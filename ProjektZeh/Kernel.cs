@@ -1,24 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using Sys = Cosmos.System;
+using System;
+using Sys = Cosmos.Kernel.System;
 
-namespace ProjektZeh
+namespace ProjektZeh;
+
+public sealed class Kernel : Sys.Kernel
 {
-    public class Kernel : Sys.Kernel
+    protected override void BeforeRun()
     {
+        Console.WriteLine("ProjektZeh booted with Cosmos Gen3. Type a line of text to echo it.");
+    }
 
-        protected override void BeforeRun()
-        {
-            Console.WriteLine("Cosmos booted successfully. Type a line of text to get it echoed back.");
-        }
-
-        protected override void Run()
-        {
-            Console.Write("Input: ");
-            var input = Console.ReadLine();
-            Console.Write("Text typed: ");
-            Console.WriteLine(input);
-        }
+    protected override void Run()
+    {
+        Console.Write("Input: ");
+        string? input = Console.ReadLine();
+        Console.Write("Text typed: ");
+        Console.WriteLine(input);
     }
 }

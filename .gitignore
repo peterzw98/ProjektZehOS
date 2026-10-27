@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Local development toolchain
+.tools/
+
+# Cosmos Gen3 ISO output
+output-*/

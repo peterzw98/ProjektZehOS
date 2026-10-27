@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "VMware Player": {
+      "commandName": "Executable",
+      "executablePath": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "commandLineArgs": "-NoProfile -ExecutionPolicy Bypass -File \"$(ProjectDir)..\\scripts\\start-vmware.ps1\" -IsoPath \"$(TargetDir)cosmos\\ProjektZeh.iso\"",
+      "workingDirectory": "$(ProjectDir)"
+    }
+  }
+}
