@@ -1,6 +1,31 @@
 # ProjektZeh
 
-ProjektZeh ist ein Cosmos-Gen3-Kernel für x64. Der Kernel liest derzeit eine Zeile von der Konsole und gibt sie wieder aus.
+ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einer kleinen Textshell.
+
+## Shell
+
+Nach dem Start erscheint der Prompt `zehos>`. Die Befehle sind:
+
+| Befehl | Funktion |
+| --- | --- |
+| `help` | Verfügbare Befehle mit Verwendung anzeigen |
+| `echo [Text ...]` | Argumente als Text ausgeben |
+| `clear` | Konsole leeren |
+| `about` | Informationen über ZehOS anzeigen |
+
+Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen, Pipes und Umleitungen sind noch nicht implementiert. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
+
+Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Der Kernel nutzt für die Texteingabe vorerst weiter `Console.ReadLine()`.
+
+Die MSTest-Tests mit Moq prüfen dieselben Shellquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel:
+
+```powershell
+dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
+```
+
+## Entwicklungsplan
+
+Die [Roadmap für ZehOS](ROADMAP.md) beschreibt die nächsten Schritte bis zu einem Desktop mit Terminal, Dateiverwaltung, spielbarem Doom und einem einfachen Browser. Jede Etappe enthält konkrete Aufgaben und ein überprüfbares Ergebnis.
 
 ## Voraussetzungen
 
