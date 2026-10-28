@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Shell;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Tests;
 
@@ -15,7 +16,7 @@ public sealed class CommandLineParserTests
         var result = CommandLineParser.Parse(input);
 
         Assert.IsTrue(result.IsOK(), "Leere Eingabe ist kein Fehler.");
-        Assert.AreEqual(0, result.Value.Length, "Leere Eingabe darf keine Argumente erzeugen.");
+        Assert.AreEqual(0, result.Value!.Length, "Leere Eingabe darf keine Argumente erzeugen.");
     }
 
     [TestMethod]
@@ -56,8 +57,8 @@ public sealed class CommandLineParserTests
         var result = CommandLineParser.Parse(input);
 
         Assert.IsFalse(result.IsOK(), "Nicht geschlossene Anfuehrungszeichen sind ungueltig.");
-        Assert.AreEqual(EnmErrCode.InvalidInput, result.eResult, "Der Fehler muss eine ungueltige Eingabe kennzeichnen.");
-        Assert.AreEqual(0, result.Value.Length, "Ein fehlerhafter Befehl darf nicht teilweise ausgefuehrt werden.");
-        StringAssert.Contains(result.sErrMsg, "Anfuehrungszeichen", "Die Meldung muss die Ursache nennen.");
+        Assert.AreEqual(ResultCode.InvalidArgument, result.Status.Code, "Der Fehler muss eine ungueltige Eingabe kennzeichnen.");
+        Assert.IsNull(result.Value, "Ein fehlerhafter Befehl darf kein ausfuehrbares Teilergebnis liefern.");
+        StringAssert.Contains(result.Status.Message, "Anfuehrungszeichen", "Die Meldung muss die Ursache nennen.");
     }
 }

@@ -17,6 +17,8 @@ Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführun
 
 Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Der Kernel nutzt für die Texteingabe vorerst weiter `Console.ReadLine()`.
 
+Gemeinsame Ergebnis- und Fehlertypen liegen unter [`ProjektZeh/Shared`](ProjektZeh/Shared/README.md). Die für ZehOS entwickelte Implementierung trennt unveränderliche Statusinformationen von optionalen Ergebniswerten. Erfolg wird über `CreateSuccess` gesetzt, Fehler über `CreateFailure` oder `CreateFromException`; `IsOK()` prüft den Status.
+
 Die MSTest-Tests mit Moq prüfen dieselben Shellquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel:
 
 ```powershell
@@ -39,7 +41,7 @@ Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Wo
 
 Die Action-Versionen sind auf feste Commits gesetzt. Die native Cosmos-Toolchain wird vom offiziellen, fortlaufend aktualisierten Release `tools-latest` bezogen. Für CodeQL werden keine separaten Sonar-Zugangsdaten benötigt. Die PR-Workflows verwenden `pull_request`, damit Code aus Forks ohne Zugriff auf Repository-Secrets geprüft werden kann.
 
-Die Regeln liegen in `Directory.Build.props`. In der `.editorconfig` sind ausschließlich zwei Regeln für Testdateien ausgenommen: Unterstriche in beschreibenden Testnamen und konstante Arrayargumente direkt an Assertions. Lokal lässt sich derselbe Buildcheck mit `dotnet build ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror` ausführen.
+Die Regeln liegen in `Directory.Build.props`. Die `.editorconfig` enthält gezielte Ausnahmen für beschreibende Testnamen, konstante Arrayargumente an Assertions und den gemeinsamen Namespace `Shared`. Lokal lässt sich derselbe Buildcheck mit `dotnet build ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror` ausführen.
 
 ## Voraussetzungen
 

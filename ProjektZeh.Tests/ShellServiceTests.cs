@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using ProjektZeh.Shell;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Tests;
 
@@ -95,8 +96,8 @@ public sealed class ShellServiceTests
         var result = shell.ExecuteLine(input, output.Object);
 
         Assert.IsFalse(result.IsOK(), "Unerwartete Argumente duerfen nicht stillschweigend ignoriert werden.");
-        Assert.AreEqual(EnmErrCode.InvalidArguments, result.eResult, "Die Fehlerart muss falsche Argumente benennen.");
-        StringAssert.Contains(result.sErrMsg, "Verwendung:", "Die Meldung muss die richtige Verwendung zeigen.");
+        Assert.AreEqual(ResultCode.InvalidArgument, result.Code, "Die Fehlerart muss falsche Argumente benennen.");
+        StringAssert.Contains(result.Message, "Verwendung:", "Die Meldung muss die richtige Verwendung zeigen.");
         output.VerifyNoOtherCalls();
     }
 
@@ -105,9 +106,9 @@ public sealed class ShellServiceTests
     {
         var result = shell.ExecuteLine("does-not-exist", output.Object);
 
-        Assert.AreEqual(EnmErrCode.UnknownCommand, result.eResult, "Unbekannte Befehle muessen erkennbar sein.");
+        Assert.AreEqual(ResultCode.NotFound, result.Code, "Unbekannte Befehle muessen erkennbar sein.");
         Assert.IsFalse(result.IsOK(), "Ein unbekannter Befehl darf keinen Erfolg melden.");
-        StringAssert.Contains(result.sErrMsg, "does-not-exist", "Die Meldung muss den unbekannten Namen nennen.");
+        StringAssert.Contains(result.Message, "does-not-exist", "Die Meldung muss den unbekannten Namen nennen.");
         output.VerifyNoOtherCalls();
         output.Setup(target => target.WriteLine("weiter"));
 
@@ -122,7 +123,7 @@ public sealed class ShellServiceTests
     {
         var result = shell.ExecuteLine("clear \"", output.Object);
 
-        Assert.AreEqual(EnmErrCode.InvalidInput, result.eResult, "Der Parserfehler muss erhalten bleiben.");
+        Assert.AreEqual(ResultCode.InvalidArgument, result.Code, "Der Parserfehler muss erhalten bleiben.");
         output.VerifyNoOtherCalls();
         output.Setup(target => target.WriteLine("weiter"));
 
@@ -137,7 +138,7 @@ public sealed class ShellServiceTests
     {
         var result = shell.ExecuteLine("echo test", null);
 
-        Assert.AreEqual(EnmErrCode.InvalidInput, result.eResult, "Eine fehlende Ausgabe muss als Fehler zurueckkommen.");
+        Assert.AreEqual(ResultCode.MissingArgument, result.Code, "Eine fehlende Ausgabe muss als Fehler zurueckkommen.");
         Assert.IsFalse(result.IsOK(), "Ohne Ausgabe darf die Shell keinen Erfolg melden.");
     }
 }

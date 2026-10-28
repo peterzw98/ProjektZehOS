@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Shell;
 
@@ -34,13 +35,13 @@ internal sealed class ShellCommand
     {
         if (arguments is null)
         {
-            return new ResultErr(EnmErrCode.InvalidInput,
+            return ResultErr.CreateFailure(ResultCode.MissingArgument,
                 "cause='InvalidInput' message='Die Argumentliste fehlt.'");
         }
 
         if (output is null)
         {
-            return new ResultErr(EnmErrCode.InvalidInput,
+            return ResultErr.CreateFailure(ResultCode.MissingArgument,
                 "cause='InvalidInput' message='Das Ausgabeziel fehlt.'");
         }
 
@@ -48,12 +49,12 @@ internal sealed class ShellCommand
         {
             if (arguments.Length > 0)
             {
-                return new ResultErr(EnmErrCode.InvalidArguments,
+                return ResultErr.CreateFailure(ResultCode.InvalidArgument,
                     $"cause='InvalidArguments' message='Verwendung: {Usage}'");
             }
         }
 
         execute(arguments, output);
-        return new ResultErr();
+        return ResultErr.CreateSuccess();
     }
 }

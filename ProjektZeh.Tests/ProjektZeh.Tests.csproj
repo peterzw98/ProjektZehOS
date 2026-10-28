@@ -14,6 +14,7 @@
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
     <Compile Include="..\ProjektZeh\Shell\**\*.cs" Link="Shell\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 </Project>

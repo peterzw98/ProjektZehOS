@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Shell;
 
@@ -18,7 +19,7 @@ internal static class CommandLineParser
     {
         if (string.IsNullOrWhiteSpace(line))
         {
-            return new ResultObject<string[]>(Array.Empty<string>());
+            return ResultObjectFactory.CreateSuccess<string[]>(Array.Empty<string>());
         }
 
         var tokens = new CommandTokens();
@@ -59,7 +60,7 @@ internal static class CommandLineParser
 
         if (insideQuotes)
         {
-            return new ResultObject<string[]>(Array.Empty<string>(), EnmErrCode.InvalidInput,
+            return ResultObjectFactory.CreateFailure<string[]>(ResultCode.InvalidArgument,
                 "cause='InvalidInput' message='Doppelte Anfuehrungszeichen sind nicht geschlossen.'");
         }
 
@@ -68,7 +69,7 @@ internal static class CommandLineParser
             tokens.Add(token.ToString());
         }
 
-        return new ResultObject<string[]>(tokens.ToArray());
+        return ResultObjectFactory.CreateSuccess<string[]>(tokens.ToArray());
     }
 
     private sealed class CommandTokens : List<string>

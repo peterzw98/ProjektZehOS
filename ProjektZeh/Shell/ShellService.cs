@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Shell;
 
@@ -31,13 +32,13 @@ internal sealed class ShellService
         var parseResult = CommandLineParser.Parse(line);
         if (!parseResult.IsOK())
         {
-            return new ResultErr(parseResult.eResult, parseResult.sErrMsg);
+            return parseResult.Status;
         }
 
-        string[] tokens = parseResult.Value;
+        string[] tokens = parseResult.Value!;
         if (tokens.Length == 0)
         {
-            return new ResultErr();
+            return ResultErr.CreateSuccess();
         }
 
         string commandName = tokens[0];
@@ -51,7 +52,7 @@ internal sealed class ShellService
             }
         }
 
-        return new ResultErr(EnmErrCode.UnknownCommand,
+        return ResultErr.CreateFailure(ResultCode.NotFound,
             $"cause='UnknownCommand' message='Unbekannter Befehl: {commandName}. Hilfe: help.'");
     }
 

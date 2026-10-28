@@ -20,7 +20,7 @@ public sealed class Kernel : Sys.Kernel
         var result = shell.ExecuteLine(Console.ReadLine(), output);
         if (!result.IsOK())
         {
-            output.WriteLine(result.sErrMsg);
+            output.WriteLine(result.Message);
         }
     }
 }
