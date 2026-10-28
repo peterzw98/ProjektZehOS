@@ -82,6 +82,7 @@ jobs:
         run: cosmos check
 
       - name: Build the x64 kernel and ISO
+        shell: bash
         run: |
           mkdir -p artifacts
           cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
