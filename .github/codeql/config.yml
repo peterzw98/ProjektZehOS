@@ -1,0 +1,9 @@
+name: ZehOS CSharp
+
+paths:
+  - ProjektZeh
+
+paths-ignore:
+  - '**/bin/**'
+  - '**/obj/**'
+  - '**/output-*/**'

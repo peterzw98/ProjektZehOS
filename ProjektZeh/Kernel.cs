@@ -7,7 +7,7 @@ namespace ProjektZeh;
 public sealed class Kernel : Sys.Kernel
 {
     private readonly ShellService shell = new();
-    private readonly ITextOutput output = new ConsoleTextOutput();
+    private readonly ConsoleTextOutput output = new();
 
     protected override void BeforeRun()
     {
