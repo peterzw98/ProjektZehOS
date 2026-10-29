@@ -1,0 +1,105 @@
+name: Build and tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: 'true'
+
+jobs:
+  tests:
+    name: Shell tests and .NET analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore test dependencies
+        run: dotnet restore ProjektZeh.Tests/ProjektZeh.Tests.csproj
+
+      - name: Build and check .NET diagnostics
+        run: dotnet build ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release --no-restore -warnaserror
+
+      - name: Run shell tests
+        run: >-
+          dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj
+          --configuration Release --no-build --no-restore
+          --logger "trx;LogFileName=shell-tests.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: shell-test-results
+          path: TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+
+  kernel:
+    name: Cosmos x64 build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install matching Cosmos CLI and patcher
+        run: |
+          dotnet tool install --global Cosmos.Tools --version 3.0.94
+          dotnet tool install --global Cosmos.Patcher --version 3.0.94
+
+      - name: Install Cosmos native toolchain
+        run: cosmos install --auto --tools
+
+      - name: Check build tools
+        run: cosmos check
+
+      - name: Build the x64 kernel and ISO
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
+
+      - name: Upload bootable ISO
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ZehOS-x64
+          path: ProjektZeh/output-x64/ProjektZeh.iso
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload kernel build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kernel-build-log
+          path: artifacts/kernel-build.log
+          if-no-files-found: warn
+          retention-days: 14

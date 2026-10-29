@@ -1,0 +1,11 @@
+root = true
+
+[ProjektZeh.Tests/*Tests.cs]
+# Testnamen folgen dem Muster Funktion_Eingabe_Verhalten aus der Entwicklerrichtlinie.
+dotnet_diagnostic.CA1707.severity = none
+# Erwartungswerte bleiben direkt an der jeweiligen einmaligen Assertion lesbar.
+dotnet_diagnostic.CA1861.severity = none
+
+[ProjektZeh/Shared/{ResultErr,ResultObject,ResultObjectFactory,ResultCode}.cs]
+# Der Namespace folgt dem Shared-Ordner statt der Visual-Basic-Benennungsregel.
+dotnet_diagnostic.CA1716.severity = none
