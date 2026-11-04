@@ -12,6 +12,16 @@ Nach dem Start erscheint der Prompt `zehos>`. Die Befehle sind:
 | `echo [Text ...]` | Argumente als Text ausgeben |
 | `clear` | Konsole leeren |
 | `about` | Informationen über ZehOS anzeigen |
+| `pwd` | Aktuelles Arbeitsverzeichnis anzeigen |
+| `cd <Pfad>` | Arbeitsverzeichnis wechseln |
+| `ls [Pfad]` | Dateien und Unterverzeichnisse auflisten |
+| `cat <Datei>` | Textdatei lesen |
+| `mkdir <Pfad>` | Verzeichnis anlegen |
+| `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
+| `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
+| `disk init <Name>` | Vollständig leere virtuelle 64-MiB-Testplatte mit MBR und FAT32 einrichten |
+| `disk mount <Name>` | Einzige FAT-Partition des Laufwerks unter `/data` einbinden |
+| `disk unmount` | `/data` mit Schreiben der Dateisystempuffer aushängen |
 
 Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen, Pipes und Umleitungen sind noch nicht implementiert. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
 
@@ -19,11 +29,52 @@ Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutp
 
 Gemeinsame Ergebnis- und Fehlertypen liegen unter [`ProjektZeh/Shared`](ProjektZeh/Shared/README.md). Die für ZehOS entwickelte Implementierung trennt unveränderliche Statusinformationen von optionalen Ergebniswerten. Erfolg wird über `CreateSuccess` gesetzt, Fehler über `CreateFailure` oder `CreateFromException`; `IsOK()` prüft den Status.
 
-Die MSTest-Tests mit Moq prüfen dieselben Shellquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel:
+Die MSTest-Tests mit Moq prüfen dieselben Shell- und Dateidienstquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel. Der Dateidienst wird gegen echte temporäre Verzeichnisse getestet; Cosmos-Treiber und dauerhafte Speicherung nach einem VM-Neustart benötigen zusätzlich einen Gasttest:
 
 ```powershell
 dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
 ```
+
+## Dateisystem in QEMU
+
+Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.94. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
+
+Kernel bauen und QEMU mit einer separaten virtuellen SATA/AHCI-Datenplatte starten:
+
+```powershell
+cosmos build --project ProjektZeh\ProjektZeh.csproj --arch x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-qemu.ps1
+```
+
+Das Skript erstellt beim ersten Aufruf ein leeres 64-MiB-Image unter `.tools\qemu\data-fat32.img`. Bei weiteren Starts verwendet es dieselbe Datei unverändert wieder. Das Image ist lokal und wird nicht in Git aufgenommen. Ein bisheriges FAT16-Image unter `.tools\qemu\data.img` bleibt erhalten; es wird weder überschrieben noch automatisch konvertiert. Mit `-IsoPath <Pfad>` lässt sich auch das in Visual Studio gebaute ISO starten. Das bisherige Cosmos-`F5`-Debugprofil hängt diese Datenplatte nicht automatisch an.
+
+Nur beim ersten Start in der ZehOS-Shell ausführen:
+
+```text
+disk list
+disk init sata0
+disk mount sata0
+```
+
+`disk init` ist ausdrücklich auf eine vollständig mit Nullen gefüllte 64-MiB-Platte mit 512-Byte-Sektoren begrenzt. Bereits vorhandene Partitionen oder Daten werden abgelehnt. Die Einrichtung erstellt eine FAT32-LBA-Partition (MBR-Typ `0x0C`) und formatiert FAT32; Cosmos bestimmt die dazu passende Clustergröße. Das Laufwerk wird anschließend mit `disk mount` eingebunden. Ein fehlgeschlagener oder abgebrochener Einrichtungsvorgang wird beim Booten nicht automatisch repariert oder wiederholt.
+
+Danach beispielsweise:
+
+```text
+mkdir texte
+cd texte
+pwd
+write hallo.txt "Hallo ZehOS!"
+cat hallo.txt
+ls
+disk unmount
+```
+
+QEMU schließen und mit demselben Startskript erneut öffnen. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Vor dem Beenden die Dateien schließen (die Shellbefehle tun das selbst) und `disk unmount` ausführen.
+
+`write` schreibt zunächst eine temporäre Datei im selben Verzeichnis und ersetzt das Ziel erst nach erfolgreichem Schreiben und Leeren der Schreibpuffer. Die alte Datei wird dafür unter einem kurzen Zufallsnamen gesichert und bei einem fehlgeschlagenen Austausch zurückbenannt. Schlägt auch die Wiederherstellung fehl, bleibt die Sicherung erhalten und ihr Pfad steht in der Fehlermeldung. Ein Schreibfehler, etwa ein voller Datenträger, lässt den bisherigen Inhalt erhalten. Dafür muss vorübergehend Platz für die alte und die neue Datei vorhanden sein; ein Schutz vor Stromausfall während des Ersetzens ist damit nicht zugesichert. `write hallo.txt ""` leert die Datei. Ein bereits belegter Mountpunkt `/data` wird bei `disk mount` abgelehnt.
+
+Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
 
 ## Entwicklungsplan
 

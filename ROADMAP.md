@@ -111,16 +111,18 @@ Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rech
 
 **Zweck:** Einstellungen, Texte, Webseiten und Spieldaten laden können.
 
-- [ ] 7.1 Ein separates virtuelles Datenlaufwerk erstellen und mit einem in Etappe 0 geprüften Controller an QEMU anschließen. Ein vorbereitetes FAT-Dateisystem verwenden; Schreibversuche zunächst auf einer Kopie durchführen.
-- [ ] 7.2 Laufwerk erkennen und über Cosmos einhängen. Zunächst Dateien nur lesen. Den tatsächlich verfügbaren Mountpfad dokumentieren, beispielsweise `/mnt`.
-- [ ] 7.3 Einen `FileService` für Pfadauflösung und begrenzte Lese- und Schreiboperationen einführen. Shellbefehle `ls`, `pwd`, `cd` und `cat` ergänzen.
-- [ ] 7.4 Schreiben ergänzen: Verzeichnisse und kleine Textdateien anlegen, schließen und erforderliche Schreibpuffer leeren. Dafür `mkdir` und einen einfachen Schreibbefehl bereitstellen.
+- [x] 7.1 Separates virtuelles 64-MiB-Datenlaufwerk über SATA/AHCI an QEMU anschließen. MBR und FAT32 mit Cosmos auf der vollständig leeren Testplatte ausdrücklich über `disk init` einrichten.
+- [x] 7.2 Laufwerk erkennen und über Cosmos unter `/data` einhängen. Vorhandene Daten beim Start ausschließlich einbinden, ohne Formatierung.
+- [x] 7.3 Einen `FileService` für Pfadauflösung und begrenzte Textoperationen (65.536 Zeichen) einführen. Shellbefehle `ls`, `pwd`, `cd` und `cat` ergänzen.
+- [x] 7.4 Schreiben ergänzen: Verzeichnisse und kleine Textdateien anlegen, schließen und mit `disk unmount` erforderliche Schreibpuffer leeren. Dafür `mkdir` und `write` bereitstellen.
 - [ ] 7.5 Fehlendes Laufwerk, ungültige Pfade, fehlende Dateien und vollen Datenträger behandeln. Ohne Datenlaufwerk soll der Desktop weiterhin starten.
-- [ ] 7.6 Datei speichern, VM sauber beenden, erneut starten und Inhalt vergleichen. Danach bei Bedarf auch das VMware-Startprofil um ein Datenlaufwerk erweitern.
+- [x] 7.6 Datei speichern, VM sauber beenden, erneut starten und Inhalt vergleichen. Danach bei Bedarf auch das VMware-Startprofil um ein Datenlaufwerk erweitern.
 
 **Fertig, wenn:** Eine im Gast geschriebene Datei nach einem Neustart unverändert gelesen werden kann.
 
 Ein RAM-Dateisystem ist für frühe Experimente möglich, erfüllt aber keine dauerhafte Speicherung. Ressourcen können anfangs auch einkompiliert werden; das ist kein Ersatz für den Neustarttest.
+
+Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 bleibt bis zur späteren Desktopintegration offen. Start und Einrichtung beschreibt die README.
 
 ## 8 Kleine Desktopanwendungen bauen
 
