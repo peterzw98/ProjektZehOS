@@ -11,12 +11,14 @@ namespace ProjektZeh.Storage;
 internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
+    private readonly Action<string, string, bool> moveFile;
 
     public string CurrentDirectory { get; private set; }
 
-    public FileService(string initialDirectory)
+    public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null)
     {
         CurrentDirectory = initialDirectory;
+        this.moveFile = moveFile ?? File.Move;
     }
 
     /// <summary>
@@ -107,7 +109,7 @@ internal sealed class FileService
                 stream.Flush(true);
             }
 
-            File.Move(temporaryPath, resolved.Value!, true);
+            ReplaceFile(temporaryPath, resolved.Value!);
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception) when (IsFileError(exception))
@@ -128,6 +130,39 @@ internal sealed class FileService
 
             return ResultErr.CreateFromException(exception);
         }
+    }
+
+    private void ReplaceFile(string temporaryPath, string targetPath)
+    {
+        if (!File.Exists(targetPath))
+        {
+            moveFile(temporaryPath, targetPath, false);
+            return;
+        }
+
+        // Cosmos haengt beim Ueberschreiben einen festen Sicherungsnamen an das Ziel an.
+        string backupPath = Path.Combine(Path.GetDirectoryName(targetPath)!, $".zehos-{Guid.NewGuid():N}.bak");
+        moveFile(targetPath, backupPath, false);
+        try
+        {
+            moveFile(temporaryPath, targetPath, false);
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            try
+            {
+                moveFile(backupPath, targetPath, false);
+            }
+            catch (Exception restoreException) when (IsFileError(restoreException))
+            {
+                throw new IOException($"Wiederherstellung fehlgeschlagen. Die Originaldatei liegt unter '{backupPath}'.",
+                    new AggregateException(exception, restoreException));
+            }
+
+            throw;
+        }
+
+        File.Delete(backupPath);
     }
 
     /// <summary>

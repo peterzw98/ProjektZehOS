@@ -49,6 +49,109 @@ public sealed class FileServiceTests
     }
 
     [TestMethod]
+    public void WriteText_CosmosBackupNameExists_ReplacesOnlyTarget()
+    {
+        File.WriteAllText(Path.Combine(directory, "test.txt"), "vorher");
+        File.WriteAllText(Path.Combine(directory, "test.txt.~replace"), "Nachbardatei");
+        files = new FileService(directory, MoveLikeCosmos);
+
+        var result = files.WriteText("test.txt", "nachher");
+
+        Assert.IsTrue(result.IsOK(), result.ToString());
+        Assert.AreEqual("nachher", files.ReadText("test.txt").Value);
+        Assert.AreEqual("Nachbardatei", files.ReadText("test.txt.~replace").Value);
+        Assert.AreEqual(2, Directory.GetFileSystemEntries(directory).Length,
+            "Ein erfolgreicher Austausch darf keine Hilfsdateien hinterlassen.");
+    }
+
+    [DataTestMethod]
+    [DataRow(247)]
+    [DataRow(255)]
+    public void WriteText_LongFatName_ReplacesExistingFile(int nameLength)
+    {
+        string name = new('a', nameLength);
+        File.WriteAllText(Path.Combine(directory, name), "vorher");
+        files = new FileService(directory, MoveLikeCosmos);
+
+        var result = files.WriteText(name, "nachher");
+
+        Assert.IsTrue(result.IsOK(), result.ToString());
+        Assert.AreEqual("nachher", files.ReadText(name).Value);
+        Assert.AreEqual(1, Directory.GetFileSystemEntries(directory).Length);
+    }
+
+    [TestMethod]
+    public void WriteText_FinalRenameFails_RestoresOriginalAndRemovesTemporaryFiles()
+    {
+        string target = Path.Combine(directory, "test.txt");
+        File.WriteAllText(target, "vorher");
+        bool originalMoved = false;
+        files = new FileService(directory, (source, destination, overwrite) =>
+        {
+            if (source.EndsWith(".tmp", StringComparison.Ordinal))
+            {
+                throw new IOException("Austausch fehlgeschlagen");
+            }
+
+            MoveLikeCosmos(source, destination, overwrite);
+            if (source == target)
+            {
+                originalMoved = true;
+            }
+        });
+
+        var result = files.WriteText("test.txt", "nachher");
+
+        Assert.IsFalse(result.IsOK());
+        Assert.IsTrue(originalMoved, "Der Fehler muss nach dem Sichern der Originaldatei auftreten.");
+        Assert.AreEqual("vorher", File.ReadAllText(target));
+        Assert.AreEqual(1, Directory.GetFileSystemEntries(directory).Length);
+    }
+
+    [TestMethod]
+    public void WriteText_RestoreFails_KeepsOriginalBackupAndReportsItsPath()
+    {
+        string target = Path.Combine(directory, "test.txt");
+        File.WriteAllText(target, "vorher");
+        string? backupPath = null;
+        files = new FileService(directory, (source, destination, overwrite) =>
+        {
+            if (source == target)
+            {
+                MoveLikeCosmos(source, destination, overwrite);
+                backupPath = destination;
+                return;
+            }
+
+            throw new IOException("Umbenennung fehlgeschlagen");
+        });
+
+        var result = files.WriteText("test.txt", "nachher");
+
+        Assert.IsFalse(result.IsOK());
+        Assert.IsNotNull(backupPath, "Vor dem Austausch muss die Originaldatei gesichert werden.");
+        Assert.AreEqual("vorher", File.ReadAllText(backupPath));
+        StringAssert.Contains(result.Message, backupPath,
+            "Der Fehler muss den Pfad zur erhaltenen Originaldatei nennen.");
+        Assert.AreEqual(1, Directory.GetFileSystemEntries(directory).Length,
+            "Nur die Sicherung darf zur manuellen Wiederherstellung bleiben.");
+    }
+
+    private static void MoveLikeCosmos(string source, string destination, bool overwrite)
+    {
+        if (overwrite && File.Exists(destination))
+        {
+            string backupPath = destination + ".~replace";
+            if (Path.GetFileName(backupPath).Length > 255 || File.Exists(backupPath))
+            {
+                throw new IOException("Cosmos-Sicherungsname nicht verfuegbar");
+            }
+        }
+
+        File.Move(source, destination, overwrite);
+    }
+
+    [TestMethod]
     public void ChangeDirectory_ParentAndRelativePaths_ResolveFromShellDirectory()
     {
         Assert.IsTrue(files.CreateDirectory("texte").IsOK(), "Der Unterordner muss angelegt werden.");
