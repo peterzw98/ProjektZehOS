@@ -128,6 +128,11 @@ internal sealed class CosmosStorageService : IStorageService
 
         try
         {
+            if (VfsManager.TryGetMount(MountPoint, out _))
+            {
+                return Failure("AlreadyMounted", "Unter /data ist bereits ein Laufwerk eingebunden.");
+            }
+
             var registration = RegisterFileSystem();
             if (!registration.IsOK())
             {

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage;
@@ -90,13 +91,41 @@ internal sealed class FileService
             return resolved.Status;
         }
 
+        string? temporaryPath = null;
+        bool temporaryCreated = false;
+        FileStream? temporaryStream = null;
         try
         {
-            File.WriteAllText(resolved.Value!, text);
+            byte[] data = new UTF8Encoding(false, true).GetBytes(text);
+            temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
+            // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
+            {
+                temporaryStream = stream;
+                temporaryCreated = true;
+                stream.Write(data);
+                stream.Flush(true);
+            }
+
+            File.Move(temporaryPath, resolved.Value!, true);
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception) when (IsFileError(exception))
         {
+            if (temporaryCreated)
+            {
+                try
+                {
+                    // shortcut: Bei ENOSPC bleibt der Stream in Cosmos 3.0.94 offen; nach Runtime-Update erneut pruefen.
+                    temporaryStream!.Dispose();
+                    File.Delete(temporaryPath!);
+                }
+                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                {
+                    return ResultErr.CreateFromException(new AggregateException(exception, cleanupException));
+                }
+            }
+
             return ResultErr.CreateFromException(exception);
         }
     }

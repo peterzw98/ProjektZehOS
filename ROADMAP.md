@@ -122,7 +122,7 @@ Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rech
 
 Ein RAM-Dateisystem ist für frühe Experimente möglich, erfüllt aber keine dauerhafte Speicherung. Ressourcen können anfangs auch einkompiliert werden; das ist kein Ersatz für den Neustarttest.
 
-Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Schritt 7.5 bleibt bis zum zusätzlichen Test eines vollen Datenträgers und der späteren Desktopintegration offen. Start und Einrichtung beschreibt die README.
+Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 bleibt bis zur späteren Desktopintegration offen. Start und Einrichtung beschreibt die README.
 
 ## 8 Kleine Desktopanwendungen bauen
 

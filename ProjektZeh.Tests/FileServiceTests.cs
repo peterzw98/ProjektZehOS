@@ -132,6 +132,33 @@ public sealed class FileServiceTests
     }
 
     [TestMethod]
+    public void WriteText_EncodingFailure_PreservesExistingFileAndRemovesTemporaryFile()
+    {
+        files.WriteText("test.txt", "vorher");
+
+        var result = files.WriteText("test.txt", "\uD800");
+
+        Assert.IsFalse(result.IsOK(), "Ein einzelnes UTF-16-Surrogat muss einen Schreibfehler liefern.");
+        Assert.AreEqual("vorher", files.ReadText("test.txt").Value,
+            "Ein Schreibfehler darf den bisherigen Dateiinhalt nicht veraendern.");
+        Assert.AreEqual(1, Directory.GetFileSystemEntries(directory).Length,
+            "Eine fehlgeschlagene temporaere Datei muss entfernt werden.");
+    }
+
+    [TestMethod]
+    public void WriteText_TargetIsDirectory_PreservesDirectoryAndRemovesTemporaryFile()
+    {
+        files.CreateDirectory("ordner");
+
+        var result = files.WriteText("ordner", "Inhalt");
+
+        Assert.IsFalse(result.IsOK(), "Ein Verzeichnis darf nicht durch eine Datei ersetzt werden.");
+        Assert.IsTrue(Directory.Exists(Path.Combine(directory, "ordner")), "Das Zielverzeichnis muss erhalten bleiben.");
+        Assert.AreEqual(1, Directory.GetFileSystemEntries(directory).Length,
+            "Bei einem fehlgeschlagenen Ersetzen darf keine temporaere Datei verbleiben.");
+    }
+
+    [TestMethod]
     public void WriteText_MaximumLength_RoundTripsWithoutTruncation()
     {
         string text = new('x', FileService.MaximumTextLength);
