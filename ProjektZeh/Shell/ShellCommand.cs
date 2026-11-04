@@ -9,7 +9,7 @@ namespace ProjektZeh.Shell;
 internal sealed class ShellCommand
 {
     private readonly bool acceptsArguments;
-    private readonly Action<string[], ITextOutput> execute;
+    private readonly Func<string[], ITextOutput, ResultErr> execute;
 
     public string Name { get; }
     public string Usage { get; }
@@ -17,6 +17,16 @@ internal sealed class ShellCommand
 
     public ShellCommand(string name, string usage, string description, bool acceptsArguments,
         Action<string[], ITextOutput> execute)
+        : this(name, usage, description, acceptsArguments, (arguments, output) =>
+        {
+            execute(arguments, output);
+            return ResultErr.CreateSuccess();
+        })
+    {
+    }
+
+    public ShellCommand(string name, string usage, string description, bool acceptsArguments,
+        Func<string[], ITextOutput, ResultErr> execute)
     {
         Name = name;
         Usage = usage;
@@ -54,7 +64,6 @@ internal sealed class ShellCommand
             }
         }
 
-        execute(arguments, output);
-        return ResultErr.CreateSuccess();
+        return execute(arguments, output);
     }
 }
