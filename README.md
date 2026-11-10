@@ -25,7 +25,19 @@ Nach dem Start erscheint der Prompt `zehos>`. Die Befehle sind:
 
 Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen, Pipes und Umleitungen sind noch nicht implementiert. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
 
-Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Der Kernel nutzt für die Texteingabe vorerst weiter `Console.ReadLine()`.
+Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Die Texteingabe verwendet einen nicht blockierenden `LineEditor`: Links/Rechts, Pos1/Ende, Backspace und Entf bearbeiten die Zeile; Hoch/Runter blättern durch die letzten 32 Befehle und zurück zum aktuellen Entwurf. Lange Zeilen scrollen horizontal und sind auf 66.560 Zeichen begrenzt. Das bisherige US-Tastaturlayout bleibt erhalten.
+
+Oben läuft eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt, damit keine Taste dauerhaft gedrückt bleibt.
+
+## Grafikprobe
+
+**F4** öffnet eine Grafikfläche mit 1024 × 768 Pixeln und 32 Bit Farbtiefe. Sie zeigt Rechtecke, Linien, Bitmaptext, einen Pixelpuffer, einen beschnittenen Zeichenbereich und einen beweglichen Mauszeiger. Maustasten, Klickzähler und ein Marker machen Klicks sichtbar. Gezeichnet wird direkt in den wiederverwendeten Cosmos-Bildpuffer; erst das fertige Bild wird ausgegeben.
+
+**Esc** oder erneut **F4** kehrt zur Shell zurück. Die bisherige Konsolenausgabe wird dabei geleert; die aktuelle Eingabe und der Befehlsverlauf bleiben erhalten. Die Grafikprobe ist die Grundlage für die spätere Fensterverwaltung und noch kein Desktop. Kann sie nicht geöffnet werden, bleibt die Shell erreichbar.
+
+Die gemeinsame Schleife verarbeitet pro Durchlauf höchstens 64 rohe Tastaturereignisse, verteilt Eingaben, aktualisiert die Statusanzeige und zeichnet bei Änderungen mit höchstens etwa 60 Bildern pro Sekunde. Die Zeitmessung verwendet `Stopwatch`; zwischen Durchläufen wartet Cosmos kurz. Datei- und Laufwerksbefehle laufen weiterhin synchron und können die Anzeige während ihrer Ausführung anhalten. Die spätere Hintergrundverarbeitung ist damit noch nicht umgesetzt.
+
+Geprüfte Cosmos-Schnittstellen, Referenz-VM und Grenzen stehen unter [`docs/COSMOS_SUPPORT.md`](docs/COSMOS_SUPPORT.md).
 
 Gemeinsame Ergebnis- und Fehlertypen liegen unter [`ProjektZeh/Shared`](ProjektZeh/Shared/README.md). Die für ZehOS entwickelte Implementierung trennt unveränderliche Statusinformationen von optionalen Ergebniswerten. Erfolg wird über `CreateSuccess` gesetzt, Fehler über `CreateFailure` oder `CreateFromException`; `IsOK()` prüft den Status.
 

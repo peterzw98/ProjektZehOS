@@ -1,4 +1,4 @@
-using System;
+using ProjektZeh.Runtime;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using Sys = Cosmos.Kernel.System;
@@ -10,6 +10,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly CosmosStorageService storage = new();
     private readonly ShellService shell;
     private readonly ConsoleTextOutput output = new();
+    private readonly InteractiveSession interactive;
 
     public Kernel()
     {
@@ -19,6 +20,7 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage).Commands
         ]);
+        interactive = new InteractiveSession(shell, output);
     }
 
     protected override void BeforeRun()
@@ -38,11 +40,6 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
-        Console.Write("zehos> ");
-        var result = shell.ExecuteLine(Console.ReadLine(), output);
-        if (!result.IsOK())
-        {
-            output.WriteLine(result.Message);
-        }
+        interactive.Run();
     }
 }
