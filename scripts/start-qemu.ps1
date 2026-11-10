@@ -43,6 +43,8 @@ $runArguments = @('run', '--iso', $resolvedIso, '--arch', 'x64', '--disk', "$dis
 if ($WaitForDebugger) {
     $runArguments += '--debug'
 }
+# Cosmos 3.0.94 haelt den Gast sonst bei Shutdown und Reboot nur an.
+$runArguments += @('--', '-action', 'shutdown=poweroff,reboot=reset')
 
 & $cosmos.Source @runArguments
 if ($LASTEXITCODE -ne 0) {

@@ -77,6 +77,10 @@ disk unmount
 
 Mit `shutdown` ausschalten und mit demselben Startskript erneut öffnen oder mit `reboot` direkt neu starten. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Beide Energieaktionen hängen ein eingebundenes Datenlaufwerk vorab mit Schreiben der Dateisystempuffer aus. Schlägt das Aushängen fehl, wird die Aktion abgebrochen und die Shell bleibt bedienbar. Ohne eingebundenes Datenlaufwerk sind beide Befehle ebenfalls verfügbar. Sie akzeptieren keine Argumente und verwenden die Energieverwaltung von Cosmos; die Unterstützung hängt von der Plattform ab. Vor einem manuellen Schließen der VM weiterhin `disk unmount` ausführen.
 
+Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos 3.0.94 vorgegebenen Optionen `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
+
+Mit `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-power-commands.ps1` werden beide Befehle in einer eigenen unsichtbaren QEMU-VM ohne Datenplatte geprüft. Nach `reboot` müssen ein zweiter Shellstart und ein laufender Gast nachweisbar sein; nach `shutdown` muss QEMU mit Exitcode 0 enden. Das ISO vorher bauen; ein anderes ISO lässt sich mit `-IsoPath` auswählen.
+
 `write` schreibt zunächst eine temporäre Datei im selben Verzeichnis und ersetzt das Ziel erst nach erfolgreichem Schreiben und Leeren der Schreibpuffer. Die alte Datei wird dafür unter einem kurzen Zufallsnamen gesichert und bei einem fehlgeschlagenen Austausch zurückbenannt. Schlägt auch die Wiederherstellung fehl, bleibt die Sicherung erhalten und ihr Pfad steht in der Fehlermeldung. Ein Schreibfehler, etwa ein voller Datenträger, lässt den bisherigen Inhalt erhalten. Dafür muss vorübergehend Platz für die alte und die neue Datei vorhanden sein; ein Schutz vor Stromausfall während des Ersetzens ist damit nicht zugesichert. `write hallo.txt ""` leert die Datei. Ein bereits belegter Mountpunkt `/data` wird bei `disk mount` abgelehnt.
 
 Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
@@ -148,7 +152,7 @@ Im Wurzelverzeichnis des Repositories:
 
 ```powershell
 cosmos build --project ProjektZeh\ProjektZeh.csproj --arch x64
-cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64
+cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64 -- -action shutdown=poweroff,reboot=reset
 ```
 
-Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
+Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
