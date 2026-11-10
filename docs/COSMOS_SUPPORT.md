@@ -1,6 +1,6 @@
 # Geprüfte Cosmos-Anbindung: Eingabe und Grafik
 
-Stand: 10. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 und 4, keine vollständige Erledigung der Grundlagenetappe 0 oder der getrennt bearbeiteten Diagnoseetappe 2.
+Stand: 10. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 und 4, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
 ## Referenzumgebung
 
@@ -38,6 +38,8 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 Am 10.11.2026 bestanden **104 Hosttests** mit Warnungen als Fehler. Der native Release-x64-Build bestand mit **0 Warnungen und 0 Fehlern**. Eine unabhängige Codeprüfung fand einen Fehler bei druckbaren Ziffernblocktasten; zwei zunächst fehlgeschlagene Regressionstests sichern die Korrektur ab. Ziffernblock-8 und Dezimalpunkt wurden danach zusätzlich im Gast geprüft.
 
 QEMU-Prüfungen: fortschreitende Zeit bei ungesendetem Entwurf, Einfügen mit Pfeiltasten, Verlauf, KeyDown/KeyUp, wiederholter Grafikwechsel mit erhaltenem Entwurf, Mausbewegung und Klicks bis zum Bildschirmrand, keine zurückbleibenden Zeigerspuren, Fehlerbehandlung der Shell, Datei schreiben/lesen sowie unveränderter Inhalt nach Unmount und VM-Neustart. Ein zusätzlicher Start ohne Datenplatte bestätigte Shell und Grafikprobe einschließlich der Rückkehr zur Shell.
+
+Nach Integration von `master` bei `d81d24a` bestehen **131 Hosttests** mit Warnungen als Fehler. Normaler Release-Build und ausdrücklich mit `-p:ZehOSRecovery=true` erzeugter Recovery-Build sind erfolgreich. In QEMU wurden zusätzlich `version`, steigende `uptime`, `log`, die gemeinsame Statuszeit, Grafikwechsel, Dateilesen und `shutdown` geprüft; QEMU beendete sich über ACPI S5. Der Recovery-Start ohne Datenplatte blieb mit `log` und `echo` bedienbar. Die normale ISO unter `output-x64` wurde dabei beibehalten.
 
 Auf dem Host: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`.
 

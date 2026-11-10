@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Graphics;
@@ -8,7 +7,7 @@ using ProjektZeh.Shell;
 
 namespace ProjektZeh.Runtime;
 
-internal sealed class InteractiveSession(ShellService shell, ITextOutput output)
+internal sealed class InteractiveSession(ShellService shell, ITextOutput output, Func<long> getElapsedMilliseconds)
 {
     private readonly CosmosInputService devices = new();
     private readonly LineEditor editor = new();
@@ -22,7 +21,6 @@ internal sealed class InteractiveSession(ShellService shell, ITextOutput output)
         var canvas = KernelConsole.Default?.Canvas;
         var input = new InputService(canvas?.Width ?? 1024, canvas?.Height ?? 768);
         CosmosInputService.SetScreenSize(canvas?.Width ?? 1024, canvas?.Height ?? 768);
-        var clock = Stopwatch.StartNew();
         long nextFrame = 0;
         long previousSecond = -1;
         bool dirty = true;
@@ -51,7 +49,7 @@ internal sealed class InteractiveSession(ShellService shell, ITextOutput output)
                 }
                 dirty = true;
             }
-            long now = clock.ElapsedMilliseconds;
+            long now = getElapsedMilliseconds();
             if (now / 1000 != previousSecond) { previousSecond = now / 1000; dirty = true; }
             if (dirty && now >= nextFrame)
             {

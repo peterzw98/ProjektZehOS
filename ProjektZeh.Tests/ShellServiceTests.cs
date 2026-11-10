@@ -54,7 +54,7 @@ public sealed class ShellServiceTests
         var result = shell.ExecuteLine("help", output.Object);
 
         Assert.IsTrue(result.IsOK(), "Die Hilfe muss aufrufbar sein.");
-        foreach (string command in new[] { "help", "echo", "clear", "about" })
+        foreach (string command in new[] { "help", "echo", "clear", "about", "version", "uptime", "log" })
         {
             output.Verify(target => target.WriteLine(It.Is<string>(text => text.StartsWith(command))),
                 Times.Once, $"Die Hilfe muss {command} genau einmal beschreiben.");
@@ -91,6 +91,9 @@ public sealed class ShellServiceTests
     [DataRow("help extra")]
     [DataRow("clear extra")]
     [DataRow("about extra")]
+    [DataRow("version extra")]
+    [DataRow("uptime extra")]
+    [DataRow("log extra")]
     public void ExecuteLine_UnexpectedArguments_ReportsUsageWithoutSideEffects(string input)
     {
         var result = shell.ExecuteLine(input, output.Object);

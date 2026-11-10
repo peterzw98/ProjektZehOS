@@ -5,6 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
+    <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

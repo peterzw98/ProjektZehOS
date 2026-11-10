@@ -59,3 +59,7 @@
 ## Ergebnis
 
 104 Hosttests mit Warnungen als Fehler bestanden; nativer Release-Build: 0 Warnungen, 0 Fehler. QEMU bestaetigt Eingabe, Tastenfreigaben, Grafik, Maus und erhaltene Datei nach Neustart sowie Bedienung ohne Datenplatte. Der unabhängige Review fand einen Ziffernblockfehler; zwei rote Regressionen reproduzierten ihn, `IsTextKey` verhindert nun die doppelte Verarbeitung als Navigation und Text. Die gesamte Testsuite und der Gasttest bestanden danach. Grenzen der Cosmos-Tastencodes und synchrone Dateioperationen sind in COSMOS_SUPPORT dokumentiert.
+
+## Nachtrag: master integrieren
+
+Auf Nutzerwunsch `origin/master` bei `d81d24a` abgerufen und integriert. Diagnose, Recovery und Energieaktionen aus Etappe 2 bleiben erhalten. Konflikte in Kernel und Roadmap zusammengefuehrt; die vorhandene Stopwatch wird nun auch fuer SystemLog und uptime verwendet, da Environment.TickCount64 in Cosmos 3.0.94 keine echte verstrichene Zeit liefert. Nach dem Merge bestehen 131 Hosttests. Normaler nativer Build und expliziter Recovery-Build mit Warnungen als Fehler bestanden. QEMU bestaetigt Diagnosebefehle, steigende uptime, Grafikwechsel und Dateilesen, shutdown sowie einen bedienbaren Recovery-Start ohne Datenplatte.
