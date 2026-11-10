@@ -14,6 +14,11 @@
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
     <Compile Include="..\ProjektZeh\Shell\**\*.cs" Link="Shell\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\ProjektZeh\SystemServices\LogLevel.cs" Link="SystemServices\LogLevel.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\SystemLogEntry.cs" Link="SystemServices\SystemLogEntry.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\ISystemLogSink.cs" Link="SystemServices\ISystemLogSink.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\SystemLog.cs" Link="SystemServices\SystemLog.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\BootService.cs" Link="SystemServices\BootService.cs" />
     <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />

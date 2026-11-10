@@ -50,12 +50,16 @@ Ein Browser für heutige komplexe Webseiten ist ein weiteres großes Entwicklung
 
 **Zweck:** Grafik- und Treiberfehler später noch verstehen können, auch wenn auf dem Bildschirm nichts mehr sichtbar ist.
 
-- [ ] 2.1 Einen `SystemLog` mit Zeitangabe, Komponente und Meldung einführen. Serielle Ausgabe und einen begrenzten Puffer im Speicher verwenden.
-- [ ] 2.2 Initialisierung in benannte Schritte aufteilen: Eingabe, Anzeige, Dateien und später Netzwerk. Erfolg und Fehler jedes Schritts protokollieren.
-- [ ] 2.3 Shellbefehle wie `version`, `uptime` und `log` ergänzen. Nur Informationen anzeigen, die tatsächlich aus einer verfügbaren Schnittstelle gelesen werden.
-- [ ] 2.4 Einen Start in die Textshell als Wiederherstellungsmodus vorsehen. Wenn die grafische Initialisierung scheitert, soll die Diagnose erreichbar bleiben.
+- [x] 2.1 Einen `SystemLog` mit Zeitangabe, Komponente und Meldung einführen. Serielle Ausgabe und einen begrenzten Puffer im Speicher verwenden.
+- [x] 2.2 Initialisierung in benannte Schritte aufteilen: Eingabe, Anzeige, Dateien und später Netzwerk. Erfolg und Fehler jedes Schritts protokollieren.
+- [x] 2.3 Shellbefehle wie `version`, `uptime` und `log` ergänzen. Nur Informationen anzeigen, die tatsächlich aus einer verfügbaren Schnittstelle gelesen werden.
+- [x] 2.4 Einen Start in die Textshell als Wiederherstellungsmodus vorsehen. Wenn die grafische Initialisierung scheitert, soll die Diagnose erreichbar bleiben.
 
 **Fertig, wenn:** Im seriellen Log erkennbar ist, bis wohin der Start kam, und ein Grafikfehler die Diagnose nicht unzugänglich macht.
+
+**Stand am 10. November 2026:** `BootService` protokolliert Beginn, Erfolg, Fehlerstatus und Exceptions benannter Schritte. Der Kernel prüft die von Cosmos bereitgestellten Eingabe-, Konsolen- und Speicherdienste; Netzwerk bleibt ausdrücklich übersprungen. `version` liest die geladenen Assemblyversionen, `uptime` die monotone Uhr seit ZehOS-Konstruktion und `log` den Ringpuffer. Mit `-p:ZehOSRecovery=true` entsteht ein Textshell-Recovery-Build, der die normale Anzeigeinitialisierung umgeht. Fehler in dieser Initialisierung führen ebenfalls zur Wiederherstellung der Textkonsole. Bis Etappe 4 ist die normale Anzeige noch die Cosmos-Textkonsole; der Rückfall bei Grafikfehlern wird durch injizierte Fehler im Hosttest geprüft. Ohne funktionierenden Cosmos-Framebuffer bleibt nur die serielle Diagnose. 58 Hosttests bestehen; normaler Release-Build und Recovery-Build erzeugen mit null Warnungen ein ISO. Normaler Boot, die drei Diagnosebefehle sowie der Recovery-Boot mit bedienbarem `log` sind in QEMU geprüft.
+
+Nach Integration der Dateisystemänderungen aus `master` bleiben Datei- und Diskbefehle erhalten; der protokollierte Dateischritt bindet die vorhandene Datenpartition ein. Die kombinierte Hosttestsuite umfasst 98 erfolgreiche Tests.
 
 ## 3 Nicht blockierende Eingabe und gemeinsame Ereignisschleife
 
@@ -238,7 +242,9 @@ Die ersten vier Änderungen sind mit der Textshell umgesetzt. Als Nächstes folg
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
 - [x] Leerzeilen, unbekannte Befehle und Argumente in Anführungszeichen sauber behandeln.
 - [x] Shellausgabe hinter `ITextOutput` legen, damit später ein Terminalfenster angeschlossen werden kann.
-- [ ] Serielle Diagnose und einen begrenzten Logpuffer hinzufügen; danach die nicht blockierende Eingabe vorbereiten.
+- [x] Serielle Diagnose und einen begrenzten Logpuffer hinzufügen.
+- [x] Benannte Initialisierungsschritte mit Erfolg- und Fehlereinträgen sowie Textshell-Wiederherstellung ergänzen.
+- [ ] Nicht blockierende Eingabe aus Etappe 3 vorbereiten; offene Schnittstellenprüfungen aus Etappe 0 weiter dokumentieren.
 
 ## Technische Quellen
 
