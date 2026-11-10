@@ -21,15 +21,17 @@ internal sealed class ConsoleLineView
         int start = Math.Max(0, editor.Cursor - columns + 1);
         string visible = text.Substring(start, Math.Min(columns, text.Length - start));
         Console.SetCursorPosition(0, row);
-        Console.Write((Prompt + visible).PadRight(Console.WindowWidth - 1));
+        Console.Write(FormatLine(visible, Console.WindowWidth));
         Console.SetCursorPosition(Prompt.Length + editor.Cursor - start, row);
     }
 
     public void Submit(string command)
     {
         Console.SetCursorPosition(0, row);
-        Console.WriteLine(Prompt + command);
+        Console.WriteLine(FormatLine(command, Console.WindowWidth));
     }
+
+    internal static string FormatLine(string text, int width) => (Prompt + text).PadRight(width - 1);
 
     public static void Status(InputService input, long milliseconds)
     {

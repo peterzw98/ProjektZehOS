@@ -41,6 +41,8 @@ QEMU-Prüfungen: fortschreitende Zeit bei ungesendetem Entwurf, Einfügen mit Pf
 
 Nach Integration von `master` bei `d81d24a` bestehen **131 Hosttests** mit Warnungen als Fehler. Normaler Release-Build und ausdrücklich mit `-p:ZehOSRecovery=true` erzeugter Recovery-Build sind erfolgreich. In QEMU wurden zusätzlich `version`, steigende `uptime`, `log`, die gemeinsame Statuszeit, Grafikwechsel, Dateilesen und `shutdown` geprüft; QEMU beendete sich über ACPI S5. Der Recovery-Start ohne Datenplatte blieb mit `log` und `echo` bedienbar. Die normale ISO unter `output-x64` wurde dabei beibehalten.
 
+Nach dem Review von PR #5 bestehen **134 Hosttests** mit Warnungen als Fehler. Zwei zunaechst fehlgeschlagene Regressionen sichern kurze und leere bestaetigte Befehle gegen stehengebliebene Zeichen des vorherigen Entwurfs ab; ein weiterer Test erhaelt ueberbreite Befehle vollstaendig. Der native Release-x64-Build und ein erneuter QEMU-Test sind erfolgreich: Verlauf und Enter im selben Ereignisblock hinterlassen keine Textreste. F4/Esc erhaelt weiterhin den Entwurf; die Shell bleibt mit `echo` und `uptime` bedienbar.
+
 Auf dem Host: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`.
 
 Im Gast: während eines ungesendeten `echo`-Entwurfs die steigende Statuszeit beobachten; Links/Rechts, Einfügen, Backspace/Entf und Hoch/Runter verwenden. Mit F4 die Grafikprobe öffnen, eine Taste halten und loslassen, Maus bewegen und klicken, an den Bildschirmrand bewegen, mit Esc zum unveränderten Entwurf zurückkehren. Anschließend `help`, `echo`, Datei schreiben/lesen und `disk unmount` prüfen. Auch ohne Datenlaufwerk müssen Shell und Grafikprobe erreichbar bleiben.
