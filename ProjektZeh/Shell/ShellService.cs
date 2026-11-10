@@ -10,15 +10,20 @@ internal sealed class ShellService
 {
     private readonly ShellCommand[] commands;
 
-    public ShellService()
+    public ShellService() : this(Array.Empty<ShellCommand>())
     {
-        commands = new[]
-        {
+    }
+
+    public ShellService(ShellCommand[] additionalCommands)
+    {
+        commands =
+        [
             new ShellCommand("help", "help", "Zeigt die verfuegbaren Befehle.", false, WriteHelp),
             new ShellCommand("echo", "echo [Text ...]", "Gibt die Argumente als Text aus.", true, WriteEcho),
             new ShellCommand("clear", "clear", "Leert die Konsole.", false, ClearOutput),
-            new ShellCommand("about", "about", "Zeigt Informationen ueber ZehOS.", false, WriteAbout)
-        };
+            new ShellCommand("about", "about", "Zeigt Informationen ueber ZehOS.", false, WriteAbout),
+            .. additionalCommands
+        ];
     }
 
     /// <summary>
