@@ -1,5 +1,6 @@
 using System;
 using ProjektZeh.Shared;
+using ProjektZeh.SystemServices;
 
 namespace ProjektZeh.Shell;
 
@@ -9,19 +10,30 @@ namespace ProjektZeh.Shell;
 internal sealed class ShellService
 {
     private readonly ShellCommand[] commands;
+    private readonly SystemLog? systemLog;
+    private readonly Func<long?>? getUptimeMilliseconds;
+    private readonly string? version;
 
-    public ShellService() : this(Array.Empty<ShellCommand>())
+    public ShellService(SystemLog? systemLog = null, Func<long?>? getUptimeMilliseconds = null, string? version = null)
+        : this(Array.Empty<ShellCommand>(), systemLog, getUptimeMilliseconds, version)
     {
     }
 
-    public ShellService(ShellCommand[] additionalCommands)
+    public ShellService(ShellCommand[] additionalCommands, SystemLog? systemLog = null,
+        Func<long?>? getUptimeMilliseconds = null, string? version = null)
     {
+        this.systemLog = systemLog;
+        this.getUptimeMilliseconds = getUptimeMilliseconds;
+        this.version = version;
         commands =
         [
             new ShellCommand("help", "help", "Zeigt die verfuegbaren Befehle.", false, WriteHelp),
             new ShellCommand("echo", "echo [Text ...]", "Gibt die Argumente als Text aus.", true, WriteEcho),
             new ShellCommand("clear", "clear", "Leert die Konsole.", false, ClearOutput),
             new ShellCommand("about", "about", "Zeigt Informationen ueber ZehOS.", false, WriteAbout),
+            new ShellCommand("version", "version", "Zeigt die geladenen Kernelversionen.", false, WriteVersion),
+            new ShellCommand("uptime", "uptime", "Zeigt die Laufzeit seit ZehOS-Start.", false, WriteUptime),
+            new ShellCommand("log", "log", "Zeigt die gepufferten Systemdiagnosen.", false, WriteLog),
             .. additionalCommands
         ];
     }
@@ -82,5 +94,34 @@ internal sealed class ShellService
     private static void WriteAbout(string[] arguments, ITextOutput output)
     {
         output.WriteLine("ZehOS - ein Betriebssystemprojekt in C# mit Cosmos Gen3.");
+    }
+
+    private void WriteVersion(string[] arguments, ITextOutput output)
+    {
+        output.WriteLine(version ?? "Versionsinformationen sind nicht verfuegbar.");
+    }
+
+    private void WriteUptime(string[] arguments, ITextOutput output)
+    {
+        long? milliseconds = getUptimeMilliseconds?.Invoke();
+        output.WriteLine(milliseconds.HasValue
+            ? $"Laufzeit seit ZehOS-Start: {milliseconds.Value} ms"
+            : "Laufzeit ist nicht verfuegbar: keine initialisierte monotone Uhr.");
+    }
+
+    private void WriteLog(string[] arguments, ITextOutput output)
+    {
+        if (systemLog is null)
+        {
+            output.WriteLine("Systemprotokoll ist nicht verfuegbar.");
+            return;
+        }
+
+        SystemLogEntry[] entries = systemLog.GetEntries();
+        output.WriteLine($"Systemprotokoll: {entries.Length}/{systemLog.Capacity} Eintraege (aelteste zuerst).");
+        foreach (SystemLogEntry entry in entries)
+        {
+            output.WriteLine(entry.ToString());
+        }
     }
 }
