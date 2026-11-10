@@ -4,6 +4,7 @@ using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Shared;
 using Cosmos.Kernel.System.Graphics;
+using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Storage;
 using Cosmos.Kernel.System.Timers;
@@ -26,7 +27,8 @@ public sealed class Kernel : Sys.Kernel
         shell = new ShellService(
         [
             .. new FileShellCommands(files).Commands,
-            .. new StorageShellCommands(storage).Commands
+            .. new StorageShellCommands(storage).Commands,
+            .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
     }
@@ -87,6 +89,17 @@ public sealed class Kernel : Sys.Kernel
         {
             output.WriteLine(result.Message);
         }
+    }
+
+    private ResultErr PreparePowerAction()
+    {
+        if (!Sys.Power.IsSupported)
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure,
+                "cause='PowerUnsupported' message='Cosmos unterstuetzt auf diesem System keine Energieaktionen.'");
+        }
+
+        return VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
     }
 
     private long GetElapsedMilliseconds()

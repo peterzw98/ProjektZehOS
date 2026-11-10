@@ -11,6 +11,8 @@ Nach dem Start erscheint der Prompt `zehos>`. Die Befehle sind:
 | `help` | Verfügbare Befehle mit Verwendung anzeigen |
 | `echo [Text ...]` | Argumente als Text ausgeben |
 | `clear` | Konsole leeren |
+| `reboot` | Datenlaufwerk aushängen und ZehOS neu starten |
+| `shutdown` | Datenlaufwerk aushängen und den Rechner ausschalten |
 | `about` | Informationen über ZehOS anzeigen |
 | `pwd` | Aktuelles Arbeitsverzeichnis anzeigen |
 | `cd <Pfad>` | Arbeitsverzeichnis wechseln |
@@ -73,7 +75,7 @@ ls
 disk unmount
 ```
 
-QEMU schließen und mit demselben Startskript erneut öffnen. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Vor dem Beenden die Dateien schließen (die Shellbefehle tun das selbst) und `disk unmount` ausführen.
+Mit `shutdown` ausschalten und mit demselben Startskript erneut öffnen oder mit `reboot` direkt neu starten. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Beide Energieaktionen hängen ein eingebundenes Datenlaufwerk vorab mit Schreiben der Dateisystempuffer aus. Schlägt das Aushängen fehl, wird die Aktion abgebrochen und die Shell bleibt bedienbar. Ohne eingebundenes Datenlaufwerk sind beide Befehle ebenfalls verfügbar. Sie akzeptieren keine Argumente und verwenden die Energieverwaltung von Cosmos; die Unterstützung hängt von der Plattform ab. Vor einem manuellen Schließen der VM weiterhin `disk unmount` ausführen.
 
 `write` schreibt zunächst eine temporäre Datei im selben Verzeichnis und ersetzt das Ziel erst nach erfolgreichem Schreiben und Leeren der Schreibpuffer. Die alte Datei wird dafür unter einem kurzen Zufallsnamen gesichert und bei einem fehlgeschlagenen Austausch zurückbenannt. Schlägt auch die Wiederherstellung fehl, bleibt die Sicherung erhalten und ihr Pfad steht in der Fehlermeldung. Ein Schreibfehler, etwa ein voller Datenträger, lässt den bisherigen Inhalt erhalten. Dafür muss vorübergehend Platz für die alte und die neue Datei vorhanden sein; ein Schutz vor Stromausfall während des Ersetzens ist damit nicht zugesichert. `write hallo.txt ""` leert die Datei. Ein bereits belegter Mountpunkt `/data` wird bei `disk mount` abgelehnt.
 
