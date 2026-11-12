@@ -1,0 +1,5 @@
+{
+  "qemu": {
+    "extraArgs": "-action shutdown=poweroff,reboot=reset"
+  }
+}
