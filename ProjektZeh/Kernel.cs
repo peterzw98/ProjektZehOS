@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using ProjektZeh.Runtime;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
@@ -17,7 +19,8 @@ public sealed class Kernel : Sys.Kernel
     private readonly CosmosStorageService storage = new();
     private readonly ShellService shell;
     private readonly ConsoleTextOutput output = new();
-    private readonly long bootTickCount = Environment.TickCount64;
+    private readonly InteractiveSession interactive;
+    private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
 
     public Kernel()
@@ -31,6 +34,7 @@ public sealed class Kernel : Sys.Kernel
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
+        interactive = new InteractiveSession(shell, output, GetElapsedMilliseconds);
     }
 
     protected override void BeforeRun()
@@ -83,12 +87,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
-        Console.Write("zehos> ");
-        var result = shell.ExecuteLine(Console.ReadLine(), output);
-        if (!result.IsOK())
-        {
-            output.WriteLine(result.Message);
-        }
+        interactive.Run();
     }
 
     private ResultErr PreparePowerAction()
@@ -104,7 +103,7 @@ public sealed class Kernel : Sys.Kernel
 
     private long GetElapsedMilliseconds()
     {
-        return Environment.TickCount64 - bootTickCount;
+        return clock.ElapsedMilliseconds;
     }
 
     private long? GetAvailableUptime()
@@ -114,7 +113,7 @@ public sealed class Kernel : Sys.Kernel
 
     private static ResultErr InitializeDisplay()
     {
-        // Bis Etappe 4 ist die Cosmos-Textkonsole die normale Anzeige.
+        // Die Shell bleibt Startansicht; F4 oeffnet die Grafikprobe.
         return RestoreTextConsole();
     }
 

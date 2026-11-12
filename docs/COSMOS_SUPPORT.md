@@ -1,0 +1,48 @@
+# Geprüfte Cosmos-Anbindung: Eingabe und Grafik
+
+Stand: 10. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 und 4, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
+
+## Referenzumgebung
+
+Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standard-VGA und PS/2-Tastatur/-Maus. Limine fordert **1024×768×32** an; die tatsächliche Bildschirmgröße wurde im Gast geprüft. Der vorhandene QEMU-Start über Cosmos bleibt verwendbar. Für Dateiprüfungen wurde eine separate Kopie des vorhandenen 64-MiB-AHCI-Datenimages verwendet.
+
+## Verwendete Schnittstellen
+
+| Funktion | Anbindung und Ergebnis |
+| --- | --- |
+| Tastatur ohne blockierendes Lesen | `KeyboardManager.HandleScanCode` wird durch einen kleinen Plug in einen vorab angelegten Rohpuffer geleitet. Normales Tippen, Wiederholung und Loslassen sind im Gast geprüft. |
+| Texteingabe | Das vorhandene `KeyboardLayout.ConvertScanCode` übersetzt im Vordergrund. Ein .NET-`UnsafeAccessor` bindet diese in 3.0.94 interne Methode an; das US-Layout bleibt erhalten. |
+| Eigene Ereignisse | `InputService` trennt KeyDown, KeyUp und Text; Mausbewegung und Maustasten haben eigene Ereignisse. Zustände sind abfragbar. |
+| Begrenzung | Je 256 Einträge für Rohdaten und eigene Ereignisse; pro Runde höchstens 64 rohe Tastenereignisse. Bei Überlauf werden wartende Ereignisse verworfen, verlorene Ereignisse gezählt und ein Reset löst gehaltene Tasten. |
+| Interruptschutz | Das Lesen des Rohpuffers verwendet `SchedulerManager.MaskInterrupts()`. Nur für diesen kleinen Bereich wird die zugehörige Experimental-Warnung der festgelegten Version ausgenommen. |
+| Maus | `MouseManager` liefert Position und drei Tastenzustände; `SetScreenSize` und `InputService` begrenzen die Position. Bewegung, Drücken/Loslassen und Bildschirmränder sind im Gast geprüft. |
+| Monotone Zeit | `Stopwatch.GetTimestamp`/Frequenz sind in der installierten x64-Version an TSC und dessen Kalibrierung gebunden. Fortschreitende Statuszeit ohne Eingabe wurde im Gast geprüft. `Environment.TickCount64` wird nicht verwendet: Die installierte Laufzeit zählt dort Aufrufe statt Millisekunden. |
+| Kurze Pause | `TimerManager.Wait(1)` am Ende jeder Runde. |
+| Grafik | `Canvas.GetFullScreen()`, `GetBuffer()` und `Display()` verwenden den schon vorhandenen Bildpuffer. Keine neue Vollbildallokation pro Bild. |
+| Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
+| Zeichnen | Rechtecke, vor dem Rasterisieren beschnittene Linien, Bitmaptext und Pixelkopien. Ein Zeichenbereich kann auf ein Teilrechteck begrenzt werden. Hosttests decken auch negative und extreme Koordinaten ab. |
+
+Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Version 3.0.94 geprüft. Die [offizielle Plug-Dokumentation](https://cosmosos.github.io/articles/dev/plugs.html) beschreibt das verwendete Ersetzen einzelner Methoden. Die Paketmetadaten verweisen auf Cosmos-Quellstand `5d0b9535251472db7ecfe012f0435f0a04ffca16`.
+
+## Grenzen
+
+- Cosmos 3.0.94 verwirft in seiner normalen Tastaturabfrage Break-Ereignisse. Daher übernimmt ZehOS den Rohdatenpfad vollständig; `Console.ReadLine` und `Console.ReadKey` gehören nicht mehr zum interaktiven Pfad. Sobald Cosmos eine öffentliche Rohereignis-API bietet, sollen Plug und Zugriff auf die interne Layoutmethode entfallen.
+- Die PS/2-Anbindung von Cosmos faltet manche erweiterten Scancodes zusammen, beispielsweise linkes/rechtes Strg und Tasten des Navigations-/Ziffernblocks. ZehOS übernimmt diese Codes; eine vollständige Unterscheidung dieser physischen Tasten ist damit noch nicht gegeben. Getestet wurden die gewöhnlichen Buchstaben, Shift, F4, Escape und die Editier-/Verlaufstasten des Referenzprofils.
+- Mauszustände werden pro Schleifendurchlauf gelesen. Es gibt noch keine vollständige Rohereignishistorie für Maus und Hotplug-Geräte.
+- Die Schleife ist kooperativ. Laufwerksinitialisierung und Dateioperationen können sie während ihrer Ausführung anhalten; Hintergrundarbeit und Abbruch folgen in späteren Etappen.
+- Die Grafikprobe enthält noch kein Fenster oder Desktop-Terminal. Beim Verlassen wird die Konsolenausgabe geleert; Zeilenentwurf und Befehlsverlauf bleiben erhalten.
+- VMware, echte Hardware, USB-Eingabe und mehrere CPUs wurden für diese Änderung nicht geprüft.
+
+## Nachprüfung
+
+Am 10.11.2026 bestanden **104 Hosttests** mit Warnungen als Fehler. Der native Release-x64-Build bestand mit **0 Warnungen und 0 Fehlern**. Eine unabhängige Codeprüfung fand einen Fehler bei druckbaren Ziffernblocktasten; zwei zunächst fehlgeschlagene Regressionstests sichern die Korrektur ab. Ziffernblock-8 und Dezimalpunkt wurden danach zusätzlich im Gast geprüft.
+
+QEMU-Prüfungen: fortschreitende Zeit bei ungesendetem Entwurf, Einfügen mit Pfeiltasten, Verlauf, KeyDown/KeyUp, wiederholter Grafikwechsel mit erhaltenem Entwurf, Mausbewegung und Klicks bis zum Bildschirmrand, keine zurückbleibenden Zeigerspuren, Fehlerbehandlung der Shell, Datei schreiben/lesen sowie unveränderter Inhalt nach Unmount und VM-Neustart. Ein zusätzlicher Start ohne Datenplatte bestätigte Shell und Grafikprobe einschließlich der Rückkehr zur Shell.
+
+Nach Integration von `master` bei `d81d24a` bestehen **131 Hosttests** mit Warnungen als Fehler. Normaler Release-Build und ausdrücklich mit `-p:ZehOSRecovery=true` erzeugter Recovery-Build sind erfolgreich. In QEMU wurden zusätzlich `version`, steigende `uptime`, `log`, die gemeinsame Statuszeit, Grafikwechsel, Dateilesen und `shutdown` geprüft; QEMU beendete sich über ACPI S5. Der Recovery-Start ohne Datenplatte blieb mit `log` und `echo` bedienbar. Die normale ISO unter `output-x64` wurde dabei beibehalten.
+
+Nach dem Review von PR #5 bestehen **134 Hosttests** mit Warnungen als Fehler. Zwei zunaechst fehlgeschlagene Regressionen sichern kurze und leere bestaetigte Befehle gegen stehengebliebene Zeichen des vorherigen Entwurfs ab; ein weiterer Test erhaelt ueberbreite Befehle vollstaendig. Der native Release-x64-Build und ein erneuter QEMU-Test sind erfolgreich: Verlauf und Enter im selben Ereignisblock hinterlassen keine Textreste. F4/Esc erhaelt weiterhin den Entwurf; die Shell bleibt mit `echo` und `uptime` bedienbar.
+
+Auf dem Host: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`.
+
+Im Gast: während eines ungesendeten `echo`-Entwurfs die steigende Statuszeit beobachten; Links/Rechts, Einfügen, Backspace/Entf und Hoch/Runter verwenden. Mit F4 die Grafikprobe öffnen, eine Taste halten und loslassen, Maus bewegen und klicken, an den Bildschirmrand bewegen, mit Esc zum unveränderten Entwurf zurückkehren. Anschließend `help`, `echo`, Datei schreiben/lesen und `disk unmount` prüfen. Auch ohne Datenlaufwerk müssen Shell und Grafikprobe erreichbar bleiben.

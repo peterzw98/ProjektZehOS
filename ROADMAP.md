@@ -65,25 +65,29 @@ Nach Integration der Dateisystemänderungen aus `master` bleiben Datei- und Disk
 
 **Zweck:** Maus, Fenster und später Spiele müssen weiter reagieren, während jemand Text eingibt.
 
-- [ ] 3.1 Eigene Ereignisse für gedrückte und losgelassene Tasten, Texteingabe, Mausbewegung und Maustasten definieren. Physische Tasten und eingegebene Zeichen getrennt behandeln.
-- [ ] 3.2 Cosmos-Eingabe über einen kleinen `InputService` anbinden. Eine begrenzte Ereigniswarteschlange und ein definiertes Verhalten bei Überlauf vorsehen.
-- [ ] 3.3 Eine zentrale Schleife einführen: Eingabe abholen → Ereignisse verteilen → Anwendungen kurz aktualisieren → bei Bedarf zeichnen → kurz warten oder CPU abgeben.
-- [ ] 3.4 Für die Shell einen `LineEditor` bauen: Zeichen einfügen, Backspace und Enter; anschließend Pfeiltasten und Befehlshistorie ergänzen. `Console.ReadLine()` aus dem interaktiven Hauptpfad entfernen.
-- [ ] 3.5 Zeitabstände mit einer monotonen Uhr berechnen. Lange Arbeit in kleine Schritte aufteilen; aufwendige Dateizugriffe und Netzwerkzugriffe später über geeignete Hintergrundarbeit entkoppeln.
+- [x] 3.1 Eigene Ereignisse für gedrückte und losgelassene Tasten, Texteingabe, Mausbewegung und Maustasten definieren. Physische Tasten und eingegebene Zeichen getrennt behandeln.
+- [x] 3.2 Cosmos-Eingabe über einen kleinen `InputService` anbinden. Eine begrenzte Ereigniswarteschlange und ein definiertes Verhalten bei Überlauf vorsehen.
+- [x] 3.3 Eine zentrale Schleife einführen: Eingabe abholen → Ereignisse verteilen → Anwendungen kurz aktualisieren → bei Bedarf zeichnen → kurz warten oder CPU abgeben.
+- [x] 3.4 Für die Shell einen `LineEditor` bauen: Zeichen einfügen, Backspace und Enter; anschließend Pfeiltasten und Befehlshistorie ergänzen. `Console.ReadLine()` aus dem interaktiven Hauptpfad entfernen.
+- [x] 3.5 Zeitabstände mit einer monotonen Uhr berechnen. Lange Arbeit in kleine Schritte aufteilen; aufwendige Dateizugriffe und Netzwerkzugriffe später über geeignete Hintergrundarbeit entkoppeln.
 
 **Fertig, wenn:** Eine regelmäßig aktualisierte Statusanzeige weiterläuft, während Text eingegeben wird, und Tastendrücke samt Loslassen zuverlässig ankommen.
+
+**Umgesetzt am 10. November 2026:** `InputService`, begrenzte Ereignispuffer, getrennte Tasten-/Textereignisse und `LineEditor` mit horizontaler Ansicht und 32 Befehlen Verlauf sind angebunden. In QEMU laufen Zeit- und Tastenzustandsanzeige während der Eingabe weiter; gedrückte und losgelassene Tasten, Cursorbearbeitung und Verlauf wurden geprüft. Die Schleife begrenzt das Eingabebudget und verwendet die TSC-basierte `Stopwatch`-Zeitmessung. Datei- und Laufwerksbefehle bleiben synchron; deren spätere Entkopplung aus 3.5 steht weiterhin aus. Der kleine Rohdaten-Plug für Cosmos 3.0.94 und die Grenzen der Tastencodes sind in `docs/COSMOS_SUPPORT.md` beschrieben.
 
 ## 4 Eine eigene grafische Fläche zeichnen
 
 **Zweck:** Die Zeichenfunktionen bereitstellen, aus denen später der Desktop entsteht.
 
-- [ ] 4.1 Die geprüfte Cosmos-Grafikfläche hinter `Graphics/DisplayService.cs` anbinden. Zunächst eine feste, in der Referenz-VM funktionierende Auflösung verwenden.
-- [ ] 4.2 Hintergrund, gefüllte Rechtecke, Linien, Bitmaptext und einen Pixelpuffer zeichnen. Den Puffer später auch für die Doom-Ausgabe verwenden können.
-- [ ] 4.3 In einen Bildpuffer zeichnen und das fertige Bild ausgeben. Vorhandene Pufferung von Cosmos verwenden, soweit sie ausreicht.
-- [ ] 4.4 Einen Mauszeiger zeichnen, seine Position auf den Bildschirm begrenzen und Klicks sichtbar machen.
-- [ ] 4.5 Zeichenbereiche beschneiden. Auch negative Koordinaten und teilweise außerhalb liegende Rechtecke dürfen keine Speicherzugriffe außerhalb des Puffers auslösen.
+- [x] 4.1 Die geprüfte Cosmos-Grafikfläche hinter `Graphics/DisplayService.cs` anbinden. Zunächst eine feste, in der Referenz-VM funktionierende Auflösung verwenden.
+- [x] 4.2 Hintergrund, gefüllte Rechtecke, Linien, Bitmaptext und einen Pixelpuffer zeichnen. Den Puffer später auch für die Doom-Ausgabe verwenden können.
+- [x] 4.3 In einen Bildpuffer zeichnen und das fertige Bild ausgeben. Vorhandene Pufferung von Cosmos verwenden, soweit sie ausreicht.
+- [x] 4.4 Einen Mauszeiger zeichnen, seine Position auf den Bildschirm begrenzen und Klicks sichtbar machen.
+- [x] 4.5 Zeichenbereiche beschneiden. Auch negative Koordinaten und teilweise außerhalb liegende Rechtecke dürfen keine Speicherzugriffe außerhalb des Puffers auslösen.
 
 **Fertig, wenn:** Hintergrund, Text und beweglicher Mauszeiger stabil sichtbar sind und wiederholtes Neuzeichnen keine Spuren hinterlässt.
+
+**Umgesetzt am 10. November 2026:** F4 öffnet die Grafikprobe; Esc/F4 kehrt zur Shell mit erhaltenem Eingabeentwurf zurück. `DisplayService` verwendet den bestehenden Cosmos-Puffer bei 1024×768×32, `PixelSurface` übernimmt beschränktes Zeichnen und Pixelkopien. Negative/extreme Koordinaten, abgeschnittene Bitmapzeichen und ungültige Quellpuffer werden auf dem Host geprüft. In QEMU wurden Mausbewegung ohne Zeigerspuren, Bildschirmgrenzen, Klicks und wiederholte Ansichtwechsel geprüft. Fenster folgen in Etappe 5.
 
 ## 5 Fensterverwaltung entwickeln
 
@@ -236,7 +240,7 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 ## Erste Änderungen und nächster Schritt
 
-Die ersten vier Änderungen sind mit der Textshell umgesetzt. Als Nächstes folgt die Diagnose aus Etappe 2:
+Die Textshell sowie Diagnose, Eingabe- und Grafikgrundlage aus Etappe 2 bis 4 sind umgesetzt. Die nächste funktionale Erweiterung ist die Fensterverwaltung aus Etappe 5:
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
@@ -244,7 +248,8 @@ Die ersten vier Änderungen sind mit der Textshell umgesetzt. Als Nächstes folg
 - [x] Shellausgabe hinter `ITextOutput` legen, damit später ein Terminalfenster angeschlossen werden kann.
 - [x] Serielle Diagnose und einen begrenzten Logpuffer hinzufügen.
 - [x] Benannte Initialisierungsschritte mit Erfolg- und Fehlereinträgen sowie Textshell-Wiederherstellung ergänzen.
-- [ ] Nicht blockierende Eingabe aus Etappe 3 vorbereiten; offene Schnittstellenprüfungen aus Etappe 0 weiter dokumentieren.
+- [x] Nicht blockierende Eingabe und eine gepufferte Grafikprobe mit F4/Esc bereitstellen.
+- [ ] Offene Schnittstellenprüfungen aus Etappe 0 weiter dokumentieren.
 
 ## Technische Quellen
 
