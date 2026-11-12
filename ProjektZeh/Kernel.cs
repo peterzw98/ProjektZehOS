@@ -17,24 +17,28 @@ namespace ProjektZeh;
 public sealed class Kernel : Sys.Kernel
 {
     private readonly CosmosStorageService storage = new();
-    private readonly ShellService shell;
     private readonly ConsoleTextOutput output = new();
     private readonly InteractiveSession interactive;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
+    private bool startDesktop;
 
     public Kernel()
     {
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        interactive = new InteractiveSession(CreateShell, output, GetElapsedMilliseconds, systemLog);
+    }
+
+    private ShellService CreateShell()
+    {
         var files = new FileService("/data");
-        shell = new ShellService(
+        return new ShellService(
         [
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
-        interactive = new InteractiveSession(shell, output, GetElapsedMilliseconds);
     }
 
     protected override void BeforeRun()
@@ -81,13 +85,14 @@ public sealed class Kernel : Sys.Kernel
         {
             output.WriteLine("Wiederherstellungsmodus: Textshell. Diagnose: version, uptime, log.");
         }
+        startDesktop = !boot.IsRecoveryMode;
         output.WriteLine("ZehOS Shell - 'help' zeigt die verfuegbaren Befehle.");
         systemLog.Information("Shell", "Textshell ist bereit.");
     }
 
     protected override void Run()
     {
-        interactive.Run();
+        interactive.Run(startDesktop);
     }
 
     private ResultErr PreparePowerAction()
@@ -113,7 +118,7 @@ public sealed class Kernel : Sys.Kernel
 
     private static ResultErr InitializeDisplay()
     {
-        // Die Shell bleibt Startansicht; F4 oeffnet die Grafikprobe.
+        // Die Textkonsole bleibt als Rueckfall erreichbar; der Desktop startet nach den Bootschritten.
         return RestoreTextConsole();
     }
 

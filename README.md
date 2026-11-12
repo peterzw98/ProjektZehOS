@@ -1,10 +1,10 @@
 # ProjektZeh
 
-ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einer kleinen Textshell.
+ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und einer kleinen Shell in unabhängigen Terminalfenstern.
 
 ## Shell
 
-Nach dem Start erscheint der Prompt `zehos>`. Die Befehle sind:
+Nach dem Start öffnen sich zwei Terminalfenster mit dem Prompt `zehos>`. Im Wiederherstellungsmodus erscheint derselbe Prompt direkt in der Textshell. Die Befehle sind:
 
 | Befehl | Funktion |
 | --- | --- |
@@ -32,13 +32,17 @@ Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführun
 
 Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Die Texteingabe verwendet einen nicht blockierenden `LineEditor`: Links/Rechts, Pos1/Ende, Backspace und Entf bearbeiten die Zeile; Hoch/Runter blättern durch die letzten 32 Befehle und zurück zum aktuellen Entwurf. Lange Zeilen scrollen horizontal und sind auf 66.560 Zeichen begrenzt. Das bisherige US-Tastaturlayout bleibt erhalten.
 
-Oben läuft eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt, damit keine Taste dauerhaft gedrückt bleibt.
+In der Textshell läuft oben eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Der Desktop zeigt Fensterzahl und Laufzeit in der unteren Leiste. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt und ein Ziehvorgang beendet.
 
-## Grafikprobe
+## Desktop und Fenster
 
-**F4** öffnet eine Grafikfläche mit 1024 × 768 Pixeln und 32 Bit Farbtiefe. Sie zeigt Rechtecke, Linien, Bitmaptext, einen Pixelpuffer, einen beschnittenen Zeichenbereich und einen beweglichen Mauszeiger. Maustasten, Klickzähler und ein Marker machen Klicks sichtbar. Gezeichnet wird direkt in den wiederverwendeten Cosmos-Bildpuffer; erst das fertige Bild wird ausgegeben.
+ZehOS startet zum Desktop mit **1024 × 768 Pixeln und 32 Bit Farbtiefe**. Ein Klick aktiviert das oberste getroffene Fenster und bringt es nach vorn; Tastatureingaben gehen nur an dieses Fenster. Die Titelleiste lässt sich mit der linken Maustaste ziehen, auch wenn der Zeiger sie dabei verlässt. Die Fenster bleiben oberhalb der unteren Leiste innerhalb des Bildschirms. **X** schließt ein Fenster. Größenänderung und Minimieren sind noch nicht vorgesehen.
 
-**Esc** oder erneut **F4** kehrt zur Shell zurück. Die bisherige Konsolenausgabe wird dabei geleert; die aktuelle Eingabe und der Befehlsverlauf bleiben erhalten. Die Grafikprobe ist die Grundlage für die spätere Fensterverwaltung und noch kein Desktop. Kann sie nicht geöffnet werden, bleibt die Shell erreichbar.
+**+ Terminal** öffnet ein weiteres Fenster, bis höchstens acht gleichzeitig geöffnet sind. Jedes Terminal besitzt seine eigene Shell, Eingabe, Historie und sein eigenes Arbeitsverzeichnis, anfangs `/data`. Die Ausgabe wird auf die Fensterbreite umgebrochen und speichert die letzten **256 Zeilen**. **Bild auf/Bild ab (PageUp/PageDown)** blättern durch ältere Ausgabe; normale Texteingabe springt zur neuesten Ausgabe zurück. Der blinkende Cursor gehört zum aktiven Fenster. `clear` leert dessen Ausgabe. Nach dem Schließen aller Fenster bleibt der Starter erreichbar.
+
+**Esc** führt zur Textshell, **F4** wechselt zwischen Desktop und Textshell. Fenster, Terminalausgaben und Eingabeentwürfe bleiben erhalten. Die alte Textkonsolenausgabe wird beim Wechsel geleert; deren eigener Eingabeentwurf und Verlauf bleiben erhalten. Grafikfehler beim Öffnen oder Zeichnen führen zur erreichbaren Textshell zurück.
+
+`WindowManager` zeichnet Fenster von hinten nach vorn und beschneidet jeden Inhalt am Fensterbereich. Hintergrund und Fenster werden bei einem neuen Bild vollständig in den vorhandenen Cosmos-Puffer gezeichnet; zusätzliche Bildpuffer pro Fenster sind nicht erforderlich. Verschieben und Schließen hinterlassen dadurch keine alten Fensterreste. `IApplication` enthält Start, Eingabebehandlung, Aktualisieren, Zeichnen und Schließen; bisher ist nur das fest einkompilierte Terminal angebunden.
 
 Die gemeinsame Schleife verarbeitet pro Durchlauf höchstens 64 rohe Tastaturereignisse, verteilt Eingaben, aktualisiert die Statusanzeige und zeichnet bei Änderungen mit höchstens etwa 60 Bildern pro Sekunde. Die Zeitmessung verwendet `Stopwatch`; zwischen Durchläufen wartet Cosmos kurz. Datei- und Laufwerksbefehle laufen weiterhin synchron und können die Anzeige während ihrer Ausführung anhalten. Die spätere Hintergrundverarbeitung ist damit noch nicht umgesetzt.
 
@@ -46,7 +50,7 @@ Geprüfte Cosmos-Schnittstellen, Referenz-VM und Grenzen stehen unter [`docs/COS
 
 Gemeinsame Ergebnis- und Fehlertypen liegen unter [`ProjektZeh/Shared`](ProjektZeh/Shared/README.md). Die für ZehOS entwickelte Implementierung trennt unveränderliche Statusinformationen von optionalen Ergebniswerten. Erfolg wird über `CreateSuccess` gesetzt, Fehler über `CreateFailure` oder `CreateFromException`; `IsOK()` prüft den Status.
 
-Die MSTest-Tests mit Moq prüfen dieselben Shell- und Dateidienstquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel. Der Dateidienst wird gegen echte temporäre Verzeichnisse getestet; Cosmos-Treiber und dauerhafte Speicherung nach einem VM-Neustart benötigen zusätzlich einen Gasttest:
+Die MSTest-Tests mit Moq prüfen dieselben Shell-, Datei-, Fenster-, Desktop- und Terminalquellen in einer normalen .NET-Umgebung ohne den Bare-Metal-Kernel. Der Dateidienst wird gegen echte temporäre Verzeichnisse getestet; Cosmos-Treiber und dauerhafte Speicherung nach einem VM-Neustart benötigen zusätzlich einen Gasttest:
 
 ```powershell
 dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
@@ -103,7 +107,7 @@ Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne 
 
 Der Bootablauf protokolliert Eingabe, Anzeige und Dateien mit Beginn, Erfolg oder Fehler auf der seriellen Ausgabe und im begrenzten Speicherpuffer. Netzwerk wird bis zur Implementierung ausdrücklich übersprungen. Fehlende Dateien-/Speicherdienste verhindern den Shellstart nicht. Die Prüfungen lesen den Zustand der bereits von Cosmos initialisierten Dienste; sie ersetzen keine Treiberinitialisierung. Der Dateischritt bindet zusätzlich die vorhandene Datenpartition von `sata0` unter `/data` ein und protokolliert einen fehlgeschlagenen Mount. Protokoll, `uptime` und Statusanzeige verwenden gemeinsam eine `Stopwatch` ab ZehOS-Konstruktion, keine Kalenderuhr. `version` zeigt Assemblyversionen, keine aus dem Netz ermittelte Releaseversion.
 
-Für ein Wiederherstellungs-ISO mit `dotnet build ProjektZeh/ProjektZeh.csproj -p:ZehOSRecovery=true` bauen. Dieser Modus umgeht die normale ZehOS-Anzeigeinitialisierung und stellt direkt die Cosmos-Textkonsole her. Ein Fehler oder eine Exception in der normalen Anzeigeinitialisierung aktiviert denselben Rückfall automatisch. Auch der normale Start beginnt in der Textshell; F4 öffnet die Grafikprobe. Ein Desktop ist noch nicht implementiert. Die Wiederherstellung benötigt weiterhin einen funktionierenden Cosmos-Framebuffer und Tastatur. Fehler vor `BeforeRun` oder eine ebenfalls fehlgeschlagene Textkonsole bleiben nur seriell diagnostizierbar.
+Für ein Wiederherstellungs-ISO mit `dotnet build ProjektZeh/ProjektZeh.csproj -p:ZehOSRecovery=true` bauen. Dieser Modus umgeht die normale ZehOS-Anzeigeinitialisierung und startet direkt in der Cosmos-Textshell. Ein Fehler oder eine Exception in der normalen Anzeigeinitialisierung aktiviert denselben Rückfall automatisch. Der normale Start öffnet den Desktop nach den Bootschritten; F4 kann ihn auch aus der Recovery-Textshell öffnen. Ein Fehler beim Desktopstart oder Zeichnen wird protokolliert und lässt die Textshell erreichbar. Die Wiederherstellung benötigt weiterhin einen funktionierenden Cosmos-Framebuffer und Tastatur. Fehler vor `BeforeRun` oder eine ebenfalls fehlgeschlagene Textkonsole bleiben nur seriell diagnostizierbar.
 
 Die [Roadmap für ZehOS](ROADMAP.md) beschreibt die nächsten Schritte bis zu einem Desktop mit Terminal, Dateiverwaltung, spielbarem Doom und einem einfachen Browser. Jede Etappe enthält konkrete Aufgaben und ein überprüfbares Ergebnis.
 
@@ -123,7 +127,7 @@ Die Regeln liegen in `Directory.Build.props`. Die `.editorconfig` enthält gezie
 
 ## Voraussetzungen
 
-- .NET SDK 10 oder neuer
+- .NET SDK 10; `global.json` wählt die neueste installierte 10.0-Featureversion. Ein allein installiertes SDK 11 reicht für Cosmos 3.0.94 nicht aus.
 - Cosmos Gen3 CLI und Bauwerkzeuge (`cosmos check` muss erfolgreich sein)
 - Für die Arbeit in Visual Studio: Visual Studio 2026 (Version 18.0 oder neuer). Visual Studio 2022 kann dieses `net10.0`-Projekt nicht bauen.
 - Für Breakpoints in Visual Studio: die [Cosmos-Visual-Studio-Erweiterung](https://github.com/CosmosOS/CosmosVsExtension/releases) und der Visual-Studio-Workload **Linux and embedded development with C++**. Der Workload stellt die GDB-Debugengine bereit.

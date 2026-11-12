@@ -11,7 +11,7 @@ internal enum PhysicalKey : byte
 {
     Escape = 1, Backspace = 14, Enter = 28, Control = 29, LeftShift = 42,
     RightShift = 54, Alt = 56, CapsLock = 58, F4 = 62, NumLock = 69,
-    Home = 71, Up = 72, Left = 75, Right = 77, End = 79, Down = 80, Delete = 83,
+    Home = 71, Up = 72, PageUp = 73, Left = 75, Right = 77, End = 79, Down = 80, PageDown = 81, Delete = 83,
     AltGr = 96
 }
 

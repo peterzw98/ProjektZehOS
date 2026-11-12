@@ -1,6 +1,6 @@
-# Geprüfte Cosmos-Anbindung: Eingabe und Grafik
+# Geprüfte Cosmos-Anbindung: Eingabe, Grafik und Desktop
 
-Stand: 10. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 und 4, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
+Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
 ## Referenzumgebung
 
@@ -30,7 +30,7 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 - Die PS/2-Anbindung von Cosmos faltet manche erweiterten Scancodes zusammen, beispielsweise linkes/rechtes Strg und Tasten des Navigations-/Ziffernblocks. ZehOS übernimmt diese Codes; eine vollständige Unterscheidung dieser physischen Tasten ist damit noch nicht gegeben. Getestet wurden die gewöhnlichen Buchstaben, Shift, F4, Escape und die Editier-/Verlaufstasten des Referenzprofils.
 - Mauszustände werden pro Schleifendurchlauf gelesen. Es gibt noch keine vollständige Rohereignishistorie für Maus und Hotplug-Geräte.
 - Die Schleife ist kooperativ. Laufwerksinitialisierung und Dateioperationen können sie während ihrer Ausführung anhalten; Hintergrundarbeit und Abbruch folgen in späteren Etappen.
-- Die Grafikprobe enthält noch kein Fenster oder Desktop-Terminal. Beim Verlassen wird die Konsolenausgabe geleert; Zeilenentwurf und Befehlsverlauf bleiben erhalten.
+- Fenster und Terminal laufen gemeinsam im Kernel. Größenänderung, Minimieren, Prozessisolation und fremde Programme sind nicht implementiert. Der Desktop begrenzt offene Fenster auf acht und die Ausgabe je Terminal auf 256 umgebrochene Zeilen. Beim Ansichtswechsel wird die Textkonsolenausgabe geleert; offene Terminals sowie Zeilenentwurf und Verlauf beider Ansichten bleiben erhalten.
 - VMware, echte Hardware, USB-Eingabe und mehrere CPUs wurden für diese Änderung nicht geprüft.
 
 ## Nachprüfung
@@ -45,4 +45,14 @@ Nach dem Review von PR #5 bestehen **134 Hosttests** mit Warnungen als Fehler. Z
 
 Auf dem Host: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`.
 
-Im Gast: während eines ungesendeten `echo`-Entwurfs die steigende Statuszeit beobachten; Links/Rechts, Einfügen, Backspace/Entf und Hoch/Runter verwenden. Mit F4 die Grafikprobe öffnen, eine Taste halten und loslassen, Maus bewegen und klicken, an den Bildschirmrand bewegen, mit Esc zum unveränderten Entwurf zurückkehren. Anschließend `help`, `echo`, Datei schreiben/lesen und `disk unmount` prüfen. Auch ohne Datenlaufwerk müssen Shell und Grafikprobe erreichbar bleiben.
+## Fenster und Desktop am 12. November 2026
+
+**149 Hosttests** mit Warnungen als Fehler bestehen auf SDK **10.0.403**. Fensterfokus/Z-Ordnung, Drag-Capture/Reset, Inhaltsclipping, Schließen, Starter-Limit und Neuzeichnen werden ebenso geprüft wie Ringpuffer, Umbruch/Leerzeilen, Scrollgrenzen, getrennte Eingabe/History und Arbeitsverzeichnisse. Zwei zunächst fehlgeschlagene Ziffernblocktests sichern ab, dass NumLock-9/3 Texteingaben statt PageUp/PageDown auslösen. Eine weitere rote/grüne Pixelregression verhindert, dass eine Scrollanzeige Text in der ersten Ausgabezeile verdeckt; die überlagerte Anzeige wurde entfernt.
+
+Native Release- und Recovery-Builds sind erfolgreich. Ein allein installiertes SDK 11 wählte zuvor einen inkompatiblen ILC-Compiler und .NET-11-Laufzeitquellen für Cosmos 3.0.94. `global.json` beschränkt den Build deshalb auf SDK 10.0; es sind keine Cosmos-Pakete geändert worden. Für diese Prüfung wurde SDK 10.0.403 projektlokal unter `.tools/dotnet10` bereitgestellt und dessen `dotnet.exe` direkt aufgerufen. Visual Studio benötigt ein regulär installiertes .NET-10-SDK.
+
+In QEMU ohne Datenlaufwerk geprüft: normaler Boot zu zwei Terminalfenstern, `echo` in beiden Fenstern, Fokuswechsel bei erhaltenem Entwurf, Ziehen außerhalb der Titelleiste bis an den Arbeitsflächenrand, freigelegter Hintergrund, Drag-Reset bei Esc/F4, PageUp/PageDown-Ausgabe, NumLock-9/3, separate Textshell, Schließen aller Fenster, Wiederöffnen und das Limit von acht Terminals. Der Recovery-Start bleibt mit `log` und `echo` bedienbar und kann per F4 zum Desktop und per Esc zurück wechseln.
+
+Mit einer separaten Kopie des 64-MiB-Datenimages geprüft: Datei im Terminal schreiben/lesen, eigene Arbeitsverzeichnisse beider Terminals, Weiterarbeit nach fehlender Datei, Reboot und erneutes Lesen desselben Inhalts sowie Shutdown. Das ursprüngliche Image blieb SHA256-gleich. Der vorhandene `scripts/test-power-commands.ps1 -WithDebugger` besteht mit dem Desktop-ISO: GDB bleibt bei Reboot verbunden, Shutdown beendet Gast und Debugger normal. Ein vollständiger Desktop-Test mit vollem Datenträger, VMware und echte Hardware bleiben offen.
+
+Gastprüfung wiederholen: normal und mit `ZehOSRecovery=true` bauen; im Desktop Befehle in beiden Terminals eingeben, einen Entwurf stehen lassen, das andere Fenster aktivieren/verschieben/schließen und über `+ Terminal` erneut öffnen. Mit `help` Ausgabe erzeugen und PageUp/PageDown nutzen. Esc/F4 muss Entwürfe und Fenster erhalten. Auch ohne Datenlaufwerk muss der Desktop starten. Dateiprüfungen nur mit einer isolierten Imagekopie durchführen.
