@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using Cosmos.Kernel.System.Graphics;
+using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Security;
@@ -12,7 +13,8 @@ namespace ProjektZeh.Runtime;
 
 internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
     Func<FileService> createFiles, ITextOutput output,
-    Func<long> getElapsedMilliseconds, SystemLog systemLog, AccountService accounts, UserSession identity)
+    Func<long> getElapsedMilliseconds, SystemLog systemLog, AccountService accounts, UserSession identity,
+    TaskManagerSection[] sections)
 {
     private readonly CosmosInputService devices = new();
     private readonly LoginFlow login = new(accounts, shell, output);
@@ -32,7 +34,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         bool dirty = true;
         output.WriteLine("F4: Desktop. Pfeiltasten: Cursor/Verlauf. Esc: zur Textshell.");
         BeginLine();
-        if (startDesktop) ToggleGraphics();
+        if (startDesktop) ToggleGraphics(input);
         while (true)
         {
             if (!graphics && shell.Poll(output)) { BeginLine(); dirty = true; }
@@ -42,14 +44,19 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
                 if (value.Type == InputEventType.KeyDown && !value.IsRepeat && value.KeyCode == (byte)PhysicalKey.F4)
-                    ToggleGraphics();
+                    ToggleGraphics(input);
                 else if (graphics)
                 {
                     if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
                     {
                         if (!display!.CloseMenu()) LeaveGraphics();
                     }
-                    else display!.Handle(value);
+                    else
+                    {
+                        // Auch Treiberfehler beim Moduswechsel muessen zur bedienbaren Textshell fuehren.
+                        try { display!.Handle(value); }
+                        catch (Exception exception) { FailGraphics("Eingabe", exception); }
+                    }
                 }
                 else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
                 {
@@ -65,8 +72,12 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             long now = getElapsedMilliseconds();
             if (graphics)
             {
-                display!.Update(now);
-                if (display.NeedsAnimation && now >= nextFrame) dirty = true;
+                try
+                {
+                    display!.Update(now);
+                    if (display.NeedsAnimation && now >= nextFrame) dirty = true;
+                }
+                catch (Exception exception) { FailGraphics("Aktualisieren", exception); }
             }
             if (now / 500 != previousTick) { previousTick = now / 500; dirty = true; }
             if (dirty && now >= nextFrame)
@@ -74,13 +85,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 if (graphics)
                 {
                     try { display!.Render(input, now); }
-                    catch (Exception exception)
-                    {
-                        LeaveGraphics();
-                        systemLog.Error("Desktop", $"Zeichnen fehlgeschlagen: {exception.Message}");
-                        output.WriteLine($"Desktopfehler: {exception.Message}");
-                        BeginLine();
-                    }
+                    catch (Exception exception) { FailGraphics("Zeichnen", exception); }
                 }
                 else
                 {
@@ -95,12 +100,20 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         }
     }
 
-    private void ToggleGraphics()
+    private void FailGraphics(string step, Exception exception)
+    {
+        LeaveGraphics();
+        systemLog.Error("Desktop", $"{step} fehlgeschlagen: {exception.Message}");
+        output.WriteLine($"Desktopfehler: {exception.Message}");
+        BeginLine();
+    }
+
+    private void ToggleGraphics(InputService input)
     {
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell, createFiles, new DesktopSession(accounts, shell, identity));
+            display ??= new DisplayService(createShell, createFiles, input, sections, new DesktopSession(accounts, shell, identity));
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");
@@ -116,11 +129,19 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
 
     private void LeaveGraphics()
     {
-        display?.Suspend();
+        string? suspendError = null;
+        try { display?.Suspend(); }
+        catch (Exception exception)
+        {
+            // Auch ein Treiberfehler bei der Ruecknahme darf den direkten F4-/Esc-Pfad nicht beenden.
+            suspendError = exception.Message;
+            systemLog.Error("Desktop", "Anzeige konnte nicht zurueckgenommen werden: " + suspendError);
+        }
         graphics = false;
         output.Clear();
         Console.CursorVisible = true;
         output.WriteLine("ZehOS Textshell - F4 oeffnet den Desktop.");
+        if (suspendError != null) output.WriteLine("Anzeigefehler beim Verlassen: " + suspendError);
         BeginLine();
     }
 

@@ -43,7 +43,7 @@ public sealed class Kernel : Sys.Kernel
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity);
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections);
     }
 
     /// <summary>Neue Terminals starten als angemeldeter Desktopbenutzer, behalten danach aber ihre eigene Identitaet.</summary>
@@ -53,6 +53,9 @@ public sealed class Kernel : Sys.Kernel
         identity.LoginAs(desktopIdentity);
         return CreateShell(identity);
     }
+
+    private static string VersionText =>
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell(UserSession identity)
     {

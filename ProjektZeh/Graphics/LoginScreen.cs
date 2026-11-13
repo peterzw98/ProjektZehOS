@@ -21,7 +21,7 @@ internal sealed class LoginScreen
     private readonly TerminalBuffer messages;
     private readonly UiPainter painter;
     private readonly UiTextBox input;
-    private readonly UiRect bounds;
+    private UiRect bounds;
 
     public LoginScreen(DesktopSession session, UiPainter painter, int width, int height)
     {
@@ -29,10 +29,16 @@ internal sealed class LoginScreen
         this.painter = painter;
         messages = new(680 / painter.GlyphWidth, 8);
         login = new(session.Accounts, session.Shell, messages);
+        input = new(128, painter: painter) { Focused = true };
+        Resize(width, height);
+        input.Submitted = Submit;
+    }
+
+    public void Resize(int width, int height)
+    {
         int line = painter.GlyphHeight;
         bounds = new((width - 720) / 2, (height - 7 * line - 56) / 2, 720, 7 * line + 56);
-        input = new(128, painter: painter) { Bounds = new(bounds.X + 20, bounds.Y + 3 * line + 24, 680, line + 12), Focused = true };
-        input.Submitted = Submit;
+        input.Bounds = new(bounds.X + 20, bounds.Y + 3 * line + 24, 680, line + 12);
     }
 
     public void Handle(InputEvent value)

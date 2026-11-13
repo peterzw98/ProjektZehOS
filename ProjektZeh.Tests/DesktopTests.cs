@@ -177,6 +177,8 @@ public sealed class DesktopTests
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         var pixels = new int[1024 * 768];
         var surface = new PixelSurface(1024, 768, pixels);
+        desktop.Render(surface, 0, 1000, 700, PointerButtons.None);
+        var background = (int[])pixels.Clone();
         desktop.OpenTerminal();
         var active = desktop.Windows.ActiveWindow!;
         int oldX = active.X;
@@ -185,12 +187,13 @@ public sealed class DesktopTests
         desktop.Handle(new(InputEventType.PointerMove, X: 20, Y: 10));
         desktop.Handle(new(InputEventType.PointerUp, X: 20, Y: 10, Button: PointerButtons.Left));
         desktop.Render(surface, 1000, 1000, 700, PointerButtons.None);
-        Assert.AreEqual(unchecked((int)0xff142236), pixels[(oldY + active.Height - 2) * 1024 + oldX + active.Width - 2]);
+        int corner = (oldY + active.Height - 2) * 1024 + oldX + active.Width - 2;
+        Assert.AreEqual(background[corner], pixels[corner]);
         while (desktop.Windows.ActiveWindow is { } window)
             desktop.Handle(new(InputEventType.PointerDown, X: window.X + window.Width - 16, Y: window.Y + 16, Button: PointerButtons.Left));
         desktop.Render(surface, 2000, 1000, 700, PointerButtons.None);
         Assert.AreEqual(0, desktop.Windows.Count);
-        Assert.AreEqual(unchecked((int)0xff142236), pixels[400 * 1024 + 500]);
+        Assert.AreEqual(background[400 * 1024 + 500], pixels[400 * 1024 + 500]);
         Assert.IsTrue(desktop.OpenTerminal());
         Assert.IsInstanceOfType<TerminalApp>(desktop.Windows.ActiveWindow!.Application);
     }

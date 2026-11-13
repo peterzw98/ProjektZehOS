@@ -207,7 +207,7 @@ public sealed class UserManagementTests
         var identity = accounts.CreateSession();
         var shell = CreateShell(identity);
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
-            () => new FileService(root), new DesktopSession(accounts, shell, identity));
+            () => new FileService(root), session: new DesktopSession(accounts, shell, identity));
         var surface = new PixelSurface(1024, 768, new int[1024 * 768]);
         desktop.Render(surface, 0, 10, 10, PointerButtons.None);
 
@@ -242,7 +242,7 @@ public sealed class UserManagementTests
         var shell = CreateShell(identity);
         var output = new TerminalBuffer(120);
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
-            () => new FileService(root), new DesktopSession(accounts, shell, identity));
+            () => new FileService(root), session: new DesktopSession(accounts, shell, identity));
         var surface = new PixelSurface(1024, 768, new int[1024 * 768]);
         desktop.Render(surface, 0, 10, 10, PointerButtons.None);
 
@@ -260,6 +260,43 @@ public sealed class UserManagementTests
         Assert.IsNull(identity.UserId);
         WaitForPassword(() => shell.Poll(output));
         Assert.IsTrue(accounts.ListUsers(admin).Length == 1, "Nach dem Abmelden darf die Berechnung kein Konto mehr anlegen.");
+    }
+
+    [TestMethod]
+    public void DesktopIdentityChangeReloadsPreferencesAndClearsPrivateAppearance()
+    {
+        var admin = SetupAdministrator();
+        var identity = accounts.CreateSession();
+        identity.LoginAs(admin);
+        var shell = CreateShell(identity);
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(identity.HomeDirectory ?? root), session: new DesktopSession(accounts, shell, identity));
+        var preferences = desktop.Preferences;
+        preferences.Apply(preferences.Settings with { Dark = false, Wallpaper = 2 });
+        identity.Logout();
+        desktop.Update(1000);
+        Assert.AreNotSame(preferences, desktop.Preferences);
+        Assert.IsTrue(desktop.Preferences.Settings.Dark);
+        Assert.AreEqual(0, desktop.Preferences.Settings.Wallpaper);
+        identity.LoginAs(admin);
+        desktop.Update(2000);
+        Assert.IsFalse(desktop.Preferences.Settings.Dark);
+        Assert.AreEqual(2, desktop.Preferences.Settings.Wallpaper);
+    }
+
+    [TestMethod]
+    public void LogoutRemainsAvailableWithEightOpenWindows()
+    {
+        var admin = SetupAdministrator();
+        var identity = accounts.CreateSession();
+        identity.LoginAs(admin);
+        var shell = CreateShell(identity);
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(root), session: new DesktopSession(accounts, shell, identity));
+        while (desktop.OpenTerminal()) { }
+        Assert.AreEqual(Desktop.MaximumWindows, desktop.Windows.Count);
+        Logout(desktop);
+        Assert.IsNull(identity.UserId);
     }
 
     private static void Logout(Desktop desktop)

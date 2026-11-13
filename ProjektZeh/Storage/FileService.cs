@@ -115,6 +115,28 @@ internal sealed class FileService
         }
     }
 
+    public ResultObject<byte[]> ReadBytes(string? path, int maximumLength)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLength);
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(resolved.Status);
+        try
+        {
+            Authorize(resolved.Value!, FilePermission.Read);
+            using var stream = new FileStream(resolved.Value!, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = stream.Length;
+            if (length < 0 || length > maximumLength)
+                return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+            var data = new byte[(int)length];
+            stream.ReadExactly(data);
+            return ResultObjectFactory.CreateSuccess(data);
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            return ResultObjectFactory.CreateFromException<byte[]>(exception);
+        }
+    }
+
     /// <summary>
     /// Ersetzt den Inhalt einer Textdatei.
     /// </summary>

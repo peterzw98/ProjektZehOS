@@ -8,8 +8,8 @@ internal sealed class WindowManager
 {
     private readonly List<Window> windows = [];
     private readonly List<Window> zOrder = [];
-    private readonly int width;
-    private readonly int height;
+    private int width;
+    private int height;
     private Window? moving;
     private Window? pointerCapture;
     private int edges;
@@ -21,6 +21,40 @@ internal sealed class WindowManager
     public int Count => windows.Count;
     public bool HasPointerCapture => moving != null || pointerCapture != null;
     public Window GetWindow(int index) => windows[index];
+
+    public void RequestClose(Window window)
+    {
+        if (!windows.Contains(window)) return;
+        Reset();
+        window.IsMinimized = false;
+        Activate(window);
+        if (window.Application.RequestClose()) CloseWindow(window);
+    }
+
+    public void Resize(int width, int height)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(width, 800);
+        ArgumentOutOfRangeException.ThrowIfLessThan(height, 544);
+        Reset();
+        this.width = width;
+        this.height = height;
+        foreach (Window window in windows)
+        {
+            if (window.IsMaximized)
+                (window.X, window.Y, window.Width, window.Height) = (0, 0, width, height);
+            else
+            {
+                window.Width = Math.Min(window.Width, width);
+                window.Height = Math.Min(window.Height, height);
+                window.X = Math.Clamp(window.X, 0, width - window.Width);
+                window.Y = Math.Clamp(window.Y, 0, height - window.Height);
+            }
+            var saved = window.RestoreBounds;
+            int savedWidth = Math.Min(saved.Width, width), savedHeight = Math.Min(saved.Height, height);
+            window.RestoreBounds = (Math.Clamp(saved.X, 0, width - savedWidth), Math.Clamp(saved.Y, 0, height - savedHeight), savedWidth, savedHeight);
+            window.Application.Resize(window.ContentWidth, window.ContentHeight);
+        }
+    }
 
     public WindowManager(int width, int height)
     {

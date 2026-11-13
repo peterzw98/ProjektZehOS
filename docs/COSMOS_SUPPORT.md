@@ -2,6 +2,10 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Desktop-Einstellungen: Abschluss am 14. November 2026
+
+Der aktuelle Desktopstand integriert master `62b064c` einschließlich Anmeldung und Dateirechten. 277 Hosttests sowie normale und Recovery-NativeAOT-Builds bestehen. In QEMU wurden Full HD, Ersteinrichtung/Anmeldung, Einstellungsapp, Personalisierung im Benutzerhome, Taskmanager, F4/Esc und ein neutraler Anmeldeschirm nach Logout geprüft. Die Szene-/Zeigeroptimierung bleibt erhalten; die aktuelle Full-HD-Stichprobe bei Mausbewegung zeigt 57 FPS. Auflösungsbestätigung, fehlgeschlagene Rücknahme und BMP-Farbmasken besitzen gezielte Hostregressionen. Ein VMware-SVGA-Laufzeitwechsel ist damit nicht im Gast nachgewiesen. Details und Grenzen: [DESKTOP_SETTINGS_REVIEW.md](DESKTOP_SETTINGS_REVIEW.md).
+
 ## Benutzer-/Kryptografieprobe am 13. November 2026
 
 Etappe 6c verwendet die bereits genehmigte BouncyCastle.Cryptography **2.7.0**, ohne Cosmos oder andere Abhängigkeiten zu aktualisieren. Im QEMU-Gast funktionieren PBKDF2-SHA256 mit **600000 Iterationen**, ein fester SHA256-Testvektor, positive/negative Kennwortvergleiche und die nativen RDSEED-/RDRAND-Funktionen. Die Plattform-.NET-PBKDF2-Implementierung war im historischen Vorversuch an einer Typinitialisierung gescheitert; sie wird im Kontenmodell nicht verwendet. Eine erfolgreiche Hostberechnung gilt weiterhin nicht als Cosmos-Nachweis.
@@ -62,6 +66,9 @@ Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standa
 | Monotone Zeit | `Stopwatch.GetTimestamp`/Frequenz sind in der installierten x64-Version an TSC und dessen Kalibrierung gebunden. Fortschreitende Statuszeit ohne Eingabe wurde im Gast geprüft. `Environment.TickCount64` wird nicht verwendet: Die installierte Laufzeit zählt dort Aufrufe statt Millisekunden. |
 | Kurze Pause | `Thread.Sleep(1)` am Ende jeder Runde. `TimerManager.Wait(1)` nutzte im QEMU-Referenzgast einen 18-Hz-Timer und begrenzte dadurch Eingabe und Bildausgabe auf etwa 15–16 FPS. Die bereits geprüfte Scheduler-Wartefunktion beseitigt diese grobe Pause, ohne die HAL-Timerfrequenz zu verändern. [Messung](DESKTOP_PERFORMANCE.md). |
 | Grafik | `Canvas.GetFullScreen()`, `GetBuffer()` und `Display()` verwenden den schon vorhandenen Bildpuffer. Keine neue Vollbildallokation pro Bild. |
+| Auflösung | Limine setzt die Bootauflösung aus `Bootloader/limine.conf` (1920×1080×32, Rückfall 1024×768×32); in QEMU geprüft. `Canvas.GetFullScreen(Mode)` wechselt zur Laufzeit nur bei Treibern mit `IDisplayModes`, in 3.0.94 nur `VmwareSvgaDriver`; der Limine-Bildpuffer meldet genau einen Modus. Nach einem Wechsel liefert `GetBuffer()` einen neuen Puffer; `KernelConsole` berechnet Spalten/Zeilen erst beim erneuten Setzen von `Font`. Laufzeitwechsel in VMware ist nicht geprüft. |
+| Systeminfos | `NetworkManager` (Adapter, MAC, Link, IPv4) ist öffentlich und lieferte in QEMU den e1000e-Adapter. Freie/gesamte Seiten stammen aus dem internen `PageAllocator` und werden per `UnsafeAccessor`/`UnsafeAccessorType` gelesen; der native Build und QEMU zeigten plausible Werte (≈ 499 MiB bei 512 MiB Gast). `GC.GetGCMemoryInfo().HeapSizeBytes` meldete im Gast 0. |
+| Schrift | `PCScreenFont.DefaultFont` ist eine echte 16×32-Schrift (keine verdoppelte 8×16). Eine kleinere Schrift bräuchte eine zusätzliche Schriftdatei. |
 | Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
 | Zeichnen | Rechtecke, vor dem Rasterisieren beschnittene Linien, Bitmaptext und Pixelkopien. Ein Zeichenbereich kann auf ein Teilrechteck begrenzt werden. Hosttests decken auch negative und extreme Koordinaten ab. |
 
