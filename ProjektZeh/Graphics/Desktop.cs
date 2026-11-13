@@ -436,7 +436,7 @@ internal sealed class Desktop
         DrawPointer(surface, pointerX, pointerY, buttons);
     }
 
-    private static void DrawPointer(PixelSurface surface, int pointerX, int pointerY, PointerButtons buttons)
+    internal static void DrawPointer(PixelSurface surface, int pointerX, int pointerY, PointerButtons buttons)
     {
         int color = buttons == PointerButtons.None ? -1 : UiPainter.Accent;
         for (int row = 0; row < 15; row++) surface.FillRectangle(pointerX, pointerY + row, row / 2 + 1, 1, unchecked((int)0xff000000));
