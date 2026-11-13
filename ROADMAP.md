@@ -2,7 +2,7 @@
 
 ZehOS soll einen bedienbaren Desktop mit Fenstern, einer Shell im Terminal, einem einfachen Browser und spielbarem Doom bekommen. Der Weg führt über kleine, einzeln prüfbare Funktionen. Jede Etappe soll einen startbaren Stand hinterlassen, auf dem die nächste aufbaut.
 
-Die empfohlene Reihenfolge lautet: **Grundlage prüfen → Textshell → Ereignisschleife und Eingabe → Grafik → Fenster → Terminal im Desktop → Dateien → erste Anwendungen → Doom → Netzwerk → einfacher Browser → Unterstützung moderner Webseiten.**
+Die empfohlene Reihenfolge lautet: **Grundlage prüfen → Textshell → Ereignisschleife und Eingabe → Grafik → Fenster → Terminal im Desktop → Multitasking und Scheduling → Nachrichten und Synchronisation → Benutzer und Dateirechte → erste Anwendungen → Doom → Netzwerk → einfacher Browser → Unterstützung moderner Webseiten.** Die bereits vorgezogene Dateisystemetappe 7 liefert die Grundlage für Benutzerverzeichnisse und Dateirechte. Die drei neuen Etappen heißen 6a bis 6c, damit bestehende Etappennummern und Verweise erhalten bleiben.
 
 ## Ausgangspunkt am 28. Oktober 2026
 
@@ -19,6 +19,8 @@ Erledigte Aufgaben sind angekreuzt; offene Kontrollkästchen kennzeichnen geplan
 ## Zielumfang
 
 Der erste vollständige Zielstand ist erreicht, wenn ZehOS in der VM zum Desktop startet, ein Terminal Befehle annimmt, Dateien einen Neustart überstehen, Doom mit Tastatursteuerung läuft und ein Browser einfache verlinkte HTML-Seiten über HTTP laden und anzeigen kann. Lokale HTML-Dateien sind ein früheres Zwischenziel.
+
+Vor den weiteren Desktopanwendungen kommen drei Lernziele hinzu: Hintergrundaufgaben mit nachvollziehbarem Scheduling, begrenzte Nachrichtenwarteschlangen mit Synchronisation sowie Benutzerkonten mit zentral geprüften Dateirechten. Jede Erweiterung erhält eine eigene Vorführung und Fehlerfallprüfungen. Threadkommunikation und Dateirechte im gemeinsamen Kernel sind dabei von isolierten Prozessen und hardwaregestütztem Speicherschutz zu unterscheiden.
 
 Ein Browser für heutige komplexe Webseiten ist ein weiteres großes Entwicklungsziel. Dafür kommen unter anderem HTTPS, Zertifikate, umfangreiche HTML- und CSS-Unterstützung, JavaScript sowie Schutz vor fehlerhaften und fremden Inhalten hinzu. Diese Anforderungen sollen den ersten benutzbaren Desktop nicht blockieren.
 
@@ -119,7 +121,47 @@ Nach Integration der Dateisystemänderungen aus `master` bleiben Datei- und Disk
 
 **Umgesetzt am 12. November 2026:** Der Desktop startet mit zwei Terminals und öffnet über `+ Terminal` bis zu acht Fenster. Jede Sitzung erhält eigene Shell-/Dateidienste, Eingabe und Verlauf. Der Ringpuffer hält 256 umgebrochene Ausgabezeilen; PageUp/PageDown scrollen, normale Texteingabe kehrt zur neuesten Ausgabe zurück. Schließen leert den Textpuffer und entfernt die Anwendung aus der Fensterliste. Esc/F4 erhält offene Sitzungen und die separate Textshell-Eingabe. Recovery startet weiterhin textuell. 149 Hosttests mit Warnungen als Fehler, native Release-/Recovery-Builds und QEMU-Prüfungen bestehen. Getrennte Arbeitsverzeichnisse, Dateifehler, Speichern und erneutes Lesen nach Reboot sind auf einer Datenimage-Kopie geprüft. Neustart und Ausschalten bestehen auch mit verbundenem GDB. VMware und echte Hardware wurden nicht neu geprüft.
 
-Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rechenzeit abgeben. Ein Fehler kann dann das gesamte System betreffen. Prozessisolation und Speicherschutz bekommen eine spätere eigene Etappe; vor dem Umgang mit beliebigen fremden Inhalten müssen sie erneut bewertet werden.
+Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rechenzeit abgeben. Die anschließenden Etappen 6a bis 6c ergänzen Hintergrundaufgaben, Kommunikation und Dateirechte. Ein Fehler kann weiterhin das gesamte System betreffen. Prozessisolation und Speicherschutz bleiben Gegenstand von Etappe 12.4; vor dem Umgang mit beliebigen fremden Inhalten müssen sie erneut bewertet werden.
+
+## 6a Multitasking und Scheduling
+
+**Zweck:** Mehrere Hintergrundaufgaben ausführen und die Verteilung ihrer Rechenzeit nachvollziehbar machen.
+
+- [ ] 6a.1 In einem getrennten Versuch die Thread-, Warte- und Scheduler-Schnittstellen von Cosmos 3.0.94 prüfen. Zwei Aufgaben im Gast ausführen und Ergebnisse sowie experimentelle APIs in `docs/COSMOS_SUPPORT.md` dokumentieren. Bei fehlender Unterstützung eine gezielte Ergänzung oder ein geprüftes Versionsupdate bewerten, bevor der Desktop umgestellt wird.
+- [ ] 6a.2 Hintergrundaufgaben mit Kennung und Zuständen wie bereit, laufend, wartend und beendet verwalten. Start, Statusanzeige und kooperativen Abbruch über die Shell ermöglichen; Ressourcen beim Beenden aufräumen.
+- [ ] 6a.3 Eine Round-Robin-Strategie für echte Kernelthreads auf der geprüften Cosmos-Anbindung implementieren. Kontextwechsel und Timermechanismus von Cosmos weiterverwenden; Zeitscheibe und Auswahlreihenfolge nachvollziehbar protokollieren. Eine reine Verteilung von `Update`-Aufrufen wäre nur kooperatives Anwendungsscheduling und darf nicht als präemptives Thread-Scheduling ausgegeben werden.
+- [ ] 6a.4 Gemeinsame Dienste gegen gleichzeitige Zugriffe absichern. Zeichnen und Eingabe im Desktop belassen; Hintergrundarbeit über kontrollierte Übergaben anbinden. Dateioperationen nur dann in Hintergrundaufgaben verschieben, wenn die verwendete Cosmos-Anbindung dafür geprüft ist.
+- [ ] 6a.5 Zwei Rechenaufgaben parallel zum bedienbaren Terminal vorführen. Fortschritt, Warten, Abbruch und wiederholten Start prüfen. Auswahlreihenfolge und Zustandswechsel auf dem Host testen; tatsächliche Verdrängung und Reaktionsfähigkeit im Gast nachweisen. Eine zweite Strategie erst später zum Vergleich ergänzen.
+
+**Fertig, wenn:** Zwei Hintergrundaufgaben unter Round-Robin nachweislich Fortschritt machen, eine rechenintensive Aufgabe die andere nicht dauerhaft verdrängt und Terminal sowie Desktop bedienbar bleiben.
+
+## 6b Nachrichtenwarteschlangen und Synchronisation
+
+**Zweck:** Aufgaben aus Etappe 6a Daten austauschen lassen und ihr Warten aufeinander korrekt koordinieren.
+
+- [ ] 6b.1 Eine begrenzte Nachrichtenwarteschlange mit definierten Ergebnissen bei voller, leerer und geschlossener Warteschlange bereitstellen. Nicht blockierendes Senden und Empfangen sowie wartende Varianten mit Abbruch und Zeitlimit vorsehen; die Desktop-Schleife darf dabei nicht blockieren.
+- [ ] 6b.2 Geprüfte Synchronisationsmittel verwenden, um gemeinsame Zustände zu schützen und wartende Aufgaben bei neuen Daten beziehungsweise freiem Platz aufzuwecken. Verlorene Wecksignale und aktives Dauerabfragen vermeiden; Interruptschutz nur für die dafür vorgesehenen kurzen Bereiche verwenden.
+- [ ] 6b.3 Eine Erzeuger-Verbraucher-Vorführung bauen: Eine Aufgabe erzeugt nummerierte Daten, die andere verarbeitet sie. Langsame Erzeugung und Verarbeitung machen die Fälle leerer beziehungsweise voller Puffer sichtbar.
+- [ ] 6b.4 Für mehrere gemeinsam benötigte Sperren eine feste Erwerbsreihenfolge festlegen und Deadlockvermeidung an einem kontrollierten Beispiel erklären und prüfen. Kein absichtliches dauerhaftes Blockieren des produktiven Desktops.
+- [ ] 6b.5 Nachrichtenreihenfolge, Kapazitätsgrenze, konkurrierende Zugriffe, Abbruch, Zeitlimit und Schließen bei wartenden Teilnehmern testen. Im Gast nachweisen, dass keine Daten verloren oder doppelt verarbeitet werden und Aufgaben nach dem Schließen sauber enden.
+
+**Fertig, wenn:** Erzeuger und Verbraucher zuverlässig über den begrenzten Puffer kommunizieren, bei leerem oder vollem Puffer korrekt warten und durch Abbruch oder Schließen beendet werden können.
+
+Diese Etappe behandelt Thread- und Anwendungskommunikation im gemeinsamen Kernel. Sie bildet eine Grundlage für Interprozesskommunikation; isolierte Prozesse und deren Schutzgrenzen folgen erst in Etappe 12.4. Eigene Softwareinterrupts sind für diese erste Kommunikation nicht erforderlich.
+
+## 6c Benutzerverwaltung und Dateirechte
+
+**Zweck:** Mehrere Benutzer mit getrennten Sitzungen und kontrolliertem Dateizugriff unterstützen. Voraussetzung ist die vorgezogene Dateisystemgrundlage aus Etappe 7.
+
+- [ ] 6c.1 Benutzerkonten mit stabiler Kennung und den Rollen Administrator und Benutzer einführen. Anmelden, Abmelden und Anzeige der aktuellen Identität ermöglichen. Kennwörter nur mit einer geprüften gesalzenen Passwort-Hashfunktion speichern; Verfügbarkeit der nötigen Kryptografie und Zufallsquelle vorher prüfen.
+- [ ] 6c.2 Jeder Sitzung ihre Benutzeridentität und ihr Benutzerverzeichnis zuordnen. Benutzerwechsel und mehrere Terminalfenster dürfen Identität oder Arbeitsverzeichnis anderer Sitzungen nicht unbeabsichtigt verändern.
+- [ ] 6c.3 Eigentümer sowie Lese- und Schreibrechte für Dateien und Verzeichnisse festlegen. Benötigte Rechteinformationen auf dem FAT32-Datenlaufwerk separat speichern und nach einem Neustart wiederherstellen. Bestehende Dateien ausdrücklich zuordnen; fehlende oder beschädigte Rechteinformationen dürfen keinen unkontrollierten Zugriff freigeben.
+- [ ] 6c.4 Rechte zentral im Dateidienst nach vollständiger Pfadauflösung prüfen. Lesen, Auflisten, Verzeichniswechsel, Anlegen und Überschreiben sowie temporäre Dateien des sicheren Schreibpfads berücksichtigen. Administrative Laufwerks- und Benutzerverwaltung auf Administratoren beschränken; spätere Anwendungen verwenden dieselben geprüften Dienste.
+- [ ] 6c.5 Mit zwei Benutzern vorführen: eigene Datei bearbeiten, fremden Zugriff ohne Berechtigung verweigern und gezielt Leserechte vergeben. Pfadumgehungen, parallele Sitzungen, Neustart sowie fehlende oder beschädigte Konten- und Rechteinformationen prüfen. Einen ausdrücklich gestarteten administrativen Recovery-Weg dokumentieren.
+
+**Fertig, wenn:** Zwei Benutzer getrennt arbeiten, erlaubte Dateioperationen funktionieren, unerlaubte Zugriffe zentral abgelehnt werden und Konten sowie Rechte einen Neustart überstehen.
+
+Diese Rechte gelten für Anwendungen, die die kontrollierten ZehOS-Dienste verwenden. Solange Anwendungen im Kernel laufen, können sie die Regeln technisch umgehen. Eine Schutzgrenze gegen fremden Code erfordert zusätzlich Kernel-/Usermode, Prozessisolation und kontrollierte Systemaufrufe aus Etappe 12.4.
 
 ## 7 Dateien lesen und dauerhaft speichern
 
@@ -206,7 +248,7 @@ Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten a
 - [ ] 12.2 HTTPS über eine geeignete TLS-Implementierung ermöglichen. Dafür Zufallsquelle, verlässliche Uhrzeit, Zertifikatsspeicher und Prüfung von Zertifikatskette sowie Hostnamen bereitstellen. Zertifikatsprüfung gehört zum Zielumfang.
 - [ ] 12.3 HTML, CSS, Schrift- und Bildformate schrittweise erweitern. Falls JavaScript zum Ziel gehört, eine geeignete Laufzeit mit kontrollierten Ressourcen integrieren und benötigte Browser-APIs ergänzen.
 - [ ] 12.4 Speicher- und Prozessisolation, kontrollierte Systemaufrufe sowie Fehlerbehandlung für Anwendungen untersuchen und umsetzen. Die dafür nötigen Cosmos-Erweiterungen getrennt bewerten.
-- [ ] 12.5 Danach externe Programme, einen Programmlader, Benutzerrechte und breitere Hardwareunterstützung planen. Ein stabiler virtueller Referenzrechner bleibt für die Entwicklung erhalten.
+- [ ] 12.5 Danach externe Programme, einen Programmlader und breitere Hardwareunterstützung planen. Die Benutzer- und Dateirechte aus Etappe 6c an Prozessisolation und kontrollierte Systemaufrufe anbinden, damit fremde Programme die Prüfungen nicht umgehen können. Ein stabiler virtueller Referenzrechner bleibt für die Entwicklung erhalten.
 
 **Fertig, wenn:** Für einen konkret festgelegten Satz von Webseiten die benötigten Funktionen und Schutzmechanismen funktionieren. „Alle heutigen Webseiten“ ist kein sinnvoller einzelner Meilenstein.
 
@@ -246,7 +288,9 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 ## Erste Änderungen und nächster Schritt
 
-Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Als Nächstes stehen die kleinen Desktopanwendungen aus Etappe 8 an, zunächst deren gemeinsame Bedienelemente und der Dateibetrachter. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die vollständige Desktop-Fehlerfallprüfung aus 7.5 bleiben sichtbar:
+Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die vollständige Desktop-Fehlerfallprüfung aus 7.5 bleiben sichtbar:
+
+Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter, zunächst deren gemeinsamen Bedienelementen und dem Dateibetrachter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
@@ -261,6 +305,7 @@ Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 si
 ## Technische Quellen
 
 - [Cosmos Gen3](https://github.com/CosmosOS/Cosmos): Grundlage und Übersicht der bereitgestellten Systemfunktionen.
+- [Cosmos Scheduling-Erweiterungen](https://cosmosos.github.io/articles/user/scheduler-plugging.html): experimentelle Schnittstelle für eigene Schedulingstrategien und Round-Robin-Beispiel; Verfügbarkeit in 3.0.94 vor der Umsetzung prüfen.
 - [Cosmos Grafik](https://cosmosos.github.io/articles/user/graphics.html): Zeichenflächen, Bildausgabe und Abgrenzung zum selbst zu entwickelnden Fenstersystem.
 - [Cosmos Dateisystem](https://cosmosos.github.io/articles/user/filesystem.html): virtuelle Laufwerke, Mountpunkte und Dateioperationen.
 - [Cosmos Netzwerk](https://cosmosos.github.io/articles/user/network.html): Netzwerkfunktionen und aktuelle Einschränkungen.

@@ -1,0 +1,5 @@
+# Code, Builddateien, Workflows und diese Regeln benoetigen eine zweite Freigabe.
+* @peterzw98 @larsernst
+
+# Reine Markdown-Dokumentation benoetigt keine Code-Owner-Freigabe.
+*.md
