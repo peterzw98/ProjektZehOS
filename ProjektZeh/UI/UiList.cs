@@ -31,6 +31,14 @@ internal sealed class UiList : UiControl
         clicked = -1;
     }
 
+    public void Select(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(index, -1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, items.Length);
+        SelectedIndex = index;
+        clicked = -1;
+    }
+
     public override void Handle(InputEvent value)
     {
         if (value.Type == InputEventType.Reset) { clicked = -1; return; }

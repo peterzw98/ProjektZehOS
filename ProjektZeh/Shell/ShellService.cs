@@ -14,6 +14,7 @@ internal sealed class ShellService
     private readonly SystemLog? systemLog;
     private readonly Func<long?>? getUptimeMilliseconds;
     private readonly string? version;
+    private readonly Func<string, ResultErr>? authorize;
     private Func<string, Func<Func<ResultErr>>>? secretInput;
     private Thread? passwordWorker;
     private Func<ResultErr>? completion;
@@ -26,6 +27,9 @@ internal sealed class ShellService
     public bool IsBusy => passwordWorker != null;
 
     public void BeginSecretInput(Func<string, Func<Func<ResultErr>>> prepare) => secretInput = prepare;
+
+    /// <summary>Verwirft eine noch nicht beantwortete Kennwortabfrage, etwa bei Abmeldung oder neuer Anmeldung.</summary>
+    public void CancelSecretInput() => secretInput = null;
 
     public bool Poll(ITextOutput output)
     {
@@ -54,8 +58,9 @@ internal sealed class ShellService
     }
 
     public ShellService(ShellCommand[] additionalCommands, SystemLog? systemLog = null,
-        Func<long?>? getUptimeMilliseconds = null, string? version = null)
+        Func<long?>? getUptimeMilliseconds = null, string? version = null, Func<string, ResultErr>? authorize = null)
     {
+        this.authorize = authorize;
         this.systemLog = systemLog;
         this.getUptimeMilliseconds = getUptimeMilliseconds;
         this.version = version;
@@ -136,6 +141,12 @@ internal sealed class ShellService
         {
             if (string.Equals(command.Name, commandName, StringComparison.OrdinalIgnoreCase))
             {
+                var allowed = authorize?.Invoke(command.Name) ?? ResultErr.CreateSuccess();
+                if (!allowed.IsOK())
+                {
+                    return allowed;
+                }
+
                 var arguments = new string[tokens.Length - 1];
                 Array.Copy(tokens, 1, arguments, 0, arguments.Length);
                 return command.Execute(arguments, output);
@@ -144,6 +155,13 @@ internal sealed class ShellService
 
         return ResultErr.CreateFailure(ResultCode.NotFound,
             $"cause='UnknownCommand' message='Unbekannter Befehl: {commandName}. Hilfe: help.'");
+    }
+
+    public bool HasCommand(string name)
+    {
+        foreach (ShellCommand command in commands)
+            if (string.Equals(command.Name, name, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     private void WriteHelp(string[] arguments, ITextOutput output)

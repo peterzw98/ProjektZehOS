@@ -35,4 +35,10 @@ public sealed class PasswordHasherTests
         CollectionAssert.AreEqual(new byte[8], invalid);
     }
 
+    [TestMethod]
+    public void UnknownAccountHashIsValidSoLoginAlwaysDerives()
+    {
+        // Ein ungueltiger Dummy-Hash liesse Verify sofort abbrechen und wuerde Kontonamen wieder ueber die Zeit verraten.
+        Assert.IsTrue(PasswordHasher.IsValid(AccountService.UnknownAccountHash));
+    }
 }

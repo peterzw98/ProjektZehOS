@@ -16,15 +16,15 @@ public sealed class DesktopSettingsTests
     [TestMethod]
     public void Settings_RoundtripAndInvalidValues_UseValidatedDefaults()
     {
-        var settings = DesktopSettings.Parse("version=1\ndark=false\naccent=2\nwallpaper=1\nwidth=1920\nheight=1080\nimage=/data/wall.bmp");
+        var settings = DesktopSettings.Parse("version=2\ndisplayConfirmed=True\ndark=false\naccent=2\nwallpaper=1\nwidth=1920\nheight=1080\nimage=/data/wall.bmp");
         Assert.IsFalse(settings.Dark);
         Assert.AreEqual(2, settings.Accent);
         Assert.AreEqual(settings, DesktopSettings.Parse(settings.Serialize()));
         var invalid = DesktopSettings.Parse("dark=nonsense\naccent=999\nwallpaper=-9\nwidth=1\nheight=999999");
         Assert.IsTrue(invalid.Dark);
         Assert.AreEqual(0, invalid.Accent);
-        Assert.AreEqual(1920, invalid.Width);
-        Assert.AreEqual(1080, invalid.Height);
+        Assert.AreEqual(0, invalid.Width);
+        Assert.AreEqual(0, invalid.Height);
     }
 
     [TestMethod]

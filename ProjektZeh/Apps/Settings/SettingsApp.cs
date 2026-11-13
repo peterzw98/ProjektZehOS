@@ -35,6 +35,7 @@ internal sealed class SettingsApp : IApplication
     private int width = 1198;
     private int height = 780;
     private string displayError = "";
+    private DisplayMode? shownMode;
 
     public SettingsApp(UiPainter painter, DesktopPreferences preferences, DisplaySettings? display, Func<long> clock)
     {
@@ -67,6 +68,8 @@ internal sealed class SettingsApp : IApplication
             var labels = new string[display.Modes.Length];
             for (int index = 0; index < labels.Length; index++) labels[index] = display.Modes[index].ToString();
             modes.SetItems(labels);
+            modes.Select(Array.IndexOf(display.Modes, display.Current));
+            shownMode = display.Current;
         }
         panel.Add(pages);
         foreach (var control in new UiControl[] { modes, apply, keep, revert, light, dark }) panel.Add(control);
@@ -104,12 +107,17 @@ internal sealed class SettingsApp : IApplication
     {
         if (display is not { Pending: true }) return;
         display.Confirm();
-        Change(preferences.Settings with { Width = display.Current.Width, Height = display.Current.Height });
+        Change(preferences.Settings with { Width = display.Current.Width, Height = display.Current.Height, DisplayConfirmed = true });
     }
 
     // Steuerelemente der verborgenen Seite sind deaktiviert und erhalten weder Fokus noch Klicks.
     private void UpdateState()
     {
+        if (display != null && shownMode != display.Current)
+        {
+            modes.Select(Array.IndexOf(display.Modes, display.Current));
+            shownMode = display.Current;
+        }
         bool displayPage = Page == DisplayPage, personal = Page == PersonalizationPage;
         bool pending = display?.Pending == true;
         modes.Enabled = displayPage && display?.CanSwitch == true && !pending;

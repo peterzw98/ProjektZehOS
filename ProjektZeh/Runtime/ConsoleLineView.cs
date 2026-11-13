@@ -5,8 +5,9 @@ namespace ProjektZeh.Runtime;
 
 internal sealed class ConsoleLineView
 {
-    private const string Prompt = "zehos> ";
+    public const string ShellPrompt = "zehos> ";
     private int row;
+    public string Prompt { get; set; } = ShellPrompt;
 
     public void Begin()
     {
@@ -21,17 +22,17 @@ internal sealed class ConsoleLineView
         int start = Math.Max(0, editor.Cursor - columns + 1);
         string visible = text.Substring(start, Math.Min(columns, text.Length - start));
         Console.SetCursorPosition(0, row);
-        Console.Write(FormatLine(visible, Console.WindowWidth));
+        Console.Write(FormatLine(visible, Console.WindowWidth, Prompt));
         Console.SetCursorPosition(Prompt.Length + editor.Cursor - start, row);
     }
 
     public void Submit(string command)
     {
         Console.SetCursorPosition(0, row);
-        Console.WriteLine(FormatLine(command, Console.WindowWidth));
+        Console.WriteLine(FormatLine(command, Console.WindowWidth, Prompt));
     }
 
-    internal static string FormatLine(string text, int width) => (Prompt + text).PadRight(width - 1);
+    internal static string FormatLine(string text, int width, string prompt = ShellPrompt) => (prompt + text).PadRight(width - 1);
 
     public static void Status(InputService input, long milliseconds)
     {

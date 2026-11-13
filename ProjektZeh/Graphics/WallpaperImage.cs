@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Numerics;
 
 namespace ProjektZeh.Graphics;
 
@@ -11,10 +12,28 @@ internal sealed record WallpaperImage(int Width, int Height, int[] Pixels)
         int Read(int offset) => BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(offset, 4));
         int start = Read(10), header = Read(14), width = Read(18), rawHeight = Read(22);
         int depth = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(28, 2));
+        int compression = Read(30);
         if (header < 40 || start < 14L + header || width is <= 0 or > 4096 || rawHeight is 0 or int.MinValue ||
             Math.Abs((long)rawHeight) > 4096 || (long)width * Math.Abs((long)rawHeight) > 4194304 ||
-            data[26] != 1 || data[27] != 0 || depth is not (24 or 32) || Read(30) != 0)
+            data[26] != 1 || data[27] != 0 || depth is not (24 or 32) ||
+            (compression != 0 && !(depth == 32 && compression is 3 or 6)))
             throw new ArgumentException("BMP-Format oder Bildgroesse nicht unterstuetzt (maximal 4 Megapixel).");
+        int redShift = 16, greenShift = 8, blueShift = 0;
+        if (compression is 3 or 6)
+        {
+            int maskEnd = compression == 6 ? 70 : 66;
+            if (data.Length < maskEnd || start < maskEnd || (header != 40 && header < maskEnd - 14))
+                throw new ArgumentException("Die BMP-Farbmasken fehlen oder sind unvollstaendig.");
+            uint red = unchecked((uint)Read(54)), green = unchecked((uint)Read(58)), blue = unchecked((uint)Read(62));
+            uint alpha = compression == 6 || header >= 56 ? unchecked((uint)Read(66)) : 0;
+            redShift = BitOperations.TrailingZeroCount(red);
+            greenShift = BitOperations.TrailingZeroCount(green);
+            blueShift = BitOperations.TrailingZeroCount(blue);
+            if (red == 0 || green == 0 || blue == 0 || (red >> redShift) != 255 || (green >> greenShift) != 255 ||
+                (blue >> blueShift) != 255 || (red & green) != 0 || (red & blue) != 0 || (green & blue) != 0 ||
+                (alpha & (red | green | blue)) != 0)
+                throw new ArgumentException("BMP benoetigt getrennte 8-Bit-Farbkanaele ohne ueberlappende Masken.");
+        }
         int height = Math.Abs(rawHeight), stride = (width * (depth / 8) + 3) & ~3;
         if (start < 0 || (long)start + (long)stride * height > data.Length) throw new ArgumentException("Die BMP-Datei ist unvollstaendig.");
         var pixels = new int[width * height];
@@ -24,7 +43,11 @@ internal sealed record WallpaperImage(int Width, int Height, int[] Pixels)
             for (int x = 0; x < width; x++)
             {
                 int offset = source + x * (depth / 8);
-                pixels[y * width + x] = unchecked((int)0xff000000) | data[offset + 2] << 16 | data[offset + 1] << 8 | data[offset];
+                uint pixel = depth == 32 ? BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset, 4))
+                    : (uint)(data[offset + 2] << 16 | data[offset + 1] << 8 | data[offset]);
+                // Hintergrundbilder sind deckend; ein optionaler Alphakanal veraendert die Farbkanaele nicht.
+                pixels[y * width + x] = unchecked((int)(0xff000000u | ((pixel >> redShift) & 255) << 16 |
+                    ((pixel >> greenShift) & 255) << 8 | ((pixel >> blueShift) & 255)));
             }
         }
         return new(width, height, pixels);

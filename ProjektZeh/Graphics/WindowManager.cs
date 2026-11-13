@@ -218,6 +218,11 @@ internal sealed class WindowManager
         if (ActiveWindow == window) Activate(TopVisible());
     }
 
+    public void CloseAll()
+    {
+        while (windows.Count > 0) CloseWindow(windows[^1]);
+    }
+
     public void Reset()
     {
         moving = null;

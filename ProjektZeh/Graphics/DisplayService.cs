@@ -23,7 +23,7 @@ internal sealed class DisplayService
     public DisplaySettings Display { get; }
 
     public DisplayService(Func<ShellService> createShell, Func<FileService> createFiles, InputService input,
-        TaskManagerSection[] sections)
+        TaskManagerSection[] sections, DesktopSession session)
     {
         this.input = input;
         canvas = Canvas.GetFullScreen();
@@ -32,15 +32,11 @@ internal sealed class DisplayService
                 $"Der Desktop benoetigt 1024x720 bis 1920x1080 mit 32 Bit, gemeldet: {canvas.Width}x{canvas.Height}. Im Bootmenue 1024x768 waehlen.");
         surface = CreateSurface();
         var current = new DisplayMode(canvas.Width, canvas.Height);
-        Display = new DisplaySettings(current, ReadModes(current), SetMode);
+        Display = new DisplaySettings(current, ReadModes(current), SetMode, () => new(canvas.Width, canvas.Height));
         var font = PCScreenFont.DefaultFont;
         desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles,
-            Display, sections);
+            Display, sections, session);
         SyncInput();
-        // Eine frueher bestaetigte Aufloesung nur uebernehmen, wenn der Treiber sie tatsaechlich anbietet.
-        var saved = new DisplayMode(desktop.Preferences.Settings.Width, desktop.Preferences.Settings.Height);
-        if (saved != current && Array.IndexOf(Display.Modes, saved) >= 0) Display.Apply(saved, 0);
-        if (Display.Pending) Display.Confirm();
     }
 
     public bool NeedsAnimation => desktop.NeedsAnimation;
@@ -64,7 +60,7 @@ internal sealed class DisplayService
         desktop.System.RecordWork(ElapsedMicroseconds(started));
     }
 
-    public void Suspend() => desktop.Handle(new(InputEventType.Reset));
+    public void Suspend() => desktop.Suspend();
 
     public void Render(InputService pointer, long milliseconds)
     {
@@ -115,6 +111,7 @@ internal sealed class DisplayService
         surface = CreateSurface();
         desktop.Resize(canvas.Width, canvas.Height);
         SyncInput();
+        // Cosmos berechnet dabei Textzellen, Zeilen und Spalten fuer den neu dimensionierten Canvas erneut.
         if (KernelConsole.Default is { } console) console.Font = console.Font;
         return matches ? ResultErr.CreateSuccess()
             : ResultErr.CreateFailure(ResultCode.Failure, $"Der Treiber meldet {canvas.Width} x {canvas.Height} statt {mode}.");

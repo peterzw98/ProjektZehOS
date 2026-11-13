@@ -54,6 +54,9 @@ internal sealed class Desktop
     private long clockMinute = -1;
     private string clock = "";
     private string menuStatus = "";
+    private readonly DesktopSession? session;
+    private readonly LoginScreen? login;
+    private int generation;
     private int sequence;
     private bool menuOpen;
     private bool alt;
@@ -63,14 +66,15 @@ internal sealed class Desktop
     public WindowManager Windows { get; }
     public DesktopMetrics Metrics { get; } = new();
     public SystemMetrics System { get; } = new();
-    public DesktopPreferences Preferences { get; }
+    public DesktopPreferences Preferences { get; private set; }
+    private bool restoreDisplay = true;
     public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application is PongApp { IsPaused: false };
 
     private sealed record ApplicationEntry(string Name, string Description, AppIcon Icon, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
         Func<ShellService> createShell, Func<FileService> createFiles,
-        DisplaySettings? display = null, TaskManagerSection[]? systemSections = null)
+        DisplaySettings? display = null, TaskManagerSection[]? systemSections = null, DesktopSession? session = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 400 + BarHeight);
@@ -107,6 +111,13 @@ internal sealed class Desktop
         reboot = new("Neu starten", () => RunPower("reboot"));
         shutdown = new("Ausschalten", () => RunPower("shutdown"));
         appList.GetMilliseconds = () => now;
+        if (session != null)
+        {
+            this.session = session;
+            login = new(session, painter, width, height);
+            generation = session.Identity.Generation;
+            applications = [.. applications, new("Abmelden", "Benutzersitzung beenden", AppIcon.Terminal, () => { login.Logout(); return true; })];
+        }
         search.Submitted = LaunchSelected;
         appList.Activated = LaunchSelected;
         // Reihenfolge bestimmt den Tab-Fokus: Suche, Liste, Starten.
@@ -123,6 +134,7 @@ internal sealed class Desktop
         width = newWidth;
         height = newHeight;
         Windows.Resize(width, height - BarHeight);
+        login?.Resize(width, height);
         LayoutMenu();
         wallpaperRevision = -1;
         sceneDirty = true;
@@ -193,6 +205,12 @@ internal sealed class Desktop
         return true;
     }
 
+    public void Suspend()
+    {
+        display?.Revert();
+        Handle(new(InputEventType.Reset));
+    }
+
     private void ToggleMenu()
     {
         if (CloseMenu()) return;
@@ -217,6 +235,12 @@ internal sealed class Desktop
             alt = leftShift = rightShift = suppressSpace = false;
             CloseMenu();
             Windows.Reset();
+            return;
+        }
+        SyncSession();
+        if (IsLocked)
+        {
+            login!.Handle(value);
             return;
         }
         if (value.Type is InputEventType.KeyDown or InputEventType.KeyUp)
@@ -253,7 +277,7 @@ internal sealed class Desktop
             if (value.Type == InputEventType.PointerDown && !menuBounds.Contains(value.X, value.Y)) { CloseMenu(); return; }
             string previous = search.Text;
             bool space = value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Space && menu.Focused == launch;
-            launch.Enabled = matches.Count > 0 && Windows.Count < MaximumWindows;
+            launch.Enabled = matches.Count > 0;
             menu.Handle(value);
             if (space && !menuOpen) suppressSpace = true;
             if (!string.Equals(previous, search.Text, StringComparison.Ordinal)) FilterApplications();
@@ -271,7 +295,7 @@ internal sealed class Desktop
 
     private void LaunchSelected()
     {
-        if (appList.SelectedIndex >= 0 && Windows.Count < MaximumWindows && matches[appList.SelectedIndex].Launch()) CloseMenu();
+        if (appList.SelectedIndex >= 0 && matches[appList.SelectedIndex].Launch()) CloseMenu();
     }
 
     private void RunFromMenu(Func<bool> action)
@@ -283,8 +307,13 @@ internal sealed class Desktop
     {
         // Die Shellbefehle haengen das Datenlaufwerk vorher aus und brechen bei Fehlern ab.
         var output = new TerminalBuffer(120);
-        var result = createShell().ExecuteLine(command, output);
-        menuStatus = result.IsOK() ? "Energieaktion wurde nicht ausgefuehrt." : result.Message;
+        var shell = createShell();
+        try
+        {
+            var result = shell.ExecuteLine(command, output);
+            menuStatus = result.IsOK() ? "Energieaktion wurde nicht ausgefuehrt." : result.Message;
+        }
+        finally { shell.Close(); }
     }
 
     private void FilterApplications()
@@ -297,7 +326,7 @@ internal sealed class Desktop
         for (int index = 0; index < matches.Count; index++) (names[index], icons[index]) = (matches[index].Name, matches[index].Icon);
         appList.SetItems(names);
         appList.Icons = icons;
-        launch.Enabled = matches.Count > 0 && Windows.Count < MaximumWindows;
+        launch.Enabled = matches.Count > 0;
     }
 
     private void LayoutMenu()
@@ -327,6 +356,24 @@ internal sealed class Desktop
 
     public void Update(long milliseconds)
     {
+        SyncSession();
+        if (IsLocked)
+        {
+            login!.Update();
+            sceneDirty = true;
+            SyncSession();
+        }
+        if (!IsLocked && restoreDisplay)
+        {
+            restoreDisplay = false;
+            var saved = Preferences.Settings;
+            var mode = new DisplayMode(saved.Width, saved.Height);
+            if (display != null && saved.DisplayConfirmed && mode != display.Current && Array.IndexOf(display.Modes, mode) >= 0)
+            {
+                display.Apply(mode, milliseconds);
+                if (display.Pending) OpenSettings();
+            }
+        }
         // Apps aktualisieren Uhr, Cursor, Messwerte und Spiele zeitgesteuert; dann die Szene neu zeichnen.
         if (milliseconds / 500 != now / 500 || NeedsAnimation) sceneDirty = true;
         now = milliseconds;
@@ -335,8 +382,35 @@ internal sealed class Desktop
         if (count != Windows.Count) sceneDirty = true;
     }
 
+    private bool IsLocked => session != null && session.Identity.UserId == null;
+
+    // Auch ein Identitaetswechsel aus der Textshell beendet Fenster und eigene Terminalsitzungen.
+    private void SyncSession()
+    {
+        if (session == null || session.Identity.Generation == generation) return;
+        generation = session.Identity.Generation;
+        CloseMenu();
+        Windows.CloseAll();
+        login!.Reset();
+        display?.Revert();
+        Preferences = new DesktopPreferences(createFiles());
+        wallpaperRevision = -1;
+        restoreDisplay = true;
+        sceneDirty = true;
+    }
+
     public void Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)
     {
+        SyncSession();
+        if (IsLocked)
+        {
+            surface.ResetClip();
+            surface.FillRectangle(0, 0, width, height, UiPainter.Background);
+            login!.Render(surface);
+            DrawPointer(surface, pointerX, pointerY, buttons);
+            sceneDirty = true;
+            return;
+        }
         if (sceneDirty || surface != sceneSurface || scene.Length != width * height)
         {
             surface.ResetClip();
@@ -359,6 +433,11 @@ internal sealed class Desktop
         }
         pointerLeft = pointerX;
         pointerTop = pointerY;
+        DrawPointer(surface, pointerX, pointerY, buttons);
+    }
+
+    private static void DrawPointer(PixelSurface surface, int pointerX, int pointerY, PointerButtons buttons)
+    {
         int color = buttons == PointerButtons.None ? -1 : UiPainter.Accent;
         for (int row = 0; row < 15; row++) surface.FillRectangle(pointerX, pointerY + row, row / 2 + 1, 1, unchecked((int)0xff000000));
         surface.DrawLine(pointerX, pointerY, pointerX, pointerY + 14, color);

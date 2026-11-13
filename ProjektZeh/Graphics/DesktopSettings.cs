@@ -12,15 +12,18 @@ internal sealed record DesktopSettings
     public int Accent { get; init; }
     public int Wallpaper { get; init; }
     public string Image { get; init; } = "";
-    public int Width { get; init; } = 1920;
-    public int Height { get; init; } = 1080;
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public bool DisplayConfirmed { get; init; }
 
-    public string Serialize() => $"version=1\ndark={Dark}\naccent={Accent}\nwallpaper={Wallpaper}\nimage={Image}\nwidth={Width}\nheight={Height}\n";
+    public string Serialize() => $"version=2\ndark={Dark}\naccent={Accent}\nwallpaper={Wallpaper}\nimage={Image}\n" +
+        (DisplayConfirmed && DisplayMode.IsSupportedSize(Width, Height) ? $"displayConfirmed=True\nwidth={Width}\nheight={Height}\n" : "");
 
     public static DesktopSettings Parse(string text)
     {
         var value = new DesktopSettings();
         int width = value.Width, height = value.Height;
+        bool confirmed = false;
         foreach (string line in text.Split('\n'))
         {
             int separator = line.IndexOf('=');
@@ -37,10 +40,12 @@ internal sealed record DesktopSettings
                 case "image" when data.Length <= 240: value = value with { Image = data }; break;
                 case "width" when int.TryParse(data, out int parsed): width = parsed; break;
                 case "height" when int.TryParse(data, out int parsed): height = parsed; break;
+                case "displayConfirmed" when bool.TryParse(data, out bool parsed): confirmed = parsed; break;
             }
         }
         if (value.Wallpaper == CustomWallpaper && value.Image.Length == 0) value = value with { Wallpaper = 0 };
-        return DisplayMode.IsSupportedSize(width, height) ? value with { Width = width, Height = height } : value;
+        // Alte Dateien enthalten auch ungefragt gespeicherte Standardaufloesungen und gelten daher nicht als bestaetigt.
+        return confirmed && DisplayMode.IsSupportedSize(width, height) ? value with { Width = width, Height = height, DisplayConfirmed = true } : value;
     }
 }
 

@@ -10,11 +10,20 @@ internal readonly record struct DisplayMode(int Width, int Height)
     public static bool IsSupportedSize(int width, int height) => width is >= 1024 and <= 1920 && height is >= 720 and <= 1080;
 }
 
-internal sealed class DisplaySettings(DisplayMode current, DisplayMode[] modes, Func<DisplayMode, ResultErr> setMode)
+internal sealed class DisplaySettings
 {
+    private readonly Func<DisplayMode, ResultErr> setMode;
+    private readonly Func<DisplayMode>? readMode;
+    public DisplaySettings(DisplayMode current, DisplayMode[] modes, Func<DisplayMode, ResultErr> setMode, Func<DisplayMode>? readMode = null)
+    {
+        Current = current;
+        Modes = modes;
+        this.setMode = setMode;
+        this.readMode = readMode;
+    }
     private DisplayMode previous;
-    public DisplayMode Current { get; private set; } = current;
-    public DisplayMode[] Modes { get; } = modes;
+    public DisplayMode Current { get; private set; }
+    public DisplayMode[] Modes { get; }
     public bool Pending { get; private set; }
     public long Deadline { get; private set; }
     public string Status { get; private set; } = "";
@@ -30,7 +39,7 @@ internal sealed class DisplaySettings(DisplayMode current, DisplayMode[] modes, 
         if (mode == Current) return ResultErr.CreateSuccess();
         var result = setMode(mode);
         Status = result.IsOK() ? "Anzeige innerhalb von 15 Sekunden bestaetigen" : result.Message;
-        if (!result.IsOK()) return result;
+        if (!result.IsOK()) { Current = readMode?.Invoke() ?? Current; return result; }
         previous = Current;
         Current = mode;
         Deadline = milliseconds + 15000;
@@ -49,9 +58,11 @@ internal sealed class DisplaySettings(DisplayMode current, DisplayMode[] modes, 
     public ResultErr Revert()
     {
         if (!Pending) return ResultErr.CreateSuccess();
+        // Ein fehlgeschlagener Rueckwechsel darf die Ereignisschleife nicht mit weiteren Versuchen blockieren.
+        Pending = false;
         var result = setMode(previous);
         Status = result.IsOK() ? "Vorherige Aufloesung wiederhergestellt" : "Rueckkehr fehlgeschlagen: " + result.Message;
-        if (result.IsOK()) { Current = previous; Pending = false; }
+        Current = result.IsOK() ? previous : readMode?.Invoke() ?? Current;
         return result;
     }
 

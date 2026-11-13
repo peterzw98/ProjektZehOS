@@ -81,6 +81,8 @@ internal sealed class TaskManagerApp : IApplication
 
     private void RefreshApplications()
     {
+        Window? selected = SelectedWindow;
+        bool hadRows = labels.Length > 0;
         int count = Math.Min(rows.Length, windows.Count);
         if (labels.Length != count)
         {
@@ -95,6 +97,8 @@ internal sealed class TaskManagerApp : IApplication
             string state = window.IsMinimized ? "minimiert" : windows.ActiveWindow == window ? "aktiv" : "geoeffnet";
             labels[index] = $"{window.Title,-24} {state,-10} {window.Width} x {window.Height}";
         }
+        if (selected != null) list.Select(Array.IndexOf(rows, selected, 0, count));
+        else if (hadRows) list.Select(-1);
         focus.Enabled = close.Enabled = count > 0;
     }
 
@@ -120,12 +124,14 @@ internal sealed class TaskManagerApp : IApplication
 
     private void FocusSelected()
     {
+        RefreshApplications();
         Window? window = SelectedWindow;
         if (window != null && window != windows.ActiveWindow) windows.ToggleTask(window);
     }
 
     private void CloseSelected()
     {
+        RefreshApplications();
         Window? window = SelectedWindow;
         if (window == null) return;
         // Die normale Schliessanfrage erhaelt die Rueckfrage bei ungespeicherten Inhalten.
