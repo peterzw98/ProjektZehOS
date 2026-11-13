@@ -58,10 +58,18 @@ internal sealed class Window
     public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight, bool active)
     {
         surface.ResetClip();
-        // Fester Versatzschatten statt Unschaerfe: kostet bei Full HD nur zwei Rechteckfuellungen.
-        surface.FillRectangle(X + 6, Y + 8, Width, Height, unchecked((int)0xff0c0f14));
-        surface.FillRectangle(X + 3, Y + 4, Width, Height, unchecked((int)0xff12161c));
-        surface.FillRectangle(X, Y, Width, Height, active ? UiPainter.Mix(UiPainter.Accent, UiPainter.Border, 45) : UiPainter.Border);
+        // Fester Versatzschatten statt Unschaerfe; nur die sichtbaren Streifen fuellen, nicht die Fensterflaeche.
+        int outer = UiPainter.Dark ? unchecked((int)0xff0c0f14) : unchecked((int)0xffaab4c1);
+        int inner = UiPainter.Dark ? unchecked((int)0xff12161c) : unchecked((int)0xff98a3b1);
+        surface.FillRectangle(X + Width, Y + 8, 6, Height, outer);
+        surface.FillRectangle(X + 6, Y + Height, Width, 8, outer);
+        surface.FillRectangle(X + Width, Y + 4, 3, Height, inner);
+        surface.FillRectangle(X + 3, Y + Height, Width, 4, inner);
+        int frame = active ? UiPainter.Mix(UiPainter.Accent, UiPainter.Border, 45) : UiPainter.Border;
+        surface.FillRectangle(X, Y, Width, 1, frame);
+        surface.FillRectangle(X, Y + Height - 1, Width, 1, frame);
+        surface.FillRectangle(X, Y, 1, Height, frame);
+        surface.FillRectangle(X + Width - 1, Y, 1, Height, frame);
         surface.FillRectangle(X + 1, Y + 1, Width - 2, TitleHeight - 1, UiPainter.Panel);
         surface.FillRectangle(X + 1, Y + TitleHeight - 1, Width - 2, 1, UiPainter.Border);
         int text = active ? UiPainter.Foreground : UiPainter.Secondary;

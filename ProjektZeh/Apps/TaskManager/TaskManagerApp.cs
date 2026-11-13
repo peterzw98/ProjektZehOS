@@ -16,7 +16,7 @@ internal sealed class TaskManagerApp : IApplication
     private readonly DesktopMetrics desktopMetrics;
     private readonly TaskManagerSection[] sections;
     private readonly UiPanel panel = new();
-    private readonly UiList sidebar = new() { RowPadding = 12 };
+    private readonly UiList sidebar = new() { RowPadding = 12, Framed = false };
     private readonly UiList list = new();
     private readonly UiButton focus;
     private readonly UiButton close;
@@ -102,12 +102,12 @@ internal sealed class TaskManagerApp : IApplication
     {
         cards[0] = "Desktop-Schleife";
         cards[1] = metrics.HasCpuSample ? $"{metrics.CpuPercent} %" : "Messung startet";
-        cards[2] = "gemessene Arbeit, keine Gesamt-CPU";
+        cards[2] = "nur Desktop-Arbeit";
         cards[3] = "Arbeitsspeicher";
         cards[4] = metrics.HasPhysicalMemory
             ? $"{metrics.FreeMemory / 1048576} / {metrics.TotalMemory / 1048576} MiB frei" : "physisch nicht verfuegbar";
-        cards[5] = $"Heap {metrics.ManagedBytes / 1024} KiB";
-        cards[6] = "Bildrate";
+        cards[5] = metrics.ManagedBytes > 0 ? $"GC-Heap {metrics.ManagedBytes / 1024} KiB" : "GC-Heap: keine Angabe";
+        cards[6] = "Bildrate (bei Aenderung)";
         cards[7] = desktopMetrics.HasSample ? $"{desktopMetrics.FramesPerSecond} FPS" : "Messung startet";
         cards[8] = desktopMetrics.HasSample ? $"laengstes Bild {desktopMetrics.MaximumFrameMilliseconds} ms" : "";
         long seconds = metrics.UptimeMilliseconds / 1000;

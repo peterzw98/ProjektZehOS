@@ -42,6 +42,14 @@ internal sealed class PixelSurface
 
     public void ResetClip() => SetClip(0, 0, Width, Height);
 
+    /// <summary>Kopiert das ganze Bild in einen gleich grossen Puffer, unabhaengig vom Ausschnitt.</summary>
+    public void CopyTo(int[] target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if ((long)Width * Height > target.Length) throw new ArgumentException("Der Zielpuffer ist zu klein.", nameof(target));
+        Array.Copy(pixels, target, Width * Height);
+    }
+
     public void FillRectangle(int x, int y, int width, int height, int color)
     {
         Bounds(x, y, width, height, out int left, out int top, out int right, out int bottom);

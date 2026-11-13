@@ -41,7 +41,14 @@ internal sealed class Desktop
     private int width;
     private int height;
     private UiRect menuBounds;
+    private const int PointerWidth = 9;
+    private const int PointerHeight = 16;
     private int[] wallpaper = [];
+    private int[] scene = [];
+    private PixelSurface? sceneSurface;
+    private bool sceneDirty = true;
+    private int pointerLeft;
+    private int pointerTop;
     private int wallpaperRevision = -1;
     private long now;
     private long clockMinute = -1;
@@ -118,12 +125,14 @@ internal sealed class Desktop
         Windows.Resize(width, height - BarHeight);
         LayoutMenu();
         wallpaperRevision = -1;
+        sceneDirty = true;
     }
 
     public bool OpenTerminal()
     {
         if (Windows.Count == MaximumWindows) return false;
         Windows.Reset();
+        sceneDirty = true;
         int offset = sequence % 4 * 40;
         // Anteilige Groesse, damit kaskadierte Terminals auch bei 1024 x 768 versetzt sichtbar bleiben.
         int windowWidth = Math.Clamp(width * 3 / 5, 640, 960);
@@ -152,6 +161,7 @@ internal sealed class Desktop
             Window window = Windows.GetWindow(index);
             if (window.Application is not T) continue;
             if (window != Windows.ActiveWindow || window.IsMinimized) Windows.ToggleTask(window);
+            sceneDirty = true;
             return true;
         }
         return false;
@@ -163,6 +173,7 @@ internal sealed class Desktop
         int area = height - BarHeight;
         if (Windows.Count == MaximumWindows || width < 800 || area < 560) return false;
         Windows.Reset();
+        sceneDirty = true;
         int windowWidth = Math.Clamp(preferredWidth, 800, width - 16);
         int windowHeight = Math.Clamp(preferredHeight, 560, area - 16);
         int offset = sequence++ % 3 * 28;
@@ -176,6 +187,7 @@ internal sealed class Desktop
     {
         if (!menuOpen) return false;
         menuOpen = false;
+        sceneDirty = true;
         menu.Handle(new(InputEventType.Reset));
         Windows.Reset();
         return true;
@@ -192,6 +204,13 @@ internal sealed class Desktop
     }
 
     public void Handle(InputEvent value)
+    {
+        // Reine Zeigerbewegung ohne Ziehen veraendert die Szene nicht; nur der Zeiger wird neu gesetzt.
+        if (value.Type != InputEventType.PointerMove || Windows.HasPointerCapture) sceneDirty = true;
+        HandleInput(value);
+    }
+
+    private void HandleInput(InputEvent value)
     {
         if (value.Type == InputEventType.Reset)
         {
@@ -308,18 +327,38 @@ internal sealed class Desktop
 
     public void Update(long milliseconds)
     {
+        // Apps aktualisieren Uhr, Cursor, Messwerte und Spiele zeitgesteuert; dann die Szene neu zeichnen.
+        if (milliseconds / 500 != now / 500 || NeedsAnimation) sceneDirty = true;
         now = milliseconds;
+        int count = Windows.Count;
         Windows.Update(milliseconds);
+        if (count != Windows.Count) sceneDirty = true;
     }
 
     public void Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)
     {
-        surface.ResetClip();
-        PrepareWallpaper();
-        surface.DrawPixels(wallpaper, 0, 0, width, height);
-        Windows.Render(surface, font, glyphWidth, glyphHeight, !menuOpen);
-        RenderTaskbar(surface, milliseconds);
-        if (menuOpen) RenderMenu(surface);
+        if (sceneDirty || surface != sceneSurface || scene.Length != width * height)
+        {
+            surface.ResetClip();
+            PrepareWallpaper();
+            surface.DrawPixels(wallpaper, 0, 0, width, height);
+            Windows.Render(surface, font, glyphWidth, glyphHeight, !menuOpen);
+            RenderTaskbar(surface, milliseconds);
+            if (menuOpen) RenderMenu(surface);
+            if (scene.Length != width * height) scene = new int[width * height];
+            surface.CopyTo(scene);
+            sceneSurface = surface;
+            sceneDirty = false;
+        }
+        else
+        {
+            // Nur den Bereich unter dem zuletzt gezeichneten Zeiger aus der unveraenderten Szene herstellen.
+            surface.SetClip(pointerLeft, pointerTop, PointerWidth, PointerHeight);
+            surface.DrawPixels(scene, 0, 0, width, height);
+            surface.ResetClip();
+        }
+        pointerLeft = pointerX;
+        pointerTop = pointerY;
         int color = buttons == PointerButtons.None ? -1 : UiPainter.Accent;
         for (int row = 0; row < 15; row++) surface.FillRectangle(pointerX, pointerY + row, row / 2 + 1, 1, unchecked((int)0xff000000));
         surface.DrawLine(pointerX, pointerY, pointerX, pointerY + 14, color);

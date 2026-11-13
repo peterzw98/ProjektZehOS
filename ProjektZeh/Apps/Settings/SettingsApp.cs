@@ -9,7 +9,7 @@ internal sealed class SettingsApp : IApplication
 {
     public const int DisplayPage = 0;
     public const int PersonalizationPage = 1;
-    private const int SidebarWidth = 260;
+    private const int SidebarWidth = 320;
     private const int PreviewWidth = 192;
     private const int PreviewHeight = 108;
     private readonly UiPainter painter;
@@ -17,7 +17,7 @@ internal sealed class SettingsApp : IApplication
     private readonly DisplaySettings? display;
     private readonly Func<long> clock;
     private readonly UiPanel panel = new();
-    private readonly UiList pages = new() { RowPadding = 12 };
+    private readonly UiList pages = new() { RowPadding = 12, Framed = false };
     private readonly UiList modes = new();
     private readonly UiButton apply;
     private readonly UiButton keep;
@@ -146,7 +146,7 @@ internal sealed class SettingsApp : IApplication
         else DrawPersonalization(surface, x, y, left, inner, active);
         bool error = preferences.StatusIsError;
         painter.Paragraph(surface, preferences.Status, left, y + height - 2 * (painter.GlyphHeight + 4) - 12, inner,
-            error ? UiPainter.Danger : UiPainter.Success);
+            error ? UiPainter.Danger : UiPainter.Secondary);
     }
 
     private void DrawDisplay(PixelSurface surface, int x, int y, int left, int inner, bool active)

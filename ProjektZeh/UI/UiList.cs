@@ -16,6 +16,8 @@ internal sealed class UiList : UiControl
     /// <summary>Optionales Symbol je Eintrag, parallel zu den Eintraegen.</summary>
     public AppIcon[]? Icons { get; set; }
     public int RowPadding { get; set; } = 4;
+    /// <summary>Ohne Rahmen, etwa als Seitenleiste; der Fokus bleibt an der Auswahl sichtbar.</summary>
+    public bool Framed { get; set; } = true;
     public Func<long> GetMilliseconds { get; set; } = () => Environment.TickCount64;
     public int SelectedIndex { get; private set; } = -1;
     public Action? Activated { get; set; }
@@ -61,7 +63,7 @@ internal sealed class UiList : UiControl
 
     protected override void DrawContent(PixelSurface surface, UiPainter painter, int x, int y, bool active)
     {
-        UiPainter.Frame(surface, Bounds, x, y, Focused && active);
+        if (Framed) UiPainter.Frame(surface, Bounds, x, y, Focused && active);
         rowHeight = painter.GlyphHeight + RowPadding;
         visible = Math.Max(1, (Bounds.Height - 8) / rowHeight);
         if (SelectedIndex >= 0) first = Math.Clamp(first, Math.Max(0, SelectedIndex - visible + 1), SelectedIndex);
@@ -71,7 +73,10 @@ internal sealed class UiList : UiControl
             int top = y + Bounds.Y + 4 + row * rowHeight;
             bool selected = first + row == SelectedIndex;
             if (selected)
+            {
                 surface.FillRectangle(x + Bounds.X + 4, top, Bounds.Width - 8, rowHeight, UiPainter.Selection);
+                if (!Framed && Focused && active) surface.FillRectangle(x + Bounds.X + 4, top, 3, rowHeight, UiPainter.Accent);
+            }
             if (Icons != null && first + row < Icons.Length)
                 AppIcons.Draw(surface, Icons[first + row], x + Bounds.X + 14, top + (rowHeight - AppIcons.Size) / 2, UiPainter.Accent);
             painter.Text(surface, items[first + row], x + Bounds.X + indent, top + RowPadding / 2, Bounds.Width - indent - 8,

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Apps.Settings;
@@ -77,12 +77,36 @@ public sealed class DesktopRedesignTests
         int before = UiPainter.Background;
         // Schaltflaeche "Hell" liegt rechts der Seitenleiste unter Titel und Abschnittsueberschrift.
         var window = desktop.Windows.ActiveWindow!;
-        int lightX = window.ContentX + 260 + 24 + 20, lightY = window.ContentY + 20 + 16 + 24 + 24 + 10;
+        int lightX = window.ContentX + 320 + 24 + 20, lightY = window.ContentY + 20 + 16 + 24 + 24 + 10;
         Click(desktop, lightX, lightY);
         Assert.IsFalse(desktop.Preferences.Settings.Dark);
         Assert.AreNotEqual(before, UiPainter.Background);
         Assert.IsFalse(desktop.Preferences.StatusIsError, desktop.Preferences.Status);
         Assert.IsFalse(new DesktopPreferences(new FileService(directory)).Settings.Dark);
+    }
+
+    [TestMethod]
+    public void PointerOnlyMove_RestoresSceneUnderOldPointer_WithoutRedrawingScene()
+    {
+        var desktop = CreateDesktop(1024, 768);
+        var pixels = new int[1024 * 768];
+        var surface = new PixelSurface(1024, 768, pixels);
+        desktop.Render(surface, 0, 2000, 2000, PointerButtons.None);
+        var clean = (int[])pixels.Clone();
+        desktop.Handle(new(InputEventType.PointerMove, X: 400, Y: 300));
+        desktop.Render(surface, 10, 400, 300, PointerButtons.None);
+        Assert.AreEqual(-1, pixels[300 * 1024 + 400]);
+        // Fremde Pixel ausserhalb des Zeigers bleiben unberuehrt, weil die Szene nicht neu gezeichnet wird.
+        pixels[10 * 1024 + 10] = 12345;
+        desktop.Handle(new(InputEventType.PointerMove, X: 600, Y: 500));
+        desktop.Render(surface, 20, 600, 500, PointerButtons.None);
+        Assert.AreEqual(12345, pixels[10 * 1024 + 10]);
+        for (int row = 300; row < 316; row++)
+            for (int column = 400; column < 409; column++)
+                Assert.AreEqual(clean[row * 1024 + column], pixels[row * 1024 + column]);
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
+        desktop.Render(surface, 30, 600, 500, PointerButtons.None);
+        Assert.AreEqual(clean[10 * 1024 + 10], pixels[10 * 1024 + 10]);
     }
 
     [TestMethod]

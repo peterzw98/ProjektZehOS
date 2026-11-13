@@ -106,7 +106,8 @@ internal sealed class DesktopPreferences
     {
         var result = files.WriteText(FileName, Settings.Serialize());
         if (result.IsOK()) SetStatus("Gespeichert in " + files.CurrentDirectory.TrimEnd('/') + "/" + FileName, false);
-        else SetStatus("Nur fuer diese Sitzung - Speichern fehlgeschlagen: " + result.Message, true);
+        // Die technische Ursache steht im Ergebnis; sichtbar bleibt eine kurze, verstaendliche Meldung.
+        else SetStatus("Nur fuer diese Sitzung: Speichern fehlgeschlagen (Datenlaufwerk eingebunden?).", true);
         return result;
     }
 

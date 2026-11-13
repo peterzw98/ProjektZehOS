@@ -1,5 +1,13 @@
 # QEMU: Mausbewegung und 60-Hz-Bildtermine
 
+## Nachtrag Full HD (Branch `codex/desktop-settings`, 13. November 2026)
+
+Mit 1920×1080 und neuem Desktop fiel die Bildrate bei dauernder Mausbewegung im QEMU-Referenzgast (Taskmanager offen) auf 38 FPS bei 81 % Auslastung der Desktop-Schleife und bis zu 30 ms pro Bild. Jedes Bild kopierte Hintergrund (8 MiB), zeichnete alle Fenster und gab 8 MiB aus.
+
+Änderung: Der Desktop merkt sich, ob sich die Szene geändert hat (Eingaben außer reiner Zeigerbewegung, Ziehen, Fensterwechsel, zeitgesteuerte Aktualisierung alle 500 ms, laufende Animation). Nur dann wird gezeichnet und die Szene einmal in einen Puffer kopiert. Bei reiner Mausbewegung wird lediglich der 9×16-Bereich unter dem alten Zeiger aus diesem Puffer wiederhergestellt. Fensterschatten und -rahmen füllen nur noch die sichtbaren Streifen statt ganzer Fensterflächen. Hintergründe werden nur bei Änderungen berechnet.
+
+Messung danach unter gleichen Bedingungen (QMP-Relativbewegung alle 8 ms, Taskmanager offen): **60 FPS**, Desktop-Schleife 29 %, längstes Bild 21 ms. `Canvas.Display()` kopiert weiterhin das ganze Bild; Ziehen von Fenstern und Pong zeichnen weiterhin vollständig und wurden bei Full HD nicht gesondert gemessen. VMware und echte Hardware sind offen.
+
 Stand: 13. November 2026. Grundlage ist der Desktopstand aus PR 17, Commit `358bf75`. Eigener Branch `codex/desktop-fps`; die laufenden Etappen 6a–6c werden nicht verändert.
 
 ## Ursache und Änderung
