@@ -40,19 +40,27 @@ internal sealed class MessageDemoService
             {
                 for (int i = 1; i <= 24; i++)
                 {
-                    context.Sleep(slowProducer ? 40 : 1);
+                    if (context.Token.WaitHandle.WaitOne(slowProducer ? 200 : 1)) break;
                     var result = buffer.TrySend(i);
                     if (result == MessageQueueResult.Full)
                     {
                         Interlocked.Increment(ref fullWaits);
                         result = buffer.Send(i, Timeout.Infinite, context.Token);
                     }
-                    if (result != MessageQueueResult.Success) return;
+                    if (result != MessageQueueResult.Success) break;
                     accounts.Transfer(true);
                     context.Report(Interlocked.Increment(ref produced));
                 }
             }
-            finally { buffer.Close(); Interlocked.Decrement(ref active); }
+            catch
+            {
+                buffer.Close();
+                Interlocked.Decrement(ref active);
+                throw;
+            }
+            // Cosmos 3.0.94 überspringt verschachteltes finally bei OCE; erwarteter Abbruch bleibt ein normaler Rückweg.
+            buffer.Close();
+            Interlocked.Decrement(ref active);
         });
         if (!producer.IsOK())
         {
@@ -74,14 +82,15 @@ internal sealed class MessageDemoService
                         Interlocked.Increment(ref emptyWaits);
                         result = buffer.Receive(out value, Timeout.Infinite, context.Token);
                     }
-                    if (result != MessageQueueResult.Success) return;
+                    if (result != MessageQueueResult.Success) break;
                     if (value != expected++) Interlocked.Increment(ref invalid);
                     accounts.Transfer(false);
                     context.Report(Interlocked.Increment(ref consumed));
-                    context.Sleep(slowProducer ? 1 : 40);
+                    if (context.Token.WaitHandle.WaitOne(slowProducer ? 1 : 200)) break;
                 }
             }
-            finally { Interlocked.Decrement(ref active); }
+            catch { Interlocked.Decrement(ref active); throw; }
+            Interlocked.Decrement(ref active);
         });
         if (!consumer.IsOK())
         {

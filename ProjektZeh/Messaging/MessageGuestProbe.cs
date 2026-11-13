@@ -9,6 +9,7 @@ internal static class MessageGuestProbe
 {
     public static void Run()
     {
+        CheckCancellationCleanup();
         var queue = new MessageQueue<int>(2);
         Check(queue.TryReceive(out _) == MessageQueueResult.Empty, "empty");
         queue.TrySend(1);
@@ -58,6 +59,41 @@ internal static class MessageGuestProbe
         Log.WriteString("MESSAGES_PROBE PASS numbered=100 consumed=100 duplicates=0 order=ok close/cancel/timeout/locks=ok\n");
     }
 
+    private static void CheckCancellationCleanup()
+    {
+        using var cancellation = new CancellationTokenSource();
+        int remaining = 2;
+        int firstFinally = 0;
+        int secondFinally = 0;
+        int caught = 0;
+        void Run(ref int finalized)
+        {
+            try
+            {
+                try
+                {
+                    cancellation.Token.WaitHandle.WaitOne();
+                    cancellation.Token.ThrowIfCancellationRequested();
+                }
+                finally
+                {
+                    Volatile.Write(ref finalized, 1);
+                    Interlocked.Decrement(ref remaining);
+                }
+            }
+            catch (OperationCanceledException) { Interlocked.Increment(ref caught); }
+        }
+        var first = new Thread(() => Run(ref firstFinally));
+        var second = new Thread(() => Run(ref secondFinally));
+        first.Start();
+        second.Start();
+        Thread.Sleep(30);
+        cancellation.Cancel();
+        Check(first.Join(2000) && second.Join(2000), "cancellation cleanup join");
+        Log.WriteString($"MESSAGES_CLEANUP first-finally={firstFinally} second-finally={secondFinally} remaining={remaining} caught={caught}\n");
+        Check(caught == 2, "cancellation catch");
+        // Die Ausgabe hält die Laufzeitgrenze fest; die produktive Vorführung bricht ohne Exception ab.
+    }
     private static void CheckWaiters(bool sending, bool cancel)
     {
         var queue = new MessageQueue<int>(1);

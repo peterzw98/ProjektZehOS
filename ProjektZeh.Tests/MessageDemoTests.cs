@@ -20,7 +20,7 @@ public sealed class MessageDemoTests
         {
             Assert.IsTrue(demo.Start(slowProducer).IsOK());
             Assert.IsFalse(demo.Start(slowProducer).IsOK());
-            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 5000));
+            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 10000));
             string state = demo.Status();
             StringAssert.Contains(state, "produced=24 consumed=24");
             StringAssert.Contains(state, "order-errors=0 buffered=0/3 lock-total=2000");
@@ -30,6 +30,20 @@ public sealed class MessageDemoTests
         finally { demo.Stop(); Assert.IsTrue(tasks.StopAll(2000)); }
     }
 
+    [TestMethod]
+    public void Start_OnlyOneTaskSlotAvailable_ClosesQueueAndStopsStartedProducer()
+    {
+        var tasks = new BackgroundTaskService();
+        var demo = new MessageDemoService(tasks);
+        try
+        {
+            for (int i = 0; i < 7; i++)
+                Assert.IsTrue(tasks.Start("occupied", context => context.Sleep(Timeout.Infinite)).IsOK());
+            Assert.IsFalse(demo.Start(false).IsOK());
+            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 2000));
+        }
+        finally { demo.Stop(); Assert.IsTrue(tasks.StopAll(2000)); }
+    }
     [DataTestMethod]
     [DataRow(false)]
     [DataRow(true)]
