@@ -37,7 +37,7 @@ internal sealed class ConsoleLineView
     {
         int left = Console.CursorLeft;
         int top = Console.CursorTop;
-        string status = $"ZehOS | Laufzeit: {milliseconds / 1000} s | Tasten: {input.PressedKeyCount} | Verloren: {input.DroppedEvents} | F4: Grafik";
+        string status = $"ZehOS | Laufzeit: {milliseconds / 1000} s | Tasten: {input.PressedKeyCount} | Verloren: {input.DroppedEvents} | F4: Desktop";
         int columns = Math.Max(1, Console.WindowWidth - 1);
         Console.SetCursorPosition(0, 0);
         Console.Write(status[..Math.Min(columns, status.Length)].PadRight(columns));

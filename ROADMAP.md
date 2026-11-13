@@ -10,6 +10,8 @@ Im Repository steht bisher ein kleiner C#-Kernel auf Basis von Cosmos Gen3 3.0.9
 
 Build und Start über QEMU sowie ein VMware-Startskript sind dokumentiert. Das VMware-Skript erzeugt derzeit eine VM ohne Festplatte und mit deaktiviertem Sound. Für dauerhafte Dateien muss später ein virtuelles Datenlaufwerk dazukommen.
 
+**Aktueller Stand am 12. November 2026:** Der normale Boot öffnet einen Desktop mit zwei unabhängigen Terminalfenstern. Fenster lassen sich aktivieren, verschieben und schließen; ein Starter öffnet weitere Terminals. Textshell-Recovery, Diagnose sowie die bereits vorhandenen Datei- und Energiekommandos bleiben erhalten. Die folgenden datierten Abschnitte dokumentieren die einzelnen Entwicklungsstände.
+
 Cosmos ist die technische Grundlage: vorhandene Treiber und Systemdienste zuerst verwenden und nur bei einer konkreten Lücke erweitern. Die aktuelle Gen3-Dokumentation beschreibt Grafik, Eingabe, Speicherverwaltung, Scheduling, Dateisystem und Netzwerk. Ob die jeweils benötigte Funktion bereits mit **3.0.94** und der gewählten VM funktioniert, wird vor ihrer Verwendung geprüft. Die Online-Dokumentation kann einen neueren Entwicklungsstand zeigen.
 
 Erledigte Aufgaben sind angekreuzt; offene Kontrollkästchen kennzeichnen geplante Arbeit. Die genannten Klassen und Schnittstellen sind Vorschläge für eigenen ZehOS-Code, keine zugesicherten Cosmos-APIs.
@@ -89,31 +91,35 @@ Nach Integration der Dateisystemänderungen aus `master` bleiben Datei- und Disk
 
 **Fertig, wenn:** Hintergrund, Text und beweglicher Mauszeiger stabil sichtbar sind und wiederholtes Neuzeichnen keine Spuren hinterlässt.
 
-**Umgesetzt am 10. November 2026:** F4 öffnet die Grafikprobe; Esc/F4 kehrt zur Shell mit erhaltenem Eingabeentwurf zurück. `DisplayService` verwendet den bestehenden Cosmos-Puffer bei 1024×768×32, `PixelSurface` übernimmt beschränktes Zeichnen und Pixelkopien. Negative/extreme Koordinaten, abgeschnittene Bitmapzeichen und ungültige Quellpuffer werden auf dem Host geprüft. In QEMU wurden Mausbewegung ohne Zeigerspuren, Bildschirmgrenzen, Klicks und wiederholte Ansichtwechsel geprüft. Fenster folgen in Etappe 5.
+**Umgesetzt am 10. November 2026:** F4 öffnete zunächst die Grafikprobe; Esc/F4 kehrte zur Shell mit erhaltenem Eingabeentwurf zurück. `DisplayService` verwendet den bestehenden Cosmos-Puffer bei 1024×768×32, `PixelSurface` übernimmt beschränktes Zeichnen und Pixelkopien. Negative/extreme Koordinaten, abgeschnittene Bitmapzeichen und ungültige Quellpuffer werden auf dem Host geprüft. In QEMU wurden Mausbewegung ohne Zeigerspuren, Bildschirmgrenzen, Klicks und wiederholte Ansichtwechsel geprüft. Seit Etappe 5/6 verwendet der Desktop dieselbe Grafikgrundlage.
 
 ## 5 Fensterverwaltung entwickeln
 
 **Zweck:** Mehrere grafische Anwendungen auf demselben Bildschirm bedienen können.
 
-- [ ] 5.1 Eine `Window`-Klasse mit Position, Größe, Titel, Inhaltsbereich und Zeichenfunktion anlegen. Zunächst ein festes Fenster darstellen.
-- [ ] 5.2 Eine Fensterliste im `WindowManager` führen und von hinten nach vorne zeichnen.
-- [ ] 5.3 Beim Klick das oberste getroffene Fenster aktivieren. Tastatureingaben ausschließlich an das aktive Fenster geben.
-- [ ] 5.4 Ziehen an der Titelleiste und Schließen implementieren. Mausereignisse während des Ziehens weiter an dieses Fenster liefern, auch wenn der Zeiger die Titelleiste verlässt.
-- [ ] 5.5 Inhalte am Fensterbereich beschneiden. Beim Verschieben und Schließen den freigelegten Hintergrund korrekt neu zeichnen.
+- [x] 5.1 Eine `Window`-Klasse mit Position, Größe, Titel, Inhaltsbereich und Zeichenfunktion anlegen. Zunächst ein festes Fenster darstellen.
+- [x] 5.2 Eine Fensterliste im `WindowManager` führen und von hinten nach vorne zeichnen.
+- [x] 5.3 Beim Klick das oberste getroffene Fenster aktivieren. Tastatureingaben ausschließlich an das aktive Fenster geben.
+- [x] 5.4 Ziehen an der Titelleiste und Schließen implementieren. Mausereignisse während des Ziehens weiter an dieses Fenster liefern, auch wenn der Zeiger die Titelleiste verlässt.
+- [x] 5.5 Inhalte am Fensterbereich beschneiden. Beim Verschieben und Schließen den freigelegten Hintergrund korrekt neu zeichnen.
 
 **Fertig, wenn:** Zwei überlappende Fenster verschoben, aktiviert und geschlossen werden können und Eingaben im richtigen Fenster ankommen.
+
+**Umgesetzt am 12. November 2026:** `Window` und `WindowManager` zeichnen im bestehenden `PixelSurface`-Puffer. Die Liste bestimmt Z-Ordnung und Fokus; Drag-Capture endet erst beim Loslassen der linken Taste oder bei Reset/Ansichtswechsel. Inhalte werden am Inhaltsrechteck beschnitten. Fenster bleiben in der Arbeitsfläche über der unteren Leiste. Hosttests und QEMU bestätigen Überlappung, Fokus, Verschieben bis zum Rand, Schließen, vollständiges Neuzeichnen und einen weiterhin bedienbaren leeren Desktop.
 
 ## 6 Desktop und Terminal als erste Anwendung
 
 **Zweck:** Das erste Kernziel erreichen: eine grafische Oberfläche mit benutzbarer Shell.
 
-- [ ] 6.1 Ein kleines Anwendungsmodell einführen, etwa `IApplication` mit Start, Ereignisbehandlung, Aktualisierung, Zeichnen und Schließen.
-- [ ] 6.2 `Apps/Terminal/TerminalApp.cs` bauen. Ausgabezeilen in einem begrenzten Textpuffer speichern und im Fenster darstellen.
-- [ ] 6.3 `ShellService` und `LineEditor` aus den früheren Etappen anschließen. Ein Terminal bekommt seine eigene Sitzung mit Eingabe, Historie und später Arbeitsverzeichnis.
-- [ ] 6.4 Scrollen durch ältere Ausgabe, einen sichtbaren Cursor und einen einfachen Starter für neue Terminalfenster ergänzen.
-- [ ] 6.5 Aufräumen beim Schließen implementieren. Zunächst nur fest einkompilierte Anwendungen starten; ein Loader für fremde Programme ist eine spätere Aufgabe.
+- [x] 6.1 Ein kleines Anwendungsmodell einführen, etwa `IApplication` mit Start, Ereignisbehandlung, Aktualisierung, Zeichnen und Schließen.
+- [x] 6.2 `Apps/Terminal/TerminalApp.cs` bauen. Ausgabezeilen in einem begrenzten Textpuffer speichern und im Fenster darstellen.
+- [x] 6.3 `ShellService` und `LineEditor` aus den früheren Etappen anschließen. Ein Terminal bekommt seine eigene Sitzung mit Eingabe, Historie und später Arbeitsverzeichnis.
+- [x] 6.4 Scrollen durch ältere Ausgabe, einen sichtbaren Cursor und einen einfachen Starter für neue Terminalfenster ergänzen.
+- [x] 6.5 Aufräumen beim Schließen implementieren. Zunächst nur fest einkompilierte Anwendungen starten; ein Loader für fremde Programme ist eine spätere Aufgabe.
 
 **Fertig, wenn:** ZehOS zum Desktop startet und zwei Terminalfenster unabhängig Befehle ausführen können.
+
+**Umgesetzt am 12. November 2026:** Der Desktop startet mit zwei Terminals und öffnet über `+ Terminal` bis zu acht Fenster. Jede Sitzung erhält eigene Shell-/Dateidienste, Eingabe und Verlauf. Der Ringpuffer hält 256 umgebrochene Ausgabezeilen; PageUp/PageDown scrollen, normale Texteingabe kehrt zur neuesten Ausgabe zurück. Schließen leert den Textpuffer und entfernt die Anwendung aus der Fensterliste. Esc/F4 erhält offene Sitzungen und die separate Textshell-Eingabe. Recovery startet weiterhin textuell. 149 Hosttests mit Warnungen als Fehler, native Release-/Recovery-Builds und QEMU-Prüfungen bestehen. Getrennte Arbeitsverzeichnisse, Dateifehler, Speichern und erneutes Lesen nach Reboot sind auf einer Datenimage-Kopie geprüft. Neustart und Ausschalten bestehen auch mit verbundenem GDB. VMware und echte Hardware wurden nicht neu geprüft.
 
 Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rechenzeit abgeben. Die anschließenden Etappen 6a bis 6c ergänzen Hintergrundaufgaben, Kommunikation und Dateirechte. Ein Fehler kann weiterhin das gesamte System betreffen. Prozessisolation und Speicherschutz bleiben Gegenstand von Etappe 12.4; vor dem Umgang mit beliebigen fremden Inhalten müssen sie erneut bewertet werden.
 
@@ -282,9 +288,9 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 ## Erste Änderungen und nächster Schritt
 
-Die Textshell sowie Diagnose, Eingabe- und Grafikgrundlage aus Etappe 2 bis 4 sind umgesetzt. Die nächste funktionale Erweiterung ist die Fensterverwaltung aus Etappe 5:
+Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die vollständige Desktop-Fehlerfallprüfung aus 7.5 bleiben sichtbar:
 
-Nach Abschluss von Fensterverwaltung und Desktop folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
+Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter, zunächst deren gemeinsamen Bedienelementen und dem Dateibetrachter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
@@ -293,6 +299,7 @@ Nach Abschluss von Fensterverwaltung und Desktop folgen in dieser Reihenfolge Et
 - [x] Serielle Diagnose und einen begrenzten Logpuffer hinzufügen.
 - [x] Benannte Initialisierungsschritte mit Erfolg- und Fehlereinträgen sowie Textshell-Wiederherstellung ergänzen.
 - [x] Nicht blockierende Eingabe und eine gepufferte Grafikprobe mit F4/Esc bereitstellen.
+- [x] Fensterverwaltung, Desktop und unabhängige Terminalfenster ergänzen.
 - [ ] Offene Schnittstellenprüfungen aus Etappe 0 weiter dokumentieren.
 
 ## Technische Quellen
