@@ -21,6 +21,7 @@ internal static class CosmosThreadProbe
             Write($"Scheduler={scheduler.Name}; Tick={SchedulerManager.DefaultQuantumNs}ns");
             CheckPreemption();
             CheckWaiting();
+            ProjektZeh.Messaging.MessageGuestProbe.Run();
             Write("PASS");
             return true;
         }
