@@ -31,10 +31,12 @@ Ein Browser für heutige komplexe Webseiten ist ein weiteres großes Entwicklung
 - [ ] 0.1 Einen unveränderten Kernel mit der festgelegten Version bauen und in QEMU starten. ISO-Pfad, Startbefehl und einen sichtbaren erfolgreichen Boot festhalten.
 - [ ] 0.2 QEMU als erste Referenzumgebung festlegen. Virtuelle Grafik, Eingabegeräte und später Netzwerk und Datenlaufwerk konkret dokumentieren. VMware nach wesentlichen Etappen zusätzlich prüfen.
 - [ ] 0.3 In kleinen, getrennten Versuchen Grafikfläche, nicht blockierende Tastaturabfrage, Maus, monotone Zeitmessung, Dateisystem und Netzwerkkarte prüfen. Pro Versuch festhalten: funktioniert, fehlt oder benötigt eine bestimmte VM-Konfiguration. Noch keine vollständigen Dienste bauen.
-- [ ] 0.4 Den möglichen Doom-Port kurz untersuchen: Welche Teile sind reine Spiel- und Renderlogik, welche benötigen externe Bibliotheken oder Betriebssystemfunktionen? Ein kleines Buildexperiment soll die größten Abhängigkeiten sichtbar machen.
+- [x] 0.4 Den möglichen Doom-Port kurz untersuchen: Welche Teile sind reine Spiel- und Renderlogik, welche benötigen externe Bibliotheken oder Betriebssystemfunktionen? Ein kleines Buildexperiment soll die größten Abhängigkeiten sichtbar machen.
 - [ ] 0.5 Ergebnisse in `docs/COSMOS_SUPPORT.md` sammeln. Falls eine benötigte Funktion in 3.0.94 fehlt, gezielt zwischen eigener Ergänzung und einem geprüften Versionsupdate entscheiden.
 
 **Fertig, wenn:** Der Ausgangskernel reproduzierbar startet und die nächsten Schritte auf geprüften Schnittstellen beruhen. Ein unbekannter Doom-Port bleibt als offene technische Frage sichtbar.
+
+**Teilstand am 13. November 2026 zu 0.4:** Der [Doom-Vorversuch](docs/DOOM_FEASIBILITY.md) dokumentiert feste Quellstände, Lizenzen und Plattformgrenzen von Managed Doom und doomgeneric. Managed Dooms Kern und Software-Renderer kompilieren ohne Silk-Desktopadapter unter .NET 10 mit Trim-/AOT-Analyse (null Warnungen/Fehler). Das ist ein Hostbuild, kein nativer Cosmos-Build und kein spielbarer Gastnachweis; 9.1 bleibt offen.
 
 ## 1 Aus der Texteingabe eine kleine Shell machen
 
