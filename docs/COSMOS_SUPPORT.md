@@ -2,7 +2,15 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
-## Thread- und Warteprobe am 13. November 2026
+## Aufgabenverwaltung und Round-Robin am 13. November 2026
+
+Die anschließende Umsetzung von 6a.2–6a.5 ersetzt Stride beim normalen und Recovery-Start durch `CosmosRoundRobinScheduler`. Cosmos 3.0.94 übernimmt unverändert Threadregistrierung, Kontextwechsel, Timer und Warteprimitive. Die Policy verwendet eine feste **20-ms-Zeitscheibe** (zwei konfigurierte 10-ms-Ticks) und eine vorab angelegte FIFO in Größe der Cosmos-Threadgrenze. Thread-Daten entstehen beim Erzeugen, der Tickpfad allokiert und blockiert nicht. Blockieren/Beenden entfernt Queuereferenzen; Ready/Yield fügt ohne doppelte Einträge hinten ein. Das Diagnosering hält die letzten 128 Auswahlen als rohe Thread-IDs, die Shell formatiert sie erst im Vordergrund. Diagnosezugriffe schützen sich mit der vorhandenen Interruptmaske. SMP und Prioritätsunterschiede sind nicht Ziel dieser Ein-CPU-Policy.
+
+`BackgroundTaskService` begrenzt verwaltete Aufgaben auf acht. Kennungen wachsen ohne Wiederverwendung, Zustände/Fortschritt/Fehler werden als Snapshot gelesen. Beendete Worker geben ihre Cancellation-Ressourcen frei; Referenzeinträge bleiben zur Diagnose und werden bei Platzbedarf entfernt. Gemeinsame Taskdaten sind synchronisiert, Fortschrittsübergaben atomar. Workers verwenden weder Anzeige, Eingabe, `SystemLog` noch Dateioperationen; dadurch bleiben deren bisherige Vordergrundzuständigkeiten erhalten. Vor Energieaktionen wird kooperativ abgebrochen und begrenzt gejoint, bei Restaktivität bleibt der Gast an.
+
+**Nachweise:** 155/155 Hosttests mit Warnungen als Fehler, native Probe-/Normal-/Recovery-Builds jeweils null Warnungen/Fehler. Die vorhandene Verdrängungs-/Warteprobe meldet `Scheduler=ZehOS RoundRobin` und PASS in QEMU (27.603.069/26.043.825 Inkremente) und VMware (37.039.887/32.996.395). QEMU zeigt zwei wachsende Busy-Zähler und eine wartende Aufgabe; ein anderes Terminal nimmt währenddessen `echo alive` an. Alle drei lassen sich abbrechen; erneuter Start erzeugt die nächste Kennung und läuft auch nach Esc in der Textshell weiter. `shutdown` beendet anschließend auch diese aktive Aufgabe und QEMU sauber. Der bestehende Energiekommando-Test bestätigt Reboot in derselben VM und Shutdown mit Exitcode 0. Recovery startet textuell, Eingabe und F4/Esc-Desktopwechsel funktionieren. Das unabhängige Code-Review meldete keine konkreten Befunde. VMware ist seriell geprüft, echte Hardware und Dateipersistenz wurden für diese reine Thread-Erweiterung nicht neu geprüft.
+
+### Historischer Ausgangsversuch 6a.1
 
 Roadmap 6a.1 wurde auf Basis von `1d37a0d` mit unveränderten Cosmos-Paketen **3.0.94** geprüft. Der opt-in Build `-p:ZehOSThreadProbe=true` führt `Runtime/CosmosThreadProbe.cs` einmal vor der interaktiven Sitzung aus. Normale und Recovery-Builds ohne diese Option enthalten die Probe nicht. Die bestehenden Anwendungen und Dateioperationen bleiben im bisherigen Hauptthread.
 
@@ -48,9 +56,10 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 - Cosmos 3.0.94 verwirft in seiner normalen Tastaturabfrage Break-Ereignisse. Daher übernimmt ZehOS den Rohdatenpfad vollständig; `Console.ReadLine` und `Console.ReadKey` gehören nicht mehr zum interaktiven Pfad. Sobald Cosmos eine öffentliche Rohereignis-API bietet, sollen Plug und Zugriff auf die interne Layoutmethode entfallen.
 - Die PS/2-Anbindung von Cosmos faltet manche erweiterten Scancodes zusammen, beispielsweise linkes/rechtes Strg und Tasten des Navigations-/Ziffernblocks. ZehOS übernimmt diese Codes; eine vollständige Unterscheidung dieser physischen Tasten ist damit noch nicht gegeben. Getestet wurden die gewöhnlichen Buchstaben, Shift, F4, Escape und die Editier-/Verlaufstasten des Referenzprofils.
 - Mauszustände werden pro Schleifendurchlauf gelesen. Es gibt noch keine vollständige Rohereignishistorie für Maus und Hotplug-Geräte.
-- Die Schleife ist kooperativ. Laufwerksinitialisierung und Dateioperationen können sie während ihrer Ausführung anhalten; Hintergrundarbeit und Abbruch folgen in späteren Etappen.
+- Die Desktop-Schleife verarbeitet Anwendungen kooperativ; die feste Thread-Anbindung aus 6a ermöglicht daneben präemptive Hintergrundaufgaben mit Abbruch. Laufwerksinitialisierung und Dateioperationen bleiben synchron und können die Desktop-Schleife während ihrer Ausführung anhalten.
 - Fenster und Terminal laufen gemeinsam im Kernel. Größenänderung, Minimieren, Prozessisolation und fremde Programme sind nicht implementiert. Der Desktop begrenzt offene Fenster auf acht und die Ausgabe je Terminal auf 256 umgebrochene Zeilen. Beim Ansichtswechsel wird die Textkonsolenausgabe geleert; offene Terminals sowie Zeilenentwurf und Verlauf beider Ansichten bleiben erhalten.
-- VMware, echte Hardware, USB-Eingabe und mehrere CPUs wurden für diese Änderung nicht geprüft.
+- VMware ist für die Thread-/Warteprobe seriell geprüft. Visuelle Bedienung in VMware, echte Hardware, USB-Eingabe und mehrere CPUs wurden für diese Erweiterung nicht geprüft.
+- Cosmos 3.0.94 überspringt beim Exception-Unwind teilweise verschachtelte `finally`-Blöcke. Zwei gezielt abgebrochene Worker erreichten ihre äußeren Cancellation-Catches, aber keines der inneren Finally-Abschlussflags (`first-finally=0 second-finally=0 remaining=2 caught=2`). Reguläre Demo-Abbrüche verwenden deshalb Rückgabewerte statt Exceptions; die Aufgabenverwaltung bereinigt auch nach abgefangenen Workerfehlern auf einem expliziten normalen Fortsetzungspfad. Dies ist keine Garantie für beliebige fremde Exception-/Ressourcenpfade.
 
 ## Nachprüfung
 
