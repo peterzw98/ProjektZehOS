@@ -2,6 +2,16 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Nachrichtenprobe am 13. November 2026
+
+Der Branch `codex/etappe6b` verwendet unverändert Cosmos **3.0.94** und erweitert den Threadprobe-Build um `MessageGuestProbe`. Mit installiertem SDK **10.0.112** und den vorhandenen Cosmos-Werkzeugen wurde der native Release-Build mit Warnungen als Fehler erfolgreich erstellt.
+
+In einem separaten QEMU-Gast (`q35`, CPU `max`, 512 MiB, Standard-VGA, kein Datenlaufwerk) liefert der ZehOS-Round-Robin-Scheduler `MESSAGES_PROBE PASS`: 100 nummerierte Nachrichten ohne Verlust/Duplikate/Reihenfolgefehler, Kapazitätsgrenze, Sende-/Empfangszeitlimit, Schließen und Abbruch wartender Sender/Empfänger, feste Sperrreihenfolge und Endsumme 2000. Zusätzlich endet der Producer nach alleinigem Consumer-Abbruch bei vollem Puffer; ein erneuter Start verarbeitet 24 Nachrichten vollständig. `Monitor.Wait`/`PulseAll`, `CancellationToken.Register` und `Stopwatch` funktionieren damit im geprüften Gastablauf, ohne den Desktopthread zum Warten auf Nachrichten zu verwenden.
+
+Die Probe reproduziert eine Laufzeitgrenze: Beim Abbruch durch `OperationCanceledException` werden beide inneren `finally`-Blöcke übersprungen (`first-finally=0 second-finally=0 remaining=2 caught=2`). Demo und Aufgabenverwaltung bereinigen ihre Ressourcen deshalb ausdrücklich auf ihren normalen und abgefangenen Fehlerwegen. Die Aufgabenprobe bestätigt geschlossene Cancellation-Wartehandles nach Abbruch und Fehler. Für Interruptmasken ist wegen des Cosmos-Patcher-Builds eine explizite `try`/`finally`-Freigabe erforderlich; `using` wird dort nicht akzeptiert.
+
+Die neue Nachrichtenprobe wurde bislang ausschließlich in QEMU ausgeführt. VMware und echte Hardware bleiben offen; ältere Threadprüfungen auf VMware gelten nicht als Nachweis für diese Erweiterung. Weitere Prüfungen und Bedienung: [ETAPPE6B_STATUS.md](ETAPPE6B_STATUS.md).
+
 ## Aufgabenverwaltung und Round-Robin am 13. November 2026
 
 Die anschließende Umsetzung von 6a.2–6a.5 ersetzt Stride beim normalen und Recovery-Start durch `CosmosRoundRobinScheduler`. Cosmos 3.0.94 übernimmt unverändert Threadregistrierung, Kontextwechsel, Timer und Warteprimitive. Die Policy verwendet eine feste **20-ms-Zeitscheibe** (zwei konfigurierte 10-ms-Ticks) und eine vorab angelegte FIFO in Größe der Cosmos-Threadgrenze. Thread-Daten entstehen beim Erzeugen, der Tickpfad allokiert und blockiert nicht. Blockieren/Beenden entfernt Queuereferenzen; Ready/Yield fügt ohne doppelte Einträge hinten ein. Das Diagnosering hält die letzten 128 Auswahlen als rohe Thread-IDs, die Shell formatiert sie erst im Vordergrund. Diagnosezugriffe schützen sich mit der vorhandenen Interruptmaske. SMP und Prioritätsunterschiede sind nicht Ziel dieser Ein-CPU-Policy.

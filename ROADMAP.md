@@ -143,13 +143,15 @@ Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rech
 
 **Zweck:** Aufgaben aus Etappe 6a Daten austauschen lassen und ihr Warten aufeinander korrekt koordinieren.
 
-- [ ] 6b.1 Eine begrenzte Nachrichtenwarteschlange mit definierten Ergebnissen bei voller, leerer und geschlossener Warteschlange bereitstellen. Nicht blockierendes Senden und Empfangen sowie wartende Varianten mit Abbruch und Zeitlimit vorsehen; die Desktop-Schleife darf dabei nicht blockieren.
-- [ ] 6b.2 Geprüfte Synchronisationsmittel verwenden, um gemeinsame Zustände zu schützen und wartende Aufgaben bei neuen Daten beziehungsweise freiem Platz aufzuwecken. Verlorene Wecksignale und aktives Dauerabfragen vermeiden; Interruptschutz nur für die dafür vorgesehenen kurzen Bereiche verwenden.
-- [ ] 6b.3 Eine Erzeuger-Verbraucher-Vorführung bauen: Eine Aufgabe erzeugt nummerierte Daten, die andere verarbeitet sie. Langsame Erzeugung und Verarbeitung machen die Fälle leerer beziehungsweise voller Puffer sichtbar.
-- [ ] 6b.4 Für mehrere gemeinsam benötigte Sperren eine feste Erwerbsreihenfolge festlegen und Deadlockvermeidung an einem kontrollierten Beispiel erklären und prüfen. Kein absichtliches dauerhaftes Blockieren des produktiven Desktops.
-- [ ] 6b.5 Nachrichtenreihenfolge, Kapazitätsgrenze, konkurrierende Zugriffe, Abbruch, Zeitlimit und Schließen bei wartenden Teilnehmern testen. Im Gast nachweisen, dass keine Daten verloren oder doppelt verarbeitet werden und Aufgaben nach dem Schließen sauber enden.
+- [x] 6b.1 Eine begrenzte Nachrichtenwarteschlange mit definierten Ergebnissen bei voller, leerer und geschlossener Warteschlange bereitstellen. Nicht blockierendes Senden und Empfangen sowie wartende Varianten mit Abbruch und Zeitlimit vorsehen; die Desktop-Schleife darf dabei nicht blockieren.
+- [x] 6b.2 Geprüfte Synchronisationsmittel verwenden, um gemeinsame Zustände zu schützen und wartende Aufgaben bei neuen Daten beziehungsweise freiem Platz aufzuwecken. Verlorene Wecksignale und aktives Dauerabfragen vermeiden; Interruptschutz nur für die dafür vorgesehenen kurzen Bereiche verwenden.
+- [x] 6b.3 Eine Erzeuger-Verbraucher-Vorführung bauen: Eine Aufgabe erzeugt nummerierte Daten, die andere verarbeitet sie. Langsame Erzeugung und Verarbeitung machen die Fälle leerer beziehungsweise voller Puffer sichtbar.
+- [x] 6b.4 Für mehrere gemeinsam benötigte Sperren eine feste Erwerbsreihenfolge festlegen und Deadlockvermeidung an einem kontrollierten Beispiel erklären und prüfen. Kein absichtliches dauerhaftes Blockieren des produktiven Desktops.
+- [x] 6b.5 Nachrichtenreihenfolge, Kapazitätsgrenze, konkurrierende Zugriffe, Abbruch, Zeitlimit und Schließen bei wartenden Teilnehmern testen. Im Gast nachweisen, dass keine Daten verloren oder doppelt verarbeitet werden und Aufgaben nach dem Schließen sauber enden.
 
 **Fertig, wenn:** Erzeuger und Verbraucher zuverlässig über den begrenzten Puffer kommunizieren, bei leerem oder vollem Puffer korrekt warten und durch Abbruch oder Schließen beendet werden können.
+
+**Geprüft am 13. November 2026:** 216 Hosttests bestehen; der native Probe-Build liefert in QEMU `MESSAGES_PROBE PASS` einschließlich alleinigem Consumer-Abbruch bei vollem Puffer und vollständigem Neustart. Diese Code-/QEMU-Abnahme belegt keine VMware-Kompatibilität; die neue Nachrichtenprobe und Bedienabläufe sind dort noch offen. Einzelheiten stehen in `docs/ETAPPE6B_STATUS.md`.
 
 Diese Etappe behandelt Thread- und Anwendungskommunikation im gemeinsamen Kernel. Sie bildet eine Grundlage für Interprozesskommunikation; isolierte Prozesse und deren Schutzgrenzen folgen erst in Etappe 12.4. Eigene Softwareinterrupts sind für diese erste Kommunikation nicht erforderlich.
 

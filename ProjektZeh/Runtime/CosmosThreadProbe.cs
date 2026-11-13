@@ -23,6 +23,7 @@ internal static class CosmosThreadProbe
             CheckPreemption();
             CheckWaiting();
             CheckTaskCleanup();
+            ProjektZeh.Messaging.MessageGuestProbe.Run();
             Write("PASS");
             return true;
         }

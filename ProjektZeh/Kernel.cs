@@ -6,6 +6,7 @@ using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Shared;
 using ProjektZeh.Scheduling;
+using ProjektZeh.Messaging;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -25,9 +26,11 @@ public sealed class Kernel : Sys.Kernel
     private bool startDesktop;
     private readonly BackgroundTaskService tasks = new();
     private readonly CosmosRoundRobinScheduler scheduler = new();
+    private readonly MessageDemoService messages;
 
     public Kernel()
     {
+        messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         interactive = new InteractiveSession(CreateShell, output, GetElapsedMilliseconds, systemLog);
     }
@@ -40,6 +43,7 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage).Commands,
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
+            .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
