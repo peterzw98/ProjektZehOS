@@ -7,8 +7,8 @@ internal sealed class InputService
     public const int QueueCapacity = 256;
     private readonly InputEventQueue events = new(QueueCapacity);
     private readonly bool[] pressed = new bool[128];
-    private readonly int width;
-    private readonly int height;
+    private int width;
+    private int height;
 
     public int PointerX { get; private set; }
     public int PointerY { get; private set; }
@@ -27,6 +27,17 @@ internal sealed class InputService
     }
 
     public bool IsKeyDown(byte key) => key < pressed.Length && pressed[key];
+
+    public void Resize(int width, int height)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        this.width = width;
+        this.height = height;
+        PointerX = Math.Clamp(PointerX, 0, width - 1);
+        PointerY = Math.Clamp(PointerY, 0, height - 1);
+        Reset(0);
+    }
 
     public void ReportKey(byte code, bool released, char character = '\0')
     {

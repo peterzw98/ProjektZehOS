@@ -25,6 +25,10 @@
     <Compile Include="..\ProjektZeh\Graphics\Window*.cs" Link="Graphics\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\DesktopMetrics.cs" Link="Graphics\DesktopMetrics.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Desktop.cs" Link="Graphics\Desktop.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\DesktopSettings.cs" Link="Graphics\DesktopSettings.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\DisplaySettings.cs" Link="Graphics\DisplaySettings.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\WallpaperImage.cs" Link="Graphics\WallpaperImage.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\AppIcons.cs" Link="Graphics\AppIcons.cs" />
     <Compile Include="..\ProjektZeh\UI\**\*.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />

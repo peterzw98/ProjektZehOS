@@ -26,8 +26,12 @@ public sealed class Kernel : Sys.Kernel
     public Kernel()
     {
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
-        interactive = new InteractiveSession(CreateShell, output, GetElapsedMilliseconds, systemLog);
+        interactive = new InteractiveSession(CreateShell, output, GetElapsedMilliseconds, systemLog,
+            new CosmosSystemInfo(storage, VersionText).Sections);
     }
+
+    private static string VersionText =>
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell()
     {
@@ -37,8 +41,7 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
-        ], systemLog, GetAvailableUptime,
-            $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
+        ], systemLog, GetAvailableUptime, VersionText);
     }
 
     protected override void BeforeRun()

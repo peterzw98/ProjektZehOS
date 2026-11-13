@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using Cosmos.Kernel.System.Graphics;
+using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
@@ -9,7 +10,7 @@ using ProjektZeh.SystemServices;
 namespace ProjektZeh.Runtime;
 
 internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOutput output,
-    Func<long> getElapsedMilliseconds, SystemLog systemLog)
+    Func<long> getElapsedMilliseconds, SystemLog systemLog, TaskManagerSection[] sections)
 {
     private readonly ShellService shell = createShell();
     private readonly CosmosInputService devices = new();
@@ -28,14 +29,14 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         bool dirty = true;
         output.WriteLine("F4: Desktop. Pfeiltasten: Cursor/Verlauf. Esc: zur Textshell.");
         line.Begin();
-        if (startDesktop) ToggleGraphics();
+        if (startDesktop) ToggleGraphics(input);
         while (true)
         {
             devices.Poll(input);
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
                 if (value.Type == InputEventType.KeyDown && !value.IsRepeat && value.KeyCode == (byte)PhysicalKey.F4)
-                    ToggleGraphics();
+                    ToggleGraphics(input);
                 else if (graphics)
                 {
                     if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
@@ -86,12 +87,12 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         }
     }
 
-    private void ToggleGraphics()
+    private void ToggleGraphics(InputService input)
     {
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell);
+            display ??= new DisplayService(createShell, input, sections);
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");
