@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Kernel.System.Diagnostics;
+using ProjektZeh.Scheduling;
 
 // Die öffentliche Scheduler-Schnittstelle ist in Cosmos 3.0.94 experimentell.
 #pragma warning disable COSMOS0001
@@ -21,6 +22,7 @@ internal static class CosmosThreadProbe
             Write($"Scheduler={scheduler.Name}; Tick={SchedulerManager.DefaultQuantumNs}ns");
             CheckPreemption();
             CheckWaiting();
+            CheckTaskCleanup();
             ProjektZeh.Messaging.MessageGuestProbe.Run();
             Write("PASS");
             return true;
@@ -124,6 +126,30 @@ internal static class CosmosThreadProbe
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void CheckTaskCleanup()
+    {
+        var tasks = new BackgroundTaskService();
+        WaitHandle? cancelledHandle = null;
+        WaitHandle? failedHandle = null;
+        var cancelled = tasks.Start("cleanup-cancel", context =>
+        {
+            cancelledHandle = context.Token.WaitHandle;
+            context.Sleep(Timeout.Infinite);
+        });
+        var failed = tasks.Start("cleanup-fault", context =>
+        {
+            failedHandle = context.Token.WaitHandle;
+            throw new InvalidOperationException("Expected cleanup probe failure");
+        });
+        var clock = Stopwatch.StartNew();
+        while ((cancelledHandle is null || failedHandle is null) && clock.ElapsedMilliseconds < 2000) Thread.Sleep(1);
+        bool stopped = tasks.StopAll(2000);
+        Check(cancelled.IsOK() && failed.IsOK() && stopped, "Task-Cleanup-Worker starten/beenden nicht.");
+        Check(cancelledHandle?.SafeWaitHandle.IsClosed == true && failedHandle?.SafeWaitHandle.IsClosed == true,
+            "Cancellation-Ressourcen nach Abbruch/Fehler noch offen.");
+        Write("tasks cancellation/fault resource cleanup PASS");
     }
 
     private static void Write(string message) => Log.WriteString($"THREAD_PROBE {message}\n");
