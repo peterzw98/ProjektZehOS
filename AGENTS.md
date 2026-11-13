@@ -114,7 +114,7 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 
 ## Branch, unabhängiges Review und Pull Request
 
-- Für die Aufgabe einen eigenen Branch mit Präfix `codex/` verwenden. Vom aktuellen passenden Zielbranch ausgehen und fremde, nicht zur Aufgabe gehörende Änderungen aus Commit und PR heraushalten. Bei paralleler Arbeit eine getrennte Arbeitskopie verwenden.
+- Für die Aufgabe einen eigenen Branch verwenden, dessen Präfix die Art der Arbeit nennt, nach eigenem Ermessen etwa `feature/`, `fix/`, `task/` oder `docs/`, gefolgt von einem kurzen, sprechenden Namen. Vom aktuellen passenden Zielbranch ausgehen und fremde, nicht zur Aufgabe gehörende Änderungen aus Commit und PR heraushalten. Bei paralleler Arbeit eine getrennte Arbeitskopie verwenden.
 - Änderungen passend prüfen und committen; Pushen gehört zum Abschluss des Arbeitsauftrags. Sobald die Aufgabe fertig ist und keine offenen fachlichen Fragen oder ungeklärten Reviewbefunde bleiben, selbstständig einen Pull Request erstellen.
 - **Vor dem Erstellen des PRs einen unabhängigen Agenten prüfen lassen.** Ihm den fertigen Änderungsstand, Anforderungen und relevante Prüfergebnisse geben. Er prüft lesend mit frischem Kontext und verändert weder Dateien noch Git-Zustand.
 - Die Rückmeldung selbst fachlich bewerten. Berechtigte Befunde beheben und betroffene Prüfungen wiederholen; abweichende Bewertungen mit Gründen festhalten. Nach wesentlichen Korrekturen den geänderten Stand erneut unabhängig prüfen lassen. Offene Probleme nicht durch das bloße Vorliegen eines Reviews als erledigt behandeln.
