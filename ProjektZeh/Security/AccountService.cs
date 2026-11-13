@@ -12,6 +12,8 @@ internal sealed class AccountService
     private sealed record Account(string Id, string Name, bool Administrator, string PasswordHash);
     private const string Header = "ZEHOS-ACCOUNTS-1\n";
     private const string Separator = "#ACL\n";
+    internal const string UnknownAccountHash =
+        "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private readonly Dictionary<string, Account> accounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<UserSession> sessions = [];
     private readonly FileService metadata;
@@ -79,7 +81,9 @@ internal sealed class AccountService
         if (IsReady) accounts.TryGetValue(name, out account);
         return () =>
         {
-            bool valid = account != null && PasswordHasher.Verify(password, account.PasswordHash);
+            // Unbekannte Namen rechnen gleich lange, damit die Antwortzeit keine Kontonamen verraet.
+            bool matches = PasswordHasher.Verify(password, account?.PasswordHash ?? UnknownAccountHash);
+            bool valid = account != null && matches;
             return () =>
             {
                 if (!valid || !IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account)) return FileAccessControl.Denied();

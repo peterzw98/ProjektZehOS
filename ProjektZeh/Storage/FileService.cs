@@ -135,9 +135,10 @@ internal sealed class FileService
         string? temporaryPath = null;
         bool temporaryCreated = false;
         FileStream? temporaryStream = null;
+        bool registered = false;
         try
         {
-            Authorize(resolved.Value!, FilePermission.Write, true);
+            registered = Authorize(resolved.Value!, FilePermission.Write, true);
             byte[] data = new UTF8Encoding(false, true).GetBytes(text);
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
@@ -154,6 +155,7 @@ internal sealed class FileService
         }
         catch (Exception exception) when (IsFileError(exception))
         {
+            if (registered) access!.ForgetCreated(resolved.Value!);
             if (temporaryCreated)
             {
                 try
@@ -216,14 +218,16 @@ internal sealed class FileService
             return resolved.Status;
         }
 
+        bool registered = false;
         try
         {
-            Authorize(resolved.Value!, FilePermission.Write, true);
+            registered = Authorize(resolved.Value!, FilePermission.Write, true);
             Directory.CreateDirectory(resolved.Value!);
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception) when (IsFileError(exception))
         {
+            if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
         }
     }
@@ -281,16 +285,19 @@ internal sealed class FileService
         return exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     }
 
-    private void Authorize(string path, FilePermission permission, bool creating = false)
+    /// <returns>true, wenn dafuer ein neuer Rechte-Eintrag angelegt wurde.</returns>
+    private bool Authorize(string path, FilePermission permission, bool creating = false)
     {
-        if (access == null) return;
+        if (access == null) return false;
         if (session == null || !access.Check(session, path, permission, creating).IsOK())
             throw new UnauthorizedAccessException("Zugriff verweigert.");
+        if (!creating || access.Contains(path)) return false;
         // Vorhandene, auch ueber FAT-Kurznamen erreichbare Eintraege muessen explizit zugeordnet sein.
-        if (creating && !access.Contains(path) && (File.Exists(path) || Directory.Exists(path)))
+        if (File.Exists(path) || Directory.Exists(path))
             throw new UnauthorizedAccessException("Vorhandener Eintrag ohne Rechtezuordnung.");
-        if (creating && !access.RegisterCreated(session, path).IsOK())
+        if (!access.RegisterCreated(session, path).IsOK())
             throw new UnauthorizedAccessException("Rechte konnten nicht gespeichert werden; Zugriff gesperrt.");
+        return true;
     }
 
     internal void ResetDirectory(string directory) => CurrentDirectory = directory;

@@ -82,6 +82,12 @@ internal sealed class FileAccessControl
         return result;
     }
 
+    // Nimmt einen Eintrag zurueck, dessen Datei nie entstanden ist; ohne gespeicherte Rechte bleibt alles gesperrt.
+    internal void ForgetCreated(string path)
+    {
+        if (entries.Remove(path) && !(Persist?.Invoke() ?? Denied()).IsOK()) Lock();
+    }
+
     public string Serialize()
     {
         var text = new StringBuilder(Header + "\n");
