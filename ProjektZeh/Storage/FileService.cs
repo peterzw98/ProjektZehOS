@@ -42,6 +42,31 @@ internal sealed class FileService
         }
     }
 
+    public ResultObject<FileEntry[]> ListDirectory(string? path)
+    {
+        var listed = ListEntries(path);
+        if (!listed.IsOK()) return ResultObjectFactory.CreateFailure<FileEntry[]>(listed.Status);
+        try
+        {
+            var entries = new FileEntry[listed.Value!.Length];
+            for (int index = 0; index < entries.Length; index++)
+            {
+                string name = listed.Value[index];
+                entries[index] = new(name, (File.GetAttributes(name) & FileAttributes.Directory) != 0);
+            }
+            Array.Sort(entries, static (left, right) =>
+            {
+                int type = right.IsDirectory.CompareTo(left.IsDirectory);
+                return type != 0 ? type : string.Compare(left.Path, right.Path, StringComparison.Ordinal);
+            });
+            return ResultObjectFactory.CreateSuccess(entries);
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            return ResultObjectFactory.CreateFromException<FileEntry[]>(exception);
+        }
+    }
+
     /// <summary>
     /// Liest eine Textdatei und schliesst sie anschliessend.
     /// </summary>

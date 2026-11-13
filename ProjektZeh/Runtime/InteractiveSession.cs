@@ -51,7 +51,11 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                 dirty = true;
             }
             long now = getElapsedMilliseconds();
-            if (graphics) display!.Update(now);
+            if (graphics)
+            {
+                display!.Update(now);
+                if (display.NeedsAnimation && now >= nextFrame) dirty = true;
+            }
             if (now / 500 != previousTick) { previousTick = now / 500; dirty = true; }
             if (dirty && now >= nextFrame)
             {

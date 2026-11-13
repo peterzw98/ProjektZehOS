@@ -9,5 +9,7 @@ internal interface IApplication
     void Handle(InputEvent value);
     void Update(long milliseconds);
     void Draw(PixelSurface surface, int x, int y, int width, int height, bool active);
+    bool IsCloseRequested => false;
+    bool RequestClose() => true;
     void Close();
 }

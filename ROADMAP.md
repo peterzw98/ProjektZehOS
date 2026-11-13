@@ -188,13 +188,15 @@ Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. D
 
 **Zweck:** Die gemeinsamen Bausteine an überschaubaren Anwendungen prüfen, bevor Browser und Doom zusätzliche Komplexität bringen.
 
-- [ ] 8.1 Wiederverwendbare Schaltflächen, Textfelder und Listen mit Fokus und einfacher Anordnung entwickeln.
-- [ ] 8.2 Einen Dateibetrachter bauen: Ordner auflisten und eine ausgewählte Textdatei anzeigen.
-- [ ] 8.3 Einen kleinen Texteditor ergänzen: Text bearbeiten, speichern und bei ungespeicherten Änderungen vor dem Schließen nachfragen.
-- [ ] 8.4 Ein kleines Spiel wie Pong bauen. Tastenzustände, zeitabhängige Bewegung, Pixelgrafik und Rückkehr zum Desktop damit prüfen.
-- [ ] 8.5 Bildzeiten und Speicherverbrauch beobachten. Große Bildpuffer wiederverwenden, statt sie in jedem Bild neu anzulegen. Ungenutzte Ressourcen beim Schließen freigeben.
+- [x] 8.1 Wiederverwendbare Schaltflächen, Textfelder und Listen mit Fokus und einfacher Anordnung entwickeln.
+- [x] 8.2 Einen Dateibetrachter bauen: Ordner auflisten und eine ausgewählte Textdatei anzeigen.
+- [x] 8.3 Einen kleinen Texteditor ergänzen: Text bearbeiten, speichern und bei ungespeicherten Änderungen vor dem Schließen nachfragen.
+- [x] 8.4 Ein kleines Spiel wie Pong bauen. Tastenzustände, zeitabhängige Bewegung, Pixelgrafik und Rückkehr zum Desktop damit prüfen.
+- [x] 8.5 Bildzeiten und Speicherverbrauch beobachten. Große Bildpuffer wiederverwenden, statt sie in jedem Bild neu anzulegen. Ungenutzte Ressourcen beim Schließen freigeben.
 
 **Fertig, wenn:** Eine Textdatei bearbeitet und neu geöffnet werden kann und das Spiel auf Eingaben reagiert, während der Desktop weiter bedienbar bleibt.
+
+**Umgesetzt am 13. November 2026:** Gemeinsame UI-Bausteine mit Fokus, Dateibetrachter, Mehrzeileneditor mit Schließrückfrage und Pong sind an den Desktop angeschlossen. Direkte Voraussetzungen sind ein wiederverwendeter Textbearbeitungskern, verschachteltes Clipping, abbrechbares Schließen und regelmäßige Spielbilder. 173 Hosttests, native Normal-/Recovery-Builds und QEMU-Prüfungen einschließlich Dateineustart, ENOSPC, Spiel/Fokus und Ressourcenbeobachtung bestehen. VMware und echte Hardware bleiben ausdrücklich offen. [Bedienung, Architektur und Nachweise](docs/DESKTOP_APPS.md). Etappen 6a–6c bleiben unverändert.
 
 ## 9 Doom schrittweise portieren
 
@@ -294,7 +296,7 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die zusätzliche VMware-Dateiprüfung bleiben sichtbar:
 
-Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter, zunächst deren gemeinsamen Bedienelementen und dem Dateibetrachter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
+Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Die unabhängig vorgezogene Etappe 8 ist implementiert und in QEMU geprüft; nach Abschluss der vorgesehenen Vorstufen folgen Doom aus Etappe 9 und die weiteren Netzwerk-/Browseretappen. VMware-Nachprüfungen bleiben offen.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
