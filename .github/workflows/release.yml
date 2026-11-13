@@ -3,12 +3,6 @@ name: Release
 on:
   push:
     tags: ['v*.*.*']
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release-Version (major.minor.patch)'
-        required: true
-        type: string
 
 permissions: {}
 
@@ -45,11 +39,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests
       - name: Build release
         env:
-          RELEASE_INPUT: ${{ inputs.version }}
           RELEASE_REF: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "$EVENT_NAME" == push ]]; then version=${RELEASE_REF#v}; else version=$RELEASE_INPUT; fi
+          version=${RELEASE_REF#v}
           scripts/build-release.sh "$version" "$RUNNER_TEMP/zehos-release"
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Sign and verify update

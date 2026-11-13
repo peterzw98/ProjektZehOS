@@ -89,6 +89,17 @@ public sealed class SetupWizardTests
     }
 
     [TestMethod]
+    public void Confirm_UnpartitionedDiskWithData_RequiresEraseConfirmation()
+    {
+        var service = new FakeInstallService(new InstallDisk("disk2", 8UL << 30, 0, IsBlank: false)) { Job = new FakeJob(1) };
+        var wizard = ReachConfirm(service);
+        Assert.IsInstanceOfType<SetupCheckBox>(wizard.FocusedControl);
+        Press(wizard, PhysicalKey.Space);
+        Press(wizard, PhysicalKey.Enter);
+        CollectionAssert.AreEqual(new[] { ("disk2", true) }, service.BeginCalls);
+    }
+
+    [TestMethod]
     public void DiskList_ArrowsAndClick_SelectDiskAndKeepSelectionOnRefresh()
     {
         var service = new FakeInstallService(new InstallDisk("a", 1UL << 30, 0), new InstallDisk("b", 1UL << 30, 1),

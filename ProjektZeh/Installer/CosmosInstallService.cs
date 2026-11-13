@@ -35,7 +35,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             foreach (IBlockDevice device in StorageManager.Devices)
             {
                 candidates.Add(new(new InstallDisk(device.Name, checked(device.BlockCount * device.BlockSize),
-                    StorageManager.GetPartitions(device).Count), IsInstallMedium(device)));
+                    StorageManager.GetPartitions(device).Count, IsBlank(device)), IsInstallMedium(device)));
             }
             return ResultObjectFactory.CreateSuccess(candidates.ToArray());
         }
@@ -86,6 +86,28 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
 #else
         throw new InvalidOperationException("Die Installationsdateien sind nur im Installer-Build enthalten.");
 #endif
+    }
+
+    /// <summary>
+    /// Prueft erstes und letztes MiB, wo Partitionstabellen, Dateisystem-, LUKS-, LVM- und ZFS-Kennungen liegen.
+    /// shortcut: keine Vollpruefung wie bei disk init, weil das bei grossen Platten Minuten dauert; bei Bedarf erweitern.
+    /// </summary>
+    private static bool IsBlank(IBlockDevice device)
+    {
+        const ulong batchBlocks = 128;
+        ulong edgeBlocks = Math.Min(device.BlockCount, 1024UL * 1024 / device.BlockSize);
+        var buffer = new byte[batchBlocks * device.BlockSize];
+        foreach (ulong start in new[] { 0UL, device.BlockCount - edgeBlocks })
+        {
+            for (ulong block = start; block < start + edgeBlocks; block += batchBlocks)
+            {
+                ulong count = Math.Min(batchBlocks, start + edgeBlocks - block);
+                device.ReadBlock(block, count, buffer);
+                for (ulong index = 0; index < count * device.BlockSize; index++)
+                    if (buffer[index] != 0) return false;
+            }
+        }
+        return true;
     }
 
     private static bool IsInstallMedium(IBlockDevice device)

@@ -83,3 +83,18 @@ Nach Zusammenführung von Backend, Release-Werkzeugen und `SetupWizard` wurde de
 5. `ZehOS-0.2.0.iso` startet ohne Datenplatte bis Textshell und Desktop.
 
 Nicht erneut geprüft: Recovery-Build nach der Zusammenführung (die Verdrahtung betrifft nur `ZEHOS_INSTALLER`), VMware, echte Hardware, Mausbedienung des Assistenten im Gast und der GitHub-Release-Workflow selbst.
+
+## Korrekturen nach dem unabhängigen Review
+
+Das Review fand keine Blocker. Behoben und erneut geprüft (278 Hosttests, 11 Python-Tests, native Releases 0.1.0/0.2.0 mit 0 Warnungen, QEMU/KVM/OVMF):
+
+- **Rückfallstart verdrängt den funktionierenden Kernel:** `update check` vergleicht zusätzlich mit `/boot/zehos-version.txt`. Im Gast nach Start von **ZehOS (vorherige Version)** (0.1.0 bei installierter 0.2.0) geprüft: Das Update wird mit Hinweis verweigert.
+- **Daten ohne erkannte Partition:** Leere Platten sind nur noch solche mit leerem erstem und letztem MiB; sonst verlangen Assistent, `setup install` und `InstallService` die Löschbestätigung. Im Gast: frische leere Platte ohne Bestätigung, eine ganze FAT32-Platte ohne Partitionstabelle wird von Cosmos als eine Partition erkannt und ebenfalls bestätigungspflichtig. Der Fall „Daten ohne Partition“ ist hostgetestet, nicht im Gast nachgestellt.
+- **Download-Grenze:** Der Kernel wird höchstens in der signierten Manifestgröße gelesen; das Manifest begrenzt die Größe auf 64 MiB.
+- **Rückfalleintrag nach Neuinstallation:** Der Installer schreibt auch `ProjektZeh.elf.bak`; der Eintrag startet im Gast direkt nach der Installation.
+- **Workflow:** Kein `workflow_dispatch` mehr; Releases entstehen nur aus `v*.*.*`-Tags.
+- **Doppelter Fehler beim Ersetzen:** Die ältere Sicherung bleibt unter ihrem Ausweichnamen, solange das Original noch unter `.bak` liegt.
+- **Installer-Build:** registriert `update` nicht mehr.
+- **Neu gefunden:** Nach einem Warmstart hing die erste Updateverbindung; Ursache und Abhilfe siehe `docs/COSMOS_SUPPORT.md`. Danach geprüft: Installation, Updateprüfung, `reboot`, erneute Prüfung, Installation und Start von 0.2.0.
+
+Offen: Zeitlimit bei einem Spiegel, der nach Verbindungsaufbau nicht antwortet; Schutz des Signaturgeheimnisses über eine GitHub-Umgebung mit Tag-Regel (Repository-Einstellung).

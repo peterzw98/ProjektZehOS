@@ -14,9 +14,10 @@ public sealed class InstallServiceTests
         var service = new InstallService(platform, [1], [2], "0.1.0");
         var disks = service.GetDisks();
         Assert.IsTrue(disks.IsOK());
-        Assert.AreEqual(2, disks.Value!.Length);
+        Assert.AreEqual(3, disks.Value!.Length);
         Assert.IsFalse(service.Begin("cd0", true).IsOK());
         Assert.IsFalse(service.Begin("sata0", false).IsOK());
+        Assert.IsFalse(service.Begin("sata2", false).IsOK(), "Daten ohne erkannte Partition verlangen ebenfalls die Loeschbestaetigung.");
         Assert.IsFalse(service.Begin("sata1", true).IsOK());
         Assert.AreEqual(0, platform.Opens);
         Assert.IsTrue(service.Begin("sata0", true).IsOK());
@@ -30,7 +31,8 @@ public sealed class InstallServiceTests
         [
             new(new InstallDisk("cd0", 256UL * 1024 * 1024, 1), true),
             new(new InstallDisk("sata0", 256UL * 1024 * 1024, 1), false),
-            new(new InstallDisk("sata1", 64UL * 1024 * 1024, 0), false)
+            new(new InstallDisk("sata1", 64UL * 1024 * 1024, 0), false),
+            new(new InstallDisk("sata2", 256UL * 1024 * 1024, 0, IsBlank: false), false)
         ]);
         public ResultObject<IInstallTarget> OpenTarget(string diskName)
         {

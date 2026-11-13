@@ -17,7 +17,8 @@ internal sealed class InstallJob : IInstallJob
 {
     private const int ChunkSize = 64 * 1024;
     private readonly IInstallTarget target;
-    private readonly string[] paths = ["/EFI/BOOT/BOOTX64.EFI", "/boot/ProjektZeh.elf", "/boot/zehos-version.txt"];
+    // Die .bak-Kopie macht den Rueckfalleintrag schon vor dem ersten Update startfaehig.
+    private readonly string[] paths = ["/EFI/BOOT/BOOTX64.EFI", "/boot/ProjektZeh.elf", "/boot/ProjektZeh.elf.bak", "/boot/zehos-version.txt"];
     private readonly byte[][] files;
     private int fileIndex;
     private int fileOffset;
@@ -28,7 +29,7 @@ internal sealed class InstallJob : IInstallJob
     public InstallJob(IInstallTarget target, byte[] efi, byte[] kernel, string version)
     {
         this.target = target;
-        files = [efi, kernel, Encoding.UTF8.GetBytes(version + "\n")];
+        files = [efi, kernel, kernel, Encoding.UTF8.GetBytes(version + "\n")];
     }
 
     public InstallStage Stage { get; private set; } = InstallStage.Partitioning;

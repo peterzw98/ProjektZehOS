@@ -1,21 +1,26 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using Cosmos.Kernel.System.Network;
+using ProjektZeh.Security;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Update;
 
 internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateSource
 {
-    internal const int MaximumKernelBytes = 64 * 1024 * 1024;
+    private const string TcpConnectionType = "Cosmos.Kernel.System.Network.Protocols.Tcp.TcpConnection, Cosmos.Kernel.System";
+    private static bool tcpStartRandomized;
 
-    public ResultObject<byte[]> Read(string name)
+    public ResultObject<byte[]> Read(string name, int maxBytes)
     {
-        // Dateinamen stammen aus dem streng geprueften Manifest oder aus diesen beiden festen Namen.
-        int limit = name == "update-manifest.txt" ? 4096 : name == "update-manifest.sig" ? 64 : MaximumKernelBytes;
+        // Dateinamen stammen aus dem streng geprueften Manifest oder aus festen Namen; die Grenze setzt der Aufrufer.
+        int limit = maxBytes;
         Socket? socket = null;
         NetworkStream? stream = null;
         DhcpClient? dhcp = null;
@@ -46,6 +51,7 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
                 dns.Close();
                 dns = null;
             }
+            RandomizeTcpStart();
             socket = new Socket(System.Net.Sockets.AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 10000,
@@ -71,6 +77,27 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
         catch (Exception exception) { result = CleanupFailure(result, exception); }
         return result;
     }
+
+    /// <summary>
+    /// Cosmos 3.0.94 beginnt nach jedem Start mit lokalem Port 49152 und Sequenznummer 1000. Nach einem Warmstart
+    /// kennen NAT und Gegenstelle dieses Verbindungstupel noch und verwerfen den neuen SYN; der Gast haengt dann im Verbindungsaufbau.
+    /// </summary>
+    private static void RandomizeTcpStart()
+    {
+        if (tcpStartRandomized) return;
+        byte[] random = new byte[8];
+        try { CosmosSaltSource.Fill(random); }
+        catch (CryptographicException) { BitConverter.TryWriteBytes(random, Stopwatch.GetTimestamp()); }
+        NextPort(null) = (ushort)(49152 + BitConverter.ToUInt16(random, 0) % 16000);
+        SequenceCounter(null) = BitConverter.ToUInt32(random, 4);
+        tcpStartRandomized = true;
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "s_nextPort")]
+    private static extern ref ushort NextPort([UnsafeAccessorType(TcpConnectionType)] object? connection);
+
+    [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "s_sequenceCounter")]
+    private static extern ref uint SequenceCounter([UnsafeAccessorType(TcpConnectionType)] object? connection);
 
     private static ResultObject<byte[]> CleanupFailure(ResultObject<byte[]> result, Exception exception) =>
         ResultObjectFactory.CreateFromException<byte[]>(new IOException(

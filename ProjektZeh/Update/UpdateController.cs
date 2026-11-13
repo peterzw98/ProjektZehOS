@@ -71,7 +71,7 @@ internal sealed class UpdateController(UpdateVersion currentVersion, Func<Update
             var offline = new UpdateService(source, target, currentVersion);
             var check = offline.Check();
             if (!check.IsOK()) return check.Status;
-            var kernel = source.Read(Path.GetFileName(path));
+            var kernel = source.Read(Path.GetFileName(path), (int)check.Value!.Size);
             if (!kernel.IsOK()) return kernel.Status;
             var result = offline.Install(kernel.Value!);
             if (offline.RequiresRestart) restartRequired = true;

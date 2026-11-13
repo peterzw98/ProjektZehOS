@@ -43,12 +43,13 @@ public sealed class UpdateCommandTests
 
     private sealed class Source : IUpdateSource
     {
-        public ResultObject<byte[]> Read(string name) => throw new AssertFailedException("Netzwerkzugriff");
+        public ResultObject<byte[]> Read(string name, int maxBytes) => throw new AssertFailedException("Netzwerkzugriff");
     }
     private sealed class Target : IUpdateTarget
     {
         public ResultErr ReplaceKernel(byte[] kernel) => throw new AssertFailedException("Schreibzugriff");
         public ResultErr WriteVersion(string version) => throw new AssertFailedException("Schreibzugriff");
+        public ResultObject<string> ReadVersion() => throw new AssertFailedException("Lesezugriff");
     }
     private sealed class Installer : IInstallService
     {

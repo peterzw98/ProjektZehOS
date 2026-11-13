@@ -17,7 +17,7 @@ internal sealed class SetupShellCommands(IInstallService installer, Func<bool> i
         {
             var disks = installer.GetDisks();
             if (!disks.IsOK()) return disks.Status;
-            foreach (var disk in disks.Value!) output.WriteLine($"{disk.Name}: {disk.SizeBytes} Bytes, {disk.PartitionCount} Partition(en)");
+            foreach (var disk in disks.Value!) output.WriteLine($"{disk.Name}: {disk.SizeBytes} Bytes, {disk.ContentText}");
             return ResultErr.CreateSuccess();
         }
         if (arguments.Length is 2 or 3 && arguments[0] == "install" && (arguments.Length == 2 || arguments[2] == "--erase"))

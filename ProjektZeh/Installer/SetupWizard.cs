@@ -240,7 +240,7 @@ internal sealed class SetupWizard
             case SetupPage.Confirm:
                 target = disks.Selected;
                 erase.Checked = false;
-                if (target!.PartitionCount > 0)
+                if (target!.RequiresErase)
                 {
                     erase.Label = $"Alle Daten auf {target.Name} loeschen";
                     erase.Bounds = new(contentX, ConfirmWarningY() + WarningHeight() + 16, contentWidth, painter.GlyphHeight + 8);
@@ -294,7 +294,7 @@ internal sealed class SetupWizard
     {
         SetupPage.License => accept.Checked,
         SetupPage.Disk => disks.Selected != null,
-        SetupPage.Confirm => target!.PartitionCount == 0 || erase.Checked,
+        SetupPage.Confirm => !target!.RequiresErase || erase.Checked,
         _ => true
     };
 
@@ -323,7 +323,7 @@ internal sealed class SetupWizard
     private void Begin()
     {
         // Loeschen wird nur nach der ausdruecklichen Bestaetigung fuer genau diese Platte angefordert.
-        var result = service.Begin(target!.Name, target.PartitionCount > 0 && erase.Checked);
+        var result = service.Begin(target!.Name, target.RequiresErase && erase.Checked);
         if (!result.IsOK()) { Fail(result.Status); return; }
         if (result.Value == null)
         {
@@ -495,10 +495,10 @@ internal sealed class SetupWizard
                 contentX, y, contentWidth, SecondaryInk, max: 2);
             return;
         }
-        if (selected == null || selected.PartitionCount == 0) return;
+        if (selected == null || !selected.RequiresErase) return;
         WarningIcon(surface, contentX, y + 4);
         Paragraph(surface, painter,
-            $"{PartitionText(selected.PartitionCount)} vorhanden. Alle Daten auf dieser Platte werden geloescht.",
+            $"{Capitalize(selected.ContentText)} vorhanden. Alle Daten auf dieser Platte werden geloescht.",
             contentX + 36, y, contentWidth - 36, Ink, max: 2);
     }
 
@@ -506,9 +506,9 @@ internal sealed class SetupWizard
 
     private int WarningHeight() => Paragraph(null, painter, ConfirmWarningText(), 0, 0, contentWidth - 68, 0) * painter.GlyphHeight + 28;
 
-    private string ConfirmWarningText() => target!.PartitionCount > 0
-        ? $"{PartitionText(target.PartitionCount)} vorhanden. Bei der Installation werden alle Daten auf dieser Platte unwiderruflich geloescht."
-        : "Die Platte enthaelt keine Partitionen. Es werden keine vorhandenen Daten geloescht.";
+    private string ConfirmWarningText() => target!.RequiresErase
+        ? $"{Capitalize(target.ContentText)} vorhanden. Bei der Installation werden alle Daten auf dieser Platte unwiderruflich geloescht."
+        : "Die Platte ist leer. Es werden keine vorhandenen Daten geloescht.";
 
     private void DrawConfirm(PixelSurface surface)
     {
@@ -519,7 +519,7 @@ internal sealed class SetupWizard
         Summary(surface, 1, "Version", $"ZehOS {service.ProductVersion}", label, line);
         Summary(surface, 2, "Startmodus", "UEFI", label, line);
         Summary(surface, 3, "Aufteilung", "1 EFI-Systempartition (FAT32)", label, line);
-        bool destructive = target.PartitionCount > 0;
+        bool destructive = target.RequiresErase;
         var box = new UiRect(contentX, ConfirmWarningY(), contentWidth, WarningHeight());
         surface.FillRectangle(box.X, box.Y, box.Width, box.Height, destructive ? WarningBorder : Divider);
         surface.FillRectangle(box.X + 1, box.Y + 1, box.Width - 2, box.Height - 2, destructive ? WarningBack : Footer);
@@ -609,7 +609,7 @@ internal sealed class SetupWizard
         }
     }
 
-    internal static string PartitionText(int count) => count == 1 ? "1 Partition" : $"{count} Partitionen";
+    private static string Capitalize(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// Bricht Text an Leerzeichen um und zeichnet die Zeilen ab first, hoechstens max; ohne Flaeche wird nur gezaehlt.
@@ -808,7 +808,7 @@ internal sealed class SetupDiskList : UiControl
         for (int index = 0; index < values.Length; index++)
         {
             sizes[index] = FormatSize(values[index].SizeBytes);
-            partitions[index] = values[index].PartitionCount == 0 ? "keine" : $"{values[index].PartitionCount}";
+            partitions[index] = values[index].PartitionCount > 0 ? $"{values[index].PartitionCount}" : values[index].IsBlank ? "keine" : "Daten";
             if (string.Equals(values[index].Name, previous, StringComparison.Ordinal)) SelectedIndex = index;
         }
         first = 0;
@@ -876,7 +876,7 @@ internal sealed class SetupDiskList : UiControl
             }
             int textTop = rowTop + (rowHeight - glyph) / 2;
             // Platten mit Partitionen tragen dauerhaft ein Warnzeichen; das Loeschen wird spaeter einzeln bestaetigt.
-            if (items[index].PartitionCount > 0) SetupWizard.WarningIcon(surface, left + 10, rowTop + (rowHeight - 24) / 2);
+            if (items[index].RequiresErase) SetupWizard.WarningIcon(surface, left + 10, rowTop + (rowHeight - 24) / 2);
             else DiskIcon(surface, left + 10, rowTop + (rowHeight - 20) / 2);
             painter.Text(surface, items[index].Name, nameColumn, textTop, sizeColumn - nameColumn - 8, SetupWizard.Ink);
             painter.Text(surface, sizes[index], sizeColumn, textTop, partitionColumn - sizeColumn, SetupWizard.Ink);

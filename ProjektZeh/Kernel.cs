@@ -35,9 +35,10 @@ public sealed class Kernel : Sys.Kernel
             return new UpdateVersion(version.Major, version.Minor, version.Build);
         }
     }
-    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
+#else
+    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
 #endif
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
     private static bool SecurityRecovery =>
@@ -87,10 +88,11 @@ public sealed class Kernel : Sys.Kernel
         shell = new ShellService(
         [
             .. new FileShellCommands(files).Commands,
-            .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #if ZEHOS_INSTALLER
             // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
             .. new SetupShellCommands(installer, () => true).Commands,
+#else
+            .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
             .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,

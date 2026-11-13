@@ -82,6 +82,29 @@ public sealed class UpdateServiceTests
         }
     }
 
+    [TestMethod]
+    public void FallbackBoot_RefusesUpdateToKeepWorkingBackup()
+    {
+        var target = new Target { InstalledVersion = "0.2.0\n" };
+        var service = new UpdateService(new Source(), target, new UpdateVersion(0, 1, 0));
+        Assert.IsFalse(service.Check().IsOK());
+        Assert.IsFalse(service.Install().IsOK());
+        Assert.AreEqual(0, target.Replacements);
+        Assert.IsTrue(new UpdateService(new Source(), new Target { InstalledVersion = "0.1.0\n" }, new UpdateVersion(0, 1, 0)).Check().IsOK());
+    }
+
+    [TestMethod]
+    public void KernelDownload_IsLimitedToSignedSize()
+    {
+        var source = new Source();
+        var service = new UpdateService(source, new Target(), new UpdateVersion(0, 1, 0));
+        Assert.IsTrue(service.Check().IsOK());
+        source.Files["ProjektZeh-0.2.0.elf"] = new byte[43];
+        Assert.IsFalse(service.Install().IsOK());
+        Assert.AreEqual(42, source.Limits["ProjektZeh-0.2.0.elf"]);
+        Assert.AreEqual(64, source.Limits["update-manifest.sig"]);
+    }
+
     private sealed class Source : IUpdateSource
     {
         public Dictionary<string, byte[]> Files { get; } = new()
@@ -90,9 +113,14 @@ public sealed class UpdateServiceTests
             ["update-manifest.sig"] = Convert.FromBase64String(Signature),
             ["ProjektZeh-0.2.0.elf"] = Encoding.ASCII.GetBytes(new string('x', 42))
         };
-        public ResultObject<byte[]> Read(string name) => Files.TryGetValue(name, out byte[]? value)
-            ? ResultObjectFactory.CreateSuccess(value)
-            : ResultObjectFactory.CreateFailure<byte[]>(ResultCode.NotFound, name);
+        public Dictionary<string, int> Limits { get; } = new();
+        public ResultObject<byte[]> Read(string name, int maxBytes)
+        {
+            Limits[name] = maxBytes;
+            if (!Files.TryGetValue(name, out byte[]? value)) return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.NotFound, name);
+            return value.Length <= maxBytes ? ResultObjectFactory.CreateSuccess(value)
+                : ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "zu gross");
+        }
     }
 
     private sealed class Target : IUpdateTarget
@@ -101,6 +129,8 @@ public sealed class UpdateServiceTests
         public bool FailVersion { get; init; }
         public int Replacements { get; private set; }
         public string? Version { get; private set; }
+        public string? InstalledVersion { get; init; }
+        public ResultObject<string> ReadVersion() => ResultObjectFactory.CreateSuccess(InstalledVersion);
         public ResultErr ReplaceKernel(byte[] kernel) { Replacements++; return FailReplace ? ResultErr.CreateFailure(ResultCode.Failure, "Austauschfehler") : ResultErr.CreateSuccess(); }
         public ResultErr WriteVersion(string version) { Version = version; return FailVersion ? ResultErr.CreateFailure(ResultCode.Failure, "Versionsfehler") : ResultErr.CreateSuccess(); }
     }

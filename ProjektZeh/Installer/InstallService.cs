@@ -37,8 +37,8 @@ internal sealed class InstallService(IInstallPlatform platform, byte[] efi, byte
             if (!string.Equals(candidate.Disk.Name, diskName, StringComparison.OrdinalIgnoreCase)) continue;
             if (candidate.IsInstallMedium) return Failure("Das Installationsmedium ist kein Installationsziel.");
             if (candidate.Disk.SizeBytes < MinimumDiskSize) return Failure("Das Laufwerk muss mindestens 128 MiB gross sein.");
-            if (candidate.Disk.PartitionCount != 0 && !eraseExisting)
-                return Failure("Das Laufwerk enthaelt Partitionen; ausdrueckliche Loeschbestaetigung erforderlich.");
+            if (candidate.Disk.RequiresErase && !eraseExisting)
+                return Failure("Das Laufwerk enthaelt Partitionen oder Daten; ausdrueckliche Loeschbestaetigung erforderlich.");
             if (efi.Length == 0 || kernel.Length == 0) return Failure("Die Installationsdateien fehlen.");
             var target = platform.OpenTarget(candidate.Disk.Name);
             if (!target.IsOK()) return ResultObjectFactory.CreateFailure<IInstallJob>(target.Status);

@@ -252,7 +252,8 @@ internal sealed class FileService
         }
         catch (Exception exception) when (IsFileError(exception))
         {
-            if (previousBackup != null)
+            // Liegt das Original nach gescheiterter Wiederherstellung noch unter backupPath, bleibt die aeltere Sicherung unter ihrem Ausweichnamen.
+            if (previousBackup != null && !File.Exists(backupPath))
             {
                 try { moveFile(previousBackup, backupPath, false); }
                 catch (Exception restoreException) when (IsFileError(restoreException))

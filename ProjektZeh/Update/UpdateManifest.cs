@@ -7,6 +7,8 @@ namespace ProjektZeh.Update;
 
 internal sealed record UpdateManifest(UpdateVersion Version, string Kernel, long Size, string Sha256)
 {
+    internal const int MaximumManifestBytes = 4096;
+    internal const int MaximumKernelBytes = 64 * 1024 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static ResultObject<UpdateManifest> Parse(byte[] bytes)
@@ -27,7 +29,7 @@ internal sealed record UpdateManifest(UpdateVersion Version, string Kernel, long
             if (!UpdateVersion.TryParse(versionText, out var version) ||
                 kernel.Length == 0 || kernel == "." || kernel == ".." ||
                 !ValidFileName(kernel) || sizeText.Length == 0 || sizeText[0] == '0' ||
-                !Digits(sizeText) || !long.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out long size) || size <= 0 ||
+                !Digits(sizeText) || !long.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out long size) || size <= 0 || size > MaximumKernelBytes ||
                 hash.Length != 64 || !IsHex(hash)) return Invalid();
             return ResultObjectFactory.CreateSuccess(new UpdateManifest(version, kernel, size, hash));
         }
