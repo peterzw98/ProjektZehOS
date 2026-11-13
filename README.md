@@ -48,6 +48,8 @@ Höchstens acht Fenster sind gleichzeitig geöffnet, einschließlich minimierter
 
 Die gemeinsame Schleife verarbeitet pro Durchlauf höchstens 64 rohe Tastaturereignisse, verteilt Eingaben, aktualisiert die Statusanzeige und zeichnet bei Änderungen mit höchstens etwa 60 Bildern pro Sekunde. Die Zeitmessung verwendet `Stopwatch`; zwischen Durchläufen wartet Cosmos kurz. Datei- und Laufwerksbefehle laufen weiterhin synchron und können die Anzeige während ihrer Ausführung anhalten. Die spätere Hintergrundverarbeitung ist damit noch nicht umgesetzt.
 
+Die Anzeige **FPS** zählt abgeschlossene Bildausgaben im Messintervall, **ms** daneben die längste Zeichen-/Ausgabedauer dieses Intervalls. Der ruhende Desktop zeichnet absichtlich nur bei Änderungen; eine niedrige FPS-Zahl im Leerlauf ist daher kein Leistungslimit. Bei dauernder Mausbewegung beziehungsweise Pong werden feste 60-Hz-Bildtermine verwendet. Im QEMU-Referenztest stieg die gemessene Bildrate von etwa 15–16 auf 58–61 FPS. Ursache und Grenzen beschreibt [DESKTOP_PERFORMANCE.md](docs/DESKTOP_PERFORMANCE.md).
+
 Geprüfte Cosmos-Schnittstellen, Referenz-VM und Grenzen stehen unter [`docs/COSMOS_SUPPORT.md`](docs/COSMOS_SUPPORT.md).
 
 Gemeinsame Ergebnis- und Fehlertypen liegen unter [`ProjektZeh/Shared`](ProjektZeh/Shared/README.md). Die für ZehOS entwickelte Implementierung trennt unveränderliche Statusinformationen von optionalen Ergebniswerten. Erfolg wird über `CreateSuccess` gesetzt, Fehler über `CreateFailure` oder `CreateFromException`; `IsOK()` prüft den Status.

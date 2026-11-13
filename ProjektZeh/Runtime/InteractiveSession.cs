@@ -1,6 +1,6 @@
 using System;
+using System.Threading;
 using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
@@ -79,9 +79,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     line.Draw(editor);
                 }
                 dirty = false;
-                nextFrame = now + 16;
+                nextFrame = FrameTiming.NextDeadline(now);
             }
-            TimerManager.Wait(1);
+            // Der HAL-Wartetimer tickt im Referenzgast nur mit 18 Hz; der Scheduler weckt feiner auf.
+            Thread.Sleep(1);
         }
     }
 
