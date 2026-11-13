@@ -3,6 +3,7 @@ using System.Threading;
 using Cosmos.Kernel.System.Graphics;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
+using ProjektZeh.Security;
 using ProjektZeh.Shell;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Storage;
@@ -11,10 +12,12 @@ namespace ProjektZeh.Runtime;
 
 internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
     Func<FileService> createFiles, ITextOutput output,
-    Func<long> getElapsedMilliseconds, SystemLog systemLog)
+    Func<long> getElapsedMilliseconds, SystemLog systemLog, AccountService accounts, UserSession identity)
 {
     private readonly CosmosInputService devices = new();
-    private readonly LineEditor editor = new();
+    private readonly LoginFlow login = new(accounts, shell, output);
+    private int generation = identity.Generation;
+    private LineEditor editor = new();
     private readonly ConsoleLineView line = new();
     private DisplayService? display;
     private bool graphics;
@@ -28,12 +31,13 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         long previousTick = -1;
         bool dirty = true;
         output.WriteLine("F4: Desktop. Pfeiltasten: Cursor/Verlauf. Esc: zur Textshell.");
-        line.Begin();
+        BeginLine();
         if (startDesktop) ToggleGraphics();
         while (true)
         {
-            if (!graphics && shell.Poll(output)) { line.Begin(); dirty = true; }
-            editor.IsSecret = shell.IsSecretInput;
+            if (!graphics && shell.Poll(output)) { BeginLine(); dirty = true; }
+            SyncSession();
+            editor.IsSecret = IsLocked ? login.IsSecret : shell.IsSecretInput;
             devices.Poll(input);
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
@@ -50,10 +54,11 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
                 {
                     line.Submit(editor.IsSecret ? "********" : command);
-                    var result = shell.ExecuteLine(command, output);
+                    var result = IsLocked ? login.Submit(command) : shell.ExecuteLine(command, output);
                     if (!result.IsOK()) output.WriteLine(result.Message);
-                    editor.IsSecret = shell.IsSecretInput;
-                    line.Begin();
+                    SyncSession();
+                    editor.IsSecret = IsLocked ? login.IsSecret : shell.IsSecretInput;
+                    BeginLine();
                 }
                 dirty = true;
             }
@@ -74,7 +79,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                         LeaveGraphics();
                         systemLog.Error("Desktop", $"Zeichnen fehlgeschlagen: {exception.Message}");
                         output.WriteLine($"Desktopfehler: {exception.Message}");
-                        line.Begin();
+                        BeginLine();
                     }
                 }
                 else
@@ -95,7 +100,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell, createFiles);
+            display ??= new DisplayService(createShell, createFiles, new DesktopSession(accounts, shell, identity));
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");
@@ -105,7 +110,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             output.Clear();
             systemLog.Error("Desktop", $"Start fehlgeschlagen: {exception.Message}");
             output.WriteLine($"Desktop konnte nicht starten: {exception.Message}");
-            line.Begin();
+            BeginLine();
         }
     }
 
@@ -116,6 +121,27 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         output.Clear();
         Console.CursorVisible = true;
         output.WriteLine("ZehOS Textshell - F4 oeffnet den Desktop.");
+        BeginLine();
+    }
+
+    /// <summary>Ohne angemeldete Konsolenidentitaet nimmt die Textshell nur die Anmeldung entgegen.</summary>
+    private bool IsLocked => identity.UserId == null && login.IsActive;
+
+    /// <summary>Verlauf und halbe Anmeldungen gehoeren nur zur jeweiligen Identitaet.</summary>
+    private void SyncSession()
+    {
+        if (identity.Generation == generation) return;
+        generation = identity.Generation;
+        editor = new();
+        login.Reset();
+    }
+
+    private void BeginLine()
+    {
+        bool locked = IsLocked;
+        // Waehrend einer laufenden Kennwortpruefung erscheint der Titel erst mit dem naechsten Schritt erneut.
+        if (locked && !login.IsSecret && !login.IsBusy) output.WriteLine($"ZehOS - {login.Title}");
+        line.Prompt = !locked ? ConsoleLineView.ShellPrompt : login.IsBusy ? "" : login.Prompt;
         line.Begin();
     }
 }

@@ -21,6 +21,8 @@ internal sealed class UiTextBox(int maximumLength, bool multiline = false, bool 
     public int FirstRow { get; private set; }
     public int Revision => buffer.Revision;
     public Action? Submitted { get; set; }
+    /// <summary>Zeigt Sternchen statt des Inhalts, etwa fuer Kennwoerter.</summary>
+    public bool Masked { get; set; }
 
     public void SetText(string value)
     {
@@ -118,7 +120,7 @@ internal sealed class UiTextBox(int maximumLength, bool multiline = false, bool 
             int top = y + Bounds.Y + 6 + (row - FirstRow) * glyphHeight;
             if (selectedAll && active && Focused)
                 surface.FillRectangle(x + Bounds.X + 6, top, length * glyphWidth, glyphHeight, UiPainter.Muted);
-            painter.Text(surface, Text.AsSpan(start, length), x + Bounds.X + 6, top, Bounds.Width - 12);
+            painter.Text(surface, Masked ? new string('*', length) : Text.AsSpan(start, length), x + Bounds.X + 6, top, Bounds.Width - 12);
         }
         if (!readOnly && Focused && active && cursorRow >= FirstRow && cursorRow < FirstRow + visibleRows)
         {

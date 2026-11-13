@@ -81,9 +81,10 @@ internal sealed class FileService
     }
 
     /// <summary>
-    /// Liest eine Textdatei und schliesst sie anschliessend.
+    /// Liest eine Textdatei und schliesst sie anschliessend. Mit <paramref name="allowMissing"/> liefert eine fehlende
+    /// Datei Erfolg ohne Wert; alle anderen Fehler, auch ein fehlendes Verzeichnis, bleiben Fehler.
     /// </summary>
-    public ResultObject<string> ReadText(string? path)
+    public ResultObject<string> ReadText(string? path, bool allowMissing = false)
     {
         var resolved = ResolvePath(path);
         if (!resolved.IsOK())
@@ -103,6 +104,10 @@ internal sealed class FileService
             }
 
             return ResultObjectFactory.CreateSuccess(new string(buffer, 0, length));
+        }
+        catch (FileNotFoundException) when (allowMissing)
+        {
+            return ResultObjectFactory.CreateSuccess<string>(null);
         }
         catch (Exception exception) when (IsFileError(exception))
         {
