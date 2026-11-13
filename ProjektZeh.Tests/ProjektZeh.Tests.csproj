@@ -24,9 +24,13 @@
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Window*.cs" Link="Graphics\%(Filename)%(Extension)" />
+    <Compile Include="..\ProjektZeh\Graphics\DesktopMetrics.cs" Link="Graphics\DesktopMetrics.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Desktop.cs" Link="Graphics\Desktop.cs" />
+    <Compile Include="..\ProjektZeh\UI\**\*.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\FrameTiming.cs" Link="Runtime\FrameTiming.cs" />
+    <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />

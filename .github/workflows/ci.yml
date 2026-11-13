@@ -46,6 +46,9 @@ jobs:
           --logger "trx;LogFileName=shell-tests.trx"
           --results-directory TestResults
 
+      - name: Check isolated FAT32 test-copy helper
+        run: python3 -m unittest discover -s scripts/tests -v
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

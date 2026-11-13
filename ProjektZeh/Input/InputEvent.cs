@@ -9,8 +9,8 @@ internal enum PointerButtons { None = 0, Left = 1, Right = 2, Middle = 4 }
 
 internal enum PhysicalKey : byte
 {
-    Escape = 1, Backspace = 14, Enter = 28, Control = 29, LeftShift = 42,
-    RightShift = 54, Alt = 56, CapsLock = 58, F4 = 62, NumLock = 69,
+    Escape = 1, Backspace = 14, Tab = 15, Enter = 28, Control = 29, LeftShift = 42,
+    RightShift = 54, Alt = 56, Space = 57, CapsLock = 58, F1 = 59, F2 = 60, F3 = 61, F4 = 62, F5 = 63, NumLock = 69,
     Home = 71, Up = 72, PageUp = 73, Left = 75, Right = 77, End = 79, Down = 80, PageDown = 81, Delete = 83,
     AltGr = 96
 }

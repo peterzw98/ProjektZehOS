@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- Fremdquellen unverändert prüfen; Projekt-Stilanalysen sind hier nicht Gegenstand. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(ManagedDoomSource)/ManagedDoom/src/**/*.cs"
+             Exclude="$(ManagedDoomSource)/ManagedDoom/src/Silk/**/*.cs" />
+  </ItemGroup>
+
+  <Target Name="CheckManagedDoomSource" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(ManagedDoomSource)' == '' Or !Exists('$(ManagedDoomSource)/ManagedDoom/src/Doom/Doom.cs')"
+           Text="ManagedDoomSource muss auf die externe Managed-Doom-Arbeitskopie zeigen; siehe docs/DOOM_FEASIBILITY.md." />
+  </Target>
+</Project>
