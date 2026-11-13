@@ -6,6 +6,7 @@ using ProjektZeh.Apps.Terminal;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
 
@@ -15,7 +16,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void AltDuringDrag_MouseReleaseStillEndsCapture()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var window = desktop.Windows.ActiveWindow!;
         desktop.Handle(new(InputEventType.PointerDown, X: window.X + 20, Y: window.Y + 10, Button: PointerButtons.Left));
@@ -31,7 +32,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void OpenMenu_PausesPongUntilWindowRegainsFocus()
     {
-        var desktop = new Desktop(1024, 768, new byte[16384], 16, 32, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[16384], 16, 32, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenPong();
         var game = ((PongApp)desktop.Windows.ActiveWindow!.Application).Game;
         var surface = new PixelSurface(1024, 768, new int[1024 * 768]);
@@ -57,7 +58,7 @@ public sealed class DesktopTests
     [DataRow("Pong")]
     public void Menu_SearchAndLaunch_PreservesMasterApplications(string name)
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
@@ -78,7 +79,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void KeyboardMenu_SpaceLaunch_DoesNotTypeSpaceIntoNewTerminal()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: 59));
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
@@ -97,7 +98,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void Taskbar_MinimizeRestore_AndMenuEscape_PreserveDraft()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var window = desktop.Windows.ActiveWindow!;
         var terminal = (TerminalApp)window.Application;
@@ -116,7 +117,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void AltTab_ThreeWindows_CyclesWithoutEditingTerminal()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var first = desktop.Windows.ActiveWindow!;
         desktop.OpenTerminal();
@@ -140,7 +141,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void MenuSearch_FiltersAppsWithoutLeakingTextIntoTerminal()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var terminal = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
         desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
@@ -157,7 +158,7 @@ public sealed class DesktopTests
     public void Desktop_BootsEmpty_AndMenuStarterRespectsLimit()
     {
         int shells = 0;
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => { shells++; return new ShellService(); });
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => { shells++; return new ShellService(); }, () => new FileService("/data"));
         Assert.AreEqual(0, desktop.Windows.Count);
         Assert.AreEqual(0, shells);
         desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Right));
@@ -173,7 +174,7 @@ public sealed class DesktopTests
     [TestMethod]
     public void Desktop_RedrawAfterMoveAndClose_RestoresBackgroundAndCanReopen()
     {
-        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         var pixels = new int[1024 * 768];
         var surface = new PixelSurface(1024, 768, pixels);
         desktop.OpenTerminal();

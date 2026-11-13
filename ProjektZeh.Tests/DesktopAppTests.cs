@@ -7,6 +7,9 @@ using ProjektZeh.Apps.Pong;
 using ProjektZeh.Apps.TextEditor;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
+using ProjektZeh.Security;
+using ProjektZeh.Shared;
+using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.UI;
 
@@ -26,6 +29,41 @@ public sealed class DesktopAppTests
     }
     [TestCleanup]
     public void Cleanup() => Directory.Delete(directory, true);
+
+    [TestMethod]
+    public void DesktopApps_UseCentralPermissionsAndLoseWriteAccessAfterLogout()
+    {
+        var access = new FileAccessControl(directory);
+        access.Initialize();
+        access.Persist = ResultErr.CreateSuccess;
+        var identity = new UserSession("alice", "alice", false, directory);
+        access.Assign(directory, "alice");
+        string foreign = Path.Combine(directory, "bob.txt");
+        File.WriteAllText(foreign, "vertraulich");
+        access.Assign(foreign, "bob");
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(directory, access: access, session: identity));
+        Assert.IsTrue(desktop.OpenFiles());
+        var manager = (FileManagerApp)desktop.Windows.ActiveWindow!.Application;
+        string? opened = null;
+        var browser = new FileManagerApp(new FileService(directory, access: access, session: identity), painter,
+            path => { opened = path; return true; });
+        browser.Start(); Click(browser, 600, 80);
+        Assert.IsNull(opened, "Fremde Dateien duerfen nicht in der Auswahl erscheinen.");
+        Assert.IsTrue(desktop.OpenEditor());
+        var editor = (TextEditorApp)desktop.Windows.ActiveWindow!.Application;
+        Click(editor, 20, 130); Type(editor, "eigene Datei");
+        editor.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F2));
+        string target = Path.Combine(directory, "neu.txt");
+        Assert.AreEqual("eigene Datei", File.ReadAllText(target));
+        identity.Logout();
+        Type(editor, "gesperrt");
+        editor.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F2));
+        Assert.IsTrue(editor.IsDirty);
+        Assert.AreEqual("eigene Datei", File.ReadAllText(target));
+        Assert.AreEqual("vertraulich", File.ReadAllText(foreign));
+        manager.Close();
+    }
 
     [TestMethod]
     public void Editor_NewMultilineFile_SaveReopenAndPreserveExistingLineEndings()

@@ -46,7 +46,7 @@ internal sealed class Desktop
     private sealed record ApplicationEntry(string Name, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
-        Func<ShellService> createShell, Func<FileService>? createFiles = null)
+        Func<ShellService> createShell, Func<FileService> createFiles)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 400 + BarHeight);
@@ -60,7 +60,8 @@ internal sealed class Desktop
         this.glyphWidth = glyphWidth;
         this.glyphHeight = glyphHeight;
         this.createShell = createShell;
-        this.createFiles = createFiles ?? (() => new FileService("/data"));
+        ArgumentNullException.ThrowIfNull(createFiles);
+        this.createFiles = createFiles;
         painter = new(font, glyphWidth, glyphHeight);
         Windows = new WindowManager(width, height - BarHeight);
         applications = [new("Terminal", OpenTerminal), new("Dateien", OpenFiles),

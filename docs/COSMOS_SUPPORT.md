@@ -2,6 +2,12 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Benutzer-/Kryptografieprobe am 13. November 2026
+
+Etappe 6c verwendet die bereits genehmigte BouncyCastle.Cryptography **2.7.0**, ohne Cosmos oder andere Abhängigkeiten zu aktualisieren. Im QEMU-Gast funktionieren PBKDF2-SHA256 mit **600000 Iterationen**, ein fester SHA256-Testvektor, positive/negative Kennwortvergleiche und die nativen RDSEED-/RDRAND-Funktionen. Die Plattform-.NET-PBKDF2-Implementierung war im historischen Vorversuch an einer Typinitialisierung gescheitert; sie wird im Kontenmodell nicht verwendet. Eine erfolgreiche Hostberechnung gilt weiterhin nicht als Cosmos-Nachweis.
+
+Die Kennwortprobe bestätigt ausdrücklich das Löschen temporärer UTF8-Kennwortbytes nach erfolgreicher Ableitung und nach einer ausgelösten Argumentausnahme. Dazu wird auf beiden Wegen explizit gelöscht; die in Etappe 6b nachgewiesene Grenze verschachtelter `finally`-Blöcke wird nicht vorausgesetzt. Die vollständige Dateiprobe auf einem isolierten FAT32-Testimage besteht einschließlich Anlegen/Ersetzen, zwei Benutzern, Rechtefreigaben und -verweigerung, Neuladen, Metadatenkorruption und unveränderter Sicherung einer 70000-Byte-Recovery-Datei. Ein tatsächlicher Neustart erhält Kontokennung und Dateiinhalte. Interaktive Kennworteingabe, Login und Logout wurden im Sicherheits-Recovery-Gast geprüft. Aktueller Gesamtstand und verbleibende Plattformprüfungen: [ETAPPE6C_STATUS.md](ETAPPE6C_STATUS.md). Für Etappe 6c sind VMware und echte Hardware nicht nachgewiesen.
+
 ## Nachrichtenprobe am 13. November 2026
 
 Der Branch `codex/etappe6b` verwendet unverändert Cosmos **3.0.94** und erweitert den Threadprobe-Build um `MessageGuestProbe`. Mit installiertem SDK **10.0.112** und den vorhandenen Cosmos-Werkzeugen wurde der native Release-Build mit Warnungen als Fehler erfolgreich erstellt.

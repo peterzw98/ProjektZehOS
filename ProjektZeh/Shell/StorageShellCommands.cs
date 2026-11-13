@@ -1,5 +1,6 @@
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
+using System;
 
 namespace ProjektZeh.Shell;
 
@@ -9,12 +10,16 @@ namespace ProjektZeh.Shell;
 internal sealed class StorageShellCommands
 {
     private readonly IStorageService storage;
+    private readonly Func<bool>? isAdministrator;
+    private readonly Action? storageChanged;
 
     public ShellCommand[] Commands { get; }
 
-    public StorageShellCommands(IStorageService storage)
+    public StorageShellCommands(IStorageService storage, Func<bool>? isAdministrator = null, Action? storageChanged = null)
     {
         this.storage = storage;
+        this.isAdministrator = isAdministrator;
+        this.storageChanged = storageChanged;
         Commands =
         [
             new("disk", "disk list|init <Name>|mount <Name>|unmount",
@@ -24,6 +29,7 @@ internal sealed class StorageShellCommands
 
     private ResultErr Execute(string[] arguments, ITextOutput output)
     {
+        if (isAdministrator != null && !isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Laufwerksverwaltung erfordert Administratorrechte.");
         if (arguments.Length == 0)
         {
             return InvalidArguments();
@@ -34,14 +40,20 @@ internal sealed class StorageShellCommands
             case "list" when arguments.Length == 1:
                 return ListDevices(output);
             case "init" when arguments.Length == 2:
-                return storage.InitializeTestDisk(arguments[1]);
+                return Changed(storage.InitializeTestDisk(arguments[1]));
             case "mount" when arguments.Length == 2:
-                return storage.Mount(arguments[1]);
+                return Changed(storage.Mount(arguments[1]));
             case "unmount" when arguments.Length == 1:
-                return storage.Unmount();
+                return Changed(storage.Unmount());
             default:
                 return InvalidArguments();
         }
+    }
+
+    private ResultErr Changed(ResultErr result)
+    {
+        if (result.IsOK()) storageChanged?.Invoke();
+        return result;
     }
 
     private ResultErr ListDevices(ITextOutput output)

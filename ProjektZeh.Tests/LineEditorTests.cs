@@ -90,6 +90,27 @@ public sealed class LineEditorTests
         Assert.AreEqual(expected, editor.Text);
     }
 
+    [TestMethod]
+    public void Editor_SecretInputUsesTextBufferEditingWithoutHistoryOrOverflow()
+    {
+        var editor = new LineEditor();
+        Type(editor, "echo old"); Key(editor, PhysicalKey.Enter);
+        editor.IsSecret = true;
+        Type(editor, new string('a', 129));
+        Assert.AreEqual(128, editor.Text.Length);
+        Assert.AreEqual(new string('*', 128), editor.DisplayText);
+        Key(editor, PhysicalKey.Up);
+        Assert.AreEqual(128, editor.Text.Length);
+        Key(editor, PhysicalKey.Home); Key(editor, PhysicalKey.Delete);
+        Type(editor, "b");
+        Assert.AreEqual('b', editor.Text[0]);
+        editor.Handle(new(InputEventType.KeyDown, (byte)PhysicalKey.Enter), out var secret);
+        Assert.AreEqual(128, secret!.Length);
+        editor.IsSecret = false;
+        Key(editor, PhysicalKey.Up);
+        Assert.AreEqual("echo old", editor.Text);
+    }
+
     private static void Type(LineEditor editor, string text)
     {
         foreach (char character in text) editor.Handle(new(InputEventType.Text, Character: character), out _);

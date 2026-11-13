@@ -5,13 +5,14 @@ using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
 using ProjektZeh.SystemServices;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime;
 
-internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOutput output,
+internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
+    Func<FileService> createFiles, ITextOutput output,
     Func<long> getElapsedMilliseconds, SystemLog systemLog)
 {
-    private readonly ShellService shell = createShell();
     private readonly CosmosInputService devices = new();
     private readonly LineEditor editor = new();
     private readonly ConsoleLineView line = new();
@@ -31,6 +32,8 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         if (startDesktop) ToggleGraphics();
         while (true)
         {
+            if (!graphics && shell.Poll(output)) { line.Begin(); dirty = true; }
+            editor.IsSecret = shell.IsSecretInput;
             devices.Poll(input);
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
@@ -44,11 +47,12 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     }
                     else display!.Handle(value);
                 }
-                else if (editor.Handle(value, out string? command) && command != null)
+                else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
                 {
-                    line.Submit(command);
+                    line.Submit(editor.IsSecret ? "********" : command);
                     var result = shell.ExecuteLine(command, output);
                     if (!result.IsOK()) output.WriteLine(result.Message);
+                    editor.IsSecret = shell.IsSecretInput;
                     line.Begin();
                 }
                 dirty = true;
@@ -91,7 +95,7 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell);
+            display ??= new DisplayService(createShell, createFiles);
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");

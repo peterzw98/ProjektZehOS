@@ -4,6 +4,7 @@ using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.Graphics.Fonts;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Graphics;
 
@@ -14,7 +15,7 @@ internal sealed class DisplayService
     private readonly Desktop desktop;
     private long nextSample;
 
-    public DisplayService(Func<ShellService> createShell)
+    public DisplayService(Func<ShellService> createShell, Func<FileService> createFiles)
     {
         canvas = Canvas.GetFullScreen();
         if (canvas.Width != 1024 || canvas.Height != 768 || canvas.Mode.ColorDepth != ColorDepth.ColorDepth32)
@@ -22,7 +23,7 @@ internal sealed class DisplayService
         surface = new PixelSurface(canvas.Width, canvas.Height,
             canvas.GetBuffer() ?? throw new InvalidOperationException("Kein Grafikpuffer vorhanden."));
         var font = PCScreenFont.DefaultFont;
-        desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell);
+        desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles);
     }
 
     public bool NeedsAnimation => desktop.NeedsAnimation;
