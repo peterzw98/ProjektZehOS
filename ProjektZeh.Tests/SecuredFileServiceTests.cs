@@ -47,4 +47,31 @@ public sealed class SecuredFileServiceTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [TestMethod]
+    public void FailedCreationLeavesNoOrphanedRightsEntry()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var access = new FileAccessControl(root);
+            access.Initialize();
+            access.Assign(root, "1");
+            access.Grant(root, "*", FilePermission.Read | FilePermission.Write);
+            int saves = 0;
+            access.Persist = () => { saves++; return ResultErr.CreateSuccess(); };
+            var bob = new FileService(root, (_, _, _) => throw new IOException("Datentraeger voll"),
+                access, new UserSession("2", "bob", false, root));
+            var alice = new FileService(root, access: access, session: new UserSession("3", "alice", false, root));
+            string target = Path.Combine(root, "notiz.txt");
+
+            Assert.IsFalse(bob.WriteText("notiz.txt", "x").IsOK());
+            Assert.IsFalse(access.Contains(target), "Der Eintrag muss nach dem Schreibfehler zurueckgenommen sein.");
+            Assert.AreEqual(2, saves, "Anlegen und Zuruecknehmen muessen beide gespeichert werden.");
+            Assert.IsTrue(alice.WriteText("notiz.txt", "y").IsOK(), "Ein anderer Benutzer muss den Pfad danach anlegen duerfen.");
+            Assert.IsTrue(access.IsOwner(target, "3"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }
