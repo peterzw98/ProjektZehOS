@@ -5,6 +5,7 @@ using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Shared;
+using ProjektZeh.Scheduling;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -22,6 +23,8 @@ public sealed class Kernel : Sys.Kernel
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
     private bool startDesktop;
+    private readonly BackgroundTaskService tasks = new();
+    private readonly CosmosRoundRobinScheduler scheduler = new();
 
     public Kernel()
     {
@@ -36,6 +39,7 @@ public sealed class Kernel : Sys.Kernel
         [
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage).Commands,
+            .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
@@ -92,6 +96,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
+        InstallScheduler();
 #if ZEHOS_THREAD_PROBE
         if (!CosmosThreadProbe.Run())
         {
@@ -110,7 +115,23 @@ public sealed class Kernel : Sys.Kernel
                 "cause='PowerUnsupported' message='Cosmos unterstuetzt auf diesem System keine Energieaktionen.'");
         }
 
+        if (!tasks.StopAll(2000)) return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         return VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+    }
+
+#pragma warning disable COSMOS0001
+    private void InstallScheduler()
+    {
+        Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
+        systemLog.Information("Scheduler", $"{scheduler.Name}; Zeitscheibe={CosmosRoundRobinScheduler.QuantumNs}ns");
+    }
+#pragma warning restore COSMOS0001
+
+    private string[] DescribeScheduler()
+    {
+        var snapshot = scheduler.Snapshot();
+        return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
+            "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
     }
 
     private long GetElapsedMilliseconds()
