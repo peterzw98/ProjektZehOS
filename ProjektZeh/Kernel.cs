@@ -113,7 +113,7 @@ public sealed class Kernel : Sys.Kernel
             ? ResultErr.CreateSuccess()
             : ResultErr.CreateFailure(ResultCode.Failure, "Cosmos-Tastatureingabe ist deaktiviert."));
         bool forceRecovery = false;
-#if ZEHOS_RECOVERY || ZEHOS_INSTALLER
+#if ZEHOS_RECOVERY
         forceRecovery = true;
 #endif
         if (!boot.InitializeDisplay(forceRecovery, InitializeDisplay, RestoreTextConsole))
@@ -176,6 +176,21 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_SECURITY_PROBE
         if (!CosmosSecurityProbe.Run()) { Stop(); return; }
+#endif
+#if ZEHOS_INSTALLER
+        if (startDesktop)
+        {
+            // Der grafische Assistent ist der Normalfall; bei einem Anzeigefehler bleibt die Text-Einrichtung mit setup bedienbar.
+            try { new InstallerSession(installer).Run(); }
+            catch (Exception exception)
+            {
+                systemLog.Error("Setup", $"Grafische Einrichtung fehlgeschlagen: {exception.Message}");
+                RestoreTextConsole();
+                output.WriteLine("Grafische Einrichtung nicht verfuegbar. Text-Einrichtung: setup list, setup install <Laufwerk> [--erase].");
+            }
+
+            startDesktop = false;
+        }
 #endif
         interactive.Run(startDesktop);
     }

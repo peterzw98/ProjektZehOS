@@ -71,3 +71,15 @@ Die Sandbox blockierte zunächst den lokalen VSTest-Socket und den MSBuild-Taskh
 `pwsh` ist nicht installiert. Die PowerShell-Helfer wurden daher nicht ausgeführt; direkte QEMU-Läufe prüften geordnetes Shutdown und Reboot mit `-action shutdown=poweroff,reboot=reset`. Kein zusätzlicher GDB-/Energie-Helfertest wurde behauptet.
 
 VMware und echte Hardware bleiben offen. Im Gast wurden numerische IPv4-Quellen und `e1000e` verwendet; die DNS-API und die vorhandenen `E1000EDriver`-/`VirtioNetDriver`-Typen wurden am installierten Paket geprüft, aber DNS-Namensauflösung und virtio-net nicht im Gast nachgewiesen. Das vollständig lokale Update ist hostgetestet; eine gesonderte Offline-Gastprüfung steht aus. Der Installer unterstützt als Startmedium das ausgelieferte ISO, einschließlich roh auf einen Datenträger geschriebener ISO-Kopien; eine auf FAT entpackte Installation des Live-Mediums ist nicht unterstützt. Stromausfallsicherheit, BIOS-Start installierter Systeme und Datenmigration gehören nicht zum Entwurf.
+
+## Grafischer Assistent nach der Zusammenführung
+
+Nach Zusammenführung von Backend, Release-Werkzeugen und `SetupWizard` wurde der vollständige Ablauf erneut mit den Release-Artefakten aus `scripts/build-release.sh 0.1.0` und `0.2.0` geprüft (QEMU 10.2.2, KVM, `q35`, OVMF, 512 MiB, `e1000e`). 275 Hosttests und die Python-Helfertests bestehen.
+
+1. `ZehOS-Setup-0.1.0.iso` startet direkt in den Assistenten. Ziel war eine frische 256-MiB-Platte mit vorhandener Linux-Partition (`sfdisk`, Typ `83`). Das ISO-Laufwerk erscheint nicht in der Liste; die vorhandene Partition löst Warnung und die Pflichtbestätigung „Alle Daten auf sata0 löschen“ aus. Hinweise, Bestätigung, Fortschritt und Abschlussseite wurden per QMP-Tastatureingaben bedient; „Neu starten“ löst den Neustart aus.
+2. Danach enthält die Platte genau eine Partition Typ `ef` ab 2048. Ohne ISO startet ZehOS 0.1.0, bindet `/data` ein und verlangt die Administratoranlage.
+3. `scripts/sign-update.py` signiert das 0.2.0-Manifest, `scripts/update-mirror.py --dir` stellt es bereit. `update check` gegen einen fremden Dienst auf Port 8080 meldet sauber `404 Not Found`; nach `update source 10.0.2.2:8090` folgen geprüfte Version, `update install` und nach `reboot` ZehOS 0.2.0.
+4. Im Limine-Menü startet **ZehOS (vorherige Version)** wieder 0.1.0.
+5. `ZehOS-0.2.0.iso` startet ohne Datenplatte bis Textshell und Desktop.
+
+Nicht erneut geprüft: Recovery-Build nach der Zusammenführung (die Verdrahtung betrifft nur `ZEHOS_INSTALLER`), VMware, echte Hardware, Mausbedienung des Assistenten im Gast und der GitHub-Release-Workflow selbst.

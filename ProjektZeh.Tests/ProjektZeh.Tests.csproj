@@ -46,7 +46,6 @@
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
-    <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\SetupWizard.cs" Link="Installer\SetupWizard.cs" />
     <Compile Include="..\ProjektZeh\Messaging\**\*.cs" Link="Messaging\%(RecursiveDir)%(Filename)%(Extension)" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
