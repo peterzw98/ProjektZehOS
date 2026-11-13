@@ -75,3 +75,7 @@ In QEMU ohne Datenlaufwerk geprüft: normaler Boot zu zwei Terminalfenstern, `ec
 Mit einer separaten Kopie des 64-MiB-Datenimages geprüft: Datei im Terminal schreiben/lesen, eigene Arbeitsverzeichnisse beider Terminals, Weiterarbeit nach fehlender Datei, Reboot und erneutes Lesen desselben Inhalts sowie Shutdown. Das ursprüngliche Image blieb SHA256-gleich. Der vorhandene `scripts/test-power-commands.ps1 -WithDebugger` besteht mit dem Desktop-ISO: GDB bleibt bei Reboot verbunden, Shutdown beendet Gast und Debugger normal. Ein vollständiger Desktop-Test mit vollem Datenträger, VMware und echte Hardware bleiben offen.
 
 Gastprüfung wiederholen: normal und mit `ZehOSRecovery=true` bauen; im Desktop Befehle in beiden Terminals eingeben, einen Entwurf stehen lassen, das andere Fenster aktivieren/verschieben/schließen und über `+ Terminal` erneut öffnen. Mit `help` Ausgabe erzeugen und PageUp/PageDown nutzen. Esc/F4 muss Entwürfe und Fenster erhalten. Auch ohne Datenlaufwerk muss der Desktop starten. Dateiprüfungen nur mit einer isolierten Imagekopie durchführen.
+
+## Doom-Vorversuch am 13. November 2026
+
+Der [getrennte Hostversuch für Roadmap 0.4](DOOM_FEASIBILITY.md) baut Managed Dooms Kern ohne Desktoppakete unter .NET 10 und erfasst verbleibende Datei-, Prozess-, Zeit- und Speicherabhängigkeiten. Es wurden keine neuen Cosmos-Schnittstellen geprüft: NativeAOT-Link für Cosmos, WAD-Zugriff, Renderausgabe und Spielbetrieb in QEMU/VMware bleiben offen. Kernel und Paketversionen sind unverändert.
