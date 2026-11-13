@@ -101,9 +101,14 @@ public sealed class DesktopStorageTests
         Assert.AreEqual("nachher", File.ReadAllText(target));
     }
 
-    private static Desktop CreateDesktop(string path, Action<string, string, bool>? moveFile = null) =>
-        new(1024, 768, new byte[4096], 8, 16,
+    private static Desktop CreateDesktop(string path, Action<string, string, bool>? moveFile = null)
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16,
             () => new ShellService(new FileShellCommands(new FileService(path, moveFile)).Commands));
+        desktop.OpenTerminal();
+        desktop.OpenTerminal();
+        return desktop;
+    }
 
     private static void Execute(Desktop desktop, string command)
     {

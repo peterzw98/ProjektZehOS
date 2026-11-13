@@ -7,15 +7,20 @@ namespace ProjektZeh.Graphics;
 internal sealed class WindowManager
 {
     private readonly List<Window> windows = [];
+    private readonly List<Window> zOrder = [];
     private readonly int width;
     private readonly int height;
-    private Window? dragging;
+    private Window? moving;
     private Window? pointerCapture;
-    private int dragX;
-    private int dragY;
+    private int edges;
+    private int startX;
+    private int startY;
+    private (int X, int Y, int Width, int Height) initial;
 
     public Window? ActiveWindow { get; private set; }
     public int Count => windows.Count;
+    public bool HasPointerCapture => moving != null || pointerCapture != null;
+    public Window GetWindow(int index) => windows[index];
 
     public WindowManager(int width, int height)
     {
@@ -34,8 +39,28 @@ internal sealed class WindowManager
         window.X = Math.Clamp(window.X, 0, width - window.Width);
         window.Y = Math.Clamp(window.Y, 0, height - window.Height);
         window.Application.Start();
+        window.Application.Resize(window.ContentWidth, window.ContentHeight);
         windows.Add(window);
         Activate(window);
+    }
+
+    public void ToggleTask(Window window)
+    {
+        if (!windows.Contains(window)) return;
+        Reset();
+        if (window == ActiveWindow) Minimize(window);
+        else { window.IsMinimized = false; Activate(window); }
+    }
+
+    public void Cycle(bool backwards = false)
+    {
+        if (windows.Count == 0) return;
+        int index = windows.IndexOf(ActiveWindow!);
+        if (index < 0) index = backwards ? 0 : -1;
+        index = (index + (backwards ? windows.Count - 1 : 1)) % windows.Count;
+        Reset();
+        windows[index].IsMinimized = false;
+        Activate(windows[index]);
     }
 
     public void Handle(InputEvent value)
@@ -46,15 +71,10 @@ internal sealed class WindowManager
             ActiveWindow?.Application.Handle(value);
             return;
         }
-        if (dragging != null)
+        if (moving != null)
         {
-            if (value.Type is InputEventType.PointerMove or InputEventType.PointerUp)
-            {
-                dragging.X = (int)Math.Clamp((long)value.X - dragX, 0, width - dragging.Width);
-                dragging.Y = (int)Math.Clamp((long)value.Y - dragY, 0, height - dragging.Height);
-                Deliver(dragging, value);
-            }
-            if (value.Type == InputEventType.PointerUp && value.Button == PointerButtons.Left) dragging = null;
+            if (value.Type is InputEventType.PointerMove or InputEventType.PointerUp) Move(value.X, value.Y);
+            if (value.Type == InputEventType.PointerUp && value.Button == PointerButtons.Left) moving = null;
             return;
         }
         if (pointerCapture != null)
@@ -68,23 +88,79 @@ internal sealed class WindowManager
         {
             Activate(hit);
             if (hit == null) return;
-            if (value.Button == PointerButtons.Left && hit.ContainsClose(value.X, value.Y))
+            if (value.Button == PointerButtons.Left)
             {
-                hit.Application.Handle(new(InputEventType.Reset));
-                if (!hit.Application.RequestClose()) return;
-                CloseWindow(hit);
-                return;
+                if (hit.ContainsClose(value.X, value.Y))
+                {
+                    Reset();
+                    if (hit.Application.RequestClose()) CloseWindow(hit);
+                    return;
+                }
+                if (hit.ContainsMinimize(value.X, value.Y)) { Minimize(hit); return; }
+                if (hit.ContainsMaximize(value.X, value.Y)) { Maximize(hit); return; }
+                edges = hit.IsMaximized ? 0 :
+                    (value.X < hit.X + 5 ? 1 : 0) | (value.X >= hit.X + hit.Width - 5 ? 2 : 0) |
+                    (value.Y < hit.Y + 4 ? 4 : 0) | (value.Y >= hit.Y + hit.Height - 5 ? 8 : 0);
+                if (edges != 0 || (!hit.IsMaximized && value.Y < hit.ContentY))
+                {
+                    moving = hit;
+                    startX = value.X;
+                    startY = value.Y;
+                    initial = (hit.X, hit.Y, hit.Width, hit.Height);
+                    hit.Application.Handle(new(InputEventType.Reset));
+                    return;
+                }
+                if (hit.ContainsContent(value.X, value.Y)) pointerCapture = hit;
             }
-            if (value.Button == PointerButtons.Left && value.Y < hit.ContentY)
-            {
-                dragging = hit;
-                dragX = value.X - hit.X;
-                dragY = value.Y - hit.Y;
-                return;
-            }
-            if (value.Button == PointerButtons.Left && hit.ContainsContent(value.X, value.Y)) pointerCapture = hit;
         }
         if (hit?.ContainsContent(value.X, value.Y) == true) Deliver(hit, value);
+    }
+
+    private void Move(int x, int y)
+    {
+        Window window = moving!;
+        long dx = (long)x - startX;
+        long dy = (long)y - startY;
+        if (edges == 0)
+        {
+            window.X = (int)Math.Clamp(initial.X + dx, 0, width - window.Width);
+            window.Y = (int)Math.Clamp(initial.Y + dy, 0, height - window.Height);
+            return;
+        }
+        int right = initial.X + initial.Width;
+        int bottom = initial.Y + initial.Height;
+        int left = initial.X;
+        int top = initial.Y;
+        if ((edges & 1) != 0) left = (int)Math.Clamp(initial.X + dx, 0, right - window.MinimumWidth);
+        if ((edges & 2) != 0) right = (int)Math.Clamp(right + dx, left + window.MinimumWidth, width);
+        if ((edges & 4) != 0) top = (int)Math.Clamp(initial.Y + dy, 0, bottom - window.MinimumHeight);
+        if ((edges & 8) != 0) bottom = (int)Math.Clamp(bottom + dy, top + window.MinimumHeight, height);
+        window.X = left;
+        window.Y = top;
+        window.Width = right - left;
+        window.Height = bottom - top;
+        window.Application.Resize(window.ContentWidth, window.ContentHeight);
+    }
+
+    private void Minimize(Window window)
+    {
+        Reset();
+        window.IsMinimized = true;
+        Activate(TopVisible());
+    }
+
+    private void Maximize(Window window)
+    {
+        Reset();
+        if (window.IsMaximized)
+            (window.X, window.Y, window.Width, window.Height) = window.RestoreBounds;
+        else
+        {
+            window.RestoreBounds = (window.X, window.Y, window.Width, window.Height);
+            (window.X, window.Y, window.Width, window.Height) = (0, 0, width, height);
+        }
+        window.IsMaximized = !window.IsMaximized;
+        window.Application.Resize(window.ContentWidth, window.ContentHeight);
     }
 
     public void Update(long milliseconds)
@@ -97,28 +173,28 @@ internal sealed class WindowManager
         }
     }
 
-    public void Reset()
-    {
-        dragging = null;
-        pointerCapture = null;
-        foreach (Window window in windows) window.Application.Handle(new(InputEventType.Reset));
-    }
-
-    public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight)
-    {
-        foreach (Window window in windows) window.Render(surface, font, glyphWidth, glyphHeight, window == ActiveWindow);
-    }
-
     private void CloseWindow(Window window)
     {
-        if (dragging == window) dragging = null;
+        if (moving == window) moving = null;
         if (pointerCapture == window) pointerCapture = null;
         window.Application.Handle(new(InputEventType.Reset));
         window.Application.Close();
         windows.Remove(window);
-        if (ActiveWindow != window) return;
-        ActiveWindow = null;
-        Activate(windows.Count == 0 ? null : windows[^1]);
+        zOrder.Remove(window);
+        if (ActiveWindow == window) Activate(TopVisible());
+    }
+
+    public void Reset()
+    {
+        moving = null;
+        pointerCapture = null;
+        foreach (Window window in windows) window.Application.Handle(new(InputEventType.Reset));
+    }
+
+    public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight, bool applicationsActive = true)
+    {
+        foreach (Window window in zOrder)
+            if (!window.IsMinimized) window.Render(surface, font, glyphWidth, glyphHeight, applicationsActive && window == ActiveWindow);
     }
 
     private void Activate(Window? window)
@@ -126,14 +202,21 @@ internal sealed class WindowManager
         if (ActiveWindow != window) ActiveWindow?.Application.Handle(new(InputEventType.Reset));
         ActiveWindow = window;
         if (window == null) return;
-        windows.Remove(window);
-        windows.Add(window);
+        zOrder.Remove(window);
+        zOrder.Add(window);
+    }
+
+    private Window? TopVisible()
+    {
+        for (int index = zOrder.Count - 1; index >= 0; index--)
+            if (!zOrder[index].IsMinimized) return zOrder[index];
+        return null;
     }
 
     private Window? HitTest(int x, int y)
     {
-        for (int index = windows.Count - 1; index >= 0; index--)
-            if (windows[index].Contains(x, y)) return windows[index];
+        for (int index = zOrder.Count - 1; index >= 0; index--)
+            if (!zOrder[index].IsMinimized && zOrder[index].Contains(x, y)) return zOrder[index];
         return null;
     }
 

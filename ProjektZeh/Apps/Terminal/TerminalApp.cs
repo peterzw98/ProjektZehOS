@@ -45,6 +45,13 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
 
     public void Update(long milliseconds) => cursorVisible = milliseconds / 500 % 2 == 0;
 
+    public void Resize(int width, int height)
+    {
+        Buffer.Reflow(Math.Max(1, (width - 16) / glyphWidth));
+        visibleRows = Math.Max(1, (height - 16) / glyphHeight - 1);
+        ScrollOffset = Math.Clamp(ScrollOffset, 0, Math.Max(0, Buffer.Count - visibleRows));
+    }
+
     public void Draw(PixelSurface surface, int x, int y, int width, int height, bool active)
     {
         surface.FillRectangle(x, y, width, height, unchecked((int)0xff101923));

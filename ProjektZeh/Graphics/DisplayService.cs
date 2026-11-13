@@ -28,6 +28,7 @@ internal sealed class DisplayService
     public bool NeedsAnimation => desktop.NeedsAnimation;
 
     public void Handle(InputEvent value) => desktop.Handle(value);
+    public bool CloseMenu() => desktop.CloseMenu();
     public void Update(long milliseconds)
     {
         desktop.Update(milliseconds);

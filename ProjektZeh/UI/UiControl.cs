@@ -11,11 +11,11 @@ internal readonly record struct UiRect(int X, int Y, int Width, int Height)
 
 internal sealed class UiPainter(byte[] font, int glyphWidth, int glyphHeight)
 {
-    public const int Background = unchecked((int)0xff101923);
-    public const int Foreground = unchecked((int)0xffedf4fc);
-    public const int Accent = unchecked((int)0xff53d7bb);
-    public const int Border = unchecked((int)0xff8294aa);
-    public const int Muted = unchecked((int)0xff213b55);
+    public const int Background = unchecked((int)0xff202a36);
+    public const int Foreground = unchecked((int)0xffe8edf4);
+    public const int Accent = unchecked((int)0xff63b3ed);
+    public const int Border = unchecked((int)0xff465260);
+    public const int Muted = unchecked((int)0xff303c4b);
     public int GlyphWidth { get; } = glyphWidth;
     public int GlyphHeight { get; } = glyphHeight;
 

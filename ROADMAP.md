@@ -198,6 +198,8 @@ Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. D
 
 **Umgesetzt am 13. November 2026:** Gemeinsame UI-Bausteine mit Fokus, Dateibetrachter, Mehrzeileneditor mit Schließrückfrage und Pong sind an den Desktop angeschlossen. Direkte Voraussetzungen sind ein wiederverwendeter Textbearbeitungskern, verschachteltes Clipping, abbrechbares Schließen und regelmäßige Spielbilder. 173 Hosttests, native Normal-/Recovery-Builds und QEMU-Prüfungen einschließlich Dateineustart, ENOSPC, Spiel/Fokus und Ressourcenbeobachtung bestehen. VMware und echte Hardware bleiben ausdrücklich offen. [Bedienung, Architektur und Nachweise](docs/DESKTOP_APPS.md). Etappen 6a–6c bleiben unverändert.
 
+Der zusätzliche KDE/Cinnamon-orientierte Desktop-Umbau wird unabhängig von den abgeschlossenen Punkten 8.1–8.5 geprüft: Programmmenü mit Suche, Fensterleiste, Minimieren/Maximieren, Größenänderung und Alt+Tab. Er verwendet die vorhandenen Apps und UI-Bausteine aus Etappe 8. [Umfang und Integrationsnachweise](docs/DESKTOP_REDESIGN.md). Ein Rechner und weitergehende Dateioperationen bleiben spätere Erweiterungen; die laufenden Etappen 6a–6c werden durch diesen Umbau nicht abgehakt.
+
 ## 9 Doom schrittweise portieren
 
 **Zweck:** Doom als Anwendung auf ZehOS ausführen. Für den ersten spielbaren Stand reichen Softwaregrafik, Tastatur, Zeitmessung und lesbare Spieldaten.

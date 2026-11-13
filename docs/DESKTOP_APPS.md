@@ -4,7 +4,7 @@ Stand: 13. November 2026. Etappen 8.1 bis 8.5 sind implementiert. Die direkten V
 
 ## Bedienung
 
-Der Starter öffnet **Dateien**, **Editor** und **Pong** neben den bisherigen Terminals. Das gemeinsame Limit bleibt acht Fenster. Die Anwendungen besitzen feste Fenstergrößen; Prozessisolation, Größenänderung und Hintergrund-Dateizugriffe gehören nicht zu dieser Etappe.
+Das Programmmenü öffnet **Dateien**, **Texteditor** und **Pong** neben dem Terminal. Das gemeinsame Limit bleibt acht Fenster einschließlich minimierter Fenster. Die ursprünglich festen Fenstergrößen wurden im anschließenden [Desktop-Umbau](DESKTOP_REDESIGN.md) durch anpassbare Größen mit Mindestgrenzen ergänzt. Prozessisolation und Hintergrund-Dateizugriffe bleiben eigene Arbeiten. Die nachfolgenden ursprünglichen Prüfergebnisse sind historische Nachweise der Anwendungsintegration; neue Prüfungen des Redesigns stehen im verlinkten Dokument.
 
 Gemeinsame Bedienelemente:
 

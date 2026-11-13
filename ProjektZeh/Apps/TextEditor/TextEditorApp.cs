@@ -62,6 +62,7 @@ internal sealed class TextEditorApp : IApplication
         else panel.Handle(value);
     }
     public void Update(long milliseconds) { }
+    public void Resize(int width, int height) => Layout(width, height);
 
     private void Load()
     {

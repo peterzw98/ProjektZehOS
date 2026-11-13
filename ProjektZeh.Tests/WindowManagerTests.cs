@@ -11,6 +11,51 @@ namespace ProjektZeh.Tests;
 public sealed class WindowManagerTests
 {
     [TestMethod]
+    public void Maximize_Twice_RestoresGeometryAndKeepsTaskbarSpace()
+    {
+        var manager = new WindowManager(400, 300);
+        var window = new Window("Test", 20, 30, 180, 150, new ProbeApp());
+        manager.Add(window);
+        manager.Handle(new(InputEventType.PointerDown, X: 152, Y: 46, Button: PointerButtons.Left));
+        Assert.AreEqual(400, window.Width);
+        Assert.AreEqual(300, window.Height);
+        manager.Handle(new(InputEventType.PointerDown, X: 352, Y: 16, Button: PointerButtons.Left));
+        Assert.AreEqual(20, window.X);
+        Assert.AreEqual(30, window.Y);
+        Assert.AreEqual(180, window.Width);
+        Assert.AreEqual(150, window.Height);
+    }
+
+    [TestMethod]
+    public void Minimize_RemovesKeyboardFocusWithoutClosingApplication()
+    {
+        var manager = new WindowManager(400, 300);
+        var app = new ProbeApp();
+        manager.Add(new Window("Test", 20, 30, 180, 150, app));
+        manager.Handle(new(InputEventType.PointerDown, X: 120, Y: 46, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.Text, Character: 'x'));
+        Assert.IsNull(manager.ActiveWindow);
+        Assert.AreEqual(1, manager.Count);
+        Assert.AreEqual(0, app.Closes);
+        Assert.IsFalse(app.Events.Exists(e => e.Type == InputEventType.Text));
+    }
+
+    [TestMethod]
+    public void Resize_BottomRight_ClampsToWorkspaceAndResetStopsCapture()
+    {
+        var manager = new WindowManager(400, 300);
+        var window = new Window("Test", 20, 30, 180, 150, new ProbeApp());
+        manager.Add(window);
+        manager.Handle(new(InputEventType.PointerDown, X: 199, Y: 179, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerMove, X: 900, Y: 900));
+        Assert.AreEqual(380, window.Width);
+        Assert.AreEqual(270, window.Height);
+        manager.Reset();
+        manager.Handle(new(InputEventType.PointerMove, X: 50, Y: 50));
+        Assert.AreEqual(380, window.Width);
+    }
+
+    [TestMethod]
     public void Focus_OverlappingWindows_OnlyTopmostReceivesKeysAndText()
     {
         var manager = new WindowManager(400, 300);
@@ -133,6 +178,7 @@ public sealed class WindowManagerTests
         public void Start() => Starts++;
         public void Handle(InputEvent value) => Events.Add(value);
         public void Update(long milliseconds) { }
+        public void Resize(int width, int height) { }
         public void Close() => Closes++;
         public void Draw(PixelSurface surface, int x, int y, int width, int height, bool active) =>
             surface.FillRectangle(int.MinValue / 2, int.MinValue / 2, int.MaxValue, int.MaxValue, Color);
