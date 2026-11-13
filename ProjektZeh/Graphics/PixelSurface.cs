@@ -10,6 +10,7 @@ internal sealed class PixelSurface
     private int clipRight;
     private int clipBottom;
 
+    public (int X, int Y, int Width, int Height) Clip => (clipLeft, clipTop, clipRight - clipLeft, clipBottom - clipTop);
     public int Width { get; }
     public int Height { get; }
 
@@ -31,6 +32,12 @@ internal sealed class PixelSurface
         clipTop = (int)Math.Clamp((long)y, 0, Height);
         clipRight = (int)Math.Clamp((long)x + Math.Max(0, width), clipLeft, Width);
         clipBottom = (int)Math.Clamp((long)y + Math.Max(0, height), clipTop, Height);
+    }
+
+    public void IntersectClip(int x, int y, int width, int height)
+    {
+        Bounds(x, y, width, height, out int left, out int top, out int right, out int bottom);
+        clipLeft = left; clipTop = top; clipRight = right; clipBottom = bottom;
     }
 
     public void ResetClip() => SetClip(0, 0, Width, Height);
@@ -89,6 +96,11 @@ internal sealed class PixelSurface
     public void DrawText(string text, int x, int y, int color, byte[] font, int glyphWidth, int glyphHeight)
     {
         ArgumentNullException.ThrowIfNull(text);
+        DrawText(text.AsSpan(), x, y, color, font, glyphWidth, glyphHeight);
+    }
+
+    public void DrawText(ReadOnlySpan<char> text, int x, int y, int color, byte[] font, int glyphWidth, int glyphHeight)
+    {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(glyphWidth);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(glyphHeight);
