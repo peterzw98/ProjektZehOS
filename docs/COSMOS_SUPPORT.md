@@ -1,6 +1,25 @@
-# Geprüfte Cosmos-Anbindung: Eingabe, Grafik und Desktop
+# Geprüfte Cosmos-Anbindung: Eingabe, Grafik, Desktop und Threads
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
+
+## Thread- und Warteprobe am 13. November 2026
+
+Roadmap 6a.1 wurde auf Basis von `1d37a0d` mit unveränderten Cosmos-Paketen **3.0.94** geprüft. Der opt-in Build `-p:ZehOSThreadProbe=true` führt `Runtime/CosmosThreadProbe.cs` einmal vor der interaktiven Sitzung aus. Normale und Recovery-Builds ohne diese Option enthalten die Probe nicht. Die bestehenden Anwendungen und Dateioperationen bleiben im bisherigen Hauptthread.
+
+| Schnittstelle | Tatsächlicher Nachweis |
+| --- | --- |
+| `Thread.Start`, `Interlocked`, `Volatile` | Zwei echte Arbeitsthreads erhöhen getrennte Zähler ohne Sleep/Yield. Beide Zähler wachsen in zwei aufeinanderfolgenden Messfenstern; der Hauptthread schläft dazwischen. Das belegt Timer-Verdrängung im verwendeten Gastprofil. |
+| `Thread.Sleep`, `Thread.Join(timeout)` | Der Hauptthread wartet zeitgesteuert und läuft trotz beider Rechenaufgaben weiter. Nach gemeinsamem Stopflag enden beide Threads innerhalb des Join-Zeitlimits. |
+| `ManualResetEvent`, `AutoResetEvent`, `WaitOne(timeout)` | Gemeinsames Startsignal; eigener Wartethread nachweislich in `WaitSleepJoin`, anschließend durch Signal aufgeweckt und gejoint. Ein vorher gesetztes Signal bleibt erhalten, ein nicht gesetztes Signal läuft in das Zeitlimit. |
+| `Thread.Yield` | Aufruf im Gast erfolgreich; kein Fairnessnachweis allein aus dessen Rückgabewert abgeleitet. |
+| `SchedulerManager.IsReady`, `Current`, `DefaultQuantumNs` | Im Gast: `Stride`, konfigurierter Tick **10.000.000 ns**. Der Tickwert ist die Cosmos-Konstante, keine Messung der realen Verdrängungslatenz. |
+| `IScheduler`, `SchedulerThread`, `PerCpuState`, `SetScheduler` | Öffentliche Schnittstelle in den installierten Assemblies und offiziellen Quellen des Paketcommits `5d0b9535251472db7ecfe012f0435f0a04ffca16` vorhanden. `COSMOS0001` wird nur lokal in der Probe bestätigt. Ein Policywechsel/eigener Round-Robin-Scheduler wurde hier noch nicht ausgeführt. |
+
+**QEMU:** `q35`, CPU `max`, 512 MiB RAM, Standard-VGA, kein Datenlaufwerk. Native Probe-, Normal- und Recovery-Builds erfolgreich mit Warnungen als Fehler und jeweils null Warnungen/Fehlern. Die Probe meldet alle Teilprüfungen und `THREAD_PROBE PASS`; im ersten Lauf erreichten die Worker 63.786.422 beziehungsweise 65.008.773 Inkremente. Die Zähler sind ein Fortschrittsnachweis, kein Leistungsvergleich. Der Testhelfer wurde zuerst gegen ein bisheriges normales ISO negativ geprüft: kein PASS und Fehler nach zehn Sekunden. Er beendet seine eigene Test-VM auch bei Fehlern. Die abschließenden 149 Hosttests bestehen. Normaler Boot, Eingabe in beiden Terminals, Textshell, F4/Esc mit erhaltenen Sitzungen sowie Recovery-Boot mit Shell-Eingabe und Desktopwechsel wurden zusätzlich geprüft. Normal- und Recovery-Logs enthalten keine Threadprobe.
+
+**VMware Player:** Separater plattenloser UEFI-Gast mit einem vCPU und 1024 MiB RAM über das bestehende Startprofil. Derselbe Probe-Build meldete seriell alle Teilprüfungen und `THREAD_PROBE PASS` (47.392.219/44.298.557 Inkremente), danach `Desktop ist bereit`. Die Test-VM wurde anschließend beendet. Kein visueller Bediennachweis in VMware: `vmrun captureScreen` wurde mangels Gastanmeldung abgelehnt; eine Anmeldung oder VMware-Tools-Installation wurde nicht vorgenommen.
+
+Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/scheduler-plugging.html) beschreibt die experimentelle Policy-Schnittstelle. Der passende [Paketquellstand](https://github.com/CosmosOS/Cosmos/tree/5d0b9535251472db7ecfe012f0435f0a04ffca16) enthält bereits ein Round-Robin-Beispiel in den Threading-Tests. Cosmos stellt Kontextwechsel, Timer und Warteprimitive bereit; eine eigene Thread-Laufzeit ist für den nächsten Schritt nicht nötig. ZehOS-eigene Aufgabenverwaltung, Round-Robin-Installation, Absicherung gemeinsamer Dienste und bedienbarer Desktop während laufender Hintergrundaufgaben bleiben Gegenstand von 6a.2–6a.5. Echte Hardware wurde nicht geprüft.
 
 ## Referenzumgebung
 
