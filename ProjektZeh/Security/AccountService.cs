@@ -111,7 +111,8 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-                if (!IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account)) return FileAccessControl.Denied();
+                if (!IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account) ||
+                    actor.UserId == null || (account.Id != actor.UserId && !IsAdmin(actor))) return FileAccessControl.Denied();
                 accounts[name] = account with { PasswordHash = encoded };
                 return Save();
             };

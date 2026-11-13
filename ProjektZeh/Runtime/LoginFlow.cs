@@ -50,6 +50,8 @@ internal sealed class LoginFlow(AccountService accounts, ShellService shell, ITe
         foreach (char character in user)
             if (!char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-'))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Ungueltiger Benutzername.");
+        // Eine liegengebliebene Kennwortabfrage wuerde sonst den Anmeldebefehl als Kennwort uebernehmen.
+        shell.CancelSecretInput();
         // Der Kennworthinweis des Befehls kaeme hier erst nach der bereits erfolgten Eingabe und entfaellt deshalb.
         var started = shell.ExecuteLine(setup ? $"security setup {user}" : $"login {user}", Discard.Instance);
         if (!started.IsOK()) return started;

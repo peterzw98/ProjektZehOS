@@ -134,6 +134,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         generation = identity.Generation;
         editor = new();
         login.Reset();
+        shell.CancelSecretInput();
     }
 
     private void BeginLine()

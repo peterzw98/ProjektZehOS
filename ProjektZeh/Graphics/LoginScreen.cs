@@ -43,7 +43,15 @@ internal sealed class LoginScreen
     /// <summary>Uebernimmt fertige Kennwortpruefungen, solange das Anmeldefenster angezeigt wird.</summary>
     public void Update() => session.Shell.Poll(messages);
 
-    public void Logout() => session.Shell.ExecuteLine("logout", messages);
+    /// <summary>
+    /// Meldet direkt ab, damit eine laufende oder offene Kennwortabfrage der Textshell das Abmelden nicht verhindert.
+    /// Laufende Berechnungen pruefen beim Uebernehmen erneut die Berechtigung.
+    /// </summary>
+    public void Logout()
+    {
+        session.Shell.CancelSecretInput();
+        session.Identity.Logout();
+    }
 
     public void Reset()
     {

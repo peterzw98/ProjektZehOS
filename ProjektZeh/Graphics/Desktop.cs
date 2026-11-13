@@ -36,6 +36,7 @@ internal sealed class Desktop
     private readonly DesktopSession? session;
     private readonly LoginScreen? login;
     private int generation;
+    private string? windowsOwner;
     private int sequence;
     private bool menuOpen;
     private bool alt;
@@ -223,20 +224,31 @@ internal sealed class Desktop
     public void Update(long milliseconds)
     {
         SyncSession();
-        if (IsLocked) login!.Update();
+        if (IsLocked)
+        {
+            login!.Update();
+            // Eine eben abgeschlossene Anmeldung legt den Fensterbesitzer fest, bevor neue Fenster entstehen.
+            SyncSession();
+        }
         Windows.Update(milliseconds);
     }
 
     private bool IsLocked => session != null && session.Identity.UserId == null;
 
-    /// <summary>Schliesst Fenster und Menue nach jedem Identitaetswechsel, auch wenn er in der Textshell geschah.</summary>
+    /// <summary>
+    /// Sperrt nach jedem Identitaetswechsel, auch aus der Textshell. Fenster bleiben fuer dieselbe Kennung erhalten,
+    /// damit ungespeicherte Entwuerfe ein Sperren ueberstehen; meldet sich jemand anderes an, werden sie geschlossen.
+    /// </summary>
     private void SyncSession()
     {
         if (session == null || session.Identity.Generation == generation) return;
         generation = session.Identity.Generation;
         CloseMenu();
-        Windows.CloseAll();
         login!.Reset();
+        string? user = session.Identity.UserId;
+        if (user == null) return;
+        if (!string.Equals(user, windowsOwner, StringComparison.Ordinal)) Windows.CloseAll();
+        windowsOwner = user;
     }
 
     public void Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)

@@ -224,12 +224,95 @@ public sealed class UserManagementTests
 
         desktop.OpenTerminal();
         Assert.AreEqual(1, desktop.Windows.Count);
-        // Abmelden und erneutes Anmelden ausserhalb des Desktops, etwa in der Textshell.
+        // Sperren und erneutes Anmelden derselben Kennung ausserhalb des Desktops erhaelt die Fenster.
         identity.Logout();
         identity.LoginAs(admin);
+        desktop.Handle(new(InputEventType.Text, Character: 'x'));
+        Assert.AreEqual(1, desktop.Windows.Count);
+
+        // Meldet sich jemand anderes an, schliesst der Desktop die Fenster vor jeder Eingabe.
+        Assert.IsTrue(accounts.PrepareCreateUser(admin, "alice", false, UserPassword)().IsOK());
+        identity.Logout();
+        Assert.IsTrue(accounts.PrepareLogin(identity, "alice", UserPassword)().IsOK());
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
         Assert.AreEqual(0, desktop.Windows.Count);
         desktop.Render(surface, 0, 10, 10, PointerButtons.None);
         Assert.IsNotNull(admin.UserId);
+    }
+
+    [TestMethod]
+    public void Abmelden_WithPendingPromptOrRunningWorker_StillLogsOut()
+    {
+        var admin = SetupAdministrator();
+        var identity = accounts.CreateSession();
+        identity.LoginAs(admin);
+        var shell = CreateShell(identity);
+        var output = new TerminalBuffer(120);
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(root), new DesktopSession(accounts, shell, identity));
+        var surface = new PixelSurface(1024, 768, new int[1024 * 768]);
+        desktop.Render(surface, 0, 10, 10, PointerButtons.None);
+
+        Assert.IsTrue(shell.ExecuteLine("passwd", output).IsOK());
+        Assert.IsTrue(shell.IsSecretInput);
+        Logout(desktop);
+        Assert.IsNull(identity.UserId);
+        Assert.IsFalse(shell.IsSecretInput, "Abmelden darf nicht als Kennwort der offenen Abfrage enden.");
+
+        identity.LoginAs(admin);
+        Assert.IsTrue(shell.ExecuteLine("user add bob user", output).IsOK());
+        Assert.IsTrue(shell.ExecuteLine("bob-password-1234", output).IsOK());
+        Assert.IsTrue(shell.IsBusy);
+        Logout(desktop);
+        Assert.IsNull(identity.UserId);
+        WaitForPassword(() => shell.Poll(output));
+        Assert.IsTrue(accounts.ListUsers(admin).Length == 1, "Nach dem Abmelden darf die Berechnung kein Konto mehr anlegen.");
+    }
+
+    private static void Logout(Desktop desktop)
+    {
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        // Das Menue behaelt den letzten Suchtext; Strg+A ersetzt ihn.
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: 30));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Control));
+        foreach (char character in "abmelden") desktop.Handle(new(InputEventType.Text, Character: character));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+    }
+
+    [TestMethod]
+    public void LoginFlow_StalePromptDoesNotSwallowLogin()
+    {
+        var admin = SetupAdministrator();
+        var identity = accounts.CreateSession();
+        identity.LoginAs(admin);
+        var shell = CreateShell(identity);
+        var output = new TerminalBuffer(120);
+        Assert.IsTrue(shell.ExecuteLine("passwd", output).IsOK());
+        identity.Logout();
+
+        var login = new LoginFlow(accounts, shell, output);
+        login.Submit("admin");
+        Assert.IsTrue(login.Submit(AdminPassword).IsOK());
+        WaitForPassword(() => shell.Poll(output));
+        Assert.AreEqual("admin", identity.UserName);
+    }
+
+    [TestMethod]
+    public void PasswordWork_ActorRemovedWhileHashing_DoesNotApply()
+    {
+        var admin = SetupAdministrator();
+        Assert.IsTrue(accounts.PrepareCreateUser(admin, "second", true, "second-password-1")().IsOK());
+        Assert.IsTrue(accounts.PrepareCreateUser(admin, "alice", false, UserPassword)().IsOK());
+        var second = accounts.CreateSession();
+        Assert.IsTrue(accounts.PrepareLogin(second, "second", "second-password-1")().IsOK());
+
+        var apply = accounts.PasswordWork(second, "alice", "geaendert-12345")();
+        Assert.IsTrue(accounts.DeleteUser(admin, "second").IsOK());
+        Assert.IsFalse(apply().IsOK());
+        var alice = accounts.CreateSession();
+        Assert.IsTrue(accounts.PrepareLogin(alice, "alice", UserPassword)().IsOK());
     }
 }

@@ -28,6 +28,9 @@ internal sealed class ShellService
 
     public void BeginSecretInput(Func<string, Func<Func<ResultErr>>> prepare) => secretInput = prepare;
 
+    /// <summary>Verwirft eine noch nicht beantwortete Kennwortabfrage, etwa bei Abmeldung oder neuer Anmeldung.</summary>
+    public void CancelSecretInput() => secretInput = null;
+
     public bool Poll(ITextOutput output)
     {
         if (passwordWorker == null || Volatile.Read(ref passwordComplete) == 0 || !passwordWorker.Join(0)) return false;
