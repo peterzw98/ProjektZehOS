@@ -42,7 +42,7 @@ Beim Start fragt ein Anmeldefenster des Desktops Benutzername und Kennwort ab; d
 
 Administratoren legen Konten mit `user add <Name> user` beziehungsweise `user add <Name> admin` an; `user list` zeigt die Konten. `grant <Pfad> <Name> r` vergibt Leserechte, `rw` zusätzlich Schreibrechte, `none` entfernt eine Freigabe. Für das Lesen einer Datei in einem fremden Home muss der Administrator auch auf diesem Verzeichnis Leserechte vergeben. Anlegen und Ersetzen benötigen Schreibrechte auf dem Elternverzeichnis, weil der sichere Schreibpfad dort temporäre Dateien und Sicherungen anlegt; `rw` auf der Datei allein genügt nicht. Eigentümer dürfen Rechte auf ihren Einträgen selbst vergeben. `security adopt <Pfad> <Name>` ordnet als Administrator einen bestehenden Eintrag ausdrücklich zu. `user del <Name>` löscht ein fremdes Konto, meldet dessen Sitzungen ab und überträgt seine Einträge samt Home an den ausführenden Administrator. Das Home eines gelöschten Kontos bleibt bestehen; derselbe Name kann deshalb nicht erneut angelegt werden. `passwd` ändert das eigene Kennwort verdeckt, `passwd <Name>` als Administrator ein fremdes; das bisherige Kennwort wird dabei nicht abgefragt.
 
-Befehlsrechte: Administratoren dürfen jeden Befehl ausführen. Für alle anderen sind `user`, `security`, `disk`, `chperm`, `reboot` und `shutdown` anfangs gesperrt, alle übrigen Befehle frei. `chperm <Befehl> admin` beschränkt einen Befehl auf Administratoren, `chperm <Befehl> *` gibt ihn frei; `perms` zeigt die Tabelle. `login`, `logout` und `chperm` lassen sich nicht umstellen. Freigegebene Befehle (`*`) stehen auch einem abgemeldeten Terminal zur Verfügung; Dateizugriffe verlangen weiterhin eine Anmeldung. Die Tabelle liegt in der reservierten Datei `/data/.zehos-commands.db`; ist sie beschädigt, bleiben Konten gesperrt wie bei beschädigten Kontodaten. Solange keine gültigen Konten geladen sind, gilt die Tabelle nicht, damit Einrichtung, Recovery und Energieaktionen erreichbar bleiben; die Befehle prüfen ihre eigenen Voraussetzungen weiterhin. Laufwerksverwaltung erfordert Administratorrechte. Nach dem Aushängen ist die Kontendatei nicht mehr erreichbar; zum automatischen Einbinden regulär neu starten oder den expliziten Recovery-Build verwenden.
+Befehlsrechte: Administratoren dürfen jeden Befehl ausführen. Für alle anderen sind `user`, `security`, `disk`, `update`, `chperm`, `reboot` und `shutdown` anfangs gesperrt, alle übrigen Befehle frei. `chperm <Befehl> admin` beschränkt einen Befehl auf Administratoren, `chperm <Befehl> *` gibt ihn frei; `perms` zeigt die Tabelle. `login`, `logout` und `chperm` lassen sich nicht umstellen. Freigegebene Befehle (`*`) stehen auch einem abgemeldeten Terminal zur Verfügung; Dateizugriffe verlangen weiterhin eine Anmeldung. Die Tabelle liegt in der reservierten Datei `/data/.zehos-commands.db`; ist sie beschädigt, bleiben Konten gesperrt wie bei beschädigten Kontodaten. Solange keine gültigen Konten geladen sind, gilt die Tabelle nicht, damit Einrichtung, Recovery und Energieaktionen erreichbar bleiben; die Befehle prüfen ihre eigenen Voraussetzungen weiterhin. Laufwerksverwaltung erfordert Administratorrechte. Nach dem Aushängen ist die Kontendatei nicht mehr erreichbar; zum automatischen Einbinden regulär neu starten oder den expliziten Recovery-Build verwenden.
 
 Fehlt auf einem eingebundenen FAT32-Laufwerk die Kontodatei `/data/.zehos-security.db` (nicht beschädigt, sondern tatsächlich nicht vorhanden), bietet das Anmeldefenster beziehungsweise die Textshell an, den ersten Administrator anzulegen (Name, Kennwort, Wiederholung; intern `security setup <Name>`). Das verwendet denselben Weg wie die Recovery; vorhandene Nutzdateien bleiben bis `security adopt` gesperrt. Wer die Kontodatei außerhalb von ZehOS löscht, kann deshalb im normalen Build einen neuen Administrator anlegen; zuvor war dafür der Sicherheits-Recovery-Build nötig. Ohne eingebundenes Laufwerk oder bei beschädigten Metadaten zeigt das Anmeldefenster „Konten gesperrt“.
 
@@ -268,3 +268,41 @@ Roadmap 7.5 ist mit fehlendem Datenlaufwerk und einer vollständig belegten isol
 `MessageQueue<T>` verwendet den vorhandenen Cosmos-Monitor mit einer gemeinsamen Sperre für Zustand und Wecksignale. Wartende Varianten liefern `Cancelled`, `TimedOut` beziehungsweise `Closed`; nicht wartende Varianten unterscheiden `Empty` und `Full`. Ein geschlossener Puffer lässt sich noch leeren. Beide Übertragungsrichtungen des kontrollierten Kontobeispiels erwerben zuerst die Sperre von Konto 1 und dann von Konto 2, damit keine zyklische Warteabhängigkeit entsteht.
 
 Der optionale Threadprobe-Build prüft zusätzlich nummerierte Zustellung, Kapazität, Zeitlimits, Schließen/Abbruch wartender Teilnehmer und den Neustart nach alleinigem Consumer-Abbruch bei vollem Puffer. Erfolg meldet `MESSAGES_PROBE PASS`; erst nach allen Teilprüfungen folgt `THREAD_PROBE PASS`. Einzelheiten und tatsächlich geprüfte Plattformen stehen in [docs/ETAPPE6B_STATUS.md](docs/ETAPPE6B_STATUS.md).
+
+## UEFI-Installation und signierte Kernelupdates
+
+Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als eingebetteter Payload. Beide Builds müssen dieselbe Version verwenden. `cosmos build` nimmt keine zusätzlichen MSBuild-Eigenschaften an; dafür direkt `dotnet build` verwenden:
+
+```bash
+payload="$PWD/.tools/installer-payload"
+mkdir -p "$payload"
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.0
+cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
+cp "$HOME/.nuget/packages/cosmos.build.common/3.0.94/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.0 \
+  -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
+```
+
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.1.0`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+
+Das Installer-ISO startet vorerst in einer lokalen Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium. Die grafische Einrichtung wird separat integriert.
+
+Die Installation ersetzt das Partitionslayout durch einen MBR mit einer einzigen FAT32-EFI-Partition (`0xEF`) ab LBA 2048. Sie schreibt `/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf`, `/boot/zehos-version.txt` und `/boot/limine/limine.conf`. Nach dem Abschluss sind die Dateisystempuffer geschrieben und das Ziel ausgehängt. Installationsmedium entfernen und neu starten. Das installierte System benötigt UEFI; ein BIOS-Bootsektor wird nicht installiert. Im normalen System mountet dieselbe Partition unter `/data`, die Bootdateien sind daher dort unter `/data/boot` erreichbar. Beim ersten Start den Administrator anlegen.
+
+Alle `update`-Operationen erfordern einen angemeldeten Administrator, unabhängig von einer Freigabe durch `chperm`:
+
+```text
+update status
+update source 10.0.2.2:8000
+update check
+update install
+reboot
+```
+
+`status` zeigt laufende Version und Quelle. Die Quelle steht in `/data/.zehos-update.conf`; ohne Datei gilt `10.0.2.2:8080`. Bei einem Hostnamen ohne Port gilt HTTP-Port 80. Der Gast verwendet DHCP, DNS für Hostnamen und einfaches HTTP/1.0. Der Spiegel muss `Content-Length` liefern; Weiterleitungen, Transfercodierungen und HTTPS werden nicht unterstützt. Manifest und Signatur heißen `update-manifest.txt` und `update-manifest.sig`, der Kernelname steht im Manifest. Manifest, Signatur und Kernel sind auf 4096 Byte, 64 Byte beziehungsweise 64 MiB begrenzt. Ein eigener Spiegel lässt sich auf dem Host mit `python3 -m http.server 8000 --directory <Paketverzeichnis>` bereitstellen; QEMU mit `e1000e` und User-Netz starten.
+
+`update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
+
+Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.2.0.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
+
+Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. Der Installer richtet die Limine-Einträge **ZehOS** und **ZehOS (vorherige Version)** mit drei Sekunden Timeout und 1024×768×32 ein. Der Rückfalleintrag ist erst nach dem ersten Update nutzbar. Nach Beginn des Dateiaustauschs ist bis zum Neustart kein weiteres Update erlaubt, auch wenn Austausch oder Bereinigung einen Fehler melden. Die Sicherungs-/Wiederherstellungslogik schützt vor behandelten Dateifehlern; sie garantiert keine Wiederherstellung nach Stromausfall. Netzwerk- und Dateioperationen der Shell laufen synchron. [Prüfergebnisse und Plattformgrenzen](docs/INSTALLER_UPDATES_TESTS.md).

@@ -14,6 +14,10 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
+    <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
+    <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
+    <Compile Include="..\ProjektZeh\Installer\InstallJob.cs" Link="Installer\InstallJob.cs" />
+    <Compile Include="..\ProjektZeh\Update\*.cs" Exclude="..\ProjektZeh\Update\Cosmos*.cs" Link="Update\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Scheduling\*.cs" Exclude="..\ProjektZeh\Scheduling\Cosmos*.cs" Link="Scheduling\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Shell\**\*.cs" Link="Shell\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\SystemServices\LogLevel.cs" Link="SystemServices\LogLevel.cs" />

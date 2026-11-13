@@ -4,6 +4,8 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+    <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
@@ -18,4 +20,13 @@
     <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(ZehOSInstaller)' == 'true'">
+    <EmbeddedResource Include="$(ZehOSPayloadDir)/ProjektZeh.elf" LogicalName="ZehOS.Payload.Kernel" />
+    <EmbeddedResource Include="$(ZehOSPayloadDir)/BOOTX64.EFI" LogicalName="ZehOS.Payload.Efi" />
+  </ItemGroup>
+
+  <Target Name="ValidateInstallerPayload" BeforeTargets="PrepareForBuild" Condition="'$(ZehOSInstaller)' == 'true'">
+    <Error Condition="'$(ZehOSPayloadDir)' == ''" Text="ZehOSInstaller benoetigt -p:ZehOSPayloadDir mit normalem ProjektZeh.elf und BOOTX64.EFI." />
+    <Error Condition="!Exists('$(ZehOSPayloadDir)/ProjektZeh.elf') Or !Exists('$(ZehOSPayloadDir)/BOOTX64.EFI')" Text="Die Installer-Payload ist unvollstaendig." />
+  </Target>
 </Project>

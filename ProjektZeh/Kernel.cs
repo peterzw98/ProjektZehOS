@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using ProjektZeh.Runtime;
+using ProjektZeh.Installer;
+using ProjektZeh.Update;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
@@ -25,6 +27,18 @@ public sealed class Kernel : Sys.Kernel
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
     private bool startDesktop;
+    private static UpdateVersion CurrentVersion
+    {
+        get
+        {
+            var version = typeof(Kernel).Assembly.GetName().Version!;
+            return new UpdateVersion(version.Major, version.Minor, version.Build);
+        }
+    }
+    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
+#if ZEHOS_INSTALLER
+    private readonly IInstallService installer;
+#endif
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
@@ -40,6 +54,15 @@ public sealed class Kernel : Sys.Kernel
     {
         messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+#if ZEHOS_INSTALLER
+        installer = new CosmosInstallService(CurrentVersion.ToString(), () =>
+        {
+            var prepared = PreparePowerAction();
+            if (!prepared.IsOK()) return prepared;
+            Sys.Power.Reboot();
+            return ResultErr.CreateSuccess();
+        });
+#endif
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
@@ -64,6 +87,11 @@ public sealed class Kernel : Sys.Kernel
         shell = new ShellService(
         [
             .. new FileShellCommands(files).Commands,
+            .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
+#if ZEHOS_INSTALLER
+            // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
+            .. new SetupShellCommands(installer, () => true).Commands,
+#endif
             .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
@@ -79,13 +107,13 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        systemLog.Information("Boot", "ZehOS startet.");
+        systemLog.Information("Boot", $"ZehOS {CurrentVersion} startet.");
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
             : ResultErr.CreateFailure(ResultCode.Failure, "Cosmos-Tastatureingabe ist deaktiviert."));
         bool forceRecovery = false;
-#if ZEHOS_RECOVERY
+#if ZEHOS_RECOVERY || ZEHOS_INSTALLER
         forceRecovery = true;
 #endif
         if (!boot.InitializeDisplay(forceRecovery, InitializeDisplay, RestoreTextConsole))
@@ -103,6 +131,10 @@ public sealed class Kernel : Sys.Kernel
             }
 
             systemLog.Information("Storage", $"Erkannte Laufwerke: {StorageManager.DeviceCount}.");
+#if ZEHOS_INSTALLER
+            output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
+            return ResultErr.CreateSuccess();
+#else
             var mounted = storage.Mount("sata0");
             if (mounted.IsOK())
             {
@@ -115,11 +147,14 @@ public sealed class Kernel : Sys.Kernel
             }
 
             return mounted;
+#endif
         });
-        systemLog.Information("Network", "Uebersprungen: ZehOS-Netzwerkdienst noch nicht implementiert.");
+        systemLog.Information("Network", "Updates initialisieren IPv4 bei Bedarf per DHCP.");
+#if !ZEHOS_INSTALLER
         var security = accounts.Load();
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
+#endif
         if (boot.IsRecoveryMode)
         {
             output.WriteLine("Wiederherstellungsmodus: Textshell. Diagnose: version, uptime, log.");
