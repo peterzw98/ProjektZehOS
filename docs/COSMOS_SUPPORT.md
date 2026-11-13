@@ -36,7 +36,7 @@ Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standa
 | Interruptschutz | Das Lesen des Rohpuffers verwendet `SchedulerManager.MaskInterrupts()`. Nur für diesen kleinen Bereich wird die zugehörige Experimental-Warnung der festgelegten Version ausgenommen. |
 | Maus | `MouseManager` liefert Position und drei Tastenzustände; `SetScreenSize` und `InputService` begrenzen die Position. Bewegung, Drücken/Loslassen und Bildschirmränder sind im Gast geprüft. |
 | Monotone Zeit | `Stopwatch.GetTimestamp`/Frequenz sind in der installierten x64-Version an TSC und dessen Kalibrierung gebunden. Fortschreitende Statuszeit ohne Eingabe wurde im Gast geprüft. `Environment.TickCount64` wird nicht verwendet: Die installierte Laufzeit zählt dort Aufrufe statt Millisekunden. |
-| Kurze Pause | `TimerManager.Wait(1)` am Ende jeder Runde. |
+| Kurze Pause | `Thread.Sleep(1)` am Ende jeder Runde. `TimerManager.Wait(1)` nutzte im QEMU-Referenzgast einen 18-Hz-Timer und begrenzte dadurch Eingabe und Bildausgabe auf etwa 15–16 FPS. Die bereits geprüfte Scheduler-Wartefunktion beseitigt diese grobe Pause, ohne die HAL-Timerfrequenz zu verändern. [Messung](DESKTOP_PERFORMANCE.md). |
 | Grafik | `Canvas.GetFullScreen()`, `GetBuffer()` und `Display()` verwenden den schon vorhandenen Bildpuffer. Keine neue Vollbildallokation pro Bild. |
 | Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
 | Zeichnen | Rechtecke, vor dem Rasterisieren beschnittene Linien, Bitmaptext und Pixelkopien. Ein Zeichenbereich kann auf ein Teilrechteck begrenzt werden. Hosttests decken auch negative und extreme Koordinaten ab. |

@@ -28,6 +28,7 @@
     <Compile Include="..\ProjektZeh\UI\**\*.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\FrameTiming.cs" Link="Runtime\FrameTiming.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
