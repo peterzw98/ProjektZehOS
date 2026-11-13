@@ -24,6 +24,7 @@
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Window*.cs" Link="Graphics\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\Desktop.cs" Link="Graphics\Desktop.cs" />
+    <Compile Include="..\ProjektZeh\UI\**\*.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />

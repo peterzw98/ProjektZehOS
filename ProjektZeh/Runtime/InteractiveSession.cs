@@ -38,7 +38,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     ToggleGraphics();
                 else if (graphics)
                 {
-                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape) LeaveGraphics();
+                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
+                    {
+                        if (!display!.CloseMenu()) LeaveGraphics();
+                    }
                     else display!.Handle(value);
                 }
                 else if (editor.Handle(value, out string? command) && command != null)

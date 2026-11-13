@@ -24,6 +24,7 @@ internal sealed class DisplayService
     }
 
     public void Handle(InputEvent value) => desktop.Handle(value);
+    public bool CloseMenu() => desktop.CloseMenu();
     public void Update(long milliseconds) => desktop.Update(milliseconds);
     public void Suspend() => desktop.Handle(new(InputEventType.Reset));
 
