@@ -33,6 +33,9 @@ internal sealed class Desktop
     private readonly List<ApplicationEntry> matches = [];
     private readonly ApplicationEntry[] applications;
     private readonly UiRect menuBounds;
+    private readonly DesktopSession? session;
+    private readonly LoginScreen? login;
+    private int generation;
     private int sequence;
     private bool menuOpen;
     private bool alt;
@@ -46,7 +49,7 @@ internal sealed class Desktop
     private sealed record ApplicationEntry(string Name, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
-        Func<ShellService> createShell, Func<FileService> createFiles)
+        Func<ShellService> createShell, Func<FileService> createFiles, DesktopSession? session = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 400 + BarHeight);
@@ -66,6 +69,13 @@ internal sealed class Desktop
         Windows = new WindowManager(width, height - BarHeight);
         applications = [new("Terminal", OpenTerminal), new("Dateien", OpenFiles),
             new("Texteditor", () => OpenEditor()), new("Pong", OpenPong)];
+        if (session != null)
+        {
+            this.session = session;
+            login = new(session, painter, width, height);
+            generation = session.Identity.Generation;
+            applications = [.. applications, new("Abmelden", () => { login.Logout(); return true; })];
+        }
         menuBounds = new(12, height - 440, 400, 378);
         search = new(64, painter: painter) { Bounds = new(28, menuBounds.Y + 56, 368, 44) };
         appList.Bounds = new(28, menuBounds.Y + 112, 368, 160);
@@ -129,6 +139,12 @@ internal sealed class Desktop
             alt = leftShift = rightShift = suppressSpace = false;
             CloseMenu();
             Windows.Reset();
+            return;
+        }
+        SyncSession();
+        if (IsLocked)
+        {
+            login!.Handle(value);
             return;
         }
         if (value.Type is InputEventType.KeyDown or InputEventType.KeyUp)
@@ -204,14 +220,47 @@ internal sealed class Desktop
         return new(312 + index * taskWidth, height - 44, taskWidth - 4, 32);
     }
 
-    public void Update(long milliseconds) => Windows.Update(milliseconds);
+    public void Update(long milliseconds)
+    {
+        SyncSession();
+        if (IsLocked)
+        {
+            login!.Update();
+            // Eine eben abgeschlossene Anmeldung wird verbucht, bevor neue Fenster entstehen.
+            SyncSession();
+        }
+        Windows.Update(milliseconds);
+    }
+
+    private bool IsLocked => session != null && session.Identity.UserId == null;
+
+    /// <summary>
+    /// Schliesst nach jedem Identitaetswechsel, auch aus der Textshell, Menue und alle Fenster. Dabei enden auch die
+    /// eigenen Terminalsitzungen; ungespeicherte Entwuerfe gehen ohne Rueckfrage verloren.
+    /// </summary>
+    private void SyncSession()
+    {
+        if (session == null || session.Identity.Generation == generation) return;
+        generation = session.Identity.Generation;
+        CloseMenu();
+        Windows.CloseAll();
+        login!.Reset();
+    }
 
     public void Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)
     {
         surface.ResetClip();
+        SyncSession();
         surface.FillRectangle(0, 0, width, height, unchecked((int)0xff142236));
+        if (IsLocked)
+        {
+            login!.Render(surface);
+            DrawPointer(surface, pointerX, pointerY, buttons);
+            return;
+        }
         Text(surface, "ZehOS", 32, 28);
         Text(surface, "DEIN ARBEITSPLATZ", 32, 64, SecondaryText);
+        if (session != null) Text(surface, $"Angemeldet: {session.Identity.UserName}", 32, 100, SecondaryText);
         painter.Text(surface, Metrics.Summary, width - 300, 20, 276, SecondaryText);
         painter.Text(surface, Metrics.AllocationSummary, width - 300, 56, 276, SecondaryText);
         if (Windows.Count == 0)
@@ -245,6 +294,11 @@ internal sealed class Desktop
             menu.Draw(surface, painter, 0, 0, true);
             if (matches.Count == 0) Text(surface, "Keine Programme gefunden", 36, menuBounds.Y + 120, SecondaryText);
         }
+        DrawPointer(surface, pointerX, pointerY, buttons);
+    }
+
+    private static void DrawPointer(PixelSurface surface, int pointerX, int pointerY, PointerButtons buttons)
+    {
         int color = buttons == PointerButtons.None ? -1 : UiPainter.Accent;
         for (int row = 0; row < 15; row++) surface.FillRectangle(pointerX, pointerY + row, row / 2 + 1, 1, unchecked((int)0xff000000));
         surface.DrawLine(pointerX, pointerY, pointerX, pointerY + 14, color);

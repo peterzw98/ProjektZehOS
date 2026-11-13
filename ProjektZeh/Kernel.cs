@@ -41,25 +41,35 @@ public sealed class Kernel : Sys.Kernel
         messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         var desktopIdentity = accounts.CreateSession();
-        interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateShell(accounts.CreateSession()),
+        interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
-            output, GetElapsedMilliseconds, systemLog);
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity);
+    }
+
+    /// <summary>Neue Terminals starten als angemeldeter Desktopbenutzer, behalten danach aber ihre eigene Identitaet.</summary>
+    private ShellService CreateTerminalShell(UserSession desktopIdentity)
+    {
+        var identity = accounts.CreateSession();
+        identity.LoginAs(desktopIdentity);
+        return CreateShell(identity);
     }
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService("/data", access: accounts.Access, session: identity);
+        var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity);
         ShellService? shell = null;
         shell = new ShellService(
         [
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
-            .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery).Commands,
+            .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
+                name => shell!.HasCommand(name)).Commands,
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
-            $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
+            $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
+            command => accounts.Authorize(identity, command));
         shell.OnClose = () => accounts.ReleaseSession(identity);
         return shell;
     }
@@ -105,7 +115,7 @@ public sealed class Kernel : Sys.Kernel
         });
         systemLog.Information("Network", "Uebersprungen: ZehOS-Netzwerkdienst noch nicht implementiert.");
         var security = accounts.Load();
-        if (!security.IsOK()) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
+        if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
         if (boot.IsRecoveryMode)
         {

@@ -62,6 +62,20 @@ internal sealed class FileAccessControl
     internal void Grant(string path, string userId, FilePermission permission) => entries[path].Grant(userId, permission);
     internal bool IsOwner(string path, string userId) => entries.TryGetValue(path, out var rights) && rights.OwnerId == userId;
     internal bool Contains(string path) => entries.ContainsKey(path);
+    /// <summary>Gibt Eintraege eines geloeschten Kontos an den neuen Eigentuemer und entfernt seine Freigaben.</summary>
+    internal void RemoveUser(string userId, string newOwnerId)
+    {
+        foreach (string path in new List<string>(entries.Keys))
+        {
+            var rights = entries[path];
+            if (rights.OwnerId != userId) { rights.Grant(userId, FilePermission.None); continue; }
+            var replacement = new FilePermissions(newOwnerId);
+            foreach (var grant in rights.Grants)
+                if (grant.Key != userId && grant.Key != newOwnerId) replacement.Grant(grant.Key, grant.Value);
+            entries[path] = replacement;
+        }
+    }
+
     internal bool ValidateUsers(HashSet<string> ids)
     {
         foreach (var entry in entries.Values)
