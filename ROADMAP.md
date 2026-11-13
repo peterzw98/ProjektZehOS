@@ -175,14 +175,14 @@ Diese Rechte gelten für Anwendungen, die die kontrollierten ZehOS-Dienste verwe
 - [x] 7.2 Laufwerk erkennen und über Cosmos unter `/data` einhängen. Vorhandene Daten beim Start ausschließlich einbinden, ohne Formatierung.
 - [x] 7.3 Einen `FileService` für Pfadauflösung und begrenzte Textoperationen (65.536 Zeichen) einführen. Shellbefehle `ls`, `pwd`, `cd` und `cat` ergänzen.
 - [x] 7.4 Schreiben ergänzen: Verzeichnisse und kleine Textdateien anlegen, schließen und mit `disk unmount` erforderliche Schreibpuffer leeren. Dafür `mkdir` und `write` bereitstellen.
-- [ ] 7.5 Fehlendes Laufwerk, ungültige Pfade, fehlende Dateien und vollen Datenträger behandeln. Ohne Datenlaufwerk soll der Desktop weiterhin starten.
+- [x] 7.5 Fehlendes Laufwerk, ungültige Pfade, fehlende Dateien und vollen Datenträger behandeln. Ohne Datenlaufwerk soll der Desktop weiterhin starten.
 - [x] 7.6 Datei speichern, VM sauber beenden, erneut starten und Inhalt vergleichen. Danach bei Bedarf auch das VMware-Startprofil um ein Datenlaufwerk erweitern.
 
 **Fertig, wenn:** Eine im Gast geschriebene Datei nach einem Neustart unverändert gelesen werden kann.
 
 Ein RAM-Dateisystem ist für frühe Experimente möglich, erfüllt aber keine dauerhafte Speicherung. Ressourcen können anfangs auch einkompiliert werden; das ist kein Ersatz für den Neustarttest.
 
-Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 bleibt bis zur späteren Desktopintegration offen. Start und Einrichtung beschreibt die README.
+Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 ist am 13. November 2026 im Desktop mit fehlendem Laufwerk, Pfadfehlern und vollständig belegter isolierter FAT32-Testkopie in QEMU geprüft. Dateierhalt, Bereinigung, Weiterbedienung und Neustart sind nachgewiesen; VMware bleibt offen. Ablauf und Grenzen stehen in [docs/DESKTOP_STORAGE_TESTS.md](docs/DESKTOP_STORAGE_TESTS.md). Start und Einrichtung beschreibt die README.
 
 ## 8 Kleine Desktopanwendungen bauen
 
@@ -292,7 +292,7 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 ## Erste Änderungen und nächster Schritt
 
-Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die vollständige Desktop-Fehlerfallprüfung aus 7.5 bleiben sichtbar:
+Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die zusätzliche VMware-Dateiprüfung bleiben sichtbar:
 
 Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter, zunächst deren gemeinsamen Bedienelementen und dem Dateibetrachter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
 

@@ -79,3 +79,9 @@ Gastprüfung wiederholen: normal und mit `ZehOSRecovery=true` bauen; im Desktop 
 ## Doom-Vorversuch am 13. November 2026
 
 Der [getrennte Hostversuch für Roadmap 0.4](DOOM_FEASIBILITY.md) baut Managed Dooms Kern ohne Desktoppakete unter .NET 10 und erfasst verbleibende Datei-, Prozess-, Zeit- und Speicherabhängigkeiten. Es wurden keine neuen Cosmos-Schnittstellen geprüft: NativeAOT-Link für Cosmos, WAD-Zugriff, Renderausgabe und Spielbetrieb in QEMU/VMware bleiben offen. Kernel und Paketversionen sind unverändert.
+
+## Desktop-Dateifehler am 13. November 2026
+
+Die [Nachprüfung von Roadmap 7.5](DESKTOP_STORAGE_TESTS.md) besteht mit dem unveränderten Kernel auf Basis `7264b34`, Cosmos 3.0.94, SDK 10.0.112 und QEMU 10.2.2. Ohne Datenplatte startet der Desktop und bleibt nach Datei-/Pfadfehlern bedienbar. Auf einer vollständig belegten isolierten FAT32-Kopie scheitern Ersetzen und Neuanlegen mit ENOSPC; Originalinhalt und Bereinigung sind vor und nach Reboot geprüft. Esc/F4 und anschliessende Befehle funktionieren. 155 Hosttests und sieben Python-Helfertests bestehen. Native Release-ISO erfolgreich gebaut; VMware und echte Hardware bleiben offen.
+
+Der FAT32-Formatter dieser Version schreibt den primären FSInfo-Sektor und den Sicherungs-Bootsektor, lässt aber in dieser Probe den FSInfo-Sicherungssektor leer. Der Offline-Testhelfer erhält diesen Zustand; daraus wird kein allgemeiner Nachweis für alle FAT32-Layouts abgeleitet.
