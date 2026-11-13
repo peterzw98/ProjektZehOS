@@ -15,6 +15,8 @@ internal sealed class LineEditor
     private int draftCursor;
 
     public string Text => text.ToString();
+    public bool IsSecret { get; set; }
+    public string DisplayText => IsSecret ? new string('*', text.Length) : Text;
     public int Cursor { get; private set; }
 
     public bool Handle(InputEvent value, out string? command)
@@ -22,7 +24,7 @@ internal sealed class LineEditor
         command = null;
         if (value.Type == InputEventType.Text)
         {
-            if (char.IsControl(value.Character) || text.Length == MaximumLength) return false;
+            if (char.IsControl(value.Character) || text.Length == (IsSecret ? 128 : MaximumLength)) return false;
             text.Insert(Cursor++, value.Character);
             return true;
         }
@@ -32,7 +34,7 @@ internal sealed class LineEditor
         {
             case PhysicalKey.Enter:
                 command = Text;
-                if (!string.IsNullOrWhiteSpace(command) &&
+                if (!IsSecret && !string.IsNullOrWhiteSpace(command) &&
                     (history.Count == 0 || history[^1] != command))
                 {
                     if (history.Count == HistoryCapacity) history.RemoveAt(0);
@@ -61,7 +63,7 @@ internal sealed class LineEditor
             case PhysicalKey.End:
                 Cursor = text.Length;
                 return true;
-            case PhysicalKey.Up when historyIndex > 0:
+            case PhysicalKey.Up when !IsSecret && historyIndex > 0:
                 if (historyIndex == history.Count)
                 {
                     draft = Text;
@@ -69,7 +71,7 @@ internal sealed class LineEditor
                 }
                 Replace(history[--historyIndex]);
                 return true;
-            case PhysicalKey.Down when historyIndex < history.Count:
+            case PhysicalKey.Down when !IsSecret && historyIndex < history.Count:
                 historyIndex++;
                 Replace(historyIndex == history.Count ? draft : history[historyIndex]);
                 if (historyIndex == history.Count) Cursor = draftCursor;

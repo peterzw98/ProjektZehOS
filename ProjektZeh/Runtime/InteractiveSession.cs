@@ -31,6 +31,8 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         if (startDesktop) ToggleGraphics();
         while (true)
         {
+            if (!graphics && shell.Poll(output)) { line.Begin(); dirty = true; }
+            editor.IsSecret = shell.IsSecretInput;
             devices.Poll(input);
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
@@ -41,11 +43,12 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape) LeaveGraphics();
                     else display!.Handle(value);
                 }
-                else if (editor.Handle(value, out string? command) && command != null)
+                else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
                 {
-                    line.Submit(command);
+                    line.Submit(editor.IsSecret ? "********" : command);
                     var result = shell.ExecuteLine(command, output);
                     if (!result.IsOK()) output.WriteLine(result.Message);
+                    editor.IsSecret = shell.IsSecretInput;
                     line.Begin();
                 }
                 dirty = true;

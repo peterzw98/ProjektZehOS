@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Collections.Generic;
+using ProjektZeh.Security;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage;
@@ -12,13 +14,18 @@ internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
     private readonly Action<string, string, bool> moveFile;
+    private readonly FileAccessControl? access;
+    private readonly UserSession? session;
 
     public string CurrentDirectory { get; private set; }
 
-    public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null)
+    public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
+        FileAccessControl? access = null, UserSession? session = null)
     {
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
+        this.access = access;
+        this.session = session;
     }
 
     /// <summary>
@@ -34,7 +41,13 @@ internal sealed class FileService
 
         try
         {
-            return ResultObjectFactory.CreateSuccess(Directory.GetFileSystemEntries(resolved.Value!));
+            Authorize(resolved.Value!, FilePermission.Read);
+            string[] entries = Directory.GetFileSystemEntries(resolved.Value!);
+            if (access == null) return ResultObjectFactory.CreateSuccess(entries);
+            var visible = new List<string>();
+            foreach (string entry in entries)
+                if (access.Check(session!, entry, FilePermission.Read).IsOK()) visible.Add(entry);
+            return ResultObjectFactory.CreateSuccess(visible.ToArray());
         }
         catch (Exception exception) when (IsFileError(exception))
         {
@@ -55,6 +68,7 @@ internal sealed class FileService
 
         try
         {
+            Authorize(resolved.Value!, FilePermission.Read);
             using var reader = new StreamReader(resolved.Value!);
             var buffer = new char[MaximumTextLength + 1];
             int length = reader.ReadBlock(buffer, 0, buffer.Length);
@@ -98,6 +112,7 @@ internal sealed class FileService
         FileStream? temporaryStream = null;
         try
         {
+            Authorize(resolved.Value!, FilePermission.Write, true);
             byte[] data = new UTF8Encoding(false, true).GetBytes(text);
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
@@ -178,6 +193,7 @@ internal sealed class FileService
 
         try
         {
+            Authorize(resolved.Value!, FilePermission.Write, true);
             Directory.CreateDirectory(resolved.Value!);
             return ResultErr.CreateSuccess();
         }
@@ -200,6 +216,7 @@ internal sealed class FileService
 
         try
         {
+            Authorize(resolved.Value!, FilePermission.Read);
             FileAttributes attributes = File.GetAttributes(resolved.Value!);
             if ((attributes & FileAttributes.Directory) == 0)
             {
@@ -216,7 +233,7 @@ internal sealed class FileService
         }
     }
 
-    private ResultObject<string> ResolvePath(string? path)
+    internal ResultObject<string> ResolvePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -238,6 +255,20 @@ internal sealed class FileService
     {
         return exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     }
+
+    private void Authorize(string path, FilePermission permission, bool creating = false)
+    {
+        if (access == null) return;
+        if (session == null || !access.Check(session, path, permission, creating).IsOK())
+            throw new UnauthorizedAccessException("Zugriff verweigert.");
+        // Vorhandene, auch ueber FAT-Kurznamen erreichbare Eintraege muessen explizit zugeordnet sein.
+        if (creating && !access.Contains(path) && (File.Exists(path) || Directory.Exists(path)))
+            throw new UnauthorizedAccessException("Vorhandener Eintrag ohne Rechtezuordnung.");
+        if (creating && !access.RegisterCreated(session, path).IsOK())
+            throw new UnauthorizedAccessException("Rechte konnten nicht gespeichert werden; Zugriff gesperrt.");
+    }
+
+    internal void ResetDirectory(string directory) => CurrentDirectory = directory;
 
     private static ResultErr TextTooLarge()
     {

@@ -5,6 +5,7 @@ using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Shared;
+using ProjektZeh.Security;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -22,6 +23,13 @@ public sealed class Kernel : Sys.Kernel
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
     private bool startDesktop;
+    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
+    private const bool SecurityRecovery =
+#if ZEHOS_SECURITY_RECOVERY
+        true;
+#else
+        false;
+#endif
 
     public Kernel()
     {
@@ -31,14 +39,19 @@ public sealed class Kernel : Sys.Kernel
 
     private ShellService CreateShell()
     {
-        var files = new FileService("/data");
-        return new ShellService(
+        var identity = accounts.CreateSession();
+        var files = new FileService("/data", access: accounts.Access, session: identity);
+        ShellService? shell = null;
+        shell = new ShellService(
         [
             .. new FileShellCommands(files).Commands,
-            .. new StorageShellCommands(storage).Commands,
+            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
+            .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
+        shell.OnClose = () => accounts.ReleaseSession(identity);
+        return shell;
     }
 
     protected override void BeforeRun()
@@ -81,6 +94,9 @@ public sealed class Kernel : Sys.Kernel
             return mounted;
         });
         systemLog.Information("Network", "Uebersprungen: ZehOS-Netzwerkdienst noch nicht implementiert.");
+        var security = accounts.Load();
+        if (!security.IsOK()) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
+        if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
         if (boot.IsRecoveryMode)
         {
             output.WriteLine("Wiederherstellungsmodus: Textshell. Diagnose: version, uptime, log.");
@@ -98,6 +114,9 @@ public sealed class Kernel : Sys.Kernel
             Stop();
             return;
         }
+#endif
+#if ZEHOS_SECURITY_PROBE
+        if (!CosmosSecurityProbe.Run()) { Stop(); return; }
 #endif
         interactive.Run(startDesktop);
     }

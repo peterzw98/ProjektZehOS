@@ -17,7 +17,7 @@ internal sealed class ConsoleLineView
     public void Draw(LineEditor editor)
     {
         int columns = Math.Max(1, Console.WindowWidth - Prompt.Length - 1);
-        string text = editor.Text;
+        string text = editor.DisplayText;
         int start = Math.Max(0, editor.Cursor - columns + 1);
         string visible = text.Substring(start, Math.Min(columns, text.Length - start));
         Console.SetCursorPosition(0, row);

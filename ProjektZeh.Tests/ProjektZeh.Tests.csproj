@@ -6,6 +6,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="MSTest.TestAdapter" Version="3.6.4" />
     <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
@@ -27,6 +28,7 @@
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
+    <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />

@@ -7,9 +7,12 @@
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Cosmos.Kernel" Version="3.0.94" />
     <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
   </ItemGroup>
