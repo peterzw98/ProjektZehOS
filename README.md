@@ -34,6 +34,24 @@ Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutp
 
 In der Textshell läuft oben eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Der Desktop zeigt Fensterzahl und Laufzeit in der unteren Leiste. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt und ein Ziehvorgang beendet.
 
+## Benutzer und Dateirechte (Etappe 6c, noch in Prüfung)
+
+Dateizugriffe erfordern eine Anmeldung und gültige Konten-/Rechtemetadaten auf `/data`. Fehlende oder beschädigte Metadaten sperren den Zugriff; bestehende Dateien werden nicht automatisch übernommen. `whoami` zeigt die Identität, `login <Name>` fragt das Kennwort verdeckt ab, `logout` meldet nur die aktuelle Sitzung ab. Kennwörter enthalten 12 bis 128 Zeichen; die Berechnung läuft im Hintergrund. Kennwörter erscheinen weder in der Ausgabe noch im Verlauf. Global laufen höchstens zwei Kennwortberechnungen gleichzeitig, auch wenn ihre Terminalfenster geschlossen wurden. Weitere Eingaben werden bis zum Abschluss abgewiesen. `shutdown` und `reboot` warten nicht blockierend, sondern melden während laufender Kennwortberechnungen einen Fehler; danach kann die Energieaktion erneut gestartet werden. Die Hashes verwenden BouncyCastle 2.7.0 mit PBKDF2-SHA256, zufälligem 16-Byte-Salt und 600000 Iterationen. Ohne funktionierende RDSEED-/RDRAND-Quelle wird die Kennwortanlage abgewiesen.
+
+Jedes Terminal hat eine eigene Anmeldung und ein eigenes Arbeitsverzeichnis. Dateien und Texteditor verwenden die Sitzung der **Textshell**: mit Esc dorthin wechseln, anmelden und mit F4 zurückkehren. Eine Anmeldung in einem Terminal verändert die Desktopidentität nicht. Jede Dateianwendung erhält ein eigenes Arbeitsverzeichnis und prüft jede Operation über denselben Dateidienst; nach Logout werden weitere Zugriffe verweigert. Bereits angezeigte Inhalte und ungespeicherte Entwürfe bleiben im Fenster erhalten. Neue Editor-Dateien liegen zunächst im Benutzerverzeichnis.
+
+Administratoren legen Konten mit `user add <Name> user` beziehungsweise `user add <Name> admin` an; `user list` zeigt die Konten. `grant <Pfad> <Name> r` vergibt Leserechte, `rw` zusätzlich Schreibrechte, `none` entfernt eine Freigabe. Für das Lesen einer Datei in einem fremden Home muss der Administrator auch auf diesem Verzeichnis Leserechte vergeben. Anlegen und Ersetzen benötigen Schreibrechte auf dem Elternverzeichnis, weil der sichere Schreibpfad dort temporäre Dateien und Sicherungen anlegt; `rw` auf der Datei allein genügt nicht. Eigentümer dürfen Rechte auf ihren Einträgen selbst vergeben. `security adopt <Pfad> <Name>` ordnet als Administrator einen bestehenden Eintrag ausdrücklich zu. Laufwerksverwaltung erfordert Administratorrechte. Nach dem Aushängen ist die Kontendatei nicht mehr erreichbar; zum automatischen Einbinden regulär neu starten oder den expliziten Recovery-Build verwenden.
+
+Die erste Einrichtung und die Wiederherstellung erfolgen nur in einem ausdrücklich gebauten Sicherheits-Recovery-System:
+
+```powershell
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSecurityRecovery=true
+```
+
+Dieses ISO startet in der Textshell. Auf einer vollständig leeren **isolierten 64-MiB-Testplatte** zuerst `disk init sata0`, dann `disk mount sata0` ausführen; ein vorhandenes FAT32-Laufwerk nicht initialisieren. `security recover <Adminname>` fragt ein neues Kennwort ab und ersetzt Konten/Rechte ausdrücklich. Eine vorhandene Metadatendatei wird unverändert als `.zehos-security-recovery-<Kennung>.db` erhalten. Vorhandene Nutzdateien bleiben bis zur ausdrücklichen Zuordnung gesperrt. Anschließend normal ohne Recovery-Eigenschaft neu bauen und starten. Metadaten, temporäre Dateien und Sicherungen mit reserviertem `.zehos-`-Präfix sind für normale Dateioperationen gesperrt.
+
+Die Regeln gelten für die kontrollierten ZehOS-Dienste. Anwendungen laufen weiterhin gemeinsam im Kernel; diese Rechte bieten keine Isolation gegenüber fremdem Kernelcode. Aktuelle Nachweise und offene Gastprüfungen stehen in `docs/ETAPPE6C_STATUS.md`.
+
 ## Desktop und Fenster
 
 ZehOS startet zu einem freien Desktop mit **1024 × 768 Pixeln und 32 Bit Farbtiefe**. **Anwendungen** oder **Alt+F1** öffnet das Programmmenü mit Suche für Terminal, Dateien, Texteditor und Pong. Tab/Shift+Tab wechseln den Fokus, Pfeiltasten die Programmauswahl und Enter startet die Auswahl. **>_** startet direkt ein Terminal. Gestaltung und Bedienung orientieren sich an KDE/Cinnamon; ZehOS verwendet weiterhin Cosmos und führt keine Linux-Programme aus.
@@ -115,7 +133,24 @@ Für ein Wiederherstellungs-ISO mit `dotnet build ProjektZeh/ProjektZeh.csproj -
 
 Die [Roadmap für ZehOS](ROADMAP.md) beschreibt die nächsten Schritte bis zu einem Desktop mit Terminal, Dateiverwaltung, spielbarem Doom und einem einfachen Browser. Jede Etappe enthält konkrete Aufgaben und ein überprüfbares Ergebnis.
 
-## Thread- und Warteprobe (Roadmap 6a.1)
+## Hintergrundaufgaben und Round-Robin (6a)
+
+Der Kernel verwendet eine eigene Round-Robin-Policy mit 20-ms-Zeitscheibe über den vorhandenen Cosmos-Timer. Alle Terminals und die Textshell sehen dieselbe begrenzte Liste von höchstens acht Aufgaben:
+
+```text
+tasks start busy
+tasks start busy
+tasks start wait
+tasks list
+tasks scheduler
+tasks cancel 1
+```
+
+`busy` rechnet ohne freiwillige CPU-Pause, `wait` wartet jeweils 250 ms. `tasks list` zeigt Kennung, Zustand, Fortschritt und gegebenenfalls Fehler. Die von `start` ausgegebene Kennung an `cancel` übergeben; Abbruch erfolgt kooperativ. Beendete Einträge bleiben zur Diagnose sichtbar und werden bei Bedarf für neue Aufgaben entfernt; Kennungen werden nicht wiederverwendet. `scheduler` zeigt die feste Zeitscheibe, die Zahl angeforderter Timer-Verdrängungen und die letzten 128 ausgewählten Kernelthread-Kennungen.
+
+Worker schreiben weder ins Terminal noch ins Dateisystem. Statusübergaben sind synchronisiert, Fortschrittszähler atomar. Eingabe und Zeichnen bleiben im Hauptthread. Vor Ausschalten/Neustart werden die Aufgaben abgebrochen und höchstens zwei Sekunden abgewartet; laufende Aufgaben verhindern danach die Energieaktion. Dies ist Multitasking im gemeinsamen Kernel und bietet keine Prozessisolation.
+
+### Isolierte Thread- und Warteprobe
 
 Ein ausdrücklich aktivierter Testbuild prüft vor dem Desktop zwei echte Cosmos-Threads ohne freiwillige CPU-Abgabe sowie Schlafen, Abbruch, Join, Ereignisse und Wartezeitlimits:
 
@@ -126,13 +161,13 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 
 Der Helfer startet eine eigene QEMU-VM ohne Datenlaufwerk, wartet höchstens 45 Sekunden auf `THREAD_PROBE PASS` und beendet nur diese Test-VM. Serielle Ausgabe und QEMU-Fehlerausgabe liegen in einem jeweils neuen Ordner unter `.tools/thread-probe/`. Fehlendes Ergebnis, `THREAD_PROBE FAIL` oder ein vorzeitiges VM-Ende lassen den Helfer fehlschlagen. Ein normales ISO erfüllt diese Probe ausdrücklich nicht.
 
-Der Test verwendet den vorhandenen Stride-Scheduler; ZehOS-Aufgabenverwaltung und Round-Robin folgen in 6a.2–6a.5. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
+Der Test verwendet den ZehOS-Round-Robin-Scheduler und prüft auch Ressourcenbereinigung der Aufgabenverwaltung sowie die Nachrichtenwarteschlangen aus 6b. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
 
 ```powershell
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThreadProbe=false -warnaserror
 ```
 
-Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#thread--und-warteprobe-am-13-november-2026).
+Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#aufgabenverwaltung-und-round-robin-am-13-november-2026).
 
 ## Automatische Builds und Codeprüfung
 
@@ -209,3 +244,13 @@ Pong verwendet W/S oder Pfeil auf/ab und Leertaste für Pause. Beim Fokusverlust
 ## Desktop-Dateifehler gezielt prüfen
 
 Roadmap 7.5 ist mit fehlendem Datenlaufwerk und einer vollständig belegten isolierten FAT32-Kopie in QEMU geprüft. Die [Prüfanleitung](docs/DESKTOP_STORAGE_TESTS.md) beschreibt den Ablauf und den Helfer `scripts/create-full-fat32-test-copy.py`. Dieser erzeugt ausschliesslich eine neue Testkopie und ersetzt kein vorhandenes Image. VMware-Dateiprüfungen bleiben offen.
+
+### Nachrichten und Synchronisation (Etappe 6b)
+
+`messages start slow-producer` startet zwei Hintergrundaufgaben mit 24 nummerierten Nachrichten und einem Puffer für drei Einträge. `messages start slow-consumer` macht den vollen Puffer sichtbar. `messages status` zeigt Fortschritt, Wartevorgänge, Reihenfolgefehler und die gemeinsame Kontosumme (2000). Die Bedienung bleibt während der Wartezeiten verfügbar; `tasks list` zeigt beide Aufgaben.
+
+`messages close` schließt den Puffer: Neue Nachrichten werden abgewiesen, vorhandene noch verarbeitet. `messages stop` bricht beide Aufgaben ab. Auch `tasks cancel <Consumer-ID>` beendet den am vollen Puffer wartenden Producer. Nach dem Ende beider Aufgaben lässt sich die Vorführung erneut starten. Die Vorführung gehört zum gemeinsamen Kerneldienst; alle Terminals sehen denselben Zustand.
+
+`MessageQueue<T>` verwendet den vorhandenen Cosmos-Monitor mit einer gemeinsamen Sperre für Zustand und Wecksignale. Wartende Varianten liefern `Cancelled`, `TimedOut` beziehungsweise `Closed`; nicht wartende Varianten unterscheiden `Empty` und `Full`. Ein geschlossener Puffer lässt sich noch leeren. Beide Übertragungsrichtungen des kontrollierten Kontobeispiels erwerben zuerst die Sperre von Konto 1 und dann von Konto 2, damit keine zyklische Warteabhängigkeit entsteht.
+
+Der optionale Threadprobe-Build prüft zusätzlich nummerierte Zustellung, Kapazität, Zeitlimits, Schließen/Abbruch wartender Teilnehmer und den Neustart nach alleinigem Consumer-Abbruch bei vollem Puffer. Erfolg meldet `MESSAGES_PROBE PASS`; erst nach allen Teilprüfungen folgt `THREAD_PROBE PASS`. Einzelheiten und tatsächlich geprüfte Plattformen stehen in [docs/ETAPPE6B_STATUS.md](docs/ETAPPE6B_STATUS.md).

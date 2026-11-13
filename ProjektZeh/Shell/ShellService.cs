@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
 
@@ -13,6 +14,39 @@ internal sealed class ShellService
     private readonly SystemLog? systemLog;
     private readonly Func<long?>? getUptimeMilliseconds;
     private readonly string? version;
+    private Func<string, Func<Func<ResultErr>>>? secretInput;
+    private Thread? passwordWorker;
+    private Func<ResultErr>? completion;
+    private int passwordComplete;
+    private bool closed;
+    private static int runningPasswordWorkers;
+    internal static bool HasRunningPasswordOperations => Volatile.Read(ref runningPasswordWorkers) != 0;
+    internal Action? OnClose { get; set; }
+    public bool IsSecretInput => secretInput != null;
+    public bool IsBusy => passwordWorker != null;
+
+    public void BeginSecretInput(Func<string, Func<Func<ResultErr>>> prepare) => secretInput = prepare;
+
+    public bool Poll(ITextOutput output)
+    {
+        if (passwordWorker == null || Volatile.Read(ref passwordComplete) == 0 || !passwordWorker.Join(0)) return false;
+        passwordWorker = null;
+        var apply = completion;
+        completion = null;
+        if (!closed)
+        {
+            var result = apply!();
+            output.WriteLine(result.IsOK() ? "Vorgang abgeschlossen." : result.Message);
+        }
+        return true;
+    }
+
+    public void Close()
+    {
+        closed = true;
+        secretInput = null;
+        OnClose?.Invoke();
+    }
 
     public ShellService(SystemLog? systemLog = null, Func<long?>? getUptimeMilliseconds = null, string? version = null)
         : this(Array.Empty<ShellCommand>(), systemLog, getUptimeMilliseconds, version)
@@ -46,6 +80,45 @@ internal sealed class ShellService
     /// <returns></returns>
     public ResultErr ExecuteLine(string? line, ITextOutput? output)
     {
+        if (closed || IsBusy) return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation laeuft oder Sitzung geschlossen.");
+        if (secretInput != null)
+        {
+            // Geschlossene Fenster duerfen die globale Grenze nicht durch neue Sitzungen umgehen.
+            if (Interlocked.Increment(ref runningPasswordWorkers) > 2)
+            {
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortdienst ausgelastet. Nach Abschluss erneut eingeben.");
+            }
+            var prepare = secretInput;
+            Func<Func<ResultErr>> work;
+            try { work = prepare(line ?? ""); }
+            catch
+            {
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht vorbereitet werden.");
+            }
+            secretInput = null;
+            Volatile.Write(ref passwordComplete, 0);
+            passwordWorker = new Thread(() =>
+            {
+                try { completion = work(); }
+                catch (Exception)
+                {
+                    // Ausnahmen koennen Kennwortdetails enthalten und werden deshalb nicht ausgegeben.
+                    completion = () => ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation fehlgeschlagen. Kennwortlaenge oder sichere Zufallsquelle pruefen.");
+                }
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                Volatile.Write(ref passwordComplete, 1);
+            });
+            try { passwordWorker.Start(); }
+            catch
+            {
+                passwordWorker = null;
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden.");
+            }
+            return ResultErr.CreateSuccess();
+        }
         var parseResult = CommandLineParser.Parse(line);
         if (!parseResult.IsOK())
         {

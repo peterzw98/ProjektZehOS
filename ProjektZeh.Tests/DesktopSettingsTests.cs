@@ -87,7 +87,7 @@ public sealed class DesktopSettingsTests
         Assert.AreEqual(1023, input.PointerX);
         Assert.AreEqual(767, input.PointerY);
         Assert.AreEqual(PointerButtons.None, input.Buttons);
-        var desktop = new Desktop(1920, 1080, new byte[4096], 8, 16, () => new ShellService());
+        var desktop = new Desktop(1920, 1080, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var window = desktop.Windows.ActiveWindow!;
         var app = window.Application;

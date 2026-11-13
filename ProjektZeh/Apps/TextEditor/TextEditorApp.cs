@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Storage;
@@ -51,7 +52,7 @@ internal sealed class TextEditorApp : IApplication
     public void Start()
     {
         if (!string.IsNullOrEmpty(path.Text)) Load();
-        else path.SetText("/data/neu.txt");
+        else path.SetText(Path.Combine(files.CurrentDirectory, "neu.txt"));
     }
 
     public void Handle(InputEvent value)
@@ -83,7 +84,7 @@ internal sealed class TextEditorApp : IApplication
         document.SetText("");
         savedText = "";
         newline = "\n";
-        path.SetText("/data/neu.txt");
+        path.SetText(Path.Combine(files.CurrentDirectory, "neu.txt"));
         status = "Neue Datei. Pfad vor dem Speichern pruefen.";
         panel.Focus(document);
     }

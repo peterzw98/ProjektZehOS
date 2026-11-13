@@ -62,7 +62,7 @@ internal sealed class Desktop
     private sealed record ApplicationEntry(string Name, string Description, AppIcon Icon, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
-        Func<ShellService> createShell, Func<FileService>? createFiles = null,
+        Func<ShellService> createShell, Func<FileService> createFiles,
         DisplaySettings? display = null, TaskManagerSection[]? systemSections = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
@@ -77,10 +77,11 @@ internal sealed class Desktop
         this.glyphWidth = glyphWidth;
         this.glyphHeight = glyphHeight;
         this.createShell = createShell;
-        this.createFiles = createFiles ?? (() => new FileService("/data"));
+        ArgumentNullException.ThrowIfNull(createFiles);
+        this.createFiles = createFiles;
         this.display = display;
         this.systemSections = systemSections ?? [];
-        Preferences = new DesktopPreferences(this.createFiles());
+        Preferences = new DesktopPreferences(createFiles());
         painter = new(font, glyphWidth, glyphHeight);
         Windows = new WindowManager(width, height - BarHeight);
         applications =

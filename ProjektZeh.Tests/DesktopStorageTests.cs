@@ -104,7 +104,8 @@ public sealed class DesktopStorageTests
     private static Desktop CreateDesktop(string path, Action<string, string, bool>? moveFile = null)
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16,
-            () => new ShellService(new FileShellCommands(new FileService(path, moveFile)).Commands));
+            () => new ShellService(new FileShellCommands(new FileService(path, moveFile)).Commands),
+            () => new FileService(path, moveFile));
         desktop.OpenTerminal();
         desktop.OpenTerminal();
         return desktop;

@@ -8,6 +8,7 @@ using ProjektZeh.Input;
 using ProjektZeh.Runtime;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Graphics;
 
@@ -21,7 +22,8 @@ internal sealed class DisplayService
 
     public DisplaySettings Display { get; }
 
-    public DisplayService(Func<ShellService> createShell, InputService input, TaskManagerSection[] sections)
+    public DisplayService(Func<ShellService> createShell, Func<FileService> createFiles, InputService input,
+        TaskManagerSection[] sections)
     {
         this.input = input;
         canvas = Canvas.GetFullScreen();
@@ -32,8 +34,8 @@ internal sealed class DisplayService
         var current = new DisplayMode(canvas.Width, canvas.Height);
         Display = new DisplaySettings(current, ReadModes(current), SetMode);
         var font = PCScreenFont.DefaultFont;
-        desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell,
-            display: Display, systemSections: sections);
+        desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles,
+            Display, sections);
         SyncInput();
         // Eine frueher bestaetigte Aufloesung nur uebernehmen, wenn der Treiber sie tatsaechlich anbietet.
         var saved = new DisplayMode(desktop.Preferences.Settings.Width, desktop.Preferences.Settings.Height);

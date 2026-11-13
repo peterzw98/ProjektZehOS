@@ -1,0 +1,155 @@
+#if ZEHOS_THREAD_PROBE
+using System;
+using System.Diagnostics;
+using System.Threading;
+using Cosmos.Kernel.System.Diagnostics;
+using ProjektZeh.Scheduling;
+
+namespace ProjektZeh.Messaging;
+
+internal static class MessageGuestProbe
+{
+    public static void Run()
+    {
+        CheckCancellationCleanup();
+        CheckDemoCancellationAndRestart();
+        var queue = new MessageQueue<int>(2);
+        Check(queue.TryReceive(out _) == MessageQueueResult.Empty, "empty");
+        queue.TrySend(1);
+        queue.TrySend(2);
+        Check(queue.TrySend(3) == MessageQueueResult.Full, "full");
+        Check(queue.Send(3, 20) == MessageQueueResult.TimedOut, "send timeout");
+        queue.TryReceive(out _);
+        queue.TryReceive(out _);
+        Check(queue.Receive(out _, 20) == MessageQueueResult.TimedOut, "receive timeout");
+        var accounts = new OrderedTransfer();
+        int produced = 0;
+        int consumed = 0;
+        int invalid = 0;
+        var producer = new Thread(() =>
+        {
+            for (int i = 1; i <= 100; i++)
+            {
+                if (queue.Send(i, 5000) != MessageQueueResult.Success) { Interlocked.Increment(ref invalid); break; }
+                accounts.Transfer(true);
+                Interlocked.Increment(ref produced);
+            }
+            queue.Close();
+        });
+        var consumer = new Thread(() =>
+        {
+            int expected = 1;
+            while (true)
+            {
+                var result = queue.Receive(out int number, 5000);
+                if (result == MessageQueueResult.Closed) break;
+                if (result != MessageQueueResult.Success) { Interlocked.Increment(ref invalid); break; }
+                if (number != expected++) Interlocked.Increment(ref invalid);
+                accounts.Transfer(false);
+                Interlocked.Increment(ref consumed);
+            }
+        });
+        consumer.Start();
+        producer.Start();
+        Check(producer.Join(10000) && consumer.Join(10000), "worker join");
+        Check(produced == 100 && consumed == 100 && invalid == 0, "numbered delivery");
+        Check(accounts.Total == 2000, "lock order");
+        Check(queue.Receive(out _, 0) == MessageQueueResult.Closed, "closed");
+        CheckWaiters(false, false);
+        CheckWaiters(true, false);
+        CheckWaiters(false, true);
+        CheckWaiters(true, true);
+        Log.WriteString("MESSAGES_PROBE PASS numbered=100 consumed=100 duplicates=0 order=ok close/cancel/timeout/locks=ok\n");
+    }
+
+    private static void CheckDemoCancellationAndRestart()
+    {
+        var tasks = new BackgroundTaskService();
+        var demo = new MessageDemoService(tasks);
+        Check(demo.Start(false).IsOK(), "demo start");
+        Check(WaitUntil(() => demo.Status().Contains("full-waits=1", StringComparison.Ordinal)), "demo full buffer");
+        var consumer = Array.Find(tasks.Snapshot(), task => task.Name == "messages-consumer");
+        Check(consumer is not null && tasks.Cancel(consumer.Id).IsOK(), "demo cancel consumer");
+        Check(WaitUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal)), "demo cancellation cleanup");
+        Check(tasks.StopAll(2000), "demo cancellation join");
+        Check(demo.Start(true).IsOK(), "demo restart");
+        Check(WaitUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 10000), "demo restart completion");
+        string status = demo.Status();
+        Check(status.Contains("produced=24 consumed=24", StringComparison.Ordinal)
+            && status.Contains("order-errors=0 buffered=0/3 lock-total=2000", StringComparison.Ordinal), "demo restarted delivery");
+        Check(tasks.StopAll(2000), "demo restarted join");
+        Log.WriteString("MESSAGES_PROBE consumer-cancel/full-buffer/restart PASS\n");
+    }
+
+    private static bool WaitUntil(Func<bool> condition, int timeoutMilliseconds = 3000)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (clock.ElapsedMilliseconds >= timeoutMilliseconds) return false;
+            Thread.Sleep(1);
+        }
+        return true;
+    }
+
+    private static void CheckCancellationCleanup()
+    {
+        using var cancellation = new CancellationTokenSource();
+        int remaining = 2;
+        int firstFinally = 0;
+        int secondFinally = 0;
+        int caught = 0;
+        void Run(ref int finalized)
+        {
+            try
+            {
+                try
+                {
+                    cancellation.Token.WaitHandle.WaitOne();
+                    cancellation.Token.ThrowIfCancellationRequested();
+                }
+                finally
+                {
+                    Volatile.Write(ref finalized, 1);
+                    Interlocked.Decrement(ref remaining);
+                }
+            }
+            catch (OperationCanceledException) { Interlocked.Increment(ref caught); }
+        }
+        var first = new Thread(() => Run(ref firstFinally));
+        var second = new Thread(() => Run(ref secondFinally));
+        first.Start();
+        second.Start();
+        Thread.Sleep(30);
+        cancellation.Cancel();
+        Check(first.Join(2000) && second.Join(2000), "cancellation cleanup join");
+        Log.WriteString($"MESSAGES_CLEANUP first-finally={firstFinally} second-finally={secondFinally} remaining={remaining} caught={caught}\n");
+        Check(caught == 2, "cancellation catch");
+        // Die Ausgabe hält die Laufzeitgrenze fest; die produktive Vorführung bricht ohne Exception ab.
+    }
+    private static void CheckWaiters(bool sending, bool cancel)
+    {
+        var queue = new MessageQueue<int>(1);
+        if (sending) queue.TrySend(1);
+        using var cancellation = new CancellationTokenSource();
+        MessageQueueResult result = MessageQueueResult.Success;
+        using var entered = new ManualResetEvent(false);
+        var thread = new Thread(() =>
+        {
+            entered.Set();
+            result = sending ? queue.Send(2, 5000, cancellation.Token) : queue.Receive(out _, 5000, cancellation.Token);
+        });
+        thread.Start();
+        Check(entered.WaitOne(2000), "waiter entered");
+        Thread.Sleep(30);
+        if (cancel) cancellation.Cancel(); else queue.Close();
+        Check(thread.Join(2000), "waiter join");
+        Check(result == (cancel ? MessageQueueResult.Cancelled : MessageQueueResult.Closed), "waiter result");
+    }
+
+    private static void Check(bool condition, string name)
+    {
+        if (!condition) throw new InvalidOperationException("messages: " + name);
+    }
+}
+#endif

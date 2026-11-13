@@ -34,16 +34,22 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             ScrollOffset = Math.Max(0, ScrollOffset - visibleRows);
             return;
         }
-        if (!Editor.Handle(value, out string? command)) return;
+        Editor.IsSecret = shell.IsSecretInput;
+        if (shell.IsBusy || !Editor.Handle(value, out string? command)) return;
         ScrollOffset = 0;
         cursorVisible = true;
         if (command == null) return;
-        Buffer.WriteLine(Prompt + command);
+        Buffer.WriteLine(Prompt + (Editor.IsSecret ? "********" : command));
         var result = shell.ExecuteLine(command, Buffer);
         if (!result.IsOK()) Buffer.WriteLine(result.Message);
     }
 
-    public void Update(long milliseconds) => cursorVisible = milliseconds / 500 % 2 == 0;
+    public void Update(long milliseconds)
+    {
+        shell.Poll(Buffer);
+        Editor.IsSecret = shell.IsSecretInput;
+        cursorVisible = milliseconds / 500 % 2 == 0;
+    }
 
     public void Resize(int width, int height)
     {
@@ -64,7 +70,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
 
         int inputY = y + height - glyphHeight - 8;
         int inputColumns = Math.Max(1, (width - 16) / glyphWidth - Prompt.Length - 1);
-        string text = Editor.Text;
+        string text = Editor.DisplayText;
         int start = Math.Max(0, Editor.Cursor - inputColumns + 1);
         string visible = text.Substring(start, Math.Min(inputColumns, text.Length - start));
         Text(surface, Prompt + visible, x + 8, inputY, unchecked((int)0xff53d7bb));
@@ -76,6 +82,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
     public void Close()
     {
         Buffer.Clear();
+        shell.Close();
         IsClosed = true;
     }
 
