@@ -75,3 +75,19 @@ In QEMU ohne Datenlaufwerk geprüft: normaler Boot zu zwei Terminalfenstern, `ec
 Mit einer separaten Kopie des 64-MiB-Datenimages geprüft: Datei im Terminal schreiben/lesen, eigene Arbeitsverzeichnisse beider Terminals, Weiterarbeit nach fehlender Datei, Reboot und erneutes Lesen desselben Inhalts sowie Shutdown. Das ursprüngliche Image blieb SHA256-gleich. Der vorhandene `scripts/test-power-commands.ps1 -WithDebugger` besteht mit dem Desktop-ISO: GDB bleibt bei Reboot verbunden, Shutdown beendet Gast und Debugger normal. Ein vollständiger Desktop-Test mit vollem Datenträger, VMware und echte Hardware bleiben offen.
 
 Gastprüfung wiederholen: normal und mit `ZehOSRecovery=true` bauen; im Desktop Befehle in beiden Terminals eingeben, einen Entwurf stehen lassen, das andere Fenster aktivieren/verschieben/schließen und über `+ Terminal` erneut öffnen. Mit `help` Ausgabe erzeugen und PageUp/PageDown nutzen. Esc/F4 muss Entwürfe und Fenster erhalten. Auch ohne Datenlaufwerk muss der Desktop starten. Dateiprüfungen nur mit einer isolierten Imagekopie durchführen.
+
+## Doom-Vorversuch am 13. November 2026
+
+Der [getrennte Hostversuch für Roadmap 0.4](DOOM_FEASIBILITY.md) baut Managed Dooms Kern ohne Desktoppakete unter .NET 10 und erfasst verbleibende Datei-, Prozess-, Zeit- und Speicherabhängigkeiten. Es wurden keine neuen Cosmos-Schnittstellen geprüft: NativeAOT-Link für Cosmos, WAD-Zugriff, Renderausgabe und Spielbetrieb in QEMU/VMware bleiben offen. Kernel und Paketversionen sind unverändert.
+
+## Desktop-Dateifehler am 13. November 2026
+
+Die [Nachprüfung von Roadmap 7.5](DESKTOP_STORAGE_TESTS.md) besteht mit dem unveränderten Kernel auf Basis `7264b34`, Cosmos 3.0.94, SDK 10.0.112 und QEMU 10.2.2. Ohne Datenplatte startet der Desktop und bleibt nach Datei-/Pfadfehlern bedienbar. Auf einer vollständig belegten isolierten FAT32-Kopie scheitern Ersetzen und Neuanlegen mit ENOSPC; Originalinhalt und Bereinigung sind vor und nach Reboot geprüft. Esc/F4 und anschliessende Befehle funktionieren. 155 Hosttests und sieben Python-Helfertests bestehen. Native Release-ISO erfolgreich gebaut; VMware und echte Hardware bleiben offen.
+
+Der FAT32-Formatter dieser Version schreibt den primären FSInfo-Sektor und den Sicherungs-Bootsektor, lässt aber in dieser Probe den FSInfo-Sicherungssektor leer. Der Offline-Testhelfer erhält diesen Zustand; daraus wird kein allgemeiner Nachweis für alle FAT32-Layouts abgeleitet.
+
+## Desktopanwendungen am 13. November 2026
+
+[Etappe 8](DESKTOP_APPS.md) verwendet die vorhandenen Grafik-, Eingabe- und Dateischnittstellen für gemeinsame Bedienelemente, Betrachter, Editor und Pong. Native Normal-/Recovery-Builds und QEMU-Prüfungen mit isolierten Datenkopien bestehen. Dateiinhalt ist nach Reboot erhalten, der ENOSPC-Schließdialog erhält den Entwurf, Pong bleibt mit der übrigen Oberfläche bedienbar. 173 Hosttests prüfen unter anderem die wiederverwendete Shellbearbeitung, Fokus, Clipping, Datei-/Schließfehler sowie zeitskaliertes Spiel und Ressourcenfreigabe. VMware und echte Hardware bleiben offen.
+
+Die Speicherdiagnose verwendet `GC.GetGCMemoryInfo().HeapSizeBytes` (Heapstand der letzten Sammlung, vor der ersten gegebenenfalls null) und `GC.GetTotalAllocatedBytes(false)` (kumulativ). `GC.GetTotalMemory(false)` ist für diesen Paketstand nicht verwendbar: Der native Link verlangt dabei das fehlende `RhWaitForPendingFinalizers`. Es wurde kein Ersatz für die Cosmos-GC eingeführt. Die bereits geprüfte Core-Interruptmaske der Eingabe erhält zusätzlich zur Experimental-Ausnahme eine eng begrenzte `NAOT0007`-Ausnahme; der `using`-Schutz bleibt erhalten. Renderkosten und Grenzen der Beobachtung dokumentiert die Prüfanleitung.

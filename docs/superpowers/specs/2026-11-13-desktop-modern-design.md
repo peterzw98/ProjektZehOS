@@ -1,6 +1,8 @@
 # ZehOS: moderne Desktopbasis und Anwendungen
 
-Stand: 13. November 2026. Entwurf zur Freigabe, noch keine Implementierung.
+Stand: 13. November 2026. Vom Nutzer freigegebener ursprünglicher Entwurf.
+
+Integrationsentscheidung nach Freigabe: Der Nutzer hat die Übernahme der unabhängig fertiggestellten Etappe 8 aus master beauftragt. Deshalb werden deren Dateibetrachter, Editor, Pong und gemeinsame UI erhalten und mit Schritt A verbunden. Der aktuelle Umfang und neue Nachweise stehen in [DESKTOP_REDESIGN.md](../../DESKTOP_REDESIGN.md). Die folgenden Bestands- und Ablaufbeschreibungen halten den ursprünglichen Entwurf fest.
 
 ## Ziel und gewählte Richtung
 
@@ -81,4 +83,4 @@ README bei Bedienänderungen aktualisieren. Roadmap um den vorgeschalteten Deskt
 
 ## Aktueller Status
 
-Nur Bestandsaufnahme und Entwurf. Kein Produktcode geändert, keine neuen Tests oder Gaststarts ausgeführt. Vor der Umsetzung ist die Freigabe dieses Entwurfs noch offen.
+Die Freigabe erfolgte im Chat. Der aktuelle Implementierungs- und Prüfstand steht im oben verlinkten Integrationsdokument; die ursprüngliche Bestandsaufnahme ist kein Nachweis des neuen Stands.

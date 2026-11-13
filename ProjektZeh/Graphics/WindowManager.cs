@@ -93,10 +93,7 @@ internal sealed class WindowManager
                 if (hit.ContainsClose(value.X, value.Y))
                 {
                     Reset();
-                    hit.Application.Close();
-                    windows.Remove(hit);
-                    zOrder.Remove(hit);
-                    Activate(TopVisible());
+                    if (hit.Application.RequestClose()) CloseWindow(hit);
                     return;
                 }
                 if (hit.ContainsMinimize(value.X, value.Y)) { Minimize(hit); return; }
@@ -168,7 +165,23 @@ internal sealed class WindowManager
 
     public void Update(long milliseconds)
     {
-        foreach (Window window in windows) window.Application.Update(milliseconds);
+        for (int index = windows.Count - 1; index >= 0; index--)
+        {
+            Window window = windows[index];
+            window.Application.Update(milliseconds);
+            if (window.Application.IsCloseRequested) CloseWindow(window);
+        }
+    }
+
+    private void CloseWindow(Window window)
+    {
+        if (moving == window) moving = null;
+        if (pointerCapture == window) pointerCapture = null;
+        window.Application.Handle(new(InputEventType.Reset));
+        window.Application.Close();
+        windows.Remove(window);
+        zOrder.Remove(window);
+        if (ActiveWindow == window) Activate(TopVisible());
     }
 
     public void Reset()
@@ -178,10 +191,10 @@ internal sealed class WindowManager
         foreach (Window window in windows) window.Application.Handle(new(InputEventType.Reset));
     }
 
-    public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight)
+    public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight, bool applicationsActive = true)
     {
         foreach (Window window in zOrder)
-            if (!window.IsMinimized) window.Render(surface, font, glyphWidth, glyphHeight, window == ActiveWindow);
+            if (!window.IsMinimized) window.Render(surface, font, glyphWidth, glyphHeight, applicationsActive && window == ActiveWindow);
     }
 
     private void Activate(Window? window)

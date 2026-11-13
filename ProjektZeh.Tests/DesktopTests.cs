@@ -1,4 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Apps.FileManager;
+using ProjektZeh.Apps.Pong;
+using ProjektZeh.Apps.TextEditor;
 using ProjektZeh.Apps.Terminal;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
@@ -9,6 +12,69 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class DesktopTests
 {
+    [TestMethod]
+    public void AltDuringDrag_MouseReleaseStillEndsCapture()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        desktop.OpenTerminal();
+        var window = desktop.Windows.ActiveWindow!;
+        desktop.Handle(new(InputEventType.PointerDown, X: window.X + 20, Y: window.Y + 10, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.PointerUp, X: 200, Y: 200, Button: PointerButtons.Left));
+        Assert.IsFalse(desktop.Windows.HasPointerCapture);
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        int x = window.X;
+        desktop.Handle(new(InputEventType.PointerMove, X: 400, Y: 300));
+        Assert.AreEqual(x, window.X);
+    }
+
+    [TestMethod]
+    public void OpenMenu_PausesPongUntilWindowRegainsFocus()
+    {
+        var desktop = new Desktop(1024, 768, new byte[16384], 16, 32, () => new ShellService());
+        desktop.OpenPong();
+        var game = ((PongApp)desktop.Windows.ActiveWindow!.Application).Game;
+        var surface = new PixelSurface(1024, 768, new int[1024 * 768]);
+        desktop.Render(surface, 0, 1000, 700, PointerButtons.None);
+        desktop.Update(0); desktop.Update(100);
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Render(surface, 200, 1000, 700, PointerButtons.None);
+        double position = game.BallX;
+        desktop.Update(200); desktop.Update(300);
+        Assert.AreEqual(position, game.BallX);
+        Assert.IsFalse(desktop.NeedsAnimation);
+        desktop.CloseMenu();
+        desktop.Render(surface, 400, 1000, 700, PointerButtons.None);
+        desktop.Update(400); desktop.Update(500);
+        Assert.AreNotEqual(position, game.BallX);
+    }
+
+    [DataTestMethod]
+    [DataRow("Dateien")]
+    [DataRow("Texteditor")]
+    [DataRow("Pong")]
+    public void Menu_SearchAndLaunch_PreservesMasterApplications(string name)
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService());
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        foreach (char character in name) desktop.Handle(new(InputEventType.Text, Character: character));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        Assert.AreEqual(1, desktop.Windows.Count);
+        var window = desktop.Windows.ActiveWindow!;
+        Assert.AreEqual(name, window.Title);
+        Assert.IsTrue(window.Application is FileManagerApp or TextEditorApp or PongApp);
+        desktop.Handle(new(InputEventType.PointerDown, X: window.X + window.Width - 48, Y: window.Y + 16, Button: PointerButtons.Left));
+        Assert.IsTrue(window.IsMaximized);
+        Assert.AreEqual(712, window.Height);
+        desktop.Handle(new(InputEventType.PointerDown, X: window.X + window.Width - 80, Y: window.Y + 16, Button: PointerButtons.Left));
+        Assert.IsTrue(window.IsMinimized);
+        Assert.IsFalse(desktop.NeedsAnimation);
+    }
+
     [TestMethod]
     public void KeyboardMenu_SpaceLaunch_DoesNotTypeSpaceIntoNewTerminal()
     {
