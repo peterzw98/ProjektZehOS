@@ -133,7 +133,24 @@ Für ein Wiederherstellungs-ISO mit `dotnet build ProjektZeh/ProjektZeh.csproj -
 
 Die [Roadmap für ZehOS](ROADMAP.md) beschreibt die nächsten Schritte bis zu einem Desktop mit Terminal, Dateiverwaltung, spielbarem Doom und einem einfachen Browser. Jede Etappe enthält konkrete Aufgaben und ein überprüfbares Ergebnis.
 
-## Thread- und Warteprobe (Roadmap 6a.1)
+## Hintergrundaufgaben und Round-Robin (6a)
+
+Der Kernel verwendet eine eigene Round-Robin-Policy mit 20-ms-Zeitscheibe über den vorhandenen Cosmos-Timer. Alle Terminals und die Textshell sehen dieselbe begrenzte Liste von höchstens acht Aufgaben:
+
+```text
+tasks start busy
+tasks start busy
+tasks start wait
+tasks list
+tasks scheduler
+tasks cancel 1
+```
+
+`busy` rechnet ohne freiwillige CPU-Pause, `wait` wartet jeweils 250 ms. `tasks list` zeigt Kennung, Zustand, Fortschritt und gegebenenfalls Fehler. Die von `start` ausgegebene Kennung an `cancel` übergeben; Abbruch erfolgt kooperativ. Beendete Einträge bleiben zur Diagnose sichtbar und werden bei Bedarf für neue Aufgaben entfernt; Kennungen werden nicht wiederverwendet. `scheduler` zeigt die feste Zeitscheibe, die Zahl angeforderter Timer-Verdrängungen und die letzten 128 ausgewählten Kernelthread-Kennungen.
+
+Worker schreiben weder ins Terminal noch ins Dateisystem. Statusübergaben sind synchronisiert, Fortschrittszähler atomar. Eingabe und Zeichnen bleiben im Hauptthread. Vor Ausschalten/Neustart werden die Aufgaben abgebrochen und höchstens zwei Sekunden abgewartet; laufende Aufgaben verhindern danach die Energieaktion. Dies ist Multitasking im gemeinsamen Kernel und bietet keine Prozessisolation.
+
+### Isolierte Thread- und Warteprobe
 
 Ein ausdrücklich aktivierter Testbuild prüft vor dem Desktop zwei echte Cosmos-Threads ohne freiwillige CPU-Abgabe sowie Schlafen, Abbruch, Join, Ereignisse und Wartezeitlimits:
 
@@ -144,13 +161,13 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 
 Der Helfer startet eine eigene QEMU-VM ohne Datenlaufwerk, wartet höchstens 45 Sekunden auf `THREAD_PROBE PASS` und beendet nur diese Test-VM. Serielle Ausgabe und QEMU-Fehlerausgabe liegen in einem jeweils neuen Ordner unter `.tools/thread-probe/`. Fehlendes Ergebnis, `THREAD_PROBE FAIL` oder ein vorzeitiges VM-Ende lassen den Helfer fehlschlagen. Ein normales ISO erfüllt diese Probe ausdrücklich nicht.
 
-Der Test verwendet den vorhandenen Stride-Scheduler; ZehOS-Aufgabenverwaltung und Round-Robin folgen in 6a.2–6a.5. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
+Der Test verwendet den ZehOS-Round-Robin-Scheduler und prüft auch Ressourcenbereinigung der Aufgabenverwaltung sowie die Nachrichtenwarteschlangen aus 6b. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
 
 ```powershell
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThreadProbe=false -warnaserror
 ```
 
-Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#thread--und-warteprobe-am-13-november-2026).
+Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#aufgabenverwaltung-und-round-robin-am-13-november-2026).
 
 ## Automatische Builds und Codeprüfung
 
@@ -227,3 +244,13 @@ Pong verwendet W/S oder Pfeil auf/ab und Leertaste für Pause. Beim Fokusverlust
 ## Desktop-Dateifehler gezielt prüfen
 
 Roadmap 7.5 ist mit fehlendem Datenlaufwerk und einer vollständig belegten isolierten FAT32-Kopie in QEMU geprüft. Die [Prüfanleitung](docs/DESKTOP_STORAGE_TESTS.md) beschreibt den Ablauf und den Helfer `scripts/create-full-fat32-test-copy.py`. Dieser erzeugt ausschliesslich eine neue Testkopie und ersetzt kein vorhandenes Image. VMware-Dateiprüfungen bleiben offen.
+
+### Nachrichten und Synchronisation (Etappe 6b)
+
+`messages start slow-producer` startet zwei Hintergrundaufgaben mit 24 nummerierten Nachrichten und einem Puffer für drei Einträge. `messages start slow-consumer` macht den vollen Puffer sichtbar. `messages status` zeigt Fortschritt, Wartevorgänge, Reihenfolgefehler und die gemeinsame Kontosumme (2000). Die Bedienung bleibt während der Wartezeiten verfügbar; `tasks list` zeigt beide Aufgaben.
+
+`messages close` schließt den Puffer: Neue Nachrichten werden abgewiesen, vorhandene noch verarbeitet. `messages stop` bricht beide Aufgaben ab. Auch `tasks cancel <Consumer-ID>` beendet den am vollen Puffer wartenden Producer. Nach dem Ende beider Aufgaben lässt sich die Vorführung erneut starten. Die Vorführung gehört zum gemeinsamen Kerneldienst; alle Terminals sehen denselben Zustand.
+
+`MessageQueue<T>` verwendet den vorhandenen Cosmos-Monitor mit einer gemeinsamen Sperre für Zustand und Wecksignale. Wartende Varianten liefern `Cancelled`, `TimedOut` beziehungsweise `Closed`; nicht wartende Varianten unterscheiden `Empty` und `Full`. Ein geschlossener Puffer lässt sich noch leeren. Beide Übertragungsrichtungen des kontrollierten Kontobeispiels erwerben zuerst die Sperre von Konto 1 und dann von Konto 2, damit keine zyklische Warteabhängigkeit entsteht.
+
+Der optionale Threadprobe-Build prüft zusätzlich nummerierte Zustellung, Kapazität, Zeitlimits, Schließen/Abbruch wartender Teilnehmer und den Neustart nach alleinigem Consumer-Abbruch bei vollem Puffer. Erfolg meldet `MESSAGES_PROBE PASS`; erst nach allen Teilprüfungen folgt `THREAD_PROBE PASS`. Einzelheiten und tatsächlich geprüfte Plattformen stehen in [docs/ETAPPE6B_STATUS.md](docs/ETAPPE6B_STATUS.md).

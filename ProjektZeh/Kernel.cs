@@ -6,6 +6,8 @@ using ProjektZeh.Storage;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Shared;
 using ProjektZeh.Security;
+using ProjektZeh.Scheduling;
+using ProjektZeh.Messaging;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -30,9 +32,13 @@ public sealed class Kernel : Sys.Kernel
 #else
         false;
 #endif
+    private readonly BackgroundTaskService tasks = new();
+    private readonly CosmosRoundRobinScheduler scheduler = new();
+    private readonly MessageDemoService messages;
 
     public Kernel()
     {
+        messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateShell(accounts.CreateSession()),
@@ -49,6 +55,8 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
             .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery).Commands,
+            .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
+            .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}");
@@ -110,6 +118,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
+        InstallScheduler();
 #if ZEHOS_THREAD_PROBE
         if (!CosmosThreadProbe.Run())
         {
@@ -131,7 +140,23 @@ public sealed class Kernel : Sys.Kernel
                 "cause='PowerUnsupported' message='Cosmos unterstuetzt auf diesem System keine Energieaktionen.'");
         }
 
+        if (!tasks.StopAll(2000)) return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         return VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+    }
+
+#pragma warning disable COSMOS0001
+    private void InstallScheduler()
+    {
+        Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
+        systemLog.Information("Scheduler", $"{scheduler.Name}; Zeitscheibe={CosmosRoundRobinScheduler.QuantumNs}ns");
+    }
+#pragma warning restore COSMOS0001
+
+    private string[] DescribeScheduler()
+    {
+        var snapshot = scheduler.Snapshot();
+        return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
+            "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
     }
 
     private long GetElapsedMilliseconds()
