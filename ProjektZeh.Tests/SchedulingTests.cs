@@ -111,4 +111,30 @@ public sealed class SchedulingTests
         }
         finally { Assert.IsTrue(tasks.StopAll(2000)); }
     }
+
+    [TestMethod]
+    public void Tasks_CancelAndFaultDisposeWaitResources()
+    {
+        var tasks = new BackgroundTaskService();
+        WaitHandle? cancelledHandle = null;
+        WaitHandle? failedHandle = null;
+        try
+        {
+            tasks.Start("cancel", context =>
+            {
+                cancelledHandle = context.Token.WaitHandle;
+                Assert.IsFalse(context.Sleep(Timeout.Infinite));
+            });
+            tasks.Start("fault", context =>
+            {
+                failedHandle = context.Token.WaitHandle;
+                throw new InvalidOperationException("resource test");
+            });
+            Assert.IsTrue(SpinWait.SpinUntil(() => cancelledHandle != null && failedHandle != null, 2000));
+            Assert.IsTrue(tasks.StopAll(2000));
+            Assert.IsTrue(cancelledHandle!.SafeWaitHandle.IsClosed);
+            Assert.IsTrue(failedHandle!.SafeWaitHandle.IsClosed);
+        }
+        finally { tasks.StopAll(2000); }
+    }
 }

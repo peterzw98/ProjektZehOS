@@ -52,6 +52,6 @@ internal sealed class TaskShellCommands
     private static void Wait(BackgroundTaskContext context)
     {
         long progress = 0;
-        while (true) { context.Sleep(250); context.Report(++progress); }
+        while (context.Sleep(250)) context.Report(++progress);
     }
 }

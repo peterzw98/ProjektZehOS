@@ -14,11 +14,10 @@ internal sealed class BackgroundTaskContext(Action<long> report, CancellationTok
 {
     public CancellationToken Token { get; } = token;
     public void Report(long progress) => report(progress);
-    public void Sleep(int milliseconds)
+    public bool Sleep(int milliseconds)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(milliseconds, Timeout.Infinite);
-        Token.ThrowIfCancellationRequested();
-        if (Token.WaitHandle.WaitOne(milliseconds)) Token.ThrowIfCancellationRequested();
+        return !Token.WaitHandle.WaitOne(milliseconds);
     }
 }
 
@@ -79,7 +78,8 @@ internal sealed class BackgroundTaskService
                 job.State = BackgroundTaskState.Faulted;
             }
         }
-        finally { lock (gate) job.Cancellation.Dispose(); }
+        // Cosmos 3.0.94 kann verschachtelte finally-Bloecke beim Unwind ueberspringen.
+        lock (gate) job.Cancellation.Dispose();
     }
 
     public ResultErr Cancel(int id)
