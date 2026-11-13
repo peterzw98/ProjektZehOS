@@ -63,19 +63,25 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     public long GetPriority(SchedulerThread thread) => 0;
     public int GetRunQueueCount(PerCpuState state)
     {
-        using var mask = SchedulerManager.MaskInterrupts();
-        return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Count ?? 0;
+        var mask = SchedulerManager.MaskInterrupts();
+        try { return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Count ?? 0; }
+        finally { mask.Dispose(); }
     }
     public SchedulerThread? GetRunQueueThread(PerCpuState state, int index)
     {
-        using var mask = SchedulerManager.MaskInterrupts();
-        return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.At(index);
+        var mask = SchedulerManager.MaskInterrupts();
+        try { return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.At(index); }
+        finally { mask.Dispose(); }
     }
     public (ulong Preemptions, uint[] ThreadIds) Snapshot()
     {
-        using var mask = SchedulerManager.MaskInterrupts();
-        var ids = new uint[traceCount];
-        for (int i = 0; i < traceCount; i++) ids[i] = selectedThreads[(traceNext - traceCount + i + selectedThreads.Length) % selectedThreads.Length];
-        return (preemptions, ids);
+        var mask = SchedulerManager.MaskInterrupts();
+        try
+        {
+            var ids = new uint[traceCount];
+            for (int i = 0; i < traceCount; i++) ids[i] = selectedThreads[(traceNext - traceCount + i + selectedThreads.Length) % selectedThreads.Length];
+            return (preemptions, ids);
+        }
+        finally { mask.Dispose(); }
     }
 }
