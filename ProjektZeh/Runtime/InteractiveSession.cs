@@ -1,17 +1,18 @@
 using System;
+using System.Threading;
 using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
 using ProjektZeh.SystemServices;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime;
 
-internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOutput output,
+internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
+    Func<FileService> createFiles, ITextOutput output,
     Func<long> getElapsedMilliseconds, SystemLog systemLog)
 {
-    private readonly ShellService shell = createShell();
     private readonly CosmosInputService devices = new();
     private readonly LineEditor editor = new();
     private readonly ConsoleLineView line = new();
@@ -40,7 +41,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     ToggleGraphics();
                 else if (graphics)
                 {
-                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape) LeaveGraphics();
+                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
+                    {
+                        if (!display!.CloseMenu()) LeaveGraphics();
+                    }
                     else display!.Handle(value);
                 }
                 else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
@@ -54,7 +58,11 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                 dirty = true;
             }
             long now = getElapsedMilliseconds();
-            if (graphics) display!.Update(now);
+            if (graphics)
+            {
+                display!.Update(now);
+                if (display.NeedsAnimation && now >= nextFrame) dirty = true;
+            }
             if (now / 500 != previousTick) { previousTick = now / 500; dirty = true; }
             if (dirty && now >= nextFrame)
             {
@@ -75,9 +83,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     line.Draw(editor);
                 }
                 dirty = false;
-                nextFrame = now + 16;
+                nextFrame = FrameTiming.NextDeadline(now);
             }
-            TimerManager.Wait(1);
+            // Der HAL-Wartetimer tickt im Referenzgast nur mit 18 Hz; der Scheduler weckt feiner auf.
+            Thread.Sleep(1);
         }
     }
 
@@ -86,7 +95,7 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell);
+            display ??= new DisplayService(createShell, createFiles);
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");

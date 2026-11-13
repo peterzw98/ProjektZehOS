@@ -30,15 +30,19 @@ public static class CosmosKeyboardCapture
 
     internal static bool TryRead(out InputEvent value, out long lost)
     {
-#pragma warning disable COSMOS0001 // Nur die Interruptmaske der festgelegten Cosmos-Version verwenden.
-        using var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
-#pragma warning restore COSMOS0001
-        lost = dropped;
-        if (lost != 0)
+#pragma warning disable COSMOS0001, NAOT0007 // Die in 3.0.94 gepruefte Core-Interruptmaske ist fuer diesen kurzen Eingabeschutz erforderlich.
+        var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
+#pragma warning restore COSMOS0001, NAOT0007
+        try
         {
-            events.Clear();
-            dropped = 0;
+            lost = dropped;
+            if (lost != 0)
+            {
+                events.Clear();
+                dropped = 0;
+            }
+            return events.TryDequeue(out value);
         }
-        return events.TryDequeue(out value);
+        finally { mask.Dispose(); }
     }
 }

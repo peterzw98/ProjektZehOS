@@ -16,7 +16,10 @@ internal sealed class PasswordHasher(Action<byte[]> fillSalt)
         if (password.Length is < 12 or > 128) throw new ArgumentException("Kennwort muss 12 bis 128 Zeichen enthalten.");
         var salt = new byte[16];
         fillSalt(salt);
-        return $"pbkdf2-sha256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(Derive(password, salt, Iterations))}";
+        byte[] derived = Derive(password, salt, Iterations);
+        string encoded = $"pbkdf2-sha256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(derived)}";
+        CryptographicOperations.ZeroMemory(derived);
+        return encoded;
     }
 
     public static bool Verify(string password, string encoded)
@@ -25,8 +28,9 @@ internal sealed class PasswordHasher(Action<byte[]> fillSalt)
         string[] parts = encoded.Split('$');
         byte[] expected = Convert.FromBase64String(parts[3]);
         byte[] actual = Derive(password, Convert.FromBase64String(parts[2]), Iterations);
-        try { return CryptographicOperations.FixedTimeEquals(expected, actual); }
-        finally { CryptographicOperations.ZeroMemory(actual); }
+        bool matches = CryptographicOperations.FixedTimeEquals(expected, actual);
+        CryptographicOperations.ZeroMemory(actual);
+        return matches;
     }
 
     public static bool IsValid(string encoded)
@@ -40,15 +44,24 @@ internal sealed class PasswordHasher(Action<byte[]> fillSalt)
         catch (FormatException) { return false; }
     }
 
-    internal static byte[] Derive(string password, byte[] salt, int iterations)
+    internal static byte[] Derive(string password, byte[] salt, int iterations) =>
+        DeriveAndClear(Encoding.UTF8.GetBytes(password), salt, iterations);
+
+    internal static byte[] DeriveAndClear(byte[] bytes, byte[] salt, int iterations)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(password);
         try
         {
             var generator = new Pkcs5S2ParametersGenerator(new Sha256Digest());
             generator.Init(bytes, salt, iterations);
-            return ((KeyParameter)generator.GenerateDerivedMacParameters(256)).GetKey();
+            byte[] result = ((KeyParameter)generator.GenerateDerivedMacParameters(256)).GetKey();
+            CryptographicOperations.ZeroMemory(bytes);
+            return result;
         }
-        finally { CryptographicOperations.ZeroMemory(bytes); }
+        catch
+        {
+            // Cosmos 3.0.94 fuehrt verschachteltes finally bei Ausnahmen nicht zuverlaessig aus.
+            CryptographicOperations.ZeroMemory(bytes);
+            throw;
+        }
     }
 }

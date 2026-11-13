@@ -24,7 +24,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly SystemLog systemLog;
     private bool startDesktop;
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
-    private const bool SecurityRecovery =
+    private static readonly bool SecurityRecovery =
 #if ZEHOS_SECURITY_RECOVERY
         true;
 #else
@@ -34,12 +34,14 @@ public sealed class Kernel : Sys.Kernel
     public Kernel()
     {
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
-        interactive = new InteractiveSession(CreateShell, output, GetElapsedMilliseconds, systemLog);
+        var desktopIdentity = accounts.CreateSession();
+        interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateShell(accounts.CreateSession()),
+            () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
+            output, GetElapsedMilliseconds, systemLog);
     }
 
-    private ShellService CreateShell()
+    private ShellService CreateShell(UserSession identity)
     {
-        var identity = accounts.CreateSession();
         var files = new FileService("/data", access: accounts.Access, session: identity);
         ShellService? shell = null;
         shell = new ShellService(

@@ -34,17 +34,39 @@ Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutp
 
 In der Textshell läuft oben eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Der Desktop zeigt Fensterzahl und Laufzeit in der unteren Leiste. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt und ein Ziehvorgang beendet.
 
+## Benutzer und Dateirechte (Etappe 6c, noch in Prüfung)
+
+Dateizugriffe erfordern eine Anmeldung und gültige Konten-/Rechtemetadaten auf `/data`. Fehlende oder beschädigte Metadaten sperren den Zugriff; bestehende Dateien werden nicht automatisch übernommen. `whoami` zeigt die Identität, `login <Name>` fragt das Kennwort verdeckt ab, `logout` meldet nur die aktuelle Sitzung ab. Kennwörter enthalten 12 bis 128 Zeichen; die Berechnung läuft im Hintergrund. Kennwörter erscheinen weder in der Ausgabe noch im Verlauf. Die Hashes verwenden BouncyCastle 2.7.0 mit PBKDF2-SHA256, zufälligem 16-Byte-Salt und 600000 Iterationen. Ohne funktionierende RDSEED-/RDRAND-Quelle wird die Kennwortanlage abgewiesen.
+
+Jedes Terminal hat eine eigene Anmeldung und ein eigenes Arbeitsverzeichnis. Dateien und Texteditor verwenden die Sitzung der **Textshell**: mit Esc dorthin wechseln, anmelden und mit F4 zurückkehren. Eine Anmeldung in einem Terminal verändert die Desktopidentität nicht. Jede Dateianwendung erhält ein eigenes Arbeitsverzeichnis und prüft jede Operation über denselben Dateidienst; nach Logout werden weitere Zugriffe verweigert. Bereits angezeigte Inhalte und ungespeicherte Entwürfe bleiben im Fenster erhalten. Neue Editor-Dateien liegen zunächst im Benutzerverzeichnis.
+
+Administratoren legen Konten mit `user add <Name> user` beziehungsweise `user add <Name> admin` an; `user list` zeigt die Konten. `grant <Pfad> <Name> r` vergibt Leserechte, `rw` zusätzlich Schreibrechte, `none` entfernt eine Freigabe. Für eine Datei in einem fremden Home muss der Administrator auch auf diesem Verzeichnis Leserechte vergeben. Eigentümer dürfen Rechte auf ihren Einträgen selbst vergeben. `security adopt <Pfad> <Name>` ordnet als Administrator einen bestehenden Eintrag ausdrücklich zu. Laufwerksverwaltung erfordert Administratorrechte. Nach dem Aushängen ist die Kontendatei nicht mehr erreichbar; zum automatischen Einbinden regulär neu starten oder den expliziten Recovery-Build verwenden.
+
+Die erste Einrichtung und die Wiederherstellung erfolgen nur in einem ausdrücklich gebauten Sicherheits-Recovery-System:
+
+```powershell
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSecurityRecovery=true
+```
+
+Dieses ISO startet in der Textshell. Auf einer vollständig leeren **isolierten 64-MiB-Testplatte** zuerst `disk init sata0`, dann `disk mount sata0` ausführen; ein vorhandenes FAT32-Laufwerk nicht initialisieren. `security recover <Adminname>` fragt ein neues Kennwort ab und ersetzt Konten/Rechte ausdrücklich. Eine vorhandene Metadatendatei wird unverändert als `.zehos-security-recovery-<Kennung>.db` erhalten. Vorhandene Nutzdateien bleiben bis zur ausdrücklichen Zuordnung gesperrt. Anschließend normal ohne Recovery-Eigenschaft neu bauen und starten. Metadaten, temporäre Dateien und Sicherungen mit reserviertem `.zehos-`-Präfix sind für normale Dateioperationen gesperrt.
+
+Die Regeln gelten für die kontrollierten ZehOS-Dienste. Anwendungen laufen weiterhin gemeinsam im Kernel; diese Rechte bieten keine Isolation gegenüber fremdem Kernelcode. Aktuelle Nachweise und offene Gastprüfungen stehen in `docs/ETAPPE6C_STATUS.md`.
+
 ## Desktop und Fenster
 
-ZehOS startet zum Desktop mit **1024 × 768 Pixeln und 32 Bit Farbtiefe**. Ein Klick aktiviert das oberste getroffene Fenster und bringt es nach vorn; Tastatureingaben gehen nur an dieses Fenster. Die Titelleiste lässt sich mit der linken Maustaste ziehen, auch wenn der Zeiger sie dabei verlässt. Die Fenster bleiben oberhalb der unteren Leiste innerhalb des Bildschirms. **X** schließt ein Fenster. Größenänderung und Minimieren sind noch nicht vorgesehen.
+ZehOS startet zu einem freien Desktop mit **1024 × 768 Pixeln und 32 Bit Farbtiefe**. **Anwendungen** oder **Alt+F1** öffnet das Programmmenü mit Suche für Terminal, Dateien, Texteditor und Pong. Tab/Shift+Tab wechseln den Fokus, Pfeiltasten die Programmauswahl und Enter startet die Auswahl. **>_** startet direkt ein Terminal. Gestaltung und Bedienung orientieren sich an KDE/Cinnamon; ZehOS verwendet weiterhin Cosmos und führt keine Linux-Programme aus.
 
-**+ Terminal** öffnet ein weiteres Fenster, bis höchstens acht gleichzeitig geöffnet sind. Jedes Terminal besitzt seine eigene Shell, Eingabe, Historie und sein eigenes Arbeitsverzeichnis, anfangs `/data`. Die Ausgabe wird auf die Fensterbreite umgebrochen und speichert die letzten **256 Zeilen**. **Bild auf/Bild ab (PageUp/PageDown)** blättern durch ältere Ausgabe; normale Texteingabe springt zur neuesten Ausgabe zurück. Der blinkende Cursor gehört zum aktiven Fenster. `clear` leert dessen Ausgabe. Nach dem Schließen aller Fenster bleibt der Starter erreichbar.
+Ein Klick aktiviert ein Fenster; **Alt+Tab** beziehungsweise **Alt+Shift+Tab** wechseln durch alle Fenster. Die Titelleiste lässt sich mit der linken Maustaste ziehen, die Ränder und Ecken verändern die Größe bis zur jeweiligen Mindestgröße. **_** minimiert, **□** maximiert beziehungsweise stellt die bisherige Geometrie wieder her, **X** schließt mit der gegebenenfalls erforderlichen Rückfrage. Fenster bleiben oberhalb der unteren Leiste. Ein Klick auf einen Eintrag in der Fensterleiste aktiviert oder restauriert ihn; beim aktiven Fenster minimiert er es. Bei wenig Platz zeigen die Einträge kurze Kennungen für Terminal, Dateien, Editor und Pong.
 
-**Esc** führt zur Textshell, **F4** wechselt zwischen Desktop und Textshell. Fenster, Terminalausgaben und Eingabeentwürfe bleiben erhalten. Die alte Textkonsolenausgabe wird beim Wechsel geleert; deren eigener Eingabeentwurf und Verlauf bleiben erhalten. Grafikfehler beim Öffnen oder Zeichnen führen zur erreichbaren Textshell zurück.
+Höchstens acht Fenster sind gleichzeitig geöffnet, einschließlich minimierter Fenster. Jedes Terminal besitzt seine eigene Shell, Eingabe, Historie und sein eigenes Arbeitsverzeichnis, anfangs `/data`. Die letzten **256 Ausgabezeilen** werden beim Ändern der Breite neu umgebrochen; überschrittene Puffergrenzen verdrängen weiterhin die älteste Ausgabe. **Bild auf/Bild ab (PageUp/PageDown)** blättern durch ältere Ausgabe; Texteingabe springt zur neuesten Ausgabe. `clear` leert dessen Ausgabe. Auch nach dem Schließen aller Fenster bleibt das Menü erreichbar.
 
-`WindowManager` zeichnet Fenster von hinten nach vorn und beschneidet jeden Inhalt am Fensterbereich. Hintergrund und Fenster werden bei einem neuen Bild vollständig in den vorhandenen Cosmos-Puffer gezeichnet; zusätzliche Bildpuffer pro Fenster sind nicht erforderlich. Verschieben und Schließen hinterlassen dadurch keine alten Fensterreste. `IApplication` enthält Start, Eingabebehandlung, Aktualisieren, Zeichnen und Schließen; bisher ist nur das fest einkompilierte Terminal angebunden.
+**Esc** schließt zuerst ein geöffnetes Programmmenü und führt sonst zur Textshell; **F4** wechselt zwischen Desktop und Textshell. Fensterzustände, Terminalausgaben und Eingabeentwürfe bleiben erhalten. Die alte Textkonsolenausgabe wird beim Wechsel geleert; deren eigener Eingabeentwurf und Verlauf bleiben erhalten. Grafikfehler beim Öffnen oder Zeichnen führen zur erreichbaren Textshell zurück.
+
+`WindowManager` zeichnet sichtbare Fenster von hinten nach vorn und beschneidet jeden Inhalt am Fensterbereich. Hintergrund und Fenster werden im vorhandenen Cosmos-Puffer gezeichnet; zusätzliche Bildpuffer pro Fenster sind nicht erforderlich. `IApplication` enthält auch Größenänderung und abbrechbares Schließen. Das Menü verwendet dieselben UI-Bausteine wie die [Anwendungen aus Etappe 8](docs/DESKTOP_APPS.md). Der [Desktop-Umbau](docs/DESKTOP_REDESIGN.md) hält Integration und neue Prüfergebnisse getrennt von deren ursprünglichen Nachweisen fest.
 
 Die gemeinsame Schleife verarbeitet pro Durchlauf höchstens 64 rohe Tastaturereignisse, verteilt Eingaben, aktualisiert die Statusanzeige und zeichnet bei Änderungen mit höchstens etwa 60 Bildern pro Sekunde. Die Zeitmessung verwendet `Stopwatch`; zwischen Durchläufen wartet Cosmos kurz. Datei- und Laufwerksbefehle laufen weiterhin synchron und können die Anzeige während ihrer Ausführung anhalten. Die spätere Hintergrundverarbeitung ist damit noch nicht umgesetzt.
+
+Die Anzeige **FPS** zählt abgeschlossene Bildausgaben im Messintervall, **ms** daneben die längste Zeichen-/Ausgabedauer dieses Intervalls. Der ruhende Desktop zeichnet absichtlich nur bei Änderungen; eine niedrige FPS-Zahl im Leerlauf ist daher kein Leistungslimit. Bei dauernder Mausbewegung beziehungsweise Pong werden feste 60-Hz-Bildtermine verwendet. Im QEMU-Referenztest stieg die gemessene Bildrate von etwa 15–16 auf 58–61 FPS. Ursache und Grenzen beschreibt [DESKTOP_PERFORMANCE.md](docs/DESKTOP_PERFORMANCE.md).
 
 Geprüfte Cosmos-Schnittstellen, Referenz-VM und Grenzen stehen unter [`docs/COSMOS_SUPPORT.md`](docs/COSMOS_SUPPORT.md).
 
@@ -195,3 +217,13 @@ cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64 -- -action shut
 ```
 
 Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
+
+## Dateibetrachter, Texteditor und Pong
+
+Der Desktop-Starter öffnet **Dateien**, **Editor** und **Pong**. Tab/Shift+Tab wechseln den Fokus, Enter aktiviert Schaltflächen und Listeneinträge. Im Editor öffnen F3 und speichern F2 die Datei; Strg+A markiert ein Textfeld vollständig. Ungespeicherte Änderungen werden beim Schließen mit „Zurueck“, „Verwerfen“ oder „Speichern“ behandelt. Schreibfehler erhalten den Entwurf. Der Dateibetrachter zeigt Ordner und eine Textvorschau und öffnet die gewählte Datei im Editor.
+
+Pong verwendet W/S oder Pfeil auf/ab und Leertaste für Pause. Beim Fokusverlust pausiert das Spiel; Esc/F4 erhält weiterhin die Fenster und öffnet die Textshell. Leiste und Kopfbereich zeigen Renderdauer, den Heapstand der letzten GC und kumulativ allokierte Bytes. Bedeutung, Grenzen und geprüfte Abläufe stehen in [Desktopanwendungen](docs/DESKTOP_APPS.md). Dateioperationen bleiben synchron; maximal acht Fenster und 65.536 Zeichen je Textdatei bleiben die Grenzen.
+
+## Desktop-Dateifehler gezielt prüfen
+
+Roadmap 7.5 ist mit fehlendem Datenlaufwerk und einer vollständig belegten isolierten FAT32-Kopie in QEMU geprüft. Die [Prüfanleitung](docs/DESKTOP_STORAGE_TESTS.md) beschreibt den Ablauf und den Helfer `scripts/create-full-fat32-test-copy.py`. Dieser erzeugt ausschliesslich eine neue Testkopie und ersetzt kein vorhandenes Image. VMware-Dateiprüfungen bleiben offen.

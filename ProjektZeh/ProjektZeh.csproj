@@ -8,6 +8,7 @@
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>
   </PropertyGroup>
 

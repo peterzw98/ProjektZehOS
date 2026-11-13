@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using ProjektZeh.Shell;
 
 namespace ProjektZeh.Apps.Terminal;
@@ -6,7 +8,8 @@ namespace ProjektZeh.Apps.Terminal;
 internal sealed class TerminalBuffer : ITextOutput
 {
     private readonly string?[] lines;
-    private readonly int columns;
+    private readonly bool[] continuation;
+    private int columns;
     private int first;
     public int Count { get; private set; }
 
@@ -16,6 +19,7 @@ internal sealed class TerminalBuffer : ITextOutput
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         this.columns = columns;
         lines = new string[capacity];
+        continuation = new bool[capacity];
     }
 
     public string GetLine(int index)
@@ -31,9 +35,9 @@ internal sealed class TerminalBuffer : ITextOutput
         foreach (string part in text.Split('\n'))
         {
             string line = part.TrimEnd('\r').Replace("\t", "    ", StringComparison.Ordinal);
-            if (line.Length == 0) Append("");
+            if (line.Length == 0) Append("", false);
             for (int start = 0; start < line.Length; start += columns)
-                Append(line.Substring(start, Math.Min(columns, line.Length - start)));
+                Append(line.Substring(start, Math.Min(columns, line.Length - start)), start > 0);
         }
     }
 
@@ -44,13 +48,40 @@ internal sealed class TerminalBuffer : ITextOutput
         Count = 0;
     }
 
-    private void Append(string line)
+    public void Reflow(int newColumns)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(newColumns);
+        if (newColumns == columns) return;
+        var logicalLines = new List<string>();
+        var text = new StringBuilder();
+        for (int index = 0; index < Count; index++)
+        {
+            if (index > 0 && !continuation[(first + index) % lines.Length])
+            {
+                logicalLines.Add(text.ToString());
+                text.Clear();
+            }
+            text.Append(GetLine(index));
+        }
+        if (Count > 0) logicalLines.Add(text.ToString());
+        Clear();
+        columns = newColumns;
+        foreach (string line in logicalLines) WriteLine(line);
+    }
+
+    private void Append(string line, bool continuesPrevious)
     {
         if (Count == lines.Length)
         {
             lines[first] = line;
+            continuation[first] = continuesPrevious;
             first = (first + 1) % lines.Length;
         }
-        else lines[(first + Count++) % lines.Length] = line;
+        else
+        {
+            int index = (first + Count++) % lines.Length;
+            lines[index] = line;
+            continuation[index] = continuesPrevious;
+        }
     }
 }
