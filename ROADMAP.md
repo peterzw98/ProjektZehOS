@@ -137,19 +137,21 @@ Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rech
 
 **Fertig, wenn:** Zwei Hintergrundaufgaben unter Round-Robin nachweislich Fortschritt machen, eine rechenintensive Aufgabe die andere nicht dauerhaft verdrängt und Terminal sowie Desktop bedienbar bleiben.
 
-**Teilstand am 13. November 2026:** Die getrennte opt-in Threadprobe aus 6a.1 besteht in QEMU und VMware mit Cosmos 3.0.94. Zwei Rechenaufgaben ohne freiwilliges Yield machen Fortschritt; Sleep, Stopflag/Join, Ereignisse und Wartezeitlimits sind im Gast geprüft. Die öffentliche experimentelle Scheduler-Schnittstelle ist vorhanden. Noch arbeitet der Cosmos-Stride-Scheduler; ein Policywechsel, ZehOS-Aufgabenverwaltung und die laufende Desktopintegration aus 6a.2–6a.5 sind damit nicht erledigt. Reproduzierbare Befehle stehen in der README, Details und Plattformgrenzen in `docs/COSMOS_SUPPORT.md`.
+**Historischer Probe-Teilstand am 13. November 2026 (vor der Aufgabenintegration):** Die getrennte opt-in Threadprobe aus 6a.1 besteht in QEMU und VMware mit Cosmos 3.0.94. Zwei Rechenaufgaben ohne freiwilliges Yield machen Fortschritt; Sleep, Stopflag/Join, Ereignisse und Wartezeitlimits sind im Gast geprüft. Die öffentliche experimentelle Scheduler-Schnittstelle ist vorhanden. Diese ursprüngliche Probe verwendete den Cosmos-Stride-Scheduler und belegte noch keinen Policywechsel oder eine Aufgabenverwaltung. Der aktuelle 6b-Stand integriert inzwischen ZehOS-Round-Robin und die gemeinsame Aufgabenverwaltung; seine neuen Prüfungen und Plattformgrenzen stehen im folgenden 6b-Abschnitt. Reproduzierbare Befehle stehen in der README, Details und Plattformgrenzen in `docs/COSMOS_SUPPORT.md`.
 
 ## 6b Nachrichtenwarteschlangen und Synchronisation
 
 **Zweck:** Aufgaben aus Etappe 6a Daten austauschen lassen und ihr Warten aufeinander korrekt koordinieren.
 
-- [ ] 6b.1 Eine begrenzte Nachrichtenwarteschlange mit definierten Ergebnissen bei voller, leerer und geschlossener Warteschlange bereitstellen. Nicht blockierendes Senden und Empfangen sowie wartende Varianten mit Abbruch und Zeitlimit vorsehen; die Desktop-Schleife darf dabei nicht blockieren.
-- [ ] 6b.2 Geprüfte Synchronisationsmittel verwenden, um gemeinsame Zustände zu schützen und wartende Aufgaben bei neuen Daten beziehungsweise freiem Platz aufzuwecken. Verlorene Wecksignale und aktives Dauerabfragen vermeiden; Interruptschutz nur für die dafür vorgesehenen kurzen Bereiche verwenden.
-- [ ] 6b.3 Eine Erzeuger-Verbraucher-Vorführung bauen: Eine Aufgabe erzeugt nummerierte Daten, die andere verarbeitet sie. Langsame Erzeugung und Verarbeitung machen die Fälle leerer beziehungsweise voller Puffer sichtbar.
-- [ ] 6b.4 Für mehrere gemeinsam benötigte Sperren eine feste Erwerbsreihenfolge festlegen und Deadlockvermeidung an einem kontrollierten Beispiel erklären und prüfen. Kein absichtliches dauerhaftes Blockieren des produktiven Desktops.
-- [ ] 6b.5 Nachrichtenreihenfolge, Kapazitätsgrenze, konkurrierende Zugriffe, Abbruch, Zeitlimit und Schließen bei wartenden Teilnehmern testen. Im Gast nachweisen, dass keine Daten verloren oder doppelt verarbeitet werden und Aufgaben nach dem Schließen sauber enden.
+- [x] 6b.1 Eine begrenzte Nachrichtenwarteschlange mit definierten Ergebnissen bei voller, leerer und geschlossener Warteschlange bereitstellen. Nicht blockierendes Senden und Empfangen sowie wartende Varianten mit Abbruch und Zeitlimit vorsehen; die Desktop-Schleife darf dabei nicht blockieren.
+- [x] 6b.2 Geprüfte Synchronisationsmittel verwenden, um gemeinsame Zustände zu schützen und wartende Aufgaben bei neuen Daten beziehungsweise freiem Platz aufzuwecken. Verlorene Wecksignale und aktives Dauerabfragen vermeiden; Interruptschutz nur für die dafür vorgesehenen kurzen Bereiche verwenden.
+- [x] 6b.3 Eine Erzeuger-Verbraucher-Vorführung bauen: Eine Aufgabe erzeugt nummerierte Daten, die andere verarbeitet sie. Langsame Erzeugung und Verarbeitung machen die Fälle leerer beziehungsweise voller Puffer sichtbar.
+- [x] 6b.4 Für mehrere gemeinsam benötigte Sperren eine feste Erwerbsreihenfolge festlegen und Deadlockvermeidung an einem kontrollierten Beispiel erklären und prüfen. Kein absichtliches dauerhaftes Blockieren des produktiven Desktops.
+- [x] 6b.5 Nachrichtenreihenfolge, Kapazitätsgrenze, konkurrierende Zugriffe, Abbruch, Zeitlimit und Schließen bei wartenden Teilnehmern testen. Im Gast nachweisen, dass keine Daten verloren oder doppelt verarbeitet werden und Aufgaben nach dem Schließen sauber enden.
 
 **Fertig, wenn:** Erzeuger und Verbraucher zuverlässig über den begrenzten Puffer kommunizieren, bei leerem oder vollem Puffer korrekt warten und durch Abbruch oder Schließen beendet werden können.
+
+**Geprüft am 13. November 2026:** 216 Hosttests bestehen; der native Probe-Build liefert in QEMU `MESSAGES_PROBE PASS` einschließlich alleinigem Consumer-Abbruch bei vollem Puffer und vollständigem Neustart. Diese Code-/QEMU-Abnahme belegt keine VMware-Kompatibilität; die neue Nachrichtenprobe und Bedienabläufe sind dort noch offen. Einzelheiten stehen in `docs/ETAPPE6B_STATUS.md`.
 
 Diese Etappe behandelt Thread- und Anwendungskommunikation im gemeinsamen Kernel. Sie bildet eine Grundlage für Interprozesskommunikation; isolierte Prozesse und deren Schutzgrenzen folgen erst in Etappe 12.4. Eigene Softwareinterrupts sind für diese erste Kommunikation nicht erforderlich.
 

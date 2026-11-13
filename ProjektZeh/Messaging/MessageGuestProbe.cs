@@ -1,7 +1,9 @@
 #if ZEHOS_THREAD_PROBE
 using System;
+using System.Diagnostics;
 using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Messaging;
 
@@ -10,6 +12,7 @@ internal static class MessageGuestProbe
     public static void Run()
     {
         CheckCancellationCleanup();
+        CheckDemoCancellationAndRestart();
         var queue = new MessageQueue<int>(2);
         Check(queue.TryReceive(out _) == MessageQueueResult.Empty, "empty");
         queue.TrySend(1);
@@ -57,6 +60,36 @@ internal static class MessageGuestProbe
         CheckWaiters(false, true);
         CheckWaiters(true, true);
         Log.WriteString("MESSAGES_PROBE PASS numbered=100 consumed=100 duplicates=0 order=ok close/cancel/timeout/locks=ok\n");
+    }
+
+    private static void CheckDemoCancellationAndRestart()
+    {
+        var tasks = new BackgroundTaskService();
+        var demo = new MessageDemoService(tasks);
+        Check(demo.Start(false).IsOK(), "demo start");
+        Check(WaitUntil(() => demo.Status().Contains("full-waits=1", StringComparison.Ordinal)), "demo full buffer");
+        var consumer = Array.Find(tasks.Snapshot(), task => task.Name == "messages-consumer");
+        Check(consumer is not null && tasks.Cancel(consumer.Id).IsOK(), "demo cancel consumer");
+        Check(WaitUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal)), "demo cancellation cleanup");
+        Check(tasks.StopAll(2000), "demo cancellation join");
+        Check(demo.Start(true).IsOK(), "demo restart");
+        Check(WaitUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 10000), "demo restart completion");
+        string status = demo.Status();
+        Check(status.Contains("produced=24 consumed=24", StringComparison.Ordinal)
+            && status.Contains("order-errors=0 buffered=0/3 lock-total=2000", StringComparison.Ordinal), "demo restarted delivery");
+        Check(tasks.StopAll(2000), "demo restarted join");
+        Log.WriteString("MESSAGES_PROBE consumer-cancel/full-buffer/restart PASS\n");
+    }
+
+    private static bool WaitUntil(Func<bool> condition, int timeoutMilliseconds = 3000)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (clock.ElapsedMilliseconds >= timeoutMilliseconds) return false;
+            Thread.Sleep(1);
+        }
+        return true;
     }
 
     private static void CheckCancellationCleanup()
