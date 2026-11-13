@@ -9,6 +9,28 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class MessageDemoTests
 {
+    [TestMethod]
+    public void Cancel_OnlySlowConsumer_StopsProducerAndAllowsRestart()
+    {
+        var tasks = new BackgroundTaskService();
+        var demo = new MessageDemoService(tasks);
+        try
+        {
+            Assert.IsTrue(demo.Start(false).IsOK());
+            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("full-waits=1", StringComparison.Ordinal), 2000));
+            var consumer = Array.Find(tasks.Snapshot(), task => task.Name == "messages-consumer");
+            Assert.IsNotNull(consumer);
+            Assert.IsTrue(tasks.Cancel(consumer.Id).IsOK());
+            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 2000), demo.Status());
+            Assert.IsTrue(SpinWait.SpinUntil(() => Array.TrueForAll(tasks.Snapshot(), task =>
+                task.State is BackgroundTaskState.Cancelled or BackgroundTaskState.Completed), 2000));
+            Assert.IsTrue(demo.Start(false).IsOK());
+            demo.Stop();
+            Assert.IsTrue(SpinWait.SpinUntil(() => demo.Status().Contains("active=0", StringComparison.Ordinal), 2000));
+        }
+        finally { demo.Stop(); Assert.IsTrue(tasks.StopAll(2000)); }
+    }
+
     [DataTestMethod]
     [DataRow(false)]
     [DataRow(true)]

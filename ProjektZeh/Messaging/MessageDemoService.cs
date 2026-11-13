@@ -89,7 +89,8 @@ internal sealed class MessageDemoService
                     if (context.Token.WaitHandle.WaitOne(slowProducer ? 1 : 200)) break;
                 }
             }
-            catch { Interlocked.Decrement(ref active); throw; }
+            catch { buffer.Close(); Interlocked.Decrement(ref active); throw; }
+            buffer.Close();
             Interlocked.Decrement(ref active);
         });
         if (!consumer.IsOK())
