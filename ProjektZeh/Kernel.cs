@@ -92,6 +92,13 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
+#if ZEHOS_THREAD_PROBE
+        if (!CosmosThreadProbe.Run())
+        {
+            Stop();
+            return;
+        }
+#endif
         interactive.Run(startDesktop);
     }
 

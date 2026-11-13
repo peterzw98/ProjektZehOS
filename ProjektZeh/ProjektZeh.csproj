@@ -6,6 +6,7 @@
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

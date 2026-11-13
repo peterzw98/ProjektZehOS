@@ -127,13 +127,15 @@ Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rech
 
 **Zweck:** Mehrere Hintergrundaufgaben ausführen und die Verteilung ihrer Rechenzeit nachvollziehbar machen.
 
-- [ ] 6a.1 In einem getrennten Versuch die Thread-, Warte- und Scheduler-Schnittstellen von Cosmos 3.0.94 prüfen. Zwei Aufgaben im Gast ausführen und Ergebnisse sowie experimentelle APIs in `docs/COSMOS_SUPPORT.md` dokumentieren. Bei fehlender Unterstützung eine gezielte Ergänzung oder ein geprüftes Versionsupdate bewerten, bevor der Desktop umgestellt wird.
+- [x] 6a.1 In einem getrennten Versuch die Thread-, Warte- und Scheduler-Schnittstellen von Cosmos 3.0.94 prüfen. Zwei Aufgaben im Gast ausführen und Ergebnisse sowie experimentelle APIs in `docs/COSMOS_SUPPORT.md` dokumentieren. Bei fehlender Unterstützung eine gezielte Ergänzung oder ein geprüftes Versionsupdate bewerten, bevor der Desktop umgestellt wird.
 - [ ] 6a.2 Hintergrundaufgaben mit Kennung und Zuständen wie bereit, laufend, wartend und beendet verwalten. Start, Statusanzeige und kooperativen Abbruch über die Shell ermöglichen; Ressourcen beim Beenden aufräumen.
 - [ ] 6a.3 Eine Round-Robin-Strategie für echte Kernelthreads auf der geprüften Cosmos-Anbindung implementieren. Kontextwechsel und Timermechanismus von Cosmos weiterverwenden; Zeitscheibe und Auswahlreihenfolge nachvollziehbar protokollieren. Eine reine Verteilung von `Update`-Aufrufen wäre nur kooperatives Anwendungsscheduling und darf nicht als präemptives Thread-Scheduling ausgegeben werden.
 - [ ] 6a.4 Gemeinsame Dienste gegen gleichzeitige Zugriffe absichern. Zeichnen und Eingabe im Desktop belassen; Hintergrundarbeit über kontrollierte Übergaben anbinden. Dateioperationen nur dann in Hintergrundaufgaben verschieben, wenn die verwendete Cosmos-Anbindung dafür geprüft ist.
 - [ ] 6a.5 Zwei Rechenaufgaben parallel zum bedienbaren Terminal vorführen. Fortschritt, Warten, Abbruch und wiederholten Start prüfen. Auswahlreihenfolge und Zustandswechsel auf dem Host testen; tatsächliche Verdrängung und Reaktionsfähigkeit im Gast nachweisen. Eine zweite Strategie erst später zum Vergleich ergänzen.
 
 **Fertig, wenn:** Zwei Hintergrundaufgaben unter Round-Robin nachweislich Fortschritt machen, eine rechenintensive Aufgabe die andere nicht dauerhaft verdrängt und Terminal sowie Desktop bedienbar bleiben.
+
+**Teilstand am 13. November 2026:** Die getrennte opt-in Threadprobe aus 6a.1 besteht in QEMU und VMware mit Cosmos 3.0.94. Zwei Rechenaufgaben ohne freiwilliges Yield machen Fortschritt; Sleep, Stopflag/Join, Ereignisse und Wartezeitlimits sind im Gast geprüft. Die öffentliche experimentelle Scheduler-Schnittstelle ist vorhanden. Noch arbeitet der Cosmos-Stride-Scheduler; ein Policywechsel, ZehOS-Aufgabenverwaltung und die laufende Desktopintegration aus 6a.2–6a.5 sind damit nicht erledigt. Reproduzierbare Befehle stehen in der README, Details und Plattformgrenzen in `docs/COSMOS_SUPPORT.md`.
 
 ## 6b Nachrichtenwarteschlangen und Synchronisation
 

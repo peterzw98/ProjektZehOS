@@ -111,6 +111,25 @@ Für ein Wiederherstellungs-ISO mit `dotnet build ProjektZeh/ProjektZeh.csproj -
 
 Die [Roadmap für ZehOS](ROADMAP.md) beschreibt die nächsten Schritte bis zu einem Desktop mit Terminal, Dateiverwaltung, spielbarem Doom und einem einfachen Browser. Jede Etappe enthält konkrete Aufgaben und ein überprüfbares Ergebnis.
 
+## Thread- und Warteprobe (Roadmap 6a.1)
+
+Ein ausdrücklich aktivierter Testbuild prüft vor dem Desktop zwei echte Cosmos-Threads ohne freiwillige CPU-Abgabe sowie Schlafen, Abbruch, Join, Ereignisse und Wartezeitlimits:
+
+```powershell
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThreadProbe=true -warnaserror
+./scripts/test-thread-probe.ps1 -IsoPath ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+```
+
+Der Helfer startet eine eigene QEMU-VM ohne Datenlaufwerk, wartet höchstens 45 Sekunden auf `THREAD_PROBE PASS` und beendet nur diese Test-VM. Serielle Ausgabe und QEMU-Fehlerausgabe liegen in einem jeweils neuen Ordner unter `.tools/thread-probe/`. Fehlendes Ergebnis, `THREAD_PROBE FAIL` oder ein vorzeitiges VM-Ende lassen den Helfer fehlschlagen. Ein normales ISO erfüllt diese Probe ausdrücklich nicht.
+
+Der Test verwendet den vorhandenen Stride-Scheduler; ZehOS-Aufgabenverwaltung und Round-Robin folgen in 6a.2–6a.5. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
+
+```powershell
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThreadProbe=false -warnaserror
+```
+
+Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#thread--und-warteprobe-am-13-november-2026).
+
 ## Automatische Builds und Codeprüfung
 
 GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows können außerdem unter **Actions → Run workflow** manuell gestartet werden:
