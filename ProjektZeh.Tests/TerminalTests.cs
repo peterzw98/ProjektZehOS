@@ -13,6 +13,29 @@ namespace ProjektZeh.Tests;
 public sealed class TerminalTests
 {
     [TestMethod]
+    public void WindowResize_ReflowsOutputWithoutLosingDraftOrLineBreaks()
+    {
+        var terminal = CreateTerminal();
+        var manager = new WindowManager(800, 600);
+        manager.Add(new Window("Terminal", 20, 20, 400, 300, terminal));
+        terminal.Buffer.Clear();
+        terminal.Buffer.WriteLine(new string('A', 40));
+        terminal.Buffer.WriteLine("");
+        terminal.Buffer.WriteLine("Ende");
+        Type(terminal, "echo draft");
+        manager.Handle(new(InputEventType.PointerDown, X: 419, Y: 319, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerUp, X: 239, Y: 319, Button: PointerButtons.Left));
+        Assert.AreEqual(4, terminal.Buffer.Count);
+        Assert.AreEqual(new string('A', 25), terminal.Buffer.GetLine(0));
+        Assert.AreEqual("", terminal.Buffer.GetLine(2));
+        manager.Handle(new(InputEventType.PointerDown, X: 239, Y: 319, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerUp, X: 419, Y: 319, Button: PointerButtons.Left));
+        Assert.AreEqual(3, terminal.Buffer.Count);
+        Assert.AreEqual(new string('A', 40), terminal.Buffer.GetLine(0));
+        Assert.AreEqual("echo draft", terminal.Editor.Text);
+    }
+
+    [TestMethod]
     public void Buffer_WrapsMultilineAndBlankLines_AndRetainsOnlyLatestRows()
     {
         var buffer = new TerminalBuffer(4, 3);

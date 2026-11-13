@@ -31,10 +31,12 @@ Ein Browser für heutige komplexe Webseiten ist ein weiteres großes Entwicklung
 - [ ] 0.1 Einen unveränderten Kernel mit der festgelegten Version bauen und in QEMU starten. ISO-Pfad, Startbefehl und einen sichtbaren erfolgreichen Boot festhalten.
 - [ ] 0.2 QEMU als erste Referenzumgebung festlegen. Virtuelle Grafik, Eingabegeräte und später Netzwerk und Datenlaufwerk konkret dokumentieren. VMware nach wesentlichen Etappen zusätzlich prüfen.
 - [ ] 0.3 In kleinen, getrennten Versuchen Grafikfläche, nicht blockierende Tastaturabfrage, Maus, monotone Zeitmessung, Dateisystem und Netzwerkkarte prüfen. Pro Versuch festhalten: funktioniert, fehlt oder benötigt eine bestimmte VM-Konfiguration. Noch keine vollständigen Dienste bauen.
-- [ ] 0.4 Den möglichen Doom-Port kurz untersuchen: Welche Teile sind reine Spiel- und Renderlogik, welche benötigen externe Bibliotheken oder Betriebssystemfunktionen? Ein kleines Buildexperiment soll die größten Abhängigkeiten sichtbar machen.
+- [x] 0.4 Den möglichen Doom-Port kurz untersuchen: Welche Teile sind reine Spiel- und Renderlogik, welche benötigen externe Bibliotheken oder Betriebssystemfunktionen? Ein kleines Buildexperiment soll die größten Abhängigkeiten sichtbar machen.
 - [ ] 0.5 Ergebnisse in `docs/COSMOS_SUPPORT.md` sammeln. Falls eine benötigte Funktion in 3.0.94 fehlt, gezielt zwischen eigener Ergänzung und einem geprüften Versionsupdate entscheiden.
 
 **Fertig, wenn:** Der Ausgangskernel reproduzierbar startet und die nächsten Schritte auf geprüften Schnittstellen beruhen. Ein unbekannter Doom-Port bleibt als offene technische Frage sichtbar.
+
+**Teilstand am 13. November 2026 zu 0.4:** Der [Doom-Vorversuch](docs/DOOM_FEASIBILITY.md) dokumentiert feste Quellstände, Lizenzen und Plattformgrenzen von Managed Doom und doomgeneric. Managed Dooms Kern und Software-Renderer kompilieren ohne Silk-Desktopadapter unter .NET 10 mit Trim-/AOT-Analyse (null Warnungen/Fehler). Das ist ein Hostbuild, kein nativer Cosmos-Build und kein spielbarer Gastnachweis; 9.1 bleibt offen.
 
 ## 1 Aus der Texteingabe eine kleine Shell machen
 
@@ -173,26 +175,30 @@ Diese Rechte gelten für Anwendungen, die die kontrollierten ZehOS-Dienste verwe
 - [x] 7.2 Laufwerk erkennen und über Cosmos unter `/data` einhängen. Vorhandene Daten beim Start ausschließlich einbinden, ohne Formatierung.
 - [x] 7.3 Einen `FileService` für Pfadauflösung und begrenzte Textoperationen (65.536 Zeichen) einführen. Shellbefehle `ls`, `pwd`, `cd` und `cat` ergänzen.
 - [x] 7.4 Schreiben ergänzen: Verzeichnisse und kleine Textdateien anlegen, schließen und mit `disk unmount` erforderliche Schreibpuffer leeren. Dafür `mkdir` und `write` bereitstellen.
-- [ ] 7.5 Fehlendes Laufwerk, ungültige Pfade, fehlende Dateien und vollen Datenträger behandeln. Ohne Datenlaufwerk soll der Desktop weiterhin starten.
+- [x] 7.5 Fehlendes Laufwerk, ungültige Pfade, fehlende Dateien und vollen Datenträger behandeln. Ohne Datenlaufwerk soll der Desktop weiterhin starten.
 - [x] 7.6 Datei speichern, VM sauber beenden, erneut starten und Inhalt vergleichen. Danach bei Bedarf auch das VMware-Startprofil um ein Datenlaufwerk erweitern.
 
 **Fertig, wenn:** Eine im Gast geschriebene Datei nach einem Neustart unverändert gelesen werden kann.
 
 Ein RAM-Dateisystem ist für frühe Experimente möglich, erfüllt aber keine dauerhafte Speicherung. Ressourcen können anfangs auch einkompiliert werden; das ist kein Ersatz für den Neustarttest.
 
-Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 bleibt bis zur späteren Desktopintegration offen. Start und Einrichtung beschreibt die README.
+Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 ist am 13. November 2026 im Desktop mit fehlendem Laufwerk, Pfadfehlern und vollständig belegter isolierter FAT32-Testkopie in QEMU geprüft. Dateierhalt, Bereinigung, Weiterbedienung und Neustart sind nachgewiesen; VMware bleibt offen. Ablauf und Grenzen stehen in [docs/DESKTOP_STORAGE_TESTS.md](docs/DESKTOP_STORAGE_TESTS.md). Start und Einrichtung beschreibt die README.
 
 ## 8 Kleine Desktopanwendungen bauen
 
 **Zweck:** Die gemeinsamen Bausteine an überschaubaren Anwendungen prüfen, bevor Browser und Doom zusätzliche Komplexität bringen.
 
-- [ ] 8.1 Wiederverwendbare Schaltflächen, Textfelder und Listen mit Fokus und einfacher Anordnung entwickeln.
-- [ ] 8.2 Einen Dateibetrachter bauen: Ordner auflisten und eine ausgewählte Textdatei anzeigen.
-- [ ] 8.3 Einen kleinen Texteditor ergänzen: Text bearbeiten, speichern und bei ungespeicherten Änderungen vor dem Schließen nachfragen.
-- [ ] 8.4 Ein kleines Spiel wie Pong bauen. Tastenzustände, zeitabhängige Bewegung, Pixelgrafik und Rückkehr zum Desktop damit prüfen.
-- [ ] 8.5 Bildzeiten und Speicherverbrauch beobachten. Große Bildpuffer wiederverwenden, statt sie in jedem Bild neu anzulegen. Ungenutzte Ressourcen beim Schließen freigeben.
+- [x] 8.1 Wiederverwendbare Schaltflächen, Textfelder und Listen mit Fokus und einfacher Anordnung entwickeln.
+- [x] 8.2 Einen Dateibetrachter bauen: Ordner auflisten und eine ausgewählte Textdatei anzeigen.
+- [x] 8.3 Einen kleinen Texteditor ergänzen: Text bearbeiten, speichern und bei ungespeicherten Änderungen vor dem Schließen nachfragen.
+- [x] 8.4 Ein kleines Spiel wie Pong bauen. Tastenzustände, zeitabhängige Bewegung, Pixelgrafik und Rückkehr zum Desktop damit prüfen.
+- [x] 8.5 Bildzeiten und Speicherverbrauch beobachten. Große Bildpuffer wiederverwenden, statt sie in jedem Bild neu anzulegen. Ungenutzte Ressourcen beim Schließen freigeben.
 
 **Fertig, wenn:** Eine Textdatei bearbeitet und neu geöffnet werden kann und das Spiel auf Eingaben reagiert, während der Desktop weiter bedienbar bleibt.
+
+**Umgesetzt am 13. November 2026:** Gemeinsame UI-Bausteine mit Fokus, Dateibetrachter, Mehrzeileneditor mit Schließrückfrage und Pong sind an den Desktop angeschlossen. Direkte Voraussetzungen sind ein wiederverwendeter Textbearbeitungskern, verschachteltes Clipping, abbrechbares Schließen und regelmäßige Spielbilder. 173 Hosttests, native Normal-/Recovery-Builds und QEMU-Prüfungen einschließlich Dateineustart, ENOSPC, Spiel/Fokus und Ressourcenbeobachtung bestehen. VMware und echte Hardware bleiben ausdrücklich offen. [Bedienung, Architektur und Nachweise](docs/DESKTOP_APPS.md). Etappen 6a–6c bleiben unverändert.
+
+Der zusätzliche KDE/Cinnamon-orientierte Desktop-Umbau wird unabhängig von den abgeschlossenen Punkten 8.1–8.5 geprüft: Programmmenü mit Suche, Fensterleiste, Minimieren/Maximieren, Größenänderung und Alt+Tab. Er verwendet die vorhandenen Apps und UI-Bausteine aus Etappe 8. [Umfang und Integrationsnachweise](docs/DESKTOP_REDESIGN.md). Ein Rechner und weitergehende Dateioperationen bleiben spätere Erweiterungen; die laufenden Etappen 6a–6c werden durch diesen Umbau nicht abgehakt.
 
 ## 9 Doom schrittweise portieren
 
@@ -290,9 +296,9 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 ## Erste Änderungen und nächster Schritt
 
-Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die vollständige Desktop-Fehlerfallprüfung aus 7.5 bleiben sichtbar:
+Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die zusätzliche VMware-Dateiprüfung bleiben sichtbar:
 
-Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Danach geht es mit den kleinen Desktopanwendungen aus Etappe 8 weiter, zunächst deren gemeinsamen Bedienelementen und dem Dateibetrachter; die vorgezogene Dateisystemetappe 7 wird dabei weiter vervollständigt.
+Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Die unabhängig vorgezogene Etappe 8 ist implementiert und in QEMU geprüft; nach Abschluss der vorgesehenen Vorstufen folgen Doom aus Etappe 9 und die weiteren Netzwerk-/Browseretappen. VMware-Nachprüfungen bleiben offen.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.

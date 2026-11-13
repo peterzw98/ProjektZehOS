@@ -1,6 +1,6 @@
 using System;
+using System.Threading;
 using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
@@ -38,7 +38,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     ToggleGraphics();
                 else if (graphics)
                 {
-                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape) LeaveGraphics();
+                    if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
+                    {
+                        if (!display!.CloseMenu()) LeaveGraphics();
+                    }
                     else display!.Handle(value);
                 }
                 else if (editor.Handle(value, out string? command) && command != null)
@@ -51,7 +54,11 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                 dirty = true;
             }
             long now = getElapsedMilliseconds();
-            if (graphics) display!.Update(now);
+            if (graphics)
+            {
+                display!.Update(now);
+                if (display.NeedsAnimation && now >= nextFrame) dirty = true;
+            }
             if (now / 500 != previousTick) { previousTick = now / 500; dirty = true; }
             if (dirty && now >= nextFrame)
             {
@@ -72,9 +79,10 @@ internal sealed class InteractiveSession(Func<ShellService> createShell, ITextOu
                     line.Draw(editor);
                 }
                 dirty = false;
-                nextFrame = now + 16;
+                nextFrame = FrameTiming.NextDeadline(now);
             }
-            TimerManager.Wait(1);
+            // Der HAL-Wartetimer tickt im Referenzgast nur mit 18 Hz; der Scheduler weckt feiner auf.
+            Thread.Sleep(1);
         }
     }
 
