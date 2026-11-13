@@ -224,16 +224,9 @@ public sealed class UserManagementTests
 
         desktop.OpenTerminal();
         Assert.AreEqual(1, desktop.Windows.Count);
-        // Sperren und erneutes Anmelden derselben Kennung ausserhalb des Desktops erhaelt die Fenster.
+        // Abmelden und erneutes Anmelden ausserhalb des Desktops schliesst die Fenster vor jeder Eingabe.
         identity.Logout();
         identity.LoginAs(admin);
-        desktop.Handle(new(InputEventType.Text, Character: 'x'));
-        Assert.AreEqual(1, desktop.Windows.Count);
-
-        // Meldet sich jemand anderes an, schliesst der Desktop die Fenster vor jeder Eingabe.
-        Assert.IsTrue(accounts.PrepareCreateUser(admin, "alice", false, UserPassword)().IsOK());
-        identity.Logout();
-        Assert.IsTrue(accounts.PrepareLogin(identity, "alice", UserPassword)().IsOK());
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
         Assert.AreEqual(0, desktop.Windows.Count);
         desktop.Render(surface, 0, 10, 10, PointerButtons.None);
@@ -280,6 +273,18 @@ public sealed class UserManagementTests
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Control));
         foreach (char character in "abmelden") desktop.Handle(new(InputEventType.Text, Character: character));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+    }
+
+    [TestMethod]
+    public void LoginWork_IdentityChangedWhileHashing_DoesNotApply()
+    {
+        var admin = SetupAdministrator();
+        var identity = accounts.CreateSession();
+        identity.LoginAs(admin);
+        var apply = accounts.LoginWork(identity, "admin", AdminPassword)();
+        identity.Logout();
+        Assert.IsFalse(apply().IsOK());
+        Assert.IsNull(identity.UserId, "Ein vor dem Abmelden gestartetes Login darf den Desktop nicht entsperren.");
     }
 
     [TestMethod]

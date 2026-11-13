@@ -161,6 +161,8 @@ internal sealed class AccountService
     {
         Account? account = null;
         if (IsReady) accounts.TryGetValue(name, out account);
+        // Ein zwischenzeitliches An- oder Abmelden, etwa ueber das Desktopmenue, darf nicht nachtraeglich ueberschrieben werden.
+        int generation = session.Generation;
         return () =>
         {
             // Unbekannte Namen rechnen gleich lange, damit die Antwortzeit keine Kontonamen verraet.
@@ -168,7 +170,8 @@ internal sealed class AccountService
             bool valid = account != null && matches;
             return () =>
             {
-                if (!valid || !IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account)) return FileAccessControl.Denied();
+                if (!valid || !IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account) ||
+                    session.Generation != generation) return FileAccessControl.Denied();
                 session.Login(account!.Id, account.Name, account.Administrator, Home(account.Name));
                 return ResultErr.CreateSuccess();
             };
