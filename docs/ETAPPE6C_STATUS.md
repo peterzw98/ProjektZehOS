@@ -1,54 +1,31 @@
-# Etappe 6c – gesicherter Zwischenstand
+# Etappe 6c – Benutzer und Dateirechte
 
-Stand: 13.11.2026, Branch `codex/etappe6c`, Ausgangscommit `5c8c185`.
-Dies ist ein WIP-Sicherungsstand zur späteren Fortsetzung, keine fertige Etappe.
-Kein PR und keine Zusammenführung mit anderen Arbeitszweigen. Die Roadmap-Abnahme bleibt offen.
+Stand: 13.11.2026, Branch `codex/etappe6c`, auf dem geprüften Stand von `codex/etappe6b` aufgebaut. Die unabhängige Codeprüfung fand zwei Sicherheits-/Lebensdauerfehler; beide sind behoben und erneut ohne offene Codebefunde geprüft. Die Abnahmekriterien sind auf Host und QEMU erfüllt; die Plattformgrenzen unten bleiben ausdrücklich offen.
 
-## Vorhandene Umsetzung
+## Umsetzung
 
-- Benutzerkonten mit stabiler ID, getrennten Sitzungen, Administratorrolle und Home-Verzeichnis.
-- Persistierte Konto-/ACL-Metadaten, gesperrter Zugriff bei fehlenden oder beschädigten Metadaten und expliziter Sicherheits-Recovery-Build (`ZehOSSecurityRecovery=true`).
-- Datei-Zugriffskontrolle im FileService, Eigentümer, benutzerspezifische Lese-/Schreibfreigaben und explizite Zuordnung bestehender Dateien.
-- Shellbefehle `whoami`, `login`, `logout`, `user`, `grant` und `security`; verdeckte Kennworteingabe ohne Verlauf. Kennwortberechnung ist in Hintergrundarbeit und anschließende Zustandsübernahme aufgeteilt; Textshell und Terminal sind angeschlossen.
-- PBKDF2-SHA256 über die ausdrücklich genehmigte Abhängigkeit BouncyCastle.Cryptography 2.7.0; 600000 Iterationen, zufälliges Salt und Vergleich über FixedTimeEquals. CosmosSaltSource nutzt die vorhandenen nativen RDSEED-/RDRAND-Funktionen; fehlt die Quelle, wird Kennwortanlage abgewiesen.
-- Opt-in-Kryptografieprobe und plattenloser QEMU-Prüfhelfer. Der Helfer wurde für diese Sicherung nicht gestartet.
+- Konten mit stabiler Kennung, Administrator-/Benutzerrolle, Home und unabhängiger Identität je Terminal. Textshell und Desktopdateianwendungen verwenden dieselbe Identität; Dateianwendungen behalten jeweils ein eigenes Arbeitsverzeichnis.
+- Persistierte Konten-/ACL-Metadaten auf FAT32. Ohne gültige Metadaten werden Dateioperationen verweigert. Bestehende Einträge müssen ausdrücklich zugeordnet werden. Aufgelöste Pfade, Elternverzeichnisse, Auflisten, Wechseln, Anlegen und Überschreiben werden zentral geprüft; reservierte Metadaten-/temporäre Namen sind gesperrt.
+- `whoami`, `login`, `logout`, `user`, `grant`, `security`. Kennwörter werden verdeckt und ohne Verlauf eingegeben. BouncyCastle.Cryptography 2.7.0 bleibt die bereits genehmigte Abhängigkeit: PBKDF2-SHA256, 600000 Iterationen, 16-Byte-Salt aus den nativen RDSEED-/RDRAND-Funktionen und FixedTimeEquals. Keine Paket- oder Werkzeugversion geändert.
+- Kennwortberechnungen laufen im Hintergrund, Zustandsänderungen im Vordergrund. Global höchstens zwei Berechnungen, einschließlich geschlossener Fenster; Start-/Vorbereitungsfehler geben den Platz zurück. Energieaktionen werden während laufender Berechnungen bedienbar abgewiesen. Geschlossene Sitzungen übernehmen keine Ergebnisse. Ein Metadatenneuladen invalidiert auch bereits berechnete Login-Ergebnisse über die Identität des Kontodatensatzes.
+- Temporäre Kennwortbytes werden bei Erfolg und Ausnahme ausdrücklich gelöscht, da Cosmos 3.0.94 verschachtelte `finally`-Pfade beim Ausnahmeabwickeln nicht zuverlässig ausführt. Der Gast prüft beide tatsächlichen Pfade.
+- Sicherheits-Recovery nur im ausdrücklich gebauten `ZehOSSecurityRecovery=true`-System. Die alte Metadatendatei wird per File.Move unverändert gesichert, auch bei Überschreitung des Shell-Textlimits; alte Nutzdateien bleiben bis zur Zuordnung gesperrt. Bedienung und Eltern-Schreibrechte für sicheres Ersetzen stehen im README.
 
-## Bisherige Kryptografieprobe – begrenzter Nachweis
+## Ausgeführte Prüfungen
 
-Bereits vorhandene serielle QEMU-Protokolle wurden beim Sichern erneut gelesen:
+- Hosttests Release mit `-warnaserror`: **230 bestanden, 0 fehlgeschlagen, 0 übersprungen**, einschließlich aller integrierten Etappen 6a/6b und Desktopanwendungen.
+- Nativer normaler Release-Build des abschließend korrigierten Gesamtstands: erfolgreich. Sicherheits-Recovery ebenfalls erfolgreich, null Warnungen/Fehler. Die abschließende kombinierte Dateiprobe wurde mit Warnungen als Fehler nativ gebaut, null Warnungen/Fehler.
+- Normaler plattenloser QEMU-Boot: Textshell und Desktop melden Bereitschaft.
+- QEMU-Kryptografieprobe: SHA256-Testvektor, Hardwarezufallsquelle, produktive 600000 Iterationen mit positivem und negativem Kennwortvergleich erfolgreich. Die zusätzliche Gastprobe bestätigt das Löschen der Kennwortbytes nach Erfolg und ausgelöster Ableitungsausnahme.
+- QEMU-Dateiprobe ausschließlich auf einem neu angelegten isolierten 64-MiB-FAT32-Image: zwei nichtadministrative Konten, eigene Datei anlegen/ersetzen/lesen, fremden Zugriff verweigern, gezielte Eltern-/Dateilesefreigabe, fremdes Schreiben verweigern, Pfadumgehung, Metadatenneuladen mit stabiler Kennung, Korruption sperrt alle Sitzungen, Recovery erhält 70000-Byte-Metadatendatei und gibt alte Nutzdateien nicht frei. Alle Probeprüfungen bestanden.
+- Interaktiver QEMU-Sicherheits-Recovery-Build auf demselben isolierten Image: Adminanlage, verdeckte Kennworteingabe, `whoami`, Schreiben/Lesen, Logout mit verweigertem Zugriff, erneutes Login und tatsächlicher Neustart. Nach Neustart dieselbe Benutzerkennung und Dateiinhalte erfolgreich gelesen; Screenshots visuell geprüft.
+- Abschließender normaler QEMU-Gesamtstand mit Dateianwendungen: Textshell-Login als Admin, Editor öffnet neuen Pfad im Admin-Home und speichert `gui saved`. Nach Textshell-Logout bleibt der Entwurf erhalten, erneutes Speichern wird verweigert und als ungespeichert markiert; ein neu gestarteter Dateibetrachter zeigt ebenfalls Zugriff verweigert. Screenshots visuell geprüft.
+- Unabhängiges Review des vollständigen Diffs gegen Etappe 6b und erneutes Review der Korrekturen: keine offenen Codebefunde. Behoben wurden unbeschränkte Kennwortworker nach Fensterschließen und eine mögliche Wiederanmeldung durch ein vor Metadatenneuladen vorbereitetes Login.
 
-- `.tools/security-probe/246bea333f0042dda96ac4a260b93093/serial.log`: Zufallsprobe abgeschlossen; Plattform-.NET-PBKDF2 scheiterte anschließend mit `System.TypeInitializationException`, innere `System.ArgumentNullException` (`value`). Diese Implementierung wird daher nicht für das Kennwortmodell verwendet.
-- `.tools/security-probe/9838dd188ab54e59acfa3f44c384c18d/serial.log`: `SECURITY_PROBE PASS PBKDF2-SHA256 vector and RNG` mit BouncyCastle. Geprüft wurde der feste SHA256-Testvektor mit einer Iteration sowie die Zufallsquelle, nicht der vollständige interaktive Kontoablauf mit 600000 Iterationen.
-- Komponentenübergreifend übermittelter Cosmos-Befund aus Etappe 6b (hier nicht erneut ausgeführt): die minimale RoundRobin-Probe meldete `MESSAGES_CLEANUP first-finally=0 second-finally=0 remaining=2 caught=2` und `THREAD_PROBE FAIL cleanupstate`. Bei ThrowIfCancellationRequested erreichten beide Worker ihren äußeren OperationCanceledException-Catch, während die verschachtelten finally-Flags ausblieben. Die 6a/6b-Korrektur verwendet für diesen Abbruchpfad normale Rückgaben und explizites Aufräumen; der Hauptagent meldet die anschließende Cleanup-Probe als bestanden. Das beweist die finally-Pfade von 6c nicht: insbesondere das Nullsetzen temporärer Kennwortbytes in PasswordHasher muss im Gast noch verifiziert beziehungsweise angepasst werden. Der ursprüngliche Nachweis liegt laut Hauptagent im getrennten 6b-Worktree unter `.tools/messages-interactive/serial-cleanup.log`, Zeilen 534–535, die Folgeprobe unter `serial-cleanup-fixed.log`.
+Lokale Diagnoseartefakte liegen ausschließlich ignoriert unter `.tools/security-check/` (serielle Protokolle und Screenshots); vorhandene Nutzerimages wurden nicht verwendet oder überschrieben. Native Builds mit zusätzlichen Probe-Eigenschaften erzeugen ihr ISO unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/`; normale `cosmos build`-Ausgaben unter `ProjektZeh/output-x64/` sind davon zu unterscheiden.
 
-Die alten Probeprotokolle sind lokale, ignorierte Diagnoseartefakte und werden nicht eingecheckt. Ihre Ergebnisse sind kein neuer Gasttest des hier gesicherten Gesamtstands.
+## Wiederholung und Grenzen
 
-## Modellreview und behobene Befunde
+Die plattenlose Kryptografieprobe wird mit `dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSecurityProbe=true` gebaut. `scripts/test-security-probe.ps1` startet das explizit ausgewählte ISO ohne Datenplatte; für die produktiven Iterationen kann ein größeres Zeitlimit nötig sein. Der zusätzliche Build `-p:ZehOSSecurityFileProbe=true` schreibt bewusst Prüfdaten unter `/data/security-probe` und darf ausschließlich mit einem neuen isolierten Testimage gestartet werden. Ein bestehendes Probeverzeichnis wird abgewiesen.
 
-Zwei zuvor festgestellte Modellbefunde sind im Quellstand korrigiert und durch Hostregressionen abgedeckt:
-
-1. Kontoanlage darf ein vorhandenes oder bereits mit ACL versehenes Home nicht automatisch übernehmen. Die Zustandsübernahme prüft beides erneut und verweigert diese Kontoanlage.
-2. Sicherheits-Recovery muss auch eine beschädigte Metadatendatei oberhalb des Shell-Textlimits erhalten. Die Datei wird unverändert mit File.Move in eine eindeutig benannte Recovery-Sicherung verschoben statt über ReadText/WriteText kopiert.
-
-Der Regressionstest `UserCreationDoesNotAdoptExistingHomesAndRecoveryPreservesOversizedMetadata` prüft diese Fälle einschließlich einer 70000 Zeichen großen beschädigten Datei. Ein unabhängiges finales Review des Gesamtstands steht weiterhin aus.
-
-## Aktuelle Prüfung dieses Sicherungsstands
-
-- SDK: `dotnet --version` meldet 10.0.403.
-- `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`: bestanden, 159 erfolgreich, 0 fehlgeschlagen, 0 übersprungen, Exitcode 0.
-- `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`: `Build completed successfully!`, Exitcode 0; normales Release-ISO unter `ProjektZeh/output-x64/ProjektZeh.iso`.
-- `git diff --check`: ohne Befund vor der Statusdatei; nach dem Staging nochmals geprüft.
-- Erste eingeschränkte Versuche scheiterten am Zugriff auf die vorhandene NuGet.Config; dieselben Prüfungen liefen anschließend mit freigegebenem Zugriff erfolgreich. Keine Paket-/Werkzeugupdates vorgenommen.
-- Für diese Sicherung keine VM gestartet und keine vorhandenen Datenimages angefasst. Kein neuer Recovery-Build, kein QEMU-/VMware- oder Hardwaretest.
-
-## Offen für die Fortsetzung
-
-- Vollständiger interaktiver Gasttest von Login/Logout, verdeckter Kennworteingabe und Hintergrundberechnung in Textshell und mehreren Terminals.
-- Zwei Benutzer: Eigentum, verweigerte Zugriffe, explizite Freigaben, unabhängige Sitzungen und Dateien im Gast prüfen.
-- Persistenz nach Neustart sowie fehlende/beschädigte/überlange Metadaten und explizite Recovery auf einer isolierten Kopie des Testimages prüfen. Auch fehlschlagende Ressourcenoperationen und Wiederherstellung prüfen.
-- Cosmos-Ausnahme-/finally-Pfade, Kennwortberechnung mit produktiver Iterationszahl, Sicherheits-Recovery-Build und Fehlerbehandlung im Gast verifizieren.
-- Integration mit aktuellem master und dessen Anwendungen sowie Etappen 6a/6b steht aus. Dieser Branch enthält diese Zusammenführung ausdrücklich noch nicht; alle späteren Datei-Aufrufer müssen dieselben Rechte beachten.
-- Unabhängiges finales Review einschließlich Sicherheits-/Fehlerpfaden und anschließende Wiederholung betroffener Prüfungen.
-- QEMU zuerst; entsprechende VMware-Abläufe und echte Hardware sind nicht nachgewiesen.
-
-Alle Etappe-6c-Abnahmekriterien bleiben bis zu diesen Nachweisen offen. Dieser Stand ist für Sicherung und Weiterarbeit bestimmt.
+Interaktive Prüfung im abschließend korrigierten normalen Gesamtstand: Administrator in Terminal 1 legt Benutzer Bob an; neues Terminal 2 ist zunächst unangemeldet. Bob meldet sich mit verdeckter Eingabe an, schreibt die eigene Datei und erhält zunächst keinen Zugriff auf die Admindatei. Nach gezielter Verzeichnis-/Dateilesefreigabe in Terminal 1 kann Bob lesen, weiterhin nicht ersetzen. Logout in Terminal 1 erhält Bobs Identität und Arbeitsverzeichnis; die Textshell bleibt unabhängig unangemeldet. Screenshots visuell geprüft. Normaler und Sicherheits-Recovery-Gast bestehen außerdem einen tatsächlichen Reboot mit zwei Bootmeldungen und `shutdown` mit QEMU-Exitcode 0. PowerShell ist hier nicht installiert; deshalb wurden dieselben Gastaktionen mit einem lokalen Python-/QMP-Helfer statt dem PowerShell-Skript geprüft, ohne GDB. Der getrennte plattenlose Negativtest mit `-cpu max,-rdrand,-rdseed` gegen das unveränderte Zufallsmodul im vorherigen Cleanup-Probe-ISO meldet erwartungsgemäß `RDSEED/RDRAND fehlt; Kennwortanlage gesperrt` (Protokoll `/tmp/zehos6c-no-rng.log`). Interaktive Fehlerfälle bei vollem FAT32-Datenträger, Gasttests aller Metadatenressourcenfehler und fehlerhafter statt fehlender Hardwarezufallsquellen sind nicht vollständig nachgewiesen. VMware und echte Hardware wurden nicht geprüft. Die Rechte schützen kontrollierte Dienste im gemeinsamen Kernel; sie schaffen keine Prozessisolation. Bereits angezeigte Inhalte bleiben nach Logout sichtbar, weitere Dateioperationen werden erneut autorisiert.

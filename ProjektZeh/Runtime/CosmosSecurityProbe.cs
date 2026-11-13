@@ -2,6 +2,7 @@
 using System;
 using System.IO;
 using ProjektZeh.Storage;
+using ProjektZeh.Shared;
 using System.Security.Cryptography;
 using Cosmos.Kernel.System.Diagnostics;
 using ProjektZeh.Security;
@@ -66,7 +67,7 @@ internal static class CosmosSecurityProbe
         string path = Path.Combine(bob.HomeDirectory!, "own.txt");
         Require(own.WriteText("own.txt", "vorher").IsOK(), "own write");
         Require(own.WriteText("own.txt", "nachher").IsOK(), "own overwrite");
-        Require(own.ReadText("own.txt").Value == "nachher", "own read");
+        RequireText(own.ReadText("own.txt"), "nachher", "own read");
         var unprivileged = accounts.CreateSession();
         Require(accounts.PrepareCreateUser(alice, "charlie", false, "charlie-password-123")().IsOK(), "second user");
         Require(accounts.PrepareLogin(unprivileged, "charlie", "charlie-password-123")().IsOK(), "second login");
@@ -74,13 +75,13 @@ internal static class CosmosSecurityProbe
         Require(!foreign.ReadText(path).IsOK(), "foreign denial");
         Require(accounts.Grant(alice, bob.HomeDirectory!, "charlie", FilePermission.Read).IsOK(), "parent grant");
         Require(accounts.Grant(bob, path, "charlie", FilePermission.Read).IsOK(), "read grant");
-        Require(foreign.ReadText(path).Value == "nachher", "shared read");
+        RequireText(foreign.ReadText(path), "nachher", "shared read");
         Require(!foreign.WriteText(path, "forbidden").IsOK(), "foreign write denial");
         Require(!foreign.ReadText("../../../../outside").IsOK(), "traversal denial");
         string id = bob.UserId!;
         Require(accounts.Load().IsOK(), "reload");
         Require(accounts.PrepareLogin(bob, "bob", "bob-password-123")().IsOK() && bob.UserId == id, "stable identity");
-        Require(own.ReadText("own.txt").Value == "nachher", "persisted file");
+        RequireText(own.ReadText("own.txt"), "nachher", "persisted file");
         File.WriteAllText(Path.Combine(root, ".zehos-security.db"), new string('x', 70000));
         Require(!accounts.Load().IsOK() && bob.UserId == null && !own.ReadText("own.txt").IsOK(), "corruption locks sessions");
         Require(accounts.PrepareRecovery(alice, "rescued", "rescued-password-123")().IsOK(), "corrupt recovery");
@@ -89,6 +90,9 @@ internal static class CosmosSecurityProbe
         Require(!accounts.Access.Check(alice, path, FilePermission.Read).IsOK(), "old file remains unmapped");
         Log.WriteString("SECURITY_FILES PASS users, ACL, overwrite, reload, corruption and recovery\n");
     }
+
+    private static void RequireText(ResultObject<string> result, string expected, string stage) =>
+        Require(result.IsOK() && result.Value == expected, stage);
 
     private static void Require(bool condition, string stage)
     {

@@ -82,7 +82,7 @@ internal sealed class AccountService
             bool valid = account != null && PasswordHasher.Verify(password, account.PasswordHash);
             return () =>
             {
-                if (!valid || !IsReady || !accounts.TryGetValue(name, out var current) || current != account) return FileAccessControl.Denied();
+                if (!valid || !IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account)) return FileAccessControl.Denied();
                 session.Login(account!.Id, account.Name, account.Administrator, Home(account.Name));
                 return ResultErr.CreateSuccess();
             };

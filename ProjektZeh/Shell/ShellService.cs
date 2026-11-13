@@ -19,6 +19,8 @@ internal sealed class ShellService
     private Func<ResultErr>? completion;
     private int passwordComplete;
     private bool closed;
+    private static int runningPasswordWorkers;
+    internal static bool HasRunningPasswordOperations => Volatile.Read(ref runningPasswordWorkers) != 0;
     internal Action? OnClose { get; set; }
     public bool IsSecretInput => secretInput != null;
     public bool IsBusy => passwordWorker != null;
@@ -81,9 +83,21 @@ internal sealed class ShellService
         if (closed || IsBusy) return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation laeuft oder Sitzung geschlossen.");
         if (secretInput != null)
         {
+            // Geschlossene Fenster duerfen die globale Grenze nicht durch neue Sitzungen umgehen.
+            if (Interlocked.Increment(ref runningPasswordWorkers) > 2)
+            {
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortdienst ausgelastet. Nach Abschluss erneut eingeben.");
+            }
             var prepare = secretInput;
+            Func<Func<ResultErr>> work;
+            try { work = prepare(line ?? ""); }
+            catch
+            {
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht vorbereitet werden.");
+            }
             secretInput = null;
-            Func<Func<ResultErr>> work = prepare(line ?? "");
             Volatile.Write(ref passwordComplete, 0);
             passwordWorker = new Thread(() =>
             {
@@ -93,9 +107,16 @@ internal sealed class ShellService
                     // Ausnahmen koennen Kennwortdetails enthalten und werden deshalb nicht ausgegeben.
                     completion = () => ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation fehlgeschlagen. Kennwortlaenge oder sichere Zufallsquelle pruefen.");
                 }
+                Interlocked.Decrement(ref runningPasswordWorkers);
                 Volatile.Write(ref passwordComplete, 1);
             });
-            passwordWorker.Start();
+            try { passwordWorker.Start(); }
+            catch
+            {
+                passwordWorker = null;
+                Interlocked.Decrement(ref runningPasswordWorkers);
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden.");
+            }
             return ResultErr.CreateSuccess();
         }
         var parseResult = CommandLineParser.Parse(line);

@@ -54,6 +54,13 @@ public sealed class AccountServiceTests
             Assert.IsTrue(accounts.PrepareLogin(alice, "alice", "alice-password-123")().IsOK());
             Assert.IsTrue(accounts.PrepareLogin(bob, "bob", "bob-password-123")().IsOK());
             string aliceId = alice.UserId!;
+            var pendingLogin = accounts.PrepareLogin(alice, "alice", "alice-password-123");
+            Assert.IsTrue(accounts.Load().IsOK());
+            Assert.IsFalse(pendingLogin().IsOK(), "Ein vor dem Neuladen vorbereitetes Login darf Sitzungen nicht wiederbeleben.");
+            Assert.IsNull(alice.UserId);
+            Assert.IsTrue(accounts.PrepareLogin(alice, "alice", "alice-password-123")().IsOK());
+            Assert.IsTrue(accounts.PrepareLogin(bob, "bob", "bob-password-123")().IsOK());
+            Assert.IsTrue(accounts.PrepareLogin(admin, "admin", "admin-password-123")().IsOK());
             var files = new FileService(alice.HomeDirectory!, access: accounts.Access, session: alice);
             Assert.IsTrue(files.WriteText("hello.txt", "hello").IsOK());
             string path = Path.Combine(alice.HomeDirectory!, "hello.txt");

@@ -26,7 +26,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly SystemLog systemLog;
     private bool startDesktop;
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
-    private static readonly bool SecurityRecovery =
+    private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;
 #else
@@ -134,6 +134,9 @@ public sealed class Kernel : Sys.Kernel
 
     private ResultErr PreparePowerAction()
     {
+        if (ShellService.HasRunningPasswordOperations)
+            return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperationen laufen noch. Energieaktion nach Abschluss erneut ausfuehren.");
+
         if (!Sys.Power.IsSupported)
         {
             return ResultErr.CreateFailure(ResultCode.Failure,
