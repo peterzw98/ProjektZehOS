@@ -99,3 +99,16 @@ Das Review fand keine Blocker. Behoben und erneut geprüft (278 Hosttests, 11 Py
 - **Neu gefunden:** Nach einem Warmstart hing die erste Updateverbindung; Ursache und Abhilfe siehe `docs/COSMOS_SUPPORT.md`. Danach geprüft: Installation, Updateprüfung, `reboot`, erneute Prüfung, Installation und Start von 0.2.0.
 
 Offen: Zeitlimit bei einem Spiegel, der nach Verbindungsaufbau nicht antwortet; Schutz des Signaturgeheimnisses über eine GitHub-Umgebung mit Tag-Regel (Repository-Einstellung).
+
+## Abschluss nach Rebase auf master und Desktop-Stil (14. November 2026)
+
+Der Branch wurde auf master `aa35e79` (Benutzerverwaltung #27, Desktop-Einstellungen #28) umgesetzt. Der Assistent verwendet jetzt Theme, Hintergrund, Fensterrahmen und `UiButton` des Desktops und skaliert für 1920×1080; das installierte Bootmenü folgt dem ISO (Full HD, 1024×768, vorherige Version). Ein weiteres Codex-Review fand zwei Punkte, beide behoben: Der Versionsmarker wird vor dem Kernel geschrieben und nach einem Austauschfehler zurückgesetzt; leer gilt nur eine vollständig gelesene Platte bis 1 GiB.
+
+Nachweise: 312 Hosttests und 11 Python-Tests; native Builds 0.1.0/0.2.0/0.3.0 (normal und Installer) sowie Recovery jeweils 0 Warnungen/0 Fehler. Recovery startet in die Textshell. Vollständiger Gastablauf in einem Skript (QEMU/KVM, OVMF, 1024 MiB, `e1000e`, frische 256-MiB-Platte):
+
+1. Assistent in Full HD: Hinweise, Zielplatte, Installation, Abschluss; danach genau eine Partition Typ `ef`.
+2. Plattenstart 0.1.0, Administratoranlage, `update check`/`update install` über `scripts/update-mirror.py`, `reboot` (Warmstart) → 0.2.0.
+3. Rückfalleintrag → 0.1.0; `update check` lehnt 0.2.0 ab („nicht neuer als die installierte Version“); Spiegel mit 0.3.0: Prüfung und Installation im Rückfallstart.
+4. `reboot` → 0.3.0; Rückfalleintrag startet weiterhin 0.1.0, `.bak` blieb also unverändert.
+
+Weiterhin offen: VMware, echte Hardware, PowerShell-Helfer (`pwsh` nicht installiert), Zeitlimit bei einem nach Verbindungsaufbau schweigenden Spiegel, ein tatsächlicher Lauf des Release-Workflows auf GitHub sowie die Mausbedienung des Assistenten im Gast.
