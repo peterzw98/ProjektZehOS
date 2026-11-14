@@ -24,7 +24,10 @@ internal sealed class InstallJob : IInstallJob
     private int fileOffset;
     private ResultErr? failure;
     private static readonly byte[] BootConfig = Encoding.UTF8.GetBytes(
-        "timeout: 3\n\n/ZehOS\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf\n    resolution: 1024x768x32\n\n/ZehOS (vorherige Version)\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf.bak\n    resolution: 1024x768x32\n");
+        // Wie das ISO: Full HD als Standard, 1024x768 als sicherer Rueckfall fuer Anzeigen ohne 1920x1080.
+        "timeout: 3\n\n/ZehOS\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf\n    resolution: 1920x1080x32\n\n" +
+        "/ZehOS (1024x768)\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf\n    resolution: 1024x768x32\n\n" +
+        "/ZehOS (vorherige Version)\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf.bak\n    resolution: 1024x768x32\n");
 
     public InstallJob(IInstallTarget target, byte[] efi, byte[] kernel, string version)
     {

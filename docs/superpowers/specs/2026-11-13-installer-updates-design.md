@@ -17,7 +17,7 @@ MBR mit genau einer Partition ab LBA 2048, Typ `0xEF` (EFI-Systempartition), FAT
 
 ```
 /EFI/BOOT/BOOTX64.EFI        Limine-UEFI aus cosmos.build.common/3.0.94/tools/Limine
-/boot/limine/limine.conf     Eintrag „ZehOS“ und „ZehOS (vorherige Version)“
+/boot/limine/limine.conf     Einträge „ZehOS“ (Full HD), „ZehOS (1024x768)“, „ZehOS (vorherige Version)“
 /boot/ProjektZeh.elf         installierter Kernel
 /boot/ProjektZeh.elf.bak     vorheriger Kernel nach einem Update (Rückfall im Bootmenü)
 /boot/zehos-version.txt      installierte Version

@@ -25,6 +25,8 @@ public sealed class InstallJobTests
         Assert.AreEqual(100, job.Percent);
         Assert.AreEqual(3, target.KernelChunks);
         StringAssert.Contains(target.Config!, "/ZehOS (vorherige Version)");
+        StringAssert.Contains(target.Config!, "/ZehOS (1024x768)");
+        StringAssert.Contains(target.Config!, "resolution: 1920x1080x32");
         StringAssert.Contains(target.Config!, "ProjektZeh.elf.bak");
         Assert.AreEqual("/boot/limine/limine.conf", target.Paths[^1]);
     }
