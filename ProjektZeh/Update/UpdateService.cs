@@ -41,7 +41,7 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         if (parsed.Value!.Version.CompareTo(currentVersion) <= 0)
             return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure, "Das Update ist nicht neuer als der laufende Kernel.");
         // Nach einem Start ueber den Rueckfalleintrag laeuft der Kernel aus .bak: nur der defekte Hauptkernel wird ersetzt,
-        // und das Update muss auch neuer als die installierte, defekte Version sein.
+        // und das Update darf nicht aelter als die installierte Version sein.
         var installed = target.ReadVersion();
         if (!installed.IsOK()) return ResultObjectFactory.CreateFailure<UpdateManifest>(installed.Status);
         bool fallback = installed.Value != null && !string.Equals(installed.Value.Trim(), currentVersion.ToString(), StringComparison.Ordinal);

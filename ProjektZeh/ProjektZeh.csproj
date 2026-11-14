@@ -44,9 +44,12 @@
     <Error Condition="'$(ZehOSPayloadDir)' == ''" Text="ZehOSInstaller benoetigt -p:ZehOSPayloadDir mit normalem ProjektZeh.elf und BOOTX64.EFI." />
     <Error Condition="!Exists('$(ZehOSPayloadDir)/ProjektZeh.elf') Or !Exists('$(ZehOSPayloadDir)/BOOTX64.EFI')" Text="Die Installer-Payload ist unvollstaendig." />
   </Target>
-  <!-- Limine darf die Requests des eingebetteten Kernels nicht als eigene Installer-Requests erkennen. -->
-  <Target Name="PrepareInstallerKernelPayload" BeforeTargets="PrepareResources" DependsOnTargets="ValidateInstallerPayload" Condition="'$(ZehOSInstaller)' == 'true'"
-          Inputs="$(ZehOSPayloadDir)/ProjektZeh.elf" Outputs="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf">
+  <!-- Limine darf die Requests des eingebetteten Kernels nicht als eigene Installer-Requests erkennen.
+       Ohne Inputs/Outputs: Zeitstempel einer neuen Payload koennen aelter sein und wuerden sonst einen alten Kernel einbetten. -->
+  <Target Name="PrepareInstallerKernelPayload" AfterTargets="ValidateInstallerPayload" Condition="'$(ZehOSInstaller)' == 'true'">
     <InvertInstallerPayload Source="$(ZehOSPayloadDir)/ProjektZeh.elf" Destination="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" />
+    <ItemGroup>
+      <FileWrites Include="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" />
+    </ItemGroup>
   </Target>
 </Project>
