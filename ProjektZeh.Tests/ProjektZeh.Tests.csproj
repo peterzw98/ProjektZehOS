@@ -17,6 +17,8 @@
     <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallJob.cs" Link="Installer\InstallJob.cs" />
+    <Compile Include="..\ProjektZeh\ThirdParty\CosmosHttp\CertificateVerifier.cs" Link="ThirdParty\CertificateVerifier.cs" />
+    <Compile Include="..\ProjektZeh\Network\*.cs" Exclude="..\ProjektZeh\Network\Cosmos*.cs" Link="Network\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Update\*.cs" Exclude="..\ProjektZeh\Update\Cosmos*.cs" Link="Update\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Scheduling\*.cs" Exclude="..\ProjektZeh\Scheduling\Cosmos*.cs" Link="Scheduling\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Shell\**\*.cs" Link="Shell\%(RecursiveDir)%(Filename)%(Extension)" />

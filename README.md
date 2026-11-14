@@ -226,6 +226,14 @@ Wenn `F5` meldet **QEMU for x64 not found**, `cosmos check` direkt im Terminal d
 
 Das Gen3-Debugging verwendet QEMU und GDB. NativeAOT kann die Anzeige einzelner Variablen einschränken; Haltepunkte und Aufruflisten sind davon unabhängig.
 
+## Netzwerk in der Shell
+
+`netinfo` zeigt Adapter, Link und IPv4-Konfiguration. Netzwerkbefehle starten einen Hintergrundauftrag pro Terminal; `net status` zeigt das Ergebnis, `net cancel` fordert den Abbruch an. Ein laufender Auftrag blockiert keine weitere Shell-Eingabe. Beim Schließen des Terminals wird sein Auftrag abgebrochen.
+
+Zuerst als Administrator `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` für das QEMU-User-Netz oder `net dhcp` ausführen und das Ergebnis abholen. Danach stehen `ping <IPv4>`, `nslookup <Name>` und `fetch http://10.0.2.2:18080/ok` bereit. Der Testserver läuft auf dem Entwicklungsrechner; `10.0.2.2` bezeichnet ihn aus dem QEMU-Gast. `fetch https://Host/Pfad` verwendet TLS 1.2/1.3 mit Zertifikatsketten-, Namens- und Gültigkeitsprüfung gegen ein eingebettetes Mozilla-Rootbundle. HTTPS verlangt eine korrekte UTC-Uhr und funktionierendes RDSEED/RDRAND; ohne diese Voraussetzungen scheitert der Abruf. Unterstützt werden IPv4 und ASCII-DNS-Namen; IPv6 und Unicode-Zielnamen werden abgelehnt.
+
+Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-Length`. Header sind auf 8192 Bytes, Antwortkörper auf 16384 Bytes begrenzt. Weiterleitungen und Transfercodierungen werden abgelehnt. Cosmos 3.0.94 verarbeitet einen Abbruch während DHCP oder TCP-Verbindungsaufbau erst nach Rückkehr seines internen Warteaufrufs. Die übrige Bedienung läuft auf dem Hauptthread weiter. [Architektur, HTTPS-Plan und Prüfnachweise](docs/NETWORK_TESTS.md).
+
 ## Start in VMware Player aus Visual Studio
 
 Die Cosmos-Erweiterung übernimmt standardmäßig `F5` und `Strg+F5` für QEMU. Für einen Start in VMware ohne Umstellen der Debug-Einstellung zuerst in Visual Studio bauen (`Strg+Umschalt+B`) und dann im Visual-Studio-Terminal aus dem Repository-Stamm ausführen:

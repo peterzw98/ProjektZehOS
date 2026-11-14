@@ -51,6 +51,8 @@ internal static class HttpUpdateResponse
             string value = lines[index][(colon + 1)..].Trim();
             if (name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase))
                 throw new IOException("HTTP-Transfercodierung wird nicht unterstuetzt.");
+            if (name.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) && !value.Equals("identity", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("HTTP-Inhaltscodierung wird nicht unterstuetzt.");
             if (!name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
             if (size != -1 || !int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out size) || size < 0 || size > maximumBytes)
                 throw new IOException("Ungueltige oder zu grosse HTTP-Dateilaenge.");

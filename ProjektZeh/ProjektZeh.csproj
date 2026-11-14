@@ -6,7 +6,9 @@
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <Version Condition="'$(Version)' == ''">0.1.0</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
+    <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
@@ -18,6 +20,13 @@
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Cosmos.Kernel" Version="3.0.94" />
     <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="ThirdParty/CosmosHttp/cacert.pem" LogicalName="ZehOS.TlsRoots" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">
+    <EmbeddedResource Include="$(ZehOSNetworkProbeCaPath)" LogicalName="ZehOS.NetworkProbeCa" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(ZehOSInstaller)' == 'true'">

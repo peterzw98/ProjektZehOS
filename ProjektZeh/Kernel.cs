@@ -10,6 +10,7 @@ using ProjektZeh.Shared;
 using ProjektZeh.Security;
 using ProjektZeh.Scheduling;
 using ProjektZeh.Messaging;
+using ProjektZeh.Network;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -84,6 +85,7 @@ public sealed class Kernel : Sys.Kernel
     private ShellService CreateShell(UserSession identity)
     {
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity);
+        var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity));
         ShellService? shell = null;
         shell = new ShellService(
         [
@@ -97,13 +99,14 @@ public sealed class Kernel : Sys.Kernel
             .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
+            .. network.Commands,
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
             command => accounts.Authorize(identity, command));
-        shell.OnClose = () => accounts.ReleaseSession(identity);
+        shell.OnClose = () => { network.Close(); accounts.ReleaseSession(identity); };
         return shell;
     }
 
@@ -152,7 +155,15 @@ public sealed class Kernel : Sys.Kernel
 #endif
         });
 #if !ZEHOS_INSTALLER
-        systemLog.Information("Network", "Updates initialisieren IPv4 bei Bedarf per DHCP.");
+        systemLog.Information("Network", $"Cosmos: aktiviert={Cosmos.Kernel.System.Network.NetworkManager.IsEnabled}, initialisiert={Cosmos.Kernel.System.Network.NetworkManager.IsInitialized}, Adapter={Cosmos.Kernel.System.Network.NetworkManager.DeviceCount}, Link={Cosmos.Kernel.System.Network.NetworkManager.LinkUp}.");
+        if (Cosmos.Kernel.System.Network.NetworkManager.IsEnabled && Cosmos.Kernel.System.Network.NetworkManager.IsInitialized)
+        {
+            for (int i = 0; i < Cosmos.Kernel.System.Network.NetworkManager.DeviceCount; i++)
+            {
+                var adapter = Cosmos.Kernel.System.Network.NetworkManager.GetAdapter(i);
+                if (adapter.IsValid) systemLog.Information("Network", $"{adapter.Name}, MAC {adapter.MacAddress}, Link={adapter.LinkUp}.");
+            }
+        }
         var security = accounts.Load();
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
@@ -169,6 +180,9 @@ public sealed class Kernel : Sys.Kernel
     protected override void Run()
     {
         InstallScheduler();
+#if ZEHOS_NETWORK_PROBE
+        if (!CosmosNetworkProbe.Run(tasks)) { Stop(); return; }
+#endif
 #if ZEHOS_THREAD_PROBE
         if (!CosmosThreadProbe.Run())
         {

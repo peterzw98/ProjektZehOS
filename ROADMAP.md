@@ -225,16 +225,25 @@ Bei Weitergabe eines Ports die jeweiligen Quellcode-Lizenzen und die getrennten 
 
 **Zweck:** Die Datenübertragung unabhängig von HTML und Fensterdarstellung zum Laufen bringen.
 
-- [ ] 10.1 Eine von der verwendeten Cosmos-Version unterstützte virtuelle Netzwerkkarte einstellen. Erkennung, Treiber und Verbindungszustand protokollieren.
-- [ ] 10.2 Zuerst mit fester IPv4-Konfiguration einen bekannten lokalen Testdienst erreichen. Danach DHCP und DNS ergänzen, soweit sie in der verwendeten Version verfügbar sind.
-- [ ] 10.3 Diagnosebefehle wie `netinfo`, `ping` und `nslookup` an die tatsächlich unterstützten Dienste anbinden.
-- [ ] 10.4 Eine TCP-Verbindung zu einem kleinen Testserver auf dem Entwicklungsrechner herstellen. Senden, Empfangen und Schließen einzeln prüfen.
-- [ ] 10.5 Einen begrenzten HTTP-Client für kontrollierte Testseiten bauen: Statuszeile und Header lesen, aufgeteilte Antworten zusammensetzen, Antwortgröße und Wartezeit begrenzen. Der Testserver liefert anfangs einfache unkomprimierte Antworten mit klar definierter Länge.
-- [ ] 10.6 Laden abbrechen können. Blockierende Verbindungsaufbauten und Lesezugriffe dürfen nicht in der Desktop-Schleife laufen. Dafür geprüfte Hintergrundarbeit mit Zeitlimits verwenden oder Zugriffe als nicht blockierende Zustandsmaschine aufbauen.
+- [x] 10.1 Eine von der verwendeten Cosmos-Version unterstützte virtuelle Netzwerkkarte einstellen. Erkennung, Treiber und Verbindungszustand protokollieren.
+- [x] 10.2 Zuerst mit fester IPv4-Konfiguration einen bekannten lokalen Testdienst erreichen. Danach DHCP und DNS ergänzen, soweit sie in der verwendeten Version verfügbar sind.
+- [x] 10.3 Diagnosebefehle wie `netinfo`, `ping` und `nslookup` an die tatsächlich unterstützten Dienste anbinden.
+- [x] 10.4 Eine TCP-Verbindung zu einem kleinen Testserver auf dem Entwicklungsrechner herstellen. Senden, Empfangen und Schließen einzeln prüfen.
+- [x] 10.5 Einen begrenzten HTTP-Client für kontrollierte Testseiten bauen: Statuszeile und Header lesen, aufgeteilte Antworten zusammensetzen, Antwortgröße und Wartezeit begrenzen. Der Testserver liefert anfangs einfache unkomprimierte Antworten mit klar definierter Länge.
+- [x] 10.6 Laden abbrechen können. Blockierende Verbindungsaufbauten und Lesezugriffe dürfen nicht in der Desktop-Schleife laufen. Dafür geprüfte Hintergrundarbeit mit Zeitlimits verwenden oder Zugriffe als nicht blockierende Zustandsmaschine aufbauen.
 
 **Fertig, wenn:** `fetch` den Text einer Testseite ausgibt und Serverausfall oder Verbindungsabbruch den Desktop nicht einfrieren lassen.
 
-Die aktuelle Cosmos-Netzwerkdokumentation nennt fehlendes TLS und damit fehlendes HTTPS als Einschränkung. HTTPS ist deshalb eine eigene technische Etappe und keine automatisch verfügbare Folge eines funktionierenden TCP-Clients. [Cosmos Netzwerk](https://cosmosos.github.io/articles/user/network.html)
+### HTTPS als Voraussetzung für den späteren Browser
+
+- [x] 10.7 TLS-Wege getrennt recherchieren: Paketstand, Lizenz, Abhängigkeiten, .NET 10, NativeAOT und die festgelegte Cosmos-Version prüfen. Cosmos.Network.Http 3.0.0 und die bereits vorhandene BouncyCastle-Version 2.7.0 wurden untersucht; die öffentliche HTTP-API allein bietet keine ausreichende Kontrolle über Transportfristen.
+- [x] 10.8 Einen begrenzten TLS-Transport über vorhandene TLS-Protokolllogik integrieren. HTTP und HTTPS verwenden dieselbe Antwortbegrenzung und Hintergrundzuständigkeit. Ein HTTPS-Fehler darf keinen Rückfall auf unverschlüsseltes HTTP auslösen.
+- [x] 10.9 Sichere Zufallsquelle, UTC-Uhr und einen festgelegten Vertrauensspeicher anbinden. Zertifikatskette, Verwendungszweck, Gültigkeitszeit und Zielname prüfen; fehlende Voraussetzungen sperren HTTPS. Keine Bedienoption zum Überspringen der Prüfung anbieten.
+- [x] 10.10 HTTPS im nativen QEMU-Gast mit kontrolliertem TLS-Dienst prüfen: Erfolg, falscher Name, fremde CA, abgelaufenes und noch nicht gültiges Zertifikat, begrenzter Empfang, Fehler und Abbruch. Testwurzeln ausschließlich in ausdrücklich gebaute Proben einbetten. Den VMware-Prüfstatus getrennt ausweisen.
+
+**Umgesetzt am 14. November 2026:** Shellnetzwerk mit E1000e, IPv4/DHCP/DNS/ICMP und begrenztem HTTP/HTTPS ist mit 323 Hosttests, nativen Release-/Recovery-Builds und QEMU-Proben geprüft. Netzwerkaufträge laufen im Hintergrund und lassen sich sitzungsbezogen abbrechen. Cosmos-interne Connect-/Send-/DHCP-Warteabschnitte reagieren erst nach ihrer Rückkehr; dies ist keine harte Gesamtfrist über diese Aufrufe hinweg. UTC bleibt eine Voraussetzung des Hypervisors; automatische Vertrauensspeicherpflege und Zertifikatssperrprüfung sind offen. VMware und echte Hardware bleiben ungeprüft. [Umsetzung und Nachweise](docs/NETWORK_TESTS.md).
+
+Die am 14. November 2026 gelesene [Cosmos-Netzwerkdokumentation](https://cosmosos.github.io/articles/user/network.html) beschreibt inzwischen ein zusätzliches HTTP-/TLS-Paket. Das beweist keine Unterstützung durch den eingefrorenen Kernelstand 3.0.94. Recherche, konkrete Anbindung und aktuelle Prüfnachweise stehen in [NETWORK_TESTS.md](docs/NETWORK_TESTS.md); HTTPS bleibt eine ausdrücklich zu prüfende Voraussetzung des späteren Browsers. Etappe 12.2 umfasst den weiteren Betrieb von Uhr und Vertrauensspeicher sowie die dort benötigte Robustheit.
 
 ## 11 Einen einfachen Browser entwickeln
 
