@@ -2,6 +2,16 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## WebAssembly-Interpreter (wasm3) am 14. November 2026
+
+Probe mit `-p:ZehOSWasmProbe=true`, QEMU 512 MiB, CPU `max`; Details in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md).
+
+- **C-Einbindung:** `GCCProject`/`GCCIncludePath` übersetzen eigene C-Verzeichnisse mit `-nostdinc -ffreestanding -mcmodel=kernel`; clangs eigene Header (`stdint.h`, `stddef.h`, `stdarg.h`, `limits.h`, `float.h`) stehen zur Verfügung, `stdlib`/`stdio`/`string` nicht. C ruft C# über `[UnmanagedCallersOnly(EntryPoint=…)]`, C# ruft C über `[DllImport("*", EntryPoint=…)]`.
+- **Vorhandene C-Symbole:** Cosmos stellt bereits `memcpy`, `memcmp`, `memset`, `memmove`, `floor(f)`, `ceil(f)`, `trunc(f)`, `sqrt(f)`, `__cosmos_heap_alloc/free` und `__cosmos_serial_write` bereit; eigene Definitionen gleichen Namens scheitern beim Linken.
+- **`memcmp` ist nicht standardkonform:** `__cosmos_memcmp` vergleicht nur ganze 32-Bit-Wörter (Restbytes werden ignoriert) und liefert nur 0/1. wasm3 hielt dadurch verschiedene Funktionstypen für gleich (`incorrect type on stack`). Eigene C-Bausteine leiten `mem*` deshalb auf exakte Implementierungen um.
+- **Stacks:** Der Boot-Thread läuft auf dem 1-MiB-Limine-Stack. `new Thread(start, maxStackSize)` erhält den angeforderten Stack. **Der Stack beendeter Threads wird nicht freigegeben:** drei leere Threads mit je 8 MiB kosteten dauerhaft 24 MiB. Langlebige Worker statt Threads pro Auftrag verwenden.
+- **Eingebettete Rekursion:** Ohne natives Budget sprengt tiefe Wasm-Rekursion den Kernel-Stack (Triple Fault, Neustart). Mit `d_m3MaxNativeStack` = 7 MiB auf einem 8-MiB-Thread endet sie als Wasm-Trap.
+
 ## Desktop-Einstellungen: Abschluss am 14. November 2026
 
 Der aktuelle Desktopstand integriert master `62b064c` einschließlich Anmeldung und Dateirechten. 277 Hosttests sowie normale und Recovery-NativeAOT-Builds bestehen. In QEMU wurden Full HD, Ersteinrichtung/Anmeldung, Einstellungsapp, Personalisierung im Benutzerhome, Taskmanager, F4/Esc und ein neutraler Anmeldeschirm nach Logout geprüft. Die Szene-/Zeigeroptimierung bleibt erhalten; die aktuelle Full-HD-Stichprobe bei Mausbewegung zeigt 57 FPS. Auflösungsbestätigung, fehlgeschlagene Rücknahme und BMP-Farbmasken besitzen gezielte Hostregressionen. Ein VMware-SVGA-Laufzeitwechsel ist damit nicht im Gast nachgewiesen. Details und Grenzen: [DESKTOP_SETTINGS_REVIEW.md](DESKTOP_SETTINGS_REVIEW.md).

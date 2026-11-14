@@ -1,6 +1,6 @@
 // ZehOS: minimale C-Laufzeit fuer den statisch gebundenen wasm3-Kern.
-// memcpy, memcmp, memset, memmove, floor und floorf stellt Cosmos 3.0.94 bereits bereit;
-// sie werden hier bewusst nicht erneut definiert, sonst scheitert das Linken.
+// floor(f), ceil(f), trunc(f) und sqrt(f) stellt Cosmos 3.0.94 bereits bereit; sie werden nicht erneut definiert.
+// Die mem*-Funktionen heissen ueber string.h zehos_mem*, weil die gleichnamigen Cosmos-Symbole abweichen.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +15,39 @@ extern void __cosmos_heap_free(void* pointer);
 extern void __cosmos_serial_write(const char* text);
 
 int errno;
+
+void* memcpy(void* destination, const void* source, size_t count)
+{
+    void* result = destination;
+    __asm__ volatile("rep movsb" : "+D"(destination), "+S"(source), "+c"(count) : : "memory");
+    return result;
+}
+
+void* memmove(void* destination, const void* source, size_t count)
+{
+    unsigned char* target = (unsigned char*)destination;
+    const unsigned char* origin = (const unsigned char*)source;
+    if (target <= origin || target >= origin + count) return memcpy(destination, source, count);
+    // Ueberlappung mit hoeherem Ziel: rueckwaerts kopieren.
+    while (count-- != 0) target[count] = origin[count];
+    return destination;
+}
+
+void* memset(void* destination, int value, size_t count)
+{
+    void* result = destination;
+    __asm__ volatile("rep stosb" : "+D"(destination), "+c"(count) : "a"(value) : "memory");
+    return result;
+}
+
+int memcmp(const void* left, const void* right, size_t count)
+{
+    const unsigned char* a = (const unsigned char*)left;
+    const unsigned char* b = (const unsigned char*)right;
+    for (size_t index = 0; index < count; index++)
+        if (a[index] != b[index]) return a[index] < b[index] ? -1 : 1;
+    return 0;
+}
 
 // Kopfbereich vor jedem Block, damit realloc die alte Groesse kennt; 16 Byte erhalten die Ausrichtung.
 typedef struct { size_t size; size_t reserved; } zehos_block_header;
@@ -164,34 +197,7 @@ float fabsf(float value) { return float_of(bits_of_float(value) & ~(1u << 31)); 
 double copysign(double magnitude, double sign) { return double_of((bits_of(magnitude) & ~(1ull << 63)) | (bits_of(sign) & (1ull << 63))); }
 float copysignf(float magnitude, float sign) { return float_of((bits_of_float(magnitude) & ~(1u << 31)) | (bits_of_float(sign) & (1u << 31))); }
 
-double sqrt(double value) { double result; __asm__("sqrtsd %1, %0" : "=x"(result) : "x"(value)); return result; }
-float sqrtf(float value) { float result; __asm__("sqrtss %1, %0" : "=x"(result) : "x"(value)); return result; }
-
 // Ab 2^52 (double) bzw. 2^23 (float) sind alle Werte ganzzahlig; NaN und Unendlich fallen ebenfalls darunter.
-double trunc(double value)
-{
-    if (!(fabs(value) < 4503599627370496.0)) return value;
-    return copysign((double)(long long)value, value);
-}
-
-float truncf(float value)
-{
-    if (!(fabsf(value) < 8388608.0f)) return value;
-    return copysignf((float)(int)value, value);
-}
-
-double ceil(double value)
-{
-    double result = trunc(value);
-    return result < value ? copysign(result + 1.0, value) : result;
-}
-
-float ceilf(float value)
-{
-    float result = truncf(value);
-    return result < value ? copysignf(result + 1.0f, value) : result;
-}
-
 // Rundung zur naechsten geraden Zahl ueber die Gleitkommaeinheit; volatile verhindert das Wegfalten.
 double rint(double value)
 {

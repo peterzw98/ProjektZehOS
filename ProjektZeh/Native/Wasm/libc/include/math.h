@@ -1,5 +1,5 @@
 #pragma once
-/* floor/floorf liefert Cosmos 3.0.94; die uebrigen Funktionen stehen in libc.c. */
+/* floor, ceil, trunc und sqrt (jeweils auch float) liefert Cosmos 3.0.94; der Rest steht in libc.c. */
 double fabs(double value);
 float fabsf(float value);
 double ceil(double value);
