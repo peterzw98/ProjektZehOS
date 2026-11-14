@@ -32,3 +32,7 @@ Nach der ursprünglichen Prüfung ist origin/master auf b51cb86 fortgeschritten 
 - Erneutes unabhängiges Integrationsreview ohne bestätigten Muss-Befund: zusätzliche Installer-/Update-Dateimethoden und Netzwerkstatus/-abbruch sowie Sitzungsfreigabe und Energievorbereitung bleiben erhalten.
 - Repository-Einstellung `delete_branch_on_merge` als true geprüft. Der Pull Request wird ohne Merge erstellt; Peter ist als Autor kein möglicher eigener Reviewer.
 - Integrierter QEMU-Normalgast mit USB-Tablet erneut geprüft: Anmeldung, Terminalstart per absoluter Maus, Pipelineausgabe1, echte df-Werte, ACL-Append auf neue Datei und erneutes Lesen, Aliasaufruf, Tab/Teilansicht, exit schließt nur die Teilansicht. Sichtbares Such-x mit echter Maus angeklickt; danach nimmt die Shell echo mouse-close an. Normalgast über shutdown beendet. Integrierter Recovery-Gast startet eindeutig als Textshell mit Anmeldeprompt; die nur lesend gestartete isolierte Testinstanz danach beendet. Die weitergehenden Recovery-Bediennachweise auf aa35e79 stehen oben und werden nicht als neue Prüfung nach dem Rebase ausgegeben.
+
+## Veröffentlichung
+
+[PR35](https://github.com/peterzw98/ProjektZehOS/pull/35) ist offen gegen master. Lars (larsernst) und azazel (Azazel55605) sind als Reviewer angefordert; Peter ist Autor und Assignee. Der Branch ist gepusht und konfliktfrei. Automatische Prüfungen sind im PR einsehbar; kein Merge ausgeführt.

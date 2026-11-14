@@ -44,6 +44,6 @@ Keine neuen Pakete/Updates. Deutsche Kommentare, vorhandene Dateirechte und Resu
 - [x] Kernel: Dateien und echte Systeminformationen an Shell anbinden; alle Hosttests mit -warnaserror ausführen.
 - [x] Native Release- und Recovery-Builds erstellen; QEMU Boot, Shell, Eingabe, Tabs/Splits, Filter/Dateibefehle auf isolierter Imagekopie prüfen. VMware versuchen.
 - [x] Tatsächliche Ergebnisse und Grenzen dokumentieren; unabhängigen Agenten lesend prüfen lassen, berechtigte Befunde beheben und nachprüfen.
-- [ ] Commit, Push und PR mit angeforderten Reviewern, ohne Merge.
+- [x] Commit, Push und PR mit angeforderten Reviewern, ohne Merge.
 
 Ausführung: Aufgaben1–3 abgeschlossen; integriert auf master b51cb86. Einzelne Host-Testgrenze im übernommenen TLS-Test separat nachgewiesen. Gastabnahme abgeschlossen; Veröffentlichung siehe docs/KONSOLE_STATUS.md.
