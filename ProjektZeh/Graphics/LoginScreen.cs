@@ -46,8 +46,8 @@ internal sealed class LoginScreen
         if (login.IsActive && !login.IsBusy) input.Handle(value);
     }
 
-    /// <summary>Uebernimmt fertige Kennwortpruefungen, solange das Anmeldefenster angezeigt wird.</summary>
-    public void Update() => session.Shell.Poll(messages);
+    /// <summary>Uebernimmt fertige Kennwortpruefungen und meldet, ob sich die Anzeige dadurch geaendert hat.</summary>
+    public bool Update() => session.Shell.Poll(messages);
 
     /// <summary>
     /// Meldet direkt ab, damit eine laufende oder offene Kennwortabfrage der Textshell das Abmelden nicht verhindert.

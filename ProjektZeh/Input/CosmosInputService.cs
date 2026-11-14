@@ -44,11 +44,22 @@ internal sealed class CosmosInputService
             input.ReportKey(raw.KeyCode, released, character);
         }
 
+        // Der Maus-Interrupt setzt X, Y und Tasten einzeln; ohne Maske mischt ein Paket dazwischen zwei Meldungen.
+        int x, y;
         PointerButtons buttons = PointerButtons.None;
-        if (MouseManager.LeftButton) buttons |= PointerButtons.Left;
-        if (MouseManager.RightButton) buttons |= PointerButtons.Right;
-        if (MouseManager.MiddleButton) buttons |= PointerButtons.Middle;
-        input.ReportPointer(MouseManager.X, MouseManager.Y, buttons);
+#pragma warning disable COSMOS0001, NAOT0007 // Die in 3.0.94 gepruefte Core-Interruptmaske ist fuer diesen kurzen Eingabeschutz erforderlich.
+        var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
+#pragma warning restore COSMOS0001, NAOT0007
+        try
+        {
+            x = MouseManager.X;
+            y = MouseManager.Y;
+            if (MouseManager.LeftButton) buttons |= PointerButtons.Left;
+            if (MouseManager.RightButton) buttons |= PointerButtons.Right;
+            if (MouseManager.MiddleButton) buttons |= PointerButtons.Middle;
+        }
+        finally { mask.Dispose(); }
+        input.ReportPointer(x, y, buttons);
     }
 
     // Verwendet die vorhandene Layoutuebersetzung, die in Cosmos 3.0.94 noch intern ist.

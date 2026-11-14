@@ -1,5 +1,5 @@
 {
   "qemu": {
-    "extraArgs": "-action shutdown=poweroff,reboot=reset"
+    "extraArgs": "-action shutdown=poweroff,reboot=reset -device qemu-xhci,id=tabletbus -device usb-tablet,bus=tabletbus.0"
   }
 }
