@@ -54,7 +54,7 @@ public sealed class ShellServiceTests
         var result = shell.ExecuteLine("help", output.Object);
 
         Assert.IsTrue(result.IsOK(), "Die Hilfe muss aufrufbar sein.");
-        foreach (string command in new[] { "help", "echo", "clear", "about", "version", "uptime", "log" })
+        foreach (string command in new[] { "help", "echo", "clear", "about", "version", "uptime", "log", "head", "tail", "grep", "wc", "sort", "uniq", "less", "history", "alias", "date", "uname", "free", "exit" })
         {
             output.Verify(target => target.WriteLine(It.Is<string>(text => text.StartsWith(command))),
                 Times.Once, $"Die Hilfe muss {command} genau einmal beschreiben.");

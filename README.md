@@ -6,7 +6,7 @@ ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und 
 
 ## Shell
 
-Nach dem Start öffnen sich zwei Terminalfenster mit dem Prompt `zehos>`. Im Wiederherstellungsmodus erscheint derselbe Prompt direkt in der Textshell. Die Befehle sind:
+Nach der Anmeldung lässt sich über das Anwendungsmenü oder die angeheftete Terminalschaltfläche ein Konsolenfenster mit dem Prompt `zehos>` öffnen. Im Wiederherstellungsmodus erscheint derselbe Prompt direkt in der Textshell. Die Befehle sind:
 
 | Befehl | Funktion |
 | --- | --- |
@@ -30,9 +30,9 @@ Nach dem Start öffnen sich zwei Terminalfenster mit dem Prompt `zehos>`. Im Wie
 | `uptime` | Millisekunden seit ZehOS-Start anzeigen; ohne initialisierten Timer als nicht verfügbar melden |
 | `log` | Die letzten maximal 128 Systemdiagnosen in zeitlicher Reihenfolge anzeigen |
 
-Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen, Pipes und Umleitungen sind noch nicht implementiert. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
+Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen werden nicht ausgewertet. Pipes (`|`) und abschließende Ausgabeumleitung (`>`/`>>`) funktionieren außerhalb doppelter Anführungszeichen. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
 
-Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und kann später in einem Terminalfenster verwendet werden. Die Texteingabe verwendet einen nicht blockierenden `LineEditor`: Links/Rechts, Pos1/Ende, Backspace und Entf bearbeiten die Zeile; Hoch/Runter blättern durch die letzten 32 Befehle und zurück zum aktuellen Entwurf. Lange Zeilen scrollen horizontal und sind auf 66.560 Zeichen begrenzt. Das bisherige US-Tastaturlayout bleibt erhalten.
+Die Befehlsauswertung in `ProjektZeh/Shell` ist von der Ausgabe über `ITextOutput` getrennt und wird von Textshell und Terminalfenstern gemeinsam verwendet. Die Texteingabe verwendet einen nicht blockierenden `LineEditor`: Links/Rechts, Pos1/Ende, Backspace und Entf bearbeiten die Zeile; Hoch/Runter blättern durch die letzten 32 Befehle und zurück zum aktuellen Entwurf. Lange Zeilen scrollen horizontal und sind auf 66.560 Zeichen begrenzt. Das bisherige US-Tastaturlayout bleibt erhalten.
 
 In der Textshell läuft oben eine Statusanzeige für Zeit, gedrückte Tasten und verlorene Eingabeereignisse weiter, auch während eine Zeile bearbeitet wird. Der Desktop zeigt Fensterzahl und Laufzeit in der unteren Leiste. Physische Tastendrücke und das Loslassen werden getrennt von Texteingaben verarbeitet. Bei einem Überlauf der begrenzten Eingabepuffer werden die Tastenzustände zurückgesetzt und ein Ziehvorgang beendet.
 
@@ -40,7 +40,7 @@ In der Textshell läuft oben eine Statusanzeige für Zeit, gedrückte Tasten und
 
 Dateizugriffe erfordern eine Anmeldung und gültige Konten-/Rechtemetadaten auf `/data`. Fehlende oder beschädigte Metadaten sperren den Zugriff; bestehende Dateien werden nicht automatisch übernommen. `whoami` zeigt die Identität, `login <Name>` fragt das Kennwort verdeckt ab, `logout` meldet nur die aktuelle Sitzung ab. Kennwörter enthalten 12 bis 128 Zeichen; die Berechnung läuft im Hintergrund. Kennwörter erscheinen weder in der Ausgabe noch im Verlauf. Global laufen höchstens zwei Kennwortberechnungen gleichzeitig, auch wenn ihre Terminalfenster geschlossen wurden. Weitere Eingaben werden bis zum Abschluss abgewiesen. `shutdown` und `reboot` warten nicht blockierend, sondern melden während laufender Kennwortberechnungen einen Fehler; danach kann die Energieaktion erneut gestartet werden. Die Hashes verwenden BouncyCastle 2.7.0 mit PBKDF2-SHA256, zufälligem 16-Byte-Salt und 600000 Iterationen. Ohne funktionierende RDSEED-/RDRAND-Quelle wird die Kennwortanlage abgewiesen.
 
-Beim Start fragt ein Anmeldefenster des Desktops Benutzername und Kennwort ab; die Textshell zeigt denselben Ablauf zeilenweise mit verdecktem Kennwort. Beide melden die gemeinsame Sitzung von Textshell, Desktop, Dateien und Texteditor an. Neu geöffnete Terminals starten als dieser Benutzer und können danach mit `login`/`logout` unabhängig wechseln. **Abmelden** im Anwendungsmenü oder `logout` in der Textshell sperrt den Desktop wieder und verwirft eine offene Kennwortabfrage der Textshell. Bei jedem Wechsel dieser Sitzung schließt der Desktop alle Fenster und meldet damit auch deren Terminals ab; ungespeicherte Entwürfe gehen ohne Rückfrage verloren, auch wenn Konten nach einem Speicherfehler gesperrt werden. Eine bereits laufende Kennwortprüfung einer Anmeldung wird nach einem zwischenzeitlichen Abmelden verworfen. Der Zeilenverlauf der Textshell beginnt bei jedem Wechsel neu. Eine Anmeldung in einem Terminal verändert die Desktopidentität nicht. Jede Dateianwendung erhält ein eigenes Arbeitsverzeichnis und prüft jede Operation über denselben Dateidienst; nach Logout werden weitere Zugriffe verweigert. Bereits angezeigte Inhalte und ungespeicherte Entwürfe bleiben im Fenster erhalten. Neue Editor-Dateien liegen zunächst im Benutzerverzeichnis.
+Beim Start fragt ein Anmeldefenster des Desktops Benutzername und Kennwort ab; die Textshell zeigt denselben Ablauf zeilenweise mit verdecktem Kennwort. Beide melden die gemeinsame Sitzung von Textshell, Desktop, Dateien und Texteditor an. Neu geöffnete Terminals starten als dieser Benutzer und können danach mit `login`/`logout` unabhängig wechseln. **Abmelden** im Anwendungsmenü oder `logout` in der Textshell sperrt den Desktop wieder und verwirft eine offene Kennwortabfrage der Textshell. Bei jedem Wechsel dieser Sitzung schließt der Desktop alle Fenster und meldet damit auch deren Terminals ab; ungespeicherte Entwürfe gehen ohne Rückfrage verloren, auch wenn Konten nach einem Speicherfehler gesperrt werden. Eine bereits laufende Kennwortprüfung einer Anmeldung wird nach einem zwischenzeitlichen Abmelden verworfen. Der Zeilenverlauf der Textshell beginnt bei jedem Wechsel neu. Eine Anmeldung in einem Terminal verändert die Desktopidentität nicht. Jede Dateianwendung erhält ein eigenes Arbeitsverzeichnis und prüft jede Operation über denselben Dateidienst; nach Logout werden weitere Zugriffe verweigert. Im Terminal werden bei einem Identitätswechsel auch Ausgabe, Entwurf, Verlauf, Aliase, Pager und die interne Zwischenablage verworfen. Bereits angezeigte Inhalte und ungespeicherte Entwürfe anderer Dateianwendungen bleiben bis zum Schließen des Fensters erhalten. Neue Editor-Dateien liegen zunächst im Benutzerverzeichnis.
 
 Administratoren legen Konten mit `user add <Name> user` beziehungsweise `user add <Name> admin` an; `user list` zeigt die Konten. `grant <Pfad> <Name> r` vergibt Leserechte, `rw` zusätzlich Schreibrechte, `none` entfernt eine Freigabe. Für das Lesen einer Datei in einem fremden Home muss der Administrator auch auf diesem Verzeichnis Leserechte vergeben. Anlegen und Ersetzen benötigen Schreibrechte auf dem Elternverzeichnis, weil der sichere Schreibpfad dort temporäre Dateien und Sicherungen anlegt; `rw` auf der Datei allein genügt nicht. Eigentümer dürfen Rechte auf ihren Einträgen selbst vergeben. `security adopt <Pfad> <Name>` ordnet als Administrator einen bestehenden Eintrag ausdrücklich zu. `user del <Name>` löscht ein fremdes Konto, meldet dessen Sitzungen ab und überträgt seine Einträge samt Home an den ausführenden Administrator. Das Home eines gelöschten Kontos bleibt bestehen; derselbe Name kann deshalb nicht erneut angelegt werden. `passwd` ändert das eigene Kennwort verdeckt, `passwd <Name>` als Administrator ein fremdes; das bisherige Kennwort wird dabei nicht abgefragt.
 
@@ -324,3 +324,49 @@ Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. De
 `scripts/build-release.sh 0.2.0 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
 
 Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.
+
+## Moderne Konsole
+
+Jedes Konsolenfenster bietet bis zu acht Tabs und pro Tab bis zu vier getrennte Ansichten. `Teil |` teilt nebeneinander, `Teil -` übereinander; zu kleine Ansichten werden mit einer Meldung abgewiesen. Jede neue Ansicht erhält eine eigene Shell, Benutzeridentität, ein eigenes Arbeitsverzeichnis, Eingabe und Verlauf. Neue Sitzungen starten als Desktopbenutzer; eine Anmeldung in einer Ansicht verändert andere Sitzungen nicht. Ein Mausklick fokussiert die gewünschte Ansicht. F4/Esc wechseln weiterhin zwischen Desktop und Textshell, ohne offene Konsolen zu verwerfen.
+
+| Tastenkürzel | Aktion |
+| --- | --- |
+| Ctrl+Shift+T | Neuer Tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Nächster / vorheriger Tab |
+| Ctrl+Shift+E / Ctrl+Shift+H | Nebeneinander / übereinander teilen |
+| Ctrl+Shift+N | Nächste Ansicht im Tab |
+| Ctrl+Shift+W | Aktive Ansicht schließen; die letzte Ansicht schließt den Tab |
+| Ctrl+Shift+M | Kontextmenü öffnen; Pfeile und Enter bedienen es |
+| Ctrl+Shift+F | Ausgabesuche öffnen; Enter / Shift+Enter suchen vorwärts / rückwärts, `x` schließt die Suchleiste |
+| Ctrl+Shift+C / Ctrl+Shift+V | Auswahl kopieren / Text einfügen |
+| Ctrl++ / Ctrl+- / Ctrl+0 | Bitmap-Schrift 100–300 % vergrößern / verkleinern / zurücksetzen |
+| Ctrl+L | Ausgabe leeren |
+| Tab | Befehle beziehungsweise Dateipfade vervollständigen (gemeinsames Präfix) |
+| Ctrl+R | Rückwärts im Befehlsverlauf nach dem aktuellen Eingabetext suchen |
+| PageUp / PageDown | Ausgabe seitenweise scrollen |
+
+Ziehen mit der linken Maustaste markiert Ausgabe. Die rechte Maustaste öffnet das Kontextmenü, unter anderem mit „Alles auswählen“. Die Zwischenablage ist nur innerhalb von ZehOS verfügbar. Einfügen ersetzt Zeilenumbrüche durch Leerzeichen und führt keinen Befehl automatisch aus. Kennworteingaben sind von Auswahlkopieren, Einfügen, Verlauf und Vervollständigung ausgenommen. Die Scrollleiste kann gezogen oder ober-/unterhalb des Griffes angeklickt werden. Die Ausgabesuche berücksichtigt auch durch Fensterbreite umgebrochene Textzeilen; zum Weiterarbeiten die Suchleiste schließen.
+
+`Profil` wechselt zwischen Breeze Dunkel, Breeze Hell und Solarisiert im aktuellen Fenster. Profile, Schriftgröße und Aliase sind sitzungslokal. Die Statusleiste zeigt Pfad, Ansichten und Zoom beziehungsweise Bedienhinweise. Der normale Scrollback hält die letzten 256 Anzeigezeilen; `less` besitzt einen eigenen Puffer für den vollständigen, auf 65.536 Zeichen begrenzten Eingabetext.
+
+Zusätzliche Shellbefehle:
+
+| Befehl | Umfang |
+| --- | --- |
+| `cp <Quelle> <Ziel>` / `mv <Quelle> <Ziel>` | Eine Datei kopieren / samt Rechten verschieben; vorhandene Ziele werden abgelehnt |
+| `rm <Datei>` / `rmdir <Verzeichnis>` | Eine Datei / ein leeres Verzeichnis löschen; kein rekursives Löschen |
+| `touch <Datei>` | Datei anlegen oder Inhalt erhalten; Cosmos 3.0.94 aktualisiert FAT-Zeitstempel noch nicht |
+| `find [Pfad] [Teilname]` | Lesbare Einträge rekursiv nach Teilnamen suchen, maximal 1.024 Einträge, keine Verknüpfungen |
+| `du [Pfad]` / `df [Pfad]` | Lesbare Inhaltsbytes summieren / tatsächliche Dateisystemkapazität und freien Platz anzeigen |
+| `head [-n Anzahl] [Datei]` / `tail [-n Anzahl] [Datei]` | Erste / letzte Zeilen, standardmäßig zehn |
+| `grep [-i] <Text> [Datei]` | Zeilen nach festem Teiltext filtern, optional ohne Beachtung der Großschreibung |
+| `wc [-l|-w|-c] [Datei]` | Zeilenumbrüche, Wörter oder Zeichen zählen; `-c` zählt Zeichen, keine UTF-8-Bytes |
+| `sort [Datei]` / `uniq [Datei]` | Zeilen ordinal sortieren / direkt aufeinanderfolgende gleiche Zeilen entfernen |
+| `less [Datei]` | Pager mit Pfeilen, Bildtasten, Home/End, Leertaste und `q`; Textshell und Desktop bleiben nichtblockierend |
+| `history` / `alias [Name=Befehl Argumente ...]` | Letzte 32 Befehle / bis zu 32 sitzungslokale Aliase anzeigen oder definieren |
+| `date` / `uname` / `free` | Gastuhr, Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
+| `exit` | Aktive Terminalsitzung schließen; die Textshell bleibt als Wiederherstellungskonsole geöffnet |
+
+Textfilter können statt einer Datei die Ausgabe einer vorherigen Pipelinestufe lesen. Beispielsweise erzeugt `echo blau >> farben.txt` eine Datei oder hängt Text an, `cat farben.txt | sort | uniq > eindeutig.txt` speichert eine gefilterte Ausgabe und `help | less` öffnet die Hilfe im Pager. `alias ll=ls` legt einen Argumentalias an; eingebettete Pipelines und Umleitungen gehören nicht zu Aliaswerten. Für Gruppenargumente ist etwa `alias suche=grep "zwei Worte"` möglich.
+
+Eine Pipeline umfasst höchstens 16 Stufen und 65.536 Ausgabezeichen pro Stufe. Jeder ausgeführte Befehl und jeder Dateizugriff prüft weiterhin seine Berechtigungen. Ein Fehler stoppt die Pipeline; ein Ausgabeziel wird dabei nicht ersetzt. Konto- und Kennwortdialoge sind mit Pipes und Umleitungen ausgeschlossen. Pipes und Umleitungen sind für ausgebende Befehle vorgesehen; Dateiveränderungen und Energieaktionen werden nicht als Pipelinefilter ausgeführt. `>` verwendet die vorhandene Sicherungs-/Wiederherstellungslogik; das ist keine Garantie bei Stromausfall. `>>` benötigt bei vorhandenen Dateien Lese- und Schreibrechte. Es gibt keine GNU-/POSIX-Kompatibilitätszusage, keine Ausführung gewöhnlicher Linux-Programme. Dieser Konsolenausbau ergänzt keine Netzwerkbefehle; separat integrierte Netzwerkfunktionen bleiben erhalten.

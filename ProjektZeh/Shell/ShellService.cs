@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using ProjektZeh.Storage;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
 
@@ -8,8 +9,13 @@ namespace ProjektZeh.Shell;
 /// <summary>
 /// Wertet Shellbefehle unabhaengig von der Benutzeroberflaeche aus.
 /// </summary>
-internal sealed class ShellService
+internal sealed partial class ShellService
 {
+    public string CurrentDirectory => files?.CurrentDirectory ?? "";
+    public bool ExitRequested { get; private set; }
+    public string? PagerText { get; private set; }
+    public void DismissPager() => PagerText = null;
+    public void ResetExitRequest() => ExitRequested = false;
     private readonly ShellCommand[] commands;
     private readonly SystemLog? systemLog;
     private readonly Func<long?>? getUptimeMilliseconds;
@@ -47,19 +53,26 @@ internal sealed class ShellService
 
     public void Close()
     {
+        if (closed) return;
         closed = true;
+        history.Clear(); aliases.Clear(); DismissPager();
         secretInput = null;
         OnClose?.Invoke();
     }
 
-    public ShellService(SystemLog? systemLog = null, Func<long?>? getUptimeMilliseconds = null, string? version = null)
-        : this(Array.Empty<ShellCommand>(), systemLog, getUptimeMilliseconds, version)
+    public ShellService(SystemLog? systemLog = null, Func<long?>? getUptimeMilliseconds = null, string? version = null, FileService? files = null, Func<string>? getDate = null, Func<string>? getMemory = null, Func<int>? getSessionGeneration = null)
+        : this(Array.Empty<ShellCommand>(), systemLog, getUptimeMilliseconds, version, null, files, getDate, getMemory, getSessionGeneration)
     {
     }
 
     public ShellService(ShellCommand[] additionalCommands, SystemLog? systemLog = null,
-        Func<long?>? getUptimeMilliseconds = null, string? version = null, Func<string, ResultErr>? authorize = null)
+        Func<long?>? getUptimeMilliseconds = null, string? version = null, Func<string, ResultErr>? authorize = null, FileService? files = null, Func<string>? getDate = null, Func<string>? getMemory = null, Func<int>? getSessionGeneration = null)
     {
+        this.getSessionGeneration = getSessionGeneration;
+        sessionGeneration = getSessionGeneration?.Invoke() ?? 0;
+        this.files = files;
+        this.getDate = getDate;
+        this.getMemory = getMemory;
         this.authorize = authorize;
         this.systemLog = systemLog;
         this.getUptimeMilliseconds = getUptimeMilliseconds;
@@ -73,6 +86,7 @@ internal sealed class ShellService
             new ShellCommand("version", "version", "Zeigt die geladenen Kernelversionen.", false, WriteVersion),
             new ShellCommand("uptime", "uptime", "Zeigt die Laufzeit seit ZehOS-Start.", false, WriteUptime),
             new ShellCommand("log", "log", "Zeigt die gepufferten Systemdiagnosen.", false, WriteLog),
+            .. CreateFeatureCommands(),
             .. additionalCommands
         ];
     }
@@ -85,6 +99,7 @@ internal sealed class ShellService
     /// <returns></returns>
     public ResultErr ExecuteLine(string? line, ITextOutput? output)
     {
+        SyncIdentity();
         if (closed || IsBusy) return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation laeuft oder Sitzung geschlossen.");
         if (secretInput != null)
         {
@@ -124,37 +139,7 @@ internal sealed class ShellService
             }
             return ResultErr.CreateSuccess();
         }
-        var parseResult = CommandLineParser.Parse(line);
-        if (!parseResult.IsOK())
-        {
-            return parseResult.Status;
-        }
-
-        string[] tokens = parseResult.Value!;
-        if (tokens.Length == 0)
-        {
-            return ResultErr.CreateSuccess();
-        }
-
-        string commandName = tokens[0];
-        foreach (ShellCommand command in commands)
-        {
-            if (string.Equals(command.Name, commandName, StringComparison.OrdinalIgnoreCase))
-            {
-                var allowed = authorize?.Invoke(command.Name) ?? ResultErr.CreateSuccess();
-                if (!allowed.IsOK())
-                {
-                    return allowed;
-                }
-
-                var arguments = new string[tokens.Length - 1];
-                Array.Copy(tokens, 1, arguments, 0, arguments.Length);
-                return command.Execute(arguments, output);
-            }
-        }
-
-        return ResultErr.CreateFailure(ResultCode.NotFound,
-            $"cause='UnknownCommand' message='Unbekannter Befehl: {commandName}. Hilfe: help.'");
+        return ExecuteFeatures(line, output);
     }
 
     public bool HasCommand(string name)

@@ -149,7 +149,7 @@ internal sealed class Desktop
         // Anteilige Groesse, damit kaskadierte Terminals auch bei 1024 x 768 versetzt sichtbar bleiben.
         int windowWidth = Math.Clamp(width * 3 / 5, 640, 960);
         int windowHeight = Math.Clamp((height - BarHeight) * 3 / 5, 400, 600);
-        var terminal = new TerminalApp(createShell(), font, glyphWidth, glyphHeight, (windowWidth - 20) / glyphWidth);
+        var terminal = new TerminalWorkspaceApp(createShell, font, glyphWidth, glyphHeight);
         Windows.Add(new Window($"Terminal {++sequence}", 72 + offset, 72 + offset, windowWidth, windowHeight, terminal, 320, 200)
             { Icon = AppIcon.Terminal });
         return true;
@@ -391,6 +391,7 @@ internal sealed class Desktop
         generation = session.Identity.Generation;
         CloseMenu();
         Windows.CloseAll();
+        TerminalClipboard.Clear();
         login!.Reset();
         display?.Revert();
         Preferences = new DesktopPreferences(createFiles());

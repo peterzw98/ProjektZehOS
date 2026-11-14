@@ -23,6 +23,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
     private readonly ConsoleLineView line = new();
     private DisplayService? display;
     private bool graphics;
+    private int pagerOffset;
 
     public void Run(bool startDesktop)
     {
@@ -33,6 +34,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         long previousTick = -1;
         bool dirty = true;
         output.WriteLine("F4: Desktop. Pfeiltasten: Cursor/Verlauf. Esc: zur Textshell.");
+        editor.HistoryFilter = shell.CanRemember;
         BeginLine();
         if (startDesktop) ToggleGraphics(input);
         while (true)
@@ -58,14 +60,28 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                         catch (Exception exception) { FailGraphics("Eingabe", exception); }
                     }
                 }
+                else if (!IsLocked && shell.PagerText != null)
+                {
+                    HandlePager(value);
+                }
+                else if (!IsLocked && !shell.IsBusy && value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Tab)
+                {
+                    editor.Complete(shell);
+                }
                 else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
                 {
                     line.Submit(editor.IsSecret ? "********" : command);
                     var result = IsLocked ? login.Submit(command) : shell.ExecuteLine(command, output);
                     if (!result.IsOK()) output.WriteLine(result.Message);
+                    if (shell.ExitRequested)
+                    {
+                        shell.ResetExitRequest();
+                        output.WriteLine("Die Textshell bleibt als Wiederherstellungskonsole geoeffnet. F4: Desktop.");
+                    }
                     SyncSession();
                     editor.IsSecret = IsLocked ? login.IsSecret : shell.IsSecretInput;
-                    BeginLine();
+                    if (shell.PagerText != null) { pagerOffset = 0; DrawPager(); }
+                    else BeginLine();
                 }
                 dirty = true;
             }
@@ -90,7 +106,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 else
                 {
                     ConsoleLineView.Status(input, now);
-                    line.Draw(editor);
+                    if (shell.PagerText == null || IsLocked) line.Draw(editor);
                 }
                 dirty = false;
                 nextFrame = FrameTiming.NextDeadline(now);
@@ -142,7 +158,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         Console.CursorVisible = true;
         output.WriteLine("ZehOS Textshell - F4 oeffnet den Desktop.");
         if (suspendError != null) output.WriteLine("Anzeigefehler beim Verlassen: " + suspendError);
-        BeginLine();
+        if (shell.PagerText != null && !IsLocked) DrawPager(); else BeginLine();
     }
 
     /// <summary>Ohne angemeldete Konsolenidentitaet nimmt die Textshell nur die Anmeldung entgegen.</summary>
@@ -153,9 +169,43 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
     {
         if (identity.Generation == generation) return;
         generation = identity.Generation;
-        editor = new();
+        editor = new() { HistoryFilter = shell.CanRemember };
         login.Reset();
         shell.CancelSecretInput();
+    }
+
+    private void HandlePager(InputEvent value)
+    {
+        if ((value.Type == InputEventType.Text && value.Character == 'q') ||
+            (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape))
+        {
+            shell.DismissPager(); output.Clear(); BeginLine(); return;
+        }
+        if (value.Type != InputEventType.KeyDown && !(value.Type == InputEventType.Text && value.Character == ' ')) return;
+        if (value.Type == InputEventType.KeyDown && (value.IsTextKey || value.KeyCode is not ((byte)PhysicalKey.Down or (byte)PhysicalKey.Up or (byte)PhysicalKey.PageDown or (byte)PhysicalKey.PageUp or (byte)PhysicalKey.Home or (byte)PhysicalKey.End))) return;
+        int page = Math.Max(1, Console.WindowHeight - 3);
+        if (value.Type == InputEventType.Text && value.Character == ' ') pagerOffset += page;
+        if (value.Type == InputEventType.KeyDown && !value.IsTextKey)
+            pagerOffset += (PhysicalKey)value.KeyCode switch
+            {
+                PhysicalKey.Down => 1, PhysicalKey.Up => -1, PhysicalKey.PageDown => page,
+                PhysicalKey.PageUp => -page, PhysicalKey.Home => -pagerOffset,
+                PhysicalKey.End => 65536, _ => 0
+            };
+        DrawPager();
+    }
+
+    private void DrawPager()
+    {
+        string[] lines = (shell.PagerText ?? "").Split('\n');
+        int page = Math.Max(1, Console.WindowHeight - 3);
+        pagerOffset = Math.Clamp(pagerOffset, 0, Math.Max(0, lines.Length - page));
+        output.Clear();
+        int width = Math.Max(1, Console.WindowWidth - 1);
+        output.WriteLine("less - Pfeile/Bildtasten/Leertaste, q/Esc schliesst");
+        for (int i = pagerOffset; i < Math.Min(lines.Length, pagerOffset + page); i++)
+            output.WriteLine(lines[i][..Math.Min(width, lines[i].Length)]);
+        output.WriteLine($"Zeile {pagerOffset + 1}/{lines.Length}");
     }
 
     private void BeginLine()
