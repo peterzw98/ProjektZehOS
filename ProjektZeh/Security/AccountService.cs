@@ -16,7 +16,7 @@ internal sealed class AccountService
         "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string CommandsFile = ".zehos-commands.db";
     private const string CommandsHeader = "ZEHOS-COMMANDS-1\n";
-    private static readonly string[] AdministrativeCommands = ["user", "security", "disk", "chperm", "reboot", "shutdown"];
+    private static readonly string[] AdministrativeCommands = ["user", "security", "disk", "update", "chperm", "reboot", "shutdown"];
     private static readonly string[] UnrestrictableCommands = ["login", "logout", "chperm"];
     private readonly Dictionary<string, bool> administratorCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Account> accounts = new(StringComparer.OrdinalIgnoreCase);

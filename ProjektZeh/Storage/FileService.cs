@@ -153,6 +153,17 @@ internal sealed class FileService
             return TextTooLarge();
         }
 
+        return WriteData(path, () => new UTF8Encoding(false, true).GetBytes(text), false);
+    }
+
+    /// <summary>Schreibt gepruefte Binaerdaten; auf Wunsch bleibt das Original als feste .bak-Datei erhalten.</summary>
+    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false)
+    {
+        return WriteData(path, () => data, keepBackup);
+    }
+
+    private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
+    {
         var resolved = ResolvePath(path);
         if (!resolved.IsOK())
         {
@@ -163,10 +174,12 @@ internal sealed class FileService
         bool temporaryCreated = false;
         FileStream? temporaryStream = null;
         bool registered = false;
+        bool backupRegistered = false;
         try
         {
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
-            byte[] data = new UTF8Encoding(false, true).GetBytes(text);
+            if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
+            byte[] data = getData();
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
             using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
@@ -177,12 +190,13 @@ internal sealed class FileService
                 stream.Flush(true);
             }
 
-            ReplaceFile(temporaryPath, resolved.Value!);
+            ReplaceFile(temporaryPath, resolved.Value!, keepBackup);
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception) when (IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
+            if (backupRegistered) access!.ForgetCreated(resolved.Value! + ".bak");
             if (temporaryCreated)
             {
                 try
@@ -201,7 +215,7 @@ internal sealed class FileService
         }
     }
 
-    private void ReplaceFile(string temporaryPath, string targetPath)
+    private void ReplaceFile(string temporaryPath, string targetPath, bool keepBackup = false)
     {
         if (!File.Exists(targetPath))
         {
@@ -210,28 +224,48 @@ internal sealed class FileService
         }
 
         // Cosmos haengt beim Ueberschreiben einen festen Sicherungsnamen an das Ziel an.
-        string backupPath = Path.Combine(Path.GetDirectoryName(targetPath)!, $".zehos-{Guid.NewGuid():N}.bak");
-        moveFile(targetPath, backupPath, false);
+        string backupPath = keepBackup ? targetPath + ".bak" :
+            Path.Combine(Path.GetDirectoryName(targetPath)!, $".zehos-{Guid.NewGuid():N}.bak");
+        string? previousBackup = null;
+        if (keepBackup && File.Exists(backupPath))
+        {
+            previousBackup = Path.Combine(Path.GetDirectoryName(targetPath)!, $".zehos-{Guid.NewGuid():N}.bak");
+            moveFile(backupPath, previousBackup, false);
+        }
         try
         {
-            moveFile(temporaryPath, targetPath, false);
+            moveFile(targetPath, backupPath, false);
+            try
+            {
+                moveFile(temporaryPath, targetPath, false);
+            }
+            catch (Exception exception) when (IsFileError(exception))
+            {
+                try { moveFile(backupPath, targetPath, false); }
+                catch (Exception restoreException) when (IsFileError(restoreException))
+                {
+                    throw new IOException($"Wiederherstellung fehlgeschlagen. Die Originaldatei liegt unter '{backupPath}'.",
+                        new AggregateException(exception, restoreException));
+                }
+                throw;
+            }
         }
         catch (Exception exception) when (IsFileError(exception))
         {
-            try
+            // Liegt das Original nach gescheiterter Wiederherstellung noch unter backupPath, bleibt die aeltere Sicherung unter ihrem Ausweichnamen.
+            if (previousBackup != null && !File.Exists(backupPath))
             {
-                moveFile(backupPath, targetPath, false);
+                try { moveFile(previousBackup, backupPath, false); }
+                catch (Exception restoreException) when (IsFileError(restoreException))
+                {
+                    throw new IOException($"Vorherige Sicherung liegt unter '{previousBackup}'.", new AggregateException(exception, restoreException));
+                }
             }
-            catch (Exception restoreException) when (IsFileError(restoreException))
-            {
-                throw new IOException($"Wiederherstellung fehlgeschlagen. Die Originaldatei liegt unter '{backupPath}'.",
-                    new AggregateException(exception, restoreException));
-            }
-
             throw;
         }
 
-        File.Delete(backupPath);
+        if (!keepBackup) File.Delete(backupPath);
+        if (previousBackup != null) File.Delete(previousBackup);
     }
 
     /// <summary>

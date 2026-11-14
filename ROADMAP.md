@@ -325,3 +325,7 @@ Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Schedulin
 - [doomgeneric](https://github.com/ozkl/doomgeneric): möglicher alternativer Portierungsweg in C.
 
 Die Reihenfolge und die Architekturvorschläge sind auf den derzeitigen ZehOS-Code zugeschnitten. Die verlinkten Projekte dienen als technische Grundlage; sie bestätigen keine bereits funktionierende Integration in ZehOS.
+
+## Installation und Updates – Stand am 14. November 2026
+
+Installer-ISO mit grafischem Einrichtungsassistenten im Desktop-Stil, UEFI-Installation auf eine FAT32-EFI-Partition, signierte Kernelupdates über einen HTTP-Spiegel oder offline sowie Release-Workflow und Spiegelwerkzeuge setzen den [Entwurf](docs/superpowers/specs/2026-11-13-installer-updates-design.md) um. Installation, Start ohne ISO, Updates, Warmstart und Rückfallstart sind in QEMU/OVMF geprüft; VMware, echte Hardware und ein tatsächlicher GitHub-Release-Lauf sind offen. Nachweise: [docs/INSTALLER_UPDATES_TESTS.md](docs/INSTALLER_UPDATES_TESTS.md).

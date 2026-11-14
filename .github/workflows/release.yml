@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions: {}
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: 'true'
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install matching Cosmos CLI and patcher
+        run: |
+          dotnet tool install --global Cosmos.Tools --version 3.0.94
+          dotnet tool install --global Cosmos.Patcher --version 3.0.94
+      - name: Install Cosmos native toolchain
+        run: cosmos install --auto --tools
+      - name: Check build tools
+        run: cosmos check
+      - name: Run host tests
+        run: |
+          dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror
+          python3 -m unittest discover -s scripts/tests
+      - name: Build release
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+        run: |
+          version=${RELEASE_REF#v}
+          scripts/build-release.sh "$version" "$RUNNER_TEMP/zehos-release"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Sign and verify update
+        env:
+          SIGNING_KEY: ${{ secrets.ZEHOS_UPDATE_SIGNING_KEY }}
+        run: |
+          if [[ -z "$SIGNING_KEY" ]]; then echo 'ZEHOS_UPDATE_SIGNING_KEY fehlt.' >&2; exit 1; fi
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          chmod 600 "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          python3 scripts/sign-update.py "$RUNNER_TEMP/zehos-release/update-manifest.txt" "$key"
+          python3 scripts/sign-update.py verify "$RUNNER_TEMP/zehos-release/update-manifest.txt" "$RUNNER_TEMP/zehos-release/update-manifest.sig" 'eebr5IjF0GjyGoAUrBhwUDUx5STOMTsAhfrq2af5s+Y='
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$RELEASE_VERSION" --verify-tag --title "ZehOS $RELEASE_VERSION" \
+            "$RUNNER_TEMP/zehos-release/ZehOS-$RELEASE_VERSION.iso" \
+            "$RUNNER_TEMP/zehos-release/ZehOS-Setup-$RELEASE_VERSION.iso" \
+            "$RUNNER_TEMP/zehos-release/ProjektZeh-$RELEASE_VERSION.elf" \
+            "$RUNNER_TEMP/zehos-release/update-manifest.txt" \
+            "$RUNNER_TEMP/zehos-release/update-manifest.sig"
