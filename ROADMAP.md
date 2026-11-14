@@ -326,6 +326,6 @@ Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Schedulin
 
 Die Reihenfolge und die Architekturvorschläge sind auf den derzeitigen ZehOS-Code zugeschnitten. Die verlinkten Projekte dienen als technische Grundlage; sie bestätigen keine bereits funktionierende Integration in ZehOS.
 
-## Installation und Updates – Backendstand am 13. November 2026
+## Installation und Updates – Stand am 14. November 2026
 
-Der gesonderte Installer-Build und die Textbefehle `setup`/`update` setzen den [Entwurf](docs/superpowers/specs/2026-11-13-installer-updates-design.md) für UEFI, FAT32-EFI-Partition und signierte Kernelupdates um. Die Installation auf eine frische 256-MiB-Platte, Start ohne ISO, HTTP-Update 0.1.0 → 0.2.0 und der echte Limine-Rückfallstart 0.1.0 sind in QEMU/OVMF geprüft. Das grafische Setup und die Release-/Spiegelwerkzeuge werden separat integriert. Die allgemeinen Netzwerk-/Browser-Abnahmekriterien werden dadurch nicht abgehakt; dieser Client unterstützt einen begrenzten HTTP-Downloadpfad für Updates. VMware und echte Hardware bleiben offen. [Details und Prüfkommandos](docs/INSTALLER_UPDATES_TESTS.md).
+Installer-ISO mit grafischem Einrichtungsassistenten im Desktop-Stil, UEFI-Installation auf eine FAT32-EFI-Partition, signierte Kernelupdates über einen HTTP-Spiegel oder offline sowie Release-Workflow und Spiegelwerkzeuge setzen den [Entwurf](docs/superpowers/specs/2026-11-13-installer-updates-design.md) um. Installation, Start ohne ISO, Updates, Warmstart und Rückfallstart sind in QEMU/OVMF geprüft; VMware, echte Hardware und ein tatsächlicher GitHub-Release-Lauf sind offen. Nachweise: [docs/INSTALLER_UPDATES_TESTS.md](docs/INSTALLER_UPDATES_TESTS.md).

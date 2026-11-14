@@ -49,9 +49,10 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         {
             if (!UpdateVersion.TryParse(installed.Value!.Trim(), out var installedVersion))
                 return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure, "Der Versionsmarker /boot/zehos-version.txt ist ungueltig.");
-            if (parsed.Value.Version.CompareTo(installedVersion) <= 0)
+            // Gleichstand bleibt erlaubt: So laesst sich auch ein unvollstaendiger Austausch derselben Version wiederholen; .bak bleibt geschuetzt.
+            if (parsed.Value.Version.CompareTo(installedVersion) < 0)
                 return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure,
-                    $"Rueckfallstart: Das Update ist nicht neuer als die installierte Version {installedVersion}.");
+                    $"Rueckfallstart: Das Update ist aelter als die installierte Version {installedVersion}.");
         }
         runningFromFallback = fallback;
         previousMarker = installed.Value?.Trim();

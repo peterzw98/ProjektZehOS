@@ -84,13 +84,19 @@ public sealed class UpdateServiceTests
     }
 
     [TestMethod]
-    public void FallbackBoot_RejectsInstalledVersionAndKeepsWorkingBackup()
+    public void FallbackBoot_RejectsOlderVersionAndKeepsWorkingBackup()
     {
-        var broken = new Target { InstalledVersion = "0.2.0\n" };
-        var service = new UpdateService(new Source(), broken, new UpdateVersion(0, 1, 0));
-        Assert.IsFalse(service.Check().IsOK(), "Die defekte installierte Version darf nicht erneut eingespielt werden.");
+        var newer = new Target { InstalledVersion = "0.3.0\n" };
+        var service = new UpdateService(new Source(), newer, new UpdateVersion(0, 1, 0));
+        Assert.IsFalse(service.Check().IsOK(), "Aelter als die installierte Version wird nicht eingespielt.");
         Assert.IsFalse(service.Install().IsOK());
-        Assert.AreEqual(0, broken.Replacements);
+        Assert.AreEqual(0, newer.Replacements);
+
+        var same = new Target { InstalledVersion = "0.2.0\n" };
+        var repeat = new UpdateService(new Source(), same, new UpdateVersion(0, 1, 0));
+        Assert.IsTrue(repeat.Check().IsOK(), "Dieselbe Version darf einen unvollstaendigen Austausch wiederholen.");
+        Assert.IsTrue(repeat.Install().IsOK());
+        Assert.IsFalse(same.RotatedBackup!.Value);
 
         var older = new Target { InstalledVersion = "0.1.5\n" };
         var fixedRelease = new UpdateService(new Source(), older, new UpdateVersion(0, 1, 0));

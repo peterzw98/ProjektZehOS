@@ -151,7 +151,9 @@ public sealed class Kernel : Sys.Kernel
             return mounted;
 #endif
         });
+#if !ZEHOS_INSTALLER
         systemLog.Information("Network", "Updates initialisieren IPv4 bei Bedarf per DHCP.");
+#endif
 #if !ZEHOS_INSTALLER
         var security = accounts.Load();
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");

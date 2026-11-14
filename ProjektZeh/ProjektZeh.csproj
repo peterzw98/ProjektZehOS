@@ -21,12 +21,32 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(ZehOSInstaller)' == 'true'">
-    <EmbeddedResource Include="$(ZehOSPayloadDir)/ProjektZeh.elf" LogicalName="ZehOS.Payload.Kernel" />
+    <EmbeddedResource Include="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" LogicalName="ZehOS.Payload.Kernel" />
     <EmbeddedResource Include="$(ZehOSPayloadDir)/BOOTX64.EFI" LogicalName="ZehOS.Payload.Efi" />
   </ItemGroup>
+
+  <UsingTask TaskName="InvertInstallerPayload" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source ParameterType="System.String" Required="true" />
+      <Destination ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        byte[] bytes = System.IO.File.ReadAllBytes(Source);
+        for (int i = 0; i < bytes.Length; i++) bytes[i] ^= 0xff;
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Destination));
+        System.IO.File.WriteAllBytes(Destination, bytes);
+      ]]></Code>
+    </Task>
+  </UsingTask>
 
   <Target Name="ValidateInstallerPayload" BeforeTargets="PrepareForBuild" Condition="'$(ZehOSInstaller)' == 'true'">
     <Error Condition="'$(ZehOSPayloadDir)' == ''" Text="ZehOSInstaller benoetigt -p:ZehOSPayloadDir mit normalem ProjektZeh.elf und BOOTX64.EFI." />
     <Error Condition="!Exists('$(ZehOSPayloadDir)/ProjektZeh.elf') Or !Exists('$(ZehOSPayloadDir)/BOOTX64.EFI')" Text="Die Installer-Payload ist unvollstaendig." />
+  </Target>
+  <!-- Limine darf die Requests des eingebetteten Kernels nicht als eigene Installer-Requests erkennen. -->
+  <Target Name="PrepareInstallerKernelPayload" BeforeTargets="PrepareResources" DependsOnTargets="ValidateInstallerPayload" Condition="'$(ZehOSInstaller)' == 'true'"
+          Inputs="$(ZehOSPayloadDir)/ProjektZeh.elf" Outputs="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf">
+    <InvertInstallerPayload Source="$(ZehOSPayloadDir)/ProjektZeh.elf" Destination="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" />
   </Target>
 </Project>

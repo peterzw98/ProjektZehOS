@@ -1,4 +1,6 @@
-# Installer und Updates: Backendprüfung vom 13. November 2026
+# Installer und Updates: Prüfungen vom 13. und 14. November 2026
+
+Die Abschnitte sind chronologisch. Frühere Abschnitte beschreiben jeweils den damaligen Stand (zunächst Text-Einrichtung und 1024×768-Bootmenü); maßgeblich ist der letzte Abschnitt.
 
 ## Umfang und Umgebung
 
@@ -88,7 +90,7 @@ Nicht erneut geprüft: Recovery-Build nach der Zusammenführung (die Verdrahtung
 
 Das Review fand keine Blocker. Behoben und erneut geprüft (278 Hosttests, 11 Python-Tests, native Releases 0.1.0/0.2.0 mit 0 Warnungen, QEMU/KVM/OVMF):
 
-- **Rückfallstart verdrängt den funktionierenden Kernel:** `update check` vergleicht zusätzlich mit `/boot/zehos-version.txt`. Nach einem Rückfallstart muss das Update neuer als die installierte Version sein und ersetzt nur den Hauptkernel; `.bak` bleibt. Im Gast nach Start von **ZehOS (vorherige Version)** (0.1.0 bei installierter 0.2.0) geprüft: Das erneute Angebot von 0.2.0 wird verweigert. Das Einspielen einer neueren Version im Rückfallstart ist hostgetestet.
+- **Rückfallstart verdrängt den funktionierenden Kernel:** `update check` vergleicht zusätzlich mit `/boot/zehos-version.txt`. Nach einem Rückfallstart muss das Update neuer als die installierte Version sein und ersetzt nur den Hauptkernel; `.bak` bleibt. Im Gast nach Start von **ZehOS (vorherige Version)** (0.1.0 bei installierter 0.2.0) geprüft: Das erneute Angebot von 0.2.0 wurde damals verweigert; seit dem letzten Review ist dieselbe Version erlaubt (siehe unten). Das Einspielen einer neueren Version im Rückfallstart ist im Gast geprüft.
 - **Daten ohne erkannte Partition:** Leer gilt nur eine vollständig als leer gelesene Platte bis 1 GiB (zweites Review durch Codex: Randprüfung genügte nicht); sonst verlangen Assistent, `setup install` und `InstallService` die Löschbestätigung. Im Gast: frische leere Platte ohne Bestätigung, eine ganze FAT32-Platte ohne Partitionstabelle wird von Cosmos als eine Partition erkannt und ebenfalls bestätigungspflichtig. Der Fall „Daten ohne Partition“ ist hostgetestet, nicht im Gast nachgestellt.
 - **Versionsmarker:** Er wird vor dem Kernel geschrieben und nach einem Austauschfehler zurückgesetzt, damit ein Rückfallstart nie als normaler Start erscheint (hostgetestet).
 - **Download-Grenze:** Der Kernel wird höchstens in der signierten Manifestgröße gelesen; das Manifest begrenzt die Größe auf 64 MiB.
@@ -108,7 +110,15 @@ Nachweise: 312 Hosttests und 11 Python-Tests; native Builds 0.1.0/0.2.0/0.3.0 (n
 
 1. Assistent in Full HD: Hinweise, Zielplatte, Installation, Abschluss; danach genau eine Partition Typ `ef`.
 2. Plattenstart 0.1.0, Administratoranlage, `update check`/`update install` über `scripts/update-mirror.py`, `reboot` (Warmstart) → 0.2.0.
-3. Rückfalleintrag → 0.1.0; `update check` lehnt 0.2.0 ab („nicht neuer als die installierte Version“); Spiegel mit 0.3.0: Prüfung und Installation im Rückfallstart.
+3. Rückfalleintrag → 0.1.0; `update check` lehnte 0.2.0 ab (damalige Regel „neuer als installiert“); Spiegel mit 0.3.0: Prüfung und Installation im Rückfallstart.
 4. `reboot` → 0.3.0; Rückfalleintrag startet weiterhin 0.1.0, `.bak` blieb also unverändert.
 
 Weiterhin offen: VMware, echte Hardware, PowerShell-Helfer (`pwsh` nicht installiert), Zeitlimit bei einem nach Verbindungsaufbau schweigenden Spiegel, ein tatsächlicher Lauf des Release-Workflows auf GitHub sowie die Mausbedienung des Assistenten im Gast.
+
+### Letztes Review (14. November 2026)
+
+Keine Blocker. Umgesetzt: Die Leerprüfung läuft pro Platte nur einmal (bis zum Beschreiben) und höchstens über 256 MiB, damit der Assistent nicht wiederholt stillsteht. Im Rückfallstart ist dieselbe Version erlaubt, damit ein unvollständiger Austausch wiederholt werden kann; `.bak` bleibt geschützt (hostgetestet). Die Netzwerkmeldung erscheint nicht mehr im Installer-Build. Nicht umgesetzt: Scheitert nach erfolgreichem Austausch nur das Löschen der älteren Sicherung, meldet `update install` einen Fehler und setzt den Marker zurück. Der nächste Start gilt dann als Rückfallstart; dieselbe Version lässt sich erneut einspielen, eine `.zehos-*.bak` kann liegen bleiben. Eine stille Behandlung hätte ein verdecktes Fehlerfeld erfordert.
+
+**Neu gefunden beim Gasttest nach dem Review:** Ein frisch gebautes Setup-ISO blieb in Limine mit `PANIC: Conflict detected for request ID` stehen. Ursache: Der eingebettete normale Kernel enthält dieselben Limine-Requests; Limine durchsucht das Installer-ELF an 8-Byte-Grenzen. Im älteren Build lagen nur 3 der 18 Kopien ausgerichtet, im neuen 12. Der Start hing also vom Zufall der Ausrichtung ab. Der Kernel wird jetzt beim Build bitinvertiert eingebettet und beim Installieren zurückgewandelt (Codex). Danach enthält das Installer-ELF die Kennung so oft wie der normale Kernel (9×). Geprüft im Gast mit zwei Platten: 512 MiB als „unklar“ mit Löschwarnung, 200 MiB als leer; Zurück/Weiter ohne erneute Prüfung, Installation nur auf `sata1` (`sata0` blieb unberührt), anschließend Start von 0.3.0 allein von dieser Platte.
+
+Screenshots: [Willkommen](images/installer/01-welcome.png), [Hinweise](images/installer/02-license.png), [Zielplatte](images/installer/03-disk.png), [Bestätigung](images/installer/04-confirm.png) und [Fortschritt](images/installer/05-installing.png) (beide Hostrendering derselben Oberfläche), [Abschluss](images/installer/06-done.png), [Update](images/installer/07-update.png), [Update im Rückfallstart](images/installer/08-fallback-update.png), [Bootmenü](images/installer/09-bootmenu.png).

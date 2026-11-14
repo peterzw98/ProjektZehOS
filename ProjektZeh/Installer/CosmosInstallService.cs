@@ -15,11 +15,13 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
     private readonly InstallService service;
     private readonly Func<ResultErr> restart;
     private bool registered;
+    // Die Vollpruefung dauert spuerbar; sie laeuft pro Platte nur einmal, bis diese Platte beschrieben wird.
+    private readonly Dictionary<string, bool> blankDisks = new(StringComparer.OrdinalIgnoreCase);
 
     public CosmosInstallService(string version, Func<ResultErr> restart)
     {
         this.restart = restart;
-        service = new InstallService(this, ReadPayload("ZehOS.Payload.Efi"), ReadPayload("ZehOS.Payload.Kernel"), version);
+        service = new InstallService(this, ReadPayload("ZehOS.Payload.Efi"), ReadPayload("ZehOS.Payload.Kernel", inverted: true), version);
     }
 
     public string ProductVersion => service.ProductVersion;
@@ -35,7 +37,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             foreach (IBlockDevice device in StorageManager.Devices)
             {
                 candidates.Add(new(new InstallDisk(device.Name, checked(device.BlockCount * device.BlockSize),
-                    StorageManager.GetPartitions(device).Count, IsBlank(device)), IsInstallMedium(device)));
+                    StorageManager.GetPartitions(device).Count, CachedIsBlank(device)), IsInstallMedium(device)));
             }
             return ResultObjectFactory.CreateSuccess(candidates.ToArray());
         }
@@ -62,6 +64,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
                         return Failure("Das Installer-Dateisystem konnte nicht registriert werden.");
                     registered = true;
                 }
+                blankDisks.Remove(device.Name);
                 return ResultObjectFactory.CreateSuccess<IInstallTarget>(new CosmosInstallTarget(device, FileSystemName));
             }
             return ResultObjectFactory.CreateFailure<IInstallTarget>(ResultCode.NotFound, "Ziellaufwerk nicht gefunden.");
@@ -69,7 +72,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
         catch (Exception exception) { return ResultObjectFactory.CreateFromException<IInstallTarget>(exception); }
     }
 
-    private static byte[] ReadPayload(string name)
+    private static byte[] ReadPayload(string name, bool inverted = false)
     {
 #if ZEHOS_INSTALLER
         using Stream stream = typeof(CosmosInstallService).Assembly.GetManifestResourceStream(name)
@@ -82,20 +85,28 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             if (count == 0) throw new EndOfStreamException("Installer-Payload ist unvollstaendig.");
             offset += count;
         }
+        if (inverted)
+            for (int i = 0; i < bytes.Length; i++) bytes[i] ^= 0xff;
         return bytes;
 #else
         throw new InvalidOperationException("Die Installationsdateien sind nur im Installer-Build enthalten.");
 #endif
     }
 
+    private bool CachedIsBlank(IBlockDevice device)
+    {
+        if (!blankDisks.TryGetValue(device.Name, out bool blank)) blankDisks[device.Name] = blank = IsBlank(device);
+        return blank;
+    }
+
     /// <summary>
     /// Leer gilt nur eine vollstaendig gelesene Platte ohne ein einziges gesetztes Byte.
-    /// shortcut: ueber 1 GiB wird nicht gelesen (dauert Minuten) und deshalb immer die Loeschbestaetigung verlangt; bei Bedarf Hintergrundpruefung ergaenzen.
+    /// shortcut: ueber 256 MiB wird nicht gelesen (die Oberflaeche stuende sonst lange still) und deshalb immer die Loeschbestaetigung verlangt; bei Bedarf Hintergrundpruefung ergaenzen.
     /// </summary>
     private static bool IsBlank(IBlockDevice device)
     {
         const ulong batchBlocks = 128;
-        if (device.BlockCount * device.BlockSize > 1024UL * 1024 * 1024) return false;
+        if (device.BlockCount * device.BlockSize > 256UL * 1024 * 1024) return false;
         var buffer = new byte[batchBlocks * device.BlockSize];
         for (ulong block = 0; block < device.BlockCount; block += batchBlocks)
         {
