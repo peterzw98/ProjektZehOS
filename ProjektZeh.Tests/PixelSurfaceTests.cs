@@ -101,4 +101,33 @@ public sealed class PixelSurfaceTests
         Assert.ThrowsException<ArgumentException>(() =>
             surface.DrawText("A", 0, 0, 1, new byte[256], int.MaxValue, int.MaxValue));
     }
+
+    [TestMethod]
+    public void FramebufferCopy_PaddedPitch_CopiesOnlyRectangleAndKeepsPadding()
+    {
+        var source = new int[4 * 3];
+        for (int index = 0; index < source.Length; index++) source[index] = index + 1;
+        // Zeilenlaenge 6 bei 4 sichtbaren Pixeln: die Polsterpixel duerfen nie beschrieben werden.
+        var target = new int[6 * 3];
+        Array.Fill(target, -9);
+        var copied = FramebufferCopy.CopyRectangle(source, 4, 3, target, 6, 4, 3, 1, 1, 2, 2);
+        Assert.AreEqual((1, 1, 2, 2), copied);
+        CollectionAssert.AreEqual(new[] { -9, -9, -9, -9, -9, -9, -9, 6, 7, -9, -9, -9, -9, 10, 11, -9, -9, -9 }, target);
+    }
+
+    [TestMethod]
+    public void FramebufferCopy_RectanglesAtEdges_AreClipped_AndCoverMatchesFullCopy()
+    {
+        var source = new int[4 * 3];
+        for (int index = 0; index < source.Length; index++) source[index] = index + 1;
+        var partial = new int[5 * 3];
+        Assert.AreEqual((0, 0, 2, 1), FramebufferCopy.CopyRectangle(source, 4, 3, partial, 5, 4, 3, -1, -2, 3, 3));
+        Assert.AreEqual((2, 1, 2, 2), FramebufferCopy.CopyRectangle(source, 4, 3, partial, 5, 4, 3, 2, 1, 9, 16));
+        Assert.AreEqual(0, FramebufferCopy.CopyRectangle(source, 4, 3, partial, 5, 4, 3, int.MaxValue, int.MinValue, 9, 16).Width);
+        CollectionAssert.AreEqual(new[] { 1, 2, 0, 0, 0, 0, 0, 7, 8, 0, 0, 0, 11, 12, 0 }, partial);
+        // Wie Canvas.Display(): ein kleinerer Framebuffer begrenzt den kopierten Bereich.
+        var small = new int[3 * 2];
+        Assert.AreEqual((0, 0, 3, 2), FramebufferCopy.CopyRectangle(source, 4, 3, small, 3, 3, 2, 0, 0, 4, 3));
+        CollectionAssert.AreEqual(new[] { 1, 2, 3, 5, 6, 7 }, small);
+    }
 }

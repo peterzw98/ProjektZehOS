@@ -234,6 +234,39 @@ public sealed class UserManagementTests
     }
 
     [TestMethod]
+    public void Desktop_LoginScreen_UsesSceneCacheForPointerMoves_AndRedrawsOnInputAndCompletion()
+    {
+        SetupAdministrator();
+        var identity = accounts.CreateSession();
+        var shell = CreateShell(identity);
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(root), session: new DesktopSession(accounts, shell, identity));
+        var pixels = new int[1024 * 768];
+        var surface = new PixelSurface(1024, 768, pixels);
+        Assert.IsNull(desktop.Render(surface, 0, 10, 10, PointerButtons.None));
+
+        // Ohne Aenderung der Anmeldung loest weder Update noch Zeigerbewegung ein neues Bild aus.
+        pixels[0] = 12345;
+        desktop.Update(100);
+        desktop.Handle(new(InputEventType.PointerMove, X: 300, Y: 200));
+        Assert.AreEqual((10, 10), desktop.Render(surface, 100, 300, 200, PointerButtons.None));
+        Assert.AreEqual(12345, pixels[0]);
+
+        desktop.Handle(new(InputEventType.Text, Character: 'a'));
+        Assert.IsNull(desktop.Render(surface, 100, 300, 200, PointerButtons.None));
+        Assert.AreNotEqual(12345, pixels[0]);
+
+        foreach (char character in "dmin") desktop.Handle(new(InputEventType.Text, Character: character));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        foreach (char character in AdminPassword) desktop.Handle(new(InputEventType.Text, Character: character));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        desktop.Render(surface, 100, 300, 200, PointerButtons.None);
+        // Die abgeschlossene Pruefung muss das Bild ohne weitere Eingabe erneuern.
+        WaitForPassword(() => { desktop.Update(100); return identity.UserId != null; });
+        Assert.IsNull(desktop.Render(surface, 100, 300, 200, PointerButtons.None));
+    }
+
+    [TestMethod]
     public void Abmelden_WithPendingPromptOrRunningWorker_StillLogsOut()
     {
         var admin = SetupAdministrator();

@@ -41,8 +41,8 @@ internal sealed class Desktop
     private int width;
     private int height;
     private UiRect menuBounds;
-    private const int PointerWidth = 9;
-    private const int PointerHeight = 16;
+    public const int PointerWidth = 9;
+    public const int PointerHeight = 16;
     private int[] wallpaper = [];
     private int[] scene = [];
     private PixelSurface? sceneSurface;
@@ -359,8 +359,8 @@ internal sealed class Desktop
         SyncSession();
         if (IsLocked)
         {
-            login!.Update();
-            sceneDirty = true;
+            // Nur abgeschlossene Kennwortpruefungen veraendern die Anzeige; Eingaben invalidieren bereits Handle.
+            if (login!.Update()) sceneDirty = true;
             SyncSession();
         }
         if (!IsLocked && restoreDisplay)
@@ -399,30 +399,35 @@ internal sealed class Desktop
         sceneDirty = true;
     }
 
-    public void Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)
+    /// <summary>
+    /// Zeichnet das Bild und liefert die Position des wiederhergestellten alten Zeigers, wenn sich ausser beiden
+    /// Zeigerflaechen nichts geaendert hat; <see langword="null"/> bedeutet ein vollstaendig neu gezeichnetes Bild.
+    /// </summary>
+    public (int X, int Y)? Render(PixelSurface surface, long milliseconds, int pointerX, int pointerY, PointerButtons buttons)
     {
         SyncSession();
-        if (IsLocked)
-        {
-            surface.ResetClip();
-            surface.FillRectangle(0, 0, width, height, UiPainter.Background);
-            login!.Render(surface);
-            DrawPointer(surface, pointerX, pointerY, buttons);
-            sceneDirty = true;
-            return;
-        }
+        (int X, int Y)? previousPointer = (pointerLeft, pointerTop);
         if (sceneDirty || surface != sceneSurface || scene.Length != width * height)
         {
             surface.ResetClip();
-            PrepareWallpaper();
-            surface.DrawPixels(wallpaper, 0, 0, width, height);
-            Windows.Render(surface, font, glyphWidth, glyphHeight, !menuOpen);
-            RenderTaskbar(surface, milliseconds);
-            if (menuOpen) RenderMenu(surface);
+            if (IsLocked)
+            {
+                surface.FillRectangle(0, 0, width, height, UiPainter.Background);
+                login!.Render(surface);
+            }
+            else
+            {
+                PrepareWallpaper();
+                surface.DrawPixels(wallpaper, 0, 0, width, height);
+                Windows.Render(surface, font, glyphWidth, glyphHeight, !menuOpen);
+                RenderTaskbar(surface, milliseconds);
+                if (menuOpen) RenderMenu(surface);
+            }
             if (scene.Length != width * height) scene = new int[width * height];
             surface.CopyTo(scene);
             sceneSurface = surface;
             sceneDirty = false;
+            previousPointer = null;
         }
         else
         {
@@ -434,6 +439,7 @@ internal sealed class Desktop
         pointerLeft = pointerX;
         pointerTop = pointerY;
         DrawPointer(surface, pointerX, pointerY, buttons);
+        return previousPointer;
     }
 
     internal static void DrawPointer(PixelSurface surface, int pointerX, int pointerY, PointerButtons buttons)

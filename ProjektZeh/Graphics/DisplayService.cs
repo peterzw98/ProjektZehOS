@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using Cosmos.Kernel.HAL.Devices.Display;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.Graphics.Fonts;
 using ProjektZeh.Apps.TaskManager;
@@ -9,6 +11,7 @@ using ProjektZeh.Runtime;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
+using FramebufferMode = Cosmos.Kernel.HAL.Devices.Display.DisplayMode;
 
 namespace ProjektZeh.Graphics;
 
@@ -65,12 +68,47 @@ internal sealed class DisplayService
     public void Render(InputService pointer, long milliseconds)
     {
         long started = Stopwatch.GetTimestamp();
-        desktop.Render(surface, milliseconds, pointer.PointerX, pointer.PointerY, pointer.Buttons);
-        canvas.Display();
+        int pointerX = pointer.PointerX, pointerY = pointer.PointerY;
+        var previous = desktop.Render(surface, milliseconds, pointerX, pointerY, pointer.Buttons);
+        // Canvas.Display() kopiert immer das ganze Bild (Full HD rund 8 MB); bei reiner Zeigerbewegung genuegen beide Zeigerflaechen.
+        if (previous is not { } old || !TryPresentPointers(old.X, old.Y, pointerX, pointerY)) canvas.Display();
         long elapsed = ElapsedMicroseconds(started);
         desktop.Metrics.RecordFrame(elapsed);
         desktop.System.RecordWork(elapsed);
     }
+
+#pragma warning disable COSMOS0003 // IDisplay ist in Cosmos 3.0.94 experimentell; Canvas.Display() verwendet dieselben Mitglieder.
+    // Liefert false, wenn nur die Vollausgabe von Cosmos sicher ist, etwa ohne Treiberanzeige oder bei anderer Farbtiefe.
+    private bool TryPresentPointers(int previousX, int previousY, int pointerX, int pointerY)
+    {
+        // Die zum Canvas gehoerende Anzeige; Primary koennte nach einem Treiberwechsel eine andere sein.
+        if (CanvasDisplay(canvas) is not { } device || !device.TryGetFacet<IDisplay>(out var display)) return false;
+        FramebufferMode mode = display.Mode;
+        var framebuffer = display.Framebuffer;
+        if (mode.IsEmpty || mode.BitsPerPixel != 32 || framebuffer == null ||
+            framebuffer.Length < (ulong)((long)mode.Height * mode.Pitch)) return false;
+        try
+        {
+            Span<int> target = framebuffer.As<int>();
+            PresentPointer(display, target, mode, previousX, previousY);
+            PresentPointer(display, target, mode, pointerX, pointerY);
+            return true;
+        }
+        // Ein zwischenzeitlich entzogener Framebuffer wird ungueltig; die Vollausgabe behandelt das wie Cosmos selbst.
+        catch (InvalidOperationException) { return false; }
+    }
+
+    private void PresentPointer(IDisplay display, Span<int> target, FramebufferMode mode, int x, int y)
+    {
+        var (left, top, width, height) = FramebufferCopy.CopyRectangle(canvas.GetBuffer(), canvas.Width, canvas.Height,
+            target, mode.Pitch / 4, mode.Width, mode.Height, x, y, Desktop.PointerWidth, Desktop.PointerHeight);
+        if (width > 0 && height > 0) display.Flush(left, top, width, height);
+    }
+#pragma warning restore COSMOS0003
+
+    // In Cosmos 3.0.94 privat; gelesen wird nur die Anzeige, aus der Canvas.Display() selbst kopiert.
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_display")]
+    private static extern ref DisplayDevice? CanvasDisplay(Canvas canvas);
 
     private static long ElapsedMicroseconds(long started) => (Stopwatch.GetTimestamp() - started) * 1000000 / Stopwatch.Frequency;
 

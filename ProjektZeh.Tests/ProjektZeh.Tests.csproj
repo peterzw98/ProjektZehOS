@@ -28,6 +28,7 @@
     <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\FramebufferCopy.cs" Link="Graphics\FramebufferCopy.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Window*.cs" Link="Graphics\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\DesktopMetrics.cs" Link="Graphics\DesktopMetrics.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Desktop.cs" Link="Graphics\Desktop.cs" />

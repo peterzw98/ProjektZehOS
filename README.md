@@ -72,6 +72,8 @@ Eigene 32-Bit-BMPs dürfen auch unkomprimierte Farbmasken (`BI_BITFIELDS`/`BI_AL
 
 Ein Klick aktiviert ein Fenster; **Alt+Tab** beziehungsweise **Alt+Shift+Tab** wechseln durch alle Fenster. Die Titelleiste lässt sich mit der linken Maustaste ziehen, die Ränder und Ecken verändern die Größe bis zur jeweiligen Mindestgröße. **_** minimiert, **□** maximiert beziehungsweise stellt die bisherige Geometrie wieder her, **X** schließt mit der gegebenenfalls erforderlichen Rückfrage. Fenster bleiben oberhalb der unteren Leiste. Ein Klick auf einen Eintrag in der Fensterleiste aktiviert oder restauriert ihn; beim aktiven Fenster minimiert er es. Bei wenig Platz kürzt die Leiste die Titel hinter dem Programmsymbol.
 
+In QEMU stellen die Visual-Studio-Projektkonfiguration und `scripts/start-qemu.ps1` ein USB-Tablet bereit. Es überträgt die absolute Position des Hostzeigers an ZehOS. `cosmos run` benötigt die Geräteargumente ausdrücklich wie im Startbeispiel unten; die CLI 3.0.94 übernimmt sie nicht aus der Projektkonfiguration.
+
 Höchstens acht Fenster sind gleichzeitig geöffnet, einschließlich minimierter Fenster. Jedes Terminal besitzt seine eigene Shell, Eingabe, Historie und sein eigenes Arbeitsverzeichnis, anfangs `/data`. Die letzten **256 Ausgabezeilen** werden beim Ändern der Breite neu umgebrochen; überschrittene Puffergrenzen verdrängen weiterhin die älteste Ausgabe. **Bild auf/Bild ab (PageUp/PageDown)** blättern durch ältere Ausgabe; Texteingabe springt zur neuesten Ausgabe. `clear` leert dessen Ausgabe. Auch nach dem Schließen aller Fenster bleibt das Menü erreichbar.
 
 **Esc** schließt zuerst ein geöffnetes Programmmenü und führt sonst zur Textshell; **F4** wechselt zwischen Desktop und Textshell. Fensterzustände, Terminalausgaben und Eingabeentwürfe bleiben erhalten. Die alte Textkonsolenausgabe wird beim Wechsel geleert; deren eigener Eingabeentwurf und Verlauf bleiben erhalten. Grafikfehler beim Öffnen oder Zeichnen führen zur erreichbaren Textshell zurück.
@@ -244,7 +246,7 @@ Im Wurzelverzeichnis des Repositories:
 
 ```powershell
 cosmos build --project ProjektZeh\ProjektZeh.csproj --arch x64
-cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64 -- -action shutdown=poweroff,reboot=reset
+cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64 -- -action shutdown=poweroff,reboot=reset -device qemu-xhci,id=tabletbus -device usb-tablet,bus=tabletbus.0
 ```
 
 Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.

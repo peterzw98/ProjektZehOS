@@ -44,7 +44,7 @@ if ($WaitForDebugger) {
     $runArguments += '--debug'
 }
 # Cosmos 3.0.94 haelt den Gast sonst bei Shutdown und Reboot nur an.
-$runArguments += @('--', '-action', 'shutdown=poweroff,reboot=reset')
+$runArguments += @('--', '-action', 'shutdown=poweroff,reboot=reset', '-device', 'qemu-xhci,id=tabletbus', '-device', 'usb-tablet,bus=tabletbus.0')
 
 & $cosmos.Source @runArguments
 if ($LASTEXITCODE -ne 0) {

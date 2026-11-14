@@ -91,22 +91,31 @@ public sealed class DesktopRedesignTests
         var desktop = CreateDesktop(1024, 768);
         var pixels = new int[1024 * 768];
         var surface = new PixelSurface(1024, 768, pixels);
-        desktop.Render(surface, 0, 2000, 2000, PointerButtons.None);
+        Assert.IsNull(desktop.Render(surface, 0, 2000, 2000, PointerButtons.None), "Das erste Bild ist immer vollstaendig.");
         var clean = (int[])pixels.Clone();
         desktop.Handle(new(InputEventType.PointerMove, X: 400, Y: 300));
-        desktop.Render(surface, 10, 400, 300, PointerButtons.None);
+        Assert.AreEqual((2000, 2000), desktop.Render(surface, 10, 400, 300, PointerButtons.None));
         Assert.AreEqual(-1, pixels[300 * 1024 + 400]);
         // Fremde Pixel ausserhalb des Zeigers bleiben unberuehrt, weil die Szene nicht neu gezeichnet wird.
         pixels[10 * 1024 + 10] = 12345;
         desktop.Handle(new(InputEventType.PointerMove, X: 600, Y: 500));
-        desktop.Render(surface, 20, 600, 500, PointerButtons.None);
+        Assert.AreEqual((400, 300), desktop.Render(surface, 20, 600, 500, PointerButtons.None));
         Assert.AreEqual(12345, pixels[10 * 1024 + 10]);
-        for (int row = 300; row < 316; row++)
-            for (int column = 400; column < 409; column++)
+        for (int row = 300; row < 300 + Desktop.PointerHeight; row++)
+            for (int column = 400; column < 400 + Desktop.PointerWidth; column++)
                 Assert.AreEqual(clean[row * 1024 + column], pixels[row * 1024 + column]);
+        // Nur alte und neue Zeigerflaeche duerfen sich gegenueber der Szene unterscheiden; nur diese werden ausgegeben.
+        for (int index = 0; index < pixels.Length; index++)
+        {
+            int column = index % 1024, row = index / 1024;
+            bool inPointer = column >= 600 && column < 600 + Desktop.PointerWidth && row >= 500 && row < 500 + Desktop.PointerHeight;
+            if (!inPointer && index != 10 * 1024 + 10) Assert.AreEqual(clean[index], pixels[index]);
+        }
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
-        desktop.Render(surface, 30, 600, 500, PointerButtons.None);
+        Assert.IsNull(desktop.Render(surface, 30, 600, 500, PointerButtons.None));
         Assert.AreEqual(clean[10 * 1024 + 10], pixels[10 * 1024 + 10]);
+        Assert.IsNull(desktop.Render(new PixelSurface(1024, 768, new int[1024 * 768]), 40, 600, 500, PointerButtons.None),
+            "Eine ersetzte Zeichenflaeche erfordert ein vollstaendiges Bild.");
     }
 
     [TestMethod]
