@@ -81,6 +81,8 @@ internal sealed class DisplayService
     // Liefert false, wenn nur die Vollausgabe von Cosmos sicher ist, etwa ohne Treiberanzeige oder bei anderer Farbtiefe.
     private bool TryPresentPointers(int previousX, int previousY, int pointerX, int pointerY)
     {
+        // Abgeleitete Canvas-Typen koennen Display() mit eigener Ausgabelogik ueberschreiben.
+        if (canvas.GetType() != typeof(Canvas)) return false;
         // Die zum Canvas gehoerende Anzeige; Primary koennte nach einem Treiberwechsel eine andere sein.
         if (CanvasDisplay(canvas) is not { } device || !device.TryGetFacet<IDisplay>(out var display)) return false;
         FramebufferMode mode = display.Mode;
@@ -90,19 +92,19 @@ internal sealed class DisplayService
         try
         {
             Span<int> target = framebuffer.As<int>();
-            PresentPointer(display, target, mode, previousX, previousY);
-            PresentPointer(display, target, mode, pointerX, pointerY);
+            PresentPointer(device, display, target, mode, previousX, previousY);
+            PresentPointer(device, display, target, mode, pointerX, pointerY);
             return true;
         }
         // Ein zwischenzeitlich entzogener Framebuffer wird ungueltig; die Vollausgabe behandelt das wie Cosmos selbst.
         catch (InvalidOperationException) { return false; }
     }
 
-    private void PresentPointer(IDisplay display, Span<int> target, FramebufferMode mode, int x, int y)
+    private void PresentPointer(DisplayDevice device, IDisplay display, Span<int> target, FramebufferMode mode, int x, int y)
     {
         var (left, top, width, height) = FramebufferCopy.CopyRectangle(canvas.GetBuffer(), canvas.Width, canvas.Height,
             target, mode.Pitch / 4, mode.Width, mode.Height, x, y, Desktop.PointerWidth, Desktop.PointerHeight);
-        if (width > 0 && height > 0) display.Flush(left, top, width, height);
+        if (width > 0 && height > 0 && !device.IsWithdrawn) display.Flush(left, top, width, height);
     }
 #pragma warning restore COSMOS0003
 
