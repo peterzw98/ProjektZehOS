@@ -89,23 +89,20 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
     }
 
     /// <summary>
-    /// Prueft erstes und letztes MiB, wo Partitionstabellen, Dateisystem-, LUKS-, LVM- und ZFS-Kennungen liegen.
-    /// shortcut: keine Vollpruefung wie bei disk init, weil das bei grossen Platten Minuten dauert; bei Bedarf erweitern.
+    /// Leer gilt nur eine vollstaendig gelesene Platte ohne ein einziges gesetztes Byte.
+    /// shortcut: ueber 1 GiB wird nicht gelesen (dauert Minuten) und deshalb immer die Loeschbestaetigung verlangt; bei Bedarf Hintergrundpruefung ergaenzen.
     /// </summary>
     private static bool IsBlank(IBlockDevice device)
     {
         const ulong batchBlocks = 128;
-        ulong edgeBlocks = Math.Min(device.BlockCount, 1024UL * 1024 / device.BlockSize);
+        if (device.BlockCount * device.BlockSize > 1024UL * 1024 * 1024) return false;
         var buffer = new byte[batchBlocks * device.BlockSize];
-        foreach (ulong start in new[] { 0UL, device.BlockCount - edgeBlocks })
+        for (ulong block = 0; block < device.BlockCount; block += batchBlocks)
         {
-            for (ulong block = start; block < start + edgeBlocks; block += batchBlocks)
-            {
-                ulong count = Math.Min(batchBlocks, start + edgeBlocks - block);
-                device.ReadBlock(block, count, buffer);
-                for (ulong index = 0; index < count * device.BlockSize; index++)
-                    if (buffer[index] != 0) return false;
-            }
+            ulong count = Math.Min(batchBlocks, device.BlockCount - block);
+            device.ReadBlock(block, count, buffer);
+            for (ulong index = 0; index < count * device.BlockSize; index++)
+                if (buffer[index] != 0) return false;
         }
         return true;
     }

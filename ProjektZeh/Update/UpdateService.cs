@@ -23,6 +23,7 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
 {
     private UpdateManifest? checkedManifest;
     private bool runningFromFallback;
+    private string? previousMarker;
     public bool RequiresRestart { get; private set; }
 
     public ResultObject<UpdateManifest> Check()
@@ -53,6 +54,7 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
                     $"Rueckfallstart: Das Update ist nicht neuer als die installierte Version {installedVersion}.");
         }
         runningFromFallback = fallback;
+        previousMarker = installed.Value?.Trim();
         checkedManifest = parsed.Value;
         return parsed;
     }
@@ -77,11 +79,16 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         digest.DoFinal(hash, 0);
         if (!string.Equals(Convert.ToHexString(hash), checkedManifest.Sha256, StringComparison.OrdinalIgnoreCase))
             return ResultErr.CreateFailure(ResultCode.Failure, "Die Kernelpruefsumme stimmt nicht mit dem Manifest ueberein.");
+        // Marker zuerst: Bleibt er nach einem Fehler falsch stehen, gilt der naechste Start als Rueckfallstart
+        // und laesst .bak unangetastet. Die umgekehrte Reihenfolge koennte einen Rueckfallstart verdecken.
+        ResultErr marked = target.WriteVersion(checkedManifest.Version.ToString());
+        if (!marked.IsOK()) return marked;
         RequiresRestart = true;
-        ResultErr replaced = target.ReplaceKernel(kernel, rotateBackup: !runningFromFallback);
-        if (!replaced.IsOK()) return replaced;
-        string installedVersion = checkedManifest.Version.ToString();
         checkedManifest = null;
-        return target.WriteVersion(installedVersion);
+        ResultErr replaced = target.ReplaceKernel(kernel, rotateBackup: !runningFromFallback);
+        if (replaced.IsOK()) return replaced;
+        ResultErr restored = target.WriteVersion(previousMarker ?? currentVersion.ToString());
+        return restored.IsOK() ? replaced : ResultErr.CreateFailure(ResultCode.Failure,
+            $"{replaced.Message} Der Versionsmarker konnte nicht zurueckgesetzt werden: {restored.Message}");
     }
 }

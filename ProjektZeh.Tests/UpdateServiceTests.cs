@@ -67,7 +67,7 @@ public sealed class UpdateServiceTests
     }
 
     [TestMethod]
-    public void ReplaceOrVersionFailure_RequiresRestartBeforeAnotherWrite()
+    public void ReplaceOrVersionFailure_KeepsMarkerConsistentWithKernel()
     {
         foreach (bool failReplace in new[] { true, false })
         {
@@ -75,10 +75,11 @@ public sealed class UpdateServiceTests
             var service = new UpdateService(new Source(), target, new(0, 1, 0));
             Assert.IsTrue(service.Check().IsOK());
             Assert.IsFalse(service.Install().IsOK());
-            Assert.IsTrue(service.RequiresRestart);
             Assert.IsFalse(service.Install().IsOK());
-            Assert.IsFalse(service.Check().IsOK());
-            Assert.AreEqual(1, target.Replacements);
+            // Der Marker wird vor dem Kernel geschrieben: ohne Marker kein Austausch, nach Austauschfehler zurueckgesetzt.
+            Assert.AreEqual(failReplace ? 1 : 0, target.Replacements);
+            Assert.AreEqual(failReplace, service.RequiresRestart);
+            if (failReplace) Assert.AreEqual("0.1.0", target.Version);
         }
     }
 

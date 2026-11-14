@@ -808,7 +808,7 @@ internal sealed class SetupDiskList : UiControl
         for (int index = 0; index < values.Length; index++)
         {
             sizes[index] = FormatSize(values[index].SizeBytes);
-            partitions[index] = values[index].PartitionCount > 0 ? $"{values[index].PartitionCount}" : values[index].IsBlank ? "keine" : "Daten";
+            partitions[index] = values[index].PartitionCount > 0 ? $"{values[index].PartitionCount}" : values[index].IsBlank ? "keine" : "unklar";
             if (string.Equals(values[index].Name, previous, StringComparison.Ordinal)) SelectedIndex = index;
         }
         first = 0;

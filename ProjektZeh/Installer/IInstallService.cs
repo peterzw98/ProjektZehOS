@@ -3,14 +3,14 @@ using ProjektZeh.Shared;
 namespace ProjektZeh.Installer;
 
 /// <summary>Zielplatte fuer die Installation; das Startmedium wird nie als Ziel angeboten.</summary>
-/// <param name="IsBlank">Auch ohne erkannte Partitionen koennen Dateisysteme oder fremde Tabellen auf der Platte liegen.</param>
+/// <param name="IsBlank">Nur wahr, wenn die Platte vollstaendig als leer gelesen wurde; ohne erkannte Partitionen koennen trotzdem Daten vorhanden sein.</param>
 internal sealed record InstallDisk(string Name, ulong SizeBytes, int PartitionCount, bool IsBlank)
 {
     public bool RequiresErase => PartitionCount > 0 || !IsBlank;
     public string ContentText => PartitionCount switch
     {
         0 when IsBlank => "keine Daten",
-        0 => "unbekannte Daten",
+        0 => "moegliche Daten",
         1 => "1 Partition",
         _ => $"{PartitionCount} Partitionen"
     };
