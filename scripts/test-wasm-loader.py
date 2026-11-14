@@ -27,9 +27,9 @@ def find_qemu() -> Path:
     raise SystemExit("qemu-system-x86_64 nicht gefunden.")
 
 
-def build_arguments(qemu: Path, iso: Path, disk: Path | None, serial: Path) -> list[str]:
+def build_arguments(qemu: Path, iso: Path, disk: Path | None, serial: Path, accel: str) -> list[str]:
     share = qemu.parent.parent / "share" / "qemu"
-    arguments = [str(qemu), "-L", str(share), "-machine", "q35", "-cpu", "max", "-m", "512M",
+    arguments = [str(qemu), "-L", str(share), "-accel", accel, "-machine", "q35", "-cpu", "max", "-m", "512M",
                  "-vga", "std", "-boot", "d", "-cdrom", str(iso), "-display", "none",
                  "-serial", f"file:{serial}", "-monitor", "none",
                  "-action", "shutdown=poweroff,reboot=reset"]
@@ -59,7 +59,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--app", type=Path, help="Wasm-App, die als /data/csprobe.wasm bereitsteht")
+    parser.add_argument("--doom", type=Path, help="doom.wasm; wird mit --wad als /data/doom.wasm bereitgestellt")
+    parser.add_argument("--wad", type=Path, help="freedoom1.wad fuer die Doom-Probe")
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--accel", choices=["tcg", "whpx", "whpx,kernel-irqchip=off", "kvm"], default="tcg",
+                        help="QEMU-Beschleuniger; Messwerte immer mit dem verwendeten Wert dokumentieren")
     parser.add_argument("--expect-fail", action="store_true",
                         help="Negativpruefung: erwartet FAIL bzw. kein PASS (z. B. ISO ohne Probe)")
     args = parser.parse_args()
@@ -71,8 +75,11 @@ def main() -> int:
         disk = work / "disk"
         disk.mkdir()
         shutil.copyfile(args.app, disk / "csprobe.wasm")
+        if args.doom is not None:
+            shutil.copyfile(args.doom, disk / "doom.wasm")
+            shutil.copyfile(args.wad, disk / "freedoom1.wad")
     serial = work / "serial.log"
-    guest = subprocess.Popen(build_arguments(find_qemu(), args.iso.resolve(), disk, serial),
+    guest = subprocess.Popen(build_arguments(find_qemu(), args.iso.resolve(), disk, serial, args.accel),
                              stdout=subprocess.DEVNULL, stderr=(work / "stderr.log").open("w"))
     try:
         passed, log = wait_for_result(guest, serial, args.timeout)
@@ -82,7 +89,7 @@ def main() -> int:
             guest.kill()
             guest.wait()
     for line in log.splitlines():
-        if "WASM_PROBE" in line or "CSPROBE" in line:
+        if "WASM_PROBE" in line:
             print(line)
     print(f"Log: {serial}")
     if args.expect_fail:

@@ -10,6 +10,7 @@ Probe mit `-p:ZehOSWasmProbe=true`, QEMU 512 MiB, CPU `max`; Details in [WASM_FE
 - **Vorhandene C-Symbole:** Cosmos stellt bereits `memcpy`, `memcmp`, `memset`, `memmove`, `floor(f)`, `ceil(f)`, `trunc(f)`, `sqrt(f)`, `__cosmos_heap_alloc/free` und `__cosmos_serial_write` bereit; eigene Definitionen gleichen Namens scheitern beim Linken.
 - **`memcmp` ist nicht standardkonform:** `__cosmos_memcmp` vergleicht nur ganze 32-Bit-Wörter (Restbytes werden ignoriert) und liefert nur 0/1. wasm3 hielt dadurch verschiedene Funktionstypen für gleich (`incorrect type on stack`). Eigene C-Bausteine leiten `mem*` deshalb auf exakte Implementierungen um.
 - **Stacks:** Der Boot-Thread läuft auf dem 1-MiB-Limine-Stack. `new Thread(start, maxStackSize)` erhält den angeforderten Stack. **Der Stack beendeter Threads wird nicht freigegeben:** drei leere Threads mit je 8 MiB kosteten dauerhaft 24 MiB. Langlebige Worker statt Threads pro Auftrag verwenden.
+- **Beschleunigung:** QEMU 10.2.2 unter Windows meldet WHPX als verfügbar, der Cosmos-Gast bricht damit aber ab (`WHPX: Unexpected VP exit code 4`, MSI-Injektion fehlgeschlagen; ebenso mit `kernel-irqchip=off`). Messungen laufen deshalb unter TCG.
 - **Eingebettete Rekursion:** Ohne natives Budget sprengt tiefe Wasm-Rekursion den Kernel-Stack (Triple Fault, Neustart). Mit `d_m3MaxNativeStack` = 7 MiB auf einem 8-MiB-Thread endet sie als Wasm-Trap.
 
 ## Desktop-Einstellungen: Abschluss am 14. November 2026

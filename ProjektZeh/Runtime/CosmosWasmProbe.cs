@@ -2,30 +2,27 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Threading;
 using System.Text;
+using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
-using ProjektZeh.Security;
+using ProjektZeh.Runtime.Wasm;
 
 namespace ProjektZeh.Runtime;
 
 /// <summary>
-/// Gastprobe fuer den statisch gebundenen wasm3-Interpreter: kleine Fehlerfallmodule und eine
-/// extern gebaute C#-App von /data. Ergebnis seriell als WASM_PROBE PASS bzw. FAIL.
+/// Gastprobe fuer den statisch gebundenen wasm3-Interpreter: kleine Fehlerfallmodule, eine extern gebaute
+/// C#-App und optional Doom ohne Fenster. Ergebnis seriell als WASM_PROBE PASS bzw. FAIL.
 /// </summary>
-internal static unsafe class CosmosWasmProbe
+internal static class CosmosWasmProbe
 {
     private const string AppPath = "/data/csprobe.wasm";
-    private const int MaximumAppBytes = 64 * 1024 * 1024;
+    private const string DoomPath = "/data/doom.wasm";
+    private const int MaximumModuleBytes = 64 * 1024 * 1024;
     private const ulong FixtureGas = 100_000_000;
     private const long AbortLimitMilliseconds = 250;
-    private const int ThreadStackBytes = 8 * 1024 * 1024;
-    private const uint WasmStackBytes = 1024 * 1024;
-    private const ulong MemoryLimitBytes = 256ul * 1024 * 1024;
     private const int AppRuns = 10;
     private const ulong LeakToleranceBytes = 8ul * 1024 * 1024;
-    private static readonly StringBuilder appOutput = new();
+    private const int DoomSeconds = 20;
 
     // Von Hand erzeugte Minimalmodule; jeweils eine exportierte Funktion "run" ohne Parameter mit i32-Ergebnis.
     private static readonly byte[] Add = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a09010700412841026a0b");
@@ -33,45 +30,21 @@ internal static unsafe class CosmosWasmProbe
     private static readonly byte[] Grow = Convert.FromHexString("0061736d010000000105016000017f0302010005030100010707010372756e00000a0a0108004180800440000b");
     private static readonly byte[] Recurse = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0601040010000b");
 
-    private enum Status { Ok = 0, NoMemory = 1, InvalidModule = 2, LoadFailed = 3, EntryMissing = 4, Trap = 5, OutOfGas = 6, LimitFailed = 7 }
-
     public static bool Run()
-    {
-        MeasureThreadStackRelease();
-        bool passed = false;
-        // Ein einziger Worker mit festem Stack fuer alle Laeufe; das native wasm3-Budget (d_m3MaxNativeStack) ist darauf abgestimmt.
-        var worker = new Thread(() => passed = RunAll(), ThreadStackBytes);
-        worker.Start();
-        worker.Join();
-        return passed;
-    }
-
-    // Befund fuer COSMOS_SUPPORT.md: wird der Stack beendeter Threads in Cosmos 3.0.94 freigegeben?
-    private static void MeasureThreadStackRelease()
-    {
-        ulong before = FreeBytes();
-        for (int index = 0; index < 3; index++)
-        {
-            var empty = new Thread(() => { }, ThreadStackBytes);
-            empty.Start();
-            empty.Join();
-        }
-        ulong after = FreeBytes();
-        Write($"threadstack threads=3 stackMiB={ThreadStackBytes >> 20} lostMiB={(before - Math.Min(before, after)) >> 20}");
-    }
-
-    private static bool RunAll()
     {
         try
         {
-            Expect("add", Add, "run", FixtureGas, Status.Ok, 42);
-            long abortMilliseconds = Expect("loop", Loop, "run", FixtureGas, Status.OutOfGas, 0);
+            MeasureThreadStackRelease();
+            Expect("add", Add, "run", WasmStatus.Ok, 42);
+            long abortMilliseconds = Expect("loop", Loop, "run", WasmStatus.OutOfGas, 0);
             Check(abortMilliseconds <= AbortLimitMilliseconds, $"Endlosschleife erst nach {abortMilliseconds} ms beendet.");
-            Expect("grow", Grow, "run", FixtureGas, Status.Ok, -1);
-            Expect("recurse", Recurse, "run", FixtureGas, Status.Trap, 0);
-            Expect("truncated", Add.AsSpan(0, 20).ToArray(), "run", FixtureGas, Status.InvalidModule, 0);
-            Expect("entry", Add, "fehlt", FixtureGas, Status.EntryMissing, 0);
+            Expect("grow", Grow, "run", WasmStatus.Ok, -1);
+            Expect("recurse", Recurse, "run", WasmStatus.Trap, 0);
+            Expect("truncated", Add.AsSpan(0, 20).ToArray(), "run", WasmStatus.InvalidModule, 0);
+            Expect("entry", Add, "fehlt", WasmStatus.EntryMissing, 0);
             RunApplication();
+            if (File.Exists(DoomPath)) RunDoom();
+            else Write("doom skipped (keine /data/doom.wasm)");
             Write("PASS");
             return true;
         }
@@ -82,23 +55,38 @@ internal static unsafe class CosmosWasmProbe
         }
     }
 
+    // Befund fuer COSMOS_SUPPORT.md: wird der Stack beendeter Threads in Cosmos 3.0.94 freigegeben?
+    private static void MeasureThreadStackRelease()
+    {
+        ulong before = FreeBytes();
+        for (int index = 0; index < 3; index++)
+        {
+            var empty = new Thread(() => { }, WasmRuntime.ThreadStackBytes);
+            empty.Start();
+            empty.Join();
+        }
+        ulong after = FreeBytes();
+        Write($"threadstack threads=3 stackMiB={WasmRuntime.ThreadStackBytes >> 20} lostMiB={(before - Math.Min(before, after)) >> 20}");
+    }
+
     private static void RunApplication()
     {
-        byte[] module = File.ReadAllBytes(AppPath);
-        Check(module.Length <= MaximumAppBytes, "App zu gross.");
+        byte[] module = ReadModule(AppPath);
+        var session = new ProbeSession(null);
         ulong freeBefore = FreeBytes();
         ulong freeAfterFirst = 0;
         for (int run = 1; run <= AppRuns; run++)
         {
-            appOutput.Clear();
+            session.Output.Clear();
+            var watch = Stopwatch.StartNew();
             // Gas 0 bedeutet ohne Budget; die C#-Laufzeit braucht fuer ihren Start sehr viele Instruktionen.
-            long elapsed = Execute(module, "_start", 0, out Status status, out int result, out string message);
+            WasmStatus status = WasmRuntime.Run(module, "_start", 0, session, out int result, out string message);
             ulong free = FreeBytes();
             if (run == 1) freeAfterFirst = free;
-            Write($"app run={run} status={status} exit={result} ms={elapsed} bytes={module.Length} freeMiB={free >> 20} " +
-                $"output='{appOutput.ToString().Trim()}' {message}");
-            Check(status == Status.Ok && result == 0, "C#-App nicht erfolgreich beendet.");
-            Check(appOutput.ToString().Contains("CSPROBE 26", StringComparison.Ordinal), "Unerwartete App-Ausgabe.");
+            Write($"app run={run} status={status} exit={result} ms={watch.ElapsedMilliseconds} bytes={module.Length} " +
+                $"freeMiB={free >> 20} output='{session.Output.ToString().Trim()}' {message}");
+            Check(status == WasmStatus.Ok && result == 0, "C#-App nicht erfolgreich beendet.");
+            Check(session.Output.ToString().Contains("CSPROBE 26", StringComparison.Ordinal), "Unerwartete App-Ausgabe.");
         }
         ulong freeAfterLast = FreeBytes();
         Write($"memory freeBeforeMiB={freeBefore >> 20} afterFirstMiB={freeAfterFirst >> 20} afterLastMiB={freeAfterLast >> 20}");
@@ -106,36 +94,43 @@ internal static unsafe class CosmosWasmProbe
         Check(freeAfterFirst - Math.Min(freeAfterFirst, freeAfterLast) <= LeakToleranceBytes, "Speicher waechst ueber wiederholte Starts.");
     }
 
-    private static ulong FreeBytes()
+    private static void RunDoom()
     {
-        GC.Collect();
-        return CosmosSystemInfo.PhysicalMemory().Free;
+        byte[] module = ReadModule(DoomPath);
+        var session = new ProbeSession("/data", DoomSeconds * 1000);
+        var watch = Stopwatch.StartNew();
+        WasmStatus status = WasmRuntime.Run(module, "_start", 0, session, out int result, out string message);
+        long elapsed = watch.ElapsedMilliseconds;
+        double playSeconds = Math.Max(1, session.LastFrameMs - session.FirstFrameMs) / 1000.0;
+        Write($"doom status={status} exit={result} ms={elapsed} frames={session.Frames} fps={session.Frames / playSeconds:F1} " +
+            $"tics={session.LastTic - session.FirstTic} ticsPerSecond={(session.LastTic - session.FirstTic) / playSeconds:F1} " +
+            $"waitedMs={WasmRuntime.WaitedMilliseconds} testFrame={session.TestFrame} {message}");
+        Check(status == WasmStatus.Ok && result == 0, "Doom nicht regulaer beendet.");
+        Check(session.TestFrame == "ff0000/00ff00/0000ff/ffffff", "Pruefbild mit falscher Kanal- oder Zeilenfolge.");
+        Check(session.Frames > 0, "Doom hat kein Bild ausgegeben.");
     }
 
-    private static long Expect(string name, byte[] module, string entry, ulong gas, Status expectedStatus, int expectedResult)
+    private static byte[] ReadModule(string path)
     {
-        long elapsed = Execute(module, entry, gas, out Status status, out int result, out string message);
+        byte[] module = File.ReadAllBytes(path);
+        Check(module.Length <= MaximumModuleBytes, "Modul zu gross.");
+        return module;
+    }
+
+    private static long Expect(string name, byte[] module, string entry, WasmStatus expectedStatus, int expectedResult)
+    {
+        var watch = Stopwatch.StartNew();
+        WasmStatus status = WasmRuntime.Run(module, entry, FixtureGas, new ProbeSession(null), out int result, out string message);
+        long elapsed = watch.ElapsedMilliseconds;
         Write($"{name} status={status} result={result} ms={elapsed} {message}");
         Check(status == expectedStatus && result == expectedResult, $"{name}: erwartet {expectedStatus}/{expectedResult}.");
         return elapsed;
     }
 
-    private static long Execute(byte[] module, string entry, ulong gas, out Status status, out int result, out string message)
+    private static ulong FreeBytes()
     {
-        byte[] entryBytes = Encoding.ASCII.GetBytes(entry + "\0");
-        byte* text = stackalloc byte[256];
-        int value = 0;
-        var watch = Stopwatch.StartNew();
-        int code;
-        fixed (byte* bytes = module)
-        fixed (byte* name = entryBytes)
-        {
-            code = Run(bytes, (uint)module.Length, name, gas, WasmStackBytes, MemoryLimitBytes, &value, text, 256);
-        }
-        status = (Status)code;
-        result = value;
-        message = Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
-        return watch.ElapsedMilliseconds;
+        GC.Collect();
+        return CosmosSystemInfo.PhysicalMemory().Free;
     }
 
     private static void Check(bool condition, string message)
@@ -145,33 +140,39 @@ internal static unsafe class CosmosWasmProbe
 
     private static void Write(string message) => Log.WriteString($"WASM_PROBE {message}\n");
 
-    [DllImport("*", EntryPoint = "zehos_wasm_run", ExactSpelling = true)]
-    private static extern int Run(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
-        int* result, byte* message, uint messageLength);
-
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_write")]
-    private static void HostWrite(int fd, byte* data, uint length)
+    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue) : IWasmSession
     {
-        _ = fd;
-        string text = Encoding.UTF8.GetString(data, (int)Math.Min(length, 4096));
-        if (appOutput.Length < 4096) appOutput.Append(text);
-        Log.WriteString(text);
-    }
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        public StringBuilder Output { get; } = new();
+        public string? Root => root;
+        public int Frames { get; private set; }
+        public int FirstTic { get; private set; } = -1;
+        public int LastTic { get; private set; }
+        public long FirstFrameMs { get; private set; }
+        public long LastFrameMs { get; private set; }
+        public string TestFrame { get; private set; } = "-";
+        public bool ShouldExit => clock.ElapsedMilliseconds >= runMilliseconds;
+        public int PollKey() => -1;
 
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_time_ns")]
-    private static ulong HostTime(int clockId)
-    {
-        // WASI-Uhr 0 ist Realzeit (UTC vom Hypervisor), alle anderen messen monoton ab Boot.
-        if (clockId == 0) return (ulong)(DateTime.UtcNow - DateTime.UnixEpoch).Ticks * 100;
-        return (ulong)(Stopwatch.GetTimestamp() * (1_000_000_000.0 / Stopwatch.Frequency));
-    }
+        public void Write(int fd, ReadOnlySpan<byte> data)
+        {
+            string text = Encoding.UTF8.GetString(data);
+            if (Output.Length < 4096) Output.Append(text);
+            Log.WriteString(text);
+        }
 
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_random")]
-    private static void HostRandom(byte* buffer, uint length)
-    {
-        var bytes = new byte[length];
-        CosmosSaltSource.Fill(bytes);
-        new ReadOnlySpan<byte>(bytes).CopyTo(new Span<byte>(buffer, (int)length));
+        public void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test)
+        {
+            if (test)
+            {
+                TestFrame = $"{pixels[0]:x6}/{pixels[width - 1]:x6}/{pixels[(height - 1) * width]:x6}/{pixels[height * width - 1]:x6}";
+                return;
+            }
+            if (FirstTic < 0) { FirstTic = tic; FirstFrameMs = clock.ElapsedMilliseconds; }
+            Frames++;
+            LastTic = tic;
+            LastFrameMs = clock.ElapsedMilliseconds;
+        }
     }
 }
 #endif

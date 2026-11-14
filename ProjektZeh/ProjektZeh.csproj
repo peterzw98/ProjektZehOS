@@ -14,16 +14,18 @@
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>
+    <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
+    <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
   </PropertyGroup>
 
-  <!-- wasm3 und seine freistehende C-Laufzeit; vorerst nur in der ausdruecklich angeforderten Probe. -->
-  <PropertyGroup Condition="'$(ZehOSWasmProbe)' == 'true'">
+  <!-- wasm3 und seine freistehende C-Laufzeit; vorerst nur im ausdruecklich angeforderten Wasm-Build. -->
+  <PropertyGroup Condition="'$(ZehOSWasm)' == 'true'">
     <!-- Cosmos-3.0.94-Standardflags plus nativem wasm3-Stackbudget (7 MiB): Wasm laeuft auf einem Thread mit
-         8 MiB Stack (CosmosWasmProbe.ThreadStackBytes); Rekursion endet so als Wasm-Trap statt im Triple Fault. -->
+         8 MiB Stack (WasmRuntime.ThreadStackBytes); Rekursion endet so als Wasm-Trap statt im Triple Fault. -->
     <CCCompilerFlags>-O2 -fno-stack-protector -nostdinc -fno-builtin -Dd_m3MaxNativeStack=7340032</CCCompilerFlags>
   </PropertyGroup>
-  <ItemGroup Condition="'$(ZehOSWasmProbe)' == 'true'">
+  <ItemGroup Condition="'$(ZehOSWasm)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/libc/" />
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/host/" />

@@ -65,6 +65,19 @@ Ergebnisse am 14. November 2026 (QEMU, TCG, 512 MiB):
 
 Normaler Release- und Recovery-Build: 0 Warnungen, 0 Fehler. Hosttests: 322/323; `TlsChecksChainNameAndDates` schlägt bereits auf dem unveränderten Ausgangsstand fehl.
 
+## Doom (Aufgabe 2 / Gate B) – Zwischenstand
+
+[experiments/Wasm.DoomProbe](../experiments/Wasm.DoomProbe/) baut doomgeneric (Commit `e257a09`) mit ZehOS-Plattformschicht als 720-KB-WASIp1-Modul. Die C-Brücke stellt dafür einen nur lesenden WASI-Dateizugriff (ein freigegebener Ordner, keine absoluten Pfade, kein `..`, Schreib-/Anlegeabsichten werden abgelehnt) und die `zehos_v1`-Imports bereit. Die Probe startet Doom ohne Fenster, wenn `/data/doom.wasm` vorhanden ist (`test-wasm-loader.py --doom … --wad …`).
+
+| Messung (20 s, Titel- und Demoablauf, Freedoom 0.13.0) | Host (wasm3 nativ, Windows) | QEMU TCG, 512 MiB, CPU max |
+| --- | --- | --- |
+| Prüfbild Kanäle/Zeilen | korrekt | korrekt (`ff0000/00ff00/0000ff/ffffff`) |
+| Spielbilder/s | 64–67 | **9,9–10,5** |
+| Spieltakte/s | 32–33 | 32,0–32,5 |
+| Wartezeit in `sleep_ms` | – | 88–144 ms von 20 s |
+
+**Gate B ist damit nicht erfüllt.** Doom läuft im Gast korrekt und in Spielgeschwindigkeit, zeichnet aber nur etwa jedes dritte Bild; die Messung zeigt praktisch keine Wartezeit, der Engpass ist also die Rechenleistung (Interpreter in voll emulierter CPU). `-O3` für wasm3 und Doom änderte nichts messbar. QEMU mit WHPX scheitert beim Cosmos-Start (`WHPX: Unexpected VP exit code 4`, auch mit `kernel-irqchip=off`). Eingabe, Fenster, Fokus, F4/Esc und Neustarts sind noch nicht geprüft.
+
 ## Grenzen und offene Punkte
 
 - Kein Produktloader: keine Rechteprüfung, keine Desktop-/Shellanbindung, kein Abbruch von außen außer Gas. Folgt in Aufgabe 3/4.
