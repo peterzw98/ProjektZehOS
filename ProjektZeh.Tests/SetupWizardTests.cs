@@ -18,7 +18,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Wizard_KeyboardOnlyFlow_InstallsEmptyDiskWithoutErase()
     {
-        var service = new FakeInstallService(new InstallDisk("disk0", 20UL << 30, 0)) { Job = new FakeJob(3) };
+        var service = new FakeInstallService(new InstallDisk("disk0", 20UL << 30, 0, IsBlank: true)) { Job = new FakeJob(3) };
         var wizard = new SetupWizard(service, Painter, 1024, 768);
         Assert.AreEqual(SetupPage.Welcome, wizard.Page);
         Press(wizard, PhysicalKey.Enter);
@@ -43,7 +43,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void License_WithoutAcceptance_BlocksNextAndKeepsChoiceOnBack()
     {
-        var wizard = new SetupWizard(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0)), Painter, 1024, 768);
+        var wizard = new SetupWizard(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true)), Painter, 1024, 768);
         Press(wizard, PhysicalKey.Enter);
         Press(wizard, PhysicalKey.Enter);
         Assert.AreEqual(SetupPage.License, wizard.Page);
@@ -64,7 +64,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Confirm_PartitionedDisk_RequiresFreshEraseConfirmation()
     {
-        var service = new FakeInstallService(new InstallDisk("disk1", 64UL << 30, 2)) { Job = new FakeJob(1) };
+        var service = new FakeInstallService(new InstallDisk("disk1", 64UL << 30, 2, IsBlank: false)) { Job = new FakeJob(1) };
         var wizard = ReachConfirm(service);
         Assert.IsInstanceOfType<SetupCheckBox>(wizard.FocusedControl);
         Press(wizard, PhysicalKey.Enter);
@@ -102,8 +102,8 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void DiskList_ArrowsAndClick_SelectDiskAndKeepSelectionOnRefresh()
     {
-        var service = new FakeInstallService(new InstallDisk("a", 1UL << 30, 0), new InstallDisk("b", 1UL << 30, 1),
-            new InstallDisk("c", 1UL << 30, 0)) { Job = new FakeJob(1) };
+        var service = new FakeInstallService(new InstallDisk("a", 1UL << 30, 0, IsBlank: true), new InstallDisk("b", 1UL << 30, 1, IsBlank: false),
+            new InstallDisk("c", 1UL << 30, 0, IsBlank: true)) { Job = new FakeJob(1) };
         var wizard = ReachDisk(service);
         var list = (SetupDiskList)wizard.FocusedControl!;
         Press(wizard, PhysicalKey.Down);
@@ -113,7 +113,7 @@ public sealed class SetupWizardTests
         Press(wizard, PhysicalKey.Up);
         Press(wizard, PhysicalKey.Tab);
         Assert.AreEqual("Aktualisieren", Label(wizard));
-        service.Disks = [new InstallDisk("b", 1UL << 30, 0), new InstallDisk("a", 1UL << 30, 0)];
+        service.Disks = [new InstallDisk("b", 1UL << 30, 0, IsBlank: true), new InstallDisk("a", 1UL << 30, 0, IsBlank: true)];
         Press(wizard, PhysicalKey.Enter);
         Assert.AreEqual("b", list.Selected!.Name);
         Assert.AreEqual(SetupPage.Disk, wizard.Page);
@@ -142,7 +142,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Disk_FocusTraversal_FollowsTabAndShiftTab()
     {
-        var wizard = ReachDisk(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0)));
+        var wizard = ReachDisk(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true)));
         Assert.IsInstanceOfType<SetupDiskList>(wizard.FocusedControl);
         string[] expected = ["Aktualisieren", "< Zurueck", "Weiter >", "Abbrechen"];
         foreach (string label in expected)
@@ -161,7 +161,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Begin_Failure_ShowsErrorAndBackReturnsToConfirm()
     {
-        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0))
+        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true))
         {
             BeginResult = ResultObjectFactory.CreateFailure<IInstallJob>(ResultCode.Failure, "Platte belegt")
         };
@@ -177,13 +177,13 @@ public sealed class SetupWizardTests
     public void Step_Failure_ShowsErrorAndBackRefreshesDisks()
     {
         var job = new FakeJob(5) { FailAt = 2 };
-        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0)) { Job = job };
+        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true)) { Job = job };
         var wizard = ReachConfirm(service);
         Press(wizard, PhysicalKey.Enter);
         for (int i = 0; i < 5; i++) wizard.Update();
         Assert.AreEqual(SetupPage.Error, wizard.Page);
         Assert.AreEqual(2, job.Steps, "Nach dem Fehler wird nicht weiter installiert.");
-        service.Disks = [new InstallDisk("disk0", 1UL << 30, 1)];
+        service.Disks = [new InstallDisk("disk0", 1UL << 30, 1, IsBlank: false)];
         int reads = service.GetDisksCount;
         Press(wizard, PhysicalKey.Enter);
         Assert.AreEqual(SetupPage.Disk, wizard.Page);
@@ -193,7 +193,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Fail_FromException_ShowsErrorPage()
     {
-        var wizard = ReachConfirm(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0)) { Job = new FakeJob(4) });
+        var wizard = ReachConfirm(new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true)) { Job = new FakeJob(4) });
         Press(wizard, PhysicalKey.Enter);
         wizard.Fail(ResultErr.CreateFromException(new IOException("Lesefehler")));
         Assert.AreEqual(SetupPage.Error, wizard.Page);
@@ -216,7 +216,7 @@ public sealed class SetupWizardTests
     [TestMethod]
     public void Installing_EscapeTabAndClick_CannotCancel()
     {
-        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0)) { Job = new FakeJob(3) };
+        var service = new FakeInstallService(new InstallDisk("disk0", 1UL << 30, 0, IsBlank: true)) { Job = new FakeJob(3) };
         var wizard = ReachConfirm(service);
         var cancel = FindButton(wizard, "Abbrechen");
         FindButton(wizard, "Installieren");
@@ -312,8 +312,8 @@ public sealed class SetupWizardTests
 
     private static IEnumerable<(string Name, SetupWizard Wizard)> AllPages(UiPainter painter, int width, int height)
     {
-        FakeInstallService Service() => new(new InstallDisk("QEMU HARDDISK 0", 32UL << 30, 2), new InstallDisk("VBOX SSD 1", 8UL << 30, 0),
-            new InstallDisk("Testplatte", 512UL << 20, 0)) { Job = new FakeJob(10) { Percent = 42, Stage = InstallStage.CopyingFiles } };
+        FakeInstallService Service() => new(new InstallDisk("QEMU HARDDISK 0", 32UL << 30, 2, IsBlank: false), new InstallDisk("VBOX SSD 1", 8UL << 30, 0, IsBlank: true),
+            new InstallDisk("Testplatte", 512UL << 20, 0, IsBlank: true)) { Job = new FakeJob(10) { Percent = 42, Stage = InstallStage.CopyingFiles } };
         var wizard = new SetupWizard(Service(), painter, width, height);
         yield return ("1-welcome", wizard);
         wizard = new SetupWizard(Service(), painter, width, height);

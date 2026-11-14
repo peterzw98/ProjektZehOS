@@ -4,7 +4,7 @@ namespace ProjektZeh.Installer;
 
 /// <summary>Zielplatte fuer die Installation; das Startmedium wird nie als Ziel angeboten.</summary>
 /// <param name="IsBlank">Auch ohne erkannte Partitionen koennen Dateisysteme oder fremde Tabellen auf der Platte liegen.</param>
-internal sealed record InstallDisk(string Name, ulong SizeBytes, int PartitionCount, bool IsBlank = true)
+internal sealed record InstallDisk(string Name, ulong SizeBytes, int PartitionCount, bool IsBlank)
 {
     public bool RequiresErase => PartitionCount > 0 || !IsBlank;
     public string ContentText => PartitionCount switch

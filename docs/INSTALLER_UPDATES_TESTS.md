@@ -88,7 +88,7 @@ Nicht erneut geprüft: Recovery-Build nach der Zusammenführung (die Verdrahtung
 
 Das Review fand keine Blocker. Behoben und erneut geprüft (278 Hosttests, 11 Python-Tests, native Releases 0.1.0/0.2.0 mit 0 Warnungen, QEMU/KVM/OVMF):
 
-- **Rückfallstart verdrängt den funktionierenden Kernel:** `update check` vergleicht zusätzlich mit `/boot/zehos-version.txt`. Im Gast nach Start von **ZehOS (vorherige Version)** (0.1.0 bei installierter 0.2.0) geprüft: Das Update wird mit Hinweis verweigert.
+- **Rückfallstart verdrängt den funktionierenden Kernel:** `update check` vergleicht zusätzlich mit `/boot/zehos-version.txt`. Nach einem Rückfallstart muss das Update neuer als die installierte Version sein und ersetzt nur den Hauptkernel; `.bak` bleibt. Im Gast nach Start von **ZehOS (vorherige Version)** (0.1.0 bei installierter 0.2.0) geprüft: Das erneute Angebot von 0.2.0 wird verweigert. Das Einspielen einer neueren Version im Rückfallstart ist hostgetestet.
 - **Daten ohne erkannte Partition:** Leere Platten sind nur noch solche mit leerem erstem und letztem MiB; sonst verlangen Assistent, `setup install` und `InstallService` die Löschbestätigung. Im Gast: frische leere Platte ohne Bestätigung, eine ganze FAT32-Platte ohne Partitionstabelle wird von Cosmos als eine Partition erkannt und ebenfalls bestätigungspflichtig. Der Fall „Daten ohne Partition“ ist hostgetestet, nicht im Gast nachgestellt.
 - **Download-Grenze:** Der Kernel wird höchstens in der signierten Manifestgröße gelesen; das Manifest begrenzt die Größe auf 64 MiB.
 - **Rückfalleintrag nach Neuinstallation:** Der Installer schreibt auch `ProjektZeh.elf.bak`; der Eintrag startet im Gast direkt nach der Installation.

@@ -79,25 +79,21 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
     }
 
     /// <summary>
-    /// Cosmos 3.0.94 beginnt nach jedem Start mit lokalem Port 49152 und Sequenznummer 1000. Nach einem Warmstart
-    /// kennen NAT und Gegenstelle dieses Verbindungstupel noch und verwerfen den neuen SYN; der Gast haengt dann im Verbindungsaufbau.
+    /// Cosmos 3.0.94 beginnt nach jedem Start mit lokalem Port 49152. Nach einem Warmstart kennen NAT und Gegenstelle
+    /// dieses Verbindungstupel noch und verwerfen den neuen SYN; der Gast haengt dann im Verbindungsaufbau.
     /// </summary>
     private static void RandomizeTcpStart()
     {
         if (tcpStartRandomized) return;
-        byte[] random = new byte[8];
+        byte[] random = new byte[2];
         try { CosmosSaltSource.Fill(random); }
         catch (CryptographicException) { BitConverter.TryWriteBytes(random, Stopwatch.GetTimestamp()); }
         NextPort(null) = (ushort)(49152 + BitConverter.ToUInt16(random, 0) % 16000);
-        SequenceCounter(null) = BitConverter.ToUInt32(random, 4);
         tcpStartRandomized = true;
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "s_nextPort")]
     private static extern ref ushort NextPort([UnsafeAccessorType(TcpConnectionType)] object? connection);
-
-    [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "s_sequenceCounter")]
-    private static extern ref uint SequenceCounter([UnsafeAccessorType(TcpConnectionType)] object? connection);
 
     private static ResultObject<byte[]> CleanupFailure(ResultObject<byte[]> result, Exception exception) =>
         ResultObjectFactory.CreateFromException<byte[]>(new IOException(

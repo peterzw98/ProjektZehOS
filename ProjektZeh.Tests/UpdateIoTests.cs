@@ -22,7 +22,7 @@ public sealed class UpdateIoTests
             File.WriteAllBytes(path, [1]);
             File.WriteAllBytes(path + ".bak", [0]);
             var target = new FileUpdateTarget(root);
-            Assert.IsTrue(target.ReplaceKernel([2]).IsOK());
+            Assert.IsTrue(target.ReplaceKernel([2], true).IsOK());
             Assert.IsTrue(target.WriteVersion("0.2.0").IsOK());
             CollectionAssert.AreEqual(new byte[] { 1 }, File.ReadAllBytes(path + ".bak"));
             CollectionAssert.AreEqual(new byte[] { 2 }, File.ReadAllBytes(path));

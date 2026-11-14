@@ -12,7 +12,8 @@ internal interface IUpdateSource
 
 internal interface IUpdateTarget
 {
-    ResultErr ReplaceKernel(byte[] kernel);
+    /// <summary>rotateBackup=false laesst die vorhandene .bak unveraendert.</summary>
+    ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup);
     ResultErr WriteVersion(string version);
     /// <summary>Installierte Version laut Versionsmarker; Erfolg ohne Wert, wenn kein Marker existiert.</summary>
     ResultObject<string> ReadVersion();
@@ -21,6 +22,7 @@ internal interface IUpdateTarget
 internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, UpdateVersion currentVersion)
 {
     private UpdateManifest? checkedManifest;
+    private bool runningFromFallback;
     public bool RequiresRestart { get; private set; }
 
     public ResultObject<UpdateManifest> Check()
@@ -37,13 +39,20 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         if (!parsed.IsOK()) return parsed;
         if (parsed.Value!.Version.CompareTo(currentVersion) <= 0)
             return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure, "Das Update ist nicht neuer als der laufende Kernel.");
-        // Nach einem Start ueber den Rueckfalleintrag wuerde ein Update den einzigen funktionierenden Kernel aus .bak verdraengen.
+        // Nach einem Start ueber den Rueckfalleintrag laeuft der Kernel aus .bak: nur der defekte Hauptkernel wird ersetzt,
+        // und das Update muss auch neuer als die installierte, defekte Version sein.
         var installed = target.ReadVersion();
         if (!installed.IsOK()) return ResultObjectFactory.CreateFailure<UpdateManifest>(installed.Status);
-        if (installed.Value != null && !string.Equals(installed.Value.Trim(), currentVersion.ToString(), StringComparison.Ordinal))
-            return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure,
-                $"Laufender Kernel {currentVersion} ist nicht die installierte Version {installed.Value.Trim()} (Rueckfalleintrag?). " +
-                "Updates sind erst nach Start der installierten Version oder einer Neuinstallation moeglich.");
+        bool fallback = installed.Value != null && !string.Equals(installed.Value.Trim(), currentVersion.ToString(), StringComparison.Ordinal);
+        if (fallback)
+        {
+            if (!UpdateVersion.TryParse(installed.Value!.Trim(), out var installedVersion))
+                return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure, "Der Versionsmarker /boot/zehos-version.txt ist ungueltig.");
+            if (parsed.Value.Version.CompareTo(installedVersion) <= 0)
+                return ResultObjectFactory.CreateFailure<UpdateManifest>(ResultCode.Failure,
+                    $"Rueckfallstart: Das Update ist nicht neuer als die installierte Version {installedVersion}.");
+        }
+        runningFromFallback = fallback;
         checkedManifest = parsed.Value;
         return parsed;
     }
@@ -69,7 +78,7 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         if (!string.Equals(Convert.ToHexString(hash), checkedManifest.Sha256, StringComparison.OrdinalIgnoreCase))
             return ResultErr.CreateFailure(ResultCode.Failure, "Die Kernelpruefsumme stimmt nicht mit dem Manifest ueberein.");
         RequiresRestart = true;
-        ResultErr replaced = target.ReplaceKernel(kernel);
+        ResultErr replaced = target.ReplaceKernel(kernel, rotateBackup: !runningFromFallback);
         if (!replaced.IsOK()) return replaced;
         string installedVersion = checkedManifest.Version.ToString();
         checkedManifest = null;

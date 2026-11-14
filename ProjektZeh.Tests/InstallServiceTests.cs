@@ -29,9 +29,9 @@ public sealed class InstallServiceTests
         public int Opens { get; private set; }
         public ResultObject<InstallCandidate[]> GetCandidates() => ResultObjectFactory.CreateSuccess<InstallCandidate[]>(
         [
-            new(new InstallDisk("cd0", 256UL * 1024 * 1024, 1), true),
-            new(new InstallDisk("sata0", 256UL * 1024 * 1024, 1), false),
-            new(new InstallDisk("sata1", 64UL * 1024 * 1024, 0), false),
+            new(new InstallDisk("cd0", 256UL * 1024 * 1024, 1, IsBlank: false), true),
+            new(new InstallDisk("sata0", 256UL * 1024 * 1024, 1, IsBlank: false), false),
+            new(new InstallDisk("sata1", 64UL * 1024 * 1024, 0, IsBlank: true), false),
             new(new InstallDisk("sata2", 256UL * 1024 * 1024, 0, IsBlank: false), false)
         ]);
         public ResultObject<IInstallTarget> OpenTarget(string diskName)

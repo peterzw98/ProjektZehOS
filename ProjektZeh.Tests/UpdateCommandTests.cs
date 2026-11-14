@@ -47,7 +47,7 @@ public sealed class UpdateCommandTests
     }
     private sealed class Target : IUpdateTarget
     {
-        public ResultErr ReplaceKernel(byte[] kernel) => throw new AssertFailedException("Schreibzugriff");
+        public ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup) => throw new AssertFailedException("Schreibzugriff");
         public ResultErr WriteVersion(string version) => throw new AssertFailedException("Schreibzugriff");
         public ResultObject<string> ReadVersion() => throw new AssertFailedException("Lesezugriff");
     }

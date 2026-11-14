@@ -83,14 +83,25 @@ public sealed class UpdateServiceTests
     }
 
     [TestMethod]
-    public void FallbackBoot_RefusesUpdateToKeepWorkingBackup()
+    public void FallbackBoot_RejectsInstalledVersionAndKeepsWorkingBackup()
     {
-        var target = new Target { InstalledVersion = "0.2.0\n" };
-        var service = new UpdateService(new Source(), target, new UpdateVersion(0, 1, 0));
-        Assert.IsFalse(service.Check().IsOK());
+        var broken = new Target { InstalledVersion = "0.2.0\n" };
+        var service = new UpdateService(new Source(), broken, new UpdateVersion(0, 1, 0));
+        Assert.IsFalse(service.Check().IsOK(), "Die defekte installierte Version darf nicht erneut eingespielt werden.");
         Assert.IsFalse(service.Install().IsOK());
-        Assert.AreEqual(0, target.Replacements);
-        Assert.IsTrue(new UpdateService(new Source(), new Target { InstalledVersion = "0.1.0\n" }, new UpdateVersion(0, 1, 0)).Check().IsOK());
+        Assert.AreEqual(0, broken.Replacements);
+
+        var older = new Target { InstalledVersion = "0.1.5\n" };
+        var fixedRelease = new UpdateService(new Source(), older, new UpdateVersion(0, 1, 0));
+        Assert.IsTrue(fixedRelease.Check().IsOK());
+        Assert.IsTrue(fixedRelease.Install().IsOK());
+        Assert.IsFalse(older.RotatedBackup!.Value, "Der laufende Rueckfallkernel in .bak bleibt erhalten.");
+
+        var normal = new Target { InstalledVersion = "0.1.0\n" };
+        var regular = new UpdateService(new Source(), normal, new UpdateVersion(0, 1, 0));
+        Assert.IsTrue(regular.Check().IsOK());
+        Assert.IsTrue(regular.Install().IsOK());
+        Assert.IsTrue(normal.RotatedBackup!.Value);
     }
 
     [TestMethod]
@@ -131,7 +142,8 @@ public sealed class UpdateServiceTests
         public string? Version { get; private set; }
         public string? InstalledVersion { get; init; }
         public ResultObject<string> ReadVersion() => ResultObjectFactory.CreateSuccess(InstalledVersion);
-        public ResultErr ReplaceKernel(byte[] kernel) { Replacements++; return FailReplace ? ResultErr.CreateFailure(ResultCode.Failure, "Austauschfehler") : ResultErr.CreateSuccess(); }
+        public bool? RotatedBackup { get; private set; }
+        public ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup) { Replacements++; RotatedBackup = rotateBackup; return FailReplace ? ResultErr.CreateFailure(ResultCode.Failure, "Austauschfehler") : ResultErr.CreateSuccess(); }
         public ResultErr WriteVersion(string version) { Version = version; return FailVersion ? ResultErr.CreateFailure(ResultCode.Failure, "Versionsfehler") : ResultErr.CreateSuccess(); }
     }
 }

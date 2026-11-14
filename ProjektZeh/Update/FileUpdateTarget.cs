@@ -8,7 +8,7 @@ namespace ProjektZeh.Update;
 internal sealed class FileUpdateTarget(string root = "/data") : IUpdateTarget
 {
     private readonly FileService files = new(root);
-    public ResultErr ReplaceKernel(byte[] kernel) => files.WriteBytes(Path.Combine(root, "boot/ProjektZeh.elf"), kernel, true);
+    public ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup) => files.WriteBytes(Path.Combine(root, "boot/ProjektZeh.elf"), kernel, rotateBackup);
     public ResultErr WriteVersion(string version) => files.WriteText(VersionPath, version + "\n");
     public ResultObject<string> ReadVersion() => files.ReadText(VersionPath, allowMissing: true);
     private string VersionPath => Path.Combine(root, "boot/zehos-version.txt");
