@@ -6,8 +6,10 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Cosmos.Kernel.System.Network;
 using ProjektZeh.Security;
+using ProjektZeh.Network;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Update;
@@ -18,6 +20,17 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
     private static bool tcpStartRandomized;
 
     public ResultObject<byte[]> Read(string name, int maxBytes)
+    {
+        if (!Monitor.TryEnter(CosmosNetworkService.Gate))
+            return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, "Netzwerkdienst ist belegt.");
+        ResultObject<byte[]> result;
+        try { result = ReadLocked(name, maxBytes); }
+        catch (Exception exception) { result = ResultObjectFactory.CreateFromException<byte[]>(exception); }
+        Monitor.Exit(CosmosNetworkService.Gate);
+        return result;
+    }
+
+    private ResultObject<byte[]> ReadLocked(string name, int maxBytes)
     {
         // Dateinamen stammen aus dem streng geprueften Manifest oder aus festen Namen; die Grenze setzt der Aufrufer.
         int limit = maxBytes;
@@ -82,7 +95,7 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
     /// Cosmos 3.0.94 beginnt nach jedem Start mit lokalem Port 49152. Nach einem Warmstart kennen NAT und Gegenstelle
     /// dieses Verbindungstupel noch und verwerfen den neuen SYN; der Gast haengt dann im Verbindungsaufbau.
     /// </summary>
-    private static void RandomizeTcpStart()
+    internal static void RandomizeTcpStart()
     {
         if (tcpStartRandomized) return;
         byte[] random = new byte[2];

@@ -67,7 +67,10 @@ public sealed class UpdateIoTests
             "HTTP/1.0 200 OK\r\nContent-Length: 4\r\n\r\nabc",
             "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nabcde",
             "HTTP/1.0 200 OK\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\na",
-            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "HTTP/1.0 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\na",
+            "HTTP/1.0 200 OK\r\nX: " + new string('a', 8192) + "\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.0 200 OK\r\nX: \0\r\nContent-Length: 0\r\n\r\n"
         })
         {
             using var stream = Response(text);
