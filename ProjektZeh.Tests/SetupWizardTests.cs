@@ -263,11 +263,11 @@ public sealed class SetupWizardTests
     }
 
     [TestMethod]
-    public void Render_AllPagesAt1024And800_StaysInsideAndClearsDirty()
+    public void Render_AllPagesAtFullHd1024And800_StaysInsideAndClearsDirty()
     {
         foreach (var painter in new[] { Painter, new UiPainter(new byte[4096], 8, 16) })
         {
-            foreach (var (width, height) in new[] { (1024, 768), (800, 600) })
+            foreach (var (width, height) in new[] { (1920, 1080), (1024, 768), (800, 600) })
             {
                 foreach (var (name, wizard) in AllPages(painter, width, height))
                 {
@@ -280,6 +280,25 @@ public sealed class SetupWizardTests
                 }
             }
         }
+    }
+
+    [TestMethod]
+    public void Layout_FullHd_UsesLargerCenteredDialogWithDesktopBackground()
+    {
+        var wizard = new SetupWizard(new FakeInstallService(), Painter, 1920, 1080);
+        var start = (UiButton)wizard.FocusedControl!;
+        Assert.AreEqual(960, start.Bounds.X + start.Bounds.Width / 2, "Startschaltflaeche steht mittig.");
+        var cancel = FindButton(wizard, "Abbrechen");
+        int right = cancel.Bounds.X + cancel.Bounds.Width;
+        // Der Dialog waechst ueber die 880 Pixel von 1024x768 hinaus, bleibt aber deutlich schmaler als der Bildschirm.
+        Assert.IsTrue(right > 960 + 880 / 2 && right < 1920 - 200, $"Rechter Rand {right}");
+        var pixels = new int[1920 * 1080];
+        wizard.Render(new PixelSurface(1920, 1080, pixels), 0, 0, PointerButtons.None);
+        var wallpaper = new int[1920 * 1080];
+        var defaults = new DesktopSettings();
+        WallpaperImage.Create(wallpaper, 1920, 1080, defaults.Wallpaper, defaults.Dark, UiPainter.Accent);
+        Assert.AreEqual(wallpaper[1079 * 1920 + 1919], pixels[1079 * 1920 + 1919], "Hintergrund entspricht dem Desktopstandard.");
+        Assert.AreEqual(UiPainter.Background, pixels[540 * 1920 + 400], "Dialogflaeche verwendet die Themenfarbe.");
     }
 
     [TestMethod]
@@ -299,7 +318,7 @@ public sealed class SetupWizardTests
         if (string.IsNullOrEmpty(directory)) return;
         var painter = ScreenshotSupport.LoadCosmosFont() ?? Painter;
         Directory.CreateDirectory(directory);
-        foreach (var (width, height) in new[] { (1024, 768), (800, 600) })
+        foreach (var (width, height) in new[] { (1920, 1080), (1024, 768), (800, 600) })
         {
             foreach (var (name, wizard) in AllPages(painter, width, height))
             {
@@ -364,17 +383,17 @@ public sealed class SetupWizardTests
         return wizard;
     }
 
-    private static SetupButton FindButton(SetupWizard wizard, string label)
+    private static UiButton FindButton(SetupWizard wizard, string label)
     {
         for (int i = 0; i < 8; i++)
         {
-            if (wizard.FocusedControl is SetupButton button && button.Label == label) return button;
+            if (wizard.FocusedControl is UiButton button && button.Label == label) return button;
             Press(wizard, PhysicalKey.Tab);
         }
         throw new AssertFailedException($"Schaltflaeche {label} fehlt.");
     }
 
-    private static string? Label(SetupWizard wizard) => (wizard.FocusedControl as SetupButton)?.Label;
+    private static string? Label(SetupWizard wizard) => (wizard.FocusedControl as UiButton)?.Label;
 
     private static void Press(SetupWizard wizard, PhysicalKey key)
     {
