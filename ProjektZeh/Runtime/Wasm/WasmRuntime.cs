@@ -41,6 +41,7 @@ internal static unsafe class WasmRuntime
     private static Thread? worker;
     private static IWasmSession? current;
     private static int nextHandle;
+    private static uint[] indexedFrame = [];
 
     /// <summary>Summe der Wartezeit des letzten Laufs in Millisekunden; trennt Rechen- von Wartezeit bei Messungen.</summary>
     public static long WaitedMilliseconds { get; private set; }
@@ -204,6 +205,17 @@ internal static unsafe class WasmRuntime
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]
     private static void HostPresent(uint* pixels, int width, int height, int tic, int test) =>
         current?.Present(new ReadOnlySpan<uint>(pixels, width * height), width, height, tic, test != 0);
+
+    // Palettenbilder werden nativ in einen wiederverwendeten Puffer umgerechnet; im Interpreter kostete das
+    // auf dem Host fast die Haelfte der Bildzeit von Doom.
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present_indexed")]
+    private static void HostPresentIndexed(byte* indices, uint* palette, int width, int height, int tic)
+    {
+        int count = width * height;
+        if (indexedFrame.Length < count) indexedFrame = new uint[count];
+        for (int index = 0; index < count; index++) indexedFrame[index] = palette[indices[index]] & 0x00FFFFFF;
+        current?.Present(indexedFrame.AsSpan(0, count), width, height, tic, false);
+    }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_ticks_ms")]
     private static uint HostTicks() => (uint)(Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);

@@ -8,7 +8,7 @@ git -C <Ordner> checkout --detach e257a09527062bfb986b6e5e0780839b6cbd5b71
 python experiments/Wasm.DoomProbe/build.py --source <Ordner>
 ```
 
-Ergebnis: `experiments/Wasm.DoomProbe/bin/doom.wasm` (rund 720 KB, 320×200, ohne Ton). Spieldaten: Freedoom 0.13.0 (`freedoom-0.13.0.zip`, SHA-256 `3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59` laut veröffentlichter CHECKSUM-Datei), BSD-Lizenz.
+Ergebnis: `experiments/Wasm.DoomProbe/bin/doom.wasm` (rund 720 KB, 320×200, 8-Bit-Bild mit Palette über `present_indexed`, ohne Ton). Spieldaten: Freedoom 0.13.0 (`freedoom-0.13.0.zip`, SHA-256 `3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59` laut veröffentlichter CHECKSUM-Datei), BSD-Lizenz.
 
 Tastenbelegung (PS/2-Set-1 → Doom): Pfeile bzw. W/S laufen, Pfeile links/rechts drehen, A/D seitwärts, Strg schießen, Leertaste benutzen, Shift rennen, Ziffern Waffen, Enter, Tab Karte. **Backspace öffnet das Doom-Menü**, weil Esc in ZehOS der Rückweg zur Textshell bleibt.
 

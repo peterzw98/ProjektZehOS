@@ -22,7 +22,7 @@ internal static class CosmosWasmProbe
     private const long AbortLimitMilliseconds = 250;
     private const int AppRuns = 10;
     private const ulong LeakToleranceBytes = 8ul * 1024 * 1024;
-    private const int DoomSeconds = 20;
+    private const int DoomSeconds = 60;
 
     // Von Hand erzeugte Minimalmodule; jeweils eine exportierte Funktion "run" ohne Parameter mit i32-Ergebnis.
     private static readonly byte[] Add = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a09010700412841026a0b");
@@ -107,7 +107,7 @@ internal static class CosmosWasmProbe
             $"waitedMs={WasmRuntime.WaitedMilliseconds} testFrame={session.TestFrame} {message}");
         Check(status == WasmStatus.Ok && result == 0, "Doom nicht regulaer beendet.");
         Check(session.TestFrame == "ff0000/00ff00/0000ff/ffffff", "Pruefbild mit falscher Kanal- oder Zeilenfolge.");
-        Check(session.Frames > 0, "Doom hat kein Bild ausgegeben.");
+        Check(session.Frames / playSeconds >= 20, "Doom unter 20 Bildern/s.");
     }
 
     private static byte[] ReadModule(string path)

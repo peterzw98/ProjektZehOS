@@ -41,6 +41,8 @@ def main() -> int:
                "-O2", "-D_DEFAULT_SOURCE", "-DDOOMGENERIC_RESX=320", "-DDOOMGENERIC_RESY=200",
                "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
                "-Wno-everything", "-I", str(args.source / "doomgeneric"),
+               # 8-Bit-Bild: die Palettenumrechnung im Interpreter kostete fast die Haelfte der Bildzeit.
+               "-DCMAP256",
                *sources, "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks",
                "-Wl,-z,stack-size=1048576", "-o", str(args.output)]
     result = subprocess.run(command)

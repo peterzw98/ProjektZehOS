@@ -7,11 +7,15 @@
 #include "doomkeys.h"
 
 extern int gametic;
+// Gebaut mit CMAP256: struct color aus i_video.h hat genau das Layout 0x00RRGGBB eines uint32_t.
+extern uint32_t colors[256];
 
 #define ZEHOS_IMPORT(name) __attribute__((import_module("zehos_v1"), import_name(name)))
 
 // Bild als 0x00RRGGBB, zeilenweise; test != 0 markiert das Pruefbild vor dem Spielstart.
 ZEHOS_IMPORT("present") void zehos_present(const uint32_t* pixels, int32_t width, int32_t height, int32_t tic, int32_t test);
+// 8-Bit-Bild mit Palette 0x00RRGGBB; die Umrechnung uebernimmt der native Kernel statt des Interpreters.
+ZEHOS_IMPORT("present_indexed") void zehos_present_indexed(const uint8_t* indices, const uint32_t* palette, int32_t width, int32_t height, int32_t tic);
 ZEHOS_IMPORT("ticks_ms") uint32_t zehos_ticks_ms(void);
 ZEHOS_IMPORT("sleep_ms") void zehos_sleep_ms(uint32_t milliseconds);
 // Liefert -1 ohne Ereignis, sonst Bit 8 = gedrueckt und Bits 0-7 = PS/2-Set-1-Scancode.
@@ -59,7 +63,7 @@ void DG_Init(void)
 
 void DG_DrawFrame(void)
 {
-    zehos_present(DG_ScreenBuffer, DOOMGENERIC_RESX, DOOMGENERIC_RESY, gametic, 0);
+    zehos_present_indexed(DG_ScreenBuffer, colors, DOOMGENERIC_RESX, DOOMGENERIC_RESY, gametic);
 }
 
 void DG_SleepMs(uint32_t ms) { zehos_sleep_ms(ms); }

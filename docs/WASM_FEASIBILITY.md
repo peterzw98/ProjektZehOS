@@ -65,18 +65,23 @@ Ergebnisse am 14. November 2026 (QEMU, TCG, 512 MiB):
 
 Normaler Release- und Recovery-Build: 0 Warnungen, 0 Fehler. Hosttests: 322/323; `TlsChecksChainNameAndDates` schlägt bereits auf dem unveränderten Ausgangsstand fehl.
 
-## Doom (Aufgabe 2 / Gate B) – Zwischenstand
+## Doom (Aufgabe 2 / Gate B) – Leistung
 
-[experiments/Wasm.DoomProbe](../experiments/Wasm.DoomProbe/) baut doomgeneric (Commit `e257a09`) mit ZehOS-Plattformschicht als 720-KB-WASIp1-Modul. Die C-Brücke stellt dafür einen nur lesenden WASI-Dateizugriff (ein freigegebener Ordner, keine absoluten Pfade, kein `..`, Schreib-/Anlegeabsichten werden abgelehnt) und die `zehos_v1`-Imports bereit. Die Probe startet Doom ohne Fenster, wenn `/data/doom.wasm` vorhanden ist (`test-wasm-loader.py --doom … --wad …`).
+[experiments/Wasm.DoomProbe](../experiments/Wasm.DoomProbe/) baut doomgeneric (Commit `e257a09`) mit ZehOS-Plattformschicht als 720-KB-WASIp1-Modul. Die C-Brücke stellt dafür einen nur lesenden WASI-Dateizugriff (ein freigegebener Ordner, keine absoluten Pfade, kein `..`, Schreib-/Anlegeabsichten werden abgelehnt) und die `zehos_v1`-Imports bereit. Die Probe startet Doom 60 s ohne Fenster, wenn `/data/doom.wasm` vorhanden ist (`test-wasm-loader.py --doom … --wad …`).
 
-| Messung (20 s, Titel- und Demoablauf, Freedoom 0.13.0) | Host (wasm3 nativ, Windows) | QEMU TCG, 512 MiB, CPU max |
+Der erste Stand zeichnete unter QEMU TCG nur rund 10 Bilder/s und war vollständig rechenbegrenzt (88 ms Wartezeit in 20 s). Die Rechenzeit pro Bild auf dem Host (wasm3 nativ, Titel-/Demoablauf) zeigte die Ursache:
+
+| Variante | ms pro Bild (Host) | QEMU TCG, 20 s |
 | --- | --- | --- |
-| Prüfbild Kanäle/Zeilen | korrekt | korrekt (`ff0000/00ff00/0000ff/ffffff`) |
-| Spielbilder/s | 64–67 | **9,9–10,5** |
-| Spieltakte/s | 32–33 | 32,0–32,5 |
-| Wartezeit in `sleep_ms` | – | 88–144 ms von 20 s |
+| 32-Bit-Ausgabe (Palettenumrechnung im Wasm-Code) | 6,0 | 9,9–10,5 Bilder/s |
+| 8-Bit-Ausgabe, Umrechnung nativ im Kernel (`present_indexed`) | 3,2 | 28,5 Bilder/s |
+| zusätzlich niedrige Detailstufe | 2,3 | 32,8 Bilder/s (durch Spieltakt begrenzt) |
 
-**Gate B ist damit nicht erfüllt.** Doom läuft im Gast korrekt und in Spielgeschwindigkeit, zeichnet aber nur etwa jedes dritte Bild; die Messung zeigt praktisch keine Wartezeit, der Engpass ist also die Rechenleistung (Interpreter in voll emulierter CPU). `-O3` für wasm3 und Doom änderte nichts messbar. QEMU mit WHPX scheitert beim Cosmos-Start (`WHPX: Unexpected VP exit code 4`, auch mit `kernel-irqchip=off`). Eingabe, Fenster, Fokus, F4/Esc und Neustarts sind noch nicht geprüft.
+`-O3`, Warten per `Thread.Yield` und das Umleiten von `memcpy` änderten nichts (wasm3 nutzt auf x86 direkte Speicherzugriffe und garantierte Endaufrufe). Übernommen wurde nur die 8-Bit-Ausgabe; sie ändert das Bild nicht.
+
+**Abschlussmessung** (QEMU TCG, 512 MiB, CPU `max`, 60 s Titel und Demos, Freedoom 0.13.0): **23,7 Bilder/s**, **34,3 Spieltakte/s**, Prüfbild `ff0000/00ff00/0000ff/ffffff` korrekt, regulärer Exit nach Beendigungsanforderung. QEMU mit WHPX scheitert beim Cosmos-Start (`WHPX: Unexpected VP exit code 4`, auch mit `kernel-irqchip=off`).
+
+Offen für Gate B: Fenster, Tastatur, Fokusverlust, F4/Esc, Schließen, zehn Neustarts und fehlende/beschädigte WAD.
 
 ## Grenzen und offene Punkte
 

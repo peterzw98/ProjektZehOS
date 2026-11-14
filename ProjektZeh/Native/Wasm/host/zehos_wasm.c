@@ -18,6 +18,7 @@ extern int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_
 extern void zehos_wasm_host_close(int32_t handle);
 // zehos_v1: Bild, Zeit und Eingabe fuer Anwendungen mit eigener Darstellung.
 extern void zehos_wasm_host_present(const uint32_t* pixels, int32_t width, int32_t height, int32_t tic, int32_t test);
+extern void zehos_wasm_host_present_indexed(const uint8_t* indices, const uint32_t* palette, int32_t width, int32_t height, int32_t tic);
 extern uint32_t zehos_wasm_host_ticks_ms(void);
 extern void zehos_wasm_host_sleep_ms(uint32_t milliseconds);
 extern int32_t zehos_wasm_host_poll_key(void);
@@ -432,6 +433,22 @@ static m3ApiRawFunction(zehos_present)
     m3ApiSuccess();
 }
 
+static m3ApiRawFunction(zehos_present_indexed)
+{
+    m3ApiGetArg(uint32_t, indices)
+    m3ApiGetArg(uint32_t, palette)
+    m3ApiGetArg(int32_t, width)
+    m3ApiGetArg(int32_t, height)
+    m3ApiGetArg(int32_t, tic)
+    if (width <= 0 || height <= 0 || width > 1920 || height > 1200) m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+    const uint8_t* data = (const uint8_t*)m3ApiOffsetToPtr(indices);
+    const uint32_t* colors = (const uint32_t*)m3ApiOffsetToPtr(palette);
+    m3ApiCheckMem(data, (size_t)width * (size_t)height);
+    m3ApiCheckMem(colors, 256 * 4);
+    zehos_wasm_host_present_indexed(data, colors, width, height, tic);
+    m3ApiSuccess();
+}
+
 static m3ApiRawFunction(zehos_ticks_ms)
 {
     m3ApiReturnType(uint32_t)
@@ -535,6 +552,7 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
     static const struct { const char* name; const char* signature; M3RawCall function; } zehos[] =
     {
         { "present", "v(iiiii)", zehos_present },
+        { "present_indexed", "v(iiiii)", zehos_present_indexed },
         { "ticks_ms", "i()", zehos_ticks_ms },
         { "sleep_ms", "v(i)", zehos_sleep_ms },
         { "poll_key", "i()", zehos_poll_key },
