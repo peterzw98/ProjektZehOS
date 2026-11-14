@@ -88,7 +88,7 @@ public sealed class DesktopTests
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Space));
         desktop.Handle(new(InputEventType.Text, Character: ' '));
         Assert.AreEqual(1, desktop.Windows.Count);
-        var terminal = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
+        var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
         Assert.AreEqual("", terminal.Editor.Text);
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Space));
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
@@ -101,7 +101,7 @@ public sealed class DesktopTests
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var window = desktop.Windows.ActiveWindow!;
-        var terminal = (TerminalApp)window.Application;
+        var terminal = ((TerminalWorkspaceApp)window.Application).ActiveTerminal;
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
         desktop.Handle(new(InputEventType.PointerDown, X: 320, Y: 740, Button: PointerButtons.Left));
         Assert.IsNull(desktop.Windows.ActiveWindow);
@@ -132,10 +132,10 @@ public sealed class DesktopTests
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: 15));
         Assert.AreSame(third, desktop.Windows.ActiveWindow);
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
-        Assert.AreEqual("", ((TerminalApp)third.Application).Editor.Text);
+        Assert.AreEqual("", ((TerminalWorkspaceApp)third.Application).ActiveTerminal.Editor.Text);
         desktop.Handle(new(InputEventType.Reset));
         desktop.Handle(new(InputEventType.Text, Character: 'y'));
-        Assert.AreEqual("y", ((TerminalApp)third.Application).Editor.Text);
+        Assert.AreEqual("y", ((TerminalWorkspaceApp)third.Application).ActiveTerminal.Editor.Text);
     }
 
     [TestMethod]
@@ -143,7 +143,7 @@ public sealed class DesktopTests
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
-        var terminal = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
+        var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
         desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
         desktop.Handle(new(InputEventType.Text, Character: 'z'));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
@@ -195,6 +195,6 @@ public sealed class DesktopTests
         Assert.AreEqual(0, desktop.Windows.Count);
         Assert.AreEqual(background[400 * 1024 + 500], pixels[400 * 1024 + 500]);
         Assert.IsTrue(desktop.OpenTerminal());
-        Assert.IsInstanceOfType<TerminalApp>(desktop.Windows.ActiveWindow!.Application);
+        Assert.IsInstanceOfType<TerminalWorkspaceApp>(desktop.Windows.ActiveWindow!.Application);
     }
 }

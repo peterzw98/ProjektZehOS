@@ -125,6 +125,8 @@ Nach Integration der Dateisystemänderungen aus `master` bleiben Datei- und Disk
 
 Die Anwendungen können zunächst gemeinsam im Kernel laufen und kooperativ Rechenzeit abgeben. Die anschließenden Etappen 6a bis 6c ergänzen Hintergrundaufgaben, Kommunikation und Dateirechte. Ein Fehler kann weiterhin das gesamte System betreffen. Prozessisolation und Speicherschutz bleiben Gegenstand von Etappe 12.4; vor dem Umgang mit beliebigen fremden Inhalten müssen sie erneut bewertet werden.
 
+**Konsolenausbau am 14. November 2026:** Ein Fenster unterstützt bis zu acht Tabs und vier Ansichten pro Tab, beide Teilungsrichtungen, Auswahl/Clipboard, Suche, Scrollleiste, Profile und Bitmapzoom. Die gemeinsame Shell ergänzt Vervollständigung, Verlaufssuche, Aliase, Pipes/Umleitungen sowie Datei- und Textwerkzeuge; Netzwerk bleibt ausgeklammert. 330 Hosttests und normale/Recovery-Builds bestehen. QEMU-Nachweise und offene VMware-/Hardwareprüfungen sind in [docs/KONSOLE_STATUS.md](docs/KONSOLE_STATUS.md) getrennt dokumentiert. Dies erweitert die abgeschlossene Terminaletappe; weitere Roadmap-Etappen werden dadurch nicht als erledigt markiert.
+
 ## 6a Multitasking und Scheduling
 
 **Zweck:** Mehrere Hintergrundaufgaben ausführen und die Verteilung ihrer Rechenzeit nachvollziehbar machen.

@@ -67,7 +67,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
-            () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
+            () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections);
     }
 
@@ -84,7 +84,7 @@ public sealed class Kernel : Sys.Kernel
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity);
+        var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
         var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity));
         ShellService? shell = null;
         shell = new ShellService(
@@ -105,7 +105,7 @@ public sealed class Kernel : Sys.Kernel
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
-            command => accounts.Authorize(identity, command));
+            command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
         shell.OnClose = () => { network.Close(); accounts.ReleaseSession(identity); };
         return shell;
     }

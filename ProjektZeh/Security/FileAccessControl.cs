@@ -102,6 +102,25 @@ internal sealed class FileAccessControl
         if (entries.Remove(path) && !(Persist?.Invoke() ?? Denied()).IsOK()) Lock();
     }
 
+    // Zielrechte vor der Umbenennung speichern: Nach einem Abbruch bleibt die Datei geschuetzt.
+    internal ResultErr PrepareMove(string source, string target)
+    {
+        if (!IsReady || !entries.TryGetValue(source, out var rights) || !IsManagedPath(target) || entries.ContainsKey(target)) return Denied();
+        entries.Add(target, rights);
+        var result = Persist?.Invoke() ?? Denied();
+        if (!result.IsOK()) Lock();
+        return result;
+    }
+
+    internal ResultErr RemoveEntry(string path)
+    {
+        if (!IsReady) return Denied();
+        entries.Remove(path);
+        var result = Persist?.Invoke() ?? Denied();
+        if (!result.IsOK()) Lock();
+        return result;
+    }
+
     public string Serialize()
     {
         var text = new StringBuilder(Header + "\n");
