@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <WasmSingleFileBundle>true</WasmSingleFileBundle>
+    <WasmEnableSIMD>false</WasmEnableSIMD>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>enable</Nullable>
+    <!-- Standardpfad des lokal entpackten wasi-sdk 25.0; .NET 10 verlangt genau diese Version. -->
+    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">$(MSBuildThisFileDirectory)../../.tools/wasi-sdk-25.0-x86_64-windows</WASI_SDK_PATH>
+  </PropertyGroup>
+  <ItemGroup><NativeFileReference Include="zehos_p1_sockets.c" /></ItemGroup>
+
+  <!-- ZehOS-Probe: gleiche Mono-Bibliotheken, aber mit WASIp1-libc und wasm-ld statt Komponentenlinker. -->
+  <Target Name="ZehOSUseWasiP1Compile" AfterTargets="_PrepareForWasiBuildNative">
+    <ItemGroup>
+      <_WasiClangCommonFlags Remove="--target=wasm32-unknown-wasip2" />
+      <_WasiClangCommonFlags Include="--target=wasm32-wasip1" />
+      <_ZehOSP2Libs Include="@(_WasmNativeFileForLinking)" Condition="$([System.String]::new('%(Identity)').Contains('wasm32-wasip2'))" />
+      <_WasmNativeFileForLinking Remove="@(_ZehOSP2Libs)" />
+      <_WasmNativeFileForLinking Include="@(_ZehOSP2Libs->'$([System.String]::new('%(Identity)').Replace('wasm32-wasip2','wasm32-wasip1'))')" />
+    </ItemGroup>
+  </Target>
+
+  <UsingTask TaskName="ZehOSRewriteRsp" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup><Files ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" /></ParameterGroup>
+    <Task><Code Type="Fragment" Language="cs"><![CDATA[
+      foreach (var item in Files)
+      {
+        var path = item.ItemSpec;
+        if (!System.IO.File.Exists(path)) continue;
+        var text = System.IO.File.ReadAllText(path).Replace("wasm32-unknown-wasip2", "wasm32-wasip1").Replace("wasm32-wasip2", "wasm32-wasip1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, "\"?-Wl,--component-type,\"[^\"]*\"\"?", "");
+        System.IO.File.WriteAllText(path, text);
+      }
+    ]]></Code></Task>
+  </UsingTask>
+
+  <Target Name="ZehOSUseWasiP1Link" BeforeTargets="_WasiLinkDotNet">
+    <ZehOSRewriteRsp Files="$(_WasmLinkRsp)" />
+  </Target>
+</Project>
