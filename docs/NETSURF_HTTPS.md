@@ -45,8 +45,13 @@ Von laser über den Koordinator entschieden:
 4. **Getrennte Fehlercodes:** `EPERM` (63) für abgelehnte Zertifikate, `EPROTO` (65) für TLS-Protokollfehler.
 5. **Eigener Fehlercode für fehlende Voraussetzungen** (Uhr, CPU-Zufall, Wurzelbundle), getrennt von „HTTPS nicht
    unterstützt“: `ENOSYS` (52).
+6. **Mixed Content:** Auf HTTPS-Seiten werden `http://`-Unterressourcen (Bilder, CSS, alles) blockiert, ohne
+   Fortfahren-Knopf; die Seite lädt ohne sie.
+7. **Formulare von einer HTTPS-Seite an ein `http://`-Ziel** zeigen eine Warnseite „Unverschlüsselter Versand“; erst
+   „Trotzdem senden“ schickt die Felder. Das gilt für POST und GET.
 
-Dazu vom Koordinator festgelegt: Endet TCP ohne `close_notify`, meldet `net_recv` nach den Restdaten `ECONNRESET`
+Dazu vom Koordinator festgelegt: Ein Meta-Refresh von HTTPS auf HTTP wird ohne Knopf blockiert (strenger als 1;
+laser kann den Knopf nachfordern). Endet TCP ohne `close_notify`, meldet `net_recv` nach den Restdaten `ECONNRESET`
 (15). Weil viele Server ohne `close_notify` schließen, muss der Fetcher bei `Content-Length` oder dem letzten Chunk
 sofort fertig sein und schließen, ohne auf EOF zu warten. Das tut er bereits: `http_response_feed` meldet dann
 `HTTP_DONE`, und `fetch_http.c` beendet den Abruf ohne EOF. Nur bei Antworten ohne Länge zählt das Ende; dort
@@ -168,6 +173,21 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   eigene HTML-Seite (`no-store`) mit dem Link „Trotzdem fortfahren“ auf die HTTP-Adresse (mit dem Koordinator
   abgestimmt). Die Ziel-URL ist dabei Fremdeingabe: HTML-escapen (`& < > " '`) und nur Schema `http` zulassen, sonst
   Fehlerseite ohne Link.
+- Mixed Content (Entscheidung 6): Der Fetcher lehnt `http://`-Abrufe ab, die nicht vom Benutzer ausgelöst wurden
+  (nicht verifizierbar) und eine HTTPS-Seite als Referer haben. Weil `struct fetch` privat ist, liest er beides über
+  zwei Getter aus `patches/netsurf-zehos-mixed-content.patch`. Derselbe Patch erzwingt in `llcache` für solche
+  Abrufe einen Neuabruf (sonst kämen sie am Fetcher vorbei aus dem Cache), gibt Favicons die Seite als Referer und
+  lässt einen Meta-Refresh von HTTPS auf HTTP unverifizierbar. Eine Unterressource mit Weiterleitung HTTPS → HTTP
+  scheitert ohne Warnseite.
+- Formulare (Entscheidung 7): Ein POST bleibt im Speicher des Fetchers (höchstens einer, 5 Minuten); die Warnseite
+  postet nur ein Einmaltoken (16 Byte aus `getentropy`, zeitkonstanter Vergleich). Ein falsches, kurzes oder
+  abgelaufenes Token ergibt eine lokale Fehlerseite ohne Netzabruf. GET-Formulare markiert `html/form.c` (Patch);
+  die Warnseite verlinkt die GET-URL. Warnseiten laden nichts nach (eigenes Favicon über `resource:`), damit die
+  Ziel-URL nicht vor dem Klick als Referer abfließt. Grenze: Neuladen oder Zurück/Vor zur GET-Warnseite ruft das
+  Ziel ohne erneute Warnung ab.
+- HSTS: NetSurfs vorhandenes `urldb` wertet `Strict-Transport-Security` aus HTTPS-Antworten aus und hebt
+  `http://`-Adressen solcher Hosts in `llcache` auf HTTPS, nur im Speicher bis zum Beenden. Eine Weiterleitung auf
+  so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
 - Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
