@@ -78,7 +78,7 @@ cmake -S wamr/product-mini/platforms/linux -B build-iwasm -DCMAKE_BUILD_TYPE=Rel
   -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIB_PTHREAD=0 -DCMAKE_EXE_LINKER_FLAGS=-rdynamic
 cmake --build build-iwasm -j
 gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c -o libzehos_host.so
-ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
+ZEHOS_NET=1 ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
   --map-dir=/::../../experiments/NetSurf.Wasi/bin/package --stack-size=1048576 \
   ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
 ```
@@ -90,7 +90,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   --host .tools/netsurf-host/libzehos_host.so
 ```
 
-Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht.
+Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung, eine abgebrochene Verbindung (RST), eine fehlende Netzwerkberechtigung, einen Cookie über eine Weiterleitung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht. Er hält die Kernelgrenzen ein (4 Verbindungen, 64 KiB je net_send/net_recv, EACCES ohne Berechtigung); ZEHOS_NET=1 ersetzt dort capability=net.
 
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
 
