@@ -16,13 +16,14 @@ internal sealed class WasmFrameTimes(long windowMilliseconds = 60_000)
     private int total;
     private long min;
     private long max;
+    private int pauses;
 
     /// <summary>Zaehlt den Abstand zum vorigen Bild; liefert nach Ablauf des Fensters dessen Zusammenfassung.</summary>
     public string? Record(long now)
     {
         if (last < 0)
         {
-            Restart(now);
+            last = now;
             windowStart = now;
             return null;
         }
@@ -33,16 +34,26 @@ internal sealed class WasmFrameTimes(long windowMilliseconds = 60_000)
         max = Math.Max(max, interval);
         total++;
         if (now - windowStart < windowMilliseconds) return null;
-        string report = $"Bildzeit n={total} min={min} median={Percentile(50)} p95={Percentile(95)} max={max} ms";
+        string report = $"Bildzeit n={total} min={min} median={Percentile(50)} p95={Percentile(95)} max={max} ms pausen={pauses}";
         Array.Clear(counts);
         total = 0;
         max = 0;
+        pauses = 0;
         windowStart = now;
         return report;
     }
 
-    /// <summary>Nach einer Pause: der Abstand dorthin ist keine Bildzeit der App.</summary>
-    public void Restart(long now) => last = now;
+    /// <summary>
+    /// Nach einer Pause: der Abstand dorthin ist keine Bildzeit der App. Gezaehlt wird sie trotzdem, weil auch ein
+    /// Desktop-Stillstand ueber der Sichtbarkeitsgrenze als Pause gilt und sonst unsichtbar aus der Messung fiele.
+    /// </summary>
+    public void Restart(long now)
+    {
+        // Vor dem ersten Bild beginnt hier auch das erste Fenster, damit die Ladezeit nicht hineinfaellt.
+        if (last < 0) windowStart = now;
+        last = now;
+        pauses++;
+    }
 
     // Naechster Rang; faellt er in den Ueberlaufeimer, gilt das genaue Maximum.
     private long Percentile(int percent)

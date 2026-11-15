@@ -439,10 +439,10 @@ class Guest:
         return [int(value) for value in re.findall(r"WASM Speicher frei=(\d+) KiB", log[mark:])]
 
     def frame_times(self, mark: int) -> list[dict[str, int]]:
-        """Doom-Bildzeiten je 60-s-Fenster seit mark (ms, heap in KiB); zerteilte Zeilen fehlen in der Liste."""
+        """Doom-Bildzeiten je 60-s-Fenster seit mark (ms, Pausen, heap in KiB); zerteilte Zeilen fehlen in der Liste."""
         log = (self.work / "serial.log").read_text(encoding="utf-8", errors="replace")
         pattern = (r"APP doom Bildzeit n=(?P<n>\d+) min=(?P<min>\d+) median=(?P<median>\d+) p95=(?P<p95>\d+) "
-                   r"max=(?P<max>\d+) ms heap=(?P<heap>\d+) KiB")
+                   r"max=(?P<max>\d+) ms pausen=(?P<pauses>\d+) heap=(?P<heap>\d+) KiB")
         return [{key: int(value) for key, value in match.groupdict().items()} for match in re.finditer(pattern, log[mark:])]
 
     def quit_testapp(self) -> None:
@@ -523,11 +523,15 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
             print("Doom-Bildzeit (ms): " + " ".join(f"{key}={value}" for key, value in window.items()), flush=True)
         if args.long_seconds >= 120 and not windows:
             raise RuntimeError("Keine Doom-Bildzeit im seriellen Protokoll.")
+        # Menue und Levelstart kosten Spielzeit vor dem Langlauf; ein Fenster weniger ist deshalb noch erwartet.
+        if len(windows) < args.long_seconds // 60 - 1:
+            print(f"Warnung: nur {len(windows)} Bildzeit-Fenster, Zeilen zerteilt oder Spielzeit pausiert.", flush=True)
         if windows:
+            # Pausen sind nicht gemessene Abstaende (auch Desktop-Stillstaende ueber 250 ms); 0 heisst nichts verborgen.
             print(f"Doom-Bildzeit gesamt: n={sum(w['n'] for w in windows)} min={min(w['min'] for w in windows)} "
                   f"median={min(w['median'] for w in windows)}-{max(w['median'] for w in windows)} "
                   f"p95<={max(w['p95'] for w in windows)} max={max(w['max'] for w in windows)} ms, "
-                  f"heap {windows[0]['heap'] / 1024:.1f}-{windows[-1]['heap'] / 1024:.1f} MiB", flush=True)
+                  f"pausen={sum(w['pauses'] for w in windows)}", flush=True)
     guest.shot("taskmanager-after")
     # Speicher nach dem Schliessen ueber X gegen den nach dem letzten Start; gemessen jeweils nach dem Aufraeumen.
     # Zerteilte Speicherzeilen fehlen in der Liste; dann vergleicht die Pruefung den ersten und letzten lesbaren Wert.
