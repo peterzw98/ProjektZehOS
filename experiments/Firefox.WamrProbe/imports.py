@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Listet Importe, Funktionsanzahl und Memory-Typ eines Wasm-Moduls (ohne Fremdpakete).
+"""Listet Importe, Exportanzahl, Funktionsanzahl und Memory-Typ eines Wasm-Moduls (ohne Fremdpakete).
 
 Aufruf: python imports.py <modul.wasm>. Memory-Flags: Bit 0 (1) = Maximum vorhanden,
 Bit 1 (2) = geteilt, Bit 2 (4) = memory64.
@@ -30,7 +30,7 @@ def limits(q):
     return (fl, mn, mx), q
 
 
-p = 8; imports = []; funcs = 0; mem = None
+p = 8; imports = []; exports = []; funcs = 0; mem = None
 while p < len(b):
     sid = b[p]; size, p = leb(p + 1); end = p + size
     if sid == 2:
@@ -47,8 +47,13 @@ while p < len(b):
             imports.append((m, f, k))
         if q != end: sys.exit("Importabschnitt nicht vollständig gelesen.")
     if sid == 3: funcs, _ = leb(p)
+    if sid == 7:
+        n, q = leb(p)
+        for _ in range(n):
+            e, q = name(q); q += 1; _, q = leb(q); exports.append(e)
     p = end
 c = collections.Counter(m for m, f, k in imports)
 print("imports", len(imports), dict(c), "defined funcs", funcs)
+print("exports", len(exports), "_start" in exports and "mit _start" or "ohne _start")
 print("memory flags/min pages/max pages", mem)
 for m, f, k in imports: print(m, f)
