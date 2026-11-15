@@ -124,8 +124,11 @@ static enum http_result parse_chunk_size(struct http_response *r, const char *li
 		if (size > (UINT64_MAX >> 4)) return HTTP_ERR_LIMIT;
 		size = (size << 4) | (uint64_t)digit;
 	}
-	// Chunk-Erweiterungen nach ';' werden ignoriert.
-	if (i == 0 || (i < len && line[i] != ';' && !is_ows(line[i]))) return HTTP_ERR_SYNTAX;
+	if (i == 0) return HTTP_ERR_SYNTAX;
+	// Nach optionalem Leerraum folgt nur eine ';'-Erweiterung (ignoriert) oder das Zeilenende; sonst könnten
+	// Zeilen wie "5 x" je nach Parser unterschiedlich gerahmt werden.
+	while (i < len && is_ows(line[i])) i++;
+	if (i < len && line[i] != ';') return HTTP_ERR_SYNTAX;
 	if (size == 0) {
 		r->state = S_TRAILER;
 		return HTTP_MORE;

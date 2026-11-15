@@ -96,6 +96,43 @@ int main(void) {
 	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n", 64, false, 1024, false, &s, NULL) == HTTP_ERR_UNSUPPORTED);
 	assert(run("HTTP/1.1 101 Switching\r\n\r\n", 64, false, 1024, false, &s, NULL) == HTTP_ERR_UNSUPPORTED);
 
+	// Chunk-Größenzeile: nach Hexziffern und optionalem Leerraum nur ';' oder Zeilenende.
+	static const char *const chunk_bad[] = { "5 x", "5x", "5\t1", " 5", "", "0x5", "5,6", "-5", "+5", "5\r", ";5", "5 5" };
+	for (size_t i = 0; i < sizeof(chunk_bad) / sizeof(chunk_bad[0]); i++) {
+		char text[128];
+		snprintf(text, sizeof(text), "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n%s\r\nhallo\r\n0\r\n\r\n", chunk_bad[i]);
+		for (size_t step = 1; step <= strlen(text); step++)
+			assert(run(text, step, false, 1024, true, &s, NULL) == HTTP_ERR_SYNTAX);
+	}
+	static const char *const chunk_good[] = { "5", "5 ", "5\t", "5;", "5 ;ext", "5\t;a=b", "5;a=\"x y\"", "00005", "5 \t ;x;y" };
+	for (size_t i = 0; i < sizeof(chunk_good) / sizeof(chunk_good[0]); i++) {
+		char text[128];
+		snprintf(text, sizeof(text), "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n%s\r\nhallo\r\n0\r\n\r\n", chunk_good[i]);
+		expect_body(text, "hallo", 200);
+	}
+	expect_body("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nA\r\n0123456789\r\n0;ende\r\n\r\n", "0123456789", 200);
+	expect_body("HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\na\n0123456789\n1\n!\n0\n\n", "0123456789!", 200);
+	// Bytes nach dem letzten Chunk und den Trailern gehören nicht mehr zur Antwort.
+	const char *chunk_tail = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\nT: 1\r\n\r\n";
+	char chunk_extra[128];
+	snprintf(chunk_extra, sizeof(chunk_extra), "%sHTTP/1.1 200 OK", chunk_tail);
+	assert(run(chunk_extra, 64, false, 1024, false, &s, &consumed) == HTTP_DONE);
+	assert(consumed == strlen(chunk_tail) && s.body_len == 2);
+	// Abgeschnitten nach dem letzten Chunk ohne abschließende Leerzeile bzw. ohne Chunk-Ende.
+	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n", 64, false, 1024, true, &s, NULL) == HTTP_ERR_TRUNCATED);
+	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: 1\r\n", 64, false, 1024, true, &s, NULL) == HTTP_ERR_TRUNCATED);
+	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab", 64, false, 1024, true, &s, NULL) == HTTP_ERR_TRUNCATED);
+	// Chunk-Rahmen zählt zum Rumpflimit: eine lange Erweiterung überschreitet es auch ohne Daten.
+	char long_ext[128];
+	snprintf(long_ext, sizeof(long_ext), "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;%040d\r\n", 0);
+	assert(run(long_ext, 64, false, 16, false, &s, NULL) == HTTP_ERR_LIMIT);
+	// Rahmen und Daten ergeben hier genau 11 Bytes: mit Limit 11 erlaubt, mit 10 nicht.
+	const char *chunk_exact = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+	assert(run(chunk_exact, 1, false, 11, true, &s, NULL) == HTTP_DONE && s.body_len == 3);
+	assert(run(chunk_exact, 1, false, 10, true, &s, NULL) == HTTP_ERR_LIMIT);
+	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n", 1, false, 11, false, &s, NULL) == HTTP_ERR_LIMIT);
+	assert(run("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n", 64, false, 1024, false, &s, NULL) == HTTP_ERR_LIMIT);
+
 	// Grenzen: Rumpf, Chunkgröße mit Überlauf, Kopfzeilenlänge und -anzahl.
 	assert(run("HTTP/1.1 200 OK\r\nContent-Length: 1025\r\n\r\n", 64, false, 1024, false, &s, NULL) == HTTP_ERR_LIMIT);
 	assert(run("HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999999\r\n\r\n", 64, false, 1024, false, &s, NULL) == HTTP_ERR_LIMIT);
