@@ -99,7 +99,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
   - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
 - **Inhalte:** kein Netz, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
-- **Prüfstand:** Linux-Prüfhost unter WAMR (`host/run_tests.py`) und ZehOS-Loader (wasm3) in QEMU 10.2.2 mit TCG über `scripts/test-netsurf-desktop.py`: `NETSURF_GUEST PASS` am 15. November 2026, frei 442 488–443 192 KiB (rund 432 MiB) über drei Starts. Unter KVM bootet ZehOS, aber QMP-Tastatureingaben kommen nicht an (Login-Zeitüberschreitung); VMware und echte Hardware ungeprüft.
+- **Prüfstand:** Linux-Prüfhost unter WAMR (`host/run_tests.py`) und ZehOS-Loader (wasm3) in QEMU 10.2.2 mit TCG über `scripts/test-netsurf-desktop.py`: `NETSURF_GUEST PASS` am 15. November 2026, frei 442 488–443 192 KiB (rund 432 MiB) über drei Starts. Unter KVM besteht der Lauf mit `-cpu qemu64,+rdrand,+rdseed` (ohne RDRAND/RDSEED scheitert die Kontoanlage, siehe [#56](https://github.com/peterzw98/ProjektZehOS/issues/56)); VMware und echte Hardware ungeprüft.
 
 ## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)
 
