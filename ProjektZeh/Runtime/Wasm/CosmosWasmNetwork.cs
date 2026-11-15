@@ -18,6 +18,7 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
     private static Thread? worker;
 #if ZEHOS_NETWORK_TEST
     internal static Action? BeforeConnect;
+    internal static Action? AfterConnect;
 #endif
 
     public IWasmNetworkConnection Open(string host, int port)
@@ -179,7 +180,15 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
 #if ZEHOS_NETWORK_TEST
                     BeforeConnect?.Invoke();
 #endif
-                    next.Connect(IPAddress.Parse(address), port);
+                    lock (gate) cancelled = closing;
+                    if (!cancelled)
+                    {
+                        next.Connect(IPAddress.Parse(address), port);
+#if ZEHOS_NETWORK_TEST
+                        AfterConnect?.Invoke();
+#endif
+                    }
+                    else { next.Close(0); next = null; }
                 }
             }
             catch (Exception exception) { failure = exception; }

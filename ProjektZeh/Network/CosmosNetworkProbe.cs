@@ -124,6 +124,18 @@ internal static class CosmosNetworkProbe
         string response = System.Text.Encoding.ASCII.GetString(data, 0, total);
         Check(eof && response.Contains("ZehOS network probe", StringComparison.Ordinal), "Wasm net response");
         Check(network.Close(handle) == 0 && network.CloseAll() == 0, "Wasm net close");
+        var pending = new ProjektZeh.Runtime.Wasm.WasmNetworkSession(new ProjektZeh.Runtime.Wasm.CosmosWasmNetworkConnector(), true);
+        Check(pending.Open("10.0.2.200", 18080, 0, out int blocked) == 0, "Wasm blocked open");
+        Thread.Sleep(300);
+        Check(pending.Status(blocked) == 6, "Wasm connect did not remain pending");
+        clock.Restart();
+        Check(pending.Close(blocked) == 0 && clock.ElapsedMilliseconds < 1000, "Wasm close during connect");
+        Check(pending.Open("10.0.2.2", 18080, 0, out int after) == 0, "Wasm open after close");
+        clock.Restart();
+        while ((status = pending.Status(after)) == 6 && clock.ElapsedMilliseconds < 60000) Thread.Sleep(20);
+        Check(status == 0 || status == 73, "Wasm pending completion " + status);
+        Write($"wasm-connect pending status={status} waitMs={clock.ElapsedMilliseconds}");
+        Check(pending.Close(after) == 0 && pending.CloseAll() == 0, "Wasm pending cleanup");
         Write("wasm-network PASS");
     }
     private sealed class NetworkProbeSession(bool allowed) : ProjektZeh.Runtime.Wasm.IWasmSession

@@ -92,7 +92,7 @@ namespace ProjektZeh.Tests
         }
 
         [TestMethod]
-        public void CloseDoesNotBlockOnConnectAndOrphanIsClosedAfterReturn()
+        public void CloseBeforeConnectPreventsConnection()
         {
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -100,6 +100,32 @@ namespace ProjektZeh.Tests
             using var entered = new ManualResetEventSlim();
             using var proceed = new ManualResetEventSlim();
             CosmosWasmNetworkConnector.BeforeConnect = () => { entered.Set(); proceed.Wait(5000); };
+            try
+            {
+                var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(), true);
+                Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, 0, out int handle));
+                Assert.IsTrue(entered.Wait(5000));
+                Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+                proceed.Set();
+                Thread.Sleep(100);
+                Assert.IsFalse(listener.Pending());
+            }
+            finally
+            {
+                proceed.Set();
+                CosmosWasmNetworkConnector.BeforeConnect = null;
+            }
+        }
+
+        [TestMethod]
+        public void CloseDoesNotBlockOnConnectAndOrphanIsClosedAfterReturn()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            using var entered = new ManualResetEventSlim();
+            using var proceed = new ManualResetEventSlim();
+            CosmosWasmNetworkConnector.AfterConnect = () => { entered.Set(); proceed.Wait(5000); };
             try
             {
                 var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(), true);
@@ -118,7 +144,7 @@ namespace ProjektZeh.Tests
             finally
             {
                 proceed.Set();
-                CosmosWasmNetworkConnector.BeforeConnect = null;
+                CosmosWasmNetworkConnector.AfterConnect = null;
             }
         }
 
