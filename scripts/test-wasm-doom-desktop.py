@@ -5,7 +5,8 @@ Das ISO muss mit -p:ZehOSWasm=true, -p:ZehOSPackageKeyPath (Testschluessel) und 
 gebaut sein. Das Skript baut daraus ein Testrepository: Doom aus --repo und die kleine App scripts/guest-testapp
 (Version 1.0.0, im Upgrade-Repository 1.1.0), signiert mit --key. Die Paketlogik wird mit der kleinen App geprueft,
 Doom nur im Szenario full. Ergebnisse erscheinen seriell als "PKG ...", "NET ...", "APP <id> ..." (erstes Bild,
-Ende) und "Desktop ist bereit." / "Textshell aktiv."; das Skript wartet auf diese Zeilen statt auf feste Zeiten.
+Ende), "WASM Speicher frei=..." (nach dem Aufraeumen eines Laufs) und "Desktop ist bereit." / "Textshell aktiv.";
+das Skript wartet auf diese Zeilen statt auf feste Zeiten.
 Die Bedienung wird anhand der Bildschirmfotos ausgewertet.
 
 Snapshot (nur TCG; WHPX blockiert savevm): Eine Vorbereitungs-VM bootet einmal, richtet das Konto ein, holt DHCP
@@ -16,7 +17,8 @@ eine Wegwerfkopie (qcow2) im Arbeitsordner; vorhandene Datenimages werden nicht 
 
 Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   full     Doom: neues Spiel, laufen/schiessen, Textshell (F4/Esc), Schliessen ueber X, Taskmanager,
-           --starts Starts (Standard 3, fuer die Speicherpruefung 10) mit Beenden ueber das Doom-Menue.
+           --starts Starts (Standard 3, fuer die Speicherpruefung 10) mit Beenden ueber das Doom-Menue; der freie
+           Speicher darf dabei um hoechstens 8 MiB sinken.
   remove   Entfernen waehrend die App laeuft (abgelehnt), Entfernen, Startmenue ohne App, pkg install-local.
   reboot   Installation, Neustart mit Anmeldung, Start der App und von Doom (erneute Pruefung) nach dem Neustart.
   upgrade  Installation, Katalog mit hoeherer Generation, pkg upgrade auf 1.1.0, Start.
@@ -54,6 +56,8 @@ GROUPS = {"quick": ["remove", "upgrade", "corrupt"], "all": SCENARIOS}
 SNAPSHOT_FORMAT = "1"
 SNAPSHOTS = ROOT / ".tools" / "guest-snapshots"
 KEPT_SNAPSHOTS = 2
+# Erlaubter Rueckgang des freien Speichers ueber die Doom-Starts; gemessen schwankt er um weniger als 1 MiB.
+MEMORY_TOLERANCE_KIB = 8 * 1024
 TESTAPP_COLORS = {"1.0.0": "0x0000a0e0u", "1.1.0": "0x0030c040u"}
 
 
@@ -400,8 +404,17 @@ class Guest:
         for key, pause in keys:
             self.qmp.tap(key)
             time.sleep(pause)
-        self.wait(f"APP {name} beendet", 60, mark)
-        time.sleep(0.5)
+        self.wait_finished(name, mark)
+
+    def wait_finished(self, name: str, mark: int) -> None:
+        """Wartet auf das Ende der App und das anschliessende Aufraeumen des Wasm-Workers (Speicherzeile)."""
+        end = self.wait(f"APP {name} beendet", 60, mark)
+        self.wait("WASM Speicher", 60, end)
+
+    def free_memory(self, mark: int) -> list[int]:
+        """Freier Speicher in KiB nach jedem Wasm-Lauf seit mark; zerteilte Zeilen fehlen in der Liste."""
+        log = (self.work / "serial.log").read_text(encoding="utf-8", errors="replace")
+        return [int(value) for value in re.findall(r"WASM Speicher frei=(\d+) KiB", log[mark:])]
 
     def quit_testapp(self) -> None:
         self.quit_app("testapp", ("q", 0))
@@ -440,11 +453,10 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
     time.sleep(1.5)
     guest.shot("resumed-fired")
     # Doom ist das erste Fenster; sein Schliessen-Feld liegt bei 1920x1080 an fester Stelle.
-    mark = guest.mark()
+    memory_mark = guest.mark()
     qmp.click(813, 100, *guest.size)
     # Belegt das Beenden und verhindert, dass die Ende-Marke in den naechsten Start faellt.
-    guest.wait("APP doom beendet", 60, mark)
-    time.sleep(0.5)
+    guest.wait_finished("doom", memory_mark)
     guest.shot("closed-x")
     guest.launch("taskmanager")
     time.sleep(3)
@@ -454,6 +466,14 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
         guest.shot(f"start-{run:02d}")
         guest.quit_doom()
     guest.shot("taskmanager-after")
+    # Speicher nach dem Schliessen ueber X gegen den nach dem letzten Start; gemessen jeweils nach dem Aufraeumen.
+    # Zerteilte Speicherzeilen fehlen in der Liste; dann vergleicht die Pruefung den ersten und letzten lesbaren Wert.
+    free = guest.free_memory(memory_mark)
+    print("frei nach jedem Doom-Lauf (MiB): " + " ".join(f"{value / 1024:.1f}" for value in free), flush=True)
+    if len(free) < 2:
+        raise RuntimeError("Zu wenige Speicherzeilen im seriellen Protokoll.")
+    if free[0] - free[-1] > MEMORY_TOLERANCE_KIB:
+        raise RuntimeError(f"Freier Speicher sinkt ueber die Starts um {(free[0] - free[-1]) / 1024:.1f} MiB.")
 
 
 def scenario_remove(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:

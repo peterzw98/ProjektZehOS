@@ -33,7 +33,10 @@ public sealed class TlsTransportTests
         request.CertificateExtensions.Add(san.Build());
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         using X509Certificate2 unsigned = request.Create(ca, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1), [1, 2, 3]);
-        using X509Certificate2 serverCert = unsigned.CopyWithPrivateKey(key);
+        using X509Certificate2 withKey = unsigned.CopyWithPrivateKey(key);
+        // SChannel unter Windows lehnt fluechtige Schluessel als Serverzertifikat ab ("platform does not support
+        // ephemeral keys"); ueber PFX geladen ist der Schluessel gespeichert und der Test laeuft auf allen Plattformen.
+        using X509Certificate2 serverCert = X509CertificateLoader.LoadPkcs12(withKey.Export(X509ContentType.Pfx), null);
         byte[] roots = Encoding.ASCII.GetBytes(ca.ExportCertificatePem());
         Assert.ThrowsException<InvalidOperationException>(() => TlsTransport.Open(new MemoryStream(), "localhost", bytes => RandomNumberGenerator.Fill(bytes), roots, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
         Assert.ThrowsException<CryptographicException>(() => TlsTransport.Open(new MemoryStream(), "localhost", _ => throw new CryptographicException("Keine Entropie"), roots, DateTime.UtcNow));

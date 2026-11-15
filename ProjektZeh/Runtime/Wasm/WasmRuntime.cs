@@ -125,7 +125,19 @@ internal static unsafe class WasmRuntime
             // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
             // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
             GC.Collect();
+            // Eine Diagnosezeile darf den gemeinsamen Worker nicht beenden; danach haengen sonst alle weiteren Laeufe.
+            try { ReportMemory(); }
+            catch (Exception) { /* Nur die Speicherzeile fehlt; Gasttests melden dann zu wenige Werte. */ }
         }
+    }
+
+    // Seriell nach dem Sammeln: erst dann ist der Lauf vollstaendig aufgeraeumt. Gasttests vergleichen damit den
+    // Speicher ueber viele Laeufe; eine Messung direkt nach "APP <id> beendet" enthielt noch ungesammelten Muell.
+    private static void ReportMemory()
+    {
+        var physical = CosmosSystemInfo.PhysicalMemory();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+            $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB\n");
     }
 
     private static WasmStatus Execute(byte[] module, string entry, ulong gas, IWasmSession session, out int result, out string message)
