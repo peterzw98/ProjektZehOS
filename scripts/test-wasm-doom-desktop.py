@@ -171,7 +171,25 @@ class Repository:
 
 def qemu_tool(name: str) -> Path:
     found = shutil.which(name)
-    return Path(found) if found else Path.home() / "AppData/Local/Cosmos/Tools/qemu/bin" / (name + ".exe")
+    if found:
+        return Path(found)
+    # Die Cosmos CLI legt QEMU unter Linux ohne bin/ ab, unter Windows mit bin/ und .exe.
+    for candidate in (Path.home() / ".cosmos/tools/qemu" / name, Path.home() / "AppData/Local/Cosmos/Tools/qemu/bin" / (name + ".exe")):
+        if candidate.is_file():
+            return candidate
+    sys.exit(f"{name} nicht gefunden: weder im PATH noch unter ~/.cosmos/tools/qemu/ (Linux) "
+             "oder ~/AppData/Local/Cosmos/Tools/qemu/bin/ (Windows)")
+
+
+def qemu_img() -> tuple[list[str], dict[str, str] | None]:
+    """Aufruf von qemu-img; der Linux-Wrapper der Cosmos CLI haengt -L an, das qemu-img ablehnt."""
+    tool = qemu_tool("qemu-img")
+    real = tool.with_name(tool.name + ".real")
+    if not real.is_file():
+        return [str(tool)], None
+    environment = dict(os.environ)
+    environment["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [str(tool.parent / "lib"), environment.get("LD_LIBRARY_PATH")]))
+    return [str(real)], environment
 
 
 def free_port() -> int:
@@ -183,8 +201,9 @@ def free_port() -> int:
 
 def create_disk(directory: Path, image: Path) -> None:
     """Erzeugt aus einem Ordner ein beschreibbares FAT-Datenlaufwerk (qcow2) ueber den vvfat-Treiber von QEMU."""
-    subprocess.run([str(qemu_tool("qemu-img")), "convert", "-f", "vvfat", "-O", "qcow2", f"fat:{directory}", str(image)],
-                   check=True, stdout=subprocess.DEVNULL)
+    tool, environment = qemu_img()
+    subprocess.run([*tool, "convert", "-f", "vvfat", "-O", "qcow2", f"fat:{directory}", str(image)],
+                   check=True, stdout=subprocess.DEVNULL, env=environment)
 
 
 # Maschine und Geraete muessen beim Laden eines Snapshots gleich sein; sie gehen deshalb in dessen Schluessel ein.
@@ -197,7 +216,9 @@ MACHINE = ["-machine", "q35", "-m", "512M", "-vga", "std", "-boot", "d", "-displ
 
 def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None) -> subprocess.Popen:
     qemu = qemu_tool("qemu-system-x86_64")
-    share = qemu.parent.parent / "share" / "qemu"
+    # Windows: bin/../share/qemu; Cosmos unter Linux: share/qemu neben dem Wrapper.
+    share = next((d for d in (qemu.parent.parent / "share" / "qemu", qemu.parent / "share" / "qemu") if d.is_dir()),
+                 qemu.parent.parent / "share" / "qemu")
     # Unter WHPX bricht der Gast mit -cpu max oder host sofort ab (Unexpected VP exit code 4); das Standardmodell laeuft.
     cpu = ["-cpu", "max"] if accel == "tcg" else []
     arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *MACHINE, "-cdrom", str(iso),
