@@ -2,6 +2,8 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+# Shell-Skripte laufen unter Linux, etwa im Paketserver-Container; CRLF wuerde sie brechen.
+*.sh text eol=lf
 
 ###############################################################################
 # Set default behavior for command prompt diff.
