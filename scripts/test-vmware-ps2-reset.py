@@ -8,6 +8,8 @@ Zwei Arten des Neustarts:
            Nach jeder Bindung meldet sich das Skript per VNC an (--user, Kennwort aus der Umgebungsvariablen
            ZEHOS_PS2_PASSWORD), wechselt mit F4 in die Textshell und tippt "reboot". Das ist der Warmstart ueber ACPI,
            nach dem der Fehler beobachtet wurde. Scheitert die Bindung, startet "vmrun reset hard" die VM neu.
+           VMware-VNC tippt mit US-Belegung, der Gast nutzt die deutsche: Konto und Kennwort deshalb ohne y, z und
+           Sonderzeichen waehlen.
            serial.log der VM wird zu Beginn geleert; die Platte wird weiterbenutzt.
 
 Nach jedem Start wartet das Skript auf die serielle Zeile "ps2:kbd offer Ps2KeyboardDriver -> ...". Am Ende steht je
@@ -77,16 +79,18 @@ def prepare_work(work: Path) -> None:
     work.mkdir(parents=True)
 
 
-def wait_for_match(serial: Path, pattern: re.Pattern[str], seen: int, timeout: float) -> re.Match[str] | None:
-    """Liefert den Treffer mit Index seen, sobald er im Protokoll steht, oder None nach der Frist."""
+def wait_for_match(serial: Path, pattern: re.Pattern[str], seen: int, timeout: float, start: int = 0) -> re.Match[str] | None:
+    """Liefert den Treffer mit Index seen ab Position start, sobald er im Protokoll steht, oder None nach der Frist."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
+        # Mindestens einmal pruefen, auch wenn die Frist schon beim Aufruf abgelaufen ist.
         if serial.is_file():
-            matches = list(pattern.finditer(serial.read_text(encoding="utf-8", errors="replace")))
+            matches = list(pattern.finditer(serial.read_text(encoding="utf-8", errors="replace"), start))
             if len(matches) > seen:
                 return matches[seen]
+        if time.monotonic() >= deadline:
+            return None
         time.sleep(1)
-    return None
 
 
 def wait_for_offer(serial: Path, seen: int) -> str | None:
@@ -96,46 +100,35 @@ def wait_for_offer(serial: Path, seen: int) -> str | None:
 
 
 class GuestReboot:
-    """Startet den Gast ueber Anmeldung, Textshell und "reboot" neu; zaehlt die eigenen Schritte im Protokoll."""
+    """Startet den Gast ueber Anmeldung, Textshell und "reboot" neu."""
 
-    def __init__(self, serial: Path, work: Path, port: int, user: str, password: str):
+    def __init__(self, serial: Path, port: int, user: str, password: str):
         self.serial = serial
-        self.script = work / "ps2-reboot-keys.txt"
         self.port = port
         self.user = user
         self.password = password
-        self.desktops = self.logins = self.shells = 0
 
     def type(self, *lines: str) -> None:
-        # Das Testkennwort steht nur kurz in dieser Datei, nicht in der Prozessliste.
-        self.script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        try:
-            completed = subprocess.run([sys.executable, str(VNC_TYPE), "--port", str(self.port), "--script", str(self.script)],
-                                       capture_output=True, text=True)
-        finally:
-            self.script.unlink(missing_ok=True)
+        # Ueber stdin statt ueber eine Datei, damit das Testkennwort nirgends liegen bleibt.
+        completed = subprocess.run([sys.executable, str(VNC_TYPE), "--port", str(self.port), "--script", "/dev/stdin"],
+                                   input="\n".join(lines) + "\n", capture_output=True, text=True)
         if completed.returncode != 0:
             raise RuntimeError(f"vnc_type: {completed.stderr.strip()}")
 
-    def wait(self, pattern: re.Pattern[str], seen: int, what: str) -> None:
-        if wait_for_match(self.serial, pattern, seen, STEP_TIMEOUT) is None:
+    def wait(self, pattern: re.Pattern[str], start: int, what: str) -> int:
+        """Wartet auf die erste Marke ab start; so verschiebt eine zusaetzliche Marke frueherer Starts nichts."""
+        match = wait_for_match(self.serial, pattern, 0, STEP_TIMEOUT, start)
+        if match is None:
             raise RuntimeError(f"{what} nicht erreicht")
+        return match.end()
 
-    def __call__(self, vmx: Path) -> None:
-        self.wait(DESKTOP_READY, self.desktops, "Anmeldebildschirm")
-        self.desktops += 1
+    def __call__(self, offer_end: int) -> None:
+        position = self.wait(DESKTOP_READY, offer_end, "Anmeldebildschirm")
         self.type(f"text: {self.user}", "key: return", "sleep: 1", f"text: {self.password}", "key: return")
-        self.wait(LOGGED_IN, self.logins, "Anmeldung")
-        self.logins += 1
+        position = self.wait(LOGGED_IN, position, "Anmeldung")
         self.type("sleep: 1", "key: f4")
-        self.wait(TEXT_SHELL, self.shells, "Textshell")
-        self.shells += 1
+        self.wait(TEXT_SHELL, position, "Textshell")
         self.type("text: reboot", "key: return")
-
-    def skip_boot(self) -> None:
-        """Ein Start ohne Tastatur wird hart neu gestartet; seine Desktopmarke darf den Zaehler nicht verschieben."""
-        if wait_for_match(self.serial, DESKTOP_READY, self.desktops, STEP_TIMEOUT) is not None:
-            self.desktops += 1
 
 
 def run_loop(vmx: Path, serial: Path, runs: int, guest: GuestReboot | None = None) -> tuple[collections.Counter[str], bool]:
@@ -154,10 +147,10 @@ def run_loop(vmx: Path, serial: Path, runs: int, guest: GuestReboot | None = Non
             if run + 1 == runs:
                 break
             if guest is not None and result == "bound":
-                guest(vmx)
+                offer = wait_for_match(serial, OFFER, run, BOOT_TIMEOUT)
+                assert offer is not None
+                guest(offer.end())
             else:
-                if guest is not None:
-                    guest.skip_boot()
                 vmrun("reset", str(vmx), "hard")
     except (RuntimeError, OSError, KeyboardInterrupt) as error:
         print(f"Abbruch: {error!r}", file=sys.stderr)
@@ -193,9 +186,10 @@ def main() -> int:
         found = SERIAL_FILE.search(vmx.read_text(encoding="utf-8"))
         if not password or found is None:
             sys.exit("ZEHOS_PS2_PASSWORD und serial0.fileName in der VMX werden benoetigt")
-        serial = Path(found.group(1))
+        # VMware loest einen relativen Pfad vom VMX-Ordner aus auf; ein absoluter bleibt unveraendert.
+        serial = vmx.parent / found.group(1)
         serial.write_text("", encoding="utf-8")
-        guest = GuestReboot(serial, vmx.parent, args.vnc_port, args.user, password)
+        guest = GuestReboot(serial, args.vnc_port, args.user, password)
 
     results, complete = run_loop(vmx, serial, args.runs, guest)
     for result, count in results.most_common():

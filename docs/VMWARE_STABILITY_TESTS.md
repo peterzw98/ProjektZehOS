@@ -63,7 +63,7 @@ Der Gegenpruefer ordnet den Fehllauf seinem Linux-Protokoll `.tools/vmware-e2e3/
 `scripts/test-vmware-ps2-reset.py` startet ZehOS in VMware Workstation unter Linux wiederholt neu und zaehlt nach jeder seriellen Zeile `ps2:kbd offer Ps2KeyboardDriver -> ...` das Ergebnis. Es kennt zwei Arten des Neustarts:
 
 - `--iso`: Start nur vom ISO, ohne Datenlaufwerk und Netz; neu gestartet wird mit `vmrun reset hard`.
-- `--vmx`: eine ausgeschaltete VM mit installiertem ZehOS und VNC auf `127.0.0.1`. Nach jeder Bindung meldet sich das Skript ueber `scripts/vnc_type.py` an (`--user`, Kennwort aus `ZEHOS_PS2_PASSWORD`), wechselt mit F4 in die Textshell und tippt `reboot`. Das ist der Warmstart ueber ACPI (`lai_acpi_reset`), nach dem der Fehler beobachtet wurde. Scheitert eine Bindung, startet `vmrun reset hard` die VM neu.
+- `--vmx`: eine ausgeschaltete VM mit installiertem ZehOS und VNC auf `127.0.0.1`. Nach jeder Bindung meldet sich das Skript ueber `scripts/vnc_type.py` an (`--user`, Kennwort aus `ZEHOS_PS2_PASSWORD`), wechselt mit F4 in die Textshell und tippt `reboot`. Das ist der Warmstart ueber ACPI (`lai_acpi_reset`), nach dem der Fehler beobachtet wurde. Scheitert eine Bindung, startet `vmrun reset hard` die VM neu. VMware-VNC tippt mit US-Belegung, der Gast nutzt die deutsche; Konto und Kennwort deshalb ohne `y`, `z` und Sonderzeichen waehlen.
 
 ```sh
 python3 scripts/test-vmware-ps2-reset.py --iso ProjektZeh/output-x64/ProjektZeh.iso --runs 100
@@ -75,9 +75,9 @@ Ergebnisse mit VMware Workstation 26.0.1 unter Linux, 1 vCPU, UEFI:
 | Ablauf | Stand | Starts | Ergebnis |
 | --- | --- | --- | --- |
 | Hardware-Reset, ISO ohne Datenlaufwerk | master `1671481` (0.2.1) | 100 | 100 `bound` |
-| Gast-`reboot` nach Anmeldung, installierte Platte | `fix/ps2-warmreset` (0.2.4, Installer-ISO, neue 256-MiB-Platte) | 50 (49 Warmstarts) | 50 `bound` |
+| Gast-`reboot` nach Anmeldung, installierte Platte | `b817c24` (0.2.4, Installer-ISO, neue 256-MiB-Platte) | 50 (49 Warmstarts) | 50 `bound` |
 
-Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warmstarts folgte auf Anmeldung, F4 und Tastatureingaben ueber VNC (50 ms Druck, 50 ms Abstand). Der Fehler liess sich damit nicht reproduzieren; bei einer beobachteten Rate von 1 zu 26 waere in 49 Warmstarts mit etwa 85 % Wahrscheinlichkeit mindestens ein Fehllauf zu erwarten gewesen. Abweichend vom Fehllauf liefen die Gaeste nur jeweils etwa eine halbe Minute, der Desktop blieb ohne geoeffnete Fenster und `/data` war die frisch installierte Platte. Der Befund bleibt offen.
+Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warmstarts folgte auf Anmeldung, F4 und Tastatureingaben ueber VNC (50 ms Druck, 50 ms Abstand). Der Fehler liess sich damit nicht reproduzieren; bei einer beobachteten Rate von 1 zu 26 waere in 49 Warmstarts mit etwa 85 % Wahrscheinlichkeit mindestens ein Fehllauf zu erwarten gewesen. Abweichend vom Fehllauf dauerte ein vollstaendiger Zyklus mit Start, Anmeldung und `reboot` nur etwa 16 s, der Desktop blieb ohne geoeffnete Fenster und `/data` war die frisch installierte Platte. Der Befund bleibt offen.
 
 ## Grenzen
 

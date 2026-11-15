@@ -62,5 +62,43 @@ class RunLoopTests(unittest.TestCase):
         self.assertEqual(results, {'bound': 1})
 
 
+class GuestRebootTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.serial = Path(directory.name) / 'serial.log'
+        self.guest = ps2_reset.GuestReboot(self.serial, 5974, 'tester', 'geheim123456')
+        self.typed = []
+        patcher = mock.patch.object(self.guest, 'type', side_effect=lambda *lines: self.typed.append(lines))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_waits_for_markers_after_current_offer(self):
+        # Eine Textshell-Marke vor der aktuellen Bindung darf den naechsten Start nicht vorziehen.
+        old = 'Desktop: Textshell aktiv.\n'
+        boot = ('[Drivers] ps2:kbd offer Ps2KeyboardDriver -> bound\n'
+                'Desktop: Desktop ist bereit.\nSession: Benutzer angemeldet.\nDesktop: Textshell aktiv.\n')
+        self.serial.write_text(old + boot)
+        self.guest(len(old))
+        self.assertEqual([lines[-1] for lines in self.typed], ['key: return', 'key: f4', 'key: return'])
+        self.assertIn('text: reboot', self.typed[-1])
+
+    def test_missing_login_aborts(self):
+        self.serial.write_text('Desktop: Desktop ist bereit.\n')
+        with mock.patch.object(ps2_reset, 'STEP_TIMEOUT', 0), self.assertRaisesRegex(RuntimeError, 'Anmeldung'):
+            self.guest(0)
+
+    def test_unbound_keyboard_is_reset_instead_of_typed(self):
+        guest = mock.Mock()
+        calls = []
+        with mock.patch.object(ps2_reset, 'vmrun', side_effect=lambda *a: calls.append(a[0])), \
+                mock.patch.object(ps2_reset, 'wait_for_offer', side_effect=['failed: x', 'bound']), \
+                mock.patch.object(ps2_reset.subprocess, 'run'):
+            results, complete = ps2_reset.run_loop(Path('x.vmx'), self.serial, 2, guest)
+        self.assertTrue(complete)
+        self.assertEqual(calls, ['start', 'reset'])
+        guest.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
