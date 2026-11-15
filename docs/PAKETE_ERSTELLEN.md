@@ -1,6 +1,6 @@
 # Apps für ZehOS bauen und als Paket veröffentlichen
 
-Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehOS-Wasm-Loader können darf und wie sie zum signierten Paket wird. Formatdetails stehen in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md), Messwerte und Hintergründe in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md). Geprüft ist bisher nur Doom (C, doomgeneric) unter QEMU; die C#-Probe lief nur als Konsolenprogramm in der Gastprobe, nicht als Paket.
+Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehOS-Wasm-Loader können darf und wie sie zum signierten Paket wird. Formatdetails stehen in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md), Messwerte und Hintergründe in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md). Unter QEMU geprüft sind Doom (C, doomgeneric) und NetSurf 3.11 als Offlinebrowser (siehe [NETSURF.md](NETSURF.md)); die C#-Probe lief nur als Konsolenprogramm in der Gastprobe, nicht als Paket.
 
 ## Was eine App ist
 

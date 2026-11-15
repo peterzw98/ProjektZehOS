@@ -1,10 +1,10 @@
 # NetSurf als ZehOS-Paket (WASIp1)
 
-NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene libnsfb-OberflÃ¤che (`frontend/zehos.c`) zeichnet Ã¼ber `zehos_v1.present` und liest Eingaben Ã¼ber `zehos_v1.poll_event`. Quellen und Werkzeuge werden nicht eingecheckt; `build.py` lÃ¤dt sie mit festen SHA-256-Werten nach `.tools/netsurf/`.
+NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene libnsfb-Oberfläche (`frontend/zehos.c`) zeichnet über `zehos_v1.present` und liest Eingaben über `zehos_v1.poll_event`. Quellen und Werkzeuge werden nicht eingecheckt; `build.py` lädt sie mit festen SHA-256-Werten nach `.tools/netsurf/`.
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `patch` sowie den nativen Entwicklungspaketen fÃ¼r libpng und zlib (z. B. `libpng-dev`, `zlib1g-dev`). Die nativen Generatoren brauchen diese auch bei ausgeschalteten PNG-Inhalten:
+Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `patch` sowie den nativen Entwicklungspaketen für libpng und zlib (z. B. `libpng-dev`, `zlib1g-dev`). Die nativen Generatoren brauchen diese auch bei ausgeschalteten PNG-Inhalten:
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py
@@ -16,7 +16,7 @@ Ergebnis ist `experiments/NetSurf.Wasi/bin/package/`:
 | --- | --- |
 | `netsurf.wasm` | Einstieg `_start` |
 | `res/` | Messages, CSS, interne Seiten, `Choices` mit Startseite `file:///pages/index.html` |
-| `pages/` | Testseiten: Start (blau), Linkziel (grÃ¼n), langer Text (orange), Eingabefeld (lila), kaputter Link |
+| `pages/` | Testseiten: Start (blau), Linkziel (grün), langer Text (orange), Eingabefeld (lila), kaputter Link |
 | `licenses/` | NetSurf (GPL-2.0), NetSurf-Bibliotheken (MIT), utf8proc, zlib |
 
 Bestandteile:
@@ -24,7 +24,7 @@ Bestandteile:
 | Baustein | Stand |
 | --- | --- |
 | NetSurf | `netsurf-all-3.11.tar.gz` |
-| wasi-sdk | 25.0 fÃ¼r Linux (dieselbe Version wie fÃ¼r Doom) |
+| wasi-sdk | 25.0 für Linux (dieselbe Version wie für Doom) |
 | zlib | 1.3.1 |
 
 Zwei Bibliotheken fehlen bewusst: libsvgtiny braucht setjmp/longjmp, und libdom verzichtet auf expat und nutzt hubbub.
@@ -32,7 +32,7 @@ Zwei Bibliotheken fehlen bewusst: libsvgtiny braucht setjmp/longjmp, und libdom 
 Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 
 - `libnsfb-wasi-dump.patch`: `nsfb_dump` ohne `dup()`, das WASI nicht kennt.
-- `libnsfb-zehos-surface.patch`: OberflÃ¤chentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wÃ¤hlt.
+- `libnsfb-zehos-surface.patch`: Oberflächentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wählt.
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
 - `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust).
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an.
@@ -58,14 +58,14 @@ Importe des Moduls:
 
 Annahmen:
 
-- **Bild:** festes Bild 632Ã—392, 0x00RRGGBB, immer vollstÃ¤ndig je `present`.
-- **Laufzeit:** Die Hauptschleife wartet hÃ¶chstens 16 ms je `sleep_ms` und fragt dazwischen `should_exit` ab. Danach endet `_start` regulÃ¤r.
-- **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (fÃ¼r Nicht-Links `EINVAL`). `fd_readdir` ist nur fÃ¼r Verzeichnislisten nÃ¶tig.
+- **Bild:** festes Bild 632×392, 0x00RRGGBB, immer vollständig je `present`.
+- **Laufzeit:** Die Hauptschleife wartet höchstens 16 ms je `sleep_ms` und fragt dazwischen `should_exit` ab. Danach endet `_start` regulär.
+- **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (für Nicht-Links `EINVAL`). `fd_readdir` ist nur für Verzeichnislisten nötig.
 - **Tasten:** normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal), zum Beispiel Pfeile 72/75/77/80 und Entf 83.
-- **Text:** Zeichen kommen ausschlieÃŸlich aus `poll_event`-Texten (Typ 3, Unicode). Zeichentasten ohne Strg erzeugen kein Tastenereignis, damit nichts doppelt getippt wird. Strg-KÃ¼rzel nutzen die US-Zuordnung der Taste.
-- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwÃ¤rts) oder 5 (abwÃ¤rts) an fbtk. Maustasten und Rad wirken an der Position ihres eigenen Ereignisses (vorab Bewegung dorthin). `reset` lÃ¤sst gehaltene Tasten los und bricht gehaltene Maustasten ohne Klick ab; Loslassen ohne vorheriges DrÃ¼cken wird verworfen.
+- **Text:** Zeichen kommen ausschließlich aus `poll_event`-Texten (Typ 3, Unicode). Zeichentasten ohne Strg erzeugen kein Tastenereignis, damit nichts doppelt getippt wird. Strg-Kürzel nutzen die US-Zuordnung der Taste.
+- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwärts) oder 5 (abwärts) an fbtk. Maustasten und Rad wirken an der Position ihres eigenen Ereignisses (vorab Bewegung dorthin). `reset` lässt gehaltene Tasten los und bricht gehaltene Maustasten ohne Klick ab; Loslassen ohne vorheriges Drücken wird verworfen.
 
-## Ohne VM prÃ¼fen
+## Ohne VM prüfen
 
 `host/zehos_host_linux.c` stellt `zehos_v1` als WAMR-Native-Bibliothek bereit. Es schreibt jedes Bild als PPM, liefert Ereignisse aus einer Datei und meldet `should_exit` nach einer festen Zeit. `iwasm` muss mit `-rdynamic` gebaut sein, damit die Bibliothek die WAMR-Funktionen findet.
 
@@ -92,21 +92,21 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 ## Grenzen
 
 - **Tastatur:**
-  - In der Adressleiste ist nur ASCII mÃ¶glich; in Formularfeldern der Seite funktioniert Unicode.
+  - In der Adressleiste ist nur ASCII möglich; in Formularfeldern der Seite funktioniert Unicode.
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
-  - FÃ¼r ZurÃ¼ck gibt es kein TastenkÃ¼rzel, nur die SchaltflÃ¤che.
+  - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
 - **Inhalte:** kein Netz, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
-- **PrÃ¼fstand:** Bisher nur auf dem Linux-PrÃ¼fhost unter WAMR geprÃ¼ft, nicht im ZehOS-Loader (wasm3), nicht in QEMU oder VMware.
+- **Prüfstand:** Linux-Prüfhost unter WAMR und Offlineablauf im echten ZehOS-Loader (wasm3) unter QEMU geprüft. Ablauf, Testartefakte und verbleibende Plattformgrenzen stehen in [docs/NETSURF.md](../../docs/NETSURF.md).
 
-## GeprÃ¼ft (Linux-PrÃ¼fhost, WAMR-2.4.5, 15. November 2026)
+## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)
 
 | Ablauf | Ergebnis |
 | --- | --- |
 | Start ohne Argumente, Paketordner als `/` | Startseite `file:///pages/index.html`, Exit 0 nach `should_exit` |
-| Klick auf Link | Formularseite geladen, ZurÃ¼ck-SchaltflÃ¤che aktiv |
-| Klick ins Feld, Texte `GrÃ¼ÃŸe @â‚¬`, Zeichentaste `g` ohne Text, RÃ¼cktaste | Feld zeigt `GrÃ¼ÃŸe @` |
+| Klick auf Link | Formularseite geladen, Zurück-Schaltfläche aktiv |
+| Klick ins Feld, Texte `Grüße @€`, Zeichentaste `g` ohne Text, Rücktaste | Feld zeigt `Grüße @` |
 | Rad âˆ’5 auf langer Seite | Seite nach unten gescrollt |
 | Kaputter Link | Seite â€žNot foundâ€œ, Browser bedienbar |
-| Maustaste auf Link gedrÃ¼ckt, `reset` | Seite bleibt, kein Klick |
-| danach Klick auf anderen Link | Linkziel geladen, keine hÃ¤ngende Taste |
+| Maustaste auf Link gedrückt, `reset` | Seite bleibt, kein Klick |
+| danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
 | Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |
