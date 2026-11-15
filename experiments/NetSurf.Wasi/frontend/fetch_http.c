@@ -195,7 +195,7 @@ static bool append_escaped(char *out, size_t cap, size_t *used, const char *text
 static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
 {
 	static const char head[] = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unsichere Weiterleitung</title>"
-		"</head><body><h1>Unsichere Weiterleitung</h1><p>Diese sichere Seite leitet auf eine unverschlüsselte "
+		"<style>body{background:#fff0d8}</style></head><body><h1>Unsichere Weiterleitung</h1><p>Diese sichere Seite leitet auf eine unverschlüsselte "
 		"HTTP-Adresse weiter:</p><p>";
 	static const char middle[] = "</p><p><a href=\"";
 	static const char tail[] = "\">Trotzdem fortfahren</a></p></body></html>";
