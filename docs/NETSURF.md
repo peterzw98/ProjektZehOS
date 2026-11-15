@@ -69,6 +69,9 @@ der endgültige Paketbuild und die erneute Gastabnahme werden vor dem PR nachget
 - Dateien nur lesend im eigenen Paket; keine persistenten Profile, Downloads oder Verzeichnislisten.
 - Eine Paket-App zur Zeit; NetSurf muss den gemeinsamen Worker nach dem Schließen freigeben.
 - Der finale Recovery-Kernel hat in QEMU ohne Datenplatte bis zur Textshell gebootet.
+- Doom-Regression auf Kernel 0.2.0: Tastatur, Fokusreset, Schliessen, Neustart und Beenden ueber das App-Menue bestanden.
+- VMware Player: Kernel 0.2.0 ohne Datenplatte seriell bis zur bereiten Shell und zum Desktop gebootet.
+  Ein Bildschirmfoto ueber vmrun scheiterte an fehlender Gastanmeldung; Browserbedienung nicht geprueft.
 - VMware-Browserbedienung und echte Hardware sind noch nicht geprüft. Ein QEMU-Ergebnis belegt sie nicht.
 - Unter Windows scheitern fünf bestehende Skript-Testfälle an direktem Shellskriptstart bzw. fehlendem
   Symlinkrecht. Dieselben unveränderten Tests bestehen in Linux-CI.
