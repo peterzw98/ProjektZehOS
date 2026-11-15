@@ -23,6 +23,7 @@ internal static class CosmosWasmProbe
     private const int AppRuns = 10;
     private const ulong LeakToleranceBytes = 8ul * 1024 * 1024;
     private const int DoomSeconds = 60;
+    private const int DoomRestarts = 4;
 
     // Von Hand erzeugte Minimalmodule; jeweils eine exportierte Funktion "run" ohne Parameter mit i32-Ergebnis.
     private static readonly byte[] Add = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a09010700412841026a0b");
@@ -108,6 +109,16 @@ internal static class CosmosWasmProbe
         Check(status == WasmStatus.Ok && result == 0, "Doom nicht regulaer beendet.");
         Check(session.TestFrame == "ff0000/00ff00/0000ff/ffffff", "Pruefbild mit falscher Kanal- oder Zeilenfolge.");
         Check(session.Frames / playSeconds >= 20, "Doom unter 20 Bildern/s.");
+        // Wiederholte kurze Starts: der Speicher muss nach jedem Lauf zurueckkommen.
+        ulong freeAfterFirst = FreeBytes();
+        for (int run = 1; run <= DoomRestarts; run++)
+        {
+            WasmStatus restart = WasmRuntime.Run(module, "_start", 0, new ProbeSession("/data", 5000), out int code, out string text);
+            Write($"doom restart={run} status={restart} exit={code} freeMiB={FreeBytes() >> 20} {text}");
+            Check(restart == WasmStatus.Ok && code == 0, "Doom-Neustart nicht regulaer beendet.");
+        }
+        ulong freeAfterLast = FreeBytes();
+        Check(freeAfterFirst - Math.Min(freeAfterFirst, freeAfterLast) <= LeakToleranceBytes, "Speicher waechst ueber Doom-Neustarts.");
     }
 
     private static byte[] ReadModule(string path)
@@ -152,6 +163,7 @@ internal static class CosmosWasmProbe
         public long LastFrameMs { get; private set; }
         public string TestFrame { get; private set; } = "-";
         public bool ShouldExit => clock.ElapsedMilliseconds >= runMilliseconds;
+        public uint TicksMilliseconds => (uint)clock.ElapsedMilliseconds;
         public int PollKey() => -1;
 
         public void Write(int fd, ReadOnlySpan<byte> data)

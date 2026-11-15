@@ -21,6 +21,8 @@ internal interface IWasmSession
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
     int PollKey();
     bool ShouldExit { get; }
+    /// <summary>Uhr der Anwendung in Millisekunden; steht still, solange die Sitzung pausiert.</summary>
+    uint TicksMilliseconds { get; }
 }
 
 /// <summary>
@@ -94,6 +96,9 @@ internal static unsafe class WasmRuntime
                 job = jobs.Dequeue();
             }
             job();
+            // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
+            // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
+            GC.Collect();
         }
     }
 
@@ -218,7 +223,7 @@ internal static unsafe class WasmRuntime
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_ticks_ms")]
-    private static uint HostTicks() => (uint)(Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
+    private static uint HostTicks() => current?.TicksMilliseconds ?? (uint)(Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_sleep_ms")]
     private static void HostSleep(uint milliseconds)

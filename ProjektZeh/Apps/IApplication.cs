@@ -11,6 +11,8 @@ internal interface IApplication
     void Resize(int width, int height) { }
     void Draw(PixelSurface surface, int x, int y, int width, int height, bool active);
     bool IsCloseRequested => false;
+    /// <summary>true, solange die Anwendung als aktives Fenster fortlaufend neue Bilder liefert.</summary>
+    bool NeedsAnimation => false;
     bool RequestClose() => true;
     void Close();
 }

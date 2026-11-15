@@ -68,7 +68,7 @@ internal sealed class Desktop
     public SystemMetrics System { get; } = new();
     public DesktopPreferences Preferences { get; private set; }
     private bool restoreDisplay = true;
-    public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application is PongApp { IsPaused: false };
+    public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application.NeedsAnimation == true;
 
     private sealed record ApplicationEntry(string Name, string Description, AppIcon Icon, Func<bool> Launch);
 
@@ -102,7 +102,10 @@ internal sealed class Desktop
             new("Texteditor", "Textdateien - Doppelklick/Enter", AppIcon.Editor, () => OpenEditor()),
             new("Einstellungen", "Anzeige, Aussehen - Doppelklick/Enter", AppIcon.Settings, OpenSettings),
             new("Taskmanager", "Fenster, System - Doppelklick/Enter", AppIcon.Tasks, OpenTaskManager),
-            new("Pong", "Spiel - Doppelklick/Enter", AppIcon.Pong, OpenPong)
+            new("Pong", "Spiel - Doppelklick/Enter", AppIcon.Pong, OpenPong),
+#if ZEHOS_WASM
+            new("Doom (Wasm)", "Spiel von /data/doom - Doppelklick/Enter", AppIcon.Pong, OpenWasmDoom),
+#endif
         ];
         pinned = [applications[1], applications[0], applications[3]];
         search = new(64, painter: painter);
@@ -161,6 +164,12 @@ internal sealed class Desktop
         new TextEditorApp(createFiles(), painter, path), 640, 440);
     public bool OpenPong() => Windows.Count < MaximumWindows && OpenApplication("Pong", AppIcon.Pong, new PongApp(painter),
         680, Math.Max(480, Window.TitleHeight + 34 + 2 * glyphHeight + PongGame.Height));
+#if ZEHOS_WASM
+    // Vorlaeufig fester Ort; der Paketkatalog ersetzt diesen Eintrag (Loader-Plan Aufgabe 4). Einzelinstanz, weil alle
+    // Wasm-Apps einen gemeinsamen Worker nutzen; eine zweite Instanz wuerde bis zum Ende der ersten warten.
+    public bool OpenWasmDoom() => ActivateExisting<Apps.Wasm.WasmGameApp>() || Windows.Count < MaximumWindows && OpenApplication("Doom", AppIcon.Pong,
+        new Apps.Wasm.WasmGameApp("/data/doom/doom.wasm", "/data/doom", painter), 640, 400 + Window.TitleHeight, 680, 440 + Window.TitleHeight);
+#endif
     public bool OpenSettings() => ActivateExisting<SettingsApp>() || Windows.Count < MaximumWindows && OpenApplication("Einstellungen",
         AppIcon.Settings, new SettingsApp(painter, Preferences, display, () => now), 640, 440, 1200, 820);
     public bool OpenTaskManager() => ActivateExisting<TaskManagerApp>() || Windows.Count < MaximumWindows && OpenApplication("Taskmanager",

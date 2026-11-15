@@ -81,7 +81,34 @@ Der erste Stand zeichnete unter QEMU TCG nur rund 10 Bilder/s und war vollständ
 
 **Abschlussmessung** (QEMU TCG, 512 MiB, CPU `max`, 60 s Titel und Demos, Freedoom 0.13.0): **23,7 Bilder/s**, **34,3 Spieltakte/s**, Prüfbild `ff0000/00ff00/0000ff/ffffff` korrekt, regulärer Exit nach Beendigungsanforderung. QEMU mit WHPX scheitert beim Cosmos-Start (`WHPX: Unexpected VP exit code 4`, auch mit `kernel-irqchip=off`).
 
-Offen für Gate B: Fenster, Tastatur, Fokusverlust, F4/Esc, Schließen, zehn Neustarts und fehlende/beschädigte WAD.
+Die Probe startet Doom danach viermal je 5 s neu; der freie Speicher bleibt bei 443 MiB.
+
+## Doom im Desktop (Gate B)
+
+Mit `-p:ZehOSWasm=true` (ohne Probe) enthält das Programmmenü „Doom (Wasm)“. `WasmGameApp` lädt `/data/doom/doom.wasm`, gibt `/data/doom` lesend frei und läuft auf dem gemeinsamen Wasm-Worker; Bilder (Doppelpuffer) und Tasten (begrenzte Warteschlange, 64 Einträge) laufen gesperrt zwischen Worker und Desktop. Das Bild wird ganzzahlig skaliert (2× im Standardfenster).
+
+- **Pause:** Ist das Fenster nicht aktiv oder wurde es über 250 ms nicht gezeichnet (Textshell, minimiert), wartet die App in `present`; ihre Uhr steht still, damit sie keine Spieltakte nachholt.
+- **Fokus:** Gehaltene Tasten werden bei Fokusverlust und `Reset` losgelassen.
+- **Beenden:** Doom-Menü (Exit 0) schließt das Fenster; das X fordert über `should_exit` das Ende an. Exitcode ≠ 0 zeigt die letzte stderr-Zeile im Fenster, Traps den Wasm-Fehler.
+- **Einzelinstanz:** Ein zweiter Start holt das vorhandene Fenster nach vorn; eine zweite Instanz würde bis zum Ende der ersten auf den einzigen Worker warten.
+- **Quit/Error:** doomgeneric registriert `G_CheckDemoStatus` per Cast als `void`-Exitfunktion; Wasm bricht den Aufruf mit `indirect call type mismatch` ab, und `I_Quit` beendet das Programm nicht. `I_Quit`/`I_Error` werden deshalb per `--wrap` in der Plattformschicht ersetzt.
+- **Speicher:** Ohne Sammeln nach jedem Lauf blieben im Desktop rund 30 MiB je Doom-Start liegen (vermutlich Lesepuffer der 28-MB-WAD); der Worker ruft danach `GC.Collect()` auf.
+
+Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080, QMP-Tastatur und USB-Tablet; Bewertung anhand der Bildschirmfotos) am 15. November 2026:
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| Start aus dem Programmmenü | Titel/Demo im Fenster |
+| Neues Spiel, laufen, drehen, schießen | E1M1, Ansicht ändert sich, Munition 50 → 48 |
+| Alt+Tab mit gehaltener Taste | Figur läuft nach Rückkehr nicht weiter |
+| 10 s Textshell (F4), zurück | Zustand unverändert, danach weiter spielbar |
+| Esc → Textshell, F4 zurück | Fenster und Spielstand erhalten |
+| Schließen über X | Fenster weg, Desktop bedienbar |
+| 10 Starts, jeweils Beenden über Doom-Menü | alle Starts laufen; frei 446 MiB vorher, 405 MiB bei laufendem Doom, 445 MiB danach |
+| fehlende WAD | „App beendet (Exitcode 1): IWAD file 'freedoom1.wad' …“ |
+| abgeschnittene WAD (100 000 Byte) | „App beendet (Exitcode 1): W_GetNumForName: PNAME…“ |
+
+**Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; das Modul liegt an festem Ort und wird ohne Rechteprüfung gelesen (Produktloader, Aufgabe 3/4); VMware und echte Hardware ungeprüft.
 
 ## Grenzen und offene Punkte
 

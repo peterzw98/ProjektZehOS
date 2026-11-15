@@ -1,7 +1,9 @@
 // ZehOS-Plattformschicht fuer doomgeneric (GPL-2.0, wie doomgeneric).
 // Laeuft als WASIp1-Programm im ZehOS-Wasm-Loader; alle Systemdienste kommen ueber zehos_v1-Imports.
 
+#include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "doomgeneric.h"
 #include "doomkeys.h"
@@ -85,6 +87,22 @@ int DG_GetKey(int* pressed, unsigned char* key)
 }
 
 void DG_SetWindowTitle(const char* title) { (void)title; }
+
+// I_Quit und I_Error werden per Linker (--wrap) hierher umgeleitet. Die Originale rufen alle Exitfunktionen auf,
+// darunter G_CheckDemoStatus, das d_main.c per Cast als void-Funktion registriert; Wasm bricht diesen Aufruf mit
+// "indirect call type mismatch" ab. Ausserdem beendet I_Quit in doomgeneric das Programm nicht. Die
+// uebersprungenen Exitfunktionen (Netz, Ton, ENDOOM, Konfiguration, Demoaufnahme) sind hier wirkungslos.
+void __wrap_I_Quit(void) { exit(0); }
+
+void __wrap_I_Error(const char* error, ...)
+{
+    va_list arguments;
+    va_start(arguments, error);
+    vfprintf(stderr, error, arguments);
+    va_end(arguments);
+    fputc('\n', stderr);
+    exit(1);
+}
 
 // i_system.c startet fuer Fehlerdialoge externe Programme; ZehOS kennt keine Prozesse.
 int system(const char* command) { (void)command; return -1; }

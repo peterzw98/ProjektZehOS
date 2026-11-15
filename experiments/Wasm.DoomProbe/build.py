@@ -44,7 +44,7 @@ def main() -> int:
                # 8-Bit-Bild: die Palettenumrechnung im Interpreter kostete fast die Haelfte der Bildzeit.
                "-DCMAP256",
                *sources, "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks",
-               "-Wl,-z,stack-size=1048576", "-o", str(args.output)]
+               "-Wl,-z,stack-size=1048576", "-Wl,--wrap=I_Quit,--wrap=I_Error", "-o", str(args.output)]
     result = subprocess.run(command)
     if result.returncode == 0:
         print(f"{args.output} ({args.output.stat().st_size} Bytes)")

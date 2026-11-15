@@ -12,4 +12,6 @@ Ergebnis: `experiments/Wasm.DoomProbe/bin/doom.wasm` (rund 720 KB, 320×200, 8-B
 
 Tastenbelegung (PS/2-Set-1 → Doom): Pfeile bzw. W/S laufen, Pfeile links/rechts drehen, A/D seitwärts, Strg schießen, Leertaste benutzen, Shift rennen, Ziffern Waffen, Enter, Tab Karte. **Backspace öffnet das Doom-Menü**, weil Esc in ZehOS der Rückweg zur Textshell bleibt.
 
+`I_Quit` und `I_Error` werden per Linker (`--wrap`) in der Plattformschicht ersetzt: Die Originale rufen eine per Cast registrierte Exitfunktion auf, die Wasm als Typfehler abbricht, und `I_Quit` beendet in doomgeneric nicht.
+
 Messwerte und Grenzen: [docs/WASM_FEASIBILITY.md](../../docs/WASM_FEASIBILITY.md).
