@@ -95,7 +95,7 @@ braucht dafür `-lssl -lcrypto`. Die Fehlercodes für TLS stehen in [PAKETE_ERST
 ## Grenzen
 
 - HTTP und HTTPS über Kernel-TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); Zertifikatsfehler ohne Fortfahren, Mixed Content blockiert. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
-- Festes Browserbild 798×519, genau der Inhalt des Paketfensters in Mindestgröße (800×560); kein Resize-Import. Ein größer gezogenes oder maximiertes Fenster zeigt das Bild zentriert mit Rand (ganzzahlige Skalierung), ein kleineres schneidet es ab. Echte Größenänderung braucht ein neues `zehos_v1`-Ereignis ([#78](https://github.com/peterzw98/ProjektZehOS/issues/78)).
+- Festes Browserbild 798×519, genau der Inhalt des Paketfensters beim Öffnen (800×560); kein Resize-Import. Ein größer gezogenes oder maximiertes Fenster zeigt das Bild zentriert mit Rand (ganzzahlige Skalierung), ein kleiner gezogenes (Paketminimum 640×440, Inhalt 638×399) schneidet es mittig zu und verdeckt dabei Werkzeug- und Adressleiste. Echte Größenänderung braucht ein neues `zehos_v1`-Ereignis ([#78](https://github.com/peterzw98/ProjektZehOS/issues/78)).
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.
 - Dateien nur lesend im eigenen Paket; keine persistenten Profile, Downloads oder Verzeichnislisten.

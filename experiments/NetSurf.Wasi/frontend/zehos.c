@@ -22,9 +22,10 @@ ZEHOS_IMPORT("ticks_ms") uint32_t zehos_ticks_ms(void);
 ZEHOS_IMPORT("sleep_ms") void zehos_sleep_ms(uint32_t milliseconds);
 ZEHOS_IMPORT("should_exit") int32_t zehos_should_exit(void);
 
-// Feste Bildgröße ohne Größenänderung: genau der Inhalt des Paketfensters in Mindestgröße (Desktop.OpenApplication
+// Feste Bildgröße ohne Größenänderung: genau der Inhalt des Paketfensters beim Öffnen (Desktop.OpenApplication
 // 800×560, abzüglich Rahmen und Titelzeile). Der Kernel skaliert nur ganzzahlig; ein kleineres Bild bliebe mit
-// schwarzem Rand zentriert (Issue #78). Größer gezogene Fenster behalten einen Rand, kleinere schneiden ab.
+// schwarzem Rand zentriert (Issue #78). Größer gezogene Fenster behalten einen Rand. Ein kleiner gezogenes Fenster
+// (Paketminimum 640×440) schneidet das Bild mittig zu und verdeckt dabei Werkzeug- und Adressleiste.
 #define ZEHOS_WIDTH 798
 #define ZEHOS_HEIGHT 519
 #define ZEHOS_MAX_WAIT_MS 16
