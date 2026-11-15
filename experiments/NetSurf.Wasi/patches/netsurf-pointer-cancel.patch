@@ -51,6 +51,32 @@
  bool
  fbtk_tgrab_pointer(fbtk_widget_t *widget)
  {
+--- a/netsurf/frontends/framebuffer/fbtk/scroll.c
++++ b/netsurf/frontends/framebuffer/fbtk/scroll.c
+@@ -207,8 +207,9 @@
+ 			if (newpos > widget->u.scroll.maximum)
+ 				newpos = widget->u.scroll.maximum;
+ 			ret = fbtk_post_callback(cbi->context, FBTK_CBT_SCROLLY, newpos);
+-		} else {
+-			/* on bar - start drag */
++		} else if (fbtk_get_handler(widget, FBTK_CBT_POINTERMOVE) == NULL) {
++			/* on bar - start drag; eine weitere Taste waehrend des Ziehens
++			 * wuerde den Grab sonst umschalten und damit loesen (ZehOS) */
+ 			widget->u.scroll.drag = cbi->y;
+ 			widget->u.scroll.drag_position = vpos;
+ 			fbtk_set_handler(widget, FBTK_CBT_POINTERMOVE, vscroll_drag, widget);
+@@ -448,8 +449,9 @@
+ 		if (newpos > widget->u.scroll.maximum)
+ 			newpos = widget->u.scroll.maximum;
+ 		ret = fbtk_post_callback(cbi->context, FBTK_CBT_SCROLLX, newpos);
+-	} else {
+-		/* on bar - start drag */
++	} else if (fbtk_get_handler(widget, FBTK_CBT_POINTERMOVE) == NULL) {
++		/* on bar - start drag; eine weitere Taste waehrend des Ziehens
++		 * wuerde den Grab sonst umschalten und damit loesen (ZehOS) */
+ 		widget->u.scroll.drag = cbi->x;
+ 		widget->u.scroll.drag_position = hpos;
+ 		fbtk_set_handler(widget, FBTK_CBT_POINTERMOVE, hscroll_drag, widget);
 --- a/netsurf/frontends/framebuffer/gui.c
 +++ b/netsurf/frontends/framebuffer/gui.c
 @@ -93,8 +93,13 @@

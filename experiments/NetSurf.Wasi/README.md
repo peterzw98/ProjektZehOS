@@ -35,7 +35,7 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `libnsfb-zehos-surface.patch`: Oberflächentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wählt.
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
 - `netsurf-testament-reproducible.patch`: Das Build-Testament (`about:testament`) enthält feste Werte statt Benutzername, vollem Namen, Rechnername, Baupfad und Tagesdatum. Das schützt persönliche Daten im Paket und macht den Build reproduzierbar (Datum aus `SOURCE_DATE_EPOCH`).
-- `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`).
+- `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`). Eine weitere Taste während eines Rollbalken-Ziehens startet kein zweites Ziehen, das den Grab umschalten und lösen würde.
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an.
 
 Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schritt), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
@@ -112,4 +112,5 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 | danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
 | Rollbalken ziehen, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, nach `reset` nicht mehr (Gegenprobe ohne `reset` rollt weiter) |
 | Links auf Seite ziehen, rechte Taste dazu, `reset`, danach Linkklick | kein Klick durch `reset`, danach Link normal geöffnet |
+| Rollbalken-Daumen ziehen, rechte Taste dazu, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, danach nicht mehr |
 | Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |
