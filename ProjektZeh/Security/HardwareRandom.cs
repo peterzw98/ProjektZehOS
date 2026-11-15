@@ -6,7 +6,7 @@ namespace ProjektZeh.Security;
 /// <summary>Die CPU bietet weder RDSEED noch RDRAND; ohne andere gepruefte Quelle sind Salts und TLS gesperrt.</summary>
 internal sealed class HardwareRandomUnavailableException : CryptographicException
 {
-    public HardwareRandomUnavailableException() : base("RDSEED/RDRAND fehlt; Kennwortanlage gesperrt.") { }
+    public HardwareRandomUnavailableException() : base("RDSEED/RDRAND fehlt.") { }
 }
 
 /// <summary>Plattformunabhaengige Auswahl und Pruefung der CPU-Zufallsbefehle; CosmosSaltSource liefert CPUID und Befehle.</summary>
@@ -25,7 +25,7 @@ internal static class HardwareRandom
         return (seed, random);
     }
 
-    /// <summary>Fuellt bytes wortweise; versagt RDSEED trotz Wiederholungen, uebernimmt RDRAND dieses Wort.</summary>
+    /// <summary>Fuellt bytes wortweise; versagt RDSEED trotz Wiederholungen, uebernimmt RDRAND den Rest des Aufrufs.</summary>
     internal static void Fill(byte[] bytes, bool seed, bool random, ReadWord readSeed, ReadWord readRandom)
     {
         if (!seed && !random) throw new HardwareRandomUnavailableException();
@@ -34,8 +34,10 @@ internal static class HardwareRandom
         {
             ulong word = 0;
             bool success = seed && TryRead(readSeed, previous, out word);
+            // Ein erschoepftes RDSEED nicht fuer jedes weitere Wort erneut 64-mal versuchen (VM-Exits unter KVM).
+            if (!success) seed = false;
             if (!success && random) success = TryRead(readRandom, previous, out word);
-            if (!success) throw new CryptographicException("Hardwarezufallsquelle nicht bereit; Kennwortanlage gesperrt.");
+            if (!success) throw new CryptographicException("Hardwarezufallsquelle nicht bereit.");
             previous = word;
             for (int index = 0; index < 8 && offset + index < bytes.Length; index++) bytes[offset + index] = (byte)(word >> (index * 8));
         }

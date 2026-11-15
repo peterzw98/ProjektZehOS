@@ -13,8 +13,10 @@ public sealed class HardwareRandomTests
     private const int RdseedBit = 0x40000;
 
     private static Func<int, int, (int Eax, int Ebx, int Ecx, int Edx)> Cpu(int maximumLeaf, int leaf1Ecx, int leaf7Ebx, List<int>? read = null) =>
-        (leaf, _) =>
+        (leaf, subleaf) =>
         {
+            // RDSEED steht in Blatt 7 nur im Subleaf 0.
+            if (subleaf != 0) throw new AssertFailedException($"Unerwartetes Subleaf {subleaf}.");
             read?.Add(leaf);
             return leaf switch
             {
@@ -74,6 +76,27 @@ public sealed class HardwareRandomTests
         // Zwei Carry-Fehler liegen innerhalb des Wiederholungslimits; RDRAND darf dann nicht gelesen werden.
         HardwareRandom.Fill(bytes, true, true, Counter(0x1111, calls => calls <= 2), (out ulong value) => throw new AssertFailedException("RDRAND gelesen."));
         Assert.AreEqual(0x1113ul, BitConverter.ToUInt64(bytes, 0));
+    }
+
+    [TestMethod]
+    public void SeedFailingLaterSwitchesToRandomForRestAndKeepsRepeatCheck()
+    {
+        int seedCalls = 0;
+        // RDSEED liefert ein Wort und versagt danach; RDRAND beginnt mit demselben Wert, der als Wiederholung gilt.
+        HardwareRandom.ReadWord seed = (out ulong value) => { value = 0x7777; return ++seedCalls == 1 ? 1 : 0; };
+        var bytes = new byte[20];
+        HardwareRandom.Fill(bytes, true, true, seed, Counter(0x7777));
+        Assert.AreEqual(0x7777ul, BitConverter.ToUInt64(bytes, 0));
+        Assert.AreEqual(0x7778ul, BitConverter.ToUInt64(bytes, 8));
+        CollectionAssert.AreEqual(new byte[] { 0x79, 0x77, 0, 0 }, bytes[16..]);
+        Assert.AreEqual(65, seedCalls, "Nach dem ersten Ausfall darf RDSEED nicht erneut versucht werden.");
+    }
+
+    [TestMethod]
+    public void BrokenSeedWithoutRandomThrowsNotReady()
+    {
+        var exception = Assert.ThrowsException<CryptographicException>(() => HardwareRandom.Fill(new byte[8], true, false, Broken, Broken));
+        Assert.IsNotInstanceOfType<HardwareRandomUnavailableException>(exception);
     }
 
     [TestMethod]
