@@ -64,6 +64,18 @@ public sealed class WasmPackagePathsTests
     }
 
     [TestMethod]
+    public void SymbolicLinkAsFinalComponentIsDenied()
+    {
+        // Geprueft wird nur das letzte Pfadglied; Zwischenverweise folgt GetAttributes (FAT kennt keine Verweise).
+        File.CreateSymbolicLink(Path.Combine(root, "res", "Verweis"), Path.Combine(root, "res", "Messages"));
+        Directory.CreateSymbolicLink(Path.Combine(root, "Ordner"), Path.Combine(root, "res"));
+        Assert.AreEqual(WasmPackagePaths.AccessDenied, WasmPackagePaths.Stat(root, "res/Verweis", out ulong size, out int type));
+        Assert.AreEqual(0UL, size);
+        Assert.AreEqual(0, type);
+        Assert.AreEqual(WasmPackagePaths.AccessDenied, WasmPackagePaths.Stat(root, "Ordner", out _, out _));
+    }
+
+    [TestMethod]
     public void NoRunningAppIsDenied()
     {
         Assert.AreEqual(WasmPackagePaths.AccessDenied, WasmPackagePaths.Stat(null, "res/Messages", out _, out _));

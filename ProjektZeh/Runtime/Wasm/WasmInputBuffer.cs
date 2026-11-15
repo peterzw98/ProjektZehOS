@@ -42,12 +42,14 @@ internal sealed class WasmInputBuffer
                 Reset();
                 return;
             case InputEventType.KeyDown:
-                if (!value.IsRepeat && held.Add(value.KeyCode) && keys.Count < LegacyCapacity)
+                // Nur gemeldete Druecke gelten als gehalten; ihr Loslassen wird nie verworfen, damit keine
+                // Taste haengen bleibt. Die Warteschlange bleibt durch maximal 256 Tastencodes begrenzt.
+                if (!value.IsRepeat && keys.Count < LegacyCapacity && held.Add(value.KeyCode))
                     keys.Enqueue(0x100 | value.KeyCode);
                 Enqueue(new(WasmInputEventType.KeyDown, value.KeyCode));
                 return;
             case InputEventType.KeyUp:
-                if (!value.IsRepeat && held.Remove(value.KeyCode) && keys.Count < LegacyCapacity)
+                if (!value.IsRepeat && held.Remove(value.KeyCode))
                     keys.Enqueue(value.KeyCode);
                 Enqueue(new(WasmInputEventType.KeyUp, value.KeyCode));
                 return;
@@ -83,7 +85,7 @@ internal sealed class WasmInputBuffer
     public void Reset()
     {
         foreach (byte code in held)
-            if (keys.Count < LegacyCapacity) keys.Enqueue(code);
+            keys.Enqueue(code);
         held.Clear();
         head = count = 0;
         highSurrogate = '\0';
