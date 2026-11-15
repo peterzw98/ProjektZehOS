@@ -270,10 +270,10 @@ Die am 14. November 2026 gelesene [Cosmos-Netzwerkdokumentation](https://cosmoso
 
 Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten aus dem Netz wird zusätzlich Etappe 10 benötigt. Die vorgeschlagene Reihenfolge gibt Doom zunächst Vorrang, weil dafür kein Netzwerkstack und keine Webstandards nötig sind.
 
-**Teilstand 15. November 2026:** Statt eines eigenen Dokumentbetrachters deckt NetSurf 3.11 als externes WASIp1-Paket ([#59](https://github.com/peterzw98/ProjektZehOS/pull/59), Version 0.2.2) die lokale Stufe ab. Die erste Abnahmestufe ist erreicht: Die Gastprüfung `scripts/test-netsurf-desktop.py` besucht in QEMU mehrere paketeigene Seiten über relative Links und kehrt über Zurück zurück. Sie prüft dabei HTML/CSS, Scrollen per Rad und Bild ab, Formulareingabe, eine fehlende Datei mit weiter bedienbarem Browser sowie drei Starts mit Schließen. Nachweise stehen in [NETSURF.md](docs/NETSURF.md).
-- 11.1–11.4: Erledigt. Geladen werden nur Dateien aus dem eigenen, lesend eingebundenen Paket, keine beliebigen Dateien unter `/data`. Skripte führt NetSurf nicht aus.
-- 11.5: Teilweise erledigt. Adresszeile und Zurück sind vorhanden, aber nur Zurück ist automatisiert geprüft. Vorwärts ist ungeprüft.
-- 11.6: Offen. HTTP/HTTPS fehlt noch; die Anbindung ist als eigener Folgeschritt in Arbeit.
+**Teilstand 15. November 2026:** Statt eines eigenen Dokumentbetrachters deckt NetSurf 3.11 als externes WASIp1-Paket ([#59](https://github.com/peterzw98/ProjektZehOS/pull/59), Version 0.2.2) die lokale Stufe ab. Die erste Abnahmestufe ist erreicht: Die Gastprüfung `scripts/test-netsurf-desktop.py` besucht in QEMU mehrere paketeigene Seiten über relative Links und kehrt über Zurück zurück. Automatisiert geprüft werden HTML/CSS über Markerfarben, Laden über die Adresszeile, Scrollen per Rad und Bild ab, die Weiterbedienung nach einem kaputten Link sowie drei Starts mit Schließen. Formulartext „Grüße @“ und Fehlerseite wurden anhand der Bildschirmfotos visuell geprüft. Nachweise stehen in [NETSURF.md](docs/NETSURF.md).
+- 11.1–11.4: Erledigt. Geladen werden nur Dateien aus dem eigenen, lesend eingebundenen Paket, keine beliebigen Dateien unter `/data`. Geprüfte relative Links liegen im selben Verzeichnis; `../` und Unterverzeichnisse sind ungeprüft. JavaScript ist laut Buildkonfiguration abgeschaltet (Codebefund, kein Test).
+- 11.5: Teilweise erledigt. Adresszeile und Zurück sind automatisiert geprüft, Vorwärts ist ungeprüft. Quelle und Darstellung trennt NetSurf über seine Fetch-Schicht; das ist ein Codebefund.
+- 11.6: Offen. HTTP/HTTPS fehlt noch; die Anbindung ist als eigener Folgeschritt angekündigt.
 - 11.7: Teilweise erledigt. Langer Text, mehrere Links und eine fehlende Datei sind abgedeckt. Fehlerhaftes HTML ist nicht als eigene Testseite geprüft; GIF/BMP sind aktiviert, aber ungeprüft.
 
 Die zweite Abnahmestufe (Seiten vom Testserver) ist offen. VMware und echte Hardware sind für den Browser ungeprüft.
@@ -284,9 +284,9 @@ Die zweite Abnahmestufe (Seiten vom Testserver) ist offen. VMware und echte Hard
 
 - [x] 12.1 Vor einem modernen Browser den Architekturweg prüfen: eine bestehende Engine portieren oder den eigenen kleinen Browser gezielt erweitern. An einem Buildversuch Laufzeit-, Speicher-, Thread-, Grafik- und Systemaufruf-Abhängigkeiten feststellen.
 
-**Stand 15. November 2026:** Der Architekturweg wurde an zwei Buildversuchen geprüft und entschieden.
-- Firefox (Gecko als Wasm): Die Machbarkeitsprobe aus PR [#54](https://github.com/peterzw98/ProjektZehOS/pull/54) braucht eine andere Wasm-Runtime, SIMD, geteilten Speicher und viele Threads. Ein erstes Bild ist nicht nachgewiesen, der geschätzte Portaufwand liegt bei Monaten.
-- NetSurf: Gewählt und portiert (Etappe 11). Diese Wahl sagt nichts über Unterstützung moderner Webseiten aus.
+**Stand 15. November 2026:** Der Architekturweg ist entschieden. Grundlage waren eine Probe am fertigen Firefox-Modul und ein Buildversuch mit NetSurf.
+- Firefox (fertiges `gecko.wasm`, PR [#54](https://github.com/peterzw98/ProjektZehOS/pull/54)): Gemessen sind 473 Importe und geteilter Speicher ab 512 MiB. Laden und Validieren gelangen unter WAMR auf dem Entwicklungsrechner, die Instanziierung brach beim ersten JS-Import ab. SIMD und viele Threads stammen laut Projekt aus der Buildkonfiguration und sind nicht selbst gemessen. Ein erstes Bild ist nicht nachgewiesen, der geschätzte Portaufwand liegt bei Monaten.
+- NetSurf: Gewählt, gebaut und portiert (Etappe 11). Es läuft unter wasm3/WASIp1 ohne Threads innerhalb der Paketlimits. Gezeichnet wird ein festes Bild von 632×392 über `zehos_v1`; als Systemaufrufe dienen WASI-Imports sowie `poll_event` und `path_filestat_get`. Diese Wahl sagt nichts über die Unterstützung moderner Webseiten aus.
 
 Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht und Probe-Skripte bleiben im ungemergten PR #54 als Referenz erhalten. Die Punkte 12.2 bis 12.5 bleiben offen.
 
@@ -318,8 +318,9 @@ ProjektZeh/
     TextEditor/
     Pong/
     Doom/
-    Browser/
 ```
+
+Doom und der Browser (NetSurf) laufen inzwischen als Wasm-Pakete außerhalb dieses Baums.
 
 Eine Shell interpretiert Befehle; ein Terminal stellt ihre Ein- und Ausgabe dar. Diese Trennung erlaubt dieselbe Befehlslogik in der Textkonsole und in mehreren Fenstern. Entsprechend lädt der Netzwerkcode Daten, während der Browser sie parst, anordnet und zeichnet.
 
@@ -335,7 +336,7 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die zusätzliche VMware-Dateiprüfung bleiben sichtbar:
 
-Als Nächstes folgen in dieser Reihenfolge Etappe 6a (Multitasking und Scheduling), 6b (Nachrichten und Synchronisation) und 6c (Benutzer und Dateirechte). Die unabhängig vorgezogene Etappe 8 ist implementiert und in QEMU geprüft; nach Abschluss der vorgesehenen Vorstufen folgen Doom aus Etappe 9 und die weiteren Netzwerk-/Browseretappen. VMware-Nachprüfungen bleiben offen.
+Etappen 6a bis 6c, 8, 9.1–9.5 und 10 sind abgeschlossen. Die lokale Stufe von Etappe 11 ist erreicht. Als Nächstes folgen der Doom-Langlauf (9.6) und HTTP im Browser (11.6). VMware-Nachprüfungen bleiben offen.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.
