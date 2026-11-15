@@ -17,7 +17,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OFFER = re.compile(r"ps2:kbd offer Ps2KeyboardDriver -> ([^\r\n]*)")
+# Nur vollstaendige Zeilen zaehlen: VMware kann eine Zeile gerade schreiben, waehrend das Skript liest.
+OFFER = re.compile(r"ps2:kbd offer Ps2KeyboardDriver -> ([^\r\n]*)\r?\n")
 # Ein Start bis zur Tastaturbindung dauert in VMware wenige Sekunden; die Frist faengt haengende Starts ab.
 BOOT_TIMEOUT = 120
 
@@ -46,7 +47,19 @@ msg.autoAnswer = "TRUE"
 
 
 def vmrun(*arguments: str) -> None:
-    subprocess.run(["vmrun", "-T", "ws", *arguments], check=True, stdout=subprocess.DEVNULL)
+    # vmrun meldet Fehler auf stdout; sie gehen sonst im CalledProcessError verloren.
+    completed = subprocess.run(["vmrun", "-T", "ws", *arguments], capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError(f"vmrun {' '.join(arguments)}: {(completed.stdout + completed.stderr).strip()}")
+
+
+def prepare_work(work: Path) -> None:
+    """Legt den Arbeitsordner neu an; einen fremden Ordner loescht das Skript nicht."""
+    if work.exists():
+        if not (work / "ps2-reset.vmx").is_file():
+            sys.exit(f"{work} ist kein Arbeitsordner dieses Skripts (ps2-reset.vmx fehlt); bitte anderen --work waehlen")
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
 
 
 def wait_for_offer(serial: Path, seen: int) -> str | None:
@@ -71,16 +84,24 @@ def main() -> int:
         sys.exit("vmrun nicht gefunden (VMware Workstation unter Linux)")
 
     work = args.work.resolve()
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
+    prepare_work(work)
     serial = work / "serial.log"
     vmx = work / "ps2-reset.vmx"
     vmx.write_text(VMX.format(iso=args.iso.resolve(), serial=serial), encoding="utf-8")
 
+    results, complete = run_loop(vmx, serial, args.runs)
+    for result, count in results.most_common():
+        print(f"{count:4d}  {result}")
+    print(f"Protokoll: {serial}")
+    return 0 if complete and set(results) == {"bound"} else 1
+
+
+def run_loop(vmx: Path, serial: Path, runs: int) -> tuple[collections.Counter[str], bool]:
+    """Liefert die Ergebnisse und ob alle angeforderten Starts ausgewertet wurden."""
     results: collections.Counter[str] = collections.Counter()
-    vmrun("start", str(vmx), "nogui")
     try:
-        for run in range(args.runs):
+        vmrun("start", str(vmx), "nogui")
+        for run in range(runs):
             result = wait_for_offer(serial, run)
             if result is None:
                 results["kein Ergebnis (Frist abgelaufen)"] += 1
@@ -88,17 +109,14 @@ def main() -> int:
                 break
             results[result] += 1
             print(f"Start {run + 1}: {result}", flush=True)
-            if run + 1 < args.runs:
+            if run + 1 < runs:
                 vmrun("reset", str(vmx), "hard")
-    except (subprocess.CalledProcessError, KeyboardInterrupt) as error:
-        print(f"Abbruch: {error}", file=sys.stderr)
-    # Die VM wird auch nach einem Fehler beendet, damit kein Testgast weiterlaeuft.
-    subprocess.run(["vmrun", "-T", "ws", "stop", str(vmx), "hard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    for result, count in results.most_common():
-        print(f"{count:4d}  {result}")
-    print(f"Protokoll: {serial}")
-    return 0 if set(results) == {"bound"} else 1
+    except (RuntimeError, OSError, KeyboardInterrupt) as error:
+        print(f"Abbruch: {error!r}", file=sys.stderr)
+    finally:
+        # Die VM wird auch nach einem Fehler beendet, damit kein Testgast weiterlaeuft.
+        subprocess.run(["vmrun", "-T", "ws", "stop", str(vmx), "hard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return results, sum(results.values()) == runs
 
 
 if __name__ == "__main__":
