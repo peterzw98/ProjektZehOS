@@ -57,8 +57,20 @@ diese beiden Inhalte werden visuell geprüft. Drei Speicherwerte nach dem Aufrä
 - Eine zusätzliche kleine Paketprobe hat Tastendruck/-freigabe, Text, alle drei Maustasten, Rad in beide
   Richtungen, Fokusreset, Koordinaten, Loslassen außerhalb sowie Neustart/Schließen im Gast geprüft.
 
-Die letzten Lizenz-/Quellenbeigaben und der überlaufsichere Radbetrag sind nach diesem Gastnachweis ergänzt;
-der endgültige Paketbuild und die erneute Gastabnahme werden vor dem PR nachgetragen.
+Endabnahme am 15. November 2026 auf genau dem PR-Stand `51c9ec8`, mit `master` einschließlich #55 und #58 und Version 0.2.2:
+
+- **Hosttests:** 473 mit Warnungen als Fehler bestanden. Darunter sind sechs neue Tests für `WasmPackagePaths`: Größe und Typ, `ENOENT`, `EACCES` beim Ausbruch aus dem Paket sowie `EIO` statt Ausnahme.
+- **Kernelbuilds:** `cosmos build` (Release) erfolgreich; Recovery-Build und Test-ISO mit Testschlüssel ohne Warnungen. Beide ISOs booten in QEMU als 0.2.2, Release bis zum Desktop und Recovery bis zur Textshell.
+- **Paket und Linux-Prüfhost:** frischer Paketbuild; nativer Eingabetest, `host/run_tests.py` 7/7 und Buildtests bestanden.
+- **CI:** Linux-Lauf [43753744664](https://github.com/peterzw98/ProjektZehOS/actions/runs/43753744664) grün.
+- **QEMU 10.2.2, TCG, unter Linux:** `NETSURF_GUEST PASS`, ohne zusätzliche Werkzeug-Umgehungen (#58).
+  - Freier Speicher nach drei Läufen: 442600, 443240 und 443176 KiB.
+  - Formulartext „Grüße @“ (deutsche Belegung mit AltGr) und Fehlerseite anhand der Bilder geprüft.
+- **Korrekturen gegenüber dem vorherigen Gastnachweis:**
+  - Entf in der Adressleiste fehlte im fbtk.
+  - Eine zweite Taste während des Rollbalken-Ziehens löste den Grab.
+  - Ein Fokusreset bei mehreren gedrückten Tasten konnte einen Klick auslösen.
+  - Der Build ist reproduzierbar und enthält keine Benutzer-, Rechner- oder Pfaddaten mehr.
 
 ## Grenzen
 
@@ -73,6 +85,9 @@ der endgültige Paketbuild und die erneute Gastabnahme werden vor dem PR nachget
 - VMware Player: Kernel 0.2.0 ohne Datenplatte seriell bis zur bereiten Shell und zum Desktop gebootet.
   Ein Bildschirmfoto ueber vmrun scheiterte an fehlender Gastanmeldung; Browserbedienung nicht geprueft.
 - VMware-Browserbedienung und echte Hardware sind noch nicht geprüft. Ein QEMU-Ergebnis belegt sie nicht.
+- Unter QEMU mit KVM bootet ZehOS, aber QMP-Tastatureingaben kommen nicht an ([#56](https://github.com/peterzw98/ProjektZehOS/issues/56)). Die Abnahme lief deshalb mit TCG.
+- Byte-gleiche Pakete entstehen nur mit derselben Hostwerkzeugkette. gperf 3.1 und 3.3 erzeugen zum Beispiel unterschiedlichen Generatorcode.
+- Paketpfade prüfen symbolische Links nur in der letzten Komponente; auf FAT ist das unkritisch. Ein voller Doom-Eingabepuffer (64 Einträge) kann ein Loslassen verlieren; das bestand schon vor diesem PR.
 - Unter Windows scheitern fünf bestehende Skript-Testfälle an direktem Shellskriptstart bzw. fehlendem
   Symlinkrecht. Dieselben unveränderten Tests bestehen in Linux-CI.
 
