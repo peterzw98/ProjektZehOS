@@ -131,7 +131,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
                 if (sourceColumns.Length != targetWidth || sourceRows.Length != targetHeight
                     || scaledFrameWidth != frameWidth || scaledFrameHeight != frameHeight)
                 {
-                    scaled = new int[targetWidth * targetHeight];
+                    // Beim Ziehen am Fensterrand aendert sich die Zielgroesse fast jedes Bild; der Bildpuffer waechst
+                    // deshalb nur (DrawPixels nimmt einen groesseren Puffer), statt jedes Mal mehrere MiB neu anzulegen.
+                    if (scaled.Length < targetWidth * targetHeight) scaled = new int[targetWidth * targetHeight];
                     sourceColumns = new int[targetWidth];
                     sourceRows = new int[targetHeight];
                     WasmImageFit.FillSourceIndices(sourceColumns, frameWidth);
