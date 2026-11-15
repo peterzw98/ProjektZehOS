@@ -2,7 +2,8 @@
  * HTTP-Fetcher für NetSurf auf ZehOS. build.py kopiert die Datei als content/fetchers/zehos_http.c.
  * Die Verbindung liefert der Kernel über zehos_v1.net_*; Weiterleitungen und Cache erledigt llcache.
  * Cookies verwaltet urldb wie beim curl-Fetcher; HTTP-Anmeldung (401) unterstützt dieser Fetcher noch nicht.
- * HTTPS ist noch nicht angebunden und wird ausdrücklich als nicht unterstützt gemeldet.
+ * HTTPS verschlüsselt und prüft der Kernel (net_open mit ZEHOS_NET_TLS); ein älterer Kernel meldet ENOTSUP.
+ * Zertifikatsfehler lassen sich nicht übergehen; eine Weiterleitung von HTTPS auf HTTP folgt nur nach Klick.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,6 +32,10 @@ ZEHOS_IMPORT("net_close") int32_t zehos_net_close(int32_t handle);
 
 /* WASI-errno-Werte, die net_* liefern kann. */
 #define NET_EACCES 2
+#define NET_ENOSYS 52
+#define NET_ENOTSUP 58
+#define NET_EPERM 63
+#define NET_EPROTO 65
 #define NET_EAGAIN 6
 #define NET_EHOSTUNREACH 23
 #define NET_EMFILE 33
@@ -38,6 +43,8 @@ ZEHOS_IMPORT("net_close") int32_t zehos_net_close(int32_t handle);
 #define NET_ECONNRESET 15
 #define NET_ENOENT 44
 #define NET_ETIMEDOUT 73
+
+#define ZEHOS_NET_TLS 1
 
 #define BODY_LIMIT (8u * 1024 * 1024)
 #define IDLE_TIMEOUT_MS 30000
@@ -56,7 +63,8 @@ struct http_fetch {
 	bool started;        /* NetSurf hat start aufgerufen; davor liegt der Abruf nur in der Warteschlange */
 	bool locked;
 	bool code_set;
-	const char *error;      /* vor dem Start erkannter Fehler, z. B. HTTPS */
+	bool tls;
+	const char *error;      /* vor dem Start erkannter Fehler, z. B. Dateiupload */
 	char host[256];
 	int port;
 	char *request;
@@ -87,6 +95,10 @@ static const char *net_error(int32_t error)
 	case NET_EHOSTUNREACH: return "Der Server ist nicht erreichbar.";
 	case NET_ETIMEDOUT: return "Zeitüberschreitung beim Verbindungsaufbau.";
 	case NET_EMFILE: return "Zu viele gleichzeitige Verbindungen.";
+	case NET_ENOTSUP: return "HTTPS wird von diesem ZehOS-Kernel noch nicht unterstützt.";
+	case NET_ENOSYS: return "HTTPS ist nicht möglich: Systemuhr oder sicherer CPU-Zufall fehlen.";
+	case NET_EPERM: return "Das Zertifikat des Servers wurde abgelehnt; die Verbindung ist nicht sicher.";
+	case NET_EPROTO: return "Die sichere Verbindung (TLS) ist fehlgeschlagen.";
 	default: return "Netzwerkfehler.";
 	}
 }
@@ -147,11 +159,97 @@ static bool on_header(void *ctx, const char *line, size_t len)
 		fetch_set_cookie(f->parent, cookie);
 		free(cookie);
 	}
+	// Bei HTTPS-Weiterleitungen erst in on_headers_done entscheiden, ob eine eigene Warnseite die Antwort ersetzt.
+	if (f->tls && f->response.status >= 300 && f->response.status < 400 && f->response.status != 304) return true;
 	fetch_msg msg = { .type = FETCH_HEADER };
 	msg.data.header_or_data.buf = (const uint8_t *)line;
 	msg.data.header_or_data.len = len;
 	send_msg(f, &msg);
 	return !f->aborted;
+}
+
+/* Hängt text HTML-maskiert an out an; Rückgabe false, wenn cap nicht reicht. */
+static bool append_escaped(char *out, size_t cap, size_t *used, const char *text)
+{
+	for (; *text != '\0'; text++) {
+		const char *piece;
+		char single[2] = { *text, '\0' };
+		switch (*text) {
+		case '&': piece = "&amp;"; break;
+		case '<': piece = "&lt;"; break;
+		case '>': piece = "&gt;"; break;
+		case '"': piece = "&quot;"; break;
+		case '\'': piece = "&#39;"; break;
+		default: piece = single; break;
+		}
+		size_t len = strlen(piece);
+		if (len >= cap - *used) return false;
+		memcpy(out + *used, piece, len);
+		*used += len;
+	}
+	out[*used] = '\0';
+	return true;
+}
+
+/* Ersetzt eine Weiterleitung von HTTPS auf HTTP durch eine Warnseite; erst ein Klick lädt das unverschlüsselte Ziel. */
+static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
+{
+	static const char head[] = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unsichere Weiterleitung</title>"
+		"</head><body><h1>Unsichere Weiterleitung</h1><p>Diese sichere Seite leitet auf eine unverschlüsselte "
+		"HTTP-Adresse weiter:</p><p>";
+	static const char middle[] = "</p><p><a href=\"";
+	static const char tail[] = "\">Trotzdem fortfahren</a></p></body></html>";
+	char *url_s;
+	size_t url_len;
+	if (nsurl_get(target, NSURL_COMPLETE, &url_s, &url_len) != NSERROR_OK) return false;
+	size_t cap = sizeof(head) + sizeof(middle) + sizeof(tail) + 2 * 6 * url_len;
+	char *page = malloc(cap);
+	size_t used = 0;
+	bool ok = page != NULL;
+	if (ok) {
+		memcpy(page, head, sizeof(head) - 1);
+		used = sizeof(head) - 1;
+		ok = append_escaped(page, cap, &used, url_s)
+			&& used + sizeof(middle) <= cap;
+	}
+	if (ok) {
+		memcpy(page + used, middle, sizeof(middle) - 1);
+		used += sizeof(middle) - 1;
+		ok = append_escaped(page, cap, &used, url_s) && used + sizeof(tail) <= cap;
+	}
+	free(url_s);
+	if (!ok) {
+		free(page);
+		return false;
+	}
+	memcpy(page + used, tail, sizeof(tail) - 1);
+	used += sizeof(tail) - 1;
+	fetch_set_http_code(f->parent, 200);
+	static const char *const headers[] = { "Content-Type: text/html; charset=utf-8", "Cache-Control: no-store" };
+	for (size_t i = 0; i < sizeof(headers) / sizeof(headers[0]) && !f->aborted; i++) {
+		fetch_msg msg = { .type = FETCH_HEADER };
+		msg.data.header_or_data.buf = (const uint8_t *)headers[i];
+		msg.data.header_or_data.len = strlen(headers[i]);
+		send_msg(f, &msg);
+	}
+	if (!f->aborted) {
+		fetch_msg msg = { .type = FETCH_DATA };
+		msg.data.header_or_data.buf = (const uint8_t *)page;
+		msg.data.header_or_data.len = used;
+		send_msg(f, &msg);
+	}
+	free(page);
+	return true;
+}
+
+/* Prüft, ob location relativ zu url auf eine http://-Adresse zeigt; *target bleibt dann referenziert. */
+static bool is_downgrade(nsurl *url, const char *location, nsurl **target)
+{
+	if (nsurl_join(url, location, target) != NSERROR_OK) return false;
+	if (nsurl_get_scheme_type(*target) == NSURL_SCHEME_HTTP) return true;
+	nsurl_unref(*target);
+	*target = NULL;
+	return false;
 }
 
 /* Entspricht fetch_curl_process_headers: 304, Weiterleitung und only_2xx enden ohne Rumpf. */
@@ -163,8 +261,15 @@ static bool on_headers_done(void *ctx, int status)
 		f->code_set = true;
 	}
 	fetch_msg msg;
+	nsurl *target = NULL;
 	if (status == 304 && f->request_len > 0 && strncmp(f->request, "GET ", 4) == 0) {
 		msg.type = FETCH_NOTMODIFIED;
+	} else if (f->tls && status >= 300 && status < 400 && f->location != NULL
+		&& is_downgrade(f->url, f->location, &target)) {
+		bool sent = send_downgrade_page(f, target);
+		nsurl_unref(target);
+		msg.type = sent ? FETCH_FINISHED : FETCH_ERROR;
+		msg.data.error = sent ? NULL : "Zu wenig Speicher.";
 	} else if (status >= 300 && status < 400 && f->location != NULL) {
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = f->location;
@@ -216,8 +321,10 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 	char *target = NULL;
 	size_t target_len = 0;
 	if (nsurl_get_scheme_type(url) == NSURL_SCHEME_HTTPS) {
-		f->error = "HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.";
-	} else if (post_multipart != NULL) {
+		f->tls = true;
+		f->port = 443;
+	}
+	if (post_multipart != NULL) {
 		f->error = "Formulare mit Dateiupload werden noch nicht unterstützt.";
 	} else if (host == NULL || lwc_string_length(host) == 0 || lwc_string_length(host) >= sizeof(f->host)
 		|| lwc_string_data(host)[0] == '[') {
@@ -300,7 +407,7 @@ static bool step(struct http_fetch *f)
 	}
 	switch (f->state) {
 	case ST_OPEN:
-		error = zehos_net_open(f->host, (int32_t)strlen(f->host), f->port, 0, &f->handle);
+		error = zehos_net_open(f->host, (int32_t)strlen(f->host), f->port, f->tls ? ZEHOS_NET_TLS : 0, &f->handle);
 		if (error != 0) {
 			f->handle = -1;
 			finish(f, FETCH_ERROR, net_error(error));
@@ -340,6 +447,11 @@ static bool step(struct http_fetch *f)
 			int32_t received = 0;
 			error = zehos_net_recv(f->handle, buffer, sizeof(buffer), &received);
 			if (error == NET_EAGAIN) return true;
+			// Der Kernel meldet TLS-Ende ohne close_notify als ECONNRESET; ohne Längenangabe ist die Antwort abgeschnitten.
+			if (error == NET_ECONNRESET && f->tls) {
+				finish(f, FETCH_ERROR, parse_error(HTTP_ERR_TRUNCATED));
+				return false;
+			}
 			if (error != 0 || received < 0 || received > (int32_t)sizeof(buffer)) {
 				finish(f, FETCH_ERROR, net_error(error));
 				return false;
