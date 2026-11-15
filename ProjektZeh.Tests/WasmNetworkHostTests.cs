@@ -187,7 +187,26 @@ namespace ProjektZeh.Tests
             var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(), true);
             Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, 0, out int handle));
             WaitFor(() => session.Status(handle) != WasmNetworkError.Again);
-            Assert.AreEqual(14, session.Status(handle));
+            Assert.AreEqual(WasmNetworkError.ConnectionRefused, session.Status(handle));
+            Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+        }
+
+        [TestMethod]
+        public void WorkerReportsResetConnection()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(), true);
+            Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, 0, out int handle));
+            using (Socket peer = listener.AcceptSocket())
+            {
+                // Linger mit Frist 0 schliesst mit RST statt FIN.
+                peer.LingerState = new LingerOption(true, 0);
+            }
+            WaitFor(() => session.Receive(handle, new byte[1], out _) is not (WasmNetworkError.Again or WasmNetworkError.Success));
+            Assert.AreEqual(WasmNetworkError.ConnectionReset, session.Receive(handle, new byte[1], out int count));
+            Assert.AreEqual(0, count);
             Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
         }
 

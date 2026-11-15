@@ -79,6 +79,16 @@ HTTP-Gastprüfung am 15. November 2026 (Branch `feature/netsurf-http-guest`, 0.2
 `NETSURF_GUEST PASS` unter QEMU mit KVM (`-cpu qemu64,+rdrand,+rdseed`); freier Speicher nach drei Läufen
 438952, 439528 und 441472 KiB. HTTPS-Fehlerseite anhand des Bildes geprüft. Linux-Prüfhost: `host/run_tests.py` 13/13.
 
+## Netzwerkfehler
+
+Das Netz-ABI kennt für Verbindungsfehler `ECONNREFUSED` (14), `ECONNRESET` (15) und `EHOSTUNREACH` (23); der Fetcher
+zeigt dafür eigene Fehlerseiten. Cosmos 3.0.94 unterscheidet diese Fälle nicht: Ein gescheiterter Verbindungsaufbau
+kommt im Kernel nur als allgemeine Ausnahme an und wird als `EIO` (29) gemeldet, ein Abbruch durch RST erscheint wie ein
+normales Verbindungsende. Die eigenen Werte entstehen deshalb nur auf dem Linux-Prüfhost und in den Hosttests mit echten
+Sockets. Der Prüfhost hält sonst die Kernelgrenzen ein: höchstens 4 Verbindungen, 64 KiB je `net_send`/`net_recv`,
+Hostnamen bis 253 ASCII-Zeichen und `EACCES` ohne Netzwerkberechtigung. Diese erteilt dort die Umgebungsvariable
+`ZEHOS_NET=1` anstelle von `capability=net`.
+
 ## Grenzen
 
 - HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Keine Cookies, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.

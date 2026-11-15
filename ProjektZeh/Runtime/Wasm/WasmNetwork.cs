@@ -11,6 +11,9 @@ internal static class WasmNetworkError
     public const int Access = 2;
     public const int Again = 6;
     public const int BadHandle = 8;
+    public const int ConnectionRefused = 14;
+    public const int ConnectionReset = 15;
+    public const int HostUnreachable = 23;
     public const int Invalid = 28;
     public const int Io = 29;
     public const int TooManyFiles = 33;
