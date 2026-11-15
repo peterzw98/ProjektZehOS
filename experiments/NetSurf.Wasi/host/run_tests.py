@@ -166,6 +166,10 @@ def extra_get(handler: TestServer) -> bool:
         handler.wfile.write(body)
     elif handler.path == "/gemischt":
         handler.send_page(200, mixed_page("/marker.css"))
+    elif handler.path == "/falsches-token":
+        handler.send_page(200, form_page("/ziel-token", "post", "zehos_bestaetigung", "0" * 32))
+    elif handler.path.startswith("/ziel-get-"):
+        form_target(handler, handler.path)
     elif handler.path == "/keks-setzen":
         handler.send_page(302, b"", {"Set-Cookie": "zehos=keks; Path=/", "Location": "/keks-pruefen  "})
     elif handler.path == "/keks-pruefen":
@@ -220,6 +224,9 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
                 self.send_page(200, mixed_page("/css-zu-http"))
             elif self.path == "/css-zu-http":
                 self.send_page(302, b"", {"Location": f"{http_base}/marker.css"})
+            elif self.path.startswith("/formular?"):
+                method, target = self.path.split("?", 1)[1].split("&")
+                self.send_page(200, form_page(f"{http_base}/{target}", method, "geheim", "wert42"))
             elif self.path == "/einschleusen":
                 # Wäre der Link nicht maskiert, setzte der eingeschleuste Stil die Markerfarbe.
                 self.send_page(302, b"", {"Location": f'{http_base}/"><style>body{{background:#902090}}</style>'})
@@ -239,6 +246,63 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
     server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+# Formulare von HTTPS an http:// (Entscheidung 7): erst Warnseite, Felder gehen erst nach "Trotzdem senden" raus.
+FORM_SOURCE, FORM_OK = (0x50, 0x50, 0x20), (0x20, 0x70, 0x20)
+CLICK_SUBMIT, CLICK_CONFIRM = (250, 150), (78, 205)
+POSTS: list[tuple[str, str]] = []
+
+
+def form_page(action: str, method: str, name: str, value: str) -> bytes:
+    form = (f'<form method="{method}" action="{action}"><input type="hidden" name="{name}" value="{value}">'
+            '<input type="submit" value="Senden" style="width:500px;height:250px"></form>')
+    return page(FORM_SOURCE, "Formular").replace(b"<p>Formular</p>", form.encode())
+
+
+def form_target(handler: TestServer, query: str) -> None:
+    sent = "geheim=wert42" in query
+    handler.send_page(200, page(FORM_OK, "Angekommen") if sent else page(HTTP_MISSING, "Felder fehlen"))
+
+
+def record_post(handler: TestServer) -> None:
+    body = handler.rfile.read(int(handler.headers.get("Content-Length") or 0)).decode()
+    POSTS.append((handler.path, body))
+    form_target(handler, body)
+
+
+TestServer.do_POST = record_post
+
+
+def form_scenarios(good: str, base: str) -> list:
+    submit = click(3600, CLICK_SUBMIT)
+    confirm = [*submit, *click(4600, CLICK_CONFIRM)]
+    return [
+        ("https-formular-warnung", address(1500, f"{good}/formular?post&ziel-warnung") + submit, [DOWNGRADE_PAGE], [FORM_OK]),
+        ("https-formular-senden", address(1500, f"{good}/formular?post&ziel-senden") + confirm, [FORM_OK], [HTTP_MISSING]),
+        ("https-formular-get-warnung", address(1500, f"{good}/formular?get&ziel-get-warnung") + submit,
+         [DOWNGRADE_PAGE], [FORM_OK]),
+        ("https-formular-get-senden", address(1500, f"{good}/formular?get&ziel-get-senden") + confirm,
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        # Eine fremde Seite postet ein erfundenes Token: lokale Fehlerseite, nichts geht ins Netz.
+        ("http-formular-falsches-token", address(1500, f"{base}/falsches-token") + submit, [], [FORM_OK, FORM_SOURCE]),
+    ]
+
+
+def form_checks() -> list[str]:
+    paths = [path for path, _ in POSTS]
+    problems = []
+    if "/ziel-warnung" in paths or "/ziel-token" in paths:
+        problems.append("Formular ohne Bestätigung gesendet")
+    if ("/ziel-senden", "geheim=wert42") not in POSTS:
+        problems.append("bestätigtes Formular nicht mit Originaldaten angekommen")
+    if any(path.startswith("/ziel-get-warnung") for path in REQUESTED):
+        problems.append("GET-Formular ohne Bestätigung gesendet")
+    if not any(path.startswith("/ziel-get-senden?") for path in REQUESTED):
+        problems.append("bestätigtes GET-Formular nicht angekommen")
+    if any("zehos_bestaetigung" in body for _, body in POSTS):
+        problems.append("Bestätigungstoken ins Netz gelangt")
+    return problems
 
 
 def https_scenarios(good: str, wrong: str) -> list:
@@ -292,6 +356,7 @@ def main() -> int:
         fixtures = make_tls_fixtures(Path(work))
         tls = [tls_server(Path(work), name, base) for name in ("gut", "falsch")]
         scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
+        scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base)
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
@@ -313,6 +378,10 @@ def main() -> int:
             print(f"{'FAIL' if problems else 'ok  '} {name}" + (f": {', '.join(problems)}" if problems else ""))
         for tls_server_running in tls:
             tls_server_running.shutdown()
+    for problem in form_checks():
+        failures += 1
+        print(f"FAIL https-formular-netz: {problem}")
+    scenarios.append(("https-formular-netz", [], [], []))
     # Mixed Content ohne Farbwirkung: das http://-Favicon der HTTPS-Seite darf nie angefragt werden.
     if "/symbol-https.ico" in REQUESTED:
         failures += 1

@@ -5,6 +5,7 @@
  * HTTPS verschlüsselt und prüft der Kernel (net_open mit ZEHOS_NET_TLS); ein älterer Kernel meldet ENOTSUP.
  * Zertifikatsfehler lassen sich nicht übergehen; eine Weiterleitung von HTTPS auf HTTP folgt nur nach Klick.
  * Unverschlüsselte Unterressourcen einer HTTPS-Seite (Mixed Content) werden ohne Rückfrage blockiert.
+ * Ein Formular von einer HTTPS-Seite an ein http://-Ziel geht erst nach Bestätigung auf einer Warnseite raus.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <unistd.h>
 #include <libwapcaplet/libwapcaplet.h>
 
 #include "utils/corestrings.h"
@@ -56,6 +58,11 @@ ZEHOS_IMPORT("net_close") int32_t zehos_net_close(int32_t handle);
 #define NET_MAX_SEND (64u * 1024u)
 #define RECV_CHUNK 16384
 
+/* Bestätigung eines Formulars von HTTPS an HTTP: die Warnseite postet nur dieses Feld mit einem Einmaltoken. */
+#define CONFIRM_FIELD "zehos_bestaetigung"
+#define CONFIRM_TOKEN_BYTES 16
+#define CONFIRM_MAX_AGE_MS (5u * 60u * 1000u)
+
 enum { ST_OPEN, ST_CONNECTING, ST_SENDING, ST_RECEIVING, ST_FINISHED };
 
 struct http_fetch {
@@ -76,6 +83,8 @@ struct http_fetch {
 	size_t request_len;
 	size_t sent;
 	char *location;
+	char *page;             /* lokal erzeugte Warnseite statt Netzabruf */
+	size_t page_len;
 	char *held;             /* zurückgehaltene Kopfzeilen einer HTTPS-Weiterleitung, je Zeile mit \n */
 	size_t held_len;
 	uint64_t last_activity;
@@ -84,6 +93,17 @@ struct http_fetch {
 };
 
 static struct http_fetch *ring;
+
+/* Höchstens ein zurückgehaltener POST; die Daten bleiben im Speicher und stehen nie in der Warnseite. */
+static struct {
+	char *url;
+	char *body;
+	char token[2 * CONFIRM_TOKEN_BYTES + 1];
+	uint64_t created;
+} pending;
+
+/* Von patches/netsurf-zehos-mixed-content.patch (html/form.c) gesetzt: Ziel eines GET-Formulars vor dem Abruf. */
+static nsurl *form_get_target;
 
 static uint64_t now_ms(void)
 {
@@ -108,6 +128,31 @@ static const char *net_error(int32_t error)
 	case NET_EPROTO: return "Die sichere Verbindung (TLS) ist fehlgeschlagen.";
 	default: return "Netzwerkfehler.";
 	}
+}
+
+static void pending_clear(void)
+{
+	if (pending.body != NULL) memset(pending.body, 0, strlen(pending.body));
+	free(pending.body);
+	free(pending.url);
+	memset(&pending, 0, sizeof(pending));
+}
+
+/* Zeitkonstanter Vergleich, damit die Laufzeit nichts über das Token verrät. */
+static bool token_equal(const char *a, const char *b)
+{
+	size_t len = strlen(b);
+	unsigned char diff = (unsigned char)(strlen(a) != len);
+	for (size_t i = 0; i < len; i++) diff |= (unsigned char)(a[i] ^ b[i]);
+	return diff == 0;
+}
+
+void fetch_zehos_http_mark_form(nsurl *url);
+
+void fetch_zehos_http_mark_form(nsurl *url)
+{
+	if (form_get_target != NULL) nsurl_unref(form_get_target);
+	form_get_target = nsurl_ref(url);
 }
 
 static const char *parse_error(enum http_result result)
@@ -207,39 +252,55 @@ static bool append_escaped(char *out, size_t cap, size_t *used, const char *text
 	return true;
 }
 
-/* Ersetzt eine Weiterleitung von HTTPS auf HTTP durch eine Warnseite; erst ein Klick lädt das unverschlüsselte Ziel. */
-static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
+static bool append_raw(char *out, size_t cap, size_t *used, const char *text)
 {
-	static const char head[] = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unsichere Weiterleitung</title>"
-		"<style>body{background:#fff0d8}</style></head><body><h1>Unsichere Weiterleitung</h1><p>Diese sichere Seite leitet auf eine unverschlüsselte "
-		"HTTP-Adresse weiter:</p><p>";
-	static const char middle[] = "</p><p><a href=\"";
-	static const char tail[] = "\">Trotzdem fortfahren</a></p></body></html>";
-	char *url_s;
-	size_t url_len;
-	if (nsurl_get(target, NSURL_COMPLETE, &url_s, &url_len) != NSERROR_OK) return false;
-	size_t cap = sizeof(head) + sizeof(middle) + sizeof(tail) + 2 * 6 * url_len;
+	size_t len = strlen(text);
+	if (len >= cap - *used) return false;
+	memcpy(out + *used, text, len);
+	*used += len;
+	out[*used] = '\0';
+	return true;
+}
+
+/* Baut eine lokale Warnseite. url_s ist Fremdeingabe und wird maskiert. Mit token entsteht ein POST-Formular,
+ * das nur das Token an url_s schickt, sonst ein Link. Rückgabe NULL bei Speichermangel. */
+static char *warning_page(const char *title, const char *text, const char *url_s, const char *button,
+	const char *token, size_t *len)
+{
+	// Maskieren vergrößert höchstens auf das Sechsfache (&quot;); die URL steht zweimal in der Seite.
+	size_t cap = 1024 + 6 * (2 * strlen(title) + strlen(text) + strlen(button) + 2 * strlen(url_s)
+		+ (token != NULL ? strlen(token) : 0));
 	char *page = malloc(cap);
 	size_t used = 0;
-	bool ok = page != NULL;
-	if (ok) {
-		memcpy(page, head, sizeof(head) - 1);
-		used = sizeof(head) - 1;
-		ok = append_escaped(page, cap, &used, url_s)
-			&& used + sizeof(middle) <= cap;
+	if (page == NULL) return NULL;
+	bool ok = append_raw(page, cap, &used, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>")
+		&& append_escaped(page, cap, &used, title)
+		&& append_raw(page, cap, &used, "</title><style>body{background:#fff0d8}</style></head><body><h1>")
+		&& append_escaped(page, cap, &used, title) && append_raw(page, cap, &used, "</h1><p>")
+		&& append_escaped(page, cap, &used, text) && append_raw(page, cap, &used, "</p><p>")
+		&& append_escaped(page, cap, &used, url_s) && append_raw(page, cap, &used, "</p>");
+	if (ok && token != NULL) {
+		ok = append_raw(page, cap, &used, "<form method=\"post\" action=\"") && append_escaped(page, cap, &used, url_s)
+			&& append_raw(page, cap, &used, "\"><input type=\"hidden\" name=\"" CONFIRM_FIELD "\" value=\"")
+			&& append_escaped(page, cap, &used, token) && append_raw(page, cap, &used, "\"><input type=\"submit\" value=\"")
+			&& append_escaped(page, cap, &used, button) && append_raw(page, cap, &used, "\"></form>");
+	} else if (ok) {
+		ok = append_raw(page, cap, &used, "<p><a href=\"") && append_escaped(page, cap, &used, url_s)
+			&& append_raw(page, cap, &used, "\">") && append_escaped(page, cap, &used, button)
+			&& append_raw(page, cap, &used, "</a></p>");
 	}
-	if (ok) {
-		memcpy(page + used, middle, sizeof(middle) - 1);
-		used += sizeof(middle) - 1;
-		ok = append_escaped(page, cap, &used, url_s) && used + sizeof(tail) <= cap;
-	}
-	free(url_s);
+	ok = ok && append_raw(page, cap, &used, "</body></html>");
 	if (!ok) {
 		free(page);
-		return false;
+		return NULL;
 	}
-	memcpy(page + used, tail, sizeof(tail) - 1);
-	used += sizeof(tail) - 1;
+	*len = used;
+	return page;
+}
+
+/* Liefert eine lokal erzeugte Seite als 200-Antwort; no-store, damit llcache sie nie wiederverwendet. */
+static void send_local_page(struct http_fetch *f, const char *page, size_t len)
+{
 	fetch_set_http_code(f->parent, 200);
 	static const char *const headers[] = { "Content-Type: text/html; charset=utf-8", "Cache-Control: no-store" };
 	for (size_t i = 0; i < sizeof(headers) / sizeof(headers[0]) && !f->aborted; i++) {
@@ -251,18 +312,47 @@ static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
 	if (!f->aborted) {
 		fetch_msg msg = { .type = FETCH_DATA };
 		msg.data.header_or_data.buf = (const uint8_t *)page;
-		msg.data.header_or_data.len = used;
+		msg.data.header_or_data.len = len;
 		send_msg(f, &msg);
 	}
+}
+
+/* Ersetzt eine Weiterleitung von HTTPS auf HTTP durch eine Warnseite; erst ein Klick lädt das unverschlüsselte Ziel. */
+static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
+{
+	char *url_s;
+	size_t url_len, len;
+	if (nsurl_get(target, NSURL_COMPLETE, &url_s, &url_len) != NSERROR_OK) return false;
+	char *page = warning_page("Unsichere Weiterleitung",
+		"Diese sichere Seite leitet auf eine unverschlüsselte HTTP-Adresse weiter:", url_s, "Trotzdem fortfahren",
+		NULL, &len);
+	free(url_s);
+	if (page == NULL) return false;
+	send_local_page(f, page, len);
 	free(page);
 	return true;
 }
 
-/* Prüft, ob location relativ zu url auf eine http://-Adresse zeigt; *target bleibt dann referenziert. */
+/* Gibt die bei einer HTTPS-Weiterleitung zurückgehaltenen Kopfzeilen an llcache weiter. */
+static void send_held_headers(struct http_fetch *f)
+{
+	for (size_t start = 0; start < f->held_len && !f->aborted;) {
+		size_t end = start;
+		while (f->held[end] != '\n') end++;
+		fetch_msg header = { .type = FETCH_HEADER };
+		header.data.header_or_data.buf = (const uint8_t *)f->held + start;
+		header.data.header_or_data.len = end - start;
+		send_msg(f, &header);
+		start = end + 1;
+	}
+}
+
+/* Prüft, ob location relativ zu url auf eine http://-Adresse zeigt; *target bleibt dann referenziert.
+ * Ein Ziel mit HSTS hebt llcache selbst auf HTTPS, das ist keine Herabstufung. */
 static bool is_downgrade(nsurl *url, const char *location, nsurl **target)
 {
 	if (nsurl_join(url, location, target) != NSERROR_OK) return false;
-	if (nsurl_get_scheme_type(*target) == NSURL_SCHEME_HTTP) return true;
+	if (nsurl_get_scheme_type(*target) == NSURL_SCHEME_HTTP && !urldb_get_hsts_enabled(*target)) return true;
 	nsurl_unref(*target);
 	*target = NULL;
 	return false;
@@ -278,10 +368,12 @@ static bool on_headers_done(void *ctx, int status)
 	}
 	fetch_msg msg;
 	nsurl *target = NULL;
+	bool downgrade = f->tls && status >= 300 && status < 400 && f->location != NULL
+		&& is_downgrade(f->url, f->location, &target);
+	if (!downgrade) send_held_headers(f);
 	if (status == 304 && f->request_len > 0 && strncmp(f->request, "GET ", 4) == 0) {
 		msg.type = FETCH_NOTMODIFIED;
-	} else if (f->tls && status >= 300 && status < 400 && f->location != NULL
-		&& is_downgrade(f->url, f->location, &target)) {
+	} else if (downgrade) {
 		// Nur ein vom Benutzer ausgelöster Abruf bekommt die Warnseite; Unterressourcen scheitern still.
 		bool sent = fetch_zehos_verifiable(f->parent) && send_downgrade_page(f, target);
 		nsurl_unref(target);
@@ -289,15 +381,6 @@ static bool on_headers_done(void *ctx, int status)
 		msg.data.error = sent ? NULL : fetch_zehos_verifiable(f->parent) ? "Zu wenig Speicher."
 			: "Unsichere Weiterleitung einer Unterressource blockiert.";
 	} else if (status >= 300 && status < 400 && f->location != NULL) {
-		for (size_t start = 0; start < f->held_len && !f->aborted;) {
-			size_t end = start;
-			while (f->held[end] != '\n') end++;
-			fetch_msg header = { .type = FETCH_HEADER };
-			header.data.header_or_data.buf = (const uint8_t *)f->held + start;
-			header.data.header_or_data.len = end - start;
-			send_msg(f, &header);
-			start = end + 1;
-		}
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = f->location;
 	} else if (f->only_2xx && (status < 200 || status > 299)) {
@@ -351,8 +434,59 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 		f->tls = true;
 		f->port = 443;
 	}
-	if (!f->tls && !fetch_zehos_verifiable(parent) && fetch_zehos_referer_is_https(parent)) {
+	char *url_s = NULL;
+	size_t url_len = 0;
+	const char *post = post_urlenc;
+	char *confirmed = NULL; /* übernommener POST nach gültiger Bestätigung */
+	bool verifiable = fetch_zehos_verifiable(parent);
+	bool form_get = verifiable && form_get_target != NULL && nsurl_compare(url, form_get_target, NSURL_COMPLETE);
+	if (verifiable && form_get_target != NULL) {
+		nsurl_unref(form_get_target);
+		form_get_target = NULL;
+	}
+	if (nsurl_get(url, NSURL_COMPLETE, &url_s, &url_len) != NSERROR_OK) {
+		f->error = "Ungültige Adresse.";
+	} else if (!f->tls && !verifiable && fetch_zehos_referer_is_https(parent)) {
 		f->error = "Unverschlüsselte Inhalte auf einer HTTPS-Seite sind blockiert.";
+	} else if (post != NULL && strncmp(post, CONFIRM_FIELD "=", sizeof(CONFIRM_FIELD)) == 0) {
+		// Bestätigung von der Warnseite: nie ins Netz, außer Token, Ziel und Alter passen.
+		bool valid = verifiable && pending.body != NULL && strcmp(pending.url, url_s) == 0
+			&& now_ms() - pending.created <= CONFIRM_MAX_AGE_MS
+			&& token_equal(post + sizeof(CONFIRM_FIELD), pending.token);
+		if (valid) {
+			confirmed = pending.body;
+			pending.body = NULL;
+			post = confirmed;
+		} else {
+			f->error = "Die Bestätigung ist ungültig oder abgelaufen; das Formular wurde nicht gesendet.";
+		}
+		pending_clear();
+	} else if (!f->tls && verifiable && fetch_zehos_referer_is_https(parent) && (post != NULL || form_get)) {
+		unsigned char random[CONFIRM_TOKEN_BYTES];
+		if (post != NULL && getentropy(random, sizeof(random)) != 0) {
+			f->error = "Ohne sicheren Zufall kann das Formular nicht bestätigt werden.";
+		} else if (post != NULL) {
+			pending_clear();
+			for (size_t i = 0; i < sizeof(random); i++) sprintf(pending.token + 2 * i, "%02x", random[i]);
+			pending.url = strdup(url_s);
+			pending.body = strdup(post);
+			pending.created = now_ms();
+			if (pending.url != NULL && pending.body != NULL)
+				f->page = warning_page("Unverschlüsselter Versand",
+					"Dieses Formular einer sicheren Seite wird unverschlüsselt gesendet an:", url_s, "Trotzdem senden",
+					pending.token, &f->page_len);
+			if (f->page == NULL) pending_clear();
+		} else {
+			// Der Klick auf den Link ist eine neue Navigation ohne Formularmarke und lädt das Ziel.
+			f->page = warning_page("Unverschlüsselter Versand",
+				"Dieses Formular einer sicheren Seite wird unverschlüsselt gesendet an:", url_s, "Trotzdem senden",
+				NULL, &f->page_len);
+		}
+		if (f->error == NULL && f->page == NULL) f->error = "Zu wenig Speicher.";
+	}
+	free(url_s);
+	if (f->error != NULL || f->page != NULL) {
+		// Schon entschieden: kein Netzabruf, keine Anfrage bauen.
 	} else if (post_multipart != NULL) {
 		f->error = "Formulare mit Dateiupload werden noch nicht unterstützt.";
 	} else if (host == NULL || lwc_string_length(host) == 0 || lwc_string_length(host) >= sizeof(f->host)
@@ -376,20 +510,24 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 		char *cookie_line = cookies != NULL ? malloc(strlen(cookies) + 9) : NULL;
 		if (cookie_line != NULL) sprintf(cookie_line, "Cookie: %s", cookies);
 		// Kopf und Formulardaten passen zusammen mit den NetSurf-Kopfzeilen in wenigen Kilobyte.
-		size_t cap = 4096 + target_len + (post_urlenc != NULL ? strlen(post_urlenc) : 0)
+		size_t cap = 4096 + target_len + (post != NULL ? strlen(post) : 0)
 			+ (cookies != NULL ? strlen(cookies) : 0);
 		f->request = malloc(cap);
 		if (f->request == NULL || all == NULL || (cookies != NULL && cookie_line == NULL)) f->error = "Zu wenig Speicher.";
 		else if (f->error == NULL) {
 			if (count > 0) memcpy(all, headers, count * sizeof(*all));
 			all[count] = cookie_line;
-			f->request_len = http_request_build(f->request, cap, f->host, f->port,
-				target_len > 0 ? target : "/", post_urlenc, all);
+			f->request_len = http_request_build(f->request, cap, f->host, f->port, f->tls ? 443 : 80,
+				target_len > 0 ? target : "/", post, all);
 			if (f->request_len == 0) f->error = "Die Anfrage ist zu groß.";
 		}
 		free(cookie_line);
 		free(all);
 		free(cookies);
+	}
+	if (confirmed != NULL) {
+		memset(confirmed, 0, strlen(confirmed));
+		free(confirmed);
 	}
 	free(target);
 	if (host != NULL) lwc_string_unref(host);
@@ -420,6 +558,7 @@ static void fetch_http_free(void *ctx)
 	free(f->request);
 	free(f->location);
 	free(f->held);
+	free(f->page);
 	free(f);
 }
 
@@ -437,6 +576,11 @@ static bool step(struct http_fetch *f)
 	}
 	switch (f->state) {
 	case ST_OPEN:
+		if (f->page != NULL) {
+			send_local_page(f, f->page, f->page_len);
+			finish(f, FETCH_FINISHED, NULL);
+			return false;
+		}
 		error = zehos_net_open(f->host, (int32_t)strlen(f->host), f->port, f->tls ? ZEHOS_NET_TLS : 0, &f->handle);
 		if (error != 0) {
 			f->handle = -1;
@@ -477,8 +621,8 @@ static bool step(struct http_fetch *f)
 			int32_t received = 0;
 			error = zehos_net_recv(f->handle, buffer, sizeof(buffer), &received);
 			if (error == NET_EAGAIN) return true;
-			// Der Kernel meldet TLS-Ende ohne close_notify als ECONNRESET; ohne Längenangabe ist die Antwort abgeschnitten.
-			if (error == NET_ECONNRESET && f->tls) {
+			// Der Kernel meldet TLS-Ende ohne close_notify als ECONNRESET; nach begonnener Antwort ist sie abgeschnitten.
+			if (error == NET_ECONNRESET && f->tls && f->response.status != 0) {
 				finish(f, FETCH_ERROR, parse_error(HTTP_ERR_TRUNCATED));
 				return false;
 			}

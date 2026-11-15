@@ -50,8 +50,9 @@ enum http_result http_response_feed(struct http_response *r, const uint8_t *data
 /* Verbindungsende: beendet einen Rumpf ohne Längenangabe, sonst ist die Antwort abgeschnitten. */
 enum http_result http_response_eof(struct http_response *r);
 
-/* Schreibt eine GET- bzw. POST-Anfrage; liefert die Länge oder 0, wenn der Puffer nicht reicht. */
-size_t http_request_build(char *out, size_t cap, const char *host, int port, const char *target,
+/* Schreibt eine GET- bzw. POST-Anfrage; liefert die Länge oder 0, wenn der Puffer nicht reicht.
+ * Host nennt den Port nur, wenn er vom Standardport des Schemas (80 bzw. 443) abweicht. */
+size_t http_request_build(char *out, size_t cap, const char *host, int port, int default_port, const char *target,
 	const char *post_body, const char *const *extra_headers);
 
 #endif

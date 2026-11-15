@@ -21,6 +21,44 @@
 +	return fetch->referer != NULL &&
 +		nsurl_get_scheme_type(fetch->referer) == NSURL_SCHEME_HTTPS;
 +}
+--- a/netsurf/content/llcache.c
++++ b/netsurf/content/llcache.c
+@@ -4005,6 +4005,14 @@
+ 		return NSERROR_NO_FETCH_HANDLER;
+ 	}
+ 
++	/* ZehOS: Mixed Content nie aus dem Cache liefern, damit der
++	 * HTTP-Fetcher den Abruf sieht und blockieren kann. */
++	if ((flags & LLCACHE_RETRIEVE_VERIFIABLE) == 0 && referer != NULL &&
++	    nsurl_get_scheme_type(referer) == NSURL_SCHEME_HTTPS &&
++	    nsurl_get_scheme_type(hsts_url) == NSURL_SCHEME_HTTP) {
++		flags |= LLCACHE_RETRIEVE_FORCE_FETCH;
++	}
++
+ 	/* Create a new object user */
+ 	error = llcache_object_user_new(cb, pw, &user);
+ 	if (error != NSERROR_OK) {
+--- a/netsurf/content/handlers/html/form.c
++++ b/netsurf/content/handlers/html/form.c
+@@ -60,6 +60,10 @@
+ #include "html/font.h"
+ #include "html/form_internal.h"
+ 
++/* ZehOS: im HTTP-Fetcher (content/fetchers/zehos_http.c); markiert das Ziel
++ * eines GET-Formulars, damit der Fetcher es von einem Link unterscheidet. */
++void fetch_zehos_http_mark_form(nsurl *url);
++
+ #define MAX_SELECT_HEIGHT 210
+ #define SELECT_LINE_SPACING 0.2
+ #define SELECT_BORDER_WIDTH 1
+@@ -2059,6 +2063,7 @@
+ 			/* Replace query segment */
+ 			res = nsurl_replace_query(action_url, data, &query_url);
+ 			if (res == NSERROR_OK) {
++				fetch_zehos_http_mark_form(query_url);
+ 				res = browser_window_navigate(target,
+ 							      query_url,
+ 							      page_url,
 --- a/netsurf/desktop/browser_window.c
 +++ b/netsurf/desktop/browser_window.c
 @@ -513,7 +513,9 @@
@@ -34,3 +72,17 @@
  	nsurl *nsurl;
  	nserror res;
  
+@@ -649,7 +651,12 @@
+ 	 * See fetchcache.c for why redirected fetches should be verifiable at
+ 	 * all.
+ 	 */
+-	if (bw->refresh_interval <= 100 && bw->parent == NULL) {
++	/* ZehOS: ein Refresh von HTTPS auf HTTP bleibt unverifizierbar und
++	 * wird damit wie Mixed Content blockiert. */
++	if (bw->refresh_interval <= 100 && bw->parent == NULL &&
++	    !(url != NULL &&
++	      nsurl_get_scheme_type(url) == NSURL_SCHEME_HTTPS &&
++	      nsurl_get_scheme_type(refresh) == NSURL_SCHEME_HTTP)) {
+ 		flags &= ~BW_NAVIGATE_UNVERIFIABLE;
+ 	} else {
+ 		parent = bw->current_content;
