@@ -169,7 +169,7 @@ public sealed class WindowManagerTests
             new Window("Too small", 0, 0, 1, 1, new ProbeApp()));
     }
 
-    private sealed class ProbeApp : IApplication
+    internal sealed class ProbeApp : IApplication
     {
         public readonly List<InputEvent> Events = [];
         public int Starts { get; private set; }

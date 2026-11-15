@@ -68,7 +68,13 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 else if (output.HandleScroll(value)) { }
                 else if (!IsLocked && !shell.IsBusy && value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Tab)
                 {
-                    editor.Complete(shell);
+                    var alternatives = editor.Complete(shell);
+                    // Wie im Terminalfenster: mehrdeutige Treffer unter der aktuellen Eingabe auflisten.
+                    if (alternatives.Count > 0)
+                    {
+                        output.WriteLine(line.Prompt + editor.Text);
+                        foreach (string row in ShellService.FormatAlternatives(alternatives, Math.Max(1, Console.WindowWidth - 1))) output.WriteLine(row);
+                    }
                     output.FollowOutput();
                 }
                 else if (!shell.IsBusy && editor.Handle(value, out string? command))
@@ -139,6 +145,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");
+            // Zeigt seriell, ob der Treiber einen Laufzeitwechsel der Aufloesung erlaubt (nur bei mehreren Modi).
+            systemLog.Information("Desktop", $"Anzeige {display.Display.Current}, Modi: {string.Join(", ", display.Display.Modes)}");
         }
         catch (Exception exception)
         {

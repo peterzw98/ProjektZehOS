@@ -7,11 +7,10 @@ internal static class UiLayout
     public const int Gap = 8;
     public const int ToolbarHeight = 44;
 
-    public static void Row(int x, int y, int width, UiControl first, UiControl second, UiControl third)
+    public static void Row(int x, int y, int width, params ReadOnlySpan<UiControl> controls)
     {
-        int cell = Math.Max(1, (width - 2 * Gap) / 3);
-        first.Bounds = new(x, y, cell, ToolbarHeight);
-        second.Bounds = new(x + cell + Gap, y, cell, ToolbarHeight);
-        third.Bounds = new(x + 2 * (cell + Gap), y, cell, ToolbarHeight);
+        int cell = Math.Max(1, (width - (controls.Length - 1) * Gap) / Math.Max(1, controls.Length));
+        for (int index = 0; index < controls.Length; index++)
+            controls[index].Bounds = new(x + index * (cell + Gap), y, cell, ToolbarHeight);
     }
 }

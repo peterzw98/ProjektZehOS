@@ -295,7 +295,8 @@ internal sealed partial class ShellService
         return ResultErr.CreateSuccess();
     }
 
-    public string Complete(string line, int cursor)
+    /// <summary>Ergaenzt das Wort am Cursor; bei mehrdeutigem Rest fuellt es <paramref name="alternatives"/> mit allen Treffern.</summary>
+    public string Complete(string line, int cursor, List<string>? alternatives = null)
     {
         SyncIdentity();
         if (IsSecretInput || IsBusy || cursor < 0 || cursor > line.Length || line.Length > 66560) return line;
@@ -359,12 +360,41 @@ internal sealed partial class ShellService
             while (length < common.Length && length < candidate.Length && char.ToUpperInvariant(common[length]) == char.ToUpperInvariant(candidate[length])) length++;
             common = common[..length];
         }
-        if (common.Length <= fragment.Length) return line;
+        if (common.Length <= fragment.Length)
+        {
+            if (candidates.Count > 1 && alternatives != null)
+            {
+                candidates.Sort(StringComparer.OrdinalIgnoreCase);
+                alternatives.AddRange(candidates);
+            }
+            return line;
+        }
         if (!quoted && common.Contains(' ')) common = '"' + common + '"';
         if (hadClosingQuote || (quoted && insideQuote && candidates.Count == 1 && !common.EndsWith('/') &&
             (cursor == line.Length || line[cursor] != '"'))) common += '"';
         string completed = line[..start] + common + line[cursor..];
         return completed.Length <= 66560 ? completed : line;
+    }
+
+    /// <summary>Ordnet Treffer spaltenweise wie bash/zsh an; sehr lange Listen werden gekuerzt.</summary>
+    internal static List<string> FormatAlternatives(List<string> names, int columns)
+    {
+        const int Limit = 96;
+        var lines = new List<string>();
+        int width = 1;
+        foreach (string name in names) width = Math.Max(width, Math.Min(name.Length, columns) + 2);
+        int perLine = Math.Max(1, columns / width);
+        var line = new System.Text.StringBuilder();
+        for (int index = 0; index < Math.Min(Limit, names.Count); index++)
+        {
+            line.Append(names[index].PadRight(width));
+            if ((index + 1) % perLine != 0) continue;
+            lines.Add(line.ToString().TrimEnd());
+            line.Clear();
+        }
+        if (line.Length > 0) lines.Add(line.ToString().TrimEnd());
+        if (names.Count > Limit) lines.Add($"... und {names.Count - Limit} weitere");
+        return lines;
     }
 
     private static ResultErr Invalid(string message) => ResultErr.CreateFailure(ResultCode.InvalidArgument, message);
