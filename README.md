@@ -242,6 +242,15 @@ Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-
 
 Mit `-p:ZehOSWasm=true` enthält der Kernel einen WebAssembly-Loader (wasm3). Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
 
+`cosmos build` nimmt keine `-p:`-Eigenschaften an; ein Kernel mit Loader entsteht über `dotnet build`. Das ISO liegt danach unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`:
+
+```powershell
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSWasm=true
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-qemu.ps1 -IsoPath ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+```
+
+Installieren braucht ein eingebundenes Datenlaufwerk, eine Anmeldung als Administrator und Netzwerkzugang. Doom belegt dort rund 30 MB. Danach in der Textshell oder einem Terminal:
+
 ```text
 net dhcp
 pkg source https://packages.pjoter.de/
@@ -404,3 +413,14 @@ Das vertikale Scrollrad bewegt den Inhalt unter dem Zeiger um drei Zeilen pro Ra
 Die Textshell ohne Desktop besitzt ebenfalls einen begrenzten Puffer von **256 Ausgabezeilen**. Scrollrad und Bildtasten blättern darin; Status und Eingabe bleiben sichtbar. Bearbeiten der Eingabe oder Tab-Vervollständigung kehrt zur neuesten Ausgabe zurück. `clear` und ein Benutzerwechsel leeren den Puffer. F4/Esc erhalten ihn; nach einer Auflösungsänderung wird er neu umgebrochen. Dies ist die lokale Textshell; `cosmos run --headless` ohne Anzeigeclient stellt weiterhin keine sichtbare Fernkonsole bereit.
 
 Die beiden mit Cosmos 3.0.94 ausgelieferten Bitmapfonts werden für die deutschen Zeichen und das Eurozeichen passend zugeordnet. Eigene Fonts benötigen eine eigene PSF-Zeichenzuordnung.
+
+## Lizenz
+
+ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
+
+- wasm3 (MIT): `ProjektZeh/ThirdParty/wasm3/LICENSE`
+- BouncyCastle (MIT) als NuGet-Paket
+- Cosmos (BSD-3-Clause) als NuGet-Pakete; übernommene Teile aus Cosmos.Network.Http in `ProjektZeh/ThirdParty/CosmosHttp` mit `LICENSE.txt` und `THIRD-PARTY-NOTICES.txt` (darin auch die Mozilla-Zertifikatsliste `cacert.pem`, MPL-2.0)
+- Die Doom-Plattformschicht in `experiments/Wasm.DoomProbe` steht wie doomgeneric unter GPL-2.0-or-later ([LICENSE](experiments/Wasm.DoomProbe/LICENSE)).
+
+Das Doom-Paket enthält doomgeneric (GPL-2.0-or-later) und die Spieldaten von Freedoom (BSD), jeweils mit ihren Lizenztexten. Die Quellen liegen öffentlich: doomgeneric am festen Commit sowie Plattformschicht und Buildskript in diesem Repository.
