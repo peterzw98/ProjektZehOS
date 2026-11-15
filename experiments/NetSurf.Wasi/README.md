@@ -34,6 +34,7 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `libnsfb-wasi-dump.patch`: `nsfb_dump` ohne `dup()`, das WASI nicht kennt.
 - `libnsfb-zehos-surface.patch`: Oberflächentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wählt.
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
+- `netsurf-testament-reproducible.patch`: Das Build-Testament (`about:testament`) enthält feste Werte statt Benutzername, vollem Namen, Rechnername, Baupfad und Tagesdatum. Das schützt persönliche Daten im Paket und macht den Build reproduzierbar (Datum aus `SOURCE_DATE_EPOCH`).
 - `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust).
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an.
 

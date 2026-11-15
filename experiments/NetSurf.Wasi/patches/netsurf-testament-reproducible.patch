@@ -1,0 +1,56 @@
+--- a/netsurf/tools/Makefile
++++ b/netsurf/tools/Makefile
+@@ -10,7 +10,7 @@
+ .PHONY: testament
+ 
+ testament $(OBJROOT)/testament.h:
+-	$(Q)$(PERL) tools/git-testament.pl $(CURDIR) $(OBJROOT)/testament.h
++	$(Q)$(PERL) tools/git-testament.pl . $(OBJROOT)/testament.h
+ 
+ 
+ # lib png build compiler flags
+--- a/netsurf/tools/git-testament.pl
++++ b/netsurf/tools/git-testament.pl
+@@ -98,19 +98,14 @@
+ 
+ my %userinfo; # The information about the current user
+ 
+-{
+-   my @pwent = getpwuid($<);
+-   $userinfo{USERNAME} = $pwent[0];
+-   my $gecos = $pwent[6];
+-   $gecos =~ s/,.+//g;
+-   $gecos =~ s/"/'/g;
+-   $gecos =~ s/\\/\\\\/g;
+-   $userinfo{GECOS} = $gecos;
+-}
++# ZehOS: keine Benutzer-, Namens- oder Rechnerdaten ins veroeffentlichte Paket; feste Werte machen den Build gleich.
++$userinfo{USERNAME} = "zehos";
++$userinfo{GECOS} = "ZehOS build";
+ 
+ # The current date, in AmigaOS version friendly format (dd.mm.yyyy)
+ 
+-my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime();
++my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
++   defined($ENV{SOURCE_DATE_EPOCH}) ? gmtime($ENV{SOURCE_DATE_EPOCH}) : localtime();
+ my $compiledate = sprintf("%02d.%02d.%d",$mday,$mon+1,$year+1900);
+ chomp $compiledate;
+ 
+@@ -124,16 +119,7 @@
+ my $qroot = $root;
+ $qroot =~ s/"/\\"/g;
+ 
+-my $hostname = $ENV{HOSTNAME};
+-
+-unless ( defined($hostname) && $hostname ne "") {
+-   # Try hostname command if env-var empty
+-   $hostname = gather_output("hostname");
+-   chomp $hostname;
+-}
+-
+-$hostname = "unknown-host" unless (defined($hostname) && $hostname ne "");
+-$hostname =~ s/"/\\"/g;
++my $hostname = "zehos-build";
+ 
+ $testament .= "#define WT_ROOT \"$qroot\"\n";
+ $testament .= "#define WT_HOSTNAME \"$hostname\"\n";
