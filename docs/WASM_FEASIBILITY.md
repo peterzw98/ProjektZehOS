@@ -111,9 +111,9 @@ Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080,
 
 **Automatisierter Langlauf am 15. November 2026 (Linux, QEMU TCG, CPU `max`, 512 MiB):** Mit dem Wasm-Release-Build auf Stand `1c0e070` und einem isolierten Datenlaufwerk wurden zehn Doom-Neustarts über das Menü geprüft. Der freie Speicher nach dem Aufräumen sank von 436,3 auf 435,3 MiB. Ein weiterer Lauf mit `--starts 0 --long-seconds 300` sendete 300,5 s lang Bewegungs-, Dreh-, Schuss- und Benutzungsereignisse; nach einem Tod startete die Figur erneut. Doom endete regulär; der freie Speicher nach dem Aufräumen betrug 437,2 MiB vor und 435,8 MiB nach dem Langlauf. Bildschirmfotos zeigen Änderungen im Spiel und einen weiterhin aktualisierten Taskmanager. Dessen angezeigte längste **Desktop**-Bildzeit betrug in einzelnen Messfenstern ohne Doom 20 und 23 ms und unter Doom-Last 42 bis 84 ms; dies sind Stichproben, keine Worst-Case-Garantie und keine Messung der Doom-Bildzeit. Die automatischen Eingaben ersetzen keine menschliche Spielprüfung. Doom-Bildzeit über mehrere Minuten, VMware und echte Hardware bleiben offen.
 
-**Doom-Bildzeit über mehrere Minuten (15. November 2026, Linux, QEMU 10.2.2, 512 MiB, 1920×1080):** `WasmGameApp` misst für das Paket `doom` den Abstand zwischen zwei Bildern von Doom (`present_indexed`). Die Werte landen in einem festen 1-ms-Histogramm ohne Allokation pro Bild; je 60 s Spielzeit erscheint seriell `APP doom Bildzeit n=… min=… median=… p95=… max=… ms pausen=… heap=… KiB`. Andere Apps werden nicht gemessen. Abstände, in denen die App pausiert war (Textshell, Minimieren, Fokuswechsel, aber auch ein Desktop ohne Zeichnen über 250 ms), zählen nicht als Bildzeit; `pausen` nennt ihre Zahl, damit solche Stillstände nicht unbemerkt aus der Messung fallen. Gemessen wurde mit dem Release-ISO von Stand `f135658` und `scripts/test-wasm-doom-desktop.py --scenario full --starts 0 --source https://packages.pjoter.de/`; die automatischen Eingaben gleichen dem Langlauf oben, der Taskmanager war offen.
+**Doom-Bildzeit über mehrere Minuten (15. November 2026, Linux, QEMU 10.2.2, 512 MiB, 1920×1080):** `WasmGameApp` misst für das Paket `doom` den Abstand zwischen zwei Bildern von Doom (`present_indexed`). Die Werte landen in einem festen 1-ms-Histogramm ohne Allokation pro Bild; je 60 s Spielzeit erscheint seriell `APP doom Bildzeit n=… min=… median=… p95=… max=… ms pausen=… heap=… KiB`. Andere Apps werden nicht gemessen. Abstände, in denen die App pausiert war (Textshell, Minimieren, Fokuswechsel, aber auch ein Desktop ohne Zeichnen über 250 ms), zählen nicht als Bildzeit; `pausen` nennt ihre Zahl, damit solche Stillstände nicht unbemerkt aus der Messung fallen. Gemessen wurde mit dem Release-ISO 0.2.16 mit Pausenzähler und `scripts/test-wasm-doom-desktop.py --scenario full --starts 0 --source https://packages.pjoter.de/`; die automatischen Eingaben gleichen dem Langlauf oben, der Taskmanager war offen.
 
-**KVM** (`--accel kvm --long-seconds 300`, CPU `qemu64,+rdrand,+rdseed`, 300,8 s): vier volle Fenster, Menü und Levelstart verbrauchen den Rest.
+**KVM** (`--accel kvm --long-seconds 300`, CPU `qemu64,+rdrand,+rdseed`, 300,8 s): fünf Fenster. Die Zeile des fünften Fensters begann im seriellen Protokoll mit überschriebener Cosmos-Debugausgabe (`[LowLev Bildzeit n=3667 …`) und fehlte deshalb zunächst in der Auswertung; das Skript sucht seither ab `Bildzeit n=`.
 
 | Fenster | Bilder | min | Median | p95 | max (ms) | Pausen |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -121,8 +121,9 @@ Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080,
 | 2 | 3661 | 2 | 12 | 38 | 60 | 0 |
 | 3 | 3685 | 2 | 12 | 37 | 79 | 0 |
 | 4 | 3700 | 2 | 12 | 37 | 64 | 0 |
+| 5 | 3667 | 2 | 13 | 38 | 59 | 0 |
 
-Insgesamt 14 642 Bilder, rund 61 Bilder/s. Der freie Speicher nach dem Aufräumen betrug 438,7 MiB nach dem ersten Doom-Lauf und 437,6 MiB nach dem Langlauf.
+Insgesamt 18 309 Bilder in 300,8 s, rund 61 Bilder/s. Der freie Speicher nach dem Aufräumen betrug 438,7 MiB nach dem ersten Doom-Lauf und 437,6 MiB nach dem Langlauf.
 
 **TCG** (`--long-seconds 600`, CPU `max`, 602,2 s). TCG emuliert die CPU in Software; diese Bildzeiten sind Emulationswerte, nicht repräsentativ für KVM, VMware oder echte Hardware, und dienen nur dem Vergleich zwischen Ständen. Der Lauf teilte sich die ersten rund acht Minuten den Host mit dem KVM-Lauf.
 
@@ -139,9 +140,9 @@ Insgesamt 14 642 Bilder, rund 61 Bilder/s. Der freie Speicher nach dem Aufräume
 | 9 | 711 | 24 | 77 | 148 | 198 | 0 |
 | 10 | 709 | 7 | 78 | 163 | 404 | 0 |
 
-Insgesamt 7336 Bilder, rund 12,2 Bilder/s; ein früherer TCG-Lauf ohne Pausenzähler (Stand `ac9d5da`, Host allein) ergab 8297 Bilder, rund 13,8 Bilder/s, Median 51–79 ms, p95 bis 157 ms. Die fensterlose Probe erreichte unter TCG 23,7 Bilder/s mit Titel und Demos; dort fehlen Desktop, Skalierung und Taskmanager, die Ursache des Unterschieds wurde nicht untersucht. Freier Speicher nach dem Aufräumen: 416,5 MiB nach dem ersten Doom-Lauf, 415,2 MiB nach dem Langlauf.
+Insgesamt 7336 Bilder, rund 12,2 Bilder/s; ein früherer TCG-Lauf vor Einführung des Pausenzählers (sonst gleicher Kernelcode, Host allein) ergab 8297 Bilder, rund 13,8 Bilder/s, Median 51–79 ms, p95 bis 157 ms. Die fensterlose Probe erreichte unter TCG 23,7 Bilder/s mit Titel und Demos; dort fehlen Desktop, Skalierung und Taskmanager, die Ursache des Unterschieds wurde nicht untersucht. Freier Speicher nach dem Aufräumen: 416,5 MiB nach dem ersten Doom-Lauf, 415,2 MiB nach dem Langlauf.
 
-In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Levelstart enthält; ob es von dort stammt, zeigt die Messung nicht. Es gab keine Pausen. Die Heap-Angabe blieb innerhalb jedes Laufs unverändert (KVM 28 477 KiB, TCG 51 475 KiB) und taugt nicht als Verlaufsmaß; Cosmos meldet hier offenbar eine feste Größe. Bildschirmfotos zeigen E1M1 im Spiel und einen weiter aktualisierten Taskmanager. VMware, echte Hardware und eine menschliche Spielprüfung sind damit nicht geprüft.
+In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Levelstart enthält; ob es von dort stammt, zeigt die Messung nicht. Es gab keine Pausen. Die Heap-Angabe änderte sich während der Fenster nicht (KVM 28 477 KiB, TCG 51 475 KiB); erst nach dem Aufräumen stand sie bei 29 645 bzw. 52 676 KiB. Als Verlauf über die Spielzeit taugt sie deshalb nicht. Bildschirmfotos zeigen E1M1 im Spiel und einen weiter aktualisierten Taskmanager. VMware, echte Hardware und eine menschliche Spielprüfung sind damit nicht geprüft.
 
 **Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; VMware und echte Hardware ungeprüft. Der feste Ordner ist inzwischen durch den signierten Paketbestand ersetzt; die Prüfung mit Installation aus dem Repository steht in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
