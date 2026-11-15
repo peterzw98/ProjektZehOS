@@ -4,7 +4,7 @@ NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`):
+Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `bison`, `flex`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py

@@ -3,7 +3,8 @@
 
 Quellen und Werkzeuge liegen unter .tools/netsurf/ und werden nicht eingecheckt; feste SHA-256-Werte machen den
 Build nachvollziehbar. Ergebnis: experiments/NetSurf.Wasi/bin/package/ mit netsurf.wasm, res/, pages/ und licenses/.
-Benötigt auf dem Linux-Host: make, cc, perl, gperf, curl/urllib-Zugang beim ersten Lauf.
+Benötigt auf dem Linux-Host: make, cc, perl, gperf, bison, flex, patch, libpng- und zlib-Entwicklungsdateien sowie
+Netzzugang beim ersten Lauf.
 """
 
 import argparse
@@ -91,7 +92,9 @@ def main() -> int:
         HERE, os.environ.copy(), logs / "frontend-input-build.log")
     run([str(input_test)], HERE, os.environ.copy(), logs / "frontend-input.log")
 
-    cc = f"{sdk / 'bin' / 'clang'} --target=wasm32-wasip1 --sysroot={sdk / 'share' / 'wasi-sysroot'}"
+    # Ohne Pfadabbildung landen rund 290 absolute Baupfade (__FILE__, Debuginfo) im Modul; dann unterscheidet es sich je Rechner.
+    cc = (f"{sdk / 'bin' / 'clang'} --target=wasm32-wasip1 --sysroot={sdk / 'share' / 'wasi-sysroot'}"
+          f" -ffile-prefix-map={TOOLS}=/netsurf-build")
     env = os.environ.copy()
     env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{env['PATH']}",
                PKG_CONFIG_PATH=str(prefix / "lib" / "pkgconfig"), PKG_CONFIG_LIBDIR=str(prefix / "lib" / "pkgconfig"))
