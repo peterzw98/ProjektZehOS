@@ -5,6 +5,8 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("netsurf_build", ROOT / "experiments/NetSurf.Wasi/build.py")
@@ -63,6 +65,53 @@ class NetSurfBuildTests(unittest.TestCase):
         self.patch("one", "three")
         source = build.fetch("netsurf")
         self.assertEqual((source / "value.txt").read_text(), "three\n")
+
+
+class NetSurfDownloadTests(unittest.TestCase):
+    DATA = b"archive"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.archive = Path(self.temp.name) / "gperf.tar.gz"
+        digest = hashlib.sha256(self.DATA).hexdigest()
+        patches = [mock.patch.object(build, "ARCHIVES", {"gperf": ("https://main/a", digest, "gperf")}),
+                   mock.patch.object(build, "MIRRORS", {"gperf": ["https://mirror/a"]}),
+                   mock.patch.object(build.time, "sleep")]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.calls = []
+
+    def serve(self, answers):
+        def urlopen(url, timeout):
+            self.calls.append(url)
+            answer = answers[url].pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return io.BytesIO(answer)
+        return mock.patch.object(build.urllib.request, "urlopen", urlopen)
+
+    def test_retries_main_source_after_error(self):
+        with self.serve({"https://main/a": [urllib.error.URLError("weg"), TimeoutError(), self.DATA]}):
+            build.download("gperf", self.archive)
+        self.assertEqual(self.archive.read_bytes(), self.DATA)
+        self.assertEqual(self.calls, ["https://main/a"] * 3)
+
+    def test_wrong_hash_switches_to_mirror_without_retry(self):
+        with self.serve({"https://main/a": [b"kaputt"], "https://mirror/a": [self.DATA]}):
+            build.download("gperf", self.archive)
+        self.assertEqual(self.archive.read_bytes(), self.DATA)
+        self.assertEqual(self.calls, ["https://main/a", "https://mirror/a"])
+
+    def test_all_sources_failing_exits_without_leftovers(self):
+        error = urllib.error.HTTPError("https://main/a", 503, "busy", {}, None)
+        with self.serve({"https://main/a": [error] * 3, "https://mirror/a": [error] * 3}):
+            with self.assertRaises(SystemExit) as raised:
+                build.download("gperf", self.archive)
+        self.assertIn("https://mirror/a", str(raised.exception))
+        self.assertEqual(len(self.calls), 2 * build.ATTEMPTS)
+        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
 
 if __name__ == "__main__":
