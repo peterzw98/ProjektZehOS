@@ -222,7 +222,7 @@ Der zusätzliche KDE/Cinnamon-orientierte Desktop-Umbau wird unabhängig von den
 **Stand am 15. November 2026:**
 - **Gewählter Weg:** doomgeneric (Commit `e257a09`), nicht Managed Doom. Es wird als WebAssembly-Programm gebaut und über den signierten Paketmanager installiert (`pkg install doom`), nicht in den Kernel übersetzt. Der Kernel enthält dafür den Loader wasm3 (`-p:ZehOSWasm=true`). Spieldaten: Freedoom 0.13.0.
 - **Erfüllt:** Die Abnahme „Fertig, wenn“ ist in QEMU erfüllt. E1M1 ist mit Laufen, Drehen, Schießen und Menü spielbar; Backspace öffnet das Doom-Menü, weil Esc zur Textshell führt. Doom endet über sein Menü oder das Fensterkreuz, ohne Neustart. Fokuswechsel und F4/Esc pausieren es. Gemessen unter TCG: 23,5 Bilder/s, 34,2 Spieltakte/s.
-- **9.6 bleibt offen:** Zehn Neustarts und ein automatisierter Langlauf über 300,5 s liefen in QEMU mit stabilem Speicher; Desktop-Bildzeiten wurden stichprobenartig beobachtet. Eine mehrminütige Messung der Doom-Bildzeit und eine menschliche Spielprüfung stehen noch aus. Einzelheiten: [WASM_FEASIBILITY.md](docs/WASM_FEASIBILITY.md).
+- **9.6 bleibt offen:** Zehn Neustarts und automatisierte Langläufe über 300,5 s und 602 s liefen in QEMU mit stabilem Speicher. Die Doom-Bildzeit wurde über zehn Minuten gemessen (QEMU TCG, je 60 s: Median 51–79 ms, p95 bis 157 ms, Maximum 807 ms beim Levelstart, sonst bis 318 ms; rund 13,8 Bilder/s). Eine menschliche Spielprüfung steht noch aus. Einzelheiten: [WASM_FEASIBILITY.md](docs/WASM_FEASIBILITY.md).
 - **Nicht geprüft:** VMware und echte Hardware.
 - **Nachweise:** [WASM_FEASIBILITY.md](docs/WASM_FEASIBILITY.md) und [PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md).
 
