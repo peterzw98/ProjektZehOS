@@ -154,18 +154,20 @@ static int32_t map_errno(int error)
 }
 
 // Abbildung wie im Kernel: abgelehntes Zertifikat EPERM, Ende ohne close_notify ECONNRESET, sonst EPROTO.
-static int32_t map_tls(SSL *session, int result)
+// close_notify ist nur nach dem Handshake ein reguläres Ende.
+static int32_t map_tls(SSL *session, int result, int handshake)
 {
     int error = SSL_get_error(session, result);
     if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return NET_EAGAIN;
-    if (error == SSL_ERROR_ZERO_RETURN) return NET_OK;
+    if (error == SSL_ERROR_ZERO_RETURN) return handshake ? NET_ECONNRESET : NET_OK;
     if (SSL_get_verify_result(session) != X509_V_OK) return NET_EPERM;
     if (error == SSL_ERROR_SYSCALL) return errno == 0 ? NET_ECONNRESET : map_errno(errno);
     if (ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) return NET_ECONNRESET;
     return NET_EPROTO;
 }
 
-// Wie TlsTransport: TLS 1.2/1.3, Kette und Name gegen ZEHOS_TLS_CA, kein Übergehen. Fehlen die Anker, meldet
+// Wie TlsTransport: TLS 1.2/1.3 nur mit ECDHE/AEAD, Kette bis 8 Zertifikate, Name ohne Teil-Platzhalter gegen
+// ZEHOS_TLS_CA, kein Übergehen. Fehlen die Anker, meldet
 // net_open wie der Kernel sofort ENOSYS.
 static int tls_available(void)
 {
@@ -176,6 +178,9 @@ static int tls_available(void)
     if (context == NULL) return 0;
     SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION);
     SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+    // Tiefe zählt Zwischenzertifikate ohne Blatt; 7 entspricht höchstens 8 Zertifikaten wie im Kernel.
+    SSL_CTX_set_verify_depth(context, 7);
+    if (SSL_CTX_set_cipher_list(context, "ECDHE+AESGCM:ECDHE+CHACHA20") != 1) { SSL_CTX_free(context); return 0; }
     SSL_CTX_set_mode(context, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     if (SSL_CTX_load_verify_locations(context, anchors, NULL) != 1) { SSL_CTX_free(context); return 0; }
     tls_context = context;
@@ -190,7 +195,8 @@ static SSL *tls_session(int fd, const char *name)
     // IPv4-Literale ohne SNI gegen die IP-SAN prüfen, Namen mit SNI gegen den DNS-Namen.
     int named = inet_pton(AF_INET, name, &literal) != 1;
     int ok = SSL_set_fd(session, fd) == 1 &&
-             (named ? SSL_set_tlsext_host_name(session, name) == 1 && SSL_set1_host(session, name) == 1
+             (named ? (SSL_set_hostflags(session, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS),
+                       SSL_set_tlsext_host_name(session, name) == 1 && SSL_set1_host(session, name) == 1)
                     : X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(session), name) == 1);
     if (!ok) { SSL_free(session); return NULL; }
     return session;
@@ -278,8 +284,9 @@ static int32_t progress(int slot)
     }
     if (sessions[slot] == NULL && (sessions[slot] = tls_session(fd, names[slot])) == NULL) return NET_EIO;
     ERR_clear_error();
+    errno = 0;
     int result = SSL_connect(sessions[slot]);
-    if (result != 1) return map_tls(sessions[slot], result);
+    if (result != 1) return map_tls(sessions[slot], result, 1);
     sockets_ready[slot] = 1;
     return NET_OK;
 }
@@ -311,9 +318,10 @@ static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, uint
         *count = 0;
         if (len == 0) return NET_OK;
         ERR_clear_error();
+        errno = 0;
         int n = sending ? SSL_write(session, buffer, (int)len) : SSL_read(session, buffer, (int)len);
         if (n > 0) *count = n;
-        return n > 0 ? NET_OK : map_tls(session, n);
+        return n > 0 ? NET_OK : map_tls(session, n, 0);
     }
     ssize_t n = sending ? send(fd, buffer, (size_t)len, MSG_NOSIGNAL) : recv(fd, buffer, (size_t)len, 0);
     if (n < 0) return map_errno(errno);
