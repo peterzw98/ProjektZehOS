@@ -282,6 +282,30 @@ Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten a
 
 **Fertig, wenn:** Für einen konkret festgelegten Satz von Webseiten die benötigten Funktionen und Schutzmechanismen funktionieren. „Alle heutigen Webseiten“ ist kein sinnvoller einzelner Meilenstein.
 
+## 12a Firefox als Paket
+
+**Zweck:** Einen vollständig lokalen Firefox als signiertes Paket über den bestehenden Paketmanager anbieten. Er rendert in der VM, ohne Fremdrechner zur Darstellung. Ausgangspunkt ist [HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm) (Gecko über Emscripten, MPL-2.0). Diese Etappe konkretisiert 12.1 für Gecko; der eigene Browser aus Etappe 11 bleibt der Rückfallweg. [Plan der Machbarkeitsprobe](docs/superpowers/plans/2026-11-15-firefox-machbarkeit.md).
+
+Bekannte Hindernisse (gemessen an Release v0.0.1 am 15. November 2026):
+
+- **Laufzeit:** Gecko braucht Threads, geteilte Memory mit Atomics und SIMD. wasm3 bietet nichts davon; vorgesehen ist WAMR (Apache-2.0).
+- **Geschwindigkeit:** JavaScript läuft ohne JIT. In einem Interpreter ist Gecko kaum benutzbar; voraussichtlich ist AOT nötig, also native Codebestandteile im Paket. Das muss vor der Umsetzung gesondert entschieden werden.
+- **Größe und Speicher:** Das Modul hat 150 MB, gegenüber derzeit 64 MiB Modul- und 128 MiB Paketgrenze. Es braucht mindestens 512 MiB lineare Memory, gegenüber derzeit 256 MiB; die VM braucht mindestens 2 GiB statt 512 MiB.
+- **Hostschnittstelle:** Von 473 Importen sind nur 5 WASI. Der Rest ist Emscripten/JS: pthreads, wasmfs, setjmp/longjmp über `invoke_*`, WebGL, Websocket-Sockets.
+- **Fehlende Hostfunktionen:** TCP und DNS für Apps (TLS macht Firefox selbst), Maus, Rad und Texteingabe, ein beschreibbares Profilverzeichnis (gesondert zu beauftragen) und mehrere gleichzeitige App-Threads.
+- **Cosmos:** Ungeprüft sind große zusammenhängende Allokationen, rund 20 Threads mit Warten/Wecken, ausführbarer Speicher für AOT und der Start unter KVM.
+- **Schwacher Zielrechner:** Celeron J3455 mit 4 Kernen und einer VM mit rund 2 GiB. Ohne KVM und AOT ist dort keine brauchbare Geschwindigkeit zu erwarten.
+- **Pflege:** Gecko-Fork und Emscripten-Stand sind festgelegt. Sicherheitsupdates erfordern Neubauten, die viel Speicher brauchen (rund 31 GiB ohne LTO, über 54 GiB mit LTO).
+
+- [ ] 12a.1 Importinventar und Hostprobe mit WAMR auf Linux: erstes Bild einer lokalen Testseite; Zeit, Memory und Threads im Interpreter und mit AOT auf beiden Zielrechnern messen.
+- [ ] 12a.2 Gastproben: Cosmos unter KVM, große Allokation in einer 2-GiB-VM, 24 Threads mit Warten/Wecken, WAMR-Plattformschicht mit dem Doom-Paket.
+- [ ] 12a.3 Bericht in `docs/FIREFOX_FEASIBILITY.md` und Entscheidung über Port, AOT-Pakete und Profilverzeichnis.
+- [ ] 12a.4 Nach positiver Entscheidung: Loader auf WAMR umstellen; Threads, Limits, Sockets, Maus und Profil als allgemeine Hostfunktionen ergänzen und in `docs/PAKETE_ERSTELLEN.md` nachtragen.
+- [ ] 12a.5 Firefox-Paket bauen, signieren und per Pull Request in `packages` veröffentlichen; Lizenztexte beilegen.
+- [ ] 12a.6 Abnahme auf beiden Zielrechnern mit einem festgelegten Satz lokaler und entfernter Testseiten über HTTP und HTTPS.
+
+**Fertig, wenn:** `pkg install firefox` den Browser installiert und dieser die festgelegten Testseiten auf beiden Zielrechnern lokal in der VM darstellt, Links, Eingabe und Scrollen funktionieren und der Desktop beim Laden und Schließen bedienbar bleibt.
+
 ## Vorgeschlagene Struktur des eigenen Codes
 
 Die Ordner erst anlegen, wenn die jeweilige Funktion entwickelt wird. `Kernel.cs` verbindet die Bausteine und hält den Bootablauf übersichtlich.
