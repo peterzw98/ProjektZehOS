@@ -1,6 +1,7 @@
 /*
  * HTTP-Fetcher für NetSurf auf ZehOS. build.py kopiert die Datei als content/fetchers/zehos_http.c.
- * Die Verbindung liefert der Kernel über zehos_v1.net_*; Weiterleitungen, Cache und Cookies erledigt llcache.
+ * Die Verbindung liefert der Kernel über zehos_v1.net_*; Weiterleitungen und Cache erledigt llcache.
+ * Cookies und HTTP-Anmeldung (401) unterstützt dieser Fetcher noch nicht.
  * HTTPS ist noch nicht angebunden und wird ausdrücklich als nicht unterstützt gemeldet.
  */
 #include <stdbool.h>
@@ -39,6 +40,7 @@ ZEHOS_IMPORT("net_close") int32_t zehos_net_close(int32_t handle);
 
 #define BODY_LIMIT (8u * 1024 * 1024)
 #define IDLE_TIMEOUT_MS 30000
+#define NET_MAX_SEND (64u * 1024u)
 #define RECV_CHUNK 16384
 
 enum { ST_OPEN, ST_CONNECTING, ST_SENDING, ST_RECEIVING, ST_FINISHED };
@@ -288,9 +290,11 @@ static bool step(struct http_fetch *f)
 		return true;
 	case ST_SENDING: {
 		int32_t sent = 0;
-		error = zehos_net_send(f->handle, f->request + f->sent, (int32_t)(f->request_len - f->sent), &sent);
+		size_t chunk = f->request_len - f->sent;
+		if (chunk > NET_MAX_SEND) chunk = NET_MAX_SEND; /* Kernel: höchstens 64 KiB je net_send */
+		error = zehos_net_send(f->handle, f->request + f->sent, (int32_t)chunk, &sent);
 		if (error == NET_EAGAIN) return true;
-		if (error != 0 || sent < 0 || (size_t)sent > f->request_len - f->sent) {
+		if (error != 0 || sent < 0 || (size_t)sent > chunk) {
 			finish(f, FETCH_ERROR, net_error(error));
 			return false;
 		}

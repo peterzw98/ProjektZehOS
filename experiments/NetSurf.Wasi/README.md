@@ -101,6 +101,8 @@ Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite,
 - HTTP/1.1 mit `Connection: close`, GET und URL-codierte POST-Formulare; Dateiupload-Formulare werden abgelehnt.
 - Weiterleitungen, 304 und Cache behandelt NetSurfs llcache wie beim curl-Fetcher.
 - Grenzen je Antwort: Zeile 8 KiB, Kopf 64 KiB und 128 Zeilen, Rumpf 8 MiB, 30 s ohne Daten. Komprimierte Übertragung wird nicht angefordert; andere Transfer-Codierungen als `chunked` gelten als Fehler.
+- Keine Cookies und keine HTTP-Anmeldung (401); Seiten mit Sitzung oder Login funktionieren noch nicht.
+- Höchstens 4 gleichzeitige Verbindungen (Kernelgrenze); `res/Choices` setzt `max_fetchers` und `max_fetchers_per_host` auf 4. Gesendet wird in Stücken bis 64 KiB.
 - `https://` zeigt ausdrücklich „HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.“
 - Fehlerseiten nennen die Ursache: fehlende Netzwerkberechtigung, unbekannter Servername, abgelehnte oder abgebrochene Verbindung, Zeitüberschreitung, ungültige, unvollständige oder zu große Antwort.
 
