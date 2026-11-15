@@ -39,16 +39,35 @@ static int held_keys[PENDING_MAX];
 static int held_count;
 static uint32_t tic;
 
-static void push(enum nsfb_event_type_e type, enum nsfb_key_code_e code)
+static void push_event(const nsfb_event_t *event)
 {
-    if (pending_count == PENDING_MAX) return;
-    pending[pending_count].type = type;
-    pending[pending_count].value.keycode = code;
-    pending_count++;
+    if (pending_count < PENDING_MAX) pending[pending_count++] = *event;
 }
 
-// Muss FBTK_KEY_UCS4_BASE im gepatchten NetSurf-fbtk entsprechen (patches/netsurf-fbtk-text.patch).
+static void push(enum nsfb_event_type_e type, enum nsfb_key_code_e code)
+{
+    nsfb_event_t event = { .type = type };
+    event.value.keycode = code;
+    push_event(&event);
+}
+
+// Maustasten und Rad wirken an der Ereignisposition; die letzte Bewegung kann veraltet sein.
+static void move_to(nsfb_event_t *event, int x, int y)
+{
+    event->type = NSFB_EVENT_MOVE_ABSOLUTE;
+    event->value.vector.x = x;
+    event->value.vector.y = y;
+    event->value.vector.z = 0;
+}
+
+static bool is_mouse_button(int key)
+{
+    return key == NSFB_KEY_MOUSE_1 || key == NSFB_KEY_MOUSE_2 || key == NSFB_KEY_MOUSE_3;
+}
+
+// Müssen den Werten im gepatchten NetSurf-fbtk entsprechen (patches/netsurf-fbtk-text.patch, netsurf-pointer-cancel.patch).
 #define UCS4_KEY_BASE 0x40000000
+#define CONTROL_CANCEL_POINTER 0x100
 
 // Normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal) auf nsfb-Codes. Die US-Zuordnung der
 // Zeichentasten dient nur Strg-Kürzeln; Zeichen selbst kommen als Unicode über EV_TEXT.
@@ -156,8 +175,8 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
         key = map_button(raw[1]);
         if (key == NSFB_KEY_UNKNOWN) return false;
         if (!track(key, raw[0] == EV_BUTTONDOWN)) return false;
-        event->type = raw[0] == EV_BUTTONDOWN ? NSFB_EVENT_KEY_DOWN : NSFB_EVENT_KEY_UP;
-        event->value.keycode = key;
+        push(raw[0] == EV_BUTTONDOWN ? NSFB_EVENT_KEY_DOWN : NSFB_EVENT_KEY_UP, key);
+        move_to(event, raw[2], raw[3]);
         return true;
     case EV_WHEEL:
         // fbtk scrollt je Rastung über Maustaste 4 (aufwärts) bzw. 5 (abwärts), jeweils gedrückt und losgelassen.
@@ -166,10 +185,24 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
             push(NSFB_EVENT_KEY_DOWN, key);
             push(NSFB_EVENT_KEY_UP, key);
         }
-        return false;
+        move_to(event, raw[2], raw[3]);
+        return true;
     case EV_RESET:
-        while (held_count > 0) push(NSFB_EVENT_KEY_UP, (enum nsfb_key_code_e)held_keys[--held_count]);
+    {
+        // Fokusverlust ist kein Klick: gehaltene Maustasten bricht NetSurf ohne Loslassen-Ereignis ab.
+        bool cancel = false;
+        while (held_count > 0) {
+            int key = held_keys[--held_count];
+            if (is_mouse_button(key)) cancel = true;
+            else push(NSFB_EVENT_KEY_UP, (enum nsfb_key_code_e)key);
+        }
+        if (cancel) {
+            nsfb_event_t control = { .type = NSFB_EVENT_CONTROL };
+            control.value.controlcode = (enum nsfb_control_e)CONTROL_CANCEL_POINTER;
+            push_event(&control);
+        }
         return false;
+    }
     default:
         return false;
     }

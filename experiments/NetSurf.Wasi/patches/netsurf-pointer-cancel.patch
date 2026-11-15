@@ -1,0 +1,68 @@
+--- a/netsurf/frontends/framebuffer/fbtk.h
++++ b/netsurf/frontends/framebuffer/fbtk.h
+@@ -209,6 +209,9 @@
+ /** Tastencodes ab diesem Wert tragen ein Unicode-Zeichen (ZehOS-Texteingabe). */
+ #define FBTK_KEY_UCS4_BASE 0x40000000
+ 
++/** Steuercode ausserhalb von nsfb: gehaltene Maustaste ohne Klick beenden (ZehOS-Fokusverlust). */
++#define FBTK_CONTROL_CANCEL_POINTER 0x100
++
+ int fbtk_keycode_to_ucs4(int code, fbtk_modifier_type mods);
+ 
+ 
+--- a/netsurf/frontends/framebuffer/gui.c
++++ b/netsurf/frontends/framebuffer/gui.c
+@@ -93,8 +93,13 @@
+ 	int x;
+ 	int y;
+ 	bool grabbed_pointer;
++	/* ZehOS: fuer den Abbruch eines laufenden Ziehens ohne Klick */
++	fbtk_widget_t *widget;
++	struct gui_window *gw;
+ } gui_drag;
+ 
++static void fb_cancel_pointer(void);
++
+ 
+ /**
+  * Cause an abnormal program termination.
+@@ -632,6 +637,9 @@
+ 			if ((event.type == NSFB_EVENT_CONTROL) &&
+ 			    (event.value.controlcode ==  NSFB_CONTROL_QUIT))
+ 				fb_complete = true;
++			if ((event.type == NSFB_EVENT_CONTROL) &&
++			    ((int)event.value.controlcode == FBTK_CONTROL_CANCEL_POINTER))
++				fb_cancel_pointer();
+ 		}
+ 
+ 		fbtk_redraw(fbtk);
+@@ -803,6 +811,20 @@
+ 	return 1;
+ }
+ 
++/* ZehOS: gehaltene Maustaste nach Fokusverlust beenden, ohne einen Klick auszuloesen */
++static void fb_cancel_pointer(void)
++{
++	if (gui_drag.state == GUI_DRAG_DRAG) {
++		if (gui_drag.grabbed_pointer) {
++			fbtk_tgrab_pointer(gui_drag.widget);
++			gui_drag.grabbed_pointer = false;
++		}
++		browser_window_mouse_track(gui_drag.gw->bw, 0,
++				gui_drag.x, gui_drag.y);
++	}
++	gui_drag.state = GUI_DRAG_NONE;
++}
++
+ /* called back when movement in browser window */
+ static int
+ fb_browser_window_move(fbtk_widget_t *widget, fbtk_callback_info *cbi)
+@@ -827,6 +849,8 @@
+ 					gui_drag.x, gui_drag.y);
+ 		}
+ 		gui_drag.grabbed_pointer = fbtk_tgrab_pointer(widget);
++		gui_drag.widget = widget;
++		gui_drag.gw = gw;
+ 		gui_drag.state = GUI_DRAG_DRAG;
+ 	}
+ 
