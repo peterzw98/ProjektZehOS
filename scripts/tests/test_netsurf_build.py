@@ -29,7 +29,8 @@ class NetSurfBuildTests(unittest.TestCase):
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
         build.ARCHIVES = {"netsurf": ("https://example.invalid/source.tar.gz",
-            hashlib.sha256(archive.read_bytes()).hexdigest(), "source"), "gperf": self.original[2]["gperf"]}
+            hashlib.sha256(archive.read_bytes()).hexdigest(), "source"),
+            **{name: self.original[2][name] for name in build.GENERATORS}}
 
     def restore(self):
         build.TOOLS, build.HERE, build.ARCHIVES = self.original

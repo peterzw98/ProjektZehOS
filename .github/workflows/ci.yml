@@ -121,7 +121,7 @@ jobs:
           persist-credentials: false
 
       - name: Install build prerequisites
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y bison flex libpng-dev zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y bison m4 libpng-dev zlib1g-dev
 
       - name: Build NetSurf WASIp1 package files
         run: python3 experiments/NetSurf.Wasi/build.py --jobs 4

@@ -3,7 +3,7 @@
 
 Quellen und Werkzeuge liegen unter .tools/netsurf/ und werden nicht eingecheckt; feste SHA-256-Werte machen den
 Build nachvollziehbar. Ergebnis: experiments/NetSurf.Wasi/bin/package/ mit netsurf.wasm, res/, pages/ und licenses/.
-Benötigt auf dem Linux-Host: make, cc, c++, perl, bison, flex, patch, libpng- und zlib-Entwicklungsdateien sowie
+Benötigt auf dem Linux-Host: make, cc, c++, m4, perl, bison, patch, libpng- und zlib-Entwicklungsdateien sowie
 Netzzugang beim ersten Lauf.
 """
 
@@ -30,10 +30,14 @@ ARCHIVES = {
                 "4dea880ff3c2f698bfd62c982b259340f9abcd7f67e6c8eb2b32c61f71644b7b", "netsurf-all-3.11"),
     "zlib": ("https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
              "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23", "zlib-1.3.1"),
-    # Fest statt Host-gperf: 3.1 und 3.3 erzeugen unterschiedlichen Generatorcode und damit andere Module.
+    # Generatoren fest statt vom Host: gperf 3.1 und 3.3 erzeugen anderen Code, Ubuntus gepatchtes flex
+    # verschiebt die Zeilen der libnslog-Lexerausgabe und damit die Debuginfo.
     "gperf": ("https://ftp.gnu.org/gnu/gperf/gperf-3.1.tar.gz",
               "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2", "gperf-3.1"),
+    "flex": ("https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz",
+             "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995", "flex-2.6.4"),
 }
+GENERATORS = ["gperf", "flex"]
 # Reihenfolge nach Abhängigkeiten; libsvgtiny fehlt, weil es setjmp/longjmp braucht.
 LIBRARIES = ["buildsystem", "libnslog", "libwapcaplet", "libparserutils", "libcss", "libhubbub", "libdom",
              "libnsbmp", "libnsgif", "libnsutils", "libutf8proc", "libnspsl", "libnsfb"]
@@ -62,8 +66,8 @@ def fetch(name: str) -> Path:
         sys.exit(f"Falscher SHA-256 für {archive.name}: {actual}")
     patches = sorted((HERE / "patches").glob("*.patch")) if name == "netsurf" else []
     # Ein neuer Patchsatz oder Generator braucht unveraenderte Quellen, auch nach einem frueher abgebrochenen Build;
-    # make erzeugt sonst die gperf-Ausgaben eines aelteren Laufs nicht neu.
-    recipe = hashlib.sha256(digest.encode() + ARCHIVES["gperf"][1].encode() + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
+    # make erzeugt sonst die Generatorausgaben eines aelteren Laufs nicht neu.
+    recipe = hashlib.sha256(digest.encode() + b"".join(ARCHIVES[g][1].encode() for g in GENERATORS) + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
     destination = TOOLS / ("source-" + recipe) if name == "netsurf" else TOOLS
     target = destination / folder
     if not target.exists():
@@ -86,14 +90,17 @@ def main() -> int:
     sdk = fetch("wasi-sdk")
     source = fetch("netsurf")
     zlib = fetch("zlib")
-    gperf = fetch("gperf")
+    generators = []
     prefix = source / "inst-wasi"
     logs = TOOLS / "logs"
     logs.mkdir(exist_ok=True)
 
-    if not (gperf / "inst" / "bin" / "gperf").exists():
-        run(["./configure", f"--prefix={gperf / 'inst'}"], gperf, os.environ.copy(), logs / "gperf-configure.log")
-        run(["make", f"-j{args.jobs}", "install"], gperf, os.environ.copy(), logs / "gperf.log")
+    for name in GENERATORS:
+        tool = fetch(name)
+        generators.append(tool / "inst" / "bin")
+        if not (generators[-1] / name).exists():
+            run(["./configure", f"--prefix={tool / 'inst'}"], tool, os.environ.copy(), logs / f"{name}-configure.log")
+            run(["make", f"-j{args.jobs}", "install"], tool, os.environ.copy(), logs / f"{name}.log")
 
     input_test = TOOLS / "frontend-input-test"
     run(["cc", "-O2", "-Wno-attributes", "-I", str(source / "libnsfb/include"),
@@ -109,9 +116,10 @@ def main() -> int:
     env.setdefault("SOURCE_DATE_EPOCH", "1794700800")
     # Die Perl-Generatoren von libparserutils/hubbub geben Tabellen in Hash-Reihenfolge aus; feste Seeds machen sie stabil.
     env.update(PERL_HASH_SEED="0", PERL_PERTURB_KEYS="0", PYTHONHASHSEED="0")
-    env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{gperf / 'inst' / 'bin'}:{env['PATH']}",
+    env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{':'.join(map(str, generators))}:{env['PATH']}",
                PKG_CONFIG_PATH=str(prefix / "lib" / "pkgconfig"), PKG_CONFIG_LIBDIR=str(prefix / "lib" / "pkgconfig"))
-    common = [f"HOST=wasm32-wasip1", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", f"CC={cc}",
+    # BUILD steht im Bauordnernamen und damit in __FILE__; ohne festen Wert folgt er dem Host-cc (Arch: x86_64-pc-linux-gnu).
+    common = [f"HOST=wasm32-wasip1", "BUILD=x86_64-linux-gnu", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", f"CC={cc}",
               f"AR={sdk / 'bin' / 'llvm-ar'}", "Q=", "DESTDIR="]
 
     if not (prefix / "lib" / "libz.a").exists():
