@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Baut NetSurf 3.11 (Framebuffer-Frontend, ZehOS-OberflÃƒÂ¤che) als WASIp1-Modul und stellt den Paketinhalt zusammen.
+"""Baut NetSurf 3.11 (Framebuffer-Frontend, ZehOS-Oberfläche) als WASIp1-Modul und stellt den Paketinhalt zusammen.
 
 Quellen und Werkzeuge liegen unter .tools/netsurf/ und werden nicht eingecheckt; feste SHA-256-Werte machen den
 Build nachvollziehbar. Ergebnis: experiments/NetSurf.Wasi/bin/package/ mit netsurf.wasm, res/, pages/ und licenses/.
-BenÃƒÂ¶tigt auf dem Linux-Host: make, cc, perl, gperf, curl/urllib-Zugang beim ersten Lauf.
+Benötigt auf dem Linux-Host: make, cc, perl, gperf, curl/urllib-Zugang beim ersten Lauf.
 """
 
 import argparse
@@ -22,7 +22,7 @@ ROOT = HERE.parents[1]
 TOOLS = ROOT / ".tools" / "netsurf"
 
 ARCHIVES = {
-    # wasi-sdk 25 verÃƒÂ¶ffentlicht keine PrÃƒÂ¼fsumme; der Wert stammt aus dem ersten Bezug am 15. November 2026.
+    # wasi-sdk 25 veröffentlicht keine Prüfsumme; der Wert stammt aus dem ersten Bezug am 15. November 2026.
     "wasi-sdk": ("https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz",
                  "52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c", "wasi-sdk-25.0-x86_64-linux"),
     "netsurf": ("https://download.netsurf-browser.org/netsurf/releases/source-full/netsurf-all-3.11.tar.gz",
@@ -30,7 +30,7 @@ ARCHIVES = {
     "zlib": ("https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
              "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23", "zlib-1.3.1"),
 }
-# Reihenfolge nach AbhÃƒÂ¤ngigkeiten; libsvgtiny fehlt, weil es setjmp/longjmp braucht.
+# Reihenfolge nach Abhängigkeiten; libsvgtiny fehlt, weil es setjmp/longjmp braucht.
 LIBRARIES = ["buildsystem", "libnslog", "libwapcaplet", "libparserutils", "libcss", "libhubbub", "libdom",
              "libnsbmp", "libnsgif", "libnsutils", "libutf8proc", "libnspsl", "libnsfb"]
 RESOURCES = ["Messages", "default.css", "quirks.css", "internal.css", "adblock.css", "welcome.html",
@@ -42,7 +42,7 @@ def run(command: list[str], cwd: Path, env: dict[str, str], log: Path) -> None:
         result = subprocess.run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
                                 stderr=subprocess.STDOUT)
     if result.returncode != 0:
-        sys.exit(f"Fehlgeschlagen ({result.returncode}): {' '.join(command[:4])} Ã¢â‚¬Â¦ Ã¢â‚¬â€œ Protokoll: {log}")
+        sys.exit(f"Fehlgeschlagen ({result.returncode}): {' '.join(command[:4])} … – Protokoll: {log}")
 
 
 def fetch(name: str) -> Path:
@@ -55,7 +55,7 @@ def fetch(name: str) -> Path:
     actual = hashlib.sha256(archive.read_bytes()).hexdigest()
     if actual != digest:
         archive.unlink()
-        sys.exit(f"Falscher SHA-256 fÃƒÂ¼r {archive.name}: {actual}")
+        sys.exit(f"Falscher SHA-256 für {archive.name}: {actual}")
     patches = sorted((HERE / "patches").glob("*.patch")) if name == "netsurf" else []
     # Ein neuer Patchsatz braucht unveraenderte Quellen, auch nach einem frueher abgebrochenen Build.
     recipe = hashlib.sha256(digest.encode() + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
@@ -119,7 +119,7 @@ def main() -> int:
     shutil.copy2(source / "netsurf" / "nsfb", package / "netsurf.wasm")
     resources = source / "netsurf" / "frontends" / "framebuffer" / "res"
     for name in RESOURCES:
-        shutil.copyfile(resources / name, package / "res" / name)  # lÃƒÂ¶st die Symlinks des Quellbaums auf
+        shutil.copyfile(resources / name, package / "res" / name)  # löst die Symlinks des Quellbaums auf
     shutil.copy2(HERE / "res" / "Choices", package / "res" / "Choices")
     shutil.copytree(HERE / "pages", package / "pages")
     licenses = package / "licenses"
@@ -130,6 +130,9 @@ def main() -> int:
             if (source / library / name).exists():
                 shutil.copyfile(source / library / name, licenses / f"{library}-{name}")
     shutil.copyfile(zlib / "LICENSE", licenses / "zlib-LICENSE")
+    # Texte, die weder NetSurf noch wasi-sdk mitliefern (PSL unter MPL-2.0, statisch gelinkte wasi-libc und compiler-rt).
+    for path in sorted((HERE / "licenses").iterdir()):
+        shutil.copyfile(path, licenses / path.name)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
     source_lines = ["ZehOS NetSurf source and build recipe", "",
         f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/experiments/NetSurf.Wasi", "",
@@ -137,6 +140,10 @@ def main() -> int:
     for name in ("netsurf", "zlib"):
         url, digest, _ = ARCHIVES[name]
         source_lines.extend([url, f"SHA256 {digest}"])
+    source_lines.extend(["", "Statically linked runtime from wasi-sdk 25:", ARCHIVES["wasi-sdk"][0],
+        f"SHA256 {ARCHIVES['wasi-sdk'][1]}",
+        "https://github.com/WebAssembly/wasi-libc/tree/574b88da481569b65a237cb80daf9a2d5aeaf82d",
+        "https://github.com/llvm/llvm-project/tree/ab4b5a2db582958af1ee308a790cfdb42bd24720/compiler-rt"])
     (licenses / "SOURCES.txt").write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     print(f"Paketinhalt: {package}")
     return 0
