@@ -12,6 +12,8 @@ public sealed class CertificateVerifierTests
     [DataRow("*.example.com", "www.example.com")]
     [DataRow("*.EXAMPLE.com", "WWW.example.COM")]
     [DataRow("*.co.uk", "example.co.uk")]
+    [DataRow("*.example.com.", "www.example.com")]
+    [DataRow("*.example.com", "xn--bcher-kva.example.com")]
     public void MatchesExactNamesAndLeftmostWildcards(string pattern, string host) =>
         Assert.IsTrue(CertificateVerifier.MatchesDnsName(pattern, host), pattern + " / " + host);
 
@@ -28,6 +30,7 @@ public sealed class CertificateVerifierTests
     [DataRow("*.0.0.1", "127.0.0.1")]
     [DataRow("*.example.com", ".example.com")]
     [DataRow("example.com", "www.example.com")]
+    [DataRow("*..com", "x..com")]
     public void RejectsBroadPartialAndMisplacedWildcards(string pattern, string host) =>
         Assert.IsFalse(CertificateVerifier.MatchesDnsName(pattern, host), pattern + " / " + host);
 }

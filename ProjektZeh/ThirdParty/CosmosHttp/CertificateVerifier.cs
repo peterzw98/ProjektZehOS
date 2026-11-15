@@ -208,7 +208,8 @@ namespace Cosmos.Network.Http
         /// Whether a certificate's DNS name matches a host: equal ignoring case, or a wildcard for its first label only.
         /// </summary>
         /// <remarks>
-        /// ZehOS: wildcards follow RFC 6125 6.4.3 as OpenSSL checks them. The "*" is the whole leftmost label, at least
+        /// ZehOS: wildcards follow RFC 6125 6.4.3 as OpenSSL checks them with X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, like the
+        /// NetSurf probe host. The "*" is the whole leftmost label, at least
         /// two labels follow it ("*.com" names nothing), it never matches an IPv4 literal, and a "*" elsewhere or inside
         /// a label ("w*.example.com") is no wildcard; such a name can only match itself, which no host name does.
         /// </remarks>
@@ -221,7 +222,7 @@ namespace Cosmos.Network.Http
                 // "*.example.com" names "www.example.com", not "example.com" nor "a.b.example.com".
                 string suffix = pattern.Substring(1);
                 int dot = host.IndexOf('.');
-                if (dot <= 0 || suffix.Contains('*') || suffix.IndexOf('.', 1) < 0 || ParseIPv4(host) != null)
+                if (dot <= 0 || suffix.Contains('*') || suffix.Contains("..") || suffix.IndexOf('.', 1) < 0 || ParseIPv4(host) != null)
                 {
                     return false;
                 }
