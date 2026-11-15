@@ -2,10 +2,12 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
 using ProjektZeh.Runtime.Wasm;
+using ProjektZeh.Security;
 
 namespace ProjektZeh.Runtime;
 
@@ -30,6 +32,8 @@ internal static class CosmosWasmProbe
     private static readonly byte[] Loop = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0b01090003400c000b41000b");
     private static readonly byte[] Grow = Convert.FromHexString("0061736d010000000105016000017f0302010005030100010707010372756e00000a0a0108004180800440000b");
     private static readonly byte[] Recurse = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0601040010000b");
+    // run ruft WASI random_get(0, 16) und liefert dessen Status.
+    private static readonly byte[] RandomGet = Convert.FromHexString("0061736d01000000010b0260027f7f017f6000017f02250116776173695f736e617073686f745f70726576696577310a72616e646f6d5f67657400000302010105030100010707010372756e00010a0a0108004100411010000b");
 
     public static bool Run()
     {
@@ -43,6 +47,8 @@ internal static class CosmosWasmProbe
             Expect("recurse", Recurse, "run", WasmStatus.Trap, 0);
             Expect("truncated", Add.AsSpan(0, 20).ToArray(), "run", WasmStatus.InvalidModule, 0);
             Expect("entry", Add, "fehlt", WasmStatus.EntryMissing, 0);
+            // Ohne Hardwarezufall muss der Gast EIO statt Erfolg mit Nullen erhalten (#61).
+            Expect("random", RandomGet, "run", WasmStatus.Ok, HasHardwareRandom() ? 0 : 29);
             RunApplication();
             if (File.Exists(DoomPath)) RunDoom();
             else Write("doom skipped (keine /data/doom.wasm)");
@@ -136,6 +142,12 @@ internal static class CosmosWasmProbe
         Write($"{name} status={status} result={result} ms={elapsed} {message}");
         Check(status == expectedStatus && result == expectedResult, $"{name}: erwartet {expectedStatus}/{expectedResult}.");
         return elapsed;
+    }
+
+    private static bool HasHardwareRandom()
+    {
+        try { CosmosSaltSource.Fill(new byte[16]); return true; }
+        catch (CryptographicException) { return false; }
     }
 
     private static ulong FreeBytes()
