@@ -3,15 +3,19 @@
 
 Das ISO muss mit -p:ZehOSWasm=true, -p:ZehOSPackageKeyPath (Testschluessel) und -p:ZehOSPackageTestCaPath (Test-CA)
 gebaut sein. Das Datenlaufwerk ist ein leerer Ordner, den QEMU als FAT-Laufwerk mit verworfenen Schreibzugriffen
-(vvfat, snapshot=on) einbindet; vorhandene Datenimages werden nicht verwendet. Paketergebnisse erscheinen seriell als
-"PKG ..."; die Bedienung wird anhand der Bildschirmfotos ausgewertet.
+(vvfat, snapshot=on) einbindet; vorhandene Datenimages werden nicht verwendet. Ergebnisse erscheinen seriell als
+"PKG ...", "NET ..." und "APP <id> ..." (erstes Bild, Ende); das Skript wartet auf diese Zeilen statt auf feste
+Zeiten. Die Bedienung wird anhand der Bildschirmfotos ausgewertet.
 
 Szenarien:
   full      Installation, neues Spiel, laufen/schiessen, Textshell (F4/Esc), Schliessen ueber X, Taskmanager,
-            zehn Starts mit Beenden ueber das Doom-Menue, Taskmanager.
+            --starts Starts (Standard 3, fuer die Speicherpruefung 10) mit Beenden ueber das Doom-Menue, Taskmanager.
   packages  Installation, Entfernen waehrend Doom laeuft (abgelehnt), Entfernen, Neuinstallation, Neustart mit
             Anmeldung und Start nach dem Neustart, Aktualisierung auf --upgrade-repo.
   corrupt   Server liefert eine veraenderte WAD; die Installation muss mit Pruefsummenfehler scheitern.
+
+Mehrere Szenarien (--scenario full packages corrupt) laufen gleichzeitig in eigenen VMs; Szenario i verwendet
+--port + i und --repo-port + i.
 """
 
 import argparse
@@ -138,16 +142,19 @@ class Repository:
                 target.write(data)
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        self.port = self.server.server_address[1]
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(tls / "server.pem", tls / "server.key")
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
 
-def start_qemu(iso: Path, disk: Path, work: Path, port: int) -> subprocess.Popen:
+def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str) -> subprocess.Popen:
     qemu = Path(shutil.which("qemu-system-x86_64") or Path.home() / "AppData/Local/Cosmos/Tools/qemu/bin/qemu-system-x86_64.exe")
     share = qemu.parent.parent / "share" / "qemu"
-    arguments = [str(qemu), "-L", str(share), "-accel", "tcg", "-machine", "q35", "-cpu", "max", "-m", "512M",
+    # Unter WHPX bricht der Gast mit -cpu max oder host sofort ab (Unexpected VP exit code 4); das Standardmodell laeuft.
+    cpu = ["-cpu", "max"] if accel == "tcg" else []
+    arguments = [str(qemu), "-L", str(share), "-accel", accel, "-machine", "q35", *cpu, "-m", "512M",
                  "-vga", "std", "-boot", "d", "-cdrom", str(iso), "-display", "none",
                  "-serial", f"file:{work / 'serial.log'}", "-monitor", "none",
                  "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off", "-action", "shutdown=poweroff,reboot=reset",
@@ -167,12 +174,53 @@ def wait_serial(work: Path, text: str, timeout: float, start: int = 0) -> int:
         found = content.find(text, start)
         if found >= 0:
             return found + len(text)
-        failure = content.find("PKG ", start)
-        if failure >= 0 and text.startswith("PKG ") and content.find("\n", failure) > 0:
-            line = content[failure:content.find("\n", failure)]
-            raise RuntimeError(f"Unerwartetes Paketergebnis: {line}")
+        # Die erste vollstaendige Ergebniszeile derselben Art (PKG, NET, APP <id>) ohne den Text ist ein Fehlschlag.
+        if text.startswith(("PKG ", "NET ", "APP ")):
+            prefix = text[:text.index(" ", 4) + 1] if text.startswith("APP ") else text[:4]
+            failure = content.find(prefix, start)
+            end = content.find("\n", failure) if failure >= 0 else -1
+            if end > 0:
+                raise RuntimeError(f"Unerwartetes Ergebnis: {content[failure:end]}")
         time.sleep(1)
     raise TimeoutError(f"Kein '{text}' im seriellen Protokoll.")
+
+
+def free_port() -> int:
+    # shortcut: der Port kann bis zum Start von QEMU neu vergeben werden; bei Bedarf --port angeben.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def run_parallel(args: argparse.Namespace) -> int:
+    """Startet jedes Szenario als eigenen Prozess mit eigener VM und eigenen Ports."""
+    children = []
+    for index, scenario in enumerate(args.scenario):
+        command = [sys.executable, __file__, "--iso", str(args.iso), "--scenario", scenario, "--accel", args.accel,
+                   "--starts", str(args.starts), "--port", str(args.port and args.port + index),
+                   "--repo-port", str(args.repo_port and args.repo_port + index)]
+        for name in ("repo", "upgrade_repo", "tls", "source"):
+            if getattr(args, name) is not None:
+                command += ["--" + name.replace("_", "-"), str(getattr(args, name))]
+        print(f"{scenario}: gestartet", flush=True)
+        children.append((scenario, time.monotonic(), subprocess.Popen(command, stdout=subprocess.PIPE,
+                                                                       stderr=subprocess.STDOUT, text=True)))
+    # Ausgaben gleichzeitig abholen, damit die Laufzeit je Szenario stimmt und volle Pipes nicht blockieren.
+    finished = {}
+
+    def collect(scenario: str, started: float, child: subprocess.Popen) -> None:
+        output, _ = child.communicate()
+        finished[scenario] = (output, time.monotonic() - started)
+
+    readers = [threading.Thread(target=collect, args=entry) for entry in children]
+    for reader in readers:
+        reader.start()
+    for reader in readers:
+        reader.join()
+    for scenario, _, child in children:
+        output, seconds = finished[scenario]
+        print(f"--- {scenario}: Exitcode {child.returncode} nach {seconds:.0f} s\n{output}", flush=True)
+    return 1 if any(child.returncode != 0 for _, _, child in children) else 0
 
 
 def serial_size(work: Path) -> int:
@@ -187,22 +235,30 @@ def main() -> int:
     parser.add_argument("--upgrade-repo", type=Path, help="Repository mit neuerer Doom-Version (Szenario packages)")
     parser.add_argument("--tls", type=Path, help="Ordner mit server.pem und server.key der Test-CA")
     parser.add_argument("--source", help="vorhandenes Repository (https://.../) statt des lokalen Testservers")
-    parser.add_argument("--scenario", choices=["full", "packages", "corrupt"], default="full")
-    parser.add_argument("--port", type=int, default=4445)
-    parser.add_argument("--repo-port", type=int, default=8443)
+    parser.add_argument("--scenario", nargs="+", choices=["full", "packages", "corrupt"], default=["full"])
+    parser.add_argument("--port", type=int, default=0, help="QMP-Port; 0 waehlt einen freien")
+    parser.add_argument("--repo-port", type=int, default=0, help="Port des Testservers; 0 waehlt einen freien")
+    parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg oder whpx (Windows)")
+    parser.add_argument("--starts", type=int, default=3, help="Doom-Starts am Ende von full (Speicherpruefung: 10)")
     args = parser.parse_args()
+    if args.source is None and (args.repo is None or args.tls is None):
+        parser.error("ohne --source sind --repo und --tls noetig")
+    if len(args.scenario) > 1:
+        return run_parallel(args)
+    scenario = args.scenario[0]
 
     work = ROOT / ".tools" / "wasm-desktop" / uuid.uuid4().hex
     (work / "disk").mkdir(parents=True)
-    if args.source is None and (args.repo is None or args.tls is None):
-        parser.error("ohne --source sind --repo und --tls noetig")
-    repository = None if args.source else Repository(args.repo.resolve(), args.tls.resolve(), args.repo_port, args.scenario == "corrupt")
-    source = args.source or f"https://10.0.2.2:{args.repo_port}/"
-    guest = start_qemu(args.iso.resolve(), work / "disk", work, args.port)
+    repository = None if args.source else Repository(args.repo.resolve(), args.tls.resolve(), args.repo_port, scenario == "corrupt")
+    source = args.source or f"https://10.0.2.2:{repository.port}/"
+    port = args.port or free_port()
+    started = time.monotonic()
+    guest = start_qemu(args.iso.resolve(), work / "disk", work, port, args.accel)
     try:
-        wait_serial(work, "ist bereit", 180)
-        qmp = Qmp(args.port)
-        time.sleep(4)
+        wait_serial(work, "Desktop ist bereit", 180)
+        print(f"Desktop bereit: {time.monotonic() - started:.0f} s", flush=True)
+        qmp = Qmp(port)
+        time.sleep(2)
         step = iter(range(1, 1000))
 
         def shot(name: str) -> tuple[int, int]:
@@ -215,6 +271,7 @@ def main() -> int:
             time.sleep(1)
         # Die Ersteinrichtung (PBKDF2) dauert unter TCG unterschiedlich lange; erst danach tippen.
         wait_serial(work, "Benutzer angemeldet.", 300, mark)
+        print(f"angemeldet: {time.monotonic() - started:.0f} s", flush=True)
         time.sleep(5)
 
         def shell(*lines: str) -> None:
@@ -235,21 +292,32 @@ def main() -> int:
             wait_serial(work, "PKG " + expected, timeout, mark)
             print(f"pkg {command}: {time.monotonic() - started:.0f} s", flush=True)
 
+        def dhcp() -> None:
+            # Getippte Zeilen koennen unter Last verloren gehen; ohne NET-Ergebnis erneut anstossen.
+            for attempt in range(3):
+                mark = serial_size(work)
+                qmp.line("net dhcp")
+                try:
+                    wait_serial(work, "NET DHCP IPv4", 90, mark)
+                    return
+                except (RuntimeError, TimeoutError):
+                    shot("dhcp-failed")
+                    if attempt == 2:
+                        raise
+
         def update_catalog() -> None:
-            # DHCP laeuft im Hintergrund und braucht unter TCG unterschiedlich lange; bei fehlender Adresse erneut versuchen.
-            for attempt in range(6):
+            for attempt in range(3):
                 try:
                     pkg("update", "Katalog geladen", 120)
                     return
                 except RuntimeError as error:
                     shot("update-failed")
-                    if not ("IPv4" in str(error) or "Paketquelle" in str(error)) or attempt == 5:
+                    if not ("IPv4" in str(error) or "Paketquelle" in str(error)) or attempt == 2:
                         raise
-                    # Die Eingabe kann waehrend der langsamen Ersteinrichtung verloren gehen; DHCP erneut anstossen.
-                    qmp.line("net dhcp")
-                    time.sleep(1)
+                    # Eine verlorene Eingabe von pkg source oder net dhcp nachholen.
                     qmp.line(f"pkg source {source}")
-                    time.sleep(15)
+                    time.sleep(1)
+                    dhcp()
                 except TimeoutError:
                     shot("update-timeout")
                     raise
@@ -264,7 +332,19 @@ def main() -> int:
             time.sleep(1)
             qmp.tap("ret")
 
+        def start_doom() -> None:
+            mark = serial_size(work)
+            launch("doom")
+            try:
+                wait_serial(work, "APP doom erstes Bild", 180, mark)
+            except TimeoutError:
+                shot("doom-timeout")
+                raise
+            # Kurz weiterlaufen lassen, damit das Bildschirmfoto mehr als das erste Bild zeigt.
+            time.sleep(3)
+
         def quit_doom() -> None:
+            mark = serial_size(work)
             qmp.tap("backspace")
             time.sleep(1)
             qmp.tap("up")
@@ -272,14 +352,13 @@ def main() -> int:
             qmp.tap("ret")
             time.sleep(1)
             qmp.tap("y")
-            time.sleep(5)
+            wait_serial(work, "APP doom beendet", 60, mark)
+            time.sleep(1)
 
-        shell("net dhcp")
-        time.sleep(10)
-        qmp.line(f"pkg source {source}")
-        time.sleep(1)
+        shell(f"pkg source {source}")
+        dhcp()
         update_catalog()
-        if args.scenario == "corrupt":
+        if scenario == "corrupt":
             pkg("install doom", "Pruefsumme falsch: freedoom1.wad")
             qmp.line("pkg list")
             time.sleep(2)
@@ -292,9 +371,8 @@ def main() -> int:
         qmp.tap("f4")
         time.sleep(3)
 
-        if args.scenario == "packages":
-            launch("doom")
-            time.sleep(30)
+        if scenario == "packages":
+            start_doom()
             shot("doom-running")
             shell("pkg remove doom")
             shot("remove-while-running")
@@ -312,11 +390,10 @@ def main() -> int:
             time.sleep(1)
             shell()
             pkg("install doom", "doom 1.0.0 installiert.")
-            qmp.line("reboot")
-            time.sleep(5)
             mark = serial_size(work)
-            wait_serial(work, "ist bereit", 240, mark)
-            time.sleep(25)
+            qmp.line("reboot")
+            wait_serial(work, "Desktop ist bereit", 240, mark)
+            time.sleep(2)
             shot("after-reboot")
             mark = serial_size(work)
             for value in (TEST_USER, TEST_PASSWORD):
@@ -324,14 +401,13 @@ def main() -> int:
                 time.sleep(1)
             wait_serial(work, "Benutzer angemeldet.", 300, mark)
             time.sleep(5)
-            launch("doom")
-            time.sleep(30)
+            start_doom()
             shot("doom-after-reboot")
             quit_doom()
             if args.upgrade_repo is not None:
                 repository.directory = args.upgrade_repo.resolve()
-                shell("net dhcp")
-                time.sleep(10)
+                shell()
+                dhcp()
                 update_catalog()
                 pkg("upgrade", "doom 1.1.0 aktualisiert.")
                 qmp.line("pkg list")
@@ -339,13 +415,11 @@ def main() -> int:
                 shot("upgraded")
                 qmp.tap("f4")
                 time.sleep(2)
-                launch("doom")
-                time.sleep(30)
+                start_doom()
                 shot("doom-upgraded")
             return 0
 
-        launch("doom")
-        time.sleep(30)
+        start_doom()
         shot("doom-demo")
         qmp.tap("backspace")
         time.sleep(1.5)
@@ -375,15 +449,17 @@ def main() -> int:
         time.sleep(1.5)
         shot("resumed-fired")
         # Doom ist das erste Fenster; sein Schliessen-Feld liegt bei 1920x1080 an fester Stelle.
+        mark = serial_size(work)
         qmp.click(813, 100, width, height)
-        time.sleep(3)
+        # Belegt das Beenden und verhindert, dass die Ende-Marke in den naechsten Start faellt.
+        wait_serial(work, "APP doom beendet", 60, mark)
+        time.sleep(1)
         shot("closed-x")
         launch("taskmanager")
         time.sleep(6)
         shot("taskmanager-before")
-        for run in range(1, 11):
-            launch("doom")
-            time.sleep(30)
+        for run in range(1, args.starts + 1):
+            start_doom()
             shot(f"start-{run:02d}")
             quit_doom()
         shot("taskmanager-after")
