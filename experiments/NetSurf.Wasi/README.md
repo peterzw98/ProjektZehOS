@@ -77,7 +77,7 @@ cd .tools/netsurf-host
 cmake -S wamr/product-mini/platforms/linux -B build-iwasm -DCMAKE_BUILD_TYPE=Release \
   -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIB_PTHREAD=0 -DCMAKE_EXE_LINKER_FLAGS=-rdynamic
 cmake --build build-iwasm -j
-gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c -o libzehos_host.so
+gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c -o libzehos_host.so -lssl -lcrypto
 ZEHOS_NET=1 ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
   --map-dir=/::../../experiments/NetSurf.Wasi/bin/package --stack-size=1048576 \
   ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
@@ -90,7 +90,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   --host .tools/netsurf-host/libzehos_host.so
 ```
 
-Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung, eine abgebrochene Verbindung (RST), eine fehlende Netzwerkberechtigung, einen Cookie über eine Weiterleitung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht. Er hält die Kernelgrenzen ein (4 Verbindungen, 64 KiB je net_send/net_recv, EACCES ohne Berechtigung); ZEHOS_NET=1 ersetzt dort capability=net.
+Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung, eine abgebrochene Verbindung (RST), eine fehlende Netzwerkberechtigung, einen Cookie über eine Weiterleitung und `https://` ohne Server. Die HTTPS-Szenarien erzeugen mit `openssl` eine Test-CA und prüfen gegen lokale TLS-Server eine Seite, `chunked`, eine Weiterleitung, einen falschen Zertifikatsnamen, die Warnseite bei HTTPS→HTTP samt maskiertem Link, blockierten Mixed Content (direkt und über eine Weiterleitung, mit HTTP-Gegenprobe) sowie eine Antwort ohne Länge mit und ohne `close_notify`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht. Er hält die Kernelgrenzen ein (4 Verbindungen, 64 KiB je net_send/net_recv, EACCES ohne Berechtigung); ZEHOS_NET=1 ersetzt dort capability=net. TLS bildet er mit OpenSSL nach (bauen mit `-lssl -lcrypto`); `ZEHOS_TLS_CA=<PEM-Pfad>` setzt die vertraute CA, ohne sie meldet `net_open` mit TLS `ENOSYS`.
 
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
 
@@ -104,7 +104,11 @@ Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite,
 - Cookies verwaltet NetSurfs urldb wie beim curl-Fetcher: `Set-Cookie` wird übernommen, passende Cookies gehen als `Cookie` mit. Sie gelten nur bis zum Beenden: Das ZehOS-Frontend lädt und speichert keine Cookie-Datei, das Paket ist nur lesend eingebunden.
 - Keine HTTP-Anmeldung (401); Seiten mit Login über HTTP-Authentifizierung funktionieren noch nicht.
 - Höchstens 4 gleichzeitige Verbindungen (Kernelgrenze); `res/Choices` setzt `max_fetchers` und `max_fetchers_per_host` auf 4. Gesendet wird in Stücken bis 64 KiB.
-- `https://` zeigt ausdrücklich „HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.“
+- `https://` (Port 443) verschlüsselt und prüft der Kernel über `net_open` mit `ZEHOS_NET_TLS`, mit denselben Vertrauensankern wie die Shell. Ein Kernel ohne TLS meldet „HTTPS wird von diesem ZehOS-Kernel noch nicht unterstützt.“
+- Zertifikatsfehler zeigen eine Fehlerseite ohne Fortfahren. Eigene Meldungen gibt es für TLS-Protokollfehler und für fehlende Uhr oder fehlenden CPU-Zufall.
+- Eine Weiterleitung von HTTPS auf HTTP ersetzt der Fetcher durch eine Warnseite; erst „Trotzdem fortfahren“ lädt die HTTP-Adresse. Unterressourcen mit solcher Weiterleitung scheitern ohne Rückfrage.
+- Mixed Content: Nicht vom Benutzer ausgelöste `http://`-Abrufe einer HTTPS-Seite (Bilder, CSS, Frames, verzögerte Meta-Refreshs) sind ohne Rückfrage blockiert; die Seite lädt ohne sie. `patches/netsurf-zehos-mixed-content.patch` macht dafür Verifizierbarkeit und Referer des Abrufs für den Fetcher lesbar.
+- Über TLS gilt eine Antwort ohne Längenangabe nur mit `close_notify` als vollständig, sonst als abgeschnitten. HTTPS-Anfragen tragen `Host: name:443`.
 - Fehlerseiten nennen die Ursache: fehlende Netzwerkberechtigung, unbekannter Servername, abgelehnte oder abgebrochene Verbindung, Zeitüberschreitung, ungültige, unvollständige oder zu große Antwort.
 
 ## Grenzen

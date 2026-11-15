@@ -94,7 +94,7 @@ braucht dafür `-lssl -lcrypto`. Die Fehlercodes für TLS stehen in [PAKETE_ERST
 
 ## Grenzen
 
-- HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
+- HTTP und HTTPS über Kernel-TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); Zertifikatsfehler ohne Fortfahren, Mixed Content blockiert. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
 - Festes Browserbild 632×392, kein Resize-Import. Das ZehOS-Fenster zentriert bzw. skaliert es.
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.
