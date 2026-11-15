@@ -12,6 +12,7 @@ internal sealed class UiList : UiControl
     private int rowHeight = 20;
     private int clicked = -1;
     private long clickedAt;
+    private bool followSelection = true;
     public bool DoubleClick { get; set; }
     /// <summary>Optionales Symbol je Eintrag, parallel zu den Eintraegen.</summary>
     public AppIcon[]? Icons { get; set; }
@@ -29,6 +30,7 @@ internal sealed class UiList : UiControl
         first = 0;
         SelectedIndex = items.Length == 0 ? -1 : 0;
         clicked = -1;
+        followSelection = true;
     }
 
     public void Select(int index)
@@ -37,18 +39,27 @@ internal sealed class UiList : UiControl
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, items.Length);
         SelectedIndex = index;
         clicked = -1;
+        followSelection = true;
     }
 
     public override void Handle(InputEvent value)
     {
         if (value.Type == InputEventType.Reset) { clicked = -1; return; }
         if (items.Length == 0) return;
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            first = (int)Math.Clamp(first - (long)value.ScrollDelta * 3, 0, Math.Max(0, items.Length - visible));
+            clicked = -1;
+            followSelection = false;
+            return;
+        }
         if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
         {
             int row = (value.Y - Bounds.Y - 4) / rowHeight;
             if (Bounds.Contains(value.X, value.Y) && value.Y >= Bounds.Y + 4 && row < visible && first + row < items.Length)
             {
                 SelectedIndex = first + row;
+                followSelection = true;
                 long now = GetMilliseconds();
                 bool activate = DoubleClick && clicked == SelectedIndex && now >= clickedAt && now - clickedAt <= 450;
                 clicked = activate ? -1 : SelectedIndex;
@@ -65,7 +76,7 @@ internal sealed class UiList : UiControl
             PhysicalKey.Home => -items.Length, PhysicalKey.End => items.Length,
             _ => 0
         };
-        if (delta != 0) { SelectedIndex = Math.Clamp(SelectedIndex + delta, 0, items.Length - 1); clicked = -1; }
+        if (delta != 0) { SelectedIndex = Math.Clamp(SelectedIndex + delta, 0, items.Length - 1); clicked = -1; followSelection = true; }
         if (value.KeyCode == (byte)PhysicalKey.Enter && !value.IsRepeat) Activated?.Invoke();
     }
 
@@ -74,7 +85,8 @@ internal sealed class UiList : UiControl
         if (Framed) UiPainter.Frame(surface, Bounds, x, y, Focused && active);
         rowHeight = painter.GlyphHeight + RowPadding;
         visible = Math.Max(1, (Bounds.Height - 8) / rowHeight);
-        if (SelectedIndex >= 0) first = Math.Clamp(first, Math.Max(0, SelectedIndex - visible + 1), SelectedIndex);
+        if (followSelection && SelectedIndex >= 0) first = Math.Clamp(first, Math.Max(0, SelectedIndex - visible + 1), SelectedIndex);
+        first = Math.Clamp(first, 0, Math.Max(0, items.Length - visible));
         int indent = Icons == null ? 12 : 44;
         for (int row = 0; row < Math.Min(visible, items.Length - first); row++)
         {

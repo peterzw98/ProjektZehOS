@@ -264,6 +264,7 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateFailure(ResultCode.Failure, "Cosmos-Textkonsole konnte nicht initialisiert werden.");
         }
 
+        if (KernelConsole.Default is { } console) console.Font = ProjektZeh.Graphics.CosmosGermanFont.Default;
         Console.Clear();
         return ResultErr.CreateSuccess();
     }

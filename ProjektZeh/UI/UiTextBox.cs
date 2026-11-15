@@ -48,6 +48,15 @@ internal sealed class UiTextBox(int maximumLength, bool multiline = false, bool 
     {
         if (value.Type == InputEventType.Reset) { selectedAll = false; return; }
         PrepareRows();
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            if (multiline)
+            {
+                FirstRow = (int)Math.Clamp(FirstRow - (long)value.ScrollDelta * 3, 0, Math.Max(0, rows.Count - visibleRows));
+                followCursor = false;
+            }
+            return;
+        }
         if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
         {
             int row = Math.Clamp(FirstRow + (value.Y - Bounds.Y - 6) / glyphHeight, 0, rows.Count - 1);
