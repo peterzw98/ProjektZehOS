@@ -68,6 +68,8 @@ def package(args: argparse.Namespace) -> None:
     if target.exists():
         raise ValueError(f"{target} existiert bereits; veroeffentlichte Versionen sind unveraenderlich.")
     lines = ["zehos-package 1", f"id={args.id}", f"version={args.version}", "runtime=zehos-wasm32-v1", f"name={args.name}", f"entry={args.entry}"]
+    if args.network:
+        lines.append("capability=net")
     for name in sorted(files):
         data = files[name].read_bytes()
         lines.append(f"file={hashlib.sha256(data).hexdigest()} {len(data)} {name}")
@@ -111,6 +113,7 @@ def main() -> int:
         build.add_argument(name, type=Path, required=True)
     for name in ("--id", "--version", "--name", "--entry"):
         build.add_argument(name, required=True)
+    build.add_argument("--network", action="store_true", help="Netzwerkzugriff im signierten Manifest erlauben")
     build.add_argument("files", nargs="+", help="QUELLE=ZIELPFAD im Paket")
     index = commands.add_parser("catalog")
     index.add_argument("--key", type=Path, required=True)

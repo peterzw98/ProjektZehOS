@@ -86,7 +86,7 @@ internal sealed class CosmosNetworkService : INetworkService
     private static IOException CleanupFailure(Exception? original, string operation, Exception cleanup) =>
         new IOException((original == null ? "" : original.Message + " ") + operation + "-Bereinigung fehlgeschlagen: " + cleanup.Message, cleanup);
 
-    private static Address Resolve(string host, CancellationToken token, Stopwatch? deadline = null)
+    internal static Address Resolve(string host, CancellationToken token, Stopwatch? deadline = null)
     {
         NetworkTarget.ValidateHost(host);
         if (IPAddress.TryParse(host, out var ip) && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) return ParseAddress(host);
@@ -153,7 +153,7 @@ internal sealed class CosmosNetworkService : INetworkService
         return result;
     }
 
-    private static void EnsureAddress()
+    internal static void EnsureAddress()
     {
         if (!NetworkManager.IsEnabled || !NetworkManager.IsInitialized) throw new IOException("Netzwerkdienst nicht initialisiert.");
         if (NetworkManager.DeviceCount == 0 || !NetworkManager.LinkUp) throw new IOException("Kein betriebsbereiter Netzwerkadapter.");

@@ -78,6 +78,25 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void ManifestNetworkCapabilityIsExplicitAndCanonical()
+    {
+        string valid = Manifest("browser", "1.0.0", ("app.wasm", [1]));
+        var noNetwork = PackageManifest.Parse(Encoding.UTF8.GetBytes(valid));
+        Assert.IsTrue(noNetwork.IsOK());
+        Assert.IsFalse(noNetwork.Value!.AllowsNetwork);
+        string network = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=net\n");
+        var enabled = PackageManifest.Parse(Encoding.UTF8.GetBytes(network));
+        Assert.IsTrue(enabled.IsOK(), enabled.Status.Message);
+        Assert.IsTrue(enabled.Value!.AllowsNetwork);
+        foreach (string invalid in new[]
+        {
+            network.Replace("capability=net", "capability=other"),
+            network.Replace("capability=net\n", "capability=net\ncapability=net\n"),
+            valid.Replace("end\n", "capability=net\nend\n")
+        }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
+    }
+
+    [TestMethod]
     public void ManifestRejectsAmbiguousOrUnsafeContent()
     {
         string valid = Manifest("doom", "1.0.0", ("app.wasm", [1]));
