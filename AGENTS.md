@@ -57,7 +57,7 @@ Wichtige Zuständigkeiten:
 - Hostfunktionen prüfen jeden Gastzeiger und jede Länge überlaufsicher. Ausnahmen dürfen die native Grenze (`UnmanagedCallersOnly`) nicht überqueren.
 - Apps erhalten keine Kernelobjekte, nur Zahlen, Kopien und instanzgebundene Handles. Der Dateizugriff bleibt auf das eigene Paket beschränkt und nur lesend, solange nichts anderes beauftragt ist.
 - Den privaten Herausgeberschlüssel nie ins Repository, in Logs, Testfixtures oder auf den Server legen. Tests verwenden eigene Testschlüssel und `-p:ZehOSPackageKeyPath`/`-p:ZehOSPackageTestCaPath`; diese gehören nie in normale Builds.
-- Im Branch `packages` veröffentlichte Versionen sind unveränderlich. Änderungen brauchen eine neue Version und eine höhere Katalog-Generation. Das Pushen dieses Branches veröffentlicht sofort; nur auf ausdrücklichen Auftrag.
+- Im Branch `packages` veröffentlichte Versionen sind unveränderlich. Änderungen brauchen eine neue Version und eine höhere Katalog-Generation. Änderungen am Branch `packages` laufen nur per Pull Request (Branchregel); der Merge veröffentlicht sofort und erfolgt nur auf ausdrücklichen Auftrag.
 - Lizenzen der Paketinhalte beachten: Lizenztexte ins Paket legen, bei GPL die Quellen öffentlich erreichbar halten. GPL-Code nicht in den Kernel übernehmen.
 
 ## Änderungen und Architektur

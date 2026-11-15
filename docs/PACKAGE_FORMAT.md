@@ -102,7 +102,7 @@ Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen s
 
 ## Server und Prüfstand
 
-Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgeliefert wird es von `deploy/package-repo` (Docker-Compose mit nginx und einem `updater`, der den Branch `packages` alle 5 Minuten nachzieht). Neue Pakete werden mit dem privaten Herausgeberschlüssel gebaut und im Branch `packages` committet; der Server übernimmt sie von selbst.
+Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgeliefert wird es von `deploy/package-repo` (Docker-Compose mit nginx und einem `updater`, der den Branch `packages` alle 5 Minuten nachzieht). Neue Pakete werden mit dem privaten Herausgeberschlüssel gebaut und per Pull Request in den Branch `packages` gebracht; nach dem Merge übernimmt der Server sie von selbst.
 
 Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py`. VMware und echte Hardware sind nicht geprüft.
 

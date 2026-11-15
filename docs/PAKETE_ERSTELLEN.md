@@ -55,7 +55,7 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
 
 1. App bauen (z. B. `python experiments/Wasm.DoomProbe/build.py --source <doomgeneric>`).
 2. Lizenztexte aller Bestandteile als Paketdateien beilegen. GPL-Code verlangt zusätzlich, dass die Quellen öffentlich erreichbar sind.
-3. Im Worktree des Branches `packages` eine **neue** Version bauen. Veröffentlichte Versionen sind unveränderlich; jede Änderung braucht eine höhere Version.
+3. Einen Arbeitsbranch von `packages` abzweigen (etwa `git worktree add -b pakete/doom-1.1.0 ../pakete origin/packages`) und darin eine **neue** Version bauen. Veröffentlichte Versionen sind unveränderlich; jede Änderung braucht eine höhere Version.
 
    ```bash
    python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <packages-Worktree> --id <id> --version <x.y.z> --name "<Name>" --entry <app.wasm> <datei>=<pfad> ...
@@ -67,7 +67,7 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
    python scripts/build-package.py catalog --key <privater-Schlüssel.pem> --repo <packages-Worktree> --generation <n+1>
    ```
 
-5. Im Branch `packages` committen und pushen. Der Server (`deploy/package-repo`) übernimmt den Stand innerhalb von 5 Minuten und schaltet ihn als Ganzes um.
+5. Den Arbeitsbranch committen, pushen und per Pull Request nach `packages` bringen; direkte Pushes auf `packages` lehnt GitHub ab. Nach dem Merge übernimmt der Server (`deploy/package-repo`) den Stand innerhalb von 5 Minuten und schaltet ihn als Ganzes um.
 6. In ZehOS: `pkg update`, dann `pkg install <id>` oder `pkg upgrade`.
 
 Den privaten Herausgeberschlüssel nie ins Repository, in Logs oder auf den Server legen. Geht er verloren, lassen sich keine Pakete mehr veröffentlichen. Ein neuer Schlüssel braucht ein Kernelupdate mit neuem `ProjektZeh/Packages/package-key.pub`.
