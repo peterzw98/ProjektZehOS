@@ -98,6 +98,8 @@ def main() -> int:
     env = os.environ.copy()
     # Feste Zeit für NetSurfs Build-Testament (patches/netsurf-testament-reproducible.patch), sonst ändert sich das Modul täglich.
     env.setdefault("SOURCE_DATE_EPOCH", "1794700800")
+    # Die Perl-Generatoren von libparserutils/hubbub geben Tabellen in Hash-Reihenfolge aus; feste Seeds machen sie stabil.
+    env.update(PERL_HASH_SEED="0", PERL_PERTURB_KEYS="0", PYTHONHASHSEED="0")
     env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{env['PATH']}",
                PKG_CONFIG_PATH=str(prefix / "lib" / "pkgconfig"), PKG_CONFIG_LIBDIR=str(prefix / "lib" / "pkgconfig"))
     common = [f"HOST=wasm32-wasip1", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", f"CC={cc}",
