@@ -14,16 +14,19 @@ internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
     private readonly Action<string, string, bool> moveFile;
+    private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
 
     public string CurrentDirectory { get; private set; }
 
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
-        FileAccessControl? access = null, UserSession? session = null)
+        FileAccessControl? access = null, UserSession? session = null,
+        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null)
     {
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
+        this.diskSpace = diskSpace;
         this.access = access;
         this.session = session;
     }
@@ -94,6 +97,14 @@ internal sealed class FileService
 
         try
         {
+            if (allowMissing && access != null && !access.Contains(resolved.Value!))
+            {
+                if (session == null || !access.Check(session, resolved.Value!, FilePermission.Write, true).IsOK())
+                    throw new UnauthorizedAccessException("Zugriff verweigert.");
+                // Nur ein wirklich fehlendes Ziel darf ohne Rechtezuordnung als leer gelten.
+                _ = File.GetAttributes(resolved.Value!);
+                throw new UnauthorizedAccessException("Vorhandener Eintrag ohne Rechtezuordnung.");
+            }
             Authorize(resolved.Value!, FilePermission.Read);
             using var reader = new StreamReader(resolved.Value!);
             var buffer = new char[MaximumTextLength + 1];
@@ -321,6 +332,199 @@ internal sealed class FileService
         {
             return ResultErr.CreateFromException(exception);
         }
+    }
+
+    public ResultErr CopyFile(string? source, string? target) => TransferFile(source, target, false);
+    public ResultErr MoveFile(string? source, string? target) => TransferFile(source, target, true);
+
+    private ResultErr TransferFile(string? source, string? target, bool moving)
+    {
+        var from = ResolvePath(source);
+        if (!from.IsOK()) return from.Status;
+        var to = ResolvePath(target);
+        if (!to.IsOK()) return to.Status;
+        bool registered = false;
+        string? temporary = null;
+        FileStream? temporaryStream = null;
+        try
+        {
+            Authorize(from.Value!, moving ? FilePermission.Read | FilePermission.Write : FilePermission.Read);
+            if (moving) Authorize(Path.GetDirectoryName(from.Value!)!, FilePermission.Write);
+            // Oeffnen prueft auch fehlende Quellen, bevor Zielrechte angelegt werden.
+            using (var input = new FileStream(from.Value!, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                if (access != null && (session == null || !access.Check(session, to.Value!, FilePermission.Write, true).IsOK()))
+                    throw new UnauthorizedAccessException("Zugriff verweigert.");
+                if (File.Exists(to.Value!) || Directory.Exists(to.Value!) || (access?.Contains(to.Value!) ?? false))
+                    throw new IOException("Das Ziel existiert bereits.");
+                if (moving && access != null)
+                {
+                    if (!access.PrepareMove(from.Value!, to.Value!).IsOK())
+                        throw new UnauthorizedAccessException("Rechte konnten nicht gespeichert werden.");
+                    registered = true;
+                }
+                else registered = Authorize(to.Value!, FilePermission.Write, true);
+                if (!moving)
+                {
+                    temporary = Path.Combine(Path.GetDirectoryName(to.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
+                    using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1);
+                    temporaryStream = output;
+                    input.CopyTo(output, 4096);
+                    output.Flush(true);
+                }
+            }
+            moveFile(moving ? from.Value! : temporary!, to.Value!, false);
+            temporary = null;
+            if (moving && access != null) return access.RemoveEntry(from.Value!);
+            return ResultErr.CreateSuccess();
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            if (registered) access!.ForgetCreated(to.Value!);
+            if (temporary != null)
+            {
+                try { temporaryStream?.Dispose(); File.Delete(temporary); }
+                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                { return ResultErr.CreateFromException(new AggregateException(exception, cleanupException)); }
+            }
+            return ResultErr.CreateFromException(exception);
+        }
+    }
+
+    public ResultErr DeleteFile(string? path) => DeleteEntry(path, false);
+    public ResultErr DeleteDirectory(string? path) => DeleteEntry(path, true);
+
+    private ResultErr DeleteEntry(string? path, bool directory)
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return resolved.Status;
+        try
+        {
+            Authorize(resolved.Value!, FilePermission.Write);
+            Authorize(Path.GetDirectoryName(resolved.Value!)!, FilePermission.Write);
+            if (directory && (string.Equals(resolved.Value, CurrentDirectory, StringComparison.OrdinalIgnoreCase) ||
+                CurrentDirectory.StartsWith(Path.TrimEndingDirectorySeparator(resolved.Value!) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("Das Arbeitsverzeichnis oder dessen Elternverzeichnis darf nicht geloescht werden.");
+            FileAttributes attributes = File.GetAttributes(resolved.Value!);
+            if (((attributes & FileAttributes.Directory) != 0) != directory)
+                throw new IOException(directory ? "Kein Verzeichnis." : "Keine Datei.");
+            if (directory) Directory.Delete(resolved.Value!, false);
+            else File.Delete(resolved.Value!);
+            return access?.RemoveEntry(resolved.Value!) ?? ResultErr.CreateSuccess();
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        { return ResultErr.CreateFromException(exception); }
+    }
+
+    public ResultErr Touch(string? path)
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return resolved.Status;
+        bool registered = false;
+        try
+        {
+            registered = Authorize(resolved.Value!, FilePermission.Write, true);
+            using (var stream = new FileStream(resolved.Value!, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
+                stream.Flush(true);
+            // Cosmos 3.0.94 bestaetigt Zeitstempel ohne Aenderung; auf dem Host werden sie aktualisiert.
+            File.SetLastWriteTimeUtc(resolved.Value!, DateTime.UtcNow);
+            return ResultErr.CreateSuccess();
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            if (registered) access!.ForgetCreated(resolved.Value!);
+            return ResultErr.CreateFromException(exception);
+        }
+    }
+
+    public ResultObject<long> GetFileSize(string? path)
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<long>(resolved.Status);
+        try
+        {
+            Authorize(resolved.Value!, FilePermission.Read);
+            using var stream = new FileStream(resolved.Value!, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return ResultObjectFactory.CreateSuccess(stream.Length);
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        { return ResultObjectFactory.CreateFromException<long>(exception); }
+    }
+
+    public ResultObject<(long TotalBytes, long AvailableBytes)> GetDiskSpace(string? path)
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<(long, long)>(resolved.Status);
+        try
+        {
+            Authorize(resolved.Value!, FilePermission.Read);
+            _ = File.GetAttributes(resolved.Value!);
+            return diskSpace?.Invoke(resolved.Value!) ??
+                ResultObjectFactory.CreateFailure<(long, long)>(ResultCode.Failure, "Speicherstatistik ist ohne Dateisystemadapter nicht verfuegbar.");
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        { return ResultObjectFactory.CreateFromException<(long, long)>(exception); }
+    }
+
+    internal const int MaximumSearchEntries = 1024;
+
+    public ResultObject<FileEntry[]> FindEntries(string? path, string name = "")
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<FileEntry[]>(resolved.Status);
+        var pending = new Stack<string>();
+        var found = new List<FileEntry>();
+        pending.Push(resolved.Value!);
+        int visited = 0;
+        try
+        {
+            while (pending.Count > 0)
+            {
+                string directory = pending.Pop();
+                Authorize(directory, FilePermission.Read);
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    throw new NotSupportedException("Die Suche folgt keinen Verknuepfungen.");
+                // Schrittweise lesen: Auch unsichtbare Eintraege duerfen das Arbeitsbudget nicht umgehen.
+                foreach (string entryPath in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    if (++visited > MaximumSearchEntries)
+                        return ResultObjectFactory.CreateFailure<FileEntry[]>(ResultCode.InvalidArgument, "Suche auf 1024 Eintraege begrenzt.");
+                    if (access != null && !access.Check(session!, entryPath, FilePermission.Read).IsOK()) continue;
+                    var attributes = File.GetAttributes(entryPath);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    var entry = new FileEntry(entryPath, (attributes & FileAttributes.Directory) != 0);
+                    if (Path.GetFileName(entry.Path).Contains(name, StringComparison.OrdinalIgnoreCase)) found.Add(entry);
+                    if (entry.IsDirectory) pending.Push(entry.Path);
+                }
+            }
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        { return ResultObjectFactory.CreateFromException<FileEntry[]>(exception); }
+        return ResultObjectFactory.CreateSuccess(found.ToArray());
+    }
+
+    public ResultObject<long> GetDirectorySize(string? path)
+    {
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<long>(resolved.Status);
+        try
+        {
+            Authorize(resolved.Value!, FilePermission.Read);
+            if ((File.GetAttributes(resolved.Value!) & FileAttributes.Directory) == 0) return GetFileSize(path);
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        { return ResultObjectFactory.CreateFromException<long>(exception); }
+        var entries = FindEntries(path);
+        if (!entries.IsOK()) return ResultObjectFactory.CreateFailure<long>(entries.Status);
+        long size = 0;
+        foreach (var entry in entries.Value!)
+        {
+            if (entry.IsDirectory) continue;
+            var length = GetFileSize(entry.Path);
+            if (!length.IsOK()) return length;
+            size += length.Value;
+        }
+        return ResultObjectFactory.CreateSuccess(size);
     }
 
     internal ResultObject<string> ResolvePath(string? path)

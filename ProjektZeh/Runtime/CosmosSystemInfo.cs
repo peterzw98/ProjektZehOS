@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using ProjektZeh.Shared;
 using System.Runtime.CompilerServices;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Network;
@@ -34,6 +36,23 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
     [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_FreePageCount")]
     private static extern ulong FreePages([UnsafeAccessorType(PageAllocatorType)] object? owner);
 
+    public static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpace(string path)
+    {
+        string? mount = path;
+        while (mount != null)
+        {
+            if (VfsManager.TryStatFs(mount, out var stats))
+                return ResultObjectFactory.CreateSuccess(((long)(stats.Blocks * stats.BlockSize), (long)(stats.AvailableBlocks * stats.BlockSize)));
+            mount = Path.GetDirectoryName(mount);
+        }
+        return ResultObjectFactory.CreateFailure<(long, long)>(ResultCode.NotFound, "Keine Dateisystemstatistik fuer diesen Pfad verfuegbar.");
+    }
+
+    public static string MemoryText()
+    {
+        var memory = PhysicalMemory();
+        return $"Speicher (Bytes): gesamt {memory.Total}, belegt {memory.Total - memory.Free}, frei {memory.Free}";
+    }
     private string[] ReadStorage()
     {
         var lines = new List<string>

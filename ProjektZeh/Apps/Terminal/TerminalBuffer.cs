@@ -12,6 +12,8 @@ internal sealed class TerminalBuffer : ITextOutput
     private int columns;
     private int first;
     public int Count { get; private set; }
+    public int Columns => columns;
+    public long Revision { get; private set; }
 
     public TerminalBuffer(int columns, int capacity = 256)
     {
@@ -29,6 +31,13 @@ internal sealed class TerminalBuffer : ITextOutput
         return lines[(first + index) % lines.Length]!;
     }
 
+    public bool IsContinuation(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
+        return continuation[(first + index) % lines.Length];
+    }
+
     public void WriteLine(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -43,6 +52,7 @@ internal sealed class TerminalBuffer : ITextOutput
 
     public void Clear()
     {
+        Revision++;
         Array.Clear(lines);
         first = 0;
         Count = 0;
@@ -71,6 +81,7 @@ internal sealed class TerminalBuffer : ITextOutput
 
     private void Append(string line, bool continuesPrevious)
     {
+        Revision++;
         if (Count == lines.Length)
         {
             lines[first] = line;

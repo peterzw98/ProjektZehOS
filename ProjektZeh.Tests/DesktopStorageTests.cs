@@ -33,7 +33,7 @@ public sealed class DesktopStorageTests
     public void Desktop_FileError_ShowsDiagnosticAndAcceptsNextCommand(string command)
     {
         var desktop = CreateDesktop(directory);
-        var terminal = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
+        var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
         int before = terminal.Buffer.Count;
 
         Execute(desktop, command);
@@ -52,10 +52,10 @@ public sealed class DesktopStorageTests
     {
         var desktop = CreateDesktop(Path.Combine(directory, "nicht-eingebunden"));
         var firstWindow = desktop.Windows.ActiveWindow!;
-        var first = (TerminalApp)firstWindow.Application;
+        var first = ((TerminalWorkspaceApp)firstWindow.Application).ActiveTerminal;
         Type(desktop, "echo Entwurf");
         Assert.IsTrue(desktop.OpenTerminal());
-        var second = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
+        var second = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
 
         Execute(desktop, "ls");
         Execute(desktop, "echo ohne Laufwerk");
@@ -84,7 +84,7 @@ public sealed class DesktopStorageTests
                 throw new IOException("Test: Datentraeger voll beim Ersetzen");
             File.Move(source, destination, overwrite);
         });
-        var terminal = (TerminalApp)desktop.Windows.ActiveWindow!.Application;
+        var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
 
         Execute(desktop, "write original.txt nachher");
 
