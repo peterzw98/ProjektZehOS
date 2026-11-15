@@ -2,6 +2,8 @@
 
 Die Abschnitte sind chronologisch. Frühere Abschnitte beschreiben jeweils den damaligen Stand (zunächst Text-Einrichtung und 1024×768-Bootmenü); maßgeblich für QEMU ist der Abschnitt „Abschluss nach Rebase auf master und Desktop-Stil“ mit seinem letzten Review; VMware ist gesondert aufgeführt.
 
+**Nachtrag vom 15. November 2026:** Die anschließend umgesetzte Korrektur für VMware-Zeitkalibrierung und LAI-Ausschalten ist mit erneuter Installer-/Plattenprüfung unter Workstation 26.0.1 in [VMWARE_STABILITY_TESTS.md](VMWARE_STABILITY_TESTS.md) dokumentiert. Der dort beschriebene seltene PS/2-ACK-Fehler bleibt offen; die ursprünglichen Fehlerbefunde unten bleiben als Verlauf erhalten.
+
 ## Umfang und Umgebung
 
 Cosmos Gen3 **3.0.94**, BouncyCastle **2.7.0**, SDK **10.0.112**, Linux x64, QEMU **10.2.2**, OVMF aus `/home/laser/Projects/.cosmos-tools/usr/share/edk2/x64/`. Keine Paket-, SDK- oder Werkzeugversion wurde geändert. Alle Images, Firmware-VARS-Kopien, Payloads und Gastprotokolle liegen unter dem ignorierten `.tools/e2e/`. Es wurden ausschließlich frisch angelegte beziehungsweise für diesen Ablauf angelegte Testimages beschrieben.

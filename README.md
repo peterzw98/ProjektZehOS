@@ -285,6 +285,8 @@ Die VMware-VM liegt im ignorierten Ordner `.tools\vmware`; die frühere Cosmos-G
 
 VMware hat in Gen3 über dieses Startprofil keine Visual-Studio-Debugger-Anbindung. Für Breakpoints QEMU mit `F5` verwenden.
 
+ZehOS 0.1.1 verwendet unter VMware dessen gemeldete TSC-/LAPIC-Frequenzen und ergänzt die von LAI benötigten PCI-Zugriffe für das Ausschalten. Cosmos bleibt bei 3.0.94. Die [VMware-Prüfungen](docs/VMWARE_STABILITY_TESTS.md) unterscheiden Windows/Player, Linux/Workstation und noch offene Abläufe.
+
 ## Bauen und starten
 
 Im Wurzelverzeichnis des Repositories:
