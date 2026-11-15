@@ -87,7 +87,7 @@ internal sealed class FileService
     /// Liest eine Textdatei und schliesst sie anschliessend. Mit <paramref name="allowMissing"/> liefert eine fehlende
     /// Datei Erfolg ohne Wert; alle anderen Fehler, auch ein fehlendes Verzeichnis, bleiben Fehler.
     /// </summary>
-    public ResultObject<string> ReadText(string? path, bool allowMissing = false)
+    public ResultObject<string> ReadText(string? path, bool allowMissing = false, int maximumLength = MaximumTextLength)
     {
         var resolved = ResolvePath(path);
         if (!resolved.IsOK())
@@ -107,11 +107,12 @@ internal sealed class FileService
             }
             Authorize(resolved.Value!, FilePermission.Read);
             using var reader = new StreamReader(resolved.Value!);
-            var buffer = new char[MaximumTextLength + 1];
+            // UTF-8 hat nie mehr Zeichen als Bytes: Puffer nach Dateigroesse, damit grosse Grenzen nichts kosten.
+            var buffer = new char[(int)Math.Min(reader.BaseStream.Length, maximumLength) + 1];
             int length = reader.ReadBlock(buffer, 0, buffer.Length);
-            if (length > MaximumTextLength)
+            if (length > maximumLength)
             {
-                return ResultObjectFactory.CreateFailure<string>(TextTooLarge());
+                return ResultObjectFactory.CreateFailure<string>(TextTooLarge(maximumLength));
             }
 
             return ResultObjectFactory.CreateSuccess(new string(buffer, 0, length));
@@ -151,7 +152,7 @@ internal sealed class FileService
     /// <summary>
     /// Ersetzt den Inhalt einer Textdatei.
     /// </summary>
-    public ResultErr WriteText(string? path, string? text)
+    public ResultErr WriteText(string? path, string? text, int maximumLength = MaximumTextLength)
     {
         if (text is null)
         {
@@ -159,9 +160,9 @@ internal sealed class FileService
                 "cause='InvalidInput' message='Der Dateiinhalt fehlt.'");
         }
 
-        if (text.Length > MaximumTextLength)
+        if (text.Length > maximumLength)
         {
-            return TextTooLarge();
+            return TextTooLarge(maximumLength);
         }
 
         return WriteData(path, () => new UTF8Encoding(false, true).GetBytes(text), false);
@@ -567,9 +568,9 @@ internal sealed class FileService
 
     internal void ResetDirectory(string directory) => CurrentDirectory = directory;
 
-    private static ResultErr TextTooLarge()
+    private static ResultErr TextTooLarge(int maximumLength)
     {
         return ResultErr.CreateFailure(ResultCode.InvalidArgument,
-            $"cause='TextTooLarge' message='Textdateien sind auf {MaximumTextLength} Zeichen begrenzt.'");
+            $"cause='TextTooLarge' message='Textdateien sind auf {maximumLength} Zeichen begrenzt.'");
     }
 }
