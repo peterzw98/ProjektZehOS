@@ -164,9 +164,10 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
 - Weiterleitung HTTPS → HTTP: Fehlerseite mit „Trotzdem fortfahren“ (Entscheidung 1). Der Knopf löst einen neuen,
   vom Benutzer ausgelösten Abruf der HTTP-Adresse aus; es entsteht keine dauerhafte Ausnahme. NetSurf 3.11 hat dafür
   keine Seite: `FETCH_ERROR` führt zu `about:query/fetcherror`, das nur „Zurück“ und „Erneut versuchen“ (wieder die
-  HTTPS-Adresse) anbietet. **OFFEN:** Der Fetcher liefert selbst eine HTML-Seite mit Link als Antwort, oder das
-  Frontend erhält eine eigene Abfrageseite. Die Ziel-URL ist dabei Fremdeingabe: HTML-escapen und nur Schema `http`
-  zulassen, sonst Fehlerseite ohne Link.
+  HTTPS-Adresse) anbietet. Deshalb erkennt der Fetcher die 3xx-Weiterleitung HTTPS → HTTP selbst und liefert eine
+  eigene HTML-Seite (`no-store`) mit dem Link „Trotzdem fortfahren“ auf die HTTP-Adresse (mit dem Koordinator
+  abgestimmt). Die Ziel-URL ist dabei Fremdeingabe: HTML-escapen (`& < > " '`) und nur Schema `http` zulassen, sonst
+  Fehlerseite ohne Link.
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
 - Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
@@ -195,7 +196,7 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
    noch nicht gültig, Ende ohne `close_notify`, Abbruch mitten im Handshake, 64-KiB-Grenzen für Klartext.
 2. **Linux-Prüfhost (`host/run_tests.py`):** NetSurf lädt eine HTTPS-Seite von einem lokalen Python-`ssl`-Server;
    falscher Name ergibt die Zertifikatsfehlerseite ohne Fortfahren; HTTPS → HTTP zeigt „Trotzdem fortfahren“, und
-   erst der Knopf lädt die HTTP-Seite (Weg nach dem OFFEN-Punkt oben), eine `Location` mit `<script>` oder `"`
+   erst der Link lädt die HTTP-Seite, eine `Location` mit `<script>` oder `"`
    erscheint escaped, eine mit anderem Schema ohne Link; Antwort ohne Länge und ohne `close_notify` erscheint als abgeschnitten,
    Antworten mit `Content-Length` oder `chunked` ohne `close_notify` dagegen vollständig. Beide Seiten (Kernel-
    Hosttest und Prüfhost) prüfen diese Fälle.
