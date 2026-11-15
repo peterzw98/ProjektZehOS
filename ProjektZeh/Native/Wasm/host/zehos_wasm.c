@@ -10,7 +10,7 @@
 // Exporte des C#-Kernels (UnmanagedCallersOnly).
 extern void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length);
 extern uint64_t zehos_wasm_host_time_ns(int32_t clockId);
-extern void zehos_wasm_host_random(uint8_t* buffer, uint32_t length);
+extern int32_t zehos_wasm_host_random(uint8_t* buffer, uint32_t length);
 // Nur lesender Zugriff unterhalb des freigegebenen App-Ordners; der Pfad ist bereits relativ und geprueft.
 extern int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length);
 extern int64_t zehos_wasm_host_file_size(int32_t handle);
@@ -186,8 +186,8 @@ static m3ApiRawFunction(wasi_random_get)
     m3ApiGetArgMem(uint8_t*, buffer)
     m3ApiGetArg(uint32_t, length)
     m3ApiCheckMem(buffer, length);
-    zehos_wasm_host_random(buffer, length);
-    m3ApiReturn(WASI_SUCCESS);
+    // Ohne Hardwarezufall meldet der Host EIO; der Gast darf den Puffer dann nicht verwenden.
+    m3ApiReturn((uint32_t)zehos_wasm_host_random(buffer, length));
 }
 
 // Standardkanaele sind Zeichengeraete, fd 3 der freigegebene Ordner, ab fd 4 regulaere Dateien.

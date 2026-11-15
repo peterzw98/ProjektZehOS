@@ -191,18 +191,10 @@ internal static unsafe class WasmRuntime
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_random")]
-    private static void HostRandom(byte* buffer, uint length)
+    private static int HostRandom(byte* buffer, uint length)
     {
-        // In kleinen Bloecken: eine Anfrage ueber die ganze lineare Memory darf keine riesige Allokation (und damit eine
-        // Ausnahme ueber die native Grenze) ausloesen.
-        var bytes = new byte[Math.Min(length, 4096u)];
-        for (uint offset = 0; offset < length; offset += (uint)bytes.Length)
-        {
-            int count = (int)Math.Min((uint)bytes.Length, length - offset);
-            try { CosmosSaltSource.Fill(bytes); }
-            catch (Exception) { Array.Clear(bytes); /* Ohne Hardwarezufall bleibt der Puffer null; Apps duerfen das nicht fuer Geheimnisse nutzen. */ }
-            bytes.AsSpan(0, count).CopyTo(new Span<byte>(buffer + offset, count));
-        }
+        // C hat buffer/length gegen die lineare Memory (hoechstens MemoryLimitBytes) geprueft; length passt in int.
+        return WasmRandom.Fill(new Span<byte>(buffer, (int)length), CosmosSaltSource.Fill);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]

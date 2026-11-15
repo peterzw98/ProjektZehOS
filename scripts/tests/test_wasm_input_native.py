@@ -73,6 +73,22 @@ def path_module(path, output=65472, read_stat=False, name="path_filestat_get", d
             + section(11, b"\x01\x00" + const(128) + b"\x0b" + leb(len(path)) + path))
 
 
+def random_module(pointer, length, read_first=False):
+    # run ruft random_get auf und liefert dessen Status oder das erste Byte des Puffers.
+    def const(value):
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    code = b"\x00" + const(pointer) + const(length) + b"\x10\x00"
+    if read_first:
+        code += b"\x1a" + const(pointer) + b"\x2d\x00\x00"
+    code += b"\x0b"
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x02\x60\x02\x7f\x7f\x01\x7f\x60\x00\x01\x7f")
+            + section(2, b"\x01" + string("wasi_snapshot_preview1") + string("random_get") + b"\x00\x00")
+            + section(3, b"\x01\x01") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00\x01")
+            + section(10, b"\x01" + leb(len(code)) + code))
+
+
 class NativeInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -185,6 +201,36 @@ class NativeInputTests(unittest.TestCase):
             self.assertEqual(value, expected)
             self.assertEqual(self.lib.stat_test_calls(), 0)
 
+
+    def test_random_get_fills_buffer_on_success(self):
+        self.lib.random_test_reset(0)
+        status, value, message = self.execute(random_module(65520, 16))
+        self.assertEqual(status, 0, message)
+        self.assertEqual(value, 0)
+        status, value, message = self.execute(random_module(65520, 16, read_first=True))
+        self.assertEqual(status, 0, message)
+        self.assertEqual(value, 0xa5)
+
+    def test_random_get_reports_host_error_instead_of_success(self):
+        # Ohne Hardwarezufall darf der Gast keinen Erfolg sehen (#61).
+        self.lib.random_test_reset(29)
+        status, value, message = self.execute(random_module(1, 16))
+        self.assertEqual(status, 0, message)
+        self.assertEqual(value, 29)
+        self.assertEqual(self.lib.random_test_calls(), 1)
+
+    def test_random_get_accepts_empty_buffer_at_memory_end(self):
+        self.lib.random_test_reset(0)
+        status, value, message = self.execute(random_module(65536, 0))
+        self.assertEqual(status, 0, message)
+        self.assertEqual(value, 0)
+
+    def test_random_get_traps_before_host_when_buffer_is_invalid(self):
+        self.lib.random_test_reset(0)
+        status, _, message = self.execute(random_module(65530, 16))
+        self.assertEqual(status, 5, message)
+        self.assertIn("out of bounds", message.lower())
+        self.assertEqual(self.lib.random_test_calls(), 0)
 
 if __name__ == "__main__":
     unittest.main()

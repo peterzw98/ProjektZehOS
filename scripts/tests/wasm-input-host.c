@@ -16,7 +16,15 @@ int32_t zehos_wasm_host_poll_event(int32_t* event) {
 }
 void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length) { }
 uint64_t zehos_wasm_host_time_ns(int32_t clock) { return 0; }
-void zehos_wasm_host_random(uint8_t* data, uint32_t length) { memset(data, 0, length); }
+static int random_error, random_calls;
+void random_test_reset(int error) { random_error = error; random_calls = 0; }
+int random_test_calls(void) { return random_calls; }
+int32_t zehos_wasm_host_random(uint8_t* data, uint32_t length) {
+    random_calls++;
+    if (random_error) return random_error;
+    memset(data, 0xa5, length);
+    return 0;
+}
 int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length) { return -1; }
 int64_t zehos_wasm_host_file_size(int32_t handle) { return -1; }
 int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_t* data, uint32_t length) { return -1; }
