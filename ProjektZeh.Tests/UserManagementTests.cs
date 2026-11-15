@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -57,6 +58,21 @@ public sealed class UserManagementTests
     {
         var watch = Stopwatch.StartNew();
         while (!poll()) Assert.IsTrue(watch.Elapsed < TimeSpan.FromSeconds(30), "Kennwortpruefung endet nicht.");
+    }
+
+    [TestMethod]
+    public void ManyFilesDoNotLockSecurityMetadata()
+    {
+        var admin = SetupAdministrator();
+        var files = new FileService(root, access: accounts.Access, session: admin);
+        // Rund 90 Zeichen je Rechteeintrag: 1000 Dateien liegen deutlich ueber der frueheren 64-KiB-Textgrenze.
+        Directory.CreateDirectory(Path.Combine(root, "home", "admin", "viele"));
+        Assert.IsTrue(accounts.Adopt(admin, Path.Combine(root, "home", "admin", "viele"), "admin").IsOK());
+        for (int index = 0; index < 1000; index++)
+            Assert.IsTrue(files.WriteText(Path.Combine(root, "home", "admin", "viele", $"notiz-{index:D4}.txt"), "x").IsOK(), index.ToString(CultureInfo.InvariantCulture));
+        Assert.IsTrue(accounts.IsAdmin(admin), "Sitzung darf nicht gesperrt werden.");
+        var reloaded = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+        Assert.IsTrue(reloaded.Load().IsOK());
     }
 
     [TestMethod]

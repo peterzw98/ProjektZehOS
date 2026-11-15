@@ -16,6 +16,9 @@ internal sealed class AccountService
         "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string CommandsFile = ".zehos-commands.db";
     private const string CommandsHeader = "ZEHOS-COMMANDS-1\n";
+    // Ein Rechteeintrag je Datei (rund 90 Zeichen): die allgemeine 64-KiB-Textgrenze sperrte das System nach wenigen
+    // hundert Dateien. 1 Mi Zeichen reichen fuer rund 10000 Eintraege.
+    private const int MaximumMetadataLength = 1024 * 1024;
     private static readonly string[] AdministrativeCommands = ["user", "security", "disk", "update", "chperm", "reboot", "shutdown"];
     private static readonly string[] UnrestrictableCommands = ["login", "logout", "chperm"];
     private readonly Dictionary<string, bool> administratorCommands = new(StringComparer.OrdinalIgnoreCase);
@@ -50,14 +53,14 @@ internal sealed class AccountService
     {
         Lock();
         NeedsSetup = false;
-        var read = metadata.ReadText(".zehos-security.db", allowMissing: true);
+        var read = metadata.ReadText(".zehos-security.db", allowMissing: true, MaximumMetadataLength);
         if (!read.IsOK()) return read.Status;
         if (read.Value == null)
         {
             NeedsSetup = true;
             return ResultErr.CreateFailure(ResultCode.NotFound, "Noch keine Konten vorhanden. Administrator bei der Anmeldung anlegen.");
         }
-        var commands = metadata.ReadText(CommandsFile, allowMissing: true);
+        var commands = metadata.ReadText(CommandsFile, allowMissing: true, MaximumMetadataLength);
         if (!commands.IsOK()) return commands.Status;
         try
         {
@@ -288,7 +291,7 @@ internal sealed class AccountService
         foreach (var account in accounts.Values)
             text.Append(account.Id).Append('|').Append(account.Name).Append('|').Append(account.Administrator ? "admin" : "user").Append('|').Append(account.PasswordHash).Append('\n');
         text.Append(Separator).Append(Access.Serialize());
-        var result = metadata.WriteText(".zehos-security.db", text.ToString());
+        var result = metadata.WriteText(".zehos-security.db", text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
         else NeedsSetup = false;
         return result;
