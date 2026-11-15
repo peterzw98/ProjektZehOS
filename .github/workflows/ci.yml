@@ -109,3 +109,36 @@ jobs:
           path: artifacts/kernel-build.log
           if-no-files-found: warn
           retention-days: 14
+
+  netsurf:
+    name: NetSurf offline package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install build prerequisites
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y gperf bison flex libpng-dev zlib1g-dev
+
+      - name: Build NetSurf WASIp1 package files
+        run: python3 experiments/NetSurf.Wasi/build.py --jobs 4
+
+      - name: Upload unsigned package files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NetSurf-offline-files
+          path: experiments/NetSurf.Wasi/bin/package/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload browser build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NetSurf-build-logs
+          path: .tools/netsurf/logs/
+          if-no-files-found: warn
+          retention-days: 14

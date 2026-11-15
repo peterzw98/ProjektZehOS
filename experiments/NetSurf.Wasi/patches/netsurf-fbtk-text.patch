@@ -1,0 +1,81 @@
+--- a/netsurf/frontends/framebuffer/fbtk.h
++++ b/netsurf/frontends/framebuffer/fbtk.h
+@@ -206,6 +206,9 @@
+  *
+  * Character mapping between keycode with modifier state and ucs-4.
+  */
++/** Tastencodes ab diesem Wert tragen ein Unicode-Zeichen (ZehOS-Texteingabe). */
++#define FBTK_KEY_UCS4_BASE 0x40000000
++
+ int fbtk_keycode_to_ucs4(int code, fbtk_modifier_type mods);
+ 
+ 
+--- a/netsurf/frontends/framebuffer/fbtk/event.c
++++ b/netsurf/frontends/framebuffer/fbtk/event.c
+@@ -302,6 +302,10 @@
+ {
+ 	int ucs4 = -1;
+ 
++	/* ZehOS: Texteingaben kommen bereits als Unicode und umgehen die US-Tastenbelegung. */
++	if (code >= FBTK_KEY_UCS4_BASE)
++		return code - FBTK_KEY_UCS4_BASE;
++
+ 	if (mods & FBTK_MOD_LSHIFT || mods & FBTK_MOD_RSHIFT) {
+ 		if ((code >= 0) && (code < (int) NOF_ELEMENTS(sh_keymap)))
+ 			ucs4 = sh_keymap[code];
+--- a/netsurf/frontends/framebuffer/fbtk/text.c
++++ b/netsurf/frontends/framebuffer/fbtk/text.c
+@@ -302,6 +302,7 @@
+ text_input(fbtk_widget_t *widget, fbtk_callback_info *cbi)
+ {
+ 	int value;
++	int ucs4;
+ 	static fbtk_modifier_type modifier = FBTK_MOD_CLEAR;
+ 	char *temp;
+ 	plot_font_style_t font_style;
+@@ -362,6 +363,22 @@
+ 		caret_moved = true;
+ 		break;
+ 
++	case NSFB_KEY_DELETE:
++		/* ZehOS: Entf loescht das Zeichen rechts der Einfuegemarke (fehlte im fbtk) */
++		if (widget->u.text.idx >= widget->u.text.len)
++			break;
++		memmove(widget->u.text.text + widget->u.text.idx,
++				widget->u.text.text + widget->u.text.idx + 1,
++				widget->u.text.len - widget->u.text.idx - 1);
++		widget->u.text.len--;
++		widget->u.text.text[widget->u.text.len] = 0;
++
++		fb_font_width(&font_style, widget->u.text.text,
++				widget->u.text.len, &widget->u.text.width);
++
++		caret_moved = true;
++		break;
++
+ 	case NSFB_KEY_RETURN:
+ 		widget->u.text.enter(widget->u.text.pw, widget->u.text.text);
+ 		break;
+@@ -442,6 +459,12 @@
+ 			break;
+ 		}
+ 
++		/* Das Feld speichert ein Byte je Zeichen; nur druckbares ASCII einfügen. */
++		ucs4 = fbtk_keycode_to_ucs4(value, modifier);
++		if (ucs4 < 0x20 || ucs4 > 0x7e) {
++			break;
++		}
++
+ 		/* allow for new character and null */
+ 		temp = realloc(widget->u.text.text, widget->u.text.len + 2);
+ 		if (temp == NULL) {
+@@ -452,8 +475,7 @@
+ 		memmove(widget->u.text.text + widget->u.text.idx + 1,
+ 				widget->u.text.text + widget->u.text.idx,
+ 				widget->u.text.len - widget->u.text.idx);
+-		widget->u.text.text[widget->u.text.idx] =
+-				fbtk_keycode_to_ucs4(value, modifier);
++		widget->u.text.text[widget->u.text.idx] = ucs4;
+ 		widget->u.text.idx++;
+ 		widget->u.text.len++;
+ 		widget->u.text.text[widget->u.text.len] = '\0';
