@@ -35,8 +35,8 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `libnsfb-zehos-surface.patch`: Oberflächentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wählt.
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
 - `netsurf-testament-reproducible.patch`: Das Build-Testament (`about:testament`) enthält feste Werte statt Benutzername, vollem Namen, Rechnername, Baupfad und Tagesdatum. Das schützt persönliche Daten im Paket und macht den Build reproduzierbar (Datum aus `SOURCE_DATE_EPOCH`).
-- `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`).
-- `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an.
+- `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`). Eine weitere Taste während eines Rollbalken-Ziehens startet kein zweites Ziehen, das den Grab umschalten und lösen würde.
+- `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an. Zusätzlich löscht Entf im Textfeld das Zeichen rechts der Einfügemarke; das fehlte im fbtk.
 
 Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schritt), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
 
@@ -81,7 +81,7 @@ ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/lib
   ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
 ```
 
-Automatische Szenarien (Klick, Reset, kaputter Link, Rad) prüfen das letzte Bild anhand der Markerfarben der Testseiten:
+Automatische Szenarien (Klick, Reset, kaputter Link, Rad, Adressleiste mit Pos1/Entf) prüfen das letzte Bild anhand der Markerfarben der Testseiten:
 
 ```bash
 python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/build-iwasm/iwasm \
@@ -97,7 +97,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
   - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
 - **Inhalte:** kein Netz, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
-- **Prüfstand:** Bisher nur auf dem Linux-Prüfhost unter WAMR geprüft, nicht im ZehOS-Loader (wasm3), nicht in QEMU oder VMware.
+- **Prüfstand:** Linux-Prüfhost unter WAMR (`host/run_tests.py`) und ZehOS-Loader (wasm3) in QEMU 10.2.2 mit TCG über `scripts/test-netsurf-desktop.py`: `NETSURF_GUEST PASS` am 15. November 2026, frei 442 488–443 192 KiB (rund 432 MiB) über drei Starts. Unter KVM bootet ZehOS, aber QMP-Tastatureingaben kommen nicht an (Login-Zeitüberschreitung); VMware und echte Hardware ungeprüft.
 
 ## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)
 
@@ -112,4 +112,5 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 | danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
 | Rollbalken ziehen, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, nach `reset` nicht mehr (Gegenprobe ohne `reset` rollt weiter) |
 | Links auf Seite ziehen, rechte Taste dazu, `reset`, danach Linkklick | kein Klick durch `reset`, danach Link normal geöffnet |
+| Rollbalken-Daumen ziehen, rechte Taste dazu, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, danach nicht mehr |
 | Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |

@@ -24,6 +24,19 @@ def click(at: int, position: tuple[int, int]) -> list[str]:
     return [f"{at} 5 1 {x} {y}", f"{at + 50} 6 1 {x} {y}"]
 
 
+def address(at: int, url: str) -> list[str]:
+    # Adressleiste anklicken, mit Pos1 und Entf leeren, URL als Texte tippen, Enter (normalisierte Tastencodes 71/83/28).
+    events = click(at, (300, 15)) + [f"{at + 200} 1 71 0 0", f"{at + 210} 2 71 0 0"]
+    t = at + 300
+    for _ in range(32):
+        events += [f"{t} 1 83 0 0", f"{t + 5} 2 83 0 0"]
+        t += 10
+    for char in url:
+        events.append(f"{t} 3 {ord(char)} 0 0")
+        t += 10
+    return events + [f"{t} 1 28 0 0", f"{t + 10} 2 28 0 0"]
+
+
 # Name, Ereignisse, erwartete Farben, verbotene Farben
 SCENARIOS = [
     ("start", [], [START], [TARGET]),
@@ -32,6 +45,7 @@ SCENARIOS = [
     ("reset-dann-klick", ["1500 5 1 80 209", "1600 8 0 0 0", *click(1700, CLICK_FORM)], [FORM], [TARGET]),
     ("kaputter-link", click(1500, CLICK_BROKEN), [], [START, TARGET, FORM, LONG]),
     ("rad-abwaerts", [*click(1500, CLICK_LONG), "2500 7 -5 300 200"], [LONG_BACKGROUND], [LONG]),
+    ("adressleiste-entf", address(1500, "file:///pages/ziel.html"), [TARGET], [START]),
 ]
 
 
@@ -53,7 +67,7 @@ def main() -> int:
         for name, events, expected, forbidden in SCENARIOS:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
-            env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="3500")
+            env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="4500")
             run = subprocess.run([str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
                                   "--stack-size=1048576", str(PACKAGE / "netsurf.wasm")],
                                  env=env, capture_output=True, text=True, timeout=60)
