@@ -78,6 +78,11 @@ def main():
         guest.qmp.command("input-send-event", {"events":[{"type":"btn", "data":{"button":name,"down":down}}]})
         time.sleep(.15)
 
+    # Erstes Paketfenster 800x560 bei 32,80; sein Inhalt (798x519 ab 33,120) ist genau das NetSurf-Bild.
+    # Koordinaten im Bild wie in host/run_tests.py, hier in Bildschirmkoordinaten umgerechnet.
+    def frame(x, y):
+        return 33 + x, 120 + y
+
     def point(x, y):
         width, height = guest.size
         guest.qmp.command("input-send-event", {"events":[
@@ -97,63 +102,63 @@ def main():
         memory_mark = guest.mark()
         guest.start_app("netsurf")
         page("start", "d8ecff")
-        # Erstes Paketfenster 800x560 bei 32,80: Inhalt798x519, Frame632x392 zentriert bei 116,183.
-        click(215,392)
+        click(*frame(99,209))
         page("linkziel", "d8ffd8")
-        click(126,196)
+        click(*frame(10,13))
         page("zurueck", "d8ecff")
         # Down auf Link, Fokusverlust, physisches Up: kein abgeschlossener Klick.
-        point(215,392)
+        point(*frame(99,209))
         button("left",True)
         guest.shell()
         button("left",False)
         guest.desktop()
         page("reset-ohne-klick", "d8ecff")
         # Ein Link bei Dokumentposition 0,0 macht einen synthetischen Fehlklick nach Mehrtasten-Drag sichtbar.
-        click(400,196)
+        click(*frame(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
             guest.qmp.tap("delete",hold=.005)
         guest.qmp.text("file:///pages/reset-probe.html")
         guest.qmp.tap("ret")
         page("mehrtasten-probe", "e0ffff")
-        point(220,280)
+        point(*frame(104,97))
         button("left",True)
-        point(300,340)
+        point(*frame(184,157))
         button("right",True)
         guest.shell()
         button("right",False)
         button("left",False)
         guest.desktop()
         page("mehrtasten-reset-ohne-klick", "e0ffff")
-        click(126,196)
+        click(*frame(10,13))
         page("nach-mehrtasten-reset", "d8ecff")
-        click(226,414)
+        click(*frame(110,231))
         before = page("lang-oben", "fff4d0")
 
         def body(pixels):
             width, _ = guest.size
-            return b"".join(pixels[(row*width+124)*3:(row*width+720)*3] for row in range(240,548))
+            left, top = frame(8, 57)
+            return b"".join(pixels[(row*width+left)*3:(row*width+left+596)*3] for row in range(top, top+308))
 
         # Der Rollbalken hat einen eigenen Capture-Pfad; Fokusverlust muss auch diesen abbrechen.
-        point(738,240)
+        point(*frame(788,57))
         button("left",True)
-        point(738,280)
+        point(*frame(788,97))
         time.sleep(.5)
         dragged = capture("rollbalken-gehalten")
         assert body(dragged) != body(before), "Test hat keinen Rollbalken-Drag begonnen"
         guest.shell()
         button("left",False)
         guest.desktop()
-        point(738,280)
+        point(*frame(788,97))
         time.sleep(.5)
         reset = capture("rollbalken-reset")
-        point(738,400)
+        point(*frame(788,217))
         time.sleep(.5)
         assert body(capture("rollbalken-nach-reset")) == body(reset), "Rollbalken zieht nach Fokusreset weiter"
-        click(126,196)
+        click(*frame(10,13))
         page("nach-rollbalken-zurueck", "d8ecff")
-        click(226,414)
+        click(*frame(110,231))
         before = page("lang-vor-rad", "fff4d0")
         for _ in range(8):
             button("wheel-down",True)
@@ -164,11 +169,11 @@ def main():
         guest.qmp.tap("pgdn")
         time.sleep(.5)
         assert capture("bild-ab") != after, "Bild ab veraendert den Seiteninhalt nicht"
-        click(126,196)
+        click(*frame(10,13))
         page("zurueck-vor-formular", "d8ecff")
-        click(205,435)
+        click(*frame(89,252))
         page("formular-leer", "f0e0ff")
-        click(380,289)
+        click(*frame(264,106))
         guest.qmp.text("Gr")
         guest.qmp.tap("bracket_left") # Deutsche U-Taste mit Umlaut.
         guest.qmp.tap("minus") # Deutsches scharfes S.
@@ -176,16 +181,16 @@ def main():
         guest.qmp.tap("alt_r","q")
         time.sleep(.5)
         capture("formular-gruesse-altgr")
-        click(126,196)
+        click(*frame(10,13))
         page("zurueck-vor-fehler", "d8ecff")
-        click(210,456)
+        click(*frame(94,273))
         time.sleep(2)
         capture("nicht-gefunden")
-        click(126,196)
+        click(*frame(10,13))
         page("nach-fehler-bedienbar", "d8ecff")
 
         def address(url):
-            click(400,196)
+            click(*frame(284,13))
             guest.qmp.tap("home")
             for _ in range(48):
                 guest.qmp.tap("delete",hold=.005)
