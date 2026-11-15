@@ -12,8 +12,8 @@ Die Bedienung wird anhand der Bildschirmfotos ausgewertet.
 Snapshot (nur TCG; WHPX blockiert savevm): Eine Vorbereitungs-VM bootet einmal, richtet das Konto ein, holt DHCP
 und Katalog, installiert Doom ueber HTTPS und speichert den Zustand. Jedes Szenario startet von einer Kopie in
 wenigen Sekunden. Der Snapshot liegt je ISO und Repository unter .tools/guest-snapshots und wird wiederverwendet.
-Ohne Snapshot (--no-snapshot, --accel whpx, --source) richtet sich jede VM selbst ein. Das Datenlaufwerk ist immer
-eine Wegwerfkopie (qcow2) im Arbeitsordner; vorhandene Datenimages werden nicht verwendet.
+Ohne Snapshot (--no-snapshot, --accel kvm/whpx, --source) richtet sich jede VM selbst ein. Das Datenlaufwerk ist
+immer eine Wegwerfkopie (qcow2) im Arbeitsordner; vorhandene Datenimages werden nicht verwendet.
 
 Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   full     Doom: neues Spiel, laufen/schiessen, Textshell (F4/Esc), Schliessen ueber X, Taskmanager,
@@ -219,8 +219,9 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
     # Windows: bin/../share/qemu; Cosmos unter Linux: share/qemu neben dem Wrapper.
     share = next((d for d in (qemu.parent.parent / "share" / "qemu", qemu.parent / "share" / "qemu") if d.is_dir()),
                  qemu.parent.parent / "share" / "qemu")
-    # Unter WHPX bricht der Gast mit -cpu max oder host sofort ab (Unexpected VP exit code 4); das Standardmodell laeuft.
-    cpu = ["-cpu", "max"] if accel == "tcg" else []
+    # Kennwortanlage und TLS brauchen RDSEED/RDRAND, die das Standardmodell nicht bietet. Unter WHPX bricht der
+    # Gast mit -cpu max oder host jedoch sofort ab (Unexpected VP exit code 4); dort bleibt das Standardmodell.
+    cpu = {"tcg": ["-cpu", "max"], "kvm": ["-cpu", "qemu64,+rdrand,+rdseed"]}.get(accel, [])
     arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *MACHINE, "-cdrom", str(iso),
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
@@ -747,7 +748,7 @@ def main() -> int:
                         default=Path(os.environ.get("WASI_SDK_PATH", ROOT / ".tools" / "wasi-sdk-25.0-x86_64-windows")))
     parser.add_argument("--source", help="vorhandenes Repository (https://.../) fuer Szenario full, ohne Testserver")
     parser.add_argument("--scenario", nargs="+", choices=SCENARIOS + list(GROUPS), default=["quick"])
-    parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg oder whpx (whpx ohne Snapshot)")
+    parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg, kvm oder whpx (kvm/whpx ohne Snapshot)")
     parser.add_argument("--starts", type=int, default=3, help="Doom-Starts am Ende von full (Speicherpruefung: 10)")
     parser.add_argument("--no-snapshot", action="store_true", help="jede VM richtet sich selbst ein")
     # Intern fuer die Kindprozesse paralleler Laeufe.
