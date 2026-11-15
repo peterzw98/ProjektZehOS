@@ -17,6 +17,7 @@
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
     <Compile Include="..\ProjektZeh\Runtime\Wasm\CosmosWasmNetwork.cs" Link="Runtime\Wasm\CosmosWasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmNetwork.cs" Link="Runtime\Wasm\WasmNetwork.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameTimes.cs" Link="Runtime\Wasm\WasmFrameTimes.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />

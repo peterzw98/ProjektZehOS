@@ -28,6 +28,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private long pausedMilliseconds;
     private readonly object gate = new();
     private readonly WasmInputBuffer input = new();
+    // Nur fuer Doom: der Langlauf (ROADMAP 9.6) misst dessen Bildzeit; andere Apps bleiben ohne Messung und Logzeilen.
+    private readonly WasmFrameTimes? frameTimes = string.Equals(packageId, "doom", StringComparison.Ordinal) ? new() : null;
     private uint[] frame = [];
     private int frameWidth;
     private int frameHeight;
@@ -185,15 +187,24 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         if (test) return;
         // Vor der Sichtbarkeitspause melden: die Marke belegt, dass das Modul laeuft, unabhaengig vom Fensterzustand.
         if (!presented) { presented = true; log?.Invoke("erstes Bild"); }
+        string? frameReport = null;
         lock (gate)
         {
             // Eine nicht sichtbare oder nicht aktive App haelt hier an; ihre Uhr steht in dieser Zeit still,
             // damit sie danach keine verpassten Spieltakte nachholt.
+            bool paused = false;
             while (!exitRequested && (!active || clock.ElapsedMilliseconds - lastDrawMilliseconds > VisibleTimeoutMilliseconds))
             {
+                paused = true;
                 long start = clock.ElapsedMilliseconds;
                 Monitor.Wait(gate, 100);
                 pausedMilliseconds += clock.ElapsedMilliseconds - start;
+            }
+            if (frameTimes != null)
+            {
+                long now = clock.ElapsedMilliseconds - pausedMilliseconds;
+                if (paused) frameTimes.Restart(now);
+                else frameReport = frameTimes.Record(now);
             }
             if (frame.Length != pixels.Length) frame = new uint[pixels.Length];
             pixels.CopyTo(frame);
@@ -201,6 +212,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             frameHeight = height;
             frameRevision++;
         }
+        // Ausserhalb der Sperre: die serielle Ausgabe soll das Zeichnen des Desktops nicht aufhalten.
+        if (frameReport != null) log?.Invoke($"{frameReport} heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB");
     }
 
     bool IWasmSession.TryReadEvent(out WasmInputEvent value)

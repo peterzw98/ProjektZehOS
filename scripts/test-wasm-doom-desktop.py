@@ -438,6 +438,13 @@ class Guest:
         log = (self.work / "serial.log").read_text(encoding="utf-8", errors="replace")
         return [int(value) for value in re.findall(r"WASM Speicher frei=(\d+) KiB", log[mark:])]
 
+    def frame_times(self, mark: int) -> list[dict[str, int]]:
+        """Doom-Bildzeiten je 60-s-Fenster seit mark (ms, heap in KiB); zerteilte Zeilen fehlen in der Liste."""
+        log = (self.work / "serial.log").read_text(encoding="utf-8", errors="replace")
+        pattern = (r"APP doom Bildzeit n=(?P<n>\d+) min=(?P<min>\d+) median=(?P<median>\d+) p95=(?P<p95>\d+) "
+                   r"max=(?P<max>\d+) ms heap=(?P<heap>\d+) KiB")
+        return [{key: int(value) for key, value in match.groupdict().items()} for match in re.finditer(pattern, log[mark:])]
+
     def quit_testapp(self) -> None:
         self.quit_app("testapp", ("q", 0))
 
@@ -488,6 +495,7 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
         guest.shot(f"start-{run:02d}")
         guest.quit_doom()
     if args.long_seconds:
+        frame_mark = guest.mark()
         guest.start_app("doom")
         qmp.tap("backspace")
         time.sleep(1.5)
@@ -509,6 +517,17 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
                 print(f"Langlauf: {time.monotonic() - started:.1f} s", flush=True)
         print(f"Langlauf gesamt: {time.monotonic() - started:.1f} s", flush=True)
         guest.quit_doom()
+        # Der Kernel meldet die Doom-Bildzeit je 60 s Spielzeit; ein angebrochenes letztes Fenster fehlt.
+        windows = guest.frame_times(frame_mark)
+        for window in windows:
+            print("Doom-Bildzeit (ms): " + " ".join(f"{key}={value}" for key, value in window.items()), flush=True)
+        if args.long_seconds >= 120 and not windows:
+            raise RuntimeError("Keine Doom-Bildzeit im seriellen Protokoll.")
+        if windows:
+            print(f"Doom-Bildzeit gesamt: n={sum(w['n'] for w in windows)} min={min(w['min'] for w in windows)} "
+                  f"median={min(w['median'] for w in windows)}-{max(w['median'] for w in windows)} "
+                  f"p95<={max(w['p95'] for w in windows)} max={max(w['max'] for w in windows)} ms, "
+                  f"heap {windows[0]['heap'] / 1024:.1f}-{windows[-1]['heap'] / 1024:.1f} MiB", flush=True)
     guest.shot("taskmanager-after")
     # Speicher nach dem Schliessen ueber X gegen den nach dem letzten Start; gemessen jeweils nach dem Aufraeumen.
     # Zerteilte Speicherzeilen fehlen in der Liste; dann vergleicht die Pruefung den ersten und letzten lesbaren Wert.
