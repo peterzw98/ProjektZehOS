@@ -165,6 +165,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         Console.Clear();
         Console.CursorVisible = true;
         output.WriteLine("ZehOS Textshell - F4 oeffnet den Desktop.");
+        // Gegenstueck zu "Desktop ist bereit."; Gasttests warten darauf statt auf eine feste Zeit.
+        systemLog.Information("Desktop", "Textshell aktiv.");
         if (suspendError != null) output.WriteLine("Anzeigefehler beim Verlassen: " + suspendError);
         if (shell.PagerText != null && !IsLocked) DrawPager(); else BeginLine();
     }

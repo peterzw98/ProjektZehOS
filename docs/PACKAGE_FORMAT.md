@@ -104,25 +104,39 @@ Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen s
 
 Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgeliefert wird es von `deploy/package-repo` (Docker-Compose mit nginx und einem `updater`, der den Branch `packages` alle 5 Minuten nachzieht). Neue Pakete werden mit dem privaten Herausgeberschlüssel gebaut und per Pull Request in den Branch `packages` gebracht; nach dem Merge übernimmt der Server sie von selbst.
 
-Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py`; die Szenarien `full`, `packages` und `corrupt` bestehen außerdem unter WHPX (`--accel whpx`). VMware und echte Hardware sind nicht geprüft.
+Geprüft am 15. November 2026 in QEMU mit `scripts/test-wasm-doom-desktop.py`. VMware und echte Hardware sind nicht geprüft.
 
-Alle Szenarien parallel, jedes in eigener VM mit freien Ports (unter TCG zusammen rund 11 Minuten):
+Das Skript baut aus dem Doom-Testrepository (`--repo`) ein eigenes Repository mit der kleinen App `scripts/guest-testapp` (1.0.0, im Upgrade-Repository 1.1.0) und signiert es mit dem Testschlüssel (`--key`). Die Paketlogik (`remove`, `reboot`, `upgrade`, `corrupt`) läuft mit dieser App in Sekunden statt mit dem 28-MB-Doom. Doom wird einmal über HTTPS installiert und im Szenario `full` gespielt. Unter TCG richtet eine Vorbereitungs-VM Konto, Netz und Katalog ein, installiert Doom und speichert den Zustand (`savevm`). Alle Szenarien starten dann parallel aus Kopien dieses Snapshots. Er liegt je ISO und Repository unter `.tools/guest-snapshots` und wird wiederverwendet.
 
 ```powershell
-py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <repo> --upgrade-repo <repo-upgrade> --tls <tls> --scenario full packages corrupt
+# Schneller Satz für jede Änderung (remove, upgrade, corrupt)
+py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --key <private.pem> --tls <tls>
+# Vollständig vor dem Pull Request, mit Speicherprüfung über zehn Doom-Starts
+py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --key <private.pem> --tls <tls> --scenario all --starts 10
 ```
 
-`--starts 10` wiederholt die Doom-Starts am Ende von `full` für die Speicherprüfung (Standard 3).
+`--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.
 
-| Prüfung | Ergebnis |
+Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden):
+
+| Lauf | Dauer |
 | --- | --- |
-| Normal gebauter Kernel (Herausgeberschlüssel), `pkg install doom` von packages.pjoter.de | Katalog 32 s, Installation 120 s, Doom spielbar |
-| F4/Esc, Schließen über X, zehn Starts mit Beenden über das Doom-Menü | alle Starts laufen; frei 416 MiB vorher, 414 MiB danach |
-| Lokales Testrepository: Entfernen während Doom läuft | abgelehnt: „Paket doom laeuft gerade; zuerst die App schliessen.“ |
-| Entfernen, `pkg list`, Neuinstallation | entfernt, als verfügbar gelistet, wieder installiert |
-| Neustart mit Anmeldung | Doom bleibt installiert und startet |
-| Katalog-Generation 2, `pkg upgrade` | `doom 1.1.0 aktualisiert`, startet danach |
-| Server liefert veränderte WAD | „Pruefsumme falsch: freedoom1.wad“, nichts installiert |
+| TCG, `--scenario all`, mit Erstellung des Snapshots (Vorbereitung 121 s) | 226 s |
+| TCG, `--scenario all`, Snapshot wiederverwendet | 104 s |
+| TCG, `--scenario all --starts 10`, Snapshot wiederverwendet | 164 s |
+| WHPX, `--scenario all`, ohne Snapshot | 198 s |
+
+| Prüfung (Stand dieses Skripts) | Ergebnis |
+| --- | --- |
+| Vorbereitung: `pkg install doom` (28 MB über HTTPS, lokales Testrepository) | installiert in 68 s (TCG) |
+| `full`: F4/Esc, Schließen über X, Starts mit Beenden über das Doom-Menü | alle Starts laufen. **Offen:** mit `--starts 10` sinkt der freie Speicher von 392 auf 353 MiB bei gleichbleibendem GC-Heap; ob ein Leck vorliegt oder der Speicher nur verzögert frei wird (Doom wird jetzt kurz nach dem ersten Bild beendet), ist ungeklärt |
+| `remove`: Entfernen, während testapp läuft | abgelehnt: „Paket testapp laeuft gerade; zuerst die App schliessen.“ |
+| `remove`: Entfernen, Startmenü, `pkg install-local /data/pkgs/testapp/1.0.0` | entfernt, „Keine Programme gefunden“, lokal wieder installiert und gestartet |
+| `reboot`: Neustart mit Anmeldung | testapp bleibt installiert und startet |
+| `upgrade`: Katalog-Generation G+1, `pkg upgrade` | `testapp 1.1.0 aktualisiert`, startet in der Farbe von 1.1.0 |
+| `corrupt`: Server liefert veränderte `testapp.wasm` | „Pruefsumme falsch: testapp.wasm“, nichts installiert |
+
+Seit der Umstellung auf testapp prüft das Skript nicht mehr: das Upgrade eines großen Pakets (28 MB neben der alten Version), einen Prüfsummenfehler in einer großen gestreamten Datei und die Neuinstallation von Doom über das Netz nach dem Entfernen. Diese Pfade nutzen denselben Code wie bei testapp. Frühere Doom-Ergebnisse (ebenfalls 15. November 2026, TCG): Installation von packages.pjoter.de mit normal gebautem Kernel in 120 s; zehn Starts mit je 30 s Laufzeit, frei 416 → 414 MiB; `doom 1.1.0 aktualisiert`; „Pruefsumme falsch: freedoom1.wad“.
 
 ## Bewusste Grenzen von Version 1
 
