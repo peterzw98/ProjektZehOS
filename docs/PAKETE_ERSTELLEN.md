@@ -49,7 +49,7 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
   - höchstens 128 Dateien und 128 MiB je Paket
   - Pfade nur aus `A–Z a–z 0–9 . _ -`, ohne Groß-/Kleinschreibungs-Duplikate
   - Kennung `[a-z0-9][a-z0-9-]{0,47}`, Anzeigename höchstens 32 ASCII-Zeichen
-- **Dauer unter QEMU TCG:** Jede Datei wird beim Installieren und vor jedem Start per SHA-256 geprüft. 28 MB brauchen beim Installieren rund 2 Minuten, beim Start bis zu etwa 30 s.
+- **Dauer unter QEMU TCG:** Jede Datei wird beim Installieren und beim ersten Start nach jedem Neustart per SHA-256 geprüft. 28 MB brauchen beim Installieren rund 2 Minuten, beim ersten Start bis zu etwa 30 s.
 
 ## Veröffentlichen
 

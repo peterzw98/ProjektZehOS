@@ -17,7 +17,7 @@ python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <
 python scripts/build-package.py catalog --key <privater-Schlüssel.pem> --repo <repo> --generation 1
 ```
 
-Das Paket enthält ein GPL-2.0-Binary. Wer es veröffentlicht, muss die Quellen bereitstellen: doomgeneric am genannten Commit, `platform/` und `build.py`.
+Das Paket enthält ein GPL-2.0-or-later-Binary. Wer es veröffentlicht, muss die Quellen bereitstellen: doomgeneric am genannten Commit, `platform/` und `build.py`.
 
 Tastenbelegung (PS/2-Set-1 → Doom): Pfeile bzw. W/S laufen, Pfeile links/rechts drehen, A/D seitwärts, Strg schießen, Leertaste benutzen, Shift rennen, Ziffern Waffen, Enter, Tab Karte. **Backspace öffnet das Doom-Menü**, weil Esc in ZehOS der Rückweg zur Textshell bleibt.
 

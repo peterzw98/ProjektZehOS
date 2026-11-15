@@ -104,6 +104,13 @@ public sealed class Kernel : Sys.Kernel
     }
 
 #endif
+    // Nach jedem Einbinden, beim Boot wie bei disk mount: halbe Installationen abschliessen oder entfernen.
+    private void ReconcilePackages()
+    {
+        var reconciled = packages.Reconcile();
+        if (!reconciled.IsOK()) systemLog.Error("Packages", reconciled.Message);
+    }
+
     private static string VersionText =>
         $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
@@ -123,7 +130,7 @@ public sealed class Kernel : Sys.Kernel
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
-            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); }).Commands,
+            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); ReconcilePackages(); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
@@ -175,8 +182,7 @@ public sealed class Kernel : Sys.Kernel
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");
-                var reconciled = packages.Reconcile();
-                if (!reconciled.IsOK()) systemLog.Error("Packages", reconciled.Message);
+                ReconcilePackages();
             }
             else
             {

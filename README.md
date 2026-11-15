@@ -247,7 +247,7 @@ pkg update
 pkg install doom
 ```
 
-Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis zeigt `pkg status`. `pkg list`, `pkg upgrade` und `pkg remove doom` verwalten installierte Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Vor jedem Start werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
+Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis zeigt `pkg status`. `pkg list`, `pkg upgrade` und `pkg remove doom` verwalten installierte Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Beim ersten Start nach jedem Neustart werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
 
 Ein Build vertraut nur dem eingebetteten öffentlichen Herausgeberschlüssel `ProjektZeh/Packages/package-key.pub`; `-p:ZehOSPackageKeyPath=<Datei>` ersetzt ihn, etwa für Tests. Den privaten Schlüssel hält der Herausgeber außerhalb des Repositorys. Das Repository wird aus dem Branch `packages` gespeist und von `deploy/package-repo` ausgeliefert (Docker-Compose mit automatischer Aktualisierung). Format, Speicherort und Werkzeug `scripts/build-package.py` beschreibt [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md). QEMU-Abläufe prüft `scripts/test-wasm-doom-desktop.py`, mit lokalem Testrepository oder mit `--source https://packages.pjoter.de/`.
 

@@ -247,6 +247,23 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void VerificationRunsOncePerVersionUntilChanged()
+    {
+        var store = Store();
+        string hash = Publish(Path.Combine(work, "repo"), "doom", "1.0.0");
+        Assert.IsTrue(store.Install(Source("repo"), "", hash, CancellationToken.None).IsOK());
+        var package = store.Acquire("doom").Value!;
+        store.Release("doom");
+        // Nach der Installation gilt die Version als geprueft; spaetere Aenderungen sind nur ausserhalb des laufenden
+        // Kernels moeglich und werden nach dem naechsten Neustart (neuer Store) wieder erkannt.
+        File.WriteAllBytes(Path.Combine(package.FilesDirectory, "app.wasm"), Encoding.ASCII.GetBytes("kaputt"));
+        Assert.IsTrue(store.VerifyOnce(package, CancellationToken.None).IsOK());
+        var rebooted = Store();
+        StringAssert.Contains(rebooted.VerifyOnce(package, CancellationToken.None).Message, "veraendert");
+        StringAssert.Contains(rebooted.VerifyOnce(package, CancellationToken.None).Message, "veraendert");
+    }
+
+    [TestMethod]
     public void DowngradeStaysBlockedWhenInstalledPackageIsDamaged()
     {
         var store = Store();

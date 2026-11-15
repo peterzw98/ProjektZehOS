@@ -169,6 +169,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
     {
         if (identity.Generation == generation) return;
         generation = identity.Generation;
+        // Sichtbar im seriellen Protokoll; automatisierte Gasttests warten darauf statt auf feste Zeiten.
+        systemLog.Information("Session", identity.UserId == null ? "Benutzer abgemeldet." : "Benutzer angemeldet.");
         editor = new() { HistoryFilter = shell.CanRemember };
         login.Reset();
         shell.CancelSecretInput();

@@ -9,7 +9,7 @@ Geprüft in QEMU TCG mit 512 MiB, e1000e und vvfat-Datenlaufwerk mit `snapshot=o
 - **`finally` auf Fehlerwegen:** Die bekannte Unwind-Grenze betrifft auch einfache `try/finally`-Blöcke. Ein `Monitor.Exit` im `finally` von `CosmosNetworkService.Download` lief nach einer Ausnahme nicht. Die Netzwerksperre blieb belegt, und jedes weitere `pkg update` wartete endlos. Sperren, Paketsperren und Schreib-Handles werden deshalb nach `catch` ausdrücklich freigegeben.
 - **TLS-Abschluss:** Schließt der Server die Verbindung direkt nach der Antwort, scheitert BouncyCastle beim Senden von `close_notify` mit `internal_error(80)`. Bei Downloads mit vollständig gelesenem, längengeprüftem Body wird das nicht als Fehler gewertet.
 - **Dateisystem:** `File.Move`, `File.Delete`, `Directory.CreateDirectory`, `Directory.GetFiles/GetDirectories` und nicht rekursives `Directory.Delete` funktionieren auf FAT. Installieren, Entfernen, Aktualisieren und Aufräumen nach einem Neustart laufen damit.
-- **Dauer unter TCG:** 28-MB-Download über HTTPS mit Schreiben und SHA-256 rund 90 bis 120 s. Die erneute Prüfung aller Dateien vor dem Start verlängert den Doom-Start auf bis zu etwa 30 s.
+- **Dauer unter TCG:** 28-MB-Download über HTTPS mit Schreiben und SHA-256 rund 90 bis 120 s. Die erneute Prüfung aller Dateien verlängert den ersten Doom-Start nach dem Booten auf bis zu etwa 30 s; danach merkt sich der Kernel die geprüfte Version bis zum nächsten Neustart.
 - **QEMU-Eingabe:** Die Kontoeinrichtung nach dem ersten Start dauert unter TCG unterschiedlich lange. Per QMP zu früh getippte Zeilen gehen verloren oder werden geteilt. Das Testskript wiederholt deshalb `net dhcp` und `pkg source`.
 
 ## WebAssembly-Interpreter (wasm3) am 14. November 2026

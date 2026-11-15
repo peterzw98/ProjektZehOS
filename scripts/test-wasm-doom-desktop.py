@@ -209,10 +209,13 @@ def main() -> int:
             return qmp.shot(work / f"{next(step):02d}-{name}.png")
 
         width, height = shot("boot")
+        mark = serial_size(work)
         for value in (TEST_USER, TEST_PASSWORD, TEST_PASSWORD):
             qmp.line(value)
             time.sleep(1)
-        time.sleep(60)
+        # Die Ersteinrichtung (PBKDF2) dauert unter TCG unterschiedlich lange; erst danach tippen.
+        wait_serial(work, "Benutzer angemeldet.", 300, mark)
+        time.sleep(5)
 
         def shell(*lines: str) -> None:
             # Esc wechselt vom Desktop in die Textshell derselben Sitzung.
@@ -315,10 +318,12 @@ def main() -> int:
             wait_serial(work, "ist bereit", 240, mark)
             time.sleep(25)
             shot("after-reboot")
+            mark = serial_size(work)
             for value in (TEST_USER, TEST_PASSWORD):
                 qmp.line(value)
                 time.sleep(1)
-            time.sleep(25)
+            wait_serial(work, "Benutzer angemeldet.", 300, mark)
+            time.sleep(5)
             launch("doom")
             time.sleep(30)
             shot("doom-after-reboot")

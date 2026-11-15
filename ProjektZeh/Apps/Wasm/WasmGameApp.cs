@@ -65,7 +65,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private (byte[]? Module, string? Error) Load(InstalledPackage package)
     {
         lock (gate) if (exitRequested) return (null, "Start abgebrochen.");
-        var verified = PackageStore.VerifyFiles(package, CancellationToken.None);
+        var verified = store.VerifyOnce(package, CancellationToken.None);
         if (!verified.IsOK()) return (null, verified.Message);
         string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
         if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, "App zu gross.");

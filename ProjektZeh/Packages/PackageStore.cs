@@ -27,6 +27,9 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
     private readonly object gate = new();
     private readonly Dictionary<string, int> inUse = new(StringComparer.Ordinal);
     private readonly HashSet<string> busy = new(StringComparer.Ordinal);
+    // Seit dem Boot vollstaendig gepruefte Versionen ("id/version"). Der normale Dateidienst erreicht .zehos-Pfade nicht;
+    // im laufenden Kernel aendert nur dieser Store die Dateien. Nach einem Neustart wird wieder geprueft.
+    private readonly HashSet<string> verified = new(StringComparer.Ordinal);
 
     private string Apps => Path.Combine(root, "apps");
     private string CatalogPath => Path.Combine(root, "catalog.signed");
@@ -104,6 +107,19 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
             if (count <= 1) inUse.Remove(id);
             else inUse[id] = count - 1;
         }
+    }
+
+    /// <summary>
+    /// Wie <see cref="VerifyFiles"/>, aber hoechstens einmal je Version und Boot: unter Emulation dauert das Hashen der
+    /// Doom-WAD vor jedem Start sonst bis zu 30 s.
+    /// </summary>
+    public ResultErr VerifyOnce(InstalledPackage package, CancellationToken cancellation)
+    {
+        string key = package.Manifest.Id + "/" + package.Manifest.Version;
+        lock (gate) if (verified.Contains(key)) return ResultErr.CreateSuccess();
+        var result = VerifyFiles(package, cancellation);
+        if (result.IsOK()) lock (gate) verified.Add(key);
+        return result;
     }
 
     /// <summary>Prueft alle gespeicherten Dateien erneut gegen das signierte Manifest; eine spaetere Veraenderung sperrt den Start.</summary>
@@ -212,6 +228,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
             return ResultObjectFactory.CreateFailure<PackageManifest>(written);
         }
         ReplaceFile(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"));
+        // WriteVersion hat jede Datei beim Schreiben gehasht; ein erneuter Durchlauf vor dem ersten Start ist unnoetig.
+        lock (gate) verified.Add(manifest.Id + "/" + manifest.Version);
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
         if (previous != null && !string.Equals(previous.Directory, target, StringComparison.Ordinal)) TryDeleteTree(previous.Directory);
         return parsed;
