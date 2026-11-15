@@ -78,6 +78,23 @@ public sealed class DesktopWorkspaceTests
     }
 
     [TestMethod]
+    public void RequestClose_OnOtherWorkspace_ShowsPendingConfirmation()
+    {
+        var manager = new WindowManager(400, 300);
+        var app = new Moq.Mock<ProjektZeh.Apps.IApplication>();
+        app.Setup(application => application.RequestClose()).Returns(false);
+        var window = new Window("Editor", 20, 30, 180, 150, app.Object);
+        manager.Add(window);
+        manager.SwitchWorkspace(1);
+        manager.RequestClose(window);
+        Assert.AreEqual(0, manager.CurrentWorkspace, "Die Schliessrueckfrage muss sichtbar sein.");
+        Assert.AreSame(window, manager.ActiveWindow);
+        Assert.AreSame(window, manager.HitTest(60, 60));
+        Assert.AreEqual(1, manager.Count);
+        app.Verify(application => application.RequestClose(), Moq.Times.Once);
+    }
+
+    [TestMethod]
     public void CloseAll_ReturnsToFirstWorkspace()
     {
         var manager = new WindowManager(400, 300);

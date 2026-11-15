@@ -29,6 +29,8 @@ internal sealed class WindowManager
     {
         if (!windows.Contains(window)) return;
         Reset();
+        // Rueckfragen muessen auf dem Desktop des betroffenen Fensters sichtbar und bedienbar sein.
+        CurrentWorkspace = window.Workspace;
         window.IsMinimized = false;
         Activate(window);
         if (window.Application.RequestClose()) CloseWindow(window);
