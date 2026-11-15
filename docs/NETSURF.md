@@ -85,8 +85,9 @@ Das Netz-ABI kennt für Verbindungsfehler `ECONNREFUSED` (14), `ECONNRESET` (15)
 zeigt dafür eigene Fehlerseiten. Cosmos 3.0.94 unterscheidet diese Fälle nicht: Ein gescheiterter Verbindungsaufbau
 kommt im Kernel nur als allgemeine Ausnahme an und wird als `EIO` (29) gemeldet, ein Abbruch durch RST erscheint wie ein
 normales Verbindungsende. Die eigenen Werte entstehen deshalb nur auf dem Linux-Prüfhost und in den Hosttests mit echten
-Sockets. Der Prüfhost hält sonst die Kernelgrenzen ein: höchstens 4 Verbindungen, 64 KiB je `net_send`/`net_recv`,
-Hostnamen bis 253 ASCII-Zeichen und `EACCES` ohne Netzwerkberechtigung. Diese erteilt dort die Umgebungsvariable
+Sockets. Der Prüfhost übernimmt die Kernelgrenzen: höchstens 4 Verbindungen, 64 KiB je `net_send`/`net_recv`,
+Hostnamen bis 253 ASCII-Zeichen und `EACCES` ohne Netzwerkberechtigung. Die Prüfung einzelner Namensteile übernimmt er
+nicht; solche Namen meldet dort die Auflösung (`ENOENT`) statt `EINVAL`. Diese erteilt dort die Umgebungsvariable
 `ZEHOS_NET=1` anstelle von `capability=net`.
 
 ## Grenzen
