@@ -29,7 +29,8 @@ class NetSurfBuildTests(unittest.TestCase):
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
         build.ARCHIVES = {"netsurf": ("https://example.invalid/source.tar.gz",
-            hashlib.sha256(archive.read_bytes()).hexdigest(), "source")}
+            hashlib.sha256(archive.read_bytes()).hexdigest(), "source"),
+            **{name: self.original[2][name] for name in build.GENERATORS}}
 
     def restore(self):
         build.TOOLS, build.HERE, build.ARCHIVES = self.original
@@ -47,6 +48,13 @@ class NetSurfBuildTests(unittest.TestCase):
         second = build.fetch("netsurf")
         self.assertEqual((second / "value.txt").read_text(), "three\n")
         self.assertEqual((first / "value.txt").read_text(), "two\n")
+
+    def test_generator_change_uses_fresh_sources(self):
+        for name in build.GENERATORS:
+            first = build.fetch("netsurf")
+            url, _, folder = build.ARCHIVES[name]
+            build.ARCHIVES[name] = (url, "0" * 64, folder)
+            self.assertNotEqual(build.fetch("netsurf"), first, name)
 
     def test_failed_patch_does_not_poison_next_build(self):
         self.patch("missing", "two")
