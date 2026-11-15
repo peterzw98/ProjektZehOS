@@ -152,7 +152,11 @@ def http_scenarios(base: str, refused: int) -> list:
 COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 
 
+REQUESTED: set[str] = set()
+
+
 def extra_get(handler: TestServer) -> bool:
+    REQUESTED.add(handler.path)
     if handler.path == "/marker.css":
         body = b"body{background:#209090}"
         handler.send_response(200)
@@ -184,8 +188,9 @@ DOWNGRADE_PAGE, INJECTED = (0xff, 0xf0, 0xd8), (0x90, 0x20, 0x90)
 MIXED_PAGE, MIXED = (0x40, 0x40, 0x90), (0x20, 0x90, 0x90)
 
 
-def mixed_page(stylesheet: str) -> bytes:
-    return page(MIXED_PAGE, "Gemischt").replace(b"</head>", f'<link rel="stylesheet" href="{stylesheet}"></head>'.encode())
+def mixed_page(stylesheet: str, icon: str = "") -> bytes:
+    links = f'<link rel="stylesheet" href="{stylesheet}">' + (f'<link rel="icon" href="{icon}">' if icon else "")
+    return page(MIXED_PAGE, "Gemischt").replace(b"</head>", f"{links}</head>".encode())
 
 
 def make_tls_fixtures(work: Path) -> dict[str, Path]:
@@ -209,7 +214,8 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
             if self.path == "/zu-http":
                 self.send_page(302, b"", {"Location": f"{http_base}/seite.html"})
             elif self.path == "/gemischt":
-                self.send_page(200, mixed_page(f"{http_base}/marker.css"))
+                # NetSurf lädt Favicons ohne Seitenbezug; der Patch setzt den Referer, sonst ginge der Abruf durch.
+                self.send_page(200, mixed_page(f"{http_base}/marker.css", f"{http_base}/symbol-https.ico"))
             elif self.path == "/gemischt-umgeleitet":
                 self.send_page(200, mixed_page("/css-zu-http"))
             elif self.path == "/css-zu-http":
@@ -307,6 +313,13 @@ def main() -> int:
             print(f"{'FAIL' if problems else 'ok  '} {name}" + (f": {', '.join(problems)}" if problems else ""))
         for tls_server_running in tls:
             tls_server_running.shutdown()
+    # Mixed Content ohne Farbwirkung: das http://-Favicon der HTTPS-Seite darf nie angefragt werden.
+    if "/symbol-https.ico" in REQUESTED:
+        failures += 1
+        print("FAIL https-gemischt-favicon: http://-Favicon wurde geladen")
+    else:
+        print("ok   https-gemischt-favicon")
+    scenarios.append(("https-gemischt-favicon", [], [], []))
     server.shutdown()
     print(f"{len(scenarios) - failures}/{len(scenarios)} bestanden")
     return 1 if failures else 0

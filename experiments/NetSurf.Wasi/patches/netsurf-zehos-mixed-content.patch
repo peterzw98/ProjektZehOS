@@ -21,3 +21,16 @@
 +	return fetch->referer != NULL &&
 +		nsurl_get_scheme_type(fetch->referer) == NSURL_SCHEME_HTTPS;
 +}
+--- a/netsurf/desktop/browser_window.c
++++ b/netsurf/desktop/browser_window.c
+@@ -513,7 +513,9 @@
+ 			      struct browser_window *bw,
+ 			      struct content_rfc5988_link *link)
+ {
+-	nsurl *nsref = NULL;
++	/* ZehOS: Seite als Referer, damit der Fetcher http://-Favicons
++	 * einer HTTPS-Seite als Mixed Content erkennt. */
++	nsurl *nsref = hlcache_handle_get_url(c);
+ 	nsurl *nsurl;
+ 	nserror res;
+ 
