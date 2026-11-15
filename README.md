@@ -251,6 +251,15 @@ pkg install doom
 
 Ein Build vertraut nur dem eingebetteten öffentlichen Herausgeberschlüssel `ProjektZeh/Packages/package-key.pub`; `-p:ZehOSPackageKeyPath=<Datei>` ersetzt ihn, etwa für Tests. Den privaten Schlüssel hält der Herausgeber außerhalb des Repositorys. Das Repository wird aus dem Branch `packages` gespeist und von `deploy/package-repo` ausgeliefert (Docker-Compose mit automatischer Aktualisierung). Format, Speicherort und Werkzeug `scripts/build-package.py` beschreibt [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md). QEMU-Abläufe prüft `scripts/test-wasm-doom-desktop.py`, mit lokalem Testrepository oder mit `--source https://packages.pjoter.de/`.
 
+Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was eine App darf, erklärt [docs/PAKETE_ERSTELLEN.md](docs/PAKETE_ERSTELLEN.md), ebenso den Weg bis zur Veröffentlichung. Die wichtigsten Grenzen:
+- Nur grafische Fensterapps; eine App zur Zeit.
+- Dateien nur lesend und nur aus dem eigenen Paket.
+- Kein Netzwerk, keine Threads, keine Speicherstände.
+- Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
+- Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
+
+`pkg` gibt es nur in Builds mit `-p:ZehOSWasm=true`.
+
 ## Start in VMware Player aus Visual Studio
 
 Die Cosmos-Erweiterung übernimmt standardmäßig `F5` und `Strg+F5` für QEMU. Für einen Start in VMware ohne Umstellen der Debug-Einstellung zuerst in Visual Studio bauen (`Strg+Umschalt+B`) und dann im Visual-Studio-Terminal aus dem Repository-Stamm ausführen:

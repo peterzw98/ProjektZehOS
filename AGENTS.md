@@ -21,6 +21,7 @@ Bei Bedarf die passende Quelle lesen:
 - `docs/COSMOS_SUPPORT.md`: geprüfte Cosmos-Schnittstellen, Referenzumgebung und bekannte Grenzen.
 - `ProjektZeh/Shared/README.md`: gemeinsame Ergebnis- und Fehlertypen.
 - `docs/superpowers/specs/` und `docs/superpowers/plans/`: vorhandene Entwürfe und Umsetzungspläne für die jeweilige Aufgabe.
+- `docs/PAKETE_ERSTELLEN.md` und `docs/PACKAGE_FORMAT.md`: Fähigkeiten und Grenzen von Wasm-Apps, Paketformat, Veröffentlichung und Paketserver.
 
 Wichtige Zuständigkeiten:
 
@@ -34,6 +35,9 @@ Wichtige Zuständigkeiten:
 | `ProjektZeh/Shell/` | Parser, Befehlstabelle und Ausgabe über `ITextOutput` |
 | `ProjektZeh/Storage/` | Dateioperationen und Cosmos-Laufwerksanbindung |
 | `ProjektZeh/SystemServices/` und `ProjektZeh/Shared/` | Bootdiagnose, Protokoll und gemeinsame Result-Typen |
+| `ProjektZeh/Runtime/Wasm/`, `ProjektZeh/Native/Wasm/`, `ProjektZeh/ThirdParty/wasm3/` | Wasm-Loader (wasm3, nur mit `-p:ZehOSWasm=true`) und WASI-/`zehos_v1`-Hostfunktionen |
+| `ProjektZeh/Packages/`, `ProjektZeh/Apps/Wasm/` | signierter Paketbestand, `pkg`-Quellen und Fenster für Paket-Apps |
+| `deploy/package-repo/`, Branch `packages` | Paketserver (Docker) und veröffentlichte signierte Pakete |
 | `ProjektZeh.Tests/` | Tests der plattformunabhängigen Logik auf dem Entwicklungsrechner |
 | `scripts/` und `.github/workflows/` | VM-Helfer, Energiekommando-Prüfung und CI |
 
@@ -44,6 +48,17 @@ Wichtige Zuständigkeiten:
 - Cosmos SDK, Kernelpakete, CLI und Patcher müssen zusammenpassen. Versionswechsel als eigene technische Änderung behandeln und durch nativen Build und Gaststart prüfen.
 - Vorhandene Cosmos-Dienste zuerst verwenden. Bei neuen Schnittstellen die Verfügbarkeit in der tatsächlich verwendeten Version prüfen; aktuelle Online-Dokumentation kann einen neueren Stand beschreiben.
 - Die Unterstützung einer .NET-API auf dem Host beweist nicht ihre Verfügbarkeit im Cosmos-/NativeAOT-Kernel.
+- Cosmos 3.0.94 überspringt `finally`-Blöcke beim Exception-Unwind, auch einfache und solche aus `using`. Sperren, Zähler und Schreib-Handles auf Fehlerwegen deshalb nach `catch` ausdrücklich freigeben, nicht in `finally`.
+
+## Wasm-Apps und Pakete
+
+- Neue Apps sind Pakete, keine Kernelbestandteile. Für eine App keinen Kernelbuild und keine appbezogenen Buildflags einführen; fehlende Fähigkeiten als allgemeine Hostfunktion des Loaders ergänzen.
+- Die Fähigkeiten und Grenzen in `docs/PAKETE_ERSTELLEN.md` sind der Vertrag mit App-Entwicklern. Neue Hostfunktionen, Imports oder Limits dort und in `docs/PACKAGE_FORMAT.md` nachtragen.
+- Hostfunktionen prüfen jeden Gastzeiger und jede Länge überlaufsicher. Ausnahmen dürfen die native Grenze (`UnmanagedCallersOnly`) nicht überqueren.
+- Apps erhalten keine Kernelobjekte, nur Zahlen, Kopien und instanzgebundene Handles. Der Dateizugriff bleibt auf das eigene Paket beschränkt und nur lesend, solange nichts anderes beauftragt ist.
+- Den privaten Herausgeberschlüssel nie ins Repository, in Logs, Testfixtures oder auf den Server legen. Tests verwenden eigene Testschlüssel und `-p:ZehOSPackageKeyPath`/`-p:ZehOSPackageTestCaPath`; diese gehören nie in normale Builds.
+- Im Branch `packages` veröffentlichte Versionen sind unveränderlich. Änderungen brauchen eine neue Version und eine höhere Katalog-Generation. Das Pushen dieses Branches veröffentlicht sofort; nur auf ausdrücklichen Auftrag.
+- Lizenzen der Paketinhalte beachten: Lizenztexte ins Paket legen, bei GPL die Quellen öffentlich erreichbar halten. GPL-Code nicht in den Kernel übernehmen.
 
 ## Änderungen und Architektur
 

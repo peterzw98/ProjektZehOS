@@ -70,7 +70,7 @@ Für Tests mit lokalem HTTPS-Repository ergänzt `-p:ZehOSPackageTestCaPath=<PEM
 
 - **Zugriff:** Der normale Dateidienst und die Dateirechte geben `.zehos-`-Pfade nicht frei. Nur der Paketdienst schreibt dort. Apps lesen ausschließlich ihr eigenes `files/`-Verzeichnis, schreibgeschützt über die WASI-Brücke.
 - **Installation:** Dateien werden in das Versionsverzeichnis kopiert und dabei gehasht. Danach werden Manifest und Signatur abgelegt. Zuletzt wird der Marker `active` über eine Ersatzdatei (`active.new`) veröffentlicht. Ein Versionsverzeichnis ohne Marker ist nie startbar. Die alte Version wird erst nach dem neuen Marker gelöscht.
-- **Aufräumen beim Einbinden:** Ein halb ersetzter Marker wird abgeschlossen. Versionen ohne Marker und Pakete ohne aktive Version werden gelöscht.
+- **Aufräumen beim Einbinden:** Ein halb ersetzter Marker wird abgeschlossen. Pakete ohne Marker und nicht aktive Versionen werden gelöscht. Hinter einem unlesbaren Marker oder einem fehlenden Versionsordner wird nichts gelöscht; das Paket bleibt gesperrt.
 - **Start:** Marker und Manifestsignatur werden geprüft, dann alle Dateien erneut gehasht. Eine nach der Installation veränderte Datei sperrt den Start. Bei Doom dauert das wegen der 28-MB-WAD einige Sekunden; im Fenster steht „Pruefe Paket …“.
 - **Sperren:** Eine laufende App hält ihre Version. `pkg remove` und `pkg upgrade` lehnen laufende Pakete ab. Zwei Änderungen am selben Paket schließen sich aus.
 - **Kein Stromausfallschutz:** FAT32 garantiert keine atomaren Schritte. Unklare Zustände werden beim nächsten Einbinden aufgeräumt oder bleiben gesperrt, bis das Paket neu installiert oder entfernt wird.
@@ -114,6 +114,7 @@ Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py
 | Entfernen, `pkg list`, Neuinstallation | entfernt, als verfügbar gelistet, wieder installiert |
 | Neustart mit Anmeldung | Doom bleibt installiert und startet |
 | Katalog-Generation 2, `pkg upgrade` | `doom 1.1.0 aktualisiert`, startet danach |
+| Server liefert veränderte WAD | „Pruefsumme falsch: freedoom1.wad“, nichts installiert |
 
 ## Bewusste Grenzen von Version 1
 
@@ -122,3 +123,8 @@ Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py
 - Keine Benutzerdaten-/Speicherstandsverzeichnisse; Apps lesen nur ihr Paket.
 - `install-local` liest den Ordner direkt (nur Administratoren), weil von außen auf das Laufwerk kopierte Dateien keine Rechteeinträge haben.
 - Kein Speicherplatztest vorab; ein voller Datenträger bricht die Installation mit Dateifehler ab und entfernt das unvollständige Versionsverzeichnis.
+- `pkg` gibt es nur in Builds mit Wasm-Loader (`-p:ZehOSWasm=true`).
+- Eine App, die `should_exit` nie abfragt, lässt sich nicht beenden; ihr Paket bleibt bis zum Neustart gesperrt.
+- Downloads haben nur ein Zeitlimit je Datenpaket, kein Gesamtlimit. Ein sehr langsamer Server hält die Netzwerksperre, bis `pkg cancel` den Auftrag abbricht.
+- Das Startmenü erkennt ein bereits offenes Fenster am Anzeigenamen; Paketnamen sollten deshalb eindeutig sein.
+- Veränderte Paketdateien sperren den Start; `pkg install <id>` derselben Version repariert sie.
