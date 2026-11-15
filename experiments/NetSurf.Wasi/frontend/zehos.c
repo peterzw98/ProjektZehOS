@@ -33,7 +33,9 @@ enum { EV_KEYDOWN = 1, EV_KEYUP, EV_TEXT, EV_MOVE, EV_BUTTONDOWN, EV_BUTTONUP, E
 #define PENDING_MAX 32
 static nsfb_event_t pending[PENDING_MAX];
 static int pending_count;
-static int held_modifiers[8];
+// Gehaltene Tasten und Maustasten, die nsfb bereits als gedrückt kennt; reset lässt sie alle los.
+// PENDING_MAX reicht, um alle gleichzeitig freizugeben.
+static int held_keys[PENDING_MAX];
 static int held_count;
 static uint32_t tic;
 
@@ -86,15 +88,10 @@ static enum nsfb_key_code_e map_key(int code)
     }
 }
 
-static bool is_modifier(enum nsfb_key_code_e key)
-{
-    return key == NSFB_KEY_LSHIFT || key == NSFB_KEY_RSHIFT || key == NSFB_KEY_LCTRL || key == NSFB_KEY_LALT;
-}
-
 static bool ctrl_held(void)
 {
     for (int i = 0; i < held_count; i++)
-        if (held_modifiers[i] == NSFB_KEY_LCTRL) return true;
+        if (held_keys[i] == NSFB_KEY_LCTRL) return true;
     return false;
 }
 
@@ -104,15 +101,17 @@ static bool is_text_key(enum nsfb_key_code_e key)
     return key >= NSFB_KEY_SPACE && key < NSFB_KEY_DELETE;
 }
 
-static void track_modifier(enum nsfb_key_code_e key, bool down)
+// Liefert false für ein Loslassen ohne vorheriges Drücken (etwa nach reset); das darf nsfb nicht erreichen.
+static bool track(enum nsfb_key_code_e key, bool down)
 {
     for (int i = 0; i < held_count; i++) {
-        if (held_modifiers[i] != (int)key) continue;
-        if (!down) held_modifiers[i] = held_modifiers[--held_count];
-        return;
+        if (held_keys[i] != (int)key) continue;
+        if (!down) held_keys[i] = held_keys[--held_count];
+        return true;
     }
-    if (down && held_count < (int)(sizeof(held_modifiers) / sizeof(held_modifiers[0])))
-        held_modifiers[held_count++] = key;
+    if (!down) return false;
+    if (held_count < PENDING_MAX) held_keys[held_count++] = key;
+    return true;
 }
 
 static enum nsfb_key_code_e map_button(int code)
@@ -134,8 +133,9 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
     case EV_KEYUP:
         key = map_key(raw[1]);
         if (key == NSFB_KEY_UNKNOWN) return false;
-        if (is_modifier(key)) track_modifier(key, raw[0] == EV_KEYDOWN);
-        else if (is_text_key(key) && !ctrl_held()) return false;
+        // Zeichentasten ohne Strg melden kein Drücken; ihr Loslassen fällt dann in track heraus.
+        if (is_text_key(key) && !ctrl_held() && raw[0] == EV_KEYDOWN) return false;
+        if (!track(key, raw[0] == EV_KEYDOWN)) return false;
         event->type = raw[0] == EV_KEYDOWN ? NSFB_EVENT_KEY_DOWN : NSFB_EVENT_KEY_UP;
         event->value.keycode = key;
         return true;
@@ -155,6 +155,7 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
     case EV_BUTTONUP:
         key = map_button(raw[1]);
         if (key == NSFB_KEY_UNKNOWN) return false;
+        if (!track(key, raw[0] == EV_BUTTONDOWN)) return false;
         event->type = raw[0] == EV_BUTTONDOWN ? NSFB_EVENT_KEY_DOWN : NSFB_EVENT_KEY_UP;
         event->value.keycode = key;
         return true;
@@ -167,7 +168,7 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
         }
         return false;
     case EV_RESET:
-        while (held_count > 0) push(NSFB_EVENT_KEY_UP, (enum nsfb_key_code_e)held_modifiers[--held_count]);
+        while (held_count > 0) push(NSFB_EVENT_KEY_UP, (enum nsfb_key_code_e)held_keys[--held_count]);
         return false;
     default:
         return false;
