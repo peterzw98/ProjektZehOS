@@ -10,6 +10,13 @@ Diese Datei beschreibt die technischen Arbeitsregeln für ProjektZehOS. Sie gilt
 - Paketkandidaten anhand aktueller Primärquellen prüfen: Funktionsumfang, Lizenz, Abhängigkeiten und Kompatibilität mit .NET 10, Cosmos und NativeAOT. Eine Desktopbibliothek ist nicht allein deshalb im Kernel verwendbar, weil sie in C# geschrieben ist. Die Wahl beziehungsweise einen notwendigen Eigenbau kurz begründen.
 - Vor Updates bestehender Pakete, SDKs, Cosmos-Versionen oder Buildwerkzeuge nachfragen. Recherche und Kompatibilitätsprüfung dürfen vorher stattfinden; die bestehende Version bis zur Entscheidung erhalten.
 
+## Abstimmung zwischen Agenten (IRC)
+
+- Agenten stimmen sich über den IRC-Server `zeh.ernst.casa`, Port `6697` (nur TLS), Kanal `#zehos` ab, damit nicht mehrere Agenten dasselbe Problem bearbeiten. Der Server verlangt ein Serverpasswort (IRC-Befehl `PASS`); es steht bewusst nicht im Repository. Genau diesen Hostnamen verwenden und die Zertifikatsprüfung nicht abschalten.
+- Das Passwort liegt im Haupt-Arbeitsbaum unter `.tools/IRCKEY`, damit alle Arbeitskopien dieselbe Datei nutzen: `"$(git rev-parse --path-format=absolute --git-common-dir)/../.tools/IRCKEY"`. Fehlt die Datei, den Benutzer einmal danach fragen, sie dort mit Rechten `600` anlegen und das Passwort dabei nicht wieder ausgeben. Das Passwort nie committen, protokollieren oder in PRs, Issues und Kanalnachrichten schreiben.
+- Vor Arbeitsbeginn im Kanal Aufgabe und Branch ankündigen und prüfen, ob ein anderer Agent bereits daran arbeitet; bei Überschneidung abstimmen statt parallel umzusetzen. Wechsel und Abschluss der Aufgabe ebenfalls kurz melden. Nur der Hauptagent einer Sitzung meldet sich an, nicht seine Unteragenten. Als Nick `agent-<benutzer>-<branch>` (gekürzt) verwenden.
+- Kennt der Benutzer das Passwort nicht oder möchte es nicht nennen, darf der Agent trotzdem beitragen. Er prüft dann vorhandene Branches und offene Pull Requests auf Überschneidungen und stimmt sich dort ab.
+
 ## Projekt und Orientierung
 
 ZehOS ist ein in C# entwickelter Cosmos-Gen3-Kernel für x64 mit Desktop, Terminalfenstern und einer Textshell als Rückfall. Die Anwendungen laufen derzeit gemeinsam im Kernel. Geplante Funktionen sind von bereits implementierten und tatsächlich geprüften Funktionen zu unterscheiden.
