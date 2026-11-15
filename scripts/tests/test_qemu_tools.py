@@ -1,4 +1,5 @@
 import importlib.util
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ spec.loader.exec_module(guest)
 class QemuToolTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home)
         patches = [mock.patch.object(guest.shutil, 'which', return_value=None),
                    mock.patch.object(guest.Path, 'home', return_value=self.home)]
         for patch in patches:
@@ -34,6 +36,13 @@ class QemuToolTests(unittest.TestCase):
     def test_finds_cosmos_linux_tool(self):
         tools = self.cosmos_linux()
         self.assertEqual(guest.qemu_tool('qemu-img'), tools / 'qemu-img')
+
+    def test_finds_cosmos_windows_tool(self):
+        tool = self.home / 'AppData/Local/Cosmos/Tools/qemu/bin/qemu-img.exe'
+        tool.parent.mkdir(parents=True)
+        tool.touch()
+        self.assertEqual(guest.qemu_tool('qemu-img'), tool)
+        self.assertEqual(guest.qemu_img(), ([str(tool)], None))
 
     def test_qemu_img_bypasses_cosmos_wrapper(self):
         tools = self.cosmos_linux()
