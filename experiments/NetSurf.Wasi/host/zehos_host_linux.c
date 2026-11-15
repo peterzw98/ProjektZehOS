@@ -5,10 +5,14 @@
 //   ZEHOS_PPM=<datei>      jedes present als PPM (P6) dorthin schreiben
 //   ZEHOS_EXIT_MS=<ms>     ab dieser App-Zeit meldet should_exit 1 (Vorgabe 10000)
 //   ZEHOS_EVENTS=<datei>   Zeilen "<ms> <typ> <code> <x> <y>"; jedes Ereignis wird ab seiner Zeit geliefert
-// net_* bildet das Netz-ABI mit nicht blockierenden POSIX-Sockets nach (DNS blockiert hier, im Kernel nicht).
+//   ZEHOS_NET=1            Netzwerk erlauben (ersetzt capability=net)
+//   ZEHOS_TLS_CA=<datei>   PEM-Vertrauensanker für ZEHOS_NET_TLS; ohne sie meldet ein TLS-Handle ENOSYS
+// net_* bildet das Netz-ABI mit nicht blockierenden POSIX-Sockets nach (DNS blockiert hier, im Kernel nicht),
+// TLS mit OpenSSL statt BouncyCastle. Bauen mit -lssl -lcrypto.
 
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <poll.h>
 #include <stdint.h>
@@ -18,6 +22,10 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 #include "wasm_export.h"
 
@@ -115,8 +123,9 @@ static int32_t should_exit_wrapper(wasm_exec_env_t env)
 
 // WASI-errno-Werte des Netz-ABI.
 enum { NET_OK = 0, NET_EACCES = 2, NET_EAGAIN = 6, NET_EBADF = 8, NET_ECONNREFUSED = 14, NET_ECONNRESET = 15,
-       NET_EHOSTUNREACH = 23, NET_EINVAL = 28, NET_EIO = 29, NET_EMFILE = 33, NET_ENOENT = 44, NET_ENOTSUP = 58,
-       NET_ETIMEDOUT = 73 };
+       NET_EHOSTUNREACH = 23, NET_EINVAL = 28, NET_EIO = 29, NET_EMFILE = 33, NET_ENOENT = 44, NET_ENOSYS = 52,
+       NET_ENOTSUP = 58, NET_EPERM = 63, NET_EPROTO = 65, NET_ETIMEDOUT = 73 };
+#define NET_TLS 1
 // Grenzen wie WasmNetworkSession im Kernel, damit der Prüfhost keine Fähigkeiten vortäuscht, die ZehOS nicht hat.
 #define MAX_SOCKETS 4
 #define MAX_TRANSFER (64 * 1024)
@@ -124,6 +133,12 @@ enum { NET_OK = 0, NET_EACCES = 2, NET_EAGAIN = 6, NET_EBADF = 8, NET_ECONNREFUS
 
 static int sockets[MAX_SOCKETS];
 static int sockets_ready[MAX_SOCKETS];
+// TCP steht, bei TLS fehlt eventuell noch der Handshake; sockets_ready gilt erst danach.
+static int sockets_connected[MAX_SOCKETS];
+static int sockets_tls[MAX_SOCKETS];
+static SSL *sessions[MAX_SOCKETS];
+static char names[MAX_SOCKETS][MAX_HOST + 1];
+static SSL_CTX *tls_context;
 
 static int32_t map_errno(int error)
 {
@@ -136,6 +151,49 @@ static int32_t map_errno(int error)
     case ETIMEDOUT: return NET_ETIMEDOUT;
     default: return NET_EIO;
     }
+}
+
+// Abbildung wie im Kernel: abgelehntes Zertifikat EPERM, Ende ohne close_notify ECONNRESET, sonst EPROTO.
+static int32_t map_tls(SSL *session, int result)
+{
+    int error = SSL_get_error(session, result);
+    if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return NET_EAGAIN;
+    if (error == SSL_ERROR_ZERO_RETURN) return NET_OK;
+    if (SSL_get_verify_result(session) != X509_V_OK) return NET_EPERM;
+    if (error == SSL_ERROR_SYSCALL) return errno == 0 ? NET_ECONNRESET : map_errno(errno);
+    if (ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) return NET_ECONNRESET;
+    return NET_EPROTO;
+}
+
+// Wie TlsTransport: TLS 1.2/1.3, Kette und Name gegen ZEHOS_TLS_CA, kein Übergehen. Fehlen die Anker, meldet
+// net_open wie der Kernel sofort ENOSYS.
+static int tls_available(void)
+{
+    if (tls_context != NULL) return 1;
+    const char *anchors = getenv("ZEHOS_TLS_CA");
+    if (anchors == NULL || *anchors == '\0') return 0;
+    SSL_CTX *context = SSL_CTX_new(TLS_client_method());
+    if (context == NULL) return 0;
+    SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION);
+    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_mode(context, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    if (SSL_CTX_load_verify_locations(context, anchors, NULL) != 1) { SSL_CTX_free(context); return 0; }
+    tls_context = context;
+    return 1;
+}
+
+static SSL *tls_session(int fd, const char *name)
+{
+    SSL *session = SSL_new(tls_context);
+    if (session == NULL) return NULL;
+    struct in_addr literal;
+    // IPv4-Literale ohne SNI gegen die IP-SAN prüfen, Namen mit SNI gegen den DNS-Namen.
+    int named = inet_pton(AF_INET, name, &literal) != 1;
+    int ok = SSL_set_fd(session, fd) == 1 &&
+             (named ? SSL_set_tlsext_host_name(session, name) == 1 && SSL_set1_host(session, name) == 1
+                    : X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(session), name) == 1);
+    if (!ok) { SSL_free(session); return NULL; }
+    return session;
 }
 
 // Handles sind 1-basiert, damit 0 nie ein gültiges Handle ist.
@@ -178,11 +236,12 @@ static int32_t net_open_wrapper(wasm_exec_env_t env, uint32_t host, uint32_t hos
     for (uint32_t i = 0; i < host_len; i++)
         if ((unsigned char)name[i] > 127) return NET_EINVAL;
     if (!network_allowed()) return NET_EACCES;
-    if (flags != 0) return NET_ENOTSUP;
+    if ((flags & ~NET_TLS) != 0) return NET_ENOTSUP;
     if (port < 1 || port > 65535 || host_len == 0 || memchr(name, '\0', host_len) != NULL) return NET_EINVAL;
     int slot = 0;
     while (slot < MAX_SOCKETS && sockets[slot] > 0) slot++;
     if (slot == MAX_SOCKETS) return NET_EMFILE;
+    if ((flags & NET_TLS) != 0 && !tls_available()) return NET_ENOSYS;
     snprintf(service, sizeof(service), "%d", port);
     struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM }, *info;
     if (getaddrinfo(name, service, &hints, &info) != 0) return NET_ENOENT;
@@ -193,25 +252,43 @@ static int32_t net_open_wrapper(wasm_exec_env_t env, uint32_t host, uint32_t hos
     freeaddrinfo(info);
     if (result != 0 && error != EINPROGRESS) { close(fd); return map_errno(error); }
     sockets[slot] = fd;
-    sockets_ready[slot] = result == 0;
+    sockets_connected[slot] = result == 0;
+    sockets_tls[slot] = (flags & NET_TLS) != 0;
+    sockets_ready[slot] = result == 0 && !sockets_tls[slot];
+    memcpy(names[slot], name, host_len + 1);
     *handle = slot + 1;
+    return NET_OK;
+}
+
+// Treibt Verbindungsaufbau und Handshake voran; der Kernel erledigt das im Worker, hier jeder Aufruf.
+static int32_t progress(int slot)
+{
+    int fd = sockets[slot];
+    if (sockets_ready[slot]) return NET_OK;
+    if (!sockets_connected[slot]) {
+        struct pollfd p = { .fd = fd, .events = POLLOUT };
+        if (poll(&p, 1, 0) == 0) return NET_EAGAIN;
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) != 0) error = errno;
+        if (error != 0) return map_errno(error);
+        sockets_connected[slot] = 1;
+        sockets_ready[slot] = !sockets_tls[slot];
+        if (sockets_ready[slot]) return NET_OK;
+    }
+    if (sessions[slot] == NULL && (sessions[slot] = tls_session(fd, names[slot])) == NULL) return NET_EIO;
+    ERR_clear_error();
+    int result = SSL_connect(sessions[slot]);
+    if (result != 1) return map_tls(sessions[slot], result);
+    sockets_ready[slot] = 1;
     return NET_OK;
 }
 
 static int32_t net_status_wrapper(wasm_exec_env_t env, int32_t handle)
 {
     (void)env;
-    int fd = socket_of(handle);
-    if (fd < 0) return NET_EBADF;
-    if (sockets_ready[handle - 1]) return NET_OK;
-    struct pollfd p = { .fd = fd, .events = POLLOUT };
-    if (poll(&p, 1, 0) == 0) return NET_EAGAIN;
-    int error = 0;
-    socklen_t len = sizeof(error);
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) != 0) error = errno;
-    if (error != 0) return map_errno(error);
-    sockets_ready[handle - 1] = 1;
-    return NET_OK;
+    if (socket_of(handle) < 0) return NET_EBADF;
+    return progress(handle - 1);
 }
 
 static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, uint32_t len, uint32_t out, int sending)
@@ -226,8 +303,18 @@ static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, uint
     if (len > MAX_TRANSFER) return NET_EINVAL;
     int fd = socket_of(handle);
     if (fd < 0) return NET_EBADF;
-    if (!sockets_ready[handle - 1]) return NET_EAGAIN;
+    int32_t state = progress(handle - 1);
+    if (state != NET_OK) return state;
     void *buffer = wasm_runtime_addr_app_to_native(inst, data);
+    SSL *session = sessions[handle - 1];
+    if (session != NULL) {
+        *count = 0;
+        if (len == 0) return NET_OK;
+        ERR_clear_error();
+        int n = sending ? SSL_write(session, buffer, (int)len) : SSL_read(session, buffer, (int)len);
+        if (n > 0) *count = n;
+        return n > 0 ? NET_OK : map_tls(session, n);
+    }
     ssize_t n = sending ? send(fd, buffer, (size_t)len, MSG_NOSIGNAL) : recv(fd, buffer, (size_t)len, 0);
     if (n < 0) return map_errno(errno);
     *count = (int32_t)n;
@@ -249,6 +336,13 @@ static int32_t net_close_wrapper(wasm_exec_env_t env, int32_t handle)
     (void)env;
     int fd = socket_of(handle);
     if (fd < 0) return NET_EBADF;
+    SSL *session = sessions[handle - 1];
+    if (session != NULL) {
+        // close_notify nur nach abgeschlossenem Handshake und ohne Rückmeldung, wie im Kernel.
+        if (sockets_ready[handle - 1]) SSL_shutdown(session);
+        SSL_free(session);
+        sessions[handle - 1] = NULL;
+    }
     close(fd);
     sockets[handle - 1] = 0;
     return NET_OK;
