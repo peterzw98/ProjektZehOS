@@ -107,7 +107,8 @@ internal sealed class FileService
             }
             Authorize(resolved.Value!, FilePermission.Read);
             using var reader = new StreamReader(resolved.Value!);
-            var buffer = new char[maximumLength + 1];
+            // UTF-8 hat nie mehr Zeichen als Bytes: Puffer nach Dateigroesse, damit grosse Grenzen nichts kosten.
+            var buffer = new char[(int)Math.Min(reader.BaseStream.Length, maximumLength) + 1];
             int length = reader.ReadBlock(buffer, 0, buffer.Length);
             if (length > maximumLength)
             {

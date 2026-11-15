@@ -73,6 +73,11 @@ public sealed class UserManagementTests
         Assert.IsTrue(accounts.IsAdmin(admin), "Sitzung darf nicht gesperrt werden.");
         var reloaded = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
         Assert.IsTrue(reloaded.Load().IsOK());
+        // Auch die Rechte der letzten Datei muessen den Neustart ueberstehen.
+        var again = reloaded.CreateSession();
+        WaitForPassword(() => reloaded.LoginWork(again, "admin", AdminPassword)()().IsOK());
+        var reloadedFiles = new FileService(root, access: reloaded.Access, session: again);
+        Assert.AreEqual("x", reloadedFiles.ReadText(Path.Combine(root, "home", "admin", "viele", "notiz-0999.txt")).Value);
     }
 
     [TestMethod]
