@@ -70,6 +70,13 @@ ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/lib
   ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
 ```
 
+Automatische Szenarien (Klick, Reset, kaputter Link, Rad) prüfen das letzte Bild anhand der Markerfarben der Testseiten:
+
+```bash
+python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/build-iwasm/iwasm \
+  --host .tools/netsurf-host/libzehos_host.so
+```
+
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
 
 ## Grenzen
