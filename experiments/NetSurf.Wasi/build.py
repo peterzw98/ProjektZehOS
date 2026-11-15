@@ -118,7 +118,8 @@ def main() -> int:
     env.update(PERL_HASH_SEED="0", PERL_PERTURB_KEYS="0", PYTHONHASHSEED="0")
     env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{':'.join(map(str, generators))}:{env['PATH']}",
                PKG_CONFIG_PATH=str(prefix / "lib" / "pkgconfig"), PKG_CONFIG_LIBDIR=str(prefix / "lib" / "pkgconfig"))
-    # BUILD steht im Bauordnernamen und damit in __FILE__; ohne festen Wert folgt er dem Host-cc (Arch: x86_64-pc-linux-gnu).
+    # BUILD ist hier nur ein fester Ordnername (landet in __FILE__), nicht der echte Host; sonst folgt er cc -dumpmachine
+    # (Arch: x86_64-pc-linux-gnu). wasi-sdk gibt es ohnehin nur fuer x86_64-Linux.
     common = [f"HOST=wasm32-wasip1", "BUILD=x86_64-linux-gnu", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", f"CC={cc}",
               f"AR={sdk / 'bin' / 'llvm-ar'}", "Q=", "DESTDIR="]
 
