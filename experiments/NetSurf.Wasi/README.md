@@ -38,7 +38,7 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`). Eine weitere Taste während eines Rollbalken-Ziehens startet kein zweites Ziehen, das den Grab umschalten und lösen würde.
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an. Zusätzlich löscht Entf im Textfeld das Zeichen rechts der Einfügemarke; das fehlte im fbtk.
 
-Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schritt), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
+Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (HTTP liefert stattdessen der eigene Fetcher, siehe unten), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
 
 ## Lizenztexte
 
@@ -90,7 +90,19 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   --host .tools/netsurf-host/libzehos_host.so
 ```
 
+Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht.
+
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
+
+## HTTP
+
+`frontend/fetch_http.c` ist ein eigener NetSurf-Fetcher für `http://`; `build.py` kopiert ihn als `content/fetchers/zehos_http.c` in den Quellbaum, `patches/netsurf-zehos-http.patch` registriert ihn. Die Verbindung kommt über `zehos_v1.net_open`/`net_status`/`net_send`/`net_recv`/`net_close` vom Kernel. Den Antwortparser `frontend/http_response.c` (Statuszeile, Kopfzeilen, `Content-Length`, `chunked`, Lesen bis Verbindungsende) prüft `tests/http.c` nativ, auch byteweise zerstückelt.
+
+- HTTP/1.1 mit `Connection: close`, GET und URL-codierte POST-Formulare; Dateiupload-Formulare werden abgelehnt.
+- Weiterleitungen, 304 und Cache behandelt NetSurfs llcache wie beim curl-Fetcher.
+- Grenzen je Antwort: Zeile 8 KiB, Kopf 64 KiB und 128 Zeilen, Rumpf 8 MiB, 30 s ohne Daten. Komprimierte Übertragung wird nicht angefordert; andere Transfer-Codierungen als `chunked` gelten als Fehler.
+- `https://` zeigt ausdrücklich „HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.“
+- Fehlerseiten nennen die Ursache: fehlende Netzwerkberechtigung, unbekannter Servername, abgelehnte oder abgebrochene Verbindung, Zeitüberschreitung, ungültige, unvollständige oder zu große Antwort.
 
 ## Grenzen
 
@@ -98,7 +110,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   - In der Adressleiste ist nur ASCII möglich; in Formularfeldern der Seite funktioniert Unicode.
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
   - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
-- **Inhalte:** kein Netz, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
+- **Inhalte:** nur HTTP ohne TLS, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
 - **Prüfstand:** Linux-Prüfhost unter WAMR (`host/run_tests.py`) und ZehOS-Loader (wasm3) in QEMU 10.2.2 mit TCG über `scripts/test-netsurf-desktop.py`: `NETSURF_GUEST PASS` am 15. November 2026, frei 442 488–443 192 KiB (rund 432 MiB) über drei Starts. Unter KVM besteht der Lauf mit `-cpu qemu64,+rdrand,+rdseed` (ohne RDRAND/RDSEED scheitert die Kontoanlage, siehe [#56](https://github.com/peterzw98/ProjektZehOS/issues/56)); VMware und echte Hardware ungeprüft.
 
 ## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)

@@ -350,6 +350,9 @@ static void fetch_http_poll(lwc_string *scheme)
 	ring = keep;
 }
 
+/* Aufruf aus fetcher_init (patches/netsurf-zehos-http.patch); dort ohne eigenen Header deklariert. */
+nserror fetch_zehos_http_register(void);
+
 nserror fetch_zehos_http_register(void)
 {
 	const struct fetcher_operation_table ops = {

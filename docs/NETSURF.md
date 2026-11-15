@@ -74,7 +74,7 @@ Endabnahme am 15. November 2026 auf genau dem PR-Stand `51c9ec8`, mit `master` e
 
 ## Grenzen
 
-- Kein HTTP/HTTPS und kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
+- HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
 - Festes Browserbild 632×392, kein Resize-Import. Das ZehOS-Fenster zentriert bzw. skaliert es.
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.
