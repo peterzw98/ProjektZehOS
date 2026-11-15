@@ -363,11 +363,12 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
         {
             if (tls != null)
             {
-                // close_notify nach Moeglichkeit; ein Fehler dabei wird laut ABI nicht an die App gemeldet.
+                // close_notify nach Moeglichkeit; ein Fehler dabei wird laut ABI nicht an die App gemeldet. Steht noch ein
+                // Teilrecord aus, entfaellt es, sonst laege close_notify mitten in diesem Record.
                 int length = 0;
                 try
                 {
-                    if (tls.IsConnected && !tls.IsClosed)
+                    if (cipherOutCount == 0 && tls.IsConnected && !tls.IsClosed)
                     {
                         tls.Close();
                         length = tls.ReadOutput(cipherOut, 0, cipherOut.Length);
@@ -382,7 +383,8 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
                 if (!Monitor.TryEnter(CosmosNetworkService.Gate)) return;
                 if (cipherOutCount > 0)
                 {
-                    try { socket.Send(cipherOut, 0, cipherOutCount, SocketFlags.None); }
+                    // Nur ein sofort moeglicher Versuch, damit die Shell nicht auf einen vollen Sendepuffer wartet.
+                    try { if (socket.Poll(0, SelectMode.SelectWrite)) socket.Send(cipherOut, 0, cipherOutCount, SocketFlags.None); }
                     catch (Exception) { }
                     cipherOutCount = 0;
                 }
