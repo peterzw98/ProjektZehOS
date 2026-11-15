@@ -1,4 +1,5 @@
 import hashlib
+import http.client
 import importlib.util
 import io
 from pathlib import Path
@@ -93,20 +94,21 @@ class NetSurfDownloadTests(unittest.TestCase):
         return mock.patch.object(build.urllib.request, "urlopen", urlopen)
 
     def test_retries_main_source_after_error(self):
-        with self.serve({"https://main/a": [urllib.error.URLError("weg"), TimeoutError(), self.DATA]}):
+        answers = [urllib.error.URLError("weg"), http.client.IncompleteRead(b"arc"), self.DATA[:3], self.DATA]
+        with mock.patch.object(build, "ATTEMPTS", 4), self.serve({"https://main/a": answers}):
             build.download("gperf", self.archive)
         self.assertEqual(self.archive.read_bytes(), self.DATA)
-        self.assertEqual(self.calls, ["https://main/a"] * 3)
+        self.assertEqual(self.calls, ["https://main/a"] * 4)
 
-    def test_wrong_hash_switches_to_mirror_without_retry(self):
-        with self.serve({"https://main/a": [b"kaputt"], "https://mirror/a": [self.DATA]}):
+    def test_failing_main_source_switches_to_mirror(self):
+        with self.serve({"https://main/a": [TimeoutError()] * 3, "https://mirror/a": [self.DATA]}):
             build.download("gperf", self.archive)
         self.assertEqual(self.archive.read_bytes(), self.DATA)
-        self.assertEqual(self.calls, ["https://main/a", "https://mirror/a"])
+        self.assertEqual(self.calls, ["https://main/a"] * 3 + ["https://mirror/a"])
 
     def test_all_sources_failing_exits_without_leftovers(self):
         error = urllib.error.HTTPError("https://main/a", 503, "busy", {}, None)
-        with self.serve({"https://main/a": [error] * 3, "https://mirror/a": [error] * 3}):
+        with self.serve({"https://main/a": [error] * 3, "https://mirror/a": [b"kaputt"] * 3}):
             with self.assertRaises(SystemExit) as raised:
                 build.download("gperf", self.archive)
         self.assertIn("https://mirror/a", str(raised.exception))

@@ -9,6 +9,7 @@ Netzzugang beim ersten Lauf.
 
 import argparse
 import hashlib
+import http.client
 import os
 import shutil
 import subprocess
@@ -73,15 +74,15 @@ def download(name: str, archive: Path) -> None:
             try:
                 with urllib.request.urlopen(source, timeout=TIMEOUT) as response, part.open("wb") as output:
                     shutil.copyfileobj(response, output)
-            except OSError as error:  # URLError, HTTPError und Zeitüberschreitung sind OSError
-                errors.append(f"{source}: {error}")
+            except (OSError, http.client.HTTPException) as error:  # IncompleteRead ist kein OSError
+                errors.append(f"{source}: {error!r}")
                 continue
             if hashlib.sha256(part.read_bytes()).hexdigest() == digest:
                 part.rename(archive)
                 return
-            # Ein falscher Inhalt wird beim Wiederholen derselben Quelle nicht besser.
+            # Auch wiederholen: http.client meldet eine vorzeitig geschlossene Verbindung mit fester Länge nicht,
+            # die Datei ist dann nur zu kurz.
             errors.append(f"{source}: falscher SHA-256")
-            break
     part.unlink(missing_ok=True)
     sys.exit(f"Download von {archive.name} fehlgeschlagen:\n  " + "\n  ".join(errors))
 
