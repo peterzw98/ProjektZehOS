@@ -12,8 +12,8 @@
 +/**
 + * Pointer-Grab ohne Klick beenden (ZehOS-Fokusverlust).
 + *
-+ * Ein noch greifendes Widget (etwa ein gezogener Rollbalken) erhaelt ein Loslassen von Maustaste 1, das bei
-+ * Rollbalken nur das Ziehen beendet. Bleibt der Grab danach bestehen, wird er aufgehoben.
++ * Ein greifender Rollbalken erhaelt ein Loslassen von Maustaste 1, das dort nur das Ziehen beendet; andere
++ * Widgets erhalten nichts. Der Grab ist danach in jedem Fall aufgehoben.
 + */
 +void fbtk_cancel_grab(fbtk_widget_t *widget);
 +
@@ -22,7 +22,7 @@
  
 --- a/netsurf/frontends/framebuffer/fbtk/event.c
 +++ b/netsurf/frontends/framebuffer/fbtk/event.c
-@@ -91,6 +91,24 @@
+@@ -91,6 +91,28 @@
  }
  
  /* exported function documented in fbtk.h */
@@ -36,9 +36,13 @@
 +	if (grabbed == NULL)
 +		return;
 +
-+	event.type = NSFB_EVENT_KEY_UP;
-+	event.value.keycode = NSFB_KEY_MOUSE_1;
-+	fbtk_post_callback(grabbed, FBTK_CBT_CLICK, &event, 0, 0);
++	/* Nur Rollbalken beenden ihr Ziehen mit einem Loslassen; bei anderen Widgets waere es ein Klick. */
++	if ((grabbed->type == FB_WIDGET_TYPE_HSCROLL) ||
++	    (grabbed->type == FB_WIDGET_TYPE_VSCROLL)) {
++		event.type = NSFB_EVENT_KEY_UP;
++		event.value.keycode = NSFB_KEY_MOUSE_1;
++		fbtk_post_callback(grabbed, FBTK_CBT_CLICK, &event, 0, 0);
++	}
 +
 +	root->u.root.grabbed = NULL;
 +}
@@ -73,20 +77,38 @@
  		}
  
  		fbtk_redraw(fbtk);
-@@ -803,6 +811,23 @@
+@@ -729,6 +737,7 @@
+ 				}
+ 
+ 				gui_drag.state = GUI_DRAG_NONE;
++				gui_drag.gw = NULL;
+ 
+ 				/* Tell core */
+ 				browser_window_mouse_track(gw->bw, 0, x, y);
+@@ -744,6 +753,7 @@
+ 			if (gui_drag.state == GUI_DRAG_DRAG) {
+ 				/* End of a drag, rather than click */
+ 				gui_drag.state = GUI_DRAG_NONE;
++				gui_drag.gw = NULL;
+ 
+ 				if (gui_drag.grabbed_pointer) {
+ 					/* need to ungrab pointer */
+@@ -803,6 +813,25 @@
  	return 1;
  }
  
 +/* ZehOS: gehaltene Maustaste nach Fokusverlust beenden, ohne einen Klick auszuloesen */
 +static void fb_cancel_pointer(void)
 +{
-+	if (gui_drag.state == GUI_DRAG_DRAG) {
-+		if (gui_drag.grabbed_pointer) {
-+			fbtk_tgrab_pointer(gui_drag.widget);
-+			gui_drag.grabbed_pointer = false;
-+		}
++	/* Unabhaengig vom Zustand: eine zweite Maustaste setzt ihn waehrend eines Ziehens auf PRESSED zurueck. */
++	if (gui_drag.grabbed_pointer) {
++		fbtk_tgrab_pointer(gui_drag.widget);
++		gui_drag.grabbed_pointer = false;
++	}
++	if (gui_drag.gw != NULL) {
 +		browser_window_mouse_track(gui_drag.gw->bw, 0,
 +				gui_drag.x, gui_drag.y);
++		gui_drag.gw = NULL;
 +	}
 +	gui_drag.state = GUI_DRAG_NONE;
 +
@@ -97,7 +119,7 @@
  /* called back when movement in browser window */
  static int
  fb_browser_window_move(fbtk_widget_t *widget, fbtk_callback_info *cbi)
-@@ -827,6 +852,8 @@
+@@ -827,6 +856,8 @@
  					gui_drag.x, gui_drag.y);
  		}
  		gui_drag.grabbed_pointer = fbtk_tgrab_pointer(widget);

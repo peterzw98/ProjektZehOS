@@ -4,7 +4,7 @@ NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `bison`, `flex`, `patch` sowie den nativen Entwicklungspaketen fuer libpng und zlib (`libpng-dev`, `zlib1g-dev`). Die nativen Generatoren brauchen diese auch bei ausgeschalteten PNG-Inhalten. `-ffile-prefix-map` normalisiert Baupfade; feste Generator-Hashseeds und `SOURCE_DATE_EPOCH` verhindern variable Metadaten:
+Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `bison`, `flex`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py
@@ -97,7 +97,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
   - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
 - **Inhalte:** kein Netz, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
-- **Prüfstand:** Linux-Prüfhost unter WAMR und Offlineablauf im echten ZehOS-Loader (wasm3) unter QEMU geprüft. Ablauf, Testartefakte und verbleibende Plattformgrenzen stehen in [docs/NETSURF.md](../../docs/NETSURF.md).
+- **Prüfstand:** Bisher nur auf dem Linux-Prüfhost unter WAMR geprüft, nicht im ZehOS-Loader (wasm3), nicht in QEMU oder VMware.
 
 ## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)
 
@@ -106,9 +106,10 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 | Start ohne Argumente, Paketordner als `/` | Startseite `file:///pages/index.html`, Exit 0 nach `should_exit` |
 | Klick auf Link | Formularseite geladen, Zurück-Schaltfläche aktiv |
 | Klick ins Feld, Texte `Grüße @€`, Zeichentaste `g` ohne Text, Rücktaste | Feld zeigt `Grüße @` |
-| Rad âˆ’5 auf langer Seite | Seite nach unten gescrollt |
-| Kaputter Link | Seite â€žNot foundâ€œ, Browser bedienbar |
+| Rad −5 auf langer Seite | Seite nach unten gescrollt |
+| Kaputter Link | Seite „Not found“, Browser bedienbar |
 | Maustaste auf Link gedrückt, `reset` | Seite bleibt, kein Klick |
 | danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
 | Rollbalken ziehen, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, nach `reset` nicht mehr (Gegenprobe ohne `reset` rollt weiter) |
+| Links auf Seite ziehen, rechte Taste dazu, `reset`, danach Linkklick | kein Klick durch `reset`, danach Link normal geöffnet |
 | Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |
