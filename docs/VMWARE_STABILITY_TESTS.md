@@ -58,15 +58,26 @@ Die Quellpruefung von Cosmos 3.0.94 (Commit `5d0b953` laut Paketmetadaten) zeigt
 
 Der Gegenpruefer ordnet den Fehllauf seinem Linux-Protokoll `.tools/vmware-e2e3/serial.log` zu (Reset bei Zeile 131008, Fehler bei 131315): Admin in der Textshell nach etwa 140 s Laufzeit, `/data` eingebunden, Desktop zuvor geoeffnet. `reboot` und Return wurden per VNC mit jeweils 50 ms Tastendruck und 80 ms Abstand gesendet; keine Taste blieb gehalten, kein Logout. Nach Return-Up folgten keine Eingaben bis zum Kaltstart. Ein gehaltener Neustart-Tastendruck ist damit fuer diesen beobachteten Lauf nicht belegt.
 
-### Reset-Schleife vom 15. November 2026
+### Reset-Schleifen vom 15. November 2026
 
-`scripts/test-vmware-ps2-reset.py` startet das ISO in VMware Workstation unter Linux ohne Datenlaufwerk und Netz. Nach jeder seriellen Zeile `ps2:kbd offer Ps2KeyboardDriver -> ...` loest es `vmrun reset hard` aus und zaehlt die Ergebnisse:
+`scripts/test-vmware-ps2-reset.py` startet ZehOS in VMware Workstation unter Linux wiederholt neu und zaehlt nach jeder seriellen Zeile `ps2:kbd offer Ps2KeyboardDriver -> ...` das Ergebnis. Es kennt zwei Arten des Neustarts:
+
+- `--iso`: Start nur vom ISO, ohne Datenlaufwerk und Netz; neu gestartet wird mit `vmrun reset hard`.
+- `--vmx`: eine ausgeschaltete VM mit installiertem ZehOS und VNC auf `127.0.0.1`. Nach jeder Bindung meldet sich das Skript ueber `scripts/vnc_type.py` an (`--user`, Kennwort aus `ZEHOS_PS2_PASSWORD`), wechselt mit F4 in die Textshell und tippt `reboot`. Das ist der Warmstart ueber ACPI (`lai_acpi_reset`), nach dem der Fehler beobachtet wurde. Scheitert eine Bindung, startet `vmrun reset hard` die VM neu.
 
 ```sh
 python3 scripts/test-vmware-ps2-reset.py --iso ProjektZeh/output-x64/ProjektZeh.iso --runs 100
+ZEHOS_PS2_PASSWORD=<Testkennwort> python3 scripts/test-vmware-ps2-reset.py --vmx <VM>.vmx --vnc-port 5974 --runs 50
 ```
 
-Mit dem Release-ISO von master `1671481` (ZehOS 0.2.1) und VMware Workstation 26.0.1 unter Linux banden 100 von 100 Starts die Tastatur (`bound`). Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Ein Hardware-Reset entspricht nicht dem beobachteten Fehllauf: Dort ging ein gastseitiges `reboot` nach Tastaturbedienung voraus. Ohne Datenlaufwerk ist keine Anmeldung und damit kein `reboot` im Gast moeglich; dieser Ablauf bleibt in der Schleife ungeprueft.
+Ergebnisse mit VMware Workstation 26.0.1 unter Linux, 1 vCPU, UEFI:
+
+| Ablauf | Stand | Starts | Ergebnis |
+| --- | --- | --- | --- |
+| Hardware-Reset, ISO ohne Datenlaufwerk | master `1671481` (0.2.1) | 100 | 100 `bound` |
+| Gast-`reboot` nach Anmeldung, installierte Platte | `fix/ps2-warmreset` (0.2.4, Installer-ISO, neue 256-MiB-Platte) | 50 (49 Warmstarts) | 50 `bound` |
+
+Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warmstarts folgte auf Anmeldung, F4 und Tastatureingaben ueber VNC (50 ms Druck, 50 ms Abstand). Der Fehler liess sich damit nicht reproduzieren; bei einer beobachteten Rate von 1 zu 26 waere in 49 Warmstarts mit etwa 85 % Wahrscheinlichkeit mindestens ein Fehllauf zu erwarten gewesen. Abweichend vom Fehllauf liefen die Gaeste nur jeweils etwa eine halbe Minute, der Desktop blieb ohne geoeffnete Fenster und `/data` war die frisch installierte Platte. Der Befund bleibt offen.
 
 ## Grenzen
 
