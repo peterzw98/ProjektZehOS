@@ -286,7 +286,7 @@ Die zweite Abnahmestufe (Seiten vom Testserver) ist offen. VMware und echte Hard
 
 **Stand 15. November 2026:** Der Architekturweg ist entschieden. Grundlage waren eine Probe am fertigen Firefox-Modul und ein Buildversuch mit NetSurf.
 - Firefox (fertiges `gecko.wasm`, PR [#54](https://github.com/peterzw98/ProjektZehOS/pull/54)): Gemessen sind 473 Importe und geteilter Speicher ab 512 MiB. Laden und Validieren gelangen unter WAMR auf dem Entwicklungsrechner, die Instanziierung brach beim ersten JS-Import ab. SIMD und viele Threads stammen laut Projekt aus der Buildkonfiguration und sind nicht selbst gemessen. Ein erstes Bild ist nicht nachgewiesen, der geschätzte Portaufwand liegt bei Monaten.
-- NetSurf: Gewählt, gebaut und portiert (Etappe 11). Es läuft unter wasm3/WASIp1 ohne Threads innerhalb der Paketlimits. Gezeichnet wird ein festes Bild von 632×392 über `zehos_v1`; als Systemaufrufe dienen WASI-Imports sowie `poll_event` und `path_filestat_get`. Diese Wahl sagt nichts über die Unterstützung moderner Webseiten aus.
+- NetSurf: Gewählt, gebaut und portiert (Etappe 11). Es läuft unter wasm3/WASIp1 ohne Threads innerhalb der Paketlimits. Gezeichnet wird ein festes Bild von 632×392 über `zehos_v1`; als Systemaufrufe dienen WASI-Imports (neu: lesendes `path_filestat_get`) und `zehos_v1.poll_event`. Diese Wahl sagt nichts über die Unterstützung moderner Webseiten aus.
 
 Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht und Probe-Skripte bleiben im ungemergten PR #54 als Referenz erhalten. Die Punkte 12.2 bis 12.5 bleiben offen.
 
@@ -317,7 +317,6 @@ ProjektZeh/
     FileManager/
     TextEditor/
     Pong/
-    Doom/
 ```
 
 Doom und der Browser (NetSurf) laufen inzwischen als Wasm-Pakete außerhalb dieses Baums.
