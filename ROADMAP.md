@@ -286,16 +286,16 @@ Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten a
 
 **Zweck:** Einen vollständig lokalen Firefox als signiertes Paket über den bestehenden Paketmanager anbieten. Er rendert in der VM, ohne Fremdrechner zur Darstellung. Ausgangspunkt ist [HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm) (Gecko über Emscripten, MPL-2.0). Diese Etappe konkretisiert 12.1 für Gecko; der eigene Browser aus Etappe 11 bleibt der Rückfallweg. [Plan der Machbarkeitsprobe](docs/superpowers/plans/2026-11-15-firefox-machbarkeit.md).
 
-Bekannte Hindernisse (gemessen an Release v0.0.1 am 15. November 2026):
+Bekannte Hindernisse am 15. November 2026. Gemessen sind die Werte an Release v0.0.1; Erwartungen sind als solche benannt:
 
 - **Laufzeit:** Gecko braucht Threads, geteilte Memory mit Atomics und SIMD. wasm3 bietet nichts davon; vorgesehen ist WAMR (Apache-2.0).
-- **Geschwindigkeit:** JavaScript läuft ohne JIT. In einem Interpreter ist Gecko kaum benutzbar; voraussichtlich ist AOT nötig, also native Codebestandteile im Paket. Das muss vor der Umsetzung gesondert entschieden werden.
-- **Größe und Speicher:** Das Modul hat 150 MB, gegenüber derzeit 64 MiB Modul- und 128 MiB Paketgrenze. Es braucht mindestens 512 MiB lineare Memory, gegenüber derzeit 256 MiB; die VM braucht mindestens 2 GiB statt 512 MiB.
+- **Geschwindigkeit:** JavaScript läuft ohne JIT. Erwartet wird, dass Gecko in einem Interpreter kaum benutzbar ist und AOT nötig wird, also native Codebestandteile im Paket. Das muss vor der Umsetzung gesondert entschieden werden.
+- **Größe und Speicher:** Das Modul hat 150 MB, gegenüber derzeit 64 MiB Modul- und 128 MiB Paketgrenze. Es braucht mindestens 512 MiB lineare Memory, gegenüber derzeit 256 MiB. Für die VM werden etwa 2 GiB statt 512 MiB erwartet.
 - **Hostschnittstelle:** Von 473 Importen sind nur 5 WASI. Der Rest ist Emscripten/JS: pthreads, wasmfs, setjmp/longjmp über `invoke_*`, WebGL, Websocket-Sockets.
 - **Fehlende Hostfunktionen:** TCP und DNS für Apps (TLS macht Firefox selbst), Maus, Rad und Texteingabe, ein beschreibbares Profilverzeichnis (gesondert zu beauftragen) und mehrere gleichzeitige App-Threads.
 - **Cosmos:** Ungeprüft sind große zusammenhängende Allokationen, rund 20 Threads mit Warten/Wecken, ausführbarer Speicher für AOT und der Start unter KVM.
 - **Schwacher Zielrechner:** Celeron J3455 mit 4 Kernen und einer VM mit rund 2 GiB. Ohne KVM und AOT ist dort keine brauchbare Geschwindigkeit zu erwarten.
-- **Pflege:** Gecko-Fork und Emscripten-Stand sind festgelegt. Sicherheitsupdates erfordern Neubauten, die viel Speicher brauchen (rund 31 GiB ohne LTO, über 54 GiB mit LTO).
+- **Pflege:** Gecko-Fork und Emscripten-Stand sind festgelegt. Sicherheitsupdates erfordern Neubauten, die viel Speicher brauchen (laut firefox-wasm rund 31 GiB ohne LTO, über 54 GiB mit LTO).
 
 - [ ] 12a.1 Importinventar und Hostprobe mit WAMR auf Linux: erstes Bild einer lokalen Testseite; Zeit, Memory und Threads im Interpreter und mit AOT auf beiden Zielrechnern messen.
 - [ ] 12a.2 Gastproben: Cosmos unter KVM, große Allokation in einer 2-GiB-VM, 24 Threads mit Warten/Wecken, WAMR-Plattformschicht mit dem Doom-Paket.

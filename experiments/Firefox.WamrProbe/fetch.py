@@ -37,12 +37,13 @@ def fetch_gecko() -> None:
 
 def fetch_wamr() -> None:
     wamr = OUT / "wamr"
-    if not (wamr / ".git").exists():
+    head = lambda: subprocess.run(["git", "-C", str(wamr), "rev-parse", "HEAD"], capture_output=True, text=True)
+    # Ein abgebrochener früherer Lauf hinterlässt .git ohne Commit; deshalb am Commit entscheiden.
+    if head().stdout.strip() != WAMR_COMMIT:
         subprocess.run(["git", "init", "-q", str(wamr)], check=True)
         subprocess.run(["git", "-C", str(wamr), "fetch", "-q", "--depth", "1", WAMR_URL, WAMR_COMMIT], check=True)
         subprocess.run(["git", "-C", str(wamr), "checkout", "-q", "--detach", "FETCH_HEAD"], check=True)
-    head = subprocess.run(["git", "-C", str(wamr), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
-    if head.stdout.strip() != WAMR_COMMIT:
+    if head().stdout.strip() != WAMR_COMMIT:
         sys.exit(f"WAMR steht nicht auf {WAMR_COMMIT}.")
 
 

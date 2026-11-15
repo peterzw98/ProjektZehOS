@@ -4,7 +4,7 @@
 
 **Goal:** Mit Messwerten entscheiden, ob ein vollständig lokaler Firefox als signiertes ZehOS-Paket (bestehender Paketmanager, kein Kernelbestandteil, kein Fremdrechner zur Darstellung) erreichbar ist. Diese Probe portiert Firefox noch nicht.
 
-**Ausgangslage (gemessen am 15. November 2026):** [HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm) (MPL-2.0) baut Gecko mit Emscripten 6.0.1 für Browser-Hosts. Release v0.0.1: `gecko.wasm` 150 MB, 194 780 Funktionen, geteilte Memory (min. 512 MiB, max. 4 GiB, kein memory64), SIMD (`-msimd128`), etwa 20 pthread-Worker, Softwaredarstellung. 473 Importe, davon 5 WASI; der Rest ist Emscripten-/JS-spezifisch: etwa 280 `emscripten_*` (überwiegend WebGL), 38 `_wasmfs_*`, 29 `wasmhost_*` (Wasm-in-Wasm), 25 `invoke_*` mit `_emscripten_throw_longjmp` (setjmp/longjmp über JS, keine C++-Exceptions), `wisp_*` (Sockets über Websocket), `__pthread_create_js`. Ohne Threads startet Gecko nicht (scheitert laut Projekt bei `NS_InitXPCOM`).
+**Ausgangslage (15. November 2026):** [HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm) (MPL-2.0) baut Gecko mit Emscripten 6.0.1 für Browser-Hosts. Gemessen mit `imports.py` an Release v0.0.1: `gecko.wasm` 150 MB, 194 780 Funktionen, geteilte Memory (min. 512 MiB, max. 4 GiB, kein memory64). Es gibt 473 Importe, davon 5 WASI. Der Rest ist Emscripten-/JS-spezifisch: 282 `emscripten_*` (überwiegend WebGL), 38 `_wasmfs_*`, 29 `wasmhost_*` (Wasm in Wasm), 25 `invoke_*` mit `_emscripten_throw_longjmp` (setjmp/longjmp über JS, keine C++-Exceptions), 4 `wisp_*` (Sockets über Websocket) und `__pthread_create_js`. Laut Projekt (Buildkonfiguration, nicht gemessen): SIMD (`-msimd128`), etwa 20 pthread-Worker, Softwaredarstellung. Ohne Threads startet Gecko nicht; ein Versuch scheiterte bei `NS_InitXPCOM`.
 
 **Lücken zu ZehOS** (Stand `docs/PAKETE_ERSTELLEN.md`): wasm3 ohne Threads und ohne SIMD; Modul höchstens 64 MiB, Paket 128 MiB, Memory 256 MiB; ein gemeinsamer App-Worker; keine Sockets, keine Maus, kein Schreibzugriff; VM 512 MiB.
 
@@ -28,8 +28,8 @@
 
 ### 1. Grundlagen und Inventar
 
-- [ ] 1.1 Skript `experiments/Firefox.WamrProbe/fetch.py`: Release v0.0.1 und WAMR-2.4.5 mit festem SHA-256 nach `.tools/firefox-probe/` laden.
-- [ ] 1.2 Importinventar als Skript (`imports.py`) einchecken und jeden Import einstufen: *nötig*, *Stub mit Fehler*, *ungenutzt* **[GPT]**.
+- [x] 1.1 Skript `experiments/Firefox.WamrProbe/fetch.py`: Release v0.0.1 (fester SHA-256) und WAMR-2.4.5 (fester Commit) nach `.tools/firefox-probe/` laden.
+- [ ] 1.2 Importinventar als Skript (`imports.py`) einchecken und jeden Import einstufen: *nötig*, *Stub mit Fehler*, *ungenutzt* **[GPT]**. Stand: Skript eingecheckt; Einstufung liegt als Hypothese vor und wird im instrumentierten Lauf geprüft.
 - [ ] 1.3 Herkunft von `invoke_*`/`_emscripten_throw_longjmp`, `wasmhost_*` und `hostimg_*` im Quellstand klären; feststellen, welche per Buildoption entfallen (WebGL, Wasm-JIT, WebCodecs) **[GPT]**.
 
 ### 2. Hostprobe mit WAMR (Linux, kein Kernel)
