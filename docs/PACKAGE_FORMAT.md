@@ -115,7 +115,7 @@ py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --ke
 py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --key <private.pem> --tls <tls> --scenario all --starts 10
 ```
 
-`--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.
+`--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. `--accel kvm` läuft ebenfalls ohne Snapshot, weil `savevm` unter KVM nicht geprüft ist; die VM startet mit `-cpu qemu64,+rdrand,+rdseed` (siehe `COSMOS_SUPPORT.md`). Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.
 
 Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden):
 

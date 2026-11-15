@@ -54,6 +54,19 @@ class QemuToolTests(unittest.TestCase):
         with mock.patch.object(guest.shutil, 'which', return_value='/usr/bin/qemu-img'):
             self.assertEqual(guest.qemu_img(), (['/usr/bin/qemu-img'], None))
 
+    def test_cpu_model_per_accelerator(self):
+        # KVM braucht RDRAND/RDSEED fuer die Kennwortanlage (#56); WHPX bricht mit -cpu max/host ab.
+        expected = {'tcg': ['-cpu', 'max'], 'kvm': ['-cpu', 'qemu64,+rdrand,+rdseed'], 'whpx': []}
+        tools = self.cosmos_linux()
+        (tools / 'qemu-system-x86_64').touch()
+        for accel, cpu in expected.items():
+            with self.subTest(accel=accel), mock.patch.object(guest.subprocess, 'Popen') as popen:
+                guest.start_qemu(Path('z.iso'), Path('d.qcow2'), self.home, 1234, accel, None)
+                arguments = popen.call_args.args[0]
+                start = arguments.index('-accel') + 2
+                self.assertEqual(arguments[start:start + len(cpu)], cpu)
+                self.assertEqual(arguments.count('-cpu'), len(cpu) // 2)
+
 
 if __name__ == '__main__':
     unittest.main()
