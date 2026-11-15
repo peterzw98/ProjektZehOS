@@ -50,6 +50,22 @@ ignoriert, Bewegung und Loslassen am Bildrand begrenzt. Ein begonnenes Ziehen be
 außerhalb des Fensters bis zum letzten Loslassen oder Reset. Das Bild hat keinen Resize-Import;
 die App bestimmt seine Größe über `present` und muss eine passende feste Größe wählen.
 
+**Netzwerk über `zehos_v1`:**
+
+Nur ein signiertes Manifest mit `capability=net` erlaubt TCP-Verbindungen; `scripts/build-package.py package --network` setzt die Zeile. Die Berechtigung umfasst auch localhost und private LAN-Adressen. Es gibt höchstens vier Verbindungen und 64 KiB je Sende- und Empfangspuffer. IPv4-Adressen und ASCII-DNS-Namen sind möglich; TLS ist noch nicht über diese Schnittstelle verfügbar.
+
+Alle Funktionen liefern einen WASI-Preview-1-Fehlercode (`0` bei Erfolg). Gastpuffer und Ausgabezeiger werden vor dem Hostzugriff geprüft; ungültige Bereiche verursachen einen Trap. Ausgabezahlen sind 32-Bit-Werte im Little-Endian-Format und dürfen unausgerichtet sein.
+
+| Import | Verhalten |
+| --- | --- |
+| `net_open(host, len, port, flags, out_handle)` | Startet DNS und TCP asynchron; `flags` muss 0 sein. Das Handle gehört zur App-Sitzung. Ohne Berechtigung `EACCES` (2). |
+| `net_status(handle)` | `EAGAIN` (6) während DNS/Connect, danach 0 oder ein Fehler; der Verbindungsaufbau hat ein Zeitlimit. |
+| `net_send(handle, ptr, len, out_n)` | Übernimmt bis zu `len` Bytes in den begrenzten Sendepuffer; `out_n` meldet die übernommene Anzahl. Bei vollem Puffer `EAGAIN`. Ein erfolgreicher Aufruf bestätigt nicht die Zustellung. |
+| `net_recv(handle, ptr, len, out_n)` | Liefert vorhandene Daten; bei leerem Puffer `EAGAIN`. Erfolg und `out_n=0` bei nichtleerem Zielpuffer bedeuten EOF. |
+| `net_close(handle)` | Gibt das Handle frei und veranlasst das Schließen der Verbindung. Offene Handles werden beim Ende der Wasm-Sitzung ebenfalls geschlossen. |
+
+Einzelne Übertragungen sind auf 64 KiB begrenzt. Häufige Fehler sind `EBADF` (8), `ECONNREFUSED` (14), `EINVAL` (28), `EIO` (29), `EMFILE` (33), `ENOENT` (44, DNS-Auflösung fehlgeschlagen), `ENOTSUP` (58) und `ETIMEDOUT` (73). Für Datenverkehr nach dem Verbindungsaufbau muss die Anwendung selbst eine geeignete Frist setzen. Cosmos-interne Connect- und Sendewartephasen sind nicht sofort abbrechbar; währenddessen können andere Netzwerkaufträge warten, die Oberfläche bleibt durch den Netzwerkworker bedienbar. Cosmos 3.0.94 unterscheidet bei fehlgeschlagenem Verbindungsaufbau nicht zuverlässig zwischen Ablehnung und Timeout; in diesem Fall kann `EIO` auftreten.
+
 **WASI Preview 1:**
 
 | Bereich | Stand |
@@ -58,7 +74,7 @@ die App bestimmt seine Größe über `present` und muss eine passende feste Grö
 | Argumente, Umgebung | `argv` ist nur `["app"]`, die Umgebung ist leer. |
 | Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
 | Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
-| Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), Sockets und Netzwerk, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
+| Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
 
 `path_filestat_get` fragt Dateien und Ordner innerhalb des eigenen Pakets über den vorgeöffneten
 Ordner fd 3 ab. `.` bezeichnet die Paketwurzel. Größe und Dateityp sind vorhanden; Zeitstempel und

@@ -1,4 +1,4 @@
-#if ZEHOS_WASM
+#if ZEHOS_WASM || ZEHOS_NETWORK_TEST
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,6 +16,9 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
     private static readonly object Gate = new();
     private static readonly List<Connection> Connections = [];
     private static Thread? worker;
+#if ZEHOS_NETWORK_TEST
+    internal static Action? BeforeConnect;
+#endif
 
     public IWasmNetworkConnection Open(string host, int port)
     {
@@ -32,6 +35,9 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
                     try
                     {
                         worker = new Thread(Work);
+#if ZEHOS_NETWORK_TEST
+                        worker.IsBackground = true;
+#endif
                         worker.Start();
                     }
                     catch (Exception exception)
@@ -68,6 +74,8 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
         }
     }
 
+    private sealed class DnsFailureException(Exception inner) : Exception("DNS-Aufloesung fehlgeschlagen.", inner);
+
     private sealed class Connection(string host, int port) : IWasmNetworkConnection
     {
         private const int Limit = WasmNetworkSession.MaximumTransferBytes;
@@ -88,7 +96,11 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
         {
             lock (gate)
             {
-                if (error == WasmNetworkError.Again && clock.ElapsedMilliseconds >= TimeoutMs) return WasmNetworkError.TimedOut;
+                if (error == WasmNetworkError.Again && clock.ElapsedMilliseconds >= TimeoutMs)
+                {
+                    error = WasmNetworkError.TimedOut;
+                    closing = true;
+                }
                 return error;
             }
         }
@@ -139,25 +151,51 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
         private void Connect()
         {
             if (!Monitor.TryEnter(CosmosNetworkService.Gate)) return;
+            bool cancelled;
+            lock (gate) cancelled = closing;
+            if (cancelled)
+            {
+                Monitor.Exit(CosmosNetworkService.Gate);
+                Finish();
+                return;
+            }
             Exception? failure = null;
             Socket? next = null;
             try
             {
                 CosmosNetworkService.EnsureAddress();
-                var address = CosmosNetworkService.Resolve(host, CancellationToken.None);
-                CosmosHttpUpdateSource.RandomizeTcpStart();
-                next = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                next.Connect(IPAddress.Parse(address.ToString()!), port);
+                string address;
+                try { address = CosmosNetworkService.Resolve(host, CancellationToken.None).ToString()!; }
+                catch (Exception exception) { throw new DnsFailureException(exception); }
+                lock (gate)
+                {
+                    if (clock.ElapsedMilliseconds >= TimeoutMs) { error = WasmNetworkError.TimedOut; closing = true; }
+                    cancelled = closing;
+                }
+                if (!cancelled)
+                {
+                    CosmosHttpUpdateSource.RandomizeTcpStart();
+                    next = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+#if ZEHOS_NETWORK_TEST
+                    BeforeConnect?.Invoke();
+#endif
+                    next.Connect(IPAddress.Parse(address), port);
+                }
             }
             catch (Exception exception) { failure = exception; }
+            if (failure != null && next != null)
+            {
+                try { next.Close(0); }
+                catch (Exception) { failure = new InvalidOperationException("TCP-Bereinigung fehlgeschlagen.", failure); }
+            }
             Monitor.Exit(CosmosNetworkService.Gate);
             if (failure != null)
             {
-                if (next != null) { try { next.Close(0); } catch (Exception) { } }
                 lock (gate) error = MapError(failure);
                 Finish();
                 return;
             }
+            if (cancelled) { Finish(); return; }
             socket = next;
             lock (gate)
             {
@@ -208,7 +246,7 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
             lock (gate) finished = true;
         }
 
-        private static int MapError(Exception exception) => exception is SocketException socketError ? socketError.SocketErrorCode switch
+        private static int MapError(Exception exception) => exception is DnsFailureException ? WasmNetworkError.NameNotFound : exception is SocketException socketError ? socketError.SocketErrorCode switch
         {
             SocketError.ConnectionRefused => 14,
             SocketError.HostUnreachable => 23,

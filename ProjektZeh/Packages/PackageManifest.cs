@@ -50,6 +50,7 @@ internal sealed class PackageManifest
         bool allowsNetwork = lines.Length > 6 && lines[6] == "capability=net";
         int fileStart = allowsNetwork ? 7 : 6;
         int count = lines.Length - fileStart - 2;
+        if (count < 0) return Invalid("Manifestende fehlt.");
         if (count > MaximumFiles) return Invalid("Mehr als 128 Dateien.");
         var files = new PackageFile[count];
         // FAT32 unterscheidet keine Gross-/Kleinschreibung; zwei solche Namen wuerden dieselbe Datei treffen.

@@ -42,11 +42,13 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private bool active;
     private string? status = "Pruefe Paket ...";
     private string? root;
+    private bool allowsNetwork;
     private readonly System.Text.StringBuilder errors = new();
 
     public bool NeedsAnimation => running && active;
     public bool IsCloseRequested { get; private set; }
     string? IWasmSession.Root => root;
+    bool IWasmSession.AllowsNetwork => allowsNetwork;
     bool IWasmSession.ShouldExit { get { lock (gate) return exitRequested; } }
     uint IWasmSession.TicksMilliseconds { get { lock (gate) return (uint)(clock.ElapsedMilliseconds - pausedMilliseconds); } }
 
@@ -71,7 +73,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
         if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, "App zu gross.");
         byte[] module = File.ReadAllBytes(entry);
-        lock (gate) { root = package.FilesDirectory; status = "Lade ..."; }
+        lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; status = "Lade ..."; }
         return (module, null);
     }
 

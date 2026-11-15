@@ -25,6 +25,11 @@ extern void zehos_wasm_host_sleep_ms(uint32_t milliseconds);
 extern int32_t zehos_wasm_host_poll_key(void);
 extern int32_t zehos_wasm_host_poll_event(int32_t* event);
 extern int32_t zehos_wasm_host_should_exit(void);
+extern int32_t zehos_wasm_host_net_open(const uint8_t* host, uint32_t length, int32_t port, int32_t flags, int32_t* handle);
+extern int32_t zehos_wasm_host_net_status(int32_t handle);
+extern int32_t zehos_wasm_host_net_send(int32_t handle, const uint8_t* data, uint32_t length, int32_t* count);
+extern int32_t zehos_wasm_host_net_recv(int32_t handle, uint8_t* data, uint32_t length, int32_t* count);
+extern int32_t zehos_wasm_host_net_close(int32_t handle);
 
 enum
 {
@@ -535,6 +540,73 @@ static m3ApiRawFunction(zehos_should_exit)
     m3ApiReturn(zehos_wasm_host_should_exit());
 }
 
+// Ausgabewerte lokal halten: Gastadressen koennen unausgerichtet oder mit dem Eingabepuffer ueberlappend sein.
+static m3ApiRawFunction(zehos_net_open)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(uint32_t, hostOffset)
+    m3ApiGetArg(uint32_t, length)
+    m3ApiGetArg(int32_t, port)
+    m3ApiGetArg(int32_t, flags)
+    m3ApiGetArg(uint32_t, outOffset)
+    const uint8_t* host = (const uint8_t*)m3ApiOffsetToPtr(hostOffset);
+    uint8_t* out = (uint8_t*)m3ApiOffsetToPtr(outOffset);
+    m3ApiCheckMem(host, length);
+    m3ApiCheckMem(out, 4);
+    int32_t handle = 0;
+    int32_t status = zehos_wasm_host_net_open(host, length, port, flags, &handle);
+    if (status == WASI_SUCCESS) memcpy(out, &handle, 4);
+    m3ApiReturn(status);
+}
+
+static m3ApiRawFunction(zehos_net_status)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(int32_t, handle)
+    m3ApiReturn(zehos_wasm_host_net_status(handle));
+}
+
+static m3ApiRawFunction(zehos_net_send)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(int32_t, handle)
+    m3ApiGetArg(uint32_t, dataOffset)
+    m3ApiGetArg(uint32_t, length)
+    m3ApiGetArg(uint32_t, outOffset)
+    const uint8_t* data = (const uint8_t*)m3ApiOffsetToPtr(dataOffset);
+    uint8_t* out = (uint8_t*)m3ApiOffsetToPtr(outOffset);
+    m3ApiCheckMem(data, length);
+    m3ApiCheckMem(out, 4);
+    int32_t count = 0;
+    int32_t status = zehos_wasm_host_net_send(handle, data, length, &count);
+    if (status == WASI_SUCCESS) memcpy(out, &count, 4);
+    m3ApiReturn(status);
+}
+
+static m3ApiRawFunction(zehos_net_recv)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(int32_t, handle)
+    m3ApiGetArg(uint32_t, dataOffset)
+    m3ApiGetArg(uint32_t, length)
+    m3ApiGetArg(uint32_t, outOffset)
+    uint8_t* data = (uint8_t*)m3ApiOffsetToPtr(dataOffset);
+    uint8_t* out = (uint8_t*)m3ApiOffsetToPtr(outOffset);
+    m3ApiCheckMem(data, length);
+    m3ApiCheckMem(out, 4);
+    int32_t count = 0;
+    int32_t status = zehos_wasm_host_net_recv(handle, data, length, &count);
+    if (status == WASI_SUCCESS) memcpy(out, &count, 4);
+    m3ApiReturn(status);
+}
+
+static m3ApiRawFunction(zehos_net_close)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(int32_t, handle)
+    m3ApiReturn(zehos_wasm_host_net_close(handle));
+}
+
 static m3ApiRawFunction(wasi_badf)
 {
     m3ApiReturnType(uint32_t)
@@ -619,6 +691,11 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
         { "poll_key", "i()", zehos_poll_key },
         { "poll_event", "i(i)", zehos_poll_event },
         { "should_exit", "i()", zehos_should_exit },
+        { "net_open", "i(iiiii)", zehos_net_open },
+        { "net_status", "i(i)", zehos_net_status },
+        { "net_send", "i(iiii)", zehos_net_send },
+        { "net_recv", "i(iiii)", zehos_net_recv },
+        { "net_close", "i(i)", zehos_net_close },
     };
     for (size_t index = 0; index < sizeof(zehos) / sizeof(zehos[0]); index++)
     {

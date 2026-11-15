@@ -48,3 +48,15 @@ int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* siz
     *size = *type == 4 ? 7 : 0;
     return 0;
 }
+
+static int net_calls;
+void net_test_reset(void) { net_calls = 0; }
+int net_test_calls(void) { return net_calls; }
+int32_t zehos_wasm_host_net_open(const uint8_t* host, uint32_t length, int32_t port, int32_t flags, int32_t* handle)
+{ (void)host; (void)length; (void)port; (void)flags; (void)handle; net_calls++; return 2; }
+int32_t zehos_wasm_host_net_status(int32_t handle) { (void)handle; return 8; }
+int32_t zehos_wasm_host_net_send(int32_t handle, const uint8_t* data, uint32_t length, int32_t* count)
+{ (void)handle; (void)data; (void)length; (void)count; net_calls++; return 8; }
+int32_t zehos_wasm_host_net_recv(int32_t handle, uint8_t* data, uint32_t length, int32_t* count)
+{ (void)handle; (void)data; (void)length; (void)count; net_calls++; return 8; }
+int32_t zehos_wasm_host_net_close(int32_t handle) { (void)handle; return 8; }

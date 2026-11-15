@@ -14,6 +14,7 @@ internal static class WasmNetworkError
     public const int Invalid = 28;
     public const int Io = 29;
     public const int TooManyFiles = 33;
+    public const int NameNotFound = 44;
     public const int NotSupported = 58;
     public const int TimedOut = 73;
 }

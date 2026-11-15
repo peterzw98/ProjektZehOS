@@ -26,6 +26,9 @@ internal static class CosmosNetworkProbe
             var ok = service.Execute("fetch", ["http://10.0.2.2:18080/ok"], CancellationToken.None);
             Check(ok.IsOK() && ok.Value == "ZehOS network probe\n", "fragmented HTTP: " + ok.Status.Message);
             Write("fetch PASS");
+#if ZEHOS_WASM
+            CheckWasmNetwork();
+#endif
 #if ZEHOS_NETWORK_TLS_PROBE
             byte[] probeCa = TlsRoots.Read("ZehOS.NetworkProbeCa");
             Check(CosmosNetworkService.Fetch("https://10.0.2.2:18443/ok", CancellationToken.None, probeCa) == "ZehOS network probe\n", "TLS valid");
@@ -86,6 +89,55 @@ internal static class CosmosNetworkProbe
         }
         catch (Exception exception) { Write("FAIL " + exception.Message); return false; }
     }
+#if ZEHOS_WASM
+    private static void CheckWasmNetwork()
+    {
+        // Minimalmodul ruft net_open fuer den lokalen Testserver auf und liefert den WASI-Status.
+        byte[] module = Convert.FromHexString("0061736d01000000010e0260057f7f7f7f7f017f6000017f021501087a65686f735f7631086e65745f6f70656e00000302010105030100010707010372756e00010a14011200418001410841a08d01410041900110000b0b0f01004180010b0831302e302e322e32");
+        var deniedSession = new NetworkProbeSession(false);
+        var allowedSession = new NetworkProbeSession(true);
+        Check(ProjektZeh.Runtime.Wasm.WasmRuntime.Run(module, "run", 100000, deniedSession, out int deniedStatus, out _) == ProjektZeh.Runtime.Wasm.WasmStatus.Ok && deniedStatus == 2, "Wasm import denies network");
+        Check(ProjektZeh.Runtime.Wasm.WasmRuntime.Run(module, "run", 100000, allowedSession, out int allowedStatus, out _) == ProjektZeh.Runtime.Wasm.WasmStatus.Ok && allowedStatus == 0, "Wasm import allows network");
+        var denied = new ProjektZeh.Runtime.Wasm.WasmNetworkSession(new ProjektZeh.Runtime.Wasm.CosmosWasmNetworkConnector(), false);
+        Check(denied.Open("10.0.2.2", 18080, 0, out _) == 2, "Wasm network capability");
+        var network = new ProjektZeh.Runtime.Wasm.WasmNetworkSession(new ProjektZeh.Runtime.Wasm.CosmosWasmNetworkConnector(), true);
+        Check(network.Open("10.0.2.2", 18080, 0, out int handle) == 0, "Wasm net open");
+        var clock = Stopwatch.StartNew();
+        int status;
+        while ((status = network.Status(handle)) == 6 && clock.ElapsedMilliseconds < 15000) Thread.Sleep(10);
+        Check(status == 0, "Wasm net connect " + status);
+        byte[] request = System.Text.Encoding.ASCII.GetBytes("GET /ok HTTP/1.0\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n");
+        Check(network.Send(handle, request, out int written) == 0 && written == request.Length, "Wasm net send");
+        byte[] data = new byte[4096];
+        int total = 0;
+        bool eof = false;
+        clock.Restart();
+        while (!eof && clock.ElapsedMilliseconds < 15000)
+        {
+            int result = network.Receive(handle, data.AsSpan(total), out int read);
+            Check(result is 0 or 6, "Wasm net recv " + result);
+            if (result == 0 && read == 0) eof = true;
+            total += read;
+            Check(total < data.Length, "Wasm net response limit");
+            if (!eof) Thread.Sleep(10);
+        }
+        string response = System.Text.Encoding.ASCII.GetString(data, 0, total);
+        Check(eof && response.Contains("ZehOS network probe", StringComparison.Ordinal), "Wasm net response");
+        Check(network.Close(handle) == 0 && network.CloseAll() == 0, "Wasm net close");
+        Write("wasm-network PASS");
+    }
+    private sealed class NetworkProbeSession(bool allowed) : ProjektZeh.Runtime.Wasm.IWasmSession
+    {
+        public string? Root => null;
+        public bool AllowsNetwork => allowed;
+        public bool ShouldExit => false;
+        public uint TicksMilliseconds => 0;
+        public void Write(int fd, ReadOnlySpan<byte> data) { }
+        public void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test) { }
+        public int PollKey() => -1;
+        public bool TryReadEvent(out ProjektZeh.Runtime.Wasm.WasmInputEvent value) { value = default; return false; }
+    }
+#endif
 #if ZEHOS_NETWORK_TLS_PROBE
     private static bool IsCancellation(Exception exception)
     {

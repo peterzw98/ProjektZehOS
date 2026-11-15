@@ -92,7 +92,8 @@ public sealed class PackageTests
         {
             network.Replace("capability=net", "capability=other"),
             network.Replace("capability=net\n", "capability=net\ncapability=net\n"),
-            valid.Replace("end\n", "capability=net\nend\n")
+            valid.Replace("end\n", "capability=net\nend\n"),
+            "zehos-package 1\nid=x\nversion=1.0.0\nruntime=zehos-wasm32-v1\nname=X\nentry=app.wasm\ncapability=net\n"
         }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
     }
 
