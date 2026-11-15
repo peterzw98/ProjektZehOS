@@ -258,10 +258,10 @@ Die am 14. November 2026 gelesene [Cosmos-Netzwerkdokumentation](https://cosmoso
 
 **Zweck:** Zuerst ein kleines, verlässliches Dokument darstellen und den Umfang anschließend erweitern.
 
-- [ ] 11.1 Einen lokalen Dokumentbetrachter als Fensteranwendung bauen. Eine HTML-Datei aus dem Dateisystem laden; Netzwerk ist für diesen Schritt noch nicht nötig.
-- [ ] 11.2 Eine kleine, festgelegte HTML-Teilmenge parsen: Überschriften, Absätze, Zeilenumbrüche, einfache Listen und Links. Nicht unterstützte Elemente kontrolliert überspringen; Skripte nicht ausführen.
-- [ ] 11.3 Ein Dokumentmodell und einen einfachen Layoutschritt implementieren: Text umbrechen, Elementhöhen bestimmen und vertikale Positionen berechnen.
-- [ ] 11.4 Dokument zeichnen, scrollen und Links anklickbar machen. Relative Dateipfade korrekt zur geöffneten Datei auflösen.
+- [x] 11.1 Einen lokalen Dokumentbetrachter als Fensteranwendung bauen. Eine HTML-Datei aus dem Dateisystem laden; Netzwerk ist für diesen Schritt noch nicht nötig.
+- [x] 11.2 Eine kleine, festgelegte HTML-Teilmenge parsen: Überschriften, Absätze, Zeilenumbrüche, einfache Listen und Links. Nicht unterstützte Elemente kontrolliert überspringen; Skripte nicht ausführen.
+- [x] 11.3 Ein Dokumentmodell und einen einfachen Layoutschritt implementieren: Text umbrechen, Elementhöhen bestimmen und vertikale Positionen berechnen.
+- [x] 11.4 Dokument zeichnen, scrollen und Links anklickbar machen. Relative Dateipfade korrekt zur geöffneten Datei auflösen.
 - [ ] 11.5 Adresszeile sowie Zurück und Vorwärts ergänzen. Dokumentquelle und Darstellung trennen, damit später dieselbe Ansicht lokale Dateien und HTTP-Antworten nutzt.
 - [ ] 11.6 Den HTTP-Client aus Etappe 10 anschließen. Relative URLs, Zielwechsel durch Weiterleitungen und verständliche Fehlermeldungen ergänzen; Weiterleitungen und Datenmengen begrenzen. Nicht unterstützte HTTPS-Ziele ausdrücklich als solche anzeigen.
 - [ ] 11.7 Kleine eigene Testseiten verwenden: langer Text, mehrere Links, fehlende Datei und fehlerhaftes HTML. Erst danach Bilder und einfache Gestaltungsregeln ergänzen.
@@ -270,15 +270,25 @@ Die am 14. November 2026 gelesene [Cosmos-Netzwerkdokumentation](https://cosmoso
 
 Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten aus dem Netz wird zusätzlich Etappe 10 benötigt. Die vorgeschlagene Reihenfolge gibt Doom zunächst Vorrang, weil dafür kein Netzwerkstack und keine Webstandards nötig sind.
 
+**Teilstand 15. November 2026:** Statt eines eigenen Dokumentbetrachters deckt NetSurf 3.11 als externes WASIp1-Paket ([#59](https://github.com/peterzw98/ProjektZehOS/pull/59), Version 0.2.2) die lokale Stufe ab. Die erste Abnahmestufe ist erreicht: Die Gastprüfung `scripts/test-netsurf-desktop.py` besucht in QEMU mehrere paketeigene Seiten über relative Links und kehrt über Zurück zurück. Sie prüft dabei HTML/CSS, Scrollen per Rad und Bild ab, Formulareingabe, eine fehlende Datei mit weiter bedienbarem Browser sowie drei Starts mit Schließen. Nachweise stehen in [NETSURF.md](docs/NETSURF.md).
+- 11.1–11.4: Erledigt. Geladen werden nur Dateien aus dem eigenen, lesend eingebundenen Paket, keine beliebigen Dateien unter `/data`. Skripte führt NetSurf nicht aus.
+- 11.5: Teilweise erledigt. Adresszeile und Zurück sind vorhanden, aber nur Zurück ist automatisiert geprüft. Vorwärts ist ungeprüft.
+- 11.6: Offen. HTTP/HTTPS fehlt noch; die Anbindung ist als eigener Folgeschritt in Arbeit.
+- 11.7: Teilweise erledigt. Langer Text, mehrere Links und eine fehlende Datei sind abgedeckt. Fehlerhaftes HTML ist nicht als eigene Testseite geprüft; GIF/BMP sind aktiviert, aber ungeprüft.
+
+Die zweite Abnahmestufe (Seiten vom Testserver) ist offen. VMware und echte Hardware sind für den Browser ungeprüft.
+
 ## 12 Moderne Webseiten und ein robusteres System
 
 **Zweck:** Den ersten Desktop zu einem umfangreicheren Betriebssystem ausbauen. Diese Arbeiten bestehen jeweils wieder aus eigenen Projekten.
 
-- [ ] 12.1 Vor einem modernen Browser den Architekturweg prüfen: eine bestehende Engine portieren oder den eigenen kleinen Browser gezielt erweitern. An einem Buildversuch Laufzeit-, Speicher-, Thread-, Grafik- und Systemaufruf-Abhängigkeiten feststellen.
+- [x] 12.1 Vor einem modernen Browser den Architekturweg prüfen: eine bestehende Engine portieren oder den eigenen kleinen Browser gezielt erweitern. An einem Buildversuch Laufzeit-, Speicher-, Thread-, Grafik- und Systemaufruf-Abhängigkeiten feststellen.
 
-**Teilstand 15. November 2026:** NetSurf 3.11 ist als externes WASIp1-Paket mit lokalen HTML-/CSS-Seiten,
-Links/Zurück, Scrollen, Texteingabe und sauberem Schließen/Neustart in QEMU geprüft. Build und Nachweise:
-[NETSURF.md](docs/NETSURF.md). HTTP/HTTPS fehlt noch; die Browseretappe bleibt offen.
+**Stand 15. November 2026:** Der Architekturweg wurde an zwei Buildversuchen geprüft und entschieden.
+- Firefox (Gecko als Wasm): Die Machbarkeitsprobe aus PR [#54](https://github.com/peterzw98/ProjektZehOS/pull/54) braucht eine andere Wasm-Runtime, SIMD, geteilten Speicher und viele Threads. Ein erstes Bild ist nicht nachgewiesen, der geschätzte Portaufwand liegt bei Monaten.
+- NetSurf: Gewählt und portiert (Etappe 11). Diese Wahl sagt nichts über Unterstützung moderner Webseiten aus.
+
+Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht und Probe-Skripte bleiben im ungemergten PR #54 als Referenz erhalten. Die Punkte 12.2 bis 12.5 bleiben offen.
 
 - [ ] 12.2 HTTPS über eine geeignete TLS-Implementierung ermöglichen. Dafür Zufallsquelle, verlässliche Uhrzeit, Zertifikatsspeicher und Prüfung von Zertifikatskette sowie Hostnamen bereitstellen. Zertifikatsprüfung gehört zum Zielumfang.
 - [ ] 12.3 HTML, CSS, Schrift- und Bildformate schrittweise erweitern. Falls JavaScript zum Ziel gehört, eine geeignete Laufzeit mit kontrollierten Ressourcen integrieren und benötigte Browser-APIs ergänzen.
