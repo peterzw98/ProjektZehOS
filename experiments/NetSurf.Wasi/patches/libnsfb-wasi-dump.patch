@@ -1,0 +1,27 @@
+--- a/libnsfb/src/dump.c
++++ b/libnsfb/src/dump.c
+@@ -25,7 +25,12 @@
+     int x;
+     int y;
+ 
++#ifdef __wasi__
++    /* WASI kennt kein dup(); der Aufrufer behält den Deskriptor, daher nur leeren statt schließen. */
++    outf = fdopen(fd, "w");
++#else
+     outf = fdopen(dup(fd), "w");
++#endif
+     if (outf == NULL) {
+ 	    return false;
+     }
+@@ -43,7 +48,11 @@
+ 	fprintf(outf,"\n");
+     }
+ 
++#ifdef __wasi__
++    fflush(outf);
++#else
+     fclose(outf);
++#endif
+ 
+     return true;
+ }
