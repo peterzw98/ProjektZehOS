@@ -93,7 +93,8 @@ internal sealed class WasmInputBuffer
             case InputEventType.PointerMove:
                 Enqueue(new(WasmInputEventType.PointerMove, 0, pixelX, pixelY));
                 break;
-            case InputEventType.PointerDown when inside:
+            // Eingefangen zaehlt jeder Klick; der Zeiger steht nach dem Drehen oft im schwarzen Rand.
+            case InputEventType.PointerDown when inside || captured:
                 Enqueue(new(WasmInputEventType.PointerDown, (int)value.Button, pixelX, pixelY));
                 break;
             case InputEventType.PointerUp:

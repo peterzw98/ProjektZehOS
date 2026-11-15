@@ -55,14 +55,16 @@ seitentreu in den Fensterinhalt ein (nächster Nachbar, vergrößernd wie verkle
 kommen in Bildkoordinaten an. Scharf, also 1:1, ist es nur bei genau passender Größe: Ein Paketfenster öffnet mit
 798×519 Inhalt.
 
-**Zeiger einfangen:** Nach `pointer_capture(1)` kommen Bewegungen nur noch als Typ 9; aufeinanderfolgende Deltas
-werden addiert. Tasten, Maustasten (5/6, mit Bildkoordinaten) und Rad bleiben unverändert. Esc, Fokusverlust,
+**Zeiger einfangen:** Nach `pointer_capture(1)` erhält die App alle Zeigerereignisse, auch außerhalb ihres
+Fensters; Taskleiste und andere Fenster reagieren dann nicht auf die Maus. Bewegungen kommen nur noch als Typ 9;
+aufeinanderfolgende Deltas werden addiert. Maustasten (5/6) zählen überall und tragen auf das Bild begrenzte
+Koordinaten; Tasten und Rad bleiben unverändert. Esc, Fokusverlust,
 Fensterwechsel, F4 und Schließen geben den Zeiger frei; Esc erreicht die App trotzdem als Taste. Nach der Freigabe
 kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
 Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
 eine App, die ihn importiert, startet dort nicht. **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
 und VMware liefern mit dem Tablet ein absolutes Zeigegerät; die Bewegung endet deshalb am Rand des Gastbildschirms
-beziehungsweise des Hostfensters. Der Desktopzeiger bleibt sichtbar.
+beziehungsweise des Hostfensters (Tablet), nicht am Fensterrand. Der Desktopzeiger bleibt sichtbar.
 
 **Netzwerk über `zehos_v1`:**
 

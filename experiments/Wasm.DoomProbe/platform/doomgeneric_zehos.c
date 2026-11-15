@@ -29,7 +29,7 @@ ZEHOS_IMPORT("poll_event") int32_t zehos_poll_event(int32_t* event);
 // 1 faengt den Zeiger ein, 0 gibt ihn frei; 0 bei Erfolg. Danach kommen Bewegungen als Typ 9 (dx, dy).
 ZEHOS_IMPORT("pointer_capture") int32_t zehos_pointer_capture(int32_t enabled);
 
-enum { EVENT_POINTER_MOVE = 4, EVENT_POINTER_DOWN = 5, EVENT_POINTER_UP = 6, EVENT_RESET = 8, EVENT_RELATIVE_MOVE = 9 };
+enum { EVENT_KEY_DOWN = 1, EVENT_POINTER_MOVE = 4, EVENT_POINTER_DOWN = 5, EVENT_POINTER_UP = 6, EVENT_RESET = 8, EVENT_RELATIVE_MOVE = 9 };
 // Pixel des Desktopzeigers sind feiner als DOS-Mausschritte; Faktor 4 dreht mit Standardempfindlichkeit spuerbar.
 #define MOUSE_TURN_SCALE 4
 
@@ -107,7 +107,10 @@ static void poll_mouse(void)
                 turn += event[2];
                 changed = 1;
                 break;
-            // Esc oder Fokusverlust geben im Kernel frei; das zeigt die erste absolute Bewegung oder ein Reset.
+            // Esc (Tastencode 1) oder Fokusverlust geben im Kernel frei; ebenso zeigt es die erste absolute Bewegung.
+            case EVENT_KEY_DOWN:
+                if (event[1] == 1) mouse_captured = 0;
+                break;
             case EVENT_POINTER_MOVE:
                 mouse_captured = 0;
                 break;

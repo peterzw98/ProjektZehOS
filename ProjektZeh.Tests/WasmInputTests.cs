@@ -149,6 +149,9 @@ public sealed class WasmInputTests
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, 30, -5), Read(input));
         input.Handle(new(InputEventType.PointerDown, X: 130, Y: 95, Button: PointerButtons.Left));
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 1, 65, 47), Read(input));
+        // Eingefangen zaehlt auch ein Klick ausserhalb des Bildes, mit begrenzten Koordinaten.
+        input.Handle(new(InputEventType.PointerDown, X: 900, Y: -40, Button: PointerButtons.Right));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 2, 319, 0), Read(input));
         Assert.IsFalse(input.TryRead(out _));
     }
 
