@@ -4,6 +4,7 @@
  * Cookies verwaltet urldb wie beim curl-Fetcher; HTTP-Anmeldung (401) unterstützt dieser Fetcher noch nicht.
  * HTTPS verschlüsselt und prüft der Kernel (net_open mit ZEHOS_NET_TLS); ein älterer Kernel meldet ENOTSUP.
  * Zertifikatsfehler lassen sich nicht übergehen; eine Weiterleitung von HTTPS auf HTTP folgt nur nach Klick.
+ * Unverschlüsselte Unterressourcen einer HTTPS-Seite (Mixed Content) werden ohne Rückfrage blockiert.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -22,6 +23,10 @@
 #include "content/urldb.h"
 #include "content/fetchers.h"
 #include "http_response.h"
+
+/* Aus patches/netsurf-zehos-mixed-content.patch; content/fetch.c kennt die privaten Felder von struct fetch. */
+bool fetch_zehos_verifiable(const struct fetch *fetch);
+bool fetch_zehos_referer_is_https(const struct fetch *fetch);
 
 #define ZEHOS_IMPORT(name) __attribute__((import_module("zehos_v1"), import_name(name)))
 ZEHOS_IMPORT("net_open") int32_t zehos_net_open(const char *host, int32_t host_len, int32_t port, int32_t flags, int32_t *handle);
@@ -71,6 +76,8 @@ struct http_fetch {
 	size_t request_len;
 	size_t sent;
 	char *location;
+	char *held;             /* zurückgehaltene Kopfzeilen einer HTTPS-Weiterleitung, je Zeile mit \n */
+	size_t held_len;
 	uint64_t last_activity;
 	struct http_response response;
 	struct http_fetch *r_next, *r_prev;
@@ -160,7 +167,16 @@ static bool on_header(void *ctx, const char *line, size_t len)
 		free(cookie);
 	}
 	// Bei HTTPS-Weiterleitungen erst in on_headers_done entscheiden, ob eine eigene Warnseite die Antwort ersetzt.
-	if (f->tls && f->response.status >= 300 && f->response.status < 400 && f->response.status != 304) return true;
+	// Der Parser begrenzt den Kopf auf HTTP_HEADER_BYTES_MAX; Kopfzeilen enthalten kein \n.
+	if (f->tls && f->response.status >= 300 && f->response.status < 400 && f->response.status != 304) {
+		char *held = realloc(f->held, f->held_len + len + 1);
+		if (held == NULL) return false;
+		memcpy(held + f->held_len, line, len);
+		held[f->held_len + len] = '\n';
+		f->held = held;
+		f->held_len += len + 1;
+		return true;
+	}
 	fetch_msg msg = { .type = FETCH_HEADER };
 	msg.data.header_or_data.buf = (const uint8_t *)line;
 	msg.data.header_or_data.len = len;
@@ -266,11 +282,22 @@ static bool on_headers_done(void *ctx, int status)
 		msg.type = FETCH_NOTMODIFIED;
 	} else if (f->tls && status >= 300 && status < 400 && f->location != NULL
 		&& is_downgrade(f->url, f->location, &target)) {
-		bool sent = send_downgrade_page(f, target);
+		// Nur ein vom Benutzer ausgelöster Abruf bekommt die Warnseite; Unterressourcen scheitern still.
+		bool sent = fetch_zehos_verifiable(f->parent) && send_downgrade_page(f, target);
 		nsurl_unref(target);
 		msg.type = sent ? FETCH_FINISHED : FETCH_ERROR;
-		msg.data.error = sent ? NULL : "Zu wenig Speicher.";
+		msg.data.error = sent ? NULL : fetch_zehos_verifiable(f->parent) ? "Zu wenig Speicher."
+			: "Unsichere Weiterleitung einer Unterressource blockiert.";
 	} else if (status >= 300 && status < 400 && f->location != NULL) {
+		for (size_t start = 0; start < f->held_len && !f->aborted;) {
+			size_t end = start;
+			while (f->held[end] != '\n') end++;
+			fetch_msg header = { .type = FETCH_HEADER };
+			header.data.header_or_data.buf = (const uint8_t *)f->held + start;
+			header.data.header_or_data.len = end - start;
+			send_msg(f, &header);
+			start = end + 1;
+		}
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = f->location;
 	} else if (f->only_2xx && (status < 200 || status > 299)) {
@@ -324,7 +351,9 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 		f->tls = true;
 		f->port = 443;
 	}
-	if (post_multipart != NULL) {
+	if (!f->tls && !fetch_zehos_verifiable(parent) && fetch_zehos_referer_is_https(parent)) {
+		f->error = "Unverschlüsselte Inhalte auf einer HTTPS-Seite sind blockiert.";
+	} else if (post_multipart != NULL) {
 		f->error = "Formulare mit Dateiupload werden noch nicht unterstützt.";
 	} else if (host == NULL || lwc_string_length(host) == 0 || lwc_string_length(host) >= sizeof(f->host)
 		|| lwc_string_data(host)[0] == '[') {
@@ -390,6 +419,7 @@ static void fetch_http_free(void *ctx)
 	nsurl_unref(f->url);
 	free(f->request);
 	free(f->location);
+	free(f->held);
 	free(f);
 }
 

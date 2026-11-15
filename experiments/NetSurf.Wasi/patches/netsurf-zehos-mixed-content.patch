@@ -1,0 +1,23 @@
+--- a/netsurf/content/fetch.c
++++ b/netsurf/content/fetch.c
+@@ -831,3 +831,20 @@
+ 		urldb_set_cookie(data, fetch->url, fetch->referer);
+ 	}
+ }
++
++/* ZehOS: Der HTTP-Fetcher braucht für die Sperre von Mixed Content und
++ * unsicheren Weiterleitungen, ob ein Abruf vom Benutzer ausgelöst wurde
++ * (verifizierbar) und ob er von einer HTTPS-Seite stammt. */
++bool fetch_zehos_verifiable(const struct fetch *fetch);
++bool fetch_zehos_referer_is_https(const struct fetch *fetch);
++
++bool fetch_zehos_verifiable(const struct fetch *fetch)
++{
++	return fetch->verifiable;
++}
++
++bool fetch_zehos_referer_is_https(const struct fetch *fetch)
++{
++	return fetch->referer != NULL &&
++		nsurl_get_scheme_type(fetch->referer) == NSURL_SCHEME_HTTPS;
++}

@@ -11,6 +11,7 @@ import argparse
 import http.server
 import os
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -117,7 +118,7 @@ class TestServer(http.server.BaseHTTPRequestHandler):
             self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             self.connection.close()
             self.close_connection = True
-        elif not cookie_get(self):
+        elif not extra_get(self):
             self.send_page(404, page(HTTP_MISSING, "Nicht gefunden"))
 
     def log_message(self, format: str, *args: object) -> None:
@@ -151,8 +152,17 @@ def http_scenarios(base: str, refused: int) -> list:
 COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 
 
-def cookie_get(handler: TestServer) -> bool:
-    if handler.path == "/keks-setzen":
+def extra_get(handler: TestServer) -> bool:
+    if handler.path == "/marker.css":
+        body = b"body{background:#209090}"
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/css")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    elif handler.path == "/gemischt":
+        handler.send_page(200, mixed_page("/marker.css"))
+    elif handler.path == "/keks-setzen":
         handler.send_page(302, b"", {"Set-Cookie": "zehos=keks; Path=/", "Location": "/keks-pruefen  "})
     elif handler.path == "/keks-pruefen":
         sent = "zehos=keks" in (handler.headers.get("Cookie") or "")
@@ -163,7 +173,83 @@ def cookie_get(handler: TestServer) -> bool:
 
 
 def cookie_scenarios(base: str) -> list:
-    return [("http-cookie", address(1500, f"{base}/keks-setzen"), [COOKIE_OK], [COOKIE_MISSING, HTTP_MISSING, START])]
+    return [("http-cookie", address(1500, f"{base}/keks-setzen"), [COOKIE_OK], [COOKIE_MISSING, HTTP_MISSING, START]),
+            # Gegenprobe zu https-gemischt: über HTTP lädt dasselbe Stylesheet und färbt die Seite.
+            ("http-gemischt-gegenprobe", address(1500, f"{base}/gemischt"), [MIXED], [START])]
+
+
+# HTTPS-Szenarien: lokale TLS-Server mit eigener Test-CA (openssl), der Prüfhost vertraut ihr über ZEHOS_TLS_CA.
+DOWNGRADE_PAGE, INJECTED = (0xff, 0xf0, 0xd8), (0x90, 0x20, 0x90)
+# Gemischte Seite: eigene Farbe, ein geladenes http://-Stylesheet überschriebe sie mit MIXED.
+MIXED_PAGE, MIXED = (0x40, 0x40, 0x90), (0x20, 0x90, 0x90)
+
+
+def mixed_page(stylesheet: str) -> bytes:
+    return page(MIXED_PAGE, "Gemischt").replace(b"</head>", f'<link rel="stylesheet" href="{stylesheet}"></head>'.encode())
+
+
+def make_tls_fixtures(work: Path) -> dict[str, Path]:
+    def openssl(*arguments: str) -> None:
+        subprocess.run(["openssl", *arguments], cwd=work, check=True, capture_output=True)
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+            "-subj", "/CN=ZehOS Test-CA", "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign")
+    for name, san in (("gut", "IP:127.0.0.1"), ("falsch", "DNS:anders.example")):
+        openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", f"{name}.key", "-out", f"{name}.csr",
+                "-subj", f"/CN={name}")
+        (work / f"{name}.ext").write_text(f"subjectAltName={san}\nextendedKeyUsage=serverAuth\n")
+        openssl("x509", "-req", "-in", f"{name}.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+                "-out", f"{name}.pem", "-days", "1", "-extfile", f"{name}.ext")
+    return {"ca": work / "ca.pem", "gut": work / "gut.pem", "falsch": work / "falsch.pem"}
+
+
+def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHTTPServer:
+    class TlsTestServer(TestServer):
+        def do_GET(self) -> None:
+            if self.path == "/zu-http":
+                self.send_page(302, b"", {"Location": f"{http_base}/seite.html"})
+            elif self.path == "/gemischt":
+                self.send_page(200, mixed_page(f"{http_base}/marker.css"))
+            elif self.path == "/gemischt-umgeleitet":
+                self.send_page(200, mixed_page("/css-zu-http"))
+            elif self.path == "/css-zu-http":
+                self.send_page(302, b"", {"Location": f"{http_base}/marker.css"})
+            elif self.path == "/einschleusen":
+                # Wäre der Link nicht maskiert, setzte der eingeschleuste Stil die Markerfarbe.
+                self.send_page(302, b"", {"Location": f'{http_base}/"><style>body{{background:#902090}}</style>'})
+            elif self.path in ("/ohne-laenge-sauber", "/ohne-laenge-abgebrochen"):
+                # HTTP/1.0 ohne Content-Length: nur close_notify (unwrap) zeigt das echte Ende.
+                self.wfile.write(b"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n" + page(HTTP_PAGE, "Ohne Länge"))
+                self.wfile.flush()
+                if self.path == "/ohne-laenge-sauber":
+                    self.connection.unwrap().close()
+                self.close_connection = True
+            else:
+                super().do_GET()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TlsTestServer)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(work / f"{name}.pem", work / f"{name}.key")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def https_scenarios(good: str, wrong: str) -> list:
+    pages = [START, TARGET, FORM, LONG, HTTP_PAGE, HTTP_CHUNKED, HTTP_MISSING, DOWNGRADE_PAGE]
+    return [
+        ("https-seite", address(1500, f"{good}/seite.html"), [HTTP_PAGE], [START]),
+        ("https-chunked", address(1500, f"{good}/chunked.html"), [HTTP_CHUNKED], [START]),
+        ("https-umleitung", address(1500, f"{good}/umleitung"), [HTTP_PAGE], [START]),
+        ("https-gemischt", address(1500, f"{good}/gemischt"), [MIXED_PAGE], [MIXED, START]),
+        ("https-gemischt-umgeleitet", address(1500, f"{good}/gemischt-umgeleitet"), [MIXED_PAGE],
+         [MIXED, DOWNGRADE_PAGE, START]),
+        ("https-falscher-name", address(1500, f"{wrong}/seite.html"), [], pages),
+        ("https-zu-http", address(1500, f"{good}/zu-http"), [DOWNGRADE_PAGE], [HTTP_PAGE, START]),
+        ("https-einschleusen", address(1500, f"{good}/einschleusen"), [DOWNGRADE_PAGE], [INJECTED, START]),
+        ("https-ohne-laenge-sauber", address(1500, f"{good}/ohne-laenge-sauber"), [HTTP_PAGE], [START]),
+        ("https-ohne-laenge-abgebrochen", address(1500, f"{good}/ohne-laenge-abgebrochen"), [], pages),
+    ]
 
 
 # Name, Ereignisse, erwartete Farben, verbotene Farben
@@ -197,11 +283,15 @@ def main() -> int:
     base = f"http://127.0.0.1:{server.server_address[1]}"
     scenarios = SCENARIOS + http_scenarios(base, closed_port()) + cookie_scenarios(base)
     with tempfile.TemporaryDirectory() as work:
+        fixtures = make_tls_fixtures(Path(work))
+        tls = [tls_server(Path(work), name, base) for name in ("gut", "falsch")]
+        scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
             env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="6000")
             env.pop("ZEHOS_NET", None)
+            env["ZEHOS_TLS_CA"] = str(fixtures["ca"])
             if name != "http-ohne-berechtigung":
                 env["ZEHOS_NET"] = "1"
             run = subprocess.run([str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
@@ -215,6 +305,8 @@ def main() -> int:
             problems += [f"Farbe {c} unerwartet" for c in forbidden if c in seen]
             failures += bool(problems)
             print(f"{'FAIL' if problems else 'ok  '} {name}" + (f": {', '.join(problems)}" if problems else ""))
+        for tls_server_running in tls:
+            tls_server_running.shutdown()
     server.shutdown()
     print(f"{len(scenarios) - failures}/{len(scenarios)} bestanden")
     return 1 if failures else 0
