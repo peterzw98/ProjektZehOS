@@ -165,6 +165,7 @@ internal static class CosmosWasmProbe
         public bool ShouldExit => clock.ElapsedMilliseconds >= runMilliseconds;
         public uint TicksMilliseconds => (uint)clock.ElapsedMilliseconds;
         public int PollKey() => -1;
+        public bool TryReadEvent(out WasmInputEvent value) { value = default; return false; }
 
         public void Write(int fd, ReadOnlySpan<byte> data)
         {

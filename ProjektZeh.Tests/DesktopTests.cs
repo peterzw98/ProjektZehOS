@@ -14,6 +14,21 @@ namespace ProjektZeh.Tests;
 public sealed class DesktopTests
 {
     [TestMethod]
+    public void ContentCapture_SecondButtonOverTaskbarDoesNotOpenMenu()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.OpenPong();
+        var window = desktop.Windows.ActiveWindow!;
+        desktop.Handle(new(InputEventType.PointerDown, X: window.ContentX + 20, Y: window.ContentY + 20, Button: PointerButtons.Right));
+        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
+        Assert.IsFalse(desktop.CloseMenu());
+        desktop.Handle(new(InputEventType.PointerUp, X: 40, Y: 740, Button: PointerButtons.Right));
+        Assert.IsTrue(desktop.Windows.HasPointerCapture);
+        desktop.Handle(new(InputEventType.PointerUp, X: 40, Y: 740, Button: PointerButtons.Left));
+        Assert.IsFalse(desktop.Windows.HasPointerCapture);
+    }
+
+    [TestMethod]
     public void AltDuringDrag_MouseReleaseStillEndsCapture()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
