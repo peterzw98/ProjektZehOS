@@ -155,8 +155,12 @@ COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 REQUESTED: set[str] = set()
 
 
+REFERERS: list[str] = []
+
+
 def extra_get(handler: TestServer) -> bool:
     REQUESTED.add(handler.path)
+    REFERERS.append(handler.headers.get("Referer") or "")
     if handler.path == "/marker.css":
         body = b"body{background:#209090}"
         handler.send_response(200)
@@ -233,7 +237,8 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
                 self.send_page(302, b"", {"Location": f"http://localhost:{port}/seite.html"})
             elif self.path.startswith("/formular?"):
                 method, target = self.path.split("?", 1)[1].split("&")
-                self.send_page(200, form_page(f"{http_base}/{target}", method, "geheim", "wert42"))
+                action = f"{http_base}/{target}".replace("-fragment", "#oben")
+                self.send_page(200, form_page(action, method, "geheim", "wert42"))
             elif self.path == "/einschleusen":
                 # Wäre der Link nicht maskiert, setzte der eingeschleuste Stil die Markerfarbe.
                 self.send_page(302, b"", {"Location": f'{http_base}/"><style>body{{background:#902090}}</style>'})
@@ -304,6 +309,9 @@ def form_scenarios(good: str, base: str) -> list:
         ("https-formular-senden", address(1500, f"{good}/formular?post&ziel-senden") + confirm, [FORM_OK], [HTTP_MISSING]),
         ("https-formular-get-warnung", address(1500, f"{good}/formular?get&ziel-get-warnung") + submit,
          [DOWNGRADE_PAGE], [FORM_OK]),
+        # Fragment in der Action: llcache ruft ohne Fragment ab, die Warnung muss trotzdem greifen.
+        ("https-formular-get-fragment", address(1500, f"{good}/formular?get&ziel-get-warnung-fragment") + submit,
+         [DOWNGRADE_PAGE], [FORM_OK]),
         ("https-formular-get-senden", address(1500, f"{good}/formular?get&ziel-get-senden") + confirm,
          [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
         # Eine fremde Seite postet ein erfundenes Token: lokale Fehlerseite, nichts geht ins Netz.
@@ -319,7 +327,8 @@ def form_checks() -> list[str]:
         problems.append("Formular ohne Bestätigung gesendet")
     if ("/ziel-senden", "geheim=wert42") not in POSTS:
         problems.append("bestätigtes Formular nicht mit Originaldaten angekommen")
-    if any(path.startswith("/ziel-get-warnung") for path in REQUESTED):
+    # Auch über Nebenwege wie den Favicon-Referer dürfen die Felder vor der Bestätigung nicht ankommen.
+    if any(path.startswith("/ziel-get-warnung") for path in REQUESTED) or any("ziel-get-warnung?" in r for r in REFERERS):
         problems.append("GET-Formular ohne Bestätigung gesendet")
     if not any(path.startswith("/ziel-get-senden?") for path in REQUESTED):
         problems.append("bestätigtes GET-Formular nicht angekommen")

@@ -159,7 +159,8 @@ void fetch_zehos_http_mark_form(nsurl *url);
 void fetch_zehos_http_mark_form(nsurl *url)
 {
 	if (form_get_target != NULL) nsurl_unref(form_get_target);
-	form_get_target = nsurl_ref(url);
+	// llcache ruft ohne Fragment ab; mit Fragment fände setup die Marke nie und der GET ginge ungewarnt raus.
+	if (nsurl_defragment(url, &form_get_target) != NSERROR_OK) form_get_target = nsurl_ref(url);
 }
 
 static const char *parse_error(enum http_result result)
@@ -282,7 +283,9 @@ static char *warning_page(const char *title, const char *text, const char *url_s
 	if (page == NULL) return NULL;
 	bool ok = append_raw(page, cap, &used, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>")
 		&& append_escaped(page, cap, &used, title)
-		&& append_raw(page, cap, &used, "</title><style>body{background:#fff0d8}</style></head><body><h1>")
+		// Eigenes Favicon, sonst lädt NetSurf /favicon.ico vom Ziel und sendet die Seiten-URL samt GET-Feldern als Referer.
+		&& append_raw(page, cap, &used, "</title><link rel=\"icon\" href=\"resource:favicon.ico\">"
+			"<style>body{background:#fff0d8}</style></head><body><h1>")
 		&& append_escaped(page, cap, &used, title) && append_raw(page, cap, &used, "</h1><p>")
 		&& append_escaped(page, cap, &used, text) && append_raw(page, cap, &used, "</p><p>")
 		&& append_escaped(page, cap, &used, url_s) && append_raw(page, cap, &used, "</p>");
