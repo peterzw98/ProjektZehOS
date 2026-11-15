@@ -27,6 +27,8 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
 `poll_event` schreibt vier Little-Endian-`i32` in der Reihenfolge `type, code, x, y`.
 Nicht ausgerichtete Adressen sind erlaubt. Ein ungültiger 16-Byte-Bereich trappt **vor** der Entnahme;
 bei Rückgabe 0 oder -1 bleibt der Zielbereich unverändert. `poll_key` und `poll_event` lesen unabhängige Puffer.
+Der Puffer von `poll_key` fasst 64 Tastendrücke; weitere Drücke werden bei vollem Puffer verworfen,
+das Loslassen einer gemeldeten Taste aber nie, damit keine Taste in der App hängen bleibt.
 
 | type | Bedeutung von code und Koordinaten |
 | --- | --- |

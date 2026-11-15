@@ -45,6 +45,25 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void WorkspaceSwitchDuringDrag_EndsCaptureAndLeavesWindowInPlace()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.OpenTerminal();
+        var window = desktop.Windows.ActiveWindow!;
+        desktop.Handle(new(InputEventType.PointerDown, X: window.X + 20, Y: window.Y + 10, Button: PointerButtons.Left));
+        Assert.IsTrue(desktop.Windows.HasPointerCapture);
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Right));
+        Assert.AreEqual(1, desktop.Windows.CurrentWorkspace);
+        Assert.IsFalse(desktop.Windows.HasPointerCapture);
+        int x = window.X, y = window.Y;
+        desktop.Handle(new(InputEventType.PointerMove, X: 400, Y: 300));
+        desktop.Handle(new(InputEventType.PointerUp, X: 400, Y: 300, Button: PointerButtons.Left));
+        Assert.AreEqual((x, y, 0), (window.X, window.Y, window.Workspace));
+    }
+
+    [TestMethod]
     public void OpenMenu_PausesPongUntilWindowRegainsFocus()
     {
         var desktop = new Desktop(1024, 768, new byte[16384], 16, 32, () => new ShellService(), () => new FileService("/data"));

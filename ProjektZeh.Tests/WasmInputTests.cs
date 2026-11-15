@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Input;
 using ProjektZeh.Runtime.Wasm;
@@ -48,6 +50,29 @@ public sealed class WasmInputTests
         Assert.AreEqual(-1, input.PollKey());
         input.Handle(new(InputEventType.Text, Character: '\ude80'));
         Assert.AreEqual(0xfffd, Read(input).Code);
+    }
+
+    [TestMethod]
+    public void FullLegacyQueueKeepsReleaseOfReportedKeys()
+    {
+        var input = new WasmInputBuffer();
+        input.Handle(new(InputEventType.KeyDown, 1));
+        for (int index = 0; index < 63; index++)
+        {
+            input.Handle(new(InputEventType.KeyDown, 2));
+            input.Handle(new(InputEventType.KeyUp, 2));
+        }
+        input.Handle(new(InputEventType.KeyDown, 3));
+        input.Handle(new(InputEventType.KeyUp, 1));
+        input.Handle(new(InputEventType.KeyUp, 3));
+        input.Handle(new(InputEventType.Reset));
+        var codes = new List<int>();
+        for (int code = input.PollKey(); code >= 0; code = input.PollKey())
+            codes.Add(code);
+        Assert.AreEqual(0x100 | 1, codes[0]);
+        Assert.AreEqual(1, codes[^1]);
+        Assert.AreEqual(codes.Count(code => code == (0x100 | 2)), codes.Count(code => code == 2));
+        Assert.IsFalse(codes.Contains(0x100 | 3) || codes.Contains(3));
     }
 
     [TestMethod]
