@@ -34,6 +34,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <GCCProject Include="$(MSBuildThisFileDirectory)Native/Acpi/" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Cosmos.Kernel" Version="3.0.94" />
     <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
