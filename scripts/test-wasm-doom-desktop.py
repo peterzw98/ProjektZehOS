@@ -487,6 +487,28 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
         guest.start_app("doom")
         guest.shot(f"start-{run:02d}")
         guest.quit_doom()
+    if args.long_seconds:
+        guest.start_app("doom")
+        qmp.tap("backspace")
+        time.sleep(1.5)
+        for _ in range(3):
+            qmp.tap("ret")
+            time.sleep(1.5)
+        started = time.monotonic()
+        cycle = 0
+        while time.monotonic() - started < args.long_seconds:
+            qmp.hold("up", 1.0)
+            qmp.hold("right", 0.3)
+            qmp.tap("ctrl")
+            # Die Benutzungstaste startet nach dem Tod erneut und oeffnet im Spiel Tueren.
+            qmp.tap("spc")
+            time.sleep(3.6)
+            cycle += 1
+            if cycle % 10 == 0:
+                guest.shot(f"long-{cycle:03d}")
+                print(f"Langlauf: {time.monotonic() - started:.1f} s", flush=True)
+        print(f"Langlauf gesamt: {time.monotonic() - started:.1f} s", flush=True)
+        guest.quit_doom()
     guest.shot("taskmanager-after")
     # Speicher nach dem Schliessen ueber X gegen den nach dem letzten Start; gemessen jeweils nach dem Aufraeumen.
     # Zerteilte Speicherzeilen fehlen in der Liste; dann vergleicht die Pruefung den ersten und letzten lesbaren Wert.
@@ -711,6 +733,8 @@ def run_parallel(args: argparse.Namespace, scenarios: list[str], fixtures: Path 
     for scenario in scenarios:
         command = [sys.executable, __file__, "--iso", str(args.iso), "--scenario", scenario, "--accel", args.accel,
                    "--starts", str(args.starts), "--run-root", str(run_root)]
+        if scenario == "full" and args.long_seconds:
+            command += ["--long-seconds", str(args.long_seconds)]
         for name in ("tls", "source", "fixtures", "base"):
             value = {"fixtures": fixtures, "base": base}.get(name, getattr(args, name, None))
             if value is not None:
@@ -750,12 +774,17 @@ def main() -> int:
     parser.add_argument("--scenario", nargs="+", choices=SCENARIOS + list(GROUPS), default=["quick"])
     parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg, kvm oder whpx (kvm/whpx ohne Snapshot)")
     parser.add_argument("--starts", type=int, default=3, help="Doom-Starts am Ende von full (Speicherpruefung: 10)")
+    parser.add_argument("--long-seconds", type=int, default=0, help="automatisierte Doom-Eingaben nach den Neustarts (Sekunden)")
     parser.add_argument("--no-snapshot", action="store_true", help="jede VM richtet sich selbst ein")
     # Intern fuer die Kindprozesse paralleler Laeufe.
     for name in ("--fixtures", "--base", "--run-root"):
         parser.add_argument(name, type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.long_seconds < 0:
+        parser.error("--long-seconds darf nicht negativ sein")
     scenarios = list(dict.fromkeys(name for value in args.scenario for name in GROUPS.get(value, [value])))
+    if args.long_seconds and "full" not in scenarios:
+        parser.error("--long-seconds benoetigt das Szenario full")
     if args.source is not None and scenarios != ["full"]:
         parser.error("--source prueft nur das Szenario full")
     if args.source is None and args.fixtures is None and (args.repo is None or args.key is None or args.tls is None):

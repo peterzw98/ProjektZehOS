@@ -109,6 +109,8 @@ Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080,
 | fehlende WAD | „App beendet (Exitcode 1): IWAD file 'freedoom1.wad' …“ |
 | abgeschnittene WAD (100 000 Byte) | „App beendet (Exitcode 1): W_GetNumForName: PNAME…“ |
 
+**Automatisierter Langlauf am 15. November 2026 (Linux, QEMU TCG, CPU `max`, 512 MiB):** Mit dem Wasm-Release-Build auf Stand `1c0e070` und einem isolierten Datenlaufwerk wurden zehn Doom-Neustarts über das Menü geprüft. Der freie Speicher nach dem Aufräumen sank von 436,3 auf 435,3 MiB. Ein weiterer Lauf mit `--starts 0 --long-seconds 300` sendete 300,5 s lang Bewegungs-, Dreh-, Schuss- und Benutzungsereignisse; nach einem Tod startete die Figur erneut. Doom endete regulär; der freie Speicher nach dem Aufräumen betrug 437,2 MiB vor und 435,8 MiB nach dem Langlauf. Bildschirmfotos zeigen Änderungen im Spiel und einen weiterhin aktualisierten Taskmanager. Dessen angezeigte längste **Desktop**-Bildzeit betrug in einzelnen Messfenstern ohne Doom 20 und 23 ms und unter Doom-Last 42 bis 84 ms; dies sind Stichproben, keine Worst-Case-Garantie und keine Messung der Doom-Bildzeit. Die automatischen Eingaben ersetzen keine menschliche Spielprüfung. Doom-Bildzeit über mehrere Minuten, VMware und echte Hardware bleiben offen.
+
 **Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; VMware und echte Hardware ungeprüft. Der feste Ordner ist inzwischen durch den signierten Paketbestand ersetzt; die Prüfung mit Installation aus dem Repository steht in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
 ## Grenzen und offene Punkte
