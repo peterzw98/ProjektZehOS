@@ -145,7 +145,7 @@ Seit der Umstellung auf testapp prüft das Skript nicht mehr: das Upgrade eines 
 - Keine Benutzerdaten-/Speicherstandsverzeichnisse; Apps lesen nur ihr Paket.
 - `install-local` liest den Ordner direkt (nur Administratoren), weil von außen auf das Laufwerk kopierte Dateien keine Rechteeinträge haben.
 - Kein Speicherplatztest vorab; ein voller Datenträger bricht die Installation mit Dateifehler ab und entfernt das unvollständige Versionsverzeichnis.
-- `pkg` gibt es nur in Builds mit Wasm-Loader (`-p:ZehOSWasm=true`).
+- Wasm-Loader und `pkg` sind im normalen Kernelbuild standardmäßig enthalten. Ein ausdrücklich mit `-p:ZehOSWasm=false` gebauter Kernel und das Installer-ISO bieten keinen `pkg`-Befehl.
 - Eine App, die `should_exit` nie abfragt, lässt sich nicht beenden; ihr Paket bleibt bis zum Neustart gesperrt.
 - Downloads haben nur ein Zeitlimit je Datenpaket, kein Gesamtlimit. Ein sehr langsamer Server hält die Netzwerksperre, bis `pkg cancel` den Auftrag abbricht.
 - Das Startmenü erkennt ein bereits offenes Fenster am Anzeigenamen; Paketnamen sollten deshalb eindeutig sein.

@@ -240,12 +240,12 @@ Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-
 
 ## Apps als Pakete installieren (Doom)
 
-Mit `-p:ZehOSWasm=true` enthält der Kernel einen WebAssembly-Loader (wasm3). Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
+Der normale Kernelbuild enthält standardmäßig den WebAssembly-Loader (wasm3) und den Paketmanager `pkg`. Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
 
-`cosmos build` nimmt keine `-p:`-Eigenschaften an; ein Kernel mit Loader entsteht über `dotnet build`. Das ISO liegt danach unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`:
+Nach `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release` startet `scripts/start-qemu.ps1` das normale ISO einschließlich Paketmanager. Alternativ mit `dotnet build` bauen und dessen ISO ausdrücklich auswählen:
 
 ```powershell
-dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSWasm=true
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-qemu.ps1 -IsoPath ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
 ```
 
@@ -269,7 +269,7 @@ Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was 
 - Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
 - Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
 
-`pkg` gibt es nur in Builds mit `-p:ZehOSWasm=true`.
+`help` zeigt `pkg` mit seinen Unterbefehlen. Nur ausdrücklich mit `-p:ZehOSWasm=false` gebaute Kernel und das Installer-ISO bieten keinen `pkg`-Befehl.
 
 ## Start in VMware Player aus Visual Studio
 
