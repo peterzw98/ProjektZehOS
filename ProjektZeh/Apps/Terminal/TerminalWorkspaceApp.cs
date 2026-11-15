@@ -18,7 +18,19 @@ internal sealed class TerminalWorkspaceApp : IApplication
     private int StatusHeight => glyphHeight + 8;
     private int SearchHeight => glyphHeight + 12;
     private static readonly string[] ToolbarLabels = ["+ Tab", "Teil |", "Teil -", "Suche", "Profil", "Menue"];
-    private static readonly string[] ProfileNames = ["Breeze Dunkel", "Breeze Hell", "Solarisiert"];
+    private static readonly string[] ProfileNames = ["Catppuccin", "Tokyo Night", "Breeze Dunkel", "Breeze Hell", "Solarisiert"];
+    // Hintergrund, Schrift, Akzent je Profil; die Fensterflaechen leiten sich daraus ab.
+    private static readonly uint[] ProfileColors =
+    [
+        0xff1e1e2e, 0xffcdd6f4, 0xff89b4fa,
+        0xff1a1b26, 0xffc0caf5, 0xff7aa2f7,
+        0xff1b1e20, 0xffeff0f1, 0xff3daee9,
+        0xfffafafa, 0xff20252b, 0xff1377a5,
+        0xff002b36, 0xff93a1a1, 0xffb58900,
+    ];
+    // Abstaende zwischen Ansichten und zum Rand sowie Rahmenstaerke wie bei gekachelten Wayland-Desktops.
+    private const int Gap = 8;
+    private const int PaneInset = 3;
     private static readonly string[] MenuItems = ["Neuer Tab          Ctrl+Shift+T", "Nebeneinander      Ctrl+Shift+E",
         "Uebereinander      Ctrl+Shift+H", "Naechste Ansicht   Ctrl+Shift+N", "Ansicht schliessen Ctrl+Shift+W",
         "Kopieren           Ctrl+Shift+C", "Einfuegen          Ctrl+Shift+V", "Alles auswaehlen", "Ausgabe suchen     Ctrl+Shift+F",
@@ -203,7 +215,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
     private void Layout()
     {
         int top = TabsHeight + ToolbarHeight + (searchOpen ? SearchHeight : 0);
-        foreach (var tab in tabs) Place(tab.Root, new(0, top, width, Math.Max(1, height - top - StatusHeight)));
+        foreach (var tab in tabs) Place(tab.Root, new(Gap, top + Gap / 2, Math.Max(1, width - 2 * Gap), Math.Max(1, height - top - StatusHeight - Gap)));
     }
 
     private static void Place(Node node, UiRect bounds)
@@ -211,19 +223,19 @@ internal sealed class TerminalWorkspaceApp : IApplication
         node.Bounds = bounds;
         if (node.Terminal != null)
         {
-            node.Terminal.Resize(Math.Max(1, bounds.Width - 4), Math.Max(1, bounds.Height - 4));
+            node.Terminal.Resize(Math.Max(1, bounds.Width - 2 * PaneInset), Math.Max(1, bounds.Height - 2 * PaneInset));
             return;
         }
-        int half = Math.Max(0, ((node.Vertical ? bounds.Width : bounds.Height) - 4) / 2);
+        int half = Math.Max(0, ((node.Vertical ? bounds.Width : bounds.Height) - Gap) / 2);
         if (node.Vertical)
         {
             Place(node.First!, bounds with { Width = half });
-            Place(node.Second!, new(bounds.X + half + 4, bounds.Y, Math.Max(0, bounds.Width - half - 4), bounds.Height));
+            Place(node.Second!, new(bounds.X + half + Gap, bounds.Y, Math.Max(0, bounds.Width - half - Gap), bounds.Height));
         }
         else
         {
             Place(node.First!, bounds with { Height = half });
-            Place(node.Second!, new(bounds.X, bounds.Y + half + 4, bounds.Width, Math.Max(0, bounds.Height - half - 4)));
+            Place(node.Second!, new(bounds.X, bounds.Y + half + Gap, bounds.Width, Math.Max(0, bounds.Height - half - Gap)));
         }
     }
 
@@ -235,16 +247,10 @@ internal sealed class TerminalWorkspaceApp : IApplication
         status = ProfileNames[Profile] + " (dieses Fenster)";
     }
 
-    private void ApplyProfile(TerminalApp terminal)
-    {
-        var colors = Profile switch
-        {
-            1 => (0xfffafafa, 0xff20252b, 0xff1377a5),
-            2 => (0xff002b36, 0xff93a1a1, 0xffb58900),
-            _ => (0xff1b1e20, 0xffeff0f1, 0xff3daee9)
-        };
-        terminal.SetColors(unchecked((int)colors.Item1), unchecked((int)colors.Item2), unchecked((int)colors.Item3));
-    }
+    private void ApplyProfile(TerminalApp terminal) =>
+        terminal.SetColors(ProfileColor(0), ProfileColor(1), ProfileColor(2));
+
+    private int ProfileColor(int part) => unchecked((int)ProfileColors[Profile * 3 + part]);
 
     private void ResetViews()
     {
@@ -285,7 +291,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
             foreach (var leaf in tabs[ActiveTabIndex].Leaves)
                 if (leaf.Bounds.Contains(value.X, value.Y))
                 {
-                    leaf.Terminal!.Handle(value with { X = value.X - leaf.Bounds.X - 2, Y = value.Y - leaf.Bounds.Y - 2 });
+                    leaf.Terminal!.Handle(value with { X = value.X - leaf.Bounds.X - PaneInset, Y = value.Y - leaf.Bounds.Y - PaneInset });
                     break;
                 }
             return;
@@ -346,7 +352,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
         {
             var leaf = capture ?? tabs[ActiveTabIndex].Active;
             if (capture != null || leaf.Bounds.Contains(value.X, value.Y))
-                leaf.Terminal!.Handle(value with { X = value.X - leaf.Bounds.X - 2, Y = value.Y - leaf.Bounds.Y - 2 });
+                leaf.Terminal!.Handle(value with { X = value.X - leaf.Bounds.X - PaneInset, Y = value.Y - leaf.Bounds.Y - PaneInset });
             if (value.Type == InputEventType.PointerUp && value.Button == PointerButtons.Left) capture = null;
             return;
         }
@@ -475,59 +481,100 @@ internal sealed class TerminalWorkspaceApp : IApplication
         if (drawWidth != width || drawHeight != height) Resize(drawWidth, drawHeight);
         var previous = surface.Clip;
         surface.IntersectClip(x, y, width, height);
-        surface.FillRectangle(x, y, width, height, UiPainter.Panel);
+        // Alle Flaechen folgen dem Profil: dunkler Grund zwischen abgerundeten Ansichten, Pillen fuer Tabs und Status.
+        int back = ProfileColor(0), text = ProfileColor(1), accent = ProfileColor(2);
+        int chrome = UiPainter.Mix(back, unchecked((int)0xff000000), 72);
+        int pill = UiPainter.Mix(text, chrome, 10);
+        int dim = UiPainter.Mix(text, chrome, 55);
+        surface.FillRectangle(x, y, width, height, chrome);
         var tab = tabs[ActiveTabIndex];
         foreach (var leaf in tab.Leaves)
         {
             var b = leaf.Bounds;
-            surface.FillRectangle(x + b.X, y + b.Y, b.Width, b.Height, leaf == tab.Active && active ? UiPainter.Accent : UiPainter.Border);
-            surface.IntersectClip(x + b.X + 2, y + b.Y + 2, Math.Max(0, b.Width - 4), Math.Max(0, b.Height - 4));
-            leaf.Terminal!.Draw(surface, x + b.X + 2, y + b.Y + 2, Math.Max(1, b.Width - 4), Math.Max(1, b.Height - 4), active && leaf == tab.Active && !searchOpen && !menuOpen);
+            bool focused = leaf == tab.Active && active;
+            UiPainter.RoundFrame(surface, x + b.X, y + b.Y, b.Width, b.Height, 10, 2,
+                focused ? accent : UiPainter.Mix(text, chrome, 18), back);
+            surface.IntersectClip(x + b.X + PaneInset, y + b.Y + PaneInset, Math.Max(0, b.Width - 2 * PaneInset), Math.Max(0, b.Height - 2 * PaneInset));
+            leaf.Terminal!.Draw(surface, x + b.X + PaneInset, y + b.Y + PaneInset, Math.Max(1, b.Width - 2 * PaneInset),
+                Math.Max(1, b.Height - 2 * PaneInset), focused && !searchOpen && !menuOpen);
             surface.SetClip(previous.X, previous.Y, previous.Width, previous.Height);
             surface.IntersectClip(x, y, width, height);
         }
+        int labelTop = (TabsHeight - glyphHeight) / 2;
         for (int index = 0; index < tabs.Count; index++)
         {
             int left = index * TabWidth;
-            surface.FillRectangle(x + left, y, TabWidth - 1, TabsHeight, index == ActiveTabIndex ? UiPainter.Background : UiPainter.Panel);
-            if (index == ActiveTabIndex) surface.FillRectangle(x + left, y + TabsHeight - 2, TabWidth - 1, 2, UiPainter.Accent);
+            bool current = index == ActiveTabIndex;
+            if (current) UiPainter.RoundRect(surface, x + left + 3, y + 3, TabWidth - 6, TabsHeight - 6, 8, UiPainter.Mix(accent, chrome, 28));
             string directory = tabs[index].Active.Terminal!.Shell.CurrentDirectory;
             string label = Path.GetFileName(Path.TrimEndingDirectorySeparator(directory));
             if (label.Length == 0) label = "Shell";
-            painter.Text(surface, $"{index + 1} {label}", x + left + 5, y + 6, TabWidth - MenuRowHeight);
-            painter.Text(surface, "x", x + left + TabWidth - CloseControlWidth + 6, y + 6, glyphWidth, UiPainter.Secondary);
+            painter.Text(surface, $"{index + 1} {label}", x + left + 10, y + labelTop, TabWidth - MenuRowHeight - 6, current ? text : dim);
+            painter.Text(surface, "x", x + left + TabWidth - CloseControlWidth + 4, y + labelTop, glyphWidth, dim);
         }
-        painter.Text(surface, "+", x + width - NewTabWidth + 6, y + 6, glyphWidth, UiPainter.Accent);
+        painter.Text(surface, "+", x + width - NewTabWidth + 6, y + labelTop, glyphWidth, accent);
         string[] labels = ToolbarLabels;
         int cell = Math.Max(1, width / labels.Length);
         for (int index = 0; index < labels.Length; index++)
-            painter.Text(surface, labels[index], x + index * cell + 5, y + TabsHeight + 7, cell - 8, UiPainter.Secondary);
+        {
+            UiPainter.RoundRect(surface, x + index * cell + 3, y + TabsHeight + 2, cell - 6, ToolbarHeight - 4, 8, pill);
+            int labelWidth = Math.Min(cell - 12, labels[index].Length * glyphWidth);
+            painter.Text(surface, labels[index], x + index * cell + (cell - labelWidth) / 2, y + TabsHeight + (ToolbarHeight - glyphHeight) / 2,
+                cell - 12, dim);
+        }
         if (searchOpen)
         {
             int top = y + TabsHeight + ToolbarHeight;
-            surface.FillRectangle(x, top, width, SearchHeight, UiPainter.Background);
-            painter.Text(surface, "Suche: " + search.Text + "_", x + 6, top + 7, width - 3 * SearchButtonWidth - 12);
-            painter.Text(surface, "<", x + width - 3 * SearchButtonWidth + 7, top + 7, glyphWidth, UiPainter.Accent);
-            painter.Text(surface, ">", x + width - 2 * SearchButtonWidth + 7, top + 7, glyphWidth, UiPainter.Accent);
-            painter.Text(surface, "x", x + width - SearchButtonWidth + 7, top + 7, glyphWidth, UiPainter.Accent);
+            UiPainter.RoundRect(surface, x + Gap, top + 2, width - 2 * Gap, SearchHeight - 4, 8, pill);
+            int searchText = top + (SearchHeight - glyphHeight) / 2;
+            painter.Text(surface, "Suche: " + search.Text + "_", x + Gap + 8, searchText, width - 3 * SearchButtonWidth - 24, text);
+            painter.Text(surface, "<", x + width - 3 * SearchButtonWidth + 7, searchText, glyphWidth, accent);
+            painter.Text(surface, ">", x + width - 2 * SearchButtonWidth + 7, searchText, glyphWidth, accent);
+            painter.Text(surface, "x", x + width - SearchButtonWidth + 7, searchText, glyphWidth, accent);
         }
-        surface.FillRectangle(x, y + height - StatusHeight, width, StatusHeight, UiPainter.Panel);
-        string detail = $"{ActiveTerminal.Shell.CurrentDirectory} | {ViewCount} Ansicht(en) | {ActiveTerminal.Zoom * 100}% | {ProfileNames[Profile]}";
-        painter.Text(surface, status.Length > 0 ? status : detail, x + 6, y + height - StatusHeight + 3, width - 12, searchOpen ? UiPainter.Accent : UiPainter.Secondary);
+        DrawStatus(surface, x, y + height - StatusHeight, chrome, pill, text, accent, back);
         if (menuOpen)
         {
-            surface.FillRectangle(x + menuX, y + menuY, Math.Min(width, MenuWidth), MenuRows * MenuRowHeight, UiPainter.Border);
+            int menuWidth = Math.Min(width, MenuWidth);
+            UiPainter.RoundFrame(surface, x + menuX, y + menuY, menuWidth, MenuRows * MenuRowHeight, 8, 1, accent, chrome);
             for (int row = 0; row < MenuRows; row++)
             {
                 int item = menuFirst + row;
                 if (item >= MenuItems.Length) break;
-                surface.FillRectangle(x + menuX + 1, y + menuY + row * MenuRowHeight + 1, MenuWidth - 2, MenuRowHeight - 1,
-                    item == menuIndex ? UiPainter.Selection : UiPainter.Panel);
-                painter.Text(surface, MenuItems[item], x + menuX + 5, y + menuY + row * MenuRowHeight + 4, Math.Min(width, MenuWidth) - 10);
+                if (item == menuIndex)
+                    UiPainter.RoundRect(surface, x + menuX + 3, y + menuY + row * MenuRowHeight + 2, menuWidth - 6, MenuRowHeight - 4, 6, pill);
+                painter.Text(surface, MenuItems[item], x + menuX + 8, y + menuY + row * MenuRowHeight + (MenuRowHeight - glyphHeight) / 2,
+                    menuWidth - 16, item == menuIndex ? text : UiPainter.Mix(text, chrome, 75));
             }
         }
 
         surface.SetClip(previous.X, previous.Y, previous.Width, previous.Height);
+    }
+
+    // Statuszeile als Segmente: Arbeitsverzeichnis hervorgehoben, danach Ansichten, Zoom und Profil.
+    private void DrawStatus(PixelSurface surface, int x, int top, int chrome, int pill, int text, int accent, int back)
+    {
+        surface.FillRectangle(x, top, width, StatusHeight, chrome);
+        int textTop = top + (StatusHeight - glyphHeight) / 2;
+        if (status.Length > 0)
+        {
+            painter.Text(surface, status, x + Gap + 4, textTop, width - 2 * Gap, searchOpen ? accent : text);
+            return;
+        }
+        int left = x + Gap;
+        left = Segment(surface, ActiveTerminal.Shell.CurrentDirectory, left, top, textTop, accent, back, x + width - Gap);
+        left = Segment(surface, $"{ViewCount} Ansicht(en)", left, top, textTop, pill, text, x + width - Gap);
+        left = Segment(surface, $"{ActiveTerminal.Zoom * 100}%", left, top, textTop, pill, text, x + width - Gap);
+        Segment(surface, ProfileNames[Profile], left, top, textTop, pill, text, x + width - Gap);
+    }
+
+    private int Segment(PixelSurface surface, string label, int left, int top, int textTop, int fill, int color, int right)
+    {
+        int segmentWidth = Math.Min(label.Length * glyphWidth + 16, right - left);
+        if (segmentWidth <= 16) return right;
+        UiPainter.RoundRect(surface, left, top + 2, segmentWidth, StatusHeight - 4, (StatusHeight - 4) / 2, fill);
+        painter.Text(surface, label, left + 8, textTop, segmentWidth - 16, color);
+        return left + segmentWidth + 6;
     }
 
     public void Close()

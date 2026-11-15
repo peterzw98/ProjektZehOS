@@ -93,12 +93,32 @@ internal sealed class UiPainter(byte[] font, int glyphWidth, int glyphHeight)
         return top - y;
     }
 
+    /// <summary>Gefuelltes Rechteck mit abgerundeten Ecken; die Ecken werden zeilenweise eingerueckt statt geglaettet.</summary>
+    public static void RoundRect(PixelSurface surface, int x, int y, int width, int height, int radius, int color)
+    {
+        if (width <= 0 || height <= 0) return;
+        radius = Math.Clamp(radius, 0, Math.Min(width, height) / 2);
+        for (int row = 0; row < radius; row++)
+        {
+            int distance = radius - row;
+            int inset = radius - (int)Math.Sqrt(radius * radius - distance * distance);
+            surface.FillRectangle(x + inset, y + row, width - 2 * inset, 1, color);
+            surface.FillRectangle(x + inset, y + height - 1 - row, width - 2 * inset, 1, color);
+        }
+        surface.FillRectangle(x, y + radius, width, height - 2 * radius, color);
+    }
+
+    /// <summary>Abgerundete Flaeche mit einfarbigem Rand der Staerke <paramref name="border"/>.</summary>
+    public static void RoundFrame(PixelSurface surface, int x, int y, int width, int height, int radius, int border, int borderColor, int fill)
+    {
+        RoundRect(surface, x, y, width, height, radius, borderColor);
+        RoundRect(surface, x + border, y + border, width - 2 * border, height - 2 * border, Math.Max(0, radius - border), fill);
+    }
+
     public static void Frame(PixelSurface surface, UiRect bounds, int x, int y, bool focused)
     {
         int inset = focused ? 2 : 1;
-        surface.FillRectangle(x + bounds.X, y + bounds.Y, bounds.Width, bounds.Height, focused ? Accent : Border);
-        surface.FillRectangle(x + bounds.X + inset, y + bounds.Y + inset, Math.Max(0, bounds.Width - 2 * inset),
-            Math.Max(0, bounds.Height - 2 * inset), Background);
+        RoundFrame(surface, x + bounds.X, y + bounds.Y, bounds.Width, bounds.Height, 6, inset, focused ? Accent : Border, Background);
     }
 }
 

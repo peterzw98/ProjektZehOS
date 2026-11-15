@@ -17,8 +17,11 @@ internal sealed class WindowManager
     private int startY;
     private (int X, int Y, int Width, int Height) initial;
 
+    public const int WorkspaceCount = 4;
     public Window? ActiveWindow { get; private set; }
     public int Count => windows.Count;
+    /// <summary>Sichtbarer virtueller Desktop; Fenster anderer Desktops bleiben geoeffnet, werden aber nicht gezeichnet.</summary>
+    public int CurrentWorkspace { get; private set; }
     public bool HasPointerCapture => moving != null || pointerCapture != null;
     public Window GetWindow(int index) => windows[index];
 
@@ -29,6 +32,8 @@ internal sealed class WindowManager
         window.IsMinimized = false;
         Activate(window);
         if (window.Application.RequestClose()) CloseWindow(window);
+        // Nur eine offene Rueckfrage erfordert den Wechsel zum Desktop des betroffenen Fensters.
+        else CurrentWorkspace = window.Workspace;
     }
 
     public void Resize(int width, int height)
@@ -74,6 +79,7 @@ internal sealed class WindowManager
         window.Y = Math.Clamp(window.Y, 0, height - window.Height);
         window.Application.Start();
         window.Application.Resize(window.ContentWidth, window.ContentHeight);
+        window.Workspace = CurrentWorkspace;
         windows.Add(window);
         Activate(window);
     }
@@ -82,19 +88,52 @@ internal sealed class WindowManager
     {
         if (!windows.Contains(window)) return;
         Reset();
-        if (window == ActiveWindow) Minimize(window);
-        else { window.IsMinimized = false; Activate(window); }
+        // Ein Fenster eines anderen Desktops wird wie unter Windows durch Wechsel dorthin aktiviert.
+        if (window.Workspace != CurrentWorkspace) CurrentWorkspace = window.Workspace;
+        else if (window == ActiveWindow) { Minimize(window); return; }
+        window.IsMinimized = false;
+        Activate(window);
     }
 
+    public int CountOn(int workspace)
+    {
+        int count = 0;
+        foreach (Window window in windows) if (window.Workspace == workspace) count++;
+        return count;
+    }
+
+    public void SwitchWorkspace(int workspace)
+    {
+        if (workspace is < 0 or >= WorkspaceCount || workspace == CurrentWorkspace) return;
+        Reset();
+        CurrentWorkspace = workspace;
+        Activate(TopVisible());
+    }
+
+    /// <summary>Verschiebt das aktive Fenster auf einen anderen Desktop und folgt ihm dorthin.</summary>
+    public void MoveActiveToWorkspace(int workspace)
+    {
+        if (ActiveWindow is not { } window || workspace is < 0 or >= WorkspaceCount || workspace == CurrentWorkspace) return;
+        Reset();
+        window.Workspace = workspace;
+        CurrentWorkspace = workspace;
+        Activate(window);
+    }
+
+    private bool IsShown(Window window) => !window.IsMinimized && window.Workspace == CurrentWorkspace;
+
+    /// <summary>Alt+Tab: wechselt nur zwischen Fenstern des aktuellen Desktops.</summary>
     public void Cycle(bool backwards = false)
     {
-        if (windows.Count == 0) return;
-        int index = windows.IndexOf(ActiveWindow!);
+        var current = new List<Window>();
+        foreach (Window window in windows) if (window.Workspace == CurrentWorkspace) current.Add(window);
+        if (current.Count == 0) return;
+        int index = current.IndexOf(ActiveWindow!);
         if (index < 0) index = backwards ? 0 : -1;
-        index = (index + (backwards ? windows.Count - 1 : 1)) % windows.Count;
+        index = (index + (backwards ? current.Count - 1 : 1)) % current.Count;
         Reset();
-        windows[index].IsMinimized = false;
-        Activate(windows[index]);
+        current[index].IsMinimized = false;
+        Activate(current[index]);
     }
 
     public void Handle(InputEvent value)
@@ -221,6 +260,8 @@ internal sealed class WindowManager
     public void CloseAll()
     {
         while (windows.Count > 0) CloseWindow(windows[^1]);
+        // Eine neue Sitzung beginnt wieder auf dem ersten Desktop.
+        CurrentWorkspace = 0;
     }
 
     public void Reset()
@@ -233,7 +274,7 @@ internal sealed class WindowManager
     public void Render(PixelSurface surface, byte[] font, int glyphWidth, int glyphHeight, bool applicationsActive = true)
     {
         foreach (Window window in zOrder)
-            if (!window.IsMinimized) window.Render(surface, font, glyphWidth, glyphHeight, applicationsActive && window == ActiveWindow);
+            if (IsShown(window)) window.Render(surface, font, glyphWidth, glyphHeight, applicationsActive && window == ActiveWindow);
     }
 
     private void Activate(Window? window)
@@ -248,14 +289,15 @@ internal sealed class WindowManager
     private Window? TopVisible()
     {
         for (int index = zOrder.Count - 1; index >= 0; index--)
-            if (!zOrder[index].IsMinimized) return zOrder[index];
+            if (IsShown(zOrder[index])) return zOrder[index];
         return null;
     }
 
-    private Window? HitTest(int x, int y)
+    /// <summary>Oberstes sichtbares Fenster an einer Position, <see langword="null"/> fuer freie Desktopflaeche.</summary>
+    public Window? HitTest(int x, int y)
     {
         for (int index = zOrder.Count - 1; index >= 0; index--)
-            if (!zOrder[index].IsMinimized && zOrder[index].Contains(x, y)) return zOrder[index];
+            if (IsShown(zOrder[index]) && zOrder[index].Contains(x, y)) return zOrder[index];
         return null;
     }
 

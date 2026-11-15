@@ -1,7 +1,8 @@
 param(
     [string] $IsoPath,
     [switch] $PrepareDiskOnly,
-    [switch] $WaitForDebugger
+    [switch] $WaitForDebugger,
+    [switch] $StandardVga
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +46,11 @@ if ($WaitForDebugger) {
 }
 # Cosmos 3.0.94 haelt den Gast sonst bei Shutdown und Reboot nur an.
 $runArguments += @('--', '-action', 'shutdown=poweroff,reboot=reset', '-device', 'qemu-xhci,id=tabletbus', '-device', 'usb-tablet,bus=tabletbus.0')
+# Nur der Cosmos-Treiber fuer VMware SVGA meldet mehrere Modi; damit laesst sich die Aufloesung im Betrieb aendern.
+# Der Gast startet dann mit 1024 x 768 und stellt eine bestaetigte Aufloesung nach der Anmeldung wieder her.
+if (-not $StandardVga) {
+    $runArguments += @('-vga', 'vmware')
+}
 
 & $cosmos.Source @runArguments
 if ($LASTEXITCODE -ne 0) {

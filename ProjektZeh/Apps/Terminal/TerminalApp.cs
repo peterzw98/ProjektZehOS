@@ -3,6 +3,7 @@ using System.Text;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Shell;
+using ProjektZeh.UI;
 
 namespace ProjektZeh.Apps.Terminal;
 
@@ -30,7 +31,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
     private int foreground = unchecked((int)0xffedf4fc);
     private int accent = unchecked((int)0xff53d7bb);
     public TerminalBuffer Buffer { get; } = new(columns);
-    public LineEditor Editor { get; } = new() { HistoryFilter = shell.CanRemember };
+    public LineEditor Editor { get; } = new() { HistoryFilter = shell.CanRemember, Suggest = true };
     public ShellService Shell => shell;
     public int ScrollOffset { get; private set; }
     public int Zoom { get; private set; } = 1;
@@ -89,7 +90,14 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             }
             if (value.KeyCode == (byte)PhysicalKey.Tab && !shell.IsSecretInput && !shell.IsBusy)
             {
-                Editor.Complete(shell);
+                var alternatives = Editor.Complete(shell);
+                if (alternatives.Count > 0)
+                {
+                    // Mehrdeutig: Treffer unter der unveraenderten Eingabe auflisten wie zsh.
+                    Buffer.WriteLine(Prompt + Editor.Text);
+                    foreach (string row in ShellService.FormatAlternatives(alternatives, Buffer.Columns)) Buffer.WriteLine(row);
+                    ScrollOffset = 0;
+                }
                 return;
             }
         }
@@ -257,7 +265,14 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
                 if (selectionStart >= 0 && position >= Math.Min(selectionStart, selectionEnd) && position < Math.Max(selectionStart, selectionEnd))
                     surface.FillRectangle(x + 8 + column * CellWidth, y + 8 + (index - first) * CellHeight, CellWidth, CellHeight, accent);
             }
-            Text(surface, line, x + 8, y + 8 + (index - first) * CellHeight, foreground);
+            int top = y + 8 + (index - first) * CellHeight;
+            // Fruehere Eingaben behalten die Promptfarbe, damit Befehle und Ausgaben unterscheidbar bleiben.
+            if (pager == null && line.StartsWith(Prompt, StringComparison.Ordinal) && !Output.IsContinuation(index))
+            {
+                Text(surface, Prompt, x + 8, top, accent);
+                Text(surface, line.AsSpan(Prompt.Length), x + 8 + Prompt.Length * CellWidth, top, foreground);
+            }
+            else Text(surface, line, x + 8, top, foreground);
         }
         int inputY = y + height - CellHeight - 8;
         if (pager != null) Text(surface, "less: Pfeile, Bild, q", x + 8, inputY, accent);
@@ -267,9 +282,18 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             string text = Editor.DisplayText;
             int start = Math.Max(0, Editor.Cursor - inputColumns + 1);
             string visible = text.Substring(start, Math.Min(inputColumns, text.Length - start));
-            Text(surface, Prompt + visible, x + 8, inputY, accent);
-            if (active && cursorVisible) surface.FillRectangle(x + 8 + (Prompt.Length + Editor.Cursor - start) * CellWidth,
-                inputY + CellHeight - 2, CellWidth, 2, accent);
+            Text(surface, Prompt, x + 8, inputY, accent);
+            int textLeft = x + 8 + Prompt.Length * CellWidth;
+            Text(surface, visible, textLeft, inputY, foreground);
+            if (start == 0 && Editor.Suggestion is { } suggestion && suggestion.Length <= inputColumns)
+                Text(surface, suggestion.AsSpan(text.Length), textLeft + text.Length * CellWidth, inputY, UiPainter.Mix(foreground, background, 40));
+            // Blockcursor wie in modernen Terminals; das Zeichen darunter bleibt in Hintergrundfarbe lesbar.
+            if (active && cursorVisible)
+            {
+                int cursorLeft = textLeft + (Editor.Cursor - start) * CellWidth;
+                surface.FillRectangle(cursorLeft, inputY, CellWidth, CellHeight, accent);
+                if (Editor.Cursor < text.Length) Text(surface, text.AsSpan(Editor.Cursor, 1), cursorLeft, inputY, background);
+            }
         }
         if (MaximumScroll > 0)
         {
@@ -381,7 +405,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         pagerOffset = 0;
         ClearSelection();
     }
-    private void Text(PixelSurface surface, string text, int x, int y, int color)
+    private void Text(PixelSurface surface, ReadOnlySpan<char> text, int x, int y, int color)
     {
         if (Zoom == 1) { surface.DrawText(text, x, y, color, font, glyphWidth, glyphHeight); return; }
         int stride = (glyphWidth + 7) / 8;

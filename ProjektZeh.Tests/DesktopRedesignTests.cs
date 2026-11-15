@@ -49,12 +49,14 @@ public sealed class DesktopRedesignTests
         Click(desktop, 40, 1060);
         var surface = new PixelSurface(1920, 1080, new int[1920 * 1080]);
         desktop.Render(surface, 1000, 0, 0, PointerButtons.None);
-        // Zweiter Eintrag (Dateien): erst markieren, dann innerhalb der Doppelklickfrist erneut klicken.
-        int rowY = 1080 - Desktop.BarHeight - 8 - 620 + 16 + 44 + 12 + 4 + 28 + 14;
-        Click(desktop, 100, rowY);
+        // Zweite Kachel (Dateien): erst markieren, dann innerhalb der Doppelklickfrist erneut klicken.
+        // Menue oben 1080-56-8-720, Suche +16/+44, Ueberschrift +12/+16+8, Kachel 104 x 92 mit 4 px Rand.
+        int rowY = 1080 - Desktop.BarHeight - 8 - 720 + 16 + 44 + 12 + 16 + 8 + 4 + 46;
+        int tileX = 8 + 16 + 4 + 104 + 52;
+        Click(desktop, tileX, rowY);
         Assert.AreEqual(0, desktop.Windows.Count);
         desktop.Update(1200);
-        Click(desktop, 100, rowY);
+        Click(desktop, tileX, rowY);
         Assert.AreEqual(1, desktop.Windows.Count);
         Assert.AreEqual("Dateien", desktop.Windows.ActiveWindow!.Title);
 

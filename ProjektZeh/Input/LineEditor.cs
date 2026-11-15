@@ -15,6 +15,18 @@ internal sealed class LineEditor
 
     public string Text => text.Text;
     public bool IsSecret { get; set; }
+    /// <summary>Blendet wie fish den juengsten passenden Verlaufseintrag ein; Pfeil rechts am Zeilenende uebernimmt ihn.</summary>
+    public bool Suggest { get; set; }
+    public string? Suggestion
+    {
+        get
+        {
+            if (!Suggest || IsSecret || text.Length == 0) return null;
+            for (int index = history.Count - 1; index >= 0; index--)
+                if (history[index].Length > text.Length && history[index].StartsWith(Text, StringComparison.Ordinal)) return history[index];
+            return null;
+        }
+    }
     public Func<string, bool>? HistoryFilter { get; set; }
     public string DisplayText => IsSecret ? new string('*', text.Length) : Text;
     public int Cursor => text.Cursor;
@@ -57,6 +69,9 @@ internal sealed class LineEditor
                 }
                 Replace(history[--historyIndex]);
                 return true;
+            case PhysicalKey.Right when Cursor == text.Length && Suggestion is { } suggestion:
+                Replace(suggestion);
+                return true;
             case PhysicalKey.Down when !IsSecret && historyIndex < history.Count:
                 historyIndex++;
                 Replace(historyIndex == history.Count ? draft : history[historyIndex]);
@@ -88,15 +103,18 @@ internal sealed class LineEditor
             }
         return false;
     }
-    public void Complete(ProjektZeh.Shell.ShellService shell)
+    /// <summary>Vervollstaendigt am Cursor und liefert bei mehreren Treffern deren Namen zur Anzeige.</summary>
+    public List<string> Complete(ProjektZeh.Shell.ShellService shell)
     {
-        if (IsSecret) return;
+        var alternatives = new List<string>();
+        if (IsSecret) return alternatives;
         string previous = Text;
         int previousCursor = Cursor;
-        string completed = shell.Complete(previous, previousCursor);
-        if (completed == previous) return;
+        string completed = shell.Complete(previous, previousCursor, alternatives);
+        if (completed == previous) return alternatives;
         SetText(completed);
         text.MoveTo(previousCursor + completed.Length - previous.Length);
+        return alternatives;
     }
 
     private bool CanRemember(string command)
