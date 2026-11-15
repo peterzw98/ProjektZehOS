@@ -4,12 +4,14 @@
 Das ISO muss mit dem oeffentlichen Gegenstueck von --key (ausschliesslich Testschluessel) gebaut sein.
 --package bezeichnet die unsignierten Dateien aus experiments/NetSurf.Wasi/bin/package oder dem CI-Artefakt.
 Vorhandene VM-Images werden nicht gelesen. Bilder/Protokolle bleiben unter .tools/netsurf-guest/ erhalten.
+Das Paket erhaelt die Netzwerkberechtigung; HTTP-Seiten liefert ein lokaler Testserver, den der Gast als 10.0.2.2 erreicht.
 """
 import argparse
 import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -17,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("package_guest", ROOT / "scripts/test-wasm-doom-desktop.py")
 tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
+spec = importlib.util.spec_from_file_location("netsurf_host", ROOT / "experiments/NetSurf.Wasi/host/run_tests.py")
+pages = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pages)
 
 
 def main():
@@ -35,7 +40,10 @@ def main():
     files.append(str(probe) + "=pages/reset-probe.html")
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
                     "--repo", str(work / "seed/pkgs"), "--id", "netsurf", "--version", "1.0.0", "--name", "NetSurf",
-                    "--entry", "netsurf.wasm", *files], check=True)
+                    "--entry", "netsurf.wasm", "--network", *files], check=True)
+    server = pages.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pages.TestServer)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://10.0.2.2:{server.server_address[1]}"
     tools.create_disk(work / "seed", work / "data.qcow2")
     port = tools.free_port()
     vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
@@ -83,6 +91,7 @@ def main():
         capture("boot")
         guest.login(first=True)
         guest.shell()
+        guest.dhcp()
         guest.pkg("install-local /data/pkgs/netsurf/1.0.0", "netsurf 1.0.0 installiert.")
         guest.desktop()
         memory_mark = guest.mark()
@@ -174,6 +183,29 @@ def main():
         capture("nicht-gefunden")
         click(126,196)
         page("nach-fehler-bedienbar", "d8ecff")
+
+        def address(url):
+            click(400,196)
+            guest.qmp.tap("home")
+            for _ in range(48):
+                guest.qmp.tap("delete",hold=.005)
+            guest.qmp.text(url)
+            guest.qmp.tap("ret")
+
+        hexcolor = lambda colour: "".join(f"{c:02x}" for c in colour)
+        address(f"{base}/seite.html")
+        page("http-seite", hexcolor(pages.HTTP_PAGE))
+        address(f"{base}/umleitung")
+        page("http-umleitung", hexcolor(pages.HTTP_PAGE))
+        address(f"{base}/chunked.html")
+        page("http-chunked", hexcolor(pages.HTTP_CHUNKED))
+        address(f"{base}/fehlt.html")
+        page("http-404", hexcolor(pages.HTTP_MISSING))
+        address("https://10.0.2.2/")
+        time.sleep(2)
+        capture("https-fehlerseite")
+        address("file:///pages/index.html")
+        page("nach-http-lokal", "d8ecff")
         for run in range(3):
             if run:
                 guest.start_app("netsurf")
@@ -184,10 +216,11 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
-        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, 3 Starts/Schliessen",flush=True)
-        print("Textfeld/Fehlerseite anhand der Bildschirmfotos visuell pruefen. Freier Speicher (KiB):",free,flush=True)
+        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), 3 Starts/Schliessen",flush=True)
+        print("Textfeld/Fehlerseiten (auch HTTPS) anhand der Bildschirmfotos visuell pruefen. Freier Speicher (KiB):",free,flush=True)
         return 0
     finally:
+        server.shutdown()
         if vm.poll() is None:
             vm.kill()
             vm.wait()

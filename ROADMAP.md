@@ -263,7 +263,7 @@ Die am 14. November 2026 gelesene [Cosmos-Netzwerkdokumentation](https://cosmoso
 - [x] 11.3 Ein Dokumentmodell und einen einfachen Layoutschritt implementieren: Text umbrechen, Elementhöhen bestimmen und vertikale Positionen berechnen.
 - [x] 11.4 Dokument zeichnen, scrollen und Links anklickbar machen. Relative Dateipfade korrekt zur geöffneten Datei auflösen.
 - [ ] 11.5 Adresszeile sowie Zurück und Vorwärts ergänzen. Dokumentquelle und Darstellung trennen, damit später dieselbe Ansicht lokale Dateien und HTTP-Antworten nutzt.
-- [ ] 11.6 Den HTTP-Client aus Etappe 10 anschließen. Relative URLs, Zielwechsel durch Weiterleitungen und verständliche Fehlermeldungen ergänzen; Weiterleitungen und Datenmengen begrenzen. Nicht unterstützte HTTPS-Ziele ausdrücklich als solche anzeigen.
+- [x] 11.6 Den HTTP-Client aus Etappe 10 anschließen. Relative URLs, Zielwechsel durch Weiterleitungen und verständliche Fehlermeldungen ergänzen; Weiterleitungen und Datenmengen begrenzen. Nicht unterstützte HTTPS-Ziele ausdrücklich als solche anzeigen.
 - [ ] 11.7 Kleine eigene Testseiten verwenden: langer Text, mehrere Links, fehlende Datei und fehlerhaftes HTML. Erst danach Bilder und einfache Gestaltungsregeln ergänzen.
 
 **Fertig, wenn:** Mehrere lokale Seiten über Links besucht werden können. Die nächste Ausbaustufe ist erreicht, wenn dieselben einfachen Seiten vom Testserver geladen werden und Laden sowie Abbrechen den Desktop bedienbar lassen.
@@ -273,10 +273,10 @@ Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten a
 **Teilstand 15. November 2026:** Statt eines eigenen Dokumentbetrachters deckt NetSurf 3.11 als externes WASIp1-Paket ([#59](https://github.com/peterzw98/ProjektZehOS/pull/59), Version 0.2.2) die lokale Stufe ab. Die erste Abnahmestufe ist erreicht: Die Gastprüfung `scripts/test-netsurf-desktop.py` besucht in QEMU mehrere paketeigene Seiten über relative Links und kehrt über Zurück zurück. Automatisiert geprüft werden HTML/CSS über Markerfarben, Laden über die Adresszeile, Scrollen per Rad und Bild ab, die Weiterbedienung nach einem kaputten Link sowie drei Starts mit Schließen. Formulartext „Grüße @“ und Fehlerseite wurden anhand der Bildschirmfotos visuell geprüft. Nachweise stehen in [NETSURF.md](docs/NETSURF.md).
 - 11.1–11.4: Erledigt. Geladen werden nur Dateien aus dem eigenen, lesend eingebundenen Paket, keine beliebigen Dateien unter `/data`. Geprüfte relative Links liegen im selben Verzeichnis; `../` und Unterverzeichnisse sind ungeprüft. JavaScript ist laut Buildkonfiguration abgeschaltet (Codebefund, kein Test).
 - 11.5: Teilweise erledigt. Adresszeile und Zurück sind automatisiert geprüft, Vorwärts ist ungeprüft. Quelle und Darstellung trennt NetSurf über seine Fetch-Schicht; das ist ein Codebefund.
-- 11.6: Offen. HTTP/HTTPS fehlt noch; die Anbindung ist als eigener Folgeschritt angekündigt.
+- 11.6: Erledigt durch einen eigenen NetSurf-Fetcher über das Netz-ABI (#69 und der Gast-PR darauf). Automatisiert geprüft: Seite, zweistufige relative Weiterleitung, `chunked` und 404 vom Testserver in QEMU, dazu abgelehnte Verbindung auf dem Linux-Prüfhost. Weiterleitungen begrenzt NetSurfs llcache, Antworten der Fetcher (Rumpf 8 MiB, Kopf 64 KiB). `https://` zeigt eine ausdrückliche Fehlerseite (visuell geprüft). Relative Links innerhalb von HTTP-Seiten sind nicht eigens getestet.
 - 11.7: Teilweise erledigt. Langer Text, mehrere Links und eine fehlende Datei sind abgedeckt. Fehlerhaftes HTML ist nicht als eigene Testseite geprüft; GIF/BMP sind aktiviert, aber ungeprüft.
 
-Die zweite Abnahmestufe (Seiten vom Testserver) ist offen. VMware und echte Hardware sind für den Browser ungeprüft.
+Die zweite Abnahmestufe ist teilweise erreicht: Seiten vom Testserver laden in QEMU, der Desktop bleibt dabei bedienbar. Das Abbrechen eines laufenden Ladevorgangs ist nicht eigens geprüft. VMware und echte Hardware sind für den Browser ungeprüft.
 
 ## 12 Moderne Webseiten und ein robusteres System
 
@@ -335,7 +335,7 @@ Reine Logik wie Befehlsparser, Pfadauflösung, Textumbruch und HTML-Parser läss
 
 Die Textshell sowie Diagnose, Eingabe, Grafik und Desktop aus Etappen 2 bis 6 sind umgesetzt. Die noch offenen Grundlagenprüfungen, die Entkopplung langer Dateioperationen aus 3.5 und die zusätzliche VMware-Dateiprüfung bleiben sichtbar:
 
-Etappen 6a bis 6c, 8, 9.1–9.5 und 10 sind abgeschlossen. Die lokale Stufe von Etappe 11 ist erreicht. Als Nächstes folgen der Doom-Langlauf (9.6) und HTTP im Browser (11.6). VMware-Nachprüfungen bleiben offen.
+Etappen 6a bis 6c, 8, 9.1–9.5 und 10 sind abgeschlossen. Die lokale Stufe von Etappe 11 ist erreicht. Als Nächstes folgen der Doom-Langlauf (9.6) und die restlichen Teilstände von Etappe 11. VMware-Nachprüfungen bleiben offen.
 
 - [x] `ShellService.ExecuteLine(...)` anlegen und die aktuelle Echo-Ausgabe dort als `echo` umsetzen.
 - [x] `help`, `clear` und `about` über eine Befehlstabelle ergänzen.

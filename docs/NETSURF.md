@@ -40,8 +40,11 @@ Das ISO muss zum öffentlichen Gegenstück des Testschlüssels passen. Der Test 
 lokales Paket und eine frische beschreibbare QEMU-Platte; bestehende Datenimages werden nicht verwendet.
 Er prüft Installation, Start, Markerfarben für HTML/CSS und Linknavigation, Zurück, Fokusverlust ohne Klick,
 Mausrad/Bild ab, Weiterbedienung nach einem kaputten Link und drei Starts mit Schließen.
-Bildschirmfotos dokumentieren zusätzlich „Grüße @“ im Formular und die sichtbare Fehlerseite „Not found“;
-diese beiden Inhalte werden visuell geprüft. Drei Speicherwerte nach dem Aufräumen dürfen um höchstens
+Das Paket erhält dafür `capability=net`. Nach `net dhcp` lädt NetSurf Seiten von einem lokalen Testserver
+auf dem Entwicklungsrechner (aus dem Gast `10.0.2.2`): eine Seite, eine zweistufige relative Weiterleitung,
+eine `chunked`-Antwort und eine 404-Seite, danach wieder eine lokale Seite.
+Bildschirmfotos dokumentieren zusätzlich „Grüße @“ im Formular, die sichtbare Fehlerseite „Not found“ und
+die HTTPS-Fehlerseite; diese drei Inhalte werden visuell geprüft. Drei Speicherwerte nach dem Aufräumen dürfen um höchstens
 8 MiB sinken. Nachweise bleiben unter `.tools/netsurf-guest/` und werden nicht eingecheckt.
 
 ## Bisheriger Nachweis
@@ -71,6 +74,10 @@ Endabnahme am 15. November 2026 auf genau dem PR-Stand `51c9ec8`, mit `master` e
   - Eine zweite Taste während des Rollbalken-Ziehens löste den Grab.
   - Ein Fokusreset bei mehreren gedrückten Tasten konnte einen Klick auslösen.
   - Der Build ist reproduzierbar und enthält keine Benutzer-, Rechner- oder Pfaddaten mehr.
+
+HTTP-Gastprüfung am 15. November 2026 (Branch `feature/netsurf-http-guest`, 0.2.11, gestapelt auf dem Host-PR #69):
+`NETSURF_GUEST PASS` unter QEMU mit KVM (`-cpu qemu64,+rdrand,+rdseed`); freier Speicher nach drei Läufen
+438952, 439528 und 441472 KiB. HTTPS-Fehlerseite anhand des Bildes geprüft. Linux-Prüfhost: `host/run_tests.py` 13/13.
 
 ## Grenzen
 
