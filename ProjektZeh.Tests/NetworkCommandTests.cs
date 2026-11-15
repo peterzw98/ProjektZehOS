@@ -38,6 +38,20 @@ public sealed class NetworkCommandTests
         Assert.IsTrue(tasks.StopAll(2000));
     }
 
+    [TestMethod]
+    public void ResultIsLoggedWhenTaskEnds()
+    {
+        using var logged = new ManualResetEventSlim();
+        string? text = null;
+        var tasks = new BackgroundTaskService();
+        var commands = new NetworkShellCommands(new FakeNetwork(), tasks, () => true, value => { text = value; logged.Set(); }).Commands;
+        Assert.IsTrue(commands[1].Execute(["dhcp"], new Output()).IsOK());
+        Assert.IsTrue(commands[1].Execute(["cancel"], new Output()).IsOK());
+        Assert.IsTrue(logged.Wait(2000));
+        Assert.AreEqual("Netzwerkauftrag abgebrochen.", text);
+        Assert.IsTrue(tasks.StopAll(2000));
+    }
+
     private sealed class FakeNetwork : INetworkService
     {
         public int Calls;

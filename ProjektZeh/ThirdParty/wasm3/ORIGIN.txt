@@ -1,0 +1,6 @@
+Quelle: https://github.com/wasm3/wasm3
+Commit: 28ecb9af6d2040e474a70f7cb7f43666740141fb
+Lizenz: MIT (LICENSE)
+Uebernommen am 14. November 2026: Kern aus source/ (m3_*.c/h ohne m3_api_*, wasm3.h, wasm3_defs.h).
+Nicht uebernommen: WASI-/uvwasi-/libc-/Tracer-APIs, Plattformdateien, Erweiterungen.
+Aenderungen: keine. Freistehende C-Laufzeit siehe ProjektZeh/Native/Wasm/libc/.

@@ -1,0 +1,24 @@
+services:
+  repo:
+    build: .
+    image: zehos-package-repo
+    restart: unless-stopped
+    # Nur lokal; TLS terminiert der Host-nginx (host-nginx.conf).
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      # Vom updater gepflegt; nginx liest nur.
+      - packages:/srv/zehos-packages:ro
+
+  # Zieht neue Pakete automatisch aus dem Git-Branch (PACKAGES_GIT_URL/PACKAGES_BRANCH in .env).
+  updater:
+    image: alpine/git:2.47.2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/updater.sh"]
+    env_file: .env
+    volumes:
+      - packages:/srv/zehos-packages
+      - ./updater.sh:/updater.sh:ro
+
+volumes:
+  packages:

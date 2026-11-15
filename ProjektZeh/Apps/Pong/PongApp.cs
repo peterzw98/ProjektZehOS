@@ -17,6 +17,7 @@ internal sealed class PongApp(UiPainter painter) : IApplication
     private int shownComputer = -1;
     private string score = "";
     public bool IsPaused => paused;
+    public bool NeedsAnimation => !paused;
     public PongGame Game => game;
 
     public void Start() { }

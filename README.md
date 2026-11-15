@@ -238,6 +238,30 @@ Zuerst als Administrator `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` 
 
 Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-Length`. Header sind auf 8192 Bytes, Antwortkörper auf 16384 Bytes begrenzt. Weiterleitungen und Transfercodierungen werden abgelehnt. Cosmos 3.0.94 verarbeitet einen Abbruch während DHCP oder TCP-Verbindungsaufbau erst nach Rückkehr seines internen Warteaufrufs. Die übrige Bedienung läuft auf dem Hauptthread weiter. [Architektur, HTTPS-Plan und Prüfnachweise](docs/NETWORK_TESTS.md).
 
+## Apps als Pakete installieren (Doom)
+
+Mit `-p:ZehOSWasm=true` enthält der Kernel einen WebAssembly-Loader (wasm3). Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
+
+```text
+net dhcp
+pkg source https://packages.pjoter.de/
+pkg update
+pkg install doom
+```
+
+Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis zeigt `pkg status`. `pkg list`, `pkg upgrade` und `pkg remove doom` verwalten installierte Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Beim ersten Start nach jedem Neustart werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
+
+Ein Build vertraut nur dem eingebetteten öffentlichen Herausgeberschlüssel `ProjektZeh/Packages/package-key.pub`; `-p:ZehOSPackageKeyPath=<Datei>` ersetzt ihn, etwa für Tests. Den privaten Schlüssel hält der Herausgeber außerhalb des Repositorys. Das Repository wird aus dem Branch `packages` gespeist und von `deploy/package-repo` ausgeliefert (Docker-Compose mit automatischer Aktualisierung). Format, Speicherort und Werkzeug `scripts/build-package.py` beschreibt [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md). QEMU-Abläufe prüft `scripts/test-wasm-doom-desktop.py`, mit lokalem Testrepository oder mit `--source https://packages.pjoter.de/`.
+
+Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was eine App darf, erklärt [docs/PAKETE_ERSTELLEN.md](docs/PAKETE_ERSTELLEN.md), ebenso den Weg bis zur Veröffentlichung. Die wichtigsten Grenzen:
+- Nur grafische Fensterapps; eine App zur Zeit.
+- Dateien nur lesend und nur aus dem eigenen Paket.
+- Kein Netzwerk, keine Threads, keine Speicherstände.
+- Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
+- Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
+
+`pkg` gibt es nur in Builds mit `-p:ZehOSWasm=true`.
+
 ## Start in VMware Player aus Visual Studio
 
 Die Cosmos-Erweiterung übernimmt standardmäßig `F5` und `Strg+F5` für QEMU. Für einen Start in VMware ohne Umstellen der Debug-Einstellung zuerst in Visual Studio bauen (`Strg+Umschalt+B`) und dann im Visual-Studio-Terminal aus dem Repository-Stamm ausführen:

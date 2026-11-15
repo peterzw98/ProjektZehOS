@@ -38,6 +38,8 @@ internal sealed class Desktop
     private readonly List<ApplicationEntry> matches = [];
     private readonly ApplicationEntry[] applications;
     private readonly ApplicationEntry[] pinned;
+    private readonly Func<ExternalApplication[]>? listExternal;
+    private ApplicationEntry[] external = [];
     private int width;
     private int height;
     private UiRect menuBounds;
@@ -68,14 +70,16 @@ internal sealed class Desktop
     public SystemMetrics System { get; } = new();
     public DesktopPreferences Preferences { get; private set; }
     private bool restoreDisplay = true;
-    public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application is PongApp { IsPaused: false };
+    public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application.NeedsAnimation == true;
 
     private sealed record ApplicationEntry(string Name, string Description, AppIcon Icon, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
         Func<ShellService> createShell, Func<FileService> createFiles,
-        DisplaySettings? display = null, TaskManagerSection[]? systemSections = null, DesktopSession? session = null)
+        DisplaySettings? display = null, TaskManagerSection[]? systemSections = null, DesktopSession? session = null,
+        Func<ExternalApplication[]>? listExternal = null)
     {
+        this.listExternal = listExternal;
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 400 + BarHeight);
         ArgumentNullException.ThrowIfNull(font);
@@ -102,7 +106,7 @@ internal sealed class Desktop
             new("Texteditor", "Textdateien - Doppelklick/Enter", AppIcon.Editor, () => OpenEditor()),
             new("Einstellungen", "Anzeige, Aussehen - Doppelklick/Enter", AppIcon.Settings, OpenSettings),
             new("Taskmanager", "Fenster, System - Doppelklick/Enter", AppIcon.Tasks, OpenTaskManager),
-            new("Pong", "Spiel - Doppelklick/Enter", AppIcon.Pong, OpenPong)
+            new("Pong", "Spiel - Doppelklick/Enter", AppIcon.Pong, OpenPong),
         ];
         pinned = [applications[1], applications[0], applications[3]];
         search = new(64, painter: painter);
@@ -161,6 +165,26 @@ internal sealed class Desktop
         new TextEditorApp(createFiles(), painter, path), 640, 440);
     public bool OpenPong() => Windows.Count < MaximumWindows && OpenApplication("Pong", AppIcon.Pong, new PongApp(painter),
         680, Math.Max(480, Window.TitleHeight + 34 + 2 * glyphHeight + PongGame.Height));
+    // Installierte Paket-Apps: ein offenes Fenster derselben App wird nach vorn geholt statt eine zweite Instanz zu starten.
+    private bool OpenExternal(ExternalApplication app)
+    {
+        for (int index = 0; index < Windows.Count; index++)
+        {
+            Window window = Windows.GetWindow(index);
+            if (window.Title != app.Name) continue;
+            if (window != Windows.ActiveWindow || window.IsMinimized) Windows.ToggleTask(window);
+            sceneDirty = true;
+            return true;
+        }
+        if (Windows.Count == MaximumWindows) return false;
+        var created = app.Create(painter);
+        if (created == null)
+        {
+            menuStatus = "Es laeuft bereits eine Paket-App; zuerst beenden.";
+            return false;
+        }
+        return OpenApplication(app.Name, AppIcon.Pong, created, 640, 400 + Window.TitleHeight, 680, 440 + Window.TitleHeight);
+    }
     public bool OpenSettings() => ActivateExisting<SettingsApp>() || Windows.Count < MaximumWindows && OpenApplication("Einstellungen",
         AppIcon.Settings, new SettingsApp(painter, Preferences, display, () => now), 640, 440, 1200, 820);
     public bool OpenTaskManager() => ActivateExisting<TaskManagerApp>() || Windows.Count < MaximumWindows && OpenApplication("Taskmanager",
@@ -219,6 +243,21 @@ internal sealed class Desktop
         menu.Focus(search);
         menuStatus = "";
         menuOpen = true;
+        RefreshExternal();
+    }
+
+    // Beim Oeffnen des Menues neu lesen, damit pkg install/remove ohne Neustart sichtbar wird.
+    private void RefreshExternal()
+    {
+        if (listExternal == null) return;
+        var apps = listExternal();
+        external = new ApplicationEntry[apps.Length];
+        for (int index = 0; index < apps.Length; index++)
+        {
+            var app = apps[index];
+            external[index] = new(app.Name, $"Paket {app.Id} - Doppelklick/Enter", AppIcon.Pong, () => OpenExternal(app));
+        }
+        FilterApplications();
     }
 
     public void Handle(InputEvent value)
@@ -320,6 +359,8 @@ internal sealed class Desktop
     {
         matches.Clear();
         foreach (var app in applications)
+            if (app.Name.Contains(search.Text, StringComparison.OrdinalIgnoreCase)) matches.Add(app);
+        foreach (var app in external)
             if (app.Name.Contains(search.Text, StringComparison.OrdinalIgnoreCase)) matches.Add(app);
         var names = new string[matches.Count];
         var icons = new AppIcon[matches.Count];

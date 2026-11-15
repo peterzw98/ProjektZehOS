@@ -2,6 +2,30 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Paketverwaltung am 15. November 2026
+
+Geprüft in QEMU TCG mit 512 MiB, e1000e und vvfat-Datenlaufwerk mit `snapshot=on`. Details in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
+
+- **`finally` auf Fehlerwegen:** Die bekannte Unwind-Grenze betrifft auch einfache `try/finally`-Blöcke. Ein `Monitor.Exit` im `finally` von `CosmosNetworkService.Download` lief nach einer Ausnahme nicht. Die Netzwerksperre blieb belegt, und jedes weitere `pkg update` wartete endlos. Sperren, Paketsperren und Schreib-Handles werden deshalb nach `catch` ausdrücklich freigegeben.
+- **TLS-Abschluss:** Schließt der Server die Verbindung direkt nach der Antwort, scheitert BouncyCastle beim Senden von `close_notify` mit `internal_error(80)`. Bei Downloads mit vollständig gelesenem, längengeprüftem Body wird das nicht als Fehler gewertet.
+- **Dateisystem:** `File.Move`, `File.Delete`, `Directory.CreateDirectory`, `Directory.GetFiles/GetDirectories` und nicht rekursives `Directory.Delete` funktionieren auf FAT. Installieren, Entfernen, Aktualisieren und Aufräumen nach einem Neustart laufen damit.
+- **Dauer unter TCG:** 28-MB-Download über HTTPS mit Schreiben und SHA-256 rund 90 bis 120 s. Die erneute Prüfung aller Dateien verlängert den ersten Doom-Start nach dem Booten auf bis zu etwa 30 s; danach merkt sich der Kernel die geprüfte Version bis zum nächsten Neustart.
+- **QEMU-Eingabe:** Die Kontoeinrichtung nach dem ersten Start dauert unter TCG unterschiedlich lange. Per QMP zu früh getippte Zeilen gehen verloren oder werden geteilt. Das Testskript wiederholt deshalb `net dhcp` und `pkg source`.
+- **Serielle Testmarken:** Neben `PKG …` schreibt der Kernel `NET <Ergebnis>` am Ende eines Netzwerkauftrags und `APP <id> erstes Bild` sowie `APP <id> beendet` (bzw. `Ende: …`) für Paket-Apps. Das Testskript wartet darauf statt auf feste Zeiten.
+- **WHPX (Windows-Hypervisor, 15. November 2026):** Der Gast läuft mit QEMU 10.2.2 unter WHPX, wenn kein `-cpu` angegeben ist (Standardmodell). Mit `-cpu max` oder `-cpu host` bricht er sofort ab (`WHPX: Unexpected VP exit code 4`). Die Meldung `whpx: injection failed, MSI … vector: 0` erscheint, ist aber folgenlos. Alle Szenarien von `scripts/test-wasm-doom-desktop.py --accel whpx` bestehen. Der Gewinn ist klein: Kontoeinrichtung 25 statt 48 s, Doom-Installation 85 statt 106 s, Szenario `packages` 517 statt 643 s. Ein wahrscheinlicher Grund ist die fest eingebaute Debugausgabe von Cosmos 3.0.94 (`[LowLevelMonitor]`, `[SCHED]`, mehrere MB je Lauf): Jedes Byte an die serielle Schnittstelle verlässt unter WHPX die VM. Abschaltbar ist sie nur zusammen mit der seriellen Schnittstelle (`CosmosEnableUART`), die die Testmarken braucht. WSL2 mit KVM ist auf dem Referenzrechner nicht installiert und nicht geprüft.
+
+## WebAssembly-Interpreter (wasm3) am 14. November 2026
+
+Probe mit `-p:ZehOSWasmProbe=true`, QEMU 512 MiB, CPU `max`; Details in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md).
+
+- **C-Einbindung:** `GCCProject`/`GCCIncludePath` übersetzen eigene C-Verzeichnisse mit `-nostdinc -ffreestanding -mcmodel=kernel`; clangs eigene Header (`stdint.h`, `stddef.h`, `stdarg.h`, `limits.h`, `float.h`) stehen zur Verfügung, `stdlib`/`stdio`/`string` nicht. C ruft C# über `[UnmanagedCallersOnly(EntryPoint=…)]`, C# ruft C über `[DllImport("*", EntryPoint=…)]`.
+- **Vorhandene C-Symbole:** Cosmos stellt bereits `memcpy`, `memcmp`, `memset`, `memmove`, `floor(f)`, `ceil(f)`, `trunc(f)`, `sqrt(f)`, `__cosmos_heap_alloc/free` und `__cosmos_serial_write` bereit; eigene Definitionen gleichen Namens scheitern beim Linken.
+- **`memcmp` ist nicht standardkonform:** `__cosmos_memcmp` vergleicht nur ganze 32-Bit-Wörter (Restbytes werden ignoriert) und liefert nur 0/1. wasm3 hielt dadurch verschiedene Funktionstypen für gleich (`incorrect type on stack`). Eigene C-Bausteine leiten `mem*` deshalb auf exakte Implementierungen um.
+- **Stacks:** Der Boot-Thread läuft auf dem 1-MiB-Limine-Stack. `new Thread(start, maxStackSize)` erhält den angeforderten Stack. **Der Stack beendeter Threads wird nicht freigegeben:** drei leere Threads mit je 8 MiB kosteten dauerhaft 24 MiB. Langlebige Worker statt Threads pro Auftrag verwenden.
+- **Ungesammelter Speicher:** Nach Doom-Läufen im Desktop blieben ohne `GC.Collect()` je rund 30 MiB belegt, obwohl der Speicher freigebbar war (mit vorheriger Sammlung stabil). Nach großen Dateilesevorgängen gezielt sammeln.
+- **Beschleunigung:** Mit `-cpu max` bricht der Gast unter WHPX ab (`WHPX: Unexpected VP exit code 4`; ebenso mit `kernel-irqchip=off`). Ohne `-cpu` läuft er (siehe Paketverwaltung, WHPX). Die Messungen hier stammen aus TCG.
+- **Eingebettete Rekursion:** Ohne natives Budget sprengt tiefe Wasm-Rekursion den Kernel-Stack (Triple Fault, Neustart). Mit `d_m3MaxNativeStack` = 7 MiB auf einem 8-MiB-Thread endet sie als Wasm-Trap.
+
 ## Desktop-Einstellungen: Abschluss am 14. November 2026
 
 Der aktuelle Desktopstand integriert master `62b064c` einschließlich Anmeldung und Dateirechten. 277 Hosttests sowie normale und Recovery-NativeAOT-Builds bestehen. In QEMU wurden Full HD, Ersteinrichtung/Anmeldung, Einstellungsapp, Personalisierung im Benutzerhome, Taskmanager, F4/Esc und ein neutraler Anmeldeschirm nach Logout geprüft. Die Szene-/Zeigeroptimierung bleibt erhalten; die aktuelle Full-HD-Stichprobe bei Mausbewegung zeigt 57 FPS. Auflösungsbestätigung, fehlgeschlagene Rücknahme und BMP-Farbmasken besitzen gezielte Hostregressionen. Ein VMware-SVGA-Laufzeitwechsel ist damit nicht im Gast nachgewiesen. Details und Grenzen: [DESKTOP_SETTINGS_REVIEW.md](DESKTOP_SETTINGS_REVIEW.md).
