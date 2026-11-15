@@ -166,8 +166,10 @@ def extra_get(handler: TestServer) -> bool:
         handler.wfile.write(body)
     elif handler.path == "/gemischt":
         handler.send_page(200, mixed_page("/marker.css"))
-    elif handler.path == "/falsches-token":
-        handler.send_page(200, form_page("/ziel-token", "post", "zehos_bestaetigung", "0" * 32))
+    elif handler.path in ("/falsches-token", "/kurzes-token"):
+        # Kurzes Token: der Vergleich darf nicht hinter die übergebenen Daten lesen.
+        value = "0" * 32 if handler.path == "/falsches-token" else "1"
+        handler.send_page(200, form_page("/ziel-token", "post", "zehos_bestaetigung", value))
     elif handler.path.startswith("/ziel-get-"):
         form_target(handler, handler.path)
     elif handler.path == "/keks-setzen":
@@ -203,7 +205,7 @@ def make_tls_fixtures(work: Path) -> dict[str, Path]:
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
             "-subj", "/CN=ZehOS Test-CA", "-addext", "basicConstraints=critical,CA:TRUE",
             "-addext", "keyUsage=critical,keyCertSign")
-    for name, san in (("gut", "IP:127.0.0.1"), ("falsch", "DNS:anders.example")):
+    for name, san in (("gut", "IP:127.0.0.1,DNS:localhost"), ("falsch", "DNS:anders.example")):
         openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", f"{name}.key", "-out", f"{name}.csr",
                 "-subj", f"/CN={name}")
         (work / f"{name}.ext").write_text(f"subjectAltName={san}\nextendedKeyUsage=serverAuth\n")
@@ -224,6 +226,11 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
                 self.send_page(200, mixed_page("/css-zu-http"))
             elif self.path == "/css-zu-http":
                 self.send_page(302, b"", {"Location": f"{http_base}/marker.css"})
+            elif self.path == "/h":
+                self.send_page(200, page(HTTP_CHUNKED, "HSTS gesetzt"), {"Strict-Transport-Security": "max-age=600"})
+            elif self.path == "/hz":
+                port = self.server.server_address[1]
+                self.send_page(302, b"", {"Location": f"http://localhost:{port}/seite.html"})
             elif self.path.startswith("/formular?"):
                 method, target = self.path.split("?", 1)[1].split("&")
                 self.send_page(200, form_page(f"{http_base}/{target}", method, "geheim", "wert42"))
@@ -274,6 +281,21 @@ def record_post(handler: TestServer) -> None:
 TestServer.do_POST = record_post
 
 
+def hsts_scenarios(port: int) -> list:
+    # NetSurfs urldb merkt sich HSTS nur im Speicher: erst setzen, dann hebt llcache http://localhost:<port> auf https.
+    # Kurze Pfade, weil address() nur 32 Zeichen der vorigen Adresse löscht.
+    named = f"https://localhost:{port}"
+    plain = f"http://localhost:{port}"
+    return [
+        ("https-hsts-link", address(1500, f"{named}/h") + address(3500, f"{plain}/seite.html"),
+         [HTTP_PAGE], [DOWNGRADE_PAGE, START]),
+        ("https-hsts-weiterleitung", address(1500, f"{named}/h") + address(3500, f"{named}/hz"),
+         [HTTP_PAGE], [DOWNGRADE_PAGE, START]),
+        # Gegenprobe ohne HSTS: dieselbe Weiterleitung zeigt die Warnseite.
+        ("https-ohne-hsts-weiterleitung", address(1500, f"{named}/hz"), [DOWNGRADE_PAGE], [HTTP_PAGE, START]),
+    ]
+
+
 def form_scenarios(good: str, base: str) -> list:
     submit = click(3600, CLICK_SUBMIT)
     confirm = [*submit, *click(4600, CLICK_CONFIRM)]
@@ -286,6 +308,7 @@ def form_scenarios(good: str, base: str) -> list:
          [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
         # Eine fremde Seite postet ein erfundenes Token: lokale Fehlerseite, nichts geht ins Netz.
         ("http-formular-falsches-token", address(1500, f"{base}/falsches-token") + submit, [], [FORM_OK, FORM_SOURCE]),
+        ("http-formular-kurzes-token", address(1500, f"{base}/kurzes-token") + submit, [], [FORM_OK, FORM_SOURCE]),
     ]
 
 
@@ -357,6 +380,7 @@ def main() -> int:
         tls = [tls_server(Path(work), name, base) for name in ("gut", "falsch")]
         scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
         scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base)
+        scenarios += hsts_scenarios(tls[0].server_address[1])
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))

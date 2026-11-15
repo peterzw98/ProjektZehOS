@@ -138,13 +138,20 @@ static void pending_clear(void)
 	memset(&pending, 0, sizeof(pending));
 }
 
-/* Zeitkonstanter Vergleich, damit die Laufzeit nichts über das Token verrät. */
+/* Zeitkonstant über den Inhalt, damit die Laufzeit nichts über das Token verrät; die Länge ist kein Geheimnis. */
 static bool token_equal(const char *a, const char *b)
 {
 	size_t len = strlen(b);
-	unsigned char diff = (unsigned char)(strlen(a) != len);
+	if (strlen(a) != len) return false;
+	unsigned char diff = 0;
 	for (size_t i = 0; i < len; i++) diff |= (unsigned char)(a[i] ^ b[i]);
 	return diff == 0;
+}
+
+/* Verwirft einen zurückgehaltenen POST, sobald er abgelaufen ist, statt bis zum nächsten Formular zu warten. */
+static void pending_expire(void)
+{
+	if (pending.body != NULL && now_ms() - pending.created > CONFIRM_MAX_AGE_MS) pending_clear();
 }
 
 void fetch_zehos_http_mark_form(nsurl *url);
@@ -434,6 +441,7 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 		f->tls = true;
 		f->port = 443;
 	}
+	pending_expire();
 	char *url_s = NULL;
 	size_t url_len = 0;
 	const char *post = post_urlenc;
@@ -451,7 +459,6 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 	} else if (post != NULL && strncmp(post, CONFIRM_FIELD "=", sizeof(CONFIRM_FIELD)) == 0) {
 		// Bestätigung von der Warnseite: nie ins Netz, außer Token, Ziel und Alter passen.
 		bool valid = verifiable && pending.body != NULL && strcmp(pending.url, url_s) == 0
-			&& now_ms() - pending.created <= CONFIRM_MAX_AGE_MS
 			&& token_equal(post + sizeof(CONFIRM_FIELD), pending.token);
 		if (valid) {
 			confirmed = pending.body;
@@ -656,6 +663,7 @@ static bool step(struct http_fetch *f)
 
 static void fetch_http_poll(lwc_string *scheme)
 {
+	pending_expire();
 	struct http_fetch *f, *keep = NULL;
 	while (ring != NULL) {
 		f = ring;
