@@ -17,7 +17,9 @@ namespace ProjektZeh.Apps.Wasm;
 /// Wasm-Worker; Bilder und Tasten werden ueber gesperrte, begrenzte Puffer zwischen Worker und Desktop getauscht.
 /// Die Paketversion bleibt bis zum Ende des Laufs gesichert, damit Entfernen oder Aktualisieren sie nicht loescht.
 /// </summary>
-internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter) : IApplication, IWasmSession
+/// <remarks><paramref name="log"/> erhaelt erstes Bild und Ende des Laufs, damit Gasttests darauf warten koennen.</remarks>
+internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null)
+    : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
     private const int KeyQueueCapacity = 64;
@@ -37,6 +39,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private int frameRevision;
     private int drawnRevision = -1;
     private bool running;
+    // Nur vom Wasm-Worker gelesen und geschrieben.
+    private bool presented;
     private bool exitRequested;
     private bool active;
     private string? status = "Pruefe Paket ...";
@@ -78,6 +82,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private void Finished(WasmStatus result, int exitCode, string message)
     {
         store.Release(packageId);
+        string ending;
         lock (gate)
         {
             running = false;
@@ -85,7 +90,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             else if (result == WasmStatus.Ok) status = $"App beendet (Exitcode {exitCode}): {LastErrorLine()}";
             else if (result == WasmStatus.LoadFailed && frameWidth == 0) status = message;
             else status = $"App abgebrochen: {result} {message}";
+            ending = result == WasmStatus.Ok && exitCode == 0 ? "beendet" : "Ende: " + status;
         }
+        log?.Invoke(ending);
     }
 
     public void Handle(InputEvent value)
@@ -189,6 +196,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     void IWasmSession.Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test)
     {
         if (test) return;
+        // Vor der Sichtbarkeitspause melden: die Marke belegt, dass das Modul laeuft, unabhaengig vom Fensterzustand.
+        if (!presented) { presented = true; log?.Invoke("erstes Bild"); }
         lock (gate)
         {
             // Eine nicht sichtbare oder nicht aktive App haelt hier an; ihre Uhr steht in dieser Zeit still,

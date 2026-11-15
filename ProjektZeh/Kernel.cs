@@ -98,7 +98,8 @@ public sealed class Kernel : Sys.Kernel
         {
             string id = installed.Value[index].Manifest.Id;
             apps[index] = new(id, installed.Value[index].Manifest.Name,
-                painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter));
+                painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter,
+                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n")));
         }
         return apps;
     }
@@ -117,7 +118,8 @@ public sealed class Kernel : Sys.Kernel
     private ShellService CreateShell(UserSession identity)
     {
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
-        var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity));
+        var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity),
+            text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"));
         ShellService? shell = null;

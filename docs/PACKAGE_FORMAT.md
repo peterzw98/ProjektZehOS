@@ -104,7 +104,15 @@ Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen s
 
 Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgeliefert wird es von `deploy/package-repo` (Docker-Compose mit nginx und einem `updater`, der den Branch `packages` alle 5 Minuten nachzieht). Neue Pakete werden mit dem privaten Herausgeberschlüssel gebaut und per Pull Request in den Branch `packages` gebracht; nach dem Merge übernimmt der Server sie von selbst.
 
-Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py`. VMware und echte Hardware sind nicht geprüft.
+Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py`; die Szenarien `full`, `packages` und `corrupt` bestehen außerdem unter WHPX (`--accel whpx`). VMware und echte Hardware sind nicht geprüft.
+
+Alle Szenarien parallel, jedes in eigener VM mit freien Ports (unter TCG zusammen rund 11 Minuten):
+
+```powershell
+py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <repo> --upgrade-repo <repo-upgrade> --tls <tls> --scenario full packages corrupt
+```
+
+`--starts 10` wiederholt die Doom-Starts am Ende von `full` für die Speicherprüfung (Standard 3).
 
 | Prüfung | Ergebnis |
 | --- | --- |
