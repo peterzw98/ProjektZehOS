@@ -27,7 +27,6 @@ version=1.0.0
 runtime=zehos-wasm32-v1
 name=Doom
 entry=doom.wasm
-[capability=net]
 file=<sha256 klein> <bytes> <pfad>
 ...
 end
