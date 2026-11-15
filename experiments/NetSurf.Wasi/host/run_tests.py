@@ -146,7 +146,8 @@ def http_scenarios(base: str, refused: int) -> list:
     ]
 
 
-# Cookie-Szenario: Set-Cookie an einer Weiterleitung, deren Location hinten Leerzeichen trägt; das Ziel prüft den Cookie.
+# Cookie-Szenario: Set-Cookie an einer Weiterleitung; das Ziel prüft den Cookie. Die Leerzeichen hinter Location
+# entfernt auch nsurl_join, das Szenario belegt das Trimmen im Fetcher also nicht.
 COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 
 

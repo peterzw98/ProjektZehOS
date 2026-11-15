@@ -233,7 +233,7 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 			f->port = (int)value;
 		}
 		// Wie curl auch HttpOnly-Cookies senden; die Zeile hängt als letzte Kopfzeile an NetSurfs Liste.
-		char *cookies = urldb_get_cookie(url, true);
+		char *cookies = f->error == NULL ? urldb_get_cookie(url, true) : NULL;
 		size_t count = 0;
 		while (headers != NULL && headers[count] != NULL) count++;
 		const char **all = calloc(count + 2, sizeof(*all));

@@ -101,7 +101,7 @@ Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite,
 - HTTP/1.1 mit `Connection: close`, GET und URL-codierte POST-Formulare; Dateiupload-Formulare werden abgelehnt.
 - Weiterleitungen, 304 und Cache behandelt NetSurfs llcache wie beim curl-Fetcher.
 - Grenzen je Antwort: Zeile 8 KiB, Kopf 64 KiB und 128 Zeilen, Rumpf 8 MiB, 30 s ohne Daten. Komprimierte Übertragung wird nicht angefordert; andere Transfer-Codierungen als `chunked` gelten als Fehler.
-- Cookies verwaltet NetSurfs urldb wie beim curl-Fetcher: `Set-Cookie` wird übernommen, passende Cookies gehen als `Cookie` mit. Sie gelten nur bis zum Beenden, weil das Paket nur lesend eingebunden ist und `~/.netsurf/Cookies` nicht gespeichert wird.
+- Cookies verwaltet NetSurfs urldb wie beim curl-Fetcher: `Set-Cookie` wird übernommen, passende Cookies gehen als `Cookie` mit. Sie gelten nur bis zum Beenden: Das ZehOS-Frontend lädt und speichert keine Cookie-Datei, das Paket ist nur lesend eingebunden.
 - Keine HTTP-Anmeldung (401); Seiten mit Login über HTTP-Authentifizierung funktionieren noch nicht.
 - Höchstens 4 gleichzeitige Verbindungen (Kernelgrenze); `res/Choices` setzt `max_fetchers` und `max_fetchers_per_host` auf 4. Gesendet wird in Stücken bis 64 KiB.
 - `https://` zeigt ausdrücklich „HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.“
