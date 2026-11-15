@@ -111,4 +111,5 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 | Maustaste auf Link gedrückt, `reset` | Seite bleibt, kein Klick |
 | danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
 | Rollbalken ziehen, `reset`, Maus weiterbewegen | Seite rollt beim Ziehen, nach `reset` nicht mehr (Gegenprobe ohne `reset` rollt weiter) |
+| Links auf Seite ziehen, rechte Taste dazu, `reset`, danach Linkklick | kein Klick durch `reset`, danach Link normal geöffnet |
 | Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |
