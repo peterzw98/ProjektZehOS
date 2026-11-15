@@ -12,6 +12,7 @@ internal sealed class WindowManager
     private int height;
     private Window? moving;
     private Window? pointerCapture;
+    private PointerButtons capturedButtons;
     private int edges;
     private int startX;
     private int startY;
@@ -153,7 +154,12 @@ internal sealed class WindowManager
         if (pointerCapture != null)
         {
             Deliver(pointerCapture, value);
-            if (value.Type == InputEventType.PointerUp && value.Button == PointerButtons.Left) pointerCapture = null;
+            if (value.Type == InputEventType.PointerDown) capturedButtons |= value.Button;
+            if (value.Type == InputEventType.PointerUp)
+            {
+                capturedButtons &= ~value.Button;
+                if (capturedButtons == PointerButtons.None) pointerCapture = null;
+            }
             return;
         }
         Window? hit = HitTest(value.X, value.Y);
@@ -183,7 +189,11 @@ internal sealed class WindowManager
                     hit.Application.Handle(new(InputEventType.Reset));
                     return;
                 }
-                if (hit.ContainsContent(value.X, value.Y)) pointerCapture = hit;
+            }
+            if (hit.ContainsContent(value.X, value.Y))
+            {
+                pointerCapture = hit;
+                capturedButtons = value.Button;
             }
         }
         if (hit?.ContainsContent(value.X, value.Y) == true) Deliver(hit, value);
@@ -249,7 +259,7 @@ internal sealed class WindowManager
     private void CloseWindow(Window window)
     {
         if (moving == window) moving = null;
-        if (pointerCapture == window) pointerCapture = null;
+        if (pointerCapture == window) { pointerCapture = null; capturedButtons = PointerButtons.None; }
         window.Application.Handle(new(InputEventType.Reset));
         window.Application.Close();
         windows.Remove(window);
@@ -268,6 +278,7 @@ internal sealed class WindowManager
     {
         moving = null;
         pointerCapture = null;
+        capturedButtons = PointerButtons.None;
         foreach (Window window in windows) window.Application.Handle(new(InputEventType.Reset));
     }
 

@@ -1,6 +1,5 @@
 #if ZEHOS_WASM
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -22,15 +21,13 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
-    private const int KeyQueueCapacity = 64;
     // Ohne Zeichnen in dieser Zeit ist das Fenster nicht sichtbar (Textshell, minimiert): die App pausiert.
     private const long VisibleTimeoutMilliseconds = 250;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private long lastDrawMilliseconds;
     private long pausedMilliseconds;
     private readonly object gate = new();
-    private readonly Queue<int> keys = new();
-    private readonly HashSet<byte> held = [];
+    private readonly WasmInputBuffer input = new();
     private uint[] frame = [];
     private int frameWidth;
     private int frameHeight;
@@ -97,32 +94,19 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
 
     public void Handle(InputEvent value)
     {
-        if (value.Type == InputEventType.Reset) { ReleaseKeys(); return; }
-        if (value.Type is not (InputEventType.KeyDown or InputEventType.KeyUp) || value.IsRepeat) return;
-        bool pressed = value.Type == InputEventType.KeyDown;
-        lock (gate)
-        {
-            if (pressed ? !held.Add(value.KeyCode) : !held.Remove(value.KeyCode)) return;
-            if (keys.Count < KeyQueueCapacity) keys.Enqueue((pressed ? 0x100 : 0) | value.KeyCode);
-        }
+        lock (gate) input.Handle(value);
     }
 
-    // Gehaltene Tasten muessen bei Fokusverlust losgelassen werden, sonst laeuft die Spielfigur weiter.
-    private void ReleaseKeys()
+    private void ResetInput()
     {
-        lock (gate)
-        {
-            foreach (byte code in held)
-                if (keys.Count < KeyQueueCapacity) keys.Enqueue(code);
-            held.Clear();
-        }
+        lock (gate) input.Reset();
     }
 
     public void Update(long milliseconds) { }
 
     public void Draw(PixelSurface surface, int x, int y, int width, int height, bool isActive)
     {
-        if (active && !isActive) ReleaseKeys();
+        if (active && !isActive) ResetInput();
         lock (gate)
         {
             active = isActive;
@@ -132,6 +116,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         surface.FillRectangle(x, y, width, height, unchecked((int)0xff000000));
         lock (gate)
         {
+            input.SetViewport(width, height, frameWidth, frameHeight);
             if (frameWidth > 0)
             {
                 int scale = Math.Max(1, Math.Min(width / frameWidth, height / frameHeight));
@@ -173,7 +158,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     public void Close()
     {
         lock (gate) { exitRequested = true; Monitor.PulseAll(gate); }
-        ReleaseKeys();
+        ResetInput();
     }
 
     // stderr wird begrenzt gesammelt, damit eine Fehlermeldung der App im Fenster erscheint.
@@ -216,9 +201,14 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
+    bool IWasmSession.TryReadEvent(out WasmInputEvent value)
+    {
+        lock (gate) return input.TryRead(out value);
+    }
+
     int IWasmSession.PollKey()
     {
-        lock (gate) return keys.Count > 0 ? keys.Dequeue() : -1;
+        lock (gate) return input.PollKey();
     }
 }
 #endif

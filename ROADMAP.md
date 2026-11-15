@@ -275,6 +275,11 @@ Der lokale Browserteil kann bereits nach Etappe 8 begonnen werden. Für Seiten a
 **Zweck:** Den ersten Desktop zu einem umfangreicheren Betriebssystem ausbauen. Diese Arbeiten bestehen jeweils wieder aus eigenen Projekten.
 
 - [ ] 12.1 Vor einem modernen Browser den Architekturweg prüfen: eine bestehende Engine portieren oder den eigenen kleinen Browser gezielt erweitern. An einem Buildversuch Laufzeit-, Speicher-, Thread-, Grafik- und Systemaufruf-Abhängigkeiten feststellen.
+
+**Teilstand 15. November 2026:** NetSurf 3.11 ist als externes WASIp1-Paket mit lokalen HTML-/CSS-Seiten,
+Links/Zurück, Scrollen, Texteingabe und sauberem Schließen/Neustart in QEMU geprüft. Build und Nachweise:
+[NETSURF.md](docs/NETSURF.md). HTTP/HTTPS fehlt noch; die Browseretappe bleibt offen.
+
 - [ ] 12.2 HTTPS über eine geeignete TLS-Implementierung ermöglichen. Dafür Zufallsquelle, verlässliche Uhrzeit, Zertifikatsspeicher und Prüfung von Zertifikatskette sowie Hostnamen bereitstellen. Zertifikatsprüfung gehört zum Zielumfang.
 - [ ] 12.3 HTML, CSS, Schrift- und Bildformate schrittweise erweitern. Falls JavaScript zum Ziel gehört, eine geeignete Laufzeit mit kontrollierten Ressourcen integrieren und benötigte Browser-APIs ergänzen.
 - [ ] 12.4 Speicher- und Prozessisolation, kontrollierte Systemaufrufe sowie Fehlerbehandlung für Anwendungen untersuchen und umsetzen. Die dafür nötigen Cosmos-Erweiterungen getrennt bewerten.

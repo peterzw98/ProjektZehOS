@@ -1,0 +1,21 @@
+--- a/libnsfb/include/libnsfb.h
++++ b/libnsfb/include/libnsfb.h
+@@ -41,6 +41,7 @@
+     NSFB_SURFACE_VNC, /**< VNC surface */
+     NSFB_SURFACE_LINUX, /**< Linux framebuffer surface */
+     NSFB_SURFACE_ABLE, /**< ABLE framebuffer surface */
++    NSFB_SURFACE_ZEHOS, /**< ZehOS-Wasm-Loader; vor RAM, damit das Frontend sie als Vorgabe wählt */
+     NSFB_SURFACE_RAM, /**< RAM surface */
+     NSFB_SURFACE_COUNT, /**< The number of surface kinds */
+ };
+--- a/libnsfb/src/surface/Makefile
++++ b/libnsfb/src/surface/Makefile
+@@ -1,7 +1,7 @@
+ # Sources
+ 
+ # Common surface code and heap based surface handler
+-SURFACE_HANDLER_yes := surface.c ram.c
++SURFACE_HANDLER_yes := surface.c ram.c zehos.c
+ 
+ # optional surface handlers
+ SURFACE_HANDLER_$(NSFB_SDL_AVAILABLE) += sdl.c

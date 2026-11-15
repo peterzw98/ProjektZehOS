@@ -138,6 +138,23 @@ Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden)
 
 Seit der Umstellung auf testapp prüft das Skript nicht mehr: das Upgrade eines großen Pakets (28 MB neben der alten Version), einen Prüfsummenfehler in einer großen gestreamten Datei und die Neuinstallation von Doom über das Netz nach dem Entfernen. Diese Pfade nutzen denselben Code wie bei testapp. Frühere Doom-Ergebnisse (ebenfalls 15. November 2026, TCG): Installation von packages.pjoter.de mit normal gebautem Kernel in 120 s; zehn Starts mit je 30 s Laufzeit, frei 416 → 414 MiB; `doom 1.1.0 aktualisiert`; „Pruefsumme falsch: freedoom1.wad“.
 
+## Hostdienste für grafische Paket-Apps
+
+Zusätzlich zu `poll_key()` bietet `zehos_v1.poll_event(ptr) -> i32` eine unabhängige, begrenzte
+Ereigniswarteschlange für Tasten, Unicode-Text, Zeiger, alle drei Maustasten und Rad.
+Der Import schreibt genau vier Little-Endian-`i32` (`type, code, x, y`, 16 Byte) und liefert
+1 bei einem Ereignis, 0 ohne Ereignis, -1 bei Hostfehler. Ein ungültiger Gastbereich trappt vor
+Entnahme. Fokusverlust/Überlauf melden Reset; Skalierung und Zentrierung werden zurückgerechnet.
+Die vollständige Typentabelle und die Grenze normalisierter Tastencodes stehen in
+[PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md#was-eine-app-vom-kernel-bekommt).
+Zusätzlich fragt `path_filestat_get` Dateityp und Größe unter derselben schreibgeschützten Paketgrenze ab;
+`path_readlink` liefert für bestehende Nicht-Links `EINVAL`. Verzeichnislisten bleiben gesperrt.
+Diese Ergänzungen ändern weder das Paketformat noch die Laufzeitkennung `zehos-wasm32-v1`.
+
+Die native Grenze lässt sich mit `python scripts/tests/test_wasm_input_native.py` prüfen
+(vorhandener GCC erforderlich). Der Test baut die echte C-Brücke mit wasm3 auf dem Host;
+er ersetzt keinen Kernel-/Gasttest.
+
 ## Bewusste Grenzen von Version 1
 
 - Nur grafische `zehos_v1`-Apps im Desktopfenster; Konsolen-Apps und ein Shellbefehl `run` fehlen.

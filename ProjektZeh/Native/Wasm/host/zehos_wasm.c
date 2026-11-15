@@ -16,12 +16,14 @@ extern int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length);
 extern int64_t zehos_wasm_host_file_size(int32_t handle);
 extern int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_t* buffer, uint32_t length);
 extern void zehos_wasm_host_close(int32_t handle);
+extern int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type);
 // zehos_v1: Bild, Zeit und Eingabe fuer Anwendungen mit eigener Darstellung.
 extern void zehos_wasm_host_present(const uint32_t* pixels, int32_t width, int32_t height, int32_t tic, int32_t test);
 extern void zehos_wasm_host_present_indexed(const uint8_t* indices, const uint32_t* palette, int32_t width, int32_t height, int32_t tic);
 extern uint32_t zehos_wasm_host_ticks_ms(void);
 extern void zehos_wasm_host_sleep_ms(uint32_t milliseconds);
 extern int32_t zehos_wasm_host_poll_key(void);
+extern int32_t zehos_wasm_host_poll_event(int32_t* event);
 extern int32_t zehos_wasm_host_should_exit(void);
 
 enum
@@ -203,7 +205,7 @@ static m3ApiRawFunction(wasi_fd_fdstat_get)
     memset(stat, 0, 24);
     stat[0] = type;
     // Rechte nur zum Lesen, Suchen und Abfragen; wasi-libc prueft sie vor eigenen Aufrufen.
-    uint64_t rights = (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 13) | (1ull << 18) | (1ull << 21);
+    uint64_t rights = (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 13) | (1ull << 15) | (1ull << 18) | (1ull << 21);
     memcpy(stat + 8, &rights, 8);
     memcpy(stat + 16, &rights, 8);
     m3ApiReturn(WASI_SUCCESS);
@@ -252,6 +254,52 @@ static int is_safe_path(const uint8_t* path, uint32_t length)
         start = index + 1;
     }
     return 1;
+}
+
+static m3ApiRawFunction(wasi_path_filestat_get)
+{
+    m3ApiReturnType(uint32_t)
+    m3ApiGetArg(int32_t, dirFd)
+    m3ApiGetArg(uint32_t, lookupFlags)
+    m3ApiGetArgMem(const uint8_t*, path)
+    m3ApiGetArg(uint32_t, pathLength)
+    m3ApiGetArgMem(uint8_t*, stat)
+    m3ApiCheckMem(stat, 64);
+    m3ApiCheckMem(path, pathLength);
+    if (dirFd != PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+    if ((lookupFlags & ~1u) != 0) m3ApiReturn(WASI_EINVAL);
+    if (!is_safe_path(path, pathLength)) m3ApiReturn(WASI_EACCES);
+    uint64_t size = 0;
+    int32_t type = 0;
+    int32_t error = zehos_wasm_host_stat(path, pathLength, &size, &type);
+    if (error != WASI_SUCCESS) m3ApiReturn((uint32_t)error);
+    memset(stat, 0, 64);
+    stat[16] = (uint8_t)type;
+    uint64_t links = 1;
+    memcpy(stat + 24, &links, 8);
+    memcpy(stat + 32, &size, 8);
+    m3ApiReturn(WASI_SUCCESS);
+}
+
+static m3ApiRawFunction(wasi_path_readlink)
+{
+    m3ApiReturnType(uint32_t)
+    m3ApiGetArg(int32_t, dirFd)
+    m3ApiGetArgMem(const uint8_t*, path)
+    m3ApiGetArg(uint32_t, pathLength)
+    m3ApiGetArgMem(uint8_t*, buffer)
+    m3ApiGetArg(uint32_t, bufferLength)
+    m3ApiGetArgMem(uint8_t*, used)
+    m3ApiCheckMem(path, pathLength);
+    m3ApiCheckMem(buffer, bufferLength);
+    m3ApiCheckMem(used, 4);
+    if (dirFd != PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+    if (!is_safe_path(path, pathLength)) m3ApiReturn(WASI_EACCES);
+    uint64_t size = 0;
+    int32_t type = 0;
+    int32_t error = zehos_wasm_host_stat(path, pathLength, &size, &type);
+    // Pakete enthalten keine Symlinks. realpath der WASI-libc erwartet fuer bestehende Nicht-Links EINVAL.
+    m3ApiReturn(error == WASI_SUCCESS ? WASI_EINVAL : (uint32_t)error);
 }
 
 static m3ApiRawFunction(wasi_path_open)
@@ -468,6 +516,19 @@ static m3ApiRawFunction(zehos_poll_key)
     m3ApiReturn(zehos_wasm_host_poll_key());
 }
 
+static m3ApiRawFunction(zehos_poll_event)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(uint32_t, offset)
+    uint8_t* target = (uint8_t*)m3ApiOffsetToPtr(offset);
+    // Vor der Entnahme pruefen; lokale Felder erlauben auch nicht ausgerichtete Gastadressen.
+    m3ApiCheckMem(target, 16);
+    int32_t event[4] = {0};
+    int32_t status = zehos_wasm_host_poll_event(event);
+    if (status == 1) memcpy(target, event, sizeof(event));
+    m3ApiReturn(status);
+}
+
 static m3ApiRawFunction(zehos_should_exit)
 {
     m3ApiReturnType(int32_t)
@@ -529,14 +590,14 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
         { "fd_filestat_set_times", "i(iIIi)", wasi_badf },
         { "fd_readdir", "i(i*iI*)", wasi_badf },
         { "path_open", "i(ii*iiIIi*)", wasi_path_open },
-        { "path_filestat_get", "i(ii*i*)", wasi_badf },
+        { "path_filestat_get", "i(ii*i*)", wasi_path_filestat_get },
         { "path_create_directory", "i(i*i)", wasi_badf },
         { "path_remove_directory", "i(i*i)", wasi_badf },
         { "path_unlink_file", "i(i*i)", wasi_badf },
         { "path_rename", "i(i*ii*i)", wasi_badf },
         { "path_link", "i(ii*ii*i)", wasi_badf },
         { "path_symlink", "i(*ii*i)", wasi_badf },
-        { "path_readlink", "i(i*i*i*)", wasi_badf },
+        { "path_readlink", "i(i*i*i*)", wasi_path_readlink },
         { "path_filestat_set_times", "i(ii*iIIi)", wasi_badf },
         { "poll_oneoff", "i(**i*)", wasi_nosys },
         { "sock_accept", "i(ii*)", wasi_nosys },
@@ -556,6 +617,7 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
         { "ticks_ms", "i()", zehos_ticks_ms },
         { "sleep_ms", "v(i)", zehos_sleep_ms },
         { "poll_key", "i()", zehos_poll_key },
+        { "poll_event", "i(i)", zehos_poll_event },
         { "should_exit", "i()", zehos_should_exit },
     };
     for (size_t index = 0; index < sizeof(zehos) / sizeof(zehos[0]); index++)

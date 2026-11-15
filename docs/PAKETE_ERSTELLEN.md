@@ -1,6 +1,6 @@
 # Apps für ZehOS bauen und als Paket veröffentlichen
 
-Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehOS-Wasm-Loader können darf und wie sie zum signierten Paket wird. Formatdetails stehen in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md), Messwerte und Hintergründe in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md). Geprüft ist bisher nur Doom (C, doomgeneric) unter QEMU; die C#-Probe lief nur als Konsolenprogramm in der Gastprobe, nicht als Paket.
+Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehOS-Wasm-Loader können darf und wie sie zum signierten Paket wird. Formatdetails stehen in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md), Messwerte und Hintergründe in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md). Unter QEMU geprüft sind Doom (C, doomgeneric) und NetSurf 3.11 als Offlinebrowser (siehe [NETSURF.md](NETSURF.md)); die C#-Probe lief nur als Konsolenprogramm in der Gastprobe, nicht als Paket.
 
 ## Was eine App ist
 
@@ -20,8 +20,33 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
 | `present_indexed(indices, palette, w, h, tic)` | 8-Bit-Bild mit 256-Farben-Palette; die Umrechnung macht der Kernel nativ (schneller) |
 | `ticks_ms()` | App-Uhr in ms; sie steht still, solange die App pausiert |
 | `sleep_ms(ms)` | Warten, höchstens 1000 ms je Aufruf |
-| `poll_key()` | -1 ohne Ereignis, sonst Bit 8 = gedrückt, Bits 0–7 = PS/2-Set-1-Scancode |
+| `poll_key()` | -1 ohne Ereignis, sonst Bit 8 = gedrückt, Bits 0–7 = normalisierter ZehOS-Tastencode (Set 1) |
+| `poll_event(ptr)` | 1 für ein Ereignis in 16 Byte Gastspeicher, 0 ohne Ereignis, -1 bei Hostfehler; Details unten |
 | `should_exit()` | 1, wenn das Fenster geschlossen wird; die App muss dann zügig enden |
+
+`poll_event` schreibt vier Little-Endian-`i32` in der Reihenfolge `type, code, x, y`.
+Nicht ausgerichtete Adressen sind erlaubt. Ein ungültiger 16-Byte-Bereich trappt **vor** der Entnahme;
+bei Rückgabe 0 oder -1 bleibt der Zielbereich unverändert. `poll_key` und `poll_event` lesen unabhängige Puffer.
+
+| type | Bedeutung von code und Koordinaten |
+| --- | --- |
+| 1 / 2 | Taste gedrückt / losgelassen; `code` = normalisierter ZehOS-Tastencode, `x=y=0` |
+| 3 | Text als Unicode-Skalar in `code`, `x=y=0`; ungültige UTF-16-Folgen werden U+FFFD |
+| 4 | Zeigerbewegung; `code=0`, `x/y` = Pixel im zuletzt gezeichneten App-Bild |
+| 5 / 6 | Maustaste gedrückt / losgelassen; `code` = 1 links, 2 rechts, 4 Mitte, `x/y` wie oben |
+| 7 | Mausrad; `code` = Schritte, positiv aufwärts, negativ abwärts, `x/y` wie oben |
+| 8 | Eingabe zurücksetzen; `code=x=y=0`, alle gehaltenen Tasten/Maustasten verwerfen |
+
+Wiederholte Tastendrücke kommen erneut als Typ 1, Text zusätzlich als Typ 3. Pfeile verwenden 72/75/77/80,
+Entf 83, AltGr 96. Ein E0-Merkmal steht nicht zur Verfügung; Ziffernblock und Navigation können denselben
+Tastencode haben. Texteingabe deshalb aus Typ 3 lesen. Bei Fokusverlust werden wartende Ereignisse und
+angefangene Surrogatpaare verworfen und durch Reset ersetzt. Der Puffer hält 128 Ereignisse;
+bei Überlauf bleiben Reset und der neueste Input. Aufeinanderfolgende Bewegungen werden zusammengefasst.
+
+Koordinaten berücksichtigen Bildskalierung und Zentrierung. Druck und Rad in schwarzen Rändern werden
+ignoriert, Bewegung und Loslassen am Bildrand begrenzt. Ein begonnenes Ziehen behält alle Maustasten auch
+außerhalb des Fensters bis zum letzten Loslassen oder Reset. Das Bild hat keinen Resize-Import;
+die App bestimmt seine Größe über `present` und muss eine passende feste Größe wählen.
 
 **WASI Preview 1:**
 
@@ -30,8 +55,16 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
 | Konsole | `fd_write` nur auf stdout/stderr. stderr wird gesammelt; die letzte Zeile erscheint bei Exitcode ≠ 0 im Fenster. |
 | Argumente, Umgebung | `argv` ist nur `["app"]`, die Umgebung ist leer. |
 | Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall; ohne ihn Nullen, nicht für Geheimnisse geeignet). |
-| Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
+| Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
 | Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), Sockets und Netzwerk, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
+
+`path_filestat_get` fragt Dateien und Ordner innerhalb des eigenen Pakets über den vorgeöffneten
+Ordner fd 3 ab. `.` bezeichnet die Paketwurzel. Größe und Dateityp sind vorhanden; Zeitstempel und
+Inodewerte sind null. Alle Gastbereiche werden vor dem Hostzugriff geprüft. Pfade verwenden dieselben
+Schutzprüfungen wie `path_open`: keine absoluten Pfade, `..`, leeren Komponenten, Backslashes, Doppelpunkte
+oder Nullbytes. Pakete haben keine symbolischen Links. `path_readlink` meldet für einen bestehenden
+Nicht-Link `EINVAL`; fehlende Dateien bleiben `ENOENT`, Zugriffsfehler `EACCES`, sonstige Dateifehler `EIO`.
+Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nicht verfügbar.
 
 ## Grenzen
 

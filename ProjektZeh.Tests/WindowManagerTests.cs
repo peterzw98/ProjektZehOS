@@ -169,6 +169,46 @@ public sealed class WindowManagerTests
             new Window("Too small", 0, 0, 1, 1, new ProbeApp()));
     }
 
+    [DataTestMethod]
+    [DataRow(2)]
+    [DataRow(4)]
+    public void ContentCapture_DeliversReleaseOutsideWindowForEveryButton(int buttonValue)
+    {
+        var button = (PointerButtons)buttonValue;
+        var app = new ProbeApp();
+        var manager = new WindowManager(400, 300);
+        var window = new Window("Capture", 10, 10, 180, 150, app);
+        manager.Add(window);
+        manager.Handle(new(InputEventType.PointerDown, X: 30, Y: 60, Button: button));
+        Assert.IsTrue(manager.HasPointerCapture);
+        manager.Handle(new(InputEventType.PointerUp, X: 390, Y: 290, Button: button));
+        Assert.AreEqual(InputEventType.PointerUp, app.Events[^1].Type);
+        Assert.AreEqual(button, app.Events[^1].Button);
+        Assert.AreEqual(390 - window.ContentX, app.Events[^1].X);
+        Assert.IsFalse(manager.HasPointerCapture);
+    }
+
+    [TestMethod]
+    public void ContentCapture_WaitsForLastButtonAndResetClearsHeldButtons()
+    {
+        var app = new ProbeApp();
+        var manager = new WindowManager(400, 300);
+        manager.Add(new Window("Capture", 10, 10, 180, 150, app));
+        manager.Handle(new(InputEventType.PointerDown, X: 30, Y: 60, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerDown, X: 390, Y: 290, Button: PointerButtons.Right));
+        manager.Handle(new(InputEventType.PointerUp, X: 390, Y: 290, Button: PointerButtons.Left));
+        Assert.IsTrue(manager.HasPointerCapture);
+        manager.Handle(new(InputEventType.PointerUp, X: 390, Y: 290, Button: PointerButtons.Right));
+        Assert.AreEqual(InputEventType.PointerUp, app.Events[^1].Type);
+        Assert.AreEqual(PointerButtons.Right, app.Events[^1].Button);
+        Assert.IsFalse(manager.HasPointerCapture);
+        manager.Handle(new(InputEventType.PointerDown, X: 30, Y: 60, Button: PointerButtons.Middle));
+        manager.Reset();
+        manager.Handle(new(InputEventType.PointerDown, X: 30, Y: 60, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerUp, X: 390, Y: 290, Button: PointerButtons.Left));
+        Assert.IsFalse(manager.HasPointerCapture);
+    }
+
     internal sealed class ProbeApp : IApplication
     {
         public readonly List<InputEvent> Events = [];

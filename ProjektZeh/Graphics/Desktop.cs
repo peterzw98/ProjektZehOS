@@ -366,7 +366,7 @@ internal sealed class Desktop
         }
         if ((alt && value.Type is InputEventType.KeyDown or InputEventType.Text) ||
             (suppressSpace && value.Type == InputEventType.Text && value.Character == ' ')) return;
-        if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerUp)
+        if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerScroll)
         {
             Windows.Handle(value);
             return;

@@ -20,6 +20,7 @@ internal interface IWasmSession
     void Write(int fd, ReadOnlySpan<byte> data);
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
     int PollKey();
+    bool TryReadEvent(out WasmInputEvent value);
     bool ShouldExit { get; }
     /// <summary>Uhr der Anwendung in Millisekunden; steht still, solange die Sitzung pausiert.</summary>
     uint TicksMilliseconds { get; }
@@ -207,14 +208,11 @@ internal static unsafe class WasmRuntime
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]
     private static int HostOpen(byte* path, uint length)
     {
-        string? root = current?.Root;
-        if (root == null || files.Count >= MaximumOpenFiles) return -1;
+        if (files.Count >= MaximumOpenFiles) return -1;
         try
         {
-            // Der Pfad ist in C bereits relativ und ohne ".."; GetFullPath stellt den Ordnerbezug zusaetzlich sicher.
-            string relative = Encoding.UTF8.GetString(path, (int)length);
-            string full = Path.GetFullPath(Path.Combine(root, relative));
-            if (!full.StartsWith(Path.TrimEndingDirectorySeparator(root) + "/", StringComparison.Ordinal)) return -1;
+            string? full = ResolvePackagePath(path, length);
+            if (full == null) return -1;
             var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
             int handle = ++nextHandle;
             files[handle] = stream;
@@ -224,6 +222,28 @@ internal static unsafe class WasmRuntime
         {
             return -1;
         }
+    }
+
+    private static string? ResolvePackagePath(byte* path, uint length)
+    {
+        string? root = current?.Root;
+        return root == null ? null : WasmPackagePaths.Resolve(root, Encoding.UTF8.GetString(path, (int)length));
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_stat")]
+    private static int HostStat(byte* path, uint length, ulong* size, int* type)
+    {
+        try
+        {
+            int result = WasmPackagePaths.Stat(current?.Root, Encoding.UTF8.GetString(path, (int)length), out ulong bytes, out int kind);
+            if (result == WasmPackagePaths.Success)
+            {
+                *size = bytes;
+                *type = kind;
+            }
+            return result;
+        }
+        catch (Exception) { return WasmPackagePaths.Io; } // keine Ausnahme ueber die native Grenze.
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_size")]
@@ -279,6 +299,21 @@ internal static unsafe class WasmRuntime
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_poll_key")]
     private static int HostPollKey() => current?.PollKey() ?? -1;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_poll_event")]
+    private static int HostPollEvent(int* fields)
+    {
+        try
+        {
+            if (current == null || !current.TryReadEvent(out var value)) return 0;
+            fields[0] = (int)value.Type;
+            fields[1] = value.Code;
+            fields[2] = value.X;
+            fields[3] = value.Y;
+            return 1;
+        }
+        catch (Exception) { return -1; }
+    }
 
     // Ohne Sitzung gibt es niemanden mehr, fuer den die App laufen koennte.
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_should_exit")]
