@@ -45,7 +45,11 @@
   <ItemGroup Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">
     <EmbeddedResource Include="$(ZehOSNetworkProbeCaPath)" LogicalName="ZehOS.NetworkProbeCa" />
   </ItemGroup>
-  <!-- Oeffentlicher Ed25519-Paketschluessel (Base64-Textdatei); ohne ihn bleibt pkg deaktiviert. -->
+  <!-- Oeffentlicher Ed25519-Paketschluessel (Base64-Textdatei); ohne ihn bleibt pkg deaktiviert. Standard ist der
+       eingecheckte Herausgeberschluessel, sobald er existiert; -p:ZehOSPackageKeyPath ersetzt ihn, etwa fuer Tests. -->
+  <PropertyGroup Condition="'$(ZehOSPackageKeyPath)' == '' and Exists('Packages/package-key.pub')">
+    <ZehOSPackageKeyPath>Packages/package-key.pub</ZehOSPackageKeyPath>
+  </PropertyGroup>
   <ItemGroup Condition="'$(ZehOSPackageKeyPath)' != ''">
     <EmbeddedResource Include="$(ZehOSPackageKeyPath)" LogicalName="ZehOS.PackageKey" />
   </ItemGroup>

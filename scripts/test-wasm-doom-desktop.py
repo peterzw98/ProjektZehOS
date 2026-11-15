@@ -225,6 +225,21 @@ def main() -> int:
             wait_serial(work, "PKG " + expected, timeout, mark)
             print(f"pkg {command}: {time.monotonic() - started:.0f} s", flush=True)
 
+        def update_catalog() -> None:
+            # DHCP laeuft im Hintergrund und braucht unter TCG unterschiedlich lange; bei fehlender Adresse erneut versuchen.
+            for attempt in range(6):
+                try:
+                    pkg("update", "Katalog geladen", 120)
+                    return
+                except RuntimeError as error:
+                    shot("update-failed")
+                    if "IPv4" not in str(error) or attempt == 5:
+                        raise
+                    time.sleep(10)
+                except TimeoutError:
+                    shot("update-timeout")
+                    raise
+
         def launch(name: str) -> None:
             # Das Suchfeld behaelt seinen Text; vor jeder Suche leeren.
             qmp.tap("alt", "f1")
@@ -245,11 +260,11 @@ def main() -> int:
             qmp.tap("y")
             time.sleep(5)
 
-        shell("net dhcp")
+        shell("net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3")
         time.sleep(10)
         qmp.line(f"pkg source https://10.0.2.2:{args.repo_port}/")
         time.sleep(1)
-        pkg("update", "Katalog geladen", 120)
+        update_catalog()
         if args.scenario == "corrupt":
             pkg("install doom", "Pruefsumme falsch: freedoom1.wad")
             qmp.line("pkg list")
@@ -299,9 +314,9 @@ def main() -> int:
             quit_doom()
             if args.upgrade_repo is not None:
                 repository.directory = args.upgrade_repo.resolve()
-                shell("net dhcp")
+                shell("net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3")
                 time.sleep(10)
-                pkg("update", "Katalog geladen", 120)
+                update_catalog()
                 pkg("upgrade", "doom 1.1.0 aktualisiert.")
                 qmp.line("pkg list")
                 time.sleep(2)
