@@ -95,6 +95,42 @@ public sealed class DesktopWorkspaceTests
     }
 
     [TestMethod]
+    public void RequestClose_DirtyEditorOnOtherWorkspace_CancelKeepsFocusAndDraft()
+    {
+        var desktop = CreateDesktop();
+        Assert.IsTrue(desktop.OpenEditor());
+        var window = desktop.Windows.ActiveWindow!;
+        var editor = (Apps.TextEditor.TextEditorApp)window.Application;
+        for (int tab = 0; tab < 4; tab++) Key(desktop, PhysicalKey.Tab);
+        desktop.Handle(new(InputEventType.Text, Character: 'x'));
+        Assert.IsTrue(editor.IsDirty);
+        desktop.Windows.SwitchWorkspace(1);
+        desktop.Windows.RequestClose(window);
+        Assert.AreEqual(0, desktop.Windows.CurrentWorkspace);
+        Assert.IsTrue(editor.CloseConfirmationVisible);
+        Key(desktop, PhysicalKey.Enter);
+        Assert.IsFalse(editor.CloseConfirmationVisible);
+        Assert.IsTrue(editor.IsDirty);
+        Assert.AreSame(window, desktop.Windows.ActiveWindow);
+    }
+
+    [TestMethod]
+    public void RequestClose_OnOtherWorkspace_WithoutConfirmationKeepsCurrentWorkspace()
+    {
+        var manager = new WindowManager(400, 300);
+        var closed = new Window("A", 20, 30, 180, 150, new WindowManagerTests.ProbeApp());
+        manager.Add(closed);
+        manager.SwitchWorkspace(1);
+        var current = new Window("B", 20, 30, 180, 150, new WindowManagerTests.ProbeApp());
+        manager.Add(current);
+        manager.RequestClose(closed);
+        Assert.AreEqual(1, manager.CurrentWorkspace);
+        Assert.AreSame(current, manager.ActiveWindow);
+        Assert.AreSame(current, manager.HitTest(60, 60));
+        Assert.AreEqual(1, manager.Count);
+    }
+
+    [TestMethod]
     public void CloseAll_ReturnsToFirstWorkspace()
     {
         var manager = new WindowManager(400, 300);

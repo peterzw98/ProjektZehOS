@@ -29,11 +29,11 @@ internal sealed class WindowManager
     {
         if (!windows.Contains(window)) return;
         Reset();
-        // Rueckfragen muessen auf dem Desktop des betroffenen Fensters sichtbar und bedienbar sein.
-        CurrentWorkspace = window.Workspace;
         window.IsMinimized = false;
         Activate(window);
         if (window.Application.RequestClose()) CloseWindow(window);
+        // Nur eine offene Rueckfrage erfordert den Wechsel zum Desktop des betroffenen Fensters.
+        else CurrentWorkspace = window.Workspace;
     }
 
     public void Resize(int width, int height)
