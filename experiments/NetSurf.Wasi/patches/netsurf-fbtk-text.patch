@@ -33,7 +33,30 @@
  	static fbtk_modifier_type modifier = FBTK_MOD_CLEAR;
  	char *temp;
  	plot_font_style_t font_style;
-@@ -442,6 +443,12 @@
+@@ -362,6 +363,22 @@
+ 		caret_moved = true;
+ 		break;
+ 
++	case NSFB_KEY_DELETE:
++		/* ZehOS: Entf loescht das Zeichen rechts der Einfuegemarke (fehlte im fbtk) */
++		if (widget->u.text.idx >= widget->u.text.len)
++			break;
++		memmove(widget->u.text.text + widget->u.text.idx,
++				widget->u.text.text + widget->u.text.idx + 1,
++				widget->u.text.len - widget->u.text.idx - 1);
++		widget->u.text.len--;
++		widget->u.text.text[widget->u.text.len] = 0;
++
++		fb_font_width(&font_style, widget->u.text.text,
++				widget->u.text.len, &widget->u.text.width);
++
++		caret_moved = true;
++		break;
++
+ 	case NSFB_KEY_RETURN:
+ 		widget->u.text.enter(widget->u.text.pw, widget->u.text.text);
+ 		break;
+@@ -442,6 +459,12 @@
  			break;
  		}
  
@@ -46,7 +69,7 @@
  		/* allow for new character and null */
  		temp = realloc(widget->u.text.text, widget->u.text.len + 2);
  		if (temp == NULL) {
-@@ -452,8 +459,7 @@
+@@ -452,8 +475,7 @@
  		memmove(widget->u.text.text + widget->u.text.idx + 1,
  				widget->u.text.text + widget->u.text.idx,
  				widget->u.text.len - widget->u.text.idx);
