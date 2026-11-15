@@ -6,6 +6,9 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Org.BouncyCastle.Tls;
+using Org.BouncyCastle.X509;
+using ProjektZeh.Network;
 using ProjektZeh.Security;
 
 namespace ProjektZeh.Runtime.Wasm;
@@ -45,6 +48,7 @@ internal static unsafe class WasmRuntime
     private static Thread? worker;
     private static IWasmSession? current;
     private static WasmNetworkSession? network;
+    private static IList<X509Certificate>? tlsAnchors;
     private static int nextHandle;
     private static uint[] indexedFrame = [];
 
@@ -150,7 +154,7 @@ internal static unsafe class WasmRuntime
         int value = 0;
         int code;
         current = session;
-        network = new WasmNetworkSession(new CosmosWasmNetworkConnector(), session.AllowsNetwork);
+        network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
         WaitedMilliseconds = 0;
         try
         {
@@ -187,6 +191,21 @@ internal static unsafe class WasmRuntime
     [DllImport("*", EntryPoint = "zehos_wasm_run", ExactSpelling = true)]
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
+
+    // Laeuft in net_open im Gastthread: Uhr und Hardwarezufall kosten wenig, das Bundle wird nur einmal je Kernellauf
+    // geparst. Es laeuft hoechstens eine Paket-App, daher greift nur ein Thread auf den Zwischenspeicher zu.
+    private static TlsClient CreateTlsClient(string host)
+    {
+        DateTime utcNow = DateTime.UtcNow;
+        try
+        {
+            TlsTransport.CheckClock(utcNow);
+            CosmosSaltSource.Fill(new byte[16]);
+            tlsAnchors ??= TlsTransport.LoadAnchors(TlsRoots.Load());
+        }
+        catch (Exception exception) { throw new WasmNetworkUnavailableException(exception); }
+        return TlsTransport.CreateClient(host, CosmosSaltSource.Fill, tlsAnchors, utcNow, true);
+    }
 
     // Hostrueckrufe der C-Schicht. Ausnahmen duerfen die native Grenze nicht ueberqueren.
 

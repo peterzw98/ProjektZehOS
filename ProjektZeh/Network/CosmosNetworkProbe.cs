@@ -40,6 +40,9 @@ internal static class CosmosNetworkProbe
                 Check(rejected, "TLS certificate rejection " + port);
             }
             Check(CosmosNetworkService.Fetch("https://10.0.2.2:18443/ok", CancellationToken.None, probeCa) == "ZehOS network probe\n", "TLS recovery");
+#if ZEHOS_WASM
+            CheckWasmTls(probeCa);
+#endif
             foreach (string path in new[] { "partial", "oversize", "slow" })
             {
                 bool rejected = false;
@@ -138,6 +141,66 @@ internal static class CosmosNetworkProbe
         Check(pending.Close(after) == 0 && pending.CloseAll() == 0, "Wasm pending cleanup");
         Write("wasm-network PASS");
     }
+#if ZEHOS_NETWORK_TLS_PROBE
+    // Nicht blockierender TLS-Pfad der Wasm-Apps mit denselben Fixtures wie die Shell: Erfolg, Ablehnungen, Frist.
+    private static void CheckWasmTls(byte[] probeCa)
+    {
+        var anchors = TlsTransport.LoadAnchors(probeCa);
+        var network = new ProjektZeh.Runtime.Wasm.WasmNetworkSession(new ProjektZeh.Runtime.Wasm.CosmosWasmNetworkConnector(host =>
+            TlsTransport.CreateClient(host, ProjektZeh.Security.CosmosSaltSource.Fill, anchors, DateTime.UtcNow, true)), true);
+        int tls = ProjektZeh.Runtime.Wasm.WasmNetworkSession.FlagTls;
+        int status;
+        // Der eine Netzwerkworker kann noch im blockierenden Cosmos-Connect zu 10.0.2.200 aus CheckWasmNetwork haengen;
+        // erst wenn eine TCP-Verbindung wieder durchgeht, misst die TLS-Frist den Handshake und nicht diese Wartezeit.
+        var clock = Stopwatch.StartNew();
+        do
+        {
+            Check(network.Open("10.0.2.2", 18080, 0, out int probe) == 0, "Wasm TLS worker probe");
+            while ((status = network.Status(probe)) == 6) Thread.Sleep(20);
+            Check(network.Close(probe) == 0, "Wasm TLS worker probe close");
+        }
+        while (status != 0 && clock.ElapsedMilliseconds < 180000);
+        Check(status == 0, "Wasm TLS worker free " + status);
+        Write($"wasm-tls workerFreeMs={clock.ElapsedMilliseconds}");
+        clock.Restart();
+        Check(network.Open("10.0.2.2", 18443, tls, out int handle) == 0, "Wasm TLS open");
+        while ((status = network.Status(handle)) == 6 && clock.ElapsedMilliseconds < 15000) Thread.Sleep(10);
+        Check(status == 0, "Wasm TLS handshake " + status);
+        Write($"wasm-tls handshakeMs={clock.ElapsedMilliseconds}");
+        byte[] request = System.Text.Encoding.ASCII.GetBytes("GET /ok HTTP/1.0\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n");
+        Check(network.Send(handle, request, out int written) == 0 && written == request.Length, "Wasm TLS send");
+        byte[] data = new byte[4096];
+        int total = 0, result = 6;
+        clock.Restart();
+        // Der Fixture-Server schliesst ohne close_notify; nach dem Rumpf ist daher 0 oder ECONNRESET zulaessig.
+        while (clock.ElapsedMilliseconds < 15000)
+        {
+            result = network.Receive(handle, data.AsSpan(total), out int read);
+            total += read;
+            Check(total < data.Length, "Wasm TLS response limit");
+            if (result is not (0 or 6) || (result == 0 && read == 0)) break;
+            if (read == 0) Thread.Sleep(10);
+        }
+        string response = System.Text.Encoding.ASCII.GetString(data, 0, total);
+        Check(result is 0 or 15 && response.Contains("ZehOS network probe", StringComparison.Ordinal), "Wasm TLS response " + result);
+        Check(network.Close(handle) == 0, "Wasm TLS close");
+        for (int port = 18444; port <= 18447; port++)
+        {
+            Check(network.Open("10.0.2.2", port, tls, out int rejected) == 0, "Wasm TLS open " + port);
+            clock.Restart();
+            while ((status = network.Status(rejected)) == 6 && clock.ElapsedMilliseconds < 15000) Thread.Sleep(10);
+            Check(status == 63, "Wasm TLS certificate rejection " + port + " status=" + status);
+            Check(network.Close(rejected) == 0, "Wasm TLS close " + port);
+        }
+        Check(network.Open("10.0.2.2", 18448, tls, out int silent) == 0, "Wasm TLS open silent");
+        clock.Restart();
+        while ((status = network.Status(silent)) == 6 && clock.ElapsedMilliseconds < 20000) Thread.Sleep(20);
+        Check(status == 73 && clock.ElapsedMilliseconds < 15000, "Wasm TLS handshake deadline " + status);
+        Check(network.Close(silent) == 0 && network.CloseAll() == 0, "Wasm TLS cleanup");
+        Write("wasm-tls PASS");
+    }
+#endif
+
     private sealed class NetworkProbeSession(bool allowed) : ProjektZeh.Runtime.Wasm.IWasmSession
     {
         public string? Root => null;

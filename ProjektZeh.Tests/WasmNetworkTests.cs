@@ -10,7 +10,14 @@ public sealed class WasmNetworkTests
     private sealed class Connector : IWasmNetworkConnector
     {
         public Connection Last { get; private set; } = null!;
-        public IWasmNetworkConnection Open(string host, int port) => Last = new Connection();
+        public bool LastTls { get; private set; }
+        public bool Unavailable { get; set; }
+        public IWasmNetworkConnection Open(string host, int port, bool tls)
+        {
+            if (Unavailable) throw new WasmNetworkUnavailableException(new InvalidOperationException());
+            LastTls = tls;
+            return Last = new Connection();
+        }
     }
 
     private sealed class Connection : IWasmNetworkConnection
@@ -39,7 +46,22 @@ public sealed class WasmNetworkTests
         var session = new WasmNetworkSession(new Connector(), true);
         Assert.AreEqual(WasmNetworkError.Invalid, session.Open("bad host", 80, 0, out _));
         Assert.AreEqual(WasmNetworkError.Invalid, session.Open("example.com", 0, 0, out _));
-        Assert.AreEqual(WasmNetworkError.NotSupported, session.Open("example.com", 80, 1, out _));
+        Assert.AreEqual(WasmNetworkError.NotSupported, session.Open("example.com", 80, 2, out _));
+        Assert.AreEqual(WasmNetworkError.NotSupported, session.Open("example.com", 80, 3, out _));
+    }
+
+    [TestMethod]
+    public void TlsFlagReachesConnectorAndMissingPrerequisitesReportNoSystem()
+    {
+        var connector = new Connector();
+        var session = new WasmNetworkSession(connector, true);
+        Assert.AreEqual(WasmNetworkError.Success, session.Open("example.com", 443, WasmNetworkSession.FlagTls, out _));
+        Assert.IsTrue(connector.LastTls);
+        Assert.AreEqual(WasmNetworkError.Success, session.Open("example.com", 80, 0, out _));
+        Assert.IsFalse(connector.LastTls);
+        connector.Unavailable = true;
+        Assert.AreEqual(WasmNetworkError.NoSystem, session.Open("example.com", 443, WasmNetworkSession.FlagTls, out int handle));
+        Assert.AreEqual(0, handle);
     }
 
     [TestMethod]

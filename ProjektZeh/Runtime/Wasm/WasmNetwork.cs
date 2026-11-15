@@ -18,11 +18,17 @@ internal static class WasmNetworkError
     public const int Io = 29;
     public const int TooManyFiles = 33;
     public const int NameNotFound = 44;
+    public const int NoSystem = 52;
     public const int NotSupported = 58;
+    public const int NotPermitted = 63;
+    public const int Protocol = 65;
     public const int TimedOut = 73;
 }
 
 internal sealed class WasmNetworkCapacityException : Exception;
+
+/// <summary>TLS ist im Gast nicht nutzbar: Uhr, Hardwarezufall oder Wurzelbundle fehlen.</summary>
+internal sealed class WasmNetworkUnavailableException(Exception inner) : Exception("TLS-Voraussetzung fehlt.", inner);
 
 internal interface IWasmNetworkConnection
 {
@@ -34,7 +40,7 @@ internal interface IWasmNetworkConnection
 
 internal interface IWasmNetworkConnector
 {
-    IWasmNetworkConnection Open(string host, int port);
+    IWasmNetworkConnection Open(string host, int port, bool tls);
 }
 
 /// <summary>Verwaltet begrenzte, sitzungsgebundene Netzwerkhandles; Transport und Gastadressen bleiben getrennt.</summary>
@@ -42,6 +48,7 @@ internal sealed class WasmNetworkSession(IWasmNetworkConnector connector, bool a
 {
     internal const int MaximumConnections = 4;
     internal const int MaximumTransferBytes = 64 * 1024;
+    internal const int FlagTls = 1;
     private readonly Dictionary<int, IWasmNetworkConnection> connections = [];
     private int nextHandle;
     private bool closed;
@@ -50,19 +57,20 @@ internal sealed class WasmNetworkSession(IWasmNetworkConnector connector, bool a
     {
         handle = 0;
         if (closed || !allowed) return WasmNetworkError.Access;
-        if (flags != 0) return WasmNetworkError.NotSupported;
+        if ((flags & ~FlagTls) != 0) return WasmNetworkError.NotSupported;
         if (port is < 1 or > 65535 || host == null) return WasmNetworkError.Invalid;
         try { NetworkTarget.ValidateHost(host); }
         catch (ArgumentException) { return WasmNetworkError.Invalid; }
         if (connections.Count >= MaximumConnections || nextHandle == int.MaxValue) return WasmNetworkError.TooManyFiles;
         try
         {
-            IWasmNetworkConnection connection = connector.Open(host, port);
+            IWasmNetworkConnection connection = connector.Open(host, port, (flags & FlagTls) != 0);
             handle = ++nextHandle;
             connections.Add(handle, connection);
             return WasmNetworkError.Success;
         }
         catch (WasmNetworkCapacityException) { return WasmNetworkError.TooManyFiles; }
+        catch (WasmNetworkUnavailableException) { return WasmNetworkError.NoSystem; }
         catch (Exception) { return WasmNetworkError.Io; }
     }
 
