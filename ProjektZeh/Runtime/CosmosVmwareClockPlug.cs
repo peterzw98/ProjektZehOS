@@ -1,3 +1,4 @@
+// Der PIT-/TSC-Rueckfall stammt aus Cosmos 3.0.94 (5d0b953); BSD-3-Clause, siehe ThirdParty/CosmosTiming/.
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using Cosmos.Build.API.Attributes;
@@ -91,7 +92,7 @@ public static class CosmosVmwareLapicPlug
     private static extern void WritePort([UnsafeAccessorType("Cosmos.Kernel.Core.Native+IO, Cosmos.Kernel.Core")] object? owner, ushort port, byte value);
 }
 
-[Plug(TargetName = "Cosmos.Kernel.Core.X64.Cpu.X64CpuOps, Cosmos.Kernel.Core.X64")]
+[Plug(TargetName = "Cosmos.Kernel.Core.X64.Cpu.X64CpuOps")]
 public static class CosmosVmwareTscPlug
 {
     private const string CpuOps = "Cosmos.Kernel.Core.X64.Cpu.X64CpuOps, Cosmos.Kernel.Core.X64";
@@ -99,7 +100,11 @@ public static class CosmosVmwareTscPlug
     [PlugMember]
     public static void CalibrateTsc()
     {
-        if (!LocalApic.IsTimerCalibrated) return;
+        if (!LocalApic.IsTimerCalibrated)
+        {
+            Serial.WriteString("[TSC] LAPIC timer not calibrated\n");
+            return;
+        }
         if (!CosmosVmwareClock.TryRead(out long frequency, out _))
         {
             ulong start = ReadTsc(null);
