@@ -209,7 +209,7 @@ public sealed class WindowManagerTests
         Assert.IsFalse(manager.HasPointerCapture);
     }
 
-    private sealed class ProbeApp : IApplication
+    internal sealed class ProbeApp : IApplication
     {
         public readonly List<InputEvent> Events = [];
         public int Starts { get; private set; }

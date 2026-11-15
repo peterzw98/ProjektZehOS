@@ -48,7 +48,7 @@ public sealed class DesktopAppTests
         string? opened = null;
         var browser = new FileManagerApp(new FileService(directory, access: access, session: identity), painter,
             path => { opened = path; return true; });
-        browser.Start(); Click(browser, 600, 80);
+        browser.Start(); Click(browser, 240, 80);
         Assert.IsNull(opened, "Fremde Dateien duerfen nicht in der Auswahl erscheinen.");
         Assert.IsTrue(desktop.OpenEditor());
         var editor = (TextEditorApp)desktop.Windows.ActiveWindow!.Application;
@@ -162,7 +162,7 @@ public sealed class DesktopAppTests
         string? opened = null;
         var app = new FileManagerApp(new FileService(directory), painter, name => { opened = name; return true; });
         app.Start();
-        Click(app, 600, 80);
+        Click(app, 240, 80);
         Assert.AreEqual(path, opened);
         Directory.CreateDirectory(Path.Combine(directory, "ordner"));
         var entries = new FileService(directory).ListDirectory(".");

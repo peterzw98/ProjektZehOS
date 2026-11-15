@@ -17,6 +17,8 @@ internal sealed class Window
     public int MinimumHeight { get; }
     public bool IsMinimized { get; internal set; }
     public bool IsMaximized { get; internal set; }
+    /// <summary>Virtueller Desktop, auf dem das Fenster liegt.</summary>
+    public int Workspace { get; internal set; }
     internal (int X, int Y, int Width, int Height) RestoreBounds { get; set; }
     public IApplication Application { get; }
     public int ContentX => X + 1;

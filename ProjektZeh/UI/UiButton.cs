@@ -34,12 +34,13 @@ internal sealed class UiButton(string label, Action activate) : UiControl
     protected override void DrawContent(PixelSurface surface, UiPainter painter, int x, int y, bool active)
     {
         bool highlighted = active && Focused && Enabled || Selected;
-        UiPainter.Frame(surface, Bounds, x, y, highlighted);
         int inset = highlighted ? 2 : 1;
         int fill = !Enabled ? UiPainter.Background
             : Primary ? (pressed ? UiPainter.Mix(UiPainter.Accent, UiPainter.Foreground, 80) : UiPainter.Accent)
             : pressed || Selected ? UiPainter.Selection : UiPainter.Muted;
-        surface.FillRectangle(x + Bounds.X + inset, y + Bounds.Y + inset, Bounds.Width - 2 * inset, Bounds.Height - 2 * inset, fill);
+        // Abgerundete Flaechen wie in aktuellen Desktops; der Rand zeigt weiterhin den Fokus.
+        UiPainter.RoundFrame(surface, x + Bounds.X, y + Bounds.Y, Bounds.Width, Bounds.Height, 8, inset,
+            highlighted ? UiPainter.Accent : UiPainter.Border, fill);
         if (Swatch is int color)
         {
             surface.FillRectangle(x + Bounds.X + 6, y + Bounds.Y + 6, Bounds.Width - 12, Bounds.Height - 12, color);

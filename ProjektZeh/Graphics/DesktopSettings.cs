@@ -15,9 +15,13 @@ internal sealed record DesktopSettings
     public int Width { get; init; }
     public int Height { get; init; }
     public bool DisplayConfirmed { get; init; }
+    public const int MaximumShortcuts = 32;
+    /// <summary>Namen der Desktopverknuepfungen; <see langword="null"/> bedeutet die eingebaute Standardauswahl.</summary>
+    public string[]? Shortcuts { get; init; }
 
     public string Serialize() => $"version=2\ndark={Dark}\naccent={Accent}\nwallpaper={Wallpaper}\nimage={Image}\n" +
-        (DisplayConfirmed && DisplayMode.IsSupportedSize(Width, Height) ? $"displayConfirmed=True\nwidth={Width}\nheight={Height}\n" : "");
+        (DisplayConfirmed && DisplayMode.IsSupportedSize(Width, Height) ? $"displayConfirmed=True\nwidth={Width}\nheight={Height}\n" : "") +
+        (Shortcuts == null ? "" : $"shortcuts={string.Join('|', Shortcuts)}\n");
 
     public static DesktopSettings Parse(string text)
     {
@@ -41,6 +45,9 @@ internal sealed record DesktopSettings
                 case "width" when int.TryParse(data, out int parsed): width = parsed; break;
                 case "height" when int.TryParse(data, out int parsed): height = parsed; break;
                 case "displayConfirmed" when bool.TryParse(data, out bool parsed): confirmed = parsed; break;
+                case "shortcuts" when data.Length <= 2048:
+                    var names = data.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    value = value with { Shortcuts = names.Length <= MaximumShortcuts ? names : names[..MaximumShortcuts] }; break;
             }
         }
         if (value.Wallpaper == CustomWallpaper && value.Image.Length == 0) value = value with { Wallpaper = 0 };

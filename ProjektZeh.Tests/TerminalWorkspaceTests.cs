@@ -127,14 +127,17 @@ public sealed class TerminalWorkspaceTests
         var pixels = new int[960 * 600];
         var surface = new PixelSurface(960, 600, pixels);
         app.Draw(surface, 0, 0, 960, 600, true);
-        Assert.AreEqual(ProjektZeh.UI.UiPainter.Secondary, pixels[10 * 960 + 160]);
+        // Farben folgen dem Terminalprofil; geprueft wird, dass das Schliessen-Zeichen sichtbar gezeichnet ist.
+        Assert.AreNotEqual(pixels[1 * 960 + 1], pixels[10 * 960 + 160]);
         app.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
         app.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
         app.Handle(new(InputEventType.KeyDown, KeyCode: 33));
         app.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Control));
         app.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.LeftShift));
         app.Draw(surface, 0, 0, 960, 600, true);
-        Assert.AreEqual(ProjektZeh.UI.UiPainter.Accent, pixels[99 * 960 + 940]);
+        // Schliessen-x der Suche nutzt dieselbe Akzentfarbe wie die Pfeile daneben.
+        Assert.AreEqual(pixels[99 * 960 + 880], pixels[99 * 960 + 940]);
+        Assert.AreNotEqual(pixels[99 * 960 + 862], pixels[99 * 960 + 940]);
         app.Handle(new(InputEventType.PointerDown, X: 940, Y: 100, Button: PointerButtons.Left));
         app.Handle(new(InputEventType.Text, Character: 'z'));
         Assert.AreEqual("z", app.ActiveTerminal.Editor.Text);
