@@ -100,6 +100,21 @@ python scripts/build-package.py catalog --key <Schlüsselordner>/private.pem --r
 
 Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen sind unveränderlich; eine Änderung braucht eine neue Version und eine höhere Katalog-Generation.
 
+## Server und Prüfstand
+
+Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgeliefert wird es von `deploy/package-repo` (Docker-Compose mit nginx und einem `updater`, der den Branch `packages` alle 5 Minuten nachzieht). Neue Pakete werden mit dem privaten Herausgeberschlüssel gebaut und im Branch `packages` committet; der Server übernimmt sie von selbst.
+
+Geprüft am 15. November 2026 in QEMU TCG mit `scripts/test-wasm-doom-desktop.py`. VMware und echte Hardware sind nicht geprüft.
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| Normal gebauter Kernel (Herausgeberschlüssel), `pkg install doom` von packages.pjoter.de | Katalog 32 s, Installation 120 s, Doom spielbar |
+| F4/Esc, Schließen über X, zehn Starts mit Beenden über das Doom-Menü | alle Starts laufen; frei 416 MiB vorher, 414 MiB danach |
+| Lokales Testrepository: Entfernen während Doom läuft | abgelehnt: „Paket doom laeuft gerade; zuerst die App schliessen.“ |
+| Entfernen, `pkg list`, Neuinstallation | entfernt, als verfügbar gelistet, wieder installiert |
+| Neustart mit Anmeldung | Doom bleibt installiert und startet |
+| Katalog-Generation 2, `pkg upgrade` | `doom 1.1.0 aktualisiert`, startet danach |
+
 ## Bewusste Grenzen von Version 1
 
 - Nur grafische `zehos_v1`-Apps im Desktopfenster; Konsolen-Apps und ein Shellbefehl `run` fehlen.

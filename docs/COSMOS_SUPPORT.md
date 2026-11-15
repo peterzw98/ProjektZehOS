@@ -2,6 +2,16 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Paketverwaltung am 15. November 2026
+
+Geprüft in QEMU TCG mit 512 MiB, e1000e und vvfat-Datenlaufwerk mit `snapshot=on`. Details in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
+
+- **`finally` auf Fehlerwegen:** Die bekannte Unwind-Grenze betrifft auch einfache `try/finally`-Blöcke. Ein `Monitor.Exit` im `finally` von `CosmosNetworkService.Download` lief nach einer Ausnahme nicht. Die Netzwerksperre blieb belegt, und jedes weitere `pkg update` wartete endlos. Sperren, Paketsperren und Schreib-Handles werden deshalb nach `catch` ausdrücklich freigegeben.
+- **TLS-Abschluss:** Schließt der Server die Verbindung direkt nach der Antwort, scheitert BouncyCastle beim Senden von `close_notify` mit `internal_error(80)`. Bei Downloads mit vollständig gelesenem, längengeprüftem Body wird das nicht als Fehler gewertet.
+- **Dateisystem:** `File.Move`, `File.Delete`, `Directory.CreateDirectory`, `Directory.GetFiles/GetDirectories` und nicht rekursives `Directory.Delete` funktionieren auf FAT. Installieren, Entfernen, Aktualisieren und Aufräumen nach einem Neustart laufen damit.
+- **Dauer unter TCG:** 28-MB-Download über HTTPS mit Schreiben und SHA-256 rund 90 bis 120 s. Die erneute Prüfung aller Dateien vor dem Start verlängert den Doom-Start auf bis zu etwa 30 s.
+- **QEMU-Eingabe:** Die Kontoeinrichtung nach dem ersten Start dauert unter TCG unterschiedlich lange. Per QMP zu früh getippte Zeilen gehen verloren oder werden geteilt. Das Testskript wiederholt deshalb `net dhcp` und `pkg source`.
+
 ## WebAssembly-Interpreter (wasm3) am 14. November 2026
 
 Probe mit `-p:ZehOSWasmProbe=true`, QEMU 512 MiB, CPU `max`; Details in [WASM_FEASIBILITY.md](WASM_FEASIBILITY.md).

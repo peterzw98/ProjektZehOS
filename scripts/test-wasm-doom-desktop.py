@@ -183,9 +183,10 @@ def serial_size(work: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--iso", type=Path, required=True)
-    parser.add_argument("--repo", type=Path, required=True, help="mit scripts/build-package.py erzeugtes Repository")
+    parser.add_argument("--repo", type=Path, help="mit scripts/build-package.py erzeugtes Repository")
     parser.add_argument("--upgrade-repo", type=Path, help="Repository mit neuerer Doom-Version (Szenario packages)")
-    parser.add_argument("--tls", type=Path, required=True, help="Ordner mit server.pem und server.key der Test-CA")
+    parser.add_argument("--tls", type=Path, help="Ordner mit server.pem und server.key der Test-CA")
+    parser.add_argument("--source", help="vorhandenes Repository (https://.../) statt des lokalen Testservers")
     parser.add_argument("--scenario", choices=["full", "packages", "corrupt"], default="full")
     parser.add_argument("--port", type=int, default=4445)
     parser.add_argument("--repo-port", type=int, default=8443)
@@ -193,7 +194,10 @@ def main() -> int:
 
     work = ROOT / ".tools" / "wasm-desktop" / uuid.uuid4().hex
     (work / "disk").mkdir(parents=True)
-    repository = Repository(args.repo.resolve(), args.tls.resolve(), args.repo_port, args.scenario == "corrupt")
+    if args.source is None and (args.repo is None or args.tls is None):
+        parser.error("ohne --source sind --repo und --tls noetig")
+    repository = None if args.source else Repository(args.repo.resolve(), args.tls.resolve(), args.repo_port, args.scenario == "corrupt")
+    source = args.source or f"https://10.0.2.2:{args.repo_port}/"
     guest = start_qemu(args.iso.resolve(), work / "disk", work, args.port)
     try:
         wait_serial(work, "ist bereit", 180)
@@ -208,12 +212,15 @@ def main() -> int:
         for value in (TEST_USER, TEST_PASSWORD, TEST_PASSWORD):
             qmp.line(value)
             time.sleep(1)
-        time.sleep(25)
+        time.sleep(60)
 
         def shell(*lines: str) -> None:
             # Esc wechselt vom Desktop in die Textshell derselben Sitzung.
             qmp.tap("esc")
-            time.sleep(1.5)
+            time.sleep(4)
+            # Leerzeile zuerst: der Wechsel in die Textshell kann unter Last laenger dauern.
+            qmp.tap("ret")
+            time.sleep(1)
             for value in lines:
                 qmp.line(value)
                 time.sleep(1)
@@ -233,9 +240,13 @@ def main() -> int:
                     return
                 except RuntimeError as error:
                     shot("update-failed")
-                    if "IPv4" not in str(error) or attempt == 5:
+                    if not ("IPv4" in str(error) or "Paketquelle" in str(error)) or attempt == 5:
                         raise
-                    time.sleep(10)
+                    # Die Eingabe kann waehrend der langsamen Ersteinrichtung verloren gehen; DHCP erneut anstossen.
+                    qmp.line("net dhcp")
+                    time.sleep(1)
+                    qmp.line(f"pkg source {source}")
+                    time.sleep(15)
                 except TimeoutError:
                     shot("update-timeout")
                     raise
@@ -260,9 +271,9 @@ def main() -> int:
             qmp.tap("y")
             time.sleep(5)
 
-        shell("net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3")
+        shell("net dhcp")
         time.sleep(10)
-        qmp.line(f"pkg source https://10.0.2.2:{args.repo_port}/")
+        qmp.line(f"pkg source {source}")
         time.sleep(1)
         update_catalog()
         if args.scenario == "corrupt":
@@ -314,7 +325,7 @@ def main() -> int:
             quit_doom()
             if args.upgrade_repo is not None:
                 repository.directory = args.upgrade_repo.resolve()
-                shell("net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3")
+                shell("net dhcp")
                 time.sleep(10)
                 update_catalog()
                 pkg("upgrade", "doom 1.1.0 aktualisiert.")
@@ -373,7 +384,8 @@ def main() -> int:
         shot("taskmanager-after")
         return 0
     finally:
-        repository.server.shutdown()
+        if repository is not None:
+            repository.server.shutdown()
         if guest.poll() is None:
             guest.kill()
             guest.wait()

@@ -78,17 +78,15 @@ internal static unsafe class WasmRuntime
                 WasmStatus status = WasmStatus.LoadFailed;
                 int result = 0;
                 string message;
-                try
-                {
-                    (byte[]? Module, string? Error) loaded;
-                    // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
-                    try { loaded = load(); }
-                    catch (Exception exception) { loaded = (null, exception.Message); }
-                    if (loaded.Module != null) status = Execute(loaded.Module, entry, gas, session, out result, out message);
-                    else message = loaded.Error ?? "Modul nicht geladen.";
-                    completed(status, result, message);
-                }
-                finally { lock (gate) pending--; }
+                (byte[]? Module, string? Error) loaded;
+                // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
+                try { loaded = load(); }
+                catch (Exception exception) { loaded = (null, exception.Message); }
+                if (loaded.Module != null) status = Execute(loaded.Module, entry, gas, session, out result, out message);
+                else message = loaded.Error ?? "Modul nicht geladen.";
+                // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
+                lock (gate) pending--;
+                completed(status, result, message);
             });
             if (worker == null)
             {

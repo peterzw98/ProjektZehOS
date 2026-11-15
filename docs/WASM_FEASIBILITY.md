@@ -108,7 +108,7 @@ Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080,
 | fehlende WAD | „App beendet (Exitcode 1): IWAD file 'freedoom1.wad' …“ |
 | abgeschnittene WAD (100 000 Byte) | „App beendet (Exitcode 1): W_GetNumForName: PNAME…“ |
 
-**Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; das Modul liegt an festem Ort und wird ohne Rechteprüfung gelesen (Produktloader, Aufgabe 3/4); VMware und echte Hardware ungeprüft.
+**Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; VMware und echte Hardware ungeprüft. Der feste Ordner ist inzwischen durch den signierten Paketbestand ersetzt; die Prüfung mit Installation aus dem Repository steht in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
 ## Grenzen und offene Punkte
 

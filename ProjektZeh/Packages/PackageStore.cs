@@ -156,39 +156,45 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         var manifest = parsed.Value!;
         var begun = Begin(manifest.Id);
         if (!begun.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(begun);
-        try
+        // Kein finally: Cosmos 3.0.94 ueberspringt finally beim Exception-Unwind (COSMOS_SUPPORT.md); die Sperre wird
+        // deshalb nach dem Abfangen auf jedem Weg ausdruecklich freigegeben.
+        ResultObject<PackageManifest> result;
+        try { result = Publish(source, prefix, parsed, signature.Value!, cancellation); }
+        catch (OperationCanceledException) { result = ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, "Installation abgebrochen."); }
+        catch (Exception exception) { result = ResultObjectFactory.CreateFromException<PackageManifest>(exception); }
+        lock (gate) busy.Remove(manifest.Id);
+        return result;
+    }
+
+    private ResultObject<PackageManifest> Publish(IPackageSource source, string prefix, ResultObject<PackageManifest> parsed, byte[] signature,
+        CancellationToken cancellation)
+    {
+        var manifest = parsed.Value!;
+        var current = ReadActive(manifest.Id);
+        // Ein beschaedigtes Paket darf durch eine neue, vollstaendig gepruefte Installation ersetzt werden.
+        InstalledPackage? previous = current.IsOK() ? current.Value : null;
+        if (previous != null && previous.Manifest.Version.CompareTo(manifest.Version) >= 0)
+            return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, previous.Manifest.Version.CompareTo(manifest.Version) == 0
+                ? $"{manifest.Id} {manifest.Version} ist bereits installiert."
+                : $"Rueckstufung abgelehnt: installiert ist {manifest.Id} {previous.Manifest.Version}.");
+        string target = Path.Combine(Apps, manifest.Id, manifest.Version.ToString());
+        ResultErr written;
+        try { written = WriteVersion(source, prefix, manifest, signature, target, cancellation); }
+        catch (Exception)
         {
-            var current = ReadActive(manifest.Id);
-            // Ein beschaedigtes Paket darf durch eine neue, vollstaendig gepruefte Installation ersetzt werden.
-            InstalledPackage? previous = current.IsOK() ? current.Value : null;
-            if (previous != null && previous.Manifest.Version.CompareTo(manifest.Version) >= 0)
-                return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, previous.Manifest.Version.CompareTo(manifest.Version) == 0
-                    ? $"{manifest.Id} {manifest.Version} ist bereits installiert."
-                    : $"Rueckstufung abgelehnt: installiert ist {manifest.Id} {previous.Manifest.Version}.");
-            string target = Path.Combine(Apps, manifest.Id, manifest.Version.ToString());
-            var written = WriteVersion(source, prefix, manifest, signature.Value!, target, cancellation);
-            if (!written.IsOK())
-            {
-                TryDeleteTree(target);
-                return ResultObjectFactory.CreateFailure<PackageManifest>(written);
-            }
-            ReplaceFile(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"));
-            // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
-            if (previous != null) TryDeleteTree(previous.Directory);
-            return parsed;
+            // Auch bei Abbruch oder Dateifehler keine halbe Version liegen lassen.
+            TryDeleteTree(target);
+            throw;
         }
-        catch (OperationCanceledException)
+        if (!written.IsOK())
         {
-            return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, "Installation abgebrochen.");
+            TryDeleteTree(target);
+            return ResultObjectFactory.CreateFailure<PackageManifest>(written);
         }
-        catch (Exception exception) when (IsFileError(exception))
-        {
-            return ResultObjectFactory.CreateFromException<PackageManifest>(exception);
-        }
-        finally
-        {
-            lock (gate) busy.Remove(manifest.Id);
-        }
+        ReplaceFile(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"));
+        // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
+        if (previous != null) TryDeleteTree(previous.Directory);
+        return parsed;
     }
 
     private static ResultErr WriteVersion(IPackageSource source, string prefix, PackageManifest manifest, byte[] signature, string target, CancellationToken cancellation)
@@ -204,12 +210,17 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var digest = new Sha256Digest();
             ResultErr copied;
-            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
+            var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+            var hashing = new HashingStream(stream, digest);
+            // Ohne using (Cosmos-Unwindgrenze): die Datei muss auch nach Abbruch geschlossen sein, damit sie loeschbar ist.
+            try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
+            catch (Exception)
             {
-                var hashing = new HashingStream(stream, digest);
-                copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation);
-                if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
+                stream.Dispose();
+                throw;
             }
+            stream.Dispose();
+            if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
             if (!string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Pruefsumme falsch: " + file.Path);
@@ -225,23 +236,26 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         if (!PackageManifest.IsValidId(id)) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Ungueltige Paketkennung.");
         var begun = Begin(id);
         if (!begun.IsOK()) return begun;
+        ResultErr result;
+        string directory = Path.Combine(Apps, id);
         try
         {
-            string directory = Path.Combine(Apps, id);
-            if (!File.Exists(Path.Combine(directory, "active"))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
-            // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
-            File.Delete(Path.Combine(directory, "active"));
-            DeleteTree(directory);
-            return ResultErr.CreateSuccess();
+            if (!File.Exists(Path.Combine(directory, "active"))) result = ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
+            else
+            {
+                // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
+                File.Delete(Path.Combine(directory, "active"));
+                DeleteTree(directory);
+                result = ResultErr.CreateSuccess();
+            }
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception)
         {
-            return ResultErr.CreateFailure(ResultCode.Failure, $"Paket {id} nicht vollstaendig entfernt: " + exception.Message);
+            result = ResultErr.CreateFailure(ResultCode.Failure, $"Paket {id} nicht vollstaendig entfernt: " + exception.Message);
         }
-        finally
-        {
-            lock (gate) busy.Remove(id);
-        }
+        // Kein finally (Cosmos-Unwindgrenze): Sperre nach dem Abfangen ausdruecklich freigeben.
+        lock (gate) busy.Remove(id);
+        return result;
     }
 
     public ResultObject<PackageCatalog> ReadCatalog()
