@@ -34,7 +34,11 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private int frameWidth;
     private int frameHeight;
     private int[] scaled = [];
-    private int scaledFor = -1;
+    // Quellspalte bzw. -zeile je Zielpixel; neu berechnet nur, wenn sich Ziel- oder Bildgroesse aendert.
+    private int[] sourceColumns = [];
+    private int[] sourceRows = [];
+    private int scaledFrameWidth;
+    private int scaledFrameHeight;
     private int frameRevision;
     private int drawnRevision = -1;
     private bool running;
@@ -121,17 +125,22 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         lock (gate)
         {
             input.SetViewport(width, height, frameWidth, frameHeight);
-            if (frameWidth > 0)
+            var (targetWidth, targetHeight) = WasmImageFit.Fit(width, height, frameWidth, frameHeight);
+            if (targetWidth > 0)
             {
-                int scale = Math.Max(1, Math.Min(width / frameWidth, height / frameHeight));
-                int targetWidth = frameWidth * scale, targetHeight = frameHeight * scale;
-                if (scaledFor != scale || scaled.Length != targetWidth * targetHeight)
+                if (sourceColumns.Length != targetWidth || sourceRows.Length != targetHeight
+                    || scaledFrameWidth != frameWidth || scaledFrameHeight != frameHeight)
                 {
                     scaled = new int[targetWidth * targetHeight];
-                    scaledFor = scale;
+                    sourceColumns = new int[targetWidth];
+                    sourceRows = new int[targetHeight];
+                    WasmImageFit.FillSourceIndices(sourceColumns, frameWidth);
+                    WasmImageFit.FillSourceIndices(sourceRows, frameHeight);
+                    scaledFrameWidth = frameWidth;
+                    scaledFrameHeight = frameHeight;
                     drawnRevision = -1;
                 }
-                if (drawnRevision != frameRevision) Scale(scale, targetWidth);
+                if (drawnRevision != frameRevision) Scale(targetWidth);
                 drawnRevision = frameRevision;
                 surface.DrawPixels(scaled, x + (width - targetWidth) / 2, y + (height - targetHeight) / 2, targetWidth, targetHeight);
             }
@@ -139,17 +148,20 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
-    private void Scale(int scale, int targetWidth)
+    // Naechster Nachbar ueber die Tabellen; wiederholte Quellzeilen werden als ganze Zeile kopiert.
+    private void Scale(int targetWidth)
     {
-        for (int row = 0; row < frameHeight; row++)
+        for (int row = 0; row < sourceRows.Length; row++)
         {
-            int target = row * scale * targetWidth;
-            for (int column = 0; column < frameWidth; column++)
+            int target = row * targetWidth;
+            if (row > 0 && sourceRows[row] == sourceRows[row - 1])
             {
-                int color = unchecked((int)(0xff000000 | frame[row * frameWidth + column]));
-                for (int repeat = 0; repeat < scale; repeat++) scaled[target + column * scale + repeat] = color;
+                Array.Copy(scaled, target - targetWidth, scaled, target, targetWidth);
+                continue;
             }
-            for (int repeat = 1; repeat < scale; repeat++) Array.Copy(scaled, target, scaled, target + repeat * targetWidth, targetWidth);
+            int source = sourceRows[row] * frameWidth;
+            for (int column = 0; column < targetWidth; column++)
+                scaled[target + column] = unchecked((int)(0xff000000 | frame[source + sourceColumns[column]]));
         }
     }
 

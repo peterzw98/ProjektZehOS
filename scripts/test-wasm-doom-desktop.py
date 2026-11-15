@@ -124,6 +124,16 @@ class Qmp:
             self.command("input-send-event", {"events": [{"type": "btn", "data": {"down": down, "button": "left"}}]})
             time.sleep(0.1)
 
+    def drag(self, x: int, y: int, to_x: int, to_y: int, width: int, height: int) -> None:
+        """Zieht mit gedrueckter linker Taste, etwa an einer Fensterecke."""
+        for (px, py), down in (((x, y), True), ((to_x, to_y), False)):
+            self.command("input-send-event", {"events": [
+                {"type": "abs", "data": {"axis": "x", "value": int(px * 32767 / (width - 1))}},
+                {"type": "abs", "data": {"axis": "y", "value": int(py * 32767 / (height - 1))}}]})
+            time.sleep(0.2)
+            self.command("input-send-event", {"events": [{"type": "btn", "data": {"down": down, "button": "left"}}]})
+            time.sleep(0.2)
+
     def shot(self, path: Path) -> tuple[int, int]:
         ppm = path.with_suffix(".ppm")
         self.command("screendump", {"filename": str(ppm)})
@@ -482,6 +492,17 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
     qmp.tap("ctrl")
     time.sleep(1.5)
     guest.shot("resumed-fired")
+    # Fenstergroessen (#78): maximiert und im Paketminimum 640x440 passt der Kernel das Bild seitentreu ein.
+    # Das Doom-Fenster liegt bei 32,80 (800x560); Maximieren-Feld bei 776,100, maximiert bei 1864,20.
+    qmp.click(776, 100, *guest.size)
+    time.sleep(1.5)
+    guest.shot("maximiert")
+    qmp.click(1864, 20, *guest.size)
+    qmp.drag(829, 637, 669, 517, *guest.size)
+    time.sleep(1.5)
+    guest.shot("paketminimum")
+    qmp.drag(669, 517, 829, 637, *guest.size)
+    time.sleep(1)
     # Doom ist das erste Fenster; sein Schliessen-Feld liegt bei 1920x1080 an fester Stelle.
     memory_mark = guest.mark()
     qmp.click(813, 100, *guest.size)
