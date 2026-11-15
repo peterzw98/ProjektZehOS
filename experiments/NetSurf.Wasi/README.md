@@ -52,7 +52,7 @@ Annahmen:
 - **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (für Nicht-Links `EINVAL`). `fd_readdir` ist nur für Verzeichnislisten nötig.
 - **Tasten:** normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal), zum Beispiel Pfeile 72/75/77/80 und Entf 83.
 - **Text:** Zeichen kommen ausschließlich aus `poll_event`-Texten (Typ 3, Unicode). Zeichentasten ohne Strg erzeugen kein Tastenereignis, damit nichts doppelt getippt wird. Strg-Kürzel nutzen die US-Zuordnung der Taste.
-- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwärts) oder 5 (abwärts) an fbtk. `reset` lässt gehaltene Umschalt-/Strg-/Alt-Tasten los.
+- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwärts) oder 5 (abwärts) an fbtk. `reset` lässt alle gehaltenen Tasten und Maustasten los; Loslassen ohne vorheriges Drücken wird verworfen. Eine so losgelassene Maustaste wirkt an der letzten Zeigerposition und kann dort einen Klick abschließen.
 
 ## Ohne VM prüfen
 
@@ -89,3 +89,4 @@ ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/lib
 | Klick ins Feld, Texte `Grüße @€`, Zeichentaste `g` ohne Text, Rücktaste | Feld zeigt `Grüße @` |
 | Rad −5 auf langer Seite | Seite nach unten gescrollt |
 | Kaputter Link | Seite „Not found“, Browser bedienbar |
+| Maustaste auf Link gedrückt, `reset`, danach neuer Klick | keine hängende Taste; das Loslassen durch `reset` schließt den Klick auf den ersten Link ab |
