@@ -1,6 +1,6 @@
 # VMware: Zeitkalibrierung, Tastatur und Ausschalten
 
-Pruefstand vom 15. November 2026, Implementierung `892a988`, Cosmos Gen3 3.0.94. Es wurden keine SDKs, Pakete oder Werkzeuge aktualisiert.
+Pruefstand vom 15. November 2026, Implementierung `892a988`, Standardversion ZehOS 0.1.1, Cosmos Gen3 3.0.94. Es wurden keine SDKs, Pakete oder Werkzeuge aktualisiert.
 
 ## Fehler und Korrektur
 
@@ -33,8 +33,33 @@ VMware Player 17.5.2 (Build 23775571), neue plattenlose Test-VM unter `.tools/vm
 
 Der kalte Normalstart und zwei anschliessende harte VM-Resets liefern jeweils beide CPUID-Marker, TSC `3072000000 Hz`, LAPIC `4125 ticks/ms`, gebundene PS/2-Tastatur und einen bereiten Desktop. Ein VM-Reset ist hier keine durch die ZehOS-Shell ausgeloeste Energieaktion. Windows-Installer und Shell-Energieaktionen in VMware Player sind damit nicht geprueft.
 
+## Unabhaengige Gegenpruefung unter Linux / Workstation 26.0.1
+
+Der Agent der urspruenglichen VMware-Installer-Pruefung hat `892a988` mit Freigabe seines Benutzers separat gebaut und getestet. Umgebung und VMX entsprechen dem [urspruenglichen Pruefaufbau](INSTALLER_UPDATES_TESTS.md#vmware-workstation-15-november-2026). Fuer `scripts/build-release.sh 0.1.0` wurde ausdruecklich die Testversion 0.1.0 gesetzt; danach wurde im Arbeitsbranch nur die Standardversion auf 0.1.1 erhoeht. Die Kernelkorrektur ist identisch. Die Ergebnisse wurden im Projektkanal am 15. November 2026 uebergeben:
+
+| Pruefung | Ergebnis |
+| --- | --- |
+| Release-Artefakte einschliesslich Setup-ISO | Build ohne Warnungen/Fehler |
+| Vier kalte Live-Starts mit jeweils zwei VM-Resets | 12/12 mit beiden CPUID-Markern, TSC 3072000000 Hz, LAPIC 4125 Ticks/ms und gebundener Tastatur |
+| Uhr gegen Hostzeit | `uptime` +60,97 s bei 61,0 s Hostzeit |
+| Setup-Assistent und Installation auf neue Testplatte | erfolgreich |
+| Warmstart ueber „Neu starten“, Start ohne ISO, Adminanlage, `/data` | erfolgreich |
+| Weiterer Kaltstart und Anmeldung | erfolgreich |
+| `reboot` vom installierten System | startet erneut; Tastaturgrenze siehe unten |
+| `shutdown` vom installierten System | `_PTS(5)` ohne LAI-Panik, VM schaltet sich aus |
+| Testplatte danach auf dem Host | FAT-Pruefung sauber; Kernel und `.bak` stimmen mit gebautem ELF ueberein |
+| Kalibrierung bei Setup- und Plattenstarts | durchgehend beide CPUID-Marker, TSC 3072000000 Hz und LAPIC 4125 Ticks/ms |
+
+### Verbleibender PS/2-Fehler bei korrektem Takt
+
+Bei einem von insgesamt 26 Starts meldete `Ps2KeyboardDriver` nach `reboot` des installierten Systems `enable scanning was not acknowledged`. Die Tastatur blieb bis zu einem Kaltstart unbenutzbar. Sechs weitere Shell-Neustarts und sechs VM-Resets mit Tastendruecken reproduzierten den Fehler nicht. Der Fehler ist von der bisherigen fehlgeschlagenen Selbstpruefung bei falscher Zeitkalibrierung zu unterscheiden: Beide CPUID-Frequenzen waren hier korrekt.
+
+Die Quellpruefung von Cosmos 3.0.94 zeigt, dass `Ps2Access.TryCommand` einen belegten Austausch, einen fehlgeschlagenen Controller-Schreibzugriff und einen ACK-Timeout mit demselben `false` meldet. Der Controller wartet bis zu 10 ms auf seinen Eingabepuffer, die Aktivierung bis zu 100 ms auf den Austausch. Die vorhandene Fehlermeldung grenzt den tatsaechlichen Grund nicht weiter ein. Ohne reproduzierbaren Fehler oder entsprechende Laufzeitdaten waere eine Treiberaenderung spekulativ; dieser Befund ist deshalb ausdruecklich **nicht behoben**.
+
+Der Gegenpruefer ordnet den Fehllauf seinem Linux-Protokoll `.tools/vmware-e2e3/serial.log` zu (Reset bei Zeile 131008, Fehler bei 131315): Admin in der Textshell nach etwa 140 s Laufzeit, `/data` eingebunden, Desktop zuvor geoeffnet. `reboot` und Return wurden per VNC mit jeweils 50 ms Tastendruck und 80 ms Abstand gesendet; keine Taste blieb gehalten, kein Logout. Nach Return-Up folgten keine Eingaben bis zum Kaltstart. Ein gehaltener Neustart-Tastendruck ist damit fuer diesen beobachteten Lauf nicht belegt.
+
 ## Grenzen
 
-Keine Aussage zu echter Hardware, mehreren CPUs, anderen VMware-Versionen oder weiteren PCI-Segmenten. VMware-Mausbedienung, Aufloesungswechsel, Netzwerk, Kernelupdates und Rueckfallstart werden durch diese Korrektur nicht als neu geprueft bezeichnet. Die beobachteten Tastaturfehler werden durch korrekte Kalibrierung vermieden; es wurde kein PS/2-Treiber auf Verdacht veraendert.
+Keine Aussage zu echter Hardware, mehreren CPUs, anderen VMware-Versionen oder weiteren PCI-Segmenten. VMware-Mausbedienung, Aufloesungswechsel, Netzwerk, Kernelupdates und Rueckfallstart werden durch diese Korrektur nicht als neu geprueft bezeichnet. Es wurde kein PS/2-Treiber auf Verdacht veraendert; der beschriebene seltene ACK-Fehler bleibt offen.
 
 Lokale Protokolle und ISO-Kopien liegen unter dem ignorierten `.tools/vmware-stability` und `.tools/vmware-source`; sie werden nicht als Quellcode eingecheckt.
