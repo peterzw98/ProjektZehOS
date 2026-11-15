@@ -129,7 +129,7 @@ Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden)
 | Prüfung (Stand dieses Skripts) | Ergebnis |
 | --- | --- |
 | Vorbereitung: `pkg install doom` (28 MB über HTTPS, lokales Testrepository) | installiert in 68 s (TCG) |
-| `full`: F4/Esc, Schließen über X, Starts mit Beenden über das Doom-Menü | alle Starts laufen. **Offen:** mit `--starts 10` sinkt der freie Speicher von 392 auf 353 MiB bei gleichbleibendem GC-Heap; ob ein Leck vorliegt oder der Speicher nur verzögert frei wird (Doom wird jetzt kurz nach dem ersten Bild beendet), ist ungeklärt |
+| `full`: F4/Esc, Schließen über X, Starts mit Beenden über das Doom-Menü | alle Starts laufen. Freier Speicher nach jedem Lauf (`WASM Speicher`, nach dem Aufräumen) mit `--starts 10`: TCG 415,3 → 414,2 MiB, WHPX 415,5 → 414,6 MiB. Das Skript lässt den Test scheitern, wenn er um mehr als 8 MiB sinkt. Ein früherer Wert von 392 → 353 MiB stammte von einem Taskmanager-Foto direkt nach `APP doom beendet`, also bevor der Worker gesammelt hatte. Eine gesonderte Messreihe (je sechs Läufe, Doom 2 s bzw. 30 s nach dem ersten Bild beendet, danach 60 s Ruhe) blieb in beiden Fällen bei 393 MiB ± 0,3: kurze und lange Läufe geben ihren Speicher gleich vollständig frei |
 | `remove`: Entfernen, während testapp läuft | abgelehnt: „Paket testapp laeuft gerade; zuerst die App schliessen.“ |
 | `remove`: Entfernen, Startmenü, `pkg install-local /data/pkgs/testapp/1.0.0` | entfernt, „Keine Programme gefunden“, lokal wieder installiert und gestartet |
 | `reboot`: Neustart mit Anmeldung | testapp bleibt installiert und startet |
