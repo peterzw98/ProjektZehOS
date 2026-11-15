@@ -104,7 +104,7 @@ int main(void) {
 		for (size_t step = 1; step <= strlen(text); step++)
 			assert(run(text, step, false, 1024, true, &s, NULL) == HTTP_ERR_SYNTAX);
 	}
-	static const char *const chunk_good[] = { "5", "5 ", "5\t", "5;", "5 ;ext", "5\t;a=b", "5;a=\"x y\"", "00005", "5 \t ;x;y" };
+	static const char *const chunk_good[] = { "5", "5 ", "5\t", "5;", "5 ;ext", "5\t;a=b", "5;a=\"x y\"", "00005", "00000000000000000005", "5 \t ;x;y" };
 	for (size_t i = 0; i < sizeof(chunk_good) / sizeof(chunk_good[0]); i++) {
 		char text[128];
 		snprintf(text, sizeof(text), "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n%s\r\nhallo\r\n0\r\n\r\n", chunk_good[i]);
