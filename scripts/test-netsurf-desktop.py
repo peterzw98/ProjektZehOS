@@ -30,6 +30,9 @@ def main():
     work.mkdir(parents=True)
     files = [str(p.resolve()) + "=" + p.relative_to(args.package).as_posix()
              for p in sorted(args.package.rglob("*")) if p.is_file()]
+    probe = work / "reset-probe.html"
+    probe.write_text('<!doctype html><style>body{margin:0;background:#e0ffff}a{display:block;width:100%;height:1500px;background:#e0ffff}</style><a href="ziel.html">Reset darf diesen Link nicht anklicken.</a>', encoding="utf-8")
+    files.append(str(probe) + "=pages/reset-probe.html")
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
                     "--repo", str(work / "seed/pkgs"), "--id", "netsurf", "--version", "1.0.0", "--name", "NetSurf",
                     "--entry", "netsurf.wasm", *files], check=True)
@@ -42,12 +45,12 @@ def main():
     def capture(name):
         nonlocal step
         step += 1
-        guest.qmp.shot(work / f"{step:02d}-{name}.png")
         ppm = work / "screen.ppm"
         guest.qmp.command("screendump", {"filename": str(ppm)})
         header, size, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
         assert header == b"P6" and maximum == b"255", "Unerwartetes QEMU-Bildformat"
         guest.size = tuple(map(int, size.split()))
+        guest.qmp.shot(work / f"{step:02d}-{name}.png")
         return pixels
 
     def page(name, color):
@@ -97,8 +100,52 @@ def main():
         button("left",False)
         guest.desktop()
         page("reset-ohne-klick", "d8ecff")
+        # Ein Link bei Dokumentposition 0,0 macht einen synthetischen Fehlklick nach Mehrtasten-Drag sichtbar.
+        click(400,196)
+        guest.qmp.tap("home")
+        for _ in range(32):
+            guest.qmp.tap("delete",hold=.005)
+        guest.qmp.text("file:///pages/reset-probe.html")
+        guest.qmp.tap("ret")
+        page("mehrtasten-probe", "e0ffff")
+        point(220,280)
+        button("left",True)
+        point(300,340)
+        button("right",True)
+        guest.shell()
+        button("right",False)
+        button("left",False)
+        guest.desktop()
+        page("mehrtasten-reset-ohne-klick", "e0ffff")
+        click(126,196)
+        page("nach-mehrtasten-reset", "d8ecff")
         click(226,414)
         before = page("lang-oben", "fff4d0")
+
+        def body(pixels):
+            width, _ = guest.size
+            return b"".join(pixels[(row*width+124)*3:(row*width+720)*3] for row in range(240,548))
+
+        # Der Rollbalken hat einen eigenen Capture-Pfad; Fokusverlust muss auch diesen abbrechen.
+        point(738,240)
+        button("left",True)
+        point(738,280)
+        time.sleep(.5)
+        dragged = capture("rollbalken-gehalten")
+        assert body(dragged) != body(before), "Test hat keinen Rollbalken-Drag begonnen"
+        guest.shell()
+        button("left",False)
+        guest.desktop()
+        point(738,280)
+        time.sleep(.5)
+        reset = capture("rollbalken-reset")
+        point(738,400)
+        time.sleep(.5)
+        assert body(capture("rollbalken-nach-reset")) == body(reset), "Rollbalken zieht nach Fokusreset weiter"
+        click(126,196)
+        page("nach-rollbalken-zurueck", "d8ecff")
+        click(226,414)
+        before = page("lang-vor-rad", "fff4d0")
         for _ in range(8):
             button("wheel-down",True)
             button("wheel-down",False)
