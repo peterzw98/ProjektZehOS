@@ -50,6 +50,8 @@ Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schrit
 | `wasi-libc-*` | wasi-libc `574b88da481569b65a237cb80daf9a2d5aeaf82d` (Submodul von wasi-sdk-25) | statisch gelinkte libc einschließlich musl-Teilen und Emulationsbibliotheken |
 | `compiler-rt-LICENSE.TXT` | llvm-project `ab4b5a2db582958af1ee308a790cfdb42bd24720`, `compiler-rt/` (Submodul von wasi-sdk-25) | statisch gelinkte Laufzeitfunktionen des Compilers |
 
+Ein veröffentlichbares Paket entsteht nur aus einem sauberen Commit auf `origin/master`. Sonst schreibt `build.py` eine Warnung in `SOURCES.txt`, weil der Quellverweis (GPL) dann nicht dauerhaft erreichbar ist.
+
 ## Schnittstelle zum Loader
 
 Importe des Moduls:

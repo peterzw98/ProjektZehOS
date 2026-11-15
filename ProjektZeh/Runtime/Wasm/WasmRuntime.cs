@@ -224,16 +224,10 @@ internal static unsafe class WasmRuntime
         }
     }
 
-    // C prueft die relativen Komponenten; dieser gemeinsame Schritt sichert den Bezug zum Paketordner.
     private static string? ResolvePackagePath(byte* path, uint length)
     {
         string? root = current?.Root;
-        if (root == null) return null;
-        root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        string full = Path.GetFullPath(Path.Combine(root, Encoding.UTF8.GetString(path, (int)length)));
-        if (full != root && !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new UnauthorizedAccessException("Pfad ausserhalb des Pakets.");
-        return full;
+        return root == null ? null : WasmPackagePaths.Resolve(root, Encoding.UTF8.GetString(path, (int)length));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_stat")]
@@ -241,19 +235,15 @@ internal static unsafe class WasmRuntime
     {
         try
         {
-            string? full = ResolvePackagePath(path, length);
-            if (full == null) return 2; // WASI EACCES
-            FileAttributes attributes = File.GetAttributes(full);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) return 2;
-            bool directory = (attributes & FileAttributes.Directory) != 0;
-            *size = directory ? 0 : (ulong)new FileInfo(full).Length;
-            *type = directory ? 3 : 4;
-            return 0;
+            int result = WasmPackagePaths.Stat(current?.Root, Encoding.UTF8.GetString(path, (int)length), out ulong bytes, out int kind);
+            if (result == WasmPackagePaths.Success)
+            {
+                *size = bytes;
+                *type = kind;
+            }
+            return result;
         }
-        catch (FileNotFoundException) { return 44; } // WASI ENOENT
-        catch (DirectoryNotFoundException) { return 44; }
-        catch (UnauthorizedAccessException) { return 2; }
-        catch (Exception) { return 29; } // WASI EIO; keine Ausnahme ueber die native Grenze.
+        catch (Exception) { return WasmPackagePaths.Io; } // keine Ausnahme ueber die native Grenze.
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_size")]

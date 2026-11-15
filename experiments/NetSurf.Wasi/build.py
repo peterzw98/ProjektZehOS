@@ -142,8 +142,20 @@ def main() -> int:
         shutil.copyfile(path, licenses / path.name)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
     source_lines = ["ZehOS NetSurf source and build recipe", "",
-        f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/experiments/NetSurf.Wasi", "",
-        "Source archives (unmodified upstream plus the patches in the recipe):"]
+        f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/experiments/NetSurf.Wasi", ""]
+    # Das GPL-Quellangebot verweist auf diesen Commit; er muss dauerhaft erreichbar sein. Nach einem Squash-Merge
+    # verschwinden Branch-Commits, lokale Aenderungen sind nirgends abrufbar.
+    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                           capture_output=True, text=True).stdout.strip()
+    on_master = subprocess.run(["git", "merge-base", "--is-ancestor", revision, "origin/master"], cwd=ROOT,
+                               capture_output=True).returncode == 0
+    if dirty or not on_master:
+        warning = ("WARNUNG: Bau aus " + ("lokal geaendertem Stand" if dirty else "Commit ausserhalb von origin/master")
+                   + "; der Quellverweis ist nicht dauerhaft. Dieses Paket nicht veroeffentlichen.")
+        print(warning, file=sys.stderr)
+        source_lines.extend([warning, ""])
+    source_lines.extend([
+        "Source archives (unmodified upstream plus the patches in the recipe):"])
     for name in ("netsurf", "zlib"):
         url, digest, _ = ARCHIVES[name]
         source_lines.extend([url, f"SHA256 {digest}"])
