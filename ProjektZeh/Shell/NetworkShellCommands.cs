@@ -7,7 +7,8 @@ using ProjektZeh.Shared;
 namespace ProjektZeh.Shell;
 
 /// <summary>Haelt Ergebnis und Abbruch einer Netzoperation je Shellsitzung getrennt.</summary>
-internal sealed class NetworkShellCommands(INetworkService network, BackgroundTaskService tasks, Func<bool> isAdministrator)
+internal sealed class NetworkShellCommands(INetworkService network, BackgroundTaskService tasks, Func<bool> isAdministrator,
+    Action<string>? log = null)
 {
     private readonly object gate = new();
     private bool running;
@@ -75,6 +76,8 @@ internal sealed class NetworkShellCommands(INetworkService network, BackgroundTa
             if (cancellation.IsCancellationRequested && response.IsOK()) text = "Netzwerkauftrag abgebrochen.";
         }
         catch (Exception exception) { text = "Netzwerkauftrag fehlgeschlagen: " + exception.Message; }
+        // Seriell mitprotokolliert, damit Gasttests auf das Ergebnis warten statt auf eine feste Zeit.
+        log?.Invoke(text);
         lock (gate) { result = text; running = false; }
     }
 
