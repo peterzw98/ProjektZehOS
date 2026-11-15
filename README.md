@@ -285,7 +285,7 @@ Die VMware-VM liegt im ignorierten Ordner `.tools\vmware`; die frühere Cosmos-G
 
 VMware hat in Gen3 über dieses Startprofil keine Visual-Studio-Debugger-Anbindung. Für Breakpoints QEMU mit `F5` verwenden.
 
-ZehOS 0.1.1 verwendet unter VMware dessen gemeldete TSC-/LAPIC-Frequenzen und ergänzt die von LAI benötigten PCI-Zugriffe für das Ausschalten. Cosmos bleibt bei 3.0.94. Die [VMware-Prüfungen](docs/VMWARE_STABILITY_TESTS.md) unterscheiden Windows/Player, Linux/Workstation und noch offene Abläufe.
+ZehOS 0.1.2 verwendet unter VMware dessen gemeldete TSC-/LAPIC-Frequenzen und ergänzt die von LAI benötigten PCI-Zugriffe für das Ausschalten. Cosmos bleibt bei 3.0.94. Die [VMware-Prüfungen](docs/VMWARE_STABILITY_TESTS.md) unterscheiden Windows/Player, Linux/Workstation und noch offene Abläufe.
 
 ## Bauen und starten
 
@@ -325,14 +325,14 @@ Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als einge
 ```bash
 payload="$PWD/.tools/installer-payload"
 mkdir -p "$payload"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.0
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.2
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
 cp "$HOME/.nuget/packages/cosmos.build.common/3.0.94/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.0 \
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.1.2 \
   -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 ```
 
-Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.1.0`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.1.2`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
 
 Das Installer-ISO startet in den grafischen Einrichtungsassistenten (Willkommen → Hinweise → Zielplatte → Bestätigung → Installation → Neustart), bedienbar mit Maus und Tastatur. Bei einem Anzeigefehler oder mit `-p:ZehOSRecovery=true` startet stattdessen eine lokale Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Ohne Löschbestätigung wird nur eine Platte angenommen, die keine Partition hat und vollständig als leer gelesen wurde. Platten über 256 MiB werden dafür nicht gelesen und verlangen deshalb immer die Bestätigung. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium.
 
