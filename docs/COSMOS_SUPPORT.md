@@ -6,6 +6,10 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 Mit VMware Workstation 26.0.1 unter Linux (UEFI, `other-64`, 1 vCPU) liefert die PIT-basierte Kalibrierung von Cosmos 3.0.94 unzuverlässige Werte. In 5 von 7 Starts wich die gemeldete TSC-Frequenz stark vom tatsächlichen Wert (etwa 3,07 GHz) ab, zwischen 53,2 MHz und 85,5 GHz; einmal war auch der LAPIC-Timer mit 68 statt 4123 Ticks/ms kalibriert. Die monotone Uhr von ZehOS übernimmt den Fehler (je nach Wert bis etwa 28-fach zu langsam oder etwa 58-fach zu schnell). In dem Start mit zusätzlich falschem LAPIC-Wert bestand die PS/2-Tastatur den Selbsttest des `Ps2KeyboardDriver` nicht. `shutdown` scheitert unter VMware in `_PTS(5)`, weil die LAI-Hostfunktionen `laihost_pci_read{b,w,d}` in Cosmos fehlen (`LAI PANIC`); die VM hält an, statt sich auszuschalten. Die fehlenden LAI-Funktionen sind im Cosmos-Paket nachgewiesen; ob der Kalibrierungsfehler aus Cosmos oder aus der PIT-Emulation von VMware stammt, ist nicht eingegrenzt. In QEMU wurde beides bisher nicht beobachtet, die Kalibrierung dort aber nicht systematisch über viele Starts geprüft. Im Projektcode ist nichts davon behoben. Ablauf und Messwerte: [INSTALLER_UPDATES_TESTS.md](INSTALLER_UPDATES_TESTS.md#vmware-workstation-15-november-2026).
 
+## Standardschalter beim Cosmos-Build am 15. November 2026
+
+`cosmos build` aus Cosmos.Tools 3.0.94 ruft `dotnet publish` mit einem globalen `DefineConstants=ARCH_X64` auf. Ohne `TreatAsLocalProperty="DefineConstants"` ignoriert MSBuild die Ergänzungen der Projektdatei, etwa `ZEHOS_WASM`: Die native Wasm-Schicht wird gebaut, die C#-Hostfunktionen fehlen jedoch beim Linken. Das Projekt lässt lokale Ergänzungen deshalb ausdrücklich zu und übernimmt dabei die vorgegebenen Architektur-Schalter. Geprüft: normaler Release-Build ohne Wasm-Option sowie QEMU-Boot, Textshell und `help` mit `pkg`.
+
 ## Paketverwaltung am 15. November 2026
 
 Geprüft in QEMU TCG mit 512 MiB, e1000e und vvfat-Datenlaufwerk mit `snapshot=on`. Details in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
