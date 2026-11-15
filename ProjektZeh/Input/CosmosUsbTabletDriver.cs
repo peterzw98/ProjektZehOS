@@ -46,11 +46,12 @@ public sealed class CosmosUsbTabletDriver : Driver
         internal void OnReport(ReadOnlySpan<byte> report)
         {
             if (!UsbTabletReport.TryDecode(report, MouseManager.ScreenWidth, MouseManager.ScreenHeight,
-                out int x, out int y, out byte buttons)) return;
+                out int x, out int y, out byte buttons, out int wheel)) return;
 
             // HandleAbsolute in Cosmos 3.0.94 übernimmt nur die Tasten, nicht die Position.
             MouseManager.SetPosition(x, y);
             Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
+            if (wheel != 0) Sink?.ReportRelative(0, 0, (KitPointerButtons)buttons, wheel);
         }
     }
 }

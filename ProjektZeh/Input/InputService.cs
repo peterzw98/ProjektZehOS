@@ -50,7 +50,7 @@ internal sealed class InputService
         if (!released && !char.IsControl(character)) Publish(new(InputEventType.Text, Character: character));
     }
 
-    public void ReportPointer(int x, int y, PointerButtons buttons)
+    public void ReportPointer(int x, int y, PointerButtons buttons, int scrollDelta = 0)
     {
         x = Math.Clamp(x, 0, width - 1);
         y = Math.Clamp(y, 0, height - 1);
@@ -69,6 +69,7 @@ internal sealed class InputService
                     (buttons & button) != 0 ? InputEventType.PointerDown : InputEventType.PointerUp,
                     X: x, Y: y, Button: button))) return;
         }
+        if (scrollDelta != 0) Publish(new(InputEventType.PointerScroll, X: x, Y: y, ScrollDelta: scrollDelta));
     }
 
     public bool TryRead(out InputEvent value) => events.TryDequeue(out value);

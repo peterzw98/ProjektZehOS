@@ -300,6 +300,11 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
 
     private bool HandlePointer(InputEvent value)
     {
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            Scroll(-(long)value.ScrollDelta * 3);
+            return true;
+        }
         if (value.Type == InputEventType.PointerUp)
         {
             ValidateSelection();
@@ -344,10 +349,10 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         return Position(row, column);
     }
     private int Position(int row, int column) => row * (Output.Columns + 1) + column;
-    private void Scroll(int rows)
+    private void Scroll(long rows)
     {
-        if (pager != null) pagerOffset = Math.Clamp(pagerOffset + rows, 0, MaximumScroll);
-        else ScrollOffset = Math.Clamp(ScrollOffset - rows, 0, MaximumScroll);
+        if (pager != null) pagerOffset = (int)Math.Clamp(pagerOffset + rows, 0, MaximumScroll);
+        else ScrollOffset = (int)Math.Clamp(ScrollOffset - rows, 0, MaximumScroll);
     }
     private void ClearSelection() { selectionStart = selectionEnd = -1; selecting = false; }
     private void ValidateSelection() { if (selectedRevision != Output.Revision) ClearSelection(); }
@@ -382,7 +387,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         int stride = (glyphWidth + 7) / 8;
         foreach (char character in text)
         {
-            int glyph = character <= 255 ? character : '?';
+            int glyph = GermanFont.Glyph(character);
             for (int row = 0; row < glyphHeight; row++)
                 for (int column = 0; column < glyphWidth; column++)
                     if ((font[glyph * stride * glyphHeight + row * stride + column / 8] & (0x80 >> column % 8)) != 0)

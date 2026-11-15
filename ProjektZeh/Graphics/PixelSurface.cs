@@ -121,7 +121,7 @@ internal sealed class PixelSurface
         {
             if (character == '\n') { penX = x; penY += glyphHeight; continue; }
             Bounds(penX, penY, glyphWidth, glyphHeight, out int left, out int top, out int right, out int bottom);
-            int glyph = character <= 255 ? character : '?';
+            int glyph = GermanFont.Glyph(character);
             for (int row = top; row < bottom; row++)
             {
                 for (int column = left; column < right; column++)

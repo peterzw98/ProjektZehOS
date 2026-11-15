@@ -60,6 +60,12 @@ internal sealed class UiPanel
                 return;
             }
         }
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            foreach (var item in controls)
+                if (item.Enabled && item.Bounds.Contains(value.X, value.Y)) { item.Handle(value); return; }
+            return;
+        }
         if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
         {
             captured = null;
