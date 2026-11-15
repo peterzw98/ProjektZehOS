@@ -16,6 +16,9 @@ internal sealed class AccountService
         "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     private const string CommandsFile = ".zehos-commands.db";
     private const string CommandsHeader = "ZEHOS-COMMANDS-1\n";
+    // Ein Rechteeintrag je Datei (rund 90 Zeichen): die allgemeine 64-KiB-Textgrenze sperrte das System nach wenigen
+    // hundert Dateien. 1 Mi Zeichen reichen je nach Pfadlaenge fuer einige tausend bis rund 10000 Eintraege.
+    private const int MaximumMetadataLength = 1024 * 1024;
     private static readonly string[] AdministrativeCommands = ["user", "security", "disk", "update", "chperm", "reboot", "shutdown"];
     private static readonly string[] UnrestrictableCommands = ["login", "logout", "chperm"];
     private readonly Dictionary<string, bool> administratorCommands = new(StringComparer.OrdinalIgnoreCase);
@@ -34,7 +37,8 @@ internal sealed class AccountService
         Access = new FileAccessControl(root);
         metadata = new FileService(Access.RootDirectory);
         this.hasher = hasher;
-        Access.Persist = Save;
+        // Neue Dateieintraege duerfen an einer vollen Rechtedatei scheitern, ohne alles zu sperren (siehe Save).
+        Access.Persist = () => Save(lockWhenFull: false);
     }
 
     public UserSession CreateSession()
@@ -50,7 +54,7 @@ internal sealed class AccountService
     {
         Lock();
         NeedsSetup = false;
-        var read = metadata.ReadText(".zehos-security.db", allowMissing: true);
+        var read = metadata.ReadText(".zehos-security.db", allowMissing: true, MaximumMetadataLength);
         if (!read.IsOK()) return read.Status;
         if (read.Value == null)
         {
@@ -282,13 +286,20 @@ internal sealed class AccountService
         foreach (var session in sessions) session.Logout();
     }
 
-    private ResultErr Save()
+    private ResultErr Save(bool lockWhenFull = true)
     {
         var text = new StringBuilder(Header);
         foreach (var account in accounts.Values)
             text.Append(account.Id).Append('|').Append(account.Name).Append('|').Append(account.Administrator ? "admin" : "user").Append('|').Append(account.PasswordHash).Append('\n');
         text.Append(Separator).Append(Access.Serialize());
-        var result = metadata.WriteText(".zehos-security.db", text.ToString());
+        // Vorab pruefen: Die gespeicherte Datei bleibt unveraendert, und FileAccessControl verwirft nur den neuen
+        // Eintrag. Andere Aenderungen (Konten, Freigaben) sperren weiterhin, weil sie sonst nur im Speicher stuenden.
+        if (text.Length > MaximumMetadataLength)
+        {
+            if (lockWhenFull) Lock();
+            return ResultErr.CreateFailure(ResultCode.Failure, FileAccessControl.FullMessage);
+        }
+        var result = metadata.WriteText(".zehos-security.db", text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
         else NeedsSetup = false;
         return result;

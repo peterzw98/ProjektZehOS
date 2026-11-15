@@ -6,11 +6,15 @@ namespace ProjektZeh.Input;
 
 internal sealed class CosmosInputService
 {
-    private readonly KeyboardLayout fallbackLayout = new USStandardLayout();
+    private readonly KeyboardLayout layout = new DEStandardLayout();
     private bool capsLock;
     private bool numLock;
 
-    public CosmosInputService() => CosmosKeyboardCapture.Initialize();
+    public CosmosInputService()
+    {
+        KeyboardManager.SetLayout(layout);
+        CosmosKeyboardCapture.Initialize();
+    }
 
     public static void SetScreenSize(int width, int height) => MouseManager.SetScreenSize(width, height);
 
@@ -35,17 +39,19 @@ internal sealed class CosmosInputService
             char character = '\0';
             if (!released)
             {
-                var key = ConvertScanCode(KeyboardManager.GetLayout() ?? fallbackLayout, raw.KeyCode,
-                    input.IsKeyDown((byte)PhysicalKey.Control),
-                    input.IsKeyDown((byte)PhysicalKey.LeftShift) || input.IsKeyDown((byte)PhysicalKey.RightShift),
-                    input.IsKeyDown((byte)PhysicalKey.Alt), numLock, capsLock);
-                character = key?.KeyChar ?? '\0';
+                bool altGr = input.IsKeyDown((byte)PhysicalKey.AltGr);
+                bool control = input.IsKeyDown((byte)PhysicalKey.Control);
+                bool shift = input.IsKeyDown((byte)PhysicalKey.LeftShift) || input.IsKeyDown((byte)PhysicalKey.RightShift);
+                // AltGr hat eine eigene Zeichenspalte und darf nicht durch CapsLock oder Shift verschwinden.
+                var key = ConvertScanCode(layout, raw.KeyCode, control || altGr, shift && !altGr,
+                    input.IsKeyDown((byte)PhysicalKey.Alt) || altGr, numLock, capsLock && !altGr);
+                character = GermanKeyboard.Translate(raw.KeyCode, key?.KeyChar ?? '\0', shift, capsLock, control, altGr);
             }
             input.ReportKey(raw.KeyCode, released, character);
         }
 
         // Der Maus-Interrupt setzt X, Y und Tasten einzeln; ohne Maske mischt ein Paket dazwischen zwei Meldungen.
-        int x, y;
+        int x, y, scroll;
         PointerButtons buttons = PointerButtons.None;
 #pragma warning disable COSMOS0001, NAOT0007 // Die in 3.0.94 gepruefte Core-Interruptmaske ist fuer diesen kurzen Eingabeschutz erforderlich.
         var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
@@ -54,12 +60,14 @@ internal sealed class CosmosInputService
         {
             x = MouseManager.X;
             y = MouseManager.Y;
+            scroll = MouseManager.ScrollDelta;
+            MouseManager.ResetScrollDelta();
             if (MouseManager.LeftButton) buttons |= PointerButtons.Left;
             if (MouseManager.RightButton) buttons |= PointerButtons.Right;
             if (MouseManager.MiddleButton) buttons |= PointerButtons.Middle;
         }
         finally { mask.Dispose(); }
-        input.ReportPointer(x, y, buttons);
+        input.ReportPointer(x, y, buttons, scroll);
     }
 
     // Verwendet die vorhandene Layoutuebersetzung, die in Cosmos 3.0.94 noch intern ist.

@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Graphics.Fonts;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Installer;
@@ -25,7 +24,7 @@ internal sealed class InstallerSession(IInstallService service)
         int height = canvas.Height;
         var surface = new PixelSurface(width, height,
             canvas.GetBuffer() ?? throw new InvalidOperationException("Kein Grafikpuffer vorhanden."));
-        var font = PCScreenFont.DefaultFont;
+        var font = CosmosGermanFont.Default;
         var wizard = new SetupWizard(service, new UiPainter(font.Data, font.Width, font.Height), width, height);
         var devices = new CosmosInputService();
         var input = new InputService(width, height);

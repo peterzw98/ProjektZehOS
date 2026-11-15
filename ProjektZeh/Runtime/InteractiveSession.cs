@@ -12,7 +12,7 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Runtime;
 
 internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
-    Func<FileService> createFiles, ITextOutput output,
+    Func<FileService> createFiles, ConsoleTextOutput output,
     Func<long> getElapsedMilliseconds, SystemLog systemLog, AccountService accounts, UserSession identity,
     TaskManagerSection[] sections, Func<Apps.ExternalApplication[]>? listExternal = null)
 {
@@ -33,6 +33,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         long nextFrame = 0;
         long previousTick = -1;
         bool dirty = true;
+        output.StartInteractive(Math.Max(1, Console.WindowWidth - 1), Math.Max(1, Console.WindowHeight - 2));
         output.WriteLine("F4: Desktop. Pfeiltasten: Cursor/Verlauf. Esc: zur Textshell.");
         editor.HistoryFilter = shell.CanRemember;
         BeginLine();
@@ -64,13 +65,17 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 {
                     HandlePager(value);
                 }
+                else if (output.HandleScroll(value)) { }
                 else if (!IsLocked && !shell.IsBusy && value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Tab)
                 {
                     editor.Complete(shell);
+                    output.FollowOutput();
                 }
-                else if (!shell.IsBusy && editor.Handle(value, out string? command) && command != null)
+                else if (!shell.IsBusy && editor.Handle(value, out string? command))
                 {
-                    line.Submit(editor.IsSecret ? "********" : command);
+                    output.FollowOutput();
+                    if (command == null) { dirty = true; continue; }
+                    output.WriteLine(line.Prompt + (editor.IsSecret ? "********" : command));
                     var result = IsLocked ? login.Submit(command) : shell.ExecuteLine(command, output);
                     if (!result.IsOK()) output.WriteLine(result.Message);
                     if (shell.ExitRequested)
@@ -105,8 +110,9 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 }
                 else
                 {
+                    output.StartInteractive(Math.Max(1, Console.WindowWidth - 1), Math.Max(1, Console.WindowHeight - 2));
                     ConsoleLineView.Status(input, now);
-                    if (shell.PagerText == null || IsLocked) line.Draw(editor);
+                    if (shell.PagerText == null || IsLocked) line.Draw(editor, output.Buffer, output.ScrollOffset);
                 }
                 dirty = false;
                 nextFrame = FrameTiming.NextDeadline(now);
@@ -136,7 +142,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         }
         catch (Exception exception)
         {
-            output.Clear();
+            line.Invalidate();
+            Console.Clear();
             systemLog.Error("Desktop", $"Start fehlgeschlagen: {exception.Message}");
             output.WriteLine($"Desktop konnte nicht starten: {exception.Message}");
             BeginLine();
@@ -154,7 +161,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             systemLog.Error("Desktop", "Anzeige konnte nicht zurueckgenommen werden: " + suspendError);
         }
         graphics = false;
-        output.Clear();
+        line.Invalidate();
+        Console.Clear();
         Console.CursorVisible = true;
         output.WriteLine("ZehOS Textshell - F4 oeffnet den Desktop.");
         if (suspendError != null) output.WriteLine("Anzeigefehler beim Verlassen: " + suspendError);
@@ -171,6 +179,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         generation = identity.Generation;
         // Sichtbar im seriellen Protokoll; automatisierte Gasttests warten darauf statt auf feste Zeiten.
         systemLog.Information("Session", identity.UserId == null ? "Benutzer abgemeldet." : "Benutzer angemeldet.");
+        output.Clear();
         editor = new() { HistoryFilter = shell.CanRemember };
         login.Reset();
         shell.CancelSecretInput();
@@ -181,7 +190,15 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         if ((value.Type == InputEventType.Text && value.Character == 'q') ||
             (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape))
         {
-            shell.DismissPager(); output.Clear(); BeginLine(); return;
+            shell.DismissPager(); line.Invalidate(); Console.Clear(); output.FollowOutput(); BeginLine(); return;
+        }
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            int pageRows = Math.Max(1, Console.WindowHeight - 3);
+            int count = (shell.PagerText ?? "").Split('\n').Length;
+            pagerOffset = (int)Math.Clamp(pagerOffset - (long)value.ScrollDelta * 3, 0, Math.Max(0, count - pageRows));
+            DrawPager();
+            return;
         }
         if (value.Type != InputEventType.KeyDown && !(value.Type == InputEventType.Text && value.Character == ' ')) return;
         if (value.Type == InputEventType.KeyDown && (value.IsTextKey || value.KeyCode is not ((byte)PhysicalKey.Down or (byte)PhysicalKey.Up or (byte)PhysicalKey.PageDown or (byte)PhysicalKey.PageUp or (byte)PhysicalKey.Home or (byte)PhysicalKey.End))) return;
@@ -202,12 +219,18 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         string[] lines = (shell.PagerText ?? "").Split('\n');
         int page = Math.Max(1, Console.WindowHeight - 3);
         pagerOffset = Math.Clamp(pagerOffset, 0, Math.Max(0, lines.Length - page));
-        output.Clear();
+        Console.Clear();
         int width = Math.Max(1, Console.WindowWidth - 1);
-        output.WriteLine("less - Pfeile/Bildtasten/Leertaste, q/Esc schliesst");
+        Console.SetCursorPosition(0, 1);
+        Console.Write("less - Scrollrad/Pfeile/Bildtasten/Leertaste, q/Esc schliesst");
         for (int i = pagerOffset; i < Math.Min(lines.Length, pagerOffset + page); i++)
-            output.WriteLine(lines[i][..Math.Min(width, lines[i].Length)]);
-        output.WriteLine($"Zeile {pagerOffset + 1}/{lines.Length}");
+        {
+            // Explizite Zeilen verhindern automatisches Konsolenscrollen beim Neuzeichnen des Pagers.
+            Console.SetCursorPosition(0, 2 + i - pagerOffset);
+            Console.Write(GermanFont.ConsoleText(lines[i][..Math.Min(width, lines[i].Length)]));
+        }
+        Console.SetCursorPosition(0, Console.WindowHeight - 1);
+        Console.Write($"Zeile {pagerOffset + 1}/{lines.Length}");
     }
 
     private void BeginLine()
@@ -216,6 +239,5 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         // Waehrend einer laufenden Kennwortpruefung erscheint der Titel erst mit dem naechsten Schritt erneut.
         if (locked && !login.IsSecret && !login.IsBusy) output.WriteLine($"ZehOS - {login.Title}");
         line.Prompt = !locked ? ConsoleLineView.ShellPrompt : login.IsBusy ? "" : login.Prompt;
-        line.Begin();
     }
 }
