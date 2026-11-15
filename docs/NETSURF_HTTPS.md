@@ -36,7 +36,9 @@ Sitzungswiederaufnahme, eigene Vertrauensanker je App und eine Pflege des Vertra
 Von laser über den Koordinator entschieden:
 
 1. **Weiterleitung HTTPS → HTTP** wird nicht selbsttätig befolgt. Die Fehlerseite nennt das Ziel und bietet den Knopf
-   „Trotzdem fortfahren“, der die HTTP-Adresse ausdrücklich lädt. Dieser Knopf gibt es nur für diesen Fall.
+   „Trotzdem fortfahren“, der die HTTP-Adresse ausdrücklich lädt. Diesen Knopf gibt es nur für diesen Fall. Die
+   Regel betrifft HTTP-3xx-Weiterleitungen, die der Fetcher erkennt; Meta-Refresh und gewöhnliche Links von einer
+   HTTPS- auf eine HTTP-Seite fallen nicht darunter.
 2. **Zertifikatsfehler** zeigen eine Fehlerseite ohne Möglichkeit zum Fortfahren.
 3. **Antworten ohne Länge** (weder `Content-Length` noch `chunked`) gelten über TLS nur mit `close_notify` als
    vollständig; ohne `close_notify` meldet der Fetcher sie als abgeschnitten.
@@ -46,8 +48,9 @@ Von laser über den Koordinator entschieden:
 
 Dazu vom Koordinator festgelegt: Endet TCP ohne `close_notify`, meldet `net_recv` nach den Restdaten `ECONNRESET`
 (15). Weil viele Server ohne `close_notify` schließen, muss der Fetcher bei `Content-Length` oder dem letzten Chunk
-sofort fertig sein und schließen, ohne auf EOF zu warten. Nur bei Antworten ohne Länge zählt das Ende; dort bedeutet
-`ECONNRESET` „abgeschnitten“.
+sofort fertig sein und schließen, ohne auf EOF zu warten. Das tut er bereits: `http_response_feed` meldet dann
+`HTTP_DONE`, und `fetch_http.c` beendet den Abruf ohne EOF. Nur bei Antworten ohne Länge zählt das Ende; dort
+bedeutet `ECONNRESET` „abgeschnitten“ statt der heutigen Meldung „Verbindung abgebrochen“.
 
 ## Entscheidung A: TLS im Kernel statt im Gast
 
@@ -99,13 +102,16 @@ Die Grenzen von 4 Verbindungen und 64 KiB je Aufruf und Puffer gelten unverände
    unverändert.
 2. **Gemeinsame Konfiguration:** `TlsTransport` so aufteilen, dass `Client`, `Authentication` und die
    Ankerauswahl (`IsUsableAnchor`) auch für den nicht blockierenden Modus nutzbar sind. Shell und Apps verwenden
-   dann dieselben Suiten, Grenzen und Prüfungen. Eine zweite TLS-Konfiguration darf nicht entstehen.
+   dann dieselben Suiten, Grenzen und Prüfungen. Eine zweite TLS-Konfiguration darf nicht entstehen. Einziger
+   bewusster Unterschied ist `RequiresCloseNotify`: Die Shell bleibt bei `false`, der App-Pfad setzt `true` als
+   Parameter des gemeinsamen Clients. Dann wirft BouncyCastle `TlsNoCloseNotifyException`, wenn die Gegenseite ohne
+   `close_notify` schließt (laut Paketdokumentation 2.7.0), und der Worker bildet das auf `ECONNRESET` ab.
 3. **Sperren kurz halten:** Nur Socketaufrufe laufen unter `CosmosNetworkService.Gate`. Die TLS-Rechenarbeit
    (Handshake, Entschlüsselung) läuft außerhalb davon und auch außerhalb der Sperre `gate` der Verbindung, sonst
    warten `net_send` und `net_recv` im App-Thread auf den Handshake. Weil ein Worker alle vier Verbindungen bedient,
    hält ein langer `OfferInput`-Aufruf auch die übrigen Verbindungen auf.
-4. **Voraussetzungen vorab prüfen:** Vor dem Handshake UTC, Wurzelbundle und einen Aufruf von `CosmosSaltSource.Fill`
-   prüfen und bei Fehlern den Code aus Entscheidung 5 setzen. Ein Entropiefehler innerhalb von BouncyCastle käme sonst
+4. **Voraussetzungen vorab prüfen:** UTC, Wurzelbundle und einen Aufruf von `CosmosSaltSource.Fill` schon in
+   `net_open` prüfen und bei Fehlern sofort `ENOSYS` (Entscheidung 5) zurückgeben; die Prüfungen sind billig. Ein Entropiefehler innerhalb von BouncyCastle käme sonst
    vermutlich als `TlsFatalAlert` an und erschiene als Protokollfehler (nicht im Quelltext geprüft).
 5. **Fehler nach Herkunft zuordnen:** `EPERM` nur für Ausnahmen aus der eigenen `Authentication.NotifyServerCertificate`,
    nicht anhand der Alertnummer. Vom Server gesendete Alerts kommen als `TlsFatalAlertReceived` und ergeben `EPROTO`.
@@ -141,7 +147,7 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
 | Fall | Code | Bemerkung |
 |------|------|-----------|
 | Kernel ohne TLS oder unbekanntes Flag | `ENOTSUP` (58) | sofort in `net_open`; Fehlerseite „HTTPS nicht unterstützt“ |
-| Keine sichere Entropie, UTC unplausibel, Bundle fehlt | `ENOSYS` (52) | Entscheidung 5; Fehlerseite nennt Uhr oder CPU-Zufall als mögliche Ursache |
+| Keine sichere Entropie, UTC unplausibel, Bundle fehlt | `ENOSYS` (52) | sofort in `net_open`; Entscheidung 5; Fehlerseite nennt Uhr oder CPU-Zufall als mögliche Ursache |
 | Zertifikat abgelehnt (Kette, Zweck, Zeit, Name, nicht lesbarer Schlüssel) | `EPERM` (63) | Entscheidung 4; nicht `EACCES`, das bleibt der fehlenden Berechtigung vorbehalten |
 | Sonstiger TLS-Protokollfehler oder Alert des Servers | `EPROTO` (65) | Entscheidung 4; z. B. keine gemeinsame Suite oder Version |
 | Zeitlimit bis Handshake-Ende | `ETIMEDOUT` (73) | wie bisher |
@@ -156,18 +162,24 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   (`urldb_set_cert_permissions`), `FETCH_SSL_ERR` lässt `llcache` mit `downgrade_tls` erneut versuchen. Beides
   widerspricht Entscheidung 2.
 - Weiterleitung HTTPS → HTTP: Fehlerseite mit „Trotzdem fortfahren“ (Entscheidung 1). Der Knopf löst einen neuen,
-  vom Benutzer ausgelösten Abruf der HTTP-Adresse aus; es entsteht keine dauerhafte Ausnahme.
+  vom Benutzer ausgelösten Abruf der HTTP-Adresse aus; es entsteht keine dauerhafte Ausnahme. NetSurf 3.11 hat dafür
+  keine Seite: `FETCH_ERROR` führt zu `about:query/fetcherror`, das nur „Zurück“ und „Erneut versuchen“ (wieder die
+  HTTPS-Adresse) anbietet. **OFFEN:** Der Fetcher liefert selbst eine HTML-Seite mit Link als Antwort, oder das
+  Frontend erhält eine eigene Abfrageseite. Die Ziel-URL ist dabei Fremdeingabe: HTML-escapen und nur Schema `http`
+  zulassen, sonst Fehlerseite ohne Link.
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
 - Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
-  Umgebungsvariable, analog zu `ZEHOS_NET=1`. Er ersetzt keinen Kerneltest.
+  Umgebungsvariable, analog zu `ZEHOS_NET=1`. Er bildet dieselben Codes nach (`ENOSYS`, `EPERM`, `EPROTO`,
+  `ECONNRESET` bei EOF ohne `close_notify`), sonst sagt der Vergleich mit dem Kernel nichts. Er ersetzt keinen
+  Kerneltest.
 
 ## Grenzen
 
 - **Cosmos-Warteabschnitte:** Connect und Send in Cosmos 3.0.94 sind nicht sofort abbrechbar. Das Zeitlimit greift
   erst nach Rückkehr des Aufrufs, wie bei HTTP ([PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md)).
-- **Ein Worker für alle Verbindungen:** Handshakes laufen nacheinander; ein langsamer Handshake verzögert die übrigen
-  Verbindungen der App.
+- **Ein Worker für alle Verbindungen:** Die Schritte der Verbindungen wechseln sich ab, aber jeder `OfferInput`-Aufruf
+  hält die übrigen Verbindungen der App auf, solange er rechnet.
 - **`close_notify`:** Server, die TLS ohne `close_notify` beenden, liefern Antworten ohne Länge nur als abgeschnittene
   Fehlerseite (Entscheidung 3). Mit `Content-Length` oder `chunked` erkennt der Fetcher Vollständigkeit selbst.
 - **Keine Sitzungswiederaufnahme:** Jede Verbindung führt einen vollen Handshake aus. Mit höchstens 4 Verbindungen
@@ -183,7 +195,8 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
    noch nicht gültig, Ende ohne `close_notify`, Abbruch mitten im Handshake, 64-KiB-Grenzen für Klartext.
 2. **Linux-Prüfhost (`host/run_tests.py`):** NetSurf lädt eine HTTPS-Seite von einem lokalen Python-`ssl`-Server;
    falscher Name ergibt die Zertifikatsfehlerseite ohne Fortfahren; HTTPS → HTTP zeigt „Trotzdem fortfahren“, und
-   erst der Knopf lädt die HTTP-Seite; Antwort ohne Länge und ohne `close_notify` erscheint als abgeschnitten,
+   erst der Knopf lädt die HTTP-Seite (Weg nach dem OFFEN-Punkt oben), eine `Location` mit `<script>` oder `"`
+   erscheint escaped, eine mit anderem Schema ohne Link; Antwort ohne Länge und ohne `close_notify` erscheint als abgeschnitten,
    Antworten mit `Content-Length` oder `chunked` ohne `close_notify` dagegen vollständig. Beide Seiten (Kernel-
    Hosttest und Prüfhost) prüfen diese Fälle.
 3. **QEMU-Probe:** Probe-Kernel mit Wasm und Test-CA (Weg siehe OFFEN oben), dazu die vorhandenen TLS-Fixtures aus
