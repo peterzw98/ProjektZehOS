@@ -39,6 +39,16 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 
 Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schritt), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
 
+## Lizenztexte
+
+`licenses/` enthält die Texte, die weder NetSurf noch wasi-sdk 25 mitliefern; sie gehören in jedes Paket:
+
+| Datei | Quelle | Bezug |
+| --- | --- | --- |
+| `MPL-2.0.txt` | mozilla.org/MPL/2.0 | `public_suffix_list.dat` in libnspsl |
+| `wasi-libc-*` | wasi-libc `574b88da481569b65a237cb80daf9a2d5aeaf82d` (Submodul von wasi-sdk-25) | statisch gelinkte libc einschließlich musl-Teilen und Emulationsbibliotheken |
+| `compiler-rt-LICENSE.TXT` | llvm-project `ab4b5a2db582958af1ee308a790cfdb42bd24720`, `compiler-rt/` (Submodul von wasi-sdk-25) | statisch gelinkte Laufzeitfunktionen des Compilers |
+
 ## Schnittstelle zum Loader
 
 Importe des Moduls:

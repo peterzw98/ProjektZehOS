@@ -181,7 +181,8 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
     case EV_WHEEL:
         // fbtk scrollt je Rastung über Maustaste 4 (aufwärts) bzw. 5 (abwärts), jeweils gedrückt und losgelassen.
         key = raw[1] > 0 ? NSFB_KEY_MOUSE_4 : NSFB_KEY_MOUSE_5;
-        for (int steps = abs(raw[1]); steps > 0 && pending_count + 2 <= PENDING_MAX; steps--) {
+        // Betrag in 64 Bit: abs(INT32_MIN) wäre undefiniert. Die Warteschlange begrenzt die Rastungen ohnehin.
+        for (int64_t steps = raw[1] < 0 ? -(int64_t)raw[1] : raw[1]; steps > 0 && pending_count + 2 <= PENDING_MAX; steps--) {
             push(NSFB_EVENT_KEY_DOWN, key);
             push(NSFB_EVENT_KEY_UP, key);
         }
