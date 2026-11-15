@@ -154,12 +154,12 @@ static int32_t map_errno(int error)
 }
 
 // Abbildung wie im Kernel: abgelehntes Zertifikat EPERM, Ende ohne close_notify ECONNRESET, sonst EPROTO.
-// close_notify ist nur nach dem Handshake ein reguläres Ende.
+// close_notify ist nur nach dem Handshake ein reguläres Ende; davor meldet BouncyCastle im Kernel einen Protokollfehler.
 static int32_t map_tls(SSL *session, int result, int handshake)
 {
     int error = SSL_get_error(session, result);
     if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return NET_EAGAIN;
-    if (error == SSL_ERROR_ZERO_RETURN) return handshake ? NET_ECONNRESET : NET_OK;
+    if (error == SSL_ERROR_ZERO_RETURN) return handshake ? NET_EPROTO : NET_OK;
     if (SSL_get_verify_result(session) != X509_V_OK) return NET_EPERM;
     if (error == SSL_ERROR_SYSCALL) return errno == 0 ? NET_ECONNRESET : map_errno(errno);
     if (ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) return NET_ECONNRESET;

@@ -26,6 +26,22 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
     internal static Action? AfterConnect;
 #endif
 
+    // Vorbedingungen fuer App-TLS im Gastthread: Uhr und Hardwarezufall kosten wenig, die Anker liefert der Aufrufer
+    // (im Kernel einmal je Kernellauf geparst). Jeder Fehler hier ist ENOSYS, nie ein spaeterer Protokollfehler.
+    internal static TlsClient CreateAppClient(string host, Action<byte[]> fillRandom, Func<IList<Org.BouncyCastle.X509.X509Certificate>> anchors,
+        DateTime utcNow)
+    {
+        IList<Org.BouncyCastle.X509.X509Certificate> trusted;
+        try
+        {
+            TlsTransport.CheckClock(utcNow);
+            fillRandom(new byte[16]);
+            trusted = anchors();
+        }
+        catch (Exception exception) { throw new WasmNetworkUnavailableException(exception); }
+        return TlsTransport.CreateClient(host, fillRandom, trusted, utcNow, true);
+    }
+
     public IWasmNetworkConnection Open(string host, int port, bool tls)
     {
         TlsClient? client = null;
@@ -314,17 +330,19 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
                 protocol.ReadInput(scratch, 0, count);
                 lock (gate) for (int i = 0; i < count; i++) input.Enqueue(scratch[i]);
             }
-            // Erst wenn aller Klartext abgeholt ist: ohne close_notify wirft CloseInput TlsNoCloseNotifyException.
-            // Ein Ende im Handshake ist wie beim Pruefhost ein Abbruch, kein Protokollfehler.
+            // Erst wenn aller Klartext abgeholt ist: Endet TCP ohne close_notify, im Handshake oder mitten in einem Record,
+            // ist das ein Abbruch (ECONNRESET) und kein Protokollfehler.
             bool drained = protocol.GetAvailableInputBytes() == 0;
-            if (socketEof && drained && !protocol.IsClosed)
-            {
-                if (!protocol.IsConnected) throw new TlsNoCloseNotifyException();
-                protocol.CloseInput();
-            }
+            if (socketEof && drained && !protocol.IsClosed) throw new TlsNoCloseNotifyException();
             lock (gate)
             {
-                if (error == WasmNetworkError.Again && protocol.IsConnected) error = WasmNetworkError.Success;
+                // Die Frist gilt auch ohne Status-Aufruf der App: ein zu spaeter Handshake ist kein Erfolg.
+                if (error == WasmNetworkError.Again && clock.ElapsedMilliseconds >= TimeoutMs)
+                {
+                    error = WasmNetworkError.TimedOut;
+                    closing = true;
+                }
+                else if (error == WasmNetworkError.Again && protocol.IsConnected) error = WasmNetworkError.Success;
                 if (protocol.IsClosed && drained) eof = true;
             }
         }

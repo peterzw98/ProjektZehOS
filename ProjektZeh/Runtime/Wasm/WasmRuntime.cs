@@ -192,20 +192,10 @@ internal static unsafe class WasmRuntime
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
 
-    // Laeuft in net_open im Gastthread: Uhr und Hardwarezufall kosten wenig, das Bundle wird nur einmal je Kernellauf
-    // geparst. Es laeuft hoechstens eine Paket-App, daher greift nur ein Thread auf den Zwischenspeicher zu.
-    private static TlsClient CreateTlsClient(string host)
-    {
-        DateTime utcNow = DateTime.UtcNow;
-        try
-        {
-            TlsTransport.CheckClock(utcNow);
-            CosmosSaltSource.Fill(new byte[16]);
-            tlsAnchors ??= TlsTransport.LoadAnchors(TlsRoots.Load());
-        }
-        catch (Exception exception) { throw new WasmNetworkUnavailableException(exception); }
-        return TlsTransport.CreateClient(host, CosmosSaltSource.Fill, tlsAnchors, utcNow, true);
-    }
+    // Das Bundle wird nur einmal je Kernellauf geparst. Es laeuft hoechstens eine Paket-App, daher greift nur ein
+    // Thread auf den Zwischenspeicher zu.
+    private static TlsClient CreateTlsClient(string host) => CosmosWasmNetworkConnector.CreateAppClient(host, CosmosSaltSource.Fill,
+        () => tlsAnchors ??= TlsTransport.LoadAnchors(TlsRoots.Load()), DateTime.UtcNow);
 
     // Hostrueckrufe der C-Schicht. Ausnahmen duerfen die native Grenze nicht ueberqueren.
 

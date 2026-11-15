@@ -26,7 +26,7 @@ namespace ProjektZeh.Network
         {
             ResolveEntered?.Set();
             ResolveContinue?.Wait(5000, token);
-            return IPAddress.Parse(host);
+            return host == "localhost" ? IPAddress.Loopback : IPAddress.Parse(host);
         }
     }
 }
@@ -237,7 +237,8 @@ namespace ProjektZeh.Tests
                 using var leafKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
                 var request = new CertificateRequest("CN=server", leafKey, HashAlgorithmName.SHA256);
                 var names = new SubjectAlternativeNameBuilder();
-                names.AddIpAddress(IPAddress.Parse(address));
+                if (IPAddress.TryParse(address, out IPAddress? ip)) names.AddIpAddress(ip);
+                else names.AddDnsName(address);
                 request.CertificateExtensions.Add(names.Build());
                 request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], false));
                 byte[] serial = RandomNumberGenerator.GetBytes(8);
@@ -252,9 +253,12 @@ namespace ProjektZeh.Tests
             public void Dispose() { Root.Dispose(); key.Dispose(); }
         }
 
-        private static WasmNetworkSession TlsSession(byte[] trustedPem) =>
-            new(new CosmosWasmNetworkConnector(host => TlsTransport.CreateClient(host, bytes => RandomNumberGenerator.Fill(bytes),
-                TlsTransport.LoadAnchors(trustedPem), DateTime.UtcNow, true)), true);
+        private static WasmNetworkSession TlsSession(byte[] trustedPem)
+        {
+            var anchors = TlsTransport.LoadAnchors(trustedPem);
+            return new(new CosmosWasmNetworkConnector(host => CosmosWasmNetworkConnector.CreateAppClient(host,
+                bytes => RandomNumberGenerator.Fill(bytes), () => anchors, DateTime.UtcNow)), true);
+        }
 
         // Antwortet nach der Anfrage mit response und beendet mit oder ohne close_notify.
         private static (int Port, Task Done) TlsServer(TcpListener listener, X509Certificate2 certificate, byte[] response, bool closeNotify)
@@ -295,9 +299,9 @@ namespace ProjektZeh.Tests
             return data.ToArray();
         }
 
-        private static int Handshake(WasmNetworkSession session, int port, out int handle)
+        private static int Handshake(WasmNetworkSession session, int port, out int handle, string host = "127.0.0.1")
         {
-            Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, WasmNetworkSession.FlagTls, out handle));
+            Assert.AreEqual(WasmNetworkError.Success, session.Open(host, port, WasmNetworkSession.FlagTls, out handle));
             int id = handle;
             WaitFor(() => session.Status(id) != WasmNetworkError.Again);
             return session.Status(handle);
@@ -387,6 +391,110 @@ namespace ProjektZeh.Tests
             Assert.AreEqual(WasmNetworkError.ConnectionReset, Handshake(session, port, out handle));
             Assert.IsTrue(aborted.Wait(5000));
             Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+        }
+
+        [TestMethod]
+        public void TlsHandshakeDeadlineHoldsWithoutStatusCalls()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            using var authority = new TestAuthority("ZehOS Test-CA");
+            // Der Server nimmt die Verbindung an und schweigt; die App fragt nur Send ab, nie Status.
+            Task silent = Task.Run(() =>
+            {
+                using Socket peer = listener.AcceptSocket();
+                Thread.Sleep(11500);
+            });
+            var session = TlsSession(authority.Pem);
+            Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, WasmNetworkSession.FlagTls, out int handle));
+            var clock = Stopwatch.StartNew();
+            int result = WasmNetworkError.Again;
+            while (result == WasmNetworkError.Again && clock.ElapsedMilliseconds < 15000)
+            {
+                result = session.Send(handle, "ping"u8, out _);
+                Thread.Sleep(50);
+            }
+            Assert.AreEqual(WasmNetworkError.TimedOut, result);
+            Assert.IsTrue(silent.Wait(5000));
+            Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+        }
+
+        [TestMethod]
+        public void TlsSendsHostAsSniAndChecksDnsName()
+        {
+            using var authority = new TestAuthority("ZehOS Test-CA");
+            foreach (var (name, expected) in new[] { ("localhost", WasmNetworkError.Success), ("other.test", WasmNetworkError.NotPermitted) })
+            {
+                using X509Certificate2 certificate = authority.Issue(name);
+                using var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                string? sni = null;
+                Task server = Task.Run(async () =>
+                {
+                    using Socket peer = listener.AcceptSocket();
+                    using var stream = new SslStream(new NetworkStream(peer, false));
+                    var options = new SslServerAuthenticationOptions
+                    {
+                        ServerCertificateSelectionCallback = (_, requested) => { sni = requested; return certificate; },
+                    };
+                    try { await stream.AuthenticateAsServerAsync(options); await stream.ShutdownAsync(); }
+                    catch (AuthenticationException) { }
+                    catch (IOException) { }
+                });
+                var session = TlsSession(authority.Pem);
+                Assert.AreEqual(expected, Handshake(session, port, out int handle, "localhost"), name);
+                Assert.IsTrue(server.Wait(5000));
+                Assert.AreEqual("localhost", sni, "Der Hostname aus net_open ist zugleich SNI.");
+                Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+            }
+        }
+
+        [TestMethod]
+        public void TlsServerAlertIsProtocolError()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            using var authority = new TestAuthority("ZehOS Test-CA");
+            Task server = Task.Run(() =>
+            {
+                using Socket peer = listener.AcceptSocket();
+                peer.Receive(new byte[4096]);
+                // Fataler Alert handshake_failure(40) statt ServerHello.
+                peer.Send(new byte[] { 0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28 });
+                Thread.Sleep(200);
+                peer.Shutdown(SocketShutdown.Both);
+            });
+            var session = TlsSession(authority.Pem);
+            Assert.AreEqual(WasmNetworkError.Protocol, Handshake(session, port, out int handle));
+            Assert.IsTrue(server.Wait(5000));
+            Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+        }
+
+        [TestMethod]
+        public void AppClientReportsMissingClockRandomOrAnchorsAsNoSystem()
+        {
+            using var authority = new TestAuthority("ZehOS Test-CA");
+            var anchors = TlsTransport.LoadAnchors(authority.Pem);
+            Action<byte[]> random = bytes => RandomNumberGenerator.Fill(bytes);
+            var cases = new Func<string, Org.BouncyCastle.Tls.TlsClient>[]
+            {
+                host => CosmosWasmNetworkConnector.CreateAppClient(host, random, () => anchors, new DateTime(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc)),
+                host => CosmosWasmNetworkConnector.CreateAppClient(host, _ => throw new InvalidOperationException("kein RDRAND"), () => anchors, DateTime.UtcNow),
+                host => CosmosWasmNetworkConnector.CreateAppClient(host, random, () => throw new InvalidOperationException("Bundle fehlt"), DateTime.UtcNow),
+            };
+            foreach (var factory in cases)
+            {
+                var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(factory), true);
+                Assert.AreEqual(WasmNetworkError.NoSystem, session.Open("127.0.0.1", 443, WasmNetworkSession.FlagTls, out int handle));
+                Assert.AreEqual(0, handle);
+            }
+            var ready = new WasmNetworkSession(new CosmosWasmNetworkConnector(host =>
+                CosmosWasmNetworkConnector.CreateAppClient(host, random, () => anchors, DateTime.UtcNow)), true);
+            Assert.AreEqual(WasmNetworkError.Success, ready.Open("127.0.0.1", 9, WasmNetworkSession.FlagTls, out _));
+            ready.CloseAll();
         }
 
         [TestMethod]

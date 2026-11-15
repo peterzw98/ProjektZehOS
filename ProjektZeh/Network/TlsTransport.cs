@@ -137,7 +137,9 @@ internal static class TlsTransport
             var certificates = new X509Certificate[chain.Length];
             for (int i = 0; i < certificates.Length; i++)
             {
-                certificates[i] = new X509Certificate(chain.GetCertificateAt(i).GetEncoded());
+                // Ein unlesbares Zertifikat ist eine Ablehnung der Pruefung, kein Protokollfehler.
+                try { certificates[i] = new X509Certificate(chain.GetCertificateAt(i).GetEncoded()); }
+                catch (Exception) { throw new TlsCertificateRejectedException(AlertDescription.bad_certificate, "Zertifikat nicht lesbar"); }
                 if (!CertificateVerifier.HasReadableKey(certificates[i]) || (i > 0 && !AllowsServerPurpose(certificates[i])))
                     throw new TlsCertificateRejectedException(AlertDescription.unsupported_certificate, null);
             }
