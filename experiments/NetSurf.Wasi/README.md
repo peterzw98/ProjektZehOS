@@ -4,7 +4,7 @@ NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf` und `patch`:
+Auf einem Linux-Host mit `make`, `cc`, `perl`, `gperf`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`):
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py
@@ -34,6 +34,7 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `libnsfb-wasi-dump.patch`: `nsfb_dump` ohne `dup()`, das WASI nicht kennt.
 - `libnsfb-zehos-surface.patch`: Oberflächentyp `NSFB_SURFACE_ZEHOS` vor `RAM`, damit das Frontend ihn ohne Kommandozeile wählt.
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
+- `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust).
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an.
 
 Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (kein Netz in diesem Schritt), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
@@ -52,7 +53,7 @@ Annahmen:
 - **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (für Nicht-Links `EINVAL`). `fd_readdir` ist nur für Verzeichnislisten nötig.
 - **Tasten:** normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal), zum Beispiel Pfeile 72/75/77/80 und Entf 83.
 - **Text:** Zeichen kommen ausschließlich aus `poll_event`-Texten (Typ 3, Unicode). Zeichentasten ohne Strg erzeugen kein Tastenereignis, damit nichts doppelt getippt wird. Strg-Kürzel nutzen die US-Zuordnung der Taste.
-- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwärts) oder 5 (abwärts) an fbtk. `reset` lässt alle gehaltenen Tasten und Maustasten los; Loslassen ohne vorheriges Drücken wird verworfen. Eine so losgelassene Maustaste wirkt an der letzten Zeigerposition und kann dort einen Klick abschließen.
+- **Maus:** Maustasten-Code 1/2/4 = links/rechts/Mitte. Das Rad liefert je Rastung Maustaste 4 (aufwärts) oder 5 (abwärts) an fbtk. Maustasten und Rad wirken an der Position ihres eigenen Ereignisses (vorab Bewegung dorthin). `reset` lässt gehaltene Tasten los und bricht gehaltene Maustasten ohne Klick ab; Loslassen ohne vorheriges Drücken wird verworfen.
 
 ## Ohne VM prüfen
 
@@ -89,4 +90,6 @@ ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/lib
 | Klick ins Feld, Texte `Grüße @€`, Zeichentaste `g` ohne Text, Rücktaste | Feld zeigt `Grüße @` |
 | Rad −5 auf langer Seite | Seite nach unten gescrollt |
 | Kaputter Link | Seite „Not found“, Browser bedienbar |
-| Maustaste auf Link gedrückt, `reset`, danach neuer Klick | keine hängende Taste; das Loslassen durch `reset` schließt den Klick auf den ersten Link ab |
+| Maustaste auf Link gedrückt, `reset` | Seite bleibt, kein Klick |
+| danach Klick auf anderen Link | Linkziel geladen, keine hängende Taste |
+| Maustaste ohne vorherige Bewegung | Klick wirkt an der Ereignisposition |
