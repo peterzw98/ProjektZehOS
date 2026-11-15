@@ -32,9 +32,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Nur fuer diese Wegwerf-VM; vvfat verwirft alle Schreibzugriffe.
 TEST_USER, TEST_PASSWORD = "tester", "testkennwort1"
-# US-Tastaturbelegung des Gasts.
-SHIFTED = {":": "semicolon", "_": "minus"}
-PLAIN = {" ": "spc", ".": "dot", "/": "slash", "-": "minus"}
+# Deutsche Tastaturbelegung des Gasts (DEStandardLayout); QMP sendet physische US-Tastenpositionen.
+SHIFTED = {":": "dot", "/": "7", "_": "slash"}
+PLAIN = {" ": "spc", ".": "dot", "-": "slash", "y": "z", "z": "y"}
 
 
 class Qmp:
@@ -83,7 +83,7 @@ class Qmp:
             if character in SHIFTED:
                 self.tap("shift", SHIFTED[character])
             elif character.isupper():
-                self.tap("shift", character.lower())
+                self.tap("shift", PLAIN.get(character.lower(), character.lower()))
             else:
                 self.tap(PLAIN.get(character, character))
 

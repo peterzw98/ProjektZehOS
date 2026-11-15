@@ -2,7 +2,7 @@ using System;
 
 namespace ProjektZeh.Input;
 
-internal enum InputEventType { KeyDown, KeyUp, Text, PointerMove, PointerDown, PointerUp, Reset }
+internal enum InputEventType { KeyDown, KeyUp, Text, PointerMove, PointerDown, PointerUp, Reset, PointerScroll }
 
 [Flags]
 internal enum PointerButtons { None = 0, Left = 1, Right = 2, Middle = 4 }
@@ -17,4 +17,4 @@ internal enum PhysicalKey : byte
 
 internal readonly record struct InputEvent(InputEventType Type, byte KeyCode = 0,
     char Character = '\0', int X = 0, int Y = 0, PointerButtons Button = PointerButtons.None,
-    bool IsRepeat = false, bool IsTextKey = false);
+    bool IsRepeat = false, bool IsTextKey = false, int ScrollDelta = 0);

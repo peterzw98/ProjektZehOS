@@ -274,12 +274,22 @@ internal sealed class TerminalWorkspaceApp : IApplication
             {
                 if (shift && Shortcut(value.KeyCode)) return;
                 if (value.KeyCode == (byte)PhysicalKey.Tab) { SelectTab((ActiveTabIndex + (shift ? tabs.Count - 1 : 1)) % tabs.Count); return; }
-                if (value.KeyCode is 13 or 78) { Zoom(1); return; }
-                if (value.KeyCode is 12 or 74) { Zoom(-1); return; }
+                if (value.KeyCode is 27 or 78) { Zoom(1); return; }
+                if (value.KeyCode is 53 or 74) { Zoom(-1); return; }
                 if (value.KeyCode == 11) { ActiveTerminal.SetZoom(1); Layout(); return; }
             }
         }
         if (menuOpen) { HandleMenu(value); return; }
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            foreach (var leaf in tabs[ActiveTabIndex].Leaves)
+                if (leaf.Bounds.Contains(value.X, value.Y))
+                {
+                    leaf.Terminal!.Handle(value with { X = value.X - leaf.Bounds.X - 2, Y = value.Y - leaf.Bounds.Y - 2 });
+                    break;
+                }
+            return;
+        }
         if (value.Type == InputEventType.PointerDown)
         {
             if (value.Button == PointerButtons.Left && value.Y < TabsHeight)
@@ -396,6 +406,13 @@ internal sealed class TerminalWorkspaceApp : IApplication
 
     private void HandleMenu(InputEvent value)
     {
+        if (value.Type == InputEventType.PointerScroll)
+        {
+            var area = new UiRect(menuX, menuY, Math.Min(width, MenuWidth), MenuRows * MenuRowHeight);
+            if (area.Contains(value.X, value.Y))
+                menuFirst = (int)Math.Clamp(menuFirst - (long)value.ScrollDelta * 3, 0, MenuItems.Length - MenuRows);
+            return;
+        }
         if (value.Type == InputEventType.KeyDown)
         {
             if (value.KeyCode == (byte)PhysicalKey.Up) menuIndex = (menuIndex + MenuItems.Length - 1) % MenuItems.Length;

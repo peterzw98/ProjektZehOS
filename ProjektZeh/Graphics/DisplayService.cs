@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Cosmos.Kernel.HAL.Devices.Display;
 using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Graphics.Fonts;
 using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Input;
 using ProjektZeh.Runtime;
@@ -36,7 +35,7 @@ internal sealed class DisplayService
         surface = CreateSurface();
         var current = new DisplayMode(canvas.Width, canvas.Height);
         Display = new DisplaySettings(current, ReadModes(current), SetMode, () => new(canvas.Width, canvas.Height));
-        var font = PCScreenFont.DefaultFont;
+        var font = CosmosGermanFont.Default;
         desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles,
             Display, sections, session, listExternal);
         SyncInput();

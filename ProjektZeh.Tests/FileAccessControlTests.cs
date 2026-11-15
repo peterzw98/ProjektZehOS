@@ -19,6 +19,28 @@ public sealed class FileAccessControlTests
     }
 
     [TestMethod]
+    public void FullMetadataRejectsOnlyTheNewEntry()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "zehos-full");
+        var access = new FileAccessControl(root);
+        access.Initialize();
+        access.Assign(root, "1");
+        access.Assign(Path.Combine(root, "alt.txt"), "1");
+        var alice = new UserSession("1", "alice", false, root);
+        access.Persist = () => ProjektZeh.Shared.ResultErr.CreateFailure(ProjektZeh.Shared.ResultCode.Failure, FileAccessControl.FullMessage);
+        Assert.AreEqual(FileAccessControl.FullMessage, access.RegisterCreated(alice, Path.Combine(root, "neu.txt")).Message);
+        Assert.AreEqual(FileAccessControl.FullMessage, access.PrepareMove(Path.Combine(root, "alt.txt"), Path.Combine(root, "ziel.txt")).Message);
+        Assert.IsTrue(access.IsReady, "Eine volle Rechtedatei darf das System nicht sperren.");
+        Assert.IsFalse(access.Contains(Path.Combine(root, "neu.txt")));
+        Assert.IsFalse(access.Contains(Path.Combine(root, "ziel.txt")));
+        Assert.IsTrue(access.Check(alice, Path.Combine(root, "alt.txt"), FilePermission.Write).IsOK());
+        // Andere Schreibfehler sperren weiterhin, damit Speicher und Platte nicht auseinanderlaufen.
+        access.Persist = () => ProjektZeh.Shared.ResultErr.CreateFailure(ProjektZeh.Shared.ResultCode.Failure, "E/A-Fehler");
+        Assert.IsFalse(access.RegisterCreated(alice, Path.Combine(root, "neu.txt")).IsOK());
+        Assert.IsFalse(access.IsReady);
+    }
+
+    [TestMethod]
     public void UnmappedPathsAndForeignWritesFailWhileExplicitReadSurvivesRestore()
     {
         string root = Path.Combine(Path.GetTempPath(), "zehos-security");

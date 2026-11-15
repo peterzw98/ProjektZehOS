@@ -92,7 +92,8 @@ internal sealed class FileAccessControl
         if (Contains(path)) return ResultErr.CreateSuccess();
         Assign(path, session.UserId!);
         var result = Persist?.Invoke() ?? Denied();
-        if (!result.IsOK()) Lock();
+        if (IsFull(result)) entries.Remove(path);
+        else if (!result.IsOK()) Lock();
         return result;
     }
 
@@ -108,7 +109,8 @@ internal sealed class FileAccessControl
         if (!IsReady || !entries.TryGetValue(source, out var rights) || !IsManagedPath(target) || entries.ContainsKey(target)) return Denied();
         entries.Add(target, rights);
         var result = Persist?.Invoke() ?? Denied();
-        if (!result.IsOK()) Lock();
+        if (IsFull(result)) entries.Remove(target);
+        else if (!result.IsOK()) Lock();
         return result;
     }
 
@@ -120,6 +122,11 @@ internal sealed class FileAccessControl
         if (!result.IsOK()) Lock();
         return result;
     }
+
+    // Eine volle Rechtedatei ist ein erwarteter Grenzfall, kein Schaden: nur der neue Eintrag wird verworfen, die
+    // gespeicherte Fassung bleibt unveraendert und das System bedienbar.
+    internal const string FullMessage = "Rechtedatenbank voll; Datei nicht angelegt.";
+    private static bool IsFull(ResultErr result) => !result.IsOK() && result.Message == FullMessage;
 
     public string Serialize()
     {
