@@ -145,8 +145,11 @@ def main() -> int:
         f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/experiments/NetSurf.Wasi", ""]
     # Das GPL-Quellangebot verweist auf diesen Commit; er muss dauerhaft erreichbar sein. Nach einem Squash-Merge
     # verschwinden Branch-Commits, lokale Aenderungen sind nirgends abrufbar.
-    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
-                           capture_output=True, text=True).stdout.strip()
+    # Unversionierte Dateien zaehlen nur im Rezeptordner: build.py liest patches/ und licenses/ per glob ein.
+    dirty = (subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                            capture_output=True, text=True).stdout.strip()
+             + subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", str(HERE)], cwd=ROOT,
+                              capture_output=True, text=True).stdout.strip())
     on_master = subprocess.run(["git", "merge-base", "--is-ancestor", revision, "origin/master"], cwd=ROOT,
                                capture_output=True).returncode == 0
     if dirty or not on_master:
