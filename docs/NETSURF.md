@@ -86,7 +86,8 @@ Endabnahme am 15. November 2026 auf genau dem PR-Stand `51c9ec8`, mit `master` e
   Ein Bildschirmfoto ueber vmrun scheiterte an fehlender Gastanmeldung; Browserbedienung nicht geprueft.
 - VMware-Browserbedienung und echte Hardware sind noch nicht geprüft. Ein QEMU-Ergebnis belegt sie nicht.
 - Die urspruengliche Annahme fehlender QMP-Eingaben unter KVM ([#56](https://github.com/peterzw98/ProjektZehOS/issues/56)) war falsch: Ohne RDRAND/RDSEED scheiterte die Kontoanlage. Mit `-cpu qemu64,+rdrand,+rdseed` und unterstuetzendem Host bestand die NetSurf-Gastabnahme unter KVM; ohne diese CPU-Merkmale bleibt die Anmeldung nicht moeglich. Die oben dokumentierte Endabnahme lief mit TCG.
-- Byte-gleiche Pakete entstehen nur mit derselben Hostwerkzeugkette. gperf 3.1 und 3.3 erzeugen zum Beispiel unterschiedlichen Generatorcode.
+- `build.py` baut gperf 3.1 selbst, weil gperf 3.1 und 3.3 unterschiedlichen Generatorcode erzeugen. bison, flex und perl kommen weiter vom Host;
+  byte-gleiche Pakete sind daher nur mit denselben Versionen dieser Werkzeuge belegt (CI: Ubuntu 24.04).
 - Paketpfade prüfen symbolische Links nur in der letzten Komponente; auf FAT ist das unkritisch.
 - Unter Windows scheitern fünf bestehende Skript-Testfälle an direktem Shellskriptstart bzw. fehlendem
   Symlinkrecht. Dieselben unveränderten Tests bestehen in Linux-CI.

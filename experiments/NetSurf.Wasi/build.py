@@ -3,7 +3,7 @@
 
 Quellen und Werkzeuge liegen unter .tools/netsurf/ und werden nicht eingecheckt; feste SHA-256-Werte machen den
 Build nachvollziehbar. Ergebnis: experiments/NetSurf.Wasi/bin/package/ mit netsurf.wasm, res/, pages/ und licenses/.
-Benötigt auf dem Linux-Host: make, cc, perl, gperf, bison, flex, patch, libpng- und zlib-Entwicklungsdateien sowie
+Benötigt auf dem Linux-Host: make, cc, c++, perl, bison, flex, patch, libpng- und zlib-Entwicklungsdateien sowie
 Netzzugang beim ersten Lauf.
 """
 
@@ -30,6 +30,9 @@ ARCHIVES = {
                 "4dea880ff3c2f698bfd62c982b259340f9abcd7f67e6c8eb2b32c61f71644b7b", "netsurf-all-3.11"),
     "zlib": ("https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
              "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23", "zlib-1.3.1"),
+    # Fest statt Host-gperf: 3.1 und 3.3 erzeugen unterschiedlichen Generatorcode und damit andere Module.
+    "gperf": ("https://ftp.gnu.org/gnu/gperf/gperf-3.1.tar.gz",
+              "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2", "gperf-3.1"),
 }
 # Reihenfolge nach Abhängigkeiten; libsvgtiny fehlt, weil es setjmp/longjmp braucht.
 LIBRARIES = ["buildsystem", "libnslog", "libwapcaplet", "libparserutils", "libcss", "libhubbub", "libdom",
@@ -58,8 +61,9 @@ def fetch(name: str) -> Path:
         archive.unlink()
         sys.exit(f"Falscher SHA-256 für {archive.name}: {actual}")
     patches = sorted((HERE / "patches").glob("*.patch")) if name == "netsurf" else []
-    # Ein neuer Patchsatz braucht unveraenderte Quellen, auch nach einem frueher abgebrochenen Build.
-    recipe = hashlib.sha256(digest.encode() + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
+    # Ein neuer Patchsatz oder Generator braucht unveraenderte Quellen, auch nach einem frueher abgebrochenen Build;
+    # make erzeugt sonst die gperf-Ausgaben eines aelteren Laufs nicht neu.
+    recipe = hashlib.sha256(digest.encode() + ARCHIVES["gperf"][1].encode() + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
     destination = TOOLS / ("source-" + recipe) if name == "netsurf" else TOOLS
     target = destination / folder
     if not target.exists():
@@ -82,9 +86,14 @@ def main() -> int:
     sdk = fetch("wasi-sdk")
     source = fetch("netsurf")
     zlib = fetch("zlib")
+    gperf = fetch("gperf")
     prefix = source / "inst-wasi"
     logs = TOOLS / "logs"
     logs.mkdir(exist_ok=True)
+
+    if not (gperf / "inst" / "bin" / "gperf").exists():
+        run(["./configure", f"--prefix={gperf / 'inst'}"], gperf, os.environ.copy(), logs / "gperf-configure.log")
+        run(["make", f"-j{args.jobs}", "install"], gperf, os.environ.copy(), logs / "gperf.log")
 
     input_test = TOOLS / "frontend-input-test"
     run(["cc", "-O2", "-Wno-attributes", "-I", str(source / "libnsfb/include"),
@@ -100,7 +109,7 @@ def main() -> int:
     env.setdefault("SOURCE_DATE_EPOCH", "1794700800")
     # Die Perl-Generatoren von libparserutils/hubbub geben Tabellen in Hash-Reihenfolge aus; feste Seeds machen sie stabil.
     env.update(PERL_HASH_SEED="0", PERL_PERTURB_KEYS="0", PYTHONHASHSEED="0")
-    env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{env['PATH']}",
+    env.update(PATH=f"{sdk / 'bin'}:{prefix / 'bin'}:{gperf / 'inst' / 'bin'}:{env['PATH']}",
                PKG_CONFIG_PATH=str(prefix / "lib" / "pkgconfig"), PKG_CONFIG_LIBDIR=str(prefix / "lib" / "pkgconfig"))
     common = [f"HOST=wasm32-wasip1", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", f"CC={cc}",
               f"AR={sdk / 'bin' / 'llvm-ar'}", "Q=", "DESTDIR="]
