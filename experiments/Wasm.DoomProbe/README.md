@@ -1,6 +1,6 @@
 # Doom als WASIp1-Modul (Probe für Gate B)
 
-`platform/doomgeneric_zehos.c` (GPL-2.0, wie doomgeneric) verbindet [doomgeneric](https://github.com/ozkl/doomgeneric/tree/e257a09527062bfb986b6e5e0780839b6cbd5b71) mit den `zehos_v1`-Imports des ZehOS-Wasm-Loaders: `present`, `ticks_ms`, `sleep_ms`, `poll_key`, `should_exit`. Die WAD liest Doom über die nur lesenden WASI-Dateifunktionen aus dem freigegebenen App-Ordner. Weder doomgeneric-Quellen noch WAD-Dateien liegen im Repository.
+`platform/doomgeneric_zehos.c` (GPL-2.0-or-later, wie doomgeneric) verbindet [doomgeneric](https://github.com/ozkl/doomgeneric/tree/e257a09527062bfb986b6e5e0780839b6cbd5b71) mit den `zehos_v1`-Imports des ZehOS-Wasm-Loaders: `present`, `ticks_ms`, `sleep_ms`, `poll_key`, `should_exit`. Die WAD liest Doom über die nur lesenden WASI-Dateifunktionen aus dem freigegebenen App-Ordner. Weder doomgeneric-Quellen noch WAD-Dateien liegen im Repository.
 
 ```powershell
 git clone https://github.com/ozkl/doomgeneric.git <Ordner>

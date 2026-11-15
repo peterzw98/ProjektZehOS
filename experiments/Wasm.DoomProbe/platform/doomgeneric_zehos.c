@@ -1,4 +1,4 @@
-// ZehOS-Plattformschicht fuer doomgeneric (GPL-2.0, wie doomgeneric).
+// ZehOS-Plattformschicht fuer doomgeneric (GPL-2.0-or-later, wie doomgeneric).
 // Laeuft als WASIp1-Programm im ZehOS-Wasm-Loader; alle Systemdienste kommen ueber zehos_v1-Imports.
 
 #include <stdarg.h>
