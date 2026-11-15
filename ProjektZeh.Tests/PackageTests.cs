@@ -231,6 +231,46 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void ReinstallOfSameVersionRepairsChangedFiles()
+    {
+        var store = Store();
+        string hash = Publish(Path.Combine(work, "repo"), "doom", "1.0.0");
+        Assert.IsTrue(store.Install(Source("repo"), "", hash, CancellationToken.None).IsOK());
+        var package = store.Acquire("doom").Value!;
+        store.Release("doom");
+        File.WriteAllBytes(Path.Combine(package.FilesDirectory, "app.wasm"), Encoding.ASCII.GetBytes("kaputt"));
+        var repaired = store.Install(Source("repo"), "", hash, CancellationToken.None);
+        Assert.IsTrue(repaired.IsOK(), repaired.Status.Message);
+        Assert.IsTrue(PackageStore.VerifyFiles(store.Acquire("doom").Value!, CancellationToken.None).IsOK());
+        store.Release("doom");
+        StringAssert.Contains(store.Install(Source("repo"), "", hash, CancellationToken.None).Status.Message, "bereits installiert");
+    }
+
+    [TestMethod]
+    public void DowngradeStaysBlockedWhenInstalledPackageIsDamaged()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("v2"), "", Publish(Path.Combine(work, "v2"), "doom", "1.1.0"), CancellationToken.None).IsOK());
+        File.WriteAllBytes(Path.Combine(work, "store", "apps", "doom", "1.1.0", "manifest.sig"), new byte[64]);
+        Publish(Path.Combine(work, "v1"), "doom", "1.0.0");
+        StringAssert.Contains(store.Install(Source("v1"), "", null, CancellationToken.None).Status.Message, "Rueckstufung");
+    }
+
+    [TestMethod]
+    public void ReconcileNeverDeletesVersionsBehindAnUnreadableMarker()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("repo"), "", Publish(Path.Combine(work, "repo"), "doom", "1.0.0"), CancellationToken.None).IsOK());
+        string apps = Path.Combine(work, "store", "apps", "doom");
+        foreach (string marker in new[] { "1.0.0\r\n", "x", "9.9.9\n" })
+        {
+            File.WriteAllText(Path.Combine(apps, "active"), marker);
+            Assert.IsTrue(store.Reconcile().IsOK());
+            Assert.IsTrue(Directory.Exists(Path.Combine(apps, "1.0.0")), marker);
+        }
+    }
+
+    [TestMethod]
     public void ReconcileFinishesReplacementAndRemovesUnpublishedVersions()
     {
         var store = Store();

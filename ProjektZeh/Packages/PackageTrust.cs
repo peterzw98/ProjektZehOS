@@ -8,8 +8,8 @@ using Org.BouncyCastle.Crypto.Signers;
 namespace ProjektZeh.Packages;
 
 /// <summary>
-/// Eigener Ed25519-Vertrauensschluessel fuer Pakete, getrennt vom Kernelupdate-Schluessel. Ein normaler Build enthaelt nur
-/// dann einen Schluessel, wenn er ausdruecklich mit -p:ZehOSPackageKeyPath gebaut wurde.
+/// Eigener Ed25519-Vertrauensschluessel fuer Pakete, getrennt vom Kernelupdate-Schluessel. Standardmaessig wird
+/// Packages/package-key.pub eingebettet; -p:ZehOSPackageKeyPath ersetzt ihn. Ohne Schluessel bleiben Pakete gesperrt.
 /// </summary>
 internal sealed class PackageTrust
 {

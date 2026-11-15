@@ -24,40 +24,63 @@ internal sealed class DirectoryPackageSource(string directory) : IPackageSource
 
     public ResultObject<byte[]> Read(string path, int maximumBytes, CancellationToken cancellation)
     {
+        FileStream? stream = null;
+        // Ohne using (Cosmos-Unwindgrenze): das Handle wird auf jedem Weg ausdruecklich geschlossen.
         try
         {
-            using var stream = new FileStream(Path.Combine(directory, path), FileMode.Open, FileAccess.Read);
-            if (stream.Length > maximumBytes) return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, path + " ist zu gross.");
-            byte[] bytes = new byte[stream.Length];
-            stream.ReadExactly(bytes);
-            return ResultObjectFactory.CreateSuccess(bytes);
+            stream = new FileStream(Path.Combine(directory, path), FileMode.Open, FileAccess.Read);
+            ResultObject<byte[]> result;
+            if (stream.Length > maximumBytes) result = ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, path + " ist zu gross.");
+            else
+            {
+                byte[] bytes = new byte[stream.Length];
+                stream.ReadExactly(bytes);
+                result = ResultObjectFactory.CreateSuccess(bytes);
+            }
+            stream.Dispose();
+            return result;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            stream?.Dispose();
             return ResultObjectFactory.CreateFromException<byte[]>(exception);
         }
     }
 
     public ResultErr Copy(string path, long size, Stream target, CancellationToken cancellation)
     {
+        FileStream? stream = null;
         try
         {
-            using var stream = new FileStream(Path.Combine(directory, path), FileMode.Open, FileAccess.Read);
-            if (stream.Length != size) return ResultErr.CreateFailure(ResultCode.InvalidArgument, path + ": Groesse passt nicht zum Manifest.");
-            byte[] buffer = new byte[BufferBytes];
-            for (long left = size; left > 0;)
-            {
-                cancellation.ThrowIfCancellationRequested();
-                int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
-                if (read <= 0) throw new EndOfStreamException(path + " ist unvollstaendig.");
-                target.Write(buffer, 0, read);
-                left -= read;
-            }
-            return ResultErr.CreateSuccess();
+            stream = new FileStream(Path.Combine(directory, path), FileMode.Open, FileAccess.Read);
+            ResultErr result = stream.Length == size ? CopyExactly(stream, path, size, target, cancellation)
+                : ResultErr.CreateFailure(ResultCode.InvalidArgument, path + ": Groesse passt nicht zum Manifest.");
+            stream.Dispose();
+            return result;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            stream?.Dispose();
             return ResultErr.CreateFailure(ResultCode.Failure, path + ": " + exception.Message);
         }
+        catch (OperationCanceledException)
+        {
+            stream?.Dispose();
+            throw;
+        }
+    }
+
+    private static ResultErr CopyExactly(FileStream stream, string path, long size, Stream target, CancellationToken cancellation)
+    {
+        byte[] buffer = new byte[BufferBytes];
+        for (long left = size; left > 0;)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
+            if (read <= 0) throw new EndOfStreamException(path + " ist unvollstaendig.");
+            target.Write(buffer, 0, read);
+            left -= read;
+        }
+        return ResultErr.CreateSuccess();
     }
 }

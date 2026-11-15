@@ -114,18 +114,17 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
             byte[] buffer = new byte[BufferBytes];
             foreach (var file in package.Manifest.Files)
             {
-                using var stream = new FileStream(Path.Combine(package.FilesDirectory, file.Path), FileMode.Open, FileAccess.Read);
-                if (stream.Length != file.Size) return Modified(file.Path);
-                var digest = new Sha256Digest();
-                for (long left = file.Size; left > 0;)
+                var stream = new FileStream(Path.Combine(package.FilesDirectory, file.Path), FileMode.Open, FileAccess.Read);
+                bool intact;
+                // Ohne using (Cosmos-Unwindgrenze): Handle auch nach Lese- oder Abbruchfehler schliessen.
+                try { intact = Matches(stream, file, buffer, cancellation); }
+                catch (Exception)
                 {
-                    cancellation.ThrowIfCancellationRequested();
-                    int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
-                    if (read <= 0) return Modified(file.Path);
-                    digest.BlockUpdate(buffer, 0, read);
-                    left -= read;
+                    stream.Dispose();
+                    throw;
                 }
-                if (!string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal)) return Modified(file.Path);
+                stream.Dispose();
+                if (!intact) return Modified(file.Path);
             }
             return ResultErr.CreateSuccess();
         }
@@ -133,6 +132,21 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketdateien nicht lesbar: " + exception.Message);
         }
+    }
+
+    private static bool Matches(FileStream stream, PackageFile file, byte[] buffer, CancellationToken cancellation)
+    {
+        if (stream.Length != file.Size) return false;
+        var digest = new Sha256Digest();
+        for (long left = file.Size; left > 0;)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
+            if (read <= 0) return false;
+            digest.BlockUpdate(buffer, 0, read);
+            left -= read;
+        }
+        return string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -171,12 +185,18 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
     {
         var manifest = parsed.Value!;
         var current = ReadActive(manifest.Id);
-        // Ein beschaedigtes Paket darf durch eine neue, vollstaendig gepruefte Installation ersetzt werden.
         InstalledPackage? previous = current.IsOK() ? current.Value : null;
-        if (previous != null && previous.Manifest.Version.CompareTo(manifest.Version) >= 0)
-            return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, previous.Manifest.Version.CompareTo(manifest.Version) == 0
-                ? $"{manifest.Id} {manifest.Version} ist bereits installiert."
-                : $"Rueckstufung abgelehnt: installiert ist {manifest.Id} {previous.Manifest.Version}.");
+        // Auch bei beschaedigtem Paket gilt die Version aus dem Marker als Rueckstufungsgrenze, sofern es diese Version
+        // tatsaechlich gibt; ein Marker ohne Versionsordner ist Datenmuell und darf eine Reparatur nicht verhindern.
+        UpdateVersion? marked = ReadMarker(Path.Combine(Apps, manifest.Id));
+        if (marked != null && !Directory.Exists(Path.Combine(Apps, manifest.Id, marked.Value.ToString()))) marked = null;
+        UpdateVersion? installed = previous?.Manifest.Version ?? marked;
+        int order = installed?.CompareTo(manifest.Version) ?? -1;
+        if (order > 0)
+            return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, $"Rueckstufung abgelehnt: installiert ist {manifest.Id} {installed}.");
+        // Dieselbe Version nur dann ablehnen, wenn sie intakt ist; sonst repariert die Neuinstallation veraenderte Dateien.
+        if (order == 0 && previous != null && VerifyFiles(previous, cancellation).IsOK())
+            return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, $"{manifest.Id} {manifest.Version} ist bereits installiert.");
         string target = Path.Combine(Apps, manifest.Id, manifest.Version.ToString());
         ResultErr written;
         try { written = WriteVersion(source, prefix, manifest, signature, target, cancellation); }
@@ -193,7 +213,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         }
         ReplaceFile(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"));
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
-        if (previous != null) TryDeleteTree(previous.Directory);
+        if (previous != null && !string.Equals(previous.Directory, target, StringComparison.Ordinal)) TryDeleteTree(previous.Directory);
         return parsed;
     }
 
@@ -359,8 +379,11 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
                 lock (gate) if (busy.Contains(id) || inUse.ContainsKey(id)) continue;
                 string marker = Path.Combine(directory, "active");
                 RestorePending(marker);
-                string? active = File.Exists(marker) ? Encoding.ASCII.GetString(ReadSmall(marker, 32)).TrimEnd('\n') : null;
-                if (active == null) { DeleteTree(directory); continue; }
+                // Ohne Marker wurde nie etwas veroeffentlicht: der Ordner ist ein Rest und darf weg.
+                if (!File.Exists(marker)) { DeleteTree(directory); continue; }
+                // Ein unlesbarer Marker oder einer ohne Zielordner loescht nichts; das Paket bleibt gesperrt statt Daten zu verlieren.
+                string? active = ReadMarker(directory)?.ToString();
+                if (active == null || !Directory.Exists(Path.Combine(directory, active))) continue;
                 foreach (string version in Directory.GetDirectories(directory))
                     if (!string.Equals(Path.GetFileName(version), active, StringComparison.Ordinal)) DeleteTree(version);
             }
@@ -369,6 +392,21 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         catch (Exception exception) when (IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketbestand nicht aufgeraeumt: " + exception.Message);
+        }
+    }
+
+    // Version aus dem Marker eines Paketordners; null bei fehlendem, zu grossem oder ungueltigem Marker.
+    private static UpdateVersion? ReadMarker(string directory)
+    {
+        string marker = Path.Combine(directory, "active");
+        try
+        {
+            if (!File.Exists(marker)) return null;
+            return UpdateVersion.TryParse(Encoding.ASCII.GetString(ReadSmall(marker, 32)).TrimEnd('\n'), out var version) ? version : null;
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            return null;
         }
     }
 
@@ -418,10 +456,21 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
 
     private static byte[] ReadSmall(string path, int maximumBytes)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
-        if (stream.Length > maximumBytes) throw new IOException(Path.GetFileName(path) + " ist zu gross.");
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        // Groesse pruefen und schliessen ohne Ausnahme durch einen using-Block (Cosmos-Unwindgrenze).
+        if (stream.Length > maximumBytes)
+        {
+            stream.Dispose();
+            throw new IOException(Path.GetFileName(path) + " ist zu gross.");
+        }
         byte[] bytes = new byte[stream.Length];
-        stream.ReadExactly(bytes);
+        try { stream.ReadExactly(bytes); }
+        catch (Exception)
+        {
+            stream.Dispose();
+            throw;
+        }
+        stream.Dispose();
         return bytes;
     }
 

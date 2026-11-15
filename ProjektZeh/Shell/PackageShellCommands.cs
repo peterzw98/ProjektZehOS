@@ -142,6 +142,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         var report = new StringBuilder();
         foreach (var package in installed.Value!)
         {
+            token.ThrowIfCancellationRequested();
             if (id.Length > 0 && package.Manifest.Id != id) continue;
             var entry = catalog.Value.Find(package.Manifest.Id);
             if (entry == null || entry.Version.CompareTo(package.Manifest.Version) <= 0) continue;

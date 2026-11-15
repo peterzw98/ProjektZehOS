@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
-VERSION = re.compile(r"^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})$")
+VERSION = re.compile(r"^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$")
 COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
 MAX_FILES, MAX_CONTENT, MAX_MANIFEST = 128, 128 * 1024 * 1024, 16 * 1024
 
@@ -85,6 +85,12 @@ def package(args: argparse.Namespace) -> None:
 def catalog(args: argparse.Namespace) -> None:
     if args.generation < 1:
         raise ValueError("Generation muss mindestens 1 sein.")
+    existing = args.repo / "catalog"
+    if existing.exists():
+        known = re.search(r"^generation=(\d+)$", existing.read_text(encoding="utf-8"), re.MULTILINE)
+        # ZehOS nimmt keinen aelteren Katalog an; ein neuer Stand braucht immer eine hoehere Generation.
+        if known and args.generation <= int(known.group(1)):
+            raise ValueError(f"Generation muss groesser als die vorhandene ({known.group(1)}) sein.")
     entries = []
     for directory in sorted(p for p in args.repo.iterdir() if p.is_dir() and ID.match(p.name)):
         versions = [p for p in directory.iterdir() if VERSION.match(p.name) and (p / "manifest").exists()]

@@ -127,7 +127,8 @@ public sealed class Kernel : Sys.Kernel
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
-#if !ZEHOS_INSTALLER
+#if ZEHOS_WASM && !ZEHOS_INSTALLER
+            // Ohne Wasm-Loader liessen sich Pakete zwar installieren, aber nicht starten.
             .. packageCommands.Commands,
 #endif
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
