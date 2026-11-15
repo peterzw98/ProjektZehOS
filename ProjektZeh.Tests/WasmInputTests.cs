@@ -134,6 +134,45 @@ public sealed class WasmInputTests
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 1, 159, 99), Read(input));
     }
 
+    [TestMethod]
+    public void CapturedPointerReportsSummedRelativeMovesAndKeepsButtons()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(640, 400, 320, 200);
+        input.SetCapture(true);
+        Assert.IsTrue(input.IsCaptured);
+        // Die erste Position nach dem Einfangen ist nur der Bezugspunkt.
+        input.Handle(new(InputEventType.PointerMove, X: 100, Y: 100));
+        input.Handle(new(InputEventType.PointerMove, X: 110, Y: 95));
+        input.Handle(new(InputEventType.PointerMove, X: 130, Y: 95));
+        input.Handle(new(InputEventType.PointerMove, X: 130, Y: 95));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, 30, -5), Read(input));
+        input.Handle(new(InputEventType.PointerDown, X: 130, Y: 95, Button: PointerButtons.Left));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 1, 65, 47), Read(input));
+        Assert.IsFalse(input.TryRead(out _));
+    }
+
+    [TestMethod]
+    public void EscapeResetAndReleaseEndCaptureAndRestoreAbsolutePointer()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(640, 400, 320, 200);
+        input.SetCapture(true);
+        input.Handle(new(InputEventType.KeyDown, (byte)PhysicalKey.Escape));
+        Assert.IsFalse(input.IsCaptured);
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.KeyDown, (byte)PhysicalKey.Escape), Read(input));
+        input.Handle(new(InputEventType.PointerMove, X: 20, Y: 40));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerMove, 0, 10, 20), Read(input));
+        input.SetCapture(true);
+        input.Reset();
+        Assert.IsFalse(input.IsCaptured, "Fokusverlust gibt den Zeiger frei.");
+        input.SetCapture(true);
+        input.SetCapture(false);
+        input.Handle(new(InputEventType.PointerMove, X: 40, Y: 40));
+        Assert.AreEqual(WasmInputEventType.Reset, Read(input).Type);
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerMove, 0, 20, 20), Read(input));
+    }
+
     private static WasmInputEvent Read(WasmInputBuffer input)
     {
         Assert.IsTrue(input.TryRead(out WasmInputEvent value));

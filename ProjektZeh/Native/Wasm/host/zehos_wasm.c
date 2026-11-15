@@ -24,6 +24,7 @@ extern uint32_t zehos_wasm_host_ticks_ms(void);
 extern void zehos_wasm_host_sleep_ms(uint32_t milliseconds);
 extern int32_t zehos_wasm_host_poll_key(void);
 extern int32_t zehos_wasm_host_poll_event(int32_t* event);
+extern int32_t zehos_wasm_host_pointer_capture(int32_t enabled);
 extern int32_t zehos_wasm_host_should_exit(void);
 extern int32_t zehos_wasm_host_net_open(const uint8_t* host, uint32_t length, int32_t port, int32_t flags, int32_t* handle);
 extern int32_t zehos_wasm_host_net_status(int32_t handle);
@@ -521,6 +522,13 @@ static m3ApiRawFunction(zehos_poll_key)
     m3ApiReturn(zehos_wasm_host_poll_key());
 }
 
+static m3ApiRawFunction(zehos_pointer_capture)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(int32_t, enabled)
+    m3ApiReturn(zehos_wasm_host_pointer_capture(enabled));
+}
+
 static m3ApiRawFunction(zehos_poll_event)
 {
     m3ApiReturnType(int32_t)
@@ -690,6 +698,7 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
         { "sleep_ms", "v(i)", zehos_sleep_ms },
         { "poll_key", "i()", zehos_poll_key },
         { "poll_event", "i(i)", zehos_poll_event },
+        { "pointer_capture", "i(i)", zehos_pointer_capture },
         { "should_exit", "i()", zehos_should_exit },
         { "net_open", "i(iiiii)", zehos_net_open },
         { "net_status", "i(i)", zehos_net_status },

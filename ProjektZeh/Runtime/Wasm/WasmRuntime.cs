@@ -25,6 +25,8 @@ internal interface IWasmSession
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
     int PollKey();
     bool TryReadEvent(out WasmInputEvent value);
+    /// <summary>Faengt den Zeiger ein oder gibt ihn frei; false, wenn die Sitzung das nicht kann.</summary>
+    bool SetPointerCapture(bool enabled);
     bool ShouldExit { get; }
     /// <summary>Uhr der Anwendung in Millisekunden; steht still, solange die Sitzung pausiert.</summary>
     uint TicksMilliseconds { get; }
@@ -365,6 +367,13 @@ internal static unsafe class WasmRuntime
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_poll_key")]
     private static int HostPollKey() => current?.PollKey() ?? -1;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_pointer_capture")]
+    private static int HostPointerCapture(int enabled)
+    {
+        try { return current != null && current.SetPointerCapture(enabled != 0) ? 0 : -1; }
+        catch (Exception) { return -1; }
+    }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_poll_event")]
     private static int HostPollEvent(int* fields)

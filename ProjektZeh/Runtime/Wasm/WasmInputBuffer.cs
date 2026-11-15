@@ -4,7 +4,7 @@ using ProjektZeh.Input;
 
 namespace ProjektZeh.Runtime.Wasm;
 
-internal enum WasmInputEventType { KeyDown = 1, KeyUp, Text, PointerMove, PointerDown, PointerUp, Scroll, Reset }
+internal enum WasmInputEventType { KeyDown = 1, KeyUp, Text, PointerMove, PointerDown, PointerUp, Scroll, Reset, RelativeMove }
 internal readonly record struct WasmInputEvent(WasmInputEventType Type, int Code = 0, int X = 0, int Y = 0);
 
 /// <summary>Eingabe im Framekoordinatensystem; die Sitzung synchronisiert alle Zugriffe mit ihrer Sperre.</summary>
@@ -24,6 +24,19 @@ internal sealed class WasmInputBuffer
     private int targetHeight;
     private long left;
     private long top;
+    private bool captured;
+    private bool hasPointer;
+    private int lastX;
+    private int lastY;
+
+    /// <summary>Eingefangener Zeiger: Bewegungen kommen nur noch relativ; Fokusverlust und Esc geben ihn frei.</summary>
+    public bool IsCaptured => captured;
+
+    public void SetCapture(bool enabled)
+    {
+        captured = enabled;
+        hasPointer = false;
+    }
 
     public void SetViewport(int width, int height, int imageWidth, int imageHeight)
     {
@@ -42,6 +55,8 @@ internal sealed class WasmInputBuffer
                 Reset();
                 return;
             case InputEventType.KeyDown:
+                // Esc bleibt fuer die App eine Taste, beendet aber immer das Einfangen.
+                if (value.KeyCode == (byte)PhysicalKey.Escape) captured = false;
                 // Nur gemeldete Druecke gelten als gehalten; ihr Loslassen wird nie verworfen, damit keine
                 // Taste haengen bleibt. Die Warteschlange bleibt durch maximal 256 Tastencodes begrenzt.
                 if (!value.IsRepeat && keys.Count < LegacyCapacity && held.Add(value.KeyCode))
@@ -58,6 +73,14 @@ internal sealed class WasmInputBuffer
                 return;
         }
 
+        if (captured && value.Type == InputEventType.PointerMove)
+        {
+            // Deltas aus Bildschirmpositionen: ein absolutes Zeigegeraet (QEMU-/VMware-Tablet) endet am Bildschirmrand.
+            if (hasPointer && (value.X != lastX || value.Y != lastY))
+                Enqueue(new(WasmInputEventType.RelativeMove, 0, value.X - lastX, value.Y - lastY));
+            (lastX, lastY, hasPointer) = (value.X, value.Y, true);
+            return;
+        }
         if (targetWidth == 0) return;
         long x = (long)value.X - left;
         long y = (long)value.Y - top;
@@ -90,6 +113,7 @@ internal sealed class WasmInputBuffer
         held.Clear();
         head = count = 0;
         highSurrogate = '\0';
+        captured = false;
         Enqueue(new(WasmInputEventType.Reset));
     }
 
@@ -127,6 +151,12 @@ internal sealed class WasmInputBuffer
         if (count > 0 && value.Type == WasmInputEventType.PointerMove && events[last].Type == value.Type)
         {
             events[last] = value;
+            return;
+        }
+        // Aufeinanderfolgende relative Bewegungen addieren, damit eine volle Warteschlange keine Drehung verliert.
+        if (count > 0 && value.Type == WasmInputEventType.RelativeMove && events[last].Type == value.Type)
+        {
+            events[last] = value with { X = events[last].X + value.X, Y = events[last].Y + value.Y };
             return;
         }
         if (count == Capacity)

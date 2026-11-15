@@ -23,6 +23,7 @@ Stand: 15. November 2026. Diese Anleitung beschreibt, was eine App für den ZehO
 | `poll_key()` | -1 ohne Ereignis, sonst Bit 8 = gedrückt, Bits 0–7 = normalisierter ZehOS-Tastencode (Set 1) |
 | `poll_event(ptr)` | 1 für ein Ereignis in 16 Byte Gastspeicher, 0 ohne Ereignis, -1 bei Hostfehler; Details unten |
 | `should_exit()` | 1, wenn das Fenster geschlossen wird; die App muss dann zügig enden |
+| `pointer_capture(on)` | 1 fängt den Zeiger ein, 0 gibt ihn frei; 0 bei Erfolg, -1 wenn das Fenster nicht aktiv ist. Seit ZehOS 0.2.22 |
 
 `poll_event` schreibt vier Little-Endian-`i32` in der Reihenfolge `type, code, x, y`.
 Nicht ausgerichtete Adressen sind erlaubt. Ein ungültiger 16-Byte-Bereich trappt **vor** der Entnahme;
@@ -38,6 +39,7 @@ das Loslassen einer gemeldeten Taste aber nie, damit keine Taste in der App hän
 | 5 / 6 | Maustaste gedrückt / losgelassen; `code` = 1 links, 2 rechts, 4 Mitte, `x/y` wie oben |
 | 7 | Mausrad; `code` = Schritte, positiv aufwärts, negativ abwärts, `x/y` wie oben |
 | 8 | Eingabe zurücksetzen; `code=x=y=0`, alle gehaltenen Tasten/Maustasten verwerfen |
+| 9 | relative Zeigerbewegung bei eingefangenem Zeiger; `code=0`, `x/y` = Pixel seit dem letzten Ereignis (rechts/unten positiv) |
 
 Wiederholte Tastendrücke kommen erneut als Typ 1, Text zusätzlich als Typ 3. Pfeile verwenden 72/75/77/80,
 Entf 83, AltGr 96. Ein E0-Merkmal steht nicht zur Verfügung; Ziffernblock und Navigation können denselben
@@ -52,6 +54,15 @@ die App bestimmt seine Größe über `present` und muss eine passende feste Grö
 seitentreu in den Fensterinhalt ein (nächster Nachbar, vergrößernd wie verkleinernd, Rest schwarz); Mauspositionen
 kommen in Bildkoordinaten an. Scharf, also 1:1, ist es nur bei genau passender Größe: Ein Paketfenster öffnet mit
 798×519 Inhalt.
+
+**Zeiger einfangen:** Nach `pointer_capture(1)` kommen Bewegungen nur noch als Typ 9; aufeinanderfolgende Deltas
+werden addiert. Tasten, Maustasten (5/6, mit Bildkoordinaten) und Rad bleiben unverändert. Esc, Fokusverlust,
+Fensterwechsel, F4 und Schließen geben den Zeiger frei; Esc erreicht die App trotzdem als Taste. Nach der Freigabe
+kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
+Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
+eine App, die ihn importiert, startet dort nicht. **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
+und VMware liefern mit dem Tablet ein absolutes Zeigegerät; die Bewegung endet deshalb am Rand des Gastbildschirms
+beziehungsweise des Hostfensters. Der Desktopzeiger bleibt sichtbar.
 
 **Netzwerk über `zehos_v1`:**
 

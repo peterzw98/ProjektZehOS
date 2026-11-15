@@ -235,6 +235,17 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         lock (gate) return input.TryRead(out value);
     }
 
+    // Nur das aktive Fenster darf einfangen; Fokusverlust setzt die Eingabe und damit das Einfangen zurueck.
+    bool IWasmSession.SetPointerCapture(bool enabled)
+    {
+        lock (gate)
+        {
+            if (enabled && !active) return false;
+            input.SetCapture(enabled);
+            return true;
+        }
+    }
+
     int IWasmSession.PollKey()
     {
         lock (gate) return input.PollKey();

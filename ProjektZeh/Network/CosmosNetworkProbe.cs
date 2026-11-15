@@ -211,6 +211,7 @@ internal static class CosmosNetworkProbe
         public void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test) { }
         public int PollKey() => -1;
         public bool TryReadEvent(out ProjektZeh.Runtime.Wasm.WasmInputEvent value) { value = default; return false; }
+        public bool SetPointerCapture(bool enabled) => false;
     }
 #endif
 #if ZEHOS_NETWORK_TLS_PROBE
