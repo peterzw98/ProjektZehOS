@@ -88,6 +88,7 @@ def random_module(pointer, length, read_first=False):
             + section(7, b"\x01" + string("run") + b"\x00\x01")
             + section(10, b"\x01" + leb(len(code)) + code))
 
+
 class NativeInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -217,6 +218,12 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(status, 0, message)
         self.assertEqual(value, 29)
         self.assertEqual(self.lib.random_test_calls(), 1)
+
+    def test_random_get_accepts_empty_buffer_at_memory_end(self):
+        self.lib.random_test_reset(0)
+        status, value, message = self.execute(random_module(65536, 0))
+        self.assertEqual(status, 0, message)
+        self.assertEqual(value, 0)
 
     def test_random_get_traps_before_host_when_buffer_is_invalid(self):
         self.lib.random_test_reset(0)

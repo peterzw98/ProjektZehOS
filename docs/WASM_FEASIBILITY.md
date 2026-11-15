@@ -58,7 +58,7 @@ Ergebnisse am 14. November 2026 (QEMU, TCG, 512 MiB):
 | `memory.grow` über Limit | -1, kein Absturz |
 | unbegrenzte Rekursion | Trap `stack overflow` |
 | abgeschnittenes Modul / fehlender Einstieg | Parsefehler / `function lookup failed` |
-| WASI `random_get` (15. November 2026, KVM) | 0 mit `-cpu max`; `EIO` (29) mit `-cpu max,-rdrand,-rdseed` |
+| WASI `random_get` (15. November 2026, KVM) | 0 mit `-cpu max`; `EIO` (29) mit `-cpu max,-rdrand,-rdseed`. Eine C#- oder wasi-libc-App ohne Hardwarezufall wurde nicht gestartet; erwartet wird ein Trap über `arc4random` statt des früheren Weiterlaufens mit Nullen. |
 | C#-App, 10 Läufe | Exit 0, `CSPROBE 26`, 3,4–4,4 s je Lauf |
 | Freier Speicher | 420 MiB vor und nach allen 10 Läufen (kein Wachstum) |
 | geänderte App, gleiches ISO | neue Ausgabe, ISO-Hash unverändert |
