@@ -236,6 +236,21 @@ Zuerst als Administrator `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` 
 
 Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-Length`. Header sind auf 8192 Bytes, Antwortkörper auf 16384 Bytes begrenzt. Weiterleitungen und Transfercodierungen werden abgelehnt. Cosmos 3.0.94 verarbeitet einen Abbruch während DHCP oder TCP-Verbindungsaufbau erst nach Rückkehr seines internen Warteaufrufs. Die übrige Bedienung läuft auf dem Hauptthread weiter. [Architektur, HTTPS-Plan und Prüfnachweise](docs/NETWORK_TESTS.md).
 
+## Apps als Pakete installieren (Doom)
+
+Mit `-p:ZehOSWasm=true` enthält der Kernel einen WebAssembly-Loader (wasm3). Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
+
+```text
+net dhcp
+pkg source https://<Repository>/
+pkg update
+pkg install doom
+```
+
+Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis zeigt `pkg status`. `pkg list`, `pkg upgrade` und `pkg remove doom` verwalten installierte Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Vor jedem Start werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
+
+Ein Build vertraut Paketen nur mit einem ausdrücklich eingebetteten öffentlichen Schlüssel: `-p:ZehOSPackageKeyPath=<Datei>`. Ohne ihn ist `pkg` gesperrt. Ein offizielles Repository und ein Herausgeberschlüssel sind noch nicht festgelegt. Format, Speicherort und Werkzeug `scripts/build-package.py` beschreibt [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md). Den QEMU-Ablauf mit lokalem HTTPS-Testrepository prüft `scripts/test-wasm-doom-desktop.py`.
+
 ## Start in VMware Player aus Visual Studio
 
 Die Cosmos-Erweiterung übernimmt standardmäßig `F5` und `Strg+F5` für QEMU. Für einen Start in VMware ohne Umstellen der Debug-Einstellung zuerst in Visual Studio bauen (`Strg+Umschalt+B`) und dann im Visual-Studio-Terminal aus dem Repository-Stamm ausführen:

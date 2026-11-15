@@ -14,7 +14,7 @@ namespace ProjektZeh.Runtime;
 internal sealed class InteractiveSession(ShellService shell, Func<ShellService> createShell,
     Func<FileService> createFiles, ITextOutput output,
     Func<long> getElapsedMilliseconds, SystemLog systemLog, AccountService accounts, UserSession identity,
-    TaskManagerSection[] sections)
+    TaskManagerSection[] sections, Func<Apps.ExternalApplication[]>? listExternal = null)
 {
     private readonly CosmosInputService devices = new();
     private readonly LoginFlow login = new(accounts, shell, output);
@@ -113,7 +113,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         if (graphics) { LeaveGraphics(); return; }
         try
         {
-            display ??= new DisplayService(createShell, createFiles, input, sections, new DesktopSession(accounts, shell, identity));
+            display ??= new DisplayService(createShell, createFiles, input, sections, new DesktopSession(accounts, shell, identity), listExternal);
             Console.CursorVisible = false;
             graphics = true;
             systemLog.Information("Desktop", "Desktop ist bereit.");

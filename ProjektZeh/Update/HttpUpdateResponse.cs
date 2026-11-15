@@ -10,6 +10,20 @@ internal static class HttpUpdateResponse
 {
     public static byte[] Read(Stream stream, int maximumBytes)
     {
+        byte[] body = new byte[(int)ReadLength(stream, maximumBytes)];
+        int offset = 0;
+        while (offset < body.Length)
+        {
+            int count = stream.Read(body, offset, Math.Min(65536, body.Length - offset));
+            if (count == 0) throw new EndOfStreamException("Unvollstaendige HTTP-Datei.");
+            offset += count;
+        }
+        return body;
+    }
+
+    /// <summary>Liest nur den Header und liefert die Content-Length; der Body bleibt im Strom, etwa fuer Paketdownloads.</summary>
+    public static long ReadLength(Stream stream, long maximumBytes)
+    {
         var header = new StringBuilder();
         byte[] single = new byte[1];
         while (header.Length < 8192)
@@ -20,29 +34,18 @@ internal static class HttpUpdateResponse
             header.Append((char)value);
             int length = header.Length;
             if (length >= 4 && header[length - 4] == '\r' && header[length - 3] == '\n' && header[length - 2] == '\r' && header[length - 1] == '\n')
-            {
-                int size = ParseHeader(header.ToString(), maximumBytes);
-                byte[] body = new byte[size];
-                int offset = 0;
-                while (offset < body.Length)
-                {
-                    int count = stream.Read(body, offset, Math.Min(65536, body.Length - offset));
-                    if (count == 0) throw new EndOfStreamException("Unvollstaendige HTTP-Datei.");
-                    offset += count;
-                }
-                return body;
-            }
+                return ParseHeader(header.ToString(), maximumBytes);
         }
         throw new IOException("HTTP-Header ist zu gross.");
     }
 
-    private static int ParseHeader(string header, int maximumBytes)
+    private static long ParseHeader(string header, long maximumBytes)
     {
         string[] lines = header.Split("\r\n", StringSplitOptions.None);
         string[] status = lines[0].Split(' ');
         if (status.Length < 2 || status[0] is not ("HTTP/1.0" or "HTTP/1.1") || status[1] != "200")
             throw new IOException("HTTP-Download abgelehnt: " + lines[0]);
-        int size = -1;
+        long size = -1;
         for (int index = 1; index < lines.Length - 2; index++)
         {
             int colon = lines[index].IndexOf(':');
@@ -54,7 +57,7 @@ internal static class HttpUpdateResponse
             if (name.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) && !value.Equals("identity", StringComparison.OrdinalIgnoreCase))
                 throw new IOException("HTTP-Inhaltscodierung wird nicht unterstuetzt.");
             if (!name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
-            if (size != -1 || !int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out size) || size < 0 || size > maximumBytes)
+            if (size != -1 || !long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out size) || size < 0 || size > maximumBytes)
                 throw new IOException("Ungueltige oder zu grosse HTTP-Dateilaenge.");
         }
         if (size == -1) throw new IOException("Content-Length fehlt.");

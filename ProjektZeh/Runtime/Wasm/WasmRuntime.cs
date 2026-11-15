@@ -48,19 +48,47 @@ internal static unsafe class WasmRuntime
     /// <summary>Summe der Wartezeit des letzten Laufs in Millisekunden; trennt Rechen- von Wartezeit bei Messungen.</summary>
     public static long WaitedMilliseconds { get; private set; }
 
+    /// <summary>true, solange ein Lauf aussteht oder laeuft; der gemeinsame Worker fuehrt nur einen zur Zeit aus.</summary>
+    public static bool IsBusy { get { lock (gate) return pending > 0; } }
+    private static int pending;
+
     /// <summary>Stellt einen Lauf in die Warteschlange; completed laeuft danach auf dem Worker.</summary>
     public static void Enqueue(byte[] module, string entry, ulong gas, IWasmSession session,
         Action<WasmStatus, int, string> completed)
     {
         ArgumentNullException.ThrowIfNull(module);
+        Enqueue(() => (module, null), entry, gas, session, completed);
+    }
+
+    /// <summary>
+    /// Wie oben, laedt das Modul aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser Paketdateien.
+    /// Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung.
+    /// </summary>
+    public static void Enqueue(Func<(byte[]? Module, string? Error)> load, string entry, ulong gas, IWasmSession session,
+        Action<WasmStatus, int, string> completed)
+    {
+        ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(completed);
         lock (gate)
         {
+            pending++;
             jobs.Enqueue(() =>
             {
-                WasmStatus status = Execute(module, entry, gas, session, out int result, out string message);
-                completed(status, result, message);
+                WasmStatus status = WasmStatus.LoadFailed;
+                int result = 0;
+                string message;
+                try
+                {
+                    (byte[]? Module, string? Error) loaded;
+                    // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
+                    try { loaded = load(); }
+                    catch (Exception exception) { loaded = (null, exception.Message); }
+                    if (loaded.Module != null) status = Execute(loaded.Module, entry, gas, session, out result, out message);
+                    else message = loaded.Error ?? "Modul nicht geladen.";
+                    completed(status, result, message);
+                }
+                finally { lock (gate) pending--; }
             });
             if (worker == null)
             {

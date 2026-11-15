@@ -11,6 +11,7 @@ using ProjektZeh.Security;
 using ProjektZeh.Scheduling;
 using ProjektZeh.Messaging;
 using ProjektZeh.Network;
+using ProjektZeh.Packages;
 using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
@@ -42,6 +43,8 @@ public sealed class Kernel : Sys.Kernel
     private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
 #endif
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
+    // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
+    private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild());
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;
@@ -68,7 +71,12 @@ public sealed class Kernel : Sys.Kernel
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections);
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
+#if ZEHOS_WASM
+            ListPackageApplications);
+#else
+            null);
+#endif
     }
 
     /// <summary>Neue Terminals starten als angemeldeter Desktopbenutzer, behalten danach aber ihre eigene Identitaet.</summary>
@@ -79,6 +87,23 @@ public sealed class Kernel : Sys.Kernel
         return CreateShell(identity);
     }
 
+#if ZEHOS_WASM
+    // Startmenueeintraege aus dem Paketbestand; beschaedigte oder nicht signierte Pakete erscheinen nicht.
+    private Apps.ExternalApplication[] ListPackageApplications()
+    {
+        var installed = packages.ReadInstalled();
+        if (!installed.IsOK()) return [];
+        var apps = new Apps.ExternalApplication[installed.Value!.Length];
+        for (int index = 0; index < apps.Length; index++)
+        {
+            string id = installed.Value[index].Manifest.Id;
+            apps[index] = new(id, installed.Value[index].Manifest.Name,
+                painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter));
+        }
+        return apps;
+    }
+
+#endif
     private static string VersionText =>
         $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
@@ -86,6 +111,8 @@ public sealed class Kernel : Sys.Kernel
     {
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity);
         var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity));
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
+            () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"));
         ShellService? shell = null;
         shell = new ShellService(
         [
@@ -100,13 +127,16 @@ public sealed class Kernel : Sys.Kernel
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
+#if !ZEHOS_INSTALLER
+            .. packageCommands.Commands,
+#endif
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
             command => accounts.Authorize(identity, command));
-        shell.OnClose = () => { network.Close(); accounts.ReleaseSession(identity); };
+        shell.OnClose = () => { network.Close(); packageCommands.Close(); accounts.ReleaseSession(identity); };
         return shell;
     }
 
@@ -144,6 +174,8 @@ public sealed class Kernel : Sys.Kernel
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");
+                var reconciled = packages.Reconcile();
+                if (!reconciled.IsOK()) systemLog.Error("Packages", reconciled.Message);
             }
             else
             {

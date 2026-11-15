@@ -45,6 +45,14 @@
   <ItemGroup Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">
     <EmbeddedResource Include="$(ZehOSNetworkProbeCaPath)" LogicalName="ZehOS.NetworkProbeCa" />
   </ItemGroup>
+  <!-- Oeffentlicher Ed25519-Paketschluessel (Base64-Textdatei); ohne ihn bleibt pkg deaktiviert. -->
+  <ItemGroup Condition="'$(ZehOSPackageKeyPath)' != ''">
+    <EmbeddedResource Include="$(ZehOSPackageKeyPath)" LogicalName="ZehOS.PackageKey" />
+  </ItemGroup>
+  <!-- Nur fuer Tests mit lokalem HTTPS-Repository; ergaenzt die normalen TLS-Wurzeln fuer Paketdownloads. -->
+  <ItemGroup Condition="'$(ZehOSPackageTestCaPath)' != ''">
+    <EmbeddedResource Include="$(ZehOSPackageTestCaPath)" LogicalName="ZehOS.PackageTestCa" />
+  </ItemGroup>
 
   <ItemGroup Condition="'$(ZehOSInstaller)' == 'true'">
     <EmbeddedResource Include="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" LogicalName="ZehOS.Payload.Kernel" />

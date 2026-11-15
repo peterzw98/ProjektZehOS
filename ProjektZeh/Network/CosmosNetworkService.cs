@@ -126,7 +126,33 @@ internal sealed class CosmosNetworkService : INetworkService
 
     private const int FetchTimeoutMilliseconds = 10000;
 
-    internal static string Fetch(string text, CancellationToken token, byte[]? rootsOverride = null)
+    internal static string Fetch(string text, CancellationToken token, byte[]? rootsOverride = null) =>
+        Encoding.UTF8.GetString(Exchange(text, rootsOverride ?? TlsRoots.Load(), false, stream => HttpUpdateResponse.Read(stream, MaximumBody), token));
+
+    /// <summary>
+    /// Fuehrt einen einzelnen GET aus und uebergibt den Antwortstrom an <paramref name="read"/>. Fuer Paketdownloads gilt das
+    /// Zeitlimit je Datenpaket statt fuer den gesamten Auftrag, damit grosse Dateien nicht am festen 10-s-Limit scheitern.
+    /// </summary>
+    internal static T Download<T>(string text, byte[] roots, Func<Stream, T> read, CancellationToken token)
+    {
+        while (!Monitor.TryEnter(Gate, 50)) token.ThrowIfCancellationRequested();
+        try
+        {
+            EnsureAddress();
+            return Exchange(text, roots, true, read, token);
+        }
+        finally { Monitor.Exit(Gate); }
+    }
+
+    private static void EnsureAddress()
+    {
+        if (!NetworkManager.IsEnabled || !NetworkManager.IsInitialized) throw new IOException("Netzwerkdienst nicht initialisiert.");
+        if (NetworkManager.DeviceCount == 0 || !NetworkManager.LinkUp) throw new IOException("Kein betriebsbereiter Netzwerkadapter.");
+        if (NetworkManager.Primary.IPConfig == null || NetworkManager.Primary.IPConfig.Address.Equals(Address4.Zero))
+            throw new IOException("IPv4 ist nicht konfiguriert: net static oder net dhcp verwenden.");
+    }
+
+    private static T Exchange<T>(string text, byte[] roots, bool idleDeadline, Func<Stream, T> read, CancellationToken token)
     {
         var clock = Stopwatch.StartNew();
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0)
@@ -136,30 +162,34 @@ internal sealed class CosmosNetworkService : INetworkService
         CheckDeadline(clock, token);
         CosmosHttpUpdateSource.RandomizeTcpStart();
         var socket = new Socket(System.Net.Sockets.AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        Exception? failure = null; byte[]? body = null; Stream? secure = null;
+        Exception? failure = null; T result = default!; Stream? secure = null;
         try
         {
             socket.Connect(IPAddress.Parse(address.ToString()!), uri.Port);
             CheckDeadline(clock, token);
-            var transport = new PollingStream(socket, clock, token);
+            var transport = new PollingStream(socket, clock, idleDeadline, token);
             Stream stream = transport;
             if (uri.Scheme == "https")
             {
-                secure = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, rootsOverride ?? TlsRoots.Load(), DateTime.UtcNow);
+                secure = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, roots, DateTime.UtcNow);
                 CheckDeadline(clock, token);
                 stream = secure;
             }
             byte[] request = Encoding.ASCII.GetBytes($"GET {uri.PathAndQuery} HTTP/1.0\r\nHost: {uri.Authority}\r\nConnection: close\r\n\r\n");
             stream.Write(request, 0, request.Length);
             stream.Flush();
-            body = HttpUpdateResponse.Read(stream, MaximumBody);
+            result = read(stream);
             CheckDeadline(clock, token);
         }
         catch (Exception exception) { failure = exception; }
-        try { secure?.Dispose(); } catch (Exception exception) { failure = CleanupFailure(failure, "TLS", exception); }
+        try { secure?.Dispose(); }
+        // Downloads sind nach vollstaendig gelesener, laengengepruefter Antwort fertig; schliesst der Server zuerst, scheitert
+        // nur das Senden von close_notify (im Gast als internal_error(80) beobachtet). Das ist kein Datenfehler.
+        catch (Exception exception) when (!(idleDeadline && failure == null)) { failure = CleanupFailure(failure, "TLS", exception); }
+        catch (Exception) { }
         try { socket.Close(0); } catch (Exception exception) { failure = CleanupFailure(failure, "TCP", exception); }
         if (failure != null) throw failure;
-        return Encoding.UTF8.GetString(body!);
+        return result;
     }
 
     private static void CheckDeadline(Stopwatch clock, CancellationToken token)
@@ -168,7 +198,7 @@ internal sealed class CosmosNetworkService : INetworkService
         if (clock.ElapsedMilliseconds >= FetchTimeoutMilliseconds) throw new IOException("Netzwerk-Zeitlimit erreicht.");
     }
 
-    private sealed class PollingStream(Socket socket, Stopwatch clock, CancellationToken token) : Stream
+    private sealed class PollingStream(Socket socket, Stopwatch clock, bool idleDeadline, CancellationToken token) : Stream
     {
         public override int Read(byte[] buffer, int offset, int count)
         {
@@ -182,6 +212,7 @@ internal sealed class CosmosNetworkService : INetworkService
             CheckDeadline(clock, token);
             int received = socket.Receive(buffer, offset, count, SocketFlags.None);
             CheckDeadline(clock, token);
+            if (idleDeadline && received > 0) clock.Restart();
             return received;
         }
         public override void Write(byte[] buffer, int offset, int count)

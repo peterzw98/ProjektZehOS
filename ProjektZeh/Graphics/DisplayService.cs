@@ -26,7 +26,7 @@ internal sealed class DisplayService
     public DisplaySettings Display { get; }
 
     public DisplayService(Func<ShellService> createShell, Func<FileService> createFiles, InputService input,
-        TaskManagerSection[] sections, DesktopSession session)
+        TaskManagerSection[] sections, DesktopSession session, Func<Apps.ExternalApplication[]>? listExternal = null)
     {
         this.input = input;
         canvas = Canvas.GetFullScreen();
@@ -38,7 +38,7 @@ internal sealed class DisplayService
         Display = new DisplaySettings(current, ReadModes(current), SetMode, () => new(canvas.Width, canvas.Height));
         var font = PCScreenFont.DefaultFont;
         desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles,
-            Display, sections, session);
+            Display, sections, session, listExternal);
         SyncInput();
     }
 

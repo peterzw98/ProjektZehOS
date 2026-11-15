@@ -85,7 +85,7 @@ Die Probe startet Doom danach viermal je 5 s neu; der freie Speicher bleibt bei 
 
 ## Doom im Desktop (Gate B)
 
-Mit `-p:ZehOSWasm=true` (ohne Probe) enthält das Programmmenü „Doom (Wasm)“. `WasmGameApp` lädt `/data/doom/doom.wasm`, gibt `/data/doom` lesend frei und läuft auf dem gemeinsamen Wasm-Worker; Bilder (Doppelpuffer) und Tasten (begrenzte Warteschlange, 64 Einträge) laufen gesperrt zwischen Worker und Desktop. Das Bild wird ganzzahlig skaliert (2× im Standardfenster).
+Mit `-p:ZehOSWasm=true` (ohne Probe) erscheint Doom im Programmmenü, sobald das Paket installiert ist ([PACKAGE_FORMAT.md](PACKAGE_FORMAT.md)). Die folgenden Gate-B-Messungen stammen noch aus dem Zwischenstand mit festem Ordner `/data/doom`. `WasmGameApp` lädt den Einstiegspunkt des Pakets, gibt dessen `files/`-Ordner lesend frei und läuft auf dem gemeinsamen Wasm-Worker; Bilder (Doppelpuffer) und Tasten (begrenzte Warteschlange, 64 Einträge) laufen gesperrt zwischen Worker und Desktop. Das Bild wird ganzzahlig skaliert (2× im Standardfenster).
 
 - **Pause:** Ist das Fenster nicht aktiv oder wurde es über 250 ms nicht gezeichnet (Textshell, minimiert), wartet die App in `present`; ihre Uhr steht still, damit sie keine Spieltakte nachholt.
 - **Fokus:** Gehaltene Tasten werden bei Fokusverlust und `Reset` losgelassen.
@@ -112,7 +112,7 @@ Geprüft mit `scripts/test-wasm-doom-desktop.py` (QEMU TCG, 512 MiB, 1920×1080,
 
 ## Grenzen und offene Punkte
 
-- Kein Produktloader: keine Rechteprüfung, keine Desktop-/Shellanbindung, kein Abbruch von außen außer Gas. Folgt in Aufgabe 3/4.
+- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
 - Die C#-App läuft doppelt interpretiert (Mono-Interpreter in wasm3); Start rund 4 s. Für Doom ist der C-Weg (doomgeneric) vorgesehen.
 - Der WASIp1-Umbau hängt an internen Targets des .NET-10-WASI-SDK und muss bei SDK-Updates neu geprüft werden.
 - `wasi:http`-Importe sind unverknüpft; HttpClient in Apps funktioniert nicht.

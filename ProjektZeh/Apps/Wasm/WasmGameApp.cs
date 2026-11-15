@@ -6,16 +6,18 @@ using System.IO;
 using System.Threading;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
+using ProjektZeh.Packages;
 using ProjektZeh.Runtime.Wasm;
 using ProjektZeh.UI;
 
 namespace ProjektZeh.Apps.Wasm;
 
 /// <summary>
-/// Fenster fuer eine Wasm-Anwendung mit eigener Bildausgabe (zehos_v1). Das Modul laeuft auf dem gemeinsamen
+/// Fenster fuer eine installierte Paket-App mit eigener Bildausgabe (zehos_v1). Das Modul laeuft auf dem gemeinsamen
 /// Wasm-Worker; Bilder und Tasten werden ueber gesperrte, begrenzte Puffer zwischen Worker und Desktop getauscht.
+/// Die Paketversion bleibt bis zum Ende des Laufs gesichert, damit Entfernen oder Aktualisieren sie nicht loescht.
 /// </summary>
-internal sealed class WasmGameApp(string modulePath, string root, UiPainter painter) : IApplication, IWasmSession
+internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter) : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
     private const int KeyQueueCapacity = 64;
@@ -37,7 +39,8 @@ internal sealed class WasmGameApp(string modulePath, string root, UiPainter pain
     private bool running;
     private bool exitRequested;
     private bool active;
-    private string? status = "Lade ...";
+    private string? status = "Pruefe Paket ...";
+    private string? root;
     private readonly System.Text.StringBuilder errors = new();
 
     public bool NeedsAnimation => running && active;
@@ -48,33 +51,39 @@ internal sealed class WasmGameApp(string modulePath, string root, UiPainter pain
 
     public void Start()
     {
-        byte[] module;
-        try
+        var acquired = store.Acquire(packageId);
+        if (!acquired.IsOK())
         {
-            module = File.ReadAllBytes(modulePath);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            status = $"App nicht lesbar: {exception.Message}";
-            return;
-        }
-        if (module.Length > MaximumModuleBytes)
-        {
-            status = "App zu gross.";
+            status = acquired.Status.Message;
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(module, "_start", 0, this, Finished);
+        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished);
+    }
+
+    // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
+    private (byte[]? Module, string? Error) Load(InstalledPackage package)
+    {
+        lock (gate) if (exitRequested) return (null, "Start abgebrochen.");
+        var verified = PackageStore.VerifyFiles(package, CancellationToken.None);
+        if (!verified.IsOK()) return (null, verified.Message);
+        string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
+        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, "App zu gross.");
+        byte[] module = File.ReadAllBytes(entry);
+        lock (gate) { root = package.FilesDirectory; status = "Lade ..."; }
+        return (module, null);
     }
 
     // Laeuft auf dem Worker, wenn das Modul endet.
     private void Finished(WasmStatus result, int exitCode, string message)
     {
+        store.Release(packageId);
         lock (gate)
         {
             running = false;
             if (result == WasmStatus.Ok && exitCode == 0) IsCloseRequested = !exitRequested;
             else if (result == WasmStatus.Ok) status = $"App beendet (Exitcode {exitCode}): {LastErrorLine()}";
+            else if (result == WasmStatus.LoadFailed && frameWidth == 0) status = message;
             else status = $"App abgebrochen: {result} {message}";
         }
     }
