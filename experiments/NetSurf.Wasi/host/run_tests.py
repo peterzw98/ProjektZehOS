@@ -11,6 +11,7 @@ Die Klickpositionen gelten für die Startseite im 798×519-Bild (oben links ausg
 import argparse
 import http.server
 import os
+import shutil
 import socket
 import ssl
 import struct
@@ -180,6 +181,8 @@ def extra_get(handler: TestServer) -> bool:
         handler.send_page(200, form_page("/ziel-token", "post", "zehos_bestaetigung", value))
     elif handler.path.startswith("/ziel-get-"):
         form_target(handler, handler.path)
+    elif js_get(handler):
+        pass
     elif handler.path == "/keks-setzen":
         handler.send_page(302, b"", {"Set-Cookie": "zehos=keks; Path=/", "Location": "/keks-pruefen  "})
     elif handler.path == "/keks-pruefen":
@@ -234,6 +237,9 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
                 self.send_page(200, mixed_page("/css-zu-http"))
             elif self.path == "/css-zu-http":
                 self.send_page(302, b"", {"Location": f"{http_base}/marker.css"})
+            elif self.path == "/js-weg":
+                # Felder in der Ziel-URL: ohne Sperre gingen sie unverschlüsselt hinaus.
+                self.send_page(200, js_page(js_mark(JS_ON), f"location.href = '{http_base}/js-ziel?geheim=wert42';"))
             elif self.path == "/h":
                 self.send_page(200, page(HTTP_CHUNKED, "HSTS gesetzt"), {"Strict-Transport-Security": "max-age=600"})
             elif self.path == "/hz":
@@ -404,6 +410,129 @@ def https_scenarios(good: str, wrong: str) -> list:
     ]
 
 
+# JavaScript-Szenarien (Policy a–e, docs/NETSURF_HTTPS.md): laufen auf einer Paketkopie mit enable_javascript:1,
+# das Paket selbst bleibt bei 0. Skripte färben per document.write einen Block; JS_ON belegt, dass Skripte laufen.
+JS_PAGE, JS_ON, JS_AFTER_LOOP = (0x30, 0x30, 0x60), (0x10, 0xa0, 0x60), (0x60, 0xa0, 0x10)
+JS_TIMERS_OK, JS_TIMERS_BAD = (0x20, 0x80, 0xa0), (0xa0, 0x20, 0x20)
+JS_RANGE_OK, JS_DATA_PAGE, JS_DATA_MARK, JS_TARGET = (0x80, 0x80, 0x20), (0x50, 0x20, 0x50), (0xa0, 0x50, 0xa0), (0x20, 0x50, 0x20)
+SECURE_SAFE, SECURE_LEAK = (0x30, 0x70, 0x70), (0x70, 0x30, 0x30)
+# Längeres Ende als die übrigen Szenarien: wasm3 interpretiert Duktape, das Zeitlimit allein belegt 2 s.
+JS_EXIT_MS = 12000
+
+
+def js_mark(colour: tuple[int, int, int]) -> str:
+    hex_colour = "".join(f"{c:02x}" for c in colour)
+    return f"document.write('<div style=\"background:#{hex_colour};width:300px;height:100px\"></div>');"
+
+
+def js_page(*scripts: str) -> bytes:
+    body = "".join(f"<script>{script}</script>" for script in scripts)
+    return page(JS_PAGE, "Skript").replace(b"</body>", f"{body}</body>".encode())
+
+
+def js_get(handler: TestServer) -> bool:
+    if handler.path == "/js-an":
+        handler.send_page(200, js_page(js_mark(JS_ON)))
+    elif handler.path == "/js-schleife":
+        # Erst nach dem Abbruch der Endlosschleife läuft das zweite Skript; mit 10 s Limit läge es nach dem Ende.
+        handler.send_page(200, js_page("while (true) {}", js_mark(JS_AFTER_LOOP)))
+    elif handler.path == "/js-timer":
+        handler.send_page(200, js_page(
+            "var n = 0; for (var i = 0; i < 70; i++) { if (setInterval(function () {}, 100000) !== undefined) n++; }"
+            f"if (n === 64) {{ {js_mark(JS_TIMERS_OK)} }} else {{ {js_mark(JS_TIMERS_BAD)} }}"))
+    elif handler.path == "/js-rekursion":
+        handler.send_page(200, js_page(
+            # Über eine native Funktion (map), sonst rekursiert Duktape ohne C-Stapel und die native Grenze greift nie.
+            f"function f() {{ [0].map(f); }} try {{ f(); }} catch (e) {{ if (e instanceof RangeError) {{ {js_mark(JS_RANGE_OK)} }} }}"))
+    elif handler.path == "/js-data":
+        hex_colour = "".join(f"{c:02x}" for c in JS_DATA_MARK)
+        handler.send_page(200, js_page(js_mark(JS_ON),
+                                       f"location.href = 'data:text/html,<body style=background:%23{hex_colour}>x</body>';"))
+    elif handler.path == "/sk":
+        handler.send_page(200, page(HTTP_PAGE, "Secure gesetzt"), {"Set-Cookie": "zehos_sicher=1; Secure; Path=/"})
+    elif handler.path == "/sp":
+        sent = "zehos_sicher=1" in (handler.headers.get("Cookie") or "")
+        handler.send_page(200, page(COOKIE_OK, "Secure-Cookie da") if sent else page(COOKIE_MISSING, "Secure-Cookie fehlt"))
+    elif handler.path in ("/ts", "/tp", "/ow"):
+        # /ts (https) setzt ein Secure-Cookie, /tp (https) ein normales, /ow (http) versucht das Secure-Cookie zu ersetzen.
+        cookie = {"/ts": "tsec=1; Secure; Path=/", "/tp": "tplain=1; Path=/", "/ow": "tsec=evil; Path=/"}[handler.path]
+        handler.send_page(200, page(HTTP_PAGE, "Cookie gesetzt"), {"Set-Cookie": cookie})
+    elif handler.path in ("/c2", "/c3"):
+        sent = handler.headers.get("Cookie") or ""
+        # /c2 (http): normales Cookie ja, Secure-Cookie nein. /c3 (https): Secure-Cookie unverändert.
+        safe = ("tplain=1" in sent and "tsec" not in sent) if handler.path == "/c2" else ("tsec=1" in sent and "evil" not in sent)
+        handler.send_page(200, page(SECURE_SAFE, "Cookies richtig") if safe else page(SECURE_LEAK, "Cookies falsch"))
+    elif handler.path == "/js-httponly":
+        # HttpOnly mit Path=/ auf einer tieferen Seite: document.cookie darf es nicht zeigen (3.11 filterte nur exakt).
+        handler.send_page(200, js_page(
+            f"if (document.cookie.indexOf('zgeheim') < 0) {{ {js_mark(SECURE_SAFE)} }} else {{ {js_mark(SECURE_LEAK)} }}"),
+            {"Set-Cookie": "zgeheim=1; HttpOnly; Path=/"})
+    elif handler.path == "/js-leerpfad":
+        # Leerer Path aus Kopfzeile und Skript darf die App nicht beenden; JS_ON danach belegt den Weiterlauf.
+        handler.send_page(200, js_page("document.cookie = 'e=1; path=';", js_mark(JS_ON)), {"Set-Cookie": "k=1; Path="})
+    elif handler.path.startswith("/js-ziel"):
+        handler.send_page(200, page(JS_TARGET, "JS-Ziel"))
+    else:
+        return False
+    return True
+
+
+def js_data_url(base: str) -> str:
+    # Getippt in die Adressleiste; ein Skript auf data: darf nicht laufen (js_checks: kein Abruf von /js-von-data),
+    # die Seitenfarbe belegt das Laden.
+    page_colour = "".join(f"{c:02x}" for c in JS_DATA_PAGE)
+    return f"data:text/html,<body style=background:%23{page_colour}><script>location.href='{base}/js-von-data'</script>"
+
+
+def js_scenarios(base: str, good: str) -> list:
+    pages = [START, HTTP_PAGE, HTTP_MISSING]
+    return [
+        # Gegenprobe zu allen JS-Szenarien: Skripte laufen überhaupt.
+        ("js-an", address(1500, f"{base}/js-an"), [JS_PAGE, JS_ON], [START]),
+        ("js-endlosschleife", address(1500, f"{base}/js-schleife"), [JS_PAGE, JS_AFTER_LOOP], [START]),
+        ("js-timerflut", address(1500, f"{base}/js-timer"), [JS_TIMERS_OK], [JS_TIMERS_BAD, START]),
+        ("js-rekursion", address(1500, f"{base}/js-rekursion"), [JS_RANGE_OK], [START]),
+        ("js-location-data", address(1500, f"{base}/js-data"), [JS_PAGE, JS_ON], [JS_DATA_MARK, START]),
+        ("js-auf-data-seite", address(1500, js_data_url(base)), [JS_DATA_PAGE], [START]),
+        # Von HTTPS per location.href auf http:// mit Feldern: der Fetcher blockiert mit Fehlerseite (keine Warnseite,
+        # der Abruf ist unverifizierbar), der Server sieht keinen Abruf (js_checks). Ohne JS bliebe JS_PAGE stehen.
+        ("js-location-downgrade", address(1500, f"{good}/js-weg"), [], [JS_TARGET, JS_PAGE, DOWNGRADE_PAGE, START]),
+        # Kurze Pfade, weil address() nur 32 Zeichen der vorigen Adresse löscht.
+        ("js-secure-cookie-http", address(1500, f"{base}/sk") + address(3500, f"{good}/sp"),
+         [COOKIE_MISSING], [COOKIE_OK] + pages),
+        ("js-an-https", address(1500, f"{good}/js-an"), [JS_PAGE, JS_ON], [START]),
+        ("js-httponly-verborgen", address(1500, f"{base}/js-httponly"), [SECURE_SAFE], [SECURE_LEAK, START]),
+        ("js-cookie-leerer-pfad", address(1500, f"{base}/js-leerpfad"), [JS_PAGE, JS_ON], [START]),
+        # Ein Secure-Cookie von https geht nicht an http:// desselben Hosts, ein normales schon (NetSurf 3.11 sandte beide).
+        ("secure-cookie-nicht-an-http", address(1500, f"{good}/ts") + address(3500, f"{good}/tp") + address(5500, f"{base}/c2"),
+         [SECURE_SAFE], [SECURE_LEAK] + pages),
+        # http:// darf ein Secure-Cookie nicht durch ein gleichnamiges ohne Secure ersetzen.
+        ("secure-cookie-nicht-ersetzbar", address(1500, f"{good}/ts") + address(3500, f"{base}/ow") + address(5500, f"{good}/c3"),
+         [SECURE_SAFE], [SECURE_LEAK] + pages),
+    ]
+
+
+def js_checks() -> list[str]:
+    problems = []
+    if any(path.startswith("/js-ziel") for path in REQUEST_LOG):
+        problems.append("location.href von HTTPS auf HTTP hat das Ziel abgerufen")
+    if "/js-von-data" in REQUEST_LOG:
+        problems.append("Skript auf einer data:-Seite ist gelaufen")
+    return problems
+
+
+def javascript_package(work: Path) -> Path:
+    # Nur die Testkopie schaltet JavaScript ein; das ausgelieferte res/Choices bleibt bei enable_javascript:0.
+    copy = work / "js-paket"
+    shutil.copytree(PACKAGE, copy)
+    choices = copy / "res" / "Choices"
+    text = choices.read_text()
+    if "enable_javascript:0" not in text:
+        raise ValueError("res/Choices ohne enable_javascript:0")
+    choices.write_text(text.replace("enable_javascript:0", "enable_javascript:1"))
+    return copy
+
+
 # Name, Ereignisse, erwartete Farben, verbotene Farben
 SCENARIOS = [
     ("start", [], [START], [TARGET]),
@@ -432,11 +561,12 @@ def main() -> int:
     args = parser.parse_args()
     if (args.wasm3 is None) == (args.iwasm is None) or (args.iwasm is None) != (args.host is None):
         parser.error("entweder --wasm3 oder --iwasm mit --host angeben")
-    if args.wasm3 is not None:
-        command = [str(args.wasm3), str(PACKAGE), str(PACKAGE / "netsurf.wasm")]
-    else:
-        command = [str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
-                   "--stack-size=1048576", str(PACKAGE / "netsurf.wasm")]
+
+    def command(package: Path) -> list[str]:
+        if args.wasm3 is not None:
+            return [str(args.wasm3), str(package), str(package / "netsurf.wasm")]
+        return [str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{package}",
+                "--stack-size=1048576", str(package / "netsurf.wasm")]
     failures = 0
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TestServer)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -448,15 +578,21 @@ def main() -> int:
         scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
         scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base, closed_port())
         scenarios += hsts_scenarios(tls[0].server_address[1])
+        javascript = js_scenarios(base, f"https://127.0.0.1:{tls[0].server_address[1]}")
+        scenarios += javascript
+        js_package = javascript_package(Path(work))
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
-            env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="6000")
+            is_js = any(name == entry[0] for entry in javascript)
+            env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame),
+                       ZEHOS_EXIT_MS=str(JS_EXIT_MS) if is_js else "6000")
             env.pop("ZEHOS_NET", None)
             env["ZEHOS_TLS_CA"] = str(fixtures["ca"])
             if name != "http-ohne-berechtigung":
                 env["ZEHOS_NET"] = "1"
-            run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+            run = subprocess.run(command(js_package if is_js else PACKAGE), env=env, capture_output=True, text=True,
+                                 timeout=60)
             seen = colours(frame) if frame.exists() else set()
             problems = []
             if run.returncode != 0:
@@ -471,6 +607,10 @@ def main() -> int:
         failures += 1
         print(f"FAIL https-formular-netz: {problem}")
     scenarios.append(("https-formular-netz", [], [], []))
+    for problem in js_checks():
+        failures += 1
+        print(f"FAIL js-netz: {problem}")
+    scenarios.append(("js-netz", [], [], []))
     # Mixed Content ohne Farbwirkung: das http://-Favicon der HTTPS-Seite darf nie angefragt werden.
     if "/symbol-https.ico" in REQUESTED:
         failures += 1
