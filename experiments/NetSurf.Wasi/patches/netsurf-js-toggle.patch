@@ -1,0 +1,114 @@
+--- a/netsurf/desktop/browser_window.c
++++ b/netsurf/desktop/browser_window.c
+@@ -4124,6 +4124,14 @@
+ }
+ 
+ 
++/* Exported interface, documented in netsurf/browser_window.h */
++bool browser_window_current_is_post(struct browser_window *bw)
++{
++	return bw->current_parameters.post_urlenc != NULL ||
++		bw->current_parameters.post_multipart != NULL;
++}
++
++
+ /* Exported interface, documented in netsurf/browser_window.h */
+ nserror browser_window_reload(struct browser_window *bw, bool all)
+ {
+--- a/netsurf/frontends/framebuffer/gui.c
++++ b/netsurf/frontends/framebuffer/gui.c
+@@ -846,11 +846,28 @@
+ }
+ 
+ 
++static void gui_window_set_status(struct gui_window *g, const char *text);
++
++/* ZehOS: JavaScript nur fuer diese Sitzung umschalten; der Wert wird nie gespeichert.
++ * Nur der fbtk-Tastenpfad ruft das auf, DOM-Ereignisse einer Seite erreichen ihn nicht. */
++static void
++fb_toggle_javascript(struct gui_window *gw)
++{
++	nsoption_set_bool(enable_javascript, !nsoption_bool(enable_javascript));
++	gui_window_set_status(gw, nsoption_bool(enable_javascript) ? "" : "JS aus");
++	/* Nach einer Formularsendung (auch nach deren Weiterleitung) nicht neu laden: das ginge als GET
++	 * an das Formularziel. Der Schalter gilt dann, wie waehrend eines Ladevorgangs, ab der naechsten Seite. */
++	if (!browser_window_current_is_post(gw->bw))
++		browser_window_reload(gw->bw, false);
++}
++
+ static int
+ fb_browser_window_input(fbtk_widget_t *widget, fbtk_callback_info *cbi)
+ {
+ 	struct gui_window *gw = cbi->context;
+ 	static fbtk_modifier_type modifier = FBTK_MOD_CLEAR;
++	/* Gehaltenes Strg+J schaltet nur einmal, Tastenwiederholungen zaehlen nicht. */
++	static bool js_toggle_held = false;
+ 	int ucs4 = -1;
+ 
+ 	NSLOG(netsurf, INFO, "got value %d", cbi->event->value.keycode);
+@@ -974,6 +991,20 @@
+ 			modifier |= FBTK_MOD_LCTRL;
+ 			break;
+ 
++		case NSFB_KEY_j:
++			if (modifier & FBTK_MOD_RCTRL ||
++					modifier & FBTK_MOD_LCTRL) {
++				if (!js_toggle_held)
++					fb_toggle_javascript(gw);
++				js_toggle_held = true;
++				break;
++			}
++			ucs4 = fbtk_keycode_to_ucs4(cbi->event->value.keycode,
++						    modifier);
++			if (ucs4 != -1)
++				browser_window_key_press(gw->bw, ucs4);
++			break;
++
+ 		case NSFB_KEY_y:
+ 		case NSFB_KEY_z:
+ 			if (cbi->event->value.keycode == NSFB_KEY_z &&
+@@ -1013,6 +1044,10 @@
+ 
+ 	case NSFB_EVENT_KEY_UP:
+ 		switch (cbi->event->value.keycode) {
++		case NSFB_KEY_j:
++			js_toggle_held = false;
++			break;
++
+ 		case NSFB_KEY_RSHIFT:
+ 			modifier &= ~FBTK_MOD_RSHIFT;
+ 			break;
+@@ -1954,6 +1989,16 @@
+ static void
+ gui_window_set_status(struct gui_window *g, const char *text)
+ {
++	/* ZehOS: Eingeschaltetes JavaScript bleibt vor jedem Statustext sichtbar. */
++	char line[256];
++
++	if (nsoption_bool(enable_javascript)) {
++		snprintf(line, sizeof(line), "JS an%s%s",
++			 (text != NULL && text[0] != '\0') ? " | " : "",
++			 text != NULL ? text : "");
++		fbtk_set_text(g->status, line);
++		return;
++	}
+ 	fbtk_set_text(g->status, text);
+ }
+ 
+--- a/netsurf/include/netsurf/browser_window.h
++++ b/netsurf/include/netsurf/browser_window.h
+@@ -318,6 +318,14 @@
+  */
+ nserror browser_window_reload(struct browser_window *bw, bool all);
+ 
++/**
++ * ZehOS: Prueft, ob die angezeigte Seite aus einer Formularsendung (POST) stammt.
++ *
++ * \param bw browser window
++ * \return true, wenn zur aktuellen Seite POST-Daten gehoeren.
++ */
++bool browser_window_current_is_post(struct browser_window *bw);
++
+ 
+ /**
+  * Close and destroy a browser window.

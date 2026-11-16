@@ -25,6 +25,7 @@ class NetSurfBuildTests(unittest.TestCase):
         build.TOOLS, build.HERE = base / "tools", base / "recipe"
         (build.TOOLS / "dl").mkdir(parents=True)
         (build.HERE / "patches").mkdir(parents=True)
+        (build.HERE / "Makefile.config").write_text("override NETSURF_USE_DUKTAPE := NO\n")
         archive = build.TOOLS / "dl/source.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             data = b"one\n"
@@ -58,6 +59,11 @@ class NetSurfBuildTests(unittest.TestCase):
             url, _, folder = build.ARCHIVES[name]
             build.ARCHIVES[name] = (url, "0" * 64, folder)
             self.assertNotEqual(build.fetch("netsurf"), first, name)
+
+    def test_config_change_uses_fresh_sources(self):
+        first = build.fetch("netsurf")
+        (build.HERE / "Makefile.config").write_text("override NETSURF_USE_DUKTAPE := YES\n")
+        self.assertNotEqual(build.fetch("netsurf"), first)
 
     def test_failed_patch_does_not_poison_next_build(self):
         self.patch("missing", "two")

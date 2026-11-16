@@ -273,8 +273,8 @@ Ein Build vertraut nur dem eingebetteten öffentlichen Herausgeberschlüssel `Pr
 NetSurf 3.11 ist als separates Offline-Paket baubar: lokale HTML-/CSS-Seiten, Links, Zurück, Scrollen und
 Formulareingabe. Der Kernel enthält nur die allgemeinen Hostdienste; NetSurf und seine Bibliotheken bleiben im
 Paket. NetSurf ist noch nicht im öffentlichen Paketkatalog veröffentlicht. Build, lokale Testinstallation und
-geprüfte Grenzen stehen in [docs/NETSURF.md](docs/NETSURF.md). HTTP/HTTPS und JavaScript sind in diesem Stand
-nicht enthalten.
+geprüfte Grenzen stehen in [docs/NETSURF.md](docs/NETSURF.md). JavaScript ist standardmäßig aus;
+Strg+J schaltet es für die laufende Sitzung ein (Statusleiste „JS an“), siehe dort.
 
 Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was eine App darf, erklärt [docs/PAKETE_ERSTELLEN.md](docs/PAKETE_ERSTELLEN.md), ebenso den Weg bis zur Veröffentlichung. Die wichtigsten Grenzen:
 - Nur grafische Fensterapps; eine App zur Zeit.

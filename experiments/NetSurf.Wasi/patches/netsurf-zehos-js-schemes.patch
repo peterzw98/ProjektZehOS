@@ -1,0 +1,16 @@
+--- a/netsurf/content/handlers/html/html.c
++++ b/netsurf/content/handlers/html/html.c
+@@ -500,7 +500,12 @@ html_create_html_data(html_content *c, const http_parameter *params)
+ 	c->scripts = NULL;
+ 	c->jsthread = NULL;
+ 
+-	c->enable_scripting = nsoption_bool(enable_javascript);
++	/* ZehOS: Skripte nur auf http(s)-Seiten, nie auf data:, resource:
++	 * oder about:, etwa den Warnseiten des HTTP-Fetchers. Nach einer
++	 * Weiterleitung ist das die URL des Ziels. */
++	c->enable_scripting = nsoption_bool(enable_javascript) &&
++		(nsurl_get_scheme_type(c->base_url) == NSURL_SCHEME_HTTP ||
++		 nsurl_get_scheme_type(c->base_url) == NSURL_SCHEME_HTTPS);
+ 	c->base.active = 1; /* The html content itself is active */
+ 
+ 	if (lwc_intern_string("*", SLEN("*"), &c->universal) != lwc_error_ok) {

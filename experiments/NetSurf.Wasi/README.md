@@ -4,7 +4,7 @@ NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `c++`, `m4`, `perl`, `bison`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). gperf 3.1 und flex 2.6.4 baut `build.py` selbst aus den Upstream-Archiven, weil andere gperf-Versionen und Ubuntus gepatchtes flex abweichende Generatorausgaben erzeugen. Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
+Auf einem Linux-Host mit `make`, `cc`, `c++`, `m4`, `perl`, `bison`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). gperf 3.1 und flex 2.6.4 baut `build.py` selbst aus den Upstream-Archiven, weil andere gperf-Versionen und Ubuntus gepatchtes flex abweichende Generatorausgaben erzeugen. `nsgenbind` (erzeugt die JavaScript-Bindings) baut es mit dem Host-`cc` aus dem NetSurf-Archiv. Für den letzten Schritt lädt es binaryen `version_133` als vorgebautes Release (SHA-256 geprüft). Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py
@@ -15,9 +15,9 @@ Ergebnis ist `experiments/NetSurf.Wasi/bin/package/`:
 | Pfad | Inhalt |
 | --- | --- |
 | `netsurf.wasm` | Einstieg `_start` |
-| `res/` | Messages, CSS, interne Seiten, `Choices` mit Startseite `file:///pages/index.html` |
+| `res/` | Messages, CSS, interne Seiten, `Choices` mit Startseite `file:///pages/index.html` und ausgeschaltetem JavaScript (`enable_javascript:0`) |
 | `pages/` | Testseiten: Start (blau), Linkziel (grün), langer Text (orange), Eingabefeld (lila), kaputter Link |
-| `licenses/` | NetSurf (GPL-2.0), NetSurf-Bibliotheken (MIT), utf8proc, zlib |
+| `licenses/` | NetSurf (GPL-2.0), NetSurf-Bibliotheken (MIT), Duktape (MIT, aus dem Kopf von `duktape.h`), utf8proc, zlib |
 
 Bestandteile:
 
@@ -26,8 +26,10 @@ Bestandteile:
 | NetSurf | `netsurf-all-3.11.tar.gz` |
 | wasi-sdk | 25.0 für Linux (dieselbe Version wie für Doom) |
 | zlib | 1.3.1 |
+| Duktape | 2.7.0, im NetSurf-Archiv enthalten |
+| binaryen | `version_133`, nur Bauwerkzeug (`wasm-opt`) |
 
-Zwei Bibliotheken fehlen bewusst: libsvgtiny braucht setjmp/longjmp, und libdom verzichtet auf expat und nutzt hubbub.
+Zwei Bibliotheken fehlen bewusst: libsvgtiny (SVG bleibt aus), und libdom verzichtet auf expat und nutzt hubbub.
 
 Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 
@@ -36,9 +38,10 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `netsurf-curl-include.patch`: `curl.h` nur mit `WITH_CURL` einbinden (Upstream-Fehler bei `NETSURF_USE_CURL=NO`).
 - `netsurf-testament-reproducible.patch`: Das Build-Testament (`about:testament`) enthält feste Werte statt Benutzername, vollem Namen, Rechnername, Baupfad und Tagesdatum. Das schützt persönliche Daten im Paket und macht den Build reproduzierbar (Datum aus `SOURCE_DATE_EPOCH`).
 - `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`). Eine weitere Taste während eines Rollbalken-Ziehens startet kein zweites Ziehen, das den Grab umschalten und lösen würde.
+- `netsurf-js-toggle.patch`: Strg+J schaltet `enable_javascript` nur über den fbtk-Tastenpfad des Frontends um, nicht über DOM-Ereignisse einer Seite; Tastenwiederholungen zählen nicht. Die Statusleiste stellt „JS an“ voran. Neu geladen wird die aktuelle Seite, außer nach einer Formularsendung samt Weiterleitung (neue Abfrage `browser_window_current_is_post`; ein Neuladen ginge sonst als GET an das Formularziel). Nichts wird gespeichert.
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an. Zusätzlich löscht Entf im Textfeld das Zeichen rechts der Einfügemarke; das fehlte im fbtk.
 
-Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (HTTP liefert stattdessen der eigene Fetcher, siehe unten), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
+Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (HTTP liefert stattdessen der eigene Fetcher, siehe unten), PNG, JPEG, WebP und SVG. Duktape ist eingebaut, JavaScript aber aus (NetSurf-Standard, in `Choices` ausdrücklich `enable_javascript:0`). Duktape meldet Fehler über setjmp/longjmp: Der Compiler übersetzt sie mit `-mllvm -wasm-enable-sjlj` und `-lsetjmp` in das alte Wasm-Exception-Handling, das wasm3 nicht kennt. Deshalb wandelt `wasm-opt --enable-exception-handling --translate-to-exnref` das gelinkte Modul in die exnref-Form um. Der C-Stapel ist auf 1 MiB erhöht (`-z stack-size`), weil 64 KiB mit Duktape nicht reichen. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
 
 ## Lizenztexte
 
@@ -105,6 +108,8 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
 
 Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung, eine abgebrochene Verbindung (RST), eine fehlende Netzwerkberechtigung, einen Cookie über eine Weiterleitung und `https://` ohne Server. Die HTTPS-Szenarien erzeugen mit `openssl` eine Test-CA und prüfen gegen lokale TLS-Server eine Seite, `chunked`, eine Weiterleitung, einen falschen Zertifikatsnamen, die Warnseite bei HTTPS→HTTP, blockierten Mixed Content (direkt, über eine Weiterleitung und als Favicon, mit HTTP-Gegenprobe), eine Antwort ohne Länge mit und ohne `close_notify`, HSTS (mit Gegenprobe) sowie Formulare an `http://` (Warnseite, Senden nach Bestätigung für POST und GET, falsches und kurzes Token, keine Felder vor der Bestätigung im Netz, Neuladen und Zurück/Vor der Warnseite sowie „Zurück“ auf einer Fehlerseite ohne Abruf des Ziels, genau ein Abruf nach Bestätigung auch nach Neuladen). Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht. Er hält die Kernelgrenzen ein (4 Verbindungen, 64 KiB je net_send/net_recv, EACCES ohne Berechtigung); ZEHOS_NET=1 ersetzt dort capability=net. TLS bildet er mit OpenSSL nach (bauen mit `-lssl -lcrypto`); `ZEHOS_TLS_CA=<PEM-Pfad>` setzt die vertraute CA, ohne sie meldet `net_open` mit TLS `ENOSYS`.
 
+Die JavaScript-Szenarien laufen auf einer temporären Paketkopie mit `enable_javascript:1`; `js-aus-im-paket` prüft, dass das ausgelieferte Paket bei 0 bleibt. Sie prüfen die Regeln aus [NETSURF_HTTPS.md](../../docs/NETSURF_HTTPS.md#javascript-und-die-https-regeln): Abbruch einer Endlosschleife nach höchstens 5 s (Limit 2 s), höchstens 64 Timer, `RangeError` statt Trap bei tiefer Rekursion über native Aufrufe, `location.href` auf `data:` navigiert nicht, `location.href` von HTTPS auf `http://` endet auf einer Fehlerseite ohne Abruf, kein Skript auf `data:`-Seiten, kein Secure-Cookie von oder an `http://`, kein Ersetzen eines Secure-Cookies über `http://`, `HttpOnly` nicht in `document.cookie`. Gegen einen Build ohne diese Patches scheitern alle diese Szenarien. Ausnahmen: `js-an` und `js-an-https` belegen nur, dass Skripte laufen; `js-cookie-leerer-pfad` sichert gegen einen Absturz bei leerem Cookie-Pfad im Patch selbst, den NetSurf 3.11 nicht hat. Geprüft nur mit `--wasm3`; mit `--iwasm` sind die JS-Szenarien offen (anderer Stapel, Legacy-EH).
+
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
 
 ## HTTP
@@ -132,7 +137,7 @@ Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite,
   - In der Adressleiste ist nur ASCII möglich; in Formularfeldern der Seite funktioniert Unicode.
   - Ziffernblocktasten fallen mit Pfeilen, Pos1, Ende, Bild auf/ab und Entf zusammen, weil die Tastencodes kein E0-Merkmal tragen.
   - Für Zurück gibt es kein Tastenkürzel, nur die Schaltfläche.
-- **Inhalte:** nur HTTP ohne TLS, kein JavaScript, keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
+- **Inhalte:** nur HTTP ohne TLS, JavaScript nur nach Strg+J für die Sitzung (siehe [NETSURF.md](../../docs/NETSURF.md#grenzen)), keine PNG-/JPEG-/SVG-Bilder; GIF und BMP sind enthalten.
 - **Prüfstand:** Linux-Prüfhost unter WAMR (`host/run_tests.py`) und ZehOS-Loader (wasm3) in QEMU 10.2.2 mit TCG über `scripts/test-netsurf-desktop.py`: `NETSURF_GUEST PASS` am 15. November 2026, frei 442 488–443 192 KiB (rund 432 MiB) über drei Starts. Unter KVM besteht der Lauf mit `-cpu qemu64,+rdrand,+rdseed` (ohne RDRAND/RDSEED scheitert die Kontoanlage, siehe [#56](https://github.com/peterzw98/ProjektZehOS/issues/56)); VMware und echte Hardware ungeprüft.
 
 ## Geprüft (Linux-Prüfhost, WAMR-2.4.5, 15. November 2026)
