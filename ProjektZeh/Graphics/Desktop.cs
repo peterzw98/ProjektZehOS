@@ -20,9 +20,9 @@ internal sealed class Desktop
 {
     public const int MaximumWindows = 8;
     public const int BarHeight = 56;
-    private const int PinnedLeft = 152;
-    private const int TaskLeft = 308;
-    private const int PagerSlot = 36;
+    // Taskleiste wie Windows 11: Start, angeheftete und offene Apps als gleich breite Symbolfelder.
+    private const int Slot = 48;
+    private const int PagerSlot = 20;
     private static readonly string[] DefaultShortcuts = ["Terminal", "Dateien", "Texteditor", "Einstellungen"];
     private readonly byte[] font;
     private readonly int glyphWidth;
@@ -38,11 +38,12 @@ internal sealed class Desktop
     private readonly UiTileGrid desktopIcons = new() { ColumnMajor = true, Transparent = true };
     private readonly List<ApplicationEntry> shortcuts = [];
     private readonly List<Window> tasks = [];
-    private readonly UiButton launch;
-    private readonly UiButton pin;
-    private readonly UiButton diagnose;
-    private readonly UiButton reboot;
-    private readonly UiButton shutdown;
+    private readonly UiButton power;
+    private readonly (string Label, Action Run)[] powerItems;
+    // Kleines Auswahlmenue ueber dem Startmenue: Ein/Aus-Aktionen oder Kontextmenue einer Kachel.
+    private (string Label, Action Run)[] popup = [];
+    private UiRect popupBounds;
+    private int popupIndex;
     private readonly List<ApplicationEntry> matches = [];
     private readonly ApplicationEntry[] applications;
     private readonly ApplicationEntry[] pinned;
@@ -73,7 +74,6 @@ internal sealed class Desktop
     private bool control;
     private bool leftShift;
     private bool rightShift;
-    private bool suppressSpace;
     private readonly Func<NetworkStatus>? getNetwork;
     private NetworkStatus networkStatus;
     private string? networkAddress;
@@ -86,7 +86,7 @@ internal sealed class Desktop
     private bool restoreDisplay = true;
     public bool NeedsAnimation => !menuOpen && Windows.ActiveWindow?.Application.NeedsAnimation == true;
 
-    private sealed record ApplicationEntry(string Name, string Description, AppIcon Icon, Func<bool> Launch);
+    private sealed record ApplicationEntry(string Name, AppIcon Icon, Func<bool> Launch);
 
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
         Func<ShellService> createShell, Func<FileService> createFiles,
@@ -116,20 +116,16 @@ internal sealed class Desktop
         Windows = new WindowManager(width, height - BarHeight);
         applications =
         [
-            new("Terminal", "Befehlszeile - Doppelklick/Enter", AppIcon.Terminal, OpenTerminal),
-            new("Dateien", "Laufwerke, Ordner - Doppelklick/Enter", AppIcon.Files, OpenFiles),
-            new("Texteditor", "Textdateien - Doppelklick/Enter", AppIcon.Editor, () => OpenEditor()),
-            new("Einstellungen", "Anzeige, Aussehen - Doppelklick/Enter", AppIcon.Settings, OpenSettings),
-            new("Taskmanager", "Fenster, System - Doppelklick/Enter", AppIcon.Tasks, OpenTaskManager),
-            new("Pong", "Spiel - Doppelklick/Enter", AppIcon.Pong, OpenPong),
+            new("Terminal", AppIcon.Terminal, OpenTerminal),
+            new("Dateien", AppIcon.Files, OpenFiles),
+            new("Texteditor", AppIcon.Editor, () => OpenEditor()),
+            new("Einstellungen", AppIcon.Settings, OpenSettings),
+            new("Taskmanager", AppIcon.Tasks, OpenTaskManager),
+            new("Pong", AppIcon.Pong, OpenPong),
         ];
         pinned = [applications[1], applications[0], applications[3]];
         search = new(64, painter: painter);
-        launch = new("Starten", LaunchSelected) { Primary = true };
-        pin = new("Auf Desktop", TogglePinned);
-        diagnose = new("Diagnose", () => RunFromMenu(OpenTaskManager));
-        reboot = new("Neu starten", () => RunPower("reboot"));
-        shutdown = new("Ausschalten", () => RunPower("shutdown"));
+        power = new("Ein/Aus", OpenPowerMenu) { Icon = AppIcon.Power };
         appList.GetMilliseconds = desktopIcons.GetMilliseconds = () => now;
         appList.GlyphWidth = desktopIcons.GlyphWidth = glyphWidth;
         appList.GlyphHeight = desktopIcons.GlyphHeight = glyphHeight;
@@ -139,12 +135,16 @@ internal sealed class Desktop
             this.session = session;
             login = new(session, painter, width, height);
             generation = session.Identity.Generation;
-            applications = [.. applications, new("Abmelden", "Benutzersitzung beenden", AppIcon.Terminal, () => { login.Logout(); return true; })];
         }
+        // Energieaktionen wie in Windows 11 gesammelt hinter dem Ein/Aus-Symbol; Abmelden nur mit Benutzersitzung.
+        powerItems = login == null
+            ? [("Neu starten", () => RunPower("reboot")), ("Herunterfahren", () => RunPower("shutdown"))]
+            : [("Abmelden", () => { CloseMenu(); login.Logout(); }), ("Neu starten", () => RunPower("reboot")),
+                ("Herunterfahren", () => RunPower("shutdown"))];
         search.Submitted = LaunchSelected;
         appList.Activated = LaunchSelected;
-        // Reihenfolge bestimmt den Tab-Fokus: Suche, Kacheln, Starten.
-        foreach (var control in new UiControl[] { search, appList, launch, pin, diagnose, reboot, shutdown }) menu.Add(control);
+        // Reihenfolge bestimmt den Tab-Fokus: Suche, Kacheln, Ein/Aus.
+        foreach (var control in new UiControl[] { search, appList, power }) menu.Add(control);
         LayoutMenu();
         LayoutIcons();
         RefreshExternal();
@@ -244,6 +244,7 @@ internal sealed class Desktop
     {
         if (!menuOpen) return false;
         menuOpen = false;
+        popup = [];
         sceneDirty = true;
         menu.Handle(new(InputEventType.Reset));
         Windows.Reset();
@@ -255,7 +256,7 @@ internal sealed class Desktop
         // Ein gehaltenes Esc darf nach der Zeigerfreigabe keinen zweiten Wechsel ausloesen.
         if (value.IsRepeat) return true;
         if (CloseNetworkFlyout()) return true;
-        if (CloseMenu()) return true;
+        if (ClosePopup() || CloseMenu()) return true;
         if (!Windows.HasAppPointerCapture) return false;
         Windows.Handle(value);
         return true;
@@ -287,7 +288,7 @@ internal sealed class Desktop
         for (int index = 0; index < apps.Length; index++)
         {
             var app = apps[index];
-            external[index] = new(app.Name, $"Paket {app.Id} - Doppelklick/Enter", AppIcon.Pong, () => OpenExternal(app));
+            external[index] = new(app.Name, AppIcon.Pong, () => OpenExternal(app));
         }
         FilterApplications();
         RebuildShortcuts();
@@ -313,7 +314,6 @@ internal sealed class Desktop
         for (int index = 0; index < shortcuts.Count; index++) (names[index], icons[index]) = (shortcuts[index].Name, shortcuts[index].Icon);
         desktopIcons.SetItems(names);
         desktopIcons.Icons = icons;
-        UpdatePinLabel();
         sceneDirty = true;
     }
 
@@ -323,8 +323,75 @@ internal sealed class Desktop
         return false;
     }
 
-    private void UpdatePinLabel() =>
-        pin.Label = appList.SelectedIndex >= 0 && IsPinned(matches[appList.SelectedIndex].Name) ? "Vom Desktop" : "Auf Desktop";
+    // Kontextmenue der gewaehlten Kachel (Rechtsklick oder Umschalt+F10) ersetzt die fruehere Schaltflaeche.
+    private void OpenTileMenu(int x, int y)
+    {
+        if (appList.SelectedIndex < 0) return;
+        string label = IsPinned(matches[appList.SelectedIndex].Name) ? "Vom Desktop entfernen" : "Auf Desktop legen";
+        OpenPopup([(label, TogglePinned)], x, y);
+    }
+
+    private void OpenPowerMenu()
+    {
+        menuStatus = "";
+        var rows = new UiRect(0, 0, PopupWidth(powerItems), powerItems.Length * PopupRowHeight + 8);
+        OpenPopup(powerItems, power.Bounds.X + power.Bounds.Width - rows.Width, power.Bounds.Y - rows.Height - 8);
+    }
+
+    private int PopupRowHeight => glyphHeight + 20;
+
+    private int PopupWidth((string Label, Action Run)[] items)
+    {
+        int longest = 0;
+        foreach (var item in items) longest = Math.Max(longest, item.Label.Length);
+        return Math.Max(200, longest * glyphWidth + 40);
+    }
+
+    private void OpenPopup((string Label, Action Run)[] items, int x, int y)
+    {
+        int popupWidth = PopupWidth(items), popupHeight = items.Length * PopupRowHeight + 8;
+        popupBounds = new(Math.Clamp(x, 0, Math.Max(0, width - popupWidth)), Math.Clamp(y, 0, Math.Max(0, height - BarHeight - popupHeight)),
+            popupWidth, popupHeight);
+        popup = items;
+        popupIndex = 0;
+        sceneDirty = true;
+    }
+
+    private bool ClosePopup()
+    {
+        if (popup.Length == 0) return false;
+        popup = [];
+        sceneDirty = true;
+        return true;
+    }
+
+    private void HandlePopup(InputEvent value)
+    {
+        if (value.Type == InputEventType.KeyDown)
+        {
+            if (value.KeyCode == (byte)PhysicalKey.Up) popupIndex = (popupIndex + popup.Length - 1) % popup.Length;
+            else if (value.KeyCode == (byte)PhysicalKey.Down) popupIndex = (popupIndex + 1) % popup.Length;
+            // Nur Enter: Leertaste liefert danach noch ein Textzeichen, das nach dem Abmelden im Anmeldefeld landen wuerde.
+            else if (value.KeyCode == (byte)PhysicalKey.Enter && !value.IsRepeat) RunPopup(popupIndex);
+            return;
+        }
+        if (value.Type != InputEventType.PointerDown) return;
+        if (value.Button == PointerButtons.Left && popupBounds.Contains(value.X, value.Y))
+        {
+            // Der 4-px-Rand oben gehoert zu keiner Zeile; ohne Pruefung runde die Division ihn auf Zeile 0.
+            int offset = value.Y - popupBounds.Y - 4;
+            if (offset >= 0 && offset / PopupRowHeight < popup.Length) RunPopup(offset / PopupRowHeight);
+            return;
+        }
+        ClosePopup();
+    }
+
+    private void RunPopup(int index)
+    {
+        var action = popup[index].Run;
+        ClosePopup();
+        action();
+    }
 
     private void TogglePinned()
     {
@@ -354,7 +421,7 @@ internal sealed class Desktop
     {
         if (value.Type == InputEventType.Reset)
         {
-            alt = control = leftShift = rightShift = suppressSpace = false;
+            alt = control = leftShift = rightShift = false;
             CloseMenu();
             Windows.Reset();
             return;
@@ -368,7 +435,6 @@ internal sealed class Desktop
         if (value.Type is InputEventType.KeyDown or InputEventType.KeyUp)
         {
             bool down = value.Type == InputEventType.KeyDown;
-            if (value.KeyCode == (byte)PhysicalKey.Space && !down) suppressSpace = false;
             if (value.KeyCode == (byte)PhysicalKey.Alt) { alt = down; return; }
             if (value.KeyCode == (byte)PhysicalKey.Control) control = down;
             if (alt && control && down && WorkspaceShortcut(value.KeyCode)) return;
@@ -382,10 +448,9 @@ internal sealed class Desktop
                 Windows.Cycle(leftShift || rightShift);
                 return;
             }
-            if (down && value.KeyCode == (byte)PhysicalKey.Escape && CloseMenu()) return;
+            if (down && value.KeyCode == (byte)PhysicalKey.Escape && (ClosePopup() || CloseMenu())) return;
         }
-        if ((alt && value.Type is InputEventType.KeyDown or InputEventType.Text) ||
-            (suppressSpace && value.Type == InputEventType.Text && value.Character == ' ')) return;
+        if (alt && value.Type is InputEventType.KeyDown or InputEventType.Text) return;
         if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerScroll)
         {
             Windows.Handle(value);
@@ -404,6 +469,7 @@ internal sealed class Desktop
         }
         if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
         {
+            TaskWindows();
             if (MenuButtonBounds.Contains(value.X, value.Y)) { ToggleMenu(); return; }
             for (int index = 0; index < pinned.Length; index++)
                 if (PinnedBounds(index).Contains(value.X, value.Y)) { CloseMenu(); pinned[index].Launch(); return; }
@@ -412,23 +478,31 @@ internal sealed class Desktop
         }
         if (menuOpen)
         {
+            if (popup.Length > 0) { HandlePopup(value); return; }
             if (value.Type == InputEventType.PointerDown && !menuBounds.Contains(value.X, value.Y)) { CloseMenu(); return; }
+            if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Right)
+            {
+                int index = appList.IndexAt(value.X, value.Y);
+                if (index >= 0) { menu.Focus(appList); appList.Select(index); OpenTileMenu(value.X, value.Y); }
+                return;
+            }
+            if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.F10 && (leftShift || rightShift) &&
+                menu.Focused == appList)
+            {
+                OpenTileMenu(appList.Bounds.X + appList.Bounds.Width / 2, appList.Bounds.Y + appList.Bounds.Height / 3);
+                return;
+            }
             string previous = search.Text;
-            bool space = value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Space && menu.Focused == launch;
-            launch.Enabled = pin.Enabled = matches.Count > 0;
             menu.Handle(value);
-            if (space && !menuOpen) suppressSpace = true;
             if (!string.Equals(previous, search.Text, StringComparison.Ordinal)) FilterApplications();
-            UpdatePinLabel();
             return;
         }
         if (value.Type is InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerMove && value.Y >= height - BarHeight)
         {
             if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
             {
-                TaskWindows();
                 for (int index = 0; index < tasks.Count; index++)
-                    if (TaskBounds(index, tasks.Count).Contains(value.X, value.Y)) { Windows.ToggleTask(tasks[index]); break; }
+                    if (TaskBounds(index).Contains(value.X, value.Y)) { Windows.ToggleTask(tasks[index]); break; }
             }
             return;
         }
@@ -476,22 +550,22 @@ internal sealed class Desktop
         if (appList.SelectedIndex >= 0 && matches[appList.SelectedIndex].Launch()) CloseMenu();
     }
 
-    private void RunFromMenu(Func<bool> action)
-    {
-        if (action()) CloseMenu();
-    }
-
     private void RunPower(string command)
     {
         // Die Shellbefehle haengen das Datenlaufwerk vorher aus und brechen bei Fehlern ab.
         var output = new TerminalBuffer(120);
         var shell = createShell();
+        // Kein finally: Cosmos 3.0.94 ueberspringt es beim Unwind; Close deshalb nach dem catch.
         try
         {
             var result = shell.ExecuteLine(command, output);
             menuStatus = result.IsOK() ? "Energieaktion wurde nicht ausgefuehrt." : result.Message;
         }
-        finally { shell.Close(); }
+        catch (Exception error)
+        {
+            menuStatus = "Energieaktion fehlgeschlagen: " + error.Message;
+        }
+        shell.Close();
     }
 
     private void FilterApplications()
@@ -506,44 +580,54 @@ internal sealed class Desktop
         for (int index = 0; index < matches.Count; index++) (names[index], icons[index]) = (matches[index].Name, matches[index].Icon);
         appList.SetItems(names);
         appList.Icons = icons;
-        launch.Enabled = pin.Enabled = matches.Count > 0;
-        UpdatePinLabel();
     }
+
+    private const int FooterHeight = 64;
 
     private void LayoutMenu()
     {
-        int menuWidth = Math.Min(640, width - 16);
-        int menuHeight = Math.Min(720, height - BarHeight - 16);
-        menuBounds = new(8, height - BarHeight - 8 - menuHeight, menuWidth, menuHeight);
-        int left = menuBounds.X + 16, inner = menuWidth - 32, bottom = menuBounds.Y + menuHeight - 16;
-        search.Bounds = new(left, menuBounds.Y + 16, inner, Math.Max(44, glyphHeight + 12));
-        int third = (inner - 16) / 3;
-        diagnose.Bounds = new(left, bottom - 48, third, 48);
-        reboot.Bounds = new(left + third + 8, bottom - 48, third, 48);
-        shutdown.Bounds = new(left + 2 * (third + 8), bottom - 48, inner - 2 * (third + 8), 48);
-        int half = (inner - 8) / 2;
-        launch.Bounds = new(left, bottom - 104, half, 48);
-        pin.Bounds = new(left + half + 8, bottom - 104, inner - half - 8, 48);
+        // Mittig ueber der Taskleiste wie in Windows 11; unten nur Benutzer und Ein/Aus.
+        int menuWidth = Math.Min(600, width - 16);
+        int menuHeight = Math.Min(640, height - BarHeight - 16);
+        menuBounds = new((width - menuWidth) / 2, height - BarHeight - 8 - menuHeight, menuWidth, menuHeight);
+        int left = menuBounds.X + 24, inner = menuWidth - 48, footerTop = menuBounds.Y + menuHeight - FooterHeight;
+        search.Bounds = new(left, menuBounds.Y + 24, inner, Math.Max(40, glyphHeight + 12));
+        power.Bounds = new(menuBounds.X + menuWidth - 24 - 44, footerTop + (FooterHeight - 44) / 2, 44, 44);
         int listTop = AppsHeaderTop + glyphHeight + 8;
         appList.Bounds = new(left, listTop, inner, Math.Max(48, HintTop - 8 - listTop));
     }
 
     private void LayoutIcons() => desktopIcons.Bounds = new(8, 8, Math.Max(1, width - 16), Math.Max(1, height - BarHeight - 16));
 
-    private int AppsHeaderTop => search.Bounds.Y + search.Bounds.Height + 12;
-    private int HintTop => launch.Bounds.Y - 8 - glyphHeight;
+    private int AppsHeaderTop => search.Bounds.Y + search.Bounds.Height + 20;
+    private int HintTop => menuBounds.Y + menuBounds.Height - FooterHeight - 12 - glyphHeight;
     private int ClockWidth => 5 * glyphWidth + 32;
     private int TrayWidth => getNetwork == null ? 0 : 40;
-    private UiRect TrayBounds => new(width - ClockWidth - TrayWidth, height - 48, TrayWidth - 4, 40);
-    private UiRect MenuButtonBounds => new(8, height - 48, 136, 40);
-    private UiRect PinnedBounds(int index) => new(PinnedLeft + index * 48, height - 48, 44, 40);
-    private UiRect PagerBounds(int index) =>
-        new(width - ClockWidth - TrayWidth - (WindowManager.WorkspaceCount - index) * PagerSlot - 8, height - 46, PagerSlot - 4, 36);
-    private UiRect TaskBounds(int index, int count)
+    internal UiRect TrayBounds => new(width - ClockWidth - TrayWidth, height - 48, TrayWidth - 4, 40);
+    private int FixedSlots => (1 + pinned.Length) * Slot;
+    // Fensterfelder werden schmaler, bevor die Gruppe Arbeitsflaechen, Netz und Uhr erreicht (640 px, acht Terminals).
+    private int TaskSlot
     {
-        int taskWidth = Math.Min(260, (PagerBounds(0).X - 12 - TaskLeft) / Math.Max(1, count));
-        return new(TaskLeft + index * taskWidth, height - 48, taskWidth - 4, 40);
+        get
+        {
+            int open = Windows.CountOn(Windows.CurrentWorkspace);
+            return open == 0 ? Slot : Math.Clamp((PagerBounds(0).X - 16 - FixedSlots) / open, AppIcons.Size + 6, Slot);
+        }
     }
+    // Mittig wie in Windows 11, aber nie in Arbeitsflaechen, Netz und Uhr hinein.
+    private int GroupLeft
+    {
+        get
+        {
+            int groupWidth = FixedSlots + Windows.CountOn(Windows.CurrentWorkspace) * TaskSlot - 4;
+            return Math.Max(8, Math.Min((width - groupWidth) / 2, PagerBounds(0).X - 8 - groupWidth));
+        }
+    }
+    internal UiRect MenuButtonBounds => new(GroupLeft, height - 48, Slot - 4, 40);
+    internal UiRect PinnedBounds(int index) => new(GroupLeft + (1 + index) * Slot, height - 48, Slot - 4, 40);
+    internal UiRect TaskBounds(int index) => new(GroupLeft + FixedSlots + index * TaskSlot, height - 48, TaskSlot - 4, 40);
+    internal UiRect PagerBounds(int index) =>
+        new(width - ClockWidth - TrayWidth - (WindowManager.WorkspaceCount - index) * PagerSlot - 8, height - 46, PagerSlot, 36);
 
     public void Update(long milliseconds)
     {
@@ -678,49 +762,36 @@ internal sealed class Desktop
         // Abgerundete Schaltflaechen auf ruhiger Leiste, angelehnt an KDE Plasma und Windows 11.
         surface.FillRectangle(0, top, width, BarHeight, UiPainter.Panel);
         surface.FillRectangle(0, top, width, 1, UiPainter.Border);
+        TaskWindows();
+        // Nur Symbole ohne Flaechen; hinterlegt sind allein das offene Menue und das aktive Fenster.
         var menuButton = MenuButtonBounds;
-        UiPainter.RoundRect(surface, menuButton.X, menuButton.Y, menuButton.Width, menuButton.Height, 10,
-            menuOpen ? UiPainter.Selection : UiPainter.Muted);
-        UiPainter.RoundRect(surface, menuButton.X + 6, menuButton.Y + 6, 28, 28, 8, UiPainter.Accent);
-        AppIcons.Draw(surface, AppIcon.Menu, menuButton.X + 10, menuButton.Y + 10, UiPainter.AccentText);
-        painter.Text(surface, "Start", menuButton.X + 44, menuButton.Y + (40 - glyphHeight) / 2, menuButton.Width - 50,
-            menuOpen ? UiPainter.Accent : UiPainter.Foreground);
+        if (menuOpen) UiPainter.RoundRect(surface, menuButton.X, menuButton.Y, menuButton.Width, menuButton.Height, 8, UiPainter.Muted);
+        AppIcons.Draw(surface, AppIcon.Menu, menuButton.X + (menuButton.Width - AppIcons.Size) / 2, menuButton.Y + 10, UiPainter.Accent);
         for (int index = 0; index < pinned.Length; index++)
         {
             var bounds = PinnedBounds(index);
-            UiPainter.RoundRect(surface, bounds.X, bounds.Y, bounds.Width, bounds.Height, 10, UiPainter.Muted);
-            AppIcons.Draw(surface, pinned[index].Icon, bounds.X + 12, bounds.Y + 10, UiPainter.Foreground);
+            AppIcons.Draw(surface, pinned[index].Icon, bounds.X + (bounds.Width - AppIcons.Size) / 2, bounds.Y + 10, UiPainter.Foreground);
         }
-        surface.FillRectangle(TaskLeft - 10, top + 16, 1, 24, UiPainter.Border);
-        TaskWindows();
         for (int index = 0; index < tasks.Count; index++)
         {
             Window window = tasks[index];
-            UiRect bounds = TaskBounds(index, tasks.Count);
+            UiRect bounds = TaskBounds(index);
             bool active = window == Windows.ActiveWindow;
-            if (active || !window.IsMinimized)
-                UiPainter.RoundRect(surface, bounds.X, bounds.Y, bounds.Width, bounds.Height, 10, active ? UiPainter.Selection : UiPainter.Muted);
-            int textColor = window.IsMinimized ? UiPainter.Secondary : UiPainter.Foreground;
-            int left = bounds.X + 10;
-            if (window.Icon is AppIcon icon)
-            {
-                AppIcons.Draw(surface, icon, left, bounds.Y + 10, active ? UiPainter.Accent : textColor);
-                left += AppIcons.Size + 10;
-            }
-            painter.Text(surface, window.Title, left, bounds.Y + (bounds.Height - glyphHeight) / 2, bounds.X + bounds.Width - 8 - left, textColor);
-            // Aktiv: langer Akzentbalken; offen: kurzer Balken; minimiert: nur gedaempfte Schrift.
-            if (active) UiPainter.RoundRect(surface, bounds.X + bounds.Width / 2 - 20, bounds.Y + bounds.Height - 4, 40, 4, 2, UiPainter.Accent);
-            else if (!window.IsMinimized) UiPainter.RoundRect(surface, bounds.X + bounds.Width / 2 - 8, bounds.Y + bounds.Height - 4, 16, 4, 2, UiPainter.Secondary);
+            if (active) UiPainter.RoundRect(surface, bounds.X, bounds.Y, bounds.Width, bounds.Height, 8, UiPainter.Muted);
+            AppIcons.Draw(surface, window.Icon ?? AppIcon.Terminal, bounds.X + (bounds.Width - AppIcons.Size) / 2, bounds.Y + 9,
+                window.IsMinimized ? UiPainter.Secondary : UiPainter.Foreground);
+            // Aktiv: langer Akzentbalken; offen: kurzer Balken; minimiert: kein Balken, gedaempftes Symbol.
+            if (active) UiPainter.RoundRect(surface, bounds.X + bounds.Width / 2 - 10, bounds.Y + bounds.Height - 4, 20, 3, 1, UiPainter.Accent);
+            else if (!window.IsMinimized) UiPainter.RoundRect(surface, bounds.X + bounds.Width / 2 - 4, bounds.Y + bounds.Height - 4, 8, 3, 1, UiPainter.Secondary);
         }
+        // Arbeitsflaechen als Punkte: aktuelle als Akzentpille, belegte hell, leere gedaempft.
         for (int index = 0; index < WindowManager.WorkspaceCount; index++)
         {
             var bounds = PagerBounds(index);
             bool current = index == Windows.CurrentWorkspace;
-            UiPainter.RoundRect(surface, bounds.X, bounds.Y, bounds.Width, bounds.Height, 8, current ? UiPainter.Accent : UiPainter.Muted);
-            painter.Text(surface, "1234".AsSpan(index, 1), bounds.X + (bounds.Width - glyphWidth) / 2,
-                bounds.Y + (bounds.Height - glyphHeight) / 2, glyphWidth, current ? UiPainter.AccentText : UiPainter.Secondary);
-            // Punkt: auf diesem Desktop liegen Fenster.
-            if (!current && Windows.CountOn(index) > 0) surface.FillRectangle(bounds.X + bounds.Width / 2 - 2, bounds.Y + bounds.Height - 5, 4, 3, UiPainter.Accent);
+            int dotWidth = current ? 16 : 8, middle = bounds.Y + bounds.Height / 2;
+            UiPainter.RoundRect(surface, bounds.X + (bounds.Width - dotWidth) / 2, middle - 4, dotWidth, 8, 4,
+                current ? UiPainter.Accent : Windows.CountOn(index) > 0 ? UiPainter.Secondary : UiPainter.Border);
         }
         if (getNetwork != null)
         {
@@ -753,17 +824,36 @@ internal sealed class Desktop
         // Abgerundetes Panel mit Versatzschatten; Apps als Kacheln wie im Windows-11-Startmenue.
         UiPainter.RoundRect(surface, menuBounds.X + 4, menuBounds.Y + 8, menuBounds.Width, menuBounds.Height, 14, unchecked((int)0xff0c0f14));
         UiPainter.RoundFrame(surface, menuBounds.X, menuBounds.Y, menuBounds.Width, menuBounds.Height, 14, 1, UiPainter.Border, UiPainter.Background);
-        int footer = launch.Bounds.Y - 12;
-        UiPainter.RoundRect(surface, menuBounds.X + 1, footer, menuBounds.Width - 2, menuBounds.Y + menuBounds.Height - 1 - footer, 13, UiPainter.Panel);
+        int footer = menuBounds.Y + menuBounds.Height - FooterHeight;
+        UiPainter.RoundRect(surface, menuBounds.X + 1, footer, menuBounds.Width - 2, FooterHeight - 1, 13, UiPainter.Panel);
         surface.FillRectangle(menuBounds.X + 1, footer, menuBounds.Width - 2, 14, UiPainter.Panel);
         surface.FillRectangle(menuBounds.X + 1, footer, menuBounds.Width - 2, 1, UiPainter.Border);
-        int left = menuBounds.X + 16, inner = menuBounds.Width - 32;
-        painter.Text(surface, search.Text.Length == 0 ? "Alle Apps" : "Suchergebnisse", left + 4, AppsHeaderTop, inner, UiPainter.Secondary);
-        menu.Draw(surface, painter, 0, 0, true);
+        int left = menuBounds.X + 24, inner = menuBounds.Width - 48;
+        painter.Text(surface, search.Text.Length == 0 ? "Alle Apps" : "Suchergebnisse", left + 4, AppsHeaderTop, inner, UiPainter.Foreground);
+        // Benutzer links in der Fusszeile: Initiale im Kreis und Name.
+        string user = session?.Identity.UserName ?? "Benutzer";
+        int badgeTop = footer + (FooterHeight - 32) / 2;
+        UiPainter.RoundRect(surface, left, badgeTop, 32, 32, 16, UiPainter.Muted);
+        painter.Text(surface, user.AsSpan(0, Math.Min(1, user.Length)), left + (32 - glyphWidth) / 2, badgeTop + (32 - glyphHeight) / 2, glyphWidth);
+        painter.Text(surface, user, left + 44, footer + (FooterHeight - glyphHeight) / 2, power.Bounds.X - left - 56);
+        menu.Draw(surface, painter, 0, 0, popup.Length == 0);
         if (matches.Count == 0) painter.Text(surface, "Keine Programme gefunden", left + 12, appList.Bounds.Y + 12, inner - 24, UiPainter.Secondary);
         if (menuStatus.Length > 0) painter.Text(surface, menuStatus, left, HintTop, inner, UiPainter.Danger);
-        else if (appList.SelectedIndex >= 0)
-            painter.Text(surface, matches[appList.SelectedIndex].Description, left, HintTop, inner, UiPainter.Secondary);
+        else if (matches.Count > 0) painter.Text(surface, "Rechtsklick: auf Desktop legen", left, HintTop, inner, UiPainter.Secondary);
+        if (popup.Length > 0) RenderPopup(surface);
+    }
+
+    private void RenderPopup(PixelSurface surface)
+    {
+        var b = popupBounds;
+        UiPainter.RoundRect(surface, b.X + 3, b.Y + 6, b.Width, b.Height, 10, unchecked((int)0xff0c0f14));
+        UiPainter.RoundFrame(surface, b.X, b.Y, b.Width, b.Height, 10, 1, UiPainter.Border, UiPainter.Background);
+        for (int index = 0; index < popup.Length; index++)
+        {
+            int rowTop = b.Y + 4 + index * PopupRowHeight;
+            if (index == popupIndex) UiPainter.RoundRect(surface, b.X + 4, rowTop, b.Width - 8, PopupRowHeight, 6, UiPainter.Selection);
+            painter.Text(surface, popup[index].Label, b.X + 16, rowTop + (PopupRowHeight - glyphHeight) / 2, b.Width - 32);
+        }
     }
 
     private bool CloseNetworkFlyout()

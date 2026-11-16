@@ -358,11 +358,10 @@ public sealed class UserManagementTests
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
-        // Das Menue behaelt den letzten Suchtext; Strg+A ersetzt ihn.
-        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
-        desktop.Handle(new(InputEventType.KeyDown, KeyCode: 30));
-        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Control));
-        foreach (char character in "abmelden") desktop.Handle(new(InputEventType.Text, Character: character));
+        // Suche -> Kacheln -> Ein/Aus; Enter oeffnet das Untermenue, dessen erster Eintrag Abmelden ist.
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
     }
 

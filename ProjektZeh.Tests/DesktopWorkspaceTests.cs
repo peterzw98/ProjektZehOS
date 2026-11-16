@@ -167,10 +167,9 @@ public sealed class DesktopWorkspaceTests
     {
         var desktop = CreateDesktop();
         desktop.OpenTerminal();
-        // Pager: Uhrbreite 5*8+32, vier Felder zu 36 px, 8 px Abstand.
-        Click(desktop, 1024 - 72 - 3 * 36 - 8 + 10, 740);
+        Click(desktop, desktop.PagerBounds(1).X + 10, 740);
         Assert.AreEqual(1, desktop.Windows.CurrentWorkspace);
-        Click(desktop, 320, 740);
+        Click(desktop, desktop.TaskBounds(0).X + 20, 740);
         Assert.AreEqual(1, desktop.Windows.CurrentWorkspace, "Auf dem leeren Desktop gibt es keinen Taskleisteneintrag.");
         Assert.IsNull(desktop.Windows.ActiveWindow);
     }
@@ -187,9 +186,12 @@ public sealed class DesktopWorkspaceTests
         Assert.AreEqual(1, desktop.Windows.Count);
         Assert.AreEqual("Terminal 1", desktop.Windows.ActiveWindow!.Title);
 
-        Click(desktop, 40, 740);
+        Click(desktop, desktop.MenuButtonBounds.X + 20, 740);
         foreach (char c in "pong") desktop.Handle(new(InputEventType.Text, Character: c));
-        Click(desktop, 400, 600);
+        // Rechtsklick auf die erste Kachel (Menue mittig 600 x 640), dann den einzigen Eintrag "Auf Desktop legen".
+        int tileX = (1024 - 600) / 2 + 24 + 4 + 52, tileY = 768 - 56 - 8 - 640 + 24 + 40 + 20 + 16 + 8 + 4 + 46;
+        desktop.Handle(new(InputEventType.PointerDown, X: tileX, Y: tileY, Button: PointerButtons.Right));
+        Click(desktop, tileX + 20, tileY + 4 + 18);
         var restored = CreateDesktop();
         restored.Update(3000);
         Click(restored, 60, 8 + 4 + 4 * 92 + 46);

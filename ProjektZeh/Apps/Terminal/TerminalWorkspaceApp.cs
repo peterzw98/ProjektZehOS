@@ -14,10 +14,8 @@ internal sealed class TerminalWorkspaceApp : IApplication
     public const int MaximumTabs = 8;
     public const int MaximumViews = 4;
     private int TabsHeight => glyphHeight + 12;
-    private int ToolbarHeight => glyphHeight + 12;
     private int StatusHeight => glyphHeight + 8;
     private int SearchHeight => glyphHeight + 12;
-    private static readonly string[] ToolbarLabels = ["+ Tab", "Teil |", "Teil -", "Suche", "Profil", "Menue"];
     private static readonly string[] ProfileNames = ["Catppuccin", "Tokyo Night", "Breeze Dunkel", "Breeze Hell", "Solarisiert"];
     // Hintergrund, Schrift, Akzent je Profil; die Fensterflaechen leiten sich daraus ab.
     private static readonly uint[] ProfileColors =
@@ -214,7 +212,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
 
     private void Layout()
     {
-        int top = TabsHeight + ToolbarHeight + (searchOpen ? SearchHeight : 0);
+        int top = TabsHeight + (searchOpen ? SearchHeight : 0);
         foreach (var tab in tabs) Place(tab.Root, new(Gap, top + Gap / 2, Math.Max(1, width - 2 * Gap), Math.Max(1, height - top - StatusHeight - Gap)));
     }
 
@@ -301,7 +299,9 @@ internal sealed class TerminalWorkspaceApp : IApplication
             if (value.Button == PointerButtons.Left && value.Y < TabsHeight)
             {
                 int tabWidth = TabWidth;
-                if (value.X >= width - NewTabWidth) NewTab();
+                // Rechts in der Tabzeile: Menue ganz aussen, davor neuer Tab; die fruehere Symbolleiste entfaellt.
+                if (value.X >= width - TabButtonWidth) OpenMenu(Math.Max(0, width - MenuWidth), TabsHeight);
+                else if (value.X >= width - 2 * TabButtonWidth) NewTab();
                 else
                 {
                     int index = value.X / tabWidth;
@@ -313,20 +313,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
                 }
                 return;
             }
-            if (value.Button == PointerButtons.Left && value.Y < TabsHeight + ToolbarHeight)
-            {
-                switch (Math.Min(5, value.X / Math.Max(1, width / 6)))
-                {
-                    case 0: NewTab(); break;
-                    case 1: Split(true); break;
-                    case 2: Split(false); break;
-                    case 3: OpenSearch(); break;
-                    case 4: SetProfile((Profile + 1) % ProfileNames.Length); break;
-                    case 5: OpenMenu(Math.Max(0, width - MenuWidth), TabsHeight + ToolbarHeight); break;
-                }
-                return;
-            }
-            if (searchOpen && value.Y < TabsHeight + ToolbarHeight + SearchHeight)
+            if (searchOpen && value.Y < TabsHeight + SearchHeight)
             {
                 if (value.X >= width - SearchButtonWidth) { searchOpen = false; Layout(); }
                 else if (value.X >= width - 3 * SearchButtonWidth) Search(value.X < width - 2 * SearchButtonWidth);
@@ -374,7 +361,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
             case 33: OpenSearch(); break;
             case 46: ActiveTerminal.CopySelection(); break;
             case 47: ActiveTerminal.PasteClipboard(); break;
-            case 50: OpenMenu(Math.Max(0, width - MenuWidth), TabsHeight + ToolbarHeight); break;
+            case 50: OpenMenu(Math.Max(0, width - MenuWidth), TabsHeight); break;
             default: return false;
         }
         return true;
@@ -393,10 +380,10 @@ internal sealed class TerminalWorkspaceApp : IApplication
     private void OpenSearch() { searchOpen = true; menuOpen = false; capture = null; Layout(); }
     private void Search(bool backwards) => status = ActiveTerminal.Find(search.Text, backwards) ? "Treffer: " + search.Text : "Kein Treffer: " + search.Text;
     private void Zoom(int delta) { ActiveTerminal.SetZoom(Math.Clamp(ActiveTerminal.Zoom + delta, 1, 3)); Layout(); }
-    private int NewTabWidth => glyphWidth + 12;
+    private int TabButtonWidth => glyphWidth + 20;
     private int CloseControlWidth => glyphWidth + 12;
     private int SearchButtonWidth => glyphWidth + 14;
-    private int TabWidth => Math.Max(1, Math.Min(180, Math.Max(1, width - NewTabWidth) / Math.Max(1, tabs.Count)));
+    private int TabWidth => Math.Max(1, Math.Min(200, Math.Max(1, width - 2 * TabButtonWidth) / Math.Max(1, tabs.Count)));
     private int MenuWidth => Math.Min(width, 34 * glyphWidth + 12);
     private int MenuRowHeight => glyphHeight + 10;
     private int MenuRows => Math.Max(1, Math.Min(MenuItems.Length, (height - 4) / MenuRowHeight));
@@ -512,19 +499,19 @@ internal sealed class TerminalWorkspaceApp : IApplication
             painter.Text(surface, $"{index + 1} {label}", x + left + 10, y + labelTop, TabWidth - MenuRowHeight - 6, current ? text : dim);
             painter.Text(surface, "x", x + left + TabWidth - CloseControlWidth + 4, y + labelTop, glyphWidth, dim);
         }
-        painter.Text(surface, "+", x + width - NewTabWidth + 6, y + labelTop, glyphWidth, accent);
-        string[] labels = ToolbarLabels;
-        int cell = Math.Max(1, width / labels.Length);
-        for (int index = 0; index < labels.Length; index++)
+        int buttons = x + width - 2 * TabButtonWidth, middle = y + TabsHeight / 2;
+        if (menuOpen) UiPainter.RoundRect(surface, buttons + TabButtonWidth + 3, y + 3, TabButtonWidth - 6, TabsHeight - 6, 8, pill);
+        painter.Text(surface, "+", buttons + (TabButtonWidth - glyphWidth) / 2, y + labelTop, glyphWidth, text);
+        // Pfeil nach unten fuer das Menue, aus zwei Linien statt eines Schriftzeichens.
+        int arrow = buttons + TabButtonWidth + TabButtonWidth / 2, size = Math.Max(4, glyphWidth / 2);
+        for (int line = 0; line < 2; line++)
         {
-            UiPainter.RoundRect(surface, x + index * cell + 3, y + TabsHeight + 2, cell - 6, ToolbarHeight - 4, 8, pill);
-            int labelWidth = Math.Min(cell - 12, labels[index].Length * glyphWidth);
-            painter.Text(surface, labels[index], x + index * cell + (cell - labelWidth) / 2, y + TabsHeight + (ToolbarHeight - glyphHeight) / 2,
-                cell - 12, dim);
+            surface.DrawLine(arrow - size, middle - size / 2 + line, arrow, middle + size / 2 + line, text);
+            surface.DrawLine(arrow, middle + size / 2 + line, arrow + size, middle - size / 2 + line, text);
         }
         if (searchOpen)
         {
-            int top = y + TabsHeight + ToolbarHeight;
+            int top = y + TabsHeight;
             UiPainter.RoundRect(surface, x + Gap, top + 2, width - 2 * Gap, SearchHeight - 4, 8, pill);
             int searchText = top + (SearchHeight - glyphHeight) / 2;
             painter.Text(surface, "Suche: " + search.Text + "_", x + Gap + 8, searchText, width - 3 * SearchButtonWidth - 24, text);

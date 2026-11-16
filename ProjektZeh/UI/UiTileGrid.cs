@@ -131,9 +131,14 @@ internal sealed class UiTileGrid : UiControl
                 UiPainter.RoundRect(surface, left + 4, top + 4, TileWidth - 8, TileHeight - 8, 8, UiPainter.Selection);
             }
             int badge = 44, badgeLeft = left + (TileWidth - badge) / 2;
-            UiPainter.RoundRect(surface, badgeLeft, top + 8, badge, badge, 12, UiPainter.Mix(UiPainter.Accent, UiPainter.Panel, 28));
+            int iconLeft = badgeLeft + (badge - AppIcons.Size) / 2, iconTop = top + 8 + (badge - AppIcons.Size) / 2;
+            // Desktopsymbole ohne Kachelflaeche: weisses Symbol mit dunklem Versatz wie die Beschriftung.
+            if (!Transparent) UiPainter.RoundRect(surface, badgeLeft, top + 8, badge, badge, 12, UiPainter.Mix(UiPainter.Accent, UiPainter.Panel, 28));
             if (Icons != null && index < Icons.Length)
-                AppIcons.Draw(surface, Icons[index], badgeLeft + (badge - AppIcons.Size) / 2, top + 8 + (badge - AppIcons.Size) / 2, UiPainter.Accent);
+            {
+                if (Transparent) AppIcons.Draw(surface, Icons[index], iconLeft + 1, iconTop + 1, unchecked((int)0xff000000));
+                AppIcons.Draw(surface, Icons[index], iconLeft, iconTop, Transparent ? unchecked((int)0xffffffff) : UiPainter.Accent);
+            }
             (string line1, string line2) = Wrap(items[index], labelColumns);
             int textTop = top + 8 + badge + 4;
             int textColor = Transparent ? unchecked((int)0xffffffff) : UiPainter.Foreground;

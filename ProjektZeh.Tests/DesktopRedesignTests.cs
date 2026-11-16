@@ -52,17 +52,17 @@ public sealed class DesktopRedesignTests
         var desktop = new Desktop(1920, 1080, font, 8, 16, () => new ShellService(), () => new FileService(directory),
             getNetwork: () => new NetworkStatus(true, true, "10.0.2.15"));
         desktop.Update(500);
-        Click(desktop, 1702, 1050);
+        Click(desktop, desktop.PagerBounds(1).X + 10, 1050);
         Assert.AreEqual(1, desktop.Windows.CurrentWorkspace);
         var plain = CreateDesktop();
-        Click(plain, 1742, 1050);
+        Click(plain, plain.PagerBounds(1).X + 10, 1050);
         Assert.AreEqual(1, plain.Windows.CurrentWorkspace);
 
         var pixels = new int[1920 * 1080];
         var surface = new PixelSurface(1920, 1080, pixels);
         desktop.Render(surface, 500, 0, 0, PointerButtons.None);
         int closed = pixels[910 * 1920 + 1700];
-        Click(desktop, 1825, 1050);
+        Click(desktop, desktop.TrayBounds.X + 10, 1050);
         desktop.Render(surface, 500, 0, 0, PointerButtons.None);
         Assert.AreNotEqual(closed, pixels[910 * 1920 + 1700]);
         // Der Testfont kodiert jedes Zeichen als Bitmuster; so pruefen wir die sichtbare Adresse ohne Test-API.
@@ -74,10 +74,10 @@ public sealed class DesktopRedesignTests
                 if (pixels[968 * 1920 + 1540 + index * 8 + bit] == UiPainter.Foreground) character |= 128 >> bit;
             Assert.AreEqual((int)expected[index], character);
         }
-        Click(desktop, 1825, 1050);
+        Click(desktop, desktop.TrayBounds.X + 10, 1050);
         desktop.Render(surface, 500, 0, 0, PointerButtons.None);
         Assert.AreEqual(closed, pixels[910 * 1920 + 1700]);
-        Click(desktop, 1825, 1050);
+        Click(desktop, desktop.TrayBounds.X + 10, 1050);
         Click(desktop, 1000, 700);
         desktop.Render(surface, 500, 0, 0, PointerButtons.None);
         Assert.AreEqual(closed, pixels[910 * 1920 + 1700]);
@@ -105,7 +105,7 @@ public sealed class DesktopRedesignTests
             getNetwork: () => new(true, true, "10.0.2.15"));
         var app = new CapturingApp();
         desktop.Windows.Add(new Window("Capture", 10, 10, 400, 300, app));
-        Click(desktop, 1825, 1050);
+        Click(desktop, desktop.TrayBounds.X + 10, 1050);
         Assert.AreEqual(1, app.PointerDowns);
     }
 
@@ -125,13 +125,13 @@ public sealed class DesktopRedesignTests
     {
         var desktop = CreateDesktop();
         desktop.Update(1000);
-        Click(desktop, 40, 1060);
+        Click(desktop, desktop.MenuButtonBounds.X + 20, 1060);
         var surface = new PixelSurface(1920, 1080, new int[1920 * 1080]);
         desktop.Render(surface, 1000, 0, 0, PointerButtons.None);
         // Zweite Kachel (Dateien): erst markieren, dann innerhalb der Doppelklickfrist erneut klicken.
-        // Menue oben 1080-56-8-720, Suche +16/+44, Ueberschrift +12/+16+8, Kachel 104 x 92 mit 4 px Rand.
-        int rowY = 1080 - Desktop.BarHeight - 8 - 720 + 16 + 44 + 12 + 16 + 8 + 4 + 46;
-        int tileX = 8 + 16 + 4 + 104 + 52;
+        // Menue mittig 600 x 640 ueber der Leiste, Suche +24/+40, Ueberschrift +20/+16+8, Kachel 104 x 92 mit 4 px Rand.
+        int rowY = 1080 - Desktop.BarHeight - 8 - 640 + 24 + 40 + 20 + 16 + 8 + 4 + 46;
+        int tileX = (1920 - 600) / 2 + 24 + 4 + 104 + 52;
         Click(desktop, tileX, rowY);
         Assert.AreEqual(0, desktop.Windows.Count);
         desktop.Update(1200);
@@ -139,8 +139,8 @@ public sealed class DesktopRedesignTests
         Assert.AreEqual(1, desktop.Windows.Count);
         Assert.AreEqual("Dateien", desktop.Windows.ActiveWindow!.Title);
 
-        Click(desktop, 152 + 2 * 48 + 20, 1060);
-        Click(desktop, 152 + 2 * 48 + 20, 1060);
+        Click(desktop, desktop.PinnedBounds(2).X + 20, 1060);
+        Click(desktop, desktop.PinnedBounds(2).X + 20, 1060);
         Assert.AreEqual(2, desktop.Windows.Count);
         Assert.IsInstanceOfType<SettingsApp>(desktop.Windows.ActiveWindow!.Application);
     }
