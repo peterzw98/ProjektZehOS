@@ -30,6 +30,9 @@ jobs:
           dotnet tool install --global Cosmos.Tools --version 3.0.94
           dotnet tool install --global Cosmos.Patcher --version 3.0.94
       - name: Install Cosmos native toolchain
+        # Wie in ci.yml: Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cosmos install --auto --tools
       - name: Check build tools
         run: cosmos check
