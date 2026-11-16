@@ -36,9 +36,6 @@
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
   </ItemGroup>
 
-  <ItemGroup>
-  </ItemGroup>
-
   <!-- Native Assertion-Texte duerfen keine lokalen Quell- und Paketpfade enthalten. -->
   <Target Name="MapNativeSourcePaths" BeforeTargets="BuildCC">
     <PropertyGroup>

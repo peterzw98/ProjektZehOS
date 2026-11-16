@@ -18,7 +18,7 @@ Die erste Gegenpruefung von `dc4794c` erkannte den noch unwirksamen TSC-Plug: `P
 - Nativer Release- und Recovery-Build von `892a988`: jeweils null Warnungen und Fehler. Ein zwischenzeitlicher Recovery-Versuch scheiterte an einer Dateisperre waehrend paralleler Assembly-Untersuchung; der sequenzielle Wiederholungslauf bestand.
 - QEMU ohne Datenplatte: Normalboot bis Shell und Desktop, F4-Wechsel zur Shell, `reboot` bis zum erneuten Boot und `shutdown` mit Exitcode 0. Der normale Energiehelfer benoetigt fuer diesen Desktopstand F4 vor den Befehlen; fuer diesen Lauf wurde eine lokale Kopie mit genau diesen Fokuswechseln verwendet.
 - Recovery: Textshellstart, `reboot` und `shutdown` mit dem unveraenderten `scripts/test-power-commands.ps1` bestanden. Kein GDB-Zusatzlauf.
-- C-Regression fuer LAI-Portadresse, Zugriffbreite, Daten, Interruptschutz und abgewiesene Zugriffe:
+- C-Regression fuer LAI-Portadresse, Zugriffbreite, Daten, Interruptschutz und abgewiesene Zugriffe (historisch bis ZehOS 0.5.3; Datei und Test entfallen seit Cosmos 3.0.97):
 
 ```powershell
 gcc -std=c11 -Wall -Wextra -Werror scripts/tests/pci_host_test.c -o .tools/pci_host_test.exe
