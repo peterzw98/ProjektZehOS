@@ -144,6 +144,11 @@ def main() -> int:
     run(["cc", "-O2", "-std=c11", "-D_DEFAULT_SOURCE", "-Wall", "-Wextra", "-Werror", str(HERE / "tests/http.c"),
          str(HERE / "frontend/http_response.c"), "-o", str(http_test)], HERE, os.environ.copy(), logs / "frontend-http-build.log")
     run([str(http_test)], HERE, os.environ.copy(), logs / "frontend-http.log")
+    # Kleine Tabelle, damit Verdrängungsschutz und fail-closed bei voller Tabelle prüfbar sind (siehe warned_targets.h).
+    warned_test = TOOLS / "frontend-warned-test"
+    run(["cc", "-O2", "-std=c11", "-DWARNED_MAX=2", "-Wall", "-Wextra", "-Werror", str(HERE / "tests/warned.c"),
+         "-o", str(warned_test)], HERE, os.environ.copy(), logs / "frontend-warned-build.log")
+    run([str(warned_test)], HERE, os.environ.copy(), logs / "frontend-warned.log")
 
     # Ohne Pfadabbildung landen rund 290 absolute Baupfade (__FILE__, Debuginfo) im Modul; dann unterscheidet es sich je Rechner.
     cc = (f"{sdk / 'bin' / 'clang'} --target=wasm32-wasip1 --sysroot={sdk / 'share' / 'wasi-sysroot'}"
@@ -175,7 +180,7 @@ def main() -> int:
     # Der HTTP-Fetcher wird von patches/netsurf-zehos-http.patch registriert und im Fetcher-Ordner mitgebaut.
     fetchers = source / "netsurf" / "content" / "fetchers"
     shutil.copy2(HERE / "frontend" / "fetch_http.c", fetchers / "zehos_http.c")
-    for name in ("http_response.c", "http_response.h"):
+    for name in ("http_response.c", "http_response.h", "warned_targets.h"):
         shutil.copy2(HERE / "frontend" / name, fetchers / name)
     run(["make", f"-j{args.jobs}", "TARGET=framebuffer", *common, "BUILD_CC=cc"], source / "netsurf", env,
         logs / "netsurf.log")
