@@ -27,7 +27,7 @@ internal sealed class CosmosNetworkService : INetworkService
         var adapter = NetworkManager.Primary;
         var address = adapter.IPConfig?.Address;
         return new(adapter.IsValid, adapter.LinkUp,
-            address == null || address.Equals(Address4.Zero) ? null : address.ToString());
+            address is null || address.Equals(Address4.Zero) ? null : address.ToString());
     }
 
     public ResultObject<string> Execute(string operation, string[] arguments, CancellationToken cancellation)
