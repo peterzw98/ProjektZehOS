@@ -255,10 +255,13 @@ internal sealed class CosmosWasmNetworkConnector : IWasmNetworkConnector
             lock (gate) finished = true;
         }
 
+        // Cosmos 3.0.94 meldet einen gescheiterten Connect nur als allgemeine Exception und einen Abbruch durch RST wie ein
+        // Verbindungsende; die eigenen Werte entstehen deshalb nur mit Socketfehlern des Hosts, im Kernel bleibt es bei EIO.
         private static int MapError(Exception exception) => exception is DnsFailureException ? WasmNetworkError.NameNotFound : exception is SocketException socketError ? socketError.SocketErrorCode switch
         {
-            SocketError.ConnectionRefused => 14,
-            SocketError.HostUnreachable => 23,
+            SocketError.ConnectionRefused => WasmNetworkError.ConnectionRefused,
+            SocketError.ConnectionReset => WasmNetworkError.ConnectionReset,
+            SocketError.HostUnreachable => WasmNetworkError.HostUnreachable,
             SocketError.TimedOut => WasmNetworkError.TimedOut,
             _ => WasmNetworkError.Io
         } : WasmNetworkError.Io;

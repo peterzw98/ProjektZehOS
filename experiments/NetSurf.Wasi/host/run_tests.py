@@ -11,6 +11,7 @@ import argparse
 import http.server
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -111,6 +112,11 @@ class TestServer(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(piece), piece))
                 self.wfile.flush()
             self.wfile.write(b"0\r\n\r\n")
+        elif self.path == "/abbruch":
+            # SO_LINGER mit Frist 0 schließt mit RST; der Fetcher muss den Abbruch als Fehler melden.
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            self.connection.close()
+            self.close_connection = True
         else:
             self.send_page(404, page(HTTP_MISSING, "Nicht gefunden"))
 
@@ -133,6 +139,9 @@ def http_scenarios(base: str, refused: int) -> list:
         ("http-chunked", address(1500, f"{base}/chunked.html"), [HTTP_CHUNKED], [START]),
         ("http-404", address(1500, f"{base}/fehlt.html"), [HTTP_MISSING], [START]),
         ("http-abgelehnt", address(1500, f"http://127.0.0.1:{refused}/"), [], pages),
+        ("http-abgebrochen", address(1500, f"{base}/abbruch"), [], pages),
+        # Ohne Netzwerkberechtigung (kein ZEHOS_NET) darf die erreichbare Seite nicht laden.
+        ("http-ohne-berechtigung", address(1500, f"{base}/seite.html"), [], pages),
         ("https-nicht-unterstuetzt", address(1500, f"https://127.0.0.1:{refused}/"), [], pages),
     ]
 
@@ -171,6 +180,9 @@ def main() -> int:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
             env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="6000")
+            env.pop("ZEHOS_NET", None)
+            if name != "http-ohne-berechtigung":
+                env["ZEHOS_NET"] = "1"
             run = subprocess.run([str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
                                   "--stack-size=1048576", str(PACKAGE / "netsurf.wasm")],
                                  env=env, capture_output=True, text=True, timeout=60)

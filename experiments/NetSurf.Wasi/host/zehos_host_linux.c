@@ -115,8 +115,12 @@ static int32_t should_exit_wrapper(wasm_exec_env_t env)
 
 // WASI-errno-Werte des Netz-ABI.
 enum { NET_OK = 0, NET_EACCES = 2, NET_EAGAIN = 6, NET_EBADF = 8, NET_ECONNREFUSED = 14, NET_ECONNRESET = 15,
-       NET_EHOSTUNREACH = 23, NET_EINVAL = 28, NET_EIO = 29, NET_EMFILE = 33, NET_ENOENT = 44, NET_ETIMEDOUT = 73 };
-#define MAX_SOCKETS 8
+       NET_EHOSTUNREACH = 23, NET_EINVAL = 28, NET_EIO = 29, NET_EMFILE = 33, NET_ENOENT = 44, NET_ENOTSUP = 58,
+       NET_ETIMEDOUT = 73 };
+// Grenzen wie WasmNetworkSession im Kernel, damit der Prüfhost keine Fähigkeiten vortäuscht, die ZehOS nicht hat.
+#define MAX_SOCKETS 4
+#define MAX_TRANSFER (64 * 1024)
+#define MAX_HOST 253
 
 static int sockets[MAX_SOCKETS];
 static int sockets_ready[MAX_SOCKETS];
@@ -150,23 +154,35 @@ static int32_t *out_pointer(wasm_exec_env_t env, uint32_t address)
     return wasm_runtime_addr_app_to_native(inst, address);
 }
 
-static int32_t net_open_wrapper(wasm_exec_env_t env, uint32_t host, int32_t host_len, int32_t port, int32_t flags, uint32_t out)
+// Ohne capability=net sperrt der Kernel net_open; der Prüfhost erlaubt Netz nur mit ZEHOS_NET=1.
+static int network_allowed(void)
+{
+    const char *value = getenv("ZEHOS_NET");
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+// Prüfreihenfolge wie HostNetOpen/WasmNetworkSession.Open im Kernel; ungültiger Gastspeicher beendet wie dort den Gast.
+static int32_t net_open_wrapper(wasm_exec_env_t env, uint32_t host, uint32_t host_len, int32_t port, int32_t flags, uint32_t out)
 {
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
-    if (host_len <= 0 || host_len > 255 || !wasm_runtime_validate_app_addr(inst, host, (uint64_t)host_len)) {
+    if (!wasm_runtime_validate_app_addr(inst, host, host_len)) {
         wasm_runtime_set_exception(inst, "net_open: ungültiger Hostname");
         return NET_EINVAL;
     }
     int32_t *handle = out_pointer(env, out);
     if (handle == NULL) return NET_EINVAL;
-    if (flags != 0 || port < 1 || port > 65535) return NET_EINVAL;
+    if (host_len > MAX_HOST) return NET_EINVAL;
+    char name[MAX_HOST + 1], service[8];
+    memcpy(name, wasm_runtime_addr_app_to_native(inst, host), host_len);
+    name[host_len] = '\0';
+    for (uint32_t i = 0; i < host_len; i++)
+        if ((unsigned char)name[i] > 127) return NET_EINVAL;
+    if (!network_allowed()) return NET_EACCES;
+    if (flags != 0) return NET_ENOTSUP;
+    if (port < 1 || port > 65535 || host_len == 0 || memchr(name, '\0', host_len) != NULL) return NET_EINVAL;
     int slot = 0;
     while (slot < MAX_SOCKETS && sockets[slot] > 0) slot++;
     if (slot == MAX_SOCKETS) return NET_EMFILE;
-    char name[256], service[8];
-    memcpy(name, wasm_runtime_addr_app_to_native(inst, host), (size_t)host_len);
-    name[host_len] = '\0';
-    if (memchr(name, '\0', (size_t)host_len) != NULL) return NET_EINVAL;
     snprintf(service, sizeof(service), "%d", port);
     struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM }, *info;
     if (getaddrinfo(name, service, &hints, &info) != 0) return NET_ENOENT;
@@ -198,15 +214,16 @@ static int32_t net_status_wrapper(wasm_exec_env_t env, int32_t handle)
     return NET_OK;
 }
 
-static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, int32_t len, uint32_t out, int sending)
+static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, uint32_t len, uint32_t out, int sending)
 {
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
-    if (len < 0 || !wasm_runtime_validate_app_addr(inst, data, (uint64_t)len)) {
+    if (!wasm_runtime_validate_app_addr(inst, data, len)) {
         wasm_runtime_set_exception(inst, "net: ungültiger Puffer");
         return NET_EINVAL;
     }
     int32_t *count = out_pointer(env, out);
     if (count == NULL) return NET_EINVAL;
+    if (len > MAX_TRANSFER) return NET_EINVAL;
     int fd = socket_of(handle);
     if (fd < 0) return NET_EBADF;
     if (!sockets_ready[handle - 1]) return NET_EAGAIN;
@@ -217,12 +234,12 @@ static int32_t transfer(wasm_exec_env_t env, int32_t handle, uint32_t data, int3
     return NET_OK;
 }
 
-static int32_t net_send_wrapper(wasm_exec_env_t env, int32_t handle, uint32_t data, int32_t len, uint32_t out)
+static int32_t net_send_wrapper(wasm_exec_env_t env, int32_t handle, uint32_t data, uint32_t len, uint32_t out)
 {
     return transfer(env, handle, data, len, out, 1);
 }
 
-static int32_t net_recv_wrapper(wasm_exec_env_t env, int32_t handle, uint32_t data, int32_t len, uint32_t out)
+static int32_t net_recv_wrapper(wasm_exec_env_t env, int32_t handle, uint32_t data, uint32_t len, uint32_t out)
 {
     return transfer(env, handle, data, len, out, 0);
 }
