@@ -101,6 +101,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Build live and installer release images
+        run: scripts/build-release.sh 0.0.0 "$RUNNER_TEMP/zehos-release-check"
+
       - name: Upload kernel build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

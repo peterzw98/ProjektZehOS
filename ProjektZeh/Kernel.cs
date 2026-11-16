@@ -278,21 +278,25 @@ public sealed class Kernel : Sys.Kernel
         automaticNetwork.Stop();
         if (!tasks.StopAll(2000))
         {
+#if !ZEHOS_INSTALLER
             StartAutomaticNetwork();
+#endif
             return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         }
         var unmounted = VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+#if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();
+#endif
         return unmounted;
     }
 
+#if !ZEHOS_INSTALLER
     private void StartAutomaticNetwork()
     {
-#if !ZEHOS_INSTALLER
         var started = automaticNetwork.Start();
         if (!started.IsOK()) systemLog.Warning("Network", started.Message);
-#endif
     }
+#endif
 
 #pragma warning disable COSMOS0001
     private void InstallScheduler()
