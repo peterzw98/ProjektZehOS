@@ -77,8 +77,10 @@ public sealed class CosmosVirtioEntropyDriver : Driver
                 }
                 catch (Exception)
                 {
-                    // Etwa eine abgebaute Bindung; ohne finally (Cosmos 3.0.94), daher Freigabe unten.
+                    // Etwa eine abgebaute Bindung; ohne finally (Cosmos 3.0.94), daher Freigabe unten. Ein schon
+                    // abgeschickter Deskriptor kann beim Geraet bleiben, deshalb wie nach einem Timeout abschalten.
                     filled = false;
+                    broken = true;
                 }
             }
             try
