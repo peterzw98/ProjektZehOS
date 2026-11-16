@@ -212,16 +212,16 @@ def main():
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 
-        # Paketminimum 640x440 (Inhalt 638x399): der Kernel verkleinert das 798x519-Bild seitentreu auf 613x399
-        # ab 45,120 statt es abzuschneiden; Adressleiste und Zurueck muessen sichtbar und treffbar bleiben (#78).
+        # Paketminimum 640x440 (Inhalt 638x399): NetSurf folgt der Fenstergroesse (poll_event Typ 10) und zeichnet
+        # 1:1 ab 33,120; Adressleiste und Zurueck muessen sichtbar und treffbar bleiben (#78).
         def small(x, y):
-            return 45 + x*613//798, 120 + y*399//519
+            return 33 + x, 120 + y
 
         point(829,637)
         button("left",True)
         point(669,517)
         button("left",False)
-        capture("paketminimum")
+        page("paketminimum", "d8ecff")
         click(*small(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
@@ -238,12 +238,15 @@ def main():
         button("left",False)
         page("wieder-standardgroesse", "d8ecff")
 
-        # Maximiert (1920x1024 Arbeitsflaeche, Inhalt 1918x983 ab 1,40): vergroessert auf 1511x983 ab 204,40.
+        # Maximiert (1920x1024 Arbeitsflaeche, Inhalt 1918x983 ab 1,40): NetSurf fuellt den Inhalt 1:1 ohne Rand.
         def large(x, y):
-            return 204 + x*1511//798, 40 + y*983//519
+            return 1 + x, 40 + y
 
         click(776,100)
-        page("maximiert", "d8ecff")
+        maximized = page("maximiert", "d8ecff")
+        width, _ = guest.size
+        for x, y in ((8, 900), (1910, 500), (1910, 900)):
+            assert maximized[(y*width+x)*3:(y*width+x)*3+3] != bytes(3), f"Schwarzer Rand bei {x},{y}: Bild folgt der Fenstergroesse nicht"
         click(*large(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
@@ -265,7 +268,7 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
-        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), Paketminimum 640x440 und maximiert (Adressleiste, Zurueck), 3 Starts/Schliessen",flush=True)
+        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), Paketminimum 640x440 und maximiert mit Bild in Fenstergroesse (Adressleiste, Zurueck), 3 Starts/Schliessen",flush=True)
         print("Textfeld/Fehlerseiten (auch HTTPS) anhand der Bildschirmfotos visuell pruefen. Freier Speicher (KiB):",free,flush=True)
         return 0
     finally:
