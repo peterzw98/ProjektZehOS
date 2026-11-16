@@ -87,7 +87,8 @@ void __wrap_Gfx_EndFrame(void) {
 		(int)(frames * 10000000ULL / total) / 10, (int)(frames * 10000000ULL / total) % 10,
 		(int)(rasterUs / 1000 / frames), (int)(meshUs / 1000 / frames), (int)(presentUs / 1000 / frames),
 		(int)((total - rasterUs - meshUs - presentUs) / 1000 / frames));
-	Report(text, MSG_TYPE_STATUS_2);
+	/* Statuszeilen zeigt der Classic-Modus nicht an; der Chat haelt die letzte Zeile sichtbar. */
+	Report(text, MSG_TYPE_NORMAL);
 	rasterUs = meshUs = presentUs = 0;
 	frames = 0;
 	windowStart = Stopwatch_Measure();

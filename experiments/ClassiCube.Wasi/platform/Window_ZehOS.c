@@ -30,6 +30,13 @@ enum {
 #define MAX_HEIGHT 1200
 
 static cc_int32 frameTic;
+/* ClassiCube will die Maus fangen; der Kernel lehnt ab, solange das Fenster nicht aktiv ist (etwa beim Spielstart),
+   und gibt sie bei Esc und Fokusverlust selbst frei. Dann faengt der naechste Klick ins Bild sie wieder ein. */
+static cc_bool wantRawMouse;
+
+static void TryCapturePointer(void) {
+	Input.RawMode = zehos_pointer_capture(1) == 0;
+}
 
 
 /*########################################################################################################################*
@@ -163,9 +170,14 @@ void Window_ProcessEvents(float delta) {
 			Event_RaiseInt(&InputEvents.Press, event[1]);
 			break;
 		case EVENT_POINTER_MOVE:
+			/* Absolute Bewegung heisst: Der Kernel hat den Fang aufgehoben. */
+			Input.RawMode = false;
 			Pointer_SetPosition(0, event[2], event[3]);
 			break;
 		case EVENT_POINTER_DOWN:
+			/* Der Klick, der die Maus einfaengt, loest im Spiel nichts aus (wie bei Doom). */
+			if (wantRawMouse && !Input.RawMode) { TryCapturePointer(); break; }
+			/* fallthrough */
 		case EVENT_POINTER_UP:
 			Pointer_SetPosition(0, event[2], event[3]);
 			if ((key = MapButton(event[1]))) Input_Set(key, event[0] == EVENT_POINTER_DOWN);
@@ -225,14 +237,14 @@ void OnscreenKeyboard_SetText(const cc_string* text) { }
 void OnscreenKeyboard_Close(void) { }
 
 void Window_EnableRawMouse(void) {
-	/* -1, wenn das Fenster nicht aktiv ist; dann bleibt die Maus frei und ClassiCube zeigt weiter den Zeiger. */
-	if (zehos_pointer_capture(1) != 0) return;
-	Input.RawMode = true;
+	wantRawMouse = true;
+	TryCapturePointer();
 }
 
 void Window_UpdateRawMouse(void) { }
 
 void Window_DisableRawMouse(void) {
+	wantRawMouse = false;
 	zehos_pointer_capture(0);
 	Input.RawMode = false;
 }

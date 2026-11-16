@@ -73,10 +73,14 @@ def main():
             time.sleep(1)
 
     def changed(before, name, message):
-        time.sleep(1)
-        after = view(capture(name))
-        assert after != before, message
-        return after
+        # Unter TCG dauert ein Bild bis zu einigen Sekunden (unter Wasser mehr); auf das naechste Bild warten.
+        deadline = time.monotonic() + 30
+        while True:
+            time.sleep(1)
+            after = view(capture(name))
+            if after != before:
+                return after
+            assert time.monotonic() < deadline, message
 
     def start():
         # Menuesuche nach dem Menueeintrag; die serielle Marke nennt die Paket-ID.
