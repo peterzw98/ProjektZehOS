@@ -230,6 +230,35 @@ def icons():
     return image
 
 
+def box(image, x, y, w, h, d, top, bottom, side, front, back=None):
+    # Quaderabwicklung im Classic-Skinlayout: Deckel/Boden oben, darunter rechts, vorne, links, hinten.
+    rect(image, x + d, y, w, d, top)
+    rect(image, x + d + w, y, w, d, bottom)
+    rect(image, x, y + d, d, h, side)
+    rect(image, x + d, y + d, w, h, front)
+    rect(image, x + d + w, y + d, d, h, side)
+    rect(image, x + 2 * d + w, y + d, w, h, back or front)
+
+
+def char():
+    # Eigene Zeichnung (CC0): einfacher Spielerskin 64x32 (Kopf, Koerper, Arm, Bein; Hutebene leer).
+    skin, hair, shirt, pants, shoes = (222, 172, 135, 255), (80, 50, 30, 255), (40, 90, 170, 255), (50, 50, 70, 255), (30, 30, 30, 255)
+    image = [[(0, 0, 0, 0)] * 64 for _ in range(32)]
+    box(image, 0, 0, 8, 8, 8, hair, skin, skin, skin, hair)
+    rect(image, 8, 8, 8, 2, hair)        # Stirnhaare vorne
+    rect(image, 0, 8, 8, 3, hair)        # Haare rechts
+    rect(image, 16, 8, 8, 3, hair)       # Haare links
+    rect(image, 9, 12, 2, 1, (255, 255, 255, 255)); rect(image, 13, 12, 2, 1, (255, 255, 255, 255))
+    rect(image, 10, 12, 1, 1, (40, 60, 120, 255)); rect(image, 13, 12, 1, 1, (40, 60, 120, 255))
+    rect(image, 11, 14, 2, 1, (150, 90, 70, 255))
+    box(image, 16, 16, 8, 12, 4, shirt, pants, shirt, shirt)
+    box(image, 40, 16, 4, 12, 4, shirt, skin, shirt, shirt)
+    rect(image, 40, 26, 16, 6, skin)     # Unterarme und Haende
+    box(image, 0, 16, 4, 12, 4, pants, shoes, pants, pants)
+    rect(image, 0, 30, 16, 2, shoes)     # Schuhe
+    return image
+
+
 def main() -> None:
     mtg, header, out = map(Path, sys.argv[1:4])
     for line in PINNED_FILE.read_text(encoding="ascii").splitlines():
@@ -241,8 +270,9 @@ def main() -> None:
     write_png(out / "default.png", font(header))
     write_png(out / "gui.png", gui())
     write_png(out / "icons.png", icons())
+    write_png(out / "char.png", char())
     checked(Path(__file__).with_name("CC-BY-SA-3.0.txt"))
-    for name in ("terrain.png", "default.png", "gui.png", "icons.png"):
+    for name in ("terrain.png", "default.png", "gui.png", "icons.png", "char.png"):
         print(hashlib.sha256((out / name).read_bytes()).hexdigest(), name)
 
 

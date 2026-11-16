@@ -90,13 +90,14 @@ Kachel  ClassiCube-Verwendung          Quelle (Mod/Datei)                       
 Alle anderen Kacheln sind transparent.
 
 
-gui.png und icons.png (je 256x256)
-----------------------------------
+gui.png und icons.png (je 256x256), char.png (64x32)
+----------------------------------------------------
 Eigene Zeichnungen fuer ZehOS, per build_texpack.py erzeugt (Rechtecke und Rahmen, keine Vorlage).
 Lizenz: CC0 1.0 (gemeinfrei), https://creativecommons.org/publicdomain/zero/1.0/
 gui.png: Hotbar 182x22 bei 0,0, Auswahlrahmen 24x24 bei 0,22, Schaltflaechen 200x20 bei y=46/66/86
          (gesperrt/normal/ausgewaehlt), Bereiche nach ClassiCube src/Widgets.c.
 icons.png: Fadenkreuz 15x15 bei 0,0 (ClassiCube src/Screens.c).
+char.png: einfacher Spielerskin im Classic-Skinlayout 64x32 (Kopf, Koerper, Arm, Bein; Hutebene leer).
 
 
 Lizenztext
@@ -107,5 +108,4 @@ SHA-256 in sources.sha256 (vom Skript geprueft). Gilt fuer terrain.png.
 
 Noch nicht enthalten
 --------------------
-particles.png, clouds.png, char.png, gui_classic.png und weitere Dateien fehlen in diesem Stand.
-Fuer char.png kommt Minetests mods/player_api (character.png, CC BY-SA 3.0, eigene license.txt) in Frage.
+particles.png, clouds.png, gui_classic.png und weitere Dateien fehlen in diesem Stand (laut Port optional).
