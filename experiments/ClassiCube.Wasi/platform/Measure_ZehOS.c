@@ -1,7 +1,7 @@
 /* Zeitmessung fuer den Entscheidungspunkt nach Etappe 2 (BSD-3-Clause wie ClassiCube).
    Der Linker leitet ausgewaehlte ClassiCube-Funktionen per --wrap hierher um (build.py), der ClassiCube-Kern bleibt
-   unveraendert. Der Kernel verwirft stdout von Paket-Apps; die Werte erscheinen deshalb im Spiel: laufend oben rechts
-   (Statuszeile 2) und die Weltgenerierung einmal im Chat. Gemessen wird mit der monotonen WASI-Uhr. */
+   unveraendert. Der Kernel verwirft stdout von Paket-Apps; die Werte erscheinen deshalb im Chat des Spiels: alle 5 s
+   eine Zeile und die Weltgenerierung einmal. Gemessen wird mit der monotonen WASI-Uhr. */
 #include "Core.h"
 #include "Chat.h"
 #include "Platform.h"
@@ -72,22 +72,24 @@ cc_bool __wrap_Builder_MakeChunk(struct ChunkInfo* info) {
 
 /* Gfx_EndFrame uebergibt das Bild (present); dort wartet der Kernel auch, solange das Fenster nicht aktiv ist. */
 void __wrap_Gfx_EndFrame(void) {
-	cc_uint64 begin = Stopwatch_Measure(), total;
+	cc_uint64 begin = Stopwatch_Measure(), total, measured;
 	char text[192];
 	__real_Gfx_EndFrame();
 	presentUs += Elapsed(begin);
 	frames++;
 
-	if (!windowStart) { windowStart = begin; return; }
+	/* Das erste Fenster beginnt hier; vorher aufgelaufene Summen (Ladebildschirm) zaehlen nicht. */
+	if (!windowStart) { windowStart = Stopwatch_Measure(); rasterUs = meshUs = presentUs = 0; frames = 0; return; }
 	total = Elapsed(windowStart);
 	if (total < REPORT_INTERVAL_US) return;
+	measured = rasterUs + meshUs + presentUs;
 
 	/* Werte je Bild in Millisekunden; "Rest" ist Spiellogik, Eingabe, Physik, Oberflaeche und Verwaltung. */
 	snprintf(text, sizeof(text), "&e%d.%d fps, je Bild: Raster %d, Mesh %d, Present %d, Rest %d ms",
 		(int)(frames * 10000000ULL / total) / 10, (int)(frames * 10000000ULL / total) % 10,
 		(int)(rasterUs / 1000 / frames), (int)(meshUs / 1000 / frames), (int)(presentUs / 1000 / frames),
-		(int)((total - rasterUs - meshUs - presentUs) / 1000 / frames));
-	/* Statuszeilen zeigt der Classic-Modus nicht an; der Chat haelt die letzte Zeile sichtbar. */
+		(int)((total > measured ? total - measured : 0) / 1000 / frames));
+	/* Im Chat statt in einer Statuszeile: Die Statuszeilen oben rechts erschienen im Gast nicht (Ursache nicht geklaert). */
 	Report(text, MSG_TYPE_NORMAL);
 	rasterUs = meshUs = presentUs = 0;
 	frames = 0;

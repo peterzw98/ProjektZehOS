@@ -4,9 +4,10 @@
 
 ## Aufbau
 
+- `patches/0002-zehos-bitmap-font-only.patch` entfernt für ZehOS die eingebaute Ersatzschrift (`SystemFonts.c`, Lizenz ungeklärt, siehe Lizenznotiz) aus dem Modul und hält die Bitmapschrift aus `default.png` fest; die Option „Use system font“ bleibt wirkungslos.
 - `patches/0001-core-zehos-target.patch` ergänzt in `src/Core.h` einen Zielblock `__ZEHOS__`: kooperativ ohne Threads (`CC_BUILD_COOPTHREADED`, wie die DOS- und Konsolenports), Software-Renderer `SoftGPU` (texturiert, mit Alphatest), `Audio_Null`. `build.py --gfx softmin` baut zum Vergleich mit `SoftMin`; der hat keinen Alphatest, Schrift und Oberfläche werden dort zu Balken. Netz, Ressourcen-Download, FreeType und Plugins sind per `#undef` aus. Ohne Netz liefern alle HTTP-Abrufe (Skins, Texturpakete vom Server) sofort einen Fehler.
 - `platform/Platform_ZehOS.c` und `platform/Window_ZehOS.c` sind von `src/msdos/` abgeleitet. Bild über `zehos_v1.present` (ClassiCubes ARGB-Puffer direkt, der Kernel ignoriert das Alphabyte), Eingabe über `poll_event`, Maus im Spiel über `pointer_capture` und Typ 9, Fenstergröße über Typ 10, Warten über `sleep_ms`. Zeit und Dateien kommen über WASI. Die Patchdatei hält die CRLF-Zeilenenden des Upstreams (`.gitattributes`).
-- `platform/Measure_ZehOS.c` misst für den Entscheidungspunkt. Der Linker leitet acht Kernfunktionen per `--wrap` um (Liste `WRAPPED` in `build.py`). Alle 5 s zeigt Statuszeile 2 oben rechts Bilder/s und je Bild die Anteile Raster (Dreiecke und Pufferlöschen), Mesh (Chunk-Geometrie), Present (Übergabe an den Kernel einschließlich Warten) und Rest. Nach der Weltgenerierung meldet der Chat Gesamt- und Rechenzeit des Generators. stdout von Paket-Apps verwirft der Kernel; deshalb laufen die Werte über die Spielanzeige.
+- `platform/Measure_ZehOS.c` misst für den Entscheidungspunkt. Der Linker leitet acht Kernfunktionen per `--wrap` um (Liste `WRAPPED` in `build.py`). Alle 5 s schreibt es in den Chat Bilder/s und je Bild die Anteile Raster (Dreiecke und Pufferlöschen), Mesh (Chunk-Geometrie), Present (Übergabe an den Kernel einschließlich Warten) und Rest. Nach der Weltgenerierung meldet der Chat Gesamt- und Rechenzeit des Generators. stdout von Paket-Apps verwirft der Kernel; deshalb laufen die Werte über die Spielanzeige. `build.py --no-measure` baut ohne Messung (für veröffentlichte Pakete).
 - `texpack/`: freies Texturpaket (Schrift aus font8x8, Public Domain; Blockatlas aus Minetest Game, CC BY-SA 3.0; `gui.png`, `icons.png`, `char.png` als eigene Zeichnungen, CC0), Herkunft je Datei in `texpack/TEXTURES.txt`, reproduzierbar mit `texpack/build_texpack.py`.
 - Maus: ClassiCube fängt den Zeiger beim Spielstart und nach dem Pausenmenü. Lehnt der Kernel ab (Fenster nicht aktiv), fängt der nächste Klick ins Bild ihn ein, ohne im Spiel zu wirken. Esc gibt ihn frei; erst dann erreicht die Maus den Fensterrahmen.
 
@@ -32,7 +33,7 @@ Das Skript installiert das Paket lokal in einer Wegwerfplatte und prüft: Start 
 
 ## Messwerte (17. November 2026)
 
-ZehOS 0.5.5 (Kernel unverändert gegenüber `master` 61bc0be), QEMU 10.2.2 auf dem Windows-Entwicklungsrechner, Paketfenster 798×519, SoftGPU, Standardwelt (Classic-Generator), Spawnpunkt. Werte aus der Anzeige von `Measure_ZehOS.c` (je zwei 5-s-Fenster), abgelesen von den Fotos des Gastskripts:
+ZehOS 0.5.6 (Kernel unverändert gegenüber `master` 61bc0be), QEMU 10.2.2 auf dem Windows-Entwicklungsrechner, Paketfenster 798×519, SoftGPU, Standardwelt (Classic-Generator), Spawnpunkt. Werte aus der Anzeige von `Measure_ZehOS.c` (je zwei 5-s-Fenster), abgelesen von den Fotos des Gastskripts:
 
 | Beschleuniger | Bilder/s | Raster je Bild | Mesh | Present | Rest | Welt erzeugt (Generator-Rechenzeit) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -42,12 +43,16 @@ ZehOS 0.5.5 (Kernel unverändert gegenüber `master` 61bc0be), QEMU 10.2.2 auf d
 | TCG, alleinige VM | 1,1–1,2 | 607–655 ms | 0 ms | 2–5 ms | 192–232 ms | 15 674 ms (6 434 ms) |
 | TCG, unter Wasser (Wasserfläche über das ganze Bild) | 0,2–0,3 | 2 198–2 985 ms | 253–304 ms | 0 ms | 307–473 ms | – |
 
-Jeder Lauf erzeugt eine andere Zufallswelt; die Werte hängen deshalb auch vom Blickfeld ab. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 85–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
+Jeder Lauf erzeugt eine andere Zufallswelt; die Werte hängen deshalb auch vom Blickfeld ab. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 70–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
 
 ## Grenzen
 
 - Ohne Ton, Netz und Speicherstände.
 - `particles.png`, `clouds.png` und Mob-Texturen fehlen im Texturpaket; ClassiCube zeichnet dort nichts.
 - Ordner legt das Paket nie an (`Directory_Create2` meldet „existiert“), Schreibzugriffe scheitern mit eigenem Fehler.
+- Fenster über 960×600 zeichnet ClassiCube in einem ganzzahligen Bruchteil der Größe (maximiert 1920×1200 also in 960×600), der Kernel skaliert hoch.
+- SoftGPU wertet VSync nicht aus; die Bildratenbegrenzung von ClassiCube greift nicht. Bei der heutigen Bildrate ohne Folgen.
 - Unter TCG ist das Spiel mit gut 1 Bild/s nicht spielbar; unter WHPX/KVM mit rund 6 Bildern/s eingeschränkt.
-- Die eingebaute Ersatzschrift von ClassiCube (`SystemFonts.c`, Lizenz ungeklärt) erscheint nur ohne `default.png` oder bei gewählter Systemschrift.
+- Esc bei freiem Zeiger führt laut Vertrag zur Textshell. Pausenmenü, Chat und Inventar schließt man deshalb über ihre Schaltflächen bzw. Enter, nicht mit Esc.
+- Bei Fokusverlust öffnet ClassiCube das Pausenmenü; der nächste Klick oder Tastendruck im wieder aktiven Fenster setzt den Fokus zurück.
+- Veröffentlichung: `--no-measure` bauen und `build-package.py ... --min-kernel 0.2.22` setzen (Import `pointer_capture`).

@@ -8,6 +8,7 @@ unveraendert.
 
 import argparse
 import hashlib
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -30,6 +31,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=HERE / "bin" / "classicube.wasm")
     # SoftMin hat keinen Alphatest (Schrift und Oberflaeche werden zu Balken); nur zum Vergleich der Rasterkosten.
     parser.add_argument("--gfx", choices=["softgpu", "softmin"], default="softgpu")
+    # Messanzeige im Chat (platform/Measure_ZehOS.c); fuer veroeffentlichte Pakete abschalten.
+    parser.add_argument("--no-measure", action="store_true")
     args = parser.parse_args()
 
     head = subprocess.run(["git", "-C", str(args.source), "rev-parse", "HEAD"], capture_output=True, text=True)
@@ -38,8 +41,9 @@ def main() -> int:
         return 1
 
     build = args.build_dir.resolve()
-    if build.exists():
-        shutil.rmtree(build)
+    # Nur den eigenen Unterordner loeschen; ein vertippter --build-dir darf keine Arbeitskopie treffen.
+    if (build / "src").exists():
+        shutil.rmtree(build / "src")
     shutil.copytree(args.source / "src", build / "src")
     # Der Bauordner liegt meist in einem Git-Arbeitsbaum; ohne Grenze wuerde git apply Pfade relativ zu dessen
     # Wurzel deuten.
@@ -51,7 +55,9 @@ def main() -> int:
 
     clang = args.wasi_sdk / "bin" / ("clang.exe" if sys.platform == "win32" else "clang")
     sources = sorted(str(path) for path in (build / "src").glob("*.c"))
-    sources += sorted(str(path) for path in (HERE / "platform").glob("*.c"))
+    sources += sorted(str(path) for path in (HERE / "platform").glob("*.c")
+                      if not (args.no_measure and path.name == "Measure_ZehOS.c"))
+    wrap = [] if args.no_measure else ["-Wl,--wrap=" + ",--wrap=".join(WRAPPED)]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(clang), "--target=wasm32-wasip1", f"--sysroot={args.wasi_sdk / 'share' / 'wasi-sysroot'}",
                "-O2", "-D__ZEHOS__", f"-DCC_GFX_BACKEND=CC_GFX_BACKEND_{args.gfx.upper()}", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
@@ -61,8 +67,10 @@ def main() -> int:
                *sources, "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks",
                # 1 MiB Stack wie der Loader; mehr als 256 MiB linearer Speicher wird ohnehin abgelehnt.
                "-Wl,-z,stack-size=1048576", "-Wl,--max-memory=268435456",
+               # DWARF aus libc und compiler-rt (rund 200 KB) braucht das Paket nicht.
+               "-Wl,--strip-debug",
                # Messpunkte fuer den Entscheidungspunkt (platform/Measure_ZehOS.c), ohne den Kern zu patchen.
-               "-Wl,--wrap=" + ",--wrap=".join(WRAPPED), "-o", str(args.output)]
+               *wrap, "-o", str(args.output)]
     result = subprocess.run(command)
     if result.returncode != 0:
         return result.returncode
@@ -70,6 +78,14 @@ def main() -> int:
     print(f"{args.output} ({args.output.stat().st_size} Bytes, SHA-256 {digest})")
     assemble_package(args.source, args.output, args.output.parent / "package")
     return 0
+
+
+def recipe_reference(recipe: Path, *inputs: Path) -> list[str]:
+    """Rezeptverweis mit Commit; dieselbe Pruefung (lokale Aenderungen, Commit auf master) wie beim NetSurf-Rezept."""
+    spec = importlib.util.spec_from_file_location("netsurf_build", ROOT / "experiments" / "NetSurf.Wasi" / "build.py")
+    netsurf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(netsurf)
+    return netsurf.recipe_reference(recipe, *inputs)
 
 
 def assemble_package(source: Path, module: Path, package: Path) -> None:
@@ -96,8 +112,8 @@ def assemble_package(source: Path, module: Path, package: Path) -> None:
         "ZehOS ClassiCube source and build recipe",
         "",
         f"ClassiCube: https://github.com/ClassiCube/ClassiCube commit {COMMIT}",
-        "Recipe (build.py, patches/, platform/, texpack/): https://github.com/peterzw98/ProjektZehOS"
-        " experiments/ClassiCube.Wasi/",
+        "Recipe (build.py, patches/, platform/, texpack/):",
+        *recipe_reference(HERE, ROOT / "experiments" / "NetSurf.Wasi" / "licenses"),
         "Toolchain: wasi-sdk 25.0 (https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25)",
     ]) + "\n", encoding="utf-8")
     print(f"Paketinhalt: {package}")

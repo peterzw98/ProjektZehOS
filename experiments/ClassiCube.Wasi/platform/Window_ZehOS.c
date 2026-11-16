@@ -126,26 +126,44 @@ void Window_Show(void) { }
 
 void Window_SetSize(int width, int height) { }
 
+/* "Quit game" im Pausenmenue; ohne Exists = false startete main das Spiel erneut. */
 void Window_RequestClose(void) {
+	Window_Main.Exists = false;
 	Event_RaiseVoid(&WindowEvents.Closing);
 }
 
+/* Die Rasterkosten wachsen mit der Pixelzahl. Groessere Fenster zeichnet ClassiCube deshalb in einem ganzzahligen
+   Bruchteil (hoechstens RENDER_MAX), den der Kernel scharf hochskaliert; Mauskoordinaten kommen in Bildkoordinaten. */
+#define RENDER_MAX_WIDTH  960
+#define RENDER_MAX_HEIGHT 600
+
 static void OnResize(int width, int height) {
+	int divisor;
 	if (width <= 0 || height <= 0) return;
+	for (divisor = 1; width / divisor > RENDER_MAX_WIDTH || height / divisor > RENDER_MAX_HEIGHT; divisor++) { }
+	width /= divisor;
+	height /= divisor;
 	if (width == Window_Main.Width && height == Window_Main.Height) return;
 	Window_Main.Width  = width;
 	Window_Main.Height = height;
 	Event_RaiseVoid(&WindowEvents.Resized);
 }
 
-/* Fokusverlust: Der Kernel hat den Zeiger freigegeben und Tasten losgelassen. ClassiCube oeffnet dann das
-   Pausenmenue und verlaesst den Mausfang. Die naechsten Ereignisse kommen erst, wenn das Fenster wieder aktiv ist. */
+/* Fokusverlust: Der Kernel hat den Zeiger freigegeben und Tasten losgelassen. Solange Focused false ist, oeffnet
+   ClassiCube je Bild das Pausenmenue (Game.c, Option autoPause). Einen Fokusgewinn meldet der Kernel nicht; das
+   naechste Tasten- oder Klickereignis kommt erst im wieder aktiven Fenster und setzt Focused zurueck. */
+static void SetFocused(cc_bool focused) {
+	if (Window_Main.Focused == focused) return;
+	Window_Main.Focused = focused;
+	Event_RaiseVoid(&WindowEvents.FocusChanged);
+}
+
+/* Reset kommt auch beim Oeffnen des Fensters; als Fokusverlust zaehlt er nur bei gefangenem Zeiger (im Spiel). */
 static void OnInputReset(void) {
 	Input_Clear();
 	if (!Input.RawMode) return;
-	Window_Main.Focused = false;
-	Event_RaiseVoid(&WindowEvents.FocusChanged);
-	Window_Main.Focused = true;
+	Input.RawMode = false;
+	SetFocused(false);
 }
 
 void Window_ProcessEvents(float delta) {
@@ -161,6 +179,7 @@ void Window_ProcessEvents(float delta) {
 	while (zehos_poll_event(event) == 1) {
 		switch (event[0]) {
 		case EVENT_KEY_DOWN:
+			SetFocused(true);
 			if ((key = MapKey(event[1]))) Input_SetPressed(key);
 			break;
 		case EVENT_KEY_UP:
@@ -175,6 +194,7 @@ void Window_ProcessEvents(float delta) {
 			Pointer_SetPosition(0, event[2], event[3]);
 			break;
 		case EVENT_POINTER_DOWN:
+			SetFocused(true);
 			/* Der Klick, der die Maus einfaengt, loest im Spiel nichts aus (wie bei Doom). */
 			if (wantRawMouse && !Input.RawMode) { TryCapturePointer(); break; }
 			/* fallthrough */
@@ -189,6 +209,9 @@ void Window_ProcessEvents(float delta) {
 			OnInputReset();
 			break;
 		case EVENT_RELATIVE_MOVE:
+			/* Typ 9 kommt nur bei gefangenem Zeiger; eine vorher eingereihte absolute Bewegung kann RawMode
+			   faelschlich geloescht haben. */
+			if (wantRawMouse) Input.RawMode = true;
 			if (Input.RawMode) Event_RaiseRawMove(&PointerEvents.RawMoved, (float)event[2], (float)event[3]);
 			break;
 		case EVENT_RESIZE:

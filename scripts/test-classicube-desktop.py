@@ -35,7 +35,7 @@ def main():
              for p in sorted(args.package.rglob("*")) if p.is_file()]
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
                     "--repo", str(work / "seed/pkgs"), "--id", "classicube", "--version", "1.0.0", "--name", "ClassiCube",
-                    "--entry", args.entry, *files], check=True)
+                    "--entry", args.entry, "--min-kernel", "0.2.22", *files], check=True)
     tools.create_disk(work / "seed", work / "data.qcow2")
     port = tools.free_port()
     vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
@@ -72,15 +72,29 @@ def main():
                 raise AssertionError(f"{name}: keine Welt sichtbar ({len(colours)} Farben im Ausschnitt)")
             time.sleep(1)
 
+    def difference(first, second):
+        return sum(first[i:i+3] != second[i:i+3] for i in range(0, len(first), 3*4))
+
+    # Wasser, Lava und nachladende Chunks aendern das Bild auch ohne Eingabe. Eine Eingabe gilt erst, wenn sie
+    # deutlich mehr Pixel aendert als ein gleich langes Kontrollfenster ohne Eingabe (siehe idle_threshold).
+    threshold = 0
+
+    def idle_threshold(before):
+        nonlocal threshold
+        time.sleep(3)
+        idle = view(capture("kontrolle-ohne-eingabe"))
+        threshold = max(2 * difference(before, idle), 500)
+        return idle
+
     def changed(before, name, message):
         # Unter TCG dauert ein Bild bis zu einigen Sekunden (unter Wasser mehr); auf das naechste Bild warten.
         deadline = time.monotonic() + 30
         while True:
             time.sleep(1)
             after = view(capture(name))
-            if after != before:
+            if difference(before, after) > threshold:
                 return after
-            assert time.monotonic() < deadline, message
+            assert time.monotonic() < deadline, f"{message} (Schwelle {threshold} Pixel)"
 
     def start():
         # Menuesuche nach dem Menueeintrag; die serielle Marke nennt die Paket-ID.
@@ -104,11 +118,14 @@ def main():
         memory_mark = guest.mark()
         start()
         state = world("welt")
-        # Measure_ZehOS.c meldet alle 5 s Bildrate und Anteile oben rechts; zwei Berichtsfenster abwarten.
+        # Measure_ZehOS.c meldet alle 5 s Bildrate und Anteile im Chat; zwei Berichtsfenster abwarten.
         time.sleep(12)
-        state = view(capture("messung"))
-        # Klick in den Inhalt startet den Zeigerfang (relative Maus, poll_event Typ 9).
+        capture("messung")
+        # Klick in den Inhalt startet den Zeigerfang (relative Maus, poll_event Typ 9). Hat ClassiCube die Maus beim
+        # Start schon gefangen, wirkt er als Spielklick; der Ausgangszustand wird deshalb erst danach aufgenommen.
         guest.qmp.click(33+399, 120+259, *guest.size)
+        time.sleep(2)
+        state = idle_threshold(view(capture("nach-fang")))
         guest.qmp.hold("w", 1.5)
         state = changed(state, "bewegung-w", "W veraendert die Ansicht nicht")
         # hypothese: der Kernel bildet aus absoluten Tablet-Bewegungen die relativen Deltas; sonst auf "rel" umstellen.
@@ -133,13 +150,19 @@ def main():
             if run:
                 start()
                 world(f"neustart-{run}")
-            # Ist das Fenster beim Start aktiv, faengt ClassiCube die Maus sofort; dann erreicht der Klick den
-            # Fensterrahmen erst nach Esc.
+            # Ist das Fenster beim Start aktiv, faengt ClassiCube die Maus sofort; Esc gibt sie frei und oeffnet
+            # das Pausenmenue.
             if run:
                 guest.qmp.tap("esc")
-                time.sleep(1)
+                time.sleep(3)
             mark = guest.mark()
-            guest.qmp.click(812+28*run, 100+28*run, *guest.size)
+            if run < 2:
+                guest.qmp.click(812+28*run, 100+28*run, *guest.size)
+            else:
+                # Letzter Lauf ueber "Quit game" (unten rechts im Pausenmenue, 120 breit, 5 Pixel Rand): Das Spiel
+                # muss enden statt neu zu starten.
+                capture("pausenmenue")
+                guest.qmp.click(33+798-5-60+28*run, 120+519-5-20+28*run, *guest.size)
             time.sleep(2)
             capture(f"schliessen-{run}")
             guest.wait_finished("classicube", mark)
@@ -147,7 +170,7 @@ def main():
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
         print("CLASSICUBE_GUEST PASS: lokal installieren, Start aus Menue, Welt, W-Bewegung, Mausblick, "
-              "Block entfernen/setzen, 3 Starts/Schliessen", flush=True)
+              "Block entfernen/setzen, 2x Schliessen ueber X, 1x Quit game", flush=True)
         print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)
         return 0
     finally:
