@@ -192,6 +192,8 @@ public sealed class WasmInputTests
         Assert.IsFalse(input.TryRead(out _), "Ein leeres Fenster ist keine Groesse.");
         input.SetViewport(2560, 1440, 320, 200);
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.Resize, 0, 1920, 1200), Read(input), "Begrenzt auf die present-Grenze.");
+        input.SetViewport(2600, 1500, 320, 200);
+        Assert.IsFalse(input.TryRead(out _), "Jenseits der Grenze bleibt die gemeldete Groesse gleich.");
     }
 
     // Jede neue Fenstergroesse kommt als erstes Ereignis an.

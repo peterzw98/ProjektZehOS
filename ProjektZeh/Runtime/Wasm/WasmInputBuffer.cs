@@ -46,8 +46,11 @@ internal sealed class WasmInputBuffer
 
     public void SetViewport(int width, int height, int imageWidth, int imageHeight)
     {
-        if (width > 0 && height > 0 && (width != viewportWidth || height != viewportHeight))
-            (viewportWidth, viewportHeight, resizePending) = (width, height, true);
+        // Groesser kann present nicht zeichnen; die App bleibt dann bei der Einpassung. Verglichen wird die begrenzte
+        // Groesse, damit Aenderungen jenseits der Grenze keine gleichlautende Meldung ausloesen.
+        int reportedWidth = Math.Min(width, MaximumImageWidth), reportedHeight = Math.Min(height, MaximumImageHeight);
+        if (width > 0 && height > 0 && (reportedWidth != viewportWidth || reportedHeight != viewportHeight))
+            (viewportWidth, viewportHeight, resizePending) = (reportedWidth, reportedHeight, true);
         frameWidth = imageWidth;
         frameHeight = imageHeight;
         (targetWidth, targetHeight) = WasmImageFit.Fit(width, height, imageWidth, imageHeight);
@@ -133,8 +136,7 @@ internal sealed class WasmInputBuffer
         if (resizePending)
         {
             resizePending = false;
-            // Groesser kann present nicht zeichnen; die App bleibt dann bei der Einpassung.
-            value = new(WasmInputEventType.Resize, 0, Math.Min(viewportWidth, MaximumImageWidth), Math.Min(viewportHeight, MaximumImageHeight));
+            value = new(WasmInputEventType.Resize, 0, viewportWidth, viewportHeight);
             return true;
         }
         if (count == 0) { value = default; return false; }
