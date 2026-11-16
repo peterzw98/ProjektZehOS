@@ -106,7 +106,7 @@ Unter Windows benötigen die Symlink-Prüfungen das Recht zum Erstellen symbolis
 
 ## Dateisystem in QEMU
 
-Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.94. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
+Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
 
 Kernel bauen und QEMU mit einer separaten virtuellen SATA/AHCI-Datenplatte starten:
 
@@ -200,7 +200,7 @@ Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#aufg
 GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows können außerdem unter **Actions → Run workflow** manuell gestartet werden:
 
 - **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen.
-- **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.94 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
+- **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
 - **CodeQL (C#)** prüft den eigenen C#-Produktionscode mit der erweiterten Sicherheitsabfrage. Eine zusätzliche Analyse läuft wöchentlich. Ergebnisse stehen unter **Security → Code scanning** und gegebenenfalls direkt am Pull Request.
 
 Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Tests laufen auf dem Host; ein erfolgreicher CI-Lauf bestätigt keinen automatisierten Start oder Bedienungstest des Kernels in QEMU.
@@ -211,12 +211,12 @@ Die Regeln liegen in `Directory.Build.props`. Die `.editorconfig` enthält gezie
 
 ## Voraussetzungen
 
-- .NET SDK 10; `global.json` wählt die neueste installierte 10.0-Featureversion. Ein allein installiertes SDK 11 reicht für Cosmos 3.0.94 nicht aus.
+- .NET SDK 10; `global.json` wählt die neueste installierte 10.0-Featureversion. Ein allein installiertes SDK 11 reicht für Cosmos 3.0.97 nicht aus.
 - Cosmos Gen3 CLI und Bauwerkzeuge (`cosmos check` muss erfolgreich sein)
 - Für die Arbeit in Visual Studio: Visual Studio 2026 (Version 18.0 oder neuer). Visual Studio 2022 kann dieses `net10.0`-Projekt nicht bauen.
 - Für Breakpoints in Visual Studio: die [Cosmos-Visual-Studio-Erweiterung](https://github.com/CosmosOS/CosmosVsExtension/releases) und der Visual-Studio-Workload **Linux and embedded development with C++**. Der Workload stellt die GDB-Debugengine bereit.
 
-Das Projekt verwendet Cosmos 3.0.94. Die offizielle Installationsanleitung steht unter <https://cosmosos.github.io/articles/user/install.html>.
+Das Projekt verwendet Cosmos 3.0.97. Die offizielle Installationsanleitung steht unter <https://cosmosos.github.io/articles/user/install.html>.
 
 Die Solution `ProjektZeh.sln` muss ausdrücklich in Visual Studio 2026 geöffnet werden. Visual Studio 2022 meldet bei diesem Projekt einen Fehler zum .NET-10-Ziel und gegebenenfalls einen Folgefehler zur Assembly-Kürzung.
 
@@ -342,14 +342,14 @@ Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als einge
 ```bash
 payload="$PWD/.tools/installer-payload"
 mkdir -p "$payload"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.3
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.4
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
-cp "$HOME/.nuget/packages/cosmos.build.common/3.0.94/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.3 \
+cp "$HOME/.nuget/packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.4 \
   -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 ```
 
-Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.3`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.4`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
 
 Das Installer-ISO startet in den grafischen Einrichtungsassistenten (Willkommen → Hinweise → Zielplatte → Bestätigung → Installation → Neustart), bedienbar mit Maus und Tastatur. Bei einem Anzeigefehler oder mit `-p:ZehOSRecovery=true` startet stattdessen eine lokale Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Ohne Löschbestätigung wird nur eine Platte angenommen, die keine Partition hat und vollständig als leer gelesen wurde. Platten über 256 MiB werden dafür nicht gelesen und verlangen deshalb immer die Bestätigung. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium.
 
@@ -369,13 +369,13 @@ reboot
 
 `update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
 
-Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.3.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
+Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.4.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
 
 Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. Der Installer richtet mit drei Sekunden Timeout die Limine-Einträge **ZehOS** (1920×1080), **ZehOS (1024x768)** und **ZehOS (vorherige Version)** ein. Der Installer legt dazu bereits eine Kopie des installierten Kernels als `.bak` an. Nach einem Start über den Rückfalleintrag (laufende und installierte Version in `/boot/zehos-version.txt` weichen ab) darf ein Update nicht älter als die installierte Version sein; es ersetzt dann nur den Hauptkernel und lässt den laufenden Kernel in `.bak` unverändert. Nach Beginn des Dateiaustauschs ist bis zum Neustart kein weiteres Update erlaubt, auch wenn Austausch oder Bereinigung einen Fehler melden. Die Sicherungs-/Wiederherstellungslogik schützt vor behandelten Dateifehlern; sie garantiert keine Wiederherstellung nach Stromausfall. Netzwerk- und Dateioperationen der Shell laufen synchron; antwortet ein Spiegel nach dem Verbindungsaufbau nicht, steht das System bis zum Cosmos-Zeitlimit (wegen des groben Cosmos-Wartetimers deutlich länger als die angeforderten 10 s). [Prüfergebnisse und Plattformgrenzen](docs/INSTALLER_UPDATES_TESTS.md).
 
 ## Releases und Updates
 
-`scripts/build-release.sh 0.5.3 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
+`scripts/build-release.sh 0.5.4 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
 
 Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.
 

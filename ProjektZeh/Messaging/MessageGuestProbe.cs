@@ -11,6 +11,7 @@ internal static class MessageGuestProbe
 {
     public static void Run()
     {
+        CheckFinallyOnUnwind();
         CheckCancellationCleanup();
         CheckDemoCancellationAndRestart();
         var queue = new MessageQueue<int>(2);
@@ -125,7 +126,38 @@ internal static class MessageGuestProbe
         Check(first.Join(2000) && second.Join(2000), "cancellation cleanup join");
         Log.WriteString($"MESSAGES_CLEANUP first-finally={firstFinally} second-finally={secondFinally} remaining={remaining} caught={caught}\n");
         Check(caught == 2, "cancellation catch");
-        // Die Ausgabe hält die Laufzeitgrenze fest; die produktive Vorführung bricht ohne Exception ab.
+        Check(firstFinally == 1 && secondFinally == 1 && remaining == 0, "cancellation finally");
+    }
+
+    // Seit Cosmos 3.0.95 laufen finally-/fault-Funclets beim Unwind, mit Dispatcherzustand je Thread (#3319, #3330).
+    private static void CheckFinallyOnUnwind()
+    {
+        int plain = 0;
+        int disposed = 0;
+        int threaded = 0;
+        var gate = new object();
+        try { try { throw new InvalidOperationException(); } finally { plain = 1; } }
+        catch (InvalidOperationException) { }
+        try { using (new DisposeFlag(() => disposed = 1)) throw new InvalidOperationException(); }
+        catch (InvalidOperationException) { }
+        try { lock (gate) throw new InvalidOperationException(); }
+        catch (InvalidOperationException) { }
+        bool released = Monitor.TryEnter(gate);
+        if (released) Monitor.Exit(gate);
+        var worker = new Thread(() =>
+        {
+            try { try { throw new InvalidOperationException(); } finally { threaded = 1; } }
+            catch (InvalidOperationException) { }
+        });
+        worker.Start();
+        Check(worker.Join(2000), "finally thread join");
+        Log.WriteString($"MESSAGES_FINALLY plain={plain} using={disposed} lock-released={(released ? 1 : 0)} thread={threaded}\n");
+        Check(plain == 1 && disposed == 1 && released && threaded == 1, "finally on unwind");
+    }
+
+    private sealed class DisposeFlag(Action dispose) : IDisposable
+    {
+        public void Dispose() => dispose();
     }
     private static void CheckWaiters(bool sending, bool cancel)
     {

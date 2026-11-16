@@ -1,4 +1,4 @@
-<Project Sdk="Cosmos.Sdk/3.0.94" TreatAsLocalProperty="DefineConstants">
+<Project Sdk="Cosmos.Sdk/3.0.97" TreatAsLocalProperty="DefineConstants">
 
   <!-- cosmos build setzt DefineConstants global; lokale Ergaenzungen wie ZEHOS_WASM muessen erhalten bleiben. -->
   <PropertyGroup>
@@ -6,7 +6,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.3</Version>
+    <Version Condition="'$(Version)' == ''">0.5.4</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
@@ -24,7 +24,7 @@
 
   <!-- wasm3 und seine freistehende C-Laufzeit gehoeren zum normalen Kernelbuild. -->
   <PropertyGroup Condition="'$(ZehOSWasm)' == 'true'">
-    <!-- Cosmos-3.0.94-Standardflags plus nativem wasm3-Stackbudget (7 MiB): Wasm laeuft auf einem Thread mit
+    <!-- Cosmos-Standardflags (3.0.94 bis 3.0.97 gleich) plus nativem wasm3-Stackbudget (7 MiB): Wasm laeuft auf einem Thread mit
          8 MiB Stack (WasmRuntime.ThreadStackBytes); Rekursion endet so als Wasm-Trap statt im Triple Fault. -->
     <CCCompilerFlags>-O2 -fno-stack-protector -nostdinc -fno-builtin -Dd_m3MaxNativeStack=7340032</CCCompilerFlags>
   </PropertyGroup>
@@ -34,10 +34,6 @@
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/host/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)Native/Wasm/libc/include/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <GCCProject Include="$(MSBuildThisFileDirectory)Native/Acpi/" />
   </ItemGroup>
 
   <!-- Native Assertion-Texte duerfen keine lokalen Quell- und Paketpfade enthalten. -->
@@ -50,8 +46,8 @@
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
-    <PackageReference Include="Cosmos.Kernel" Version="3.0.94" />
-    <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
+    <PackageReference Include="Cosmos.Kernel" Version="3.0.97" />
+    <PackageReference Include="Cosmos.Kernel.System" Version="3.0.97" />
   </ItemGroup>
 
   <ItemGroup>

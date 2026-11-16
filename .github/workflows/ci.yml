@@ -75,8 +75,8 @@ jobs:
 
       - name: Install matching Cosmos CLI and patcher
         run: |
-          dotnet tool install --global Cosmos.Tools --version 3.0.94
-          dotnet tool install --global Cosmos.Patcher --version 3.0.94
+          dotnet tool install --global Cosmos.Tools --version 3.0.97
+          dotnet tool install --global Cosmos.Patcher --version 3.0.97
 
       - name: Install Cosmos native toolchain
         # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).

@@ -53,12 +53,12 @@ Wichtige Zuständigkeiten:
 
 ## Technischer Rahmen
 
-- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 3.0.94 und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
+- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 3.0.97 und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
 - `global.json` wählt ein installiertes SDK aus der 10.0-Reihe. Ein allein installiertes SDK 11 genügt für den bestehenden Cosmos-Build nicht. Bei Buildproblemen zuerst die lokale SDK-Version prüfen.
 - Cosmos SDK, Kernelpakete, CLI und Patcher müssen zusammenpassen. Versionswechsel als eigene technische Änderung behandeln und durch nativen Build und Gaststart prüfen.
 - Vorhandene Cosmos-Dienste zuerst verwenden. Bei neuen Schnittstellen die Verfügbarkeit in der tatsächlich verwendeten Version prüfen; aktuelle Online-Dokumentation kann einen neueren Stand beschreiben.
 - Die Unterstützung einer .NET-API auf dem Host beweist nicht ihre Verfügbarkeit im Cosmos-/NativeAOT-Kernel.
-- Cosmos 3.0.94 überspringt `finally`-Blöcke beim Exception-Unwind, auch einfache und solche aus `using`. Sperren, Zähler und Schreib-Handles auf Fehlerwegen deshalb nach `catch` ausdrücklich freigeben, nicht in `finally`.
+- Seit Cosmos 3.0.95 laufen `finally`-Blöcke (auch aus `using` und `lock`) beim Exception-Unwind, mit Dispatcherzustand je Thread; im Gast belegt durch `MessageGuestProbe` (`-p:ZehOSThreadProbe=true`). Ressourcen deshalb wieder auf dem normalen .NET-Weg mit `using`/`finally` freigeben.
 
 ## Wasm-Apps und Pakete
 

@@ -5,7 +5,10 @@ namespace ProjektZeh.Network;
 
 internal static class TlsRoots
 {
-    internal static byte[] Load() => Read("ZehOS.TlsRoots");
+    private static byte[]? bundle;
+
+    // Einmal je Start lesen: jeder HTTPS-Abruf (ein Paket sind 4 + Dateienzahl) las sonst 189 KB neu.
+    internal static byte[] Load() => bundle ??= Read("ZehOS.TlsRoots");
 
     internal static byte[] Read(string resourceName)
     {
