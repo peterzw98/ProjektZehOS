@@ -20,7 +20,7 @@ sind mit **OFFEN** markiert. Bezug: [ROADMAP](../ROADMAP.md) 12.2, [NETWORK_TEST
   nicht blockierend zwischen 64-KiB-Puffern und Socket. Das Zeitlimit von 10 s gilt von `net_open` bis zum
   Verbindungsaufbau.
 - **NetSurf** meldet `https://` in `frontend/fetch_http.c` ausdrücklich als nicht unterstützt und ruft `net_open`
-  immer mit `flags = 0` auf. Der Linux-Prüfhost (`host/zehos_host_core.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
+  immer mit `flags = 0` auf. Der Linux-Prüfhost (damals `host/zehos_host_linux.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
 
 ## Ziel und Nicht-Ziele
 
@@ -261,9 +261,9 @@ senden können. Die Patches schließen das und begrenzen Rechenzeit und Timer:
 | `netsurf-zehos-js-navigation.patch` | JS-Navigationen tragen die Seite als Referer. Von HTTPS auf HTTP sind sie wie ein Meta-Refresh unverifizierbar; `fetch_http.c` blockiert sie deshalb ohne Knopf. HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata als `http`/`https` (etwa `data:`) sind per JS nicht erreichbar, sonst umginge eine eigene `data:`-Seite mit Formular die Warnung. |
 | `netsurf-zehos-js-schemes.patch` | Skripte laufen nur auf `http`- und `https`-Seiten, nie auf `data:`, `resource:` oder `about:`, also auch nicht auf den Warnseiten des Fetchers. Maßgeblich ist die URL nach Weiterleitungen. |
 | `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. Höchstens 200 native Aufrufebenen statt 1000: Jede Ebene belegt in wasm3 etwa 3 KiB des 1-MiB-Stapels (Messung von red), darüber endete die App mit einem Trap statt mit `RangeError`. |
-| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Ohne `https` ersetzt oder löscht ein Cookie kein gleichnamiges `Secure`-Cookie. Außerdem behebt der Patch einen Fehler in 3.11: `urldb_get_cookie` prüfte das Schema des gespeicherten Pfadknotens statt der Anfrage, und die Bedingungen mit `lwc_string_isequal` (liefert `lwc_error_ok`, also 0) waren nie wahr. `Secure`-Cookies gingen so auch an `http://` und waren dort über `document.cookie` lesbar. |
+| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Ohne `https` ersetzt oder löscht ein Cookie kein `Secure`-Cookie gleicher Domain, gleichen Pfads und Namens; ein Cookie mit anderem Pfad oder als Domain-Cookie kann es weiter überdecken (RFC 6265bis weist auch das ab). `HttpOnly` wird jetzt in allen Suchschleifen von `urldb_get_cookie` beachtet; 3.11 filterte es nur bei exakt passendem Pfad, sodass `document.cookie` die meisten `HttpOnly`-Cookies las. Außerdem behebt der Patch einen Fehler in 3.11: `urldb_get_cookie` prüfte das Schema des gespeicherten Pfadknotens statt der Anfrage, und die Bedingungen mit `lwc_string_isequal` (liefert `lwc_error_ok`, also 0) waren nie wahr. `Secure`-Cookies gingen so auch an `http://` und waren dort über `document.cookie` lesbar. |
 
-`document.cookie` liefert schon in 3.11 keine `HttpOnly`-Cookies, `Secure`-Cookies erst mit dem Patch nur auf HTTPS-Seiten. Ein Skript kann ein `HttpOnly`-Cookie aber weiter über `document.cookie` überschreiben (unverändert aus 3.11).
+`document.cookie` liefert mit dem Patch keine `HttpOnly`-Cookies und `Secure`-Cookies nur auf HTTPS-Seiten. Ein Skript kann ein `HttpOnly`-Cookie aber weiter über `document.cookie` überschreiben (unverändert aus 3.11).
 Ein echter Formularversand per Skript ist nicht möglich, weil `HTMLFormElement` in 3.11 kein `submit()` bietet.
 Unterressourcen, die ein Skript in die Seite einfügt, lädt NetSurf mit der Seite als Referer; die
 Mixed-Content-Sperre sollte daher auch für sie greifen (nicht geprüft).
@@ -280,7 +280,7 @@ einen `Referer` mit der vollständigen Seiten-URL, außer von HTTPS auf HTTP.
 **Testszenarien** (für `host/run_tests.py`, sobald der Build Duktape enthält): Endlosschleife bricht nach etwa
 2 s ab und die Seite bleibt bedienbar; eine `setInterval`-Flut endet beim 65. Timer; `location.href` von
 HTTPS auf HTTP zeigt die Sperrseite und sendet nichts; `location.href` auf eine `data:`-URL navigiert nicht;
-ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert; tiefe Rekursion endet mit `RangeError`, die App läuft weiter.
+ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert, ein von `https` gesetztes geht nicht an `http://` und lässt sich von dort nicht ersetzen; `document.cookie` enthält kein `HttpOnly`-Cookie; `Path=` (leer) beendet die App nicht; tiefe Rekursion endet mit `RangeError`, die App läuft weiter.
 
 ## Betroffene Dateien bei einer Umsetzung
 
