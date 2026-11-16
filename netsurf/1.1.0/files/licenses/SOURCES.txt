@@ -1,0 +1,15 @@
+ZehOS NetSurf source and build recipe
+
+https://github.com/peterzw98/ProjektZehOS/tree/43da4aadf53d6e0ab6f4b930cb40c3f5aff144b1/experiments/NetSurf.Wasi
+
+Source archives (unmodified upstream plus the patches in the recipe):
+https://download.netsurf-browser.org/netsurf/releases/source-full/netsurf-all-3.11.tar.gz
+SHA256 4dea880ff3c2f698bfd62c982b259340f9abcd7f67e6c8eb2b32c61f71644b7b
+https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+SHA256 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+
+Statically linked runtime from wasi-sdk 25:
+https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+SHA256 52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c
+https://github.com/WebAssembly/wasi-libc/tree/574b88da481569b65a237cb80daf9a2d5aeaf82d
+https://github.com/llvm/llvm-project/tree/ab4b5a2db582958af1ee308a790cfdb42bd24720/compiler-rt
