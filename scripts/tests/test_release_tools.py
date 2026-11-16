@@ -4,6 +4,7 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import threading
@@ -58,24 +59,35 @@ class ReleaseToolsTests(unittest.TestCase):
                     server.shutdown()
                     thread.join()
 
-    def test_manifest_rejects_traversal_and_symlink(self):
+    def test_manifest_rejects_traversal(self):
         with self.assertRaises(ValueError):
             mirror.kernel_name(b'kernel=../secret\n')
+
+    def test_manifest_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as temp, tempfile.TemporaryDirectory() as other:
             directory = Path(temp)
             (directory / 'update-manifest.txt').write_text('kernel=ProjektZeh-1.2.3.elf\n')
             (directory / 'update-manifest.sig').write_bytes(b'sig')
             outside = Path(other) / 'file'
             outside.write_bytes(b'secret')
-            (directory / 'ProjektZeh-1.2.3.elf').symlink_to(outside)
+            try:
+                (directory / 'ProjektZeh-1.2.3.elf').symlink_to(outside)
+            except OSError as error:
+                if getattr(error, 'winerror', None) == 1314:
+                    self.skipTest('Windows erlaubt diesem Benutzer keine symbolischen Links')
+                raise
             with self.assertRaises(ValueError):
                 mirror.local_files(directory)
 
     def test_invalid_version_fails(self):
+        bash = shutil.which('bash')
+        if bash is None:
+            self.skipTest('Bash wird fuer build-release.sh benoetigt')
         for version in ('v1.2.3', '1.2', '1.02.3', '1.2.3/other'):
             with self.subTest(version=version):
-                result = subprocess.run([str(SCRIPTS / 'build-release.sh'), version], capture_output=True)
+                result = subprocess.run([bash, str(SCRIPTS / 'build-release.sh'), version], capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b'Aufruf: build-release.sh', result.stderr)
 
 
 if __name__ == '__main__':

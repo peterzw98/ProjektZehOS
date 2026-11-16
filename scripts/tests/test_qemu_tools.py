@@ -51,8 +51,9 @@ class QemuToolTests(unittest.TestCase):
         self.assertTrue(environment['LD_LIBRARY_PATH'].startswith(str(tools / 'lib')))
 
     def test_qemu_img_from_path_runs_unchanged(self):
-        with mock.patch.object(guest.shutil, 'which', return_value='/usr/bin/qemu-img'):
-            self.assertEqual(guest.qemu_img(), (['/usr/bin/qemu-img'], None))
+        tool = str(self.home / 'qemu-img')
+        with mock.patch.object(guest.shutil, 'which', return_value=tool):
+            self.assertEqual(guest.qemu_img(), ([tool], None))
 
     def test_cpu_model_per_accelerator(self):
         # KVM braucht RDRAND/RDSEED fuer die Kennwortanlage (#56); WHPX bricht mit -cpu max/host ab.
@@ -62,6 +63,7 @@ class QemuToolTests(unittest.TestCase):
         for accel, cpu in expected.items():
             with self.subTest(accel=accel), mock.patch.object(guest.subprocess, 'Popen') as popen:
                 guest.start_qemu(Path('z.iso'), Path('d.qcow2'), self.home, 1234, accel, None)
+                self.assertTrue(popen.call_args.kwargs['stderr'].closed)
                 arguments = popen.call_args.args[0]
                 start = arguments.index('-accel') + 2
                 self.assertEqual(arguments[start:start + len(cpu)], cpu)

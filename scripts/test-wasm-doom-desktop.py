@@ -80,11 +80,21 @@ class Qmp:
         self.stream.write((json.dumps(message) + "\n").encode())
         self.stream.flush()
         while True:
-            reply = json.loads(self.stream.readline())
+            line = self.stream.readline()
+            if not line:
+                raise ConnectionError(f"QMP {name}: Verbindung beendet")
+            reply = json.loads(line)
             if "return" in reply or "error" in reply:
                 if "error" in reply:
                     raise RuntimeError(f"QMP {name}: {reply['error']}")
                 return reply
+
+    def quit(self) -> None:
+        # QEMU beendet sich oft, bevor die Antwort gelesen ist; unter Linux kommt dann ein Reset statt "return".
+        try:
+            self.command("quit")
+        except ConnectionError:
+            pass
 
     def key(self, qcode: str, down: bool) -> None:
         self.command("input-send-event", {"events": [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}]})
@@ -239,7 +249,8 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
                  *(["-loadvm", loadvm] if loadvm else [])]
-    return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=(work / "stderr.log").open("w"))
+    with (work / "stderr.log").open("w") as stderr:
+        return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=stderr)
 
 
 # So lange darf eine abweichende Ergebniszeile stehen, bevor sie als Fehlschlag gilt; sie kann zerteilt sein.
@@ -747,8 +758,10 @@ def prepare_snapshot(args: argparse.Namespace, fixtures: Path, run_root: Path) -
         reply = guest.qmp.command("human-monitor-command", {"command-line": "savevm base"})
         if reply["return"]:
             raise RuntimeError(f"savevm: {reply['return'].strip()}")
-        guest.qmp.command("quit")
-        vm.wait(60)
+        guest.qmp.quit()
+        # Ein Verbindungsende gilt bei quit als Erfolg; ein Absturz zeigt sich erst am Exitcode.
+        if vm.wait(60) != 0:
+            raise RuntimeError(f"QEMU quit: Exitcode {vm.returncode}")
         guest.log("Snapshot gespeichert")
         # shortcut: zwei gleichzeitige Aufrufe bauen denselben Snapshot doppelt; der zweite ersetzt den ersten.
         base.parent.mkdir(parents=True, exist_ok=True)
