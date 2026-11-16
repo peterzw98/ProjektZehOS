@@ -54,25 +54,41 @@ public sealed class CosmosVirtioEntropyDriver : Driver
         // 2000 x 50 us: QEMU antwortet in Mikrosekunden, ein haengendes Geraet blockiert die Ereignisschleife hoechstens 100 ms.
         private const int Polls = 2000;
         private const uint PollMicroseconds = 50;
+        private const int BusyWaitMilliseconds = 250;
 
         private int busy;
         private volatile bool broken;
 
         internal bool TryFill(byte[] bytes)
         {
-            // Die Virtqueue ist nicht threadsicher; ein paralleler Aufruf scheitert, statt zu warten.
-            if (broken || Interlocked.CompareExchange(ref busy, 1, 0) != 0) return false;
-            bool filled;
+            // Die Virtqueue ist nicht threadsicher. Kennwortarbeit, TLS und Wasm-Apps laufen auf eigenen Threads;
+            // ein zweiter Aufruf wartet deshalb begrenzt (laenger als eine Anfrage hoechstens dauert), statt zu scheitern.
+            for (int wait = 0; Interlocked.CompareExchange(ref busy, 1, 0) != 0; wait++)
+            {
+                if (wait >= BusyWaitMilliseconds) return false;
+                Thread.Sleep(1);
+            }
+            bool filled = false;
+            if (!broken)
+            {
+                try
+                {
+                    filled = Fill(bytes);
+                }
+                catch (Exception)
+                {
+                    // Etwa eine abgebaute Bindung; ohne finally (Cosmos 3.0.94), daher Freigabe unten.
+                    filled = false;
+                }
+            }
             try
             {
-                filled = Fill(bytes);
-                // Keine Zufallsbytes im DMA-Puffer zuruecklassen.
+                // Keine Zufallsbytes im DMA-Puffer zuruecklassen, auch nicht nach einem Teilfehler.
                 buffer.Span.Clear();
             }
             catch (Exception)
             {
-                // Etwa eine abgebaute Bindung; ohne finally (Cosmos 3.0.94), daher Freigabe unten.
-                filled = false;
+                // Der Puffer gehoert nach dem Abbau der Bindung schon nicht mehr dem Treiber.
             }
             Volatile.Write(ref busy, 0);
             return filled;
