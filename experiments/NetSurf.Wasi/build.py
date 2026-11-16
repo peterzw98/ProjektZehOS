@@ -219,7 +219,8 @@ def main() -> int:
     header = (source / "netsurf/content/handlers/javascript/duktape/duktape.h").read_text(encoding="utf-8").splitlines()
     start = header.index("/* LICENSE.txt */")
     end = header.index(" */", header.index("/* AUTHORS.rst */"))
-    text = [line[3:] if line.startswith(" * ") else line.lstrip(" *") for line in header[start:end]
+    # Die Blöcke sind mit " *  " eingerückt; ohne diesen Rand bleiben die Aufzählungen (" * Name") erhalten.
+    text = [line[4:] if line.startswith(" *  ") else line[3:] for line in header[start:end]
             if not line.startswith(("/*", " */"))]
     (licenses / "duktape-LICENSE.txt").write_text("\n".join(line.rstrip() for line in text) + "\n", encoding="utf-8")
     # Texte, die weder NetSurf noch wasi-sdk mitliefern (PSL unter MPL-2.0, statisch gelinkte wasi-libc und compiler-rt).
