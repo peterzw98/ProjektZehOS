@@ -176,7 +176,7 @@ public sealed class ShellSafetyTests
             while(!shell.Poll(output)) Assert.IsTrue(watch.Elapsed<TimeSpan.FromSeconds(10),"Kennwortarbeit endet nicht.");
             return output.Text;
         }
-        StringAssert.Contains(Run(new HardwareRandomUnavailableException()),"CPU ohne RDRAND/RDSEED");
+        StringAssert.Contains(Run(new HardwareRandomUnavailableException()),"Ohne RDRAND/RDSEED/virtio-rng");
         string other=Run(new InvalidOperationException("geheim-kennwort"));
         StringAssert.Contains(other,"Kennwortoperation fehlgeschlagen");
         Assert.IsFalse(other.Contains("geheim-kennwort",StringComparison.Ordinal),"Ausnahmetext darf nicht erscheinen.");

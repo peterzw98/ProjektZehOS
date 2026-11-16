@@ -117,4 +117,37 @@ public sealed class HardwareRandomTests
             Assert.ThrowsException<CryptographicException>(() => HardwareRandom.Fill(bytes, false, true, Broken, stuck), constant.ToString("x", System.Globalization.CultureInfo.InvariantCulture));
         }
     }
+
+    [TestMethod]
+    public void WorkingCpuDoesNotAskDevice()
+    {
+        var bytes = new byte[4];
+        HardwareRandom.Fill(bytes, b => b[0] = 1, _ => throw new AssertFailedException("Geraet darf nicht gefragt werden."));
+        Assert.AreEqual(1, bytes[0]);
+    }
+
+    [TestMethod]
+    public void MissingOrFailingCpuFallsBackToDevice()
+    {
+        foreach (CryptographicException failure in new CryptographicException[] { new HardwareRandomUnavailableException(), new("nicht bereit") })
+        {
+            var bytes = new byte[4];
+            HardwareRandom.Fill(bytes, _ => throw failure, b => { b.AsSpan().Fill(7); return true; });
+            CollectionAssert.AreEqual(new byte[] { 7, 7, 7, 7 }, bytes);
+        }
+    }
+
+    [TestMethod]
+    public void WithoutDeviceTheCpuErrorRemains()
+    {
+        Assert.ThrowsException<HardwareRandomUnavailableException>(() => HardwareRandom.Fill(new byte[4], _ => throw new HardwareRandomUnavailableException(), _ => false));
+        var other = Assert.ThrowsException<CryptographicException>(() => HardwareRandom.Fill(new byte[4], _ => throw new CryptographicException("nicht bereit"), _ => false));
+        Assert.IsNotInstanceOfType<HardwareRandomUnavailableException>(other);
+    }
+
+    [TestMethod]
+    public void OtherCpuErrorsAreNotHidden()
+    {
+        Assert.ThrowsException<InvalidOperationException>(() => HardwareRandom.Fill(new byte[4], _ => throw new InvalidOperationException(), _ => true));
+    }
 }

@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 
 namespace ProjektZeh.Security;
 
-/// <summary>Die CPU bietet weder RDSEED noch RDRAND; ohne andere gepruefte Quelle sind Salts und TLS gesperrt.</summary>
+/// <summary>Die CPU bietet weder RDSEED noch RDRAND und kein virtio-rng springt ein; Salts und TLS sind dann gesperrt.</summary>
 internal sealed class HardwareRandomUnavailableException : CryptographicException
 {
     public HardwareRandomUnavailableException() : base("RDSEED/RDRAND fehlt.") { }
@@ -23,6 +23,20 @@ internal static class HardwareRandom
         bool random = maximumLeaf >= 1 && (cpuId(1, 0).Ecx & 0x40000000) != 0;
         bool seed = maximumLeaf >= 7 && (cpuId(7, 0).Ebx & 0x40000) != 0;
         return (seed, random);
+    }
+
+    /// <summary>Fuellt bytes aus der CPU; fehlt sie oder versagt sie, fuellt das Geraet (virtio-rng) den ganzen Puffer neu.</summary>
+    internal static void Fill(byte[] bytes, Action<byte[]> cpu, Func<byte[], bool> device)
+    {
+        try
+        {
+            cpu(bytes);
+        }
+        catch (CryptographicException)
+        {
+            // Ohne Ersatzquelle bleibt der urspruengliche Fehler sichtbar, etwa fuer die Meldung im Anmeldefenster.
+            if (!device(bytes)) throw;
+        }
     }
 
     /// <summary>Fuellt bytes wortweise; versagt RDSEED trotz Wiederholungen, uebernimmt RDRAND den Rest des Aufrufs.</summary>

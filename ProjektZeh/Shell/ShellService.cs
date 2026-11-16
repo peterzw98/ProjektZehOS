@@ -139,7 +139,7 @@ internal sealed partial class ShellService
                 try { completion = work(); }
                 catch (HardwareRandomUnavailableException)
                 {
-                    completion = () => ResultErr.CreateFailure(ResultCode.Failure, "CPU ohne RDRAND/RDSEED: Kontoanlage und Kennwortaenderung nicht moeglich.");
+                    completion = () => ResultErr.CreateFailure(ResultCode.Failure, "Ohne RDRAND/RDSEED/virtio-rng keine Kontoanlage oder Kennwortaenderung.");
                 }
                 catch (Exception)
                 {
