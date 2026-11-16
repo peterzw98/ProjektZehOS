@@ -27,11 +27,14 @@ internal sealed class PackageManifest
     public string Name { get; }
     public string Entry { get; }
     public bool AllowsNetwork { get; }
+    /// <summary>Niedrigste ZehOS-Version, deren Hostfunktionen das Paket braucht; null, wenn jede Version genuegt.</summary>
+    public UpdateVersion? MinimumKernel { get; }
     public PackageFile[] Files { get; }
     public byte[] Bytes { get; }
 
-    private PackageManifest(string id, UpdateVersion version, string name, string entry, bool allowsNetwork, PackageFile[] files, byte[] bytes) =>
-        (Id, Version, Name, Entry, AllowsNetwork, Files, Bytes) = (id, version, name, entry, allowsNetwork, files, bytes);
+    private PackageManifest(string id, UpdateVersion version, string name, string entry, bool allowsNetwork, UpdateVersion? minimumKernel,
+        PackageFile[] files, byte[] bytes) =>
+        (Id, Version, Name, Entry, AllowsNetwork, MinimumKernel, Files, Bytes) = (id, version, name, entry, allowsNetwork, minimumKernel, files, bytes);
 
     public static ResultObject<PackageManifest> Parse(byte[] bytes)
     {
@@ -49,6 +52,15 @@ internal sealed class PackageManifest
         if (!Field(lines[5], "entry", out string entry)) return Invalid("Einstiegspunkt fehlt.");
         bool allowsNetwork = lines.Length > 6 && lines[6] == "capability=net";
         int fileStart = allowsNetwork ? 7 : 6;
+        // Kernel vor 0.3.0 kennen diese Zeile nicht und verwerfen das Manifest als ungueltige Dateizeile. Das ist gewollt:
+        // Sie installieren dann kein Paket, das bei ihnen nicht startet, und der Katalog bleibt fuer sie lesbar.
+        UpdateVersion? minimumKernel = null;
+        if (lines.Length > fileStart && Field(lines[fileStart], "min-kernel", out string kernelText))
+        {
+            if (!UpdateVersion.TryParse(kernelText, out var required)) return Invalid("Ungueltige Mindest-Kernelversion.");
+            minimumKernel = required;
+            fileStart++;
+        }
         int count = lines.Length - fileStart - 2;
         if (count < 0) return Invalid("Manifestende fehlt.");
         if (count > MaximumFiles) return Invalid("Mehr als 128 Dateien.");
@@ -71,7 +83,7 @@ internal sealed class PackageManifest
         if (lines[^2] != "end") return Invalid("Manifestende fehlt.");
         if (!entry.EndsWith(".wasm", StringComparison.Ordinal) || Array.FindIndex(files, file => file.Path == entry) < 0)
             return Invalid("Einstiegspunkt ist keine gelistete Wasm-Datei.");
-        return ResultObjectFactory.CreateSuccess(new PackageManifest(id, version, name, entry, allowsNetwork, files, bytes));
+        return ResultObjectFactory.CreateSuccess(new PackageManifest(id, version, name, entry, allowsNetwork, minimumKernel, files, bytes));
     }
 
     public static bool IsValidId(string id)

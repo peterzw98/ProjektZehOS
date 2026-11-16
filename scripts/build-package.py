@@ -2,7 +2,7 @@
 """Erzeugt signierte ZehOS-Pakete und den Repositorykatalog (Format: docs/PACKAGE_FORMAT.md).
 
   keygen <Ordner>                         neues Ed25519-Schluesselpaar: private.pem und public.b64
-  package --key K --repo R --id I --version V --name N --entry E QUELLE=ZIEL ...
+  package --key K --repo R --id I --version V --name N --entry E [--network] [--min-kernel X.Y.Z] QUELLE=ZIEL ...
   catalog --key K --repo R --generation G hoechste Version je Paket in R/catalog(.sig)
 
 Der private Schluessel bleibt ausserhalb des Repositorys. Signiert wird mit OpenSSL (pkeyutl -rawin), wie bei
@@ -52,6 +52,8 @@ def version_key(text: str) -> tuple[int, ...]:
 def package(args: argparse.Namespace) -> None:
     if not ID.match(args.id) or not VERSION.match(args.version):
         raise ValueError("Ungueltige Kennung oder Version.")
+    if args.min_kernel is not None and not VERSION.match(args.min_kernel):
+        raise ValueError("Ungueltige Mindest-Kernelversion.")
     if not (1 <= len(args.name) <= 32 and args.name == args.name.strip() and all(" " <= c <= "~" for c in args.name)):
         raise ValueError("Anzeigename: 1-32 druckbare ASCII-Zeichen.")
     files: dict[str, Path] = {}
@@ -70,6 +72,8 @@ def package(args: argparse.Namespace) -> None:
     lines = ["zehos-package 1", f"id={args.id}", f"version={args.version}", "runtime=zehos-wasm32-v1", f"name={args.name}", f"entry={args.entry}"]
     if args.network:
         lines.append("capability=net")
+    if args.min_kernel is not None:
+        lines.append(f"min-kernel={args.min_kernel}")
     for name in sorted(files):
         data = files[name].read_bytes()
         lines.append(f"file={hashlib.sha256(data).hexdigest()} {len(data)} {name}")
@@ -114,6 +118,7 @@ def main() -> int:
     for name in ("--id", "--version", "--name", "--entry"):
         build.add_argument(name, required=True)
     build.add_argument("--network", action="store_true", help="Netzwerkzugriff im signierten Manifest erlauben")
+    build.add_argument("--min-kernel", help="niedrigste ZehOS-Version X.Y.Z, deren Hostfunktionen das Paket braucht")
     build.add_argument("files", nargs="+", help="QUELLE=ZIELPFAD im Paket")
     index = commands.add_parser("catalog")
     index.add_argument("--key", type=Path, required=True)

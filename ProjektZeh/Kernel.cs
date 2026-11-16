@@ -44,7 +44,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
     private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
     // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
-    private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild());
+    private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild(), CurrentVersion);
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;

@@ -27,6 +27,7 @@ version=1.0.0
 runtime=zehos-wasm32-v1
 name=Doom
 entry=doom.wasm
+min-kernel=0.3.0
 file=<sha256 klein> <bytes> <pfad>
 ...
 end
@@ -38,6 +39,13 @@ end
 - `file`: höchstens 128 Zeilen, ordinal nach Pfad sortiert, zusammen höchstens 128 MiB. Pfadkomponenten bestehen nur aus `A–Z a–z 0–9 . _ -`, Trenner ist `/`. Abgelehnt werden leere Komponenten, `.`, `..`, abschließende Punkte und Pfade, die sich nur in Groß-/Kleinschreibung unterscheiden (FAT32).
 - `entry`: eine der gelisteten Dateien, Endung `.wasm`.
 - `capability=net`: optionale einzelne Zeile direkt nach `entry`; sie erlaubt Netzwerkzugriff über `zehos_v1`. Ohne diese Zeile ist der Zugriff gesperrt. Unbekannte oder wiederholte Fähigkeiten werden abgelehnt. Die Berechtigung umfasst auch localhost und private LAN-Ziele, schließt TLS über `ZEHOS_NET_TLS` ein und ist von der Paketsignatur gedeckt. Das Paketwerkzeug setzt sie mit `--network`.
+- `min-kernel`: optionale einzelne Zeile nach `entry` beziehungsweise nach `capability=net`, mit der niedrigsten ZehOS-Version (drei Dezimalzahlen), deren Hostfunktionen das Paket braucht. Als Wert dient die Version, die den neuesten verwendeten Import eingeführt hat (etwa 0.2.22 für `pointer_capture`). Das Paketwerkzeug setzt die Zeile mit `--min-kernel X.Y.Z`. Ab ZehOS 0.3.0 gilt: Ist der laufende Kernel älter als der Wert, lehnt `pkg install`/`pkg upgrade` die Version mit „… braucht ZehOS X.Y.Z oder neuer“ ab, bevor eine Datei geladen wird; die installierte Version bleibt unverändert. Auch der Start einer installierten Version wird mit dieser Meldung verweigert.
+
+  Kernel vor 0.3.0 kennen das Feld nicht und verwerfen **jedes** Manifest mit dieser Zeile als ungültig („Ungueltige Dateizeile“), unabhängig vom Wert. Der Katalog bleibt für sie lesbar. Folgen auf solchen Kerneln:
+
+  - Sie installieren und aktualisieren das Paket nicht; `pkg list` zeigt dauerhaft das Update an.
+  - Führt der Katalog nur noch diese Version, lässt sich das Paket dort auch nicht mehr neu installieren.
+  - Nach einer Rückstufung auf einen solchen Kernel (etwa über den Starteintrag der vorherigen Version) gilt eine schon installierte Version als beschädigt. Sie verschwindet aus Startmenü und `pkg list` und lässt sich nur mit `pkg remove <id>` entfernen.
 
 Die Signatur deckt genau die gespeicherten Bytes ab; ZehOS serialisiert Manifeste nie neu.
 
@@ -95,11 +103,11 @@ Vorher muss IPv4 konfiguriert sein (`net dhcp`). Ergebnisse von Hintergrundauftr
 
 ```bash
 python scripts/build-package.py keygen <Schlüsselordner>
-python scripts/build-package.py package --key <Schlüsselordner>/private.pem --repo <repo> --id doom --version 1.0.0 --name Doom --entry doom.wasm <doom.wasm>=doom.wasm <freedoom1.wad>=freedoom1.wad
+python scripts/build-package.py package --key <Schlüsselordner>/private.pem --repo <repo> --id doom --version 1.1.0 --name Doom --entry doom.wasm --min-kernel 0.2.22 <doom.wasm>=doom.wasm <freedoom1.wad>=freedoom1.wad
 python scripts/build-package.py catalog --key <Schlüsselordner>/private.pem --repo <repo> --generation 1
 ```
 
-Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen sind unveränderlich; eine Änderung braucht eine neue Version und eine höhere Katalog-Generation.
+Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen sind unveränderlich; eine Änderung braucht eine neue Version und eine höhere Katalog-Generation. Der Katalog führt je Paket nur die höchste Version; ältere Versionsordner bleiben im Repository liegen, werden aber nicht mehr angeboten.
 
 ## Server und Prüfstand
 
@@ -107,10 +115,10 @@ Das öffentliche Repository liegt unter `https://packages.pjoter.de/`. Ausgelief
 
 Geprüft am 15. November 2026 in QEMU mit `scripts/test-wasm-doom-desktop.py`. VMware und echte Hardware sind nicht geprüft.
 
-Das Skript baut aus dem Doom-Testrepository (`--repo`) ein eigenes Repository mit der kleinen App `scripts/guest-testapp` (1.0.0, im Upgrade-Repository 1.1.0) und signiert es mit dem Testschlüssel (`--key`). Die Paketlogik (`remove`, `reboot`, `upgrade`, `corrupt`) läuft mit dieser App in Sekunden statt mit dem 28-MB-Doom. Doom wird einmal über HTTPS installiert und im Szenario `full` gespielt. Unter TCG richtet eine Vorbereitungs-VM Konto, Netz und Katalog ein, installiert Doom und speichert den Zustand (`savevm`). Alle Szenarien starten dann parallel aus Kopien dieses Snapshots. Er liegt je ISO und Repository unter `.tools/guest-snapshots` und wird wiederverwendet.
+Das Skript baut aus dem Doom-Testrepository (`--repo`) ein eigenes Repository mit der kleinen App `scripts/guest-testapp` (1.0.0, im Upgrade-Repository 1.1.0) und signiert es mit dem Testschlüssel (`--key`). Die Paketlogik (`remove`, `reboot`, `upgrade`, `corrupt`, `minkernel`) läuft mit dieser App in Sekunden statt mit dem 28-MB-Doom. Doom wird einmal über HTTPS installiert und im Szenario `full` gespielt. Unter TCG richtet eine Vorbereitungs-VM Konto, Netz und Katalog ein, installiert Doom und speichert den Zustand (`savevm`). Alle Szenarien starten dann parallel aus Kopien dieses Snapshots. Er liegt je ISO und Repository unter `.tools/guest-snapshots` und wird wiederverwendet.
 
 ```powershell
-# Schneller Satz für jede Änderung (remove, upgrade, corrupt)
+# Schneller Satz für jede Änderung (remove, upgrade, corrupt, minkernel)
 py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --key <private.pem> --tls <tls>
 # Vollständig vor dem Pull Request, mit Speicherprüfung über zehn Doom-Starts
 py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --key <private.pem> --tls <tls> --scenario all --starts 10
@@ -138,6 +146,7 @@ Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden)
 | `reboot`: Neustart mit Anmeldung | testapp bleibt installiert und startet |
 | `upgrade`: Katalog-Generation G+1, `pkg upgrade` | `testapp 1.1.0 aktualisiert`, startet in der Farbe von 1.1.0 |
 | `corrupt`: Server liefert veränderte `testapp.wasm` | „Pruefsumme falsch: testapp.wasm“, nichts installiert |
+| `minkernel`: testapp 1.1.0 mit `min-kernel=99.0.0`, `pkg upgrade` (16. November 2026, TCG, Kernel 0.3.0) | „testapp 1.1.0 braucht ZehOS 99.0.0 oder neuer; laufender Kernel ist 0.3.0.“, 1.0.0 bleibt installiert und startet. `pkg list` zeigt weiter „Update 1.1.0“, weil der Katalog keine Mindestversion enthält |
 
 Seit der Umstellung auf testapp prüft das Skript nicht mehr: das Upgrade eines großen Pakets (28 MB neben der alten Version), einen Prüfsummenfehler in einer großen gestreamten Datei und die Neuinstallation von Doom über das Netz nach dem Entfernen. Diese Pfade nutzen denselben Code wie bei testapp. Frühere Doom-Ergebnisse (ebenfalls 15. November 2026, TCG): Installation von packages.pjoter.de mit normal gebautem Kernel in 120 s; zehn Starts mit je 30 s Laufzeit, frei 416 → 414 MiB; `doom 1.1.0 aktualisiert`; „Pruefsumme falsch: freedoom1.wad“.
 
