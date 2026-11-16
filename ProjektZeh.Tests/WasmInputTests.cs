@@ -159,7 +159,7 @@ public sealed class WasmInputTests
     public void CapturedRawMotionContinuesAtEdgeWithoutDuplicatingPositionDelta()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(100, 100, 100, 100);
+        SetViewport(input, 100, 100, 100, 100);
         input.SetCapture(true);
         input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 8, DeltaY: -2, HasRawMotion: true));
         input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 9, DeltaY: 1, HasRawMotion: true));
@@ -171,7 +171,7 @@ public sealed class WasmInputTests
     public void CapturedMixedTabletAndRawMotionKeepsBothAndDoesNotInventMotion()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(100, 100, 100, 100);
+        SetViewport(input, 100, 100, 100, 100);
         input.SetCapture(true);
         input.Handle(new(InputEventType.PointerMove, X: 40, Y: 40));
         input.Handle(new(InputEventType.PointerMove, X: 99, Y: 40, DeltaX: 1,

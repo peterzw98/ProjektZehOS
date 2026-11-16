@@ -67,7 +67,7 @@ Fensterwechsel, F4 und Schließen geben den Zeiger frei; bei eingefangenem Zeige
 kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
 Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
 eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen).
-Relative PS/2-Mauspakete bleiben beim Zeigerfang auch am Rand des Gastbildschirms als Deltas erhalten. Bei absoluten
+Ab ZehOS 0.5.2 bleiben relative PS/2-Mauspakete beim Zeigerfang auch am Rand des Gastbildschirms als Deltas erhalten. Bei absoluten
 Tablets entstehen Deltas weiterhin aus Bildschirmpositionen; ihre Bewegung endet am Gastbildschirm- beziehungsweise
 Hostfensterrand. Der Desktopzeiger bleibt sichtbar.
 

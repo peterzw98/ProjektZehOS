@@ -158,7 +158,7 @@ Der Import schreibt genau vier Little-Endian-`i32` (`type, code, x, y`, 16 Byte)
 1 bei einem Ereignis, 0 ohne Ereignis, -1 bei Hostfehler. Ein ungültiger Gastbereich trappt vor
 Entnahme. Fokusverlust/Überlauf melden Reset; Skalierung und Zentrierung werden zurückgerechnet.
 Seit 0.2.22 fängt `zehos_v1.pointer_capture(on) -> i32` den Zeiger ein; dann kommen Bewegungen als
-relativer Typ 9. PS/2-Rohbewegungen bleiben am Gastbildschirmrand erhalten; absolute Tablets bleiben auf ihre Positionsgrenzen beschränkt. Esc, Fokusverlust und Schließen geben ihn frei. Das erste Esc bei Zeigerfang erreicht die App; ein weiteres Esc führt zur Textshell. F4 wechselt jederzeit zur Textshell.
+relativer Typ 9. Ab 0.5.2 bleiben PS/2-Rohbewegungen am Gastbildschirmrand erhalten; absolute Tablets bleiben auf ihre Positionsgrenzen beschränkt. Esc, Fokusverlust und Schließen geben ihn frei. Das erste Esc bei Zeigerfang erreicht die App; ein weiteres Esc führt zur Textshell. F4 wechselt jederzeit zur Textshell.
 Seit 0.5.1 meldet Typ 10 die Größe des Fensterinhalts.
 Die vollständige Typentabelle und die Grenze normalisierter Tastencodes stehen in
 [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md#was-eine-app-vom-kernel-bekommt).
