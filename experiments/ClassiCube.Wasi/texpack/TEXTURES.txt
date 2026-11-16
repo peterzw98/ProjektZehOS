@@ -1,0 +1,96 @@
+Freies Texturpaket fuer ClassiCube auf ZehOS
+==========================================
+
+Enthaelt keine Grafiken von Mojang, minecraft.net oder classicube.net und nichts aus ClassiCubes misc/.
+Erzeugt mit build_texpack.py aus den unten genannten Quellen (SHA-256 je Datei in sources.sha256).
+
+
+default.png (Schrift, 128x128, 16x16 Zeichen zu 8x8 Pixeln, weiss auf transparent)
+------------------------------------------------------------------------------------
+Quelle: font8x8 von Daniel Hepper, Datei font8x8_basic.h,
+        https://github.com/dhepper/font8x8, Commit 8e279d2d864e79128e96188a6b9526cfa3fbfef9
+Lizenz: Public Domain (laut Dateikopf; Vorlage: Marcel Sondaar und die gemeinfreien IBM-VGA-Schriften)
+Aenderung: Bitmuster als ClassiCube-Schriftbild angeordnet (Zeichencode = Zelle, Codes 0-127).
+
+
+terrain.png (Blockatlas, 256x256, 16x16 Kacheln zu 16x16 Pixeln)
+------------------------------------------------------------------
+Lizenz von terrain.png: Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+https://creativecommons.org/licenses/by-sa/3.0/
+terrain.png ist eine Bearbeitung der unten genannten Minetest-Game-Texturen und steht deshalb selbst unter
+CC BY-SA 3.0. Die ZehOS-Paketsignatur weist nur die Herkunft nach und schraenkt Nutzung und Weitergabe nicht ein.
+
+Quelle: Minetest Game, https://github.com/minetest/minetest_game, Commit 9e895af6e9feb98332fa1a778001442f5669bc20
+Urheber laut den license.txt der jeweiligen Mods:
+  mods/default: celeron55 (Perttu Ahola), Cisoun, G4JC, VanessaE, RealBadAngel, Calinou, MirceaKitsune, Jordach,
+                PilzAdam, jojoa1997, InfinityProject, Splizard, Zeg9, paramat, BlockMen, sofar, Neuromancer, Gambit,
+                asl97, KevDoy, Mito551, GreenXenith, kaeza, kilbith, tobyplowy, CloudyProton, TumeniNodes,
+                Mossmanikin, random-geek, Extex101, An0n3m0us, Lopano (Copyright 2010-2023)
+  mods/wool:    Cisoun (2012-2016)
+  mods/flowers: RHRhino (2014-2016), Gambit (2015-2016), yyt16384 (2016), paramat (2017)
+  mods/tnt:     BlockMen (2014-2016), ShadowNinja (2014-2016), Wuzzy (2015-2016), sofar (2016), paramat (2018)
+  mods/fire:    Perttu Ahola (celeron55) (2012-2016), Muadtralk (2012-2016), Gambit (2013-2016)
+
+Aenderungen insgesamt: Kacheln aus Einzeldateien zu einem Atlas in ClassiCubes Kachelanordnung zusammengesetzt.
+Zusaetzlich je Kachel wie in der Tabelle angegeben (getoent = Farbwerte mit einer festen Farbe multipliziert).
+
+Kachel  ClassiCube-Verwendung          Quelle (Mod/Datei)                         Aenderung
+0       Gras oben                      default/default_grass.png                  -
+1       Stein                          default/default_stone.png                  -
+2       Erde                           default/default_dirt.png                   -
+3       Gras Seite                     default/default_grass_side.png             ueber default_dirt.png gelegt
+4       Holz                           default/default_wood.png                   -
+5       Stufe Seite                    default/default_stone_brick.png            -
+6       Stufe oben/unten               default/default_stone_block.png            -
+7       Ziegel                         default/default_brick.png                  -
+8-10    TNT Seite/oben/unten           tnt/tnt_side.png, tnt_top.png, tnt_bottom.png -
+11      Seil                           eigene Zeichnung (ZehOS, CC0)              -
+12      Rose                           flowers/flowers_rose.png                   -
+13      Loewenzahn                     flowers/flowers_dandelion_yellow.png       -
+14      Wasser                         default/default_water.png                  -
+15      Setzling                       default/default_sapling.png                -
+16      Bruchstein                     default/default_cobble.png                 -
+17      Grundgestein                   default/default_stone.png                  dunkel getoent
+18      Sand                           default/default_sand.png                   -
+19      Kies                           default/default_gravel.png                 -
+20      Stamm Seite                    default/default_tree.png                   -
+21      Stamm oben/unten               default/default_tree_top.png               -
+22      Laub                           default/default_leaves.png                 -
+23,39,55 Eisenblock                    default/default_steel_block.png            -
+24,40,56 Goldblock                     default/default_gold_block.png             -
+25,41,57 Sandstein                     default/default_sandstone.png              -
+26,42,58 Saeule                        default/default_desert_stone_block.png     -
+28      roter Pilz                     flowers/flowers_mushroom_red.png           -
+29      brauner Pilz                   flowers/flowers_mushroom_brown.png         -
+30      Lava                           default/default_lava.png                   -
+32      Golderz                        default/default_mineral_gold.png           ueber default_stone.png gelegt
+33      Eisenerz                       default/default_mineral_iron.png           ueber default_stone.png gelegt
+34      Kohleerz                       default/default_mineral_coal.png           ueber default_stone.png gelegt
+35      Buecherregal                   default/default_bookshelf.png              -
+36      bemooster Stein                default/default_mossycobble.png            -
+37      Obsidian                       default/default_obsidian.png               -
+38      Feuer                          fire/fire_basic_flame.png                  Schwarz durchsichtig gemacht
+48      Schwamm                        wool/wool_white.png                        gelb getoent
+49      Glas                           default/default_glass.png                  -
+50      Schnee                         default/default_snow.png                   -
+51      Eis                            default/default_ice.png                    -
+52      Steinziegel                    default/default_stone_brick.png            -
+53      Kiste                          default/default_wood.png                   braun getoent
+54      Keramikfliese                  default/default_stone_block.png            hell getoent
+64-68   Wolle rot/orange/gelb/hellgruen/gruen  wool/wool_red, wool_orange, wool_yellow, wool_green, wool_dark_green -
+69,70   Wolle petrol/aqua              wool/wool_white.png                        getoent
+71,72   Wolle cyan/blau                wool/wool_cyan.png, wool_blue.png          -
+73      Wolle indigo                   wool/wool_white.png                        getoent
+74-79   Wolle violett/magenta/rosa/schwarz/grau/weiss  wool/wool_violet, wool_magenta, wool_pink, wool_black, wool_grey, wool_white -
+80,81   hellrosa/waldgruen             wool/wool_white.png                        getoent
+82      braun                          wool/wool_brown.png                        -
+83,84   tiefblau/tuerkis               wool/wool_white.png                        getoent
+86      Magma                          default/default_lava.png                   orange getoent
+
+Alle anderen Kacheln sind transparent.
+
+
+Noch nicht enthalten
+--------------------
+gui.png, icons.png, particles.png, clouds.png, char.png und weitere Dateien fehlen in diesem Stand.
+Fuer char.png kommt Minetests mods/player_api (character.png, CC BY-SA 3.0, eigene license.txt) in Frage.
