@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Spielt Eingabeszenarien über den Linux-Prüfhost ab und prüft das letzte Bild anhand der Markerfarben der Testseiten.
 
-Aufruf vom Repository-Stamm: python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm <iwasm> --host <libzehos_host.so>
+Aufruf vom Repository-Stamm: python3 experiments/NetSurf.Wasi/host/run_tests.py --wasm3 <zehos-wasm3>
+(gleicher wasm3-Kern wie ZehOS) oder optional --iwasm <iwasm> --host <libzehos_host.so> (WAMR, nur Legacy-EH).
 Voraussetzung: build.py ist gelaufen. Ereignisse folgen dem poll_event-ABI: <ms> <typ> <code> <x> <y>.
 Die Klickpositionen gelten für die Startseite im 798×519-Bild (oben links ausgerichtet wie im 632×392-Bild davor). HTTP-Szenarien laden Seiten von einem lokalen Testserver
 über das Netz-ABI des Prüfhosts.
@@ -425,9 +426,17 @@ def colours(path: Path) -> set[tuple[int, int, int]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iwasm", type=Path, required=True)
-    parser.add_argument("--host", type=Path, required=True)
+    parser.add_argument("--wasm3", type=Path, help="Prüfhost aus zehos_host_wasm3.c")
+    parser.add_argument("--iwasm", type=Path, help="optional: WAMR iwasm, zusammen mit --host")
+    parser.add_argument("--host", type=Path, help="optional: libzehos_host.so für --iwasm")
     args = parser.parse_args()
+    if (args.wasm3 is None) == (args.iwasm is None) or (args.iwasm is None) != (args.host is None):
+        parser.error("entweder --wasm3 oder --iwasm mit --host angeben")
+    if args.wasm3 is not None:
+        command = [str(args.wasm3), str(PACKAGE), str(PACKAGE / "netsurf.wasm")]
+    else:
+        command = [str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
+                   "--stack-size=1048576", str(PACKAGE / "netsurf.wasm")]
     failures = 0
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TestServer)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -447,9 +456,7 @@ def main() -> int:
             env["ZEHOS_TLS_CA"] = str(fixtures["ca"])
             if name != "http-ohne-berechtigung":
                 env["ZEHOS_NET"] = "1"
-            run = subprocess.run([str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
-                                  "--stack-size=1048576", str(PACKAGE / "netsurf.wasm")],
-                                 env=env, capture_output=True, text=True, timeout=60)
+            run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
             seen = colours(frame) if frame.exists() else set()
             problems = []
             if run.returncode != 0:
