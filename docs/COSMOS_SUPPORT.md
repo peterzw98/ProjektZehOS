@@ -2,6 +2,18 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Cosmos 3.0.97 am 16. November 2026
+
+ZehOS 0.5.4 wechselt von Cosmos 3.0.94 auf **3.0.97** (SDK `Cosmos.Sdk/3.0.97`, `Cosmos.Kernel`, `Cosmos.Kernel.System`, CI-/Release-Werkzeuge `Cosmos.Tools`/`Cosmos.Patcher` 3.0.97). Die Standard-`CCCompilerFlags` sind unverändert, die wasm3-Ergänzung bleibt gültig. Freigabe durch Peter am 16. November 2026; Änderungsliste `v3.0.94...v3.0.97` (129 Commits) geprüft, Tabelle im Pull Request.
+
+- **finally beim Unwind:** Seit 3.0.95 ruft der Dispatcher `finally`-/`fault`-Funclets auf und hält seinen Zustand je Thread (Upstream #3319, #3330). Der Threadprobe-Build (`-p:ZehOSThreadProbe=true`) meldet unter QEMU/KVM `MESSAGES_FINALLY plain=1 using=1 lock-released=1 thread=1` und `MESSAGES_CLEANUP first-finally=1 second-finally=1 remaining=0 caught=2` (3.0.94: `0`/`0`/`2`); `THREAD_PROBE PASS`. Die bisherige Regel „kein finally“ entfällt; die Umwege werden in einem eigenen Schritt zurückgebaut.
+- **uACPI statt LAI:** uACPI bringt eigenen PCI-Konfigurationszugriff (Mechanismus 1 und ECAM, mit maskierten Interrupts). Der ZehOS-Ersatz `Native/Acpi/pci_host.c` für die LAI-Hostfunktionen und sein C-Test entfallen; sie würden nicht mehr linken. QEMU: `reboot` und `shutdown` (Exitcode 0) im Normal- und Recovery-Build. VMware Workstation (UEFI, ohne Datenlaufwerk): fünf Starts mit gebundener PS/2-Tastatur, `reboot` bis zum erneuten Desktop, `shutdown` schaltet jetzt aus (`[ACPI-PM] Entering S5`); unter 3.0.94 hielt die VM in `_PTS(5)` an. Die VMware-CPUID-Kalibrierung greift unverändert (TSC 3,072 GHz, LAPIC 4125 Ticks/ms).
+- **CD-ROM als Blockgerät:** Das AHCI-ATAPI-Laufwerk erscheint als `cdrom0` (2048-Byte-Sektoren). `/data` bleibt auf `sata0`; der Installer zeigt das Setup-ISO nicht als Ziel an.
+- **Energiehelfer:** `scripts/test-power-commands.ps1` tippt in die Textshell, der Normalbuild startet aber auf dem Desktop; der Ablauf scheitert deshalb auch mit 3.0.94. Geprüft wurde mit einem gleichwertigen Python-Ablauf (gleiche QEMU-Argumente einschließlich `.cosmos/config.json`), beim Normalbuild mit vorherigem F4. `pwsh` ist auf dem Prüfrechner nicht installiert; GDB nicht geprüft.
+- **Release:** `scripts/build-release.sh` baut Live-ISO, Setup-ISO, Kernel und Manifest. Der Pfadscan findet außer den bekannten fünf festen Upstream-Pfaden drei weitere derselben Art aus vorgebauten Cosmos-Assemblies (`Scheduler/ConditionVariable.cs`, `InterruptEvent.cs`, `Mutex.cs`), die einzeln ausgenommen sind; uACPI-Quellen hinterlassen keine Pfade. Der Limine-EFI-Lader ist in 3.0.94 und 3.0.97 bytegleich.
+- **Weitere Gastprüfungen (QEMU 10.2.2, KVM):** Boot, Desktop, Administratoranlage, DHCP, HTTPS-Katalog von packages.pjoter.de, virtio-rng ohne RDRAND/RDSEED, Installer (Assistent bis „Installation abgeschlossen“, Plattenstart ohne ISO bis Desktop und Kontoanlage). APPS_PLACEHOLDER
+- **Unverändert übernommen:** Der eigene `memcmp`-Ersatz der Wasm-libc bleibt (die uACPI-Hilfen leiten weiter auf `__cosmos_memcmp`). Netzwerk-, Tastatur- und Zeitumwege wurden nicht zurückgebaut; Break-Ereignisse, `MouseManager.HandleAbsolute` und das Freigeben von Thread-Stacks ändern sich laut Änderungsliste nicht.
+
 ## DHCP ohne Server am 16. November 2026
 
 Vor Einbau der Automatik: normaler nativer Releasebuild und gesonderter Sicherheits-Recovery-Build, QEMU TCG, E1000e mit Socket-Netz ohne Gegenstelle (Link vorhanden, kein DHCP-Server), neue isolierte 64-MiB-Testplatte. `net dhcp` endete mit `DHCP hat keine IPv4-Adresse geliefert.` nach rund 6,9 s einschließlich Tasteneingabe. Anschließend setzte `net static` erfolgreich eine Adresse; die Sperre blieb frei. `-nic user,restrict=on` wäre dafür ungeeignet, weil QEMU weiterhin DHCP anbietet.
@@ -121,7 +133,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 ## Referenzumgebung
 
-Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standard-VGA und PS/2-Tastatur/-Maus. Limine fordert **1024×768×32** an; die tatsächliche Bildschirmgröße wurde im Gast geprüft. Der vorhandene QEMU-Start über Cosmos bleibt verwendbar. Für Dateiprüfungen wurde eine separate Kopie des vorhandenen 64-MiB-AHCI-Datenimages verwendet.
+Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standard-VGA und PS/2-Tastatur/-Maus. Limine fordert **1024×768×32** an; die tatsächliche Bildschirmgröße wurde im Gast geprüft. Der vorhandene QEMU-Start über Cosmos bleibt verwendbar. Für Dateiprüfungen wurde eine separate Kopie des vorhandenen 64-MiB-AHCI-Datenimages verwendet.
 
 ## Verwendete Schnittstellen
 
@@ -155,7 +167,7 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 - Die Desktop-Schleife verarbeitet Anwendungen kooperativ; die feste Thread-Anbindung aus 6a ermöglicht daneben präemptive Hintergrundaufgaben mit Abbruch. Laufwerksinitialisierung und Dateioperationen bleiben synchron und können die Desktop-Schleife während ihrer Ausführung anhalten.
 - Fenster und Terminal laufen gemeinsam im Kernel. Größenänderung, Minimieren, Prozessisolation und fremde Programme sind nicht implementiert. Der Desktop begrenzt offene Fenster auf acht und die Ausgabe je Terminal auf 256 umgebrochene Zeilen. Beim Ansichtswechsel wird die Textkonsolenausgabe geleert; offene Terminals sowie Zeilenentwurf und Verlauf beider Ansichten bleiben erhalten.
 - VMware ist für die Thread-/Warteprobe seriell geprüft. Visuelle Bedienung in VMware, echte Hardware, USB-Eingabe und mehrere CPUs wurden für diese Erweiterung nicht geprüft.
-- Cosmos 3.0.94 überspringt beim Exception-Unwind teilweise verschachtelte `finally`-Blöcke. Zwei gezielt abgebrochene Worker erreichten ihre äußeren Cancellation-Catches, aber keines der inneren Finally-Abschlussflags (`first-finally=0 second-finally=0 remaining=2 caught=2`). Reguläre Demo-Abbrüche verwenden deshalb Rückgabewerte statt Exceptions; die Aufgabenverwaltung bereinigt auch nach abgefangenen Workerfehlern auf einem expliziten normalen Fortsetzungspfad. Dies ist keine Garantie für beliebige fremde Exception-/Ressourcenpfade.
+- Bis Cosmos 3.0.94 (behoben ab 3.0.95, siehe oben): Beim Exception-Unwind wurden verschachtelte `finally`-Blöcke übersprungen. Zwei gezielt abgebrochene Worker erreichten ihre äußeren Cancellation-Catches, aber keines der inneren Finally-Abschlussflags (`first-finally=0 second-finally=0 remaining=2 caught=2`). Reguläre Demo-Abbrüche verwenden deshalb Rückgabewerte statt Exceptions; die Aufgabenverwaltung bereinigt auch nach abgefangenen Workerfehlern auf einem expliziten normalen Fortsetzungspfad. Dies ist keine Garantie für beliebige fremde Exception-/Ressourcenpfade.
 
 ## Nachprüfung
 
