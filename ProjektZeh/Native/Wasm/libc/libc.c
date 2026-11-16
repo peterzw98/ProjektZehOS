@@ -1,5 +1,5 @@
 // ZehOS: minimale C-Laufzeit fuer den statisch gebundenen wasm3-Kern.
-// floor(f), ceil(f), trunc(f) und sqrt(f) stellt Cosmos 3.0.94 bereits bereit; sie werden nicht erneut definiert.
+// floor(f), ceil(f), trunc(f) und sqrt(f) stellt Cosmos bereits bereit; sie werden nicht erneut definiert.
 // memcpy, memmove, memset und memcmp kommen standardkonform aus Cosmos (siehe string.h).
 
 #include <stddef.h>
