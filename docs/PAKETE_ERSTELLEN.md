@@ -40,7 +40,7 @@ das Loslassen einer gemeldeten Taste aber nie, damit keine Taste in der App hän
 | 7 | Mausrad; `code` = Schritte, positiv aufwärts, negativ abwärts, `x/y` wie oben |
 | 8 | Eingabe zurücksetzen; `code=x=y=0`, alle gehaltenen Tasten/Maustasten verwerfen |
 | 9 | relative Zeigerbewegung bei eingefangenem Zeiger; `code=0`, `x/y` = Pixel seit dem letzten Ereignis (rechts/unten positiv) |
-| 10 | Fenstergröße; `code=0`, `x/y` = Breite/Höhe des Fensterinhalts in Pixeln, höchstens 1920×1200. Seit ZehOS @RESIZE_VERSION@ |
+| 10 | Fenstergröße; `code=0`, `x/y` = Breite/Höhe des Fensterinhalts in Pixeln, je Achse auf 1920 bzw. 1200 begrenzt (größere Fenster passt der Kernel ein). Seit ZehOS @RESIZE_VERSION@ |
 
 Wiederholte Tastendrücke kommen erneut als Typ 1, Text zusätzlich als Typ 3. Pfeile verwenden 72/75/77/80,
 Entf 83, AltGr 96. Ein E0-Merkmal steht nicht zur Verfügung; Ziffernblock und Navigation können denselben
@@ -54,7 +54,7 @@ außerhalb des Fensters bis zum letzten Loslassen oder Reset. Die App bestimmt d
 Typ 10 meldet die Größe des Fensterinhalts beim ersten Zeichnen und nach jeder Änderung; mehrere Änderungen
 zwischen zwei Abfragen ergeben eine Meldung mit der letzten Größe, Reset und Überlauf verwerfen sie nicht. Eine App,
 die danach Bilder in dieser Größe liefert, wird 1:1 gezeichnet. Apps ohne Typ 10 (oder ältere Kernel) behalten ihre
-feste Größe. Bis das nächste Bild kommt, gilt für Zeigerkoordinaten das zuletzt gezeichnete. Der Kernel passt das Bild
+feste Größe. Bis das nächste Bild kommt, gelten Zeigerkoordinaten weiter für das zuletzt gezeichnete Bild; die App kann solche Ereignisse nicht von späteren unterscheiden. Der Kernel passt das Bild
 seitentreu in den Fensterinhalt ein (nächster Nachbar, vergrößernd wie verkleinernd, Rest schwarz); Mauspositionen
 kommen in Bildkoordinaten an. Scharf, also 1:1, ist es nur bei genau passender Größe: Ein Paketfenster öffnet mit
 798×519 Inhalt.

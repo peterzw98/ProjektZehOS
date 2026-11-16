@@ -222,7 +222,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
                 if (paused) frameTimes.Restart(now);
                 else frameReport = frameTimes.Record(now);
             }
-            if (frame.Length != pixels.Length) frame = new uint[pixels.Length];
+            // Nur wachsen: Folgt eine App der Fenstergroesse, aendert sich das Bild beim Ziehen fast jedes Mal.
+            if (frame.Length < pixels.Length) frame = new uint[pixels.Length];
             pixels.CopyTo(frame);
             frameWidth = width;
             frameHeight = height;

@@ -217,9 +217,11 @@ def main():
         def small(x, y):
             return 33 + x, 120 + y
 
+        # In Schritten ziehen: jede Zwischengroesse erreicht NetSurf als neues Bild (wachsender Bildpuffer im Kernel).
         point(829,637)
         button("left",True)
-        point(669,517)
+        for step in range(1, 9):
+            point(829-20*step,637-15*step)
         button("left",False)
         page("paketminimum", "d8ecff")
         click(*small(284,13))
