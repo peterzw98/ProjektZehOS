@@ -18,6 +18,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\CosmosWasmNetwork.cs" Link="Runtime\Wasm\CosmosWasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmNetwork.cs" Link="Runtime\Wasm\WasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameTimes.cs" Link="Runtime\Wasm\WasmFrameTimes.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameProfile.cs" Link="Runtime\Wasm\WasmFrameProfile.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmImageFit.cs" Link="Runtime\Wasm\WasmImageFit.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
