@@ -6,6 +6,7 @@
  * Zertifikatsfehler lassen sich nicht übergehen; eine Weiterleitung von HTTPS auf HTTP folgt nur nach Klick.
  * Unverschlüsselte Unterressourcen einer HTTPS-Seite (Mixed Content) werden ohne Rückfrage blockiert.
  * Ein Formular von einer HTTPS-Seite an ein http://-Ziel geht erst nach Bestätigung auf einer Warnseite raus.
+ * Diese Warnseite kommt als Weiterleitung auf eine data:-URL, damit History und Cache nie die Ziel-URL enthalten.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,6 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <libwapcaplet/libwapcaplet.h>
+#include <nsutils/base64.h>
 
 #include "utils/corestrings.h"
 #include "utils/log.h"
@@ -83,7 +85,7 @@ struct http_fetch {
 	size_t request_len;
 	size_t sent;
 	char *location;
-	char *page;             /* lokal erzeugte Warnseite statt Netzabruf */
+	char *page;             /* lokal erzeugte Formularwarnung statt Netzabruf, ausgeliefert per data:-Weiterleitung */
 	size_t page_len;
 	char *held;             /* zurückgehaltene Kopfzeilen einer HTTPS-Weiterleitung, je Zeile mit \n */
 	size_t held_len;
@@ -343,6 +345,37 @@ static bool send_downgrade_page(struct http_fetch *f, nsurl *target)
 	return true;
 }
 
+/* Leitet auf f->page als data:-URL um, statt die Warnseite unter der http://-Ziel-URL zu liefern. NetSurf trägt
+ * die URL des Inhalts nach der Weiterleitung in die History ein; Neuladen, Zurück und Vor laden so nur die
+ * data:-Seite und nie das Ziel samt Formularfeldern. llcache verwirft die Cache-Daten des umgeleiteten Objekts,
+ * ein späterer Abruf der Ziel-URL kommt deshalb wieder hier an. */
+static void send_page_redirect(struct http_fetch *f)
+{
+	static const char prefix[] = "data:text/html;charset=utf-8;base64,";
+	uint8_t *encoded = NULL;
+	size_t encoded_len = 0;
+	char *target = NULL;
+	if (nsu_base64_encode_alloc((const uint8_t *)f->page, f->page_len, &encoded, &encoded_len) == NSUERROR_OK
+		&& encoded != NULL) target = malloc(sizeof(prefix) + encoded_len);
+	if (target == NULL) {
+		free(encoded);
+		finish(f, FETCH_ERROR, "Zu wenig Speicher.");
+		return;
+	}
+	memcpy(target, prefix, sizeof(prefix) - 1);
+	memcpy(target + sizeof(prefix) - 1, encoded, encoded_len);
+	target[sizeof(prefix) - 1 + encoded_len] = '\0';
+	free(encoded);
+	// 303, weil llcache nur 301/302/303 ohne POST-Daten folgt; der zurückgehaltene POST bleibt im Fetcher.
+	fetch_set_http_code(f->parent, 303);
+	f->state = ST_FINISHED;
+	fetch_msg msg = { .type = FETCH_REDIRECT };
+	msg.data.redirect = target;
+	// llcache wertet das Ziel im Rückruf sofort aus (nsurl_join), danach wird es nicht mehr gebraucht.
+	if (!f->aborted) send_msg(f, &msg);
+	free(target);
+}
+
 /* Gibt die bei einer HTTPS-Weiterleitung zurückgehaltenen Kopfzeilen an llcache weiter. */
 static void send_held_headers(struct http_fetch *f)
 {
@@ -487,7 +520,8 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 					pending.token, &f->page_len);
 			if (f->page == NULL) pending_clear();
 		} else {
-			// Der Klick auf den Link ist eine neue Navigation ohne Formularmarke und lädt das Ziel.
+			// Der Klick auf den Link ist eine neue Navigation ohne Formularmarke und mit der data:-Seite als
+			// Referer (kein HTTPS, kein Referer-Kopf), deshalb lädt er das Ziel genau einmal.
 			f->page = warning_page("Unverschlüsselter Versand",
 				"Dieses Formular einer sicheren Seite wird unverschlüsselt gesendet an:", url_s, "Trotzdem senden",
 				NULL, &f->page_len);
@@ -587,8 +621,7 @@ static bool step(struct http_fetch *f)
 	switch (f->state) {
 	case ST_OPEN:
 		if (f->page != NULL) {
-			send_local_page(f, f->page, f->page_len);
-			finish(f, FETCH_FINISHED, NULL);
+			send_page_redirect(f);
 			return false;
 		}
 		error = zehos_net_open(f->host, (int32_t)strlen(f->host), f->port, f->tls ? ZEHOS_NET_TLS : 0, &f->handle);

@@ -153,6 +153,8 @@ COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 
 
 REQUESTED: set[str] = set()
+# Jede Anfrage einzeln, damit Szenarien "genau einmal angefragt" prüfen können.
+REQUEST_LOG: list[str] = []
 
 
 REFERERS: list[str] = []
@@ -160,6 +162,7 @@ REFERERS: list[str] = []
 
 def extra_get(handler: TestServer) -> bool:
     REQUESTED.add(handler.path)
+    REQUEST_LOG.append(handler.path)
     REFERERS.append(handler.headers.get("Referer") or "")
     if handler.path == "/marker.css":
         body = b"body{background:#209090}"
@@ -263,6 +266,8 @@ def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHT
 # Formulare von HTTPS an http:// (Entscheidung 7): erst Warnseite, Felder gehen erst nach "Trotzdem senden" raus.
 FORM_SOURCE, FORM_OK = (0x50, 0x50, 0x20), (0x20, 0x70, 0x20)
 CLICK_SUBMIT, CLICK_CONFIRM = (250, 150), (78, 205)
+# Werkzeugleiste "blfsrutc" mit Abstand 2: Zurück 2–24, Verlauf 26–52, Vor 54–76, Stopp 78–104, Neu laden 106–130.
+CLICK_BACK, CLICK_FORWARD, CLICK_RELOAD = (13, 15), (65, 15), (118, 15)
 POSTS: list[tuple[str, str]] = []
 
 
@@ -304,6 +309,8 @@ def hsts_scenarios(port: int) -> list:
 def form_scenarios(good: str, base: str) -> list:
     submit = click(3600, CLICK_SUBMIT)
     confirm = [*submit, *click(4600, CLICK_CONFIRM)]
+    reload = [*submit, *click(4600, CLICK_RELOAD)]
+    back_forward = [*submit, *click(4600, CLICK_BACK), *click(5300, CLICK_FORWARD)]
     return [
         ("https-formular-warnung", address(1500, f"{good}/formular?post&ziel-warnung") + submit, [DOWNGRADE_PAGE], [FORM_OK]),
         ("https-formular-senden", address(1500, f"{good}/formular?post&ziel-senden") + confirm, [FORM_OK], [HTTP_MISSING]),
@@ -313,6 +320,20 @@ def form_scenarios(good: str, base: str) -> list:
         ("https-formular-get-fragment", address(1500, f"{good}/formular?get&ziel-get-warnung-fragment") + submit,
          [DOWNGRADE_PAGE], [FORM_OK]),
         ("https-formular-get-senden", address(1500, f"{good}/formular?get&ziel-get-senden") + confirm,
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        # Neuladen und Zurück/Vor zeigen wieder die Warnung, ohne das Ziel anzufragen (form_checks prüft das Netz).
+        ("https-formular-get-neuladen", address(1500, f"{good}/formular?get&ziel-get-neuladen") + reload,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-get-zurueck-vor", address(1500, f"{good}/formular?get&ziel-get-zurueck") + back_forward,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-neuladen", address(1500, f"{good}/formular?post&ziel-neuladen") + reload,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        # Gegenprobe: Nach dem Neuladen funktioniert die Bestätigung weiter, das Ziel kommt genau einmal an.
+        ("https-formular-get-neuladen-senden",
+         address(1500, f"{good}/formular?get&ziel-get-neu-senden") + reload + click(5300, CLICK_CONFIRM),
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        ("https-formular-neuladen-senden",
+         address(1500, f"{good}/formular?post&ziel-neu-senden") + reload + click(5300, CLICK_CONFIRM),
          [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
         # Eine fremde Seite postet ein erfundenes Token: lokale Fehlerseite, nichts geht ins Netz.
         ("http-formular-falsches-token", address(1500, f"{base}/falsches-token") + submit, [], [FORM_OK, FORM_SOURCE]),
@@ -330,8 +351,18 @@ def form_checks() -> list[str]:
     # Auch über Nebenwege wie den Favicon-Referer dürfen die Felder vor der Bestätigung nicht ankommen.
     if any(path.startswith("/ziel-get-warnung") for path in REQUESTED) or any("ziel-get-warnung?" in r for r in REFERERS):
         problems.append("GET-Formular ohne Bestätigung gesendet")
-    if not any(path.startswith("/ziel-get-senden?") for path in REQUESTED):
-        problems.append("bestätigtes GET-Formular nicht angekommen")
+    # Neuladen und Zurück/Vor dürfen das Ziel weder per GET noch per POST erreichen, auch ohne Felder.
+    for target in ("/ziel-get-neuladen", "/ziel-get-zurueck", "/ziel-neuladen"):
+        if any(path.split("?")[0] == target for path in REQUEST_LOG + paths) or any(f"{target}?" in r for r in REFERERS):
+            problems.append(f"{target} ohne Bestätigung angefragt")
+    # Ein Klick auf die Bestätigung ruft das Ziel genau einmal ab, auch nach Neuladen der Warnseite.
+    for prefix in ("/ziel-get-senden?", "/ziel-get-neu-senden?"):
+        count = sum(path.startswith(prefix) for path in REQUEST_LOG)
+        if count != 1:
+            problems.append(f"bestätigtes GET-Formular {prefix[:-1]} {count}-mal statt einmal angekommen")
+    if paths.count("/ziel-senden") != 1 or POSTS.count(("/ziel-neu-senden", "geheim=wert42")) != 1 \
+            or paths.count("/ziel-neu-senden") != 1:
+        problems.append("bestätigtes POST-Formular nicht genau einmal angekommen")
     if any("zehos_bestaetigung" in body for _, body in POSTS):
         problems.append("Bestätigungstoken ins Netz gelangt")
     return problems

@@ -183,8 +183,12 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   postet nur ein Einmaltoken (16 Byte aus `getentropy`, zeitkonstanter Vergleich). Ein falsches, kurzes oder
   abgelaufenes Token ergibt eine lokale Fehlerseite ohne Netzabruf. GET-Formulare markiert `html/form.c` (Patch);
   die Warnseite verlinkt die GET-URL. Warnseiten laden nichts nach (eigenes Favicon über `resource:`), damit die
-  Ziel-URL nicht vor dem Klick als Referer abfließt. Grenze: Neuladen oder Zurück/Vor zur GET-Warnseite ruft das
-  Ziel ohne erneute Warnung ab.
+  Ziel-URL nicht vor dem Klick als Referer abfließt. Der Fetcher liefert die Warnseite als 303-Weiterleitung auf
+  eine `data:`-URL statt unter der Ziel-URL. NetSurf trägt die URL des Inhalts nach der Weiterleitung in die History
+  ein (`content_get_url` liefert das Zielobjekt von `llcache_fetch_redirect`), und `llcache` verwirft die
+  Cache-Daten des umgeleiteten Objekts. Neuladen und Zurück/Vor laden deshalb nur wieder die Warnung; der Link
+  beziehungsweise das Token darauf löst genau einen Abruf aus. Von der `data:`-Seite sendet NetSurf keinen
+  `Referer`-Kopf, weil das Schema nicht passt (`get_referer_header` in `llcache.c`).
 - HSTS: NetSurfs vorhandenes `urldb` wertet `Strict-Transport-Security` aus HTTPS-Antworten aus und hebt
   `http://`-Adressen solcher Hosts in `llcache` auf HTTPS, nur im Speicher bis zum Beenden. Eine Weiterleitung auf
   so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
