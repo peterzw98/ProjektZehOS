@@ -84,8 +84,12 @@ internal sealed class WasmInputBuffer
         if (captured && value.Type == InputEventType.PointerMove)
         {
             // PS/2-Deltas bleiben auch am Bildschirmrand erhalten; absolute Tablets verwenden Positionsdifferenzen.
-            if (value.DeltaX != 0 || value.DeltaY != 0)
-                Enqueue(new(WasmInputEventType.RelativeMove, 0, value.DeltaX, value.DeltaY));
+            if (value.HasRawMotion)
+            {
+                int dx = (int)Math.Clamp((long)value.DeltaX + (hasPointer ? value.TabletDeltaX : 0), int.MinValue, int.MaxValue);
+                int dy = (int)Math.Clamp((long)value.DeltaY + (hasPointer ? value.TabletDeltaY : 0), int.MinValue, int.MaxValue);
+                if (dx != 0 || dy != 0) Enqueue(new(WasmInputEventType.RelativeMove, 0, dx, dy));
+            }
             else if (hasPointer && (value.X != lastX || value.Y != lastY))
                 Enqueue(new(WasmInputEventType.RelativeMove, 0, value.X - lastX, value.Y - lastY));
             (lastX, lastY, hasPointer) = (value.X, value.Y, true);
@@ -174,7 +178,11 @@ internal sealed class WasmInputBuffer
         // Aufeinanderfolgende relative Bewegungen addieren, damit eine volle Warteschlange keine Drehung verliert.
         if (count > 0 && value.Type == WasmInputEventType.RelativeMove && events[last].Type == value.Type)
         {
-            events[last] = value with { X = events[last].X + value.X, Y = events[last].Y + value.Y };
+            events[last] = value with
+            {
+                X = (int)Math.Clamp((long)events[last].X + value.X, int.MinValue, int.MaxValue),
+                Y = (int)Math.Clamp((long)events[last].Y + value.Y, int.MinValue, int.MaxValue)
+            };
             return;
         }
         if (count == Capacity)

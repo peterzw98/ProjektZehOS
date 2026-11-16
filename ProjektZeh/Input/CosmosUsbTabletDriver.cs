@@ -55,6 +55,7 @@ public sealed class CosmosUsbTabletDriver : Driver
             try
             {
                 CosmosMousePlug.ApplyPending();
+                CosmosMousePlug.RecordTabletMotion(x - MouseManager.X, y - MouseManager.Y);
                 // HandleAbsolute in Cosmos 3.0.94 übernimmt nur die Tasten, nicht die Position.
                 MouseManager.SetPosition(x, y);
                 Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);

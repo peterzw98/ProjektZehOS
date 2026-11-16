@@ -90,7 +90,7 @@ public sealed class InputTests
         var input = new InputService(100, 80);
         input.ReportPointer(99, 40, PointerButtons.None);
         Assert.IsTrue(input.TryRead(out _));
-        input.ReportPointer(99, 40, PointerButtons.None, deltaX: 7, deltaY: -3);
+        input.ReportPointer(99, 40, PointerButtons.None, deltaX: 7, deltaY: -3, hasRawMotion: true);
         Assert.IsTrue(input.TryRead(out var move));
         Assert.AreEqual(InputEventType.PointerMove, move.Type);
         Assert.AreEqual(7, move.DeltaX);

@@ -161,10 +161,34 @@ public sealed class WasmInputTests
         var input = new WasmInputBuffer();
         input.SetViewport(100, 100, 100, 100);
         input.SetCapture(true);
-        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 8, DeltaY: -2));
-        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 9, DeltaY: 1));
+        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 8, DeltaY: -2, HasRawMotion: true));
+        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 9, DeltaY: 1, HasRawMotion: true));
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, 17, -1), Read(input));
         Assert.IsFalse(input.TryRead(out _));
+    }
+
+    [TestMethod]
+    public void CapturedMixedTabletAndRawMotionKeepsBothAndDoesNotInventMotion()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(100, 100, 100, 100);
+        input.SetCapture(true);
+        input.Handle(new(InputEventType.PointerMove, X: 40, Y: 40));
+        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 40, DeltaX: 1,
+            HasRawMotion: true, TabletDeltaX: 58));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, 59, 0), Read(input));
+        input.Handle(new(InputEventType.PointerMove, X: 89, Y: 40, HasRawMotion: true));
+        Assert.IsFalse(input.TryRead(out _), "Gegenlaeufige Rohpakete duerfen keinen Positionsersatz erzeugen.");
+    }
+
+    [TestMethod]
+    public void CapturedRawMotionSaturatesWhenEventsAreCombined()
+    {
+        var input = new WasmInputBuffer();
+        input.SetCapture(true);
+        input.Handle(new(InputEventType.PointerMove, DeltaX: int.MaxValue, HasRawMotion: true));
+        input.Handle(new(InputEventType.PointerMove, DeltaX: 10, HasRawMotion: true));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, int.MaxValue, 0), Read(input));
     }
 
     [TestMethod]

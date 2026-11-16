@@ -16,11 +16,13 @@ public sealed class RelativeMouseBufferTests
         buffer.Add(new(-3, 5, PointerButtons.None, 0));
         Assert.IsTrue(buffer.TryRead(out var second));
         Assert.AreEqual(new RelativeMousePacket(-3, 5, PointerButtons.None, 0), second);
-        buffer.TakeMotion(out int x, out int y, out long lost);
+        buffer.TakeMotion(out int x, out int y, out bool raw, out _, out _, out long lost);
+        Assert.IsTrue(raw);
         Assert.AreEqual(4, x);
         Assert.AreEqual(3, y);
         Assert.AreEqual(0L, lost);
-        buffer.TakeMotion(out x, out y, out lost);
+        buffer.TakeMotion(out x, out y, out raw, out _, out _, out lost);
+        Assert.IsFalse(raw);
         Assert.AreEqual(0, x);
         Assert.AreEqual(0, y);
     }
@@ -31,7 +33,7 @@ public sealed class RelativeMouseBufferTests
         var buffer = new RelativeMouseBuffer();
         for (int i = 0; i < 128; i++) buffer.Add(new(1, 0, PointerButtons.Left, 0));
         buffer.Add(new(2, 0, PointerButtons.None, 0));
-        buffer.TakeMotion(out int x, out _, out long lost);
+        buffer.TakeMotion(out int x, out _, out _, out _, out _, out long lost);
         Assert.AreEqual(128L, lost);
         Assert.AreEqual(2, x);
         Assert.IsTrue(buffer.TryRead(out var packet));

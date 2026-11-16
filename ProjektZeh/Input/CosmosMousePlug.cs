@@ -37,7 +37,10 @@ public static class CosmosMousePlug
         }
     }
 
-    internal static void TakeMotion(out int x, out int y, out long dropped) => packets.TakeMotion(out x, out y, out dropped);
+    internal static void RecordTabletMotion(int x, int y) => packets.AddTabletMotion(x, y);
+
+    internal static void TakeMotion(out int x, out int y, out bool hasRaw, out int tabletX, out int tabletY, out long dropped) =>
+        packets.TakeMotion(out x, out y, out hasRaw, out tabletX, out tabletY, out dropped);
 
     [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "<X>k__BackingField")]
     private static extern ref int X([UnsafeAccessorType(MouseType)] object? owner);
