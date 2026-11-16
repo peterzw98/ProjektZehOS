@@ -40,10 +40,11 @@ Kernel-ISO von `master` 61bc0be (ZehOS 0.5.3; dieser Branch ändert keinen Kerne
 | WHPX, alleinige VM | 5,0–5,1 | 139–180 ms | 15–45 ms | 0 ms | 2–7 ms | 320 ms (220 ms) |
 | WHPX, parallel zu einer TCG-VM | 6,2–6,3 | 111–140 ms | 16–33 ms | 0 ms | 2–12 ms | 738 ms (463 ms) |
 | WHPX, Blick in Steinboden nach Blockänderung | 3,8–5,7 | 157–235 ms | 13–18 ms | 0 ms | 2–3 ms | – |
+| WHPX, Kernel 0.5.7 mit Cosmos 3.0.97, Rechner durch andere Builds/VMs ausgelastet | 1,8–3,9 | 141–470 ms | 44–67 ms | 0–1 ms | 19–45 ms | – |
 | TCG, alleinige VM | 1,1–1,2 | 607–655 ms | 0 ms | 2–5 ms | 192–232 ms | 15 674 ms (6 434 ms) |
 | TCG, unter Wasser (Wasserfläche über das ganze Bild) | 0,2–0,3 | 2 198–2 985 ms | 253–304 ms | 0 ms | 307–473 ms | – |
 
-Jeder Lauf erzeugt eine andere Zufallswelt; die Werte hängen deshalb auch vom Blickfeld ab. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 70–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
+Jeder Lauf erzeugt eine andere Zufallswelt; die Werte hängen deshalb auch vom Blickfeld ab. Alle Zeilen außer der mit 0.5.7 liefen auf dem ISO von `master` 61bc0be (Cosmos 3.0.94). Die Werte schwanken stark mit der Last auf dem Entwicklungsrechner; belastbar ist vor allem das Verhältnis der Anteile. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 70–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
 
 ## Grenzen
 
