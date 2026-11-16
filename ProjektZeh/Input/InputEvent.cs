@@ -17,4 +17,5 @@ internal enum PhysicalKey : byte
 
 internal readonly record struct InputEvent(InputEventType Type, byte KeyCode = 0,
     char Character = '\0', int X = 0, int Y = 0, PointerButtons Button = PointerButtons.None,
-    bool IsRepeat = false, bool IsTextKey = false, int ScrollDelta = 0);
+    bool IsRepeat = false, bool IsTextKey = false, int ScrollDelta = 0,
+    int DeltaX = 0, int DeltaY = 0);

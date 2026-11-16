@@ -84,4 +84,17 @@ public sealed class InputTests
         Assert.IsTrue(input.TryRead(out var reset));
         Assert.AreEqual(InputEventType.Reset, reset.Type);
     }
+    [TestMethod]
+    public void RawMotionIsReportedEvenWhenPointerIsClampedAtEdge()
+    {
+        var input = new InputService(100, 80);
+        input.ReportPointer(99, 40, PointerButtons.None);
+        Assert.IsTrue(input.TryRead(out _));
+        input.ReportPointer(99, 40, PointerButtons.None, deltaX: 7, deltaY: -3);
+        Assert.IsTrue(input.TryRead(out var move));
+        Assert.AreEqual(InputEventType.PointerMove, move.Type);
+        Assert.AreEqual(7, move.DeltaX);
+        Assert.AreEqual(-3, move.DeltaY);
+    }
+
 }

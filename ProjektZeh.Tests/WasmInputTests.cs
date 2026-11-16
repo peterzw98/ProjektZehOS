@@ -156,6 +156,18 @@ public sealed class WasmInputTests
     }
 
     [TestMethod]
+    public void CapturedRawMotionContinuesAtEdgeWithoutDuplicatingPositionDelta()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(100, 100, 100, 100);
+        input.SetCapture(true);
+        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 8, DeltaY: -2));
+        input.Handle(new(InputEventType.PointerMove, X: 99, Y: 50, DeltaX: 9, DeltaY: 1));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.RelativeMove, 0, 17, -1), Read(input));
+        Assert.IsFalse(input.TryRead(out _));
+    }
+
+    [TestMethod]
     public void EscapeResetAndReleaseEndCaptureAndRestoreAbsolutePointer()
     {
         var input = new WasmInputBuffer();

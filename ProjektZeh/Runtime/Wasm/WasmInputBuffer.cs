@@ -83,8 +83,10 @@ internal sealed class WasmInputBuffer
 
         if (captured && value.Type == InputEventType.PointerMove)
         {
-            // Deltas aus Bildschirmpositionen: ein absolutes Zeigegeraet (QEMU-/VMware-Tablet) endet am Bildschirmrand.
-            if (hasPointer && (value.X != lastX || value.Y != lastY))
+            // PS/2-Deltas bleiben auch am Bildschirmrand erhalten; absolute Tablets verwenden Positionsdifferenzen.
+            if (value.DeltaX != 0 || value.DeltaY != 0)
+                Enqueue(new(WasmInputEventType.RelativeMove, 0, value.DeltaX, value.DeltaY));
+            else if (hasPointer && (value.X != lastX || value.Y != lastY))
                 Enqueue(new(WasmInputEventType.RelativeMove, 0, value.X - lastX, value.Y - lastY));
             (lastX, lastY, hasPointer) = (value.X, value.Y, true);
             return;
