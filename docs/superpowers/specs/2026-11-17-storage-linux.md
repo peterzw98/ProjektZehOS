@@ -43,6 +43,8 @@ Im tatsächlichen Paket vorhanden:
 
 Wichtige Grenzen aus der Binärinspektion: ext2 legt in den betrachteten Create-Pfaden UID/GID zunächst als 0 an. Der Formatter verwendet 32-Bit-Blockzähler; aus dem Formatnamen folgt keine beliebige Plattengröße. Der VFS löst vorhandene Symlinks auf und begrenzt Linkverfolgung auf acht Schritte. Eine reine Prüfung des ursprünglichen Pfadtexts reicht deshalb für Sicherheitsgrenzen nicht aus. Das sind Codebefunde, keine Gasttestergebnisse. Rechte, Link-Erzeugung, Zeitattribute, Fehlerwege, Root-Mount und virtuelle Treiber sind gezielt im integrierten 3.0.97-Gast zu prüfen.
 
+Nachprüfung des IRC-Reviews am selben 3.0.97-Paket: Der Formatter wählt bei 4096-Byte-Blöcken 2048 Blöcke je Gruppe (16384 Gruppen bei 128 GiB), setzt kein `sparse_super` und schreibt im untersuchten Ablauf nur den primären Superblock/Gruppendeskriptortisch. Ob sein Ergebnis `e2fsck -fn` besteht, ist deshalb eine ausdrückliche Go/No-Go-Bedingung unmittelbar nach Formatierung, noch vor jedem Gastschreiben. `Ext2Superblock.TryCreate` liest Featureflags, lehnt unbekannte Incompat-/RoCompat-Bits im betrachteten Pfad aber nicht ab. Vor jedem Mount ist deshalb ein geprüfter Featurevertrag nötig: unbekannte Incompat-Bits verweigern, unbekannte RoCompat-Bits nur dann read-only zulassen, wenn Lesen nachweislich sicher ist; niemals blind schreiben. Der Dateischreibpfad setzt `SizeHigh`, ergänzt aber dort kein `large_file`-Featureflag. Bis zur erfolgreichen gesonderten Prüfung gelten maximal **2 GiB minus 1 Byte je Datei** als konservatives Freigabelimit. Das ist eine vorläufige Implementierungsgrenze, keine ext2-Formatgrenze. Zeitstempelsetzen und Link-Erzeugung über `System.IO` bleiben ungeprüft und dürfen nicht aus internen VFS-Funktionen abgeleitet werden.
+
 ## Kandidaten und Empfehlung
 
 | Kandidat | Nutzen | Aufwand und Grenze | Entscheidungsvorschlag |
@@ -79,6 +81,7 @@ An der üblichen Unix-Aufteilung orientiert, ohne vollständige FHS-Konformität
 ├── usr/share/licenses/    Lizenzen/Komponentenliste
 ├── usr/src/               optional mitgelieferte Quellen, kein Zugriff aufs Host-Repository
 ├── var/lib/zehos/         Paketbestand, Kataloge und dauerhafter Systemzustand
+│   └── apps/<id>/        reservierter instanzgebunden abzusichernder App-Zustand
 ├── var/log/               begrenzte persistente Protokolle
 ├── var/cache/zehos/       löschbare Downloads/Caches
 ├── run/                   flüchtiger Laufzeitzustand, begrenzter RAM-Speicher
@@ -131,6 +134,10 @@ Der Kernel bleibt kompiliert. Die tatsächlich gestartete Kernel-Binärdatei kan
 ## Migration und Freigabe
 
 Keine In-place-Konvertierung und kein automatisches Formatieren beim Boot. Bestands-FAT bleibt erhalten, Migration erfolgt auf eine neue Platte mit Protokoll und Rückfallweg. Zuerst nur lesend inventarisieren, freien Platz prüfen, dann Dateien, Konten/ACLs, Paketvertrauen und Konfiguration übernehmen und gegenprüfen. Unterbrechung darf niemals eine neue Administrator-Ersteinrichtung über bestehende Konten auslösen.
+
+Bei heutigen Installationen liegen Bootartefakte und Daten gemeinsam auf der FAT-ESP. Für die Migration ist deshalb eine zweite, neue Platte mit dem Ziel-Layout nötig; der Installer-Layoutteil muss vor der Root-Migration fertig sein. Ist das ext2-Root nicht einhängbar, startet eine unabhängig von ext2 verfügbare Recovery von FAT/ISO, ohne Konto-Neuanlage und ohne Schreibzugriff auf das defekte Root. Gerätesuche darf weder `sata0` noch den VMware-Standardcontroller voraussetzen: Das derzeitige VMware-Profil ist ohne Datenplatte; ein geprüftes AHCI-/NVMe-Profil und explizite Geräte-/Partitionsauswahl gehören vor die VMware-Speicherabnahme.
+
+Parallel geplanter App-Schreibspeicher (ClassiCube-Etappe 13.4) wird vor seiner Freigabe mit dieser Pfadentscheidung abgeglichen: Ziel `/var/lib/zehos/apps/<id>`, zusätzliche Benutzer-/Instanztrennung nach dessen Sicherheitsvertrag. Ein gegebenenfalls schon implementierter `/data`-Pfad erhält eine explizite Migration. Dieser Plan erweitert selbst keine Wasm-Schreibrechte und setzt die App-Erweiterung nicht voraus.
 
 Vorgeschlagene Zuordnung: `/data/home` → `/home`, Sicherheitsdaten → geschütztes `/etc/zehos`, Paketablage → `/var/lib/zehos/packages`, persönliche Desktopeinstellungen → jeweiliges `.config/zehos`, Bootartefakte → EFI-Partition. Sonstige Benutzerdateien erhalten einen explizit protokollierten Zielort unter `/mnt/legacy-data` bzw. einem übernommenen Datenverzeichnis. Keine stillen Überschreibungen. Pfadkonflikte und ungültige Metadaten stoppen die Freigabe.
 

@@ -29,6 +29,12 @@
 4. Virtuelle Datei mit Länge 0 und dynamischem Inhalt: begrenzt bis EOF lesen, konsistente Teilreads, kein Hängen.
 5. Unmount-/Flushfehler oder offener Handle: Energieaktion abbrechen und Shell bedienbar halten.
 
+## Abhängigkeiten und IRC-Unterstützung
+
+Auf Benutzerwunsch beginnt die Codeumsetzung erst nach Merge des Cosmos-Updates #117 und des Planungs-PRs #118. Umsetzungshilfe und unabhängiges Endreview sind im IRC angefragt; vor Arbeitsbeginn Helfer, Dateien, Branches und Abnahme ausdrücklich vereinbaren. IRC-Hinweise werden am owning source geprüft, sie ersetzen keine eigene Bewertung.
+
+Reihenfolge: **1 → 2 (ext2 nur isoliert) → 3 → 7a (Installer-Layout und ext2-unabhängige Recovery) → 4 → 5/6 → 7b (Updates/Energieaktionen) → 8**. Etappe 7 wird deshalb in zwei überprüfbare Lieferstände aufgeteilt. Große Datenplatten allein brauchen die Root-Migration nicht. App-Schreibspeicher ist ein paralleler Auftrag, dessen Pfade vor seiner Aktivierung abzustimmen sind.
+
 ## Etappe 1: Eignung von 3.0.97 und ext2 nachweisen
 
 **Dateien:** neu `docs/STORAGE_3_0_97_FINDINGS.md`, `scripts/test-storage-filesystems.py`, `scripts/tests/test_storage_filesystems.py`; experimenteller Gastadapter erst nach API-Abgleich unter `experiments/StorageProbe/`. Keine neue Produktionsabhängigkeit.
@@ -37,7 +43,10 @@
 - [ ] Vorhandene Cosmos-Verträge `IVfsFileSystemType`, `IVfsSuperblock`, `IVfsInode`, Datei-/Inodeoperationen und Gpt aus genau diesem Paket auslesen. Root-Mount, nested Mounts, Sichtbarkeit von Mountpunkten bei Enumeration und read-only testen.
 - [ ] Tests des Imagehelfers zuerst schreiben und rot ausführen: vorhandener Zielpfad bleibt byteidentisch, ungültige Größe wird vor jedem Schreibzugriff verweigert, Größenberechnung für 128 GiB ist exakt `137438953472` Byte. Danach minimal implementieren; `python -m unittest discover -s scripts/tests -p test_storage_filesystems.py` muss grün sein.
 - [ ] Ausschließlich neue sparse/qcow2-Testimages für 32/64/128 GiB verwenden. 512-Byte-Sektoren, GPT + FAT32-ESP + ext2; ext2 zunächst mit 4096-Byte-Blöcken. Host-Formatter und Cosmos-Formatter getrennt prüfen, Featureflags dokumentieren.
+- [ ] Jedes frisch formatierte ext2-Image unmittelbar und vor Gastschreibzugriff mit `e2fsck -fn` prüfen. Formatter-Superblockkopien/Gruppenlayout ausdrücklich untersuchen; Fehler bedeutet No-Go für diesen Formatter, kein automatisches Reparieren und Weiterverwenden. Hostformatierung ist nur mit unabhängig geprüftem Featurevertrag eine Alternative.
+- [ ] Feature-Allowlist aus tatsächlich unterstützten 3.0.97-Funktionen ableiten und Tests mit unbekannten Incompat-/RoCompat-Bits ergänzen: unbekanntes Incompat muss vor Mount scheitern, unbekanntes RoCompat vor jedem Schreiben; RO nur bei belegtem sicherem Lesen. Nicht unterstützte Features dürfen nicht durch Setzen eines Mountflags als gelöst gelten.
 - [ ] Im Gast Create/Read/Write/Append/Seek/Rename/Delete/Mkdir/Rmdir, Unicode-Namen, Case-Unterschiede, Symlinks, Zeitwerte, freie Blöcke/Inodes, read-only und ENOSPC prüfen. Größe/Offets über 2 GiB prüfen; eine Datei über 4 GiB als Fähigkeitsprobe separat protokollieren, kein pauschales Freigabeversprechen.
+- [ ] Zunächst höchstens `2147483647` Byte je Datei freigeben; Grenzüberschreitung muss ohne Metadatenkorruption verweigert werden. Größere Dateien nur in der isolierten Probe zusammen mit `large_file`-Flag, Wiederöffnung und Offlineprüfung untersuchen. Ergebnisse zum Größen-Highword allein heben die Grenze nicht auf.
 - [ ] Nach Flush, Unmount und Neustart Inhalte/Hashes prüfen; Offlineprüfung `e2fsck -fn <isoliertes-ext2-Partitionsimage>` ohne Reparatur. Identisches Vorgehen unter QEMU und VMware; fehlende Werkzeuge als offen melden.
 - [ ] Fehler-/Abbruchfälle auf Kopien prüfen, Speicherverbrauch und Dauer messen. Für ext2, Formatter und VFS jeweils Go/No-Go dokumentieren. Bei Fehlschlag Folgeetappen anhalten und Ursache bzw. Alternative neu entwerfen; kein stiller exFAT-/ext4-Port.
 
@@ -48,6 +57,7 @@
 **Dateien:** `scripts/start-qemu.ps1`, `scripts/start-vmware.ps1`, `ProjektZeh/Storage/{CosmosStorageService,IStorageService,StorageDeviceInfo}.cs`, `ProjektZeh/Shell/FileShellCommands.cs` (tatsächlichen disk-Aufrufer erneut prüfen), neue gezielte Hosttests; README.
 
 - [ ] Alle Storage-Aufrufer und VM-Tests erfassen. Bestehende Parameter/Befehle erhalten; explizite Auswahl eines vorhandenen größeren Images ergänzen. Ohne neue Option bleibt das alte Bestandsimage unverändert der Standard.
+- [ ] Festes `sata0` beim Boot und das bisher plattenlose VMware-Profil berücksichtigen: explizite sichere Geräteauswahl, separater AHCI-/NVMe-Testdatenträger mit geprüftem Controller. Keine Annahme, VMware-Standard-SCSI werde von Cosmos erkannt. Zeitbudget anhand der beobachteten I/O-Stapelgröße messen statt 128 GiB vollständig ohne Anlass zu lesen.
 - [ ] Tests zuerst: Bestandsimage mit Prüfsumme unangetastet; >32-Bit-Bytegrößen korrekt anzeigen; mehrere Partitionen einschließlich ESP eindeutig auswählen; unbekanntes/ungültiges Format nicht schreibend „probieren“.
 - [ ] Unterstützten Mountpfad für FAT aus Etappe 1 ergänzen. ext2 in dieser Etappe ausschließlich in der isolierten Probe anbieten; allgemeine Einbindung und Aktivierung erst nach bestandener Etappe 3. Datenpartition über gespeicherte Identität/Layout auswählen, nicht über `partitions[0]` oder ausschließlich wechselnde Gerätenamen.
 - [ ] Hosttests `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`; VM-Helfertests und `scripts/test-power-commands.ps1` nach Startkonfigurationsänderung ausführen.
@@ -76,6 +86,8 @@
 - [ ] ext2 als `/` einhängen, darunter echte Mountpunkte für `/boot`, `/dev`, `/proc`, `/sys` und spätere Fremdplatten bereitstellen. RAM-Backends für `/run` und `/tmp` nur mit Kapazitäts-/Benutzergrenzen; nach Neustart leer.
 - [ ] Normale Benutzer starten in `/home/<name>`, persönliche Konfiguration wandert nach `.config/zehos`. Kein künstliches root-Konto anlegen; `/usr/bin` nur für tatsächlich vorhandene Starter befüllen.
 - [ ] Paketvertrauen, Updatepfade, unbekannte Dateien und Daten außerhalb der bisherigen ACL-Verwaltung separat prüfen. Dokumentation und relevante Tests umstellen; vollständige Host- und Gastprüfung, danach committen.
+- [ ] Vor Beginn muss Etappe 7a abgenommen sein: zweite neue Platte mit Ziel-Layout und funktionierender FAT-/ISO-Recovery bei nicht einhängbarem ext2-Root. Fehlende Root-Platte oder beschädigte Root-Metadaten dürfen niemals Konto-Ersteinrichtung auslösen.
+- [ ] Mit dem App-Speicher-Auftrag (ClassiCube 13.4) Pfad `/var/lib/zehos/apps/<id>`, Benutzer-/Instanztrennung und Migration eventuell vorhandener `/data`-App-Daten abstimmen. Keine neuen Wasm-Rechte allein durch die Root-Migration vergeben.
 
 **Ergebnis:** Durchgängiger neuer Dateibaum mit überprüfter Rückfallmöglichkeit, kein Layout allein aus leeren Ordnern.
 
@@ -104,6 +116,8 @@
 **Ergebnis:** Geräte sind echte Streams; Hardwarezugriff wird nicht durch bloße Sichtbarkeit allgemein freigegeben.
 
 ## Etappe 7: Installer, Updates und Energieaktionen
+
+**7a vor Etappe 4:** Layout/Formatierung, Bootpfade und unabhängig vom ext2-Root startbare Recovery einschließlich Fehlertests. **7b nach Etappen 4–6:** Updates, Flush-/Unmount-Reihenfolge und vollständige Energieabnahme.
 
 **Dateien:** `ProjektZeh/Installer/{CosmosInstallService,InstallService,InstallJob}.cs`, `Update/`, `Kernel.cs`, betroffene `Install*Tests`, `Update*Tests`, `scripts/test-power-commands.ps1` und Gastprüfskripte.
 
