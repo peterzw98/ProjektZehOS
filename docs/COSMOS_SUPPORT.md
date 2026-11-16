@@ -130,7 +130,7 @@ Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standa
 | Eigene Ereignisse | `InputService` trennt KeyDown, KeyUp und Text; Mausbewegung und Maustasten haben eigene Ereignisse. Zustände sind abfragbar. |
 | Begrenzung | Je 256 Einträge für Rohdaten und eigene Ereignisse; pro Runde höchstens 64 rohe Tastenereignisse. Bei Überlauf werden wartende Ereignisse verworfen, verlorene Ereignisse gezählt und ein Reset löst gehaltene Tasten. |
 | Interruptschutz | Das Lesen des Rohpuffers und der gemeinsame Snapshot von Mausposition und Tasten verwenden `SchedulerManager.MaskInterrupts()`. Nur für diese kleinen Bereiche wird die zugehörige Experimental-Warnung der festgelegten Version ausgenommen. |
-| Maus | `MouseManager` liefert Position und drei Tastenzustände; `SetScreenSize` und `InputService` begrenzen die Position. Bewegung, Drücken/Loslassen und Bildschirmränder sind im Gast geprüft. |
+| Maus | `MouseManager.HandleRelative` begrenzt die Positionswerte vor dem Auslesen. ZehOS puffert daher PS/2-Rohpakete über einen Plug und führt die Cosmos-Aktualisierung beim Poll beziehungsweise vor absoluten Tabletberichten aus. Relative Bewegungen stehen beim Zeigerfang unabhängig vom Gastbildschirmrand zur Verfügung. |
 | USB-Tablet | Cosmos 3.0.94 besitzt keinen absoluten Zeigertreiber; `MouseManager.HandleAbsolute` übernimmt nur die Tasten, nicht X/Y. Ein projekteigener Treiber für das QEMU-USB-Tablet setzt die skalierte Position über `SetPosition` und meldet die Tasten über den Pointer-Sink. Position und Bedienung wurden im QEMU-Gast geprüft; VMware ist offen. |
 | Monotone Zeit | `Stopwatch.GetTimestamp`/Frequenz sind in der installierten x64-Version an TSC und dessen Kalibrierung gebunden. Fortschreitende Statuszeit ohne Eingabe wurde im Gast geprüft. `Environment.TickCount64` wird nicht verwendet: Die installierte Laufzeit zählt dort Aufrufe statt Millisekunden. |
 | Kurze Pause | `Thread.Sleep(1)` am Ende jeder Runde. `TimerManager.Wait(1)` nutzte im QEMU-Referenzgast einen 18-Hz-Timer und begrenzte dadurch Eingabe und Bildausgabe auf etwa 15–16 FPS. Die bereits geprüfte Scheduler-Wartefunktion beseitigt diese grobe Pause, ohne die HAL-Timerfrequenz zu verändern. [Messung](DESKTOP_PERFORMANCE.md). |
@@ -140,6 +140,8 @@ Cosmos Gen3 **3.0.94**, .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standa
 | Schrift | `PCScreenFont.DefaultFont` ist eine echte 16×32-Schrift (keine verdoppelte 8×16). Eine kleinere Schrift bräuchte eine zusätzliche Schriftdatei. |
 | Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
 | Zeichnen | Rechtecke, vor dem Rasterisieren beschnittene Linien, Bitmaptext und Pixelkopien. Ein Zeichenbereich kann auf ein Teilrechteck begrenzt werden. Hosttests decken auch negative und extreme Koordinaten ab. |
+
+**Relative Maus (#79):** In QEMU/TCG wurde Doom 1.1.0 mit einer isolierten Testplatte sowohl nur mit PS/2-Maus als auch mit PS/2-Maus und USB-Tablet gestartet. In beiden Läufen änderte weitere relative Mausbewegung die Doom-Ansicht, nachdem der Zeiger den Gastbildschirmrand erreicht hatte. VMware und echte Hardware sind für diese Änderung nicht geprüft.
 
 Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Version 3.0.94 geprüft. Die [offizielle Plug-Dokumentation](https://cosmosos.github.io/articles/dev/plugs.html) beschreibt das verwendete Ersetzen einzelner Methoden. Die Paketmetadaten verweisen auf Cosmos-Quellstand `5d0b9535251472db7ecfe012f0435f0a04ffca16`.
 

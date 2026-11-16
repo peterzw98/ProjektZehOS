@@ -48,10 +48,25 @@ public sealed class CosmosUsbTabletDriver : Driver
             if (!UsbTabletReport.TryDecode(report, MouseManager.ScreenWidth, MouseManager.ScreenHeight,
                 out int x, out int y, out byte buttons, out int wheel)) return;
 
-            // HandleAbsolute in Cosmos 3.0.94 übernimmt nur die Tasten, nicht die Position.
-            MouseManager.SetPosition(x, y);
-            Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
-            if (wheel != 0) Sink?.ReportRelative(0, 0, (KitPointerButtons)buttons, wheel);
+            // Ein PS/2-Interrupt darf die Paketfolge waehrend des Tabletberichts nicht unterbrechen.
+#pragma warning disable COSMOS0001, NAOT0007
+            var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
+#pragma warning restore COSMOS0001, NAOT0007
+            try
+            {
+                CosmosMousePlug.ApplyPending();
+                CosmosMousePlug.RecordTabletMotion(x - MouseManager.X, y - MouseManager.Y);
+                // HandleAbsolute in Cosmos 3.0.94 übernimmt nur die Tasten, nicht die Position.
+                MouseManager.SetPosition(x, y);
+                Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
+                if (wheel != 0) Sink?.ReportRelative(0, 0, (KitPointerButtons)buttons, wheel);
+            }
+            catch
+            {
+                mask.Dispose();
+                throw;
+            }
+            mask.Dispose();
         }
     }
 }

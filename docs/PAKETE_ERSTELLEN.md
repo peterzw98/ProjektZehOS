@@ -66,9 +66,10 @@ Koordinaten; Tasten und Rad bleiben unverändert. Esc, Fokusverlust,
 Fensterwechsel, F4 und Schließen geben den Zeiger frei; bei eingefangenem Zeiger erreicht Esc die App als Taste. Ein weiteres Esc führt zur Textshell. Nach der Freigabe
 kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
 Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
-eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen). **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
-und VMware liefern mit dem Tablet ein absolutes Zeigegerät; die Bewegung endet deshalb am Rand des Gastbildschirms
-beziehungsweise des Hostfensters (Tablet), nicht am Fensterrand. Der Desktopzeiger bleibt sichtbar.
+eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen).
+Ab ZehOS 0.5.2 bleiben relative PS/2-Mauspakete beim Zeigerfang auch am Rand des Gastbildschirms als Deltas erhalten. Bei absoluten
+Tablets entstehen Deltas weiterhin aus Bildschirmpositionen; ihre Bewegung endet am Gastbildschirm- beziehungsweise
+Hostfensterrand. Der Desktopzeiger bleibt sichtbar.
 
 **Netzwerk über `zehos_v1`:**
 

@@ -50,15 +50,17 @@ internal sealed class InputService
         if (!released && !char.IsControl(character)) Publish(new(InputEventType.Text, Character: character));
     }
 
-    public void ReportPointer(int x, int y, PointerButtons buttons, int scrollDelta = 0)
+    public void ReportPointer(int x, int y, PointerButtons buttons, int scrollDelta = 0, int deltaX = 0, int deltaY = 0, bool hasRawMotion = false,
+        int tabletDeltaX = 0, int tabletDeltaY = 0)
     {
         x = Math.Clamp(x, 0, width - 1);
         y = Math.Clamp(y, 0, height - 1);
-        if (x != PointerX || y != PointerY)
+        if (x != PointerX || y != PointerY || hasRawMotion)
         {
             PointerX = x;
             PointerY = y;
-            if (!Publish(new(InputEventType.PointerMove, X: x, Y: y))) return;
+            if (!Publish(new(InputEventType.PointerMove, X: x, Y: y, DeltaX: deltaX, DeltaY: deltaY, HasRawMotion: hasRawMotion,
+                TabletDeltaX: tabletDeltaX, TabletDeltaY: tabletDeltaY))) return;
         }
         PointerButtons changed = Buttons ^ buttons;
         Buttons = buttons;
