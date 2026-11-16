@@ -14,6 +14,8 @@ eigenen Images und behält die e2fsck-Ausgabe.
 
 ## Ergebnis 17. November 2026 (Linux, e2fsprogs 1.47.4): NO-GO
 
+Host: Linux 7.2.9, .NET SDK 10.0.112, e2fsprogs 1.47.4, x86-64, Cosmos.Kernel.System 3.0.97 aus NuGet. Genaue Matrix, `dumpe2fs -h` und e2fsck-Meldungen: [results-2026-11-17.md](results-2026-11-17.md).
+
 Alle 18 Fälle (4 MiB, 8 MiB, 64 MiB, 32/64/128 GiB je 1K/2K/4K) formatieren ohne Fehler (7 ms bis 2 s), aber
 `e2fsck -fn` endet immer mit Exit 4 (Fehler bleiben). Ursachen laut Quelle (`Ext2Formatter.cs`, Tag v3.0.97):
 
