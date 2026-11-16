@@ -134,6 +134,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.wfile.flush()
                 self.close_connection = True
                 return
+            if self.path == '/fin':
+                # Ganze Antwort auf einmal, dann sofort schliessen: FIN erreicht den Gast vor dessen close_notify.
+                self.wfile.write(b'HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n' + BODY)
+                self.wfile.flush()
+                self.close_connection = True
+                return
             if self.path != '/ok':
                 self.send_error(404)
                 return

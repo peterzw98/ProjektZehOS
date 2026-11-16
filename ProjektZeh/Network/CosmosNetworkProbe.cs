@@ -32,6 +32,10 @@ internal static class CosmosNetworkProbe
 #if ZEHOS_NETWORK_TLS_PROBE
             byte[] probeCa = TlsRoots.Read("ZehOS.NetworkProbeCa");
             Check(CosmosNetworkService.Fetch("https://10.0.2.2:18443/ok", CancellationToken.None, probeCa) == "ZehOS network probe\n", "TLS valid");
+            // Server schliesst sofort nach dem Body; der Abruf darf weder scheitern noch auf das 10-s-Zeitlimit warten.
+            var finClock = Stopwatch.StartNew();
+            Check(CosmosNetworkService.Fetch("https://10.0.2.2:18443/fin", CancellationToken.None, probeCa) == "ZehOS network probe\n"
+                && finClock.ElapsedMilliseconds < 5000, "TLS close after server FIN");
             for (int port = 18444; port <= 18447; port++)
             {
                 bool rejected = false;

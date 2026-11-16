@@ -208,11 +208,14 @@ internal sealed class CosmosNetworkService : INetworkService
             CheckDeadline(clock, token);
         }
         catch (Exception exception) { failure = exception; }
-        try { secure?.Dispose(); }
-        // Downloads sind nach vollstaendig gelesener, laengengepruefter Antwort fertig; schliesst der Server zuerst, scheitert
-        // nur das Senden von close_notify (im Gast als internal_error(80) beobachtet). Das ist kein Datenfehler.
-        catch (Exception exception) when (!(idleDeadline && failure == null)) { failure = CleanupFailure(failure, "TLS", exception); }
-        catch (Exception) { }
+        // close_notify nur nach einem Fehler: Eine gelesene Antwort ist laengengeprueft (HttpUpdateResponse). Hat der Server
+        // danach schon geschlossen, meldet Cosmos den Socket nie als schreibbar; PollingStream.Write wartete bis zum
+        // 10-s-Zeitlimit, Downloads dauerten so je 10 s laenger und Fetch scheiterte mit internal_error(80).
+        if (failure != null)
+        {
+            try { secure?.Dispose(); }
+            catch (Exception exception) { failure = CleanupFailure(failure, "TLS", exception); }
+        }
         try { socket.Close(0); } catch (Exception exception) { failure = CleanupFailure(failure, "TCP", exception); }
         if (failure != null) throw failure;
         return result;
