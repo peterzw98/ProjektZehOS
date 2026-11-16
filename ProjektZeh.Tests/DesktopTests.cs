@@ -5,6 +5,8 @@ using ProjektZeh.Apps.TextEditor;
 using ProjektZeh.Apps.Terminal;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
+using ProjektZeh.Apps;
+using ProjektZeh.Runtime.Wasm;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 
@@ -13,6 +15,64 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class DesktopTests
 {
+    [TestMethod]
+    public void Escape_WithAppCaptureReachesAppBeforeRecovery()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        app.Input.SetCapture(true);
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        var escape = new InputEvent(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape);
+        Assert.IsTrue(desktop.HandleEscape(escape));
+        Assert.IsFalse(app.Input.IsCaptured);
+        Assert.IsTrue(app.Input.TryRead(out var received));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.KeyDown, (byte)PhysicalKey.Escape), received);
+        Assert.IsTrue(desktop.HandleEscape(escape with { IsRepeat = true }));
+        Assert.IsFalse(desktop.HandleEscape(escape));
+    }
+
+    [TestMethod]
+    public void Escape_ClosesMenuOpenedDuringAppCaptureBeforeRecovery()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        app.Input.SetCapture(true);
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        Assert.IsFalse(app.Input.IsCaptured);
+        while (app.Input.TryRead(out _)) { }
+        var escape = new InputEvent(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape);
+        Assert.IsTrue(desktop.HandleEscape(escape));
+        // Das Menue hat den Fang schon beendet; geprueft wird vor allem, dass Esc das Menue schliesst statt zur Textshell zu fuehren.
+        while (app.Input.TryRead(out var received)) Assert.AreNotEqual(WasmInputEventType.KeyDown, received.Type);
+        Assert.IsFalse(desktop.CloseMenu());
+        Assert.IsFalse(desktop.HandleEscape(escape));
+    }
+
+    [TestMethod]
+    public void Escape_DuringWindowDragDoesNotGoToApp()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.OpenTerminal();
+        var window = desktop.Windows.ActiveWindow!;
+        desktop.Handle(new(InputEventType.PointerDown, X: window.X + 20, Y: window.Y + 10, Button: PointerButtons.Left));
+        Assert.IsTrue(desktop.Windows.HasPointerCapture);
+        Assert.IsFalse(desktop.HandleEscape(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape)));
+    }
+
+    private sealed class CaptureProbeApp : IApplication
+    {
+        public WasmInputBuffer Input { get; } = new();
+        public bool CapturesPointer => Input.IsCaptured;
+        public void Start() { }
+        public void Handle(InputEvent value) => Input.Handle(value);
+        public void Update(long milliseconds) { }
+        public void Draw(PixelSurface surface, int x, int y, int width, int height, bool active) { }
+        public void Close() { }
+    }
+
     [TestMethod]
     public void ContentCapture_SecondButtonOverTaskbarDoesNotOpenMenu()
     {

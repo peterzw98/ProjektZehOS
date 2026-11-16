@@ -34,6 +34,7 @@ void zehos_wasm_host_present_indexed(const uint8_t* i, const uint32_t* p, int32_
 uint32_t zehos_wasm_host_ticks_ms(void) { return 0; }
 void zehos_wasm_host_sleep_ms(uint32_t ms) { }
 int32_t zehos_wasm_host_poll_key(void) { return -1; }
+int32_t zehos_wasm_host_pointer_capture(int32_t enabled) { (void)enabled; return -1; }
 int32_t zehos_wasm_host_should_exit(void) { return 0; }
 
 static int stat_calls;

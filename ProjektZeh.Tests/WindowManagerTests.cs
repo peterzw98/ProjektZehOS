@@ -209,12 +209,37 @@ public sealed class WindowManagerTests
         Assert.IsFalse(manager.HasPointerCapture);
     }
 
+    [TestMethod]
+    public void CapturingAppReceivesAllPointerEventsUntilItReleases()
+    {
+        var manager = new WindowManager(600, 300);
+        var other = new ProbeApp();
+        var grabbing = new ProbeApp();
+        var otherWindow = new Window("A", 20, 30, 180, 150, other);
+        var grabbingWindow = new Window("B", 300, 30, 180, 150, grabbing);
+        manager.Add(otherWindow);
+        manager.Add(grabbingWindow);
+        grabbing.CapturesPointer = true;
+        manager.Handle(new(InputEventType.PointerMove, X: 5, Y: 250));
+        manager.Handle(new(InputEventType.PointerDown, X: 100, Y: 100, Button: PointerButtons.Left));
+        Assert.AreSame(grabbingWindow, manager.ActiveWindow, "Ein Klick auf ein anderes Fenster wechselt nicht.");
+        Assert.IsFalse(other.Events.Exists(e => e.Type is InputEventType.PointerMove or InputEventType.PointerDown));
+        Assert.AreEqual(new InputEvent(InputEventType.PointerMove, X: 5 - grabbingWindow.ContentX, Y: 250 - grabbingWindow.ContentY),
+            grabbing.Events.Find(e => e.Type == InputEventType.PointerMove));
+        Assert.IsTrue(grabbing.Events.Exists(e => e.Type == InputEventType.PointerDown));
+        grabbing.CapturesPointer = false;
+        manager.Handle(new(InputEventType.PointerUp, X: 100, Y: 100, Button: PointerButtons.Left));
+        manager.Handle(new(InputEventType.PointerDown, X: 100, Y: 100, Button: PointerButtons.Left));
+        Assert.AreSame(otherWindow, manager.ActiveWindow);
+    }
+
     internal sealed class ProbeApp : IApplication
     {
         public readonly List<InputEvent> Events = [];
         public int Starts { get; private set; }
         public int Closes { get; private set; }
         public int Color { get; init; }
+        public bool CapturesPointer { get; set; }
         public void Start() => Starts++;
         public void Handle(InputEvent value) => Events.Add(value);
         public void Update(long milliseconds) { }

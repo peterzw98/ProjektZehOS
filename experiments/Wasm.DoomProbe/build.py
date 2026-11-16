@@ -41,6 +41,8 @@ def main() -> int:
                "-O2", "-D_DEFAULT_SOURCE", "-DDOOMGENERIC_RESX=320", "-DDOOMGENERIC_RESY=200",
                "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
                "-Wno-everything", "-I", str(args.source / "doomgeneric"),
+               # Ohne Abbildung landen absolute Baupfade (Benutzername) ueber __FILE__ im Paket.
+               f"-ffile-prefix-map={args.source.resolve()}=/doomgeneric", f"-ffile-prefix-map={HERE.resolve()}=/zehos",
                # 8-Bit-Bild: die Palettenumrechnung im Interpreter kostete fast die Haelfte der Bildzeit.
                "-DCMAP256",
                *sources, "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks",

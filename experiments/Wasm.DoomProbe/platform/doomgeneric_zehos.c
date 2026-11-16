@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "d_event.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
 
@@ -23,6 +24,14 @@ ZEHOS_IMPORT("sleep_ms") void zehos_sleep_ms(uint32_t milliseconds);
 // Liefert -1 ohne Ereignis, sonst Bit 8 = gedrueckt und Bits 0-7 = PS/2-Set-1-Scancode.
 ZEHOS_IMPORT("poll_key") int32_t zehos_poll_key(void);
 ZEHOS_IMPORT("should_exit") int32_t zehos_should_exit(void);
+// Schreibt type, code, x, y als vier i32 und liefert 1, ohne Ereignis 0; unabhaengig von poll_key.
+ZEHOS_IMPORT("poll_event") int32_t zehos_poll_event(int32_t* event);
+// 1 faengt den Zeiger ein, 0 gibt ihn frei; 0 bei Erfolg. Danach kommen Bewegungen als Typ 9 (dx, dy).
+ZEHOS_IMPORT("pointer_capture") int32_t zehos_pointer_capture(int32_t enabled);
+
+enum { EVENT_KEY_DOWN = 1, EVENT_POINTER_MOVE = 4, EVENT_POINTER_DOWN = 5, EVENT_POINTER_UP = 6, EVENT_RESET = 8, EVENT_RELATIVE_MOVE = 9 };
+// Pixel des Desktopzeigers sind feiner als DOS-Mausschritte; Faktor 4 dreht mit Standardempfindlichkeit spuerbar.
+#define MOUSE_TURN_SCALE 4
 
 static uint32_t test_frame[DOOMGENERIC_RESX * DOOMGENERIC_RESY];
 
@@ -42,8 +51,8 @@ static unsigned char translate(uint8_t code)
         case 42: case 54: return KEY_RSHIFT;
         case 28: return KEY_ENTER;
         case 15: return KEY_TAB;
-        // Esc bleibt in ZehOS der Rueckweg zur Textshell; Backspace oeffnet deshalb das Doom-Menue.
-        case 14: return KEY_ESCAPE;
+        // Backspace erreicht das Menue auch bei bereits freigegebenem Zeiger.
+        case 1: case 14: return KEY_ESCAPE;
         default: break;
     }
     if (code >= 59 && code <= 68) return (unsigned char)(KEY_F1 + (code - 59));
@@ -72,8 +81,60 @@ void DG_SleepMs(uint32_t ms) { zehos_sleep_ms(ms); }
 
 uint32_t DG_GetTicksMs(void) { return zehos_ticks_ms(); }
 
+static int mouse_captured;
+static int mouse_buttons;
+
+// Zeigerbits des Kernels (links 1, rechts 2, Mitte 4) entsprechen Dooms data1 (Feuer, Strafe, Vorwaerts).
+static void poll_mouse(void)
+{
+    int32_t event[4];
+    int turn = 0, changed = 0;
+    while (zehos_poll_event(event) == 1)
+    {
+        switch (event[0])
+        {
+            case EVENT_POINTER_DOWN:
+                // Der erste Klick faengt nur ein und feuert nicht.
+                if (!mouse_captured) { mouse_captured = zehos_pointer_capture(1) == 0; break; }
+                mouse_buttons |= event[1] & 7;
+                changed = 1;
+                break;
+            case EVENT_POINTER_UP:
+                mouse_buttons &= ~(event[1] & 7);
+                changed = 1;
+                break;
+            case EVENT_RELATIVE_MOVE:
+                turn += event[2];
+                changed = 1;
+                break;
+            // Esc (Tastencode 1) oder Fokusverlust geben im Kernel frei; ebenso zeigt es die erste absolute Bewegung.
+            case EVENT_KEY_DOWN:
+                if (event[1] == 1) { mouse_captured = 0; mouse_buttons = 0; changed = 1; }
+                break;
+            case EVENT_POINTER_MOVE:
+                // Nur der Uebergang aus dem Fang braucht ein ev_mouse; freie Bewegungen aendern nichts.
+                if (mouse_captured || mouse_buttons) changed = 1;
+                mouse_captured = 0;
+                mouse_buttons = 0;
+                break;
+            case EVENT_RESET:
+                mouse_captured = 0;
+                mouse_buttons = 0;
+                changed = 1;
+                break;
+            default:
+                break;
+        }
+    }
+    if (!changed) return;
+    // Vertikale Bewegung bleibt aus, sonst liefe der Spieler beim Umsehen vor und zurueck.
+    event_t ev = { ev_mouse, mouse_buttons, turn * MOUSE_TURN_SCALE, 0, 0 };
+    D_PostEvent(&ev);
+}
+
 int DG_GetKey(int* pressed, unsigned char* key)
 {
+    poll_mouse();
     for (;;)
     {
         int32_t event = zehos_poll_key();

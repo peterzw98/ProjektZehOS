@@ -52,6 +52,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private readonly System.Text.StringBuilder errors = new();
 
     public bool NeedsAnimation => running && active;
+    public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
     public bool IsCloseRequested { get; private set; }
     string? IWasmSession.Root => root;
     bool IWasmSession.AllowsNetwork => allowsNetwork;
@@ -114,9 +115,10 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
 
     public void Draw(PixelSurface surface, int x, int y, int width, int height, bool isActive)
     {
-        if (active && !isActive) ResetInput();
         lock (gate)
         {
+            // Reset und Deaktivierung unter derselben Sperre: sonst koennte pointer_capture dazwischen noch einfangen.
+            if (active && !isActive) input.Reset();
             active = isActive;
             lastDrawMilliseconds = clock.ElapsedMilliseconds;
             Monitor.PulseAll(gate);
@@ -233,6 +235,17 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     bool IWasmSession.TryReadEvent(out WasmInputEvent value)
     {
         lock (gate) return input.TryRead(out value);
+    }
+
+    // Nur das aktive Fenster darf einfangen; Fokusverlust setzt die Eingabe und damit das Einfangen zurueck.
+    bool IWasmSession.SetPointerCapture(bool enabled)
+    {
+        lock (gate)
+        {
+            if (enabled && !active) return false;
+            input.SetCapture(enabled);
+            return true;
+        }
     }
 
     int IWasmSession.PollKey()

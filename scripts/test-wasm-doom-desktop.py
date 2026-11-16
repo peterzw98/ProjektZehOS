@@ -115,10 +115,13 @@ class Qmp:
         self.text(value)
         self.tap("ret")
 
-    def click(self, x: int, y: int, width: int, height: int) -> None:
+    def move(self, x: int, y: int, width: int, height: int) -> None:
         position = [{"type": "abs", "data": {"axis": "x", "value": int(x * 32767 / (width - 1))}},
                     {"type": "abs", "data": {"axis": "y", "value": int(y * 32767 / (height - 1))}}]
         self.command("input-send-event", {"events": position})
+
+    def click(self, x: int, y: int, width: int, height: int) -> None:
+        self.move(x, y, width, height)
         time.sleep(0.2)
         for down in (True, False):
             self.command("input-send-event", {"events": [{"type": "btn", "data": {"down": down, "button": "left"}}]})
@@ -318,8 +321,10 @@ class Guest:
     def wait(self, text: str, timeout: float, mark: int = 0) -> int:
         return wait_serial(self.work, text, timeout, mark)
 
-    def shot(self, name: str) -> None:
-        self.size = self.qmp.shot(self.work / f"{next(self.step):02d}-{name}.png")
+    def shot(self, name: str) -> Path:
+        path = self.work / f"{next(self.step):02d}-{name}.png"
+        self.size = self.qmp.shot(path)
+        return path
 
     def connect(self) -> None:
         self.qmp = Qmp(self.port)
@@ -463,6 +468,21 @@ class Guest:
         self.quit_app("doom", ("backspace", 1), ("up", 0.5), ("ret", 1), ("y", 0))
 
 
+def view_region(png: Path) -> bytes:
+    """3D-Ansicht des Doom-Bilds ohne Statusleiste, deren Gesicht sich auch ohne Eingabe bewegt.
+
+    Liest nur die PNGs aus Qmp.shot: ein IDAT, RGB, Filter 0 je Zeile. Der Ausschnitt gilt fuer das erste
+    Doom-Fenster bei 1920x1080 (Bild 640x400 ab 112/180).
+    """
+    data = png.read_bytes()
+    width = struct.unpack(">I", data[16:20])[0]
+    start = data.index(b"IDAT") + 4
+    length = struct.unpack(">I", data[start - 8:start - 4])[0]
+    raw = zlib.decompress(data[start:start + length])
+    stride = 1 + width * 3
+    return b"".join(raw[row * stride + 1 + 120 * 3:row * stride + 1 + 744 * 3] for row in range(184, 500))
+
+
 def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None, repository: Repository | None) -> None:
     qmp = guest.qmp
     guest.start_app("doom")
@@ -481,6 +501,19 @@ def scenario_full(guest: Guest, args: argparse.Namespace, fixtures: Path | None,
     qmp.tap("ctrl")
     time.sleep(1)
     guest.shot("moved-fired")
+    # Maus (#79): der erste Klick ins Doom-Bild faengt den Zeiger ein, ohne zu feuern; danach dreht eine
+    # Bewegung nach rechts die Ansicht. Das USB-Tablet liefert absolute Positionen, der Kernel daraus Deltas.
+    centre = (416, 380)
+    qmp.click(*centre, *guest.size)
+    time.sleep(1)
+    before = guest.shot("mouse-captured")
+    for step in range(1, 11):
+        qmp.move(centre[0] + step * 20, centre[1], *guest.size)
+        time.sleep(0.05)
+    time.sleep(1)
+    after = guest.shot("mouse-turned")
+    if view_region(before) == view_region(after):
+        raise RuntimeError("Doom-Ansicht hat sich nach der Mausbewegung nicht gedreht.")
     # Doom muss in der Textshell pausieren; die 10 s sind Teil der Pruefung, keine Wartezeit.
     qmp.tap("f4")
     time.sleep(10)
