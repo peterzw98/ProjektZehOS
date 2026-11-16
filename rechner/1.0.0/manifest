@@ -1,0 +1,16 @@
+zehos-package 1
+id=rechner
+version=1.0.0
+runtime=zehos-wasm32-v1
+name=Rechner
+entry=rechner.wasm
+file=3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986 35149 LICENSE.txt
+file=469ee1562e803e032a48d0115e82f8d17a622b025a915220ac3937b8756459b5 555 licenses/SOURCES.txt
+file=1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d 16708 licenses/compiler-rt-LICENSE.TXT
+file=2711a8b5a5cdfef0e639f96c1aca12ae23d7d64a02d0507f1bdf14d2b27bbc3a 910 licenses/wasi-libc-LICENSE
+file=a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2 10847 licenses/wasi-libc-LICENSE-APACHE
+file=268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5 12243 licenses/wasi-libc-LICENSE-APACHE-LLVM
+file=23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3 1023 licenses/wasi-libc-LICENSE-MIT
+file=f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af 6204 licenses/wasi-libc-musl-COPYRIGHT
+file=871c433619d1aac1ad201c99e33b3c4eff28a58bd2fc66a5c821783a974731a9 110249 rechner.wasm
+end

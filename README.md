@@ -6,4 +6,6 @@ Doom: doomgeneric (GPL-2.0-or-later) mit ZehOS-Plattformschicht, Quellen: experi
 
 NetSurf: Browser NetSurf 3.11 (GPL-2.0) mit HTTP/HTTPS ueber den ZehOS-Kernel, Quellen und Bauanleitung: experiments/NetSurf.Wasi auf master (Commit im Paket unter licenses/SOURCES.txt). Die Lizenztexte aller Bestandteile liegen im Paket unter licenses/. Gebaut von der CI ("Build and tests", Artefakt NetSurf-offline-files), nicht lokal. Braucht ZehOS 0.3.0 oder neuer und das Netzwerkrecht (capability=net). NetSurf 1.1.0 enthaelt JavaScript (Duktape, MIT, Lizenz unter licenses/duktape-LICENSE.txt); es ist bei jedem Start aus und laesst sich mit Strg+J im Seitenbereich fuer die laufende Sitzung einschalten (Statusleiste "JS an"), Skripte laufen nur auf http(s)-Seiten.
 
+Rechner: Taschenrechner (GPL-3.0-or-later), Quellen und Bauanleitung: experiments/Rechner.Wasi auf master (Commit im Paket unter licenses/SOURCES.txt). Statisch gelinkt sind wasi-libc (MIT/Apache-2.0, musl) und compiler-rt (Apache-2.0 mit LLVM-Ausnahme); ihre Lizenztexte liegen im Paket unter licenses/. Gebaut von der CI ("Build and tests", Artefakt Rechner-files), nicht lokal. Braucht weder Netzwerkrecht noch min-kernel.
+
 Pakete mit min-kernel im Manifest werden von Kerneln vor 0.3.0 als ungueltig abgelehnt; dort bleibt nur Doom 1.0.0 nutzbar, sofern es schon installiert ist.
