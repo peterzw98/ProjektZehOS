@@ -4,7 +4,7 @@ using ProjektZeh.Input;
 
 namespace ProjektZeh.Runtime.Wasm;
 
-internal enum WasmInputEventType { KeyDown = 1, KeyUp, Text, PointerMove, PointerDown, PointerUp, Scroll, Reset, RelativeMove }
+internal enum WasmInputEventType { KeyDown = 1, KeyUp, Text, PointerMove, PointerDown, PointerUp, Scroll, Reset, RelativeMove, Resize }
 internal readonly record struct WasmInputEvent(WasmInputEventType Type, int Code = 0, int X = 0, int Y = 0);
 
 /// <summary>Eingabe im Framekoordinatensystem; die Sitzung synchronisiert alle Zugriffe mit ihrer Sperre.</summary>
@@ -18,8 +18,14 @@ internal sealed class WasmInputBuffer
     private int head;
     private int count;
     private char highSurrogate;
+    private const int MaximumImageWidth = 1920;
+    private const int MaximumImageHeight = 1200;
     private int frameWidth;
     private int frameHeight;
+    private int viewportWidth;
+    private int viewportHeight;
+    // Getrennt von der Warteschlange: Reset und Ueberlauf verwerfen die Groesse nie, mehrere Aenderungen ergeben eine Meldung.
+    private bool resizePending;
     private int targetWidth;
     private int targetHeight;
     private long left;
@@ -40,6 +46,8 @@ internal sealed class WasmInputBuffer
 
     public void SetViewport(int width, int height, int imageWidth, int imageHeight)
     {
+        if (width > 0 && height > 0 && (width != viewportWidth || height != viewportHeight))
+            (viewportWidth, viewportHeight, resizePending) = (width, height, true);
         frameWidth = imageWidth;
         frameHeight = imageHeight;
         (targetWidth, targetHeight) = WasmImageFit.Fit(width, height, imageWidth, imageHeight);
@@ -122,6 +130,13 @@ internal sealed class WasmInputBuffer
 
     public bool TryRead(out WasmInputEvent value)
     {
+        if (resizePending)
+        {
+            resizePending = false;
+            // Groesser kann present nicht zeichnen; die App bleibt dann bei der Einpassung.
+            value = new(WasmInputEventType.Resize, 0, Math.Min(viewportWidth, MaximumImageWidth), Math.Min(viewportHeight, MaximumImageHeight));
+            return true;
+        }
         if (count == 0) { value = default; return false; }
         value = events[head];
         head = (head + 1) % Capacity;

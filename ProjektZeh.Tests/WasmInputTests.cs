@@ -90,7 +90,7 @@ public sealed class WasmInputTests
     public void PointerUsesDisplayedScaleAndLetterboxAndKeepsRelease()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(1280, 1000, 640, 480);
+        SetViewport(input, 1280, 1000, 640, 480);
         input.Handle(new(InputEventType.PointerDown, X: 100, Y: 120, Button: PointerButtons.Left));
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 1, 50, 50), Read(input));
         input.Handle(new(InputEventType.PointerDown, X: 100, Y: 0, Button: PointerButtons.Right));
@@ -104,7 +104,7 @@ public sealed class WasmInputTests
     public void ConsecutiveMotionCoalescesWithoutReorderingTextOrWheel()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(640, 480, 640, 480);
+        SetViewport(input, 640, 480, 640, 480);
         input.Handle(new(InputEventType.PointerMove, X: 10, Y: 20));
         input.Handle(new(InputEventType.PointerMove, X: 30, Y: 40));
         input.Handle(new(InputEventType.Text, Character: 'a'));
@@ -122,7 +122,7 @@ public sealed class WasmInputTests
     {
         var input = new WasmInputBuffer();
         // 640x480 in 320x200 wird seitentreu auf 266x200 verkleinert, links 27 px Rand: (0,0) liegt daneben.
-        input.SetViewport(320, 200, 640, 480);
+        SetViewport(input, 320, 200, 640, 480);
         input.Handle(new(InputEventType.PointerDown, X: 0, Y: 0, Button: PointerButtons.Middle));
         Assert.IsFalse(input.TryRead(out _));
         input.Handle(new(InputEventType.PointerDown, X: 27, Y: 0, Button: PointerButtons.Middle));
@@ -138,7 +138,7 @@ public sealed class WasmInputTests
     public void CapturedPointerReportsSummedRelativeMovesAndKeepsButtons()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(640, 400, 320, 200);
+        SetViewport(input, 640, 400, 320, 200);
         input.SetCapture(true);
         Assert.IsTrue(input.IsCaptured);
         // Die erste Position nach dem Einfangen ist nur der Bezugspunkt.
@@ -159,7 +159,7 @@ public sealed class WasmInputTests
     public void EscapeResetAndReleaseEndCaptureAndRestoreAbsolutePointer()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(640, 400, 320, 200);
+        SetViewport(input, 640, 400, 320, 200);
         input.SetCapture(true);
         input.Handle(new(InputEventType.KeyDown, (byte)PhysicalKey.Escape));
         Assert.IsFalse(input.IsCaptured);
@@ -174,6 +174,31 @@ public sealed class WasmInputTests
         input.Handle(new(InputEventType.PointerMove, X: 40, Y: 40));
         Assert.AreEqual(WasmInputEventType.Reset, Read(input).Type);
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerMove, 0, 20, 20), Read(input));
+    }
+
+    [TestMethod]
+    public void ResizeIsReportedOnceAndSurvivesResetAndOverflow()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(798, 519, 0, 0);
+        input.SetViewport(800, 600, 0, 0);
+        input.Handle(new(InputEventType.Reset));
+        for (int index = 0; index < 200; index++) input.Handle(new(InputEventType.Text, Character: 'a'));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.Resize, 0, 800, 600), Read(input), "Nur die letzte Groesse zaehlt.");
+        Assert.AreEqual(WasmInputEventType.Reset, Read(input).Type, "Der Ueberlauf meldet weiterhin Reset.");
+        input.SetViewport(800, 600, 320, 200);
+        while (input.TryRead(out WasmInputEvent value)) Assert.AreNotEqual(WasmInputEventType.Resize, value.Type);
+        input.SetViewport(0, 0, 320, 200);
+        Assert.IsFalse(input.TryRead(out _), "Ein leeres Fenster ist keine Groesse.");
+        input.SetViewport(2560, 1440, 320, 200);
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.Resize, 0, 1920, 1200), Read(input), "Begrenzt auf die present-Grenze.");
+    }
+
+    // Jede neue Fenstergroesse kommt als erstes Ereignis an.
+    private static void SetViewport(WasmInputBuffer input, int width, int height, int imageWidth, int imageHeight)
+    {
+        input.SetViewport(width, height, imageWidth, imageHeight);
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.Resize, 0, width, height), Read(input));
     }
 
     private static WasmInputEvent Read(WasmInputBuffer input)

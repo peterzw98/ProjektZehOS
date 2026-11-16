@@ -51,6 +51,7 @@ public sealed class WasmImageFitTests
         // Doom im Standardfenster: 798x498 mittig, oben 10 px Rand.
         var input = new WasmInputBuffer();
         input.SetViewport(798, 519, 320, 200);
+        Assert.IsTrue(input.TryRead(out WasmInputEvent resize) && resize.Type == WasmInputEventType.Resize);
         var columns = new int[798];
         var rows = new int[498];
         WasmImageFit.FillSourceIndices(columns, 320);
