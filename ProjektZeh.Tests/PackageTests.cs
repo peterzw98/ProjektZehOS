@@ -439,7 +439,9 @@ public sealed class PackageTests
         var pkg = session.Commands.Single();
         var output = new Output();
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
-        StringAssert.Contains(Status(session), "Paketquelle");
+        Assert.AreEqual("doom 1.0.0 installiert.", Status(session));
+        Assert.AreEqual(PackageStore.DefaultSource, requested);
+        Assert.IsTrue(pkg.Execute(["remove", "doom"], output).IsOK());
         Assert.IsTrue(pkg.Execute(["source", "https://repo.test/zehos/"], output).IsOK());
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
         Assert.AreEqual("doom 1.0.0 installiert.", Status(session));
@@ -474,6 +476,42 @@ public sealed class PackageTests
         var keyless = new Shell.PackageShellCommands(new PackageStore(Path.Combine(work, "store"), null, Kernel), _ => throw new InvalidOperationException(),
             path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true).Commands.Single();
         StringAssert.Contains(keyless.Execute(["install", "doom"], output).Message, "Paketschluessel");
+    }
+
+    [TestMethod]
+    public void InstallationReportsBytesAndOnlyFinishesAfterVerification()
+    {
+        string repo = Path.Combine(work, "progress");
+        Publish(repo, "doom", "1.0.0");
+        var progress = new List<PackageProgress>();
+        var result = Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, progress.Add);
+        Assert.IsTrue(result.IsOK(), result.Status.Message);
+        var downloads = progress.Where(p => p.Phase == "Download").ToArray();
+        Assert.IsTrue(downloads.Any(p => p.CompletedBytes > 0 && p.CompletedBytes < p.TotalBytes));
+        Assert.IsTrue(downloads.All(p => p.CompletedBytes >= 0 && p.CompletedBytes <= p.TotalBytes));
+        Assert.AreEqual("Fertig", progress[^1].Phase);
+        Assert.AreEqual(70009L, progress[^1].TotalBytes);
+        Assert.AreEqual(progress[^1].TotalBytes, progress[^1].CompletedBytes);
+    }
+
+    [TestMethod]
+    public void InvalidPackageNeverReportsFinished()
+    {
+        string repo = Path.Combine(work, "bad-progress");
+        Publish(repo, "doom", "1.0.0");
+        File.WriteAllBytes(Path.Combine(repo, "files", "app.wasm"), new byte[9]);
+        var progress = new List<PackageProgress>();
+        Assert.IsFalse(Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, progress.Add).IsOK());
+        Assert.IsFalse(progress.Any(p => p.Phase == "Fertig"));
+    }
+    [TestMethod]
+    public void MissingSourceUsesPublicRepositoryWithoutWritingConfiguration()
+    {
+        var store = Store();
+        Assert.AreEqual("https://packages.pjoter.de/", store.ReadSource().Value);
+        Assert.IsFalse(Directory.Exists(Path.Combine(work, "store")));
+        Assert.IsTrue(store.WriteSource("https://custom.test/").IsOK());
+        Assert.AreEqual("https://custom.test/", store.ReadSource().Value);
     }
 
     [TestMethod]
