@@ -1,6 +1,7 @@
 CertificateVerifier.cs stammt aus Cosmos.Network.Http 3.0.0, Commit
 b188be67e89d7ea99a4594bf698892ee4dfc357f:
 https://github.com/CosmosOS/Cosmos.Network.Http
-Quellaenderungen: #nullable disable und explizites using System fuer den Hostbuild.
+Quellaenderungen: #nullable disable und explizites using System fuer den Hostbuild;
+MatchesDnsName prueft Platzhalter nach RFC 6125 6.4.3 ("*.com" passt nicht mehr).
 cacert.pem ist das im selben Commit enthaltene Mozilla-Rootbundle.
 Die zugehoerigen Lizenz- und Drittanbieterhinweise liegen hier bei.
