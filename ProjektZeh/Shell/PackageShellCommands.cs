@@ -13,10 +13,11 @@ namespace ProjektZeh.Shell;
 /// Shellsitzung; das Ergebnis holt die Ereignisschleife ab, wie bei den Netzwerkbefehlen.
 /// </summary>
 internal sealed class PackageShellCommands(PackageStore store, Func<string, IPackageSource> remote,
-    Func<string, ResultObject<string>> resolvePath, BackgroundTaskService tasks, Func<bool> isAdministrator, Action<string>? log = null)
+    Func<string, ResultObject<string>> resolvePath, BackgroundTaskService tasks, Func<bool> isAdministrator,
+    Action<string>? log = null, Func<int>? getSessionGeneration = null)
 {
     private const string Usage = "pkg list|source [<https-URL>]|update|install <id>|install-local <Verzeichnis>|upgrade [<id>]|remove <id>|cancel";
-    private readonly ShellJob job = new(tasks, "pkg", "Paketauftrag", log);
+    private readonly ShellJob job = new(tasks, "pkg", "Paketauftrag", log, getSessionGeneration);
     public string? TakeResult() => job.TakeResult();
 
     public ShellCommand[] Commands => [new("pkg", Usage, "Installiert und verwaltet signierte App-Pakete.", true, Execute)];

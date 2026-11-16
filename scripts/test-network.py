@@ -249,8 +249,13 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
         monitor.write_line('fetch http://10.0.2.2:18080/stall')
         monitor.write_line('echo NETWORK_UI_DURING_FETCH')
         monitor.screenshot(prefix.with_name(prefix.name + '-during-fetch.ppm'))
+        result_start = len(serial.read_text(encoding='utf-8', errors='replace'))
         monitor.write_line('net cancel')
-        monitor.write_line('net status')
+        cancel_deadline = time.monotonic() + timeout
+        while 'NET Netzwerkauftrag abgebrochen.' not in serial.read_text(encoding='utf-8', errors='replace')[result_start:]:
+            if qemu.poll() is not None or time.monotonic() >= cancel_deadline:
+                raise TimeoutError(f'Abbruchergebnis fehlt; Protokoll: {serial}')
+            time.sleep(0.1)
         monitor.screenshot(prefix.with_name(prefix.name + '-cancel.ppm'))
         monitor.key('f4')
         time.sleep(1)

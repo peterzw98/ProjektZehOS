@@ -2,6 +2,12 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## DHCP ohne Server am 16. November 2026
+
+Vor Einbau der Automatik: normaler nativer Releasebuild und gesonderter Sicherheits-Recovery-Build, QEMU TCG, E1000e mit Socket-Netz ohne Gegenstelle (Link vorhanden, kein DHCP-Server), neue isolierte 64-MiB-Testplatte. `net dhcp` endete mit `DHCP hat keine IPv4-Adresse geliefert.` nach rund 6,9 s einschließlich Tasteneingabe. Anschließend setzte `net static` erfolgreich eine Adresse; die Sperre blieb frei. `-nic user,restrict=on` wäre dafür ungeeignet, weil QEMU weiterhin DHCP anbietet.
+
+Der dekompilierte installierte `DhcpClient` aus Cosmos 3.0.94 wartet in `Receive` in 100-ms-Schritten nominell bis fünf Sekunden, nach einem Offer gegebenenfalls nochmals auf ACK. Dieser Warteabschnitt nimmt keinen CancellationToken an. Beim Ausschalten während DHCP kann deshalb `StopAll(2000)` zunächst scheitern; der vorhandene Energiepfad bricht dann ab, die Shell bleibt bedienbar. Im Schlaf zwischen Versuchen ist die Automatik sofort abbrechbar. Keine Zusage einer Lease-Erneuerung oder durchgehenden Internetverfügbarkeit.
+
 ## TLS für Wasm-Apps am 15. November 2026
 
 - **Nicht blockierendes BouncyCastle:** `TlsClientProtocol()` ohne Stream mit `OfferInput`/`ReadOutput`/`ReadInput`/`WriteApplicationData` läuft im Cosmos-Gast. Die Netzwerkprobe hat gegen die TLS-Fixtures einen Handshake in rund 1,2 s (QEMU TCG) abgeschlossen, falscher Name, fremde CA, abgelaufenes und künftiges Zertifikat abgelehnt und die 10-s-Frist gegen einen stummen Server eingehalten.

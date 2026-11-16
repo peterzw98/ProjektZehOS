@@ -8,6 +8,7 @@ using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Apps.Terminal;
 using ProjektZeh.Apps.TextEditor;
 using ProjektZeh.Input;
+using ProjektZeh.Network;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.UI;
@@ -72,6 +73,11 @@ internal sealed class Desktop
     private bool leftShift;
     private bool rightShift;
     private bool suppressSpace;
+    private readonly Func<NetworkStatus>? getNetwork;
+    private NetworkStatus networkStatus;
+    private string? networkAddress;
+    private long networkSample = -1;
+    private bool networkFlyoutOpen;
     public WindowManager Windows { get; }
     public DesktopMetrics Metrics { get; } = new();
     public SystemMetrics System { get; } = new();
@@ -84,8 +90,9 @@ internal sealed class Desktop
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
         Func<ShellService> createShell, Func<FileService> createFiles,
         DisplaySettings? display = null, TaskManagerSection[]? systemSections = null, DesktopSession? session = null,
-        Func<ExternalApplication[]>? listExternal = null)
+        Func<ExternalApplication[]>? listExternal = null, Func<NetworkStatus>? getNetwork = null)
     {
+        this.getNetwork = getNetwork;
         this.listExternal = listExternal;
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 400 + BarHeight);
@@ -246,6 +253,7 @@ internal sealed class Desktop
     {
         // Ein gehaltenes Esc darf nach der Zeigerfreigabe keinen zweiten Wechsel ausloesen.
         if (value.IsRepeat) return true;
+        if (CloseNetworkFlyout()) return true;
         if (CloseMenu()) return true;
         if (!Windows.HasAppPointerCapture) return false;
         Windows.Handle(value);
@@ -260,6 +268,7 @@ internal sealed class Desktop
 
     private void ToggleMenu()
     {
+        CloseNetworkFlyout();
         if (CloseMenu()) return;
         Windows.Reset();
         menu.Handle(new(InputEventType.Reset));
@@ -376,6 +385,17 @@ internal sealed class Desktop
         }
         if ((alt && value.Type is InputEventType.KeyDown or InputEventType.Text) ||
             (suppressSpace && value.Type == InputEventType.Text && value.Character == ' ')) return;
+        if (value.Type == InputEventType.PointerDown)
+        {
+            if (getNetwork != null && value.Button == PointerButtons.Left && TrayBounds.Contains(value.X, value.Y))
+            {
+                CloseMenu();
+                networkFlyoutOpen = !networkFlyoutOpen;
+                sceneDirty = true;
+                return;
+            }
+            CloseNetworkFlyout();
+        }
         if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerScroll)
         {
             Windows.Handle(value);
@@ -512,10 +532,12 @@ internal sealed class Desktop
     private int AppsHeaderTop => search.Bounds.Y + search.Bounds.Height + 12;
     private int HintTop => launch.Bounds.Y - 8 - glyphHeight;
     private int ClockWidth => 5 * glyphWidth + 32;
+    private int TrayWidth => getNetwork == null ? 0 : 40;
+    private UiRect TrayBounds => new(width - ClockWidth - TrayWidth, height - 48, TrayWidth - 4, 40);
     private UiRect MenuButtonBounds => new(8, height - 48, 136, 40);
     private UiRect PinnedBounds(int index) => new(PinnedLeft + index * 48, height - 48, 44, 40);
     private UiRect PagerBounds(int index) =>
-        new(width - ClockWidth - (WindowManager.WorkspaceCount - index) * PagerSlot - 8, height - 46, PagerSlot - 4, 36);
+        new(width - ClockWidth - TrayWidth - (WindowManager.WorkspaceCount - index) * PagerSlot - 8, height - 46, PagerSlot - 4, 36);
     private UiRect TaskBounds(int index, int count)
     {
         int taskWidth = Math.Min(260, (PagerBounds(0).X - 12 - TaskLeft) / Math.Max(1, count));
@@ -524,6 +546,17 @@ internal sealed class Desktop
 
     public void Update(long milliseconds)
     {
+        if (getNetwork != null && milliseconds / 500 != networkSample)
+        {
+            networkSample = milliseconds / 500;
+            var status = getNetwork();
+            if (status != networkStatus)
+            {
+                networkStatus = status;
+                networkAddress = status.Address == null ? null : "IPv4 " + status.Address;
+            }
+            sceneDirty = true;
+        }
         SyncSession();
         if (IsLocked)
         {
@@ -557,6 +590,7 @@ internal sealed class Desktop
     {
         if (session == null || session.Identity.Generation == generation) return;
         generation = session.Identity.Generation;
+        CloseNetworkFlyout();
         CloseMenu();
         Windows.CloseAll();
         desktopIcons.Focused = false;
@@ -594,6 +628,7 @@ internal sealed class Desktop
                 Windows.Render(surface, font, glyphWidth, glyphHeight, !menuOpen);
                 RenderTaskbar(surface, milliseconds);
                 if (menuOpen) RenderMenu(surface);
+                if (networkFlyoutOpen) RenderNetworkFlyout(surface);
             }
             if (scene.Length != width * height) scene = new int[width * height];
             surface.CopyTo(scene);
@@ -686,6 +721,21 @@ internal sealed class Desktop
             // Punkt: auf diesem Desktop liegen Fenster.
             if (!current && Windows.CountOn(index) > 0) surface.FillRectangle(bounds.X + bounds.Width / 2 - 2, bounds.Y + bounds.Height - 5, 4, 3, UiPainter.Accent);
         }
+        if (getNetwork != null)
+        {
+            var bounds = TrayBounds;
+            if (networkFlyoutOpen) UiPainter.RoundRect(surface, bounds.X, bounds.Y, bounds.Width, bounds.Height, 8, UiPainter.Muted);
+            int x = bounds.X + 8, y = bounds.Y + 10;
+            bool connected = networkStatus.Link && networkStatus.Address != null;
+            AppIcons.Draw(surface, AppIcon.Network, x, y, connected ? UiPainter.Foreground : UiPainter.Secondary);
+            if (!networkStatus.Adapter || !networkStatus.Link)
+            {
+                surface.DrawLine(x + 12, y + 12, x + 19, y + 19, UiPainter.Secondary);
+                surface.DrawLine(x + 19, y + 12, x + 12, y + 19, UiPainter.Secondary);
+            }
+            else if (!connected && milliseconds / 500 % 2 == 0)
+                surface.FillRectangle(x + 16, y + 16, 4, 4, UiPainter.Accent);
+        }
         long minute = milliseconds / 60000;
         if (minute != clockMinute)
         {
@@ -711,5 +761,22 @@ internal sealed class Desktop
         if (menuStatus.Length > 0) painter.Text(surface, menuStatus, left, HintTop, inner, UiPainter.Danger);
         else if (appList.SelectedIndex >= 0)
             painter.Text(surface, matches[appList.SelectedIndex].Description, left, HintTop, inner, UiPainter.Secondary);
+    }
+
+    private bool CloseNetworkFlyout()
+    {
+        if (!networkFlyoutOpen) return false;
+        networkFlyoutOpen = false;
+        sceneDirty = true;
+        return true;
+    }
+
+    private void RenderNetworkFlyout(PixelSurface surface)
+    {
+        int x = Math.Max(8, TrayBounds.X + TrayBounds.Width - 320), y = height - BarHeight - 120;
+        UiPainter.RoundFrame(surface, x, y, 320, 112, 12, 1, UiPainter.Border, UiPainter.Background);
+        painter.Text(surface, "Netzwerk", x + 16, y + 16, 288, UiPainter.Foreground);
+        painter.Text(surface, networkStatus.Text, x + 16, y + 40, 288, UiPainter.Secondary);
+        if (networkAddress != null) painter.Text(surface, networkAddress, x + 16, y + 64, 288, UiPainter.Foreground);
     }
 }

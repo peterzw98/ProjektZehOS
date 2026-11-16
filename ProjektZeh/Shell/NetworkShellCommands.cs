@@ -8,9 +8,9 @@ namespace ProjektZeh.Shell;
 
 /// <summary>Haelt Ergebnis und Abbruch einer Netzoperation je Shellsitzung getrennt.</summary>
 internal sealed class NetworkShellCommands(INetworkService network, BackgroundTaskService tasks, Func<bool> isAdministrator,
-    Action<string>? log = null)
+    Action<string>? log = null, Func<int>? getSessionGeneration = null)
 {
-    private readonly ShellJob job = new(tasks, "net", "Netzwerkauftrag", log);
+    private readonly ShellJob job = new(tasks, "net", "Netzwerkauftrag", log, getSessionGeneration);
     public string? TakeResult() => job.TakeResult();
 
     public ShellCommand[] Commands =>

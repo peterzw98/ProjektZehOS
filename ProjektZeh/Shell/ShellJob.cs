@@ -6,20 +6,24 @@ using ProjektZeh.Shared;
 namespace ProjektZeh.Shell;
 
 /// <summary>Haelt Auftraege und Ergebnisse je Shell; nur die Ereignisschleife schreibt in die Anzeige.</summary>
-internal sealed class ShellJob(BackgroundTaskService tasks, string command, string label, Action<string>? log = null)
+internal sealed class ShellJob(BackgroundTaskService tasks, string command, string label, Action<string>? log = null,
+    Func<int>? getSessionGeneration = null)
 {
     private readonly object gate = new();
     private bool running;
     private bool closed;
     private int taskId;
     private string? result;
+    private int generation;
 
     public ResultErr Start(string taskName, ITextOutput output, Func<CancellationToken, string> work)
     {
         lock (gate)
         {
             if (closed) return ResultErr.CreateFailure(ResultCode.Failure, "Sitzung geschlossen.");
+            if (generation != (getSessionGeneration?.Invoke() ?? 0)) result = null;
             if (running || result != null) return ResultErr.CreateFailure(ResultCode.Failure, $"Ein {label} dieser Sitzung laeuft bereits.");
+            generation = getSessionGeneration?.Invoke() ?? 0;
             running = true;
             var started = tasks.Start(taskName, context => Run(work, context.Token));
             if (!started.IsOK()) { running = false; return started.Status; }
@@ -52,7 +56,14 @@ internal sealed class ShellJob(BackgroundTaskService tasks, string command, stri
 
     public string? TakeResult()
     {
-        lock (gate) { var text = result; result = null; return text; }
+        lock (gate)
+        {
+            bool sameIdentity = generation == (getSessionGeneration?.Invoke() ?? 0);
+            if (!sameIdentity && running) tasks.Cancel(taskId);
+            var text = sameIdentity ? result : null;
+            result = null;
+            return text;
+        }
     }
 
     public void Close()

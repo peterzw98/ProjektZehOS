@@ -4,7 +4,7 @@
 
 Der Arbeitsstand folgt dem [Umsetzungsplan](superpowers/plans/2026-11-14-network-https.md). Cosmos 3.0.94 und die bestehenden Paketversionen bleiben erhalten. Netzwerkkartentreiber und IPv4-Stack kommen aus Cosmos; ZehOS ergänzt die Shellintegration, Ressourcenbegrenzungen und die Zuständigkeit für Hintergrundzugriffe. Ein Desktopbrowser ist nicht Teil dieser Etappe.
 
-Die Netzwerkbefehle starten einen Hintergrundauftrag je Terminal. `net status` holt dessen Ergebnis im Vordergrund ab; `net cancel` fordert den Abbruch an. Der Worker schreibt nicht direkt in die Anzeige. Globale Netzwerkoperationen müssen serialisiert werden, weil Cosmos seinen Stack nicht für beliebige parallele Aufrufer absichert. Änderungen der globalen IPv4-Konfiguration sind administrativ.
+Die Netzwerkbefehle starten einen Hintergrundauftrag je Terminal. `ShellService.Poll` holt fertige Ergebnisse einmalig in die aufrufende Sitzung; `net cancel` fordert den Abbruch an. Der Worker schreibt nicht direkt in die Anzeige. Globale Netzwerkoperationen müssen serialisiert werden, weil Cosmos seinen Stack nicht für beliebige parallele Aufrufer absichert. Manuelle Änderungen der globalen IPv4-Konfiguration sind administrativ. Nach dem Boot sucht ein dauerhafter Auftrag bei Link ohne Adresse per DHCP (erneut nach zehn Sekunden). `auto-dhcp` prüft unter der Netzwerksperre nochmals auf eine inzwischen gesetzte Adresse, damit eine wartende Automatik `net static` nicht überschreibt. Die Taskleiste liest einen sperrfreien Zustands-Snapshot alle 500 ms; Link mit Adresse ist keine Internetprüfung.
 
 ## Recherche und Wiederverwendung
 

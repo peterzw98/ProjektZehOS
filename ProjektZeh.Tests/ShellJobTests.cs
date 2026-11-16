@@ -78,6 +78,23 @@ public sealed class ShellJobTests
         Assert.IsFalse(job.Start("net info", new Output(), _ => "falsch").IsOK());
     }
 
+    [TestMethod]
+    public void ResultFromPreviousIdentityIsDiscarded()
+    {
+        int generation = 1;
+        var tasks = new BackgroundTaskService();
+        var job = new ShellJob(tasks, "net", "Netzwerkauftrag", getSessionGeneration: () => generation);
+        using var release = new ManualResetEventSlim();
+        Assert.IsTrue(job.Start("net fetch", new Output(), _ => { release.Wait(CancellationToken.None); return "privater Inhalt"; }).IsOK());
+        generation = 2;
+        release.Set();
+        Assert.IsTrue(tasks.StopAll(2000));
+        Assert.IsNull(job.TakeResult());
+        Assert.IsTrue(job.Start("net info", new Output(), _ => "neue Sitzung").IsOK());
+        Assert.IsTrue(tasks.StopAll(2000));
+        Assert.AreEqual("neue Sitzung", job.TakeResult());
+    }
+
     private sealed class Output : ITextOutput
     {
         public string? Last { get; private set; }

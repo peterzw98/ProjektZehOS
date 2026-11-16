@@ -62,6 +62,7 @@ public sealed class NetworkCommandTests
 
     private sealed class FakeNetwork : INetworkService
     {
+        public NetworkStatus Status => new(true, true, null);
         public int Calls;
         public ManualResetEvent Started { get; } = new(false);
         public ResultObject<string> Execute(string operation, string[] arguments, CancellationToken cancellation)

@@ -6,6 +6,7 @@ using Cosmos.Kernel.HAL.Devices.Display;
 using Cosmos.Kernel.System.Graphics;
 using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Input;
+using ProjektZeh.Network;
 using ProjektZeh.Runtime;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
@@ -25,7 +26,8 @@ internal sealed class DisplayService
     public DisplaySettings Display { get; }
 
     public DisplayService(Func<ShellService> createShell, Func<FileService> createFiles, InputService input,
-        TaskManagerSection[] sections, DesktopSession session, Func<Apps.ExternalApplication[]>? listExternal = null)
+        TaskManagerSection[] sections, DesktopSession session, Func<Apps.ExternalApplication[]>? listExternal = null,
+        Func<NetworkStatus>? getNetwork = null)
     {
         this.input = input;
         canvas = Canvas.GetFullScreen();
@@ -37,7 +39,7 @@ internal sealed class DisplayService
         Display = new DisplaySettings(current, ReadModes(current), SetMode, () => new(canvas.Width, canvas.Height));
         var font = CosmosGermanFont.Default;
         desktop = new Desktop(canvas.Width, canvas.Height, font.Data, font.Width, font.Height, createShell, createFiles,
-            Display, sections, session, listExternal);
+            Display, sections, session, listExternal, getNetwork);
         SyncInput();
     }
 
