@@ -8,7 +8,7 @@ namespace ProjektZeh.Shell;
 /// <summary>
 /// Schreibt auf die Cosmos-Konsole.
 /// </summary>
-internal sealed class ConsoleTextOutput : ITextOutput
+internal sealed class ConsoleTextOutput : IProgressOutput
 {
     private bool interactive;
     private int visibleRows = 1;
@@ -43,6 +43,12 @@ internal sealed class ConsoleTextOutput : ITextOutput
     public void WriteLine(string text)
     {
         Buffer.WriteLine(text);
+        if (!interactive) Console.WriteLine(GermanFont.ConsoleText(text));
+    }
+
+    public void WriteProgress(string text)
+    {
+        Buffer.WriteProgress(text);
         if (!interactive) Console.WriteLine(GermanFont.ConsoleText(text));
     }
 

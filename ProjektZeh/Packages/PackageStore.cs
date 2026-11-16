@@ -9,6 +9,8 @@ using ProjektZeh.Update;
 
 namespace ProjektZeh.Packages;
 
+internal sealed record PackageProgress(string Phase, string Path, long CompletedBytes, long TotalBytes);
+
 internal sealed record InstalledPackage(PackageManifest Manifest, string Directory)
 {
     public string FilesDirectory => Path.Combine(Directory, "files");
@@ -22,6 +24,7 @@ internal sealed record InstalledPackage(PackageManifest Manifest, string Directo
 /// </summary>
 internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersion kernel)
 {
+    public const string DefaultSource = "https://packages.pjoter.de/";
     private const int BufferBytes = 64 * 1024;
     private const string NewSuffix = ".new";
     private readonly object gate = new();
@@ -172,16 +175,20 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     /// Installiert oder aktualisiert aus <paramref name="source"/> unter <paramref name="prefix"/> (manifest, manifest.sig,
     /// files/). Mit <paramref name="expectedManifestSha256"/> muss das Manifest exakt dem Katalogeintrag entsprechen.
     /// Rueckstufungen und Aenderungen an laufenden Paketen werden abgelehnt.
+    /// Der interne Fortschrittsempfaenger speichert nur den Zustand und darf nicht werfen; Anzeige und Formatierung
+    /// erfolgen spaeter in der Ereignisschleife. Fertig wird erst nach dem Veroeffentlichen gemeldet.
     /// </summary>
-    public ResultObject<PackageManifest> Install(IPackageSource source, string prefix, string? expectedManifestSha256, CancellationToken cancellation)
+    public ResultObject<PackageManifest> Install(IPackageSource source, string prefix, string? expectedManifestSha256, CancellationToken cancellation, Action<PackageProgress>? progress = null)
     {
         if (trust == null) return ResultObjectFactory.CreateFailure<PackageManifest>(NoTrust());
+        progress?.Invoke(new("Manifest laden", prefix, 0, 0));
         var manifestBytes = source.Read(prefix + "manifest", PackageManifest.MaximumBytes, cancellation);
         if (!manifestBytes.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(manifestBytes.Status);
         var signature = source.Read(prefix + "manifest.sig", PackageTrust.SignatureBytes, cancellation);
         if (!signature.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(signature.Status);
         if (expectedManifestSha256 != null && !string.Equals(PackageTrust.Sha256Hex(manifestBytes.Value!), expectedManifestSha256, StringComparison.Ordinal))
             return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.InvalidArgument, "Manifest passt nicht zum signierten Katalog.");
+        progress?.Invoke(new("Signatur pruefen", prefix, 0, 0));
         if (!trust.Verify(manifestBytes.Value!, signature.Value!))
             return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.InvalidArgument, "Paketsignatur ungueltig.");
         var parsed = PackageManifest.Parse(manifestBytes.Value!);
@@ -195,7 +202,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         // Kein finally: Cosmos 3.0.94 ueberspringt finally beim Exception-Unwind (COSMOS_SUPPORT.md); die Sperre wird
         // deshalb nach dem Abfangen auf jedem Weg ausdruecklich freigegeben.
         ResultObject<PackageManifest> result;
-        try { result = Publish(source, prefix, parsed, signature.Value!, cancellation); }
+        try { result = Publish(source, prefix, parsed, signature.Value!, progress, cancellation); }
         catch (OperationCanceledException) { result = ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, "Installation abgebrochen."); }
         catch (Exception exception) { result = ResultObjectFactory.CreateFromException<PackageManifest>(exception); }
         lock (gate) busy.Remove(manifest.Id);
@@ -203,7 +210,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     }
 
     private ResultObject<PackageManifest> Publish(IPackageSource source, string prefix, ResultObject<PackageManifest> parsed, byte[] signature,
-        CancellationToken cancellation)
+        Action<PackageProgress>? progress, CancellationToken cancellation)
     {
         var manifest = parsed.Value!;
         var current = ReadActive(manifest.Id);
@@ -221,7 +228,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, $"{manifest.Id} {manifest.Version} ist bereits installiert.");
         string target = Path.Combine(Apps, manifest.Id, manifest.Version.ToString());
         ResultErr written;
-        try { written = WriteVersion(source, prefix, manifest, signature, target, cancellation); }
+        try { written = WriteVersion(source, prefix, manifest, signature, target, progress, cancellation); }
         catch (Exception)
         {
             // Auch bei Abbruch oder Dateifehler keine halbe Version liegen lassen.
@@ -238,24 +245,34 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         lock (gate) verified.Add(manifest.Id + "/" + manifest.Version);
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
         if (previous != null && !string.Equals(previous.Directory, target, StringComparison.Ordinal)) TryDeleteTree(previous.Directory);
+        long total = 0;
+        foreach (var file in manifest.Files) total += file.Size;
+        progress?.Invoke(new("Fertig", manifest.Id, total, total));
         return parsed;
     }
 
-    private static ResultErr WriteVersion(IPackageSource source, string prefix, PackageManifest manifest, byte[] signature, string target, CancellationToken cancellation)
+    private static ResultErr WriteVersion(IPackageSource source, string prefix, PackageManifest manifest, byte[] signature, string target, Action<PackageProgress>? progress, CancellationToken cancellation)
     {
         // Reste eines abgebrochenen Versuchs derselben Version sind nie aktiv gewesen und werden verworfen.
         if (Directory.Exists(target)) DeleteTree(target);
         string files = Path.Combine(target, "files");
         Directory.CreateDirectory(files);
+        long total = 0, completed = 0;
+        foreach (var file in manifest.Files) total += file.Size;
         foreach (var file in manifest.Files)
         {
             cancellation.ThrowIfCancellationRequested();
+            progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             string path = Path.Combine(files, file.Path.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var digest = new Sha256Digest();
             ResultErr copied;
             var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
-            var hashing = new HashingStream(stream, digest);
+            var hashing = new HashingStream(stream, digest, count =>
+            {
+                completed += count;
+                progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
+            });
             // Ohne using (Cosmos-Unwindgrenze): die Datei muss auch nach Abbruch geschlossen sein, damit sie loeschbar ist.
             try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
             catch (Exception)
@@ -266,6 +283,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             stream.Dispose();
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
+            progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
             if (!string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Pruefsumme falsch: " + file.Path);
         }
@@ -364,7 +382,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     {
         try
         {
-            if (!File.Exists(SourcePath)) return ResultObjectFactory.CreateSuccess<string>(null);
+            if (!File.Exists(SourcePath)) return ResultObjectFactory.CreateSuccess(DefaultSource);
             return ResultObjectFactory.CreateSuccess(Encoding.ASCII.GetString(ReadSmall(SourcePath, 2048)).TrimEnd('\n'));
         }
         catch (Exception exception) when (IsFileError(exception))
@@ -519,7 +537,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private static ResultObject<PackageCatalog> DamagedCatalog() =>
         ResultObjectFactory.CreateFailure<PackageCatalog>(ResultCode.Failure, "Gespeicherter Katalog beschaedigt; pkg update ausfuehren.");
 
-    private sealed class HashingStream(Stream target, Sha256Digest digest) : Stream
+    private sealed class HashingStream(Stream target, Sha256Digest digest, Action<int> progress) : Stream
     {
         public long Written { get; private set; }
         public override void Write(byte[] buffer, int offset, int count)
@@ -527,6 +545,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             digest.BlockUpdate(buffer, offset, count);
             target.Write(buffer, offset, count);
             Written += count;
+            progress(count);
         }
         public override bool CanRead => false;
         public override bool CanSeek => false;

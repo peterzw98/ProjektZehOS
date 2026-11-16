@@ -18,7 +18,45 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
 {
     private const string Usage = "pkg list|source [<https-URL>]|update|install <id>|install-local <Verzeichnis>|upgrade [<id>]|remove <id>|cancel";
     private readonly ShellJob job = new(tasks, "pkg", "Paketauftrag", log, getSessionGeneration);
-    public string? TakeResult() => job.TakeResult();
+    private readonly object progressGate = new();
+    private PackageProgress? progress;
+    private string? lastProgress;
+    private int progressGeneration;
+    private bool closed;
+
+    public string? TakeResult()
+    {
+        string? text = job.TakeResult();
+        if (text != null) lock (progressGate) progress = null;
+        return text;
+    }
+
+    public string? TakeProgress()
+    {
+        PackageProgress? value;
+        lock (progressGate)
+        {
+            value = progressGeneration == (getSessionGeneration?.Invoke() ?? 0) ? progress : null;
+            progress = null;
+        }
+        if (value == null) return null;
+        string text;
+        if (value.TotalBytes > 0)
+        {
+            int percent = (int)(value.CompletedBytes * 100 / value.TotalBytes);
+            string bar = new string('#', percent / 5).PadRight(20, '-');
+            text = $"{value.Phase} {value.Path} [{bar}] {percent}% {value.CompletedBytes}/{value.TotalBytes} B";
+        }
+        else text = $":: {value.Phase} {value.Path}";
+        if (text == lastProgress) return null;
+        lastProgress = text;
+        return text;
+    }
+
+    private void ReportProgress(PackageProgress value)
+    {
+        lock (progressGate) if (!closed) progress = value;
+    }
 
     public ShellCommand[] Commands => [new("pkg", Usage, "Installiert und verwaltet signierte App-Pakete.", true, Execute)];
 
@@ -34,7 +72,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
             case "source" when count == 0:
                 var source = store.ReadSource();
                 if (!source.IsOK()) return source.Status;
-                output.WriteLine(source.Value ?? "Keine Paketquelle gesetzt.");
+                output.WriteLine(source.Value!);
                 return ResultErr.CreateSuccess();
         }
         if (!store.HasTrust) return ResultErr.CreateFailure(ResultCode.Failure, "Dieser Build enthaelt keinen Paketschluessel; Pakete sind deaktiviert.");
@@ -61,7 +99,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
             case "install-local":
                 var directory = resolvePath(argument);
                 if (!directory.IsOK()) return directory.Status;
-                return Start(output, token => Describe(store.Install(new DirectoryPackageSource(directory.Value!), "", null, token), "installiert"));
+                return Start(output, token => Describe(store.Install(new DirectoryPackageSource(directory.Value!), "", null, token, ReportProgress), "installiert"));
             case "install":
                 if (!PackageManifest.IsValidId(argument)) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Ungueltige Paketkennung.");
                 return Start(output, token => InstallFromCatalog(argument, token));
@@ -88,7 +126,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
             foreach (var entry in catalog.Value.Entries)
                 if (Array.FindIndex(installed.Value!, package => package.Manifest.Id == entry.Id) < 0) lines.Add($"{entry.Id} {entry.Version} verfuegbar");
         if (!catalog.IsOK()) lines.Add(catalog.Status.Message);
-        else if (catalog.Value == null) lines.Add("Kein Katalog geladen: pkg source <URL>, dann pkg update.");
+        else if (catalog.Value == null) lines.Add("Noch kein Katalog geladen; pkg install <id> oder pkg upgrade laden ihn automatisch.");
         foreach (string line in lines) output.WriteLine(line);
         if (lines.Count == 0) output.WriteLine("Keine Pakete.");
         return ResultErr.CreateSuccess();
@@ -96,13 +134,16 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
 
     private ResultObject<PackageCatalog> LoadCatalog(CancellationToken token)
     {
-        var url = RequireSource();
+        var url = store.ReadSource();
         if (!url.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(url.Status);
         var source = remote(url.Value!);
+        ReportProgress(new("Paketliste laden", "catalog", 0, 0));
         var catalog = source.Read("catalog", PackageCatalog.MaximumBytes, token);
         if (!catalog.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(catalog.Status);
+        ReportProgress(new("Katalogsignatur laden", "catalog.sig", 0, 0));
         var signature = source.Read("catalog.sig", PackageTrust.SignatureBytes, token);
         if (!signature.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(signature.Status);
+        ReportProgress(new("Katalog pruefen", "", 0, 0));
         return store.AcceptCatalog(catalog.Value!, signature.Value!);
     }
 
@@ -112,19 +153,19 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
 
     private string InstallFromCatalog(string id, CancellationToken token)
     {
-        var url = RequireSource();
+        var url = store.ReadSource();
         if (!url.IsOK()) return url.Status.Message;
         var catalog = LoadCatalog(token);
         if (!catalog.IsOK()) return DescribeCatalog(catalog);
         var entry = catalog.Value?.Find(id);
         if (entry == null) return $"Paket {id} ist nicht im Katalog.";
-        return Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token), "installiert");
+        return Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token, ReportProgress), "installiert");
     }
 
     // Jedes Paket einzeln; ein Fehler bei einem Paket haelt die uebrigen nicht auf.
     private string Upgrade(string id, CancellationToken token)
     {
-        var url = RequireSource();
+        var url = store.ReadSource();
         if (!url.IsOK()) return url.Status.Message;
         var catalog = LoadCatalog(token);
         if (!catalog.IsOK()) return DescribeCatalog(catalog);
@@ -137,24 +178,42 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
             if (id.Length > 0 && package.Manifest.Id != id) continue;
             var entry = catalog.Value!.Find(package.Manifest.Id);
             if (entry == null || entry.Version.CompareTo(package.Manifest.Version) <= 0) continue;
-            string line = Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token), "aktualisiert");
+            string line = Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token, ReportProgress), "aktualisiert");
             report.Append(report.Length == 0 ? "" : "\n").Append(line);
         }
         return report.Length > 0 ? report.ToString() : "Alle Pakete sind aktuell.";
-    }
-
-    private ResultObject<string> RequireSource()
-    {
-        var source = store.ReadSource();
-        if (source.IsOK() && source.Value == null) return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, "Keine Paketquelle gesetzt; zuerst pkg source <https-URL>.");
-        return source;
     }
 
     private static string Describe(ResultObject<PackageManifest> installed, string verb) =>
         installed.IsOK() ? $"{installed.Value!.Id} {installed.Value.Version} {verb}." : installed.Status.Message;
 
     private ResultErr Start(ITextOutput output, Func<CancellationToken, string> work)
-        => job.Start("pkg", output, work);
+    {
+        // Cosmos ueberspringt finally beim Unwind; auch ein Ausgabefehler muss die Sperre freigeben.
+        Monitor.Enter(progressGate);
+        ResultErr started;
+        try
+        {
+            started = job.Start("pkg", output, work);
+            if (started.IsOK())
+            {
+                progress = null;
+                lastProgress = null;
+                progressGeneration = getSessionGeneration?.Invoke() ?? 0;
+            }
+        }
+        catch (Exception)
+        {
+            Monitor.Exit(progressGate);
+            throw;
+        }
+        Monitor.Exit(progressGate);
+        return started;
+    }
 
-    public void Close() => job.Close();
+    public void Close()
+    {
+        lock (progressGate) { closed = true; progress = null; }
+        job.Close();
+    }
 }

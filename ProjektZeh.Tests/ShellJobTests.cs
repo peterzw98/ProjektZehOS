@@ -66,6 +66,24 @@ public sealed class ShellJobTests
     }
 
     [TestMethod]
+    public void PollReplacesLiveProgressAndClosedSessionDropsIt()
+    {
+        string? pending = "50%";
+        var shell = new ShellService { TakeJobProgress = () => { var text = pending; pending = null; return text; } };
+        var output = new ProjektZeh.Apps.Terminal.TerminalBuffer(20);
+        output.WriteLine("vorher");
+        Assert.IsTrue(shell.Poll(output));
+        pending = "75%";
+        Assert.IsTrue(shell.Poll(output));
+        Assert.AreEqual(2, output.Count);
+        Assert.AreEqual("vorher", output.GetLine(0));
+        Assert.AreEqual("75%", output.GetLine(1));
+        shell.Close();
+        pending = "100%";
+        Assert.IsFalse(shell.Poll(output));
+        Assert.AreEqual("75%", output.GetLine(1));
+    }
+    [TestMethod]
     public void CloseCancelsWorkAndDropsItsResult()
     {
         var tasks = new BackgroundTaskService();

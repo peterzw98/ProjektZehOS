@@ -63,7 +63,7 @@ internal sealed class DirectoryPackageSource(string directory) : IPackageSource
             stream?.Dispose();
             return ResultErr.CreateFailure(ResultCode.Failure, path + ": " + exception.Message);
         }
-        catch (OperationCanceledException)
+        catch (Exception)
         {
             stream?.Dispose();
             throw;

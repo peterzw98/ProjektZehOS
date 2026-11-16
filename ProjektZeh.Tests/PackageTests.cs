@@ -439,7 +439,9 @@ public sealed class PackageTests
         var pkg = session.Commands.Single();
         var output = new Output();
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
-        StringAssert.Contains(Status(session), "Paketquelle");
+        Assert.AreEqual("doom 1.0.0 installiert.", Status(session));
+        Assert.AreEqual(PackageStore.DefaultSource, requested);
+        Assert.IsTrue(pkg.Execute(["remove", "doom"], output).IsOK());
         Assert.IsTrue(pkg.Execute(["source", "https://repo.test/zehos/"], output).IsOK());
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
         Assert.AreEqual("doom 1.0.0 installiert.", Status(session));
@@ -474,6 +476,145 @@ public sealed class PackageTests
         var keyless = new Shell.PackageShellCommands(new PackageStore(Path.Combine(work, "store"), null, Kernel), _ => throw new InvalidOperationException(),
             path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true).Commands.Single();
         StringAssert.Contains(keyless.Execute(["install", "doom"], output).Message, "Paketschluessel");
+    }
+
+    [DataTestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void ShellReportsTransferProgressBeforePublishingAndDeliversResultOnce(bool identityChanges)
+    {
+        string repo = Path.Combine(work, "live-progress");
+        string hash = Publish(Path.Combine(repo, "doom", "1.0.0"), "doom", "1.0.0");
+        byte[] catalog = Encoding.UTF8.GetBytes($"zehos-catalog 1\ngeneration=1\npackage=doom 1.0.0 {hash}\nend\n");
+        File.WriteAllBytes(Path.Combine(repo, "catalog"), catalog);
+        File.WriteAllBytes(Path.Combine(repo, "catalog.sig"), Sign(catalog));
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var tasks = new Scheduling.BackgroundTaskService();
+        var store = Store();
+        var source = new PausingPackageSource(repo, started, release);
+        int generation = 0;
+        var session = new Shell.PackageShellCommands(store, _ => source,
+            path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true, getSessionGeneration: () => generation);
+        try
+        {
+            Assert.IsTrue(session.Commands.Single().Execute(["install", "doom"], new Output()).IsOK());
+            Assert.IsTrue(started.Wait(2000));
+            if (identityChanges)
+            {
+                generation++;
+                Assert.IsNull(session.TakeProgress(), "Fortschritt der alten Identitaet darf nicht erscheinen.");
+                Assert.IsNull(session.TakeResult());
+                release.Set();
+                Assert.IsTrue(tasks.StopAll(2000));
+                Assert.IsNull(session.TakeResult());
+                Assert.IsNull(session.TakeProgress());
+                return;
+            }
+            string? progress = session.TakeProgress();
+            Assert.IsNotNull(progress);
+            StringAssert.Contains(progress, "50%");
+            StringAssert.Contains(progress, "35009/70009 B");
+            StringAssert.Contains(progress, "level.wad");
+            Assert.IsNull(session.TakeProgress());
+            Assert.IsNull(session.TakeResult());
+            Assert.IsNull(store.ReadActive("doom").Value);
+            release.Set();
+            string? result = null;
+            Assert.IsTrue(SpinWait.SpinUntil(() => (result = session.TakeResult()) != null, 2000));
+            Assert.AreEqual("doom 1.0.0 installiert.", result);
+            Assert.IsNull(session.TakeResult());
+            session.Close();
+            Assert.IsNull(session.TakeProgress());
+        }
+        finally
+        {
+            release.Set();
+            tasks.StopAll(2000);
+        }
+    }
+
+    private sealed class PausingPackageSource(string directory, ManualResetEventSlim started, ManualResetEventSlim release) : IPackageSource
+    {
+        private readonly DirectoryPackageSource inner = new(directory);
+        public ProjektZeh.Shared.ResultObject<byte[]> Read(string path, int maximumBytes, CancellationToken cancellation) =>
+            inner.Read(path, maximumBytes, cancellation);
+        public ProjektZeh.Shared.ResultErr Copy(string path, long size, Stream target, CancellationToken cancellation)
+        {
+            if (!path.EndsWith("level.wad", StringComparison.Ordinal)) return inner.Copy(path, size, target, cancellation);
+            byte[] data = File.ReadAllBytes(Path.Combine(directory, path));
+            int half = data.Length / 2;
+            target.Write(data, 0, half);
+            started.Set();
+            release.Wait(cancellation);
+            target.Write(data, half, data.Length - half);
+            return ProjektZeh.Shared.ResultErr.CreateSuccess();
+        }
+    }
+    [TestMethod]
+    public void InstallationReportsBytesAndOnlyFinishesAfterVerification()
+    {
+        string repo = Path.Combine(work, "progress");
+        Publish(repo, "doom", "1.0.0");
+        var progress = new List<PackageProgress>();
+        var result = Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, progress.Add);
+        Assert.IsTrue(result.IsOK(), result.Status.Message);
+        var downloads = progress.Where(p => p.Phase == "Download").ToArray();
+        Assert.IsTrue(downloads.Any(p => p.CompletedBytes > 0 && p.CompletedBytes < p.TotalBytes));
+        Assert.IsTrue(downloads.All(p => p.CompletedBytes >= 0 && p.CompletedBytes <= p.TotalBytes));
+        Assert.AreEqual("Fertig", progress[^1].Phase);
+        Assert.AreEqual(70009L, progress[^1].TotalBytes);
+        Assert.AreEqual(progress[^1].TotalBytes, progress[^1].CompletedBytes);
+    }
+
+    [TestMethod]
+    public void CancelledDownloadReleasesFilesAndNeverReportsFinished()
+    {
+        string repo = Path.Combine(work, "cancel-progress");
+        Publish(repo, "doom", "1.0.0");
+        var store = Store();
+        using var cancel = new CancellationTokenSource();
+        var progress = new List<PackageProgress>();
+        var result = store.Install(new DirectoryPackageSource(repo), "", null, cancel.Token, value =>
+        {
+            progress.Add(value);
+            if (value.Phase == "Download" && value.CompletedBytes > 0) cancel.Cancel();
+        });
+        Assert.IsFalse(result.IsOK());
+        Assert.IsNull(store.ReadActive("doom").Value);
+        Assert.IsFalse(progress.Any(value => value.Phase == "Fertig"));
+        using (File.Open(Path.Combine(repo, "files", "app.wasm"), FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+        Assert.IsTrue(store.Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None).IsOK());
+    }
+    [TestMethod]
+    public void UnexpectedDownloadFailureClosesSourceFile()
+    {
+        string repo = Path.Combine(work, "throw-progress");
+        Publish(repo, "doom", "1.0.0");
+        Assert.IsFalse(Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, value =>
+        {
+            if (value.Phase == "Download" && value.CompletedBytes > 0) throw new InvalidOperationException("Testfehler beim Schreiben");
+        }).IsOK());
+        using var file = File.Open(Path.Combine(repo, "files", "app.wasm"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+    [TestMethod]
+    public void InvalidPackageNeverReportsFinished()
+    {
+        string repo = Path.Combine(work, "bad-progress");
+        Publish(repo, "doom", "1.0.0");
+        File.WriteAllBytes(Path.Combine(repo, "files", "app.wasm"), new byte[9]);
+        var progress = new List<PackageProgress>();
+        Assert.IsFalse(Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, progress.Add).IsOK());
+        Assert.IsFalse(progress.Any(p => p.Phase == "Fertig"));
+    }
+    [TestMethod]
+    public void MissingSourceUsesPublicRepositoryWithoutWritingConfiguration()
+    {
+        var store = Store();
+        Assert.AreEqual("https://packages.pjoter.de/", store.ReadSource().Value);
+        Assert.IsFalse(Directory.Exists(Path.Combine(work, "store")));
+        Assert.IsTrue(store.WriteSource("https://custom.test/").IsOK());
+        Assert.AreEqual("https://custom.test/", store.ReadSource().Value);
     }
 
     [TestMethod]
