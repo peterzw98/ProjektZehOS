@@ -30,6 +30,7 @@ internal sealed partial class ShellService
     private static int runningPasswordWorkers;
     internal static bool HasRunningPasswordOperations => Volatile.Read(ref runningPasswordWorkers) != 0;
     internal Action? OnClose { get; set; }
+    internal Func<string?>? TakeJobResult { get; set; }
     public bool IsSecretInput => secretInput != null;
     public bool IsBusy => passwordWorker != null;
 
@@ -40,7 +41,13 @@ internal sealed partial class ShellService
 
     public bool Poll(ITextOutput output)
     {
-        if (passwordWorker == null || Volatile.Read(ref passwordComplete) == 0 || !passwordWorker.Join(0)) return false;
+        bool written = false;
+        while (!closed && TakeJobResult?.Invoke() is string text)
+        {
+            output.WriteLine(text);
+            written = true;
+        }
+        if (passwordWorker == null || Volatile.Read(ref passwordComplete) == 0 || !passwordWorker.Join(0)) return written;
         passwordWorker = null;
         var apply = completion;
         completion = null;

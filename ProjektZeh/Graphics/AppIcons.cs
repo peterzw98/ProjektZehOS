@@ -1,6 +1,6 @@
 namespace ProjektZeh.Graphics;
 
-internal enum AppIcon { Menu, Files, Terminal, Editor, Settings, Tasks, Pong }
+internal enum AppIcon { Menu, Files, Terminal, Editor, Settings, Tasks, Pong, Network }
 
 /// <summary>Einfache Liniensymbole, direkt mit den vorhandenen Zeichenfunktionen gezeichnet.</summary>
 internal static class AppIcons
@@ -11,6 +11,11 @@ internal static class AppIcons
     {
         switch (icon)
         {
+            case AppIcon.Network:
+                Outline(surface, x, y + 1, 18, 12, color);
+                surface.FillRectangle(x + 8, y + 13, 2, 5, color);
+                surface.FillRectangle(x + 3, y + 17, 14, 2, color);
+                break;
             case AppIcon.Menu:
                 foreach ((int left, int top) in new[] { (0, 0), (12, 0), (0, 12), (12, 12) }) Outline(surface, x + left, y + top, 8, 8, color);
                 break;

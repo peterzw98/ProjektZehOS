@@ -41,11 +41,11 @@ def prepare_fixtures():
     config.write_text(f'''[ ca ]
 default_ca = local
 [ local ]
-database = {target}/index.txt
-new_certs_dir = {target}
-certificate = {target}/ca.pem
-private_key = {target}/ca.key
-serial = {target}/serial
+database = {target.as_posix()}/index.txt
+new_certs_dir = {target.as_posix()}
+certificate = {target.as_posix()}/ca.pem
+private_key = {target.as_posix()}/ca.key
+serial = {target.as_posix()}/serial
 default_md = sha256
 default_days = 3650
 policy = policy
@@ -249,8 +249,13 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
         monitor.write_line('fetch http://10.0.2.2:18080/stall')
         monitor.write_line('echo NETWORK_UI_DURING_FETCH')
         monitor.screenshot(prefix.with_name(prefix.name + '-during-fetch.ppm'))
+        result_start = len(serial.read_text(encoding='utf-8', errors='replace'))
         monitor.write_line('net cancel')
-        monitor.write_line('net status')
+        cancel_deadline = time.monotonic() + timeout
+        while 'NET Netzwerkauftrag abgebrochen.' not in serial.read_text(encoding='utf-8', errors='replace')[result_start:]:
+            if qemu.poll() is not None or time.monotonic() >= cancel_deadline:
+                raise TimeoutError(f'Abbruchergebnis fehlt; Protokoll: {serial}')
+            time.sleep(0.1)
         monitor.screenshot(prefix.with_name(prefix.name + '-cancel.ppm'))
         monitor.key('f4')
         time.sleep(1)
@@ -318,7 +323,9 @@ def run(args):
                    '-vga', 'std', '-netdev', 'user,id=net0', '-device', 'e1000e,netdev=net0',
                    '-cdrom', str(args.iso.resolve()), '-boot', 'd', '-serial', f'file:{serial}',
                    '-monitor', 'none', '-display', 'none', '-action', 'shutdown=poweroff,reboot=reset']
-        share = args.qemu.resolve().parent / 'share' / 'qemu'
+        qemu_directory = args.qemu.resolve().parent
+        share = next((path for path in (qemu_directory / 'share' / 'qemu', qemu_directory.parent / 'share' / 'qemu')
+                      if path.is_dir()), qemu_directory / 'share' / 'qemu')
         if share.is_dir():
             command[1:1] = ['-L', str(share)]
         if disk:

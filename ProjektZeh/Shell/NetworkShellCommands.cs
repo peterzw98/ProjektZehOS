@@ -8,17 +8,15 @@ namespace ProjektZeh.Shell;
 
 /// <summary>Haelt Ergebnis und Abbruch einer Netzoperation je Shellsitzung getrennt.</summary>
 internal sealed class NetworkShellCommands(INetworkService network, BackgroundTaskService tasks, Func<bool> isAdministrator,
-    Action<string>? log = null)
+    Action<string>? log = null, Func<int>? getSessionGeneration = null)
 {
-    private readonly object gate = new();
-    private bool running;
-    private int taskId;
-    private string? result;
+    private readonly ShellJob job = new(tasks, "net", "Netzwerkauftrag", log, getSessionGeneration);
+    public string? TakeResult() => job.TakeResult();
 
     public ShellCommand[] Commands =>
     [
         new("netinfo", "netinfo", "Zeigt Netzwerkadapter und IPv4-Konfiguration.", true, (a, o) => Start("info", a, o)),
-        new("net", "net dhcp|static <IP> <Maske> <Gateway> <DNS>|status|cancel", "Konfiguriert IPv4 oder zeigt den Auftrag.", true, Net),
+        new("net", "net dhcp|static <IP> <Maske> <Gateway> <DNS>|cancel", "Konfiguriert IPv4 oder bricht den Auftrag ab.", true, Net),
         new("ping", "ping <IPv4>", "Prueft die Erreichbarkeit einer IPv4-Adresse.", true, (a, o) => Start("ping", a, o)),
         new("nslookup", "nslookup <Name>", "Loest einen Namen ueber DNS auf.", true, (a, o) => Start("dns", a, o)),
         new("fetch", "fetch <http[s]://Host[:Port]/Pfad>", "Laedt eine begrenzte HTTP- oder HTTPS-Antwort.", true, (a, o) => Start("fetch", a, o))
@@ -26,21 +24,8 @@ internal sealed class NetworkShellCommands(INetworkService network, BackgroundTa
 
     private ResultErr Net(string[] arguments, ITextOutput output)
     {
-        if (arguments.Length == 1 && arguments[0] == "status")
-        {
-            lock (gate) output.WriteLine(running ? "Netzwerkauftrag laeuft." : result ?? "Kein Netzwerkauftrag.");
-            return ResultErr.CreateSuccess();
-        }
         if (arguments.Length == 1 && arguments[0] == "cancel")
-        {
-            lock (gate)
-            {
-                if (!running) return ResultErr.CreateFailure(ResultCode.Failure, "Kein Netzwerkauftrag laeuft.");
-                var cancelled = tasks.Cancel(taskId);
-                if (cancelled.IsOK()) output.WriteLine("Abbruch angefordert; Status mit net status pruefen.");
-                return cancelled;
-            }
-        }
+            return job.Cancel(output);
         if (arguments.Length >= 1 && arguments[0] is "dhcp" or "static")
         {
             if (!isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Netzwerkkonfiguration erfordert Administratorrechte.");
@@ -48,41 +33,18 @@ internal sealed class NetworkShellCommands(INetworkService network, BackgroundTa
             Array.Copy(arguments, 1, parameters, 0, parameters.Length);
             return Start(arguments[0], parameters, output);
         }
-        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: net dhcp|static <IP> <Maske> <Gateway> <DNS>|status|cancel");
+        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: net dhcp|static <IP> <Maske> <Gateway> <DNS>|cancel");
     }
 
     private ResultErr Start(string operation, string[] arguments, ITextOutput output)
+        => job.Start("net " + operation, output, token => Run(operation, arguments, token));
+
+    private string Run(string operation, string[] arguments, CancellationToken cancellation)
     {
-        lock (gate)
-        {
-            if (running) return ResultErr.CreateFailure(ResultCode.Failure, "Ein Netzwerkauftrag dieser Sitzung laeuft bereits.");
-            running = true;
-            result = null;
-            var started = tasks.Start("net " + operation, context => Run(operation, arguments, context.Token));
-            if (!started.IsOK()) { running = false; return started.Status; }
-            taskId = started.Value;
-            output.WriteLine("Netzwerkauftrag gestartet; Ergebnis mit net status abrufen.");
-            return ResultErr.CreateSuccess();
-        }
+        var response = network.Execute(operation, arguments, cancellation);
+        if (cancellation.IsCancellationRequested) return "Netzwerkauftrag abgebrochen.";
+        return response.IsOK() ? response.Value ?? "Abgeschlossen." : response.Status.Message;
     }
 
-    private void Run(string operation, string[] arguments, CancellationToken cancellation)
-    {
-        string text;
-        try
-        {
-            var response = network.Execute(operation, arguments, cancellation);
-            text = response.IsOK() ? response.Value ?? "Abgeschlossen." : response.Status.Message;
-            if (cancellation.IsCancellationRequested && response.IsOK()) text = "Netzwerkauftrag abgebrochen.";
-        }
-        catch (Exception exception) { text = "Netzwerkauftrag fehlgeschlagen: " + exception.Message; }
-        // Seriell mitprotokolliert, damit Gasttests auf das Ergebnis warten statt auf eine feste Zeit.
-        log?.Invoke(text);
-        lock (gate) { result = text; running = false; }
-    }
-
-    public void Close()
-    {
-        lock (gate) if (running) tasks.Cancel(taskId);
-    }
+    public void Close() => job.Close();
 }

@@ -94,10 +94,10 @@ pkg install <id>               aus dem Katalog installieren (Admin, Hintergrunda
 pkg install-local <Ordner>     Paketordner <id>/<version> lokal installieren (Admin)
 pkg upgrade [<id>]             auf Katalogversionen aktualisieren, je Paket einzeln (Admin)
 pkg remove <id>                Paket entfernen (Admin)
-pkg status | pkg cancel        Ergebnis bzw. Abbruch des laufenden Auftrags dieser Sitzung
+pkg cancel                     Abbruch des laufenden Auftrags dieser Sitzung anfordern
 ```
 
-Vorher muss IPv4 konfiguriert sein (`net dhcp`). Ergebnisse von Hintergrundaufträgen stehen zusätzlich seriell als `PKG …`.
+IPv4 wird beim Boot automatisch per DHCP konfiguriert; ohne DHCP-Server ist `net static` nötig. `install` und `upgrade` laden zuerst den signierten Katalog und brechen bei einem Abruffehler ab. Ergebnisse erscheinen automatisch in der aufrufenden Shell und zusätzlich seriell als `PKG …`. Eine Paketquelle muss vorher mit `pkg source` gesetzt sein.
 
 ## Paket bauen
 

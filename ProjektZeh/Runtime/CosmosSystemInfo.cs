@@ -81,7 +81,6 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
             lines.Add($"  Verbindung: {(adapter.LinkUp ? "ja" : "nein")}, bereit: {(adapter.Ready ? "ja" : "nein")}");
             lines.Add($"  IPv4: {adapter.IPConfig?.Address.ToString() ?? "keine Adresse"}");
         }
-        lines.Add("ZehOS startet noch keinen DHCP-/Internetdienst.");
         return [.. lines];
     }
 }

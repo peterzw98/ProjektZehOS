@@ -52,6 +52,8 @@ public sealed class Kernel : Sys.Kernel
         false;
 #endif
     private readonly BackgroundTaskService tasks = new();
+    private readonly CosmosNetworkService networkService = new();
+    private readonly NetworkAutoConfiguration automaticNetwork;
     private readonly CosmosRoundRobinScheduler scheduler = new();
     private readonly MessageDemoService messages;
 
@@ -59,6 +61,8 @@ public sealed class Kernel : Sys.Kernel
     {
         messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        automaticNetwork = new(networkService, tasks,
+            text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
 #if ZEHOS_INSTALLER
         installer = new CosmosInstallService(CurrentVersion.ToString(), () =>
         {
@@ -73,9 +77,9 @@ public sealed class Kernel : Sys.Kernel
             () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
-            ListPackageApplications);
+            ListPackageApplications, () => networkService.Status);
 #else
-            null);
+            null, () => networkService.Status);
 #endif
     }
 
@@ -118,10 +122,10 @@ public sealed class Kernel : Sys.Kernel
     private ShellService CreateShell(UserSession identity)
     {
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
-        var network = new NetworkShellCommands(new CosmosNetworkService(), tasks, () => accounts.IsAdmin(identity),
-            text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
+        var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
+            text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
-            () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"));
+            () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
         [
@@ -146,6 +150,7 @@ public sealed class Kernel : Sys.Kernel
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
+        shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult();
         shell.OnClose = () => { network.Close(); packageCommands.Close(); accounts.ReleaseSession(identity); };
         return shell;
     }
@@ -252,6 +257,9 @@ public sealed class Kernel : Sys.Kernel
             startDesktop = false;
         }
 #endif
+#if !ZEHOS_INSTALLER
+        StartAutomaticNetwork();
+#endif
         interactive.Run(startDesktop);
     }
 
@@ -266,8 +274,23 @@ public sealed class Kernel : Sys.Kernel
                 "cause='PowerUnsupported' message='Cosmos unterstuetzt auf diesem System keine Energieaktionen.'");
         }
 
-        if (!tasks.StopAll(2000)) return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
-        return VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        automaticNetwork.Stop();
+        if (!tasks.StopAll(2000))
+        {
+            StartAutomaticNetwork();
+            return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
+        }
+        var unmounted = VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        if (!unmounted.IsOK()) StartAutomaticNetwork();
+        return unmounted;
+    }
+
+    private void StartAutomaticNetwork()
+    {
+#if !ZEHOS_INSTALLER
+        var started = automaticNetwork.Start();
+        if (!started.IsOK()) systemLog.Warning("Network", started.Message);
+#endif
     }
 
 #pragma warning disable COSMOS0001

@@ -18,6 +18,18 @@ internal sealed class CosmosNetworkService : INetworkService
     private const int TimeoutMilliseconds = 5000;
     private const int MaximumBody = 16384;
 
+    public NetworkStatus Status => ReadStatus();
+
+    private static NetworkStatus ReadStatus()
+    {
+        if (!NetworkManager.IsEnabled || !NetworkManager.IsInitialized || NetworkManager.DeviceCount == 0)
+            return new(false, false, null);
+        var adapter = NetworkManager.Primary;
+        var address = adapter.IPConfig?.Address;
+        return new(adapter.IsValid, adapter.LinkUp,
+            address is null || address.Equals(Address4.Zero) ? null : address.ToString());
+    }
+
     public ResultObject<string> Execute(string operation, string[] arguments, CancellationToken cancellation)
     {
         while (!Monitor.TryEnter(Gate, 50)) cancellation.ThrowIfCancellationRequested();
@@ -31,6 +43,11 @@ internal sealed class CosmosNetworkService : INetworkService
     private static string Perform(string operation, string[] arguments, CancellationToken cancellation)
     {
         if (!NetworkManager.IsEnabled || !NetworkManager.IsInitialized) throw new IOException("Netzwerkdienst nicht initialisiert.");
+        if (operation == "auto-dhcp")
+        {
+            if (ReadStatus().Address is string configured) return "IPv4 bereits konfiguriert: " + configured;
+            operation = "dhcp";
+        }
         if (operation == "info")
         {
             if (arguments.Length != 0) throw new ArgumentException("Verwendung: netinfo");

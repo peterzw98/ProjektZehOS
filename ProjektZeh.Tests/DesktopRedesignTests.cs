@@ -1,11 +1,13 @@
 ﻿using System;
 using System.IO;
+using ProjektZeh.Apps;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Apps.Settings;
 using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Apps.TextEditor;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
+using ProjektZeh.Network;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
@@ -39,6 +41,83 @@ public sealed class DesktopRedesignTests
     {
         desktop.Handle(new(InputEventType.PointerDown, X: x, Y: y, Button: PointerButtons.Left));
         desktop.Handle(new(InputEventType.PointerUp, X: x, Y: y, Button: PointerButtons.Left));
+    }
+
+    [TestMethod]
+    public void NetworkTrayShiftsPagerAndFlyoutShowsAddressUntilNextClick()
+    {
+        var font = new byte[4096];
+        for (int character = 0; character < 256; character++)
+            Array.Fill(font, (byte)character, character * 16, 16);
+        var desktop = new Desktop(1920, 1080, font, 8, 16, () => new ShellService(), () => new FileService(directory),
+            getNetwork: () => new NetworkStatus(true, true, "10.0.2.15"));
+        desktop.Update(500);
+        Click(desktop, 1702, 1050);
+        Assert.AreEqual(1, desktop.Windows.CurrentWorkspace);
+        var plain = CreateDesktop();
+        Click(plain, 1742, 1050);
+        Assert.AreEqual(1, plain.Windows.CurrentWorkspace);
+
+        var pixels = new int[1920 * 1080];
+        var surface = new PixelSurface(1920, 1080, pixels);
+        desktop.Render(surface, 500, 0, 0, PointerButtons.None);
+        int closed = pixels[910 * 1920 + 1700];
+        Click(desktop, 1825, 1050);
+        desktop.Render(surface, 500, 0, 0, PointerButtons.None);
+        Assert.AreNotEqual(closed, pixels[910 * 1920 + 1700]);
+        // Der Testfont kodiert jedes Zeichen als Bitmuster; so pruefen wir die sichtbare Adresse ohne Test-API.
+        string expected = "IPv4 10.0.2.15";
+        for (int index = 0; index < expected.Length; index++)
+        {
+            int character = 0;
+            for (int bit = 0; bit < 8; bit++)
+                if (pixels[968 * 1920 + 1540 + index * 8 + bit] == UiPainter.Foreground) character |= 128 >> bit;
+            Assert.AreEqual((int)expected[index], character);
+        }
+        Click(desktop, 1825, 1050);
+        desktop.Render(surface, 500, 0, 0, PointerButtons.None);
+        Assert.AreEqual(closed, pixels[910 * 1920 + 1700]);
+        Click(desktop, 1825, 1050);
+        Click(desktop, 1000, 700);
+        desktop.Render(surface, 500, 0, 0, PointerButtons.None);
+        Assert.AreEqual(closed, pixels[910 * 1920 + 1700]);
+    }
+
+    [TestMethod]
+    public void NetworkStateIsSampledAtMostEveryHalfSecond()
+    {
+        int reads = 0;
+        var desktop = new Desktop(1920, 1080, new byte[4096], 8, 16, () => new ShellService(), () => new FileService(directory),
+            getNetwork: () => { reads++; return new(true, true, null); });
+        desktop.Update(0);
+        int initial = reads;
+        desktop.Update(100);
+        desktop.Update(499);
+        Assert.AreEqual(initial, reads);
+        desktop.Update(500);
+        Assert.AreEqual(initial + 1, reads);
+    }
+
+    [TestMethod]
+    public void CapturedPointerReachesAppEvenOverNetworkTray()
+    {
+        var desktop = new Desktop(1920, 1080, new byte[4096], 8, 16, () => new ShellService(), () => new FileService(directory),
+            getNetwork: () => new(true, true, "10.0.2.15"));
+        var app = new CapturingApp();
+        desktop.Windows.Add(new Window("Capture", 10, 10, 400, 300, app));
+        Click(desktop, 1825, 1050);
+        Assert.AreEqual(1, app.PointerDowns);
+    }
+
+    private sealed class CapturingApp : IApplication
+    {
+        public int PointerDowns;
+        public bool CapturesPointer => true;
+        public void Start() { }
+        public void Handle(InputEvent value) { if (value.Type == InputEventType.PointerDown) PointerDowns++; }
+        public void Update(long milliseconds) { }
+        public void Draw(PixelSurface surface, int x, int y, int width, int height, bool active) { }
+        public void Close() { }
     }
 
     [TestMethod]
