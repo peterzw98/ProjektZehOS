@@ -1,0 +1,101 @@
+--- a/netsurf/content/handlers/javascript/duktape/Location.bnd
++++ b/netsurf/content/handlers/javascript/duktape/Location.bnd
+@@ -16,6 +16,35 @@ class Location {
+ prologue Location()
+ %{
+ #include "netsurf/browser_window.h"
++
++/* ZehOS: Navigationen per JS tragen die Seite als Referer, damit der
++ * HTTP-Fetcher die HTTPS->HTTP-Regeln anwendet. Ein Wechsel von HTTPS auf
++ * HTTP bleibt wie ein Meta-Refresh unverifizierbar und wird dort blockiert;
++ * HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata (data:, file:,
++ * javascript:) sind per JS nicht erreichbar, sonst umginge eine eigene
++ * data:-Seite die Formularwarnung. */
++static void zehos_location_navigate(struct browser_window *bw, nsurl *base,
++		const char *url, enum browser_window_nav_flags flags)
++{
++	nsurl *joined;
++	enum nsurl_scheme_type scheme;
++
++	if (nsurl_join(base, url, &joined) != NSERROR_OK) {
++		return;
++	}
++	scheme = nsurl_get_scheme_type(joined);
++	if (scheme != NSURL_SCHEME_HTTP && scheme != NSURL_SCHEME_HTTPS) {
++		NSLOG(netsurf, INFO, "ZehOS: JS-Navigation ohne http(s) blockiert");
++	} else {
++		if (nsurl_get_scheme_type(base) == NSURL_SCHEME_HTTPS &&
++		    scheme == NSURL_SCHEME_HTTP) {
++			flags |= BW_NAVIGATE_UNVERIFIABLE;
++		}
++		browser_window_navigate(bw, joined, base, flags,
++					NULL, NULL, NULL);
++	}
++	nsurl_unref(joined);
++}
+ %}
+ 
+ init Location(nsurl *url)
+@@ -58,19 +87,10 @@ method Location::assign()
+ 		return 0;
+ 	}
+ 
+-	nsurl *joined;
+ 	duk_size_t slen;
+ 	const char *url = duk_safe_to_lstring(ctx, 0, &slen);
+ 
+-	nsurl_join(priv->url, url, &joined);
+-	browser_window_navigate(priv_win->win,
+-				joined,
+-				NULL,
+-				BW_NAVIGATE_HISTORY,
+-				NULL,
+-				NULL,
+-				NULL);
+-	nsurl_unref(joined);
++	zehos_location_navigate(priv_win->win, priv->url, url, BW_NAVIGATE_HISTORY);
+ 	return 0;
+ %}
+ 
+@@ -87,19 +107,10 @@ method Location::replace()
+ 		return 0;
+ 	}
+ 
+-	nsurl *joined;
+ 	duk_size_t slen;
+ 	const char *url = duk_safe_to_lstring(ctx, 0, &slen);
+ 
+-	nsurl_join(priv->url, url, &joined);
+-	browser_window_navigate(priv_win->win,
+-				joined,
+-				NULL,
+-				BW_NAVIGATE_NONE,
+-				NULL,
+-				NULL,
+-				NULL);
+-	nsurl_unref(joined);
++	zehos_location_navigate(priv_win->win, priv->url, url, BW_NAVIGATE_NONE);
+ 	return 0;
+ %}
+ 
+@@ -135,19 +146,10 @@ setter Location::href()
+ 		return 0;
+ 	}
+ 
+-	nsurl *joined;
+ 	duk_size_t slen;
+ 	const char *url = duk_safe_to_lstring(ctx, 0, &slen);
+ 
+-	nsurl_join(priv->url, url, &joined);
+-	browser_window_navigate(priv_win->win,
+-				joined,
+-				NULL,
+-				BW_NAVIGATE_HISTORY,
+-				NULL,
+-				NULL,
+-				NULL);
+-	nsurl_unref(joined);
++	zehos_location_navigate(priv_win->win, priv->url, url, BW_NAVIGATE_HISTORY);
+ 	return 0;
+ %}
+ 

@@ -20,7 +20,7 @@ sind mit **OFFEN** markiert. Bezug: [ROADMAP](../ROADMAP.md) 12.2, [NETWORK_TEST
   nicht blockierend zwischen 64-KiB-Puffern und Socket. Das Zeitlimit von 10 s gilt von `net_open` bis zum
   Verbindungsaufbau.
 - **NetSurf** meldet `https://` in `frontend/fetch_http.c` ausdrücklich als nicht unterstützt und ruft `net_open`
-  immer mit `flags = 0` auf. Der Linux-Prüfhost (`host/zehos_host_linux.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
+  immer mit `flags = 0` auf. Der Linux-Prüfhost (damals `host/zehos_host_linux.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
 
 ## Ziel und Nicht-Ziele
 
@@ -205,7 +205,7 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
-- Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
+- Der Prüfhost `host/zehos_host_core.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
   Umgebungsvariable, analog zu `ZEHOS_NET=1`. Er bildet dieselben Codes nach (`ENOSYS`, `EPERM`, `EPROTO`,
   `ECONNRESET` bei EOF ohne `close_notify`), sonst sagt der Vergleich mit dem Kernel nichts. Er ersetzt keinen
   Kerneltest.
@@ -244,9 +244,47 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
 5. **Regression:** Shell-`fetch https://`, Paketquelle und HTTP-Seiten in NetSurf bleiben unverändert.
 6. **VMware:** getrennt ausweisen, solange nicht geprüft.
 
+## JavaScript und die HTTPS-Regeln
+
+**Status:** Patches vom 16. November 2026. Lokal mit Duktape-Build und eingeschaltetem JavaScript auf dem
+wasm3-Prüfhost geprüft (Szenarien unten), noch nicht im Gast. Sie wirken erst, wenn der Build Duktape
+enthält und JavaScript eingeschaltet ist; Standard bleibt `enable_javascript:0`. Entschieden von laser am
+16. November 2026 (Policy a–e).
+
+NetSurfs Duktape-Bindungen navigieren in `Location.href`, `assign()` und `replace()` ohne Referer. Der Fetcher
+erkennt eine HTTPS-Herkunft aber nur am Referer, ohne ihn griffen weder die Mixed-Content-Sperre noch die
+Formularwarnung. Ein Skript hätte so getippte Felder per `location.href = 'http://…?feld=…'` unverschlüsselt
+senden können. Die Patches schließen das und begrenzen Rechenzeit und Timer:
+
+| Patch | Regel |
+|-------|-------|
+| `netsurf-zehos-js-navigation.patch` | JS-Navigationen tragen die Seite als Referer. Von HTTPS auf HTTP sind sie wie ein Meta-Refresh unverifizierbar; `fetch_http.c` blockiert sie deshalb ohne Knopf. HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata als `http`/`https` (etwa `data:`) sind per JS nicht erreichbar, sonst umginge eine eigene `data:`-Seite mit Formular die Warnung. |
+| `netsurf-zehos-js-schemes.patch` | Skripte laufen nur auf `http`- und `https`-Seiten, nie auf `data:`, `resource:` oder `about:`, also auch nicht auf den Warnseiten des Fetchers. Maßgeblich ist die URL nach Weiterleitungen. |
+| `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. Höchstens 200 native Aufrufebenen statt 1000: Jede Ebene belegt in wasm3 etwa 3 KiB des 1-MiB-Stapels (Messung von red), darüber endete die App mit einem Trap statt mit `RangeError`. |
+| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Ohne `https` ersetzt oder löscht ein Cookie kein `Secure`-Cookie gleicher Domain, gleichen Pfads und Namens; ein Cookie mit anderem Pfad oder als Domain-Cookie kann es weiter überdecken (RFC 6265bis weist auch das ab). `HttpOnly` wird jetzt in allen Suchschleifen von `urldb_get_cookie` beachtet; 3.11 filterte es nur bei exakt passendem Pfad, sodass `document.cookie` die meisten `HttpOnly`-Cookies las. Außerdem behebt der Patch einen Fehler in 3.11: `urldb_get_cookie` prüfte das Schema des gespeicherten Pfadknotens statt der Anfrage, und die Bedingungen mit `lwc_string_isequal` (liefert `lwc_error_ok`, also 0) waren nie wahr. `Secure`-Cookies gingen so auch an `http://` und waren dort über `document.cookie` lesbar. |
+
+`document.cookie` liefert mit dem Patch keine `HttpOnly`-Cookies und `Secure`-Cookies nur auf HTTPS-Seiten. Ein Skript kann ein `HttpOnly`-Cookie aber weiter über `document.cookie` überschreiben (unverändert aus 3.11).
+Ein echter Formularversand per Skript ist nicht möglich, weil `HTMLFormElement` in 3.11 kein `submit()` bietet.
+Unterressourcen, die ein Skript in die Seite einfügt, lädt NetSurf mit der Seite als Referer; die
+Mixed-Content-Sperre sollte daher auch für sie greifen (nicht geprüft).
+
+**Grenzen:** Das Zeitlimit gilt je Aufruf. 64 Timer mit je 2 s können die App weiter dauerhaft belegen; der Desktop
+bleibt bedienbar, weil Wasm-Apps auf einem verdrängten Worker laufen, NetSurf selbst reagiert dann aber nur
+zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Weitere Rekursionsgrenzen von Duktape sind unverändert und nicht gegen den wasm3-Stapel gemessen: Compiler (2500), RegExp-Übersetzung und -Ausführung (je 10000), JSON und CBOR (je 1000), etwa bei `JSON.parse` tief geschachtelter Felder. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
+linearer Speicher der App. Ein Formular auf einer `data:`-Seite, die der Benutzer selbst über einen Link
+öffnet, sendet ohne Warnung, denn ihr Referer ist nicht HTTPS; das gilt auch ohne JavaScript. Ebenso kann ein Skript
+ein `<a href>` auf `http://…?feld=…` umschreiben: Klickt der Benutzer, gilt das wie jeder Link von HTTPS auf HTTP
+als erlaubt (Entscheidung 1), und die Felder gehen unverschlüsselt hinaus. JS-Navigationen senden jetzt wie Links
+einen `Referer` mit der vollständigen Seiten-URL, außer von HTTPS auf HTTP.
+
+**Testszenarien** (für `host/run_tests.py`, sobald der Build Duktape enthält): Endlosschleife bricht nach etwa
+2 s ab und die Seite bleibt bedienbar; eine `setInterval`-Flut endet beim 65. Timer; `location.href` von
+HTTPS auf HTTP zeigt die Sperrseite und sendet nichts; `location.href` auf eine `data:`-URL navigiert nicht;
+ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert, ein von `https` gesetztes geht nicht an `http://` und lässt sich von dort nicht ersetzen; `document.cookie` enthält kein `HttpOnly`-Cookie; `Path=` (leer) beendet die App nicht; tiefe Rekursion endet mit `RangeError`, die App läuft weiter.
+
 ## Betroffene Dateien bei einer Umsetzung
 
 `ProjektZeh/Network/TlsTransport.cs`, `ProjektZeh/Runtime/Wasm/WasmNetwork.cs` und `CosmosWasmNetwork.cs`,
-`ProjektZeh.Tests/`, `experiments/NetSurf.Wasi/frontend/fetch_http.c`, `host/zehos_host_linux.c`,
+`ProjektZeh.Tests/`, `experiments/NetSurf.Wasi/frontend/fetch_http.c`, `host/zehos_host_core.c`,
 `host/run_tests.py`, `docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md` (neuer Flag als Vertrag) sowie
 `docs/NETSURF.md`. Die Umsetzung ist ein eigener Auftrag und mit den Besitzern dieser Dateien abzustimmen.
