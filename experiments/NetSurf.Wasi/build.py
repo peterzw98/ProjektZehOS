@@ -121,8 +121,10 @@ def fetch(name: str) -> Path:
     return target
 
 
-def recipe_reference(recipe: Path) -> list[str]:
-    """Quellverweis fuer SOURCES.txt: Rezeptordner am aktuellen Commit, bei unsicherem Stand mit Warnung."""
+def recipe_reference(recipe: Path, *inputs: Path) -> list[str]:
+    """Quellverweis fuer SOURCES.txt: Rezeptordner am aktuellen Commit, bei unsicherem Stand mit Warnung.
+
+    inputs nennt weitere Ordner ausserhalb des Rezepts, aus denen der Build Dateien uebernimmt."""
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
     lines = [f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/{recipe.relative_to(ROOT).as_posix()}", ""]
     # Das GPL-Quellangebot verweist auf diesen Commit; er muss dauerhaft erreichbar sein. Nach einem Squash-Merge
@@ -130,7 +132,7 @@ def recipe_reference(recipe: Path) -> list[str]:
     # Unversionierte Dateien zaehlen nur im Rezeptordner: build.py liest patches/ und licenses/ per glob ein.
     dirty = (subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
                             capture_output=True, text=True).stdout.strip()
-             + subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", str(recipe)], cwd=ROOT,
+             + subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", str(recipe), *map(str, inputs)], cwd=ROOT,
                               capture_output=True, text=True).stdout.strip())
     on_master = subprocess.run(["git", "merge-base", "--is-ancestor", revision, "origin/master"], cwd=ROOT,
                                capture_output=True).returncode == 0

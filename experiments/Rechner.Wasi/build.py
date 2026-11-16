@@ -57,7 +57,7 @@ def main() -> int:
     for path in sorted((NETSURF / "licenses").iterdir()):
         if path.name.startswith(("wasi-libc-", "compiler-rt-")):
             shutil.copyfile(path, licenses / path.name)
-    source_lines = ["ZehOS Rechner source and build recipe", ""] + netsurf.recipe_reference(HERE)
+    source_lines = ["ZehOS Rechner source and build recipe", ""] + netsurf.recipe_reference(HERE, NETSURF / "licenses")
     source_lines.extend(netsurf.wasi_runtime_sources())
     (licenses / "SOURCES.txt").write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     data = output.read_bytes()
