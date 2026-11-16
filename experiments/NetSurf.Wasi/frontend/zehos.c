@@ -43,6 +43,8 @@ static int pending_count;
 static int held_keys[PENDING_MAX];
 static int held_count;
 static uint32_t tic;
+// Geaendertes Bild, das noch nicht an den Kernel ging (siehe zehos_update).
+static bool dirty;
 
 static void push_event(const nsfb_event_t *event)
 {
@@ -278,9 +280,17 @@ static int zehos_finalise(nsfb_t *nsfb)
     return 0;
 }
 
+static void present_if_dirty(nsfb_t *nsfb)
+{
+    if (!dirty) return;
+    dirty = false;
+    zehos_present((const uint32_t *)nsfb->ptr, nsfb->width, nsfb->height, (int32_t)tic++, 0);
+}
+
 static bool zehos_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
 {
-    (void)nsfb;
+    // NetSurf fragt Ereignisse erst nach einem vollstaendigen Neuzeichnen ab; hier ist das Bild fertig.
+    present_if_dirty(nsfb);
     uint32_t start = zehos_ticks_ms();
     for (;;) {
         if (zehos_should_exit()) {
@@ -316,8 +326,10 @@ static int zehos_update(nsfb_t *nsfb, nsfb_bbox_t *box)
     (void)box;
     struct nsfb_cursor_s *cursor = nsfb->cursor;
     if (cursor != NULL && cursor->plotted == false) nsfb_cursor_plot(nsfb, cursor);
+    // Jedes fbtk-Widget meldet sein eigenes Update; ein sofortiges present zeigte Zwischenstaende, nach einem
+    // Groessenwechsel etwa die neue Leiste ueber dem noch alten Seitenbereich. Gesendet wird in zehos_input.
     // shortcut: immer das ganze Bild, da present keine Teilbereiche kennt; bei Bedarf Teilaktualisierung im ABI ergänzen.
-    zehos_present((const uint32_t *)nsfb->ptr, nsfb->width, nsfb->height, (int32_t)tic++, 0);
+    dirty = true;
     return 0;
 }
 

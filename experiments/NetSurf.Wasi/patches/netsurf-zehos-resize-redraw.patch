@@ -1,11 +1,12 @@
 --- a/netsurf/frontends/framebuffer/gui.c
 +++ b/netsurf/frontends/framebuffer/gui.c
-@@ -1636,6 +1636,9 @@
+@@ -1636,6 +1636,10 @@
  		int width, int height)
  {
  	fbtk_set_pos_and_size(gw->browser, x, y, width, height);
-+	/* ZehOS: Ganze Flaeche neu zeichnen. Stand vor dem Groessenwechsel schon eine Teilflaeche an, zeichnete
-+	 * fb_browser_window_redraw nur diese, und der Rest behielt die alten Bildpunkte (Issue #78-Folge). */
++	/* ZehOS: Ganze Flaeche neu zeichnen. Stand vor dem Groessenwechsel schon eine Teilflaeche an (Eingabe,
++	 * Rollen), zeichnete fb_browser_window_redraw nur diese, und der Rest zeigte bis zum Neuformatieren die
++	 * alten Bildpunkte des vergroesserten Puffers. */
 +	fb_queue_redraw(gw->browser, 0, 0, width, height);
  	browser_window_schedule_reformat(gw->bw);
  }
