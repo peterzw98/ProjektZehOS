@@ -17,7 +17,7 @@
  {
 --- a/netsurf/frontends/framebuffer/gui.c
 +++ b/netsurf/frontends/framebuffer/gui.c
-@@ -846,11 +846,27 @@
+@@ -846,11 +846,28 @@
  }
  
  
@@ -30,7 +30,8 @@
 +{
 +	nsoption_set_bool(enable_javascript, !nsoption_bool(enable_javascript));
 +	gui_window_set_status(gw, nsoption_bool(enable_javascript) ? "" : "JS aus");
-+	/* Ein POST-Ergebnis nicht erneut abrufen; der Schalter gilt dann ab der naechsten Seite. */
++	/* Nach einer Formularsendung (auch nach deren Weiterleitung) nicht neu laden: das ginge als GET
++	 * an das Formularziel. Der Schalter gilt dann, wie waehrend eines Ladevorgangs, ab der naechsten Seite. */
 +	if (!browser_window_current_is_post(gw->bw))
 +		browser_window_reload(gw->bw, false);
 +}
@@ -45,7 +46,7 @@
  	int ucs4 = -1;
  
  	NSLOG(netsurf, INFO, "got value %d", cbi->event->value.keycode);
-@@ -974,6 +990,20 @@
+@@ -974,6 +991,20 @@
  			modifier |= FBTK_MOD_LCTRL;
  			break;
  
@@ -66,7 +67,7 @@
  		case NSFB_KEY_y:
  		case NSFB_KEY_z:
  			if (cbi->event->value.keycode == NSFB_KEY_z &&
-@@ -1013,6 +1043,10 @@
+@@ -1013,6 +1044,10 @@
  
  	case NSFB_EVENT_KEY_UP:
  		switch (cbi->event->value.keycode) {
@@ -77,7 +78,7 @@
  		case NSFB_KEY_RSHIFT:
  			modifier &= ~FBTK_MOD_RSHIFT;
  			break;
-@@ -1954,6 +1988,16 @@
+@@ -1954,6 +1989,16 @@
  static void
  gui_window_set_status(struct gui_window *g, const char *text)
  {
