@@ -184,6 +184,52 @@ def font(header: Path):
     return image
 
 
+def rect(image, x, y, w, h, color):
+    for row in range(y, y + h):
+        image[row][x:x + w] = [color] * w
+
+
+def frame(image, x, y, w, h, color, thickness=1):
+    rect(image, x, y, w, thickness, color)
+    rect(image, x, y + h - thickness, w, thickness, color)
+    rect(image, x, y, thickness, h, color)
+    rect(image, x + w - thickness, y, thickness, h, color)
+
+
+def button(image, y, face, light, dark):
+    # 200x20, abgesetzter Rand oben/links hell und unten/rechts dunkel.
+    rect(image, 0, y, 200, 20, face)
+    rect(image, 0, y, 200, 1, light)
+    rect(image, 0, y, 1, 20, light)
+    rect(image, 0, y + 19, 200, 1, dark)
+    rect(image, 199, y, 1, 20, dark)
+    frame(image, 0, y, 200, 20, (0, 0, 0, 255))
+
+
+def gui():
+    # Eigene Zeichnung (CC0). Bereiche nach ClassiCube Widgets.c: Hotbar 182x22 bei 0,0, Auswahl 24x24 bei 0,22,
+    # Schaltflaechen 200x20 bei y=46 (gesperrt), 66 (normal), 86 (ausgewaehlt). Nur die obere Haelfte wird genutzt.
+    image = [[(0, 0, 0, 0)] * 256 for _ in range(256)]
+    rect(image, 0, 0, 182, 22, (40, 40, 40, 160))
+    frame(image, 0, 0, 182, 22, (20, 20, 20, 255))
+    for slot in range(9):
+        frame(image, 1 + slot * 20, 1, 20, 20, (110, 110, 110, 255))
+    frame(image, 0, 22, 24, 24, (20, 20, 20, 255))
+    frame(image, 1, 23, 22, 22, (240, 240, 240, 255), 2)
+    button(image, 46, (60, 60, 60, 255), (80, 80, 80, 255), (40, 40, 40, 255))
+    button(image, 66, (110, 110, 110, 255), (160, 160, 160, 255), (70, 70, 70, 255))
+    button(image, 86, (110, 130, 190, 255), (170, 190, 240, 255), (70, 80, 130, 255))
+    return image
+
+
+def icons():
+    # Eigene Zeichnung (CC0): Fadenkreuz 15x15 bei 0,0 (Screens.c); nur das obere Viertel wird genutzt.
+    image = [[(0, 0, 0, 0)] * 256 for _ in range(256)]
+    rect(image, 6, 0, 3, 15, (255, 255, 255, 220))
+    rect(image, 0, 6, 15, 3, (255, 255, 255, 220))
+    return image
+
+
 def main() -> None:
     mtg, header, out = map(Path, sys.argv[1:4])
     for line in PINNED_FILE.read_text(encoding="ascii").splitlines():
@@ -193,7 +239,10 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     write_png(out / "terrain.png", terrain(mtg))
     write_png(out / "default.png", font(header))
-    for name in ("terrain.png", "default.png"):
+    write_png(out / "gui.png", gui())
+    write_png(out / "icons.png", icons())
+    checked(Path(__file__).with_name("CC-BY-SA-3.0.txt"))
+    for name in ("terrain.png", "default.png", "gui.png", "icons.png"):
         print(hashlib.sha256((out / name).read_bytes()).hexdigest(), name)
 
 
