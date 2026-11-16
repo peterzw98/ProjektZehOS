@@ -239,7 +239,8 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
                  *(["-loadvm", loadvm] if loadvm else [])]
-    return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=(work / "stderr.log").open("w"))
+    with (work / "stderr.log").open("w") as stderr:
+        return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=stderr)
 
 
 # So lange darf eine abweichende Ergebniszeile stehen, bevor sie als Fehlschlag gilt; sie kann zerteilt sein.

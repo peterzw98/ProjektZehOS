@@ -272,14 +272,17 @@ namespace ProjektZeh.Tests
                 {
                     await stream.AuthenticateAsServerAsync(certificate);
                     var request = new byte[4];
-                    int count = 0;
-                    while (count < request.Length) count += await stream.ReadAsync(request.AsMemory(count));
+                    await stream.ReadExactlyAsync(request).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
                     await stream.WriteAsync(response);
-                    if (closeNotify) await stream.ShutdownAsync();
+                    if (closeNotify)
+                    {
+                        await stream.ShutdownAsync();
+                        // Den Peer erst nach seinem Ende schliessen: SChannel verwirft sonst noch ausstehende Daten.
+                        while (await stream.ReadAsync(request).AsTask().WaitAsync(TimeSpan.FromSeconds(5)) != 0) { }
+                    }
                 }
                 catch (AuthenticationException) { }
                 catch (IOException) { }
-                peer.Shutdown(SocketShutdown.Both);
             });
             return (port, done);
         }
@@ -323,8 +326,8 @@ namespace ProjektZeh.Tests
             Assert.AreEqual(4, written);
             CollectionAssert.AreEqual(response, ReadAll(session, handle, out int result));
             Assert.AreEqual(WasmNetworkError.Success, result, "close_notify ist ein regulaeres Ende.");
-            Assert.IsTrue(done.Wait(5000));
             Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+            Assert.IsTrue(done.Wait(5000));
         }
 
         [TestMethod]
@@ -340,8 +343,8 @@ namespace ProjektZeh.Tests
             Assert.AreEqual(WasmNetworkError.Success, session.Send(handle, "ping"u8, out _));
             CollectionAssert.AreEqual("pong"u8.ToArray(), ReadAll(session, handle, out int result));
             Assert.AreEqual(WasmNetworkError.ConnectionReset, result);
-            Assert.IsTrue(done.Wait(5000));
             Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+            Assert.IsTrue(done.Wait(5000));
         }
 
         [TestMethod]
@@ -369,6 +372,15 @@ namespace ProjektZeh.Tests
         [TestMethod]
         public void TlsPeerWithoutTlsAndAbortedHandshakeAreReported()
         {
+            static void ReadClientHello(Socket peer)
+            {
+                // Ungelesene TCP-Daten fuehren unter Windows beim Schliessen zu RST statt zum beabsichtigten FIN.
+                using var transport = new NetworkStream(peer, false);
+                var header = new byte[5];
+                transport.ReadExactly(header);
+                transport.ReadExactly(new byte[(header[3] << 8) | header[4]]);
+            }
+
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -376,6 +388,7 @@ namespace ProjektZeh.Tests
             Task plain = Task.Run(() =>
             {
                 using Socket peer = listener.AcceptSocket();
+                ReadClientHello(peer);
                 peer.Send("HTTP/1.0 400 Bad Request\r\n\r\n"u8.ToArray());
                 peer.Shutdown(SocketShutdown.Both);
             });
@@ -386,6 +399,7 @@ namespace ProjektZeh.Tests
             Task aborted = Task.Run(() =>
             {
                 using Socket peer = listener.AcceptSocket();
+                ReadClientHello(peer);
                 peer.Shutdown(SocketShutdown.Both);
             });
             Assert.AreEqual(WasmNetworkError.ConnectionReset, Handshake(session, port, out handle));

@@ -67,8 +67,15 @@ public sealed class WasmPackagePathsTests
     public void SymbolicLinkAsFinalComponentIsDenied()
     {
         // Geprueft wird nur das letzte Pfadglied; Zwischenverweise folgt GetAttributes (FAT kennt keine Verweise).
-        File.CreateSymbolicLink(Path.Combine(root, "res", "Verweis"), Path.Combine(root, "res", "Messages"));
-        Directory.CreateSymbolicLink(Path.Combine(root, "Ordner"), Path.Combine(root, "res"));
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(root, "res", "Verweis"), Path.Combine(root, "res", "Messages"));
+            Directory.CreateSymbolicLink(Path.Combine(root, "Ordner"), Path.Combine(root, "res"));
+        }
+        catch (IOException exception) when (OperatingSystem.IsWindows() && (exception.HResult & 0xffff) == 1314)
+        {
+            Assert.Inconclusive("Windows erlaubt diesem Benutzer keine symbolischen Links.");
+        }
         Assert.AreEqual(WasmPackagePaths.AccessDenied, WasmPackagePaths.Stat(root, "res/Verweis", out ulong size, out int type));
         Assert.AreEqual(0UL, size);
         Assert.AreEqual(0, type);
