@@ -48,7 +48,10 @@ bei Überlauf bleiben Reset und der neueste Input. Aufeinanderfolgende Bewegunge
 Koordinaten berücksichtigen Bildskalierung und Zentrierung. Druck und Rad in schwarzen Rändern werden
 ignoriert, Bewegung und Loslassen am Bildrand begrenzt. Ein begonnenes Ziehen behält alle Maustasten auch
 außerhalb des Fensters bis zum letzten Loslassen oder Reset. Das Bild hat keinen Resize-Import;
-die App bestimmt seine Größe über `present` und muss eine passende feste Größe wählen.
+die App bestimmt seine Größe über `present` und muss eine passende feste Größe wählen. Der Kernel passt das Bild
+seitentreu in den Fensterinhalt ein (nächster Nachbar, vergrößernd wie verkleinernd, Rest schwarz); Mauspositionen
+kommen in Bildkoordinaten an. Scharf, also 1:1, ist es nur bei genau passender Größe: Ein Paketfenster öffnet mit
+798×519 Inhalt.
 
 **Netzwerk über `zehos_v1`:**
 

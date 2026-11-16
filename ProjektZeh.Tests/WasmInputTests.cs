@@ -118,12 +118,17 @@ public sealed class WasmInputTests
     }
 
     [TestMethod]
-    public void CroppedFrameAndResizeUseCurrentGeometry()
+    public void ShrunkFrameAndResizeUseCurrentGeometry()
     {
         var input = new WasmInputBuffer();
+        // 640x480 in 320x200 wird seitentreu auf 266x200 verkleinert, links 27 px Rand: (0,0) liegt daneben.
         input.SetViewport(320, 200, 640, 480);
         input.Handle(new(InputEventType.PointerDown, X: 0, Y: 0, Button: PointerButtons.Middle));
-        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 4, 160, 140), Read(input));
+        Assert.IsFalse(input.TryRead(out _));
+        input.Handle(new(InputEventType.PointerDown, X: 27, Y: 0, Button: PointerButtons.Middle));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 4, 0, 0), Read(input));
+        input.Handle(new(InputEventType.PointerDown, X: 292, Y: 199, Button: PointerButtons.Middle));
+        Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 4, 637, 477), Read(input));
         input.SetViewport(320, 200, 160, 100);
         input.Handle(new(InputEventType.PointerDown, X: 318, Y: 198, Button: PointerButtons.Left));
         Assert.AreEqual(new WasmInputEvent(WasmInputEventType.PointerDown, 1, 159, 99), Read(input));

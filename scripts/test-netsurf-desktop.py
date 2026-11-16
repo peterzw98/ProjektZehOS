@@ -211,6 +211,50 @@ def main():
         capture("https-fehlerseite")
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
+
+        # Paketminimum 640x440 (Inhalt 638x399): der Kernel verkleinert das 798x519-Bild seitentreu auf 613x399
+        # ab 45,120 statt es abzuschneiden; Adressleiste und Zurueck muessen sichtbar und treffbar bleiben (#78).
+        def small(x, y):
+            return 45 + x*613//798, 120 + y*399//519
+
+        point(829,637)
+        button("left",True)
+        point(669,517)
+        button("left",False)
+        capture("paketminimum")
+        click(*small(284,13))
+        guest.qmp.tap("home")
+        for _ in range(32):
+            guest.qmp.tap("delete",hold=.005)
+        guest.qmp.text("file:///pages/formular.html")
+        guest.qmp.tap("ret")
+        page("paketminimum-formular", "f0e0ff")
+        click(*small(10,13))
+        page("paketminimum-zurueck", "d8ecff")
+        # Zurueck auf 800x560: die folgenden Schliessen-Klicks erwarten die Ausgangsgroesse.
+        point(669,517)
+        button("left",True)
+        point(829,637)
+        button("left",False)
+        page("wieder-standardgroesse", "d8ecff")
+
+        # Maximiert (1920x1024 Arbeitsflaeche, Inhalt 1918x983 ab 1,40): vergroessert auf 1511x983 ab 204,40.
+        def large(x, y):
+            return 204 + x*1511//798, 40 + y*983//519
+
+        click(776,100)
+        page("maximiert", "d8ecff")
+        click(*large(284,13))
+        guest.qmp.tap("home")
+        for _ in range(32):
+            guest.qmp.tap("delete",hold=.005)
+        guest.qmp.text("file:///pages/formular.html")
+        guest.qmp.tap("ret")
+        page("maximiert-formular", "f0e0ff")
+        click(*large(10,13))
+        page("maximiert-zurueck", "d8ecff")
+        click(1864,20)
+        page("wiederhergestellt", "d8ecff")
         for run in range(3):
             if run:
                 guest.start_app("netsurf")
@@ -221,7 +265,7 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
-        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), 3 Starts/Schliessen",flush=True)
+        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), Paketminimum 640x440 und maximiert (Adressleiste, Zurueck), 3 Starts/Schliessen",flush=True)
         print("Textfeld/Fehlerseiten (auch HTTPS) anhand der Bildschirmfotos visuell pruefen. Freier Speicher (KiB):",free,flush=True)
         return 0
     finally:

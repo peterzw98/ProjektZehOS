@@ -20,7 +20,8 @@ internal sealed class WasmInputBuffer
     private char highSurrogate;
     private int frameWidth;
     private int frameHeight;
-    private int scale;
+    private int targetWidth;
+    private int targetHeight;
     private long left;
     private long top;
 
@@ -28,10 +29,9 @@ internal sealed class WasmInputBuffer
     {
         frameWidth = imageWidth;
         frameHeight = imageHeight;
-        scale = width > 0 && height > 0 && imageWidth > 0 && imageHeight > 0
-            ? Math.Max(1, Math.Min(width / imageWidth, height / imageHeight)) : 0;
-        left = ((long)width - (long)imageWidth * scale) / 2;
-        top = ((long)height - (long)imageHeight * scale) / 2;
+        (targetWidth, targetHeight) = WasmImageFit.Fit(width, height, imageWidth, imageHeight);
+        left = ((long)width - targetWidth) / 2;
+        top = ((long)height - targetHeight) / 2;
     }
 
     public void Handle(InputEvent value)
@@ -58,12 +58,13 @@ internal sealed class WasmInputBuffer
                 return;
         }
 
-        if (scale == 0) return;
+        if (targetWidth == 0) return;
         long x = (long)value.X - left;
         long y = (long)value.Y - top;
-        bool inside = x >= 0 && y >= 0 && x < (long)frameWidth * scale && y < (long)frameHeight * scale;
-        int pixelX = (int)Math.Clamp(x / scale, 0, frameWidth - 1L);
-        int pixelY = (int)Math.Clamp(y / scale, 0, frameHeight - 1L);
+        bool inside = x >= 0 && y >= 0 && x < targetWidth && y < targetHeight;
+        // Erst begrenzen, dann abbilden: Positionen weit ausserhalb duerfen im long-Produkt nicht ueberlaufen.
+        int pixelX = WasmImageFit.SourceIndex(Math.Clamp(x, 0, targetWidth - 1L), targetWidth, frameWidth);
+        int pixelY = WasmImageFit.SourceIndex(Math.Clamp(y, 0, targetHeight - 1L), targetHeight, frameHeight);
         switch (value.Type)
         {
             case InputEventType.PointerMove:
