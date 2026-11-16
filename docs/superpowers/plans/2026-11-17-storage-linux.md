@@ -10,7 +10,7 @@
 
 **Spec:** [Entwurf und Recherche](../specs/2026-11-17-storage-linux.md).
 
-**Status:** Planungsentwurf. Benutzer hat Größenbereich und Cosmos-Dateisicht bestätigt. ext2/GPT sind Empfehlungen mit vorgeschalteter Eignungsprüfung, keine bereits abgenommenen technischen Lösungen. Nur Dokumentation ist beauftragt. Vor Implementierung Architekturentwurf bestätigen; nach der Eignungsprüfung die betroffenen Folgeetappen anhand der tatsächlichen APIs ausführbar konkretisieren.
+**Status:** Der Benutzer hat die Umsetzung nach Merge von #117 und #118 freigegeben. Etappe 1 hat ein **No-Go für den Cosmos-3.0.97-ext2-Formatierer** ergeben; die Folgeetappen sind gesperrt. Größenbereich und Cosmos-Dateisicht sind bestätigt, ext2/GPT bleiben bedingt zu qualifizierende Empfehlungen. Befunde, ausgeführte Prüfungen und offene Entscheidungen stehen in [STORAGE_3_0_97_FINDINGS.md](../../STORAGE_3_0_97_FINDINGS.md). Nach einer geprüften Formatterlösung die Eignungsprüfung wiederholen und Folgeetappen anhand der tatsächlichen APIs konkretisieren.
 
 ## Globale Vorgaben
 
