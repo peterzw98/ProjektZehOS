@@ -159,7 +159,7 @@ Der Import schreibt genau vier Little-Endian-`i32` (`type, code, x, y`, 16 Byte)
 Entnahme. Fokusverlust/Überlauf melden Reset; Skalierung und Zentrierung werden zurückgerechnet.
 Seit 0.2.22 fängt `zehos_v1.pointer_capture(on) -> i32` den Zeiger ein; dann kommen Bewegungen als
 relativer Typ 9. Esc, Fokusverlust und Schließen geben ihn frei. Das erste Esc bei Zeigerfang erreicht die App; ein weiteres Esc führt zur Textshell. F4 wechselt jederzeit zur Textshell.
-Seit @RESIZE_VERSION@ meldet Typ 10 die Größe des Fensterinhalts.
+Seit 0.5.1 meldet Typ 10 die Größe des Fensterinhalts.
 Die vollständige Typentabelle und die Grenze normalisierter Tastencodes stehen in
 [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md#was-eine-app-vom-kernel-bekommt).
 Zusätzlich fragt `path_filestat_get` Dateityp und Größe unter derselben schreibgeschützten Paketgrenze ab;
