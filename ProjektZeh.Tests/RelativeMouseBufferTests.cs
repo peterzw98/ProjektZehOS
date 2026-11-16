@@ -28,6 +28,21 @@ public sealed class RelativeMouseBufferTests
     }
 
     [TestMethod]
+    public void TabletMotionAndBalancedRawPacketsRemainDistinct()
+    {
+        var buffer = new RelativeMouseBuffer();
+        buffer.AddTabletMotion(100, -7);
+        buffer.Add(new(10, 0, PointerButtons.None, 0));
+        buffer.Add(new(-10, 0, PointerButtons.None, 0));
+        buffer.TakeMotion(out int x, out int y, out bool raw, out int tabletX, out int tabletY, out _);
+        Assert.IsTrue(raw);
+        Assert.AreEqual(0, x);
+        Assert.AreEqual(0, y);
+        Assert.AreEqual(100, tabletX);
+        Assert.AreEqual(-7, tabletY);
+    }
+
+    [TestMethod]
     public void OverflowSignalsLossAndKeepsLatestState()
     {
         var buffer = new RelativeMouseBuffer();
