@@ -26,7 +26,8 @@ public sealed class NetworkCommandTests
     {
         var network = new FakeNetwork();
         var tasks = new BackgroundTaskService();
-        var first = new NetworkShellCommands(network, tasks, () => true).Commands;
+        var firstSession = new NetworkShellCommands(network, tasks, () => true);
+        var first = firstSession.Commands;
         var second = new NetworkShellCommands(network, tasks, () => true).Commands;
         var output = new Output();
         Assert.IsTrue(first[4].Execute(["http://example.test/"], output).IsOK());
@@ -34,7 +35,7 @@ public sealed class NetworkCommandTests
         Assert.IsFalse(first[2].Execute(["1.2.3.4"], output).IsOK());
         Assert.IsFalse(second[1].Execute(["cancel"], output).IsOK());
         Assert.IsTrue(first[1].Execute(["cancel"], output).IsOK());
-        Assert.IsTrue(SpinWait.SpinUntil(() => { first[1].Execute(["status"], output); return output.Last == "Netzwerkauftrag abgebrochen."; }, 2000));
+        Assert.IsTrue(SpinWait.SpinUntil(() => firstSession.TakeResult() == "Netzwerkauftrag abgebrochen.", 2000));
         Assert.IsTrue(tasks.StopAll(2000));
     }
 
@@ -50,6 +51,13 @@ public sealed class NetworkCommandTests
         Assert.IsTrue(logged.Wait(2000));
         Assert.AreEqual("Netzwerkauftrag abgebrochen.", text);
         Assert.IsTrue(tasks.StopAll(2000));
+    }
+
+    [TestMethod]
+    public void StatusIsNoLongerACommand()
+    {
+        var commands = new NetworkShellCommands(new FakeNetwork(), new BackgroundTaskService(), () => true).Commands;
+        Assert.AreEqual(ResultCode.InvalidArgument, commands[1].Execute(["status"], new Output()).Code);
     }
 
     private sealed class FakeNetwork : INetworkService

@@ -10,16 +10,14 @@ namespace ProjektZeh.Shell;
 
 /// <summary>
 /// Paketbefehle der Shell. Aendernde Befehle sind Administratoren vorbehalten und laufen als Hintergrundauftrag je
-/// Shellsitzung; das Ergebnis liefert <c>pkg status</c>, wie bei den Netzwerkbefehlen.
+/// Shellsitzung; das Ergebnis holt die Ereignisschleife ab, wie bei den Netzwerkbefehlen.
 /// </summary>
 internal sealed class PackageShellCommands(PackageStore store, Func<string, IPackageSource> remote,
     Func<string, ResultObject<string>> resolvePath, BackgroundTaskService tasks, Func<bool> isAdministrator, Action<string>? log = null)
 {
-    private const string Usage = "pkg list|source [<https-URL>]|update|install <id>|install-local <Verzeichnis>|upgrade [<id>]|remove <id>|status|cancel";
-    private readonly object gate = new();
-    private bool running;
-    private int taskId;
-    private string? result;
+    private const string Usage = "pkg list|source [<https-URL>]|update|install <id>|install-local <Verzeichnis>|upgrade [<id>]|remove <id>|cancel";
+    private readonly ShellJob job = new(tasks, "pkg", "Paketauftrag", log);
+    public string? TakeResult() => job.TakeResult();
 
     public ShellCommand[] Commands => [new("pkg", Usage, "Installiert und verwaltet signierte App-Pakete.", true, Execute)];
 
@@ -30,17 +28,8 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         switch (command)
         {
             case "list" when count == 0: return List(output);
-            case "status" when count == 0:
-                lock (gate) output.WriteLine(running ? "Paketauftrag laeuft." : result ?? "Kein Paketauftrag.");
-                return ResultErr.CreateSuccess();
             case "cancel" when count == 0:
-                lock (gate)
-                {
-                    if (!running) return ResultErr.CreateFailure(ResultCode.Failure, "Kein Paketauftrag laeuft.");
-                    var cancelled = tasks.Cancel(taskId);
-                    if (cancelled.IsOK()) output.WriteLine("Abbruch angefordert; Status mit pkg status pruefen.");
-                    return cancelled;
-                }
+                return job.Cancel(output);
             case "source" when count == 0:
                 var source = store.ReadSource();
                 if (!source.IsOK()) return source.Status;
@@ -62,7 +51,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         {
             case "source":
                 var written = store.WriteSource(argument);
-                if (written.IsOK()) output.WriteLine("Paketquelle gesetzt; Katalog mit pkg update laden.");
+                if (written.IsOK()) output.WriteLine("Paketquelle gesetzt.");
                 return written;
             case "remove":
                 var removed = store.Remove(argument);
@@ -78,7 +67,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
             case "upgrade":
                 return Start(output, token => Upgrade(argument, token));
             default:
-                return Start(output, Update);
+                return Start(output, token => DescribeCatalog(LoadCatalog(token)));
         }
     }
 
@@ -104,29 +93,30 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         return ResultErr.CreateSuccess();
     }
 
-    private string Update(CancellationToken token)
+    private ResultObject<PackageCatalog> LoadCatalog(CancellationToken token)
     {
         var url = RequireSource();
-        if (!url.IsOK()) return url.Status.Message;
+        if (!url.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(url.Status);
         var source = remote(url.Value!);
         var catalog = source.Read("catalog", PackageCatalog.MaximumBytes, token);
-        if (!catalog.IsOK()) return "Katalog nicht geladen: " + catalog.Status.Message;
+        if (!catalog.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(catalog.Status);
         var signature = source.Read("catalog.sig", PackageTrust.SignatureBytes, token);
-        if (!signature.IsOK()) return "Katalog nicht geladen: " + signature.Status.Message;
-        var accepted = store.AcceptCatalog(catalog.Value!, signature.Value!);
-        return accepted.IsOK()
-            ? $"Katalog geladen (Generation {accepted.Value!.Generation}, {accepted.Value.Entries.Length} Pakete)."
-            : accepted.Status.Message;
+        if (!signature.IsOK()) return ResultObjectFactory.CreateFailure<PackageCatalog>(signature.Status);
+        return store.AcceptCatalog(catalog.Value!, signature.Value!);
     }
+
+    private static string DescribeCatalog(ResultObject<PackageCatalog> catalog) => catalog.IsOK()
+        ? $"Katalog geladen (Generation {catalog.Value!.Generation}, {catalog.Value.Entries.Length} Pakete)."
+        : "Katalog nicht geladen: " + catalog.Status.Message;
 
     private string InstallFromCatalog(string id, CancellationToken token)
     {
         var url = RequireSource();
         if (!url.IsOK()) return url.Status.Message;
-        var catalog = store.ReadCatalog();
-        if (!catalog.IsOK()) return catalog.Status.Message;
+        var catalog = LoadCatalog(token);
+        if (!catalog.IsOK()) return DescribeCatalog(catalog);
         var entry = catalog.Value?.Find(id);
-        if (entry == null) return catalog.Value == null ? "Kein Katalog geladen; zuerst pkg update." : $"Paket {id} ist nicht im Katalog.";
+        if (entry == null) return $"Paket {id} ist nicht im Katalog.";
         return Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token), "installiert");
     }
 
@@ -135,8 +125,8 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
     {
         var url = RequireSource();
         if (!url.IsOK()) return url.Status.Message;
-        var catalog = store.ReadCatalog();
-        if (!catalog.IsOK() || catalog.Value == null) return catalog.IsOK() ? "Kein Katalog geladen; zuerst pkg update." : catalog.Status.Message;
+        var catalog = LoadCatalog(token);
+        if (!catalog.IsOK()) return DescribeCatalog(catalog);
         var installed = store.ReadInstalled();
         if (!installed.IsOK()) return installed.Status.Message;
         var report = new StringBuilder();
@@ -144,7 +134,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         {
             token.ThrowIfCancellationRequested();
             if (id.Length > 0 && package.Manifest.Id != id) continue;
-            var entry = catalog.Value.Find(package.Manifest.Id);
+            var entry = catalog.Value!.Find(package.Manifest.Id);
             if (entry == null || entry.Version.CompareTo(package.Manifest.Version) <= 0) continue;
             string line = Describe(store.Install(remote(url.Value!), $"{entry.Id}/{entry.Version}/", entry.ManifestSha256, token), "aktualisiert");
             report.Append(report.Length == 0 ? "" : "\n").Append(line);
@@ -163,33 +153,7 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
         installed.IsOK() ? $"{installed.Value!.Id} {installed.Value.Version} {verb}." : installed.Status.Message;
 
     private ResultErr Start(ITextOutput output, Func<CancellationToken, string> work)
-    {
-        lock (gate)
-        {
-            if (running) return ResultErr.CreateFailure(ResultCode.Failure, "Ein Paketauftrag dieser Sitzung laeuft bereits.");
-            running = true;
-            result = null;
-            var started = tasks.Start("pkg", context => Run(work, context.Token));
-            if (!started.IsOK()) { running = false; return started.Status; }
-            taskId = started.Value;
-            output.WriteLine("Paketauftrag gestartet; Ergebnis mit pkg status abrufen.");
-            return ResultErr.CreateSuccess();
-        }
-    }
+        => job.Start("pkg", output, work);
 
-    private void Run(Func<CancellationToken, string> work, CancellationToken token)
-    {
-        string text;
-        try { text = work(token); }
-        catch (OperationCanceledException) { text = "Paketauftrag abgebrochen."; }
-        catch (Exception exception) { text = "Paketauftrag fehlgeschlagen: " + exception.Message; }
-        // Seriell mitprotokolliert, damit Installationen ohne Bildschirm nachvollziehbar bleiben.
-        log?.Invoke(text);
-        lock (gate) { result = text; running = false; }
-    }
-
-    public void Close()
-    {
-        lock (gate) if (running) tasks.Cancel(taskId);
-    }
+    public void Close() => job.Close();
 }

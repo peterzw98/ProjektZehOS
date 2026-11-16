@@ -412,16 +412,11 @@ public sealed class PackageTests
         public void Clear() { }
     }
 
-    private static string Status(Shell.ShellCommand pkg)
+    private static string Status(Shell.PackageShellCommands pkg)
     {
-        var output = new Output();
-        Assert.IsTrue(SpinWait.SpinUntil(() =>
-        {
-            output.Lines.Clear();
-            pkg.Execute(["status"], output);
-            return output.Lines[0] != "Paketauftrag laeuft.";
-        }, 10000));
-        return output.Lines[0];
+        string? result = null;
+        Assert.IsTrue(SpinWait.SpinUntil(() => (result = pkg.TakeResult()) != null, 10000));
+        return result!;
     }
 
     [TestMethod]
@@ -439,31 +434,27 @@ public sealed class PackageTests
         var store = Store();
         string? requested = null;
         var tasks = new Scheduling.BackgroundTaskService();
-        var pkg = new Shell.PackageShellCommands(store, url => { requested = url; return new DirectoryPackageSource(repo); },
-            path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true).Commands.Single();
+        var session = new Shell.PackageShellCommands(store, url => { requested = url; return new DirectoryPackageSource(repo); },
+            path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true);
+        var pkg = session.Commands.Single();
         var output = new Output();
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
-        StringAssert.Contains(Status(pkg), "Paketquelle");
+        StringAssert.Contains(Status(session), "Paketquelle");
         Assert.IsTrue(pkg.Execute(["source", "https://repo.test/zehos/"], output).IsOK());
         Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
-        StringAssert.Contains(Status(pkg), "pkg update");
-        Assert.IsTrue(pkg.Execute(["update"], output).IsOK());
-        StringAssert.Contains(Status(pkg), "Generation 1");
+        Assert.AreEqual("doom 1.0.0 installiert.", Status(session));
         Assert.AreEqual("https://repo.test/zehos/", requested);
-        Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
-        Assert.AreEqual("doom 1.0.0 installiert.", Status(pkg));
 
         WriteCatalog(2, "1.1.0", Publish(Path.Combine(repo, "doom", "1.1.0"), "doom", "1.1.0"));
-        Assert.IsTrue(pkg.Execute(["update"], output).IsOK());
-        Status(pkg);
-        output.Lines.Clear();
-        Assert.IsTrue(pkg.Execute(["list"], output).IsOK());
-        StringAssert.Contains(output.Lines[0], "Update 1.1.0");
         Assert.IsTrue(pkg.Execute(["upgrade"], output).IsOK());
-        Assert.AreEqual("doom 1.1.0 aktualisiert.", Status(pkg));
+        Assert.AreEqual("doom 1.1.0 aktualisiert.", Status(session));
         WriteCatalog(1, "1.0.0", v1);
         Assert.IsTrue(pkg.Execute(["update"], output).IsOK());
-        StringAssert.Contains(Status(pkg), "aelter");
+        StringAssert.Contains(Status(session), "aelter");
+        File.Delete(Path.Combine(repo, "catalog"));
+        Assert.IsTrue(pkg.Execute(["install", "doom"], output).IsOK());
+        StringAssert.StartsWith(Status(session), "Katalog nicht geladen:");
+        Assert.AreEqual(ProjektZeh.Shared.ResultCode.InvalidArgument, pkg.Execute(["status"], output).Code);
         Assert.IsTrue(pkg.Execute(["remove", "doom"], output).IsOK());
         Assert.AreEqual(0, store.ReadInstalled().Value!.Length);
         Assert.IsTrue(tasks.StopAll(2000));
