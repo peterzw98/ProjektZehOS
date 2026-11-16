@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using ProjektZeh.Storage;
+using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
 
@@ -122,6 +123,10 @@ internal sealed partial class ShellService
             passwordWorker = new Thread(() =>
             {
                 try { completion = work(); }
+                catch (HardwareRandomUnavailableException)
+                {
+                    completion = () => ResultErr.CreateFailure(ResultCode.Failure, "CPU ohne RDRAND/RDSEED: Kontoanlage und Kennwortaenderung nicht moeglich.");
+                }
                 catch (Exception)
                 {
                     // Ausnahmen koennen Kennwortdetails enthalten und werden deshalb nicht ausgegeben.

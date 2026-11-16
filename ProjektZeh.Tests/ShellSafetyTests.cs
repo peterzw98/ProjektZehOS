@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Input;
+using ProjektZeh.Security;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
 using ProjektZeh.Shared;
@@ -161,5 +162,23 @@ public sealed class ShellSafetyTests
         shell.Close(); shell.Close();
         Assert.AreEqual(1,calls); Assert.IsNull(shell.PagerText); Assert.AreEqual(0,shell.History.Count);
         Assert.IsFalse(shell.ExecuteLine("echo",output).IsOK());
+    }
+
+    [TestMethod]
+    public void SecretWork_ReportsMissingHardwareRandomClearly()
+    {
+        string Run(Exception failure)
+        {
+            var shell=new ShellService(); var output=new Output();
+            shell.BeginSecretInput(_=>()=>throw failure);
+            Assert.IsTrue(shell.ExecuteLine("geheim-kennwort",output).IsOK());
+            var watch=System.Diagnostics.Stopwatch.StartNew();
+            while(!shell.Poll(output)) Assert.IsTrue(watch.Elapsed<TimeSpan.FromSeconds(10),"Kennwortarbeit endet nicht.");
+            return output.Text;
+        }
+        StringAssert.Contains(Run(new HardwareRandomUnavailableException()),"CPU ohne RDRAND/RDSEED");
+        string other=Run(new InvalidOperationException("geheim-kennwort"));
+        StringAssert.Contains(other,"Kennwortoperation fehlgeschlagen");
+        Assert.IsFalse(other.Contains("geheim-kennwort",StringComparison.Ordinal),"Ausnahmetext darf nicht erscheinen.");
     }
 }
