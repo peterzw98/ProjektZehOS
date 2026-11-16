@@ -1,6 +1,6 @@
 // ZehOS: minimale C-Laufzeit fuer den statisch gebundenen wasm3-Kern.
-// floor(f), ceil(f), trunc(f) und sqrt(f) stellt Cosmos 3.0.94 bereits bereit; sie werden nicht erneut definiert.
-// Die mem*-Funktionen heissen ueber string.h zehos_mem*, weil die gleichnamigen Cosmos-Symbole abweichen.
+// floor(f), ceil(f), trunc(f) und sqrt(f) stellt Cosmos bereits bereit; sie werden nicht erneut definiert.
+// memcpy, memmove, memset und memcmp kommen standardkonform aus Cosmos (siehe string.h).
 
 #include <stddef.h>
 #include <stdint.h>
@@ -15,39 +15,6 @@ extern void __cosmos_heap_free(void* pointer);
 extern void __cosmos_serial_write(const char* text);
 
 int errno;
-
-void* memcpy(void* destination, const void* source, size_t count)
-{
-    void* result = destination;
-    __asm__ volatile("rep movsb" : "+D"(destination), "+S"(source), "+c"(count) : : "memory");
-    return result;
-}
-
-void* memmove(void* destination, const void* source, size_t count)
-{
-    unsigned char* target = (unsigned char*)destination;
-    const unsigned char* origin = (const unsigned char*)source;
-    if (target <= origin || target >= origin + count) return memcpy(destination, source, count);
-    // Ueberlappung mit hoeherem Ziel: rueckwaerts kopieren.
-    while (count-- != 0) target[count] = origin[count];
-    return destination;
-}
-
-void* memset(void* destination, int value, size_t count)
-{
-    void* result = destination;
-    __asm__ volatile("rep stosb" : "+D"(destination), "+c"(count) : "a"(value) : "memory");
-    return result;
-}
-
-int memcmp(const void* left, const void* right, size_t count)
-{
-    const unsigned char* a = (const unsigned char*)left;
-    const unsigned char* b = (const unsigned char*)right;
-    for (size_t index = 0; index < count; index++)
-        if (a[index] != b[index]) return a[index] < b[index] ? -1 : 1;
-    return 0;
-}
 
 // Kopfbereich vor jedem Block, damit realloc die alte Groesse kennt; 16 Byte erhalten die Ausrichtung.
 typedef struct { size_t size; size_t reserved; } zehos_block_header;

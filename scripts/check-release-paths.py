@@ -11,6 +11,9 @@ def check_file(path, patterns):
     # Cosmos enthaelt diesen festen Pfad bereits in vorgebauten Assemblies.
     upstream_root = '/home/runner/work/Cosmos/Cosmos/src/'
     upstream_files = (
+        'Cosmos.Kernel.Core/Scheduler/ConditionVariable.cs',
+        'Cosmos.Kernel.Core/Scheduler/InterruptEvent.cs',
+        'Cosmos.Kernel.Core/Scheduler/Mutex.cs',
         'Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/DriverEngine.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/InterruptContextGuard.cs',

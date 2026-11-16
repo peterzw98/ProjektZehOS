@@ -83,7 +83,7 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
             result = ResultObjectFactory.CreateSuccess(HttpUpdateResponse.Read(stream, limit));
         }
         catch (Exception exception) { result = ResultObjectFactory.CreateFromException<byte[]>(exception); }
-        // Cosmos fuehrt verschachtelte finally-Bloecke nicht auf jedem Fehlerpfad aus.
+        // Bewusst nach dem catch statt im finally: Ein Fehler beim Schliessen geht ueber CleanupFailure in das Ergebnis ein.
         try { dhcp?.Close(); dns?.Close(); stream?.Dispose(); }
         catch (Exception exception) { result = CleanupFailure(result, exception); }
         try { socket?.Close(1000); }

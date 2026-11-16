@@ -70,12 +70,7 @@ internal sealed class CosmosInputService
             if (MouseManager.RightButton) buttons |= PointerButtons.Right;
             if (MouseManager.MiddleButton) buttons |= PointerButtons.Middle;
         }
-        catch
-        {
-            mask.Dispose();
-            throw;
-        }
-        mask.Dispose();
+        finally { mask.Dispose(); }
         if (lostMouse != 0) input.Reset(lostMouse);
         input.ReportPointer(x, y, buttons, scroll, deltaX, deltaY, hasRaw, tabletX, tabletY);
     }

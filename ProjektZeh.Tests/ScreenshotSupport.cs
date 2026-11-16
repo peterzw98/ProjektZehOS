@@ -16,7 +16,7 @@ internal static class ScreenshotSupport
     {
         string packages = Environment.GetEnvironmentVariable("NUGET_PACKAGES") ??
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-        string path = Path.Combine(packages, "cosmos.kernel.system", "3.0.94", "runtimes", "linux-x64", "lib", "net10.0", "Cosmos.Kernel.System.dll");
+        string path = Path.Combine(packages, "cosmos.kernel.system", "3.0.97", "runtimes", "linux-x64", "lib", "net10.0", "Cosmos.Kernel.System.dll");
         if (!File.Exists(path)) return null;
         byte[] assembly = File.ReadAllBytes(path);
         // Das Magic steht auch im Ladecode; die Ressource erkennt man am folgenden Version-0-/32-Byte-Kopf.

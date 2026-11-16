@@ -162,21 +162,12 @@ internal sealed class CosmosNetworkService : INetworkService
     internal static T Download<T>(string text, byte[] roots, Func<Stream, T> read, CancellationToken token)
     {
         while (!Monitor.TryEnter(Gate, 50)) token.ThrowIfCancellationRequested();
-        // Kein finally: Cosmos 3.0.94 ueberspringt finally beim Exception-Unwind (COSMOS_SUPPORT.md); die Sperre blieb
-        // nach einem Fehler sonst belegt und jeder weitere Download wartete endlos.
-        T result;
         try
         {
             EnsureAddress();
-            result = Exchange(text, roots, true, read, token);
+            return Exchange(text, roots, true, read, token);
         }
-        catch (Exception)
-        {
-            Monitor.Exit(Gate);
-            throw;
-        }
-        Monitor.Exit(Gate);
-        return result;
+        finally { Monitor.Exit(Gate); }
     }
 
     internal static void EnsureAddress()

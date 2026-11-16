@@ -61,12 +61,7 @@ public sealed class CosmosUsbTabletDriver : Driver
                 Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
                 if (wheel != 0) Sink?.ReportRelative(0, 0, (KitPointerButtons)buttons, wheel);
             }
-            catch
-            {
-                mask.Dispose();
-                throw;
-            }
-            mask.Dispose();
+            finally { mask.Dispose(); }
         }
     }
 }

@@ -555,7 +555,6 @@ internal sealed class Desktop
         // Die Shellbefehle haengen das Datenlaufwerk vorher aus und brechen bei Fehlern ab.
         var output = new TerminalBuffer(120);
         var shell = createShell();
-        // Kein finally: Cosmos 3.0.94 ueberspringt es beim Unwind; Close deshalb nach dem catch.
         try
         {
             var result = shell.ExecuteLine(command, output);
@@ -565,7 +564,7 @@ internal sealed class Desktop
         {
             menuStatus = "Energieaktion fehlgeschlagen: " + error.Message;
         }
-        shell.Close();
+        finally { shell.Close(); }
     }
 
     private void FilterApplications()

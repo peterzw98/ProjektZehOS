@@ -53,12 +53,12 @@ Wichtige Zuständigkeiten:
 
 ## Technischer Rahmen
 
-- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 3.0.94 und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
+- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 3.0.97 und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
 - `global.json` wählt ein installiertes SDK aus der 10.0-Reihe. Ein allein installiertes SDK 11 genügt für den bestehenden Cosmos-Build nicht. Bei Buildproblemen zuerst die lokale SDK-Version prüfen.
 - Cosmos SDK, Kernelpakete, CLI und Patcher müssen zusammenpassen. Versionswechsel als eigene technische Änderung behandeln und durch nativen Build und Gaststart prüfen.
 - Vorhandene Cosmos-Dienste zuerst verwenden. Bei neuen Schnittstellen die Verfügbarkeit in der tatsächlich verwendeten Version prüfen; aktuelle Online-Dokumentation kann einen neueren Stand beschreiben.
 - Die Unterstützung einer .NET-API auf dem Host beweist nicht ihre Verfügbarkeit im Cosmos-/NativeAOT-Kernel.
-- Cosmos 3.0.94 überspringt `finally`-Blöcke beim Exception-Unwind, auch einfache und solche aus `using`. Sperren, Zähler und Schreib-Handles auf Fehlerwegen deshalb nach `catch` ausdrücklich freigeben, nicht in `finally`.
+- Seit Cosmos 3.0.95 laufen `finally`-Blöcke (auch aus `using` und `lock`) beim Exception-Unwind, mit Dispatcherzustand je Thread; im Gast belegt durch `MessageGuestProbe` (`-p:ZehOSThreadProbe=true`). Ressourcen deshalb wieder auf dem normalen .NET-Weg mit `using`/`finally` freigeben.
 
 ## Wasm-Apps und Pakete
 
@@ -132,7 +132,7 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 - Hosttests ersetzen keinen Kernelstart. Bei Kerneländerungen den nativen Build und den betroffenen Ablauf in QEMU prüfen. Zum Abschluss einer Funktion Boot, Shell, Eingabe und die betroffenen Desktop-/Dateifunktionen kurz prüfen.
 - Bei Boot- oder Anzeigeänderungen auch Recovery mit `dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true` bauen und starten. Normale und Recovery-Ausgabe eindeutig auseinanderhalten.
 - Für Änderungen an Energieaktionen oder VM-Startkonfiguration `powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-power-commands.ps1` verwenden. `-WithDebugger` prüft zusätzlich GDB und benötigt `gdb-multiarch` sowie die zum ISO passende ELF-Datei.
-- Die QEMU-Optionen `-action shutdown=poweroff,reboot=reset` und `ProjektZeh/.cosmos/config.json` berücksichtigen. Ohne sie hält Cosmos 3.0.94 den Gast bei Energieaktionen an; im Debugger kann dabei `SIGQUIT` erscheinen.
+- Die QEMU-Optionen `-action shutdown=poweroff,reboot=reset` und `ProjektZeh/.cosmos/config.json` berücksichtigen. Ohne sie hält Cosmos (geprüft mit 3.0.94) den Gast bei Energieaktionen an; im Debugger kann dabei `SIGQUIT` erscheinen.
 - QEMU und VMware sind Zielplattformen. Betroffene Kernelabläufe auf beiden prüfen; QEMU bleibt die erste Umgebung für die schnelle Entwicklung und den GDB-Debugger. Das VMware-Profil aus `scripts/start-vmware.ps1` und seine Grenzen stehen in `README.md`; derzeit besitzt diese VM kein Datenlaufwerk.
 - Fehlende Plattformprüfungen ausdrücklich als offen führen. Ein QEMU-Ergebnis belegt keine VMware-Kompatibilität. Echte Hardware nur dann als geprüft bezeichnen, wenn dort tatsächlich getestet wurde.
 - Bei reinen Dokumentationsänderungen Verweise, Befehle und Aussagen prüfen; dafür ist kein neuer Kernelbuild erforderlich.

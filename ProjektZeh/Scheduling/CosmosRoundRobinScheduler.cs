@@ -75,13 +75,19 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     }
     public (ulong Preemptions, uint[] ThreadIds) Snapshot()
     {
+        // Nicht unter der Maske allokieren: seit Cosmos 3.0.97 sperrt der Heap statt zu maskieren, und Parken mit
+        // maskierten Interrupts loest eine Panic aus.
+        var buffer = new uint[selectedThreads.Length];
+        int count;
+        ulong taken;
         var mask = SchedulerManager.MaskInterrupts();
         try
         {
-            var ids = new uint[traceCount];
-            for (int i = 0; i < traceCount; i++) ids[i] = selectedThreads[(traceNext - traceCount + i + selectedThreads.Length) % selectedThreads.Length];
-            return (preemptions, ids);
+            count = traceCount;
+            for (int i = 0; i < count; i++) buffer[i] = selectedThreads[(traceNext - count + i + selectedThreads.Length) % selectedThreads.Length];
+            taken = preemptions;
         }
         finally { mask.Dispose(); }
+        return (taken, count == buffer.Length ? buffer : buffer[..count]);
     }
 }
