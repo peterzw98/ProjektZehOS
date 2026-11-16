@@ -38,6 +38,10 @@ ARCHIVES = {
               "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2", "gperf-3.1"),
     "flex": ("https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz",
              "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995", "flex-2.6.4"),
+    # wasi-sdk 25 erzeugt setjmp/longjmp (Duktape) als altes Wasm-Exception-Handling; wasm3 kennt nur exnref.
+    # wasm-opt übersetzt nach dem Link. SHA-256 = Prüfsumme des Releases.
+    "binaryen": ("https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz",
+                 "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489", "binaryen-version_133"),
 }
 GENERATORS = ["gperf", "flex"]
 # ftp.gnu.org bricht unter Last oft ab; die Spiegel liefern dasselbe Archiv, der SHA-256 bleibt maßgeblich.
@@ -100,7 +104,9 @@ def fetch(name: str) -> Path:
     patches = sorted((HERE / "patches").glob("*.patch")) if name == "netsurf" else []
     # Ein neuer Patchsatz oder Generator braucht unveraenderte Quellen, auch nach einem frueher abgebrochenen Build;
     # make erzeugt sonst die Generatorausgaben eines aelteren Laufs nicht neu.
-    recipe = hashlib.sha256(digest.encode() + b"".join(ARCHIVES[g][1].encode() for g in GENERATORS) + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches)).hexdigest()[:16]
+    # Makefile.config zaehlt mit: make baut Objekte nach geaenderten CFLAGS (etwa Duktape/SjLj) sonst nicht neu.
+    config = (HERE / "Makefile.config").read_bytes() if name == "netsurf" else b""
+    recipe = hashlib.sha256(digest.encode() + b"".join(ARCHIVES[g][1].encode() for g in GENERATORS) + b"".join(p.name.encode() + b"\0" + p.read_bytes() for p in patches) + config).hexdigest()[:16]
     destination = TOOLS / ("source-" + recipe) if name == "netsurf" else TOOLS
     target = destination / folder
     if not target.exists():
@@ -123,6 +129,7 @@ def main() -> int:
     sdk = fetch("wasi-sdk")
     source = fetch("netsurf")
     zlib = fetch("zlib")
+    binaryen = fetch("binaryen")
     generators = []
     prefix = source / "inst-wasi"
     logs = TOOLS / "logs"
@@ -176,6 +183,11 @@ def main() -> int:
         run(["make", "install", *common, "WARNFLAGS=-Wall -W -Wno-error", "WITH_EXPAT_BINDING=no"],
             source / library, env, logs / f"{library}.log")
 
+    # nsgenbind erzeugt die Duktape-Bindings aus den .bnd-Dateien und läuft auf dem Bauhost, daher Host-cc statt wasi-sdk.
+    # Ziel ist prefix/bin, das schon in PATH liegt; duktape/Makefile ruft "nsgenbind" ohne Pfad auf.
+    run(["make", "install", "HOST=x86_64-linux-gnu", f"PREFIX={prefix}", f"NSSHARED={source / 'buildsystem'}", "CC=cc",
+         "Q=", "DESTDIR=", "WARNFLAGS=-Wall -W -Wno-error"], source / "nsgenbind", env, logs / "nsgenbind.log")
+
     shutil.copy2(HERE / "Makefile.config", source / "netsurf" / "Makefile.config")
     # Der HTTP-Fetcher wird von patches/netsurf-zehos-http.patch registriert und im Fetcher-Ordner mitgebaut.
     fetchers = source / "netsurf" / "content" / "fetchers"
@@ -188,7 +200,8 @@ def main() -> int:
     package = HERE / "bin" / "package"
     shutil.rmtree(package, ignore_errors=True)
     (package / "res").mkdir(parents=True)
-    shutil.copy2(source / "netsurf" / "nsfb", package / "netsurf.wasm")
+    run([str(binaryen / "bin" / "wasm-opt"), "--enable-exception-handling", "--translate-to-exnref",
+         str(source / "netsurf" / "nsfb"), "-o", str(package / "netsurf.wasm")], HERE, env, logs / "wasm-opt.log")
     resources = source / "netsurf" / "frontends" / "framebuffer" / "res"
     for name in RESOURCES:
         shutil.copyfile(resources / name, package / "res" / name)  # löst die Symlinks des Quellbaums auf
@@ -202,6 +215,13 @@ def main() -> int:
             if (source / library / name).exists():
                 shutil.copyfile(source / library / name, licenses / f"{library}-{name}")
     shutil.copyfile(zlib / "LICENSE", licenses / "zlib-LICENSE")
+    # Duktape (MIT) liefert LICENSE.txt und AUTHORS.rst nur als Kommentarblöcke am Anfang von duktape.h mit.
+    header = (source / "netsurf/content/handlers/javascript/duktape/duktape.h").read_text(encoding="utf-8").splitlines()
+    start = header.index("/* LICENSE.txt */")
+    end = header.index(" */", header.index("/* AUTHORS.rst */"))
+    text = [line[3:] if line.startswith(" * ") else line.lstrip(" *") for line in header[start:end]
+            if not line.startswith(("/*", " */"))]
+    (licenses / "duktape-LICENSE.txt").write_text("\n".join(line.rstrip() for line in text) + "\n", encoding="utf-8")
     # Texte, die weder NetSurf noch wasi-sdk mitliefern (PSL unter MPL-2.0, statisch gelinkte wasi-libc und compiler-rt).
     for path in sorted((HERE / "licenses").iterdir()):
         shutil.copyfile(path, licenses / path.name)
