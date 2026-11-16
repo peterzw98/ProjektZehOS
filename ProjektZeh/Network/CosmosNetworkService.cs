@@ -115,8 +115,8 @@ internal sealed class CosmosNetworkService : INetworkService
             client.Connect(DnsConfig.Nameservers[0]); client.SendQuery(host);
             var clock = deadline ?? Stopwatch.StartNew();
             long limit = deadline is null ? TimeoutMilliseconds : FetchTimeoutMilliseconds;
-            // Ein verlorenes UDP-Paket brach sonst den ganzen Abruf ab (pkg install im Gast); die Frage geht deshalb ohne Antwort
-            // einmal erneut hinaus, innerhalb derselben Frist.
+            // Ein verlorenes UDP-Paket kann sonst den ganzen Abruf abbrechen (pkg install im Gast scheiterte mit DNS-Zeitlimit);
+            // die Frage geht deshalb ohne Antwort einmal erneut hinaus, innerhalb derselben Frist.
             var asked = Stopwatch.StartNew(); bool repeated = false;
             while (address is null && clock.ElapsedMilliseconds < limit)
             {
@@ -197,7 +197,7 @@ internal sealed class CosmosNetworkService : INetworkService
         CheckDeadline(clock, token);
         CosmosHttpUpdateSource.RandomizeTcpStart();
         var socket = new Socket(System.Net.Sockets.AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        Exception? failure = null; T result = default!; Stream? secure = null;
+        Exception? failure = null; T result = default!;
         try
         {
             socket.Connect(IPAddress.Parse(address.ToString()!), uri.Port);
@@ -206,9 +206,8 @@ internal sealed class CosmosNetworkService : INetworkService
             Stream stream = transport;
             if (uri.Scheme == "https")
             {
-                secure = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, roots, DateTime.UtcNow);
+                stream = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, roots, DateTime.UtcNow);
                 CheckDeadline(clock, token);
-                stream = secure;
             }
             byte[] request = Encoding.ASCII.GetBytes($"GET {uri.PathAndQuery} HTTP/1.0\r\nHost: {uri.Authority}\r\nConnection: close\r\n\r\n");
             stream.Write(request, 0, request.Length);
@@ -217,14 +216,9 @@ internal sealed class CosmosNetworkService : INetworkService
             CheckDeadline(clock, token);
         }
         catch (Exception exception) { failure = exception; }
-        // close_notify nur nach einem Fehler: Eine gelesene Antwort ist laengengeprueft (HttpUpdateResponse). Hat der Server
-        // danach schon geschlossen, meldet Cosmos den Socket nie als schreibbar; PollingStream.Write wartete bis zum
-        // 10-s-Zeitlimit, Downloads dauerten so je 10 s laenger und Fetch scheiterte mit internal_error(80).
-        if (failure != null)
-        {
-            try { secure?.Dispose(); }
-            catch (Exception exception) { failure = CleanupFailure(failure, "TLS", exception); }
-        }
+        // Kein close_notify: Eine gelesene Antwort ist laengengeprueft (HttpUpdateResponse), nach einem Fehler wird die
+        // Verbindung verworfen. Hat der Server schon geschlossen, meldet Cosmos den Socket nie als schreibbar;
+        // PollingStream.Write wartete bis zum 10-s-Zeitlimit, und Fetch scheiterte danach mit internal_error(80).
         try { socket.Close(0); } catch (Exception exception) { failure = CleanupFailure(failure, "TCP", exception); }
         if (failure != null) throw failure;
         return result;
