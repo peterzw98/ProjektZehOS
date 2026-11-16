@@ -83,10 +83,12 @@ def queued_stylesheet(handler: "TestServer") -> None:
 class TestServer(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def send_page(self, status: int, body: bytes, headers: dict[str, str] | None = None) -> None:
+    def send_page(self, status: int, body: bytes,
+                  headers: dict[str, str] | list[tuple[str, str]] | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        for name, value in (headers or {}).items():
+        # Liste statt dict, wenn eine Kopfzeile mehrfach vorkommt (zwei Set-Cookie).
+        for name, value in (headers.items() if isinstance(headers, dict) else headers or []):
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -434,8 +436,10 @@ def js_get(handler: TestServer) -> bool:
     if handler.path == "/js-an":
         handler.send_page(200, js_page(js_mark(JS_ON)))
     elif handler.path == "/js-schleife":
-        # Erst nach dem Abbruch der Endlosschleife läuft das zweite Skript; mit 10 s Limit läge es nach dem Ende.
-        handler.send_page(200, js_page("while (true) {}", js_mark(JS_AFTER_LOOP)))
+        # Das dritte Skript läuft erst nach dem Abbruch der Schleife und markiert nur, wenn er nach höchstens 5 s kam
+        # (Limit 2 s plus Spielraum für wasm3); ein Limit von 10 s scheitert damit unabhängig vom Prüfende.
+        handler.send_page(200, js_page("var t0 = Date.now();", "while (true) {}",
+                                       f"if (Date.now() - t0 < 5000) {{ {js_mark(JS_AFTER_LOOP)} }}"))
     elif handler.path == "/js-timer":
         handler.send_page(200, js_page(
             "var n = 0; for (var i = 0; i < 70; i++) { if (setInterval(function () {}, 100000) !== undefined) n++; }"
@@ -449,10 +453,13 @@ def js_get(handler: TestServer) -> bool:
         handler.send_page(200, js_page(js_mark(JS_ON),
                                        f"location.href = 'data:text/html,<body style=background:%23{hex_colour}>x</body>';"))
     elif handler.path == "/sk":
-        handler.send_page(200, page(HTTP_PAGE, "Secure gesetzt"), {"Set-Cookie": "zehos_sicher=1; Secure; Path=/"})
+        # Das normale Cookie belegt, dass Cookies überhaupt gespeichert werden.
+        handler.send_page(200, page(HTTP_PAGE, "Secure gesetzt"), [("Set-Cookie", "zehos_sicher=1; Secure; Path=/"),
+                                                                   ("Set-Cookie", "zehos_offen=1; Path=/")])
     elif handler.path == "/sp":
-        sent = "zehos_sicher=1" in (handler.headers.get("Cookie") or "")
-        handler.send_page(200, page(COOKIE_OK, "Secure-Cookie da") if sent else page(COOKIE_MISSING, "Secure-Cookie fehlt"))
+        sent = handler.headers.get("Cookie") or ""
+        safe = "zehos_offen=1" in sent and "zehos_sicher" not in sent
+        handler.send_page(200, page(SECURE_SAFE, "Cookies richtig") if safe else page(SECURE_LEAK, "Cookies falsch"))
     elif handler.path in ("/ts", "/tp", "/ow"):
         # /ts (https) setzt ein Secure-Cookie, /tp (https) ein normales, /ow (http) versucht das Secure-Cookie zu ersetzen.
         cookie = {"/ts": "tsec=1; Secure; Path=/", "/tp": "tplain=1; Path=/", "/ow": "tsec=evil; Path=/"}[handler.path]
@@ -463,10 +470,12 @@ def js_get(handler: TestServer) -> bool:
         safe = ("tplain=1" in sent and "tsec" not in sent) if handler.path == "/c2" else ("tsec=1" in sent and "evil" not in sent)
         handler.send_page(200, page(SECURE_SAFE, "Cookies richtig") if safe else page(SECURE_LEAK, "Cookies falsch"))
     elif handler.path == "/js-httponly":
-        # HttpOnly mit Path=/ auf einer tieferen Seite: document.cookie darf es nicht zeigen (3.11 filterte nur exakt).
+        # HttpOnly mit Path=/ auf einer tieferen Seite: document.cookie darf es nicht zeigen (3.11 filterte nur exakt);
+        # das normale Cookie muss dort erscheinen, sonst bestünde die Prüfung auch ohne lesbare Cookies.
         handler.send_page(200, js_page(
-            f"if (document.cookie.indexOf('zgeheim') < 0) {{ {js_mark(SECURE_SAFE)} }} else {{ {js_mark(SECURE_LEAK)} }}"),
-            {"Set-Cookie": "zgeheim=1; HttpOnly; Path=/"})
+            "var c = document.cookie;"
+            f"if (c.indexOf('zoffen=1') >= 0 && c.indexOf('zgeheim') < 0) {{ {js_mark(SECURE_SAFE)} }} else {{ {js_mark(SECURE_LEAK)} }}"),
+            [("Set-Cookie", "zgeheim=1; HttpOnly; Path=/"), ("Set-Cookie", "zoffen=1; Path=/")])
     elif handler.path == "/js-leerpfad":
         # Leerer Path aus Kopfzeile und Skript darf die App nicht beenden; JS_ON danach belegt den Weiterlauf.
         handler.send_page(200, js_page("document.cookie = 'e=1; path=';", js_mark(JS_ON)), {"Set-Cookie": "k=1; Path="})
@@ -496,10 +505,11 @@ def js_scenarios(base: str, good: str) -> list:
         ("js-auf-data-seite", address(1500, js_data_url(base)), [JS_DATA_PAGE], [START]),
         # Von HTTPS per location.href auf http:// mit Feldern: der Fetcher blockiert mit Fehlerseite (keine Warnseite,
         # der Abruf ist unverifizierbar), der Server sieht keinen Abruf (js_checks). Ohne JS bliebe JS_PAGE stehen.
-        ("js-location-downgrade", address(1500, f"{good}/js-weg"), [], [JS_TARGET, JS_PAGE, DOWNGRADE_PAGE, START]),
+        ("js-location-downgrade", address(1500, f"{good}/js-weg"), [],
+         [JS_TARGET, JS_PAGE, DOWNGRADE_PAGE, HTTP_MISSING, START]),
         # Kurze Pfade, weil address() nur 32 Zeichen der vorigen Adresse löscht.
         ("js-secure-cookie-http", address(1500, f"{base}/sk") + address(3500, f"{good}/sp"),
-         [COOKIE_MISSING], [COOKIE_OK] + pages),
+         [SECURE_SAFE], [SECURE_LEAK] + pages),
         ("js-an-https", address(1500, f"{good}/js-an"), [JS_PAGE, JS_ON], [START]),
         ("js-httponly-verborgen", address(1500, f"{base}/js-httponly"), [SECURE_SAFE], [SECURE_LEAK, START]),
         ("js-cookie-leerer-pfad", address(1500, f"{base}/js-leerpfad"), [JS_PAGE, JS_ON], [START]),
@@ -580,6 +590,8 @@ def main() -> int:
         scenarios += hsts_scenarios(tls[0].server_address[1])
         javascript = js_scenarios(base, f"https://127.0.0.1:{tls[0].server_address[1]}")
         scenarios += javascript
+        # Gegenprobe auf dem ausgelieferten Paket: dort bleibt JavaScript aus.
+        scenarios.append(("js-aus-im-paket", address(1500, f"{base}/js-an"), [JS_PAGE], [JS_ON, START]))
         js_package = javascript_package(Path(work))
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
