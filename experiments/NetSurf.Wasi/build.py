@@ -9,12 +9,14 @@ Netzzugang beim ersten Lauf.
 
 import argparse
 import hashlib
+import http.client
 import os
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -38,6 +40,14 @@ ARCHIVES = {
              "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995", "flex-2.6.4"),
 }
 GENERATORS = ["gperf", "flex"]
+# ftp.gnu.org bricht unter Last oft ab; die Spiegel liefern dasselbe Archiv, der SHA-256 bleibt maßgeblich.
+# SOURCES.txt nennt weiter nur die Haupt-URL aus ARCHIVES.
+MIRRORS = {
+    "gperf": ["https://ftpmirror.gnu.org/gperf/gperf-3.1.tar.gz",
+              "https://mirrors.kernel.org/gnu/gperf/gperf-3.1.tar.gz"],
+}
+ATTEMPTS = 3
+TIMEOUT = 60
 # Reihenfolge nach Abhängigkeiten; libsvgtiny fehlt, weil es setjmp/longjmp braucht.
 LIBRARIES = ["buildsystem", "libnslog", "libwapcaplet", "libparserutils", "libcss", "libhubbub", "libdom",
              "libnsbmp", "libnsgif", "libnsutils", "libutf8proc", "libnspsl", "libnsfb"]
@@ -53,13 +63,36 @@ def run(command: list[str], cwd: Path, env: dict[str, str], log: Path) -> None:
         sys.exit(f"Fehlgeschlagen ({result.returncode}): {' '.join(command[:4])} … – Protokoll: {log}")
 
 
+def download(name: str, archive: Path) -> None:
+    url, digest, _ = ARCHIVES[name]
+    part = archive.with_suffix(".part")
+    errors = []
+    for source in [url, *MIRRORS.get(name, [])]:
+        for attempt in range(ATTEMPTS):
+            if attempt:
+                time.sleep(2 ** attempt)
+            try:
+                with urllib.request.urlopen(source, timeout=TIMEOUT) as response, part.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+            except (OSError, http.client.HTTPException) as error:  # IncompleteRead ist kein OSError
+                errors.append(f"{source}: {error!r}")
+                continue
+            if hashlib.sha256(part.read_bytes()).hexdigest() == digest:
+                part.rename(archive)
+                return
+            # Auch wiederholen: http.client meldet eine vorzeitig geschlossene Verbindung mit fester Länge nicht,
+            # die Datei ist dann nur zu kurz.
+            errors.append(f"{source}: falscher SHA-256")
+    part.unlink(missing_ok=True)
+    sys.exit(f"Download von {archive.name} fehlgeschlagen:\n  " + "\n  ".join(errors))
+
+
 def fetch(name: str) -> Path:
     url, digest, folder = ARCHIVES[name]
     archive = TOOLS / "dl" / url.rsplit("/", 1)[1]
     archive.parent.mkdir(parents=True, exist_ok=True)
     if not archive.exists():
-        urllib.request.urlretrieve(url, archive.with_suffix(".part"))
-        archive.with_suffix(".part").rename(archive)
+        download(name, archive)
     actual = hashlib.sha256(archive.read_bytes()).hexdigest()
     if actual != digest:
         archive.unlink()
