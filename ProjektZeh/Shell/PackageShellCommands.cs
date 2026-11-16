@@ -189,26 +189,17 @@ internal sealed class PackageShellCommands(PackageStore store, Func<string, IPac
 
     private ResultErr Start(ITextOutput output, Func<CancellationToken, string> work)
     {
-        // Cosmos ueberspringt finally beim Unwind; auch ein Ausgabefehler muss die Sperre freigeben.
-        Monitor.Enter(progressGate);
-        ResultErr started;
-        try
+        lock (progressGate)
         {
-            started = job.Start("pkg", output, work);
+            var started = job.Start("pkg", output, work);
             if (started.IsOK())
             {
                 progress = null;
                 lastProgress = null;
                 progressGeneration = getSessionGeneration?.Invoke() ?? 0;
             }
+            return started;
         }
-        catch (Exception)
-        {
-            Monitor.Exit(progressGate);
-            throw;
-        }
-        Monitor.Exit(progressGate);
-        return started;
     }
 
     public void Close()

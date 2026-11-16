@@ -191,7 +191,7 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
                     else TransferCipher(tls);
                 }
                 catch (Exception exception) { failure = exception; }
-                Monitor.Exit(CosmosNetworkService.Gate);
+                finally { Monitor.Exit(CosmosNetworkService.Gate); }
             }
             if (failure == null && tls != null)
             {
@@ -205,51 +205,51 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
         {
             if (!Monitor.TryEnter(CosmosNetworkService.Gate)) return;
             bool cancelled;
-            lock (gate) cancelled = closing;
-            if (cancelled)
-            {
-                Monitor.Exit(CosmosNetworkService.Gate);
-                Finish();
-                return;
-            }
             Exception? failure = null;
             Socket? next = null;
             try
             {
-                CosmosNetworkService.EnsureAddress();
-                string address;
-                try { address = CosmosNetworkService.Resolve(host, CancellationToken.None).ToString()!; }
-                catch (Exception exception) { throw new DnsFailureException(exception); }
-                lock (gate)
-                {
-                    if (clock.ElapsedMilliseconds >= TimeoutMs) { error = WasmNetworkError.TimedOut; closing = true; }
-                    cancelled = closing;
-                }
+                lock (gate) cancelled = closing;
                 if (!cancelled)
                 {
-                    CosmosHttpUpdateSource.RandomizeTcpStart();
-                    next = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-#if ZEHOS_NETWORK_TEST
-                    BeforeConnect?.Invoke();
-#endif
-                    lock (gate) cancelled = closing;
-                    if (!cancelled)
+                    try
                     {
-                        next.Connect(IPAddress.Parse(address), port);
+                        CosmosNetworkService.EnsureAddress();
+                        string address;
+                        try { address = CosmosNetworkService.Resolve(host, CancellationToken.None).ToString()!; }
+                        catch (Exception exception) { throw new DnsFailureException(exception); }
+                        lock (gate)
+                        {
+                            if (clock.ElapsedMilliseconds >= TimeoutMs) { error = WasmNetworkError.TimedOut; closing = true; }
+                            cancelled = closing;
+                        }
+                        if (!cancelled)
+                        {
+                            CosmosHttpUpdateSource.RandomizeTcpStart();
+                            next = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 #if ZEHOS_NETWORK_TEST
-                        AfterConnect?.Invoke();
+                            BeforeConnect?.Invoke();
 #endif
+                            lock (gate) cancelled = closing;
+                            if (!cancelled)
+                            {
+                                next.Connect(IPAddress.Parse(address), port);
+#if ZEHOS_NETWORK_TEST
+                                AfterConnect?.Invoke();
+#endif
+                            }
+                            else { next.Close(0); next = null; }
+                        }
                     }
-                    else { next.Close(0); next = null; }
+                    catch (Exception exception) { failure = exception; }
+                    if (failure != null && next != null)
+                    {
+                        try { next.Close(0); }
+                        catch (Exception) { failure = new InvalidOperationException("TCP-Bereinigung fehlgeschlagen.", failure); }
+                    }
                 }
             }
-            catch (Exception exception) { failure = exception; }
-            if (failure != null && next != null)
-            {
-                try { next.Close(0); }
-                catch (Exception) { failure = new InvalidOperationException("TCP-Bereinigung fehlgeschlagen.", failure); }
-            }
-            Monitor.Exit(CosmosNetworkService.Gate);
+            finally { Monitor.Exit(CosmosNetworkService.Gate); }
             if (failure != null)
             {
                 lock (gate) error = MapError(failure);
