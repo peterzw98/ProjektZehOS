@@ -11,6 +11,7 @@ using ProjektZeh.Input;
 using ProjektZeh.Network;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
+using ProjektZeh.SystemServices;
 using ProjektZeh.UI;
 
 namespace ProjektZeh.Graphics;
@@ -60,7 +61,7 @@ internal sealed class Desktop
     private int pointerTop;
     private int wallpaperRevision = -1;
     private long now;
-    private long clockMinute = -1;
+    private long clockNextRead = long.MinValue;
     private string clock = "";
     private string menuStatus = "";
     private readonly DesktopSession? session;
@@ -736,11 +737,13 @@ internal sealed class Desktop
             else if (!connected && milliseconds / 500 % 2 == 0)
                 surface.FillRectangle(x + 16, y + 16, 4, 4, UiPainter.Accent);
         }
-        long minute = milliseconds / 60000;
-        if (minute != clockMinute)
+        // Die CMOS-Uhr nur zum erwarteten Minutenwechsel lesen, nicht in jedem Bild.
+        if (milliseconds >= clockNextRead)
         {
-            clockMinute = minute;
-            clock = $"{minute / 60 % 100:00}:{minute % 60:00}";
+            DateTime utc = DateTime.UtcNow;
+            clockNextRead = milliseconds + (60 - utc.Second) * 1000L - utc.Millisecond;
+            DateTime local = LocalTime.FromUtc(utc).Time;
+            clock = $"{local.Hour:00}:{local.Minute:00}";
         }
         painter.Text(surface, clock, width - 16 - clock.Length * glyphWidth, top + (BarHeight - glyphHeight) / 2, width);
     }

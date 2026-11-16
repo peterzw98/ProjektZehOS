@@ -37,6 +37,7 @@
     <Compile Include="..\ProjektZeh\SystemServices\ISystemLogSink.cs" Link="SystemServices\ISystemLogSink.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\SystemLog.cs" Link="SystemServices\SystemLog.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\BootService.cs" Link="SystemServices\BootService.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\LocalTime.cs" Link="SystemServices\LocalTime.cs" />
     <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
