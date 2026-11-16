@@ -107,6 +107,18 @@ static struct {
 /* Von patches/netsurf-zehos-mixed-content.patch (html/form.c) gesetzt: Ziel eines GET-Formulars vor dem Abruf. */
 static nsurl *form_get_target;
 
+/* Ziel-URLs bereits gewarnter Formulare. NetSurf ruft sie ohne Formularmarke erneut ab, etwa "Zurück" auf einer
+ * Fehlerseite (browser_window__reload_current_parameters mit den alten Parametern samt HTTPS-Referer) oder
+ * "Erneut versuchen". Jeder solche Abruf mit HTTPS-Referer bekommt wieder die Warnung; bestätigt wird nur von der
+ * data:-Warnseite aus. Ohne Frist, weil NetSurf die URL ebenso lange in current_parameters hält; die ältesten
+ * Einträge fallen erst nach WARNED_MAX weiteren Warnungen heraus. Gespeichert wird nur ein Hash: Eintragen braucht
+ * so keinen Speicher und kann auch bei Speichermangel nicht scheitern, eine Kollision bewirkt nur eine Warnung mehr. */
+#define WARNED_MAX 16
+static struct {
+	uint64_t hash[WARNED_MAX];
+	size_t count, next;
+} warned;
+
 static uint64_t now_ms(void)
 {
 	struct timespec ts;
@@ -154,6 +166,31 @@ static bool token_equal(const char *a, const char *b)
 static void pending_expire(void)
 {
 	if (pending.body != NULL && now_ms() - pending.created > CONFIRM_MAX_AGE_MS) pending_clear();
+}
+
+/* FNV-1a, 64 Bit; kein Schutz gegen gezielte Kollisionen nötig, weil eine Kollision nur zusätzlich warnt. */
+static uint64_t url_hash(const char *url_s)
+{
+	uint64_t hash = 14695981039346656037u;
+	for (; *url_s != '\0'; url_s++) hash = (hash ^ (unsigned char)*url_s) * 1099511628211u;
+	return hash;
+}
+
+static bool warned_contains(const char *url_s)
+{
+	uint64_t hash = url_hash(url_s);
+	for (size_t i = 0; i < warned.count; i++) {
+		if (warned.hash[i] == hash) return true;
+	}
+	return false;
+}
+
+static void warned_add(const char *url_s)
+{
+	if (warned_contains(url_s)) return;
+	warned.hash[warned.next] = url_hash(url_s);
+	warned.next = (warned.next + 1) % WARNED_MAX;
+	if (warned.count < WARNED_MAX) warned.count++;
 }
 
 void fetch_zehos_http_mark_form(nsurl *url);
@@ -504,7 +541,12 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 			f->error = "Die Bestätigung ist ungültig oder abgelaufen; das Formular wurde nicht gesendet.";
 		}
 		pending_clear();
-	} else if (!f->tls && verifiable && fetch_zehos_referer_is_https(parent) && (post != NULL || form_get)) {
+	} else if (!f->tls && verifiable && fetch_zehos_referer_is_https(parent)
+		&& (post != NULL || form_get || warned_contains(url_s))) {
+		// Der Referer kommt aus struct fetch, nicht aus den Kopfzeilen: Von HTTPS an HTTP sendet NetSurf keinen
+		// Referer-Kopf (get_referer_header in llcache.c), der Abruf trüge ihn also nie in headers.
+		// Vor der Warnseite eintragen, damit auch "Erneut versuchen" nach Speichermangel wieder warnt.
+		warned_add(url_s);
 		unsigned char random[CONFIRM_TOKEN_BYTES];
 		if (post != NULL && getentropy(random, sizeof(random)) != 0) {
 			f->error = "Ohne sicheren Zufall kann das Formular nicht bestätigt werden.";

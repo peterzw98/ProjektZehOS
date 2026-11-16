@@ -184,11 +184,20 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   abgelaufenes Token ergibt eine lokale Fehlerseite ohne Netzabruf. GET-Formulare markiert `html/form.c` (Patch);
   die Warnseite verlinkt die GET-URL. Warnseiten laden nichts nach (eigenes Favicon über `resource:`), damit die
   Ziel-URL nicht vor dem Klick als Referer abfließt. Der Fetcher liefert die Warnseite als 303-Weiterleitung auf
-  eine `data:`-URL statt unter der Ziel-URL. NetSurf trägt die URL des Inhalts nach der Weiterleitung in die History
-  ein (`content_get_url` liefert das Zielobjekt von `llcache_fetch_redirect`), und `llcache` verwirft die
-  Cache-Daten des umgeleiteten Objekts. Neuladen und Zurück/Vor laden deshalb nur wieder die Warnung; der Link
-  beziehungsweise das Token darauf löst genau einen Abruf aus. Von der `data:`-Seite sendet NetSurf keinen
-  `Referer`-Kopf, weil das Schema nicht passt (`get_referer_header` in `llcache.c`).
+  eine `data:`-URL statt unter der Ziel-URL. Lokale Navigation, Neuladen und Zurück/Vor nutzen deshalb die
+  `data:`-URL: NetSurf trägt die URL des Inhalts nach der Weiterleitung in die History ein (`content_get_url`
+  liefert das Zielobjekt von `llcache_fetch_redirect`), und `llcache` verwirft die Cache-Daten des umgeleiteten
+  Objekts. Die Ziel-URL steht weiter nur im Speicher: in `current_parameters` des Browserfensters, in `urldb`
+  (`urldb_add_url` für die Weiterleitungsquelle) und in den Metadaten des alten llcache-Objekts. `urldb` wird
+  nicht gespeichert; das Framebuffer-Frontend schreibt nur Cookies (`urldb_save_cookies`). Weil NetSurf über
+  `current_parameters` das Ziel ohne Formularmarke erneut abrufen kann („Zurück“ auf einer Fehlerseite,
+  `browser_window__reload_current_parameters`, ebenso „Erneut versuchen“), merkt sich der Fetcher die gewarnten
+  Ziele (Hash, 16 Einträge, ohne Frist) und warnt bei jedem Abruf mit HTTPS-Referer erneut. Den Referer liest er
+  aus `struct fetch`, weil NetSurf von HTTPS an HTTP keinen `Referer`-Kopf mitgibt. Bestätigt wird nur von der
+  `data:`-Seite aus: Der Link beziehungsweise das Token löst genau einen Abruf aus, und von dort sendet NetSurf
+  keinen `Referer`-Kopf, weil das Schema nicht passt (`get_referer_header` in `llcache.c`). Grenzen: Bei POST
+  steht das Token in der `data:`-URL (Adressleiste, History); es gilt nur einmal und höchstens 5 Minuten. Nach 16
+  weiteren Formularwarnungen fällt ein Ziel aus der Liste.
 - HSTS: NetSurfs vorhandenes `urldb` wertet `Strict-Transport-Security` aus HTTPS-Antworten aus und hebt
   `http://`-Adressen solcher Hosts in `llcache` auf HTTPS, nur im Speicher bis zum Beenden. Eine Weiterleitung auf
   so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).

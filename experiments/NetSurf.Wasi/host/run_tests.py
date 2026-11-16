@@ -306,11 +306,24 @@ def hsts_scenarios(port: int) -> list:
     ]
 
 
-def form_scenarios(good: str, base: str) -> list:
+def address_over(at: int, url: str) -> list[str]:
+    # Wie address(), aber ohne Löschen: die lange data:-URL der Warnseite bleibt hinter "#" als Fragment stehen.
+    events = click(at, (300, 15)) + [f"{at + 200} 1 71 0 0", f"{at + 210} 2 71 0 0"]
+    t = at + 300
+    for char in url + "#":
+        events.append(f"{t} 3 {ord(char)} 0 0")
+        t += 10
+    return events + [f"{t} 1 28 0 0", f"{t + 10} 2 28 0 0"]
+
+
+def form_scenarios(good: str, base: str, refused: int) -> list:
     submit = click(3600, CLICK_SUBMIT)
     confirm = [*submit, *click(4600, CLICK_CONFIRM)]
     reload = [*submit, *click(4600, CLICK_RELOAD)]
     back_forward = [*submit, *click(4600, CLICK_BACK), *click(5300, CLICK_FORWARD)]
+    # Von der Warnseite zu einer abgelehnten Adresse, auf der Fehlerseite "Zurück": NetSurf lädt dann die alten
+    # Parameter (Ziel-URL mit HTTPS-Referer, ohne Formularmarke) neu, browser_window__reload_current_parameters.
+    error_back = [*submit, *address_over(4200, f"http://127.0.0.1:{refused}/"), *click(5300, CLICK_BACK)]
     return [
         ("https-formular-warnung", address(1500, f"{good}/formular?post&ziel-warnung") + submit, [DOWNGRADE_PAGE], [FORM_OK]),
         ("https-formular-senden", address(1500, f"{good}/formular?post&ziel-senden") + confirm, [FORM_OK], [HTTP_MISSING]),
@@ -321,12 +334,17 @@ def form_scenarios(good: str, base: str) -> list:
          [DOWNGRADE_PAGE], [FORM_OK]),
         ("https-formular-get-senden", address(1500, f"{good}/formular?get&ziel-get-senden") + confirm,
          [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
-        # Neuladen und Zurück/Vor zeigen wieder die Warnung, ohne das Ziel anzufragen (form_checks prüft das Netz).
+        # Neuladen, Zurück/Vor und "Zurück" auf einer Fehlerseite zeigen wieder die Warnung, ohne das Ziel
+        # anzufragen (form_checks prüft das Netz).
         ("https-formular-get-neuladen", address(1500, f"{good}/formular?get&ziel-get-neuladen") + reload,
          [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
         ("https-formular-get-zurueck-vor", address(1500, f"{good}/formular?get&ziel-get-zurueck") + back_forward,
          [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
         ("https-formular-neuladen", address(1500, f"{good}/formular?post&ziel-neuladen") + reload,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-get-fehler-zurueck", address(1500, f"{good}/formular?get&ziel-get-fehler") + error_back,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-fehler-zurueck", address(1500, f"{good}/formular?post&ziel-fehler") + error_back,
          [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
         # Gegenprobe: Nach dem Neuladen funktioniert die Bestätigung weiter, das Ziel kommt genau einmal an.
         ("https-formular-get-neuladen-senden",
@@ -352,7 +370,7 @@ def form_checks() -> list[str]:
     if any(path.startswith("/ziel-get-warnung") for path in REQUESTED) or any("ziel-get-warnung?" in r for r in REFERERS):
         problems.append("GET-Formular ohne Bestätigung gesendet")
     # Neuladen und Zurück/Vor dürfen das Ziel weder per GET noch per POST erreichen, auch ohne Felder.
-    for target in ("/ziel-get-neuladen", "/ziel-get-zurueck", "/ziel-neuladen"):
+    for target in ("/ziel-get-neuladen", "/ziel-get-zurueck", "/ziel-neuladen", "/ziel-get-fehler", "/ziel-fehler"):
         if any(path.split("?")[0] == target for path in REQUEST_LOG + paths) or any(f"{target}?" in r for r in REFERERS):
             problems.append(f"{target} ohne Bestätigung angefragt")
     # Ein Klick auf die Bestätigung ruft das Ziel genau einmal ab, auch nach Neuladen der Warnseite.
@@ -419,7 +437,7 @@ def main() -> int:
         fixtures = make_tls_fixtures(Path(work))
         tls = [tls_server(Path(work), name, base) for name in ("gut", "falsch")]
         scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
-        scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base)
+        scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base, closed_port())
         scenarios += hsts_scenarios(tls[0].server_address[1])
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
