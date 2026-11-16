@@ -1,4 +1,5 @@
 zehos-catalog 1
-generation=1
-package=doom 1.0.0 e48aa710fc7bbf9235b79fdc41e47f5b2385ee3529388fb5206c64a5d467f4c9
+generation=2
+package=doom 1.1.0 8f4677b8e7b7168c4828393ee037f2a401a96790b69b1d4ee608bdf990a9eb18
+package=netsurf 1.0.0 5bf023c31aeb58a44c009e71770f1aecdfdb10a16f7dbd4f6b3040fe70e9a65f
 end

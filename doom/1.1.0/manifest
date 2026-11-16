@@ -1,0 +1,12 @@
+zehos-package 1
+id=doom
+version=1.1.0
+runtime=zehos-wasm32-v1
+name=Doom
+entry=doom.wasm
+min-kernel=0.2.22
+file=7c62f2c520769c798774f416637eec4921e5f0aafdac1245ae7c8a8cf65fe102 1644 COPYING-freedoom.txt
+file=189b1af95d661151e054cea10c91b3d754e4de4d3fecfb074c1fb29476f7167b 18431 LICENSE-doomgeneric.txt
+file=b0e47bb1f8142b098af92452fcdaec71166b5ffcaf5a2942ada0f1c96d5f9057 721946 doom.wasm
+file=7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d 28795076 freedoom1.wad
+end
