@@ -3,7 +3,9 @@
 // Gastprüfungen wie in ZehOS. Diese Datei liefert nur die Linux-Seite der WASI-Rückrufe und den Start.
 //
 // Aufruf: zehos-wasm3 <paketordner> <modul.wasm>; Umgebung siehe zehos_host_core.c.
-// Exitcode: der des Gasts, sonst 100 + ZEHOS_WASM_*-Status (z. B. 102 ungültiges Modul, 105 Trap).
+// Exitcode: der des Gasts (außerhalb 0..99 als 99, damit er nicht mit Loaderfehlern kollidiert oder auf 0 abgeschnitten wird),
+// sonst 100 + ZEHOS_WASM_*-Status (z. B. 102 ungültiges Modul, 105 Trap).
+// Mit -Dd_m3HasPosixHost=0 -Dd_m3GuardedMemory=0 übersetzen, sonst prüft wasm3 Speichergrenzen anders als im Kernel.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -96,7 +98,9 @@ int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_t *buff
 
 void zehos_wasm_host_close(int32_t handle)
 {
-    if (close(handle) == 0) open_files--;
+    // Linux gibt den Deskriptor auch bei einem Fehler von close frei.
+    close(handle);
+    open_files--;
 }
 
 // Wie WasmPackagePaths.Stat: symbolische Links gelten als verweigert, Ordner haben Größe 0.
@@ -168,14 +172,16 @@ int main(int argc, char **argv)
     pthread_attr_t attributes;
     pthread_t thread;
     if (pthread_attr_init(&attributes) != 0 || pthread_attr_setstacksize(&attributes, THREAD_STACK_BYTES) != 0 ||
-        pthread_create(&thread, &attributes, execute, &run) != 0 || pthread_join(thread, NULL) != 0) {
+        pthread_create(&thread, &attributes, execute, &run) != 0) {
         fprintf(stderr, "zehos-wasm3: Worker-Thread nicht startbar\n");
         return 2;
     }
+    pthread_attr_destroy(&attributes);
+    if (pthread_join(thread, NULL) != 0) { fprintf(stderr, "zehos-wasm3: Worker-Thread nicht beendet\n"); return 2; }
     free(run.bytes);
     if (run.status != 0) {
         fprintf(stderr, "zehos-wasm3: Status %d: %s\n", run.status, run.message);
         return 100 + run.status;
     }
-    return run.result;
+    return run.result >= 0 && run.result < 100 ? run.result : 99;
 }
