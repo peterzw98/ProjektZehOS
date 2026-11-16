@@ -39,7 +39,7 @@ internal sealed partial class ShellService
         new("less", "less [Datei]", "Pager: Pfeile/Bildtasten, Leertaste, q zum Schliessen.", true, (a,o) => Filter("less",a,o)),
         new("history", "history", "Zeigt den sitzungslokalen Verlauf (32 Befehle).", false, WriteHistory),
         new("alias", "alias [Name=Befehl ...]", "Definiert einen sitzungslokalen Argumentalias (32 Aliase).", true, SetAlias),
-        new("date", "date", "Zeigt Datum/Uhrzeit der Hardwareuhr.", false, (_,o) => o.WriteLine(getDate?.Invoke() ?? FormatLocalNow())),
+        new("date", "date", "Zeigt die Ortszeit (MEZ/MESZ) aus der UTC-Hardwareuhr.", false, (_,o) => o.WriteLine(getDate?.Invoke() ?? FormatLocalNow())),
         new("uname", "uname", "Zeigt Kernel und Architektur.", false, (_,o) => o.WriteLine("ZehOS x64 Cosmos Gen3")),
         new("free", "free", "Zeigt die verfuegbaren Speicherangaben.", false, (_,o) => o.WriteLine(getMemory?.Invoke() ?? "Speicherangaben sind nicht verfuegbar.")),
         new("exit", "exit", "Schliesst diese Terminalsitzung; Textshell bleibt bedienbar.", false, (_,_) => ExitRequested = true)

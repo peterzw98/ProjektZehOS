@@ -14,7 +14,8 @@ internal static class LocalTime
     {
         // Die EU wechselt am letzten Sonntag im März und Oktober jeweils um 01:00 UTC.
         bool summer = utc >= LastSunday(utc.Year, 3).AddHours(1) && utc < LastSunday(utc.Year, 10).AddHours(1);
-        return summer ? (utc.AddHours(2), "MESZ") : (utc.AddHours(1), "MEZ");
+        var local = DateTime.SpecifyKind(utc.AddHours(summer ? 2 : 1), DateTimeKind.Unspecified);
+        return (local, summer ? "MESZ" : "MEZ");
     }
 
     private static DateTime LastSunday(int year, int month)
