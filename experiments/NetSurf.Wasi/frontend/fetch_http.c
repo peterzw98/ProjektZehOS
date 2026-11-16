@@ -1,7 +1,7 @@
 /*
  * HTTP-Fetcher für NetSurf auf ZehOS. build.py kopiert die Datei als content/fetchers/zehos_http.c.
  * Die Verbindung liefert der Kernel über zehos_v1.net_*; Weiterleitungen und Cache erledigt llcache.
- * Cookies und HTTP-Anmeldung (401) unterstützt dieser Fetcher noch nicht.
+ * Cookies verwaltet urldb wie beim curl-Fetcher; HTTP-Anmeldung (401) unterstützt dieser Fetcher noch nicht.
  * HTTPS ist noch nicht angebunden und wird ausdrücklich als nicht unterstützt gemeldet.
  */
 #include <stdbool.h>
@@ -18,6 +18,7 @@
 #include "utils/nsurl.h"
 #include "utils/ring.h"
 #include "content/fetch.h"
+#include "content/urldb.h"
 #include "content/fetchers.h"
 #include "http_response.h"
 
@@ -121,6 +122,17 @@ static void finish(struct http_fetch *f, fetch_msg_type type, const char *error)
 	send_msg(f, &msg);
 }
 
+/* Liefert den Wert einer Kopfzeile "Name: Wert" ohne umgebende Leerzeichen oder NULL bei anderem Namen. */
+static char *header_value(const char *line, size_t len, const char *name)
+{
+	size_t name_len = strlen(name);
+	if (len < name_len || strncasecmp(line, name, name_len) != 0) return NULL;
+	const char *value = line + name_len, *end = line + len;
+	while (value < end && (*value == ' ' || *value == '\t')) value++;
+	while (end > value && (end[-1] == ' ' || end[-1] == '\t')) end--;
+	return strndup(value, (size_t)(end - value));
+}
+
 static bool on_header(void *ctx, const char *line, size_t len)
 {
 	struct http_fetch *f = ctx;
@@ -128,10 +140,12 @@ static bool on_header(void *ctx, const char *line, size_t len)
 		fetch_set_http_code(f->parent, f->response.status);
 		f->code_set = true;
 	}
-	if (len >= 9 && strncasecmp(line, "Location:", 9) == 0 && f->location == NULL) {
-		const char *value = line + 9, *end = line + len;
-		while (value < end && (*value == ' ' || *value == '\t')) value++;
-		f->location = strndup(value, (size_t)(end - value));
+	if (f->location == NULL) f->location = header_value(line, len, "Location:");
+	char *cookie = header_value(line, len, "Set-Cookie:");
+	if (cookie != NULL) {
+		// fetch_set_cookie prüft Verifizierbarkeit und Referer wie beim curl-Fetcher.
+		fetch_set_cookie(f->parent, cookie);
+		free(cookie);
 	}
 	fetch_msg msg = { .type = FETCH_HEADER };
 	msg.data.header_or_data.buf = (const uint8_t *)line;
@@ -218,15 +232,28 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 			if (end == lwc_string_data(port) || value < 1 || value > 65535) f->error = "Ungültiger Port.";
 			f->port = (int)value;
 		}
+		// Wie curl auch HttpOnly-Cookies senden; die Zeile hängt als letzte Kopfzeile an NetSurfs Liste.
+		char *cookies = f->error == NULL ? urldb_get_cookie(url, true) : NULL;
+		size_t count = 0;
+		while (headers != NULL && headers[count] != NULL) count++;
+		const char **all = calloc(count + 2, sizeof(*all));
+		char *cookie_line = cookies != NULL ? malloc(strlen(cookies) + 9) : NULL;
+		if (cookie_line != NULL) sprintf(cookie_line, "Cookie: %s", cookies);
 		// Kopf und Formulardaten passen zusammen mit den NetSurf-Kopfzeilen in wenigen Kilobyte.
-		size_t cap = 4096 + target_len + (post_urlenc != NULL ? strlen(post_urlenc) : 0);
+		size_t cap = 4096 + target_len + (post_urlenc != NULL ? strlen(post_urlenc) : 0)
+			+ (cookies != NULL ? strlen(cookies) : 0);
 		f->request = malloc(cap);
-		if (f->request == NULL) f->error = "Zu wenig Speicher.";
+		if (f->request == NULL || all == NULL || (cookies != NULL && cookie_line == NULL)) f->error = "Zu wenig Speicher.";
 		else if (f->error == NULL) {
+			if (count > 0) memcpy(all, headers, count * sizeof(*all));
+			all[count] = cookie_line;
 			f->request_len = http_request_build(f->request, cap, f->host, f->port,
-				target_len > 0 ? target : "/", post_urlenc, headers);
+				target_len > 0 ? target : "/", post_urlenc, all);
 			if (f->request_len == 0) f->error = "Die Anfrage ist zu groß.";
 		}
+		free(cookie_line);
+		free(all);
+		free(cookies);
 	}
 	free(target);
 	if (host != NULL) lwc_string_unref(host);

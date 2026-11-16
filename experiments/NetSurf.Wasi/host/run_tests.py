@@ -117,7 +117,7 @@ class TestServer(http.server.BaseHTTPRequestHandler):
             self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             self.connection.close()
             self.close_connection = True
-        else:
+        elif not cookie_get(self):
             self.send_page(404, page(HTTP_MISSING, "Nicht gefunden"))
 
     def log_message(self, format: str, *args: object) -> None:
@@ -144,6 +144,26 @@ def http_scenarios(base: str, refused: int) -> list:
         ("http-ohne-berechtigung", address(1500, f"{base}/seite.html"), [], pages),
         ("https-nicht-unterstuetzt", address(1500, f"https://127.0.0.1:{refused}/"), [], pages),
     ]
+
+
+# Cookie-Szenario: Set-Cookie an einer Weiterleitung; das Ziel prüft den Cookie. Die Leerzeichen hinter Location
+# entfernt auch nsurl_join, das Szenario belegt das Trimmen im Fetcher also nicht.
+COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
+
+
+def cookie_get(handler: TestServer) -> bool:
+    if handler.path == "/keks-setzen":
+        handler.send_page(302, b"", {"Set-Cookie": "zehos=keks; Path=/", "Location": "/keks-pruefen  "})
+    elif handler.path == "/keks-pruefen":
+        sent = "zehos=keks" in (handler.headers.get("Cookie") or "")
+        handler.send_page(200, page(COOKIE_OK, "Cookie da") if sent else page(COOKIE_MISSING, "Cookie fehlt"))
+    else:
+        return False
+    return True
+
+
+def cookie_scenarios(base: str) -> list:
+    return [("http-cookie", address(1500, f"{base}/keks-setzen"), [COOKIE_OK], [COOKIE_MISSING, HTTP_MISSING, START])]
 
 
 # Name, Ereignisse, erwartete Farben, verbotene Farben
@@ -174,7 +194,8 @@ def main() -> int:
     failures = 0
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TestServer)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    scenarios = SCENARIOS + http_scenarios(f"http://127.0.0.1:{server.server_address[1]}", closed_port())
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    scenarios = SCENARIOS + http_scenarios(base, closed_port()) + cookie_scenarios(base)
     with tempfile.TemporaryDirectory() as work:
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"

@@ -92,7 +92,7 @@ nicht; solche Namen meldet dort die Auflösung (`ENOENT`) statt `EINVAL`. Diese 
 
 ## Grenzen
 
-- HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Keine Cookies, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
+- HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
 - Festes Browserbild 632×392, kein Resize-Import. Das ZehOS-Fenster zentriert bzw. skaliert es.
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.

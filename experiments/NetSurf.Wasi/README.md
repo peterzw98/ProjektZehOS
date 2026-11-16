@@ -78,7 +78,7 @@ cmake -S wamr/product-mini/platforms/linux -B build-iwasm -DCMAKE_BUILD_TYPE=Rel
   -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIB_PTHREAD=0 -DCMAKE_EXE_LINKER_FLAGS=-rdynamic
 cmake --build build-iwasm -j
 gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c -o libzehos_host.so
-ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
+ZEHOS_NET=1 ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
   --map-dir=/::../../experiments/NetSurf.Wasi/bin/package --stack-size=1048576 \
   ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
 ```
@@ -90,7 +90,7 @@ python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/b
   --host .tools/netsurf-host/libzehos_host.so
 ```
 
-Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht.
+Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite, eine zweistufige relative Weiterleitung, `chunked`, 404, eine abgelehnte Verbindung, eine abgebrochene Verbindung (RST), eine fehlende Netzwerkberechtigung, einen Cookie über eine Weiterleitung und `https://`. Der Prüfhost bildet `net_*` mit nicht blockierenden POSIX-Sockets nach; DNS blockiert dort, im Kernel nicht. Er hält die Kernelgrenzen ein (4 Verbindungen, 64 KiB je net_send/net_recv, EACCES ohne Berechtigung); ZEHOS_NET=1 ersetzt dort capability=net.
 
 `wamr` ist WAMR-2.4.5 (Commit `25bd7eb63e828e4bd242cc9b38d260b4b31c6605`). Ereignisdateien (`ZEHOS_EVENTS`) enthalten je Zeile `<ms> <typ> <code> <x> <y>` nach dem `poll_event`-ABI.
 
@@ -101,7 +101,8 @@ Die HTTP-Szenarien starten dazu einen lokalen Testserver und prüfen eine Seite,
 - HTTP/1.1 mit `Connection: close`, GET und URL-codierte POST-Formulare; Dateiupload-Formulare werden abgelehnt.
 - Weiterleitungen, 304 und Cache behandelt NetSurfs llcache wie beim curl-Fetcher.
 - Grenzen je Antwort: Zeile 8 KiB, Kopf 64 KiB und 128 Zeilen, Rumpf 8 MiB, 30 s ohne Daten. Komprimierte Übertragung wird nicht angefordert; andere Transfer-Codierungen als `chunked` gelten als Fehler.
-- Keine Cookies und keine HTTP-Anmeldung (401); Seiten mit Sitzung oder Login funktionieren noch nicht.
+- Cookies verwaltet NetSurfs urldb wie beim curl-Fetcher: `Set-Cookie` wird übernommen, passende Cookies gehen als `Cookie` mit. Sie gelten nur bis zum Beenden: Das ZehOS-Frontend lädt und speichert keine Cookie-Datei, das Paket ist nur lesend eingebunden.
+- Keine HTTP-Anmeldung (401); Seiten mit Login über HTTP-Authentifizierung funktionieren noch nicht.
 - Höchstens 4 gleichzeitige Verbindungen (Kernelgrenze); `res/Choices` setzt `max_fetchers` und `max_fetchers_per_host` auf 4. Gesendet wird in Stücken bis 64 KiB.
 - `https://` zeigt ausdrücklich „HTTPS wird von NetSurf auf ZehOS noch nicht unterstützt.“
 - Fehlerseiten nennen die Ursache: fehlende Netzwerkberechtigung, unbekannter Servername, abgelehnte oder abgebrochene Verbindung, Zeitüberschreitung, ungültige, unvollständige oder zu große Antwort.
