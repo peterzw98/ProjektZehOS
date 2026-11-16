@@ -36,6 +36,46 @@ public sealed class TerminalTests
     }
 
     [TestMethod]
+    public void ProgressReplacesOnlyItsOwnWrappedRows()
+    {
+        var buffer = new TerminalBuffer(4, 8);
+        buffer.WriteLine("alt");
+        buffer.WriteProgress("123456789");
+        buffer.WriteProgress("50%");
+        Assert.AreEqual(2, buffer.Count);
+        Assert.AreEqual("alt", buffer.GetLine(0));
+        Assert.AreEqual("50%", buffer.GetLine(1));
+        buffer.WriteLine("echo");
+        buffer.WriteProgress("90%");
+        Assert.AreEqual("echo", buffer.GetLine(2));
+        Assert.AreEqual("90%", buffer.GetLine(3));
+        buffer.Clear();
+        buffer.WriteLine("neu");
+        buffer.WriteProgress("100%");
+        Assert.AreEqual("neu", buffer.GetLine(0));
+    }
+
+    [TestMethod]
+    public void ProgressSurvivesReflowAndRingOverflow()
+    {
+        var buffer = new TerminalBuffer(4, 3);
+        buffer.WriteLine("alt");
+        buffer.WriteProgress("123456789");
+        buffer.WriteProgress("50%");
+        Assert.AreEqual(1, buffer.Count);
+        Assert.AreEqual("50%", buffer.GetLine(0));
+        buffer.Reflow(2);
+        buffer.WriteProgress("OK");
+        Assert.AreEqual(1, buffer.Count);
+        Assert.AreEqual("OK", buffer.GetLine(0));
+        buffer.WriteLine("Z");
+        buffer.Reflow(4);
+        buffer.WriteProgress("fertig");
+        Assert.AreEqual("Z", buffer.GetLine(0));
+        Assert.AreEqual("fert", buffer.GetLine(1));
+        Assert.AreEqual("ig", buffer.GetLine(2));
+    }
+    [TestMethod]
     public void Buffer_WrapsMultilineAndBlankLines_AndRetainsOnlyLatestRows()
     {
         var buffer = new TerminalBuffer(4, 3);

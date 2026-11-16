@@ -175,6 +175,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     /// Installiert oder aktualisiert aus <paramref name="source"/> unter <paramref name="prefix"/> (manifest, manifest.sig,
     /// files/). Mit <paramref name="expectedManifestSha256"/> muss das Manifest exakt dem Katalogeintrag entsprechen.
     /// Rueckstufungen und Aenderungen an laufenden Paketen werden abgelehnt.
+    /// Der interne Fortschrittsempfaenger speichert nur den Zustand und darf nicht werfen; Anzeige und Formatierung
+    /// erfolgen spaeter in der Ereignisschleife. Fertig wird erst nach dem Veroeffentlichen gemeldet.
     /// </summary>
     public ResultObject<PackageManifest> Install(IPackageSource source, string prefix, string? expectedManifestSha256, CancellationToken cancellation, Action<PackageProgress>? progress = null)
     {

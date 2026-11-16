@@ -495,6 +495,36 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void CancelledDownloadReleasesFilesAndNeverReportsFinished()
+    {
+        string repo = Path.Combine(work, "cancel-progress");
+        Publish(repo, "doom", "1.0.0");
+        var store = Store();
+        using var cancel = new CancellationTokenSource();
+        var progress = new List<PackageProgress>();
+        var result = store.Install(new DirectoryPackageSource(repo), "", null, cancel.Token, value =>
+        {
+            progress.Add(value);
+            if (value.Phase == "Download" && value.CompletedBytes > 0) cancel.Cancel();
+        });
+        Assert.IsFalse(result.IsOK());
+        Assert.IsNull(store.ReadActive("doom").Value);
+        Assert.IsFalse(progress.Any(value => value.Phase == "Fertig"));
+        using (File.Open(Path.Combine(repo, "files", "app.wasm"), FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+        Assert.IsTrue(store.Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None).IsOK());
+    }
+    [TestMethod]
+    public void UnexpectedDownloadFailureClosesSourceFile()
+    {
+        string repo = Path.Combine(work, "throw-progress");
+        Publish(repo, "doom", "1.0.0");
+        Assert.IsFalse(Store().Install(new DirectoryPackageSource(repo), "", null, CancellationToken.None, value =>
+        {
+            if (value.Phase == "Download" && value.CompletedBytes > 0) throw new InvalidOperationException("Testfehler beim Schreiben");
+        }).IsOK());
+        using var file = File.Open(Path.Combine(repo, "files", "app.wasm"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+    [TestMethod]
     public void InvalidPackageNeverReportsFinished()
     {
         string repo = Path.Combine(work, "bad-progress");
