@@ -54,9 +54,30 @@ Der Agent der urspruenglichen VMware-Installer-Pruefung hat `892a988` mit Freiga
 
 Bei einem von insgesamt 26 Starts meldete `Ps2KeyboardDriver` nach `reboot` des installierten Systems `enable scanning was not acknowledged`. Die Tastatur blieb bis zu einem Kaltstart unbenutzbar. Sechs weitere Shell-Neustarts und sechs VM-Resets mit Tastendruecken reproduzierten den Fehler nicht. Der Fehler ist von der bisherigen fehlgeschlagenen Selbstpruefung bei falscher Zeitkalibrierung zu unterscheiden: Beide CPUID-Frequenzen waren hier korrekt.
 
-Die Quellpruefung von Cosmos 3.0.94 zeigt, dass `Ps2Access.TryCommand` einen belegten Austausch, einen fehlgeschlagenen Controller-Schreibzugriff und einen ACK-Timeout mit demselben `false` meldet. Der Controller wartet bis zu 10 ms auf seinen Eingabepuffer, die Aktivierung bis zu 100 ms auf den Austausch. Die vorhandene Fehlermeldung grenzt den tatsaechlichen Grund nicht weiter ein. Ohne reproduzierbaren Fehler oder entsprechende Laufzeitdaten waere eine Treiberaenderung spekulativ; dieser Befund ist deshalb ausdruecklich **nicht behoben**.
+Die Quellpruefung von Cosmos 3.0.94 (Commit `5d0b953` laut Paketmetadaten) zeigt, dass `Ps2Access.TryCommand` einen belegten Austausch, einen fehlgeschlagenen Controller-Schreibzugriff, viermal Resend (`0xFE`) und einen ACK-Timeout mit demselben `false` meldet. Der Controller wartet bis zu 10 ms auf seinen Eingabepuffer, die Aktivierung bis zu 100 ms auf das ACK. Im Fehllauf liegen zwischen `published keyboard` und der Fehlermeldung nur zwei LAPIC-Ticks des 10-ms-Timers, also etwa 10 bis hoechstens 30 ms, sofern keine Timerinterrupts verloren gingen; TSC- und LAPIC-Frequenz stammen beide aus VMware-CPUID. Die Untergrenze passt zur 10-ms-Wartezeit von `TrySend`. Der 100-ms-ACK-Timeout ist damit sehr unwahrscheinlich. Ein belegter Austausch ist ebenfalls unwahrscheinlich: LED-Befehle von `KeyboardManager` entstehen erst bei Sperrtasten und laufen auf demselben Treiberthread wie die Bindung. Es bleiben ein voller i8042-Eingabepuffer (10 ms in `TrySend`) oder wiederholtes Resend der Tastatur. Die vorhandene Meldung unterscheidet diese Faelle nicht. Ein oeffentlicher Weg, eine fehlgeschlagene Bindung erneut anzubieten, besteht in Cosmos 3.0.94 nicht. Ohne reproduzierbaren Fehler oder entsprechende Laufzeitdaten waere eine Treiberaenderung spekulativ; dieser Befund ist deshalb ausdruecklich **nicht behoben**.
 
 Der Gegenpruefer ordnet den Fehllauf seinem Linux-Protokoll `.tools/vmware-e2e3/serial.log` zu (Reset bei Zeile 131008, Fehler bei 131315): Admin in der Textshell nach etwa 140 s Laufzeit, `/data` eingebunden, Desktop zuvor geoeffnet. `reboot` und Return wurden per VNC mit jeweils 50 ms Tastendruck und 80 ms Abstand gesendet; keine Taste blieb gehalten, kein Logout. Nach Return-Up folgten keine Eingaben bis zum Kaltstart. Ein gehaltener Neustart-Tastendruck ist damit fuer diesen beobachteten Lauf nicht belegt.
+
+### Reset-Schleifen vom 15. November 2026
+
+`scripts/test-vmware-ps2-reset.py` startet ZehOS in VMware Workstation unter Linux wiederholt neu und zaehlt nach jeder seriellen Zeile `ps2:kbd offer Ps2KeyboardDriver -> ...` das Ergebnis. Es kennt zwei Arten des Neustarts:
+
+- `--iso`: Start nur vom ISO, ohne Datenlaufwerk und Netz; neu gestartet wird mit `vmrun reset hard`.
+- `--vmx`: eine ausgeschaltete VM mit installiertem ZehOS und VNC auf `127.0.0.1`. Nach jeder Bindung meldet sich das Skript ueber `scripts/vnc_type.py` an (`--user`, Kennwort aus `ZEHOS_PS2_PASSWORD`), wechselt mit F4 in die Textshell und tippt `reboot`. Das ist der Warmstart ueber ACPI (`lai_acpi_reset`), nach dem der Fehler beobachtet wurde. Scheitert eine Bindung, startet `vmrun reset hard` die VM neu. VMware-VNC tippt mit US-Belegung, der Gast nutzt die deutsche; Konto und Kennwort deshalb ohne `y`, `z` und Sonderzeichen waehlen.
+
+```sh
+python3 scripts/test-vmware-ps2-reset.py --iso ProjektZeh/output-x64/ProjektZeh.iso --runs 100
+ZEHOS_PS2_PASSWORD=<Testkennwort> python3 scripts/test-vmware-ps2-reset.py --vmx <VM>.vmx --vnc-port 5974 --runs 50
+```
+
+Ergebnisse mit VMware Workstation 26.0.1 unter Linux, 1 vCPU, UEFI:
+
+| Ablauf | Stand | Starts | Ergebnis |
+| --- | --- | --- | --- |
+| Hardware-Reset, ISO ohne Datenlaufwerk | master `1671481` (0.2.1) | 100 | 100 `bound` |
+| Gast-`reboot` nach Anmeldung, installierte Platte | `b817c24` (0.2.4, Installer-ISO, neue 256-MiB-Platte) | 50 (49 Warmstarts) | 50 `bound` |
+
+Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warmstarts folgte auf Anmeldung, F4 und Tastatureingaben ueber VNC (50 ms Druck, 50 ms Abstand). Der Fehler liess sich damit nicht reproduzieren; bei einer beobachteten Rate von 1 zu 26 waere in 49 Warmstarts mit etwa 85 % Wahrscheinlichkeit mindestens ein Fehllauf zu erwarten gewesen. Abweichend vom Fehllauf dauerte ein vollstaendiger Zyklus mit Start, Anmeldung und `reboot` nur etwa 16 s, der Desktop blieb ohne geoeffnete Fenster und `/data` war die frisch installierte Platte. Der Befund bleibt offen.
 
 ## Grenzen
 
