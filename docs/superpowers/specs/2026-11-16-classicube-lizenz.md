@@ -22,8 +22,8 @@ Quellstand: `ClassiCube/ClassiCube` Commit `2b01bee867fe81331d0a898e7ad40a718821
 | Frustum-Culling (Mark Morley) | „use … in any way you want“ | im Spielcode |
 | OpenTK, Mono-Anteile | MIT | nur Windows/X11-Fensterschicht, nicht für WASI |
 | Emscripten | MIT bzw. University of Illinois/NCSA | nur `src/webclient`, nicht für WASI |
-| BearSSL | MIT | nur mit Netz/TLS (`third_party/bearssl`); ohne `CC_BUILD_NETWORKING` nicht mitbauen |
-| FreeType | FreeType License (FTL), Nennungspflicht in der Dokumentation | nur mit `CC_BUILD_FREETYPE` (`src/freetype`, `src/_ft*.c`) |
+| BearSSL | MIT | nur mit Netz/TLS (`third_party/bearssl`); nur mit `CC_BUILD_NETWORKING`, das per `#undef` abzuschalten ist |
+| FreeType | FreeType License (FTL), Nennungspflicht in der Dokumentation | nur mit `CC_BUILD_FREETYPE` (`src/freetype` und `src/_*.c`, etwa `_ftbase.c`, `_truetype.c`, `_sfnt.c`, `_smooth.c`) |
 
 Weitere Drittquellen unter `third_party/`, nicht in `license.txt` aufgeführt:
 
@@ -37,14 +37,14 @@ Für das Paket gilt deshalb: ClassiCube-`license.txt` vollständig, dazu die Liz
 
 ## Standardtexturen: Mojang-Material
 
-- `src/Resources.c:864-867` (`CC_BUILD_RESOURCES`): Der Launcher lädt beim ersten Start `client.jar` von Minecraft Classic 0.30 und 1.6.2 von `launcher.mojang.com` und dazu vier Texturen von `classic.minecraft.net`. Er extrahiert daraus `terrain.png`, `gui.png` und weitere Dateien und baut `texpacks/default.zip`. Zusätzlich lädt er Patches von `static.classicube.net`.
+- `src/Resources.c:864-872` (`CC_BUILD_RESOURCES`, Abrufe in Zeile 1174): Der Launcher lädt beim ersten Start `client.jar` von Minecraft Classic 0.30 und 1.6.2 von `launcher.mojang.com` (864-865) und dazu vier Texturen von `classic.minecraft.net` (869-872). Er extrahiert daraus `terrain.png`, `gui.png` und weitere Dateien und baut `texpacks/default.zip`. Zusätzlich lädt er Patches von `static.classicube.net`.
 - `src/Resources.c:347`: Sounds und Musik kommen von `resources.download.minecraft.net`, ebenfalls Mojang.
 - `src/Resources.c:718-722`: alternativ `RESOURCE_SERVER "/default.zip"` (`http://static.classicube.net/default.zip`).
 - `readme.md:39`: „download the required assets from minecraft.net and classicube.net“.
 - `misc/cc_textures.zip` (Konsolenports, `terrain.png`, `gui.png`, `char.png`, Mob-Texturen usw.) und `misc/cc_audio.zip`: Beide haben keine eigene Lizenzangabe, die Herkunft ist nicht belegt, beim Audio vermutlich Mojang. Nicht verwenden.
 - Eingebaute Ersatzschrift `font_bitmap` (`src/SystemFonts.c:50-51`, Kommentar „Source: Goodly's texture pack for ClassiCube“; offenbar mit `misc/bitmap_font_gen.cs` aus dessen `default.png` erzeugt). Die Lizenz von Goodlys Texturpaket ist ungeklärt. Sie wird gezeichnet, wenn kein `default.png` geladen ist (`Drawer2D.c:552-557, 572`) oder wenn statt der Bitmapschrift die Systemschrift gewählt ist. Ohne `CC_BUILD_FREETYPE` ersetzt sie dann die Systemschrift. Im Spiel ist standardmäßig die Bitmapschrift aktiv (`Drawer2D.c:713`, `OPT_USE_CHAT_FONT` aus); die Menüoption `MenuOptions.c:931` schaltet um. Deshalb ein eigenes `default.png` mitliefern und die Systemschrift-Option im Port ausblenden oder festsetzen. Bis die Lizenz geklärt ist, eine eigene oder freie Bitmapschrift einplanen und im Port prüfen, dass `font_bitmap` nie sichtbar wird.
 
-Folge: Paketbau und Gasttest dürfen weder den Launcher-Download noch `misc/*.zip` verwenden. Das Spiel sucht `texpacks/default.zip` und `texpacks/classicube.zip` (`TexturePack.c:505-508`). Ein eigenes freies `default.zip` im Paket ersetzt beide. Ohne Datei zeigt `Game.c:450` einen Warnhinweis.
+Folge: Paketbau und Gasttest dürfen weder den Launcher-Download noch `misc/*.zip` verwenden. Das Spiel sucht `texpacks/default.zip` und `texpacks/classicube.zip` (`TexturePack.c:505-508`). Davor versucht es `Game_Version.DefaultTexpack` (`TexturePack.c:506`; in älteren Classic-Modi `texpacks/default_0023.zip`, `GameVersion.c:58-70`) und ein in den Optionen gewähltes Paket (`TexturePack.c:496`). Ein eigenes freies `default.zip` im Paket ersetzt die Standardpfade, wenn der Port die Spielversion festlegt und die Texturpaketwahl sperrt oder `default_0023.zip` ebenfalls mitliefert. Ohne Datei zeigt `Game.c:450` einen Warnhinweis.
 
 ## Nachladen beim Start und wie es abgeschaltet wird
 
@@ -52,11 +52,11 @@ Folge: Paketbau und Gasttest dürfen weder den Launcher-Download noch `misc/*.zi
 | --- | --- | --- |
 | Launcher: Anmeldung, Serverliste, Flaggen (`www.classicube.net/api`, `static.classicube.net`) | `LWeb.c:241-651` | Start mit `--singleplayer` (`main_impl.h:205-208`); der Launcher läuft dann nicht |
 | Launcher: Update-Prüfung `cdn.classicube.net/client/builds.json` | `LWeb.c:575-619` | wie oben |
-| Launcher: Ressourcen von Mojang/classicube.net | `Resources.c` (`CC_BUILD_RESOURCES`) | wie oben; zusätzlich `CC_BUILD_RESOURCES` nicht definieren |
-| Spiel: Skins `cdn.classicube.net/skin` | `Entity.c:253`, `Http_Worker.c` | `CC_BUILD_NETWORKING` nicht definieren: `Http_Worker.c:5-40` liefert dann für alle Abrufe `-1` |
+| Launcher: Ressourcen von Mojang/classicube.net | `Resources.c` (`CC_BUILD_RESOURCES`) | wie oben; zusätzlich `#undef CC_BUILD_RESOURCES` |
+| Spiel: Skins `cdn.classicube.net/skin` | `Entity.c:253`, `Http_Worker.c` | `#undef CC_BUILD_NETWORKING`: `Http_Worker.c:5-40` liefert dann für alle Abrufe `-1` |
 | Spiel: Texturpaket-URL vom Server, WoM-Erweiterung | `TexturePack.c:712`, `Protocol.c:275-281` | nur im Mehrspieler; ebenfalls durch Stubs abgeschaltet |
-| Spiel: Plugins (`dlopen`) | `Game.c:444` (`CC_BUILD_PLUGINS`) | nicht definieren; WASI kennt kein `dlopen` |
-| Spiel: Menü „Texturpaket per URL“ | `Menus.c:2921` | Stub, liefert keinen Abruf |
+| Spiel: Plugins (`dlopen`) | `Game.c:444` (`CC_BUILD_PLUGINS`) | `#undef CC_BUILD_PLUGINS`; WASI kennt kein `dlopen` |
+| Spiel: Bestätigungsdialog für eine vom Server geschickte Texturpaket-URL | `Menus.c:2921` (`TexPackOverlay_Show`, nur über `Server.c:53`) | nur im Mehrspieler; durch die Stubs ohne Abruf |
 
 `Core.h:182-188` definiert `CC_BUILD_NETWORKING`, `CC_BUILD_FREETYPE`, `CC_BUILD_RESOURCES` und `CC_BUILD_PLUGINS` standardmäßig. Die WASI-Plattformdefinition muss sie deshalb ausdrücklich mit `#undef` abschalten, wie andere Ports es tun (zum Beispiel `Core.h:287-289`), und `CC_BUILD_NOMUSIC`/`CC_BUILD_NOSOUNDS` setzen. Ohne FreeType hat WASI keine Systemschriften. Start immer mit `--singleplayer`. Mehrspieler (Plan-Etappe 6) braucht später ein eigenes, auf `zehos_v1.net_*` umgestelltes Netz ohne BearSSL und weiterhin ohne Skin-Server, solange keine Freigabe dafür vorliegt.
 
@@ -73,11 +73,11 @@ Benötigt werden mindestens:
 
 Optional sind `rain.png`, `snow.png`, `animations.png`/`.txt` und Mob-Texturen. Mobs sind im Einzelspieler-Standardmodus nicht nötig.
 
-Kandidat für die Blocktexturen: Minetest Game, Mod `default` (`minetest/minetest_game`, `mods/default/license.txt`). Medien stehen unter CC BY-SA 3.0, Rechteinhaber celeron55, Cisoun, VanessaE, Calinou, paramat u. a. Einzelne Medien weiterer Urheber stehen unter CC BY 3.0 oder CC0. Die Zuordnung je Datei steht in derselben Datei und muss beim Zusammenstellen je verwendeter Textur übernommen werden. Folgen:
+Kandidat für die Blocktexturen: Minetest Game, Mod `default` (`minetest/minetest_game`, `mods/default/license.txt`). Medien stehen unter CC BY-SA 3.0, Rechteinhaber celeron55, Cisoun, VanessaE, Calinou, paramat u. a. Die dort aufgeführten CC-BY-3.0- und CC0-Abschnitte betreffen nach den genannten Urhebern vor allem Sounds; die Texturen fallen praktisch unter CC BY-SA 3.0. Der Code des Mods steht unter LGPL-2.1, wird aber nicht verwendet. Die Zuordnung je Datei steht in derselben Datei und muss beim Zusammenstellen je verwendeter Textur übernommen werden. Folgen:
 
 - Das zusammengestellte `default.zip` ist eine Bearbeitung und steht selbst unter CC BY-SA 3.0. Ins Paket gehören Urheberliste, Lizenztext und Änderungshinweis („zu einem ClassiCube-Atlas zusammengesetzt“).
-- ShareAlike betrifft nur das Texturpaket, nicht `classicube.wasm` (getrennte Datei, nur geladen). Mit BSD-3-Clause und dem Paketformat ist das vereinbar.
-- Minetests `character.png` hat das 64×32-Skin-Format und kann `char.png` liefern (gleiche Lizenzprüfung je Datei).
+- ShareAlike betrifft nur das Texturpaket, nicht `classicube.wasm` (getrennte Datei, nur geladen). Mit BSD-3-Clause und dem Paketformat ist das vereinbar. CC BY-SA 3.0 §4a verbietet technische Maßnahmen, die Empfänger einschränken; die Paketsignatur belegt nur die Herkunft und hindert niemanden an Nutzung oder Weitergabe.
+- Minetests `character.png` liegt nicht im Mod `default`, sondern in `mods/player_api` mit eigener `license.txt` (Medien CC BY-SA 3.0, Rechteinhaber celeron55, MirceaKitsune, Jordach, kilbith u. a.). Die Namensnennung kommt aus dieser Datei. Es kann `char.png` liefern, wenn das 64×32-Format bestätigt ist (nicht geprüft).
 - `default.png`, `gui.png` und `icons.png` haben in Minetest keine Entsprechung im ClassiCube-Layout. Am einfachsten sind eigene Grafiken (im Paket als CC0 oder unter derselben Lizenz wie das Paket ausweisen) oder eine Schrift mit belegter freier Lizenz, gerastert auf 8×8 Pixel je Zeichen.
 
 Alternative ohne ShareAlike: CC0-Kacheln, etwa „Tiny Texture Pack 3“ von Screaming Brain Studios auf OpenGameArt. Das sind Einzelkacheln mit 128 bis 512 Pixeln, kein Atlas; Auswahl und Herunterskalieren wären Eigenarbeit. Die Lizenz ist je Seite zu prüfen.
