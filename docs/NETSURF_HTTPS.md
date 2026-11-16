@@ -20,7 +20,7 @@ sind mit **OFFEN** markiert. Bezug: [ROADMAP](../ROADMAP.md) 12.2, [NETWORK_TEST
   nicht blockierend zwischen 64-KiB-Puffern und Socket. Das Zeitlimit von 10 s gilt von `net_open` bis zum
   Verbindungsaufbau.
 - **NetSurf** meldet `https://` in `frontend/fetch_http.c` ausdrücklich als nicht unterstützt und ruft `net_open`
-  immer mit `flags = 0` auf. Der Linux-Prüfhost (`host/zehos_host_linux.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
+  immer mit `flags = 0` auf. Der Linux-Prüfhost (`host/zehos_host_core.c`) lehnt Flags ebenfalls mit `ENOTSUP` ab.
 
 ## Ziel und Nicht-Ziele
 
@@ -205,7 +205,7 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
-- Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
+- Der Prüfhost `host/zehos_host_core.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer
   Umgebungsvariable, analog zu `ZEHOS_NET=1`. Er bildet dieselben Codes nach (`ENOSYS`, `EPERM`, `EPROTO`,
   `ECONNRESET` bei EOF ohne `close_notify`), sonst sagt der Vergleich mit dem Kernel nichts. Er ersetzt keinen
   Kerneltest.
@@ -285,6 +285,6 @@ ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` w
 ## Betroffene Dateien bei einer Umsetzung
 
 `ProjektZeh/Network/TlsTransport.cs`, `ProjektZeh/Runtime/Wasm/WasmNetwork.cs` und `CosmosWasmNetwork.cs`,
-`ProjektZeh.Tests/`, `experiments/NetSurf.Wasi/frontend/fetch_http.c`, `host/zehos_host_linux.c`,
+`ProjektZeh.Tests/`, `experiments/NetSurf.Wasi/frontend/fetch_http.c`, `host/zehos_host_core.c`,
 `host/run_tests.py`, `docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md` (neuer Flag als Vertrag) sowie
 `docs/NETSURF.md`. Die Umsetzung ist ein eigener Auftrag und mit den Besitzern dieser Dateien abzustimmen.
