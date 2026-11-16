@@ -29,4 +29,4 @@ python3 experiments/Rechner.Wasi/build.py
 
 Das Skript übersetzt und startet zuerst die Hosttests `tests/calc_test.c` mit dem nativen `cc`, baut dann mit wasi-sdk 25 (fester SHA-256, derselbe Abruf wie `experiments/NetSurf.Wasi/build.py`) `bin/package/rechner.wasm` und bricht ab, wenn ein lokaler Pfad im Modul steht. Die Oberfläche lässt sich ohne VM mit dem Prüfhost `zehos-wasm3` aus `experiments/NetSurf.Wasi/` und einer Ereignisdatei (`ZEHOS_EVENTS`, `ZEHOS_PPM`) prüfen.
 
-Paket: Kennung `rechner`, Name `Rechner`, Einstieg `rechner.wasm`, Dateien `rechner.wasm` und `LICENSE.txt`, ohne `--network`.
+Paket: Kennung `rechner`, Name `Rechner`, Einstieg `rechner.wasm`, ohne `--network`. Dateien: `rechner.wasm`, `LICENSE.txt` (GPL-3.0) und `licenses/` mit den Texten der statisch gelinkten wasi-libc (MIT/Apache-2.0, musl) und compiler-rt (Apache-2.0 mit LLVM-Ausnahme) sowie `SOURCES.txt` mit dem Quellverweis auf den gebauten Commit. Baut man nicht aus einem unveränderten Commit auf `origin/master`, trägt `SOURCES.txt` eine Warnung; ein solches Paket nicht veröffentlichen.

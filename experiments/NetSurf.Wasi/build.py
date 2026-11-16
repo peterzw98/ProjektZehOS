@@ -121,6 +121,37 @@ def fetch(name: str) -> Path:
     return target
 
 
+def recipe_reference(recipe: Path, *inputs: Path) -> list[str]:
+    """Quellverweis fuer SOURCES.txt: Rezeptordner am aktuellen Commit, bei unsicherem Stand mit Warnung.
+
+    inputs nennt weitere Ordner ausserhalb des Rezepts, aus denen der Build Dateien uebernimmt."""
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+    lines = [f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/{recipe.relative_to(ROOT).as_posix()}", ""]
+    # Das GPL-Quellangebot verweist auf diesen Commit; er muss dauerhaft erreichbar sein. Nach einem Squash-Merge
+    # verschwinden Branch-Commits, lokale Aenderungen sind nirgends abrufbar.
+    # Unversionierte Dateien zaehlen nur im Rezeptordner: build.py liest patches/ und licenses/ per glob ein.
+    dirty = (subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                            capture_output=True, text=True).stdout.strip()
+             + subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", str(recipe), *map(str, inputs)], cwd=ROOT,
+                              capture_output=True, text=True).stdout.strip())
+    on_master = subprocess.run(["git", "merge-base", "--is-ancestor", revision, "origin/master"], cwd=ROOT,
+                               capture_output=True).returncode == 0
+    if dirty or not on_master:
+        warning = ("WARNUNG: Bau aus " + ("lokal geaendertem Stand" if dirty else "Commit ausserhalb von origin/master")
+                   + "; der Quellverweis ist nicht dauerhaft. Dieses Paket nicht veroeffentlichen.")
+        print(warning, file=sys.stderr)
+        lines.extend([warning, ""])
+    return lines
+
+
+def wasi_runtime_sources() -> list[str]:
+    """Herkunft der statisch gelinkten wasi-libc und compiler-rt; ihre Lizenztexte liegen in licenses/."""
+    return ["Statically linked runtime from wasi-sdk 25:", ARCHIVES["wasi-sdk"][0],
+            f"SHA256 {ARCHIVES['wasi-sdk'][1]}",
+            "https://github.com/WebAssembly/wasi-libc/tree/574b88da481569b65a237cb80daf9a2d5aeaf82d",
+            "https://github.com/llvm/llvm-project/tree/ab4b5a2db582958af1ee308a790cfdb42bd24720/compiler-rt"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -226,32 +257,13 @@ def main() -> int:
     # Texte, die weder NetSurf noch wasi-sdk mitliefern (PSL unter MPL-2.0, statisch gelinkte wasi-libc und compiler-rt).
     for path in sorted((HERE / "licenses").iterdir()):
         shutil.copyfile(path, licenses / path.name)
-    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
-    source_lines = ["ZehOS NetSurf source and build recipe", "",
-        f"https://github.com/peterzw98/ProjektZehOS/tree/{revision}/experiments/NetSurf.Wasi", ""]
-    # Das GPL-Quellangebot verweist auf diesen Commit; er muss dauerhaft erreichbar sein. Nach einem Squash-Merge
-    # verschwinden Branch-Commits, lokale Aenderungen sind nirgends abrufbar.
-    # Unversionierte Dateien zaehlen nur im Rezeptordner: build.py liest patches/ und licenses/ per glob ein.
-    dirty = (subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
-                            capture_output=True, text=True).stdout.strip()
-             + subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", str(HERE)], cwd=ROOT,
-                              capture_output=True, text=True).stdout.strip())
-    on_master = subprocess.run(["git", "merge-base", "--is-ancestor", revision, "origin/master"], cwd=ROOT,
-                               capture_output=True).returncode == 0
-    if dirty or not on_master:
-        warning = ("WARNUNG: Bau aus " + ("lokal geaendertem Stand" if dirty else "Commit ausserhalb von origin/master")
-                   + "; der Quellverweis ist nicht dauerhaft. Dieses Paket nicht veroeffentlichen.")
-        print(warning, file=sys.stderr)
-        source_lines.extend([warning, ""])
+    source_lines = ["ZehOS NetSurf source and build recipe", ""] + recipe_reference(HERE)
     source_lines.extend([
         "Source archives (unmodified upstream plus the patches in the recipe):"])
     for name in ("netsurf", "zlib"):
         url, digest, _ = ARCHIVES[name]
         source_lines.extend([url, f"SHA256 {digest}"])
-    source_lines.extend(["", "Statically linked runtime from wasi-sdk 25:", ARCHIVES["wasi-sdk"][0],
-        f"SHA256 {ARCHIVES['wasi-sdk'][1]}",
-        "https://github.com/WebAssembly/wasi-libc/tree/574b88da481569b65a237cb80daf9a2d5aeaf82d",
-        "https://github.com/llvm/llvm-project/tree/ab4b5a2db582958af1ee308a790cfdb42bd24720/compiler-rt"])
+    source_lines.extend([""] + wasi_runtime_sources())
     (licenses / "SOURCES.txt").write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     print(f"Paketinhalt: {package}")
     return 0
