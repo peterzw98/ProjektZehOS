@@ -16,6 +16,7 @@ internal sealed class CosmosNetworkService : INetworkService
 {
     internal static readonly object Gate = new();
     private const int TimeoutMilliseconds = 5000;
+    private const int DnsRetryMilliseconds = 2000;
     private const int MaximumBody = 16384;
 
     public NetworkStatus Status => ReadStatus();
@@ -114,8 +115,16 @@ internal sealed class CosmosNetworkService : INetworkService
             client.Connect(DnsConfig.Nameservers[0]); client.SendQuery(host);
             var clock = deadline ?? Stopwatch.StartNew();
             long limit = deadline is null ? TimeoutMilliseconds : FetchTimeoutMilliseconds;
+            // Ein verlorenes UDP-Paket brach sonst den ganzen Abruf ab (pkg install im Gast); die Frage geht deshalb ohne Antwort
+            // einmal erneut hinaus, innerhalb derselben Frist.
+            var asked = Stopwatch.StartNew(); bool repeated = false;
             while (address is null && clock.ElapsedMilliseconds < limit)
-            { token.ThrowIfCancellationRequested(); address = client.Receive(0); if (address is null) token.WaitHandle.WaitOne(10); }
+            {
+                token.ThrowIfCancellationRequested();
+                address = client.Receive(0);
+                if (address is null && !repeated && asked.ElapsedMilliseconds >= DnsRetryMilliseconds) { client.SendQuery(host); repeated = true; }
+                if (address is null) token.WaitHandle.WaitOne(10);
+            }
             if (address is null) throw new IOException("DNS-Zeitlimit erreicht oder Name nicht gefunden.");
         }
         catch (Exception exception) { failure = exception; }
