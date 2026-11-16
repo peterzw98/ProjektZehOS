@@ -479,11 +479,57 @@ def js_get(handler: TestServer) -> bool:
     elif handler.path == "/js-leerpfad":
         # Leerer Path aus Kopfzeile und Skript darf die App nicht beenden; JS_ON danach belegt den Weiterlauf.
         handler.send_page(200, js_page("document.cookie = 'e=1; path=';", js_mark(JS_ON)), {"Set-Cookie": "k=1; Path="})
+    elif handler.path in TOGGLE_PAGES:
+        handler.send_page(200, js_page(js_mark(JS_ON)))
+    elif handler.path == "/js-synthetisch":
+        # Eine Seite darf den Schalter nicht über DOM-Ereignisse auslösen; sonst lüde sie ohne JS neu.
+        fire = "".join(
+            f"try {{ var e = document.createEvent('KeyboardEvent'); e.initEvent('{kind}', true, true); "
+            "e.ctrlKey = true; e.key = 'j'; e.keyCode = 74; document.dispatchEvent(e); document.body.dispatchEvent(e); } "
+            "catch (x) {}"
+            for kind in ("keydown", "keypress", "keyup"))
+        handler.send_page(200, js_page(fire, js_mark(JS_ON)))
+    elif handler.path == "/js-formular":
+        handler.send_page(200, form_page("/js-post", "post", "geheim", "wert42"))
     elif handler.path.startswith("/js-ziel"):
         handler.send_page(200, page(JS_TARGET, "JS-Ziel"))
     else:
         return False
     return True
+
+
+# Sitzungsschalter Strg+J (netsurf-js-toggle.patch): läuft auf dem ausgelieferten Paket mit JavaScript aus.
+# Jede Seite hat einen eigenen Pfad, damit js_checks die Abrufe je Szenario zählen kann.
+TOGGLE_PAGES = {"/js-schalter": 2, "/js-halten": 2, "/js-zweimal": 3, "/js-adressleiste": 1}
+
+
+def ctrl_j(at: int, repeats: int = 1) -> list[str]:
+    # Strg (29) halten, J (36) drücken; weitere KeyDown ohne KeyUp entsprechen einer gehaltenen Taste.
+    downs = [f"{at + 20 + 20 * i} 1 36 0 0" for i in range(repeats)]
+    end = at + 40 + 20 * repeats
+    return [f"{at} 1 29 0 0", *downs, f"{end} 2 36 0 0", f"{end + 20} 2 29 0 0"]
+
+
+# Nach dem Tippen liegt der Fokus in der Adressleiste, wo Strg+J nicht wirkt; ein Klick in die Seite verlässt sie.
+CLICK_PAGE = (600, 400)
+
+
+def toggle_scenarios(base: str) -> list:
+    page_ctrl_j = lambda at, repeats=1: click(at, CLICK_PAGE) + ctrl_j(at + 500, repeats)
+    return [
+        # Strg+J lädt die Seite neu, jetzt mit JavaScript.
+        ("js-schalter-an", address(1500, f"{base}/js-schalter") + page_ctrl_j(4500), [JS_PAGE, JS_ON], [START]),
+        # Gehaltenes J schaltet nur einmal (sonst wäre es bei zwei Drücken wieder aus).
+        ("js-schalter-gehalten", address(1500, f"{base}/js-halten") + page_ctrl_j(4500, repeats=2), [JS_PAGE, JS_ON], [START]),
+        # Zweimal Strg+J: wieder aus, die Seite ist zweimal neu geladen.
+        ("js-schalter-zweimal", address(1500, f"{base}/js-zweimal") + page_ctrl_j(4500) + page_ctrl_j(8000), [JS_PAGE], [JS_ON, START]),
+        # In der Adressleiste wirkt Strg+J nicht.
+        ("js-schalter-adressleiste", address(1500, f"{base}/js-adressleiste") + click(5000, (300, 15)) + ctrl_j(5500),
+         [JS_PAGE], [JS_ON, START]),
+        # Nach einem POST schaltet Strg+J ohne erneutes Senden; die Seite bleibt.
+        ("js-schalter-post", address(1500, f"{base}/js-formular") + click(4000, CLICK_SUBMIT) + ctrl_j(7000),
+         [FORM_OK], [HTTP_MISSING, START]),
+    ]
 
 
 def js_data_url(base: str) -> str:
@@ -513,6 +559,9 @@ def js_scenarios(base: str, good: str) -> list:
         ("js-an-https", address(1500, f"{good}/js-an"), [JS_PAGE, JS_ON], [START]),
         ("js-httponly-verborgen", address(1500, f"{base}/js-httponly"), [SECURE_SAFE], [SECURE_LEAK, START]),
         ("js-cookie-leerer-pfad", address(1500, f"{base}/js-leerpfad"), [JS_PAGE, JS_ON], [START]),
+        # Mit JS an: synthetische Strg+J-Ereignisse der Seite schalten nicht (genau ein Abruf, js_checks).
+        ("js-schalter-synthetisch", address(1500, f"{base}/js-synthetisch"),
+         [JS_PAGE, JS_ON], [START]),
         # Ein Secure-Cookie von https geht nicht an http:// desselben Hosts, ein normales schon (NetSurf 3.11 sandte beide).
         ("secure-cookie-nicht-an-http", address(1500, f"{good}/ts") + address(3500, f"{good}/tp") + address(5500, f"{base}/c2"),
          [SECURE_SAFE], [SECURE_LEAK] + pages),
@@ -528,6 +577,13 @@ def js_checks() -> list[str]:
         problems.append("location.href von HTTPS auf HTTP hat das Ziel abgerufen")
     if "/js-von-data" in REQUEST_LOG:
         problems.append("Skript auf einer data:-Seite ist gelaufen")
+    for path, expected in [*TOGGLE_PAGES.items(), ("/js-synthetisch", 1)]:
+        count = REQUEST_LOG.count(path)
+        if count != expected:
+            problems.append(f"{path} {count}-mal statt {expected}-mal abgerufen")
+    posts = [path for path, _ in POSTS].count("/js-post")
+    if posts != 1 or "/js-post" in REQUEST_LOG:
+        problems.append(f"Strg+J nach POST: {posts} POST, GET auf das Ziel {'ja' if '/js-post' in REQUEST_LOG else 'nein'}")
     return problems
 
 
@@ -590,15 +646,18 @@ def main() -> int:
         scenarios += hsts_scenarios(tls[0].server_address[1])
         javascript = js_scenarios(base, f"https://127.0.0.1:{tls[0].server_address[1]}")
         scenarios += javascript
-        # Gegenprobe auf dem ausgelieferten Paket: dort bleibt JavaScript aus.
+        # Gegenprobe auf dem ausgelieferten Paket: dort bleibt JavaScript aus, auch in jedem neuen Lauf.
         scenarios.append(("js-aus-im-paket", address(1500, f"{base}/js-an"), [JS_PAGE], [JS_ON, START]))
+        toggles = toggle_scenarios(base)
+        scenarios += toggles
         js_package = javascript_package(Path(work))
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
             is_js = any(name == entry[0] for entry in javascript)
+            slow = is_js or any(name == entry[0] for entry in toggles)
             env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame),
-                       ZEHOS_EXIT_MS=str(JS_EXIT_MS) if is_js else "6000")
+                       ZEHOS_EXIT_MS=str(JS_EXIT_MS) if slow else "6000")
             env.pop("ZEHOS_NET", None)
             env["ZEHOS_TLS_CA"] = str(fixtures["ca"])
             if name != "http-ohne-berechtigung":
