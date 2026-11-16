@@ -105,13 +105,7 @@ jobs:
         run: scripts/build-release.sh 0.0.0 "$RUNNER_TEMP/zehos-release-check"
 
       - name: Check release artifacts for local paths
-        run: |
-          for artifact in "$RUNNER_TEMP"/zehos-release-check/*; do
-            if LC_ALL=C grep -a -F -q -e '/home/' -e '/Users/' -e "$GITHUB_WORKSPACE" -e "$RUNNER_TEMP" "$artifact"; then
-              echo "Local path found in $(basename "$artifact")" >&2
-              exit 1
-            fi
-          done
+        run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release-check/*
 
       - name: Upload kernel build log
         if: always()
