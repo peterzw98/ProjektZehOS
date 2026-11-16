@@ -94,8 +94,9 @@ braucht dafür `-lssl -lcrypto`. Die Fehlercodes für TLS stehen in [PAKETE_ERST
 
 ## Grenzen
 
-- HTTP und HTTPS über Kernel-TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); Zertifikatsfehler ohne Fortfahren, Mixed Content blockiert. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
+- HTTP und HTTPS über Kernel-TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); Zertifikatsfehler ohne Fortfahren, Mixed Content blockiert. Cookies nur bis zum Beenden, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
 - Festes Browserbild 798×519, genau der Inhalt des Paketfensters beim Öffnen (800×560); kein Resize-Import. Andere Fenstergrößen passt der Kernel seitentreu ein (nächster Nachbar): ein größer gezogenes oder maximiertes Fenster zeigt das Bild vergrößert mit Rand an einer Seite und leicht ungleichmäßigen Pixeln, ein kleiner gezogenes (Paketminimum 640×440, Inhalt 638×399) verkleinert es auf 613×399; Text wird dabei unschärfer, bleibt aber vollständig sichtbar und bedienbar. Echte Größenänderung braucht ein neues `zehos_v1`-Ereignis ([#78](https://github.com/peterzw98/ProjektZehOS/issues/78)).
+- JavaScript ist standardmäßig aus. Strg+J im Seitenbereich (direkt nach dem Start oder nach einem Klick in die Seite) schaltet es für die laufende Sitzung ein oder aus; die Statusleiste zeigt dann „JS an“. Gespeichert wird nichts, jeder Start beginnt mit JavaScript aus. Skripte laufen nur auf http(s)-Seiten. Der Schalter lädt die aktuelle Seite neu, nach einer Formularsendung (POST) aber nicht; dann gilt er ab der nächsten Seite. In der Adressleiste wirkt Strg+J nicht.
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.
 - Dateien nur lesend im eigenen Paket; keine persistenten Profile, Downloads oder Verzeichnislisten.
