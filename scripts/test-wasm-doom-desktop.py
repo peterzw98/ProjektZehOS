@@ -759,7 +759,9 @@ def prepare_snapshot(args: argparse.Namespace, fixtures: Path, run_root: Path) -
         if reply["return"]:
             raise RuntimeError(f"savevm: {reply['return'].strip()}")
         guest.qmp.quit()
-        vm.wait(60)
+        # Ein Verbindungsende gilt bei quit als Erfolg; ein Absturz zeigt sich erst am Exitcode.
+        if vm.wait(60) != 0:
+            raise RuntimeError(f"QEMU quit: Exitcode {vm.returncode}")
         guest.log("Snapshot gespeichert")
         # shortcut: zwei gleichzeitige Aufrufe bauen denselben Snapshot doppelt; der zweite ersetzt den ersten.
         base.parent.mkdir(parents=True, exist_ok=True)
