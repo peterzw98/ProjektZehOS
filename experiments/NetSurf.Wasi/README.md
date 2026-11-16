@@ -4,7 +4,7 @@ NetSurf 3.11 mit dem Framebuffer-Frontend als `wasm32-wasip1`-Modul. Eine eigene
 
 ## Bauen
 
-Auf einem Linux-Host mit `make`, `cc`, `c++`, `m4`, `perl`, `bison`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). gperf 3.1 und flex 2.6.4 baut `build.py` selbst aus den Upstream-Archiven, weil andere gperf-Versionen und Ubuntus gepatchtes flex abweichende Generatorausgaben erzeugen. Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
+Auf einem Linux-Host mit `make`, `cc`, `c++`, `m4`, `perl`, `bison`, `patch` sowie den Entwicklungsdateien von libpng und zlib (für NetSurfs Hostwerkzeug `convert_image`). gperf 3.1 und flex 2.6.4 baut `build.py` selbst aus den Upstream-Archiven, weil andere gperf-Versionen und Ubuntus gepatchtes flex abweichende Generatorausgaben erzeugen. `nsgenbind` (erzeugt die JavaScript-Bindings) baut es mit dem Host-`cc` aus dem NetSurf-Archiv. Für den letzten Schritt lädt es binaryen `version_133` als vorgebautes Release (SHA-256 geprüft). Das Modul enthält keine absoluten Baupfade (`-ffile-prefix-map`), damit es auf jedem Rechner gleich ausfällt:
 
 ```bash
 python3 experiments/NetSurf.Wasi/build.py
@@ -15,9 +15,9 @@ Ergebnis ist `experiments/NetSurf.Wasi/bin/package/`:
 | Pfad | Inhalt |
 | --- | --- |
 | `netsurf.wasm` | Einstieg `_start` |
-| `res/` | Messages, CSS, interne Seiten, `Choices` mit Startseite `file:///pages/index.html` |
+| `res/` | Messages, CSS, interne Seiten, `Choices` mit Startseite `file:///pages/index.html` und ausgeschaltetem JavaScript (`enable_javascript:0`) |
 | `pages/` | Testseiten: Start (blau), Linkziel (grün), langer Text (orange), Eingabefeld (lila), kaputter Link |
-| `licenses/` | NetSurf (GPL-2.0), NetSurf-Bibliotheken (MIT), utf8proc, zlib |
+| `licenses/` | NetSurf (GPL-2.0), NetSurf-Bibliotheken (MIT), Duktape (MIT, aus dem Kopf von `duktape.h`), utf8proc, zlib |
 
 Bestandteile:
 
@@ -26,8 +26,10 @@ Bestandteile:
 | NetSurf | `netsurf-all-3.11.tar.gz` |
 | wasi-sdk | 25.0 für Linux (dieselbe Version wie für Doom) |
 | zlib | 1.3.1 |
+| Duktape | 2.7.0, im NetSurf-Archiv enthalten |
+| binaryen | `version_133`, nur Bauwerkzeug (`wasm-opt`) |
 
-Zwei Bibliotheken fehlen bewusst: libsvgtiny braucht setjmp/longjmp, und libdom verzichtet auf expat und nutzt hubbub.
+Zwei Bibliotheken fehlen bewusst: libsvgtiny (SVG bleibt aus), und libdom verzichtet auf expat und nutzt hubbub.
 
 Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 
@@ -38,7 +40,7 @@ Patches (`patches/`, mit `patch -p1` auf den Quellbaum):
 - `netsurf-pointer-cancel.patch`: Steuercode `FBTK_CONTROL_CANCEL_POINTER` beendet eine gehaltene Maustaste oder ein Ziehen ohne Klick (Fokusverlust). Das gilt auch für Rollbalken, die den Zeiger selbst greifen (`fbtk_cancel_grab`). Eine weitere Taste während eines Rollbalken-Ziehens startet kein zweites Ziehen, das den Grab umschalten und lösen würde.
 - `netsurf-fbtk-text.patch`: Tastencodes ab `0x40000000` tragen Unicode-Zeichen aus `poll_event`-Texten. Die Adressleiste speichert ein Byte je Zeichen und nimmt deshalb nur druckbares ASCII an. Zusätzlich löscht Entf im Textfeld das Zeichen rechts der Einfügemarke; das fehlte im fbtk.
 
-Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (HTTP liefert stattdessen der eigene Fetcher, siehe unten), Duktape (JavaScript, setjmp), PNG, JPEG, WebP und SVG. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
+Ausgeschaltet sind (`Makefile.config`): curl/OpenSSL (HTTP liefert stattdessen der eigene Fetcher, siehe unten), PNG, JPEG, WebP und SVG. Duktape ist eingebaut, JavaScript aber aus (NetSurf-Standard, in `Choices` ausdrücklich `enable_javascript:0`). Duktape meldet Fehler über setjmp/longjmp: Der Compiler übersetzt sie mit `-mllvm -wasm-enable-sjlj` und `-lsetjmp` in das alte Wasm-Exception-Handling, das wasm3 nicht kennt. Deshalb wandelt `wasm-opt --enable-exception-handling --translate-to-exnref` das gelinkte Modul in die exnref-Form um. Der C-Stapel ist auf 1 MiB erhöht (`-z stack-size`), weil 64 KiB mit Duktape nicht reichen. `mmap` und `signal` kommen aus der Emulation der wasi-libc, `iconv` aus der wasi-libc selbst.
 
 ## Lizenztexte
 
