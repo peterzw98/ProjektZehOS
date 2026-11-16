@@ -1,4 +1,4 @@
-<Project Sdk="Cosmos.Sdk/3.0.94" TreatAsLocalProperty="DefineConstants">
+<Project Sdk="Cosmos.Sdk/3.0.97" TreatAsLocalProperty="DefineConstants">
 
   <!-- cosmos build setzt DefineConstants global; lokale Ergaenzungen wie ZEHOS_WASM muessen erhalten bleiben. -->
   <PropertyGroup>
@@ -37,7 +37,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <GCCProject Include="$(MSBuildThisFileDirectory)Native/Acpi/" />
   </ItemGroup>
 
   <!-- Native Assertion-Texte duerfen keine lokalen Quell- und Paketpfade enthalten. -->
@@ -50,8 +49,8 @@
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
-    <PackageReference Include="Cosmos.Kernel" Version="3.0.94" />
-    <PackageReference Include="Cosmos.Kernel.System" Version="3.0.94" />
+    <PackageReference Include="Cosmos.Kernel" Version="3.0.97" />
+    <PackageReference Include="Cosmos.Kernel.System" Version="3.0.97" />
   </ItemGroup>
 
   <ItemGroup>
