@@ -88,7 +88,9 @@ normales Verbindungsende. Die eigenen Werte entstehen deshalb nur auf dem Linux-
 Sockets. Der Prüfhost übernimmt die Kernelgrenzen: höchstens 4 Verbindungen, 64 KiB je `net_send`/`net_recv`,
 Hostnamen bis 253 ASCII-Zeichen und `EACCES` ohne Netzwerkberechtigung. Die Prüfung einzelner Namensteile übernimmt er
 nicht; solche Namen meldet dort die Auflösung (`ENOENT`) statt `EINVAL`. Diese erteilt dort die Umgebungsvariable
-`ZEHOS_NET=1` anstelle von `capability=net`.
+`ZEHOS_NET=1` anstelle von `capability=net`. TLS (`ZEHOS_NET_TLS`) bildet der Prüfhost mit OpenSSL nach; die
+Vertrauensanker kommen aus `ZEHOS_TLS_CA=<PEM-Datei>`, ohne sie meldet `net_open` wie der Kernel `ENOSYS`. Er
+braucht dafür `-lssl -lcrypto`. Die Fehlercodes für TLS stehen in [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md).
 
 ## Grenzen
 

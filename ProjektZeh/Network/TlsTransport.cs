@@ -13,12 +13,27 @@ using Org.BouncyCastle.X509;
 namespace ProjektZeh.Network;
 
 // Der Transport muss jede Ein- und Ausgabe einschliesslich Handshake zeitlich begrenzen.
+/// <summary>Die eigene Zertifikatspruefung hat abgelehnt; Apps unterscheiden das von Protokollfehlern.</summary>
+internal sealed class TlsCertificateRejectedException(short alert, string? detail) : TlsFatalAlert(alert, detail);
+
 internal static class TlsTransport
 {
     internal static Stream Open(Stream transport, string host, Action<byte[]> fillRandom, byte[] trustedPem, DateTime utcNow)
     {
+        CheckClock(utcNow);
+        var protocol = new TlsClientProtocol(transport);
+        protocol.Connect(CreateClient(host, fillRandom, LoadAnchors(trustedPem), utcNow, false));
+        return protocol.Stream;
+    }
+
+    internal static void CheckClock(DateTime utcNow)
+    {
         if (utcNow.Kind != DateTimeKind.Utc || utcNow.Year is < 2026 or > 2100)
             throw new InvalidOperationException("Ungueltige UTC-Uhr; TLS ist gesperrt.");
+    }
+
+    internal static IList<X509Certificate> LoadAnchors(byte[] trustedPem)
+    {
         var roots = new X509CertificateParser().ReadCertificates(trustedPem);
         var trusted = new List<X509Certificate>();
         foreach (X509Certificate root in roots)
@@ -26,10 +41,14 @@ internal static class TlsTransport
             if (IsUsableAnchor(root)) trusted.Add(root);
         }
         if (trusted.Count == 0) throw new InvalidOperationException("Keine vertrauenswuerdigen TLS-Wurzeln.");
-        var protocol = new TlsClientProtocol(transport);
-        protocol.Connect(new Client(new BcTlsCrypto(new HardwareSecureRandom(fillRandom)), host, trusted, utcNow));
-        return protocol.Stream;
+        return trusted;
     }
+
+    // Shell und Wasm-Apps teilen Suiten, Grenzen und Pruefung. Apps verlangen close_notify, damit eine Antwort ohne
+    // Laenge nicht unbemerkt abgeschnitten wird; die Shell liest nur laengengepruefte Antworten.
+    internal static TlsClient CreateClient(string host, Action<byte[]> fillRandom, IList<X509Certificate> anchors, DateTime utcNow,
+        bool requireCloseNotify) =>
+        new Client(new BcTlsCrypto(new HardwareSecureRandom(fillRandom)), host, anchors, utcNow, requireCloseNotify);
 
     private static bool IsUsableAnchor(X509Certificate root)
     {
@@ -90,7 +109,8 @@ internal static class TlsTransport
         }
     }
 
-    private sealed class Client(BcTlsCrypto crypto, string host, IList<X509Certificate> roots, DateTime utcNow) : DefaultTlsClient(crypto)
+    private sealed class Client(BcTlsCrypto crypto, string host, IList<X509Certificate> roots, DateTime utcNow, bool requireCloseNotify)
+        : DefaultTlsClient(crypto)
     {
         protected override int[] GetSupportedCipherSuites() => TlsUtilities.GetSupportedCipherSuites(Crypto,
         [CipherSuite.TLS_CHACHA20_POLY1305_SHA256, CipherSuite.TLS_AES_128_GCM_SHA256,
@@ -104,7 +124,7 @@ internal static class TlsTransport
         protected override IList<ServerName>? GetSniServerNames() => CertificateVerifier.ParseIPv4(host) == null
             ? [new ServerName(NameType.host_name, Encoding.ASCII.GetBytes(host))] : null;
         public override TlsAuthentication GetAuthentication() => new Authentication(host, roots, utcNow);
-        public override bool RequiresCloseNotify() => false;
+        public override bool RequiresCloseNotify() => requireCloseNotify;
     }
 
     private sealed class Authentication(string host, IList<X509Certificate> roots, DateTime utcNow) : TlsAuthentication
@@ -113,16 +133,18 @@ internal static class TlsTransport
         {
             var chain = serverCertificate.Certificate;
             if (chain == null || chain.Length == 0 || chain.Length > 8)
-                throw new TlsFatalAlert(AlertDescription.bad_certificate);
+                throw new TlsCertificateRejectedException(AlertDescription.bad_certificate, null);
             var certificates = new X509Certificate[chain.Length];
             for (int i = 0; i < certificates.Length; i++)
             {
-                certificates[i] = new X509Certificate(chain.GetCertificateAt(i).GetEncoded());
+                // Ein unlesbares Zertifikat ist eine Ablehnung der Pruefung, kein Protokollfehler.
+                try { certificates[i] = new X509Certificate(chain.GetCertificateAt(i).GetEncoded()); }
+                catch (Exception) { throw new TlsCertificateRejectedException(AlertDescription.bad_certificate, "Zertifikat nicht lesbar"); }
                 if (!CertificateVerifier.HasReadableKey(certificates[i]) || (i > 0 && !AllowsServerPurpose(certificates[i])))
-                    throw new TlsFatalAlert(AlertDescription.unsupported_certificate);
+                    throw new TlsCertificateRejectedException(AlertDescription.unsupported_certificate, null);
             }
             string? error = CertificateVerifier.Verify(certificates, host, roots, utcNow);
-            if (error != null) throw new TlsFatalAlert(AlertDescription.bad_certificate, error);
+            if (error != null) throw new TlsCertificateRejectedException(AlertDescription.bad_certificate, error);
         }
 
         public TlsCredentials? GetClientCredentials(CertificateRequest certificateRequest) => null;

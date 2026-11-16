@@ -52,19 +52,30 @@ die App bestimmt seine Größe über `present` und muss eine passende feste Grö
 
 **Netzwerk über `zehos_v1`:**
 
-Nur ein signiertes Manifest mit `capability=net` erlaubt TCP-Verbindungen; `scripts/build-package.py package --network` setzt die Zeile. Die Berechtigung umfasst auch localhost und private LAN-Adressen. Es gibt höchstens vier Verbindungen und 64 KiB je Sende- und Empfangspuffer. IPv4-Adressen und ASCII-DNS-Namen sind möglich; TLS ist noch nicht über diese Schnittstelle verfügbar.
+Nur ein signiertes Manifest mit `capability=net` erlaubt TCP-Verbindungen; `scripts/build-package.py package --network` setzt die Zeile. Die Berechtigung umfasst auch localhost und private LAN-Adressen. Es gibt höchstens vier Verbindungen und 64 KiB je Sende- und Empfangspuffer. IPv4-Adressen und ASCII-DNS-Namen sind möglich. TLS gibt es über das Flag `ZEHOS_NET_TLS` (siehe unten); es braucht keine eigene Berechtigung.
 
 Alle Funktionen liefern einen WASI-Preview-1-Fehlercode (`0` bei Erfolg). Gastpuffer und Ausgabezeiger werden vor dem Hostzugriff geprüft; ungültige Bereiche verursachen einen Trap. Ausgabezahlen sind 32-Bit-Werte im Little-Endian-Format und dürfen unausgerichtet sein.
 
 | Import | Verhalten |
 | --- | --- |
-| `net_open(host, len, port, flags, out_handle)` | Startet DNS und TCP asynchron; `flags` muss 0 sein. Das Handle gehört zur App-Sitzung. Ohne Berechtigung `EACCES` (2). |
-| `net_status(handle)` | `EAGAIN` (6) während DNS/Connect, danach 0 oder ein Fehler; der Verbindungsaufbau hat ein Zeitlimit. |
+| `net_open(host, len, port, flags, out_handle)` | Startet DNS und TCP asynchron. `flags` ist 0 oder `ZEHOS_NET_TLS` (1); andere Bits ergeben `ENOTSUP` (58), auch auf älteren Kerneln ohne TLS. Das Handle gehört zur App-Sitzung. Ohne Berechtigung `EACCES` (2). |
+| `net_status(handle)` | `EAGAIN` (6) während DNS/Connect und gegebenenfalls TLS-Handshake, danach 0 oder ein Fehler; der Verbindungsaufbau hat einschließlich Handshake ein Zeitlimit von 10 s. |
 | `net_send(handle, ptr, len, out_n)` | Übernimmt bis zu `len` Bytes in den begrenzten Sendepuffer; `out_n` meldet die übernommene Anzahl. Bei vollem Puffer `EAGAIN`. Ein erfolgreicher Aufruf bestätigt nicht die Zustellung. |
 | `net_recv(handle, ptr, len, out_n)` | Liefert vorhandene Daten; bei leerem Puffer `EAGAIN`. Erfolg und `out_n=0` bei nichtleerem Zielpuffer bedeuten EOF. |
 | `net_close(handle)` | Gibt das Handle frei und veranlasst das Schließen der Verbindung. Offene Handles werden beim Ende der Wasm-Sitzung ebenfalls geschlossen. |
 
 Einzelne Übertragungen sind auf 64 KiB begrenzt. Häufige Fehler sind `EBADF` (8), `EINVAL` (28), `EIO` (29), `EMFILE` (33), `ENOENT` (44, DNS-Auflösung fehlgeschlagen), `ENOTSUP` (58) und `ETIMEDOUT` (73). Für Datenverkehr nach dem Verbindungsaufbau muss die Anwendung selbst eine geeignete Frist setzen. Cosmos-interne Connect- und Sendewartephasen sind nicht sofort abbrechbar; währenddessen können andere Netzwerkaufträge warten, die Oberfläche bleibt durch den Netzwerkworker bedienbar. Ein gleichzeitig mit `net_close` beginnender Connect kann das Ziel noch erreichen; der Worker schließt den Socket nach Rückkehr des Cosmos-Aufrufs. Das ABI kennt außerdem `ECONNREFUSED` (14), `ECONNRESET` (15) und `EHOSTUNREACH` (23). Cosmos 3.0.94 unterscheidet diese Fälle nicht: Ein abgelehnter oder unerreichbarer Verbindungsaufbau meldet `EIO`, ein Abbruch durch RST erscheint wie ein normales Verbindungsende (`net_recv` liefert 0 Bytes). Anwendungen sollten die drei Werte trotzdem behandeln.
+
+**TLS (`ZEHOS_NET_TLS`):** Der Kernel führt nach dem TCP-Aufbau einen TLS-1.2/1.3-Handshake mit denselben Suiten, Grenzen und derselben Zertifikatsprüfung wie die Shell aus (eingebautes Mozilla-Wurzelbundle, höchstens 8 Zertifikate je Kette). Der übergebene `host` ist zugleich SNI und Prüfname; ein IPv4-Literal wird ohne SNI gegen die IP-SAN geprüft. Eine Option zum Übergehen der Prüfung oder eigene Vertrauensanker gibt es nicht. `net_send` und `net_recv` übertragen Klartext; die Grenzen von vier Verbindungen und 64 KiB gelten für Klartext. Zusätzliche Fehler:
+
+| Code | Bedeutung |
+| --- | --- |
+| `ENOSYS` (52) | sofort aus `net_open`: UTC-Uhr unplausibel, kein Hardwarezufall (RDRAND/RDSEED) oder Wurzelbundle nicht lesbar |
+| `EPERM` (63) | aus `net_status`: Zertifikat abgelehnt (Kette, Name, Gültigkeit, Verwendungszweck) |
+| `EPROTO` (65) | aus `net_status`, `net_send` oder `net_recv`: sonstiger TLS-Fehler oder Alert des Servers |
+| `ECONNRESET` (15) | Verbindung endet ohne `close_notify`, im Handshake oder nach den bereits gelieferten Daten |
+
+Nach `close_notify` meldet `net_recv` EOF wie bei TCP. Endet die Verbindung ohne `close_notify`, liefert `net_recv` erst die restlichen Daten und dann `ECONNRESET`. Viele Server schließen ohne `close_notify`; eine Antwort mit bekannter Länge sollte die App deshalb nach dem letzten Byte selbst beenden. `net_close` sendet nach Möglichkeit `close_notify`. Die Wurzeln werden beim ersten TLS-Aufruf einmal je Kernellauf eingelesen; dieser Aufruf von `net_open` dauert entsprechend länger.
 
 **WASI Preview 1:**
 
