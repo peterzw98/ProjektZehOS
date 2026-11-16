@@ -148,6 +148,6 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
    ```
 
 5. Den Arbeitsbranch committen, pushen und per Pull Request nach `packages` bringen; direkte Pushes auf `packages` lehnt GitHub ab. Nach dem Merge übernimmt der Server (`deploy/package-repo`) den Stand innerhalb von 5 Minuten und schaltet ihn als Ganzes um.
-6. In ZehOS: `pkg update`, dann `pkg install <id>` oder `pkg upgrade`.
+6. In ZehOS: `pkg install <id>` oder `pkg upgrade`; beide laden den signierten Katalog automatisch. `pkg update` bleibt als freiwilliger Einzelabruf verfügbar.
 
 Den privaten Herausgeberschlüssel nie ins Repository, in Logs oder auf den Server legen. Geht er verloren, lassen sich keine Pakete mehr veröffentlichen. Ein neuer Schlüssel braucht ein Kernelupdate mit neuem `ProjektZeh/Packages/package-key.pub`.

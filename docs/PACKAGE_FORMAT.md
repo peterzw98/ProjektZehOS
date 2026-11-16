@@ -97,7 +97,7 @@ pkg remove <id>                Paket entfernen (Admin)
 pkg cancel                     Abbruch des laufenden Auftrags dieser Sitzung anfordern
 ```
 
-IPv4 wird beim Boot automatisch per DHCP konfiguriert; ohne DHCP-Server ist `net static` nötig. `install` und `upgrade` laden zuerst den signierten Katalog und brechen bei einem Abruffehler ab. Ergebnisse erscheinen automatisch in der aufrufenden Shell und zusätzlich seriell als `PKG …`. Eine Paketquelle muss vorher mit `pkg source` gesetzt sein.
+IPv4 wird beim Boot automatisch per DHCP konfiguriert; ohne DHCP-Server ist `net static` nötig. `install` und `upgrade` laden zuerst den signierten Katalog und brechen bei einem Abruffehler ab. Während des Auftrags erscheint in der aufrufenden Shell eine ersetzbare Statuszeile mit Phase, Paket/Datei, Balken, Prozent und Bytes. Das Ergebnis folgt nach Abschluss automatisch und zusätzlich seriell als `PKG …`. Standardquelle ist `https://packages.pjoter.de/`; `pkg source` setzt bei Bedarf eine eigene HTTPS-Quelle. Gespeicherte eigene Quellen bleiben erhalten. Eine vorherige manuelle Katalogaktualisierung ist nicht erforderlich.
 
 ## Paket bauen
 

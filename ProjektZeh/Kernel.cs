@@ -150,6 +150,7 @@ public sealed class Kernel : Sys.Kernel
         ], systemLog, GetAvailableUptime,
             $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
+        shell.TakeJobProgress = packageCommands.TakeProgress;
         shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult();
         shell.OnClose = () => { network.Close(); packageCommands.Close(); accounts.ReleaseSession(identity); };
         return shell;

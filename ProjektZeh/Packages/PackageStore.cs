@@ -262,7 +262,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         foreach (var file in manifest.Files)
         {
             cancellation.ThrowIfCancellationRequested();
-            progress?.Invoke(new("Download", file.Path, completed, total));
+            progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             string path = Path.Combine(files, file.Path.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var digest = new Sha256Digest();
@@ -271,7 +271,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             var hashing = new HashingStream(stream, digest, count =>
             {
                 completed += count;
-                progress?.Invoke(new("Download", file.Path, completed, total));
+                progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             });
             // Ohne using (Cosmos-Unwindgrenze): die Datei muss auch nach Abbruch geschlossen sein, damit sie loeschbar ist.
             try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
@@ -283,7 +283,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             stream.Dispose();
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
-            progress?.Invoke(new("Datei pruefen", file.Path, completed, total));
+            progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
             if (!string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Pruefsumme falsch: " + file.Path);
         }

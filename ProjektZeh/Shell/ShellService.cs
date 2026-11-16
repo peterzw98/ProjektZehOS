@@ -31,6 +31,7 @@ internal sealed partial class ShellService
     internal static bool HasRunningPasswordOperations => Volatile.Read(ref runningPasswordWorkers) != 0;
     internal Action? OnClose { get; set; }
     internal Func<string?>? TakeJobResult { get; set; }
+    internal Func<string?>? TakeJobProgress { get; set; }
     public bool IsSecretInput => secretInput != null;
     public bool IsBusy => passwordWorker != null;
 
@@ -42,6 +43,12 @@ internal sealed partial class ShellService
     public bool Poll(ITextOutput output)
     {
         bool written = false;
+        if (!closed && TakeJobProgress?.Invoke() is string progress)
+        {
+            if (output is IProgressOutput live) live.WriteProgress(progress);
+            else output.WriteLine(progress);
+            written = true;
+        }
         while (!closed && TakeJobResult?.Invoke() is string text)
         {
             output.WriteLine(text);

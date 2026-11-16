@@ -262,11 +262,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-qemu.ps1 -Is
 Installieren braucht ein eingebundenes Datenlaufwerk, eine Anmeldung als Administrator und Netzwerkzugang. Doom belegt dort rund 30 MB. Danach in der Textshell oder einem Terminal:
 
 ```text
-pkg source https://packages.pjoter.de/
 pkg install doom
 ```
 
-Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis erscheint automatisch im aufrufenden Terminal. `pkg cancel` fordert den Abbruch an. `pkg install` und `pkg upgrade` laden vorher den signierten Katalog; schlägt das fehl, wird die Operation abgebrochen. `pkg update` lädt den Katalog auch einzeln. `pkg list` und `pkg remove doom` zeigen beziehungsweise entfernen Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Beim ersten Start nach jedem Neustart werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
+Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis erscheint automatisch im aufrufenden Terminal. `pkg list` und `pkg remove doom` zeigen beziehungsweise entfernen Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Beim ersten Start nach jedem Neustart werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
+
+Standardquelle ist `https://packages.pjoter.de/`; eine mit `pkg source <https-URL>` gespeicherte eigene Quelle bleibt erhalten. `pkg install` und `pkg upgrade` laden die signierte Paketliste automatisch vor dem Auftrag. `pkg update` bleibt als freiwilliger Katalogabruf verfügbar. Installierte Apps werden nur mit `pkg upgrade` aktualisiert.
+
+Während des Auftrags zeigt dieselbe Shell eine laufend ersetzte Statuszeile: Katalog-/Signaturphase, Paket und Datei, Downloadbalken, Prozent und übertragene/Gesamtbytes. Eine abgeschlossene Übertragung ist noch keine abgeschlossene Installation: Erst nach Hashprüfung und Veröffentlichung folgt das Ergebnis. `pkg cancel` bricht ab. Der Fortschritt bleibt an die Sitzung gebunden; andere Terminals erhalten ihn nicht.
 
 Ein Build vertraut nur dem eingebetteten öffentlichen Herausgeberschlüssel `ProjektZeh/Packages/package-key.pub`; `-p:ZehOSPackageKeyPath=<Datei>` ersetzt ihn, etwa für Tests. Den privaten Schlüssel hält der Herausgeber außerhalb des Repositorys. Das Repository wird aus dem Branch `packages` gespeist und von `deploy/package-repo` ausgeliefert (Docker-Compose mit automatischer Aktualisierung). Format, Speicherort und Werkzeug `scripts/build-package.py` beschreibt [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md). QEMU-Abläufe prüft `scripts/test-wasm-doom-desktop.py` mit lokalem Testrepository und Snapshot (Aufruf und Szenarien in [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md)), das Szenario `full` auch mit `--source https://packages.pjoter.de/`.
 

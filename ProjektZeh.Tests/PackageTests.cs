@@ -478,6 +478,79 @@ public sealed class PackageTests
         StringAssert.Contains(keyless.Execute(["install", "doom"], output).Message, "Paketschluessel");
     }
 
+    [DataTestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void ShellReportsTransferProgressBeforePublishingAndDeliversResultOnce(bool identityChanges)
+    {
+        string repo = Path.Combine(work, "live-progress");
+        string hash = Publish(Path.Combine(repo, "doom", "1.0.0"), "doom", "1.0.0");
+        byte[] catalog = Encoding.UTF8.GetBytes($"zehos-catalog 1\ngeneration=1\npackage=doom 1.0.0 {hash}\nend\n");
+        File.WriteAllBytes(Path.Combine(repo, "catalog"), catalog);
+        File.WriteAllBytes(Path.Combine(repo, "catalog.sig"), Sign(catalog));
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var tasks = new Scheduling.BackgroundTaskService();
+        var store = Store();
+        var source = new PausingPackageSource(repo, started, release);
+        int generation = 0;
+        var session = new Shell.PackageShellCommands(store, _ => source,
+            path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true, getSessionGeneration: () => generation);
+        try
+        {
+            Assert.IsTrue(session.Commands.Single().Execute(["install", "doom"], new Output()).IsOK());
+            Assert.IsTrue(started.Wait(2000));
+            if (identityChanges)
+            {
+                generation++;
+                Assert.IsNull(session.TakeProgress(), "Fortschritt der alten Identitaet darf nicht erscheinen.");
+                Assert.IsNull(session.TakeResult());
+                release.Set();
+                Assert.IsTrue(tasks.StopAll(2000));
+                Assert.IsNull(session.TakeResult());
+                Assert.IsNull(session.TakeProgress());
+                return;
+            }
+            string? progress = session.TakeProgress();
+            Assert.IsNotNull(progress);
+            StringAssert.Contains(progress, "50%");
+            StringAssert.Contains(progress, "35009/70009 B");
+            StringAssert.Contains(progress, "level.wad");
+            Assert.IsNull(session.TakeProgress());
+            Assert.IsNull(session.TakeResult());
+            Assert.IsNull(store.ReadActive("doom").Value);
+            release.Set();
+            string? result = null;
+            Assert.IsTrue(SpinWait.SpinUntil(() => (result = session.TakeResult()) != null, 2000));
+            Assert.AreEqual("doom 1.0.0 installiert.", result);
+            Assert.IsNull(session.TakeResult());
+            session.Close();
+            Assert.IsNull(session.TakeProgress());
+        }
+        finally
+        {
+            release.Set();
+            tasks.StopAll(2000);
+        }
+    }
+
+    private sealed class PausingPackageSource(string directory, ManualResetEventSlim started, ManualResetEventSlim release) : IPackageSource
+    {
+        private readonly DirectoryPackageSource inner = new(directory);
+        public ProjektZeh.Shared.ResultObject<byte[]> Read(string path, int maximumBytes, CancellationToken cancellation) =>
+            inner.Read(path, maximumBytes, cancellation);
+        public ProjektZeh.Shared.ResultErr Copy(string path, long size, Stream target, CancellationToken cancellation)
+        {
+            if (!path.EndsWith("level.wad", StringComparison.Ordinal)) return inner.Copy(path, size, target, cancellation);
+            byte[] data = File.ReadAllBytes(Path.Combine(directory, path));
+            int half = data.Length / 2;
+            target.Write(data, 0, half);
+            started.Set();
+            release.Wait(cancellation);
+            target.Write(data, half, data.Length - half);
+            return ProjektZeh.Shared.ResultErr.CreateSuccess();
+        }
+    }
     [TestMethod]
     public void InstallationReportsBytesAndOnlyFinishesAfterVerification()
     {
