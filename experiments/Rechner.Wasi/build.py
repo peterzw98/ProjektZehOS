@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Baut die Rechner-App als WASIp1-Modul und stellt den Paketinhalt zusammen.
+
+Ergebnis: experiments/Rechner.Wasi/bin/package/ mit rechner.wasm und LICENSE.txt (GPL-3.0, Lizenz des Repositorys).
+wasi-sdk 25 kommt mit festem SHA-256 ueber denselben Abruf wie der NetSurf-Build (.tools/netsurf/).
+Vorher laufen die Hosttests der Rechner-Logik mit dem nativen C-Compiler (cc).
+"""
+
+import importlib.util
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+PACKAGE = HERE / "bin" / "package"
+SOURCES = [HERE / "src" / "calc.c", HERE / "src" / "app.c"]
+
+
+def wasi_sdk() -> Path:
+    spec = importlib.util.spec_from_file_location("netsurf_build", ROOT / "experiments" / "NetSurf.Wasi" / "build.py")
+    netsurf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(netsurf)
+    return netsurf.fetch("wasi-sdk")
+
+
+def host_tests() -> None:
+    binary = HERE / "bin" / "calc_test"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-I", str(HERE / "src"),
+                    str(HERE / "src" / "calc.c"), str(HERE / "tests" / "calc_test.c"), "-lm", "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
+
+
+def main() -> int:
+    host_tests()
+    sdk = wasi_sdk()
+    PACKAGE.mkdir(parents=True, exist_ok=True)
+    output = PACKAGE / "rechner.wasm"
+    subprocess.run([str(sdk / "bin" / "clang"), "--target=wasm32-wasip1", f"--sysroot={sdk / 'share' / 'wasi-sysroot'}",
+                    "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    # Ohne Abbildung landen absolute Baupfade (Benutzername) ueber __FILE__ im Paket.
+                    f"-ffile-prefix-map={HERE}=/rechner", *map(str, SOURCES), "-lm", "-o", str(output)], check=True)
+    shutil.copyfile(ROOT / "LICENSE", PACKAGE / "LICENSE.txt")
+    data = output.read_bytes()
+    for marker in (b"/home/", b"/Users/", str(ROOT).encode()):
+        if marker in data:
+            sys.exit(f"{output.name} enthaelt einen lokalen Pfad ({marker.decode()}).")
+    print(f"{output} ({len(data)} Bytes)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
