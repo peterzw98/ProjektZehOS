@@ -260,7 +260,7 @@ senden können. Die Patches schließen das und begrenzen Rechenzeit und Timer:
 |-------|-------|
 | `netsurf-zehos-js-navigation.patch` | JS-Navigationen tragen die Seite als Referer. Von HTTPS auf HTTP sind sie wie ein Meta-Refresh unverifizierbar; `fetch_http.c` blockiert sie deshalb ohne Knopf. HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata als `http`/`https` (etwa `data:`) sind per JS nicht erreichbar, sonst umginge eine eigene `data:`-Seite mit Formular die Warnung. |
 | `netsurf-zehos-js-schemes.patch` | Skripte laufen nur auf `http`- und `https`-Seiten, nie auf `data:`, `resource:` oder `about:`, also auch nicht auf den Warnseiten des Fetchers. Maßgeblich ist die URL nach Weiterleitungen. |
-| `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. |
+| `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. Höchstens 200 native Aufrufebenen statt 1000: Jede Ebene belegt in wasm3 etwa 3 KiB des 1-MiB-Stapels (Messung von red), darüber endete die App mit einem Trap statt mit `RangeError`. |
 | `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Sonst könnte eine `http://`-Seite oder ihr Skript ein sicheres Cookie setzen. |
 
 `document.cookie` liefert schon in 3.11 keine `HttpOnly`-Cookies und `Secure`-Cookies nur auf HTTPS-Seiten.
@@ -270,14 +270,14 @@ Mixed-Content-Sperre sollte daher auch für sie greifen (nicht geprüft).
 
 **Grenzen:** Das Zeitlimit gilt je Aufruf. 64 Timer mit je 2 s können die App weiter dauerhaft belegen; der Desktop
 bleibt bedienbar, weil Wasm-Apps auf einem verdrängten Worker laufen, NetSurf selbst reagiert dann aber nur
-zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
+zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Die Rekursionsgrenzen des Duktape-Compilers (2500) und der RegExp-Übersetzung (10000) sind unverändert und nicht gegen den wasm3-Stapel gemessen. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
 linearer Speicher der App. Ein Formular auf einer `data:`-Seite, die der Benutzer selbst über einen Link
 öffnet, sendet ohne Warnung, denn ihr Referer ist nicht HTTPS; das gilt auch ohne JavaScript.
 
 **Testszenarien** (für `host/run_tests.py`, sobald der Build Duktape enthält): Endlosschleife bricht nach etwa
 2 s ab und die Seite bleibt bedienbar; eine `setInterval`-Flut endet beim 65. Timer; `location.href` von
 HTTPS auf HTTP zeigt die Sperrseite und sendet nichts; `location.href` auf eine `data:`-URL navigiert nicht;
-ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert.
+ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert; tiefe Rekursion endet mit `RangeError`, die App läuft weiter.
 
 ## Betroffene Dateien bei einer Umsetzung
 

@@ -47,6 +47,18 @@
  
  	if (argc >= 2) {
  		timeout = duk_get_int(ctx, 1);
+--- a/netsurf/content/handlers/javascript/duktape/duk_custom.h
++++ b/netsurf/content/handlers/javascript/duktape/duk_custom.h
+@@ -37,4 +37,9 @@
+ extern duk_bool_t dukky_check_timeout(void *udata);
+ #define DUK_USE_EXEC_TIMEOUT_CHECK dukky_check_timeout
+ 
++/* ZehOS: Jede native Aufrufebene belegt in wasm3 etwa 3 KiB des 1-MiB-Stapels;
++ * bei 1000 Ebenen trapt die App, mit 200 wirft Duktape vorher RangeError. */
++#undef DUK_USE_NATIVE_CALL_RECLIMIT
++#define DUK_USE_NATIVE_CALL_RECLIMIT 200
++
+ #include "netsurf/inttypes.h"
 --- a/netsurf/content/handlers/javascript/duktape/dukky.c
 +++ b/netsurf/content/handlers/javascript/duktape/dukky.c
 @@ -839,7 +839,9 @@ static void dukky_leave_thread(jsthread *thread)
