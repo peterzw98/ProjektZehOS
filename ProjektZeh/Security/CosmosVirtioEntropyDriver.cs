@@ -62,7 +62,7 @@ public sealed class CosmosVirtioEntropyDriver : Driver
         internal bool TryFill(byte[] bytes)
         {
             // Die Virtqueue ist nicht threadsicher. Kennwortarbeit, TLS und Wasm-Apps laufen auf eigenen Threads;
-            // ein zweiter Aufruf wartet deshalb begrenzt (laenger als eine Anfrage hoechstens dauert), statt zu scheitern.
+            // ein zweiter Aufruf wartet deshalb begrenzt (laenger als ein ueblicher Aufruf dauert), statt sofort zu scheitern.
             for (int wait = 0; Interlocked.CompareExchange(ref busy, 1, 0) != 0; wait++)
             {
                 if (wait >= BusyWaitMilliseconds) return false;
