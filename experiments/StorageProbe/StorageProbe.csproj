@@ -5,10 +5,16 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <CosmosLib>$(NuGetPackageRoot)cosmos.kernel.system/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosLib>
-    <CosmosHal>$(NuGetPackageRoot)cosmos.kernel.hal/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosHal>
-    <CosmosCore>$(NuGetPackageRoot)cosmos.kernel.core/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosCore>
+    <CosmosLib>$([MSBuild]::EnsureTrailingSlash($(NuGetPackageRoot)))cosmos.kernel.system/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosLib>
+    <CosmosHal>$([MSBuild]::EnsureTrailingSlash($(NuGetPackageRoot)))cosmos.kernel.hal/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosHal>
+    <CosmosCore>$([MSBuild]::EnsureTrailingSlash($(NuGetPackageRoot)))cosmos.kernel.core/3.0.97/runtimes/linux-x64/lib/net10.0/</CosmosCore>
   </PropertyGroup>
+  <!-- Nur die Assemblies laden, keine Cosmos-Build-Props importieren: PackageDownload holt die Pakete ohne Kernel-Restore. -->
+  <ItemGroup>
+    <PackageDownload Include="Cosmos.Kernel.System" Version="[3.0.97]" />
+    <PackageDownload Include="Cosmos.Kernel.HAL" Version="[3.0.97]" />
+    <PackageDownload Include="Cosmos.Kernel.Core" Version="[3.0.97]" />
+  </ItemGroup>
   <ItemGroup>
     <Reference Include="Cosmos.Kernel.System" HintPath="$(CosmosLib)Cosmos.Kernel.System.dll" />
     <Reference Include="Cosmos.Kernel.HAL" HintPath="$(CosmosHal)Cosmos.Kernel.HAL.dll" />

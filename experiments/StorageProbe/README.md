@@ -4,13 +4,24 @@ Formatiert ein neues, dünn belegtes Rohimage (eine Partition ohne Partitionstab
 `Cosmos.Kernel.System` 3.0.97 (NuGet, `internal`, per Reflection) und prüft es mit e2fsprogs. Kein Kernelbuild.
 
 ```bash
+dotnet run -c Release --project experiments/StorageProbe -- selftest
 dotnet run -c Release --project experiments/StorageProbe -- format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L]
 experiments/StorageProbe/matrix.sh .tools/storage-probe
 ```
 
-`format` legt `IMAGE` mit `FileMode.CreateNew` an (eine vorhandene Datei wird nie überschrieben) und gibt eine
-JSON-Zeile aus. Das Dateigerät hat 512-Byte-Sektoren und prüft jeden Blockzugriff. `matrix.sh` löscht nur die
-eigenen Images und behält die e2fsck-Ausgabe.
+Die Cosmos-Pakete kommen über `PackageDownload` (genau `[3.0.97]`, ohne Cosmos-Build-Props); die Probe baut
+deshalb auch ohne vorherigen Kernel-Restore (mit leerem NuGet-Ordner geprüft).
+
+`format` prüft alle Argumente, bevor eine Datei entsteht: Optionen paarweise, Größe positives Vielfaches von 512,
+Blockgröße 1024, 2048 oder 4096; unter Windows höchstens 64 MiB, solange die sparse Anlage dort nicht geprüft ist.
+Das Image wird mit `FileMode.CreateNew` angelegt; eine vorhandene Datei bleibt unverändert (Exitcode 3). Ausgabe
+ist eine JSON-Zeile, Exitcode 0 nur bei erfolgreichem Format. Das Dateigerät hat 512-Byte-Sektoren und lehnt
+Zugriffe hinter dem Ende, zu kleine Puffer und Überläufe ab. `selftest` prüft diese Grenzen und die
+Argumentprüfung ohne Cosmos-Aufruf.
+
+`matrix.sh` legt je Lauf einen neuen Ordner (`mktemp -d`) im Arbeitsordner an, bricht bei einem Formatfehler ohne
+Löschen ab und löscht nur die Images, die es in diesem Ordner selbst erzeugt hat (große sparse Images belegen
+mehrere GB); die e2fsck-Ausgaben bleiben liegen.
 
 ## Ergebnis 17. November 2026 (Linux, e2fsprogs 1.47.4): NO-GO
 
