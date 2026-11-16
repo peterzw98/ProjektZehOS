@@ -18,7 +18,7 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:
 # Erst der Build stellt die Cosmos-Pakete im NuGet-Cache her; auf einem frischen CI-Rechner fehlt Limine vorher.
 packages=$(dotnet nuget locals global-packages -l)
 packages=${packages#global-packages: }
-boot="$packages/cosmos.build.common/3.0.94/tools/Limine/BOOTX64.EFI"
+boot="$packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI"
 test -f "$boot" || { echo "Limine fehlt: $boot" >&2; exit 1; }
 cp ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso "$out/ZehOS-$version.iso"
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$out/ProjektZeh-$version.elf"

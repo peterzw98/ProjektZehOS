@@ -24,7 +24,7 @@
 
   <!-- wasm3 und seine freistehende C-Laufzeit gehoeren zum normalen Kernelbuild. -->
   <PropertyGroup Condition="'$(ZehOSWasm)' == 'true'">
-    <!-- Cosmos-3.0.94-Standardflags plus nativem wasm3-Stackbudget (7 MiB): Wasm laeuft auf einem Thread mit
+    <!-- Cosmos-Standardflags (3.0.94 bis 3.0.97 gleich) plus nativem wasm3-Stackbudget (7 MiB): Wasm laeuft auf einem Thread mit
          8 MiB Stack (WasmRuntime.ThreadStackBytes); Rekursion endet so als Wasm-Trap statt im Triple Fault. -->
     <CCCompilerFlags>-O2 -fno-stack-protector -nostdinc -fno-builtin -Dd_m3MaxNativeStack=7340032</CCCompilerFlags>
   </PropertyGroup>
