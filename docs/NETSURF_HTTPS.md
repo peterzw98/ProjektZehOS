@@ -246,8 +246,8 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
 
 ## JavaScript und die HTTPS-Regeln
 
-**Status:** Patches vom 16. November 2026, gegen die Quellen von NetSurf 3.11 übersetzt (`gcc -fsyntax-only`,
-Bindungen mit nsgenbind erzeugt), aber noch nicht im Gast geprüft. Sie wirken erst, wenn der Build Duktape
+**Status:** Patches vom 16. November 2026. Lokal mit Duktape-Build und eingeschaltetem JavaScript auf dem
+wasm3-Prüfhost geprüft (Szenarien unten), noch nicht im Gast. Sie wirken erst, wenn der Build Duktape
 enthält und JavaScript eingeschaltet ist; Standard bleibt `enable_javascript:0`. Entschieden von laser am
 16. November 2026 (Policy a–e).
 
@@ -261,18 +261,21 @@ senden können. Die Patches schließen das und begrenzen Rechenzeit und Timer:
 | `netsurf-zehos-js-navigation.patch` | JS-Navigationen tragen die Seite als Referer. Von HTTPS auf HTTP sind sie wie ein Meta-Refresh unverifizierbar; `fetch_http.c` blockiert sie deshalb ohne Knopf. HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata als `http`/`https` (etwa `data:`) sind per JS nicht erreichbar, sonst umginge eine eigene `data:`-Seite mit Formular die Warnung. |
 | `netsurf-zehos-js-schemes.patch` | Skripte laufen nur auf `http`- und `https`-Seiten, nie auf `data:`, `resource:` oder `about:`, also auch nicht auf den Warnseiten des Fetchers. Maßgeblich ist die URL nach Weiterleitungen. |
 | `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. Höchstens 200 native Aufrufebenen statt 1000: Jede Ebene belegt in wasm3 etwa 3 KiB des 1-MiB-Stapels (Messung von red), darüber endete die App mit einem Trap statt mit `RangeError`. |
-| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Sonst könnte eine `http://`-Seite oder ihr Skript ein sicheres Cookie setzen. |
+| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Ohne `https` ersetzt oder löscht ein Cookie kein gleichnamiges `Secure`-Cookie. Außerdem behebt der Patch einen Fehler in 3.11: `urldb_get_cookie` prüfte das Schema des gespeicherten Pfadknotens statt der Anfrage, und die Bedingungen mit `lwc_string_isequal` (liefert `lwc_error_ok`, also 0) waren nie wahr. `Secure`-Cookies gingen so auch an `http://` und waren dort über `document.cookie` lesbar. |
 
-`document.cookie` liefert schon in 3.11 keine `HttpOnly`-Cookies und `Secure`-Cookies nur auf HTTPS-Seiten.
+`document.cookie` liefert schon in 3.11 keine `HttpOnly`-Cookies, `Secure`-Cookies erst mit dem Patch nur auf HTTPS-Seiten. Ein Skript kann ein `HttpOnly`-Cookie aber weiter über `document.cookie` überschreiben (unverändert aus 3.11).
 Ein echter Formularversand per Skript ist nicht möglich, weil `HTMLFormElement` in 3.11 kein `submit()` bietet.
 Unterressourcen, die ein Skript in die Seite einfügt, lädt NetSurf mit der Seite als Referer; die
 Mixed-Content-Sperre sollte daher auch für sie greifen (nicht geprüft).
 
 **Grenzen:** Das Zeitlimit gilt je Aufruf. 64 Timer mit je 2 s können die App weiter dauerhaft belegen; der Desktop
 bleibt bedienbar, weil Wasm-Apps auf einem verdrängten Worker laufen, NetSurf selbst reagiert dann aber nur
-zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Die Rekursionsgrenzen des Duktape-Compilers (2500) und der RegExp-Übersetzung (10000) sind unverändert und nicht gegen den wasm3-Stapel gemessen. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
+zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Weitere Rekursionsgrenzen von Duktape sind unverändert und nicht gegen den wasm3-Stapel gemessen: Compiler (2500), RegExp-Übersetzung und -Ausführung (je 10000), JSON und CBOR (je 1000), etwa bei `JSON.parse` tief geschachtelter Felder. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
 linearer Speicher der App. Ein Formular auf einer `data:`-Seite, die der Benutzer selbst über einen Link
-öffnet, sendet ohne Warnung, denn ihr Referer ist nicht HTTPS; das gilt auch ohne JavaScript.
+öffnet, sendet ohne Warnung, denn ihr Referer ist nicht HTTPS; das gilt auch ohne JavaScript. Ebenso kann ein Skript
+ein `<a href>` auf `http://…?feld=…` umschreiben: Klickt der Benutzer, gilt das wie jeder Link von HTTPS auf HTTP
+als erlaubt (Entscheidung 1), und die Felder gehen unverschlüsselt hinaus. JS-Navigationen senden jetzt wie Links
+einen `Referer` mit der vollständigen Seiten-URL, außer von HTTPS auf HTTP.
 
 **Testszenarien** (für `host/run_tests.py`, sobald der Build Duktape enthält): Endlosschleife bricht nach etwa
 2 s ab und die Seite bleibt bedienbar; eine `setInterval`-Flut endet beim 65. Timer; `location.href` von

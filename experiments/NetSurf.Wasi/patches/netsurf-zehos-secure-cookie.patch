@@ -1,6 +1,58 @@
 --- a/netsurf/content/urldb.c
 +++ b/netsurf/content/urldb.c
-@@ -3873,6 +3873,14 @@ bool urldb_set_cookie(const char *header, nsurl *url, nsurl *referer)
+@@ -2250,6 +2250,23 @@ static struct host_part *urldb_add_host(const char *host)
+ }
+ 
+ 
++/**
++ * ZehOS: true, wenn p ein Secure-Cookie mit Domain, Pfad und Name von c hält.
++ */
++static bool
++urldb_has_secure_cookie(const struct path_data *p,
++			const struct cookie_internal_data *c)
++{
++	const struct cookie_internal_data *d;
++
++	for (d = p->cookies; d; d = d->next) {
++		if (d->secure && !strcmp(d->domain, c->domain) &&
++		    !strcmp(d->path, c->path) && !strcmp(d->name, c->name))
++			return true;
++	}
++	return false;
++}
++
+ /**
+  * Insert a cookie into the database
+  *
+@@ -2309,6 +2326,27 @@ urldb_insert_cookie(struct cookie_internal_data *c,
+ 		}
+ 	}
+ 
++	/* ZehOS: Ohne https darf ein Cookie ein Secure-Cookie weder ersetzen
++	 * noch löschen (wie RFC 6265bis). Host-Cookies liegen je Schema in
++	 * eigenen Pfadknoten, deshalb den https-Knoten prüfen; Domain-Cookies
++	 * teilen sich die Liste des Hosts. Beim Laden der Cookie-Datei ist
++	 * scheme bei Domain-Cookies NULL; die Datei gilt als vertrauenswürdig. */
++	if (!c->secure && scheme != NULL) {
++		bool https;
++		const struct path_data *s;
++
++		if (lwc_string_isequal(scheme, corestring_lwc_https, &https) !=
++				lwc_error_ok) {
++			https = false;
++		}
++		s = c->domain[0] == '.' ? p : urldb_match_path(&h->paths,
++				c->path, corestring_lwc_https, 0);
++		if (!https && s != NULL && urldb_has_secure_cookie(s, c)) {
++			urldb_free_cookie(c);
++			return true;
++		}
++	}
++
+ 	/* add cookie */
+ 	for (d = p->cookies; d; d = d->next) {
+ 		if (!strcmp(d->domain, c->domain) &&
+@@ -3873,6 +3911,14 @@ bool urldb_set_cookie(const char *header, nsurl *url, nsurl *referer)
  			goto error;
  		}
  
@@ -15,3 +67,77 @@
  		/* 4.3.2:i Cookie path must be a prefix of URL path */
  		len = strlen(c->path);
  		if (len > lwc_string_length(path) ||
+@@ -4014,7 +4060,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 	lwc_string *scheme;
+ 	time_t now;
+ 	int i;
+-	bool match;
++	bool secure_request;
+ 
+ 	assert(url != NULL);
+ 
+@@ -4028,6 +4074,14 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 		return NULL;
+ 
+ 	scheme = p->scheme;
++	/* ZehOS: Die Secure-Prüfungen unten verglichen das Schema des
++	 * gespeicherten Pfadknotens (q->scheme, p->scheme) und waren wegen
++	 * lwc_string_isequal (liefert lwc_error_ok == 0) nie wahr; Secure-Cookies
++	 * gingen so auch an http://. Maßgeblich ist das Schema der Anfrage. */
++	if (lwc_string_isequal(scheme, corestring_lwc_https, &secure_request) !=
++			lwc_error_ok) {
++		secure_request = false;
++	}
+ 
+ 	matched_cookies = malloc(matched_cookies_size *
+ 				 sizeof(struct cookie_internal_data *));
+@@ -4086,11 +4140,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 					/* cookie has expired => ignore */
+ 					continue;
+ 
+-				if (c->secure && lwc_string_isequal(
+-					    q->scheme,
+-					    corestring_lwc_https,
+-					    &match) &&
+-				    match == false)
++				if (c->secure && !secure_request)
+ 					/* secure cookie for insecure host.
+ 					 * ignore */
+ 					continue;
+@@ -4126,11 +4176,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 					/* cookie has expired => ignore */
+ 					continue;
+ 
+-				if (c->secure && lwc_string_isequal(
+-					    q->scheme,
+-					    corestring_lwc_https,
+-					    &match) &&
+-				    match == false)
++				if (c->secure && !secure_request)
+ 					/* Secure cookie for insecure server
+ 					 * => ignore */
+ 					continue;
+@@ -4171,10 +4217,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 				/* paths don't match => ignore */
+ 				continue;
+ 
+-			if (c->secure && lwc_string_isequal(p->scheme,
+-							    corestring_lwc_https,
+-							    &match) &&
+-			    match == false)
++			if (c->secure && !secure_request)
+ 				/* Secure cookie for insecure server
+ 				 * => ignore */
+ 				continue;
+@@ -4206,10 +4249,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
+ 				/* paths don't match => ignore */
+ 				continue;
+ 
+-			if (c->secure && lwc_string_isequal(scheme,
+-							    corestring_lwc_https,
+-							    &match) &&
+-			    match == false)
++			if (c->secure && !secure_request)
+ 				/* secure cookie for insecure host. ignore */
+ 				continue;
+ 
