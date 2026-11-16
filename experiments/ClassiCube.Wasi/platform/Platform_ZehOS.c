@@ -123,8 +123,10 @@ void Platform_DecodePath(cc_string* dst, const cc_filepath* path) {
 
 void Directory_GetCachePath(cc_string* path) { }
 
+/* Der Paketordner ist nur lesbar. ClassiCube legt beim Start Ordner fuer spaetere Schreibzugriffe an (maps,
+   texturecache, audio) und zeigte dafuer rote Warnungen; die Schreibzugriffe selbst melden ihren eigenen Fehler. */
 cc_result Directory_Create2(const cc_filepath* path) {
-	return mkdir(path->buffer, 0755) == -1 ? errno : 0;
+	return EEXIST;
 }
 
 int File_Exists(const cc_filepath* path) {

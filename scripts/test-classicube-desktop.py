@@ -133,6 +133,11 @@ def main():
             if run:
                 start()
                 world(f"neustart-{run}")
+            # Ist das Fenster beim Start aktiv, faengt ClassiCube die Maus sofort; dann erreicht der Klick den
+            # Fensterrahmen erst nach Esc.
+            if run:
+                guest.qmp.tap("esc")
+                time.sleep(1)
             mark = guest.mark()
             guest.qmp.click(812+28*run, 100+28*run, *guest.size)
             time.sleep(2)

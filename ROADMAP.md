@@ -310,7 +310,7 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 
 **Fertig, wenn:** 13.2 erfüllt ist; 13.3 bis 13.6 folgen je nach Messung und Entscheidung.
 
-**Stand am 16. November 2026:** 13.2 in Arbeit (`experiments/ClassiCube.Wasi/`): ClassiCube baut ohne Threads als WASIp1-Modul. Lizenz und Nachladen sind in [2026-11-16-classicube-lizenz.md](docs/superpowers/specs/2026-11-16-classicube-lizenz.md) (PR #116) geklärt, ein freies Texturpaket fehlt noch. 13.1 ist offen. Voraussetzung für Kernelanteile (13.1, 13.3–13.5) ist der Merge von Cosmos 3.0.97.
+**Stand am 17. November 2026:** 13.2 umgesetzt, aber noch nicht abgehakt (`experiments/ClassiCube.Wasi/`). ClassiCube läuft ohne Threads als WASIp1-Paket mit SoftGPU und freiem Texturpaket. In QEMU (TCG und WHPX) besteht `scripts/test-classicube-desktop.py`: Start aus dem Menü, Welt, Bewegung, Mausblick, Block entfernen und setzen, drei Starts mit stabilem freien Speicher. Unter WHPX laufen 6 Bilder/s, die Rasterisierung belegt rund 85–90 % der Bildzeit (Messwerte in der README des Ports). Offen sind VMware, die Veröffentlichung im Branch `packages` und die Entscheidung nach Etappe 2. Lizenzlage: [2026-11-16-classicube-lizenz.md](docs/superpowers/specs/2026-11-16-classicube-lizenz.md) (PR #116). 13.1 ist offen. Voraussetzung für Kernelanteile (13.1, 13.3–13.5) ist der Merge von Cosmos 3.0.97.
 
 ## Vorgeschlagene Struktur des eigenen Codes
 
