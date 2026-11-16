@@ -52,15 +52,11 @@ internal sealed class MessageDemoService
                     context.Report(Interlocked.Increment(ref produced));
                 }
             }
-            catch
+            finally
             {
                 buffer.Close();
                 Interlocked.Decrement(ref active);
-                throw;
             }
-            // Cosmos 3.0.94 überspringt verschachteltes finally bei OCE; erwarteter Abbruch bleibt ein normaler Rückweg.
-            buffer.Close();
-            Interlocked.Decrement(ref active);
         });
         if (!producer.IsOK())
         {
@@ -89,9 +85,11 @@ internal sealed class MessageDemoService
                     if (context.Token.WaitHandle.WaitOne(slowProducer ? 1 : 200)) break;
                 }
             }
-            catch { buffer.Close(); Interlocked.Decrement(ref active); throw; }
-            buffer.Close();
-            Interlocked.Decrement(ref active);
+            finally
+            {
+                buffer.Close();
+                Interlocked.Decrement(ref active);
+            }
         });
         if (!consumer.IsOK())
         {

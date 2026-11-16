@@ -78,8 +78,7 @@ internal sealed class BackgroundTaskService
                 job.State = BackgroundTaskState.Faulted;
             }
         }
-        // Cosmos 3.0.94 kann verschachtelte finally-Bloecke beim Unwind ueberspringen.
-        lock (gate) job.Cancellation.Dispose();
+        finally { lock (gate) job.Cancellation.Dispose(); }
     }
 
     public ResultErr Cancel(int id)
