@@ -111,15 +111,17 @@ static nsurl *form_get_target;
  * Fehlerseite (browser_window__reload_current_parameters mit den alten Parametern samt HTTPS-Referer) oder
  * "Erneut versuchen". Jeder solche Abruf mit HTTPS-Referer bekommt wieder die Warnung; bestätigt wird nur von der
  * data:-Warnseite aus. Ohne Frist, weil NetSurf die URL ebenso lange in current_parameters hält; die ältesten
- * Einträge fallen erst nach WARNED_MAX weiteren Warnungen heraus. Gespeichert wird nur ein Hash: Eintragen braucht
- * so keinen Speicher und kann auch bei Speichermangel nicht scheitern, eine Kollision bewirkt nur eine Warnung mehr.
- * Je Fenster ist höchstens ein Ziel über current_parameters/loading_parameters erreichbar und wird von der nächsten
- * Warnung desselben Fensters ersetzt; verdrängen können nur Warnungen anderer Fenster (Frames, iframes). 256 Einträge
- * (2 KiB) liegen weit über dem, was ein Formular-Frameset praktisch erzeugt. */
+ * Einträge werden nie verdrängt: Ein Frame könnte sein Ziel noch in current_parameters halten. Ist die Tabelle voll,
+ * gilt jedes Ziel als gewarnt (fail-closed), jeder Abruf mit HTTPS-Referer an http:// zeigt dann die Warnung.
+ * Gespeichert wird nur ein Hash: Eintragen braucht so keinen Speicher und kann auch bei Speichermangel nicht
+ * scheitern, eine Kollision bewirkt nur eine Warnung mehr. WARNED_MAX ist für eine Sättigungsprobe per -D
+ * überschreibbar; normale Builds nutzen 256 (2 KiB). */
+#ifndef WARNED_MAX
 #define WARNED_MAX 256
+#endif
 static struct {
 	uint64_t hash[WARNED_MAX];
-	size_t count, next;
+	size_t count;
 } warned;
 
 static uint64_t now_ms(void)
@@ -181,6 +183,7 @@ static uint64_t url_hash(const char *url_s)
 
 static bool warned_contains(const char *url_s)
 {
+	if (warned.count == WARNED_MAX) return true; /* voll: fail-closed */
 	uint64_t hash = url_hash(url_s);
 	for (size_t i = 0; i < warned.count; i++) {
 		if (warned.hash[i] == hash) return true;
@@ -190,10 +193,8 @@ static bool warned_contains(const char *url_s)
 
 static void warned_add(const char *url_s)
 {
-	if (warned_contains(url_s)) return;
-	warned.hash[warned.next] = url_hash(url_s);
-	warned.next = (warned.next + 1) % WARNED_MAX;
-	if (warned.count < WARNED_MAX) warned.count++;
+	if (warned_contains(url_s)) return; /* bekannt oder Tabelle voll */
+	warned.hash[warned.count++] = url_hash(url_s);
 }
 
 void fetch_zehos_http_mark_form(nsurl *url);
