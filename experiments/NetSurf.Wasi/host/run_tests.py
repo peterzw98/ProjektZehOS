@@ -3,7 +3,7 @@
 
 Aufruf vom Repository-Stamm: python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm <iwasm> --host <libzehos_host.so>
 Voraussetzung: build.py ist gelaufen. Ereignisse folgen dem poll_event-ABI: <ms> <typ> <code> <x> <y>.
-Die Klickpositionen gelten für die Startseite im 632×392-Bild. HTTP-Szenarien laden Seiten von einem lokalen Testserver
+Die Klickpositionen gelten für die Startseite im 798×519-Bild (oben links ausgerichtet wie im 632×392-Bild davor). HTTP-Szenarien laden Seiten von einem lokalen Testserver
 über das Netz-ABI des Prüfhosts.
 """
 
