@@ -52,6 +52,7 @@ struct http_fetch {
 	int32_t handle;
 	bool only_2xx;
 	bool aborted;
+	bool started;        /* NetSurf hat start aufgerufen; davor liegt der Abruf nur in der Warteschlange */
 	bool locked;
 	bool code_set;
 	const char *error;      /* vor dem Start erkannter Fehler, z. B. HTTPS */
@@ -236,7 +237,9 @@ static void *fetch_http_setup(struct fetch *parent, nsurl *url, bool only_2xx, b
 
 static bool fetch_http_start(void *ctx)
 {
-	((struct http_fetch *)ctx)->last_activity = now_ms();
+	struct http_fetch *f = ctx;
+	f->started = true;
+	f->last_activity = now_ms();
 	return true;
 }
 
@@ -344,7 +347,9 @@ static void fetch_http_poll(lwc_string *scheme)
 	while (ring != NULL) {
 		f = ring;
 		RING_REMOVE(ring, f);
-		if (f->locked || (!f->aborted && step(f))) {
+		// setup legt jeden Abruf an, NetSurf startet aber höchstens max_fetchers davon. Wartende dürfen weder
+		// eine Verbindung öffnen (Kernelgrenze 4) noch an der Leerlauffrist ohne gesetztes last_activity scheitern.
+		if (f->locked || (!f->aborted && (!f->started || step(f)))) {
 			RING_INSERT(keep, f);
 			continue;
 		}

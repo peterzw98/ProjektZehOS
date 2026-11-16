@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1] / "bin" / "package"
@@ -48,6 +49,33 @@ def page(colour: tuple[int, int, int], text: str) -> bytes:
             f"<body><p>{text}</p></body></html>").encode()
 
 
+# Warteschlange: mehr Stylesheets als max_fetchers (4) und Kernelgrenze (4 Verbindungen). Jedes antwortet verzögert,
+# damit alle gleichzeitig angefordert sind; NetSurf startet die übrigen erst, wenn ein Platz frei wird.
+QUEUE_PAGE = (0xe0, 0xe0, 0xd0)
+QUEUE_MARKERS = [(0x10, 0x30, 0x50), (0x10, 0x50, 0x30), (0x30, 0x10, 0x50),
+                 (0x30, 0x50, 0x10), (0x50, 0x10, 0x30), (0x50, 0x30, 0x10)]
+QUEUE_DELAY_S = 0.5
+
+
+def queue_page() -> bytes:
+    links = "".join(f'<link rel="stylesheet" href="/warte-{i}.css">' for i in range(len(QUEUE_MARKERS)))
+    blocks = "".join(f'<div id="w{i}" style="width:40px;height:20px"></div>' for i in range(len(QUEUE_MARKERS)))
+    return page(QUEUE_PAGE, "Warteschlange").replace(b"</head>", f"{links}</head>".encode()).replace(
+        b"</body>", f"{blocks}</body>".encode())
+
+
+def queued_stylesheet(handler: "TestServer") -> None:
+    index = int(handler.path[len("/warte-"):-len(".css")])
+    colour = "".join(f"{c:02x}" for c in QUEUE_MARKERS[index])
+    time.sleep(QUEUE_DELAY_S)
+    body = f"#w{index}{{background:#{colour}}}".encode()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/css")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 class TestServer(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -61,7 +89,11 @@ class TestServer(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if self.path == "/seite.html":
+        if self.path.startswith("/warte-") and self.path.endswith(".css"):
+            queued_stylesheet(self)
+        elif self.path == "/viele":
+            self.send_page(200, queue_page())
+        elif self.path == "/seite.html":
             self.send_page(200, page(HTTP_PAGE, "HTTP-Seite"))
         elif self.path == "/umleitung":
             # Relative Weiterleitung über zwei Stufen; NetSurf muss sie selbst zum Ziel auflösen.
@@ -95,6 +127,7 @@ def closed_port() -> int:
 def http_scenarios(base: str, refused: int) -> list:
     pages = [START, TARGET, FORM, LONG, HTTP_PAGE, HTTP_CHUNKED, HTTP_MISSING]
     return [
+        ("http-warteschlange", address(1500, f"{base}/viele"), [QUEUE_PAGE] + QUEUE_MARKERS, [START]),
         ("http-seite", address(1500, f"{base}/seite.html"), [HTTP_PAGE], [START]),
         ("http-umleitung", address(1500, f"{base}/umleitung"), [HTTP_PAGE], [START]),
         ("http-chunked", address(1500, f"{base}/chunked.html"), [HTTP_CHUNKED], [START]),
