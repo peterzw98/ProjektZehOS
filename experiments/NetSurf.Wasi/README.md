@@ -64,7 +64,7 @@ Importe des Moduls:
 
 Annahmen:
 
-- **Bild:** festes Bild 798×519 (Inhalt des Paketfensters beim Öffnen, 800×560), 0x00RRGGBB, immer vollständig je `present`.
+- **Bild:** zunächst 798×519 (Inhalt des Paketfensters beim Öffnen, 800×560), danach die mit `poll_event` Typ 10 gemeldete Fenstergröße (NetSurf mindestens 300×200, höchstens 1920×1200); 0x00RRGGBB, immer vollständig je `present`. Ein Kernel ohne Typ 10 passt das Startbild weiter ein.
 - **Laufzeit:** Die Hauptschleife wartet höchstens 16 ms je `sleep_ms` und fragt dazwischen `should_exit` ab. Danach endet `_start` regulär.
 - **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (für Nicht-Links `EINVAL`). `fd_readdir` ist nur für Verzeichnislisten nötig.
 - **Tasten:** normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal), zum Beispiel Pfeile 72/75/77/80 und Entf 83.

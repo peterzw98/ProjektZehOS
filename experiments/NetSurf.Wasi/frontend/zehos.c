@@ -22,15 +22,16 @@ ZEHOS_IMPORT("ticks_ms") uint32_t zehos_ticks_ms(void);
 ZEHOS_IMPORT("sleep_ms") void zehos_sleep_ms(uint32_t milliseconds);
 ZEHOS_IMPORT("should_exit") int32_t zehos_should_exit(void);
 
-// Feste Bildgröße ohne Größenänderung: genau der Inhalt des Paketfensters beim Öffnen (Desktop.OpenApplication
-// 800×560, abzüglich Rahmen und Titelzeile), dort 1:1 und damit scharf (Issue #78). Andere Fenstergrößen passt der
-// Kernel seitentreu ein (nächster Nachbar): größere mit Rand an einer Seite, kleinere (Paketminimum 640×440)
-// verkleinert, aber vollständig sichtbar.
+// Startgröße bis zum ersten Größenereignis: der Inhalt des Paketfensters beim Öffnen (800×560 abzüglich Rahmen und
+// Titelzeile). Danach folgt das Bild der Fenstergröße (Ereignis 10, Issue #78); ein älterer Kernel ohne dieses
+// Ereignis passt das feste Bild weiterhin seitentreu ein.
 #define ZEHOS_WIDTH 798
 #define ZEHOS_HEIGHT 519
+#define ZEHOS_MAX_WIDTH 1920
+#define ZEHOS_MAX_HEIGHT 1200
 #define ZEHOS_MAX_WAIT_MS 16
 
-enum { EV_KEYDOWN = 1, EV_KEYUP, EV_TEXT, EV_MOVE, EV_BUTTONDOWN, EV_BUTTONUP, EV_WHEEL, EV_RESET };
+enum { EV_KEYDOWN = 1, EV_KEYUP, EV_TEXT, EV_MOVE, EV_BUTTONDOWN, EV_BUTTONUP, EV_WHEEL, EV_RESET, EV_RESIZE = 10 };
 
 // Ein Hostereignis kann mehrere nsfb-Ereignisse ergeben (Rad, Reset); sie warten hier.
 #define PENDING_MAX 32
@@ -207,6 +208,12 @@ static bool translate(const int32_t raw[4], nsfb_event_t *event)
         }
         return false;
     }
+    case EV_RESIZE:
+        // gui_resize setzt die Mindestgröße 300×200 selbst durch; set_geometry prüft die Obergrenze.
+        event->type = NSFB_EVENT_RESIZE;
+        event->value.resize.w = raw[2];
+        event->value.resize.h = raw[3];
+        return true;
     default:
         return false;
     }
@@ -233,7 +240,7 @@ static int zehos_defaults(nsfb_t *nsfb)
 
 static int zehos_initialise(nsfb_t *nsfb)
 {
-    if (nsfb->width <= 0 || nsfb->height <= 0 || nsfb->width > 1920 || nsfb->height > 1200) return -1;
+    if (nsfb->width <= 0 || nsfb->height <= 0 || nsfb->width > ZEHOS_MAX_WIDTH || nsfb->height > ZEHOS_MAX_HEIGHT) return -1;
     uint8_t *buffer = realloc(nsfb->ptr, (size_t)nsfb->width * nsfb->height * 4);
     if (buffer == NULL) return -1;
     nsfb->ptr = buffer;
@@ -243,9 +250,20 @@ static int zehos_initialise(nsfb_t *nsfb)
 
 static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_format_e format)
 {
-    // Das Paketfenster hat eine feste Größe, und present erwartet XRGB. NetSurf fragt beim Start eigene Werte an
-    // (Vorgabe 800×600); die Oberfläche behält ihre Werte, und das Frontend liest sie danach über nsfb_get_geometry.
-    (void)nsfb; (void)width; (void)height; (void)format;
+    // present erwartet XRGB; das Format bleibt. NetSurf fragt vor nsfb_init eigene Werte an (Vorgabe 800×600): Diese
+    // Anfrage wird ignoriert, damit das erste Bild die Startgröße hat. Danach kommt eine Größe nur aus Ereignis 10.
+    (void)format;
+    if (nsfb->ptr == NULL) return 0;
+    if (width <= 0 || height <= 0 || width > ZEHOS_MAX_WIDTH || height > ZEHOS_MAX_HEIGHT) return -1;
+    if (width == nsfb->width && height == nsfb->height) return 0;
+    uint8_t *buffer = realloc(nsfb->ptr, (size_t)width * height * 4);
+    if (buffer == NULL) return -1;
+    nsfb->ptr = buffer;
+    nsfb->width = width;
+    nsfb->height = height;
+    nsfb->linelen = width * 4;
+    // Der bisherige Ausschnitt kann über das kleinere Bild hinausragen.
+    nsfb->plotter_fns->set_clip(nsfb, NULL);
     return 0;
 }
 
