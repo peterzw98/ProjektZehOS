@@ -33,7 +33,7 @@ Das Skript installiert das Paket lokal in einer Wegwerfplatte und prüft: Start 
 
 ## Messwerte (17. November 2026)
 
-ZehOS 0.5.6 (Kernel unverändert gegenüber `master` 61bc0be), QEMU 10.2.2 auf dem Windows-Entwicklungsrechner, Paketfenster 798×519, SoftGPU, Standardwelt (Classic-Generator), Spawnpunkt. Werte aus der Anzeige von `Measure_ZehOS.c` (je zwei 5-s-Fenster), abgelesen von den Fotos des Gastskripts:
+Kernel-ISO von `master` 61bc0be (ZehOS 0.5.3; dieser Branch ändert keinen Kernelcode), QEMU 10.2.2 auf dem Windows-Entwicklungsrechner, Paketfenster 798×519, SoftGPU, Standardwelt (Classic-Generator), Spawnpunkt. Werte aus der Anzeige von `Measure_ZehOS.c` (je zwei 5-s-Fenster), abgelesen von den Fotos des Gastskripts:
 
 | Beschleuniger | Bilder/s | Raster je Bild | Mesh | Present | Rest | Welt erzeugt (Generator-Rechenzeit) |
 | --- | --- | --- | --- | --- | --- | --- |
