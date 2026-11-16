@@ -97,13 +97,26 @@ internal static unsafe class WasmRuntime
                 lock (gate) pending--;
                 completed(status, result, message);
             });
-            if (worker == null)
-            {
-                worker = new Thread(Work, ThreadStackBytes);
-                worker.Start();
-            }
+            StartWorkerLocked();
             Monitor.Pulse(gate);
         }
+    }
+
+    /// <summary>
+    /// Legt den Worker beim Start an, solange der Heap noch frei von Netzmuell ist: Der 8-MiB-Stack kommt aus dem
+    /// nativen Heap, dessen Fehlschlag keine Collection ausloest; Cosmos 3.0.97 benutzt dann einen Nullzeiger.
+    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie.
+    /// </summary>
+    public static void StartWorker()
+    {
+        lock (gate) StartWorkerLocked();
+    }
+
+    private static void StartWorkerLocked()
+    {
+        if (worker != null) return;
+        worker = new Thread(Work, ThreadStackBytes);
+        worker.Start();
     }
 
     /// <summary>Fuehrt einen Lauf aus und wartet auf das Ergebnis; nur ausserhalb des Workers aufrufen.</summary>

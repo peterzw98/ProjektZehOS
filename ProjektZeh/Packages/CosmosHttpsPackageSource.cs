@@ -53,8 +53,13 @@ internal sealed class CosmosHttpsPackageSource(string baseUrl) : IPackageSource
         }
     }
 
+    private static byte[]? roots;
+
+    // Dasselbe Array je Start, damit TlsTransport die geparsten Anker wiederverwendet.
+    private static byte[] Roots() => roots ??= LoadRoots();
+
     // Eine Test-CA gelangt nur ueber -p:ZehOSPackageTestCaPath in einen Build und ergaenzt die normalen Wurzeln.
-    private static byte[] Roots()
+    private static byte[] LoadRoots()
     {
         byte[] roots = TlsRoots.Load();
         using (Stream? probe = typeof(TlsRoots).Assembly.GetManifestResourceStream("ZehOS.PackageTestCa"))

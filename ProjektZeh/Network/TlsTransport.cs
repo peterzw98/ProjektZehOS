@@ -22,8 +22,21 @@ internal static class TlsTransport
     {
         CheckClock(utcNow);
         var protocol = new TlsClientProtocol(transport);
-        protocol.Connect(CreateClient(host, fillRandom, LoadAnchors(trustedPem), utcNow, false));
+        protocol.Connect(CreateClient(host, fillRandom, CachedAnchors(trustedPem), utcNow, false));
         return protocol.Stream;
+    }
+
+    private static (byte[] Pem, IList<X509Certificate> Anchors)? cachedAnchors;
+
+    // Das Parsen aller Wurzeln je Verbindung erzeugte den Grossteil des Muells eines Downloads; der Cosmos-GC laeuft
+    // erst, wenn der Seitenallokator erschoepft ist. Gilt fuer dasselbe Bundle-Array (TlsRoots.Load liefert stets dasselbe).
+    private static IList<X509Certificate> CachedAnchors(byte[] trustedPem)
+    {
+        var cached = cachedAnchors;
+        if (cached is { } entry && ReferenceEquals(entry.Pem, trustedPem)) return entry.Anchors;
+        var anchors = LoadAnchors(trustedPem);
+        cachedAnchors = (trustedPem, anchors);
+        return anchors;
     }
 
     internal static void CheckClock(DateTime utcNow)
