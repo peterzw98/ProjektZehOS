@@ -179,6 +179,8 @@ internal static class CosmosWasmProbe
         public uint TicksMilliseconds => (uint)clock.ElapsedMilliseconds;
         public int PollKey() => -1;
         public bool TryReadEvent(out WasmInputEvent value) { value = default; return false; }
+        // Die Probe läuft ohne Fenster und Zeiger; pointer_capture meldet der App deshalb -1.
+        public bool SetPointerCapture(bool enabled) => false;
 
         public void Write(int fd, ReadOnlySpan<byte> data)
         {
