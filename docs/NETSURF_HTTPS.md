@@ -45,8 +45,13 @@ Von laser über den Koordinator entschieden:
 4. **Getrennte Fehlercodes:** `EPERM` (63) für abgelehnte Zertifikate, `EPROTO` (65) für TLS-Protokollfehler.
 5. **Eigener Fehlercode für fehlende Voraussetzungen** (Uhr, CPU-Zufall, Wurzelbundle), getrennt von „HTTPS nicht
    unterstützt“: `ENOSYS` (52).
+6. **Mixed Content:** Auf HTTPS-Seiten werden `http://`-Unterressourcen (Bilder, CSS, alles) blockiert, ohne
+   Fortfahren-Knopf; die Seite lädt ohne sie.
+7. **Formulare von einer HTTPS-Seite an ein `http://`-Ziel** zeigen eine Warnseite „Unverschlüsselter Versand“; erst
+   „Trotzdem senden“ schickt die Felder. Das gilt für POST und GET.
 
-Dazu vom Koordinator festgelegt: Endet TCP ohne `close_notify`, meldet `net_recv` nach den Restdaten `ECONNRESET`
+Dazu vom Koordinator festgelegt: Ein Meta-Refresh von HTTPS auf HTTP wird ohne Knopf blockiert (strenger als 1;
+laser kann den Knopf nachfordern). Endet TCP ohne `close_notify`, meldet `net_recv` nach den Restdaten `ECONNRESET`
 (15). Weil viele Server ohne `close_notify` schließen, muss der Fetcher bei `Content-Length` oder dem letzten Chunk
 sofort fertig sein und schließen, ohne auf EOF zu warten. Das tut er bereits: `http_response_feed` meldet dann
 `HTTP_DONE`, und `fetch_http.c` beendet den Abruf ohne EOF. Nur bei Antworten ohne Länge zählt das Ende; dort
@@ -168,6 +173,36 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   eigene HTML-Seite (`no-store`) mit dem Link „Trotzdem fortfahren“ auf die HTTP-Adresse (mit dem Koordinator
   abgestimmt). Die Ziel-URL ist dabei Fremdeingabe: HTML-escapen (`& < > " '`) und nur Schema `http` zulassen, sonst
   Fehlerseite ohne Link.
+- Mixed Content (Entscheidung 6): Der Fetcher lehnt `http://`-Abrufe ab, die nicht vom Benutzer ausgelöst wurden
+  (nicht verifizierbar) und eine HTTPS-Seite als Referer haben. Weil `struct fetch` privat ist, liest er beides über
+  zwei Getter aus `patches/netsurf-zehos-mixed-content.patch`. Derselbe Patch erzwingt in `llcache` für solche
+  Abrufe einen Neuabruf (sonst kämen sie am Fetcher vorbei aus dem Cache), gibt Favicons die Seite als Referer und
+  lässt einen Meta-Refresh von HTTPS auf HTTP unverifizierbar. Eine Unterressource mit Weiterleitung HTTPS → HTTP
+  scheitert ohne Warnseite.
+- Formulare (Entscheidung 7): Ein POST bleibt im Speicher des Fetchers (höchstens einer, 5 Minuten); die Warnseite
+  postet nur ein Einmaltoken (16 Byte aus `getentropy`, zeitkonstanter Vergleich). Ein falsches, kurzes oder
+  abgelaufenes Token ergibt eine lokale Fehlerseite ohne Netzabruf. GET-Formulare markiert `html/form.c` (Patch);
+  die Warnseite verlinkt die GET-URL. Warnseiten laden nichts nach (eigenes Favicon über `resource:`), damit die
+  Ziel-URL nicht vor dem Klick als Referer abfließt. Der Fetcher liefert die Warnseite als 303-Weiterleitung auf
+  eine `data:`-URL statt unter der Ziel-URL. Lokale Navigation, Neuladen und Zurück/Vor nutzen deshalb die
+  `data:`-URL: NetSurf trägt die URL des Inhalts nach der Weiterleitung in die History ein (`content_get_url`
+  liefert das Zielobjekt von `llcache_fetch_redirect`), und `llcache` verwirft die Cache-Daten des umgeleiteten
+  Objekts. Die Ziel-URL steht weiter nur im Speicher: in `current_parameters` des Browserfensters, in `urldb`
+  (`urldb_add_url` für die Weiterleitungsquelle) und in den Metadaten des alten llcache-Objekts. `urldb` wird
+  nicht gespeichert; das Framebuffer-Frontend schreibt nur Cookies (`urldb_save_cookies`). Weil NetSurf über
+  `current_parameters` das Ziel ohne Formularmarke erneut abrufen kann („Zurück“ auf einer Fehlerseite,
+  `browser_window__reload_current_parameters`, ebenso „Erneut versuchen“), merkt sich der Fetcher die gewarnten
+  Ziele (Hash, bis zu 256 Einträge, ohne Frist und ohne Verdrängung; ist die Tabelle voll, gilt jedes Ziel als gewarnt) und warnt bei jedem Abruf mit HTTPS-Referer erneut. Den Referer liest er
+  aus `struct fetch`, weil NetSurf von HTTPS an HTTP keinen `Referer`-Kopf mitgibt. Bestätigt wird nur von der
+  `data:`-Seite aus: Der Link beziehungsweise das Token löst genau einen Abruf aus, und von dort sendet NetSurf
+  keinen `Referer`-Kopf, weil das Schema nicht passt (`get_referer_header` in `llcache.c`). Grenzen: Bei POST
+  steht das Token in der `data:`-URL (Adressleiste, History); es gilt nur einmal und höchstens 5 Minuten. Nach 256
+  gewarnten Zielen warnt der Fetcher bei jedem Abruf mit HTTPS-Referer an ein `http://`-Ziel, auch bei normalen
+  Links (fail-closed, damit kein Frame-Ziel aus der Liste fällt). Kommt ein POST-Ziel
+  über „Zurück“ auf einer Fehlerseite zurück, gilt die Warnung einem GET-Abruf ohne Felder.
+- HSTS: NetSurfs vorhandenes `urldb` wertet `Strict-Transport-Security` aus HTTPS-Antworten aus und hebt
+  `http://`-Adressen solcher Hosts in `llcache` auf HTTPS, nur im Speicher bis zum Beenden. Eine Weiterleitung auf
+  so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
 - Mit `Content-Length` oder `chunked` nach dem letzten Byte beziehungsweise Chunk sofort abschließen und schließen,
   ohne auf EOF zu warten. Bei Antworten ohne Länge ein `ECONNRESET` als abgeschnitten melden (Entscheidung 3).
 - Der Prüfhost `host/zehos_host_linux.c` erhält denselben Flag über OpenSSL mit einer Test-CA aus einer

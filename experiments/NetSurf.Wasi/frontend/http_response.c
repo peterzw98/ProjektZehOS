@@ -215,11 +215,11 @@ enum http_result http_response_eof(struct http_response *r)
 	return HTTP_ERR_TRUNCATED;
 }
 
-size_t http_request_build(char *out, size_t cap, const char *host, int port, const char *target,
+size_t http_request_build(char *out, size_t cap, const char *host, int port, int default_port, const char *target,
 	const char *post_body, const char *const *extra_headers)
 {
 	char authority[300];
-	int n = port == 80 ? snprintf(authority, sizeof(authority), "%s", host)
+	int n = port == default_port ? snprintf(authority, sizeof(authority), "%s", host)
 		: snprintf(authority, sizeof(authority), "%s:%d", host, port);
 	if (n < 0 || (size_t)n >= sizeof(authority)) return 0;
 	size_t used = 0;

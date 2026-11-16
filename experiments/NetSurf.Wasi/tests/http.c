@@ -153,14 +153,19 @@ int main(void) {
 	// Anfragen.
 	char request[512];
 	const char *extra[] = { "Accept-Language: de", "Connection: keep-alive", "X-Bad: a\r\nInjected: 1", NULL };
-	size_t n = http_request_build(request, sizeof(request), "10.0.2.2", 18080, "/a?b=1", NULL, extra);
+	size_t n = http_request_build(request, sizeof(request), "10.0.2.2", 18080, 80, "/a?b=1", NULL, extra);
 	assert(n == strlen(request));
 	assert(strcmp(request, "GET /a?b=1 HTTP/1.1\r\nHost: 10.0.2.2:18080\r\nConnection: close\r\n"
 		"Accept-Encoding: identity\r\nAccept-Language: de\r\n\r\n") == 0);
-	n = http_request_build(request, sizeof(request), "beispiel", 80, "/", "name=x", NULL);
+	n = http_request_build(request, sizeof(request), "beispiel", 80, 80, "/", "name=x", NULL);
 	assert(strstr(request, "POST / HTTP/1.1\r\nHost: beispiel\r\n") == request);
 	assert(strstr(request, "Content-Length: 6\r\n\r\nname=x") != NULL);
-	assert(http_request_build(request, 20, "beispiel", 80, "/", NULL, NULL) == 0);
+	assert(http_request_build(request, 20, "beispiel", 80, 80, "/", NULL, NULL) == 0);
+	// HTTPS: Standardport 443 fehlt im Host, Port 80 ist dort kein Standard und bleibt stehen.
+	http_request_build(request, sizeof(request), "beispiel", 443, 443, "/", NULL, NULL);
+	assert(strstr(request, "GET / HTTP/1.1\r\nHost: beispiel\r\n") == request);
+	http_request_build(request, sizeof(request), "beispiel", 80, 443, "/", NULL, NULL);
+	assert(strstr(request, "Host: beispiel:80\r\n") != NULL);
 
 	puts("http tests ok");
 	return 0;

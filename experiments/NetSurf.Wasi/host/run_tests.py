@@ -11,6 +11,7 @@ import argparse
 import http.server
 import os
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -117,7 +118,7 @@ class TestServer(http.server.BaseHTTPRequestHandler):
             self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             self.connection.close()
             self.close_connection = True
-        elif not cookie_get(self):
+        elif not extra_get(self):
             self.send_page(404, page(HTTP_MISSING, "Nicht gefunden"))
 
     def log_message(self, format: str, *args: object) -> None:
@@ -151,8 +152,34 @@ def http_scenarios(base: str, refused: int) -> list:
 COOKIE_OK, COOKIE_MISSING = (0x30, 0x90, 0x30), (0x90, 0x30, 0x30)
 
 
-def cookie_get(handler: TestServer) -> bool:
-    if handler.path == "/keks-setzen":
+REQUESTED: set[str] = set()
+# Jede Anfrage einzeln, damit Szenarien "genau einmal angefragt" prüfen können.
+REQUEST_LOG: list[str] = []
+
+
+REFERERS: list[str] = []
+
+
+def extra_get(handler: TestServer) -> bool:
+    REQUESTED.add(handler.path)
+    REQUEST_LOG.append(handler.path)
+    REFERERS.append(handler.headers.get("Referer") or "")
+    if handler.path == "/marker.css":
+        body = b"body{background:#209090}"
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/css")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    elif handler.path == "/gemischt":
+        handler.send_page(200, mixed_page("/marker.css"))
+    elif handler.path in ("/falsches-token", "/kurzes-token"):
+        # Kurzes Token: der Vergleich darf nicht hinter die übergebenen Daten lesen.
+        value = "0" * 32 if handler.path == "/falsches-token" else "1"
+        handler.send_page(200, form_page("/ziel-token", "post", "zehos_bestaetigung", value))
+    elif handler.path.startswith("/ziel-get-"):
+        form_target(handler, handler.path)
+    elif handler.path == "/keks-setzen":
         handler.send_page(302, b"", {"Set-Cookie": "zehos=keks; Path=/", "Location": "/keks-pruefen  "})
     elif handler.path == "/keks-pruefen":
         sent = "zehos=keks" in (handler.headers.get("Cookie") or "")
@@ -163,7 +190,217 @@ def cookie_get(handler: TestServer) -> bool:
 
 
 def cookie_scenarios(base: str) -> list:
-    return [("http-cookie", address(1500, f"{base}/keks-setzen"), [COOKIE_OK], [COOKIE_MISSING, HTTP_MISSING, START])]
+    return [("http-cookie", address(1500, f"{base}/keks-setzen"), [COOKIE_OK], [COOKIE_MISSING, HTTP_MISSING, START]),
+            # Gegenprobe zu https-gemischt: über HTTP lädt dasselbe Stylesheet und färbt die Seite.
+            ("http-gemischt-gegenprobe", address(1500, f"{base}/gemischt"), [MIXED], [START])]
+
+
+# HTTPS-Szenarien: lokale TLS-Server mit eigener Test-CA (openssl), der Prüfhost vertraut ihr über ZEHOS_TLS_CA.
+DOWNGRADE_PAGE, INJECTED = (0xff, 0xf0, 0xd8), (0x90, 0x20, 0x90)
+# Gemischte Seite: eigene Farbe, ein geladenes http://-Stylesheet überschriebe sie mit MIXED.
+MIXED_PAGE, MIXED = (0x40, 0x40, 0x90), (0x20, 0x90, 0x90)
+
+
+def mixed_page(stylesheet: str, icon: str = "") -> bytes:
+    links = f'<link rel="stylesheet" href="{stylesheet}">' + (f'<link rel="icon" href="{icon}">' if icon else "")
+    return page(MIXED_PAGE, "Gemischt").replace(b"</head>", f"{links}</head>".encode())
+
+
+def make_tls_fixtures(work: Path) -> dict[str, Path]:
+    def openssl(*arguments: str) -> None:
+        subprocess.run(["openssl", *arguments], cwd=work, check=True, capture_output=True)
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+            "-subj", "/CN=ZehOS Test-CA", "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign")
+    for name, san in (("gut", "IP:127.0.0.1,DNS:localhost"), ("falsch", "DNS:anders.example")):
+        openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", f"{name}.key", "-out", f"{name}.csr",
+                "-subj", f"/CN={name}")
+        (work / f"{name}.ext").write_text(f"subjectAltName={san}\nextendedKeyUsage=serverAuth\n")
+        openssl("x509", "-req", "-in", f"{name}.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+                "-out", f"{name}.pem", "-days", "1", "-extfile", f"{name}.ext")
+    return {"ca": work / "ca.pem", "gut": work / "gut.pem", "falsch": work / "falsch.pem"}
+
+
+def tls_server(work: Path, name: str, http_base: str) -> http.server.ThreadingHTTPServer:
+    class TlsTestServer(TestServer):
+        def do_GET(self) -> None:
+            if self.path == "/zu-http":
+                self.send_page(302, b"", {"Location": f"{http_base}/seite.html"})
+            elif self.path == "/gemischt":
+                # NetSurf lädt Favicons ohne Seitenbezug; der Patch setzt den Referer, sonst ginge der Abruf durch.
+                self.send_page(200, mixed_page(f"{http_base}/marker.css", f"{http_base}/symbol-https.ico"))
+            elif self.path == "/gemischt-umgeleitet":
+                self.send_page(200, mixed_page("/css-zu-http"))
+            elif self.path == "/css-zu-http":
+                self.send_page(302, b"", {"Location": f"{http_base}/marker.css"})
+            elif self.path == "/h":
+                self.send_page(200, page(HTTP_CHUNKED, "HSTS gesetzt"), {"Strict-Transport-Security": "max-age=600"})
+            elif self.path == "/hz":
+                port = self.server.server_address[1]
+                self.send_page(302, b"", {"Location": f"http://localhost:{port}/seite.html"})
+            elif self.path.startswith("/formular?"):
+                method, target = self.path.split("?", 1)[1].split("&")
+                action = f"{http_base}/{target}".replace("-fragment", "#oben")
+                self.send_page(200, form_page(action, method, "geheim", "wert42"))
+            elif self.path == "/einschleusen":
+                # Wäre der Link nicht maskiert, setzte der eingeschleuste Stil die Markerfarbe.
+                self.send_page(302, b"", {"Location": f'{http_base}/"><style>body{{background:#902090}}</style>'})
+            elif self.path in ("/ohne-laenge-sauber", "/ohne-laenge-abgebrochen"):
+                # HTTP/1.0 ohne Content-Length: nur close_notify (unwrap) zeigt das echte Ende.
+                self.wfile.write(b"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n" + page(HTTP_PAGE, "Ohne Länge"))
+                self.wfile.flush()
+                if self.path == "/ohne-laenge-sauber":
+                    self.connection.unwrap().close()
+                self.close_connection = True
+            else:
+                super().do_GET()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TlsTestServer)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(work / f"{name}.pem", work / f"{name}.key")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+# Formulare von HTTPS an http:// (Entscheidung 7): erst Warnseite, Felder gehen erst nach "Trotzdem senden" raus.
+FORM_SOURCE, FORM_OK = (0x50, 0x50, 0x20), (0x20, 0x70, 0x20)
+CLICK_SUBMIT, CLICK_CONFIRM = (250, 150), (78, 205)
+# Werkzeugleiste "blfsrutc" mit Abstand 2: Zurück 2–24, Verlauf 26–52, Vor 54–76, Stopp 78–104, Neu laden 106–130.
+CLICK_BACK, CLICK_FORWARD, CLICK_RELOAD = (13, 15), (65, 15), (118, 15)
+POSTS: list[tuple[str, str]] = []
+
+
+def form_page(action: str, method: str, name: str, value: str) -> bytes:
+    form = (f'<form method="{method}" action="{action}"><input type="hidden" name="{name}" value="{value}">'
+            '<input type="submit" value="Senden" style="width:500px;height:250px"></form>')
+    return page(FORM_SOURCE, "Formular").replace(b"<p>Formular</p>", form.encode())
+
+
+def form_target(handler: TestServer, query: str) -> None:
+    sent = "geheim=wert42" in query
+    handler.send_page(200, page(FORM_OK, "Angekommen") if sent else page(HTTP_MISSING, "Felder fehlen"))
+
+
+def record_post(handler: TestServer) -> None:
+    body = handler.rfile.read(int(handler.headers.get("Content-Length") or 0)).decode()
+    POSTS.append((handler.path, body))
+    form_target(handler, body)
+
+
+TestServer.do_POST = record_post
+
+
+def hsts_scenarios(port: int) -> list:
+    # NetSurfs urldb merkt sich HSTS nur im Speicher: erst setzen, dann hebt llcache http://localhost:<port> auf https.
+    # Kurze Pfade, weil address() nur 32 Zeichen der vorigen Adresse löscht.
+    named = f"https://localhost:{port}"
+    plain = f"http://localhost:{port}"
+    return [
+        ("https-hsts-link", address(1500, f"{named}/h") + address(3500, f"{plain}/seite.html"),
+         [HTTP_PAGE], [DOWNGRADE_PAGE, START]),
+        ("https-hsts-weiterleitung", address(1500, f"{named}/h") + address(3500, f"{named}/hz"),
+         [HTTP_PAGE], [DOWNGRADE_PAGE, START]),
+        # Gegenprobe ohne HSTS: dieselbe Weiterleitung zeigt die Warnseite.
+        ("https-ohne-hsts-weiterleitung", address(1500, f"{named}/hz"), [DOWNGRADE_PAGE], [HTTP_PAGE, START]),
+    ]
+
+
+def address_over(at: int, url: str) -> list[str]:
+    # Wie address(), aber ohne Löschen: die lange data:-URL der Warnseite bleibt hinter "#" als Fragment stehen.
+    events = click(at, (300, 15)) + [f"{at + 200} 1 71 0 0", f"{at + 210} 2 71 0 0"]
+    t = at + 300
+    for char in url + "#":
+        events.append(f"{t} 3 {ord(char)} 0 0")
+        t += 10
+    return events + [f"{t} 1 28 0 0", f"{t + 10} 2 28 0 0"]
+
+
+def form_scenarios(good: str, base: str, refused: int) -> list:
+    submit = click(3600, CLICK_SUBMIT)
+    confirm = [*submit, *click(4600, CLICK_CONFIRM)]
+    reload = [*submit, *click(4600, CLICK_RELOAD)]
+    back_forward = [*submit, *click(4600, CLICK_BACK), *click(5300, CLICK_FORWARD)]
+    # Von der Warnseite zu einer abgelehnten Adresse, auf der Fehlerseite "Zurück": NetSurf lädt dann die alten
+    # Parameter (Ziel-URL mit HTTPS-Referer, ohne Formularmarke) neu, browser_window__reload_current_parameters.
+    error_back = [*submit, *address_over(4200, f"http://127.0.0.1:{refused}/"), *click(5300, CLICK_BACK)]
+    return [
+        ("https-formular-warnung", address(1500, f"{good}/formular?post&ziel-warnung") + submit, [DOWNGRADE_PAGE], [FORM_OK]),
+        ("https-formular-senden", address(1500, f"{good}/formular?post&ziel-senden") + confirm, [FORM_OK], [HTTP_MISSING]),
+        ("https-formular-get-warnung", address(1500, f"{good}/formular?get&ziel-get-warnung") + submit,
+         [DOWNGRADE_PAGE], [FORM_OK]),
+        # Fragment in der Action: llcache ruft ohne Fragment ab, die Warnung muss trotzdem greifen.
+        ("https-formular-get-fragment", address(1500, f"{good}/formular?get&ziel-get-warnung-fragment") + submit,
+         [DOWNGRADE_PAGE], [FORM_OK]),
+        ("https-formular-get-senden", address(1500, f"{good}/formular?get&ziel-get-senden") + confirm,
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        # Neuladen, Zurück/Vor und "Zurück" auf einer Fehlerseite zeigen wieder die Warnung, ohne das Ziel
+        # anzufragen (form_checks prüft das Netz).
+        ("https-formular-get-neuladen", address(1500, f"{good}/formular?get&ziel-get-neuladen") + reload,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-get-zurueck-vor", address(1500, f"{good}/formular?get&ziel-get-zurueck") + back_forward,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-neuladen", address(1500, f"{good}/formular?post&ziel-neuladen") + reload,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-get-fehler-zurueck", address(1500, f"{good}/formular?get&ziel-get-fehler") + error_back,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        ("https-formular-fehler-zurueck", address(1500, f"{good}/formular?post&ziel-fehler") + error_back,
+         [DOWNGRADE_PAGE], [FORM_OK, HTTP_MISSING]),
+        # Gegenprobe: Nach dem Neuladen funktioniert die Bestätigung weiter, das Ziel kommt genau einmal an.
+        ("https-formular-get-neuladen-senden",
+         address(1500, f"{good}/formular?get&ziel-get-neu-senden") + reload + click(5300, CLICK_CONFIRM),
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        ("https-formular-neuladen-senden",
+         address(1500, f"{good}/formular?post&ziel-neu-senden") + reload + click(5300, CLICK_CONFIRM),
+         [FORM_OK], [DOWNGRADE_PAGE, HTTP_MISSING]),
+        # Eine fremde Seite postet ein erfundenes Token: lokale Fehlerseite, nichts geht ins Netz.
+        ("http-formular-falsches-token", address(1500, f"{base}/falsches-token") + submit, [], [FORM_OK, FORM_SOURCE]),
+        ("http-formular-kurzes-token", address(1500, f"{base}/kurzes-token") + submit, [], [FORM_OK, FORM_SOURCE]),
+    ]
+
+
+def form_checks() -> list[str]:
+    paths = [path for path, _ in POSTS]
+    problems = []
+    if "/ziel-warnung" in paths or "/ziel-token" in paths:
+        problems.append("Formular ohne Bestätigung gesendet")
+    if ("/ziel-senden", "geheim=wert42") not in POSTS:
+        problems.append("bestätigtes Formular nicht mit Originaldaten angekommen")
+    # Auch über Nebenwege wie den Favicon-Referer dürfen die Felder vor der Bestätigung nicht ankommen.
+    if any(path.startswith("/ziel-get-warnung") for path in REQUESTED) or any("ziel-get-warnung?" in r for r in REFERERS):
+        problems.append("GET-Formular ohne Bestätigung gesendet")
+    # Neuladen und Zurück/Vor dürfen das Ziel weder per GET noch per POST erreichen, auch ohne Felder.
+    for target in ("/ziel-get-neuladen", "/ziel-get-zurueck", "/ziel-neuladen", "/ziel-get-fehler", "/ziel-fehler"):
+        if any(path.split("?")[0] == target for path in REQUEST_LOG + paths) or any(f"{target}?" in r for r in REFERERS):
+            problems.append(f"{target} ohne Bestätigung angefragt")
+    # Ein Klick auf die Bestätigung ruft das Ziel genau einmal ab, auch nach Neuladen der Warnseite.
+    for prefix in ("/ziel-get-senden?", "/ziel-get-neu-senden?"):
+        count = sum(path.startswith(prefix) for path in REQUEST_LOG)
+        if count != 1:
+            problems.append(f"bestätigtes GET-Formular {prefix[:-1]} {count}-mal statt einmal angekommen")
+    if paths.count("/ziel-senden") != 1 or POSTS.count(("/ziel-neu-senden", "geheim=wert42")) != 1 \
+            or paths.count("/ziel-neu-senden") != 1:
+        problems.append("bestätigtes POST-Formular nicht genau einmal angekommen")
+    if any("zehos_bestaetigung" in body for _, body in POSTS):
+        problems.append("Bestätigungstoken ins Netz gelangt")
+    return problems
+
+
+def https_scenarios(good: str, wrong: str) -> list:
+    pages = [START, TARGET, FORM, LONG, HTTP_PAGE, HTTP_CHUNKED, HTTP_MISSING, DOWNGRADE_PAGE]
+    return [
+        ("https-seite", address(1500, f"{good}/seite.html"), [HTTP_PAGE], [START]),
+        ("https-chunked", address(1500, f"{good}/chunked.html"), [HTTP_CHUNKED], [START]),
+        ("https-umleitung", address(1500, f"{good}/umleitung"), [HTTP_PAGE], [START]),
+        ("https-gemischt", address(1500, f"{good}/gemischt"), [MIXED_PAGE], [MIXED, START]),
+        ("https-gemischt-umgeleitet", address(1500, f"{good}/gemischt-umgeleitet"), [MIXED_PAGE],
+         [MIXED, DOWNGRADE_PAGE, START]),
+        ("https-falscher-name", address(1500, f"{wrong}/seite.html"), [], pages),
+        ("https-zu-http", address(1500, f"{good}/zu-http"), [DOWNGRADE_PAGE], [HTTP_PAGE, START]),
+        ("https-einschleusen", address(1500, f"{good}/einschleusen"), [DOWNGRADE_PAGE], [INJECTED, START]),
+        ("https-ohne-laenge-sauber", address(1500, f"{good}/ohne-laenge-sauber"), [HTTP_PAGE], [START]),
+        ("https-ohne-laenge-abgebrochen", address(1500, f"{good}/ohne-laenge-abgebrochen"), [], pages),
+    ]
 
 
 # Name, Ereignisse, erwartete Farben, verbotene Farben
@@ -197,11 +434,17 @@ def main() -> int:
     base = f"http://127.0.0.1:{server.server_address[1]}"
     scenarios = SCENARIOS + http_scenarios(base, closed_port()) + cookie_scenarios(base)
     with tempfile.TemporaryDirectory() as work:
+        fixtures = make_tls_fixtures(Path(work))
+        tls = [tls_server(Path(work), name, base) for name in ("gut", "falsch")]
+        scenarios += https_scenarios(*(f"https://127.0.0.1:{s.server_address[1]}" for s in tls))
+        scenarios += form_scenarios(f"https://127.0.0.1:{tls[0].server_address[1]}", base, closed_port())
+        scenarios += hsts_scenarios(tls[0].server_address[1])
         for name, events, expected, forbidden in scenarios:
             script, frame = Path(work) / f"{name}.txt", Path(work) / f"{name}.ppm"
             script.write_text("".join(f"{line}\n" for line in events))
             env = dict(os.environ, ZEHOS_EVENTS=str(script), ZEHOS_PPM=str(frame), ZEHOS_EXIT_MS="6000")
             env.pop("ZEHOS_NET", None)
+            env["ZEHOS_TLS_CA"] = str(fixtures["ca"])
             if name != "http-ohne-berechtigung":
                 env["ZEHOS_NET"] = "1"
             run = subprocess.run([str(args.iwasm), f"--native-lib={args.host.resolve()}", f"--map-dir=/::{PACKAGE}",
@@ -215,6 +458,19 @@ def main() -> int:
             problems += [f"Farbe {c} unerwartet" for c in forbidden if c in seen]
             failures += bool(problems)
             print(f"{'FAIL' if problems else 'ok  '} {name}" + (f": {', '.join(problems)}" if problems else ""))
+        for tls_server_running in tls:
+            tls_server_running.shutdown()
+    for problem in form_checks():
+        failures += 1
+        print(f"FAIL https-formular-netz: {problem}")
+    scenarios.append(("https-formular-netz", [], [], []))
+    # Mixed Content ohne Farbwirkung: das http://-Favicon der HTTPS-Seite darf nie angefragt werden.
+    if "/symbol-https.ico" in REQUESTED:
+        failures += 1
+        print("FAIL https-gemischt-favicon: http://-Favicon wurde geladen")
+    else:
+        print("ok   https-gemischt-favicon")
+    scenarios.append(("https-gemischt-favicon", [], [], []))
     server.shutdown()
     print(f"{len(scenarios) - failures}/{len(scenarios)} bestanden")
     return 1 if failures else 0
