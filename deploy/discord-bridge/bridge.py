@@ -69,6 +69,11 @@ def nick_color(nick):
     return int(hashlib.md5(nick.lower().encode()).hexdigest()[:6], 16) | 0x404040
 
 
+def agent_count(members):
+    """Anzahl verschiedener Agenten-Nicks über alle gespiegelten Kanäle."""
+    return len({nick for nicks in members.values() for nick in nicks if nick.lower().startswith("agent-")})
+
+
 def channel_name(irc_channel):
     return irc_channel.lstrip("#&").lower()
 
@@ -81,9 +86,24 @@ class Bridge(discord.Client):
         self.writer = None
         self.channels = {}  # IRC-Kanal (klein) -> Discord-Textkanal
         self.ready_event = asyncio.Event()
+        self.members = {}  # IRC-Kanal (klein) -> Nicks, für Präsenz und QUIT/NICK-Meldungen
 
     async def setup_hook(self):
         self.loop.create_task(self.irc_loop())
+        self.loop.create_task(self.presence_loop())
+
+    async def presence_loop(self):
+        # Discord begrenzt Präsenz-Updates; daher nur alle 30 s und nur bei Änderung senden
+        await self.ready_event.wait()
+        shown = None
+        while True:
+            count = agent_count(self.members)
+            if count != shown:
+                await self.change_presence(activity=discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=f"{count} agent{'' if count == 1 else 's'} in IRC"))
+                shown = count
+            await asyncio.sleep(30)
 
     async def on_ready(self):
         guild = self.get_guild(GUILD_ID) or await self.fetch_guild(GUILD_ID)
@@ -121,19 +141,32 @@ class Bridge(discord.Client):
             embed.set_author(name=nick)
             embed.set_footer(text=f"{target} · IRC")
             await self.post(target, embed)
-        elif command == "JOIN" and params and nick != IRC_NICK:
-            await self.event(params[0], f"➡️ **{nick}** joined", 0x3ba55c)
-        elif command == "PART" and params and nick != IRC_NICK:
-            reason = f" ({params[1]})" if len(params) > 1 else ""
-            await self.event(params[0], f"⬅️ **{nick}** left{reason}", 0xed4245)
+        elif command == "353" and len(params) >= 4:
+            self.members.setdefault(params[2].lower(), set()).update(n.lstrip("~&@%+") for n in params[3].split())
+        elif command == "JOIN" and params:
+            self.members.setdefault(params[0].lower(), set()).add(nick)
+            if nick != IRC_NICK:
+                await self.event(params[0], f"➡️ **{nick}** joined", 0x3ba55c)
+        elif command in ("PART", "KICK") and params:
+            gone = params[1] if command == "KICK" and len(params) > 1 else nick
+            self.members.get(params[0].lower(), set()).discard(gone)
+            if gone == IRC_NICK:
+                self.members.pop(params[0].lower(), None)
+            elif command == "PART":
+                reason = f" ({params[1]})" if len(params) > 1 else ""
+                await self.event(params[0], f"⬅️ **{nick}** left{reason}", 0xed4245)
         elif command == "QUIT":
-            # shortcut: QUIT nennt keinen Kanal, geht daher an alle Spiegel; bei mehreren Kanälen Mitgliederlisten führen
             reason = f" ({params[0]})" if params else ""
-            for irc_channel in self.channels:
-                await self.event(irc_channel, f"⬅️ **{nick}** quit{reason}", 0xed4245)
+            for irc_channel, nicks in self.members.items():
+                if nick in nicks:
+                    nicks.discard(nick)
+                    await self.event(irc_channel, f"⬅️ **{nick}** quit{reason}", 0xed4245)
         elif command == "NICK" and params:
-            for irc_channel in self.channels:
-                await self.event(irc_channel, f"🔁 **{nick}** is now **{params[0]}**")
+            for irc_channel, nicks in self.members.items():
+                if nick in nicks:
+                    nicks.discard(nick)
+                    nicks.add(params[0])
+                    await self.event(irc_channel, f"🔁 **{nick}** is now **{params[0]}**")
         elif command == "TOPIC" and len(params) == 2:
             await self.event(params[0], f"📌 **{nick}** set the topic: {params[1]}", 0xfaa61a)
 
@@ -168,6 +201,7 @@ class Bridge(discord.Client):
             except (OSError, ssl.SSLError) as error:
                 print(f"IRC error: {error}", flush=True)
             self.writer = None
+            self.members.clear()
             print(f"IRC disconnected, retrying in {delay}s", flush=True)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 300)

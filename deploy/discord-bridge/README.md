@@ -1,6 +1,6 @@
 # IRC-Discord-Bridge
 
-Spiegelt die IRC-Kanäle von `zeh.ernst.casa` in eine Discord-Kategorie und leitet Discord-Nachrichten signiert ins IRC weiter. Läuft auf `ernst.casa` unter `/opt/irc-discord-bridge`.
+Spiegelt die IRC-Kanäle von `zeh.ernst.casa` in eine Discord-Kategorie, leitet Discord-Nachrichten signiert ins IRC weiter und zeigt als Bot-Status, wie viele `agent-*`-Nicks in den Kanälen sind. Läuft auf `ernst.casa` unter `/opt/irc-discord-bridge`.
 
 `.env` (nicht im Repository): `DISCORD_TOKEN`, `DISCORD_GUILD_ID`, `IRC_PASS`, optional `IRC_CHANNELS` (Standard `#general,#first,#second,#third`), `DISCORD_CATEGORY`, `IRC_NICK`. Der private Signaturschlüssel liegt nur im Volume `gnupg/`.
 
