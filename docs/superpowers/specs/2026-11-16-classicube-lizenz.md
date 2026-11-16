@@ -41,8 +41,8 @@ Für das Paket gilt deshalb: ClassiCube-`license.txt` vollständig, dazu die Liz
 - `src/Resources.c:347`: Sounds und Musik kommen von `resources.download.minecraft.net`, ebenfalls Mojang.
 - `src/Resources.c:718-722`: alternativ `RESOURCE_SERVER "/default.zip"` (`http://static.classicube.net/default.zip`).
 - `readme.md:39`: „download the required assets from minecraft.net and classicube.net“.
-- `misc/cc_textures.zip` (Konsolenports): `terrain.png`, `gui.png`, `char.png`, Mob-Texturen usw. ohne eigene Lizenzangabe. Ihre Herkunft ist nicht belegt; nicht verwenden.
-- Eingebaute Ersatzschrift `font_bitmap` (`Drawer2D.c`, erzeugt mit `misc/bitmap_font_gen.cs` aus einem `default.png`): Sie greift, wenn `default.png` fehlt. Ihre Herkunft ist nicht dokumentiert (vermutlich die Classic-Schrift). Deshalb ein eigenes `default.png` mitliefern, damit die Ersatzschrift nie angezeigt wird, und die Frage bei Bedarf beim Upstream klären.
+- `misc/cc_textures.zip` (Konsolenports, `terrain.png`, `gui.png`, `char.png`, Mob-Texturen usw.) und `misc/cc_audio.zip`: Beide haben keine eigene Lizenzangabe, die Herkunft ist nicht belegt, beim Audio vermutlich Mojang. Nicht verwenden.
+- Eingebaute Ersatzschrift `font_bitmap` (`src/SystemFonts.c:50-51`, Kommentar „Source: Goodly's texture pack for ClassiCube“; offenbar mit `misc/bitmap_font_gen.cs` aus dessen `default.png` erzeugt). Die Lizenz von Goodlys Texturpaket ist ungeklärt. Sie wird gezeichnet, wenn kein `default.png` geladen ist (`Drawer2D.c:552-557, 572`) oder wenn statt der Bitmapschrift die Systemschrift gewählt ist. Ohne `CC_BUILD_FREETYPE` ersetzt sie dann die Systemschrift. Im Spiel ist standardmäßig die Bitmapschrift aktiv (`Drawer2D.c:713`, `OPT_USE_CHAT_FONT` aus); die Menüoption `MenuOptions.c:931` schaltet um. Deshalb ein eigenes `default.png` mitliefern und die Systemschrift-Option im Port ausblenden oder festsetzen. Bis die Lizenz geklärt ist, eine eigene oder freie Bitmapschrift einplanen und im Port prüfen, dass `font_bitmap` nie sichtbar wird.
 
 Folge: Paketbau und Gasttest dürfen weder den Launcher-Download noch `misc/*.zip` verwenden. Das Spiel sucht `texpacks/default.zip` und `texpacks/classicube.zip` (`TexturePack.c:505-508`). Ein eigenes freies `default.zip` im Paket ersetzt beide. Ohne Datei zeigt `Game.c:450` einen Warnhinweis.
 
@@ -58,7 +58,7 @@ Folge: Paketbau und Gasttest dürfen weder den Launcher-Download noch `misc/*.zi
 | Spiel: Plugins (`dlopen`) | `Game.c:444` (`CC_BUILD_PLUGINS`) | nicht definieren; WASI kennt kein `dlopen` |
 | Spiel: Menü „Texturpaket per URL“ | `Menus.c:2921` | Stub, liefert keinen Abruf |
 
-Für die WASI-Plattformdefinition in `Core.h` reicht also: kein `CC_BUILD_NETWORKING`, kein `CC_BUILD_RESOURCES`, kein `CC_BUILD_PLUGINS`, kein `CC_BUILD_FREETYPE` (WASI hat keine Systemschriften), `CC_BUILD_NOMUSIC`/`CC_BUILD_NOSOUNDS`. Start immer mit `--singleplayer`. Mehrspieler (Plan-Etappe 6) braucht später ein eigenes, auf `zehos_v1.net_*` umgestelltes Netz ohne BearSSL und weiterhin ohne Skin-Server, solange keine Freigabe dafür vorliegt.
+`Core.h:182-188` definiert `CC_BUILD_NETWORKING`, `CC_BUILD_FREETYPE`, `CC_BUILD_RESOURCES` und `CC_BUILD_PLUGINS` standardmäßig. Die WASI-Plattformdefinition muss sie deshalb ausdrücklich mit `#undef` abschalten, wie andere Ports es tun (zum Beispiel `Core.h:287-289`), und `CC_BUILD_NOMUSIC`/`CC_BUILD_NOSOUNDS` setzen. Ohne FreeType hat WASI keine Systemschriften. Start immer mit `--singleplayer`. Mehrspieler (Plan-Etappe 6) braucht später ein eigenes, auf `zehos_v1.net_*` umgestelltes Netz ohne BearSSL und weiterhin ohne Skin-Server, solange keine Freigabe dafür vorliegt.
 
 Schreibzugriffe (`options.txt`, `fontscache.txt`, Weltdateien) sind nicht Teil dieser Recherche; sie gehören zu Etappe 2 (Umleiten in den Speicher) beziehungsweise Etappe 4.
 
@@ -90,7 +90,7 @@ Vor der Veröffentlichung ist zu prüfen:
 
 ## Offen
 
-- Herkunft der eingebauten Ersatzschrift (`font_bitmap`) und von `misc/cc_textures.zip`: beim Upstream nicht geklärt. Für ZehOS nicht nötig, wenn ein eigenes `default.png` mitkommt.
+- Lizenz der eingebauten Ersatzschrift (`font_bitmap`, laut `SystemFonts.c:50` aus Goodlys Texturpaket) sowie Herkunft von `misc/cc_textures.zip` und `misc/cc_audio.zip`: ungeklärt. Für ZehOS unkritisch, wenn ein eigenes `default.png` mitkommt und der Port die Systemschrift-Option sperrt. Das prüft der Port.
 - Die Classic-Blockanordnung von `terrain.png` braucht für einige Blöcke (Schwämme, farbige Wolle, Gold-/Eisenblöcke) Entsprechungen. Minetest-Texturen decken nicht alle 1:1 ab; fehlende Kacheln selbst erstellen.
 - Lizenz der in `license.txt` genannten Ray-Box-Vorlage: ohne angegebene Lizenz, der Code ist laut Text nur danach geschrieben. Das Risiko trägt der Upstream; hier nur dokumentiert.
 
