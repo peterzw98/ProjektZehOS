@@ -1,0 +1,32 @@
+--- a/netsurf/content/fetch.c
++++ b/netsurf/content/fetch.c
+@@ -58,6 +58,7 @@
+ #include "content/fetchers/curl.h"
+ #endif
+ #include "content/fetchers/data.h"
++nserror fetch_zehos_http_register(void);
+ #include "content/fetchers/file/file.h"
+ #include "javascript/fetcher.h"
+ #include "content/urldb.h"
+@@ -295,6 +296,11 @@
+ 	}
+ #endif
+ 
++	ret = fetch_zehos_http_register();
++	if (ret != NSERROR_OK) {
++		return ret;
++	}
++
+ 	ret = fetch_data_register();
+ 	if (ret != NSERROR_OK) {
+ 		return ret;
+--- a/netsurf/content/fetchers/Makefile
++++ b/netsurf/content/fetchers/Makefile
+@@ -1,6 +1,6 @@
+ # Content fetchers sources
+ 
+-S_FETCHERS_YES := data.c resource.c
++S_FETCHERS_YES := data.c resource.c zehos_http.c http_response.c
+ S_FETCHERS_NO :=
+ S_FETCHERS_$(NETSURF_USE_CURL) += curl.c
+ 

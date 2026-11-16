@@ -40,8 +40,11 @@ Das ISO muss zum öffentlichen Gegenstück des Testschlüssels passen. Der Test 
 lokales Paket und eine frische beschreibbare QEMU-Platte; bestehende Datenimages werden nicht verwendet.
 Er prüft Installation, Start, Markerfarben für HTML/CSS und Linknavigation, Zurück, Fokusverlust ohne Klick,
 Mausrad/Bild ab, Weiterbedienung nach einem kaputten Link und drei Starts mit Schließen.
-Bildschirmfotos dokumentieren zusätzlich „Grüße @“ im Formular und die sichtbare Fehlerseite „Not found“;
-diese beiden Inhalte werden visuell geprüft. Drei Speicherwerte nach dem Aufräumen dürfen um höchstens
+Das Paket erhält dafür `capability=net`. Nach `net dhcp` lädt NetSurf Seiten von einem lokalen Testserver
+auf dem Entwicklungsrechner (aus dem Gast `10.0.2.2`): eine Seite, eine zweistufige relative Weiterleitung,
+eine `chunked`-Antwort und eine 404-Seite, danach wieder eine lokale Seite.
+Bildschirmfotos dokumentieren zusätzlich „Grüße @“ im Formular, die sichtbare Fehlerseite „Not found“ und
+die HTTPS-Fehlerseite; diese drei Inhalte werden visuell geprüft. Drei Speicherwerte nach dem Aufräumen dürfen um höchstens
 8 MiB sinken. Nachweise bleiben unter `.tools/netsurf-guest/` und werden nicht eingecheckt.
 
 ## Bisheriger Nachweis
@@ -72,9 +75,13 @@ Endabnahme am 15. November 2026 auf genau dem PR-Stand `51c9ec8`, mit `master` e
   - Ein Fokusreset bei mehreren gedrückten Tasten konnte einen Klick auslösen.
   - Der Build ist reproduzierbar und enthält keine Benutzer-, Rechner- oder Pfaddaten mehr.
 
+HTTP-Gastprüfung am 15. November 2026 (Branch `feature/netsurf-http-guest`, 0.2.11, gestapelt auf dem Host-PR #69):
+`NETSURF_GUEST PASS` unter QEMU mit KVM (`-cpu qemu64,+rdrand,+rdseed`); freier Speicher nach drei Läufen
+438952, 439528 und 441472 KiB. HTTPS-Fehlerseite anhand des Bildes geprüft. Linux-Prüfhost: `host/run_tests.py` 13/13.
+
 ## Grenzen
 
-- Kein HTTP/HTTPS und kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
+- HTTP nur ohne TLS (siehe [HTTP](../experiments/NetSurf.Wasi/README.md#http)); `https://` zeigt eine Fehlerseite. Keine Cookies, keine HTTP-Anmeldung, höchstens 4 gleichzeitige Verbindungen. Kein JavaScript. GIF/BMP sind aktiviert; PNG/JPEG/SVG sind ausgeschaltet.
 - Festes Browserbild 632×392, kein Resize-Import. Das ZehOS-Fenster zentriert bzw. skaliert es.
 - Formulare unterstützen Unicode; die Adressleiste nur ASCII. Strg-Kürzel orientieren sich an der
   physischen US-Tastenposition. Ziffernblock und Navigation haben teilweise dieselben normalisierten Codes.

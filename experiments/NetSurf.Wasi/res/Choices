@@ -1,1 +1,3 @@
 homepage_url:file:///pages/index.html
+max_fetchers:4
+max_fetchers_per_host:4

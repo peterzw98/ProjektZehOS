@@ -107,6 +107,10 @@ def main() -> int:
          "-I", str(source / "libnsfb/src"), str(HERE / "tests/input.c"), "-o", str(input_test)],
         HERE, os.environ.copy(), logs / "frontend-input-build.log")
     run([str(input_test)], HERE, os.environ.copy(), logs / "frontend-input.log")
+    http_test = TOOLS / "frontend-http-test"
+    run(["cc", "-O2", "-std=c11", "-D_DEFAULT_SOURCE", "-Wall", "-Wextra", "-Werror", str(HERE / "tests/http.c"),
+         str(HERE / "frontend/http_response.c"), "-o", str(http_test)], HERE, os.environ.copy(), logs / "frontend-http-build.log")
+    run([str(http_test)], HERE, os.environ.copy(), logs / "frontend-http.log")
 
     # Ohne Pfadabbildung landen rund 290 absolute Baupfade (__FILE__, Debuginfo) im Modul; dann unterscheidet es sich je Rechner.
     cc = (f"{sdk / 'bin' / 'clang'} --target=wasm32-wasip1 --sysroot={sdk / 'share' / 'wasi-sysroot'}"
@@ -135,6 +139,11 @@ def main() -> int:
             source / library, env, logs / f"{library}.log")
 
     shutil.copy2(HERE / "Makefile.config", source / "netsurf" / "Makefile.config")
+    # Der HTTP-Fetcher wird von patches/netsurf-zehos-http.patch registriert und im Fetcher-Ordner mitgebaut.
+    fetchers = source / "netsurf" / "content" / "fetchers"
+    shutil.copy2(HERE / "frontend" / "fetch_http.c", fetchers / "zehos_http.c")
+    for name in ("http_response.c", "http_response.h"):
+        shutil.copy2(HERE / "frontend" / name, fetchers / name)
     run(["make", f"-j{args.jobs}", "TARGET=framebuffer", *common, "BUILD_CC=cc"], source / "netsurf", env,
         logs / "netsurf.log")
 
