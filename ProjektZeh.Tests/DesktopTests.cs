@@ -32,6 +32,26 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void Escape_WithMenuOpenedDuringAppCaptureClosesMenuOnly()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        app.Input.SetCapture(true);
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        Assert.IsFalse(app.Input.IsCaptured);
+        while (app.Input.TryRead(out _)) { }
+        var escape = new InputEvent(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape);
+        Assert.IsTrue(desktop.HandleEscape(escape));
+        // CloseMenu setzt die Fenster zurueck; die App sieht nur dieses Reset, kein Esc.
+        while (app.Input.TryRead(out var received)) Assert.AreNotEqual(WasmInputEventType.KeyDown, received.Type);
+        Assert.IsFalse(desktop.CloseMenu());
+        Assert.IsFalse(desktop.HandleEscape(escape));
+    }
+
+    [TestMethod]
     public void Escape_DuringWindowDragDoesNotGoToApp()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));

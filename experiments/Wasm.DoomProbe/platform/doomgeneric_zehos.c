@@ -112,9 +112,10 @@ static void poll_mouse(void)
                 if (event[1] == 1) { mouse_captured = 0; mouse_buttons = 0; changed = 1; }
                 break;
             case EVENT_POINTER_MOVE:
+                // Nur der Uebergang aus dem Fang braucht ein ev_mouse; freie Bewegungen aendern nichts.
+                if (mouse_captured || mouse_buttons) changed = 1;
                 mouse_captured = 0;
                 mouse_buttons = 0;
-                changed = 1;
                 break;
             case EVENT_RESET:
                 mouse_captured = 0;

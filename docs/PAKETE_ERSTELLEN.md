@@ -119,7 +119,7 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
 - **Beenden:** Eine App, die `should_exit()` nie abfragt, lässt sich nicht beenden. Das Paket bleibt dann bis zum Neustart gesperrt (kein Entfernen, kein Upgrade). Die Hauptschleife muss die Abfrage enthalten.
 - **Keine Speicherstände:** Apps können nichts dauerhaft speichern.
 - **Tasten:**
-  - Esc gibt bei eingefangener Maus den Zeiger frei und erreicht Doom; danach führt Esc zur Textshell. F4 wechselt jederzeit zwischen Desktop und Textshell. Doom bietet Backspace zusätzlich für sein Menü.
+  - Das erste Esc bei eingefangener Maus gibt den Zeiger frei und erreicht die App als Taste; Wiederholungen eines gehaltenen Esc gehen nicht weiter. Ein erneutes Esc bei freiem Zeiger führt zur Textshell. F4 wechselt jederzeit zwischen Desktop und Textshell.
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.
 - **Pause:** Ist das Fenster nicht aktiv oder nicht sichtbar, blockiert `present` und `ticks_ms` steht still.
 - **Fehler:** Ein Trap (ungültiger Speicherzugriff, falscher indirekter Aufruf) beendet nur die App; das Fenster zeigt die Ursache. Ein Fehler im Interpreter oder Host kann trotzdem den Kernel treffen. Das ist eine logische Grenze, keine Prozessisolation.
