@@ -68,32 +68,24 @@ public sealed class CosmosVirtioEntropyDriver : Driver
                 if (wait >= BusyWaitMilliseconds) return false;
                 Thread.Sleep(1);
             }
-            bool filled = false;
-            if (!broken)
-            {
-                try
-                {
-                    filled = Fill(bytes);
-                }
-                catch (Exception)
-                {
-                    // Etwa eine abgebaute Bindung; ohne finally (Cosmos 3.0.94), daher Freigabe unten. Ein schon
-                    // abgeschickter Deskriptor kann beim Geraet bleiben, deshalb wie nach einem Timeout abschalten.
-                    filled = false;
-                    broken = true;
-                }
-            }
             try
             {
-                // Keine Zufallsbytes im DMA-Puffer zuruecklassen, auch nicht nach einem Teilfehler.
-                buffer.Span.Clear();
+                return !broken && Fill(bytes);
             }
             catch (Exception)
             {
-                // Der Puffer gehoert nach dem Abbau der Bindung schon nicht mehr dem Treiber.
+                // Etwa eine abgebaute Bindung. Ein schon abgeschickter Deskriptor kann beim Geraet bleiben, deshalb wie
+                // nach einem Timeout abschalten.
+                broken = true;
+                return false;
             }
-            Volatile.Write(ref busy, 0);
-            return filled;
+            finally
+            {
+                // Keine Zufallsbytes im DMA-Puffer zuruecklassen, auch nicht nach einem Teilfehler.
+                try { buffer.Span.Clear(); }
+                catch (Exception) { /* Der Puffer gehoert nach dem Abbau der Bindung schon nicht mehr dem Treiber. */ }
+                Volatile.Write(ref busy, 0);
+            }
         }
 
         private bool Fill(byte[] bytes)

@@ -141,7 +141,7 @@ disk unmount
 
 Mit `shutdown` ausschalten und mit demselben Startskript erneut öffnen oder mit `reboot` direkt neu starten. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Beide Energieaktionen hängen ein eingebundenes Datenlaufwerk vorab mit Schreiben der Dateisystempuffer aus. Schlägt das Aushängen fehl, wird die Aktion abgebrochen und die Shell bleibt bedienbar. Ohne eingebundenes Datenlaufwerk sind beide Befehle ebenfalls verfügbar. Sie akzeptieren keine Argumente und verwenden die Energieverwaltung von Cosmos; die Unterstützung hängt von der Plattform ab. Vor einem manuellen Schließen der VM weiterhin `disk unmount` ausführen.
 
-Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos 3.0.94 vorgegebenen Optionen `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
+Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos vorgegebenen Optionen (geprüft mit 3.0.94) `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
 
 Mit `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-power-commands.ps1` werden beide Befehle in einer eigenen unsichtbaren QEMU-VM ohne Datenplatte geprüft. Nach `reboot` müssen ein zweiter Shellstart und ein laufender Gast nachweisbar sein; nach `shutdown` muss QEMU mit Exitcode 0 enden. Das ISO vorher bauen; ein anderes ISO lässt sich mit `-IsoPath` auswählen.
 
@@ -342,14 +342,14 @@ Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als einge
 ```bash
 payload="$PWD/.tools/installer-payload"
 mkdir -p "$payload"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.5
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.6
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
 cp "$HOME/.nuget/packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.5 \
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.6 \
   -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 ```
 
-Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.5`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.6`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
 
 Das Installer-ISO startet in den grafischen Einrichtungsassistenten (Willkommen → Hinweise → Zielplatte → Bestätigung → Installation → Neustart), bedienbar mit Maus und Tastatur. Bei einem Anzeigefehler oder mit `-p:ZehOSRecovery=true` startet stattdessen eine lokale Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Ohne Löschbestätigung wird nur eine Platte angenommen, die keine Partition hat und vollständig als leer gelesen wurde. Platten über 256 MiB werden dafür nicht gelesen und verlangen deshalb immer die Bestätigung. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium.
 
@@ -369,13 +369,13 @@ reboot
 
 `update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
 
-Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.5.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
+Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.6.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
 
 Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. Der Installer richtet mit drei Sekunden Timeout die Limine-Einträge **ZehOS** (1920×1080), **ZehOS (1024x768)** und **ZehOS (vorherige Version)** ein. Der Installer legt dazu bereits eine Kopie des installierten Kernels als `.bak` an. Nach einem Start über den Rückfalleintrag (laufende und installierte Version in `/boot/zehos-version.txt` weichen ab) darf ein Update nicht älter als die installierte Version sein; es ersetzt dann nur den Hauptkernel und lässt den laufenden Kernel in `.bak` unverändert. Nach Beginn des Dateiaustauschs ist bis zum Neustart kein weiteres Update erlaubt, auch wenn Austausch oder Bereinigung einen Fehler melden. Die Sicherungs-/Wiederherstellungslogik schützt vor behandelten Dateifehlern; sie garantiert keine Wiederherstellung nach Stromausfall. Netzwerk- und Dateioperationen der Shell laufen synchron; antwortet ein Spiegel nach dem Verbindungsaufbau nicht, steht das System bis zum Cosmos-Zeitlimit (wegen des groben Cosmos-Wartetimers deutlich länger als die angeforderten 10 s). [Prüfergebnisse und Plattformgrenzen](docs/INSTALLER_UPDATES_TESTS.md).
 
 ## Releases und Updates
 
-`scripts/build-release.sh 0.5.5 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
+`scripts/build-release.sh 0.5.6 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
 
 Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.
 
@@ -412,7 +412,7 @@ Zusätzliche Shellbefehle:
 | --- | --- |
 | `cp <Quelle> <Ziel>` / `mv <Quelle> <Ziel>` | Eine Datei kopieren / samt Rechten verschieben; vorhandene Ziele werden abgelehnt |
 | `rm <Datei>` / `rmdir <Verzeichnis>` | Eine Datei / ein leeres Verzeichnis löschen; kein rekursives Löschen |
-| `touch <Datei>` | Datei anlegen oder Inhalt erhalten; Cosmos 3.0.94 aktualisiert FAT-Zeitstempel noch nicht |
+| `touch <Datei>` | Datei anlegen oder Inhalt erhalten; Cosmos aktualisiert FAT-Zeitstempel noch nicht (geprüft mit 3.0.94) |
 | `find [Pfad] [Teilname]` | Lesbare Einträge rekursiv nach Teilnamen suchen, maximal 1.024 Einträge, keine Verknüpfungen |
 | `du [Pfad]` / `df [Pfad]` | Lesbare Inhaltsbytes summieren / tatsächliche Dateisystemkapazität und freien Platz anzeigen |
 | `head [-n Anzahl] [Datei]` / `tail [-n Anzahl] [Datei]` | Erste / letzte Zeilen, standardmäßig zehn |
@@ -434,7 +434,7 @@ Das vertikale Scrollrad bewegt den Inhalt unter dem Zeiger um drei Zeilen pro Ra
 
 Die Textshell ohne Desktop besitzt ebenfalls einen begrenzten Puffer von **256 Ausgabezeilen**. Scrollrad und Bildtasten blättern darin; Status und Eingabe bleiben sichtbar. Bearbeiten der Eingabe oder Tab-Vervollständigung kehrt zur neuesten Ausgabe zurück. `clear` und ein Benutzerwechsel leeren den Puffer. F4/Esc erhalten ihn; nach einer Auflösungsänderung wird er neu umgebrochen. Dies ist die lokale Textshell; `cosmos run --headless` ohne Anzeigeclient stellt weiterhin keine sichtbare Fernkonsole bereit.
 
-Die beiden mit Cosmos 3.0.94 ausgelieferten Bitmapfonts werden für die deutschen Zeichen und das Eurozeichen passend zugeordnet. Eigene Fonts benötigen eine eigene PSF-Zeichenzuordnung.
+Die beiden mit Cosmos ausgelieferten Bitmapfonts (geprüft mit 3.0.94) werden für die deutschen Zeichen und das Eurozeichen passend zugeordnet. Eigene Fonts benötigen eine eigene PSF-Zeichenzuordnung.
 
 ## Lizenz
 

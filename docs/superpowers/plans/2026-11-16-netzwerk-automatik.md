@@ -23,7 +23,7 @@
 
 ## Global Constraints
 
-- Regeln aus `AGENTS.md` gelten vollständig: Kommentare auf Deutsch, Zeilenenden und Schreibweise bestehender Dateien erhalten, keine `finally`-Blöcke auf Fehlerwegen (Cosmos 3.0.94 überspringt sie), `ResultErr`/`ResultObject<T>` verwenden.
+- Regeln aus `AGENTS.md` gelten vollständig: Kommentare auf Deutsch, Zeilenenden und Schreibweise bestehender Dateien erhalten, `finally`/`using` normal verwenden (seit Cosmos 3.0.95 laufen sie beim Unwind; Stand dieses Plans war 3.0.94), `ResultErr`/`ResultObject<T>` verwenden.
 - Kein `Console.ReadLine()`/`ReadKey()` und kein blockierender Aufruf in der Ereignisschleife. `INetworkService.Execute` wartet auf `CosmosNetworkService.Gate` und darf deshalb nur aus Hintergrundaufträgen laufen.
 - Cosmos-abhängige Dateien (`CosmosNetworkService.cs`, `Kernel.cs`, `DisplayService.cs`, `InteractiveSession.cs`) gehören nicht in den Hostbuild. Neue plattformunabhängige Dateien in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` einbinden.
 - Hosttests: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror`.

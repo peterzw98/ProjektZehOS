@@ -136,16 +136,9 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             byte[] buffer = new byte[BufferBytes];
             foreach (var file in package.Manifest.Files)
             {
-                var stream = new FileStream(Path.Combine(package.FilesDirectory, file.Path), FileMode.Open, FileAccess.Read);
                 bool intact;
-                // Ohne using (Cosmos-Unwindgrenze): Handle auch nach Lese- oder Abbruchfehler schliessen.
-                try { intact = Matches(stream, file, buffer, cancellation); }
-                catch (Exception)
-                {
-                    stream.Dispose();
-                    throw;
-                }
-                stream.Dispose();
+                using (var stream = new FileStream(Path.Combine(package.FilesDirectory, file.Path), FileMode.Open, FileAccess.Read))
+                    intact = Matches(stream, file, buffer, cancellation);
                 if (!intact) return Modified(file.Path);
             }
             return ResultErr.CreateSuccess();
@@ -199,14 +192,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         if (!supported.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(supported);
         var begun = Begin(manifest.Id);
         if (!begun.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(begun);
-        // Kein finally: Cosmos 3.0.94 ueberspringt finally beim Exception-Unwind (COSMOS_SUPPORT.md); die Sperre wird
-        // deshalb nach dem Abfangen auf jedem Weg ausdruecklich freigegeben.
-        ResultObject<PackageManifest> result;
-        try { result = Publish(source, prefix, parsed, signature.Value!, progress, cancellation); }
-        catch (OperationCanceledException) { result = ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, "Installation abgebrochen."); }
-        catch (Exception exception) { result = ResultObjectFactory.CreateFromException<PackageManifest>(exception); }
-        lock (gate) busy.Remove(manifest.Id);
-        return result;
+        try { return Publish(source, prefix, parsed, signature.Value!, progress, cancellation); }
+        catch (OperationCanceledException) { return ResultObjectFactory.CreateFailure<PackageManifest>(ResultCode.Failure, "Installation abgebrochen."); }
+        catch (Exception exception) { return ResultObjectFactory.CreateFromException<PackageManifest>(exception); }
+        finally { lock (gate) busy.Remove(manifest.Id); }
     }
 
     private ResultObject<PackageManifest> Publish(IPackageSource source, string prefix, ResultObject<PackageManifest> parsed, byte[] signature,
@@ -267,20 +256,16 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var digest = new Sha256Digest();
             ResultErr copied;
-            var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
-            var hashing = new HashingStream(stream, digest, count =>
+            HashingStream hashing;
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
             {
-                completed += count;
-                progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
-            });
-            // Ohne using (Cosmos-Unwindgrenze): die Datei muss auch nach Abbruch geschlossen sein, damit sie loeschbar ist.
-            try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
-            catch (Exception)
-            {
-                stream.Dispose();
-                throw;
+                hashing = new HashingStream(stream, digest, count =>
+                {
+                    completed += count;
+                    progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
+                });
+                copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation);
             }
-            stream.Dispose();
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
             progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
@@ -304,26 +289,20 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         if (!PackageManifest.IsValidId(id)) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Ungueltige Paketkennung.");
         var begun = Begin(id);
         if (!begun.IsOK()) return begun;
-        ResultErr result;
         string directory = Path.Combine(Apps, id);
         try
         {
-            if (!File.Exists(Path.Combine(directory, "active"))) result = ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
-            else
-            {
-                // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
-                File.Delete(Path.Combine(directory, "active"));
-                DeleteTree(directory);
-                result = ResultErr.CreateSuccess();
-            }
+            if (!File.Exists(Path.Combine(directory, "active"))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
+            // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
+            File.Delete(Path.Combine(directory, "active"));
+            DeleteTree(directory);
+            return ResultErr.CreateSuccess();
         }
         catch (Exception exception)
         {
-            result = ResultErr.CreateFailure(ResultCode.Failure, $"Paket {id} nicht vollstaendig entfernt: " + exception.Message);
+            return ResultErr.CreateFailure(ResultCode.Failure, $"Paket {id} nicht vollstaendig entfernt: " + exception.Message);
         }
-        // Kein finally (Cosmos-Unwindgrenze): Sperre nach dem Abfangen ausdruecklich freigeben.
-        lock (gate) busy.Remove(id);
-        return result;
+        finally { lock (gate) busy.Remove(id); }
     }
 
     public ResultObject<PackageCatalog> ReadCatalog()
@@ -504,21 +483,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
 
     private static byte[] ReadSmall(string path, int maximumBytes)
     {
-        var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
-        // Groesse pruefen und schliessen ohne Ausnahme durch einen using-Block (Cosmos-Unwindgrenze).
-        if (stream.Length > maximumBytes)
-        {
-            stream.Dispose();
-            throw new IOException(Path.GetFileName(path) + " ist zu gross.");
-        }
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        if (stream.Length > maximumBytes) throw new IOException(Path.GetFileName(path) + " ist zu gross.");
         byte[] bytes = new byte[stream.Length];
-        try { stream.ReadExactly(bytes); }
-        catch (Exception)
-        {
-            stream.Dispose();
-            throw;
-        }
-        stream.Dispose();
+        stream.ReadExactly(bytes);
         return bytes;
     }
 

@@ -53,15 +53,8 @@ internal sealed class PasswordHasher(Action<byte[]> fillSalt)
         {
             var generator = new Pkcs5S2ParametersGenerator(new Sha256Digest());
             generator.Init(bytes, salt, iterations);
-            byte[] result = ((KeyParameter)generator.GenerateDerivedMacParameters(256)).GetKey();
-            CryptographicOperations.ZeroMemory(bytes);
-            return result;
+            return ((KeyParameter)generator.GenerateDerivedMacParameters(256)).GetKey();
         }
-        catch
-        {
-            // Cosmos 3.0.94 fuehrt verschachteltes finally bei Ausnahmen nicht zuverlaessig aus.
-            CryptographicOperations.ZeroMemory(bytes);
-            throw;
-        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 }
