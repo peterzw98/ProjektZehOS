@@ -32,7 +32,7 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
-    public void Escape_WithMenuOpenedDuringAppCaptureClosesMenuOnly()
+    public void Escape_ClosesMenuOpenedDuringAppCaptureBeforeRecovery()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         var app = new CaptureProbeApp();
@@ -45,7 +45,7 @@ public sealed class DesktopTests
         while (app.Input.TryRead(out _)) { }
         var escape = new InputEvent(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape);
         Assert.IsTrue(desktop.HandleEscape(escape));
-        // CloseMenu setzt die Fenster zurueck; die App sieht nur dieses Reset, kein Esc.
+        // Das Menue hat den Fang schon beendet; geprueft wird vor allem, dass Esc das Menue schliesst statt zur Textshell zu fuehren.
         while (app.Input.TryRead(out var received)) Assert.AreNotEqual(WasmInputEventType.KeyDown, received.Type);
         Assert.IsFalse(desktop.CloseMenu());
         Assert.IsFalse(desktop.HandleEscape(escape));
