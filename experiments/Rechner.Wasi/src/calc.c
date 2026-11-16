@@ -42,11 +42,31 @@ static double parse_number(parser* p)
         p->position++;
     }
     if (digits == 0) { fail(p, "UNGUELTIGER AUSDRUCK"); return 0; }
+    // Ein Exponent entsteht nur beim Weiterrechnen mit einem Ergebnis wie "1e+12"; getippt wird er nicht.
+    int exponent = 0;
+    if (peek(p) == 'e')
+    {
+        p->position++;
+        int negative = peek(p) == '-';
+        if (peek(p) == '-' || peek(p) == '+') p->position++;
+        int exponent_digits = 0;
+        while (peek(p) >= '0' && peek(p) <= '9' && exponent_digits < 4)
+        {
+            exponent = exponent * 10 + (peek(p) - '0');
+            exponent_digits++;
+            p->position++;
+        }
+        if (exponent_digits == 0) { fail(p, "UNGUELTIGER AUSDRUCK"); return 0; }
+        if (negative) exponent = -exponent;
+    }
     // Ganzzahlige Mantisse durch eine Zehnerpotenz: bei hoechstens 15 Ziffern korrekt gerundet und
     // unabhaengig von strtod und Gebietsschema.
     double scale = 1;
     for (int i = 0; i < decimals; i++) scale *= 10;
-    return mantissa / scale;
+    double value = mantissa / scale;
+    for (; exponent > 0; exponent--) value *= 10;
+    for (; exponent < 0; exponent++) value /= 10;
+    return value;
 }
 
 static double parse_primary(parser* p)
@@ -65,27 +85,31 @@ static double parse_primary(parser* p)
     return parse_number(p);
 }
 
-static double parse_postfix(parser* p)
+static double parse_postfix(parser* p, int* percent)
 {
     double value = parse_primary(p);
-    while (peek(p) == '%') { p->position++; value /= 100; }
+    while (peek(p) == '%') { p->position++; value /= 100; *percent = 1; }
     return value;
 }
 
-static double parse_unary(parser* p)
+static double parse_unary(parser* p, int* percent)
 {
-    if (peek(p) == '-') { p->position++; return -parse_unary(p); }
-    if (peek(p) == '+') { p->position++; return parse_unary(p); }
-    return parse_postfix(p);
+    if (peek(p) == '-') { p->position++; return -parse_unary(p, percent); }
+    if (peek(p) == '+') { p->position++; return parse_unary(p, percent); }
+    return parse_postfix(p, percent);
 }
 
-static double parse_product(parser* p)
+// percent meldet, ob der Term genau ein Faktor mit "%" ist; nur dann gilt die Prozentregel bei + und -.
+static double parse_product(parser* p, int* percent)
 {
-    double value = parse_unary(p);
+    *percent = 0;
+    double value = parse_unary(p, percent);
     while (peek(p) == '*' || peek(p) == '/')
     {
         char op = p->text[p->position++];
-        double right = parse_unary(p);
+        int ignored = 0;
+        *percent = 0;
+        double right = parse_unary(p, &ignored);
         if (op == '/')
         {
             if (right == 0) { fail(p, "DIVISION DURCH 0"); return 0; }
@@ -98,11 +122,14 @@ static double parse_product(parser* p)
 
 static double parse_sum(parser* p)
 {
-    double value = parse_product(p);
+    int percent;
+    double value = parse_product(p, &percent);
     while (peek(p) == '+' || peek(p) == '-')
     {
         char op = p->text[p->position++];
-        double right = parse_product(p);
+        double right = parse_product(p, &percent);
+        // Wie bei ueblichen Taschenrechnern: "50+10%" sind 50 plus 10 % von 50.
+        if (percent) right *= value;
         value = op == '+' ? value + right : value - right;
     }
     return value;
@@ -140,13 +167,21 @@ static char last(const calc_state* state)
     return length > 0 ? state->input[length - 1] : 0;
 }
 
-// Beginn der letzten Zahl (Ziffern und Punkt) am Ende der Eingabe.
-static int number_start(const calc_state* state)
+// Beginn der Zahl, die bei end endet: Ziffern, Punkt und ein Exponent wie in "1e-05".
+static int number_begin(const char* text, int end)
 {
-    int i = length_of(state);
-    while (i > 0 && ((state->input[i - 1] >= '0' && state->input[i - 1] <= '9') || state->input[i - 1] == '.')) i--;
+    int i = end;
+    while (i > 0)
+    {
+        char c = text[i - 1];
+        if ((c >= '0' && c <= '9') || c == '.' || c == 'e') i--;
+        else if ((c == '+' || c == '-') && i >= 2 && text[i - 2] == 'e') i--;
+        else break;
+    }
     return i;
 }
+
+static int number_start(const calc_state* state) { return number_begin(state->input, length_of(state)); }
 
 static int append(calc_state* state, char c)
 {
@@ -254,7 +289,17 @@ void calc_clear(calc_state* state)
     state->evaluated = 0;
 }
 
-static int is_number_char(char c) { return (c >= '0' && c <= '9') || c == '.'; }
+// Index der "(", die zur ")" an Position close gehoert, sonst -1.
+static int matching_open(const char* text, int close)
+{
+    int depth = 0;
+    for (int i = close; i >= 0; i--)
+    {
+        depth += text[i] == ')' ? 1 : text[i] == '(' ? -1 : 0;
+        if (depth == 0) return i;
+    }
+    return -1;
+}
 
 void calc_negate(calc_state* state)
 {
@@ -265,26 +310,36 @@ void calc_negate(calc_state* state)
         state->result[0] = 0;
     }
     int end = length_of(state);
-    int closed = end > 0 && state->input[end - 1] == ')';
-    int stop = closed ? end - 1 : end;
-    int start = stop;
-    while (start > 0 && is_number_char(state->input[start - 1])) start--;
-    if (start == stop) return;
-    if (closed)
+    if (end == 0) return;
+    int start;
+    if (state->input[end - 1] == ')')
     {
-        // "(-x)" am Ende wird wieder zu "x".
-        if (start >= 2 && state->input[start - 1] == '-' && state->input[start - 2] == '(')
+        start = matching_open(state->input, end - 1);
+        if (start < 0) return;
+        // "(-x)" am Ende wird wieder zu "x"; das gilt fuer Zahlen und Klammerausdruecke.
+        if (state->input[start + 1] == '-')
         {
-            memmove(state->input + start - 2, state->input + start, (size_t)(stop - start));
-            state->input[stop - 2] = 0;
+            int inner = start + 2, inner_end = end - 1;
+            int number = number_begin(state->input, inner_end) == inner && inner < inner_end;
+            int group = state->input[inner] == '(' && matching_open(state->input, inner_end - 1) == inner;
+            if (number || group)
+            {
+                memmove(state->input + start, state->input + inner, (size_t)(inner_end - inner));
+                state->input[start + inner_end - inner] = 0;
+                return;
+            }
         }
-        return;
+    }
+    else
+    {
+        start = number_start(state);
+        if (start == end) return;
     }
     // "(-x)" statt einfachem Minus, damit "5*-3" und Punkt vor Strich eindeutig bleiben.
     if (end + 3 > CALC_MAX_INPUT) return;
-    char number[CALC_MAX_INPUT + 1];
-    snprintf(number, sizeof(number), "%s", state->input + start);
-    snprintf(state->input + start, sizeof(state->input) - (size_t)start, "(-%s)", number);
+    char tail[CALC_MAX_INPUT + 1];
+    snprintf(tail, sizeof(tail), "%s", state->input + start);
+    snprintf(state->input + start, sizeof(state->input) - (size_t)start, "(-%s)", tail);
 }
 
 void calc_evaluate(calc_state* state)

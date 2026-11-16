@@ -59,6 +59,16 @@ int main(void)
     expect_eval("2*(-3)", "-6");
     expect_eval("50%", "0.5");
     expect_eval("200*10%", "20");
+    // Prozent wie Windows/Android: Zu- und Abschlag beziehen sich auf den linken Wert.
+    expect_eval("50+10%", "55");
+    expect_eval("50-10%", "45");
+    expect_eval("200/50%", "400");
+    expect_eval("50+10%*2", "50.2");
+    expect_eval("(50+10%)*2", "110");
+    // Weiterrechnen mit Ergebnissen in Exponentenschreibweise.
+    expect_eval("1e+12+1", "1e+12");
+    expect_eval("1e-05*2", "2e-05");
+    expect_eval("1e", "FEHLER:UNGUELTIGER AUSDRUCK");
     expect_eval("((2+3)*(4-1))/5", "3");
     expect_eval("(1+2", "3");
     // Rundung: Binaerfehler verschwinden bei 12 signifikanten Stellen.
@@ -72,7 +82,7 @@ int main(void)
     // Fehlerzustaende.
     expect_eval("1/0", "FEHLER:DIVISION DURCH 0");
     expect_eval("1/(2-2)", "FEHLER:DIVISION DURCH 0");
-    expect_eval("1e5", "FEHLER:UNGUELTIGER AUSDRUCK");
+    expect_eval("1e5", "100000");
     expect_eval("1+", "FEHLER:UNGUELTIGER AUSDRUCK");
     expect_eval("()", "FEHLER:UNGUELTIGER AUSDRUCK");
     expect_eval("1)", "FEHLER:UNGUELTIGER AUSDRUCK");
@@ -94,6 +104,13 @@ int main(void)
     expect_keys("5N", "(-5)", "");
     expect_keys("5NN", "5", "");
     expect_keys("3*5N=", "3*(-5)", "-15");
+    expect_keys("(2+3)N", "(-(2+3))", "");
+    expect_keys("(2+3)NN", "(2+3)", "");
+    expect_keys("(2+3)N=", "(-(2+3))", "-5");
+    expect_keys("1000000*1000000=+1=", "1e+12+1", "1e+12");
+    expect_keys("1/100000=*2=", "1e-05*2", "2e-05");
+    expect_keys("1/100000=N", "(-1e-05)", "");
+    expect_keys("1/100000=NN", "1e-05", "");
     expect_keys("12+34E", "12+", "");
     expect_keys("12+34B", "12+3", "");
     expect_keys("12+34C", "", "");
