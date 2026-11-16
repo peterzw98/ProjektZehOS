@@ -1,0 +1,25 @@
+diff --git a/src/Core.h b/src/Core.h
+index 95be4acfa..3b78b9301 100644
+--- a/src/Core.h
++++ b/src/Core.h
+@@ -189,7 +189,19 @@ typedef cc_uint8  cc_bool;
+ /*#define CC_BUILD_GL11*/
+ 
+ #ifndef CC_BUILD_MANUAL
+-#if defined NXDK
++#if defined __ZEHOS__
++	/* ZehOS: WASIp1 unter wasm3, ein Faden, Software-Renderer, Paketdateien nur lesbar */
++	#define CC_BUILD_ZEHOS
++	#define CC_BUILD_COOPTHREADED
++	#define CC_BUILD_NOMUSIC
++	#define CC_BUILD_NOSOUNDS
++	#undef  CC_BUILD_FREETYPE
++	#undef  CC_BUILD_NETWORKING
++	#undef  CC_BUILD_PLUGINS
++	#undef  CC_BUILD_RESOURCES
++	#define DEFAULT_AUD_BACKEND CC_AUD_BACKEND_NULL
++	#define DEFAULT_GFX_BACKEND CC_GFX_BACKEND_SOFTMIN
++#elif defined NXDK
+ 	/* XBox also defines _WIN32 */
+ 	#define CC_BUILD_XBOX
+ 	#define CC_BUILD_CONSOLE
