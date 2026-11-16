@@ -5,7 +5,9 @@ namespace ProjektZeh.Security;
 
 internal static class CosmosSaltSource
 {
-    public static void Fill(byte[] bytes)
+    public static void Fill(byte[] bytes) => HardwareRandom.Fill(bytes, FillFromCpu, CosmosVirtioEntropyDriver.TryFill);
+
+    private static void FillFromCpu(byte[] bytes)
     {
         if (!X86Base.IsSupported) throw new HardwareRandomUnavailableException();
         var (seed, random) = HardwareRandom.Detect(X86Base.CpuId);
