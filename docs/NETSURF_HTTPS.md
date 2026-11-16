@@ -244,6 +244,41 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
 5. **Regression:** Shell-`fetch https://`, Paketquelle und HTTP-Seiten in NetSurf bleiben unverändert.
 6. **VMware:** getrennt ausweisen, solange nicht geprüft.
 
+## JavaScript und die HTTPS-Regeln
+
+**Status:** Patches vom 16. November 2026, gegen die Quellen von NetSurf 3.11 übersetzt (`gcc -fsyntax-only`,
+Bindungen mit nsgenbind erzeugt), aber noch nicht im Gast geprüft. Sie wirken erst, wenn der Build Duktape
+enthält und JavaScript eingeschaltet ist; Standard bleibt `enable_javascript:0`. Entschieden von laser am
+16. November 2026 (Policy a–e).
+
+NetSurfs Duktape-Bindungen navigieren in `Location.href`, `assign()` und `replace()` ohne Referer. Der Fetcher
+erkennt eine HTTPS-Herkunft aber nur am Referer, ohne ihn griffen weder die Mixed-Content-Sperre noch die
+Formularwarnung. Ein Skript hätte so getippte Felder per `location.href = 'http://…?feld=…'` unverschlüsselt
+senden können. Die Patches schließen das und begrenzen Rechenzeit und Timer:
+
+| Patch | Regel |
+|-------|-------|
+| `netsurf-zehos-js-navigation.patch` | JS-Navigationen tragen die Seite als Referer. Von HTTPS auf HTTP sind sie wie ein Meta-Refresh unverifizierbar; `fetch_http.c` blockiert sie deshalb ohne Knopf. HSTS-Ziele hebt llcache vorher auf HTTPS. Andere Schemata als `http`/`https` (etwa `data:`) sind per JS nicht erreichbar, sonst umginge eine eigene `data:`-Seite mit Formular die Warnung. |
+| `netsurf-zehos-js-schemes.patch` | Skripte laufen nur auf `http`- und `https`-Seiten, nie auf `data:`, `resource:` oder `about:`, also auch nicht auf den Warnseiten des Fetchers. Maßgeblich ist die URL nach Weiterleitungen. |
+| `netsurf-zehos-js-limits.patch` | Zeitlimit je Skriptaufruf 2 s statt 10 s; höchstens 64 offene Timer je Fenster, weitere `setTimeout`/`setInterval` liefern `undefined`. |
+| `netsurf-zehos-secure-cookie.patch` | Cookies mit `Secure` werden nur von `https`-Adressen angenommen, auch aus `Set-Cookie`. Sonst könnte eine `http://`-Seite oder ihr Skript ein sicheres Cookie setzen. |
+
+`document.cookie` liefert schon in 3.11 keine `HttpOnly`-Cookies und `Secure`-Cookies nur auf HTTPS-Seiten.
+Ein echter Formularversand per Skript ist nicht möglich, weil `HTMLFormElement` in 3.11 kein `submit()` bietet.
+Unterressourcen, die ein Skript in die Seite einfügt, lädt NetSurf mit der Seite als Referer; die
+Mixed-Content-Sperre sollte daher auch für sie greifen (nicht geprüft).
+
+**Grenzen:** Das Zeitlimit gilt je Aufruf. 64 Timer mit je 2 s können die App weiter dauerhaft belegen; der Desktop
+bleibt bedienbar, weil Wasm-Apps auf einem verdrängten Worker laufen, NetSurf selbst reagiert dann aber nur
+zwischen den Aufrufen. Ein Rechenbudget je Seite fehlt. Der Duktape-Heap hat kein eigenes Limit, nur die 256 MiB
+linearer Speicher der App. Ein Formular auf einer `data:`-Seite, die der Benutzer selbst über einen Link
+öffnet, sendet ohne Warnung, denn ihr Referer ist nicht HTTPS; das gilt auch ohne JavaScript.
+
+**Testszenarien** (für `host/run_tests.py`, sobald der Build Duktape enthält): Endlosschleife bricht nach etwa
+2 s ab und die Seite bleibt bedienbar; eine `setInterval`-Flut endet beim 65. Timer; `location.href` von
+HTTPS auf HTTP zeigt die Sperrseite und sendet nichts; `location.href` auf eine `data:`-URL navigiert nicht;
+ein Skript auf einer `data:`-Seite läuft nicht; `Secure`-Cookie von `http://` wird nicht gespeichert.
+
 ## Betroffene Dateien bei einer Umsetzung
 
 `ProjektZeh/Network/TlsTransport.cs`, `ProjektZeh/Runtime/Wasm/WasmNetwork.cs` und `CosmosWasmNetwork.cs`,

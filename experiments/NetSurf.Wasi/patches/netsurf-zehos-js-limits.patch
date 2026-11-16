@@ -1,0 +1,62 @@
+--- a/netsurf/content/handlers/javascript/duktape/Window.bnd
++++ b/netsurf/content/handlers/javascript/duktape/Window.bnd
+@@ -40,6 +40,24 @@ typedef struct window_schedule_s {
+ 	bool running;
+ } window_schedule_t;
+ 
++/* ZehOS: Obergrenze offener Timer je Fenster gegen eine Flut von
++ * setTimeout/setInterval; weitere Aufrufe liefern undefined. */
++#define ZEHOS_MAX_TIMERS 64
++
++static bool window_timer_limit_reached(window_private_t *window)
++{
++	window_schedule_t *sched = window->schedule_ring;
++	size_t count = 0;
++
++	if (sched != NULL) {
++		do {
++			count++;
++			sched = sched->r_next;
++		} while (sched != window->schedule_ring);
++	}
++	return count >= ZEHOS_MAX_TIMERS;
++}
++
+ static void window_remove_callback_bits(duk_context *ctx, size_t handle) {
+ 	/* stack is ... */
+ 	duk_push_global_object(ctx);
+@@ -521,6 +539,10 @@ method Window::setTimeout()
+ 	if (priv->closed_down == true) {
+ 		return 0; /* coerced to undefined */
+ 	}
++	if (window_timer_limit_reached(priv)) {
++		NSLOG(dukky, INFO, "ZehOS: Timerobergrenze erreicht");
++		return 0;
++	}
+ 
+ 	if (argc >= 2) {
+ 		timeout = duk_get_int(ctx, 1);
+@@ -541,6 +563,10 @@ method Window::setInterval()
+ 	if (priv->closed_down == true) {
+ 		return 0; /* coerced to undefined */
+ 	}
++	if (window_timer_limit_reached(priv)) {
++		NSLOG(dukky, INFO, "ZehOS: Timerobergrenze erreicht");
++		return 0;
++	}
+ 
+ 	if (argc >= 2) {
+ 		timeout = duk_get_int(ctx, 1);
+--- a/netsurf/content/handlers/javascript/duktape/dukky.c
++++ b/netsurf/content/handlers/javascript/duktape/dukky.c
+@@ -839,7 +839,9 @@ static void dukky_leave_thread(jsthread *thread)
+ 
+ duk_bool_t dukky_check_timeout(void *udata)
+ {
+-#define JS_EXEC_TIMEOUT_MS 10000 /* 10 seconds */
++/* ZehOS: 2 s statt 10 s, weil ein Aufruf die Oberfläche der App so lange
++ * anhält; wasm3 interpretiert, deshalb nicht knapper. */
++#define JS_EXEC_TIMEOUT_MS 2000
+ 	jsheap *heap = (jsheap *) udata;
+ 	uint64_t now;
+ 

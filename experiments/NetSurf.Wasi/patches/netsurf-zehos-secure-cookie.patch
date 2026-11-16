@@ -1,0 +1,17 @@
+--- a/netsurf/content/urldb.c
++++ b/netsurf/content/urldb.c
+@@ -3873,6 +3873,14 @@ bool urldb_set_cookie(const char *header, nsurl *url, nsurl *referer)
+ 			goto error;
+ 		}
+ 
++		/* ZehOS: Secure nur von https (wie RFC 6265bis), sonst könnte
++		 * eine http://-Seite oder ihr JS ein sicheres Cookie setzen. */
++		if (c->secure &&
++		    nsurl_get_scheme_type(url) != NSURL_SCHEME_HTTPS) {
++			urldb_free_cookie(c);
++			goto error;
++		}
++
+ 		/* 4.3.2:i Cookie path must be a prefix of URL path */
+ 		len = strlen(c->path);
+ 		if (len > lwc_string_length(path) ||
