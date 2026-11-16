@@ -110,11 +110,11 @@ public sealed class TerminalWorkspaceTests
     }
 
     [TestMethod]
-    public void GuestFontSize_ExpandsToolbarHitAreaAlongWithText()
+    public void GuestFontSize_ExpandsNewTabHitAreaAlongWithText()
     {
         var app = new TerminalWorkspaceApp(() => new ShellService(), new byte[16384], 16, 32);
         app.Start(); app.Resize(960, 600);
-        app.Handle(new(InputEventType.PointerDown, X: 10, Y: 60, Button: PointerButtons.Left));
+        app.Handle(new(InputEventType.PointerDown, X: 960 - 2 * 36 + 4, Y: 10, Button: PointerButtons.Left));
         Assert.AreEqual(2, app.TabCount);
         app.Close();
     }
@@ -136,9 +136,9 @@ public sealed class TerminalWorkspaceTests
         app.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.LeftShift));
         app.Draw(surface, 0, 0, 960, 600, true);
         // Schliessen-x der Suche nutzt dieselbe Akzentfarbe wie die Pfeile daneben.
-        Assert.AreEqual(pixels[99 * 960 + 880], pixels[99 * 960 + 940]);
-        Assert.AreNotEqual(pixels[99 * 960 + 862], pixels[99 * 960 + 940]);
-        app.Handle(new(InputEventType.PointerDown, X: 940, Y: 100, Button: PointerButtons.Left));
+        Assert.AreEqual(pixels[55 * 960 + 880], pixels[55 * 960 + 940]);
+        Assert.AreNotEqual(pixels[55 * 960 + 862], pixels[55 * 960 + 940]);
+        app.Handle(new(InputEventType.PointerDown, X: 940, Y: 56, Button: PointerButtons.Left));
         app.Handle(new(InputEventType.Text, Character: 'z'));
         Assert.AreEqual("z", app.ActiveTerminal.Editor.Text);
         app.Close();

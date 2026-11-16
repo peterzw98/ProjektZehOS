@@ -80,11 +80,11 @@ public sealed class DesktopTests
         desktop.OpenPong();
         var window = desktop.Windows.ActiveWindow!;
         desktop.Handle(new(InputEventType.PointerDown, X: window.ContentX + 20, Y: window.ContentY + 20, Button: PointerButtons.Right));
-        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
         Assert.IsFalse(desktop.CloseMenu());
-        desktop.Handle(new(InputEventType.PointerUp, X: 40, Y: 740, Button: PointerButtons.Right));
+        desktop.Handle(new(InputEventType.PointerUp, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Right));
         Assert.IsTrue(desktop.Windows.HasPointerCapture);
-        desktop.Handle(new(InputEventType.PointerUp, X: 40, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerUp, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
         Assert.IsFalse(desktop.Windows.HasPointerCapture);
     }
 
@@ -171,22 +171,50 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
-    public void KeyboardMenu_SpaceLaunch_DoesNotTypeSpaceIntoNewTerminal()
+    public void KeyboardMenu_EnterOnTile_StartsTerminalAndKeepsFocusThere()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: 59));
         desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
-        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
-        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Space));
-        desktop.Handle(new(InputEventType.Text, Character: ' '));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
         Assert.AreEqual(1, desktop.Windows.Count);
         var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
         Assert.AreEqual("", terminal.Editor.Text);
-        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Space));
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
         Assert.AreEqual("x", terminal.Editor.Text);
+    }
+
+    [TestMethod]
+    public void PowerButton_OpensSubmenu_EscapeClosesSubmenuBeforeMenu()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
+        // Ein/Aus rechts in der Fusszeile: Menue mittig 600 x 640, Knopf 44 px mit 24 px Rand, Fusszeile 64 px.
+        int powerX = (1024 - 600) / 2 + 600 - 24 - 22, powerY = 768 - 56 - 8 - 32;
+        desktop.Handle(new(InputEventType.PointerDown, X: powerX, Y: powerY, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerUp, X: powerX, Y: powerY, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsTrue(desktop.CloseMenu(), "Esc schliesst zuerst nur das Untermenue.");
+        Assert.AreEqual(0, desktop.Windows.Count);
+    }
+
+    [TestMethod]
+    public void ShiftF10_OnTile_TogglesDesktopShortcut()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F10));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.LeftShift));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        // Terminal liegt standardmaessig auf dem Desktop; der Eintrag entfernt es, ohne eine App zu starten.
+        CollectionAssert.DoesNotContain(desktop.Preferences.Settings.Shortcuts!, "Terminal");
+        Assert.AreEqual(0, desktop.Windows.Count);
     }
 
     [TestMethod]
@@ -197,12 +225,13 @@ public sealed class DesktopTests
         var window = desktop.Windows.ActiveWindow!;
         var terminal = ((TerminalWorkspaceApp)window.Application).ActiveTerminal;
         desktop.Handle(new(InputEventType.Text, Character: 'x'));
-        desktop.Handle(new(InputEventType.PointerDown, X: 320, Y: 740, Button: PointerButtons.Left));
+        int taskX = desktop.TaskBounds(0).X + 20;
+        desktop.Handle(new(InputEventType.PointerDown, X: taskX, Y: 740, Button: PointerButtons.Left));
         Assert.IsNull(desktop.Windows.ActiveWindow);
         Assert.IsTrue(window.IsMinimized);
-        desktop.Handle(new(InputEventType.PointerDown, X: 320, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerDown, X: taskX, Y: 740, Button: PointerButtons.Left));
         Assert.AreSame(window, desktop.Windows.ActiveWindow);
-        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
         Assert.IsTrue(desktop.CloseMenu());
         Assert.IsFalse(desktop.CloseMenu());
         Assert.AreEqual("x", terminal.Editor.Text);
@@ -238,7 +267,7 @@ public sealed class DesktopTests
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
         desktop.OpenTerminal();
         var terminal = ((TerminalWorkspaceApp)desktop.Windows.ActiveWindow!.Application).ActiveTerminal;
-        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
         desktop.Handle(new(InputEventType.Text, Character: 'z'));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
         Assert.AreEqual(1, desktop.Windows.Count);
@@ -255,9 +284,9 @@ public sealed class DesktopTests
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => { shells++; return new ShellService(); }, () => new FileService("/data"));
         Assert.AreEqual(0, desktop.Windows.Count);
         Assert.AreEqual(0, shells);
-        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Right));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Right));
         Assert.AreEqual(0, desktop.Windows.Count);
-        desktop.Handle(new(InputEventType.PointerDown, X: 40, Y: 740, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
         desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
         Assert.AreEqual(1, desktop.Windows.Count);
         while (desktop.OpenTerminal()) { }

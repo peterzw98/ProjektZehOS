@@ -14,6 +14,8 @@ internal sealed class UiButton(string label, Action activate) : UiControl
     public bool Selected { get; set; }
     /// <summary>Farbfeld statt Beschriftung, etwa fuer die Akzentauswahl.</summary>
     public int? Swatch { get; set; }
+    /// <summary>Flache Symbolschaltflaeche; die Beschriftung dient dann nur der Benennung.</summary>
+    public AppIcon? Icon { get; set; }
 
     public override void Handle(InputEvent value)
     {
@@ -35,6 +37,16 @@ internal sealed class UiButton(string label, Action activate) : UiControl
     {
         bool highlighted = active && Focused && Enabled || Selected;
         int inset = highlighted ? 2 : 1;
+        if (Icon is AppIcon icon)
+        {
+            // Ohne Flaeche wie in Windows 11; Fokus und Druck bleiben sichtbar.
+            if (highlighted || pressed)
+                UiPainter.RoundFrame(surface, x + Bounds.X, y + Bounds.Y, Bounds.Width, Bounds.Height, 8, inset,
+                    highlighted ? UiPainter.Accent : UiPainter.Border, pressed ? UiPainter.Selection : UiPainter.Muted);
+            AppIcons.Draw(surface, icon, x + Bounds.X + (Bounds.Width - AppIcons.Size) / 2, y + Bounds.Y + (Bounds.Height - AppIcons.Size) / 2,
+                Enabled ? UiPainter.Foreground : UiPainter.Secondary);
+            return;
+        }
         int fill = !Enabled ? UiPainter.Background
             : Primary ? (pressed ? UiPainter.Mix(UiPainter.Accent, UiPainter.Foreground, 80) : UiPainter.Accent)
             : pressed || Selected ? UiPainter.Selection : UiPainter.Muted;

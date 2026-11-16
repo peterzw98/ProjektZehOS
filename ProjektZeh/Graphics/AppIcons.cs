@@ -1,6 +1,6 @@
 namespace ProjektZeh.Graphics;
 
-internal enum AppIcon { Menu, Files, Terminal, Editor, Settings, Tasks, Pong, Network }
+internal enum AppIcon { Menu, Files, Terminal, Editor, Settings, Tasks, Pong, Network, Power }
 
 /// <summary>Einfache Liniensymbole, direkt mit den vorhandenen Zeichenfunktionen gezeichnet.</summary>
 internal static class AppIcons
@@ -46,6 +46,17 @@ internal static class AppIcons
                 Line(surface, x + 8, y + 2, x + 12, y + 18, color);
                 Line(surface, x + 12, y + 18, x + 15, y + 10, color);
                 Line(surface, x + 15, y + 10, x + 19, y + 10, color);
+                break;
+            case AppIcon.Power:
+                // Oben offener Ring als Achteck mit senkrechtem Strich.
+                Line(surface, x + 5, y + 4, x + 2, y + 8, color);
+                Line(surface, x + 2, y + 8, x + 2, y + 13, color);
+                Line(surface, x + 2, y + 13, x + 6, y + 18, color);
+                Line(surface, x + 6, y + 18, x + 13, y + 18, color);
+                Line(surface, x + 13, y + 18, x + 17, y + 13, color);
+                Line(surface, x + 17, y + 13, x + 17, y + 8, color);
+                Line(surface, x + 17, y + 8, x + 14, y + 4, color);
+                surface.FillRectangle(x + 9, y + 1, 2, 9, color);
                 break;
             case AppIcon.Pong:
                 surface.FillRectangle(x + 1, y + 3, 3, 13, color);
