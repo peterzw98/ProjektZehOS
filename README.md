@@ -141,7 +141,7 @@ disk unmount
 
 Mit `shutdown` ausschalten und mit demselben Startskript erneut öffnen oder mit `reboot` direkt neu starten. ZehOS versucht beim Start ausschließlich die vorhandene Partition von `sata0` unter `/data` einzubinden; es formatiert dabei nichts. Mit `cat /data/texte/hallo.txt` muss der zuvor gespeicherte Inhalt erscheinen. Beide Energieaktionen hängen ein eingebundenes Datenlaufwerk vorab mit Schreiben der Dateisystempuffer aus. Schlägt das Aushängen fehl, wird die Aktion abgebrochen und die Shell bleibt bedienbar. Ohne eingebundenes Datenlaufwerk sind beide Befehle ebenfalls verfügbar. Sie akzeptieren keine Argumente und verwenden die Energieverwaltung von Cosmos; die Unterstützung hängt von der Plattform ab. Vor einem manuellen Schließen der VM weiterhin `disk unmount` ausführen.
 
-Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos 3.0.94 vorgegebenen Optionen `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
+Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos vorgegebenen Optionen (geprüft mit 3.0.94) `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
 
 Mit `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-power-commands.ps1` werden beide Befehle in einer eigenen unsichtbaren QEMU-VM ohne Datenplatte geprüft. Nach `reboot` müssen ein zweiter Shellstart und ein laufender Gast nachweisbar sein; nach `shutdown` muss QEMU mit Exitcode 0 enden. Das ISO vorher bauen; ein anderes ISO lässt sich mit `-IsoPath` auswählen.
 
@@ -412,7 +412,7 @@ Zusätzliche Shellbefehle:
 | --- | --- |
 | `cp <Quelle> <Ziel>` / `mv <Quelle> <Ziel>` | Eine Datei kopieren / samt Rechten verschieben; vorhandene Ziele werden abgelehnt |
 | `rm <Datei>` / `rmdir <Verzeichnis>` | Eine Datei / ein leeres Verzeichnis löschen; kein rekursives Löschen |
-| `touch <Datei>` | Datei anlegen oder Inhalt erhalten; Cosmos 3.0.94 aktualisiert FAT-Zeitstempel noch nicht |
+| `touch <Datei>` | Datei anlegen oder Inhalt erhalten; Cosmos aktualisiert FAT-Zeitstempel noch nicht (geprüft mit 3.0.94) |
 | `find [Pfad] [Teilname]` | Lesbare Einträge rekursiv nach Teilnamen suchen, maximal 1.024 Einträge, keine Verknüpfungen |
 | `du [Pfad]` / `df [Pfad]` | Lesbare Inhaltsbytes summieren / tatsächliche Dateisystemkapazität und freien Platz anzeigen |
 | `head [-n Anzahl] [Datei]` / `tail [-n Anzahl] [Datei]` | Erste / letzte Zeilen, standardmäßig zehn |
@@ -434,7 +434,7 @@ Das vertikale Scrollrad bewegt den Inhalt unter dem Zeiger um drei Zeilen pro Ra
 
 Die Textshell ohne Desktop besitzt ebenfalls einen begrenzten Puffer von **256 Ausgabezeilen**. Scrollrad und Bildtasten blättern darin; Status und Eingabe bleiben sichtbar. Bearbeiten der Eingabe oder Tab-Vervollständigung kehrt zur neuesten Ausgabe zurück. `clear` und ein Benutzerwechsel leeren den Puffer. F4/Esc erhalten ihn; nach einer Auflösungsänderung wird er neu umgebrochen. Dies ist die lokale Textshell; `cosmos run --headless` ohne Anzeigeclient stellt weiterhin keine sichtbare Fernkonsole bereit.
 
-Die beiden mit Cosmos 3.0.94 ausgelieferten Bitmapfonts werden für die deutschen Zeichen und das Eurozeichen passend zugeordnet. Eigene Fonts benötigen eine eigene PSF-Zeichenzuordnung.
+Die beiden mit Cosmos ausgelieferten Bitmapfonts (geprüft mit 3.0.94) werden für die deutschen Zeichen und das Eurozeichen passend zugeordnet. Eigene Fonts benötigen eine eigene PSF-Zeichenzuordnung.
 
 ## Lizenz
 
