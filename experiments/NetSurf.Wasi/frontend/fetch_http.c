@@ -112,8 +112,11 @@ static nsurl *form_get_target;
  * "Erneut versuchen". Jeder solche Abruf mit HTTPS-Referer bekommt wieder die Warnung; bestätigt wird nur von der
  * data:-Warnseite aus. Ohne Frist, weil NetSurf die URL ebenso lange in current_parameters hält; die ältesten
  * Einträge fallen erst nach WARNED_MAX weiteren Warnungen heraus. Gespeichert wird nur ein Hash: Eintragen braucht
- * so keinen Speicher und kann auch bei Speichermangel nicht scheitern, eine Kollision bewirkt nur eine Warnung mehr. */
-#define WARNED_MAX 16
+ * so keinen Speicher und kann auch bei Speichermangel nicht scheitern, eine Kollision bewirkt nur eine Warnung mehr.
+ * Je Fenster ist höchstens ein Ziel über current_parameters/loading_parameters erreichbar und wird von der nächsten
+ * Warnung desselben Fensters ersetzt; verdrängen können nur Warnungen anderer Fenster (Frames, iframes). 256 Einträge
+ * (2 KiB) liegen weit über dem, was ein Formular-Frameset praktisch erzeugt. */
+#define WARNED_MAX 256
 static struct {
 	uint64_t hash[WARNED_MAX];
 	size_t count, next;

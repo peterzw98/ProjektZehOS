@@ -192,12 +192,14 @@ Werte nach WASI Preview 1 (`wasi-libc` `__errno_values.h`):
   nicht gespeichert; das Framebuffer-Frontend schreibt nur Cookies (`urldb_save_cookies`). Weil NetSurf über
   `current_parameters` das Ziel ohne Formularmarke erneut abrufen kann („Zurück“ auf einer Fehlerseite,
   `browser_window__reload_current_parameters`, ebenso „Erneut versuchen“), merkt sich der Fetcher die gewarnten
-  Ziele (Hash, 16 Einträge, ohne Frist) und warnt bei jedem Abruf mit HTTPS-Referer erneut. Den Referer liest er
+  Ziele (Hash, 256 Einträge, ohne Frist) und warnt bei jedem Abruf mit HTTPS-Referer erneut. Den Referer liest er
   aus `struct fetch`, weil NetSurf von HTTPS an HTTP keinen `Referer`-Kopf mitgibt. Bestätigt wird nur von der
   `data:`-Seite aus: Der Link beziehungsweise das Token löst genau einen Abruf aus, und von dort sendet NetSurf
   keinen `Referer`-Kopf, weil das Schema nicht passt (`get_referer_header` in `llcache.c`). Grenzen: Bei POST
-  steht das Token in der `data:`-URL (Adressleiste, History); es gilt nur einmal und höchstens 5 Minuten. Nach 16
-  weiteren Formularwarnungen fällt ein Ziel aus der Liste.
+  steht das Token in der `data:`-URL (Adressleiste, History); es gilt nur einmal und höchstens 5 Minuten. Nach 256
+  weiteren Formularwarnungen fällt ein Ziel aus der Liste; je Fenster ersetzt jede neue Warnung das dort
+  erreichbare Ziel, verdrängen können also nur Warnungen in anderen Fenstern (Frames, iframes). Kommt ein POST-Ziel
+  über „Zurück“ auf einer Fehlerseite zurück, gilt die Warnung einem GET-Abruf ohne Felder.
 - HSTS: NetSurfs vorhandenes `urldb` wertet `Strict-Transport-Security` aus HTTPS-Antworten aus und hebt
   `http://`-Adressen solcher Hosts in `llcache` auf HTTPS, nur im Speicher bis zum Beenden. Eine Weiterleitung auf
   so einen Host gilt deshalb nicht als Herabstufung (keine Warnseite).
