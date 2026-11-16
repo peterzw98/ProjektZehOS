@@ -19,8 +19,8 @@ for (int i = 2; i + 1 < args.Length; i += 2)
 {
     switch (args[i])
     {
-        case "--size": size = long.Parse(args[i + 1]); break;
-        case "--block-size": blockSize = uint.Parse(args[i + 1]); break;
+        case "--size": size = long.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--block-size": blockSize = uint.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--label": label = args[i + 1]; break;
         default: Console.Error.WriteLine("Unbekannte Option " + args[i]); return 2;
     }
