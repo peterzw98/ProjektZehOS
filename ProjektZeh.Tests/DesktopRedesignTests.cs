@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using ProjektZeh.Apps;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Apps.Settings;
 using ProjektZeh.Apps.TaskManager;
@@ -95,6 +96,28 @@ public sealed class DesktopRedesignTests
         Assert.AreEqual(initial, reads);
         desktop.Update(500);
         Assert.AreEqual(initial + 1, reads);
+    }
+
+    [TestMethod]
+    public void CapturedPointerReachesAppEvenOverNetworkTray()
+    {
+        var desktop = new Desktop(1920, 1080, new byte[4096], 8, 16, () => new ShellService(), () => new FileService(directory),
+            getNetwork: () => new(true, true, "10.0.2.15"));
+        var app = new CapturingApp();
+        desktop.Windows.Add(new Window("Capture", 10, 10, 400, 300, app));
+        Click(desktop, 1825, 1050);
+        Assert.AreEqual(1, app.PointerDowns);
+    }
+
+    private sealed class CapturingApp : IApplication
+    {
+        public int PointerDowns;
+        public bool CapturesPointer => true;
+        public void Start() { }
+        public void Handle(InputEvent value) { if (value.Type == InputEventType.PointerDown) PointerDowns++; }
+        public void Update(long milliseconds) { }
+        public void Draw(PixelSurface surface, int x, int y, int width, int height, bool active) { }
+        public void Close() { }
     }
 
     [TestMethod]

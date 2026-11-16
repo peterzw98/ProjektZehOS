@@ -41,11 +41,11 @@ def prepare_fixtures():
     config.write_text(f'''[ ca ]
 default_ca = local
 [ local ]
-database = {target}/index.txt
-new_certs_dir = {target}
-certificate = {target}/ca.pem
-private_key = {target}/ca.key
-serial = {target}/serial
+database = {target.as_posix()}/index.txt
+new_certs_dir = {target.as_posix()}
+certificate = {target.as_posix()}/ca.pem
+private_key = {target.as_posix()}/ca.key
+serial = {target.as_posix()}/serial
 default_md = sha256
 default_days = 3650
 policy = policy
@@ -323,7 +323,9 @@ def run(args):
                    '-vga', 'std', '-netdev', 'user,id=net0', '-device', 'e1000e,netdev=net0',
                    '-cdrom', str(args.iso.resolve()), '-boot', 'd', '-serial', f'file:{serial}',
                    '-monitor', 'none', '-display', 'none', '-action', 'shutdown=poweroff,reboot=reset']
-        share = args.qemu.resolve().parent / 'share' / 'qemu'
+        qemu_directory = args.qemu.resolve().parent
+        share = next((path for path in (qemu_directory / 'share' / 'qemu', qemu_directory.parent / 'share' / 'qemu')
+                      if path.is_dir()), qemu_directory / 'share' / 'qemu')
         if share.is_dir():
             command[1:1] = ['-L', str(share)]
         if disk:

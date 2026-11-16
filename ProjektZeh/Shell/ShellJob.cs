@@ -28,20 +28,21 @@ internal sealed class ShellJob(BackgroundTaskService tasks, string command, stri
             var started = tasks.Start(taskName, context => Run(work, context.Token));
             if (!started.IsOK()) { running = false; return started.Status; }
             taskId = started.Value;
-            output.WriteLine($"Laeuft ... Abbruch: {command} cancel");
-            return ResultErr.CreateSuccess();
         }
+        output.WriteLine($"Laeuft ... Abbruch: {command} cancel");
+        return ResultErr.CreateSuccess();
     }
 
     public ResultErr Cancel(ITextOutput output)
     {
+        ResultErr cancelled;
         lock (gate)
         {
             if (!running) return ResultErr.CreateFailure(ResultCode.Failure, $"Kein {label} laeuft.");
-            var cancelled = tasks.Cancel(taskId);
-            if (cancelled.IsOK()) output.WriteLine("Abbruch angefordert.");
-            return cancelled;
+            cancelled = tasks.Cancel(taskId);
         }
+        if (cancelled.IsOK()) output.WriteLine("Abbruch angefordert.");
+        return cancelled;
     }
 
     private void Run(Func<CancellationToken, string> work, CancellationToken token)

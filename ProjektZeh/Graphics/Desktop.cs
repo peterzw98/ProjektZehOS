@@ -385,6 +385,11 @@ internal sealed class Desktop
         }
         if ((alt && value.Type is InputEventType.KeyDown or InputEventType.Text) ||
             (suppressSpace && value.Type == InputEventType.Text && value.Character == ' ')) return;
+        if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerScroll)
+        {
+            Windows.Handle(value);
+            return;
+        }
         if (value.Type == InputEventType.PointerDown)
         {
             if (getNetwork != null && value.Button == PointerButtons.Left && TrayBounds.Contains(value.X, value.Y))
@@ -395,11 +400,6 @@ internal sealed class Desktop
                 return;
             }
             CloseNetworkFlyout();
-        }
-        if (Windows.HasPointerCapture && value.Type is InputEventType.PointerMove or InputEventType.PointerDown or InputEventType.PointerUp or InputEventType.PointerScroll)
-        {
-            Windows.Handle(value);
-            return;
         }
         if (value.Type == InputEventType.PointerDown && value.Button == PointerButtons.Left)
         {
