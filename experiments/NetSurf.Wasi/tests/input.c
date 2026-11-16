@@ -70,10 +70,14 @@ int main(void) {
     assert(zehos_set_geometry(&surface, 800, 600, NSFB_FMT_ANY) == 0 && surface.width == ZEHOS_WIDTH);
     assert(zehos_initialise(&surface) == 0);
     surface.clip.x1 = ZEHOS_WIDTH;
+    for (size_t i = 0; i < (size_t)ZEHOS_WIDTH * ZEHOS_HEIGHT * 4; i++) surface.ptr[i] = 0x5a;
     assert(zehos_set_geometry(&surface, 640, 400, NSFB_FMT_ANY) == 0);
+    // Keine alten Bildpunkte mit falscher Zeilenlaenge nach dem Groessenwechsel.
+    for (size_t i = 0; i < (size_t)640 * 400 * 4; i++) assert(surface.ptr[i] == 0);
     assert(surface.width == 640 && surface.height == 400 && surface.linelen == 640 * 4 && surface.clip.x1 == 640);
     assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
     assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
+    for (size_t i = 0; i < (size_t)1920 * 1200 * 4; i += 4099) assert(surface.ptr[i] == 0);
     surface.ptr[(size_t)1920 * 1200 * 4 - 1] = 1; // Puffer deckt das ganze neue Bild ab (ASan/Valgrind).
     zehos_finalise(&surface);
     puts("NetSurf input PASS");

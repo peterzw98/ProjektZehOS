@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "libnsfb.h"
 #include "libnsfb_plot.h"
@@ -258,6 +259,9 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
     if (width == nsfb->width && height == nsfb->height) return 0;
     uint8_t *buffer = realloc(nsfb->ptr, (size_t)width * height * 4);
     if (buffer == NULL) return -1;
+    // realloc behaelt die alten Bildpunkte mit der alten Zeilenlaenge; bis NetSurf neu zeichnet, waeren sie schraeg
+    // versetzt sichtbar. Leer ist der Rest schwarz statt verzerrt.
+    memset(buffer, 0, (size_t)width * height * 4);
     nsfb->ptr = buffer;
     nsfb->width = width;
     nsfb->height = height;
