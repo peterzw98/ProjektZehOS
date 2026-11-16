@@ -91,7 +91,7 @@ Einzelne Übertragungen sind auf 64 KiB begrenzt. Häufige Fehler sind `EBADF` (
 
 | Code | Bedeutung |
 | --- | --- |
-| `ENOSYS` (52) | sofort aus `net_open`: UTC-Uhr unplausibel, kein Hardwarezufall (RDRAND/RDSEED) oder Wurzelbundle nicht lesbar |
+| `ENOSYS` (52) | sofort aus `net_open`: UTC-Uhr unplausibel, kein Hardwarezufall (RDRAND/RDSEED/virtio-rng) oder Wurzelbundle nicht lesbar |
 | `EPERM` (63) | aus `net_status`: Zertifikat abgelehnt (Kette, Name, Gültigkeit, Verwendungszweck) |
 | `EPROTO` (65) | aus `net_status`, `net_send` oder `net_recv`: sonstiger TLS-Fehler oder Alert des Servers |
 | `ECONNRESET` (15) | Verbindung endet ohne `close_notify`, im Handshake oder nach den bereits gelieferten Daten |
@@ -104,7 +104,7 @@ Nach `close_notify` meldet `net_recv` EOF wie bei TCP. Endet die Verbindung ohne
 | --- | --- |
 | Konsole | `fd_write` nur auf stdout/stderr. stderr wird gesammelt; die letzte Zeile erscheint bei Exitcode ≠ 0 im Fenster. |
 | Argumente, Umgebung | `argv` ist nur `["app"]`, die Umgebung ist leer. |
-| Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
+| Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND, sonst virtio-rng; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
 | Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
 | Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
 
