@@ -15,6 +15,12 @@ uint32_t zehos_ticks_ms(void) { return 0; }
 void zehos_sleep_ms(uint32_t ms) { }
 int32_t zehos_should_exit(void) { return 0; }
 
+static bool reset_clip(nsfb_t *nsfb, nsfb_bbox_t *clip) {
+    nsfb_bbox_t full = {0, 0, nsfb->width, nsfb->height};
+    nsfb->clip = full;
+    return clip == NULL;
+}
+
 static bool send(int type, int code, int x, int y, nsfb_event_t *event) {
     int32_t raw[4] = {type, code, x, y};
     return translate(raw, event);
@@ -55,6 +61,21 @@ int main(void) {
     count = 0;
     while (take_pending(&event)) count++;
     assert(count == 32);
+    assert(send(EV_RESIZE, 0, 1024, 700, &event));
+    assert(event.type == NSFB_EVENT_RESIZE && event.value.resize.w == 1024 && event.value.resize.h == 700);
+    nsfb_plotter_fns_t plotters = { .set_clip = reset_clip };
+    nsfb_t surface = { .plotter_fns = &plotters };
+    assert(zehos_defaults(&surface) == 0);
+    // Die Startanfrage von NetSurf (vor nsfb_init) aendert die Startgroesse nicht.
+    assert(zehos_set_geometry(&surface, 800, 600, NSFB_FMT_ANY) == 0 && surface.width == ZEHOS_WIDTH);
+    assert(zehos_initialise(&surface) == 0);
+    surface.clip.x1 = ZEHOS_WIDTH;
+    assert(zehos_set_geometry(&surface, 640, 400, NSFB_FMT_ANY) == 0);
+    assert(surface.width == 640 && surface.height == 400 && surface.linelen == 640 * 4 && surface.clip.x1 == 640);
+    assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
+    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
+    surface.ptr[(size_t)1920 * 1200 * 4 - 1] = 1; // Puffer deckt das ganze neue Bild ab (ASan/Valgrind).
+    zehos_finalise(&surface);
     puts("NetSurf input PASS");
     return 0;
 }
