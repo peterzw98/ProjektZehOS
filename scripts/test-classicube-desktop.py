@@ -100,6 +100,9 @@ def main():
         memory_mark = guest.mark()
         start()
         state = world("welt")
+        # Measure_ZehOS.c meldet alle 5 s Bildrate und Anteile oben rechts; zwei Berichtsfenster abwarten.
+        time.sleep(12)
+        state = view(capture("messung"))
         # Klick in den Inhalt startet den Zeigerfang (relative Maus, poll_event Typ 9).
         guest.qmp.click(33+399, 120+259, *guest.size)
         guest.qmp.hold("w", 1.5)
@@ -128,6 +131,8 @@ def main():
                 world(f"neustart-{run}")
             mark = guest.mark()
             guest.qmp.click(812+28*run, 100+28*run, *guest.size)
+            time.sleep(2)
+            capture(f"schliessen-{run}")
             guest.wait_finished("classicube", mark)
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"

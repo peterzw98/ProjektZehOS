@@ -28,6 +28,8 @@ def main() -> int:
     parser.add_argument("--wasi-sdk", type=Path, default=ROOT / ".tools" / "wasi-sdk-25.0-x86_64-windows")
     parser.add_argument("--build-dir", type=Path, default=ROOT / ".tools" / "classicube-build")
     parser.add_argument("--output", type=Path, default=HERE / "bin" / "classicube.wasm")
+    # SoftMin hat keinen Alphatest (Schrift und Oberflaeche werden zu Balken); nur zum Vergleich der Rasterkosten.
+    parser.add_argument("--gfx", choices=["softgpu", "softmin"], default="softgpu")
     args = parser.parse_args()
 
     head = subprocess.run(["git", "-C", str(args.source), "rev-parse", "HEAD"], capture_output=True, text=True)
@@ -52,7 +54,7 @@ def main() -> int:
     sources += sorted(str(path) for path in (HERE / "platform").glob("*.c"))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(clang), "--target=wasm32-wasip1", f"--sysroot={args.wasi_sdk / 'share' / 'wasi-sysroot'}",
-               "-O2", "-D__ZEHOS__", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
+               "-O2", "-D__ZEHOS__", f"-DCC_GFX_BACKEND=CC_GFX_BACKEND_{args.gfx.upper()}", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
                "-Wno-everything", "-I", str(build / "src"),
                # Ohne Abbildung landen absolute Baupfade (Benutzername) ueber __FILE__ im Paket.
                f"-ffile-prefix-map={build}=/classicube", f"-ffile-prefix-map={HERE}=/zehos",
