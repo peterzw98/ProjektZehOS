@@ -52,7 +52,7 @@ Ziel: Einzelspieler im Fenster, Welt nur im Speicher, ohne Kernelerweiterung.
 - [ ] Freies Texturpaket wählen, Lizenz belegen, ins Paket legen.
 - [ ] Limits einhalten: Modul höchstens 64 MiB, höchstens 256 MiB Speicher, Paket höchstens 128 MiB, 1 MiB Wasm-Stack. Speichermangel und Traps beenden nur die App mit sichtbarer Ursache.
 - [ ] Paket nach `docs/PACKAGE_FORMAT.md`: Paket-ID festlegen, Manifest ohne `capability=net` (erst Etappe 6), Lizenz- und Quellenangaben im Paket, Menüeintrag. Lokal mit Testschlüssel bauen und installieren (nie der Herausgeberschlüssel).
-- [ ] Gastprüfung als Skript (Muster `scripts/test-netsurf-desktop.py`): Start aus dem Menü, Welt erzeugt, Bewegung, Blick per Maus, Block setzen/entfernen, Beenden über Fenster, drei Starts mit Schließen und jeweils freiem Speicher (wie beim Doom-Langlauf).
+- [ ] Gastprüfung als Skript (Muster `scripts/test-netsurf-desktop.py`): Start aus dem Menü, Welt erzeugt, Bewegung, Blick per Maus, Block setzen/entfernen, Beenden über Fenster, drei Starts mit Schließen und jeweils freiem Speicher (wie beim Doom-Langlauf). In QEMU; VMware zusätzlich, sonst ausdrücklich als offen nennen.
 - [ ] **Messung** mit der Messung aus Etappe 1 (falls schon vorhanden) oder ClassiCube-eigenen Zeiten: Bilder/s bei fester Fenstergröße, Dauer der Weltgenerierung, Anteil Rasterisierung vs. Spiellogik. Ergebnis mit Datum dokumentieren.
 - [ ] `ROADMAP.md` um einen Abschnitt für das Spiel ergänzen (Ziel, Abnahme, Stand).
 - [ ] Veröffentlichung: neue Paketversion und höhere Katalog-Generation per PR in `packages`, Merge nur auf ausdrücklichen Auftrag.
@@ -112,7 +112,9 @@ Ziel: Rechenlastige Apps laufen nahezu nativ.
 ## Etappe 6: Mehrspieler (1–2 Wochen)
 
 - [ ] Classic-Protokoll über die vorhandene Netz-ABI (`capability=net`, höchstens vier Verbindungen, 64 KiB Puffer) anbinden; neue Paketversion mit Netzberechtigung.
-- [ ] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops.
+- [ ] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops. In QEMU; VMware, soweit dort Netz verfügbar ist, sonst als offen nennen.
+
+**Fertig, wenn:** Zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, und Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
 ## Risiken
 
