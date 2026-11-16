@@ -59,7 +59,7 @@ kommen in Bildkoordinaten an. Scharf, also 1:1, ist es nur bei genau passender G
 Fensters; Taskleiste und andere Fenster reagieren dann nicht auf die Maus. Bewegungen kommen nur noch als Typ 9;
 aufeinanderfolgende Deltas werden addiert. Maustasten (5/6) zählen überall und tragen auf das Bild begrenzte
 Koordinaten; Tasten und Rad bleiben unverändert. Esc, Fokusverlust,
-Fensterwechsel, F4 und Schließen geben den Zeiger frei; Esc erreicht die App trotzdem als Taste. Nach der Freigabe
+Fensterwechsel, F4 und Schließen geben den Zeiger frei; bei eingefangenem Zeiger erreicht Esc die App als Taste. Ein weiteres Esc führt zur Textshell. Nach der Freigabe
 kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
 Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
 eine App, die ihn importiert, startet dort nicht. **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
@@ -119,7 +119,7 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
 - **Beenden:** Eine App, die `should_exit()` nie abfragt, lässt sich nicht beenden. Das Paket bleibt dann bis zum Neustart gesperrt (kein Entfernen, kein Upgrade). Die Hauptschleife muss die Abfrage enthalten.
 - **Keine Speicherstände:** Apps können nichts dauerhaft speichern.
 - **Tasten:**
-  - Esc ist für die Textshell reserviert, F4 für den Wechsel zwischen Desktop und Textshell. Doom legt sein Menü deshalb auf Backspace.
+  - Esc gibt bei eingefangener Maus den Zeiger frei und erreicht Doom; danach führt Esc zur Textshell. F4 wechselt jederzeit zwischen Desktop und Textshell. Doom bietet Backspace zusätzlich für sein Menü.
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.
 - **Pause:** Ist das Fenster nicht aktiv oder nicht sichtbar, blockiert `present` und `ticks_ms` steht still.
 - **Fehler:** Ein Trap (ungültiger Speicherzugriff, falscher indirekter Aufruf) beendet nur die App; das Fenster zeigt die Ursache. Ein Fehler im Interpreter oder Host kann trotzdem den Kernel treffen. Das ist eine logische Grenze, keine Prozessisolation.

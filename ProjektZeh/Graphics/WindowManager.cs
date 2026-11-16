@@ -24,6 +24,7 @@ internal sealed class WindowManager
     /// <summary>Sichtbarer virtueller Desktop; Fenster anderer Desktops bleiben geoeffnet, werden aber nicht gezeichnet.</summary>
     public int CurrentWorkspace { get; private set; }
     public bool HasPointerCapture => moving != null || pointerCapture != null || AppCapture != null;
+    public bool HasAppPointerCapture => AppCapture != null;
 
     // Eine App mit eingefangenem Zeiger bekommt jede Bewegung und jeden Klick, auch ausserhalb ihres Inhalts.
     private Window? AppCapture => ActiveWindow is { } window && IsShown(window) && window.Application.CapturesPointer ? window : null;

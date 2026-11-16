@@ -52,7 +52,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 {
                     if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape)
                     {
-                        if (!display!.CloseMenu()) LeaveGraphics();
+                        try { if (!display!.HandleEscape(value)) LeaveGraphics(); }
+                        catch (Exception exception) { FailGraphics("Eingabe", exception); }
                     }
                     else
                     {

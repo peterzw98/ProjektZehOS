@@ -242,6 +242,16 @@ internal sealed class Desktop
         return true;
     }
 
+    public bool HandleEscape(InputEvent value)
+    {
+        // Ein gehaltenes Esc darf nach der Zeigerfreigabe keinen zweiten Wechsel ausloesen.
+        if (value.IsRepeat) return true;
+        if (CloseMenu()) return true;
+        if (!Windows.HasAppPointerCapture) return false;
+        Windows.Handle(value);
+        return true;
+    }
+
     public void Suspend()
     {
         display?.Revert();

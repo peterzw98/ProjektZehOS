@@ -19,7 +19,7 @@ python scripts/build-package.py catalog --key <privater-Schlüssel.pem> --repo <
 
 Das Paket enthält ein GPL-2.0-or-later-Binary. Wer es veröffentlicht, muss die Quellen bereitstellen: doomgeneric am genannten Commit, `platform/` und `build.py`.
 
-Tastenbelegung (PS/2-Set-1 → Doom): Pfeile bzw. W/S laufen, Pfeile links/rechts drehen, A/D seitwärts, Strg schießen, Leertaste benutzen, Shift rennen, Ziffern Waffen, Enter, Tab Karte. **Backspace öffnet das Doom-Menü**, weil Esc in ZehOS der Rückweg zur Textshell bleibt.
+Tastenbelegung (PS/2-Set-1 → Doom): Pfeile bzw. W/S laufen, Pfeile links/rechts drehen, A/D seitwärts, Strg schießen, Leertaste benutzen, Shift rennen, Ziffern Waffen, Enter, Tab Karte. **Esc** gibt bei eingefangener Maus den Zeiger frei und öffnet das Doom-Menü; ein weiteres Esc führt zur Textshell. **Backspace** öffnet das Doom-Menü auch bei freiem Zeiger.
 
 `I_Quit` und `I_Error` werden per Linker (`--wrap`) in der Plattformschicht ersetzt: Die Originale rufen eine per Cast registrierte Exitfunktion auf, die Wasm als Typfehler abbricht, und `I_Quit` beendet in doomgeneric nicht.
 

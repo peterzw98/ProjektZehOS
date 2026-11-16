@@ -51,8 +51,8 @@ static unsigned char translate(uint8_t code)
         case 42: case 54: return KEY_RSHIFT;
         case 28: return KEY_ENTER;
         case 15: return KEY_TAB;
-        // Esc bleibt in ZehOS der Rueckweg zur Textshell; Backspace oeffnet deshalb das Doom-Menue.
-        case 14: return KEY_ESCAPE;
+        // Backspace erreicht das Menue auch bei bereits freigegebenem Zeiger.
+        case 1: case 14: return KEY_ESCAPE;
         default: break;
     }
     if (code >= 59 && code <= 68) return (unsigned char)(KEY_F1 + (code - 59));
@@ -109,10 +109,12 @@ static void poll_mouse(void)
                 break;
             // Esc (Tastencode 1) oder Fokusverlust geben im Kernel frei; ebenso zeigt es die erste absolute Bewegung.
             case EVENT_KEY_DOWN:
-                if (event[1] == 1) mouse_captured = 0;
+                if (event[1] == 1) { mouse_captured = 0; mouse_buttons = 0; changed = 1; }
                 break;
             case EVENT_POINTER_MOVE:
                 mouse_captured = 0;
+                mouse_buttons = 0;
+                changed = 1;
                 break;
             case EVENT_RESET:
                 mouse_captured = 0;
