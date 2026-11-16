@@ -23,7 +23,8 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   reboot   Installation, Neustart mit Anmeldung, Start der App und von Doom (erneute Pruefung) nach dem Neustart.
   upgrade  Installation, Katalog mit hoeherer Generation, pkg upgrade auf 1.1.0, Start.
   corrupt  Server liefert eine veraenderte testapp.wasm; die Installation muss mit Pruefsummenfehler scheitern.
-Gruppen: quick = remove upgrade corrupt (fuer jede Aenderung), all = alle Szenarien (vor dem PR).
+  minkernel  testapp 1.1.0 verlangt ZehOS 99.0.0; pkg upgrade muss ablehnen, danach startet testapp (Fotos: 1.0.0).
+Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien (vor dem PR).
 """
 
 import argparse
@@ -50,8 +51,8 @@ TEST_USER, TEST_PASSWORD = "tester", "testkennwort1"
 # Deutsche Tastaturbelegung des Gasts (DEStandardLayout); QMP sendet physische US-Tastenpositionen.
 SHIFTED = {":": "dot", "/": "7", "_": "slash"}
 PLAIN = {" ": "spc", ".": "dot", "-": "slash", "y": "z", "z": "y"}
-SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt"]
-GROUPS = {"quick": ["remove", "upgrade", "corrupt"], "all": SCENARIOS}
+SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel"]
+GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS}
 # Bei Aenderungen am Vorbereitungsablauf erhoehen, damit alte Snapshots nicht weiterverwendet werden.
 SNAPSHOT_FORMAT = "1"
 SNAPSHOTS = ROOT / ".tools" / "guest-snapshots"
@@ -677,8 +678,23 @@ def scenario_corrupt(guest: Guest, args: argparse.Namespace, fixtures: Path, rep
     guest.shot("corrupt-rejected")
 
 
+def scenario_minkernel(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
+    guest.use_source()
+    guest.pkg("install testapp", "testapp 1.0.0 installiert.")
+    repository.directory = fixtures / "repo-minkernel"
+    guest.update_catalog()
+    guest.pkg("upgrade", "testapp 1.1.0 braucht ZehOS 99.0.0")
+    guest.qmp.line("pkg list")
+    time.sleep(1)
+    guest.shot("minkernel-rejected")
+    guest.desktop()
+    guest.start_app("testapp")
+    guest.shot("testapp-still-1.0.0")
+    guest.quit_testapp()
+
+
 RUN = {"full": scenario_full, "remove": scenario_remove, "reboot": scenario_reboot, "upgrade": scenario_upgrade,
-       "corrupt": scenario_corrupt}
+       "corrupt": scenario_corrupt, "minkernel": scenario_minkernel}
 
 
 def catalog_generation(repo: Path) -> int:
@@ -699,13 +715,13 @@ def build_fixtures(args: argparse.Namespace, target: Path) -> Path:
     # Gleiche Generation wie das Doom-Repository: der Gast nimmt sie an, auch wenn er dessen Katalog schon kennt.
     generation = catalog_generation(args.repo)
 
-    def add_testapp(destination: Path, version: str) -> None:
+    def add_testapp(destination: Path, version: str, *extra: str) -> None:
         wasm = target / f"testapp-{version}.wasm"
         subprocess.run([str(clang), "--target=wasm32-wasip1", f"--sysroot={args.wasi_sdk / 'share' / 'wasi-sysroot'}",
                         "-O2", "-Wall", "-Wextra", "-Werror", f"-DTESTAPP_COLOR={TESTAPP_COLORS[version]}", "-o", str(wasm),
                         str(ROOT / "scripts" / "guest-testapp" / "testapp.c")], check=True)
         subprocess.run([*tool, "package", "--key", str(args.key), "--repo", str(destination), "--id", "testapp",
-                        "--version", version, "--name", "Testapp", "--entry", "testapp.wasm", f"{wasm}=testapp.wasm"],
+                        "--version", version, "--name", "Testapp", "--entry", "testapp.wasm", *extra, f"{wasm}=testapp.wasm"],
                        check=True, stdout=subprocess.DEVNULL)
 
     add_testapp(repo, "1.0.0")
@@ -714,6 +730,13 @@ def build_fixtures(args: argparse.Namespace, target: Path) -> Path:
     shutil.copytree(repo, upgrade)
     add_testapp(upgrade, "1.1.0")
     subprocess.run([*tool, "catalog", "--key", str(args.key), "--repo", str(upgrade), "--generation", str(generation + 1)],
+                   check=True, stdout=subprocess.DEVNULL)
+    # Eine Version, die kein Kernel erfuellt. Der Gastlauf prueft die Ablehnungsmeldung; dass keine Datei geladen
+    # wird und 1.0.0 aktiv bleibt, belegen die Hosttests, hier nur pkg list und der Start auf den Bildschirmfotos.
+    minkernel = target / "repo-minkernel"
+    shutil.copytree(repo, minkernel)
+    add_testapp(minkernel, "1.1.0", "--min-kernel", "99.0.0")
+    subprocess.run([*tool, "catalog", "--key", str(args.key), "--repo", str(minkernel), "--generation", str(generation + 1)],
                    check=True, stdout=subprocess.DEVNULL)
     shutil.copytree(repo / "testapp" / "1.0.0", target / "disk" / "pkgs" / "testapp" / "1.0.0")
     return target

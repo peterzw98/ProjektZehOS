@@ -62,7 +62,7 @@ Koordinaten; Tasten und Rad bleiben unverändert. Esc, Fokusverlust,
 Fensterwechsel, F4 und Schließen geben den Zeiger frei; bei eingefangenem Zeiger erreicht Esc die App als Taste. Ein weiteres Esc führt zur Textshell. Nach der Freigabe
 kommen wieder absolute Bewegungen (Typ 4), daran erkennt die App sie; bei Fokusverlust zusätzlich ein Reset.
 Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import fehlt in Kerneln vor 0.2.22;
-eine App, die ihn importiert, startet dort nicht. **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
+eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen). **Grenze:** Die Deltas entstehen aus Bildschirmpositionen. QEMU
 und VMware liefern mit dem Tablet ein absolutes Zeigegerät; die Bewegung endet deshalb am Rand des Gastbildschirms
 beziehungsweise des Hostfensters (Tablet), nicht am Fensterrand. Der Desktopzeiger bleibt sichtbar.
 
@@ -136,8 +136,10 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
 3. Einen Arbeitsbranch von `packages` abzweigen (etwa `git worktree add -b pakete/doom-1.1.0 ../pakete origin/packages`) und darin eine **neue** Version bauen. Veröffentlichte Versionen sind unveränderlich; jede Änderung braucht eine höhere Version.
 
    ```bash
-   python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <packages-Worktree> --id <id> --version <x.y.z> --name "<Name>" --entry <app.wasm> <datei>=<pfad> ...
+   python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <packages-Worktree> --id <id> --version <x.y.z> --name "<Name>" --entry <app.wasm> --min-kernel <x.y.z> <datei>=<pfad> ...
    ```
+
+   `--min-kernel` nennt die ZehOS-Version, die den neuesten verwendeten Import eingeführt hat (die Hostfunktionen oben nennen sie). Ohne neuere Importe kann der Parameter entfallen. Kernel ab 0.3.0 lehnen Installation, Upgrade und Start mit einer Meldung ab, wenn sie älter als dieser Wert sind. Kernel vor 0.3.0 kennen das Feld nicht und verwerfen jedes Manifest mit `min-kernel`, auch wenn sie die Importe hätten; Einzelheiten in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
 4. Den Katalog mit **höherer Generation** neu signieren. Das Werkzeug lehnt eine gleiche oder kleinere ab.
 

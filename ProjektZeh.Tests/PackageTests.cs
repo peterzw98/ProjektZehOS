@@ -60,7 +60,19 @@ public sealed class PackageTests
         return PackageTrust.Sha256Hex(manifest);
     }
 
-    private PackageStore Store() => new(Path.Combine(work, "store"), Trust);
+    private static readonly ProjektZeh.Update.UpdateVersion Kernel = new(0, 3, 0);
+
+    private PackageStore Store(ProjektZeh.Update.UpdateVersion? kernel = null) => new(Path.Combine(work, "store"), Trust, kernel ?? Kernel);
+
+    // Ergaenzt ein veroeffentlichtes Manifest um die Mindest-Kernelversion, signiert neu und liefert den neuen Hash.
+    private static string RequireKernel(string directory, string version)
+    {
+        string path = Path.Combine(directory, "manifest");
+        byte[] manifest = Encoding.UTF8.GetBytes(File.ReadAllText(path).Replace("entry=app.wasm\n", $"entry=app.wasm\nmin-kernel={version}\n"));
+        File.WriteAllBytes(path, manifest);
+        File.WriteAllBytes(Path.Combine(directory, "manifest.sig"), Sign(manifest));
+        return PackageTrust.Sha256Hex(manifest);
+    }
 
     private DirectoryPackageSource Source(string name) => new DirectoryPackageSource(Path.Combine(work, name));
 
@@ -94,6 +106,32 @@ public sealed class PackageTests
             network.Replace("capability=net\n", "capability=net\ncapability=net\n"),
             valid.Replace("end\n", "capability=net\nend\n"),
             "zehos-package 1\nid=x\nversion=1.0.0\nruntime=zehos-wasm32-v1\nname=X\nentry=app.wasm\ncapability=net\n"
+        }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
+    }
+
+    [TestMethod]
+    public void ManifestMinimumKernelIsOptionalAndCanonical()
+    {
+        string valid = Manifest("doom", "1.1.0", ("app.wasm", [1]));
+        Assert.IsNull(PackageManifest.Parse(Encoding.UTF8.GetBytes(valid)).Value!.MinimumKernel);
+        string required = valid.Replace("entry=app.wasm\n", "entry=app.wasm\nmin-kernel=0.3.0\n");
+        var parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(required));
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.AreEqual("0.3.0", parsed.Value!.MinimumKernel.ToString());
+        Assert.IsFalse(parsed.Value.AllowsNetwork);
+        string both = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=net\nmin-kernel=0.3.0\n");
+        var network = PackageManifest.Parse(Encoding.UTF8.GetBytes(both));
+        Assert.IsTrue(network.IsOK(), network.Status.Message);
+        Assert.IsTrue(network.Value!.AllowsNetwork);
+        Assert.AreEqual("0.3.0", network.Value.MinimumKernel.ToString());
+        foreach (string invalid in new[]
+        {
+            required.Replace("min-kernel=0.3.0", "min-kernel=0.3"),
+            required.Replace("min-kernel=0.3.0", "min-kernel="),
+            required.Replace("min-kernel=0.3.0", "min-kernel=v0.3.0"),
+            required.Replace("min-kernel=0.3.0\n", "min-kernel=0.3.0\nmin-kernel=0.3.0\n"),
+            valid.Replace("entry=app.wasm\n", "entry=app.wasm\nmin-kernel=0.3.0\ncapability=net\n"),
+            valid.Replace("end\n", "min-kernel=0.3.0\nend\n"),
         }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
     }
 
@@ -213,7 +251,38 @@ public sealed class PackageTests
         StringAssert.Contains(store.Install(Source("repo"), "", null, CancellationToken.None).Status.Message, "Paketsignatur");
         File.Delete(Path.Combine(repo, "files", "app.wasm"));
         Assert.IsFalse(store.Install(Source("repo"), "", null, CancellationToken.None).IsOK());
-        Assert.IsFalse(new PackageStore(Path.Combine(work, "store"), null).ReadInstalled().IsOK(), "Ohne Schluessel keine Pakete.");
+        Assert.IsFalse(new PackageStore(Path.Combine(work, "store"), null, Kernel).ReadInstalled().IsOK(), "Ohne Schluessel keine Pakete.");
+    }
+
+    [TestMethod]
+    public void RejectsPackageForNewerKernelWithoutTouchingInstalledVersion()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("v1"), "", Publish(Path.Combine(work, "v1"), "doom", "1.0.0"), CancellationToken.None).IsOK());
+        Publish(Path.Combine(work, "v2"), "doom", "1.1.0");
+        string tooNew = RequireKernel(Path.Combine(work, "v2"), "0.3.1");
+        var rejected = store.Install(Source("v2"), "", tooNew, CancellationToken.None);
+        StringAssert.Contains(rejected.Status.Message, "braucht ZehOS 0.3.1");
+        StringAssert.Contains(rejected.Status.Message, "0.3.0");
+        Assert.AreEqual("1.0.0", store.ReadInstalled().Value!.Single().Manifest.Version.ToString());
+        Assert.IsFalse(Directory.Exists(Path.Combine(work, "store", "apps", "doom", "1.1.0")), "Abgelehnte Version legt nichts an.");
+
+        Publish(Path.Combine(work, "v2"), "doom", "1.1.0");
+        string matching = RequireKernel(Path.Combine(work, "v2"), "0.3.0");
+        Assert.IsTrue(store.Install(Source("v2"), "", matching, CancellationToken.None).IsOK(), "Gleiche Kernelversion genuegt.");
+        Assert.AreEqual("0.3.0", store.ReadInstalled().Value!.Single().Manifest.MinimumKernel.ToString());
+    }
+
+    [TestMethod]
+    public void InstalledPackageForNewerKernelDoesNotStartAfterKernelDowngrade()
+    {
+        Publish(Path.Combine(work, "repo"), "doom", "1.1.0");
+        string hash = RequireKernel(Path.Combine(work, "repo"), "0.3.0");
+        Assert.IsTrue(Store().Install(Source("repo"), "", hash, CancellationToken.None).IsOK());
+        var older = Store(new ProjektZeh.Update.UpdateVersion(0, 2, 24));
+        StringAssert.Contains(older.Acquire("doom").Status.Message, "braucht ZehOS 0.3.0");
+        Assert.AreEqual(1, older.ReadInstalled().Value!.Length, "Das Paket bleibt sichtbar und entfernbar.");
+        Assert.IsTrue(older.Remove("doom").IsOK(), "Ein abgelehnter Start haelt keine Sperre.");
     }
 
     [TestMethod]
@@ -411,7 +480,7 @@ public sealed class PackageTests
             StringAssert.Contains(user.Execute(arguments, output).Message, "Administrator", string.Join(' ', arguments));
         Assert.IsTrue(user.Execute(["list"], output).IsOK());
         Assert.IsFalse(user.Execute(["bogus"], output).IsOK());
-        var keyless = new Shell.PackageShellCommands(new PackageStore(Path.Combine(work, "store"), null), _ => throw new InvalidOperationException(),
+        var keyless = new Shell.PackageShellCommands(new PackageStore(Path.Combine(work, "store"), null, Kernel), _ => throw new InvalidOperationException(),
             path => ProjektZeh.Shared.ResultObjectFactory.CreateSuccess(path), tasks, () => true).Commands.Single();
         StringAssert.Contains(keyless.Execute(["install", "doom"], output).Message, "Paketschluessel");
     }

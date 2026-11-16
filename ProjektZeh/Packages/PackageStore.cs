@@ -20,7 +20,7 @@ internal sealed record InstalledPackage(PackageManifest Manifest, string Directo
 /// aktiven Version. Nur der Marker veroeffentlicht eine Version; ein unvollstaendiges Versionsverzeichnis ist nie startbar.
 /// Eine zweite Installed-Datenbank gibt es nicht: Marker plus signiertes Manifest sind maszgeblich.
 /// </summary>
-internal sealed class PackageStore(string root, PackageTrust? trust)
+internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersion kernel)
 {
     private const int BufferBytes = 64 * 1024;
     private const string NewSuffix = ".new";
@@ -94,6 +94,9 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
             var active = ReadActive(id);
             if (!active.IsOK()) return active;
             if (active.Value == null) return ResultObjectFactory.CreateFailure<InstalledPackage>(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
+            // Nach einer Kernelrueckstufung liegt eine neuere Paketversion vor, deren Hostfunktionen fehlen koennen.
+            var supported = RequireKernel(active.Value.Manifest);
+            if (!supported.IsOK()) return ResultObjectFactory.CreateFailure<InstalledPackage>(supported);
             inUse[id] = inUse.GetValueOrDefault(id) + 1;
             return active;
         }
@@ -184,6 +187,9 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         var parsed = PackageManifest.Parse(manifestBytes.Value!);
         if (!parsed.IsOK()) return parsed;
         var manifest = parsed.Value!;
+        // Vor jedem Dateizugriff pruefen: Eine abgelehnte Version laedt nichts und laesst die installierte unberuehrt.
+        var supported = RequireKernel(manifest);
+        if (!supported.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(supported);
         var begun = Begin(manifest.Id);
         if (!begun.IsOK()) return ResultObjectFactory.CreateFailure<PackageManifest>(begun);
         // Kein finally: Cosmos 3.0.94 ueberspringt finally beim Exception-Unwind (COSMOS_SUPPORT.md); die Sperre wird
@@ -267,6 +273,12 @@ internal sealed class PackageStore(string root, PackageTrust? trust)
         File.WriteAllBytes(Path.Combine(target, "manifest.sig"), signature);
         return ResultErr.CreateSuccess();
     }
+
+    private ResultErr RequireKernel(PackageManifest manifest) =>
+        manifest.MinimumKernel is { } required && required.CompareTo(kernel) > 0
+            ? ResultErr.CreateFailure(ResultCode.Failure,
+                $"{manifest.Id} {manifest.Version} braucht ZehOS {required} oder neuer; laufender Kernel ist {kernel}. Zuerst ZehOS aktualisieren.")
+            : ResultErr.CreateSuccess();
 
     /// <summary>Entfernt nur die eigenen Paketdateien; Benutzerdaten liegen nicht im Paketbestand.</summary>
     public ResultErr Remove(string id)
