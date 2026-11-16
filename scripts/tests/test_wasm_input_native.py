@@ -89,6 +89,18 @@ def random_module(pointer, length, read_first=False):
             + section(10, b"\x01" + leb(len(code)) + code))
 
 
+def net_module(name, args):
+    def const(value):
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    code = b"\x00" + b"".join(map(const, args)) + b"\x10\x00\x0b"
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x02\x60" + leb(len(args)) + b"\x7f" * len(args) + b"\x01\x7f\x60\x00\x01\x7f")
+            + section(2, b"\x01" + string("zehos_v1") + string(name) + b"\x00\x00")
+            + section(3, b"\x01\x01") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00\x01")
+            + section(10, b"\x01" + leb(len(code)) + code))
+
+
 class NativeInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -128,6 +140,34 @@ class NativeInputTests(unittest.TestCase):
         status = self.lib.zehos_wasm_run(data, len(data), b"run", 100000, 65536, 65536,
                                          ctypes.byref(value), message, len(message))
         return status, value.value, message.value.decode()
+
+    def test_network_checks_guest_ranges_before_host_call(self):
+        cases = (
+            ("net_open", (65535, 2, 80, 0, 128)),
+            ("net_open", (0, 4, 80, 0, 65533)),
+            ("net_send", (1, 65535, 2, 128)),
+            ("net_send", (1, 0, 4, 0xfffffffe)),
+            ("net_recv", (1, 0xffffffff, 2, 128)),
+            ("net_recv", (1, 0, 4, 65533)),
+        )
+        for name, args in cases:
+            with self.subTest(name=name, args=args):
+                self.lib.net_test_reset()
+                status, _, message = self.execute(net_module(name, args))
+                self.assertEqual(status, 5, message)
+                self.assertIn("out of bounds", message.lower())
+                self.assertEqual(self.lib.net_test_calls(), 0)
+
+    def test_network_unaligned_valid_buffers_reach_host(self):
+        for name, args, expected in (("net_open", (1, 4, 80, 0, 7), 2),
+                                     ("net_send", (1, 1, 4, 7), 8),
+                                     ("net_recv", (1, 1, 4, 7), 8)):
+            with self.subTest(name=name):
+                self.lib.net_test_reset()
+                status, value, message = self.execute(net_module(name, args))
+                self.assertEqual(status, 0, message)
+                self.assertEqual(value, expected)
+                self.assertEqual(self.lib.net_test_calls(), 1)
 
     def test_valid_unaligned_and_last_sixteen_bytes_copy_all_fields(self):
         for pointer in (1, 65520):

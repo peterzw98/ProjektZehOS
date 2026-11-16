@@ -37,6 +37,7 @@ end
 - `name`: Anzeigename im Startmenü, 1–32 druckbare ASCII-Zeichen, ohne Leerzeichen am Rand.
 - `file`: höchstens 128 Zeilen, ordinal nach Pfad sortiert, zusammen höchstens 128 MiB. Pfadkomponenten bestehen nur aus `A–Z a–z 0–9 . _ -`, Trenner ist `/`. Abgelehnt werden leere Komponenten, `.`, `..`, abschließende Punkte und Pfade, die sich nur in Groß-/Kleinschreibung unterscheiden (FAT32).
 - `entry`: eine der gelisteten Dateien, Endung `.wasm`.
+- `capability=net`: optionale einzelne Zeile direkt nach `entry`; sie erlaubt Netzwerkzugriff über `zehos_v1`. Ohne diese Zeile ist der Zugriff gesperrt. Unbekannte oder wiederholte Fähigkeiten werden abgelehnt. Die Berechtigung umfasst auch localhost und private LAN-Ziele und ist von der Paketsignatur gedeckt. Das Paketwerkzeug setzt sie mit `--network`.
 
 Die Signatur deckt genau die gespeicherten Bytes ab; ZehOS serialisiert Manifeste nie neu.
 

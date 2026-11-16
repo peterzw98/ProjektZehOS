@@ -17,6 +17,7 @@ internal interface IWasmSession
 {
     /// <summary>Ordner, auf den die Anwendung lesend als "/" zugreift; null sperrt Dateizugriffe.</summary>
     string? Root { get; }
+    bool AllowsNetwork { get; }
     void Write(int fd, ReadOnlySpan<byte> data);
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
     int PollKey();
@@ -43,6 +44,7 @@ internal static unsafe class WasmRuntime
     private static readonly Dictionary<int, FileStream> files = [];
     private static Thread? worker;
     private static IWasmSession? current;
+    private static WasmNetworkSession? network;
     private static int nextHandle;
     private static uint[] indexedFrame = [];
 
@@ -148,6 +150,7 @@ internal static unsafe class WasmRuntime
         int value = 0;
         int code;
         current = session;
+        network = new WasmNetworkSession(new CosmosWasmNetworkConnector(), session.AllowsNetwork);
         WaitedMilliseconds = 0;
         try
         {
@@ -157,13 +160,25 @@ internal static unsafe class WasmRuntime
                 code = NativeRun(bytes, (uint)module.Length, name, gas, WasmStackBytes, MemoryLimitBytes, &value, text, 256);
             }
         }
-        finally
+        catch (Exception exception)
         {
-            current = null;
-            // Die C-Schicht schliesst offene Dateien selbst; dies faengt nur Reste nach Fehlern ab.
-            foreach (var stream in files.Values) stream.Dispose();
-            files.Clear();
+            code = (int)WasmStatus.Trap;
+            value = 0;
+            byte[] failure = Encoding.ASCII.GetBytes(exception.Message);
+            int count = Math.Min(failure.Length, 255);
+            for (int i = 0; i < count; i++) text[i] = failure[i];
+            text[count] = 0;
         }
+        current = null;
+        int networkCleanup = network.CloseAll();
+        network = null;
+        foreach (var stream in files.Values)
+        {
+            try { stream.Dispose(); }
+            catch (Exception) { code = (int)WasmStatus.Trap; }
+        }
+        files.Clear();
+        if (networkCleanup != WasmNetworkError.Success) code = (int)WasmStatus.Trap;
         result = value;
         message = Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
         return (WasmStatus)code;
@@ -174,6 +189,56 @@ internal static unsafe class WasmRuntime
         int* result, byte* message, uint messageLength);
 
     // Hostrueckrufe der C-Schicht. Ausnahmen duerfen die native Grenze nicht ueberqueren.
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_net_open")]
+    private static int HostNetOpen(byte* host, uint length, int port, int flags, int* handle)
+    {
+        try
+        {
+            if (length > 253) return WasmNetworkError.Invalid;
+            var bytes = new ReadOnlySpan<byte>(host, (int)length);
+            foreach (byte value in bytes) if (value > 127) return WasmNetworkError.Invalid;
+            int status = network?.Open(Encoding.ASCII.GetString(bytes), port, flags, out *handle) ?? WasmNetworkError.Access;
+            return status;
+        }
+        catch (Exception) { return WasmNetworkError.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_net_status")]
+    private static int HostNetStatus(int handle)
+    {
+        try { return network?.Status(handle) ?? WasmNetworkError.BadHandle; }
+        catch (Exception) { return WasmNetworkError.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_net_send")]
+    private static int HostNetSend(int handle, byte* data, uint length, int* count)
+    {
+        try
+        {
+            if (length > WasmNetworkSession.MaximumTransferBytes) return WasmNetworkError.Invalid;
+            return network?.Send(handle, new ReadOnlySpan<byte>(data, (int)length), out *count) ?? WasmNetworkError.BadHandle;
+        }
+        catch (Exception) { return WasmNetworkError.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_net_recv")]
+    private static int HostNetReceive(int handle, byte* data, uint length, int* count)
+    {
+        try
+        {
+            if (length > WasmNetworkSession.MaximumTransferBytes) return WasmNetworkError.Invalid;
+            return network?.Receive(handle, new Span<byte>(data, (int)length), out *count) ?? WasmNetworkError.BadHandle;
+        }
+        catch (Exception) { return WasmNetworkError.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_net_close")]
+    private static int HostNetClose(int handle)
+    {
+        try { return network?.Close(handle) ?? WasmNetworkError.BadHandle; }
+        catch (Exception) { return WasmNetworkError.Io; }
+    }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_write")]
     private static void HostWrite(int fd, byte* data, uint length)

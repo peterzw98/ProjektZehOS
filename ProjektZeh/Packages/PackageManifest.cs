@@ -26,11 +26,12 @@ internal sealed class PackageManifest
     public UpdateVersion Version { get; }
     public string Name { get; }
     public string Entry { get; }
+    public bool AllowsNetwork { get; }
     public PackageFile[] Files { get; }
     public byte[] Bytes { get; }
 
-    private PackageManifest(string id, UpdateVersion version, string name, string entry, PackageFile[] files, byte[] bytes) =>
-        (Id, Version, Name, Entry, Files, Bytes) = (id, version, name, entry, files, bytes);
+    private PackageManifest(string id, UpdateVersion version, string name, string entry, bool allowsNetwork, PackageFile[] files, byte[] bytes) =>
+        (Id, Version, Name, Entry, AllowsNetwork, Files, Bytes) = (id, version, name, entry, allowsNetwork, files, bytes);
 
     public static ResultObject<PackageManifest> Parse(byte[] bytes)
     {
@@ -46,7 +47,10 @@ internal sealed class PackageManifest
         if (!Field(lines[3], "runtime", out string runtime) || runtime != Runtime) return Invalid("Nicht unterstuetztes Laufzeitprofil.");
         if (!Field(lines[4], "name", out string name) || !IsValidName(name)) return Invalid("Ungueltiger Anzeigename.");
         if (!Field(lines[5], "entry", out string entry)) return Invalid("Einstiegspunkt fehlt.");
-        int count = lines.Length - 8;
+        bool allowsNetwork = lines.Length > 6 && lines[6] == "capability=net";
+        int fileStart = allowsNetwork ? 7 : 6;
+        int count = lines.Length - fileStart - 2;
+        if (count < 0) return Invalid("Manifestende fehlt.");
         if (count > MaximumFiles) return Invalid("Mehr als 128 Dateien.");
         var files = new PackageFile[count];
         // FAT32 unterscheidet keine Gross-/Kleinschreibung; zwei solche Namen wuerden dieselbe Datei treffen.
@@ -54,7 +58,7 @@ internal sealed class PackageManifest
         long total = 0;
         for (int index = 0; index < count; index++)
         {
-            if (!Field(lines[6 + index], "file", out string value)) return Invalid("Ungueltige Dateizeile.");
+            if (!Field(lines[fileStart + index], "file", out string value)) return Invalid("Ungueltige Dateizeile.");
             string[] parts = value.Split(' ');
             if (parts.Length != 3 || parts[0].Length != 64 || !IsLowerHex(parts[0]) || !TryParseSize(parts[1], out long size) || !IsValidPath(parts[2]))
                 return Invalid("Ungueltige Dateizeile.");
@@ -67,7 +71,7 @@ internal sealed class PackageManifest
         if (lines[^2] != "end") return Invalid("Manifestende fehlt.");
         if (!entry.EndsWith(".wasm", StringComparison.Ordinal) || Array.FindIndex(files, file => file.Path == entry) < 0)
             return Invalid("Einstiegspunkt ist keine gelistete Wasm-Datei.");
-        return ResultObjectFactory.CreateSuccess(new PackageManifest(id, version, name, entry, files, bytes));
+        return ResultObjectFactory.CreateSuccess(new PackageManifest(id, version, name, entry, allowsNetwork, files, bytes));
     }
 
     public static bool IsValidId(string id)

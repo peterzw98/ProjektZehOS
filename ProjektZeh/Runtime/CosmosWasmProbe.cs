@@ -168,6 +168,7 @@ internal static class CosmosWasmProbe
         private readonly Stopwatch clock = Stopwatch.StartNew();
         public StringBuilder Output { get; } = new();
         public string? Root => root;
+        public bool AllowsNetwork => false;
         public int Frames { get; private set; }
         public int FirstTic { get; private set; } = -1;
         public int LastTic { get; private set; }
