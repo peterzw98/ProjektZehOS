@@ -19,7 +19,9 @@ def check_file(path, patterns):
     )
     for name in upstream_files:
         for encoding in ('utf-8', 'utf-16-le', 'utf-16-be'):
-            data = data.replace((upstream_root + name).encode(encoding), b'')
+            terminator = b'\0' if encoding == 'utf-8' else b'\0\0'
+            allowed = (upstream_root + name).encode(encoding) + terminator
+            data = data.replace(allowed, b'\0' * len(allowed))
     return not any(value.encode(encoding) in data for value in patterns
                    for encoding in ('utf-8', 'utf-16-le', 'utf-16-be'))
 
