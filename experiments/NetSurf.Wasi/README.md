@@ -70,22 +70,34 @@ Annahmen:
 
 ## Ohne VM prüfen
 
-`host/zehos_host_linux.c` stellt `zehos_v1` als WAMR-Native-Bibliothek bereit. Es schreibt jedes Bild als PPM, liefert Ereignisse aus einer Datei und meldet `should_exit` nach einer festen Zeit. `iwasm` muss mit `-rdynamic` gebaut sein, damit die Bibliothek die WAMR-Funktionen findet.
+Der Prüfhost `zehos-wasm3` übersetzt denselben wasm3-Kern (`ProjektZeh/ThirdParty/wasm3`) und dieselbe Importbindung (`ProjektZeh/Native/Wasm/host/zehos_wasm.c`) wie der Kernel, mit dessen Grenzen: 1 MiB Wasm-Stack, 256 MiB Speicher, 7 MiB natives Budget auf einem 8-MiB-Thread, kein Gas. Er prüft also dasselbe Parsen, dieselben Wasm-Features (Exception-Handling nur als exnref) und dieselben Gastprüfungen. `host/zehos_host_wasm3.c` liefert nur die Linux-Seite der WASI-Rückrufe (Paketordner nur lesend) und den Start; `host/zehos_host_core.c` bildet `zehos_v1` nach. Er schreibt jedes Bild als PPM, liefert Ereignisse aus einer Datei und meldet `should_exit` nach einer festen Zeit. Exitcode ist der des Gasts, bei einem Loaderfehler 100 plus `ZEHOS_WASM_*`-Status (etwa 105 Trap).
+
+```bash
+W=ProjektZeh/ThirdParty/wasm3/source
+gcc -O2 -Dd_m3MaxNativeStack=7340032 -I$W -Iexperiments/NetSurf.Wasi/host $W/*.c ProjektZeh/Native/Wasm/host/zehos_wasm.c \
+  experiments/NetSurf.Wasi/host/zehos_host_core.c experiments/NetSurf.Wasi/host/zehos_host_wasm3.c \
+  -o .tools/netsurf-host/zehos-wasm3 -lssl -lcrypto -lm -lpthread
+ZEHOS_NET=1 ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 .tools/netsurf-host/zehos-wasm3 \
+  experiments/NetSurf.Wasi/bin/package experiments/NetSurf.Wasi/bin/package/netsurf.wasm
+```
+
+Automatische Szenarien (Klick, Reset, kaputter Link, Rad, Adressleiste mit Pos1/Entf) prüfen das letzte Bild anhand der Markerfarben der Testseiten:
+
+```bash
+python3 experiments/NetSurf.Wasi/host/run_tests.py --wasm3 .tools/netsurf-host/zehos-wasm3
+```
+
+Optional bleibt der WAMR-Weg: `host/zehos_host_linux.c` stellt `zehos_v1` als Native-Bibliothek für `iwasm` bereit (`iwasm` mit `-rdynamic` gebaut). WAMR führt Exception-Handling nur im Legacy-Format aus; ein Modul mit exnref, etwa mit setjmp/longjmp über `--translate-to-exnref`, lädt dort nicht. Dieser Weg prüft deshalb nur Module ohne Exception-Handling.
 
 ```bash
 cd .tools/netsurf-host
 cmake -S wamr/product-mini/platforms/linux -B build-iwasm -DCMAKE_BUILD_TYPE=Release \
   -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIB_PTHREAD=0 -DCMAKE_EXE_LINKER_FLAGS=-rdynamic
 cmake --build build-iwasm -j
-gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c -o libzehos_host.so -lssl -lcrypto
-ZEHOS_NET=1 ZEHOS_PPM=frame.ppm ZEHOS_EXIT_MS=8000 ./build-iwasm/iwasm --native-lib=$PWD/libzehos_host.so \
-  --map-dir=/::../../experiments/NetSurf.Wasi/bin/package --stack-size=1048576 \
-  ../../experiments/NetSurf.Wasi/bin/package/netsurf.wasm
-```
-
-Automatische Szenarien (Klick, Reset, kaputter Link, Rad, Adressleiste mit Pos1/Entf) prüfen das letzte Bild anhand der Markerfarben der Testseiten:
-
-```bash
+gcc -O2 -shared -fPIC -Iwamr/core/iwasm/include -I../../experiments/NetSurf.Wasi/host \
+  ../../experiments/NetSurf.Wasi/host/zehos_host_linux.c ../../experiments/NetSurf.Wasi/host/zehos_host_core.c \
+  -o libzehos_host.so -lssl -lcrypto
+cd ../..
 python3 experiments/NetSurf.Wasi/host/run_tests.py --iwasm .tools/netsurf-host/build-iwasm/iwasm \
   --host .tools/netsurf-host/libzehos_host.so
 ```
