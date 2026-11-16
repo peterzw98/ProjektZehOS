@@ -192,6 +192,8 @@ class Bridge(discord.Client):
                         delay = 5
                         for irc_channel in IRC_CHANNELS:
                             self.send_irc(f"JOIN {irc_channel}")
+                            # Topics (Projekt je Kanal) setzt der Koordinator; ohne Fehlerfolge, falls die Bridge kein Op ist
+                            self.send_irc(f"MODE {irc_channel} -t")
                         print("IRC connected", flush=True)
                     elif command == "433":
                         self.send_irc(f"NICK {IRC_NICK}_")
