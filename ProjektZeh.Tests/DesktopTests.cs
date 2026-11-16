@@ -233,6 +233,21 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void PowerPopup_ClickOnTopBorder_RunsNothing()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.Handle(new(InputEventType.PointerDown, X: desktop.MenuButtonBounds.X + 20, Y: 740, Button: PointerButtons.Left));
+        int powerX = (1024 - 600) / 2 + 600 - 24 - 22, powerY = 768 - 56 - 8 - 32;
+        desktop.Handle(new(InputEventType.PointerDown, X: powerX, Y: powerY, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.PointerUp, X: powerX, Y: powerY, Button: PointerButtons.Left));
+        // Untermenue ohne Sitzung: zwei Zeilen zu 36 px plus 8 px Rand, 8 px ueber dem Knopf (Oberkante 640 + 10).
+        int top = 650 - 8 - (2 * 36 + 8);
+        desktop.Handle(new(InputEventType.PointerDown, X: powerX - 40, Y: top + 2, Button: PointerButtons.Left));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsTrue(desktop.CloseMenu(), "Der Klick auf den Rand darf weder eine Aktion ausloesen noch das Untermenue schliessen.");
+    }
+
+    [TestMethod]
     public void PowerPopup_SpaceDoesNotRunEntry()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));

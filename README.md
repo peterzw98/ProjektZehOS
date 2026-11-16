@@ -6,7 +6,7 @@ ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und 
 
 ## Shell
 
-Nach der Anmeldung lässt sich über das Anwendungsmenü oder die angeheftete Terminalschaltfläche ein Konsolenfenster mit dem Prompt `zehos>` öffnen. Im Wiederherstellungsmodus erscheint derselbe Prompt direkt in der Textshell. Die Befehle sind:
+Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Terminalschaltfläche ein Konsolenfenster mit dem Prompt `zehos>` öffnen. Im Wiederherstellungsmodus erscheint derselbe Prompt direkt in der Textshell. Die Befehle sind:
 
 | Befehl | Funktion |
 | --- | --- |
@@ -381,7 +381,7 @@ Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` 
 
 ## Moderne Konsole
 
-Die Gestaltung lehnt sich an Hyprland und Konsole an: abgerundete Ansichten mit Abständen, ein Akzentrahmen um die aktive Ansicht, Tabs, Werkzeugleiste und Statussegmente in Pillenform. Das Profil (Catppuccin, Tokyo Night, Breeze Dunkel/Hell, Solarisiert) färbt auch die Fensterflächen. Der Prompt erscheint in der Akzentfarbe, die Eingabe mit Blockcursor. Wie in fish blendet die Eingabezeile den jüngsten passenden Verlaufsbefehl grau ein; **Pfeil rechts** am Zeilenende übernimmt ihn.
+Die Gestaltung lehnt sich an Hyprland und Konsole an: abgerundete Ansichten mit Abständen, ein Akzentrahmen um die aktive Ansicht, Tabs und Statussegmente in Pillenform. Das Profil (Catppuccin, Tokyo Night, Breeze Dunkel/Hell, Solarisiert) färbt auch die Fensterflächen. Der Prompt erscheint in der Akzentfarbe, die Eingabe mit Blockcursor. Wie in fish blendet die Eingabezeile den jüngsten passenden Verlaufsbefehl grau ein; **Pfeil rechts** am Zeilenende übernimmt ihn.
 
 Jedes Konsolenfenster bietet bis zu acht Tabs und pro Tab bis zu vier getrennte Ansichten. Rechts in der Tabzeile öffnet **+** einen neuen Tab und der Pfeil das Terminalmenü; dort teilen **Nebeneinander** und **Uebereinander** die Ansicht (auch Strg+Umschalt+E/H), außerdem stehen Suche, Profil und Schriftgröße bereit; zu kleine Ansichten werden mit einer Meldung abgewiesen. Jede neue Ansicht erhält eine eigene Shell, Benutzeridentität, ein eigenes Arbeitsverzeichnis, Eingabe und Verlauf. Neue Sitzungen starten als Desktopbenutzer; eine Anmeldung in einer Ansicht verändert andere Sitzungen nicht. Ein Mausklick fokussiert die gewünschte Ansicht. F4/Esc wechseln weiterhin zwischen Desktop und Textshell, ohne offene Konsolen zu verwerfen.
 
