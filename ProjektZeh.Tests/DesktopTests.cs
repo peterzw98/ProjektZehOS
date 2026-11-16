@@ -218,6 +218,39 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void Taskbar_EightTerminalsAt640_StayLeftOfWorkspaces()
+    {
+        var desktop = new Desktop(640, 480, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"),
+            getNetwork: () => default);
+        while (desktop.OpenTerminal()) { }
+        var last = desktop.TaskBounds(Desktop.MaximumWindows - 1);
+        Assert.IsTrue(last.X + last.Width <= desktop.PagerBounds(0).X, "Das letzte Fensterfeld darf keine Arbeitsflaeche ueberdecken.");
+        Assert.IsTrue(desktop.MenuButtonBounds.X >= 8);
+        // Klick auf das letzte Feld schaltet dieses Fenster, statt Arbeitsflaeche oder Netz zu treffen.
+        desktop.Handle(new(InputEventType.PointerDown, X: last.X + last.Width / 2, Y: 460, Button: PointerButtons.Left));
+        Assert.AreEqual(0, desktop.Windows.CurrentWorkspace);
+        Assert.IsTrue(desktop.Windows.GetWindow(Desktop.MaximumWindows - 1).IsMinimized);
+    }
+
+    [TestMethod]
+    public void PowerPopup_SpaceDoesNotRunEntry()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Tab));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Space));
+        desktop.Handle(new(InputEventType.Text, Character: ' '));
+        // Eine zweite Leertaste im offenen Untermenue fuehrt nichts aus; Esc schliesst dann nur das Untermenue.
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Space));
+        desktop.Handle(new(InputEventType.Text, Character: ' '));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsTrue(desktop.CloseMenu());
+    }
+
+    [TestMethod]
     public void Taskbar_MinimizeRestore_AndMenuEscape_PreserveDraft()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));

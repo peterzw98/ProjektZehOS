@@ -371,14 +371,16 @@ internal sealed class Desktop
         {
             if (value.KeyCode == (byte)PhysicalKey.Up) popupIndex = (popupIndex + popup.Length - 1) % popup.Length;
             else if (value.KeyCode == (byte)PhysicalKey.Down) popupIndex = (popupIndex + 1) % popup.Length;
-            else if (value.KeyCode is (byte)PhysicalKey.Enter or (byte)PhysicalKey.Space && !value.IsRepeat) RunPopup(popupIndex);
+            // Nur Enter: Leertaste liefert danach noch ein Textzeichen, das nach dem Abmelden im Anmeldefeld landen wuerde.
+            else if (value.KeyCode == (byte)PhysicalKey.Enter && !value.IsRepeat) RunPopup(popupIndex);
             return;
         }
         if (value.Type != InputEventType.PointerDown) return;
         if (value.Button == PointerButtons.Left && popupBounds.Contains(value.X, value.Y))
         {
-            int row = (value.Y - popupBounds.Y - 4) / PopupRowHeight;
-            if (row >= 0 && row < popup.Length) RunPopup(row);
+            // Der 4-px-Rand oben gehoert zu keiner Zeile; ohne Pruefung runde die Division ihn auf Zeile 0.
+            int offset = value.Y - popupBounds.Y - 4;
+            if (offset >= 0 && offset / PopupRowHeight < popup.Length) RunPopup(offset / PopupRowHeight);
             return;
         }
         ClosePopup();
@@ -553,12 +555,17 @@ internal sealed class Desktop
         // Die Shellbefehle haengen das Datenlaufwerk vorher aus und brechen bei Fehlern ab.
         var output = new TerminalBuffer(120);
         var shell = createShell();
+        // Kein finally: Cosmos 3.0.94 ueberspringt es beim Unwind; Close deshalb nach dem catch.
         try
         {
             var result = shell.ExecuteLine(command, output);
             menuStatus = result.IsOK() ? "Energieaktion wurde nicht ausgefuehrt." : result.Message;
         }
-        finally { shell.Close(); }
+        catch (Exception error)
+        {
+            menuStatus = "Energieaktion fehlgeschlagen: " + error.Message;
+        }
+        shell.Close();
     }
 
     private void FilterApplications()
@@ -597,20 +604,28 @@ internal sealed class Desktop
     private int ClockWidth => 5 * glyphWidth + 32;
     private int TrayWidth => getNetwork == null ? 0 : 40;
     internal UiRect TrayBounds => new(width - ClockWidth - TrayWidth, height - 48, TrayWidth - 4, 40);
-    // Mittig, aber nie in Arbeitsflaechen, Netz und Uhr hinein.
-    // shortcut: bei sehr vielen Fenstern auf 640 Pixel Breite ueberdeckt die Gruppe rechts die Arbeitsflaechen; dann Ueberlauf-Menue ergaenzen.
-    private int GroupLeft
+    private int FixedSlots => (1 + pinned.Length) * Slot;
+    // Fensterfelder werden schmaler, bevor die Gruppe Arbeitsflaechen, Netz und Uhr erreicht (640 px, acht Terminals).
+    private int TaskSlot
     {
         get
         {
             int open = Windows.CountOn(Windows.CurrentWorkspace);
-            int groupWidth = (1 + pinned.Length + open) * Slot - 4;
+            return open == 0 ? Slot : Math.Clamp((PagerBounds(0).X - 16 - FixedSlots) / open, AppIcons.Size + 6, Slot);
+        }
+    }
+    // Mittig wie in Windows 11, aber nie in Arbeitsflaechen, Netz und Uhr hinein.
+    private int GroupLeft
+    {
+        get
+        {
+            int groupWidth = FixedSlots + Windows.CountOn(Windows.CurrentWorkspace) * TaskSlot - 4;
             return Math.Max(8, Math.Min((width - groupWidth) / 2, PagerBounds(0).X - 8 - groupWidth));
         }
     }
     internal UiRect MenuButtonBounds => new(GroupLeft, height - 48, Slot - 4, 40);
     internal UiRect PinnedBounds(int index) => new(GroupLeft + (1 + index) * Slot, height - 48, Slot - 4, 40);
-    internal UiRect TaskBounds(int index) => new(GroupLeft + (1 + pinned.Length + index) * Slot, height - 48, Slot - 4, 40);
+    internal UiRect TaskBounds(int index) => new(GroupLeft + FixedSlots + index * TaskSlot, height - 48, TaskSlot - 4, 40);
     internal UiRect PagerBounds(int index) =>
         new(width - ClockWidth - TrayWidth - (WindowManager.WorkspaceCount - index) * PagerSlot - 8, height - 46, PagerSlot, 36);
 
@@ -824,7 +839,7 @@ internal sealed class Desktop
         menu.Draw(surface, painter, 0, 0, popup.Length == 0);
         if (matches.Count == 0) painter.Text(surface, "Keine Programme gefunden", left + 12, appList.Bounds.Y + 12, inner - 24, UiPainter.Secondary);
         if (menuStatus.Length > 0) painter.Text(surface, menuStatus, left, HintTop, inner, UiPainter.Danger);
-        else if (matches.Count > 0) painter.Text(surface, "Rechtsklick auf eine App: auf den Desktop legen", left, HintTop, inner, UiPainter.Secondary);
+        else if (matches.Count > 0) painter.Text(surface, "Rechtsklick: auf Desktop legen", left, HintTop, inner, UiPainter.Secondary);
         if (popup.Length > 0) RenderPopup(surface);
     }
 

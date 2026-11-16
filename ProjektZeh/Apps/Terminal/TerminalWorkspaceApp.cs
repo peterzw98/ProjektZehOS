@@ -503,9 +503,12 @@ internal sealed class TerminalWorkspaceApp : IApplication
         if (menuOpen) UiPainter.RoundRect(surface, buttons + TabButtonWidth + 3, y + 3, TabButtonWidth - 6, TabsHeight - 6, 8, pill);
         painter.Text(surface, "+", buttons + (TabButtonWidth - glyphWidth) / 2, y + labelTop, glyphWidth, text);
         // Pfeil nach unten fuer das Menue, aus zwei Linien statt eines Schriftzeichens.
-        int arrow = buttons + TabButtonWidth + TabButtonWidth / 2;
-        surface.DrawLine(arrow - 5, middle - 2, arrow, middle + 3, text);
-        surface.DrawLine(arrow, middle + 3, arrow + 5, middle - 2, text);
+        int arrow = buttons + TabButtonWidth + TabButtonWidth / 2, size = Math.Max(4, glyphWidth / 2);
+        for (int line = 0; line < 2; line++)
+        {
+            surface.DrawLine(arrow - size, middle - size / 2 + line, arrow, middle + size / 2 + line, text);
+            surface.DrawLine(arrow, middle + size / 2 + line, arrow + size, middle - size / 2 + line, text);
+        }
         if (searchOpen)
         {
             int top = y + TabsHeight;
