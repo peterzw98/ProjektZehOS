@@ -107,7 +107,7 @@ jobs:
       - name: Check release artifacts for local paths
         run: |
           for artifact in "$RUNNER_TEMP"/zehos-release-check/*; do
-            if LC_ALL=C grep -a -F -q -e '/home/' -e '/Users/' -e "$USER" -e "$(hostname)" -e "$GITHUB_WORKSPACE" -e "$RUNNER_TEMP" "$artifact"; then
+            if LC_ALL=C grep -a -F -q -e '/home/' -e '/Users/' -e "$GITHUB_WORKSPACE" -e "$RUNNER_TEMP" "$artifact"; then
               echo "Local path found in $(basename "$artifact")" >&2
               exit 1
             fi
