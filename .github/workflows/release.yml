@@ -58,6 +58,8 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$key"
           python3 scripts/sign-update.py "$RUNNER_TEMP/zehos-release/update-manifest.txt" "$key"
           python3 scripts/sign-update.py verify "$RUNNER_TEMP/zehos-release/update-manifest.txt" "$RUNNER_TEMP/zehos-release/update-manifest.sig" 'eebr5IjF0GjyGoAUrBhwUDUx5STOMTsAhfrq2af5s+Y='
+      - name: Check release artifacts for local paths
+        run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release/*
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
