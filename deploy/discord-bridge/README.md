@@ -9,4 +9,4 @@ python3 test_bridge.py            # Selbsttest der Hilfsfunktionen (benötigt di
 docker compose up -d --build      # auf dem Server
 ```
 
-Weitergeleitete Zeilen prüfen: `gpg --import bridge-pubkey.asc`, dann `./verify.sh '#general' '<Name> text [id=… t=… sig=…]'`.
+Weitergeleitete Zeilen prüfen: `gpg --import bridge-pubkey.asc`, dann die Zeile (ohne IRC-Präfix, Absender muss `discord` sein) per stdin übergeben: `./verify.sh '#general' < zeile.txt`.
