@@ -12,11 +12,14 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 COMMIT = "2b01bee867fe81331d0a898e7ad40a71882131de"
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+WRAPPED = ["Gfx_DrawVb_IndexedTris_Range", "Gfx_DrawVb_IndexedTris", "Gfx_DrawIndexedTris_T2fC4b", "Gfx_ClearBuffers",
+           "Gfx_EndFrame", "Builder_MakeChunk", "Gen_Start", "Gen_IsDone"]
 
 
 def main() -> int:
@@ -55,12 +58,47 @@ def main() -> int:
                f"-ffile-prefix-map={build}=/classicube", f"-ffile-prefix-map={HERE}=/zehos",
                *sources, "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks",
                # 1 MiB Stack wie der Loader; mehr als 256 MiB linearer Speicher wird ohnehin abgelehnt.
-               "-Wl,-z,stack-size=1048576", "-Wl,--max-memory=268435456", "-o", str(args.output)]
+               "-Wl,-z,stack-size=1048576", "-Wl,--max-memory=268435456",
+               # Messpunkte fuer den Entscheidungspunkt (platform/Measure_ZehOS.c), ohne den Kern zu patchen.
+               "-Wl,--wrap=" + ",--wrap=".join(WRAPPED), "-o", str(args.output)]
     result = subprocess.run(command)
-    if result.returncode == 0:
-        digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
-        print(f"{args.output} ({args.output.stat().st_size} Bytes, SHA-256 {digest})")
-    return result.returncode
+    if result.returncode != 0:
+        return result.returncode
+    digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
+    print(f"{args.output} ({args.output.stat().st_size} Bytes, SHA-256 {digest})")
+    assemble_package(args.source, args.output, args.output.parent / "package")
+    return 0
+
+
+def assemble_package(source: Path, module: Path, package: Path) -> None:
+    """Legt den unsignierten Paketinhalt an: Modul, Texturpaket und alle Lizenz- und Quellenangaben."""
+    if package.exists():
+        shutil.rmtree(package)
+    (package / "texpacks").mkdir(parents=True)
+    shutil.copyfile(module, package / "classicube.wasm")
+    # ClassiCube sucht texpacks/default.zip; feste Zeitstempel halten das Archiv bytegleich.
+    with zipfile.ZipFile(package / "texpacks" / "default.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted((HERE / "texpack").glob("*.png")):
+            archive.writestr(zipfile.ZipInfo(path.name, date_time=(2026, 11, 16, 0, 0, 0)), path.read_bytes(),
+                             compress_type=zipfile.ZIP_DEFLATED)
+    licenses = package / "licenses"
+    licenses.mkdir()
+    shutil.copyfile(source / "license.txt", licenses / "classicube-license.txt")
+    for path in sorted((HERE / "texpack").glob("*.txt")):
+        shutil.copyfile(path, licenses / f"texpack-{path.name}")
+    # Statisch gelinkte wasi-libc und compiler-rt; die Texte liegen bereits beim NetSurf-Rezept.
+    for path in sorted((ROOT / "experiments" / "NetSurf.Wasi" / "licenses").iterdir()):
+        if path.name.startswith(("wasi-libc", "compiler-rt")):
+            shutil.copyfile(path, licenses / path.name)
+    (licenses / "SOURCES.txt").write_text("\n".join([
+        "ZehOS ClassiCube source and build recipe",
+        "",
+        f"ClassiCube: https://github.com/ClassiCube/ClassiCube commit {COMMIT}",
+        "Recipe (build.py, patches/, platform/, texpack/): https://github.com/peterzw98/ProjektZehOS"
+        " experiments/ClassiCube.Wasi/",
+        "Toolchain: wasi-sdk 25.0 (https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25)",
+    ]) + "\n", encoding="utf-8")
+    print(f"Paketinhalt: {package}")
 
 
 if __name__ == "__main__":

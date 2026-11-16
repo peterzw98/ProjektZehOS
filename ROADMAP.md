@@ -297,6 +297,21 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 
 **Fertig, wenn:** Für einen konkret festgelegten Satz von Webseiten die benötigten Funktionen und Schutzmechanismen funktionieren. „Alle heutigen Webseiten“ ist kein sinnvoller einzelner Meilenstein.
 
+## 13 Voxelspiel (ClassiCube)
+
+**Zweck:** Ein Minecraft-artiges Voxelspiel als signiertes Wasm-Paket: ClassiCube (BSD-Lizenz) unter wasm3/WASIp1, ohne appbezogenen Kernelcode. Plan: [2026-11-16-classicube.md](docs/superpowers/plans/2026-11-16-classicube.md).
+
+- [ ] 13.1 Messen und Anzeigeweg: Bildzeit von Paket-Apps in Anteile zerlegen (`WasmFrameTimes` für alle Apps, zur Laufzeit zuschaltbar), belegte Anzeige-Engpässe beheben. Abnahme: Doom-Bildzeit zerlegt dokumentiert, Engpässe behoben oder begründet.
+- [ ] 13.2 Port, erster spielbarer Stand: Einzelspieler im Fenster, Welt nur im Speicher, SoftMin-Grafik, ohne Threads, freie Texturen, Paket ohne `capability=net`, Gastskript. Abnahme: startet als Paket, Welt spielbar, endet ohne Neustart, Speicher nach Beenden frei, Messwerte liegen vor.
+- [ ] 13.3 Software-Rasterizer als Hostfunktion (nur wenn die Messung aus 13.2 die Rasterisierung als Engpass zeigt). Abnahme: gleiches Bild wie SoftMin, messbar höhere Bildrate, Fehler beenden nur die App, QEMU und VMware dokumentiert.
+- [ ] 13.4 App-Speicher: begrenztes Schreiben im eigenen Bereich auf `/data`, Welten speichern. Abnahme: Welt übersteht Beenden und Neustart, voller Datenträger oder fehlendes Laufwerk bleiben bedienbar.
+- [ ] 13.5 AOT-Laufzeit (nur nach Messung und Sicherheitsabstimmung mit Peter, Bezug 12.4). Abnahme: messbarer Gewinn, alle Pakete laufen weiter, Sicherheitsgrenze dokumentiert.
+- [ ] 13.6 Mehrspieler über die Netz-ABI (`capability=net`). Abnahme: zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, Verbindungsfehler lassen Spiel und Desktop bedienbar.
+
+**Fertig, wenn:** 13.2 erfüllt ist; 13.3 bis 13.6 folgen je nach Messung und Entscheidung.
+
+**Stand am 16. November 2026:** 13.2 in Arbeit (`experiments/ClassiCube.Wasi/`): ClassiCube baut ohne Threads als WASIp1-Modul. Lizenz und Nachladen sind in [2026-11-16-classicube-lizenz.md](docs/superpowers/specs/2026-11-16-classicube-lizenz.md) (PR #116) geklärt, ein freies Texturpaket fehlt noch. 13.1 ist offen. Voraussetzung für Kernelanteile (13.1, 13.3–13.5) ist der Merge von Cosmos 3.0.97.
+
 ## Vorgeschlagene Struktur des eigenen Codes
 
 Die Ordner erst anlegen, wenn die jeweilige Funktion entwickelt wird. `Kernel.cs` verbindet die Bausteine und hält den Bootablauf übersichtlich.
