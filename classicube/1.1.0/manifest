@@ -1,0 +1,22 @@
+zehos-package 1
+id=classicube
+version=1.1.0
+runtime=zehos-wasm32-v1
+name=ClassiCube
+entry=classicube.wasm
+capability=net
+capability=storage
+min-kernel=0.5.65
+file=c346e0b21932d2771db82fe4fc78e6f36d45a5869e6accee29ed0a7ce5f5e1e0 694107 classicube.wasm
+file=cd406550be05d1f425f78c8543ff2d182c913955de5787478e2820b21942e84e 409 licenses/SOURCES.txt
+file=a3c404fb40407b79841d8c1d93f76ff406004a880a16cea29d74d767438dd48f 17224 licenses/classicube-license.txt
+file=815455237d89628f7b995a9e11a6e9074f7443afdf63507d715a676f80d874a4 17019 licenses/compiler-rt-LICENSE.TXT
+file=9395bff3abc90fdeaeedfd1f77d99e296b44fd5e1e71d683e034196588feb57c 22599 licenses/texpack-CC-BY-SA-3.0.txt
+file=65ec6aaef2a9cb5ca6bbd7040d9ffb4dc8ec2bbea8d9df685bdbfd8ed1400340 8272 licenses/texpack-TEXTURES.txt
+file=24cc2be3c753ac2629002d3ff364efc4ad4e737c99c79da1877cb231f88cd0f5 927 licenses/wasi-libc-LICENSE
+file=7cfd738c53d61c79f07e348f622bf7707c9084237054d37fbe07788a75f5881c 11048 licenses/wasi-libc-LICENSE-APACHE
+file=b4671407c0ea0b64c757ced56d89f031581afd9083a4b47d9051fb1886bb3b68 12463 licenses/wasi-libc-LICENSE-APACHE-LLVM
+file=36516aefdc84c5d5a1e7485425913a22dbda69eb1930c5e84d6ae4972b5194b9 1046 licenses/wasi-libc-LICENSE-MIT
+file=5f7c882fccb097ee08aa9ff223cff44e4d5b284dedb85a8cc09d80768b2ecef9 6397 licenses/wasi-libc-musl-COPYRIGHT
+file=8b8a8c9bfb091aa0ea244c340319eb517884e731c24c83476f1d080332364c4b 23273 texpacks/default.zip
+end

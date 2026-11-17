@@ -1,0 +1,7 @@
+ZehOS ClassiCube source and build recipe
+
+ClassiCube: https://github.com/ClassiCube/ClassiCube commit 2b01bee867fe81331d0a898e7ad40a71882131de
+Recipe (build.py, patches/, platform/, texpack/):
+https://github.com/peterzw98/ProjektZehOS/tree/1227e60a0185fdc0e2182dcc5c3d44ec86f5d584/experiments/ClassiCube.Wasi
+
+Toolchain: wasi-sdk 25.0 (https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25)
