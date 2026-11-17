@@ -294,7 +294,7 @@ python3 scripts/test-simd-probe.py --iso <ISO> --accel kvm --cpu host        # �
 | TCG `max`, `x86-64-v3` | ausstehend | | | |
 | VMware | **offen** (nicht geprüft) | | | |
 
-Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille gegenüber der Skalarstufe derselben Gruppe. Die vollständigen `isa`/`accel`-Zeilen liegen im Protokoll des Testers und sind hier nicht abgedruckt; `IsSupported=false` für `Sse41`, `Avx2` und `Fma` ist aus den `SKIP`-Stufen abgeleitet. Ursache laut Koordinator: Der Kernel wird ohne ILC-`--instruction-set` gebaut, der Befehlssatz ist die x64-Baseline mit SSE2; er wird zur Kompilierzeit festgelegt und folgt nicht der CPU (dasselbe Ergebnis mit `-cpu max` und auf dem Host-CPU).
+Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille gegenüber der Skalarstufe derselben Gruppe (int-dot: `Vector128` und `Vector<T>` gegen skalar; float-dot: `Vector128`; byte-count: `Sse2`). **`isa`-Zeile in allen drei Läufen gleich:** `X86Base=True Sse=True Sse2=True`, alle übrigen (`Sse3`, `Ssse3`, `Sse41`, `Sse42`, `Popcnt`, `Avx`, `Avx2`, `Fma`, `Bmi1`, `Bmi2`, `Lzcnt`, `Avx512F`) `False`; **`accel`:** `Vector128=True`, `Vector256=False`, `Vector512=False`, `Vector<int>.Count=4` (also 128 Bit). Ursache laut Koordinator: Der Kernel wird ohne ILC-`--instruction-set` gebaut, der Befehlssatz ist die x64-Baseline mit SSE2; er wird zur Kompilierzeit festgelegt und folgt nicht der CPU (dasselbe Ergebnis mit `-cpu max` und auf dem Host-CPU). Auch `Popcnt` und `Lzcnt` fehlen: `BitOperations.PopCount` läuft im Standardbuild über den Softwarepfad.
 
 **Empfehlung für R1 (Stand der Standard-ILC-Läufe):**
 
