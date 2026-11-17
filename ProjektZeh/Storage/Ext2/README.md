@@ -55,10 +55,12 @@ möglichen Upstream-Fix erhalten.
 
 ## Regel für Aufrufer
 
-Kernelcode formatiert ext2 nur mit `CosmosExt2Formatter.FormatForKernel(device, options)`. Nicht verwenden:
-`VfsManager.TryFormat`/`Ext2FileSystemType.TryFormat` mit ext2 (läuft in den fehlerhaften Paketformatter) und
-`CosmosExt2Formatter.Format` (erlaubt 1K/2K, nur für die Hostprobe). Ein Plug auf den Paketformatter wurde verworfen:
-der Cosmos-Patcher kopiert den Plugkörper nach `Cosmos.Kernel.System`, und ILC brach mit „library initializer
-assemblies Cosmos.Kernel.System reference each other in a cycle“ ab (Beleg: Branch `task/storage-ext2-kernel-plug`).
-`ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht in `ProjektZeh/**/*.cs` außerhalb dieses Ordners nach solchen
-Aufrufen; über Variablen weitergereichte Dateisystemnamen erkennt die Suche nicht.
+`ProjektZeh/Storage/CosmosExt2FormatterPlug.cs` ersetzt `Ext2Formatter.Format` aus dem Paket durch
+`CosmosExt2Formatter.FormatForKernel`; auch `VfsManager.TryFormat`/`Ext2FileSystemType.TryFormat` mit ext2 laufen damit
+nur über das 4-KiB-Profil. Neuer Kernelcode ruft trotzdem bevorzugt `FormatForKernel(device, options)` direkt auf.
+`CosmosExt2Formatter.Format` (1K/2K erlaubt) ist nur für die Hostprobe.
+
+Der Plugkörper wird vom Cosmos-Patcher nach `Cosmos.Kernel.System` kopiert und darf deshalb keinen Typ aus
+`Cosmos.Kernel.System` nennen; `FormatForKernel` nimmt darum `object?`. Mit `Ext2FormatOptions` in der Signatur brach
+ILC mit „library initializer assemblies Cosmos.Kernel.System reference each other in a cycle“ ab (a2c9e39 auf
+Branch `task/storage-ext2-kernel-plug`, Gegenprobe ohne Plug grün).
