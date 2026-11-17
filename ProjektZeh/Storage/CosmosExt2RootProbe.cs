@@ -42,6 +42,10 @@ internal static class CosmosExt2RootProbe
     private const string ControlPrefix = "ZEHOS-ROOTPROBE run=";
     private const int CheckedPrefix = 1024 * 1024;
     private const int IoChunk = 1024 * 1024;
+    // Einmal angelegt statt je Datei: 1-MiB-Arrays pro Aufruf (10000 Dateien in d) liessen eine Allokation null liefern
+    // (Lauf 10: Page Fault in Fill, CR2=0x10). Nur der Hauptablauf nutzt sie; JWorker hat eigene Puffer.
+    private static readonly byte[] IoBuffer = new byte[IoChunk];
+    private static readonly byte[] ExpectedBuffer = new byte[IoChunk];
     private const int FillFileMiB = 64;
     private const int SmallFill = 4096;
     // Superblock ab Byte 1024 = Sektor 2 und 3 bei 512-Byte-Sektoren.
@@ -789,8 +793,8 @@ internal static class CosmosExt2RootProbe
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
         if (stream.Length != entry.Length) return false;
-        byte[] actual = new byte[IoChunk];
-        byte[] expected = new byte[IoChunk];
+        byte[] actual = IoBuffer;
+        byte[] expected = ExpectedBuffer;
         for (long offset = 0; offset < entry.Length; offset += IoChunk)
         {
             int length = (int)Math.Min(IoChunk, entry.Length - offset);
@@ -812,7 +816,7 @@ internal static class CosmosExt2RootProbe
     private static bool IsZero(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
-        byte[] buffer = new byte[IoChunk];
+        byte[] buffer = IoBuffer;
         int got;
         while ((got = stream.Read(buffer, 0, buffer.Length)) > 0)
             if (buffer.AsSpan(0, got).IndexOfAnyExcept((byte)0) >= 0) return false;
@@ -824,7 +828,7 @@ internal static class CosmosExt2RootProbe
     private static void WriteGenerated(string path, string source, string seed, long length)
     {
         using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
-        byte[] buffer = new byte[(int)Math.Min(IoChunk, Math.Max(length, 1))];
+        byte[] buffer = IoBuffer;
         for (long offset = 0; offset < length; offset += buffer.Length)
         {
             int chunk = (int)Math.Min(buffer.Length, length - offset);
