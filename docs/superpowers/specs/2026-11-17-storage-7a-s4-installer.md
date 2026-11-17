@@ -2,7 +2,7 @@
 
 Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a §4 und §7](2026-11-17-storage-7a-installer-layout.md) für den Installer. Baut auf S2 (`GptLayoutWriter`, `GptLayout.Verify`, `Crc32`) und S3 (`InstallMarker`, `InstalledIdentity`) aus `task/storage-7a-identity` sowie auf `task/storage-7a-installer-exclusion` (Ausschluss von Marker-/Root-/GPT-`ZEHOSDATA`-Platten) auf. **Nur Entwurf**, kein Code, nichts im Gast.
 
-## 0. Entscheidungen (Vorschlag)
+## 0. Entscheidungen (§0.2/§0.3 von der Leitung am 12:03 bestätigt)
 
 1. **Ausdrückliche Wahl, kein Fallback.** `setup install <Laufwerk> [--erase]` bleibt unverändert der Legacy-Installer (eine FAT-Partition, MBR). Der neue Weg heißt `setup install <Laufwerk> --layout gpt --erase`. Schlägt eine GPT-Vorbedingung fehl, endet der Befehl mit Fehler; es wird nie still auf Legacy gewechselt (7a Entscheidung 7).
 2. **`--erase` ist beim GPT-Weg immer Pflicht.** Eine 32–128-GiB-Platte lässt sich nicht schnell als leer belegen (`DiskEmptyCheck` prüft über 4 GiB nur Stichproben), und der Writer löscht Anfang und Ende ohnehin. Das hält die Regel einfach und datensicher.
@@ -80,7 +80,7 @@ Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupW
 
 ## 6. Offene Punkte
 
-1. **Leitung:** §0.2 (`--erase` immer Pflicht beim GPT-Weg) und §0.3 (Freischaltung erst nach 4.0-Go und G1–G7) bestätigen.
+1. *Entschieden 12:03:* `--erase` beim GPT-Weg immer Pflicht; Freischaltung nur mit `-p:ZehOSGptInstaller=true` bis 4.0-Go und G1–G7 grün, normaler Build zeigt die Option nicht.
 2. Mountpunkt für das Root während der Installation: `/mnt/install-root` im `Legacy`-Profil ist ein Mount ohne Verzeichnis (zulässig, `VfsManager.cs:146`); im `Root`-Profil existiert `/mnt` – beides im Gast prüfen.
 3. Ob `RescanPartitions` nach dem eigenen GPT-Writer die Partitionen mit den richtigen Startsektoren liefert (Cosmos liest GPT ohne CRC-Prüfung, 7a §2), belegt erst G1; der Host-Probelauf S2 (`scripts/test-installer-layout.py`, `sgdisk -v`) ist Voraussetzung.
 4. Sync/`s_state` im Installer nutzt denselben Code wie die Energieaktion aus Etappe 4 §2 – gemeinsam mit 4.3 umsetzen, nicht doppelt.
