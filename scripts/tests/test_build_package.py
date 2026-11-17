@@ -64,6 +64,9 @@ if sys.argv[1:] == ['--version']:
     sys.exit(0)
 Path(LOG).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
 output = Path(sys.argv[sys.argv.index('-o') + 1])
+if FAIL:
+    output.write_bytes(b'teil')
+    sys.exit(1)
 output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes())
 """
 
@@ -82,11 +85,11 @@ class BuildPackageAotTests(unittest.TestCase):
         for name, data in (('app.wasm', b'wasm'), ('App.txt', b'gross'), ('b.dat', b'b')):
             (self.directory / name).write_bytes(data)
 
-    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5'):
+    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5', fail=False):
         """Ersatz-wamrc, das seine Schalter in folder/calls.json protokolliert und eine Ausgabedatei schreibt."""
         tool = self.directory / folder
         tool.mkdir()
-        code = f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\n' + FAKE_WAMRC
+        code = f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\nFAIL = {fail!r}\n' + FAKE_WAMRC
         (tool / 'fake_wamrc.py').write_text(code, encoding='utf-8')
         if os.name == 'nt':
             launcher = tool / 'wamrc.cmd'
@@ -107,18 +110,32 @@ class BuildPackageAotTests(unittest.TestCase):
         digest = hashlib.sha256(wamrc.read_bytes()).hexdigest()
         return mock.patch.object(self.tool, 'WAMRC_SHA256', frozenset({digest}))
 
-    def translate(self, wamrc, allowed=True):
-        output = self.directory / 'out.aot'
+    def translate(self, wamrc, allowed=True, output=None):
+        output = output or self.directory / 'out.aot'
         if not allowed:
             return self.call('aot', str(wamrc), str(self.directory / 'app.wasm'), '-o', str(output))
         with self.allow(wamrc):
             return self.call('aot', str(wamrc), str(self.directory / 'app.wasm'), '-o', str(output))
 
-    def build(self, *extra, entry='app.wasm', files=None):
+    def build(self, *extra, entry='app.wasm', files=None, wamrc=None):
         files = files or [f"{self.directory / 'app.wasm'}=app.wasm", f"{self.directory / 'App.txt'}=App.txt",
                           f"{self.directory / 'b.dat'}=b.dat"]
-        return self.call('package', '--key', str(self.directory / 'key' / 'private.pem'), '--repo', str(self.directory / 'repo'),
-                         '--id', 'app', '--version', '1.0.0', '--name', 'App', '--entry', entry, *extra, *files)
+        arguments = ('package', '--key', str(self.directory / 'key' / 'private.pem'), '--repo', str(self.directory / 'repo'),
+                     '--id', 'app', '--version', '1.0.0', '--name', 'App', '--entry', entry, *extra, *files)
+        if wamrc is None:
+            return self.call(*arguments)
+        with self.allow(wamrc):
+            return self.call(*arguments)
+
+    def translated(self):
+        """Uebersetzt app.wasm mit dem Ersatz-wamrc und liefert dessen Pfad fuer die Zulassung in build()."""
+        wamrc = self.fake_wamrc()
+        code, error = self.translate(wamrc)
+        self.assertEqual(code, 0, error)
+        return wamrc
+
+    def receipt(self):
+        return self.directory / 'out.aot.json'
 
     def package_dir(self):
         return self.directory / 'repo' / 'app' / '1.0.0'
@@ -128,10 +145,28 @@ class BuildPackageAotTests(unittest.TestCase):
         code, error = self.translate(wamrc)
         self.assertEqual(code, 0, error)
         calls = json.loads((wamrc.parent / 'calls.json').read_text(encoding='utf-8'))
-        self.assertEqual(calls, ['--target=x86_64', '--cpu=x86-64', '--bounds-checks=1', '--stack-bounds-checks=1',
-                                 '--size-level=0', '--disable-simd', '-o', str(self.directory / 'out.aot'),
-                                 str(self.directory / 'app.wasm')])
+        flags = ['--target=x86_64', '--cpu=x86-64', '--bounds-checks=1', '--stack-bounds-checks=1', '--size-level=0', '--disable-simd']
+        # Eingabe ist die Kopie im Temp-Verzeichnis, damit der Beleg genau die gelesenen Bytes nennt.
+        self.assertEqual(calls[:-1], [*flags, '-o', str(self.directory / 'out.aot')])
+        self.assertEqual(Path(calls[-1]).name, 'input.wasm')
         self.assertEqual((self.directory / 'out.aot').read_bytes(), b'AOT:wasm')
+        receipt = json.loads(self.receipt().read_text(encoding='utf-8'))
+        sha = lambda data: hashlib.sha256(data).hexdigest()
+        self.assertEqual(receipt, {'aot_abi': 'wamr245-aot5-x64-bc', 'wamrc_version': 'wamrc 2.4.5', 'flags': flags,
+                                   'wamrc_sha256': sha(wamrc.read_bytes()), 'wasm_sha256': sha(b'wasm'), 'aot_sha256': sha(b'AOT:wasm')})
+
+    def test_aot_rejects_output_equal_to_input_and_removes_partial_output(self):
+        wamrc = self.fake_wamrc()
+        code, error = self.translate(wamrc, output=self.directory / 'app.wasm')
+        self.assertEqual(code, 1)
+        self.assertIn('dieselbe Datei', error)
+        self.assertEqual((self.directory / 'app.wasm').read_bytes(), b'wasm')
+        failing = self.fake_wamrc('failing', fail=True)
+        code, _ = self.translate(failing)
+        self.assertEqual(code, 1)
+        self.assertTrue((failing.parent / 'calls.json').exists())
+        self.assertFalse((self.directory / 'out.aot').exists())
+        self.assertFalse(self.receipt().exists())
 
     def test_relative_wamrc_runs_the_checked_copy_not_one_from_path(self):
         checked = self.fake_wamrc('checked')
@@ -162,8 +197,8 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertFalse((self.directory / 'out.aot').exists())
 
     def test_aot_file_name_manifest_order_and_hash(self):
-        (self.directory / 'out.aot').write_bytes(b'AOT:wasm')
-        code, error = self.build('--aot-file', str(self.directory / 'out.aot'))
+        wamrc = self.translated()
+        code, error = self.build('--aot-file', str(self.directory / 'out.aot'), wamrc=wamrc)
         self.assertEqual(code, 0, error)
         aot = (self.package_dir() / 'files' / self.ABI_FILE).read_bytes()
         self.assertEqual(aot, b'AOT:wasm')
@@ -186,6 +221,35 @@ class BuildPackageAotTests(unittest.TestCase):
                  ([f"{self.directory / 'app.wasm'}={long_entry}"], long_entry, 'laenger als 200 Zeichen'))
         for files, entry, message in cases:
             code, error = self.build(*aot, entry=entry, files=files)
+            self.assertEqual(code, 1, message)
+            self.assertIn(message, error)
+        self.assertFalse((self.directory / 'repo').exists())
+
+    def test_aot_file_requires_matching_receipt(self):
+        wamrc = self.translated()
+        aot = self.directory / 'out.aot'
+        receipt = self.receipt().read_text(encoding='utf-8')
+
+        def tamper(key, value):
+            data = json.loads(receipt)
+            data[key] = value
+            self.receipt().write_text(json.dumps(data), encoding='utf-8')
+
+        cases = (
+            (lambda: (self.directory / 'app.wasm').write_bytes(b'neu'), 'anderen .wasm'),
+            (lambda: aot.write_bytes(b'AOT:anders'), 'passt nicht zu ihrem Beleg'),
+            (lambda: self.receipt().unlink(), 'fehlt'),
+            (lambda: self.receipt().write_text('kein json', encoding='utf-8'), 'Paketfehler'),
+            (lambda: tamper('flags', ['--bounds-checks=0']), 'andere wamrc-Schalter'),
+            (lambda: tamper('wamrc_sha256', '0' * 64), 'nicht zugelassenes wamrc'),
+            (lambda: tamper('aot_abi', 'wamr246-aot6-x64-bc'), 'andere AOT-Kennung'),
+        )
+        for change, message in cases:
+            (self.directory / 'app.wasm').write_bytes(b'wasm')
+            aot.write_bytes(b'AOT:wasm')
+            self.receipt().write_text(receipt, encoding='utf-8')
+            change()
+            code, error = self.build('--aot-file', str(aot), wamrc=wamrc)
             self.assertEqual(code, 1, message)
             self.assertIn(message, error)
         self.assertFalse((self.directory / 'repo').exists())

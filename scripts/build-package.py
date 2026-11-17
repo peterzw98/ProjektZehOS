@@ -3,7 +3,7 @@
 
   keygen <Ordner>                         neues Ed25519-Schluesselpaar: private.pem und public.b64
   package --key K --repo R --id I --version V --name N --entry E [--network] [--min-kernel X.Y.Z] [--aot-file A] QUELLE=ZIEL ...
-  aot WAMRC EINGABE.wasm -o AUSGABE.aot   mit dem zugelassenen wamrc 2.4.5 uebersetzen; braucht keinen Schluessel
+  aot WAMRC EINGABE.wasm -o AUSGABE.aot   mit dem zugelassenen wamrc 2.4.5 uebersetzen, Beleg AUSGABE.aot.json; ohne Schluessel
   catalog --key K --repo R --generation G hoechste Version je Paket in R/catalog(.sig)
 
 Der private Schluessel bleibt ausserhalb des Repositorys. Signiert wird mit OpenSSL (pkeyutl -rawin), wie bei
@@ -13,6 +13,7 @@ scripts/sign-update.py. Das Werkzeug fuehrt keine Paketinhalte aus und packt nic
 import argparse
 import base64
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -61,19 +62,57 @@ def keygen(directory: Path) -> None:
 def compile_aot(args: argparse.Namespace) -> None:
     # Getrennt von package, weil wamrc fremde .wasm liest und ohne Zugriff auf den Schluessel laufen soll
     # (Sicherheitsdokument, Abschnitt 5, Punkt 2).
+    if args.output.resolve() == args.wasm.resolve():
+        raise ValueError("Ausgabe und Eingabe sind dieselbe Datei.")
     with tempfile.TemporaryDirectory() as scratch:
         # Geprueft und ausgefuehrt wird dieselbe Kopie mit absolutem Pfad: Kein Austausch der Datei zwischen Pruefung
         # und Start, keine Suche im PATH. Ein fremdes wamrc laeuft nicht einmal fuer --version.
         tool = Path(scratch) / args.wamrc.name
         shutil.copyfile(args.wamrc, tool)
         tool.chmod(0o700)
-        if hashlib.sha256(tool.read_bytes()).hexdigest() not in WAMRC_SHA256:
+        wamrc_sha = hashlib.sha256(tool.read_bytes()).hexdigest()
+        if wamrc_sha not in WAMRC_SHA256:
             raise ValueError(f"{args.wamrc} ist nicht das zugelassene wamrc (SHA-256 unbekannt).")
         version = subprocess.run([str(tool), "--version"], check=True, capture_output=True, text=True).stdout.partition("\n")[0]
         if not WAMRC_VERSION.search(version):
             raise ValueError(f"wamrc 2.4.5 erwartet, gefunden: {version}")
-        subprocess.run([str(tool), *WAMRC_FLAGS, "-o", str(args.output), str(args.wasm)], check=True)
-    print(f"{args.output}: {hashlib.sha256(args.output.read_bytes()).hexdigest()}")
+        # Auch das .wasm als Kopie: Der Beleg nennt genau die Bytes, die wamrc gelesen hat.
+        wasm = Path(scratch) / "input.wasm"
+        shutil.copyfile(args.wasm, wasm)
+        try:
+            subprocess.run([str(tool), *WAMRC_FLAGS, "-o", str(args.output), str(wasm)], check=True)
+        except subprocess.CalledProcessError:
+            args.output.unlink(missing_ok=True)
+            raise
+        receipt = {"aot_abi": AOT_ABI, "wamrc_version": version, "wamrc_sha256": wamrc_sha, "flags": list(WAMRC_FLAGS),
+                   "wasm_sha256": hashlib.sha256(wasm.read_bytes()).hexdigest(),
+                   "aot_sha256": hashlib.sha256(args.output.read_bytes()).hexdigest()}
+    receipt_path(args.output).write_text(json.dumps(receipt, indent=1) + "\n", encoding="utf-8")
+    print(f"{args.output}: {receipt['aot_sha256']}")
+
+
+def receipt_path(aot: Path) -> Path:
+    return aot.with_name(aot.name + ".json")
+
+
+def check_receipt(aot: Path, wasm: Path) -> None:
+    """Gleicht die .aot mit dem Beleg von aot ab. Schuetzt gegen Verwechslung und veraltete Dateien, nicht gegen Angreifer."""
+    try:
+        receipt = json.loads(receipt_path(aot).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ValueError(f"Beleg {receipt_path(aot)} fehlt; die .aot mit dem Unterbefehl aot erzeugen.") from None
+    if not isinstance(receipt, dict):
+        raise ValueError("Beleg ist kein JSON-Objekt.")
+    if receipt.get("aot_abi") != AOT_ABI:
+        raise ValueError("Beleg nennt eine andere AOT-Kennung.")
+    if receipt.get("flags") != list(WAMRC_FLAGS):
+        raise ValueError("Beleg nennt andere wamrc-Schalter.")
+    if receipt.get("wamrc_sha256") not in WAMRC_SHA256:
+        raise ValueError("Beleg nennt ein nicht zugelassenes wamrc.")
+    if receipt.get("aot_sha256") != hashlib.sha256(aot.read_bytes()).hexdigest():
+        raise ValueError("Die .aot passt nicht zu ihrem Beleg.")
+    if receipt.get("wasm_sha256") != hashlib.sha256(wasm.read_bytes()).hexdigest():
+        raise ValueError("Die .aot wurde aus einem anderen .wasm als dem Einstiegspunkt uebersetzt; neu uebersetzen.")
 
 
 def version_key(text: str) -> tuple[int, ...]:
@@ -103,6 +142,7 @@ def package(args: argparse.Namespace) -> None:
             raise ValueError(f"{aot} ist bereits als Paketdatei gelistet.")
         if len(files) >= MAX_FILES:
             raise ValueError("Mit der AOT-Datei waeren es mehr als 128 Dateien.")
+        check_receipt(args.aot_file, files[args.entry])
         files[aot] = args.aot_file
     if sum(path.stat().st_size for path in files.values()) > MAX_CONTENT:
         raise ValueError("Paketinhalt groesser als 128 MiB.")
@@ -159,7 +199,7 @@ def main() -> int:
         build.add_argument(name, required=True)
     build.add_argument("--network", action="store_true", help="Netzwerkzugriff im signierten Manifest erlauben")
     build.add_argument("--min-kernel", help="niedrigste ZehOS-Version X.Y.Z, deren Hostfunktionen das Paket braucht")
-    build.add_argument("--aot-file", type=Path, help=f"mit dem Unterbefehl aot erzeugte Datei als <entry>.{AOT_ABI}.aot aufnehmen")
+    build.add_argument("--aot-file", type=Path, help=f"mit dem Unterbefehl aot erzeugte Datei (Beleg .json daneben) als <entry>.{AOT_ABI}.aot aufnehmen")
     build.add_argument("files", nargs="+", help="QUELLE=ZIELPFAD im Paket")
     translate = commands.add_parser("aot")
     translate.add_argument("wamrc", type=Path)
