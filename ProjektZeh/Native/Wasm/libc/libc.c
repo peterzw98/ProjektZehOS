@@ -126,7 +126,9 @@ static long long parse_signed(const char* text, char** end, int base, long long 
     unsigned long long value = parse_integer(text, end, base, &negative, &overflow);
     unsigned long long limit = negative ? (unsigned long long)max + 1 : (unsigned long long)max;
     if (overflow || value > limit) { errno = ERANGE; return negative ? -max - 1 : max; }
-    return negative ? -(long long)(value - 1) - 1 : (long long)value;
+    // Betrag bis max + 1 ohne implementierungsdefinierte Umwandlung negieren; "-0" ergibt 0.
+    if (!negative || value == 0) return (long long)value;
+    return -(long long)(value - 1) - 1;
 }
 
 unsigned long long strtoull(const char* text, char** end, int base)

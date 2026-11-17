@@ -4,8 +4,10 @@
 #include <stdint.h>
 #include <errno.h>
 
+#define GUARD_BYTES 16
+#define GUARD_VALUE 0xEE
 static _Alignas(16) unsigned char arena[1 << 20];
-static size_t used;
+static size_t used, offset = 2;
 static int allocs, frees;
 static void* last_raw;
 static void* last_freed;
@@ -16,11 +18,22 @@ void* __cosmos_heap_alloc(size_t size)
     last_request = size;
     // Wie HeapNative.Alloc: die Groesse wird auf 32 Bit gekuerzt.
     size = (uint32_t)size;
-    size_t start = ((used + 15) & ~(size_t)15) + 2;
-    if (start + size > sizeof(arena)) return NULL;
-    used = start + size;
+    size_t start = ((used + 15) & ~(size_t)15) + offset;
+    if (start + size + GUARD_BYTES > sizeof(arena)) return NULL;
+    // Waechterbytes direkt hinter dem Rohblock zeigen Schreibzugriffe ueber dessen Ende.
+    for (size_t index = 0; index < GUARD_BYTES; index++) arena[start + size + index] = GUARD_VALUE;
+    used = start + size + GUARD_BYTES;
     allocs++;
     return last_raw = arena + start;
+}
+
+// Versatz des Rohblocks zur 16-Byte-Grenze (Cosmos beobachtet: 2 und 4).
+void heap_test_set_offset(size_t value) { offset = value; }
+int heap_test_guard_intact(void)
+{
+    const unsigned char* guard = (const unsigned char*)last_raw + (uint32_t)last_request;
+    for (size_t index = 0; index < GUARD_BYTES; index++) if (guard[index] != GUARD_VALUE) return 0;
+    return 1;
 }
 
 void __cosmos_heap_free(void* pointer) { frees++; last_freed = pointer; }
@@ -53,7 +66,7 @@ int memcmp(const void* left, const void* right, size_t count)
     return 0;
 }
 
-void heap_test_reset(void) { used = 0; allocs = frees = 0; last_raw = last_freed = NULL; last_request = 0; }
+void heap_test_reset(void) { used = 0; offset = 2; allocs = frees = 0; last_raw = last_freed = NULL; last_request = 0; }
 int heap_test_allocs(void) { return allocs; }
 int heap_test_frees(void) { return frees; }
 void* heap_test_last_raw(void) { return last_raw; }

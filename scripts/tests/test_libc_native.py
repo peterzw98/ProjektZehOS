@@ -75,6 +75,21 @@ class NativeLibcTests(unittest.TestCase):
         self.assertEqual(self.lib.calloc(3, 5) % 16, 0)
         self.assertEqual(self.lib.realloc(self.lib.malloc(4), 40) % 16, 0)
 
+    def test_aligned_block_stays_inside_raw_block_for_every_offset(self):
+        for offset in (0, 1, 2, 15):
+            self.lib.heap_test_reset()
+            self.lib.heap_test_set_offset(offset)
+            for size in (0, 1, 15, 16, 17, 100):
+                pointer = self.lib.malloc(size)
+                raw = self.lib.heap_test_last_raw()
+                self.assertEqual(raw % 16, offset)
+                self.assertEqual(pointer % 16, 0, (offset, size))
+                self.assertGreaterEqual(pointer - 16, raw, (offset, size))
+                ctypes.memset(pointer, 0x5A, size)
+                self.assertTrue(self.lib.heap_test_guard_intact(), (offset, size))
+                self.lib.free(pointer)
+                self.assertEqual(self.lib.heap_test_last_freed(), raw)
+
     def test_free_releases_the_raw_block(self):
         pointer = self.lib.malloc(24)
         raw = self.lib.heap_test_last_raw()
@@ -107,7 +122,14 @@ class NativeLibcTests(unittest.TestCase):
         for size in (largest + 1, 0xFFFFFFFF, 1 << 40, (1 << 64) - 1):
             self.assertIsNone(self.lib.malloc(size), hex(size))
         self.assertIsNone(self.lib.calloc(1 << 33, 1 << 33))
-        self.assertIsNone(self.lib.realloc(self.lib.malloc(1), 1 << 33))
+        # Produkt genau an bzw. knapp ueber der 32-Bit-Grenze; ohne Pruefung kuerzte der Heap es auf 0 bzw. 2^16.
+        self.assertIsNone(self.lib.calloc(1 << 16, 1 << 16))
+        self.assertIsNone(self.lib.calloc((1 << 16) + 1, 1 << 16))
+        old = self.lib.malloc(4)
+        ctypes.memmove(old, b"keep", 4)
+        self.assertIsNone(self.lib.realloc(old, 1 << 33))
+        self.assertEqual(self.lib.heap_test_frees(), 0)
+        self.assertEqual(ctypes.string_at(old, 4), b"keep")
         self.assertEqual(self.lib.heap_test_allocs(), 1)
         # Die groesste zulaessige Anforderung erreicht den Heap ungekuerzt (der Ersatzheap lehnt sie dann ab).
         self.assertIsNone(self.lib.malloc(largest))
@@ -142,7 +164,11 @@ class NativeLibcTests(unittest.TestCase):
     def test_strtoll_and_strtol_signs(self):
         self.assertEqual(self.parse("strtoll", " -0x7f", 0), (-127, 6, 0))
         self.assertEqual(self.parse("strtol", "-123", 10), (-123, 4, 0))
-        bits = ctypes.sizeof(ctypes.c_long) * 8
+        for name in ("strtoll", "strtol"):
+            self.assertEqual(self.parse(name, "-0"), (0, 2, 0))
+        # Unter MinGW (LLP64) ist long 32 Bit; strtol wird auf dem Host daher nur im 32-Bit-Bereich geprueft,
+        # im Kernel (LP64) gilt der 64-Bit-Bereich wie bei strtoll.
+        bits =ctypes.sizeof(ctypes.c_long) * 8
         maximum = (1 << (bits - 1)) - 1
         self.assertEqual(self.parse("strtol", str(maximum + 1))[::2], (maximum, ERANGE))
         self.assertEqual(self.parse("strtol", str(-maximum - 2))[::2], (-maximum - 1, ERANGE))
