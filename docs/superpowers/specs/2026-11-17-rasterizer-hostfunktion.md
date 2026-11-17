@@ -73,13 +73,13 @@ Die Umwandlung float→int bildet clang für wasm32 ohne `nontrapping-fptoint` n
 
 ### 3.5 Erkennbar auf älteren Kerneln
 
-wasm3 übersetzt eine Funktion erst bei ihrem ersten Aufruf (`op_Compile`), und der Loader ignoriert unbekannte Imports (`zehos_wasm.c`, `m3Err_functionLookupFailed`). Ein Modul, das `raster_draw` importiert, lädt also auch auf älteren Kerneln. Es trappt erst, wenn der fehlende Import tatsächlich aufgerufen wird: wasm3 setzt auch für Imports das Modul (`m3_module.c`), übersetzt den Aufruf deshalb als `op_Compile` und meldet `functionImportMissing` erst zur Laufzeit (`m3_compile.c`). (Ursprünglich hieß es hier, schon das Übersetzen des Aufrufers trappe; das unabhängige Review hat das am Code widerlegt.)
+wasm3 übersetzt eine Funktion erst bei ihrem ersten Aufruf (`op_Compile`), und der Loader ignoriert unbekannte Imports (`zehos_host_wasm3.c`, `m3Err_functionLookupFailed`). Ein Modul, das `raster_draw` importiert, lädt also auch auf älteren Kerneln. Es trappt erst, wenn der fehlende Import tatsächlich aufgerufen wird: wasm3 setzt auch für Imports das Modul (`m3_module.c`), übersetzt den Aufruf deshalb als `op_Compile` und meldet `functionImportMissing` erst zur Laufzeit (`m3_compile.c`). (Ursprünglich hieß es hier, schon das Übersetzen des Aufrufers trappe; das unabhängige Review hat das am Code widerlegt.)
 
 Der Kernel meldet die Fähigkeit deshalb über die WASI-Umgebung: `ZEHOS_FEATURES=raster_v1` (kommagetrennte Liste, künftig erweiterbar). Ältere Kernel liefern eine leere Umgebung (`docs/PAKETE_ERSTELLEN.md`). Die App prüft die Variable einmal beim Start und ruft den Import nur, wenn `raster_v1` gemeldet ist; sonst bleibt sie bei SoftGPU. So läuft dasselbe Paket ohne `min-kernel`-Sprung auf alten und neuen Kerneln. Die Umgebungsvariable ist eine neue, allgemeine Zusage im Vertrag (`docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md`).
 
 ## 4 Ort der Umsetzung im Kernel
 
-| | A: C neben `zehos_wasm.c` (`GCCProject`) | B: C# in `ProjektZeh/Graphics/Raster/` |
+| | A: C neben `zehos_host_core.c` (`GCCProject`) | B: C# in `ProjektZeh/Graphics/Raster/` |
 | --- | --- | --- |
 | Nähe zum Gast | Zeiger direkt aus wasm3 | C-Brücke prüft Bereiche, ruft einmal je Aufruf `zehos_wasm_host_raster` (`UnmanagedCallersOnly`) |
 | Hosttests | kein C-Testpfad auf dem Windows-Entwicklungsrechner (kein WSL, kein nativer C-Compiler im Projekt) | MSTest in `ProjektZeh.Tests`, wie die übrige plattformunabhängige Logik |
@@ -88,7 +88,7 @@ Der Kernel meldet die Fähigkeit deshalb über die WASI-Umgebung: `ZEHOS_FEATURE
 
 **Empfehlung B**, weil der Plan Hosttests mit Pixelvergleich, Grenz- und Fehlerfällen verlangt und das Projekt sie nur für C# bereitstellt. Die Bereichsprüfung des Gastspeichers liegt in C (wie bei den übrigen Hostfunktionen), der Rasterkern in C# arbeitet nur auf bereits geprüften Spans. Zeigt die Gastmessung, dass B mehr als etwa 30 % langsamer ist als nötig für das Ziel aus Abschnitt 1, wird der Kern nach A verschoben; die ABI bleibt gleich. Die Lizenz von SoftGPU (BSD-3) erlaubt beide Wege; der Hinweis kommt in die Quelldatei und `docs/`.
 
-Der Kern ist plattformunabhängig (keine Cosmos-Typen) und kommt in `ProjektZeh.Tests/ProjektZeh.Tests.csproj`. Die C-Brücke (Prüfung, Weitergabe) liegt in `ProjektZeh/Native/Wasm/host/zehos_wasm.c`, Tabelle `zehos_v1`. Die Umgebung `ZEHOS_FEATURES` setzt `wasi_environ_*` in derselben Datei.
+Der Kern ist plattformunabhängig (keine Cosmos-Typen) und kommt in `ProjektZeh.Tests/ProjektZeh.Tests.csproj`. Die C-Brücke (Prüfung, Weitergabe) liegt in `ProjektZeh/Native/Wasm/host/zehos_host_core.c`, Tabelle `ZEHOS_HOST_FUNCTIONS` in `zehos_host_core.h`. Die Umgebung `ZEHOS_FEATURES` setzt `wasi_environ_*` in `zehos_host_core.c`.
 
 ## 5 Gastseite (ClassiCube)
 
@@ -119,9 +119,11 @@ Bisher nutzt ZehOS aus `System.Runtime.Intrinsics` nur skalare X86-Befehle (`Cos
 
 **Fertig, wenn** (Plan): gleiches Bild wie SoftGPU (Referenzvergleich), messbar höhere Bildrate, Fehlerfälle beenden nur die App, QEMU- und VMware-Ergebnis dokumentiert; dazu Hosttests mit `-warnaserror`, nativer Normal- und Recovery-Build.
 
+**Nachtrag Beschleunigung (17. November 2026, `task/raster-speed`):** Der Kern bestimmt bei exakt darstellbaren Kantenwerten (alle Ecken des Rechtecks unter 2^23) die abgedeckten Pixel einer Zeile ganzzahlig statt sie abzutasten, liest Puffer nach einer Prüfung je Aufruf ohne Bereichsprüfung je Pixel und rechnet im 3D-Pfad vier Pixel je Schritt mit SSE2 (`Vector128`, `cvttps2dq`, keine Ganzzahl-Vektormultiplikation). Bitgleichheit sichert `WasmRasterizerEquivalenceTests` gegen eine eingefrorene Kopie der alten Fassung (Spielszene und 1500 Zufallsszenen); einzige Ausnahme ist das Vorzeichen von NaN-Tiefen, das schon zwischen Übersetzungsstufen der alten Fassung schwankt und keinen Vergleich beeinflusst. Liegen Farb- und Tiefenpuffer überlappend im Gastspeicher, bleibt der Kern skalar. Gastmessungen unter WHPX schwankten stark mit der Last des Entwicklungsrechners und dem laufenden Mesh-Aufbau (Werte im Bericht des Branches).
+
 ## 8 Abstimmung
 
-- **Etappe 1** (agent-laser-purple, `feature/wasm-frametimes`): ändert `ProjektZeh/Runtime/Wasm/` außer der Importtabelle. Meine Änderungen dort: nur `zehos_wasm.c` (Tabelle, Brücke, Umgebung) und eine neue Rückruffunktion in `WasmRuntime.cs`. Vor dem Umbau im Kanal abgleichen.
+- **Etappe 1** (agent-laser-purple, `feature/wasm-frametimes`): ändert `ProjektZeh/Runtime/Wasm/` außer der Importtabelle. Meine Änderungen dort: nur `zehos_wasm.c`, heute `zehos_host_core.c`/`.h` (Tabelle, Brücke, Umgebung) und eine neue Rückruffunktion in `WasmRuntime.cs`. Vor dem Umbau im Kanal abgleichen.
 - **Etappe 5** (AOT, agent-laser-pink-aot, Übergabe `docs/aot-handoff`): Die ABI ist laufzeitunabhängig (Gastadressen und Längen). Eine AOT-Laufzeit braucht nur eine zweite Bindung derselben Brücke.
 - Lizenz: Der übertragene Algorithmus stammt aus ClassiCube (BSD-3, UnknownShadow200); Hinweis in der Quelldatei und in den Lizenzangaben des Kernels.
 

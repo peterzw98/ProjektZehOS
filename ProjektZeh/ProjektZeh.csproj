@@ -6,13 +6,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.14</Version>
+    <Version Condition="'$(Version)' == ''">0.5.34</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
@@ -49,6 +50,10 @@
   <PropertyGroup Condition="'$(ZehOSWasmAot)' == 'true'">
     <CCCompilerFlags>$(CCCompilerFlags) -DZEHOS_WASM_AOT -DBH_PLATFORM_ZEHOS -DBUILD_TARGET_X86_64 -DBH_MALLOC=wasm_runtime_malloc -DBH_FREE=wasm_runtime_free -DWASM_ENABLE_AOT=1 -DWASM_ENABLE_INTERP=0 -DWASM_ENABLE_FAST_INTERP=0 -DWASM_ENABLE_JIT=0 -DWASM_ENABLE_FAST_JIT=0 -DWASM_ENABLE_LIBC_BUILTIN=0 -DWASM_ENABLE_LIBC_WASI=0 -DWASM_ENABLE_THREAD_MGR=0 -DWASM_ENABLE_SHARED_MEMORY=0 -DWASM_ENABLE_MULTI_MODULE=0 -DWASM_ENABLE_SIMD=0 -DWASM_ENABLE_BULK_MEMORY=1 -DWASM_ENABLE_REF_TYPES=1 -DWASM_ENABLE_AOT_INTRINSICS=1 -DWASM_ENABLE_QUICK_AOT_ENTRY=1 -DWASM_ENABLE_SHRUNK_MEMORY=1 -DWASM_ENABLE_MINI_LOADER=0 -DWASM_ENABLE_EXTENDED_CONST_EXPR=0 -DWASM_DISABLE_HW_BOUND_CHECK=1 -DWASM_DISABLE_STACK_HW_BOUND_CHECK=1 -DWASM_DISABLE_WAKEUP_BLOCKING_OP=0 -DWASM_DISABLE_WRITE_GS_BASE=1 -DWASM_GLOBAL_HEAP_SIZE=10485760 -Dstatic_assert=_Static_assert</CCCompilerFlags>
   </PropertyGroup>
+  <!-- Nur fuer die SIMD-Probe: ILC-Befehlssatz ausdruecklich vorgeben (z. B. x86-64-v3, native). Ohne Angabe bleibt der Cosmos-Standard. -->
+  <ItemGroup Condition="'$(ZehOSSimdProbe)' == 'true' and '$(ZehOSSimdInstructionSet)' != ''">
+    <IlcArg Include="--instruction-set:$(ZehOSSimdInstructionSet)" />
+  </ItemGroup>
   <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />
   </ItemGroup>
@@ -75,6 +80,37 @@
       <CCCompilerFlags Condition="'$(CCCompilerFlags)' == ''">-O2 -fno-stack-protector -nostdinc -fno-builtin</CCCompilerFlags>
       <CCCompilerFlags>$(CCCompilerFlags) -ffile-prefix-map=&quot;$(NuGetPackageRoot)=/nuget/&quot; -ffile-prefix-map=&quot;$(MSBuildProjectDirectory)=/zehos&quot;</CCCompilerFlags>
     </PropertyGroup>
+  </Target>
+
+  <!-- Cosmos.Build.CC 3.0.97 (CCBuildTask) benennt Objektdateien nur nach dem Inhalt der .c-Datei und ueberspringt
+       vorhandene. Geaenderte Header oder C-Flags (etwa d_m3MaxNativeStack, ZehOSAotProbe) liessen so alte Objekte in
+       cobj/ stehen, bis zu "undefined symbol" beim Linken. Ein Stempel aus Flags, Include-Pfaden und dem Inhalt aller
+       eigenen Header leert cobj/, sobald sich davon etwas aendert; danach uebersetzt Cosmos alle C-Dateien neu.
+       Bewusst grob: auch Header, die der jeweilige Build nicht einbindet (etwa WAMR ohne ZehOSAotProbe), loesen das aus. -->
+  <Target Name="InvalidateStaleCObjects" BeforeTargets="BuildCC" DependsOnTargets="MapNativeSourcePaths;FindCSourceFilesForCC">
+    <PropertyGroup>
+      <ZehOSCObjDir>$(IntermediateOutputPath)cosmos/cobj/</ZehOSCObjDir>
+      <ZehOSCStampFile>$(IntermediateOutputPath)cosmos/cobj.stamp</ZehOSCStampFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <ZehOSCHeader Include="Native/**/*.h;ThirdParty/**/*.h" />
+    </ItemGroup>
+    <GetFileHash Files="@(ZehOSCHeader)">
+      <Output TaskParameter="Items" ItemName="ZehOSCHeaderHash" />
+    </GetFileHash>
+    <Hash ItemsToHash="$(CCCompilerFlags);$(TargetArchitecture);@(GCCIncludePath);@(GCCProject->'%(FullPath)');@(ZehOSCHeaderHash->'%(Identity)=%(FileHash)')">
+      <Output TaskParameter="HashResult" PropertyName="ZehOSCStamp" />
+    </Hash>
+    <ReadLinesFromFile File="$(ZehOSCStampFile)" Condition="Exists('$(ZehOSCStampFile)')">
+      <Output TaskParameter="Lines" PropertyName="ZehOSCStampOld" />
+    </ReadLinesFromFile>
+    <ItemGroup Condition="'$(ZehOSCStampOld)' != '$(ZehOSCStamp)'">
+      <ZehOSStaleCObject Include="$(ZehOSCObjDir)*.o;$(ZehOSCObjDir)*.obj" />
+    </ItemGroup>
+    <Message Text="[CC] Header oder C-Flags geaendert: @(ZehOSStaleCObject->Count()) Objektdateien verworfen" Importance="High" Condition="'@(ZehOSStaleCObject)' != ''" />
+    <Delete Files="@(ZehOSStaleCObject)" />
+    <MakeDir Directories="$(IntermediateOutputPath)cosmos/" />
+    <WriteLinesToFile File="$(ZehOSCStampFile)" Lines="$(ZehOSCStamp)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <ItemGroup>

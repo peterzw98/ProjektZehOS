@@ -83,6 +83,10 @@ public sealed class AccountServiceTests
 
             Assert.IsFalse(accounts.Load().IsOK());
             Assert.IsFalse(accounts.NeedsSetup, "ohne ausdrueckliches Bootfenster und eingebundenes /data nie eine Ersteinrichtung");
+            accounts.SetupWindowOpen = true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "auch im Bootfenster gilt /data ohne ausdrueckliche Angabe als nicht eingebunden");
+            accounts.SetupWindowOpen = false;
             accounts.IsDataMounted = () => true;
             Assert.IsFalse(accounts.Load().IsOK());
             Assert.IsFalse(accounts.NeedsSetup, "nur das geoeffnete Bootfenster erlaubt sie");

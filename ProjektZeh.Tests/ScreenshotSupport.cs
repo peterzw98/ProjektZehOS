@@ -11,8 +11,11 @@ internal static class ScreenshotSupport
 {
     private static readonly uint[] CrcTable = CreateCrcTable();
 
+    public static UiPainter? LoadCosmosFont() =>
+        LoadCosmosFontData() is { } font ? new UiPainter(font.Data, font.Width, font.Height) : null;
+
     /// <summary>Liest die im Cosmos-Paket eingebettete PSF2-Standardschrift, ohne die Kernelassembly zu laden.</summary>
-    public static UiPainter? LoadCosmosFont()
+    public static (byte[] Data, int Width, int Height)? LoadCosmosFontData()
     {
         string packages = Environment.GetEnvironmentVariable("NUGET_PACKAGES") ??
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
@@ -28,7 +31,7 @@ internal static class ScreenshotSupport
         int glyphBytes = BinaryPrimitives.ReadInt32LittleEndian(header[20..]);
         int height = BinaryPrimitives.ReadInt32LittleEndian(header[24..]);
         int width = BinaryPrimitives.ReadInt32LittleEndian(header[28..]);
-        return new UiPainter(header.Slice(headerSize, 256 * glyphBytes).ToArray(), width, height);
+        return (header.Slice(headerSize, 256 * glyphBytes).ToArray(), width, height);
     }
 
     public static void WritePng(string path, int width, int height, int[] pixels)

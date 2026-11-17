@@ -37,14 +37,17 @@ public sealed class Kernel : Sys.Kernel
             return new UpdateVersion(version.Major, version.Minor, version.Build);
         }
     }
+    // Etappe 4.1: einmal gewaehltes Pfadprofil; Root wird erst mit 4.3 gewaehlt, bis dahin gilt immer Legacy (/data).
+    private static readonly SystemPaths Paths = SystemPaths.Legacy;
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
-    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
+    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget(Paths.UpdateRoot), Paths.AdminRoot);
 #endif
-    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
+    // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
+    private readonly AccountService accounts = new(Paths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), Paths.Comparison, CosmosPathGuard.For(Paths.AdminRoot));
     // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
-    private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild(), CurrentVersion);
+    private readonly PackageStore packages = new(Paths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;
@@ -61,7 +64,7 @@ public sealed class Kernel : Sys.Kernel
     {
         messages = new MessageDemoService(tasks);
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
-        accounts.IsDataMounted = () => VfsManager.TryGetMount("/data", out _);
+        accounts.IsDataMounted = () => VfsManager.TryGetMount(Paths.AdminRoot, out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -76,7 +79,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
-            () => new FileService(desktopIdentity.HomeDirectory ?? "/data", access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
+            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -123,10 +126,10 @@ public sealed class Kernel : Sys.Kernel
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
+        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
@@ -253,6 +256,13 @@ public sealed class Kernel : Sys.Kernel
             return;
         }
 #endif
+#if ZEHOS_SIMD_PROBE
+        if (!CosmosSimdProbe.Run())
+        {
+            Stop();
+            return;
+        }
+#endif
 #if ZEHOS_SECURITY_PROBE
         if (!CosmosSecurityProbe.Run()) { Stop(); return; }
 #endif
@@ -319,7 +329,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
             return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         }
-        var unmounted = VfsManager.TryGetMount("/data", out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        var unmounted = VfsManager.TryGetMount(Paths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
 #if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();
 #endif

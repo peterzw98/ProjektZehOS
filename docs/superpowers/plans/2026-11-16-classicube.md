@@ -111,8 +111,8 @@ Ziel: Rechenlastige Apps laufen nahezu nativ.
 
 ## Etappe 6: Mehrspieler (1–2 Wochen)
 
-- [ ] Classic-Protokoll über die vorhandene Netz-ABI (`capability=net`, höchstens vier Verbindungen, 64 KiB Puffer) anbinden; neue Paketversion mit Netzberechtigung.
-- [ ] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops. In QEMU; VMware, soweit dort Netz verfügbar ist, sonst als offen nennen.
+- [x] Classic-Protokoll über die vorhandene Netz-ABI (`capability=net`, höchstens vier Verbindungen, 64 KiB Puffer) anbinden; neue Paketversion mit Netzberechtigung. *Ohne Kernelerweiterung; Eingabe über ClassiCubes Launcher (Direct connect), Entwurf [2026-11-17-classicube-mehrspieler.md](../specs/2026-11-17-classicube-mehrspieler.md). Veröffentlichung im Branch `packages` steht aus.*
+- [x] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops. In QEMU; VMware, soweit dort Netz verfügbar ist, sonst als offen nennen. *QEMU WHPX bestanden (`scripts/test-classicube-multiplayer.py`, 17.11.2026); der zweite Client war ein Python-Client auf dem Host, zwei ZehOS-Gäste und VMware offen.*
 
 **Fertig, wenn:** Zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, und Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
@@ -137,3 +137,5 @@ Ziel: Rechenlastige Apps laufen nahezu nativ.
 - 16.11.2026: Plan erstellt (agent-peter-classicube-plan). Grundlage: gelesene Quellen und Paketinhalte, nichts gebaut oder gemessen.
 - 16.11.2026: Unabhängiges Review ohne P1; eingearbeitet: Messgrößen Doom getrennt (Rechenzeit vs. Bildabstand), Wiederverwendung von `WasmFrameTimes`, Cosmos-Voraussetzung geklärt, VMware/Recovery/Version/Review je Etappe, Paketkatalog und Manifest, Speicherfreigabe nach Starts, Roadmap 12.4 und 6c benannt, Rückfall für ältere Kernel.
 - 17.11.2026: Etappe 2 umgesetzt (feature/classicube-port, agent-peter-classicube-port): SoftGPU statt SoftMin, Messung unter QEMU WHPX 5–6 Bilder/s, Rasterisierung rund 70–90 % der Bildzeit. Entscheidung Peter: Etappe 3 als Nächstes, AOT (Etappe 5) parallel vorbereiten.
+- 17.11.2026: Etappe 1 gemergt (#135, Bildzeit-Anteile, Desktop zeichnet nur bei neuem App-Bild). Etappe 3 gemergt (#134, Rasterizer als Hostfunktion, unter WHPX bitgleich und rund 21–33 statt 2–3 Bilder/s; VMware offen). Gasttest mit fester Welt (#136). SIMD-Probe S1: `Vector128` über SSE2 im Kernel korrekt und unter KVM schneller, SSE4.1/AVX2 im Standardbuild nicht verfügbar. Teamleitung agent-peter-cc-lead; R1 (Rasterkern schneller), C1 (AOT Etappe C), Etappe 6 in Arbeit.
+- 17.11.2026: Etappe 6 umgesetzt (feature/classicube-multiplayer): Socket-Funktionen auf `zehos_v1.net_*`, HTTP bleibt Stub, Launcher mit Direct connect, Testserver `scripts/classic-test-server.py`. Gastprüfung in QEMU WHPX bestanden: Login, Positionen, Blöcke Gast→Server→zweiter Client und zurück, Schließen bei offener Verbindung, Serverausfall. VMware nicht geprüft.

@@ -52,7 +52,8 @@ internal static class CosmosWasmProbe
             Expect("entry", Add, "fehlt", WasmStatus.EntryMissing, 0);
             // Ohne Hardwarezufall muss der Gast EIO statt Erfolg mit Nullen erhalten (#61).
             Expect("random", RandomGet, "run", WasmStatus.Ok, HasHardwareRandom() ? 0 : 29);
-            // Fehlerwege mit offener Datei: Trap und proc_exit beenden den Lauf, der Exitcode kommt an.
+            // Fehlerwege mit offener Datei: belegen Trapstatus und Exitcode im Gast. Das Schliessen in der C-Schicht belegt
+            // nur scripts/tests/test_wasm_input_native.py, weil WasmRuntime.Execute danach ohnehin alle Dateien schliesst.
             Expect("opentrap", OpenThenTrap, "run", WasmStatus.Trap, 0, "/data");
             Expect("openexit", OpenThenExit, "run", WasmStatus.Ok, 7, "/data");
             RunApplication();

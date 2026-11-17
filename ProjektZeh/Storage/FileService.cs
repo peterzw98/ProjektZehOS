@@ -17,13 +17,17 @@ internal sealed class FileService
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
+    // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
+    private readonly Func<string, bool, ResultErr>? pathGuard;
 
     public string CurrentDirectory { get; private set; }
 
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
         FileAccessControl? access = null, UserSession? session = null,
-        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null)
+        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
+        Func<string, bool, ResultErr>? pathGuard = null)
     {
+        this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
         this.diskSpace = diskSpace;
@@ -46,10 +50,9 @@ internal sealed class FileService
         {
             Authorize(resolved.Value!, FilePermission.Read);
             string[] entries = Directory.GetFileSystemEntries(resolved.Value!);
-            if (access == null) return ResultObjectFactory.CreateSuccess(entries);
             var visible = new List<string>();
             foreach (string entry in entries)
-                if (access.Check(session!, entry, FilePermission.Read).IsOK()) visible.Add(entry);
+                if (Visible(entry)) visible.Add(entry);
             return ResultObjectFactory.CreateSuccess(visible.ToArray());
         }
         catch (Exception exception) when (IsFileError(exception))
@@ -89,7 +92,7 @@ internal sealed class FileService
     /// </summary>
     public ResultObject<string> ReadText(string? path, bool allowMissing = false, int maximumLength = MaximumTextLength)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: allowMissing);
         if (!resolved.IsOK())
         {
             return resolved;
@@ -189,7 +192,7 @@ internal sealed class FileService
 
     private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
         {
             return resolved.Status;
@@ -298,7 +301,7 @@ internal sealed class FileService
     /// </summary>
     public ResultErr CreateDirectory(string? path)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
         {
             return resolved.Status;
@@ -355,7 +358,7 @@ internal sealed class FileService
     {
         var from = ResolvePath(source);
         if (!from.IsOK()) return from.Status;
-        var to = ResolvePath(target);
+        var to = ResolvePath(target, creating: true);
         if (!to.IsOK()) return to.Status;
         bool registered = false;
         string? temporary = null;
@@ -416,8 +419,9 @@ internal sealed class FileService
         {
             Authorize(resolved.Value!, FilePermission.Write);
             Authorize(Path.GetDirectoryName(resolved.Value!)!, FilePermission.Write);
-            if (directory && (string.Equals(resolved.Value, CurrentDirectory, StringComparison.OrdinalIgnoreCase) ||
-                CurrentDirectory.StartsWith(Path.TrimEndingDirectorySeparator(resolved.Value!) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+            StringComparison comparison = access?.Comparison ?? StringComparison.OrdinalIgnoreCase;
+            if (directory && (string.Equals(resolved.Value, CurrentDirectory, comparison) ||
+                CurrentDirectory.StartsWith(Path.TrimEndingDirectorySeparator(resolved.Value!) + Path.DirectorySeparatorChar, comparison)))
                 throw new IOException("Das Arbeitsverzeichnis oder dessen Elternverzeichnis darf nicht geloescht werden.");
             FileAttributes attributes = File.GetAttributes(resolved.Value!);
             if (((attributes & FileAttributes.Directory) != 0) != directory)
@@ -432,7 +436,7 @@ internal sealed class FileService
 
     public ResultErr Touch(string? path)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK()) return resolved.Status;
         bool registered = false;
         try
@@ -503,7 +507,8 @@ internal sealed class FileService
                 {
                     if (++visited > MaximumSearchEntries)
                         return ResultObjectFactory.CreateFailure<FileEntry[]>(ResultCode.InvalidArgument, "Suche auf 1024 Eintraege begrenzt.");
-                    if (access != null && !access.Check(session!, entryPath, FilePermission.Read).IsOK()) continue;
+                    // Vor GetAttributes: Cosmos folgt dort Symlinks.
+                    if (!Visible(entryPath)) continue;
                     var attributes = File.GetAttributes(entryPath);
                     if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
                     var entry = new FileEntry(entryPath, (attributes & FileAttributes.Directory) != 0);
@@ -541,7 +546,12 @@ internal sealed class FileService
         return ResultObjectFactory.CreateSuccess(size);
     }
 
-    internal ResultObject<string> ResolvePath(string? path)
+    /// <summary>
+    /// Absoluter Pfad, erst nach dem Pfadwaechter (Etappe 3): jeder Symlink und jede fremde Mountgrenze wird abgelehnt,
+    /// ein fehlendes Blatt nur bei <paramref name="creating"/>. Restrisiko: zwischen Pruefung und IO kann sich der Baum aendern
+    /// (ZehOS selbst legt keine Symlinks an).
+    /// </summary>
+    internal ResultObject<string> ResolvePath(string? path, bool creating = false)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -551,7 +561,9 @@ internal sealed class FileService
 
         try
         {
-            return ResultObjectFactory.CreateSuccess(Path.GetFullPath(path, CurrentDirectory));
+            string full = Path.GetFullPath(path, CurrentDirectory);
+            var guarded = FileAccessControl.RunGuard(pathGuard, full, creating);
+            return guarded.IsOK() ? ResultObjectFactory.CreateSuccess(full) : ResultObjectFactory.CreateFailure<string>(guarded);
         }
         catch (Exception exception) when (IsFileError(exception))
         {
@@ -580,6 +592,11 @@ internal sealed class FileService
     }
 
     internal void ResetDirectory(string directory) => CurrentDirectory = directory;
+
+    /// <summary>Ein Listeneintrag ist sichtbar nach Rechten, ohne Rechteverwaltung nach dem Pfadwaechter.</summary>
+    private bool Visible(string entry) => access != null
+        ? access.Check(session!, entry, FilePermission.Read).IsOK()
+        : FileAccessControl.RunGuard(pathGuard, entry, false).IsOK();
 
     private static ResultErr TextTooLarge(int maximumLength)
     {

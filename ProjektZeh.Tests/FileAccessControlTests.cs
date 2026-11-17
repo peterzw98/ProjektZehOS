@@ -64,6 +64,6 @@ public sealed class FileAccessControlTests
         Assert.IsFalse(restored.Check(alice, Path.Combine(root, ".zehos-hidden.tmp"), FilePermission.Read).IsOK());
         bob.Logout();
         Assert.IsFalse(restored.Check(bob, path, FilePermission.Read).IsOK());
-        Assert.AreEqual("1", alice.UserId);
+        Assert.IsTrue(restored.Check(alice, path, FilePermission.Write).IsOK());
     }
 }
