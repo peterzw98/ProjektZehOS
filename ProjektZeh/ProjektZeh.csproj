@@ -6,7 +6,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.44</Version>
+    <Version Condition="'$(Version)' == ''">0.5.52</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
@@ -22,8 +22,11 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
-    <!-- AOT-Gastprobe (Plan 5c, Etappe B) braucht die freistehende C-Laufzeit fuer malloc. -->
-    <ZehOSWasm Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasm>
+    <!-- WAMR-AOT-Lader (Plan 5c, Etappe D) vorerst nur auf Wunsch: AOT bleibt bis Etappe F aus, und vor Etappe E gibt es
+         keinen Aufrufer ausser der Probe. Er braucht wasm3s freistehende C-Laufzeit; die AOT-Gastprobe schaltet ihn ein. -->
+    <ZehOSWasmAot Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasmAot>
+    <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
+    <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
     <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
   </PropertyGroup>
 
@@ -41,10 +44,11 @@
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
   </ItemGroup>
   <!-- WAMR 2.4.5 nur als AOT-Lader (Plan 5c, Etappe B2): kein Interpreter, kein JIT, keine WASI-libc, keine Threads,
-       explizite statt hardwaregestuetzter Bereichspruefung. Die Schalter gelten fuer alle C-Quellen, betreffen aber nur WAMR.
+       explizite statt hardwaregestuetzter Bereichspruefung. Die Schalter gelten fuer alle C-Quellen, betreffen aber nur WAMR
+       und die WAMR-Bindung zehos_host_wamr.c (ZEHOS_WASM_AOT).
        Bulk-Memory und Referenztypen bleiben an, weil wasi-sdk 25 sie standardmaessig erzeugt; sonst lehnt der Lader jedes Paket ab. -->
-  <PropertyGroup Condition="'$(ZehOSAotProbe)' == 'true'">
-    <CCCompilerFlags>$(CCCompilerFlags) -DBH_PLATFORM_ZEHOS -DBUILD_TARGET_X86_64 -DBH_MALLOC=wasm_runtime_malloc -DBH_FREE=wasm_runtime_free -DWASM_ENABLE_AOT=1 -DWASM_ENABLE_INTERP=0 -DWASM_ENABLE_FAST_INTERP=0 -DWASM_ENABLE_JIT=0 -DWASM_ENABLE_FAST_JIT=0 -DWASM_ENABLE_LIBC_BUILTIN=0 -DWASM_ENABLE_LIBC_WASI=0 -DWASM_ENABLE_THREAD_MGR=0 -DWASM_ENABLE_SHARED_MEMORY=0 -DWASM_ENABLE_MULTI_MODULE=0 -DWASM_ENABLE_SIMD=0 -DWASM_ENABLE_BULK_MEMORY=1 -DWASM_ENABLE_REF_TYPES=1 -DWASM_ENABLE_AOT_INTRINSICS=1 -DWASM_ENABLE_QUICK_AOT_ENTRY=1 -DWASM_ENABLE_SHRUNK_MEMORY=1 -DWASM_ENABLE_MINI_LOADER=0 -DWASM_ENABLE_EXTENDED_CONST_EXPR=0 -DWASM_DISABLE_HW_BOUND_CHECK=1 -DWASM_DISABLE_STACK_HW_BOUND_CHECK=1 -DWASM_DISABLE_WAKEUP_BLOCKING_OP=0 -DWASM_DISABLE_WRITE_GS_BASE=1 -DWASM_GLOBAL_HEAP_SIZE=10485760 -Dstatic_assert=_Static_assert</CCCompilerFlags>
+  <PropertyGroup Condition="'$(ZehOSWasmAot)' == 'true'">
+    <CCCompilerFlags>$(CCCompilerFlags) -DZEHOS_WASM_AOT -DBH_PLATFORM_ZEHOS -DBUILD_TARGET_X86_64 -DBH_MALLOC=wasm_runtime_malloc -DBH_FREE=wasm_runtime_free -DWASM_ENABLE_AOT=1 -DWASM_ENABLE_INTERP=0 -DWASM_ENABLE_FAST_INTERP=0 -DWASM_ENABLE_JIT=0 -DWASM_ENABLE_FAST_JIT=0 -DWASM_ENABLE_LIBC_BUILTIN=0 -DWASM_ENABLE_LIBC_WASI=0 -DWASM_ENABLE_THREAD_MGR=0 -DWASM_ENABLE_SHARED_MEMORY=0 -DWASM_ENABLE_MULTI_MODULE=0 -DWASM_ENABLE_SIMD=0 -DWASM_ENABLE_BULK_MEMORY=1 -DWASM_ENABLE_REF_TYPES=1 -DWASM_ENABLE_AOT_INTRINSICS=1 -DWASM_ENABLE_QUICK_AOT_ENTRY=1 -DWASM_ENABLE_SHRUNK_MEMORY=1 -DWASM_ENABLE_MINI_LOADER=0 -DWASM_ENABLE_EXTENDED_CONST_EXPR=0 -DWASM_DISABLE_HW_BOUND_CHECK=1 -DWASM_DISABLE_STACK_HW_BOUND_CHECK=1 -DWASM_DISABLE_WAKEUP_BLOCKING_OP=0 -DWASM_DISABLE_WRITE_GS_BASE=1 -DWASM_GLOBAL_HEAP_SIZE=10485760 -Dstatic_assert=_Static_assert</CCCompilerFlags>
   </PropertyGroup>
   <!-- Nur fuer die SIMD-Probe: ILC-Befehlssatz ausdruecklich vorgeben (z. B. x86-64-v3, native). Ohne Angabe bleibt der Cosmos-Standard. -->
   <ItemGroup Condition="'$(ZehOSSimdProbe)' == 'true' and '$(ZehOSSimdInstructionSet)' != ''">
@@ -52,6 +56,8 @@
   </ItemGroup>
   <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ZehOSWasmAot)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/wamr-platform/" />
     <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/aot/" />
     <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/aot/arch/" />

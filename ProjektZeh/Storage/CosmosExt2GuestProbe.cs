@@ -86,6 +86,8 @@ internal static class CosmosExt2GuestProbe
             mountedAt = MountPoint;
             Pass(MountPoint);
 
+            DirectoryLimit();
+
             byte[] expected = ExpectedContent();
             FileOperations(device, expected);
 
@@ -120,6 +122,27 @@ internal static class CosmosExt2GuestProbe
             Write($"{step} FAIL {exception.GetType().Name}: {exception.Message}");
             return Finish();
         }
+    }
+
+    private static void DirectoryLimit()
+    {
+        Begin("directory-limit");
+        string directory = MountPoint + "/limit";
+        Directory.CreateDirectory(directory);
+        Check(CosmosDirectoryEntryLimit.ForDirectory(directory) == FileService.MaximumExt2DirectoryEntries, "ext2-Grenze nicht erkannt");
+        // Kleine Grenze prueft denselben Schreibpfad ohne tausende langsame Gast-Dateioperationen.
+        var files = new FileService(directory, directoryEntryLimit: _ => 2);
+        Check(files.WriteText("one", "original").IsOK() && files.Touch("two").IsOK(), "Eintraege bis zur Grenze abgelehnt");
+        var rejected = files.WriteText("three", "new");
+        Check(!rejected.IsOK() && rejected.Message.Contains("cause='DirectoryEntryLimit'", StringComparison.Ordinal), "Grenzfehler fehlt");
+        Check(files.MoveFile("one", "renamed").IsOK(), "Rename an der Grenze abgelehnt");
+        rejected = files.WriteText("renamed", "changed");
+        Check(!rejected.IsOK() && File.ReadAllText(directory + "/renamed") == "original", "Original beim Ersetzen verloren");
+        Check(Directory.GetFileSystemEntries(directory).Length == 2, "Tempdatei oder weiterer Eintrag geblieben");
+        File.Delete(directory + "/renamed");
+        File.Delete(directory + "/two");
+        Directory.Delete(directory);
+        Pass("ext2=8190; FileService-Anlegen, Ablehnen, Rename und Originalerhalt mit Testgrenze 2");
     }
 
     private static IBlockDevice FindProbeDevice()

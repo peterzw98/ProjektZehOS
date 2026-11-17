@@ -31,6 +31,7 @@ internal static class CosmosNetworkProbe
 #endif
 #if ZEHOS_NETWORK_TLS_PROBE
             byte[] probeCa = TlsRoots.Read("ZehOS.NetworkProbeCa");
+            CheckClock(service, probeCa);
             Check(CosmosNetworkService.Fetch("https://10.0.2.2:18443/ok", CancellationToken.None, probeCa) == "ZehOS network probe\n", "TLS valid");
             // Server schliesst sofort nach dem Body; der Abruf darf weder scheitern noch auf das 10-s-Zeitlimit warten.
             var finClock = Stopwatch.StartNew();
@@ -97,6 +98,39 @@ internal static class CosmosNetworkProbe
         catch (Exception exception) { Write("FAIL " + exception.Message); return false; }
     }
 #if ZEHOS_WASM
+#if ZEHOS_NETWORK_TLS_PROBE
+    /// <summary>
+    /// Etappe 12.2 PR C: SNTP-Fixtures des Helfers auf 10.0.2.2 (18123 richtige Zeit, 18124 fremde Antwort, 18125 eine
+    /// Stunde zurueck). Mit falscher RTC (--rtc-base) muss TLS erst gesperrt sein und nach dem Abgleich gehen.
+    /// </summary>
+    private static void CheckClock(CosmosNetworkService service, byte[] probeCa)
+    {
+        bool rtcPlausible = ProjektZeh.SystemServices.ClockCorrection.IsPlausible(DateTime.UtcNow, TlsRoots.MinimumTime);
+        Write("time RTC " + DateTime.UtcNow.ToString("u") + (rtcPlausible ? " plausible" : " implausible"));
+        if (!rtcPlausible)
+        {
+            bool blocked = false;
+            try { CosmosNetworkService.Fetch("https://10.0.2.2:18443/ok", CancellationToken.None, probeCa); }
+            catch (Exception exception)
+            {
+                for (Exception? current = exception; current != null; current = current.InnerException)
+                    blocked |= current.Message.Contains("UTC-Uhr", StringComparison.Ordinal);
+            }
+            Check(blocked, "TLS blocked by implausible RTC");
+        }
+        Check(!service.Execute("time", ["10.0.2.2", "18124"], CancellationToken.None).IsOK(), "NTP foreign answer ignored");
+        if (rtcPlausible)
+        {
+            var backward = service.Execute("time", ["10.0.2.2", "18125"], CancellationToken.None);
+            Check(!backward.IsOK() && backward.Status.Message.Contains("BackwardStepRefused", StringComparison.Ordinal), "NTP backward step: " + backward.Status.Message);
+        }
+        var synced = service.Execute("time", ["10.0.2.2", "18123"], CancellationToken.None);
+        Check(synced.IsOK() && ProjektZeh.SystemServices.SystemClock.IsSynchronized, "NTP sync: " + synced.Status.Message);
+        Check(ProjektZeh.SystemServices.ClockCorrection.IsPlausible(ProjektZeh.SystemServices.SystemClock.UtcNow, TlsRoots.MinimumTime), "clock plausible after sync");
+        Write("time PASS " + synced.Value);
+    }
+#endif
+
     private static void CheckWasmNetwork()
     {
         // Minimalmodul ruft net_open fuer den lokalen Testserver auf und liefert den WASI-Status.
@@ -151,7 +185,7 @@ internal static class CosmosNetworkProbe
     {
         var anchors = TlsTransport.LoadAnchors(probeCa);
         var network = new ProjektZeh.Runtime.Wasm.WasmNetworkSession(new ProjektZeh.Runtime.Wasm.CosmosWasmNetworkConnector(host =>
-            TlsTransport.CreateClient(host, ProjektZeh.Security.CosmosSaltSource.Fill, anchors, DateTime.UtcNow, true)), true);
+            TlsTransport.CreateClient(host, ProjektZeh.Security.CosmosSaltSource.Fill, anchors, ProjektZeh.SystemServices.SystemClock.UtcNow, true)), true);
         int tls = ProjektZeh.Runtime.Wasm.WasmNetworkSession.FlagTls;
         int status;
         // Der eine Netzwerkworker kann noch im blockierenden Cosmos-Connect zu 10.0.2.200 aus CheckWasmNetwork haengen;

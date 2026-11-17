@@ -65,6 +65,13 @@ internal sealed class CosmosStorageService : IStorageService
                 return size;
             }
 
+            // Vor ExistingPartitions, damit eine GPT unabhaengig davon abgelehnt wird, ob Cosmos ihre Eintraege erkennt.
+            var layout = DataDiskSelector.CheckNoInstalledLayout(device.BlockSize, device.BlockCount, device.ReadBlock);
+            if (!layout.IsOK())
+            {
+                return layout;
+            }
+
             if (StorageManager.GetPartitions(device).Count != 0)
             {
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");

@@ -8,6 +8,9 @@ namespace ProjektZeh.Network;
 internal sealed class NetworkAutoConfiguration(INetworkService network, BackgroundTaskService tasks, Action<string> log)
 {
     public const int RetryMilliseconds = 10000;
+    /// <summary>Standard-Zeitserver (freigegeben von Peter, 17.11.2026).</summary>
+    public const string TimeServer = "pool.ntp.org";
+    private const int TimeAttempts = 3;
     private readonly object gate = new();
     private bool enabled;
     private bool running;
@@ -53,6 +56,7 @@ internal sealed class NetworkAutoConfiguration(INetworkService network, Backgrou
         int retryMilliseconds = RetryMilliseconds)
     {
         string? previous = null;
+        int timeAttempts = 0;
         while (!context.Token.IsCancellationRequested)
         {
             var status = network.Status;
@@ -63,6 +67,15 @@ internal sealed class NetworkAutoConfiguration(INetworkService network, Backgrou
                 if (context.Token.IsCancellationRequested) return;
                 string text = result.IsOK() ? result.Value ?? "DHCP abgeschlossen." : result.Status.Message;
                 if (!string.Equals(previous, text, StringComparison.Ordinal)) { log(text); previous = text; }
+                status = network.Status;
+            }
+            // Etappe 12.2: nach der ersten Adresse einmal die Uhr abgleichen, bei Fehlern hoechstens dreimal je Lauf.
+            if (status.Address != null && timeAttempts < TimeAttempts && !ProjektZeh.SystemServices.SystemClock.IsSynchronized)
+            {
+                timeAttempts++;
+                var time = network.Execute("time", [TimeServer], context.Token);
+                if (context.Token.IsCancellationRequested) return;
+                log(time.IsOK() ? time.Value ?? "Uhr abgeglichen." : "Zeitabgleich fehlgeschlagen: " + time.Status.Message);
             }
             if (!context.Sleep(retryMilliseconds)) return;
         }

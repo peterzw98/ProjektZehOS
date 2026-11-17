@@ -41,7 +41,8 @@ internal static class TlsTransport
 
     internal static void CheckClock(DateTime utcNow)
     {
-        if (utcNow.Kind != DateTimeKind.Utc || utcNow.Year is < 2026 or > 2100)
+        // Etappe 12.2: nicht vor dem Stand des Wurzelbundles, hoechstens 15 Jahre danach (vorher nur Jahr 2026-2100).
+        if (!ProjektZeh.SystemServices.ClockCorrection.IsPlausible(utcNow, TlsRoots.MinimumTime))
             throw new InvalidOperationException("Ungueltige UTC-Uhr; TLS ist gesperrt.");
     }
 

@@ -189,6 +189,7 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.
 - **Pause:** Ist das Fenster nicht aktiv oder nicht sichtbar, blockiert `present` und `ticks_ms` steht still.
 - **Fehler:** Ein Trap (ungültiger Speicherzugriff, falscher indirekter Aufruf) beendet nur die App; das Fenster zeigt die Ursache. Ein Fehler im Interpreter oder Host kann trotzdem den Kernel treffen. Das ist eine logische Grenze, keine Prozessisolation.
+- **AOT (in Arbeit, noch nicht für Apps freigegeben):** Unter dem künftigen AOT-Pfad trappt eine WASI-Funktion, die ZehOS nur als Stub anbietet, bei einer ungültigen Gastadresse, statt wie unter wasm3 `EBADF`/`ENOSYS` zu liefern.
 - **Paketformat:**
   - höchstens 128 Dateien und 128 MiB je Paket
   - Pfade nur aus `A–Z a–z 0–9 . _ -`, ohne Groß-/Kleinschreibungs-Duplikate

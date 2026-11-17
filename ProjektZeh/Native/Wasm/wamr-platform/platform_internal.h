@@ -47,6 +47,9 @@ float fminf(float left, float right);
 double fmax(double left, double right);
 float fmaxf(float left, float right);
 
+// Stackgrenze des Wasm-Workers fuer den naechsten AOT-Lauf; NULL schaltet die Pruefung ab (zehos_platform.c).
+void zehos_wamr_set_stack_boundary(uint8_t *boundary);
+
 static inline os_file_handle os_get_invalid_handle(void) { return -1; }
 static inline int os_getpagesize(void) { return 4096; }
 
