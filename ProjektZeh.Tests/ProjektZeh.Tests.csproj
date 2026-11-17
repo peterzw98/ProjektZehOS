@@ -62,6 +62,7 @@
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\DataDiskSelector.cs" Link="Storage\DataDiskSelector.cs" />
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
