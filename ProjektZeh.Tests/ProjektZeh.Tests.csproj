@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_UPDATE_TESTS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
@@ -26,6 +27,8 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmSaveStore.cs" Link="Runtime\Wasm\WasmSaveStore.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\IWasmSession.cs" Link="Runtime\Wasm\IWasmSession.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRuntime.HostCallbacks.cs" Link="Runtime\Wasm\WasmRuntime.HostCallbacks.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\VmwareClock.cs" Link="Runtime\VmwareClock.cs" />

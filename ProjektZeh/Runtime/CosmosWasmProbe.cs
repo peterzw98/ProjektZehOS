@@ -29,6 +29,8 @@ internal static class CosmosWasmProbe
 
     // Von Hand erzeugte Minimalmodule; jeweils eine exportierte Funktion "run" ohne Parameter mit i32-Ergebnis.
     private static readonly byte[] Add = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a09010700412841026a0b");
+    // run ruft present und present_indexed mit je einem Pixel auf; die Sitzung wirft in beiden Rueckrufen.
+    private static readonly byte[] PresentCallbacks = Convert.FromHexString("0061736d01000000010d0260057f7f7f7f7f006000017f022f02087a65686f735f76310770726573656e740000087a65686f735f76310f70726573656e745f696e646578656400000302010105030100010707010372756e00020a1e011c00410041014101410041001000410041104101410141001001412a0b");
     private static readonly byte[] Loop = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0b01090003400c000b41000b");
     private static readonly byte[] Grow = Convert.FromHexString("0061736d010000000105016000017f0302010005030100010707010372756e00000a0a0108004180800440000b");
     private static readonly byte[] Recurse = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0601040010000b");
@@ -50,6 +52,7 @@ internal static class CosmosWasmProbe
         {
             MeasureThreadStackRelease();
             Expect("add", Add, "run", WasmStatus.Ok, 42);
+            CheckPresentFailures();
             long abortMilliseconds = Expect("loop", Loop, "run", WasmStatus.OutOfGas, 0);
             Check(abortMilliseconds <= AbortLimitMilliseconds, $"Endlosschleife erst nach {abortMilliseconds} ms beendet.");
             Expect("grow", Grow, "run", WasmStatus.Ok, -1);
@@ -100,6 +103,19 @@ internal static class CosmosWasmProbe
         }
         ulong after = FreeBytes();
         Write($"threadstack threads=3 stackMiB={WasmRuntime.ThreadStackBytes >> 20} lostMiB={(before - Math.Min(before, after)) >> 20}");
+    }
+
+    private static void CheckPresentFailures()
+    {
+        for (int run = 1; run <= 2; run++)
+        {
+            var session = new ProbeSession(null, failPresent: true);
+            WasmStatus status = WasmRuntime.Run(PresentCallbacks, "run", FixtureGas, session, out int result, out string message);
+            Write($"callbacks run={run} status={status} result={result} calls={session.PresentCalls} {message}");
+            Check(status == WasmStatus.Ok && result == 42 && session.PresentCalls == 2,
+                "present-Ausnahme hat den Lauf oder einen Folgeaufruf unterbrochen.");
+        }
+        Write("callbacks PASS");
     }
 
     private static void RunApplication()
@@ -190,7 +206,7 @@ internal static class CosmosWasmProbe
 
     private static void Write(string message) => Log.WriteString($"WASM_PROBE {message}\n");
 
-    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue, string? saveRoot = null) : IWasmSession
+    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue, string? saveRoot = null, bool failPresent = false) : IWasmSession
     {
         private readonly Stopwatch clock = Stopwatch.StartNew();
         public StringBuilder Output { get; } = new();
@@ -198,6 +214,7 @@ internal static class CosmosWasmProbe
         public string? SaveRoot => saveRoot;
         public bool AllowsNetwork => false;
         public int Frames { get; private set; }
+        public int PresentCalls { get; private set; }
         public int FirstTic { get; private set; } = -1;
         public int LastTic { get; private set; }
         public long FirstFrameMs { get; private set; }
@@ -219,6 +236,8 @@ internal static class CosmosWasmProbe
 
         public void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test)
         {
+            PresentCalls++;
+            if (failPresent) throw new InvalidOperationException("Gezielter present-Fehler der Gastprobe.");
             if (test)
             {
                 TestFrame = $"{pixels[0]:x6}/{pixels[width - 1]:x6}/{pixels[(height - 1) * width]:x6}/{pixels[height * width - 1]:x6}";
