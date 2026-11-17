@@ -8,6 +8,8 @@ namespace ProjektZeh.Graphics;
 internal sealed record DesktopSettings
 {
     public const int CustomWallpaper = 4;
+    /// <summary>Laengste gespeicherte Bildangabe; laengere verwirft <see cref="Parse"/>.</summary>
+    public const int MaximumImageLength = 240;
     public bool Dark { get; init; } = true;
     public int Accent { get; init; }
     public int Wallpaper { get; init; }
@@ -41,7 +43,7 @@ internal sealed record DesktopSettings
                     value = value with { Accent = accent }; break;
                 case "wallpaper" when int.TryParse(data, out int wallpaper) && wallpaper is >= 0 and <= CustomWallpaper:
                     value = value with { Wallpaper = wallpaper }; break;
-                case "image" when data.Length <= 240: value = value with { Image = data }; break;
+                case "image" when data.Length <= MaximumImageLength: value = value with { Image = data }; break;
                 case "width" when int.TryParse(data, out int parsed): width = parsed; break;
                 case "height" when int.TryParse(data, out int parsed): height = parsed; break;
                 case "displayConfirmed" when bool.TryParse(data, out bool parsed): confirmed = parsed; break;

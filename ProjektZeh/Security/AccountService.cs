@@ -10,11 +10,11 @@ namespace ProjektZeh.Security;
 internal sealed class AccountService
 {
     private sealed record Account(string Id, string Name, bool Administrator, string PasswordHash);
-    private const string Header = "ZEHOS-ACCOUNTS-1\n";
-    private const string Separator = "#ACL\n";
+    internal const string Header = "ZEHOS-ACCOUNTS-1\n";
+    internal const string Separator = "#ACL\n";
     internal const string UnknownAccountHash =
         "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    private const string CommandsFile = ".zehos-commands.db";
+    internal const string CommandsFile = ".zehos-commands.db";
     private const string CommandsHeader = "ZEHOS-COMMANDS-1\n";
     // Ein Rechteeintrag je Datei (rund 90 Zeichen): die allgemeine 64-KiB-Textgrenze sperrte das System nach wenigen
     // hundert Dateien. 1 Mi Zeichen reichen je nach Pfadlaenge fuer einige tausend bis rund 10000 Eintraege.
