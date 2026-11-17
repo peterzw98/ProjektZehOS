@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
+using ProjektZeh.Storage.Migration;
 
 namespace ProjektZeh.Security;
 
@@ -26,6 +27,7 @@ internal sealed class AccountService
     private readonly List<UserSession> sessions = [];
     private readonly FileService metadata;
     private readonly PasswordHasher hasher;
+    private readonly Func<IDisposable?>? tryBeginWrite;
     public FileAccessControl Access { get; }
     public bool IsReady => Access.IsReady && accounts.Count != 0;
     /// <summary>Nur eine tatsaechlich fehlende Kontodatei erlaubt die Ersteinrichtung im normalen Build.</summary>
@@ -59,6 +61,7 @@ internal sealed class AccountService
 
     /// <summary>Dateiname der Konten- und Rechtedatei auf der Datenplatte.</summary>
     public const string MetadataFile = ".zehos-security.db";
+    private readonly string securityDirectory;
 
     /// <summary>Liefert, ob /data eingebunden ist. Sicherer Standard: nicht eingebunden; Kernel und Tests setzen es ausdruecklich.</summary>
     public Func<bool> IsDataMounted { get; set; } = () => false;
@@ -68,6 +71,12 @@ internal sealed class AccountService
     /// (der Kernel schliesst es danach wieder), so auch im Installer-Build.
     /// </summary>
     public bool SetupWindowOpen { get; set; }
+
+    /// <summary>
+    /// Nach jedem erfolgreichen Speichern der Kontendatei (Etappe 4.3: Root-Marker fresh wird danach auf ready gesetzt).
+    /// Fehler des Rueckrufs aendern das Speicherergebnis nicht; der Rueckruf meldet sie selbst.
+    /// </summary>
+    public Action? Saved { get; set; }
 
     /// <summary>
     /// Ersteinrichtung nur beim Boot, nur mit eingebundenem /data und nur ohne vorhandene Kontendatei. Eine fehlende Datei auf
@@ -82,11 +91,17 @@ internal sealed class AccountService
     }
 
     /// <summary>Etappe 3: Vergleich und Pfadwaechter der Verwaltungswurzel gelten auch fuer die Kontendatei selbst.</summary>
+    /// <param name="securityDirectory">
+    /// Ort der Konten-, Rechte- und Recovery-Dateien (Etappe 4.3: /etc/zehos im Root-Profil); ohne Angabe die Verwaltungswurzel
+    /// wie im Legacy-Profil (/data).
+    /// </param>
     public AccountService(string root, PasswordHasher hasher, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard,
-        Func<string, int?>? directoryEntryLimit = null)
+        Func<string, int?>? directoryEntryLimit = null, string? securityDirectory = null, Func<IDisposable?>? tryBeginWrite = null)
     {
-        Access = new FileAccessControl(root, comparison, pathGuard);
-        metadata = new FileService(Access.RootDirectory, pathGuard: pathGuard, directoryEntryLimit: directoryEntryLimit);
+        this.tryBeginWrite = tryBeginWrite;
+        Access = new FileAccessControl(root, comparison, pathGuard, tryBeginWrite);
+        this.securityDirectory = securityDirectory ?? Access.RootDirectory;
+        metadata = new FileService(this.securityDirectory, pathGuard: pathGuard, directoryEntryLimit: directoryEntryLimit, tryBeginWrite: tryBeginWrite);
         this.hasher = hasher;
         // Neue Dateieintraege duerfen an einer vollen Rechtedatei scheitern, ohne alles zu sperren (siehe Save).
         Access.Persist = () => Save(lockWhenFull: false);
@@ -176,6 +191,8 @@ internal sealed class AccountService
             {
                 if (!IsReady || !accounts.TryGetValue(name, out var current) || !ReferenceEquals(current, account) ||
                     actor.UserId == null || (account.Id != actor.UserId && !IsAdmin(actor))) return FileAccessControl.Denied();
+                using var writer = tryBeginWrite?.Invoke();
+                if (tryBeginWrite != null && writer == null) return WriteBlocked();
                 accounts[name] = account with { PasswordHash = encoded };
                 return Save();
             };
@@ -189,6 +206,8 @@ internal sealed class AccountService
         // Der Ausfuehrende ist selbst Administrator; damit bleibt immer mindestens einer erhalten.
         if (target.Id == actor.UserId)
             return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Das eigene Konto kann nicht geloescht werden.");
+        using var writer = tryBeginWrite?.Invoke();
+        if (tryBeginWrite != null && writer == null) return WriteBlocked();
         accounts.Remove(name);
         Access.RemoveUser(target.Id, actor.UserId!);
         foreach (var session in sessions)
@@ -213,6 +232,8 @@ internal sealed class AccountService
         foreach (string fixedCommand in UnrestrictableCommands)
             if (string.Equals(fixedCommand, command, StringComparison.OrdinalIgnoreCase))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, $"{command} bleibt fest geregelt.");
+        using var writer = tryBeginWrite?.Invoke();
+        if (tryBeginWrite != null && writer == null) return WriteBlocked();
         administratorCommands[command] = administrator;
         return SaveCommands();
     }
@@ -257,6 +278,8 @@ internal sealed class AccountService
             // Pruefung mit System.IO (folgt Links) und vor dem Speichern.
             if (!IsAdmin(actor) || accounts.ContainsKey(name) || accounts.Count >= 32 || Access.Contains(Home(name)))
                 return FileAccessControl.Denied();
+            using var writer = tryBeginWrite?.Invoke();
+            if (tryBeginWrite != null && writer == null) return WriteBlocked();
             var topology = CheckHomeTopology(name);
             if (!topology.IsOK()) return topology;
             if (Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
@@ -282,10 +305,12 @@ internal sealed class AccountService
             return () =>
             {
             // Vor jeder Mutation, auch wenn die Platte erst nach dem Boot (disk use) eingebunden wurde.
+            using var writer = tryBeginWrite?.Invoke();
+            if (tryBeginWrite != null && writer == null) return WriteBlocked();
             string? blocked = MutationBlocked();
             if (blocked != null) return ResultErr.CreateFailure(ResultCode.Failure, "Konten gesperrt: " + blocked);
-            string metadataPath = Path.Combine(Access.RootDirectory, MetadataFile);
-            string recoveredPath = Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db");
+            string metadataPath = Path.Combine(securityDirectory, MetadataFile);
+            string recoveredPath = Path.Combine(securityDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db");
             // Quelle, Ziel und Home-Topologie vor jeder Mutation pruefen (Etappe 3): nichts verschieben oder speichern,
             // wenn ein Teil davon ueber einen Symlink oder einen fremden Mount liefe.
             foreach (var guarded in new[] { Access.Guard(metadataPath, creating: true), Access.Guard(recoveredPath, creating: true), CheckHomeTopology(name) })
@@ -325,6 +350,8 @@ internal sealed class AccountService
     {
         if (!IsReady || actor.UserId == null || (!IsAdmin(actor) && !Access.IsOwner(path, actor.UserId)) ||
             !Access.Contains(path) || !accounts.TryGetValue(name, out var target)) return FileAccessControl.Denied();
+        using var writer = tryBeginWrite?.Invoke();
+        if (tryBeginWrite != null && writer == null) return WriteBlocked();
         Access.Grant(path, target.Id, permission);
         return Save();
     }
@@ -332,6 +359,8 @@ internal sealed class AccountService
     public ResultErr Adopt(UserSession actor, string path, string ownerName)
     {
         if (!IsAdmin(actor) || !Access.IsManagedPath(path) || Access.Contains(path) || !accounts.TryGetValue(ownerName, out var owner)) return FileAccessControl.Denied();
+        using var writer = tryBeginWrite?.Invoke();
+        if (tryBeginWrite != null && writer == null) return WriteBlocked();
         try { _ = File.GetAttributes(path); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         { return ResultErr.CreateFromException(exception); }
@@ -358,6 +387,8 @@ internal sealed class AccountService
         foreach (var session in sessions) session.Logout();
     }
 
+    private static ResultErr WriteBlocked() => ResultErr.CreateFailure(ResultCode.Failure, MigrationWriteGate.BusyMessage);
+
     private ResultErr Save(bool lockWhenFull = true)
     {
         var text = new StringBuilder(Header);
@@ -373,7 +404,11 @@ internal sealed class AccountService
         }
         var result = metadata.WriteText(MetadataFile, text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
-        else NeedsSetup = false;
+        else
+        {
+            NeedsSetup = false;
+            Saved?.Invoke();
+        }
         return result;
     }
 

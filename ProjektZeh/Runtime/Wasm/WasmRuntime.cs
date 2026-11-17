@@ -11,6 +11,8 @@ using Org.BouncyCastle.X509;
 using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
 using ProjektZeh.Security;
+using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -21,6 +23,8 @@ internal interface IWasmSession
 {
     /// <summary>Ordner, auf den die Anwendung lesend als "/" zugreift; null sperrt Dateizugriffe.</summary>
     string? Root { get; }
+    /// <summary>Etappe 13.4: Ordner fuer /save (eigener App-Speicher); null, wenn die App nicht speichern darf oder kann.</summary>
+    string? SaveRoot { get; }
     bool AllowsNetwork { get; }
     void Write(int fd, ReadOnlySpan<byte> data);
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
@@ -55,6 +59,16 @@ internal static unsafe class WasmRuntime
     private static IList<X509Certificate>? tlsAnchors;
     private static int nextHandle;
     private static uint[] indexedFrame = [];
+    private static WasmSaveStore? save;
+
+    /// <summary>Waechter fuer Symlinks und Mountgrenzen des App-Speichers; der Kernel setzt ihn beim Start.</summary>
+    public static Func<string, bool, ResultErr>? SavePathGuard { get; set; }
+    /// <summary>Freier Platz des Datentraegers fuer die ENOSPC-Vorpruefung.</summary>
+    public static Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? SaveDiskSpace { get; set; }
+    /// <summary>Migrations- (4.5) bzw. Energiesperre (7b): solange true, melden schreibende Aufrufe EBUSY.</summary>
+    public static Func<bool> SaveWritesBlocked { get; set; } = () => false;
+    /// <summary>Pfadvergleich des Profils (Legacy-FAT ohne, ext2-Root mit Gross-/Kleinschreibung).</summary>
+    public static StringComparison SaveComparison { get; set; } = StringComparison.OrdinalIgnoreCase;
 
     /// <summary>Summe der Wartezeit (sleep_ms) des laufenden bzw. letzten Laufs in Stopwatch-Ticks; trennt Rechen- von Wartezeit.</summary>
     public static long WaitedTicks { get; private set; }
@@ -185,6 +199,8 @@ internal static unsafe class WasmRuntime
         int code;
         current = session;
         network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
+        save = session.SaveRoot is { } saveRoot ? new WasmSaveStore(saveRoot, () => AppStorageGate.IsBlocked || SaveWritesBlocked(), SavePathGuard,
+            SaveDiskSpace, disk: operation => AppStorageGate.Run(operation, WasiErrno.Busy), comparison: SaveComparison) : null;
         WaitedTicks = 0;
         try
         {
@@ -214,6 +230,10 @@ internal static unsafe class WasmRuntime
             text[count] = 0;
         }
         current = null;
+        // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
+        try { save?.CloseAll(); }
+        catch (Exception) { code = (int)WasmStatus.Trap; }
+        save = null;
         int networkCleanup = network.CloseAll();
         network = null;
         foreach (var stream in files.Values)
@@ -434,6 +454,135 @@ internal static unsafe class WasmRuntime
     private static void HostClose(int handle)
     {
         if (files.Remove(handle, out var stream)) stream.Dispose();
+    }
+
+    // Etappe 13.4: App-Speicher /save. Jede Rueckgabe ist eine WASI-Fehlernummer; Ausnahmen werden zu EIO, damit
+    // keine die native Grenze ueberquert.
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_available")]
+    private static int HostSaveAvailable() => save != null ? 1 : 0;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_open")]
+    private static int HostSaveOpen(byte* path, uint length, uint flags, int* handle)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.Open(Encoding.UTF8.GetString(path, (int)length), (flags & 1) != 0, (flags & 4) != 0, (flags & 8) != 0,
+                (flags & 2) != 0, (flags & 16) != 0, out int opened);
+            *handle = opened;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_read")]
+    private static int HostSaveRead(int handle, ulong offset, byte* buffer, uint length, uint* read)
+    {
+        try
+        {
+            if (save == null || offset > long.MaxValue) return WasiErrno.BadFile;
+            int status = save.Read(handle, (long)offset, new Span<byte>(buffer, (int)length), out int count);
+            *read = (uint)count;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_write")]
+    private static int HostSaveWrite(int handle, ulong offset, byte* data, uint length)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            if (offset > int.MaxValue) return WasiErrno.FileTooLarge;
+            return save.Write(handle, (long)offset, new ReadOnlySpan<byte>(data, (int)length), out _);
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_size")]
+    private static long HostSaveSize(int handle)
+    {
+        try { return save?.Size(handle) ?? -1; }
+        catch (Exception) { return -1; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_set_size")]
+    private static int HostSaveSetSize(int handle, ulong size)
+    {
+        try { return save == null ? WasiErrno.BadFile : size > int.MaxValue ? WasiErrno.FileTooLarge : save.SetSize(handle, (long)size); }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_sync")]
+    private static int HostSaveSync(int handle)
+    {
+        try { return save?.Sync(handle) ?? WasiErrno.BadFile; }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_close")]
+    private static int HostSaveClose(int handle)
+    {
+        try { return save?.Close(handle) ?? WasiErrno.BadFile; }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_stat")]
+    private static int HostSaveStat(byte* path, uint length, ulong* size, int* type)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.Stat(Encoding.UTF8.GetString(path, (int)length), out long bytes, out bool directory);
+            *size = (ulong)bytes;
+            *type = directory ? 3 : 4;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_path")]
+    private static int HostSavePath(int operation, byte* path, uint length)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            string name = Encoding.UTF8.GetString(path, (int)length);
+            return operation switch
+            {
+                1 => save.CreateDirectory(name),
+                2 => save.RemoveDirectory(name),
+                3 => save.Unlink(name),
+                _ => WasiErrno.Invalid,
+            };
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_rename")]
+    private static int HostSaveRename(byte* from, uint fromLength, byte* to, uint toLength)
+    {
+        try
+        {
+            return save?.Rename(Encoding.UTF8.GetString(from, (int)fromLength), Encoding.UTF8.GetString(to, (int)toLength)) ?? WasiErrno.BadFile;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_readdir")]
+    private static int HostSaveReaddir(int handle, byte* buffer, uint length, ulong cookie, uint* used)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.List(handle, out var entries);
+            if (status != WasiErrno.Success) return status;
+            *used = (uint)WasiDirectoryEntries.Write(entries, cookie, new Span<byte>(buffer, (int)length));
+            return WasiErrno.Success;
+        }
+        catch (Exception) { return WasiErrno.Io; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]

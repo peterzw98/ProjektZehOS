@@ -50,16 +50,18 @@ jobs:
 
   tests:
     name: Shell tests and .NET analysis
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
 
@@ -86,22 +88,91 @@ jobs:
       - name: Check coverage
         # Alle gefundenen Berichte werden zusammengefuehrt (die Hang-Erkennung legt eine zweite Kopie ab). Ohne Treffer
         # bricht das Skript mit einem Eingabefehler ab, statt 0 % durchzuwinken.
-        run: >-
-          python3 scripts/check-coverage.py $(find TestResults -name '*.cobertura.xml')
-          --min-total 92 --min-file 50
-          --exclusions scripts/coverage-exclusions.txt
-          --sources ProjektZeh
-          --summary "$GITHUB_STEP_SUMMARY"
+        run: |
+          mapfile -d '' reports < <(find TestResults -name '*.cobertura.xml' -print0)
+          python3 scripts/check-coverage.py "${reports[@]}" \
+            --min-total 92 --min-file 50 \
+            --exclusions scripts/coverage-exclusions.txt \
+            --sources ProjektZeh \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-test-results
           # TestResults/golden enthaelt nur bei abweichenden Referenzbildern die erhaltenen Bilder.
           path: |
             TestResults/*.trx
             TestResults/**/*.cobertura.xml
+            TestResults/golden/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Laeuft immer, auch bei reinen Doku-PRs: dort ist das die einzige inhaltliche Pruefung.
+  lint:
+    name: Docs, scripts and workflow lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check relative Markdown links and anchors
+        run: python3 scripts/check-doc-links.py
+
+      # shellcheck ist auf dem Runner vorinstalliert. Fehler und Warnungen brechen ab, Hinweise (info/style) nicht.
+      - name: Lint shell scripts
+        run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=warning
+
+      # Aktualisieren: neue Version und deren SHA-256 aus actionlint_<Version>_checksums.txt des Releases eintragen (Dependabot hebt
+      # einen curl-Pin nicht).
+      - name: Lint workflows
+        env:
+          ACTIONLINT_VERSION: '1.7.8'
+          ACTIONLINT_SHA256: be92c2652ab7b6d08425428797ceabeb16e31a781c07bc388456b4e592f3e36a
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  # Die Hosttests laufen zusaetzlich unter Windows: Pfadtrenner, Zeilenenden und Groesse-/Kleinschreibung weichen dort ab
+  # (mehrere Storage-Befunde betrafen genau das). Ohne Abdeckungsbericht; der Linux-Job bleibt die massgebliche Pruefung.
+  tests-windows:
+    name: Shell tests (Windows)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run shell tests
+        run: >-
+          dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj
+          --configuration Release -warnaserror
+          --logger "trx;LogFileName=shell-tests-windows.trx"
+          --blame-hang-timeout 5m --blame-hang-dump-type none
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shell-test-results-windows
+          path: |
+            TestResults/*.trx
             TestResults/golden/
           if-no-files-found: warn
           retention-days: 14
@@ -115,12 +186,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
 
@@ -144,13 +215,59 @@ jobs:
           mkdir -p artifacts
           cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
 
+      - name: Check that all ZehOS plugs bind
+        # Der Patcher beendet den Build auch dann erfolgreich, wenn ein Plug sein Ziel nicht findet.
+        run: python3 scripts/check-plug-binding.py artifacts/kernel-build.log ProjektZeh
+
       - name: Upload bootable ISO
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ZehOS-x64
           path: ProjektZeh/output-x64/ProjektZeh.iso
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload kernel build log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-build-log
+          path: artifacts/kernel-build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Eigener Job statt Schritte im Kernel-Job: der Gastlauf haengt nur am ISO und soll nicht auf den vollstaendigen Neubau der
+  # Release-Images (Live- und Installer-ISO, rund eine Minute) warten. Der Job baut die Toolchain selbst und laeuft parallel.
+  release-images:
+    name: Release images (live and installer)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install matching Cosmos CLI and patcher
+        run: |
+          dotnet tool install --global Cosmos.Tools --version 3.0.97
+          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+
+      - name: Install Cosmos native toolchain
+        # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: cosmos install --auto --tools
+
+      - name: Check build tools
+        run: cosmos check
 
       - name: Build live and installer release images
         run: scripts/build-release.sh 0.0.0 "$RUNNER_TEMP/zehos-release-check"
@@ -158,22 +275,15 @@ jobs:
       - name: Check release artifacts for local paths
         run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release-check/*
 
-      - name: Upload kernel build log
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: kernel-build-log
-          path: artifacts/kernel-build.log
-          if-no-files-found: warn
-          retention-days: 14
-
   netsurf:
     name: NetSurf offline package
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -184,7 +294,7 @@ jobs:
         run: python3 experiments/NetSurf.Wasi/build.py --jobs 4
 
       - name: Upload unsigned package files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: NetSurf-offline-files
           path: experiments/NetSurf.Wasi/bin/package/
@@ -193,7 +303,7 @@ jobs:
 
       - name: Upload browser build logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: NetSurf-build-logs
           path: .tools/netsurf/logs/
@@ -202,11 +312,13 @@ jobs:
 
   rechner:
     name: Rechner package
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -214,7 +326,7 @@ jobs:
         run: python3 experiments/Rechner.Wasi/build.py
 
       - name: Upload unsigned package files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Rechner-files
           path: experiments/Rechner.Wasi/bin/package/
@@ -228,12 +340,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Download bootable ISO
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ZehOS-x64
           path: iso
@@ -249,7 +361,7 @@ jobs:
 
       - name: Upload guest screenshots and logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guest-desktop
           path: .tools/desktop-guest/
@@ -260,19 +372,20 @@ jobs:
 
   guest-recovery:
     name: Guest recovery boot (QEMU)
-    # Das Recovery-ISO braucht einen eigenen Kernelbuild. Fuer jeden PR waere das ein zweiter Build; deshalb laeuft
-    # der Job nur auf master und bei manuellem Start.
-    if: github.event_name != 'pull_request'
+    # Das Recovery-ISO braucht einen eigenen Kernelbuild (rund 40 s). Der Job laeuft parallel zu den uebrigen und verlaengert
+    # die Pipeline nicht; er entfaellt wie der Gastlauf bei reinen Doku-PRs.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
 
@@ -306,7 +419,7 @@ jobs:
 
       - name: Upload guest screenshots and logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guest-recovery
           path: .tools/desktop-guest/
