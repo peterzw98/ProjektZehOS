@@ -64,3 +64,7 @@ Der Plugkörper wird vom Cosmos-Patcher nach `Cosmos.Kernel.System` kopiert und 
 `Cosmos.Kernel.System` nennen; `FormatForKernel` nimmt darum `object?`. Mit `Ext2FormatOptions` in der Signatur brach
 ILC mit „library initializer assemblies Cosmos.Kernel.System reference each other in a cycle“ ab (a2c9e39 auf
 Branch `task/storage-ext2-kernel-plug`, Gegenprobe ohne Plug grün).
+
+`ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht in `ProjektZeh/**/*.cs` außerhalb dieses Ordners nach
+`(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
+weitergereichte Dateisystemnamen erkennt die Suche nicht.
