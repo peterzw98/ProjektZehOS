@@ -21,6 +21,9 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
+    <!-- AOT-Gastprobe (Plan 5c, Etappe B) braucht die freistehende C-Laufzeit fuer malloc. -->
+    <ZehOSWasm Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasm>
+    <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
   </PropertyGroup>
 
   <!-- wasm3 und seine freistehende C-Laufzeit gehoeren zum normalen Kernelbuild. -->
@@ -35,6 +38,9 @@
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/host/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)Native/Wasm/libc/include/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
+    <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />
   </ItemGroup>
 
   <!-- Native Assertion-Texte duerfen keine lokalen Quell- und Paketpfade enthalten. -->
