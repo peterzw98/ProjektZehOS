@@ -158,6 +158,11 @@ public sealed class TerminalTests
             second.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
             Assert.AreEqual(Path.Combine(root, "child"), files1.CurrentDirectory);
             Assert.AreEqual(root, files2.CurrentDirectory);
+            // Der lange Temp-Pfad wird im Puffer umgebrochen; deshalb die Zeilen ohne Trenner zusammensetzen.
+            var output = new System.Text.StringBuilder();
+            for (int line = 0; line < second.Buffer.Count; line++) output.Append(second.Buffer.GetLine(line));
+            StringAssert.Contains(output.ToString(), root);
+            Assert.IsFalse(output.ToString().Contains(Path.Combine(root, "child"), StringComparison.Ordinal));
         }
         finally { Directory.Delete(root, true); }
     }
