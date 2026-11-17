@@ -31,6 +31,9 @@ extern int32_t zehos_wasm_host_net_status(int32_t handle);
 extern int32_t zehos_wasm_host_net_send(int32_t handle, const uint8_t* data, uint32_t length, int32_t* count);
 extern int32_t zehos_wasm_host_net_recv(int32_t handle, uint8_t* data, uint32_t length, int32_t* count);
 extern int32_t zehos_wasm_host_net_close(int32_t handle);
+// Rasterizer (C#): erhaelt den ganzen linearen Speicher und prueft jeden Bereich selbst; -1 heisst Bereichsfehler.
+extern int32_t zehos_wasm_host_raster_draw(uint8_t* memory, uint32_t length, uint32_t call);
+extern int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uint32_t offset, uint32_t count, uint32_t value);
 
 enum
 {
@@ -111,8 +114,11 @@ static m3ApiRawFunction(wasi_proc_exit)
     m3ApiTrap(m3Err_trapExit);
 }
 
-// Laufzeiten wie Mono setzen argv[0] voraus; weitere Argumente und eine Umgebung gibt es noch nicht.
+// Laufzeiten wie Mono setzen argv[0] voraus; weitere Argumente gibt es noch nicht.
 static const char program_name[] = "app";
+// Die Umgebung meldet optionale zehos_v1-Faehigkeiten. Aeltere Kernel liefern eine leere Umgebung; Apps rufen neue
+// Imports nur, wenn sie hier genannt sind (wasm3 uebersetzt eine Funktion erst bei ihrem ersten Aufruf).
+static const char environment_entry[] = "ZEHOS_FEATURES=raster_v1";
 
 static m3ApiRawFunction(wasi_args_sizes_get)
 {
@@ -148,15 +154,23 @@ static m3ApiRawFunction(wasi_environ_sizes_get)
     m3ApiGetArgMem(uint32_t*, bytes)
     m3ApiCheckMem(count, 4);
     m3ApiCheckMem(bytes, 4);
-    uint32_t zero = 0;
-    memcpy(count, &zero, 4);
-    memcpy(bytes, &zero, 4);
+    uint32_t one = 1, size = sizeof(environment_entry);
+    memcpy(count, &one, 4);
+    memcpy(bytes, &size, 4);
     m3ApiReturn(WASI_SUCCESS);
 }
 
 static m3ApiRawFunction(wasi_environ_get)
 {
     m3ApiReturnType(uint32_t)
+    m3ApiGetArg(uint32_t, pointers)
+    m3ApiGetArg(uint32_t, buffer)
+    uint8_t* list = (uint8_t*)m3ApiOffsetToPtr(pointers);
+    uint8_t* text = (uint8_t*)m3ApiOffsetToPtr(buffer);
+    m3ApiCheckMem(list, 4);
+    m3ApiCheckMem(text, sizeof(environment_entry));
+    memcpy(list, &buffer, 4);
+    memcpy(text, environment_entry, sizeof(environment_entry));
     m3ApiReturn(WASI_SUCCESS);
 }
 
@@ -487,6 +501,31 @@ static m3ApiRawFunction(zehos_present)
     m3ApiSuccess();
 }
 
+// Rasterizer: Beschreibung und alle Puffer liegen im Gastspeicher; die Pruefung uebernimmt der C#-Kern.
+static m3ApiRawFunction(zehos_raster_draw)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(uint32_t, call)
+    size_t size = m3_GetMemorySizeAt(_mem);
+    if (size > UINT32_MAX) m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+    int32_t status = zehos_wasm_host_raster_draw((uint8_t*)_mem, (uint32_t)size, call);
+    if (status < 0) m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+    m3ApiReturn(status);
+}
+
+static m3ApiRawFunction(zehos_raster_fill)
+{
+    m3ApiReturnType(int32_t)
+    m3ApiGetArg(uint32_t, offset)
+    m3ApiGetArg(uint32_t, count)
+    m3ApiGetArg(uint32_t, value)
+    size_t size = m3_GetMemorySizeAt(_mem);
+    if (size > UINT32_MAX) m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+    int32_t status = zehos_wasm_host_raster_fill((uint8_t*)_mem, (uint32_t)size, offset, count, value);
+    if (status < 0) m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+    m3ApiReturn(status);
+}
+
 static m3ApiRawFunction(zehos_present_indexed)
 {
     m3ApiGetArg(uint32_t, indices)
@@ -705,6 +744,8 @@ static M3Result link_wasi(IM3Module module, zehos_wasm_context* context)
         { "net_send", "i(iiii)", zehos_net_send },
         { "net_recv", "i(iiii)", zehos_net_recv },
         { "net_close", "i(i)", zehos_net_close },
+        { "raster_draw", "i(i)", zehos_raster_draw },
+        { "raster_fill", "i(iii)", zehos_raster_fill },
     };
     for (size_t index = 0; index < sizeof(zehos) / sizeof(zehos[0]); index++)
     {

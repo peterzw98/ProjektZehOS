@@ -28,7 +28,12 @@ public sealed class UserManagementTests
     {
         root = Path.Combine(Path.GetTempPath(), $"zehos-users-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
-        accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+        accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)))
+        {
+            // Wie der Boot: eingebundenes /data, Ersteinrichtungsfenster offen.
+            IsDataMounted = () => true,
+            SetupWindowOpen = true,
+        };
     }
 
     [TestCleanup]

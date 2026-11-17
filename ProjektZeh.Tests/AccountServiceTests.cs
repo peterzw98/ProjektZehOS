@@ -37,6 +37,89 @@ public sealed class AccountServiceTests
     }
 
     [TestMethod]
+    public void MissingAccountFile_OffersSetupOnlyWhenNotBlockedByDiskSelection()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+
+            accounts.IsDataMounted = () => true;
+            accounts.SetupWindowOpen = true;
+            accounts.SetupBlockedReason = "cause='AmbiguousDataDisk'";
+            var blocked = accounts.Load();
+            Assert.IsFalse(blocked.IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "kein Konto auf einem falsch gewaehlten Laufwerk");
+            StringAssert.Contains(blocked.Message, "AmbiguousDataDisk");
+            Assert.IsFalse(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+
+            accounts.SetupBlockedReason = null;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup, "ohne Sperre bleibt die Ersteinrichtung wie bisher");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [DataTestMethod]
+    [DataRow(true, true, false, true)]
+    [DataRow(false, true, false, false)]
+    [DataRow(true, false, false, false)]
+    [DataRow(true, true, true, false)]
+    [DataRow(false, false, false, false)]
+    public void MaySetUp_NeedsMountedBootAndNoAccountsFile(bool mounted, bool atBoot, bool hasAccountsFile, bool expected)
+    {
+        Assert.AreEqual(expected, AccountService.MaySetUp(mounted, atBoot, hasAccountsFile));
+    }
+
+    [TestMethod]
+    public void MissingAccountFile_DefaultsNeverOfferSetup()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "ohne ausdrueckliches Bootfenster und eingebundenes /data nie eine Ersteinrichtung");
+            accounts.IsDataMounted = () => true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "nur das geoeffnete Bootfenster erlaubt sie");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void MissingAccountFile_NoSetupWhenDataNotMountedOrAfterBoot()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+            bool mounted = false;
+            accounts.IsDataMounted = () => mounted;
+            accounts.SetupWindowOpen = true;
+
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "ohne eingebundenes /data keine Ersteinrichtung, auch wenn die Datei 'fehlt'");
+
+            mounted = true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup, "beim Boot mit eingebundenem /data bleibt die Ersteinrichtung moeglich");
+
+            accounts.SetupWindowOpen = false;
+            var afterBoot = accounts.Load();
+            Assert.IsFalse(afterBoot.IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "im laufenden Betrieb gesperrt statt eingerichtet");
+            StringAssert.Contains(afterBoot.Message, "nur beim Boot");
+            Assert.IsFalse(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void AccountsPermissionsAndIdsPersistAndCorruptionLocksEverySession()
     {
         string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

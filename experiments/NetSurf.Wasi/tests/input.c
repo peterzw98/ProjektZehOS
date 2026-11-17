@@ -9,7 +9,8 @@
 void _nsfb_register_surface(const enum nsfb_type_e type, const nsfb_surface_rtns_t *rtns, const char *name) { }
 bool select_plotters(nsfb_t *nsfb) { return true; }
 bool nsfb_cursor_plot(nsfb_t *nsfb, struct nsfb_cursor_s *cursor) { return true; }
-void zehos_present(const uint32_t *pixels, int32_t width, int32_t height, int32_t tic, int32_t test) { }
+static int presented;
+void zehos_present(const uint32_t *pixels, int32_t width, int32_t height, int32_t tic, int32_t test) { presented++; }
 int32_t zehos_poll_event(int32_t *event) { return 0; }
 uint32_t zehos_ticks_ms(void) { return 0; }
 void zehos_sleep_ms(uint32_t ms) { }
@@ -70,11 +71,25 @@ int main(void) {
     assert(zehos_set_geometry(&surface, 800, 600, NSFB_FMT_ANY) == 0 && surface.width == ZEHOS_WIDTH);
     assert(zehos_initialise(&surface) == 0);
     surface.clip.x1 = ZEHOS_WIDTH;
+    for (size_t i = 0; i < (size_t)ZEHOS_WIDTH * ZEHOS_HEIGHT * 4; i++) surface.ptr[i] = 0x5a;
     assert(zehos_set_geometry(&surface, 640, 400, NSFB_FMT_ANY) == 0);
+    // Keine alten Bildpunkte mit falscher Zeilenlaenge nach dem Groessenwechsel.
+    for (size_t i = 0; i < (size_t)640 * 400 * 4; i++) assert(surface.ptr[i] == 0);
     assert(surface.width == 640 && surface.height == 400 && surface.linelen == 640 * 4 && surface.clip.x1 == 640);
     assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
     assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
+    for (size_t i = 0; i < (size_t)1920 * 1200 * 4; i += 4099) assert(surface.ptr[i] == 0);
     surface.ptr[(size_t)1920 * 1200 * 4 - 1] = 1; // Puffer deckt das ganze neue Bild ab (ASan/Valgrind).
+    // Mehrere Widget-Updates eines Neuzeichnens ergeben genau ein Bild, gesendet vor der naechsten Eingabeabfrage.
+    nsfb_bbox_t box = {0, 0, 1, 1};
+    assert(zehos_update(&surface, &box) == 0 && zehos_update(&surface, &box) == 0 && presented == 0);
+    assert(!zehos_input(&surface, &event, 0) && presented == 1);
+    assert(!zehos_input(&surface, &event, 0) && presented == 1);
+    // Regelweg: NetSurfs Hauptschleife sendet direkt nach dem Neuzeichnen.
+    assert(zehos_update(&surface, &box) == 0);
+    zehos_flush();
+    zehos_flush();
+    assert(presented == 2);
     zehos_finalise(&surface);
     puts("NetSurf input PASS");
     return 0;

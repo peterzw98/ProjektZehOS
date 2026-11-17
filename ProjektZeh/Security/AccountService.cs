@@ -30,6 +30,30 @@ internal sealed class AccountService
     public bool IsReady => Access.IsReady && accounts.Count != 0;
     /// <summary>Nur eine tatsaechlich fehlende Kontodatei erlaubt die Ersteinrichtung im normalen Build.</summary>
     public bool NeedsSetup { get; private set; }
+
+    /// <summary>
+    /// Gesetzt, wenn die Auswahl der Datenplatte fehlgeschlagen oder mehrdeutig ist: dann gilt auch eine fehlende Kontodatei
+    /// nicht als Ersteinrichtung, damit ein falsch gewaehltes oder leeres Laufwerk kein Konto erhaelt.
+    /// </summary>
+    public string? SetupBlockedReason { get; set; }
+
+    /// <summary>Dateiname der Konten- und Rechtedatei auf der Datenplatte.</summary>
+    public const string MetadataFile = ".zehos-security.db";
+
+    /// <summary>Liefert, ob /data eingebunden ist. Sicherer Standard: nicht eingebunden; Kernel und Tests setzen es ausdruecklich.</summary>
+    public Func<bool> IsDataMounted { get; set; } = () => false;
+
+    /// <summary>
+    /// Die Ersteinrichtung wird nur beim Boot angeboten: Standard geschlossen, nur der Boot-Load oeffnet das Fenster
+    /// (der Kernel schliesst es danach wieder), so auch im Installer-Build.
+    /// </summary>
+    public bool SetupWindowOpen { get; set; }
+
+    /// <summary>
+    /// Ersteinrichtung nur beim Boot, nur mit eingebundenem /data und nur ohne vorhandene Kontendatei. Eine fehlende Datei auf
+    /// einer waehrend der Sitzung gewechselten oder gar nicht eingebundenen Platte ergibt Sperre statt Einrichtung.
+    /// </summary>
+    public static bool MaySetUp(bool mounted, bool atBoot, bool hasAccountsFile) => mounted && atBoot && !hasAccountsFile;
     public IReadOnlyDictionary<string, bool> AdministratorCommands => administratorCommands;
 
     public AccountService(string root, PasswordHasher hasher)
@@ -54,8 +78,15 @@ internal sealed class AccountService
     {
         Lock();
         NeedsSetup = false;
-        var read = metadata.ReadText(".zehos-security.db", allowMissing: true, MaximumMetadataLength);
+        var read = metadata.ReadText(MetadataFile, allowMissing: true, MaximumMetadataLength);
         if (!read.IsOK()) return read.Status;
+        if (read.Value == null)
+        {
+            bool mounted = IsDataMounted();
+            if (SetupBlockedReason != null || !MaySetUp(mounted, SetupWindowOpen, hasAccountsFile: false))
+                return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + (SetupBlockedReason ??
+                    (!mounted ? "/data ist nicht eingebunden." : "Sie wird nur beim Boot angeboten.")));
+        }
         if (read.Value == null)
         {
             NeedsSetup = true;
@@ -217,12 +248,12 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-            if (File.Exists(Path.Combine(Access.RootDirectory, ".zehos-security.db")))
+            if (File.Exists(Path.Combine(Access.RootDirectory, MetadataFile)))
             {
                 try
                 {
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
-                    File.Move(Path.Combine(Access.RootDirectory, ".zehos-security.db"),
+                    File.Move(Path.Combine(Access.RootDirectory, MetadataFile),
                         Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db"), false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
@@ -299,7 +330,7 @@ internal sealed class AccountService
             if (lockWhenFull) Lock();
             return ResultErr.CreateFailure(ResultCode.Failure, FileAccessControl.FullMessage);
         }
-        var result = metadata.WriteText(".zehos-security.db", text.ToString(), MaximumMetadataLength);
+        var result = metadata.WriteText(MetadataFile, text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
         else NeedsSetup = false;
         return result;

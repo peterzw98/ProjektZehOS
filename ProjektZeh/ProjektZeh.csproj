@@ -6,13 +6,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.7</Version>
+    <Version Condition="'$(Version)' == ''">0.5.13</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>
@@ -20,6 +21,9 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
+    <!-- AOT-Gastprobe (Plan 5c, Etappe B) braucht die freistehende C-Laufzeit fuer malloc. -->
+    <ZehOSWasm Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasm>
+    <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
   </PropertyGroup>
 
   <!-- wasm3 und seine freistehende C-Laufzeit gehoeren zum normalen Kernelbuild. -->
@@ -34,6 +38,29 @@
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/host/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)Native/Wasm/libc/include/" />
     <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
+  </ItemGroup>
+  <!-- WAMR 2.4.5 nur als AOT-Lader (Plan 5c, Etappe B2): kein Interpreter, kein JIT, keine WASI-libc, keine Threads,
+       explizite statt hardwaregestuetzter Bereichspruefung. Die Schalter gelten fuer alle C-Quellen, betreffen aber nur WAMR.
+       Bulk-Memory und Referenztypen bleiben an, weil wasi-sdk 25 sie standardmaessig erzeugt; sonst lehnt der Lader jedes Paket ab. -->
+  <PropertyGroup Condition="'$(ZehOSAotProbe)' == 'true'">
+    <CCCompilerFlags>$(CCCompilerFlags) -DBH_PLATFORM_ZEHOS -DBUILD_TARGET_X86_64 -DBH_MALLOC=wasm_runtime_malloc -DBH_FREE=wasm_runtime_free -DWASM_ENABLE_AOT=1 -DWASM_ENABLE_INTERP=0 -DWASM_ENABLE_FAST_INTERP=0 -DWASM_ENABLE_JIT=0 -DWASM_ENABLE_FAST_JIT=0 -DWASM_ENABLE_LIBC_BUILTIN=0 -DWASM_ENABLE_LIBC_WASI=0 -DWASM_ENABLE_THREAD_MGR=0 -DWASM_ENABLE_SHARED_MEMORY=0 -DWASM_ENABLE_MULTI_MODULE=0 -DWASM_ENABLE_SIMD=0 -DWASM_ENABLE_BULK_MEMORY=1 -DWASM_ENABLE_REF_TYPES=1 -DWASM_ENABLE_AOT_INTRINSICS=1 -DWASM_ENABLE_QUICK_AOT_ENTRY=1 -DWASM_ENABLE_SHRUNK_MEMORY=1 -DWASM_ENABLE_MINI_LOADER=0 -DWASM_ENABLE_EXTENDED_CONST_EXPR=0 -DWASM_DISABLE_HW_BOUND_CHECK=1 -DWASM_DISABLE_STACK_HW_BOUND_CHECK=1 -DWASM_DISABLE_WAKEUP_BLOCKING_OP=0 -DWASM_DISABLE_WRITE_GS_BASE=1 -DWASM_GLOBAL_HEAP_SIZE=10485760 -Dstatic_assert=_Static_assert</CCCompilerFlags>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
+    <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/wamr-platform/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/aot/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/aot/arch/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/common/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/utils/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/mem-alloc/" />
+    <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/mem-alloc/ems/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)Native/Wasm/wamr-platform/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/platform/include/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/utils/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/shared/mem-alloc/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/include/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/common/" />
+    <GCCIncludePath Include="$(MSBuildThisFileDirectory)ThirdParty/wamr/core/iwasm/aot/" />
   </ItemGroup>
 
   <!-- Native Assertion-Texte duerfen keine lokalen Quell- und Paketpfade enthalten. -->

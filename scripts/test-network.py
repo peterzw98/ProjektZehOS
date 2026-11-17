@@ -16,6 +16,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guest_keys import key_for  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_QEMU = Path(shutil.which('qemu-system-x86_64') or Path.home() / '.cosmos/tools/qemu/qemu-system-x86_64')
 BODY = b'ZehOS network probe\n'
@@ -185,11 +188,10 @@ class Monitor:
         time.sleep(0.06)
 
     def write_line(self, value):
-        keys = {' ': 'spc', '.': 'dot', '/': 'slash', ':': 'shift-semicolon',
-                '_': 'shift-minus', '-': 'minus'}
+        # Deutsches Gastlayout (y/z, Satzzeichen): eine gemeinsame Tabelle fuer alle Skripte, siehe scripts/guest_keys.py.
         for char in value:
-            key = keys.get(char, f'shift-{char.lower()}' if char.isupper() else char)
-            self.key(key)
+            shifted, name = key_for(char)
+            self.key(f'shift-{name}' if shifted else name)
         self.key('ret')
         time.sleep(2)
 
@@ -200,6 +202,26 @@ class Monitor:
     def close(self):
         self.stream.close()
         self.connection.close()
+
+
+PROBE_PASS = 'NETWORK_PROBE PASS'
+
+
+def restart_finished(text, marker, markers_before, passes_before):
+    """Nach einem Neustart: neue Bereit-Marke und, falls vorher eine Probe lief, auch deren erneutes PASS."""
+    return text.count(marker) > markers_before and text.count(PROBE_PASS) >= passes_before + (1 if passes_before else 0)
+
+
+def admin_setup_lines():
+    """Eingaben fuer den ersten Administrator nach dem Neustart: Name, Kennwort, Wiederholung.
+
+    Auch im Sicherheits-Recovery-Build bietet der Boot mit eingebundenem, leerem /data die Ersteinrichtung an: NeedsSetup
+    macht den LoginFlow aktiv, und die gesperrte Textshell (InteractiveSession.IsLocked) nimmt nur Name und Kennwoerter
+    entgegen. Ein getipptes 'security recover ...' landete dort als Benutzername. Der Hinweis 'security recover' im Boottext
+    wird im Recovery-Build unabhaengig davon ausgegeben.
+    """
+    password = 'testpassword12345'
+    return ['netadmin', password, password]
 
 
 def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False):
@@ -225,13 +247,30 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
             monitor.write_line('disk init sata0')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-disk-init.ppm'))
-            monitor.write_line('disk mount sata0')
+            # Die Ersteinrichtung gibt es nur beim Boot mit eingebundenem /data; disk init laesst nichts eingebunden und hat
+            # geflusht, daher genuegt ein harter Neustart per QMP. Danach ist sata0 eingebunden und die Ersteinrichtung offen.
+            before = serial.read_text(encoding='utf-8', errors='replace')
+            markers_before, passes_before = before.count(marker), before.count(PROBE_PASS)
+            monitor.command('system_reset')
+            reboot_deadline = time.monotonic() + timeout
+            # Das Probe-ISO wiederholt nach dem Neustart die ganze Netzwerkprobe; die Shell reagiert erst danach auf Eingaben.
+            while not restart_finished(serial.read_text(encoding='utf-8', errors='replace'), marker, markers_before, passes_before):
+                if qemu.poll() is not None or time.monotonic() >= reboot_deadline:
+                    raise TimeoutError(f'Neustart nach disk init nicht abgeschlossen (Marke {marker!r}, {PROBE_PASS!r}); Protokoll: {serial}')
+                time.sleep(0.2)
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            monitor.write_line('netadmin')
-            monitor.write_line('testpassword12345')
-            monitor.write_line('testpassword12345')
-            time.sleep(12)
+            mark = len(serial.read_text(encoding='utf-8', errors='replace'))
+            for line in admin_setup_lines():
+                monitor.write_line(line)
+                time.sleep(1)
+            # Die Kennwortpruefung (PBKDF2) braucht unter TCG laenger als eine feste Zeit; der Kernel meldet die Anmeldung seriell.
+            login_deadline = time.monotonic() + timeout
+            while 'Benutzer angemeldet.' not in serial.read_text(encoding='utf-8', errors='replace')[mark:]:
+                if qemu.poll() is not None or time.monotonic() >= login_deadline:
+                    monitor.screenshot(prefix.with_name(prefix.name + '-setup-timeout.ppm'))
+                    raise TimeoutError(f"Administrator wurde nicht angelegt ('Benutzer angemeldet.' fehlt); Protokoll: {serial}")
+                time.sleep(0.2)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
             monitor.key('f4')
             time.sleep(2)

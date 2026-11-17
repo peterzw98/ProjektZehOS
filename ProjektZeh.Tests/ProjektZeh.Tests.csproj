@@ -23,6 +23,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
+    <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\VmwareClock.cs" Link="Runtime\VmwareClock.cs" />
     <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
@@ -59,6 +60,10 @@
     <Compile Include="..\ProjektZeh\Graphics\LoginScreen.cs" Link="Graphics\LoginScreen.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
+    <Compile Include="..\ProjektZeh\Storage\DataDiskSelector.cs" Link="Storage\DataDiskSelector.cs" />
+    <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
