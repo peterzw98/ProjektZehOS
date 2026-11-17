@@ -119,7 +119,7 @@ python scripts/build-package.py package --key <Schlüsselordner>/private.pem --r
 python scripts/build-package.py catalog --key <Schlüsselordner>/private.pem --repo <repo> --generation 1
 ```
 
-Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen sind unveränderlich; eine Änderung braucht eine neue Version und eine höhere Katalog-Generation. Der Katalog führt je Paket nur die höchste Version; ältere Versionsordner bleiben im Repository liegen, werden aber nicht mehr angeboten.
+Den privaten Schlüssel nicht ins Repository legen. Veröffentlichte Versionen sind unveränderlich; eine Änderung braucht eine neue Version und eine höhere Katalog-Generation. Der Katalog führt je Paket nur die höchste Version; ältere Versionsordner bleiben im Repository liegen, werden aber nicht mehr angeboten. Bricht `package` ab, entfernt das Werkzeug den angefangenen Versionsordner; `catalog` berücksichtigt nur Versionen mit `manifest.sig`.
 
 ## Server und Prüfstand
 
