@@ -395,6 +395,7 @@ def main():
             # "shutdown" haengt /data aus und schreibt die Puffer, ein Abbruch der VM koennte Eintraege verlieren.
             guest.shell("shutdown")
             vm.wait(timeout=120)
+            assert vm.returncode == 0, f"shutdown endete mit {vm.returncode}; Plattenstand unsicher"
             _, _, read = fat16(disk_raw(work))
             accounts = read.names(".zehos-apps/classicube")
             assert len(accounts) == 1, f"Ein Kontoordner erwartet: {accounts}"
