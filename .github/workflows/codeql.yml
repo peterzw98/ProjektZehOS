@@ -55,8 +55,9 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-extended
-          # Die Pfadkonfiguration beschreibt nur den C#-Quellbaum; Workflows und Skripte liegen ausserhalb von ProjektZeh/.
-          config-file: ${{ matrix.language == 'csharp' && './.github/codeql/config.yml' || '' }}
+          # config.yml beschreibt nur den C#-Quellbaum; Workflows und Skripte liegen ausserhalb von ProjektZeh/. Fuer sie schliesst
+          # config-other.yml gebauten und fremden Code (ThirdParty) aus.
+          config-file: ${{ matrix.language == 'csharp' && './.github/codeql/config.yml' || './.github/codeql/config-other.yml' }}
 
       - name: Analyze ${{ matrix.name }} source
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4

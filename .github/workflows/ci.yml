@@ -127,6 +127,8 @@ jobs:
       - name: Lint shell scripts
         run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=warning
 
+      # Aktualisieren: neue Version und deren SHA-256 aus actionlint_<Version>_checksums.txt des Releases eintragen (Dependabot hebt
+      # einen curl-Pin nicht).
       - name: Lint workflows
         env:
           ACTIONLINT_VERSION: '1.7.8'

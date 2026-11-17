@@ -3,6 +3,8 @@
 
 Aufruf: check-doc-links.py [Wurzel]. Exit 0 ohne Befund, 1 bei kaputten Verweisen, 2 bei Eingabefehlern.
 Externe Adressen (http, https, mailto) werden bewusst nicht geprueft, weil sie das Ergebnis vom Netz abhaengig machen.
+Grenzen: Setext-Ueberschriften, Referenz-Links ([text][id]), %-codierte Pfade und HTML-Anker (<a name>) kennt die Pruefung nicht;
+solche Verweise bleiben ungeprueft (False Negatives), ein Anker darauf wird als fehlend gemeldet (False Positive).
 """
 import re
 import sys
