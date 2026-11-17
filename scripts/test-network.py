@@ -211,7 +211,12 @@ def restart_finished(text, marker, markers_before, passes_before):
 
 
 def admin_setup_lines(recovery):
-    """Eingaben fuer den ersten Administrator: Sicherheits-Recovery-Build per security recover (ein Kennwort), sonst Ersteinrichtung (Name, 2x Kennwort)."""
+    """Eingaben fuer den ersten Administrator: Sicherheits-Recovery-Build per security recover (ein Kennwort), sonst Ersteinrichtung (Name, 2x Kennwort).
+
+    Ueber die Kommandozeile ist nur der Recovery-Zweig erreichbar: --provision-desktop verlangt --recovery, weil disk init im
+    normalen Build einen Administrator braucht, den es auf der neuen Platte noch nicht gibt. Der zweite Zweig ist nur als
+    Funktion mit Hosttest abgesichert (Ablaufwahl), falls der Parser einmal gelockert wird.
+    """
     password = 'testpassword12345'
     return ['security recover netadmin', password] if recovery else ['netadmin', password, password]
 
