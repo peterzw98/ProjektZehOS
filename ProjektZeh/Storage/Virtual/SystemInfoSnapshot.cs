@@ -28,13 +28,77 @@ internal static class SystemInfoSnapshot
     // Freitext des Systemprotokolls wird nie ausgegeben; nur diese festen Kategorien (Kernel.cs/Dienste), alles andere "other".
     private static readonly string[] LogCategories = ["Boot", "Desktop", "Network", "Packages", "Setup"];
 
-    public static ResultObject<byte[]> Version(string version) => Build(1, text => text.Append("version: ").Append(Field(version)).Append('\n'));
+    /// <summary>
+    /// Schreibt den Snapshot und zaehlt die UTF-8-Bytes laufend mit: Ein zu langes Feld oder eine Summe ueber 64 KiB bricht
+    /// sofort ab, ohne den Rest zu bauen. Nach einem Abbruch ist jede weitere Ausgabe wirkungslos.
+    /// </summary>
+    private sealed class Writer
+    {
+        private readonly StringBuilder text = new();
+        private int bytes;
+
+        public string? Error { get; private set; }
+
+        /// <summary>Feste ASCII-Anteile (Schluesselwoerter, Zahlen); ohne Maskierung.</summary>
+        public Writer Raw(string ascii)
+        {
+            if (Error is null)
+            {
+                bytes += ascii.Length;
+                text.Append(ascii);
+                CheckTotal();
+            }
+
+            return this;
+        }
+
+        /// <summary>Ein Wert als ein Token: leer/null wird "-", Trenner und Steuerzeichen werden maskiert.</summary>
+        public Writer Field(string? value)
+        {
+            if (Error is not null) return this;
+            if (string.IsNullOrEmpty(value)) return Raw("-");
+            // Jedes Zeichen braucht mindestens ein Byte: so lange Werte fallen vor dem Maskieren und ohne Allokation.
+            if (value.Length > MaxFieldBytes) return Fail("Ein Textfeld ist laenger als 256 Byte.");
+            int fieldBytes = 0;
+            for (int index = 0; index < value.Length; index++)
+            {
+                int length = char.IsSurrogatePair(value, index) ? 2 : 1;
+                string piece = SystemInfoSnapshot.Mask(value, index, length);
+                fieldBytes += Encoding.UTF8.GetByteCount(piece);
+                if (fieldBytes > MaxFieldBytes) return Fail("Ein Textfeld ist laenger als 256 Byte.");
+                text.Append(piece);
+                index += length - 1;
+            }
+
+            bytes += fieldBytes;
+            CheckTotal();
+            return this;
+        }
+
+        public ResultObject<byte[]> Result() => Error is null
+            ? ResultObjectFactory.CreateSuccess(Encoding.UTF8.GetBytes(text.ToString()))
+            : ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, Error);
+
+        private void CheckTotal()
+        {
+            if (bytes > MaxBytes) Fail("Snapshot groesser als 64 KiB.");
+        }
+
+        private Writer Fail(string message)
+        {
+            Error = message;
+            text.Clear();
+            return this;
+        }
+    }
+
+    public static ResultObject<byte[]> Version(string version) => Build(w => w.Raw("version: ").Field(version).Raw("\n"));
 
     /// <summary>Ohne initialisierten Timer (null) steht "unavailable"; es gibt keinen belegten Idle-Zaehler.</summary>
-    public static ResultObject<byte[]> Uptime(long? elapsedMilliseconds) => Build(1, text =>
+    public static ResultObject<byte[]> Uptime(long? elapsedMilliseconds) => Build(w =>
     {
-        if (elapsedMilliseconds is not { } ms || ms < 0) text.Append("unavailable\n");
-        else text.Append((ms / 1000).ToString(CultureInfo.InvariantCulture)).Append('.').Append((ms % 1000).ToString("D3", CultureInfo.InvariantCulture)).Append('\n');
+        if (elapsedMilliseconds is not { } ms || ms < 0) w.Raw("unavailable\n");
+        else w.Raw((ms / 1000).ToString(CultureInfo.InvariantCulture)).Raw(".").Raw((ms % 1000).ToString("D3", CultureInfo.InvariantCulture)).Raw("\n");
     });
 
     public static ResultObject<byte[]> Memory(ulong pageSize, ulong totalPages, ulong freePages)
@@ -44,34 +108,39 @@ internal static class SystemInfoSnapshot
         if (totalPages > ulong.MaxValue / pageSize)
             return Failure("Speicherzaehler ueberlaufen.");
         ulong total = totalPages * pageSize, free = freePages * pageSize;
-        return Build(3, text => text.Append("MemTotal: ").Append(total).Append(" B\nMemFree: ").Append(free).Append(" B\nPageSize: ").Append(pageSize).Append(" B\n"));
+        return Build(w => w.Raw("MemTotal: " + total.ToString(CultureInfo.InvariantCulture) + " B\nMemFree: " + free.ToString(CultureInfo.InvariantCulture)
+            + " B\nPageSize: " + pageSize.ToString(CultureInfo.InvariantCulture) + " B\n"));
     }
 
-    public static ResultObject<byte[]> Mounts(IReadOnlyList<SystemInfoMount> mounts) => Records(mounts, (text, mount) =>
-        text.Append(Field(mount.Source)).Append(' ').Append(Field(mount.MountPoint)).Append(' ').Append(Field(mount.Name)).Append(mount.ReadOnly ? " ro\n" : " rw\n"));
+    public static ResultObject<byte[]> Mounts(IReadOnlyList<SystemInfoMount> mounts) => Records(mounts, (w, mount) =>
+        w.Field(mount.Source).Raw(" ").Field(mount.MountPoint).Raw(" ").Field(mount.Name).Raw(mount.ReadOnly ? " ro\n" : " rw\n"));
 
     /// <summary>Zeitstempel, Stufe und Kategorie aus der Allowlist; die Nachricht (MAC, Befehle, Pfade, Exceptions) wird nie gelesen.</summary>
-    public static ResultObject<byte[]> Log(IReadOnlyList<SystemLogEntry> entries) => Records(entries, (text, entry) =>
+    public static ResultObject<byte[]> Log(IReadOnlyList<SystemLogEntry> entries) => Records(entries, (w, entry) =>
     {
         string category = Array.IndexOf(LogCategories, entry.Component) >= 0 ? entry.Component : "other";
-        text.Append(entry.ElapsedMilliseconds).Append(' ').Append(entry.Level.ToString().ToUpperInvariant()).Append(' ').Append(category).Append('\n');
+        w.Raw(entry.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " " + entry.Level.ToString().ToUpperInvariant() + " " + category + "\n");
     });
 
+    /// <summary>
+    /// Zeigt nur "kompiliert"/"nicht kompiliert". shortcut: Die Matrix will das Buildflag vom initialisierten Dienst unterscheiden,
+    /// das braucht die Dienstzustaende aus dem Aufrufer; nachziehen bei der Aktivierung (E5b).
+    /// </summary>
     public static ResultObject<byte[]> Components(IReadOnlyList<SystemInfoComponent> features, IReadOnlyList<SystemInfoDriver> drivers)
     {
         if (features.Count + drivers.Count > MaxRecords) return Failure("Zu viele Datensaetze (hoechstens 128).");
-        return Build(features.Count + drivers.Count, text =>
+        return Build(w =>
         {
-            foreach (var feature in features) text.Append("feature ").Append(Field(feature.Name)).Append(feature.Compiled ? " compiled\n" : " absent\n");
-            foreach (var driver in drivers) text.Append("driver ").Append(Field(driver.Name)).Append(' ').Append(driver.Priority).Append('\n');
+            foreach (var feature in features) w.Raw("feature ").Field(feature.Name).Raw(feature.Compiled ? " compiled\n" : " absent\n");
+            foreach (var driver in drivers) w.Raw("driver ").Field(driver.Name).Raw(" " + driver.Priority.ToString(CultureInfo.InvariantCulture) + "\n");
         });
     }
 
-    public static ResultObject<byte[]> Devices(IReadOnlyList<SystemInfoDevice> devices) => Records(devices, (text, device) =>
-        text.Append(Field(device.Path)).Append(' ').Append(Field(device.Bus)).Append(' ').Append(Field(device.Driver)).Append(' ').Append(Field(device.State)).Append('\n'));
+    public static ResultObject<byte[]> Devices(IReadOnlyList<SystemInfoDevice> devices) => Records(devices, (w, device) =>
+        w.Field(device.Path).Raw(" ").Field(device.Bus).Raw(" ").Field(device.Driver).Raw(" ").Field(device.State).Raw("\n"));
 
-    public static ResultObject<byte[]> Blocks(IReadOnlyList<SystemInfoBlock> blocks) => Records(blocks, (text, block) =>
-        text.Append(Field(block.Name)).Append(' ').Append(block.SizeBytes).Append(' ').Append(block.Partitions).Append('\n'));
+    public static ResultObject<byte[]> Blocks(IReadOnlyList<SystemInfoBlock> blocks) => Records(blocks, (w, block) =>
+        w.Field(block.Name).Raw(" " + block.SizeBytes.ToString(CultureInfo.InvariantCulture) + " " + block.Partitions.ToString(CultureInfo.InvariantCulture) + "\n"));
 
     /// <summary>Sektorzahl mal Sektorgroesse mit Ueberlaufpruefung (die bisherige Projektion multipliziert ungeprueft).</summary>
     public static ResultObject<ulong> SizeBytes(ulong sectors, ulong sectorSize) =>
@@ -79,48 +148,45 @@ internal static class SystemInfoSnapshot
             ? ResultObjectFactory.CreateFailure<ulong>(ResultCode.InvalidArgument, "Plattengroesse ueberlaeuft.")
             : ResultObjectFactory.CreateSuccess(sectors * sectorSize);
 
-    /// <summary>Maskiert Leerzeichen, Steuerzeichen, Backslash und alleinstehende Surrogate als \uXXXX, damit Felder ein Token bleiben.</summary>
-    internal static string Field(string value)
+    /// <summary>Wie ein Feld im Snapshot erscheint (Test und Aufrufer); leer/null ergibt "-".</summary>
+    internal static string Field(string? value)
     {
-        var text = new StringBuilder(value.Length);
-        for (int index = 0; index < value.Length; index++)
-        {
-            char c = value[index];
-            if (char.IsHighSurrogate(c) && index + 1 < value.Length && char.IsLowSurrogate(value[index + 1]))
-            {
-                text.Append(c).Append(value[++index]);
-                continue;
-            }
-
-            if (c <= ' ' || c == '\\' || (c >= '\u007f' && c <= '\u009f') || char.IsSurrogate(c))
-                text.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-            else
-                text.Append(c);
-        }
-
-        return text.ToString();
+        var writer = new Writer().Field(value);
+        return writer.Error is null ? Encoding.UTF8.GetString(writer.Result().Value!) : throw new ArgumentException(writer.Error, nameof(value));
     }
 
-    private static ResultObject<byte[]> Records<T>(IReadOnlyList<T> items, Action<StringBuilder, T> write)
+    /// <summary>
+    /// Maskiert, was ein Konsument als Trenner oder Steuerung lesen koennte: Leerraum, Backslash und die Kategorien
+    /// Control, Format, Zeilen-/Absatztrenner, Leerzeichen-Trenner, Surrogat (allein), privat und nicht zugewiesen
+    /// als \uXXXX bzw. \UXXXXXXXX.
+    /// </summary>
+    private static string Mask(string value, int index, int length)
+    {
+        char c = value[index];
+        if (length == 1 && !char.IsSurrogate(c) && c != '\\' && !char.IsWhiteSpace(c) && !Masked(CharUnicodeInfo.GetUnicodeCategory(c)))
+            return c.ToString();
+        if (length == 2 && !Masked(CharUnicodeInfo.GetUnicodeCategory(value, index)))
+            return value.Substring(index, 2);
+        return length == 2
+            ? "\\U" + char.ConvertToUtf32(c, value[index + 1]).ToString("x8", CultureInfo.InvariantCulture)
+            : "\\u" + ((int)c).ToString("x4", CultureInfo.InvariantCulture);
+    }
+
+    private static bool Masked(UnicodeCategory category) => category is UnicodeCategory.Control or UnicodeCategory.Format
+        or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator or UnicodeCategory.SpaceSeparator
+        or UnicodeCategory.Surrogate or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned;
+
+    private static ResultObject<byte[]> Records<T>(IReadOnlyList<T> items, Action<Writer, T> write)
     {
         if (items.Count > MaxRecords) return Failure("Zu viele Datensaetze (hoechstens 128).");
-        return Build(items.Count, text => { foreach (var item in items) write(text, item); });
+        return Build(w => { foreach (var item in items) write(w, item); });
     }
 
-    private static ResultObject<byte[]> Build(int records, Action<StringBuilder> write)
+    private static ResultObject<byte[]> Build(Action<Writer> write)
     {
-        var text = new StringBuilder();
-        write(text);
-        string result = text.ToString();
-        // Ein Feld nach dem Maskieren hat hoechstens 256 Byte UTF-8: grobe Obergrenze je Zeile pruefen, dann Gesamtgroesse.
-        foreach (string line in result.Split('\n'))
-        {
-            foreach (string field in line.Split(' '))
-                if (Encoding.UTF8.GetByteCount(field) > MaxFieldBytes) return Failure("Ein Textfeld ist laenger als 256 Byte.");
-        }
-
-        byte[] bytes = Encoding.UTF8.GetBytes(result);
-        return bytes.Length > MaxBytes ? Failure("Snapshot groesser als 64 KiB.") : ResultObjectFactory.CreateSuccess(bytes);
+        var writer = new Writer();
+        write(writer);
+        return writer.Result();
     }
 
     private static ResultObject<byte[]> Failure(string message) => ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, message);
@@ -138,10 +204,20 @@ internal sealed class SystemInfoFile
 
     public long Length => bytes.Length;
 
-    /// <summary>Ruft die Erzeugung genau einmal je Open auf; Fehler werden unveraendert weitergegeben.</summary>
+    /// <summary>Ruft die Erzeugung genau einmal je Open auf; Fehler und Ausnahmen der Erzeugung werden zu einem Fehlerergebnis.</summary>
     public static ResultObject<SystemInfoFile> Open(Func<ResultObject<byte[]>> produce)
     {
-        var snapshot = produce();
+        ResultObject<byte[]> snapshot;
+        try
+        {
+            snapshot = produce();
+        }
+        catch (Exception exception)
+        {
+            // Der Aufrufer liest Cosmos-Zustand; eine Ausnahme dort darf die Dateioperation nicht abbrechen.
+            return ResultObjectFactory.CreateFailure<SystemInfoFile>(ResultCode.Exception, exception.Message);
+        }
+
         return snapshot.IsOK() && snapshot.Value is { } data
             ? ResultObjectFactory.CreateSuccess(new SystemInfoFile(data))
             : ResultObjectFactory.CreateFailure<SystemInfoFile>(snapshot.Status);

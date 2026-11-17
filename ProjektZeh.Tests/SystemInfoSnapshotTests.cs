@@ -137,4 +137,61 @@ public sealed class SystemInfoSnapshotTests
         Assert.IsFalse(open.IsOK());
         Assert.IsNull(open.Value);
     }
+
+    [TestMethod]
+    public void EverySeparatorAndControlClassIsMasked()
+    {
+        var expected = new Dictionary<string, string>
+        {
+            ["\u0001"] = "\\u0001",
+            ["\u2028"] = "\\u2028",
+            ["\u2029"] = "\\u2029",
+            ["\u00a0"] = "\\u00a0",
+            ["\u3000"] = "\\u3000",
+            ["\u200b"] = "\\u200b",
+            ["\u202e"] = "\\u202e",
+            ["\ufeff"] = "\\ufeff",
+            ["\ue000"] = "\\ue000",
+            ["\u0378"] = "\\u0378",
+            ["\udc00"] = "\\udc00",
+            ["\ud800\ud800"] = "\\ud800\\ud800",
+            ["\udb40\udc01"] = "\\U000e0001",
+            ["\udb80\udc00"] = "\\U000f0000",
+            ["\ud83d\ude00"] = "\ud83d\ude00",
+            ["\u00e4"] = "\u00e4",
+        };
+        foreach (var (input, output) in expected)
+            Assert.AreEqual(output, SystemInfoSnapshot.Field(input), $"U+{(int)input[0]:X4}");
+    }
+
+    [TestMethod]
+    public void EmptyAndNullFieldsBecomeDashSoColumnsDoNotShift()
+    {
+        Assert.AreEqual("- /x - rw\n", Text(SystemInfoSnapshot.Mounts([new SystemInfoMount("", null!, "/x", false)])));
+    }
+
+    [TestMethod]
+    public void ExactLimitsAreAcceptedAndOneMoreIsRejected()
+    {
+        SystemInfoMount[] Mounts(int lastNameLength) => Enumerable.Range(0, 128)
+            .Select(i => new SystemInfoMount(new string('c', i == 127 ? lastNameLength : 106), new string('a', 200), new string('b', 200), false)).ToArray();
+        var exact = SystemInfoSnapshot.Mounts(Mounts(106));
+        Assert.IsTrue(exact.IsOK());
+        Assert.AreEqual(65536, exact.Value!.Length);
+        Assert.IsFalse(SystemInfoSnapshot.Mounts(Mounts(107)).IsOK());
+        var mounts = Enumerable.Range(0, 129).Select(i => new SystemInfoMount("n", "s", "/m", false)).ToArray();
+        Assert.IsTrue(SystemInfoSnapshot.Mounts(mounts.Take(128).ToArray()).IsOK());
+        Assert.IsFalse(SystemInfoSnapshot.Mounts(mounts).IsOK());
+        var devices = Enumerable.Range(0, 129).Select(i => new SystemInfoDevice("p", "b", "d", "ok")).ToArray();
+        Assert.IsTrue(SystemInfoSnapshot.Devices(devices.Take(128).ToArray()).IsOK());
+        Assert.IsFalse(SystemInfoSnapshot.Devices(devices).IsOK());
+    }
+
+    [TestMethod]
+    public void OpenTurnsProducerExceptionIntoFailure()
+    {
+        var open = SystemInfoFile.Open(() => throw new InvalidOperationException("Cosmos"));
+        Assert.IsFalse(open.IsOK());
+        Assert.IsNull(open.Value);
+    }
 }
