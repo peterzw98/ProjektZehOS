@@ -14,9 +14,9 @@ payload=$(mktemp -d)
 trap 'rm -rf "$payload"' EXIT
 cd "$root"
 
-# MSBuild uebernimmt jede Umgebungsvariable als Property (ohne Gross-/Kleinschreibung); geerbte Test-Schluessel, Test-CAs
-# oder Probe-Schalter duerfen nicht ins Release gelangen.
-for name in $(compgen -e | grep -i '^zehos' || true); do unset "$name"; done
+# MSBuild uebernimmt jede Umgebungsvariable als Property (ohne Gross-/Kleinschreibung); geerbte Test-Schluessel, Test-CAs,
+# Probe-Schalter oder Konstanten (die csproj haengt an DefineConstants an) duerfen nicht ins Release gelangen.
+for name in $(compgen -e | grep -i -E '^(zehos|defineconstants$)' || true); do unset "$name"; done
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version"
 # Erst der Build stellt die Cosmos-Pakete im NuGet-Cache her; auf einem frischen CI-Rechner fehlt Limine vorher.
 packages=$(dotnet nuget locals global-packages -l)

@@ -110,7 +110,7 @@ class ReleaseToolsTests(unittest.TestCase):
             harness = r'''
 dotnet() {
     if [[ "$1" == build ]]; then
-        if env | grep -qi '^zehos'; then
+        if env | grep -qi -E '^(zehos|defineconstants=)'; then
             echo 'Release wuerde geerbte ZehOS-Properties verwenden' >&2
             return 77
         fi
@@ -127,7 +127,8 @@ export -f dotnet
 '''
             environment = dict(os.environ, ZehOSUpdateTestKeyPath='/inherited/test.pub',
                                ZEHOSUPDATETESTKEYPATH='/inherited/other-case.pub',
-                               ZehOSPackageKeyPath='/inherited/package.pub', zehosrecovery='true')
+                               ZehOSPackageKeyPath='/inherited/package.pub', zehosrecovery='true',
+                               DefineConstants='ZEHOS_RECOVERY')
             result = subprocess.run([bash, '-c', harness, 'release-test', script.as_posix(),
                                      (root / 'release').as_posix()], capture_output=True, text=True,
                                     env=environment, timeout=30)
