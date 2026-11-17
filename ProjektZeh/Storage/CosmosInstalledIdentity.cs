@@ -18,11 +18,14 @@ internal static class CosmosInstalledIdentity
 {
     private const string DataMount = "/data";
 
-    public static IdentityResult? EvaluateData()
+    public static IdentityResult? EvaluateData() => Evaluate(DataMount);
+
+    /// <summary>Wie <see cref="EvaluateData"/>, fuer die unter <paramref name="mountPoint"/> eingehaengte ESP (4.3: /boot/efi).</summary>
+    public static IdentityResult? Evaluate(string mountPoint)
     {
         try
         {
-            return EvaluateMountedData();
+            return EvaluateMounted(mountPoint);
         }
         catch (Exception exception)
         {
@@ -30,11 +33,11 @@ internal static class CosmosInstalledIdentity
         }
     }
 
-    private static IdentityResult? EvaluateMountedData()
+    private static IdentityResult? EvaluateMounted(string mountPoint)
     {
         Partition? partition = null;
         foreach (VfsMount mount in VfsManager.Mounts)
-            if (string.Equals(mount.MountPoint, DataMount, StringComparison.Ordinal)) partition = mount.Partition;
+            if (string.Equals(mount.MountPoint, mountPoint, StringComparison.Ordinal)) partition = mount.Partition;
         if (partition is null) return null;
 
         IBlockDevice host = partition.Host;
@@ -47,16 +50,17 @@ internal static class CosmosInstalledIdentity
         {
             table = GptLayout.Failure("TableIoError", "GPT nicht lesbar: " + exception.GetType().Name);
         }
-        return InstalledIdentity.Evaluate(ReadMarker(), table, entry => RootGate(host, entry));
+        return InstalledIdentity.Evaluate(ReadMarker(mountPoint), table, entry => RootGate(host, entry));
     }
 
     /// <summary>Fuer AccountService.MutationBlockedReason.</summary>
     public static string? MutationBlockedReason() => EvaluateData()?.BlockedReason;
 
-    private static string? ReadMarker()
+    /// <summary>Markertext der ESP unter <paramref name="mountPoint"/>; null = Datei fehlt, leer = unlesbar (ergibt Unclear).</summary>
+    internal static string? ReadMarker(string mountPoint)
     {
         // Rohes System.IO ohne Pfadwaechter: die ESP ist FAT und kennt keine Symlinks.
-        string path = Path.Combine(DataMount, InstallMarker.RelativePath);
+        string path = Path.Combine(mountPoint, InstallMarker.RelativePath);
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
