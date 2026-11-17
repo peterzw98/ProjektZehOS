@@ -69,6 +69,8 @@
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayout.cs" Link="Storage\Partitioning\GptLayout.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayoutWriter.cs" Link="Storage\Partitioning\GptLayoutWriter.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\InstallMarker.cs" Link="Storage\Partitioning\InstallMarker.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\InstalledIdentity.cs" Link="Storage\Partitioning\InstalledIdentity.cs" />
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
