@@ -129,8 +129,8 @@ public sealed class InstalledIdentityTests
     }
 
     [TestMethod]
-    [DataRow(RootCheck.Reject)]
-    [DataRow(RootCheck.ReadOnly)]
+    [DataRow((int)RootCheck.Reject)]
+    [DataRow((int)RootCheck.ReadOnly)]
     // RootCheck ist internal; oeffentliche Testmethoden nehmen den Wert deshalb als int (CS0051).
     public void Marker_GateNotOk_RootDamaged(int gate) =>
         Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, Root), (RootCheck)gate));
@@ -146,11 +146,11 @@ public sealed class InstalledIdentityTests
     // --- CheckRoot: s_state getrennt von unbekanntem RoCompat ---
 
     [TestMethod]
-    [DataRow((ushort)1, 0x1u, RootCheck.Ok, DisplayName = "sauber")]
-    [DataRow((ushort)0, 0x1u, RootCheck.Unclean, DisplayName = "s_state 0")]
-    [DataRow((ushort)2, 0x1u, RootCheck.Unclean, DisplayName = "s_state Fehler")]
-    [DataRow((ushort)1, 0x9u, RootCheck.ReadOnly, DisplayName = "unbekanntes RoCompat")]
-    [DataRow((ushort)0, 0x9u, RootCheck.ReadOnly, DisplayName = "RoCompat und s_state: bleibt ReadOnly")]
+    [DataRow((ushort)1, 0x1u, (int)RootCheck.Ok, DisplayName = "sauber")]
+    [DataRow((ushort)0, 0x1u, (int)RootCheck.Unclean, DisplayName = "s_state 0")]
+    [DataRow((ushort)2, 0x1u, (int)RootCheck.Unclean, DisplayName = "s_state Fehler")]
+    [DataRow((ushort)1, 0x9u, (int)RootCheck.ReadOnly, DisplayName = "unbekanntes RoCompat")]
+    [DataRow((ushort)0, 0x9u, (int)RootCheck.ReadOnly, DisplayName = "RoCompat und s_state: bleibt ReadOnly")]
     public void CheckRoot_SeparatesStateFromRoCompat(ushort state, uint roCompat, int expected) =>
         Assert.AreEqual((RootCheck)expected, InstalledIdentity.CheckRoot(Superblock(state, roCompat)));
 
