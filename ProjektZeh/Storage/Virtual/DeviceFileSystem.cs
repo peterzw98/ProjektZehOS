@@ -11,7 +11,7 @@ namespace ProjektZeh.Storage.Virtual;
 internal static class DeviceFileSystem
 {
     /// <summary>Die einzigen Geraete dieser Etappe, sortiert; Terminal- und Blockgeraete brauchen erst eigene Vertraege.</summary>
-    public static IReadOnlyList<string> Names { get; } = Array.AsReadOnly(["null", "zero"]);
+    public static IReadOnlyList<string> Names { get; } = Array.AsReadOnly(new[] { "null", "zero" });
 
     public static ResultObject<DeviceHandle> Open(string name) => name switch
     {
