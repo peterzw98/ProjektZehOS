@@ -25,7 +25,8 @@ public sealed class Kernel : Sys.Kernel
 {
     private readonly CosmosStorageService storage = new();
     private readonly ConsoleTextOutput output = new();
-    private readonly InteractiveSession interactive;
+    // Entsteht erst in InitializeServices, weil die Shell Konten, Pakete und das Pfadprofil braucht.
+    private InteractiveSession interactive = null!;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
     private bool startDesktop;
@@ -37,22 +38,16 @@ public sealed class Kernel : Sys.Kernel
             return new UpdateVersion(version.Major, version.Minor, version.Build);
         }
     }
-    // Etappe 4.1: einmal gewaehltes Pfadprofil; Root wird erst mit 4.3 gewaehlt, bis dahin gilt immer Legacy (/data).
-    private static readonly SystemPaths Paths = SystemPaths.Legacy;
+    // Etappe 4.3: das Pfadprofil wird einmal beim Boot gewaehlt (InitializeServices); Konten, Pakete und Updates haengen davon ab
+    // und entstehen deshalb erst dort, nicht als Feldinitialisierer vor jeder Plattenpruefung.
+    private SystemPaths systemPaths = SystemPaths.Legacy;
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
-    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
-        new FileUpdateTarget(Paths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory), Paths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory);
+    private UpdateController updates = null!;
 #endif
-    // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
-    private readonly AccountService accounts = new(Paths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), Paths.Comparison,
-        CosmosPathGuard.For(Paths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory)
-    {
-        MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
-    };
-    // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
-    private readonly PackageStore packages = new(Paths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
+    private AccountService accounts = null!;
+    private PackageStore packages = null!;
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;
@@ -68,8 +63,6 @@ public sealed class Kernel : Sys.Kernel
     public Kernel()
     {
         messages = new MessageDemoService(tasks);
-        // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
-        accounts.IsDataMounted = () => VfsManager.TryGetMount(Paths.AdminRoot, out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -82,9 +75,32 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateSuccess();
         });
 #endif
+    }
+
+    /// <summary>
+    /// Baut die profilabhaengigen Dienste genau einmal beim Boot, vor dem ersten Zugriff im Storage-Schritt (Etappe 4.3).
+    /// Reihenfolge wie frueher im Konstruktor: Updates, Konten, Pakete, dann Sitzung und Shell.
+    /// </summary>
+    private void InitializeServices(SystemPaths paths)
+    {
+        systemPaths = paths;
+#if !ZEHOS_INSTALLER
+        updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
+            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory), systemPaths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory);
+#endif
+        // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
+        accounts = new(systemPaths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), systemPaths.Comparison,
+            CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory)
+        {
+            MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
+        };
+        // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
+        accounts.IsDataMounted = () => VfsManager.TryGetMount(systemPaths.AdminRoot, out _);
+        // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
+        packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
-            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity,
+            () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
@@ -132,7 +148,7 @@ public sealed class Kernel : Sys.Kernel
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity,
+        var files = new FileService(identity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: identity,
             diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
@@ -186,6 +202,8 @@ public sealed class Kernel : Sys.Kernel
             return;
         }
 
+        // Legacy-Profil bis zur Profilwahl (4.3 hinter ZehOSRootProfile); vor jedem Zugriff auf Konten, Pakete und Updates.
+        InitializeServices(SystemPaths.Legacy);
         boot.RunStep("Storage", () =>
         {
             if (!StorageManager.IsEnabled || !StorageManager.IsInitialized)
@@ -336,7 +354,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
             return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         }
-        var unmounted = VfsManager.TryGetMount(Paths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        var unmounted = VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
 #if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();
 #endif
