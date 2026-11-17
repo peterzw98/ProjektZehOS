@@ -76,6 +76,7 @@
     <Compile Include="..\ProjektZeh\Storage\Virtual\VirtualTree.cs" Link="Storage\Virtual\VirtualTree.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\AppStorageGate.cs" Link="Storage\AppStorageGate.cs" />
+    <Compile Include="..\ProjektZeh\Storage\StorageLock.cs" Link="Storage\StorageLock.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2DirectoryRemoval.cs" Link="Storage\Ext2\Ext2DirectoryRemoval.cs" />
