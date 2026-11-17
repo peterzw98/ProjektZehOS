@@ -336,6 +336,44 @@ public sealed class WasmSaveStoreTests
     }
 
     [TestMethod]
+    public void SaveRootIsCreatedLevelByLevelUnderAStrictGuard()
+    {
+        // Wie CosmosPathGuard: beim Anlegen darf nur das Blatt fehlen. PathGuard prueft Kernelpfade ("/data/..."); der Test
+        // uebersetzt Hostpfade unter root dorthin und zurueck, damit er auf Linux- und Windows-Hosts gleich laeuft.
+        string Kernel(string host)
+        {
+            string relative = Path.GetRelativePath(root, host).Replace(Path.DirectorySeparatorChar, '/');
+            return relative == "." ? "/data" : "/data/" + relative;
+        }
+        string Host(string kernel) => kernel == "/data" ? root : Path.Combine(root, kernel["/data/".Length..].Replace('/', Path.DirectorySeparatorChar));
+        string mount = root;
+        Func<string, bool, ResultErr> guard = (path, creating) => ProjektZeh.Security.PathGuard.Check("/data", Kernel(path), ["/data"],
+            (parent, name) =>
+            {
+                string host = Path.Combine(Host(parent), name);
+                return Directory.Exists(host) ? ProjektZeh.Security.PathNodeKind.Directory
+                    : File.Exists(host) ? ProjektZeh.Security.PathNodeKind.File : ProjektZeh.Security.PathNodeKind.Missing;
+            }, creating);
+        var files = new ProjektZeh.Storage.FileService(root, pathGuard: guard);
+        string target = mount + "/.zehos-apps/classicube/" + new string('a', 32);
+
+        Assert.IsFalse(files.CreateDirectory(target).IsOK(), "Gegenprobe: in einem Schritt lehnt der Waechter ab (cc-lead-Befund)");
+        var created = WasmSaveStore.CreateRoot(files, mount, target);
+        Assert.IsTrue(created.IsOK(), created.Message);
+        Assert.IsTrue(Directory.Exists(target));
+        Assert.IsTrue(WasmSaveStore.CreateRoot(files, mount, target).IsOK(), "vorhandener Ordner ist kein Fehler");
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, "/anderswo/x").IsOK());
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, mount).IsOK(), "die Wurzel selbst ist kein App-Speicher");
+
+        // Eine Ebene, die als Datei existiert, scheitert sauber statt etwas anzulegen.
+        string blocked = mount + "/.zehos-apps/datei";
+        File.WriteAllText(blocked, "x");
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, blocked + "/konto").IsOK());
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount + "/", mount + "/.zehos-apps/datei").IsOK(), "Blatt als Datei");
+        Assert.IsTrue(WasmSaveStore.CreateRoot(files, mount + "/", mount + "/.zehos-apps/zweite").IsOK(), "Wurzel mit abschliessendem /");
+    }
+
+    [TestMethod]
     public void RenameStaysInsideAndRefusesDirectoryClashes()
     {
         var store = Store();
