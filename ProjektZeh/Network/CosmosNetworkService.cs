@@ -9,6 +9,7 @@ using Cosmos.Kernel.System.Network;
 using ProjektZeh.Shared;
 using ProjektZeh.Update;
 using ProjektZeh.Security;
+using ProjektZeh.SystemServices;
 
 namespace ProjektZeh.Network;
 
@@ -85,6 +86,13 @@ internal sealed class CosmosNetworkService : INetworkService
             return "DHCP IPv4: " + NetworkManager.Primary.IPConfig.Address;
         }
         if (NetworkManager.Primary.IPConfig == null || NetworkManager.Primary.IPConfig.Address.Equals(Address4.Zero)) throw new IOException("IPv4 ist nicht konfiguriert: net static oder net dhcp verwenden.");
+        if (operation == "time")
+        {
+            if (arguments.Length is < 1 or > 2) throw new ArgumentException("Verwendung: net time [Server] [Port]");
+            int port = Sntp.Port;
+            if (arguments.Length == 2 && (!int.TryParse(arguments[1], out port) || port is < 1 or > 65535)) throw new ArgumentException("Ungueltiger Port.");
+            return SyncTime(arguments[0], port, cancellation);
+        }
         if (arguments.Length != 1) throw new ArgumentException("Genau ein Ziel angeben.");
         return operation switch
         {
@@ -131,6 +139,50 @@ internal sealed class CosmosNetworkService : INetworkService
         try { client.Close(); } catch (Exception exception) { failure = CleanupFailure(failure, "DNS", exception); }
         if (failure != null) throw failure;
         return address!;
+    }
+
+    private const int NtpRetryMilliseconds = 2000;
+
+    /// <summary>
+    /// Etappe 12.2: einmal SNTP (Frist 2 s, eine Wiederholung) und den Versatz nach <see cref="ClockCorrection"/> uebernehmen.
+    /// Nicht authentifiziert; die Grenzen stehen in der Spec 2026-11-17-tls-12-2-audit.md §2.3.
+    /// </summary>
+    private static string SyncTime(string host, int port, CancellationToken token)
+    {
+        Address server = Resolve(host, token);
+        byte[] nonce = new byte[8];
+        CosmosSaltSource.Fill(nonce);
+        byte[] request = Sntp.CreateRequest(nonce);
+        // Der parameterlose Cosmos-Konstruktor bindet Port 0, Antworten kaemen dann nie an (3.0.97, wie DnsClient mit Port 53).
+        var client = new Cosmos.Kernel.System.Network.UdpClient(Sntp.Port); Exception? failure = null; DateTime network = default, rtc = default; bool answered = false;
+        try
+        {
+            client.Connect(server, port);
+            client.Send(request);
+            var clock = Stopwatch.StartNew(); bool repeated = false;
+            while (!answered && clock.ElapsedMilliseconds < 2 * NtpRetryMilliseconds)
+            {
+                token.ThrowIfCancellationRequested();
+                var sender = new Cosmos.Kernel.System.Network.EndPoint(Address4.Zero, 0);
+                byte[]? data = client.Receive(ref sender, 50);
+                // Fremde oder kaputte Pakete werden verworfen; es zaehlt nur eine Antwort auf diese Anfrage.
+                if (data != null && Sntp.ParseResponse(data, nonce) is { } parsed && parsed.IsOK())
+                {
+                    network = parsed.Value;
+                    rtc = DateTime.UtcNow;
+                    answered = true;
+                }
+                if (!answered && !repeated && clock.ElapsedMilliseconds >= NtpRetryMilliseconds) { client.Send(request); repeated = true; }
+            }
+            if (!answered) throw new IOException("Keine gueltige NTP-Antwort von " + host + ".");
+        }
+        catch (Exception exception) { failure = exception; }
+        try { client.Close(); } catch (Exception exception) { failure = CleanupFailure(failure, "NTP", exception); }
+        if (failure != null) throw failure;
+        var offset = ClockCorrection.Offset(rtc, network, TlsRoots.MinimumTime);
+        if (!offset.IsOK()) throw new IOException("Zeitabgleich nicht uebernommen: " + offset.Status.Message);
+        SystemClock.Apply(offset.Value);
+        return "Uhr abgeglichen mit " + host + ": " + network.ToString("u") + " (Versatz zur RTC " + offset.Value.TotalSeconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " s).";
     }
 
     private static string Ping(Address address, CancellationToken token)
@@ -197,7 +249,7 @@ internal sealed class CosmosNetworkService : INetworkService
             Stream stream = transport;
             if (uri.Scheme == "https")
             {
-                stream = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, roots, DateTime.UtcNow);
+                stream = TlsTransport.Open(transport, uri.Host, CosmosSaltSource.Fill, roots, SystemClock.UtcNow);
                 CheckDeadline(clock, token);
             }
             byte[] request = Encoding.ASCII.GetBytes($"GET {uri.PathAndQuery} HTTP/1.0\r\nHost: {uri.Authority}\r\nConnection: close\r\n\r\n");

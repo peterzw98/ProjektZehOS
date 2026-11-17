@@ -266,6 +266,8 @@ Das Gen3-Debugging verwendet QEMU und GDB. NativeAOT kann die Anzeige einzelner 
 
 Nach dem Boot versucht ZehOS bei Link ohne IPv4-Adresse automatisch DHCP, bei fehlender Antwort erneut nach zehn Sekunden. Eine manuell als Administrator mit `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` gesetzte Adresse bleibt erhalten; `net dhcp` fordert DHCP ausdrücklich erneut an. Das Netzwerksymbol unten rechts zwischen Desktopumschaltung und Uhr zeigt Verbindung, Suche oder fehlenden Link/Adapter. Ein Linksklick öffnet den Zustand und die IPv4-Adresse, der nächste Klick oder Esc schließt die Anzeige. „Verbunden“ bedeutet Link mit IPv4-Adresse, keine geprüfte Internetverbindung.
 
+Sobald eine IPv4-Adresse vorliegt, gleicht ZehOS die Uhr einmal per SNTP mit `pool.ntp.org` ab (bei Fehlern höchstens dreimal je Start). Administratoren können das mit `net time [Server] [Port]` erneut anstoßen. Die Hardwareuhr wird dabei nicht verändert. Ein Abgleich darf die Uhr beliebig vor-, aber höchstens 5 Minuten zurückstellen, solange die Hardwareuhr plausibel ist. SNTP ist nicht authentifiziert; die Grenzen stehen in [NETWORK_TESTS.md](docs/NETWORK_TESTS.md).
+
 Mit konfigurierter Adresse stehen `ping <IPv4>`, `nslookup <Name>` und `fetch http://10.0.2.2:18080/ok` bereit. Der Testserver läuft auf dem Entwicklungsrechner; `10.0.2.2` bezeichnet ihn aus dem QEMU-Gast. `fetch https://Host/Pfad` verwendet TLS 1.2/1.3 mit Zertifikatsketten-, Namens- und Gültigkeitsprüfung gegen ein eingebettetes Mozilla-Rootbundle. HTTPS verlangt eine korrekte UTC-Uhr und Hardwarezufall (RDSEED/RDRAND oder virtio-rng); ohne diese Voraussetzungen scheitert der Abruf. Unterstützt werden IPv4 und ASCII-DNS-Namen; IPv6 und Unicode-Zielnamen werden abgelehnt.
 
 Die Automatik belegt einen der acht Hintergrundplätze. Während DHCP die Netzwerksperre hält, kann die Update-Prüfung „Netzwerkdienst ist belegt.“ melden; nach Ende der Suche erneut versuchen. Cosmos-DHCP lässt sich erst nach seinem Empfangs-Warteabschnitt abbrechen. Dauert das länger als die zwei Sekunden zum Beenden aller Aufgaben, bricht die Energieaktion sicher ab und lässt sich danach erneut anfordern.
@@ -447,7 +449,7 @@ Zusätzliche Shellbefehle:
 | `sort [Datei]` / `uniq [Datei]` | Zeilen ordinal sortieren / direkt aufeinanderfolgende gleiche Zeilen entfernen |
 | `less [Datei]` | Pager mit Pfeilen, Bildtasten, Home/End, Leertaste und `q`; Textshell und Desktop bleiben nichtblockierend |
 | `history` / `alias [Name=Befehl Argumente ...]` | Letzte 32 Befehle / bis zu 32 sitzungslokale Aliase anzeigen oder definieren |
-| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr, Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
+| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr (nach einem SNTP-Abgleich korrigiert), Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
 | `exit` | Aktive Terminalsitzung schließen; die Textshell bleibt als Wiederherstellungskonsole geöffnet |
 
 Textfilter können statt einer Datei die Ausgabe einer vorherigen Pipelinestufe lesen. Beispielsweise erzeugt `echo blau >> farben.txt` eine Datei oder hängt Text an, `cat farben.txt | sort | uniq > eindeutig.txt` speichert eine gefilterte Ausgabe und `help | less` öffnet die Hilfe im Pager. `alias ll=ls` legt einen Argumentalias an; eingebettete Pipelines und Umleitungen gehören nicht zu Aliaswerten. Für Gruppenargumente ist etwa `alias suche=grep "zwei Worte"` möglich.
