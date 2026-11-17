@@ -137,7 +137,9 @@ def run_size(args: argparse.Namespace, base: Path, gib: int) -> None:
     create_sparse(data, gib * GIB)
     run = new_work_dir(work / "lauf1")
     process, qmp = boot(args, run, [blank, data])
-    mark = send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
+    # Ueber 4 GiB prueft der Kernel nur stichprobenartig und verlangt --yes-large.
+    command = "disk init sata1" + (" --yes-large" if gib > 4 else "")
+    mark = send_command(qmp, run, command, "Befehl: " + command)
     started = time.monotonic()
     tools.wait_serial(run, "Laufwerksaenderung abgeschlossen.", args.init_timeout, mark)
     print(f"{gib} GiB: disk init dauerte {time.monotonic() - started:.0f} s", flush=True)

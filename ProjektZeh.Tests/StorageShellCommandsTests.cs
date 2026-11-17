@@ -34,16 +34,31 @@ public sealed class StorageShellCommandsTests
     {
         var expected = ResultErr.CreateFailure(ResultCode.Failure, "DiskNotEmpty");
         var storage = new Mock<IStorageService>(MockBehavior.Strict);
-        storage.Setup(target => target.InitializeTestDisk("sata0")).Returns(expected);
+        storage.Setup(target => target.InitializeTestDisk("sata0", false)).Returns(expected);
         var output = new Mock<ITextOutput>(MockBehavior.Strict);
         var shell = new ShellService(new StorageShellCommands(storage.Object).Commands);
 
         var result = shell.ExecuteLine("disk init sata0", output.Object);
 
         Assert.AreSame(expected, result, "Der konkrete Speicherfehler muss unveraendert zurueckkommen.");
-        storage.Verify(target => target.InitializeTestDisk("sata0"), Times.Once, "Nur der ausdrueckliche Aufruf darf initialisieren.");
+        storage.Verify(target => target.InitializeTestDisk("sata0", false), Times.Once, "Nur der ausdrueckliche Aufruf darf initialisieren.");
         storage.VerifyNoOtherCalls();
         output.VerifyNoOtherCalls();
+    }
+
+    [TestMethod]
+    public void ExecuteLine_InitWithYesLarge_PassesConfirmation()
+    {
+        var storage = new Mock<IStorageService>(MockBehavior.Strict);
+        storage.Setup(target => target.InitializeTestDisk("sata1", true)).Returns(ResultErr.CreateSuccess());
+        var output = new Mock<ITextOutput>(MockBehavior.Strict);
+        var shell = new ShellService(new StorageShellCommands(storage.Object).Commands);
+
+        Assert.IsTrue(shell.ExecuteLine("disk init sata1 --yes-large", output.Object).IsOK());
+        Assert.IsFalse(shell.ExecuteLine("disk init sata1 --yes", output.Object).IsOK(), "Nur die ausgeschriebene Bestaetigung zaehlt.");
+
+        storage.Verify(target => target.InitializeTestDisk("sata1", true), Times.Once);
+        storage.VerifyNoOtherCalls();
     }
 
     [TestMethod]

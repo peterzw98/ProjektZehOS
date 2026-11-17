@@ -45,7 +45,7 @@ internal sealed class CosmosStorageService : IStorageService
     /// <summary>
     /// Erstellt MBR und FAT32 ausschliesslich auf einer vollstaendig leeren Platte von 64 MiB bis 128 GiB; die Partition erhaelt das Label ZEHOSDATA.
     /// </summary>
-    public ResultErr InitializeTestDisk(string? deviceName)
+    public ResultErr InitializeTestDisk(string? deviceName, bool confirmLarge)
     {
         var found = FindDevice(deviceName);
         if (!found.IsOK())
@@ -67,7 +67,7 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
             }
 
-            var blank = CheckEmptyDisk(device);
+            var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, device.ReadBlock);
             if (!blank.IsOK())
             {
                 return blank;
@@ -260,26 +260,6 @@ internal sealed class CosmosStorageService : IStorageService
         }
 
         registered = true;
-        return ResultErr.CreateSuccess();
-    }
-
-    private static ResultErr CheckEmptyDisk(IBlockDevice device)
-    {
-        // shortcut: liest die ganze Platte; der AHCI-Treiber bewegt nur 8 Sektoren (4 KiB) je Befehl, das dauert bei 32 GiB Minuten, bei 128 GiB Stunden. Vor Gastlaeufen ab 32 GiB entscheiden, ob nur Anfang und Ende geprueft werden.
-        ulong batchBlocks = 1024 * 1024 / device.BlockSize;
-        var buffer = new byte[batchBlocks * device.BlockSize];
-        for (ulong block = 0; block < device.BlockCount; block += batchBlocks)
-        {
-            // Die Plattengroesse ist nicht mehr durch die Stapelgroesse teilbar; der letzte Stapel wird gekuerzt.
-            ulong count = Math.Min(batchBlocks, device.BlockCount - block);
-            var span = buffer.AsSpan(0, (int)(count * device.BlockSize));
-            device.ReadBlock(block, count, span);
-            if (span.IndexOfAnyExcept((byte)0) >= 0)
-            {
-                return Failure("DiskNotEmpty", "Das Laufwerk enthaelt Daten; es wird nicht formatiert.");
-            }
-        }
-
         return ResultErr.CreateSuccess();
     }
 

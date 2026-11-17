@@ -24,7 +24,7 @@ internal sealed class StorageShellCommands
         this.commandLog = commandLog;
         Commands =
         [
-            new("disk", "disk list|init <Name>|mount <Name>|unmount",
+            new("disk", "disk list|init <Name> [--yes-large]|mount <Name>|unmount",
                 "Listet Laufwerke oder richtet eine leere Platte (64 MiB bis 128 GiB) als Datenplatte ZEHOSDATA ein.", true, Execute)
         ];
     }
@@ -44,7 +44,9 @@ internal sealed class StorageShellCommands
             case "list" when arguments.Length == 1:
                 return ListDevices(output);
             case "init" when arguments.Length == 2:
-                return Changed(storage.InitializeTestDisk(arguments[1]));
+                return Changed(storage.InitializeTestDisk(arguments[1], false));
+            case "init" when arguments.Length == 3 && arguments[2] == "--yes-large":
+                return Changed(storage.InitializeTestDisk(arguments[1], true));
             case "mount" when arguments.Length == 2:
                 return Changed(storage.Mount(arguments[1]));
             case "unmount" when arguments.Length == 1:
@@ -84,6 +86,6 @@ internal sealed class StorageShellCommands
     private static ResultErr InvalidArguments()
     {
         return ResultErr.CreateFailure(ResultCode.InvalidArgument,
-            "cause='InvalidArguments' message='Verwendung: disk list|init <Name>|mount <Name>|unmount'");
+            "cause='InvalidArguments' message='Verwendung: disk list|init <Name> [--yes-large]|mount <Name>|unmount'");
     }
 }
