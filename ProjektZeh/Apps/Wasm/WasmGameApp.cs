@@ -7,6 +7,7 @@ using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Packages;
 using ProjektZeh.Runtime.Wasm;
+using ProjektZeh.Storage;
 using ProjektZeh.UI;
 
 namespace ProjektZeh.Apps.Wasm;
@@ -100,14 +101,32 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
     // Das .aot wird zusaetzlich bei jedem Start genau in den Bytes geprueft, die WAMR erhaelt (WasmEngineSelection.ReadAot).
+    /// <summary>Modul in 1-MiB-Abschnitten unter der Speicher-Sperre; null, wenn es groesser als erlaubt ist.</summary>
+    private static byte[]? ReadModule(string entry)
+    {
+        var stream = StorageLock.Run(() => new FileStream(entry, FileMode.Open, FileAccess.Read));
+        try
+        {
+            long length = StorageLock.Run(() => stream.Length);
+            if (length > MaximumModuleBytes) return null;
+            byte[] module = new byte[length];
+            StorageLock.ReadExactly(stream, module);
+            return module;
+        }
+        finally
+        {
+            StorageLock.Run(stream.Dispose);
+        }
+    }
+
     private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package)
     {
         lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
         if (!verified.IsOK()) return (null, null, verified.Message);
         string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
-        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, null, "App zu gross.");
-        byte[] module = File.ReadAllBytes(entry);
+        byte[]? module = ReadModule(entry);
+        if (module == null) return (null, null, "App zu gross.");
         byte[]? aot = null;
         var aotFile = WasmEngineSelection.FindAot(package.Manifest, WasmEngineSelection.AotBuiltIn, WasmEngineSelection.AotEnabled);
         if (aotFile != null)

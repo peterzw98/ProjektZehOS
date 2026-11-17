@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -18,47 +17,23 @@ namespace ProjektZeh.Runtime.Wasm;
 
 internal enum WasmStatus { Ok = 0, NoMemory = 1, InvalidModule = 2, LoadFailed = 3, EntryMissing = 4, Trap = 5, OutOfGas = 6, LimitFailed = 7 }
 
-/// <summary>Dienste, die eine laufende Wasm-Anwendung vom Kernel erhaelt.</summary>
-internal interface IWasmSession
-{
-    /// <summary>Ordner, auf den die Anwendung lesend als "/" zugreift; null sperrt Dateizugriffe.</summary>
-    string? Root { get; }
-    /// <summary>Etappe 13.4: Ordner fuer /save (eigener App-Speicher); null, wenn die App nicht speichern darf oder kann.</summary>
-    string? SaveRoot { get; }
-    bool AllowsNetwork { get; }
-    void Write(int fd, ReadOnlySpan<byte> data);
-    void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
-    int PollKey();
-    bool TryReadEvent(out WasmInputEvent value);
-    /// <summary>Faengt den Zeiger ein oder gibt ihn frei; false, wenn die Sitzung das nicht kann.</summary>
-    bool SetPointerCapture(bool enabled);
-    bool ShouldExit { get; }
-    /// <summary>Uhr der Anwendung in Millisekunden; steht still, solange die Sitzung pausiert.</summary>
-    uint TicksMilliseconds { get; }
-}
-
 /// <summary>
 /// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
 /// optional nativ ueber WAMR-AOT (-p:ZehOSWasmAot=true). Alle Laeufe teilen sich einen langlebigen Worker mit festem
 /// Stack, weil Cosmos 3.0.94 Stacks beendeter Threads nicht freigibt und die nativen Stackgrenzen von wasm3
 /// (d_m3MaxNativeStack, siehe ProjektZeh.csproj) und WAMR (zehos_host_wamr.c) auf diesen Stack abgestimmt sind.
 /// </summary>
-internal static unsafe class WasmRuntime
+internal static unsafe partial class WasmRuntime
 {
     public const int ThreadStackBytes = 8 * 1024 * 1024;
     private const uint WasmStackBytes = 1024 * 1024;
     private const ulong MemoryLimitBytes = 256ul * 1024 * 1024;
-    private const int MaximumOpenFiles = 16;
 
     private static readonly object gate = new();
     private static readonly Queue<Action> jobs = new();
-    private static readonly Dictionary<int, FileStream> files = [];
     private static Thread? worker;
-    private static IWasmSession? current;
     private static WasmNetworkSession? network;
     private static IList<X509Certificate>? tlsAnchors;
-    private static int nextHandle;
-    private static uint[] indexedFrame = [];
     private static WasmSaveStore? save;
 
     /// <summary>Waechter fuer Symlinks und Mountgrenzen des App-Speichers; der Kernel setzt ihn beim Start.</summary>
@@ -171,6 +146,19 @@ internal static unsafe class WasmRuntime
                 while (jobs.Count == 0) Monitor.Wait(gate);
                 job = jobs.Dequeue();
             }
+            // Auch vorher sammeln: Cosmos 3.0.97 sammelt erst, wenn der Seitenallokator erschoepft ist, und eine grosse
+            // zusammenhaengende Allokation liefert bei vollem Heap NULL statt zu sammeln. Nach einer Online-Installation
+            // (TLS, Katalog, Paketdateien) lagen rund 2 Mio. tote Objekte im Heap; ClassiCube scheiterte dann am
+            // Wachstum des Wasm-Speichers ("Out of VRAM", Exitcode 1).
+            long collectStart = Stopwatch.GetTimestamp();
+            GC.Collect();
+            // Wie bei ReportMemory: eine Diagnosezeile darf den gemeinsamen Worker nicht beenden.
+            try
+            {
+                Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+                    $"WASM GC vor Lauf {(long)Stopwatch.GetElapsedTime(collectStart).TotalMilliseconds} ms\n");
+            }
+            catch (Exception) { /* Nur die Dauerzeile fehlt. */ }
             job();
             // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
             // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
@@ -230,6 +218,7 @@ internal static unsafe class WasmRuntime
             text[count] = 0;
         }
         current = null;
+        presentFailureReported = false;
         // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
         try { save?.CloseAll(); }
         catch (Exception) { code = (int)WasmStatus.Trap; }
@@ -238,7 +227,7 @@ internal static unsafe class WasmRuntime
         network = null;
         foreach (var stream in files.Values)
         {
-            try { stream.Dispose(); }
+            try { StorageLock.Run(stream.Dispose); }
             catch (Exception) { code = (int)WasmStatus.Trap; }
         }
         files.Clear();
@@ -390,31 +379,6 @@ internal static unsafe class WasmRuntime
         return WasmRandom.Fill(new Span<byte>(buffer, (int)length), CosmosSaltSource.Fill);
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]
-    private static int HostOpen(byte* path, uint length)
-    {
-        if (files.Count >= MaximumOpenFiles) return -1;
-        try
-        {
-            string? full = ResolvePackagePath(path, length);
-            if (full == null) return -1;
-            var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
-            int handle = ++nextHandle;
-            files[handle] = stream;
-            return handle;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return -1;
-        }
-    }
-
-    private static string? ResolvePackagePath(byte* path, uint length)
-    {
-        string? root = current?.Root;
-        return root == null ? null : WasmPackagePaths.Resolve(root, Encoding.UTF8.GetString(path, (int)length));
-    }
-
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_stat")]
     private static int HostStat(byte* path, uint length, ulong* size, int* type)
     {
@@ -429,31 +393,6 @@ internal static unsafe class WasmRuntime
             return result;
         }
         catch (Exception) { return WasmPackagePaths.Io; } // keine Ausnahme ueber die native Grenze.
-    }
-
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_size")]
-    private static long HostFileSize(int handle)
-    {
-        try { return files.TryGetValue(handle, out var stream) ? stream.Length : -1; }
-        catch (IOException) { return -1; }
-    }
-
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_read")]
-    private static int HostFileRead(int handle, ulong offset, byte* buffer, uint length)
-    {
-        if (!files.TryGetValue(handle, out var stream)) return -1;
-        try
-        {
-            stream.Position = (long)offset;
-            return stream.Read(new Span<byte>(buffer, (int)length));
-        }
-        catch (IOException) { return -1; }
-    }
-
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_close")]
-    private static void HostClose(int handle)
-    {
-        if (files.Remove(handle, out var stream)) stream.Dispose();
     }
 
     // Etappe 13.4: App-Speicher /save. Jede Rueckgabe ist eine WASI-Fehlernummer; Ausnahmen werden zu EIO, damit
@@ -583,21 +522,6 @@ internal static unsafe class WasmRuntime
             return WasiErrno.Success;
         }
         catch (Exception) { return WasiErrno.Io; }
-    }
-
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]
-    private static void HostPresent(uint* pixels, int width, int height, int tic, int test) =>
-        current?.Present(new ReadOnlySpan<uint>(pixels, width * height), width, height, tic, test != 0);
-
-    // Palettenbilder werden nativ in einen wiederverwendeten Puffer umgerechnet; im Interpreter kostete das
-    // auf dem Host fast die Haelfte der Bildzeit von Doom.
-    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present_indexed")]
-    private static void HostPresentIndexed(byte* indices, uint* palette, int width, int height, int tic)
-    {
-        int count = width * height;
-        if (indexedFrame.Length < count) indexedFrame = new uint[count];
-        for (int index = 0; index < count; index++) indexedFrame[index] = palette[indices[index]] & 0x00FFFFFF;
-        current?.Present(indexedFrame.AsSpan(0, count), width, height, tic, false);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_ticks_ms")]

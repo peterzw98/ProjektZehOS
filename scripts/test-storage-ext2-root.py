@@ -52,8 +52,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 13):
-        raise ValueError(f"Lauf ausserhalb 1..12: {run}")
+    if run not in range(1, 16):
+        raise ValueError(f"Lauf ausserhalb 1..15: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
@@ -309,8 +309,8 @@ def main() -> int:
                         help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
     parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit) auf 2 GiB; kein Go")
-    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12],
-                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung); kein Go")
+    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15],
+                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT); kein Go")
     parser.add_argument("--memory", default="512M", help="Gastspeicher (QEMU -m), Standard 512M wie das Produktprofil")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")

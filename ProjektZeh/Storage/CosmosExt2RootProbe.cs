@@ -80,6 +80,9 @@ internal static class CosmosExt2RootProbe
                 case 10: RunDeleteSpan(root); break;
                 case 11: RunScale(root); break;
                 case 12: RunHeapFragmentation(root); break;
+                case 13: RunConcurrency(root, lockedOnly: false); break;
+                case 14: RunConcurrency(root, lockedOnly: true); break;
+                case 15: RunConcurrency(root, lockedOnly: true, onFat: true); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -374,6 +377,141 @@ internal static class CosmosExt2RootProbe
     // Nicht inlinen: ILC sieht newarr als nie null an und wuerde einen direkten Vergleich entfernen (vgl. BufferAllocation).
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool IsMissing(object? value) => value is null;
+
+    /// <summary>
+    /// Diagnoselauf 13 (Schritt j, 18.11.): Liest Cosmos-ext2 unter Nebenlaeufigkeit falsch? Je Variante 30 s, dreimal:
+    /// ein Leser allein (Kontrolle), zwei Leser, ein Leser neben einem Anleger (anderes Verzeichnis), dasselbe mit einer
+    /// gemeinsamen Sperre um jede Operation (Abhilfe-Beleg). Gezaehlt werden Lesevorgaenge und Abweichungen.
+    /// </summary>
+    /// <param name="lockedOnly">Lauf 14: nur gesperrte Varianten, damit e2fsck danach allein die Sperre bewertet (Lauf 13 beschaedigte
+    /// ohne Sperre Bitmaps und Inode-Tabelle).</param>
+    /// <param name="onFat">Lauf 15: dieselbe Last auf der FAT-Platte (sata0 unter /boot/efi), Auflage Koordinator 00:32.</param>
+    private static void RunConcurrency(IBlockDevice root, bool lockedOnly, bool onFat = false)
+    {
+        Begin("format13");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        string bas = "";
+        if (onFat)
+        {
+            IBlockDevice fat = FindDevice(FatDeviceName, size => size == 64 * MiB, "64 MiB");
+            Check(IsBlank(fat), $"{FatDeviceName}: nicht leer; nichts geschrieben");
+            Check(VfsManager.RegisterFileSystem(FatFileSystem, new FatFileSystemType(fat)), "FAT-Registrierung abgelehnt");
+            Check(VfsManager.TryFormat(FatFileSystem, "", new FatFormatOptions { Type = FatType.Fat32, VolumeLabel = FatLabel }), "FAT-Format abgelehnt");
+            MountEfi();
+            bas = EfiMount;
+        }
+
+        Directory.CreateDirectory(bas + "/c");
+        for (int index = 0; index < RootProbeCatalog.JReadFiles; index++) WriteGenerated($"{bas}/c/r{index:D2}", $"/c/r{index:D2}", "j", 4096);
+        Pass(onFat ? "Format, Mount / und FAT unter /boot/efi, 50 Lesedateien auf FAT" : "Format, Mount /, 50 Lesedateien");
+
+        var variants = lockedOnly
+            ? new (string Name, int Readers, bool Creator, bool Locked, bool Renamer)[]
+            {
+                ("zwei-leser-sperre", 2, false, true, false), ("leser-anleger-sperre", 1, true, true, false),
+                ("zwei-leser-anleger-sperre", 2, true, true, false), ("leser-anleger-umbenenner-sperre", 2, true, true, true),
+            }
+            : new (string Name, int Readers, bool Creator, bool Locked, bool Renamer)[]
+            {
+                ("ein-leser", 1, false, false, false), ("zwei-leser", 2, false, false, false),
+                ("leser-anleger", 1, true, false, false), ("leser-anleger-sperre", 1, true, true, false),
+            };
+        int unlockedMismatches = 0, lockedMismatches = 0;
+        int rounds = lockedOnly ? 5 : 3;
+        for (int round = 0; round < rounds; round++)
+        {
+            foreach (var variant in variants)
+            {
+                Begin("conc-" + variant.Name);
+                var worker = new ConcurrencyWorker(variant.Locked, $"{bas}/n{round}{variant.Name}", bas);
+                Directory.CreateDirectory(worker.CreateDirectory);
+                var threads = new List<Thread>();
+                for (int reader = 0; reader < variant.Readers; reader++) threads.Add(new Thread(worker.Read));
+                if (variant.Creator) threads.Add(new Thread(worker.Create));
+                if (variant.Renamer) threads.Add(new Thread(worker.Rename));
+                foreach (var thread in threads) thread.Start();
+                Thread.Sleep(30_000);
+                worker.Stop = true;
+                foreach (var thread in threads) Check(thread.Join(30000), "Aufgabe endet nicht (Haenger)");
+                Check(worker.Unexpected == null, "unerwartete Ausnahme: " + worker.Unexpected);
+                if (variant.Locked) lockedMismatches += worker.Mismatches;
+                else if (variant.Readers + (variant.Creator ? 1 : 0) > 1) unlockedMismatches += worker.Mismatches;
+                Write($"conc-{variant.Name} INFO Runde {round}: gelesen {worker.Reads}, falsch {worker.Mismatches}, angelegt {worker.Created}, umbenannt {worker.Renamed}");
+                if (variant.Readers == 1 && !variant.Creator) Check(worker.Mismatches == 0, $"{worker.Mismatches} Fehler schon mit einem Leser");
+                // Aufraeumen haelt den Inode-Cache je Mount klein (Grenze ~17 500) und die 64-MiB-FAT frei.
+                StorageLock.Run(() => DeleteTree(worker.CreateDirectory));
+            }
+        }
+
+        Begin("conc");
+        Write($"conc INFO ohne Sperre nebenlaeufig falsch: {unlockedMismatches}, mit Sperre falsch: {lockedMismatches}");
+        Check(lockedMismatches == 0, $"{lockedMismatches} Fehler trotz Sperre");
+        Pass("Kontrolle und Sperre fehlerfrei");
+        AfterPhase(root);
+    }
+
+    private sealed class ConcurrencyWorker(bool locked, string createDirectory, string readBase)
+    {
+        public volatile bool Stop;
+        public volatile string? Unexpected;
+        public int Reads;
+        public int Mismatches;
+        public int Created;
+        public string CreateDirectory { get; } = createDirectory;
+
+        public void Read()
+        {
+            int local = 0;
+            Loop(() =>
+            {
+                string name = $"/c/r{local++ % RootProbeCatalog.JReadFiles:D2}";
+                byte[] data = Guard(() => File.ReadAllBytes(readBase + name));
+                if (!data.AsSpan().SequenceEqual(RootProbeContent.Create("j", name, 4096))) Interlocked.Increment(ref Mismatches);
+                Interlocked.Increment(ref Reads);
+            });
+        }
+
+        public void Create() => Loop(() =>
+        {
+            string path = $"{CreateDirectory}/f{Created:D6}";
+            byte[] content = RootProbeContent.Create("j", path, 1000);
+            Guard(() => { File.WriteAllBytes(path, content); return content; });
+            Created++;
+        });
+
+        public int Renamed;
+
+        /// <summary>Benennt die angelegten Dateien um (Verzeichnisaenderung neben Lesern und Anleger).</summary>
+        public void Rename() => Loop(() =>
+        {
+            int target = Renamed;
+            if (target >= Created) { Thread.Sleep(1); return; }
+            string source = $"{CreateDirectory}/f{target:D6}";
+            Guard(() => { File.Move(source, $"{CreateDirectory}/m{target:D6}"); return true; });
+            Renamed++;
+        });
+
+        // Gesperrt ueber dieselbe StorageLock wie das Produkt, nicht ueber eine eigene Probensperre.
+        private T Guard<T>(Func<T> operation) => locked ? StorageLock.Run(operation) : operation();
+
+        private void Loop(Action action)
+        {
+            while (!Stop && Unexpected == null)
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception exception)
+                {
+                    Unexpected = $"{exception.GetType().Name}: {exception.Message}";
+                }
+            }
+        }
+    }
 
     private static void RunScale(IBlockDevice root)
     {
@@ -1069,7 +1207,7 @@ internal static class CosmosExt2RootProbe
         int end = text.IndexOf('\n', ControlPrefix.Length);
         bool parsed = int.TryParse(text.AsSpan(ControlPrefix.Length, (end < 0 ? text.Length : end) - ControlPrefix.Length),
             System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int run);
-        Check(parsed && run is >= 1 and <= 12, "Lauf ausserhalb 1..12; nichts geschrieben");
+        Check(parsed && run is >= 1 and <= 15, "Lauf ausserhalb 1..15; nichts geschrieben");
         return run;
     }
 
@@ -1217,10 +1355,12 @@ internal static class CosmosExt2RootProbe
         public int ReadMismatch;
         public int ExpectedIo;
 
+        // Wie das Produkt: jeder Plattenzugriff unter StorageLock (Diagnoselauf 13: ohne Sperre Metadatenkorruption).
         public void Create() => Loop(() =>
         {
             string path = $"/j/a/f{Created:D6}";
-            File.WriteAllBytes(path, RootProbeContent.Create("j", path, 1000));
+            byte[] content = RootProbeContent.Create("j", path, 1000);
+            StorageLock.Run(() => File.WriteAllBytes(path, content));
             Created++;
         });
 
@@ -1228,9 +1368,9 @@ internal static class CosmosExt2RootProbe
         {
             int target = Changed;
             string source = $"/j/a/f{target:D6}";
-            if (!File.Exists(source)) { Thread.Sleep(1); return; }
-            if (target % 2 == 0) File.Move(source, $"/j/a/g{target:D6}");
-            else File.Delete(source);
+            if (!StorageLock.Run(() => File.Exists(source))) { Thread.Sleep(1); return; }
+            if (target % 2 == 0) StorageLock.Run(() => File.Move(source, $"/j/a/g{target:D6}"));
+            else StorageLock.Run(() => File.Delete(source));
             Changed++;
         });
 
@@ -1238,7 +1378,7 @@ internal static class CosmosExt2RootProbe
         {
             int index = Reads % RootProbeCatalog.JReadFiles;
             string path = $"/j/c/r{index:D2}";
-            if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(RootProbeContent.Create("j", path, 4096))) Interlocked.Increment(ref ReadMismatch);
+            if (!StorageLock.Run(() => File.ReadAllBytes(path)).AsSpan().SequenceEqual(RootProbeContent.Create("j", path, 4096))) Interlocked.Increment(ref ReadMismatch);
             Reads++;
         });
 

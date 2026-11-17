@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Cosmos.Kernel.System.FileSystem;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Security;
 
@@ -13,14 +14,16 @@ namespace ProjektZeh.Security;
 /// </summary>
 internal static class CosmosPathGuard
 {
-    public static Func<string, bool, ResultErr> For(string root) => (path, creating) =>
+    // Die ganze Pruefung als ein Abschnitt unter der Speicher-Sperre: sie fragt Cosmos komponentenweise ab, und ein
+    // gleichzeitiger Zugriff eines anderen Threads koennte dazwischen Metadaten veraendern (Diagnoselauf 13).
+    public static Func<string, bool, ResultErr> For(string root) => (path, creating) => StorageLock.Run(() =>
     {
         var mountPoints = new List<string>();
         foreach (VfsMount mount in VfsManager.Mounts) mountPoints.Add(mount.MountPoint);
-        return PathGuard.Check(root, path, mountPoints, Lookup, creating);
-    };
+        return PathGuard.Check(root, path, mountPoints, LookupStorageLocked, creating);
+    });
 
-    private static PathNodeKind Lookup(string parent, string name)
+    private static PathNodeKind LookupStorageLocked(string parent, string name)
     {
         // Der Elternpfad wurde schon als Verzeichnis geprueft; laesst er sich nicht oeffnen, ist das ein Fehler, kein fehlendes Blatt.
         if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory))

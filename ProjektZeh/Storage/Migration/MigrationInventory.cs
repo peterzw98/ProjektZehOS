@@ -81,30 +81,14 @@ internal sealed class MigrationInventory
         var pending = new Stack<(DirectoryInfo Directory, string Relative)>();
         try
         {
-            pending.Push((new DirectoryInfo(sourceRoot), ""));
+            pending.Push((StorageLock.Run(() => new DirectoryInfo(sourceRoot)), ""));
             while (pending.Count > 0)
             {
                 cancellation.ThrowIfCancellationRequested();
                 var (directory, relative) = pending.Pop();
-                foreach (var child in directory.EnumerateFileSystemInfos())
-                {
-                    // Symlinks und Mountpunkte sind auf FAT nicht vorgesehen; fail-closed statt ihnen zu folgen.
-                    if ((child.Attributes & FileAttributes.ReparsePoint) != 0)
-                        return Failure("SourceUnsupported", $"Verknuepfung in der Quelle: {relative}{child.Name}");
-                    if (entries.Count >= maximumEntries)
-                        return Failure("InventoryTooLarge", $"Mehr als {maximumEntries} Eintraege in der Quelle; Migration nicht begonnen.");
-                    string path = relative + child.Name;
-                    if (child is DirectoryInfo subdirectory)
-                    {
-                        entries.Add(new InventoryEntry(path, true, 0, null, 0));
-                        pending.Push((subdirectory, path + "/"));
-                    }
-                    else
-                    {
-                        var file = (FileInfo)child;
-                        entries.Add(new InventoryEntry(path, false, file.Length, null, file.LastWriteTimeUtc.Ticks));
-                    }
-                }
+                // Ein gesperrter Abschnitt je Verzeichnis: Aufzaehlen und Attribute lesen, nicht der ganze Baum.
+                var failure = StorageLock.Run(() => ListDirectoryStorageLocked(directory, relative, entries, pending, maximumEntries));
+                if (failure != null) return failure;
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
@@ -116,11 +100,38 @@ internal sealed class MigrationInventory
         return ResultObjectFactory.CreateSuccess(entries);
     }
 
+    /// <summary>Fehlerergebnis oder null, wenn alle Kinder von <paramref name="directory"/> aufgenommen sind.</summary>
+    private static ResultObject<List<InventoryEntry>>? ListDirectoryStorageLocked(DirectoryInfo directory, string relative,
+        List<InventoryEntry> entries, Stack<(DirectoryInfo Directory, string Relative)> pending, int maximumEntries)
+    {
+        foreach (var child in directory.EnumerateFileSystemInfos())
+        {
+            // Symlinks und Mountpunkte sind auf FAT nicht vorgesehen; fail-closed statt ihnen zu folgen.
+            if ((child.Attributes & FileAttributes.ReparsePoint) != 0)
+                return Failure("SourceUnsupported", $"Verknuepfung in der Quelle: {relative}{child.Name}");
+            if (entries.Count >= maximumEntries)
+                return Failure("InventoryTooLarge", $"Mehr als {maximumEntries} Eintraege in der Quelle; Migration nicht begonnen.");
+            string path = relative + child.Name;
+            if (child is DirectoryInfo subdirectory)
+            {
+                entries.Add(new InventoryEntry(path, true, 0, null, 0));
+                pending.Push((subdirectory, path + "/"));
+            }
+            else
+            {
+                var file = (FileInfo)child;
+                entries.Add(new InventoryEntry(path, false, file.Length, null, file.LastWriteTimeUtc.Ticks));
+            }
+        }
+        return null;
+    }
+
     private static ResultObject<string> HashFile(string sourceRoot, string relativePath, CancellationToken cancellation)
     {
         try
         {
-            using var stream = new CancellationReadStream(File.OpenRead(HostPath(sourceRoot, relativePath)), cancellation);
+            // Sperre je Lesestueck, nicht fuer die ganze Datei.
+            using var stream = new CancellationReadStream(StorageLockReadStream.OpenRead(HostPath(sourceRoot, relativePath)), cancellation);
             return ResultObjectFactory.CreateSuccess(MigrationHash.Hex(stream));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

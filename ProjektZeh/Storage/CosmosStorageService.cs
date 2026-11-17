@@ -77,7 +77,7 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
             }
 
-            var overwrite = DataDiskSelector.CheckOverwrite(ReadCandidates(), VfsManager.TryGetMount(MountPoint, out _), confirmOverwrite);
+            var overwrite = DataDiskSelector.CheckOverwrite(ReadCandidates(), StorageLock.Run(() => VfsManager.TryGetMount(MountPoint, out _)), confirmOverwrite);
             if (!overwrite.IsOK())
             {
                 return overwrite;
@@ -118,7 +118,7 @@ internal sealed class CosmosStorageService : IStorageService
                 Type = FatType.Fat32,
                 VolumeLabel = DataDiskSelector.DataLabel
             };
-            if (!VfsManager.TryFormat(FileSystemName, partitions[0], options))
+            if (!StorageLock.Run(() => VfsManager.TryFormat(FileSystemName, partitions[0], options)))
             {
                 return Failure("FormatRefused", "Cosmos hat die FAT32-Formatierung abgelehnt." + MbrLeftBehind);
             }
@@ -245,7 +245,7 @@ internal sealed class CosmosStorageService : IStorageService
                 return index.Status;
             }
 
-            if (VfsManager.TryGetMount(MountPoint, out _))
+            if (StorageLock.Run(() => VfsManager.TryGetMount(MountPoint, out _)))
             {
                 // Derselbe Weg wie disk unmount: erst die App-Schreibsperre (Etappe 13.4), dann aushaengen.
                 var unmounted = Unmount();
@@ -286,7 +286,7 @@ internal sealed class CosmosStorageService : IStorageService
 
         try
         {
-            return File.Exists(MountPoint + "/" + AccountService.MetadataFile);
+            return StorageLock.Run(() => File.Exists(MountPoint + "/" + AccountService.MetadataFile));
         }
         catch (Exception exception)
         {
@@ -295,7 +295,7 @@ internal sealed class CosmosStorageService : IStorageService
         }
         finally
         {
-            if (!VfsManager.TryUnmount(MountPoint))
+            if (!StorageLock.Run(() => VfsManager.TryUnmount(MountPoint)))
             {
                 Note($"Fehler: {deviceName} liess sich nach der Pruefung nicht aushaengen");
             }
@@ -325,7 +325,7 @@ internal sealed class CosmosStorageService : IStorageService
 
     private ResultErr PrepareMount()
     {
-        if (VfsManager.TryGetMount(MountPoint, out _))
+        if (StorageLock.Run(() => VfsManager.TryGetMount(MountPoint, out _)))
         {
             return Failure("AlreadyMounted", "Unter /data ist bereits ein Laufwerk eingebunden.");
         }
@@ -335,7 +335,7 @@ internal sealed class CosmosStorageService : IStorageService
 
     private static ResultErr MountPartition(IBlockDevice device, int partitionIndex, MountFlags flags = MountFlags.None)
     {
-        if (!VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], flags, MountPoint, out _))
+        if (!StorageLock.Run(() => VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], flags, MountPoint, out _)))
         {
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
         }
@@ -355,7 +355,7 @@ internal sealed class CosmosStorageService : IStorageService
         if (!AppStorageGate.TryBlock()) return Failure("StorageBusy", AppStorageGate.BusyDescription + " laeuft; spaeter erneut aushaengen.");
         try
         {
-            if (!VfsManager.TryUnmount(MountPoint))
+            if (!StorageLock.Run(() => VfsManager.TryUnmount(MountPoint)))
             {
                 AppStorageGate.Release();
                 return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
@@ -365,7 +365,7 @@ internal sealed class CosmosStorageService : IStorageService
         }
         catch (Exception exception)
         {
-            if (VfsManager.TryGetMount(MountPoint, out _)) AppStorageGate.Release();
+            if (StorageLock.Run(() => VfsManager.TryGetMount(MountPoint, out _))) AppStorageGate.Release();
             return ResultErr.CreateFromException(exception);
         }
     }
@@ -376,21 +376,21 @@ internal sealed class CosmosStorageService : IStorageService
     /// <summary>Partition des beschreibbar eingehaengten /data (Quelle der Migration); null, wenn /data fehlt oder lesend haengt.</summary>
     internal static Partition? WritableDataPartition()
     {
-        foreach (VfsMount mount in VfsManager.Mounts)
+        foreach (VfsMount mount in StorageLock.Run(() => VfsManager.Mounts))
             if (mount.MountPoint == MountPoint) return (mount.Flags & MountFlags.ReadOnly) == 0 ? mount.Partition : null;
         return null;
     }
 
     // Die folgenden drei laufen nur unter dem Quelllease der Migration (MigrationSourceSwap); Unmount() wuerde dort
     // an der eigenen Sperre scheitern und gibt die Sperre beim Einhaengen frei.
-    internal static bool UnmountData() => VfsManager.TryUnmount(MountPoint);
+    internal static bool UnmountData() => StorageLock.Run(() => VfsManager.TryUnmount(MountPoint));
 
     /// <summary>Dieselbe FAT-Partition ueber den Lese-Wrapper: Fsync/Release/Sync/Drop schreiben nicht (P3-g).</summary>
     internal static bool MountDataReadOnly(Partition partition) => migrationSource.TryMount(
         new CosmosReadOnlyFileSystem(new FatFileSystemType(new Ext2.CosmosReadOnlyBlockDevice(partition))), partition, MountFlags.ReadOnly, MountPoint);
 
     internal bool MountDataWritable(Partition partition) =>
-        RegisterFileSystem().IsOK() && VfsManager.TryMount(FileSystemName, partition, MountFlags.None, MountPoint, out _);
+        RegisterFileSystem().IsOK() && StorageLock.Run(() => VfsManager.TryMount(FileSystemName, partition, MountFlags.None, MountPoint, out _));
 #endif
 
     private static ResultObject<IBlockDevice> FindDevice(string? deviceName)
@@ -421,7 +421,7 @@ internal sealed class CosmosStorageService : IStorageService
             return ResultErr.CreateSuccess();
         }
 
-        if (!VfsManager.RegisterFileSystem(FileSystemName, new FatFileSystemType()))
+        if (!StorageLock.Run(() => VfsManager.RegisterFileSystem(FileSystemName, new FatFileSystemType())))
         {
             return Failure("RegistrationRefused", "Cosmos hat die Registrierung von zehos-fat abgelehnt.");
         }
