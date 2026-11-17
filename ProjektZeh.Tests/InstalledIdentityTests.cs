@@ -131,8 +131,9 @@ public sealed class InstalledIdentityTests
     [TestMethod]
     [DataRow(RootCheck.Reject)]
     [DataRow(RootCheck.ReadOnly)]
-    public void Marker_GateNotOk_RootDamaged(RootCheck gate) =>
-        Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, Root), gate));
+    // RootCheck ist internal; oeffentliche Testmethoden nehmen den Wert deshalb als int (CS0051).
+    public void Marker_GateNotOk_RootDamaged(int gate) =>
+        Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, Root), (RootCheck)gate));
 
     [TestMethod]
     public void Marker_RootUnclean_OwnStateAndBlocked()
@@ -150,8 +151,8 @@ public sealed class InstalledIdentityTests
     [DataRow((ushort)2, 0x1u, RootCheck.Unclean, DisplayName = "s_state Fehler")]
     [DataRow((ushort)1, 0x9u, RootCheck.ReadOnly, DisplayName = "unbekanntes RoCompat")]
     [DataRow((ushort)0, 0x9u, RootCheck.ReadOnly, DisplayName = "RoCompat und s_state: bleibt ReadOnly")]
-    public void CheckRoot_SeparatesStateFromRoCompat(ushort state, uint roCompat, RootCheck expected) =>
-        Assert.AreEqual(expected, InstalledIdentity.CheckRoot(Superblock(state, roCompat)));
+    public void CheckRoot_SeparatesStateFromRoCompat(ushort state, uint roCompat, int expected) =>
+        Assert.AreEqual((RootCheck)expected, InstalledIdentity.CheckRoot(Superblock(state, roCompat)));
 
     [TestMethod]
     public void CheckRoot_WrongMagic_Reject()

@@ -26,7 +26,7 @@ internal sealed record IdentityResult(InstalledState State, string Reason)
 }
 
 /// <summary>Ergebnis der Root-Superblockpruefung; Unclean trennt "nur s_state" von unbekanntem RoCompat (Etappe 4, §2).</summary>
-public enum RootCheck
+internal enum RootCheck
 {
     Ok,
     Unclean,
