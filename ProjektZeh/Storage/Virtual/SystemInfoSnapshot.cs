@@ -52,8 +52,8 @@ internal static class SystemInfoSnapshot
             return this;
         }
 
-        /// <summary>Ein Wert als ein Token: leer/null wird "-", Trenner und Steuerzeichen werden maskiert.</summary>
-        public Writer Field(string? value)
+        /// <summary>Ein Wert als ein Token: leer/null wird "-", Trenner und Steuerzeichen werden maskiert; <paramref name="keepSpaces"/> laesst U+0020 stehen (Wert allein in der Zeile).</summary>
+        public Writer Field(string? value, bool keepSpaces = false)
         {
             if (Error is not null) return this;
             if (string.IsNullOrEmpty(value)) return Raw("-");
@@ -63,7 +63,7 @@ internal static class SystemInfoSnapshot
             for (int index = 0; index < value.Length; index++)
             {
                 int length = char.IsSurrogatePair(value, index) ? 2 : 1;
-                string piece = SystemInfoSnapshot.Mask(value, index, length);
+                string piece = SystemInfoSnapshot.Mask(value, index, length, keepSpaces);
                 fieldBytes += Encoding.UTF8.GetByteCount(piece);
                 if (fieldBytes > MaxFieldBytes) return Fail("Ein Textfeld ist laenger als 256 Byte.");
                 text.Append(piece);
@@ -92,7 +92,7 @@ internal static class SystemInfoSnapshot
         }
     }
 
-    public static ResultObject<byte[]> Version(string version) => Build(w => w.Raw("version: ").Field(version).Raw("\n"));
+    public static ResultObject<byte[]> Version(string version) => Build(w => w.Raw("version: ").Field(version, keepSpaces: true).Raw("\n"));
 
     /// <summary>Ohne initialisierten Timer (null) steht "unavailable"; es gibt keinen belegten Idle-Zaehler.</summary>
     public static ResultObject<byte[]> Uptime(long? elapsedMilliseconds) => Build(w =>
@@ -160,9 +160,10 @@ internal static class SystemInfoSnapshot
     /// Control, Format, Zeilen-/Absatztrenner, Leerzeichen-Trenner, Surrogat (allein), privat und nicht zugewiesen
     /// als \uXXXX bzw. \UXXXXXXXX.
     /// </summary>
-    private static string Mask(string value, int index, int length)
+    private static string Mask(string value, int index, int length, bool keepSpaces)
     {
         char c = value[index];
+        if (keepSpaces && c == ' ') return " ";
         if (length == 1 && !char.IsSurrogate(c) && c != '\\' && !char.IsWhiteSpace(c) && !Masked(CharUnicodeInfo.GetUnicodeCategory(c)))
             return c.ToString();
         if (length == 2 && !Masked(CharUnicodeInfo.GetUnicodeCategory(value, index)))

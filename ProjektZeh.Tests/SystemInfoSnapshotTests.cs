@@ -194,4 +194,11 @@ public sealed class SystemInfoSnapshotTests
         Assert.IsFalse(open.IsOK());
         Assert.IsNull(open.Value);
     }
+
+    [TestMethod]
+    public void VersionKeepsSpacesButMasksControlCharacters()
+    {
+        Assert.AreEqual("version: ZehOS 0.5.20 (Cosmos 3.0.97)\n", Text(SystemInfoSnapshot.Version("ZehOS 0.5.20 (Cosmos 3.0.97)")));
+        Assert.AreEqual("version: a\\u000ab\\u005c \\u00a0\n", Text(SystemInfoSnapshot.Version("a\nb\\ \u00a0")));
+    }
 }
