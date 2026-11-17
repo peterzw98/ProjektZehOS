@@ -14,8 +14,8 @@ namespace ProjektZeh.Storage;
 /// <summary>
 /// Gastprobe (-p:ZehOSStorageProbe=true) fuer ext2 auf der ganzen Testplatte ohne Partitionstabelle; Gegenstueck
 /// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber VfsManager.TryFormat, damit der
-/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): Featurevertrag,
-/// schreibgeschuetzter Mount, Hashes von probe.bin und reuse.bin, Verzeichnis neu.
+/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): nur die
+/// Lesekomponente CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro, verweigerte Mutationen, Imagehash vor/nach unveraendert.
 /// Jedes andere Geraet und jeder andere Inhalt bleibt unberuehrt.
 /// </summary>
 internal static class CosmosExt2GuestProbe
@@ -39,11 +39,12 @@ internal static class CosmosExt2GuestProbe
     private const int ReuseLength = 6000;
 
     private static string step = "select";
+    // Einhaengepunkt, den Finish nach einem Fehler noch aushaengen muss; null = nichts eingebunden.
+    private static string? mountedAt;
 
     /// <summary>Schreibt alle Schritte seriell und endet immer mit STORAGE_PROBE DONE; true nur ohne FAIL.</summary>
     public static bool Run()
     {
-        bool mounted = false;
         try
         {
             Begin("select");
@@ -54,37 +55,39 @@ internal static class CosmosExt2GuestProbe
             Check(blank || hasExt2, $"{device.Name}: erstes MiB weder leer noch ext2; nichts geschrieben");
             Pass($"{device.Name} Lauf {(blank ? 1 : 2)}");
 
+            if (!blank)
+            {
+                ReadOnlyRun(device, prefix);
+                Write("DONE");
+                return true;
+            }
+
             Begin("register");
             Check(VfsManager.RegisterFileSystem(FileSystemName, new Ext2FileSystemType(device)), "Registrierung abgelehnt");
             Pass(FileSystemName);
 
-            if (blank)
-            {
-                // Bewusst der allgemeine VFS-Weg: ohne Optionen formatiert der Paketformatter mit 1024 Byte,
-                // 4096 Byte und sparse_super belegen also den Plug auf FormatForKernel.
-                Begin("format");
-                Check(VfsManager.TryFormat(FileSystemName, "", null), "TryFormat abgelehnt");
-                prefix = ReadPrefix(device);
-                uint logBlockSize = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.LogBlockSizeOffset);
-                uint roCompat = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.FeatureRoCompatOffset);
-                Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: Plug nicht aktiv");
-                Pass("4096 Byte, sparse_super (Plug aktiv)");
-            }
+            // Bewusst der allgemeine VFS-Weg: ohne Optionen formatiert der Paketformatter mit 1024 Byte,
+            // 4096 Byte und sparse_super belegen also den Plug auf FormatForKernel.
+            Begin("format");
+            Check(VfsManager.TryFormat(FileSystemName, "", null), "TryFormat abgelehnt");
+            prefix = ReadPrefix(device);
+            uint logBlockSize = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.LogBlockSizeOffset);
+            uint roCompat = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.FeatureRoCompatOffset);
+            Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: Plug nicht aktiv");
+            Pass("4096 Byte, sparse_super (Plug aktiv)");
 
             Begin("gate");
             var decision = Ext2FeatureGate.Evaluate(prefix.AsSpan(CosmosExt2SuperblockLayout.SuperblockOffset, CosmosExt2SuperblockLayout.SuperblockSize));
             Check(decision == Ext2MountDecision.Ok, $"Entscheidung {decision}");
             Pass("Ok");
 
-            // Lauf 2 prueft nur und mountet deshalb schreibgeschuetzt.
             Begin("mount");
-            MountFlags flags = blank ? MountFlags.None : MountFlags.ReadOnly;
-            Check(VfsManager.TryMount(FileSystemName, "", flags, MountPoint, out _), "TryMount abgelehnt");
-            mounted = true;
-            Pass(blank ? MountPoint : MountPoint + " nur lesend");
+            Check(VfsManager.TryMount(FileSystemName, "", MountFlags.None, MountPoint, out _), "TryMount abgelehnt");
+            mountedAt = MountPoint;
+            Pass(MountPoint);
 
             byte[] expected = ExpectedContent();
-            if (blank) FileOperations(device, expected);
+            FileOperations(device, expected);
 
             Begin("hash");
             string expectedHash = Hash(expected);
@@ -100,7 +103,7 @@ internal static class CosmosExt2GuestProbe
             Pass(expectedReuse);
 
             Begin("unmount");
-            mounted = false;
+            mountedAt = null;
             Check(VfsManager.TryUnmount(MountPoint), "TryUnmount abgelehnt");
             device.Flush();
             Pass("Puffer geschrieben");
@@ -109,13 +112,13 @@ internal static class CosmosExt2GuestProbe
         }
         catch (ProbeFailure)
         {
-            return Finish(mounted);
+            return Finish();
         }
         catch (Exception exception)
         {
             // Auch Ausnahmen aus Format oder Geraete-I/O werden dem laufenden Schritt zugeordnet.
             Write($"{step} FAIL {exception.GetType().Name}: {exception.Message}");
-            return Finish(mounted);
+            return Finish();
         }
     }
 
@@ -209,6 +212,133 @@ internal static class CosmosExt2GuestProbe
         Pass("Geraetepuffer geschrieben");
     }
 
+    /// <summary>
+    /// Lauf 2: nur die Lesekomponente CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro. Der native Cosmos-Lesemount faellt weg,
+    /// weil er bei Sync/Drop schreibt; der SHA-256 ueber die ganze Platte vor und nach dem Lauf belegt, dass nichts geschrieben wurde.
+    /// </summary>
+    private static void ReadOnlyRun(IBlockDevice device, byte[] prefix)
+    {
+        Begin("ro-imagehash-before");
+        string before = DeviceHash(device);
+        Pass(before);
+
+        Begin("ro-gate");
+        var decision = Ext2FeatureGate.Evaluate(prefix.AsSpan(CosmosExt2SuperblockLayout.SuperblockOffset, CosmosExt2SuperblockLayout.SuperblockSize));
+        Check(decision != Ext2MountDecision.Reject, $"Entscheidung {decision}");
+        Pass(decision == Ext2MountDecision.Ok ? "Ok" : "ReadOnly");
+
+        Begin("ro-mount");
+        var component = new CosmosReadOnlyExt2FileSystem(device);
+        Check(component.TryMount(out VfsMount? mount), "TryMount abgelehnt");
+        mountedAt = CosmosReadOnlyExt2FileSystem.MountPoint;
+        Check(mount!.IsReadOnly, "Mount nicht als schreibgeschuetzt gefuehrt");
+        Pass(mountedAt + " nur lesend");
+        // Nur Doku (keine Bewertung): VfsManager.TryMount verlangt kein vorhandenes /mnt; ob der Elternpfad sichtbar ist, steht hier.
+        Write($"ro-info /mnt existiert={Directory.Exists("/mnt")}");
+
+        string root = CosmosReadOnlyExt2FileSystem.MountPoint;
+        string probe = root + "/probe.bin";
+        string expectedHash = Hash(ExpectedContent());
+
+        Begin("ro-read");
+        Check(Hash(File.ReadAllBytes(probe)) == expectedHash, "probe.bin Hash weicht ab");
+        Check(Hash(File.ReadAllBytes(root + "/reuse.bin")) == Hash(ReuseContent()), "reuse.bin Hash weicht ab");
+        Check(Directory.Exists(root + "/neu"), "Verzeichnis neu fehlt");
+        Check(Array.Exists(Directory.GetFileSystemEntries(root), entry => entry.EndsWith("/probe.bin", StringComparison.Ordinal)), "Wurzelliste ohne probe.bin");
+        Pass("probe.bin, reuse.bin, neu, Wurzelliste");
+
+        Begin("ro-handle");
+        Check(VfsManager.TryOpenFile(probe, out IVfsFileHandle? opened), "TryOpenFile abgelehnt");
+        IVfsFileHandle handle = opened!;
+        // Ausdruecklich schliessen statt using: der Handle wird auch nach einem Check-Fehler geschlossen, und eine
+        // Ausnahme beim Schliessen verdeckt die primaere nicht (beide werden gemeldet).
+        Exception? failure = null;
+        try
+        {
+            byte[] content = new byte[BaseLength + AppendLength];
+            int total = 0;
+            long read;
+            while (total < content.Length && (read = handle.Read(content.AsSpan(total))) > 0) total += (int)read;
+            Check(total == content.Length && Hash(content) == expectedHash, $"Handle las {total} Byte oder falschen Inhalt");
+            Check(handle.TryFlush(), "Sync (TryFlush) abgelehnt");
+            Check(!handle.TrySetAttr(SetAttrFlags.Size, default), "SetAttr nicht verweigert");
+            long written = -1;
+            bool threw = Refused(() => written = handle.Write([0x55]));
+            Check(threw || written <= 0, $"Write ueber Handle nicht verweigert ({written} Byte)");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        try
+        {
+            handle.Dispose();
+        }
+        catch (Exception exception)
+        {
+            Write($"ro-handle FAIL Dispose {exception.GetType().Name}: {exception.Message}");
+            failure ??= new ProbeFailure();
+        }
+
+        if (failure != null) throw failure;
+        Pass("Lesen, Sync, SetAttr/Write verweigert, Schliessen");
+
+        Begin("ro-write-denied");
+        string created = root + "/neu.bin";
+        string moved = root + "/verschoben.bin";
+        string directory = root + "/ordner2";
+        // Ausgangslage nachweisen: Ziel vorhanden, neue Namen fehlen; sonst bewiese das Ausbleiben der Wirkung nichts.
+        Check(File.Exists(probe) && !File.Exists(created) && !Directory.Exists(directory) && !File.Exists(moved), "Ausgangslage falsch");
+        Refused(() => File.WriteAllBytes(created, [1, 2, 3]));
+        Refused(() => File.Delete(probe));
+        Refused(() => Directory.CreateDirectory(directory));
+        Refused(() => File.Move(probe, moved));
+        Check(!File.Exists(created) && !Directory.Exists(directory) && !File.Exists(moved), "Mutation sichtbar");
+        Check(File.Exists(probe) && Hash(File.ReadAllBytes(probe)) == expectedHash, "probe.bin veraendert oder weg");
+        Pass("Create, Delete, Mkdir, Rename ohne Wirkung");
+
+        Begin("ro-unmount");
+        mountedAt = null;
+        Check(VfsManager.TryUnmount(root), "TryUnmount abgelehnt");
+        Pass(root);
+
+        Begin("ro-imagehash-after");
+        string after = DeviceHash(device);
+        Check(after == before, $"{after} statt {before}");
+        Pass("Image unveraendert");
+    }
+
+    // Jede Ausnahme gilt als Verweigerung; ob wirklich nichts geschrieben wurde, pruefen Dateizustand und Imagehash.
+    private static bool Refused(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
+
+    private static string DeviceHash(IBlockDevice device)
+    {
+        var digest = new Sha256Digest();
+        byte[] chunk = new byte[CheckedPrefix];
+        ulong blocksPerChunk = (ulong)CheckedPrefix / device.BlockSize;
+        for (ulong block = 0; block < device.BlockCount; block += blocksPerChunk)
+        {
+            device.ReadBlock(block, blocksPerChunk, chunk);
+            digest.BlockUpdate(chunk, 0, chunk.Length);
+        }
+
+        byte[] hash = new byte[digest.GetDigestSize()];
+        digest.DoFinal(hash, 0);
+        return Convert.ToHexString(hash);
+    }
+
     // Endinhalt von probe.bin nach Schreiben, Anhaengen und Ueberschreiben; Lauf 2 vergleicht dagegen.
     private static byte[] ExpectedContent()
     {
@@ -235,12 +365,13 @@ internal static class CosmosExt2GuestProbe
         return Convert.ToHexString(hash);
     }
 
-    private static bool Finish(bool mounted)
+    private static bool Finish()
     {
         // Auch nach einem Fehler aushaengen, damit der Treiber seine Puffer schreibt; das Ergebnis bleibt FAIL.
         try
         {
-            if (mounted && !VfsManager.TryUnmount(MountPoint)) Write("unmount FAIL nach Fehler");
+            if (mountedAt != null && !VfsManager.TryUnmount(mountedAt)) Write("unmount FAIL nach Fehler");
+            mountedAt = null;
         }
         catch (Exception exception)
         {

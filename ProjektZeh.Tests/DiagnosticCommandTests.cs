@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
+using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.SystemServices;
 
@@ -33,6 +34,26 @@ public sealed class DiagnosticCommandTests
         output.Verify(target => target.WriteLine("[123 ms] Error Display: Grafikfehler"), Times.Once);
         output.Verify(target => target.WriteLine("weiter"), Times.Once);
         output.VerifyNoOtherCalls();
+    }
+
+    [TestMethod]
+    public void ExecuteLine_Frametimes_SwitchesSharedProfileAndRejectsUnknownArguments()
+    {
+        var shell = new ShellService((SystemLog?)null, null, null);
+        var output = new Mock<ITextOutput>(MockBehavior.Strict);
+        output.Setup(target => target.WriteLine(It.IsAny<string>()));
+        try
+        {
+            Assert.IsTrue(shell.ExecuteLine("frametimes on", output.Object).IsOK());
+            Assert.IsTrue(Runtime.Wasm.WasmFrameProfile.Shared.Enabled);
+            Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine("frametimes laut", output.Object).Code);
+            Assert.IsTrue(Runtime.Wasm.WasmFrameProfile.Shared.Enabled, "Ein falsches Argument darf nichts umschalten.");
+            Assert.IsTrue(shell.ExecuteLine("frametimes off", output.Object).IsOK());
+            Assert.IsFalse(Runtime.Wasm.WasmFrameProfile.Shared.Enabled);
+        }
+        finally { Runtime.Wasm.WasmFrameProfile.Shared.SetEnabled(false); }
+        output.Verify(target => target.WriteLine(It.Is<string>(text => text.StartsWith("Bildzeitmessung an. Anteile", System.StringComparison.Ordinal))), Times.Once);
+        output.Verify(target => target.WriteLine(It.Is<string>(text => text.StartsWith("Bildzeitmessung aus. Anteile", System.StringComparison.Ordinal))), Times.Once);
     }
 
     [DataTestMethod]

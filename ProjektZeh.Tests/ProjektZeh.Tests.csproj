@@ -18,6 +18,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\CosmosWasmNetwork.cs" Link="Runtime\Wasm\CosmosWasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmNetwork.cs" Link="Runtime\Wasm\WasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameTimes.cs" Link="Runtime\Wasm\WasmFrameTimes.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameProfile.cs" Link="Runtime\Wasm\WasmFrameProfile.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmImageFit.cs" Link="Runtime\Wasm\WasmImageFit.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
@@ -63,6 +64,9 @@
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayout.cs" Link="Storage\Partitioning\GptLayout.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayoutWriter.cs" Link="Storage\Partitioning\GptLayoutWriter.cs" />
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
