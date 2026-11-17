@@ -28,6 +28,9 @@ internal sealed class FileService
     private readonly Func<string, bool, ResultErr>? pathGuard;
     // Erzeuger der /proc- und /sys-Dateien (normalisierter Pfad -> Snapshot); der Kernel liefert ihn aus Cosmos-Werten.
     private readonly Func<string, ResultObject<byte[]>>? virtualSource;
+
+    /// <summary>Grosse Lesepuffer (Bilder, App-Speicher bis 16 MiB) mit Null-Abwehr; Tests setzen eine Allokation, die null liefert.</summary>
+    internal Func<int, byte[]?> AllocateBuffer { get; init; } = BufferAllocation.TryAllocate;
     // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
     private readonly Func<string, bool> isRegularFile;
 
@@ -174,8 +177,8 @@ internal sealed class FileService
             if (length < 0 || length > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
             // Laenge 0 kann auch "unbekannt" heissen (virtuelle Dateien wie unter Linux): dann begrenzt bis EOF lesen.
-            if (length == 0) return ReadUntilEnd(stream, maximumLength);
-            var data = new byte[(int)length];
+            if (length == 0) return ReadUntilEnd(stream, maximumLength, AllocateBuffer);
+            if (AllocateBuffer((int)length) is not { } data) return OutOfMemory<byte[]>();
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
@@ -185,20 +188,41 @@ internal sealed class FileService
         }
     }
 
-    /// <summary>Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei.</summary>
-    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength)
+    /// <summary>
+    /// Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei. Gelesen wird in
+    /// Bloecken und erst am Ende in einen Puffer passender Groesse kopiert; jede Anforderung laeuft ueber
+    /// <paramref name="allocate"/>, damit ein ausgeschoepfter Kernel-Heap als OutOfMemory endet statt als Absturz.
+    /// </summary>
+    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength, Func<int, byte[]?>? allocate = null)
     {
-        using var data = new MemoryStream();
-        var chunk = new byte[4096];
-        int read;
-        while ((read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, (long)maximumLength + 1 - data.Length))) > 0)
+        allocate ??= BufferAllocation.TryAllocate;
+        const int BlockLength = 4096;
+        var blocks = new List<byte[]>();
+        long total = 0;
+        while (true)
         {
-            data.Write(chunk, 0, read);
-            if (data.Length > maximumLength)
+            if (allocate(BlockLength) is not { } block) return OutOfMemory<byte[]>();
+            int filled = 0, read;
+            while (filled < block.Length
+                   && (read = stream.Read(block, filled, (int)Math.Min(block.Length - filled, (long)maximumLength + 1 - total - filled))) > 0)
+                filled += read;
+            total += filled;
+            if (total > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+            if (filled > 0) blocks.Add(block);
+            if (filled < block.Length) break;
         }
 
-        return ResultObjectFactory.CreateSuccess(data.ToArray());
+        if (allocate((int)total) is not { } data) return OutOfMemory<byte[]>();
+        int offset = 0;
+        foreach (byte[] block in blocks)
+        {
+            int count = (int)Math.Min(block.Length, total - offset);
+            block.AsSpan(0, count).CopyTo(data.AsSpan(offset));
+            offset += count;
+        }
+
+        return ResultObjectFactory.CreateSuccess(data);
     }
 
     /// <summary>Gehoert der Pfad (nach Normalisierung gegen das Arbeitsverzeichnis) zu /proc, /sys oder /dev?</summary>
@@ -274,7 +298,7 @@ internal sealed class FileService
         {
             var handle = DeviceFileSystem.Open(node.Path["/dev/".Length..]);
             if (!handle.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(handle.Status);
-            var data = new byte[maximumLength + 1];
+            if (AllocateBuffer(maximumLength + 1) is not { } data) return OutOfMemory<byte[]>();
             int total = 0;
             try
             {
@@ -328,12 +352,15 @@ internal sealed class FileService
     }
 
     /// <summary>Schreibt gepruefte Binaerdaten; auf Wunsch bleibt das Original als feste .bak-Datei erhalten.</summary>
-    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false)
+    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false) => WriteBytes(path, data.AsMemory(), keepBackup);
+
+    /// <summary>Wie oben fuer einen Ausschnitt eines Puffers, ohne ihn vorher zu kopieren (App-Speicher bis 16 MiB).</summary>
+    internal ResultErr WriteBytes(string path, ReadOnlyMemory<byte> data, bool keepBackup = false)
     {
         return WriteData(path, () => data, keepBackup);
     }
 
-    private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
+    private ResultErr WriteData(string? path, Func<ReadOnlyMemory<byte>> getData, bool keepBackup)
     {
         var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
@@ -352,7 +379,7 @@ internal sealed class FileService
             writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
-            byte[] data = getData();
+            ReadOnlyMemory<byte> data = getData();
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             EnsureDirectoryEntryAvailable(temporaryPath);
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
@@ -360,7 +387,7 @@ internal sealed class FileService
             {
                 temporaryStream = stream;
                 temporaryCreated = true;
-                stream.Write(data);
+                stream.Write(data.Span);
                 stream.Flush(true);
             }
 
@@ -768,6 +795,9 @@ internal sealed class FileService
                 throw new IOException($"cause='DirectoryEntryLimit' message='Verzeichnis {parent} ist auf {maximum.Value} Eintraege begrenzt; zuerst einen Eintrag entfernen oder einen anderen Ordner verwenden.'");
         }
     }
+
+    private static ResultObject<T> OutOfMemory<T>() =>
+        ResultObjectFactory.CreateFailure<T>(ResultCode.Failure, "cause='OutOfMemory' message='Kein Speicher fuer den Lesepuffer.'");
 
     private static bool IsFileError(Exception exception)
     {

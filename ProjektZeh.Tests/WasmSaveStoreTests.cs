@@ -27,6 +27,53 @@ public sealed class WasmSaveStoreTests
     private WasmSaveStore Store(WasmSaveLimits? limits = null, long available = long.MaxValue) =>
         new(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, available)), limits: limits);
 
+    // Audit Speicher: Grow und das Laden einer vorhandenen Datei pruefen den Puffer vor jeder Zustandsaenderung.
+    [TestMethod]
+    public void MissingBufferReportsNoSpaceAndKeepsStateAndFile()
+    {
+        int allowed = int.MaxValue;
+        var store = new WasmSaveStore(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, long.MaxValue)),
+            allocate: length => allowed-- > 0 ? new byte[length] : null);
+        Assert.AreEqual(WasiErrno.Success, Create(store, "welt.dat", out int handle));
+        Assert.AreEqual(WasiErrno.Success, Write(store, handle, "alt"));
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        long buffered = store.BufferedBytes;
+
+        allowed = 1; // Laden der vorhandenen Datei bekommt noch einen Puffer, das Wachsen nicht mehr.
+        Assert.AreEqual(WasiErrno.Success, store.Open("welt.dat", create: false, exclusive: false, truncate: false, directory: false, write: true, out handle));
+        buffered = store.BufferedBytes;
+        Assert.AreEqual(WasiErrno.NoSpace, Write(store, handle, "neu und laenger"), "Grow ohne Puffer");
+        Assert.AreEqual(buffered, store.BufferedBytes, "Zaehler unveraendert");
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        Assert.AreEqual("alt", File.ReadAllText(Path.Combine(root, "welt.dat")), "Alte Fassung bleibt, nichts Halbes geschrieben.");
+
+        allowed = 0;
+        Assert.AreNotEqual(WasiErrno.Success, store.Open("welt.dat", create: false, exclusive: false, truncate: false, directory: false, write: true, out _),
+            "Laden der vorhandenen Datei ohne Puffer ist ein Fehler, kein leerer Erfolg.");
+    }
+
+    [TestMethod]
+    public void GrowFallsBackToExactSizeWhenDoublingHasNoBuffer()
+    {
+        int limit = int.MaxValue;
+        var store = new WasmSaveStore(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, long.MaxValue)),
+            allocate: length => length <= limit ? new byte[length] : null);
+        Assert.AreEqual(WasiErrno.Success, Create(store, "welt.dat", out int handle));
+        Assert.AreEqual(WasiErrno.Success, Write(store, handle, new string('a', 1000)));
+        long buffered = store.BufferedBytes;
+
+        limit = 1500; // Verdopplung auf 2000 scheitert, die exakte Groesse 1200 nicht
+        Assert.AreEqual(WasiErrno.Success, Write(store, handle, new string('b', 200), offset: 1000), "Rueckfall auf exakte Groesse");
+        Assert.AreEqual(buffered + 200, store.BufferedBytes, "Puffer genau so gross wie die Datei");
+
+        limit = 0; // weder Verdopplung noch exakte Groesse: ENOSPC, Zaehler und Laenge bleiben
+        buffered = store.BufferedBytes;
+        Assert.AreEqual(WasiErrno.NoSpace, Write(store, handle, "c", offset: 1200));
+        Assert.AreEqual(buffered, store.BufferedBytes, "Zaehler unveraendert");
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        Assert.AreEqual(new string('a', 1000) + new string('b', 200), Disk("welt.dat"), "Laenge unveraendert, kein Byte von c");
+    }
+
     private static int Create(WasmSaveStore store, string path, out int handle) =>
         store.Open(path, create: true, exclusive: false, truncate: true, directory: false, write: true, out handle);
 
