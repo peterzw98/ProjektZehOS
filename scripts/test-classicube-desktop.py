@@ -15,6 +15,7 @@ zweiten Start ueber "Load level" gefunden und geladen.
 import argparse
 import importlib.util
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import time
@@ -24,6 +25,72 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("package_guest", ROOT / "scripts/test-wasm-doom-desktop.py")
 tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
+
+
+def disk_raw(work: Path) -> Path:
+    """Rohkopie der Datenplatte (qcow2 -> raw) zum Lesen auf dem Host."""
+    tool, environment = tools.qemu_img()
+    raw = work / "data.raw"
+    subprocess.run([*tool, "convert", "-O", "raw", str(work / "data.qcow2"), str(raw)], check=True, env=environment)
+    return raw
+
+
+def fat16(raw: Path):
+    """Minimaler Leser fuer die vvfat-Testplatte (MBR, eine FAT16-Partition): freie Bytes, Clustergroesse und eine
+    Funktion, die eine Datei per Pfad (lange Namen, Grossschreibung egal) liest oder None liefert."""
+    data = raw.read_bytes()
+    start = struct.unpack_from("<I", data, 446 + 8)[0] * 512
+    sector, per_cluster, reserved, fats, roots, total, _, fat_sectors = struct.unpack_from("<HBHBHHBH", data, start + 11)
+    total = total or struct.unpack_from("<I", data, start + 32)[0]
+    cluster = sector * per_cluster
+    fat = start + reserved * sector
+    root = fat + fats * fat_sectors * sector
+    first = root + roots * 32
+    clusters = (total * sector - (first - start)) // cluster
+    table = struct.unpack_from(f"<{clusters + 2}H", data, fat)
+
+    def chain(number):
+        while 2 <= number < 0xFFF8:
+            yield data[first + (number - 2) * cluster:first + (number - 1) * cluster]
+            number = table[number]
+
+    def entries(raw_dir):
+        long_name = []
+        for offset in range(0, len(raw_dir), 32):
+            entry = raw_dir[offset:offset + 32]
+            if entry[0] == 0:
+                return
+            if entry[0] == 0xE5:
+                long_name = []
+            elif entry[11] == 0x0F:
+                part = (entry[1:11] + entry[14:26] + entry[28:32]).decode("utf-16-le").split("\0")[0]
+                long_name = [part] + ([] if entry[0] & 0x40 else long_name)
+            else:
+                base, extension = (entry[0:8].decode("ascii", "replace").rstrip(),
+                                   entry[8:11].decode("ascii", "replace").rstrip())
+                short = base + ("." + extension if extension else "")
+                yield ("".join(long_name) or short).lower(), entry[11], \
+                    struct.unpack_from("<H", entry, 26)[0], struct.unpack_from("<I", entry, 28)[0]
+                long_name = []
+
+    def read(path):
+        current = data[root:first]
+        for index, name in enumerate(path.lower().split("/")):
+            found = next((e for e in entries(current) if e[0] == name), None)
+            if found is None:
+                return None
+            current = b"".join(chain(found[2]))
+            if index == len(path.split("/")) - 1:
+                return current if found[1] & 0x10 else current[:found[3]]
+        return current
+
+    def names(path):
+        """Namen in einem Ordner (fuer den Kontoordner mit unbekannter ID)."""
+        directory = read(path)
+        return [] if directory is None else [e[0] for e in entries(directory) if e[0] not in (".", "..")]
+
+    read.names = names
+    return table[2:].count(0) * cluster, cluster, read
 
 
 def main():
@@ -36,7 +103,10 @@ def main():
     # Paket aus build.py --raster-toggle: F8 wechselt zwischen Kernel- und Gast-Rasterisierung derselben Szene.
     parser.add_argument("--raster-compare", action="store_true")
     parser.add_argument("--storage", action="store_true", help="Paket mit capability=storage: Welt speichern und laden")
+    parser.add_argument("--disk-full", action="store_true", help="mit --storage: fast volle Datenplatte, Speichern scheitert")
     args = parser.parse_args()
+    if args.disk_full and not args.storage:
+        parser.error("--disk-full braucht --storage")
     work = ROOT / ".tools/classicube-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
     files = [str(p.resolve()) + "=" + p.relative_to(args.package).as_posix()
@@ -45,12 +115,16 @@ def main():
                     "--repo", str(work / "seed/pkgs"), "--id", "classicube", "--version", "1.0.0", "--name", "ClassiCube",
                     "--entry", args.entry, "--min-kernel", "0.2.22", *(["--storage"] if args.storage else []), *files],
                    check=True)
-    if args.storage:
-        # shortcut: Kernel 0.5.56 legt nur den letzten Ordner von /data/.zehos-apps/<paket>/<konto> an (Kernel.SaveRootFor,
-        # PathGuard ohne Elternordner); auf einer frischen Platte fehlte /save sonst. Entfernen, sobald der Kernel
-        # die Elternordner selbst anlegt.
-        (work / "seed/.zehos-apps/classicube").mkdir(parents=True)
     tools.create_disk(work / "seed", work / "data.qcow2")
+    if args.disk_full:
+        # Die Quote laesst sich nicht vorbelegen: Der Kontoordner traegt eine bei der Ersteinrichtung gewuerfelte ID.
+        # Stattdessen fuellt eine Datei die Platte so weit, dass Installation, Anmeldung und Ordner noch passen
+        # (Paket plus rund 15 Cluster, gemessen 13), die gespeicherte Welt (rund 75 KB, 10 Cluster) aber nicht mehr.
+        free, cluster, _ = fat16(disk_raw(work))
+        package = sum(-(-p.stat().st_size // cluster) for p in (work / "seed/pkgs/classicube/1.0.0").rglob("*") if p.is_file())
+        with (work / "seed/fuellung.bin").open("wb") as filler:
+            filler.truncate(free - (package + 20) * cluster)
+        tools.create_disk(work / "seed", work / "data.qcow2")
     port = tools.free_port()
     vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
     guest = tools.Guest(work, port, "", time.monotonic())
@@ -248,10 +322,13 @@ def main():
             # Die gespeicherte Welt soll sich von der frisch erzeugten unterscheiden.
             button("right")
             changed(state, "block-fuer-speicherstand", "Rechtsklick setzt keinen Block")
+            # F schaltet die Sichtweite um (Option viewdist); ClassiCube schreibt options.txt beim Beenden.
+            guest.qmp.tap("f")
+            time.sleep(1)
         # Esc gibt den Zeiger frei und oeffnet das Pausenmenue; danach ist das Schliessen-Symbol erreichbar.
         guest.qmp.tap("esc")
         time.sleep(1)
-        save_level(0, args.storage)
+        save_level(0, args.storage and not args.disk_full)
         for run in range(3):
             if run:
                 start()
@@ -264,7 +341,7 @@ def main():
             if run:
                 guest.qmp.tap("esc")
                 time.sleep(3)
-            if run == 1 and args.storage:
+            if run == 1 and args.storage and not args.disk_full:
                 load_level(run, fresh)
                 guest.qmp.tap("esc")
                 time.sleep(3)
@@ -282,8 +359,24 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
-        saving = ("Welt speichern, nach Neustart ueber Load level laden" if args.storage
-                  else "Speichern ohne /save scheitert ohne Abbruch")
+        saving = "Speichern ohne /save scheitert ohne Abbruch"
+        if args.disk_full:
+            saving = "Speichern auf voller Platte scheitert ohne Abbruch"
+        elif args.storage:
+            # Platte nach dem Lauf auf dem Host lesen; der Kontoordner hat eine zufaellige ID.
+            vm.kill()
+            vm.wait()
+            _, _, read = fat16(disk_raw(work))
+            accounts = read.names(".zehos-apps/classicube")
+            assert len(accounts) == 1, f"Ein Kontoordner erwartet: {accounts}"
+            options = read(f".zehos-apps/classicube/{accounts[0]}/options.txt")
+            assert options and b"viewdist=" in options, f"options.txt ohne viewdist: {options!r}"
+            world_file = read(f".zehos-apps/classicube/{accounts[0]}/maps/zehtest.cw")
+            assert world_file and world_file[:2] == b"\x1f\x8b", "maps/zehtest.cw fehlt oder ist kein gzip"
+            viewdist = next(line for line in options.splitlines() if line.startswith(b"viewdist=")).decode()
+            print(f"Platte: options.txt mit {viewdist!r}, "
+                  f"maps/zehtest.cw {len(world_file)} Bytes", flush=True)
+            saving = "Welt speichern, nach Neustart ueber Load level laden, options.txt auf der Platte"
         print("CLASSICUBE_GUEST PASS: lokal installieren, Start aus Menue, Welt, W-Bewegung, Mausblick, "
               f"Block entfernen/setzen, {saving}, 2x Schliessen ueber X, 1x Quit game", flush=True)
         print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)
