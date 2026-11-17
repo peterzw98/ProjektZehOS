@@ -115,11 +115,11 @@ internal sealed class GptInstallJob : IInstallJob
         var cleanup = target.Abort();
         string missing = Stage switch
         {
-            InstallStage.WritingMarker => "Installationsmarker fehlt",
+            InstallStage.WritingMarker => "Installationsmarker eventuell bereits geschrieben",
             InstallStage.CopyingFiles or InstallStage.WritingBootConfig => "Bootdateien unvollstaendig",
             _ => "Root noch nicht vorbereitet",
         };
-        string message = $"{result.Message} Stand: {state}, {missing}. Die Platte gilt als unklar; " +
+        string message = $"{result.Message} Stand: {state}, {missing}. Der Zustand der Platte ist unklar; " +
             $"neu installieren mit setup install {diskName} --layout gpt --erase.";
         if (!cleanup.IsOK()) message += " Bereinigung fehlgeschlagen: " + cleanup.Message;
         failure = ResultErr.CreateFailure(ResultCode.Failure, message);

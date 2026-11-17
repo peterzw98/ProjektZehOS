@@ -44,7 +44,12 @@ internal static class RootVolumeState
         // Zweimal wie bei sync; sync: der erste Lauf kann Metadaten erzeugen, die erst der zweite schreibt.
         for (int pass = 0; pass < 2; pass++)
             if (!Do("sync", volume.Sync)) return Failed("sync meldete einen Fehler.");
-        var result = SetState(volume, 1);
+        ResultErr result;
+        try { result = SetState(volume, 1); }
+        catch (StepException exception) when (exception.Step == "write")
+        {
+            return RollBack(volume, Failed($"write fehlgeschlagen: {exception.InnerException!.Message}"));
+        }
         if (!result.IsOK()) return result;
         var confirmed = Run(volume, () =>
         {
@@ -55,16 +60,20 @@ internal static class RootVolumeState
             if (InstalledIdentity.CheckRoot(reread) != RootCheck.Ok) return Failed("CheckRoot nach dem Schliessen nicht Ok.");
             return ResultErr.CreateSuccess();
         });
-        if (confirmed.IsOK()) return confirmed;
-        // Nach einem Fehler darf die Platte nicht "sauber" tragen, waehrend der Aufrufer weiterschreibt (Review peter-review P2-1).
+        return confirmed.IsOK() ? confirmed : RollBack(volume, confirmed);
+    });
+
+    private static ResultErr RollBack(IRootVolume volume, ResultErr failure)
+    {
+        // Auch ein fehlgeschlagenes Schreiben kann den Zustand bereits geaendert haben.
         var rollback = Run(volume, () =>
         {
             var reset = SetState(volume, 0);
             if (reset.IsOK()) Do("flush", volume.Flush);
             return reset;
         });
-        return rollback.IsOK() ? confirmed : Failed(confirmed.Message + " Ruecknahme auf s_state 0 fehlgeschlagen: " + rollback.Message);
-    });
+        return rollback.IsOK() ? failure : Failed(failure.Message + " Ruecknahme auf s_state 0 fehlgeschlagen: " + rollback.Message);
+    }
 
     private static ResultErr SetState(IRootVolume volume, ushort state)
     {

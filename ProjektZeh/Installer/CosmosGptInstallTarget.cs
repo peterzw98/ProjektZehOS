@@ -80,7 +80,10 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         foreach (string entry in LayoutMigration.InstallerEntries)
             if (!string.Equals(entry, LayoutMarker.Path, StringComparison.Ordinal))
                 Directory.CreateDirectory(RootMount + entry);
-        File.WriteAllText(RootMount + LayoutMarker.Path, new LayoutMarker(LayoutState.Fresh, diskGuid).Serialize());
+        string markerPath = RootMount + LayoutMarker.Path;
+        string temporaryPath = markerPath + IMigrationTarget.TemporarySuffix;
+        File.WriteAllText(temporaryPath, new LayoutMarker(LayoutState.Fresh, diskGuid).Serialize());
+        File.Move(temporaryPath, markerPath, true);
         var closed = RootVolumeState.Close(volume);
         if (!closed.IsOK()) return closed;
         if (!VfsManager.TryUnmount(RootMount)) return Failed("Root konnte nicht ausgehaengt werden.");

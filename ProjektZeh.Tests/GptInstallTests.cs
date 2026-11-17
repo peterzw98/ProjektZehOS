@@ -245,7 +245,7 @@ public sealed class GptInstallTests
     [DataRow("prepare-root", "PreparingRoot", "Root noch nicht vorbereitet")]
     [DataRow("file /boot/ProjektZeh.elf", "CopyingFiles", "Bootdateien unvollstaendig")]
     [DataRow("file /boot/limine/limine.conf", "WritingBootConfig", "Bootdateien unvollstaendig")]
-    [DataRow("write-marker", "WritingMarker", "Installationsmarker fehlt")]
+    [DataRow("write-marker", "WritingMarker", "Installationsmarker eventuell bereits geschrieben")]
     public void Job_FailureInStage_AbortsWithoutMarkerAndNamesState(string failingCall, string stage, string missing)
     {
         var platform = new Platform();
@@ -361,7 +361,7 @@ public sealed class GptInstallTests
 
         Assert.AreEqual(InstallStage.WritingMarker, job.Stage);
         StringAssert.Contains(result.Message, "Installationsmarker nach dem Schreiben nicht gleich");
-        StringAssert.Contains(result.Message, "Installationsmarker fehlt");
+        StringAssert.Contains(result.Message, "Installationsmarker eventuell bereits geschrieben");
     }
 
     // Test 6a und Abschnitt 4, erste Zeile: Identitaet nach Abbruch.

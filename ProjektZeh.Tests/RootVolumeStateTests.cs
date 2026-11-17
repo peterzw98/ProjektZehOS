@@ -65,7 +65,6 @@ public sealed class RootVolumeStateTests
     [DataRow("sync", 1)]
     [DataRow("sync", 2)]
     [DataRow("read", 1)]
-    [DataRow("write", 1)]
     public void Close_StepFailsBeforeStateWritten_StopsAndNamesStep(string step, int occurrence)
     {
         var volume = new Volume(state: 0) { FailOn = (step, occurrence) };
@@ -76,6 +75,19 @@ public sealed class RootVolumeStateTests
         StringAssert.Contains(result.Message, step);
         Assert.AreEqual(step, volume.Calls[^1]);
         Assert.AreEqual(0, volume.State);
+    }
+
+    [TestMethod]
+    public void Close_WriteThrowsAfterChangingState_RollsBackToZero()
+    {
+        var volume = new Volume(state: 0) { FailAfterWrite = true };
+
+        var result = RootVolumeState.Close(volume);
+
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Message, "write fehlgeschlagen");
+        Assert.AreEqual(0, volume.State);
+        Assert.AreEqual("flush", volume.Calls[^1]);
     }
 
     [DataTestMethod]
@@ -186,6 +198,7 @@ public sealed class RootVolumeStateTests
         public (string Step, int Occurrence)? FailOn { get; init; }
         public (string Step, int Occurrence)? AlsoFailOn { get; init; }
         public bool SyncResult { get; init; } = true;
+        public bool FailAfterWrite { get; init; }
         public ushort? StateAfterFlush { get; init; }
         public bool CorruptAfterFlush { get; init; }
         public ushort State => BitConverter.ToUInt16(superblock, Ext2FeatureGate.StateOffset);
@@ -223,6 +236,7 @@ public sealed class RootVolumeStateTests
         {
             Step("write");
             superblock = source.ToArray();
+            if (FailAfterWrite && counts["write"] == 1) throw new System.IO.IOException("write nach Aenderung");
         }
 
         public void Flush()
