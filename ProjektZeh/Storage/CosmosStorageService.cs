@@ -352,7 +352,7 @@ internal sealed class CosmosStorageService : IStorageService
     public ResultErr Unmount()
     {
         // Aktive Schreiber/Migration sofort ablehnen, statt die Ereignisschleife auf ein langes Schreiben warten zu lassen.
-        if (!AppStorageGate.TryBlock()) return Failure("StorageBusy", "Schreibzugriff oder Migration laeuft; spaeter erneut aushaengen.");
+        if (!AppStorageGate.TryBlock()) return Failure("StorageBusy", AppStorageGate.BusyDescription + " laeuft; spaeter erneut aushaengen.");
         try
         {
             if (!VfsManager.TryUnmount(MountPoint))

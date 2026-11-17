@@ -94,6 +94,23 @@ public sealed class MigrationSourceWriterTests
         public void Dispose() => check();
     }
 
+    // Review peter-review P3-b (4.5): eine Gate-Ablehnung ist "Laufwerk gesperrt", nicht "Zugriff verweigert".
+    [TestMethod]
+    public void BlockedWriteCheckReportsStorageBusyNotDenied()
+    {
+        var accounts = new AccountService(root, new PasswordHasher(bytes => Array.Fill(bytes, (byte)7)),
+            StringComparison.OrdinalIgnoreCase, null, tryBeginWrite: gate.TryBeginWrite);
+        var admin = accounts.CreateSession();
+        Assert.IsTrue(accounts.PrepareRecovery(admin, "admin", "admin-password-123")().IsOK());
+        string path = Path.Combine(root, "managed");
+        Assert.IsTrue(accounts.Access.Check(admin, path, FilePermission.Write, creating: true).IsOK());
+        using var migration = gate.TryLockSource();
+
+        var blocked = accounts.Access.Check(admin, path, FilePermission.Write, creating: true);
+
+        StringAssert.Contains(blocked.Message, "StorageBusy");
+    }
+
     [TestMethod]
     public void BlockedAccountMutationsPreserveMetadataAndExistingSessions()
     {

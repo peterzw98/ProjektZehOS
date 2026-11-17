@@ -21,6 +21,8 @@ internal static class AppStorageGate
 
     public static bool IsMigrationLocked => writes.IsMigrationLocked;
     public static IDisposable? TryBeginWrite() => writes.TryBeginWrite();
+    public static IDisposable? TryBeginWrite(string activity) => writes.TryBeginWrite(activity);
+    public static string BusyDescription => writes.BusyDescription;
     public static IDisposable? TryLockSource() => writes.TryLockSource();
     public static bool TryBlock() => writes.TryBlock();
 

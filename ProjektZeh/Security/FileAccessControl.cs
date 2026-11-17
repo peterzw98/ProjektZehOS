@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage.Migration;
 
 namespace ProjektZeh.Security;
 
@@ -61,7 +62,9 @@ internal sealed class FileAccessControl
     public ResultErr Check(UserSession session, string path, FilePermission permission, bool creating = false)
     {
         using var writer = (permission & FilePermission.Write) != 0 ? TryBeginWrite?.Invoke() : null;
-        if ((permission & FilePermission.Write) != 0 && TryBeginWrite != null && writer == null) return Denied();
+        // Gesperrte Quelle (Migration, Aushaengen) ist kein Rechteproblem; die Meldung nennt StorageBusy (Review peter-review P3-b).
+        if ((permission & FilePermission.Write) != 0 && TryBeginWrite != null && writer == null)
+            return ResultErr.CreateFailure(ResultCode.Failure, MigrationWriteGate.BusyMessage);
         if (!IsReady || session.UserId == null || !IsManagedPath(path)) return Denied();
         if (!Guard(path, creating).IsOK()) return Denied();
         if (entries.TryGetValue(path, out var rights))

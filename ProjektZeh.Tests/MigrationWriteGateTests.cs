@@ -8,6 +8,24 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class MigrationWriteGateTests
 {
+    // Review peter-review P3-a (4.5): eine lange Paketinstallation haelt den Lease; die Ablehnung soll sie benennen.
+    [TestMethod]
+    public void BusyDescription_NamesActiveActivityUntilItsLeaseEnds()
+    {
+        var gate = new MigrationWriteGate();
+        Assert.AreEqual("Schreibzugriff", gate.BusyDescription);
+        var plain = gate.TryBeginWrite();
+        Assert.AreEqual("Schreibzugriff", gate.BusyDescription);
+        var install = gate.TryBeginWrite("Paketinstallation");
+        Assert.AreEqual("Paketinstallation", gate.BusyDescription);
+        install!.Dispose();
+        install.Dispose();
+        Assert.AreEqual("Schreibzugriff", gate.BusyDescription);
+        plain!.Dispose();
+        using var migration = gate.TryLockSource();
+        Assert.AreEqual("Migration", gate.BusyDescription);
+    }
+
     [TestMethod]
     public void ExistingWritersPreventMigrationUntilTheirLastLeaseEnds()
     {
