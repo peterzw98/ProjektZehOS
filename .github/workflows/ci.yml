@@ -39,12 +39,14 @@ jobs:
       - name: Build and check .NET diagnostics
         run: dotnet build ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release --no-restore -warnaserror
 
+      # Ein haengender Test bricht nach drei Minuten ab und wird namentlich genannt, statt den Job bis zum Zeitlimit zu blockieren.
       - name: Run shell tests
         run: >-
           dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj
           --configuration Release --no-build --no-restore
           --logger "trx;LogFileName=shell-tests.trx"
           --collect "Code Coverage;Format=cobertura"
+          --blame-hang-timeout 3m --blame-hang-dump-type none
           --results-directory TestResults
 
       # Vor der Abdeckungspruefung, damit ein Fehler in check-coverage.py selbst sichtbar wird.

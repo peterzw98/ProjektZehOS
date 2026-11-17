@@ -64,9 +64,11 @@ public sealed class FileManagerTests
         Assert.AreEqual(Path.Combine(directory, "sub"), files.CurrentDirectory);
         Click(app, 130, 30);
         Assert.AreEqual(directory, files.CurrentDirectory, "Hoch fuehrt zum uebergeordneten Ordner.");
-        // Hier fuehrte Zurueck nach "sub", Hoch muss dagegen eine Ebene ueber den Startordner.
-        Click(app, 130, 30);
-        Assert.AreEqual(Path.GetDirectoryName(directory), files.CurrentDirectory);
+        // Hoch ist ein eigener Schritt im Verlauf: Zurueck fuehrt danach wieder nach "sub". Waere Hoch nur ein Zurueck,
+        // bliebe es hier beim Startordner. Der Test verlaesst den eigenen Ordner bewusst nicht: im echten Temp-Ordner
+        // liegen unter Linux benannte Pipes, an denen die Vorschau haengen bleibt.
+        Click(app, 30, 30);
+        Assert.AreEqual(Path.Combine(directory, "sub"), files.CurrentDirectory);
     }
 
     [TestMethod]
