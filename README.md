@@ -266,6 +266,8 @@ Das Gen3-Debugging verwendet QEMU und GDB. NativeAOT kann die Anzeige einzelner 
 
 Nach dem Boot versucht ZehOS bei Link ohne IPv4-Adresse automatisch DHCP, bei fehlender Antwort erneut nach zehn Sekunden. Eine manuell als Administrator mit `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` gesetzte Adresse bleibt erhalten; `net dhcp` fordert DHCP ausdrücklich erneut an. Das Netzwerksymbol unten rechts zwischen Desktopumschaltung und Uhr zeigt Verbindung, Suche oder fehlenden Link/Adapter. Ein Linksklick öffnet den Zustand und die IPv4-Adresse, der nächste Klick oder Esc schließt die Anzeige. „Verbunden“ bedeutet Link mit IPv4-Adresse, keine geprüfte Internetverbindung.
 
+Sobald eine IPv4-Adresse vorliegt, gleicht ZehOS die Uhr einmal per SNTP mit `pool.ntp.org` ab (bei Fehlern höchstens dreimal je Lauf der Netzwerkautomatik). Administratoren können das mit `net time [Server] [Port]` erneut anstoßen. Die Hardwareuhr wird dabei nicht verändert. Ein Abgleich darf die Uhr beliebig vor-, aber höchstens 5 Minuten zurückstellen, solange die Uhr plausibel ist. Eine unplausible Uhr (etwa vor dem Stand des Wurzelbundles) wird vollständig übernommen. SNTP ist nicht authentifiziert: In diesem Fall kann ein Angreifer im Netz jede Zeit ab dem Bundle-Stand setzen. Die Grenzen stehen in [NETWORK_TESTS.md](docs/NETWORK_TESTS.md).
+
 Mit konfigurierter Adresse stehen `ping <IPv4>`, `nslookup <Name>` und `fetch http://10.0.2.2:18080/ok` bereit. Der Testserver läuft auf dem Entwicklungsrechner; `10.0.2.2` bezeichnet ihn aus dem QEMU-Gast. `fetch https://Host/Pfad` verwendet TLS 1.2/1.3 mit Zertifikatsketten-, Namens- und Gültigkeitsprüfung gegen ein eingebettetes Mozilla-Rootbundle. HTTPS verlangt eine korrekte UTC-Uhr und Hardwarezufall (RDSEED/RDRAND oder virtio-rng); ohne diese Voraussetzungen scheitert der Abruf. Unterstützt werden IPv4 und ASCII-DNS-Namen; IPv6 und Unicode-Zielnamen werden abgelehnt.
 
 Die Automatik belegt einen der acht Hintergrundplätze. Während DHCP die Netzwerksperre hält, kann die Update-Prüfung „Netzwerkdienst ist belegt.“ melden; nach Ende der Suche erneut versuchen. Cosmos-DHCP lässt sich erst nach seinem Empfangs-Warteabschnitt abbrechen. Dauert das länger als die zwei Sekunden zum Beenden aller Aufgaben, bricht die Energieaktion sicher ab und lässt sich danach erneut anfordern.
@@ -309,6 +311,8 @@ Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was 
 - Kein Netzwerk, keine Threads, keine Speicherstände.
 - Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
 - Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
+
+**In Arbeit, nicht für Apps freigegeben:** Ein nativer AOT-Pfad (WAMR 2.4.5 als reiner AOT-Lader, [AOT-Plan](docs/superpowers/plans/2026-11-17-aot-kernel.md), Etappe D) ist nur in Kernel gebaut, die ausdrücklich `-p:ZehOSWasmAot=true` oder die Gastprobe `-p:ZehOSAotProbe=true` verwenden. Der normale Build enthält ihn nicht; Paket-Apps laufen weiterhin ausschließlich unter wasm3. Paketformat, Auswahl und Laufzeitschalter folgen in Etappe E, AOT bleibt danach bis Etappe F standardmäßig aus. Probe und Fixtures: [ProjektZeh/Native/AotProbe/fixture/README.md](ProjektZeh/Native/AotProbe/fixture/README.md).
 
 `help` zeigt `pkg` mit seinen Unterbefehlen. Nur ausdrücklich mit `-p:ZehOSWasm=false` gebaute Kernel und das Installer-ISO bieten keinen `pkg`-Befehl.
 
@@ -447,7 +451,7 @@ Zusätzliche Shellbefehle:
 | `sort [Datei]` / `uniq [Datei]` | Zeilen ordinal sortieren / direkt aufeinanderfolgende gleiche Zeilen entfernen |
 | `less [Datei]` | Pager mit Pfeilen, Bildtasten, Home/End, Leertaste und `q`; Textshell und Desktop bleiben nichtblockierend |
 | `history` / `alias [Name=Befehl Argumente ...]` | Letzte 32 Befehle / bis zu 32 sitzungslokale Aliase anzeigen oder definieren |
-| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr, Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
+| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr (nach einem SNTP-Abgleich korrigiert), Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
 | `exit` | Aktive Terminalsitzung schließen; die Textshell bleibt als Wiederherstellungskonsole geöffnet |
 
 Textfilter können statt einer Datei die Ausgabe einer vorherigen Pipelinestufe lesen. Beispielsweise erzeugt `echo blau >> farben.txt` eine Datei oder hängt Text an, `cat farben.txt | sort | uniq > eindeutig.txt` speichert eine gefilterte Ausgabe und `help | less` öffnet die Hilfe im Pager. `alias ll=ls` legt einen Argumentalias an; eingebettete Pipelines und Umleitungen gehören nicht zu Aliaswerten. Für Gruppenargumente ist etwa `alias suche=grep "zwei Worte"` möglich.
@@ -467,6 +471,7 @@ Die beiden mit Cosmos ausgelieferten Bitmapfonts (geprüft mit 3.0.94) werden f�
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
 
 - wasm3 (MIT): `ProjektZeh/ThirdParty/wasm3/LICENSE`
+- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), nur in Builds mit `-p:ZehOSWasmAot=true`: `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
 - Rasterizer für Wasm-Apps, übertragen aus ClassiCubes SoftGPU (BSD-3-Clause): `ProjektZeh/Graphics/Raster/LICENSE-ClassiCube.txt`
 - BouncyCastle (MIT) als NuGet-Paket
 - Cosmos (BSD-3-Clause) als NuGet-Pakete; übernommene Teile aus Cosmos.Network.Http in `ProjektZeh/ThirdParty/CosmosHttp` mit `LICENSE.txt` und `THIRD-PARTY-NOTICES.txt` (darin auch die Mozilla-Zertifikatsliste `cacert.pem`, MPL-2.0)
