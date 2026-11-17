@@ -34,6 +34,31 @@ public sealed class TlsTransportTests
         Assert.AreSame(bundle, TlsRoots.Load(), "Das Bundle wird je Start nur einmal gelesen.");
         // cacert.pem enthaelt ueber hundert Wurzeln; deutlich weniger hiesse, dass das Einlesen abbricht.
         Assert.IsTrue(TlsTransport.LoadAnchors(bundle).Count > 100);
+        Assert.AreSame(TlsTransport.CachedAnchors(bundle), TlsTransport.CachedAnchors(bundle));
+    }
+
+    [TestMethod]
+    public void StartDeadline_Https_ParsesRootsBeforeTheClockStarts()
+    {
+        // Eigene Kopie: so ist der Cache vor dem Aufruf sicher leer fuer genau dieses Array.
+        byte[] bundle = (byte[])TlsRoots.Load().Clone();
+        var parse = System.Diagnostics.Stopwatch.StartNew();
+        var deadline = TlsTransport.StartDeadline("https://packages.example/catalog", bundle);
+        long total = parse.ElapsedTicks;
+
+        // Die Frist-Uhr laeuft erst nach dem Parsen an: sie hat hoechstens den Bruchteil seit der Rueckkehr gesehen.
+        Assert.IsTrue(deadline.ElapsedTicks < total / 2, $"Die Uhr lief schon waehrend des Wurzelparsens ({deadline.ElapsedTicks} von {total} Ticks).");
+        var probe = System.Diagnostics.Stopwatch.StartNew();
+        TlsTransport.CachedAnchors(bundle);
+        Assert.IsTrue(probe.ElapsedMilliseconds < 50, "Nach StartDeadline muss der Abruf den Cache treffen.");
+    }
+
+    [TestMethod]
+    public void StartDeadline_Http_DoesNotParseRoots()
+    {
+        byte[] invalid = [1, 2, 3];
+        // HTTP braucht keine Wurzeln; ungueltige Bytes duerfen deshalb nicht geparst werden.
+        Assert.IsTrue(TlsTransport.StartDeadline("http://10.0.2.2/", invalid).IsRunning);
     }
 
     [TestMethod]

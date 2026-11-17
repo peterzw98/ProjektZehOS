@@ -30,7 +30,18 @@ internal static class TlsTransport
 
     // Das Parsen aller Wurzeln je Verbindung erzeugte den Grossteil des Muells eines Downloads; der Cosmos-GC laeuft
     // erst, wenn der Seitenallokator erschoepft ist. Gilt fuer dasselbe Bundle-Array (TlsRoots.Load liefert stets dasselbe).
-    private static IList<X509Certificate> CachedAnchors(byte[] trustedPem)
+    /// <summary>
+    /// Startet die Abruffrist eines Netzabrufs. Fuer HTTPS werden die Wurzeln vorher einmal geparst: Beim ersten Abruf nach
+    /// dem Boot dauerte das laenger als die ganze Frist (CosmosNetworkService.FetchTimeoutMilliseconds), danach traf der
+    /// Abruf den Cache.
+    /// </summary>
+    internal static System.Diagnostics.Stopwatch StartDeadline(string url, byte[] trustedPem)
+    {
+        if (url.StartsWith("https:", StringComparison.OrdinalIgnoreCase)) CachedAnchors(trustedPem);
+        return System.Diagnostics.Stopwatch.StartNew();
+    }
+
+    internal static IList<X509Certificate> CachedAnchors(byte[] trustedPem)
     {
         var cached = cachedAnchors;
         if (cached is { } entry && ReferenceEquals(entry.Pem, trustedPem)) return entry.Anchors;
