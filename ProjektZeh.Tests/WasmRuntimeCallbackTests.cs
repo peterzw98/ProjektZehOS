@@ -19,7 +19,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     public void Initialize()
     {
         Directory.CreateDirectory(directory);
-        Set("current", null);
+        WasmRuntime.SetTestSession(null);
         Runtime.GetField("presentFailureReported", BindingFlags.NonPublic | BindingFlags.Static)?.SetValue(null, false);
         Files.Clear();
         Cosmos.Kernel.System.Diagnostics.Log.Writer = messages.Add;
@@ -28,7 +28,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     [TestCleanup]
     public void Cleanup()
     {
-        Set("current", null);
+        WasmRuntime.SetTestSession(null);
         Cosmos.Kernel.System.Diagnostics.Log.Writer = null;
         foreach (FileStream stream in Files.Values) stream.Dispose();
         Files.Clear();
@@ -39,7 +39,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     public void PresentExceptionsStayInsideBothNativeCallbacksAndReportOnlyOnce()
     {
         var session = new Session { Failure = new InvalidOperationException("present") };
-        Set("current", session);
+        WasmRuntime.SetTestSession(session);
         uint pixel = 0x123456;
         ((delegate* unmanaged<uint*, int, int, int, int, void>)Entry("HostPresent"))(&pixel, 1, 1, 0, 0);
         byte index = 0;
@@ -60,7 +60,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     public void IndexedFrameConvertsPaletteAndSurvivesAFailingDiagnostic()
     {
         var session = new Session { Failure = new InvalidOperationException("present") };
-        Set("current", session);
+        WasmRuntime.SetTestSession(session);
         Cosmos.Kernel.System.Diagnostics.Log.Writer = _ => throw new InvalidOperationException("log");
         byte index = 2;
         uint* palette = stackalloc uint[256];
@@ -75,7 +75,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     [TestMethod]
     public void OpenConvertsAnUnexpectedSessionExceptionToFailure()
     {
-        Set("current", new Session { RootFailure = true });
+        WasmRuntime.SetTestSession(new Session { RootFailure = true });
         byte path = 0;
         Assert.AreEqual(-1, ((delegate* unmanaged<byte*, uint, int>)Entry("HostOpen"))(&path, 1));
         Assert.AreEqual(0, Files.Count);
@@ -101,7 +101,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
     {
         string path = Path.Combine(directory, "module.txt");
         File.WriteAllText(path, "Test");
-        Set("current", new Session { RootDirectory = directory });
+        WasmRuntime.SetTestSession(new Session { RootDirectory = directory });
         byte[] bytes = System.Text.Encoding.UTF8.GetBytes("module.txt");
         int handle;
         fixed (byte* data = bytes) handle = ((delegate* unmanaged<byte*, uint, int>)Entry("HostOpen"))(data, (uint)bytes.Length);
@@ -111,6 +111,16 @@ public sealed unsafe class WasmRuntimeCallbackTests
         ((delegate* unmanaged<int, void>)Entry("HostClose"))(handle);
         Assert.IsFalse(Files.ContainsKey(handle));
         using var exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+    [TestMethod]
+    public void MissingSessionAndUnknownHandlesReportFailure()
+    {
+        byte value = (byte)'x';
+        Assert.AreEqual(-1, ((delegate* unmanaged<byte*, uint, int>)Entry("HostOpen"))(&value, 1));
+        Assert.AreEqual(-1L, ((delegate* unmanaged<int, long>)Entry("HostFileSize"))(123));
+        Assert.AreEqual(-1, ((delegate* unmanaged<int, ulong, byte*, uint, int>)Entry("HostFileRead"))(123, 0, &value, 1));
+        ((delegate* unmanaged<int, void>)Entry("HostClose"))(123);
+        Assert.AreEqual(0, Files.Count);
     }
     [TestMethod]
     public void CloseRemovesHandleEvenWhenDisposeThrows()
@@ -124,7 +134,6 @@ public sealed unsafe class WasmRuntimeCallbackTests
 
     private static Dictionary<int, FileStream> Files => (Dictionary<int, FileStream>)Field("files").GetValue(null)!;
     private static FieldInfo Field(string name) => Runtime.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!;
-    private static void Set(string name, object? value) => Field(name).SetValue(null, value);
     private static void* Entry(string name) => (void*)Runtime.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
 
     private sealed class FailingFile(string path) : FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite)

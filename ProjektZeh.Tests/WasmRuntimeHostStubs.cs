@@ -10,17 +10,11 @@ namespace Cosmos.Kernel.System.Diagnostics
     }
 }
 
-namespace ProjektZeh.Security
+namespace ProjektZeh.Runtime.Wasm
 {
-    internal static class CosmosSaltSource
+    internal static unsafe partial class WasmRuntime
     {
-        public static void Fill(byte[] bytes) => throw new NotSupportedException("Hardwarezufall ist kein Teil dieses Hosttests.");
-    }
-}
-namespace ProjektZeh.Runtime
-{
-    internal static class CosmosSystemInfo
-    {
-        public static (ulong Total, ulong Free) PhysicalMemory() => throw new NotSupportedException("Physischer Speicher fehlt im Hosttest.");
+        // Nur der Testteil setzt Sitzungen ohne den nativen Worker; im Kernel uebernimmt dies Execute.
+        internal static void SetTestSession(IWasmSession? session) => current = session;
     }
 }
