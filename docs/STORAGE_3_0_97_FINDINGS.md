@@ -92,6 +92,35 @@ Quellbefunde zu wiederholtem Parsen/Allokieren und zum Inodecache sind Hinweise 
 
 **Kein sicherer Mindest-RAM ist abgeleitet.** 1 GiB ist eine vorgeschlagene vorläufige Testkonfiguration, keine Betriebszusage; selbst 2 GiB verhinderten den kumulierten Fehler nicht. Offen bleiben gezielte Low-Memory-, Fragmentierungs- und Wiederholungsläufe sowie Messungen von Spitzenbelegung und freiem zusammenhängendem Speicher. Die hier berichteten Gastläufe belegen weder VMware noch echte Hardware.
 
+### Inode-Cache und GC-Fragmentierung
+
+**Befund:** E4.0-Lauf 1 (peter-senior, Probe `2b080d4`, KVM, 512 MiB und 1 GiB RAM, mit RemoveEntry-Plug) scheitert in Schritt e beim Anlegen nach 7488 von 8000 Einträgen. Das Image zeigt 131072 − 113543 = 17529 belegte Inodes, davon 10 reserviert. Das sind genau die 17519 Einträge, bei denen Cosmos' `_inodeCache` (`Dictionary<uint, Ext2Inode>`, nur bei `Drop` geleert) auf 36353 Einträge wächst. Die nötige Allokation des Eintragsfelds (≈ 850 KiB) liefert null, `Array.Copy` meldet `ArgumentNullException` (`destinationArray`).
+
+**Ursache:** Quellstand `efcf20cc`.
+- `AllocObjectSlow` ruft bei gescheitertem Nachfüllen `Collect()` und versucht genau einmal erneut.
+- Der GC verdichtet nicht.
+- Objekte über der TLAB-Größe brauchen einen Freilistenblock oder einen neuen Seitenlauf aus `PageAllocator.AllocPages`. Dieser durchsucht die Seitentabelle nach zusammenhängenden freien Seiten.
+- Langlebige kleine Objekte, die zwischen viel Müll entstehen, liegen über viele 64-KiB-Segmente verteilt. Leere Segmente gibt der Sweep zurück, belegte nicht. Ein großer zusammenhängender Lauf fehlt dann trotz reichlich freiem Speicher.
+
+**Gastbeleg:** Diagnoselauf 12 (`08401d6`, `--diagnose-run 12`, KVM).
+
+| RAM | wachsendes Dictionary | vorab dimensioniert (40000) | 16 MiB danach |
+| --- | --- | --- | --- |
+| 512 MiB | Fehler bei 17519 | ohne Fehler | gelingt |
+| 1 GiB | Fehler bei 36353 | ohne Fehler | gelingt |
+
+**Einschätzung für Nutzer:** Die Grenze zählt verschiedene Inodes, die seit dem Einhängen gelesen oder geschrieben wurden.
+- Speichern per Temp-Datei und Umbenennen vergibt meist die gerade freigegebene Inode-Nummer wieder und füllt den Cache deshalb kaum.
+- Kritisch sind Vorgänge, die viele verschiedene Dateien berühren: ein Verzeichnislisting (`ReadDir` liest jedes Kind), Suche über den Baum, die Migration nach `/` oder viele kleine Paketdateien.
+- Ein Nutzerbaum mit einigen tausend Dateien bleibt unter der Grenze, ein vollständiger Durchlauf eines größeren Baums nicht.
+- Weil die Grenze aus der Fragmentierung entsteht, verschiebt sie sich mit Speicher und Vorgeschichte. Eine feste Zahl ist keine Zusage.
+
+**Bewertung eines Cache-Plugs (nur Bewertung, kein Code):** Ein begrenzter oder verdrängender Cache würde das Wachstum stoppen. Cosmos verlässt sich aber auf ein Objekt je Inode.
+- `Rmdir` und `Unlink` ändern Link-Zähler am zwischengespeicherten Objekt und schreiben es.
+- Die VFS-Schicht hält `IVfsInode`-Referenzen.
+
+Zwei Objekte für dasselbe Inode könnten einander mit veralteten Werten überschreiben. Ein solcher Plug bräuchte eigene Gastnachweise und eine Entscheidung von Peter. Ein vorab dimensionierter Cache ist per `UnsafeAccessor` nicht erreichbar, weil der Zugriff auf das generische Dictionary mit internem Typargument im Gast `NotSupportedException` warf (vgl. `CosmosExt2FreeInodePlug`).
+
 ### Produktgrenze 8189
 
 [PR #211](https://github.com/peterzw98/ProjektZehOS/pull/211) setzt `FileService.MaximumExt2DirectoryEntries` auf **8189 direkte Kinder** je beschreibbarem ext2-Verzeichnis. Cosmos `ParseDirectory` betrachtet höchstens 8192 Records einschließlich `.` und `..`; der verbleibende Platz ist nötig, weil Rename zunächst den neuen Namen anlegt. Lauf 9 meldete bei 8190 Kindern eine erfolgreiche Umbenennung, nach der Cosmos in derselben Sitzung weder alten noch neuen Namen sah, obwohl `debugfs` den korrekten Platteneintrag zeigte.

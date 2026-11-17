@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Shared;
 using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
@@ -23,6 +24,64 @@ public sealed class FileServiceTests
     public void Cleanup()
     {
         Directory.Delete(directory, true);
+    }
+
+    // Audit Speicher: Cosmos lieferte fuer grosse Allokationen null; das darf nie als gelesene Datei durchgehen.
+    [TestMethod]
+    public void ReadBytes_MissingBuffer_ReportsOutOfMemoryInsteadOfData()
+    {
+        File.WriteAllBytes(Path.Combine(directory, "bild.raw"), [1, 2, 3]);
+        var starved = new FileService(directory) { AllocateBuffer = _ => null };
+
+        var read = starved.ReadBytes("bild.raw", 16);
+
+        Assert.IsFalse(read.IsOK());
+        StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, files.ReadBytes("bild.raw", 16).Value);
+    }
+
+    // Laenge 0 (virtuelle/unbekannte Laenge) liest blockweise; auch dieser Pfad darf ohne Puffer nicht abstuerzen.
+    [TestMethod]
+    public void ReadUntilEnd_MissingBuffer_ReportsOutOfMemory()
+    {
+        byte[] content = new byte[10000];
+        for (int index = 0; index < content.Length; index++) content[index] = (byte)index;
+        int allowed = 2; // zwei Lesebloecke gelingen, der dritte nicht
+        using (var stream = new MemoryStream(content))
+        {
+            var read = FileService.ReadUntilEnd(stream, 64 * 1024, length => allowed-- > 0 ? new byte[length] : null);
+            Assert.IsFalse(read.IsOK());
+            StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        }
+
+        int calls = 0; // Bloecke gelingen, der Ergebnispuffer nicht
+        using (var stream = new MemoryStream(content))
+        {
+            var read = FileService.ReadUntilEnd(stream, 64 * 1024, length => ++calls <= 3 ? new byte[length] : null);
+            Assert.IsFalse(read.IsOK());
+            StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        }
+
+        using (var stream = new MemoryStream(content))
+            CollectionAssert.AreEqual(content, FileService.ReadUntilEnd(stream, content.Length).Value, "Inhalt ueber Blockgrenzen");
+        using (var stream = new ShortReadStream(content))
+            CollectionAssert.AreEqual(content, FileService.ReadUntilEnd(stream, content.Length).Value, "Teil-Reads fuellen die Bloecke");
+        using (var stream = new MemoryStream())
+            Assert.AreEqual(0, FileService.ReadUntilEnd(stream, 16).Value!.Length, "leerer Strom");
+        using (var stream = new MemoryStream(new byte[8192]))
+            Assert.AreEqual(8192, FileService.ReadUntilEnd(stream, 8192).Value!.Length, "genau zwei volle Bloecke bis zur Grenze");
+        using (var stream = new MemoryStream(new byte[8193]))
+            Assert.IsFalse(FileService.ReadUntilEnd(stream, 8192).IsOK(), "ein Byte ueber der Grenze");
+    }
+
+    [TestMethod]
+    public void BufferAllocation_ReturnsBufferOfRequestedLength()
+    {
+        Assert.AreEqual(5, BufferAllocation.TryAllocate(5)!.Length);
+        Assert.AreEqual(0, BufferAllocation.TryAllocate(0)!.Length);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => BufferAllocation.TryAllocate(-1));
+        Assert.AreEqual(5, BufferAllocation.TryAllocate(5, collectFirst: true)!.Length);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => BufferAllocation.TryAllocate(-1, collectFirst: true));
     }
 
     [TestMethod]
@@ -321,4 +380,10 @@ public sealed class FileServiceTests
         Assert.IsFalse(result.IsOK(), "Ein leerer Pfad darf keine Datei erzeugen.");
         Assert.AreEqual(0, Directory.GetFileSystemEntries(directory).Length, "Ungueltige Eingaben duerfen nichts schreiben.");
     }
+}
+
+/// <summary>Liefert je Read hoechstens sieben Bytes, wie Geraete- oder Netzstroeme.</summary>
+internal sealed class ShortReadStream(byte[] content) : MemoryStream(content)
+{
+    public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 7));
 }
