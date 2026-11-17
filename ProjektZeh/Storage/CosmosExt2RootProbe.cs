@@ -79,6 +79,7 @@ internal static class CosmosExt2RootProbe
                 case 9: RunLimitOnly(root, renameWhenFull: false); break;
                 case 10: RunDeleteSpan(root); break;
                 case 11: RunScale(root); break;
+                case 12: RunHeapFragmentation(root); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -286,6 +287,93 @@ internal static class CosmosExt2RootProbe
     /// GC-Heap je 512) und ob vier Verzeichnisse mit je 2048 Eintraegen Anlegen, Umbenennen und Loeschen stabil schaffen.
     /// Kein Aufraeumen des grossen Verzeichnisses: Loeschen vieler Eintraege ist selbst ein offener Befund (Lauf 9/10).
     /// </summary>
+    /// <summary>
+    /// Diagnoselauf 12 (Schritt e, 17.11.): Liefert der Cosmos-GC nach viel Umschlag mit verstreuten langlebigen kleinen
+    /// Objekten fuer eine grosse Allokation null? Nachgebildet wird der Inode-Cache (Dictionary, das mit jedem neuen Inode
+    /// waechst) neben einem vorab dimensionierten Dictionary gleicher Fuellung. Erwartung aus der Quelle (efcf20cc): Sammeln
+    /// erst bei vollem Seitenspeicher, keine Verdichtung, Freilistenbloecke unter 8 KiB, grosse Allokationen brauchen einen
+    /// zusammenhaengenden Seitenlauf.
+    /// </summary>
+    private static void RunHeapFragmentation(IBlockDevice root)
+    {
+        Begin("format12");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        Pass("Format, Mount /, s_state 0");
+
+        Begin("frag-start");
+        Write($"frag-start INFO groesste Allokation vorher: {LargestAllocation()} KiB, GC-Heap {GC.GetTotalMemory(false) / 1024} KiB");
+        const int Survivors = 40_000;
+        // Vorab dimensioniert: das Eintragsfeld (~40000 x 24 Byte) entsteht jetzt, solange der Seitenspeicher noch frei ist.
+        var sized = new Dictionary<uint, object>(Survivors);
+        var growing = new Dictionary<uint, object>();
+        Pass("Dictionaries angelegt");
+
+        Begin("frag-churn");
+        string growFailure = "keiner";
+        int growCount = 0;
+        long garbage = 0;
+        byte[]? sink = null;
+        for (uint key = 0; key < Survivors; key++)
+        {
+            // Je Ueberlebendem etwa 64 KiB Muell in 1-KiB-Stuecken: die Ueberlebenden verteilen sich so ueber den ganzen
+            // Speicher, wie die Inodes zwischen den Puffern einer langen Dateisitzung.
+            for (int index = 0; index < 64; index++) sink = new byte[1024];
+            garbage += 64 * 1024;
+            var survivor = new byte[96];
+            sized.Add(key, survivor);
+            if (growFailure != "keiner") continue;
+            try
+            {
+                growing.Add(key, survivor);
+                growCount++;
+            }
+            catch (Exception exception)
+            {
+                growFailure = $"{exception.GetType().Name}: {exception.Message}";
+            }
+
+            if ((key + 1) % 5000 == 0)
+                Write($"frag-churn INFO {key + 1} Ueberlebende, Muell {garbage / (1024 * 1024)} MiB, GC-Heap {GC.GetTotalMemory(false) / 1024} KiB");
+        }
+
+        GC.KeepAlive(sink);
+        Write($"frag-churn INFO wachsendes Dictionary: {growCount} Eintraege, erster Fehler: {growFailure}");
+        Write($"frag-churn INFO vorab dimensioniert: {sized.Count} Eintraege");
+        Write($"frag-churn INFO groesste Allokation danach: {LargestAllocation()} KiB, GC-Heap {GC.GetTotalMemory(false) / 1024} KiB");
+        Pass($"Muell {garbage / (1024 * 1024)} MiB");
+        AfterPhase(root);
+    }
+
+    /// <summary>Groesste der Stufen 32 KiB bis 16 MiB, die der Heap noch liefert (null zaehlt wie OutOfMemoryException).</summary>
+    private static int LargestAllocation()
+    {
+        int largest = 0;
+        for (int kib = 32; kib <= 16 * 1024; kib *= 2)
+        {
+            byte[]? buffer;
+            try
+            {
+                buffer = new byte[kib * 1024];
+            }
+            catch (OutOfMemoryException)
+            {
+                buffer = null;
+            }
+
+            if (IsMissing(buffer)) break;
+            largest = kib;
+        }
+
+        return largest;
+    }
+
+    // Nicht inlinen: ILC sieht newarr als nie null an und wuerde einen direkten Vergleich entfernen (vgl. BufferAllocation).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool IsMissing(object? value) => value is null;
+
     private static void RunScale(IBlockDevice root)
     {
         Begin("format11");
@@ -976,7 +1064,7 @@ internal static class CosmosExt2RootProbe
         int end = text.IndexOf('\n', ControlPrefix.Length);
         bool parsed = int.TryParse(text.AsSpan(ControlPrefix.Length, (end < 0 ? text.Length : end) - ControlPrefix.Length),
             System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int run);
-        Check(parsed && run is >= 1 and <= 11, "Lauf ausserhalb 1..11; nichts geschrieben");
+        Check(parsed && run is >= 1 and <= 12, "Lauf ausserhalb 1..12; nichts geschrieben");
         return run;
     }
 
