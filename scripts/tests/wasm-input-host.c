@@ -75,3 +75,28 @@ int32_t zehos_wasm_host_raster_draw(uint8_t* memory, uint32_t length, uint32_t c
 { (void)memory; (void)length; (void)call; return 8; }
 int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uint32_t offset, uint32_t count, uint32_t value)
 { (void)memory; (void)length; (void)offset; (void)count; (void)value; return 8; }
+// App-Speicher /save (Etappe 13.4): Freigabe schaltbar; gezaehlt werden Aufrufe, die den Host erreichen.
+static int save_enabled, save_calls;
+static uint32_t save_flags;
+void save_test_reset(int enabled) { save_enabled = enabled; save_calls = 0; save_flags = 0; }
+int save_test_calls(void) { return save_calls; }
+uint32_t save_test_flags(void) { return save_flags; }
+int32_t zehos_wasm_host_save_available(void) { return save_enabled; }
+int32_t zehos_wasm_host_save_open(const uint8_t* path, uint32_t length, uint32_t flags, int32_t* handle)
+{ (void)path; (void)length; save_calls++; save_flags = flags; *handle = 77; return 0; }
+int32_t zehos_wasm_host_save_read(int32_t handle, uint64_t offset, uint8_t* buffer, uint32_t length, uint32_t* read)
+{ (void)handle; (void)offset; (void)buffer; (void)length; save_calls++; *read = 0; return 0; }
+int32_t zehos_wasm_host_save_write(int32_t handle, uint64_t offset, const uint8_t* data, uint32_t length)
+{ (void)handle; (void)offset; (void)data; (void)length; save_calls++; return 0; }
+int64_t zehos_wasm_host_save_size(int32_t handle) { (void)handle; return 0; }
+int32_t zehos_wasm_host_save_set_size(int32_t handle, uint64_t size) { (void)handle; (void)size; save_calls++; return 0; }
+int32_t zehos_wasm_host_save_sync(int32_t handle) { (void)handle; save_calls++; return 0; }
+int32_t zehos_wasm_host_save_close(int32_t handle) { (void)handle; save_calls++; return 0; }
+int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type)
+{ (void)path; (void)length; (void)size; (void)type; save_calls++; return 44; }
+int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32_t length)
+{ (void)operation; (void)path; (void)length; save_calls++; return 0; }
+int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength)
+{ (void)from; (void)fromLength; (void)to; (void)toLength; save_calls++; return 0; }
+int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used)
+{ (void)handle; (void)buffer; (void)length; (void)cookie; save_calls++; *used = 0; return 0; }
