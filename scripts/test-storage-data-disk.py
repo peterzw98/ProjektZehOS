@@ -79,11 +79,21 @@ def size_label(size: int) -> str:
 
 def _set_sparse_windows(descriptor: int) -> None:
     """NTFS macht truncate() sonst zu einer voll belegten, genullten Datei (128 GiB); FSCTL_SET_SPARSE vorher setzen.
-    shortcut: Fehler (etwa ein Dateisystem ohne Sparse-Dateien) werden ignoriert, die Datei ist dann nur nicht duenn."""
+    Ein Fehler (etwa ein Dateisystem ohne Sparse-Dateien) bricht nicht ab, die Datei ist dann nur nicht duenn; er wird auf
+    stderr gemeldet, damit ein langsamer Lauf erklaerbar bleibt."""
     import ctypes
     import msvcrt
-    returned = ctypes.c_ulong(0)
-    ctypes.windll.kernel32.DeviceIoControl(msvcrt.get_osfhandle(descriptor), 0x000900C4, None, 0, None, 0, ctypes.byref(returned), None)
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    device_io_control = kernel32.DeviceIoControl
+    # Ohne argtypes uebergibt ctypes den 64-Bit-HANDLE als 32-Bit-int und kann ihn abschneiden
+    device_io_control.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                  wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    device_io_control.restype = wintypes.BOOL
+    returned = wintypes.DWORD(0)
+    if not device_io_control(msvcrt.get_osfhandle(descriptor), 0x000900C4, None, 0, None, 0, ctypes.byref(returned), None):
+        print(f"Warnung: FSCTL_SET_SPARSE fehlgeschlagen (Windows-Fehler {ctypes.get_last_error()}), "
+              "das Image wird voll belegt", file=sys.stderr)
 
 
 def create_sparse(path: Path, size: int) -> None:
@@ -92,7 +102,12 @@ def create_sparse(path: Path, size: int) -> None:
     with path.open("xb") as image:  # "x": nie ein vorhandenes Image ueberschreiben
         if os.name == "nt":
             _set_sparse_windows(image.fileno())
-        image.truncate(size)
+            # truncate() verlaengert unter Windows ueber CRT _chsize mit geschriebenen Nullen, auch bei gesetztem
+            # Sparse-Flag (gemessen 551 s); ein einzelnes Byte am Ende laesst die Luecke davor unbelegt
+            image.seek(size - 1)
+            image.write(b"\0")
+        else:
+            image.truncate(size)
 
 
 def sha256(path: Path) -> str:
