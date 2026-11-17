@@ -52,8 +52,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 6):
-        raise ValueError(f"Lauf ausserhalb 1..5: {run}")
+    if run not in range(1, 11):
+        raise ValueError(f"Lauf ausserhalb 1..10: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
@@ -306,6 +306,8 @@ def main() -> int:
     parser.add_argument("--size", type=int, choices=[2, 32, 128], required=True,
                         help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
+    parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit) auf 2 GiB; kein Go")
+    parser.add_argument("--diagnose-run", type=int, choices=[9, 10], help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen); kein Go")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
     parser.add_argument("--timeout", type=float, default=3600, help="Sekunden je Lauf bis STORAGE_ROOT DONE")
@@ -326,6 +328,17 @@ def main() -> int:
     ctx.qemu_img("create", "-f", "qcow2", str(ctx.work / "fat.qcow2"), "64M")
     inodes = ctx.work / "inodes.qcow2"
     ctx.qemu_img("create", "-f", "qcow2", str(inodes), "1G")
+    if args.diagnose_run:
+        args.limit_only = True
+    if args.limit_only:
+        if args.size != 2:
+            sys.exit("--limit-only nur mit --size 2")
+        root = ctx.work / "root.qcow2"
+        ctx.qemu_img("create", "-f", "qcow2", str(root), "2G")
+        run = args.diagnose_run or 9
+        clean_run(ctx, f"lauf{run}", run, root)
+        ctx.note(f"ERGEBNIS Diagnose e-limit: {'bestanden' if ctx.go else 'FAIL'} (kein Go-Kriterium)")
+        return 0 if ctx.go else 1
     if args.size != 2:
         high_group_run(ctx, args.k_boundary)
         verdict = "Go (Hochgruppenlauf)" if ctx.go else "No-Go"

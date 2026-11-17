@@ -60,7 +60,7 @@ internal static class CosmosExt2RootProbe
             Begin("select");
             int run = ReadControl();
             // Laeufe 1-5 auf 2 GiB, Hochgruppenlauf 6-8 auf 32/128 GiB (Leitungsentscheid 19:02, Vollfuellung zu langsam).
-            IBlockDevice root = run <= 5
+            IBlockDevice root = run is <= 5 or 9 or 10
                 ? FindDevice(RootDeviceName, size => size == 2 * GiB, "2 GiB")
                 : FindDevice(RootDeviceName, size => size == 32 * GiB || size == 128 * GiB, "32 oder 128 GiB");
             Pass($"Lauf {run}, {RootDeviceName} {root.BlockCount * root.BlockSize / GiB} GiB");
@@ -72,6 +72,8 @@ internal static class CosmosExt2RootProbe
                 case 4: RunAfterAbort(root); break;
                 case 5: RunAfterRepair(root); break;
                 case 6: RunFormatOnly(root); break;
+                case 9: RunLimitOnly(root, renameWhenFull: false); break;
+                case 10: RunDeleteSpan(root); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -223,6 +225,43 @@ internal static class CosmosExt2RootProbe
         StepM(root);
     }
 
+    /// <summary>Diagnoselauf 9 (2 GiB, leer): nur Format, Mount und Schritt e-limit, ohne die langen Schritte davor.</summary>
+    private static void RunLimitOnly(IBlockDevice root, bool renameWhenFull)
+    {
+        Begin("format9");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        Pass("Format, Mount /, s_state 0");
+        StepELimit(root, renameWhenFull);
+        StepM(root);
+    }
+
+    /// <summary>
+    /// Diagnoselauf 10: 600 Dateien in einem Verzeichnis (mehr als zwei 4-KiB-Bloecke), die ersten 300 loeschen, kein Aufraeumen.
+    /// Der Host prueft mit e2fsck, ob geloeschte Eintraege ueber Blockgrenzen verschmolzen wurden.
+    /// </summary>
+    private static void RunDeleteSpan(IBlockDevice root)
+    {
+        Begin("format10");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        Pass("Format, Mount /, s_state 0");
+        Begin("delete-span");
+        Directory.CreateDirectory("/span");
+        for (int index = 0; index < 600; index++) File.WriteAllBytes($"/span/n{index:D4}", [1]);
+        for (int index = 0; index < 300; index++) File.Delete($"/span/n{index:D4}");
+        int visible = Directory.GetFileSystemEntries("/span").Length;
+        Write($"delete-span INFO sichtbar nach Loeschen: {visible} (erwartet 300)");
+        Check(visible == 300, $"{visible} statt 300 Eintraege sichtbar");
+        Pass("300 von 600 geloescht, 300 sichtbar");
+        AfterPhase(root);
+        StepM(root);
+    }
+
     /// <summary>Hochgruppenlauf, Teil 1: nur formatieren; danach belegt der Host die unteren Gruppen per debugfs fallocate.</summary>
     private static void RunFormatOnly(IBlockDevice root)
     {
@@ -361,22 +400,48 @@ internal static class CosmosExt2RootProbe
     /// Grenzfall zu e: Cosmos 3.0.97 fasst je Verzeichnis 8190 Eintraege neben '.' und '..'; der naechste muss mit IOException
     /// scheitern, ohne das Verzeichnis zu beschaedigen. Danach Umbenennen und Loeschen darin und ein Ersatzeintrag; am Ende geraeumt.
     /// </summary>
-    private static void StepELimit(IBlockDevice root)
+    /// <param name="renameWhenFull">
+    /// Nur Diagnose: Umbenennen im vollen Verzeichnis. Danach sieht Cosmos nur noch einen Teil der Eintraege, und das
+    /// Aufraeumen loescht das Verzeichnis samt unsichtbarer Eintraege (Lauf 9 am 17.11.: 4097 verwaiste Inodes). Ueber
+    /// ZehOS ist der Fall wegen der Produktgrenze 8189 nicht erreichbar; die Laeufe 1-5 pruefen ihn deshalb nicht.
+    /// </param>
+    private static void StepELimit(IBlockDevice root, bool renameWhenFull = false)
     {
-        Begin("e-limit");
+        // Teilschritte einzeln benannt: ein FAIL nennt so die Operation (Lauf 32 GiB: ArgumentNullException ohne Ort).
+        Begin("e-limit-create");
         const string directory = "/elimit";
         Directory.CreateDirectory(directory);
         for (int index = 0; index < RootProbeCatalog.DirectoryLimit; index++) File.WriteAllBytes($"{directory}/n{index:D4}", [unchecked((byte)index)]);
+        Begin("e-limit-over");
         bool refused = Refused(() => File.WriteAllBytes($"{directory}/over", [1]));
         Check(refused, $"Eintrag {RootProbeCatalog.DirectoryLimit + 1} ohne IOException angelegt");
+        Begin("e-limit-list");
         Check(!File.Exists($"{directory}/over"), "abgelehnter Eintrag sichtbar");
         var listed = Directory.GetFileSystemEntries(directory);
         Check(listed.Length == RootProbeCatalog.DirectoryLimit, $"{listed.Length} statt {RootProbeCatalog.DirectoryLimit} Eintraege nach der Ablehnung");
-        File.Move($"{directory}/n0000", $"{directory}/m0000");
+        // Umbenennen im vollen Verzeichnis braucht kurz einen Record mehr. Cosmos meldet Erfolg, sieht danach in derselben
+        // Sitzung aber keinen der beiden Namen (am Image korrekt, e2fsck sauber). Nur protokolliert (Leitung 19:26); die
+        // Produktgrenze liegt deshalb einen Eintrag tiefer (8189).
+        if (renameWhenFull)
+        {
+            Begin("e-limit-rename-full");
+            string fullRename = "ohne Ausnahme";
+            try { File.Move($"{directory}/n0002", $"{directory}/v0002"); }
+            catch (Exception exception) { fullRename = exception.GetType().Name + ": " + exception.Message; }
+            bool oldName = File.Exists($"{directory}/n0002"), newName = File.Exists($"{directory}/v0002");
+            Write($"e-limit INFO Umbenennen im vollen Verzeichnis: {fullRename}; alt={oldName} neu={newName}");
+        }
+
+        Begin("e-limit-delete");
         File.Delete($"{directory}/n0001");
+        Check(!File.Exists($"{directory}/n0001"), "n0001 nach Loeschen noch da");
+        Begin("e-limit-rename");
+        File.Move($"{directory}/n0000", $"{directory}/m0000");
+        Check(File.Exists($"{directory}/m0000") && !File.Exists($"{directory}/n0000"), $"Umbenennen nach Loeschen: m0000={File.Exists($"{directory}/m0000")} n0000={File.Exists($"{directory}/n0000")}");
+        Begin("e-limit-replace");
         File.WriteAllBytes($"{directory}/ersatz", [2]);
-        Check(File.Exists($"{directory}/m0000") && !File.Exists($"{directory}/n0000") && !File.Exists($"{directory}/n0001") && File.Exists($"{directory}/ersatz"),
-            "Umbenennen/Loeschen/Ersatz im vollen Verzeichnis falsch");
+        Check(File.Exists($"{directory}/ersatz"), "Ersatzeintrag fehlt");
+        Begin("e-limit");
         Check(File.ReadAllBytes($"{directory}/n{RootProbeCatalog.DirectoryLimit - 1:D4}")[0] == unchecked((byte)(RootProbeCatalog.DirectoryLimit - 1)), "letzter Eintrag unlesbar");
         DeleteTree(directory);
         Check(!Directory.Exists(directory), "/elimit nicht geraeumt");
@@ -809,7 +874,7 @@ internal static class CosmosExt2RootProbe
         string text = Encoding.ASCII.GetString(sector);
         Check(text.StartsWith(ControlPrefix, StringComparison.Ordinal), "Steuerplatte ohne Kennung; nichts geschrieben");
         int run = text[ControlPrefix.Length] - '0';
-        Check(run is >= 1 and <= 8, "Lauf ausserhalb 1..8; nichts geschrieben");
+        Check(run is >= 1 and <= 10, "Lauf ausserhalb 1..10; nichts geschrieben");
         return run;
     }
 
