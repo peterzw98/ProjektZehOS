@@ -644,6 +644,7 @@ internal static class WasmRasterizer
                 walk2.Apply(minX, maxX, ref first, ref last);
                 if (first > last) continue;
             }
+            // Ohne Tiefentest und -schreiben (needsDepth falsch) ist DepthStride ungeprueft; depthRow wird dann nie benutzt.
             int colorRow = y * colorStride, depthRow = y * depthStride;
             int x = first;
             if (vector && x <= lastVector)

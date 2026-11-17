@@ -26,10 +26,12 @@ internal sealed class RasterFrame
     public readonly uint ColorAt, DepthAt;
     public uint ClearColor = 0xFF7FB2FF;
     private int used = 64;
+    private readonly int limit;
 
     public RasterFrame(int capacity, int width, int height, int colorStride, int depthStride)
     {
         Memory = new byte[capacity];
+        limit = capacity;
         Width = width;
         Height = height;
         ColorStride = colorStride;
@@ -38,17 +40,35 @@ internal sealed class RasterFrame
         DepthAt = Allocate(depthStride * height * 4);
     }
 
+    /// <summary>
+    /// Puffer an festen Stellen (auch ueberlappend oder buendig am Speicherende); Vertices, Beschreibungen und Texturen
+    /// ohne feste Stelle liegen unterhalb von allocationLimit. Der Speicher ist anfangs mit pattern gefuellt.
+    /// </summary>
+    public RasterFrame(int capacity, int width, int height, int colorStride, int depthStride, uint colorAt, uint depthAt,
+        int allocationLimit, byte pattern)
+    {
+        Memory = new byte[capacity];
+        Memory.AsSpan().Fill(pattern);
+        limit = allocationLimit;
+        Width = width;
+        Height = height;
+        ColorStride = colorStride;
+        DepthStride = depthStride;
+        ColorAt = colorAt;
+        DepthAt = depthAt;
+    }
+
     public uint Allocate(int bytes)
     {
         uint at = (uint)used;
         used += (bytes + 3) & ~3;
-        if (used > Memory.Length) throw new InvalidOperationException("Testspeicher zu klein");
+        if (used > limit) throw new InvalidOperationException("Testspeicher zu klein");
         return at;
     }
 
-    public uint AddTexture(int width, int height, Func<int, int, uint> texel)
+    public uint AddTexture(int width, int height, Func<int, int, uint> texel, uint? place = null)
     {
-        uint at = Allocate(width * height * 4);
+        uint at = place ?? Allocate(width * height * 4);
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
                 BinaryPrimitives.WriteUInt32LittleEndian(Memory.AsSpan((int)at + (y * width + x) * 4), texel(x, y));
@@ -309,19 +329,28 @@ internal static class RasterScenes
             int w = 1 << random.Next(0, 6), h = 1 << random.Next(0, 6);
             textures.Add((frame.AddTexture(w, h, (_, _) => (uint)random.Next() | (random.Next(0, 3) == 0 ? 0xFF000000u : 0u)), w, h));
         }
+        RandomCalls(frame, random, textures, random.Next(1, 12), 0, 0);
+        return frame;
+    }
+
+    /// <summary>Haengt zufaellige Aufrufe an; requiredFlags werden immer gesetzt, forbiddenFlags nie, fullScissor nutzt den ganzen Puffer, finite vermeidet NaN, Unendlich und riesige Werte.</summary>
+    public static void RandomCalls(RasterFrame frame, Random random, List<(uint At, int W, int H)> textures, int calls,
+        uint requiredFlags, uint forbiddenFlags, bool fullScissor = false, bool finite = false)
+    {
+        int width = frame.Width, height = frame.Height;
         float Coordinate(float range)
         {
             int kind = random.Next(0, 40);
+            if (kind < 3 && finite) kind = 3;
             if (kind == 0) return float.NaN;
             if (kind == 1) return random.Next(0, 2) == 0 ? float.PositiveInfinity : float.NegativeInfinity;
             if (kind == 2) return (random.NextSingle() - 0.5f) * 1e9f;
             if (kind < 6) return MathF.Round((random.NextSingle() - 0.5f) * range * 2);
             return (random.NextSingle() - 0.5f) * range * 2;
         }
-        int calls = random.Next(1, 12);
         for (int call = 0; call < calls; call++)
         {
-            uint flags = (uint)random.Next(0, 512);
+            uint flags = ((uint)random.Next(0, 512) | requiredFlags) & ~forbiddenFlags;
             bool twoD = (flags & WasmRasterizer.Flag2D) != 0;
             float[] mvp;
             int matrixKind = random.Next(0, 3);
@@ -352,8 +381,7 @@ internal static class RasterScenes
             }
             var texture = textures[random.Next(0, textures.Count)];
             frame.AddCall(flags, vertices, texture.At, texture.W, texture.H, mvp, random.Next(0, 4) == 0 ? Coordinate(1) : 0,
-                random.Next(0, 4) == 0 ? Coordinate(1) : 0, random.Next(0, width), random.Next(0, height));
+                random.Next(0, 4) == 0 ? Coordinate(1) : 0, fullScissor ? width - 1 : random.Next(0, width), fullScissor ? height - 1 : random.Next(0, height));
         }
-        return frame;
     }
 }
