@@ -215,6 +215,10 @@ jobs:
           mkdir -p artifacts
           cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
 
+      - name: Check that all ZehOS plugs bind
+        # Der Patcher beendet den Build auch dann erfolgreich, wenn ein Plug sein Ziel nicht findet.
+        run: python3 scripts/check-plug-binding.py artifacts/kernel-build.log ProjektZeh
+
       - name: Upload bootable ISO
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

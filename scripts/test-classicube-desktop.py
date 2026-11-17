@@ -393,7 +393,12 @@ def main():
         if args.storage:
             # Platte nach dem Lauf auf dem Host lesen; der Kontoordner hat eine zufaellige ID. Vorher herunterfahren:
             # "shutdown" haengt /data aus und schreibt die Puffer, ein Abbruch der VM koennte Eintraege verlieren.
-            guest.shell("shutdown")
+            try:
+                guest.shell("shutdown")
+            except ConnectionError:
+                # Unter KVM schaltet der Gast schon beim Druecken von Enter ab; das Loslassen per QMP erreicht dann
+                # kein QEMU mehr. Ob das Herunterfahren sauber war, entscheidet allein der Exitcode.
+                pass
             vm.wait(timeout=120)
             assert vm.returncode == 0, f"shutdown endete mit {vm.returncode}; Plattenstand unsicher"
             _, _, read = fat16(disk_raw(work))

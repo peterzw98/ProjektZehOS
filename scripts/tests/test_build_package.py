@@ -60,6 +60,28 @@ class BuildPackageTests(unittest.TestCase):
                 self.assertIn('Mindest-Kernelversion', built.stderr)
             self.assertFalse((directory / 'repo' / 'app').exists())
 
+    def test_failed_signing_leaves_no_version_and_catalog_skips_unsigned(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / 'app.wasm').write_bytes(b'x')
+            self.assertEqual(self.run_tool('keygen', str(directory / 'key')).returncode, 0)
+            arguments = ['--repo', str(directory / 'repo'), '--id', 'app', '--version', '1.0.0', '--name', 'App',
+                         '--entry', 'app.wasm', f"{directory / 'app.wasm'}=app.wasm"]
+            built = self.run_tool('package', '--key', str(directory / 'fehlt.pem'), *arguments)
+            self.assertEqual(built.returncode, 1)
+            self.assertFalse((directory / 'repo' / 'app' / '1.0.0').exists())
+            # Ein erneuter Lauf mit richtigem Schluessel darf nicht an einem Rest scheitern.
+            built = self.run_tool('package', '--key', str(directory / 'key' / 'private.pem'), *arguments)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            # Ein Versionsordner ohne Signatur (etwa aus einem frueheren Abbruch) gehoert nicht in den Katalog.
+            unsigned = directory / 'repo' / 'app' / '2.0.0'
+            unsigned.mkdir()
+            (unsigned / 'manifest').write_bytes(b'zehos-package 1\n')
+            listed = self.run_tool('catalog', '--key', str(directory / 'key' / 'private.pem'), '--repo', str(directory / 'repo'),
+                                   '--generation', '1')
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            self.assertIn('package=app 1.0.0 ', (directory / 'repo' / 'catalog').read_text(encoding='utf-8'))
+
 
 def load_tool():
     spec = importlib.util.spec_from_file_location('build_package', SCRIPT)

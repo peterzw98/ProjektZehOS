@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage.Partitioning;
 
@@ -38,6 +39,29 @@ internal sealed record LayoutMarker(LayoutState State, Guid DiskGuid, string? So
             !long.TryParse(lines[4][6..], NumberStyles.None, CultureInfo.InvariantCulture, out long files))
             return Failure("MarkerField", "Felder fehlen, sind unbekannt oder ungueltig.");
         return ResultObjectFactory.CreateSuccess(new LayoutMarker(state, disk, lines[3][7..], files));
+    }
+
+    /// <summary>
+    /// Marker direkt aus einem eingehaengten Root lesen (Profilwahl 4.3, Zielpruefung 4.5): null = Datei fehlt; eine zu grosse
+    /// Datei und jeder andere Lesefehler ergeben einen ungueltigen Marker (Unclear), nie "fehlt".
+    /// </summary>
+    internal static ResultObject<LayoutMarker>? ReadFile(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+            if (stream.Length > MaximumBytes) return Parse(string.Empty);
+            using var reader = new StreamReader(stream);
+            return Parse(reader.ReadToEnd());
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return Parse(string.Empty);
+        }
     }
 
     internal static bool IsSha256(string value)
