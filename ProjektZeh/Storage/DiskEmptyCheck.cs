@@ -18,6 +18,7 @@ internal static class DiskEmptyCheck
     internal const ulong SampleStep = 64UL * 1024 * 1024;
     internal const ulong SampleBytes = 4096;
     private const ulong BatchBytes = 1024UL * 1024;
+    private const ulong ProgressBytes = 256UL * 1024 * 1024;
 
     /// <summary>
     /// shortcut: ueber 4 GiB bleiben Daten zwischen den Stichproben unentdeckt (nur die ersten 4 KiB je 64 MiB werden gelesen);
@@ -33,7 +34,7 @@ internal static class DiskEmptyCheck
         ulong totalBytes = blockCount * blockSize;
         if (totalBytes <= FullScanLimit)
         {
-            return ScanRange(blockSize, 0, blockCount, read, progress, "Gesamt");
+            return ScanRange(blockSize, 0, blockCount, read, progress, "Gesamt", true);
         }
 
         if (!confirmedLarge)
@@ -66,9 +67,10 @@ internal static class DiskEmptyCheck
         return ResultErr.CreateSuccess();
     }
 
-    private static ResultErr ScanRange(ulong blockSize, ulong first, ulong end, BlockReader read, Action<string>? progress, string area)
+    private static ResultErr ScanRange(ulong blockSize, ulong first, ulong end, BlockReader read, Action<string>? progress, string area, bool periodic = false)
     {
         progress?.Invoke($"scan {area} start LBA {first}");
+        ulong nextReport = first + ProgressBytes / blockSize;
         ulong batchBlocks = Math.Max(1, BatchBytes / blockSize);
         var buffer = new byte[batchBlocks * blockSize];
         for (ulong block = first; block < end; block += batchBlocks)
@@ -78,6 +80,12 @@ internal static class DiskEmptyCheck
             var span = buffer.AsSpan(0, (int)(count * blockSize));
             read(block, count, span);
             if (span.IndexOfAnyExcept((byte)0) >= 0) return NotEmpty();
+            // Im Vollscan eine Marke je 256 MiB, damit ein Hang von langsamem Lesen unterscheidbar bleibt.
+            if (periodic && block + count >= nextReport)
+            {
+                progress?.Invoke($"scan {area} gelesen bis LBA {block + count}");
+                nextReport += ProgressBytes / blockSize;
+            }
         }
 
         progress?.Invoke($"scan {area} ok LBA {end}");

@@ -134,6 +134,20 @@ public sealed class DiskEmptyCheckTests
     }
 
     [TestMethod]
+    public void FullScan_ReportsEvery256MiB()
+    {
+        var messages = new List<string>();
+
+        DiskEmptyCheck.Check(Sector, GiB / Sector, false, new FakeDisk(GiB).Read, messages.Add);
+
+        CollectionAssert.AreEqual(new[]
+        {
+            "scan Gesamt start LBA 0", "scan Gesamt gelesen bis LBA 524288", "scan Gesamt gelesen bis LBA 1048576",
+            "scan Gesamt gelesen bis LBA 1572864", "scan Gesamt gelesen bis LBA 2097152", "scan Gesamt ok LBA 2097152"
+        }, messages);
+    }
+
+    [TestMethod]
     public void LargeDisk_Confirmed_OddSizeStaysInsideDisk()
     {
         Assert.IsTrue(Run(new FakeDisk(5 * GiB + 3 * Sector), true).Ok);

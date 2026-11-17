@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
@@ -67,7 +68,9 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
             }
 
-            var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, device.ReadBlock, Progress);
+            var clock = Stopwatch.StartNew();
+            Progress("init start", clock);
+            var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, device.ReadBlock, text => Progress(text, clock));
             if (!blank.IsOK())
             {
                 return blank;
@@ -80,13 +83,13 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             Mbr.Create(device);
-            Progress("mbr ok");
+            Progress("mbr ok", clock);
             if (!PartitionManager.Create(device, PartitionStart, device.BlockCount - PartitionStart, 0x0C, Guid.Empty))
             {
                 return Failure("PartitionCreationRefused", "Cosmos hat das Anlegen der Partition abgelehnt.");
             }
 
-            Progress("partition ok");
+            Progress("partition ok", clock);
             StorageManager.RescanPartitions(device);
             var partitions = StorageManager.GetPartitions(device);
             if (partitions.Count != 1)
@@ -94,7 +97,7 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("UnexpectedPartitionCount", "Nach der Einrichtung wurde nicht genau eine Partition erkannt.");
             }
 
-            Progress("format start");
+            Progress("format start", clock);
             var options = new FatFormatOptions
             {
                 Type = FatType.Fat32,
@@ -106,7 +109,7 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             device.Flush();
-            Progress("format ok");
+            Progress("format ok", clock);
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception)
@@ -116,7 +119,9 @@ internal sealed class CosmosStorageService : IStorageService
     }
 
     // Fortschritt seriell: die Shell blockiert bei grossen Platten, der Bildschirm zeigt erst am Ende etwas.
-    private static void Progress(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE " + text + "\n");
+    // t = Millisekunden seit Beginn von disk init: je Befehl gerechnet trennt das langsames Lesen von einem Hang.
+    private static void Progress(string text, Stopwatch clock) =>
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE {text} t={clock.ElapsedMilliseconds}ms\n");
 
     /// <summary>
     /// Bindet die einzige Partition des benannten Laufwerks ein, ohne sie zu formatieren.
