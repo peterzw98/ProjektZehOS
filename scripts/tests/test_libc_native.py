@@ -18,6 +18,11 @@ HEADERS = {
 }
 
 
+# Unter ELF wuerden Aufrufe innerhalb der Bibliothek (realloc -> free, calloc -> malloc) an die bereits geladene
+# glibc gebunden (Interposition) und gaeben Arena-Zeiger an deren free; -Bsymbolic bindet sie an libc.c selbst.
+LINK_LOCAL = [] if os.name == "nt" else ["-Wl,-Bsymbolic"]
+
+
 @unittest.skipIf(shutil.which("gcc") is None, "gcc fuer die native libc-Pruefung erforderlich")
 class NativeLibcTests(unittest.TestCase):
     @classmethod
@@ -36,7 +41,7 @@ class NativeLibcTests(unittest.TestCase):
         subprocess.run([compiler, "-shared", "-fPIC", "-O2", "-nostdinc", "-nostdlib", "-ffreestanding", "-fno-builtin",
                         "-I", str(ROOT / "ProjektZeh/Native/Wasm/libc/include"), "-isystem", str(include),
                         str(ROOT / "ProjektZeh/Native/Wasm/libc/libc.c"), str(ROOT / "scripts/tests/libc-host.c"),
-                        "-lgcc", "-o", str(library)], check=True)
+                        "-lgcc", "-o", str(library)] + LINK_LOCAL, check=True)
         cls.lib = lib = ctypes.CDLL(str(library))
         for name in ("malloc", "calloc", "realloc", "heap_test_last_raw", "heap_test_last_freed"):
             getattr(lib, name).restype = ctypes.c_void_p
