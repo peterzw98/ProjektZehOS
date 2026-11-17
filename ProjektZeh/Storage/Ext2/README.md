@@ -4,8 +4,45 @@ Gemeinsame Quelle für Kernel (Plug) und Hostprobe `experiments/StorageProbe` (`
 3.0.97; der Treiber zum Mounten, Lesen und Schreiben kommt aus dem Paket. Ersetzt werden zwei Stellen: das Formatieren
 (`Ext2Formatter.Format`) und die Inode-Freigabe beim Löschen (`Ext2Superblock.FreeInode`, siehe unten).
 
-Im Produkt wird ext2 noch nirgends eingehängt. Vor dem ersten Produktmount muss `Ext2FeatureGate.Evaluate` davor
-geschaltet und `s_state` (Fehlerflag) ausgewertet werden; ohne das mountet Cosmos unbekannte Features schreibend.
+Im Produkt wird ext2 noch nirgends beim Booten oder über die Shell eingehängt. Die neue explizite Lesekomponente
+`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Mount und verwendet einen eigenen
+Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Sie ist noch nicht als Produktfunktion aktiviert.
+
+## Abgesicherter Lesemount
+
+`Ext2FeatureGate` lässt nur das geprüfte 4-KiB-Profil zu. Unbekannte Incompat-Bits führen zur Ablehnung,
+unbekannte Compat-/RoCompat-Bits höchstens zum Lesemount. `s_state` ist eine Bitmaske: nur 1 (VALID ohne ERROR)
+behält die Featureentscheidung; 0, 2 und 3 erlauben höchstens Lesen, unbekannte Zustandsbits führen zur Ablehnung.
+Diese Entscheidung repariert keine Metadaten und bestätigt keine Konsistenz beschädigter Volumes.
+Vor dem nativen Mount werden außerdem positive Inode-/Blockzahlen (mindestens 16 Blöcke), `first_data_block=0`,
+Gruppengrößen von 1 bis 32768 sowie eine Inodegröße als Zweierpotenz zwischen 128 und 4096 geprüft. Damit werden
+offensichtliche Geometriefehler vor den nativen Bitmap- und Inodetabellenzugriffen abgelehnt; Verweise innerhalb
+der Gruppen und beschädigte Verzeichnisse benötigen weiterhin eine unabhängige Offlineprüfung.
+Volumen und Gerät sind auf 128 GiB begrenzt; höchstens 16384 Gruppen entsprechen dem geprüften Formatterprofil
+mit 8-MiB-Gruppen. Die Inodezahl muss exakt Gruppenzahl × Inodes je Gruppe entsprechen (überlaufsicher mit `ulong`
+berechnet). Diese Grenzen verhindern unkontrollierte Gruppendeskriptor-Allokationen aus manipulierten Headern.
+
+Das Mountflag allein verhindert in Cosmos 3.0.97 nicht alle Schreibzugriffe. Erneute ILSpy-Prüfung der installierten
+`Cosmos.Kernel.System.dll` aus Paket 3.0.97 bestätigte (Zeilen im dekompilierten Quelltext):
+
+- `Ext2FileOperations.cs:170–182`: `Fsync` schreibt jeden nativen Inode und flusht immer; `Release` ruft es ohne
+  Dirty- oder Read-only-Prüfung auf. `VfsFileHandle.cs:88–92` ruft `Release` auch nach reinem Lesen auf.
+- `Ext2Superblock.cs:537–547`: auch `Drop` selbst ruft `Flush` auf; dieses flusht das Gerät und aktualisiert
+  anschließend den Superblock. Nur den Aufruf in `Ext2SuperblockOperations` zu umgehen genügt deshalb nicht.
+
+Die Lesesicht verpackt alle über Lookup und ReadDir gelieferten Inodes, verweigert Mutationen und delegiert
+Read/Seek mit dem nativen Inode. Release/Fsync/Sync/Drop schreiben nicht und benötigen keine native Freigabe:
+die Caches sind verwaltet. Darunter verweigert `CosmosReadOnlyBlockDevice` jeden WriteBlock- und Flush-Aufruf
+mit einer sichtbaren Ausnahme. Eine nichtleere Source wird abgelehnt, weil sie im Cosmos-Treiber das injizierte
+Gerät umgehen würde. Die Komponente unterstützt zunächst nur 512-Byte-Sektoren.
+
+Ein langlebiges Komponentenobjekt registriert seinen Namen einmal und kann denselben Datenträger erneut mounten.
+Für die spätere Produktintegration fehlen noch Gerätebesitz, Rechteprüfung und die allgemeine Mountverwaltung;
+derzeit darf die Komponente ausschließlich mit exklusiv gehaltenen Testdatenträgern verwendet werden.
+
+Die Hostprobe `dotnet run --project experiments/StorageProbe/StorageProbe.csproj -c Release -- readonly-selftest`
+prüft mit den echten Cosmos-Assemblies ein frisches RAM-Volume einschließlich Datei-/Verzeichnislesen,
+Schließen, Sync/Drop, verbotenen Mutationen und unverändertem Volumenhash. Sie ersetzt keinen Gasttest des VFS-Mounts.
 
 ## Herkunft und Lizenz
 
@@ -99,6 +136,14 @@ nur, wenn es genau 72 MiB groß ist; die App-Platte hat 64 MiB. Erstes MiB kompl
 über `VfsManager.TryFormat` (4096 Byte und `sparse_super` belegen den Plug), prüft `Ext2FeatureGate`, mountet die
 ganze Platte ohne Partitionstabelle und führt Create/Write, Append, Seek-Write, Read, Rename, Mkdir, Rmdir, Delete,
 Sync und Unmount aus; `probe.bin` (72 KiB, reicht in den Einfach-Indirektblock) bleibt. Trägt die Platte ext2:
-Lauf 2 prüft Featurevertrag, Mount und SHA-256 von `probe.bin`. Jeder andere Inhalt bricht ohne Schreibzugriff ab.
+Lauf 2 verwendet nur die Lesekomponente `CosmosReadOnlyExt2FileSystem` unter `/mnt/ext2-ro` (der native
+Cosmos-Lesemount schreibt bei Sync/Drop): SHA-256 über die ganze Platte vorher, Featurevertrag, Mount, Lesen von
+`probe.bin`/`reuse.bin`/`neu`, Datei-Handle mit Lesen, Sync und Schließen bei verweigertem Write/SetAttr, verweigerte
+Create/Delete/Mkdir/Rename ohne Wirkung, Unmount und derselbe SHA-256 danach; das Hostskript vergleicht zusätzlich den
+Image-Hash vor und nach Lauf 2. Für die verweigerten Mutationen prüft die Probe vorher die Ausgangslage (Ziel
+vorhanden, neue Namen fehlen) und nachher unveränderten Namen und Hash. `/mnt` muss nicht existieren:
+`VfsManager.TryMount` normalisiert nur den Einhängepunkt (Cosmos `VfsManager.cs:692-706`, efcf20c) und prüft keinen
+Elternpfad; die Probe protokolliert `ro-info /mnt existiert=…` ohne Bewertung. Jeder andere Inhalt bricht ohne
+Schreibzugriff ab.
 Seriell `STORAGE_PROBE <schritt> PASS|FAIL …`, Ausnahmen werden dem laufenden Schritt zugeordnet, am Ende immer
 `STORAGE_PROBE DONE`; danach fährt der Gast über den normalen Energiepfad herunter.

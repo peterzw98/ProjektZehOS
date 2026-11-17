@@ -101,6 +101,11 @@ void __wrap_Gen_Start(const struct MapGenerator* gen, int seed, int width, int h
 	genBegin = begin;
 	genComputeUs = 0;
 	genRunning = true;
+#ifdef ZEHOS_WORLD_SEED
+	/* Nur Testbuilds (build.py --world-seed): Server.c waehlt den Seed nach der Uhr; eine feste Welt macht
+	   Gastpruefungen reproduzierbar und Messungen vergleichbar. */
+	seed = ZEHOS_WORLD_SEED;
+#endif
 	__real_Gen_Start(gen, seed, width, height, length);
 	genComputeUs += Elapsed(begin);
 }

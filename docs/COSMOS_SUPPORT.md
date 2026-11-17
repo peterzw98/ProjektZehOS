@@ -10,6 +10,10 @@ Kernelcode liegt bei `0xffffffff8…` (`-mcmodel=kernel`), der Heap im direkt ab
 
 WAMR 2.4.5 läuft im selben Probe-Build als reiner AOT-Lader (`ThirdParty/wamr`, Plattformschicht `Native/Wasm/wamr-platform`; Kernelabbild rund 199 KB größer). Ein mit `wamrc --target=x86_64 --cpu=x86-64 --bounds-checks=1 --stack-bounds-checks=1 --size-level=0 --disable-simd` übersetztes `.aot` lädt im Gast unter KVM und TCG; Rückgabewert, Hostfunktion, Zugriff außerhalb des linearen Speichers, Überlauf des Wasm-Stacks und Überlauf des nativen Stacks (Grenze 7 MiB auf einem 8-MiB-Thread) verhalten sich wie erwartet. Nach einem Trap ist der Wasm-Stackzeiger (`__stack_pointer`) nicht zurückgesetzt; belegt ist danach nur ein Aufruf ohne Speicher-Stack, Funktionen mit Speicher-Stack scheitern. Eine Instanz ist nach einem Trap zu verwerfen. Ein `f64`-Zwischenwert überlebt acht `sleep_ms`-Threadwechsel, während ein zweiter Thread mit `double` rechnet. Zwei Befunde dabei: `__cosmos_heap_alloc` liefert Blöcke, die teils nur auf 2 Byte ausgerichtet sind (beobachtet: Rohblock bei `…6002`, ein anderer bei `…2004`); `malloc` der freistehenden C-Laufzeit gibt das unverändert weiter, obwohl C 16 Byte (`max_align_t`) zusagt. WAMRs Lader liest Puffer 4-Byte-ausgerichtet und erkannte auf solchen Blöcken den Dateikopf nicht; die Plattformschicht richtet ihre Blöcke deshalb selbst auf 16 Byte aus. Außerdem sind `strtoll`, `strtoull` und `strtod` der C-Laufzeit Platzhalter, die 0 liefern; die Plattformschicht bringt eigene `atoi`/`strtoul` mit, weil der Lader Funktionsnummern aus Symbolnamen liest.
 
+## Pfadauflösung, Symlinks und Mountzuordnung in Cosmos 3.0.97 am 17. November 2026
+
+Quellbefund (efcf20c, kein Gasttest mit Symlinks): `VfsManager.TryResolve` (`VfsManager.cs:508ff`) ist privat, folgt Symlinks in jedem Segment einschließlich des letzten (höchstens 8), lehnt `..` ab und liefert keinen kanonischen Pfad; öffentliche Aufrufe wie `TryStat` und `TryOpenFile` folgen ebenfalls. Ein `lstat` ohne Folgen gibt es nicht. In `System.IO` ist `LStat` gleich `Stat`, `SymLink` liefert `EPERM`, `ReadLink` nichts (`InteropSysFilePlug.cs:207-287`): ZehOS selbst legt keine Links an, sieht vorhandene ext2-Links aber nie als solche. `IsReadOnlyPath` prüft den unaufgelösten Text (`FileDescriptorTable.cs:98`, `VfsManager.Paths.cs:212`), ein Symlink-Elternpfad kann ein Lese-Mount-Flag also umgehen. Die Zuordnung Pfad → Mount (`FindMount`, `VfsManager.cs:671`) ist privat; öffentlich ist nur `VfsManager.Mounts`. ZehOS prüft deshalb vor jedem Dateizugriff jede Komponente ohne Folgen und lehnt jeden Symlink und jeden fremden Mount ab (`ProjektZeh/Security/PathGuard.cs`, Cosmos-Anbindung `CosmosPathGuard.cs`). Restrisiko: Änderungen am Baum zwischen Prüfung und Zugriff.
+
 ## ext2-Formatierer aus Cosmos 3.0.97 am 17. November 2026
 
 **Keine Freigabe:** Die Linux-Hostprobe mit dem unveränderten Cosmos-Formatierer erzeugte in allen 18 Kombinationen (4/8/64 MiB und 32/64/128 GiB, jeweils 1/2/4 KiB-Blöcke) Dateisysteme, für die `e2fsck -fn` Exit 4 meldet. Festgestellt wurden fehlende Backup-Metadaten, eine falsche 1-KiB-Gruppengeometrie und ungesetzte Bitmap-Füllbits. Die Windows-Gegenprobe bestätigt Formatteraufruf und Headerwerte, keine Konsistenzprüfung im Gast. ext2-Aktivierung und Root-Migration bleiben gesperrt. Reproducer, Zuständigkeiten und Grenzen: [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md).
@@ -267,3 +271,43 @@ Prüfstand: SDK10.0.403 und Cosmos3.0.94 unverändert. **410 Hosttests mit Warnu
 Im normalen QEMU-Gast mit isolierter 64-MiB-Datenimagekopie geprüft: Anmeldung, QWERTZ, `äöü ÄÖÜ ß €`, ISO-Sondertasten, AltGr mit CapsLock/Shift, deutscher Strg+Plus-Zoom, Terminalrad in beide Richtungen, Dateivorschau mit Rad, Textshellausgabe und Pager mit Rad. Hosttests ergänzen Hover-Routing in geteilten Terminals, Listen/Textfeldern, Auswahl-/Entwurfserhalt, Überlauf-Reset und Auflösungswechsel der Textshell.
 
 VMware: Ein separater Start ohne Datenlaufwerk erreichte laut serieller Diagnose Textshell und Desktop. Interaktive Eingabe- und Scrollprüfungen bleiben offen; `vmrun captureScreen` verweigerte die anonyme Gastoperation. Ein QEMU-Ergebnis belegt diese Abläufe nicht für VMware. Die tatsächliche Zwei-Finger-Geste am Hosttrackpad wurde nicht physisch ausgeführt; geprüft wurden die entsprechenden QEMU-Geräteereignisse. Direkte Laptop-Trackpadtreiber und ein serielles Fernterminal sind nicht Teil dieser Änderung.
+
+## SIMD-Probe (S1, 17. November 2026)
+
+Frage: Funktionieren `System.Runtime.Intrinsics` (`Vector128/256`, `Sse2/Sse41/Avx2.IsSupported`, `Vector128.IsHardwareAccelerated`) im Cosmos-3.0.97-/NativeAOT-Kernel korrekt und schneller als skalar? **Stand: Standard-ILC-Läufe auf TCG und KVM bestanden (siehe Tabelle); der v3-Build bootet auf TCG und KVM nicht (0 Byte seriell); der v2-Lauf steht aus.**
+
+**Probe:** `ProjektZeh/Runtime/CosmosSimdProbe.cs`, nur mit `-p:ZehOSSimdProbe=true` (Konstante `ZEHOS_SIMD_PROBE`, Muster `ZehOSThreadProbe`); kein normaler Build ändert sich. Optional `-p:ZehOSSimdInstructionSet=<Wert>` reicht `--instruction-set:<Wert>` an ILC durch (etwa `x86-64-v3`, `native`); ohne Angabe gilt der Cosmos-Standard. `ProjektZeh/ThirdParty/wamr` bleibt unberührt.
+
+Serielle Zeilen `SIMD_PROBE …`: `isa` (alle `IsSupported`-Werte), `accel` (`IsHardwareAccelerated`, `Vector<int>.Count`), je Stufe `begin <Name>` vor dem Lauf (ein Absturz zeigt die letzte Stufe), danach `<Name> PASS|FAIL|SKIP` und `INFO … speedup_permille=<n> FASTER|NOT_FASTER`, am Ende `SIMD_PROBE PASS` oder `FAIL …`. **Korrektheit** entscheidet PASS/FAIL (exakter Vergleich mit dem Skalarergebnis), **Zeiten** sind INFO. Stufen: int-Skalarprodukt (skalar, `Vector128`, `Vector256`, `Vector<T>`, `Sse41`, `Avx2`), float-Skalarprodukt (`Vector128`, `Fma`/`Avx`), Byte-Zählen (`Sse2`, `Avx2` mit `MoveMask`/`PopCount`) und **Registerzustand über Threadwechsel** (zwei Threads rechnen 400 ms parallel mit Vektoren und prüfen jedes Ergebnis; ein beim Umschalten nicht gesicherter XMM/YMM-Zustand würde Abweichungen zeigen).
+
+**Aufruf (Clerk):**
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSSimdProbe=true            # Standard-Befehlssatz
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSSimdProbe=true -p:ZehOSSimdInstructionSet=x86-64-v3   # nur auf Wunsch
+python3 scripts/test-simd-probe.py --iso <ISO> --accel tcg --cpu qemu64      # Grundausstattung (Pflicht)
+python3 scripts/test-simd-probe.py --iso <ISO> --accel tcg --cpu max
+python3 scripts/test-simd-probe.py --iso <ISO> --accel kvm --cpu host        # über einen Clerk
+```
+
+| Lauf (Build `5347b06`, Standard-ILC) | `isa` Sse41/Avx2/Fma | Korrektheit | Beschleunigung (`speedup_permille`) | Threadzustand |
+|---|---|---|---|---|
+| TCG `qemu64` | `SKIP` (IsSupported=false) | PASS | int-dot 263 (NOT_FASTER), float-dot 1008, byte-count 1212 | 0 Abweichungen |
+| TCG `max` | `SKIP` (IsSupported=false) | PASS | int-dot 243 (NOT_FASTER), float-dot 1030, byte-count 1225 | 0 Abweichungen |
+| KVM `host` | `SKIP` (IsSupported=false, auch auf dem Host-CPU) | PASS | int-dot `Vector128` 1602 (`Vector<T>` 1601), float-dot 2776, byte-count `Sse2` 4358 | 0 Abweichungen |
+| TCG `max`, `x86-64-v3` | **keine Ausgabe**: serielles Protokoll 0 Byte nach rund 5 min, keine `isa`-/`accel`-Zeile, keine Stufe begonnen; der Standard-ISO lief im selben Aufbau | | | |
+| KVM `host`, `x86-64-v3` | **keine Ausgabe** (serielles Protokoll 0 Byte, keine Stufe), wie TCG `max`; Standard-ISO lief in allen drei Läufen | | | |
+| TCG `max` und KVM `host`, `x86-64-v2` (SSE4.2, POPCNT; ohne VEX) | **vorgeschlagen**, ausstehend | | | |
+| VMware | **offen** (nicht geprüft) | | | |
+
+Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille gegenüber der Skalarstufe derselben Gruppe (int-dot: `Vector128` und `Vector<T>` gegen skalar; float-dot: `Vector128`; byte-count: `Sse2`). **`isa`-Zeile in allen drei Läufen gleich:** `X86Base=True Sse=True Sse2=True`, alle übrigen (`Sse3`, `Ssse3`, `Sse41`, `Sse42`, `Popcnt`, `Avx`, `Avx2`, `Fma`, `Bmi1`, `Bmi2`, `Lzcnt`, `Avx512F`) `False`; **`accel`:** `Vector128=True`, `Vector256=False`, `Vector512=False`, `Vector<int>.Count=4` (also 128 Bit). Ursache laut Koordinator: Der Kernel wird ohne ILC-`--instruction-set` gebaut, der Befehlssatz ist die x64-Baseline mit SSE2; er wird zur Kompilierzeit festgelegt und folgt nicht der CPU (dasselbe Ergebnis mit `-cpu max` und auf dem Host-CPU). Auch `Popcnt` und `Lzcnt` fehlen: `BitOperations.PopCount` läuft im Standardbuild über den Softwarepfad.
+
+**Empfehlung für R1 (Stand der Standard-ILC-Läufe):**
+
+- **`Vector128` über SSE2: ja.** Korrekt auf TCG (`qemu64`, `max`) und KVM, 0 Abweichungen beim Registerzustand über Threadwechsel, und auf KVM klar schneller (int-dot 1,6×, float-dot 2,8×, byte-count 4,4×). Die Baseline SSE2 genügt dafür; kein Build-Schalter nötig.
+- **Vorsicht bei Ganzzahl-Multiplikation (32 Bit):** SSE2 hat kein `pmulld`; die Probe zeigt unter TCG 0,24–0,26× (langsamer als skalar). Für Wasm-SIMD heißt das: `f32x4`/`i8x16`/Vergleichs- und Maskenoperationen bilden sich gut ab, `i32x4.mul` kostet ohne SSE4.1 einen Emulationsaufschlag; unter KVM war int-dot trotzdem schneller.
+- **v3-Build bootet unter TCG `max` nicht (keine serielle Ausgabe):** Der Absturz oder Hänger liegt vor der seriellen Initialisierung, also im frühen Start. **Vermutung, ungeprüft:** Mit `--instruction-set:x86-64-v3` erzeugt ILC auch für die Laufzeit- und Kernelcode VEX-codierte Befehle (AVX/AVX2/BMI); sie lösen `#UD` aus, solange das Betriebssystem `CR4.OSXSAVE` und `XCR0` nicht gesetzt hat, und das tut der Kernel offenbar nicht. Ein v3-Build für den ganzen Kernel ist damit ohne Cosmos-seitige Änderung kein gangbarer Weg. **Nächster billiger Test:** `x86-64-v2` (SSE3/SSSE3/SSE4.1/SSE4.2/POPCNT, Legacy-Kodierung ohne XCR0): wäre `pmulld` (i32x4.mul), `pshufb` und `popcnt` nutzbar, ohne dass der Kernel AVX freischalten muss.
+- **SSE4.1/AVX2/FMA im Standardbuild: nein**, weil `IsSupported=false` (Baseline). Ein Build mit `-p:ZehOSSimdInstructionSet=x86-64-v3` bootet unter TCG `max` nicht (siehe oben) und kommt damit nicht in Frage; der KVM-Lauf mit v3 zeigt dasselbe (0 Byte seriell), die Ursache ist also nicht der TCG-Emulator.
+- **Mindestens zu belegen vor einer v3-Freigabe:** Lauf `x86-64-v3` auf KVM `host` und TCG `max` (Absturz zeigt die letzte `begin`-Stufe), VMware, und eine echte CPU ohne AVX2.
+
+Bekannte Grenzen der Probe: `IsSupported` ist im NativeAOT-Code entweder eine Kompilierzeitkonstante des gewählten Befehlssatzes oder ein Laufzeitwert aus der CPU-Erkennung der Runtime; welcher der beiden Fälle im Cosmos-Kernel gilt, zeigt erst der Lauf (`isa`-Zeile mit und ohne `ZehOSSimdInstructionSet`). Die Probe liest `XCR0` nicht direkt.

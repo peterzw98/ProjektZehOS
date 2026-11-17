@@ -5,9 +5,9 @@ namespace ProjektZeh.Storage.Ext2;
 /// <summary>Result of the pre-mount feature check of an ext2 superblock.</summary>
 public enum Ext2MountDecision
 {
-    /// <summary>Every feature is known; read-write mount allowed.</summary>
+    /// <summary>Unterstützter Header; weitere Mount- und Rechteprüfungen bleiben erforderlich.</summary>
     Ok,
-    /// <summary>Only unknown compat/ro_compat bits: mount read-only at most.</summary>
+    /// <summary>Zustandsfehler oder unbekannte Compat-/RoCompat-Bits: höchstens lesend einhängen.</summary>
     ReadOnly,
     /// <summary>Not mountable: not a supported ext2 volume or unknown incompat bits.</summary>
     Reject,
@@ -22,13 +22,17 @@ public enum Ext2MountDecision
 /// </summary>
 public static class Ext2FeatureGate
 {
+    internal const uint MaximumBlocks = 33554432; // 128 GiB mit 4096-Byte-Blöcken.
+    private const uint MaximumGroups = 16384; // Das geprüfte Formatterprofil verwendet 8-MiB-Gruppen.
     private const int SuperblockSize = 1024;
     private const int MagicOffset = 56;
+    private const int StateOffset = 58;
     private const int LogBlockSizeOffset = 24;
     private const int RevLevelOffset = 76;
     private const int FeatureCompatOffset = 92;
     private const int FeatureIncompatOffset = 96;
     private const int FeatureRoCompatOffset = 100;
+    private const int InodeSizeOffset = 88;
 
     private const ushort Magic = 0xEF53;
     private const uint RevDynamic = 1;
@@ -48,8 +52,34 @@ public static class Ext2FeatureGate
             return Ext2MountDecision.Reject;
         }
 
+        uint inodes = BitConverter.ToUInt32(superblock.Slice(0, 4));
+        uint blocks = BitConverter.ToUInt32(superblock.Slice(4, 4));
+        uint firstDataBlock = BitConverter.ToUInt32(superblock.Slice(20, 4));
+        uint blocksPerGroup = BitConverter.ToUInt32(superblock.Slice(32, 4));
+        uint inodesPerGroup = BitConverter.ToUInt32(superblock.Slice(40, 4));
+        ushort inodeSize = BitConverter.ToUInt16(superblock.Slice(InodeSizeOffset, 2));
+        // Die nativen Bitmap-/Inodetabellenpfade setzen diese Grenzen voraus; dies ersetzt kein fsck.
+        if (inodes == 0 || blocks < 16 || blocks > MaximumBlocks || firstDataBlock != 0
+            || blocksPerGroup is 0 or > 32768 || inodesPerGroup is 0 or > 32768
+            || inodeSize < 128 || inodeSize > 4096 || (inodeSize & (inodeSize - 1)) != 0)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
+        ulong groups = ((ulong)blocks + blocksPerGroup - 1) / blocksPerGroup;
+        if (groups > MaximumGroups || (ulong)inodes != groups * inodesPerGroup)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
+        ushort state = BitConverter.ToUInt16(superblock.Slice(StateOffset, 2));
+        if ((state & ~3) != 0)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
         bool unknownCompat = (BitConverter.ToUInt32(superblock.Slice(FeatureCompatOffset, 4)) & ~KnownCompat) != 0;
         bool unknownRoCompat = (BitConverter.ToUInt32(superblock.Slice(FeatureRoCompatOffset, 4)) & ~KnownRoCompat) != 0;
-        return unknownCompat || unknownRoCompat ? Ext2MountDecision.ReadOnly : Ext2MountDecision.Ok;
+        return state != 1 || unknownCompat || unknownRoCompat ? Ext2MountDecision.ReadOnly : Ext2MountDecision.Ok;
     }
 }

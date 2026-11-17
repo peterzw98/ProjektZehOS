@@ -42,7 +42,8 @@ public sealed class Kernel : Sys.Kernel
 #else
     private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
 #endif
-    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill));
+    // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
+    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill), StringComparison.OrdinalIgnoreCase, CosmosPathGuard.For("/data"));
     // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
     private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild(), CurrentVersion);
     private static bool SecurityRecovery =>
@@ -126,7 +127,7 @@ public sealed class Kernel : Sys.Kernel
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
@@ -248,6 +249,13 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_THREAD_PROBE
         if (!CosmosThreadProbe.Run())
+        {
+            Stop();
+            return;
+        }
+#endif
+#if ZEHOS_SIMD_PROBE
+        if (!CosmosSimdProbe.Run())
         {
             Stop();
             return;
