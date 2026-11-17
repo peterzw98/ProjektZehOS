@@ -45,7 +45,7 @@ def region(ppm: bytes, box: tuple[int, int, int, int]) -> bytes:
 
 
 # Erwartet im Recovery-Lauf, der absichtlich ohne Datenplatte startet (DataDiskSelector, Kernel protokolliert es als Error).
-WITHOUT_DISK = "Error Storage: Failure: cause=DeviceNotFound message=Keine Datenplatte gefunden."
+WITHOUT_DISK = "Error Storage: Failure: cause='DeviceNotFound' message='Keine Datenplatte gefunden.'"
 
 
 def unexpected_errors(serial: str, recovery: bool) -> list[str]:

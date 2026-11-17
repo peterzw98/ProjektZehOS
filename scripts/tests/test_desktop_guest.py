@@ -43,10 +43,10 @@ class ErrorLineTests(unittest.TestCase):
         self.assertEqual(guest.error_lines(serial), [])
 
     def test_missing_data_disk_is_expected_only_in_recovery(self):
-        serial = ('[9 ms] Error Storage: Failure: cause=DeviceNotFound message=Keine Datenplatte gefunden.\n'
-                  '[10 ms] Error Storage: Failure: cause=ReadFailed message=Lesefehler.\n')
+        serial = ("[9 ms] Error Storage: Failure: cause='DeviceNotFound' message='Keine Datenplatte gefunden.'\n"
+                  "[10 ms] Error Storage: Failure: cause='ReadFailed' message='Lesefehler.'\n")
         self.assertEqual(guest.unexpected_errors(serial, recovery=True),
-                         ['[10 ms] Error Storage: Failure: cause=ReadFailed message=Lesefehler.'])
+                         ["[10 ms] Error Storage: Failure: cause='ReadFailed' message='Lesefehler.'"])
         self.assertEqual(len(guest.unexpected_errors(serial, recovery=False)), 2)
 
 
