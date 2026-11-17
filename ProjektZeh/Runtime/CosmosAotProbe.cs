@@ -1,7 +1,9 @@
 #if ZEHOS_AOT_PROBE
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
+using ProjektZeh.Runtime.Wasm;
 
 namespace ProjektZeh.Runtime;
 
@@ -17,6 +19,8 @@ internal static unsafe class CosmosAotProbe
     private const ulong Cr4Smep = 1ul << 20;
     // -mcmodel=kernel: 32-Bit-Spruenge und RIP-relative Zugriffe reichen +-2 GiB weit.
     private const ulong NearCodeDistance = 1ul << 31;
+    // ret42, call_host, oob, recurse, recurse_native und ret42 nach den Traps (aot_probe.c).
+    private const int FixtureCases = 6;
 
     public static bool Run()
     {
@@ -48,6 +52,18 @@ internal static unsafe class CosmosAotProbe
             return false;
         }
         Write($"wamr init PASS version={major}.{minor}.{patch}");
+
+        // Wie Paket-Apps auf einem eigenen Thread mit 8 MiB Stack; die native Stackgrenze haengt davon ab.
+        int passed = 0;
+        var worker = new Thread(() => passed = NativeFixture(), WasmRuntime.ThreadStackBytes);
+        worker.Start();
+        worker.Join();
+        if (passed != FixtureCases)
+        {
+            Write($"FAIL fixture {passed}/{FixtureCases}");
+            return false;
+        }
+        Write($"fixture PASS {passed}/{FixtureCases}");
         Write("PASS");
         return true;
     }
@@ -76,6 +92,9 @@ internal static unsafe class CosmosAotProbe
 
     [DllImport("*", EntryPoint = "zehos_aot_probe_wamr_init", ExactSpelling = true)]
     private static extern int NativeWamrInit(uint* major, uint* minor, uint* patch);
+
+    [DllImport("*", EntryPoint = "zehos_aot_probe_fixture", ExactSpelling = true)]
+    private static extern int NativeFixture();
 
     [DllImport("*", EntryPoint = "zehos_aot_probe_exec", ExactSpelling = true)]
     private static extern int NativeExec(ulong* blockAddress);
