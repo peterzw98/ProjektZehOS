@@ -52,3 +52,12 @@ diff --git a/src/LScreens.c b/src/LScreens.c
  	LInput_Add(s,  &s->iptUsername, 280, "Username..",  main_iptUsername);
  	LInput_Add(s,  &s->iptPassword, 280, "Password..",  main_iptPassword);
  	LButton_Add(s, &s->btnLogin,    100, 35, "Sign in", 
+@@ -1024,7 +1027,7 @@
+ 	s->Tick          = MainScreen_Tick;
+ 	s->title         = "ClassiCube";
+ 
+-#ifdef CC_BUILD_NETWORKING
++#if defined CC_BUILD_NETWORKING && !defined CC_BUILD_ZEHOS
+ 	s->onEnterWidget = (struct LWidget*)&s->btnLogin;
+ #else
+ 	s->onEnterWidget = (struct LWidget*)&s->btnSPlayer;

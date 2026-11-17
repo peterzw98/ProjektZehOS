@@ -31,7 +31,7 @@ Fehlercodes der Netz-ABI sind WASI-Fehlernummern; sie stimmen mit den `errno`-We
 
 ### HTTP bleibt aus
 
-`CC_BUILD_NETWORKING` schaltet in ClassiCube Classic-Protokoll und HTTP-Worker (Skins, Texturpakete vom Server, classicube.net-Anmeldung, Updateprüfung) gemeinsam ein. Für ZehOS wird nur das Classic-Protokoll gebraucht. Ein Patch lässt `src/Http_Worker.c` für ZehOS bei den vorhandenen Stubs: Alle HTTP-Abrufe scheitern weiter sofort, das Paket nimmt keine Verbindung zu Dritten auf und BearSSL wird nicht gebraucht. Folge: Spieler erscheinen mit Standardskin, Server-Texturpakete werden nicht geladen.
+`CC_BUILD_NETWORKING` schaltet in ClassiCube Classic-Protokoll und HTTP-Worker (Skins, Texturpakete vom Server, classicube.net-Anmeldung, Updateprüfung) gemeinsam ein. Für ZehOS wird nur das Classic-Protokoll gebraucht. Ein Patch lässt `src/Http_Worker.c` für ZehOS bei den vorhandenen Stubs: HTTP-Abrufe werden nie beantwortet (der Stub meldet kein Ergebnis; im Launcher bleibt deshalb „Checking..“ neben Exit stehen), das Paket nimmt keine Verbindung zu Dritten auf und BearSSL wird nicht gebraucht. Folge: Spieler erscheinen mit Standardskin, Server-Texturpakete werden nicht geladen.
 
 ### Eingabe von Server und Name: ClassiCubes Launcher
 

@@ -115,8 +115,14 @@ def main():
         # versetzt das Fenster um 28 Pixel.
         time.sleep(3)
         launcher = view(capture("launcher"))
-        offset = 28 * launches.pop(0)
-        guest.qmp.click(33+399+offset, 120+259+110+offset, *guest.size)
+        run = launches.pop(0)
+        offset = 28 * run
+        if run == 0:
+            # Enter ohne gewaehltes Widget startet Singleplayer (onEnterWidget); vorher zeigte es auf das unter
+            # ZehOS ausgeblendete "Sign in" ohne OnClick und beendete die App mit einem Trap.
+            guest.qmp.tap("ret")
+        else:
+            guest.qmp.click(33+399+offset, 120+259+110+offset, *guest.size)
         # Die verrauschte Launcher-Flaeche hat selbst viele Farben; erst wenn sie verschwunden ist, zaehlt world().
         deadline = time.monotonic() + 60
         while difference(launcher, view(capture("launcher-verlassen"))) < len(launcher) // 24:

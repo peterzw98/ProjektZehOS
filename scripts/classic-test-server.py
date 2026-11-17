@@ -180,7 +180,11 @@ class ClassicServer:
             except OSError:
                 return
             with self.lock:
-                free = next(i for i in range(127) if i not in self.clients)
+                free = next((i for i in range(127) if i not in self.clients), None)
+                if free is None:
+                    # Alle Spieler-IDs belegt: abweisen statt den Annahme-Thread mit StopIteration zu beenden.
+                    connection.close()
+                    continue
                 client = Client(connection, address, free)
                 self.clients[free] = client
             threading.Thread(target=self._serve, args=(client,), daemon=True).start()

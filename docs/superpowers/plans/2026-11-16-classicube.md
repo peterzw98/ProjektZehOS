@@ -112,7 +112,7 @@ Ziel: Rechenlastige Apps laufen nahezu nativ.
 ## Etappe 6: Mehrspieler (1–2 Wochen)
 
 - [x] Classic-Protokoll über die vorhandene Netz-ABI (`capability=net`, höchstens vier Verbindungen, 64 KiB Puffer) anbinden; neue Paketversion mit Netzberechtigung. *Ohne Kernelerweiterung; Eingabe über ClassiCubes Launcher (Direct connect), Entwurf [2026-11-17-classicube-mehrspieler.md](../specs/2026-11-17-classicube-mehrspieler.md). Veröffentlichung im Branch `packages` steht aus.*
-- [x] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops. In QEMU; VMware, soweit dort Netz verfügbar ist, sonst als offen nennen. *QEMU WHPX bestanden (`scripts/test-classicube-multiplayer.py`, 17.11.2026); VMware offen.*
+- [x] Gegen einen lokalen Testserver prüfen: Verbinden, Bewegung, Blockänderungen, Abbruch und Serverausfall ohne Einfrieren des Desktops. In QEMU; VMware, soweit dort Netz verfügbar ist, sonst als offen nennen. *QEMU WHPX bestanden (`scripts/test-classicube-multiplayer.py`, 17.11.2026); der zweite Client war ein Python-Client auf dem Host, zwei ZehOS-Gäste und VMware offen.*
 
 **Fertig, wenn:** Zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, und Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
