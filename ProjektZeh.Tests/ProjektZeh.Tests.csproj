@@ -76,6 +76,7 @@
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2DirectoryRemoval.cs" Link="Storage\Ext2\Ext2DirectoryRemoval.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2IndirectBlocks.cs" Link="Storage\Ext2\Ext2IndirectBlocks.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\ChecksummedText.cs" Link="Storage\Partitioning\ChecksummedText.cs" />

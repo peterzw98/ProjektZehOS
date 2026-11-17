@@ -64,6 +64,10 @@ public sealed class FileServiceTests
 
         using (var stream = new MemoryStream(content))
             CollectionAssert.AreEqual(content, FileService.ReadUntilEnd(stream, content.Length).Value, "Inhalt ueber Blockgrenzen");
+        using (var stream = new ShortReadStream(content))
+            CollectionAssert.AreEqual(content, FileService.ReadUntilEnd(stream, content.Length).Value, "Teil-Reads fuellen die Bloecke");
+        using (var stream = new MemoryStream())
+            Assert.AreEqual(0, FileService.ReadUntilEnd(stream, 16).Value!.Length, "leerer Strom");
         using (var stream = new MemoryStream(new byte[8192]))
             Assert.AreEqual(8192, FileService.ReadUntilEnd(stream, 8192).Value!.Length, "genau zwei volle Bloecke bis zur Grenze");
         using (var stream = new MemoryStream(new byte[8193]))
@@ -374,4 +378,10 @@ public sealed class FileServiceTests
         Assert.IsFalse(result.IsOK(), "Ein leerer Pfad darf keine Datei erzeugen.");
         Assert.AreEqual(0, Directory.GetFileSystemEntries(directory).Length, "Ungueltige Eingaben duerfen nichts schreiben.");
     }
+}
+
+/// <summary>Liefert je Read hoechstens sieben Bytes, wie Geraete- oder Netzstroeme.</summary>
+internal sealed class ShortReadStream(byte[] content) : MemoryStream(content)
+{
+    public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 7));
 }
