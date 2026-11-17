@@ -90,7 +90,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
         // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
         accounts = new(systemPaths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), systemPaths.Comparison,
-            CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory)
+            CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory, systemPaths.SecurityDirectory)
         {
             MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
         };

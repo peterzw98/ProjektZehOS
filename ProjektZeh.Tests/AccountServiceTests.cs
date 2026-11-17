@@ -61,6 +61,34 @@ public sealed class AccountServiceTests
         finally { Directory.Delete(root, true); }
     }
 
+    [TestMethod]
+    public void SecurityDirectory_HoldsAccountFilesOutsideRoot()
+    {
+        // Etappe 4.3, Root-Profil: Konten unter /etc/zehos, Verwaltungswurzel / (Spec Etappe 4, Abschnitt 1).
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        string security = Path.Combine(root, "etc", "zehos");
+        Directory.CreateDirectory(security);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)), StringComparison.Ordinal, null,
+                securityDirectory: security)
+            {
+                IsDataMounted = () => true,
+                SetupWindowOpen = true,
+            };
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup);
+            Assert.IsTrue(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+            Assert.IsTrue(File.Exists(Path.Combine(security, AccountService.MetadataFile)));
+            Assert.IsFalse(File.Exists(Path.Combine(root, AccountService.MetadataFile)));
+
+            var reloaded = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)), StringComparison.Ordinal, null,
+                securityDirectory: security);
+            Assert.IsTrue(reloaded.Load().IsOK(), "Konten aus dem Sicherheitsverzeichnis geladen");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [DataTestMethod]
     [DataRow(true, true, false, true)]
     [DataRow(false, true, false, false)]
