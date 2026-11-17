@@ -13,7 +13,8 @@ python3 scripts/test-installer-layout.py .tools/installer-layout
 ```
 
 `layout` (Etappe 7a Schritt 2) partitioniert ein neues sparse Image mit dem produktiven `GptLayoutWriter`
-(32 bis 128 GiB, sonst keine Datei), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
+(32 bis 128 GiB, sonst keine Datei; unter Windows wie bei `format` verweigert, solange die sparse Anlage dort nicht
+geprüft ist, Exitcode 2), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
 (4 KiB, `zehos-root`) und prüft mit `GptLayout.Verify`; `verify` prüft ein vorhandenes Image nur lesend.
 `scripts/test-installer-layout.py` prüft das Ergebnis mit `sgdisk -v`, `sfdisk -J`, `mkfs.fat`/`fsck.fat` im
 ESP-Fenster (Grenze: das belegt nur Lage und Größe der ESP, nicht ZehOS' eigenen FAT-Formatter; der ist nicht
