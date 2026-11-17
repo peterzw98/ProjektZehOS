@@ -10,7 +10,8 @@ Ablauf: lokal installieren, Start aus dem Menue, Launcher "Singleplayer", Welt s
 Block entfernen (links) und setzen (rechts), "Save level" im Pausenmenue, Schliessen ueber das Fenster, drei Starts
 mit freiem Speicher. Ohne --storage muss das Speichern scheitern, ohne das Spiel zu beenden. Mit --storage erhaelt das
 Paket den App-Speicher /save (Etappe 13.4): die Welt wird mit einem zusaetzlich gesetzten Block gespeichert, im
-zweiten Start ueber "Load level" gefunden und geladen.
+zweiten Start ueber "Load level" gefunden und geladen; danach liest das Skript options.txt (Sichtweite per F
+umgeschaltet) und die Welt aus der Testplatte. --disk-full fuellt die Platte vorab, Speichern muss dann scheitern.
 """
 import argparse
 import importlib.util
