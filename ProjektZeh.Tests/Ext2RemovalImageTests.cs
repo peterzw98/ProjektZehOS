@@ -34,12 +34,12 @@ public sealed class Ext2RemovalImageTests
         image = Path.Combine(directory, "data.img");
         string empty = Path.Combine(directory, "leer");
         File.WriteAllBytes(empty, []);
-        Tool("mke2fs", $"-q -t ext2 -b {BlockSize} -O ^dir_index -F {image} 8M");
+        Tool("mke2fs", $"-q -t ext2 -b {BlockSize} -O ^dir_index -F \"{image}\" 8M");
         var commands = new StringBuilder("mkdir d\ncd d\n");
         for (int index = 0; index < Entries; index++) commands.Append(CultureInfo.InvariantCulture, $"write {empty} n{index:D4}\n");
         // Platz fuer die Ersatzlinks entfernter Eintraege, damit deren Inodes nicht verwaist zurueckbleiben.
         commands.Append("cd /\nmkdir k\nexpand_dir k\nexpand_dir k\nexpand_dir k\n");
-        Tool("debugfs", $"-w -f - {image}", commands.ToString());
+        Tool("debugfs", $"-w -f - \"{image}\"", commands.ToString());
         Assert.AreEqual(0, Check().ExitCode, "frisches Image ist sauber");
     }
 
@@ -112,7 +112,7 @@ public sealed class Ext2RemovalImageTests
 
     private (List<long> Blocks, byte[] Data) ReadDirectory()
     {
-        var blocks = Tool("debugfs", $"-R \"blocks /d\" {image}").Output
+        var blocks = Tool("debugfs", $"-R \"blocks /d\" \"{image}\"").Output
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(long.Parse).ToList();
         byte[] data = new byte[blocks.Count * BlockSize];
         using var stream = new FileStream(image, FileMode.Open, FileAccess.Read);
@@ -138,8 +138,8 @@ public sealed class Ext2RemovalImageTests
     /// <summary>Zweiter Link unter /k: nach dem Entfernen aus /d stimmt links_count 1 wieder, die Inode ist nicht verwaist.</summary>
     private void KeepInode(uint inode)
     {
-        var result = Run("debugfs", $"-w -R \"ln <{inode}> /k/i{inode}\" {image}");
-        StringAssert.Contains(Tool("debugfs", $"-R \"ls /k\" {image}").Output, $"i{inode}", result.Error);
+        var result = Run("debugfs", $"-w -R \"ln <{inode}> /k/i{inode}\" \"{image}\"");
+        StringAssert.Contains(Tool("debugfs", $"-R \"ls /k\" \"{image}\"").Output, $"i{inode}", result.Error);
     }
 
     private static (string Name, uint Inode) RecordAt(byte[] data, int offset) =>
@@ -166,13 +166,13 @@ public sealed class Ext2RemovalImageTests
 
     /// <summary>Lebende Namen aus "debugfs ls" (Format "inode (rec_len) name"); freigegebene Records mit Inode 0 zaehlen nicht.</summary>
     private List<string> List() =>
-        Regex.Matches(Tool("debugfs", $"-R \"ls /d\" {image}").Output, @"(\d+)\s+\(\d+\)\s+(\S+)")
+        Regex.Matches(Tool("debugfs", $"-R \"ls /d\" \"{image}\"").Output, @"(\d+)\s+\(\d+\)\s+(\S+)")
             .Where(match => match.Groups[1].Value != "0" && match.Groups[2].Value.StartsWith('n'))
             .Select(match => match.Groups[2].Value).ToList();
 
     private (int ExitCode, string Output) Check()
     {
-        var result = Run("e2fsck", $"-fn {image}");
+        var result = Run("e2fsck", $"-fn \"{image}\"");
         return (result.ExitCode, result.Output + result.Error);
     }
 
@@ -195,12 +195,13 @@ public sealed class Ext2RemovalImageTests
         try
         {
             using var process = Process.Start(start)!;
+            // Erst beide Ausgaben abholen, dann stdin schreiben: debugfs spiegelt jede Befehlszeile, sonst laeuft die Pipe voll.
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
             if (input is not null) process.StandardInput.Write(input);
             process.StandardInput.Close();
-            var error = process.StandardError.ReadToEndAsync();
-            string output = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
-            return (process.ExitCode, output, error.Result);
+            return (process.ExitCode, output.Result, error.Result);
         }
         catch (Win32Exception exception)
         {
