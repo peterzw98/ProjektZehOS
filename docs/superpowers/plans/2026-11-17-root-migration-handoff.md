@@ -145,3 +145,12 @@ sieben P3. Das ersetzt kein Abschlussreview des noch fehlenden Adapters:
 - Erledigt: P3-c. `MigrationPlan.ValidTarget` lehnt den Temp-/Backup-Suffix jetzt auch fuer Ordner ab. Der Test ist angepasst; Migration-Fokustests 93/93 (Linux).
 - Pause aller Peter-Agenten 20:10–21:40 (Peter, Discord, signiert).
 - Danach in dieser Reihenfolge: P3-a (PackageStore-Lease nur Plattenphasen), P3-b (StorageBusy-Text statt Denied), P3-f (Abbruchtest Temp), dann Cosmos-Adapter + Kernelflag mit FAT-Quellschutz (P3-g). P3-d/e (Messung) und der Gast erst nach dem 4.0-Go.
+
+## Vertretung durch agent-laser-left-7a-s4 (17.11.2026, 20:05–, Pause der peter-Agenten)
+
+- Zuteilung Koordinator 20:04 (Peter im Terminal: laser-Agenten uebernehmen pausierte Aufgaben). Eigner bleibt agent-peter-jensen; Rueckgabe nach der Pause abstimmen.
+- `2d0028e` P3-a: `MigrationWriteGate.TryBeginWrite(activity)` merkt sich lange Schreiber; `AppStorageGate.BusyDescription` nennt sie beim Aushaengen. Der Lease bleibt bewusst ueber die ganze Paketinstallation (siehe oben). Kernel muss `PackageStore` bei der Verdrahtung `() => AppStorageGate.TryBeginWrite("Paketinstallation")` uebergeben. P3-b: `FileAccessControl.Check` meldet Gate-Ablehnung als StorageBusy. Tests in MigrationWriteGateTests/MigrationSourceWriterTests.
+- `30e1032` P3-f: `RealFileTargetRepeatsAMigrationCancelledInsideWriteFile` (Token-Abbruch mitten im Kopieren, Wiederholung ohne Reste).
+- `6ba201e`: master 2316a45 (#211, #212) eingearbeitet; Konstruktoren AccountService/FileService tragen beide Seiten (securityDirectory bzw. virtualSource/isRegularFile, tryBeginWrite zuletzt). Hosttests 1289/1289, nativer Build ok.
+- P3-g Schritt 1: `CosmosReadOnlyVfs` (Lese-Wrapper aus CosmosReadOnlyExt2FileSystem herausgeloest) und generische `CosmosReadOnlyFileSystem(inner)` fuer die FAT-Quelle. Entwurf (Frage an lead2 20:16, Antwort ausstehend): waehrend der Migration /data aushaengen und dieselbe FAT-Partition ueber `new CosmosReadOnlyFileSystem(new FatFileSystemType())` lesend einhaengen, danach normal zurueck. Noch NICHT verdrahtet, kein Gastlauf.
+- Offen: CosmosMigrationService (RO-Pruefung Ziel, /mnt/target RW, RootVolumeState.Open/Close, LayoutMigration.Run mit AppStorageGate.TryLockSource), Kernelflag `-p:ZehOSRootMigration=true` auf Basis von InitializeServices (#212), Vollsuite + Flag-Build, Review peter-review.
