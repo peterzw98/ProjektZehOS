@@ -400,7 +400,7 @@ internal sealed partial class ShellService
 
     private static string FormatLocalNow()
     {
-        var (time, zone) = LocalTime.FromUtc(DateTime.UtcNow);
+        var (time, zone) = LocalTime.FromUtc(ProjektZeh.SystemServices.SystemClock.UtcNow);
         return time.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + " " + zone;
     }
 

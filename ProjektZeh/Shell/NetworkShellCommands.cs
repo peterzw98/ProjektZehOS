@@ -16,7 +16,7 @@ internal sealed class NetworkShellCommands(INetworkService network, BackgroundTa
     public ShellCommand[] Commands =>
     [
         new("netinfo", "netinfo", "Zeigt Netzwerkadapter und IPv4-Konfiguration.", true, (a, o) => Start("info", a, o)),
-        new("net", "net dhcp|static <IP> <Maske> <Gateway> <DNS>|cancel", "Konfiguriert IPv4 oder bricht den Auftrag ab.", true, Net),
+        new("net", "net dhcp|static <IP> <Maske> <Gateway> <DNS>|time [Server] [Port]|cancel", "Konfiguriert IPv4, gleicht die Uhr per SNTP ab oder bricht den Auftrag ab.", true, Net),
         new("ping", "ping <IPv4>", "Prueft die Erreichbarkeit einer IPv4-Adresse.", true, (a, o) => Start("ping", a, o)),
         new("nslookup", "nslookup <Name>", "Loest einen Namen ueber DNS auf.", true, (a, o) => Start("dns", a, o)),
         new("fetch", "fetch <http[s]://Host[:Port]/Pfad>", "Laedt eine begrenzte HTTP- oder HTTPS-Antwort.", true, (a, o) => Start("fetch", a, o))
@@ -26,14 +26,16 @@ internal sealed class NetworkShellCommands(INetworkService network, BackgroundTa
     {
         if (arguments.Length == 1 && arguments[0] == "cancel")
             return job.Cancel(output);
-        if (arguments.Length >= 1 && arguments[0] is "dhcp" or "static")
+        if (arguments.Length >= 1 && arguments[0] is "dhcp" or "static" or "time")
         {
             if (!isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Netzwerkkonfiguration erfordert Administratorrechte.");
             string[] parameters = new string[arguments.Length - 1];
             Array.Copy(arguments, 1, parameters, 0, parameters.Length);
+            // Die Uhr betrifft TLS fuer alle Sitzungen; ohne Angabe gilt der freigegebene Standardserver.
+            if (arguments[0] == "time" && parameters.Length == 0) parameters = [NetworkAutoConfiguration.TimeServer];
             return Start(arguments[0], parameters, output);
         }
-        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: net dhcp|static <IP> <Maske> <Gateway> <DNS>|cancel");
+        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: net dhcp|static <IP> <Maske> <Gateway> <DNS>|time [Server] [Port]|cancel");
     }
 
     private ResultErr Start(string operation, string[] arguments, ITextOutput output)
