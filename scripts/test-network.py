@@ -16,6 +16,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guest_keys import key_for  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_QEMU = Path(shutil.which('qemu-system-x86_64') or Path.home() / '.cosmos/tools/qemu/qemu-system-x86_64')
 BODY = b'ZehOS network probe\n'
@@ -185,11 +188,10 @@ class Monitor:
         time.sleep(0.06)
 
     def write_line(self, value):
-        keys = {' ': 'spc', '.': 'dot', '/': 'slash', ':': 'shift-semicolon',
-                '_': 'shift-minus', '-': 'minus'}
+        # Deutsches Gastlayout (y/z, Satzzeichen): eine gemeinsame Tabelle fuer alle Skripte, siehe scripts/guest_keys.py.
         for char in value:
-            key = keys.get(char, f'shift-{char.lower()}' if char.isupper() else char)
-            self.key(key)
+            shifted, name = key_for(char)
+            self.key(f'shift-{name}' if shifted else name)
         self.key('ret')
         time.sleep(2)
 
