@@ -222,7 +222,14 @@ def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
     process, qmp = boot(args, run, [copy])
     tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
     tools.wait_serial(run, device_line("sata0", LEGACY_SIZE, 1), 5)
-    stop(process, qmp, run)
+    # Kein sauberes Herunterfahren: das Bestandsimage hat Konten, die Shell zeigt die Anmeldung und ein getipptes
+    # shutdown landete im Benutzernamen. Geprueft werden nur Mount und das unveraenderte Original; die Kopie ist Wegwerf.
+    qmp.quit()
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
     if sha256(original) != before:
         raise RuntimeError("Das Original des Bestandsimages hat sich veraendert")
     print("Bestandsimage: Rueckfall sata0 mountet, Original unveraendert", flush=True)
