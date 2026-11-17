@@ -74,7 +74,7 @@ internal static class TlsTransport
             {
                 if (oid != X509Extensions.BasicConstraints.Id && oid != X509Extensions.KeyUsage.Id &&
                     oid != X509Extensions.ExtendedKeyUsage.Id && oid != X509Extensions.SubjectAlternativeName.Id &&
-                    oid != X509Extensions.CertificatePolicies.Id) return false;
+                    oid != X509Extensions.CertificatePolicies.Id && oid != X509Extensions.NameConstraints.Id) return false;
             }
         }
         return AllowsServerPurpose(root);
