@@ -60,6 +60,8 @@ public sealed class Kernel : Sys.Kernel
     public Kernel()
     {
         messages = new MessageDemoService(tasks);
+        // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
+        accounts.IsDataMounted = () => VfsManager.TryGetMount("/data", out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -136,7 +138,7 @@ public sealed class Kernel : Sys.Kernel
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
-            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); ReconcilePackages(); }).Commands,
+            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.SetupBlockedReason = null; accounts.Load(); ReconcilePackages(); systemLog.Information("Storage", "Laufwerksaenderung abgeschlossen."); }, text => systemLog.Information("Storage", "Befehl: " + text)).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
@@ -182,20 +184,27 @@ public sealed class Kernel : Sys.Kernel
             }
 
             systemLog.Information("Storage", $"Erkannte Laufwerke: {StorageManager.DeviceCount}.");
+            // Gasttests (scripts/test-storage-data-disk.py) lesen Groesse und Einbindung aus dem seriellen Protokoll.
+            var listed = storage.GetDevices();
+            if (listed.IsOK())
+                foreach (var listedDevice in listed.Value!)
+                    systemLog.Information("Storage", $"Laufwerk {listedDevice.Name}: {listedDevice.SizeBytes} Bytes, {listedDevice.PartitionCount} Partition(en)");
 #if ZEHOS_INSTALLER
             output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
             return ResultErr.CreateSuccess();
 #else
-            var mounted = storage.Mount("sata0");
+            var mounted = storage.MountData(out string? setupBlockedReason);
+            accounts.SetupBlockedReason = setupBlockedReason;
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");
+                systemLog.Information("Storage", "Datenlaufwerk unter /data eingebunden.");
                 ReconcilePackages();
             }
             else
             {
                 output.WriteLine(mounted.Message);
-                output.WriteLine("Laufwerke: disk list. Leere Testplatte: disk init sata0, dann disk mount sata0.");
+                output.WriteLine("Laufwerke: disk list. Leere Platte einrichten: disk init <Name>, einbinden: disk use <Name> --yes (Konten nur beim Boot oder per security recover).");
             }
 
             return mounted;
@@ -211,7 +220,10 @@ public sealed class Kernel : Sys.Kernel
                 if (adapter.IsValid) systemLog.Information("Network", $"{adapter.Name}, MAC {adapter.MacAddress}, Link={adapter.LinkUp}.");
             }
         }
+        // Ersteinrichtung nur beim Boot: nur dieser Load oeffnet das Fenster, spaetere (disk mount/use/init) bieten kein Konto an.
+        accounts.SetupWindowOpen = true;
         var security = accounts.Load();
+        accounts.SetupWindowOpen = false;
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif
