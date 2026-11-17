@@ -10,10 +10,12 @@ import argparse
 import importlib.util
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import threading
 import time
 import uuid
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("package_guest", ROOT / "scripts/test-wasm-doom-desktop.py")
@@ -58,17 +60,32 @@ def main():
         header, size, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
         assert header == b"P6" and maximum == b"255", "Unerwartetes QEMU-Bildformat"
         guest.size = tuple(map(int, size.split()))
-        guest.qmp.shot(work / f"{step:02d}-{name}.png")
+        width, height = guest.size
+        raw = b"".join(b"\0" + pixels[row * width * 3:(row + 1) * width * 3] for row in range(height))
+
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+        # Das Belegbild muss genau die Pixel enthalten, die der Test prueft.
+        (work / f"{step:02d}-{name}.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
         return pixels
 
-    def page(name, color):
+    def page(name, color, points=()):
         deadline = time.monotonic() + 30
         while True:
             pixels = capture(name)
-            if pixels.count(bytes.fromhex(color)) >= 4000:
+            width, height = guest.size
+            # Die alte Seite ist schon vor dem Resize sichtbar; erst ein vollstaendiges Bild zaehlt.
+            edges_ready = all(0 <= x < width and 0 <= y < height
+                              and len(pixels[(y * width + x) * 3:(y * width + x) * 3 + 3]) == 3
+                              and pixels[(y * width + x) * 3:(y * width + x) * 3 + 3] != bytes(3)
+                              for x, y in points)
+            if pixels.count(bytes.fromhex(color)) >= 4000 and edges_ready:
                 return pixels
             if time.monotonic() > deadline:
-                raise AssertionError(f"{name}: erwartete Seitenfarbe #{color} fehlt")
+                raise AssertionError(f"{name}: Seitenfarbe #{color} oder vollstaendiges Bild an {points} fehlt")
             time.sleep(.5)
 
     def click(x, y):
@@ -245,10 +262,7 @@ def main():
             return 1 + x, 40 + y
 
         click(776,100)
-        maximized = page("maximiert", "d8ecff")
-        width, _ = guest.size
-        for x, y in ((8, 900), (1910, 500), (1910, 900)):
-            assert maximized[(y*width+x)*3:(y*width+x)*3+3] != bytes(3), f"Schwarzer Rand bei {x},{y}: Bild folgt der Fenstergroesse nicht"
+        page("maximiert", "d8ecff", ((8, 900), (1910, 500), (1910, 900)))
         click(*large(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
