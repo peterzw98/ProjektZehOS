@@ -192,10 +192,11 @@ internal static unsafe class WasmRuntime
             {
                 bool native = WasmEngineSelection.Select(WasmEngineSelection.AotBuiltIn, aot, gas) == WasmEngine.Aot;
                 ReportEngine(name, native ? "aot " + WasmEngineSelection.AotAbi : "wasm3");
-                code = native ? RunAot(aot!, entryName, &value, text) : RunWasm3(module, entryName, gas, &value, text);
-                // Scheitert das .aot vor dem Start (Laden, Instanz, Einstieg), laeuft dieselbe App unter wasm3. Nach einem
-                // Trap gibt es keinen zweiten Versuch. Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
-                if (native && module.Length > 0 && IsBeforeStart((WasmStatus)code))
+                int instantiated = 0;
+                code = native ? RunAot(aot!, entryName, &value, text, &instantiated) : RunWasm3(module, entryName, gas, &value, text);
+                // Scheitert das .aot vor dem Instanziieren (Format, Laden, Speicherobergrenze), laeuft dieselbe App unter
+                // wasm3. Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
+                if (native && WasmEngineSelection.FallsBackToWasm3(module.Length > 0, code != (int)WasmStatus.Ok, instantiated != 0))
                 {
                     ReportEngine(name, $"wasm3 AOT-Rueckfall: {(WasmStatus)code} {Marshal.PtrToStringAnsi((IntPtr)text)}");
                     value = 0;
@@ -246,27 +247,23 @@ internal static unsafe class WasmRuntime
         if (name != null) Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Start {name} Laufzeit={engine}\n");
     }
 
-    // Statuscodes, die zehos_wasm_run_aot nur vor dem Aufruf des Einstiegs liefert (zehos_host_wamr.c).
-    private static bool IsBeforeStart(WasmStatus status) =>
-        status is WasmStatus.NoMemory or WasmStatus.InvalidModule or WasmStatus.LoadFailed or WasmStatus.EntryMissing;
-
     // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn waehlt WasmEngineSelection immer wasm3.
 #if ZEHOS_WASM_AOT
 
     // Dieselben Grenzen wie wasm3 (Speicher, Stack der Ausfuehrungsumgebung), aber kein Gasbudget.
-    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text)
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text, int* instantiated)
     {
         fixed (byte* bytes = aot)
         {
-            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated);
         }
     }
 
     [DllImport("*", EntryPoint = "zehos_wasm_run_aot", ExactSpelling = true)]
     private static extern int NativeRunAot(byte* bytes, uint length, byte* entry, uint stackBytes, ulong memoryBytes,
-        int* result, byte* message, uint messageLength);
+        int* result, byte* message, uint messageLength, int* instantiated);
 #else
-    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text) =>
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text, int* instantiated) =>
         throw new InvalidOperationException("WAMR-AOT ist in diesem Kernel nicht enthalten.");
 #endif
 

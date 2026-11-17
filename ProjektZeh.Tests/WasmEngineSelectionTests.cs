@@ -110,9 +110,30 @@ public sealed class WasmEngineSelectionTests
     }
 
     [TestMethod]
-    public void ReadAotRejectsSizesAboveTheLimitBeforeReading()
+    public void EmptyOrOversizedAotFallsBackToWasm3()
     {
-        var file = new PackageFile(OwnAot, WasmEngineSelection.MaximumAotBytes + 1L, new string('a', 64));
-        Assert.IsFalse(WasmEngineSelection.ReadAot(Path.GetTempPath(), file).IsOK());
+        // Die Groesse steht im signierten Manifest; ausserhalb der Grenze wird das .aot gar nicht erst gelesen.
+        string hash = new('a', 64);
+        string Manifest(long size) =>
+            $"zehos-package 1\nid=app\nversion=1.0.0\nruntime=zehos-wasm32-v1\nname=App\nentry=app.wasm\nfile={hash} {size} {OwnAot}\nfile={hash} 4 app.wasm\nend\n";
+        foreach (long size in new[] { 0L, WasmEngineSelection.MaximumAotBytes + 1L })
+        {
+            var parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(Manifest(size)));
+            Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+            Assert.IsNull(WasmEngineSelection.FindAot(parsed.Value!, aotBuiltIn: true, enabled: true), size.ToString(CultureInfo.InvariantCulture));
+        }
+        var limit = PackageManifest.Parse(Encoding.UTF8.GetBytes(Manifest(WasmEngineSelection.MaximumAotBytes)));
+        Assert.IsNotNull(WasmEngineSelection.FindAot(limit.Value!, aotBuiltIn: true, enabled: true));
+    }
+
+    [TestMethod]
+    public void OnlyFailuresBeforeInstantiationRunAgainUnderWasm3()
+    {
+        Assert.IsTrue(WasmEngineSelection.FallsBackToWasm3(hasWasm: true, aotFailed: true, aotInstantiated: false));
+        // Nach dem Instanziieren kann Gastcode gelaufen sein (start-Funktion, Konstruktoren): kein zweiter Lauf.
+        Assert.IsFalse(WasmEngineSelection.FallsBackToWasm3(hasWasm: true, aotFailed: true, aotInstantiated: true));
+        Assert.IsFalse(WasmEngineSelection.FallsBackToWasm3(hasWasm: true, aotFailed: false, aotInstantiated: true));
+        // Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
+        Assert.IsFalse(WasmEngineSelection.FallsBackToWasm3(hasWasm: false, aotFailed: true, aotInstantiated: false));
     }
 }

@@ -58,25 +58,34 @@ internal static class WasmEngineSelection
     public static string AotPath(string entry) => entry[..^".wasm".Length] + "." + AotAbi + ".aot";
 
     /// <summary>
-    /// Die .aot-Datei des Einstiegs mit genau der eigenen Kennung, oder null: AOT nicht enthalten, ausgeschaltet oder
-    /// keine passende Datei. Ein .aot fremder Kennung wird wie jede andere Paketdatei als Daten behandelt.
+    /// Die .aot-Datei des Einstiegs mit genau der eigenen Kennung, oder null: AOT nicht enthalten, ausgeschaltet, keine
+    /// passende Datei oder laut signiertem Manifest leer bzw. groesser als <see cref="MaximumAotBytes"/>; dann laeuft das
+    /// .wasm. Ein .aot fremder Kennung wird wie jede andere Paketdatei als Daten behandelt.
     /// </summary>
     public static PackageFile? FindAot(PackageManifest manifest, bool aotBuiltIn, bool enabled)
     {
         if (!aotBuiltIn || !enabled) return null;
         string path = AotPath(manifest.Entry);
-        return Array.Find(manifest.Files, file => string.Equals(file.Path, path, StringComparison.Ordinal));
+        var file = Array.Find(manifest.Files, entry => string.Equals(entry.Path, path, StringComparison.Ordinal));
+        return file is { Size: > 0 and <= MaximumAotBytes } ? file : null;
     }
 
     /// <summary>
-    /// Liest das .aot genau einmal ueber einen einzigen Dateizugriff und prueft genau diese Bytes gegen den SHA-256 aus dem
-    /// signierten Manifest. Nur der zurueckgegebene Puffer darf an WAMR gehen: PackageStore.VerifyOnce prueft je
-    /// Paketversion nur einmal je Kernellauf, eine spaetere Aenderung der Datei bliebe sonst unbemerkt.
+    /// Ob ein gescheiterter AOT-Lauf unter wasm3 wiederholt wird: nur mit .wasm und nur, wenn WAMR noch nicht mit dem
+    /// Instanziieren begonnen hat. Danach kann Gastcode gelaufen sein (start-Funktion, Konstruktoren), ein zweiter Lauf
+    /// wiederholte dessen Wirkungen.
+    /// </summary>
+    public static bool FallsBackToWasm3(bool hasWasm, bool aotFailed, bool aotInstantiated) =>
+        hasWasm && aotFailed && !aotInstantiated;
+
+    /// <summary>
+    /// Liest das von <see cref="FindAot"/> gelieferte .aot genau einmal ueber einen einzigen Dateizugriff und prueft genau
+    /// diese Bytes gegen den SHA-256 aus dem signierten Manifest. Nur der zurueckgegebene Puffer darf an WAMR gehen:
+    /// PackageStore.VerifyOnce prueft je Paketversion nur einmal je Kernellauf, eine spaetere Aenderung der Datei bliebe
+    /// sonst unbemerkt.
     /// </summary>
     public static ResultObject<byte[]> ReadAot(string filesDirectory, PackageFile file)
     {
-        if (file.Size is <= 0 or > MaximumAotBytes)
-            return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, $"AOT-Datei {file.Path} zu gross oder leer.");
         byte[] bytes = new byte[file.Size];
         try
         {
@@ -84,7 +93,7 @@ internal static class WasmEngineSelection
             if (stream.Length != file.Size) return Modified(file.Path);
             stream.ReadExactly(bytes);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (PackageStore.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, $"AOT-Datei {file.Path} nicht lesbar: {exception.Message}");
         }

@@ -26,8 +26,10 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   minkernel  testapp 1.1.0 verlangt ZehOS 99.0.0; pkg upgrade muss ablehnen, danach startet testapp (Fotos: 1.0.0).
   aot      AOT-Plan Etappe E, ISO mit -p:ZehOSWasmAot=true: Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
            Windows gibt es kein wamrc). AOT aus -> wasm3; "wasmaot on" -> aotapp laeuft nativ (Exitcode 7 der
-           Fixture); fremde Kennung -> wasm3; .aot ohne _start -> Rueckfall auf wasm3. Geprueft ueber die Zeilen
-           "WASM Start <id> Laufzeit=...".
+           Fixture); fremde Kennung -> wasm3; .aot mit falscher Formatversion -> Rueckfall auf wasm3; .aot ohne
+           _start -> Abbruch ohne Rueckfall (Gastcode kann beim Instanziieren gelaufen sein). Geprueft ueber die
+           Zeilen "WASM Start <id> Laufzeit=...". Ein nach der Installation veraendertes .aot laesst sich aus der
+           Shell nicht erzeugen ("write" in den Paketbestand: Zugriff verweigert); diese Sperre ist nur hostgetestet.
   aotold   Paket mit .aot auf einem Kernel ohne AOT-Auswahl (aelteres ISO): Installation und Start unter wasm3.
   aotcorrupt  Server liefert ein veraendertes .aot; die Installation muss mit Pruefsummenfehler scheitern.
 Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien ausser den AOT-Faellen
@@ -725,7 +727,7 @@ def start_engine(guest: Guest, name: str, result: str, *engines: str) -> int:
 
 
 def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
-    install_aot_apps(guest, fixtures, repository, "aotapp", "aotfremd", "aotfallback")
+    install_aot_apps(guest, fixtures, repository, "aotapp", "aotfremd", "aotfallback", "aotnoentry")
     # Standard aus (bis Etappe F): trotz passendem .aot laeuft das .wasm.
     start_engine(guest, "aotapp", "erstes Bild", "wasm3")
     guest.quit_testapp_named("aotapp")
@@ -736,9 +738,15 @@ def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, reposit
     guest.wait("WASM Speicher", 60, end)
     start_engine(guest, "aotfremd", "erstes Bild", "wasm3")
     guest.quit_testapp_named("aotfremd")
-    # Das .aot der Probe-B-Fixture hat kein _start: Laden scheitert vor dem Start, dieselbe App laeuft unter wasm3.
-    start_engine(guest, "aotfallback", "erstes Bild", "aot wamr245-aot5-x64-bc", "wasm3 AOT-Rueckfall: EntryMissing")
+    # Falsche AOT-Formatversion: WAMR lehnt beim Laden ab, vor dem Instanziieren; dieselbe App laeuft unter wasm3.
+    start_engine(guest, "aotfallback", "erstes Bild", "aot wamr245-aot5-x64-bc", "wasm3 AOT-Rueckfall: InvalidModule")
     guest.quit_testapp_named("aotfallback")
+    # Probe-B-Fixture ohne _start: der Fehler faellt erst nach dem Instanziieren auf, deshalb kein wasm3-Neustart.
+    end = start_engine(guest, "aotnoentry", "Ende: App abgebrochen: EntryMissing", "aot wamr245-aot5-x64-bc")
+    log = (guest.work / "serial.log").read_text(encoding="utf-8", errors="replace")
+    if "WASM Start aotnoentry Laufzeit=wasm3" in log:
+        raise RuntimeError("aotnoentry lief nach dem Instanziieren erneut unter wasm3.")
+    guest.wait("WASM Speicher", 60, end)
 
 
 def scenario_aotold(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
@@ -821,8 +829,10 @@ def build_fixtures(args: argparse.Namespace, target: Path) -> Path:
     shutil.copytree(repo, aot_repo)
     host = aot_fixture("aot_runtime_fixture_data.c", "zehos_aot_host_fixture")
     no_start = aot_fixture("aot_fixture_data.c", "zehos_aot_fixture")
+    # Byte 4 ist die AOT-Formatversion (wie der Fall "d version" der AOT-Probe).
+    wrong_version = no_start[:4] + bytes([4]) + no_start[5:]
     for app, name, data in (("aotapp", AOT_FILE, host), ("aotfremd", FOREIGN_AOT_FILE, host),
-                            ("aotfallback", AOT_FILE, no_start)):
+                            ("aotfallback", AOT_FILE, wrong_version), ("aotnoentry", AOT_FILE, no_start)):
         aot = target / f"{app}.aot"
         aot.write_bytes(data)
         subprocess.run([*tool, "package", "--key", str(args.key), "--repo", str(aot_repo), "--id", app, "--version", "1.0.0",
