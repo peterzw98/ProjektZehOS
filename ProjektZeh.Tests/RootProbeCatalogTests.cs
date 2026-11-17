@@ -33,9 +33,10 @@ public sealed class RootProbeCatalogTests
     public void Expected_StepE_RenamedDeletedAndNew()
     {
         var e = RootProbeCatalog.Expected(1).Where(entry => entry.Path.StartsWith("/e/", StringComparison.Ordinal)).ToList();
-        // 20 000 - 2 000 geloescht + 2 000 neu; 2 000 tragen den Inhalt ihres alten Namens.
-        Assert.AreEqual(20000, e.Count);
-        Assert.AreEqual(2000, e.Count(entry => entry.Path != entry.Source));
+        // 8 000 - 800 geloescht + 800 neu; 800 tragen den Inhalt ihres alten Namens; unter der Cosmos-Grenze von 8 190.
+        Assert.AreEqual(8000, e.Count);
+        Assert.AreEqual(800, e.Count(entry => entry.Path != entry.Source));
+        Assert.IsTrue(e.Count <= RootProbeCatalog.DirectoryLimit);
         Assert.IsFalse(e.Any(entry => entry.Path == RootProbeCatalog.EName(2)));
     }
 

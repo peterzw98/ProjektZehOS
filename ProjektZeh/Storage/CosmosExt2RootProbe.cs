@@ -116,6 +116,7 @@ internal static class CosmosExt2RootProbe
         StepC(root, files);
         StepD(root);
         StepE(root);
+        StepELimit(root);
         StepF(root);
         StepG(root, files, 1, RootProbeCatalog.GCount);
         StepH(root, files);
@@ -316,6 +317,33 @@ internal static class CosmosExt2RootProbe
 
         Check(listed.Length == expected, $"{listed.Length} Eintraege statt {expected}");
         Pass($"{expected} Eintraege vollstaendig, ohne Doppelnamen, Inhalte gleich");
+        AfterPhase(root);
+    }
+
+    /// <summary>
+    /// Grenzfall zu e: Cosmos 3.0.97 fasst je Verzeichnis 8190 Eintraege neben '.' und '..'; der naechste muss mit IOException
+    /// scheitern, ohne das Verzeichnis zu beschaedigen. Danach Umbenennen und Loeschen darin und ein Ersatzeintrag; am Ende geraeumt.
+    /// </summary>
+    private static void StepELimit(IBlockDevice root)
+    {
+        Begin("e-limit");
+        const string directory = "/elimit";
+        Directory.CreateDirectory(directory);
+        for (int index = 0; index < RootProbeCatalog.DirectoryLimit; index++) File.WriteAllBytes($"{directory}/n{index:D4}", [unchecked((byte)index)]);
+        bool refused = Refused(() => File.WriteAllBytes($"{directory}/over", [1]));
+        Check(refused, $"Eintrag {RootProbeCatalog.DirectoryLimit + 1} ohne IOException angelegt");
+        Check(!File.Exists($"{directory}/over"), "abgelehnter Eintrag sichtbar");
+        var listed = Directory.GetFileSystemEntries(directory);
+        Check(listed.Length == RootProbeCatalog.DirectoryLimit, $"{listed.Length} statt {RootProbeCatalog.DirectoryLimit} Eintraege nach der Ablehnung");
+        File.Move($"{directory}/n0000", $"{directory}/m0000");
+        File.Delete($"{directory}/n0001");
+        File.WriteAllBytes($"{directory}/ersatz", [2]);
+        Check(File.Exists($"{directory}/m0000") && !File.Exists($"{directory}/n0000") && !File.Exists($"{directory}/n0001") && File.Exists($"{directory}/ersatz"),
+            "Umbenennen/Loeschen/Ersatz im vollen Verzeichnis falsch");
+        Check(File.ReadAllBytes($"{directory}/n{RootProbeCatalog.DirectoryLimit - 1:D4}")[0] == unchecked((byte)(RootProbeCatalog.DirectoryLimit - 1)), "letzter Eintrag unlesbar");
+        DeleteTree(directory);
+        Check(!Directory.Exists(directory), "/elimit nicht geraeumt");
+        Pass($"{RootProbeCatalog.DirectoryLimit} Eintraege gehen, der naechste ergibt IOException, Verzeichnis bleibt bedienbar");
         AfterPhase(root);
     }
 
@@ -800,10 +828,23 @@ internal static class CosmosExt2RootProbe
 
     private static bool Finish()
     {
-        // Nur Nebenmounts aushaengen; / bleibt wie im Produkt eingehaengt, der Host bewertet das Image.
+        // Nur Nebenmounts aushaengen; / bleibt wie im Produkt eingehaengt, der Host bewertet das Image. / wird einmal
+        // synchronisiert, damit die Superblockzaehler am Image zum Stand beim Fehler passen (sonst meldet e2fsck sie als falsch).
         foreach (string mountPoint in mounted.ToArray())
         {
-            if (mountPoint == "/") continue;
+            if (mountPoint == "/")
+            {
+                try
+                {
+                    if (VfsManager.TryGetMount("/", out VfsMount? root) && !root!.Superblock.SuperOperations.Sync(root.Superblock)) Write("sync / FAIL nach Fehler");
+                }
+                catch (Exception exception)
+                {
+                    Write($"sync / FAIL nach Fehler: {exception.GetType().Name}: {exception.Message}");
+                }
+
+                continue;
+            }
             try
             {
                 if (!VfsManager.TryUnmount(mountPoint)) Write($"unmount {mountPoint} FAIL nach Fehler");
