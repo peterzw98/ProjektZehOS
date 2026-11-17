@@ -37,7 +37,11 @@ def main() -> int:
     parser.add_argument("--raster", choices=["host", "soft"], default="host")
     # Nur fuer Gastpruefungen: F8 schaltet zwischen Kernel- und Gast-Rasterisierung um (Bildvergleich, Messung).
     parser.add_argument("--raster-toggle", action="store_true")
+    # Nur fuer Gastpruefungen: feste Welt statt Zufallsseed; wirkt ueber den Gen_Start-Messpunkt.
+    parser.add_argument("--world-seed", type=int)
     args = parser.parse_args()
+    if args.world_seed is not None and args.no_measure:
+        parser.error("--world-seed braucht die Messpunkte (ohne --no-measure)")
 
     head = subprocess.run(["git", "-C", str(args.source), "rev-parse", "HEAD"], capture_output=True, text=True)
     if head.returncode != 0 or head.stdout.strip() != COMMIT:
@@ -70,6 +74,7 @@ def main() -> int:
                "-mno-nontrapping-fptoint",
                *(["-DZEHOS_RASTER_SOFT"] if args.raster == "soft" else []),
                *(["-DZEHOS_RASTER_TOGGLE"] if args.raster_toggle else []), "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
+               *([f"-DZEHOS_WORLD_SEED={args.world_seed}"] if args.world_seed is not None else []),
                "-Wno-everything", "-I", str(build / "src"),
                # Ohne Abbildung landen absolute Baupfade (Benutzername) ueber __FILE__ im Paket.
                f"-ffile-prefix-map={build}=/classicube", f"-ffile-prefix-map={HERE}=/zehos",
