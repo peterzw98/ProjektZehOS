@@ -351,9 +351,8 @@ internal sealed class CosmosStorageService : IStorageService
     /// </summary>
     public ResultErr Unmount()
     {
-        // Etappe 13.4: keine App darf mitten in ein Ersetzen (Temp, Sicherung, Rename) hinein ausgehaengt werden. Block wartet
-        // auf einen laufenden App-Schreibvorgang; bleibt /data eingebunden, wird die Sperre wieder aufgehoben.
-        AppStorageGate.Block();
+        // Aktive Schreiber/Migration sofort ablehnen, statt die Ereignisschleife auf ein langes Schreiben warten zu lassen.
+        if (!AppStorageGate.TryBlock()) return Failure("StorageBusy", AppStorageGate.BusyDescription + " laeuft; spaeter erneut aushaengen.");
         try
         {
             if (!VfsManager.TryUnmount(MountPoint))
@@ -370,6 +369,29 @@ internal sealed class CosmosStorageService : IStorageService
             return ResultErr.CreateFromException(exception);
         }
     }
+
+#if ZEHOS_ROOT_MIGRATION
+    private static readonly CosmosSwitchableFileSystem migrationSource = new("zehos-fat-migration");
+
+    /// <summary>Partition des beschreibbar eingehaengten /data (Quelle der Migration); null, wenn /data fehlt oder lesend haengt.</summary>
+    internal static Partition? WritableDataPartition()
+    {
+        foreach (VfsMount mount in VfsManager.Mounts)
+            if (mount.MountPoint == MountPoint) return (mount.Flags & MountFlags.ReadOnly) == 0 ? mount.Partition : null;
+        return null;
+    }
+
+    // Die folgenden drei laufen nur unter dem Quelllease der Migration (MigrationSourceSwap); Unmount() wuerde dort
+    // an der eigenen Sperre scheitern und gibt die Sperre beim Einhaengen frei.
+    internal static bool UnmountData() => VfsManager.TryUnmount(MountPoint);
+
+    /// <summary>Dieselbe FAT-Partition ueber den Lese-Wrapper: Fsync/Release/Sync/Drop schreiben nicht (P3-g).</summary>
+    internal static bool MountDataReadOnly(Partition partition) => migrationSource.TryMount(
+        new CosmosReadOnlyFileSystem(new FatFileSystemType(new Ext2.CosmosReadOnlyBlockDevice(partition))), partition, MountFlags.ReadOnly, MountPoint);
+
+    internal bool MountDataWritable(Partition partition) =>
+        RegisterFileSystem().IsOK() && VfsManager.TryMount(FileSystemName, partition, MountFlags.None, MountPoint, out _);
+#endif
 
     private static ResultObject<IBlockDevice> FindDevice(string? deviceName)
     {

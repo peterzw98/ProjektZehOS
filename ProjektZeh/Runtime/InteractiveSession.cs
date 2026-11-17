@@ -24,6 +24,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
     private readonly ConsoleLineView line = new();
     private DisplayService? display;
     private bool graphics;
+    private bool control;
+    private bool shift;
     private int pagerOffset;
 
     public void Run(bool startDesktop)
@@ -47,6 +49,12 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             devices.Poll(input);
             for (var count = 0; count < InputService.QueueCapacity && input.TryRead(out var value); count++)
             {
+                if (value.Type == InputEventType.Reset) control = shift = false;
+                if (value.Type is InputEventType.KeyDown or InputEventType.KeyUp)
+                {
+                    if (value.KeyCode == (byte)PhysicalKey.Control) control = value.Type == InputEventType.KeyDown;
+                    if (value.KeyCode is (byte)PhysicalKey.LeftShift or (byte)PhysicalKey.RightShift) shift = value.Type == InputEventType.KeyDown;
+                }
                 if (value.Type == InputEventType.KeyDown && !value.IsRepeat && value.KeyCode == (byte)PhysicalKey.F4)
                     ToggleGraphics(input);
                 else if (graphics)
@@ -62,6 +70,11 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                         try { display!.Handle(value); }
                         catch (Exception exception) { FailGraphics("Eingabe", exception); }
                     }
+                }
+                else if (!IsLocked && control && !shift && value.Type == InputEventType.KeyDown && value.KeyCode == 46 && shell.TryInterrupt(output))
+                {
+                    output.FollowOutput();
+                    dirty = true;
                 }
                 else if (!IsLocked && shell.PagerText != null)
                 {
