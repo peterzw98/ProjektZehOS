@@ -395,16 +395,23 @@ internal static unsafe class WasmRuntime
     private static int HostOpen(byte* path, uint length)
     {
         if (files.Count >= MaximumOpenFiles) return -1;
+        FileStream? stream = null;
         try
         {
             string? full = ResolvePackagePath(path, length);
             if (full == null) return -1;
-            var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+            stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
             int handle = ++nextHandle;
             files[handle] = stream;
             return handle;
         }
-        catch (Exception) { return -1; } // keine Ausnahme ueber die native Grenze (#204).
+        catch (Exception)
+        {
+            // Erst nach erfolgreicher Registrierung besitzt die Handle-Tabelle den Stream.
+            try { stream?.Dispose(); }
+            catch (Exception) { /* Auch die Freigabe darf keine Ausnahme ueber die native Grenze tragen. */ }
+            return -1;
+        }
     }
 
     private static string? ResolvePackagePath(byte* path, uint length)
@@ -452,7 +459,7 @@ internal static unsafe class WasmRuntime
     private static void HostClose(int handle)
     {
         try { if (files.Remove(handle, out var stream)) stream.Dispose(); }
-        catch (Exception) { /* Das Handle ist bereits entfernt; ein Fehler beim Schliessen bleibt folgenlos. */ }
+        catch (Exception) { /* Das Handle ist bereits entfernt; ein Schliessfehler darf die native Grenze nicht verlassen. */ }
     }
 
     // Etappe 13.4: App-Speicher /save. Jede Rueckgabe ist eine WASI-Fehlernummer; Ausnahmen werden zu EIO, damit
