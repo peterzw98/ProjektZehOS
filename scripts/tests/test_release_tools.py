@@ -90,7 +90,7 @@ class ReleaseToolsTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b'Aufruf: build-release.sh', result.stderr)
 
-    def test_release_overrides_inherited_update_test_key_for_both_builds(self):
+    def test_release_drops_inherited_zehos_properties_for_both_builds(self):
         bash = shutil.which('bash')
         if bash is None and Path('C:/Program Files/Git/bin/bash.exe').exists():
             bash = 'C:/Program Files/Git/bin/bash.exe'
@@ -110,12 +110,8 @@ class ReleaseToolsTests(unittest.TestCase):
             harness = r'''
 dotnet() {
     if [[ "$1" == build ]]; then
-        local empty_update_key=false
-        for argument in "$@"; do
-            [[ "$argument" == -p:ZehOSUpdateTestKeyPath= ]] && empty_update_key=true
-        done
-        if [[ "$empty_update_key" != true ]]; then
-            echo 'Release wuerde geerbten Update-Testschluessel verwenden' >&2
+        if env | grep -qi '^zehos'; then
+            echo 'Release wuerde geerbte ZehOS-Properties verwenden' >&2
             return 77
         fi
         printf '%s\n' "$*" >> release-builds.log
@@ -130,7 +126,8 @@ export -f dotnet
 "$BASH" "$1" 1.2.3 "$2"
 '''
             environment = dict(os.environ, ZehOSUpdateTestKeyPath='/inherited/test.pub',
-                               ZEHOSUPDATETESTKEYPATH='/inherited/other-case.pub')
+                               ZEHOSUPDATETESTKEYPATH='/inherited/other-case.pub',
+                               ZehOSPackageKeyPath='/inherited/package.pub', zehosrecovery='true')
             result = subprocess.run([bash, '-c', harness, 'release-test', script.as_posix(),
                                      (root / 'release').as_posix()], capture_output=True, text=True,
                                     env=environment, timeout=30)

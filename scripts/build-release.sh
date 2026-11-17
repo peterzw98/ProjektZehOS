@@ -14,8 +14,10 @@ payload=$(mktemp -d)
 trap 'rm -rf "$payload"' EXIT
 cd "$root"
 
-# Releaseartefakte duerfen keinen Update-Testschluessel aus der Umgebung uebernehmen.
-dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSUpdateTestKeyPath=
+# MSBuild uebernimmt jede Umgebungsvariable als Property (ohne Gross-/Kleinschreibung); geerbte Test-Schluessel, Test-CAs
+# oder Probe-Schalter duerfen nicht ins Release gelangen.
+for name in $(compgen -e | grep -i '^zehos' || true); do unset "$name"; done
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version"
 # Erst der Build stellt die Cosmos-Pakete im NuGet-Cache her; auf einem frischen CI-Rechner fehlt Limine vorher.
 packages=$(dotnet nuget locals global-packages -l)
 packages=${packages#global-packages: }
@@ -29,7 +31,7 @@ if ! grep -q 'ZehOSInstaller' ProjektZeh/ProjektZeh.csproj; then
   echo 'Installer-Build ist im Projekt noch nicht eingerichtet.' >&2
   exit 1
 fi
-dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSUpdateTestKeyPath= -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 cp ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso "$out/ZehOS-Setup-$version.iso"
 size=$(wc -c < "$out/ProjektZeh-$version.elf" | tr -d '[:space:]')
 hash=$(sha256sum "$out/ProjektZeh-$version.elf" | cut -d ' ' -f 1)
