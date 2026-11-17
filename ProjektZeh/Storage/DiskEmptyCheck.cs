@@ -8,19 +8,20 @@ internal delegate void BlockReader(ulong block, ulong count, Span<byte> buffer);
 
 /// <summary>
 /// Leerpruefung vor disk init als reine Funktion. Bis <see cref="FullScanLimit"/> wird alles gelesen; darueber nur
-/// Kopf, Ende und je ein Sektor pro GiB, und nur nach ausdruecklicher Bestaetigung. Kopf und Ende decken MBR, GPT samt
+/// Kopf, Ende und je 4 KiB alle 64 MiB, und nur nach ausdruecklicher Bestaetigung. Kopf und Ende decken MBR, GPT samt
 /// Sicherungskopie, FAT-/NTFS-/LUKS-Bootsektor und den ext2-Superblock (Offset 0x438) ab.
 /// </summary>
 internal static class DiskEmptyCheck
 {
     internal const ulong FullScanLimit = 4UL * 1024 * 1024 * 1024;
     internal const ulong EdgeBytes = 64UL * 1024 * 1024;
-    internal const ulong SampleStep = 1024UL * 1024 * 1024;
+    internal const ulong SampleStep = 64UL * 1024 * 1024;
+    internal const ulong SampleBytes = 4096;
     private const ulong BatchBytes = 1024UL * 1024;
 
     /// <summary>
-    /// shortcut: ueber 4 GiB bleiben Daten zwischen den Stichproben unentdeckt (nur der Sektor am Anfang jedes GiB wird gelesen);
-    /// bei Bedarf Grenze erhoehen, die Vollpruefung kostet beim AHCI-Treiber (4 KiB je Befehl) Minuten je 32 GiB.
+    /// shortcut: ueber 4 GiB bleiben Daten zwischen den Stichproben unentdeckt (nur die ersten 4 KiB je 64 MiB werden gelesen);
+    /// bei Bedarf dichter pruefen, die Vollpruefung kostet beim AHCI-Treiber (4 KiB je Befehl) Minuten je 32 GiB.
     /// </summary>
     public static ResultErr Check(ulong blockSize, ulong blockCount, bool confirmedLarge, BlockReader read)
     {
@@ -46,11 +47,15 @@ internal static class DiskEmptyCheck
         if (!result.IsOK()) return result;
         result = ScanRange(blockSize, blockCount - edgeBlocks, blockCount, read);
         if (!result.IsOK()) return result;
-        var sector = new byte[blockSize];
+        ulong sampleBlocks = Math.Max(1, SampleBytes / blockSize);
+        var sample = new byte[sampleBlocks * blockSize];
         for (ulong offset = SampleStep; offset < totalBytes; offset += SampleStep)
         {
-            read(offset / blockSize, 1, sector);
-            if (sector.AsSpan().IndexOfAnyExcept((byte)0) >= 0) return NotEmpty();
+            ulong block = offset / blockSize;
+            ulong count = Math.Min(sampleBlocks, blockCount - block);
+            var span = sample.AsSpan(0, (int)(count * blockSize));
+            read(block, count, span);
+            if (span.IndexOfAnyExcept((byte)0) >= 0) return NotEmpty();
         }
 
         return ResultErr.CreateSuccess();

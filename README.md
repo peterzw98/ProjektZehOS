@@ -125,7 +125,7 @@ disk init sata0
 disk mount sata0
 ```
 
-`disk init` ist auf leere Platten von 64 MiB bis 128 GiB mit 512-Byte-Sektoren begrenzt. Bis 4 GiB wird die ganze Platte auf Nullen geprüft; darüber nur Kopf und Ende (je 64 MiB, mit MBR/GPT- und Dateisystemkennungen) sowie ein Sektor je GiB, und nur mit `disk init <Name> --yes-large`. Daten zwischen den Stichproben werden dort nicht erkannt. Bereits vorhandene Partitionen oder Daten werden abgelehnt. Die Einrichtung erstellt eine FAT32-LBA-Partition (MBR-Typ `0x0C`) und formatiert FAT32; Cosmos bestimmt die dazu passende Clustergröße. Das Laufwerk wird anschließend mit `disk mount` eingebunden. Ein fehlgeschlagener oder abgebrochener Einrichtungsvorgang wird beim Booten nicht automatisch repariert oder wiederholt.
+`disk init` ist auf leere Platten von 64 MiB bis 128 GiB mit 512-Byte-Sektoren begrenzt. Bis 4 GiB wird die ganze Platte auf Nullen geprüft; darüber nur Kopf und Ende (je 64 MiB, mit MBR/GPT- und Dateisystemkennungen) sowie 4 KiB alle 64 MiB, und nur mit `disk init <Name> --yes-large`. Daten zwischen den Stichproben werden dort nicht erkannt. Bereits vorhandene Partitionen oder Daten werden abgelehnt. Die Einrichtung erstellt eine FAT32-LBA-Partition (MBR-Typ `0x0C`) und formatiert FAT32; Cosmos bestimmt die dazu passende Clustergröße. Das Laufwerk wird anschließend mit `disk mount` eingebunden. Ein fehlgeschlagener oder abgebrochener Einrichtungsvorgang wird beim Booten nicht automatisch repariert oder wiederholt.
 
 Danach beispielsweise:
 

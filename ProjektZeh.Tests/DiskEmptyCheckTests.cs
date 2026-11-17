@@ -78,7 +78,7 @@ public sealed class DiskEmptyCheckTests
         var disk = new FakeDisk(32 * GiB);
 
         Assert.IsTrue(Run(disk, true).Ok);
-        Assert.AreEqual(2 * 64 * MiB + 31 * Sector, disk.BytesRead);
+        Assert.AreEqual(2 * 64 * MiB + 511 * 4096, disk.BytesRead, "Kopf, Ende und 4 KiB alle 64 MiB");
     }
 
     [DataTestMethod]
@@ -86,7 +86,9 @@ public sealed class DiskEmptyCheckTests
     [DataRow(64 * MiB - 1)]
     [DataRow(32 * GiB - 64 * MiB)]
     [DataRow(32 * GiB - 1)]
-    [DataRow(3 * GiB + 256)] // Mitte eines Stichprobensektors
+    [DataRow(3 * GiB + 256)] // Mitte der Stichprobe
+    [DataRow(3 * GiB + 4095)] // letztes Byte der Stichprobe
+    [DataRow(3 * GiB + 64 * MiB)] // dichter als 1 Stichprobe je GiB
     public void LargeDisk_Confirmed_DataInCheckedRegion_Aborts(ulong dirtyOffset)
     {
         Assert.IsTrue(Run(new FakeDisk(32 * GiB, dirtyOffset), true).Is("DiskNotEmpty"));
@@ -95,10 +97,9 @@ public sealed class DiskEmptyCheckTests
     [TestMethod]
     public void LargeDisk_DataBetweenSamples_IsNotDetected_Documented()
     {
-        // Bewusste Grenze: ueber 4 GiB wird nur der erste Sektor je GiB gelesen.
-        var disk = new FakeDisk(32 * GiB, 3 * GiB + 10 * MiB);
-
-        Assert.IsTrue(Run(disk, true).Ok);
+        // Bewusste Grenze: ueber 4 GiB werden nur 4 KiB je 64 MiB gelesen.
+        Assert.IsTrue(Run(new FakeDisk(32 * GiB, 3 * GiB + 10 * MiB), true).Ok);
+        Assert.IsTrue(Run(new FakeDisk(32 * GiB, 3 * GiB + 4096), true).Ok, "erstes Byte hinter der Stichprobe");
     }
 
     [TestMethod]
