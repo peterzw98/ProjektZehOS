@@ -10,9 +10,7 @@ spec = importlib.util.spec_from_file_location('classic_test_server', SCRIPTS / '
 classic = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(classic)
 
-# Paketgroessen einschliesslich Opcode (Server -> Client), Protokoll 7
-SERVER_SIZES = {0x00: 131, 0x01: 1, 0x02: 1, 0x03: 1028, 0x04: 7, 0x06: 8, 0x07: 74, 0x08: 10, 0x0C: 2, 0x0D: 66,
-                0x0E: 65}
+SERVER_SIZES = classic.SERVER_SIZES
 
 
 class TestClient:

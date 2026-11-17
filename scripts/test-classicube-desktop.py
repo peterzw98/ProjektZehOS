@@ -4,7 +4,7 @@
 Das ISO muss mit dem oeffentlichen Gegenstueck von --key (ausschliesslich Testschluessel) gebaut sein.
 --package bezeichnet die unsignierten Paketdateien des Ports (Wasm und Ressourcen).
 Vorhandene VM-Images werden nicht gelesen. Bilder/Protokolle bleiben unter .tools/classicube-guest/ erhalten.
-Ablauf: lokal installieren, Start aus dem Menue, Welt sichtbar, Bewegung (W), Blick per Maus,
+Ablauf: lokal installieren, Start aus dem Menue, Launcher "Singleplayer", Welt sichtbar, Bewegung (W), Blick per Maus,
 Block entfernen (links) und setzen (rechts), Schliessen ueber das Fenster, drei Starts mit freiem Speicher.
 """
 import argparse
@@ -109,6 +109,14 @@ def main():
         mark = guest.mark()
         guest.launch("ClassiCube")
         guest.wait("APP classicube erstes Bild", 180, mark)
+        # Erst zeigt der Launcher; "Singleplayer" liegt 110 Pixel unter der Mitte des Inhalts (798x519). Jeder Start
+        # versetzt das Fenster um 28 Pixel.
+        time.sleep(3)
+        capture("launcher")
+        offset = 28 * launches.pop(0)
+        guest.qmp.click(33+399+offset, 120+259+110+offset, *guest.size)
+
+    launches = [0, 1, 2]
 
     def button(name):
         for down in (True, False):

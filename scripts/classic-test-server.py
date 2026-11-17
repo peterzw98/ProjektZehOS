@@ -18,6 +18,9 @@ import time
 PROTOCOL_VERSION = 7
 # Paketgroessen einschliesslich Opcode (Client -> Server)
 CLIENT_SIZES = {0x00: 131, 0x05: 9, 0x08: 10, 0x0D: 66}
+# Paketgroessen einschliesslich Opcode (Server -> Client), fuer Testclients
+SERVER_SIZES = {0x00: 131, 0x01: 1, 0x02: 1, 0x03: 1028, 0x04: 7, 0x06: 8, 0x07: 74, 0x08: 10, 0x0C: 2, 0x0D: 66,
+                0x0E: 65}
 SELF_ID = 0xFF  # -1: der eigene Spieler im Spawn-/Positionspaket
 BEDROCK, STONE, DIRT, GRASS, AIR = 7, 1, 3, 2, 0
 
