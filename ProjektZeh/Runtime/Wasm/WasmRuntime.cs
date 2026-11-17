@@ -34,9 +34,10 @@ internal interface IWasmSession
 }
 
 /// <summary>
-/// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus. Alle Laeufe teilen sich einen
-/// langlebigen Worker mit festem Stack, weil Cosmos 3.0.94 Stacks beendeter Threads nicht freigibt und das
-/// native wasm3-Budget (d_m3MaxNativeStack, siehe ProjektZeh.csproj) auf diesen Stack abgestimmt ist.
+/// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
+/// optional nativ ueber WAMR-AOT (-p:ZehOSWasmAot=true). Alle Laeufe teilen sich einen langlebigen Worker mit festem
+/// Stack, weil Cosmos 3.0.94 Stacks beendeter Threads nicht freigibt und die nativen Stackgrenzen von wasm3
+/// (d_m3MaxNativeStack, siehe ProjektZeh.csproj) und WAMR (zehos_host_wamr.c) auf diesen Stack abgestimmt sind.
 /// </summary>
 internal static unsafe class WasmRuntime
 {
@@ -65,12 +66,15 @@ internal static unsafe class WasmRuntime
     public static bool IsBusy { get { lock (gate) return pending > 0; } }
     private static int pending;
 
-    /// <summary>Stellt einen Lauf in die Warteschlange; completed laeuft danach auf dem Worker.</summary>
+    /// <summary>
+    /// Stellt einen Lauf in die Warteschlange; completed laeuft danach auf dem Worker. Mit aot (Bytes eines .aot zum
+    /// selben Modul) laeuft der Einstieg nativ unter WAMR, sofern WasmEngineSelection das zulaesst; sonst das .wasm.
+    /// </summary>
     public static void Enqueue(byte[] module, string entry, ulong gas, IWasmSession session,
-        Action<WasmStatus, int, string> completed)
+        Action<WasmStatus, int, string> completed, byte[]? aot = null)
     {
         ArgumentNullException.ThrowIfNull(module);
-        Enqueue(() => (module, null), entry, gas, session, completed);
+        EnqueueLoaded(() => (module, null), aot, entry, gas, session, completed);
     }
 
     /// <summary>
@@ -78,7 +82,10 @@ internal static unsafe class WasmRuntime
     /// Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung.
     /// </summary>
     public static void Enqueue(Func<(byte[]? Module, string? Error)> load, string entry, ulong gas, IWasmSession session,
-        Action<WasmStatus, int, string> completed)
+        Action<WasmStatus, int, string> completed) => EnqueueLoaded(load, null, entry, gas, session, completed);
+
+    private static void EnqueueLoaded(Func<(byte[]? Module, string? Error)> load, byte[]? aot, string entry, ulong gas,
+        IWasmSession session, Action<WasmStatus, int, string> completed)
     {
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
@@ -95,7 +102,7 @@ internal static unsafe class WasmRuntime
                 // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
                 try { loaded = load(); }
                 catch (Exception exception) { loaded = (null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, entry, gas, session, out result, out message);
+                if (loaded.Module != null) status = Execute(loaded.Module, aot, entry, gas, session, out result, out message);
                 else message = loaded.Error ?? "Modul nicht geladen.";
                 // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
                 lock (gate) pending--;
@@ -124,13 +131,14 @@ internal static unsafe class WasmRuntime
     }
 
     /// <summary>Fuehrt einen Lauf aus und wartet auf das Ergebnis; nur ausserhalb des Workers aufrufen.</summary>
-    public static WasmStatus Run(byte[] module, string entry, ulong gas, IWasmSession session, out int result, out string message)
+    public static WasmStatus Run(byte[] module, string entry, ulong gas, IWasmSession session, out int result, out string message,
+        byte[]? aot = null)
     {
         using var done = new ManualResetEvent(false);
         WasmStatus status = WasmStatus.Trap;
         int value = 0;
         string text = string.Empty;
-        Enqueue(module, entry, gas, session, (s, r, m) => { status = s; value = r; text = m; done.Set(); });
+        Enqueue(module, entry, gas, session, (s, r, m) => { status = s; value = r; text = m; done.Set(); }, aot);
         done.WaitOne();
         result = value;
         message = text;
@@ -166,7 +174,8 @@ internal static unsafe class WasmRuntime
             $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB\n");
     }
 
-    private static WasmStatus Execute(byte[] module, string entry, ulong gas, IWasmSession session, out int result, out string message)
+    private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session, out int result,
+        out string message)
     {
         byte[] entryBytes = Encoding.ASCII.GetBytes(entry + "\0");
         byte* text = stackalloc byte[256];
@@ -177,10 +186,11 @@ internal static unsafe class WasmRuntime
         WaitedTicks = 0;
         try
         {
-            fixed (byte* bytes = module)
             fixed (byte* name = entryBytes)
             {
-                code = NativeRun(bytes, (uint)module.Length, name, gas, WasmStackBytes, MemoryLimitBytes, &value, text, 256);
+                code = WasmEngineSelection.Select(AotBuiltIn, aot, gas) == WasmEngine.Aot
+                    ? RunAot(aot!, name, &value, text)
+                    : RunWasm3(module, name, gas, &value, text);
             }
         }
         catch (Exception exception)
@@ -207,9 +217,40 @@ internal static unsafe class WasmRuntime
         return (WasmStatus)code;
     }
 
+    private static int RunWasm3(byte[] module, byte* entry, ulong gas, int* value, byte* text)
+    {
+        fixed (byte* bytes = module)
+        {
+            return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+        }
+    }
+
     [DllImport("*", EntryPoint = "zehos_wasm_run", ExactSpelling = true)]
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
+
+    // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn waehlt WasmEngineSelection immer wasm3.
+#if ZEHOS_WASM_AOT
+    private const bool AotBuiltIn = true;
+
+    // Dieselben Grenzen wie wasm3 (Speicher, Stack der Ausfuehrungsumgebung), aber kein Gasbudget.
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text)
+    {
+        fixed (byte* bytes = aot)
+        {
+            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+        }
+    }
+
+    [DllImport("*", EntryPoint = "zehos_wasm_run_aot", ExactSpelling = true)]
+    private static extern int NativeRunAot(byte* bytes, uint length, byte* entry, uint stackBytes, ulong memoryBytes,
+        int* result, byte* message, uint messageLength);
+#else
+    private const bool AotBuiltIn = false;
+
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text) =>
+        throw new InvalidOperationException("WAMR-AOT ist in diesem Kernel nicht enthalten.");
+#endif
 
     // Das Bundle wird nur einmal je Kernellauf geparst. Es laeuft hoechstens eine Paket-App, daher greift nur ein
     // Thread auf den Zwischenspeicher zu.
