@@ -79,13 +79,13 @@ public sealed class DataDiskSelectorTests
         var result = DataDiskSelector.CheckInitSize(512, bytes / 512);
 
         Assert.AreEqual(allowed, result.IsOK());
-        if (!allowed) StringAssert.Contains(result.Status.Message, "UnsupportedDiskSize");
+        if (!allowed) StringAssert.Contains(result.Message, "UnsupportedDiskSize");
     }
 
     [TestMethod]
     public void CheckInitSize_RejectsOtherSectorSizeAndOverflowingCounts()
     {
-        StringAssert.Contains(DataDiskSelector.CheckInitSize(4096, 131072).Status.Message, "UnsupportedSectorSize");
+        StringAssert.Contains(DataDiskSelector.CheckInitSize(4096, 131072).Message, "UnsupportedSectorSize");
         Assert.IsFalse(DataDiskSelector.CheckInitSize(512, 0).IsOK());
         Assert.IsFalse(DataDiskSelector.CheckInitSize(512, ulong.MaxValue).IsOK());
     }
