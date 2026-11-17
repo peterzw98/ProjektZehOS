@@ -46,7 +46,9 @@ internal static class DataDiskSelector
 
     /// <summary>
     /// Vom Installer nie angeboten: jede Partition mit dem FAT32-Label ZEHOSDATA, egal ob MBR 0x0C oder GPT (Basic Data,
-    /// ESP). Bewusst weiter als <see cref="IsDataPartition"/>, das nur bestimmt, was eingebunden wird.
+    /// ESP). Bewusst weiter als <see cref="IsDataPartition"/>, das nur bestimmt, was eingebunden wird. Grenze: Describe liest
+    /// das Label nur bei MBR 0x0C, ESP und Basic Data; MBR-FAT-Typen wie 0x0B/0x06 mit Label ZEHOSDATA bleiben unerkannt
+    /// (disk init legt immer 0x0C an).
     /// </summary>
     internal static bool IsInstallExcluded(DataDiskPartition partition) =>
         string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
@@ -180,7 +182,7 @@ internal static class DataDiskSelector
     {
         if (!Partitioning.GptLayout.HasTraces(blockSize, blockCount, read)) return ResultErr.CreateSuccess();
         return ResultErr.CreateFailure(ResultCode.Failure,
-            Cause("InstalledLayout", "Das Laufwerk traegt eine GPT (installiertes ZehOS oder anderes System); disk init verweigert das auch mit --yes-overwrite. Neu einrichten nur ueber die Installation mit --erase."));
+            Cause("InstalledLayout", "Das Laufwerk traegt eine GPT (installiertes ZehOS oder anderes System); disk init verweigert das auch mit --yes-overwrite. Eine installierte ZehOS-Platte nur ueber die Installation mit --erase neu einrichten; eine fremde GPT-Platte vorher ausserhalb von ZehOS leeren."));
     }
 
     /// <summary>512-Byte-Sektoren und 64 MiB bis 128 GiB; die Division verhindert einen Ueberlauf von BlockCount * BlockSize.</summary>
