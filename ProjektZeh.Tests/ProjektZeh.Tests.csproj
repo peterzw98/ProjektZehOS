@@ -66,6 +66,7 @@
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\SystemInfoSnapshot.cs" Link="Storage\Virtual\SystemInfoSnapshot.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Virtual\VirtualTree.cs" Link="Storage\Virtual\VirtualTree.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
