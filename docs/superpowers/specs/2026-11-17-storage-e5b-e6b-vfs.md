@@ -2,15 +2,16 @@
 
 Stand: 17. November 2026, Basis `origin/master` @ `0a5547e` (E5a/E6a-Hostlogik #147 gemergt: `SystemInfoSnapshot`, `SystemInfoFile`, `DeviceFileSystem`). **Nur Entwurf**, kein Code, nichts im Gast. Cosmos-Aussagen aus der Quelle `efcf20c` (= 3.0.97). Grundlage: [Matrix](2026-11-17-system-files-inventory.md), [Spezifikation „Alles als Datei“](2026-11-17-storage-linux.md), [Etappe 4](2026-11-17-storage-etappe4-design.md).
 
-## 0. Entscheidungen (Vorschlag; Review huang zu `0633a37` eingearbeitet)
+## 0. Entscheidungen (Review huang zu `0633a37` eingearbeitet, Leitung 12:06/12:07)
 
 1. **Ein eigener Dateisystemtyp je Baum** (`zehos-proc`, `zehos-sys`, `zehos-dev`), registriert per `VfsManager.RegisterFileSystem`, eingehängt auf `/proc`, `/sys` (beide `MountFlags.ReadOnly`) und `/dev` (schreibbar nur für `/dev/null`). Kein Overlay, kein zweites VFS.
 2. **In beiden Profilen.** `TryMount` verlangt kein Verzeichnis am Mountpunkt (`VfsManager.cs:146`), die Bäume funktionieren deshalb auch im `Legacy`-Profil ohne `/` – E5b/E6b müssen nicht auf das Root-Profil warten. Im `Root`-Profil legt der Installer die Mountpunktverzeichnisse an (Etappe 4 §2), damit `ls /` sie zeigt.
 3. **Snapshot je Open beim ersten Lesezugriff, ohne Tabelle.** Cosmos kennt keinen Open-Hook im Treiber, `VfsManager.TryOpenFile` löst den Pfad aber je Open neu auf und baut ein eigenes `VfsOpenFile` (`VfsManager.cs:432`). Deshalb liefert `Lookup` je Aufruf ein **frisches Inode-Objekt mit eigener `IFileOperations`-Instanz**, die den Snapshot beim ersten `Read`/`Seek` erzeugt und hält (huang P3 a). Keine Tabelle je `IVfsOpenFile`, keine Abhängigkeit von `Release`, keine Obergrenze offener Snapshots.
 4. **`GetAttr` meldet Größe 0** für `/proc`/`/sys` (wie Linux, kein Snapshot beim `stat`). Alle ZehOS-Leser lesen deshalb bis EOF mit Grenze (`FileService.ReadText` tut das schon; `ReadBytes` wird für Größe 0 auf begrenztes Lesen bis EOF umgestellt).
-5. **`FileService` bekommt drei schmale Einstiege, die Pipeline bleibt unverändert** (huang P2-1): `ReadVirtual(path, session)`, `ListVirtual(path)`, `WriteNull(path)`. Sie lesen **direkt aus den Erzeugern** (`SystemInfoSnapshot`, `DeviceFileSystem`), nicht über `System.IO`, und werden nur von `cat`, Umleitung, Textbetrachter und `ls` aufgerufen. `ResolvePath`/`Authorize` und alle übrigen Methoden bleiben wie heute: für sie sind `/proc`, `/sys`, `/dev` fremde Mounts und werden in beiden Profilen abgelehnt. `cp /dev/zero`, `pkg install-local /dev/…`, Suche, Prüfsumme usw. kommen damit strukturell nie dorthin; §3 ist zusätzliche Absicherung. Direktes Lesen aus dem Erzeuger schließt auch aus, dass bei fehlgeschlagenem Mount eine darunterliegende Datei auf Root gelesen wird (huang P3 d).
+5. **`FileService` bekommt drei schmale Einstiege, die Pipeline bleibt unverändert** (huang P2-1): `ReadVirtual(path, session)`, `ListVirtual(path)`, `WriteNull(path)`. Sie lesen **direkt aus den Erzeugern** (`SystemInfoSnapshot`, `DeviceFileSystem`), nicht über `System.IO`, und werden von `cat`, Umleitung, Textbetrachter, `ls` **und dem Dateimanager** aufgerufen – alle auf denselben Knoten (Bedingung der Leitung 12:07). `ResolvePath`/`Authorize` und alle übrigen Methoden bleiben wie heute: für sie sind `/proc`, `/sys`, `/dev` fremde Mounts und werden in beiden Profilen abgelehnt. `cp /dev/zero`, `pkg install-local /dev/…`, Suche, Prüfsumme usw. kommen damit strukturell nie dorthin; §3 ist zusätzliche Absicherung. Direktes Lesen aus dem Erzeuger schließt auch aus, dass bei fehlgeschlagenem Mount eine darunterliegende Datei auf Root gelesen wird (huang P3 d).
 6. **Wasm bekommt nichts.** Paket-Apps sehen nur ihr Paketverzeichnis über `PREOPEN_FD` (`zehos_wasm.c:325-345`, `is_safe_path`); daran ändert sich nichts. Test belegt, dass `/proc`, `/sys`, `/dev` aus einer App nicht erreichbar sind.
-7. **Warum trotzdem ein Cosmos-Treiber** (huang P2-2, zur Bestätigung durch die Leitung): die Spezifikation verlangt „alles als Datei“ – Verzeichnisse und `stat` über dieselbe Dateischnittstelle wie bei normalen Dateien, `/proc/mounts` mit den virtuellen Mounts selbst, `ls /` im `Root`-Profil, und spätere Verbraucher außerhalb von `FileService` (Dateimanager über `System.IO`, Etappe 6 Geräte). Der Treiber liefert diese Sichtbarkeit; der Inhalt für ZehOS-Bedienung kommt über die Einstiege aus §0.5. Damit ist E5b.1/E5b.2 allein schon nutzbar, E5b.3/E6b.1 machen die Bäume im VFS sichtbar. Alternative der Leitung: E5b.3/E6b.1 zurückstellen, bis ein Verbraucher außerhalb `FileService` sie braucht.
+7. **Cosmos-Treiber jetzt** (Leitung 12:07): der Plan verlangt „alles als Datei“ – Verzeichnisse und `stat` über dieselbe Dateischnittstelle, `/proc/mounts` mit den virtuellen Mounts selbst, `ls /` im `Root`-Profil, spätere Verbraucher außerhalb `FileService`. Der Treiber lehnt jede Mutation selbst ab (`Create`, `Mkdir`, `Unlink`, `Rmdir`, `Rename`, `SetAttr`, `Symlink`, `Write` außer `/dev/null`). Die drei Einstiege aus §0.5 ersetzen die zuvor erwogene Allowlist im Pfadwächter (Leitung 12:07: sicherer, Pipeline unverändert).
+8. **Kopieren, Prüfsumme und `pkg install-local` nehmen nur reguläre Dateien als Quelle** (Typprüfung per `FileTypeMask`), unabhängig vom Pfad (Leitung 12:06).
 
 ## 1. Dateien und Rechte
 
@@ -56,7 +57,7 @@ Getrennt nach Projektregel Hardware/Logik:
 | Paket | Inhalt | Prüfung |
 |---|---|---|
 | E5b.1 | `VirtualTree`, `VirtualAccess` (rein) + Tests | Hosttests |
-| E5b.2 | `FileService`: Einstiege `ReadVirtual`/`ListVirtual`/`WriteNull` (direkt aus den Erzeugern, Rechte per `VirtualAccess`), Aufrufe in `cat`, Umleitung, Textbetrachter, `ls`; `ReadBytes` bis EOF bei Länge 0 | Hosttests |
+| E5b.2 | `FileService`: Einstiege `ReadVirtual`/`ListVirtual`/`WriteNull` (direkt aus den Erzeugern, Rechte per `VirtualAccess`), Aufrufe in `cat`, Umleitung, Textbetrachter, `ls`, Dateimanager; Kopieren/Prüfsumme/`pkg install-local` nur mit regulärer Quelle; `ReadBytes` bis EOF bei Länge 0 | Hosttests |
 | E5b.3 | Cosmos-Adapter `zehos-proc`/`zehos-sys`, Registrierung und Mount beim Boot (beide Profile), Mountfehler nur protokolliert, Boot läuft weiter | nativer Build, Gast G1–G4 |
 | E6b.1 | `zehos-dev` mit `null`/`zero`, Gerätetyp-Ablehnung in Kopieren/Prüfsumme/Paketinstallation | Hosttests, Gast G5–G6 |
 | E6b.2 | Wasm-Gegenprobe | Gast G7 |
@@ -84,7 +85,7 @@ Getrennt nach Projektregel Hardware/Logik:
 
 ## 6. Offene Punkte
 
-1. **Leitung:** Rechte §1 bestätigen (huang: einverstanden) und §0.7 entscheiden: Treiber jetzt (Vorschlag, Spezifikation „alles als Datei“) oder zurückstellen.
+1. *Entschieden 12:06/12:07:* Rechte §1 (huang einverstanden), Treiber jetzt, drei Einstiege statt Wächter-Allowlist, Dateimanager über dieselben Einstiege.
 2. Ob die System.IO-Schicht von Cosmos (`InteropSysFilePlug`) für Zeichengeräte und Größe 0 etwas anderes tut als für Dateien (Länge, `pread`), ist ungeprüft; E5b.3/E6b.1 prüfen das im Gast zuerst.
 3. *Entfällt:* keine Snapshot-Tabelle mehr (§0.3).
 4. Verzeichnisse je Gerät unter `/sys/devices/<id>/` und `/dev/<block-id>` sind nicht Teil dieser Stufe (Spezifikation: später, Schreibzugriff nur mit eigener Freigabe).
