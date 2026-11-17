@@ -56,6 +56,30 @@ public sealed class DiagnosticCommandTests
         output.Verify(target => target.WriteLine(It.Is<string>(text => text.StartsWith("Bildzeitmessung aus. Anteile", System.StringComparison.Ordinal))), Times.Once);
     }
 
+    [TestMethod]
+    public void ExecuteLine_WasmAot_IsOffByDefaultAndSwitchesForTheNextStart()
+    {
+        var shell = new ShellService((SystemLog?)null, null, null);
+        var output = new Mock<ITextOutput>(MockBehavior.Strict);
+        output.Setup(target => target.WriteLine(It.IsAny<string>()));
+        try
+        {
+            // Peters Entscheidung: AOT bleibt standardmaessig aus, bis Etappe F abgeschlossen ist.
+            Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
+            Assert.IsTrue(shell.ExecuteLine("wasmaot", output.Object).IsOK());
+            Assert.IsTrue(shell.ExecuteLine("wasmaot on", output.Object).IsOK());
+            Assert.IsTrue(Runtime.Wasm.WasmEngineSelection.AotEnabled);
+            Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine("wasmaot schnell", output.Object).Code);
+            Assert.IsTrue(Runtime.Wasm.WasmEngineSelection.AotEnabled, "Ein falsches Argument darf nichts umschalten.");
+            Assert.IsTrue(shell.ExecuteLine("wasmaot off", output.Object).IsOK());
+            Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
+        }
+        finally { Runtime.Wasm.WasmEngineSelection.AotEnabled = false; }
+        output.Verify(target => target.WriteLine("WAMR-AOT aus (Kennung wamr245-aot5-x64-bc)."), Times.Exactly(2));
+        output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc)."), Times.Once);
+        // Der Hostbuild enthaelt kein WAMR; die Shell sagt das bei jeder Abfrage.
+        output.Verify(target => target.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3."), Times.Exactly(3));
+    }
     [DataTestMethod]
     [DataRow("version", "Versionsinformationen sind nicht verfuegbar.")]
     [DataRow("uptime", "Laufzeit ist nicht verfuegbar: keine initialisierte monotone Uhr.")]
