@@ -17,13 +17,17 @@ internal sealed class FileService
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
+    // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
+    private readonly Func<string, bool, ResultErr>? pathGuard;
 
     public string CurrentDirectory { get; private set; }
 
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
         FileAccessControl? access = null, UserSession? session = null,
-        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null)
+        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
+        Func<string, bool, ResultErr>? pathGuard = null)
     {
+        this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
         this.diskSpace = diskSpace;
@@ -89,7 +93,7 @@ internal sealed class FileService
     /// </summary>
     public ResultObject<string> ReadText(string? path, bool allowMissing = false, int maximumLength = MaximumTextLength)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: allowMissing);
         if (!resolved.IsOK())
         {
             return resolved;
@@ -189,7 +193,7 @@ internal sealed class FileService
 
     private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
         {
             return resolved.Status;
@@ -298,7 +302,7 @@ internal sealed class FileService
     /// </summary>
     public ResultErr CreateDirectory(string? path)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
         {
             return resolved.Status;
@@ -355,7 +359,7 @@ internal sealed class FileService
     {
         var from = ResolvePath(source);
         if (!from.IsOK()) return from.Status;
-        var to = ResolvePath(target);
+        var to = ResolvePath(target, creating: true);
         if (!to.IsOK()) return to.Status;
         bool registered = false;
         string? temporary = null;
@@ -432,7 +436,7 @@ internal sealed class FileService
 
     public ResultErr Touch(string? path)
     {
-        var resolved = ResolvePath(path);
+        var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK()) return resolved.Status;
         bool registered = false;
         try
@@ -541,7 +545,12 @@ internal sealed class FileService
         return ResultObjectFactory.CreateSuccess(size);
     }
 
-    internal ResultObject<string> ResolvePath(string? path)
+    /// <summary>
+    /// Absoluter Pfad, erst nach dem Pfadwaechter (Etappe 3): jeder Symlink und jede fremde Mountgrenze wird abgelehnt,
+    /// ein fehlendes Blatt nur bei <paramref name="creating"/>. Restrisiko: zwischen Pruefung und IO kann sich der Baum aendern
+    /// (ZehOS selbst legt keine Symlinks an).
+    /// </summary>
+    internal ResultObject<string> ResolvePath(string? path, bool creating = false)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -551,7 +560,9 @@ internal sealed class FileService
 
         try
         {
-            return ResultObjectFactory.CreateSuccess(Path.GetFullPath(path, CurrentDirectory));
+            string full = Path.GetFullPath(path, CurrentDirectory);
+            var guarded = FileAccessControl.RunGuard(pathGuard, full, creating);
+            return guarded.IsOK() ? ResultObjectFactory.CreateSuccess(full) : ResultObjectFactory.CreateFailure<string>(guarded);
         }
         catch (Exception exception) when (IsFileError(exception))
         {

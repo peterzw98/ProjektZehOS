@@ -57,9 +57,15 @@ internal sealed class AccountService
     public IReadOnlyDictionary<string, bool> AdministratorCommands => administratorCommands;
 
     public AccountService(string root, PasswordHasher hasher)
+        : this(root, hasher, StringComparison.OrdinalIgnoreCase, null)
     {
-        Access = new FileAccessControl(root);
-        metadata = new FileService(Access.RootDirectory);
+    }
+
+    /// <summary>Etappe 3: Vergleich und Pfadwaechter der Verwaltungswurzel gelten auch fuer die Kontendatei selbst.</summary>
+    public AccountService(string root, PasswordHasher hasher, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard)
+    {
+        Access = new FileAccessControl(root, comparison, pathGuard);
+        metadata = new FileService(Access.RootDirectory, pathGuard: pathGuard);
         this.hasher = hasher;
         // Neue Dateieintraege duerfen an einer vollen Rechtedatei scheitern, ohne alles zu sperren (siehe Save).
         Access.Persist = () => Save(lockWhenFull: false);

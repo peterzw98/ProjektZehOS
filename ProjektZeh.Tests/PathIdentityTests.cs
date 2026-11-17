@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Security;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
 
@@ -133,6 +134,47 @@ public sealed class PathIdentityTests
         CollectionAssert.AreEqual(new[] { (Path.Combine(root, "x"), false), (Path.Combine(root, "neu"), true) }, calls);
     }
 
+    [TestMethod]
+    public void FileService_EveryOperationReachesTheGuardAndChangesNothing()
+    {
+        string directory = Path.Combine(Temp, "zehos-guard-io-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string existing = Path.Combine(directory, "a.txt");
+            File.WriteAllText(existing, "x");
+            var calls = new List<(string Path, bool Creating)>();
+            var files = new FileService(directory, pathGuard: (path, creating) =>
+            {
+                calls.Add((path, creating));
+                return FileAccessControl.Denied();
+            });
+            Assert.IsFalse(files.ReadText("a.txt").IsOK(), "Lesen");
+            Assert.IsFalse(files.WriteText("b.txt", "y").IsOK(), "Schreiben/Ersetzen");
+            Assert.IsFalse(files.ListEntries(".").IsOK(), "Listen");
+            Assert.IsFalse(files.MoveFile("a.txt", "c.txt").IsOK(), "Verschieben");
+            Assert.IsFalse(files.CopyFile("a.txt", "d.txt").IsOK(), "Kopieren");
+            Assert.IsFalse(files.DeleteFile("a.txt").IsOK(), "Loeschen");
+            Assert.IsFalse(files.CreateDirectory("neu").IsOK(), "Verzeichnis");
+            Assert.IsFalse(files.GetFileSize("a.txt").IsOK(), "Metadaten");
+            Assert.AreEqual("x", File.ReadAllText(existing));
+            CollectionAssert.AreEquivalent(new[] { "a.txt" }, Array.ConvertAll(Directory.GetFileSystemEntries(directory), Path.GetFileName));
+            CollectionAssert.Contains(calls, (Path.Combine(directory, "b.txt"), true), "Schreibziel mit creating");
+            CollectionAssert.Contains(calls, (existing, false), "Lesequelle ohne creating");
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [TestMethod]
+    public void FileService_GuardException_Denies()
+    {
+        var files = new FileService(Temp, pathGuard: (_, _) => throw new InvalidOperationException("kaputt"));
+        Assert.IsFalse(files.ReadText("egal.txt", allowMissing: true).IsOK());
+    }
+
     // ---- PathGuard (VFS-Pfade mit '/') ----
 
     private static readonly string[] Mounts = ["/", "/data", "/proc", "/mnt/ext2-ro"];
@@ -152,7 +194,7 @@ public sealed class PathIdentityTests
     [DataTestMethod]
     [DataRow("/data/home/a/x.txt", false, true)]
     [DataRow("/data/home/a/neu.txt", true, true)]
-    [DataRow("/data/home/a/neu.txt", false, true)]
+    [DataRow("/data/home/a/neu.txt", false, false)]
     [DataRow("/data/home/link/x.txt", false, false)]
     [DataRow("/data/home/a/blatt", false, false)]
     [DataRow("/data/schleife/x", false, false)]
@@ -181,6 +223,25 @@ public sealed class PathIdentityTests
         var lookup = Tree(("/etc", PathNodeKind.Directory), ("/etc/hosts", PathNodeKind.File));
         Assert.IsTrue(PathGuard.Check("/", "/etc/hosts", Mounts, lookup, false).IsOK());
         Assert.IsTrue(PathGuard.Check("/", "/", Mounts, lookup, false).IsOK());
+    }
+
+    [TestMethod]
+    public void Guard_RootThatIsNoMountPoint_Denies()
+    {
+        Assert.IsFalse(PathGuard.Check("/data/home", "/data/home/a/x.txt", Mounts, Home, false).IsOK(), "Wurzel muss Einhaengepunkt sein");
+    }
+
+    [TestMethod]
+    public void AccessControl_GuardExceptionDeniesEvenAdministrator()
+    {
+        string root = Path.Combine(Temp, "zehos-guard-throw");
+        var access = new FileAccessControl(root, StringComparison.Ordinal, (_, _) => throw new IOException("kaputt"));
+        access.Initialize();
+        access.Assign(root, "1");
+        access.Assign(Path.Combine(root, "x"), "1");
+        var admin = new UserSession("1", "admin", true, root);
+        Assert.IsFalse(access.Check(admin, Path.Combine(root, "x"), FilePermission.Read).IsOK());
+        Assert.IsFalse(access.Guard(Path.Combine(root, "x"), false).IsOK());
     }
 
     [TestMethod]
