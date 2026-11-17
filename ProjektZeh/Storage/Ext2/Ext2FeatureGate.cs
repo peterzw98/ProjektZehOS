@@ -24,6 +24,7 @@ public static class Ext2FeatureGate
 {
     private const int SuperblockSize = 1024;
     private const int MagicOffset = 56;
+    private const int StateOffset = 58;
     private const int LogBlockSizeOffset = 24;
     private const int RevLevelOffset = 76;
     private const int FeatureCompatOffset = 92;
@@ -48,8 +49,14 @@ public static class Ext2FeatureGate
             return Ext2MountDecision.Reject;
         }
 
+        ushort state = BitConverter.ToUInt16(superblock.Slice(StateOffset, 2));
+        if (state > 2)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
         bool unknownCompat = (BitConverter.ToUInt32(superblock.Slice(FeatureCompatOffset, 4)) & ~KnownCompat) != 0;
         bool unknownRoCompat = (BitConverter.ToUInt32(superblock.Slice(FeatureRoCompatOffset, 4)) & ~KnownRoCompat) != 0;
-        return unknownCompat || unknownRoCompat ? Ext2MountDecision.ReadOnly : Ext2MountDecision.Ok;
+        return state != 1 || unknownCompat || unknownRoCompat ? Ext2MountDecision.ReadOnly : Ext2MountDecision.Ok;
     }
 }

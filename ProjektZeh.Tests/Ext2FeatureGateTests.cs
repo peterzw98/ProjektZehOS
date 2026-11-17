@@ -13,11 +13,12 @@ public sealed class Ext2FeatureGateTests
     private const uint NeedsRecovery = 0x4;
     private const uint HasJournal = 0x4;
 
-    private static byte[] Superblock(uint rev = 1, uint logBlock = 2, uint compat = 0, uint incompat = Filetype, uint roCompat = SparseSuper, ushort magic = 0xEF53)
+    private static byte[] Superblock(uint rev = 1, uint logBlock = 2, uint compat = 0, uint incompat = Filetype, uint roCompat = SparseSuper, ushort magic = 0xEF53, ushort state = 1)
     {
         byte[] sb = new byte[1024];
         BitConverter.TryWriteBytes(sb.AsSpan(24, 4), logBlock);
         BitConverter.TryWriteBytes(sb.AsSpan(56, 2), magic);
+        BitConverter.TryWriteBytes(sb.AsSpan(58, 2), state);
         BitConverter.TryWriteBytes(sb.AsSpan(76, 4), rev);
         BitConverter.TryWriteBytes(sb.AsSpan(92, 4), compat);
         BitConverter.TryWriteBytes(sb.AsSpan(96, 4), incompat);
@@ -73,4 +74,22 @@ public sealed class Ext2FeatureGateTests
     [TestMethod]
     public void Evaluate_ShortBuffer_IsReject() =>
         Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(new byte[1023]));
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(2)]
+    public void Evaluate_UncleanState_IsReadOnly(int state) =>
+        Assert.AreEqual(Ext2MountDecision.ReadOnly, Ext2FeatureGate.Evaluate(Superblock(state: (ushort)state)));
+
+    [TestMethod]
+    [DataRow(3)]
+    [DataRow(4)]
+    [DataRow(5)]
+    [DataRow(65535)]
+    public void Evaluate_UnknownState_IsReject(int state) =>
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(Superblock(state: (ushort)state, roCompat: 3)));
+
+    [TestMethod]
+    public void Evaluate_UncleanWithUnknownIncompat_IsReject() =>
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(Superblock(state: 2, incompat: 0x40)));
 }
