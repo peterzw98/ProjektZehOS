@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "libnsfb.h"
 #include "libnsfb_plot.h"
@@ -42,6 +43,9 @@ static int pending_count;
 static int held_keys[PENDING_MAX];
 static int held_count;
 static uint32_t tic;
+// Geaendertes Bild, das noch nicht an den Kernel ging (siehe zehos_update); NetSurf hat genau eine Oberflaeche.
+static bool dirty;
+static nsfb_t *surface;
 
 static void push_event(const nsfb_event_t *event)
 {
@@ -245,6 +249,7 @@ static int zehos_initialise(nsfb_t *nsfb)
     if (buffer == NULL) return -1;
     nsfb->ptr = buffer;
     nsfb->linelen = nsfb->width * 4;
+    surface = nsfb;
     return 0;
 }
 
@@ -258,6 +263,9 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
     if (width == nsfb->width && height == nsfb->height) return 0;
     uint8_t *buffer = realloc(nsfb->ptr, (size_t)width * height * 4);
     if (buffer == NULL) return -1;
+    // realloc behaelt die alten Bildpunkte mit der alten Zeilenlaenge; bis NetSurf neu zeichnet, waeren sie schraeg
+    // versetzt sichtbar. Leer ist der Rest schwarz statt verzerrt.
+    memset(buffer, 0, (size_t)width * height * 4);
     nsfb->ptr = buffer;
     nsfb->width = width;
     nsfb->height = height;
@@ -269,14 +277,29 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
 
 static int zehos_finalise(nsfb_t *nsfb)
 {
+    if (surface == nsfb) surface = NULL;
     free(nsfb->ptr);
     nsfb->ptr = NULL;
     return 0;
 }
 
+static void present_if_dirty(nsfb_t *nsfb)
+{
+    if (!dirty) return;
+    dirty = false;
+    zehos_present((const uint32_t *)nsfb->ptr, nsfb->width, nsfb->height, (int32_t)tic++, 0);
+}
+
+// Aufruf aus NetSurfs Hauptschleife direkt nach fbtk_redraw (patches/netsurf-zehos-resize-redraw.patch).
+void zehos_flush(void)
+{
+    if (surface != NULL) present_if_dirty(surface);
+}
+
 static bool zehos_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
 {
-    (void)nsfb;
+    // Rueckfall, falls ein Bild ohne zehos_flush entstand; vor dem Warten, damit es nicht liegen bleibt.
+    present_if_dirty(nsfb);
     uint32_t start = zehos_ticks_ms();
     for (;;) {
         if (zehos_should_exit()) {
@@ -312,8 +335,10 @@ static int zehos_update(nsfb_t *nsfb, nsfb_bbox_t *box)
     (void)box;
     struct nsfb_cursor_s *cursor = nsfb->cursor;
     if (cursor != NULL && cursor->plotted == false) nsfb_cursor_plot(nsfb, cursor);
+    // Jedes fbtk-Widget meldet sein eigenes Update; ein sofortiges present zeigte Zwischenstaende, nach einem
+    // Groessenwechsel etwa die neue Leiste ueber dem noch alten Seitenbereich. Gesendet wird in zehos_input.
     // shortcut: immer das ganze Bild, da present keine Teilbereiche kennt; bei Bedarf Teilaktualisierung im ABI ergänzen.
-    zehos_present((const uint32_t *)nsfb->ptr, nsfb->width, nsfb->height, (int32_t)tic++, 0);
+    dirty = true;
     return 0;
 }
 
