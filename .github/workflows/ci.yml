@@ -39,8 +39,9 @@ jobs:
           code=true
           if [ "$EVENT" = "pull_request" ]; then
             # Laesst sich die Dateiliste nicht lesen, wird gebaut: lieber ein Build zu viel als einer zu wenig.
-            if files=$(gh api "$FILES_URL" --paginate --jq '.[].filename') && [ -n "$files" ] \
-              && ! printf '%s\n' "$files" | grep -qvE '(\.md$|^docs/)'; then
+            # Bei Umbenennungen zaehlt auch der alte Pfad: Code, der nach docs/ wandert, ist kein Doku-PR.
+            if files=$(gh api "$FILES_URL" --paginate --jq '.[] | .filename, (.previous_filename // empty)') \
+              && [ -n "$files" ] && ! grep -qvE '(\.md$|^docs/)' <<<"$files"; then
               code=false
             fi
           fi
