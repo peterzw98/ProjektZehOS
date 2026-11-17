@@ -95,7 +95,8 @@ public sealed class HardwareRandomTests
     [TestMethod]
     public void BrokenSeedWithoutRandomThrowsNotReady()
     {
-        var exception = Assert.ThrowsException<CryptographicException>(() => HardwareRandom.Fill(new byte[8], true, false, Broken, Broken));
+        var exception = Assert.ThrowsException<CryptographicException>(() =>
+            HardwareRandom.Fill(new byte[8], true, false, Broken, (out ulong value) => throw new AssertFailedException("RDRAND gelesen.")));
         Assert.IsNotInstanceOfType<HardwareRandomUnavailableException>(exception);
     }
 
@@ -112,7 +113,10 @@ public sealed class HardwareRandomTests
         // Konstante, Nullwerte und alle Bits gesetzt (bekannte Firmwarefehler) gelten als Fehler.
         foreach (ulong constant in new[] { 0ul, ulong.MaxValue, 0x4242ul })
         {
-            HardwareRandom.ReadWord stuck = (out ulong value) => { value = constant; return 1; };
+            // Erst ein gueltiges Wort, dann der Wert: so lehnt nur die jeweilige Pruefung das zweite Wort ab, nicht die
+            // Wiederholungspruefung gegen den Startwert 0 (fuer 0x4242 ist gerade die Wiederholung gemeint).
+            int calls = 0;
+            HardwareRandom.ReadWord stuck = (out ulong value) => { value = ++calls == 1 ? 0x4242ul : constant; return 1; };
             var bytes = new byte[16];
             Assert.ThrowsException<CryptographicException>(() => HardwareRandom.Fill(bytes, false, true, Broken, stuck), constant.ToString("x", System.Globalization.CultureInfo.InvariantCulture));
         }

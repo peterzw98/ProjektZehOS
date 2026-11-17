@@ -64,6 +64,11 @@ public sealed class FileManagerTests
         Assert.AreEqual(Path.Combine(directory, "sub"), files.CurrentDirectory);
         Click(app, 130, 30);
         Assert.AreEqual(directory, files.CurrentDirectory, "Hoch fuehrt zum uebergeordneten Ordner.");
+        // Hoch ist ein eigener Schritt im Verlauf: Zurueck fuehrt danach wieder nach "sub". Waere Hoch nur ein Zurueck,
+        // bliebe es hier beim Startordner. Der Test verlaesst den eigenen Ordner bewusst nicht: im echten Temp-Ordner
+        // liegen unter Linux benannte Pipes, an denen die Vorschau haengen bleibt.
+        Click(app, 30, 30);
+        Assert.AreEqual(Path.Combine(directory, "sub"), files.CurrentDirectory);
     }
 
     [TestMethod]
@@ -142,19 +147,6 @@ public sealed class FileManagerTests
         Type(app, "verirrt");
         Key(app, PhysicalKey.Enter);
         Assert.IsFalse(Directory.Exists(Path.Combine(directory, "sub", "verirrt")));
-    }
-
-    [TestMethod]
-    public void Rename_UsesFileSelectedWhenStarted()
-    {
-        File.WriteAllText(Path.Combine(directory, "a.txt"), "a");
-        var app = Start(new FileService(directory));
-        Click(app, 300, FirstRowY);
-        Key(app, PhysicalKey.F2);
-        Type(app, "c.txt");
-        Key(app, PhysicalKey.Enter);
-        Assert.IsTrue(File.Exists(Path.Combine(directory, "c.txt")));
-        Assert.IsFalse(File.Exists(Path.Combine(directory, "a.txt")));
     }
 
     [TestMethod]

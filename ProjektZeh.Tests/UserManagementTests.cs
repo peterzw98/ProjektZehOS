@@ -146,6 +146,112 @@ public sealed class UserManagementTests
         Assert.AreEqual("rebooted", output.GetLine(output.Count - 1));
     }
 
+    private UserSession CreateAlice(UserSession admin)
+    {
+        Assert.IsTrue(accounts.PrepareCreateUser(admin, "alice", false, UserPassword)().IsOK());
+        var alice = accounts.CreateSession();
+        Assert.IsTrue(accounts.PrepareLogin(alice, "alice", UserPassword)().IsOK());
+        return alice;
+    }
+
+    private bool CanRead(UserSession identity, string path) =>
+        new FileService(root, access: accounts.Access, session: identity).ReadText(Path.Combine(root, path)).IsOK();
+
+    [TestMethod]
+    public void Shell_WhoamiAndLogout_ShowIdentityAndEndOnlyThatSession()
+    {
+        var admin = SetupAdministrator();
+        var other = accounts.CreateSession();
+        Assert.IsTrue(accounts.PrepareLogin(other, "admin", AdminPassword)().IsOK());
+        var shell = CreateShell(admin);
+        var output = new TerminalBuffer(400);
+
+        Assert.IsTrue(shell.ExecuteLine("whoami", output).IsOK());
+        Assert.AreEqual($"admin ({admin.UserId}) admin; Home: {admin.HomeDirectory}", output.GetLine(output.Count - 1));
+
+        Assert.IsTrue(shell.ExecuteLine("logout", output).IsOK());
+        Assert.IsNull(admin.UserId);
+        Assert.IsNotNull(other.UserId, "Abmelden betrifft nur die eigene Sitzung.");
+        Assert.IsTrue(shell.ExecuteLine("whoami", output).IsOK());
+        Assert.AreEqual("Nicht angemeldet.", output.GetLine(output.Count - 1));
+    }
+
+    [TestMethod]
+    public void Shell_UserList_ShowsAccountsToAdministratorOnly()
+    {
+        var admin = SetupAdministrator();
+        var alice = CreateAlice(admin);
+        var output = new TerminalBuffer(120);
+
+        Assert.IsTrue(CreateShell(admin).ExecuteLine("user list", output).IsOK());
+        CollectionAssert.AreEqual(accounts.ListUsers(admin), new[] { output.GetLine(0), output.GetLine(1) });
+        StringAssert.Contains(output.GetLine(0) + output.GetLine(1), "alice", StringComparison.Ordinal);
+
+        int before = output.Count;
+        Assert.IsFalse(CreateShell(alice).ExecuteLine("user list", output).IsOK());
+        Assert.AreEqual(before, output.Count, "Ohne Administratorrechte erscheint keine Kontenliste.");
+    }
+
+    [TestMethod]
+    public void Shell_Perms_ListsCommandRightsAfterChperm()
+    {
+        var admin = SetupAdministrator();
+        var shell = CreateShell(admin);
+        var output = new TerminalBuffer(120);
+        Assert.IsTrue(shell.ExecuteLine("chperm whoami admin", output).IsOK());
+        Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine("chperm whoami user", output).Code);
+
+        Assert.IsTrue(shell.ExecuteLine("perms", output).IsOK());
+
+        Assert.AreEqual("Administratoren duerfen alles; nicht aufgefuehrte Befehle sind frei.", output.GetLine(0));
+        bool listed = false;
+        for (int index = 1; index < output.Count; index++) listed |= output.GetLine(index) == "whoami: admin";
+        Assert.IsTrue(listed, "Der eben beschraenkte Befehl fehlt in der Liste.");
+    }
+
+    [TestMethod]
+    public void Shell_Grant_NeedsFileAndHomeRightAndRevokesReadAccess()
+    {
+        var admin = SetupAdministrator();
+        var alice = CreateAlice(admin);
+        string file = Path.GetRelativePath(root, Path.Combine(admin.HomeDirectory!, "geheim.txt")).Replace('\\', '/');
+        Assert.IsTrue(new FileService(root, access: accounts.Access, session: admin).WriteText(Path.Combine(root, file), "x").IsOK());
+        var shell = CreateShell(admin);
+        var output = new TerminalBuffer(120);
+        Assert.IsFalse(CanRead(alice, file));
+
+        Assert.IsTrue(shell.ExecuteLine($"grant {file} alice r", output).IsOK());
+        Assert.IsFalse(CanRead(alice, file), "Ohne Leserecht auf dem fremden Home bleibt die Datei unerreichbar.");
+        Assert.IsTrue(shell.ExecuteLine($"grant {Path.GetDirectoryName(file)!.Replace('\\', '/')} alice r", output).IsOK());
+        Assert.IsTrue(CanRead(alice, file));
+
+        Assert.IsTrue(shell.ExecuteLine($"grant {file} alice none", output).IsOK());
+        Assert.IsFalse(CanRead(alice, file));
+
+        Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine($"grant {file} alice x", output).Code);
+        Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine($"grant {file} alice", output).Code);
+        Assert.IsFalse(shell.ExecuteLine($"grant {file} niemand r", output).IsOK());
+    }
+
+    [TestMethod]
+    public void Shell_SecurityAdopt_AssignsExistingFileAndRefusesSetupAndRecovery()
+    {
+        var admin = SetupAdministrator();
+        var alice = CreateAlice(admin);
+        File.WriteAllText(Path.Combine(root, "alt.txt"), "x");
+        var shell = CreateShell(admin);
+        var output = new TerminalBuffer(120);
+        Assert.IsFalse(CanRead(alice, "alt.txt"), "Nicht zugeordnete Bestandsdateien bleiben gesperrt.");
+
+        Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine("security adopt alt.txt", output).Code);
+        Assert.IsTrue(shell.ExecuteLine("security adopt alt.txt alice", output).IsOK());
+        Assert.IsTrue(CanRead(alice, "alt.txt"));
+
+        StringAssert.Contains(shell.ExecuteLine("security setup zweiter", output).Message, "bereits Konten", StringComparison.Ordinal);
+        StringAssert.Contains(shell.ExecuteLine("security recover admin", output).Message, "Recovery erfordert", StringComparison.Ordinal);
+        Assert.IsFalse(shell.IsSecretInput, "Abgelehnte Aufrufe duerfen keine Kennworteingabe oeffnen.");
+    }
+
     [TestMethod]
     public void DeleteUser_LogsOutTransfersFilesAndKeepsDatabaseLoadable()
     {
