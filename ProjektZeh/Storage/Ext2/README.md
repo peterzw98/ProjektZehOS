@@ -76,8 +76,9 @@ der Gastprobe (Details und Zeilen: [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPS
 `ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs` ersetzt `Ext2Superblock.FreeInode`. Die Plattenlogik steht rein in
 `Ext2InodeRelease.Release` (Host-Tests `ProjektZeh.Tests/Ext2InodeReleaseTests.cs`): zuerst das Inode mit
 `links_count` 0 und `dtime` schreiben, dann das Bitmapbit löschen; ist das Bit schon frei, wird nichts geschrieben und
-die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tun das selbst). Zähler, Deskriptor und
-Cache schreibt der Plug wie das Original fort; interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
+die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tun das selbst). Zähler und Deskriptor
+schreibt der Plug wie das Original fort; den Inode-Cache-Eintrag entfernt er nicht (generischer Zugriff warf im Gast
+`NotSupportedException`; unschädlich, Begründung im Code); interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
 Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
 
 ## Gastprobe

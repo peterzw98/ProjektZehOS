@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Runtime.CompilerServices;
 using Cosmos.Build.API.Attributes;
 using ProjektZeh.Storage.Ext2;
@@ -21,8 +20,6 @@ internal static class CosmosExt2InodeRelease
 {
     private const string Superblock = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2Superblock, Cosmos.Kernel.System";
     private const string GroupDesc = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2GroupDesc, Cosmos.Kernel.System";
-    private const string InodeCacheType = "System.Collections.Generic.Dictionary`2[[System.UInt32, System.Private.CoreLib],"
-        + "[Cosmos.Kernel.System.FileSystem.Ext2.Ext2Inode, Cosmos.Kernel.System]], System.Private.CoreLib";
 
     internal static void Free(object superblock, uint inodeNumber)
     {
@@ -46,7 +43,11 @@ internal static class CosmosExt2InodeRelease
             SetFreeInodesCount(superblock, GetFreeInodesCount(superblock) + 1);
         }
 
-        ((IDictionary)InodeCache(superblock)).Remove(inodeNumber);
+        // shortcut: der Cache-Eintrag bleibt stehen (Cosmos: _inodeCache.Remove). Der Zugriff auf das generische
+        // Dictionary per UnsafeAccessorType warf im Gast NotSupportedException (85b1484). Unschaedlich, weil ein
+        // freigegebenes Inode keinen Verzeichniseintrag mehr hat und jede Neuvergabe (Create/Mkdir/Symlink) das Inode per
+        // WriteInode in den Cache schreibt, bevor es gelesen wird (Ext2InodeOperations.cs:153-174, 209-256, 309-366).
+        // Bei einem Cosmos-Fix des Treibers mit dem Plug entfernen.
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "GroupOfInode")]
@@ -79,10 +80,6 @@ internal static class CosmosExt2InodeRelease
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_FreeInodesCount")]
     private static extern void SetFreeInodesCount([UnsafeAccessorType(Superblock)] object superblock, uint value);
-
-    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_inodeCache")]
-    [return: UnsafeAccessorType(InodeCacheType)]
-    private static extern ref object InodeCache([UnsafeAccessorType(Superblock)] object superblock);
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "InodeBitmap")]
     private static extern ref uint InodeBitmap([UnsafeAccessorType(GroupDesc)] object descriptor);
