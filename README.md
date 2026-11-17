@@ -216,6 +216,8 @@ GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows
 
 Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Tests laufen auf dem Host; ein erfolgreicher CI-Lauf bestätigt keinen automatisierten Start oder Bedienungstest des Kernels in QEMU.
 
+Lokal prüft `python3 scripts/test-desktop-guest.py --iso ProjektZeh/output-x64/ProjektZeh.iso [--accel tcg|kvm|whpx] [--boot-timeout 300]` ein ISO in QEMU: Boot, Ersteinrichtung des Kontos auf einer leeren Wegwerfplatte, Terminal öffnen, tippen und über **X** schließen, Dateien und Einstellungen, Ab- und Anmeldung in der Textshell, F4 und `shutdown` (QEMU muss mit Exitcode 0 enden); Error-Zeilen im seriellen Protokoll lassen ihn scheitern. Mit `--recovery` prüft er ein Recovery-ISO (Textshell, kein Desktop). Bilder, `serial.log` und `stderr.log` liegen unter `.tools/desktop-guest/<Kennung>/`. Das ist nur ein QEMU-Ergebnis; VMware bleibt ungeprüft.
+
 Die Action-Versionen sind auf feste Commits gesetzt. Die native Cosmos-Toolchain wird vom offiziellen, fortlaufend aktualisierten Release `tools-latest` bezogen. Für CodeQL werden keine separaten Sonar-Zugangsdaten benötigt. Die PR-Workflows verwenden `pull_request`, damit Code aus Forks ohne Zugriff auf Repository-Secrets geprüft werden kann.
 
 Die Regeln liegen in `Directory.Build.props`. Die `.editorconfig` enthält gezielte Ausnahmen für beschreibende Testnamen, konstante Arrayargumente an Assertions und den gemeinsamen Namespace `Shared`. Lokal lässt sich derselbe Buildcheck mit `dotnet build ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror` ausführen.
