@@ -79,3 +79,15 @@ der Gastprobe (Details und Zeilen: [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPS
 die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tun das selbst). Zähler, Deskriptor und
 Cache schreibt der Plug wie das Original fort; interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
 Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
+
+## Gastprobe
+
+`-p:ZehOSStorageProbe=true` baut `ProjektZeh/Storage/CosmosExt2GuestProbe.cs` ein; die Hostseite ist
+`scripts/test-storage-ext2-guest.py`. Die Probe nutzt nur `sata1` (AHCI-Port 1 hinter der App-Platte an Port 0) und
+nur, wenn es genau 72 MiB groß ist; die App-Platte hat 64 MiB. Erstes MiB komplett null: Lauf 1 formatiert bewusst
+über `VfsManager.TryFormat` (4096 Byte und `sparse_super` belegen den Plug), prüft `Ext2FeatureGate`, mountet die
+ganze Platte ohne Partitionstabelle und führt Create/Write, Append, Seek-Write, Read, Rename, Mkdir, Rmdir, Delete,
+Sync und Unmount aus; `probe.bin` (72 KiB, reicht in den Einfach-Indirektblock) bleibt. Trägt die Platte ext2:
+Lauf 2 prüft Featurevertrag, Mount und SHA-256 von `probe.bin`. Jeder andere Inhalt bricht ohne Schreibzugriff ab.
+Seriell `STORAGE_PROBE <schritt> PASS|FAIL …`, Ausnahmen werden dem laufenden Schritt zugeordnet, am Ende immer
+`STORAGE_PROBE DONE`; danach fährt der Gast über den normalen Energiepfad herunter.

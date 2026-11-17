@@ -244,6 +244,13 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_SECURITY_PROBE
         if (!CosmosSecurityProbe.Run()) { Stop(); return; }
 #endif
+#if ZEHOS_STORAGE_PROBE
+        // scripts/test-storage-ext2-guest.py wartet nach STORAGE_PROBE DONE auf das Gastende, auch nach FAIL.
+        CosmosExt2GuestProbe.Run();
+        if (PreparePowerAction().IsOK()) Sys.Power.Shutdown();
+        Stop();
+        return;
+#endif
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
 #endif
