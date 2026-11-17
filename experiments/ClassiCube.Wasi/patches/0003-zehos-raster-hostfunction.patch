@@ -1,0 +1,73 @@
+diff --git a/src/Graphics_SoftGPU.c b/src/Graphics_SoftGPU.c
+index aa0ba88c5..105eb2971 100644
+--- a/src/Graphics_SoftGPU.c
++++ b/src/Graphics_SoftGPU.c
+@@ -163,7 +163,22 @@ static void ClearDepthBuffer(void) {
+ 	for (i = 0; i < size; i++) depthBuffer[i] = 100000000.0f;
+ }
+ 
++#ifdef CC_BUILD_ZEHOS
++/* ZehOS: Loeschen und Zeichnen als Hostfunktion (zehos_v1.raster_*, platform/Raster_ZehOS.c). */
++/* Liefert der Kernel einen Fehler oder fehlt die Funktion, rechnet SoftGPU wie bisher selbst. */
++int ZehOS_RasterDraw(const cc_uint32* call);
++int ZehOS_RasterFill(void* data, cc_uint32 count, cc_uint32 value);
++#define ZEHOS_DEPTH_CLEAR 0x4CBEBC20 /* 100000000.0f */
++#endif
++
+ void Gfx_ClearBuffers(GfxBuffers buffers) {
++#ifdef CC_BUILD_ZEHOS
++	int size = fb_width * fb_height;
++	if ((buffers & GFX_BUFFER_COLOR) && cb_stride == fb_width && ZehOS_RasterFill(colorBuffer, size, clearColor) == 0)
++		buffers &= ~GFX_BUFFER_COLOR;
++	if ((buffers & GFX_BUFFER_DEPTH) && ZehOS_RasterFill(depthBuffer, size, ZEHOS_DEPTH_CLEAR) == 0)
++		buffers &= ~GFX_BUFFER_DEPTH;
++#endif
+ 	if (buffers & GFX_BUFFER_COLOR) ClearColorBuffer();
+ 	if (buffers & GFX_BUFFER_DEPTH) ClearDepthBuffer();
+ }
+@@ -943,9 +958,45 @@ static void DrawClipped(int mask, Vertex* v0, Vertex* v1, Vertex* v2, Vertex* v3
+ 	}
+ }
+ 
++#ifdef CC_BUILD_ZEHOS
++/* Beschreibung zehos_raster_call Version 1 (docs/superpowers/specs/2026-11-17-rasterizer-hostfunktion.md im ZehOS-Repository) */
++static cc_bool ZehOS_DrawQuads(int startVertex, int verticesCount, DrawHints hints) {
++	cc_uint32 call[35];
++	float* values = (float*)call;
++	cc_bool sprite = gfx_rendering2D && (hints & (DRAW_HINT_SPRITE|DRAW_HINT_RECT));
++
++	call[0]  = 1;
++	call[1]  = (gfx_depthTest ? 1 : 0) | (gfx_depthWrite ? 2 : 0) | (colWrite ? 4 : 0) | (gfx_alphaTest ? 8 : 0)
++			 | (gfx_alphaBlend ? 16 : 0) | (faceCulling ? 32 : 0) | (gfx_rendering2D ? 64 : 0) | (sprite ? 128 : 0)
++			 | (gfx_format == VERTEX_FORMAT_TEXTURED ? 256 : 0);
++	call[2]  = (cc_uint32)(cc_uintptr)((char*)gfx_vertices + startVertex * gfx_stride);
++	call[3]  = verticesCount;
++	call[4]  = (cc_uint32)(cc_uintptr)colorBuffer;
++	call[5]  = cb_stride;
++	call[6]  = fb_width;
++	call[7]  = fb_height;
++	call[8]  = (cc_uint32)(cc_uintptr)depthBuffer;
++	call[9]  = db_stride;
++	call[10] = (cc_uint32)(cc_uintptr)curTexPixels;
++	call[11] = curTexWidth;
++	call[12] = curTexHeight;
++	call[13] = fb_maxX;
++	call[14] = fb_maxY;
++	values[15] = vp_hwidth;
++	values[16] = vp_hheight;
++	values[17] = texOffsetX;
++	values[18] = texOffsetY;
++	Mem_Copy(&values[19], &_mvp, 64);
++	return ZehOS_RasterDraw(call) == 0;
++}
++#endif
++
+ void DrawQuads(int startVertex, int verticesCount, DrawHints hints) {
+ 	Vertex vertices[4];
+ 	int i, j = startVertex;
++#ifdef CC_BUILD_ZEHOS
++	if (ZehOS_DrawQuads(startVertex, verticesCount, hints)) return;
++#endif
+ 
+ 	if (gfx_rendering2D && (hints & (DRAW_HINT_SPRITE|DRAW_HINT_RECT))) {
+ 		// 4 vertices = 1 quad = 2 triangles

@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.X509;
+using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
 using ProjektZeh.Security;
 
@@ -262,6 +263,22 @@ internal static unsafe class WasmRuntime
     {
         try { return network?.Close(handle) ?? WasmNetworkError.BadHandle; }
         catch (Exception) { return WasmNetworkError.Io; }
+    }
+
+    // Rasterizer: Die C-Bruecke uebergibt den linearen Speicher; WasmRasterizer prueft jeden Bereich. Eine unerwartete
+    // Ausnahme beendet nur die App (Trap), statt die native Grenze zu ueberqueren.
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_raster_draw")]
+    private static int HostRasterDraw(byte* memory, uint length, uint call)
+    {
+        try { return length > int.MaxValue ? WasmRasterizer.OutOfBounds : WasmRasterizer.Draw(new Span<byte>(memory, (int)length), call); }
+        catch (Exception) { return WasmRasterizer.OutOfBounds; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_raster_fill")]
+    private static int HostRasterFill(byte* memory, uint length, uint offset, uint count, uint value)
+    {
+        try { return length > int.MaxValue ? WasmRasterizer.OutOfBounds : WasmRasterizer.Fill(new Span<byte>(memory, (int)length), offset, count, value); }
+        catch (Exception) { return WasmRasterizer.OutOfBounds; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_write")]

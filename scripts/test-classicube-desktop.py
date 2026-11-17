@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--entry", default="classicube.wasm", help="Wasm-Datei im Paketverzeichnis")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="tcg")
+    # Paket aus build.py --raster-toggle: F8 wechselt zwischen Kernel- und Gast-Rasterisierung derselben Szene.
+    parser.add_argument("--raster-compare", action="store_true")
     args = parser.parse_args()
     work = ROOT / ".tools/classicube-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
@@ -121,6 +123,17 @@ def main():
         # Measure_ZehOS.c meldet alle 5 s Bildrate und Anteile im Chat; zwei Berichtsfenster abwarten.
         time.sleep(12)
         capture("messung")
+        if args.raster_compare:
+            # Ein Lauf, zwei Rasterwege: Bild und Messzeile mit Kernel (Standard), dann mit SoftGPU im Gast.
+            kernel = view(capture("raster-kernel"))
+            guest.qmp.tap("f8")
+            time.sleep(12)
+            software = view(capture("raster-softgpu"))
+            samples = len(kernel) // (3 * 4)
+            print(f"RASTER_COMPARE abweichend {difference(kernel, software)} von {samples} Stichproben "
+                  "(Wasser, Wolken und Nachladen aendern sich auch ohne Wechsel)", flush=True)
+            guest.qmp.tap("f8")
+            time.sleep(3)
         # Klick in den Inhalt startet den Zeigerfang (relative Maus, poll_event Typ 9). Hat ClassiCube die Maus beim
         # Start schon gefangen, wirkt er als Spielklick; der Ausgangszustand wird deshalb erst danach aufgenommen.
         guest.qmp.click(33+399, 120+259, *guest.size)

@@ -160,6 +160,7 @@ Entnahme. Fokusverlust/Überlauf melden Reset; Skalierung und Zentrierung werden
 Seit 0.2.22 fängt `zehos_v1.pointer_capture(on) -> i32` den Zeiger ein; dann kommen Bewegungen als
 relativer Typ 9. Ab 0.5.2 bleiben PS/2-Rohbewegungen am Gastbildschirmrand erhalten; absolute Tablets bleiben auf ihre Positionsgrenzen beschränkt. Esc, Fokusverlust und Schließen geben ihn frei. Das erste Esc bei Zeigerfang erreicht die App; ein weiteres Esc führt zur Textshell. F4 wechselt jederzeit zur Textshell.
 Seit 0.5.1 meldet Typ 10 die Größe des Fensterinhalts.
+Seit 0.5.8 zeichnen `zehos_v1.raster_draw` und `raster_fill` Quads nativ in Puffer im Speicher der App; die Umgebung meldet das mit `ZEHOS_FEATURES=raster_v1` (Einzelheiten in [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md#was-eine-app-vom-kernel-bekommt)). Ein Paket kann die Imports nutzen, ohne `min-kernel` zu erhöhen, wenn es sie nur bei gemeldeter Fähigkeit aufruft.
 Die vollständige Typentabelle und die Grenze normalisierter Tastencodes stehen in
 [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md#was-eine-app-vom-kernel-bekommt).
 Zusätzlich fragt `path_filestat_get` Dateityp und Größe unter derselben schreibgeschützten Paketgrenze ab;

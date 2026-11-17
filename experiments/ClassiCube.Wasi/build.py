@@ -33,6 +33,10 @@ def main() -> int:
     parser.add_argument("--gfx", choices=["softgpu", "softmin"], default="softgpu")
     # Messanzeige im Chat (platform/Measure_ZehOS.c); fuer veroeffentlichte Pakete abschalten.
     parser.add_argument("--no-measure", action="store_true")
+    # Rasterisierung im Kernel, wenn ZEHOS_FEATURES sie meldet (Standard); "soft" erzwingt SoftGPU fuer Vergleiche.
+    parser.add_argument("--raster", choices=["host", "soft"], default="host")
+    # Nur fuer Gastpruefungen: F8 schaltet zwischen Kernel- und Gast-Rasterisierung um (Bildvergleich, Messung).
+    parser.add_argument("--raster-toggle", action="store_true")
     args = parser.parse_args()
 
     head = subprocess.run(["git", "-C", str(args.source), "rev-parse", "HEAD"], capture_output=True, text=True)
@@ -60,7 +64,9 @@ def main() -> int:
     wrap = [] if args.no_measure else ["-Wl,--wrap=" + ",--wrap=".join(WRAPPED)]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(clang), "--target=wasm32-wasip1", f"--sysroot={args.wasi_sdk / 'share' / 'wasi-sysroot'}",
-               "-O2", "-D__ZEHOS__", f"-DCC_GFX_BACKEND=CC_GFX_BACKEND_{args.gfx.upper()}", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
+               "-O2", "-D__ZEHOS__", f"-DCC_GFX_BACKEND=CC_GFX_BACKEND_{args.gfx.upper()}",
+               *(["-DZEHOS_RASTER_SOFT"] if args.raster == "soft" else []),
+               *(["-DZEHOS_RASTER_TOGGLE"] if args.raster_toggle else []), "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
                "-Wno-everything", "-I", str(build / "src"),
                # Ohne Abbildung landen absolute Baupfade (Benutzername) ueber __FILE__ im Paket.
                f"-ffile-prefix-map={build}=/classicube", f"-ffile-prefix-map={HERE}=/zehos",
