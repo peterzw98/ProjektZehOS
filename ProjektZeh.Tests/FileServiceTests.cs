@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Shared;
 using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
@@ -23,6 +24,28 @@ public sealed class FileServiceTests
     public void Cleanup()
     {
         Directory.Delete(directory, true);
+    }
+
+    // Audit Speicher: Cosmos lieferte fuer grosse Allokationen null; das darf nie als gelesene Datei durchgehen.
+    [TestMethod]
+    public void ReadBytes_MissingBuffer_ReportsOutOfMemoryInsteadOfData()
+    {
+        File.WriteAllBytes(Path.Combine(directory, "bild.raw"), [1, 2, 3]);
+        var starved = new FileService(directory) { AllocateBuffer = _ => null };
+
+        var read = starved.ReadBytes("bild.raw", 16);
+
+        Assert.IsFalse(read.IsOK());
+        StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, files.ReadBytes("bild.raw", 16).Value);
+    }
+
+    [TestMethod]
+    public void BufferAllocation_ReturnsBufferOfRequestedLength()
+    {
+        Assert.AreEqual(5, BufferAllocation.TryAllocate(5)!.Length);
+        Assert.AreEqual(0, BufferAllocation.TryAllocate(0)!.Length);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => BufferAllocation.TryAllocate(-1));
     }
 
     [TestMethod]

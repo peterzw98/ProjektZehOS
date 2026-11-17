@@ -27,6 +27,31 @@ public sealed class WasmSaveStoreTests
     private WasmSaveStore Store(WasmSaveLimits? limits = null, long available = long.MaxValue) =>
         new(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, available)), limits: limits);
 
+    // Audit Speicher: Grow und das Laden einer vorhandenen Datei pruefen den Puffer vor jeder Zustandsaenderung.
+    [TestMethod]
+    public void MissingBufferReportsNoSpaceAndKeepsStateAndFile()
+    {
+        int allowed = int.MaxValue;
+        var store = new WasmSaveStore(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, long.MaxValue)),
+            allocate: length => allowed-- > 0 ? new byte[length] : null);
+        Assert.AreEqual(WasiErrno.Success, Create(store, "welt.dat", out int handle));
+        Assert.AreEqual(WasiErrno.Success, Write(store, handle, "alt"));
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        long buffered = store.BufferedBytes;
+
+        allowed = 1; // Laden der vorhandenen Datei bekommt noch einen Puffer, das Wachsen nicht mehr.
+        Assert.AreEqual(WasiErrno.Success, store.Open("welt.dat", create: false, exclusive: false, truncate: false, directory: false, write: true, out handle));
+        buffered = store.BufferedBytes;
+        Assert.AreEqual(WasiErrno.NoSpace, Write(store, handle, "neu und laenger"), "Grow ohne Puffer");
+        Assert.AreEqual(buffered, store.BufferedBytes, "Zaehler unveraendert");
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        Assert.AreEqual("alt", File.ReadAllText(Path.Combine(root, "welt.dat")), "Alte Fassung bleibt, nichts Halbes geschrieben.");
+
+        allowed = 0;
+        Assert.AreNotEqual(WasiErrno.Success, store.Open("welt.dat", create: false, exclusive: false, truncate: false, directory: false, write: true, out _),
+            "Laden der vorhandenen Datei ohne Puffer ist ein Fehler, kein leerer Erfolg.");
+    }
+
     private static int Create(WasmSaveStore store, string path, out int handle) =>
         store.Open(path, create: true, exclusive: false, truncate: true, directory: false, write: true, out handle);
 

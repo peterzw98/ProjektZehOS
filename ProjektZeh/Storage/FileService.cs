@@ -26,6 +26,9 @@ internal sealed class FileService
     private readonly Func<string, bool, ResultErr>? pathGuard;
     // Erzeuger der /proc- und /sys-Dateien (normalisierter Pfad -> Snapshot); der Kernel liefert ihn aus Cosmos-Werten.
     private readonly Func<string, ResultObject<byte[]>>? virtualSource;
+
+    /// <summary>Grosse Lesepuffer (Bilder, App-Speicher bis 16 MiB) mit Null-Abwehr; Tests setzen eine Allokation, die null liefert.</summary>
+    internal Func<int, byte[]?> AllocateBuffer { get; init; } = BufferAllocation.TryAllocate;
     // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
     private readonly Func<string, bool> isRegularFile;
 
@@ -171,7 +174,7 @@ internal sealed class FileService
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
             // Laenge 0 kann auch "unbekannt" heissen (virtuelle Dateien wie unter Linux): dann begrenzt bis EOF lesen.
             if (length == 0) return ReadUntilEnd(stream, maximumLength);
-            var data = new byte[(int)length];
+            if (AllocateBuffer((int)length) is not { } data) return OutOfMemory<byte[]>();
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
@@ -270,7 +273,7 @@ internal sealed class FileService
         {
             var handle = DeviceFileSystem.Open(node.Path["/dev/".Length..]);
             if (!handle.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(handle.Status);
-            var data = new byte[maximumLength + 1];
+            if (AllocateBuffer(maximumLength + 1) is not { } data) return OutOfMemory<byte[]>();
             int total = 0;
             try
             {
@@ -324,12 +327,15 @@ internal sealed class FileService
     }
 
     /// <summary>Schreibt gepruefte Binaerdaten; auf Wunsch bleibt das Original als feste .bak-Datei erhalten.</summary>
-    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false)
+    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false) => WriteBytes(path, data.AsMemory(), keepBackup);
+
+    /// <summary>Wie oben fuer einen Ausschnitt eines Puffers, ohne ihn vorher zu kopieren (App-Speicher bis 16 MiB).</summary>
+    internal ResultErr WriteBytes(string path, ReadOnlyMemory<byte> data, bool keepBackup = false)
     {
         return WriteData(path, () => data, keepBackup);
     }
 
-    private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
+    private ResultErr WriteData(string? path, Func<ReadOnlyMemory<byte>> getData, bool keepBackup)
     {
         var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
@@ -346,7 +352,7 @@ internal sealed class FileService
         {
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
-            byte[] data = getData();
+            ReadOnlyMemory<byte> data = getData();
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             EnsureDirectoryEntryAvailable(temporaryPath);
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
@@ -354,7 +360,7 @@ internal sealed class FileService
             {
                 temporaryStream = stream;
                 temporaryCreated = true;
-                stream.Write(data);
+                stream.Write(data.Span);
                 stream.Flush(true);
             }
 
@@ -748,6 +754,9 @@ internal sealed class FileService
                 throw new IOException($"cause='DirectoryEntryLimit' message='Verzeichnis {parent} ist auf {maximum.Value} Eintraege begrenzt; zuerst einen Eintrag entfernen oder einen anderen Ordner verwenden.'");
         }
     }
+
+    private static ResultObject<T> OutOfMemory<T>() =>
+        ResultObjectFactory.CreateFailure<T>(ResultCode.Failure, "cause='OutOfMemory' message='Kein Speicher fuer den Lesepuffer.'");
 
     private static bool IsFileError(Exception exception)
     {
