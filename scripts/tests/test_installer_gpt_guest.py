@@ -47,6 +47,19 @@ class PartitionTests(unittest.TestCase):
             guest.partitions(data, 8192 * 512)
 
 
+class MarkerTests(unittest.TestCase):
+    def test_markers_use_partition_identity_and_crc(self):
+        data = table()
+        data["partitiontable"]["id"] = "12121212-1212-4212-8212-121212121212"
+        root = data["partitiontable"]["partitions"][1]
+        root["uuid"] = "34343434-3434-4434-8434-343434343434"
+        esp, fresh = guest.expected_markers(data, root)
+        self.assertIn(b"root-first=4096\nroot-sectors=4096\n", esp)
+        self.assertIn(b"state=fresh\ndisk=12121212-1212-4212-8212-121212121212\n", fresh)
+        self.assertEqual(esp.splitlines()[-1], b"crc32=7d5d4721")
+        self.assertEqual(fresh.splitlines()[-1], b"crc32=f3e83252")
+
+
 class OfflineCheckTests(unittest.TestCase):
     def test_e2fsck_exit_zero_with_unfixed_error_fails(self):
         result = mock.Mock(returncode=0, stdout="Free blocks count wrong. Fix? no\n", stderr="")

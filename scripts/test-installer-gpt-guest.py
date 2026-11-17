@@ -14,6 +14,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import uuid
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("storage_guest", ROOT / "scripts/test-storage-data-disk.py")
@@ -90,10 +92,21 @@ def check_ext2(image: Path) -> None:
         raise RuntimeError("e2fsck meldet Fehler oder Warnungen: " + output)
 
 
-def inspect_g8(image: Path, work: Path, payload: Path, version: str, config: Path) -> None:
+def expected_markers(table: dict, root: dict) -> tuple[bytes, bytes]:
+    disk_guid = str(uuid.UUID(table["partitiontable"]["id"]))
+    root_guid = str(uuid.UUID(root["uuid"]))
+    body = (f"zehos-install 1\ndisk={disk_guid}\nroot={root_guid}\n"
+            f"root-first={root['start']}\nroot-sectors={root['size']}\n").encode()
+    esp = body + f"crc32={zlib.crc32(body):08x}\n".encode()
+    body = f"format=1\nstate=fresh\ndisk={disk_guid}\n".encode()
+    return esp, body + f"crc32={zlib.crc32(body):08x}\n".encode()
+
+
+def inspect_image(image: Path, work: Path, payload: Path, version: str, config: Path, marker_expected: bool) -> None:
     check_gpt(image)
     result = subprocess.run(["sfdisk", "-J", str(image)], capture_output=True, text=True, check=True)
-    esp, root = partitions(json.loads(result.stdout), image.stat().st_size)
+    table = json.loads(result.stdout)
+    esp, root = partitions(table, image.stat().st_size)
     esp_image, root_image = work / "esp.img", work / "root.img"
     extract_sparse(image, esp["start"] * SECTOR, esp["size"] * SECTOR, esp_image)
     extract_sparse(image, root["start"] * SECTOR, root["size"] * SECTOR, root_image)
@@ -109,8 +122,19 @@ def inspect_g8(image: Path, work: Path, payload: Path, version: str, config: Pat
         if result.stdout != contents:
             raise ValueError(f"Bootdatei weicht ab: {path}")
     listing = subprocess.run(["mdir", "-a", "-b", "-i", str(esp_image), "::/boot"], capture_output=True, text=True, check=True)
-    if any(line.rstrip("/").rsplit("/", 1)[-1].lower() == ".zehos-install.id" for line in listing.stdout.splitlines()):
-        raise ValueError("ESP-Marker ist bereits vorhanden")
+    present = any(line.rstrip("/").rsplit("/", 1)[-1].lower() == ".zehos-install.id" for line in listing.stdout.splitlines())
+    if present != marker_expected:
+        raise ValueError("ESP-Marker vorhanden" if present else "ESP-Marker fehlt")
+    if marker_expected:
+        expected_marker, expected_root = expected_markers(table, root)
+        actual = subprocess.run(["mcopy", "-i", str(esp_image), "::/boot/.zehos-install.id", "-"],
+                                capture_output=True, check=True).stdout
+        if actual != expected_marker:
+            raise ValueError("ESP-Marker passt nicht zur GPT")
+        actual_root = subprocess.run(["debugfs", "-R", "cat /etc/zehos/.zehos-layout", str(root_image)],
+                                     capture_output=True, check=True).stdout
+        if actual_root != expected_root:
+            raise ValueError("Root-Marker fehlt oder passt nicht zur GPT")
 
 
 def new_sparse(path: Path, size: int) -> None:
@@ -163,10 +187,34 @@ def run_g6_basic(args, work: Path) -> None:
             process.wait(timeout=30)
 
 
+def run_g1_basic(args, work: Path) -> None:
+    for size in (32 * GIB, 128 * GIB):
+        case = storage.new_work_dir(work / f"g1-{size // GIB}g")
+        target = case / "target.img"
+        storage.create_sparse(target, size)
+        run = storage.new_work_dir(case / "guest")
+        process = None
+        try:
+            process, qmp = storage.boot(args, run, [target])
+            mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
+            qmp.line("setup install sata0 --layout gpt --erase")
+            storage.tools.wait_serial(run, "GPT_TEST RESULT OK", args.timeout, mark)
+            storage.stop(process, qmp, run)
+            process = None
+            inspect_image(target, case, args.payload, args.version, args.boot_config, marker_expected=True)
+            print(f"PASS G1 Teil: {size // GIB} GiB installiert und offline geprueft", flush=True)
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=30)
+    print("OFFEN G1: Boot von GPT, Identitaet, Ersteinrichtung und VMware", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-g8", action="store_true", help="G8 mit vorbereitetem Recovery-Setup-ISO ausfuehren")
     parser.add_argument("--run-g6-basic", action="store_true", help="G6-Groessengrenzen und --erase pruefen")
+    parser.add_argument("--run-g1-basic", action="store_true", help="G1-Installation und Offline-Pruefung vorbereiten")
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--iso", type=Path)
     parser.add_argument("--payload", type=Path)
@@ -178,22 +226,24 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=1200)
     args = parser.parse_args()
     print("OFFEN G1-G7 und G9: Gastablaeufe noch nicht implementiert", flush=True)
-    if not args.run_g8 and not args.run_g6_basic:
+    if not args.run_g8 and not args.run_g6_basic and not args.run_g1_basic:
         print("OFFEN G8: --run-g8 nicht angegeben", flush=True)
         return 2
-    if args.run_g8 and args.run_g6_basic:
-        parser.error("G8 und G6 brauchen getrennte Arbeitsordner")
-    required = ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if args.run_g8 else ()
+    if sum((args.run_g8, args.run_g6_basic, args.run_g1_basic)) > 1:
+        parser.error("G1, G6 und G8 brauchen getrennte Arbeitsordner")
+    required = ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if args.run_g8 or args.run_g1_basic else ()
+    if args.run_g1_basic:
+        required += ("debugfs",)
     missing = [name for name in required if not shutil.which(name)]
     if missing:
         print("OFFEN G8: Werkzeuge fehlen: " + ", ".join(missing), flush=True)
         return 2
     if not all((args.iso, args.ovmf_code, args.ovmf_vars)):
         parser.error("Gastlauf benoetigt --iso, --ovmf-code und --ovmf-vars")
-    if args.run_g8 and not all((args.payload, args.version, args.boot_config)):
+    if (args.run_g8 or args.run_g1_basic) and not all((args.payload, args.version, args.boot_config)):
         parser.error("G8 benoetigt --payload, --version und --boot-config")
     files = [args.iso, args.ovmf_code, args.ovmf_vars]
-    if args.run_g8:
+    if args.run_g8 or args.run_g1_basic:
         files += [args.boot_config, args.payload / "ProjektZeh.elf", args.payload / "BOOTX64.EFI"]
     for file in files:
         if not file.is_file():
@@ -208,6 +258,9 @@ def main() -> int:
     if args.run_g6_basic:
         run_g6_basic(args, work)
         return 2
+    if args.run_g1_basic:
+        run_g1_basic(args, work)
+        return 2
     target = work / "target.img"
     storage.create_sparse(target, 32 * GIB)
     run = storage.new_work_dir(work / "guest")
@@ -219,7 +272,7 @@ def main() -> int:
         process.kill()
         process.wait(timeout=30)
         process = None
-        inspect_g8(target, work, args.payload, args.version, args.boot_config)
+        inspect_image(target, work, args.payload, args.version, args.boot_config, marker_expected=False)
         print("PASS G8: Bootdateien geflusht, Marker fehlt, Offline-Pruefungen bestanden", flush=True)
     finally:
         if process is not None and process.poll() is None:
