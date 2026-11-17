@@ -48,3 +48,45 @@ __attribute__((export_name("fsleep"))) int fsleep(void)
     }
     return (int)(value * 1000.0);
 }
+
+// Etappe-E-Vorbereitung (Review huang P3a): weitere Zugriffe ausserhalb des linearen Speichers. Basis und Laengen kommen
+// aus einer globalen Variable, damit der Compiler nichts faltet und kein Speicher-Stack beteiligt ist (ein Trap setzt
+// __stack_pointer nicht zurueck).
+static volatile unsigned int probe_base = 0;
+
+static unsigned int memory_end(void) { return (unsigned int)__builtin_wasm_memory_size(0) * 65536u; }
+
+// Berechnete Adresse knapp hinter dem Ende: der Zugriff beginnt im Speicher und endet ausserhalb.
+__attribute__((export_name("oob_computed"))) int oob_computed(void)
+{
+    return *(volatile int*)(probe_base + memory_end() - 2);
+}
+
+// i32.load mit statischem Offset 16 auf Adresse 0xfffffff8: addr+offset laeuft ueber 2^32 und darf nicht umbrechen.
+// Inline-Assembler, weil clang base[4] als umbrechende i32.add-Adresse (= 8, im Speicher) uebersetzt.
+__attribute__((export_name("oob_offset_wrap"))) int oob_offset_wrap(void)
+{
+    unsigned int address = probe_base + 0xfffffff8u;
+    int value;
+    __asm__ volatile("local.get %1\n\ti32.load 16\n\tlocal.set %0" : "=r"(value) : "r"(address));
+    return value;
+}
+
+// memory.fill und memory.copy, die genau bis zum Ende reichen, muessen gelingen; ein Byte mehr muss abbrechen.
+__attribute__((export_name("fill_edge_ok"))) int fill_edge_ok(void)
+{
+    __builtin_memset((void*)(probe_base + memory_end() - 16), 7, 16);
+    return *(volatile unsigned char*)(probe_base + memory_end() - 1);
+}
+
+__attribute__((export_name("fill_edge_oob"))) int fill_edge_oob(void)
+{
+    __builtin_memset((void*)(probe_base + memory_end() - 16), 7, 17);
+    return 0;
+}
+
+__attribute__((export_name("copy_edge_oob"))) int copy_edge_oob(void)
+{
+    __builtin_memcpy((void*)(probe_base + memory_end() - 8), (const void*)(probe_base + 1024), 16);
+    return 0;
+}

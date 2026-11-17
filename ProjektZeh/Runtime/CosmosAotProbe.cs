@@ -23,8 +23,9 @@ internal static unsafe class CosmosAotProbe
     private const ulong Cr4Smep = 1ul << 20;
     // -mcmodel=kernel: 32-Bit-Spruenge und RIP-relative Zugriffe reichen +-2 GiB weit.
     private const ulong NearCodeDistance = 1ul << 31;
-    // ret42, call_host, fsleep, oob, recurse, recurse_native und ret42 nach den Traps (aot_probe.c).
-    private const int FixtureCases = 7;
+    // ret42, call_host, fsleep, oob, fuenf Grenzfaelle fuer Etappe E, recurse, recurse_native und ret42 nach den Traps
+    // (aot_probe.c).
+    private const int FixtureCases = 12;
 
     public static bool Run()
     {

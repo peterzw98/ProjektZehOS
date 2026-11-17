@@ -5,7 +5,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 sdk="${1:?wasi-sdk-Ordner angeben}"; wamrc="${2:?wamrc angeben}"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-"$sdk/bin/clang" --target=wasm32 -O2 -nostdlib -Wl,--no-entry -Wl,--allow-undefined \
+"$sdk/bin/clang" --target=wasm32 -mbulk-memory -O2 -nostdlib -Wl,--no-entry -Wl,--allow-undefined \
   -Wl,--initial-memory=65536 -Wl,--max-memory=65536 -Wl,-z,stack-size=16384 \
   -o "$work/fixture.wasm" "$here/aot_fixture.c"
 "$wamrc" --target=x86_64 --cpu=x86-64 --bounds-checks=1 --stack-bounds-checks=1 --size-level=0 --disable-simd \
