@@ -77,9 +77,9 @@ Ziel: die drei unbelegten Annahmen klären, bevor WAMR in den Kernel kommt. Bran
 
 Ziel: Die Hostlogik existiert einmal; wasm3 verhält sich danach wie vorher. Branch `feature/wasm-host-core`. Unabhängig von B und parallel möglich.
 
-- [ ] `ProjektZeh/Native/Wasm/host/zehos_wasm.c` (783 Zeilen) teilen: `zehos_host_core.c` mit allen WASI- und `zehos_v1`-Funktionen als gewöhnliche C-Funktionen (Kontext, Speicherbasis, Speichergröße, Argumente; jede Adresse und Länge geprüft), `zehos_host_wasm3.c` nur mit Argumentübernahme und Tabelle. Vorbild und Vergleich: `experiments/NetSurf.Wasi/host/zehos_host_core.c` und `experiments/AOT.Probe/host/zehos_host_wamr.c`.
-- [ ] Verhalten erhalten: Reihenfolge der Prüfungen, WASI-Fehlercodes, Stubs (`wasi_badf`, `wasi_nosys`), `proc_exit`, Schließen offener Dateien nach Traps.
-- [ ] Namen und Signaturen stehen in **einer** Tabelle, aus der beide Bindungen ihre Einträge ableiten.
+- [x] `ProjektZeh/Native/Wasm/host/zehos_wasm.c` (783 Zeilen) teilen: `zehos_host_core.c` mit allen WASI- und `zehos_v1`-Funktionen als gewöhnliche C-Funktionen (Kontext, Speicherbasis, Speichergröße, Argumente; jede Adresse und Länge geprüft), `zehos_host_wasm3.c` nur mit Argumentübernahme und Tabelle. Vorbild und Vergleich: `experiments/NetSurf.Wasi/host/zehos_host_core.c` und `experiments/AOT.Probe/host/zehos_host_wamr.c`.
+- [x] Verhalten erhalten: Reihenfolge der Prüfungen, WASI-Fehlercodes, Stubs (`wasi_badf`, `wasi_nosys`), `proc_exit`, Schließen offener Dateien nach Traps.
+- [x] Namen und Signaturen stehen in **einer** Tabelle, aus der beide Bindungen ihre Einträge ableiten.
 - [ ] **Abstimmung mit Etappe 3** (Rasterizer, `feature/classicube-rasterizer`): Sie fügt Einträge in dieselbe Tabelle. Vor Beginn im Kanal klären, wer zuerst mergt; der zweite rebased.
 - [ ] Prüfungen: vorhandene Gastproben (`-p:ZehOSWasmProbe=true`), `scripts/test-wasm-doom-desktop.py --scenario all`, `scripts/test-netsurf-desktop.py`, `scripts/test-classicube-desktop.py`.
 
@@ -159,3 +159,4 @@ Summe 9–15 Wochen bei einem Agenten je Etappe; A, B und C zusammen dauern so l
 - 17.11.2026: Plan erstellt (agent-orchestrator) auf `master` 8d47277. Grundlage: Übergabe, Hostprobe 5b, gelesener Loader- und Paketcode, WAMR-2.4.5-Quellen. Nichts gebaut oder gemessen; kein unabhängiges Review.
 - 17.11.2026: Peters signierte Zeile von 01:55 (`#first`) laut Koordinator eingetragen; Etappe A an agent-scientist, Review des Plans an agent-engineer-huang, B und C warten auf freie Engineers.
 - 17.11.2026: Review agent-engineer-huang auf 9cd0e25, kein P1. Eingearbeitet: Umfang von Peters Freigabe (Etappe D braucht ausdrückliche Bestätigung), Hashprüfung der gelesenen `.aot`-Bytes statt `VerifyOnce`, Gastproben der Fehlerwege als Abnahme von Etappe C, sortierte `file`-Zeile, Paketgröße in Etappe F.
+- 17.11.2026: Etappe C auf `feature/wasm-host-core` (Basis `master` f6e2e22): `zehos_host_core.c`/`.h` mit allen Diensten und der X-Makro-Liste `ZEHOS_HOST_FUNCTIONS` (56 Einträge, gleich der bisherigen Bindungstabelle), `zehos_host_wasm3.c` mit Argumentübernahme und `zehos_wasm_run`. Native ABI-Prüfung um offene Dateien nach Trap, `proc_exit`, Ende und Gasbudget ergänzt (auch gegen den alten Stand grün), Gastprobe um `opentrap`/`openexit`. Ergebnisse und offene Punkte im Abschlussbericht des Agenten; NetSurf-Gasttest mit dem veröffentlichten Paket 1.2.0 scheitert an der Fenstergrößenprüfung (Paket älter als das Skript), VMware nicht geprüft. Kein unabhängiges Review, kein PR.
