@@ -78,7 +78,7 @@ internal sealed class UpdateController(UpdateVersion currentVersion, Func<Update
             if (offline.RequiresRestart) restartRequired = true;
             return result;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
     }
 
