@@ -5,7 +5,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 base=${PROJECT_COORDINATOR_BASE:-$HOME/ProjectCoordinator/team}
-key=${IRCKEY:-$HOME/ProjectCoordinator/ProjektZehOS/.tools/IRCKEY}
+key=${IRCKEY_FILE:-$HOME/ProjectCoordinator/ProjektZehOS/.tools/IRCKEY}
 start() {
   local nick=$1 model=$2 role=$3 home=$base/$1
   mkdir -p "$home/.claude"

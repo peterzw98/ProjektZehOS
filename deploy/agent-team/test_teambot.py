@@ -13,7 +13,7 @@ parts_ohne = split_message("wort " * 200, limit=120)
 assert len(parts_ohne) > 1
 assert not any(PREFIX.match(p) for p in parts_ohne)
 
-# Wortkombination mit Doppelpunkt matcht PREFIX syntaktisch; split_message wiederholt es bei langen Nachrichten
+# Bekannte Eigenheit des regulären Ausdrucks: Wortkombination mit Doppelpunkt matcht PREFIX rein syntaktisch; split_message wiederholt es bei langen Nachrichten
 assert PREFIX.match("Ergebnis der Tests: alles grün")
 long_prefix = split_message("Ergebnis der Tests: " + "wort " * 50, limit=100)
 assert len(long_prefix) > 1 and all(p.startswith("Ergebnis der Tests: ") for p in long_prefix)
