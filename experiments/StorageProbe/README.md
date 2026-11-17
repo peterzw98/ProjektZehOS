@@ -16,7 +16,8 @@ python3 scripts/test-installer-layout.py .tools/installer-layout
 (32 bis 128 GiB, sonst keine Datei), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
 (4 KiB, `zehos-root`) und prüft mit `GptLayout.Verify`; `verify` prüft ein vorhandenes Image nur lesend.
 `scripts/test-installer-layout.py` prüft das Ergebnis mit `sgdisk -v`, `sfdisk -J`, `mkfs.fat`/`fsck.fat` im
-ESP-Fenster, `e2fsck -fn` und `dumpe2fs -h` im Root-Fenster sowie Gegenproben mit zerstörtem Byte; fehlende
+ESP-Fenster (Grenze: das belegt nur Lage und Größe der ESP, nicht ZehOS' eigenen FAT-Formatter; der ist nicht
+hosttauglich und bleibt Gasttest G1), `e2fsck -fn` und `dumpe2fs -h` im Root-Fenster sowie Gegenproben mit zerstörtem Byte; fehlende
 Werkzeuge gelten als offen.
 
 `--formatter fixed` (bzw. `matrix.sh … fixed`) formatiert mit der korrigierten gemeinsamen Quelle

@@ -168,7 +168,7 @@ def check_layout(image: Path, size: int, layout: dict, work: Path, disk_guids: s
 
 def counterproofs(image: Path, size: int, work: Path) -> None:
     blocks = size // SECTOR
-    for name, offset in [("Primaer-CRC", SECTOR + 16), ("Backup-CRC", (blocks - 1) * SECTOR + 16), ("Tabellen-CRC", 2 * SECTOR + 40)]:
+    for name, offset in [("Primaer-CRC", SECTOR + 16), ("Backup-CRC", (blocks - 1) * SECTOR + 16), ("Eintragstabelle (Byte in Eintrag 0, LastLba)", 2 * SECTOR + 40)]:
         copy = work / "gegenprobe.img"
         extract(image, 0, size, copy)
         flip(copy, offset)
@@ -218,7 +218,8 @@ def main() -> int:
     for size in REFUSED:
         image = work / f"refused-{size}.img"
         code, answer = probe("layout", str(image), "--size", str(size))
-        check(f"{size} B verweigert, keine Datei", code != 0 and not image.exists(), json.dumps(answer))
+        # Die Ursache verlangen: ein Absturz oder fehlendes dotnet hiesse sonst ebenfalls "verweigert".
+        check(f"{size} B verweigert, keine Datei", code == 1 and answer.get("cause") == "UnsupportedDiskSize" and not image.exists(), json.dumps(answer))
 
     disk_guids: set[str] = set()
     for size in SIZES:

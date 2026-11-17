@@ -78,7 +78,14 @@ internal static class LayoutCommand
     internal static int Verify(string[] args)
     {
         if (args.Length != 2) { Console.Error.WriteLine(Usage); return 2; }
-        using var file = new FileStream(args[1], FileMode.Open, FileAccess.Read);
+        FileStream file;
+        try { file = new FileStream(args[1], FileMode.Open, FileAccess.Read); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { ok = false, verify = "io", error = exception.Message }));
+            return 3;
+        }
+        using var _ = file;
         var device = new FileBlockDevice(file, Path.GetFileName(args[1]));
         var verified = GptLayout.Verify(GptLayout.SectorSize, device.BlockCount, device.ReadBlock);
         Console.WriteLine(JsonSerializer.Serialize(new { ok = verified.IsOK(), verify = verified.IsOK() ? "ok" : verified.Status.Message }));
