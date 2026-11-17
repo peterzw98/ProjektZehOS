@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Hostseite der Gastabnahme fuer die Datenplatte ZEHOSDATA (Paket 2.3), je Groesse 32/64/128 GiB.
 
-Das ISO muss ein Recovery-Build sein (Textshell, "Textshell ist bereit."). Je Groesse in einem NEUEN Arbeitsordner:
+Das ISO muss mit -p:ZehOSSecurityRecovery=true gebaut sein (Textshell "Textshell ist bereit."; ein normaler
+Recovery-Build lehnt disk init ohne Administrator ab). Je Groesse in einem NEUEN Arbeitsordner:
 sparse RAW-Image als zweite Platte (sata1; sata0 ist eine leere 64-MiB-Platte), Boot, "disk init sata1", Ende,
 Neustart; dann muss das serielle Protokoll "Datenlaufwerk unter /data eingebunden." (ohne Befehl, nur ueber das
 Label, sata0 ist leer) und "Laufwerk sata1: <Bytes> Bytes, 1 Partition(en)" zeigen. "disk list" wird zusaetzlich
@@ -210,7 +211,7 @@ def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iso", type=Path, required=True)
+    parser.add_argument("--iso", type=Path, required=True, help="ISO, gebaut mit -p:ZehOSSecurityRecovery=true")
     parser.add_argument("--work", type=Path, required=True, help="neuer Arbeitsordner (darf nicht existieren)")
     parser.add_argument("--size", type=parse_size, action="append", help="Groesse wie 64M, 4G, 5G, 32G (64M..128G, mehrfach moeglich; Standard 32G 64G 128G)")
     parser.add_argument("--legacy-image", type=Path, help="Bestandsimage (64 MiB, Label ZEHOS) fuer die Gegenprobe")
