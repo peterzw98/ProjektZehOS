@@ -105,7 +105,8 @@ int os_cond_signal(korp_cond* cond) { (void)cond; return BHT_OK; }
 
 korp_tid os_self_thread(void) { return 1; }
 
-// Die Stackgrenze setzt der Aufrufer je Lauf mit wasm_runtime_set_native_stack_boundary.
+// Die Stackgrenze setzt der Aufrufer je Lauf mit wasm_runtime_set_native_stack_boundary; ohne sie laeuft der native
+// Stack ungeprueft. shortcut: Probe setzt sie immer, Etappe D muss eine fehlende Grenze als Fehler behandeln.
 uint8* os_thread_get_stack_boundary(void) { return NULL; }
 void os_thread_jit_write_protect_np(bool enabled) { (void)enabled; }
 
@@ -155,6 +156,7 @@ int strncasecmp(const char* left, const char* right, size_t count)
 
 // strtoll/strtoull/strtod der C-Laufzeit sind nur Platzhalter, die 0 liefern; der AOT-Lader liest aber Funktionsnummern
 // aus Symbolnamen wie "aot_func#3" (aot_loader.c). Ohne eigene Zahlenumwandlung landet jeder interne Aufruf bei Funktion 0.
+// shortcut: ohne Ueberlauf- und errno-Behandlung; reicht fuer Funktionsnummern, vor allgemeiner Nutzung ergaenzen.
 unsigned long strtoul(const char* text, char** end, int base)
 {
     const char* p = text;
