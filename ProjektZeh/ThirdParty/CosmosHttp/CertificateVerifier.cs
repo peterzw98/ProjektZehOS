@@ -536,7 +536,7 @@ namespace Cosmos.Network.Http
             return null;
         }
 
-        private static GeneralSubtree[] Subtrees(Asn1Encodable subtrees)
+        private static GeneralSubtree[] Subtrees(GeneralSubtrees subtrees)
         {
             if (subtrees?.ToAsn1Object() is not Asn1Sequence sequence)
             {
