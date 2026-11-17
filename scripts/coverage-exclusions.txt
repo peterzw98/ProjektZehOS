@@ -1,0 +1,3 @@
+# Dateien, die scripts/check-coverage.py nicht mitzaehlt: <Pfad relativ zu ProjektZeh/> # <Grund>
+# Zulaessiger Grund ist nur Code, der direkt auf Konsole oder Hardware schreibt und im Gast geprueft wird.
+Runtime/ConsoleLineView.cs # Draw schreibt auf die Kernelkonsole; pruefbar erst im Gasttest der Textshell

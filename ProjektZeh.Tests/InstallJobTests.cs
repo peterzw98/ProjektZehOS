@@ -40,6 +40,7 @@ public sealed class InstallJobTests
         Assert.IsFalse(job.Step().IsOK());
         Assert.IsFalse(job.Step().IsOK());
         Assert.AreEqual(0, target.Paths.Count);
+        Assert.AreEqual(1, target.FormatCalls);
     }
 
     private sealed class Target : IInstallTarget
@@ -51,7 +52,12 @@ public sealed class InstallJobTests
         public ResultErr Abort() => ResultErr.CreateSuccess();
         public ResultErr Complete() => ResultErr.CreateSuccess();
         public ResultErr Partition() => ResultErr.CreateSuccess();
-        public ResultErr Format() => FailFormat ? ResultErr.CreateFailure(ResultCode.Failure, "Format") : ResultErr.CreateSuccess();
+        public int FormatCalls { get; private set; }
+        public ResultErr Format()
+        {
+            FormatCalls++;
+            return FailFormat ? ResultErr.CreateFailure(ResultCode.Failure, "Format") : ResultErr.CreateSuccess();
+        }
         public ResultErr WriteFileChunk(string path, byte[] data, int offset, int count, bool first, bool last)
         {
             Paths.Add(path);
