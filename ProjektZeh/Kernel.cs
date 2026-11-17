@@ -127,7 +127,7 @@ public sealed class Kernel : Sys.Kernel
         var files = new FileService(identity.HomeDirectory ?? "/data", access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), files.ResolvePath, tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
