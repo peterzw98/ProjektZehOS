@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
 using Cosmos.Kernel.System.Storage;
+using ProjektZeh.Security;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage;
@@ -175,14 +177,14 @@ internal sealed class CosmosStorageService : IStorageService
         setupBlockedReason = null;
         try
         {
-            var decision = DataDiskSelector.Decide(ReadCandidates());
+            var decision = DataDiskSelector.Decide(ReadCandidates(), HasAccountsFile);
             if (decision.HasHint)
             {
                 Note("Hinweis: " + decision.Hint);
             }
 
             ResultErr result;
-            if (decision.Action == DataDiskAction.Mount)
+            if (decision.Action is DataDiskAction.Mount or DataDiskAction.MountLabelled)
             {
                 var found = FindDevice(decision.DeviceName);
                 var prepared = found.IsOK() ? PrepareMount() : found.Status;
@@ -254,6 +256,36 @@ internal sealed class CosmosStorageService : IStorageService
         }
     }
 
+    /// <summary>
+    /// Bindet die Partition probeweise schreibgeschuetzt ein, prueft die Kontendatei und haengt sie in jedem Fall wieder aus; nur eine Platte, die
+    /// schon Konten traegt, wird beim Boot automatisch verwendet (eine leere ZEHOSDATA-Platte liesse sonst eine Ersteinrichtung zu).
+    /// </summary>
+    private bool HasAccountsFile(string deviceName, int partitionIndex)
+    {
+        var found = FindDevice(deviceName);
+        if (!found.IsOK() || !PrepareMount().IsOK() || !MountPartition(found.Value!, partitionIndex, MountFlags.ReadOnly).IsOK())
+        {
+            return false;
+        }
+
+        try
+        {
+            return File.Exists(MountPoint + "/" + AccountService.MetadataFile);
+        }
+        catch (Exception exception)
+        {
+            Note($"Pruefung der Kontendatei auf {deviceName} fehlgeschlagen: {exception.Message}");
+            return false;
+        }
+        finally
+        {
+            if (!VfsManager.TryUnmount(MountPoint))
+            {
+                Note($"Fehler: {deviceName} liess sich nach der Pruefung nicht aushaengen");
+            }
+        }
+    }
+
     private static List<DataDiskCandidate> ReadCandidates()
     {
         var candidates = new List<DataDiskCandidate>();
@@ -285,9 +317,9 @@ internal sealed class CosmosStorageService : IStorageService
         return RegisterFileSystem();
     }
 
-    private static ResultErr MountPartition(IBlockDevice device, int partitionIndex)
+    private static ResultErr MountPartition(IBlockDevice device, int partitionIndex, MountFlags flags = MountFlags.None)
     {
-        if (!VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], MountFlags.None, MountPoint, out _))
+        if (!VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], flags, MountPoint, out _))
         {
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
         }

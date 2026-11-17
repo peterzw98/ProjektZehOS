@@ -12,7 +12,9 @@ internal enum DataDiskAction
 {
     /// <summary>sata0 einbinden: Bestand (0x0C-Partition) oder der bisherige Rueckfall mit genau einer Partition.</summary>
     Mount,
-    /// <summary>Genau eine ZEHOSDATA-Platte ohne Bestand auf sata0: nur melden (DataDiskNotMounted), Einbinden erst mit disk use.</summary>
+    /// <summary>Genau eine ZEHOSDATA-Platte ohne Bestand auf sata0, die schon eine Kontendatei traegt: diese einbinden.</summary>
+    MountLabelled,
+    /// <summary>Genau eine ZEHOSDATA-Platte ohne Kontendatei: nur melden (DataDiskNotMounted), Einbinden erst mit disk use.</summary>
     LabelledAvailable,
     /// <summary>Erkannt, aber nicht sicher einbindbar; es wird nichts eingebunden und keine Ersteinrichtung angeboten.</summary>
     Blocked,
@@ -42,10 +44,11 @@ internal static class DataDiskSelector
     /// <summary>
     /// Auswahl beim Boot (Spec Etappe 2, Abschnitt 3), in dieser Reihenfolge: (1) traegt sata0 eine 0x0C-Partition (Label egal),
     /// ist das der Bestand und wird eingebunden, eine ZEHOSDATA-Platte daneben nur als Hinweis; (2) sonst genau eine
-    /// ZEHOSDATA-Partition anderswo: nur melden, nie automatisch einbinden (Spec nach Koordinator 07:45); (3) mehrere sind mehrdeutig, nichts wird eingebunden; (4) sonst der bisherige Rueckfall,
+    /// ZEHOSDATA-Partition anderswo: nur mit vorhandener Kontendatei einbinden (<paramref name="hasAccountsFile"/> prueft das und
+    /// laesst nichts eingebunden), sonst melden; eine leere ZEHOSDATA-Platte wird nie automatisch eingebunden; (3) mehrere sind mehrdeutig, nichts wird eingebunden; (4) sonst der bisherige Rueckfall,
     /// sata0 mit genau einer Partition.
     /// </summary>
-    public static DataDiskDecision Decide(IReadOnlyList<DataDiskCandidate> devices)
+    public static DataDiskDecision Decide(IReadOnlyList<DataDiskCandidate> devices, Func<string, int, bool>? hasAccountsFile = null)
     {
         DataDiskCandidate? existing = null;
         var labelled = new List<(string Device, int Index)>();
@@ -69,8 +72,13 @@ internal static class DataDiskSelector
         if (labelled.Count > 1)
             return new(DataDiskAction.Blocked, null, -1, Cause("AmbiguousDataDisk", "Mehr als eine Datenpartition ZEHOSDATA gefunden; es wird nichts eingebunden."));
         if (labelled.Count == 1)
-            return new(DataDiskAction.LabelledAvailable, labelled[0].Device, labelled[0].Index,
-                Cause("DataDiskNotMounted", $"Datenplatte ZEHOSDATA auf {labelled[0].Device} gefunden, aber nicht eingebunden; zum Einbinden: disk use {labelled[0].Device} --yes."));
+        {
+            var (device, index) = labelled[0];
+            if (hasAccountsFile != null && hasAccountsFile(device, index))
+                return new(DataDiskAction.MountLabelled, device, index, string.Empty);
+            return new(DataDiskAction.LabelledAvailable, device, index,
+                Cause("DataDiskNotMounted", $"Datenplatte ZEHOSDATA auf {device} ohne Kontendatei gefunden, nicht eingebunden; zum Einbinden: disk use {device} --yes."));
+        }
 
         if (existing == null)
             return new(DataDiskAction.NoDataDisk, null, -1, Cause("DeviceNotFound", "Keine Datenplatte gefunden."));
@@ -90,7 +98,7 @@ internal static class DataDiskSelector
     public static string? SetupBlockedReason(DataDiskDecision decision, bool mounted) => decision.Action switch
     {
         DataDiskAction.Blocked or DataDiskAction.LabelledAvailable => decision.Message,
-        DataDiskAction.Mount when !mounted =>
+        DataDiskAction.Mount or DataDiskAction.MountLabelled when !mounted =>
             Cause("MountRefused", $"Einbinden der gewaehlten Datenplatte {decision.DeviceName} fehlgeschlagen."),
         _ => null,
     };

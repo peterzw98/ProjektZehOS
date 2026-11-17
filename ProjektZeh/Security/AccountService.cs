@@ -36,6 +36,21 @@ internal sealed class AccountService
     /// nicht als Ersteinrichtung, damit ein falsch gewaehltes oder leeres Laufwerk kein Konto erhaelt.
     /// </summary>
     public string? SetupBlockedReason { get; set; }
+
+    /// <summary>Dateiname der Konten- und Rechtedatei auf der Datenplatte.</summary>
+    public const string MetadataFile = ".zehos-security.db";
+
+    /// <summary>Liefert, ob /data eingebunden ist; ohne Angabe (Hosttests, Probes) gilt es als eingebunden.</summary>
+    public Func<bool>? IsDataMounted { get; set; }
+
+    /// <summary>Die Ersteinrichtung wird nur beim Boot angeboten; der Kernel schliesst das Fenster nach dem ersten Laden.</summary>
+    public bool SetupWindowOpen { get; set; } = true;
+
+    /// <summary>
+    /// Ersteinrichtung nur beim Boot, nur mit eingebundenem /data und nur ohne vorhandene Kontendatei. Eine fehlende Datei auf
+    /// einer waehrend der Sitzung gewechselten oder gar nicht eingebundenen Platte ergibt Sperre statt Einrichtung.
+    /// </summary>
+    public static bool MaySetUp(bool mounted, bool atBoot, bool hasAccountsFile) => mounted && atBoot && !hasAccountsFile;
     public IReadOnlyDictionary<string, bool> AdministratorCommands => administratorCommands;
 
     public AccountService(string root, PasswordHasher hasher)
@@ -60,10 +75,15 @@ internal sealed class AccountService
     {
         Lock();
         NeedsSetup = false;
-        var read = metadata.ReadText(".zehos-security.db", allowMissing: true, MaximumMetadataLength);
+        var read = metadata.ReadText(MetadataFile, allowMissing: true, MaximumMetadataLength);
         if (!read.IsOK()) return read.Status;
-        if (read.Value == null && SetupBlockedReason != null)
-            return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + SetupBlockedReason);
+        if (read.Value == null)
+        {
+            bool mounted = IsDataMounted?.Invoke() ?? true;
+            if (SetupBlockedReason != null || !MaySetUp(mounted, SetupWindowOpen, hasAccountsFile: false))
+                return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + (SetupBlockedReason ??
+                    (!mounted ? "/data ist nicht eingebunden." : "Sie wird nur beim Boot angeboten.")));
+        }
         if (read.Value == null)
         {
             NeedsSetup = true;
@@ -225,12 +245,12 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-            if (File.Exists(Path.Combine(Access.RootDirectory, ".zehos-security.db")))
+            if (File.Exists(Path.Combine(Access.RootDirectory, MetadataFile)))
             {
                 try
                 {
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
-                    File.Move(Path.Combine(Access.RootDirectory, ".zehos-security.db"),
+                    File.Move(Path.Combine(Access.RootDirectory, MetadataFile),
                         Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db"), false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
@@ -307,7 +327,7 @@ internal sealed class AccountService
             if (lockWhenFull) Lock();
             return ResultErr.CreateFailure(ResultCode.Failure, FileAccessControl.FullMessage);
         }
-        var result = metadata.WriteText(".zehos-security.db", text.ToString(), MaximumMetadataLength);
+        var result = metadata.WriteText(MetadataFile, text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
         else NeedsSetup = false;
         return result;

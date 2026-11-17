@@ -60,6 +60,8 @@ public sealed class Kernel : Sys.Kernel
     public Kernel()
     {
         messages = new MessageDemoService(tasks);
+        // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
+        accounts.IsDataMounted = () => VfsManager.TryGetMount("/data", out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -202,7 +204,7 @@ public sealed class Kernel : Sys.Kernel
             else
             {
                 output.WriteLine(mounted.Message);
-                output.WriteLine("Laufwerke: disk list. Leere Platte einrichten: disk init <Name>; danach wird eine einzelne ZEHOSDATA-Platte beim naechsten Start eingebunden, sofort mit disk use <Name> --yes.");
+                output.WriteLine("Laufwerke: disk list. Leere Platte einrichten: disk init <Name>, einbinden: disk use <Name> --yes (Konten nur beim Boot oder per security recover).");
             }
 
             return mounted;
@@ -219,6 +221,8 @@ public sealed class Kernel : Sys.Kernel
             }
         }
         var security = accounts.Load();
+        // Ersteinrichtung nur beim Boot: spaetere Loads (disk mount/use/init) duerfen kein Konto anbieten.
+        accounts.SetupWindowOpen = false;
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif

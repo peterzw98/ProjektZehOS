@@ -24,7 +24,7 @@ internal sealed class StorageShellCommands
         this.commandLog = commandLog;
         Commands =
         [
-            new("disk", "disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount <Name>|unmount",
+            new("disk", "disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount sata0|mount <Name> --yes|unmount",
                 "Listet Laufwerke oder richtet eine leere Platte (64 MiB bis 128 GiB) als Datenplatte ZEHOSDATA ein.", true, Execute)
         ];
     }
@@ -51,10 +51,17 @@ internal sealed class StorageShellCommands
             case "list" when arguments.Length == 1:
                 return ListDevices(output);
             case "init" when arguments.Length >= 2 && TryParseInitFlags(arguments, out bool confirmLarge, out bool confirmOverwrite):
-                return Changed(storage.InitializeTestDisk(arguments[1], confirmLarge, confirmOverwrite));
+            {
+                var initialized = Changed(storage.InitializeTestDisk(arguments[1], confirmLarge, confirmOverwrite));
+                if (initialized.IsOK() && confirmLarge)
+                    output.WriteLine("Hinweis: Die Platte wurde nur stichprobenartig auf Leere geprueft; Daten ZWISCHEN den Stichproben (ueber 4 GiB) wurden nicht erkannt.");
+                return initialized;
+            }
             case "use" when arguments.Length == 3 && arguments[2] == "--yes":
                 return Changed(storage.UseDataDisk(arguments[1]));
-            case "mount" when arguments.Length == 2:
+            // Nur der sata0-Bestand wird ohne Bestaetigung eingebunden; jede andere Platte wie bei use nur mit --yes.
+            case "mount" when arguments.Length == 2 && string.Equals(arguments[1], DataDiskSelector.ExistingDevice, StringComparison.OrdinalIgnoreCase):
+            case "mount" when arguments.Length == 3 && arguments[2] == "--yes":
                 return Changed(storage.Mount(arguments[1]));
             case "unmount" when arguments.Length == 1:
                 return Changed(storage.Unmount());
@@ -107,6 +114,6 @@ internal sealed class StorageShellCommands
     private static ResultErr InvalidArguments()
     {
         return ResultErr.CreateFailure(ResultCode.InvalidArgument,
-            "cause='InvalidArguments' message='Verwendung: disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount <Name>|unmount'");
+            "cause='InvalidArguments' message='Verwendung: disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount sata0|mount <Name> --yes|unmount'");
     }
 }

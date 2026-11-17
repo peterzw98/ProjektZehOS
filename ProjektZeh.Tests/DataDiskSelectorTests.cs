@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Storage;
@@ -66,6 +67,38 @@ public sealed class DataDiskSelectorTests
     }
 
     [TestMethod]
+    public void Decide_LabelledDiskWithAccountsFile_IsMounted_WithoutOneNotAtAll()
+    {
+        var devices = new[] { Disk("sata0"), Disk("sata1", Other, Data) };
+        var asked = new List<(string, int)>();
+
+        var withAccounts = DataDiskSelector.Decide(devices, (device, index) => { asked.Add((device, index)); return true; });
+        var without = DataDiskSelector.Decide(devices, (_, _) => false);
+        var noCheck = DataDiskSelector.Decide(devices);
+
+        Assert.AreEqual(DataDiskAction.MountLabelled, withAccounts.Action);
+        Assert.AreEqual("sata1", withAccounts.DeviceName);
+        Assert.AreEqual(1, withAccounts.PartitionIndex);
+        CollectionAssert.AreEqual(new[] { ("sata1", 1) }, asked);
+        Assert.AreEqual(DataDiskAction.LabelledAvailable, without.Action, "leere ZEHOSDATA nie automatisch");
+        StringAssert.Contains(without.Message, "DataDiskNotMounted");
+        Assert.AreEqual(DataDiskAction.LabelledAvailable, noCheck.Action, "ohne Pruefung im Zweifel nicht einbinden");
+    }
+
+    [TestMethod]
+    public void Decide_AccountsCheckRunsOnlyForTheSingleLabelledCase()
+    {
+        int calls = 0;
+        Func<string, int, bool> check = (_, _) => { calls++; return true; };
+
+        DataDiskSelector.Decide([Disk("sata0", Foreign), Disk("sata1", Data)], check);
+        DataDiskSelector.Decide([Disk("sata1", Data), Disk("sata2", Data)], check);
+        DataDiskSelector.Decide([Disk("sata0")], check);
+
+        Assert.AreEqual(0, calls, "Bestand, Mehrdeutigkeit und keine Platte pruefen nichts (kein Mount fremder Platten)");
+    }
+
+    [TestMethod]
     public void Decide_TwoLabelledPartitions_IsBlocked()
     {
         foreach (var devices in new[] { new[] { Disk("sata1", Data), Disk("sata2", Data) }, new[] { Disk("sata1", Data, Data) } })
@@ -126,7 +159,7 @@ public sealed class DataDiskSelectorTests
         var ambiguous = DataDiskSelector.Decide([Disk("sata1", Data), Disk("sata2", Data)]);
         var existing = DataDiskSelector.Decide([Disk("sata0", Foreign)]);
         var labelled = DataDiskSelector.Decide([Disk("sata0"), Disk("sata1", Data)]);
-        var mountedLabelled = DataDiskSelector.Decide([Disk("sata0", Foreign)]);
+        var mountedLabelled = DataDiskSelector.Decide([Disk("sata0"), Disk("sata1", Data)], (_, _) => true);
         var none = DataDiskSelector.Decide([]);
 
         StringAssert.Contains(DataDiskSelector.SetupBlockedReason(ambiguous, false)!, "AmbiguousDataDisk");
@@ -135,6 +168,7 @@ public sealed class DataDiskSelectorTests
         StringAssert.Contains(DataDiskSelector.SetupBlockedReason(labelled, false)!, "sata1");
         Assert.IsNull(DataDiskSelector.SetupBlockedReason(existing, true), "erfolgreicher Mount: normale Ersteinrichtung moeglich");
         Assert.IsNull(DataDiskSelector.SetupBlockedReason(mountedLabelled, true));
+        StringAssert.Contains(DataDiskSelector.SetupBlockedReason(mountedLabelled, false)!, "sata1");
         Assert.IsNull(DataDiskSelector.SetupBlockedReason(none, false), "Boot ohne Datenplatte bleibt unveraendert");
     }
 

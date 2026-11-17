@@ -59,6 +59,45 @@ public sealed class AccountServiceTests
         finally { Directory.Delete(root, true); }
     }
 
+    [DataTestMethod]
+    [DataRow(true, true, false, true)]
+    [DataRow(false, true, false, false)]
+    [DataRow(true, false, false, false)]
+    [DataRow(true, true, true, false)]
+    [DataRow(false, false, false, false)]
+    public void MaySetUp_NeedsMountedBootAndNoAccountsFile(bool mounted, bool atBoot, bool hasAccountsFile, bool expected)
+    {
+        Assert.AreEqual(expected, AccountService.MaySetUp(mounted, atBoot, hasAccountsFile));
+    }
+
+    [TestMethod]
+    public void MissingAccountFile_NoSetupWhenDataNotMountedOrAfterBoot()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+            bool mounted = false;
+            accounts.IsDataMounted = () => mounted;
+
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "ohne eingebundenes /data keine Ersteinrichtung, auch wenn die Datei 'fehlt'");
+
+            mounted = true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup, "beim Boot mit eingebundenem /data bleibt die Ersteinrichtung moeglich");
+
+            accounts.SetupWindowOpen = false;
+            var afterBoot = accounts.Load();
+            Assert.IsFalse(afterBoot.IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "im laufenden Betrieb gesperrt statt eingerichtet");
+            StringAssert.Contains(afterBoot.Message, "nur beim Boot");
+            Assert.IsFalse(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [TestMethod]
     public void AccountsPermissionsAndIdsPersistAndCorruptionLocksEverySession()
     {
