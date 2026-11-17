@@ -2,33 +2,58 @@ param(
     [string] $IsoPath,
     [switch] $PrepareDiskOnly,
     [switch] $WaitForDebugger,
-    [switch] $StandardVga
+    [switch] $StandardVga,
+    [string] $DataImagePath
 )
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$diskDirectory = Join-Path $repositoryRoot '.tools\qemu'
-$diskPath = Join-Path $diskDirectory 'data-fat32.img'
 $diskSize = 64MB
 
-New-Item -ItemType Directory -Path $diskDirectory -Force | Out-Null
-if (-not (Test-Path -LiteralPath $diskPath)) {
-    # CreateNew verhindert auch bei einem parallelen Start das Ueberschreiben.
-    $diskStream = [System.IO.File]::Open($diskPath, [System.IO.FileMode]::CreateNew)
-    try {
-        $diskStream.SetLength($diskSize)
+if ($PSBoundParameters.ContainsKey('DataImagePath')) {
+    # Nur pruefen: nichts anlegen, formatieren oder vergroessern. Ein Komma wuerde die cosmos --disk-Liste teilen.
+    if ([string]::IsNullOrWhiteSpace($DataImagePath)) {
+        throw 'DataImagePath darf nicht leer sein.'
     }
-    finally {
-        $diskStream.Dispose()
+    if ($DataImagePath.Contains(',')) {
+        throw "DataImagePath darf kein Komma enthalten: $DataImagePath"
     }
-    Write-Host "Leere Testfestplatte erstellt: $diskPath"
+    if (-not (Test-Path -LiteralPath $DataImagePath -PathType Leaf)) {
+        throw "DataImagePath ist keine vorhandene Datei: $DataImagePath"
+    }
+    $diskPath = (Resolve-Path -LiteralPath $DataImagePath).Path
+    if ($diskPath.Contains(',')) {
+        throw "Der aufgeloeste Pfad darf kein Komma enthalten: $diskPath"
+    }
+    $length = (Get-Item -LiteralPath $diskPath).Length
+    if ($length -lt $diskSize -or $length % 512 -ne 0) {
+        throw "Das Datenimage muss mindestens 64 MiB gross und ein Vielfaches von 512 Byte sein: $diskPath ($length Byte)"
+    }
+    Write-Host "Vorhandenes Datenimage wird unveraendert verwendet: $diskPath"
 }
 else {
-    $disk = Get-Item -LiteralPath $diskPath
-    if ($disk.Length -ne $diskSize) {
-        throw "Die vorhandene Testfestplatte hat nicht die erwarteten 64 MiB: $diskPath"
+    $diskDirectory = Join-Path $repositoryRoot '.tools\qemu'
+    $diskPath = Join-Path $diskDirectory 'data-fat32.img'
+
+    New-Item -ItemType Directory -Path $diskDirectory -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $diskPath)) {
+        # CreateNew verhindert auch bei einem parallelen Start das Ueberschreiben.
+        $diskStream = [System.IO.File]::Open($diskPath, [System.IO.FileMode]::CreateNew)
+        try {
+            $diskStream.SetLength($diskSize)
+        }
+        finally {
+            $diskStream.Dispose()
+        }
+        Write-Host "Leere Testfestplatte erstellt: $diskPath"
     }
-    Write-Host "Vorhandene Testfestplatte wird weiterverwendet: $diskPath"
+    else {
+        $disk = Get-Item -LiteralPath $diskPath
+        if ($disk.Length -ne $diskSize) {
+            throw "Die vorhandene Testfestplatte hat nicht die erwarteten 64 MiB: $diskPath"
+        }
+        Write-Host "Vorhandene Testfestplatte wird weiterverwendet: $diskPath"
+    }
 }
 
 if ($PrepareDiskOnly) {

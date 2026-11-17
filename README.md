@@ -115,7 +115,7 @@ cosmos build --project ProjektZeh\ProjektZeh.csproj --arch x64
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-qemu.ps1
 ```
 
-Das Skript erstellt beim ersten Aufruf ein leeres 64-MiB-Image unter `.tools\qemu\data-fat32.img`. Bei weiteren Starts verwendet es dieselbe Datei unverändert wieder. Das Image ist lokal und wird nicht in Git aufgenommen. Ein bisheriges FAT16-Image unter `.tools\qemu\data.img` bleibt erhalten; es wird weder überschrieben noch automatisch konvertiert. Mit `-IsoPath <Pfad>` lässt sich auch das in Visual Studio gebaute ISO starten. Das bisherige Cosmos-`F5`-Debugprofil hängt diese Datenplatte nicht automatisch an.
+Das Skript erstellt beim ersten Aufruf ein leeres 64-MiB-Image unter `.tools\qemu\data-fat32.img`. Bei weiteren Starts verwendet es dieselbe Datei unverändert wieder. Das Image ist lokal und wird nicht in Git aufgenommen. Ein bisheriges FAT16-Image unter `.tools\qemu\data.img` bleibt erhalten; es wird weder überschrieben noch automatisch konvertiert. Mit `-IsoPath <Pfad>` lässt sich auch das in Visual Studio gebaute ISO starten. Das bisherige Cosmos-`F5`-Debugprofil hängt diese Datenplatte nicht automatisch an. Mit `-DataImagePath <Pfad>` verwendet das Skript stattdessen ein vorhandenes RAW-Datenimage (reguläre Datei, mindestens 64 MiB, Vielfaches von 512 Byte, Pfad ohne Komma). Das Image wird nur geprüft, nie angelegt, formatiert oder vergrößert; mit `-PrepareDiskOnly` endet das Skript nach der Prüfung.
 
 Nur beim ersten Start in der ZehOS-Shell ausführen:
 
