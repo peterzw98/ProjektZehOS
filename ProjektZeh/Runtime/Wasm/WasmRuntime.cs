@@ -284,8 +284,7 @@ internal static unsafe class WasmRuntime
 
     private static int ReportRasterFailure(Exception exception)
     {
-        try { Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Rasterizer-Fehler: " + exception.GetType().Name + "
-"); }
+        try { Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Rasterizer-Fehler: " + exception.GetType().Name + "\n"); }
         catch (Exception) { /* Protokoll nicht verfuegbar; der Trap meldet den Abbruch trotzdem. */ }
         return WasmRasterizer.OutOfBounds;
     }

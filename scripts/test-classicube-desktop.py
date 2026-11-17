@@ -82,10 +82,16 @@ def main():
     threshold = 0
 
     def idle_threshold(before):
+        # Unter TCG laedt die Welt noch Sekunden nach; erst wenn ein Kontrollfenster ruhig ist, taugt es als Schwelle.
         nonlocal threshold
-        time.sleep(3)
-        idle = view(capture("kontrolle-ohne-eingabe"))
-        threshold = max(2 * difference(before, idle), 500)
+        for attempt in range(10):
+            time.sleep(3)
+            idle = view(capture("kontrolle-ohne-eingabe"))
+            change = difference(before, idle)
+            if change < 2000:
+                break
+            before = idle
+        threshold = max(2 * change, 500)
         return idle
 
     def changed(before, name, message):
