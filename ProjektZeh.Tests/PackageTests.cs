@@ -110,6 +110,28 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void ManifestStorageCapabilityFollowsNetwork()
+    {
+        // Etappe 13.4: Freigaben in fester Reihenfolge net, storage; jede einzeln oder beide.
+        string valid = Manifest("classicube", "1.1.0", ("app.wasm", [1]));
+        string storage = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=storage\n");
+        var parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(storage));
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.IsTrue(parsed.Value!.AllowsStorage);
+        Assert.IsFalse(parsed.Value.AllowsNetwork);
+        string both = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=net\ncapability=storage\nmin-kernel=0.5.50\n");
+        parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(both));
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.IsTrue(parsed.Value!.AllowsNetwork && parsed.Value.AllowsStorage);
+        Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(valid)).Value!.AllowsStorage);
+        foreach (string invalid in new[]
+        {
+            valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=storage\ncapability=net\n"),
+            storage.Replace("capability=storage\n", "capability=storage\ncapability=storage\n"),
+        }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
+    }
+
+    [TestMethod]
     public void ManifestMinimumKernelIsOptionalAndCanonical()
     {
         string valid = Manifest("doom", "1.1.0", ("app.wasm", [1]));
@@ -206,6 +228,32 @@ public sealed class PackageTests
         Assert.IsFalse(Trust.Verify(content, signature[..63]));
         content[0] ^= 1;
         Assert.IsFalse(Trust.Verify(content, signature));
+    }
+
+    [TestMethod]
+    public void InstalledPackageStaysValidAfterLayoutMigration()
+    {
+        // Etappe 4.4 Test 23: PackageStore speichert nur relative Pfade; der 1:1 kopierte Bestand bleibt unter der neuen Wurzel gueltig.
+        string data = Path.Combine(work, "data");
+        string owner = new('a', 32);
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, ProjektZeh.Security.AccountService.MetadataFile),
+            ProjektZeh.Security.AccountService.Header + $"{owner}|anna|admin|{ProjektZeh.Security.AccountService.UnknownAccountHash}\n" +
+            ProjektZeh.Security.AccountService.Separator + "ZEHOS-SECURITY-1\nP|" + Convert.ToBase64String(Encoding.UTF8.GetBytes("/data")) + "|" + owner + "\n");
+        string hash = Publish(Path.Combine(work, "repo"), "doom", "1.0.0");
+        var legacy = new PackageStore(Path.Combine(data, ".zehos-packages"), Trust, Kernel);
+        Assert.IsTrue(legacy.Install(Source("repo"), "", hash, CancellationToken.None).IsOK());
+
+        using var target = new FakeMigrationTarget(Guid.NewGuid());
+        var migrated = ProjektZeh.Storage.Migration.LayoutMigration.Run(data, target, () => new MemoryStream(), _ => { });
+        Assert.IsTrue(migrated.IsOK(), migrated.Status.Message);
+
+        var store = new PackageStore(target.Host(ProjektZeh.Storage.SystemPaths.Root.PackagesDirectory), Trust, Kernel);
+        Assert.AreEqual("doom", store.ReadInstalled().Value!.Single().Manifest.Id);
+        var package = store.Acquire("doom");
+        Assert.IsTrue(package.IsOK(), package.Status.Message);
+        Assert.IsTrue(PackageStore.VerifyFiles(package.Value!, CancellationToken.None).IsOK());
+        store.Release("doom");
     }
 
     [TestMethod]

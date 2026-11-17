@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_HOST_TESTS</DefineConstants>
+    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_HOST_TESTS;ZEHOS_UPDATE_TESTS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
@@ -21,7 +21,9 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmNetwork.cs" Link="Runtime\Wasm\WasmNetwork.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameTimes.cs" Link="Runtime\Wasm\WasmFrameTimes.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameProfile.cs" Link="Runtime\Wasm\WasmFrameProfile.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmEngineSelection.cs" Link="Runtime\Wasm\WasmEngineSelection.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmImageFit.cs" Link="Runtime\Wasm\WasmImageFit.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmSaveStore.cs" Link="Runtime\Wasm\WasmSaveStore.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
@@ -40,6 +42,7 @@
     <Compile Include="..\ProjektZeh\SystemServices\SystemLogEntry.cs" Link="SystemServices\SystemLogEntry.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\ISystemLogSink.cs" Link="SystemServices\ISystemLogSink.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\SystemLog.cs" Link="SystemServices\SystemLog.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\SystemClock.cs" Link="SystemServices\SystemClock.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\BootService.cs" Link="SystemServices\BootService.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\LocalTime.cs" Link="SystemServices\LocalTime.cs" />
     <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
@@ -63,17 +66,25 @@
     <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\DataDiskSelector.cs" Link="Storage\DataDiskSelector.cs" />
+    <Compile Include="..\ProjektZeh\Storage\LayoutProfile.cs" Link="Storage\LayoutProfile.cs" />
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\SystemInfoSnapshot.cs" Link="Storage\Virtual\SystemInfoSnapshot.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Virtual\VirtualTree.cs" Link="Storage\Virtual\VirtualTree.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
+    <Compile Include="..\ProjektZeh\Storage\AppStorageGate.cs" Link="Storage\AppStorageGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeCatalog.cs" Link="Storage\Ext2\RootProbeCatalog.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeContent.cs" Link="Storage\Ext2\RootProbeContent.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\ChecksummedText.cs" Link="Storage\Partitioning\ChecksummedText.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Migration\*.cs" Link="Storage\Migration\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayout.cs" Link="Storage\Partitioning\GptLayout.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayoutWriter.cs" Link="Storage\Partitioning\GptLayoutWriter.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\InstallMarker.cs" Link="Storage\Partitioning\InstallMarker.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Partitioning\InstalledIdentity.cs" Link="Storage\Partitioning\InstalledIdentity.cs" />
     <Compile Include="..\ProjektZeh\Security\**\*.cs" Exclude="..\ProjektZeh\Security\Cosmos*.cs" Link="Security\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Storage\IStorageService.cs" Link="Storage\IStorageService.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />

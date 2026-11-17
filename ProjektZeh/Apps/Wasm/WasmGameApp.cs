@@ -17,7 +17,12 @@ namespace ProjektZeh.Apps.Wasm;
 /// Die Paketversion bleibt bis zum Ende des Laufs gesichert, damit Entfernen oder Aktualisieren sie nicht loescht.
 /// </summary>
 /// <remarks><paramref name="log"/> erhaelt erstes Bild und Ende des Laufs, damit Gasttests darauf warten koennen.</remarks>
-internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null)
+/// <param name="saveRootFor">
+/// Etappe 13.4: liefert den Ordner fuer /save dieses Pakets (eigenes Konto, eingebundenes /data) oder null; nur fuer
+/// Pakete mit capability=storage gefragt.
+/// </param>
+internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null,
+    Func<string, string?>? saveRootFor = null)
     : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
@@ -56,6 +61,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private string? status = "Pruefe Paket ...";
     private string? root;
     private bool allowsNetwork;
+    private string? saveRoot;
     private readonly System.Text.StringBuilder errors = new();
 
     // Nur bei neuem Bild, wartendem present oder als Lebenszeichen alle 100 ms: sonst setzte der Desktop jedes 60-Hz-Bild
@@ -75,6 +81,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
     public bool IsCloseRequested { get; private set; }
     string? IWasmSession.Root => root;
+    string? IWasmSession.SaveRoot => saveRoot;
     bool IWasmSession.AllowsNetwork => allowsNetwork;
     bool IWasmSession.ShouldExit { get { lock (gate) return exitRequested; } }
     uint IWasmSession.TicksMilliseconds { get { lock (gate) return (uint)(clock.ElapsedMilliseconds - pausedMilliseconds); } }
@@ -88,20 +95,30 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished);
+        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, packageId);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
-    private (byte[]? Module, string? Error) Load(InstalledPackage package)
+    // Das .aot wird zusaetzlich bei jedem Start genau in den Bytes geprueft, die WAMR erhaelt (WasmEngineSelection.ReadAot).
+    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package)
     {
-        lock (gate) if (exitRequested) return (null, "Start abgebrochen.");
+        lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
-        if (!verified.IsOK()) return (null, verified.Message);
+        if (!verified.IsOK()) return (null, null, verified.Message);
         string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
-        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, "App zu gross.");
+        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, null, "App zu gross.");
         byte[] module = File.ReadAllBytes(entry);
-        lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; status = "Lade ..."; }
-        return (module, null);
+        byte[]? aot = null;
+        var aotFile = WasmEngineSelection.FindAot(package.Manifest, WasmEngineSelection.AotBuiltIn, WasmEngineSelection.AotEnabled);
+        if (aotFile != null)
+        {
+            var read = WasmEngineSelection.ReadAot(package.FilesDirectory, aotFile);
+            if (!read.IsOK()) return (null, null, read.Status.Message);
+            aot = read.Value;
+        }
+        string? storage = package.Manifest.AllowsStorage ? saveRootFor?.Invoke(packageId) : null;
+        lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; saveRoot = storage; status = "Lade ..."; }
+        return (module, aot, null);
     }
 
     // Laeuft auf dem Worker, wenn das Modul endet.

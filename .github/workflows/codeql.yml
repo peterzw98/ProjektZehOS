@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
   pull_request:
+    # Reine Doku-PRs aendern keinen analysierbaren Code. Es gibt keine Pflichtpruefung, die dadurch ausbliebe.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   schedule:
     - cron: '20 3 * * 1'
   workflow_dispatch:
@@ -17,32 +21,45 @@ concurrency:
 
 jobs:
   analyze:
-    name: CodeQL (C#)
+    name: CodeQL (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            name: C#
+          - language: actions
+            name: GitHub Actions
+          - language: python
+            name: Python
     permissions:
       contents: read
       security-events: write
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: matrix.language == 'csharp'
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          languages: csharp
+          languages: ${{ matrix.language }}
           build-mode: none
           queries: security-extended
-          config-file: ./.github/codeql/config.yml
+          # config.yml beschreibt nur den C#-Quellbaum; Workflows und Skripte liegen ausserhalb von ProjektZeh/. Fuer sie schliesst
+          # config-other.yml gebauten und fremden Code (ThirdParty) aus.
+          config-file: ${{ matrix.language == 'csharp' && './.github/codeql/config.yml' || './.github/codeql/config-other.yml' }}
 
-      - name: Analyze C# source
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - name: Analyze ${{ matrix.name }} source
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          category: /language:csharp
+          category: /language:${{ matrix.language }}

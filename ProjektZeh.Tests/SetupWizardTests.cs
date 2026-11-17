@@ -310,22 +310,18 @@ public sealed class SetupWizardTests
         Assert.AreEqual("512 MB", SetupDiskList.FormatSize(512UL << 20));
     }
 
-    /// <summary>Schreibt alle Seiten als PNG nach ZEHOS_SCREENSHOT_DIR; ohne Variable wird nichts erzeugt.</summary>
-    [TestMethod]
-    public void Screenshots_WhenRequested_WritePngPerPage()
+    // 1920 x 1080 ist die Standardaufloesung beim Boot, 1024 x 768 der Rueckfall; bei 800 x 600 wird das Layout zuerst eng.
+    [DataTestMethod]
+    [DataRow(800, 600)]
+    [DataRow(1024, 768)]
+    [DataRow(1920, 1080)]
+    public void AllPages_MatchReferenceImages(int width, int height)
     {
-        string? directory = Environment.GetEnvironmentVariable("ZEHOS_SCREENSHOT_DIR");
-        if (string.IsNullOrEmpty(directory)) return;
-        var painter = ScreenshotSupport.LoadCosmosFont() ?? Painter;
-        Directory.CreateDirectory(directory);
-        foreach (var (width, height) in new[] { (1920, 1080), (1024, 768), (800, 600) })
+        foreach (var (name, wizard) in AllPages(Golden.Painter(), width, height))
         {
-            foreach (var (name, wizard) in AllPages(painter, width, height))
-            {
-                var pixels = new int[width * height];
-                wizard.Render(new PixelSurface(width, height, pixels), width * 2 / 3, height / 3, PointerButtons.None);
-                ScreenshotSupport.WritePng(Path.Combine(directory, $"{width}x{height}-{name}.png"), width, height, pixels);
-            }
+            var pixels = new int[width * height];
+            wizard.Render(new PixelSurface(width, height, pixels), width * 2 / 3, height / 3, PointerButtons.None);
+            Golden.Check($"setup-{width}x{height}-{name}", width, height, pixels);
         }
     }
 

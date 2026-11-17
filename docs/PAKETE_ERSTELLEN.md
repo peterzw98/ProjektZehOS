@@ -126,8 +126,8 @@ Nach `close_notify` meldet `net_recv` EOF wie bei TCP. Endet die Verbindung ohne
 | Konsole | `fd_write` nur auf stdout/stderr. stderr wird gesammelt; die letzte Zeile erscheint bei Exitcode ≠ 0 im Fenster. |
 | Argumente, Umgebung | `argv` ist nur `["app"]`. Die Umgebung enthält ab ZehOS 0.5.13 genau `ZEHOS_FEATURES=<Liste>`, eine kommagetrennte Liste optionaler `zehos_v1`-Fähigkeiten (heute `raster_v1`). Ältere Kernel liefern eine leere Umgebung. |
 | Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND, sonst virtio-rng; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
-| Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
-| Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
+| Dateien | Das eigene Paketverzeichnis `files/` ist als `/` (fd 3) nur lesend freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. Mit `capability=storage` zusätzlich der schreibbare App-Speicher `/save` (fd 4), siehe „App-Speicher“. |
+| Nicht vorhanden | Schreiben, Anlegen und Löschen außerhalb von `/save`, Verzeichnisse des Pakets lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
 
 `path_filestat_get` fragt Dateien und Ordner innerhalb des eigenen Pakets über den vorgeöffneten
 Ordner fd 3 ab. `.` bezeichnet die Paketwurzel. Größe und Dateityp sind vorhanden; Zeitstempel und
@@ -135,7 +135,47 @@ Inodewerte sind null. Alle Gastbereiche werden vor dem Hostzugriff geprüft. Pfa
 Schutzprüfungen wie `path_open`: keine absoluten Pfade, `..`, leeren Komponenten, Backslashes, Doppelpunkte
 oder Nullbytes. Pakete haben keine symbolischen Links. `path_readlink` meldet für einen bestehenden
 Nicht-Link `EINVAL`; fehlende Dateien bleiben `ENOENT`, Zugriffsfehler `EACCES`, sonstige Dateifehler `EIO`.
-Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nicht verfügbar.
+Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles des Pakets bleiben nicht verfügbar.
+
+### App-Speicher `/save` (Etappe 13.4)
+
+Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als zweiten vorgeöffneten Ordner `/save` (fd 4). Er liegt im Legacy-Profil unter `/data/.zehos-apps/<paket>/<konto-id>`, gehört also dem angemeldeten Konto. Andere Konten, der Dateimanager und andere Apps sehen ihn nicht.
+
+**Wann `/save` fehlt:** Es fehlt, wenn niemand angemeldet ist, `/data` nicht eingebunden ist oder die Fähigkeit nicht im Manifest steht. `fd_prestat_get(4)` liefert dann `EBADF`, die WASI-libc kennt nur `/`, und `fopen("/save/...")` scheitert mit `ENOENT`/`ENOTCAPABLE`. Die App muss ohne Speichern weiterlaufen können.
+
+**Unter `/save` erlaubt:**
+- `path_open` mit `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_DIRECTORY` sowie Lese- und Schreibrechten; `fd_write`, `fd_pwrite`, `fd_read`, `fd_pread`, `fd_seek` (auch über das Ende hinaus) und `fd_filestat_set_size` auf Dateien;
+- `fd_readdir` auf geöffneten Ordnern (`opendir("/save")` öffnet `.`);
+- `path_create_directory`, `path_remove_directory` (nur leer), `path_unlink_file`, `path_rename` (Quelle und Ziel unter `/save`; ein vorhandenes Ziel wird atomar ersetzt), `path_filestat_get`, `fd_sync`, `fd_close`.
+
+**Gesperrt:**
+- `path_link` und `path_symlink` liefern `ENOTCAPABLE`.
+- Schreibende Aufrufe auf das Paket (fd 3) liefern `ENOTCAPABLE` bzw. `EBADF`; die Rechte gelten je fd.
+- Namen folgen den Regeln für Nutzerpfade: kein `..`, keine leeren Komponenten, nichts mit `.zehos-` am Anfang, kein abschließender Punkt oder Leerraum, keine `\`, `:`, `|`.
+
+**Konsistenz:** Eine geöffnete Datei liegt vollständig im Kernel und wird erst bei `fd_sync` oder `fd_close` als Ganzes ersetzt (Temp + Rename). Nach einem Absturz oder Stromausfall bleibt die alte oder die neue Fassung, nie eine halbe. `O_TRUNC` leert nur den Puffer: Bis zum erfolgreichen `fd_close` bzw. `fd_sync` bleibt die alte Fassung auf der Platte, ein gescheitertes Speichern zerstört also nichts. Endet die App ohne `fd_close`, auch durch einen Trap, schließt das Laufzeitende alle Dateien und schreibt dabei ihren aktuellen Inhalt; bei einem harten Abbruch des Rechners gehen ungespeicherte Änderungen verloren. Heute läuft höchstens eine Paket-App gleichzeitig. Wer mehrere Dateien gemeinsam ändert, schreibt in eine Temp-Datei und benennt sie danach um. Ein Umbenennen auf denselben Namen (auch nur in anderer Groß-/Kleinschreibung) bleibt ohne Wirkung.
+
+**Einschränkungen:** Alle Pfade beziehen sich auf `/save` (fd 4). Geöffnete Unterordner taugen nur für `fd_readdir`, nicht als Ausgangspunkt für `openat`/`fstatat` (`EBADF`). Pfade mit abschließendem `/` oder `./`-Teilen gelten als unzulässig (`EACCES`). Einen Schreibzugriff gibt es nur mit `fd_write`- oder `fd_filestat_set_size`-Recht; `O_CREAT` allein legt die Datei an, ohne den fd beschreibbar zu machen.
+
+**Grenzen je App und Konto:**
+- 64 MiB Gesamtgröße (jeder Ordner zählt mit 32 KiB, einem FAT-Cluster), 1024 Einträge;
+- 16 MiB je Datei;
+- 8 gleichzeitig beschreibbare Dateien;
+- 16 MiB für alle geöffneten Dateien einer App-Instanz zusammen (sie liegen im Kernel-Speicher).
+
+**Fehler** (nie Trap):
+
+| errno | Ursache |
+| --- | --- |
+| `ENOSPC` (51) | Quote, Einträge, Pufferbudget, voller Datenträger oder voller Ordner |
+| `EFBIG` (22) | Datei über 16 MiB |
+| `EMFILE` (33) | mehr als 8 beschreibbare Dateien |
+| `EBUSY` (10) | Das Datenlaufwerk wird gerade ausgehängt (`disk unmount`, `shutdown`, `reboot`) oder eine Systemaktion sperrt das Schreiben; Lesen geht weiter. Ein laufendes Schreiben wird vorher abgeschlossen; das Aushängen wartet so lange (bis zum Ersetzen einer Datei von höchstens 16 MiB). |
+| `ENOENT` (44) | Datei fehlt oder das Laufwerk wurde ausgehängt |
+| `EACCES` (2) | unzulässiger Pfad |
+| `EIO` (29) | sonstiger Laufwerksfehler |
+
+`fd_close` meldet einen Schreibfehler ebenfalls, der fd ist danach trotzdem frei und die alte Fassung bleibt.
 
 ## Grenzen
 
@@ -149,6 +189,7 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.
 - **Pause:** Ist das Fenster nicht aktiv oder nicht sichtbar, blockiert `present` und `ticks_ms` steht still.
 - **Fehler:** Ein Trap (ungültiger Speicherzugriff, falscher indirekter Aufruf) beendet nur die App; das Fenster zeigt die Ursache. Ein Fehler im Interpreter oder Host kann trotzdem den Kernel treffen. Das ist eine logische Grenze, keine Prozessisolation.
+- **AOT (in Arbeit, noch nicht für Apps freigegeben):** Ein Paket darf `<entry ohne .wasm>.wamr245-aot5-x64-bc.aot` enthalten ([Paketformat](PACKAGE_FORMAT.md#aot-datei-optional-aot-plan-etappe-e)). Nur ein mit `-p:ZehOSWasmAot=true` gebauter Kernel nutzt es, und erst nach `wasmaot on` (Standard aus); sonst, bei fremder Kennung, bei einem `.aot` über 64 MiB und wenn das `.aot` schon beim Laden scheitert, läuft das `.wasm` unter wasm3. Scheitert es erst beim Instanziieren oder am Einstieg, bricht der Start ohne zweiten Versuch ab. Ältere Kernel installieren solche Pakete und starten das `.wasm`. Dieselbe App muss deshalb unter beiden Laufzeiten gleich funktionieren. Unterschiede unter AOT: kein Gasbudget (wie heute bei Paket-Apps), und eine WASI-Funktion, die ZehOS nur als Stub anbietet, trappt bei einer ungültigen Gastadresse, statt wie unter wasm3 `EBADF`/`ENOSYS` zu liefern. NetSurf und andere Apps mit Ausnahmen im exnref-Format laden unter WAMR 2.4.5 nicht und bleiben bei wasm3.
 - **Paketformat:**
   - höchstens 128 Dateien und 128 MiB je Paket
   - Pfade nur aus `A–Z a–z 0–9 . _ -`, ohne Groß-/Kleinschreibungs-Duplikate
@@ -177,3 +218,35 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
 6. In ZehOS: `pkg install <id>` oder `pkg upgrade`; beide laden den signierten Katalog automatisch. `pkg update` bleibt als freiwilliger Einzelabruf verfügbar.
 
 Den privaten Herausgeberschlüssel nie ins Repository, in Logs oder auf den Server legen. Geht er verloren, lassen sich keine Pakete mehr veröffentlichen. Ein neuer Schlüssel braucht ein Kernelupdate mit neuem `ProjektZeh/Packages/package-key.pub`.
+
+## AOT-Datei erzeugen (Werkzeug, noch ohne Kernelnutzung)
+
+Übersetzen und Signieren sind zwei getrennte Schritte, weil `wamrc` fremde `.wasm` liest und deshalb ohne Zugriff auf den privaten Schlüssel laufen soll (Sicherheitsdokument, Abschnitt 5, Punkt 2). `scripts/build-package.py aot <wamrc> <app.wasm> -o <app.aot>` übersetzt den Einstiegspunkt mit `wamrc` in nativen x86-64-Code und braucht keinen Schlüssel. `package … --aot-file <app.aot>` legt die fertige Datei danach als `<entry ohne .wasm>.wamr245-aot5-x64-bc.aot` ins Paket, etwa `doom.wamr245-aot5-x64-bc.aot` neben `doom.wasm`. Die Datei steht als gewöhnliche, ordinal einsortierte `file`-Zeile im signierten Manifest; ein neues Manifestfeld gibt es nicht. Hintergrund und Sicherheitsabwägung: [AOT-Plan](superpowers/plans/2026-11-17-aot-kernel.md), Etappe E, und [Sicherheitsdokument](superpowers/specs/2026-11-17-aot-sicherheit.md).
+
+- **Kennung `wamr245-aot5-x64-bc`:** WAMR 2.4.5, AOT-Formatversion 5 (`AOT_CURRENT_VERSION` in 2.4.5), Ziel x86-64, mit Speicher- und Stackprüfung. Ein anderes WAMR ergibt eine neue Kennung. Die Kennung ist nur eine Behauptung im Dateinamen; der Kernel kann sie nicht prüfen. Dass Schalter und `wamrc` stimmen, stellt allein das Werkzeug beim Übersetzen sicher (siehe Beleg).
+- **Feste Schalter:** `--target=x86_64 --cpu=x86-64 --bounds-checks=1 --stack-bounds-checks=1 --size-level=0 --disable-simd`, gleich `ProjektZeh/Native/AotProbe/fixture/compile-aot.sh` im Branch `feature/wasm-aot-runtime`. Weitere Schalter nimmt das Werkzeug nicht an.
+- **Festes Werkzeug:** `aot` kopiert die angegebene `wamrc`-Datei in ein temporäres Verzeichnis und führt nur diese Kopie mit absolutem Pfad aus, also ohne Suche im `PATH` und ohne Austausch zwischen Prüfung und Start. Vorher prüft es den SHA-256 der Kopie gegen die Liste `WAMRC_SHA256` im Skript (derzeit nur das `wamrc` der Hostprobe 5b, `6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774`) und danach `wamrc --version` auf 2.4.5. Ein unbekanntes `wamrc` läuft nicht einmal für `--version`. Der Hash deckt nur diese eine Datei: `wamrc` muss LLVM statisch gelinkt enthalten (Standard eines LLVM-Baus ohne `BUILD_SHARED_LIBS`/`LLVM_LINK_LLVM_DYLIB`). Gemeinsame Systembibliotheken wie die C-Bibliothek deckt die Prüfung nicht ab; das bleibt eine Grenze. `aot` lehnt eine Ausgabe ab, die gleich der Eingabe ist, und löscht eine Teil-Ausgabe, wenn `wamrc` scheitert.
+- **Beleg:** `aot` schreibt neben die Ausgabe `<app.aot>.json` mit Kennung, `wamrc`-Version, SHA-256 von `wamrc`, `.wasm` und `.aot` sowie den festen Schaltern. `package --aot-file` verlangt diesen Beleg und bricht ab, wenn der Hash der `.aot` nicht passt, das `.wasm` nicht genau der Einstiegsdatei dieses Aufrufs entspricht, das `wamrc` nicht zugelassen ist oder Schalter oder Kennung abweichen. Der Beleg schützt gegen Verwechslung und veraltete Dateien, etwa eine `.aot` aus einer älteren App-Version. Er ist nicht signiert und schützt nicht gegen einen Angreifer, der auf der Übersetzungs- oder Signiermaschine Dateien ändern kann.
+- **Temporäres Verzeichnis:** `aot` führt `wamrc` aus dem temporären Verzeichnis aus. Ist `/tmp` mit `noexec` eingehängt, `TMPDIR` auf ein ausführbares Verzeichnis setzen.
+- **Grenzen:** Das `.aot` zählt gegen 128 Dateien und 128 MiB Paketinhalt und vergrößert den Download auch für Kernel, die es nicht nutzen. Der Pfad mit Suffix darf wie jeder Paketpfad höchstens 200 Zeichen lang sein, sonst bricht `package` ab. Ohne `--aot-file` arbeitet `package` unverändert.
+- **Kernelstand:** Der Kernel nutzt `.aot` erst mit der Kernelseite von Etappe E; bis dahin startet jede App unter wasm3. Heutige Kernel behandeln die Datei als gewöhnliche Paketdatei: `PackageManifest.Parse` nimmt jeden gültigen Pfad an, `pkg install` lädt und prüft sie wie jede andere Datei per SHA-256, gestartet wird nur `entry`. Die Datei kostet dort also nur Download, Speicherplatz und Prüfzeit.
+- **Nur unter Linux:** Für Windows gibt es kein `wamrc`, und der Windows-Entwicklungsrechner hat kein WSL. `.aot`-Dateien entstehen deshalb bis auf Weiteres nur auf einem Linux-Rechner; signiert werden kann danach wie bisher.
+
+### wamrc 2.4.5 und LLVM 18.1.8 bauen
+
+Die Werkzeuge liegen unter `.tools/aot/` und gehören nicht ins Repository. Grundlage ist die Hostprobe 5b (Branch `experiments/aot-hostprobe`, `experiments/AOT.Probe/README.md`).
+
+1. **LLVM 18.1.8 aus den Quellen:** `llvm-project-18.1.8.src.tar.xz` vom GitHub-Release `llvmorg-18.1.8` laden und die beiliegende Signatur (Tom Stellard) prüfen. Die Hostprobe hat den SHA-256 nur gekürzt festgehalten (`0b58557a…db2f2a`); er muss an Anfang und Ende übereinstimmen. Bauen nur für X86, ohne Clang und Tests, mit `-DCMAKE_CXX_FLAGS="-include cstdint"`, weil GCC 16 `<cstdint>` nicht mehr implizit einbindet. Das vorgebaute LLVM-18.1.8-Paket (Ubuntu 18.04) passt nicht (`wamrc` stürzt in `X86TargetMachine` ab); mit LLVM 23 baut WAMR 2.4.5 nicht (API-Brüche).
+2. **WAMR 2.4.5:** `WAMR-2.4.5.tar.gz` von GitHub laden und den SHA-256 `1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b` prüfen. `wamr-compiler` gegen das eigene, statisch gebaute LLVM bauen.
+3. **Prüfen:** `wamrc --version` muss 2.4.5 melden. Ein neu gebautes `wamrc` hat fast sicher einen anderen SHA-256 als das der Hostprobe und wird vom Skript abgelehnt. Es in `WAMRC_SHA256` aufzunehmen ist eine eigene Änderung mit Rückfrage; vorher belegen Trap-Tests mit genau diesem `wamrc` (Speicherzugriff außerhalb, tiefe Rekursion) die Prüfungen im erzeugten Code (Sicherheitsdokument, Abschnitt 5, Punkt 3; Fixtures unter `ProjektZeh/Native/AotProbe/fixture/` im Branch `feature/wasm-aot-runtime`).
+
+Ablauf:
+
+```bash
+# 1. Übersetzen unter Linux in einer getrennten Umgebung (etwa einem Container) ohne den privaten Schlüssel:
+python scripts/build-package.py aot .tools/aot/<wamrc> <app.wasm> -o <app.aot>
+# 2. Signieren wie unter „Veröffentlichen“, mit der übersetzten Datei:
+python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <packages-Worktree> --id <id> --version <x.y.z> --name "<Name>" --entry <app.wasm> --aot-file <app.aot> <datei>=<pfad> ...
+```
+
+Die Belegdatei `<app.aot>.json` muss neben `<app.aot>` mit auf die Signiermaschine; ist das `.wasm` in Schritt 2 ein anderes als in Schritt 1, bricht `package` ab.

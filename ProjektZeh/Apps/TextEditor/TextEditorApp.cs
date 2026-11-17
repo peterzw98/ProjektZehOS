@@ -68,7 +68,8 @@ internal sealed class TextEditorApp : IApplication
     private void Load()
     {
         if (IsDirty) { status = "Ungespeichert: zuerst speichern oder Fenster schliessen."; return; }
-        var result = files.ReadText(path.Text);
+        // Virtuelle Dateien (Oeffnen aus dem Dateimanager) aus dem Erzeuger; Speichern dorthin lehnt FileService ab.
+        var result = files.ReadTextOrVirtual(path.Text);
         if (!result.IsOK()) { status = result.Status.Message; return; }
         string text = result.Value!;
         newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";

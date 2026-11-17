@@ -206,6 +206,12 @@ int32_t zehos_aot_probe_fixture(void)
            // B4: Erwartung aus derselben Rechnung auf dem Host (1.1, achtmal *1.5+0.25, mal 1000).
            + run_case(instance, env, "fsleep", 40506, NULL)
            + run_case(instance, env, "oob", 0, "out of bounds memory access")
+           // Etappe-E-Vorbereitung: berechnete Adresse, addr+offset ueber 2^32, memory.fill/copy an der Grenze.
+           + run_case(instance, env, "oob_computed", 0, "out of bounds memory access")
+           + run_case(instance, env, "oob_offset_wrap", 0, "out of bounds memory access")
+           + run_case(instance, env, "fill_edge_ok", 7, NULL)
+           + run_case(instance, env, "fill_edge_oob", 0, "out of bounds memory access")
+           + run_case(instance, env, "copy_edge_oob", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse_native", 0, "native stack overflow")
            // Nach den Traps muss dieselbe Instanz weiter rechnen.
@@ -218,4 +224,23 @@ done:
     os_free(bytes);
     wasm_runtime_destroy();
     return passed;
+}
+
+// Etappe D: Bytes der Fixtures fuer den Weg ueber WasmRuntime und zehos_wasm_run_aot. 0 = B-Fixture (aot_fixture_data.c),
+// 1 = Hostfunktionen, 2 = Anfangsspeicher ueber 256 MiB (aot_runtime_fixture_data.c, nur unter Linux mit wamrc gebaut).
+// Groesse 0 heisst: noch nicht gebaut.
+extern const uint32_t zehos_aot_host_fixture_size;
+extern const uint8_t zehos_aot_host_fixture[];
+extern const uint32_t zehos_aot_limit_fixture_size;
+extern const uint8_t zehos_aot_limit_fixture[];
+
+const uint8_t* zehos_aot_probe_fixture_bytes(int32_t which, uint32_t* size)
+{
+    switch (which)
+    {
+        case 0: *size = zehos_aot_fixture_size; return zehos_aot_fixture;
+        case 1: *size = zehos_aot_host_fixture_size; return zehos_aot_host_fixture;
+        case 2: *size = zehos_aot_limit_fixture_size; return zehos_aot_limit_fixture;
+        default: *size = 0; return NULL;
+    }
 }
