@@ -94,6 +94,30 @@ class FixtureServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
+NTP_EPOCH = 2208988800
+
+
+class SntpServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    """Etappe 12.2: SNTP-Fixture; mode 'ok' antwortet richtig, 'foreign' mit falschem Originate, 'backward' eine Stunde zurueck."""
+    allow_reuse_address = True
+
+    def __init__(self, address, mode):
+        self.mode = mode
+        super().__init__(address, SntpHandler)
+
+
+class SntpHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        request, sock = self.request
+        if len(request) < 48 or request[0] & 7 != 3:
+            return
+        now = time.time() - (3600 if self.server.mode == 'backward' else 0) + NTP_EPOCH
+        stamp = int(now).to_bytes(4, 'big') + int((now % 1) * 2**32).to_bytes(4, 'big')
+        originate = bytes(8) if self.server.mode == 'foreign' else request[40:48]
+        response = bytes([0x24, 2, 6, 0xEC]) + bytes(8) + b'LOCL' + stamp + originate + stamp + stamp
+        sock.sendto(response, self.client_address)
+
+
 class SilentServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -360,6 +384,10 @@ def run(args):
             except Exception:
                 server.server_close()
                 raise
+        for port, mode in [(18123, 'ok'), (18124, 'foreign'), (18125, 'backward')]:
+            sntp = SntpServer(('127.0.0.1', port), mode)
+            threading.Thread(target=sntp.serve_forever, daemon=True).start()
+            servers.append(sntp)
         silent = SilentServer(('127.0.0.1', 18448), SilentHandler)
         silent.stop_event = stop_event
         threading.Thread(target=silent.serve_forever, daemon=True).start()
@@ -373,6 +401,9 @@ def run(args):
                       if path.is_dir()), qemu_directory / 'share' / 'qemu')
         if share.is_dir():
             command[1:1] = ['-L', str(share)]
+        if args.rtc_base:
+            # Etappe 12.2: absichtlich falsche Gastuhr; die Probe muss TLS sperren und per SNTP korrigieren.
+            command.extend(['-rtc', f'base={args.rtc_base}'])
         if disk:
             command.extend(['-drive', f'if=none,id=testdisk,format=raw,file={disk}',
                             '-device', 'ich9-ahci,id=testahci',
@@ -423,6 +454,7 @@ def main():
     parser.add_argument('--iso', type=Path, help='ISO mit aktivierter Netzwerkprobe')
     parser.add_argument('--qemu', type=Path, default=DEFAULT_QEMU)
     parser.add_argument('--timeout', type=float, default=240)
+    parser.add_argument('--rtc-base', help='Gastuhr setzen, etwa 2020-01-01 (Zeitabgleich mit falscher RTC pruefen)')
     parser.add_argument('--smoke', action='store_true', help='Nach PASS Oberflaechenpruefung mit Bildern')
     parser.add_argument('--boot-smoke', action='store_true', help='Boot-/Oberflaechenablauf ohne Netzwerkprobe; Bilder manuell pruefen')
     parser.add_argument('--recovery', action='store_true', help='Recovery-ISO beginnt in der Textshell')
