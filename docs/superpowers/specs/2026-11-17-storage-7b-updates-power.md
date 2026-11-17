@@ -49,8 +49,9 @@ Stand: 17. November 2026, Basis `origin/master` @ `06ac97a`. Plan [Etappe 7b](..
 
 ## 3. Gemeinsamer Baustein `RootVolumeState` (aus 4.3)
 
-- `Open(device)`: `s_state` = 0 per Lesen-Ändern-Schreiben, `Device.Flush()`; vor dem ersten Datenschreibzugriff nach dem RW-Mount.
-- `Close()`: Sync, Sync (Cosmos schreibt den Superblock nach dem Flush, Etappe 4 §2), `s_state` = 1, `Device.Flush()`; danach Superblock neu lesen und `s_state` = 1 prüfen.
+- `Open(device)`: `s_state` = 0 per Lesen-Ändern-Schreiben, `Device.Flush()`, **danach Neulesen und 0 prüfen**; vor dem ersten Datenschreibzugriff nach dem RW-Mount. Ob ein gepufferter Treiber-Superblock die 0 später überschreibt, können Hosttests nicht zeigen; das belegt nur E4.0 Lauf 3/4 (Annahme, ausdrücklich).
+- `Close()`: Sync, Sync (Cosmos schreibt den Superblock nach dem Flush, Etappe 4 §2), `s_state` = 1, `Device.Flush()`; danach Superblock neu lesen und `s_state` = 1 prüfen. **Scheitert etwas nach dem Schreiben von 1, setzt `Close` selbst best-effort `s_state` = 0 + Flush zurück** und hängt einen Zweitfehler an die Meldung; der Aufrufervertrag (Schreibsperre erst nach erfolgreichem `Reopen` aufheben, §2) bleibt zusätzlich bestehen.
+- Geschrieben wird nur der Sektor mit `s_state` (Byte 58 im zweiten Superblock-Sektor), nicht beide Sektoren; Vorbedingung „nie nebenläufig zu Dateischreibern“ steht in der Klassendoku.
 - `Reopen()`: wie `Open` nach einem zurückgekehrten oder abgebrochenen `Close`.
 - Der Superblock-Zugriff am Treiber vorbei geschieht **nur** in diesen drei Methoden und nie nebenläufig zu Dateischreibern (Etappe 4 §2). Reine Logik (Offset, Lesen-Ändern-Schreiben über ein `IBlockDevice`-Abbild) ist hosttestbar.
 
