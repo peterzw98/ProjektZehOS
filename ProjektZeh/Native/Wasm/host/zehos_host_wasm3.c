@@ -24,7 +24,8 @@ static M3Result trap_result(zehos_host_trap trap)
 }
 
 // wasm3 legt jedes Argument in einen eigenen 64-Bit-Platz; i32-Werte stehen in den unteren 32 Bit. Die Umwandlung
-// in den Parametertyp der Kernfunktion uebernimmt deren Prototyp (wie m3ApiGetArg).
+// in den Parametertyp der Kernfunktion uebernimmt deren Prototyp (wie m3ApiGetArg). Die Kuerzung eines 64-Bit-Platzes
+// auf i32 ist gewollt: Die oberen 32 Bit eines i32-Arguments sind bei wasm3 bedeutungslos.
 #define ZEHOS_M3_ARGS_0(slots)
 #define ZEHOS_M3_ARGS_1(slots) , (slots)[0]
 #define ZEHOS_M3_ARGS_2(slots) ZEHOS_M3_ARGS_1(slots), (slots)[1]

@@ -6,7 +6,7 @@ Stand 17. November 2026, erstellt von agent-scientist auf Zuweisung des Koordina
 
 ## 1 Was sich ändert
 
-Heute ist Wasm die einzige Schutzgrenze zwischen Paket-App und Kernel: Apps laufen im Ring 0 ohne Prozessschutz (ROADMAP 6c, 12.4). wasm3 prüft jeden Speicherzugriff zur Laufzeit. Die vertrauenswürdige Basis (TCB) für eine Paket-App besteht aus wasm3, den Hostfunktionen (`ProjektZeh/Native/Wasm/host/zehos_wasm.c`, `WasmRuntime.cs`) und der Paketprüfung.
+Heute ist Wasm die einzige Schutzgrenze zwischen Paket-App und Kernel: Apps laufen im Ring 0 ohne Prozessschutz (ROADMAP 6c, 12.4). wasm3 prüft jeden Speicherzugriff zur Laufzeit. Die vertrauenswürdige Basis (TCB) für eine Paket-App besteht aus wasm3, den Hostfunktionen (`ProjektZeh/Native/Wasm/host/zehos_host_core.c`, `zehos_host_wasm3.c`, `WasmRuntime.cs`) und der Paketprüfung.
 
 Mit AOT kommen hinzu:
 
