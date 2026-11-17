@@ -29,6 +29,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `version` | Versionen der geladenen ZehOS- und Cosmos-Assemblies anzeigen |
 | `uptime` | Millisekunden seit ZehOS-Start anzeigen; ohne initialisierten Timer als nicht verfügbar melden |
 | `log` | Die letzten maximal 128 Systemdiagnosen in zeitlicher Reihenfolge anzeigen |
+| `frametimes [on\|off]` | Bildzeit laufender Paket-Apps in Anteile zerlegen (App-Rechnen, `sleep_ms`, Bildkopie, Skalierung, Desktop, Anzeige); bei `on` je 60-s-Messfenster eine Zeile `Anteile …` im seriellen Protokoll, ohne Argument der aktuelle Stand |
 
 Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen werden nicht ausgewertet. Pipes (`|`) und abschließende Ausgabeumleitung (`>`/`>>`) funktionieren außerhalb doppelter Anführungszeichen. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
 

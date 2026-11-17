@@ -58,9 +58,20 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private bool allowsNetwork;
     private readonly System.Text.StringBuilder errors = new();
 
-    // Nur bei neuem Bild oder wartendem present: sonst setzte der Desktop jedes 60-Hz-Bild neu zusammen und gab es
-    // vollstaendig aus, und auf der einen CPU fehlte diese Zeit der App (Etappe 1, Messung in WASM_FEASIBILITY.md).
-    public bool NeedsAnimation { get { lock (gate) return running && active && (presentWaiting || drawnRevision != frameRevision); } }
+    // Nur bei neuem Bild, wartendem present oder als Lebenszeichen alle 100 ms: sonst setzte der Desktop jedes 60-Hz-Bild
+    // neu zusammen, und auf der einen CPU fehlte diese Zeit der App (Etappe 1, WASM_FEASIBILITY.md). Das Lebenszeichen
+    // haelt lastDrawMilliseconds unter VisibleTimeoutMilliseconds; ohne es pausierte eine App mit Bildern ueber 250 ms
+    // (Doom unter TCG) bei jedem present und ihre Spieluhr stand still.
+    private const long KeepAliveMilliseconds = 100;
+    public bool NeedsAnimation
+    {
+        get
+        {
+            lock (gate)
+                return running && active && (presentWaiting || drawnRevision != frameRevision
+                    || clock.ElapsedMilliseconds - lastDrawMilliseconds >= KeepAliveMilliseconds);
+        }
+    }
     public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
     public bool IsCloseRequested { get; private set; }
     string? IWasmSession.Root => root;
