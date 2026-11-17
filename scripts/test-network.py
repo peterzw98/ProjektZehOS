@@ -225,13 +225,20 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
             monitor.write_line('disk init sata0')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-disk-init.ppm'))
-            monitor.write_line('disk mount sata0')
+            # Die Ersteinrichtung gibt es nur beim Boot mit eingebundenem /data (nicht nach disk mount in der Sitzung):
+            # disk init laesst nichts eingebunden und hat die Platte geleert geschrieben (Flush), daher genuegt ein
+            # harter Neustart per QMP; sata0 mit Partition wird beim Boot eingebunden, die Kontodatei fehlt, die Einrichtung folgt.
+            starts = serial.read_text(encoding='utf-8', errors='replace').count(marker)
+            monitor.command('system_reset')
+            reboot_deadline = time.monotonic() + timeout
+            while serial.read_text(encoding='utf-8', errors='replace').count(marker) <= starts:
+                if qemu.poll() is not None or time.monotonic() >= reboot_deadline:
+                    raise TimeoutError(f'Neustart nach disk init ohne erneute Marke {marker!r}; Protokoll: {serial}')
+                time.sleep(0.2)
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            # Die Ersteinrichtung gibt es nur beim Boot; in der laufenden Sitzung legt der Sicherheits-Recovery-Build
-            # den ersten Administrator mit security recover an (eine Kennwortabfrage, kein Wiederholen).
-            monitor.write_line('security recover netadmin')
-            time.sleep(1)
+            monitor.write_line('netadmin')
+            monitor.write_line('testpassword12345')
             monitor.write_line('testpassword12345')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
