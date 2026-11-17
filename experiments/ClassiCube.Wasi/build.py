@@ -53,11 +53,19 @@ def main() -> int:
     if (build / "src").exists():
         shutil.rmtree(build / "src")
     shutil.copytree(args.source / "src", build / "src")
+    # Zeilenenden angleichen: ClassiCube hat teils CRLF, die Patches liegen im Repository als LF und werden je nach
+    # core.autocrlf als LF oder CRLF ausgecheckt. Unter Linux scheiterte git apply sonst an CRLF-Zieldateien.
+    for path in (build / "src").rglob("*"):
+        if path.is_file():
+            data = path.read_bytes()
+            if b"\r\n" in data:
+                path.write_bytes(data.replace(b"\r\n", b"\n"))
     # Der Bauordner liegt meist in einem Git-Arbeitsbaum; ohne Grenze wuerde git apply Pfade relativ zu dessen
     # Wurzel deuten.
     environment = dict(os.environ, GIT_CEILING_DIRECTORIES=str(build.parent))
     for patch in sorted((HERE / "patches").glob("*.patch")):
-        if subprocess.run(["git", "apply", str(patch)], cwd=build, env=environment).returncode != 0:
+        text = patch.read_bytes().replace(b"\r\n", b"\n")
+        if subprocess.run(["git", "apply", "-"], cwd=build, env=environment, input=text).returncode != 0:
             print(f"Patch {patch.name} passt nicht.", file=sys.stderr)
             return 1
 
