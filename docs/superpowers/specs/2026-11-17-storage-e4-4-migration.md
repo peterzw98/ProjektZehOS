@@ -111,5 +111,5 @@ Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateC
 ## 7. Offene Punkte
 
 1. 7a S4: endgültige Liste der vom Installer auf Root angelegten Einträge (§4, Wiederholungsregel).
-2. Rechte für `/srv` und `/srv/legacy-data` (§3.4): Vorschlag „wie bisher `/data`“ – Leitung bestätigen.
+2. *Entschieden 11:51:* `/srv` und `/srv/legacy-data` mit den Rechten des bisherigen `/data`-Eintrags.
 3. `FreeInodes` ist in Cosmos 3.0.97 nur über den Superblock lesbar (`s_free_inodes_count`); ob `VfsManager`/`VfsStatFs` ihn liefert, prüft 4.5.
