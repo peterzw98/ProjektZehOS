@@ -1,0 +1,63 @@
+diff --git a/src/Drawer2D.c b/src/Drawer2D.c
+--- a/src/Drawer2D.c
++++ b/src/Drawer2D.c
+@@ -47,7 +47,12 @@
+ }
+ 
+ void Font_Make(struct FontDesc* desc, int size, int flags) {
++#ifdef CC_BUILD_ZEHOS
++	/* ZehOS: ohne Systemschriften auch im Launcher nur die Bitmapschrift aus default.png */
++	if (true) {
++#else
+ 	if (Drawer2D.BitmappedText) {
++#endif
+ 		Font_MakeBitmapped(desc, size, flags);
+ 	} else {
+ 		SysFont_MakeDefault(desc, size, flags);
+diff --git a/src/Http_Worker.c b/src/Http_Worker.c
+--- a/src/Http_Worker.c
++++ b/src/Http_Worker.c
+@@ -2,7 +2,8 @@
+ 
+ #if defined CC_BUILD_WEB
+ /* Implemented in web http backend without C worker thread(s) */
+-#elif !defined CC_BUILD_NETWORKING
++/* ZehOS: Classic-Protokoll ja, HTTP nein (keine Verbindungen zu Dritten, kein BearSSL) */
++#elif !defined CC_BUILD_NETWORKING || defined CC_BUILD_ZEHOS
+ #include "Http.h"
+ #include "Game.h"
+ 
+@@ -32,7 +33,8 @@
+ 	return -1;
+ }
+ 
+-int Http_CheckProgress(int reqID) { return -1; }
++/* Nie laufend: -1 hiesse "laedt" und zeigte im Mehrspieler dauerhaft "Downloading texture pack" */
++int Http_CheckProgress(int reqID) { return HTTP_PROGRESS_NOT_WORKING_ON; }
+ 
+ void Http_LogError(const char* action, const struct HttpRequest* item) { }
+ 
+diff --git a/src/LScreens.c b/src/LScreens.c
+--- a/src/LScreens.c
++++ b/src/LScreens.c
+@@ -855,7 +855,10 @@
+ 	s->iptPassword.inputType = KEYBOARD_TYPE_PASSWORD;
+ 	s->lblUpdate.small       = true;
+ 
+-#ifdef CC_BUILD_NETWORKING
++#ifdef CC_BUILD_ZEHOS
++	/* ZehOS: ohne HTTP keine Anmeldung bei classicube.net; der Name gilt fuer Singleplayer */
++	LInput_Add(s,  &s->iptUsername, 280, "Username..",  main_iptUsername);
++#elif defined CC_BUILD_NETWORKING
+ 	LInput_Add(s,  &s->iptUsername, 280, "Username..",  main_iptUsername);
+ 	LInput_Add(s,  &s->iptPassword, 280, "Password..",  main_iptPassword);
+ 	LButton_Add(s, &s->btnLogin,    100, 35, "Sign in", 
+@@ -1024,7 +1027,7 @@
+ 	s->Tick          = MainScreen_Tick;
+ 	s->title         = "ClassiCube";
+ 
+-#ifdef CC_BUILD_NETWORKING
++#if defined CC_BUILD_NETWORKING && !defined CC_BUILD_ZEHOS
+ 	s->onEnterWidget = (struct LWidget*)&s->btnLogin;
+ #else
+ 	s->onEnterWidget = (struct LWidget*)&s->btnSPlayer;

@@ -170,6 +170,56 @@ public sealed class DesktopTests
         Assert.IsFalse(desktop.NeedsAnimation);
     }
 
+    private static void LaunchFromMenu(Desktop desktop, string name)
+    {
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Alt));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F1));
+        desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Alt));
+        // Das Suchfeld behaelt seinen Text ueber das Schliessen hinweg.
+        for (int index = 0; index < name.Length; index++) desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Backspace));
+        foreach (char character in name) desktop.Handle(new(InputEventType.Text, Character: character));
+        desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+    }
+
+    [TestMethod]
+    public void Menu_PackageApp_StartsOnceAndSecondLaunchActivatesItsWindow()
+    {
+        int created = 0;
+        var app = new ExternalApplication("probe", "Probe", _ => { created++; return new CaptureProbeApp(); });
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"),
+            listExternal: () => [app]);
+
+        LaunchFromMenu(desktop, "Probe");
+        Assert.AreEqual(1, created);
+        Assert.AreEqual("Probe", desktop.Windows.ActiveWindow!.Title);
+
+        Assert.IsTrue(desktop.OpenTerminal());
+        Assert.AreNotEqual("Probe", desktop.Windows.ActiveWindow!.Title);
+        LaunchFromMenu(desktop, "Probe");
+
+        Assert.AreEqual(1, created, "Eine laufende Paket-App darf nicht ein zweites Mal gestartet werden.");
+        Assert.AreEqual(2, desktop.Windows.Count);
+        Assert.AreEqual("Probe", desktop.Windows.ActiveWindow!.Title);
+    }
+
+    [TestMethod]
+    public void Menu_PackageAppWhileWorkerIsBusy_OpensNoWindowUntilWorkerIsFree()
+    {
+        bool busy = true;
+        var app = new ExternalApplication("probe", "Probe", _ => busy ? null : new CaptureProbeApp());
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"),
+            listExternal: () => [app]);
+
+        LaunchFromMenu(desktop, "Probe");
+        Assert.AreEqual(0, desktop.Windows.Count);
+
+        busy = false;
+        desktop.CloseMenu();
+        LaunchFromMenu(desktop, "Probe");
+        Assert.AreEqual(1, desktop.Windows.Count);
+        Assert.AreEqual("Probe", desktop.Windows.ActiveWindow!.Title);
+    }
+
     [TestMethod]
     public void KeyboardMenu_EnterOnTile_StartsTerminalAndKeepsFocusThere()
     {

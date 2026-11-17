@@ -84,13 +84,25 @@ internal sealed class FileAccessControl
         string prefix = Path.EndsInDirectorySeparator(RootDirectory) ? RootDirectory : RootDirectory + Path.DirectorySeparatorChar;
         if (!path.StartsWith(prefix, comparison)) return false;
         string relative = path[prefix.Length..];
-        foreach (string part in relative.Split(Path.DirectorySeparatorChar))
+        string[] parts = relative.Split(Path.DirectorySeparatorChar);
+        if (IsSystemDataPath(parts)) return false;
+        foreach (string part in parts)
         {
             if (part.Length == 0 || part == "." || part == ".." || part.EndsWith('.') || part.EndsWith(' ') ||
                 part.StartsWith(".zehos-", StringComparison.OrdinalIgnoreCase) || part.IndexOfAny(['|', '\r', '\n', ':', '\\', '/', '\0']) >= 0) return false;
         }
         return true;
     }
+
+    /// <summary>
+    /// Etappe 4.2: Systemdaten des Root-Profils (/etc/zehos, /var/lib/zehos) sind fuer den Dateidienst immer gesperrt, auch fuer
+    /// Administratoren; nur die zustaendigen Dienste schreiben dort ueber eigene Dateidienste mit Pfadwaechter. Gilt nur, wenn die
+    /// Verwaltungswurzel das Dateisystem selbst ist; unter /data (Legacy) bleibt jeder Pfad wie bisher verwaltbar.
+    /// </summary>
+    private bool IsSystemDataPath(string[] parts) =>
+        string.Equals(RootDirectory, Path.GetPathRoot(RootDirectory), comparison) &&
+        ((parts.Length >= 2 && string.Equals(parts[0], "etc", comparison) && string.Equals(parts[1], "zehos", comparison)) ||
+         (parts.Length >= 3 && string.Equals(parts[0], "var", comparison) && string.Equals(parts[1], "lib", comparison) && string.Equals(parts[2], "zehos", comparison)));
 
     internal void Assign(string path, string ownerId)
     {

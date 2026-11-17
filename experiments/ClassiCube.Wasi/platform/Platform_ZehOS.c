@@ -1,9 +1,9 @@
 /* ZehOS-Plattformschicht fuer ClassiCube (BSD-3-Clause wie ClassiCube, Copyright (c) 2014 - 2024, UnknownShadow200).
-   Abgeleitet von src/msdos/Platform_MSDOS.c: ein Faden, keine Sockets, keine Prozesse. Laeuft als WASIp1-Programm
-   im ZehOS-Wasm-Loader; Dateien sind nur lesbar, Schreibversuche scheitern mit einem Fehlercode. */
+   Abgeleitet von src/msdos/Platform_MSDOS.c: ein Faden, keine Prozesse. Laeuft als WASIp1-Programm im
+   ZehOS-Wasm-Loader; Dateien sind nur lesbar, Schreibversuche scheitern mit einem Fehlercode. TCP laeuft ueber die
+   Netzfunktionen von zehos_v1 (nur mit capability=net im Paketmanifest). */
 #define CC_NO_UPDATER
 #define CC_NO_DYNLIB
-#define CC_NO_SOCKETS
 #define CC_NO_THREADING
 #define CC_NO_ENCRYPTION
 #define CC_NO_OPEN
@@ -32,6 +32,12 @@
 #define ZEHOS_IMPORT(name) __attribute__((import_module("zehos_v1"), import_name(name)))
 /* WASI kennt kein poll_oneoff im Loader, usleep der libc wuerde scheitern. */
 ZEHOS_IMPORT("sleep_ms") void zehos_sleep_ms(cc_uint32 milliseconds);
+/* Netz-ABI: Rueckgabe ist eine WASI-Fehlernummer (gleich den errno-Werten von wasi-libc), 0 bei Erfolg. */
+ZEHOS_IMPORT("net_open") cc_int32 zehos_net_open(const char* host, cc_uint32 length, cc_int32 port, cc_int32 flags, cc_int32* handle);
+ZEHOS_IMPORT("net_status") cc_int32 zehos_net_status(cc_int32 handle);
+ZEHOS_IMPORT("net_send") cc_int32 zehos_net_send(cc_int32 handle, const cc_uint8* data, cc_uint32 length, cc_int32* count);
+ZEHOS_IMPORT("net_recv") cc_int32 zehos_net_recv(cc_int32 handle, cc_uint8* data, cc_uint32 length, cc_int32* count);
+ZEHOS_IMPORT("net_close") cc_int32 zehos_net_close(cc_int32 handle);
 
 const cc_result ReturnCode_FileShareViolation = 1000000000;
 const cc_result ReturnCode_FileNotFound     = ENOENT;
@@ -49,13 +55,14 @@ cc_bool  Platform_ReadonlyFilesystem;
 #include "main_impl.h"
 
 int main(void) {
-	/* argv des Loaders ist nur ["app"]; ohne Launcher startet --singleplayer direkt eine erzeugte Welt. */
-	char* arguments[] = { "ClassiCube", DEFAULT_SINGLEPLAYER_ARG, NULL };
+	/* argv des Loaders ist nur ["app"]. Ohne Argumente startet der Launcher (Singleplayer, Direct connect); er
+	   uebergibt die Spielargumente ueber Process_StartGame2, der zweite RunProgram-Durchlauf startet das Spiel. */
+	char* arguments[] = { "ClassiCube", NULL };
 	cc_result res;
-	SetupProgram(2, arguments);
+	SetupProgram(1, arguments);
 
 	do {
-		res = RunProgram(2, arguments);
+		res = RunProgram(1, arguments);
 	} while (Window_Main.Exists);
 
 	Window_Free();
@@ -185,6 +192,101 @@ cc_result File_Length(cc_file file, cc_uint32* len) {
 	struct stat st;
 	if (fstat(file, &st) == -1) { *len = -1; return errno; }
 	*len = (cc_uint32)st.st_size; return 0;
+}
+
+
+/*########################################################################################################################*
+*---------------------------------------------------------Socket----------------------------------------------------------*
+*#########################################################################################################################*/
+/* Der Kernel loest Namen erst in net_open auf und verbindet dort sofort. cc_sockaddr traegt deshalb nur Port (2 Byte,
+   Host-Reihenfolge) und Namen; Socket_Create oeffnet die Verbindung, Socket_Connect meldet nur "laeuft". */
+const cc_result ReturnCode_SocketInProgess  = EINPROGRESS;
+const cc_result ReturnCode_SocketWouldBlock = EAGAIN;
+const cc_result ReturnCode_SocketDropped    = ECONNRESET;
+
+/* Groesste Einzeluebertragung der Netz-ABI */
+#define NET_MAX_TRANSFER (64 * 1024)
+#define NET_MAX_HOST 253
+
+static cc_bool StoreHost(const cc_string* host, int port, cc_sockaddr* dst) {
+	int i;
+	if (host->length < 1 || host->length > NET_MAX_HOST || port < 1 || port > 65535) return false;
+	for (i = 0; i < host->length; i++) {
+		char c = host->buffer[i];
+		if (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '.' && c != '-')
+			return false;
+	}
+	dst->data[0] = (cc_uint8)port;
+	dst->data[1] = (cc_uint8)(port >> 8);
+	Mem_Copy(dst->data + 2, host->buffer, host->length);
+	dst->size = 2 + host->length;
+	return true;
+}
+
+static cc_bool ParseIPv4(const cc_string* ip, int port, cc_sockaddr* dst) {
+	cc_uint32 raw;
+	return ParseIPv4Address(ip, &raw) && StoreHost(ip, port, dst);
+}
+
+/* Die Netz-ABI kennt nur IPv4 und DNS-Namen. */
+static cc_bool ParseIPv6(const char* ip, int port, cc_sockaddr* dst) { return false; }
+
+static cc_result ParseHost(const char* host, int port, cc_sockaddr* addrs, int* numValidAddrs) {
+	cc_string name = String_FromReadonly(host);
+	if (!StoreHost(&name, port, &addrs[0])) return ERR_INVALID_ARGUMENT;
+	*numValidAddrs = 1;
+	return 0;
+}
+
+cc_bool SockAddr_ToString(const cc_sockaddr* addr, cc_string* dst) {
+	int port = addr->data[0] | (addr->data[1] << 8);
+	String_AppendAll(dst, addr->data + 2, addr->size - 2);
+	String_Format1(dst, ":%i", &port);
+	return true;
+}
+
+cc_result Socket_Create(cc_socket* s, cc_sockaddr* addr) {
+	int port = addr->data[0] | (addr->data[1] << 8);
+	cc_int32 handle = 0;
+	cc_result res = zehos_net_open((const char*)addr->data + 2, addr->size - 2, port, 0, &handle);
+	*s = res ? -1 : handle;
+	return res;
+}
+
+cc_result Socket_SetNonBlocking(cc_socket s, cc_bool nonblocking) { return 0; }
+
+void Socket_Close(cc_socket s) {
+	if (s >= 0) zehos_net_close(s);
+}
+
+cc_result Socket_Connect(cc_socket s, const void* addr, int addrSize) { return EINPROGRESS; }
+
+cc_result Socket_Read(cc_socket s, cc_uint8* data, cc_uint32 count, cc_uint32* modified) {
+	cc_int32 read = 0;
+	cc_result res;
+	*modified = 0;
+	if (!count) return 0;
+	res = zehos_net_recv(s, data, min(count, NET_MAX_TRANSFER), &read);
+	if (res) return res;
+	/* EOF: ClassiCube werte 0 Bytes erst nach 30 s Stille als Abbruch; ein beendeter Server soll sofort zaehlen. */
+	if (read == 0) return ReturnCode_SocketDropped;
+	*modified = (cc_uint32)read;
+	return 0;
+}
+
+cc_result Socket_Write(cc_socket s, const cc_uint8* data, cc_uint32 count, cc_uint32* modified) {
+	cc_int32 wrote = 0;
+	cc_result res = zehos_net_send(s, data, min(count, NET_MAX_TRANSFER), &wrote);
+	*modified = res ? 0 : (cc_uint32)wrote;
+	return res;
+}
+
+/* net_status ist EAGAIN bis DNS und Verbindungsaufbau fertig sind. Lesbarkeit laesst sich ohne Lesen nicht pruefen;
+   ClassiCube fragt READ nur im (abgeschalteten) HTTP-Client ab, verbunden gilt deshalb fuer beide Arten. */
+cc_result Socket_Poll(cc_socket s, int timeoutMS, int mode, cc_bool* success) {
+	cc_result res = zehos_net_status(s);
+	*success = res == 0;
+	return res == EAGAIN ? 0 : res;
 }
 
 

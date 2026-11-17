@@ -1,4 +1,5 @@
-// Linux-Seite des Kernel-Rückrufvertrags zehos_wasm_host_* (ProjektZeh/Native/Wasm/host/zehos_wasm.c).
+// Linux-Seite des Kernel-Rückrufvertrags zehos_wasm_host_* (ProjektZeh/Native/Wasm/host/zehos_host_core.c).
+// Gleichnamig mit dem Kernel-Header; "zehos_host_core.h" findet jede Datei zuerst im eigenen Ordner.
 // Zeiger sind native Adressen, die der Aufrufer bereits gegen den Gastspeicher geprüft hat.
 
 #ifndef ZEHOS_HOST_CORE_H
