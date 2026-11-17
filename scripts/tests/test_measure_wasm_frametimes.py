@@ -26,6 +26,16 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(measure.last_median(lines), 33)
         self.assertIsNone(measure.last_median(['Anteile (ms, median/p95/max) app=1']))
 
+    def test_last_average_fps_counts_frames_of_last_window(self):
+        lines = ['Bildzeit n=1462 min=6 median=23 p95=120 max=200 ms pausen=0',
+                 'Bildzeit n=1800 min=6 median=20 p95=99 max=150 ms pausen=0']
+        self.assertEqual(measure.last_average_fps(lines), 30.0)
+        self.assertIsNone(measure.last_average_fps([]))
+
+    def test_move_is_off_by_default(self):
+        self.assertFalse(measure.parse_args(['--iso', 'x.iso']).move)
+        self.assertTrue(measure.parse_args(['--iso', 'x.iso', '--move']).move)
+
 
 if __name__ == '__main__':
     unittest.main()

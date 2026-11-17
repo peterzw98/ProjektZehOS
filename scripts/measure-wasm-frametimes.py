@@ -48,6 +48,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="QMP-Tasten nach dem ersten Bild, etwa ret; shift-f drueckt beide zusammen, "
                              "wait:<s> wartet dazwischen (Welt laden)")
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--move", action="store_true",
+                        help="waehrend der Messung abwechselnd w/a/s/d halten (bewegte Kamera, ClassiCube)")
     args = parser.parse_args(argv)
     if args.package and not args.key:
         parser.error("--package braucht --key")
@@ -56,6 +58,16 @@ def parse_args(argv=None) -> argparse.Namespace:
     if args.runs < 1:
         parser.error("--runs muss mindestens 1 sein")
     return args
+
+
+# Bewegung fuer --move: vor und zurueck, dazwischen seitlich; die Welt bleibt dadurch im Bild und der Spieler am Ort.
+MOVE_STEPS = (("w", 2.5), ("a", 1.0), ("s", 2.5), ("d", 1.0))
+
+
+def last_average_fps(lines: list[str]) -> float | None:
+    """Durchschnittliche Bilder je Sekunde im letzten 60-s-Fenster: Bildzahl n der letzten Zeile "Bildzeit ..." / 60."""
+    found = [int(m.group(1)) for line in lines if (m := re.search(r"^Bildzeit n=(\d+)", line))]
+    return round(found[-1] / 60, 1) if found else None
 
 
 def last_median(lines: list[str]) -> int | None:
@@ -113,7 +125,15 @@ def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
                     continue
                 guest.qmp.tap(*key.split("-"))
                 time.sleep(0.5)
-        time.sleep(args.seconds)
+        if args.move:
+            end = time.monotonic() + args.seconds
+            step = 0
+            while time.monotonic() < end:
+                key, seconds = MOVE_STEPS[step % len(MOVE_STEPS)]
+                guest.qmp.hold(key, min(seconds, max(0.0, end - time.monotonic())))
+                step += 1
+        else:
+            time.sleep(args.seconds)
         guest.shot("ende")
         log = (work / "serial.log").read_text(encoding="utf-8", errors="replace")[mark:]
         lines = re.findall(r"(Bildzeit n=[^\r\n]*|Anteile \(ms[^\r\n]*)", log)
@@ -143,11 +163,17 @@ def main() -> int:
             print(f"Lauf {number} gescheitert: {type(error).__name__}: {error}", flush=True)
             results.append([])
     medians = [last_median(lines) for lines in results]
+    averages = [last_average_fps(lines) for lines in results]
     if args.runs > 1:
         known = [value for value in medians if value is not None]
         overall = f"{statistics.median(known)} ms" if known else "-"
         print(f"Zusammenfassung {args.id} aot={args.aot} accel={args.accel}: Bildzeit-Median letztes Fenster je Lauf "
               f"{medians} ms, Median ueber Laeufe {overall}", flush=True)
+    # Peters Messlatte fuer ClassiCube (18.11.2026): Mittelwert der Bilder je Sekunde, nicht Median der Bildzeit.
+    known_fps = [value for value in averages if value is not None]
+    mean_fps = f"{statistics.mean(known_fps):.1f}" if known_fps else "-"
+    print(f"Durchschnitt {args.id} aot={args.aot} accel={args.accel} move={args.move}: avg fps letztes Fenster je Lauf "
+          f"{averages}, Mittel {mean_fps}", flush=True)
     return 0 if all(any(line.startswith("Anteile") for line in lines) for lines in results) else 1
 
 
