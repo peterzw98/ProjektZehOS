@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST</DefineConstants>
+    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_UPDATE_TESTS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
