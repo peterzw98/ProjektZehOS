@@ -12,7 +12,7 @@ Stand: 17. November 2026, Basis `origin/master` (Etappe-4-Entwurf #145 gemergt).
 | `MigrationJournal` | **rein** Parse/Format; Schreiben über das Ziel | keine |
 | `LayoutMarker` | Root-Marker `state=fresh/migrating/ready` | Format wie `InstallMarker` (gleiche crc32-Regel, eigene Felder) |
 | `LayoutMigration.Run(...)` | Ablauf Schritte 1–10 aus Etappe 4 §3 | `IMigrationTarget`, `Func<IDisposable> lockSource` (Schreibsperre der Quelle; `Run` hält sie per `using`, die Sperre selbst baut 4.5) |
-| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename), `AppendJournal` (mit Flush), `Delete`, `ReadBack`, `FreeBytes` (verfügbare, nicht reservierte Blöcke × Blockgröße, huang P3 e), `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
+| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename), `AppendJournal` (mit Flush), `Delete`, `ReadBack`, `List` (alle Pfade unter der Zielwurzel, ohne Mountgrenzen zu überschreiten; nötig für die Wiederholungsregel §4/Test 20), `FreeBytes` (verfügbare, nicht reservierte Blöcke × Blockgröße, huang P3 e), `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
 
 Die Quelle wird nur über `System.IO` gelesen (Hosttests mit Temp-Verzeichnis). Alle Ziel- und ACL-Pfade sind Kernelpfade mit `/` und werden mit einer reinen `/`-Pfadfunktion behandelt, nie mit `Path.GetFullPath`, damit die Tests auf Linux- und Windows-Hosts gleich laufen.
 
