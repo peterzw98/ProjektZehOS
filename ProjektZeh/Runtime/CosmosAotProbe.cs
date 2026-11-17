@@ -40,6 +40,14 @@ internal static unsafe class CosmosAotProbe
             Write("FAIL exec lieferte nicht 42");
             return false;
         }
+
+        uint major, minor, patch;
+        if (NativeWamrInit(&major, &minor, &patch) != 1)
+        {
+            Write("FAIL wamr wasm_runtime_full_init");
+            return false;
+        }
+        Write($"wamr init PASS version={major}.{minor}.{patch}");
         Write("PASS");
         return true;
     }
@@ -65,6 +73,9 @@ internal static unsafe class CosmosAotProbe
 
     [DllImport("*", EntryPoint = "zehos_aot_probe_heap_address", ExactSpelling = true)]
     private static extern ulong NativeHeapAddress();
+
+    [DllImport("*", EntryPoint = "zehos_aot_probe_wamr_init", ExactSpelling = true)]
+    private static extern int NativeWamrInit(uint* major, uint* minor, uint* patch);
 
     [DllImport("*", EntryPoint = "zehos_aot_probe_exec", ExactSpelling = true)]
     private static extern int NativeExec(ulong* blockAddress);
