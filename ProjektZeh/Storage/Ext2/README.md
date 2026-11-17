@@ -52,3 +52,13 @@ Plug rufen deshalb `FormatForKernel` auf: nur 4096 Byte (`null` => 4096), jede a
 `Format` selbst bleibt für die Matrix mit 1K/2K/4K nutzbar. Achtung: `new Ext2FormatOptions()` hat in Cosmos weiterhin den
 Standard 1024; Aufrufer setzen `BlockSize` ausdrücklich. Die 1K-Korrektur bleibt für die Linux-Matrix und einen
 möglichen Upstream-Fix erhalten.
+
+## Regel für Aufrufer
+
+Kernelcode formatiert ext2 nur mit `CosmosExt2Formatter.FormatForKernel(device, options)`. Nicht verwenden:
+`VfsManager.TryFormat`/`Ext2FileSystemType.TryFormat` mit ext2 (läuft in den fehlerhaften Paketformatter) und
+`CosmosExt2Formatter.Format` (erlaubt 1K/2K, nur für die Hostprobe). Ein Plug auf den Paketformatter wurde verworfen:
+der Cosmos-Patcher kopiert den Plugkörper nach `Cosmos.Kernel.System`, und ILC brach mit „library initializer
+assemblies Cosmos.Kernel.System reference each other in a cycle“ ab (Beleg: Branch `task/storage-ext2-kernel-plug`).
+`ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht in `ProjektZeh/**/*.cs` außerhalb dieses Ordners nach solchen
+Aufrufen; über Variablen weitergereichte Dateisystemnamen erkennt die Suche nicht.
