@@ -148,11 +148,22 @@ public sealed class InstalledIdentityTests
     [TestMethod]
     [DataRow((ushort)1, 0x1u, (int)RootCheck.Ok, DisplayName = "sauber")]
     [DataRow((ushort)0, 0x1u, (int)RootCheck.Unclean, DisplayName = "s_state 0")]
-    [DataRow((ushort)2, 0x1u, (int)RootCheck.Unclean, DisplayName = "s_state Fehler")]
+    [DataRow((ushort)2, 0x1u, (int)RootCheck.ReadOnly, DisplayName = "s_state Fehlerbit: beschaedigt, nicht nur unsauber")]
+    [DataRow((ushort)3, 0x1u, (int)RootCheck.ReadOnly, DisplayName = "s_state sauber mit Fehlerbit: beschaedigt")]
     [DataRow((ushort)1, 0x9u, (int)RootCheck.ReadOnly, DisplayName = "unbekanntes RoCompat")]
     [DataRow((ushort)0, 0x9u, (int)RootCheck.ReadOnly, DisplayName = "RoCompat und s_state: bleibt ReadOnly")]
     public void CheckRoot_SeparatesStateFromRoCompat(ushort state, uint roCompat, int expected) =>
         Assert.AreEqual((RootCheck)expected, InstalledIdentity.CheckRoot(Superblock(state, roCompat)));
+
+    [TestMethod]
+    [DataRow((ushort)2)]
+    [DataRow((ushort)3)]
+    public void Marker_RootErrorState_RootDamaged(ushort state)
+    {
+        // Spec 7a Abschnitt 5: s_state mit Fehlerbit (2/3) ist RootDamaged, nur s_state 0 ist RootUnclean.
+        var result = InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => InstalledIdentity.CheckRoot(Superblock(state, 0x1)));
+        Assert.AreEqual(InstalledState.RootDamaged, result.State);
+    }
 
     [TestMethod]
     public void CheckRoot_WrongMagic_Reject()

@@ -42,14 +42,16 @@ internal enum RootCheck
 internal static class InstalledIdentity
 {
     /// <summary>
-    /// Feature-Gate mit getrenntem Ausgang fuer s_state: meldet das Gate ReadOnly und waere derselbe Superblock mit sauberem
-    /// Zustand Ok, ist nur s_state schuld (Unclean); sonst bleibt es ReadOnly (unbekanntes RoCompat).
+    /// Feature-Gate mit getrenntem Ausgang fuer s_state: meldet das Gate ReadOnly, ist s_state 0 (nicht sauber ausgehaengt,
+    /// ohne Fehlerbit) und waere derselbe Superblock mit sauberem Zustand Ok, ist nur das schuld (Unclean). Das Fehlerbit
+    /// (s_state 2/3) und unbekanntes RoCompat bleiben ReadOnly und damit RootDamaged (Spec 7a, Abschnitt 5).
     /// </summary>
     public static RootCheck CheckRoot(ReadOnlySpan<byte> superblock)
     {
         var decision = Ext2FeatureGate.Evaluate(superblock);
         if (decision == Ext2MountDecision.Ok) return RootCheck.Ok;
         if (decision == Ext2MountDecision.Reject) return RootCheck.Reject;
+        if (BitConverter.ToUInt16(superblock.Slice(Ext2FeatureGate.StateOffset, 2)) != 0) return RootCheck.ReadOnly;
         byte[] clean = superblock[..1024].ToArray();
         BitConverter.TryWriteBytes(clean.AsSpan(Ext2FeatureGate.StateOffset, 2), (ushort)1);
         return Ext2FeatureGate.Evaluate(clean) == Ext2MountDecision.Ok ? RootCheck.Unclean : RootCheck.ReadOnly;
