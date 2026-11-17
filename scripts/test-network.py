@@ -210,6 +210,12 @@ def restart_finished(text, marker, markers_before, passes_before):
     return text.count(marker) > markers_before and text.count(PROBE_PASS) >= passes_before + (1 if passes_before else 0)
 
 
+def admin_setup_lines(recovery):
+    """Eingaben fuer den ersten Administrator: Sicherheits-Recovery-Build per security recover (ein Kennwort), sonst Ersteinrichtung (Name, 2x Kennwort)."""
+    password = 'testpassword12345'
+    return ['security recover netadmin', password] if recovery else ['netadmin', password, password]
+
+
 def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False):
     deadline = time.monotonic() + timeout
     marker = 'Textshell ist bereit.' if recovery else 'Desktop ist bereit.'
@@ -247,9 +253,9 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
                 time.sleep(0.2)
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            monitor.write_line('security recover netadmin')
-            time.sleep(1)
-            monitor.write_line('testpassword12345')
+            for line in admin_setup_lines(recovery):
+                monitor.write_line(line)
+                time.sleep(1)
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
             monitor.key('f4')
