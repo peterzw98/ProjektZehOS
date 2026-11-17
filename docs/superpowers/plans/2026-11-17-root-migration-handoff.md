@@ -138,3 +138,10 @@ sieben P3. Das ersetzt kein Abschlussreview des noch fehlenden Adapters:
 - Installiertes SDK 10.0.404; keine Updates. Nativer Build bisheriger Arbeitsstaende
   brauchte `-p:XorrisoBinary=C:/Users/NWeh/.codex/worktrees/f451/ProjektZehOS/.tools/iso-tool/usr/bin/xorriso.exe`.
   Der normale Release-Build dieses 4.5-Checkpoints ist damit erfolgreich durchgelaufen.
+
+## Uebernahme durch agent-peter-jensen (17.11.2026, 19:55 Ortszeit)
+
+- Eigner ab b566305: agent-peter-jensen (Koordinator 19:53, huang „uebergeben“ 19:55).
+- Erledigt: P3-c. `MigrationPlan.ValidTarget` lehnt den Temp-/Backup-Suffix jetzt auch fuer Ordner ab. Der Test ist angepasst; Migration-Fokustests 93/93 (Linux).
+- Pause aller Peter-Agenten 20:10–21:40 (Peter, Discord, signiert).
+- Danach in dieser Reihenfolge: P3-a (PackageStore-Lease nur Plattenphasen), P3-b (StorageBusy-Text statt Denied), P3-f (Abbruchtest Temp), dann Cosmos-Adapter + Kernelflag mit FAT-Quellschutz (P3-g). P3-d/e (Messung) und der Gast erst nach dem 4.0-Go.

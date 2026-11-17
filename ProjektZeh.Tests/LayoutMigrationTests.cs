@@ -391,7 +391,7 @@ public sealed class LayoutMigrationTests
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 245), SystemPaths.Root, isFile: true));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 246), SystemPaths.Root, isFile: true));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/brief.txt.zehos-tmp", SystemPaths.Root, isFile: true), "kollidiert mit dem Temp-Namen von brief.txt");
-        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/ordner.zehos-tmp", SystemPaths.Root, isFile: false));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/ordner.zehos-tmp", SystemPaths.Root, isFile: false), "Ordner belegt ebenfalls den Temp-Namen (P3-c)");
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255), SystemPaths.Root, isFile: false));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 256), SystemPaths.Root, isFile: false));
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255) + "/x", SystemPaths.Root, isFile: true), "Verzeichnisteil darf 255 Byte haben");
