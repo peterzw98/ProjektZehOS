@@ -19,6 +19,7 @@ existieren.
 import argparse
 import hashlib
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -76,10 +77,21 @@ def size_label(size: int) -> str:
     return f"{size // GIB}g" if size % GIB == 0 else f"{size // MIB}m"
 
 
+def _set_sparse_windows(descriptor: int) -> None:
+    """NTFS macht truncate() sonst zu einer voll belegten, genullten Datei (128 GiB); FSCTL_SET_SPARSE vorher setzen.
+    shortcut: Fehler (etwa ein Dateisystem ohne Sparse-Dateien) werden ignoriert, die Datei ist dann nur nicht duenn."""
+    import ctypes
+    import msvcrt
+    returned = ctypes.c_ulong(0)
+    ctypes.windll.kernel32.DeviceIoControl(msvcrt.get_osfhandle(descriptor), 0x000900C4, None, 0, None, 0, ctypes.byref(returned), None)
+
+
 def create_sparse(path: Path, size: int) -> None:
     if not MIN_SIZE <= size <= MAX_SIZE or size % 512:
         raise ValueError(f"Nicht vorgesehene Imagegroesse: {size}")
     with path.open("xb") as image:  # "x": nie ein vorhandenes Image ueberschreiben
+        if os.name == "nt":
+            _set_sparse_windows(image.fileno())
         image.truncate(size)
 
 
