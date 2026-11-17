@@ -14,7 +14,8 @@ namespace ProjektZeh.Storage;
 /// <summary>
 /// Gastprobe (-p:ZehOSStorageProbe=true) fuer ext2 auf der ganzen Testplatte ohne Partitionstabelle; Gegenstueck
 /// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber VfsManager.TryFormat, damit der
-/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): Featurevertrag, Mount, Hash.
+/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): Featurevertrag,
+/// schreibgeschuetzter Mount, Hashes von probe.bin und reuse.bin, Verzeichnis neu.
 /// Jedes andere Geraet und jeder andere Inhalt bleibt unberuehrt.
 /// </summary>
 internal static class CosmosExt2GuestProbe
@@ -32,6 +33,10 @@ internal static class CosmosExt2GuestProbe
     // Mitten im vierten Block; 72 KiB reichen ueber die 12 direkten Bloecke in den Einfach-Indirektblock.
     private const int OverwriteOffset = 3 * 4096 + 100;
     private const int OverwriteLength = 16;
+    // Nach Delete/Rmdir neu angelegt: belegt die eben freigegebenen Inodes erneut (FreeInode-Plug laesst den Cache stehen).
+    private const string ReuseFile = MountPoint + "/reuse.bin";
+    private const string ReuseDirectory = MountPoint + "/neu";
+    private const int ReuseLength = 6000;
 
     private static string step = "select";
 
@@ -71,10 +76,12 @@ internal static class CosmosExt2GuestProbe
             Check(decision == Ext2MountDecision.Ok, $"Entscheidung {decision}");
             Pass("Ok");
 
+            // Lauf 2 prueft nur und mountet deshalb schreibgeschuetzt.
             Begin("mount");
-            Check(VfsManager.TryMount(FileSystemName, "", MountFlags.None, MountPoint, out _), "TryMount abgelehnt");
+            MountFlags flags = blank ? MountFlags.None : MountFlags.ReadOnly;
+            Check(VfsManager.TryMount(FileSystemName, "", flags, MountPoint, out _), "TryMount abgelehnt");
             mounted = true;
-            Pass(MountPoint);
+            Pass(blank ? MountPoint : MountPoint + " nur lesend");
 
             byte[] expected = ExpectedContent();
             if (blank) FileOperations(device, expected);
@@ -84,6 +91,13 @@ internal static class CosmosExt2GuestProbe
             string actualHash = Hash(File.ReadAllBytes(ProbeFile));
             Check(actualHash == expectedHash, $"{actualHash} statt {expectedHash}");
             Pass(expectedHash);
+
+            Begin("reuse-check");
+            Check(Directory.Exists(ReuseDirectory), "Verzeichnis neu fehlt");
+            string expectedReuse = Hash(ReuseContent());
+            string actualReuse = Hash(File.ReadAllBytes(ReuseFile));
+            Check(actualReuse == expectedReuse, $"reuse.bin {actualReuse} statt {expectedReuse}");
+            Pass(expectedReuse);
 
             Begin("unmount");
             mounted = false;
@@ -181,6 +195,15 @@ internal static class CosmosExt2GuestProbe
         Check(!File.Exists(after), "Datei noch vorhanden");
         Pass("renamed.bin");
 
+        Begin("reuse-create");
+        File.WriteAllBytes(ReuseFile, ReuseContent());
+        Pass($"{ReuseLength} Byte");
+
+        Begin("reuse-mkdir");
+        Directory.CreateDirectory(ReuseDirectory);
+        Check(Directory.Exists(ReuseDirectory), "Verzeichnis fehlt");
+        Pass(ReuseDirectory);
+
         Begin("sync");
         device.Flush();
         Pass("Geraetepuffer geschrieben");
@@ -193,6 +216,13 @@ internal static class CosmosExt2GuestProbe
         for (int i = 0; i < BaseLength; i++) content[i] = (byte)((i * 131) ^ (i >> 9));
         for (int i = BaseLength; i < content.Length; i++) content[i] = (byte)(0xA5 ^ i);
         for (int i = OverwriteOffset; i < OverwriteOffset + OverwriteLength; i++) content[i] = 0xEE;
+        return content;
+    }
+
+    private static byte[] ReuseContent()
+    {
+        byte[] content = new byte[ReuseLength];
+        for (int i = 0; i < content.Length; i++) content[i] = (byte)(i * 7 + 3);
         return content;
     }
 
