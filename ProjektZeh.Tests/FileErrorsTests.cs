@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Storage;
@@ -23,7 +24,7 @@ public sealed class FileErrorsTests
     {
         // Diese Fehler zeigen einen Programmfehler und duerfen nicht als Dateifehler verschluckt werden.
         Assert.IsFalse(FileErrors.IsFileError(new InvalidOperationException()));
-        Assert.IsFalse(FileErrors.IsFileError(new NullReferenceException()));
-        Assert.IsFalse(FileErrors.IsFileError(new OutOfMemoryException()));
+        Assert.IsFalse(FileErrors.IsFileError(new FormatException()));
+        Assert.IsFalse(FileErrors.IsFileError(new KeyNotFoundException()));
     }
 }
