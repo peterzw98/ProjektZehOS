@@ -16,10 +16,15 @@ public sealed class Ext2FeatureGateTests
     private static byte[] Superblock(uint rev = 1, uint logBlock = 2, uint compat = 0, uint incompat = Filetype, uint roCompat = SparseSuper, ushort magic = 0xEF53, ushort state = 1)
     {
         byte[] sb = new byte[1024];
+        BitConverter.TryWriteBytes(sb.AsSpan(0, 4), 128u);
+        BitConverter.TryWriteBytes(sb.AsSpan(4, 4), 2048u);
         BitConverter.TryWriteBytes(sb.AsSpan(24, 4), logBlock);
+        BitConverter.TryWriteBytes(sb.AsSpan(32, 4), 32768u);
+        BitConverter.TryWriteBytes(sb.AsSpan(40, 4), 128u);
         BitConverter.TryWriteBytes(sb.AsSpan(56, 2), magic);
         BitConverter.TryWriteBytes(sb.AsSpan(58, 2), state);
         BitConverter.TryWriteBytes(sb.AsSpan(76, 4), rev);
+        BitConverter.TryWriteBytes(sb.AsSpan(88, 2), (ushort)128);
         BitConverter.TryWriteBytes(sb.AsSpan(92, 4), compat);
         BitConverter.TryWriteBytes(sb.AsSpan(96, 4), incompat);
         BitConverter.TryWriteBytes(sb.AsSpan(100, 4), roCompat);
@@ -92,4 +97,32 @@ public sealed class Ext2FeatureGateTests
     [TestMethod]
     public void Evaluate_UncleanWithUnknownIncompat_IsReject() =>
         Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(Superblock(state: 2, incompat: 0x40)));
+
+    [TestMethod]
+    [DataRow(0, 0u)]
+    [DataRow(4, 0u)]
+    [DataRow(4, 15u)]
+    [DataRow(20, 1u)]
+    [DataRow(32, 0u)]
+    [DataRow(32, 32769u)]
+    [DataRow(40, 0u)]
+    [DataRow(40, 32769u)]
+    public void Evaluate_InvalidGeometry_IsReject(int offset, uint value)
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(offset, 4), value);
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(64)]
+    [DataRow(129)]
+    [DataRow(8192)]
+    public void Evaluate_InvalidInodeSize_IsReject(int inodeSize)
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(88, 2), (ushort)inodeSize);
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
+    }
 }

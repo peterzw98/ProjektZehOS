@@ -14,6 +14,10 @@ Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Sie ist noch nicht als P
 unbekannte Compat-/RoCompat-Bits höchstens zum Lesemount. `s_state` ist eine Bitmaske: nur 1 (VALID ohne ERROR)
 behält die Featureentscheidung; 0, 2 und 3 erlauben höchstens Lesen, unbekannte Zustandsbits führen zur Ablehnung.
 Diese Entscheidung repariert keine Metadaten und bestätigt keine Konsistenz beschädigter Volumes.
+Vor dem nativen Mount werden außerdem positive Inode-/Blockzahlen (mindestens 16 Blöcke), `first_data_block=0`,
+Gruppengrößen von 1 bis 32768 sowie eine Inodegröße als Zweierpotenz zwischen 128 und 4096 geprüft. Damit werden
+offensichtliche Geometriefehler vor den nativen Bitmap- und Inodetabellenzugriffen abgelehnt; Verweise innerhalb
+der Gruppen und beschädigte Verzeichnisse benötigen weiterhin eine unabhängige Offlineprüfung.
 
 Das Mountflag allein verhindert in Cosmos 3.0.97 nicht alle Schreibzugriffe. Erneute ILSpy-Prüfung der installierten
 `Cosmos.Kernel.System.dll` aus Paket 3.0.97 bestätigte (Zeilen im dekompilierten Quelltext):

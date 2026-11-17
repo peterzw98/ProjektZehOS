@@ -30,6 +30,7 @@ public static class Ext2FeatureGate
     private const int FeatureCompatOffset = 92;
     private const int FeatureIncompatOffset = 96;
     private const int FeatureRoCompatOffset = 100;
+    private const int InodeSizeOffset = 88;
 
     private const ushort Magic = 0xEF53;
     private const uint RevDynamic = 1;
@@ -45,6 +46,20 @@ public static class Ext2FeatureGate
             || BitConverter.ToUInt32(superblock.Slice(RevLevelOffset, 4)) != RevDynamic
             || BitConverter.ToUInt32(superblock.Slice(LogBlockSizeOffset, 4)) != LogBlockSize4096
             || (BitConverter.ToUInt32(superblock.Slice(FeatureIncompatOffset, 4)) & ~KnownIncompat) != 0)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
+        uint inodes = BitConverter.ToUInt32(superblock.Slice(0, 4));
+        uint blocks = BitConverter.ToUInt32(superblock.Slice(4, 4));
+        uint firstDataBlock = BitConverter.ToUInt32(superblock.Slice(20, 4));
+        uint blocksPerGroup = BitConverter.ToUInt32(superblock.Slice(32, 4));
+        uint inodesPerGroup = BitConverter.ToUInt32(superblock.Slice(40, 4));
+        ushort inodeSize = BitConverter.ToUInt16(superblock.Slice(InodeSizeOffset, 2));
+        // Die nativen Bitmap-/Inodetabellenpfade setzen diese Grenzen voraus; dies ersetzt kein fsck.
+        if (inodes == 0 || blocks < 16 || firstDataBlock != 0
+            || blocksPerGroup is 0 or > 32768 || inodesPerGroup is 0 or > 32768
+            || inodeSize < 128 || inodeSize > 4096 || (inodeSize & (inodeSize - 1)) != 0)
         {
             return Ext2MountDecision.Reject;
         }
