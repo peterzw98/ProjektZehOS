@@ -43,6 +43,19 @@ class ErrorLineTests(unittest.TestCase):
         self.assertEqual(guest.error_lines(serial), [])
 
 
+class RecoveryMachineTests(unittest.TestCase):
+    def test_without_appdisk_keeps_other_devices(self):
+        machine = guest.without_appdisk(guest.tools.MACHINE)
+        self.assertFalse(any(value.startswith('ide-hd,drive=appdisk') for value in machine))
+        for device in ('ahci,id=ahci', 'e1000e,netdev=net0', 'qemu-xhci,id=tabletbus'):
+            self.assertIn(device, machine)
+        self.assertEqual(len(machine), len(guest.tools.MACHINE) - 2)
+
+    def test_without_appdisk_rejects_missing_device(self):
+        with self.assertRaises(ValueError):
+            guest.without_appdisk(['-device', 'ahci,id=ahci'])
+
+
 class BootTimeoutTests(unittest.TestCase):
     def test_boot_timeout_stops_process_and_keeps_log(self):
         with tempfile.TemporaryDirectory() as directory:

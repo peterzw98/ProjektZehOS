@@ -49,6 +49,15 @@ def error_lines(serial: str) -> list[str]:
     return [line for line in serial.splitlines() if ERROR_LINE.search(line)]
 
 
+def without_appdisk(machine: list[str]) -> list[str]:
+    """QEMU-Argumente ohne das Paar "-device ide-hd,drive=appdisk,..."; scheitert, wenn es fehlt."""
+    pairs = [index for index in range(len(machine) - 1)
+             if machine[index] == "-device" and machine[index + 1].startswith("ide-hd,drive=appdisk")]
+    if len(pairs) != 1:
+        raise ValueError("Genau ein AppDisk-Geraet erwartet")
+    return machine[:pairs[0]] + machine[pairs[0] + 2:]
+
+
 class Run:
     """Ein Gastlauf: Wegwerfplatte, QEMU, Guest aus test-wasm-doom-desktop.py und Bildvergleiche."""
 
@@ -262,8 +271,7 @@ def main() -> int:
     if args.recovery:
         # Ohne Datenplatte: auf einer leeren Platte bietet Recovery die Ersteinrichtung an, und uname/shutdown wuerden
         # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
-        device = tools.MACHINE.index("ide-hd,drive=appdisk,bus=ahci.0")
-        tools.MACHINE = tools.MACHINE[:device - 1] + tools.MACHINE[device + 1:]
+        tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
                args.boot_timeout)
 
