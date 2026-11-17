@@ -1,0 +1,174 @@
+using System;
+using System.IO;
+using System.Text;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Shared;
+using ProjektZeh.Storage.Ext2;
+using ProjektZeh.Storage.Partitioning;
+
+namespace ProjektZeh.Tests;
+
+/// <summary>Etappe 7a Schritt 3a: ESP-Marker und Identitaet des installierten Systems (Spec 7a, Abschnitt 5).</summary>
+[TestClass]
+public sealed class InstalledIdentityTests
+{
+    private const ulong Blocks = 64UL * 1024 * 1024 * 1024 / 512;
+    private static readonly Guid Disk = new("11111111-2222-4333-8444-555555555555");
+    private static readonly Guid EspGuid = new("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    private static readonly Guid RootGuid = new("99999999-8888-4777-8666-555555555555");
+    private static readonly GptEntry Esp = new(GptLayout.EspType, EspGuid, 2048, 2048 + 1048576 - 1, GptLayoutWriter.EspName);
+    private static readonly GptEntry Root = new(GptLayout.LinuxFileSystemType, RootGuid, 1050624, Blocks - 40, GptLayoutWriter.RootName);
+    private static readonly InstallMarker Marker = new(Disk, RootGuid, Root.FirstLba, Root.LastLba - Root.FirstLba + 1);
+
+    private static ResultObject<GptTable> Table(params GptEntry[] entries) => ResultObjectFactory.CreateSuccess(new GptTable(Disk, entries));
+    private static readonly ResultObject<GptTable> InvalidTable = GptLayout.Failure("PrimaryHeaderCrc", "kaputt");
+
+    private static InstalledState Evaluate(string? marker, ResultObject<GptTable>? table, Ext2MountDecision gate = Ext2MountDecision.Ok) =>
+        InstalledIdentity.Evaluate(marker, table, _ => gate).State;
+
+    // --- Marker-Format ---
+
+    [TestMethod]
+    public void Marker_RoundTrip()
+    {
+        string text = Marker.Serialize();
+        Assert.IsTrue(Encoding.UTF8.GetByteCount(text) <= InstallMarker.MaximumBytes);
+        StringAssert.StartsWith(text, "zehos-install 1\n");
+        var parsed = InstallMarker.Parse(text);
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.AreEqual(Marker, parsed.Value);
+    }
+
+    [TestMethod]
+    public void Marker_ChangedLine_FailsChecksum()
+    {
+        string text = Marker.Serialize().Replace("root-first=1050624", "root-first=1050632", StringComparison.Ordinal);
+        StringAssert.Contains(InstallMarker.Parse(text).Status.Message, "cause='MarkerChecksum'");
+    }
+
+    [TestMethod]
+    [DataRow("", DisplayName = "leer")]
+    [DataRow("zehos-install 1\n", DisplayName = "nur Kopfzeile")]
+    [DataRow("zehos-install 2\ndisk=x\ncrc32=00000000\n", DisplayName = "unbekannte Version")]
+    public void Marker_Malformed_Invalid(string text) => Assert.IsFalse(InstallMarker.Parse(text).IsOK());
+
+    [TestMethod]
+    public void Marker_TooLongOrTooManyLines_Invalid()
+    {
+        StringAssert.Contains(InstallMarker.Parse(new string('x', 513)).Status.Message, "cause='MarkerTooLarge'");
+        string lines = string.Concat(System.Linq.Enumerable.Repeat("a\n", 13));
+        StringAssert.Contains(InstallMarker.Parse(lines).Status.Message, "cause='MarkerTooLarge'");
+    }
+
+    [TestMethod]
+    public void Marker_ResealedButWrongFields_Invalid()
+    {
+        // Gueltige Pruefsumme, aber unbekannter Schluessel bzw. falsche Zahl: die Feldpruefung muss abweisen.
+        StringAssert.Contains(InstallMarker.Parse(Reseal("zehos-install 1\ndisk=" + Disk + "\nroot=" + RootGuid + "\nroot-first=1\nroot-size=2\n")).Status.Message, "cause='MarkerField'");
+        StringAssert.Contains(InstallMarker.Parse(Reseal("zehos-install 1\ndisk=" + Disk + "\nroot=" + RootGuid + "\nroot-first=-1\nroot-sectors=2\n")).Status.Message, "cause='MarkerField'");
+        StringAssert.Contains(InstallMarker.Parse(Reseal("zehos-install 1\ndisk=kein-guid\nroot=" + RootGuid + "\nroot-first=1\nroot-sectors=2\n")).Status.Message, "cause='MarkerField'");
+    }
+
+    private static string Reseal(string body) =>
+        body + "crc32=" + Crc32.Compute(Encoding.UTF8.GetBytes(body)).ToString("x8", System.Globalization.CultureInfo.InvariantCulture) + "\n";
+
+    // --- Tabelle Abschnitt 5 ---
+
+    [TestMethod]
+    public void NoMarker_NoGpt_Legacy() => Assert.AreEqual(InstalledState.Legacy, Evaluate(null, null));
+
+    [TestMethod]
+    public void NoMarker_GptWithoutRoot_Legacy() => Assert.AreEqual(InstalledState.Legacy, Evaluate(null, Table(Esp)));
+
+    [TestMethod]
+    public void NoMarker_GptWithRootPartition_Unclear() => Assert.AreEqual(InstalledState.Unclear, Evaluate(null, Table(Esp, Root)));
+
+    [TestMethod]
+    public void NoMarker_InvalidGpt_Unclear() => Assert.AreEqual(InstalledState.Unclear, Evaluate(null, InvalidTable));
+
+    [TestMethod]
+    public void Marker_Healthy() => Assert.AreEqual(InstalledState.Healthy, Evaluate(Marker.Serialize(), Table(Esp, Root)));
+
+    [TestMethod]
+    public void Marker_RootEntryDeleted_RootMissing() => Assert.AreEqual(InstalledState.RootMissing, Evaluate(Marker.Serialize(), Table(Esp)));
+
+    [TestMethod]
+    public void Marker_Unreadable_Unclear()
+    {
+        Assert.AreEqual(InstalledState.Unclear, Evaluate("zehos-install 1\nkaputt\n", Table(Esp, Root)));
+    }
+
+    [TestMethod]
+    public void Marker_WithoutGptOrInvalidGpt_Unclear()
+    {
+        Assert.AreEqual(InstalledState.Unclear, Evaluate(Marker.Serialize(), null));
+        Assert.AreEqual(InstalledState.Unclear, Evaluate(Marker.Serialize(), InvalidTable));
+    }
+
+    [TestMethod]
+    public void Marker_OtherDiskGuid_Unclear()
+    {
+        string other = (Marker with { DiskGuid = Guid.NewGuid() }).Serialize();
+        Assert.AreEqual(InstalledState.Unclear, Evaluate(other, Table(Esp, Root)));
+    }
+
+    [TestMethod]
+    [DataRow(8L, 0L, DisplayName = "Start verschoben")]
+    [DataRow(0L, 8L, DisplayName = "vergroessert")]
+    [DataRow(0L, -8L, DisplayName = "verkleinert")]
+    public void Marker_RootPositionOrSizeDiffers_RootDamaged(long startShift, long endShift)
+    {
+        var moved = Root with { FirstLba = (ulong)((long)Root.FirstLba + startShift), LastLba = (ulong)((long)Root.LastLba + endShift) };
+        Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, moved)));
+    }
+
+    [TestMethod]
+    public void Marker_RootGuidWithWrongType_RootDamaged()
+    {
+        var wrongType = Root with { Type = GptLayout.EspType };
+        Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, wrongType)));
+    }
+
+    [TestMethod]
+    [DataRow(Ext2MountDecision.Reject)]
+    [DataRow(Ext2MountDecision.ReadOnly)]
+    public void Marker_GateNotOk_RootDamaged(Ext2MountDecision gate) =>
+        Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, Root), gate));
+
+    [TestMethod]
+    public void Marker_SuperblockIoError_RootDamagedWithRestartHint()
+    {
+        var result = InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => throw new IOException("AHCI-Fehler"));
+        Assert.AreEqual(InstalledState.RootDamaged, result.State);
+        StringAssert.Contains(result.Reason, "cause='RootIoError'");
+        StringAssert.Contains(result.Reason, "Neustart");
+    }
+
+    [TestMethod]
+    public void Gate_OnlyAskedForTheMarkedRootEntry()
+    {
+        GptEntry? asked = null;
+        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), entry => { asked = entry; return Ext2MountDecision.Ok; });
+        Assert.AreEqual(Root, asked);
+        bool called = false;
+        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => { called = true; return Ext2MountDecision.Ok; });
+        Assert.IsFalse(called, "ohne Root-Eintrag kein Plattenzugriff");
+    }
+
+    [TestMethod]
+    public void BlockedReason_OnlyForRootFailures()
+    {
+        Assert.IsNull(InstalledIdentity.Evaluate(null, null, _ => Ext2MountDecision.Ok).BlockedReason);
+        Assert.IsNull(InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => Ext2MountDecision.Ok).BlockedReason);
+        foreach (var result in new[]
+        {
+            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => Ext2MountDecision.Ok),
+            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => Ext2MountDecision.Reject),
+            InstalledIdentity.Evaluate(null, Table(Esp, Root), _ => Ext2MountDecision.Ok),
+        })
+        {
+            Assert.IsNotNull(result.BlockedReason, result.State.ToString());
+            StringAssert.Contains(result.BlockedReason, "Keine Ersteinrichtung");
+        }
+    }
+}
