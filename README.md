@@ -171,6 +171,14 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 8189 direkte Einträge (ein Platz unter der Cosmos-Grenze bleibt für Umbenennungen frei), einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
 
+Ist ext2 als `/` eingehängt, hält Cosmos 3.0.97 jede seit dem Start berührte Datei im Speicher, bis der Datenträger ausgehängt wird. Nach etwa 17.500 verschiedenen Dateien je Sitzung können weitere Dateioperationen mit einem Fehler scheitern, weil der Speicher zu stark zerstückelt ist. Die genaue Zahl hängt vom Arbeitsspeicher und vom bisherigen Verlauf ab.
+
+- **Betroffen** sind Vorgänge, die viele verschiedene Dateien berühren: große Ordner auflisten, ganze Bäume durchsuchen oder kopieren, Pakete mit vielen Dateien installieren.
+- **Kaum betroffen** ist das normale Speichern, weil es freigegebene Dateinummern wiederverwendet.
+- **Abhilfe:** ZehOS neu starten. Danach beginnt die Zählung von vorn.
+
+ZehOS umgeht die Grenze bewusst nicht (Entscheidung 17. November 2026). Hintergrund steht in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md).
+
 Die Eintragsprüfung gilt für den Dateidienst (FileService). Direkte interne Schreibzugriffe, etwa des Paketbestands oder der Desktop-Einstellungen, sind davon nicht erfasst; sie ist deshalb keine harte Dateisystemgarantie.
 
 Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
