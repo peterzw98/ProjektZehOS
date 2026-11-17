@@ -37,7 +37,9 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             foreach (IBlockDevice device in StorageManager.Devices)
             {
                 // Die Datenplatte ZEHOSDATA ist nie Installationsziel und erscheint nicht in der Liste.
-                if (CosmosDataDisk.HasDataPartition(device)) continue;
+                // Nicht lesbar heisst nicht sicher: ein solches Geraet wird nicht angeboten, die Liste bleibt nutzbar.
+                try { if (CosmosDataDisk.HasDataPartition(device)) continue; }
+                catch (Exception) { continue; }
                 candidates.Add(new(new InstallDisk(device.Name, checked(device.BlockCount * device.BlockSize),
                     StorageManager.GetPartitions(device).Count, CachedIsBlank(device)), IsInstallMedium(device)));
             }

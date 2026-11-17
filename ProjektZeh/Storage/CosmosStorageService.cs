@@ -124,6 +124,13 @@ internal sealed class CosmosStorageService : IStorageService
 
         try
         {
+            // Reihenfolge der Fehler wie bisher: AlreadyMounted, Registrierung, Partitionsanzahl, Mount.
+            var prepared = PrepareMount();
+            if (!prepared.IsOK())
+            {
+                return prepared;
+            }
+
             if (StorageManager.GetPartitions(found.Value!).Count != 1)
             {
                 return Failure("UnexpectedPartitionCount", "Zum Einbinden wird genau eine Datenpartition erwartet.");
@@ -147,7 +154,15 @@ internal sealed class CosmosStorageService : IStorageService
             var candidates = new List<DataDiskCandidate>();
             foreach (IBlockDevice device in StorageManager.Devices)
             {
-                candidates.Add(CosmosDataDisk.Describe(device));
+                // Ein unlesbares Geraet (CD/ATAPI, Lesefehler) darf den Mount der uebrigen nicht verhindern.
+                try
+                {
+                    candidates.Add(CosmosDataDisk.Describe(device));
+                }
+                catch (Exception exception)
+                {
+                    Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE {device.Name} uebersprungen: {exception.Message}\n");
+                }
             }
 
             var selection = DataDiskSelector.Select(candidates);
@@ -157,7 +172,13 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             var found = FindDevice(selection.Value!.DeviceName);
-            return found.IsOK() ? MountPartition(found.Value!, selection.Value.PartitionIndex) : found.Status;
+            if (!found.IsOK())
+            {
+                return found.Status;
+            }
+
+            var prepared = PrepareMount();
+            return prepared.IsOK() ? MountPartition(found.Value!, selection.Value.PartitionIndex) : prepared;
         }
         catch (Exception exception)
         {
@@ -165,19 +186,18 @@ internal sealed class CosmosStorageService : IStorageService
         }
     }
 
-    private ResultErr MountPartition(IBlockDevice device, int partitionIndex)
+    private ResultErr PrepareMount()
     {
         if (VfsManager.TryGetMount(MountPoint, out _))
         {
             return Failure("AlreadyMounted", "Unter /data ist bereits ein Laufwerk eingebunden.");
         }
 
-        var registration = RegisterFileSystem();
-        if (!registration.IsOK())
-        {
-            return registration;
-        }
+        return RegisterFileSystem();
+    }
 
+    private static ResultErr MountPartition(IBlockDevice device, int partitionIndex)
+    {
         if (!VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], MountFlags.None, MountPoint, out _))
         {
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
