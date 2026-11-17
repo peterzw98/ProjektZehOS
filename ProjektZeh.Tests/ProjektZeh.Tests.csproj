@@ -65,6 +65,7 @@
     <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\DataDiskSelector.cs" Link="Storage\DataDiskSelector.cs" />
+    <Compile Include="..\ProjektZeh\Storage\LayoutProfile.cs" Link="Storage\LayoutProfile.cs" />
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\SystemInfoSnapshot.cs" Link="Storage\Virtual\SystemInfoSnapshot.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
