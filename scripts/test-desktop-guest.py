@@ -124,11 +124,20 @@ class Run:
     def changed(self, name: str, previous: bytes, timeout: float = 60) -> bytes:
         return self.settle(name, lambda current: current != previous, timeout)
 
-    def close_terminal(self) -> None:
-        # Erstes Terminal nach dem Boot: Position 72/72, Breite wie Desktop.OpenTerminal; X 20 px vor dem rechten Rand.
+    def terminal_size(self) -> tuple[int, int]:
+        # Erstes Terminal nach dem Boot: Position 72/72, Groesse wie Desktop.OpenTerminal.
         width, height = self.guest.size
-        window_width = min(max(width * 3 // 4, 640), 1100)
-        self.guest.qmp.click(72 + window_width - 20, 72 + 20, width, height)
+        return min(max(width * 3 // 4, 640), 1100), min(max((height - BAR_HEIGHT) * 3 // 5, 400), 600)
+
+    def terminal_output(self, workspace: bytes) -> bytes:
+        """Ausgabebereich des Terminals ohne die unterste Zeile: dort blinkt der Cursor (TerminalApp, 500 ms)."""
+        window_width, window_height = self.terminal_size()
+        return self.patch(workspace, (72, 72 + 40, 72 + window_width, 72 + window_height - 64))
+
+    def close_terminal(self) -> None:
+        # Das X liegt 20 px vor dem rechten Rand in der Titelleiste (Window.ContainsClose).
+        width, height = self.guest.size
+        self.guest.qmp.click(72 + self.terminal_size()[0] - 20, 72 + 20, width, height)
 
     def powered_off(self) -> None:
         """Nach shutdown muss QEMU binnen 60 s mit Exitcode 0 enden (-action shutdown=poweroff)."""
@@ -159,7 +168,7 @@ class Run:
         for attempt in range(3):
             guest.qmp.line("echo e2e")
             try:
-                self.changed("echo", terminal, 20)
+                self.settle("echo", lambda current: self.terminal_output(current) != self.terminal_output(terminal), 20)
                 break
             except AssertionError:
                 if attempt == 2:
