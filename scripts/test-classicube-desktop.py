@@ -152,10 +152,12 @@ def main():
             guest.qmp.move(33+399+160, 120+259+25*dy, width, height)
             time.sleep(.1)
         state = changed(state, "blick-boden", "Blick nach unten veraendert die Ansicht nicht")
-        button("left")
-        state = changed(state, "block-entfernt", "Linksklick entfernt keinen Block")
+        # Erst setzen, dann denselben Block entfernen: Ein entfernter Block direkt vor dem Spieler laesst sich nicht
+        # wieder setzen (ClassiCube verbietet Bloecke im Spielerkoerper), je nach Zufallswelt.
         button("right")
-        changed(state, "block-gesetzt", "Rechtsklick setzt keinen Block")
+        state = changed(state, "block-gesetzt", "Rechtsklick setzt keinen Block")
+        button("left")
+        changed(state, "block-entfernt", "Linksklick entfernt keinen Block")
         # Esc gibt den Zeiger frei; danach ist das Schliessen-Symbol des Fensters erreichbar.
         guest.qmp.tap("esc")
         time.sleep(1)
