@@ -356,6 +356,14 @@ public sealed class WasmSaveStoreTests
         Assert.IsTrue(Directory.Exists(target));
         Assert.IsTrue(WasmSaveStore.CreateRoot(files, mount, target).IsOK(), "vorhandener Ordner ist kein Fehler");
         Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, "/anderswo/x").IsOK());
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, mount).IsOK(), "die Wurzel selbst ist kein App-Speicher");
+
+        // Eine Ebene, die als Datei existiert, scheitert sauber statt etwas anzulegen.
+        string blocked = mount + "/.zehos-apps/datei";
+        File.WriteAllText(blocked, "x");
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, blocked + "/konto").IsOK());
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount + "/", mount + "/.zehos-apps/datei").IsOK(), "Blatt als Datei");
+        Assert.IsTrue(WasmSaveStore.CreateRoot(files, mount + "/", mount + "/.zehos-apps/zweite").IsOK(), "Wurzel mit abschliessendem /");
     }
 
     [TestMethod]
