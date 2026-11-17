@@ -135,10 +135,10 @@ Präzisierungen gegenüber §1–§5:
 - Schritt 8 erkennt eine Änderung gleicher Größe nur bei geändertem Zeitstempel (bewusste Grenze aus Test 21).
 - `IOException` und `UnauthorizedAccessException` aus Quelle oder Ziel werden zu einem Fehlerergebnis; andere Ausnahmen laufen durch. Die Schreibsperre wird in beiden Fällen freigegeben.
 - Vor `ready` steht eine Sync-Schranke (zweifach), danach noch einmal zweifach Sync; ohne die Schranke könnte nach einem Absturz `ready` dauerhaft sein, gepufferte Dateien aber nicht (Review peter-review P2-1). Scheitert ein `Sync` nach `ready`, meldet der Lauf einen Fehler; der Marker steht dann bereits auf `ready`.
-- `WriteFile` schreibt über `<pfad>.zehos-migration-tmp` (`IMigrationTarget.TemporarySuffix`). Ein Rest davon zu einer journalisierten Datei oder zum Marker gilt bei der Wiederholung (und bei `fresh` für den Marker) als eigene Spur und wird gelöscht, statt die Wiederholung zu verweigern.
+- `WriteFile` schreibt über `<pfad>.zehos-tmp` (`IMigrationTarget.TemporarySuffix`, wie #167). `AppendJournal` flusht `D`/`W` und den Kopf, `F` nicht. Ein Rest davon zu einer journalisierten Datei oder zum Marker gilt bei der Wiederholung (und bei `fresh` für den Marker) als eigene Spur und wird gelöscht, statt die Wiederholung zu verweigern.
 - Ein unvollständiger Journalkopf ohne gültige Folgezeilen gilt als leeres Journal (Absturz direkt nach `migrating`); ein ungültiger Kopf vor gültigen Zeilen bleibt ein Schaden.
 - Auch bei `state=fresh` darf das Ziel nur die Installereinträge enthalten; sonst `ForeignEntry`, nichts geschrieben. Journalpfade unter `/boot`, `/mnt`, `/proc`, `/sys` oder `/dev` gelten als fremd. `List()` darf `/` selbst liefern.
-- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`), Verzeichnisnamen über 255 und Dateinamen über 235 UTF-8-Byte (Platz für die Temp-Endung) sind Konflikte.
+- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`), Verzeichnisnamen über 255 und Dateinamen über 245 UTF-8-Byte (Platz für die Temp-Endung) sowie Dateinamen, die selbst auf `.zehos-tmp` enden (würden vom Temp-Namen der gleichnamigen Datei überschrieben), sind Konflikte.
 - Desktopdatei: ein Hintergrundziel unter Systemdaten oder länger als `DesktopSettings.MaximumImageLength` wird geleert und protokolliert.
 - `/srv/legacy-data/home` (nur bei Homes ohne Konto) erbt wie alle neuen Verzeichnisse vom nächsten Elterneintrag, also von `/` (bisher `/data`), nicht von `/data/home`. Nach der Ersteinrichtung haben beide dieselben Rechte.
 

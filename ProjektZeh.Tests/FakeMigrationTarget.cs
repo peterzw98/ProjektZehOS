@@ -43,7 +43,7 @@ internal sealed class FakeMigrationTarget : IMigrationTarget, IDisposable
         File.Move(temporary, Host(path), true);
     });
 
-    public ResultErr AppendJournal(string line) => Do("journal " + line.TrimEnd('\n'), () => File.AppendAllText(Host(MigrationJournal.Path), line));
+    public ResultErr AppendJournal(string line, bool flush) => Do("journal " + line.TrimEnd('\n'), () => File.AppendAllText(Host(MigrationJournal.Path), line));
 
     public ResultErr Delete(string path)
     {

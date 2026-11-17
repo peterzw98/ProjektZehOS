@@ -279,14 +279,16 @@ public sealed class LayoutMigrationTests
     {
         Write(".zehos-security.db", StandardSecurity());
         // FAT erlaubt 255 UTF-16-Zeichen; Linux-Hosts lehnen > 255 Byte schon beim Anlegen ab, daher die Regel auch direkt pruefen.
-        // Dateien brauchen Platz fuer die Temp-Endung (20 Byte): hoechstens 235 Byte; Verzeichnisse 255 Byte.
-        Write(new string('\u00e4', 115) + ".txt", "x");
-        Assert.AreEqual(0, Plan().Conflicts.Count, "234 Byte passen");
-        Write(new string('\u00e4', 116) + ".txt", "x");
-        Assert.AreEqual(1, Plan().Conflicts.Count, "236 Byte: Temp-Name waere zu lang");
-        Assert.AreEqual(235, MigrationPlan.MaximumFileNameBytes);
-        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 235), SystemPaths.Root, isFile: true));
-        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 236), SystemPaths.Root, isFile: true));
+        // Dateien brauchen Platz fuer die Temp-Endung (10 Byte): hoechstens 245 Byte; Verzeichnisse 255 Byte.
+        Write(new string('\u00e4', 120) + ".txt", "x");
+        Assert.AreEqual(0, Plan().Conflicts.Count, "244 Byte passen");
+        Write(new string('\u00e4', 121) + ".txt", "x");
+        Assert.AreEqual(1, Plan().Conflicts.Count, "246 Byte: Temp-Name waere zu lang");
+        Assert.AreEqual(245, MigrationPlan.MaximumFileNameBytes);
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 245), SystemPaths.Root, isFile: true));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 246), SystemPaths.Root, isFile: true));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/brief.txt.zehos-tmp", SystemPaths.Root, isFile: true), "kollidiert mit dem Temp-Namen von brief.txt");
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/ordner.zehos-tmp", SystemPaths.Root, isFile: false));
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255), SystemPaths.Root, isFile: false));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 256), SystemPaths.Root, isFile: false));
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255) + "/x", SystemPaths.Root, isFile: true), "Verzeichnisteil darf 255 Byte haben");

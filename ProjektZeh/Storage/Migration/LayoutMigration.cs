@@ -83,12 +83,12 @@ internal static class LayoutMigration
         progress(MigrationStep.Marked);
 
         // Schritt 6/7: Verzeichnisse, dann Dateien; jede Absicht steht geflusht im Journal, bevor die Aktion beginnt.
-        var step = target.AppendJournal(MigrationJournal.HeaderLine(inventory.Value.Hash));
+        var step = target.AppendJournal(MigrationJournal.HeaderLine(inventory.Value.Hash), flush: true);
         if (!step.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(step);
         foreach (string directory in plan.Directories)
         {
             if (IsInstallerEntry(directory)) continue;
-            step = target.AppendJournal(MigrationJournal.DirectoryLine(directory));
+            step = target.AppendJournal(MigrationJournal.DirectoryLine(directory), flush: true);
             if (step.IsOK()) step = target.CreateDirectory(directory);
             if (!step.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(step);
         }
@@ -127,7 +127,7 @@ internal static class LayoutMigration
                 File.ReadAllText(MigrationInventory.HostPath(sourceRoot, file.Source), Encoding.UTF8), plan, log)),
             _ => null,
         };
-        var step = target.AppendJournal(MigrationJournal.WriteLine(file.Target));
+        var step = target.AppendJournal(MigrationJournal.WriteLine(file.Target), flush: true);
         if (!step.IsOK()) return step;
         string expected;
         if (replaced != null)
@@ -151,7 +151,7 @@ internal static class LayoutMigration
         using (var stream = back.Value!) actual = Convert.ToHexStringLower(SHA256.HashData(stream));
         if (!string.Equals(actual, expected, StringComparison.Ordinal))
             return ResultErr.CreateFailure(ResultCode.Failure, $"cause='VerifyFailed' message='Pruefsumme nach dem Schreiben falsch: {file.Target}'");
-        return target.AppendJournal(MigrationJournal.DoneLine(file.Target, actual));
+        return target.AppendJournal(MigrationJournal.DoneLine(file.Target, actual), flush: false);
     }
 
     /// <summary>

@@ -197,6 +197,8 @@ internal sealed class MigrationPlan
             int limit = isFile && i == parts.Length - 1 ? MaximumFileNameBytes : MaximumNameBytes;
             if (!PathComponent.IsValid(parts[i], system) || System.Text.Encoding.UTF8.GetByteCount(parts[i]) > limit) return false;
         }
+        // Eine Datei "x.zehos-tmp" neben "x" wuerde vom Temp-Namen beim Schreiben von "x" ueberschrieben.
+        if (isFile && parts[^1].EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)) return false;
         return true;
     }
 

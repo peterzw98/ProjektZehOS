@@ -14,7 +14,7 @@ internal interface IMigrationTarget
     /// Endung der Temp-Datei von <see cref="WriteFile"/> neben dem Ziel (pfad + Endung). Fester Bestandteil des Vertrags, damit
     /// eine Wiederholung die Reste eines abgebrochenen Schreibens als eigene Spur erkennt und entfernt.
     /// </summary>
-    const string TemporarySuffix = ".zehos-migration-tmp";
+    const string TemporarySuffix = ".zehos-tmp";
 
     /// <summary>Legt ein Verzeichnis an; ein vorhandenes gilt als Erfolg (Wiederholung).</summary>
     ResultErr CreateDirectory(string path);
@@ -23,8 +23,11 @@ internal interface IMigrationTarget
     /// <see cref="Sync"/>; der Ablauf setzt deshalb vor dem Marker "ready" eine Sync-Schranke.
     /// </summary>
     ResultErr WriteFile(string path, Stream content);
-    /// <summary>Haengt eine Journalzeile an und flusht sie auf das Geraet, bevor der Aufrufer die zugehoerige Aktion beginnt.</summary>
-    ResultErr AppendJournal(string line);
+    /// <summary>
+    /// Haengt eine Journalzeile an. Mit <paramref name="flush"/> ist sie auf dem Geraet, bevor der Aufrufer die zugehoerige
+    /// Aktion beginnt (Absichten D/W); Bestaetigungen F brauchen das nicht, weil W schon vor der Datei steht.
+    /// </summary>
+    ResultErr AppendJournal(string line, bool flush);
     /// <summary>Loescht eine Datei oder ein leeres Verzeichnis.</summary>
     ResultErr Delete(string path);
     /// <summary>Oeffnet eine geschriebene Datei zum Zuruecklesen; der Aufrufer gibt den Strom frei.</summary>
