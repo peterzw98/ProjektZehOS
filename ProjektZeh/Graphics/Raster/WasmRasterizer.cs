@@ -1,6 +1,10 @@
 using System;
 using System.Buffers.Binary;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace ProjektZeh.Graphics.Raster;
 
@@ -56,9 +60,12 @@ internal static class WasmRasterizer
         public ReadOnlySpan<byte> Vertices;
         public int ColorStride, DepthStride, Stride;
         public int TexWidth, TexHeight, TexWidthMask, TexHeightMask;
-        public int MaxX, MaxY;
+        public int MaxX, MaxY, Width;
         public float HalfWidth, HalfHeight, TexOffsetU, TexOffsetV;
         public bool DepthTest, DepthWrite, ColorWrite, AlphaTest, AlphaBlend, FaceCulling, Textured;
+        // Vier Pixel je Schritt (nur SSE2): Die Tiefen eines Schritts werden vor dessen Schreibzugriffen gelesen, das ist
+        // nur bitgleich, solange Farb- und Tiefenpuffer im Gastspeicher getrennt liegen.
+        public bool Vector;
         public float M11, M12, M13, M14, M21, M22, M23, M24, M31, M32, M33, M34, M41, M42, M43, M44;
     }
 
@@ -100,6 +107,7 @@ internal static class WasmRasterizer
         ulong depthBytes = needsDepth ? ((ulong)depthStride * (height - 1) + width) * 4 : 0;
         if (needsDepth && !TryRange(memory.Length, U32(call, 32), depthBytes, out depthStart)) return OutOfBounds;
         if (count == 0) return Success;
+        bool separate = !needsDepth || (ulong)depthStart + depthBytes <= (ulong)colorStart || (ulong)colorStart + colorBytes <= (ulong)depthStart;
 
         var context = new Context
         {
@@ -116,6 +124,7 @@ internal static class WasmRasterizer
             TexHeightMask = (int)texHeight - 1,
             MaxX = (int)maxX,
             MaxY = (int)maxY,
+            Width = (int)width,
             HalfWidth = F32(call, 60),
             HalfHeight = F32(call, 64),
             TexOffsetU = F32(call, 68),
@@ -127,6 +136,7 @@ internal static class WasmRasterizer
             AlphaBlend = (flags & FlagAlphaBlend) != 0,
             FaceCulling = (flags & FlagFaceCulling) != 0,
             Textured = (flags & FlagTextured) != 0,
+            Vector = Sse2.IsSupported && separate,
             M11 = F32(call, 76), M12 = F32(call, 80), M13 = F32(call, 84), M14 = F32(call, 88),
             M21 = F32(call, 92), M22 = F32(call, 96), M23 = F32(call, 100), M24 = F32(call, 104),
             M31 = F32(call, 108), M32 = F32(call, 112), M33 = F32(call, 116), M34 = F32(call, 120),
@@ -321,6 +331,104 @@ internal static class WasmRasterizer
     private static float Edge(int ax, int ay, int bx, int by, float cx, float cy) =>
         unchecked(bx - ax) * (cy - ay) - unchecked(by - ay) * (cx - ax);
 
+    // Gleichwertig zu "ic0 < 0 || ic1 < 0 || ic2 < 0" mit ic = bc * factor, aber ohne Multiplikation: factor = 1 / area ist
+    // nie NaN, bei area = 0 +Unendlich, sonst endlich und vom Betrag mindestens 2^-31 (area ist int). bc ist nie NaN oder
+    // unendlich und stets ein Vielfaches von 0,5 (Pixelmitte, ganzzahlige Ecken; Runden auf float erhaelt das), ausser 0
+    // also vom Betrag mindestens 0,5. Das Produkt wird deshalb weder 0 noch NaN, sein Vorzeichen ist das von bc mal dem
+    // von factor (bc = 0 ergibt +-0 oder NaN, beides nicht < 0).
+    // Entlang einer Zeile waechst oder faellt jedes bc monoton (Runden ist monoton), daher liegen die abgedeckten Pixel
+    // einer Zeile lueckenlos beieinander: Nach dem ersten Pixel dahinter kann die Zeile enden.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool Outside(bool positive, float bc0, float bc1, float bc2) =>
+        positive ? (bc0 < 0) | (bc1 < 0) | (bc2 < 0) : (bc0 > 0) | (bc1 > 0) | (bc2 > 0);
+
+    private const double ExactLimit = 8388608; // 2^23: Darunter ist jedes Vielfache von 0,5 als float exakt darstellbar.
+
+    // Bleibt eine Kantenfunktion an allen vier Ecken des Rechtecks unter 2^23, gilt das (linear) fuer jedes Pixel darin.
+    // Dann rundet keine der fortlaufenden Additionen, und bc = start + n * dx + m * dy laesst sich direkt berechnen.
+    private static bool Exact(float start, int dx, int dy, int columns, int rows)
+    {
+        double right = (double)columns * dx, down = (double)rows * dy;
+        return Math.Abs(start) < ExactLimit && Math.Abs(start + right) < ExactLimit
+            && Math.Abs(start + down) < ExactLimit && Math.Abs(start + right + down) < ExactLimit;
+    }
+
+    // Grenze der abgedeckten Pixel einer Kante, Zeile fuer Zeile (nur fuer exakte Kanten, siehe Exact). Dort ist
+    // e = 2 * bc = v + n * s + m * t ganzzahlig (n Spalte, m Zeile ab der Ecke des Rechtecks); nicht verworfen wird
+    // e >= 0 (Vorzeichen wie Outside bereits eingerechnet). Fuer s > 0 ist das n >= bound = ceil(-e0 / s), fuer s < 0
+    // n <= bound = floor(e0 / -s). Je Zeile aendert sich bound um t / |s|; Quotient und Rest werden einmal je Dreieck
+    // berechnet, danach genuegen ganzzahlige Additionen wie bei Bresenham. |e| < 2^24, |s|, |t| <= 2^33: alles passt in long.
+    private struct EdgeWalk
+    {
+        private readonly long divisor, quotient, remainder, rowStep;
+        private readonly int kind;
+        private long bound, rest, value;
+
+        public EdgeWalk(bool positive, float start, int dx, int dy)
+        {
+            long v = (long)((double)start * 2), s = 2L * dx, t = 2L * dy;
+            if (!positive)
+            {
+                v = -v;
+                s = -s;
+                t = -t;
+            }
+            kind = Math.Sign(s);
+            divisor = Math.Abs(s);
+            rowStep = t;
+            value = v;
+            quotient = remainder = bound = rest = 0;
+            if (kind == 0) return;
+            (quotient, remainder) = FloorDivRem(t, divisor);
+            // Mit v = q * |s| + r, 0 <= r < |s|: s > 0 ergibt bound = ceil(-v / s) = -q, s < 0 bound = floor(v / -s) = q;
+            // in beiden Faellen ist r der Abstand zur naechsten Grenze.
+            (long q, long r) = FloorDivRem(v, divisor);
+            bound = kind > 0 ? -q : q;
+            rest = r;
+        }
+
+        private static (long Quotient, long Remainder) FloorDivRem(long value, long divisor)
+        {
+            long quotient = value / divisor, remainder = value - quotient * divisor;
+            return remainder < 0 ? (quotient - 1, remainder + divisor) : (quotient, remainder);
+        }
+
+        /// <summary>Engt [first, last] auf die Spalten dieser Zeile ein und geht zur naechsten Zeile.</summary>
+        public void Apply(int minX, int maxX, ref int first, ref int last)
+        {
+            if (kind > 0)
+            {
+                if (minX + bound > first) first = (int)Math.Min(minX + bound, maxX + 1L);
+                bound -= quotient;
+                rest += remainder;
+                if (rest >= divisor)
+                {
+                    bound--;
+                    rest -= divisor;
+                }
+            }
+            else if (kind < 0)
+            {
+                if (minX + bound < last) last = (int)Math.Max(minX + bound, minX - 1L);
+                bound += quotient;
+                rest += remainder;
+                if (rest >= divisor)
+                {
+                    bound++;
+                    rest -= divisor;
+                }
+            }
+            else
+            {
+                if (value < 0) last = minX - 1;
+                value += rowStep;
+            }
+        }
+    }
+
+    // Kantenwert an Spalte first, aus dem Zeilenanfang; bei exakten Kanten ohne Rundung, bei first = minX unveraendert.
+    private static float Advance(float start, int steps, int dx) => (float)(start + (double)steps * dx);
+
     private static void DrawTriangle2D(ref Context context, ref Vertex v0, ref Vertex v1, ref Vertex v2)
     {
         int x0 = ToInt(v0.X), y0 = ToInt(v0.Y), x1 = ToInt(v1.X), y1 = ToInt(v1.Y), x2 = ToInt(v2.X), y2 = ToInt(v2.Y);
@@ -343,44 +451,113 @@ internal static class WasmRasterizer
         float bc1Start = Edge(x2, y2, x0, y0, minX + 0.5f, minY + 0.5f);
         float bc2Start = Edge(x0, y0, x1, y1, minX + 0.5f, minY + 0.5f);
 
+        bool textured = context.Textured, alphaTest = context.AlphaTest, alphaBlend = context.AlphaBlend;
+        int colorStride = context.ColorStride, texWidth = context.TexWidth;
+        int texWidthMask = context.TexWidthMask, texHeightMask = context.TexHeightMask;
+        int colorR = R(color), colorG = G(color), colorB = B(color), colorA = A(color);
+        // Indizes wie in DrawTriangle3D begrenzt: x, y innerhalb des Scissors, Texturindex durch die Masken.
+        ref uint colors = ref MemoryMarshal.GetReference(context.Color);
+        ref uint texels = ref MemoryMarshal.GetReference(context.Texture);
+        bool positive = factor > 0;
+        int columns = maxX - minX, rows = maxY - minY;
+        bool exact = Exact(bc0Start, dx12, dy12, columns, rows) && Exact(bc1Start, dx20, dy20, columns, rows)
+            && Exact(bc2Start, dx01, dy01, columns, rows);
+        EdgeWalk walk0 = exact ? new(positive, bc0Start, dx12, dy12) : default;
+        EdgeWalk walk1 = exact ? new(positive, bc1Start, dx20, dy20) : default;
+        EdgeWalk walk2 = exact ? new(positive, bc2Start, dx01, dy01) : default;
+
         for (int y = minY; y <= maxY; y++, bc0Start += dy12, bc1Start += dy20, bc2Start += dy01)
         {
-            float bc0 = bc0Start, bc1 = bc1Start, bc2 = bc2Start;
-            for (int x = minX; x <= maxX; x++, bc0 += dx12, bc1 += dx20, bc2 += dx01)
+            int first = minX, last = maxX;
+            if (exact)
             {
+                walk0.Apply(minX, maxX, ref first, ref last);
+                walk1.Apply(minX, maxX, ref first, ref last);
+                walk2.Apply(minX, maxX, ref first, ref last);
+                if (first > last) continue;
+            }
+            float bc0 = Advance(bc0Start, first - minX, dx12), bc1 = Advance(bc1Start, first - minX, dx20), bc2 = Advance(bc2Start, first - minX, dx01);
+            int colorRow = y * colorStride;
+            bool entered = false;
+            for (int x = first; x <= last; x++, bc0 += dx12, bc1 += dx20, bc2 += dx01)
+            {
+                if (Outside(positive, bc0, bc1, bc2))
+                {
+                    if (entered) break;
+                    continue;
+                }
+                entered = true;
                 float ic0 = bc0 * factor, ic1 = bc1 * factor, ic2 = bc2 * factor;
-                if (ic0 < 0 || ic1 < 0 || ic2 < 0) continue;
-                int index = y * context.ColorStride + x;
                 int r, g, b, a;
-                if (context.Textured)
+                if (textured)
                 {
                     float u = ic0 * u0 + ic1 * u1 + ic2 * u2;
                     float v = ic0 * t0 + ic1 * t1 + ic2 * t2;
-                    int texX = ToInt(u) & context.TexWidthMask;
-                    int texY = ToInt(v) & context.TexHeightMask;
-                    uint texel = context.Texture[texY * context.TexWidth + texX];
-                    a = (A(color) * BitmapA(texel)) >> 8;
-                    r = (R(color) * BitmapR(texel)) >> 8;
-                    g = (G(color) * BitmapG(texel)) >> 8;
-                    b = (B(color) * BitmapB(texel)) >> 8;
+                    int texX = ToInt(u) & texWidthMask;
+                    int texY = ToInt(v) & texHeightMask;
+                    uint texel = Unsafe.Add(ref texels, texY * texWidth + texX);
+                    a = (colorA * BitmapA(texel)) >> 8;
+                    r = (colorR * BitmapR(texel)) >> 8;
+                    g = (colorG * BitmapG(texel)) >> 8;
+                    b = (colorB * BitmapB(texel)) >> 8;
                 }
                 else
                 {
-                    r = R(color); g = G(color); b = B(color); a = A(color);
+                    r = colorR; g = colorG; b = colorB; a = colorA;
                 }
-                if (context.AlphaTest && a < 0x80) continue;
-                if (context.AlphaBlend && a == 0) continue;
-                if (context.AlphaBlend && a != 255)
+                if (alphaTest && a < 0x80) continue;
+                if (alphaBlend && a == 0) continue;
+                ref uint target = ref Unsafe.Add(ref colors, colorRow + x);
+                if (alphaBlend && a != 255)
                 {
-                    uint destination = context.Color[index];
+                    uint destination = target;
                     int dr = BitmapR(destination), dg = BitmapG(destination), db = BitmapB(destination);
                     r = dr + ((a * (r - dr)) >> 8);
                     g = dg + ((a * (g - dg)) >> 8);
                     b = db + ((a * (b - db)) >> 8);
                 }
-                context.Color[index] = Make(r, g, b, 0xFF);
+                target = Make(r, g, b, 0xFF);
             }
         }
+    }
+
+    // Feste Werte eines Dreiecks fuer Plot; Farbe ist die Vertexfarbe (texturiert) oder die feste Farbe des Dreiecks.
+    private struct Shading
+    {
+        public bool Texturing, ColorWrite, DepthWrite, AlphaTest, AlphaBlend;
+        public int R, G, B, A;
+    }
+
+    // Ein Pixel nach bestandenem Tiefentest, Reihenfolge wie die Schleife in SoftGPU. Indizes wie in DrawTriangle3D begrenzt.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Plot(in Shading shading, ref uint colors, ref float depths, ref uint texels, int colorIndex, int depthIndex,
+        float z, int texIndex)
+    {
+        if (!shading.ColorWrite)
+        {
+            if (shading.DepthWrite) Unsafe.Add(ref depths, depthIndex) = z;
+            return;
+        }
+        int r = shading.R, g = shading.G, b = shading.B, a = shading.A;
+        if (shading.Texturing)
+        {
+            uint texel = Unsafe.Add(ref texels, texIndex);
+            a = (a * BitmapA(texel)) >> 8;
+            r = (r * BitmapR(texel)) >> 8;
+            g = (g * BitmapG(texel)) >> 8;
+            b = (b * BitmapB(texel)) >> 8;
+        }
+        if (shading.AlphaTest && a < 0x80) return;
+        if (shading.DepthWrite) Unsafe.Add(ref depths, depthIndex) = z;
+        ref uint target = ref Unsafe.Add(ref colors, colorIndex);
+        if (!shading.AlphaBlend)
+        {
+            target = Make(r, g, b, 0xFF);
+            return;
+        }
+        uint destination = target;
+        int dr = BitmapR(destination), dg = BitmapG(destination), db = BitmapB(destination);
+        target = Make(dr + ((a * (r - dr)) >> 8), dg + ((a * (g - dg)) >> 8), db + ((a * (b - db)) >> 8), 0xFF);
     }
 
     private static void DrawTriangle3D(ref Context context, ref Vertex v0, ref Vertex v1, ref Vertex v2)
@@ -429,46 +606,152 @@ internal static class WasmRasterizer
             texturing = false;
         }
 
+        var shading = new Shading
+        {
+            Texturing = texturing, ColorWrite = context.ColorWrite, DepthWrite = context.DepthWrite,
+            AlphaTest = context.AlphaTest, AlphaBlend = context.AlphaBlend,
+            R = texturing ? R(color) : r, G = texturing ? G(color) : g, B = texturing ? B(color) : b, A = texturing ? A(color) : a,
+        };
+        bool depthTest = context.DepthTest;
+        int colorStride = context.ColorStride, depthStride = context.DepthStride;
+        int texWidth = context.TexWidth, texWidthMask = context.TexWidthMask, texHeightMask = context.TexHeightMask;
+        // Ohne Bereichspruefung je Pixel: x liegt in [0, MaxX] mit MaxX < width, y in [0, MaxY] mit MaxY < height, und Draw
+        // hat Farb- und (bei Tiefentest oder -schreiben) Tiefenpuffer mit stride * (height - 1) + width Werten geprueft.
+        // Der Texturindex ist durch die Masken kleiner als TexWidth * TexHeight, die Laenge der geprueften Textur.
+        ref uint colors = ref MemoryMarshal.GetReference(context.Color);
+        ref float depths = ref MemoryMarshal.GetReference(context.Depth);
+        ref uint texels = ref MemoryMarshal.GetReference(context.Texture);
+        bool positive = factor > 0;
+        int columns = maxX - minX, rows = maxY - minY;
+        bool exact = Exact(bc0Start, dx12, dy12, columns, rows) && Exact(bc1Start, dx20, dy20, columns, rows)
+            && Exact(bc2Start, dx01, dy01, columns, rows);
+        EdgeWalk walk0 = exact ? new(positive, bc0Start, dx12, dy12) : default;
+        EdgeWalk walk1 = exact ? new(positive, bc1Start, dx20, dy20) : default;
+        EdgeWalk walk2 = exact ? new(positive, bc2Start, dx01, dy01) : default;
+        // Vier Pixel je Schritt nur bei exakten Kanten: Dann ist bc an Spalte x + k genau bc(x) + k * dx, auch als float.
+        bool vector = exact && context.Vector;
+        int lastVector = context.Width - 4;
+        TriangleLanes lanes = vector ? new TriangleLanes(factor, w0, w1, w2, z0, z1, z2, u0, u1, u2, t0, t1, t2, dx12, dx20, dx01,
+            texWidthMask, texHeightMask, BitOperations.Log2((uint)texWidth)) : default;
+
         for (int y = minY; y <= maxY; y++, bc0Start += dy12, bc1Start += dy20, bc2Start += dy01)
         {
-            float bc0 = bc0Start, bc1 = bc1Start, bc2 = bc2Start;
-            for (int x = minX; x <= maxX; x++, bc0 += dx12, bc1 += dx20, bc2 += dx01)
+            int first = minX, last = maxX;
+            if (exact)
             {
-                float ic0 = bc0 * factor, ic1 = bc1 * factor, ic2 = bc2 * factor;
-                if (ic0 < 0 || ic1 < 0 || ic2 < 0) continue;
-                int depthIndex = y * context.DepthStride + x;
-                float w = 1 / (ic0 * w0 + ic1 * w1 + ic2 * w2);
-                float z = (ic0 * z0 + ic1 * z1 + ic2 * z2) * w;
-                if (context.DepthTest && (z < 0 || z > context.Depth[depthIndex])) continue;
-                if (!context.ColorWrite)
+                walk0.Apply(minX, maxX, ref first, ref last);
+                walk1.Apply(minX, maxX, ref first, ref last);
+                walk2.Apply(minX, maxX, ref first, ref last);
+                if (first > last) continue;
+            }
+            // Ohne Tiefentest und -schreiben (needsDepth falsch) ist DepthStride ungeprueft; depthRow wird dann nie benutzt.
+            int colorRow = y * colorStride, depthRow = y * depthStride;
+            int x = first;
+            if (vector && x <= lastVector)
+            {
+                x = lanes.Row(in shading, ref colors, ref depths, ref texels, depthTest, colorRow, depthRow, x, last, lastVector,
+                    Advance(bc0Start, x - minX, dx12), Advance(bc1Start, x - minX, dx20), Advance(bc2Start, x - minX, dx01));
+            }
+            float bc0 = Advance(bc0Start, x - minX, dx12), bc1 = Advance(bc1Start, x - minX, dx20), bc2 = Advance(bc2Start, x - minX, dx01);
+            bool entered = false;
+            for (; x <= last; x++, bc0 += dx12, bc1 += dx20, bc2 += dx01)
+            {
+                if (Outside(positive, bc0, bc1, bc2))
                 {
-                    if (context.DepthWrite) context.Depth[depthIndex] = z;
+                    if (entered) break;
                     continue;
                 }
-                if (texturing)
+                entered = true;
+                float ic0 = bc0 * factor, ic1 = bc1 * factor, ic2 = bc2 * factor;
+                int depthIndex = depthRow + x;
+                float w = 1 / (ic0 * w0 + ic1 * w1 + ic2 * w2);
+                float z = (ic0 * z0 + ic1 * z1 + ic2 * z2) * w;
+                if (depthTest && (z < 0 || z > Unsafe.Add(ref depths, depthIndex))) continue;
+                int texIndex = 0;
+                if (texturing && shading.ColorWrite)
                 {
                     float u = (ic0 * u0 + ic1 * u1 + ic2 * u2) * w;
                     float v = (ic0 * t0 + ic1 * t1 + ic2 * t2) * w;
-                    int texX = ToInt(u) & context.TexWidthMask;
-                    int texY = ToInt(v) & context.TexHeightMask;
-                    uint texel = context.Texture[texY * context.TexWidth + texX];
-                    a = (A(color) * BitmapA(texel)) >> 8;
-                    r = (R(color) * BitmapR(texel)) >> 8;
-                    g = (G(color) * BitmapG(texel)) >> 8;
-                    b = (B(color) * BitmapB(texel)) >> 8;
+                    texIndex = (ToInt(v) & texHeightMask) * texWidth + (ToInt(u) & texWidthMask);
                 }
-                if (context.AlphaTest && a < 0x80) continue;
-                if (context.DepthWrite) context.Depth[depthIndex] = z;
-                int index = y * context.ColorStride + x;
-                if (!context.AlphaBlend)
-                {
-                    context.Color[index] = Make(r, g, b, 0xFF);
-                    continue;
-                }
-                uint destination = context.Color[index];
-                int dr = BitmapR(destination), dg = BitmapG(destination), db = BitmapB(destination);
-                context.Color[index] = Make(dr + ((a * (r - dr)) >> 8), dg + ((a * (g - dg)) >> 8), db + ((a * (b - db)) >> 8), 0xFF);
+                Plot(in shading, ref colors, ref depths, ref texels, colorRow + x, depthIndex, z, texIndex);
             }
+        }
+    }
+
+    /// <summary>
+    /// Rechnet vier Pixel einer Zeile gleichzeitig (SSE2): dieselben float-Operationen in derselben Reihenfolge wie die
+    /// skalare Schleife, daher bitgleich. Einzige Ausnahme: Treffen zwei NaN verschiedenen Vorzeichens aufeinander, bestimmt
+    /// die vom Compiler gewaehlte Operandenreihenfolge das Vorzeichen einer NaN-Tiefe (wie schon zwischen Uebersetzungsstufen
+    /// der skalaren Fassung); jeder Vergleich mit NaN ist davon unabhaengig, das Bild bleibt gleich.
+    /// cvttps2dq liefert ausserhalb von int und bei NaN INT_MIN, genau wie ToInt.
+    /// Die Farbe entsteht danach je Pixel in Plot; ganzzahlige Vektormultiplikation (erst ab SSE4.1) wird nicht gebraucht.
+    /// </summary>
+    private readonly struct TriangleLanes
+    {
+        private readonly Vector128<float> factor, w0, w1, w2, z0, z1, z2, u0, u1, u2, t0, t1, t2;
+        private readonly Vector128<float> offset0, offset1, offset2, step0, step1, step2;
+        private readonly Vector128<int> texWidthMask, texHeightMask;
+        private readonly int texShift;
+
+        public TriangleLanes(float factor, float w0, float w1, float w2, float z0, float z1, float z2, float u0, float u1, float u2,
+            float t0, float t1, float t2, int dx12, int dx20, int dx01, int texWidthMask, int texHeightMask, int texShift)
+        {
+            this.factor = Vector128.Create(factor);
+            this.w0 = Vector128.Create(w0); this.w1 = Vector128.Create(w1); this.w2 = Vector128.Create(w2);
+            this.z0 = Vector128.Create(z0); this.z1 = Vector128.Create(z1); this.z2 = Vector128.Create(z2);
+            this.u0 = Vector128.Create(u0); this.u1 = Vector128.Create(u1); this.u2 = Vector128.Create(u2);
+            this.t0 = Vector128.Create(t0); this.t1 = Vector128.Create(t1); this.t2 = Vector128.Create(t2);
+            // k * dx ist fuer jede gueltige Spalte exakt (Exact); Spalten hinter last werden nur maskiert, nie verwendet.
+            offset0 = Vector128.Create(0f, dx12, 2f * dx12, 3f * dx12);
+            offset1 = Vector128.Create(0f, dx20, 2f * dx20, 3f * dx20);
+            offset2 = Vector128.Create(0f, dx01, 2f * dx01, 3f * dx01);
+            step0 = Vector128.Create(4f * dx12); step1 = Vector128.Create(4f * dx20); step2 = Vector128.Create(4f * dx01);
+            this.texWidthMask = Vector128.Create(texWidthMask);
+            this.texHeightMask = Vector128.Create(texHeightMask);
+            this.texShift = texShift;
+        }
+
+        /// <summary>Zeichnet [x, last] in Schritten zu vier Pixeln, solange x &lt;= lastVector (Schritt in der Pufferzeile); liefert das naechste x.</summary>
+        public int Row(in Shading shading, ref uint colors, ref float depths, ref uint texels, bool depthTest, int colorRow, int depthRow,
+            int x, int last, int lastVector, float bc0, float bc1, float bc2)
+        {
+            Vector128<float> b0 = Vector128.Create(bc0) + offset0, b1 = Vector128.Create(bc1) + offset1, b2 = Vector128.Create(bc2) + offset2;
+            bool texture = shading.Texturing && shading.ColorWrite;
+            for (; x <= last && x <= lastVector; x += 4, b0 += step0, b1 += step1, b2 += step2)
+            {
+                // Spalten hinter last liegen ausserhalb des Dreiecks oder des Scissors und werden nur maskiert; x + 3 < width.
+                int lanes = last - x >= 3 ? 0xF : (1 << (last - x + 1)) - 1;
+                Vector128<float> ic0 = b0 * factor, ic1 = b1 * factor, ic2 = b2 * factor;
+                Vector128<float> w = Vector128<float>.One / (ic0 * w0 + ic1 * w1 + ic2 * w2);
+                Vector128<float> z = (ic0 * z0 + ic1 * z1 + ic2 * z2) * w;
+                if (depthTest)
+                {
+                    Vector128<float> depth = Vector128.LoadUnsafe(ref depths, (nuint)(depthRow + x));
+                    Vector128<float> fail = Vector128.LessThan(z, Vector128<float>.Zero) | Vector128.GreaterThan(z, depth);
+                    lanes &= ~(int)fail.ExtractMostSignificantBits();
+                    if (lanes == 0) continue;
+                }
+                Vector128<int> texIndex = Vector128<int>.Zero;
+                if (texture)
+                {
+                    Vector128<float> u = (ic0 * u0 + ic1 * u1 + ic2 * u2) * w;
+                    Vector128<float> v = (ic0 * t0 + ic1 * t1 + ic2 * t2) * w;
+                    Vector128<int> texX = Sse2.ConvertToVector128Int32WithTruncation(u) & texWidthMask;
+                    Vector128<int> texY = Sse2.ConvertToVector128Int32WithTruncation(v) & texHeightMask;
+                    // Zweierpotenz: Verschieben statt Multiplizieren (pmulld gibt es erst mit SSE4.1).
+                    texIndex = Vector128.ShiftLeft(texY, texShift) + texX;
+                }
+                do
+                {
+                    int lane = BitOperations.TrailingZeroCount(lanes);
+                    lanes &= lanes - 1;
+                    Plot(in shading, ref colors, ref depths, ref texels, colorRow + x + lane, depthRow + x + lane, z.GetElement(lane),
+                        texIndex.GetElement(lane));
+                }
+                while (lanes != 0);
+            }
+            return x;
         }
     }
 
