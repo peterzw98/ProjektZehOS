@@ -21,6 +21,8 @@ internal sealed class MigrationPlan
     // 255 Byte; FAT erlaubt 255 UTF-16-Zeichen, die in UTF-8 laenger sein koennen. Beides muss vor dem Schreiben auffallen.
     internal const long MaximumFileBytes = (1L << 31) - 1;
     internal const int MaximumNameBytes = 255;
+    // Dateien entstehen ueber "<name>" + Temp-Endung (IMigrationTarget.WriteFile); auch dieser Name muss auf ext2 passen.
+    internal static readonly int MaximumFileNameBytes = MaximumNameBytes - System.Text.Encoding.UTF8.GetByteCount(IMigrationTarget.TemporarySuffix);
     private const string LegacyDataDirectory = "/srv/legacy-data";
     private readonly Dictionary<string, string> sourceToTarget = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> sourceDirectoryTargets = new(StringComparer.Ordinal);
@@ -57,7 +59,7 @@ internal sealed class MigrationPlan
         {
             string? target = plan.Map(entry, accounts, legacy, root, out PlanContent content);
             if (target == null) continue;
-            if (!ValidTarget(target, root))
+            if (!ValidTarget(target, root, !entry.IsDirectory))
             {
                 plan.conflicts.Add($"Zielpfad ungueltig: {entry.RelativePath} -> {target}");
                 continue;
@@ -184,13 +186,17 @@ internal sealed class MigrationPlan
     private static bool Is(string value, string expected) => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
 
     // Systemziele (/etc/zehos, /var/lib/zehos) duerfen .zehos--Namen tragen, Nutzerziele nicht (huang 5a.1).
-    internal static bool ValidTarget(string target, SystemPaths root)
+    internal static bool ValidTarget(string target, SystemPaths root, bool isFile)
     {
         if (!KernelPath.IsAbsoluteNormalized(target) || target == "/") return false;
         bool system = KernelPath.IsAtOrBelow(target, root.SecurityDirectory, StringComparison.Ordinal) ||
             KernelPath.IsAtOrBelow(target, KernelPath.Parent(root.PackagesDirectory)!, StringComparison.Ordinal);
-        foreach (string part in target[1..].Split('/'))
-            if (!PathComponent.IsValid(part, system) || System.Text.Encoding.UTF8.GetByteCount(part) > MaximumNameBytes) return false;
+        string[] parts = target[1..].Split('/');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            int limit = isFile && i == parts.Length - 1 ? MaximumFileNameBytes : MaximumNameBytes;
+            if (!PathComponent.IsValid(parts[i], system) || System.Text.Encoding.UTF8.GetByteCount(parts[i]) > limit) return false;
+        }
         return true;
     }
 

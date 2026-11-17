@@ -138,7 +138,7 @@ Präzisierungen gegenüber §1–§5:
 - `WriteFile` schreibt über `<pfad>.zehos-migration-tmp` (`IMigrationTarget.TemporarySuffix`). Ein Rest davon zu einer journalisierten Datei oder zum Marker gilt bei der Wiederholung (und bei `fresh` für den Marker) als eigene Spur und wird gelöscht, statt die Wiederholung zu verweigern.
 - Ein unvollständiger Journalkopf ohne gültige Folgezeilen gilt als leeres Journal (Absturz direkt nach `migrating`); ein ungültiger Kopf vor gültigen Zeilen bleibt ein Schaden.
 - Auch bei `state=fresh` darf das Ziel nur die Installereinträge enthalten; sonst `ForeignEntry`, nichts geschrieben. Journalpfade unter `/boot`, `/mnt`, `/proc`, `/sys` oder `/dev` gelten als fremd. `List()` darf `/` selbst liefern.
-- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`) und Namen über 255 UTF-8-Byte sind Konflikte.
+- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`), Verzeichnisnamen über 255 und Dateinamen über 235 UTF-8-Byte (Platz für die Temp-Endung) sind Konflikte.
 - Desktopdatei: ein Hintergrundziel unter Systemdaten oder länger als `DesktopSettings.MaximumImageLength` wird geleert und protokolliert.
 - `/srv/legacy-data/home` (nur bei Homes ohne Konto) erbt wie alle neuen Verzeichnisse vom nächsten Elterneintrag, also von `/` (bisher `/data`), nicht von `/data/home`. Nach der Ersteinrichtung haben beide dieselben Rechte.
 
@@ -148,3 +148,4 @@ Offen für 4.5 (aus den Reviews):
 - Journalkosten: je Datei drei geflushte Zeilen und vollständiges Einlesen bei der Wiederholung; unter TCG mit vielen Dateien messen, gegebenenfalls `F`-Zeilen bündeln.
 - Der Hostfake bildet keine Schreibpufferung ab; die Dauerhaftigkeit vor `ready` belegt erst G4–G6.
 - Ein Nutzerordner `boot` unter `/data` wird als alte ESP ausgeschlossen; der Befehl zeigt das vor dem Bestätigen an.
+- `LayoutMigration.InstallerEntries` ist bisher eine eigene Liste neben 7a-S4 `PreparingRoot`; beim Bau des Installers eine gemeinsame Konstante verwenden und testen, dass ein frisch installiertes Root die Fremdprüfung besteht.

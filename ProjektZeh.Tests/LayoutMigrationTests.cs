@@ -278,12 +278,18 @@ public sealed class LayoutMigrationTests
     public void T07_NameLongerThanExt2AllowsIsAConflict()
     {
         Write(".zehos-security.db", StandardSecurity());
-        // FAT erlaubt 255 UTF-16-Zeichen; Linux-Hosts lehnen > 255 Byte schon beim Anlegen ab, daher die Regel direkt pruefen.
-        Write(new string('\u00e4', 125) + ".txt", "x");
-        Assert.AreEqual(0, Plan().Conflicts.Count, "254 Byte passen");
-        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/legacy-data/" + new string('\u00e4', 125) + ".txt", SystemPaths.Root));
-        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/legacy-data/" + new string('\u00e4', 126) + ".txt", SystemPaths.Root), "256 Byte");
-        Assert.IsFalse(MigrationPlan.ValidTarget("/home/" + new string('a', 256), SystemPaths.Root));
+        // FAT erlaubt 255 UTF-16-Zeichen; Linux-Hosts lehnen > 255 Byte schon beim Anlegen ab, daher die Regel auch direkt pruefen.
+        // Dateien brauchen Platz fuer die Temp-Endung (20 Byte): hoechstens 235 Byte; Verzeichnisse 255 Byte.
+        Write(new string('\u00e4', 115) + ".txt", "x");
+        Assert.AreEqual(0, Plan().Conflicts.Count, "234 Byte passen");
+        Write(new string('\u00e4', 116) + ".txt", "x");
+        Assert.AreEqual(1, Plan().Conflicts.Count, "236 Byte: Temp-Name waere zu lang");
+        Assert.AreEqual(235, MigrationPlan.MaximumFileNameBytes);
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 235), SystemPaths.Root, isFile: true));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 236), SystemPaths.Root, isFile: true));
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255), SystemPaths.Root, isFile: false));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 256), SystemPaths.Root, isFile: false));
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255) + "/x", SystemPaths.Root, isFile: true), "Verzeichnisteil darf 255 Byte haben");
     }
 
     [TestMethod]
