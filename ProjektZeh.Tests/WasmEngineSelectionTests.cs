@@ -127,6 +127,19 @@ public sealed class WasmEngineSelectionTests
     }
 
     [TestMethod]
+    public void ReadAotRejectsInvalidSizesWithoutReading()
+    {
+        // Der Ordner existiert nicht: ein Lesezugriff ergaebe "nicht lesbar" statt der Groessenmeldung.
+        string missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        foreach (long size in new[] { 0L, WasmEngineSelection.MaximumAotBytes + 1L })
+        {
+            var read = WasmEngineSelection.ReadAot(missing, new PackageFile(OwnAot, size, new string('a', 64)));
+            Assert.IsFalse(read.IsOK());
+            StringAssert.Contains(read.Status.Message, "ungueltige Groesse");
+        }
+    }
+
+    [TestMethod]
     public void OnlyFailuresBeforeInstantiationRunAgainUnderWasm3()
     {
         Assert.IsTrue(WasmEngineSelection.FallsBackToWasm3(hasWasm: true, aotFailed: true, aotInstantiated: false));

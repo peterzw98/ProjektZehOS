@@ -86,6 +86,9 @@ internal static class WasmEngineSelection
     /// </summary>
     public static ResultObject<byte[]> ReadAot(string filesDirectory, PackageFile file)
     {
+        // Grenze auch hier: ein direkter Aufruf ohne FindAot soll nicht bis zur Paketgrenze von 128 MiB allokieren.
+        if (file.Size is <= 0 or > MaximumAotBytes)
+            return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, $"AOT-Datei {file.Path} hat eine ungueltige Groesse.");
         byte[] bytes = new byte[file.Size];
         try
         {
