@@ -45,6 +45,8 @@ public sealed class AccountServiceTests
         {
             var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
 
+            accounts.IsDataMounted = () => true;
+            accounts.SetupWindowOpen = true;
             accounts.SetupBlockedReason = "cause='AmbiguousDataDisk'";
             var blocked = accounts.Load();
             Assert.IsFalse(blocked.IsOK());
@@ -71,6 +73,24 @@ public sealed class AccountServiceTests
     }
 
     [TestMethod]
+    public void MissingAccountFile_DefaultsNeverOfferSetup()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "ohne ausdrueckliches Bootfenster und eingebundenes /data nie eine Ersteinrichtung");
+            accounts.IsDataMounted = () => true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "nur das geoeffnete Bootfenster erlaubt sie");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void MissingAccountFile_NoSetupWhenDataNotMountedOrAfterBoot()
     {
         string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -80,6 +100,7 @@ public sealed class AccountServiceTests
             var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
             bool mounted = false;
             accounts.IsDataMounted = () => mounted;
+            accounts.SetupWindowOpen = true;
 
             Assert.IsFalse(accounts.Load().IsOK());
             Assert.IsFalse(accounts.NeedsSetup, "ohne eingebundenes /data keine Ersteinrichtung, auch wenn die Datei 'fehlt'");

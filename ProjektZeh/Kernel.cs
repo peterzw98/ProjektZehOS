@@ -220,8 +220,9 @@ public sealed class Kernel : Sys.Kernel
                 if (adapter.IsValid) systemLog.Information("Network", $"{adapter.Name}, MAC {adapter.MacAddress}, Link={adapter.LinkUp}.");
             }
         }
+        // Ersteinrichtung nur beim Boot: nur dieser Load oeffnet das Fenster, spaetere (disk mount/use/init) bieten kein Konto an.
+        accounts.SetupWindowOpen = true;
         var security = accounts.Load();
-        // Ersteinrichtung nur beim Boot: spaetere Loads (disk mount/use/init) duerfen kein Konto anbieten.
         accounts.SetupWindowOpen = false;
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");

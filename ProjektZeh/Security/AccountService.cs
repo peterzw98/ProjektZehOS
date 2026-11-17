@@ -40,11 +40,14 @@ internal sealed class AccountService
     /// <summary>Dateiname der Konten- und Rechtedatei auf der Datenplatte.</summary>
     public const string MetadataFile = ".zehos-security.db";
 
-    /// <summary>Liefert, ob /data eingebunden ist; ohne Angabe (Hosttests, Probes) gilt es als eingebunden.</summary>
-    public Func<bool>? IsDataMounted { get; set; }
+    /// <summary>Liefert, ob /data eingebunden ist. Sicherer Standard: nicht eingebunden; Kernel und Tests setzen es ausdruecklich.</summary>
+    public Func<bool> IsDataMounted { get; set; } = () => false;
 
-    /// <summary>Die Ersteinrichtung wird nur beim Boot angeboten; der Kernel schliesst das Fenster nach dem ersten Laden.</summary>
-    public bool SetupWindowOpen { get; set; } = true;
+    /// <summary>
+    /// Die Ersteinrichtung wird nur beim Boot angeboten: Standard geschlossen, nur der Boot-Load oeffnet das Fenster
+    /// (der Kernel schliesst es danach wieder), so auch im Installer-Build.
+    /// </summary>
+    public bool SetupWindowOpen { get; set; }
 
     /// <summary>
     /// Ersteinrichtung nur beim Boot, nur mit eingebundenem /data und nur ohne vorhandene Kontendatei. Eine fehlende Datei auf
@@ -79,7 +82,7 @@ internal sealed class AccountService
         if (!read.IsOK()) return read.Status;
         if (read.Value == null)
         {
-            bool mounted = IsDataMounted?.Invoke() ?? true;
+            bool mounted = IsDataMounted();
             if (SetupBlockedReason != null || !MaySetUp(mounted, SetupWindowOpen, hasAccountsFile: false))
                 return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + (SetupBlockedReason ??
                     (!mounted ? "/data ist nicht eingebunden." : "Sie wird nur beim Boot angeboten.")));
