@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Prüft im Cosmos-Buildlog, dass jeder ZehOS-Plug sein Ziel gefunden hat.
+
+Cosmos.Patcher meldet ein fehlendes Ziel nur als Warnung und beendet den Build erfolgreich; der Plug ist dann still
+wirkungslos. Benötigt das Log von `cosmos build --verbose`.
+"""
+
+from pathlib import Path
+import re
+import sys
+
+PLUG_CLASS = re.compile(r'\[Plug\(')
+PLUG_MEMBER = re.compile(r'\[PlugMember\]\s*(?:\[[^\]]*\]\s*)*[^(;{]*?\b(\w+)\s*\(')
+CLASS = re.compile(r'\bclass\s+(\w+)')
+NAMESPACE = re.compile(r'^\s*namespace\s+([\w.]+)', re.MULTILINE)
+
+
+def expected_plugs(source_root):
+    plugs = set()
+    for path in sorted(Path(source_root).rglob('*.cs')):
+        text = path.read_text(encoding='utf-8-sig')
+        if not PLUG_CLASS.search(text):
+            continue
+        namespace = NAMESPACE.search(text)
+        prefix = namespace.group(1) + '.' if namespace else ''
+        for member in PLUG_MEMBER.finditer(text):
+            classes = CLASS.findall(text, 0, member.start())
+            if classes:
+                plugs.add(f'{prefix}{classes[-1]}::{member.group(1)}')
+    return plugs
+
+
+def unwrap(lines):
+    # Der Patcher bricht lange Zeilen am Konsolenrand um; Fortsetzungen beginnen ohne Einrückung.
+    joined = []
+    for line in lines:
+        line = line.rstrip('\r\n')
+        if joined and line and not line[0].isspace() and joined[-1].lstrip().startswith('['):
+            joined[-1] += line
+        else:
+            joined.append(line)
+    return joined
+
+
+def bound_plugs(lines, expected):
+    bound, missed, current = set(), set(), None
+    for line in unwrap(lines):
+        if 'Starting method resolution for' in line:
+            # Teilstring statt Zerlegung: beim Zusammenfügen umbrochener Zeilen kann das Leerzeichen vor dem Namen fehlen.
+            current = next((plug for plug in expected if plug + '(' in line), None)
+        elif current and 'Found matching method' in line:
+            bound.add(current)
+            current = None
+        elif current and 'Target method not found' in line:
+            # Cosmos versucht Plugs gegen jede Assembly mit passendem Typnamen; ein Fehlversuch allein ist kein Fehler.
+            missed.add(current)
+            current = None
+    return bound, missed
+
+
+def main(arguments):
+    if len(arguments) != 2:
+        print('Aufruf: check-plug-binding.py <kernel-build.log> <Quellordner>', file=sys.stderr)
+        return 2
+    try:
+        expected = expected_plugs(arguments[1])
+        with open(arguments[0], encoding='utf-8', errors='replace') as log:
+            bound, missed = bound_plugs(log, expected)
+    except OSError as error:
+        print(f'Prüfung nicht möglich: {error}', file=sys.stderr)
+        return 2
+    if not expected:
+        print(f'Keine Plugs in {arguments[1]} gefunden.', file=sys.stderr)
+        return 2
+    unbound = sorted(expected - bound)
+    for plug in unbound:
+        reason = 'Ziel nicht gefunden' if plug in missed else 'nicht im Log (Build ohne --verbose?)'
+        print(f'Plug bindet nicht: {plug} ({reason})', file=sys.stderr)
+    if unbound:
+        return 1
+    print(f'{len(expected)} ZehOS-Plugs gebunden.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -201,6 +201,8 @@ Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`
 
 Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Version 3.0.94 geprüft. Die [offizielle Plug-Dokumentation](https://cosmosos.github.io/articles/dev/plugs.html) beschreibt das verwendete Ersetzen einzelner Methoden. Die Paketmetadaten verweisen auf Cosmos-Quellstand `5d0b9535251472db7ecfe012f0435f0a04ffca16`.
 
+Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Target method not found` und beendet den Build erfolgreich; der Plug ist dann still wirkungslos. Dieselbe Warnung erscheint auch regulär, weil der Patcher Plugs gegen jede Assembly mit passendem Typnamen versucht. Die CI prüft deshalb mit `scripts/check-plug-binding.py` im Log von `cosmos build --verbose`, dass jede `[PlugMember]`-Methode aus `ProjektZeh/` mindestens einmal `Found matching method` erreicht.
+
 ## Grenzen
 
 - Cosmos 3.0.94 verwirft in seiner normalen Tastaturabfrage Break-Ereignisse. Daher übernimmt ZehOS den Rohdatenpfad vollständig; `Console.ReadLine` und `Console.ReadKey` gehören nicht mehr zum interaktiven Pfad. Sobald Cosmos eine öffentliche Rohereignis-API bietet, sollen Plug und Zugriff auf die interne Layoutmethode entfallen.
