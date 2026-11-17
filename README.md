@@ -310,6 +310,8 @@ Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was 
 - Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
 - Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
 
+**In Arbeit, nicht für Apps freigegeben:** Ein nativer AOT-Pfad (WAMR 2.4.5 als reiner AOT-Lader, [AOT-Plan](docs/superpowers/plans/2026-11-17-aot-kernel.md), Etappe D) ist nur in Kernel gebaut, die ausdrücklich `-p:ZehOSWasmAot=true` oder die Gastprobe `-p:ZehOSAotProbe=true` verwenden. Der normale Build enthält ihn nicht; Paket-Apps laufen weiterhin ausschließlich unter wasm3. Paketformat, Auswahl und Laufzeitschalter folgen in Etappe E, AOT bleibt danach bis Etappe F standardmäßig aus. Probe und Fixtures: [ProjektZeh/Native/AotProbe/fixture/README.md](ProjektZeh/Native/AotProbe/fixture/README.md).
+
 `help` zeigt `pkg` mit seinen Unterbefehlen. Nur ausdrücklich mit `-p:ZehOSWasm=false` gebaute Kernel und das Installer-ISO bieten keinen `pkg`-Befehl.
 
 ## Start in VMware Player aus Visual Studio
@@ -467,6 +469,7 @@ Die beiden mit Cosmos ausgelieferten Bitmapfonts (geprüft mit 3.0.94) werden f�
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
 
 - wasm3 (MIT): `ProjektZeh/ThirdParty/wasm3/LICENSE`
+- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), nur in Builds mit `-p:ZehOSWasmAot=true`: `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
 - Rasterizer für Wasm-Apps, übertragen aus ClassiCubes SoftGPU (BSD-3-Clause): `ProjektZeh/Graphics/Raster/LICENSE-ClassiCube.txt`
 - BouncyCastle (MIT) als NuGet-Paket
 - Cosmos (BSD-3-Clause) als NuGet-Pakete; übernommene Teile aus Cosmos.Network.Http in `ProjektZeh/ThirdParty/CosmosHttp` mit `LICENSE.txt` und `THIRD-PARTY-NOTICES.txt` (darin auch die Mozilla-Zertifikatsliste `cacert.pem`, MPL-2.0)
