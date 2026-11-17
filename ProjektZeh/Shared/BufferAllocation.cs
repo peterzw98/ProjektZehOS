@@ -21,8 +21,8 @@ internal static class BufferAllocation
     /// </summary>
     public static byte[]? TryAllocate(int length, bool collectFirst)
     {
-        if (collectFirst) GC.Collect();
         ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (collectFirst) GC.Collect();
         try
         {
             byte[] buffer = new byte[length];
