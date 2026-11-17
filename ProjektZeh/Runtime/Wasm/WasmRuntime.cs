@@ -171,6 +171,19 @@ internal static unsafe class WasmRuntime
                 while (jobs.Count == 0) Monitor.Wait(gate);
                 job = jobs.Dequeue();
             }
+            // Auch vorher sammeln: Cosmos 3.0.97 sammelt erst, wenn der Seitenallokator erschoepft ist, und eine grosse
+            // zusammenhaengende Allokation liefert bei vollem Heap NULL statt zu sammeln. Nach einer Online-Installation
+            // (TLS, Katalog, Paketdateien) lagen rund 2 Mio. tote Objekte im Heap; ClassiCube scheiterte dann am
+            // Wachstum des Wasm-Speichers ("Out of VRAM", Exitcode 1).
+            long collectStart = Stopwatch.GetTimestamp();
+            GC.Collect();
+            // Wie bei ReportMemory: eine Diagnosezeile darf den gemeinsamen Worker nicht beenden.
+            try
+            {
+                Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+                    $"WASM GC vor Lauf {(long)Stopwatch.GetElapsedTime(collectStart).TotalMilliseconds} ms\n");
+            }
+            catch (Exception) { /* Nur die Dauerzeile fehlt. */ }
             job();
             // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
             // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
