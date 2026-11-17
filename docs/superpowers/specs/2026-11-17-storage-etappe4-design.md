@@ -47,10 +47,11 @@ Damit unterscheiden sich frische Installation, abgebrochene Einrichtung und abge
 
 **Reihenfolge beim Boot:**
 
+0. `GptLayout.Verify` auf `sata0` (7a). Kein 7a-Layout erkannt ⇒ `Legacy` wie heute, ohne `/boot/efi` und ohne Umhängen (huang P3 f).
 1. ESP (FAT) direkt unter `/boot/efi` einhängen und den ESP-Marker dort lesen, `InstalledIdentity.Evaluate` (7a).
 2. Bei `Healthy`: Root über `CosmosReadOnlyExt2FileSystem` (#137) öffnen, `Ext2FeatureGate` auswerten, Root-Marker und Kontendatei lesen. Nichts wird dabei geschrieben (Cosmos schreibt bei Release/Sync/Drop auch auf Lese-Mounts, deshalb die RO-Komponente).
 3. RO-Zugriff schließen; nur im Fall „`Root`“ unten ext2 schreibbar auf `/` einhängen, im Fall `RootUnclean` die RO-Komponente auf `/`.
-4. Ergibt sich kein `Root`-Fall: die ESP muss für das 7a-Verhalten unter `/data` liegen. Offene Frage an die Leitung (§7.8): Leitung 11:24 sagt „kein Umhängen“ und zugleich „`Unclear` = ESP als `/data`“; beides zusammen geht nur, wenn in diesem Fall `/boot/efi` ausgehängt und `/data` eingehängt wird (einmalig beim Boot, vor dem Laden der Konten) oder wenn der Rückfall die ESP unter `/boot/efi` lässt und `/data` leer bleibt.
+4. Ergibt sich kein `Root`-Fall: einmalig beim Boot, vor dem Laden der Konten, `/boot/efi` aushängen und die ESP unter `/data` einhängen; 7a gilt dann unverändert (Leitung 11:27). Gasttest G8.
 
 | Lage | Profil und Verhalten |
 |---|---|
@@ -59,12 +60,15 @@ Damit unterscheiden sich frische Installation, abgebrochene Einrichtung und abge
 | `Healthy` (ESP-Marker), Gate `Ok`, Root-Marker `state=fresh`, keine Kontendatei | `Root`, Ersteinrichtung wie heute; sie setzt im Root-Marker `state=ready` als letzten Schritt |
 | `Healthy` (ESP-Marker), Gate `Ok`, Root-Marker `state=fresh`, Kontendatei vorhanden (Einrichtung nach dem Speichern abgebrochen) | `Root`, keine Ersteinrichtung (Konten existieren); `state=ready` wird beim nächsten Speichern der Konten nachgezogen |
 | `Healthy`, Gate `ReadOnly` (unbekanntes RoCompat oder `s_state` nicht sauber, siehe unten), Root-Marker `state=ready` | **`RootUnclean`** (eigener Zustand, nicht `RootDamaged`): Profil `Root` nur lesend über die RO-Komponente, Anmeldung mit vorhandenen Konten, alle Schreibzugriffe verweigert, Hinweis „Root nicht sauber ausgehängt – offline `e2fsck` nötig“; Einrichtung und `security recover` gesperrt |
+| `Healthy` (ESP-Marker), Root-Marker `state=ready`, **keine Kontendatei** (Eintrag verloren/beschädigt) | `Unclear`: keine Ersteinrichtung, kein neuer Admin (7a Entscheidung 3); `SetupWork` nur bei `state=fresh` (huang P2-2) |
 | `Healthy` (ESP-Marker), aber Root-Marker `state=migrating`, fehlend oder ungültig, oder Gate `Reject` | `Unclear` |
 | ESP-Marker ergibt `RootMissing`/`RootDamaged`/`Unclear` | wie 7a: ESP als `/data`, Profil `Legacy`, Einrichtung/Recovery gesperrt |
 
 `Unclear` hat nur noch diese eine Bedeutung (7a).
 
-**Sauber-Kennzeichen (senior P2-2):** Der Cosmos-ext2-Treiber setzt `s_state` beim schreibenden Mount nie zurück (nur der Formatter schreibt es, `Ext2Formatter.cs:161`); nach einem Absturz sähe ein halb geschriebenes Root sauber aus. ZehOS setzt deshalb direkt nach dem schreibenden Root-Mount selbst `s_state = 0` (nicht sauber) und erst nach dem Sync beim Herunterfahren wieder `1`. Ein harter Abbruch führt dadurch zu Gate `ReadOnly` und zu `RootUnclean`, nicht zu verlorenen Konten. `shortcut:` eigener Superblock-Schreibzugriff, entfällt, wenn Cosmos das Kennzeichen selbst pflegt.
+**Änderung an der gemergten 7a-Spezifikation (huang P2-1, Leitung 11:24):** 7a §5 bildet Gate `ReadOnly` heute auf `RootDamaged` ab, und `Healthy` verlangt Gate `Ok`. Für `RootUnclean` liefert `InstalledIdentity.Evaluate` einen **eigenen Ausgang `RootUnclean`**, wenn das Gate nur wegen `s_state` (nicht sauber) `ReadOnly` meldet; unbekanntes RoCompat bleibt `RootDamaged`. 7a-Tabelle §5 und deren Tests sind entsprechend nachzuziehen (betrifft S3 `InstalledIdentity`); die Etappe-4-Tabelle oben liest „Gate `ReadOnly` wegen `s_state`“ als diesen Ausgang.
+
+**Sauber-Kennzeichen (senior P2-2):** Der Cosmos-ext2-Treiber setzt `s_state` beim schreibenden Mount nie zurück (nur der Formatter schreibt es, `Ext2Formatter.cs:161`); nach einem Absturz sähe ein halb geschriebenes Root sauber aus. ZehOS setzt deshalb direkt nach dem schreibenden Root-Mount selbst `s_state = 0` (nicht sauber) und erst beim Herunterfahren wieder `1`: Sync, Sync, alle Schreiber ruhig, `s_state = 1` per Lesen-Ändern-Schreiben des Superblocksektors, danach ein eigenes `Device.Flush()` – auch die zweite Sync-Runde schreibt den Superblock nach dem Flush, sonst erschiene jedes sauber ausgeschaltete Root als unsauber (huang P3 a; `UpdateSuperblock` ändert nur die Free-Zähler, `Ext2Superblock.cs:738-752`, ein gesetztes `s_state` bleibt stehen). Dieser Schreibzugriff geht am Treiber vorbei auf denselben Sektor; er erfolgt nur an genau diesen zwei Punkten (direkt nach dem Mount vor dem Start anderer Aufgaben, zuletzt beim Herunterfahren), nie nebenläufig zu Dateischreibern (huang P3 b). Ein harter Abbruch führt dadurch zu Gate `ReadOnly` und zu `RootUnclean`, nicht zu verlorenen Konten. **Folge (Handbuch, Testablauf):** jeder harte Abbruch (Gast beenden, Strom) macht Root bis zu einem externen `e2fsck` lesend; ZehOS repariert nichts. Für Test-VMs häufig; G7 ist der erste Beleg (huang P3 c). `shortcut:` eigener Superblock-Schreibzugriff, entfällt, wenn Cosmos das Kennzeichen selbst pflegt.
 
 **Absturz während eines Schreibvorgangs (huang P2-3):** ext2 hat kein Journal, und Konten und ACLs liegen nur auf Root. Gegenmaßnahmen: Konten-, ACL- und Root-Marker-Dateien schreiben in der Reihenfolge Temp-Datei, Flush, Rename, Verzeichnis-Flush, doppelter Sync (bestehendes `WriteData`-Muster plus Flush/Sync); Test „harter Abbruch während des Speicherns ⇒ alte oder neue Fassung, nie keine“. Das ersetzt kein fsck; beschädigte ext2-Metadaten bleiben möglich und enden in `RootUnclean` bzw. `RootDamaged`. `security recover` bleibt bei `RootDamaged` und `RootUnclean` gesperrt (7a Entscheidung 6, Leitung 11:24); Reparatur offline.
 
@@ -80,12 +84,12 @@ Damit unterscheiden sich frische Installation, abgebrochene Einrichtung und abge
 
 **Ablauf (reine Logik `LayoutMigration`, Dateizugriff über injiziertes Dateisystem):**
 
-1. **Schreibsperre der Quelle (huang P2-2):** für die Dauer ist `/data` für alle Schreiber gesperrt – `FileService` (über `FileAccessControl`, auch Admin), `PackageStore`, `UpdateController`, Desktopeinstellungen. Eigenes Sperrkennzeichen, **nicht** `Access.Lock` (das sperrte auch den aufrufenden Admin, `IsAdmin = IsReady && …`). Lesen und die laufende Sitzung bleiben möglich.
+1. **Schreibsperre der Quelle (huang P2-2):** für die Dauer ist `/data` für alle Schreiber gesperrt – `FileService` (über `FileAccessControl`, auch Admin), `PackageStore`, `UpdateController`, Desktopeinstellungen. Eigenes Sperrkennzeichen, **nicht** `Access.Lock` (das sperrte auch den aufrufenden Admin, `IsAdmin = IsReady && …`). Lesen und die laufende Sitzung bleiben möglich. Freigabe in `finally` auch bei Ausnahme; das Kennzeichen liegt nur im Speicher, ein Neustart räumt es (huang P3 d).
 2. **Inventar (nur lesen):** alle Einträge unter `/data` mit Größe und SHA-256, ACL-Einträge, Konten. Schlägt das Lesen eines Eintrags fehl: Abbruch.
 3. **Zuordnung** nach §1. Einträge ohne Zuordnung → `/srv/legacy-data/<relativer Pfad>`. Ausgenommen und protokolliert: `/data/boot/**` (gehört zur alten ESP; der neue Kernel kommt aus 7a), temporäre `.zehos-*.tmp`/`.bak`. Paketbestand und App-Zustand 1:1; ob `PackageStore`-Metadaten absolute `/data`-Pfade enthalten, wird vor 4.4 geprüft und getestet.
 4. **Prüfungen vor dem Schreiben:** freier Platz und freie Inodes für alle Dateien und Verzeichnisse, jede Datei auf 4 KiB aufgerundet, plus 10 % Reserve; keine zwei Quellen auf dasselbe Ziel (Ordinal); Zielpfade bestehen den Pfadwächter. Ein Konflikt stoppt mit Liste, nichts geschrieben.
 5. Root-Marker des Ziels auf `state=migrating`.
-6. **Kopieren** jeder Datei, Journal-Absicht **vor** der Datei: Zeile „schreibe <Pfad>“ in `/etc/zehos/.zehos-migration-journal`, dann Datei schreiben, Prüfsumme zurücklesen, Zeile „fertig <Pfad> <Hash>“ (huang P3 a).
+6. **Kopieren** jeder Datei, Journal-Absicht **vor** der Datei: Zeile „schreibe <Pfad>“ in `/etc/zehos/.zehos-migration-journal` und **flushen**, dann Datei schreiben; Verzeichnisse werden ebenso journalisiert (huang P3 e); Prüfsumme zurücklesen, Zeile „fertig <Pfad> <Hash>“ (huang P3 a).
 7. **Metadaten:** ACL-Pfade mit derselben Zuordnung umschreiben; Konten und Befehlsrechte unverändert übernehmen; Ergebnis zurücklesen und mit `FileAccessControl` (Ordinal, Wurzel `/`) laden – Ladefehler ⇒ Abbruch.
 8. **Inventar erneut** mit dem aus Schritt 2 vergleichen; jede Abweichung ⇒ Abbruch.
 9. Root-Marker `state=ready` mit Ziel-Disk-GUID, Quellinventar-Hash und Dateizahl als letzter Schreibzugriff, danach Sync (zweifach, §2).
@@ -118,10 +122,11 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 **Hosttests:**
 1. `SystemPaths`: jede Zeile aus §1 für beide Profile; `Legacy` gleich den heutigen Literalen (Regressionstabelle).
 2. Gesperrte Systempfade: Lesen, Schreiben, Listen, Suche, `mv` hinein/heraus, `cd`, auch als Admin und in Groß-/Kleinvarianten ⇒ verweigert; Dienste mit eigenem `FileService` dürfen schreiben.
-3. `LayoutProfile.Decide`: jede Zeile aus §2; insbesondere `state=migrating` oder fehlender Root-Marker ⇒ `Unclear`, nie Ersteinrichtung; `fresh` mit Kontendatei ⇒ keine Ersteinrichtung; Gate `ReadOnly` ⇒ `RootUnclean` (nur lesend mit Anmeldung, nicht `RootDamaged`).
-4. `LayoutMigration`: Zuordnung je Kategorie; Datei ohne Zuordnung nach `/srv/legacy-data`; Zielkonflikt ⇒ nichts geschrieben; zu wenig Platz ⇒ nichts geschrieben; ACL in anderer Schreibweise ⇒ Zieleintrag mit tatsächlichem Namen; ACL ohne Datei ⇒ protokolliert; zu wenig Inodes bzw. viele kleine Dateien (4-KiB-Rundung) ⇒ nichts geschrieben; ENOSPC beim Kopieren; Quelle ändert sich während des Laufs (Schreibversuch gesperrt, Inventarvergleich Schritt 8 schlägt bei manipuliertem Fake an); Abbruch nach jedem der Schritte 1–9 ⇒ nie `state=ready`; Absturz zwischen Datei und Journal ⇒ Wiederholung möglich; Wiederholung nach jedem Abbruch ⇒ gleiches Endergebnis wie ohne Abbruch; fremde Datei auf Ziel ⇒ Verweigerung; Quelle byteidentisch (Fake zählt Schreibzugriffe: 0).
+3. `LayoutProfile.Decide`: jede Zeile aus §2; insbesondere `state=migrating`, fehlender Root-Marker oder `state=ready` ohne Kontendatei ⇒ `Unclear`, nie Ersteinrichtung; `SetupWork` nur bei `state=fresh`; kein 7a-Layout ⇒ `Legacy` ohne `/boot/efi`; `fresh` mit Kontendatei ⇒ keine Ersteinrichtung; Gate `ReadOnly` ⇒ `RootUnclean` (nur lesend mit Anmeldung, nicht `RootDamaged`).
+4. `LayoutMigration`: Zuordnung je Kategorie; Datei ohne Zuordnung nach `/srv/legacy-data`; Zielkonflikt ⇒ nichts geschrieben; zu wenig Platz ⇒ nichts geschrieben; ACL in anderer Schreibweise ⇒ Zieleintrag mit tatsächlichem Namen; ACL ohne Datei ⇒ protokolliert; zu wenig Inodes bzw. viele kleine Dateien (4-KiB-Rundung) ⇒ nichts geschrieben; ENOSPC beim Kopieren; Quelle ändert sich während des Laufs (Schreibversuch gesperrt, Inventarvergleich Schritt 8 schlägt bei manipuliertem Fake an); Abbruch nach jedem der Schritte 1–9 ⇒ nie `state=ready`; Absturz zwischen Datei und Journal ⇒ Wiederholung möglich; Absichtszeile vor der Datei geflusht; angelegte Verzeichnisse im Journal; Ausnahme während der Migration ⇒ Schreibsperre freigegeben; Wiederholung nach jedem Abbruch ⇒ gleiches Endergebnis wie ohne Abbruch; fremde Datei auf Ziel ⇒ Verweigerung; Quelle byteidentisch (Fake zählt Schreibzugriffe: 0).
 5. Root-Marker: CRC, Größe, Formatversion, `state`-Werte, Temp + Rename; beschädigt ⇒ `Unclear`.
-6. Energieaktion im `Root`-Profil: Sync-Fehler bricht ab; zwei Syncs, danach `s_state = 1`.
+6. Energieaktion im `Root`-Profil: Sync-Fehler bricht ab; zwei Syncs, danach `s_state = 1` und eigenes Flush (Fake prüft Reihenfolge: letzter Gerätezugriff ist Flush nach dem `s_state`-Schreiben).
+6a. `InstalledIdentity.Evaluate` (7a-Erweiterung): Gate `ReadOnly` nur wegen `s_state` ⇒ `RootUnclean`; unbekanntes RoCompat ⇒ `RootDamaged`.
 7. Konten-/ACL-Speichern: Abbruch nach jedem Schritt (Temp, Flush, Rename, Verzeichnis-Flush, Sync) ⇒ alte oder neue Fassung lesbar.
 8. Schreibsperre der Quelle: `FileService` als Admin, `PackageStore`, Update, Desktopeinstellungen verweigern; Anmeldung und Lesen gehen weiter.
 
@@ -131,7 +136,8 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 - G3 Marker offline gelöscht ⇒ keine Einrichtung, `security recover` verweigert, Root lesbar.
 - G4 Migration 64-MiB-Bestandsplatte → neue 32-GiB-Platte: Anmeldung mit altem Kennwort, Dateien und ACLs gleich (Hashvergleich), Pakete starten (NetSurf), alte Platte Prüfsumme unverändert und weiter bootfähig.
 - G5 Migration mit vollem Ziel (kleine Root-Partition per Testlayout) und mit Abbruch (Gast hart beenden) ⇒ Ziel `Unclear`, `e2fsck -fn` nach dem Abbruch, Wiederholung erfolgreich, `e2fsck -fn` danach (Wiederholung löscht Dateien; Unlink/Rmdir hatte ext2-Befunde, huang P3 e).
-- G7 Root-System hart beenden während Schreiben ⇒ nächster Boot `RootUnclean`, Anmeldung möglich, Kontendatei alt oder neu; nach offline `e2fsck -fy` wieder schreibbar. ESP-Umhängen `/boot/efi` → `/data` bei `RootMissing`.
+- G7 Root-System hart beenden während Schreiben ⇒ nächster Boot `RootUnclean`, Anmeldung möglich, Kontendatei alt oder neu; nach offline `e2fsck -fy` wieder schreibbar. Sauberes Herunterfahren ⇒ nächster Boot `Root` schreibbar (kein falsches `RootUnclean`).
+- G8 `Unclear`-Platte (Root-Marker offline auf `migrating`) bootet, ESP unter `/data`, keine Einrichtung, `security recover` verweigert (Leitung 11:27).
 - G6 64 GiB und 128 GiB: Migration, Neustart, `e2fsck -fn`.
 
 ## 7. Offene Punkte
@@ -143,4 +149,5 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 5. *Geklärt (senior):* Sync über `VfsManager.Mounts` → `SuperOperations.Sync`, zweifach wegen der Flush-Reihenfolge (§2). Offen: ob ein FAT-Lese-Mount in Cosmos schreibt (Ziel-ESP-Prüfung in §3).
 6. **App-Speicher:** §5 mit dem ClassiCube-Auftrag abstimmen, bevor 13.4 einen `/data`-Pfad festschreibt.
 7. VMware: eigene AHCI-Platte wie in Etappe 2. Zeitbudget: Quelle kann eine FAT-Datenplatte bis 128 GiB sein (Etappe 2); bei ≈ 100 MB/s unter KVM dauert Lesen plus Rücklesen einer vollen Platte über eine Stunde. Fortschrittsanzeige und Abbruch per Taste gehören deshalb in 4.5.
-8. **Leitung:** ESP-Lage im Rückfall (§2 Schritt 4): einmalig beim Boot nach `/data` umhängen (Vorschlag, dann gilt 7a unverändert) oder unter `/boot/efi` lassen.
+8. *Entschieden 11:27:* im Rückfall ESP einmalig beim Boot von `/boot/efi` nach `/data` umhängen (G8).
+9. **7a-Nachtrag:** Ausgang `RootUnclean` in `InstalledIdentity` (S3) und 7a §5 aufnehmen (§2).
