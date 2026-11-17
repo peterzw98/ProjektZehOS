@@ -24,7 +24,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
 | `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
 | `disk init <Name> [--yes-large] [--yes-overwrite]` | Leere Platte (64 MiB bis 128 GiB; über 4 GiB nur Stichprobenprüfung und nur mit `--yes-large`) mit MBR und FAT32 (Label `ZEHOSDATA`) einrichten; ist schon `/data` eingebunden oder trägt `sata0` eine Partition, verlangt der Befehl zusätzlich `--yes-overwrite` |
-| `disk use <Name> --yes` | Auf die `ZEHOSDATA`-Partition des Laufwerks umschalten; ein eingebundenes `/data` wird vorher ausgehängt. Der Boot bindet eine `ZEHOSDATA`-Platte nie selbst ein |
+| `disk use <Name> --yes` | Auf die `ZEHOSDATA`-Partition des Laufwerks umschalten; ein eingebundenes `/data` wird vorher ausgehängt. Der Boot bindet eine einzelne `ZEHOSDATA`-Platte ohne Bestand auf `sata0` nur dann selbst ein, wenn sie schon eine Kontendatei trägt |
 | `disk mount <Name> [--yes]` | Einzige FAT-Partition des Laufwerks unter `/data` einbinden; `sata0` (Bestand) ohne, jede andere Platte nur mit `--yes` |
 | `disk unmount` | `/data` mit Schreiben der Dateisystempuffer aushängen |
 | `version` | Versionen der geladenen ZehOS- und Cosmos-Assemblies anzeigen |
