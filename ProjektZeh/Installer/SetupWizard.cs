@@ -64,6 +64,9 @@ internal sealed class SetupWizard
     private readonly UiButton no;
     private readonly SetupCheckBox accept;
     private readonly SetupCheckBox erase;
+    // GPT-Weg (Spec 7a-S4) nur mit injizierter Freischaltung; ungeeignete Platten zeigen statt des Kaestchens den Grund.
+    private readonly bool gptEnabled;
+    private readonly SetupCheckBox gpt = new("GPT mit ext2-Root (32 bis 128 GiB)");
     private readonly SetupTextView license;
     private readonly SetupDiskList disks;
     private readonly UiPanel promptPanel = new();
@@ -80,8 +83,9 @@ internal sealed class SetupWizard
     public bool IsCancelPromptOpen { get; private set; }
     public UiControl? FocusedControl => IsCancelPromptOpen ? promptPanel.Focused : panel.Focused;
 
-    public SetupWizard(IInstallService service, UiPainter painter, int width, int height)
+    public SetupWizard(IInstallService service, UiPainter painter, int width, int height, bool gptEnabled = false)
     {
+        this.gptEnabled = gptEnabled;
         ArgumentNullException.ThrowIfNull(service);
         ArgumentNullException.ThrowIfNull(painter);
         this.service = service;
@@ -228,13 +232,19 @@ internal sealed class SetupWizard
                 break;
             case SetupPage.Confirm:
                 target = disks.Selected;
-                erase.Checked = false;
-                if (target!.RequiresErase)
+                erase.Checked = gpt.Checked = false;
+                int checkY = ConfirmWarningY() + WarningHeight() + 16;
+                if (target!.RequiresErase || GptOffered)
                 {
                     erase.Label = $"Alle Daten auf {target.Name} loeschen";
-                    erase.Bounds = new(contentX, ConfirmWarningY() + WarningHeight() + 16, contentWidth, painter.GlyphHeight + 8);
+                    erase.Bounds = new(contentX, checkY, contentWidth, painter.GlyphHeight + 8);
                     panel.Add(erase);
                     focus = erase;
+                }
+                if (GptOffered)
+                {
+                    gpt.Bounds = new(contentX, checkY + painter.GlyphHeight + 16, contentWidth, painter.GlyphHeight + 8);
+                    panel.Add(gpt);
                 }
                 Buttons(back, "Installieren", cancel);
                 focus ??= next;
@@ -283,7 +293,7 @@ internal sealed class SetupWizard
     {
         SetupPage.License => accept.Checked,
         SetupPage.Disk => disks.Selected != null,
-        SetupPage.Confirm => !target!.RequiresErase || erase.Checked,
+        SetupPage.Confirm => !NeedsErase || erase.Checked,
         _ => true
     };
 
@@ -312,7 +322,7 @@ internal sealed class SetupWizard
     private void Begin()
     {
         // Loeschen wird nur nach der ausdruecklichen Bestaetigung fuer genau diese Platte angefordert.
-        var result = service.Begin(target!.Name, target.RequiresErase && erase.Checked);
+        var result = gpt.Checked ? service.BeginGpt(target!.Name, erase.Checked) : service.Begin(target!.Name, target.RequiresErase && erase.Checked);
         if (!result.IsOK()) { Fail(result.Status); return; }
         if (result.Value == null)
         {
@@ -510,8 +520,12 @@ internal sealed class SetupWizard
 
     private int WarningHeight() => Paragraph(null, painter, ConfirmWarningText(), 0, 0, contentWidth - 68, 0) * painter.GlyphHeight + 28;
 
-    private string ConfirmWarningText() => target!.RequiresErase
-        ? $"{Capitalize(target.ContentText)} vorhanden. Bei der Installation werden alle Daten auf dieser Platte unwiderruflich geloescht."
+    private bool GptOffered => gptEnabled && target?.GptBlockedReason == null;
+    // Der GPT-Weg loescht immer; die Bestaetigung ist dort stets die Loeschbestaetigung.
+    private bool NeedsErase => target!.RequiresErase || gpt.Checked;
+
+    private string ConfirmWarningText() => NeedsErase
+        ? $"{Capitalize(target!.ContentText)} vorhanden. Bei der Installation werden alle Daten auf dieser Platte unwiderruflich geloescht."
         : "Die Platte ist leer. Es werden keine vorhandenen Daten geloescht.";
 
     private void DrawConfirm(PixelSurface surface)
@@ -522,8 +536,11 @@ internal sealed class SetupWizard
         Summary(surface, 0, "Zielplatte", $"{target!.Name} ({SetupDiskList.FormatSize(target.SizeBytes)})", label, line);
         Summary(surface, 1, "Version", $"ZehOS {service.ProductVersion}", label, line);
         Summary(surface, 2, "Startmodus", "UEFI", label, line);
-        Summary(surface, 3, "Aufteilung", "1 EFI-Systempartition (FAT32)", label, line);
-        bool destructive = target.RequiresErase;
+        Summary(surface, 3, "Aufteilung", gpt.Checked ? "EFI-Systempartition 512 MiB (FAT32) + Root (ext2, Rest)" : "1 EFI-Systempartition (FAT32)", label, line);
+        if (gptEnabled && target.GptBlockedReason is { } reason)
+            painter.Text(surface, $"GPT mit ext2-Root nicht moeglich: {reason}", contentX, ConfirmWarningY() + WarningHeight() + painter.GlyphHeight + 32,
+                contentWidth, UiPainter.Mix(UiPainter.Secondary, UiPainter.Background, 55));
+        bool destructive = NeedsErase;
         var box = new UiRect(contentX, ConfirmWarningY(), contentWidth, WarningHeight());
         // Karten wie im Taskmanager; die Loeschwarnung erhaelt einen Rahmen und Schimmer in der Warnfarbe.
         surface.FillRectangle(box.X, box.Y, box.Width, box.Height, destructive ? UiPainter.Warning : UiPainter.Border);
@@ -546,20 +563,20 @@ internal sealed class SetupWizard
         Title(surface, "ZehOS wird installiert");
         int glyph = painter.GlyphHeight;
         int y = bodyTop + Paragraph(surface, painter, "Bitte warten. Dies kann einige Minuten dauern.", contentX, bodyTop, contentWidth, UiPainter.Secondary) * glyph + 16;
-        var stage = job?.Stage ?? InstallStage.Completed;
+        int stage = StageRow(job?.Stage ?? InstallStage.Completed);
         for (int index = 0; index < StageTexts.Length; index++)
         {
             int rowY = y + index * (glyph + 8);
             int iconY = rowY + (glyph - 24) / 2;
-            if (index < (int)stage) CheckMark(surface, contentX + 2, iconY, UiPainter.Success);
-            else if (index == (int)stage)
+            if (index < stage) CheckMark(surface, contentX + 2, iconY, UiPainter.Success);
+            else if (index == stage)
             {
                 // Pfeil auf die laufende Phase wie in der Statusliste von Windows Setup.
                 for (int row = 0; row < 16; row++)
                     surface.FillRectangle(contentX + 6, iconY + 4 + row, 8 - Math.Abs(row - 8) + 1, 1, UiPainter.Accent);
             }
             // Kommende Phasen gedaempft; das Thema kennt nur Secondary, daher zum Hintergrund hin gemischt.
-            int color = index == (int)stage ? UiPainter.Foreground : index < (int)stage ? UiPainter.Secondary
+            int color = index == stage ? UiPainter.Foreground : index < stage ? UiPainter.Secondary
                 : UiPainter.Mix(UiPainter.Secondary, UiPainter.Background, 55);
             painter.Text(surface, StageTexts[index], contentX + 36, rowY, contentWidth - 36, color);
         }
@@ -572,6 +589,16 @@ internal sealed class SetupWizard
         surface.FillRectangle(contentX + 1, barY + 1, (contentWidth - 2) * percent / 100, 14, UiPainter.Accent);
         FooterNote(surface, "Schalten Sie den Computer nicht aus.", contentWidth);
     }
+
+    /// <summary>Zeile der Statusliste; die GPT-Stufen fallen in dieselben vier Phasen wie der Legacy-Weg.</summary>
+    internal static int StageRow(InstallStage stage) => stage switch
+    {
+        InstallStage.Partitioning => 0,
+        InstallStage.Formatting or InstallStage.FormattingEsp or InstallStage.FormattingRoot or InstallStage.VerifyingRoot or InstallStage.PreparingRoot => 1,
+        InstallStage.CopyingFiles => 2,
+        InstallStage.WritingBootConfig or InstallStage.WritingMarker => 3,
+        _ => StageTexts.Length,
+    };
 
     private void DrawDone(PixelSurface surface)
     {

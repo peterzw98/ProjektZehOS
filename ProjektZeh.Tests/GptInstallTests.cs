@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Input;
 using ProjektZeh.Installer;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage.Ext2;
 using ProjektZeh.Storage.Partitioning;
+using ProjektZeh.UI;
 
 namespace ProjektZeh.Tests;
 
@@ -382,6 +384,84 @@ public sealed class GptInstallTests
 
         Assert.IsFalse(table.IsOK(), "Ohne Primaerkopf ist die GPT ungueltig.");
         Assert.AreEqual(InstalledState.Unclear, result.State, "Ungueltige GPT ohne Marker sperrt, nie Legacy.");
+    }
+
+    // Test 8, Assistent: GPT-Zeile nur mit Freischaltung, bei ungeeigneter Platte ohne Kaestchen.
+    [TestMethod]
+    public void Wizard_GptChecked_RequiresEraseAndCallsBeginGpt()
+    {
+        var service = new RecordingService { Disks = [new("min", 32 * GiB, 0, true)] };
+        var wizard = ReachConfirm(service, gptEnabled: true);
+
+        Assert.AreEqual("Alle Daten auf min loeschen", (wizard.FocusedControl as SetupCheckBox)?.Label);
+        Press(wizard, PhysicalKey.Tab);
+        Assert.AreEqual("GPT mit ext2-Root (32 bis 128 GiB)", (wizard.FocusedControl as SetupCheckBox)?.Label);
+        Press(wizard, PhysicalKey.Space);
+        Press(wizard, PhysicalKey.Enter);
+        Assert.AreEqual(SetupPage.Confirm, wizard.Page, "Ohne Loeschbestaetigung startet der GPT-Weg nicht.");
+        Assert.AreEqual(0, service.Calls.Count);
+
+        Press(wizard, PhysicalKey.Tab);
+        while (wizard.FocusedControl is not SetupCheckBox { Label: "Alle Daten auf min loeschen" }) Press(wizard, PhysicalKey.Tab);
+        Press(wizard, PhysicalKey.Space);
+        Press(wizard, PhysicalKey.Enter);
+
+        CollectionAssert.AreEqual(new[] { "gpt min" }, service.Calls);
+    }
+
+    [TestMethod]
+    public void Wizard_GptUnchecked_UsesLegacyBegin()
+    {
+        var service = new RecordingService { Disks = [new("min", 32 * GiB, 0, true)] };
+        var wizard = ReachConfirm(service, gptEnabled: true);
+
+        Press(wizard, PhysicalKey.Enter);
+
+        CollectionAssert.AreEqual(new[] { "legacy min False" }, service.Calls);
+    }
+
+    [DataTestMethod]
+    [DataRow(false, 32UL)]
+    [DataRow(true, 31UL)]
+    public void Wizard_NotEnabledOrDiskUnsuitable_OffersNoGptCheckbox(bool enabled, ulong sizeGiB)
+    {
+        var wizard = ReachConfirm(new RecordingService { Disks = [new("disk", sizeGiB * GiB, 0, true)] }, enabled);
+
+        for (int index = 0; index < 8; index++)
+        {
+            Assert.IsFalse(wizard.FocusedControl is SetupCheckBox { Label: "GPT mit ext2-Root (32 bis 128 GiB)" });
+            Press(wizard, PhysicalKey.Tab);
+        }
+    }
+
+    [TestMethod]
+    public void Wizard_StageRow_LegacyKeepsOrderAndGptStagesFollowPhases()
+    {
+        InstallStage[] legacy = [InstallStage.Partitioning, InstallStage.Formatting, InstallStage.CopyingFiles, InstallStage.WritingBootConfig, InstallStage.Completed];
+        InstallStage[] gpt = [InstallStage.Partitioning, InstallStage.FormattingEsp, InstallStage.FormattingRoot, InstallStage.VerifyingRoot,
+            InstallStage.PreparingRoot, InstallStage.CopyingFiles, InstallStage.WritingBootConfig, InstallStage.WritingMarker, InstallStage.Completed];
+
+        CollectionAssert.AreEqual(new[] { 0, 1, 2, 3, 4 }, legacy.Select(SetupWizard.StageRow).ToArray());
+        var rows = gpt.Select(SetupWizard.StageRow).ToList();
+        CollectionAssert.AreEqual(rows.OrderBy(row => row).ToList(), rows);
+        Assert.AreEqual(4, rows[^1]);
+    }
+
+    private static SetupWizard ReachConfirm(RecordingService service, bool gptEnabled)
+    {
+        var wizard = new SetupWizard(service, new UiPainter(new byte[256 * 64], 16, 32), 1024, 768, gptEnabled);
+        Press(wizard, PhysicalKey.Enter);
+        Press(wizard, PhysicalKey.Space);
+        Press(wizard, PhysicalKey.Enter);
+        Press(wizard, PhysicalKey.Enter);
+        Assert.AreEqual(SetupPage.Confirm, wizard.Page);
+        return wizard;
+    }
+
+    private static void Press(SetupWizard wizard, PhysicalKey key)
+    {
+        wizard.Handle(new(InputEventType.KeyDown, KeyCode: (byte)key));
+        wizard.Handle(new(InputEventType.KeyUp, KeyCode: (byte)key));
     }
 
     private static InstallService Service(Platform platform) =>
