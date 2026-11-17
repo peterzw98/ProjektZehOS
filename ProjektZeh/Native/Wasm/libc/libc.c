@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
+#include <errno.h>
 
 extern void* __cosmos_heap_alloc(size_t size);
 extern void __cosmos_heap_free(void* pointer);
@@ -16,21 +18,28 @@ extern void __cosmos_serial_write(const char* text);
 
 int errno;
 
-// Kopfbereich vor jedem Block, damit realloc die alte Groesse kennt; 16 Byte erhalten die Ausrichtung.
-typedef struct { size_t size; size_t reserved; } zehos_block_header;
+// Cosmos-Rohbloecke sind teils nur 2 Byte ausgerichtet (AOT-Probe B3), C sagt aber 16 Byte (max_align_t) zu.
+// Der Kopf direkt vor dem ausgerichteten Nutzzeiger haelt Groesse (fuer realloc) und Rohzeiger (fuer free).
+#define ZEHOS_ALIGN 16u
+typedef struct { size_t size; void* raw; } zehos_block_header;
+#define ZEHOS_BLOCK_EXTRA (sizeof(zehos_block_header) + ZEHOS_ALIGN - 1)
 
 void* malloc(size_t size)
 {
-    if (size > SIZE_MAX - sizeof(zehos_block_header)) return NULL;
-    zehos_block_header* header = (zehos_block_header*)__cosmos_heap_alloc(sizeof(zehos_block_header) + size);
-    if (header == NULL) return NULL;
+    // __cosmos_heap_alloc kuerzt die Groesse auf 32 Bit (HeapNative.Alloc, Cosmos 3.0.97); groessere Bloecke scheitern hier.
+    if (size > UINT32_MAX - ZEHOS_BLOCK_EXTRA) return NULL;
+    uint8_t* raw = (uint8_t*)__cosmos_heap_alloc(ZEHOS_BLOCK_EXTRA + size);
+    if (raw == NULL) return NULL;
+    uintptr_t aligned = ((uintptr_t)raw + ZEHOS_BLOCK_EXTRA) & ~(uintptr_t)(ZEHOS_ALIGN - 1);
+    zehos_block_header* header = (zehos_block_header*)aligned - 1;
     header->size = size;
-    return header + 1;
+    header->raw = raw;
+    return (void*)aligned;
 }
 
 void free(void* pointer)
 {
-    if (pointer != NULL) __cosmos_heap_free((zehos_block_header*)pointer - 1);
+    if (pointer != NULL) __cosmos_heap_free(((zehos_block_header*)pointer - 1)->raw);
 }
 
 void* calloc(size_t count, size_t size)
@@ -79,10 +88,61 @@ int strncmp(const char* left, const char* right, size_t count)
 
 int strcmp(const char* left, const char* right) { return strncmp(left, right, SIZE_MAX); }
 
-// Nur fuer m3_CallArgv; ZehOS ruft Funktionen mit typisierten Argumenten auf, daher ist Zahlenparsing nicht vorgesehen.
-long long strtoll(const char* text, char** end, int base) { (void)base; if (end) *end = (char*)text; return 0; }
-unsigned long long strtoull(const char* text, char** end, int base) { (void)base; if (end) *end = (char*)text; return 0; }
-double strtod(const char* text, char** end) { if (end) *end = (char*)text; return 0; }
+static int digit_value(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 99;
+}
+
+// Gemeinsamer Kern nach C11 7.22.1.4: Betrag und Vorzeichen getrennt, Ueberlauf ueber *overflow; ohne Ziffern bleibt *end = text.
+static unsigned long long parse_integer(const char* text, char** end, int base, int* negative, int* overflow)
+{
+    *negative = 0;
+    *overflow = 0;
+    if (end != NULL) *end = (char*)text;
+    if (base < 0 || base == 1 || base > 36) { errno = EINVAL; return 0; }
+    const char* p = text;
+    while (isspace((unsigned char)*p)) p++;
+    if (*p == '-' || *p == '+') *negative = *p++ == '-';
+    // "0x" ohne folgende Hexziffer ist nur die Zahl 0; *end zeigt dann auf das 'x'.
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] == 'x' || p[1] == 'X') && digit_value(p[2]) < 16) { p += 2; base = 16; }
+    else if (base == 0) base = p[0] == '0' ? 8 : 10;
+    const char* digits = p;
+    unsigned long long value = 0;
+    for (int digit; (digit = digit_value(*p)) < base; p++)
+    {
+        if (value > (~0ull - (unsigned)digit) / (unsigned)base) *overflow = 1;
+        else value = value * (unsigned)base + (unsigned)digit;
+    }
+    if (p != digits && end != NULL) *end = (char*)p;
+    return value;
+}
+
+static long long parse_signed(const char* text, char** end, int base, long long max)
+{
+    int negative, overflow;
+    unsigned long long value = parse_integer(text, end, base, &negative, &overflow);
+    unsigned long long limit = negative ? (unsigned long long)max + 1 : (unsigned long long)max;
+    if (overflow || value > limit) { errno = ERANGE; return negative ? -max - 1 : max; }
+    return negative ? -(long long)(value - 1) - 1 : (long long)value;
+}
+
+unsigned long long strtoull(const char* text, char** end, int base)
+{
+    int negative, overflow;
+    unsigned long long value = parse_integer(text, end, base, &negative, &overflow);
+    if (overflow) { errno = ERANGE; return ~0ull; }
+    return negative ? 0ull - value : value;
+}
+
+long long strtoll(const char* text, char** end, int base) { return parse_signed(text, end, base, __LONG_LONG_MAX__); }
+long strtol(const char* text, char** end, int base) { return (long)parse_signed(text, end, base, __LONG_MAX__); }
+// strtoul, strtof und atoi definiert derzeit die WAMR-Plattformschicht (zehos_platform.c); hier nicht doppelt anlegen.
+
+// shortcut: Gleitkommazahlen werden nicht gelesen (keine Umwandlung, errno = EINVAL); umsetzen, sobald ein Aufrufer sie braucht.
+double strtod(const char* text, char** end) { if (end) *end = (char*)text; errno = EINVAL; return 0; }
 
 // Module erreichen wasm3 als Speicherblock ueber den ZehOS-Loader; direkter Dateizugriff ist gesperrt.
 FILE* fopen(const char* path, const char* mode) { (void)path; (void)mode; return NULL; }
