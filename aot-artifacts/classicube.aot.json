@@ -1,0 +1,15 @@
+{
+ "aot_abi": "wamr245-aot5-x64-bc",
+ "wamrc_version": "wamrc 2.4.5",
+ "wamrc_sha256": "6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774",
+ "flags": [
+  "--target=x86_64",
+  "--cpu=x86-64",
+  "--bounds-checks=1",
+  "--stack-bounds-checks=1",
+  "--size-level=0",
+  "--disable-simd"
+ ],
+ "wasm_sha256": "ae31320cf263be38dc37f15ad5578eee5390956510e77a364fb00102c96060dc",
+ "aot_sha256": "5a24ed280ef1255207265a33f4a7ea2bda29825bde436e491dec8e3900748532"
+}
