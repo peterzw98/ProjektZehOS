@@ -77,10 +77,11 @@ internal sealed class FileShellCommands
         if (files.IsVirtualPath(path))
         {
             var listed = files.ListVirtual(path);
-            // Eine Datei listet sich selbst wie unter Linux; die Rechte hat ListVirtual davor schon geprueft.
-            if (listed.Status.Code == ResultCode.InvalidArgument)
+            string normalized = VirtualTree.Normalize(path, files.CurrentDirectory);
+            // Eine Datei listet sich selbst wie unter Linux; Rechte und Existenz hat ListVirtual davor geprueft.
+            if (!listed.IsOK() && VirtualTree.Find(normalized) is { Kind: not VirtualKind.Directory } && listed.Status.Code == ResultCode.InvalidArgument)
             {
-                output.WriteLine(VirtualTree.Normalize(path, files.CurrentDirectory));
+                output.WriteLine(normalized);
                 return ResultErr.CreateSuccess();
             }
             if (!listed.IsOK()) return listed.Status;

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using Cosmos.Kernel.System;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.FileSystem;
+using Cosmos.Kernel.System.Storage;
 using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Shared;
-using ProjektZeh.Storage;
 using ProjektZeh.Storage.Virtual;
 using ProjektZeh.SystemServices;
 
@@ -16,10 +16,8 @@ namespace ProjektZeh.Runtime;
 /// uebergibt sie an <see cref="SystemInfoSnapshot"/>, das Grenzen, Maskierung und Format festlegt. Quellen laut Matrix
 /// docs/superpowers/specs/2026-11-17-system-files-inventory.md (Cosmos 3.0.97).
 /// </summary>
-internal sealed class CosmosSystemFiles(IStorageService storage, string version, Func<long> elapsedMilliseconds, SystemLog log)
+internal sealed class CosmosSystemFiles(string version, Func<long> elapsedMilliseconds, SystemLog log)
 {
-    private const ulong PageSize = 4096;
-
     public ResultObject<byte[]> Produce(string path) => path switch
     {
         "/proc/version" => SystemInfoSnapshot.Version(version),
@@ -34,11 +32,9 @@ internal sealed class CosmosSystemFiles(IStorageService storage, string version,
         _ => ResultObjectFactory.CreateFailure<byte[]>(ResultCode.NotFound, "Keine Systemdatei."),
     };
 
-    private static ResultObject<byte[]> Memory()
-    {
-        var memory = CosmosSystemInfo.PhysicalMemory();
-        return SystemInfoSnapshot.Memory(PageSize, memory.Total / PageSize, memory.Free / PageSize);
-    }
+    // Oeffentliche Zaehler von Cosmos 3.0.97 samt Seitengroesse (Matrix), nicht der private Zugriff aus CosmosSystemInfo.
+    private static ResultObject<byte[]> Memory() =>
+        SystemInfoSnapshot.Memory(MemoryDiagnostics.PageSizeBytes, MemoryDiagnostics.TotalPages, MemoryDiagnostics.FreePages);
 
     private static List<SystemInfoMount> Mounts()
     {
@@ -78,12 +74,18 @@ internal sealed class CosmosSystemFiles(IStorageService storage, string version,
         return result;
     }
 
-    private ResultObject<byte[]> Blocks()
+    /// <summary>Groesse ueberlaufsicher aus Blockzahl und Blockgroesse; ein Ueberlauf macht den ganzen Snapshot zum Fehler.</summary>
+    private static ResultObject<byte[]> Blocks()
     {
-        var devices = storage.GetDevices();
-        if (!devices.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(devices.Status);
-        var blocks = new List<SystemInfoBlock>(devices.Value!.Length);
-        foreach (var device in devices.Value) blocks.Add(new(device.Name, device.SizeBytes, device.PartitionCount));
+        var devices = StorageManager.Devices;
+        var blocks = new List<SystemInfoBlock>(Math.Min(devices.Count, SystemInfoSnapshot.MaxRecords + 1));
+        for (int index = 0; index < devices.Count && blocks.Count <= SystemInfoSnapshot.MaxRecords; index++)
+        {
+            var size = SystemInfoSnapshot.SizeBytes(devices[index].BlockCount, devices[index].BlockSize);
+            if (!size.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(size.Status);
+            blocks.Add(new(devices[index].Name, size.Value, StorageManager.GetPartitions(devices[index]).Count));
+        }
+
         return SystemInfoSnapshot.Blocks(blocks);
     }
 

@@ -67,7 +67,7 @@ public sealed class Kernel : Sys.Kernel
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => VfsManager.TryGetMount(Paths.AdminRoot, out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
-        systemFiles = new CosmosSystemFiles(storage, VersionText, GetElapsedMilliseconds, systemLog);
+        systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
 #if ZEHOS_INSTALLER
