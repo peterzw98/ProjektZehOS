@@ -44,9 +44,27 @@ def region(ppm: bytes, box: tuple[int, int, int, int]) -> bytes:
     return b"".join(pixels[(row * width + left) * 3:(row * width + right) * 3] for row in range(top, bottom))
 
 
+# Erwartet im Recovery-Lauf, der absichtlich ohne Datenplatte startet (DataDiskSelector, Kernel protokolliert es als Error).
+WITHOUT_DISK = "Error Storage: Failure: cause='DeviceNotFound' message='Keine Datenplatte gefunden.'"
+
+
+def unexpected_errors(serial: str, recovery: bool) -> list[str]:
+    """Error-Zeilen ohne die im jeweiligen Lauf erwartete."""
+    return [line for line in error_lines(serial) if not (recovery and WITHOUT_DISK in line)]
+
+
 def error_lines(serial: str) -> list[str]:
     """Zeilen des seriellen Protokolls mit einem Eintrag der Stufe Error."""
     return [line for line in serial.splitlines() if ERROR_LINE.search(line)]
+
+
+def without_appdisk(machine: list[str]) -> list[str]:
+    """QEMU-Argumente ohne das Paar "-device ide-hd,drive=appdisk,..."; scheitert, wenn es fehlt."""
+    pairs = [index for index in range(len(machine) - 1)
+             if machine[index] == "-device" and machine[index + 1].startswith("ide-hd,drive=appdisk")]
+    if len(pairs) != 1:
+        raise ValueError("Genau ein AppDisk-Geraet erwartet")
+    return machine[:pairs[0]] + machine[pairs[0] + 2:]
 
 
 class Run:
@@ -228,7 +246,7 @@ def run(work: Path, start_vm, recovery: bool, boot_timeout: float) -> int:
     current = Run(work, start_vm, boot_timeout)
     try:
         current.recovery_flow() if recovery else current.desktop_flow()
-        errors = error_lines(current.serial())
+        errors = unexpected_errors(current.serial(), recovery)
         if errors:
             raise AssertionError("Error-Zeilen im seriellen Protokoll:\n" + "\n".join(errors))
         current.guest.log("fertig")
@@ -259,6 +277,10 @@ def main() -> int:
     (work / "empty").mkdir(parents=True)
     disk = work / "data.qcow2"
     tools.create_disk(work / "empty", disk)
+    if args.recovery:
+        # Ohne Datenplatte: auf einer leeren Platte bietet Recovery die Ersteinrichtung an, und uname/shutdown wuerden
+        # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
+        tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
                args.boot_timeout)
 

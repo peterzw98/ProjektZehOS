@@ -42,6 +42,26 @@ class ErrorLineTests(unittest.TestCase):
                   '[15 ms] Information Shell: Error im Text ist kein Fehler.\n')
         self.assertEqual(guest.error_lines(serial), [])
 
+    def test_missing_data_disk_is_expected_only_in_recovery(self):
+        serial = ("[9 ms] Error Storage: Failure: cause='DeviceNotFound' message='Keine Datenplatte gefunden.'\n"
+                  "[10 ms] Error Storage: Failure: cause='ReadFailed' message='Lesefehler.'\n")
+        self.assertEqual(guest.unexpected_errors(serial, recovery=True),
+                         ["[10 ms] Error Storage: Failure: cause='ReadFailed' message='Lesefehler.'"])
+        self.assertEqual(len(guest.unexpected_errors(serial, recovery=False)), 2)
+
+
+class RecoveryMachineTests(unittest.TestCase):
+    def test_without_appdisk_keeps_other_devices(self):
+        machine = guest.without_appdisk(guest.tools.MACHINE)
+        self.assertFalse(any(value.startswith('ide-hd,drive=appdisk') for value in machine))
+        for device in ('ahci,id=ahci', 'e1000e,netdev=net0', 'qemu-xhci,id=tabletbus'):
+            self.assertIn(device, machine)
+        self.assertEqual(len(machine), len(guest.tools.MACHINE) - 2)
+
+    def test_without_appdisk_rejects_missing_device(self):
+        with self.assertRaises(ValueError):
+            guest.without_appdisk(['-device', 'ahci,id=ahci'])
+
 
 class BootTimeoutTests(unittest.TestCase):
     def test_boot_timeout_stops_process_and_keeps_log(self):
