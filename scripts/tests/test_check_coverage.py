@@ -122,6 +122,18 @@ class CheckCoverageTests(unittest.TestCase):
         self.assertNotIn('Shell/F01.cs', text)
         self.assertLess(text.index('Shell/F11.cs'), text.index('Shell/F10.cs'))
 
+    def test_multiple_reports_are_merged(self):
+        # Die Hang-Erkennung des Testlaufs legt den Bericht ein zweites Mal ab; mehrere Testprojekte liefern je einen.
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = Path(directory) / 'a.xml', Path(directory) / 'b.xml'
+            first.write_text(build_xml([(ROOT + 'Shell\A.cs', {1: 0, 2: 1})]), encoding='utf-8')
+            second.write_text(build_xml([(ROOT + 'Shell\A.cs', {1: 3}), (ROOT + 'Shell\B.cs', {7: 0})]), encoding='utf-8')
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = coverage.main([str(first), str(second)])
+        self.assertEqual(0, code)
+        self.assertIn('(2/3 Zeilen)', out.getvalue())
+
     def test_relative_filename_is_accepted(self):
         _, out, _, _ = self.run_main([('ProjektZeh/Shell/A.cs', lines(1, 0))])
         self.assertIn('(1/1 Zeilen)', out)
