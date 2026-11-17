@@ -73,6 +73,9 @@ weitergereichte Dateisystemnamen erkennt die Suche nicht.
 
 Cosmos 3.0.97 `Rmdir` schreibt das freigegebene Inode nie zurück, `Unlink` setzt kein `dtime`; e2fsck meldete das nach
 der Gastprobe (Details und Zeilen: [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md)).
-`ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs` ersetzt `Ext2Superblock.FreeInode`: zuerst das Inode auf der Platte mit
-`links_count` 0 und `dtime` schreiben, dann wie im Original Bitmapbit, Zähler, Deskriptor und Cache. Interne Member
-erreicht der Plug nur über `UnsafeAccessor` mit Typnamen; der Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
+`ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs` ersetzt `Ext2Superblock.FreeInode`. Die Plattenlogik steht rein in
+`Ext2InodeRelease.Release` (Host-Tests `ProjektZeh.Tests/Ext2InodeReleaseTests.cs`): zuerst das Inode mit
+`links_count` 0 und `dtime` schreiben, dann das Bitmapbit löschen; ist das Bit schon frei, wird nichts geschrieben und
+die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tun das selbst). Zähler, Deskriptor und
+Cache schreibt der Plug wie das Original fort; interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
+Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.

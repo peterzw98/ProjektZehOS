@@ -1,5 +1,3 @@
-// FreeInode-Ablauf nach Cosmos src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Superblock.cs:617-632 (efcf20cc, 3.0.97),
-// BSD-3-Clause, siehe Storage/Ext2/LICENSE-Cosmos.txt. Ergänzt um das Löschen des Inodes auf der Platte.
 using System;
 using System.Collections;
 using System.Runtime.CompilerServices;
@@ -8,16 +6,17 @@ using ProjektZeh.Storage.Ext2;
 
 namespace ProjektZeh.Storage;
 
-// shortcut: Cosmos 3.0.97 Rmdir schreibt das freigegebene Inode nie und Unlink setzt kein dtime (Storage/Ext2/README.md,
-// docs/COSMOS_EXT2_UPSTREAM_ISSUE.md); nach einem korrigierten Cosmos-Release entfernen.
+// shortcut: Cosmos 3.0.97 Rmdir schreibt das freigegebene Inode nie, Unlink setzt kein dtime (docs/COSMOS_EXT2_UPSTREAM_ISSUE.md);
+// nach einem korrigierten Cosmos-Release entfernen.
 [Plug(TargetName = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2Superblock")]
 public static class CosmosExt2FreeInodePlug
 {
-    // Der Körper wird nach Cosmos.Kernel.System kopiert und darf keinen Typ von dort nennen (vgl. CosmosExt2FormatterPlug).
+    // Der Koerper wird nach Cosmos.Kernel.System kopiert und darf keinen Typ von dort nennen (vgl. CosmosExt2FormatterPlug).
     [PlugMember]
     public static void FreeInode(object aThis, uint inodeNumber) => CosmosExt2InodeRelease.Free(aThis, inodeNumber);
 }
 
+/// <summary>Verbindet Ext2InodeRelease mit dem internen Zustand von Cosmos' Ext2Superblock (Original: Ext2Superblock.cs:617-632).</summary>
 internal static class CosmosExt2InodeRelease
 {
     private const string Superblock = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2Superblock, Cosmos.Kernel.System";
@@ -28,32 +27,25 @@ internal static class CosmosExt2InodeRelease
     internal static void Free(object superblock, uint inodeNumber)
     {
         uint group = GroupOfInode(superblock, inodeNumber);
-        uint index = IndexInGroup(superblock, inodeNumber);
         object descriptor = GetGroup(superblock, group);
         uint blockSize = GetBlockSize(superblock);
+        bool released = Ext2InodeRelease.Release(
+            block =>
+            {
+                byte[] buffer = new byte[blockSize];
+                ReadBlocks(superblock, block, 1, buffer);
+                return buffer;
+            },
+            (block, buffer) => WriteBlocks(superblock, block, 1, buffer),
+            InodeTable(descriptor), InodeBitmap(descriptor), IndexInGroup(superblock, inodeNumber),
+            blockSize, GetInodeSize(superblock), (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (released)
+        {
+            FreeInodesInGroup(descriptor)++;
+            UpdateGroupDesc(superblock, group);
+            SetFreeInodesCount(superblock, GetFreeInodesCount(superblock) + 1);
+        }
 
-        // Änderung: Inode zuerst auf der Platte als gelöscht markieren (links_count 0, dtime), wie e2fsck es erwartet.
-        // Rmdir hat es bis hierhin nur im Speicher geändert, Unlink ohne dtime geschrieben.
-        uint inodeSize = GetInodeSize(superblock);
-        uint inodesPerBlock = blockSize / inodeSize;
-        uint tableBlock = InodeTable(descriptor) + index / inodesPerBlock;
-        int offset = (int)(index % inodesPerBlock * inodeSize);
-        byte[] table = new byte[blockSize];
-        ReadBlocks(superblock, tableBlock, 1, table);
-        BitConverter.TryWriteBytes(table.AsSpan(offset + CosmosExt2InodeLayout.LinksCountOffset, 2), (ushort)0);
-        // dtime 0 hiesse für e2fsck "nicht gelöscht"; ohne Uhr wenigstens 1.
-        uint now = (uint)Math.Max(1, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        BitConverter.TryWriteBytes(table.AsSpan(offset + CosmosExt2InodeLayout.DtimeOffset, 4), now);
-        WriteBlocks(superblock, tableBlock, 1, table);
-
-        // Ab hier unverändert wie Cosmos: Bitmapbit löschen, Zähler und Deskriptor fortschreiben, Cache leeren.
-        byte[] bitmap = new byte[blockSize];
-        ReadBlocks(superblock, InodeBitmap(descriptor), 1, bitmap);
-        bitmap[index / 8] &= (byte)~(1u << (int)(index % 8));
-        WriteBlocks(superblock, InodeBitmap(descriptor), 1, bitmap);
-        FreeInodesInGroup(descriptor)++;
-        UpdateGroupDesc(superblock, group);
-        SetFreeInodesCount(superblock, GetFreeInodesCount(superblock) + 1);
         ((IDictionary)InodeCache(superblock)).Remove(inodeNumber);
     }
 
