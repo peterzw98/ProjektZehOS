@@ -26,6 +26,8 @@ internal sealed class FakeMigrationTarget : IMigrationTarget, IDisposable
     public List<string> Operations { get; } = [];
     public Func<string, bool>? FailWhen { get; set; }
     public Func<string, bool>? RefuseWhen { get; set; }
+    /// <summary>Absturz nach vollstaendiger Temp-Datei, vor dem Rename (bleibt als Rest liegen).</summary>
+    public Func<string, bool>? CrashBeforeRenameWhen { get; set; }
     public long Bytes { get; set; } = long.MaxValue / 2;
     public long Inodes { get; set; } = long.MaxValue / 2;
 
@@ -35,8 +37,9 @@ internal sealed class FakeMigrationTarget : IMigrationTarget, IDisposable
 
     public ResultErr WriteFile(string path, Stream content) => Do("write " + path, () =>
     {
-        string temporary = Host(path) + ".migration-tmp";
+        string temporary = Host(path) + IMigrationTarget.TemporarySuffix;
         using (var file = File.Create(temporary)) content.CopyTo(file);
+        if (CrashBeforeRenameWhen?.Invoke("write " + path) == true) throw new IOException("Simulierter Abbruch vor dem Rename: " + path);
         File.Move(temporary, Host(path), true);
     });
 

@@ -26,17 +26,16 @@ internal static class LayoutMigration
     public static ResultObject<MigrationReport> Run(string sourceRoot, IMigrationTarget target, Func<IDisposable> lockSource,
         Action<string> log, Action<MigrationStep>? progress = null)
     {
-        // Schritt 1: Schreibsperre der Quelle; using gibt sie auch bei einer Ausnahme frei.
-        using (lockSource())
+        try
         {
-            try
-            {
+            // Schritt 1: Schreibsperre der Quelle; using gibt sie auch bei einer Ausnahme frei. Auch ein Fehler beim Erwerben
+            // der Sperre wird zum Fehlerergebnis.
+            using (lockSource())
                 return RunLocked(sourceRoot, target, log, progress ?? (_ => { }));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return Failure("MigrationIoFailed", exception.Message);
-            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return Failure("MigrationIoFailed", exception.Message);
         }
     }
 
@@ -72,11 +71,8 @@ internal static class LayoutMigration
         progress(MigrationStep.Planned);
 
         // Schritt 4: eine Wiederholung raeumt erst die eigenen Spuren weg, dann zaehlt der freie Platz.
-        if (marker.Value.State == LayoutState.Migrating)
-        {
-            var cleaned = CleanPreviousRun(target, inventory.Value.Hash, log);
-            if (!cleaned.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(cleaned);
-        }
+        var cleaned = PrepareTarget(target, marker.Value.State, inventory.Value.Hash, log);
+        if (!cleaned.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(cleaned);
         var space = CheckSpace(target, plan);
         if (!space.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(space);
         progress(MigrationStep.Checked);
@@ -108,7 +104,12 @@ internal static class LayoutMigration
         if (!unchanged.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(unchanged);
         progress(MigrationStep.Verified);
 
-        // Schritt 9: "ready" als letzter Schreibzugriff, danach zweifach Sync (Etappe 4 §2).
+        // Schritt 9: erst alles Geschriebene dauerhaft machen, dann "ready" als letzter Schreibzugriff und erneut zweifach Sync
+        // (Etappe 4 §2). Ohne die Schranke davor koennte nach einem Absturz "ready" auf der Platte stehen, gepufferte Dateien
+        // aber nicht (wie 7a-S4 P2-1).
+        written = target.Sync();
+        if (written.IsOK()) written = target.Sync();
+        if (!written.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(written);
         written = WriteMarker(target, marker.Value with { State = LayoutState.Ready, SourceHash = inventory.Value.Hash, Files = plan.Files.Count });
         if (written.IsOK()) written = target.Sync();
         if (written.IsOK()) written = target.Sync();
@@ -154,28 +155,60 @@ internal static class LayoutMigration
     }
 
     /// <summary>
-    /// Wiederholung (§4): erlaubt, wenn jeder Eintrag auf Root vom Installer stammt oder im Journal steht. Dann werden genau die
-    /// journalisierten Dateien und Verzeichnisse (von unten nach oben) entfernt; fehlende Pfade sind Absichten ohne Aktion.
+    /// Auf dem Ziel duerfen nur Installereintraege liegen, bei einer Wiederholung (§4) zusaetzlich alles, was das Journal nennt,
+    /// und Temp-Dateien eines abgebrochenen <see cref="IMigrationTarget.WriteFile"/> zu einer journalisierten Datei oder dem
+    /// Marker (auch bei "fresh": ein Absturz vor dem Rename von "migrating" laesst den alten Marker stehen). Sonst koennte eine spaetere Wiederholung fremde Daten loeschen. Bei einer Wiederholung werden genau diese Spuren
+    /// entfernt (Verzeichnisse von unten nach oben); fehlende Pfade sind Absichten ohne Aktion.
     /// </summary>
-    private static ResultErr CleanPreviousRun(IMigrationTarget target, string sourceHash, Action<string> log)
+    private static ResultErr PrepareTarget(IMigrationTarget target, LayoutState state, string sourceHash, Action<string> log)
     {
-        var journal = ReadJournal(target);
-        if (!journal.IsOK()) return journal.Status;
-        var known = new HashSet<string>(InstallerEntries, StringComparer.Ordinal) { MigrationJournal.Path };
-        var files = journal.Value?.Files ?? [];
-        var directories = journal.Value?.Directories ?? [];
-        known.UnionWith(files);
-        known.UnionWith(directories);
+        bool repeating = state == LayoutState.Migrating;
+        MigrationJournal? journal = null;
+        if (repeating)
+        {
+            var read = ReadJournal(target);
+            if (!read.IsOK()) return read.Status;
+            journal = read.Value;
+        }
+        IReadOnlyList<string> files = journal?.Files ?? [], directories = journal?.Directories ?? [];
+        // Die Planung erzeugt dort nie Pfade; ein solches Journal stammt nicht aus diesem Ablauf.
+        foreach (var paths in new[] { files, directories })
+            foreach (string path in paths)
+                if (IsInstallerArea(path)) return Foreign(path);
+
+        var known = new HashSet<string>(InstallerEntries, StringComparer.Ordinal) { "/" };
+        var writable = new HashSet<string>(files, StringComparer.Ordinal) { LayoutMarker.Path };
+        if (repeating)
+        {
+            known.Add(MigrationJournal.Path);
+            known.UnionWith(files);
+            known.UnionWith(directories);
+        }
+        var temporaries = new List<string>();
         var listed = target.List();
         if (!listed.IsOK()) return listed.Status;
         foreach (string path in listed.Value!)
-            if (!known.Contains(path))
-                return ResultErr.CreateFailure(ResultCode.Failure, $"cause='ForeignEntry' message='Fremder Eintrag auf dem Ziel: {path}; nur Neuinstallation moeglich.'");
-        if (journal.Value != null && journal.Value.SourceHash != sourceHash) log("Quelle hat sich seit dem abgebrochenen Lauf geaendert.");
-
-        foreach (string file in files)
         {
-            var deleted = DeleteTolerant(target, file);
+            if (known.Contains(path)) continue;
+            if (path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal) &&
+                writable.Contains(path[..^IMigrationTarget.TemporarySuffix.Length]))
+            {
+                temporaries.Add(path);
+                continue;
+            }
+            return Foreign(path);
+        }
+        foreach (string path in temporaries)
+        {
+            var deleted = DeleteTolerant(target, path);
+            if (!deleted.IsOK()) return deleted;
+        }
+        if (!repeating) return ResultErr.CreateSuccess();
+        if (journal?.SourceHash is { } previous && previous != sourceHash) log("Quelle hat sich seit dem abgebrochenen Lauf geaendert.");
+
+        foreach (string path in files)
+        {
+            var deleted = DeleteTolerant(target, path);
             if (!deleted.IsOK()) return deleted;
         }
         for (int i = directories.Count - 1; i >= 0; i--)
@@ -184,6 +217,17 @@ internal static class LayoutMigration
             if (!deleted.IsOK()) return deleted;
         }
         return DeleteTolerant(target, MigrationJournal.Path);
+    }
+
+    private static ResultErr Foreign(string path) =>
+        ResultErr.CreateFailure(ResultCode.Failure, $"cause='ForeignEntry' message='Fremder Eintrag auf dem Ziel: {path}; nur Neuinstallation moeglich.'");
+
+    // Mountpunkte und Bootbereich des Installers; die Migration schreibt dort nie.
+    private static bool IsInstallerArea(string path)
+    {
+        foreach (string area in new[] { "/boot", "/mnt", "/proc", "/sys", "/dev" })
+            if (KernelPath.IsAtOrBelow(path, area, StringComparison.Ordinal)) return true;
+        return false;
     }
 
     private static ResultErr DeleteTolerant(IMigrationTarget target, string path)

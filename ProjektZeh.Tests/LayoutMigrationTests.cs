@@ -274,6 +274,31 @@ public sealed class LayoutMigrationTests
         StringAssert.Contains(plan.Conflicts[0], "a|b.txt");
     }
 
+    [TestMethod]
+    public void T07_NameLongerThanExt2AllowsIsAConflict()
+    {
+        Write(".zehos-security.db", StandardSecurity());
+        // FAT erlaubt 255 UTF-16-Zeichen; Linux-Hosts lehnen > 255 Byte schon beim Anlegen ab, daher die Regel direkt pruefen.
+        Write(new string('\u00e4', 125) + ".txt", "x");
+        Assert.AreEqual(0, Plan().Conflicts.Count, "254 Byte passen");
+        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/legacy-data/" + new string('\u00e4', 125) + ".txt", SystemPaths.Root));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/legacy-data/" + new string('\u00e4', 126) + ".txt", SystemPaths.Root), "256 Byte");
+        Assert.IsFalse(MigrationPlan.ValidTarget("/home/" + new string('a', 256), SystemPaths.Root));
+    }
+
+    [TestMethod]
+    public void T07_FileOfTwoGibibytesIsAConflict()
+    {
+        Write(".zehos-security.db", StandardSecurity());
+        string path = Path.Combine(source, "gross.img");
+        using (var file = File.Create(path)) file.SetLength(MigrationPlan.MaximumFileBytes);
+        Assert.AreEqual(0, Plan().Conflicts.Count, "2 GiB - 1 passt");
+        using (var file = File.OpenWrite(path)) file.SetLength(MigrationPlan.MaximumFileBytes + 1);
+        var plan = Plan();
+        Assert.AreEqual(1, plan.Conflicts.Count);
+        StringAssert.Contains(plan.Conflicts[0], "gross.img");
+    }
+
     // ---------------------------------------------------------------- ACL
 
     private (string Text, MigrationPlan Plan) Rewrite()
@@ -404,6 +429,7 @@ public sealed class LayoutMigrationTests
         Assert.AreEqual("image=\n", cleared);
         Assert.IsTrue(log.Any(line => line.Contains("/data/gibtsnicht.bmp", StringComparison.Ordinal)));
         Assert.AreEqual("image=bild.bmp\n", MigrationAcl.RewriteDesktop("image=bild.bmp\n", plan, log.Add), "relativ bleibt");
+        Assert.AreEqual("image=\n", MigrationAcl.RewriteDesktop("image=/data/.zehos-packages/catalog.signed\n", plan, log.Add), "Systemdaten");
     }
 
     // ---------------------------------------------------------------- Journal und Marker
@@ -441,8 +467,14 @@ public sealed class LayoutMigrationTests
         string[] lines = JournalText().Split('\n');
         lines[2] = "X kaputt";
         Assert.IsFalse(MigrationJournal.Parse(string.Join('\n', lines)).IsOK());
-        Assert.IsFalse(MigrationJournal.Parse("ZEHOS-MIGRATION-2 " + SourceSha + "\n").IsOK());
-        Assert.IsFalse(MigrationJournal.Parse("").IsOK());
+        Assert.IsFalse(MigrationJournal.Parse("ZEHOS-MIGRATION-2 " + SourceSha + "\n" + MigrationJournal.WriteLine("/a")).IsOK(), "falscher Kopf vor gueltiger Zeile");
+        foreach (string unfinished in new[] { "", "ZEHOS-MIG", "ZEHOS-MIGRATION-2 " + SourceSha + "\n", "\0\0\n\0" })
+        {
+            var empty = MigrationJournal.Parse(unfinished);
+            Assert.IsTrue(empty.IsOK(), "unvollstaendiger Kopf ohne Folgezeilen = noch nichts begonnen");
+            Assert.IsNull(empty.Value!.SourceHash);
+            Assert.AreEqual(0, empty.Value.Files.Count + empty.Value.Directories.Count);
+        }
         Assert.IsFalse(MigrationJournal.Parse(MigrationJournal.HeaderLine(SourceSha) + "D " + Encode("relativ") + "\n" + MigrationJournal.WriteLine("/a")).IsOK());
     }
 
@@ -502,6 +534,8 @@ public sealed class LayoutMigrationTests
         var operations = target.Operations;
         Assert.AreEqual("write " + LayoutMarker.Path, operations[^3], "ready als letzter Schreibzugriff");
         CollectionAssert.AreEqual(new[] { "sync", "sync" }, operations.TakeLast(2).ToArray());
+        CollectionAssert.AreEqual(new[] { "sync", "sync" }, operations.Skip(operations.Count - 5).Take(2).ToArray(), "Sync-Schranke vor ready");
+        Assert.IsTrue(operations[^6].StartsWith("journal F ", StringComparison.Ordinal), "davor nur Kopieren");
         Assert.AreEqual(1, operations.Count(operation => operation == "write " + LayoutMarker.Path) - 1, "genau ein Schreiben vor ready (migrating)");
         Assert.AreEqual(1, sourceLock.Taken);
         Assert.AreEqual(1, sourceLock.Released);
@@ -547,6 +581,11 @@ public sealed class LayoutMigrationTests
             Assert.IsFalse(result.IsOK(), $"Abbruch bei Operation {stop}");
             Assert.AreNotEqual(LayoutState.Ready, target.Marker().State, $"Abbruch bei {stop}");
             Assert.AreEqual(sourceLock.Taken, sourceLock.Released, $"Sperre bei {stop}");
+
+            target.FailWhen = null;
+            var repeated = Run(target);
+            Assert.IsTrue(repeated.IsOK(), $"Wiederholung nach Abbruch bei {stop}: {repeated.Status.Message}");
+            CollectionAssert.AreEqual(reference.Snapshot(), target.Snapshot(), $"Abbruch bei {stop}");
         }
     }
 
@@ -622,6 +661,91 @@ public sealed class LayoutMigrationTests
         afterDirectory.FailWhen = null;
         Assert.IsTrue(Run(afterDirectory).IsOK());
         CollectionAssert.AreEqual(expected, afterDirectory.Snapshot());
+    }
+
+    [TestMethod]
+    public void T19_TemporaryFileOfAnInterruptedWriteIsCleanedUp()
+    {
+        StandardSource();
+        var reference = Target();
+        Assert.IsTrue(Run(reference).IsOK());
+        // Datei, Marker "migrating" und Marker "ready": jeweils Absturz zwischen Temp und Rename.
+        foreach (int markerWrite in new[] { -1, 0, 1 })
+        {
+            var target = Target();
+            int markers = 0;
+            target.CrashBeforeRenameWhen = operation => markerWrite < 0
+                ? operation == "write /home/bob/brief.txt"
+                : operation == "write " + LayoutMarker.Path && markers++ == markerWrite;
+            Assert.IsFalse(Run(target).IsOK());
+            Assert.IsTrue(target.List().Value!.Any(path => path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)), "Temp-Rest liegt");
+            target.CrashBeforeRenameWhen = null;
+            var repeated = Run(target);
+            Assert.IsTrue(repeated.IsOK(), $"{markerWrite}: {repeated.Status.Message}");
+            CollectionAssert.AreEqual(reference.Snapshot(), target.Snapshot(), markerWrite.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    [TestMethod]
+    public void T19_CrashWhileWritingTheJournalHeaderCanBeRepeated()
+    {
+        StandardSource();
+        var reference = Target();
+        Assert.IsTrue(Run(reference).IsOK());
+        foreach (string partial in new[] { "", "ZEHOS-MIG", "\0\0\0\0", "ZEHOS-MIGRATION-1 abc\n" })
+        {
+            var target = Target();
+            target.FailWhen = operation => operation.StartsWith("journal ZEHOS-MIGRATION-1", StringComparison.Ordinal);
+            Assert.IsFalse(Run(target).IsOK());
+            Assert.AreEqual(LayoutState.Migrating, target.Marker().State);
+            File.WriteAllText(target.Host(MigrationJournal.Path), partial);
+            target.FailWhen = null;
+            var repeated = Run(target);
+            Assert.IsTrue(repeated.IsOK(), $"Kopf '{partial}': {repeated.Status.Message}");
+            CollectionAssert.AreEqual(reference.Snapshot(), target.Snapshot());
+        }
+    }
+
+    [TestMethod]
+    public void T19_CrashWhileCleaningUpCanBeRepeatedAgain()
+    {
+        StandardSource();
+        var reference = Target();
+        Assert.IsTrue(Run(reference).IsOK());
+        var target = Target();
+        target.FailWhen = operation => operation == "write /srv/legacy-data/notizen.txt";
+        Assert.IsFalse(Run(target).IsOK());
+        target.FailWhen = operation => operation == "delete /home/bob";
+        Assert.IsFalse(Run(target).IsOK(), "Abbruch mitten im Aufraeumen");
+        target.FailWhen = null;
+        Assert.IsTrue(Run(target).IsOK());
+        CollectionAssert.AreEqual(reference.Snapshot(), target.Snapshot());
+    }
+
+    [TestMethod]
+    public void T20_ForeignEntryOnAFreshTargetIsRefused()
+    {
+        StandardSource();
+        var target = Target();
+        Directory.CreateDirectory(target.Host("/home/anna"));
+        File.WriteAllText(target.Host("/home/anna/bild.bmp"), "alt");
+        StringAssert.Contains(Run(target).Status.Message, "ForeignEntry");
+        Assert.IsFalse(Writes(target));
+        Assert.AreEqual("alt", File.ReadAllText(target.Host("/home/anna/bild.bmp")));
+    }
+
+    [TestMethod]
+    public void T20_JournalNamingAnInstallerAreaIsRefused()
+    {
+        StandardSource();
+        var target = Target();
+        target.FailWhen = operation => operation == "write /home/bob/brief.txt";
+        Assert.IsFalse(Run(target).IsOK());
+        File.AppendAllText(target.Host(MigrationJournal.Path), MigrationJournal.WriteLine("/boot/efi/zehos.elf"));
+        target.FailWhen = null;
+        target.Operations.Clear();
+        StringAssert.Contains(Run(target).Status.Message, "ForeignEntry");
+        Assert.IsFalse(Writes(target));
     }
 
     [TestMethod]

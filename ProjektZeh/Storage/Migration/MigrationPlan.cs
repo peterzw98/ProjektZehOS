@@ -17,6 +17,10 @@ internal sealed record PlanFile(string Source, string Target, long Size, string 
 internal sealed class MigrationPlan
 {
     private const long BlockBytes = 4096;
+    // Root ist ext2 ohne large_file (Gate, E4.0 Schritt g): Dateien ab 2 GiB passen nicht. ext2 speichert Namen mit hoechstens
+    // 255 Byte; FAT erlaubt 255 UTF-16-Zeichen, die in UTF-8 laenger sein koennen. Beides muss vor dem Schreiben auffallen.
+    internal const long MaximumFileBytes = (1L << 31) - 1;
+    internal const int MaximumNameBytes = 255;
     private const string LegacyDataDirectory = "/srv/legacy-data";
     private readonly Dictionary<string, string> sourceToTarget = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> sourceDirectoryTargets = new(StringComparer.Ordinal);
@@ -56,6 +60,11 @@ internal sealed class MigrationPlan
             if (!ValidTarget(target, root))
             {
                 plan.conflicts.Add($"Zielpfad ungueltig: {entry.RelativePath} -> {target}");
+                continue;
+            }
+            if (!entry.IsDirectory && entry.Size > MaximumFileBytes)
+            {
+                plan.conflicts.Add($"Datei zu gross fuer Root (ext2 ohne large_file, hoechstens 2 GiB - 1): {entry.RelativePath}");
                 continue;
             }
             if (!targets.TryAdd(target, entry.RelativePath))
@@ -175,13 +184,13 @@ internal sealed class MigrationPlan
     private static bool Is(string value, string expected) => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
 
     // Systemziele (/etc/zehos, /var/lib/zehos) duerfen .zehos--Namen tragen, Nutzerziele nicht (huang 5a.1).
-    private static bool ValidTarget(string target, SystemPaths root)
+    internal static bool ValidTarget(string target, SystemPaths root)
     {
         if (!KernelPath.IsAbsoluteNormalized(target) || target == "/") return false;
         bool system = KernelPath.IsAtOrBelow(target, root.SecurityDirectory, StringComparison.Ordinal) ||
             KernelPath.IsAtOrBelow(target, KernelPath.Parent(root.PackagesDirectory)!, StringComparison.Ordinal);
         foreach (string part in target[1..].Split('/'))
-            if (!PathComponent.IsValid(part, system)) return false;
+            if (!PathComponent.IsValid(part, system) || System.Text.Encoding.UTF8.GetByteCount(part) > MaximumNameBytes) return false;
         return true;
     }
 

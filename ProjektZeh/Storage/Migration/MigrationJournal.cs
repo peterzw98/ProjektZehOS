@@ -15,14 +15,15 @@ internal sealed class MigrationJournal
     public const string Path = "/etc/zehos/.zehos-migration-journal";
     private const string Header = "ZEHOS-MIGRATION-1 ";
 
-    private MigrationJournal(string sourceHash, List<string> directories, List<string> files)
+    private MigrationJournal(string? sourceHash, List<string> directories, List<string> files)
     {
         SourceHash = sourceHash;
         Directories = directories;
         Files = files;
     }
 
-    public string SourceHash { get; }
+    /// <summary>Quellinventar des abgebrochenen Laufs; <see langword="null"/>, wenn schon der Kopf nicht vollstaendig geschrieben wurde.</summary>
+    public string? SourceHash { get; }
     /// <summary>Verzeichnisse in Schreibreihenfolge (Eltern vor Kindern).</summary>
     public IReadOnlyList<string> Directories { get; }
     /// <summary>Dateien mit Absicht oder Bestaetigung, jeweils einmal.</summary>
@@ -36,15 +37,15 @@ internal sealed class MigrationJournal
     /// <summary>
     /// ext2 ohne Journal kann nach einem Absturz die Dateigroesse schon erhoeht haben: eine abgeschnittene letzte Zeile und ein
     /// Schwanz aus ungueltigen Zeilen (Nullbytes, Muell) gelten als nicht geschrieben. Folgt auf eine ungueltige Zeile noch eine
-    /// gueltige, ist das Journal beschaedigt und eine Wiederholung wird verweigert.
+    /// gueltige, ist das Journal beschaedigt und eine Wiederholung wird verweigert. Das gilt auch fuer den Kopf: ist er
+    /// unvollstaendig und folgt nichts Gueltiges, wurde vor dem Absturz noch nichts begonnen (leeres Journal).
     /// </summary>
     public static ResultObject<MigrationJournal> Parse(string text)
     {
         string[] lines = text.Split('\n');
         // Das letzte Element steht hinter dem letzten Umbruch: unvollstaendig geschrieben, nie ausgewertet.
         int complete = lines.Length - 1;
-        if (complete < 1 || !lines[0].StartsWith(Header, StringComparison.Ordinal) || !LayoutMarker.IsSha256(lines[0][Header.Length..]))
-            return Invalid("Journalkopf fehlt oder ist ungueltig.");
+        bool header = complete >= 1 && lines[0].StartsWith(Header, StringComparison.Ordinal) && LayoutMarker.IsSha256(lines[0][Header.Length..]);
 
         var directories = new List<string>();
         var files = new List<string>();
@@ -59,11 +60,12 @@ internal sealed class MigrationJournal
                 if (firstInvalid < 0) firstInvalid = i;
                 continue;
             }
+            if (!header) return Invalid("Journalkopf ungueltig vor gueltigen Eintraegen.");
             if (firstInvalid >= 0) return Invalid($"Beschaedigte Journalzeile {firstInvalid + 1} vor gueltigen Eintraegen.");
             if (kind == 'D') { if (seenDirectories.Add(path)) directories.Add(path); }
             else if (seenFiles.Add(path)) files.Add(path);
         }
-        return ResultObjectFactory.CreateSuccess(new MigrationJournal(lines[0][Header.Length..], directories, files));
+        return ResultObjectFactory.CreateSuccess(new MigrationJournal(header ? lines[0][Header.Length..] : null, directories, files));
     }
 
     private static bool TryParseLine(string line, out char kind, out string path)

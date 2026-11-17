@@ -52,7 +52,7 @@ internal static class MigrationAcl
                 continue;
             }
             // Systemdaten sind fuer den Dateidienst gesperrt (Paket 4.2); dort gibt es keine Rechteeintraege.
-            if (KernelPath.IsAtOrBelow(target, "/etc", StringComparison.Ordinal) || KernelPath.IsAtOrBelow(target, "/var", StringComparison.Ordinal))
+            if (IsSystemData(target))
             {
                 log($"Rechteeintrag fuer Systemdaten verworfen: {path}");
                 continue;
@@ -66,8 +66,7 @@ internal static class MigrationAcl
         // scheitert Check an der Elternkette (huang P2-2). Eltern stehen vor ihren Kindern, daher reicht ein Durchlauf.
         foreach (string directory in plan.Directories)
         {
-            if (mapped.ContainsKey(directory) || !plan.IsCreatedDirectory(directory) ||
-                KernelPath.IsAtOrBelow(directory, "/etc", StringComparison.Ordinal) || KernelPath.IsAtOrBelow(directory, "/var", StringComparison.Ordinal)) continue;
+            if (mapped.ContainsKey(directory) || !plan.IsCreatedDirectory(directory) || IsSystemData(directory)) continue;
             string? parent = KernelPath.Parent(directory);
             while (parent != null && !mapped.ContainsKey(parent)) parent = KernelPath.Parent(parent);
             var inherited = mapped[parent ?? "/"];
@@ -88,7 +87,9 @@ internal static class MigrationAcl
 
     /// <summary>
     /// Desktopdatei: ein absoluter Hintergrundpfad wird ueber den Plan abgebildet, ohne Zuordnung geleert und protokolliert
-    /// (huang P3 a). Relative Pfade gelten weiter vom Home aus. Alle anderen Zeilen bleiben unveraendert.
+    /// (huang P3 a). Ebenso geleert wird ein Ziel unter Systemdaten (fuer den Dateidienst gesperrt) oder eines, das laenger als
+    /// die gespeicherte Hoechstlaenge wuerde (sonst verwirft der Desktop es stillschweigend). Relative Pfade gelten weiter vom
+    /// Home aus. Alle anderen Zeilen bleiben unveraendert.
     /// </summary>
     public static string RewriteDesktop(string text, MigrationPlan plan, Action<string> log)
     {
@@ -99,7 +100,8 @@ internal static class MigrationAcl
             if (separator < 0 || lines[i][..separator].Trim() != "image") continue;
             string image = lines[i][(separator + 1)..].Trim();
             if (!image.StartsWith('/')) continue;
-            if (plan.TryMapSource(image, out string target) && target != "/") lines[i] = "image=" + target;
+            if (plan.TryMapSource(image, out string target) && target != "/" && !IsSystemData(target) &&
+                target.Length <= ProjektZeh.Graphics.DesktopSettings.MaximumImageLength) lines[i] = "image=" + target;
             else
             {
                 log($"Hintergrundbild ohne Ziel, Einstellung geleert: {image}");
@@ -108,6 +110,9 @@ internal static class MigrationAcl
         }
         return string.Join('\n', lines);
     }
+
+    private static bool IsSystemData(string path) =>
+        KernelPath.IsAtOrBelow(path, "/etc", StringComparison.Ordinal) || KernelPath.IsAtOrBelow(path, "/var", StringComparison.Ordinal);
 
     private sealed record Parts(string Accounts, string Acl);
 
