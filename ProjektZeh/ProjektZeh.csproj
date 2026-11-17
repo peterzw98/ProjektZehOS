@@ -6,7 +6,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.30</Version>
+    <Version Condition="'$(Version)' == ''">0.5.31</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
@@ -74,6 +74,37 @@
       <CCCompilerFlags Condition="'$(CCCompilerFlags)' == ''">-O2 -fno-stack-protector -nostdinc -fno-builtin</CCCompilerFlags>
       <CCCompilerFlags>$(CCCompilerFlags) -ffile-prefix-map=&quot;$(NuGetPackageRoot)=/nuget/&quot; -ffile-prefix-map=&quot;$(MSBuildProjectDirectory)=/zehos&quot;</CCCompilerFlags>
     </PropertyGroup>
+  </Target>
+
+  <!-- Cosmos.Build.CC 3.0.97 (CCBuildTask) benennt Objektdateien nur nach dem Inhalt der .c-Datei und ueberspringt
+       vorhandene. Geaenderte Header oder C-Flags (etwa d_m3MaxNativeStack, ZehOSAotProbe) liessen so alte Objekte in
+       cobj/ stehen, bis zu "undefined symbol" beim Linken. Ein Stempel aus Flags, Include-Pfaden und dem Inhalt aller
+       eigenen Header leert cobj/, sobald sich davon etwas aendert; danach uebersetzt Cosmos alle C-Dateien neu.
+       Bewusst grob: auch Header, die der jeweilige Build nicht einbindet (etwa WAMR ohne ZehOSAotProbe), loesen das aus. -->
+  <Target Name="InvalidateStaleCObjects" BeforeTargets="BuildCC" DependsOnTargets="MapNativeSourcePaths;FindCSourceFilesForCC">
+    <PropertyGroup>
+      <ZehOSCObjDir>$(IntermediateOutputPath)cosmos/cobj/</ZehOSCObjDir>
+      <ZehOSCStampFile>$(IntermediateOutputPath)cosmos/cobj.stamp</ZehOSCStampFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <ZehOSCHeader Include="Native/**/*.h;ThirdParty/**/*.h" />
+    </ItemGroup>
+    <GetFileHash Files="@(ZehOSCHeader)">
+      <Output TaskParameter="Items" ItemName="ZehOSCHeaderHash" />
+    </GetFileHash>
+    <Hash ItemsToHash="$(CCCompilerFlags);$(TargetArchitecture);@(GCCIncludePath);@(GCCProject->'%(FullPath)');@(ZehOSCHeaderHash->'%(Identity)=%(FileHash)')">
+      <Output TaskParameter="HashResult" PropertyName="ZehOSCStamp" />
+    </Hash>
+    <ReadLinesFromFile File="$(ZehOSCStampFile)" Condition="Exists('$(ZehOSCStampFile)')">
+      <Output TaskParameter="Lines" PropertyName="ZehOSCStampOld" />
+    </ReadLinesFromFile>
+    <ItemGroup Condition="'$(ZehOSCStampOld)' != '$(ZehOSCStamp)'">
+      <ZehOSStaleCObject Include="$(ZehOSCObjDir)*.o;$(ZehOSCObjDir)*.obj" />
+    </ItemGroup>
+    <Message Text="[CC] Header oder C-Flags geaendert: @(ZehOSStaleCObject->Count()) Objektdateien verworfen" Importance="High" Condition="'@(ZehOSStaleCObject)' != ''" />
+    <Delete Files="@(ZehOSStaleCObject)" />
+    <MakeDir Directories="$(IntermediateOutputPath)cosmos/" />
+    <WriteLinesToFile File="$(ZehOSCStampFile)" Lines="$(ZehOSCStamp)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <ItemGroup>
