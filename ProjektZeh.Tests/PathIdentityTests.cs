@@ -313,6 +313,35 @@ public sealed class PathIdentityTests
     }
 
     [TestMethod]
+    public void CreateUser_AdminLostBeforeCommit_DeniesWithoutTouchingHomes()
+    {
+        string root = NewRoot();
+        try
+        {
+            string homes = Path.Combine(root, "home");
+            int homeLookups = 0;
+            var accounts = Accounts(root, (path, _) =>
+            {
+                if (path.StartsWith(homes, StringComparison.Ordinal)) homeLookups++;
+                return ProjektZeh.Shared.ResultErr.CreateSuccess();
+            });
+            var admin = accounts.CreateSession();
+            Assert.IsTrue(accounts.PrepareRecovery(admin, "admin", "admin-password-123")().IsOK());
+            File.WriteAllText(Path.Combine(homes, "neu"), "hindernis");
+            var commit = accounts.CreateUserWork(admin, "neu", false, "user-password-123")();
+            accounts.ReleaseSession(admin);
+            var before = Metadata(root);
+            homeLookups = 0;
+            var result = commit();
+            Assert.IsFalse(result.IsOK());
+            Assert.AreEqual(FileAccessControl.Denied().Message, result.Message, "nur Denied, keine Topologie-Ursache fuer Nicht-Admins");
+            Assert.AreEqual(0, homeLookups, "kein Dateisystemzugriff vor der Rechtepruefung");
+            CollectionAssert.AreEqual(before, Metadata(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void Setup_HomeIsAFile_CreatesNoMetadata()
     {
         string root = NewRoot();
