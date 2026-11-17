@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSGptG8Probe)' == 'true'">$(DefineConstants);ZEHOS_GPT_G8_PROBE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />

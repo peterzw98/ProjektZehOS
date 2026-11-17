@@ -221,6 +221,26 @@ public sealed class GptInstallTests
         Assert.AreEqual(100, job.Percent);
     }
 
+#if ZEHOS_GPT_G8_PROBE
+    [TestMethod]
+    public void Job_G8Probe_WaitsAfterFlushWithoutWritingMarker()
+    {
+        var platform = new Platform();
+        var job = Service(platform).BeginGpt("min", true).Value!;
+        for (int step = 0; step < 1000 && job.Stage != InstallStage.WritingMarker; step++)
+            Assert.IsTrue(job.Step().IsOK());
+
+        Assert.AreEqual(InstallStage.WritingMarker, job.Stage);
+        Assert.AreEqual(96, job.Percent);
+        Assert.AreEqual("flush-esp", platform.Target.Calls[^1]);
+        int calls = platform.Target.Calls.Count;
+        Assert.IsTrue(job.Step().IsOK());
+        Assert.IsTrue(job.Step().IsOK());
+        Assert.AreEqual(calls, platform.Target.Calls.Count);
+        Assert.IsFalse(job.IsCompleted);
+    }
+#endif
+
     [TestMethod]
     public void Job_WritesMarkerMatchingTableAndRootMarkerWithDiskGuid()
     {
