@@ -1,6 +1,25 @@
 --- a/netsurf/frontends/framebuffer/gui.c
 +++ b/netsurf/frontends/framebuffer/gui.c
-@@ -1636,6 +1636,10 @@
+@@ -616,6 +616,9 @@
+ 	return true;
+ }
+ 
++/* ZehOS-Oberflaeche (libnsfb surface/zehos.c): sendet das fertige Bild an den Kernel. */
++void zehos_flush(void);
++
+ static void framebuffer_run(void)
+ {
+ 	nsfb_event_t event;
+@@ -643,6 +646,8 @@
+ 		}
+ 
+ 		fbtk_redraw(fbtk);
++		/* ZehOS: ein Bild je Durchgang, direkt nach dem Neuzeichnen und vor dem naechsten schedule_run. */
++		zehos_flush();
+ 	}
+ }
+ 
+@@ -1702,6 +1707,10 @@
  		int width, int height)
  {
  	fbtk_set_pos_and_size(gw->browser, x, y, width, height);

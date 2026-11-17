@@ -85,6 +85,11 @@ int main(void) {
     assert(zehos_update(&surface, &box) == 0 && zehos_update(&surface, &box) == 0 && presented == 0);
     assert(!zehos_input(&surface, &event, 0) && presented == 1);
     assert(!zehos_input(&surface, &event, 0) && presented == 1);
+    // Regelweg: NetSurfs Hauptschleife sendet direkt nach dem Neuzeichnen.
+    assert(zehos_update(&surface, &box) == 0);
+    zehos_flush();
+    zehos_flush();
+    assert(presented == 2);
     zehos_finalise(&surface);
     puts("NetSurf input PASS");
     return 0;

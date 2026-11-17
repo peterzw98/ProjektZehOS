@@ -43,8 +43,9 @@ static int pending_count;
 static int held_keys[PENDING_MAX];
 static int held_count;
 static uint32_t tic;
-// Geaendertes Bild, das noch nicht an den Kernel ging (siehe zehos_update).
+// Geaendertes Bild, das noch nicht an den Kernel ging (siehe zehos_update); NetSurf hat genau eine Oberflaeche.
 static bool dirty;
+static nsfb_t *surface;
 
 static void push_event(const nsfb_event_t *event)
 {
@@ -248,6 +249,7 @@ static int zehos_initialise(nsfb_t *nsfb)
     if (buffer == NULL) return -1;
     nsfb->ptr = buffer;
     nsfb->linelen = nsfb->width * 4;
+    surface = nsfb;
     return 0;
 }
 
@@ -275,6 +277,7 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
 
 static int zehos_finalise(nsfb_t *nsfb)
 {
+    if (surface == nsfb) surface = NULL;
     free(nsfb->ptr);
     nsfb->ptr = NULL;
     return 0;
@@ -287,9 +290,15 @@ static void present_if_dirty(nsfb_t *nsfb)
     zehos_present((const uint32_t *)nsfb->ptr, nsfb->width, nsfb->height, (int32_t)tic++, 0);
 }
 
+// Aufruf aus NetSurfs Hauptschleife direkt nach fbtk_redraw (patches/netsurf-zehos-resize-redraw.patch).
+void zehos_flush(void)
+{
+    if (surface != NULL) present_if_dirty(surface);
+}
+
 static bool zehos_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
 {
-    // NetSurf fragt Ereignisse erst nach einem vollstaendigen Neuzeichnen ab; hier ist das Bild fertig.
+    // Rueckfall, falls ein Bild ohne zehos_flush entstand; vor dem Warten, damit es nicht liegen bleibt.
     present_if_dirty(nsfb);
     uint32_t start = zehos_ticks_ms();
     for (;;) {
