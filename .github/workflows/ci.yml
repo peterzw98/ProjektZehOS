@@ -123,10 +123,9 @@ jobs:
       - name: Check relative Markdown links and anchors
         run: python3 scripts/check-doc-links.py
 
-      # shellcheck ist auf dem Runner vorinstalliert. Nur Fehler brechen ab; Warnungen (etwa SC2115 in deploy/package-repo)
-      # stehen im PR als Befund und werden gesondert behoben.
+      # shellcheck ist auf dem Runner vorinstalliert. Fehler und Warnungen brechen ab, Hinweise (info/style) nicht.
       - name: Lint shell scripts
-        run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=error
+        run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=warning
 
       - name: Lint workflows
         env:
