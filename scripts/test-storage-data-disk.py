@@ -139,7 +139,12 @@ def send_command(qmp, run: Path, command: str, ack: str, tries: int = 2, ack_tim
 
 
 def stop(process, qmp, run: Path) -> None:
-    qmp.line("shutdown")
+    # Das getippte shutdown ist der echte Abschaltpfad (Datentraeger aushaengen); QEMU beendet sich oft noch vor
+    # dem Loslassen der Taste, dann bricht die QMP-Verbindung ab. Das gilt als Beginn des Herunterfahrens.
+    try:
+        qmp.line("shutdown")
+    except (ConnectionError, OSError):
+        pass
     try:
         process.wait(timeout=60)
     except subprocess.TimeoutExpired:
