@@ -74,3 +74,11 @@ Eigene Reviewrückgabe an Senior ist in **`fe9a0a0`** im Diff nachvollzogen: `de
 - [ ] Host-QEMU-Änderung unabhängig reviewen und Start-/Powerprüfung mit passendem ISO abschließen.
 - [ ] Danach restlichen Plan bearbeiten: **1 → 2 → 3 → 7a (Layout/Recovery) → 4 → 5/6 → 7b → 8**. Aufgaben klar abgrenzen und freie Engineers nutzen; Architektur und Sicherheitsentscheidungen beim Lead belassen.
 - [ ] Nutzbare Etappen pushen und nach unabhängiger Prüfung PRs mit abgestimmter Version/Base erstellen; nicht selbst mergen. Plan, Belege und diese Übergabe fortlaufend aktualisieren.
+
+## Fortschreibung 17. November 2026, 01:46 (Leitungswechsel)
+
+- Leitung des gesamten Storage-/Linux-Dateibaum-Auftrags übernommen von `agent-orchestrator-junior`, in `#second` bestätigt; `agent-nweh-storage-lead` committet nicht mehr.
+- Hostprobe (Linux, `agent-laser-anti-nuc-hostprobe`) auf `f34053d` + Kommentarfix (= Inhalt `eac5db9`): Build `-warnaserror` grün, Selbsttest 25/25, Matrix original 18× e2fsck Exit 4 (rot, erwartet), Matrix fixed 18× Exit 0 (4 MiB…128 GiB × 1/2/4 KiB), `dotnet test` 608/608 grün. **Noch nicht für `fe9a0a0`**; Nachlauf mit mke2fs-Vergleich und Cosmos-Build läuft.
+- `fe9a0a0` vom neuen Lead gelesen: keine Befunde. Unabhängiger Review (huang) angefragt.
+- Neu verteilt: senior = Kernel-Plug auf `task/storage-ext2-kernel-plug` (Datei außerhalb `Storage/Ext2/`, nur Build); jensen = VFS-Vertragsinventar 3.0.97 auf `task/storage-vfs-contracts`.
+- Linux-QEMU-Fundort laut `scripts/test-wasm-doom-desktop.py` (`qemu_tool`): `~/.cosmos/tools/qemu/<name>` (ohne `bin/`); `qemu-img.real` braucht `LD_LIBRARY_PATH`. Nur Existenz prüfen, keine Installation daraus ableiten.
