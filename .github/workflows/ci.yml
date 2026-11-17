@@ -88,12 +88,13 @@ jobs:
       - name: Check coverage
         # Alle gefundenen Berichte werden zusammengefuehrt (die Hang-Erkennung legt eine zweite Kopie ab). Ohne Treffer
         # bricht das Skript mit einem Eingabefehler ab, statt 0 % durchzuwinken.
-        run: >-
-          python3 scripts/check-coverage.py $(find TestResults -name '*.cobertura.xml')
-          --min-total 92 --min-file 50
-          --exclusions scripts/coverage-exclusions.txt
-          --sources ProjektZeh
-          --summary "$GITHUB_STEP_SUMMARY"
+        run: |
+          mapfile -d '' reports < <(find TestResults -name '*.cobertura.xml' -print0)
+          python3 scripts/check-coverage.py "${reports[@]}" \
+            --min-total 92 --min-file 50 \
+            --exclusions scripts/coverage-exclusions.txt \
+            --sources ProjektZeh \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test results
         if: always()
