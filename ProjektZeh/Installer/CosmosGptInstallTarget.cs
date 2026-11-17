@@ -6,6 +6,7 @@ using Cosmos.Kernel.System.FileSystem.Fat;
 using Cosmos.Kernel.System.Storage;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage.Ext2;
+using ProjektZeh.Storage.Migration;
 using ProjektZeh.Storage.Partitioning;
 
 namespace ProjektZeh.Installer;
@@ -43,7 +44,8 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
 
     public ResultErr FormatEsp() => Try(() =>
     {
-        if (!VfsManager.TryFormat(espFileSystem, esp!, new FatFormatOptions { Type = FatType.Fat32, VolumeLabel = EspLabel }))
+        // Cosmos 3.0.97 liest die ESP mit 4-KiB-Clustern; groessere Cluster sind nicht verlaesslich.
+        if (!VfsManager.TryFormat(espFileSystem, esp!, new FatFormatOptions { Type = FatType.Fat32, SectorsPerCluster = 8, VolumeLabel = EspLabel }))
             return Failed("FAT32-Formatierung der EFI-Partition fehlgeschlagen.");
         if (!VfsManager.TryMount(espFileSystem, esp!, MountFlags.None, espMount, out _))
             return Failed("Die EFI-Partition konnte nicht eingebunden werden.");
@@ -74,11 +76,11 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         var volume = new CosmosRootVolume(root!, mount);
         var opened = RootVolumeState.Open(volume);
         if (!opened.IsOK()) return opened;
-        // Vollstaendige Liste der vom Installer auf Root angelegten Eintraege (E4.4 §4 verweist hierauf).
-        foreach (string directory in new[] { "/boot", "/boot/efi", "/mnt", "/proc", "/sys", "/dev", "/etc", "/etc/zehos" })
-            Directory.CreateDirectory(RootMount + directory);
-        var marker = WriteRootMarker(diskGuid);
-        if (!marker.IsOK()) return marker;
+        // Migration und Installer verwenden dieselbe Liste, damit eine Wiederholung keine fremden Daten loescht.
+        foreach (string entry in LayoutMigration.InstallerEntries)
+            if (!string.Equals(entry, LayoutMarker.Path, StringComparison.Ordinal))
+                Directory.CreateDirectory(RootMount + entry);
+        File.WriteAllText(RootMount + LayoutMarker.Path, new LayoutMarker(LayoutState.Fresh, diskGuid).Serialize());
         var closed = RootVolumeState.Close(volume);
         if (!closed.IsOK()) return closed;
         if (!VfsManager.TryUnmount(RootMount)) return Failed("Root konnte nicht ausgehaengt werden.");
@@ -87,9 +89,6 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         device.Flush();
         return ResultErr.CreateSuccess();
     });
-
-    // shortcut: Root-Marker /etc/zehos/.zehos-layout (state=fresh, Disk-GUID) folgt mit ChecksummedText nach dem E4.4-Merge (Entscheidung lead2 17.11. 15:23); bis dahin bricht der GPT-Weg hier ab.
-    private static ResultErr WriteRootMarker(Guid diskGuid) => Failed($"Root-Marker noch nicht umgesetzt (wartet auf E4.4), Disk {diskGuid:D}.");
 
     public ResultErr WriteFileChunk(string path, byte[] data, int offset, int count, bool first, bool last)
     {
