@@ -137,22 +137,30 @@ internal static class TlsTransport
         protected override ProtocolVersion[] GetSupportedVersions() => [ProtocolVersion.TLSv13, ProtocolVersion.TLSv12];
 
         // Etappe 12.2: auch die Handshake-Signatur (TLS 1.2 ServerKeyExchange, TLS 1.3 CertificateVerify) nie mit SHA-1
-        // oder schwaecher; angeboten werden nur die Standardverfahren mit SHA-2 bzw. EdDSA.
-        protected override IList<SignatureAndHashAlgorithm> GetSupportedSignatureAlgorithms()
-        {
-            var strong = new List<SignatureAndHashAlgorithm>();
-            foreach (var algorithm in base.GetSupportedSignatureAlgorithms())
-                if (IsStrongHandshakeSignature(algorithm)) strong.Add(algorithm);
-            return strong;
-        }
+        // oder schwaecher. BouncyCastle prueft beide gegen diese Liste.
+        protected override IList<SignatureAndHashAlgorithm> GetSupportedSignatureAlgorithms() =>
+            StrongHandshakeSignatures(base.GetSupportedSignatureAlgorithms());
         protected override IList<ServerName>? GetSniServerNames() => CertificateVerifier.ParseIPv4(host) == null
             ? [new ServerName(NameType.host_name, Encoding.ASCII.GetBytes(host))] : null;
         public override TlsAuthentication GetAuthentication() => new Authentication(host, roots, utcNow);
         public override bool RequiresCloseNotify() => requireCloseNotify;
     }
 
+    /// <summary>
+    /// Behaelt RSA (PKCS#1 v1.5 und PSS) und ECDSA mit SHA-2 sowie EdDSA. DSA entfaellt, weil der Pruefer keine DSA-Schluessel
+    /// liest; ML-DSA (Hash-Byte 9) ebenso, weil der Pruefer solche Zertifikate nicht annimmt.
+    /// </summary>
+    internal static IList<SignatureAndHashAlgorithm> StrongHandshakeSignatures(IList<SignatureAndHashAlgorithm> offered)
+    {
+        var strong = new List<SignatureAndHashAlgorithm>();
+        foreach (var algorithm in offered)
+            if (IsStrongHandshakeSignature(algorithm)) strong.Add(algorithm);
+        return strong;
+    }
+
     internal static bool IsStrongHandshakeSignature(SignatureAndHashAlgorithm algorithm) =>
-        algorithm.Hash is HashAlgorithm.sha256 or HashAlgorithm.sha384 or HashAlgorithm.sha512 || algorithm.Hash == HashAlgorithm.Intrinsic;
+        algorithm.Signature != SignatureAlgorithm.dsa &&
+        (algorithm.Hash is HashAlgorithm.sha256 or HashAlgorithm.sha384 or HashAlgorithm.sha512 || algorithm.Hash == HashAlgorithm.Intrinsic);
 
     private sealed class Authentication(string host, IList<X509Certificate> roots, DateTime utcNow) : TlsAuthentication
     {

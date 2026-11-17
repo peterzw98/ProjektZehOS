@@ -5,6 +5,9 @@ using System.Text;
 using Cosmos.Network.Http;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Org.BouncyCastle.Asn1;
+using Org.BouncyCastle.Asn1.Nist;
+using Org.BouncyCastle.Asn1.Oiw;
+using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.Sec;
 using Org.BouncyCastle.Asn1.X509;
 using Org.BouncyCastle.Asn1.X9;
@@ -72,6 +75,54 @@ public sealed class CertificateStrengthTests
         Assert.IsNull(Verify(Leaf("SHA384WITHRSA")));
         Assert.IsNull(Verify(Leaf(key: Ec(SecObjectIdentifiers.SecP256r1))), "P-256-Blatt");
         Assert.IsNull(Verify(Leaf("SHA256WITHRSAANDMGF1")), "RSASSA-PSS mit SHA-256");
+        Assert.IsNull(Verify(Leaf(key: Ec(SecObjectIdentifiers.SecP384r1))), "P-384-Blatt");
+        Assert.IsNull(Verify(Leaf(key: Ec(SecObjectIdentifiers.SecP521r1))), "P-521-Blatt");
+        var edGenerator = new Ed25519KeyPairGenerator();
+        edGenerator.Init(new Ed25519KeyGenerationParameters(Random));
+        Assert.IsNull(Verify(Leaf(key: edGenerator.GenerateKeyPair())), "Ed25519-Blatt");
+    }
+
+    [TestMethod]
+    public void Sha1SelfSignedCopyOfTheRootAfterATrustedPathStillPasses()
+    {
+        // Server haengen oft die Wurzel (auch mit SHA-1-Selbstsignatur) an; sie wird nie erreicht, wenn die Wurzel vertraut ist.
+        var appended = Issue("CN=Test Root", RootKey, "CN=Test Root", RootKey.Private, "SHA1WITHRSA", ca: true);
+        Assert.IsNull(Verify(Leaf(), appended));
+    }
+
+    [TestMethod]
+    public void PssNeedsSha2AndMatchingMgf1()
+    {
+        var sha256 = new AlgorithmIdentifier(NistObjectIdentifiers.IdSha256, DerNull.Instance);
+        var sha1 = new AlgorithmIdentifier(OiwObjectIdentifiers.IdSha1, DerNull.Instance);
+        Assert.IsTrue(CertificateVerifier.HasStrongSignature(WithAlgorithm(Pss(sha256, sha256))));
+        Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(Pss(sha256, sha1))), "MGF1 mit SHA-1");
+        Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(Pss(sha1, sha1))), "SHA-1");
+        Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(new AlgorithmIdentifier(PkcsObjectIdentifiers.IdRsassaPss))), "ohne Parameter = SHA-1");
+        Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(new AlgorithmIdentifier(PkcsObjectIdentifiers.IdRsassaPss, DerNull.Instance))), "NULL-Parameter");
+    }
+
+    private static AlgorithmIdentifier Pss(AlgorithmIdentifier hash, AlgorithmIdentifier maskHash) =>
+        new(PkcsObjectIdentifiers.IdRsassaPss, new RsassaPssParameters(hash, new AlgorithmIdentifier(PkcsObjectIdentifiers.IdMgf1, maskHash),
+            DerInteger.ValueOf(32), DerInteger.ValueOf(1)));
+
+    // Nur die Algorithmusangabe zaehlt fuer HasStrongSignature; die Signatur selbst stammt von einem echten SHA-256-Signierer.
+    private static X509Certificate WithAlgorithm(AlgorithmIdentifier algorithm)
+    {
+        var generator = new X509V3CertificateGenerator();
+        generator.SetSerialNumber(BigInteger.One);
+        generator.SetSubjectDN(new X509Name("CN=x"));
+        generator.SetIssuerDN(new X509Name("CN=Test Root"));
+        generator.SetNotBefore(Now.AddDays(-1));
+        generator.SetNotAfter(Now.AddDays(1));
+        generator.SetPublicKey(RootKey.Public);
+        return generator.Generate(new ClaimedAlgorithm(algorithm, new Asn1SignatureFactory("SHA256WITHRSA", RootKey.Private, Random)));
+    }
+
+    private sealed class ClaimedAlgorithm(AlgorithmIdentifier algorithm, ISignatureFactory signer) : ISignatureFactory
+    {
+        public object AlgorithmDetails => algorithm;
+        public IStreamCalculator<IBlockResult> CreateCalculator() => signer.CreateCalculator();
     }
 
     [TestMethod]
@@ -128,7 +179,25 @@ public sealed class CertificateStrengthTests
 
         // Gepruefter Stand 17.11.2026: 121 Wurzeln, keine faellt durch die Regeln heraus (Spec §5.2).
         var shipped = new X509CertificateParser().ReadCertificates(TlsRoots.Load()).Count;
-        Assert.AreEqual(shipped, TlsTransport.LoadAnchors(TlsRoots.Load()).Count);
+        Assert.AreEqual(shipped, TlsTransport.LoadAnchors(TlsRoots.Load()).Count,
+            "Stolperdraht: eine neue Wurzel faellt heraus (Schluessel, kritische Erweiterung oder Zweck) - Bundle pruefen, Regel nicht still lockern.");
+    }
+
+    [TestMethod]
+    public void HandshakeListKeepsCommonSchemesAndDropsWeakOnes()
+    {
+        var offered = new List<SignatureAndHashAlgorithm>
+        {
+            SignatureAndHashAlgorithm.ed25519,
+            SignatureAndHashAlgorithm.rsa_pss_rsae_sha256,
+            SignatureAndHashAlgorithm.GetInstance(HashAlgorithm.sha256, SignatureAlgorithm.ecdsa),
+            SignatureAndHashAlgorithm.GetInstance(HashAlgorithm.sha256, SignatureAlgorithm.rsa),
+            SignatureAndHashAlgorithm.GetInstance(HashAlgorithm.sha256, SignatureAlgorithm.dsa),
+            SignatureAndHashAlgorithm.GetInstance(HashAlgorithm.sha1, SignatureAlgorithm.rsa),
+            SignatureAndHashAlgorithm.GetInstance(HashAlgorithm.sha224, SignatureAlgorithm.ecdsa),
+        };
+        var kept = TlsTransport.StrongHandshakeSignatures(offered);
+        CollectionAssert.AreEqual(offered.Take(4).ToList(), kept.ToList());
     }
 
     [TestMethod]

@@ -109,7 +109,8 @@ namespace Cosmos.Network.Http
         }
 
         /// <summary>
-        /// Whether a server certificate names a host, by its subjectAltName (dNSName or iPAddress), else its common name.
+        /// Whether a server certificate names a host, by its subjectAltName (dNSName or iPAddress); ZehOS: never by its
+        /// common name.
         /// </summary>
         internal static bool NamesHost(BcCertificate certificate, string host)
         {
@@ -122,7 +123,7 @@ namespace Cosmos.Network.Http
             Asn1OctetString extension = certificate.GetExtensionValue(X509Extensions.SubjectAlternativeName);
             if (extension != null)
             {
-                // A malformed extension names nothing, the common name included, as mbedTLS refuses the certificate.
+                // A malformed extension names nothing, as mbedTLS refuses the certificate.
                 // Null for an empty one, which a peer may send: a null dereference is a kernel panic on Cosmos.
                 GeneralName[] all;
                 try
@@ -414,27 +415,35 @@ namespace Cosmos.Network.Http
 
         internal static bool HasStrongSignature(BcCertificate certificate)
         {
-            var oid = new DerObjectIdentifier(certificate.SigAlgOid);
-            if (Array.IndexOf(s_strongSignatures, oid) >= 0)
+            AlgorithmIdentifier algorithm = certificate.CertificateStructure.SignatureAlgorithm;
+            if (Array.IndexOf(s_strongSignatures, algorithm.Algorithm) >= 0)
             {
                 return true;
             }
 
-            if (!oid.Equals(PkcsObjectIdentifiers.IdRsassaPss))
+            // RSASSA-PSS: a SHA-2 hash and MGF1 with the same hash (CA/B Baseline Requirements). Missing parameters
+            // would mean SHA-1; they are tested without throwing, as exceptions are slow on Cosmos and two at once on
+            // different threads halt it.
+            if (!algorithm.Algorithm.Equals(PkcsObjectIdentifiers.IdRsassaPss) || algorithm.Parameters?.ToAsn1Object() is not Asn1Sequence sequence)
             {
                 return false;
             }
 
+            RsassaPssParameters parameters;
             try
             {
-                var parameters = RsassaPssParameters.GetInstance(Asn1Object.FromByteArray(certificate.GetSigAlgParams()));
-                return Array.IndexOf(s_strongHashes, parameters.HashAlgorithm.Algorithm) >= 0;
+                parameters = RsassaPssParameters.GetInstance(sequence);
             }
             catch
             {
-                // Missing or malformed parameters: the default hash would be SHA-1.
+                // A malformed parameter sequence.
                 return false;
             }
+
+            DerObjectIdentifier hash = parameters.HashAlgorithm.Algorithm;
+            AlgorithmIdentifier mask = parameters.MaskGenAlgorithm;
+            return Array.IndexOf(s_strongHashes, hash) >= 0 && mask.Algorithm.Equals(PkcsObjectIdentifiers.IdMgf1) &&
+                mask.Parameters?.ToAsn1Object() is Asn1Sequence maskHash && AlgorithmIdentifier.GetInstance(maskHash).Algorithm.Equals(hash);
         }
 
         /// <summary>
