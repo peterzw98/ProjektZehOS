@@ -28,6 +28,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly InteractiveSession interactive;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
+    private readonly CosmosSystemFiles systemFiles;
     private bool startDesktop;
     private static UpdateVersion CurrentVersion
     {
@@ -66,6 +67,7 @@ public sealed class Kernel : Sys.Kernel
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => VfsManager.TryGetMount(Paths.AdminRoot, out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        systemFiles = new CosmosSystemFiles(storage, VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
 #if ZEHOS_INSTALLER
@@ -79,7 +81,8 @@ public sealed class Kernel : Sys.Kernel
 #endif
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
-            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
+            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace,
+                virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -126,7 +129,8 @@ public sealed class Kernel : Sys.Kernel
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
+        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace,
+            virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
