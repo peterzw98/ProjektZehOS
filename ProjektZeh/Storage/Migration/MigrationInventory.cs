@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage.Migration;
@@ -31,15 +32,16 @@ internal sealed class MigrationInventory
     /// <summary>SHA-256 ueber Pfade, Arten, Groessen und Inhaltspruefsummen; Grundlage von Journalkopf und Root-Marker.</summary>
     public string Hash { get; }
 
-    public static ResultObject<MigrationInventory> Read(string sourceRoot, int maximumEntries = MaximumEntries)
+    public static ResultObject<MigrationInventory> Read(string sourceRoot, int maximumEntries = MaximumEntries,
+        CancellationToken cancellation = default)
     {
-        var listed = List(sourceRoot, maximumEntries);
+        var listed = List(sourceRoot, maximumEntries, cancellation);
         if (!listed.IsOK()) return ResultObjectFactory.CreateFailure<MigrationInventory>(listed.Status);
         var entries = listed.Value!;
         for (int i = 0; i < entries.Count; i++)
         {
             if (entries[i].IsDirectory) continue;
-            var hash = HashFile(sourceRoot, entries[i].RelativePath);
+            var hash = HashFile(sourceRoot, entries[i].RelativePath, cancellation);
             if (!hash.IsOK()) return ResultObjectFactory.CreateFailure<MigrationInventory>(hash.Status);
             entries[i] = entries[i] with { Sha256 = hash.Value };
         }
@@ -50,19 +52,20 @@ internal sealed class MigrationInventory
     /// Schritt 8: vergleicht Verzeichnisliste, Groessen und Zeitstempel mit diesem Inventar und hasht nur abweichende Dateien
     /// neu (sonst wuerde die Platte ein weiteres Mal vollstaendig gelesen, huang P3 c). Jede Abweichung ist ein Fehler.
     /// </summary>
-    public ResultErr VerifyUnchanged(string sourceRoot)
+    public ResultErr VerifyUnchanged(string sourceRoot, CancellationToken cancellation = default)
     {
-        var listed = List(sourceRoot, MaximumEntries);
+        var listed = List(sourceRoot, MaximumEntries, cancellation);
         if (!listed.IsOK()) return listed.Status;
         var current = listed.Value!;
         if (current.Count != Entries.Count) return Changed("Anzahl der Eintraege");
         for (int i = 0; i < current.Count; i++)
         {
+            cancellation.ThrowIfCancellationRequested();
             InventoryEntry before = Entries[i], now = current[i];
             if (!string.Equals(before.RelativePath, now.RelativePath, StringComparison.Ordinal) || before.IsDirectory != now.IsDirectory ||
                 before.Size != now.Size) return Changed(now.RelativePath);
             if (before.IsDirectory || before.LastWriteTicks == now.LastWriteTicks) continue;
-            var hash = HashFile(sourceRoot, now.RelativePath);
+            var hash = HashFile(sourceRoot, now.RelativePath, cancellation);
             if (!hash.IsOK()) return hash.Status;
             if (!string.Equals(hash.Value, before.Sha256, StringComparison.Ordinal)) return Changed(now.RelativePath);
         }
@@ -73,7 +76,7 @@ internal sealed class MigrationInventory
     public static string HostPath(string sourceRoot, string relativePath) =>
         Path.Combine(sourceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
-    private static ResultObject<List<InventoryEntry>> List(string sourceRoot, int maximumEntries)
+    private static ResultObject<List<InventoryEntry>> List(string sourceRoot, int maximumEntries, CancellationToken cancellation)
     {
         var entries = new List<InventoryEntry>();
         var pending = new Stack<(DirectoryInfo Directory, string Relative)>();
@@ -82,6 +85,7 @@ internal sealed class MigrationInventory
             pending.Push((new DirectoryInfo(sourceRoot), ""));
             while (pending.Count > 0)
             {
+                cancellation.ThrowIfCancellationRequested();
                 var (directory, relative) = pending.Pop();
                 foreach (var child in directory.EnumerateFileSystemInfos())
                 {
@@ -113,11 +117,11 @@ internal sealed class MigrationInventory
         return ResultObjectFactory.CreateSuccess(entries);
     }
 
-    private static ResultObject<string> HashFile(string sourceRoot, string relativePath)
+    private static ResultObject<string> HashFile(string sourceRoot, string relativePath, CancellationToken cancellation)
     {
         try
         {
-            using var stream = File.OpenRead(HostPath(sourceRoot, relativePath));
+            using var stream = new CancellationReadStream(File.OpenRead(HostPath(sourceRoot, relativePath)), cancellation);
             return ResultObjectFactory.CreateSuccess(Convert.ToHexStringLower(SHA256.HashData(stream)));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

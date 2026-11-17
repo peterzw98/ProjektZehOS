@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
@@ -119,6 +120,44 @@ public sealed class LayoutMigrationTests
         public int Released { get; private set; }
         public Lock Take() { Taken++; return this; }
         public void Dispose() => Released++;
+    }
+
+    [TestMethod]
+    public void CancellationBeforeReadyLeavesTheTargetUnreadyAndReleasesTheSource()
+    {
+        StandardSource();
+        foreach (MigrationStep step in Enum.GetValues<MigrationStep>())
+        {
+            var target = Target();
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var result = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add,
+                current => { if (current == step) cancellation.Cancel(); }, cancellation.Token);
+            Assert.AreEqual(1, sourceLock.Released, step.ToString());
+            if (step == MigrationStep.Ready)
+                Assert.IsTrue(result.IsOK(), "Ein bereits abgeschlossener Commit wird nicht rueckwirkend abgebrochen.");
+            else
+            {
+                Assert.IsFalse(result.IsOK(), step.ToString());
+                StringAssert.Contains(result.Status.Message, "cause='MigrationCancelled'");
+                Assert.AreNotEqual(LayoutState.Ready, target.Marker().State, step.ToString());
+            }
+        }
+    }
+
+    [TestMethod]
+    public void AlreadyCancelledMigrationDoesNotWriteAndReleasesTheSource()
+    {
+        StandardSource();
+        var target = Target();
+        var sourceLock = new Lock();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var result = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add, cancellation: cancellation.Token);
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Status.Message, "cause='MigrationCancelled'");
+        Assert.IsFalse(Writes(target));
+        Assert.AreEqual(1, sourceLock.Released);
     }
 
     private ResultObject<MigrationReport> Run(FakeMigrationTarget target, Lock? sourceLock = null, Action<MigrationStep>? progress = null)
