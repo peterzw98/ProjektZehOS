@@ -107,15 +107,10 @@ internal sealed class FileService
             }
             Authorize(resolved.Value!, FilePermission.Read);
             using var reader = new StreamReader(resolved.Value!);
-            // UTF-8 hat nie mehr Zeichen als Bytes: Puffer nach Dateigroesse, damit grosse Grenzen nichts kosten.
-            var buffer = new char[(int)Math.Min(reader.BaseStream.Length, maximumLength) + 1];
-            int length = reader.ReadBlock(buffer, 0, buffer.Length);
-            if (length > maximumLength)
-            {
-                return ResultObjectFactory.CreateFailure<string>(TextTooLarge(maximumLength));
-            }
-
-            return ResultObjectFactory.CreateSuccess(new string(buffer, 0, length));
+            var text = ReadToEnd(reader, maximumLength);
+            return text == null
+                ? ResultObjectFactory.CreateFailure<string>(TextTooLarge(maximumLength))
+                : ResultObjectFactory.CreateSuccess(text);
         }
         catch (FileNotFoundException) when (allowMissing)
         {
@@ -125,6 +120,24 @@ internal sealed class FileService
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
+    }
+
+    /// <summary>Liest bis EOF (nicht nach Stream.Length: /proc-Dateien melden 0); null, wenn mehr als <paramref name="maximumLength"/> Zeichen kommen.</summary>
+    internal static string? ReadToEnd(TextReader reader, int maximumLength)
+    {
+        var text = new StringBuilder();
+        var chunk = new char[4096];
+        int read;
+        while ((read = reader.Read(chunk, 0, (int)Math.Min(chunk.Length, (long)maximumLength + 1 - text.Length))) > 0)
+        {
+            text.Append(chunk, 0, read);
+            if (text.Length > maximumLength)
+            {
+                return null;
+            }
+        }
+
+        return text.ToString();
     }
 
     public ResultObject<byte[]> ReadBytes(string? path, int maximumLength)
