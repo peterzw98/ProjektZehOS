@@ -35,7 +35,8 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
     {
         superblock = null;
         // Eine Source würde im Cosmos-Treiber das injizierte Lesegerät umgehen.
-        if (!source.IsEmpty || (flags & MountFlags.ReadOnly) == 0 || device.BlockSize != 512 || device.BlockCount < 4) return false;
+        if (!source.IsEmpty || (flags & MountFlags.ReadOnly) == 0 || device.BlockSize != 512
+            || device.BlockCount < 4 || device.BlockCount > (ulong)Ext2FeatureGate.MaximumBlocks * 8) return false;
         byte[] header = new byte[1024];
         device.ReadBlock(2, 2, header);
         if (Ext2FeatureGate.Evaluate(header) == Ext2MountDecision.Reject) return false;

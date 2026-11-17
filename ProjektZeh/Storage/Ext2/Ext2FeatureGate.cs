@@ -22,6 +22,8 @@ public enum Ext2MountDecision
 /// </summary>
 public static class Ext2FeatureGate
 {
+    internal const uint MaximumBlocks = 33554432; // 128 GiB mit 4096-Byte-Blöcken.
+    private const uint MaximumGroups = 16384; // Das geprüfte Formatterprofil verwendet 8-MiB-Gruppen.
     private const int SuperblockSize = 1024;
     private const int MagicOffset = 56;
     private const int StateOffset = 58;
@@ -57,9 +59,15 @@ public static class Ext2FeatureGate
         uint inodesPerGroup = BitConverter.ToUInt32(superblock.Slice(40, 4));
         ushort inodeSize = BitConverter.ToUInt16(superblock.Slice(InodeSizeOffset, 2));
         // Die nativen Bitmap-/Inodetabellenpfade setzen diese Grenzen voraus; dies ersetzt kein fsck.
-        if (inodes == 0 || blocks < 16 || firstDataBlock != 0
+        if (inodes == 0 || blocks < 16 || blocks > MaximumBlocks || firstDataBlock != 0
             || blocksPerGroup is 0 or > 32768 || inodesPerGroup is 0 or > 32768
             || inodeSize < 128 || inodeSize > 4096 || (inodeSize & (inodeSize - 1)) != 0)
+        {
+            return Ext2MountDecision.Reject;
+        }
+
+        ulong groups = ((ulong)blocks + blocksPerGroup - 1) / blocksPerGroup;
+        if (groups > MaximumGroups || (ulong)inodes != groups * inodesPerGroup)
         {
             return Ext2MountDecision.Reject;
         }

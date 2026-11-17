@@ -125,4 +125,45 @@ public sealed class Ext2FeatureGateTests
         BitConverter.TryWriteBytes(header.AsSpan(88, 2), (ushort)inodeSize);
         Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
     }
+
+    [TestMethod]
+    [DataRow(127u)]
+    [DataRow(129u)]
+    [DataRow(268435456u)]
+    public void Evaluate_InconsistentInodeCount_IsReject(uint inodes)
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(0, 4), inodes);
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
+    }
+
+    [TestMethod]
+    public void Evaluate_ExcessiveGroupCount_IsReject()
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(0, 4), 32768u);
+        BitConverter.TryWriteBytes(header.AsSpan(4, 4), 32768u);
+        BitConverter.TryWriteBytes(header.AsSpan(32, 4), 1u);
+        BitConverter.TryWriteBytes(header.AsSpan(40, 4), 1u);
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
+    }
+
+    [TestMethod]
+    public void Evaluate_VolumeOver128GiB_IsReject()
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(4, 4), 33554433u);
+        Assert.AreEqual(Ext2MountDecision.Reject, Ext2FeatureGate.Evaluate(header));
+    }
+
+    [TestMethod]
+    public void Evaluate_128GiBFormatterGeometry_IsOk()
+    {
+        byte[] header = Superblock();
+        BitConverter.TryWriteBytes(header.AsSpan(0, 4), 4194304u);
+        BitConverter.TryWriteBytes(header.AsSpan(4, 4), 33554432u);
+        BitConverter.TryWriteBytes(header.AsSpan(32, 4), 2048u);
+        BitConverter.TryWriteBytes(header.AsSpan(40, 4), 256u);
+        Assert.AreEqual(Ext2MountDecision.Ok, Ext2FeatureGate.Evaluate(header));
+    }
 }

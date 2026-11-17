@@ -18,6 +18,9 @@ Vor dem nativen Mount werden außerdem positive Inode-/Blockzahlen (mindestens 1
 Gruppengrößen von 1 bis 32768 sowie eine Inodegröße als Zweierpotenz zwischen 128 und 4096 geprüft. Damit werden
 offensichtliche Geometriefehler vor den nativen Bitmap- und Inodetabellenzugriffen abgelehnt; Verweise innerhalb
 der Gruppen und beschädigte Verzeichnisse benötigen weiterhin eine unabhängige Offlineprüfung.
+Volumen und Gerät sind auf 128 GiB begrenzt; höchstens 16384 Gruppen entsprechen dem geprüften Formatterprofil
+mit 8-MiB-Gruppen. Die Inodezahl muss exakt Gruppenzahl × Inodes je Gruppe entsprechen (überlaufsicher mit `ulong`
+berechnet). Diese Grenzen verhindern unkontrollierte Gruppendeskriptor-Allokationen aus manipulierten Headern.
 
 Das Mountflag allein verhindert in Cosmos 3.0.97 nicht alle Schreibzugriffe. Erneute ILSpy-Prüfung der installierten
 `Cosmos.Kernel.System.dll` aus Paket 3.0.97 bestätigte (Zeilen im dekompilierten Quelltext):
