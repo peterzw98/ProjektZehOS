@@ -2,6 +2,8 @@
 
 Stand: 17. November 2026. Arbeitszweig `task/storage-ext2-qualification`, Ausgangspunkt `d443931` (ZehOS 0.5.6, Cosmos-Pakete 3.0.97).
 
+Die folgenden Abschnitte bis einschließlich „Offene Arbeit und nächster Entscheidungspunkt“ dokumentieren die historische Erstprüfung des unveränderten Formatierers. Sie sind keine aktuelle Gesamtfreigabe. Spätere Treiber- und Speicherbefunde stehen im [E4.0-Nachtrag](#e40-spätere-laufzeitbefunde-17-november-2026).
+
 ## Entscheidung
 
 **Keine Freigabe des Cosmos-3.0.97-ext2-Formatierers.** Die von ihm frisch erzeugten Dateisysteme bestehen die externe Konsistenzprüfung nicht. Weder ein erfolgreicher Formatter-Rückgabewert noch ein erfolgreicher Mount würde diese Fehler widerlegen. Bestehender FAT32-Betrieb, Bestandsimages und Kernel-Dateizugriffe wurden nicht verändert.
@@ -55,3 +57,72 @@ Die Binärinspektion ist reproduzierbar mit `ilspycmd -t <vollständiger Typname
 Keine ext2-Gastfreigabe für QEMU oder VMware, kein GPT-Installerwechsel, keine Root-Migration und keine `/proc`-/`/sys`-Implementierung. Diese Schritte werden nicht als erledigt abgehakt. Der Windows-CLI-Versionsunterschied ist für die reine Hostprobe kein Grund, ungefragt Werkzeuge zu ändern.
 
 Empfehlung: die drei Formatterbefunde zunächst gegen den exakten Cosmos-Quellstand als reproduzierbaren Fehlerbericht/Fix vorbereiten und danach die Matrix erneut ausführen. Einen externen Issue oder PR nur nach Auftrag veröffentlichen. Bis zu einer geprüften Lösung FAT32 beibehalten. Eine eigene abweichende Formatterkopie im Kernel oder ein Wechsel zu exFAT/ext4 wäre eine neue Architekturentscheidung; der Formatiererfehler allein rechtfertigt keinen ungeprüften Port.
+
+## E4.0: spätere Laufzeitbefunde (17. November 2026)
+
+Dieser Nachtrag trennt den am versionsgebundenen Cosmos-Code geprüften Fehler von den durch andere Agenten ausgeführten und im Projekt-IRC gemeldeten Host-/Gastläufen. Für diesen Dokumentationsstand wurden die Dateisystem- und Speicherläufe nicht erneut ausgeführt. Die Rohdaten der genannten Läufe liegen bei den ausführenden Agenten; die unten genannten Ablageorte sind Belegpointer, keine eingecheckten Testartefakte. Einzelne PASS-Ergebnisse erteilen keine Gesamtfreigabe für ext2 oder die Root-Migration.
+
+### Entfernen über ext2-Blockgrenzen
+
+**Quellbefund:** `Ext2DirectoryHelper.RemoveEntry` in [Cosmos 3.0.97, Commit efcf20cc](https://github.com/CosmosOS/Cosmos/blob/efcf20cc62884b042a0adadffe9fc4540491fd89/src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Directory.cs) führt `prevPos` und `prevRecLen` über das gesamte Verzeichnis weiter. Beim Entfernen des ersten Records eines Folgeblocks vergrößert es damit den letzten Record des vorherigen Blocks; dessen `rec_len` überschreitet die Blockgrenze. Bei wiederholtem Verschmelzen ist außerdem ein Überlauf des 16-Bit-Längenfelds möglich. Die reine Auflistung durch Cosmos ist kein Konsistenznachweis.
+
+**Gemeldete Belege:**
+
+| Prüfung | Aufbau und Ergebnis | Herkunft |
+| --- | --- | --- |
+| E4.0 Lauf 10 | QEMU/KVM, 2-GiB-Dateisystem; 600 Dateien, erste 300 gelöscht. Cosmos listet die übrigen 300, aber `e2fsck -fn` endet mit Exit 12 und beschädigtem Verzeichnis (Inode 11, Block 0). | peter-senior, IRC 17.11.2026 20:58–20:59 UTC; `scripts/test-storage-ext2-root.py --size 2 --diagnose-run 10`, Ablage `.tools/e40-span/` auf seinem Rechner |
+| Unabhängiger Hostbeweis | Echter unveränderter Cosmos-3.0.97-Treiber, 32-MiB-ext2, 4-KiB-Blöcke, 600 Dateien. `n0253` bei Offset 4072 hat `rec_len=24`; Entfernen von `n0254` am Blockanfang 4096 vergrößert die Länge auf 40: Ende 4112 statt höchstens 4096. `e2fsck -fn`: vorher 0, nachher 12. | codex-upper-test, Branch `task/ext2-boundary-test`, IRC 21:02 UTC; `/tmp/zehos-ext2-boundary-01/{before,after}.img`; Branch zum Dokuabgleich noch nicht auf origin verfügbar |
+| Gegenprüfung des Hostbeweises | Eigener Parser, `e2fsck` und `debugfs` auf Kopien bestätigen denselben Grenzübertritt; erneuter Skriptlauf reproduziert ihn. Der Kontrollfall `n0255` innerhalb eines Blocks hält die Recordstruktur korrekt. | RED-ext2-review, IRC 21:14 UTC |
+
+Der Hostlauf meldete zusätzlich fehlendes `dtime` bei freigegebenen Inodes (im Kontrollfall Exit 4); das ist ein separater bekannter Befund des ungeplugten Cosmos-Treibers. ZehOS hat dafür bereits `CosmosExt2FreeInodePlug`/`Ext2InodeRelease`. Die 4096 verwaisten Inodes aus Lauf 9 (`.tools/e40-limit4/`) sind nicht pauschal als Folge des Grenzfehlers belegt.
+
+**Produktfolgen und Stand der Umgehung:** Betroffen sind Löschungen sowie Umbenennungen, damit auch `rm`, `mv`, Austausch per temporärer Datei und Migration. Die Verzeichnisgrenze 8189 verhindert den Fehler nicht; schon ein Verzeichnis mit mehreren Blöcken reicht aus. Der Branch `fix/ext2-remove-entry-plug` (beim Abgleich `be097fe`) ersetzt die Operation durch blocklokales Verschmelzen (`Ext2DirectoryRemoval`). Am Blockanfang bleibt die Recordlänge erhalten, der Eintrag wird freigegeben. Eine Hostgegenprobe der reinen Ersatzlogik (`7407a48`) wurde für Blockanfang, Blockmitte, vollständiges Leeren und verschiedene Löschreihenfolgen mit `e2fsck` Exit 0 gemeldet (RED, IRC 21:23 UTC; freigegebene Inodes wurden dort gesondert per `debugfs` mit `dtime` versehen). Das ist kein Beleg für die native Plug-Bindung oder den Gastablauf.
+
+Der erste Plug-Stand mit `object`-Parametern fand sein statisches Ziel mit internen Cosmos-Typen nicht, obwohl der Build erfolgreich endete. `be097fe` verwendet passende Typnamen; der Bindungsnachweis im nativen Buildlog und die erneuten Gastläufe 9/10 mit sauberer externer Konsistenzprüfung sind getrennt erforderlich. Das [CI-Gate aus PR #219](https://github.com/peterzw98/ProjektZehOS/pull/219) verlangt für jede ZehOS-Plugmethode einen erfolgreichen Bindungsversuch im ausführlichen Buildlog; Fehlversuche gegen andere Assemblies sind dabei zulässig. Es ersetzt keine Gastprüfung. Ein abgeschlossener Gastnachweis dieses Plug-Stands liegt diesem Nachtrag noch nicht vor.
+
+Bereits beschädigte Verzeichnisse repariert die Umgehung nicht. Erkennt die Ersatzlogik ungültige Records, bricht sie ab; sie soll die Beschädigung nicht durch weitere Änderungen verdecken. Vor weiteren Schreibversuchen das Volume offline an einer gesicherten Kopie mit `e2fsck` prüfen und gegebenenfalls reparieren. Ein erfolgreiches `ls` oder ein erfolgreicher Kernelbuild reicht nicht.
+
+### Speicherfehler und RAM-Aussagen
+
+Gemeldet wurde für die E4.0-Reihe 10–12, insbesondere Lauf 12 mit `task/e40-probe-fix` `1a81ecc`: Bei **2 GiB RAM** bestehen `select` bis `d-state`, Phase `e` endet mit `ArgumentNullException` für `destinationArray`; ab Phase `d` erscheint `[GC] Mark stack overflow`. Bei **512 MiB RAM** scheitert der kumulierte Lauf bereits in Phase `d` mit einer Null-Allokation. Quelle: right-tester-Ergebnis, durch den Koordinator am 17.11.2026 20:44 UTC weitergegeben; Ablage `.tools/worktrees/e40-run12-work` beim ausführenden Agenten. Eine verlässlich fangbare `OutOfMemoryException` ist dadurch gerade nicht belegt.
+
+Dem steht der isolierte **Lauf 11** von peter-senior gegenüber (IRC 21:09 UTC): frisches 2-GiB-Dateisystem, je 512 MiB und 2 GiB RAM, ein Verzeichnis bis 8190 Einträge ohne Fehler; 4 × 2048 Einträge mit je 100 Rename und 100 Delete bestanden, `e2fsck` Exit 0. Das Anlegen von 8190 Einträgen dauerte 215 beziehungsweise 152 Sekunden. Diese Einzelprüfung widerlegt eine allein durch die Eintragszahl erklärte Speichergrenze, garantiert aber keine Dauerlast nach vorangegangenen Phasen.
+
+Quellbefunde zu wiederholtem Parsen/Allokieren und zum Inodecache sind Hinweise auf kumulierten Speicherdruck. Ob Lecks, Fragmentierung oder GC-Verhalten den Fehler jeweils verursachen, ist durch diese Läufe nicht abschließend getrennt. Große Produktpuffer sind ebenfalls relevant: `WasmSaveStore` erlaubt 16 MiB pro Datei, `WasmGameApp` und `WasmEngineSelection.ReadAot` Module bis 64 MiB, `WasmRuntime` bis 256 MiB linearen Speicher. Diese Grenzen sind keine Aussage über gleichzeitig verfügbaren oder zusammenhängenden Kernel-Heap. Ein erfolgreicher Hosttest der Fehlerbehandlung belegt das Verhalten des Cosmos-Allokators nicht.
+
+**Kein sicherer Mindest-RAM ist abgeleitet.** 1 GiB ist eine vorgeschlagene vorläufige Testkonfiguration, keine Betriebszusage; selbst 2 GiB verhinderten den kumulierten Fehler nicht. Offen bleiben gezielte Low-Memory-, Fragmentierungs- und Wiederholungsläufe sowie Messungen von Spitzenbelegung und freiem zusammenhängendem Speicher. Die hier berichteten Gastläufe belegen weder VMware noch echte Hardware.
+
+### Inode-Cache und GC-Fragmentierung
+
+**Befund:** E4.0-Lauf 1 (peter-senior, Probe `2b080d4`, KVM, 512 MiB und 1 GiB RAM, mit RemoveEntry-Plug) scheitert in Schritt e beim Anlegen nach 7488 von 8000 Einträgen. Das Image zeigt 131072 − 113543 = 17529 belegte Inodes, davon 10 reserviert. Das sind genau die 17519 Einträge, bei denen Cosmos' `_inodeCache` (`Dictionary<uint, Ext2Inode>`, nur bei `Drop` geleert) auf 36353 Einträge wächst. Die nötige Allokation des Eintragsfelds (≈ 850 KiB) liefert null, `Array.Copy` meldet `ArgumentNullException` (`destinationArray`).
+
+**Ursache:** Quellstand `efcf20cc`.
+- `AllocObjectSlow` ruft bei gescheitertem Nachfüllen `Collect()` und versucht genau einmal erneut.
+- Der GC verdichtet nicht.
+- Objekte über der TLAB-Größe brauchen einen Freilistenblock oder einen neuen Seitenlauf aus `PageAllocator.AllocPages`. Dieser durchsucht die Seitentabelle nach zusammenhängenden freien Seiten.
+- Langlebige kleine Objekte, die zwischen viel Müll entstehen, liegen über viele 64-KiB-Segmente verteilt. Leere Segmente gibt der Sweep zurück, belegte nicht. Ein großer zusammenhängender Lauf fehlt dann trotz reichlich freiem Speicher.
+
+**Gastbeleg:** Diagnoselauf 12 (`08401d6`, `--diagnose-run 12`, KVM).
+
+| RAM | wachsendes Dictionary | vorab dimensioniert (40000) | 16 MiB danach |
+| --- | --- | --- | --- |
+| 512 MiB | Fehler bei 17519 | ohne Fehler | gelingt |
+| 1 GiB | Fehler bei 36353 | ohne Fehler | gelingt |
+
+**Einschätzung für Nutzer:** Die Grenze zählt verschiedene Inodes, die seit dem Einhängen gelesen oder geschrieben wurden.
+- Speichern per Temp-Datei und Umbenennen vergibt meist die gerade freigegebene Inode-Nummer wieder und füllt den Cache deshalb kaum.
+- Kritisch sind Vorgänge, die viele verschiedene Dateien berühren: ein Verzeichnislisting (`ReadDir` liest jedes Kind), Suche über den Baum, die Migration nach `/` oder viele kleine Paketdateien.
+- Ein Nutzerbaum mit einigen tausend Dateien bleibt unter der Grenze, ein vollständiger Durchlauf eines größeren Baums nicht.
+- Weil die Grenze aus der Fragmentierung entsteht, verschiebt sie sich mit Speicher und Vorgeschichte. Eine feste Zahl ist keine Zusage.
+
+**Bewertung eines Cache-Plugs (nur Bewertung, kein Code):** Ein begrenzter oder verdrängender Cache würde das Wachstum stoppen. Cosmos verlässt sich aber auf ein Objekt je Inode.
+- `Rmdir` und `Unlink` ändern Link-Zähler am zwischengespeicherten Objekt und schreiben es.
+- Die VFS-Schicht hält `IVfsInode`-Referenzen.
+
+Zwei Objekte für dasselbe Inode könnten einander mit veralteten Werten überschreiben. Ein solcher Plug bräuchte eigene Gastnachweise und eine Entscheidung von Peter. Ein vorab dimensionierter Cache ist per `UnsafeAccessor` nicht erreichbar, weil der Zugriff auf das generische Dictionary mit internem Typargument im Gast `NotSupportedException` warf (vgl. `CosmosExt2FreeInodePlug`).
+
+### Produktgrenze 8189
+
+[PR #211](https://github.com/peterzw98/ProjektZehOS/pull/211) setzt `FileService.MaximumExt2DirectoryEntries` auf **8189 direkte Kinder** je beschreibbarem ext2-Verzeichnis. Cosmos `ParseDirectory` betrachtet höchstens 8192 Records einschließlich `.` und `..`; der verbleibende Platz ist nötig, weil Rename zunächst den neuen Namen anlegt. Lauf 9 meldete bei 8190 Kindern eine erfolgreiche Umbenennung, nach der Cosmos in derselben Sitzung weder alten noch neuen Namen sah, obwohl `debugfs` den korrekten Platteneintrag zeigte.
+
+Versteckte und temporäre Einträge zählen mit. Die Migration berücksichtigt auch erzeugte Zielverzeichnisse und Marker-/Journalplatz vor dem Zielschreiben. Direkte interne `System.IO`-Schreibzugriffe sind von der FileService-Prüfung nicht vollständig erfasst. Die Grenze ist weder eine ext2-Formatgrenze noch ein Schutz vor dem `RemoveEntry`-Fehler oder Speichererschöpfung; fremd überfüllte oder beschädigte Verzeichnisse werden nicht repariert. Die Begründung ist im [Entwurf zur Verzeichnisgrenze](superpowers/specs/2026-11-17-ext2-directory-limit.md) beschrieben. Der Hostnachweis an der Produktgrenze und der kleine Gasttest mit Testgrenze 2 ersetzen keinen Gastgrenztest mit 8189/8190 Kindern; ein solcher Nachweis nach #211 liegt diesem Nachtrag noch nicht vor.
