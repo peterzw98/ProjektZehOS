@@ -50,7 +50,7 @@ public static class Ext2FeatureGate
         }
 
         ushort state = BitConverter.ToUInt16(superblock.Slice(StateOffset, 2));
-        if (state > 2)
+        if ((state & ~3) != 0)
         {
             return Ext2MountDecision.Reject;
         }

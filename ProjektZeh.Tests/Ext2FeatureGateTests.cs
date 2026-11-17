@@ -78,11 +78,11 @@ public sealed class Ext2FeatureGateTests
     [TestMethod]
     [DataRow(0)]
     [DataRow(2)]
+    [DataRow(3)]
     public void Evaluate_UncleanState_IsReadOnly(int state) =>
         Assert.AreEqual(Ext2MountDecision.ReadOnly, Ext2FeatureGate.Evaluate(Superblock(state: (ushort)state)));
 
     [TestMethod]
-    [DataRow(3)]
     [DataRow(4)]
     [DataRow(5)]
     [DataRow(65535)]

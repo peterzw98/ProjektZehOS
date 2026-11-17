@@ -4,8 +4,38 @@ Gemeinsame Quelle für Kernel (Plug) und Hostprobe `experiments/StorageProbe` (`
 3.0.97; der Treiber zum Mounten, Lesen und Schreiben kommt aus dem Paket. Ersetzt werden zwei Stellen: das Formatieren
 (`Ext2Formatter.Format`) und die Inode-Freigabe beim Löschen (`Ext2Superblock.FreeInode`, siehe unten).
 
-Im Produkt wird ext2 noch nirgends eingehängt. Vor dem ersten Produktmount muss `Ext2FeatureGate.Evaluate` davor
-geschaltet und `s_state` (Fehlerflag) ausgewertet werden; ohne das mountet Cosmos unbekannte Features schreibend.
+Im Produkt wird ext2 noch nirgends beim Booten oder über die Shell eingehängt. Die neue explizite Lesekomponente
+`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Mount und verwendet einen eigenen
+Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Sie ist noch nicht als Produktfunktion aktiviert.
+
+## Abgesicherter Lesemount
+
+`Ext2FeatureGate` lässt nur das geprüfte 4-KiB-Profil zu. Unbekannte Incompat-Bits führen zur Ablehnung,
+unbekannte Compat-/RoCompat-Bits höchstens zum Lesemount. `s_state` ist eine Bitmaske: nur 1 (VALID ohne ERROR)
+behält die Featureentscheidung; 0, 2 und 3 erlauben höchstens Lesen, unbekannte Zustandsbits führen zur Ablehnung.
+Diese Entscheidung repariert keine Metadaten und bestätigt keine Konsistenz beschädigter Volumes.
+
+Das Mountflag allein verhindert in Cosmos 3.0.97 nicht alle Schreibzugriffe. Erneute ILSpy-Prüfung der installierten
+`Cosmos.Kernel.System.dll` aus Paket 3.0.97 bestätigte (Zeilen im dekompilierten Quelltext):
+
+- `Ext2FileOperations.cs:170–182`: `Fsync` schreibt jeden nativen Inode und flusht immer; `Release` ruft es ohne
+  Dirty- oder Read-only-Prüfung auf. `VfsFileHandle.cs:88–92` ruft `Release` auch nach reinem Lesen auf.
+- `Ext2Superblock.cs:537–547`: auch `Drop` selbst ruft `Flush` auf; dieses flusht das Gerät und aktualisiert
+  anschließend den Superblock. Nur den Aufruf in `Ext2SuperblockOperations` zu umgehen genügt deshalb nicht.
+
+Die Lesesicht verpackt alle über Lookup und ReadDir gelieferten Inodes, verweigert Mutationen und delegiert
+Read/Seek mit dem nativen Inode. Release/Fsync/Sync/Drop schreiben nicht und benötigen keine native Freigabe:
+die Caches sind verwaltet. Darunter verweigert `CosmosReadOnlyBlockDevice` jeden WriteBlock- und Flush-Aufruf
+mit einer sichtbaren Ausnahme. Eine nichtleere Source wird abgelehnt, weil sie im Cosmos-Treiber das injizierte
+Gerät umgehen würde. Die Komponente unterstützt zunächst nur 512-Byte-Sektoren.
+
+Ein langlebiges Komponentenobjekt registriert seinen Namen einmal und kann denselben Datenträger erneut mounten.
+Für die spätere Produktintegration fehlen noch Gerätebesitz, Rechteprüfung und die allgemeine Mountverwaltung;
+derzeit darf die Komponente ausschließlich mit exklusiv gehaltenen Testdatenträgern verwendet werden.
+
+Die Hostprobe `dotnet run --project experiments/StorageProbe/StorageProbe.csproj -c Release -- readonly-selftest`
+prüft mit den echten Cosmos-Assemblies ein frisches RAM-Volume einschließlich Datei-/Verzeichnislesen,
+Schließen, Sync/Drop, verbotenen Mutationen und unverändertem Volumenhash. Sie ersetzt keinen Gasttest des VFS-Mounts.
 
 ## Herkunft und Lizenz
 
