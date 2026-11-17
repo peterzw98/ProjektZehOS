@@ -9,7 +9,14 @@ Stand: 17. November 2026, Grundlage [Aufrufer-Inventar](2026-11-17-storage-calle
    - **bis 4 GiB:** vollständiger Scan wie bisher.
    - **über 4 GiB:** Teilscan, nur zusammen mit `disk init <gerät> --yes-large` und deutlichem Hinweis in der Ausgabe: erste und letzte 64 MiB vollständig, Signaturstellen (MBR/GPT Sektor 0/1 und Ende, FAT-Bootsektor, ext2 `0x438`, NTFS, LUKS) und eine Stichprobe von 4 KiB je 64 MiB. Ein einziges Byte ungleich null bricht ab; ohne `--yes-large` wird nichts geschrieben.
    Zeitbudget vor Gasttests mit 64 MiB und 4 GiB messen.
-3. **Identität statt Gerätename.** `disk init` markiert die Datenpartition mit dem FAT-Volumelabel `ZEHOSDATA`. Beim Boot sucht der Kernel über alle Geräte genau eine Partition mit Typ `0x0C` und diesem Label und hängt sie unter `/data` ein. Mehr als ein Treffer: nichts einhängen, Fehler melden (kein Raten). Kein Treffer: Rückfall auf das heutige `sata0`-Verhalten, damit unmarkierte Bestandsplatten weiter funktionieren. Lässt Cosmos 3.0.97 kein Label beim Formatieren zu, ersatzweise Markerdatei `/.zehos-data` im Wurzelverzeichnis, geprüft nach einem Nur-lesen-Mount.
+3. **Auswahl beim Boot – Bestand gewinnt** (nach Review huang/Koordinator, 17.11. 07:44; ein angehängtes Laufwerk darf `/data` samt Kontendatei nie still ersetzen):
+   1. Trägt `sata0` eine FAT-Datenpartition (Typ `0x0C`, Label `ZEHOS` oder `ZEHOSDATA`), wird `sata0` eingebunden. Gibt es zusätzlich eine `ZEHOSDATA`-Partition auf einem anderen Gerät, nur Protokollhinweis, kein Umschalten.
+   2. Sonst genau eine `ZEHOSDATA`-Partition auf einem anderen Gerät: diese einbinden.
+   3. Mehrere `ZEHOSDATA`-Treffer: nichts einbinden (`AmbiguousDataDisk`).
+   4. Sonst der bisherige Rückfall: `sata0` mit genau einer Partition.
+   Umschalten auf eine andere Datenplatte nur per ausdrücklichem `disk mount <gerät>` in der laufenden Sitzung; eine dauerhafte Umschaltung ist nicht Teil dieser Etappe. Bekannte Grenze wie bisher: ohne Bestandsplatte wird eine angehängte `ZEHOSDATA`-Platte eingebunden.
+   **Keine Ersteinrichtung nach Fehlauswahl:** Bei `AmbiguousDataDisk` oder einem fehlgeschlagenen Mount einer gewählten Platte bietet der Kernel keine Administrator-Ersteinrichtung an und legt kein Konto an; Fehlerzeile seriell. Kein Datenlaufwerk vorhanden (`DeviceNotFound`) bleibt wie bisher.
+   **`disk init` auf eine weitere Platte** verlangt `--yes-additional`, wenn `/data` eingebunden ist oder `sata0` schon eine Partition trägt.
 4. **Ein Mountpunkt `/data`** bis Etappe 4. Mehrere persistente Mounts, `/`-Root und Mountpunkt-Argumente kommen erst mit dem Root-Baum.
 5. **Installer schützt die Datenplatte.** Platten mit `ZEHOSDATA`-Partition erscheinen nicht in `setup list`; Installation auf sie wird verweigert, auch mit `--erase`.
 6. **VMware:** eigene AHCI-Testplatte, keine Annahme über VMware-Standard-SCSI. Zeitbudget für 128 GiB wird gemessen, die Platte wird nicht vollständig gelesen.
