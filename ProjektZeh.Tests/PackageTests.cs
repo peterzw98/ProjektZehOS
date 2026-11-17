@@ -209,6 +209,32 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void InstalledPackageStaysValidAfterLayoutMigration()
+    {
+        // Etappe 4.4 Test 23: PackageStore speichert nur relative Pfade; der 1:1 kopierte Bestand bleibt unter der neuen Wurzel gueltig.
+        string data = Path.Combine(work, "data");
+        string owner = new('a', 32);
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, ProjektZeh.Security.AccountService.MetadataFile),
+            ProjektZeh.Security.AccountService.Header + $"{owner}|anna|admin|{ProjektZeh.Security.AccountService.UnknownAccountHash}\n" +
+            ProjektZeh.Security.AccountService.Separator + "ZEHOS-SECURITY-1\nP|" + Convert.ToBase64String(Encoding.UTF8.GetBytes("/data")) + "|" + owner + "\n");
+        string hash = Publish(Path.Combine(work, "repo"), "doom", "1.0.0");
+        var legacy = new PackageStore(Path.Combine(data, ".zehos-packages"), Trust, Kernel);
+        Assert.IsTrue(legacy.Install(Source("repo"), "", hash, CancellationToken.None).IsOK());
+
+        using var target = new FakeMigrationTarget(Guid.NewGuid());
+        var migrated = ProjektZeh.Storage.Migration.LayoutMigration.Run(data, target, () => new MemoryStream(), _ => { });
+        Assert.IsTrue(migrated.IsOK(), migrated.Status.Message);
+
+        var store = new PackageStore(target.Host(ProjektZeh.Storage.SystemPaths.Root.PackagesDirectory), Trust, Kernel);
+        Assert.AreEqual("doom", store.ReadInstalled().Value!.Single().Manifest.Id);
+        var package = store.Acquire("doom");
+        Assert.IsTrue(package.IsOK(), package.Status.Message);
+        Assert.IsTrue(PackageStore.VerifyFiles(package.Value!, CancellationToken.None).IsOK());
+        store.Release("doom");
+    }
+
+    [TestMethod]
     public void InstallsVerifiesAndRemovesPackage()
     {
         string hash = Publish(Path.Combine(work, "repo"), "doom", "1.0.0");
