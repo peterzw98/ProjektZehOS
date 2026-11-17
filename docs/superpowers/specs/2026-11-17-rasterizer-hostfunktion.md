@@ -123,7 +123,11 @@ Bisher nutzt ZehOS aus `System.Runtime.Intrinsics` nur skalare X86-Befehle (`Cos
 - **Etappe 5** (AOT, agent-laser-pink-aot, Übergabe `docs/aot-handoff`): Die ABI ist laufzeitunabhängig (Gastadressen und Längen). Eine AOT-Laufzeit braucht nur eine zweite Bindung derselben Brücke.
 - Lizenz: Der übertragene Algorithmus stammt aus ClassiCube (BSD-3, UnknownShadow200); Hinweis in der Quelldatei und in den Lizenzangaben des Kernels.
 
-## 9 Offene Entscheidungen für Peter
+## 9 Entscheidungen
+
+Peter hat am 17. November 2026 allen drei Punkten zugestimmt („Ja, so umsetzen“): C#-Kern mit Rückfall auf C nach Messung, Erkennung über `ZEHOS_FEATURES`, Zeichnen auf Gastspeicher ohne Handles und Befehlspuffer.
+
+Ursprüngliche Fragen:
 
 1. Ort der Umsetzung: B (C#, testbar) mit Rückfall auf A nach Messung — oder gleich A?
 2. Feature-Erkennung über `ZEHOS_FEATURES` (neue allgemeine Zusage an App-Entwickler) — einverstanden?
