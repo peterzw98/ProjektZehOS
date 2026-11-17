@@ -243,6 +243,94 @@ public sealed class PathIdentityTests
         finally { Directory.Delete(root, true); }
     }
 
+    // Alle reservierten Metadaten (Konten, Befehlsrechte, Recovery-Sicherungen) mit Inhalt.
+    private static SortedDictionary<string, string> Metadata(string root)
+    {
+        var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (string file in Directory.GetFiles(root, ".zehos-*")) files[Path.GetFileName(file)] = Convert.ToBase64String(File.ReadAllBytes(file));
+        return files;
+    }
+
+    private static AccountService PlainAccounts(string root) => new(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+
+    [TestMethod]
+    public void Recovery_HomeIsAFile_ChangesNoMetadata()
+    {
+        string root = NewRoot();
+        try
+        {
+            var accounts = PlainAccounts(root);
+            Assert.IsTrue(accounts.PrepareRecovery(accounts.CreateSession(), "admin", "admin-password-123")().IsOK());
+            string homes = Path.Combine(root, "home");
+            Directory.Delete(homes, true);
+            File.WriteAllText(homes, "hindernis");
+            var before = Metadata(root);
+            Assert.IsFalse(accounts.PrepareRecovery(accounts.CreateSession(), "neu", "admin-password-456")().IsOK());
+            CollectionAssert.AreEqual(before, Metadata(root), "Konten/Commands byteidentisch, keine Recovery-Sicherung");
+            Assert.AreEqual("hindernis", File.ReadAllText(homes));
+            var reloaded = PlainAccounts(root);
+            Assert.IsTrue(reloaded.Load().IsOK(), "bestehende Konten bleiben ladbar");
+        }
+        finally { File.Delete(Path.Combine(root, "home")); Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void Recovery_UserHomeIsAFile_ChangesNoMetadata()
+    {
+        string root = NewRoot();
+        try
+        {
+            var accounts = PlainAccounts(root);
+            Assert.IsTrue(accounts.PrepareRecovery(accounts.CreateSession(), "admin", "admin-password-123")().IsOK());
+            string obstacle = Path.Combine(root, "home", "neu");
+            File.WriteAllText(obstacle, "hindernis");
+            var before = Metadata(root);
+            Assert.IsFalse(accounts.PrepareRecovery(accounts.CreateSession(), "neu", "admin-password-456")().IsOK());
+            CollectionAssert.AreEqual(before, Metadata(root));
+            Assert.AreEqual("hindernis", File.ReadAllText(obstacle));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void CreateUser_UserHomeIsAFile_ChangesNoMetadata()
+    {
+        string root = NewRoot();
+        try
+        {
+            var accounts = PlainAccounts(root);
+            var admin = accounts.CreateSession();
+            Assert.IsTrue(accounts.PrepareRecovery(admin, "admin", "admin-password-123")().IsOK());
+            string obstacle = Path.Combine(root, "home", "neu");
+            File.WriteAllText(obstacle, "hindernis");
+            var before = Metadata(root);
+            Assert.IsFalse(accounts.PrepareCreateUser(admin, "neu", false, "user-password-123")().IsOK());
+            CollectionAssert.AreEqual(before, Metadata(root));
+            Assert.IsFalse(accounts.Access.Contains(obstacle));
+            Assert.AreEqual("hindernis", File.ReadAllText(obstacle));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void Setup_HomeIsAFile_CreatesNoMetadata()
+    {
+        string root = NewRoot();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "home"), "hindernis");
+            var accounts = PlainAccounts(root);
+            accounts.IsDataMounted = () => true;
+            accounts.SetupWindowOpen = true;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup);
+            Assert.IsFalse(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+            Assert.AreEqual(0, Metadata(root).Count, "keine Metadaten angelegt");
+            Assert.AreEqual("hindernis", File.ReadAllText(Path.Combine(root, "home")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [TestMethod]
     public void FileServiceWithoutAccess_ListingsSkipGuardedChildren()
     {
