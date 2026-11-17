@@ -86,6 +86,7 @@ public sealed class Kernel : Sys.Kernel
         // Etappe 13.4: App-Speicher unter /data mit demselben Waechter wie die Kontendatei.
         Runtime.Wasm.WasmRuntime.SavePathGuard = CosmosPathGuard.For(Paths.AdminRoot);
         Runtime.Wasm.WasmRuntime.SaveDiskSpace = CosmosSystemInfo.DiskSpace;
+        Runtime.Wasm.WasmRuntime.SaveComparison = Paths.Comparison;
 #endif
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),

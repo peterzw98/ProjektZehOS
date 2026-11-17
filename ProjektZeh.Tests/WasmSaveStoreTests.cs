@@ -261,6 +261,21 @@ public sealed class WasmSaveStoreTests
     }
 
     [TestMethod]
+    public void CaseSensitiveProfileRenamesByCase()
+    {
+        if (!OperatingSystem.IsLinux()) Assert.Inconclusive("Braucht ein Dateisystem mit Gross-/Kleinschreibung (ext2-Profil).");
+        var store = new WasmSaveStore(root, () => false, comparison: StringComparison.Ordinal);
+        Create(store, "Welt", out int handle);
+        Write(store, handle, "x");
+        store.Close(handle);
+        Assert.AreEqual(WasiErrno.Success, store.Rename("Welt", "welt"));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "welt")) && !File.Exists(Path.Combine(root, "Welt")));
+        store.CreateDirectory("a");
+        store.CreateDirectory("A");
+        Assert.AreEqual(WasiErrno.Success, store.Rename("a", "A/x"), "a ist kein Elter von A/x");
+    }
+
+    [TestMethod]
     public void DirectoryCannotMoveIntoItself()
     {
         var store = Store();

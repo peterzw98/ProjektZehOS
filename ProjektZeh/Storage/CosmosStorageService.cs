@@ -240,9 +240,11 @@ internal sealed class CosmosStorageService : IStorageService
 
             if (VfsManager.TryGetMount(MountPoint, out _))
             {
-                if (!VfsManager.TryUnmount(MountPoint))
+                // Derselbe Weg wie disk unmount: erst die App-Schreibsperre (Etappe 13.4), dann aushaengen.
+                var unmounted = Unmount();
+                if (!unmounted.IsOK())
                 {
-                    return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
+                    return unmounted;
                 }
 
                 Note("use: bisheriges /data ausgehaengt");
@@ -331,8 +333,9 @@ internal sealed class CosmosStorageService : IStorageService
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
         }
 
-        // Etappe 13.4: nach dem Einbinden duerfen Apps wieder in ihren App-Speicher schreiben.
-        AppStorageGate.Release();
+        // Etappe 13.4: nach dem Einbinden duerfen Apps wieder in ihren App-Speicher schreiben. Die schreibgeschuetzte
+        // Probeeinbindung beim Boot gibt die Sperre nicht frei, weil sie gleich wieder aushaengt.
+        if ((flags & MountFlags.ReadOnly) == 0) AppStorageGate.Release();
         return ResultErr.CreateSuccess();
     }
 

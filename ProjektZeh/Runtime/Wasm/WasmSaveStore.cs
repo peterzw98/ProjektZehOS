@@ -74,6 +74,7 @@ internal sealed class WasmSaveStore
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly WasmSaveLimits limits;
     private readonly Func<Func<int>, int> disk;
+    private readonly StringComparison comparison;
     private readonly FileService files;
     // Ordner belegen auf FAT mindestens einen Cluster; ohne diesen Anteil liessen sich ueber leere Ordner rund 32 MiB
     // jenseits der Quote belegen (Review).
@@ -88,8 +89,10 @@ internal sealed class WasmSaveStore
     /// </param>
     public WasmSaveStore(string root, Func<bool> writesBlocked, Func<string, bool, ResultErr>? pathGuard = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null, WasmSaveLimits? limits = null,
-        Func<Func<int>, int>? disk = null)
+        Func<Func<int>, int>? disk = null, StringComparison comparison = StringComparison.OrdinalIgnoreCase)
     {
+        // Pfadvergleich des Dateisystems: FAT (Legacy) ohne, ext2 (Root) mit Gross-/Kleinschreibung.
+        this.comparison = comparison;
         this.disk = disk ?? (operation => operation());
         this.root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         this.writesBlocked = writesBlocked;
@@ -295,9 +298,9 @@ internal sealed class WasmSaveStore
         if (from == root || target == root) return WasiErrno.Access;
         // Gleicher Name (auf FAT auch nur in anderer Schreibweise): nichts zu tun. Sonst loeschte das Ersetzen unten die
         // einzige Fassung (Review). Eine reine Aenderung der Schreibweise bleibt damit ohne Wirkung.
-        if (string.Equals(from, target, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(from, target, comparison))
             return File.Exists(from) || Directory.Exists(from) ? WasiErrno.Success : WasiErrno.NotFound;
-        if (target.StartsWith(from + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return WasiErrno.Invalid;
+        if (target.StartsWith(from + Path.DirectorySeparatorChar, comparison)) return WasiErrno.Invalid;
         if (Directory.Exists(from)) return Directory.Exists(target) || File.Exists(target) ? WasiErrno.Exists : MovedDirectory(from, target);
         if (!File.Exists(from)) return WasiErrno.NotFound;
         if (Directory.Exists(target)) return WasiErrno.IsDirectory;

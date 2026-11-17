@@ -170,7 +170,7 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 | `ENOSPC` (51) | Quote, Einträge, Pufferbudget, voller Datenträger oder voller Ordner |
 | `EFBIG` (22) | Datei über 16 MiB |
 | `EMFILE` (33) | mehr als 8 beschreibbare Dateien |
-| `EBUSY` (10) | Das Datenlaufwerk wird gerade ausgehängt (`disk unmount`, `shutdown`, `reboot`) oder eine Systemaktion sperrt das Schreiben; Lesen geht weiter. Ein laufendes Schreiben wird vorher abgeschlossen. |
+| `EBUSY` (10) | Das Datenlaufwerk wird gerade ausgehängt (`disk unmount`, `shutdown`, `reboot`) oder eine Systemaktion sperrt das Schreiben; Lesen geht weiter. Ein laufendes Schreiben wird vorher abgeschlossen; das Aushängen wartet so lange (bis zum Ersetzen einer Datei von höchstens 16 MiB). |
 | `ENOENT` (44) | Datei fehlt oder das Laufwerk wurde ausgehängt |
 | `EACCES` (2) | unzulässiger Pfad |
 | `EIO` (29) | sonstiger Laufwerksfehler |

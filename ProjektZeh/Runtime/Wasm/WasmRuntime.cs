@@ -66,6 +66,8 @@ internal static unsafe class WasmRuntime
     public static Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? SaveDiskSpace { get; set; }
     /// <summary>Migrations- (4.5) bzw. Energiesperre (7b): solange true, melden schreibende Aufrufe EBUSY.</summary>
     public static Func<bool> SaveWritesBlocked { get; set; } = () => false;
+    /// <summary>Pfadvergleich des Profils (Legacy-FAT ohne, ext2-Root mit Gross-/Kleinschreibung).</summary>
+    public static StringComparison SaveComparison { get; set; } = StringComparison.OrdinalIgnoreCase;
 
     /// <summary>Summe der Wartezeit (sleep_ms) des laufenden bzw. letzten Laufs in Stopwatch-Ticks; trennt Rechen- von Wartezeit.</summary>
     public static long WaitedTicks { get; private set; }
@@ -187,7 +189,7 @@ internal static unsafe class WasmRuntime
         current = session;
         network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
         save = session.SaveRoot is { } saveRoot ? new WasmSaveStore(saveRoot, () => AppStorageGate.IsBlocked || SaveWritesBlocked(), SavePathGuard,
-            SaveDiskSpace, disk: operation => AppStorageGate.Run(operation, WasiErrno.Busy)) : null;
+            SaveDiskSpace, disk: operation => AppStorageGate.Run(operation, WasiErrno.Busy), comparison: SaveComparison) : null;
         WaitedTicks = 0;
         try
         {
