@@ -39,7 +39,7 @@ public sealed class StorageSizeDisplayTests
     }
 
     [DataTestMethod]
-    [DataRow(uint.MaxValue, "3,9 GB")] // abgeschnitten auf Zehntel, nicht aufgerundet
+    [DataRow(4294967295UL, "3,9 GB")] // abgeschnitten auf Zehntel, nicht aufgerundet
     [DataRow(1UL << 32, "4,0 GB")]
     [DataRow(32UL << 30, "32,0 GB")]
     [DataRow(64UL << 30, "64,0 GB")]
@@ -48,7 +48,7 @@ public sealed class StorageSizeDisplayTests
         Assert.AreEqual(expected, SetupDiskList.FormatSize(bytes));
 
     [DataTestMethod]
-    [DataRow(uint.MaxValue, "4 GB")]
+    [DataRow(4294967295L, "4 GB")]
     [DataRow(1L << 32, "4 GB")]
     [DataRow(32L << 30, "32 GB")]
     [DataRow(64L << 30, "64 GB")]
