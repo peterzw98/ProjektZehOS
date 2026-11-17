@@ -266,3 +266,33 @@ Prüfstand: SDK10.0.403 und Cosmos3.0.94 unverändert. **410 Hosttests mit Warnu
 Im normalen QEMU-Gast mit isolierter 64-MiB-Datenimagekopie geprüft: Anmeldung, QWERTZ, `äöü ÄÖÜ ß €`, ISO-Sondertasten, AltGr mit CapsLock/Shift, deutscher Strg+Plus-Zoom, Terminalrad in beide Richtungen, Dateivorschau mit Rad, Textshellausgabe und Pager mit Rad. Hosttests ergänzen Hover-Routing in geteilten Terminals, Listen/Textfeldern, Auswahl-/Entwurfserhalt, Überlauf-Reset und Auflösungswechsel der Textshell.
 
 VMware: Ein separater Start ohne Datenlaufwerk erreichte laut serieller Diagnose Textshell und Desktop. Interaktive Eingabe- und Scrollprüfungen bleiben offen; `vmrun captureScreen` verweigerte die anonyme Gastoperation. Ein QEMU-Ergebnis belegt diese Abläufe nicht für VMware. Die tatsächliche Zwei-Finger-Geste am Hosttrackpad wurde nicht physisch ausgeführt; geprüft wurden die entsprechenden QEMU-Geräteereignisse. Direkte Laptop-Trackpadtreiber und ein serielles Fernterminal sind nicht Teil dieser Änderung.
+
+## SIMD-Probe (S1, 17. November 2026)
+
+Frage: Funktionieren `System.Runtime.Intrinsics` (`Vector128/256`, `Sse2/Sse41/Avx2.IsSupported`, `Vector128.IsHardwareAccelerated`) im Cosmos-3.0.97-/NativeAOT-Kernel korrekt und schneller als skalar? **Stand: Probe gebaut zur Prüfung, noch nicht im Gast gelaufen; die Ergebnistabelle ist leer.**
+
+**Probe:** `ProjektZeh/Runtime/CosmosSimdProbe.cs`, nur mit `-p:ZehOSSimdProbe=true` (Konstante `ZEHOS_SIMD_PROBE`, Muster `ZehOSThreadProbe`); kein normaler Build ändert sich. Optional `-p:ZehOSSimdInstructionSet=<Wert>` reicht `--instruction-set:<Wert>` an ILC durch (etwa `x86-64-v3`, `native`); ohne Angabe gilt der Cosmos-Standard. `ProjektZeh/ThirdParty/wamr` bleibt unberührt.
+
+Serielle Zeilen `SIMD_PROBE …`: `isa` (alle `IsSupported`-Werte), `accel` (`IsHardwareAccelerated`, `Vector<int>.Count`), je Stufe `begin <Name>` vor dem Lauf (ein Absturz zeigt die letzte Stufe), danach `<Name> PASS|FAIL|SKIP` und `INFO … speedup_permille=<n> FASTER|NOT_FASTER`, am Ende `SIMD_PROBE PASS` oder `FAIL …`. **Korrektheit** entscheidet PASS/FAIL (exakter Vergleich mit dem Skalarergebnis), **Zeiten** sind INFO. Stufen: int-Skalarprodukt (skalar, `Vector128`, `Vector256`, `Vector<T>`, `Sse41`, `Avx2`), float-Skalarprodukt (`Vector128`, `Fma`/`Avx`), Byte-Zählen (`Sse2`, `Avx2` mit `MoveMask`/`PopCount`) und **Registerzustand über Threadwechsel** (zwei Threads rechnen 400 ms parallel mit Vektoren und prüfen jedes Ergebnis; ein beim Umschalten nicht gesicherter XMM/YMM-Zustand würde Abweichungen zeigen).
+
+**Aufruf (Clerk):**
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSSimdProbe=true            # Standard-Befehlssatz
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSSimdProbe=true -p:ZehOSSimdInstructionSet=x86-64-v3   # nur auf Wunsch
+python3 scripts/test-simd-probe.py --iso <ISO> --accel tcg --cpu qemu64      # Grundausstattung (Pflicht)
+python3 scripts/test-simd-probe.py --iso <ISO> --accel tcg --cpu max
+python3 scripts/test-simd-probe.py --iso <ISO> --accel kvm --cpu host        # über einen Clerk
+```
+
+| Lauf | `isa` (Sse2/Sse41/Avx2/Fma) | Korrektheit | Beschleunigung (`speedup_permille`) | Threadzustand | Anmerkung |
+|---|---|---|---|---|---|
+| TCG `qemu64`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
+| TCG `max`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
+| KVM `host`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
+| KVM `host`, `x86-64-v3` | ausstehend | ausstehend | ausstehend | ausstehend | |
+| VMware | **offen** (nicht geprüft) | | | | |
+
+**Empfehlung für R1 (SIMD ja/nein, welche Stufe):** erst nach den Gastläufen. Entscheidungsregel: SIMD nur, wenn (1) Korrektheit und Threadzustand auf allen Pflichtläufen PASS sind, (2) die Stufe ohne Absturz läuft (kein `#UD` bei AVX durch fehlendes OS-XCR0, das die Probe nur über das letzte `begin` sichtbar macht) und (3) KVM eine Beschleunigung > 1000 ‰ zeigt. Unter TCG ist ein Rückgang erwartbar und kein Ausschlussgrund.
+
+Bekannte Grenzen der Probe: `IsSupported` ist im NativeAOT-Code entweder eine Kompilierzeitkonstante des gewählten Befehlssatzes oder ein Laufzeitwert aus der CPU-Erkennung der Runtime; welcher der beiden Fälle im Cosmos-Kernel gilt, zeigt erst der Lauf (`isa`-Zeile mit und ohne `ZehOSSimdInstructionSet`). Die Probe liest `XCR0` nicht direkt.
