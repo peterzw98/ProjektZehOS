@@ -136,7 +136,7 @@ public sealed class Kernel : Sys.Kernel
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
-            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); ReconcilePackages(); }).Commands,
+            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); ReconcilePackages(); systemLog.Information("Storage", "Laufwerksaenderung abgeschlossen."); }).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
@@ -182,6 +182,11 @@ public sealed class Kernel : Sys.Kernel
             }
 
             systemLog.Information("Storage", $"Erkannte Laufwerke: {StorageManager.DeviceCount}.");
+            // Gasttests (scripts/test-storage-data-disk.py) lesen Groesse und Einbindung aus dem seriellen Protokoll.
+            var listed = storage.GetDevices();
+            if (listed.IsOK())
+                foreach (var listedDevice in listed.Value!)
+                    systemLog.Information("Storage", $"Laufwerk {listedDevice.Name}: {listedDevice.SizeBytes} Bytes, {listedDevice.PartitionCount} Partition(en)");
 #if ZEHOS_INSTALLER
             output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
             return ResultErr.CreateSuccess();
@@ -190,6 +195,7 @@ public sealed class Kernel : Sys.Kernel
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");
+                systemLog.Information("Storage", "Datenlaufwerk unter /data eingebunden.");
                 ReconcilePackages();
             }
             else
