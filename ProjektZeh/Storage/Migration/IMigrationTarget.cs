@@ -15,6 +15,8 @@ internal interface IMigrationTarget
     /// eine Wiederholung die Reste eines abgebrochenen Schreibens als eigene Spur erkennt und entfernt.
     /// </summary>
     const string TemporarySuffix = ".zehos-tmp";
+    /// <summary>Nur waehrend eines Ersetzens vorhandene alte Fassung; dieselbe Wiederholungsregel wie fuer Tempdateien.</summary>
+    const string BackupSuffix = ".zehos-bak";
 
     /// <summary>Legt ein Verzeichnis an; ein vorhandenes gilt als Erfolg (Wiederholung).</summary>
     ResultErr CreateDirectory(string path);
