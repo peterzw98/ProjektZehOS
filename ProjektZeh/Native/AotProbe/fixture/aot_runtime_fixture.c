@@ -69,6 +69,39 @@ __attribute__((export_name("host_oob"))) int host_oob(void)
     return fd_write(1, (const ciovec*)(probe_base + 0xfffffff0u), 1, &written);
 }
 
+static unsigned memory_end(void) { return (unsigned)__builtin_wasm_memory_size(0) * 65536u; }
+
+// Gueltige Zeiger, ungueltige Laenge: wamrc prueft bei "*" nur das erste Byte, erst die Kernfunktion sieht, dass zwei
+// iovecs (16 Byte) ab memory_end - 8 bzw. ein u32 auf den letzten zwei Bytes ueber das Ende reichen.
+__attribute__((export_name("host_badlen"))) int host_badlen(void)
+{
+    return fd_write(1, (const ciovec*)(probe_base + memory_end() - 8), 2, &written);
+}
+
+__attribute__((export_name("host_badwritten"))) int host_badwritten(void)
+{
+    static ciovec empty;
+    return fd_write(1, &empty, 1, (unsigned*)(probe_base + memory_end() - 2));
+}
+
+// Ueber einen Funktionszeiger: call_indirect auf den Import laeuft durch WAMRs invokeNative mit der registrierten
+// Signatur statt durch den direkten Aufruf aus AOT-Code.
+static int (*volatile indirect_write)(int, const ciovec*, int, unsigned*) = fd_write;
+static const char indirect_text[] = "AOT_HOST indirekt\n";
+
+__attribute__((export_name("host_indirect"))) int host_indirect(void)
+{
+    static ciovec vector;
+    vector.buffer = indirect_text;
+    vector.length = sizeof(indirect_text) - 1;
+    return indirect_write(1, &vector, 1, &written);
+}
+
+__attribute__((export_name("host_indirect_badlen"))) int host_indirect_badlen(void)
+{
+    return indirect_write(1, (const ciovec*)(probe_base + memory_end() - 8), 2, &written);
+}
+
 // Waechst ueber 256 MiB: memory.grow muss -1 liefern, nicht trappen.
 __attribute__((export_name("grow"))) int grow(void)
 {

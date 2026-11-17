@@ -7,7 +7,7 @@ Windows gibt es kein `wamrc`. Die festen Übersetzerschalter stehen in `compile-
 | Skript | Erzeugt | Inhalt |
 | --- | --- | --- |
 | `build.sh` | `../aot_fixture_data.c` | Probe B: `ret42`, `call_host`, `fsleep`, `oob` (Speicherverletzung), `recurse` (Wasm-Stack), `recurse_native` (nativer Stack). Etappe D nutzt dieselben Bytes über `zehos_wasm_run_aot`; `_start` fehlt dort, das ist der Fall „fehlender Einstieg“. Ungültige Datei und falsche Formatversion erzeugt die Probe selbst durch Bytemanipulation. |
-| `build-runtime.sh` | `../aot_runtime_fixture_data.c` | Etappe D: `host` (WASI und `zehos_v1` über die gemeinsame Hostfunktionstabelle, `proc_exit`, Trap einer Hostfunktion, `memory.grow` über 256 MiB, offene Datei nach Trap/`proc_exit`) und `limit` (gleiche Quelle mit 257 MiB Anfangsspeicher, muss mit `LoadFailed` abgelehnt werden). |
+| `build-runtime.sh` | `../aot_runtime_fixture_data.c` | Etappe D: `host` (WASI und `zehos_v1` über die gemeinsame Hostfunktionstabelle, `proc_exit`, Trap einer Hostfunktion bei ungültiger Adresse und bei gültigem Zeiger mit zu großer Länge, `call_indirect` auf einen WASI-Import, `memory.grow` über 256 MiB, offene Datei nach Trap/`proc_exit`) und `limit` (gleiche Quelle mit 257 MiB Anfangsspeicher, muss mit `LoadFailed` abgelehnt werden). |
 | `compile-aot.sh` | ein `.aot` | beliebiges `.wasm`, etwa Doom |
 
 ## Linux-Schritte

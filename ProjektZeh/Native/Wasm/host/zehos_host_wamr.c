@@ -226,7 +226,11 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     RuntimeInitArgs init;
     memset(&init, 0, sizeof(init));
     init.mem_alloc_type = Alloc_With_System_Allocator;
-    if (!wasm_runtime_full_init(&init)) return ZEHOS_WASM_NO_MEMORY;
+    if (!wasm_runtime_full_init(&init))
+    {
+        copy_message(message, messageLength, "WAMR nicht gestartet");
+        return ZEHOS_WASM_NO_MEMORY;
+    }
 
     int32_t status = ZEHOS_WASM_OK;
     char error[128];
@@ -253,6 +257,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     else if ((copy = (uint8_t*)os_malloc(length)) == NULL)
     {
         status = ZEHOS_WASM_NO_MEMORY;
+        text = "kein Speicher fuer die AOT-Datei";
     }
     else
     {
@@ -312,6 +317,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     if (status == ZEHOS_WASM_OK && (env = wasm_runtime_create_exec_env(instance, stackBytes)) == NULL)
     {
         status = ZEHOS_WASM_NO_MEMORY;
+        text = "keine Ausfuehrungsumgebung";
     }
 
     if (status == ZEHOS_WASM_OK)
