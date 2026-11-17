@@ -264,6 +264,20 @@ internal static class CosmosExt2RootProbe
         Check(visible == 300, $"{visible} statt 300 Eintraege sichtbar");
         Pass("300 von 600 geloescht, 300 sichtbar");
         AfterPhase(root);
+
+        // (c) Leitung 22:23: Verschieben in einen anderen Ordner genau am Blockanfang. Bei 16-Byte-Eintraegen fuellen '.',
+        // '..' und n0000-n0253 Block 0, n0254 ist der erste Record von Block 1 (wie im Hostbeweis).
+        Begin("move-blockstart");
+        Directory.CreateDirectory("/quelle");
+        Directory.CreateDirectory("/ziel");
+        for (int index = 0; index < 600; index++) File.WriteAllBytes($"/quelle/n{index:D4}", [3]);
+        foreach (int index in new[] { 254, 255, 509, 510 }) File.Move($"/quelle/n{index:D4}", $"/ziel/m{index:D4}");
+        File.Move("/quelle/n0100", "/quelle/umbenannt");
+        Check(Directory.GetFileSystemEntries("/quelle").Length == 596 && Directory.GetFileSystemEntries("/ziel").Length == 4,
+            $"quelle {Directory.GetFileSystemEntries("/quelle").Length}, ziel {Directory.GetFileSystemEntries("/ziel").Length}");
+        Check(File.Exists("/ziel/m0254") && !File.Exists("/quelle/n0254") && File.Exists("/quelle/umbenannt"), "Verschieben am Blockanfang falsch");
+        Pass("4 Dateien an Blockgrenzen verschoben, 1 im Ordner umbenannt");
+        AfterPhase(root);
         StepM(root);
     }
 
@@ -506,8 +520,23 @@ internal static class CosmosExt2RootProbe
         Check(File.Exists($"{directory}/ersatz"), "Ersatzeintrag fehlt");
         Begin("e-limit");
         Check(File.ReadAllBytes($"{directory}/n{RootProbeCatalog.DirectoryLimit - 1:D4}")[0] == unchecked((byte)(RootProbeCatalog.DirectoryLimit - 1)), "letzter Eintrag unlesbar");
-        DeleteTree(directory);
-        Check(!Directory.Exists(directory), "/elimit nicht geraeumt");
+        Begin("e-limit-cleanup");
+        // Der abgelehnte 8191. Eintrag liegt trotz IOException auf der Platte, aber hinter dem Lesefenster von 8192 Records;
+        // er wird erst sichtbar, wenn Platz frei ist. Deshalb in Runden leeren und jeden Nachzuegler protokollieren.
+        string[] rest = Directory.GetFileSystemEntries(directory);
+        for (int round = 0; round < 3 && rest.Length > 0; round++)
+        {
+            if (round > 0) Write($"e-limit INFO nachtraeglich sichtbar: {string.Join(",", rest, 0, Math.Min(5, rest.Length))}");
+            foreach (string entry in rest) File.Delete(entry);
+            rest = Directory.GetFileSystemEntries(directory);
+        }
+
+        Write($"e-limit INFO nach dem Leeren sichtbar: {rest.Length}");
+        string rmdir = "ok";
+        try { Directory.Delete(directory); }
+        catch (Exception exception) { rmdir = exception.GetType().Name + ": " + exception.Message; }
+        Write($"e-limit INFO rmdir {directory}: {rmdir}");
+        Check(!Directory.Exists(directory), $"/elimit nicht geraeumt (sichtbar {rest.Length}, rmdir {rmdir})");
         Pass($"{RootProbeCatalog.DirectoryLimit} Eintraege gehen, der naechste ergibt IOException, Verzeichnis bleibt bedienbar");
         AfterPhase(root);
     }
