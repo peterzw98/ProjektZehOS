@@ -65,7 +65,8 @@ internal static class TlsTransport
 
     private static bool IsUsableAnchor(X509Certificate root)
     {
-        if (!CertificateVerifier.HasReadableKey(root)) return false;
+        // Etappe 12.2: Wurzeln mit schwachem Schluessel (RSA < 2048, fremde Kurve) nicht laden.
+        if (!CertificateVerifier.HasStrongKey(root)) return false;
         var critical = root.GetCriticalExtensionOids();
         if (critical != null)
         {
@@ -134,11 +135,24 @@ internal static class TlsTransport
         public override int GetMaxCertificateChainLength() => 8;
         public override int GetMaxHandshakeMessageSize() => 32768;
         protected override ProtocolVersion[] GetSupportedVersions() => [ProtocolVersion.TLSv13, ProtocolVersion.TLSv12];
+
+        // Etappe 12.2: auch die Handshake-Signatur (TLS 1.2 ServerKeyExchange, TLS 1.3 CertificateVerify) nie mit SHA-1
+        // oder schwaecher; angeboten werden nur die Standardverfahren mit SHA-2 bzw. EdDSA.
+        protected override IList<SignatureAndHashAlgorithm> GetSupportedSignatureAlgorithms()
+        {
+            var strong = new List<SignatureAndHashAlgorithm>();
+            foreach (var algorithm in base.GetSupportedSignatureAlgorithms())
+                if (IsStrongHandshakeSignature(algorithm)) strong.Add(algorithm);
+            return strong;
+        }
         protected override IList<ServerName>? GetSniServerNames() => CertificateVerifier.ParseIPv4(host) == null
             ? [new ServerName(NameType.host_name, Encoding.ASCII.GetBytes(host))] : null;
         public override TlsAuthentication GetAuthentication() => new Authentication(host, roots, utcNow);
         public override bool RequiresCloseNotify() => requireCloseNotify;
     }
+
+    internal static bool IsStrongHandshakeSignature(SignatureAndHashAlgorithm algorithm) =>
+        algorithm.Hash is HashAlgorithm.sha256 or HashAlgorithm.sha384 or HashAlgorithm.sha512 || algorithm.Hash == HashAlgorithm.Intrinsic;
 
     private sealed class Authentication(string host, IList<X509Certificate> roots, DateTime utcNow) : TlsAuthentication
     {

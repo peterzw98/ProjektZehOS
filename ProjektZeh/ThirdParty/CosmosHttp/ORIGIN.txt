@@ -3,5 +3,8 @@ b188be67e89d7ea99a4594bf698892ee4dfc357f:
 https://github.com/CosmosOS/Cosmos.Network.Http
 Quellaenderungen: #nullable disable und explizites using System fuer den Hostbuild;
 MatchesDnsName prueft Platzhalter nach RFC 6125 6.4.3 ("*.com" passt nicht mehr).
+Etappe 12.2 (0.5.x): Zertifikate unterhalb der Wurzel nur mit SHA-2-/EdDSA-Signatur
+(kein SHA-1/MD5, RSASSA-PSS nur mit SHA-2) und starkem Schluessel (RSA >= 2048,
+EC P-256/P-384/P-521, Ed25519/Ed448), CheckStrength; NamesHost ohne CN-Rueckfall.
 cacert.pem ist das im selben Commit enthaltene Mozilla-Rootbundle.
 Die zugehoerigen Lizenz- und Drittanbieterhinweise liegen hier bei.

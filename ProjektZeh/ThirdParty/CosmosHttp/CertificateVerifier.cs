@@ -9,7 +9,10 @@ using Org.BouncyCastle.Asn1;
 using Org.BouncyCastle.Asn1.EdEC;
 using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.X509;
+using Org.BouncyCastle.Asn1.Nist;
+using Org.BouncyCastle.Asn1.Sec;
 using Org.BouncyCastle.Asn1.X9;
+using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.X509;
 using Org.BouncyCastle.X509.Extension;
 using BcCertificate = Org.BouncyCastle.X509.X509Certificate;
@@ -76,6 +79,14 @@ namespace Cosmos.Network.Http
                     return null;
                 }
 
+                // ZehOS (Etappe 12.2): every certificate below the trust anchor is signed with a current algorithm and
+                // carries a strong key; the anchors' keys are checked when they are loaded.
+                error = CheckStrength(current);
+                if (error != null)
+                {
+                    return error;
+                }
+
                 // Signed by a trusted certificate. Above the leaf, depth certificate authorities stand below it.
                 BcCertificate anchor = FindIssuer(current, trusted, 0, now, depth, out error);
                 if (anchor != null)
@@ -106,8 +117,8 @@ namespace Cosmos.Network.Http
 
             byte[] address = ParseIPv4(host);
 
-            bool hasDnsName = false;
-
+            // ZehOS (Etappe 12.2): only the subjectAltName names a host; the common name no longer counts (as in current
+            // browsers; RFC 6125 6.4.4 only allows it).
             Asn1OctetString extension = certificate.GetExtensionValue(X509Extensions.SubjectAlternativeName);
             if (extension != null)
             {
@@ -132,7 +143,6 @@ namespace Cosmos.Network.Http
                 {
                     if (name.TagNo == GeneralName.DnsName)
                     {
-                        hasDnsName = true;
                         if (address == null && MatchesDnsName(DerIA5String.GetInstance(name.Name).GetString(), host))
                         {
                             return true;
@@ -145,20 +155,6 @@ namespace Cosmos.Network.Http
                             return true;
                         }
                     }
-                }
-            }
-
-            // The common name counts only for a certificate without DNS names (RFC 6125, 6.4.4).
-            if (hasDnsName || address != null)
-            {
-                return false;
-            }
-
-            foreach (string commonName in certificate.SubjectDN.GetValueList(X509Name.CN))
-            {
-                if (MatchesDnsName(commonName, host))
-                {
-                    return true;
                 }
             }
 
@@ -366,6 +362,110 @@ namespace Cosmos.Network.Http
 
             // A named curve: an OID, as parsed, or as wrapped in X962Parameters in a certificate BouncyCastle made.
             return oid.Equals(X9ObjectIdentifiers.IdECPublicKey) && algorithm.Parameters?.ToAsn1Object() is DerObjectIdentifier;
+        }
+
+        // ZehOS (Etappe 12.2): signature algorithms accepted below a trust anchor. SHA-1, MD5 and anything unknown are
+        // refused; RSASSA-PSS additionally needs a SHA-2 hash (checked in HasStrongSignature).
+        private static readonly DerObjectIdentifier[] s_strongSignatures =
+        {
+            PkcsObjectIdentifiers.Sha256WithRsaEncryption,
+            PkcsObjectIdentifiers.Sha384WithRsaEncryption,
+            PkcsObjectIdentifiers.Sha512WithRsaEncryption,
+            X9ObjectIdentifiers.ECDsaWithSha256,
+            X9ObjectIdentifiers.ECDsaWithSha384,
+            X9ObjectIdentifiers.ECDsaWithSha512,
+            EdECObjectIdentifiers.id_Ed25519,
+            EdECObjectIdentifiers.id_Ed448,
+        };
+
+        private static readonly DerObjectIdentifier[] s_strongHashes =
+        {
+            NistObjectIdentifiers.IdSha256,
+            NistObjectIdentifiers.IdSha384,
+            NistObjectIdentifiers.IdSha512,
+        };
+
+        private static readonly DerObjectIdentifier[] s_strongCurves =
+        {
+            SecObjectIdentifiers.SecP256r1,
+            SecObjectIdentifiers.SecP384r1,
+            SecObjectIdentifiers.SecP521r1,
+        };
+
+        private const int MinimumRsaBits = 2048;
+
+        /// <summary>
+        /// ZehOS (Etappe 12.2): why a certificate below the trust anchor is too weak, or null.
+        /// </summary>
+        internal static string CheckStrength(BcCertificate certificate)
+        {
+            if (!HasStrongSignature(certificate))
+            {
+                return "The certificate of " + Name(certificate) + " is signed with a weak or unknown algorithm (" + certificate.SigAlgName + ").";
+            }
+
+            if (!HasStrongKey(certificate))
+            {
+                return "The certificate of " + Name(certificate) + " has a weak key.";
+            }
+
+            return null;
+        }
+
+        internal static bool HasStrongSignature(BcCertificate certificate)
+        {
+            var oid = new DerObjectIdentifier(certificate.SigAlgOid);
+            if (Array.IndexOf(s_strongSignatures, oid) >= 0)
+            {
+                return true;
+            }
+
+            if (!oid.Equals(PkcsObjectIdentifiers.IdRsassaPss))
+            {
+                return false;
+            }
+
+            try
+            {
+                var parameters = RsassaPssParameters.GetInstance(Asn1Object.FromByteArray(certificate.GetSigAlgParams()));
+                return Array.IndexOf(s_strongHashes, parameters.HashAlgorithm.Algorithm) >= 0;
+            }
+            catch
+            {
+                // Missing or malformed parameters: the default hash would be SHA-1.
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// ZehOS (Etappe 12.2): RSA of at least 2048 bits, EC on P-256, P-384 or P-521, Ed25519 or Ed448.
+        /// </summary>
+        internal static bool HasStrongKey(BcCertificate certificate)
+        {
+            if (!HasReadableKey(certificate))
+            {
+                return false;
+            }
+
+            AlgorithmIdentifier algorithm = certificate.SubjectPublicKeyInfo.Algorithm;
+            if (algorithm.Algorithm.Equals(X9ObjectIdentifiers.IdECPublicKey))
+            {
+                return Array.IndexOf(s_strongCurves, (DerObjectIdentifier)algorithm.Parameters.ToAsn1Object()) >= 0;
+            }
+
+            if (algorithm.Algorithm.Equals(PkcsObjectIdentifiers.RsaEncryption) || algorithm.Algorithm.Equals(PkcsObjectIdentifiers.IdRsassaPss))
+            {
+                try
+                {
+                    return ((RsaKeyParameters)certificate.GetPublicKey()).Modulus.BitLength >= MinimumRsaBits;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool IsSignedBy(BcCertificate certificate, BcCertificate issuer)
