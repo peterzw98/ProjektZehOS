@@ -60,8 +60,10 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         IBlockDevice? device = FindDevice(diskName);
         if (device is null) return Failure("DeviceNotFound", "Laufwerk nicht gefunden: " + diskName);
         if (ReferenceEquals(device, source.Host)) return Failure("TargetIsSource", "Das Ziel ist das Laufwerk mit /data.");
-        foreach (Partition partition in StorageManager.GetPartitions(device))
-            if (VfsManager.IsPartitionMounted(partition)) return Failure("TargetMounted", "Eine Partition des Ziels ist eingehaengt.");
+        // VfsManager.IsPartitionMounted ist in Cosmos 3.0.97 nicht oeffentlich; die Mounttabelle nennt die Partition.
+        foreach (VfsMount mount in VfsManager.Mounts)
+            if (mount.Partition is { } mounted && ReferenceEquals(mounted.Host, device))
+                return Failure("TargetMounted", "Eine Partition des Ziels ist eingehaengt.");
 
         if (!Gpt.IsGpt(device)) return Failure("TargetNotGpt", "Das Ziel hat kein ZehOS-Layout (keine GPT).");
         var table = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
@@ -85,6 +87,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
             return Failure<Partition>("TargetEspUnreadable", "ESP des Ziels nicht lesbar.");
         IdentityResult? identity;
         string? text;
+        bool unmounted;
         try
         {
             identity = CosmosInstalledIdentity.Evaluate(TargetEfiMount);
@@ -92,9 +95,11 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         }
         finally
         {
-            // Ohne Aushaengen bliebe ein fremder Mount stehen; dann lieber gar nicht weiter.
-            if (!VfsManager.TryUnmount(TargetEfiMount)) throw new IOException("cause='TargetEspBusy' message='ESP des Ziels liess sich nicht aushaengen.'");
+            unmounted = VfsManager.TryUnmount(TargetEfiMount);
         }
+
+        // Ohne Aushaengen bliebe ein fremder Mount stehen; dann lieber gar nicht weiter.
+        if (!unmounted) return Failure<Partition>("TargetEspBusy", "ESP des Ziels liess sich nicht aushaengen.");
 
         if (identity is not { State: InstalledState.Healthy })
             return Failure<Partition>("TargetNotHealthy", identity?.Reason ?? "Keine ZehOS-Installation auf dem Ziel.");
@@ -110,14 +115,17 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         if (!readOnly.TryMount(new CosmosReadOnlyExt2FileSystem(root), root, MountFlags.ReadOnly, TargetMount))
             return Failure<LayoutState>("TargetRootUnreadable", "Root des Ziels nicht lesbar.");
         ResultObject<LayoutMarker>? marker;
+        bool unmounted;
         try
         {
             marker = LayoutMarker.ReadFile(TargetMount + LayoutMarker.Path);
         }
         finally
         {
-            if (!VfsManager.TryUnmount(TargetMount)) throw new IOException("cause='TargetRootBusy' message='Root des Ziels liess sich nicht aushaengen.'");
+            unmounted = VfsManager.TryUnmount(TargetMount);
         }
+
+        if (!unmounted) return Failure<LayoutState>("TargetRootBusy", "Root des Ziels liess sich nicht aushaengen.");
 
         if (marker is null) return Failure<LayoutState>("TargetMarkerMissing", "Root-Marker des Ziels fehlt.");
         if (!marker.IsOK()) return ResultObjectFactory.CreateFailure<LayoutState>(marker.Status);

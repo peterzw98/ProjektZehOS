@@ -29,8 +29,9 @@ public sealed class Kernel : Sys.Kernel
     private static readonly Func<IDisposable?>? SourceWrites = AppStorageGate.TryBeginWrite;
     private static readonly Func<IDisposable?>? PackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
 #else
-    private static readonly Func<IDisposable?>? SourceWrites = null;
-    private static readonly Func<IDisposable?>? PackageWrites = null;
+    // Ohne Flag bleiben beide null: die Dienste verhalten sich wie vor 4.5.
+    private static Func<IDisposable?>? SourceWrites => null;
+    private static Func<IDisposable?>? PackageWrites => null;
 #endif
     private readonly ConsoleTextOutput output = new();
     // Entsteht erst in InitializeServices, weil die Shell Konten, Pakete und das Pfadprofil braucht.
