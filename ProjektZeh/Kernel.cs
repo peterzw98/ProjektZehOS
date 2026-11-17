@@ -133,7 +133,9 @@ public sealed class Kernel : Sys.Kernel
             virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.IsVirtualPath(path)
+                ? ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument, "cause='VirtualSource' message='Pakete nur aus normalen Verzeichnissen installieren.'")
+                : files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(

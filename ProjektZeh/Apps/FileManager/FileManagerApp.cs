@@ -262,6 +262,8 @@ internal sealed class FileManagerApp : IApplication
         preview.SetText("");
         // Ohne sichtbare Vorschau keine Plattenarbeit in der gemeinsamen Ereignisschleife.
         if (!preview.Enabled || Selected is not { IsDirectory: false } entry || sizes[list.SelectedIndex] > FileService.MaximumTextLength) return;
+        // Geraete haben keinen Vorschauinhalt; /dev/zero wuerde je Auswahl 64 KiB lesen und mit dem Grenzfehler enden.
+        if (virtualLocation != null && VirtualTree.Find(entry.Path)?.Kind == VirtualKind.CharacterDevice) return;
         var result = files.ReadTextOrVirtual(entry.Path);
         if (result.IsOK()) preview.SetText(result.Value!.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'));
     }

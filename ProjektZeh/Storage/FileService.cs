@@ -267,15 +267,21 @@ internal sealed class FileService
             if (!handle.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(handle.Status);
             var data = new byte[maximumLength + 1];
             int total = 0;
-            while (total < data.Length)
+            try
             {
-                var read = handle.Value!.Read(data.AsSpan(total));
-                if (!read.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(read.Status);
-                if (read.Value == 0) break;
-                total += read.Value;
+                while (total < data.Length)
+                {
+                    var read = handle.Value!.Read(data.AsSpan(total));
+                    if (!read.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(read.Status);
+                    if (read.Value == 0) break;
+                    total += read.Value;
+                }
+            }
+            finally
+            {
+                handle.Value!.Close();
             }
 
-            handle.Value!.Close();
             return ResultObjectFactory.CreateSuccess(data[..total]);
         }
 

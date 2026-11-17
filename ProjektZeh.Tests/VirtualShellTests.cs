@@ -56,6 +56,14 @@ public sealed class VirtualShellTests
     }
 
     [TestMethod]
+    public void LsOfAVirtualFilePrintsItsNameAndStillChecksRights()
+    {
+        Assert.IsTrue(shell.ExecuteLine("ls /proc/./version", output).IsOK());
+        CollectionAssert.AreEqual(new[] { "/proc/version" }, output.Lines);
+        Assert.IsFalse(shell.ExecuteLine("ls /proc/log", output).IsOK(), "Nur Administratoren duerfen /proc/log sehen.");
+    }
+
+    [TestMethod]
     public void CdIntoVirtualTreesIsRefusedAndKeepsTheDirectory()
     {
         string before = files.CurrentDirectory;

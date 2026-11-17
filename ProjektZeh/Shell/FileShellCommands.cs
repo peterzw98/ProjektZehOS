@@ -1,6 +1,7 @@
 using System.Globalization;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
+using ProjektZeh.Storage.Virtual;
 
 namespace ProjektZeh.Shell;
 
@@ -76,6 +77,12 @@ internal sealed class FileShellCommands
         if (files.IsVirtualPath(path))
         {
             var listed = files.ListVirtual(path);
+            // Eine Datei listet sich selbst wie unter Linux; die Rechte hat ListVirtual davor schon geprueft.
+            if (listed.Status.Code == ResultCode.InvalidArgument)
+            {
+                output.WriteLine(VirtualTree.Normalize(path, files.CurrentDirectory));
+                return ResultErr.CreateSuccess();
+            }
             if (!listed.IsOK()) return listed.Status;
             foreach (var entry in listed.Value!) output.WriteLine(entry.Path);
             return ResultErr.CreateSuccess();
