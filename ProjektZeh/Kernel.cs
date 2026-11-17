@@ -135,7 +135,8 @@ public sealed class Kernel : Sys.Kernel
         if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
         var path = Paths.AppState(packageId, user);
         if (!path.IsOK()) return null;
-        var created = new FileService(Paths.AdminRoot, pathGuard: CosmosPathGuard.For(Paths.AdminRoot)).CreateDirectory(path.Value!);
+        var created = Runtime.Wasm.WasmSaveStore.CreateRoot(new FileService(Paths.AdminRoot, pathGuard: CosmosPathGuard.For(Paths.AdminRoot)),
+            Paths.AdminRoot, path.Value!);
         if (!created.IsOK())
         {
             systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);

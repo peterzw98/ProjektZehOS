@@ -103,6 +103,26 @@ internal sealed class WasmSaveStore
         files = new FileService(this.root, pathGuard: pathGuard, diskSpace: diskSpace);
     }
 
+    /// <summary>
+    /// Legt den App-Speicher <paramref name="target"/> unterhalb von <paramref name="adminRoot"/> Ebene fuer Ebene an
+    /// (.zehos-apps, Paket, Konto). Der Pfadwaechter erlaubt beim Anlegen nur ein fehlendes Blatt; auf einer frischen
+    /// Platte fehlte sonst schon .zehos-apps (Befund cc-lead im ClassiCube-Gasttest).
+    /// </summary>
+    internal static ResultErr CreateRoot(FileService files, string adminRoot, string target)
+    {
+        string prefix = adminRoot.TrimEnd('/') + "/";
+        if (!target.StartsWith(prefix, StringComparison.Ordinal))
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "cause='OutsideRoot' message='App-Speicher liegt nicht unter der Verwaltungswurzel.'");
+        string path = adminRoot.TrimEnd('/');
+        foreach (string part in target[prefix.Length..].Split('/'))
+        {
+            path += "/" + part;
+            var created = files.CreateDirectory(path);
+            if (!created.IsOK()) return created;
+        }
+        return ResultErr.CreateSuccess();
+    }
+
     /// <summary>Speicherbedarf der offenen Dateien; begrenzt den Kernel-Heap je Instanz.</summary>
     public long BufferedBytes => buffered;
 
