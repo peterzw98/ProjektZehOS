@@ -82,8 +82,12 @@ class World:
         return bytes(out)
 
     def spawn(self) -> tuple[int, int, int]:
-        """Mitte der Welt in Augenhoehe ueber dem Gras (Festkomma, 32 Einheiten je Block)."""
-        return self.width * 16, (self.ground + 1) * 32 + 51, self.length * 16
+        """Blockmitte nahe der Weltmitte in Augenhoehe ueber dem Gras (Festkomma, 32 Einheiten je Block).
+
+        Nicht auf eine Blockkante: Steht das Auge genau auf x=32.0, beginnt ClassiCubes Zielstrahl im Nachbarblock und
+        meldet beim Blick nach unten eine Seitenflaeche; Setzen landet dann im Boden und unterbleibt (Gast 17.11.2026).
+        """
+        return self.width * 16 + 16, (self.ground + 1) * 32 + 51, self.length * 16 + 16
 
 
 class Client:

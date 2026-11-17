@@ -27,6 +27,16 @@ diff --git a/src/Http_Worker.c b/src/Http_Worker.c
  #include "Http.h"
  #include "Game.h"
  
+@@ -32,7 +33,8 @@
+ 	return -1;
+ }
+ 
+-int Http_CheckProgress(int reqID) { return -1; }
++/* Nie laufend: -1 hiesse "laedt" und zeigte im Mehrspieler dauerhaft "Downloading texture pack" */
++int Http_CheckProgress(int reqID) { return HTTP_PROGRESS_NOT_WORKING_ON; }
+ 
+ void Http_LogError(const char* action, const struct HttpRequest* item) { }
+ 
 diff --git a/src/LScreens.c b/src/LScreens.c
 --- a/src/LScreens.c
 +++ b/src/LScreens.c

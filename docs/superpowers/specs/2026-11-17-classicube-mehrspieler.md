@@ -63,3 +63,14 @@ Es gibt nur einen Build. Das Netz entscheidet das Manifest: Die neue Paketversio
 ## Gastprüfung
 
 `scripts/test-classicube-multiplayer.py` nach dem Muster von `scripts/test-classicube-desktop.py`: Testserver im Skript auf `127.0.0.1` (der Gast erreicht ihn als `10.0.2.2`), Paket mit `--network`, `net dhcp`, Start, *Direct connect*, Name und Adresse tippen, Verbinden. Geprüft wird: Login am Server, Bewegung (Positionspakete ändern sich), Blockänderung kommt am Server an, ein vom Server gesetzter Block erscheint im Bild, Schließen des Fensters bei bestehender Verbindung (Server sieht das Ende), Serverausfall (Server schließt alle Verbindungen, ClassiCube zeigt „Disconnected“, der Desktop reagiert weiter auf das Startmenü). `scripts/test-classicube-desktop.py` startet Einzelspieler künftig über den Launcher.
+
+## Ergebnis der Gastprüfung (17. November 2026)
+
+QEMU 10.2.2 mit WHPX, ISO dieses Branches mit Test-Paketschlüssel (Kernel unverändert gegenüber `feature/classicube-rasterizer`), Paket mit `capability=net`. `scripts/test-classicube-multiplayer.py` bestanden: Launcher und Direct connect mit Bitmapschrift, Login, Positionen am Server, gesetzter und entfernter Block am Server und beim zweiten Client, dessen Steinboden im Bild, Schließen des Fensters bei offener Verbindung (Server sieht das Ende), Serverausfall mit „Disconnected!“ nach unter einer Sekunde, danach Textshell/Desktop-Wechsel und sauberes Ende der App. Freier Speicher nach den beiden Läufen 447 016 und 447 464 KiB.
+
+Befunde aus der Prüfung:
+
+- Ohne Patch zeigte ClassiCube im Mehrspieler dauerhaft „Downloading texture pack“: Der HTTP-Stub meldete für `Http_CheckProgress` −1, das ClassiCube als „lädt“ liest. Patch 0004 meldet jetzt „keine Anfrage“.
+- Steht das Auge des Spielers genau auf einer Blockkante (der erste Testserver spawnte auf x = 32,0), trifft ClassiCubes Zielstrahl beim Blick nach unten eine Seitenfläche, und Setzen landet im Boden (wird verworfen). Das ist Verhalten von ClassiCube, nicht des Ports; der Testserver spawnt deshalb in der Blockmitte. Der Einzelspieler-Generator spawnt ebenfalls auf Blockkanten (64,0); das erklärt gelegentliche Fehlschläge von „Rechtsklick setzt keinen Block“ in `scripts/test-classicube-desktop.py`.
+- `scripts/test-classicube-desktop.py` (Einzelspieler über den Launcher) bestanden, freier Speicher nach drei Läufen 447 864, 448 184 und 444 880 KiB; zwei Läufe davor scheiterten an „Rechtsklick setzt keinen Block“ (Kantenfall oben, Rechner zeitweise stark ausgelastet) bzw. am zu frühen Weiterlaufen nach dem Launcher (Skript wartet jetzt, bis der Launcher verschwunden ist).
+- Offen: VMware (nicht geprüft), zwei ZehOS-Gäste gleichzeitig am selben Server (der zweite Client lief als Python-Client auf dem Host), Verbindungsabbruch ohne FIN/RST (Server hängt).

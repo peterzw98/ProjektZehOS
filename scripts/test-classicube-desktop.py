@@ -112,9 +112,14 @@ def main():
         # Erst zeigt der Launcher; "Singleplayer" liegt 110 Pixel unter der Mitte des Inhalts (798x519). Jeder Start
         # versetzt das Fenster um 28 Pixel.
         time.sleep(3)
-        capture("launcher")
+        launcher = view(capture("launcher"))
         offset = 28 * launches.pop(0)
         guest.qmp.click(33+399+offset, 120+259+110+offset, *guest.size)
+        # Die verrauschte Launcher-Flaeche hat selbst viele Farben; erst wenn sie verschwunden ist, zaehlt world().
+        deadline = time.monotonic() + 60
+        while difference(launcher, view(capture("launcher-verlassen"))) < len(launcher) // 24:
+            assert time.monotonic() < deadline, "Singleplayer im Launcher startet kein Spiel"
+            time.sleep(1)
 
     launches = [0, 1, 2]
 

@@ -205,7 +205,7 @@ def main():
         mark = server.mark()
         guest.qmp.hold("w", 1.5)
         moved = server_event(lambda e: e["type"] == "position" and e["player"] == PLAYER and
-                             (e["x"], e["z"]) != (server.world.width * 16, server.world.length * 16),
+                             (e["x"], e["z"]) != server.world.spawn()[::2],
                              30, mark, "Bewegung kommt nicht am Server an")
         state = changed(state, "bewegung-w", "W veraendert die Ansicht nicht")
         assert observer.seen(0x08), "Beobachter erhaelt keine Positionen"
@@ -219,6 +219,7 @@ def main():
         button("right")
         placed = server_event(lambda e: e["type"] == "block" and e["player"] == PLAYER and e["mode"] == 1, 30, mark,
                               "Gesetzter Block kommt nicht am Server an")
+        capture("block-gesetzt")
         button("left")
         removed = server_event(lambda e: e["type"] == "block" and e["player"] == PLAYER and e["mode"] == 0, 30, mark,
                                "Entfernter Block kommt nicht am Server an")

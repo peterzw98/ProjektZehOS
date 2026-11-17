@@ -69,6 +69,10 @@ class ClassicTestServerTests(unittest.TestCase):
         self.assertEqual(world[(5 * 16 + 3) * 16 + 5], classic.AIR)
         self.assertEqual(spawn[0], 0xFF)
         self.assertEqual(classic.untext(spawn[1:65]), 'anna')
+        # Blockmitte statt Blockkante, sonst trifft ClassiCubes Zielstrahl eine Seitenflaeche.
+        x, y, z = struct.unpack('>hhh', spawn[65:71])
+        self.assertEqual((x % 32, z % 32), (16, 16))
+        self.assertEqual(y, 5 * 32 + 51)
         login = self.server.wait_for(lambda e: e['type'] == 'login', 5)
         self.assertEqual((login['player'], login['magic']), ('anna', 0x42))
 
