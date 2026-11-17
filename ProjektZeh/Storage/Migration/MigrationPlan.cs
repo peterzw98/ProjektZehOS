@@ -55,8 +55,15 @@ internal sealed class MigrationPlan
         }
 
         var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        var sourceChildren = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var entry in inventory.Entries)
         {
+            int separator = entry.RelativePath.LastIndexOf('/');
+            string parent = separator < 0 ? "" : entry.RelativePath[..separator];
+            sourceChildren.TryGetValue(parent, out int children);
+            sourceChildren[parent] = ++children;
+            if (children == FileService.MaximumExt2DirectoryEntries + 1)
+                plan.conflicts.Add($"cause='DirectoryEntryLimit' message='Quellverzeichnis {legacy.AdminRoot}/{parent} hat mehr als {FileService.MaximumExt2DirectoryEntries} Eintraege; vor der Migration aufteilen.'");
             string? target = plan.Map(entry, accounts, legacy, root, out PlanContent content);
             if (target == null) continue;
             if (!ValidTarget(target, root, !entry.IsDirectory))
@@ -88,6 +95,23 @@ internal sealed class MigrationPlan
             if (needed.Contains(file.Target)) plan.conflicts.Add($"Datei und Verzeichnis auf demselben Ziel: {file.Target}");
         plan.directories.AddRange(needed);
         plan.directorySet.UnionWith(needed);
+
+        // Umgelegte Dateien und erzeugte Eltern koennen mehrere Quellen in einem Zielordner zusammenfuehren.
+        var targetEntries = new HashSet<string>(needed, StringComparer.Ordinal);
+        foreach (var file in plan.files) targetEntries.Add(file.Target);
+        targetEntries.UnionWith(LayoutMigration.InstallerEntries);
+        targetEntries.Add(MigrationJournal.Path);
+        // Der bereits vorhandene Marker wird zum Abschluss ueber eine zusaetzliche Tempdatei ersetzt.
+        targetEntries.Add(LayoutMarker.Path + IMigrationTarget.TemporarySuffix);
+        var targetChildren = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string target in targetEntries)
+        {
+            string parent = KernelPath.Parent(target)!;
+            targetChildren.TryGetValue(parent, out int children);
+            targetChildren[parent] = ++children;
+            if (children == FileService.MaximumExt2DirectoryEntries + 1)
+                plan.conflicts.Add($"cause='DirectoryEntryLimit' message='Zielverzeichnis {parent} benoetigt mehr als {FileService.MaximumExt2DirectoryEntries} Eintraege; vor der Migration aufteilen.'");
+        }
 
         long bytes = plan.directories.Count * BlockBytes, inodes = plan.directories.Count + plan.files.Count;
         foreach (var file in plan.files) bytes += (file.Size + BlockBytes - 1) / BlockBytes * BlockBytes;
