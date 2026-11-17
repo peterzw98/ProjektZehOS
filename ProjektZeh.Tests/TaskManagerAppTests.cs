@@ -79,6 +79,7 @@ public sealed class TaskManagerAppTests
         Assert.AreEqual(2, desktop.Windows.Count);
         Assert.AreSame(second, desktop.Windows.GetWindow(0));
         Assert.AreNotSame(first, desktop.Windows.GetWindow(1));
+        Assert.IsInstanceOfType<TaskManagerApp>(desktop.Windows.GetWindow(1).Application, "Nur das gewaehlte Fenster darf fehlen.");
     }
 
     [TestMethod]

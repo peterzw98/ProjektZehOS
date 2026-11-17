@@ -32,7 +32,9 @@ public sealed class ResultTests
         Assert.IsNull(status.ExceptionDetails, "Erfolg darf keine Exceptiondetails enthalten.");
         Assert.IsTrue(result.IsOK(), "Ein ausdruecklich erfolgreiches Ergebnis muss als Erfolg gelten.");
         Assert.AreEqual("Ergebnis", result.Value, "Der Wert muss unveraendert ankommen.");
-        Assert.IsTrue(ResultObjectFactory.CreateSuccess<string>(null).IsOK(), "Auch ein erlaubter null-Wert gilt als Erfolg.");
+        var empty = ResultObjectFactory.CreateSuccess<string>(null);
+        Assert.IsTrue(empty.IsOK(), "Auch ein erlaubter null-Wert gilt als Erfolg.");
+        Assert.IsNull(empty.Value, "Ein erlaubter null-Wert muss unveraendert bleiben.");
     }
 
     [DataTestMethod]
@@ -51,6 +53,7 @@ public sealed class ResultTests
         var result = ResultObjectFactory.CreateFailure<int>(code, "Kein Wert gefunden.");
         Assert.IsFalse(result.IsOK(), "Der Standardwert eines Werttyps darf keinen Erfolg vortaeuschen.");
         Assert.AreEqual(code, result.Status.Code, "Die Ursache muss vom Wert getrennt bleiben.");
+        Assert.AreEqual(0, result.Value, "Ohne Wert bleibt der Standardwert des Typs erhalten.");
     }
 
     [TestMethod]

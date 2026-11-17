@@ -47,16 +47,19 @@ jobs:
           --collect "Code Coverage;Format=cobertura"
           --results-directory TestResults
 
+      # Vor der Abdeckungspruefung, damit ein Fehler in check-coverage.py selbst sichtbar wird.
+      - name: Run Python script tests
+        run: python3 -m unittest discover -s scripts/tests -v
+
       - name: Check coverage
-        # Ohne Bericht liefert find nichts; das Skript meldet dann einen Eingabefehler statt 0 % durchzuwinken.
+        # Genau ein Bericht wird erwartet: ohne Treffer oder mit mehreren bricht das Skript mit einem Eingabefehler ab,
+        # statt 0 % oder nur einen Teil durchzuwinken.
         run: >-
-          python3 scripts/check-coverage.py "$(find TestResults -name '*.cobertura.xml' | head -n 1)"
+          python3 scripts/check-coverage.py $(find TestResults -name '*.cobertura.xml')
           --min-total 92 --min-file 50
           --exclusions scripts/coverage-exclusions.txt
+          --sources ProjektZeh
           --summary "$GITHUB_STEP_SUMMARY"
-
-      - name: Check isolated FAT32 test-copy helper
-        run: python3 -m unittest discover -s scripts/tests -v
 
       - name: Upload test results
         if: always()

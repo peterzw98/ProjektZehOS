@@ -161,12 +161,20 @@ public sealed class UpdateServiceTests
     [DataTestMethod]
     [DataRow("update check")]
     [DataRow("update install")]
-    [DataRow("update install fehlt.zip")]
     public void UpdateCommand_SourceWithoutSignature_FailsWithoutOutputOrWrite(string line) => RunUpdateCommand((shell, source, target, output) =>
     {
         source.Files.Remove("update-manifest.sig");
 
         Assert.IsFalse(shell.ExecuteLine(line, output).IsOK());
+
+        Assert.AreEqual(0, output.Lines.Count);
+        Assert.AreEqual(0, target.Replacements);
+    });
+
+    [TestMethod]
+    public void UpdateCommand_InstallMissingOfflineFile_FailsWithoutOutputOrWrite() => RunUpdateCommand((shell, _, target, output) =>
+    {
+        Assert.IsFalse(shell.ExecuteLine("update install fehlt.zip", output).IsOK());
 
         Assert.AreEqual(0, output.Lines.Count);
         Assert.AreEqual(0, target.Replacements);
