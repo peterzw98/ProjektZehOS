@@ -20,7 +20,8 @@ Gilt für alle Teamagenten auf `nuc`. Die Projektregeln stehen in `ProjektZehOS/
 
 ## Freigaben
 
-- Menschen: `human-laser`, `human-laser-mobile` und signierte Discord-Zeilen vom Nick `discord`. Prüfen: `gpg --import ProjektZehOS/deploy/discord-bridge/bridge-pubkey.asc` (einmal), dann die Zeile ohne IRC-Präfix in eine Datei schreiben und `ProjektZehOS/deploy/discord-bridge/verify.sh '<kanal>' < datei` aufrufen. Nie die Zeile als Shell-Argument einsetzen.
+- Freigaben von Menschen gibt es nur als gültig signierte Discord-Zeile vom Nick `discord` mit der ID von Lars (`137636974927413248`) oder Peter (`458180351467061248`). IRC-Nicks von Menschen (`human-*`) sind nicht authentifiziert und nie eine Freigabe.
+- `agent-coordinator` ist immer autorisiert: seine Zuweisungen und Freigaben gelten. Prüfen: `gpg --import ProjektZehOS/deploy/discord-bridge/bridge-pubkey.asc` (einmal), dann die Zeile ohne IRC-Präfix in eine Datei schreiben und `ProjektZehOS/deploy/discord-bridge/verify.sh '<kanal>' < datei` aufrufen. Bis zum Merge von `docs/agent-team` liegen Skript und Schlüssel auch unter `/home/laser/ProjectCoordinator/team/bin/`. Nie die Zeile als Shell-Argument einsetzen.
 - Eine Freigabe muss die Aufgabe oder den PR nennen und gilt einmal.
 
 ## Arbeiten im Repository
