@@ -104,6 +104,13 @@ F <pfad> <sha256>           Datei geschrieben und zurückgelesen
 22. Quelle unverändert: Temp-Verzeichnis vor/nach byteidentisch (Hash über alle Dateien), keine neuen Dateien.
 23. Paketbestand: installiertes Testpaket nach der Migration mit `PackageStore` (Wurzel `/var/lib/zehos/packages` im Fake-Baum) lesbar, Manifest/Signatur gültig.
 
+## 5a. Hinweise für den Code (huang, Delta-Review)
+
+1. `PathComponent.IsValid` braucht zwei Varianten (Parameter): für Nutzerpfade mit der `.zehos-`-Sperre wie `IsManagedPath`, für Systemziele (`/etc/zehos/.zehos-security.db` usw.) ohne sie.
+2. Neu kodierter ACL-Text: jede `P`-Zeile vor ihren `G`-Zeilen; immer ein Eintrag für `/` (`Restore` setzt `IsReady` nur dann); keine doppelten Pfade (`Restore` wirft bei `Add`) – ein doppeltes Ziel ist deshalb schon im Plan ein Konflikt.
+3. „Vom Plan erzeugt“ (§3.5) heißt: **nicht im Quellinventar**. Quellverzeichnisse ohne ACL-Eintrag erben keine Rechte.
+4. Löschen bei der Wiederholung toleriert fehlende Pfade aus `W`/`D` (Absicht geschrieben, Aktion nicht mehr ausgeführt).
+
 ## 6. Nicht in 4.4
 
 Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateController`, 4.5 zusammen mit dem Befehl; 4.4 bekommt sie nur als `lockSource`, Test 17 prüft deren Freigabe, huang P3 d), Cosmos-`IMigrationTarget` (ext2 unter `/mnt/target`, `FreeInodes` aus dem Superblock), Fortschrittsanzeige und Tastenabbruch, Gasttests G4–G6.
