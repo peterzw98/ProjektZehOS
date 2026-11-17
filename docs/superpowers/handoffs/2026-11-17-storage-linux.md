@@ -2,6 +2,8 @@
 
 Stand: 17. November 2026. **Nicht fertig:** Formatterkorrektur und Gesamtplan laufen weiter. Dieses Dokument dient dem ausdrücklich vom Benutzer gewünschten Wechsel der Teamleitung vor einem Nutzungslimit.
 
+**Aktueller Stand (05:40):** Lead `agent-orchestrator-junior`. ext2-Formatter-Plug und FreeInode-Plug sind aktiv und im Gast belegt (`feb5a55`, `e2fsck -fn` Exit 0); der Abschnitt „Plug verworfen“ (01:52) ist überholt. PR-Kandidat Etappe 1: `feature/storage-ext2` (Base `fix/netsurf-resize-race`, Version 0.5.10). Etappe 2 (Datenplatte) auf `task/storage-data-disk-selector`, offen.
+
 ## Auftrag und Grenzen
 
 Der Benutzer hat die gezielte Korrektur des Cosmos-Formatierers, die erneute Qualifikation und **den gesamten** [Storage-Plan](../plans/2026-11-17-storage-linux.md) beauftragt. [Spezifikation](../specs/2026-11-17-storage-linux.md): 32–128 GiB, Linux-artiger Rootbaum einschließlich `/etc`, `/var`, `/home`, virtueller `/proc`-/`/sys`-Systemdaten und `/dev`, danach Migration, Installer, Updates und Energieaktionen. Der Benutzer ist offline; übliche Entscheidungen selbst treffen, Aufgaben delegieren und Ergebnisse selbst prüfen. Bei knappem Budget an einen bestätigten Nachfolger übergeben.

@@ -1,8 +1,11 @@
 # Korrigierter Cosmos-ext2-Formatter
 
 Gemeinsame Quelle für Kernel (Plug) und Hostprobe `experiments/StorageProbe` (`--formatter fixed`). Cosmos bleibt
-3.0.97; der Treiber zum Mounten, Lesen und Schreiben kommt unverändert aus dem Paket. Ersetzt wird nur das
-Formatieren.
+3.0.97; der Treiber zum Mounten, Lesen und Schreiben kommt aus dem Paket. Ersetzt werden zwei Stellen: das Formatieren
+(`Ext2Formatter.Format`) und die Inode-Freigabe beim Löschen (`Ext2Superblock.FreeInode`, siehe unten).
+
+Im Produkt wird ext2 noch nirgends eingehängt. Vor dem ersten Produktmount muss `Ext2FeatureGate.Evaluate` davor
+geschaltet und `s_state` (Fehlerflag) ausgewertet werden; ohne das mountet Cosmos unbekannte Features schreibend.
 
 ## Herkunft und Lizenz
 
@@ -80,6 +83,11 @@ die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tu
 schreibt der Plug wie das Original fort; den Inode-Cache-Eintrag entfernt er nicht (generischer Zugriff warf im Gast
 `NotSupportedException`; unschädlich, Begründung im Code); interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
 Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
+
+**Beleg (17. November 2026, QEMU/KVM):** Stand `feb5a55` (Plugcode identisch mit diesem Branch): Hosttests 635/635,
+Probe-Build mit `-warnaserror` grün, Gastprobe Lauf 1 16× PASS, Lauf 2 6× PASS, `e2fsck -fn` Exit 0 auf einem frischen
+72-MiB-Image. Vorher mit Originaltreiber (`1b7ef9c`): `e2fsck -fn` Exit 4 (Inode ohne `dtime`, unverbundenes
+Verzeichnis). VMware ungeprüft.
 
 ## Gastprobe
 
