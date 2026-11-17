@@ -187,7 +187,9 @@ public sealed class Kernel : Sys.Kernel
         if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
         var path = systemPaths.AppState(packageId, user);
         if (!path.IsOK()) return null;
-        var created = new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot)).CreateDirectory(path.Value!);
+        // #210 (ebenenweise anlegen) mit dem Profilpfad aus 4.3; im Root-Profil liegt der App-Zustand unter /var/lib/zehos/apps.
+        var created = Runtime.Wasm.WasmSaveStore.CreateRoot(new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot)),
+            systemPaths.AdminRoot, path.Value!);
         if (!created.IsOK())
         {
             systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);
