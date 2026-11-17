@@ -153,4 +153,61 @@ public sealed class UiTests
         Assert.AreEqual(3, list.SelectedIndex);
         Assert.AreEqual(1, activated);
     }
+
+    [TestMethod]
+    public void TextBox_EnterInSingleLine_SubmitsWithoutEditing()
+    {
+        int submitted = 0;
+        var box = new UiTextBox(20) { Submitted = () => submitted++ };
+        box.SetText("ab");
+        box.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        Assert.AreEqual(1, submitted);
+        Assert.AreEqual("ab", box.Text);
+    }
+
+    [TestMethod]
+    public void TextBox_EnterInMultiline_InsertsLineWithoutSubmitting()
+    {
+        int submitted = 0;
+        var box = new UiTextBox(20, true) { Submitted = () => submitted++ };
+        box.SetText("ab");
+        box.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        Assert.AreEqual(0, submitted);
+        Assert.AreEqual("\nab", box.Text);
+    }
+
+    [TestMethod]
+    public void TileGrid_EnterOnVisibleSelection_ActivatesOnce()
+    {
+        int activated = 0;
+        var grid = new UiTileGrid { Bounds = new(0, 0, 400, 300), Activated = () => activated++ };
+        grid.SetItems(["a", "b"]);
+        grid.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        grid.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter, IsRepeat: true));
+        Assert.AreEqual(1, activated);
+    }
+
+    [TestMethod]
+    public void TileGrid_EnterOnSelectionOutsideColumnGrid_ActivatesNothing()
+    {
+        int activated = 0;
+        // Ein Platz im spaltenweisen Raster: Eintrag 2 liegt ausserhalb und ist unsichtbar.
+        var grid = new UiTileGrid { Bounds = new(0, 0, 104, 100), ColumnMajor = true, Activated = () => activated++ };
+        grid.SetItems(["a", "b", "c"]);
+        Assert.AreEqual(1, grid.Capacity);
+        grid.Select(2);
+        grid.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        Assert.AreEqual(0, activated);
+    }
+
+    [TestMethod]
+    public void TileGrid_EnterWithoutSelection_ActivatesNothing()
+    {
+        int activated = 0;
+        var grid = new UiTileGrid { Bounds = new(0, 0, 400, 300), ColumnMajor = true, Activated = () => activated++ };
+        grid.SetItems(["a"]);
+        grid.Select(-1);
+        grid.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Enter));
+        Assert.AreEqual(0, activated);
+    }
 }
