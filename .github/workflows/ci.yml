@@ -152,12 +152,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Build live and installer release images
-        run: scripts/build-release.sh 0.0.0 "$RUNNER_TEMP/zehos-release-check"
-
-      - name: Check release artifacts for local paths
-        run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release-check/*
-
       - name: Upload kernel build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -166,6 +160,45 @@ jobs:
           path: artifacts/kernel-build.log
           if-no-files-found: warn
           retention-days: 14
+
+  # Eigener Job statt Schritte im Kernel-Job: der Gastlauf haengt nur am ISO und soll nicht auf den vollstaendigen Neubau der
+  # Release-Images (Live- und Installer-ISO, rund eine Minute) warten. Der Job baut die Toolchain selbst und laeuft parallel.
+  release-images:
+    name: Release images (live and installer)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install matching Cosmos CLI and patcher
+        run: |
+          dotnet tool install --global Cosmos.Tools --version 3.0.97
+          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+
+      - name: Install Cosmos native toolchain
+        # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: cosmos install --auto --tools
+
+      - name: Check build tools
+        run: cosmos check
+
+      - name: Build live and installer release images
+        run: scripts/build-release.sh 0.0.0 "$RUNNER_TEMP/zehos-release-check"
+
+      - name: Check release artifacts for local paths
+        run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release-check/*
 
   netsurf:
     name: NetSurf offline package
