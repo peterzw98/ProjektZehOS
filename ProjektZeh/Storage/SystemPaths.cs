@@ -38,6 +38,9 @@ internal sealed class SystemPaths
 
     private readonly string appStateBase;
 
+    /// <summary>Wurzel aller App-Zustandsordner; die Migration bildet sie als Ganzes ab (Etappe 4.4).</summary>
+    public string AppStateDirectory => appStateBase;
+
     public PathProfile Profile { get; }
     /// <summary>Verwaltungswurzel der ACLs.</summary>
     public string AdminRoot { get; }

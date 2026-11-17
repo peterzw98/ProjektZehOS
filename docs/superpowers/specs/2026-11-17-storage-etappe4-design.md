@@ -92,7 +92,7 @@ Damit unterscheiden sich frische Installation, abgebrochene Einrichtung und abge
 6. **Kopieren** jeder Datei, Journal-Absicht **vor** der Datei: Zeile „schreibe <Pfad>“ in `/etc/zehos/.zehos-migration-journal` und **flushen**, dann Datei schreiben; Verzeichnisse werden ebenso journalisiert (huang P3 e); Prüfsumme zurücklesen, Zeile „fertig <Pfad> <Hash>“ (huang P3 a).
 7. **Metadaten:** ACL-Pfade mit derselben Zuordnung umschreiben; Konten und Befehlsrechte unverändert übernehmen; Ergebnis zurücklesen und mit `FileAccessControl` (Ordinal, Wurzel `/`) laden – Ladefehler ⇒ Abbruch.
 8. **Inventar erneut** mit dem aus Schritt 2 vergleichen; jede Abweichung ⇒ Abbruch.
-9. Root-Marker `state=ready` mit Ziel-Disk-GUID, Quellinventar-Hash und Dateizahl als letzter Schreibzugriff, danach Sync (zweifach, §2).
+9. **Erst Sync (zweifach, §2)**, dann Root-Marker `state=ready` mit Ziel-Disk-GUID, Quellinventar-Hash und Dateizahl als letzter Schreibzugriff, danach erneut Sync (zweifach). Ohne Sync davor könnte nach einem Absturz `ready` auf der Platte stehen, gepufferte Dateiblöcke aber nicht (peter-review zu E4.4-Code).
 10. Schreibsperre der Quelle aufheben; die alte Platte ist unverändert.
 
 **Groß-/Kleinschreibung:** FAT ist case-insensitiv, ACL-Einträge können anders geschrieben sein als der Name auf der Platte. Die Migration nimmt den **tatsächlichen Namen aus der Verzeichnisauflistung** und ordnet ACL-Einträge per OrdinalIgnoreCase zu; ein ACL-Eintrag ohne Datei wird protokolliert und nicht übernommen.

@@ -11,9 +11,6 @@ internal static class ScreenshotSupport
 {
     private static readonly uint[] CrcTable = CreateCrcTable();
 
-    public static UiPainter? LoadCosmosFont() =>
-        LoadCosmosFontData() is { } font ? new UiPainter(font.Data, font.Width, font.Height) : null;
-
     /// <summary>Liest die im Cosmos-Paket eingebettete PSF2-Standardschrift, ohne die Kernelassembly zu laden.</summary>
     public static (byte[] Data, int Width, int Height)? LoadCosmosFontData()
     {
