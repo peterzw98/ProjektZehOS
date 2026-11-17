@@ -249,6 +249,7 @@ internal static class CosmosExt2RootProbe
         Begin("c");
         Check(files.CreateDirectory("/etc").IsOK() && files.CreateDirectory("/etc/zehos").IsOK(), "/etc/zehos");
         string directory = "/home";
+        Check(files.CreateDirectory(directory).IsOK(), "CreateDirectory /home");
         foreach (string part in new[] { "test", ".config", "zehos", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8" })
         {
             directory += "/" + part;
