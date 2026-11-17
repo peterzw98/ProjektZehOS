@@ -14,27 +14,41 @@ internal static class CosmosDataDisk
     private const int Fat32LabelLength = 11;
     private const int Fat32TypeOffset = 82;
 
-    public static DataDiskCandidate Describe(IBlockDevice device)
+    /// <param name="readBasicDataLabels">
+    /// Nur der Installer-Ausschluss liest zusaetzlich das Label von GPT-Basic-Data-Partitionen; Boot und disk use bleiben
+    /// beim bisherigen Lesemuster, damit ein unlesbarer fremder Bootsektor dort kein Geraet aus der Auswahl nimmt.
+    /// </param>
+    public static DataDiskCandidate Describe(IBlockDevice device, bool readBasicDataLabels = false)
     {
         // Der Typ steht nur in der MBR-Tabelle; Partition kennt ihn nicht, daher Zuordnung ueber den Startsektor.
         var found = StorageManager.GetPartitions(device);
         if (found.Count == 0) return new(device.Name, device.BlockSize, device.BlockCount, []);
         var entries = Mbr.IsMbr(device) ? Mbr.Parse(device) : new List<MbrPartitionEntry>();
+        // GPT-Typen fuer das 7a-Layout; Cosmos nummeriert die Partitionen in Parse-Reihenfolge, zugeordnet wird trotzdem ueber den Startsektor.
+        var gptEntries = Gpt.IsGpt(device) ? Gpt.Parse(device) : new List<GptPartitionEntry>();
         var partitions = new List<DataDiskPartition>();
         foreach (Partition partition in found)
         {
             byte type = 0;
             foreach (var entry in entries)
                 if (entry.StartSector == partition.StartSector) type = entry.SystemId;
-            partitions.Add(new(type, type == DataDiskSelector.FatLbaType ? ReadFat32Label(partition) : null));
+            Guid gptType = Guid.Empty;
+            foreach (var entry in gptEntries)
+                if (entry.StartSector == partition.StartSector) gptType = entry.PartitionType;
+            // Wirft das Lesen eines Basic-Data-Labels (etwa bei beschaedigtem Bootsektor), bietet der Installer das Geraet
+            // nicht an (CosmosInstallService faengt die Ausnahme); das ist dort die sichere Seite.
+            bool fat = type == DataDiskSelector.FatLbaType || gptType == Partitioning.GptLayout.EspType
+                || (readBasicDataLabels && gptType == Partitioning.GptLayout.BasicDataType);
+            partitions.Add(new(type, fat ? ReadFat32Label(partition) : null, gptType));
         }
         return new(device.Name, device.BlockSize, device.BlockCount, partitions);
     }
 
-    public static bool HasDataPartition(IBlockDevice device)
+    /// <summary>Installer-Ausschluss: ZEHOSDATA mit MBR oder GPT (<see cref="DataDiskSelector.IsInstallExcluded"/>).</summary>
+    public static bool HasZehosDataLabel(IBlockDevice device)
     {
-        foreach (var partition in Describe(device).Partitions)
-            if (DataDiskSelector.IsDataPartition(partition)) return true;
+        foreach (var partition in Describe(device, readBasicDataLabels: true).Partitions)
+            if (DataDiskSelector.IsInstallExcluded(partition)) return true;
         return false;
     }
 

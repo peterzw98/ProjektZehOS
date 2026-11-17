@@ -1,4 +1,4 @@
-// ZehOS: WAMR-Plattformschicht fuer den reinen AOT-Lader (Plan 5c, Etappe B2).
+// ZehOS: WAMR-Plattformschicht fuer den reinen AOT-Lader (Plan 5c, Etappe B2, Normalbetrieb ab Etappe D).
 // Ein Worker, kein Dateisystem, keine Signale: Sperren sind leer, Speicher kommt aus der freistehenden C-Laufzeit.
 
 #include "platform_api_vmcore.h"
@@ -105,13 +105,22 @@ int os_cond_signal(korp_cond* cond) { (void)cond; return BHT_OK; }
 
 korp_tid os_self_thread(void) { return 1; }
 
-// Die Stackgrenze setzt der Aufrufer je Lauf mit wasm_runtime_set_native_stack_boundary; ohne sie laeuft der native
-// Stack ungeprueft. shortcut: Probe setzt sie immer, Etappe D muss eine fehlende Grenze als Fehler behandeln.
-uint8* os_thread_get_stack_boundary(void) { return NULL; }
+// Grenze des nativen Stacks fuer den laufenden AOT-Aufruf. zehos_wasm_run_aot setzt sie vor jedem Lauf auf dem
+// Wasm-Worker (8 MiB Stack, Grenze 7 MiB unter dem Einstieg wie bei wasm3) und loescht sie danach. WAMR liest sie bei
+// jedem Aufruf (wasm_exec_env_set_thread_info) und laesst WASM_STACK_GUARD_SIZE Abstand; der AOT-Code mit
+// --stack-bounds-checks trappt davor mit "native stack overflow", statt ohne Schutzseite im Triple Fault zu enden.
+// Ein Thread, ein Lauf zur Zeit: eine globale Variable genuegt.
+static uint8* stack_boundary;
+
+void zehos_wamr_set_stack_boundary(uint8_t* boundary) { stack_boundary = boundary; }
+
+uint8* os_thread_get_stack_boundary(void) { return stack_boundary; }
 void os_thread_jit_write_protect_np(bool enabled) { (void)enabled; }
 
-// shortcut: liefert 0, WAMR nutzt die Zeit nur fuer Protokoll und Messung; vor Etappe D an die Kerneluhr anbinden.
-uint64 os_time_get_boot_us(void) { return 0; }
+// Monotone Kerneluhr ueber denselben C#-Rueckruf wie WASI clock_time_get (Uhr 1 = ab Boot).
+extern uint64_t zehos_wasm_host_time_ns(int32_t clockId);
+
+uint64 os_time_get_boot_us(void) { return zehos_wasm_host_time_ns(1) / 1000u; }
 
 // Fehlende Funktionen der freistehenden C-Laufzeit, nur fuer WAMR.
 static void swap_bytes(uint8_t* left, uint8_t* right, size_t size)
