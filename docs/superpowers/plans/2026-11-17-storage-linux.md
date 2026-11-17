@@ -14,6 +14,8 @@
 
 ## Globale Vorgaben
 
+**Fortsetzung am 17. November:** Der Benutzer hat den gezielten Formatter-Fix, erneute Qualifikation und die Umsetzung des gesamten Plans freigegeben; Aufgaben sollen auf mehrere Agenten verteilt werden. Bei knappem Nutzungslimit soll eine bestätigte Übergabe erfolgen. Aktueller Arbeitsstand und Rollen: [Handoff](../handoffs/2026-11-17-storage-linux.md). Keine automatische Merge-/Publish-Freigabe daraus ableiten.
+
 - Zielversion **Cosmos 3.0.97**, Datenträger **32, 64, 128 GiB**; laufendes Cosmos-Update nicht in diesen Auftrag ziehen.
 - Bestehende 64-MiB-Testplatte und `disk init`-Schutz unverändert erhalten. Neue Images nur unter explizitem neuem Pfad mit CreateNew erzeugen.
 - Keine Datenmigration ohne Rückfallkopie; kein automatisches Formatieren, keine In-place-Konvertierung.

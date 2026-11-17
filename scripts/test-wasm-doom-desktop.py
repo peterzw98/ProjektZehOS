@@ -48,9 +48,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Nur fuer diese Wegwerf-VMs; die Datenlaufwerke sind Kopien im Arbeitsordner.
 TEST_USER, TEST_PASSWORD = "tester", "testkennwort1"
-# Deutsche Tastaturbelegung des Gasts (DEStandardLayout); QMP sendet physische US-Tastenpositionen.
-SHIFTED = {":": "dot", "/": "7", "_": "slash"}
-PLAIN = {" ": "spc", ".": "dot", "-": "slash", "y": "z", "z": "y"}
+# Deutsche Tastaturbelegung des Gasts (DEStandardLayout) liegt zentral in scripts/guest_keys.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guest_keys import key_for  # noqa: E402
 SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel"]
 GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS}
 # Bei Aenderungen am Vorbereitungsablauf erhoehen, damit alte Snapshots nicht weiterverwendet werden.
@@ -115,12 +115,8 @@ class Qmp:
 
     def text(self, value: str) -> None:
         for character in value:
-            if character in SHIFTED:
-                self.tap("shift", SHIFTED[character])
-            elif character.isupper():
-                self.tap("shift", PLAIN.get(character.lower(), character.lower()))
-            else:
-                self.tap(PLAIN.get(character, character))
+            shifted, name = key_for(character)
+            self.tap("shift", name) if shifted else self.tap(name)
 
     def line(self, value: str) -> None:
         self.text(value)

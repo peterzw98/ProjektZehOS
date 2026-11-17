@@ -209,6 +209,42 @@ public sealed class FileServiceTests
         Assert.IsTrue(next.IsOK(), "Ein Lesefehler darf nachfolgende Operationen nicht blockieren.");
     }
 
+    // Liefert wie /proc-Dateien Daten in kleinen Stuecken, ohne je eine Laenge zu melden.
+    private sealed class TrickleReader(string content) : TextReader
+    {
+        private int position;
+
+        public override int Read(char[] buffer, int index, int count)
+        {
+            if (position >= content.Length || count == 0)
+            {
+                return 0;
+            }
+
+            buffer[index] = content[position++];
+            return 1;
+        }
+    }
+
+    [TestMethod]
+    public void ReadToEnd_StreamWithoutLength_ReadsUntilEof()
+    {
+        Assert.AreEqual("abc\ndef", FileService.ReadToEnd(new TrickleReader("abc\ndef"), 100));
+    }
+
+    [TestMethod]
+    public void ReadToEnd_ExactlyAtLimit_Succeeds()
+    {
+        Assert.AreEqual(5, FileService.ReadToEnd(new TrickleReader("12345"), 5)!.Length);
+    }
+
+    [TestMethod]
+    public void ReadToEnd_OverLimit_ReturnsNull()
+    {
+        Assert.IsNull(FileService.ReadToEnd(new TrickleReader("123456"), 5));
+        Assert.IsNull(FileService.ReadToEnd(new StringReader(new string('x', 70000)), FileService.MaximumTextLength));
+    }
+
     [TestMethod]
     public void ReadText_TooLargeFile_ReturnsFailureAndClosesStream()
     {
