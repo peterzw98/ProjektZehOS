@@ -102,9 +102,9 @@ internal static unsafe class CosmosAotProbe
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
     private const int Restarts = 20;
     private const int FileRounds = 20;
-    // WAMR startet je Lauf neu; nach dem ersten Lauf darf kein Speicher mehr verloren gehen. Die Toleranz deckt
-    // Schwankungen des Cosmos-Allokators ab, nicht einen Verlust je Lauf (20 Laeufe).
-    private const ulong LeakToleranceBytes = 1024 * 1024;
+    // WAMR startet je Lauf neu; ab dem zweiten Lauf darf kein Speicher mehr verloren gehen (der erste legt Caches an).
+    // 64 KiB = 16 Seiten Schwankung des Seitenallokators; schon 4 KiB Verlust je Lauf fielen ueber 18 Laeufe auf.
+    private const ulong LeakToleranceBytes = 64 * 1024;
     private const int DoomSeconds = 20;
     private const string DoomTestFrame = "ff0000/00ff00/0000ff/ffffff";
     private static readonly byte[] NoModule = [];
@@ -144,20 +144,20 @@ internal static unsafe class CosmosAotProbe
         }
     }
 
-    // 20 Starts hintereinander; der freie Speicher nach dem letzten darf nicht unter dem nach dem ersten liegen.
+    // 20 Starts hintereinander; der freie Speicher nach dem letzten darf nicht unter dem nach dem zweiten liegen.
     private static void RunRestarts(byte[] fixture)
     {
-        ulong freeAfterFirst = 0;
+        ulong freeAfterSecond = 0;
         for (int run = 1; run <= Restarts; run++)
         {
             Expect($"d restart={run}", fixture, "ret42", WasmStatus.Ok, 42);
             ulong free = FreeBytes();
-            if (run == 1) freeAfterFirst = free;
+            if (run == 2) freeAfterSecond = free;
             Write($"d restart={run} freeKiB={free / 1024}");
         }
         ulong freeAfterLast = FreeBytes();
-        Write($"d memory afterFirstKiB={freeAfterFirst / 1024} afterLastKiB={freeAfterLast / 1024}");
-        Check(freeAfterFirst - Math.Min(freeAfterFirst, freeAfterLast) <= LeakToleranceBytes,
+        Write($"d memory afterSecondKiB={freeAfterSecond / 1024} afterLastKiB={freeAfterLast / 1024}");
+        Check(freeAfterSecond - Math.Min(freeAfterSecond, freeAfterLast) <= LeakToleranceBytes,
             "Speicher waechst ueber wiederholte AOT-Starts.");
     }
 
@@ -174,6 +174,14 @@ internal static unsafe class CosmosAotProbe
         Check(session.Output.ToString().Contains("AOT_HOST hallo", StringComparison.Ordinal), "d host: Ausgabe fehlt.");
         Expect("d host calls", host, "hostcalls", WasmStatus.Ok, 31);
         Expect("d host oob", host, "host_oob", WasmStatus.Trap, 0, "out of bounds memory access");
+        // Zeiger gueltig, Laenge nicht: den Trap meldet erst die Kernfunktion (wamrc prueft nur das erste Byte).
+        Expect("d host badlen", host, "host_badlen", WasmStatus.Trap, 0, "out of bounds memory access");
+        Expect("d host badwritten", host, "host_badwritten", WasmStatus.Trap, 0, "out of bounds memory access");
+        // call_indirect auf den Import: Weg ueber invokeNative mit der registrierten "*"-Signatur.
+        var indirect = new ProbeSession(null);
+        Expect("d host indirect", host, "host_indirect", WasmStatus.Ok, 0, session: indirect);
+        Check(indirect.Output.ToString().Contains("AOT_HOST indirekt", StringComparison.Ordinal), "d host indirect: Ausgabe fehlt.");
+        Expect("d host indirect_badlen", host, "host_indirect_badlen", WasmStatus.Trap, 0, "out of bounds memory access");
         Expect("d host grow", host, "grow", WasmStatus.Ok, -1);
         if (!File.Exists(ProbeFile))
         {
