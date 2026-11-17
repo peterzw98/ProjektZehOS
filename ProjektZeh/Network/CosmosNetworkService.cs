@@ -238,10 +238,11 @@ internal sealed class CosmosNetworkService : INetworkService
 
     private static T Exchange<T>(string text, byte[] roots, bool idleDeadline, Func<Stream, T> read, CancellationToken token)
     {
-        var clock = TlsTransport.StartDeadline(text, roots);
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0)
             throw new ArgumentException("Nur HTTP- und HTTPS-URLs ohne Zugangsdaten oder Fragment werden unterstuetzt.");
         if (uri.Host.Length > 253 || uri.PathAndQuery.Length > 2048) throw new ArgumentException("URL ist zu lang.");
+        // Erst nach der Pruefung: eine ungueltige URL soll nicht vorher die Wurzeln parsen.
+        var clock = TlsTransport.StartDeadline(uri, roots);
         Address address = Resolve(uri.Host, token, clock);
         CheckDeadline(clock, token);
         CosmosHttpUpdateSource.RandomizeTcpStart();

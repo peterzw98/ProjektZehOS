@@ -35,9 +35,9 @@ internal static class TlsTransport
     /// dem Boot dauerte das laenger als die ganze Frist (CosmosNetworkService.FetchTimeoutMilliseconds), danach traf der
     /// Abruf den Cache.
     /// </summary>
-    internal static System.Diagnostics.Stopwatch StartDeadline(string url, byte[] trustedPem)
+    internal static System.Diagnostics.Stopwatch StartDeadline(Uri url, byte[] trustedPem)
     {
-        if (url.StartsWith("https:", StringComparison.OrdinalIgnoreCase)) CachedAnchors(trustedPem);
+        if (url.Scheme == Uri.UriSchemeHttps) CachedAnchors(trustedPem);
         return System.Diagnostics.Stopwatch.StartNew();
     }
 

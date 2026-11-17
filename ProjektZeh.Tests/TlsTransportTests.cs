@@ -43,7 +43,7 @@ public sealed class TlsTransportTests
         // Eigene Kopie: so ist der Cache vor dem Aufruf sicher leer fuer genau dieses Array.
         byte[] bundle = (byte[])TlsRoots.Load().Clone();
         var parse = System.Diagnostics.Stopwatch.StartNew();
-        var deadline = TlsTransport.StartDeadline("https://packages.example/catalog", bundle);
+        var deadline = TlsTransport.StartDeadline(new Uri("https://packages.example/catalog"), bundle);
         long total = parse.ElapsedTicks;
 
         // Die Frist-Uhr laeuft erst nach dem Parsen an: sie hat hoechstens den Bruchteil seit der Rueckkehr gesehen.
@@ -58,7 +58,7 @@ public sealed class TlsTransportTests
     {
         byte[] invalid = [1, 2, 3];
         // HTTP braucht keine Wurzeln; ungueltige Bytes duerfen deshalb nicht geparst werden.
-        Assert.IsTrue(TlsTransport.StartDeadline("http://10.0.2.2/", invalid).IsRunning);
+        Assert.IsTrue(TlsTransport.StartDeadline(new Uri("http://10.0.2.2/"), invalid).IsRunning);
     }
 
     [TestMethod]
