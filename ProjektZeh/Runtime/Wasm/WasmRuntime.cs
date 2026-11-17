@@ -177,8 +177,13 @@ internal static unsafe class WasmRuntime
             // Wachstum des Wasm-Speichers ("Out of VRAM", Exitcode 1).
             long collectStart = Stopwatch.GetTimestamp();
             GC.Collect();
-            Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-                $"WASM GC vor Lauf {(long)Stopwatch.GetElapsedTime(collectStart).TotalMilliseconds} ms\n");
+            // Wie bei ReportMemory: eine Diagnosezeile darf den gemeinsamen Worker nicht beenden.
+            try
+            {
+                Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+                    $"WASM GC vor Lauf {(long)Stopwatch.GetElapsedTime(collectStart).TotalMilliseconds} ms\n");
+            }
+            catch (Exception) { /* Nur die Dauerzeile fehlt. */ }
             job();
             // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
             // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
