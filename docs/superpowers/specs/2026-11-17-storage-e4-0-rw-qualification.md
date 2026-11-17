@@ -30,7 +30,7 @@ Je Größe (32 GiB, 128 GiB) ein frisches Image im neuen Arbeitsordner (`new_wor
 | Schritt | Inhalt (Weg) | PASS-Bedingung |
 |---|---|---|
 | a | Format, Gate, Mount `/`, `/boot/efi` daneben | Gate `Ok`, beide Mounts sichtbar, `/boot/efi` über `/` erreichbar, `FileService` lehnt `/boot/efi/...` als fremden Mount ab |
-| b | `s_state` lesen (= 1), auf 0 setzen, `Device.Flush()` | danach erst Daten; Wert nach jeder Phase c–h erneut gelesen und = 0 (Sync/Flush des Treibers fasst ihn nicht an) |
+| b | `s_state` lesen (= 1), auf 0 setzen, `Device.Flush()` | danach erst Daten; Wert nach jeder Phase c–l2 und i2 erneut gelesen und = 0 (Sync/Flush des Treibers fasst ihn nicht an) |
 | c | Baum `/etc/zehos`, `/home/test/.config/zehos`, Tiefe 8; Schreiben, Lesen, Umbenennen, Löschen in `/home/test` (`FileService`) | alle Ergebnisse `IsOK()` |
 | d | **10 000 Dateien** in 10 Verzeichnissen × 1 000, Größen 0, 1, 4095, 4096, 4097, 64 KiB, 1 MiB, einige 16 MiB (`System.IO`) | Rücklesen = neu berechnete Erwartung |
 | e | **Großes Verzeichnis:** 20 000 Einträge in einem Verzeichnis (über die 12 direkten Blöcke hinaus, Indirektblock), darin 2 000 umbenennen, 2 000 löschen (Zusammenführen von `rec_len`), 2 000 neu anlegen | Auflistung vollständig, keine Doppelnamen, Inhalte stimmen |
@@ -40,8 +40,8 @@ Je Größe (32 GiB, 128 GiB) ein frisches Image im neuen Arbeitsordner (`new_wor
 | i | **Namen:** 255 Byte, UTF-8 (`ä`, `ß`, Leerzeichen), `A` und `a` nebeneinander (Ordinal, beide getrennt lesbar) | Auflistung zeigt genau diese Namen; `FileService` findet sie mit Ordinal-Vergleich |
 | j | **Nebenläufigkeit:** 3 gleichzeitige Aufgaben (Anlegen, Umbenennen/Löschen, Lesen), zwei davon im selben Verzeichnis, 60 s; kein `s_state`-Zugriff in dieser Zeit | keine Ausnahme außer erwarteten `IOException`, Inhalte stimmen |
 | k | **Große Datei:** 2 GiB − 1 Byte schreiben und lesen, dann ein Byte anhängen | 2 GiB − 1 lesbar; Anhängen abgelehnt, `large_file` bleibt aus, Gate `Ok` |
-| l1 | **Blöcke erschöpfen:** 64-MiB-Nullen-Dateien bis zum ersten Fehler, dann 4-KiB-Dateien bis zum zweiten, dann `Mkdir` (braucht einen Block); `s_r_blocks_count` protokollieren | Fehler je über `System.IO` **und** `FileService` (`ResultCode`, Shell-Weg bedienbar); nach Löschen einer Datei wieder schreibbar |
-| l2 | **Ersetzen bei vollem Datenträger:** `WriteData` auf eine vorhandene Integritätsdatei mit größerem Inhalt | Fehler, **Original unverändert** (Hash) |
+| l1 | **Blöcke erschöpfen:** 64-MiB-Nullen-Dateien bis zum ersten Fehler, dann 4-KiB-Dateien bis zum zweiten, dann `Mkdir` (braucht einen Block); `s_r_blocks_count` protokollieren | Fehler je über `System.IO` **und** `FileService` (`ResultCode`, Shell-Weg bedienbar); nach Löschen einer Datei wieder schreibbar; jede 50. Füll-Datei zurücklesen und auf „alles null“ prüfen (doppelt vergebene Blockketten fielen sonst nur über Integritätsdateien auf) |
+| l2 | **Ersetzen bei vollem Datenträger:** nach dem Löschen in l1 erst wieder bis zum Fehler auffüllen, dann `WriteData` auf eine vorhandene Integritätsdatei mit größerem Inhalt | Fehler, **Original unverändert** (Hash) |
 | i2 | **Inodes erschöpfen** auf der 1-GiB-Zusatzplatte (≈ 65 000 Inodes): 0-Byte-Dateien bis zum Fehler | Fehler über beide Wege, `s_free_inodes_count` = 0, danach löschen und neu anlegen gelingt; `e2fsck -fn` der Zusatzplatte = 0 |
 | m | Herunterfahren wie Produkt: Sync, Sync, `s_state` = 1, `Device.Flush()`; **kein** Unmount von `/` | `DONE`; der Host prüft `s_state` = 1 am Image (`dumpe2fs -h`: „clean“), nicht der Gast |
 
@@ -65,7 +65,7 @@ Gate `Ok`, Mount `/`; **alle Integritätsdateien aus Lauf 2 außerhalb `/qual3` 
 
 Muster `scripts/test-storage-ext2-guest.py` (`new_work_dir`, `qemu_tool`, `wait_serial`, Kurzschluss nach FAIL). Parameter: `--iso`, `--work` (neu), `--size 32|128`, `--accel kvm|whpx|tcg`, `--timeout` je Lauf, `--e2fsck`, `--dumpe2fs`.
 
-- **Imageformat:** qcow2 (`qemu-img create -f qcow2`), angehängt mit `-drive …,discard=unmap,detect-zeroes=unmap`. Füll-Dateien bestehen aus Nullen und belegen dadurch keinen Hostplatz; nur die Integritätsdateien (≈ 3 GiB) und Metadaten werden real geschrieben. Beide Größen werden **voll** gefüllt (Leitung 11:58). Für `e2fsck`/`dumpe2fs` wird das Image per `qemu-img convert -O raw` in eine sparse RAW-Kopie gewandelt (oder `qemu-nbd`, falls vorhanden); belegter Hostplatz und Laufzeit kommen in den Bericht.
+- **Imageformat:** qcow2 (`qemu-img create -f qcow2`), angehängt mit `-drive …,discard=unmap,detect-zeroes=unmap`. Füll-Dateien bestehen aus Nullen und belegen dadurch keinen Hostplatz; nur die Integritätsdateien (≈ 3 GiB) und Metadaten werden real geschrieben. Beide Größen werden **voll** gefüllt (Leitung 11:58). Für `e2fsck`/`dumpe2fs` wird das Image per `qemu-img convert -O raw` in eine sparse RAW-Kopie gewandelt (oder `qemu-nbd`, falls vorhanden); belegter Hostplatz und Laufzeit kommen in den Bericht. E4.0 läuft auf einem **Linux-Host** (ext4/xfs): `qemu-img convert -O raw` erzeugt auf NTFS ohne Sparse-Flag eine voll belegte Datei; für Windows-Läufe vorher das Sparse-Flag setzen. Speicherbedarf und Laufzeit von `e2fsck` auf dem 128-GiB-Image auf dem Testrechner messen und mitberichten.
 - **Kopien** für Lauf 3/4/5 per `qemu-img create -b <basis> -F qcow2` (Overlay) bzw. vollständige Kopie vor `e2fsck -fy`.
 - Ausgabe je Lauf `PASS/FAIL/DONE/qemu-exit`, `e2fsck`-Exit, Superblockzähler Gast vs. `dumpe2fs -h`, Image-SHA vor/nach Lauf 4.
 - Exit 0 nur bei Go (§5). Fehlende Werkzeuge (`qemu-img`, `e2fsck`, `dumpe2fs`) ⇒ „offen“, nie „bestanden“.
