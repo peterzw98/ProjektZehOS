@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Security;
 using ProjektZeh.Storage;
@@ -173,6 +174,89 @@ public sealed class PathIdentityTests
     {
         var files = new FileService(Temp, pathGuard: (_, _) => throw new InvalidOperationException("kaputt"));
         Assert.IsFalse(files.ReadText("egal.txt", allowMissing: true).IsOK());
+    }
+
+    // ---- Review c5b7ff9: Konten-/Home-Pfade und Listen ohne Rechteverwaltung ----
+
+    private static AccountService Accounts(string root, Func<string, bool, ProjektZeh.Shared.ResultErr> guard) =>
+        new(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)), StringComparison.Ordinal, guard);
+
+    private static Func<string, bool, ProjektZeh.Shared.ResultErr> DenyWhen(Func<string, bool> denied) =>
+        (path, _) => denied(path) ? FileAccessControl.Denied() : ProjektZeh.Shared.ResultErr.CreateSuccess();
+
+    private static string NewRoot()
+    {
+        string root = Path.Combine(Temp, "zehos-e3-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    [TestMethod]
+    public void Recovery_GuardDeniesMetadata_MovesAndSavesNothing()
+    {
+        string root = NewRoot();
+        try
+        {
+            string metadata = Path.Combine(root, AccountService.MetadataFile);
+            File.WriteAllText(metadata, "alt");
+            var accounts = Accounts(root, DenyWhen(path => path.EndsWith(AccountService.MetadataFile, StringComparison.Ordinal)));
+            Assert.IsFalse(accounts.PrepareRecovery(accounts.CreateSession(), "admin", "admin-password-123")().IsOK());
+            Assert.AreEqual("alt", File.ReadAllText(metadata), "Metadaten bleiben am Platz");
+            Assert.AreEqual(0, Directory.GetFiles(root, ".zehos-security-recovery-*").Length);
+            Assert.IsFalse(Directory.Exists(Path.Combine(root, "home")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void Recovery_GuardDeniesHomes_ChangesNoMetadata()
+    {
+        string root = NewRoot();
+        try
+        {
+            var accounts = Accounts(root, DenyWhen(path => path.StartsWith(Path.Combine(root, "home"), StringComparison.Ordinal)));
+            Assert.IsFalse(accounts.PrepareRecovery(accounts.CreateSession(), "admin", "admin-password-123")().IsOK());
+            Assert.IsFalse(File.Exists(Path.Combine(root, AccountService.MetadataFile)), "ungueltige Home-Topologie vor dem Speichern abgewiesen");
+            Assert.IsFalse(Directory.Exists(Path.Combine(root, "home")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void CreateUser_GuardDeniesHome_SavesNothing()
+    {
+        string root = NewRoot();
+        try
+        {
+            string evil = Path.Combine(root, "home", "evil");
+            var accounts = Accounts(root, DenyWhen(path => path.StartsWith(evil, StringComparison.Ordinal)));
+            var admin = accounts.CreateSession();
+            Assert.IsTrue(accounts.PrepareRecovery(admin, "admin", "admin-password-123")().IsOK());
+            string metadata = Path.Combine(root, AccountService.MetadataFile);
+            byte[] before = File.ReadAllBytes(metadata);
+            Assert.IsFalse(accounts.PrepareCreateUser(admin, "evil", false, "user-password-123")().IsOK());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(metadata), "Konten/Rechte unveraendert");
+            Assert.IsFalse(accounts.Access.Contains(evil));
+            Assert.IsFalse(Directory.Exists(evil));
+            Assert.IsTrue(accounts.PrepareCreateUser(admin, "gut", false, "user-password-123")().IsOK(), "andere Konten weiter moeglich");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void FileServiceWithoutAccess_ListingsSkipGuardedChildren()
+    {
+        string root = NewRoot();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "a.txt"), "a");
+            File.WriteAllText(Path.Combine(root, "b.txt"), "b");
+            var files = new FileService(root, pathGuard: DenyWhen(path => path.EndsWith("b.txt", StringComparison.Ordinal)));
+            CollectionAssert.AreEqual(new[] { "a.txt" }, Array.ConvertAll(files.ListEntries(".").Value!, Path.GetFileName));
+            CollectionAssert.AreEqual(new[] { "a.txt" }, Array.ConvertAll(files.ListDirectory(".").Value!, entry => Path.GetFileName(entry.Path)));
+            CollectionAssert.AreEqual(new[] { "a.txt" }, Array.ConvertAll(files.FindEntries(".").Value!, entry => Path.GetFileName(entry.Path)));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     // ---- PathGuard (VFS-Pfade mit '/') ----
