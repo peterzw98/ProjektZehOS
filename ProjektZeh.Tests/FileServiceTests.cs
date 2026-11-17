@@ -80,6 +80,8 @@ public sealed class FileServiceTests
         Assert.AreEqual(5, BufferAllocation.TryAllocate(5)!.Length);
         Assert.AreEqual(0, BufferAllocation.TryAllocate(0)!.Length);
         Assert.ThrowsException<ArgumentOutOfRangeException>(() => BufferAllocation.TryAllocate(-1));
+        Assert.AreEqual(5, BufferAllocation.TryAllocate(5, collectFirst: true)!.Length);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => BufferAllocation.TryAllocate(-1, collectFirst: true));
     }
 
     [TestMethod]

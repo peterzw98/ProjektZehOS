@@ -11,8 +11,17 @@ namespace ProjektZeh.Shared;
 internal static class BufferAllocation
 {
     /// <summary>Neuer Puffer oder null, wenn der Heap keinen liefert; eine echte OutOfMemoryException zaehlt ebenso.</summary>
-    public static byte[]? TryAllocate(int length)
+    public static byte[]? TryAllocate(int length) => TryAllocate(length, collectFirst: false);
+
+    /// <summary>
+    /// Wie <see cref="TryAllocate(int)"/>; mit <paramref name="collectFirst"/> wird vorher gesammelt. Cosmos 3.0.97 sammelt bei
+    /// verwalteten Objekten selbst erst, wenn der Seitenspeicher voll ist, und verdichtet nicht: Ein frueher Collect gibt
+    /// Segmente frei, solange noch Platz ist, und erhoeht so die Chance auf einen zusammenhaengenden Seitenlauf. Gegen bereits
+    /// fragmentierten Speicher hilft er nicht; die Null-Abwehr bleibt deshalb der eigentliche Schutz.
+    /// </summary>
+    public static byte[]? TryAllocate(int length, bool collectFirst)
     {
+        if (collectFirst) GC.Collect();
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         try
         {
