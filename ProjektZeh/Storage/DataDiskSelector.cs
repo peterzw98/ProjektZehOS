@@ -45,6 +45,15 @@ internal static class DataDiskSelector
         partition.Type == FatLbaType && string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Vom Installer nie angeboten: jede Partition mit dem FAT32-Label ZEHOSDATA, egal ob MBR 0x0C oder GPT (Basic Data,
+    /// ESP). Bewusst weiter als <see cref="IsDataPartition"/>, das nur bestimmt, was eingebunden wird. Grenze: Describe liest
+    /// das Label nur bei MBR 0x0C, ESP und Basic Data; MBR-FAT-Typen wie 0x0B/0x06 mit Label ZEHOSDATA bleiben unerkannt
+    /// (disk init legt immer 0x0C an).
+    /// </summary>
+    internal static bool IsInstallExcluded(DataDiskPartition partition) =>
+        string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Auswahl beim Boot (Spec Etappe 2, Abschnitt 3), in dieser Reihenfolge: (1) traegt sata0 eine 0x0C-Partition (Label egal),
     /// ist das der Bestand und wird eingebunden, eine ZEHOSDATA-Platte daneben nur als Hinweis; (2) sonst genau eine
     /// ZEHOSDATA-Partition anderswo: nur mit vorhandener Kontendatei einbinden (<paramref name="hasAccountsFile"/> prueft das und
@@ -162,6 +171,18 @@ internal static class DataDiskSelector
         if (!existing || confirmed) return ResultErr.CreateSuccess();
         return ResultErr.CreateFailure(ResultCode.Failure,
             Cause("OverwriteNeedsConfirmation", "Es ist schon /data eingebunden oder sata0 traegt eine Partition; zur Bestaetigung 'disk init <Name> --yes-overwrite' verwenden."));
+    }
+
+    /// <summary>
+    /// disk init legt nur MBR-Datenplatten an und darf eine GPT nie ueberschreiben (Spec 7a, Abschnitt 5): Platten mit
+    /// GPT-Spuren, also jede installierte 7a-Platte mit Marker oder Root, auch nach abgebrochenem Schreiben, werden ohne
+    /// Ausnahme abgelehnt; keine Bestaetigung hebt das auf. Ueberschreiben nur ueber die Neuinstallation mit --erase.
+    /// </summary>
+    public static ResultErr CheckNoInstalledLayout(ulong blockSize, ulong blockCount, BlockReader read)
+    {
+        if (!Partitioning.GptLayout.HasTraces(blockSize, blockCount, read)) return ResultErr.CreateSuccess();
+        return ResultErr.CreateFailure(ResultCode.Failure,
+            Cause("InstalledLayout", "Das Laufwerk traegt eine GPT (installiertes ZehOS oder anderes System); disk init verweigert das auch mit --yes-overwrite. Eine installierte ZehOS-Platte nur ueber die Installation mit --erase neu einrichten; eine fremde GPT-Platte vorher ausserhalb von ZehOS leeren."));
     }
 
     /// <summary>512-Byte-Sektoren und 64 MiB bis 128 GiB; die Division verhindert einen Ueberlauf von BlockCount * BlockSize.</summary>
