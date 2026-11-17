@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST</DefineConstants>
+    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_HOST_TESTS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
@@ -68,6 +68,8 @@
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeCatalog.cs" Link="Storage\Ext2\RootProbeCatalog.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeContent.cs" Link="Storage\Ext2\RootProbeContent.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayout.cs" Link="Storage\Partitioning\GptLayout.cs" />
