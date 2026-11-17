@@ -34,6 +34,9 @@ internal static class CosmosWasmProbe
     private static readonly byte[] Recurse = Convert.FromHexString("0061736d010000000105016000017f030201000707010372756e00000a0601040010000b");
     // run ruft WASI random_get(0, 16) und liefert dessen Status.
     private static readonly byte[] RandomGet = Convert.FromHexString("0061736d01000000010b0260027f7f017f6000017f02250116776173695f736e617073686f745f70726576696577310a72616e646f6d5f67657400000302010105030100010707010372756e00010a0a0108004100411010000b");
+    // run oeffnet csprobe.wasm ueber path_open (gelingt das nicht: Ergebnis 99) und trappt danach bzw. ruft proc_exit(7).
+    private static readonly byte[] OpenThenTrap = Convert.FromHexString("0061736d0100000001160360097f7f7f7f7f7e7e7f7f017f60017f006000017f02470216776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310970726f635f6578697400010302010205030100010707010372756e00020a2201200041034100418001410c410042004200410041c0001000450440000b41e3000b0b1301004180010b0c637370726f62652e7761736d");
+    private static readonly byte[] OpenThenExit = Convert.FromHexString("0061736d0100000001160360097f7f7f7f7f7e7e7f7f017f60017f006000017f02470216776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310970726f635f6578697400010302010205030100010707010372756e00020a2501230041034100418001410c410042004200410041c0001000450440410710010b41e3000b0b1301004180010b0c637370726f62652e7761736d");
 
     public static bool Run()
     {
@@ -49,6 +52,10 @@ internal static class CosmosWasmProbe
             Expect("entry", Add, "fehlt", WasmStatus.EntryMissing, 0);
             // Ohne Hardwarezufall muss der Gast EIO statt Erfolg mit Nullen erhalten (#61).
             Expect("random", RandomGet, "run", WasmStatus.Ok, HasHardwareRandom() ? 0 : 29);
+            // Fehlerwege mit offener Datei: belegen Trapstatus und Exitcode im Gast. Das Schliessen in der C-Schicht belegt
+            // nur scripts/tests/test_wasm_input_native.py, weil WasmRuntime.Execute danach ohnehin alle Dateien schliesst.
+            Expect("opentrap", OpenThenTrap, "run", WasmStatus.Trap, 0, "/data");
+            Expect("openexit", OpenThenExit, "run", WasmStatus.Ok, 7, "/data");
             RunApplication();
             if (File.Exists(DoomPath)) RunDoom();
             else Write("doom skipped (keine /data/doom.wasm)");
@@ -134,10 +141,11 @@ internal static class CosmosWasmProbe
         return module;
     }
 
-    private static long Expect(string name, byte[] module, string entry, WasmStatus expectedStatus, int expectedResult)
+    private static long Expect(string name, byte[] module, string entry, WasmStatus expectedStatus, int expectedResult,
+        string? root = null)
     {
         var watch = Stopwatch.StartNew();
-        WasmStatus status = WasmRuntime.Run(module, entry, FixtureGas, new ProbeSession(null), out int result, out string message);
+        WasmStatus status = WasmRuntime.Run(module, entry, FixtureGas, new ProbeSession(root), out int result, out string message);
         long elapsed = watch.ElapsedMilliseconds;
         Write($"{name} status={status} result={result} ms={elapsed} {message}");
         Check(status == expectedStatus && result == expectedResult, $"{name}: erwartet {expectedStatus}/{expectedResult}.");

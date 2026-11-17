@@ -1,5 +1,5 @@
 // Prüfhost mit dem wasm3-Kern und der Importbindung des Kernels (ProjektZeh/ThirdParty/wasm3,
-// ProjektZeh/Native/Wasm/host/zehos_wasm.c): dasselbe Parsen, dieselben Features (exnref) und dieselben
+// ProjektZeh/Native/Wasm/host/zehos_host_core.c und zehos_host_wasm3.c): dasselbe Parsen, dieselben Features (exnref) und dieselben
 // Gastprüfungen wie in ZehOS. Diese Datei liefert nur die Linux-Seite der WASI-Rückrufe und den Start.
 //
 // Aufruf: zehos-wasm3 <paketordner> <modul.wasm>; Umgebung siehe zehos_host_core.c.
@@ -63,7 +63,7 @@ int32_t zehos_wasm_host_random(uint8_t *buffer, uint32_t length)
     return WASI_SUCCESS;
 }
 
-// zehos_wasm.c hat den Pfad schon auf einfache relative Komponenten geprüft; hier nur an den Paketordner hängen.
+// zehos_host_core.c (Kernel) hat den Pfad schon auf einfache relative Komponenten geprüft; hier nur an den Paketordner hängen.
 static int package_path(const uint8_t *path, uint32_t length, char *full, size_t capacity)
 {
     if (length > MAXIMUM_PATH) return 0;
@@ -134,6 +134,12 @@ void zehos_wasm_host_present_indexed(const uint8_t *indices, const uint32_t *pal
 // Tastatur und Zeigerfang gibt es im Prüfhost nicht; der Kernel meldet dasselbe für ein inaktives Fenster.
 int32_t zehos_wasm_host_poll_key(void) { return -1; }
 int32_t zehos_wasm_host_pointer_capture(int32_t enabled) { (void)enabled; return -1; }
+
+// Den Rasterizer bietet der Prüfhost nicht an; -1 wird im Kernelkern zum Speicher-Trap. NetSurf ruft ihn nicht.
+int32_t zehos_wasm_host_raster_draw(uint8_t *memory, uint32_t length, uint32_t call)
+{ (void)memory; (void)length; (void)call; return -1; }
+int32_t zehos_wasm_host_raster_fill(uint8_t *memory, uint32_t length, uint32_t offset, uint32_t count, uint32_t value)
+{ (void)memory; (void)length; (void)offset; (void)count; (void)value; return -1; }
 
 struct run { uint8_t *bytes; uint32_t length; int32_t status, result; char message[256]; };
 

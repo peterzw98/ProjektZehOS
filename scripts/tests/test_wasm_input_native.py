@@ -101,6 +101,21 @@ def net_module(name, args):
             + section(10, b"\x01" + leb(len(code)) + code))
 
 
+def open_module(after):
+    # run oeffnet asset.txt ueber path_open und fuehrt bei Erfolg after aus; scheitert das Oeffnen, liefert es 99.
+    code = (b"\x00\x41\x03\x41\x00\x41\x80\x01\x41\x09\x41\x00\x42\x00\x42\x00\x41\x00\x41\xc0\x00"
+            + b"\x10\x00\x45\x04\x40" + after + b"\x0b\x41\xe3\x00\x0b")
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x03\x60\x09" + b"\x7f" * 5 + b"\x7e\x7e\x7f\x7f\x01\x7f"
+                      + b"\x60\x01\x7f\x00\x60\x00\x01\x7f")
+            + section(2, b"\x02" + string("wasi_snapshot_preview1") + string("path_open") + b"\x00\x00"
+                      + string("wasi_snapshot_preview1") + string("proc_exit") + b"\x00\x01")
+            + section(3, b"\x01\x02") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00\x02")
+            + section(10, b"\x01" + leb(len(code)) + code)
+            + section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(9) + b"asset.txt"))
+
+
 class NativeInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -113,7 +128,7 @@ class NativeInputTests(unittest.TestCase):
         source = ROOT / "ProjektZeh/ThirdParty/wasm3/source"
         library = Path(cls.temp.name) / ("input.dll" if os.name == "nt" else "input.so")
         subprocess.run([compiler, "-shared", "-fPIC", "-O2", "-I", str(source),
-                        str(ROOT / "ProjektZeh/Native/Wasm/host/zehos_wasm.c"),
+                        *(str(ROOT / "ProjektZeh/Native/Wasm/host" / name) for name in ("zehos_host_core.c", "zehos_host_wasm3.c")),
                         str(ROOT / "scripts/tests/wasm-input-host.c"),
                         *map(str, sorted(source.glob("*.c"))), "-lm", "-o", str(library)], check=True)
         if os.name == "nt":
@@ -271,6 +286,17 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(status, 5, message)
         self.assertIn("out of bounds", message.lower())
         self.assertEqual(self.lib.random_test_calls(), 0)
+
+    def test_open_files_are_closed_on_every_exit_path(self):
+        # Trap, proc_exit, regulaeres Ende und erschoepftes Gasbudget schliessen die offene Datei in der C-Schicht.
+        for name, after, expected in (("trap", b"\x00", (5, 0)), ("proc_exit", b"\x41\x07\x10\x01", (0, 7)),
+                                      ("return", b"\x41\x00\x0f", (0, 0)), ("gas", b"\x03\x40\x0c\x00\x0b", (6, 0))):
+            with self.subTest(name=name):
+                self.lib.file_test_reset()
+                status, value, message = self.execute(open_module(after))
+                self.assertEqual((status, value), expected, message)
+                self.assertEqual(self.lib.file_test_closes(), 1)
+                self.assertEqual(self.lib.file_test_open(), 0)
 
 if __name__ == "__main__":
     unittest.main()
