@@ -20,4 +20,8 @@
     <Reference Include="Cosmos.Kernel.HAL" HintPath="$(CosmosHal)Cosmos.Kernel.HAL.dll" />
     <Reference Include="Cosmos.Kernel.Core" HintPath="$(CosmosCore)Cosmos.Kernel.Core.dll" />
   </ItemGroup>
+  <!-- Dieselbe korrigierte Formatterquelle wie im Kernel (--formatter fixed). -->
+  <ItemGroup>
+    <Compile Include="../../ProjektZeh/Storage/Ext2/*.cs" Link="Ext2/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
