@@ -43,6 +43,30 @@ Die späteren E4.0-Berichte ergänzen die historischen Formatterbefunde: Cosmos 
 
 Die E4.0-Speicherläufe melden außerdem fehlgeschlagene Allokationen ohne verlässliche `OutOfMemoryException`, darunter `ArgumentNullException` für `destinationArray` und `[GC] Mark stack overflow` bei 2 GiB RAM; bei 512 MiB scheiterte der kumulierte Lauf früher. **Ein sicherer Mindest-RAM ist daraus nicht ableitbar; 1 GiB ist nur eine vorgeschlagene Testkonfiguration.** Die FileService-Grenze von 8189 direkten ext2-Kindern reserviert einen Platz für Rename und schützt weder vor diesem Speicherproblem noch vor dem Löschfehler. Belege, Abgrenzungen und offene Gastprüfungen: [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md#e40-spätere-laufzeitbefunde-17-november-2026).
 
+**Inode-Cache und große Allokationen (E4.0-Lauf 1 und Diagnoselauf 12, 17. November 2026):** Cosmos `Ext2Superblock` hält jedes gelesene oder geschriebene Inode in `_inodeCache` (`Dictionary<uint, Ext2Inode>`, Quelle `efcf20cc`, `Ext2Superblock.cs:20`). Der Cache wird nur bei `Drop` (Aushängen) geleert. Bei ext2 als `/` wächst er also über die ganze Sitzung. `ReadDir` liest dabei jedes Kind eines aufgelisteten Verzeichnisses. Bei 17519 Einträgen braucht das Dictionary ein neues Eintragsfeld mit rund 850 KiB (36353 × 24 Byte). Liefert der Allokator dafür null, endet die Dateioperation mit `ArgumentNullException` (`destinationArray`).
+
+E4.0-Lauf 1 brach so in Schritt e nach 17519 belegten Inodes ab, mit 512 MiB und 1 GiB RAM identisch.
+
+Ursache im Cosmos-GC (`GarbageCollector.cs` `AllocObjectSlow`, `GarbageCollector.Tlab.cs` `RefillAllocContext`, `PageAllocator.cs` `AllocPages`/`FindEmptyRun`):
+- Gesammelt wird erst, wenn eine Allokation scheitert. Danach folgt genau ein weiterer Versuch.
+- Der GC verdichtet nicht.
+- Eine große Allokation braucht einen zusammenhängenden Seitenlauf.
+- Verstreute langlebige kleine Objekte halten die 64-KiB-Segmente belegt. Für verwaltete Objekte bildet ein einzelnes `GC.Collect` vor der Allokation deshalb nur nach, was Cosmos selbst schon tut. Native Allokationen (`Heap.Alloc` → `LargeHeap` → `AllocPages`, etwa wasm3 per `malloc`) sammeln dagegen nicht; dort kann ein `GC.Collect` vorher Seiten freigeben (Befund agent-peter-cc-lead).
+
+Diagnoselauf 12 (`CosmosExt2RootProbe`, `--diagnose-run 12`) bildet den Cache ohne Dateisystem nach:
+- 40000 kleine Überlebende, dazwischen je 64 KiB Müll.
+- Bei 512 MiB scheitert das wachsende Dictionary exakt bei 17519, bei 1 GiB beim nächsten Wachstum bei 36353.
+- Ein vorab dimensioniertes Dictionary übersteht alle 40000 Einträge.
+- Danach gelingt wieder eine 16-MiB-Allokation.
+
+Das ist also vorübergehende Fragmentierung im Augenblick der Anforderung, kein voller Speicher.
+
+**Grenze:** Pro Sitzung mit ext2 als `/` sind nur etwa 17.500 verschiedene berührte Inodes belegt; bei 1 GiB RAM bestand ein Nachbau auch das nächste Wachstum. Die Grenze trifft jede große Allokation (Dateipuffer, Bilder, Wasm-Module), nicht nur den Cache. Gegenmittel ohne Cosmos-Eingriff:
+- große Puffer früh und dauerhaft anlegen und wiederverwenden;
+- null als Fehler melden (`BufferAllocation.TryAllocate`).
+
+Einen begrenzten Cache per Plug bewertet der [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md#inode-cache-und-gc-fragmentierung).
+
 ## ext2-Formatierer aus Cosmos 3.0.97 am 17. November 2026
 
 **Keine Freigabe:** Die Linux-Hostprobe mit dem unveränderten Cosmos-Formatierer erzeugte in allen 18 Kombinationen (4/8/64 MiB und 32/64/128 GiB, jeweils 1/2/4 KiB-Blöcke) Dateisysteme, für die `e2fsck -fn` Exit 4 meldet. Festgestellt wurden fehlende Backup-Metadaten, eine falsche 1-KiB-Gruppengeometrie und ungesetzte Bitmap-Füllbits. Die Windows-Gegenprobe bestätigt Formatteraufruf und Headerwerte, keine Konsistenzprüfung im Gast. ext2-Aktivierung und Root-Migration bleiben gesperrt. Reproducer, Zuständigkeiten und Grenzen: [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md).
