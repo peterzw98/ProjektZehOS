@@ -65,7 +65,11 @@ internal static class CosmosWasmProbe
             // Mit /save gelingt der Rundweg ueber FileService auf dem Cosmos-Laufwerk; ohne Freigabe fehlt fd 4 (EBADF).
             if (Directory.Exists("/data"))
             {
-                Directory.CreateDirectory(SaveProbeRoot);
+                // Derselbe Weg wie Kernel.SaveRootFor: ebenenweise mit dem Cosmos-Pfadwaechter. Die Probeplatte hat kein
+                // .zehos-apps, das ist der Fall einer frischen Platte (Befund cc-lead).
+                var created = WasmSaveStore.CreateRoot(new ProjektZeh.Storage.FileService("/data", pathGuard: CosmosPathGuard.For("/data")),
+                    "/data", SaveProbeRoot);
+                Check(created.IsOK(), "save: App-Speicher nicht angelegt: " + created.Message);
                 Expect("save", SaveRoundTrip, "run", WasmStatus.Ok, 5, null, SaveProbeRoot);
                 Check(File.ReadAllText(SaveProbeRoot + "/probe.txt") == "Hallo", "save: Datei auf dem Laufwerk falsch.");
             }
