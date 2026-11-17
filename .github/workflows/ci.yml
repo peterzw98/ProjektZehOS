@@ -98,7 +98,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-test-results
           # TestResults/golden enthaelt nur bei abweichenden Referenzbildern die erhaltenen Bilder.
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-test-results-windows
           path: |
@@ -216,7 +216,7 @@ jobs:
           cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
 
       - name: Upload bootable ISO
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ZehOS-x64
           path: ProjektZeh/output-x64/ProjektZeh.iso
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload kernel build log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kernel-build-log
           path: artifacts/kernel-build.log
@@ -290,7 +290,7 @@ jobs:
         run: python3 experiments/NetSurf.Wasi/build.py --jobs 4
 
       - name: Upload unsigned package files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: NetSurf-offline-files
           path: experiments/NetSurf.Wasi/bin/package/
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload browser build logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: NetSurf-build-logs
           path: .tools/netsurf/logs/
@@ -322,7 +322,7 @@ jobs:
         run: python3 experiments/Rechner.Wasi/build.py
 
       - name: Upload unsigned package files
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Rechner-files
           path: experiments/Rechner.Wasi/bin/package/
@@ -357,7 +357,7 @@ jobs:
 
       - name: Upload guest screenshots and logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guest-desktop
           path: .tools/desktop-guest/
@@ -415,7 +415,7 @@ jobs:
 
       - name: Upload guest screenshots and logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guest-recovery
           path: .tools/desktop-guest/
