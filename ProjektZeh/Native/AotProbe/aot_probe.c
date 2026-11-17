@@ -206,6 +206,12 @@ int32_t zehos_aot_probe_fixture(void)
            // B4: Erwartung aus derselben Rechnung auf dem Host (1.1, achtmal *1.5+0.25, mal 1000).
            + run_case(instance, env, "fsleep", 40506, NULL)
            + run_case(instance, env, "oob", 0, "out of bounds memory access")
+           // Etappe-E-Vorbereitung: berechnete Adresse, addr+offset ueber 2^32, memory.fill/copy an der Grenze.
+           + run_case(instance, env, "oob_computed", 0, "out of bounds memory access")
+           + run_case(instance, env, "oob_offset_wrap", 0, "out of bounds memory access")
+           + run_case(instance, env, "fill_edge_ok", 7, NULL)
+           + run_case(instance, env, "fill_edge_oob", 0, "out of bounds memory access")
+           + run_case(instance, env, "copy_edge_oob", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse_native", 0, "native stack overflow")
            // Nach den Traps muss dieselbe Instanz weiter rechnen.

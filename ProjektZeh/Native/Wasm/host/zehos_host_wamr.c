@@ -214,13 +214,16 @@ static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instan
 // Fuehrt einen Einstiegspunkt eines AOT-Moduls aus, mit denselben Statuscodes wie zehos_wasm_run. Ohne Gasbudget:
 // Laeufe mit Budget bleiben bei wasm3 (WasmEngineSelection). WAMR wird je Lauf gestartet und beendet; so sind
 // Instanz, Modul, ausfuehrbarer Speicher, Hostgruppen und offene Dateien nach jedem Weg freigegeben.
+// *instantiated wird 1, sobald das Instanziieren beginnt: ab dann kann Gastcode gelaufen sein (start-Funktion,
+// Konstruktoren), und der Aufrufer darf dieselbe App nicht unter wasm3 wiederholen.
 int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* entry, uint32_t stackBytes,
-    uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength)
+    uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength, int32_t* instantiated)
 {
     zehos_wamr_run run;
     zehos_host_context_init(&run.context);
     run.exited = 0;
     *result = 0;
+    *instantiated = 0;
     copy_message(message, messageLength, "");
 
     RuntimeInitArgs init;
@@ -286,6 +289,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         memset(&arguments, 0, sizeof(arguments));
         arguments.default_stack_size = stackBytes;
         arguments.max_memory_pages = maximumPages;
+        *instantiated = 1;
         instance = wasm_runtime_instantiate_ex(module, &arguments, error, sizeof(error));
         if (instance == NULL)
         {
