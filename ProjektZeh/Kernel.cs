@@ -122,7 +122,7 @@ public sealed class Kernel : Sys.Kernel
     }
 
     private static string VersionText =>
-        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell(UserSession identity)
     {
@@ -153,7 +153,7 @@ public sealed class Kernel : Sys.Kernel
             .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
-            $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
+            VersionText,
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
         shell.TakeJobProgress = packageCommands.TakeProgress;
         shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult();
@@ -163,7 +163,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        systemLog.Information("Boot", $"ZehOS {CurrentVersion} startet.");
+        systemLog.Information("Boot", $"ZehOS {CurrentVersion}{ManifestSignature.BuildLabel} startet.");
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()

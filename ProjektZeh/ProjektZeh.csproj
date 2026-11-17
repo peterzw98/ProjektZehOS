@@ -6,7 +6,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.37</Version>
+    <Version Condition="'$(Version)' == ''">0.5.38</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
@@ -126,6 +126,14 @@
   </PropertyGroup>
   <ItemGroup Condition="'$(ZehOSPackageKeyPath)' != ''">
     <EmbeddedResource Include="$(ZehOSPackageKeyPath)" LogicalName="ZehOS.PackageKey" />
+  </ItemGroup>
+  <!-- Ausschliesslich fuer lokale Update-Tests: ersetzt das Produktionsvertrauen, ohne Rueckfall. -->
+  <PropertyGroup Condition="'$(ZehOSUpdateTestKeyPath)' != ''">
+    <DefineConstants>$(DefineConstants);ZEHOS_UPDATE_TESTKEY</DefineConstants>
+    <InformationalVersion>$(Version)+update-testkey</InformationalVersion>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ZehOSUpdateTestKeyPath)' != ''">
+    <EmbeddedResource Include="$(ZehOSUpdateTestKeyPath)" LogicalName="ZehOS.UpdateTestKey" />
   </ItemGroup>
   <!-- Nur fuer Tests mit lokalem HTTPS-Repository; ergaenzt die normalen TLS-Wurzeln fuer Paketdownloads. -->
   <ItemGroup Condition="'$(ZehOSPackageTestCaPath)' != ''">
