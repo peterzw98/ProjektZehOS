@@ -13,6 +13,7 @@ internal sealed class FileAccessControl
     // Etappe 3: Vergleich je Verwaltungswurzel (ext2 Ordinal, FAT OrdinalIgnoreCase) fuer jede Schluessel- und Praefixpruefung.
     private readonly StringComparison comparison;
     public string RootDirectory { get; }
+    internal StringComparison Comparison => comparison;
     /// <summary>Prueft Symlinks und Mountgrenzen (Pfad, creating) vor jeder Rechteentscheidung; null nur ohne Dateisystem (Hosttests).</summary>
     internal Func<string, bool, ResultErr>? PathGuard { get; }
     public bool IsReady { get; private set; }

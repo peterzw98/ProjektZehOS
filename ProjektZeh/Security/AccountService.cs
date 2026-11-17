@@ -231,6 +231,9 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
+            // Home-Topologie vor jeder Pruefung mit System.IO (folgt Links) und vor dem Speichern abweisen.
+            var topology = CheckHomeTopology(name);
+            if (!topology.IsOK()) return topology;
             if (!IsAdmin(actor) || accounts.ContainsKey(name) || accounts.Count >= 32 || Access.Contains(Home(name)) ||
                 Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
             var account = new Account(Guid.NewGuid().ToString("N"), name, administrator, encoded);
@@ -254,13 +257,18 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-            if (File.Exists(Path.Combine(Access.RootDirectory, MetadataFile)))
+            string metadataPath = Path.Combine(Access.RootDirectory, MetadataFile);
+            string recoveredPath = Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db");
+            // Quelle, Ziel und Home-Topologie vor jeder Mutation pruefen (Etappe 3): nichts verschieben oder speichern,
+            // wenn ein Teil davon ueber einen Symlink oder einen fremden Mount liefe.
+            foreach (var guarded in new[] { Access.Guard(metadataPath, creating: true), Access.Guard(recoveredPath, creating: true), CheckHomeTopology(name) })
+                if (!guarded.IsOK()) return guarded;
+            if (File.Exists(metadataPath))
             {
                 try
                 {
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
-                    File.Move(Path.Combine(Access.RootDirectory, MetadataFile),
-                        Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db"), false);
+                    File.Move(metadataPath, recoveredPath, false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
                 { return ResultErr.CreateFromException(exception); }
@@ -364,9 +372,30 @@ internal sealed class AccountService
 
     private string Home(string name) => Path.Combine(Access.RootDirectory, "home", name);
 
+    /// <summary>home und home/&lt;name&gt; duerfen nur fehlen oder echte Verzeichnisse im Mount der Wurzel sein.</summary>
+    private ResultErr CheckHomeTopology(string name)
+    {
+        string homes = Path.Combine(Access.RootDirectory, "home");
+        var checkedHomes = Access.Guard(homes, creating: true);
+        if (!checkedHomes.IsOK()) return checkedHomes;
+        // Fehlt home, entstehen beide Stufen neu; CreateHome prueft jede Stufe vor dem Anlegen erneut.
+        return Directory.Exists(homes) ? Access.Guard(Home(name), creating: true) : ResultErr.CreateSuccess();
+    }
+
+    /// <summary>Legt home und home/&lt;name&gt; stufenweise an, jede Stufe erst nach dem Pfadwaechter.</summary>
     private ResultErr CreateHome(string name)
     {
-        try { Directory.CreateDirectory(Home(name)); return ResultErr.CreateSuccess(); }
+        try
+        {
+            foreach (string directory in new[] { Path.Combine(Access.RootDirectory, "home"), Home(name) })
+            {
+                var guarded = Access.Guard(directory, creating: true);
+                if (!guarded.IsOK()) { Lock(); return guarded; }
+                Directory.CreateDirectory(directory);
+            }
+
+            return ResultErr.CreateSuccess();
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         { Lock(); return ResultErr.CreateFromException(exception); }
     }

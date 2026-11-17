@@ -50,10 +50,9 @@ internal sealed class FileService
         {
             Authorize(resolved.Value!, FilePermission.Read);
             string[] entries = Directory.GetFileSystemEntries(resolved.Value!);
-            if (access == null) return ResultObjectFactory.CreateSuccess(entries);
             var visible = new List<string>();
             foreach (string entry in entries)
-                if (access.Check(session!, entry, FilePermission.Read).IsOK()) visible.Add(entry);
+                if (Visible(entry)) visible.Add(entry);
             return ResultObjectFactory.CreateSuccess(visible.ToArray());
         }
         catch (Exception exception) when (IsFileError(exception))
@@ -420,8 +419,9 @@ internal sealed class FileService
         {
             Authorize(resolved.Value!, FilePermission.Write);
             Authorize(Path.GetDirectoryName(resolved.Value!)!, FilePermission.Write);
-            if (directory && (string.Equals(resolved.Value, CurrentDirectory, StringComparison.OrdinalIgnoreCase) ||
-                CurrentDirectory.StartsWith(Path.TrimEndingDirectorySeparator(resolved.Value!) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+            StringComparison comparison = access?.Comparison ?? StringComparison.OrdinalIgnoreCase;
+            if (directory && (string.Equals(resolved.Value, CurrentDirectory, comparison) ||
+                CurrentDirectory.StartsWith(Path.TrimEndingDirectorySeparator(resolved.Value!) + Path.DirectorySeparatorChar, comparison)))
                 throw new IOException("Das Arbeitsverzeichnis oder dessen Elternverzeichnis darf nicht geloescht werden.");
             FileAttributes attributes = File.GetAttributes(resolved.Value!);
             if (((attributes & FileAttributes.Directory) != 0) != directory)
@@ -507,7 +507,8 @@ internal sealed class FileService
                 {
                     if (++visited > MaximumSearchEntries)
                         return ResultObjectFactory.CreateFailure<FileEntry[]>(ResultCode.InvalidArgument, "Suche auf 1024 Eintraege begrenzt.");
-                    if (access != null && !access.Check(session!, entryPath, FilePermission.Read).IsOK()) continue;
+                    // Vor GetAttributes: Cosmos folgt dort Symlinks.
+                    if (!Visible(entryPath)) continue;
                     var attributes = File.GetAttributes(entryPath);
                     if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
                     var entry = new FileEntry(entryPath, (attributes & FileAttributes.Directory) != 0);
@@ -591,6 +592,11 @@ internal sealed class FileService
     }
 
     internal void ResetDirectory(string directory) => CurrentDirectory = directory;
+
+    /// <summary>Ein Listeneintrag ist sichtbar nach Rechten, ohne Rechteverwaltung nach dem Pfadwaechter.</summary>
+    private bool Visible(string entry) => access != null
+        ? access.Check(session!, entry, FilePermission.Read).IsOK()
+        : FileAccessControl.RunGuard(pathGuard, entry, false).IsOK();
 
     private static ResultErr TextTooLarge(int maximumLength)
     {

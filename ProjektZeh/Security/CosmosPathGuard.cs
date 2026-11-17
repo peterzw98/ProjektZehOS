@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Cosmos.Kernel.System.FileSystem;
 using ProjektZeh.Shared;
 
@@ -21,7 +22,9 @@ internal static class CosmosPathGuard
 
     private static PathNodeKind Lookup(string parent, string name)
     {
-        if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory)) return PathNodeKind.Missing;
+        // Der Elternpfad wurde schon als Verzeichnis geprueft; laesst er sich nicht oeffnen, ist das ein Fehler, kein fehlendes Blatt.
+        if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory))
+            throw new IOException("Elternverzeichnis nicht lesbar: " + parent);
         using (directory)
         {
             IVfsInode inode = directory.Inode;
