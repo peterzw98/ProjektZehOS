@@ -1,5 +1,6 @@
 import base64
 import importlib.util
+import os
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -88,6 +89,54 @@ class ReleaseToolsTests(unittest.TestCase):
                 result = subprocess.run([bash, str(SCRIPTS / 'build-release.sh'), version], capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b'Aufruf: build-release.sh', result.stderr)
+
+    def test_release_overrides_inherited_update_test_key_for_both_builds(self):
+        bash = shutil.which('bash')
+        if bash is None and Path('C:/Program Files/Git/bin/bash.exe').exists():
+            bash = 'C:/Program Files/Git/bin/bash.exe'
+        if bash is None:
+            self.skipTest('Bash wird fuer build-release.sh benoetigt')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'scripts').mkdir()
+            (root / 'ProjektZeh').mkdir()
+            script = root / 'scripts/build-release.sh'
+            shutil.copyfile(SCRIPTS / 'build-release.sh', script)
+            (root / 'ProjektZeh/ProjektZeh.csproj').write_text('<ZehOSInstaller>true</ZehOSInstaller>')
+            boot = root / 'packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI'
+            boot.parent.mkdir(parents=True)
+            boot.write_bytes(b'boot')
+            # Nur dotnet ersetzen: der echte Releaseablauf muss beide Builds sicher aufrufen.
+            harness = r'''
+dotnet() {
+    if [[ "$1" == build ]]; then
+        local empty_update_key=false
+        for argument in "$@"; do
+            [[ "$argument" == -p:ZehOSUpdateTestKeyPath= ]] && empty_update_key=true
+        done
+        if [[ "$empty_update_key" != true ]]; then
+            echo 'Release wuerde geerbten Update-Testschluessel verwenden' >&2
+            return 77
+        fi
+        printf '%s\n' "$*" >> release-builds.log
+        mkdir -p ProjektZeh/bin/Release/net10.0/linux-x64/cosmos
+        printf iso > ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+        printf kernel > ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf
+    else
+        printf 'global-packages: %s/packages\n' "$PWD"
+    fi
+}
+export -f dotnet
+"$BASH" "$1" 1.2.3 "$2"
+'''
+            environment = dict(os.environ, ZehOSUpdateTestKeyPath='/inherited/test.pub',
+                               ZEHOSUPDATETESTKEYPATH='/inherited/other-case.pub')
+            result = subprocess.run([bash, '-c', harness, 'release-test', script.as_posix(),
+                                     (root / 'release').as_posix()], capture_output=True, text=True,
+                                    env=environment, timeout=30)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(2, len((root / 'release-builds.log').read_text().splitlines()))
+            self.assertTrue((root / 'release/update-manifest.txt').is_file())
 
 
 if __name__ == '__main__':
