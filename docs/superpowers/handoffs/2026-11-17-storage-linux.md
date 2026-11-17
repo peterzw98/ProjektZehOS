@@ -82,3 +82,6 @@ Eigene Reviewrückgabe an Senior ist in **`fe9a0a0`** im Diff nachvollzogen: `de
 - `fe9a0a0` vom neuen Lead gelesen: keine Befunde. Unabhängiger Review (huang) angefragt.
 - Neu verteilt: senior = Kernel-Plug auf `task/storage-ext2-kernel-plug` (Datei außerhalb `Storage/Ext2/`, nur Build); jensen = VFS-Vertragsinventar 3.0.97 auf `task/storage-vfs-contracts`.
 - Linux-QEMU-Fundort laut `scripts/test-wasm-doom-desktop.py` (`qemu_tool`): `~/.cosmos/tools/qemu/<name>` (ohne `bin/`); `qemu-img.real` braucht `LD_LIBRARY_PATH`. Nur Existenz prüfen, keine Installation daraus ableiten.
+- 01:50 Hostprobe auf **`fe9a0a0`**: Build `-warnaserror` grün, Selbsttest inkl. Sektor 0/Überlauf/>128 GiB ohne Zugriff, Matrix original 18× Exit 4, fixed 18× Exit 0, `dotnet test` 608/608. mke2fs-Vergleich (64 MiB/32 GiB × 1/4 KiB, `-O none,sparse_super,filetype -I128`, gleiche `-N/-g`, `-m0`): Geometrie und Features identisch, Unterschied nur `lost+found` (legt der Cosmos-Formatter nicht an). Unabhängiger Review (huang) steht aus; erst danach Integration.
+- Plug `task/storage-ext2-kernel-plug` `a2c9e39` gelesen, ok; Cosmos-Build läuft auf der Hostprobe. Feature-Gate `task/storage-ext2-feature-gate` `51606c0` (jensen) gelesen, ok; Hosttests ausstehend. P3: `s_state` (errors) wird noch nicht ausgewertet.
+- 5c-Planung (AOT) liegt laut Koordinator nicht mehr bei dieser Leitung.
