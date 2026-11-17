@@ -215,8 +215,8 @@ internal sealed class SystemInfoFile
         }
         catch (Exception exception)
         {
-            // Der Aufrufer liest Cosmos-Zustand; eine Ausnahme dort darf die Dateioperation nicht abbrechen.
-            return ResultObjectFactory.CreateFailure<SystemInfoFile>(ResultCode.Exception, exception.Message);
+            // Der Aufrufer liest Cosmos-Zustand; eine Ausnahme dort darf die Dateioperation nicht abbrechen. Nur der Typname, die Meldung kann Pfade tragen.
+            return ResultObjectFactory.CreateFailure<SystemInfoFile>(ResultCode.Exception, "Snapshot konnte nicht erzeugt werden: " + exception.GetType().Name);
         }
 
         return snapshot.IsOK() && snapshot.Value is { } data

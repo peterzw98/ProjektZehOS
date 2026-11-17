@@ -190,8 +190,9 @@ public sealed class SystemInfoSnapshotTests
     [TestMethod]
     public void OpenTurnsProducerExceptionIntoFailure()
     {
-        var open = SystemInfoFile.Open(() => throw new InvalidOperationException("Cosmos"));
+        var open = SystemInfoFile.Open(() => throw new InvalidOperationException("/data/geheim.txt"));
         Assert.IsFalse(open.IsOK());
+        Assert.IsFalse(open.Status.ToString().Contains("geheim", StringComparison.Ordinal));
         Assert.IsNull(open.Value);
     }
 
