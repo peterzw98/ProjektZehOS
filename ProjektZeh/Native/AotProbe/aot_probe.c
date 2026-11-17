@@ -96,8 +96,18 @@ static int32_t host_add(wasm_exec_env_t exec_env, int32_t left, int32_t right)
     return left + right;
 }
 
+// C#-Rueckruf der wasm3-Hostfunktionen (WasmRuntime); schlaeft und gibt dabei den Prozessor ab.
+extern void zehos_wasm_host_sleep_ms(uint32_t milliseconds);
+
+static void host_sleep_ms(wasm_exec_env_t exec_env, int32_t milliseconds)
+{
+    (void)exec_env;
+    zehos_wasm_host_sleep_ms(milliseconds < 0 ? 0 : milliseconds > 1000 ? 1000 : (uint32_t)milliseconds);
+}
+
 static NativeSymbol host_symbols[] = {
     { "host_add", (void*)host_add, "(ii)i", NULL },
+    { "sleep_ms", (void*)host_sleep_ms, "(i)", NULL },
 };
 
 // Die freistehende C-Laufzeit hat keine Teilstringsuche.
@@ -195,7 +205,9 @@ int32_t zehos_aot_probe_fixture(void)
            + run_case(instance, env, "recurse", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse_native", 0, "native stack overflow")
            // Nach den Traps muss dieselbe Instanz weiter rechnen.
-           + run_case(instance, env, "ret42", 42, NULL);
+           + run_case(instance, env, "ret42", 42, NULL)
+           // B4: Erwartung aus derselben Rechnung auf dem Host (1.1, achtmal *1.5+0.25, mal 1000).
+           + run_case(instance, env, "fsleep", 40506, NULL);
 
 done:
     if (env != NULL) wasm_runtime_destroy_exec_env(env);

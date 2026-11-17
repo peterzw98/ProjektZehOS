@@ -34,3 +34,17 @@ __attribute__((noinline)) static int climb(int depth)
 __attribute__((export_name("recurse_native"))) int recurse_native(void) { return climb(1); }
 
 __attribute__((export_name("call_host"))) int call_host(void) { return host_add(40, 2); }
+
+__attribute__((import_module("zehos"), import_name("sleep_ms"))) void sleep_ms(int milliseconds);
+
+// B4: f64-Zwischenwerte ueberleben Threadwechsel; sleep_ms gibt den Prozessor an andere Threads ab.
+__attribute__((export_name("fsleep"))) int fsleep(void)
+{
+    volatile double value = 1.1;
+    for (int step = 0; step < 8; step++)
+    {
+        value = value * 1.5 + 0.25;
+        sleep_ms(5);
+    }
+    return (int)(value * 1000.0);
+}

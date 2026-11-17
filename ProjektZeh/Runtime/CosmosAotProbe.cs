@@ -19,8 +19,8 @@ internal static unsafe class CosmosAotProbe
     private const ulong Cr4Smep = 1ul << 20;
     // -mcmodel=kernel: 32-Bit-Spruenge und RIP-relative Zugriffe reichen +-2 GiB weit.
     private const ulong NearCodeDistance = 1ul << 31;
-    // ret42, call_host, oob, recurse, recurse_native und ret42 nach den Traps (aot_probe.c).
-    private const int FixtureCases = 6;
+    // ret42, call_host, oob, recurse, recurse_native, ret42 nach den Traps und fsleep (aot_probe.c).
+    private const int FixtureCases = 7;
 
     public static bool Run()
     {
@@ -54,10 +54,31 @@ internal static unsafe class CosmosAotProbe
         Write($"wamr init PASS version={major}.{minor}.{patch}");
 
         // Wie Paket-Apps auf einem eigenen Thread mit 8 MiB Stack; die native Stackgrenze haengt davon ab.
+        // Waehrend fsleep schlaeft, rechnet ein zweiter Thread mit double; beide Ergebnisse muessen stimmen.
         int passed = 0;
+        bool done = false;
+        bool noiseOk = true;
+        var noise = new Thread(() =>
+        {
+            while (!Volatile.Read(ref done))
+            {
+                double value = 3.0;
+                for (int step = 0; step < 1000; step++) value = value * 0.999 + 0.003;
+                if (Math.Abs(value - NoiseExpected()) > 1e-9) noiseOk = false;
+                Thread.Sleep(1);
+            }
+        });
         var worker = new Thread(() => passed = NativeFixture(), WasmRuntime.ThreadStackBytes);
+        noise.Start();
         worker.Start();
         worker.Join();
+        Volatile.Write(ref done, true);
+        noise.Join();
+        if (!noiseOk)
+        {
+            Write("FAIL fixture Nebenthread rechnete falsch");
+            return false;
+        }
         if (passed != FixtureCases)
         {
             Write($"FAIL fixture {passed}/{FixtureCases}");
@@ -66,6 +87,14 @@ internal static unsafe class CosmosAotProbe
         Write($"fixture PASS {passed}/{FixtureCases}");
         Write("PASS");
         return true;
+    }
+
+    // Referenzwert des Nebenthreads auf demselben Rechenweg.
+    private static double NoiseExpected()
+    {
+        double value = 3.0;
+        for (int step = 0; step < 1000; step++) value = value * 0.999 + 0.003;
+        return value;
     }
 
     private static int Bit(ulong value, ulong mask) => (value & mask) != 0 ? 1 : 0;
