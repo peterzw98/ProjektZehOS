@@ -50,7 +50,7 @@ internal static class ClockCorrection
             return Refused("NetworkTimeImplausible", "Netzwerkzeit " + networkUtc.ToString("u") + " liegt ausserhalb des plausiblen Bereichs.");
         TimeSpan step = networkUtc - currentUtc;
         if (IsPlausible(currentUtc, lowerBound) && step < -MaximumBackward)
-            return Refused("BackwardStepRefused", "Netzwerkzeit liegt " + (-step).ToString(@"d\.hh\:mm\:ss") + " hinter der Uhr; mehr als 5 Minuten Rueckschritt werden nicht uebernommen.");
+            return Refused("BackwardStepRefused", "Netzwerkzeit liegt " + (-step).ToString(@"d\.hh\:mm\:ss", System.Globalization.CultureInfo.InvariantCulture) + " hinter der Uhr; mehr als 5 Minuten Rueckschritt werden nicht uebernommen.");
         return ResultObjectFactory.CreateSuccess(networkUtc - rtcUtc);
     }
 
