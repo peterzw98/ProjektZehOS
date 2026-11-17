@@ -1,7 +1,11 @@
 import os
+import sys
+import types
 
 os.environ.setdefault("IRC_PASS", "x")
 os.environ.setdefault("DISCORD_GUILD_ID", "1")
+# Die geprüften Hilfsfunktionen brauchen discord.py nicht; die CI installiert es deshalb nicht.
+sys.modules.setdefault("discord", types.SimpleNamespace(Client=object))
 
 from bridge import agent_count, irc_lines, parse, signed_payload
 
