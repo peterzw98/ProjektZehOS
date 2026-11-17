@@ -202,6 +202,14 @@ class Monitor:
         self.connection.close()
 
 
+PROBE_PASS = 'NETWORK_PROBE PASS'
+
+
+def restart_finished(text, marker, markers_before, passes_before):
+    """Nach einem Neustart: neue Bereit-Marke und, falls vorher eine Probe lief, auch deren erneutes PASS."""
+    return text.count(marker) > markers_before and text.count(PROBE_PASS) >= passes_before + (1 if passes_before else 0)
+
+
 def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False):
     deadline = time.monotonic() + timeout
     marker = 'Textshell ist bereit.' if recovery else 'Desktop ist bereit.'
@@ -225,20 +233,22 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
             monitor.write_line('disk init sata0')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-disk-init.ppm'))
-            # Die Ersteinrichtung gibt es nur beim Boot mit eingebundenem /data (nicht nach disk mount in der Sitzung):
-            # disk init laesst nichts eingebunden und hat die Platte geleert geschrieben (Flush), daher genuegt ein
-            # harter Neustart per QMP; sata0 mit Partition wird beim Boot eingebunden, die Kontodatei fehlt, die Einrichtung folgt.
-            starts = serial.read_text(encoding='utf-8', errors='replace').count(marker)
+            # Die Ersteinrichtung gibt es nur beim Boot und nicht im Sicherheits-Recovery-Build; disk init laesst nichts
+            # eingebunden und hat geflusht, daher genuegt ein harter Neustart per QMP. Danach ist sata0 eingebunden, und
+            # security recover legt den ersten Administrator an (eine Kennwortabfrage).
+            before = serial.read_text(encoding='utf-8', errors='replace')
+            markers_before, passes_before = before.count(marker), before.count(PROBE_PASS)
             monitor.command('system_reset')
             reboot_deadline = time.monotonic() + timeout
-            while serial.read_text(encoding='utf-8', errors='replace').count(marker) <= starts:
+            # Das Probe-ISO wiederholt nach dem Neustart die ganze Netzwerkprobe; die Shell reagiert erst danach auf Eingaben.
+            while not restart_finished(serial.read_text(encoding='utf-8', errors='replace'), marker, markers_before, passes_before):
                 if qemu.poll() is not None or time.monotonic() >= reboot_deadline:
-                    raise TimeoutError(f'Neustart nach disk init ohne erneute Marke {marker!r}; Protokoll: {serial}')
+                    raise TimeoutError(f'Neustart nach disk init nicht abgeschlossen (Marke {marker!r}, {PROBE_PASS!r}); Protokoll: {serial}')
                 time.sleep(0.2)
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            monitor.write_line('netadmin')
-            monitor.write_line('testpassword12345')
+            monitor.write_line('security recover netadmin')
+            time.sleep(1)
             monitor.write_line('testpassword12345')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
