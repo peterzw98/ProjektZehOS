@@ -238,6 +238,7 @@ public sealed class GptInstallTests
     }
 
 #if ZEHOS_GPT_G8_PROBE
+    // Nur mit --filter Job_G8Probe ausfuehren: der Haltepunkt laesst alle vollstaendigen Laeufe dieser Klasse bei 96 % stehen.
     [TestMethod]
     public void Job_G8Probe_WaitsAfterFlushWithoutWritingMarker()
     {

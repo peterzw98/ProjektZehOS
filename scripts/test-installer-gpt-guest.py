@@ -2,7 +2,15 @@
 """Vorbereitung der GPT-Installer-Gastabnahme. G8 startet nur mit ausdruecklichem --run-g8.
 
 Alle Images und der Arbeitsordner werden neu angelegt; bereits vorhandene Daten werden nie beschrieben.
-Nicht implementierte Faelle und fehlende Werkzeuge sind offen und fuehren zu Exitcode 2.
+
+Benoetigte Builds (sonst fehlen die seriellen GPT_TEST-Quittungen):
+- --iso: Installer-ISO mit -p:ZehOSInstaller=true -p:ZehOSGptInstaller=true -p:ZehOSGptGuestProbe=true,
+  fuer G8 zusaetzlich -p:ZehOSGptG8Probe=true.
+- --payload/ProjektZeh.elf: der eingebettete Kernel ebenfalls mit -p:ZehOSGptGuestProbe=true, sonst fehlt
+  "GPT_TEST IDENTITY" beim Start der installierten Platte.
+
+Exitcodes: 2 = alle ausgefuehrten Faelle bestanden, andere Faelle offen (G1-G7/G9 sind noch nicht vollstaendig,
+deshalb gibt es derzeit kein 0); 1 = Fehler. Nicht implementierte Faelle und fehlende Werkzeuge sind offen (2).
 """
 import argparse
 import errno
@@ -248,6 +256,10 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=1200)
     args = parser.parse_args()
     print("OFFEN G1-G7 und G9: Gastablaeufe noch nicht implementiert", flush=True)
+    # Die Schreibfreiheits- und Sparse-Pruefungen brauchen SEEK_DATA/SEEK_HOLE (unter Windows nicht vorhanden).
+    if not hasattr(os, "SEEK_DATA") or not hasattr(os, "SEEK_HOLE"):
+        print("OFFEN: os.SEEK_DATA/SEEK_HOLE fehlen auf dieser Plattform (Linux erforderlich)", flush=True)
+        return 2
     if not args.run_g8 and not args.run_g6_basic and not args.run_g1_basic:
         print("OFFEN G8: --run-g8 nicht angegeben", flush=True)
         return 2
@@ -295,7 +307,8 @@ def main() -> int:
         process.wait(timeout=30)
         process = None
         inspect_image(target, work, args.payload, args.version, args.boot_config, marker_expected=False)
-        print("PASS G8: Bootdateien geflusht, Marker fehlt, Offline-Pruefungen bestanden", flush=True)
+        # SIGKILL nach der Quittung belegt Bestand gegen Gast-Absturz (Gast-/QEMU-Cache), nicht gegen Stromausfall.
+        print("PASS G8: Bootdateien nach Gast-Flush im Image, Marker fehlt, Offline-Pruefungen bestanden", flush=True)
     finally:
         if process is not None and process.poll() is None:
             process.kill()

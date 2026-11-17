@@ -108,3 +108,12 @@ class ExtractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlatformTests(unittest.TestCase):
+    def test_missing_seek_data_reports_open_instead_of_traceback(self):
+        # Review peter-review P3-c: unter Windows fehlt os.SEEK_DATA; das ist offen (2), kein AttributeError.
+        fake_os = mock.Mock(wraps=guest.os, spec=[name for name in dir(guest.os) if name not in ("SEEK_DATA", "SEEK_HOLE")])
+        with tempfile.TemporaryDirectory() as work, mock.patch.object(guest, "os", fake_os), \
+                mock.patch("sys.argv", ["test", "--work", work, "--run-g6-basic"]):
+            self.assertEqual(2, guest.main())
