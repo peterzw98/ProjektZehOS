@@ -375,11 +375,36 @@ internal sealed class AccountService
     /// <summary>home und home/&lt;name&gt; duerfen nur fehlen oder echte Verzeichnisse im Mount der Wurzel sein.</summary>
     private ResultErr CheckHomeTopology(string name)
     {
-        string homes = Path.Combine(Access.RootDirectory, "home");
-        var checkedHomes = Access.Guard(homes, creating: true);
-        if (!checkedHomes.IsOK()) return checkedHomes;
+        var homes = DirectoryOrMissing(Path.Combine(Access.RootDirectory, "home"));
+        if (!homes.IsOK()) return homes.Status;
         // Fehlt home, entstehen beide Stufen neu; CreateHome prueft jede Stufe vor dem Anlegen erneut.
-        return Directory.Exists(homes) ? Access.Guard(Home(name), creating: true) : ResultErr.CreateSuccess();
+        if (!homes.Value) return ResultErr.CreateSuccess();
+        var home = DirectoryOrMissing(Home(name));
+        return home.IsOK() ? ResultErr.CreateSuccess() : home.Status;
+    }
+
+    /// <summary>
+    /// Nach dem Pfadwaechter: true fuer ein Verzeichnis, false fuer einen wirklich fehlenden Eintrag. Eine Datei oder ein
+    /// anderer Eintrag an dieser Stelle wird abgelehnt; echte E/A-Fehler werden weitergegeben, nicht als "fehlt" gewertet.
+    /// </summary>
+    private ResultObject<bool> DirectoryOrMissing(string path)
+    {
+        var guarded = Access.Guard(path, creating: true);
+        if (!guarded.IsOK()) return ResultObjectFactory.CreateFailure<bool>(guarded);
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.Directory) != 0
+                ? ResultObjectFactory.CreateSuccess(true)
+                : ResultObjectFactory.CreateFailure<bool>(ResultCode.Failure, $"cause='HomeNotDirectory' message='Kein Verzeichnis: {path}'");
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return ResultObjectFactory.CreateSuccess(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return ResultObjectFactory.CreateFromException<bool>(exception);
+        }
     }
 
     /// <summary>Legt home und home/&lt;name&gt; stufenweise an, jede Stufe erst nach dem Pfadwaechter.</summary>
