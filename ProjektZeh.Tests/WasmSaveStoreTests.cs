@@ -336,6 +336,29 @@ public sealed class WasmSaveStoreTests
     }
 
     [TestMethod]
+    public void SaveRootIsCreatedLevelByLevelUnderAStrictGuard()
+    {
+        // Wie CosmosPathGuard: beim Anlegen darf nur das Blatt fehlen. Kernelpfade mit '/' unter root als Einhaengepunkt.
+        string mount = root.Replace(Path.DirectorySeparatorChar, '/');
+        Func<string, bool, ResultErr> guard = (path, creating) => ProjektZeh.Security.PathGuard.Check(mount, path.Replace(Path.DirectorySeparatorChar, '/'), [mount],
+            (parent, name) =>
+            {
+                string host = Path.Combine(parent, name);
+                return Directory.Exists(host) ? ProjektZeh.Security.PathNodeKind.Directory
+                    : File.Exists(host) ? ProjektZeh.Security.PathNodeKind.File : ProjektZeh.Security.PathNodeKind.Missing;
+            }, creating);
+        var files = new ProjektZeh.Storage.FileService(root, pathGuard: guard);
+        string target = mount + "/.zehos-apps/classicube/" + new string('a', 32);
+
+        Assert.IsFalse(files.CreateDirectory(target).IsOK(), "Gegenprobe: in einem Schritt lehnt der Waechter ab (cc-lead-Befund)");
+        var created = WasmSaveStore.CreateRoot(files, mount, target);
+        Assert.IsTrue(created.IsOK(), created.Message);
+        Assert.IsTrue(Directory.Exists(target));
+        Assert.IsTrue(WasmSaveStore.CreateRoot(files, mount, target).IsOK(), "vorhandener Ordner ist kein Fehler");
+        Assert.IsFalse(WasmSaveStore.CreateRoot(files, mount, "/anderswo/x").IsOK());
+    }
+
+    [TestMethod]
     public void RenameStaysInsideAndRefusesDirectoryClashes()
     {
         var store = Store();
