@@ -120,7 +120,7 @@ public sealed class DiskEmptyCheckTests
         }, messages);
         Assert.AreEqual("scan Kopf start LBA 0", messages[0]);
         Assert.AreEqual($"scan Ende ok LBA {disk.BlockCount}", messages[^1]);
-        Assert.AreEqual(31, messages.FindAll(m => m.StartsWith("scan Stichprobe") && m.Contains(" start ")).Count, "jede 16. von 511 Stichproben");
+        Assert.AreEqual(31, messages.FindAll(m => m.StartsWith("scan Stichprobe", StringComparison.Ordinal) && m.Contains(" start ", StringComparison.Ordinal)).Count, "jede 16. von 511 Stichproben");
     }
 
     [TestMethod]
