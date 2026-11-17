@@ -120,3 +120,32 @@ Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateC
 1. 7a S4: endgültige Liste der vom Installer auf Root angelegten Einträge (§4, Wiederholungsregel).
 2. *Entschieden 11:51:* `/srv` und `/srv/legacy-data` mit den Rechten des bisherigen `/data`-Eintrags.
 3. `FreeInodes` ist in Cosmos 3.0.97 nur über den Superblock lesbar (`s_free_inodes_count`); ob `VfsManager`/`VfsStatFs` ihn liefert, prüft 4.5.
+
+## 8. Umsetzungsstand
+
+Umgesetzt auf `task/storage-e4-4-migration` in `ProjektZeh/Storage/Migration/` (Hostlogik). Tests: `LayoutMigrationTests` (1–22, 21a) und `PackageTests.InstalledPackageStaysValidAfterLayoutMigration` (23). Kein Cosmos-`IMigrationTarget`, kein Shellbefehl und kein Gasttest; das bleibt bei 4.5.
+
+Präzisierungen gegenüber §1–§5:
+
+- `IMigrationTarget.List` wie in #164. Fehlende Pfade meldet das Ziel mit `ResultCode.NotFound`.
+- Das Home-Verzeichnis trägt im Ziel den **Kontonamen** (`SystemPaths.Root.Home`, Ordinal), Dateien und Ordner darunter den tatsächlichen Namen der Auflistung. Sonst fände das Root-Profil `/home/<konto>` bei abweichender Schreibweise auf FAT nicht.
+- Die CRC-/Zeilenregel liegt als `ChecksummedText` neben `Crc32`. `InstallMarker` (7a, noch nicht auf `master`) soll beim Merge darauf umgestellt werden.
+- Die Installerverzeichnisse aus 7a-S4 werden weder journalisiert noch angelegt noch gelöscht.
+- Die Rückleseprobe mit `FileAccessControl("/", Ordinal).Restore` läuft nur als Linux-Hosttest (12); im Ablauf folgt sie mit 4.5 im Kernel.
+- Schritt 8 erkennt eine Änderung gleicher Größe nur bei geändertem Zeitstempel (bewusste Grenze aus Test 21).
+- `IOException` und `UnauthorizedAccessException` aus Quelle oder Ziel werden zu einem Fehlerergebnis; andere Ausnahmen laufen durch. Die Schreibsperre wird in beiden Fällen freigegeben.
+- Vor `ready` steht eine Sync-Schranke (zweifach), danach noch einmal zweifach Sync; ohne die Schranke könnte nach einem Absturz `ready` dauerhaft sein, gepufferte Dateien aber nicht (Review peter-review P2-1). Scheitert ein `Sync` nach `ready`, meldet der Lauf einen Fehler; der Marker steht dann bereits auf `ready`.
+- `WriteFile` schreibt über `<pfad>.zehos-tmp` (`IMigrationTarget.TemporarySuffix`, wie #167). `AppendJournal` flusht `D`/`W` und den Kopf, `F` nicht. Ein Rest davon zu einer journalisierten Datei oder zum Marker gilt bei der Wiederholung (und bei `fresh` für den Marker) als eigene Spur und wird gelöscht, statt die Wiederholung zu verweigern.
+- Ein unvollständiger Journalkopf ohne gültige Folgezeilen gilt als leeres Journal (Absturz direkt nach `migrating`); ein ungültiger Kopf vor gültigen Zeilen bleibt ein Schaden.
+- Auch bei `state=fresh` darf das Ziel nur die Installereinträge enthalten; sonst `ForeignEntry`, nichts geschrieben. Journalpfade unter `/boot`, `/mnt`, `/proc`, `/sys` oder `/dev` gelten als fremd. `List()` darf `/` selbst liefern.
+- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`), Verzeichnisnamen über 255 und Dateinamen über 245 UTF-8-Byte (Platz für die Temp-Endung) sowie Dateinamen, die selbst auf `.zehos-tmp` enden (würden vom Temp-Namen der gleichnamigen Datei überschrieben), sind Konflikte.
+- Desktopdatei: ein Hintergrundziel unter Systemdaten oder länger als `DesktopSettings.MaximumImageLength` wird geleert und protokolliert.
+- `/srv/legacy-data/home` (nur bei Homes ohne Konto) erbt wie alle neuen Verzeichnisse vom nächsten Elterneintrag, also von `/` (bisher `/data`), nicht von `/data/home`. Nach der Ersteinrichtung haben beide dieselben Rechte.
+
+Offen für 4.5 (aus den Reviews):
+
+- Rücklesen der umgeschriebenen Kontendatei mit `FileAccessControl("/", Ordinal).Restore` im Ablauf (Etappe 4 §3 Schritt 7) ist Pflicht.
+- Journalkosten: je Datei drei geflushte Zeilen und vollständiges Einlesen bei der Wiederholung; unter TCG mit vielen Dateien messen, gegebenenfalls `F`-Zeilen bündeln.
+- Der Hostfake bildet keine Schreibpufferung ab; die Dauerhaftigkeit vor `ready` belegt erst G4–G6.
+- Ein Nutzerordner `boot` unter `/data` wird als alte ESP ausgeschlossen; der Befehl zeigt das vor dem Bestätigen an.
+- `LayoutMigration.InstallerEntries` ist bisher eine eigene Liste neben 7a-S4 `PreparingRoot`; beim Bau des Installers eine gemeinsame Konstante verwenden und testen, dass ein frisch installiertes Root die Fremdprüfung besteht.

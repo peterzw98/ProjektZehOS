@@ -10,11 +10,11 @@ namespace ProjektZeh.Security;
 internal sealed class AccountService
 {
     private sealed record Account(string Id, string Name, bool Administrator, string PasswordHash);
-    private const string Header = "ZEHOS-ACCOUNTS-1\n";
-    private const string Separator = "#ACL\n";
+    internal const string Header = "ZEHOS-ACCOUNTS-1\n";
+    internal const string Separator = "#ACL\n";
     internal const string UnknownAccountHash =
         "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    private const string CommandsFile = ".zehos-commands.db";
+    internal const string CommandsFile = ".zehos-commands.db";
     private const string CommandsHeader = "ZEHOS-COMMANDS-1\n";
     // Ein Rechteeintrag je Datei (rund 90 Zeichen): die allgemeine 64-KiB-Textgrenze sperrte das System nach wenigen
     // hundert Dateien. 1 Mi Zeichen reichen je nach Pfadlaenge fuer einige tausend bis rund 10000 Eintraege.
@@ -36,6 +36,26 @@ internal sealed class AccountService
     /// nicht als Ersteinrichtung, damit ein falsch gewaehltes oder leeres Laufwerk kein Konto erhaelt.
     /// </summary>
     public string? SetupBlockedReason { get; set; }
+
+    /// <summary>
+    /// Sperre bei Rootfehlern (Spec 7a, Abschnitt 5): wird bei jedem Laden und direkt vor jeder Mutation durch Ersteinrichtung
+    /// oder Recovery neu ausgewertet. Anders als SetupBlockedReason setzt ein Laufwerkswechsel sie nicht zurueck; nur bei der
+    /// Konstruktion setzbar.
+    /// </summary>
+    public Func<string?>? MutationBlockedReason { get; init; }
+
+    /// <summary>Wirft die Pruefung, wird gesperrt (fail-closed); nur der Typname geht in die Meldung.</summary>
+    private string? MutationBlocked()
+    {
+        try
+        {
+            return MutationBlockedReason?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            return $"cause='IdentityCheckFailed' message='Identitaetspruefung fehlgeschlagen: {exception.GetType().Name}. Keine Ersteinrichtung.'";
+        }
+    }
 
     /// <summary>Dateiname der Konten- und Rechtedatei auf der Datenplatte.</summary>
     public const string MetadataFile = ".zehos-security.db";
@@ -89,8 +109,9 @@ internal sealed class AccountService
         if (read.Value == null)
         {
             bool mounted = IsDataMounted();
-            if (SetupBlockedReason != null || !MaySetUp(mounted, SetupWindowOpen, hasAccountsFile: false))
-                return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + (SetupBlockedReason ??
+            string? blocked = SetupBlockedReason ?? MutationBlocked();
+            if (blocked != null || !MaySetUp(mounted, SetupWindowOpen, hasAccountsFile: false))
+                return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + (blocked ??
                     (!mounted ? "/data ist nicht eingebunden." : "Sie wird nur beim Boot angeboten.")));
         }
         if (read.Value == null)
@@ -259,6 +280,9 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
+            // Vor jeder Mutation, auch wenn die Platte erst nach dem Boot (disk use) eingebunden wurde.
+            string? blocked = MutationBlocked();
+            if (blocked != null) return ResultErr.CreateFailure(ResultCode.Failure, "Konten gesperrt: " + blocked);
             string metadataPath = Path.Combine(Access.RootDirectory, MetadataFile);
             string recoveredPath = Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db");
             // Quelle, Ziel und Home-Topologie vor jeder Mutation pruefen (Etappe 3): nichts verschieben oder speichern,

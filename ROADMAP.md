@@ -290,7 +290,11 @@ Die zweite Abnahmestufe ist teilweise erreicht: Seiten vom Testserver laden in Q
 
 Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht und Probe-Skripte bleiben im ungemergten PR #54 als Referenz erhalten. Die Punkte 12.2 bis 12.5 bleiben offen.
 
-**Kandidat Ladybird (Wunsch Lars, 17. November 2026):** [Ladybird](https://github.com/LadybirdBrowser/ladybird) als Paket ist gewünscht, aber noch nicht bewertet umgesetzt. Erstbewertung ohne Build in [LADYBIRD_FEASIBILITY.md](docs/LADYBIRD_FEASIBILITY.md): BSD-2, C++23 und Rust, mehrere Prozesse mit IPC, Threads, Skia/GPU, LibJS mit JIT, kein upstream-WASI-Ziel. Voraussetzungen sind voraussichtlich 12.4, Threads für Pakete und 13.5; der Speicher der JS-Engine setzt einen 64-Bit-Adressraum voraus (32 GiB reservierte Heap-Region), was auch LibJS allein als WASIp1-Modul ohne Umbau ausschließt (siehe [Plan Roadmap 12](docs/superpowers/plans/2026-11-17-roadmap-12.md)).
+<<<<<<< HEAD
+**Kandidat Ladybird (Wunsch Lars, 17. November 2026):** [Ladybird](https://github.com/LadybirdBrowser/ladybird) als Paket ist gewünscht, aber noch nicht bewertet umgesetzt. Erstbewertung ohne Build in [LADYBIRD_FEASIBILITY.md](docs/LADYBIRD_FEASIBILITY.md): BSD-2, C++23 und Rust, mehrere Prozesse mit IPC, Threads, Skia/GPU, LibJS mit JIT, kein upstream-WASI-Ziel. Voraussetzungen sind voraussichtlich 12.4, Threads für Pakete und 13.5; ein kleiner erster Schritt wäre LibJS allein als WASIp1-Modul.
+=======
+**Kandidat Ladybird (Wunsch Lars, 17. November 2026):** [Ladybird](https://github.com/LadybirdBrowser/ladybird) als Paket ist gewünscht, aber noch nicht bewertet umgesetzt. Erstbewertung ohne Build in [LADYBIRD_FEASIBILITY.md](docs/LADYBIRD_FEASIBILITY.md): BSD-2, Rust und C++23 (Rust überwiegt), mehrere Prozesse mit IPC (Renderer immer eigene Prozesse), Threads, Skia/GPU, LibJS mit JIT, kein WASI-Buildziel für Ladybird selbst. Voraussetzungen sind voraussichtlich 12.4, Threads für Pakete und 13.5; ein kleiner erster Schritt wäre LibJS allein als WASIp1-Modul.
+>>>>>>> origin/master
 
 - [ ] 12.2 HTTPS über eine geeignete TLS-Implementierung ermöglichen. Dafür Zufallsquelle, verlässliche Uhrzeit, Zertifikatsspeicher und Prüfung von Zertifikatskette sowie Hostnamen bereitstellen. Zertifikatsprüfung gehört zum Zielumfang.
 - [ ] 12.3 HTML, CSS, Schrift- und Bildformate schrittweise erweitern. Falls JavaScript zum Ziel gehört, eine geeignete Laufzeit mit kontrollierten Ressourcen integrieren und benötigte Browser-APIs ergänzen.
@@ -301,7 +305,7 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 - [ ] 12.8 Dateien und POSIX-Breite für Pakete: Schreiben im eigenen Bereich (13.4), Verzeichnisse lesen, `poll_oneoff`, Uhren.
 - [ ] 12.9 Mehrere Instanzen je Paket mit Nachrichtenkanälen und geteilten Puffern, als Vorstufe des Programmladers aus 12.5.
 
-**Zerlegung und Reihenfolge (17. November 2026):** 12.3 bis 12.9 sind eigene Projekte. Reihenfolge für große Pakete: 13.5 (AOT) zuerst, dann 12.6 und 12.7 nebeneinander, 12.8 nach Storage 7a/7b, danach 12.9; die Studie zu 12.4 läuft daneben. Erst danach wird über einen Ladybird-Port entschieden. Ziel, Abnahme, Risiko und Aufwand je Projekt: [Plan Roadmap 12](docs/superpowers/plans/2026-11-17-roadmap-12.md).
+**Zerlegung und Reihenfolge (17. November 2026):** 12.3 bis 12.9 sind eigene Projekte. Reihenfolge für große Pakete: 13.5 (AOT) zuerst, dann 12.6 und 12.7 nebeneinander, 12.8 nach Storage 7a/7b, danach 12.9; die Studie zu 12.4 läuft daneben. Erst danach wird über einen Ladybird-Port entschieden. Offen ist dabei der Speicher der JS-Engine: LibGC reserviert eine Heap-Region von 32 GiB Adressraum, was in wasm32 nicht geht und auch LibJS allein als WASIp1-Modul ohne Umbau ausschließt. Ziel, Abnahme, Risiko und Aufwand je Projekt: [Plan Roadmap 12](docs/superpowers/plans/2026-11-17-roadmap-12.md).
 
 **Fertig, wenn:** Für einen konkret festgelegten Satz von Webseiten die benötigten Funktionen und Schutzmechanismen funktionieren. „Alle heutigen Webseiten“ ist kein sinnvoller einzelner Meilenstein.
 

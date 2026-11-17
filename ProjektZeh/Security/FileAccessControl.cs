@@ -87,10 +87,7 @@ internal sealed class FileAccessControl
         string[] parts = relative.Split(Path.DirectorySeparatorChar);
         if (IsSystemDataPath(parts)) return false;
         foreach (string part in parts)
-        {
-            if (part.Length == 0 || part == "." || part == ".." || part.EndsWith('.') || part.EndsWith(' ') ||
-                part.StartsWith(".zehos-", StringComparison.OrdinalIgnoreCase) || part.IndexOfAny(['|', '\r', '\n', ':', '\\', '/', '\0']) >= 0) return false;
-        }
+            if (!PathComponent.IsValid(part)) return false;
         return true;
     }
 

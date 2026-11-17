@@ -65,6 +65,13 @@ internal sealed class CosmosStorageService : IStorageService
                 return size;
             }
 
+            // Vor ExistingPartitions, damit eine GPT unabhaengig davon abgelehnt wird, ob Cosmos ihre Eintraege erkennt.
+            var layout = DataDiskSelector.CheckNoInstalledLayout(device.BlockSize, device.BlockCount, device.ReadBlock);
+            if (!layout.IsOK())
+            {
+                return layout;
+            }
+
             if (StorageManager.GetPartitions(device).Count != 0)
             {
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
@@ -199,6 +206,13 @@ internal sealed class CosmosStorageService : IStorageService
             if (setupBlockedReason != null)
             {
                 Note("Fehler: " + setupBlockedReason + " Keine Ersteinrichtung.");
+            }
+            else if (result.IsOK())
+            {
+                // Identitaet des installierten Systems (7a): die Sperre selbst sitzt in AccountService, hier nur die Bootzeile.
+                var identity = CosmosInstalledIdentity.EvaluateData();
+                if (identity?.BlockedReason != null) Note("Fehler: " + identity.BlockedReason);
+                else if (identity is { State: not Partitioning.InstalledState.Legacy }) Note("Identitaet: " + identity.State);
             }
 
             return result;

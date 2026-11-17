@@ -4,7 +4,8 @@ using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage;
 
-internal sealed record DataDiskPartition(byte Type, string? Label);
+/// <param name="GptType">Typ-GUID aus der GPT (Guid.Empty bei MBR-Platten).</param>
+internal sealed record DataDiskPartition(byte Type, string? Label, Guid GptType = default);
 
 internal sealed record DataDiskCandidate(string Name, ulong BlockSize, ulong BlockCount, IReadOnlyList<DataDiskPartition> Partitions);
 
@@ -32,6 +33,8 @@ internal sealed record DataDiskDecision(DataDiskAction Action, string? DeviceNam
 internal static class DataDiskSelector
 {
     internal const string DataLabel = "ZEHOSDATA";
+    /// <summary>FAT-Label der vom 7a-Installer angelegten ESP; fremde ESPs (Windows, Linux) haengt Decide nie als /data ein.</summary>
+    internal const string EspLabel = "ZEHOSBOOT";
     internal const byte FatLbaType = 0x0C;
     internal const string ExistingDevice = "sata0";
     internal const ulong SectorSize = 512;
@@ -40,6 +43,15 @@ internal static class DataDiskSelector
 
     internal static bool IsDataPartition(DataDiskPartition partition) =>
         partition.Type == FatLbaType && string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Vom Installer nie angeboten: jede Partition mit dem FAT32-Label ZEHOSDATA, egal ob MBR 0x0C oder GPT (Basic Data,
+    /// ESP). Bewusst weiter als <see cref="IsDataPartition"/>, das nur bestimmt, was eingebunden wird. Grenze: Describe liest
+    /// das Label nur bei MBR 0x0C, ESP und Basic Data; MBR-FAT-Typen wie 0x0B/0x06 mit Label ZEHOSDATA bleiben unerkannt
+    /// (disk init legt immer 0x0C an).
+    /// </summary>
+    internal static bool IsInstallExcluded(DataDiskPartition partition) =>
+        string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Auswahl beim Boot (Spec Etappe 2, Abschnitt 3), in dieser Reihenfolge: (1) traegt sata0 eine 0x0C-Partition (Label egal),
@@ -67,6 +79,26 @@ internal static class DataDiskSelector
             string? hint = other.Device == null ? null
                 : $"Datenplatte ZEHOSDATA auf {other.Device} vorhanden; der Bestand auf {existing.Name} hat Vorrang (Umschalten: disk use {other.Device} --yes).";
             return new(DataDiskAction.Mount, existing.Name, 0, string.Empty, hint);
+        }
+
+        // Installiertes GPT-Layout (7a): die ESP wird immer eingebunden, auch ohne Root; die Identitaet bewertet erst danach
+        // der Marker auf der ESP. Zuordnung ueber den Typ, nie ueber den Index.
+        if (existing != null)
+        {
+            int esp = -1;
+            for (int index = 0; index < existing.Partitions.Count; index++)
+            {
+                if (!IsZehosEsp(existing.Partitions[index])) continue;
+                if (esp >= 0) return new(DataDiskAction.Blocked, existing.Name, -1, Cause("AmbiguousEsp", "Mehr als eine EFI-Systempartition auf sata0; es wird nichts eingebunden."));
+                esp = index;
+            }
+            if (esp >= 0)
+            {
+                var other = labelled.Find(entry => !string.Equals(entry.Device, existing.Name, StringComparison.OrdinalIgnoreCase));
+                string? hint = other.Device == null ? null
+                    : $"Datenplatte ZEHOSDATA auf {other.Device} vorhanden; das installierte System auf {existing.Name} hat Vorrang (Umschalten: disk use {other.Device} --yes).";
+                return new(DataDiskAction.Mount, existing.Name, esp, string.Empty, hint);
+            }
         }
 
         if (labelled.Count > 1)
@@ -103,6 +135,9 @@ internal static class DataDiskSelector
         _ => null,
     };
 
+    private static bool IsZehosEsp(DataDiskPartition partition) =>
+        partition.GptType == Partitioning.GptLayout.EspType && string.Equals(partition.Label?.TrimEnd(), EspLabel, StringComparison.OrdinalIgnoreCase);
+
     private static bool HasFatPartition(DataDiskCandidate device)
     {
         foreach (var partition in device.Partitions)
@@ -136,6 +171,18 @@ internal static class DataDiskSelector
         if (!existing || confirmed) return ResultErr.CreateSuccess();
         return ResultErr.CreateFailure(ResultCode.Failure,
             Cause("OverwriteNeedsConfirmation", "Es ist schon /data eingebunden oder sata0 traegt eine Partition; zur Bestaetigung 'disk init <Name> --yes-overwrite' verwenden."));
+    }
+
+    /// <summary>
+    /// disk init legt nur MBR-Datenplatten an und darf eine GPT nie ueberschreiben (Spec 7a, Abschnitt 5): Platten mit
+    /// GPT-Spuren, also jede installierte 7a-Platte mit Marker oder Root, auch nach abgebrochenem Schreiben, werden ohne
+    /// Ausnahme abgelehnt; keine Bestaetigung hebt das auf. Ueberschreiben nur ueber die Neuinstallation mit --erase.
+    /// </summary>
+    public static ResultErr CheckNoInstalledLayout(ulong blockSize, ulong blockCount, BlockReader read)
+    {
+        if (!Partitioning.GptLayout.HasTraces(blockSize, blockCount, read)) return ResultErr.CreateSuccess();
+        return ResultErr.CreateFailure(ResultCode.Failure,
+            Cause("InstalledLayout", "Das Laufwerk traegt eine GPT (installiertes ZehOS oder anderes System); disk init verweigert das auch mit --yes-overwrite. Eine installierte ZehOS-Platte nur ueber die Installation mit --erase neu einrichten; eine fremde GPT-Platte vorher ausserhalb von ZehOS leeren."));
     }
 
     /// <summary>512-Byte-Sektoren und 64 MiB bis 128 GiB; die Division verhindert einen Ueberlauf von BlockCount * BlockSize.</summary>
