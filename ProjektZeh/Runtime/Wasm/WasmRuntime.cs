@@ -12,6 +12,7 @@ using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -185,7 +186,8 @@ internal static unsafe class WasmRuntime
         int code;
         current = session;
         network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
-        save = session.SaveRoot is { } saveRoot ? new WasmSaveStore(saveRoot, () => SaveWritesBlocked(), SavePathGuard, SaveDiskSpace) : null;
+        save = session.SaveRoot is { } saveRoot ? new WasmSaveStore(saveRoot, () => AppStorageGate.IsBlocked || SaveWritesBlocked(), SavePathGuard,
+            SaveDiskSpace, disk: operation => AppStorageGate.Run(operation, WasiErrno.Busy)) : null;
         WaitedTicks = 0;
         try
         {

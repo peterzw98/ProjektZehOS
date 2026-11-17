@@ -153,10 +153,12 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 - Schreibende Aufrufe auf das Paket (fd 3) liefern `ENOTCAPABLE` bzw. `EBADF`; die Rechte gelten je fd.
 - Namen folgen den Regeln für Nutzerpfade: kein `..`, keine leeren Komponenten, nichts mit `.zehos-` am Anfang, kein abschließender Punkt oder Leerraum, keine `\`, `:`, `|`.
 
-**Konsistenz:** Eine geöffnete Datei liegt vollständig im Kernel und wird erst bei `fd_sync` oder `fd_close` als Ganzes ersetzt (Temp + Rename). Nach einem Absturz oder Stromausfall bleibt die alte oder die neue Fassung, nie eine halbe. Ungespeicherte Änderungen gehen beim Beenden ohne `fd_close` nicht verloren, weil das Laufzeitende alle Dateien schließt; bei einem harten Abbruch des Rechners schon. Zwei Fenster derselben App teilen `/save`, und die letzte Schließung gewinnt. Wer mehrere Dateien gemeinsam ändert, schreibt in eine Temp-Datei und benennt sie danach um.
+**Konsistenz:** Eine geöffnete Datei liegt vollständig im Kernel und wird erst bei `fd_sync` oder `fd_close` als Ganzes ersetzt (Temp + Rename). Nach einem Absturz oder Stromausfall bleibt die alte oder die neue Fassung, nie eine halbe. `O_TRUNC` leert nur den Puffer: Bis zum erfolgreichen `fd_close` bzw. `fd_sync` bleibt die alte Fassung auf der Platte, ein gescheitertes Speichern zerstört also nichts. Endet die App ohne `fd_close`, auch durch einen Trap, schließt das Laufzeitende alle Dateien und schreibt dabei ihren aktuellen Inhalt; bei einem harten Abbruch des Rechners gehen ungespeicherte Änderungen verloren. Heute läuft höchstens eine Paket-App gleichzeitig. Wer mehrere Dateien gemeinsam ändert, schreibt in eine Temp-Datei und benennt sie danach um. Ein Umbenennen auf denselben Namen (auch nur in anderer Groß-/Kleinschreibung) bleibt ohne Wirkung.
+
+**Einschränkungen:** Alle Pfade beziehen sich auf `/save` (fd 4). Geöffnete Unterordner taugen nur für `fd_readdir`, nicht als Ausgangspunkt für `openat`/`fstatat` (`EBADF`). Pfade mit abschließendem `/` oder `./`-Teilen gelten als unzulässig (`EACCES`). Einen Schreibzugriff gibt es nur mit `fd_write`- oder `fd_filestat_set_size`-Recht; `O_CREAT` allein legt die Datei an, ohne den fd beschreibbar zu machen.
 
 **Grenzen je App und Konto:**
-- 64 MiB Gesamtgröße, 1024 Einträge;
+- 64 MiB Gesamtgröße (jeder Ordner zählt mit 32 KiB, einem FAT-Cluster), 1024 Einträge;
 - 16 MiB je Datei;
 - 8 gleichzeitig beschreibbare Dateien;
 - 16 MiB für alle geöffneten Dateien einer App-Instanz zusammen (sie liegen im Kernel-Speicher).
@@ -168,7 +170,7 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 | `ENOSPC` (51) | Quote, Einträge, Pufferbudget, voller Datenträger oder voller Ordner |
 | `EFBIG` (22) | Datei über 16 MiB |
 | `EMFILE` (33) | mehr als 8 beschreibbare Dateien |
-| `EBUSY` (10) | Systemaktion sperrt das Schreiben, etwa Migration oder Energieaktion; Lesen geht weiter |
+| `EBUSY` (10) | Das Datenlaufwerk wird gerade ausgehängt (`disk unmount`, `shutdown`, `reboot`) oder eine Systemaktion sperrt das Schreiben; Lesen geht weiter. Ein laufendes Schreiben wird vorher abgeschlossen. |
 | `ENOENT` (44) | Datei fehlt oder das Laufwerk wurde ausgehängt |
 | `EACCES` (2) | unzulässiger Pfad |
 | `EIO` (29) | sonstiger Laufwerksfehler |

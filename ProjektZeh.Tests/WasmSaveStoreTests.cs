@@ -224,6 +224,103 @@ public sealed class WasmSaveStoreTests
     }
 
     [TestMethod]
+    public void TruncateKeepsTheOldVersionUntilTheNewOneIsWritten()
+    {
+        var store = Store();
+        Create(store, "welt.cw", out int first);
+        Write(store, first, "alte Welt");
+        store.Close(first);
+
+        // fopen("w") = O_CREAT|O_TRUNC: bis Close bleibt die alte Fassung, ein gescheitertes Speichern zerstoert nichts.
+        Assert.AreEqual(WasiErrno.Success, Create(store, "welt.cw", out int second));
+        Assert.AreEqual("alte Welt", Disk("welt.cw"));
+        Write(store, second, "neu");
+        blocked = true;
+        Assert.AreEqual(WasiErrno.Busy, store.Close(second));
+        Assert.AreEqual("alte Welt", Disk("welt.cw"), "gescheitertes Speichern laesst die alte Fassung");
+        blocked = false;
+
+        Create(store, "welt.cw", out int third);
+        Assert.AreEqual(WasiErrno.Success, store.Close(third), "leeres Speichern ist ein gewolltes Leeren");
+        Assert.AreEqual("", Disk("welt.cw"));
+    }
+
+    [TestMethod]
+    public void RenameOntoItselfKeepsTheFile()
+    {
+        var store = Store();
+        Create(store, "welt.cw", out int handle);
+        Write(store, handle, "Welt");
+        store.Close(handle);
+        Assert.AreEqual(WasiErrno.Success, store.Rename("welt.cw", "welt.cw"));
+        Assert.AreEqual("Welt", Disk("welt.cw"));
+        Assert.AreEqual(WasiErrno.Success, store.Rename("welt.cw", "WELT.CW"), "nur andere Schreibweise");
+        Assert.IsTrue(File.Exists(Path.Combine(root, "welt.cw")) || File.Exists(Path.Combine(root, "WELT.CW")));
+        Assert.AreEqual("Welt", File.ReadAllText(Directory.GetFiles(root).Single()));
+        Assert.AreEqual(WasiErrno.NotFound, store.Rename("fehlt", "fehlt"));
+    }
+
+    [TestMethod]
+    public void DirectoryCannotMoveIntoItself()
+    {
+        var store = Store();
+        store.CreateDirectory("a");
+        Assert.AreEqual(WasiErrno.Invalid, store.Rename("a", "a/b"));
+        Assert.IsTrue(Directory.Exists(Path.Combine(root, "a")));
+    }
+
+    [TestMethod]
+    public void CreateWithoutWriteRightGivesAReadOnlyDescriptor()
+    {
+        var store = Store();
+        Assert.AreEqual(WasiErrno.Success, store.Open("neu", true, false, false, false, false, out int handle));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "neu")), "O_CREAT legt die Datei trotzdem an");
+        Assert.AreEqual(WasiErrno.BadFile, store.Write(handle, 0, [1], out _));
+        Assert.AreEqual(WasiErrno.BadFile, store.SetSize(handle, 4));
+    }
+
+    [TestMethod]
+    public void DirectoriesCountAgainstTheByteQuota()
+    {
+        // Je Ordner 32 KiB (ein FAT-Cluster): bei 100 KiB Quote passen drei Ordner, der vierte nicht.
+        var store = Store(new WasmSaveLimits(TotalBytes: 100 * 1024));
+        for (int index = 0; index < 3; index++) Assert.AreEqual(WasiErrno.Success, store.CreateDirectory("d" + index));
+        Assert.AreEqual(WasiErrno.NoSpace, store.CreateDirectory("d3"));
+    }
+
+    [TestMethod]
+    public void DiskOperationsRunThroughTheGate()
+    {
+        int calls = 0;
+        bool busy = false;
+        var store = new WasmSaveStore(root, () => false, disk: operation => { calls++; return busy ? WasiErrno.Busy : operation(); });
+        Assert.AreEqual(WasiErrno.Success, Create(store, "a", out int handle));
+        Write(store, handle, "x");
+        busy = true;
+        Assert.AreEqual(WasiErrno.Busy, store.Sync(handle), "Aushaengen laeuft: kein Plattenzugriff");
+        Assert.AreEqual(WasiErrno.Busy, store.CreateDirectory("d"));
+        Assert.AreEqual(WasiErrno.Busy, store.Unlink("a"));
+        busy = false;
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        Assert.AreEqual("x", Disk("a"));
+        Assert.IsTrue(calls >= 5);
+    }
+
+    [TestMethod]
+    public void AppStorageGateBlocksNewWritersAndReleases()
+    {
+        try
+        {
+            Assert.AreEqual(1, ProjektZeh.Storage.AppStorageGate.Run(() => 1, 10));
+            ProjektZeh.Storage.AppStorageGate.Block();
+            Assert.IsTrue(ProjektZeh.Storage.AppStorageGate.IsBlocked);
+            Assert.AreEqual(10, ProjektZeh.Storage.AppStorageGate.Run(() => 1, 10));
+        }
+        finally { ProjektZeh.Storage.AppStorageGate.Release(); }
+        Assert.IsFalse(ProjektZeh.Storage.AppStorageGate.IsBlocked);
+    }
+
+    [TestMethod]
     public void RenameStaysInsideAndRefusesDirectoryClashes()
     {
         var store = Store();

@@ -406,7 +406,8 @@ static uint32_t save_path_open(zehos_host_call* call, const uint8_t* name, uint3
     file->position = 0;
     file->size = 0;
     file->kind = (openFlags & 2) ? ZEHOS_FILE_SAVE_DIRECTORY : ZEHOS_FILE_SAVE;
-    file->writable = (flags & (SAVE_WRITE | SAVE_CREATE | SAVE_TRUNCATE)) != 0 && (openFlags & 2) == 0;
+    // Schreiben nur mit fd_write- bzw. fd_filestat_set_size-Recht; O_CREAT/O_TRUNC allein machen den fd nicht beschreibbar.
+    file->writable = (flags & SAVE_WRITE) != 0;
     file->append = (fdFlags & 1) != 0;
     uint32_t fd = (uint32_t)(FIRST_FILE_FD + slot);
     memcpy(call->memory + openedFd, &fd, 4);

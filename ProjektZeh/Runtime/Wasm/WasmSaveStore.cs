@@ -73,14 +73,24 @@ internal sealed class WasmSaveStore
     private readonly Func<string, bool, ResultErr>? pathGuard;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly WasmSaveLimits limits;
+    private readonly Func<Func<int>, int> disk;
     private readonly FileService files;
+    // Ordner belegen auf FAT mindestens einen Cluster; ohne diesen Anteil liessen sich ueber leere Ordner rund 32 MiB
+    // jenseits der Quote belegen (Review).
+    private const long DirectoryBytes = 32 * 1024;
     private readonly Dictionary<int, Entry> open = [];
     private int nextHandle = 1;
     private long buffered;
 
+    /// <param name="disk">
+    /// Fuehrt jede Plattenoperation unter der gemeinsamen Schreibsperre aus (<see cref="AppStorageGate.Run"/>), damit
+    /// Aushaengen und Energieaktionen nicht mitten in ein Ersetzen fallen; ohne Angabe direkt.
+    /// </param>
     public WasmSaveStore(string root, Func<bool> writesBlocked, Func<string, bool, ResultErr>? pathGuard = null,
-        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null, WasmSaveLimits? limits = null)
+        Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null, WasmSaveLimits? limits = null,
+        Func<Func<int>, int>? disk = null)
     {
+        this.disk = disk ?? (operation => operation());
         this.root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         this.writesBlocked = writesBlocked;
         this.pathGuard = pathGuard;
@@ -123,9 +133,12 @@ internal sealed class WasmSaveStore
             if (!read.IsOK()) return Failed(read.Status);
             data = read.Value!;
         }
-        var entry = new Entry(path, false, write || create || truncate) { Data = data, Length = data.Length };
-        // O_CREAT legt die Datei sofort an, O_TRUNC leert sie sofort, wie unter POSIX erwartet.
-        if (!exists || truncate)
+        var entry = new Entry(path, false, write) { Data = data, Length = data.Length };
+        // O_CREAT legt eine fehlende Datei sofort an (sichtbar wie unter POSIX). O_TRUNC leert dagegen nur den Puffer: die
+        // alte Fassung bleibt auf der Platte, bis Sync bzw. Close die neue schreibt, damit ein gescheitertes Speichern
+        // nichts zerstoert (Review).
+        entry.Dirty = truncate && exists;
+        if (!exists)
         {
             entry.Dirty = true;
             status = Persist(entry);
@@ -228,9 +241,13 @@ internal sealed class WasmSaveStore
         if (path == root) return WasiErrno.Exists;
         if (Directory.Exists(path) || File.Exists(path)) return WasiErrno.Exists;
         if (!Directory.Exists(Path.GetDirectoryName(path)!)) return WasiErrno.NotFound;
-        if (Usage().Entries >= limits.Entries) return WasiErrno.NoSpace;
-        var created = files.CreateDirectory(path);
-        return created.IsOK() ? WasiErrno.Success : Failed(created);
+        var usage = Usage();
+        if (usage.Entries >= limits.Entries || usage.Bytes + DirectoryBytes > limits.TotalBytes) return WasiErrno.NoSpace;
+        return disk(() =>
+        {
+            var created = files.CreateDirectory(path);
+            return created.IsOK() ? WasiErrno.Success : Failed(created);
+        });
     }
 
     public int RemoveDirectory(string relative)
@@ -243,8 +260,11 @@ internal sealed class WasmSaveStore
         status = List(path, out var children);
         if (status != WasiErrno.Success) return status;
         if (children.Length != 0) return WasiErrno.NotEmpty;
-        var removed = files.DeleteDirectory(path);
-        return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        return disk(() =>
+        {
+            var removed = files.DeleteDirectory(path);
+            return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        });
     }
 
     public int Unlink(string relative)
@@ -254,8 +274,11 @@ internal sealed class WasmSaveStore
         if (status != WasiErrno.Success) return status;
         if (Directory.Exists(path)) return WasiErrno.IsDirectory;
         if (!File.Exists(path)) return WasiErrno.NotFound;
-        var removed = files.DeleteFile(path);
-        return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        return disk(() =>
+        {
+            var removed = files.DeleteFile(path);
+            return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        });
     }
 
     /// <summary>
@@ -270,6 +293,11 @@ internal sealed class WasmSaveStore
         status = Resolve(toRelative, out string target);
         if (status != WasiErrno.Success) return status;
         if (from == root || target == root) return WasiErrno.Access;
+        // Gleicher Name (auf FAT auch nur in anderer Schreibweise): nichts zu tun. Sonst loeschte das Ersetzen unten die
+        // einzige Fassung (Review). Eine reine Aenderung der Schreibweise bleibt damit ohne Wirkung.
+        if (string.Equals(from, target, StringComparison.OrdinalIgnoreCase))
+            return File.Exists(from) || Directory.Exists(from) ? WasiErrno.Success : WasiErrno.NotFound;
+        if (target.StartsWith(from + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return WasiErrno.Invalid;
         if (Directory.Exists(from)) return Directory.Exists(target) || File.Exists(target) ? WasiErrno.Exists : MovedDirectory(from, target);
         if (!File.Exists(from)) return WasiErrno.NotFound;
         if (Directory.Exists(target)) return WasiErrno.IsDirectory;
@@ -281,31 +309,37 @@ internal sealed class WasmSaveStore
         var data = files.ReadBytes(from, limits.FileBytes);
         if (!data.IsOK()) return Failed(data.Status);
         if (!HasDiskSpace(data.Value!.Length)) return WasiErrno.NoSpace;
-        var replaced = files.WriteBytes(target, data.Value!);
-        if (!replaced.IsOK()) return Failed(replaced);
-        var removed = files.DeleteFile(from);
-        return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        return disk(() =>
+        {
+            var replaced = files.WriteBytes(target, data.Value!);
+            if (!replaced.IsOK()) return Failed(replaced);
+            var removed = files.DeleteFile(from);
+            return removed.IsOK() ? WasiErrno.Success : Failed(removed);
+        });
     }
 
-    private int Moved(string from, string to)
+    private int Moved(string from, string to) => disk(() =>
     {
         var moved = files.MoveFile(from, to);
         return moved.IsOK() ? WasiErrno.Success : Failed(moved);
-    }
+    });
 
     // FileService verschiebt nur Dateien; beide Pfade sind ueber Resolve geprueft und bewacht.
     private int MovedDirectory(string from, string to)
     {
         if (!Directory.Exists(Path.GetDirectoryName(to)!)) return WasiErrno.NotFound;
-        try
+        return disk(() =>
         {
-            Directory.Move(from, to);
-            return WasiErrno.Success;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return Directory.Exists(root) ? WasiErrno.Io : WasiErrno.NotFound;
-        }
+            try
+            {
+                Directory.Move(from, to);
+                return WasiErrno.Success;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return Directory.Exists(root) ? WasiErrno.Io : WasiErrno.NotFound;
+            }
+        });
     }
 
     private int Add(Entry entry)
@@ -347,10 +381,14 @@ internal sealed class WasmSaveStore
         long existing = File.Exists(entry.Path) ? new FileInfo(entry.Path).Length : 0;
         if (Usage().Bytes - existing + entry.Length > limits.TotalBytes) return WasiErrno.NoSpace;
         if (!HasDiskSpace(entry.Length)) return WasiErrno.NoSpace;
-        var written = files.WriteBytes(entry.Path, entry.Data.AsSpan(0, entry.Length).ToArray());
-        if (!written.IsOK()) return Failed(written);
-        entry.Dirty = false;
-        return WasiErrno.Success;
+        byte[] content = entry.Data.AsSpan(0, entry.Length).ToArray();
+        int status = disk(() =>
+        {
+            var written = files.WriteBytes(entry.Path, content);
+            return written.IsOK() ? WasiErrno.Success : Failed(written);
+        });
+        if (status == WasiErrno.Success) entry.Dirty = false;
+        return status;
     }
 
     // Vorab statt aus der Fehlermeldung: FileService unterscheidet einen vollen Datentraeger nicht von anderen Fehlern.
@@ -370,7 +408,7 @@ internal sealed class WasmSaveStore
         {
             if (Path.GetFileName(path).StartsWith(".zehos-", StringComparison.OrdinalIgnoreCase)) continue;
             entries++;
-            if (File.Exists(path)) bytes += new FileInfo(path).Length;
+            bytes += File.Exists(path) ? new FileInfo(path).Length : DirectoryBytes;
         }
         return (bytes, entries);
     }

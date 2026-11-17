@@ -331,6 +331,8 @@ internal sealed class CosmosStorageService : IStorageService
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
         }
 
+        // Etappe 13.4: nach dem Einbinden duerfen Apps wieder in ihren App-Speicher schreiben.
+        AppStorageGate.Release();
         return ResultErr.CreateSuccess();
     }
 
@@ -339,10 +341,14 @@ internal sealed class CosmosStorageService : IStorageService
     /// </summary>
     public ResultErr Unmount()
     {
+        // Etappe 13.4: keine App darf mitten in ein Ersetzen (Temp, Sicherung, Rename) hinein ausgehaengt werden. Block wartet
+        // auf einen laufenden App-Schreibvorgang; bleibt /data eingebunden, wird die Sperre wieder aufgehoben.
+        AppStorageGate.Block();
         try
         {
             if (!VfsManager.TryUnmount(MountPoint))
             {
+                AppStorageGate.Release();
                 return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
             }
 
@@ -350,6 +356,7 @@ internal sealed class CosmosStorageService : IStorageService
         }
         catch (Exception exception)
         {
+            if (VfsManager.TryGetMount(MountPoint, out _)) AppStorageGate.Release();
             return ResultErr.CreateFromException(exception);
         }
     }
