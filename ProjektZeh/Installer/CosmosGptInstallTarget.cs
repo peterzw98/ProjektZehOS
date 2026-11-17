@@ -117,6 +117,10 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         if (!VfsManager.TryGetMount(espMount, out VfsMount? mount) || !mount.Superblock.SuperOperations.Sync(mount.Superblock))
             return Failed("Sync der EFI-Partition fehlgeschlagen.");
         device.Flush();
+#if ZEHOS_GPT_G8_PROBE
+        // Der Host beendet den Gast erst nach dieser Quittung ohne weiteres Gast-I/O.
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString("GPT_G8_BOOT_FLUSHED\n");
+#endif
         return ResultErr.CreateSuccess();
     });
 
