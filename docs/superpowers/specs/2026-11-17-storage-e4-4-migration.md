@@ -8,13 +8,15 @@ Stand: 17. November 2026, Basis `origin/master` (Etappe-4-Entwurf #145 gemergt).
 |---|---|---|
 | `MigrationInventory` | Quelle lesen: alle Dateien und Verzeichnisse unter `SystemPaths.Legacy.AdminRoot` mit tatsächlichem Namen, Größe, SHA-256 | `System.IO`, `SHA256` (im Kernel schon genutzt, `CosmosSecurityProbe`, `TlsTransport`) |
 | `MigrationPlan.Create(inventory, legacy, root)` | **rein**: Zuordnung jedes Eintrags, Ausschlüsse, Konflikte, Platzbedarf | keine |
-| `MigrationAcl.Rewrite(securityText, plan)` | **rein**: Kontendatei umschreiben (Konten unverändert, ACL-Pfade zugeordnet) | `FileAccessControl` |
+| `MigrationAcl.Rewrite(securityText, plan)` | **rein textuell**: Kontendatei umschreiben (Konten unverändert, ACL-Pfade zugeordnet) | keine (`FileAccessControl` nutzt `Path.GetFullPath`/Hosttrenner und wäre auf Windows-Hosts nicht testbar, huang P2-1) |
 | `MigrationJournal` | **rein** Parse/Format; Schreiben über das Ziel | keine |
 | `LayoutMarker` | Root-Marker `state=fresh/migrating/ready` | Format wie `InstallMarker` (gleiche crc32-Regel, eigene Felder) |
-| `LayoutMigration.Run(...)` | Ablauf Schritte 1–10 aus Etappe 4 §3 | `IMigrationTarget` |
-| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename), `AppendJournal` (mit Flush), `Delete`, `ReadBack`, `FreeBytes`, `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
+| `LayoutMigration.Run(...)` | Ablauf Schritte 1–10 aus Etappe 4 §3 | `IMigrationTarget`, `Func<IDisposable> lockSource` (Schreibsperre der Quelle; `Run` hält sie per `using`, die Sperre selbst baut 4.5) |
+| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename), `AppendJournal` (mit Flush), `Delete`, `ReadBack`, `FreeBytes` (verfügbare, nicht reservierte Blöcke × Blockgröße, huang P3 e), `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
 
-Die Quelle wird nur über `System.IO` gelesen (Hosttests mit Temp-Verzeichnis). Für die Schreibseite ist eine Schnittstelle nötig, weil ENOSPC, Inode-Mangel, Abbruch nach jedem Schritt und Absturz zwischen Datei und Journal auf dem Host nicht anders reproduzierbar sind; sie bekommt genau die oben genannten Methoden, keine weiteren.
+Die Quelle wird nur über `System.IO` gelesen (Hosttests mit Temp-Verzeichnis). Alle Ziel- und ACL-Pfade sind Kernelpfade mit `/` und werden mit einer reinen `/`-Pfadfunktion behandelt, nie mit `Path.GetFullPath`, damit die Tests auf Linux- und Windows-Hosts gleich laufen.
+
+**Inventargrenze (huang P3 c):** höchstens 100 000 Einträge; darüber bricht die Migration vor jedem Schreibzugriff mit klarer Meldung ab (Kernel-Heap, FAT erlaubt Millionen Dateien). `shortcut:` feste Grenze, anheben nach Messung von G6. Für die Schreibseite ist eine Schnittstelle nötig, weil ENOSPC, Inode-Mangel, Abbruch nach jedem Schritt und Absturz zwischen Datei und Journal auf dem Host nicht anders reproduzierbar sind; sie bekommt genau die oben genannten Methoden, keine weiteren.
 
 ## 2. Zuordnungsregeln (`MigrationPlan`)
 
@@ -28,14 +30,14 @@ Relativ zu `/data`, Vergleich der Quelle **OrdinalIgnoreCase** (FAT), Ziel **Ord
 | `.zehos-update.conf` | `/etc/zehos/update.conf` | unverändert |
 | `.zehos-packages/**` | `/var/lib/zehos/packages/**` | 1:1; `PackageStore` speichert nur relative Pfade (`Path.Combine(root, …)`, `PackageStore.cs:37-39`), geprüft per Test (§5, P3 d) |
 | `.zehos-apps/**` | `/var/lib/zehos/apps/**` | 1:1 (`SystemPaths.AppState`) |
-| `home/<name>/zehos-desktop.conf` | `/home/<name>/.config/zehos/desktop.conf` | `.config/zehos` wird angelegt |
+| `home/<name>/zehos-desktop.conf` | `/home/<name>/.config/zehos/desktop.conf` | `.config/zehos` wird angelegt (Rechte §3.5); der absolute Hintergrundpfad darin (`Settings.Image`) wird über die Planzuordnung umgeschrieben, ohne Zuordnung geleert und protokolliert (huang P3 a) |
 | `home/<name>/**` sonst | `/home/<name>/**` | |
 | `boot/**` | – | ausgeschlossen, protokolliert (alte ESP-Artefakte) |
 | `.zehos-*.tmp`, `.zehos-*.bak` (in jedem Verzeichnis) | – | ausgeschlossen, protokolliert |
 | jede andere `.zehos-*`-Datei | – | **Konflikt** (unbekannte Systemdatei, fail-closed) |
 | alles andere | `/srv/legacy-data/<relativer Pfad>` | Lead-Entscheid 11:23 |
 
-**Konflikte (stoppen vor jedem Schreibzugriff, mit Liste):** zwei Quellen auf dasselbe Ziel (Ordinal), unbekannte `.zehos-*`-Datei, Zielpfad besteht `PathGuard.Check` nicht (Komponentenregeln Etappe 3), Konto-Name, der keine gültige Pfadkomponente ist, `home/<name>` ohne Konto (wird nach `/srv/legacy-data/home/<name>` gelegt, **kein** Konflikt, aber protokolliert).
+**Konflikte (stoppen vor jedem Schreibzugriff, mit Liste):** zwei Quellen auf dasselbe Ziel (Ordinal), unbekannte `.zehos-*`-Datei, Zielpfad verletzt die Komponentenregeln (reine Funktion `PathComponent.IsValid`, aus der Schleife in `FileAccessControl.IsManagedPath` herausgezogen und dort weiterverwendet; `PathGuard.Check` prüft das echte Verzeichnis und läuft erst beim Ausführen, huang P3 b), Konto-Name, der keine gültige Pfadkomponente ist, `home/<name>` ohne Konto (wird nach `/srv/legacy-data/home/<name>` gelegt, **kein** Konflikt, aber protokolliert).
 
 **Platzbedarf:** je Datei `ceil(size / 4096) * 4096`, je Verzeichnis 4096; Inodes = Dateien + Verzeichnisse; jeweils plus 10 % Reserve, mindestens 1 MiB bzw. 64 Inodes (Etappe 4 §3 Schritt 4).
 
@@ -44,12 +46,11 @@ Relativ zu `/data`, Vergleich der Quelle **OrdinalIgnoreCase** (FAT), Ziel **Ord
 Eingabe: Text von `.zehos-security.db` (`ZEHOS-ACCOUNTS-1`, Kontozeilen, `#ACL\n`, `ZEHOS-SECURITY-1`-Block; `AccountService.cs:13-14,105-119`).
 
 1. Kontozeilen **byteidentisch** übernehmen (Id, Name, Rolle, Hash).
-2. ACL-Block mit `new FileAccessControl("/data", OrdinalIgnoreCase).Restore` laden; Fehler ⇒ Abbruch.
-3. Jeden Eintrag über die Planzuordnung abbilden. Gibt es zum Eintrag keine Datei (Groß-/Kleinschreibung über OrdinalIgnoreCase verglichen), wird er protokolliert und weggelassen.
-4. Wurzelrechte des neuen Baums nach dem Muster von `SetupWork` (`AccountService.cs:282-287`): `/` und `/home` erhalten Eigentümer und `*`-Rechte des bisherigen `/data`- bzw. `/data/home`-Eintrags; `/srv` und `/srv/legacy-data` bekommen die Rechte des bisherigen `/data`-Eintrags. `/etc`, `/var` usw. bekommen **keinen** Eintrag (für `FileService` ohnehin gesperrt, Paket 4.2).
-5. Neu serialisieren mit `new FileAccessControl("/", Ordinal)`; das Ergebnis muss mit derselben Instanzart `Restore` bestehen (Rücklesen), sonst Abbruch.
-
-Benötigt eine kleine interne Aufzählung der Einträge in `FileAccessControl` (`internal IEnumerable<(string Path, FilePermissions Rights)> Entries`) – keine neue öffentliche API.
+2. ACL-Block zeilenweise lesen: `ZEHOS-SECURITY-1`, dann `P|<base64 pfad>|<eigentümer>` und `G|<base64 pfad>|<benutzer>|<recht>` (`FileAccessControl.cs:170-200`). Jede andere Zeile, ungültiges Base64 oder ein `G` ohne vorheriges `P` ⇒ Abbruch.
+3. Jeden Pfad über die Planzuordnung abbilden (reine `/`-Pfadfunktion). Gibt es zum Eintrag keine Datei (Groß-/Kleinschreibung über OrdinalIgnoreCase verglichen), wird er protokolliert und weggelassen.
+4. Wurzelrechte des neuen Baums nach dem Muster von `SetupWork` (`AccountService.cs:282-287`): `/` und `/home` erhalten Eigentümer und `*`-Rechte des bisherigen `/data`- bzw. `/data/home`-Eintrags; `/srv` und `/srv/legacy-data` bekommen die Rechte des bisherigen `/data`-Eintrags (huang: einverstanden). `/etc`, `/var` usw. bekommen **keinen** Eintrag (für `FileService` ohnehin gesperrt, Paket 4.2).
+5. **Vom Plan neu erzeugte Verzeichnisse** (z. B. `/home/<name>/.config`, `/home/<name>/.config/zehos`) erhalten Eigentümer und Rechte des nächsten abgebildeten Elterneintrags; sonst könnte das Konto seine Desktopeinstellungen nicht lesen, weil `Check` einen Eintrag für jeden Elternpfad verlangt (huang P2-2).
+6. Neu kodieren in derselben Zeilenform, Pfade sortiert (Ordinal). Das Rücklesen mit `FileAccessControl("/", Ordinal).Restore` macht 4.5 im Kernel bzw. ein Linux-Hosttest; der reine Test prüft die Zeilen selbst.
 
 ## 4. Journal und Root-Marker
 
@@ -57,12 +58,12 @@ Benötigt eine kleine interne Aufzählung der Einträge in `FileAccessControl` (
 
 ```
 ZEHOS-MIGRATION-1 <quellinventar-sha256>
-D <pfad>                    Verzeichnis angelegt
+D <pfad>                    Absicht: Verzeichnis wird angelegt (vor CreateDirectory)
 W <pfad>                    Absicht: Datei wird geschrieben
 F <pfad> <sha256>           Datei geschrieben und zurückgelesen
 ```
 
-`Parse` akzeptiert eine abgeschnittene **letzte** Zeile (Absturz beim Anhängen) und behandelt sie als nicht vorhanden; jede andere ungültige Zeile ⇒ Journal ungültig ⇒ Wiederholung verweigert.
+`Parse` behandelt am **Ende** eine abgeschnittene Zeile sowie einen Schwanz aus Nullbytes oder ungültigen Zeichen als nicht vorhanden (ext2 ohne Journal kann nach einem Absturz die Dateigröße schon erhöht haben, huang P2-3); jede ungültige Zeile davor ⇒ Journal ungültig ⇒ Wiederholung verweigert. `D` ist wie `W` eine Absicht vor der Aktion; `CreateDirectory` ist bei der Wiederholung idempotent.
 
 **Wiederholung:** erlaubt, wenn Root-Marker `state=migrating` und jede Datei/jedes Verzeichnis auf Root entweder vom Installer stammt (`/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc/zehos`, Root-Marker – Liste aus 7a S4) oder im Journal als `D`, `W` oder `F` steht. Dann: Dateien aus `W`/`F` löschen, Verzeichnisse aus `D` von unten nach oben löschen, Journal löschen, neu beginnen. Abweichender Quellinventar-Hash ist kein Hindernis (die Quelle darf sich zwischen zwei Läufen geändert haben), wird aber protokolliert.
 
@@ -80,14 +81,15 @@ F <pfad> <sha256>           Datei geschrieben und zurückgelesen
 7. Ungültige Pfadkomponente im Zielpfad ⇒ Konflikt.
 
 **ACL (rein):**
-8. Kontozeilen byteidentisch; Hash unverändert.
+8. Kontozeilen byteidentisch; Hash unverändert; reine Textfunktion, gleich auf Linux- und Windows-Host.
 9. Eintrag `/data/Home/Anna/Bild.BMP` bei tatsächlichem Namen `home/anna/bild.bmp` ⇒ Ziel `/home/anna/bild.bmp`.
 10. Eintrag ohne Datei ⇒ protokolliert, fehlt im Ergebnis.
-11. Wurzelrechte `/`, `/home`, `/srv`, `/srv/legacy-data` wie §3.4; kein Eintrag unter `/etc` oder `/var`.
-12. Ergebnis besteht `Restore` mit Wurzel `/`, Ordinal; beschädigter Eingabetext ⇒ Abbruch.
+11. Wurzelrechte `/`, `/home`, `/srv`, `/srv/legacy-data` wie §3.4; kein Eintrag unter `/etc` oder `/var`; `/home/anna/.config` und `/home/anna/.config/zehos` mit Eigentümer anna (§3.5).
+12. Beschädigter Eingabetext (unbekannte Zeile, ungültiges Base64, `G` ohne `P`) ⇒ Abbruch. Nur auf Linux-Host zusätzlich: Ergebnis besteht `FileAccessControl("/", Ordinal).Restore`.
+12a. Desktopdatei: Hintergrund `/data/home/anna/bild.bmp` ⇒ `/home/anna/bild.bmp`; Pfad ohne Zuordnung ⇒ leer, protokolliert.
 
 **Journal und Marker (rein):**
-13. Format/Parse rund; abgeschnittene letzte Zeile toleriert, beschädigte mittlere Zeile ⇒ ungültig.
+13. Format/Parse rund; abgeschnittene letzte Zeile und Nullbyte-/Müllschwanz toleriert, beschädigte mittlere Zeile ⇒ ungültig.
 14. Marker: jeder `state`, CRC falsch, > 512 Byte, unbekanntes Feld ⇒ ungültig.
 
 **Ablauf (`Run` mit Hostfake-Ziel):**
@@ -95,15 +97,16 @@ F <pfad> <sha256>           Datei geschrieben und zurückgelesen
 16. Reihenfolge je Datei: `W` geflusht vor dem ersten Byte der Datei, `F` danach.
 17. Abbruch nach jedem Schritt 1–9 und nach jeder einzelnen Datei (Fake wirft) ⇒ nie `state=ready`; Schreibsperre wieder frei (`finally`).
 18. ENOSPC und Inodemangel mitten im Kopieren ⇒ Abbruch, Marker `migrating`.
-19. Absturz zwischen Datei und `F` sowie zwischen `W` und Datei ⇒ Wiederholung erlaubt, Endergebnis gleich Test 15.
+19. Absturz zwischen Datei und `F`, zwischen `W` und Datei, zwischen `D` und `CreateDirectory` sowie zwischen `CreateDirectory` und dem nächsten Eintrag ⇒ Wiederholung erlaubt, Endergebnis gleich Test 15.
 20. Fremde Datei auf dem Ziel ⇒ Wiederholung verweigert.
-21. Quelle ändert sich (Fake ändert eine Quelldatei nach Schritt 2) ⇒ Inventarvergleich Schritt 8 bricht ab.
+21. Quelle ändert sich (Fake ändert eine Quelldatei nach Schritt 2) ⇒ Inventarvergleich Schritt 8 bricht ab. Schritt 8 vergleicht Verzeichnisliste, Größe und Zeitstempel und hasht nur abweichende Einträge neu (sonst vierfaches Lesen der Platte, huang P3 c).
+21a. Mehr als 100 000 Einträge ⇒ Abbruch vor dem ersten Schreibzugriff.
 22. Quelle unverändert: Temp-Verzeichnis vor/nach byteidentisch (Hash über alle Dateien), keine neuen Dateien.
 23. Paketbestand: installiertes Testpaket nach der Migration mit `PackageStore` (Wurzel `/var/lib/zehos/packages` im Fake-Baum) lesbar, Manifest/Signatur gültig.
 
 ## 6. Nicht in 4.4
 
-Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateController`, 4.5 zusammen mit dem Befehl), Cosmos-`IMigrationTarget` (ext2 unter `/mnt/target`, `FreeInodes` aus dem Superblock), Fortschrittsanzeige und Tastenabbruch, Gasttests G4–G6.
+Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateController`, 4.5 zusammen mit dem Befehl; 4.4 bekommt sie nur als `lockSource`, Test 17 prüft deren Freigabe, huang P3 d), Cosmos-`IMigrationTarget` (ext2 unter `/mnt/target`, `FreeInodes` aus dem Superblock), Fortschrittsanzeige und Tastenabbruch, Gasttests G4–G6.
 
 ## 7. Offene Punkte
 
