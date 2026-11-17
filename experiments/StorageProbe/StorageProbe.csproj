@@ -23,5 +23,9 @@
   <!-- Dieselbe korrigierte Formatterquelle wie im Kernel (Option formatter fixed). -->
   <ItemGroup>
     <Compile Include="../../ProjektZeh/Storage/Ext2/*.cs" Link="Ext2/%(Filename)%(Extension)" />
+    <!-- 7a Schritt 2: produktiver GPT-Writer und Verify samt Abhaengigkeiten (Result-Typen, BlockReader). -->
+    <Compile Include="../../ProjektZeh/Storage/Partitioning/*.cs" Link="Partitioning/%(Filename)%(Extension)" />
+    <Compile Include="../../ProjektZeh/Storage/DiskEmptyCheck.cs" Link="Storage/DiskEmptyCheck.cs" />
+    <Compile Include="../../ProjektZeh/Shared/*.cs" Link="Shared/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
