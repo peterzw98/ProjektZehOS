@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Shared;
+using ProjektZeh.Shell;
 using ProjektZeh.Update;
 
 namespace ProjektZeh.Tests;
@@ -121,6 +122,98 @@ public sealed class UpdateServiceTests
         Assert.IsFalse(service.Install().IsOK());
         Assert.AreEqual(42, source.Limits["ProjektZeh-0.2.0.elf"]);
         Assert.AreEqual(64, source.Limits["update-manifest.sig"]);
+    }
+
+    [TestMethod]
+    public void UpdateCommand_Status_PrintsRunningVersionAndSource() => RunUpdateCommand((shell, _, _, output) =>
+    {
+        Assert.IsTrue(shell.ExecuteLine("update status", output).IsOK());
+
+        CollectionAssert.AreEqual(new[] { "Laufender Kernel: 0.1.0", "Updatequelle: 10.0.2.2:8080" }, output.Lines);
+    });
+
+    [TestMethod]
+    public void UpdateCommand_Source_StoresEndpointAndRejectsPath() => RunUpdateCommand((shell, _, _, output) =>
+    {
+        Assert.IsTrue(shell.ExecuteLine("update source mirror.example:8000", output).IsOK());
+        Assert.IsFalse(shell.ExecuteLine("update source mirror/path", output).IsOK());
+
+        Assert.IsTrue(shell.ExecuteLine("update status", output).IsOK());
+        Assert.AreEqual("Updatequelle: mirror.example:8000", output.Lines[^1]);
+    });
+
+    [TestMethod]
+    public void UpdateCommand_CheckThenInstall_ReportsUpdateAndReplacesKernelOnce() => RunUpdateCommand((shell, _, target, output) =>
+    {
+        Assert.IsTrue(shell.ExecuteLine("update check", output).IsOK());
+        Assert.AreEqual(0, target.Replacements, "Pruefen allein darf nichts schreiben.");
+        Assert.IsTrue(shell.ExecuteLine("update install", output).IsOK());
+
+        CollectionAssert.AreEqual(new[]
+        {
+            "Geprueftes Update: 0.2.0 (42 Bytes).",
+            "Kernel installiert. Bitte neu starten; die vorherige Version bleibt im Bootmenue."
+        }, output.Lines);
+        Assert.AreEqual(1, target.Replacements);
+        Assert.AreEqual("0.2.0", target.Version);
+    });
+
+    [DataTestMethod]
+    [DataRow("update check")]
+    [DataRow("update install")]
+    public void UpdateCommand_SourceWithoutSignature_FailsWithoutOutputOrWrite(string line) => RunUpdateCommand((shell, source, target, output) =>
+    {
+        source.Files.Remove("update-manifest.sig");
+
+        Assert.IsFalse(shell.ExecuteLine(line, output).IsOK());
+
+        Assert.AreEqual(0, output.Lines.Count);
+        Assert.AreEqual(0, target.Replacements);
+    });
+
+    [TestMethod]
+    public void UpdateCommand_InstallMissingOfflineFile_FailsWithoutOutputOrWrite() => RunUpdateCommand((shell, _, target, output) =>
+    {
+        Assert.IsFalse(shell.ExecuteLine("update install fehlt.zip", output).IsOK());
+
+        Assert.AreEqual(0, output.Lines.Count);
+        Assert.AreEqual(0, target.Replacements);
+    });
+
+    [DataTestMethod]
+    [DataRow("update")]
+    [DataRow("update status now")]
+    [DataRow("update source")]
+    [DataRow("update install a b")]
+    [DataRow("update bogus")]
+    public void UpdateCommand_InvalidArguments_ReturnUsage(string line) => RunUpdateCommand((shell, _, target, output) =>
+    {
+        var result = shell.ExecuteLine(line, output);
+
+        Assert.AreEqual(ResultCode.InvalidArgument, result.Code);
+        StringAssert.StartsWith(result.Message, "Verwendung: update", StringComparison.Ordinal);
+        Assert.AreEqual(0, target.Replacements);
+    });
+
+    private static void RunUpdateCommand(Action<ShellService, Source, Target, Output> test)
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = new Source();
+            var target = new Target();
+            var controller = new UpdateController(new(0, 1, 0), _ => source, target, root);
+            test(new ShellService(new UpdateShellCommands(controller, () => true).Commands), source, target, new Output());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class Output : ITextOutput
+    {
+        public List<string> Lines { get; } = [];
+        public void WriteLine(string text) => Lines.Add(text);
+        public void Clear() => Lines.Clear();
     }
 
     private sealed class Source : IUpdateSource
