@@ -126,8 +126,8 @@ Nach `close_notify` meldet `net_recv` EOF wie bei TCP. Endet die Verbindung ohne
 | Konsole | `fd_write` nur auf stdout/stderr. stderr wird gesammelt; die letzte Zeile erscheint bei Exitcode ≠ 0 im Fenster. |
 | Argumente, Umgebung | `argv` ist nur `["app"]`. Die Umgebung enthält ab ZehOS 0.5.13 genau `ZEHOS_FEATURES=<Liste>`, eine kommagetrennte Liste optionaler `zehos_v1`-Fähigkeiten (heute `raster_v1`). Ältere Kernel liefern eine leere Umgebung. |
 | Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND, sonst virtio-rng; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
-| Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
-| Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
+| Dateien | Das eigene Paketverzeichnis `files/` ist als `/` (fd 3) nur lesend freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. Mit `capability=storage` zusätzlich der schreibbare App-Speicher `/save` (fd 4), siehe „App-Speicher“. |
+| Nicht vorhanden | Schreiben, Anlegen und Löschen außerhalb von `/save`, Verzeichnisse des Pakets lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |
 
 `path_filestat_get` fragt Dateien und Ordner innerhalb des eigenen Pakets über den vorgeöffneten
 Ordner fd 3 ab. `.` bezeichnet die Paketwurzel. Größe und Dateityp sind vorhanden; Zeitstempel und
@@ -135,7 +135,47 @@ Inodewerte sind null. Alle Gastbereiche werden vor dem Hostzugriff geprüft. Pfa
 Schutzprüfungen wie `path_open`: keine absoluten Pfade, `..`, leeren Komponenten, Backslashes, Doppelpunkte
 oder Nullbytes. Pakete haben keine symbolischen Links. `path_readlink` meldet für einen bestehenden
 Nicht-Link `EINVAL`; fehlende Dateien bleiben `ENOENT`, Zugriffsfehler `EACCES`, sonstige Dateifehler `EIO`.
-Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nicht verfügbar.
+Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles des Pakets bleiben nicht verfügbar.
+
+### App-Speicher `/save` (Etappe 13.4)
+
+Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als zweiten vorgeöffneten Ordner `/save` (fd 4). Er liegt im Legacy-Profil unter `/data/.zehos-apps/<paket>/<konto-id>`, gehört also dem angemeldeten Konto. Andere Konten, der Dateimanager und andere Apps sehen ihn nicht.
+
+**Wann `/save` fehlt:** Es fehlt, wenn niemand angemeldet ist, `/data` nicht eingebunden ist oder die Fähigkeit nicht im Manifest steht. `fd_prestat_get(4)` liefert dann `EBADF`, die WASI-libc kennt nur `/`, und `fopen("/save/...")` scheitert mit `ENOENT`/`ENOTCAPABLE`. Die App muss ohne Speichern weiterlaufen können.
+
+**Unter `/save` erlaubt:**
+- `path_open` mit `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_DIRECTORY` sowie Lese- und Schreibrechten; `fd_write`, `fd_pwrite`, `fd_read`, `fd_pread`, `fd_seek` (auch über das Ende hinaus) und `fd_filestat_set_size` auf Dateien;
+- `fd_readdir` auf geöffneten Ordnern (`opendir("/save")` öffnet `.`);
+- `path_create_directory`, `path_remove_directory` (nur leer), `path_unlink_file`, `path_rename` (Quelle und Ziel unter `/save`; ein vorhandenes Ziel wird atomar ersetzt), `path_filestat_get`, `fd_sync`, `fd_close`.
+
+**Gesperrt:**
+- `path_link` und `path_symlink` liefern `ENOTCAPABLE`.
+- Schreibende Aufrufe auf das Paket (fd 3) liefern `ENOTCAPABLE` bzw. `EBADF`; die Rechte gelten je fd.
+- Namen folgen den Regeln für Nutzerpfade: kein `..`, keine leeren Komponenten, nichts mit `.zehos-` am Anfang, kein abschließender Punkt oder Leerraum, keine `\`, `:`, `|`.
+
+**Konsistenz:** Eine geöffnete Datei liegt vollständig im Kernel und wird erst bei `fd_sync` oder `fd_close` als Ganzes ersetzt (Temp + Rename). Nach einem Absturz oder Stromausfall bleibt die alte oder die neue Fassung, nie eine halbe. `O_TRUNC` leert nur den Puffer: Bis zum erfolgreichen `fd_close` bzw. `fd_sync` bleibt die alte Fassung auf der Platte, ein gescheitertes Speichern zerstört also nichts. Endet die App ohne `fd_close`, auch durch einen Trap, schließt das Laufzeitende alle Dateien und schreibt dabei ihren aktuellen Inhalt; bei einem harten Abbruch des Rechners gehen ungespeicherte Änderungen verloren. Heute läuft höchstens eine Paket-App gleichzeitig. Wer mehrere Dateien gemeinsam ändert, schreibt in eine Temp-Datei und benennt sie danach um. Ein Umbenennen auf denselben Namen (auch nur in anderer Groß-/Kleinschreibung) bleibt ohne Wirkung.
+
+**Einschränkungen:** Alle Pfade beziehen sich auf `/save` (fd 4). Geöffnete Unterordner taugen nur für `fd_readdir`, nicht als Ausgangspunkt für `openat`/`fstatat` (`EBADF`). Pfade mit abschließendem `/` oder `./`-Teilen gelten als unzulässig (`EACCES`). Einen Schreibzugriff gibt es nur mit `fd_write`- oder `fd_filestat_set_size`-Recht; `O_CREAT` allein legt die Datei an, ohne den fd beschreibbar zu machen.
+
+**Grenzen je App und Konto:**
+- 64 MiB Gesamtgröße (jeder Ordner zählt mit 32 KiB, einem FAT-Cluster), 1024 Einträge;
+- 16 MiB je Datei;
+- 8 gleichzeitig beschreibbare Dateien;
+- 16 MiB für alle geöffneten Dateien einer App-Instanz zusammen (sie liegen im Kernel-Speicher).
+
+**Fehler** (nie Trap):
+
+| errno | Ursache |
+| --- | --- |
+| `ENOSPC` (51) | Quote, Einträge, Pufferbudget, voller Datenträger oder voller Ordner |
+| `EFBIG` (22) | Datei über 16 MiB |
+| `EMFILE` (33) | mehr als 8 beschreibbare Dateien |
+| `EBUSY` (10) | Das Datenlaufwerk wird gerade ausgehängt (`disk unmount`, `shutdown`, `reboot`) oder eine Systemaktion sperrt das Schreiben; Lesen geht weiter. Ein laufendes Schreiben wird vorher abgeschlossen; das Aushängen wartet so lange (bis zum Ersetzen einer Datei von höchstens 16 MiB). |
+| `ENOENT` (44) | Datei fehlt oder das Laufwerk wurde ausgehängt |
+| `EACCES` (2) | unzulässiger Pfad |
+| `EIO` (29) | sonstiger Laufwerksfehler |
+
+`fd_close` meldet einen Schreibfehler ebenfalls, der fd ist danach trotzdem frei und die alte Fassung bleibt.
 
 ## Grenzen
 
@@ -149,7 +189,7 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.
 - **Pause:** Ist das Fenster nicht aktiv oder nicht sichtbar, blockiert `present` und `ticks_ms` steht still.
 - **Fehler:** Ein Trap (ungültiger Speicherzugriff, falscher indirekter Aufruf) beendet nur die App; das Fenster zeigt die Ursache. Ein Fehler im Interpreter oder Host kann trotzdem den Kernel treffen. Das ist eine logische Grenze, keine Prozessisolation.
-- **AOT (in Arbeit, noch nicht für Apps freigegeben):** Unter dem künftigen AOT-Pfad trappt eine WASI-Funktion, die ZehOS nur als Stub anbietet, bei einer ungültigen Gastadresse, statt wie unter wasm3 `EBADF`/`ENOSYS` zu liefern.
+- **AOT (in Arbeit, noch nicht für Apps freigegeben):** Ein Paket darf `<entry ohne .wasm>.wamr245-aot5-x64-bc.aot` enthalten ([Paketformat](PACKAGE_FORMAT.md#aot-datei-optional-aot-plan-etappe-e)). Nur ein mit `-p:ZehOSWasmAot=true` gebauter Kernel nutzt es, und erst nach `wasmaot on` (Standard aus); sonst, bei fremder Kennung, bei einem `.aot` über 64 MiB und wenn das `.aot` schon beim Laden scheitert, läuft das `.wasm` unter wasm3. Scheitert es erst beim Instanziieren oder am Einstieg, bricht der Start ohne zweiten Versuch ab. Ältere Kernel installieren solche Pakete und starten das `.wasm`. Dieselbe App muss deshalb unter beiden Laufzeiten gleich funktionieren. Unterschiede unter AOT: kein Gasbudget (wie heute bei Paket-Apps), und eine WASI-Funktion, die ZehOS nur als Stub anbietet, trappt bei einer ungültigen Gastadresse, statt wie unter wasm3 `EBADF`/`ENOSYS` zu liefern. NetSurf und andere Apps mit Ausnahmen im exnref-Format laden unter WAMR 2.4.5 nicht und bleiben bei wasm3.
 - **Paketformat:**
   - höchstens 128 Dateien und 128 MiB je Paket
   - Pfade nur aus `A–Z a–z 0–9 . _ -`, ohne Groß-/Kleinschreibungs-Duplikate

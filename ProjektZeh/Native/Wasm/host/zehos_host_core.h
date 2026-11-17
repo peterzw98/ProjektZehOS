@@ -23,7 +23,10 @@ enum
 
 enum { ZEHOS_HOST_MAXIMUM_FILES = 16 };
 
-typedef struct { int32_t handle; uint64_t position; uint64_t size; } zehos_wasm_file;
+// kind: Paketdatei (nur lesend), Datei oder Ordner im App-Speicher /save (Etappe 13.4). Rechte gelten je fd.
+enum { ZEHOS_FILE_PACKAGE = 0, ZEHOS_FILE_SAVE = 1, ZEHOS_FILE_SAVE_DIRECTORY = 2 };
+
+typedef struct { int32_t handle; uint64_t position; uint64_t size; uint8_t kind; uint8_t writable; uint8_t append; } zehos_wasm_file;
 
 // Gehoert genau einem Lauf; offene Dateien schliesst zehos_host_context_close_files auf jedem Weg.
 typedef struct
@@ -75,21 +78,21 @@ typedef struct
     X(wasi_snapshot_preview1, fd_tell, i, "i*", zehos_host_fd_tell, 2) \
     X(wasi_snapshot_preview1, fd_filestat_get, i, "i*", zehos_host_fd_filestat_get, 2) \
     X(wasi_snapshot_preview1, fd_pread, i, "i*iI*", zehos_host_fd_pread, 5) \
-    X(wasi_snapshot_preview1, fd_pwrite, i, "i*iI*", zehos_host_badf, 0) \
+    X(wasi_snapshot_preview1, fd_pwrite, i, "i*iI*", zehos_host_fd_pwrite, 5) \
     X(wasi_snapshot_preview1, fd_advise, i, "iIIi", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, fd_sync, i, "i", zehos_host_badf, 0) \
+    X(wasi_snapshot_preview1, fd_sync, i, "i", zehos_host_fd_sync, 1) \
     X(wasi_snapshot_preview1, fd_fdstat_set_flags, i, "ii", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, fd_filestat_set_size, i, "iI", zehos_host_badf, 0) \
+    X(wasi_snapshot_preview1, fd_filestat_set_size, i, "iI", zehos_host_fd_filestat_set_size, 2) \
     X(wasi_snapshot_preview1, fd_filestat_set_times, i, "iIIi", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, fd_readdir, i, "i*iI*", zehos_host_badf, 0) \
+    X(wasi_snapshot_preview1, fd_readdir, i, "i*iI*", zehos_host_fd_readdir, 5) \
     X(wasi_snapshot_preview1, path_open, i, "ii*iiIIi*", zehos_host_path_open, 9) \
     X(wasi_snapshot_preview1, path_filestat_get, i, "ii*i*", zehos_host_path_filestat_get, 5) \
-    X(wasi_snapshot_preview1, path_create_directory, i, "i*i", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, path_remove_directory, i, "i*i", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, path_unlink_file, i, "i*i", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, path_rename, i, "i*ii*i", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, path_link, i, "ii*ii*i", zehos_host_badf, 0) \
-    X(wasi_snapshot_preview1, path_symlink, i, "*ii*i", zehos_host_badf, 0) \
+    X(wasi_snapshot_preview1, path_create_directory, i, "i*i", zehos_host_path_create_directory, 3) \
+    X(wasi_snapshot_preview1, path_remove_directory, i, "i*i", zehos_host_path_remove_directory, 3) \
+    X(wasi_snapshot_preview1, path_unlink_file, i, "i*i", zehos_host_path_unlink_file, 3) \
+    X(wasi_snapshot_preview1, path_rename, i, "i*ii*i", zehos_host_path_rename, 6) \
+    X(wasi_snapshot_preview1, path_link, i, "ii*ii*i", zehos_host_notcapable, 0) \
+    X(wasi_snapshot_preview1, path_symlink, i, "*ii*i", zehos_host_notcapable, 0) \
     X(wasi_snapshot_preview1, path_readlink, i, "i*i*i*", zehos_host_path_readlink, 6) \
     X(wasi_snapshot_preview1, path_filestat_set_times, i, "ii*iIIi", zehos_host_badf, 0) \
     X(wasi_snapshot_preview1, poll_oneoff, i, "**i*", zehos_host_nosys, 0) \
@@ -140,6 +143,18 @@ uint32_t zehos_host_path_filestat_get(zehos_host_call* call, int32_t dirFd, uint
     uint32_t pathLength, uint32_t stat);
 uint32_t zehos_host_path_readlink(zehos_host_call* call, int32_t dirFd, uint32_t path, uint32_t pathLength,
     uint32_t buffer, uint32_t bufferLength, uint32_t used);
+uint32_t zehos_host_fd_pwrite(zehos_host_call* call, int32_t fd, uint32_t iovs, uint32_t count, uint64_t offset,
+    uint32_t written);
+uint32_t zehos_host_fd_sync(zehos_host_call* call, int32_t fd);
+uint32_t zehos_host_fd_filestat_set_size(zehos_host_call* call, int32_t fd, uint64_t size);
+uint32_t zehos_host_fd_readdir(zehos_host_call* call, int32_t fd, uint32_t buffer, uint32_t length, uint64_t cookie,
+    uint32_t used);
+uint32_t zehos_host_path_create_directory(zehos_host_call* call, int32_t dirFd, uint32_t path, uint32_t pathLength);
+uint32_t zehos_host_path_remove_directory(zehos_host_call* call, int32_t dirFd, uint32_t path, uint32_t pathLength);
+uint32_t zehos_host_path_unlink_file(zehos_host_call* call, int32_t dirFd, uint32_t path, uint32_t pathLength);
+uint32_t zehos_host_path_rename(zehos_host_call* call, int32_t fromFd, uint32_t fromPath, uint32_t fromLength,
+    int32_t toFd, uint32_t toPath, uint32_t toLength);
+uint32_t zehos_host_notcapable(zehos_host_call* call);
 uint32_t zehos_host_badf(zehos_host_call* call);
 uint32_t zehos_host_nosys(zehos_host_call* call);
 void zehos_host_proc_exit(zehos_host_call* call, int32_t code);

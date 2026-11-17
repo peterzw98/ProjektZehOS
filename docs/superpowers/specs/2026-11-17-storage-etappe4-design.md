@@ -1,6 +1,6 @@
 # Etappe 4: Root-Baum, feste Systempfade und nichtdestruktive Migration – Entwurf
 
-Stand: 17. November 2026, Basis `origin/master` @ `284e7ee` (0.5.17, Etappe 3 gemergt). **Nur Entwurf**, kein Code, nichts im Gast ausgeführt. Grundlage: [Plan, Etappe 4](../plans/2026-11-17-storage-linux.md#etappe-4-root-baum-konfiguration-und-nichtdestruktive-migration), [Zielstruktur](2026-11-17-storage-linux.md#zielstruktur), [Etappe 3](2026-11-17-storage-etappe3-design.md), [7a-Layout](2026-11-17-storage-7a-installer-layout.md). Cosmos-Aussagen aus der Quelle `efcf20c` (= 3.0.97), nicht aus dem Gast. Code erst nach Lead-OK; Voraussetzung bleibt die Abnahme von 7a.
+Stand: 17. November 2026, Basis `origin/master` @ `284e7ee` (0.5.17, Etappe 3 gemergt). **Nur Entwurf**, kein Code, nichts im Gast ausgeführt. Grundlage: [Plan, Etappe 4](../plans/2026-11-17-storage-linux.md#etappe-4-root-baum-konfiguration-und-nichtdestruktive-migration), [Zielstruktur](2026-11-17-storage-linux.md#zielstruktur), Etappe 3, [7a-Layout](2026-11-17-storage-7a-installer-layout.md). Cosmos-Aussagen aus der Quelle `efcf20c` (= 3.0.97), nicht aus dem Gast. Code erst nach Lead-OK; Voraussetzung bleibt die Abnahme von 7a.
 
 ## 0. Entscheidungen (Leitung 11:23: §0.2 bestätigt, Ablageort `/srv/legacy-data`, neues Paket 4.0; 11:24: Reviewbefunde, `RootUnclean`)
 

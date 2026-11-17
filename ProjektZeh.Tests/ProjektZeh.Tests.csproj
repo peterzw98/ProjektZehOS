@@ -23,6 +23,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmFrameProfile.cs" Link="Runtime\Wasm\WasmFrameProfile.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmEngineSelection.cs" Link="Runtime\Wasm\WasmEngineSelection.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmImageFit.cs" Link="Runtime\Wasm\WasmImageFit.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmSaveStore.cs" Link="Runtime\Wasm\WasmSaveStore.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
@@ -69,8 +70,10 @@
     <Compile Include="..\ProjektZeh\Storage\Virtual\SystemInfoSnapshot.cs" Link="Storage\Virtual\SystemInfoSnapshot.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
+    <Compile Include="..\ProjektZeh\Storage\AppStorageGate.cs" Link="Storage\AppStorageGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\ChecksummedText.cs" Link="Storage\Partitioning\ChecksummedText.cs" />
     <Compile Include="..\ProjektZeh\Storage\Migration\*.cs" Link="Storage\Migration\%(Filename)%(Extension)" />

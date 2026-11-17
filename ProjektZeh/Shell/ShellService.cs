@@ -106,6 +106,7 @@ internal sealed partial class ShellService
             new ShellCommand("uptime", "uptime", "Zeigt die Laufzeit seit ZehOS-Start.", false, WriteUptime),
             new ShellCommand("log", "log", "Zeigt die gepufferten Systemdiagnosen.", false, WriteLog),
             new ShellCommand("frametimes", "frametimes [on|off]", "Zerlegt die Bildzeit von Paket-Apps in Anteile (Bericht je 60 s im Protokoll).", true, ExecuteFrametimes),
+            new ShellCommand("wasmaot", "wasmaot [on|off]", "Startet Paket-Apps mit passendem .aot nativ ueber WAMR (Standard aus).", true, ExecuteWasmAot),
             .. CreateFeatureCommands(),
             .. additionalCommands
         ];
@@ -216,6 +217,17 @@ internal sealed partial class ShellService
         if (on || arguments.Length == 1 && string.Equals(arguments[0], "off", StringComparison.OrdinalIgnoreCase)) profile.SetEnabled(on);
         else if (arguments.Length != 0) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: frametimes [on|off]");
         output.WriteLine((profile.Enabled ? "Bildzeitmessung an. " : "Bildzeitmessung aus. ") + profile.Peek());
+        return ResultErr.CreateSuccess();
+    }
+
+    // Gilt fuer den naechsten App-Start; eine laufende App behaelt ihre Laufzeit.
+    private static ResultErr ExecuteWasmAot(string[] arguments, ITextOutput output)
+    {
+        bool on = arguments.Length == 1 && string.Equals(arguments[0], "on", StringComparison.OrdinalIgnoreCase);
+        if (on || arguments.Length == 1 && string.Equals(arguments[0], "off", StringComparison.OrdinalIgnoreCase)) WasmEngineSelection.AotEnabled = on;
+        else if (arguments.Length != 0) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: wasmaot [on|off]");
+        output.WriteLine((WasmEngineSelection.AotEnabled ? "WAMR-AOT an" : "WAMR-AOT aus") + $" (Kennung {WasmEngineSelection.AotAbi}).");
+        if (!WasmEngineSelection.AotBuiltIn) output.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3.");
         return ResultErr.CreateSuccess();
     }
 

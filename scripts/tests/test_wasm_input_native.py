@@ -116,6 +116,26 @@ def open_module(after):
             + section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(9) + b"asset.txt"))
 
 
+def wasi_module(name, params, args, data=b"", read_back=None):
+    # run ruft einen WASI-Import mit festen Argumenten auf (i = i32, I = i64); read_back liest danach ein u32 aus dem Speicher.
+    def const(kind, value):
+        if kind == "I":
+            return b"\x42" + leb(value, True)
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    code = b"\x00" + b"".join(const(kind, value) for kind, value in zip(params, args)) + b"\x10\x00"
+    if read_back is not None:
+        code += b"\x1a" + const("i", read_back) + b"\x28\x02\x00"
+    code += b"\x0b"
+    types = bytes(0x7e if kind == "I" else 0x7f for kind in params)
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x02\x60" + leb(len(params)) + types + b"\x01\x7f\x60\x00\x01\x7f")
+            + section(2, b"\x01" + string("wasi_snapshot_preview1") + string(name) + b"\x00\x00")
+            + section(3, b"\x01\x01") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00\x01")
+            + section(10, b"\x01" + leb(len(code)) + code)
+            + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
+
+
 class NativeInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -249,7 +269,9 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(value, 28)
 
     def test_path_stat_rejects_other_directory_handles_and_unknown_flags(self):
-        for kwargs, expected in (({"dir_fd":4},8), ({"flags":2},28)):
+        # fd 4 ist nur mit Speicherfreigabe /save (Etappe 13.4); ohne sie bleibt er ungueltig.
+        self.lib.save_test_reset(0)
+        for kwargs, expected in (({"dir_fd":4},8), ({"dir_fd":5},8), ({"flags":2},28)):
             self.lib.stat_test_reset()
             status, value, message = self.execute(path_module(b"asset.txt", **kwargs))
             self.assertEqual(status, 0, message)
@@ -297,6 +319,59 @@ class NativeInputTests(unittest.TestCase):
                 self.assertEqual((status, value), expected, message)
                 self.assertEqual(self.lib.file_test_closes(), 1)
                 self.assertEqual(self.lib.file_test_open(), 0)
+
+    # Etappe 13.4: App-Speicher /save (fd 4)
+    def save_call(self, name, params, args, data=b"", read_back=None):
+        status, value, message = self.execute(wasi_module(name, params, args, data, read_back))
+        self.assertEqual(status, 0, message)
+        return value
+
+    def test_save_is_absent_without_capability(self):
+        self.lib.save_test_reset(0)
+        self.assertEqual(self.save_call("fd_prestat_get", "ii", (4, 512)), 8)
+        self.assertEqual(self.save_call("path_create_directory", "iii", (4, 128, 4), b"maps"), 8)
+        self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 1, 64, 0, 0, 512), b"maps"), 8)
+        self.assertEqual(self.lib.save_test_calls(), 0)
+
+    def test_save_prestat_names_save(self):
+        self.lib.save_test_reset(1)
+        self.assertEqual(self.save_call("fd_prestat_get", "ii", (4, 512), read_back=516), 5)
+        self.assertEqual(self.save_call("fd_prestat_dir_name", "iii", (4, 512, 5), read_back=512),
+                         int.from_bytes(b"/sav", "little"))
+        self.assertEqual(self.save_call("fd_prestat_dir_name", "iii", (4, 512, 4)), 28, "Puffer zu klein")
+
+    def test_package_stays_read_only_and_links_are_refused(self):
+        self.lib.save_test_reset(1)
+        for name, params, args in (("path_create_directory", "iii", (3, 128, 4)), ("path_unlink_file", "iii", (3, 128, 4)),
+                                   ("path_remove_directory", "iii", (3, 128, 4)), ("path_rename", "iiiiii", (3, 128, 4, 4, 128, 4)),
+                                   ("path_rename", "iiiiii", (4, 128, 4, 3, 128, 4))):
+            with self.subTest(name=name, args=args):
+                self.assertEqual(self.save_call(name, params, args, b"maps"), 76)
+        self.assertEqual(self.save_call("path_symlink", "iiiii", (128, 4, 4, 128, 4), b"maps"), 76)
+        self.assertEqual(self.save_call("path_link", "iiiiiii", (4, 0, 128, 4, 4, 128, 4), b"maps"), 76)
+        self.assertEqual(self.save_call("fd_write", "iiii", (3, 512, 0, 520)), 8, "Paket-Preopen ist kein Schreibziel")
+        self.assertEqual(self.lib.save_test_calls(), 0)
+
+    def test_save_paths_are_checked_before_the_host(self):
+        self.lib.save_test_reset(1)
+        for path in (b"../x", b"/abs", b"a/../b", b"a\\b", b"a:b"):
+            with self.subTest(path=path):
+                self.assertEqual(self.save_call("path_create_directory", "iii", (4, 128, len(path)), path), 2)
+                self.assertEqual(self.save_call("path_rename", "iiiiii", (4, 128, len(path), 4, 128, 1), path), 2)
+        self.assertEqual(self.lib.save_test_calls(), 0)
+        status, _, message = self.execute(wasi_module("path_create_directory", "iii", (4, 0xfffffff8, 16)))
+        self.assertEqual(status, 5, message)
+        self.assertEqual(self.lib.save_test_calls(), 0, "Speichertrap vor dem Hostaufruf")
+        self.assertEqual(self.save_call("path_create_directory", "iii", (4, 128, 4), b"maps"), 0)
+        self.assertEqual(self.lib.save_test_calls(), 1)
+
+    def test_save_open_passes_flags_and_returns_a_file_descriptor(self):
+        self.lib.save_test_reset(1)
+        # O_CREAT|O_TRUNC mit fd_write-Recht -> SAVE_CREATE|SAVE_TRUNCATE|SAVE_WRITE = 25; erster freier fd ist 5.
+        self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 9, 64, 0, 0, 512), b"w.cw", read_back=512), 5)
+        self.assertEqual(self.lib.save_test_flags(), 25)
+        self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 0x10, 64, 0, 0, 512), b"w.cw"), 28, "unbekanntes oflag")
+
 
 if __name__ == "__main__":
     unittest.main()

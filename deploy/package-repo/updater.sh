@@ -26,7 +26,7 @@ while true; do
             rm -rf "$releases/$commit.tmp"
             mkdir -p "$releases/$commit.tmp"
             if git -C "$clone" archive "$commit" | tar -x -C "$releases/$commit.tmp"; then
-                rm -rf "$releases/$commit"
+                rm -rf "${releases:?}/${commit:?}"
                 mv "$releases/$commit.tmp" "$releases/$commit"
                 previous=$(readlink "$root/current" 2>/dev/null || true)
                 # ln -sfn ersetzt den Link in einem Schritt; zwischen Entfernen und Anlegen liegt nur ein sehr kurzes Fenster.
