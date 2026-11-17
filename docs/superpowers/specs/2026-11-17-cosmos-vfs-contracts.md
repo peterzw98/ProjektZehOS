@@ -53,9 +53,8 @@ Aus dem Lesen der Verträge abgeleitet, nicht im Gast geprüft:
 
 1. **Keine Hardlinks** (`Link` fehlt in `IInodeOperations`/Handles), kein `mknod`/Gerätedateien/FIFOs, keine xattr/ACLs.
 2. **`Drop` ist `void`** und `TryUnmount` meldet Flush-Fehler nicht; Unmount mit offenen Handles wird nicht verweigert. Für ein sicheres Aushängen ist ein eigener Vorab-Check (offene Handles, `Sync`) nötig.
-3. **`Seek`-Zugriff auf die Position** liegt im VFS; ein Treiber kann keinen Fehler für Seek hinter EOF o. ä. melden außer `false`.
-4. **Zeit-/Rechtepfade:** `SetAttr` bietet Mode/Uid/Gid/Size/Zeiten, ob die ext2-Implementierung sie für `System.IO` zuverlässig setzt, ist laut Storage-Spezifikation ungeprüft. Ob das VFS Rechte/Uid selbst durchsetzt, wurde hier nicht untersucht (offen).
-5. **GPT:** kein Backup-Header, keine CRC-Pflege, nur `BasicDataPartitionType`-Konstante (Linux-Filesystem-GUID `0FC63DAF-8483-4772-8E79-3D69D8477DE4` fehlt, `AddPartition` nimmt aber beliebige GUID); Resize/Move ändern nur die Tabelle.
-6. **`FormatOptions`** ist ein leeres Marker-Interface; ext2-Parameter (Blockgröße, `sparse_super`, Gruppengröße) stehen nur im Treiber-Typ, nicht im allgemeinen Vertrag.
-7. **Keine Deregistrierung** von Treibern, keine Mountpropagation/Bind-Mounts, keine Dateisperren, kein `mmap`.
-8. **`MountFlags.NoSuid/NoDev/NoExec`** existieren; ob das VFS sie auswertet, ist nicht geprüft.
+3. **Zeit-/Rechtepfade:** `SetAttr` bietet Mode/Uid/Gid/Size/Zeiten, ob die ext2-Implementierung sie für `System.IO` zuverlässig setzt, ist laut Storage-Spezifikation ungeprüft. Ob das VFS Rechte/Uid selbst durchsetzt, wurde hier nicht untersucht (offen).
+4. **GPT:** kein Backup-Header, keine CRC-Pflege, nur `BasicDataPartitionType`-Konstante (Linux-Filesystem-GUID `0FC63DAF-8483-4772-8E79-3D69D8477DE4` fehlt, `AddPartition` nimmt aber beliebige GUID); Resize/Move ändern nur die Tabelle.
+5. **`FormatOptions`** ist ein leeres Marker-Interface; ext2-Parameter (Blockgröße, `sparse_super`, Gruppengröße) stehen nur im Treiber-Typ, nicht im allgemeinen Vertrag.
+6. **Keine Deregistrierung** von Treibern, keine Mountpropagation/Bind-Mounts, keine Dateisperren, kein `mmap`.
+7. **`MountFlags.NoSuid/NoDev/NoExec`** existieren; ob das VFS sie auswertet, ist nicht geprüft.
