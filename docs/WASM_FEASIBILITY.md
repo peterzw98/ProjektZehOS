@@ -160,6 +160,33 @@ In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Le
 
 Medianwerte der Anteile in ms. Unter TCG ist `app` ≈ Bildzeit; darin stecken aber auch rund 33 s Desktop- und Anzeigearbeit je 60 s (894 Desktopbilder, davon rund 600 Lebenszeichen), reine Rechenbegrenzung von Doom ist damit nicht belegt; unter KVM dominieren ebenfalls `app` und die Konkurrenz um die CPU, die Bildkopie und `Canvas.Display()` sind klein. Die KVM-Bildzeiten schwanken wegen der Host-Last stark; ein Vorher/Nachher-Vergleich der Doom-Bildzeit ist daraus nicht belastbar, belegt ist die Halbierung der Desktoparbeit. Der Limine-Bildpuffer ist laut Codebefund voraussichtlich bereits write-combining ([COSMOS_SUPPORT.md](COSMOS_SUPPORT.md)); `anzeige` (1,4 ms unter KVM) bestätigt keinen Engpass dort. Offen: Messung unter geringer Host-Last, KVM mit Lebenszeichen (ausgelieferter Stand; jedes Lebenszeichen setzt den Desktop vollständig zusammen), VMware (VM ohne Datenlaufwerk, Paket-Apps dort nicht prüfbar), Bereichsübertragung statt Vollbild-Zusammensetzung (Anteil `desktop`).
 
+## Messung wasm3 gegen AOT (AOT-Plan Etappe F)
+
+Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes Testschlüsselpaar (`python3 scripts/build-package.py keygen <dir>`), nie der Herausgeberschlüssel. `<wamrc>` ist das zugelassene wamrc 2.4.5 (Hash in `scripts/build-package.py`); `aot` legt den Beleg `<app.aot>.json` daneben, den `package --aot-file` prüft.
+
+```sh
+KEY=~/zehos-testkey   # enthält private.pem und public.b64
+# 1. Kernel mit WAMR, vertraut dem Testschlüssel
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSWasmAot=true -p:ZehOSPackageKeyPath=$KEY/public.b64
+ISO=ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+# 2. Paketdateien aus packages (ClassiCube samt texpacks/ und licenses/) und .aot erzeugen
+mkdir -p .tools/aot/doom .tools/aot/classicube
+git archive origin/packages doom/1.1.0/files | tar -x -C .tools/aot/doom --strip-components=3
+git archive origin/packages classicube/1.0.0/files | tar -x -C .tools/aot/classicube --strip-components=3
+python3 scripts/build-package.py aot <wamrc> .tools/aot/doom/doom.wasm -o .tools/aot/doom.aot
+python3 scripts/build-package.py aot <wamrc> .tools/aot/classicube/classicube.wasm -o .tools/aot/classicube.aot
+# 3. Messen: je Beschleunigung, Laufzeit und App drei Läufe auf frischer Platte
+DOOM="--package .tools/aot/doom --key $KEY/private.pem --aot-file .tools/aot/doom.aot"
+CC="--package .tools/aot/classicube --key $KEY/private.pem --aot-file .tools/aot/classicube.aot \
+  --id classicube --version 1.0.0 --name ClassiCube --entry classicube.wasm --network --min-kernel 0.5.13 --start-keys ret"
+for ACCEL in kvm tcg; do for AOT in off on; do
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $DOOM
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $CC
+done; done
+```
+
+Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
