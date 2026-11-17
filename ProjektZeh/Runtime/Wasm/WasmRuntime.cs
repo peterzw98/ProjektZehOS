@@ -230,6 +230,7 @@ internal static unsafe class WasmRuntime
             text[count] = 0;
         }
         current = null;
+        presentFailureReported = false;
         // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
         try { save?.CloseAll(); }
         catch (Exception) { code = (int)WasmStatus.Trap; }
@@ -403,10 +404,7 @@ internal static unsafe class WasmRuntime
             files[handle] = stream;
             return handle;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return -1;
-        }
+        catch (Exception) { return -1; } // keine Ausnahme ueber die native Grenze (#204).
     }
 
     private static string? ResolvePackagePath(byte* path, uint length)
@@ -435,25 +433,26 @@ internal static unsafe class WasmRuntime
     private static long HostFileSize(int handle)
     {
         try { return files.TryGetValue(handle, out var stream) ? stream.Length : -1; }
-        catch (IOException) { return -1; }
+        catch (Exception) { return -1; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_read")]
     private static int HostFileRead(int handle, ulong offset, byte* buffer, uint length)
     {
-        if (!files.TryGetValue(handle, out var stream)) return -1;
         try
         {
+            if (!files.TryGetValue(handle, out var stream)) return -1;
             stream.Position = (long)offset;
             return stream.Read(new Span<byte>(buffer, (int)length));
         }
-        catch (IOException) { return -1; }
+        catch (Exception) { return -1; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_close")]
     private static void HostClose(int handle)
     {
-        if (files.Remove(handle, out var stream)) stream.Dispose();
+        try { if (files.Remove(handle, out var stream)) stream.Dispose(); }
+        catch (Exception) { /* Das Handle ist bereits entfernt; ein Fehler beim Schliessen bleibt folgenlos. */ }
     }
 
     // Etappe 13.4: App-Speicher /save. Jede Rueckgabe ist eine WASI-Fehlernummer; Ausnahmen werden zu EIO, damit
@@ -586,18 +585,36 @@ internal static unsafe class WasmRuntime
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]
-    private static void HostPresent(uint* pixels, int width, int height, int tic, int test) =>
-        current?.Present(new ReadOnlySpan<uint>(pixels, width * height), width, height, tic, test != 0);
+    private static void HostPresent(uint* pixels, int width, int height, int tic, int test)
+    {
+        try { current?.Present(new ReadOnlySpan<uint>(pixels, width * height), width, height, tic, test != 0); }
+        catch (Exception exception) { ReportPresentFailure(exception); }
+    }
+
+    // Einmal je Lauf melden: present laeuft je Bild, ein Dauerfehler darf das serielle Protokoll nicht fluten.
+    private static bool presentFailureReported;
+
+    private static void ReportPresentFailure(Exception exception)
+    {
+        if (presentFailureReported) return;
+        presentFailureReported = true;
+        try { Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM present-Fehler: " + exception.GetType().Name + "\n"); }
+        catch (Exception) { /* Protokoll nicht verfuegbar; das Bild entfaellt, die App laeuft weiter. */ }
+    }
 
     // Palettenbilder werden nativ in einen wiederverwendeten Puffer umgerechnet; im Interpreter kostete das
     // auf dem Host fast die Haelfte der Bildzeit von Doom.
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present_indexed")]
     private static void HostPresentIndexed(byte* indices, uint* palette, int width, int height, int tic)
     {
-        int count = width * height;
-        if (indexedFrame.Length < count) indexedFrame = new uint[count];
-        for (int index = 0; index < count; index++) indexedFrame[index] = palette[indices[index]] & 0x00FFFFFF;
-        current?.Present(indexedFrame.AsSpan(0, count), width, height, tic, false);
+        try
+        {
+            int count = width * height;
+            if (indexedFrame.Length < count) indexedFrame = new uint[count];
+            for (int index = 0; index < count; index++) indexedFrame[index] = palette[indices[index]] & 0x00FFFFFF;
+            current?.Present(indexedFrame.AsSpan(0, count), width, height, tic, false);
+        }
+        catch (Exception exception) { ReportPresentFailure(exception); }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_ticks_ms")]
