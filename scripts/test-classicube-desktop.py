@@ -6,7 +6,7 @@ Das ISO muss mit dem oeffentlichen Gegenstueck von --key (ausschliesslich Testsc
 Das Paket mit build.py --world-seed 1 bauen: Die Schritte sind fuer diese feste Welt abgestimmt (offene Wiese am
 Spawnpunkt); mit Zufallswelt stand der Spieler etwa in einer Baumkrone oder Wasser trieb die Schwelle hoch.
 Vorhandene VM-Images werden nicht gelesen. Bilder/Protokolle bleiben unter .tools/classicube-guest/ erhalten.
-Ablauf: lokal installieren, Start aus dem Menue, Welt sichtbar, Bewegung (W), Blick per Maus,
+Ablauf: lokal installieren, Start aus dem Menue, Launcher "Singleplayer", Welt sichtbar, Bewegung (W), Blick per Maus,
 Block entfernen (links) und setzen (rechts), Schliessen ueber das Fenster, drei Starts mit freiem Speicher.
 """
 import argparse
@@ -111,6 +111,25 @@ def main():
         mark = guest.mark()
         guest.launch("ClassiCube")
         guest.wait("APP classicube erstes Bild", 180, mark)
+        # Erst zeigt der Launcher; "Singleplayer" liegt 110 Pixel unter der Mitte des Inhalts (798x519). Jeder Start
+        # versetzt das Fenster um 28 Pixel.
+        time.sleep(3)
+        launcher = view(capture("launcher"))
+        run = launches.pop(0)
+        offset = 28 * run
+        if run == 0:
+            # Enter ohne gewaehltes Widget startet Singleplayer (onEnterWidget); vorher zeigte es auf das unter
+            # ZehOS ausgeblendete "Sign in" ohne OnClick und beendete die App mit einem Trap.
+            guest.qmp.tap("ret")
+        else:
+            guest.qmp.click(33+399+offset, 120+259+110+offset, *guest.size)
+        # Die verrauschte Launcher-Flaeche hat selbst viele Farben; erst wenn sie verschwunden ist, zaehlt world().
+        deadline = time.monotonic() + 60
+        while difference(launcher, view(capture("launcher-verlassen"))) < len(launcher) // 24:
+            assert time.monotonic() < deadline, "Singleplayer im Launcher startet kein Spiel"
+            time.sleep(1)
+
+    launches = [0, 1, 2]
 
     def button(name):
         for down in (True, False):
