@@ -60,6 +60,24 @@ internal static class CosmosExt2Formatter
     private const int MaxVolumeLabelLength = 16;
 
     /// <summary>
+    /// Produktionsprofil für Kernel und Plug: nur 4096-Byte-Blöcke (null =&gt; 4096). Andere Blockgrößen
+    /// werden vor jedem Schreibzugriff abgelehnt, weil der Cosmos-3.0.97-Treiber 1K-Volumes falsch adressiert
+    /// und 2K nicht qualifiziert ist.
+    /// </summary>
+    /// <param name="device">Block device to format.</param>
+    /// <param name="options">Label and block size; the block size must be 4096 when given.</param>
+    /// <returns>true when the volume was written.</returns>
+    public static bool FormatForKernel(IBlockDevice device, Ext2FormatOptions? options)
+    {
+        if (options != null && options.BlockSize != 4096)
+        {
+            return false;
+        }
+
+        return Format(device, options);
+    }
+
+    /// <summary>
     /// Format <paramref name="device"/> with a fresh ext2 volume.
     /// </summary>
     /// <param name="device">Block device to format.</param>

@@ -44,6 +44,8 @@ Jede Änderung ist im Code mit `Änderung:` markiert.
 ohne `first_data_block`. Bei 1K-Blöcken ist das korrekte Layout um einen Block verschoben. Schreibt der
 Cosmos-Treiber auf ein korrekt formatiertes 1K-Volume, kann er belegte Metadaten- oder Datenblöcke
 überschreiben. Das Original war mit diesem Treiberfehler selbstkonsistent, aber nicht ext2-konform. Kernel und
-Plug verwenden deshalb nur 2048 oder 4096 Byte. Achtung: `new Ext2FormatOptions()` hat in Cosmos weiterhin den
+Plug rufen deshalb `FormatForKernel` auf: nur 4096 Byte (`null` => 4096), jede andere Blockgröße endet mit
+`false` vor dem ersten Schreibzugriff. 2048 ist formatterseitig korrigiert, aber nicht für den Kernel qualifiziert.
+`Format` selbst bleibt für die Matrix mit 1K/2K/4K nutzbar. Achtung: `new Ext2FormatOptions()` hat in Cosmos weiterhin den
 Standard 1024; Aufrufer setzen `BlockSize` ausdrücklich. Die 1K-Korrektur bleibt für die Linux-Matrix und einen
 möglichen Upstream-Fix erhalten.

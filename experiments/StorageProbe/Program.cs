@@ -132,6 +132,22 @@ internal static class SelfTest
         }
         image = File.ReadAllBytes(path);
         File.Delete(path);
+
+        // Kernelprofil: 1K und 2K werden ohne einen einzigen Schreibzugriff abgelehnt, null formatiert mit 4K.
+        string kernelPath = Path.Combine(directory, "kernel.img");
+        using (var file = new FileStream(kernelPath, FileMode.CreateNew, FileAccess.ReadWrite))
+        {
+            file.SetLength(8L * 1024 * 1024);
+            var device = new FileBlockDevice(file, "kernel");
+            bool refused = !ProjektZeh.Storage.Ext2.CosmosExt2Formatter.FormatForKernel(device, new Ext2FormatOptions { BlockSize = 1024 })
+                && !ProjektZeh.Storage.Ext2.CosmosExt2Formatter.FormatForKernel(device, new Ext2FormatOptions { BlockSize = 2048 });
+            expect(refused && device.Writes == 0, "kernel: 1K/2K ohne Schreibzugriff abgelehnt");
+            bool formatted = ProjektZeh.Storage.Ext2.CosmosExt2Formatter.FormatForKernel(device, null);
+            byte[] header = new byte[1024];
+            device.ReadBlock(2, 2, header);
+            expect(formatted && BitConverter.ToUInt32(header, 24) == 2, "kernel: null formatiert mit 4096-Byte-Bloecken");
+        }
+        File.Delete(kernelPath);
         uint U32(long offset) => BitConverter.ToUInt32(image, (int)offset);
         ushort U16(long offset) => BitConverter.ToUInt16(image, (int)offset);
         const long Primary = 1024, Backup = 8193L * 1024;
@@ -172,8 +188,11 @@ internal sealed class FileBlockDevice(FileStream file, string name) : IBlockDevi
         file.ReadExactly(data[..(int)(blockCount * 512)]);
     }
 
+    public int Writes { get; private set; }
+
     public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data)
     {
+        Writes++;
         Check(blockNo, blockCount, data.Length);
         file.Position = (long)(blockNo * 512);
         file.Write(data[..(int)(blockCount * 512)]);
