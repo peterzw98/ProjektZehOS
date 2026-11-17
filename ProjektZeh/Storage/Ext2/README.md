@@ -133,6 +133,10 @@ nur, wenn es genau 72 MiB groß ist; die App-Platte hat 64 MiB. Erstes MiB kompl
 über `VfsManager.TryFormat` (4096 Byte und `sparse_super` belegen den Plug), prüft `Ext2FeatureGate`, mountet die
 ganze Platte ohne Partitionstabelle und führt Create/Write, Append, Seek-Write, Read, Rename, Mkdir, Rmdir, Delete,
 Sync und Unmount aus; `probe.bin` (72 KiB, reicht in den Einfach-Indirektblock) bleibt. Trägt die Platte ext2:
-Lauf 2 prüft Featurevertrag, Mount und SHA-256 von `probe.bin`. Jeder andere Inhalt bricht ohne Schreibzugriff ab.
+Lauf 2 verwendet nur die Lesekomponente `CosmosReadOnlyExt2FileSystem` unter `/mnt/ext2-ro` (der native
+Cosmos-Lesemount schreibt bei Sync/Drop): SHA-256 über die ganze Platte vorher, Featurevertrag, Mount, Lesen von
+`probe.bin`/`reuse.bin`/`neu`, Datei-Handle mit Lesen, Sync und Schließen bei verweigertem Write/SetAttr, verweigerte
+Create/Delete/Mkdir/Rename ohne Wirkung, Unmount und derselbe SHA-256 danach; das Hostskript vergleicht zusätzlich den
+Image-Hash vor und nach Lauf 2. Jeder andere Inhalt bricht ohne Schreibzugriff ab.
 Seriell `STORAGE_PROBE <schritt> PASS|FAIL …`, Ausnahmen werden dem laufenden Schritt zugeordnet, am Ende immer
 `STORAGE_PROBE DONE`; danach fährt der Gast über den normalen Energiepfad herunter.

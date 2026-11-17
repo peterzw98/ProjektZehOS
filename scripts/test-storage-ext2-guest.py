@@ -7,6 +7,7 @@ Das ISO muss die Storage-Probe enthalten, die seriell "STORAGE_PROBE <Name> PASS
 Exit 0 nur, wenn beide Laeufe ohne FAIL und mit DONE enden und e2fsck -fn 0 liefert.
 """
 import argparse
+import hashlib
 import importlib.util
 import re
 import shutil
@@ -89,8 +90,27 @@ def main() -> int:
     tool, environment = tools.qemu_img()
     subprocess.run([*tool, "create", "-f", "qcow2", str(appdisk), "64M"], check=True, stdout=subprocess.DEVNULL, env=environment)
     # Kurzschluss: nach einem Fehlschlag kein zweiter Lauf und kein e2fsck auf einem unklaren Image.
-    ok = run_once(args, work, image, appdisk, "lauf1") and run_once(args, work, image, appdisk, "lauf2")
+    ok = run_once(args, work, image, appdisk, "lauf1")
+    if ok:
+        # Lauf 2 mountet nur lesend: das Image muss danach bitgleich sein.
+        before = image_hash(image)
+        ok = run_once(args, work, image, appdisk, "lauf2") and same_image(before, image_hash(image))
     return 0 if ok and fsck(e2fsck, image) else 1
+
+
+def image_hash(image: Path) -> str:
+    digest = hashlib.sha256()
+    with image.open("rb") as data:
+        for chunk in iter(lambda: data.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def same_image(before: str, after: str) -> bool:
+    print(f"Image SHA-256 vor lauf2 {before}, danach {after}")
+    if before != after:
+        print("lauf2 hat das Image veraendert", file=sys.stderr)
+    return before == after
 
 
 def fsck(e2fsck: str, image: Path) -> bool:
