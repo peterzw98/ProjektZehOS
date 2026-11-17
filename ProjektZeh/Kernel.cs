@@ -457,6 +457,12 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateFailure(ResultCode.Failure,
                 "cause='PowerUnsupported' message='Cosmos unterstuetzt auf diesem System keine Energieaktionen.'");
         }
+#if ZEHOS_ROOT_MIGRATION
+        // 4.5: StopAll wuerde eine laufende Migration still abbrechen; sie wird ausdruecklich mit system cancel beendet.
+        bool stranded = CosmosMigrationService.StrandedReason != null;
+        if (AppStorageGate.IsMigrationLocked && !stranded)
+            return ResultErr.CreateFailure(ResultCode.Failure, "cause='MigrationRunning' message='Migration laeuft; erst abwarten oder mit system cancel abbrechen.'");
+#endif
 
         automaticNetwork.Stop();
         if (!tasks.StopAll(2000))
@@ -466,12 +472,21 @@ public sealed class Kernel : Sys.Kernel
 #endif
             return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         }
+        ResultErr unmounted;
+#if ZEHOS_ROOT_MIGRATION
+        // Nach gescheitertem Zurueckhaengen haengt /data hoechstens ueber den Lese-Wrapper; dort ist nichts zu schreiben, und
+        // Unmount() scheiterte an der bewusst gehaltenen Quellsperre.
+        if (stranded)
+            unmounted = !VfsManager.TryGetMount(systemPaths.AdminRoot, out _) || CosmosStorageService.UnmountData() ? ResultErr.CreateSuccess()
+                : ResultErr.CreateFailure(ResultCode.Failure, "cause='UnmountRefused' message='Lesemount von /data liess sich nicht aushaengen.'");
+        else
+#endif
 #if ZEHOS_ROOT_PROFILE
         // Root-Profil: / laesst sich nicht aushaengen; /boot/efi aushaengen, zweimal Sync, s_state = 1 (Spec Abschnitt 2).
-        var unmounted = layout?.RootVolume is { } rootVolume ? CosmosLayoutProfile.Close(rootVolume)
+        unmounted = layout?.RootVolume is { } rootVolume ? CosmosLayoutProfile.Close(rootVolume)
             : systemPaths.Profile == PathProfile.Legacy && VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
 #else
-        var unmounted = VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        unmounted = VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
 #endif
 #if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();

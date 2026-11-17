@@ -29,6 +29,12 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
     private static readonly CosmosSwitchableFileSystem readOnly = new("zehos-migration-ro");
     private static readonly CosmosSwitchableFileSystem writable = new("zehos-migration-rw");
 
+    /// <summary>
+    /// Gesetzt, wenn /data nach einer Migration nicht zurueckgehaengt werden konnte; der Quelllease bleibt dann bis zum Neustart
+    /// gehalten. Die Energieaktion braucht das, um den empfohlenen Neustart trotz gehaltener Sperre zuzulassen.
+    /// </summary>
+    internal static string? StrandedReason { get; private set; }
+
     public ResultObject<MigrationReport> Run(string diskName, Action<string> log, CancellationToken cancellation)
     {
         try
@@ -156,7 +162,10 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         if (!closed.IsOK()) log("Fehler: Ziel nicht sauber geschlossen: " + closed.Message);
         if (!unmounted) log("Fehler: Ziel liess sich nicht aushaengen.");
         if (restoreFailure != null)
+        {
+            StrandedReason = restoreFailure;
             return Failure("SourceRestoreFailed", done + restoreFailure + (result.IsOK() ? string.Empty : " Migration: " + result.Status.Message));
+        }
         if (!result.IsOK()) return result;
         if (!closed.IsOK()) return Failure("TargetCloseFailed", done + "das Ziel ist nicht sauber geschlossen: " + closed.Message);
         if (!unmounted) return Failure("TargetUnmountFailed", done + "das Ziel liess sich nicht aushaengen.");
