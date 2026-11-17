@@ -23,9 +23,10 @@ Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a �
 | Sektorgröße 512 | „GPT-Layout nur mit 512-Byte-Sektoren“ |
 | 32 GiB ≤ Größe, `BlockCount ≤ 268435456` (128 GiB) | „GPT-Layout nur für 32 bis 128 GiB“ |
 | `--erase` gesetzt | „GPT-Installation löscht die Platte; --erase erforderlich“ |
-| Hardware-Zufall verfügbar (Probe-Aufruf von `CosmosSaltSource.Fill` auf einen Wegwerfpuffer) | „Keine Hardware-Zufallsquelle (RDRAND/RDSEED/virtio-rng)“ |
+| Disk-, ESP- und Root-GUID **hier einmal erzeugt** (`CosmosSaltSource.Fill`) und im Job gehalten; der Writer bekommt sie übergeben und ruft keine Zufallsquelle mehr auf | „Keine Hardware-Zufallsquelle (RDRAND/RDSEED/virtio-rng)“ |
+| Mountpunkte frei: `SystemPaths.InstallMount` und `/mnt/install-root` nicht belegt | „Installations-Mountpunkt belegt“ |
+| Summe der ESP-Dateien (Kernel ×2, EFI, Version, Limine-Konfiguration, Marker) ≤ 512 MiB − 16 MiB Reserve | „Installationsdateien passen nicht auf die EFI-Partition“ |
 | Installationsdateien vorhanden | wie heute |
-| ext2-Formatter verfügbar und Plug aktiv | „ext2-Formatter nicht verfügbar“ |
 
 ## 3. Stufen (`InstallJob` mit Layout `Gpt`)
 
@@ -35,47 +36,50 @@ Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a �
 |---|---|---|
 | `Partitioning` | `GptLayoutWriter.Write` (Schreibreihenfolge 7a §3, Flush), `RescanPartitions`, `GptLayout.Verify` gültig, genau 2 Partitionen mit ESP-/Linux-Typ, Zuordnung über Startsektor | 0 |
 | `FormattingEsp` | FAT32 Label `ZEHOSBOOT`, Einhängen am Installationsmountpunkt (`SystemPaths.InstallMount` des laufenden Profils) | 5 |
-| `FormattingRoot` | `CosmosExt2Formatter.FormatForKernel` auf Partition 2 | 10 |
+| `FormattingRoot` | `CosmosExt2Formatter.FormatForKernel` auf Partition 2 (Formatter ist fester Teil des Builds, kein Laufzeit-Vorabtest); danach `log_block_size` = 2 und `sparse_super` prüfen wie die Etappe-1-Probe, sonst Abbruch | 10 |
 | `VerifyingRoot` | Superblock lesen, `InstalledIdentity.CheckRoot` = `Ok` | 25 |
-| `PreparingRoot` | Root schreibbar unter `/mnt/install-root` einhängen, `s_state` = 0 + Flush; Verzeichnisse `/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc/zehos`; Root-Marker `/etc/zehos/.zehos-layout` `state=fresh`, Disk-GUID (Temp + Rename); Sync, Sync, `s_state` = 1, Flush; aushängen | 27 |
+| `PreparingRoot` | Root schreibbar unter `/mnt/install-root` einhängen, `s_state` = 0 + Flush; Verzeichnisse `/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc/zehos`; Root-Marker `/etc/zehos/.zehos-layout` `state=fresh`, Disk-GUID (Temp + Rename) über eine **eigene `FileService`-Instanz ohne Rechteverwaltung** mit `CosmosPathGuard.For("/mnt/install-root")` (wie die Kontendatei in `AccountService`; der Nutzer-`FileService` sperrt `.zehos-`-Namen); Sync, Sync, `s_state` = 1, Flush; aushängen; **danach Superblock neu lesen**: `s_state` = 1 und `CheckRoot` = `Ok`, sonst Abbruch (der Treiber könnte beim Aushängen einen gepufferten Superblock zurückschreiben) | 27 |
 | `CopyingFiles` | wie heute auf die ESP (`/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf`, `.bak`, `/boot/zehos-version.txt`) | 30–90 |
-| `WritingBootConfig` | `/boot/limine/limine.conf` wie heute (`boot():` zeigt auf die ESP) | 92 |
-| `WritingMarker` | ESP-Marker `boot/.zehos-install.id` (`InstallMarker.Serialize`) per Temp + Rename, zurücklesen und `Parse` = gleich | 96 |
-| `Completed` | ESP aushängen, Flush | 100 |
+| `WritingBootConfig` | `/boot/limine/limine.conf` wie heute (`boot():` zeigt auf die ESP), danach **Flush/Sync der ESP** (Dauerhaftigkeitsschranke: der Marker darf nie vor den Bootdateien auf der Platte stehen, Cosmos-FAT puffert) | 92 |
+| `WritingMarker` | ESP-Marker `boot/.zehos-install.id` (`InstallMarker.Serialize`) per Temp + Rename, erneut Flush, zurücklesen und `Parse` = gleich | 96 |
+| `Completed` | ESP aushängen, Flush; Fehler hier ist ein **Installerfehler** (Exit ≠ 0, §4) | 100 |
 
 Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupWizardTests` für Legacy bleiben unverändert grün.
 
 ## 4. Abbruch
 
-`InstallJob.Step` ruft wie heute `target.Abort()` (bestehendes Muster). `Abort` hängt aus, was eingehängt ist (Root zuerst, dann ESP), und löscht **nichts**. Die Meldung nennt den Stand, z. B. „GPT geschrieben, Root formatiert, Bootdateien unvollständig. Die Platte gilt als unklar; neu installieren mit `setup install <L> --layout gpt --erase`.“ Folgen je Stufe:
+`InstallJob.Step` ruft wie heute `target.Abort()` (bestehendes Muster). `Abort` hängt aus, was eingehängt ist (Root zuerst, dann ESP), und löscht **nichts**; scheitern beide Aushängevorgänge, nennt die Meldung beide Fehler, der Befehl endet mit Fehler. Die Meldung nennt den Stand, z. B. „GPT geschrieben, Root formatiert, Bootdateien unvollständig. Die Platte gilt als unklar; neu installieren mit `setup install <L> --layout gpt --erase`.“ Folgen je Stufe:
 
 | Abbruch in | Platte danach | Identität beim nächsten Boot |
 |---|---|---|
-| `Partitioning` vor Schritt 4 des Writers | alter Primärheader genullt, evtl. Backup neu | `Unclear` (7a §3) |
+| `Partitioning` vor Schritt 4 des Writers | alter Primärheader genullt, evtl. Backupheader neu, keine ESP | `Unclear` nur, wenn `InstalledIdentity` „Primär ungültig, Backup gültig“ und „GPT-Rest ohne Marker“ so einstuft – **im Identity-Test ausdrücklich festlegen**; sonst ist die Platte leer/unbekannt und braucht ohnehin `--erase` |
 | `Partitioning` danach bis `WritingBootConfig` | GPT gültig, Root-Partition vorhanden, kein ESP-Marker | `Unclear` |
 | `WritingMarker` | Temp-Datei, kein gültiger Marker | `Unclear` |
-| `Completed` (Aushängen scheitert) | Marker gültig | `Healthy`; Meldung „Aushängen fehlgeschlagen, Puffer evtl. nicht geschrieben“ |
+| `Completed` (Aushängen scheitert) | Marker und Bootdateien geflusht (Schranken §3) | `Healthy`, aber der Installer meldet **Fehler** (Exit ≠ 0) „Aushängen fehlgeschlagen“ |
+| Neuinstallation über ein `Healthy`-System, Abbruch vor `FormattingEsp` | alter ESP-Marker kann im ESP-Bereich stehen bleiben | `Unclear`, weil der alte Marker die alte Disk-GUID trägt und die neue GPT neue GUIDs hat; Test und G9 belegen das |
 
 ## 5. Tests
 
 **Hosttests (zuerst):**
-1. `Begin` GPT: 32 GiB − 512 B, 32 GiB, 128 GiB, 128 GiB + 512 B; Sektor 4096; ohne `--erase`; Zufallsquelle wirft; Medium; ausgeschlossene Platte ⇒ jeweils Fehler und **0 Schreibzugriffe** (Zähl-Fake).
+1. `Begin` GPT: 32 GiB − 512 B, 32 GiB, 128 GiB, 128 GiB + 512 B; Sektor 4096; ohne `--erase`; Zufallsquelle wirft; Medium; ausgeschlossene Platte; Installationsdateien fehlen; Mountpunkt belegt; Dateien zu groß für die ESP ⇒ jeweils Fehler und **0 Schreibzugriffe** (Zähl-Fake). Der Writer erhält die GUIDs aus `Begin` (Fake-Zufallsquelle wird nach `Begin` nie mehr aufgerufen).
 2. Legacy unverändert: bestehende Tests ohne Änderung grün; `setup install <L>` ohne `--layout` erzeugt den Legacy-Job.
 3. `--layout gpt` ohne Freischaltung ⇒ Verwendungsfehler; unbekanntes Layout ⇒ Verwendungsfehler.
-4. Stufenfolge mit Zähl-Fake: Writer genau einmal, ESP-Format vor Root-Format, Root-Marker vor Bootdateien, ESP-Marker als **letzter** Schreibzugriff.
+4. Stufenfolge mit Zähl-Fake: Writer genau einmal, ESP-Format vor Root-Format, Root-Marker vor Bootdateien, ESP-Marker als **letzter** Schreibzugriff mit **Flush davor und danach**; nach dem Aushängen des Root ein zweites Superblock-Lesen.
 5. Abbruch in jeder Stufe: `Abort` aufgerufen, ESP-Marker nie geschrieben (außer Stufe `Completed`), Meldung nennt den Stand; Prozent monoton.
-6. `VerifyingRoot`: `CheckRoot` ≠ `Ok` ⇒ Abbruch vor `PreparingRoot`.
+6. `VerifyingRoot`: `CheckRoot` ≠ `Ok` ⇒ Abbruch vor `PreparingRoot`; zweites Lesen nach dem Aushängen mit `s_state` ≠ 1 ⇒ Abbruch vor `CopyingFiles`.
+6a. Neuinstallation über `Healthy` mit Abbruch nach `Partitioning`: `InstalledIdentity` ergibt nicht `Healthy`.
 7. `WritingMarker`: Rücklesen ungleich ⇒ Abbruch.
 8. `setup list`: Spalte `gpt` mit Gründen; SetupWizard zeigt die GPT-Zeile nur mit Freischaltung, ausgegraut mit Grund.
 
 **Gasttests (QEMU+OVMF, danach VMware; Ansage, ein Gast; Testbuild mit `-p:ZehOSGptInstaller=true`), Zuordnung zu 7a §7:**
-- G1 32 GiB und 128 GiB installieren, von der GPT-Platte über OVMF booten, `disk list` zeigt 2 Partitionen, Identität `Healthy`, Ersteinrichtung wie heute; `sgdisk -v`, `fsck.fat -n`, `e2fsck -fn` offline Exit 0, Root-Marker `state=fresh`.
+- G1 32 GiB und 128 GiB installieren, von der GPT-Platte über OVMF booten, `disk list` zeigt 2 Partitionen, Identität `Healthy`, Ersteinrichtung wie heute; `sgdisk -v`, `fsck.fat -n`, `e2fsck -fn` offline Exit 0, `dumpe2fs -h` „clean“, Root-Marker `state=fresh`.
 - G2 Rückfalleintrag `.bak` startet.
 - G3/G4 Root offline gelöscht bzw. beschädigt ⇒ Boot normal, Einrichtung und `security recover` gesperrt.
 - G5 Recovery-ISO bei G3/G4.
 - G6 Installer verweigert Medium, `ZEHOSDATA`-Platte, eingebundenes Ziel, 31 GiB, 129 GiB, fehlendes `--erase`.
 - G7 installierte Platte + `ZEHOSDATA`-Platte: Bestand gewinnt.
-- G8 Abbruch: Gast während `CopyingFiles` hart beenden ⇒ nächster Boot von der Platte nicht möglich bzw. Identität `Unclear`, Neuinstallation mit `--erase` gelingt.
+- G8 Abbruch: Gast während `CopyingFiles` hart beenden ⇒ nächster Boot von der Platte nicht möglich bzw. Identität `Unclear`, Neuinstallation mit `--erase` gelingt. Abbrüche in `Partitioning` (zwischen den Writer-Schritten) und `PreparingRoot` sind im Gast nicht zeitgenau auslösbar; sie deckt der Zähl-Fake der Hosttests 4/5 ab.
+- G9 Neuinstallation über ein `Healthy`-System, Abbruch in `CopyingFiles` ⇒ nicht `Healthy`, keine Einrichtung.
 - TCG ohne RDRAND ⇒ Installer verweigert mit Zufallsquellen-Fehler (Gegenprobe, kein Fehlschlag).
 
 ## 6. Offene Punkte
@@ -83,4 +87,4 @@ Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupW
 1. *Entschieden 12:03:* `--erase` beim GPT-Weg immer Pflicht; Freischaltung nur mit `-p:ZehOSGptInstaller=true` bis 4.0-Go und G1–G7 grün, normaler Build zeigt die Option nicht.
 2. Mountpunkt für das Root während der Installation: `/mnt/install-root` im `Legacy`-Profil ist ein Mount ohne Verzeichnis (zulässig, `VfsManager.cs:146`); im `Root`-Profil existiert `/mnt` – beides im Gast prüfen.
 3. Ob `RescanPartitions` nach dem eigenen GPT-Writer die Partitionen mit den richtigen Startsektoren liefert (Cosmos liest GPT ohne CRC-Prüfung, 7a §2), belegt erst G1; der Host-Probelauf S2 (`scripts/test-installer-layout.py`, `sgdisk -v`) ist Voraussetzung.
-4. Sync/`s_state` im Installer nutzt denselben Code wie die Energieaktion aus Etappe 4 §2 – gemeinsam mit 4.3 umsetzen, nicht doppelt.
+4. **Abhängigkeit:** Sync/`s_state` im Installer nutzt denselben Code wie die Energieaktion aus Etappe 4 §2. S4 darf diesen Pfad nicht vor 4.3 duplizieren: entweder 4.3 zuerst oder S4 liefert den gemeinsamen Baustein, den 4.3 übernimmt (Zuteilung Coordinator/Leitung).
