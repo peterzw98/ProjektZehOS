@@ -64,10 +64,29 @@ class PlugBindingTests(unittest.TestCase):
         self.assertEqual(1, self.run_gate(FOREIGN_MISS + MISSED))
 
     def test_miss_in_another_assembly_is_allowed_when_one_target_binds(self):
-        self.assertEqual(0, self.run_gate(MISSED + RESOLVED))
+        # Wie FreeInode auf be097fe: dieselbe Signatur scheitert an einem gleichnamigen Typ und bindet am echten.
+        same_signature_miss = RESOLVED.replace('[DEBUG] [ResolveMethod] Found matching method: System.Boolean',
+                                               '[WARN] [ResolveMethod] Target method not found: RemoveEntry')
+        self.assertEqual(0, self.run_gate(same_signature_miss + RESOLVED))
 
     def test_plug_absent_from_log_fails(self):
         self.assertEqual(1, self.run_gate(FOREIGN_MISS))
+
+    def test_overload_that_does_not_bind_fails_even_if_another_binds(self):
+        other = MISSED.replace('System.Object,System.Object,System.St\nring', 'System.Int32')
+        self.assertEqual(1, self.run_gate(RESOLVED + other))
+
+    def test_plug_member_forms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'Plug.cs'
+            source.write_text('namespace N { [Plug(typeof(T))] static class P {\n'
+                              '[PlugMember(TargetName = "A")] static void A() { }\n'
+                              '[PlugMember, Obsolete] static T G<T>(T v) => v; } }\n', encoding='utf-8')
+            self.assertEqual({'N.P::A', 'N.P::G'}, gate.expected_plugs(directory))
+            source.write_text('namespace N; [Plug(typeof(T))] static class P { [PlugMember] static int F { get; } }',
+                              encoding='utf-8')
+            with self.assertRaises(ValueError):
+                gate.expected_plugs(directory)
 
     def test_missing_log_or_plugs_cannot_be_checked(self):
         with tempfile.TemporaryDirectory() as directory:
