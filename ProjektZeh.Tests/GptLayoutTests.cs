@@ -272,8 +272,8 @@ public sealed class GptLayoutTests
     [TestMethod]
     public void Write_Guids_Version4_DistinctAndNotEmpty()
     {
-        var first = Write(new SparseDisk(Blocks32), RandomNumberGenerator.Fill);
-        var second = Write(new SparseDisk(Blocks32), RandomNumberGenerator.Fill);
+        var first = Write(new SparseDisk(Blocks32), bytes => RandomNumberGenerator.Fill(bytes));
+        var second = Write(new SparseDisk(Blocks32), bytes => RandomNumberGenerator.Fill(bytes));
         var guids = new HashSet<Guid>();
         foreach (var table in new[] { first.Table, second.Table })
             foreach (Guid guid in new[] { table.DiskGuid, table.Entries[0].Unique, table.Entries[1].Unique })
