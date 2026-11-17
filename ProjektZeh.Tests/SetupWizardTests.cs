@@ -310,10 +310,11 @@ public sealed class SetupWizardTests
         Assert.AreEqual("512 MB", SetupDiskList.FormatSize(512UL << 20));
     }
 
-    // Kleinste und uebliche Aufloesung: bei 800 x 600 wird das Layout zuerst eng.
+    // 1920 x 1080 ist die Standardaufloesung beim Boot, 1024 x 768 der Rueckfall; bei 800 x 600 wird das Layout zuerst eng.
     [DataTestMethod]
     [DataRow(800, 600)]
     [DataRow(1024, 768)]
+    [DataRow(1920, 1080)]
     public void AllPages_MatchReferenceImages(int width, int height)
     {
         foreach (var (name, wizard) in AllPages(Golden.Painter(), width, height))

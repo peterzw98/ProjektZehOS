@@ -254,6 +254,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: cosmos install --auto --tools
 
+      - name: Check build tools
+        run: cosmos check
+
       - name: Build the recovery ISO
         run: dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true
 
