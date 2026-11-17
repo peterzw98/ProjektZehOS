@@ -136,7 +136,7 @@ public sealed class Kernel : Sys.Kernel
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
-            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.Load(); ReconcilePackages(); systemLog.Information("Storage", "Laufwerksaenderung abgeschlossen."); }, text => systemLog.Information("Storage", "Befehl: " + text)).Commands,
+            .. new StorageShellCommands(storage, () => SecurityRecovery || accounts.IsAdmin(identity), () => { accounts.SetupBlockedReason = null; accounts.Load(); ReconcilePackages(); systemLog.Information("Storage", "Laufwerksaenderung abgeschlossen."); }, text => systemLog.Information("Storage", "Befehl: " + text)).Commands,
             .. new AccountShellCommands(accounts, identity, files, prepare => shell!.BeginSecretInput(prepare), SecurityRecovery,
                 name => shell!.HasCommand(name)).Commands,
             .. network.Commands,
@@ -191,7 +191,8 @@ public sealed class Kernel : Sys.Kernel
             output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
             return ResultErr.CreateSuccess();
 #else
-            var mounted = storage.MountData();
+            var mounted = storage.MountData(out string? setupBlockedReason);
+            accounts.SetupBlockedReason = setupBlockedReason;
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");
@@ -201,7 +202,7 @@ public sealed class Kernel : Sys.Kernel
             else
             {
                 output.WriteLine(mounted.Message);
-                output.WriteLine("Laufwerke: disk list. Leere Testplatte: disk init sata0, dann disk mount sata0.");
+                output.WriteLine("Laufwerke: disk list. Leere Platte einrichten: disk init <Name>; danach wird eine einzelne ZEHOSDATA-Platte beim naechsten Start eingebunden, sofort mit disk use <Name> --yes.");
             }
 
             return mounted;

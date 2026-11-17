@@ -10,18 +10,21 @@ internal sealed record DataDiskCandidate(string Name, ulong BlockSize, ulong Blo
 
 internal enum DataDiskAction
 {
-    /// <summary>Bestand auf sata0: diese Partition unter /data einbinden.</summary>
+    /// <summary>sata0 einbinden: Bestand (0x0C-Partition) oder der bisherige Rueckfall mit genau einer Partition.</summary>
     Mount,
-    /// <summary>Keine Datenplatte erkannt: Boot wie bisher ohne /data.</summary>
-    NoDataDisk,
-    /// <summary>Eine ZEHOSDATA-Platte ist da, wird aber nie automatisch eingebunden (disk use).</summary>
+    /// <summary>Genau eine ZEHOSDATA-Platte ohne Bestand auf sata0: nur melden (DataDiskNotMounted), Einbinden erst mit disk use.</summary>
     LabelledAvailable,
     /// <summary>Erkannt, aber nicht sicher einbindbar; es wird nichts eingebunden und keine Ersteinrichtung angeboten.</summary>
     Blocked,
+    /// <summary>Keine Datenplatte vorhanden: Boot wie bisher ohne /data.</summary>
+    NoDataDisk,
 }
 
-/// <param name="Hint">Zusatzhinweis fuers Protokoll, etwa eine nicht bevorzugte ZEHOSDATA-Platte neben dem Bestand.</param>
-internal sealed record DataDiskDecision(DataDiskAction Action, string? DeviceName, int PartitionIndex, string Message, string? Hint = null);
+/// <param name="Hint">Protokollhinweis, etwa eine nicht bevorzugte ZEHOSDATA-Platte neben dem Bestand.</param>
+internal sealed record DataDiskDecision(DataDiskAction Action, string? DeviceName, int PartitionIndex, string Message, string? Hint = null)
+{
+    public bool HasHint => Hint != null;
+}
 
 /// <summary>Reine Auswahl der Datenpartition und Groessenpruefung fuer disk init, ohne Cosmos-Abhaengigkeit.</summary>
 internal static class DataDiskSelector
@@ -37,9 +40,10 @@ internal static class DataDiskSelector
         partition.Type == FatLbaType && string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Bestand gewinnt: traegt sata0 irgendeine Partition, wird nur sie in Betracht gezogen (genau eine, sonst Blocked) und
-    /// keine ZEHOSDATA-Platte bevorzugt. Ohne Bestand wird eine ZEHOSDATA-Platte nur angeboten, nie automatisch eingebunden;
-    /// zwei oder mehr sind mehrdeutig.
+    /// Auswahl beim Boot (Spec Etappe 2, Abschnitt 3), in dieser Reihenfolge: (1) traegt sata0 eine 0x0C-Partition (Label egal),
+    /// ist das der Bestand und wird eingebunden, eine ZEHOSDATA-Platte daneben nur als Hinweis; (2) sonst genau eine
+    /// ZEHOSDATA-Partition anderswo: nur melden, nie automatisch einbinden (Spec nach Koordinator 07:45); (3) mehrere sind mehrdeutig, nichts wird eingebunden; (4) sonst der bisherige Rueckfall,
+    /// sata0 mit genau einer Partition.
     /// </summary>
     public static DataDiskDecision Decide(IReadOnlyList<DataDiskCandidate> devices)
     {
@@ -52,11 +56,10 @@ internal static class DataDiskSelector
                 if (IsDataPartition(device.Partitions[index])) labelled.Add((device.Name, index));
         }
 
-        if (existing != null && existing.Partitions.Count > 0)
+        if (existing != null && HasFatPartition(existing))
         {
             if (existing.Partitions.Count != 1)
                 return new(DataDiskAction.Blocked, existing.Name, -1, Cause("UnexpectedPartitionCount", "Zum Einbinden wird genau eine Datenpartition erwartet."));
-            // sata0 selbst kann ZEHOSDATA tragen; ein Hinweis ist nur fuer eine andere Platte noetig.
             var other = labelled.Find(entry => !string.Equals(entry.Device, existing.Name, StringComparison.OrdinalIgnoreCase));
             string? hint = other.Device == null ? null
                 : $"Datenplatte ZEHOSDATA auf {other.Device} vorhanden; der Bestand auf {existing.Name} hat Vorrang (Umschalten: disk use {other.Device} --yes).";
@@ -68,7 +71,35 @@ internal static class DataDiskSelector
         if (labelled.Count == 1)
             return new(DataDiskAction.LabelledAvailable, labelled[0].Device, labelled[0].Index,
                 Cause("DataDiskNotMounted", $"Datenplatte ZEHOSDATA auf {labelled[0].Device} gefunden, aber nicht eingebunden; zum Einbinden: disk use {labelled[0].Device} --yes."));
-        return new(DataDiskAction.NoDataDisk, null, -1, Cause("DeviceNotFound", "Keine Datenplatte gefunden."));
+
+        if (existing == null)
+            return new(DataDiskAction.NoDataDisk, null, -1, Cause("DeviceNotFound", "Keine Datenplatte gefunden."));
+        if (existing.Partitions.Count == 1)
+            return new(DataDiskAction.Mount, existing.Name, 0, string.Empty);
+        // Keine oder mehrere Partitionen ohne 0x0C: wie bisher kein /data, aber nur bei null Partitionen ohne Fehlerzeile.
+        return existing.Partitions.Count == 0
+            ? new(DataDiskAction.NoDataDisk, existing.Name, -1, Cause("UnexpectedPartitionCount", "Zum Einbinden wird genau eine Datenpartition erwartet."))
+            : new(DataDiskAction.Blocked, existing.Name, -1, Cause("UnexpectedPartitionCount", "Zum Einbinden wird genau eine Datenpartition erwartet."));
+    }
+
+    /// <summary>
+    /// Grund, warum keine Administrator-Ersteinrichtung angeboten werden darf, sonst null: bei Blocked, bei einer erkannten, aber
+    /// nicht eingebundenen ZEHOSDATA-Platte und wenn das Einbinden einer gewaehlten Platte fehlschlug. NoDataDisk (Boot ohne
+    /// Datenplatte) bleibt unveraendert.
+    /// </summary>
+    public static string? SetupBlockedReason(DataDiskDecision decision, bool mounted) => decision.Action switch
+    {
+        DataDiskAction.Blocked or DataDiskAction.LabelledAvailable => decision.Message,
+        DataDiskAction.Mount when !mounted =>
+            Cause("MountRefused", $"Einbinden der gewaehlten Datenplatte {decision.DeviceName} fehlgeschlagen."),
+        _ => null,
+    };
+
+    private static bool HasFatPartition(DataDiskCandidate device)
+    {
+        foreach (var partition in device.Partitions)
+            if (partition.Type == FatLbaType) return true;
+        return false;
     }
 
     /// <summary>Index der einzigen ZEHOSDATA-Partition eines Laufwerks fuer <c>disk use</c>.</summary>

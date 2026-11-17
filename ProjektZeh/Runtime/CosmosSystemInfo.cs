@@ -57,7 +57,7 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
     {
         var lines = new List<string>
         {
-            VfsManager.TryGetMount("/data", out _) ? "/data: eingebunden" : "/data: nicht eingebunden (disk mount sata0)"
+            VfsManager.TryGetMount("/data", out _) ? "/data: eingebunden" : "/data: nicht eingebunden (disk use <Name> --yes oder disk mount <Name>)"
         };
         var devices = storage.GetDevices();
         if (!devices.IsOK()) lines.Add("Laufwerke nicht lesbar: " + devices.Status.Message);

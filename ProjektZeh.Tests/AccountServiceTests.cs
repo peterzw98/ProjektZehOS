@@ -37,6 +37,29 @@ public sealed class AccountServiceTests
     }
 
     [TestMethod]
+    public void MissingAccountFile_OffersSetupOnlyWhenNotBlockedByDiskSelection()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var accounts = new AccountService(root, new PasswordHasher(bytes => RandomNumberGenerator.Fill(bytes)));
+
+            accounts.SetupBlockedReason = "cause='AmbiguousDataDisk'";
+            var blocked = accounts.Load();
+            Assert.IsFalse(blocked.IsOK());
+            Assert.IsFalse(accounts.NeedsSetup, "kein Konto auf einem falsch gewaehlten Laufwerk");
+            StringAssert.Contains(blocked.Message, "AmbiguousDataDisk");
+            Assert.IsFalse(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+
+            accounts.SetupBlockedReason = null;
+            Assert.IsFalse(accounts.Load().IsOK());
+            Assert.IsTrue(accounts.NeedsSetup, "ohne Sperre bleibt die Ersteinrichtung wie bisher");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void AccountsPermissionsAndIdsPersistAndCorruptionLocksEverySession()
     {
         string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

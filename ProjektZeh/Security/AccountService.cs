@@ -30,6 +30,12 @@ internal sealed class AccountService
     public bool IsReady => Access.IsReady && accounts.Count != 0;
     /// <summary>Nur eine tatsaechlich fehlende Kontodatei erlaubt die Ersteinrichtung im normalen Build.</summary>
     public bool NeedsSetup { get; private set; }
+
+    /// <summary>
+    /// Gesetzt, wenn die Auswahl der Datenplatte fehlgeschlagen oder mehrdeutig ist: dann gilt auch eine fehlende Kontodatei
+    /// nicht als Ersteinrichtung, damit ein falsch gewaehltes oder leeres Laufwerk kein Konto erhaelt.
+    /// </summary>
+    public string? SetupBlockedReason { get; set; }
     public IReadOnlyDictionary<string, bool> AdministratorCommands => administratorCommands;
 
     public AccountService(string root, PasswordHasher hasher)
@@ -56,6 +62,8 @@ internal sealed class AccountService
         NeedsSetup = false;
         var read = metadata.ReadText(".zehos-security.db", allowMissing: true, MaximumMetadataLength);
         if (!read.IsOK()) return read.Status;
+        if (read.Value == null && SetupBlockedReason != null)
+            return ResultErr.CreateFailure(ResultCode.Failure, "Ersteinrichtung gesperrt: " + SetupBlockedReason);
         if (read.Value == null)
         {
             NeedsSetup = true;

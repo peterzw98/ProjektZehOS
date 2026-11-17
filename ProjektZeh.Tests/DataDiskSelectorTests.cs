@@ -13,63 +13,60 @@ public sealed class DataDiskSelectorTests
     private static DataDiskCandidate Disk(string name, params DataDiskPartition[] partitions) =>
         new(name, 512, 131072, partitions);
 
+    private static DataDiskPartition Foreign => new(0x0C, "FREMD");
+    private static DataDiskPartition Linux => new(0x83, null);
+
     [TestMethod]
-    public void Decide_ExistingOnSata0_WinsOverLabelledDisk_AndHintsAtIt()
+    public void Decide_ExistingWithForeignLabel_WinsOverLabelledDisk_WithHint()
     {
-        var result = DataDiskSelector.Decide([Disk("sata0", Other), Disk("sata1", Data)]);
+        var result = DataDiskSelector.Decide([Disk("sata0", Foreign), Disk("sata1", Data)]);
 
         Assert.AreEqual(DataDiskAction.Mount, result.Action);
         Assert.AreEqual("sata0", result.DeviceName);
         Assert.AreEqual(0, result.PartitionIndex);
-        StringAssert.Contains(result.Hint!, "sata1");
+        Assert.IsTrue(result.HasHint);
         StringAssert.Contains(result.Hint!, "disk use sata1 --yes");
     }
 
     [TestMethod]
     public void Decide_ExistingOnSata0_WithoutOtherLabelledDisk_HasNoHint()
     {
-        Assert.IsNull(DataDiskSelector.Decide([Disk("sata0", Data)]).Hint, "sata0 selbst ist kein Hinweisgrund");
-        Assert.IsNull(DataDiskSelector.Decide([Disk("sata0", Other), Disk("sata1", Other)]).Hint);
+        Assert.IsFalse(DataDiskSelector.Decide([Disk("sata0", Data)]).HasHint, "sata0 selbst ist kein Hinweisgrund");
+        Assert.IsFalse(DataDiskSelector.Decide([Disk("sata0", Foreign), Disk("sata1", Other)]).HasHint);
     }
 
     [TestMethod]
-    public void Decide_AnyPartitionOnSata0_CountsAsExisting_EvenWithOtherType()
-    {
-        var result = DataDiskSelector.Decide([Disk("sata0", new DataDiskPartition(0x83, null)), Disk("sata1", Data)]);
-
-        Assert.AreEqual(DataDiskAction.Mount, result.Action, "im Zweifel Bestand");
-    }
-
-    [TestMethod]
-    public void Decide_TwoPartitionsOnSata0_IsBlocked_NotReplacedByLabelledDisk()
-    {
-        var result = DataDiskSelector.Decide([Disk("sata0", Other, Other), Disk("sata1", Data)]);
-
-        Assert.AreEqual(DataDiskAction.Blocked, result.Action);
-        StringAssert.Contains(result.Message, "UnexpectedPartitionCount");
-    }
-
-    [TestMethod]
-    public void Decide_NoExisting_OneLabelledDisk_IsOfferedNeverMounted()
+    public void Decide_OnlyLabelledDisk_SataZeroEmpty_IsOfferedNeverMounted()
     {
         var result = DataDiskSelector.Decide([Disk("sata0"), Disk("sata1", Other, Data)]);
 
         Assert.AreEqual(DataDiskAction.LabelledAvailable, result.Action);
+        StringAssert.Contains(result.Message, "DataDiskNotMounted");
+        StringAssert.Contains(result.Message, "disk use sata1 --yes");
         Assert.AreEqual("sata1", result.DeviceName);
         Assert.AreEqual(1, result.PartitionIndex);
-        StringAssert.Contains(result.Message, "disk use sata1 --yes");
+        Assert.IsFalse(result.HasHint);
     }
 
     [TestMethod]
-    public void Decide_NoExisting_LabelIgnoresCaseAndPadding()
+    public void Decide_OnlyLabelledDisk_NoSata0AtAll_IsOffered_LabelIgnoresCaseAndPadding()
     {
-        var result = DataDiskSelector.Decide([Disk("sata1", new DataDiskPartition(0x0C, "zehosdata  "))]);
+        var result = DataDiskSelector.Decide([Disk("sata2", new DataDiskPartition(0x0C, "zehosdata  "))]);
+
+        Assert.AreEqual(DataDiskAction.LabelledAvailable, result.Action);
+        Assert.AreEqual("sata2", result.DeviceName);
+    }
+
+    [TestMethod]
+    public void Decide_SataZeroWithoutFatPartition_LabelledDiskIsOfferedBeforeFallback()
+    {
+        var result = DataDiskSelector.Decide([Disk("sata0", Linux), Disk("sata1", Data)]);
 
         Assert.AreEqual(DataDiskAction.LabelledAvailable, result.Action);
     }
 
     [TestMethod]
-    public void Decide_NoExisting_TwoLabelledPartitions_IsBlocked()
+    public void Decide_TwoLabelledPartitions_IsBlocked()
     {
         foreach (var devices in new[] { new[] { Disk("sata1", Data), Disk("sata2", Data) }, new[] { Disk("sata1", Data, Data) } })
         {
@@ -81,12 +78,64 @@ public sealed class DataDiskSelectorTests
     }
 
     [TestMethod]
-    public void Decide_NothingUsable_IsNoDataDisk()
+    public void Decide_ExistingWinsEvenWhenTwoLabelledDisksExist()
     {
-        Assert.AreEqual(DataDiskAction.NoDataDisk, DataDiskSelector.Decide([]).Action);
-        Assert.AreEqual(DataDiskAction.NoDataDisk, DataDiskSelector.Decide([Disk("sata0")]).Action);
+        var result = DataDiskSelector.Decide([Disk("sata0", Foreign), Disk("sata1", Data), Disk("sata2", Data)]);
+
+        Assert.AreEqual(DataDiskAction.Mount, result.Action, "Bestand zuerst, nie Mehrdeutigkeit gegen einen Bestand");
+    }
+
+    [TestMethod]
+    public void Decide_Fallback_SataZeroWithSingleNonFatPartition_Mounts()
+    {
+        var result = DataDiskSelector.Decide([Disk("sata0", Linux)]);
+
+        Assert.AreEqual(DataDiskAction.Mount, result.Action);
+        Assert.AreEqual("sata0", result.DeviceName);
+    }
+
+    [TestMethod]
+    public void Decide_TwoPartitionsOnSata0_IsBlocked()
+    {
+        foreach (var partitions in new[] { new[] { Foreign, Foreign }, new[] { Linux, Linux } })
+        {
+            var result = DataDiskSelector.Decide([Disk("sata0", partitions), Disk("sata1", Other)]);
+
+            Assert.AreEqual(DataDiskAction.Blocked, result.Action);
+            StringAssert.Contains(result.Message, "UnexpectedPartitionCount");
+        }
+    }
+
+    [TestMethod]
+    public void Decide_NothingUsable_IsNoDataDisk_WithMessageAsBefore()
+    {
+        var absent = DataDiskSelector.Decide([]);
+        var blank = DataDiskSelector.Decide([Disk("sata0")]);
         var wrongType = DataDiskSelector.Decide([Disk("sata0"), Disk("sata1", new DataDiskPartition(0x83, "ZEHOSDATA"))]);
+
+        Assert.AreEqual(DataDiskAction.NoDataDisk, absent.Action);
+        StringAssert.Contains(absent.Message, "DeviceNotFound");
+        Assert.AreEqual(DataDiskAction.NoDataDisk, blank.Action);
+        StringAssert.Contains(blank.Message, "UnexpectedPartitionCount");
         Assert.AreEqual(DataDiskAction.NoDataDisk, wrongType.Action, "Label ohne Typ 0x0C zaehlt nicht");
+    }
+
+    [TestMethod]
+    public void SetupBlockedReason_OnlyForBlockedOrFailedChosenMount()
+    {
+        var ambiguous = DataDiskSelector.Decide([Disk("sata1", Data), Disk("sata2", Data)]);
+        var existing = DataDiskSelector.Decide([Disk("sata0", Foreign)]);
+        var labelled = DataDiskSelector.Decide([Disk("sata0"), Disk("sata1", Data)]);
+        var mountedLabelled = DataDiskSelector.Decide([Disk("sata0", Foreign)]);
+        var none = DataDiskSelector.Decide([]);
+
+        StringAssert.Contains(DataDiskSelector.SetupBlockedReason(ambiguous, false)!, "AmbiguousDataDisk");
+        StringAssert.Contains(DataDiskSelector.SetupBlockedReason(existing, false)!, "sata0");
+        StringAssert.Contains(DataDiskSelector.SetupBlockedReason(labelled, false)!, "DataDiskNotMounted");
+        StringAssert.Contains(DataDiskSelector.SetupBlockedReason(labelled, false)!, "sata1");
+        Assert.IsNull(DataDiskSelector.SetupBlockedReason(existing, true), "erfolgreicher Mount: normale Ersteinrichtung moeglich");
+        Assert.IsNull(DataDiskSelector.SetupBlockedReason(mountedLabelled, true));
+        Assert.IsNull(DataDiskSelector.SetupBlockedReason(none, false), "Boot ohne Datenplatte bleibt unveraendert");
     }
 
     [TestMethod]

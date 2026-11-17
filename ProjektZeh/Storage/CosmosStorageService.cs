@@ -92,7 +92,7 @@ internal sealed class CosmosStorageService : IStorageService
             Progress("mbr ok", clock);
             if (!PartitionManager.Create(device, PartitionStart, device.BlockCount - PartitionStart, 0x0C, Guid.Empty))
             {
-                return Failure("PartitionCreationRefused", "Cosmos hat das Anlegen der Partition abgelehnt.");
+                return Failure("PartitionCreationRefused", "Cosmos hat das Anlegen der Partition abgelehnt." + MbrLeftBehind);
             }
 
             Progress("partition ok", clock);
@@ -100,7 +100,7 @@ internal sealed class CosmosStorageService : IStorageService
             var partitions = StorageManager.GetPartitions(device);
             if (partitions.Count != 1)
             {
-                return Failure("UnexpectedPartitionCount", "Nach der Einrichtung wurde nicht genau eine Partition erkannt.");
+                return Failure("UnexpectedPartitionCount", "Nach der Einrichtung wurde nicht genau eine Partition erkannt." + MbrLeftBehind);
             }
 
             Progress("format start", clock);
@@ -111,7 +111,7 @@ internal sealed class CosmosStorageService : IStorageService
             };
             if (!VfsManager.TryFormat(FileSystemName, partitions[0], options))
             {
-                return Failure("FormatRefused", "Cosmos hat die FAT32-Formatierung abgelehnt.");
+                return Failure("FormatRefused", "Cosmos hat die FAT32-Formatierung abgelehnt." + MbrLeftBehind);
             }
 
             device.Flush();
@@ -123,6 +123,9 @@ internal sealed class CosmosStorageService : IStorageService
             return ResultErr.CreateFromException(exception);
         }
     }
+
+    // Nach Mbr.Create ist die Platte nicht mehr leer; ein zweites disk init lehnt sie deshalb als "nicht leer" ab.
+    private const string MbrLeftBehind = " Es bleibt ein MBR auf der Platte zurueck; fuer ein erneutes disk init muss sie vorher vollstaendig geleert werden (Image neu anlegen).";
 
     // Fortschritt seriell: die Shell blockiert bei grossen Platten, der Bildschirm zeigt erst am Ende etwas.
     // t = Millisekunden seit Beginn von disk init: je Befehl gerechnet trennt das langsames Lesen von einem Hang.
@@ -163,41 +166,45 @@ internal sealed class CosmosStorageService : IStorageService
     }
 
     /// <summary>
-    /// Boot-Einbindung: nur ein Bestand auf sata0 wird eingebunden. Eine ZEHOSDATA-Platte wird weder bevorzugt noch automatisch
-    /// verwendet (disk use); bei Mehrdeutigkeit oder einem unbrauchbaren Bestand wird nichts eingebunden und seriell gemeldet.
+    /// Boot-Einbindung nach <see cref="DataDiskSelector.Decide"/>: nur ein Bestand auf sata0 wird eingebunden, eine ZEHOSDATA-Platte nie automatisch (disk use);
+    /// bei Mehrdeutigkeit oder einem fehlgeschlagenen Einbinden meldet <paramref name="setupBlockedReason"/> den Grund, aus dem keine
+    /// Administrator-Ersteinrichtung angeboten werden darf.
     /// </summary>
-    public ResultErr MountData()
+    public ResultErr MountData(out string? setupBlockedReason)
     {
+        setupBlockedReason = null;
         try
         {
             var decision = DataDiskSelector.Decide(ReadCandidates());
-            if (decision.Hint != null)
+            if (decision.HasHint)
             {
                 Note("Hinweis: " + decision.Hint);
             }
 
+            ResultErr result;
             if (decision.Action == DataDiskAction.Mount)
             {
                 var found = FindDevice(decision.DeviceName);
-                if (!found.IsOK())
-                {
-                    return found.Status;
-                }
-
-                var prepared = PrepareMount();
-                return prepared.IsOK() ? MountPartition(found.Value!, decision.PartitionIndex) : prepared;
+                var prepared = found.IsOK() ? PrepareMount() : found.Status;
+                result = !prepared.IsOK() ? prepared : MountPartition(found.Value!, decision.PartitionIndex);
             }
-
-            if (decision.Action != DataDiskAction.NoDataDisk)
+            else
             {
-                // Ohne Mount gibt es keine Kontodatei und damit keine Admin-Ersteinrichtung (AccountService.Load).
-                Note("Fehler: " + decision.Message + " Keine Ersteinrichtung.");
+                result = ResultErr.CreateFailure(ResultCode.Failure, decision.Message);
             }
 
-            return ResultErr.CreateFailure(ResultCode.Failure, decision.Message);
+            setupBlockedReason = DataDiskSelector.SetupBlockedReason(decision, result.IsOK());
+            if (setupBlockedReason != null)
+            {
+                Note("Fehler: " + setupBlockedReason + " Keine Ersteinrichtung.");
+            }
+
+            return result;
         }
         catch (Exception exception)
         {
+            setupBlockedReason = "cause='MountException' message='Fehler bei der Auswahl der Datenplatte; keine Ersteinrichtung.'";
+            Note("Fehler: " + exception.Message);
             return ResultErr.CreateFromException(exception);
         }
     }

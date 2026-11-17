@@ -40,7 +40,7 @@ internal static class DiskEmptyCheck
         if (!confirmedLarge)
         {
             return Failure("LargeDiskNeedsConfirmation",
-                "Platten ueber 4 GiB werden nur stichprobenartig auf Leere geprueft; zur Bestaetigung 'disk init <Name> --yes-large' verwenden.");
+                "Platten ueber 4 GiB werden nur stichprobenartig auf Leere geprueft; Daten ZWISCHEN den Stichproben werden nicht erkannt. Zur Bestaetigung 'disk init <Name> --yes-large' verwenden.");
         }
 
         ulong edgeBlocks = EdgeBytes / blockSize;
