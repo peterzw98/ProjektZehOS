@@ -14,9 +14,9 @@ Stand: 17. November 2026, Grundlage [Aufrufer-Inventar](2026-11-17-storage-calle
    2. Sonst genau eine `ZEHOSDATA`-Partition auf einem anderen Gerät: diese einbinden.
    3. Mehrere `ZEHOSDATA`-Treffer: nichts einbinden (`AmbiguousDataDisk`).
    4. Sonst der bisherige Rückfall: `sata0` mit genau einer Partition.
-   Umschalten auf eine andere Datenplatte nur per ausdrücklichem `disk mount <gerät>` in der laufenden Sitzung; eine dauerhafte Umschaltung ist nicht Teil dieser Etappe. Bekannte Grenze wie bisher: ohne Bestandsplatte wird eine angehängte `ZEHOSDATA`-Platte eingebunden.
+   Umschalten auf eine andere Datenplatte nur per `disk use <gerät> --yes` in der laufenden Sitzung; eine dauerhafte Umschaltung ist nicht Teil dieser Etappe. Bekannte Grenze wie bisher: ohne Bestandsplatte wird eine angehängte `ZEHOSDATA`-Platte eingebunden.
    **Keine Ersteinrichtung nach Fehlauswahl:** Bei `AmbiguousDataDisk` oder einem fehlgeschlagenen Mount einer gewählten Platte bietet der Kernel keine Administrator-Ersteinrichtung an und legt kein Konto an; Fehlerzeile seriell. Kein Datenlaufwerk vorhanden (`DeviceNotFound`) bleibt wie bisher.
-   **`disk init` auf eine weitere Platte** verlangt `--yes-additional`, wenn `/data` eingebunden ist oder `sata0` schon eine Partition trägt.
+   **`disk init` auf eine weitere Platte** verlangt `--yes-overwrite` (zusätzlich zu `--yes-large`), wenn `/data` eingebunden ist oder `sata0` schon eine Partition trägt.
 4. **Ein Mountpunkt `/data`** bis Etappe 4. Mehrere persistente Mounts, `/`-Root und Mountpunkt-Argumente kommen erst mit dem Root-Baum.
 5. **Installer schützt die Datenplatte.** Platten mit `ZEHOSDATA`-Partition erscheinen nicht in `setup list`; Installation auf sie wird verweigert, auch mit `--erase`.
 6. **VMware:** eigene AHCI-Testplatte, keine Annahme über VMware-Standard-SCSI. Zeitbudget für 128 GiB wird gemessen, die Platte wird nicht vollständig gelesen.
