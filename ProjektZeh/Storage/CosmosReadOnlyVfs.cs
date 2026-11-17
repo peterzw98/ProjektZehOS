@@ -102,3 +102,44 @@ internal sealed class CosmosReadOnlyFileSystem(IVfsFileSystemType inner) : IVfsF
     public bool TryFormat(ReadOnlySpan<char> source, IVfsFormatOptions? options) => false;
     public bool TryDestroy(ReadOnlySpan<char> source) => false;
 }
+
+/// <summary>
+/// Feste Registrierung mit austauschbarem Inneren (Etappe 4.5): Cosmos 3.0.97 kennt kein UnregisterFileSystem, die Migration
+/// haengt aber nacheinander verschiedene Partitionen ein. Das Innere gilt nur waehrend des einen TryMount-Aufrufs. Die
+/// oeffentliche Partitions-Ueberladung setzt VfsMount.Partition (Identitaetspruefung, IsPartitionMounted) und reicht als
+/// Quelle den Partitionsindex weiter; den verwirft der Typ, damit das Innere sein injiziertes Lesegeraet verwendet.
+/// </summary>
+internal sealed class CosmosSwitchableFileSystem(string name) : IVfsFileSystemType
+{
+    private bool registered;
+    private IVfsFileSystemType? inner;
+
+    public bool TryMount(IVfsFileSystemType type, Cosmos.Kernel.System.Storage.Partition partition, MountFlags flags, string mountPoint)
+    {
+        if (!registered)
+        {
+            if (!VfsManager.RegisterFileSystem(name, this)) return false;
+            registered = true;
+        }
+
+        inner = type;
+        try
+        {
+            return VfsManager.TryMount(name, partition, flags, mountPoint, out _);
+        }
+        finally
+        {
+            inner = null;
+        }
+    }
+
+    public bool TryMount(ReadOnlySpan<char> source, MountFlags flags, [NotNullWhen(true)] out IVfsSuperblock? superblock)
+    {
+        superblock = null;
+        // Mit dem Index wuerde FatFileSystemType das echte Geraet statt des injizierten Lesegeraets oeffnen.
+        return inner != null && inner.TryMount(ReadOnlySpan<char>.Empty, flags, out superblock);
+    }
+
+    public bool TryFormat(ReadOnlySpan<char> source, IVfsFormatOptions? options) => false;
+    public bool TryDestroy(ReadOnlySpan<char> source) => false;
+}

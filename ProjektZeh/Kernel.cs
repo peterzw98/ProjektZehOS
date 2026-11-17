@@ -24,6 +24,14 @@ namespace ProjektZeh;
 public sealed class Kernel : Sys.Kernel
 {
     private readonly CosmosStorageService storage = new();
+#if ZEHOS_ROOT_MIGRATION
+    // Etappe 4.5: jeder Schreiber auf /data nimmt einen Lease, damit system migrate die Quelle exklusiv sperren kann.
+    private static readonly Func<IDisposable?>? SourceWrites = AppStorageGate.TryBeginWrite;
+    private static readonly Func<IDisposable?>? PackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
+#else
+    private static readonly Func<IDisposable?>? SourceWrites = null;
+    private static readonly Func<IDisposable?>? PackageWrites = null;
+#endif
     private readonly ConsoleTextOutput output = new();
     // Entsteht erst in InitializeServices, weil die Shell Konten, Pakete und das Pfadprofil braucht.
     private InteractiveSession interactive = null!;
@@ -93,18 +101,19 @@ public sealed class Kernel : Sys.Kernel
         systemPaths = paths;
 #if !ZEHOS_INSTALLER
         updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
-            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory), systemPaths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory);
+            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites), systemPaths.AdminRoot,
+            CosmosDirectoryEntryLimit.ForDirectory, SourceWrites);
 #endif
         // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
         accounts = new(systemPaths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), systemPaths.Comparison,
-            CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory, systemPaths.SecurityDirectory)
+            CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory, systemPaths.SecurityDirectory, SourceWrites)
         {
             MutationBlockedReason = MutationBlockedReason,
         };
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => VfsManager.TryGetMount(systemPaths.AdminRoot, out _);
         // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
-        packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
+        packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion, PackageWrites);
         desktopIdentity = accounts.CreateSession();
 #if ZEHOS_WASM
         // Etappe 13.4: App-Speicher mit demselben Waechter wie die Kontendatei.
@@ -188,7 +197,7 @@ public sealed class Kernel : Sys.Kernel
         var path = systemPaths.AppState(packageId, user);
         if (!path.IsOK()) return null;
         // #210 (ebenenweise anlegen) mit dem Profilpfad aus 4.3; im Root-Profil liegt der App-Zustand unter /var/lib/zehos/apps.
-        var created = Runtime.Wasm.WasmSaveStore.CreateRoot(new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot)),
+        var created = Runtime.Wasm.WasmSaveStore.CreateRoot(new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot), tryBeginWrite: SourceWrites),
             systemPaths.AdminRoot, path.Value!);
         if (!created.IsOK())
         {
@@ -220,6 +229,10 @@ public sealed class Kernel : Sys.Kernel
                 ? ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument, "cause='VirtualSource' message='Pakete nur aus normalen Verzeichnissen installieren.'")
                 : files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
+#if ZEHOS_ROOT_MIGRATION
+        var migration = new MigrationShellCommands(new CosmosMigrationService(storage), tasks, () => accounts.IsAdmin(identity),
+            () => systemPaths.Profile == PathProfile.Legacy, () => identity.Generation, text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("MIGRATE " + text + "\n"));
+#endif
         ShellService? shell = null;
         shell = new ShellService(
         [
@@ -240,13 +253,22 @@ public sealed class Kernel : Sys.Kernel
 #endif
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
-            .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
+            .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands,
+#if ZEHOS_ROOT_MIGRATION
+            .. migration.Commands,
+#endif
         ], systemLog, GetAvailableUptime,
             VersionText,
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
         shell.TakeJobProgress = packageCommands.TakeProgress;
+#if ZEHOS_ROOT_MIGRATION
+        shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult() ?? migration.TakeResult();
+        shell.InterruptJob = migration.Interrupt;
+        shell.OnClose = () => { network.Close(); packageCommands.Close(); migration.Close(); accounts.ReleaseSession(identity); };
+#else
         shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult();
         shell.OnClose = () => { network.Close(); packageCommands.Close(); accounts.ReleaseSession(identity); };
+#endif
         return shell;
     }
 

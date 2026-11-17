@@ -16,6 +16,8 @@
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRootProfile)' == 'true'">$(DefineConstants);ZEHOS_ROOT_PROFILE</DefineConstants>
+    <!-- Etappe 4.5: system migrate (Legacy -> Root) samt Quellsperre aller Schreiber; bis zum Gast-Go nur mit diesem Flag. -->
+    <DefineConstants Condition="'$(ZehOSRootMigration)' == 'true'">$(DefineConstants);ZEHOS_ROOT_MIGRATION</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>

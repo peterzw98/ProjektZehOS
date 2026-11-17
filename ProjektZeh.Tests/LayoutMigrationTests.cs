@@ -235,6 +235,27 @@ public sealed class LayoutMigrationTests
         finally { Directory.Delete(targetRoot, true); }
     }
 
+    // Aus CosmosLayoutProfile.ReadLayout verschoben (4.3 und 4.5 lesen den Marker damit): fehlt = null, sonst nie "fehlt".
+    [TestMethod]
+    public void ReadFileDistinguishesMissingValidOversizedAndBrokenMarkers()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "zehos-marker-read-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "marker");
+            Assert.IsNull(LayoutMarker.ReadFile(path));
+            Assert.IsNull(LayoutMarker.ReadFile(Path.Combine(directory, "fehlt", "marker")), "fehlender Ordner zaehlt als fehlend");
+            File.WriteAllText(path, new LayoutMarker(LayoutState.Migrating, Disk).Serialize());
+            Assert.AreEqual(LayoutState.Migrating, LayoutMarker.ReadFile(path)!.Value!.State);
+            File.WriteAllText(path, new string('x', LayoutMarker.MaximumBytes + 1));
+            Assert.IsFalse(LayoutMarker.ReadFile(path)!.IsOK());
+            File.WriteAllText(path, "state=ready");
+            Assert.IsFalse(LayoutMarker.ReadFile(path)!.IsOK());
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     // Audit zu #212: Marker wurden erst ganz in einen MemoryStream kopiert und danach gegen die Grenze geprueft.
     [TestMethod]
     public void OversizedMarkerIsRejectedAfterTheLimitWithoutReadingItCompletely()
