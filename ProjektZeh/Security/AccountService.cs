@@ -231,11 +231,13 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-            // Home-Topologie vor jeder Pruefung mit System.IO (folgt Links) und vor dem Speichern abweisen.
+            // Erst Rechte und Kontozustand erneut pruefen (ohne Dateisystemzugriff), dann die Home-Topologie vor jeder
+            // Pruefung mit System.IO (folgt Links) und vor dem Speichern.
+            if (!IsAdmin(actor) || accounts.ContainsKey(name) || accounts.Count >= 32 || Access.Contains(Home(name)))
+                return FileAccessControl.Denied();
             var topology = CheckHomeTopology(name);
             if (!topology.IsOK()) return topology;
-            if (!IsAdmin(actor) || accounts.ContainsKey(name) || accounts.Count >= 32 || Access.Contains(Home(name)) ||
-                Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
+            if (Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
             var account = new Account(Guid.NewGuid().ToString("N"), name, administrator, encoded);
             accounts.Add(name, account);
             Access.Assign(Home(name), account.Id);
