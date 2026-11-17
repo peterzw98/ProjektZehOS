@@ -199,15 +199,17 @@ int32_t zehos_aot_probe_fixture(void)
              (unsigned long long)(uintptr_t)module, (unsigned long long)(uintptr_t)(top - ZEHOS_AOT_NATIVE_STACK));
     report(line);
 
+    // fsleep vor den Traps: ein Trap setzt den Wasm-Stackzeiger (__stack_pointer) nicht zurueck, danach scheitert
+    // jede Funktion mit Speicher-Stack. Eine Instanz ist nach einem Trap also nur noch eingeschraenkt nutzbar.
     passed = run_case(instance, env, "ret42", 42, NULL)
            + run_case(instance, env, "call_host", 42, NULL)
+           // B4: Erwartung aus derselben Rechnung auf dem Host (1.1, achtmal *1.5+0.25, mal 1000).
+           + run_case(instance, env, "fsleep", 40506, NULL)
            + run_case(instance, env, "oob", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse", 0, "out of bounds memory access")
            + run_case(instance, env, "recurse_native", 0, "native stack overflow")
            // Nach den Traps muss dieselbe Instanz weiter rechnen.
-           + run_case(instance, env, "ret42", 42, NULL)
-           // B4: Erwartung aus derselben Rechnung auf dem Host (1.1, achtmal *1.5+0.25, mal 1000).
-           + run_case(instance, env, "fsleep", 40506, NULL);
+           + run_case(instance, env, "ret42", 42, NULL);
 
 done:
     if (env != NULL) wasm_runtime_destroy_exec_env(env);
