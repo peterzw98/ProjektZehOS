@@ -12,6 +12,8 @@
     <PackageReference Include="MSTest.TestAdapter" Version="3.6.4" />
     <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
     <PackageReference Include="Moq" Version="4.20.72" />
+    <!-- Nur die Cosmos-Schrift fuer Referenzbilder; dieselbe Version wie im Kernel, nicht im Build referenziert. -->
+    <PackageDownload Include="Cosmos.Kernel.System" Version="[3.0.97]" />
   </ItemGroup>
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
