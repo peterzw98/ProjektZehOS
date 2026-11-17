@@ -87,7 +87,9 @@ Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
 **Beleg (17. November 2026, QEMU/KVM):** Stand `feb5a55` (Plugcode identisch mit diesem Branch): Hosttests 635/635,
 Probe-Build mit `-warnaserror` grün, Gastprobe Lauf 1 16× PASS, Lauf 2 6× PASS, `e2fsck -fn` Exit 0 auf einem frischen
 72-MiB-Image. Vorher mit Originaltreiber (`1b7ef9c`): `e2fsck -fn` Exit 4 (Inode ohne `dtime`, unverbundenes
-Verzeichnis). VMware ungeprüft.
+Verzeichnis). PR-Stand `4e1c941` (zusätzlich Inode-Wiederverwendung nach Delete/Rmdir, Lauf 2 nur lesend): Hosttests
+646/646, Lauf 1 19× PASS, Lauf 2 7× PASS, `e2fsck -fn` Exit 0, normaler ISO bootet bis „Desktop ist bereit“. VMware
+ungeprüft.
 
 ## Gastprobe
 
