@@ -64,4 +64,45 @@ public sealed class MigrationWriteGateTests
             Assert.IsNotNull(after);
         }
     }
+
+    [TestMethod]
+    public void AWriterCanFinishNestedMetadataWritesWhileACompatibilityBlockWaits()
+    {
+        var gate = new MigrationWriteGate();
+        var writer = gate.TryBeginWrite();
+        Assert.IsNotNull(writer);
+        var blocked = new Thread(gate.Block);
+        blocked.Start();
+        try
+        {
+            Assert.IsTrue(SpinWait.SpinUntil(() => gate.IsLocked, 2000));
+            using var metadata = gate.TryBeginWrite();
+            Assert.IsNotNull(metadata, "Der bestehende Schreiber muss seine verschachtelte Metadatensicherung abschliessen koennen.");
+            IDisposable? foreign = null;
+            var other = new Thread(() => foreign = gate.TryBeginWrite());
+            other.Start();
+            Assert.IsTrue(other.Join(2000));
+            try { Assert.IsNull(foreign); }
+            finally { foreign?.Dispose(); }
+        }
+        finally
+        {
+            writer.Dispose();
+            Assert.IsTrue(blocked.Join(2000));
+            gate.ReleaseBlock();
+        }
+    }
+
+    [TestMethod]
+    public void LeaseDisposalOnAnotherThreadReleasesTheOriginalWriter()
+    {
+        var gate = new MigrationWriteGate();
+        var writer = gate.TryBeginWrite();
+        Assert.IsNotNull(writer);
+        var other = new Thread(writer.Dispose);
+        other.Start();
+        Assert.IsTrue(other.Join(2000));
+        using var migration = gate.TryLockSource();
+        Assert.IsNotNull(migration);
+    }
 }

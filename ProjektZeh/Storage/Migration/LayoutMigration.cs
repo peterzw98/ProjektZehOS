@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using ProjektZeh.Security;
@@ -147,7 +146,7 @@ internal static class LayoutMigration
         string expected;
         if (replaced != null)
         {
-            expected = Convert.ToHexStringLower(SHA256.HashData(replaced));
+            expected = MigrationHash.Hex(replaced);
             using var content = new CancellationReadStream(new MemoryStream(replaced, false), cancellation);
             step = target.WriteFile(file.Target, content);
         }
@@ -163,7 +162,7 @@ internal static class LayoutMigration
         var back = target.ReadBack(file.Target);
         if (!back.IsOK()) return back.Status;
         string actual;
-        using (var stream = new CancellationReadStream(back.Value!, cancellation)) actual = Convert.ToHexStringLower(SHA256.HashData(stream));
+        using (var stream = new CancellationReadStream(back.Value!, cancellation)) actual = MigrationHash.Hex(stream);
         if (!string.Equals(actual, expected, StringComparison.Ordinal))
             return ResultErr.CreateFailure(ResultCode.Failure, $"cause='VerifyFailed' message='Pruefsumme nach dem Schreiben falsch: {file.Target}'");
         return target.AppendJournal(MigrationJournal.DoneLine(file.Target, actual), flush: false);

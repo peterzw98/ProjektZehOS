@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using ProjektZeh.Shared;
@@ -122,7 +121,7 @@ internal sealed class MigrationInventory
         try
         {
             using var stream = new CancellationReadStream(File.OpenRead(HostPath(sourceRoot, relativePath)), cancellation);
-            return ResultObjectFactory.CreateSuccess(Convert.ToHexStringLower(SHA256.HashData(stream)));
+            return ResultObjectFactory.CreateSuccess(MigrationHash.Hex(stream));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -137,7 +136,7 @@ internal sealed class MigrationInventory
         foreach (var entry in entries)
             text.Append(entry.IsDirectory ? 'D' : 'F').Append(' ').Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(entry.RelativePath)))
                 .Append(' ').Append(entry.Size.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(entry.Sha256 ?? "-").Append('\n');
-        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+        return MigrationHash.Hex(Encoding.UTF8.GetBytes(text.ToString()));
     }
 
     private static ResultErr Changed(string what) =>

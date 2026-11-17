@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Security.Cryptography;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Storage.Migration;
@@ -16,7 +15,7 @@ public sealed class CancellationReadStreamTests
         using var cancellation = new CancellationTokenSource();
         var inner = new CancelAfterRead(cancellation);
         using var guarded = new CancellationReadStream(inner, cancellation.Token);
-        Assert.ThrowsException<OperationCanceledException>(() => SHA256.HashData(guarded));
+        Assert.ThrowsException<OperationCanceledException>(() => MigrationHash.Hex(guarded));
         Assert.AreEqual(1, inner.Reads);
     }
 

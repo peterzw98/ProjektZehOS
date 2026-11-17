@@ -4,6 +4,7 @@ using System.Text;
 using System.Collections.Generic;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage.Migration;
 
 namespace ProjektZeh.Storage;
 
@@ -17,6 +18,7 @@ internal sealed class FileService
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly Func<string, int?>? directoryEntryLimit;
+    private readonly Func<IDisposable?>? tryBeginWrite;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
     // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
@@ -27,13 +29,15 @@ internal sealed class FileService
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
         FileAccessControl? access = null, UserSession? session = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
-        Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null)
+        Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null,
+        Func<IDisposable?>? tryBeginWrite = null)
     {
         this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
         this.diskSpace = diskSpace;
         this.directoryEntryLimit = directoryEntryLimit;
+        this.tryBeginWrite = tryBeginWrite ?? access?.TryBeginWrite;
         this.access = access;
         this.session = session;
     }
@@ -206,8 +210,10 @@ internal sealed class FileService
         FileStream? temporaryStream = null;
         bool registered = false;
         bool backupRegistered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
             byte[] data = getData();
@@ -245,7 +251,11 @@ internal sealed class FileService
 
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
+
+    private IDisposable? BeginWrite() => tryBeginWrite == null ? null :
+        tryBeginWrite() ?? throw new IOException(MigrationWriteGate.BusyMessage);
 
     private void ReplaceFile(string temporaryPath, string targetPath, bool keepBackup = false)
     {
@@ -312,8 +322,10 @@ internal sealed class FileService
         }
 
         bool registered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             EnsureDirectoryEntryAvailable(resolved.Value!, createParents: true);
             Directory.CreateDirectory(resolved.Value!);
@@ -324,6 +336,7 @@ internal sealed class FileService
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     /// <summary>
@@ -368,8 +381,10 @@ internal sealed class FileService
         bool registered = false;
         string? temporary = null;
         FileStream? temporaryStream = null;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             Authorize(from.Value!, moving ? FilePermission.Read | FilePermission.Write : FilePermission.Read);
             if (moving) Authorize(Path.GetDirectoryName(from.Value!)!, FilePermission.Write);
             // Oeffnen prueft auch fehlende Quellen, bevor Zielrechte angelegt werden.
@@ -415,6 +430,7 @@ internal sealed class FileService
             }
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     public ResultErr DeleteFile(string? path) => DeleteEntry(path, false);
@@ -426,6 +442,7 @@ internal sealed class FileService
         if (!resolved.IsOK()) return resolved.Status;
         try
         {
+            using var writer = BeginWrite();
             Authorize(resolved.Value!, FilePermission.Write);
             Authorize(Path.GetDirectoryName(resolved.Value!)!, FilePermission.Write);
             StringComparison comparison = access?.Comparison ?? StringComparison.OrdinalIgnoreCase;
@@ -448,8 +465,10 @@ internal sealed class FileService
         var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK()) return resolved.Status;
         bool registered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             EnsureDirectoryEntryAvailable(resolved.Value!);
             using (var stream = new FileStream(resolved.Value!, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
@@ -463,6 +482,7 @@ internal sealed class FileService
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     public ResultObject<long> GetFileSize(string? path)

@@ -351,9 +351,8 @@ internal sealed class CosmosStorageService : IStorageService
     /// </summary>
     public ResultErr Unmount()
     {
-        // Etappe 13.4: keine App darf mitten in ein Ersetzen (Temp, Sicherung, Rename) hinein ausgehaengt werden. Block wartet
-        // auf einen laufenden App-Schreibvorgang; bleibt /data eingebunden, wird die Sperre wieder aufgehoben.
-        AppStorageGate.Block();
+        // Aktive Schreiber/Migration sofort ablehnen, statt die Ereignisschleife auf ein langes Schreiben warten zu lassen.
+        if (!AppStorageGate.TryBlock()) return Failure("StorageBusy", "Schreibzugriff oder Migration laeuft; spaeter erneut aushaengen.");
         try
         {
             if (!VfsManager.TryUnmount(MountPoint))
