@@ -67,34 +67,69 @@ static void end_call(wasm_exec_env_t env, const zehos_host_call* call)
     else wasm_runtime_set_exception(instance, memory_exception);
 }
 
-// WAMR uebergibt Rohfunktionen jedes Argument in einem eigenen 64-Bit-Platz; i32-Werte stehen in den unteren 32 Bit.
-// Die Umwandlung in den Parametertyp der Kernfunktion uebernimmt deren Prototyp, wie bei der wasm3-Bindung.
-#define ZEHOS_WAMR_ARGS_0(slots)
-#define ZEHOS_WAMR_ARGS_1(slots) , (slots)[0]
-#define ZEHOS_WAMR_ARGS_2(slots) ZEHOS_WAMR_ARGS_1(slots), (slots)[1]
-#define ZEHOS_WAMR_ARGS_3(slots) ZEHOS_WAMR_ARGS_2(slots), (slots)[2]
-#define ZEHOS_WAMR_ARGS_4(slots) ZEHOS_WAMR_ARGS_3(slots), (slots)[3]
-#define ZEHOS_WAMR_ARGS_5(slots) ZEHOS_WAMR_ARGS_4(slots), (slots)[4]
-#define ZEHOS_WAMR_ARGS_6(slots) ZEHOS_WAMR_ARGS_5(slots), (slots)[5]
-#define ZEHOS_WAMR_ARGS_7(slots) ZEHOS_WAMR_ARGS_6(slots), (slots)[6]
-#define ZEHOS_WAMR_ARGS_8(slots) ZEHOS_WAMR_ARGS_7(slots), (slots)[7]
-#define ZEHOS_WAMR_ARGS_9(slots) ZEHOS_WAMR_ARGS_8(slots), (slots)[8]
-
-// Das Ergebnis gehoert in den ersten Platz und wird nur ohne Trap geschrieben.
-#define ZEHOS_WAMR_CALL_i(function, count) \
-    uint32_t value = (uint32_t)function(&call ZEHOS_WAMR_ARGS_##count(args)); \
-    if (call.trap == ZEHOS_HOST_CONTINUE) *(uint32_t*)args = value;
-#define ZEHOS_WAMR_CALL_v(function, count) \
-    function(&call ZEHOS_WAMR_ARGS_##count(args));
-
-#define ZEHOS_WAMR_WRAPPER(module, name, result, params, function, count) \
-    static void zehos_wamr_##module##_##name(wasm_exec_env_t env, uint64_t* args) \
-    { \
-        (void)args; \
-        zehos_host_call call = begin_call(env); \
-        ZEHOS_WAMR_CALL_##result(function, count) \
-        end_call(env, &call); \
+// AOT-Code ruft aufgeloeste Importe direkt ueber seine Funktionszeigertabelle mit der System-V-Aufrufkonvention
+// (exec_env, Argumente ...) auf, ohne WAMRs Rohfunktions-Bruecke; deshalb gewoehnliche Natives. Dabei hat wamrc fuer
+// Importe, die es aus WAMRs eigener WASI-Bibliothek kennt, Gastadressen bereits selbst in Hostzeiger gewandelt und nur
+// das erste Byte bzw. die mit "~" folgende Laenge geprueft (im Gast belegt: fd_write erhielt iovs und written als
+// Hostzeiger, fd und Anzahl als Zahl). Der Weg ueber invokeNative liefert dagegen Offsets, weil die Signatur hier nur
+// i32 nennt. Jede Gastadresse ("*" in der Tabelle) wird deshalb wieder zum Offset: Hostzeiger des Cosmos-Heaps liegen
+// ueber 4 GiB, Offsets darunter. Ein Hostzeiger ausserhalb des linearen Speichers ist ein Trap. Die volle Pruefung von
+// Adresse und Laenge macht danach wie bei wasm3 die Kernfunktion.
+static void guest_offsets(zehos_host_call* call, const char* params, uint64_t* slots, size_t count)
+{
+    uintptr_t base = (uintptr_t)call->memory;
+    for (size_t index = 0; index < count && params[index] != 0; index++)
+    {
+        if (params[index] != '*' || slots[index] <= UINT32_MAX) continue;
+        if (call->memory == NULL || slots[index] < base || slots[index] - base > call->memorySize)
+        {
+            call->trap = ZEHOS_HOST_TRAP_MEMORY;
+            return;
+        }
+        slots[index] -= base;
     }
+}
+
+// Jedes Argument steht in einem 64-Bit-Register bzw. Stapelplatz; die Wrapper nehmen es als uint64_t, und der
+// Prototyp der Kernfunktion kuerzt i32-Werte auf 32 Bit, wie bei der wasm3-Bindung. Stubs (0 Argumente) ignorieren
+// uebergebene Argumente; der Aufrufer raeumt den Stapel auf.
+#define ZEHOS_WAMR_PARAMS_0
+#define ZEHOS_WAMR_PARAMS_1 , uint64_t a0
+#define ZEHOS_WAMR_PARAMS_2 ZEHOS_WAMR_PARAMS_1, uint64_t a1
+#define ZEHOS_WAMR_PARAMS_3 ZEHOS_WAMR_PARAMS_2, uint64_t a2
+#define ZEHOS_WAMR_PARAMS_4 ZEHOS_WAMR_PARAMS_3, uint64_t a3
+#define ZEHOS_WAMR_PARAMS_5 ZEHOS_WAMR_PARAMS_4, uint64_t a4
+#define ZEHOS_WAMR_PARAMS_6 ZEHOS_WAMR_PARAMS_5, uint64_t a5
+#define ZEHOS_WAMR_PARAMS_7 ZEHOS_WAMR_PARAMS_6, uint64_t a6
+#define ZEHOS_WAMR_PARAMS_8 ZEHOS_WAMR_PARAMS_7, uint64_t a7
+#define ZEHOS_WAMR_PARAMS_9 ZEHOS_WAMR_PARAMS_8, uint64_t a8
+#define ZEHOS_WAMR_ARGS_0
+#define ZEHOS_WAMR_ARGS_1 , a0
+#define ZEHOS_WAMR_ARGS_2 ZEHOS_WAMR_ARGS_1, a1
+#define ZEHOS_WAMR_ARGS_3 ZEHOS_WAMR_ARGS_2, a2
+#define ZEHOS_WAMR_ARGS_4 ZEHOS_WAMR_ARGS_3, a3
+#define ZEHOS_WAMR_ARGS_5 ZEHOS_WAMR_ARGS_4, a4
+#define ZEHOS_WAMR_ARGS_6 ZEHOS_WAMR_ARGS_5, a5
+#define ZEHOS_WAMR_ARGS_7 ZEHOS_WAMR_ARGS_6, a6
+#define ZEHOS_WAMR_ARGS_8 ZEHOS_WAMR_ARGS_7, a7
+#define ZEHOS_WAMR_ARGS_9 ZEHOS_WAMR_ARGS_8, a8
+// slots[0] ist ein Platzhalter, damit auch Stubs ohne Argumente ein gueltiges Feld haben.
+#define ZEHOS_WAMR_SLOTS_0
+#define ZEHOS_WAMR_SLOTS_1 , slots[1]
+#define ZEHOS_WAMR_SLOTS_2 ZEHOS_WAMR_SLOTS_1, slots[2]
+#define ZEHOS_WAMR_SLOTS_3 ZEHOS_WAMR_SLOTS_2, slots[3]
+#define ZEHOS_WAMR_SLOTS_4 ZEHOS_WAMR_SLOTS_3, slots[4]
+#define ZEHOS_WAMR_SLOTS_5 ZEHOS_WAMR_SLOTS_4, slots[5]
+#define ZEHOS_WAMR_SLOTS_6 ZEHOS_WAMR_SLOTS_5, slots[6]
+#define ZEHOS_WAMR_SLOTS_7 ZEHOS_WAMR_SLOTS_6, slots[7]
+#define ZEHOS_WAMR_SLOTS_8 ZEHOS_WAMR_SLOTS_7, slots[8]
+#define ZEHOS_WAMR_SLOTS_9 ZEHOS_WAMR_SLOTS_8, slots[9]
+#define ZEHOS_WAMR_PREPARE(params, count)     zehos_host_call call = begin_call(env);     uint64_t slots[(count) + 1] = { 0 ZEHOS_WAMR_ARGS_##count };     guest_offsets(&call, params, slots + 1, count);
+
+// Nach einem Trap ist das Ergebnis bedeutungslos; der AOT-Code prueft die Ausnahme und verwirft es.
+#define ZEHOS_WAMR_WRAPPER_i(module, name, params, function, count)     static uint32_t zehos_wamr_##module##_##name(wasm_exec_env_t env ZEHOS_WAMR_PARAMS_##count)     {         ZEHOS_WAMR_PREPARE(params, count)         uint32_t value = 0;         if (call.trap == ZEHOS_HOST_CONTINUE) value = (uint32_t)function(&call ZEHOS_WAMR_SLOTS_##count);         end_call(env, &call);         return call.trap == ZEHOS_HOST_CONTINUE ? value : 0;     }
+#define ZEHOS_WAMR_WRAPPER_v(module, name, params, function, count)     static void zehos_wamr_##module##_##name(wasm_exec_env_t env ZEHOS_WAMR_PARAMS_##count)     {         ZEHOS_WAMR_PREPARE(params, count)         if (call.trap == ZEHOS_HOST_CONTINUE) function(&call ZEHOS_WAMR_SLOTS_##count);         end_call(env, &call);     }
+#define ZEHOS_WAMR_WRAPPER(module, name, result, params, function, count)     ZEHOS_WAMR_WRAPPER_##result(module, name, params, function, count)
 ZEHOS_HOST_FUNCTIONS(ZEHOS_WAMR_WRAPPER)
 
 // Signaturen entstehen beim Registrieren aus der Tabelle; WAMR braucht sie veraenderbar (Sortierung der Symbole).
@@ -114,8 +149,8 @@ static struct
 enum { ZEHOS_WAMR_BINDINGS = sizeof(bindings) / sizeof(bindings[0]), ZEHOS_WAMR_SIGNATURE = 16 };
 static char signatures[ZEHOS_WAMR_BINDINGS][ZEHOS_WAMR_SIGNATURE];
 
-// "i*i*" mit Ergebnis i wird zu "(iiii)i". Gastadressen ("*") bleiben bewusst i32: WAMR wandelt "*"-Parameter selbst in
-// Hostzeiger und prueft dabei nur ein Byte; die Kernfunktionen brauchen den Offset und pruefen die volle Laenge.
+// "i*i*" mit Ergebnis i wird zu "(iiii)i". Gastadressen ("*") bleiben in der Signatur bewusst i32, damit der Weg ueber
+// invokeNative Offsets liefert; Hostzeiger aus dem direkten Aufruf wandelt guest_offsets zurueck.
 static int build_signature(char* target, const char* params, const char* result)
 {
     size_t length = strlen(params);
@@ -137,7 +172,7 @@ static int register_host(void)
     {
         if (!build_signature(signatures[index], bindings[index].params, bindings[index].result)) return 0;
         bindings[index].symbol.signature = signatures[index];
-        if (!wasm_runtime_register_natives_raw(bindings[index].module, &bindings[index].symbol, 1)) return 0;
+        if (!wasm_runtime_register_natives(bindings[index].module, &bindings[index].symbol, 1)) return 0;
     }
     return 1;
 }
