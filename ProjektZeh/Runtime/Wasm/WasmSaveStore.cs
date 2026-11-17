@@ -73,6 +73,7 @@ internal sealed class WasmSaveStore
     private readonly Func<string, bool, ResultErr>? pathGuard;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly WasmSaveLimits limits;
+    private readonly Func<int, byte[]?> allocate;
     private readonly Func<Func<int>, int> disk;
     private readonly StringComparison comparison;
     private readonly FileService files;
@@ -89,8 +90,10 @@ internal sealed class WasmSaveStore
     /// </param>
     public WasmSaveStore(string root, Func<bool> writesBlocked, Func<string, bool, ResultErr>? pathGuard = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null, WasmSaveLimits? limits = null,
-        Func<Func<int>, int>? disk = null, StringComparison comparison = StringComparison.OrdinalIgnoreCase)
+        Func<Func<int>, int>? disk = null, StringComparison comparison = StringComparison.OrdinalIgnoreCase,
+        Func<int, byte[]?>? allocate = null)
     {
+        this.allocate = allocate ?? BufferAllocation.TryAllocate;
         // Pfadvergleich des Dateisystems: FAT (Legacy) ohne, ext2 (Root) mit Gross-/Kleinschreibung.
         this.comparison = comparison;
         this.disk = disk ?? (operation => operation());
@@ -100,7 +103,7 @@ internal sealed class WasmSaveStore
         this.diskSpace = diskSpace;
         this.limits = limits ?? new WasmSaveLimits();
         // Ohne Rechteverwaltung wie die Kontendatei: der Waechter prueft Symlinks und Mountgrenzen.
-        files = new FileService(this.root, pathGuard: pathGuard, diskSpace: diskSpace);
+        files = new FileService(this.root, pathGuard: pathGuard, diskSpace: diskSpace) { AllocateBuffer = this.allocate };
     }
 
     /// <summary>
@@ -392,7 +395,11 @@ internal sealed class WasmSaveStore
             capacity = size;
             if (buffered - entry.Data.Length + capacity > limits.BufferBytes) return WasiErrno.NoSpace;
         }
-        var data = new byte[capacity];
+        // Scheitert die Verdopplung, genuegt vielleicht die exakte Groesse. Ohne Puffer vom Kernel-Heap meldet die App ENOSPC wie
+        // bei ausgeschoepftem Pufferbudget; Eintrag und Zaehler bleiben.
+        byte[]? data = allocate((int)capacity);
+        if (data is null && capacity > size) data = allocate((int)(capacity = size));
+        if (data is null) return WasiErrno.NoSpace;
         entry.Data.AsSpan(0, entry.Length).CopyTo(data);
         buffered += capacity - entry.Data.Length;
         entry.Data = data;
@@ -406,7 +413,8 @@ internal sealed class WasmSaveStore
         long existing = File.Exists(entry.Path) ? new FileInfo(entry.Path).Length : 0;
         if (Usage().Bytes - existing + entry.Length > limits.TotalBytes) return WasiErrno.NoSpace;
         if (!HasDiskSpace(entry.Length)) return WasiErrno.NoSpace;
-        byte[] content = entry.Data.AsSpan(0, entry.Length).ToArray();
+        // Ohne Kopie (bis 16 MiB, Audit-Befund): der Puffer aendert sich waehrend des synchronen Schreibens nicht.
+        ReadOnlyMemory<byte> content = entry.Data.AsMemory(0, entry.Length);
         int status = disk(() =>
         {
             var written = files.WriteBytes(entry.Path, content);
