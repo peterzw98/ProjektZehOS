@@ -200,4 +200,52 @@ public sealed class DesktopE2ETests
         scenario.Chord(PhysicalKey.Alt, PhysicalKey.F1);
         scenario.Check($"menue-{width}x{height}");
     }
+    // Strg+Umschalt+Taste wie auf der Tastatur: Modifikatoren halten, Taste druecken, in umgekehrter Reihenfolge loesen.
+    private static void ControlShift(DesktopScenario scenario, byte key)
+    {
+        scenario.Desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
+        scenario.Desktop.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
+        scenario.Desktop.Handle(new(InputEventType.KeyDown, KeyCode: key));
+        scenario.Desktop.Handle(new(InputEventType.KeyUp, KeyCode: key));
+        scenario.Desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.LeftShift));
+        scenario.Desktop.Handle(new(InputEventType.KeyUp, KeyCode: (byte)PhysicalKey.Control));
+        scenario.Frame();
+    }
+
+    [TestMethod]
+    public void Terminal_TabsSplitSearchMenuAndExit()
+    {
+        using var scenario = new DesktopScenario();
+        Launch(scenario, "term");
+        var workspace = ActiveTerminal(scenario);
+        scenario.Line("echo erster");
+        ControlShift(scenario, 20);
+        Assert.AreEqual((2, 1), (workspace.TabCount, workspace.ActiveTabIndex), "Strg+Umschalt+T oeffnet einen zweiten Tab.");
+        ControlShift(scenario, 18);
+        Assert.AreEqual(2, workspace.ViewCount, "Strg+Umschalt+E teilt nebeneinander.");
+        var right = workspace.ActiveTerminal;
+        ControlShift(scenario, 49);
+        Assert.AreNotSame(right, workspace.ActiveTerminal, "Strg+Umschalt+N wechselt die Ansicht.");
+        scenario.Line("echo links");
+        ControlShift(scenario, 33);
+        scenario.Line("links");
+        scenario.Check("terminal-geteilt-suche");
+
+        // Menue ueber Strg+Umschalt+M, mit Pfeiltasten auf "Uebereinander" und Enter.
+        ControlShift(scenario, 50);
+        scenario.Key(PhysicalKey.Down);
+        scenario.Key(PhysicalKey.Down);
+        scenario.Key(PhysicalKey.Enter);
+        Assert.AreEqual(3, workspace.ViewCount, "Das Menue teilt die aktive Ansicht uebereinander.");
+        ControlShift(scenario, 17);
+        Assert.AreEqual(2, workspace.ViewCount, "Strg+Umschalt+W schliesst die aktive Ansicht.");
+
+        // exit beendet nur die eigene Ansicht; der letzte Tab mit einer Ansicht schliesst danach das Fenster nicht.
+        scenario.Line("exit");
+        Assert.AreEqual(1, workspace.ViewCount);
+        scenario.Line("exit");
+        Assert.AreEqual(1, workspace.TabCount, "exit in der letzten Ansicht schliesst den Tab.");
+        Assert.AreEqual(1, Count<TerminalWorkspaceApp>(scenario));
+        CollectionAssert.Contains(Lines(workspace.ActiveTerminal), "erster", "Der erste Tab behaelt seine Ausgabe.");
+    }
 }

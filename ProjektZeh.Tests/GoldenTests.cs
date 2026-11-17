@@ -72,6 +72,28 @@ public sealed class GoldenTests
     }
 
     [TestMethod]
+    public void Font_MissingPackage_FailsInCiAndIsInconclusiveLocally()
+    {
+        string? packages = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
+        string? ci = Environment.GetEnvironmentVariable("CI");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            // Ohne Schrift waeren alle Referenzbilder textlos; in der CI darf das nicht als uebersprungen durchgehen.
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", directory);
+            Environment.SetEnvironmentVariable("CI", "true");
+            Assert.ThrowsException<AssertFailedException>(() => Golden.Font());
+            Environment.SetEnvironmentVariable("CI", null);
+            Assert.ThrowsException<AssertInconclusiveException>(() => Golden.Font());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", packages);
+            Environment.SetEnvironmentVariable("CI", ci);
+        }
+    }
+
+    [TestMethod]
     public void DesktopClock_UsesInjectedTime()
     {
         var first = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);

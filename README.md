@@ -115,6 +115,12 @@ python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.c
 
 `scripts/coverage-exclusions.txt` nennt die wenigen Dateien, die nicht mitzählen, jeweils mit Grund. Die Abdeckung sagt nur, welche Zeilen ein Test ausführt, und gilt nur für die Quellen, die das Testprojekt einbindet. Kernelstart, Treiber und die Cosmos-Hardwareadapter fehlen im Nenner; `--sources ProjektZeh` listet diese ungemessenen Dateien auf.
 
+`DesktopE2ETests` bedient den Desktop auf dem Host Ende zu Ende nur über Eingabeereignisse (Anmeldung, Startmenü, Terminal, Dateien, Texteditor, Einstellungen, Fenster, Arbeitsflächen, Taskmanager) und vergleicht das gezeichnete Bild mit Referenzbildern unter `ProjektZeh.Tests/Golden/`. Verglichen wird die SHA-256-Prüfsumme der Pixel (`<Name>.sha256`); das PNG daneben dient nur zum Ansehen. Die Uhr steht dabei fest auf 2. Januar 2026, 03:04:05 UTC. Bereiche, die den Hostpfad der temporären Testplatte zeigen, werden vor dem Vergleich magentafarben übermalt. Die Tests brauchen die Cosmos-Schrift aus dem NuGet-Paket `Cosmos.Kernel.System` 3.0.97, das `dotnet restore` lädt. Fehlt sie, gelten die Tests lokal als nicht ausführbar; ist die Umgebungsvariable `CI` gesetzt, scheitern sie. Weicht ein Bild ab, liegt das erhaltene Bild unter `TestResults/golden/<Name>.actual.png`. Nach einer gewollten Änderung der Oberfläche die Referenzbilder neu erzeugen und jedes geänderte PNG im Pull Request ansehen:
+
+```powershell
+$env:ZEHOS_UPDATE_GOLDEN = "1"; dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"; Remove-Item Env:ZEHOS_UPDATE_GOLDEN
+```
+
 ## Dateisystem in QEMU
 
 Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
