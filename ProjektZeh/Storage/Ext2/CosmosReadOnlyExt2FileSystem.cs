@@ -14,12 +14,15 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
     internal const string MountPoint = "/mnt/ext2-ro";
     private bool registered;
 
-    public bool TryMount([NotNullWhen(true)] out VfsMount? mount)
+    public bool TryMount([NotNullWhen(true)] out VfsMount? mount) => TryMount(MountPoint, out mount);
+
+    /// <summary>Etappe 4.3: im Fall RootUnclean haengt der Kernel die Lesekomponente direkt auf / ein.</summary>
+    public bool TryMount(string mountPoint, [NotNullWhen(true)] out VfsMount? mount)
     {
         mount = null;
         foreach (VfsMount existing in VfsManager.Mounts)
         {
-            if (existing.MountPoint == MountPoint || ReferenceEquals(existing.Partition, device)) return false;
+            if (existing.MountPoint == mountPoint || ReferenceEquals(existing.Partition, device)) return false;
         }
 
         if (!registered)
@@ -28,7 +31,7 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
             registered = true;
         }
 
-        return VfsManager.TryMount(FileSystemName, "", MountFlags.ReadOnly, MountPoint, out mount);
+        return VfsManager.TryMount(FileSystemName, "", MountFlags.ReadOnly, mountPoint, out mount);
     }
 
     public bool TryMount(ReadOnlySpan<char> source, MountFlags flags, [NotNullWhen(true)] out IVfsSuperblock? superblock)

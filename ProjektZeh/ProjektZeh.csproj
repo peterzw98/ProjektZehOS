@@ -15,6 +15,7 @@
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSRootProfile)' == 'true'">$(DefineConstants);ZEHOS_ROOT_PROFILE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityFileProbe)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_PROBE;ZEHOS_SECURITY_FILE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSecurityRecovery)' == 'true'">$(DefineConstants);ZEHOS_SECURITY_RECOVERY;ZEHOS_RECOVERY</DefineConstants>

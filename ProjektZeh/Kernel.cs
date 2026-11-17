@@ -47,6 +47,10 @@ public sealed class Kernel : Sys.Kernel
     private UpdateController updates = null!;
 #endif
     private AccountService accounts = null!;
+#if ZEHOS_ROOT_PROFILE
+    // Etappe 4.3: Ergebnis der Profilwahl; RootVolume nur im schreibbaren Root-Fall (s_state beim Herunterfahren).
+    private CosmosLayoutSelection? layout;
+#endif
     private PackageStore packages = null!;
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
@@ -92,7 +96,7 @@ public sealed class Kernel : Sys.Kernel
         accounts = new(systemPaths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), systemPaths.Comparison,
             CosmosPathGuard.For(systemPaths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory, systemPaths.SecurityDirectory)
         {
-            MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
+            MutationBlockedReason = MutationBlockedReason,
         };
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => VfsManager.TryGetMount(systemPaths.AdminRoot, out _);
@@ -110,6 +114,35 @@ public sealed class Kernel : Sys.Kernel
 #endif
     }
 
+    /// <summary>
+    /// Sperrgrund vor jeder Kontenmutation (7a): mit Profilwahl zuerst deren Grund, der fuer die ganze Sitzung gilt
+    /// (nicht ruecksetzbar), sonst die Identitaet des aktuell als /data eingehaengten Volumes.
+    /// </summary>
+    private string? MutationBlockedReason()
+    {
+#if ZEHOS_ROOT_PROFILE
+        if (layout?.Decision.BlockedReason is { } blocked) return blocked;
+#endif
+        return CosmosInstalledIdentity.MutationBlockedReason();
+    }
+
+#if ZEHOS_ROOT_PROFILE
+    /// <summary>Ein Root-Marker fresh wird nach dem ersten erfolgreichen Speichern der Konten auf ready gesetzt (Spec Abschnitt 2).</summary>
+    private void ApplyLayout()
+    {
+        if (layout is null) return;
+        if (!layout.Decision.MarkReadyOnSave || layout.RootVolume is not { } volume) return;
+        bool marked = false;
+        accounts.Saved = () =>
+        {
+            if (marked) return;
+            var result = CosmosLayoutProfile.MarkReady(layout.DiskGuid, volume);
+            if (result.IsOK()) marked = true;
+            else systemLog.Error("Storage", result.Message);
+        };
+    }
+
+#endif
     /// <summary>Neue Terminals starten als angemeldeter Desktopbenutzer, behalten danach aber ihre eigene Identitaet.</summary>
     private ShellService CreateTerminalShell(UserSession desktopIdentity)
     {
@@ -202,8 +235,15 @@ public sealed class Kernel : Sys.Kernel
             return;
         }
 
-        // Legacy-Profil bis zur Profilwahl (4.3 hinter ZehOSRootProfile); vor jedem Zugriff auf Konten, Pakete und Updates.
+        // Profilwahl (4.3) vor jedem Zugriff auf Konten, Pakete und Updates; ohne ZehOSRootProfile immer Legacy.
+#if ZEHOS_ROOT_PROFILE
+        if (StorageManager.IsEnabled && StorageManager.IsInitialized)
+            layout = CosmosLayoutProfile.Select(text => systemLog.Information("Storage", text));
+        InitializeServices(layout?.Decision.Profile == PathProfile.Root ? SystemPaths.Root : SystemPaths.Legacy);
+        ApplyLayout();
+#else
         InitializeServices(SystemPaths.Legacy);
+#endif
         boot.RunStep("Storage", () =>
         {
             if (!StorageManager.IsEnabled || !StorageManager.IsInitialized)
@@ -221,7 +261,22 @@ public sealed class Kernel : Sys.Kernel
             output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
             return ResultErr.CreateSuccess();
 #else
+#if ZEHOS_ROOT_PROFILE
+            if (layout?.Decision.Profile == PathProfile.Root)
+            {
+                // / und /boot/efi sind schon eingehaengt; die Sperre (RootUnclean) kommt allein aus der Profilwahl.
+                accounts.SetupBlockedReason = layout.Decision.BlockedReason;
+                string text = layout.Decision.Outcome == LayoutOutcome.Root ? "Root-Profil: / (ext2) und /boot/efi eingebunden." : "Root-Profil nur lesend: Root nicht sauber ausgehaengt, offline e2fsck noetig.";
+                output.WriteLine(text);
+                systemLog.Information("Storage", text);
+                ReconcilePackages();
+                return ResultErr.CreateSuccess();
+            }
+#endif
             var mounted = storage.MountData(out string? setupBlockedReason);
+#if ZEHOS_ROOT_PROFILE
+            setupBlockedReason ??= layout?.Decision.BlockedReason;
+#endif
             accounts.SetupBlockedReason = setupBlockedReason;
             if (mounted.IsOK())
             {
@@ -354,7 +409,13 @@ public sealed class Kernel : Sys.Kernel
 #endif
             return ResultErr.CreateFailure(ResultCode.Failure, "Hintergrundaufgaben laufen noch; Energieaktion abgebrochen.");
         }
+#if ZEHOS_ROOT_PROFILE
+        // Root-Profil: / laesst sich nicht aushaengen; /boot/efi aushaengen, zweimal Sync, s_state = 1 (Spec Abschnitt 2).
+        var unmounted = layout?.RootVolume is { } rootVolume ? CosmosLayoutProfile.Close(rootVolume)
+            : systemPaths.Profile == PathProfile.Legacy && VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+#else
         var unmounted = VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+#endif
 #if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();
 #endif

@@ -71,6 +71,12 @@ internal sealed class AccountService
     public bool SetupWindowOpen { get; set; }
 
     /// <summary>
+    /// Nach jedem erfolgreichen Speichern der Kontendatei (Etappe 4.3: Root-Marker fresh wird danach auf ready gesetzt).
+    /// Fehler des Rueckrufs aendern das Speicherergebnis nicht; der Rueckruf meldet sie selbst.
+    /// </summary>
+    public Action? Saved { get; set; }
+
+    /// <summary>
     /// Ersteinrichtung nur beim Boot, nur mit eingebundenem /data und nur ohne vorhandene Kontendatei. Eine fehlende Datei auf
     /// einer waehrend der Sitzung gewechselten oder gar nicht eingebundenen Platte ergibt Sperre statt Einrichtung.
     /// </summary>
@@ -379,7 +385,11 @@ internal sealed class AccountService
         }
         var result = metadata.WriteText(MetadataFile, text.ToString(), MaximumMetadataLength);
         if (!result.IsOK()) Lock();
-        else NeedsSetup = false;
+        else
+        {
+            NeedsSetup = false;
+            Saved?.Invoke();
+        }
         return result;
     }
 

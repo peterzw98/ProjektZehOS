@@ -78,7 +78,10 @@ public sealed class AccountServiceTests
             };
             Assert.IsFalse(accounts.Load().IsOK());
             Assert.IsTrue(accounts.NeedsSetup);
+            int saved = 0;
+            accounts.Saved = () => saved++;
             Assert.IsTrue(accounts.SetupWork(accounts.CreateSession(), "admin", "admin-password-123")()().IsOK());
+            Assert.IsTrue(saved > 0, "Saved nach erfolgreichem Speichern (Root-Marker ready)");
             Assert.IsTrue(File.Exists(Path.Combine(security, AccountService.MetadataFile)));
             Assert.IsFalse(File.Exists(Path.Combine(root, AccountService.MetadataFile)));
 
