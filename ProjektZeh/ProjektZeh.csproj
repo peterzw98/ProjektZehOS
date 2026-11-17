@@ -10,6 +10,8 @@
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <!-- GPT-Installer (Spec 7a-S4) nur in Testbuilds bis zum Go von Paket 4.0 und gruenen Gasttests G1-G7. -->
     <DefineConstants Condition="'$(ZehOSGptInstaller)' == 'true'">$(DefineConstants);ZEHOS_GPT_INSTALLER</DefineConstants>
+    <!-- Nur fuer den G8-Abbruchtest: vor dem ESP-Marker bei 96 Prozent warten. -->
+    <DefineConstants Condition="'$(ZehOSGptInstaller)' == 'true' and '$(ZehOSGptG8Probe)' == 'true'">$(DefineConstants);ZEHOS_GPT_G8_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>

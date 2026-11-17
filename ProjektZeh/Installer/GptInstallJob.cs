@@ -93,6 +93,10 @@ internal sealed class GptInstallJob : IInstallJob
     {
         if (failure != null) return failure;
         if (IsCompleted) return ResultErr.CreateSuccess();
+#if ZEHOS_GPT_G8_PROBE
+        // Der Gast bleibt nach dem Bootdatei-Flush bei 96 Prozent fuer den harten Abbruch stehen.
+        if (Stage == InstallStage.WritingMarker) return ResultErr.CreateSuccess();
+#endif
         ResultErr result = Stage switch
         {
             InstallStage.Partitioning => Advance(target.WriteLayout(table), InstallStage.FormattingEsp, "GPT geschrieben"),
