@@ -44,6 +44,15 @@ def region(ppm: bytes, box: tuple[int, int, int, int]) -> bytes:
     return b"".join(pixels[(row * width + left) * 3:(row * width + right) * 3] for row in range(top, bottom))
 
 
+# Erwartet im Recovery-Lauf, der absichtlich ohne Datenplatte startet (DataDiskSelector, Kernel protokolliert es als Error).
+WITHOUT_DISK = "Error Storage: Failure: cause=DeviceNotFound message=Keine Datenplatte gefunden."
+
+
+def unexpected_errors(serial: str, recovery: bool) -> list[str]:
+    """Error-Zeilen ohne die im jeweiligen Lauf erwartete."""
+    return [line for line in error_lines(serial) if not (recovery and WITHOUT_DISK in line)]
+
+
 def error_lines(serial: str) -> list[str]:
     """Zeilen des seriellen Protokolls mit einem Eintrag der Stufe Error."""
     return [line for line in serial.splitlines() if ERROR_LINE.search(line)]
@@ -237,7 +246,7 @@ def run(work: Path, start_vm, recovery: bool, boot_timeout: float) -> int:
     current = Run(work, start_vm, boot_timeout)
     try:
         current.recovery_flow() if recovery else current.desktop_flow()
-        errors = error_lines(current.serial())
+        errors = unexpected_errors(current.serial(), recovery)
         if errors:
             raise AssertionError("Error-Zeilen im seriellen Protokoll:\n" + "\n".join(errors))
         current.guest.log("fertig")

@@ -42,6 +42,12 @@ class ErrorLineTests(unittest.TestCase):
                   '[15 ms] Information Shell: Error im Text ist kein Fehler.\n')
         self.assertEqual(guest.error_lines(serial), [])
 
+    def test_missing_data_disk_is_expected_only_in_recovery(self):
+        serial = ('[9 ms] Error Storage: Failure: cause=DeviceNotFound message=Keine Datenplatte gefunden.\n'
+                  '[10 ms] Error Desktop: Anderer Fehler.\n')
+        self.assertEqual(guest.unexpected_errors(serial, recovery=True), ['[10 ms] Error Desktop: Anderer Fehler.'])
+        self.assertEqual(len(guest.unexpected_errors(serial, recovery=False)), 2)
+
 
 class RecoveryMachineTests(unittest.TestCase):
     def test_without_appdisk_keeps_other_devices(self):
