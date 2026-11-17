@@ -11,6 +11,8 @@ using Org.BouncyCastle.X509;
 using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
 using ProjektZeh.Security;
+using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -21,6 +23,8 @@ internal interface IWasmSession
 {
     /// <summary>Ordner, auf den die Anwendung lesend als "/" zugreift; null sperrt Dateizugriffe.</summary>
     string? Root { get; }
+    /// <summary>Etappe 13.4: Ordner fuer /save (eigener App-Speicher); null, wenn die App nicht speichern darf oder kann.</summary>
+    string? SaveRoot { get; }
     bool AllowsNetwork { get; }
     void Write(int fd, ReadOnlySpan<byte> data);
     void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test);
@@ -55,6 +59,16 @@ internal static unsafe class WasmRuntime
     private static IList<X509Certificate>? tlsAnchors;
     private static int nextHandle;
     private static uint[] indexedFrame = [];
+    private static WasmSaveStore? save;
+
+    /// <summary>Waechter fuer Symlinks und Mountgrenzen des App-Speichers; der Kernel setzt ihn beim Start.</summary>
+    public static Func<string, bool, ResultErr>? SavePathGuard { get; set; }
+    /// <summary>Freier Platz des Datentraegers fuer die ENOSPC-Vorpruefung.</summary>
+    public static Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? SaveDiskSpace { get; set; }
+    /// <summary>Migrations- (4.5) bzw. Energiesperre (7b): solange true, melden schreibende Aufrufe EBUSY.</summary>
+    public static Func<bool> SaveWritesBlocked { get; set; } = () => false;
+    /// <summary>Pfadvergleich des Profils (Legacy-FAT ohne, ext2-Root mit Gross-/Kleinschreibung).</summary>
+    public static StringComparison SaveComparison { get; set; } = StringComparison.OrdinalIgnoreCase;
 
     /// <summary>Summe der Wartezeit (sleep_ms) des laufenden bzw. letzten Laufs in Stopwatch-Ticks; trennt Rechen- von Wartezeit.</summary>
     public static long WaitedTicks { get; private set; }
@@ -74,18 +88,20 @@ internal static unsafe class WasmRuntime
         Action<WasmStatus, int, string> completed, byte[]? aot = null)
     {
         ArgumentNullException.ThrowIfNull(module);
-        EnqueueLoaded(() => (module, null), aot, entry, gas, session, completed);
+        EnqueueLoaded(() => (module, aot, null), entry, gas, session, completed, null);
     }
 
     /// <summary>
-    /// Wie oben, laedt das Modul aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser Paketdateien.
-    /// Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung.
+    /// Wie oben, laedt Modul und optionales .aot aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser
+    /// Paketdateien. Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung. Mit name meldet der Lauf
+    /// seriell die gewaehlte Laufzeit und einen Rueckfall auf wasm3 (Gasttests fragen beides ab).
     /// </summary>
-    public static void Enqueue(Func<(byte[]? Module, string? Error)> load, string entry, ulong gas, IWasmSession session,
-        Action<WasmStatus, int, string> completed) => EnqueueLoaded(load, null, entry, gas, session, completed);
+    public static void Enqueue(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas, IWasmSession session,
+        Action<WasmStatus, int, string> completed, string? name = null) =>
+        EnqueueLoaded(load, entry, gas, session, completed, name);
 
-    private static void EnqueueLoaded(Func<(byte[]? Module, string? Error)> load, byte[]? aot, string entry, ulong gas,
-        IWasmSession session, Action<WasmStatus, int, string> completed)
+    private static void EnqueueLoaded(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas,
+        IWasmSession session, Action<WasmStatus, int, string> completed, string? name)
     {
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
@@ -98,11 +114,11 @@ internal static unsafe class WasmRuntime
                 WasmStatus status = WasmStatus.LoadFailed;
                 int result = 0;
                 string message;
-                (byte[]? Module, string? Error) loaded;
+                (byte[]? Module, byte[]? Aot, string? Error) loaded;
                 // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
                 try { loaded = load(); }
-                catch (Exception exception) { loaded = (null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, aot, entry, gas, session, out result, out message);
+                catch (Exception exception) { loaded = (null, null, exception.Message); }
+                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
                 else message = loaded.Error ?? "Modul nicht geladen.";
                 // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
                 lock (gate) pending--;
@@ -174,8 +190,8 @@ internal static unsafe class WasmRuntime
             $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB\n");
     }
 
-    private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session, out int result,
-        out string message)
+    private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session,
+        string? name, out int result, out string message)
     {
         byte[] entryBytes = Encoding.ASCII.GetBytes(entry + "\0");
         byte* text = stackalloc byte[256];
@@ -183,14 +199,25 @@ internal static unsafe class WasmRuntime
         int code;
         current = session;
         network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
+        save = session.SaveRoot is { } saveRoot ? new WasmSaveStore(saveRoot, () => AppStorageGate.IsBlocked || SaveWritesBlocked(), SavePathGuard,
+            SaveDiskSpace, disk: operation => AppStorageGate.Run(operation, WasiErrno.Busy), comparison: SaveComparison) : null;
         WaitedTicks = 0;
         try
         {
-            fixed (byte* name = entryBytes)
+            fixed (byte* entryName = entryBytes)
             {
-                code = WasmEngineSelection.Select(AotBuiltIn, aot, gas) == WasmEngine.Aot
-                    ? RunAot(aot!, name, &value, text)
-                    : RunWasm3(module, name, gas, &value, text);
+                bool native = WasmEngineSelection.Select(WasmEngineSelection.AotBuiltIn, aot, gas) == WasmEngine.Aot;
+                ReportEngine(name, native ? "aot " + WasmEngineSelection.AotAbi : "wasm3");
+                int instantiated = 0;
+                code = native ? RunAot(aot!, entryName, &value, text, &instantiated) : RunWasm3(module, entryName, gas, &value, text);
+                // Scheitert das .aot vor dem Instanziieren (Format, Laden, Speicherobergrenze), laeuft dieselbe App unter
+                // wasm3. Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
+                if (native && WasmEngineSelection.FallsBackToWasm3(module.Length > 0, code != (int)WasmStatus.Ok, instantiated != 0))
+                {
+                    ReportEngine(name, $"wasm3 AOT-Rueckfall: {(WasmStatus)code} {Marshal.PtrToStringAnsi((IntPtr)text)}");
+                    value = 0;
+                    code = RunWasm3(module, entryName, gas, &value, text);
+                }
             }
         }
         catch (Exception exception)
@@ -203,6 +230,10 @@ internal static unsafe class WasmRuntime
             text[count] = 0;
         }
         current = null;
+        // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
+        try { save?.CloseAll(); }
+        catch (Exception) { code = (int)WasmStatus.Trap; }
+        save = null;
         int networkCleanup = network.CloseAll();
         network = null;
         foreach (var stream in files.Values)
@@ -229,26 +260,30 @@ internal static unsafe class WasmRuntime
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
 
+    // Eigene WASM-Zeile statt "APP <id> ...": Gasttests werten jede andere APP-Zeile beim Warten auf "erstes Bild" als
+    // Fehlschlag. Format: "WASM Start <name> Laufzeit=aot <AotAbi>" bzw. "Laufzeit=wasm3[ AOT-Rueckfall: <Status> <Text>]".
+    private static void ReportEngine(string? name, string engine)
+    {
+        if (name != null) Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Start {name} Laufzeit={engine}\n");
+    }
+
     // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn waehlt WasmEngineSelection immer wasm3.
 #if ZEHOS_WASM_AOT
-    private const bool AotBuiltIn = true;
 
     // Dieselben Grenzen wie wasm3 (Speicher, Stack der Ausfuehrungsumgebung), aber kein Gasbudget.
-    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text)
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text, int* instantiated)
     {
         fixed (byte* bytes = aot)
         {
-            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated);
         }
     }
 
     [DllImport("*", EntryPoint = "zehos_wasm_run_aot", ExactSpelling = true)]
     private static extern int NativeRunAot(byte* bytes, uint length, byte* entry, uint stackBytes, ulong memoryBytes,
-        int* result, byte* message, uint messageLength);
+        int* result, byte* message, uint messageLength, int* instantiated);
 #else
-    private const bool AotBuiltIn = false;
-
-    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text) =>
+    private static int RunAot(byte[] aot, byte* entry, int* value, byte* text, int* instantiated) =>
         throw new InvalidOperationException("WAMR-AOT ist in diesem Kernel nicht enthalten.");
 #endif
 
@@ -419,6 +454,135 @@ internal static unsafe class WasmRuntime
     private static void HostClose(int handle)
     {
         if (files.Remove(handle, out var stream)) stream.Dispose();
+    }
+
+    // Etappe 13.4: App-Speicher /save. Jede Rueckgabe ist eine WASI-Fehlernummer; Ausnahmen werden zu EIO, damit
+    // keine die native Grenze ueberquert.
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_available")]
+    private static int HostSaveAvailable() => save != null ? 1 : 0;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_open")]
+    private static int HostSaveOpen(byte* path, uint length, uint flags, int* handle)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.Open(Encoding.UTF8.GetString(path, (int)length), (flags & 1) != 0, (flags & 4) != 0, (flags & 8) != 0,
+                (flags & 2) != 0, (flags & 16) != 0, out int opened);
+            *handle = opened;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_read")]
+    private static int HostSaveRead(int handle, ulong offset, byte* buffer, uint length, uint* read)
+    {
+        try
+        {
+            if (save == null || offset > long.MaxValue) return WasiErrno.BadFile;
+            int status = save.Read(handle, (long)offset, new Span<byte>(buffer, (int)length), out int count);
+            *read = (uint)count;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_write")]
+    private static int HostSaveWrite(int handle, ulong offset, byte* data, uint length)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            if (offset > int.MaxValue) return WasiErrno.FileTooLarge;
+            return save.Write(handle, (long)offset, new ReadOnlySpan<byte>(data, (int)length), out _);
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_size")]
+    private static long HostSaveSize(int handle)
+    {
+        try { return save?.Size(handle) ?? -1; }
+        catch (Exception) { return -1; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_set_size")]
+    private static int HostSaveSetSize(int handle, ulong size)
+    {
+        try { return save == null ? WasiErrno.BadFile : size > int.MaxValue ? WasiErrno.FileTooLarge : save.SetSize(handle, (long)size); }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_sync")]
+    private static int HostSaveSync(int handle)
+    {
+        try { return save?.Sync(handle) ?? WasiErrno.BadFile; }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_close")]
+    private static int HostSaveClose(int handle)
+    {
+        try { return save?.Close(handle) ?? WasiErrno.BadFile; }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_stat")]
+    private static int HostSaveStat(byte* path, uint length, ulong* size, int* type)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.Stat(Encoding.UTF8.GetString(path, (int)length), out long bytes, out bool directory);
+            *size = (ulong)bytes;
+            *type = directory ? 3 : 4;
+            return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_path")]
+    private static int HostSavePath(int operation, byte* path, uint length)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            string name = Encoding.UTF8.GetString(path, (int)length);
+            return operation switch
+            {
+                1 => save.CreateDirectory(name),
+                2 => save.RemoveDirectory(name),
+                3 => save.Unlink(name),
+                _ => WasiErrno.Invalid,
+            };
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_rename")]
+    private static int HostSaveRename(byte* from, uint fromLength, byte* to, uint toLength)
+    {
+        try
+        {
+            return save?.Rename(Encoding.UTF8.GetString(from, (int)fromLength), Encoding.UTF8.GetString(to, (int)toLength)) ?? WasiErrno.BadFile;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_readdir")]
+    private static int HostSaveReaddir(int handle, byte* buffer, uint length, ulong cookie, uint* used)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            int status = save.List(handle, out var entries);
+            if (status != WasiErrno.Success) return status;
+            *used = (uint)WasiDirectoryEntries.Write(entries, cookie, new Span<byte>(buffer, (int)length));
+            return WasiErrno.Success;
+        }
+        catch (Exception) { return WasiErrno.Io; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]

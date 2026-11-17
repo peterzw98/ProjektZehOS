@@ -35,6 +35,18 @@ class BuildPackageTests(unittest.TestCase):
             self.assertEqual(lines[-2:], ['end', ''])
             self.assertEqual((directory / 'repo' / 'app' / '1.0.0' / 'manifest.sig').stat().st_size, 64)
 
+    def test_storage_capability_follows_network(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / 'app.wasm').write_bytes(b'x')
+            self.assertEqual(self.run_tool('keygen', str(directory / 'key')).returncode, 0)
+            built = self.run_tool('package', '--key', str(directory / 'key' / 'private.pem'), '--repo', str(directory / 'repo'),
+                                  '--id', 'app', '--version', '1.0.0', '--name', 'App', '--entry', 'app.wasm', '--storage',
+                                  '--network', f"{directory / 'app.wasm'}=app.wasm")
+            self.assertEqual(built.returncode, 0, built.stderr)
+            lines = (directory / 'repo' / 'app' / '1.0.0' / 'manifest').read_text(encoding='utf-8').split('\n')
+            self.assertEqual(lines[5:8], ['entry=app.wasm', 'capability=net', 'capability=storage'])
+
     def test_invalid_minimum_kernel_is_rejected_without_output(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

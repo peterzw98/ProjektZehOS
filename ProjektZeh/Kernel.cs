@@ -65,6 +65,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly NetworkAutoConfiguration automaticNetwork;
     private readonly CosmosRoundRobinScheduler scheduler = new();
     private readonly MessageDemoService messages;
+    private readonly UserSession desktopIdentity;
 
     public Kernel()
     {
@@ -84,7 +85,13 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateSuccess();
         });
 #endif
-        var desktopIdentity = accounts.CreateSession();
+        desktopIdentity = accounts.CreateSession();
+#if ZEHOS_WASM
+        // Etappe 13.4: App-Speicher unter /data mit demselben Waechter wie die Kontendatei.
+        Runtime.Wasm.WasmRuntime.SavePathGuard = CosmosPathGuard.For(Paths.AdminRoot);
+        Runtime.Wasm.WasmRuntime.SaveDiskSpace = CosmosSystemInfo.DiskSpace;
+        Runtime.Wasm.WasmRuntime.SaveComparison = Paths.Comparison;
+#endif
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
@@ -117,9 +124,27 @@ public sealed class Kernel : Sys.Kernel
             string id = installed.Value[index].Manifest.Id;
             apps[index] = new(id, installed.Value[index].Manifest.Name,
                 painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter,
-                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n")));
+                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n"), SaveRootFor));
         }
         return apps;
+    }
+
+    /// <summary>
+    /// Etappe 13.4: /save einer App fuer das angemeldete Desktopkonto, nur mit eingebundenem /data. Der Ordner wird bei
+    /// Bedarf ueber einen Dateidienst ohne Rechteverwaltung mit Waechter angelegt; ohne ihn laeuft die App ohne Speichern.
+    /// </summary>
+    private string? SaveRootFor(string packageId)
+    {
+        if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
+        var path = Paths.AppState(packageId, user);
+        if (!path.IsOK()) return null;
+        var created = new FileService(Paths.AdminRoot, pathGuard: CosmosPathGuard.For(Paths.AdminRoot)).CreateDirectory(path.Value!);
+        if (!created.IsOK())
+        {
+            systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);
+            return null;
+        }
+        return path.Value;
     }
 
 #endif
