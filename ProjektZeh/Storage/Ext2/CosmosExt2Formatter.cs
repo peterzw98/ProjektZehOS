@@ -68,16 +68,23 @@ internal static class CosmosExt2Formatter
     /// und 2K nicht qualifiziert ist.
     /// </summary>
     /// <param name="device">Block device to format.</param>
-    /// <param name="options">Label and block size; the block size must be 4096 when given.</param>
+    /// <param name="options">Null or <see cref="Ext2FormatOptions"/> with block size 4096.</param>
     /// <returns>true when the volume was written.</returns>
-    public static bool FormatForKernel(IBlockDevice device, Ext2FormatOptions? options)
+    public static bool FormatForKernel(IBlockDevice device, object? options)
     {
-        if (options != null && options.BlockSize != 4096)
+        // object statt Ext2FormatOptions: der Patcher kopiert den Plugkörper nach Cosmos.Kernel.System; ein
+        // System-Typ in dieser Signatur erzeugte dort einen Selbstverweis (ILC: Initialisierer-Zyklus).
+        if (options is null)
+        {
+            return Format(device, null);
+        }
+
+        if (options is not Ext2FormatOptions ext2Options || ext2Options.BlockSize != 4096)
         {
             return false;
         }
 
-        return Format(device, options);
+        return Format(device, ext2Options);
     }
 
     /// <summary>

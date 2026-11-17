@@ -11,6 +11,7 @@ namespace ProjektZeh.Storage;
 public static class CosmosExt2FormatterPlug
 {
     // Auch Ext2FileSystemType.TryFormat landet hier: im Kernel nur das 4-KiB-Profil.
+    // Der Koerper darf keinen Typ aus Cosmos.Kernel.System nennen (vgl. CosmosMousePlug): Aufruf nur ueber object.
     [PlugMember]
     public static bool Format(IBlockDevice device, Ext2FormatOptions? options) =>
         CosmosExt2Formatter.FormatForKernel(device, options);
