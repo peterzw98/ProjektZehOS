@@ -233,6 +233,8 @@ internal static class CosmosExt2GuestProbe
         mountedAt = CosmosReadOnlyExt2FileSystem.MountPoint;
         Check(mount!.IsReadOnly, "Mount nicht als schreibgeschuetzt gefuehrt");
         Pass(mountedAt + " nur lesend");
+        // Nur Doku (keine Bewertung): VfsManager.TryMount verlangt kein vorhandenes /mnt; ob der Elternpfad sichtbar ist, steht hier.
+        Write($"ro-info /mnt existiert={Directory.Exists("/mnt")}");
 
         string root = CosmosReadOnlyExt2FileSystem.MountPoint;
         string probe = root + "/probe.bin";
@@ -266,6 +268,8 @@ internal static class CosmosExt2GuestProbe
         string created = root + "/neu.bin";
         string moved = root + "/verschoben.bin";
         string directory = root + "/ordner2";
+        // Ausgangslage nachweisen: Ziel vorhanden, neue Namen fehlen; sonst bewiese das Ausbleiben der Wirkung nichts.
+        Check(File.Exists(probe) && !File.Exists(created) && !Directory.Exists(directory) && !File.Exists(moved), "Ausgangslage falsch");
         Refused(() => File.WriteAllBytes(created, [1, 2, 3]));
         Refused(() => File.Delete(probe));
         Refused(() => Directory.CreateDirectory(directory));

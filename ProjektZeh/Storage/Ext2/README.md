@@ -137,6 +137,10 @@ Lauf 2 verwendet nur die Lesekomponente `CosmosReadOnlyExt2FileSystem` unter `/m
 Cosmos-Lesemount schreibt bei Sync/Drop): SHA-256 über die ganze Platte vorher, Featurevertrag, Mount, Lesen von
 `probe.bin`/`reuse.bin`/`neu`, Datei-Handle mit Lesen, Sync und Schließen bei verweigertem Write/SetAttr, verweigerte
 Create/Delete/Mkdir/Rename ohne Wirkung, Unmount und derselbe SHA-256 danach; das Hostskript vergleicht zusätzlich den
-Image-Hash vor und nach Lauf 2. Jeder andere Inhalt bricht ohne Schreibzugriff ab.
+Image-Hash vor und nach Lauf 2. Für die verweigerten Mutationen prüft die Probe vorher die Ausgangslage (Ziel
+vorhanden, neue Namen fehlen) und nachher unveränderten Namen und Hash. `/mnt` muss nicht existieren:
+`VfsManager.TryMount` normalisiert nur den Einhängepunkt (Cosmos `VfsManager.cs:692-706`, efcf20c) und prüft keinen
+Elternpfad; die Probe protokolliert `ro-info /mnt existiert=…` ohne Bewertung. Jeder andere Inhalt bricht ohne
+Schreibzugriff ab.
 Seriell `STORAGE_PROBE <schritt> PASS|FAIL …`, Ausnahmen werden dem laufenden Schritt zugeordnet, am Ende immer
 `STORAGE_PROBE DONE`; danach fährt der Gast über den normalen Energiepfad herunter.
