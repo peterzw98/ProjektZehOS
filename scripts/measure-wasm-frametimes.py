@@ -136,7 +136,12 @@ def main() -> int:
     results = []
     for number in range(1, args.runs + 1):
         print(f"Lauf {number}/{args.runs}", flush=True)
-        results.append(run(args, seed_dir, work if args.runs == 1 else work / f"lauf{number}"))
+        try:
+            results.append(run(args, seed_dir, work if args.runs == 1 else work / f"lauf{number}"))
+        except Exception as error:  # noqa: BLE001 - ein Absturz (Panik, Timeout) zaehlt als Lauf ohne Messwert
+            # Fuer "n von m Laeufen" muss es mit dem naechsten Lauf weitergehen; der Exitcode bleibt dann 1.
+            print(f"Lauf {number} gescheitert: {type(error).__name__}: {error}", flush=True)
+            results.append([])
     medians = [last_median(lines) for lines in results]
     if args.runs > 1:
         known = [value for value in medians if value is not None]
