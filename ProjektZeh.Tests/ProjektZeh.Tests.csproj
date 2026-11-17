@@ -30,6 +30,7 @@
     <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallJob.cs" Link="Installer\InstallJob.cs" />
+    <Compile Include="..\ProjektZeh\Installer\GptInstallJob.cs" Link="Installer\GptInstallJob.cs" />
     <Compile Include="..\ProjektZeh\ThirdParty\CosmosHttp\CertificateVerifier.cs" Link="ThirdParty\CertificateVerifier.cs" />
     <Compile Include="..\ProjektZeh\Network\*.cs" Exclude="..\ProjektZeh\Network\Cosmos*.cs" Link="Network\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Packages\*.cs" Exclude="..\ProjektZeh\Packages\Cosmos*.cs" Link="Packages\%(Filename)%(Extension)" />

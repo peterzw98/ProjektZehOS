@@ -65,7 +65,13 @@ internal static class GptLayoutWriter
     {
         var plan = Plan(blockSize, blockCount, random);
         if (!plan.IsOK()) return plan;
-        GptTable table = plan.Value!;
+        Write(blockCount, plan.Value!, write, flush);
+        return plan;
+    }
+
+    /// <summary>Schreibt eine vorab mit <see cref="Plan"/> erzeugte Tabelle; der Installer haelt die GUIDs seit Begin (Spec 7a-S4, Abschnitt 2).</summary>
+    public static void Write(ulong blockCount, GptTable table, BlockWriter write, Action flush)
+    {
 
         byte[] entries = GptLayout.BuildEntries(table.Entries);
         uint entriesCrc = Crc32.Compute(entries);
@@ -84,7 +90,6 @@ internal static class GptLayoutWriter
         flush();
         write(0, GptLayout.BuildProtectiveMbr(blockCount));
         flush();
-        return plan;
     }
 
     /// <summary>Setzt Version 4 und RFC-4122-Variante im Guid-Bytelayout (gemischtes Endian, wie GPT es speichert).</summary>
