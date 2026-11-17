@@ -14,6 +14,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 /// <summary>Bedient einen echten Desktop nur ueber Eingabeereignisse, mit eigener Platte, fester Uhr und festem Takt.</summary>
+// UiPainter haelt das Farbschema statisch; Szenarien duerfen deshalb nicht parallel laufen.
 internal sealed class DesktopScenario : IDisposable
 {
     public const string AdminPassword = "admin-password-123";
@@ -26,13 +27,14 @@ internal sealed class DesktopScenario : IDisposable
     private int pointerX;
     private int pointerY;
 
-    public DesktopScenario(int width = 1024, int height = 768, bool withLogin = false)
+    /// <param name="rootName">Ordnername der Testplatte unter dem Temp-Ordner; nur fuer Tests der Pfadmaskierung.</param>
+    public DesktopScenario(int width = 1024, int height = 768, bool withLogin = false, string? rootName = null)
     {
         this.width = width;
         this.height = height;
         pixels = new int[width * height];
         surface = new PixelSurface(width, height, pixels);
-        Root = Path.Combine(Path.GetTempPath(), $"zehos-e2e-{Guid.NewGuid():N}");
+        Root = Path.Combine(Path.GetTempPath(), rootName ?? $"zehos-e2e-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Root);
         pointerX = width / 2;
         pointerY = height / 2;
@@ -143,13 +145,18 @@ internal sealed class DesktopScenario : IDisposable
     /// Vergleicht das aktuelle Bild; <paramref name="hidden"/> sind Bildschirmbereiche, die den Hostpfad der
     /// Testplatte zeigen und deshalb vor dem Vergleich einfarbig uebermalt werden.
     /// </summary>
-    public void Check(string name, params UiRect[] hidden)
+    public void Check(string name, params UiRect[] hidden) => Golden.Check(name, width, height, Masked(hidden));
+
+    /// <summary>Pruefsumme des aktuellen Bilds mit uebermalten Bereichen, ohne Referenzbild.</summary>
+    public string Hash(params UiRect[] hidden) => Golden.Hash(width, height, Masked(hidden));
+
+    private int[] Masked(UiRect[] hidden)
     {
         Frame();
         var copy = (int[])pixels.Clone();
         var target = new PixelSurface(width, height, copy);
         foreach (var area in hidden) target.FillRectangle(area.X, area.Y, area.Width, area.Height, unchecked((int)0xffff00ff));
-        Golden.Check(name, width, height, copy);
+        return copy;
     }
 
     /// <summary>Zeile unter der Titelleiste eines Fensters, in der Dateien und Texteditor den Pfad zeigen.</summary>

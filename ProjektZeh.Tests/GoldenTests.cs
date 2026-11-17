@@ -1,5 +1,7 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
+using System.IO.Compression;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
@@ -8,23 +10,28 @@ using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
 
+// Die Tests setzen prozessweite Umgebungsvariablen.
 [TestClass]
+[DoNotParallelize]
 public sealed class GoldenTests
 {
     private string directory = "";
     private string? update;
+    private string? ci;
 
     [TestInitialize]
     public void Create()
     {
         directory = Path.Combine(Path.GetTempPath(), $"zehos-golden-{Guid.NewGuid():N}");
         update = Environment.GetEnvironmentVariable(Golden.UpdateVariable);
+        ci = Environment.GetEnvironmentVariable("CI");
     }
 
     [TestCleanup]
     public void Remove()
     {
         Environment.SetEnvironmentVariable(Golden.UpdateVariable, update);
+        Environment.SetEnvironmentVariable("CI", ci);
         if (Directory.Exists(directory)) Directory.Delete(directory, true);
         if (File.Exists(ActualPng)) File.Delete(ActualPng);
     }
@@ -33,8 +40,10 @@ public sealed class GoldenTests
 
     private void WriteReference(int[] pixels)
     {
+        Environment.SetEnvironmentVariable("CI", null);
         Environment.SetEnvironmentVariable(Golden.UpdateVariable, "1");
         Golden.Check("selftest", 2, 2, pixels, directory);
+        Environment.SetEnvironmentVariable("CI", ci);
         Environment.SetEnvironmentVariable(Golden.UpdateVariable, null);
         Assert.IsTrue(File.Exists(Path.Combine(directory, "selftest.png")));
     }
@@ -61,6 +70,61 @@ public sealed class GoldenTests
     {
         WriteReference([1, 2, 3, 4]);
         Assert.ThrowsException<AssertFailedException>(() => Golden.Check("selftest", 4, 1, [1, 2, 3, 4], directory));
+    }
+
+    [TestMethod]
+    public void Check_UpdateInCi_FailsWithoutWriting()
+    {
+        Environment.SetEnvironmentVariable("CI", "true");
+        Environment.SetEnvironmentVariable(Golden.UpdateVariable, "1");
+        Assert.ThrowsException<AssertFailedException>(() => Golden.Check("selftest", 2, 2, [1, 2, 3, 4], directory));
+        Assert.IsFalse(Directory.Exists(directory));
+    }
+
+    // Ein Reviewer sieht nur das PNG; es muss genau die Pixel zeigen, deren Pruefsumme verglichen wird.
+    [TestMethod]
+    public void ReferencePngs_MatchTheirChecksums()
+    {
+        string folder = Path.Combine(Golden.RepositoryRoot(), "ProjektZeh.Tests", "Golden");
+        string[] references = Directory.GetFiles(folder, "*.sha256");
+        Assert.AreNotEqual(0, references.Length);
+        foreach (string reference in references)
+        {
+            var (width, height, pixels) = ReadPng(Path.ChangeExtension(reference, ".png"));
+            Assert.AreEqual(File.ReadAllText(reference).Trim(), Golden.Hash(width, height, pixels), reference);
+        }
+    }
+
+    // Liest nur das Format von ScreenshotSupport.WritePng: RGB mit 8 Bit, ein IDAT, Filter 0 je Zeile, Alpha immer voll.
+    private static (int Width, int Height, int[] Pixels) ReadPng(string path)
+    {
+        byte[] file = File.ReadAllBytes(path);
+        int width = 0, height = 0;
+        using var data = new MemoryStream();
+        for (int offset = 8; offset < file.Length;)
+        {
+            int length = BinaryPrimitives.ReadInt32BigEndian(file.AsSpan(offset));
+            string type = System.Text.Encoding.ASCII.GetString(file, offset + 4, 4);
+            if (type == "IHDR")
+            {
+                width = BinaryPrimitives.ReadInt32BigEndian(file.AsSpan(offset + 8));
+                height = BinaryPrimitives.ReadInt32BigEndian(file.AsSpan(offset + 12));
+            }
+            if (type == "IDAT") data.Write(file, offset + 8, length);
+            offset += 12 + length;
+        }
+        data.Position = 0;
+        using var zlib = new ZLibStream(data, CompressionMode.Decompress);
+        var row = new byte[1 + width * 3];
+        var pixels = new int[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            zlib.ReadExactly(row);
+            Assert.AreEqual(0, row[0], "Nur Filter 0 erwartet.");
+            for (int x = 0; x < width; x++)
+                pixels[y * width + x] = unchecked((int)0xff000000) | row[1 + x * 3] << 16 | row[2 + x * 3] << 8 | row[3 + x * 3];
+        }
+        return (width, height, pixels);
     }
 
     [TestMethod]

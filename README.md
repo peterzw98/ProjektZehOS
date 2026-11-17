@@ -121,6 +121,8 @@ python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.c
 $env:ZEHOS_UPDATE_GOLDEN = "1"; dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"; Remove-Item Env:ZEHOS_UPDATE_GOLDEN
 ```
 
+Unter Linux oder macOS entsprechend `ZEHOS_UPDATE_GOLDEN=1 dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"`. Ist zugleich `CI` gesetzt, scheitert das Aktualisieren absichtlich. Ein Test prüft, dass jedes PNG genau die Pixel seiner Prüfsumme zeigt.
+
 ## Dateisystem in QEMU
 
 Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.

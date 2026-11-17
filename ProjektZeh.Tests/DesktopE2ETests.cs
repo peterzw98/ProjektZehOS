@@ -17,6 +17,7 @@ namespace ProjektZeh.Tests;
 /// Bedienablaeufe Ende zu Ende: Eingaben nur ueber Desktop.Handle, Pruefung des fachlichen Ergebnisses und eines Referenzbilds.
 /// </summary>
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopE2ETests
 {
     private static string[] Lines(TerminalApp terminal) =>
@@ -78,6 +79,12 @@ public sealed class DesktopE2ETests
     public void Terminal_WriteFile_AppearsInFileManagerAndOpensInEditor()
     {
         using var scenario = new DesktopScenario();
+        scenario.Check("editor-notiz", EditNote(scenario));
+    }
+
+    // Terminal schreibt notiz.txt, Dateien oeffnet sie im Texteditor, F2 speichert; liefert die Pfadbereiche des Bilds.
+    private static UiRect[] EditNote(DesktopScenario scenario)
+    {
         Launch(scenario, "term");
         scenario.Line("write notiz.txt eins");
         Launch(scenario, "dateien");
@@ -95,7 +102,35 @@ public sealed class DesktopE2ETests
         string saved = File.ReadAllText(Path.Combine(scenario.Root, "notiz.txt"));
         StringAssert.Contains(saved, "eins");
         StringAssert.Contains(saved, "zwei");
-        scenario.Check("editor-notiz", DesktopScenario.PathRow(window), DesktopScenario.PathRow(scenario.Desktop.Windows.ActiveWindow!));
+        return [DesktopScenario.PathRow(window), DesktopScenario.PathRow(scenario.Desktop.Windows.ActiveWindow!)];
+    }
+
+    [TestMethod]
+    public void HostPathLength_StaysInsideHiddenAreas()
+    {
+        // Unter Windows ist der Temp-Pfad laenger; Umbruch oder Kuerzung darf nicht aus den uebermalten Bereichen ragen.
+        string Render(string name, Func<DesktopScenario, UiRect[]> run)
+        {
+            using var scenario = new DesktopScenario(rootName: name);
+            return scenario.Hash(run(scenario));
+        }
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string longName = "e" + id + new string('x', 100);
+        Assert.AreEqual(Render("e" + id, EditNote), Render(longName, EditNote));
+        Assert.AreEqual(Render("s" + id, SwitchToLight), Render("s" + longName, SwitchToLight));
+    }
+
+    [TestMethod]
+    public void StartMenu_ClosedWithEscape_OpensWithEmptySearch()
+    {
+        using var scenario = new DesktopScenario();
+        scenario.Chord(PhysicalKey.Alt, PhysicalKey.F1);
+        scenario.Text("term");
+        scenario.Key(PhysicalKey.Escape);
+        Assert.IsFalse(scenario.Desktop.CloseMenu(), "Esc schliesst das Startmenue.");
+        scenario.Chord(PhysicalKey.Alt, PhysicalKey.F1);
+        // Gleiches Bild wie das frisch geoeffnete Menue: Suchfeld leer, alle Apps sichtbar.
+        scenario.Check("menue-1024x768");
     }
 
     [TestMethod]
@@ -106,11 +141,23 @@ public sealed class DesktopE2ETests
         Assert.IsInstanceOfType<SettingsApp>(scenario.Desktop.Windows.ActiveWindow!.Application);
         scenario.Key(PhysicalKey.Down);
         scenario.Check("einstellungen-dunkel", SettingsStatus(scenario));
+        scenario.Check("einstellungen-hell", SwitchToLight(scenario));
+    }
+
+    // Auf der Seite Personalisierung "Hell" waehlen; liefert die Statuszeile mit dem Pfad der Konfigurationsdatei.
+    private static UiRect[] SwitchToLight(DesktopScenario scenario)
+    {
+        if (scenario.Desktop.Windows.ActiveWindow?.Application is not SettingsApp)
+        {
+            Launch(scenario, "einst");
+            scenario.Key(PhysicalKey.Down);
+        }
         scenario.Key(PhysicalKey.Tab);
         scenario.Key(PhysicalKey.Enter);
         StringAssert.Contains(File.ReadAllText(Path.Combine(scenario.Root, "zehos-desktop.conf")), "dark=False");
-        scenario.Check("einstellungen-hell", SettingsStatus(scenario));
+        return [SettingsStatus(scenario)];
     }
+
     private static int Count<T>(DesktopScenario scenario) =>
         Enumerable.Range(0, scenario.Desktop.Windows.Count).Count(index => scenario.Desktop.Windows.GetWindow(index).Application is T);
 

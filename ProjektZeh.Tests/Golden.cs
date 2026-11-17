@@ -37,6 +37,8 @@ internal static class Golden
         string reference = Path.Combine(directory, name + ".sha256");
         if (Environment.GetEnvironmentVariable(UpdateVariable) == "1")
         {
+            // Ein versehentlich gesetzter Wert in der CI wuerde alle Referenzen ueberschreiben und gruen melden.
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI"))) Assert.Fail($"{UpdateVariable}=1 ist in der CI nicht erlaubt.");
             Directory.CreateDirectory(directory);
             File.WriteAllText(reference, actual + "\n");
             ScreenshotSupport.WritePng(Path.Combine(directory, name + ".png"), width, height, pixels);
