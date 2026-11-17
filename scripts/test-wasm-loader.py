@@ -30,7 +30,10 @@ def find_qemu() -> Path:
 
 def build_arguments(qemu: Path, iso: Path, disk: Path | None, serial: Path, accel: str) -> list[str]:
     share = qemu.parent.parent / "share" / "qemu"
-    arguments = [str(qemu), "-L", str(share), "-accel", accel, "-machine", "q35", "-cpu", "max", "-m", "512M",
+    # Unter WHPX bricht der Gast mit -cpu max sofort ab (Unexpected VP exit code 4, COSMOS_SUPPORT.md); dort bleibt
+    # das Standardmodell.
+    cpu = [] if accel.startswith("whpx") else ["-cpu", "max"]
+    arguments = [str(qemu), "-L", str(share), "-accel", accel, "-machine", "q35", *cpu, "-m", "512M",
                  "-vga", "std", "-boot", "d", "-cdrom", str(iso), "-display", "none",
                  "-serial", f"file:{serial}", "-monitor", "none",
                  "-action", "shutdown=poweroff,reboot=reset"]

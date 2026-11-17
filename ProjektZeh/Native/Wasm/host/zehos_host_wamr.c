@@ -68,19 +68,24 @@ static void end_call(wasm_exec_env_t env, const zehos_host_call* call)
 }
 
 // AOT-Code ruft aufgeloeste Importe direkt ueber seine Funktionszeigertabelle mit der System-V-Aufrufkonvention
-// (exec_env, Argumente ...) auf, ohne WAMRs Rohfunktions-Bruecke; deshalb gewoehnliche Natives. Dabei hat wamrc fuer
-// Importe, die es aus WAMRs eigener WASI-Bibliothek kennt, Gastadressen bereits selbst in Hostzeiger gewandelt und nur
-// das erste Byte bzw. die mit "~" folgende Laenge geprueft (im Gast belegt: fd_write erhielt iovs und written als
-// Hostzeiger, fd und Anzahl als Zahl). Der Weg ueber invokeNative liefert dagegen Offsets, weil die Signatur hier nur
-// i32 nennt. Jede Gastadresse ("*" in der Tabelle) wird deshalb wieder zum Offset: Hostzeiger des Cosmos-Heaps liegen
-// ueber 4 GiB, Offsets darunter. Ein Hostzeiger ausserhalb des linearen Speichers ist ein Trap. Die volle Pruefung von
-// Adresse und Laenge macht danach wie bei wasm3 die Kernfunktion.
+// (exec_env, Argumente ...) auf, ohne WAMRs Rohfunktions-Bruecke; deshalb gewoehnliche Natives. Fuer Importe, die wamrc
+// aus WAMRs eigener WASI-Bibliothek kennt, wandelt der erzeugte Code Gastadressen dabei schon in Hostzeiger und prueft
+// nur das erste Byte bzw. eine mit "~" folgende Laenge (im Gast belegt: fd_write erhielt iovs und written als
+// Hostzeiger, fd und Anzahl als Zahl). Der Weg ueber invokeNative (etwa call_indirect auf einen Import) wandelt nach
+// der hier registrierten Signatur, die "*" deshalb wie die Tabelle nennt. So kommt jede Gastadresse ("*") auf beiden
+// Wegen als Hostzeiger an, alle anderen i32-Argumente als Zahl. Die Entscheidung haengt nur an der Tabelle, nicht am
+// Wert: "*" steht ausschliesslich bei WASI-Funktionen, die WAMRs WASI-Bibliothek mit derselben Zeigerstelle kennt
+// (zehos_v1 uebergibt Offsets als "i"). Stimmt das fuer einen Import nicht, ist der Wert ein Offset unterhalb der
+// Speicherbasis und endet hier als Trap statt als falscher Zugriff (fail-closed).
+// Ein Hostzeiger wird wieder zum Offset; erlaubt ist [base, base + memorySize], das Ende eingeschlossen: ein Zeiger
+// genau auf das Ende ist mit Laenge 0 gueltig, jede groessere Laenge weist die Kernfunktion ab, die wie bei wasm3
+// Adresse und volle Laenge prueft.
 static void guest_offsets(zehos_host_call* call, const char* params, uint64_t* slots, size_t count)
 {
     uintptr_t base = (uintptr_t)call->memory;
     for (size_t index = 0; index < count && params[index] != 0; index++)
     {
-        if (params[index] != '*' || slots[index] <= UINT32_MAX) continue;
+        if (params[index] != '*') continue;
         if (call->memory == NULL || slots[index] < base || slots[index] - base > call->memorySize)
         {
             call->trap = ZEHOS_HOST_TRAP_MEMORY;
@@ -149,15 +154,15 @@ static struct
 enum { ZEHOS_WAMR_BINDINGS = sizeof(bindings) / sizeof(bindings[0]), ZEHOS_WAMR_SIGNATURE = 16 };
 static char signatures[ZEHOS_WAMR_BINDINGS][ZEHOS_WAMR_SIGNATURE];
 
-// "i*i*" mit Ergebnis i wird zu "(iiii)i". Gastadressen ("*") bleiben in der Signatur bewusst i32, damit der Weg ueber
-// invokeNative Offsets liefert; Hostzeiger aus dem direkten Aufruf wandelt guest_offsets zurueck.
+// "i*i*" mit Ergebnis i wird zu "(i*i*)i". "*" bleibt, damit auch der Weg ueber invokeNative Hostzeiger liefert wie der
+// direkte Aufruf aus AOT-Code (guest_offsets).
 static int build_signature(char* target, const char* params, const char* result)
 {
     size_t length = strlen(params);
     if (length + 4 > ZEHOS_WAMR_SIGNATURE) return 0;
     size_t index = 0;
     target[index++] = '(';
-    for (size_t param = 0; param < length; param++) target[index++] = params[param] == '*' ? 'i' : params[param];
+    for (size_t param = 0; param < length; param++) target[index++] = params[param];
     target[index++] = ')';
     if (result[0] == 'i') target[index++] = 'i';
     target[index] = 0;
