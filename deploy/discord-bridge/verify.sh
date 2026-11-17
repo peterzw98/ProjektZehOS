@@ -3,6 +3,7 @@
 # Aufruf: verify.sh '#general' < datei-mit-zeile   (vorher: gpg --import bridge-pubkey.asc)
 # Die Zeile kommt über stdin, weil sie aus Discord stammt und als Argument die Shell-Quotierung brechen könnte.
 FPR=D170DEF86DB8574DD5267CBBD5B2E2C51E45D537
+ok=
 channel=$(printf '%s' "$1" | tr 'A-Z' 'a-z'); line=$(head -n1)
 meta=$(printf '%s' "$line" | sed -n 's/.* \[id=\([0-9]*\) t=\([0-9]*\) sig=\([A-Za-z0-9+/=]*\)\]$/\1 \2 \3/p')
 [ -n "$meta" ] || { echo "unsigned"; exit 1; }

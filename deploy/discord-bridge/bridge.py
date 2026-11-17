@@ -196,12 +196,15 @@ class Bridge(discord.Client):
                             self.send_irc(f"MODE {irc_channel} -t")
                         print("IRC connected", flush=True)
                     elif command == "433":
-                        self.send_irc(f"NICK {IRC_NICK}_")
+                        # Kein Ausweichnick: Agenten erkennen Freigaben nur vom Nick discord; später erneut versuchen
+                        raise ConnectionError(f"nick {IRC_NICK} in use")
                     else:
                         await self.on_irc(nick, command, params)
                     await self.writer.drain()
-            except (OSError, ssl.SSLError) as error:
-                print(f"IRC error: {error}", flush=True)
+            except Exception as error:  # jeder Fehler führt zur Neuverbindung, sonst bliebe die Bridge stumm
+                print(f"IRC error: {error!r}", flush=True)
+            if self.writer:
+                self.writer.close()
             self.writer = None
             self.members.clear()
             print(f"IRC disconnected, retrying in {delay}s", flush=True)

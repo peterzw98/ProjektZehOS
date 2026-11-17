@@ -10,8 +10,8 @@ cd "$home" || exit 1
 run() {
   local cont=(); [ -e .started ] && cont=(--continue)
   "$CLAUDE" -p "${cont[@]}" --model "$model" --permission-mode auto \
-    --append-system-prompt-file "$home/role.md" "$1" </dev/null >>"$home/runner.log" 2>&1
-  touch .started
+    --append-system-prompt-file "$home/role.md" "$1" </dev/null >>"$home/runner.log" 2>&1 \
+    && touch .started  # nur nach Erfolg, sonst fehlt beim nächsten Wecken die Sitzung
 }
 "$here/team-watch.sh" "$home/ProjektZehOS/.tools/irc" "$nick" | while IFS= read -r line; do
   batch=$line

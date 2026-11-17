@@ -22,7 +22,8 @@ tail -n0 -F "$dir/log.txt" \
   | sed -u -E 's/^[0-9-]+ ([0-9]{2}:[0-9]{2}):[0-9]{2} << :([^!]+)![^ ]+ (PRIVMSG|NOTICE) ([^ ]+) :/\1 \2 -> \4: /; s/^[0-9-]+ ([0-9]{2}:[0-9]{2}):[0-9]{2} << :([^!]+)![^ ]+ ([A-Z]+) ?:?/\1 [\3] \2 /' \
   | "${awk[@]}" '
       # Bremse gegen Nennungsschleifen: höchstens 8 Zeilen je Absender und Minute, danach ein Hinweis.
-      { split($0, f, " "); who = f[2]; min = f[1]
+      # Menschen kommen alle über den Nick discord; sie zählen einzeln nach dem <Namen>
+      { split($0, f, " "); who = f[2]; min = f[1]; if (who == "discord") who = who f[5]
         if (min != last[who]) { last[who] = min; n[who] = 0 }
         if (++n[who] <= 8) print substr($0, 1, 1200)
         else if (n[who] == 9) print min " [gedrosselt] " who " sendet zu viel, Rest im log.txt"

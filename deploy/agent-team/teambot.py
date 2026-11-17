@@ -9,7 +9,9 @@ HOST, PORT = "zeh.ernst.casa", 6697
 NICK, D, KEY = sys.argv[1], sys.argv[2], sys.argv[3]
 START_CHANNELS = (sys.argv[4] if len(sys.argv) > 4 else "#general").split(",")
 LOG, FIFO = os.path.join(D, "log.txt"), os.path.join(D, "outbox.fifo")
-PREFIX = re.compile(r"^((?:[^\s:]+[ ,]*)+:)\s+(.*)$")  # "nick1 nick2: text"
+NICKCHARS = r"[A-Za-z0-9_\-\[\]\\^{}|`]+"
+# "nick1 nick2: text"; Trenner zwischen Nicks ist Pflicht, sonst backtrackt der Ausdruck exponentiell
+PREFIX = re.compile(rf"^((?:{NICKCHARS}[ ,]+)*{NICKCHARS}:)\s+(.*)$")
 sock = None; lock = threading.Lock()
 channels = set(c.lower() for c in START_CHANNELS)  # nach Neuverbindung wieder betreten
 
@@ -19,9 +21,18 @@ def log(s):
 
 
 def send(line, quiet=False):
-    with lock:
-        if sock: sock.sendall((line + "\r\n").encode())
+    """Sendet eine Zeile; False, wenn keine Verbindung besteht oder das Senden scheitert."""
+    try:
+        with lock:
+            if not sock:
+                log("!! nicht gesendet (keine Verbindung): " + ("PASS ***" if quiet else line))
+                return False
+            sock.sendall((line + "\r\n").encode())
+    except OSError as e:
+        log(f"!! nicht gesendet ({e}): " + ("PASS ***" if quiet else line))
+        return False
     if not quiet: log(">> " + line)
+    return True
 
 
 def chunks(text, limit):
@@ -57,7 +68,11 @@ def outbox():
                 target, text = ("#general", line)
                 if line.startswith("#") and " " in line: target, text = line.split(" ", 1)
                 for part in split_message(text):
-                    send(f"PRIVMSG {target} :{part}"); time.sleep(0.6)
+                    # Bei getrennter Verbindung warten, statt die Nachricht zu verlieren (höchstens ~2 min)
+                    for _ in range(8):
+                        if send(f"PRIVMSG {target} :{part}"): break
+                        time.sleep(15)
+                    time.sleep(0.6)
 
 
 def main():
