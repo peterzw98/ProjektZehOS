@@ -9,7 +9,9 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class DataDiskSelectorGptTests
 {
-    private static readonly DataDiskPartition Esp = new(0, null, GptLayout.EspType);
+    private static readonly DataDiskPartition Esp = new(0, "ZEHOSBOOT  ", GptLayout.EspType);
+    private static readonly DataDiskPartition ForeignEsp = new(0, "NO NAME    ", GptLayout.EspType);
+    private static readonly DataDiskPartition Msr = new(0, null, new Guid("E3C9E316-0B5C-4DB8-817D-F92DF00215AE"));
     private static readonly DataDiskPartition Root = new(0, null, GptLayout.LinuxFileSystemType);
     private static readonly DataDiskPartition Data = new(DataDiskSelector.FatLbaType, "ZEHOSDATA  ");
 
@@ -65,6 +67,23 @@ public sealed class DataDiskSelectorGptTests
         // Ohne ESP kein installiertes Layout: zwei Partitionen ohne 0x0C bleiben wie bisher gesperrt, eine bleibt Rueckfall.
         Assert.AreEqual(DataDiskAction.Blocked, DataDiskSelector.Decide([Disk("sata0", Root, Root)]).Action);
         Assert.AreEqual(DataDiskAction.Mount, DataDiskSelector.Decide([Disk("sata0", Root)]).Action);
+    }
+
+    [TestMethod]
+    public void ForeignEspWithOtherPartitions_NotMounted()
+    {
+        // Windows-Platte (ESP ohne ZEHOSBOOT, MSR, Daten): wie bisher nicht eingehaengt, nie als /data beschrieben.
+        var decision = DataDiskSelector.Decide([Disk("sata0", ForeignEsp, Msr, Root)]);
+        Assert.AreEqual(DataDiskAction.Blocked, decision.Action);
+        StringAssert.Contains(decision.Message, "UnexpectedPartitionCount");
+    }
+
+    [TestMethod]
+    public void ForeignEspBesideZehosEsp_MountsZehosEsp()
+    {
+        var decision = DataDiskSelector.Decide([Disk("sata0", ForeignEsp, Esp, Root)]);
+        Assert.AreEqual(DataDiskAction.Mount, decision.Action);
+        Assert.AreEqual(1, decision.PartitionIndex);
     }
 
     [TestMethod]

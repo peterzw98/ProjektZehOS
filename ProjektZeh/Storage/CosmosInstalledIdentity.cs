@@ -11,13 +11,26 @@ namespace ProjektZeh.Storage;
 /// <summary>
 /// Cosmos-Anbindung von InstalledIdentity (7a Schritt 3b): liest bei jedem Aufruf die Platte hinter dem aktuell als /data
 /// eingehaengten Volume neu (Marker auf der ESP, GPT ueber GptLayout.Verify, Root-Superblock), damit auch ein per disk use
-/// eingehaengtes /data bewertet wird. Ohne /data gibt es nichts zu bewerten und keine Mutation (null).
+/// eingehaengtes /data bewertet wird. Ohne /data gibt es nichts zu bewerten (null, nicht gesperrt): Ersteinrichtung und
+/// Recovery scheitern ohne eingehaengtes /data ohnehin. Jede unerwartete Ausnahme ergibt Unclear (fail-closed).
 /// </summary>
 internal static class CosmosInstalledIdentity
 {
     private const string DataMount = "/data";
 
     public static IdentityResult? EvaluateData()
+    {
+        try
+        {
+            return EvaluateMountedData();
+        }
+        catch (Exception exception)
+        {
+            return new(InstalledState.Unclear, $"cause='IdentityCheckFailed' message='Identitaetspruefung fehlgeschlagen: {exception.GetType().Name}. Keine Ersteinrichtung.'");
+        }
+    }
+
+    private static IdentityResult? EvaluateMountedData()
     {
         Partition? partition = null;
         foreach (VfsMount mount in VfsManager.Mounts)
@@ -32,7 +45,7 @@ internal static class CosmosInstalledIdentity
         }
         catch (Exception exception) when (exception is IOException or ArgumentOutOfRangeException)
         {
-            table = GptLayout.Failure("TableIoError", "GPT nicht lesbar: " + exception.Message);
+            table = GptLayout.Failure("TableIoError", "GPT nicht lesbar: " + exception.GetType().Name);
         }
         return InstalledIdentity.Evaluate(ReadMarker(), table, entry => RootGate(host, entry));
     }
@@ -42,16 +55,23 @@ internal static class CosmosInstalledIdentity
 
     private static string? ReadMarker()
     {
+        // Rohes System.IO ohne Pfadwaechter: die ESP ist FAT und kennt keine Symlinks.
         string path = Path.Combine(DataMount, InstallMarker.RelativePath);
         try
         {
-            if (!File.Exists(path)) return null;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
             // Groessere Dateien gar nicht erst lesen; ein leerer Text ist fuer Parse ungueltig (=> Unclear).
-            if (new FileInfo(path).Length > InstallMarker.MaximumBytes) return string.Empty;
-            return File.ReadAllText(path);
+            if (stream.Length > InstallMarker.MaximumBytes) return string.Empty;
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            // Nur "fehlt" darf Legacy ergeben; jeder andere Lesefehler ist unklar.
             return string.Empty;
         }
     }

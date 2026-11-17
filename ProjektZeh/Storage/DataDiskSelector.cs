@@ -33,6 +33,8 @@ internal sealed record DataDiskDecision(DataDiskAction Action, string? DeviceNam
 internal static class DataDiskSelector
 {
     internal const string DataLabel = "ZEHOSDATA";
+    /// <summary>FAT-Label der vom 7a-Installer angelegten ESP; fremde ESPs (Windows, Linux) haengt Decide nie als /data ein.</summary>
+    internal const string EspLabel = "ZEHOSBOOT";
     internal const byte FatLbaType = 0x0C;
     internal const string ExistingDevice = "sata0";
     internal const ulong SectorSize = 512;
@@ -77,7 +79,7 @@ internal static class DataDiskSelector
             int esp = -1;
             for (int index = 0; index < existing.Partitions.Count; index++)
             {
-                if (existing.Partitions[index].GptType != Partitioning.GptLayout.EspType) continue;
+                if (!IsZehosEsp(existing.Partitions[index])) continue;
                 if (esp >= 0) return new(DataDiskAction.Blocked, existing.Name, -1, Cause("AmbiguousEsp", "Mehr als eine EFI-Systempartition auf sata0; es wird nichts eingebunden."));
                 esp = index;
             }
@@ -123,6 +125,9 @@ internal static class DataDiskSelector
             Cause("MountRefused", $"Einbinden der gewaehlten Datenplatte {decision.DeviceName} fehlgeschlagen."),
         _ => null,
     };
+
+    private static bool IsZehosEsp(DataDiskPartition partition) =>
+        partition.GptType == Partitioning.GptLayout.EspType && string.Equals(partition.Label?.TrimEnd(), EspLabel, StringComparison.OrdinalIgnoreCase);
 
     private static bool HasFatPartition(DataDiskCandidate device)
     {

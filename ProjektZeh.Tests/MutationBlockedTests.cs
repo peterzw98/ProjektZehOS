@@ -94,6 +94,24 @@ public sealed class MutationBlockedTests
     }
 
     [TestMethod]
+    public void ThrowingCheck_FailsClosedWithTypeNameOnly()
+    {
+        string root = NewRoot();
+        try
+        {
+            var accounts = Accounts(root, () => throw new InvalidOperationException("geheime Details"));
+            var loaded = accounts.Load();
+            Assert.IsFalse(accounts.NeedsSetup, "eine Ausnahme der Pruefung sperrt, statt den Boot zu werfen");
+            StringAssert.Contains(loaded.Message, "cause='IdentityCheckFailed'");
+            StringAssert.Contains(loaded.Message, "InvalidOperationException");
+            Assert.IsFalse(loaded.Message.Contains("geheime Details", StringComparison.Ordinal));
+            Assert.IsFalse(accounts.PrepareRecovery(accounts.CreateSession(), "admin", "admin-password-123")().IsOK());
+            Assert.AreEqual(0, Metadata(root).Count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void NotBlocked_SetupAsBefore()
     {
         string root = NewRoot();

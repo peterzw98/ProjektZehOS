@@ -31,7 +31,8 @@ internal static class CosmosDataDisk
             Guid gptType = Guid.Empty;
             foreach (var entry in gptEntries)
                 if (entry.StartSector == partition.StartSector) gptType = entry.PartitionType;
-            partitions.Add(new(type, type == DataDiskSelector.FatLbaType ? ReadFat32Label(partition) : null, gptType));
+            bool fat = type == DataDiskSelector.FatLbaType || gptType == Partitioning.GptLayout.EspType;
+            partitions.Add(new(type, fat ? ReadFat32Label(partition) : null, gptType));
         }
         return new(device.Name, device.BlockSize, device.BlockCount, partitions);
     }
