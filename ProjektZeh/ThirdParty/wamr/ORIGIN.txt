@@ -1,0 +1,10 @@
+WebAssembly Micro Runtime (WAMR) 2.4.5
+Quelle: https://github.com/bytecodealliance/wasm-micro-runtime, Tag WAMR-2.4.5
+Tarball WAMR-2.4.5.tar.gz, SHA-256 1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b
+Lizenz: Apache-2.0 WITH LLVM-exception (LICENSE)
+
+Uebernommen nur, was der reine AOT-Lader fuer x86-64 braucht (Plan 5c, Etappe B2): core/iwasm/aot ohne
+aot_perf_map.c und aot_validator.c, aot/arch nur aot_reloc_x86_64.c, core/iwasm/common, core/shared/utils,
+core/shared/mem-alloc mit ems, die Kopfdateien aus core/iwasm/include, core/iwasm/interpreter,
+core/iwasm/compilation, core/shared/platform/include sowie core/config.h und core/version.h.
+Aenderungen: keine. Die Plattformschicht und invokeNative liegen in ProjektZeh/Native/Wasm/wamr-platform.

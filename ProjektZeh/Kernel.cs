@@ -250,6 +250,9 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
 #endif
+#if ZEHOS_AOT_PROBE
+        if (!CosmosAotProbe.Run()) { Stop(); return; }
+#endif
 #if ZEHOS_INSTALLER
         if (startDesktop)
         {
