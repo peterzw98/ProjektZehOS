@@ -64,6 +64,9 @@ namespace Cosmos.Network.Http
                 return "The certificate of " + Name(current) + " isn't meant for TLS " + (host != null ? "servers." : "clients.");
             }
 
+            // ZehOS (Etappe 12.2): the authorities above the leaf, whose nameConstraints apply to it.
+            var authorities = new List<BcCertificate>();
+
             for (int depth = 0; depth < MaxDepth; depth++)
             {
                 // Refused as mbedTLS refuses it: an extension it can't honour that says it must be.
@@ -76,7 +79,7 @@ namespace Cosmos.Network.Http
                 // A certificate trusted as such: the end of the chain.
                 if (Contains(trusted, current))
                 {
-                    return null;
+                    return CheckNameConstraints(chain[0], authorities);
                 }
 
                 // ZehOS (Etappe 12.2): every certificate below the trust anchor is signed with a current algorithm and
@@ -91,7 +94,8 @@ namespace Cosmos.Network.Http
                 BcCertificate anchor = FindIssuer(current, trusted, 0, now, depth, out error);
                 if (anchor != null)
                 {
-                    return null;
+                    authorities.Add(anchor);
+                    return CheckNameConstraints(chain[0], authorities);
                 }
 
                 // Signed by an intermediate the peer sent.
@@ -102,6 +106,7 @@ namespace Cosmos.Network.Http
                     return error ?? chainError ?? "The certificate of " + Name(current) + " was issued by " + current.IssuerDN + ", which isn't trusted.";
                 }
 
+                authorities.Add(issuer);
                 current = issuer;
             }
 
@@ -255,6 +260,8 @@ namespace Cosmos.Network.Http
             X509Extensions.ExtendedKeyUsage.Id,
             X509Extensions.SubjectAlternativeName.Id,
             X509Extensions.CertificatePolicies.Id,
+            // ZehOS (Etappe 12.2): honoured by CheckNameConstraints.
+            X509Extensions.NameConstraints.Id,
         };
 
         private static string CheckCriticalExtensions(BcCertificate certificate)
@@ -269,7 +276,6 @@ namespace Cosmos.Network.Http
             {
                 if (Array.IndexOf(s_handledExtensions, oid) < 0)
                 {
-                    // nameConstraints (2.5.29.30), for one.
                     return "The certificate of " + Name(certificate) + " has a critical extension that isn't supported (" + oid + ").";
                 }
             }
@@ -470,6 +476,207 @@ namespace Cosmos.Network.Http
                     return ((RsaKeyParameters)certificate.GetPublicKey()).Modulus.BitLength >= MinimumRsaBits;
                 }
                 catch
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// ZehOS (Etappe 12.2): the nameConstraints of every authority on the path (RFC 5280 4.2.1.10) for the leaf's
+        /// subjectAltName dNSName and iPAddress (IPv4) entries, or why they are violated. Other name forms in a
+        /// constraint can't be checked here, so such a chain is refused; so is a malformed extension.
+        /// </summary>
+        internal static string CheckNameConstraints(BcCertificate leaf, IList<BcCertificate> authorities)
+        {
+            List<string> dnsNames = null;
+            List<byte[]> addresses = null;
+            foreach (BcCertificate authority in authorities)
+            {
+                Asn1OctetString extension = authority.GetExtensionValue(X509Extensions.NameConstraints);
+                if (extension == null)
+                {
+                    continue;
+                }
+
+                if (dnsNames == null)
+                {
+                    dnsNames = new List<string>();
+                    addresses = new List<byte[]>();
+                    if (!CollectNames(leaf, dnsNames, addresses))
+                    {
+                        return "The names of " + Name(leaf) + " can't be read.";
+                    }
+                }
+
+                // A malformed extension, subtree or name in it refuses the chain; it only reaches this point when the
+                // authority's signature was valid, so a peer can't make every handshake throw here.
+                string error;
+                try
+                {
+                    NameConstraints constraints = NameConstraints.GetInstance(X509ExtensionUtilities.FromExtensionValue(extension));
+                    error = constraints == null
+                        ? "The name constraints of " + Name(authority) + " can't be read."
+                        : CheckSubtrees(authority, Subtrees(constraints.PermittedSubtreesValue), true, dnsNames, addresses)
+                            ?? CheckSubtrees(authority, Subtrees(constraints.ExcludedSubtreesValue), false, dnsNames, addresses);
+                }
+                catch
+                {
+                    error = "The name constraints of " + Name(authority) + " can't be read.";
+                }
+
+                if (error != null)
+                {
+                    return error;
+                }
+            }
+
+            return null;
+        }
+
+        private static GeneralSubtree[] Subtrees(Asn1Encodable subtrees)
+        {
+            if (subtrees?.ToAsn1Object() is not Asn1Sequence sequence)
+            {
+                return null;
+            }
+
+            var result = new GeneralSubtree[sequence.Count];
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i] = GeneralSubtree.GetInstance(sequence[i]);
+            }
+
+            return result;
+        }
+
+        private static string CheckSubtrees(BcCertificate authority, GeneralSubtree[] subtrees, bool permitted, List<string> dnsNames, List<byte[]> addresses)
+        {
+            if (subtrees == null)
+            {
+                return null;
+            }
+
+            var dnsBases = new List<string>();
+            var addressBases = new List<byte[]>();
+            foreach (GeneralSubtree subtree in subtrees)
+            {
+                GeneralName name = subtree.Base;
+                if (name.TagNo == GeneralName.DnsName)
+                {
+                    dnsBases.Add(DerIA5String.GetInstance(name.Name).GetString());
+                }
+                else if (name.TagNo == GeneralName.IPAddress)
+                {
+                    byte[] range = Asn1OctetString.GetInstance(name.Name).GetOctets();
+                    if (range.Length == 8)
+                    {
+                        addressBases.Add(range);
+                    }
+                    else if (range.Length != 32)
+                    {
+                        return "The name constraints of " + Name(authority) + " can't be read.";
+                    }
+
+                    // An IPv6 range (32 bytes) constrains no IPv4 address.
+                }
+                else
+                {
+                    return "The name constraints of " + Name(authority) + " use a name form that isn't supported.";
+                }
+            }
+
+            foreach (string dnsName in dnsNames)
+            {
+                bool inside = dnsBases.Exists(constraint => WithinDnsSubtree(dnsName, constraint));
+                // A permitted list of a form constrains names of that form only (RFC 5280 4.2.1.10).
+                if (permitted ? dnsBases.Count > 0 && !inside : inside)
+                {
+                    return "The certificate of " + Name(authority) + " may not issue for " + dnsName + ".";
+                }
+            }
+
+            foreach (byte[] address in addresses)
+            {
+                bool inside = addressBases.Exists(range => WithinAddressRange(address, range));
+                if (permitted ? addressBases.Count > 0 && !inside : inside)
+                {
+                    return "The certificate of " + Name(authority) + " may not issue for that IP address.";
+                }
+            }
+
+            return null;
+        }
+
+        private static bool CollectNames(BcCertificate leaf, List<string> dnsNames, List<byte[]> addresses)
+        {
+            Asn1OctetString extension = leaf.GetExtensionValue(X509Extensions.SubjectAlternativeName);
+            if (extension == null)
+            {
+                return true;
+            }
+
+            try
+            {
+                GeneralName[] all = GeneralNames.GetInstance(X509ExtensionUtilities.FromExtensionValue(extension))?.GetNames();
+                if (all == null)
+                {
+                    return false;
+                }
+
+                foreach (GeneralName name in all)
+                {
+                    if (name.TagNo == GeneralName.DnsName)
+                    {
+                        dnsNames.Add(DerIA5String.GetInstance(name.Name).GetString());
+                    }
+                    else if (name.TagNo == GeneralName.IPAddress)
+                    {
+                        byte[] address = Asn1OctetString.GetInstance(name.Name).GetOctets();
+                        if (address.Length == 4)
+                        {
+                            addresses.Add(address);
+                        }
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// ZehOS (Etappe 12.2): RFC 5280 4.2.1.10: "example.com" covers itself and every name below it; ".example.com"
+        /// only the names below it. "badexample.com" is not within "example.com".
+        /// </summary>
+        internal static bool WithinDnsSubtree(string name, string constraint)
+        {
+            name = name.TrimEnd('.');
+            constraint = constraint.TrimEnd('.');
+            if (constraint.Length == 0)
+            {
+                return true;
+            }
+
+            if (constraint[0] == '.')
+            {
+                return name.EndsWith(constraint, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(name, constraint, StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith("." + constraint, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool WithinAddressRange(byte[] address, byte[] range)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if ((address[i] & range[4 + i]) != (range[i] & range[4 + i]))
                 {
                     return false;
                 }
