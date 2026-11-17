@@ -1,6 +1,6 @@
 # Etappe 7a: Installer-Layout ESP + ext2, Boot und Recovery (Inventar, Entwurf, Testspezifikation)
 
-Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (ZehOS 0.5.12). **Nur lesen und entwerfen:** keine Formatier-, Boot- oder Installeränderung, nichts davon im Gast ausgeführt. Grundlage: [Plan, Etappe 7](../plans/2026-11-17-storage-linux.md#etappe-7-installer-updates-und-energieaktionen), [Aufrufer-Inventar](2026-11-17-storage-callers.md), [Etappe-2-Entscheidungen](2026-11-17-storage-etappe2-design.md), Cosmos-Quelle `efcf20c` (= 3.0.97). Aussagen zu Cosmos stammen aus dem Quellbaum, nicht aus dem Gast.
+Stand: 17. November 2026, Basis `origin/master` @ `6fb962b` (Storage Etappe 2 gemergt, ZehOS 0.5.12). **Nur lesen und entwerfen:** keine Formatier-, Boot- oder Installeränderung, nichts davon im Gast ausgeführt. Grundlage: [Plan, Etappe 7](../plans/2026-11-17-storage-linux.md#etappe-7-installer-updates-und-energieaktionen), [Aufrufer-Inventar](2026-11-17-storage-callers.md), [Etappe-2-Entscheidungen](2026-11-17-storage-etappe2-design.md), Cosmos-Quelle `efcf20c` (= 3.0.97). Aussagen zu Cosmos stammen aus dem Quellbaum, nicht aus dem Gast.
 
 ## 0. Entscheidungen der Storage-Leitung (09:12/09:15, nachgezogen)
 
@@ -47,7 +47,7 @@ Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (
 
 ## 3. Entwurf: Ziel-Layout
 
-- **Partitionstabelle:** GPT mit Schutz-MBR, 1-MiB-Ausrichtung (LBA 2048 wie heute), Primär- und Backup-Header, korrekte CRC32. Schreiber als schmale, injizierbare Klasse (`GptLayoutWriter`: Plattengröße, Sektorgröße 512, GUID-Quelle → Bytes für Sektor 0..33 und die letzten 33 Sektoren), nur für den Umfang 32 bis 128 GiB; alles andere wird **vor jedem Schreibzugriff** verweigert. **GUIDs:** Disk-GUID und Partitions-GUIDs kommen aus der Hardware-Zufallsquelle (Version-4-Bits gesetzt) und sind je Installation eindeutig; keine Ableitung aus der Plattengröße (das macht `Gpt.Create` mit `WriteDeterministicGuid` und würde gleich große Platten verwechselbar machen). Im Test wird die Quelle injiziert; zusätzlich ein Test, dass zwei Installationen verschiedene GUIDs erhalten.
+- **Partitionstabelle:** GPT mit Schutz-MBR, 1-MiB-Ausrichtung (LBA 2048 wie heute), Primär- und Backup-Header, korrekte CRC32. Schreiber als schmale, injizierbare Klasse (`GptLayoutWriter`: Plattengröße, Sektorgröße 512, GUID-Quelle → Bytes für Sektor 0..33 und die letzten 33 Sektoren), nur für den Umfang 32 bis 128 GiB; alles andere wird **vor jedem Schreibzugriff** verweigert. **GUIDs:** Disk-GUID und Partitions-GUIDs kommen aus der Hardware-Zufallsquelle (Version-4-Bits gesetzt) und sind je Installation eindeutig; Quelle ist das vorhandene `CosmosSaltSource.Fill` (RDSEED/RDRAND per CPUID geprüft, Ersatz virtio-rng; `HardwareRandom.cs`, in master belegt, Cosmos 3.0.94-Nativfunktionen `_native_cpu_rdseed64`/`_native_cpu_rdrand64`). Fehlt jede Quelle (`HardwareRandomUnavailableException`), **verweigert der Installer vor dem ersten Schreibzugriff**; es gibt keine deterministische Ersatzableitung. Keine Ableitung aus der Plattengröße (das macht `Gpt.Create` mit `WriteDeterministicGuid` und würde gleich große Platten verwechselbar machen). Im Test wird die Quelle injiziert; zusätzlich ein Test, dass zwei Installationen verschiedene GUIDs erhalten.
 - **Partition 1 – ESP:** Typ `C12A7328-…`, FAT32, Label `ZEHOSBOOT`, Standard 512 MiB (Kernel + `.bak` + Limine; konkrete Größe nach Payloadmessung festlegen), Inhalt wie heute: `/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf(.bak)`, `/boot/zehos-version.txt`, `/boot/limine/limine.conf`. Bleibt bis Etappe 4 auch `/data` (Konten, Pakete, Updatekonfiguration).
 - **Partition 2 – Root:** Typ `0FC63DAF-…`, GPT-Name `ZEHOS-ROOT`, ext2 mit 4096-Byte-Blöcken, ext2-Volumename `zehos-root`, Größe = Rest der Platte (Zielumfang 32 bis 128 GiB, also Root ≤ ≈127,5 GiB, innerhalb der Formatterobergrenze). Wird in 7a formatiert und geprüft, aber **nicht** als `/` eingehängt (Etappe 4). Keine Freigabe über 128 GiB.
 - **Größenbereich:** 32 bis 128 GiB (Entscheid). Platten außerhalb bekommen das neue Layout nicht (offen, ob der bisherige Ein-Partition-Installer für kleine Platten bestehen bleibt oder sie abgelehnt werden); ESP 512 MiB, Root = Rest.
@@ -63,7 +63,7 @@ Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zäh
 
 **Problem:** Wird der Root-GPT-Eintrag gelöscht, sieht die Platte wie eine reine ESP-Platte aus; ohne weitere Information wäre das „kein installiertes Layout" und die Einrichtung würde angeboten. Deshalb trägt die ESP die Identität:
 
-- **ESP-Marker** `/boot/zehos-install.id` (Textdatei, Format-Version, Disk-GUID, Root-Partitions-GUID, Root-Startsektor/-Größe, vom Installer als letzter Schritt geschrieben). Der Dateiname gehört zum Schutz der `.zehos-`-/Systempfade (Etappe 3 festlegen).
+- **ESP-Marker** `boot/zehos-install.id` (Pfad **relativ zur ESP-Wurzel**; die ESP wird als `/data` eingehängt, gelesen wird also über das ESP-Volume, nicht über ein `/boot`-Mount, das es nicht gibt: im Gast `/data/boot/zehos-install.id`) (Textdatei, Format-Version, Disk-GUID, Root-Partitions-GUID, Root-Startsektor/-Größe, vom Installer als letzter Schritt geschrieben). Der Dateiname gehört zum Schutz der `.zehos-`-/Systempfade (Etappe 3 festlegen).
 - **Prüfung beim Boot** (reine Funktion `InstalledIdentity.Evaluate(marker?, gptEntries, diskGuid, rootSuperblock?)`):
 
 | Lage | Ergebnis |
@@ -72,6 +72,7 @@ Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zäh
 | Marker lesbar, Disk-GUID passt, GPT-Eintrag mit Root-GUID vorhanden, Lage/Größe passen, Gate `Ok` | `Healthy` |
 | Marker lesbar, aber **kein GPT-Eintrag mit der Root-GUID** (auch bei sonst gültiger Tabelle) | `RootMissing` |
 | Eintrag vorhanden, Lage/Größe weichen ab, Magic falsch, Gate `Reject` oder Superblock unlesbar | `RootDamaged` (`ReadOnly` bei unbekanntem RoCompat: lesbar, keine Einrichtung) |
+| **Kein Marker, aber Linux-Root-Partition (ext2-Typ-GUID) neben der ESP vorhanden** (Abbruch des Installers vor dem Markerschreiben, Marker gelöscht) | `Unclear`: keine Einrichtung, nie `Legacy` |
 | Marker unlesbar/beschädigt, Disk-GUID passt nicht, Tabelle ungültig oder mehrdeutig | `Unclear` |
 
 - **Folge:** `RootMissing`, `RootDamaged` und `Unclear` ergeben `Blocked` → `DataDiskSelector.SetupBlockedReason` → `AccountService.SetupBlockedReason` (Mechanik aus Etappe 2): keine Ersteinrichtung, kein neues Konto, serielle Fehlerzeile `STORAGE Fehler: … Keine Ersteinrichtung.` **Unklare Identität sperrt grundsätzlich.** Der Boot führt in die Recovery-Shell (Anzeige/Textshell), nicht in eine Neueinrichtung.
@@ -100,7 +101,7 @@ Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zäh
 **Host-Gegenprüfung (Beweisregel: produktiver Writer, kein Python-Spiegel):** ein Hostprogramm unter `experiments/` (wie `StorageProbe`, bindet die **produktiven** Quellen `GptLayoutWriter`/Identität per Compile-Include ein) schreibt in ein NEUES sparse Image (existierender Pfad = Abbruch); `scripts/test-installer-layout.py` ruft es auf und prüft das Ergebnis mit `sfdisk -l`/`sgdisk -v` (Tabelle und Backup gültig), `fsck.fat -n` auf der ESP und `e2fsck -fn` auf der Root-Partition. Exit 0 nur wenn alles grün; fehlende Werkzeuge werden als offen gemeldet, nicht als bestanden. Python kennt nur Aufruf und Auswertung, nie die Tabellenbytes selbst.
 
 **Gasttests (QEMU+OVMF, danach VMware; nur auf Ansage, ein Gast gleichzeitig):**
-- G1 frische Installation auf 1 GiB, 32 GiB, 128 GiB: Boot per OVMF von der installierten GPT-Platte (zentrale Annahme), `disk list` zeigt zwei Partitionen, ESP als `/data`, Anmeldung/Ersteinrichtung wie heute.
+- G1 frische Installation auf 32 GiB und 128 GiB (Zielumfang; 1 GiB und kleiner/größer werden dagegen verweigert, siehe Negativtest): Boot per OVMF von der installierten GPT-Platte (zentrale Annahme), `disk list` zeigt zwei Partitionen, ESP als `/data`, Anmeldung/Ersteinrichtung wie heute.
 - G2 `.bak`-Rückfalleintrag und `update` (7b-Regression nur Lesen der Pfade).
 - G3 Root fehlt (Partition 2 offline löschen): Boot gelingt, serielle Fehlerzeile, **keine** Ersteinrichtung, Recovery-Shell erreichbar.
 - G4 Root beschädigt (ext2-Magic/Incompat-Bit offline ändern): wie G3.
