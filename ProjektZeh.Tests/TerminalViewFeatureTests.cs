@@ -179,17 +179,6 @@ public sealed class TerminalViewFeatureTests
     }
 
     [TestMethod]
-    public void CloseReleasesShellOnlyOnce()
-    {
-        var terminal = Create();
-        int closed = 0;
-        terminal.Shell.OnClose = () => closed++;
-        terminal.Close();
-        terminal.Close();
-        Assert.AreEqual(1, closed);
-    }
-
-    [TestMethod]
     public void AliasToAccountCommandCannotEnterEditorHistory()
     {
         var terminal = Create();

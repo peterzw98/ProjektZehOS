@@ -133,7 +133,7 @@ public sealed class DesktopSettingsTests
             Assert.AreEqual(1, loaded.Settings.Accent);
             var missing = new DesktopPreferences(new FileService(Path.Combine(directory, "absent")));
             Assert.IsFalse(missing.Save().IsOK());
-            Assert.IsTrue(missing.Status.Length > 0);
+            Assert.IsTrue(missing.StatusIsError);
         }
         finally { Directory.Delete(directory, true); }
     }

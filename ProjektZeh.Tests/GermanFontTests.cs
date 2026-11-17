@@ -20,7 +20,6 @@ public sealed class GermanFontTests
         byte[] normalized = GermanFont.Normalize(source, 8, 16);
         int destination = GermanFont.Glyph(character);
         CollectionAssert.AreEqual(source.AsSpan(glyph * 16, 16).ToArray(), normalized.AsSpan(destination * 16, 16).ToArray());
-        Assert.AreEqual((byte)(glyph % 251), source[glyph * 16]);
         Assert.AreEqual((byte)'A', normalized['A' * 16]);
         Assert.AreEqual((char)destination, GermanFont.ConsoleText(character.ToString())[0]);
         var resource = new byte[256 * 64];

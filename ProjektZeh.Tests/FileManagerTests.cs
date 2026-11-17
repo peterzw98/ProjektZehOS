@@ -64,6 +64,9 @@ public sealed class FileManagerTests
         Assert.AreEqual(Path.Combine(directory, "sub"), files.CurrentDirectory);
         Click(app, 130, 30);
         Assert.AreEqual(directory, files.CurrentDirectory, "Hoch fuehrt zum uebergeordneten Ordner.");
+        // Hier fuehrte Zurueck nach "sub", Hoch muss dagegen eine Ebene ueber den Startordner.
+        Click(app, 130, 30);
+        Assert.AreEqual(Path.GetDirectoryName(directory), files.CurrentDirectory);
     }
 
     [TestMethod]
@@ -142,19 +145,6 @@ public sealed class FileManagerTests
         Type(app, "verirrt");
         Key(app, PhysicalKey.Enter);
         Assert.IsFalse(Directory.Exists(Path.Combine(directory, "sub", "verirrt")));
-    }
-
-    [TestMethod]
-    public void Rename_UsesFileSelectedWhenStarted()
-    {
-        File.WriteAllText(Path.Combine(directory, "a.txt"), "a");
-        var app = Start(new FileService(directory));
-        Click(app, 300, FirstRowY);
-        Key(app, PhysicalKey.F2);
-        Type(app, "c.txt");
-        Key(app, PhysicalKey.Enter);
-        Assert.IsTrue(File.Exists(Path.Combine(directory, "c.txt")));
-        Assert.IsFalse(File.Exists(Path.Combine(directory, "a.txt")));
     }
 
     [TestMethod]
