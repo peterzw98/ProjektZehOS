@@ -16,6 +16,14 @@ internal sealed class FileAccessControl
 
     public FileAccessControl(string rootDirectory) => RootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
 
+    /// <summary>
+    /// Etappe 3 (Vertrag): Vergleich je Verwaltungswurzel, Ordinal auf ext2, OrdinalIgnoreCase auf FAT (Standard). Gilt fuer
+    /// Eintraege, Restore, Contains, Verschieben und jede Praefixpruefung. <paramref name="pathGuard"/> prueft vor jedem
+    /// Zugriff Symlinks und Mountgrenzen (Pfad, creating); null nur fuer Hosttests ohne Dateisystem.
+    /// </summary>
+    public FileAccessControl(string rootDirectory, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard = null)
+        : this(rootDirectory) => throw new NotImplementedException();
+
     internal void Initialize() { entries.Clear(); IsReady = true; }
     internal void Lock() { IsReady = false; entries.Clear(); }
 
