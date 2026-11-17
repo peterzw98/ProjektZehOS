@@ -26,13 +26,13 @@ class Ext2GuestHostTests(unittest.TestCase):
                     guest.new_work_dir(path)
         self.assertEqual((self.dir / 'datei').read_bytes(), b'x')
 
-    def test_image_is_sparse_64_mib(self):
+    def test_image_is_sparse_72_mib(self):
         image = self.dir / 'a.img'
         guest.create_image(image)
-        self.assertEqual(image.stat().st_size, 64 * 1024 * 1024)
+        self.assertEqual(image.stat().st_size, 75497472)
 
     def test_image_rejects_bad_size_and_never_overwrites(self):
-        for size in (63 * 1024 * 1024, 64 * 1024 * 1024 + 1):
+        for size in (64 * 1024 * 1024, 72 * 1024 * 1024 - 1, 72 * 1024 * 1024 + 512):
             with self.subTest(size=size), self.assertRaises(ValueError):
                 guest.create_image(self.dir / 'b.img', size)
         existing = self.dir / 'c.img'

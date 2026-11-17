@@ -2,7 +2,7 @@
 """Hostseite der ext2-Gastqualifikation: zwei QEMU-Laeufe auf demselben RAW-Image, danach e2fsck -fn.
 
 Das ISO muss die Storage-Probe enthalten, die seriell "STORAGE_PROBE <Name> PASS|FAIL ..." und am Ende
-"STORAGE_PROBE DONE" schreibt und sich danach selbst beendet. Das Image (64 MiB, sparse) kommt als zweite Platte
+"STORAGE_PROBE DONE" schreibt und sich danach selbst beendet. Das Image (genau 72 MiB, sparse) kommt als zweite Platte
 (AHCI-Port 1) in einen NEUEN Arbeitsordner; ein vorhandener Pfad ist ein Abbruch, nichts wird ueberschrieben.
 Exit 0 nur, wenn beide Laeufe ohne FAIL und mit DONE enden und e2fsck -fn 0 liefert.
 """
@@ -19,8 +19,8 @@ spec = importlib.util.spec_from_file_location("package_guest", ROOT / "scripts/t
 tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
 
-IMAGE_SIZE = 64 * 1024 * 1024
-SECTOR = 512
+# Genau 72 MiB: die leere App-Platte hat 64 MiB, so ist die Testplatte im Gast eindeutig.
+IMAGE_SIZE = 72 * 1024 * 1024
 RESULT = re.compile(r"^STORAGE_PROBE (?!DONE)(\S+) (PASS|FAIL)\b", re.MULTILINE)
 
 
@@ -33,8 +33,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def create_image(path: Path, size: int = IMAGE_SIZE) -> None:
-    if size < IMAGE_SIZE or size % SECTOR:
-        raise ValueError(f"Image muss mindestens 64 MiB gross und ein Vielfaches von {SECTOR} Byte sein: {size}")
+    if size != IMAGE_SIZE:
+        raise ValueError(f"Image muss genau {IMAGE_SIZE} Byte (72 MiB) gross sein: {size}")
     with path.open("xb") as image:  # "x": nie ein vorhandenes Image ueberschreiben
         image.truncate(size)
 
