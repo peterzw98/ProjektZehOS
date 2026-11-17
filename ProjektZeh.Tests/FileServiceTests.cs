@@ -40,6 +40,36 @@ public sealed class FileServiceTests
         CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, files.ReadBytes("bild.raw", 16).Value);
     }
 
+    // Laenge 0 (virtuelle/unbekannte Laenge) liest blockweise; auch dieser Pfad darf ohne Puffer nicht abstuerzen.
+    [TestMethod]
+    public void ReadUntilEnd_MissingBuffer_ReportsOutOfMemory()
+    {
+        byte[] content = new byte[10000];
+        for (int index = 0; index < content.Length; index++) content[index] = (byte)index;
+        int allowed = 2; // zwei Lesebloecke gelingen, der dritte nicht
+        using (var stream = new MemoryStream(content))
+        {
+            var read = FileService.ReadUntilEnd(stream, 64 * 1024, length => allowed-- > 0 ? new byte[length] : null);
+            Assert.IsFalse(read.IsOK());
+            StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        }
+
+        int calls = 0; // Bloecke gelingen, der Ergebnispuffer nicht
+        using (var stream = new MemoryStream(content))
+        {
+            var read = FileService.ReadUntilEnd(stream, 64 * 1024, length => ++calls <= 3 ? new byte[length] : null);
+            Assert.IsFalse(read.IsOK());
+            StringAssert.Contains(read.Status.Message, "OutOfMemory");
+        }
+
+        using (var stream = new MemoryStream(content))
+            CollectionAssert.AreEqual(content, FileService.ReadUntilEnd(stream, content.Length).Value, "Inhalt ueber Blockgrenzen");
+        using (var stream = new MemoryStream(new byte[8192]))
+            Assert.AreEqual(8192, FileService.ReadUntilEnd(stream, 8192).Value!.Length, "genau zwei volle Bloecke bis zur Grenze");
+        using (var stream = new MemoryStream(new byte[8193]))
+            Assert.IsFalse(FileService.ReadUntilEnd(stream, 8192).IsOK(), "ein Byte ueber der Grenze");
+    }
+
     [TestMethod]
     public void BufferAllocation_ReturnsBufferOfRequestedLength()
     {

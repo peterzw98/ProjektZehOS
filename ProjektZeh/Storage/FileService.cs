@@ -177,7 +177,7 @@ internal sealed class FileService
             if (length < 0 || length > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
             // Laenge 0 kann auch "unbekannt" heissen (virtuelle Dateien wie unter Linux): dann begrenzt bis EOF lesen.
-            if (length == 0) return ReadUntilEnd(stream, maximumLength);
+            if (length == 0) return ReadUntilEnd(stream, maximumLength, AllocateBuffer);
             if (AllocateBuffer((int)length) is not { } data) return OutOfMemory<byte[]>();
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
@@ -188,20 +188,41 @@ internal sealed class FileService
         }
     }
 
-    /// <summary>Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei.</summary>
-    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength)
+    /// <summary>
+    /// Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei. Gelesen wird in
+    /// Bloecken und erst am Ende in einen Puffer passender Groesse kopiert; jede Anforderung laeuft ueber
+    /// <paramref name="allocate"/>, damit ein ausgeschoepfter Kernel-Heap als OutOfMemory endet statt als Absturz.
+    /// </summary>
+    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength, Func<int, byte[]?>? allocate = null)
     {
-        using var data = new MemoryStream();
-        var chunk = new byte[4096];
-        int read;
-        while ((read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, (long)maximumLength + 1 - data.Length))) > 0)
+        allocate ??= BufferAllocation.TryAllocate;
+        const int BlockLength = 4096;
+        var blocks = new List<byte[]>();
+        long total = 0;
+        while (true)
         {
-            data.Write(chunk, 0, read);
-            if (data.Length > maximumLength)
+            if (allocate(BlockLength) is not { } block) return OutOfMemory<byte[]>();
+            int filled = 0, read;
+            while (filled < block.Length
+                   && (read = stream.Read(block, filled, (int)Math.Min(block.Length - filled, (long)maximumLength + 1 - total - filled))) > 0)
+                filled += read;
+            total += filled;
+            if (total > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+            if (filled > 0) blocks.Add(block);
+            if (filled < block.Length) break;
         }
 
-        return ResultObjectFactory.CreateSuccess(data.ToArray());
+        if (allocate((int)total) is not { } data) return OutOfMemory<byte[]>();
+        int offset = 0;
+        foreach (byte[] block in blocks)
+        {
+            int count = (int)Math.Min(block.Length, total - offset);
+            block.AsSpan(0, count).CopyTo(data.AsSpan(offset));
+            offset += count;
+        }
+
+        return ResultObjectFactory.CreateSuccess(data);
     }
 
     /// <summary>Gehoert der Pfad (nach Normalisierung gegen das Arbeitsverzeichnis) zu /proc, /sys oder /dev?</summary>

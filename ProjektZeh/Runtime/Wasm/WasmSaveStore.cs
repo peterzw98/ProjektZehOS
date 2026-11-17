@@ -395,8 +395,11 @@ internal sealed class WasmSaveStore
             capacity = size;
             if (buffered - entry.Data.Length + capacity > limits.BufferBytes) return WasiErrno.NoSpace;
         }
-        // Ohne Puffer vom Kernel-Heap meldet die App ENOSPC wie bei ausgeschoepftem Pufferbudget; Eintrag und Zaehler bleiben.
-        if (allocate((int)capacity) is not { } data) return WasiErrno.NoSpace;
+        // Scheitert die Verdopplung, genuegt vielleicht die exakte Groesse. Ohne Puffer vom Kernel-Heap meldet die App ENOSPC wie
+        // bei ausgeschoepftem Pufferbudget; Eintrag und Zaehler bleiben.
+        byte[]? data = allocate((int)capacity);
+        if (data is null && capacity > size) data = allocate((int)(capacity = size));
+        if (data is null) return WasiErrno.NoSpace;
         entry.Data.AsSpan(0, entry.Length).CopyTo(data);
         buffered += capacity - entry.Data.Length;
         entry.Data = data;
