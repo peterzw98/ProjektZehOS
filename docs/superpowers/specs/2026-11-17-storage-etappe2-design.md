@@ -10,7 +10,7 @@ Stand: 17. November 2026, Grundlage [Aufrufer-Inventar](2026-11-17-storage-calle
    - **über 4 GiB:** Teilscan, nur zusammen mit `disk init <gerät> --yes-large` und deutlichem Hinweis in der Ausgabe: erste und letzte 64 MiB vollständig, Signaturstellen (MBR/GPT Sektor 0/1 und Ende, FAT-Bootsektor, ext2 `0x438`, NTFS, LUKS) und eine Stichprobe von 4 KiB je 64 MiB. Ein einziges Byte ungleich null bricht ab; ohne `--yes-large` wird nichts geschrieben.
    Zeitbudget vor Gasttests mit 64 MiB und 4 GiB messen.
 3. **Auswahl beim Boot – Bestand gewinnt** (nach Review huang/Koordinator, 17.11. 07:44; ein angehängtes Laufwerk darf `/data` samt Kontendatei nie still ersetzen):
-   1. Trägt `sata0` eine FAT-Datenpartition (Typ `0x0C`, Label `ZEHOS` oder `ZEHOSDATA`), wird `sata0` eingebunden. Gibt es zusätzlich eine `ZEHOSDATA`-Partition auf einem anderen Gerät, nur Protokollhinweis, kein Umschalten.
+   1. Trägt `sata0` eine Partition vom Typ `0x0C` (Label egal; im Zweifel gilt Bestand), wird `sata0` eingebunden. Gibt es zusätzlich eine `ZEHOSDATA`-Partition auf einem anderen Gerät, nur Protokollhinweis, kein Umschalten.
    2. Sonst genau eine `ZEHOSDATA`-Partition auf einem anderen Gerät: diese einbinden.
    3. Mehrere `ZEHOSDATA`-Treffer: nichts einbinden (`AmbiguousDataDisk`).
    4. Sonst der bisherige Rückfall: `sata0` mit genau einer Partition.
