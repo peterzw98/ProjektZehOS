@@ -28,6 +28,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly InteractiveSession interactive;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
+    private readonly CosmosSystemFiles systemFiles;
     private bool startDesktop;
     private static UpdateVersion CurrentVersion
     {
@@ -72,6 +73,7 @@ public sealed class Kernel : Sys.Kernel
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => VfsManager.TryGetMount(Paths.AdminRoot, out _);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
 #if ZEHOS_INSTALLER
@@ -92,7 +94,8 @@ public sealed class Kernel : Sys.Kernel
 #endif
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity,
-                diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory),
+                diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
+                virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -158,10 +161,13 @@ public sealed class Kernel : Sys.Kernel
     private ShellService CreateShell(UserSession identity)
     {
         var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity,
-            diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory);
+            diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
+            virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.IsVirtualPath(path)
+                ? ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument, "cause='VirtualSource' message='Pakete nur aus normalen Verzeichnissen installieren.'")
+                : files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
@@ -245,6 +251,8 @@ public sealed class Kernel : Sys.Kernel
             return mounted;
 #endif
         });
+        // In beiden Profilen und unabhaengig von /data (Spec E5b/E6b §0.2); ein Fehler wird nur protokolliert.
+        boot.RunStep("VirtualFiles", MountVirtualFiles);
 #if !ZEHOS_INSTALLER
         systemLog.Information("Network", $"Cosmos: aktiviert={Cosmos.Kernel.System.Network.NetworkManager.IsEnabled}, initialisiert={Cosmos.Kernel.System.Network.NetworkManager.IsInitialized}, Adapter={Cosmos.Kernel.System.Network.NetworkManager.DeviceCount}, Link={Cosmos.Kernel.System.Network.NetworkManager.LinkUp}.");
         if (Cosmos.Kernel.System.Network.NetworkManager.IsEnabled && Cosmos.Kernel.System.Network.NetworkManager.IsInitialized)
@@ -389,6 +397,21 @@ public sealed class Kernel : Sys.Kernel
         var snapshot = scheduler.Snapshot();
         return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
+    }
+
+    /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
+    /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>
+    private ResultErr MountVirtualFiles()
+    {
+        var failed = new System.Collections.Generic.List<string>();
+        foreach (var (name, root, flags) in new[] { ("zehos-proc", "/proc", MountFlags.ReadOnly), ("zehos-sys", "/sys", MountFlags.ReadOnly), ("zehos-dev", "/dev", MountFlags.None) })
+        {
+            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce))) failed.Add(name + " nicht registriert");
+            else if (!VfsManager.TryMount(name, "", flags, root, out _)) failed.Add(root + " nicht eingehaengt");
+        }
+
+        return failed.Count == 0 ? ResultErr.CreateSuccess()
+            : ResultErr.CreateFailure(ResultCode.Failure, $"cause='MountFailed' message='{string.Join(", ", failed)}.'");
     }
 
     private long GetElapsedMilliseconds()

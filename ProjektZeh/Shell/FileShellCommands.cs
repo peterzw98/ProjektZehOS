@@ -1,6 +1,7 @@
 using System.Globalization;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
+using ProjektZeh.Storage.Virtual;
 
 namespace ProjektZeh.Shell;
 
@@ -53,6 +54,10 @@ internal sealed class FileShellCommands
             return InvalidArguments("cd <Pfad>");
         }
 
+        // Die Navigation laeuft ueber ResolvePath, fuer den /proc, /sys und /dev fremde Mounts sind (Spec E5b/E6b §3a).
+        if (files.IsVirtualPath(arguments[0]))
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument,
+                "cause='VirtualReadOnly' message='/proc, /sys und /dev sind nur lesbar, mit absolutem Pfad: ls /proc, cat /proc/version.'");
         return files.ChangeDirectory(arguments[0]);
     }
 
@@ -67,6 +72,21 @@ internal sealed class FileShellCommands
         if (arguments.Length == 1)
         {
             path = arguments[0];
+        }
+
+        if (files.IsVirtualPath(path))
+        {
+            var listed = files.ListVirtual(path);
+            string normalized = VirtualTree.Normalize(path, files.CurrentDirectory);
+            // Eine Datei listet sich selbst wie unter Linux; Rechte und Existenz hat ListVirtual davor geprueft.
+            if (!listed.IsOK() && VirtualTree.Find(normalized) is { Kind: not VirtualKind.Directory } && listed.Status.Code == ResultCode.InvalidArgument)
+            {
+                output.WriteLine(normalized);
+                return ResultErr.CreateSuccess();
+            }
+            if (!listed.IsOK()) return listed.Status;
+            foreach (var entry in listed.Value!) output.WriteLine(entry.Path);
+            return ResultErr.CreateSuccess();
         }
 
         var result = files.ListEntries(path);
@@ -90,7 +110,7 @@ internal sealed class FileShellCommands
             return InvalidArguments("cat <Datei>");
         }
 
-        var result = files.ReadText(arguments[0]);
+        var result = files.ReadTextOrVirtual(arguments[0]);
         if (!result.IsOK())
         {
             return result.Status;
