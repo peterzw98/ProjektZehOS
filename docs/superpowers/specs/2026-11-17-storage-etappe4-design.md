@@ -2,7 +2,7 @@
 
 Stand: 17. November 2026, Basis `origin/master` @ `284e7ee` (0.5.17, Etappe 3 gemergt). **Nur Entwurf**, kein Code, nichts im Gast ausgeführt. Grundlage: [Plan, Etappe 4](../plans/2026-11-17-storage-linux.md#etappe-4-root-baum-konfiguration-und-nichtdestruktive-migration), [Zielstruktur](2026-11-17-storage-linux.md#zielstruktur), [Etappe 3](2026-11-17-storage-etappe3-design.md), [7a-Layout](2026-11-17-storage-7a-installer-layout.md). Cosmos-Aussagen aus der Quelle `efcf20c` (= 3.0.97), nicht aus dem Gast. Code erst nach Lead-OK; Voraussetzung bleibt die Abnahme von 7a.
 
-## 0. Vorgeschlagene Entscheidungen (zur Bestätigung durch die Leitung)
+## 0. Entscheidungen (Leitung 11:23: §0.2 bestätigt, Ablageort `/srv/legacy-data`, neues Paket 4.0)
 
 1. **Zwei feste Profile, kein konfigurierbarer Pfadbaum.** `SystemPaths` kennt genau `Legacy` (heutige Pfade unter `/data`, byteidentisches Verhalten) und `Root` (ext2 als `/`). Das Profil wird **einmal beim Boot** aus Identität und Migrationsmarker bestimmt (§2) und danach nicht mehr gewechselt; `disk use/mount` ändern es nicht.
 2. **ESP unter `/boot/efi`, nicht unter `/boot`.** Abweichung von der Zielstruktur mit Grund: Kernel und Limine liegen auf der ESP unter `boot/…` (`InstallJob.cs:21`, Limine `boot():/boot/ProjektZeh.elf`). Als `/boot` eingehängt entstünde `/boot/boot/ProjektZeh.elf`; mit `/boot/efi` bleibt der Limine-Pfad unverändert, und `FileUpdateTarget` bekommt nur eine andere Wurzel (`/boot/efi` statt `/data`). Das ist zugleich die übliche Linux-Lage. `/boot` selbst ist ein Verzeichnis auf Root.
@@ -27,7 +27,7 @@ Stand: 17. November 2026, Basis `origin/master` @ `284e7ee` (0.5.17, Etappe 3 ge
 | Orte im Dateimanager | Arbeitsverzeichnis, `/data` | Arbeitsverzeichnis, `/home/<name>` | `FileManagerApp.cs:68` |
 | Startverzeichnis ohne Konto | `/data` | `/` (nur lesend sichtbar nach ACL) | `Kernel.cs:80,127` |
 | App-Zustand (ClassiCube 13.4) | noch keiner | `/var/lib/zehos/apps/<id>/<konto-id>/` (reserviert, §5) | – |
-| Übernommene sonstige Dateien | – | `/mnt/legacy-data/…` (Verzeichnis auf Root, ACLs übernommen) | – |
+| Übernommene sonstige Dateien | – | `/srv/legacy-data/…` (Verzeichnis auf Root, ACLs übernommen; `/mnt` bleibt reinen Mounts vorbehalten) | – |
 
 Nicht verschoben: Gastproben (`CosmosSecurityProbe`, `CosmosWasmProbe`) bleiben Legacy-Testbuilds unter `/data`; der Installer hängt sein Ziel weiter vorübergehend an `/data` (`CosmosInstallService.cs:66-203`), nur im `Root`-Profil an einem freien Mountpunkt `/mnt/install` (sonst wäre `/data` dort ein unbelegter Name ohne Bedeutung).
 
@@ -65,7 +65,7 @@ Reihenfolge im `Root`-Profil (alles vor dem Laden der Konten):
 **Ablauf (reine Logik `LayoutMigration`, Dateizugriff über injiziertes Dateisystem):**
 
 1. **Inventar (nur lesen):** alle Einträge unter `/data` mit Größe und SHA-256, ACL-Einträge, Konten. Schlägt das Lesen eines Eintrags fehl: Abbruch.
-2. **Zuordnung** nach §1. Einträge ohne Zuordnung → `/mnt/legacy-data/<relativer Pfad>`. Ausgenommen und protokolliert: `/data/boot/**` (gehört zur alten ESP; der neue Kernel kommt aus 7a), temporäre `.zehos-*.tmp`/`.bak`.
+2. **Zuordnung** nach §1. Einträge ohne Zuordnung → `/srv/legacy-data/<relativer Pfad>`. Ausgenommen und protokolliert: `/data/boot/**` (gehört zur alten ESP; der neue Kernel kommt aus 7a), temporäre `.zehos-*.tmp`/`.bak`.
 3. **Prüfungen vor dem Schreiben:** freier Platz ≥ Summe + 10 % Reserve; keine zwei Quellen auf dasselbe Ziel (Ordinal); Zielpfade bestehen den Pfadwächter. Ein Konflikt stoppt mit Liste, nichts geschrieben.
 4. **Konten sperren:** `AccountService` der Quelle geht für die Dauer in den gesperrten Zustand (keine Anmeldung, keine Rechteänderung), damit sich das Inventar nicht ändert.
 5. **Kopieren** jeder Datei auf das Ziel und Prüfsumme zurücklesen. Fortschritt in `/etc/zehos/.zehos-migration-journal` auf dem Ziel (jede geschriebene Zieldatei mit Hash).
@@ -81,6 +81,7 @@ Reihenfolge im `Root`-Profil (alles vor dem Laden der Konten):
 
 | Paket | Inhalt | Prüfung | Vorschlag |
 |---|---|---|---|
+| 4.0 | **RW-Qualifikation ext2 als `/` im Gast** auf Basis der Etappe-1-Probe: CRUD, 10 000 Dateien, Volllaufen/ENOSPC, Rename/Delete, Neustart, `e2fsck -fn` offline Exit 0, je 32 und 128 GiB. **Ohne Go kein `Root`-Profil** | Tester (Gast), Auswertung Leitung | senior (Probe), aot-probe/tripleclerk |
 | 4.1 | `SystemPaths` (zwei Profile) und Umstellung aller Aufrufer aus §1; `Legacy` erzeugt exakt die heutigen Pfade | Hosttests beide Profile; bestehende Tests unverändert grün; nativer Build, Normalboot, Datenplatte A–F (Regression) | senior |
 | 4.2 | Gesperrte Systempfade `/etc/zehos`, `/var/lib/zehos` in `FileAccessControl` (auch Admin) | Hosttests: Lesen/Schreiben/Listen/Suche/Umbenennen hinein und heraus verweigert | huang oder jensen |
 | 4.3 | Profilwahl beim Boot (§2) als reine Funktion `LayoutProfile.Decide(identity, gate, marker, rootEmpty)` plus Cosmos-Anbindung (Root-Mount, `/boot/efi`, Sync bei Energieaktion) | Hosttests jede Tabellenzeile; Gast G1–G3 | senior |
@@ -88,7 +89,7 @@ Reihenfolge im `Root`-Profil (alles vor dem Laden der Konten):
 | 4.5 | Shellbefehl `system migrate` und Cosmos-Anbindung | Gast G4–G6 | senior |
 | 4.6 | App-Pfad mit ClassiCube 13.4 abstimmen (§5), Doku | Review cc-lead | orchestrator-junior |
 
-4.1 und 4.2 sind unabhängig von 7a und können zuerst kommen; 4.3–4.5 brauchen 7a S2–S4 (Writer, Identität, Installer).
+4.1 und 4.2 sind unabhängig von 7a und nach Review ohne P1/P2 freigegeben (Leitung 11:23). 4.0 läuft vor 4.3; 4.3–4.5 brauchen das Go aus 4.0 und 7a S2–S4 (Writer, Identität, Installer).
 
 ## 5. App-Speicher (Abstimmung mit ClassiCube 13.4)
 
@@ -100,7 +101,7 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 1. `SystemPaths`: jede Zeile aus §1 für beide Profile; `Legacy` gleich den heutigen Literalen (Regressionstabelle).
 2. Gesperrte Systempfade: Lesen, Schreiben, Listen, Suche, `mv` hinein/heraus, `cd`, auch als Admin und in Groß-/Kleinvarianten ⇒ verweigert; Dienste mit eigenem `FileService` dürfen schreiben.
 3. `LayoutProfile.Decide`: jede Zeile aus §2; insbesondere „kein Marker, Root nicht leer“ ⇒ gesperrt, nie Ersteinrichtung.
-4. `LayoutMigration`: Zuordnung je Kategorie; Datei ohne Zuordnung nach `/mnt/legacy-data`; Zielkonflikt ⇒ nichts geschrieben; zu wenig Platz ⇒ nichts geschrieben; ACL in anderer Schreibweise ⇒ Zieleintrag mit tatsächlichem Namen; ACL ohne Datei ⇒ protokolliert; ENOSPC beim Kopieren; Abbruch nach jedem der Schritte 1–7 ⇒ kein Marker; Wiederholung nach jedem Abbruch ⇒ gleiches Endergebnis wie ohne Abbruch; fremde Datei auf Ziel ⇒ Verweigerung; Quelle byteidentisch (Fake zählt Schreibzugriffe: 0).
+4. `LayoutMigration`: Zuordnung je Kategorie; Datei ohne Zuordnung nach `/srv/legacy-data`; Zielkonflikt ⇒ nichts geschrieben; zu wenig Platz ⇒ nichts geschrieben; ACL in anderer Schreibweise ⇒ Zieleintrag mit tatsächlichem Namen; ACL ohne Datei ⇒ protokolliert; ENOSPC beim Kopieren; Abbruch nach jedem der Schritte 1–7 ⇒ kein Marker; Wiederholung nach jedem Abbruch ⇒ gleiches Endergebnis wie ohne Abbruch; fremde Datei auf Ziel ⇒ Verweigerung; Quelle byteidentisch (Fake zählt Schreibzugriffe: 0).
 5. Marker: CRC, Größe, Formatversion, Temp + Rename; beschädigt ⇒ `Unclear`.
 6. Energieaktion im `Root`-Profil: Sync-Fehler bricht ab.
 
@@ -114,10 +115,10 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 
 ## 7. Offene Punkte
 
-1. **Leitung:** §0.2 `/boot/efi` statt `/boot` bestätigen (weicht von der Zielstruktur ab).
-2. **Leitung:** Ort für übernommene sonstige Dateien (`/mnt/legacy-data` als Verzeichnis auf Root, wie in der Spezifikation) bestätigen; `/mnt` ist sonst für Mounts reserviert.
+1. *Entschieden 11:23:* ESP unter `/boot/efi` (weicht bewusst von der Zielstruktur ab).
+2. *Entschieden 11:23:* übernommene sonstige Dateien unter `/srv/legacy-data`, ACLs übernommen.
 3. **7a:** Liste der vom Installer auf Root angelegten Einträge („Root leer“, §2) und ob der Installer die Mountpunktverzeichnisse anlegt.
-4. **Cosmos (senior):** Schreibendes ext2 als `/` ist bisher nur in der isolierten Probe belegt (Etappe 1: CRUD, Inode-Wiederverwendung). Dauerbetrieb, viele Dateien und volles Root sind ungeprüft; G1/G6 sind dafür die ersten Belege.
+4. **Cosmos:** Schreibendes ext2 als `/` ist bisher nur in der isolierten Probe belegt (Etappe 1: CRUD, Inode-Wiederverwendung); Paket 4.0 schließt diese Lücke vor jedem `Root`-Profil. G1/G6 prüfen danach den Produktpfad.
 5. **Cosmos:** Sync/Flush eines nicht aushängbaren `/` beim Herunterfahren – API in 3.0.97 prüfen (`IVfsSuperblock`-Sync).
 6. **App-Speicher:** §5 mit dem ClassiCube-Auftrag abstimmen, bevor 13.4 einen `/data`-Pfad festschreibt.
 7. VMware: eigene AHCI-Platte wie in Etappe 2. Zeitbudget: Quelle kann eine FAT-Datenplatte bis 128 GiB sein (Etappe 2); bei ≈ 100 MB/s unter KVM dauert Lesen plus Rücklesen einer vollen Platte über eine Stunde. Fortschrittsanzeige und Abbruch per Taste gehören deshalb in 4.5.
