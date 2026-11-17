@@ -61,3 +61,8 @@ int32_t zehos_wasm_host_net_send(int32_t handle, const uint8_t* data, uint32_t l
 int32_t zehos_wasm_host_net_recv(int32_t handle, uint8_t* data, uint32_t length, int32_t* count)
 { (void)handle; (void)data; (void)length; (void)count; net_calls++; return 8; }
 int32_t zehos_wasm_host_net_close(int32_t handle) { (void)handle; return 8; }
+// Rasterizer-Rueckrufe (Etappe 3): diese Pruefung deckt sie nicht ab, sie muessen nur aufloesbar sein.
+int32_t zehos_wasm_host_raster_draw(uint8_t* memory, uint32_t length, uint32_t call)
+{ (void)memory; (void)length; (void)call; return 8; }
+int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uint32_t offset, uint32_t count, uint32_t value)
+{ (void)memory; (void)length; (void)offset; (void)count; (void)value; return 8; }

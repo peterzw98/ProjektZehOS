@@ -4,6 +4,7 @@ using ProjektZeh.Storage;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
+using ProjektZeh.Runtime.Wasm;
 
 namespace ProjektZeh.Shell;
 
@@ -101,6 +102,7 @@ internal sealed partial class ShellService
             new ShellCommand("version", "version", "Zeigt die geladenen Kernelversionen.", false, WriteVersion),
             new ShellCommand("uptime", "uptime", "Zeigt die Laufzeit seit ZehOS-Start.", false, WriteUptime),
             new ShellCommand("log", "log", "Zeigt die gepufferten Systemdiagnosen.", false, WriteLog),
+            new ShellCommand("frametimes", "frametimes [on|off]", "Zerlegt die Bildzeit von Paket-Apps in Anteile (Bericht je 60 s im Protokoll).", true, ExecuteFrametimes),
             .. CreateFeatureCommands(),
             .. additionalCommands
         ];
@@ -202,6 +204,16 @@ internal sealed partial class ShellService
         output.WriteLine(milliseconds.HasValue
             ? $"Laufzeit seit ZehOS-Start: {milliseconds.Value} ms"
             : "Laufzeit ist nicht verfuegbar: keine initialisierte monotone Uhr.");
+    }
+
+    private static ResultErr ExecuteFrametimes(string[] arguments, ITextOutput output)
+    {
+        var profile = WasmFrameProfile.Shared;
+        bool on = arguments.Length == 1 && string.Equals(arguments[0], "on", StringComparison.OrdinalIgnoreCase);
+        if (on || arguments.Length == 1 && string.Equals(arguments[0], "off", StringComparison.OrdinalIgnoreCase)) profile.SetEnabled(on);
+        else if (arguments.Length != 0) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: frametimes [on|off]");
+        output.WriteLine((profile.Enabled ? "Bildzeitmessung an. " : "Bildzeitmessung aus. ") + profile.Peek());
+        return ResultErr.CreateSuccess();
     }
 
     private void WriteLog(string[] arguments, ITextOutput output)

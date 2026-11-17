@@ -47,5 +47,16 @@ class Ext2GuestHostTests(unittest.TestCase):
         self.assertEqual(guest.evaluate('STORAGE_PROBE mount PASS\n'), (1, 0, False))
 
 
+    def test_image_hash_detects_any_change_after_run2(self):
+        image = self.dir / 'd.img'
+        image.write_bytes(bytes(3 * 1024 * 1024))
+        before = guest.image_hash(image)
+        self.assertTrue(guest.same_image(before, guest.image_hash(image)))
+        with image.open('r+b') as data:
+            data.seek(2 * 1024 * 1024 + 5)
+            data.write(b'\x01')
+        self.assertFalse(guest.same_image(before, guest.image_hash(image)))
+
+
 if __name__ == '__main__':
     unittest.main()
