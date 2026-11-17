@@ -74,18 +74,20 @@ internal static unsafe class WasmRuntime
         Action<WasmStatus, int, string> completed, byte[]? aot = null)
     {
         ArgumentNullException.ThrowIfNull(module);
-        EnqueueLoaded(() => (module, null), aot, entry, gas, session, completed);
+        EnqueueLoaded(() => (module, aot, null), entry, gas, session, completed, null);
     }
 
     /// <summary>
-    /// Wie oben, laedt das Modul aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser Paketdateien.
-    /// Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung.
+    /// Wie oben, laedt Modul und optionales .aot aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser
+    /// Paketdateien. Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung. log erhaelt die
+    /// gewaehlte Laufzeit beim Start und einen Rueckfall auf wasm3 (Gasttests fragen beides ab).
     /// </summary>
-    public static void Enqueue(Func<(byte[]? Module, string? Error)> load, string entry, ulong gas, IWasmSession session,
-        Action<WasmStatus, int, string> completed) => EnqueueLoaded(load, null, entry, gas, session, completed);
+    public static void Enqueue(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas, IWasmSession session,
+        Action<WasmStatus, int, string> completed, Action<string>? log = null) =>
+        EnqueueLoaded(load, entry, gas, session, completed, log);
 
-    private static void EnqueueLoaded(Func<(byte[]? Module, string? Error)> load, byte[]? aot, string entry, ulong gas,
-        IWasmSession session, Action<WasmStatus, int, string> completed)
+    private static void EnqueueLoaded(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas,
+        IWasmSession session, Action<WasmStatus, int, string> completed, Action<string>? log)
     {
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
@@ -98,11 +100,11 @@ internal static unsafe class WasmRuntime
                 WasmStatus status = WasmStatus.LoadFailed;
                 int result = 0;
                 string message;
-                (byte[]? Module, string? Error) loaded;
+                (byte[]? Module, byte[]? Aot, string? Error) loaded;
                 // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
                 try { loaded = load(); }
-                catch (Exception exception) { loaded = (null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, aot, entry, gas, session, out result, out message);
+                catch (Exception exception) { loaded = (null, null, exception.Message); }
+                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, log, out result, out message);
                 else message = loaded.Error ?? "Modul nicht geladen.";
                 // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
                 lock (gate) pending--;
@@ -174,8 +176,8 @@ internal static unsafe class WasmRuntime
             $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB\n");
     }
 
-    private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session, out int result,
-        out string message)
+    private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session,
+        Action<string>? log, out int result, out string message)
     {
         byte[] entryBytes = Encoding.ASCII.GetBytes(entry + "\0");
         byte* text = stackalloc byte[256];
@@ -188,9 +190,17 @@ internal static unsafe class WasmRuntime
         {
             fixed (byte* name = entryBytes)
             {
-                code = WasmEngineSelection.Select(AotBuiltIn, aot, gas) == WasmEngine.Aot
-                    ? RunAot(aot!, name, &value, text)
-                    : RunWasm3(module, name, gas, &value, text);
+                bool native = WasmEngineSelection.Select(WasmEngineSelection.AotBuiltIn, aot, gas) == WasmEngine.Aot;
+                log?.Invoke(native ? "Start Laufzeit=aot " + WasmEngineSelection.AotAbi : "Start Laufzeit=wasm3");
+                code = native ? RunAot(aot!, name, &value, text) : RunWasm3(module, name, gas, &value, text);
+                // Scheitert das .aot vor dem Start (Laden, Instanz, Einstieg), laeuft dieselbe App unter wasm3. Nach einem
+                // Trap gibt es keinen zweiten Versuch. Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
+                if (native && module.Length > 0 && IsBeforeStart((WasmStatus)code))
+                {
+                    log?.Invoke($"Start Laufzeit=wasm3 AOT-Rueckfall: {(WasmStatus)code} {Marshal.PtrToStringAnsi((IntPtr)text)}");
+                    value = 0;
+                    code = RunWasm3(module, name, gas, &value, text);
+                }
             }
         }
         catch (Exception exception)
@@ -229,9 +239,12 @@ internal static unsafe class WasmRuntime
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
 
+    // Statuscodes, die zehos_wasm_run_aot nur vor dem Aufruf des Einstiegs liefert (zehos_host_wamr.c).
+    private static bool IsBeforeStart(WasmStatus status) =>
+        status is WasmStatus.NoMemory or WasmStatus.InvalidModule or WasmStatus.LoadFailed or WasmStatus.EntryMissing;
+
     // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn waehlt WasmEngineSelection immer wasm3.
 #if ZEHOS_WASM_AOT
-    private const bool AotBuiltIn = true;
 
     // Dieselben Grenzen wie wasm3 (Speicher, Stack der Ausfuehrungsumgebung), aber kein Gasbudget.
     private static int RunAot(byte[] aot, byte* entry, int* value, byte* text)
@@ -246,8 +259,6 @@ internal static unsafe class WasmRuntime
     private static extern int NativeRunAot(byte* bytes, uint length, byte* entry, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
 #else
-    private const bool AotBuiltIn = false;
-
     private static int RunAot(byte[] aot, byte* entry, int* value, byte* text) =>
         throw new InvalidOperationException("WAMR-AOT ist in diesem Kernel nicht enthalten.");
 #endif

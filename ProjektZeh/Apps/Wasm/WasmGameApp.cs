@@ -88,20 +88,29 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished);
+        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, log);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
-    private (byte[]? Module, string? Error) Load(InstalledPackage package)
+    // Das .aot wird zusaetzlich bei jedem Start genau in den Bytes geprueft, die WAMR erhaelt (WasmEngineSelection.ReadAot).
+    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package)
     {
-        lock (gate) if (exitRequested) return (null, "Start abgebrochen.");
+        lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
-        if (!verified.IsOK()) return (null, verified.Message);
+        if (!verified.IsOK()) return (null, null, verified.Message);
         string entry = Path.Combine(package.FilesDirectory, package.Manifest.Entry);
-        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, "App zu gross.");
+        if (new FileInfo(entry).Length > MaximumModuleBytes) return (null, null, "App zu gross.");
         byte[] module = File.ReadAllBytes(entry);
+        byte[]? aot = null;
+        var aotFile = WasmEngineSelection.FindAot(package.Manifest, WasmEngineSelection.AotBuiltIn, WasmEngineSelection.AotEnabled);
+        if (aotFile != null)
+        {
+            var read = WasmEngineSelection.ReadAot(package.FilesDirectory, aotFile);
+            if (!read.IsOK()) return (null, null, read.Status.Message);
+            aot = read.Value;
+        }
         lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; status = "Lade ..."; }
-        return (module, null);
+        return (module, aot, null);
     }
 
     // Laeuft auf dem Worker, wenn das Modul endet.
