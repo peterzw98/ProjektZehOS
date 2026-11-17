@@ -126,8 +126,8 @@ class CheckCoverageTests(unittest.TestCase):
         # Die Hang-Erkennung des Testlaufs legt den Bericht ein zweites Mal ab; mehrere Testprojekte liefern je einen.
         with tempfile.TemporaryDirectory() as directory:
             first, second = Path(directory) / 'a.xml', Path(directory) / 'b.xml'
-            first.write_text(build_xml([(ROOT + 'Shell\A.cs', {1: 0, 2: 1})]), encoding='utf-8')
-            second.write_text(build_xml([(ROOT + 'Shell\A.cs', {1: 3}), (ROOT + 'Shell\B.cs', {7: 0})]), encoding='utf-8')
+            first.write_text(build_xml([(ROOT + 'Shell\\A.cs', {1: 0, 2: 1})]), encoding='utf-8')
+            second.write_text(build_xml([(ROOT + 'Shell\\A.cs', {1: 3}), (ROOT + 'Shell\\B.cs', {7: 0})]), encoding='utf-8')
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = coverage.main([str(first), str(second)])
