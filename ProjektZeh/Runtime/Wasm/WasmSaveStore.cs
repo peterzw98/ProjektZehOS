@@ -106,7 +106,9 @@ internal sealed class WasmSaveStore
     /// <summary>
     /// Legt den App-Speicher <paramref name="target"/> unterhalb von <paramref name="adminRoot"/> Ebene fuer Ebene an
     /// (.zehos-apps, Paket, Konto). Der Pfadwaechter erlaubt beim Anlegen nur ein fehlendes Blatt; auf einer frischen
-    /// Platte fehlte sonst schon .zehos-apps (Befund cc-lead im ClassiCube-Gasttest).
+    /// Platte fehlte sonst schon .zehos-apps (Befund cc-lead im ClassiCube-Gasttest). Scheitert eine tiefere Ebene, bleiben
+    /// die oberen als leere Ordner stehen; das ist harmlos, der naechste Start nutzt sie weiter. Im Root-Profil (4.3) liegt
+    /// der App-Zustand unter /var/lib/zehos/apps und braucht dort die passende Wurzel und den System-Dateidienst.
     /// </summary>
     internal static ResultErr CreateRoot(FileService files, string adminRoot, string target)
     {
