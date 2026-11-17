@@ -83,6 +83,20 @@ public sealed class LayoutMigrationTests
         Write("dokumente/.zehos-replace.tmp", "x");
     }
 
+    [TestMethod]
+    public void SourceDirectoryOverTheParserLimitConflictsBeforeAnyTargetWrite()
+    {
+        StandardSource();
+        string bulk = Path.Combine(source, "bulk");
+        Directory.CreateDirectory(bulk);
+        for (int i = 0; i < 8191; i++) File.Create(Path.Combine(bulk, $"f{i:D4}.txt")).Dispose();
+        var target = Target();
+        var result = Run(target);
+        StringAssert.Contains(result.Status.Message, "PlanConflict");
+        Assert.IsFalse(Writes(target), string.Join(", ", target.Operations));
+        Assert.AreEqual(LayoutState.Fresh, target.Marker().State);
+    }
+
     private MigrationPlan Plan(params string[] accounts)
     {
         var inventory = MigrationInventory.Read(source);

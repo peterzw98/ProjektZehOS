@@ -62,10 +62,11 @@ internal sealed class AccountService
     }
 
     /// <summary>Etappe 3: Vergleich und Pfadwaechter der Verwaltungswurzel gelten auch fuer die Kontendatei selbst.</summary>
-    public AccountService(string root, PasswordHasher hasher, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard)
+    public AccountService(string root, PasswordHasher hasher, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard,
+        Func<string, int?>? directoryEntryLimit = null)
     {
         Access = new FileAccessControl(root, comparison, pathGuard);
-        metadata = new FileService(Access.RootDirectory, pathGuard: pathGuard);
+        metadata = new FileService(Access.RootDirectory, pathGuard: pathGuard, directoryEntryLimit: directoryEntryLimit);
         this.hasher = hasher;
         // Neue Dateieintraege duerfen an einer vollen Rechtedatei scheitern, ohne alles zu sperren (siehe Save).
         Access.Persist = () => Save(lockWhenFull: false);
