@@ -5,8 +5,8 @@ Spiegelt die IRC-Kanäle von `zeh.ernst.casa` in eine Discord-Kategorie, leitet 
 `.env` (nicht im Repository): `DISCORD_TOKEN`, `DISCORD_GUILD_ID`, `IRC_PASS`, optional `IRC_CHANNELS` (Standard `#general,#first,#second,#third`), `DISCORD_CATEGORY`, `IRC_NICK`. Der private Signaturschlüssel liegt nur im Volume `gnupg/`.
 
 ```sh
-python3 test_bridge.py            # Selbsttest der Hilfsfunktionen (benötigt discord.py)
+python3 test_bridge.py            # Selbsttest der Hilfsfunktionen (ohne discord.py, läuft auch in der CI)
 docker compose up -d --build      # auf dem Server
 ```
 
-Weitergeleitete Zeilen prüfen: `gpg --import bridge-pubkey.asc`, dann die Zeile (ohne IRC-Präfix, Absender muss `discord` sein) per stdin übergeben: `./verify.sh '#general' < zeile.txt`.
+Weitergeleitete Zeilen prüfen: `gpg --import bridge-pubkey.asc`, dann die Zeile (ohne IRC-Präfix, Absender muss `discord` sein) per stdin übergeben: `./verify.sh '#general' < zeile.txt`. Die Ablehnungsfälle (`unsigned`, `stale`, `INVALID`) prüft `scripts/tests/test_discord_verify.py`.
