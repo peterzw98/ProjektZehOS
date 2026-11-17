@@ -187,6 +187,29 @@ done; done
 
 Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
 
+### Ergebnisse (Stand 17. November 2026)
+
+Gemessen von agent-laser-right-tester (Linux, KVM und TCG, Stand `3060e5a`), agent-laser-RED (TCG, master `1227e60`) und cc-lead (Windows, WHPX). Bildzeit ist der Median des letzten 60-s-Fensters je Lauf in ms.
+
+| App | Beschleunigung | wasm3 | AOT |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | KVM | 19 (App-Anteil 18) | 11 (App-Anteil 0,4); 3 von 3 Läufen ohne Fehler |
+| Doom 1.1.0 | TCG | 281 | Stand `5f04669`: kein erstes Bild in 600 s. Stand `1227e60`: in 1 von 5 Läufen Kernel-Panik (#GP, nicht kanonische RIP) vor dem ersten Bild |
+| ClassiCube 1.0.0 | KVM | 41 / 53 / 59 (p95 159–218) | Trap „out of bounds memory access“ vor oder kurz nach dem ersten Bild (KVM und TCG) |
+| ClassiCube 1.0.0 | WHPX | 29–61 je nach Lauf | in 2 von 3 Läufen Trap; mit Diagnosekernel in 1 von 3 Läufen Hänger bei der Weltgenerierung, sonst 40 bzw. 54 ms |
+
+Doom zeigt den erwarteten Gewinn: Der App-Anteil sinkt unter AOT von 18 ms auf 0,4 ms je Bild. Was übrig bleibt, sind Desktop, Skalierung und Anzeige. ClassiCube ist unter wasm3 durch das Rastern im Host begrenzt (siehe die Messung der Sichtweite weiter oben). AOT würde dort nur den Gastanteil verkleinern.
+
+**Befund AOT: Red Zone.** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Die Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
+
+- Der von wamrc erzeugte Code legt in Blattfunktionen Werte unterhalb von RSP ab. `objdump` zählt Schreibzugriffe `mov reg,-0x..(%rsp)`: 229 in `classicube.aot`, 107 in `doom.aot`.
+- Cosmos 3.0.97 betritt Interrupts im Ring 0 ohne IST und ohne Stackwechsel (`CPU/Interrupts.s`). CPU-Frame und gesicherte Register landen direkt unter dem aktuellen RSP. Ein Timer-Interrupt in einer solchen Blattfunktion überschreibt deren lokale Werte.
+- Der Kernel-C-Code (wasm3, WAMR-Lader, Hostfunktionen, C-Laufzeit) nutzt die Red Zone gemessen nicht: 0 Treffer in allen C-Objekten. Deshalb tritt der Fehler nur unter AOT auf.
+
+wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Nötig ist ein wamrc, der allen erzeugten Funktionen das LLVM-Attribut `noredzone` gibt. Das bedeutet eine neue zugelassene Prüfsumme in `scripts/build-package.py` und eine neue AOT-Kennung, damit vorhandene `.aot` nicht mehr geladen werden. Die Entscheidung darüber liegt bei Peter. Ein IST für den Timer-Interrupt kommt nicht in Frage: Cosmos schaltet Threads aus dem Timer-Interrupt um, der Kontext muss auf dem Stack des Threads liegen.
+
+Für Nutzer besteht derzeit kein Risiko: `wasmaot` ist standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Bis zu einem wamrc mit `noredzone` bleibt AOT ein Diagnoseweg; die Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind damit offen. Ein Diagnosebau mit `noredzone` und je 10 Vergleichsläufen ist beauftragt.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
