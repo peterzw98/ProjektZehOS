@@ -210,15 +210,16 @@ def restart_finished(text, marker, markers_before, passes_before):
     return text.count(marker) > markers_before and text.count(PROBE_PASS) >= passes_before + (1 if passes_before else 0)
 
 
-def admin_setup_lines(recovery):
-    """Eingaben fuer den ersten Administrator: Sicherheits-Recovery-Build per security recover (ein Kennwort), sonst Ersteinrichtung (Name, 2x Kennwort).
+def admin_setup_lines():
+    """Eingaben fuer den ersten Administrator nach dem Neustart: Name, Kennwort, Wiederholung.
 
-    Ueber die Kommandozeile ist nur der Recovery-Zweig erreichbar: --provision-desktop verlangt --recovery, weil disk init im
-    normalen Build einen Administrator braucht, den es auf der neuen Platte noch nicht gibt. Der zweite Zweig ist nur als
-    Funktion mit Hosttest abgesichert (Ablaufwahl), falls der Parser einmal gelockert wird.
+    Auch im Sicherheits-Recovery-Build bietet der Boot mit eingebundenem, leerem /data die Ersteinrichtung an: NeedsSetup
+    macht den LoginFlow aktiv, und die gesperrte Textshell (InteractiveSession.IsLocked) nimmt nur Name und Kennwoerter
+    entgegen. Ein getipptes 'security recover ...' landete dort als Benutzername. Der Hinweis 'security recover' im Boottext
+    wird im Recovery-Build unabhaengig davon ausgegeben.
     """
     password = 'testpassword12345'
-    return ['security recover netadmin', password] if recovery else ['netadmin', password, password]
+    return ['netadmin', password, password]
 
 
 def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False):
@@ -244,9 +245,8 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
             monitor.write_line('disk init sata0')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-disk-init.ppm'))
-            # Die Ersteinrichtung gibt es nur beim Boot und nicht im Sicherheits-Recovery-Build; disk init laesst nichts
-            # eingebunden und hat geflusht, daher genuegt ein harter Neustart per QMP. Danach ist sata0 eingebunden, und
-            # security recover legt den ersten Administrator an (eine Kennwortabfrage).
+            # Die Ersteinrichtung gibt es nur beim Boot mit eingebundenem /data; disk init laesst nichts eingebunden und hat
+            # geflusht, daher genuegt ein harter Neustart per QMP. Danach ist sata0 eingebunden und die Ersteinrichtung offen.
             before = serial.read_text(encoding='utf-8', errors='replace')
             markers_before, passes_before = before.count(marker), before.count(PROBE_PASS)
             monitor.command('system_reset')
@@ -258,10 +258,17 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
                 time.sleep(0.2)
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            for line in admin_setup_lines(recovery):
+            mark = len(serial.read_text(encoding='utf-8', errors='replace'))
+            for line in admin_setup_lines():
                 monitor.write_line(line)
                 time.sleep(1)
-            time.sleep(12)
+            # Die Kennwortpruefung (PBKDF2) braucht unter TCG laenger als eine feste Zeit; der Kernel meldet die Anmeldung seriell.
+            login_deadline = time.monotonic() + timeout
+            while 'Benutzer angemeldet.' not in serial.read_text(encoding='utf-8', errors='replace')[mark:]:
+                if qemu.poll() is not None or time.monotonic() >= login_deadline:
+                    monitor.screenshot(prefix.with_name(prefix.name + '-setup-timeout.ppm'))
+                    raise TimeoutError(f"Administrator wurde nicht angelegt ('Benutzer angemeldet.' fehlt); Protokoll: {serial}")
+                time.sleep(0.2)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
             monitor.key('f4')
             time.sleep(2)

@@ -23,11 +23,9 @@ class RestartFinishedTests(unittest.TestCase):
 
 
 class AdminSetupTests(unittest.TestCase):
-    def test_recovery_uses_security_recover_with_one_password(self):
-        self.assertEqual(network.admin_setup_lines(True), ['security recover netadmin', 'testpassword12345'])
-
-    def test_normal_build_uses_first_run_setup_with_confirmation(self):
-        self.assertEqual(network.admin_setup_lines(False), ['netadmin', 'testpassword12345', 'testpassword12345'])
+    def test_first_run_setup_takes_name_and_password_twice(self):
+        # Die gesperrte Textshell nimmt nach dem Boot nur Name, Kennwort und Wiederholung entgegen (auch im Recovery-Build).
+        self.assertEqual(network.admin_setup_lines(), ['netadmin', 'testpassword12345', 'testpassword12345'])
 
 
 if __name__ == '__main__':
