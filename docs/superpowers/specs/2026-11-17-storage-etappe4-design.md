@@ -51,7 +51,7 @@ Damit unterscheiden sich frische Installation, abgebrochene Einrichtung und abge
 1. ESP (FAT) direkt unter `/boot/efi` einhängen und den ESP-Marker dort lesen, `InstalledIdentity.Evaluate` (7a).
 2. Bei `Healthy`: Root über `CosmosReadOnlyExt2FileSystem` (#137) öffnen, `Ext2FeatureGate` auswerten, Root-Marker und Kontendatei lesen. Nichts wird dabei geschrieben (Cosmos schreibt bei Release/Sync/Drop auch auf Lese-Mounts, deshalb die RO-Komponente).
 3. RO-Zugriff schließen; nur im Fall „`Root`“ unten ext2 schreibbar auf `/` einhängen, im Fall `RootUnclean` die RO-Komponente auf `/`.
-4. Ergibt sich kein `Root`-Fall: einmalig beim Boot, vor dem Laden der Konten, `/boot/efi` aushängen und die ESP unter `/data` einhängen; 7a gilt dann unverändert (Leitung 11:27). Gasttest G8.
+4. Ergibt sich kein `Root`-Fall: einmalig beim Boot, vor dem Laden der Konten, alle Handles auf `/boot/efi` (ESP-Marker-Lesen) schließen, `/boot/efi` aushängen und die ESP unter `/data` einhängen (unter `/boot/efi` zu bleiben würde die Legacy-Pfade wie `FileUpdateTarget` `/data/boot` verbiegen); 7a gilt dann unverändert (Leitung 11:27). Gasttest G8.
 
 | Lage | Profil und Verhalten |
 |---|---|
@@ -137,7 +137,7 @@ Vorschlag an den App-Speicher-Auftrag: `/var/lib/zehos/apps/<paket-id>/<konto-id
 - G4 Migration 64-MiB-Bestandsplatte → neue 32-GiB-Platte: Anmeldung mit altem Kennwort, Dateien und ACLs gleich (Hashvergleich), Pakete starten (NetSurf), alte Platte Prüfsumme unverändert und weiter bootfähig.
 - G5 Migration mit vollem Ziel (kleine Root-Partition per Testlayout) und mit Abbruch (Gast hart beenden) ⇒ Ziel `Unclear`, `e2fsck -fn` nach dem Abbruch, Wiederholung erfolgreich, `e2fsck -fn` danach (Wiederholung löscht Dateien; Unlink/Rmdir hatte ext2-Befunde, huang P3 e).
 - G7 Root-System hart beenden während Schreiben ⇒ nächster Boot `RootUnclean`, Anmeldung möglich, Kontendatei alt oder neu; nach offline `e2fsck -fy` wieder schreibbar. Sauberes Herunterfahren ⇒ nächster Boot `Root` schreibbar (kein falsches `RootUnclean`).
-- G8 `Unclear`-Platte (Root-Marker offline auf `migrating`) bootet, ESP unter `/data`, keine Einrichtung, `security recover` verweigert (Leitung 11:27).
+- G8 `Unclear`-Platte (Root-Marker offline auf `migrating`) bootet, ESP unter `/data`, keine Einrichtung, `security recover` verweigert (Leitung 11:27). Dasselbe mit offline gelöschtem Root-GPT-Eintrag (`RootMissing`).
 - G6 64 GiB und 128 GiB: Migration, Neustart, `e2fsck -fn`.
 
 ## 7. Offene Punkte
