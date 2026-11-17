@@ -57,6 +57,37 @@ public sealed class WasmRasterizerEquivalenceTests
     private const byte Pattern = 0xA5;
 
     [TestMethod]
+    public void SmallQuadGridsMatchReference()
+    {
+        // Quadraster mit 1 bis 20 Pixel breiten Flaechen: deckt beide Seiten der Grenze fuer den Vierpixelpfad ab.
+        uint flags = WasmRasterizer.FlagDepthTest | WasmRasterizer.FlagDepthWrite | WasmRasterizer.FlagColorWrite
+            | WasmRasterizer.FlagTextured | WasmRasterizer.FlagAlphaTest;
+        float[] identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+        var random = new Random(17);
+        for (int size = 1; size <= 20; size++)
+        {
+            var frame = new RasterFrame(1 << 22, 160, 96, 163, 161);
+            uint texture = frame.AddTexture(16, 16, (_, _) => (uint)random.Next() | (random.Next(0, 4) == 0 ? 0u : 0xFF000000u));
+            var vertices = new List<RasterVertex>();
+            for (int y = 0; y < frame.Height; y += size)
+                for (int x = 0; x < frame.Width; x += size)
+                {
+                    // Bildschirmpixel in Clip-Koordinaten, leicht versetzt und schraeg, damit die Kanten nicht achsparallel sind.
+                    float Cx(float px) => px / frame.Width * 2 - 1;
+                    float Cy(float py) => 1 - py / frame.Height * 2;
+                    float z = random.NextSingle() * 0.9f + 0.05f, skew = random.NextSingle() * 0.7f;
+                    uint color = (uint)random.Next() | 0xFF000000u;
+                    vertices.Add(new(Cx(x + 0.3f), Cy(y + skew), z, color, 0, 0));
+                    vertices.Add(new(Cx(x + size + skew), Cy(y + 0.2f), z, color, 1, 0));
+                    vertices.Add(new(Cx(x + size), Cy(y + size + 0.4f), z, color, 1, 1));
+                    vertices.Add(new(Cx(x - skew), Cy(y + size), z, color, 0, 1));
+                }
+            frame.AddCall(flags, vertices, texture, 16, 16, identity);
+            AssertSame(frame, $"Quadraster {size} Pixel");
+        }
+    }
+
+    [TestMethod]
     public void BuffersFlushWithMemoryEndMatchReference()
     {
         // Breite durch 4 teilbar und Scissor bis zur letzten Spalte: Der Vektorpfad laeuft bis an das Pufferende. Jeder

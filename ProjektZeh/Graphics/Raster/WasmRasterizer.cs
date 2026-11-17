@@ -45,6 +45,8 @@ internal static class WasmRasterizer
     private const int ColouredStride = 16;
     private const int TexturedStride = 24;
     private const uint PackedWhite = 0xFFFFFFFF;
+    // Ab dieser Breite (maxX - minX) lohnt der Vierpixelpfad; Hostmessung 17.11.2026, siehe DrawTriangle3D.
+    private const int MinVectorColumns = 8;
 
     private struct Vertex
     {
@@ -629,7 +631,9 @@ internal static class WasmRasterizer
         EdgeWalk walk1 = exact ? new(positive, bc1Start, dx20, dy20) : default;
         EdgeWalk walk2 = exact ? new(positive, bc2Start, dx01, dy01) : default;
         // Vier Pixel je Schritt nur bei exakten Kanten: Dann ist bc an Spalte x + k genau bc(x) + k * dx, auch als float.
-        bool vector = exact && context.Vector;
+        // Schmale Dreiecke (ClassiCube: zehntausende Flaechen von wenigen Pixeln je Bild) zeichnet die skalare Schleife
+        // schneller, weil der Aufbau von TriangleLanes dort mehr kostet, als die Vierpixelschritte sparen; beide Wege sind bitgleich.
+        bool vector = exact && context.Vector && columns >= MinVectorColumns;
         int lastVector = context.Width - 4;
         TriangleLanes lanes = vector ? new TriangleLanes(factor, w0, w1, w2, z0, z1, z2, u0, u1, u2, t0, t1, t2, dx12, dx20, dx01,
             texWidthMask, texHeightMask, BitOperations.Log2((uint)texWidth)) : default;
