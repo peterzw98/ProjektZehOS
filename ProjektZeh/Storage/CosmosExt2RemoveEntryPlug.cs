@@ -12,9 +12,12 @@ namespace ProjektZeh.Storage;
 [Plug(TargetName = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2DirectoryHelper")]
 public static class CosmosExt2RemoveEntryPlug
 {
-    // Unlink, Rmdir und Rename rufen RemoveEntry; der Koerper nennt keinen Typ aus Cosmos.Kernel.System (vgl. CosmosExt2FreeInodePlug).
+    // Unlink, Rmdir und Rename rufen RemoveEntry. Der Patcher vergleicht Parametertypen nach vollem Namen; mit object statt der
+    // internen Typen meldete er "Target method not found" und patchte still nichts (Review peter-review 22:25). Die Signatur
+    // nennt deshalb die gleichnamigen Attrappentypen unten; der Rumpf reicht sie nur als object weiter.
     [PlugMember]
-    public static bool RemoveEntry(object sb, object dir, string name) => CosmosExt2DirectoryRemoval.Remove(sb, dir, name);
+    public static bool RemoveEntry(Cosmos.Kernel.System.FileSystem.Ext2.Ext2Superblock sb, Cosmos.Kernel.System.FileSystem.Ext2.Ext2Inode dir, string name) =>
+        CosmosExt2DirectoryRemoval.Remove(sb, dir, name);
 }
 
 /// <summary>Verbindet Ext2DirectoryRemoval mit Cosmos' Ext2Superblock und Ext2Inode (Original: Ext2Directory.cs:302-365).</summary>
