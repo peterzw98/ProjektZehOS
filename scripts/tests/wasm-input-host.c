@@ -25,10 +25,19 @@ int32_t zehos_wasm_host_random(uint8_t* data, uint32_t length) {
     memset(data, 0xa5, length);
     return 0;
 }
-int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length) { return -1; }
-int64_t zehos_wasm_host_file_size(int32_t handle) { return -1; }
+// Nur "asset.txt" oeffnet (Handle 42, 7 Byte); offene Handles und Schliessvorgaenge bleiben nach Traps lesbar.
+static int open_files, closes;
+void file_test_reset(void) { open_files = closes = 0; }
+int file_test_open(void) { return open_files; }
+int file_test_closes(void) { return closes; }
+int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length) {
+    if (length != 9 || memcmp(path, "asset.txt", 9) != 0) return -1;
+    open_files++;
+    return 42;
+}
+int64_t zehos_wasm_host_file_size(int32_t handle) { return handle == 42 ? 7 : -1; }
 int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_t* data, uint32_t length) { return -1; }
-void zehos_wasm_host_close(int32_t handle) { }
+void zehos_wasm_host_close(int32_t handle) { if (handle == 42) { open_files--; closes++; } }
 void zehos_wasm_host_present(const uint32_t* p, int32_t w, int32_t h, int32_t tic, int32_t test) { }
 void zehos_wasm_host_present_indexed(const uint8_t* i, const uint32_t* p, int32_t w, int32_t h, int32_t tic) { }
 uint32_t zehos_wasm_host_ticks_ms(void) { return 0; }
