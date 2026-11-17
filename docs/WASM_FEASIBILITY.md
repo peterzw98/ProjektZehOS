@@ -218,15 +218,27 @@ Gemessen von agent-laser-right-tester (Linux, KVM und TCG, Stand `3060e5a`), age
 
 Doom zeigt den erwarteten Gewinn: Der App-Anteil sinkt unter AOT von 18 ms auf 0,4 ms je Bild. Was übrig bleibt, sind Desktop, Skalierung und Anzeige. ClassiCube ist unter wasm3 durch das Rastern im Host begrenzt (siehe die Messung der Sichtweite weiter oben). AOT würde dort nur den Gastanteil verkleinern.
 
-**Befund AOT: Red Zone (Hypothese mit Belegen).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Wahrscheinliche Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
+**Befund AOT: Red Zone (durch Gegenprobe belegt).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
 
 - Der von wamrc erzeugte Code legt in Blattfunktionen Werte unterhalb von RSP ab. `objdump` zählt Schreibzugriffe `mov reg,-0x..(%rsp)`: 229 in `classicube.aot`, 107 in `doom.aot`.
 - Cosmos 3.0.97 betritt Interrupts im Ring 0 ohne IST und ohne Stackwechsel (`CPU/Interrupts.s`). CPU-Frame und gesicherte Register landen direkt unter dem aktuellen RSP. Ein Timer-Interrupt in einer solchen Blattfunktion überschreibt deren lokale Werte.
 - Der Kernel-C-Code (wasm3, WAMR-Lader, Hostfunktionen, C-Laufzeit) nutzt die Red Zone gemessen nicht: 0 Treffer in allen C-Objekten. Das passt dazu, dass die Fehler nur unter AOT auftreten.
 
-wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Nötig ist ein wamrc, der allen erzeugten Funktionen das LLVM-Attribut `noredzone` gibt. Das bedeutet eine neue zugelassene Prüfsumme in `scripts/build-package.py` und eine neue AOT-Kennung, damit vorhandene `.aot` nicht mehr geladen werden. Die Entscheidung darüber liegt bei Peter. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Deshalb gibt ein Patch (`ProjektZeh/Native/AotProbe/fixture/wamrc-noredzone.patch`, Bauanleitung in [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md)) allen erzeugten Funktionen das LLVM-Attribut `noredzone`. Gegenprobe von agent-laser-RED (Doom und ClassiCube, TCG und KVM): mit dem alten `.aot` 11 von 27 Läufen mit Trap, Stillstand oder #GP-Panik, mit dem gepatchten wamrc 0 von 26; die Bildzeiten sind gleich. `objdump` findet in den neuen `doom.aot`/`classicube.aot` und in den Probe-Fixtures keinen Zugriff unterhalb von RSP mehr.
 
-Für Nutzer besteht derzeit kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` ist auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Bis zu einem wamrc mit `noredzone` bleibt AOT ein Diagnoseweg; die Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind damit offen. Bewiesen ist die Ursache erst, wenn ein Diagnosebau mit `noredzone` die Fehler beseitigt; dieser Bau mit je 10 Vergleichsläufen ist beauftragt.
+Peter hat am 17. November 2026 freigegeben, das gepatchte wamrc zu übernehmen. `scripts/build-package.py` lässt nur noch dieses wamrc zu (das frühere ohne Patch ist aus `WAMRC_SHA256` entfernt), und die AOT-Kennung heißt jetzt `wamr245-aot5-x64-bc-nrz` in Werkzeug und Kernel. Ein Kernel mit der neuen Kennung findet `.aot` des alten wamrc nicht mehr und startet die App unter wasm3. Rückweg: Kennung und Prüfsumme zurücksetzen; wasm3 bleibt immer der Rückfall. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+
+Für Nutzer besteht kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` bleibt auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Eingeschaltet wird AOT erst, wenn zu jeder Veröffentlichung eines Pakets mit `.aot` mindestens 10 Gastläufe je App unter KVM und TCG ohne Trap belegt sind. Wiederholbare Gegenprobe mit dem Messskript (gescheiterte Läufe zählt die Zusammenfassung als `None`, das Skript läuft weiter):
+
+```sh
+for ACCEL in kvm tcg; do
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 10 --seconds 90 --aot on $DOOM
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 10 --seconds 90 --aot on $CC
+done
+grep -h "Ende: App abgebrochen\|EXCEPTION\|Panic" .tools/frametimes/*/lauf*/serial.log   # muss leer bleiben
+```
+
+Die übrigen Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind offen. Für ClassiCube bringt AOT wenig, weil das Rastern schon nativ im Kernel läuft.
 
 ## Grenzen und offene Punkte
 
