@@ -68,6 +68,7 @@ def main(argv=None):
     parser.add_argument('--min-file', type=float, default=0.0)
     parser.add_argument('--exclusions')
     parser.add_argument('--summary')
+    parser.add_argument('--sources', help='Quellordner; Dateien ohne Eintrag im Bericht werden als ungemessen genannt')
     arguments = parser.parse_args(argv)
 
     try:
@@ -76,6 +77,8 @@ def main(argv=None):
     except InputError as error:
         print(error, file=sys.stderr)
         return 2
+    for path in sorted(excluded - files.keys()):
+        print(f'Ausnahme ohne Treffer: {path}', file=sys.stderr)
     # Pro Datei: (getroffen, gesamt)
     stats = {path: (sum(lines.values()), len(lines))
              for path, lines in files.items() if path not in excluded and lines}
@@ -89,12 +92,24 @@ def main(argv=None):
     summary = f'Gesamt: {percent(hit, total):.1f} % ({hit}/{total} Zeilen)'
     print(summary)
     if percent(hit, total) < arguments.min_total:
-        print(f'Gesamt {percent(hit, total):.1f} % liegt unter {arguments.min_total:.1f} %')
+        # Zwei Stellen, damit ein gerundet gleicher Wert nicht wie ein Widerspruch aussieht.
+        print(f'Gesamt {percent(hit, total):.2f} % liegt unter {arguments.min_total:.2f} %')
         exit_code = 1
     for path, (file_hit, count) in sorted(stats.items()):
         if percent(file_hit, count) < arguments.min_file:
             print(f'Unter Grenze: {path} {percent(file_hit, count):.1f} %')
             exit_code = 1
+
+    unmeasured = []
+    if arguments.sources:
+        # Der Bericht kennt nur Dateien mit ausfuehrbaren Zeilen, die das Testprojekt einkompiliert. Alles andere
+        # fehlt im Nenner; ohne diese Liste laese sich die Prozentzahl wie eine Abdeckung des ganzen Kernels.
+        root = Path(arguments.sources)
+        sources = [path.relative_to(root).as_posix() for path in root.rglob('*.cs')
+                   if not {'obj', 'bin'} & set(path.relative_to(root).parts)]
+        unmeasured = sorted(set(sources) - files.keys())
+        print(f'Ohne Messung: {len(unmeasured)} von {len(sources)} Quelldateien '
+              '(nicht im Hostbuild oder ohne ausfuehrbare Zeilen)')
 
     if arguments.summary:
         worst = sorted(stats.items(), key=lambda item: (item[1][0] - item[1][1], item[0]))[:10]
@@ -102,6 +117,9 @@ def main(argv=None):
                 for path, (file_hit, count) in worst]
         with open(arguments.summary, 'a', encoding='utf-8') as file:
             file.write('\n'.join([summary, '', '| Datei | offen | Abdeckung |', '| --- | --- | --- |', *rows]) + '\n')
+            if unmeasured:
+                file.write('\n'.join(['', f'Ohne Messung ({len(unmeasured)} Dateien, nicht im Hostbuild oder ohne '
+                                      'ausfuehrbare Zeilen):', '', *(f'- {path}' for path in unmeasured)]) + '\n')
     return exit_code
 
 

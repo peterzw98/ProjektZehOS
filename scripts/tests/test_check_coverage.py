@@ -69,10 +69,34 @@ class CheckCoverageTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn('Shell/A.cs', out)
 
-    def test_repository_and_project_share_a_name(self):
-        code, out, _, _ = self.run_main([(ROOT + 'Shell\\A.cs', lines(1, 9))], '--min-file', '50')
+    def test_linux_runner_path_is_reduced_to_project_relative_name(self):
+        runner = '/home/runner/work/ProjektZehOS/ProjektZehOS/ProjektZeh/Shell/A.cs'
+        code, out, _, _ = self.run_main([(runner, lines(1, 9))], '--min-file', '50')
         self.assertEqual(1, code)
         self.assertIn('Unter Grenze: Shell/A.cs', out)
+
+    def test_failure_message_shows_why_rounded_values_differ(self):
+        # 91,96 % wird als 92.0 % gerundet; die Fehlzeile muss zeigen, dass der Wert trotzdem unter 92 liegt.
+        code, out, _, _ = self.run_main([(ROOT + 'Shell\\A.cs', lines(2299, 201))], '--min-total', '92')
+        self.assertEqual(1, code)
+        self.assertIn('91.96', out)
+
+    def test_exclusion_without_matching_file_warns(self):
+        code, _, err, _ = self.run_main([(ROOT + 'Shell\\A.cs', lines(1, 0))], exclusions='Shell/Alt.cs # umbenannt\n')
+        self.assertEqual(0, code)
+        self.assertIn('Shell/Alt.cs', err)
+
+    def test_sources_lists_product_files_missing_from_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sources = Path(directory) / 'ProjektZeh'
+            for name in ('Shell/A.cs', 'Storage/CosmosDisk.cs', 'obj/Generated.cs', 'bin/Copy.cs'):
+                (sources / name).parent.mkdir(parents=True, exist_ok=True)
+                (sources / name).write_text('', encoding='utf-8')
+            code, out, _, text = self.run_main([(ROOT + 'Shell\\A.cs', lines(1, 0))], '--sources', str(sources), summary=True)
+        self.assertEqual(0, code)
+        self.assertIn('Ohne Messung: 1 von 2 Quelldateien', out)
+        self.assertIn('Storage/CosmosDisk.cs', text)
+        self.assertNotIn('Generated.cs', text)
 
     def test_excluded_file_is_ignored(self):
         classes = [(ROOT + 'Shell\\A.cs', lines(1, 9)), (ROOT + 'Shell\\B.cs', lines(10, 0))]
