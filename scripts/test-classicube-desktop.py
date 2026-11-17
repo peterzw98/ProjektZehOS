@@ -14,6 +14,7 @@ zweiten Start ueber "Load level" gefunden und geladen; danach liest das Skript o
 umgeschaltet) und die Welt aus der Testplatte. --disk-full fuellt die Platte vorab, Speichern muss dann scheitern.
 """
 import argparse
+import gzip
 import importlib.util
 from pathlib import Path
 import struct
@@ -42,6 +43,7 @@ def fat16(raw: Path):
     data = raw.read_bytes()
     start = struct.unpack_from("<I", data, 446 + 8)[0] * 512
     sector, per_cluster, reserved, fats, roots, total, _, fat_sectors = struct.unpack_from("<HBHBHHBH", data, start + 11)
+    assert fat_sectors > 0 and roots > 0, "Nur FAT16 (vvfat-Testplatte) wird gelesen"
     total = total or struct.unpack_from("<I", data, start + 32)[0]
     cluster = sector * per_cluster
     fat = start + reserved * sector
@@ -51,7 +53,10 @@ def fat16(raw: Path):
     table = struct.unpack_from(f"<{clusters + 2}H", data, fat)
 
     def chain(number):
+        seen = set()
         while 2 <= number < 0xFFF8:
+            assert number not in seen and number < len(table), f"FAT-Kette defekt bei Cluster {number}"
+            seen.add(number)
             yield data[first + (number - 2) * cluster:first + (number - 1) * cluster]
             number = table[number]
 
@@ -361,23 +366,58 @@ def main():
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
         saving = "Speichern ohne /save scheitert ohne Abbruch"
-        if args.disk_full:
-            saving = "Speichern auf voller Platte scheitert ohne Abbruch"
-        elif args.storage:
-            # Platte nach dem Lauf auf dem Host lesen; der Kontoordner hat eine zufaellige ID.
-            vm.kill()
-            vm.wait()
+        if args.storage and not args.disk_full:
+            # Abnahme 13.4 verlangt auch einen Neustart des Rechners: "reboot" in der Textshell haengt /data sauber aus,
+            # QEMU setzt den Gast zurueck (-action reboot=reset) und bootet mit derselben Platte.
+            mark = guest.mark()
+            guest.shell("reboot")
+            guest.wait("Desktop ist bereit", 300, mark)
+            time.sleep(1)
+            guest.search = 0
+            guest.login(first=False)
+            launches.append(0)
+            start()
+            world("nach-vm-neustart")
+            time.sleep(5)
+            fresh = view(capture("nach-vm-neustart-ruhig"))
+            guest.qmp.tap("esc")
+            time.sleep(3)
+            load_level(0, fresh)
+            guest.qmp.tap("esc")
+            time.sleep(3)
+            mark = guest.mark()
+            guest.qmp.click(812, 100, *guest.size)
+            time.sleep(2)
+            capture("schliessen-nach-vm-neustart")
+            guest.wait_finished("classicube", mark)
+        if args.storage:
+            # Platte nach dem Lauf auf dem Host lesen; der Kontoordner hat eine zufaellige ID. Vorher herunterfahren:
+            # "shutdown" haengt /data aus und schreibt die Puffer, ein Abbruch der VM koennte Eintraege verlieren.
+            guest.shell("shutdown")
+            vm.wait(timeout=120)
             _, _, read = fat16(disk_raw(work))
             accounts = read.names(".zehos-apps/classicube")
             assert len(accounts) == 1, f"Ein Kontoordner erwartet: {accounts}"
-            options = read(f".zehos-apps/classicube/{accounts[0]}/options.txt")
+            folder = f".zehos-apps/classicube/{accounts[0]}"
+            # Ordner maps legt ClassiCube beim Spielstart nur unter /save an; er belegt, dass /save aktiv war.
+            assert read(folder + "/maps") is not None, "maps fehlt: /save war nicht aktiv"
+            world_file = read(folder + "/maps/zehtest.cw")
+        if args.disk_full:
+            assert world_file is None, "Auf voller Platte darf maps/zehtest.cw nicht entstehen"
+            saving = "Speichern auf voller Platte scheitert ohne Abbruch (/save aktiv, keine Welt auf der Platte)"
+        elif args.storage:
+            options = read(folder + "/options.txt")
             assert options and b"viewdist=" in options, f"options.txt ohne viewdist: {options!r}"
-            world_file = read(f".zehos-apps/classicube/{accounts[0]}/maps/zehtest.cw")
-            assert world_file and world_file[:2] == b"\x1f\x8b", "maps/zehtest.cw fehlt oder ist kein gzip"
+            assert world_file, "maps/zehtest.cw fehlt"
+            nbt = gzip.decompress(world_file)
+            # NBT: Compound (10), Namenslaenge (u16, big endian), Name der Wurzel.
+            assert nbt[0] == 10 and nbt[3:3 + struct.unpack(">H", nbt[1:3])[0]] == b"ClassicWorld", \
+                f"maps/zehtest.cw ist keine ClassicWorld: {nbt[:16]!r}"
             viewdist = next(line for line in options.splitlines() if line.startswith(b"viewdist=")).decode()
-            print(f"Platte: options.txt mit {viewdist!r}, "
-                  f"maps/zehtest.cw {len(world_file)} Bytes", flush=True)
-            saving = "Welt speichern, nach Neustart ueber Load level laden, options.txt auf der Platte"
+            print(f"Platte: options.txt mit {viewdist!r}, maps/zehtest.cw {len(world_file)} Bytes "
+                  f"({len(nbt)} Bytes ClassicWorld-NBT)", flush=True)
+            saving = ("Welt speichern, nach App-Neustart und nach VM-Neustart ueber Load level laden, "
+                      "options.txt und Welt auf der Platte")
         print("CLASSICUBE_GUEST PASS: lokal installieren, Start aus Menue, Welt, W-Bewegung, Mausblick, "
               f"Block entfernen/setzen, {saving}, 2x Schliessen ueber X, 1x Quit game", flush=True)
         print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)
