@@ -8,6 +8,7 @@ using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Input;
 using ProjektZeh.Network;
 using ProjektZeh.Runtime;
+using ProjektZeh.Runtime.Wasm;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
@@ -71,9 +72,16 @@ internal sealed class DisplayService
         long started = Stopwatch.GetTimestamp();
         int pointerX = pointer.PointerX, pointerY = pointer.PointerY;
         var previous = desktop.Render(surface, milliseconds, pointerX, pointerY, pointer.Buttons);
+        long composed = ElapsedMicroseconds(started);
         // Canvas.Display() kopiert immer das ganze Bild (Full HD rund 8 MB); bei reiner Zeigerbewegung genuegen beide Zeigerflaechen.
         if (previous is not { } old || !TryPresentPointers(old.X, old.Y, pointerX, pointerY)) canvas.Display();
         long elapsed = ElapsedMicroseconds(started);
+        var profile = WasmFrameProfile.Shared;
+        if (profile.Enabled)
+        {
+            profile.Record(WasmFramePhase.Desktop, composed);
+            profile.Record(WasmFramePhase.Display, elapsed - composed);
+        }
         desktop.Metrics.RecordFrame(elapsed);
         desktop.System.RecordWork(elapsed);
     }

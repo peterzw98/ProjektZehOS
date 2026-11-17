@@ -9,9 +9,10 @@ using Cosmos.Kernel.System.FileSystem.Ext2;
 // ProjektZeh/Storage/Ext2/CosmosExt2Formatter.cs (fixed) formatieren. Ergebnis als eine JSON-Zeile auf stdout.
 // selftest: Grenz- und Argumentpruefungen sowie Layoutpruefung der korrigierten Quelle, ohne e2fsck.
 if (args.Length == 1 && args[0] == "selftest") return SelfTest.Run();
+if (args.Length == 1 && args[0] == "readonly-selftest") return ReadOnlySelfTest.Run();
 if (args.Length < 2 || args[0] != "format")
 {
-    Console.Error.WriteLine("Aufruf: format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L] [--formatter original|fixed] | selftest");
+    Console.Error.WriteLine("Aufruf: format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L] [--formatter original|fixed] | selftest | readonly-selftest");
     return 2;
 }
 string? problem = FormatRequest.TryParse(args, out var request);
