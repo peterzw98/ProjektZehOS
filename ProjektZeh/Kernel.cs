@@ -247,7 +247,9 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_STORAGE_PROBE
         // scripts/test-storage-ext2-guest.py wartet nach STORAGE_PROBE DONE auf das Gastende, auch nach FAIL.
         CosmosExt2GuestProbe.Run();
-        if (PreparePowerAction().IsOK()) Sys.Power.Shutdown();
+        var power = PreparePowerAction();
+        if (power.IsOK()) Sys.Power.Shutdown();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_PROBE shutdown FAIL {power.Message}\n");
         Stop();
         return;
 #endif
