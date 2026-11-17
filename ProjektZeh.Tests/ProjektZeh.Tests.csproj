@@ -70,6 +70,7 @@
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayout.cs" Link="Storage\Partitioning\GptLayout.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\GptLayoutWriter.cs" Link="Storage\Partitioning\GptLayoutWriter.cs" />
