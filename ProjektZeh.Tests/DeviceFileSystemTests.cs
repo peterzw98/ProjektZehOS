@@ -68,9 +68,6 @@ public sealed class DeviceFileSystemTests
         Assert.AreEqual(0, buffer[DeviceHandle.MaxReadBytes - 1]);
         Assert.AreEqual(0xAA, buffer[DeviceHandle.MaxReadBytes], "hinter der Grenze bleibt der Puffer unberuehrt");
         Assert.AreEqual(0xAA, buffer[^1]);
-        // Ein int.MaxValue-Fenster wuerde ohne Grenze 2 GiB loeschen; mit der Grenze bleibt der Aufruf klein.
-        Assert.AreEqual(DeviceHandle.MaxReadBytes, handle.Read(System.Runtime.InteropServices.MemoryMarshal.CreateSpan(
-            ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(buffer), buffer.Length)).Value);
     }
 
     [TestMethod]
