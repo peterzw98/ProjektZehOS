@@ -57,6 +57,14 @@ Getrennt nach Projektregel Hardware/Logik:
 - `ReadVirtual` hat für `/dev/zero` dieselbe 64-Ki-Grenze mit Fehler wie `ReadText`; `cat /dev/zero` endet so mit einem Grenzfehler (G5), auch wenn es direkt aus dem Erzeuger liest.
 - Ob ein Aufrufer `ReadVirtual` statt `ReadText` nimmt (`cat`, Umleitung, Textbetrachter, `ls`, Dateimanager), entscheidet eine gemeinsame Funktion `IsVirtualPath` (nach derselben Normalisierung), nicht jeder Befehl für sich.
 
+## 3a. Navigation (huang P2 zu `80cbcec`)
+
+Shell und Dateimanager navigieren über `FileService.CurrentDirectory`/`ResolvePath`, und die lehnen die Bäume als fremde Mounts ab (Pipeline bleibt unverändert). Deshalb:
+
+- **Shell:** kein `cd` in `/proc`, `/sys`, `/dev`; Meldung „nur lesbar, mit absolutem Pfad“. `ls` und `cat` nehmen virtuelle Pfade nur absolut bzw. nach Normalisierung absolut (`cd /` und `cat proc/version` im `Root`-Profil normalisiert zu `/proc/version` und ist erlaubt).
+- **Dateimanager:** eigener Zustand „virtueller Ort“ (Pfad außerhalb von `FileService.CurrentDirectory`); die Ortsliste enthält `/proc`, `/sys`, `/dev`; Navigation nur innerhalb des Baums per `ListVirtual`; „Zurück“/„Hoch“ an der Baumwurzel verlässt den Baum zum vorherigen normalen Ort; Neu, Umbenennen, Löschen, Kopieren, Einfügen sind dort deaktiviert mit Meldung; Öffnen per `ReadVirtual`.
+- **Typquelle für §0.8:** im Kernel `VfsManager.TryStat` + `VfsStat.IsRegularFile`; im `FileService` als injizierbare Funktion `isRegularFile` (Hoststandard: `File.GetAttributes`, keine Verzeichnisse). Ohne Stat-Ergebnis (Fehler) ⇒ ablehnen. `PackageShellCommands` prüft den Typ selbst vor dem Installieren (dessen `resolvePath` liefert nur einen Pfad), nicht erst `PackageStore`.
+
 ## 4. Arbeitspakete
 
 | Paket | Inhalt | Prüfung |
@@ -76,6 +84,8 @@ Getrennt nach Projektregel Hardware/Logik:
 4. Erzeuger wirft ⇒ Fehlerergebnis, keine Ausnahme bis `FileService`.
 5. `ReadBytes` mit gemeldeter Länge 0 und 10 KiB Inhalt ⇒ 10 KiB; mit endlosem Strom ⇒ Fehler bei Grenze; echte leere Datei ⇒ 0 Bytes.
 6. Kopieren/Prüfsumme/Suche/`pkg install-local` mit Pfaden unter `/proc`, `/sys`, `/dev` ⇒ abgelehnt (fremder Mount), 0 Bytes geschrieben; Typprüfung über `FileTypeMask` erkennt Zeichengeräte, nicht Symlinks (Überlappung).
+7b. Shell: `cd /proc` ⇒ Meldung, Arbeitsverzeichnis unverändert; `cat /proc/version` aus `/home/x` gelingt. Dateimanager (Stil `FileManagerTests`): Ort `/proc` öffnen, Unterordner `/sys/kernel` betreten, „Hoch“ an der Baumwurzel kehrt zum vorherigen Ort zurück, Neu/Umbenennen/Löschen/Kopieren/Einfügen deaktiviert, Öffnen liest per `ReadVirtual`.
+7c. `isRegularFile`-Fake meldet Zeichengerät bzw. Stat-Fehler ⇒ Kopieren, Prüfsumme und `pkg install-local` lehnen ab, bevor gelesen wird.
 7a. Normalisierung: `/proc/./version`, `//proc/version`, `/proc/../proc/version` ⇒ dieselbe Datei; `/proc/../etc/x` ⇒ kein virtueller Pfad. `ReadVirtual("/dev/zero")` ⇒ Grenzfehler bei 64 Ki.
 7. `ReadVirtual` liest aus dem Erzeuger auch dann, wenn unter Root eine gleichnamige Datei `/proc/version` liegt (Mount fehlgeschlagen).
 
