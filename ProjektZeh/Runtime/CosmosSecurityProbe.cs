@@ -56,7 +56,8 @@ internal static class CosmosSecurityProbe
         const string root = "/data/security-probe";
         if (Directory.Exists(root)) throw new InvalidOperationException("Probedaten existieren bereits.");
         Directory.CreateDirectory(root);
-        var accounts = new AccountService(root, hasher);
+        // Wie im Kernel: die 7a-Sperre gilt auch fuer den Probepfad.
+        var accounts = new AccountService(root, hasher) { MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason };
         var alice = accounts.CreateSession();
         var bob = accounts.CreateSession();
         Require(!accounts.Load().IsOK(), "missing metadata");

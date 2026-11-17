@@ -20,13 +20,19 @@ internal static class CosmosDataDisk
         var found = StorageManager.GetPartitions(device);
         if (found.Count == 0) return new(device.Name, device.BlockSize, device.BlockCount, []);
         var entries = Mbr.IsMbr(device) ? Mbr.Parse(device) : new List<MbrPartitionEntry>();
+        // GPT-Typen fuer das 7a-Layout; Cosmos nummeriert die Partitionen in Parse-Reihenfolge, zugeordnet wird trotzdem ueber den Startsektor.
+        var gptEntries = Gpt.IsGpt(device) ? Gpt.Parse(device) : new List<GptPartitionEntry>();
         var partitions = new List<DataDiskPartition>();
         foreach (Partition partition in found)
         {
             byte type = 0;
             foreach (var entry in entries)
                 if (entry.StartSector == partition.StartSector) type = entry.SystemId;
-            partitions.Add(new(type, type == DataDiskSelector.FatLbaType ? ReadFat32Label(partition) : null));
+            Guid gptType = Guid.Empty;
+            foreach (var entry in gptEntries)
+                if (entry.StartSector == partition.StartSector) gptType = entry.PartitionType;
+            bool fat = type == DataDiskSelector.FatLbaType || gptType == Partitioning.GptLayout.EspType;
+            partitions.Add(new(type, fat ? ReadFat32Label(partition) : null, gptType));
         }
         return new(device.Name, device.BlockSize, device.BlockCount, partitions);
     }

@@ -26,7 +26,7 @@ public static class Ext2FeatureGate
     private const uint MaximumGroups = 16384; // Das geprüfte Formatterprofil verwendet 8-MiB-Gruppen.
     private const int SuperblockSize = 1024;
     private const int MagicOffset = 56;
-    private const int StateOffset = 58;
+    internal const int StateOffset = 58;
     private const int LogBlockSizeOffset = 24;
     private const int RevLevelOffset = 76;
     private const int FeatureCompatOffset = 92;
