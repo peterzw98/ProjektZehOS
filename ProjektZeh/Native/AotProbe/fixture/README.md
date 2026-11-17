@@ -1,7 +1,9 @@
 # AOT-Fixtures (AOT-Plan Etappen B und D)
 
-Die `.aot`-Dateien entstehen nur unter Linux mit `wamrc` 2.4.5 (LLVM 18.1.8) aus der Hostprobe 5b
-(`wamrc` SHA-256 `6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774`) und wasi-sdk 25.0. Für
+Die `.aot`-Dateien entstehen nur unter Linux mit `wamrc` 2.4.5 (LLVM 18.1.8) mit dem Patch `wamrc-noredzone.patch`
+(`wamrc` SHA-256 `5809858be58ab78b00d970b5d50cae40e1a38d2a99abe16f8b952f74e128902c`) und wasi-sdk 25.0. Der Patch gibt allen
+erzeugten Funktionen `noredzone`; die Fixtures sind damit bytegleich zu denen des frueheren `wamrc` ohne Patch
+(`6b400e9c…`), nur die Kopfzeile nennt das neue Werkzeug. Bauanleitung in `docs/PAKETE_ERSTELLEN.md`. Für
 Windows gibt es kein `wamrc`. Die festen Übersetzerschalter stehen in `compile-aot.sh` (gleich `build.sh`).
 
 | Skript | Erzeugt | Inhalt |
