@@ -5,7 +5,10 @@ Stand: 17. November 2026, Grundlage [Aufrufer-Inventar](2026-11-17-storage-calle
 ## Entscheidungen
 
 1. **Standard bleibt unverändert.** Ohne neue Platte verhält sich der Kernel wie heute: `sata0`, 64 MiB, FAT32 auf MBR-Partition 0, Mountpunkt `/data`. Bestandsimages werden nicht verändert; Hosttest mit Prüfsumme.
-2. **`disk init <gerät>` akzeptiert leere Platten von 64 MiB bis 128 GiB** (512-Byte-Sektoren). Die Leerprüfung bleibt die einzige Freigabe zum Schreiben; nicht leere Platten werden wie bisher abgelehnt. Größen außerhalb des Bereichs: `UnsupportedDiskSize`.
+2. **`disk init <gerät>` akzeptiert leere Platten von 64 MiB bis 128 GiB** (512-Byte-Sektoren); Größen außerhalb: `UnsupportedDiskSize`. Leerprüfung (Datenverlust hat Vorrang vor Zeit, Cosmos-AHCI überträgt nur 8 Sektoren je Befehl, AhciPort.cs:34 in efcf20c):
+   - **bis 4 GiB:** vollständiger Scan wie bisher.
+   - **über 4 GiB:** Teilscan, nur zusammen mit `disk init <gerät> --yes-large` und deutlichem Hinweis in der Ausgabe: erste und letzte 64 MiB vollständig, Signaturstellen (MBR/GPT Sektor 0/1 und Ende, FAT-Bootsektor, ext2 `0x438`, NTFS, LUKS) und eine Stichprobe von 4 KiB je 64 MiB. Ein einziges Byte ungleich null bricht ab; ohne `--yes-large` wird nichts geschrieben.
+   Zeitbudget vor Gasttests mit 64 MiB und 4 GiB messen.
 3. **Identität statt Gerätename.** `disk init` markiert die Datenpartition mit dem FAT-Volumelabel `ZEHOSDATA`. Beim Boot sucht der Kernel über alle Geräte genau eine Partition mit Typ `0x0C` und diesem Label und hängt sie unter `/data` ein. Mehr als ein Treffer: nichts einhängen, Fehler melden (kein Raten). Kein Treffer: Rückfall auf das heutige `sata0`-Verhalten, damit unmarkierte Bestandsplatten weiter funktionieren. Lässt Cosmos 3.0.97 kein Label beim Formatieren zu, ersatzweise Markerdatei `/.zehos-data` im Wurzelverzeichnis, geprüft nach einem Nur-lesen-Mount.
 4. **Ein Mountpunkt `/data`** bis Etappe 4. Mehrere persistente Mounts, `/`-Root und Mountpunkt-Argumente kommen erst mit dem Root-Baum.
 5. **Installer schützt die Datenplatte.** Platten mit `ZEHOSDATA`-Partition erscheinen nicht in `setup list`; Installation auf sie wird verweigert, auch mit `--erase`.
