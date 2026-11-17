@@ -11,11 +11,12 @@ Stand: 17. November 2026, Grundlage [Aufrufer-Inventar](2026-11-17-storage-calle
    Zeitbudget vor Gasttests mit 64 MiB und 4 GiB messen.
 3. **Auswahl beim Boot – Bestand gewinnt** (nach Review huang/Koordinator, 17.11. 07:44; ein angehängtes Laufwerk darf `/data` samt Kontendatei nie still ersetzen):
    1. Trägt `sata0` eine Partition vom Typ `0x0C` (Label egal; im Zweifel gilt Bestand), wird `sata0` eingebunden. Gibt es zusätzlich eine `ZEHOSDATA`-Partition auf einem anderen Gerät, nur Protokollhinweis, kein Umschalten.
-   2. Sonst genau eine `ZEHOSDATA`-Partition auf einem anderen Gerät: nur melden (`DataDiskNotMounted`), nicht einbinden; Einbinden erst mit `disk use <gerät> --yes` (Koordinator 07:45: keine automatische Label-Bevorzugung).
+   2. Sonst genau eine `ZEHOSDATA`-Partition auf einem anderen Gerät: einbinden, **aber nur wenn sie bereits eine Kontendatei `.zehos-security.db` trägt** (nach dem Mount prüfen, sonst sofort aushängen und `DataDiskNotMounted` melden). Eine leere `ZEHOSDATA`-Platte wird nie automatisch eingebunden (senior 07:51, P1: sonst Aussperrung im Normalbuild, weil `disk use` Admin braucht).
    3. Mehrere `ZEHOSDATA`-Treffer: nichts einbinden (`AmbiguousDataDisk`).
    4. Sonst der bisherige Rückfall: `sata0` mit genau einer Partition.
    Umschalten auf eine andere Datenplatte nur per `disk use <gerät> --yes` in der laufenden Sitzung; eine dauerhafte Umschaltung ist nicht Teil dieser Etappe.
-   **Keine Ersteinrichtung nach Fehlauswahl:** Bei `AmbiguousDataDisk` oder einem fehlgeschlagenen Mount einer gewählten Platte bietet der Kernel keine Administrator-Ersteinrichtung an und legt kein Konto an; Fehlerzeile seriell. Kein Datenlaufwerk vorhanden (`DeviceNotFound`) bleibt wie bisher.
+   **Keine Ersteinrichtung nach Fehlauswahl:** Bei `AmbiguousDataDisk` oder einem fehlgeschlagenen Mount einer gewählten Platte bietet der Kernel keine Administrator-Ersteinrichtung an und legt kein Konto an; Fehlerzeile seriell. Kein Datenlaufwerk vorhanden (`DeviceNotFound`) bleibt wie bisher. Die Ersteinrichtung setzt außerdem ausdrücklich ein eingebundenes `/data` voraus (nicht nur die Ausnahmeart beim Lesen) und wird **nur beim Boot** angeboten: wechselt `/data` in einer laufenden Sitzung (`disk mount`, `disk use`) auf eine Platte ohne Kontendatei, wird gesperrt statt eingerichtet.
+   **`disk mount <gerät>`** verlangt `--yes`, außer für den `sata0`-Bestand (senior 07:51, P2).
    **`disk init` auf eine weitere Platte** verlangt `--yes-overwrite` (zusätzlich zu `--yes-large`), wenn `/data` eingebunden ist oder `sata0` schon eine Partition trägt.
 4. **Ein Mountpunkt `/data`** bis Etappe 4. Mehrere persistente Mounts, `/`-Root und Mountpunkt-Argumente kommen erst mit dem Root-Baum.
 5. **Installer schützt die Datenplatte.** Platten mit `ZEHOSDATA`-Partition erscheinen nicht in `setup list`; Installation auf sie wird verweigert, auch mit `--erase`.
