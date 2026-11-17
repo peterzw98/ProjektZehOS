@@ -146,6 +146,20 @@ In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Le
 
 **Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; VMware und echte Hardware ungeprüft. Der feste Ordner ist inzwischen durch den signierten Paketbestand ersetzt; die Prüfung mit Installation aus dem Repository steht in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
+## Bildzeit-Anteile (ClassiCube-Etappe 1, 17. November 2026)
+
+`frametimes on` (Shell, beliebiges Terminal) zerlegt die Bildzeit laufender Paket-Apps; je 60-s-Fenster der App schreibt der Kernel neben `Bildzeit …` eine Zeile `Anteile (ms, median/p95/max) …` ins serielle Protokoll. Anteile: `app` (Wanduhrzeit von der Rückkehr aus `present` bis zum nächsten `present`, ohne `sleep_ms`; enthält auch die Zeit, in der der Hauptthread mit `desktop` und `anzeige` die eine CPU belegt, die Anteile überlappen sich also), `schlaf` (`sleep_ms` der App), `kopie` (Bild in den Kernelpuffer), `skalierung` (`WasmImageFit`), `desktop` (Zusammensetzen des Desktops) und `anzeige` (`Canvas.Display()` bzw. Zeigerausgabe). Desktop und Anzeige laufen auf dem Hauptthread, die übrigen auf dem Wasm-Worker; alle teilen sich eine CPU. Mehrere gleichzeitig laufende Apps landen in denselben Histogrammen. Ausgeschaltet kostet jede Messstelle nur eine Abfrage, pro Messung wird nicht allokiert. Messskript: `scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm|tcg` (Doom 1.1.0 aus `packages`, Titel-/Demoablauf ohne Eingabe, frische Platte).
+
+**Befund:** Bei laufender App setzte der Desktop jedes 60-Hz-Bild neu zusammen und gab es vollständig aus, unabhängig davon, ob die App ein neues Bild geliefert hatte. Unter KVM (Host-Last 32 durch andere Gäste) waren das rund 58 Desktopbilder/s bei rund 25 Doom-Bildern/s; aus Median × Anzahl ergeben sich rund 19,7 s Desktop- und Anzeigearbeit je 60 s, also etwa ein Drittel der einen CPU. **Behoben:** `WasmGameApp.NeedsAnimation` verlangt ein Zeichnen nur noch bei neuem Bild, wartendem `present` oder als Lebenszeichen alle 100 ms. Ohne das Lebenszeichen pausierte Doom unter TCG (Bilder über 250 ms) bei jedem `present` (`pausen=44–52` je Fenster).
+
+| QEMU 10.2.2, Doom 1.1.0, je 60 s | Bildzeit median/p95 ms | app | schlaf | kopie | skalierung | desktop | anzeige | Desktopbilder/Doom-Bilder |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KVM vorher (2 Fenster) | 32/102, 41/106 | 25,6–39,7 | 0,1 | 0,1 | 0,6 | 4,3–5,5 | 1,4–1,8 | 3462/1492, 2672/1220 |
+| KVM nachher (ohne Lebenszeichen) | 39/98, 24/86 | 22,2–38,0 | 0,1 | 0,1 | 0,5–0,6 | 4,4–4,6 | 1,4 | 1418/1421, 1544/1693 |
+| TCG nachher, mit Lebenszeichen (3 Fenster) | 300/892, 339/822, 295/672 | 295–339 | 0,0–0,1 | 0,2 | 3,8–5,1 | 27,6–35,1 | 9,9–13,4 | 894/163, 557/157, 561/168 |
+
+Medianwerte der Anteile in ms. Unter TCG ist `app` ≈ Bildzeit; darin stecken aber auch rund 33 s Desktop- und Anzeigearbeit je 60 s (894 Desktopbilder, davon rund 600 Lebenszeichen), reine Rechenbegrenzung von Doom ist damit nicht belegt; unter KVM dominieren ebenfalls `app` und die Konkurrenz um die CPU, die Bildkopie und `Canvas.Display()` sind klein. Die KVM-Bildzeiten schwanken wegen der Host-Last stark; ein Vorher/Nachher-Vergleich der Doom-Bildzeit ist daraus nicht belastbar, belegt ist die Halbierung der Desktoparbeit. Der Limine-Bildpuffer ist laut Codebefund voraussichtlich bereits write-combining ([COSMOS_SUPPORT.md](COSMOS_SUPPORT.md)); `anzeige` (1,4 ms unter KVM) bestätigt keinen Engpass dort. Offen: Messung unter geringer Host-Last, KVM mit Lebenszeichen (ausgelieferter Stand; jedes Lebenszeichen setzt den Desktop vollständig zusammen), VMware (VM ohne Datenlaufwerk, Paket-Apps dort nicht prüfbar), Bereichsübertragung statt Vollbild-Zusammensetzung (Anteil `desktop`).
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
