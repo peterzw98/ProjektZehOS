@@ -97,8 +97,11 @@ void Window_Init(void) {
 void Window_Free(void) { }
 
 static void DoCreateWindow(int width, int height) {
-	Window_Main.Width    = DEFAULT_WIDTH;
-	Window_Main.Height   = DEFAULT_HEIGHT;
+	/* Launcher und Spiel legen nacheinander "ihr" Fenster an; eine bereits gemeldete Groesse (Typ 10) bleibt. */
+	if (!Window_Main.Width) {
+		Window_Main.Width  = DEFAULT_WIDTH;
+		Window_Main.Height = DEFAULT_HEIGHT;
+	}
 	Window_Main.Focused  = true;
 
 	Window_Main.Exists   = true;
