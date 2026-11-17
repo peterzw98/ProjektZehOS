@@ -68,3 +68,11 @@ Branch `task/storage-ext2-kernel-plug`, Gegenprobe ohne Plug grün).
 `ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht in `ProjektZeh/**/*.cs` außerhalb dieses Ordners nach
 `(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
 weitergereichte Dateisystemnamen erkennt die Suche nicht.
+
+## Löschen: Plug auf FreeInode
+
+Cosmos 3.0.97 `Rmdir` schreibt das freigegebene Inode nie zurück, `Unlink` setzt kein `dtime`; e2fsck meldete das nach
+der Gastprobe (Details und Zeilen: [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md)).
+`ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs` ersetzt `Ext2Superblock.FreeInode`: zuerst das Inode auf der Platte mit
+`links_count` 0 und `dtime` schreiben, dann wie im Original Bitmapbit, Zähler, Deskriptor und Cache. Interne Member
+erreicht der Plug nur über `UnsafeAccessor` mit Typnamen; der Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
