@@ -248,8 +248,12 @@ internal static class CosmosExt2GuestProbe
         Pass("probe.bin, reuse.bin, neu, Wurzelliste");
 
         Begin("ro-handle");
-        Check(VfsManager.TryOpenFile(probe, out IVfsFileHandle? handle), "TryOpenFile abgelehnt");
-        using (handle!)
+        Check(VfsManager.TryOpenFile(probe, out IVfsFileHandle? opened), "TryOpenFile abgelehnt");
+        IVfsFileHandle handle = opened!;
+        // Ausdruecklich schliessen statt using: der Handle wird auch nach einem Check-Fehler geschlossen, und eine
+        // Ausnahme beim Schliessen verdeckt die primaere nicht (beide werden gemeldet).
+        Exception? failure = null;
+        try
         {
             byte[] content = new byte[BaseLength + AppendLength];
             int total = 0;
@@ -262,6 +266,22 @@ internal static class CosmosExt2GuestProbe
             bool threw = Refused(() => written = handle.Write([0x55]));
             Check(threw || written <= 0, $"Write ueber Handle nicht verweigert ({written} Byte)");
         }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        try
+        {
+            handle.Dispose();
+        }
+        catch (Exception exception)
+        {
+            Write($"ro-handle FAIL Dispose {exception.GetType().Name}: {exception.Message}");
+            failure ??= new ProbeFailure();
+        }
+
+        if (failure != null) throw failure;
         Pass("Lesen, Sync, SetAttr/Write verweigert, Schliessen");
 
         Begin("ro-write-denied");
