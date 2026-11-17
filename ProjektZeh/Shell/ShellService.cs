@@ -33,8 +33,11 @@ internal sealed partial class ShellService
     internal Action? OnClose { get; set; }
     internal Func<string?>? TakeJobResult { get; set; }
     internal Func<string?>? TakeJobProgress { get; set; }
+    internal Func<ITextOutput, bool>? InterruptJob { get; set; }
     public bool IsSecretInput => secretInput != null;
     public bool IsBusy => passwordWorker != null;
+
+    public bool TryInterrupt(ITextOutput output) => !closed && !IsSecretInput && InterruptJob?.Invoke(output) == true;
 
     public void BeginSecretInput(Func<string, Func<Func<ResultErr>>> prepare) => secretInput = prepare;
 

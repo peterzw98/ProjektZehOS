@@ -160,6 +160,56 @@ public sealed class LayoutMigrationTests
         Assert.AreEqual(1, sourceLock.Released);
     }
 
+    [TestMethod]
+    public void RealFileTargetRepeatsAnInterruptedMigrationWithOnlyKnownBackups()
+    {
+        StandardSource();
+        string before = SourceHash();
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-real-migration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            foreach (string path in LayoutMigration.InstallerEntries)
+                if (path != LayoutMarker.Path) Directory.CreateDirectory(Path.Combine(targetRoot, path[1..].Replace('/', Path.DirectorySeparatorChar)));
+            string markerPath = Path.Combine(targetRoot, "etc", "zehos", ".zehos-layout");
+            File.WriteAllText(markerPath, new LayoutMarker(LayoutState.Fresh, Disk).Serialize());
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess());
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var first = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add,
+                step => { if (step == MigrationStep.Copied) cancellation.Cancel(); }, cancellation.Token);
+            Assert.IsFalse(first.IsOK());
+            using (var reader = new StreamReader(target.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Migrating, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+
+            string note = Path.Combine(targetRoot, "srv", "legacy-data", "notizen.txt");
+            File.Move(note, note + IMigrationTarget.BackupSuffix);
+            File.Move(markerPath, markerPath + IMigrationTarget.BackupSuffix);
+            var second = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add);
+            Assert.IsTrue(second.IsOK(), second.Status.Message + "\n" + string.Join("\n", log));
+            using (var reader = new StreamReader(target.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Ready, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*", SearchOption.AllDirectories).Any(path =>
+                path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) || path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)));
+            Assert.AreEqual(before, SourceHash());
+            Assert.AreEqual(2, sourceLock.Released);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    [TestMethod]
+    public void SourceFileCollidingWithTheBackupSuffixConflictsBeforeWriting()
+    {
+        StandardSource();
+        File.WriteAllText(Path.Combine(source, "note" + IMigrationTarget.BackupSuffix), "user content");
+        var target = Target();
+        var result = Run(target);
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Status.Message, "PlanConflict");
+        Assert.IsFalse(Writes(target));
+    }
+
     private ResultObject<MigrationReport> Run(FakeMigrationTarget target, Lock? sourceLock = null, Action<MigrationStep>? progress = null)
     {
         sourceLock ??= new Lock();

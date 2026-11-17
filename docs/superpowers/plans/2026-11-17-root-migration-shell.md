@@ -60,7 +60,7 @@
 
 **Dateien:** `Storage/Migration/IMigrationService.cs`, `Shell/MigrationShellCommands.cs`, ShellService, TerminalApp, InteractiveSession und zugehoerige Tests.
 
-- [ ] Reiner Vertrag: `ResultObject<MigrationReport> Run(string diskName, CancellationToken cancellation, Action<string> log)`.
+- [ ] Reiner Vertrag: `ResultObject<MigrationReport> Run(string diskName, Action<string> log, CancellationToken cancellation)`.
 - [ ] Abgegrenzte Syntax-/Dispatchtests lokal delegieren; Diff/Testergebnis selbst pruefen. Sicherheit, Architektur und Cosmos nicht delegieren.
 - [ ] Syntax ohne `--yes`, zusaetzliche Argumente, nicht-Admin/Root und doppelte Auftraege zuerst rot; `MigrationShellCommands(service,tasks,isAdministrator,isLegacy,...)` wie NetworkShellCommands auf ShellJob aufbauen.
 - [ ] `system cancel` und Strg+C in derselben Shell fordern denselben Tokenabbruch an; F4/Escape und bestehendes Kopieren mit Strg+Shift+C erhalten.

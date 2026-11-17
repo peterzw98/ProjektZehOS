@@ -207,6 +207,13 @@ internal static class LayoutMigration
         {
             cancellation.ThrowIfCancellationRequested();
             if (known.Contains(path)) continue;
+            if (path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) &&
+                writable.Contains(path[..^IMigrationTarget.BackupSuffix.Length]))
+            {
+                // Der Marker kann nur noch in der Sicherung stehen; erst sein erfolgreicher Austausch entfernt sie.
+                if (path != LayoutMarker.Path + IMigrationTarget.BackupSuffix) temporaries.Add(path);
+                continue;
+            }
             if (path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal) &&
                 writable.Contains(path[..^IMigrationTarget.TemporarySuffix.Length]))
             {
