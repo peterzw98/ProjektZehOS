@@ -208,6 +208,8 @@ jobs:
 
       # Ohne KVM: der Lauf prueft den Weg Eingabe -> Treiber -> Bildpuffer unter TCG, nicht die Geschwindigkeit.
       - name: Boot the ISO and drive the desktop
+        # Eigene Grenze unter der des Jobs, damit der Upload der Bilder auch nach einem haengenden Gast noch laeuft.
+        timeout-minutes: 20
         run: python3 scripts/test-desktop-guest.py --iso iso/ProjektZeh.iso --accel tcg
 
       - name: Upload guest screenshots and logs
