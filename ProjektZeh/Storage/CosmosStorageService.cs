@@ -200,6 +200,13 @@ internal sealed class CosmosStorageService : IStorageService
             {
                 Note("Fehler: " + setupBlockedReason + " Keine Ersteinrichtung.");
             }
+            else if (result.IsOK())
+            {
+                // Identitaet des installierten Systems (7a): die Sperre selbst sitzt in AccountService, hier nur die Bootzeile.
+                var identity = CosmosInstalledIdentity.EvaluateData();
+                if (identity?.BlockedReason != null) Note("Fehler: " + identity.BlockedReason);
+                else if (identity is { State: not Partitioning.InstalledState.Legacy }) Note("Identitaet: " + identity.State);
+            }
 
             return result;
         }
