@@ -17,7 +17,7 @@ public sealed class RootVolumeStateTests
         Assert.IsTrue(RootVolumeState.Open(volume).IsOK());
 
         Assert.AreEqual(0, volume.State);
-        CollectionAssert.AreEqual(new[] { "read", "write", "flush" }, volume.Calls);
+        CollectionAssert.AreEqual(new[] { "read", "write", "flush", "read" }, volume.Calls);
         Assert.IsTrue(volume.OnlyStateChanged(), "Lesen-aendern-schreiben: nur s_state aendert sich.");
     }
 
@@ -38,6 +38,7 @@ public sealed class RootVolumeStateTests
     [DataRow("read", 1)]
     [DataRow("write", 1)]
     [DataRow("flush", 1)]
+    [DataRow("read", 2)]
     public void Open_StepFails_StopsAndNamesStep(string step, int occurrence)
     {
         var volume = new Volume(state: 1) { FailOn = (step, occurrence) };
@@ -49,14 +50,23 @@ public sealed class RootVolumeStateTests
         Assert.AreEqual(step, volume.Calls[^1]);
     }
 
+    [TestMethod]
+    public void Open_DriverWritesBackCleanState_Fails()
+    {
+        var volume = new Volume(state: 1) { StateAfterFlush = 1 };
+
+        var result = RootVolumeState.Open(volume);
+
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Message, "s_state != 0");
+    }
+
     [DataTestMethod]
     [DataRow("sync", 1)]
     [DataRow("sync", 2)]
     [DataRow("read", 1)]
     [DataRow("write", 1)]
-    [DataRow("flush", 1)]
-    [DataRow("read", 2)]
-    public void Close_StepFails_StopsAndNamesStep(string step, int occurrence)
+    public void Close_StepFailsBeforeStateWritten_StopsAndNamesStep(string step, int occurrence)
     {
         var volume = new Volume(state: 0) { FailOn = (step, occurrence) };
 
@@ -65,6 +75,51 @@ public sealed class RootVolumeStateTests
         Assert.IsFalse(result.IsOK());
         StringAssert.Contains(result.Message, step);
         Assert.AreEqual(step, volume.Calls[^1]);
+        Assert.AreEqual(0, volume.State);
+    }
+
+    [DataTestMethod]
+    [DataRow("flush", 1)]
+    [DataRow("read", 2)]
+    public void Close_StepFailsAfterStateWritten_RollsBackToZero(string step, int occurrence)
+    {
+        // Review peter-review P2-1: die Platte darf nach einem Fehler nie "sauber" tragen.
+        var volume = new Volume(state: 0) { FailOn = (step, occurrence) };
+
+        var result = RootVolumeState.Close(volume);
+
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Message, step);
+        Assert.AreEqual(0, volume.State);
+        Assert.AreEqual("flush", volume.Calls[^1], "Die Ruecknahme wird geflusht.");
+        Assert.IsTrue(volume.OnlyStateChanged());
+    }
+
+    [TestMethod]
+    public void Close_RollbackAlsoFails_NamesBothErrors()
+    {
+        var volume = new Volume(state: 0) { FailOn = ("flush", 1), AlsoFailOn = ("write", 2) };
+
+        var result = RootVolumeState.Close(volume);
+
+        StringAssert.Contains(result.Message, "flush fehlgeschlagen");
+        StringAssert.Contains(result.Message, "Ruecknahme auf s_state 0 fehlgeschlagen");
+        StringAssert.Contains(result.Message, "write fehlgeschlagen");
+    }
+
+    [TestMethod]
+    public void Close_ErrorBitSetAfterOpen_RefusesWithoutWriting()
+    {
+        // Review peter-review P3-b: Fehlerbit zwischen Open und Close.
+        var volume = new Volume(state: 1);
+        Assert.IsTrue(RootVolumeState.Open(volume).IsOK());
+        volume.SetStateDirectly(2);
+        volume.Calls.Clear();
+
+        Assert.IsFalse(RootVolumeState.Close(volume).IsOK());
+
+        CollectionAssert.DoesNotContain(volume.Calls, "write");
+        Assert.AreEqual(2, volume.State);
     }
 
     [TestMethod]
@@ -129,10 +184,12 @@ public sealed class RootVolumeStateTests
 
         public List<string> Calls { get; } = [];
         public (string Step, int Occurrence)? FailOn { get; init; }
+        public (string Step, int Occurrence)? AlsoFailOn { get; init; }
         public bool SyncResult { get; init; } = true;
         public ushort? StateAfterFlush { get; init; }
         public bool CorruptAfterFlush { get; init; }
         public ushort State => BitConverter.ToUInt16(superblock, Ext2FeatureGate.StateOffset);
+        public void SetStateDirectly(ushort state) => BitConverter.TryWriteBytes(superblock.AsSpan(Ext2FeatureGate.StateOffset), state);
 
         public bool OnlyStateChanged()
         {
@@ -145,8 +202,9 @@ public sealed class RootVolumeStateTests
         {
             Calls.Add(name);
             counts[name] = counts.GetValueOrDefault(name) + 1;
-            if (FailOn is { } fail && fail.Step == name && fail.Occurrence == counts[name])
-                throw new System.IO.IOException(name + " Geraetefehler");
+            foreach (var fail in new[] { FailOn, AlsoFailOn })
+                if (fail is { } hit && hit.Step == name && hit.Occurrence == counts[name])
+                    throw new System.IO.IOException(name + " Geraetefehler");
         }
 
         public bool Sync()

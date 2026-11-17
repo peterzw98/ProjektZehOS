@@ -11,6 +11,7 @@ internal interface IRootVolume
     bool Sync();
     /// <summary>Liest die 1024 Byte des Superblocks (Byte 1024 der Partition) direkt vom Geraet.</summary>
     void ReadSuperblock(Span<byte> superblock);
+    /// <summary>Schreibt den geaenderten Superblock zurueck; der Adapter darf sich auf den Sektor mit s_state beschraenken.</summary>
     void WriteSuperblock(ReadOnlySpan<byte> superblock);
     /// <summary>Device.Flush: Schreibpuffer des Geraets auf die Platte.</summary>
     void Flush();
@@ -20,6 +21,9 @@ internal interface IRootVolume
 /// s_state des Root (Spec 7a-S4 §6.4, Entscheidung der Storage-Leitung 17.11.): Open markiert vor Schreibzugriffen
 /// "nicht sauber", Close nach zwei Syncs wieder "sauber" und belegt das durch Neulesen. Installer, Energieaktion (4.3) und
 /// Updates (7b) nutzen denselben Baustein. Ein gesetztes Fehlerbit wird nie ueberschrieben.
+/// Vorbedingung: nie nebenlaeufig zu Dateischreibern auf demselben Root (7b-Spec §3); die Sperre haelt der Aufrufer.
+/// Annahme: der Treiber schreibt seinen gepufferten Superblock nicht ueber unser s_state zurueck. Das Neulesen faengt nur
+/// einen sofortigen Rueckschreib; Wirksamkeit unter Last belegt erst die E4.0-Probe (Laeufe 3/4), nicht der Hosttest.
 /// </summary>
 internal static class RootVolumeState
 {
@@ -28,8 +32,11 @@ internal static class RootVolumeState
     public static ResultErr Open(IRootVolume volume) => Run(volume, () =>
     {
         var result = SetState(volume, 0);
-        if (result.IsOK()) Do("flush", volume.Flush);
-        return result;
+        if (!result.IsOK()) return result;
+        Do("flush", volume.Flush);
+        // Ohne Nachweis saehe ein Absturz nach einem Treiber-Rueckschreib mit s_state 1 sauber aus.
+        if (BitConverter.ToUInt16(Read(volume), Ext2FeatureGate.StateOffset) != 0) return Failed("Root nach dem Oeffnen nicht als offen markiert (s_state != 0).");
+        return ResultErr.CreateSuccess();
     });
 
     public static ResultErr Close(IRootVolume volume) => Run(volume, () =>
@@ -39,12 +46,24 @@ internal static class RootVolumeState
             if (!Do("sync", volume.Sync)) return Failed("sync meldete einen Fehler.");
         var result = SetState(volume, 1);
         if (!result.IsOK()) return result;
-        Do("flush", volume.Flush);
-        // Neulesen belegt wegen des Geraetecaches nur Sichtbarkeit; es faengt aber einen zurueckgeschriebenen alten Superblock.
-        byte[] reread = Read(volume);
-        if (BitConverter.ToUInt16(reread, Ext2FeatureGate.StateOffset) != 1) return Failed("Root nach dem Schliessen nicht sauber (s_state != 1).");
-        if (InstalledIdentity.CheckRoot(reread) != RootCheck.Ok) return Failed("CheckRoot nach dem Schliessen nicht Ok.");
-        return ResultErr.CreateSuccess();
+        var confirmed = Run(volume, () =>
+        {
+            Do("flush", volume.Flush);
+            // Neulesen belegt wegen des Geraetecaches nur Sichtbarkeit; es faengt aber einen zurueckgeschriebenen alten Superblock.
+            byte[] reread = Read(volume);
+            if (BitConverter.ToUInt16(reread, Ext2FeatureGate.StateOffset) != 1) return Failed("Root nach dem Schliessen nicht sauber (s_state != 1).");
+            if (InstalledIdentity.CheckRoot(reread) != RootCheck.Ok) return Failed("CheckRoot nach dem Schliessen nicht Ok.");
+            return ResultErr.CreateSuccess();
+        });
+        if (confirmed.IsOK()) return confirmed;
+        // Nach einem Fehler darf die Platte nicht "sauber" tragen, waehrend der Aufrufer weiterschreibt (Review peter-review P2-1).
+        var rollback = Run(volume, () =>
+        {
+            var reset = SetState(volume, 0);
+            if (reset.IsOK()) Do("flush", volume.Flush);
+            return reset;
+        });
+        return rollback.IsOK() ? confirmed : Failed(confirmed.Message + " Ruecknahme auf s_state 0 fehlgeschlagen: " + rollback.Message);
     });
 
     private static ResultErr SetState(IRootVolume volume, ushort state)

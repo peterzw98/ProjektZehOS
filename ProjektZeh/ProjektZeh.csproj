@@ -8,6 +8,8 @@
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
     <Version Condition="'$(Version)' == ''">0.5.34</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
+    <!-- GPT-Installer (Spec 7a-S4) nur in Testbuilds bis zum Go von Paket 4.0 und gruenen Gasttests G1-G7. -->
+    <DefineConstants Condition="'$(ZehOSGptInstaller)' == 'true'">$(DefineConstants);ZEHOS_GPT_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>

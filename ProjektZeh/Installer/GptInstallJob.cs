@@ -41,6 +41,8 @@ internal sealed class GptInstallJob : IInstallJob
     private const int ChunkSize = 64 * 1024;
     private const uint SparseSuper = 0x1;
     private const int RoCompatOffset = 100;
+    private const int LogBlockSizeOffset = 24;
+    private const uint LogBlockSize4096 = 2;
     private readonly IGptInstallTarget target;
     private readonly GptTable table;
     private readonly string diskName;
@@ -111,7 +113,12 @@ internal sealed class GptInstallJob : IInstallJob
             return failure;
         }
         var cleanup = target.Abort();
-        string missing = Stage == InstallStage.WritingMarker ? "Installationsmarker fehlt" : "Bootdateien unvollstaendig";
+        string missing = Stage switch
+        {
+            InstallStage.WritingMarker => "Installationsmarker fehlt",
+            InstallStage.CopyingFiles or InstallStage.WritingBootConfig => "Bootdateien unvollstaendig",
+            _ => "Root noch nicht vorbereitet",
+        };
         string message = $"{result.Message} Stand: {state}, {missing}. Die Platte gilt als unklar; " +
             $"neu installieren mit setup install {diskName} --layout gpt --erase.";
         if (!cleanup.IsOK()) message += " Bereinigung fehlgeschlagen: " + cleanup.Message;
@@ -142,6 +149,8 @@ internal sealed class GptInstallJob : IInstallJob
         byte[] superblock = read.Value!;
         if (requireClean && BitConverter.ToUInt16(superblock, Ext2FeatureGate.StateOffset) != 1)
             return Failed("Root nach dem Aushaengen nicht sauber (s_state != 1).");
+        // Spec 7a-S4 §3 FormattingRoot: 4-KiB-Bloecke und sparse_super ausdruecklich, unabhaengig vom Gate.
+        if (BitConverter.ToUInt32(superblock, LogBlockSizeOffset) != LogBlockSize4096) return Failed("Root nicht mit 4096-Byte-Bloecken formatiert (log_block_size != 2).");
         if (InstalledIdentity.CheckRoot(superblock) != RootCheck.Ok) return Failed("Root-Superblock nach dem Formatieren nicht im unterstuetzten Profil.");
         if ((BitConverter.ToUInt32(superblock, RoCompatOffset) & SparseSuper) == 0) return Failed("Root ohne sparse_super formatiert.");
         return ResultErr.CreateSuccess();

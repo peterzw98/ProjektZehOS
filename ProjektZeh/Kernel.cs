@@ -39,6 +39,12 @@ public sealed class Kernel : Sys.Kernel
     }
     // Etappe 4.1: einmal gewaehltes Pfadprofil; Root wird erst mit 4.3 gewaehlt, bis dahin gilt immer Legacy (/data).
     private static readonly SystemPaths Paths = SystemPaths.Legacy;
+    // Einzige Stelle, die -p:ZehOSGptInstaller abbildet; der getestete Installercode bekommt nur den bool.
+#if ZEHOS_GPT_INSTALLER
+    private const bool GptInstaller = true;
+#else
+    private const bool GptInstaller = false;
+#endif
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
@@ -78,7 +84,7 @@ public sealed class Kernel : Sys.Kernel
             if (!prepared.IsOK()) return prepared;
             Sys.Power.Reboot();
             return ResultErr.CreateSuccess();
-        });
+        }, GptInstaller, Paths.InstallMount);
 #endif
         var desktopIdentity = accounts.CreateSession();
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
@@ -140,7 +146,7 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
 #if ZEHOS_INSTALLER
             // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
-            .. new SetupShellCommands(installer, () => true).Commands,
+            .. new SetupShellCommands(installer, () => true, GptInstaller).Commands,
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
@@ -282,7 +288,7 @@ public sealed class Kernel : Sys.Kernel
         if (startDesktop)
         {
             // Der grafische Assistent ist der Normalfall; bei einem Anzeigefehler bleibt die Text-Einrichtung mit setup bedienbar.
-            try { new InstallerSession(installer).Run(); }
+            try { new InstallerSession(installer, GptInstaller).Run(); }
             catch (Exception exception)
             {
                 systemLog.Error("Setup", $"Grafische Einrichtung fehlgeschlagen: {exception.Message}");

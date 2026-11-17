@@ -239,14 +239,14 @@ public sealed class GptInstallTests
 
     // Test 5: Abbruch in jeder Stufe.
     [DataTestMethod]
-    [DataRow("layout", "Partitioning")]
-    [DataRow("format-esp", "FormattingEsp")]
-    [DataRow("format-root", "FormattingRoot")]
-    [DataRow("prepare-root", "PreparingRoot")]
-    [DataRow("file /boot/ProjektZeh.elf", "CopyingFiles")]
-    [DataRow("file /boot/limine/limine.conf", "WritingBootConfig")]
-    [DataRow("write-marker", "WritingMarker")]
-    public void Job_FailureInStage_AbortsWithoutMarkerAndNamesState(string failingCall, string stage)
+    [DataRow("layout", "Partitioning", "Root noch nicht vorbereitet")]
+    [DataRow("format-esp", "FormattingEsp", "Root noch nicht vorbereitet")]
+    [DataRow("format-root", "FormattingRoot", "Root noch nicht vorbereitet")]
+    [DataRow("prepare-root", "PreparingRoot", "Root noch nicht vorbereitet")]
+    [DataRow("file /boot/ProjektZeh.elf", "CopyingFiles", "Bootdateien unvollstaendig")]
+    [DataRow("file /boot/limine/limine.conf", "WritingBootConfig", "Bootdateien unvollstaendig")]
+    [DataRow("write-marker", "WritingMarker", "Installationsmarker fehlt")]
+    public void Job_FailureInStage_AbortsWithoutMarkerAndNamesState(string failingCall, string stage, string missing)
     {
         var platform = new Platform();
         platform.Target.FailOn = failingCall;
@@ -259,6 +259,7 @@ public sealed class GptInstallTests
         Assert.IsNull(platform.Target.Marker, "Ohne Abschluss steht nie ein gueltiger ESP-Marker.");
         StringAssert.Contains(result.Message, "setup install min --layout gpt --erase");
         StringAssert.Contains(result.Message, "unklar");
+        StringAssert.Contains(result.Message, missing);
     }
 
     [TestMethod]
@@ -299,6 +300,23 @@ public sealed class GptInstallTests
 
         Assert.AreEqual(InstallStage.VerifyingRoot, job.Stage);
         CollectionAssert.DoesNotContain(platform.Target.Calls, "prepare-root");
+    }
+
+    [TestMethod]
+    public void Job_RootWith2KiBBlocks_AbortsAtVerifyingRoot()
+    {
+        // Review huang P3 (a): das Gate verlangt 4096-Byte-Bloecke (log_block_size 2); 2 KiB darf nie durchgehen.
+        var platform = new Platform();
+        byte[] superblock = Superblock(state: 1);
+        BitConverter.TryWriteBytes(superblock.AsSpan(24), 1u);
+        platform.Target.Superblocks.Enqueue(superblock);
+        var job = Service(platform).BeginGpt("min", true).Value!;
+
+        var result = RunUntilFailure(job);
+
+        Assert.AreEqual(InstallStage.VerifyingRoot, job.Stage);
+        CollectionAssert.DoesNotContain(platform.Target.Calls, "prepare-root");
+        StringAssert.Contains(result.Message, "log_block_size");
     }
 
     [TestMethod]
@@ -393,16 +411,24 @@ public sealed class GptInstallTests
         var service = new RecordingService { Disks = [new("min", 32 * GiB, 0, true)] };
         var wizard = ReachConfirm(service, gptEnabled: true);
 
-        Assert.AreEqual("Alle Daten auf min loeschen", (wizard.FocusedControl as SetupCheckBox)?.Label);
-        Press(wizard, PhysicalKey.Tab);
-        Assert.AreEqual("GPT mit ext2-Root (32 bis 128 GiB)", (wizard.FocusedControl as SetupCheckBox)?.Label);
+        // Leere Platte: ohne GPT-Haken keine Loeschbestaetigung; der Fokus bleibt wie bisher auf Installieren.
+        for (int guard = 0; wizard.FocusedControl is not SetupCheckBox { Label: "GPT mit ext2-Root (32 bis 128 GiB)" }; guard++)
+        {
+            Assert.IsFalse(wizard.FocusedControl is SetupCheckBox { Label: "Alle Daten auf min loeschen" }, "Loeschbestaetigung erst mit GPT-Haken.");
+            Assert.IsTrue(guard < 8);
+            Press(wizard, PhysicalKey.Tab);
+        }
         Press(wizard, PhysicalKey.Space);
         Press(wizard, PhysicalKey.Enter);
         Assert.AreEqual(SetupPage.Confirm, wizard.Page, "Ohne Loeschbestaetigung startet der GPT-Weg nicht.");
         Assert.AreEqual(0, service.Calls.Count);
 
         Press(wizard, PhysicalKey.Tab);
-        while (wizard.FocusedControl is not SetupCheckBox { Label: "Alle Daten auf min loeschen" }) Press(wizard, PhysicalKey.Tab);
+        for (int guard = 0; wizard.FocusedControl is not SetupCheckBox { Label: "Alle Daten auf min loeschen" }; guard++)
+        {
+            Assert.IsTrue(guard < 8, "Mit GPT-Haken erscheint die Loeschbestaetigung.");
+            Press(wizard, PhysicalKey.Tab);
+        }
         Press(wizard, PhysicalKey.Space);
         Press(wizard, PhysicalKey.Enter);
 

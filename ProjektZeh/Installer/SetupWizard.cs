@@ -238,8 +238,10 @@ internal sealed class SetupWizard
                 {
                     erase.Label = $"Alle Daten auf {target.Name} loeschen";
                     erase.Bounds = new(contentX, checkY, contentWidth, painter.GlyphHeight + 8);
+                    // Auf leeren Platten erscheint die Loeschbestaetigung erst mit dem GPT-Haken (UpdateNext schaltet sie).
+                    erase.Enabled = target.RequiresErase;
                     panel.Add(erase);
-                    focus = erase;
+                    if (erase.Enabled) focus = erase;
                 }
                 if (GptOffered)
                 {
@@ -289,7 +291,17 @@ internal sealed class SetupWizard
 
     private int ButtonWidth(string label) => Math.Max(112, label.Length * painter.GlyphWidth + 32);
 
-    private void UpdateNext() => next.Enabled = Page switch
+    private void UpdateNext()
+    {
+        if (Page == SetupPage.Confirm && GptOffered)
+        {
+            erase.Enabled = NeedsErase;
+            if (!erase.Enabled) erase.Checked = false;
+        }
+        next.Enabled = NextEnabled();
+    }
+
+    private bool NextEnabled() => Page switch
     {
         SetupPage.License => accept.Checked,
         SetupPage.Disk => disks.Selected != null,
@@ -708,6 +720,8 @@ internal sealed class SetupCheckBox(string label) : UiControl
 
     protected override void DrawContent(PixelSurface surface, UiPainter painter, int x, int y, bool active)
     {
+        // Ein deaktiviertes Kaestchen ist ausgeblendet; UiPanel ueberspringt es schon fuer Fokus und Zeiger.
+        if (!Enabled) return;
         var box = new UiRect(Bounds.X + 2, Bounds.Y + (Bounds.Height - 24) / 2, 24, 24);
         // Secondary statt Border als Rahmen: ein leeres Kaestchen muss sich deutlich vom Hintergrund abheben.
         surface.FillRectangle(x + box.X, y + box.Y, 24, 24, UiPainter.Secondary);
