@@ -21,7 +21,7 @@ public sealed class Ext2FormatterUsageTests
     [TestMethod]
     public void KernelSources_FormatExt2_OnlyThroughFormatForKernel()
     {
-        string kernel = Path.Combine(FindRepositoryRoot(), "ProjektZeh");
+        string kernel = Path.Combine(Golden.RepositoryRoot(), "ProjektZeh");
         string allowed = Path.Combine(kernel, "Storage", "Ext2") + Path.DirectorySeparatorChar;
         string[] offenders = Directory.EnumerateFiles(kernel, "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.StartsWith(allowed, StringComparison.Ordinal))
@@ -40,14 +40,5 @@ public sealed class Ext2FormatterUsageTests
         Assert.IsTrue(Forbidden.IsMatch("type.TryFormat(source, new Ext2FormatOptions { BlockSize = 4096 });"));
         Assert.IsFalse(Forbidden.IsMatch("CosmosExt2Formatter.FormatForKernel(device, null);"));
         Assert.IsFalse(Forbidden.IsMatch("VfsManager.TryFormat(fileSystemName, partition, new FatFormatOptions());"));
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "ProjektZeh", "ProjektZeh.csproj"))) return directory.FullName;
-        }
-        throw new InvalidOperationException("Repository-Stamm mit ProjektZeh/ProjektZeh.csproj nicht gefunden.");
     }
 }

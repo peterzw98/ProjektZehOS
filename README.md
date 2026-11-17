@@ -106,6 +106,23 @@ dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
 
 Unter Windows benötigen die Symlink-Prüfungen das Recht zum Erstellen symbolischer Links (etwa über den Entwicklermodus). Ohne dieses Recht werden nur diese Tests als nicht ausführbar gemeldet; die übrigen Pfadprüfungen laufen weiter. Die Python-Skripttests starten mit `python -m unittest discover -s scripts/tests`. Für die Release-Skripttests muss Bash im `PATH` liegen, unter Windows beispielsweise Git Bash.
 
+Die CI misst die Zeilenabdeckung der im Hostbuild enthaltenen Produktivquellen und scheitert unter der in `.github/workflows/ci.yml` gesetzten Grenze. Lokal entsteht der Bericht mit dem Sammler des Test-SDK; `scripts/check-coverage.py` wertet ihn aus:
+
+```powershell
+dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --configuration Release --collect "Code Coverage;Format=cobertura" --results-directory TestResults
+python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.cobertura.xml | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName --min-total 92 --min-file 50 --exclusions scripts/coverage-exclusions.txt --sources ProjektZeh
+```
+
+`scripts/coverage-exclusions.txt` nennt die wenigen Dateien, die nicht mitzählen, jeweils mit Grund. Die Abdeckung sagt nur, welche Zeilen ein Test ausführt, und gilt nur für die Quellen, die das Testprojekt einbindet. Kernelstart, Treiber und die Cosmos-Hardwareadapter fehlen im Nenner; `--sources ProjektZeh` listet diese ungemessenen Dateien auf.
+
+`DesktopE2ETests` bedient den Desktop auf dem Host Ende zu Ende nur über Eingabeereignisse (Anmeldung, Startmenü, Terminal, Dateien, Texteditor, Einstellungen, Fenster, Arbeitsflächen, Taskmanager) und vergleicht das gezeichnete Bild mit Referenzbildern unter `ProjektZeh.Tests/Golden/`. Verglichen wird die SHA-256-Prüfsumme der Pixel (`<Name>.sha256`); das PNG daneben dient nur zum Ansehen. Die Uhr steht dabei fest auf 2. Januar 2026, 03:04:05 UTC. Bereiche, die den Hostpfad der temporären Testplatte zeigen, werden vor dem Vergleich magentafarben übermalt. Die Tests brauchen die Cosmos-Schrift aus dem NuGet-Paket `Cosmos.Kernel.System` 3.0.97, das `dotnet restore` lädt. Fehlt sie, gelten die Tests lokal als nicht ausführbar; ist die Umgebungsvariable `CI` gesetzt, scheitern sie. Weicht ein Bild ab, liegt das erhaltene Bild unter `TestResults/golden/<Name>.actual.png`. Nach einer gewollten Änderung der Oberfläche die Referenzbilder neu erzeugen und jedes geänderte PNG im Pull Request ansehen:
+
+```powershell
+$env:ZEHOS_UPDATE_GOLDEN = "1"; dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"; Remove-Item Env:ZEHOS_UPDATE_GOLDEN
+```
+
+Unter Linux oder macOS entsprechend `ZEHOS_UPDATE_GOLDEN=1 dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"`. Ist zugleich `CI` gesetzt, scheitert das Aktualisieren absichtlich. Ein Test prüft, dass jedes PNG genau die Pixel seiner Prüfsumme zeigt.
+
 ## Dateisystem in QEMU
 
 Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
@@ -203,9 +220,12 @@ GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows
 
 - **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen.
 - **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
+- **Guest boot and desktop (QEMU)** startet das ISO aus dem Job **Cosmos x64 build** unter QEMU mit TCG und bedient es mit `scripts/test-desktop-guest.py`: Boot, Anmeldung, Fenster öffnen und schließen, Textshell und `shutdown`. Bildschirmfotos und Protokolle liegen im Artefakt `guest-desktop`.
 - **CodeQL (C#)** prüft den eigenen C#-Produktionscode mit der erweiterten Sicherheitsabfrage. Eine zusätzliche Analyse läuft wöchentlich. Ergebnisse stehen unter **Security → Code scanning** und gegebenenfalls direkt am Pull Request.
 
-Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Tests laufen auf dem Host; ein erfolgreicher CI-Lauf bestätigt keinen automatisierten Start oder Bedienungstest des Kernels in QEMU.
+Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Hosttests laufen ohne Kernel. Der Gastlauf belegt nur den oben genannten Ablauf unter QEMU mit TCG; KVM, VMware, echte Hardware, das Recovery-ISO und alle übrigen Funktionen prüft die CI nicht.
+
+Lokal prüft `python3 scripts/test-desktop-guest.py --iso ProjektZeh/output-x64/ProjektZeh.iso [--accel tcg|kvm|whpx] [--boot-timeout 300]` ein ISO in QEMU: Boot, Ersteinrichtung des Kontos auf einer leeren Wegwerfplatte, Terminal öffnen, tippen und über **X** schließen, Dateien und Einstellungen, Ab- und Anmeldung in der Textshell, F4 und `shutdown` (QEMU muss mit Exitcode 0 enden); Error-Zeilen im seriellen Protokoll lassen ihn scheitern. Mit `--recovery` prüft er beim Recovery-ISO nur Boot bis zur Textshell, das Ausbleiben des Desktops und `shutdown`; `uname` wird nur fotografiert. Bilder, `serial.log` und `stderr.log` liegen unter `.tools/desktop-guest/<Kennung>/`. Das ist nur ein QEMU-Ergebnis; VMware bleibt ungeprüft.
 
 Die Action-Versionen sind auf feste Commits gesetzt. Die native Cosmos-Toolchain wird vom offiziellen, fortlaufend aktualisierten Release `tools-latest` bezogen. Für CodeQL werden keine separaten Sonar-Zugangsdaten benötigt. Die PR-Workflows verwenden `pull_request`, damit Code aus Forks ohne Zugriff auf Repository-Secrets geprüft werden kann.
 
@@ -344,14 +364,14 @@ Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als einge
 ```bash
 payload="$PWD/.tools/installer-payload"
 mkdir -p "$payload"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.21
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.30
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
 cp "$HOME/.nuget/packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.21 \
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:Version=0.5.30 \
   -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 ```
 
-Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.21`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Die Standardversion ist `0.5.30`. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
 
 Das Installer-ISO startet in den grafischen Einrichtungsassistenten (Willkommen → Hinweise → Zielplatte → Bestätigung → Installation → Neustart), bedienbar mit Maus und Tastatur. Bei einem Anzeigefehler oder mit `-p:ZehOSRecovery=true` startet stattdessen eine lokale Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Ohne Löschbestätigung wird nur eine Platte angenommen, die keine Partition hat und vollständig als leer gelesen wurde. Platten über 256 MiB werden dafür nicht gelesen und verlangen deshalb immer die Bestätigung. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium.
 
@@ -371,13 +391,13 @@ reboot
 
 `update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
 
-Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.21.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
+Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-0.5.30.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
 
 Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. Der Installer richtet mit drei Sekunden Timeout die Limine-Einträge **ZehOS** (1920×1080), **ZehOS (1024x768)** und **ZehOS (vorherige Version)** ein. Der Installer legt dazu bereits eine Kopie des installierten Kernels als `.bak` an. Nach einem Start über den Rückfalleintrag (laufende und installierte Version in `/boot/zehos-version.txt` weichen ab) darf ein Update nicht älter als die installierte Version sein; es ersetzt dann nur den Hauptkernel und lässt den laufenden Kernel in `.bak` unverändert. Nach Beginn des Dateiaustauschs ist bis zum Neustart kein weiteres Update erlaubt, auch wenn Austausch oder Bereinigung einen Fehler melden. Die Sicherungs-/Wiederherstellungslogik schützt vor behandelten Dateifehlern; sie garantiert keine Wiederherstellung nach Stromausfall. Netzwerk- und Dateioperationen der Shell laufen synchron; antwortet ein Spiegel nach dem Verbindungsaufbau nicht, steht das System bis zum Cosmos-Zeitlimit (wegen des groben Cosmos-Wartetimers deutlich länger als die angeforderten 10 s). [Prüfergebnisse und Plattformgrenzen](docs/INSTALLER_UPDATES_TESTS.md).
 
 ## Releases und Updates
 
-`scripts/build-release.sh 0.5.21 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
+`scripts/build-release.sh 0.5.30 [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
 
 Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.
 

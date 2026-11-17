@@ -112,6 +112,23 @@ public sealed class InputScrollTests
     }
 
     [TestMethod]
+    public void Terminal_PageUpScrollsBackAndPageDownForward()
+    {
+        var terminal = new TerminalApp(new ShellService(), new byte[4096], 8, 16, 48);
+        terminal.Resize(400, 300);
+        for (int i = 0; i < 100; i++) terminal.Buffer.WriteLine($"row {i}");
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.PageUp));
+        int page = terminal.ScrollOffset;
+        Assert.IsTrue(page > 0);
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.PageUp));
+        Assert.AreEqual(2 * page, terminal.ScrollOffset);
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.PageDown));
+        Assert.AreEqual(page, terminal.ScrollOffset);
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.PageDown));
+        Assert.AreEqual(0, terminal.ScrollOffset);
+    }
+
+    [TestMethod]
     public void Panel_WheelTargetsHoveredTextViewWithoutChangingFocusOrCursor()
     {
         var panel = new UiPanel();
