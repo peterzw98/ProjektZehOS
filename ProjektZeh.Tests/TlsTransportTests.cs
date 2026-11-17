@@ -19,6 +19,24 @@ namespace ProjektZeh.Tests;
 public sealed class TlsTransportTests
 {
     [TestMethod]
+    public void Read_MissingResource_ThrowsWithResourceName()
+    {
+        var error = Assert.ThrowsException<InvalidOperationException>(() => TlsRoots.Read("fehlt"));
+
+        StringAssert.Contains(error.Message, "fehlt", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
+    public void Load_ShippedRootBundle_IsCachedAndYieldsTrustAnchors()
+    {
+        byte[] bundle = TlsRoots.Load();
+
+        Assert.AreSame(bundle, TlsRoots.Load(), "Das Bundle wird je Start nur einmal gelesen.");
+        // cacert.pem enthaelt ueber hundert Wurzeln; deutlich weniger hiesse, dass das Einlesen abbricht.
+        Assert.IsTrue(TlsTransport.LoadAnchors(bundle).Count > 100);
+    }
+
+    [TestMethod]
     public async Task TlsChecksChainNameAndDates()
     {
         using RSA caKey = RSA.Create(2048);
