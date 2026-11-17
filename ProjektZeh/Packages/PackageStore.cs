@@ -497,7 +497,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         return Convert.ToHexStringLower(hash);
     }
 
-    private static bool IsFileError(Exception exception) => exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
+    internal static bool IsFileError(Exception exception) => exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     private static ResultErr NoTrust() => ResultErr.CreateFailure(ResultCode.Failure, "Dieser Build enthaelt keinen Paketschluessel; Pakete sind deaktiviert.");
     private static ResultErr Modified(string path) => ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {path} wurde veraendert; Start gesperrt.");
     private static ResultObject<T> Damaged<T>(string id, string? detail = null) =>

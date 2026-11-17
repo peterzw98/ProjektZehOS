@@ -6,7 +6,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.56</Version>
+    <Version Condition="'$(Version)' == ''">0.5.59</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
@@ -22,8 +22,8 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
-    <!-- WAMR-AOT-Lader (Plan 5c, Etappe D) vorerst nur auf Wunsch: AOT bleibt bis Etappe F aus, und vor Etappe E gibt es
-         keinen Aufrufer ausser der Probe. Er braucht wasm3s freistehende C-Laufzeit; die AOT-Gastprobe schaltet ihn ein. -->
+    <!-- WAMR-AOT-Lader (Plan 5c, Etappe D) vorerst nur auf Wunsch: AOT bleibt bis Etappe F aus (Schalter wasmaot,
+         Standard aus); ohne diesen Schalter waehlt WasmGameApp immer wasm3. Er braucht wasm3s freistehende C-Laufzeit; die AOT-Gastprobe schaltet ihn ein. -->
     <ZehOSWasmAot Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasmAot>
     <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
