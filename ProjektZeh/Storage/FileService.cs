@@ -4,6 +4,7 @@ using System.Text;
 using System.Collections.Generic;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage.Virtual;
 
 namespace ProjektZeh.Storage;
 
@@ -21,14 +22,22 @@ internal sealed class FileService
     private readonly UserSession? session;
     // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
     private readonly Func<string, bool, ResultErr>? pathGuard;
+    // Erzeuger der /proc- und /sys-Dateien (normalisierter Pfad -> Snapshot); der Kernel liefert ihn aus Cosmos-Werten.
+    private readonly Func<string, ResultObject<byte[]>>? virtualSource;
+    // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
+    private readonly Func<string, bool> isRegularFile;
 
     public string CurrentDirectory { get; private set; }
 
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
         FileAccessControl? access = null, UserSession? session = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
-        Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null)
+        Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null,
+        Func<string, ResultObject<byte[]>>? virtualSource = null,
+        Func<string, bool>? isRegularFile = null)
     {
+        this.virtualSource = virtualSource;
+        this.isRegularFile = isRegularFile ?? IsRegularHostFile;
         this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
@@ -158,12 +167,137 @@ internal sealed class FileService
             long length = stream.Length;
             if (length < 0 || length > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+            // Laenge 0 kann auch "unbekannt" heissen (virtuelle Dateien wie unter Linux): dann begrenzt bis EOF lesen.
+            if (length == 0) return ReadUntilEnd(stream, maximumLength);
             var data = new byte[(int)length];
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
         catch (Exception exception) when (IsFileError(exception))
         {
+            return ResultObjectFactory.CreateFromException<byte[]>(exception);
+        }
+    }
+
+    /// <summary>Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei.</summary>
+    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength)
+    {
+        using var data = new MemoryStream();
+        var chunk = new byte[4096];
+        int read;
+        while ((read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, (long)maximumLength + 1 - data.Length))) > 0)
+        {
+            data.Write(chunk, 0, read);
+            if (data.Length > maximumLength)
+                return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+        }
+
+        return ResultObjectFactory.CreateSuccess(data.ToArray());
+    }
+
+    /// <summary>Gehoert der Pfad (nach Normalisierung gegen das Arbeitsverzeichnis) zu /proc, /sys oder /dev?</summary>
+    public bool IsVirtualPath(string? path) =>
+        !string.IsNullOrWhiteSpace(path) && VirtualTree.IsVirtualPath(VirtualTree.Normalize(path, CurrentDirectory));
+
+    /// <summary>
+    /// Liest eine virtuelle Datei direkt aus dem Erzeuger, nie ueber System.IO (Spec E5b/E6b §0.5): auch wenn unter Root eine
+    /// gleichnamige Datei liegt, wird sie nicht gelesen. /dev/zero endet wie ReadText mit dem Grenzfehler.
+    /// </summary>
+    public ResultObject<string> ReadVirtual(string? path, int maximumLength = MaximumTextLength)
+    {
+        var node = VirtualNodeFor(path, write: false);
+        if (!node.IsOK()) return ResultObjectFactory.CreateFailure<string>(node.Status);
+        var bytes = ReadVirtualBytes(node.Value!, maximumLength);
+        if (!bytes.IsOK()) return ResultObjectFactory.CreateFailure<string>(bytes.Status);
+        return bytes.Value!.Length > maximumLength
+            ? ResultObjectFactory.CreateFailure<string>(TextTooLarge(maximumLength))
+            : ResultObjectFactory.CreateSuccess(Encoding.UTF8.GetString(bytes.Value));
+    }
+
+    /// <summary>Gemeinsame Weiche fuer Textleser (cat, Filter, Betrachter): virtuelle Pfade aus dem Erzeuger, sonst <see cref="ReadText"/>.</summary>
+    public ResultObject<string> ReadTextOrVirtual(string? path) => IsVirtualPath(path) ? ReadVirtual(path) : ReadText(path);
+
+    /// <summary>Kinder eines virtuellen Verzeichnisses als absolute Pfade, Verzeichnisse zuerst wie <see cref="ListDirectory"/>.</summary>
+    public ResultObject<FileEntry[]> ListVirtual(string? path)
+    {
+        var node = VirtualNodeFor(path, write: false);
+        if (!node.IsOK()) return ResultObjectFactory.CreateFailure<FileEntry[]>(node.Status);
+        var names = VirtualTree.List(node.Value!.Path);
+        if (!names.IsOK()) return ResultObjectFactory.CreateFailure<FileEntry[]>(names.Status);
+        var entries = new List<FileEntry>();
+        foreach (string name in names.Value!)
+        {
+            string child = node.Value.Path + "/" + name;
+            entries.Add(new(child, VirtualTree.Find(child)!.Kind == VirtualKind.Directory));
+        }
+
+        entries.Sort(static (left, right) =>
+        {
+            int type = right.IsDirectory.CompareTo(left.IsDirectory);
+            return type != 0 ? type : string.Compare(left.Path, right.Path, StringComparison.Ordinal);
+        });
+        return ResultObjectFactory.CreateSuccess(entries.ToArray());
+    }
+
+    /// <summary>Schreiben auf /dev/null: die Daten werden verworfen; jeder andere virtuelle Pfad ist nur lesbar.</summary>
+    public ResultErr WriteNull(string? path)
+    {
+        var node = VirtualNodeFor(path, write: true);
+        return node.IsOK() ? ResultErr.CreateSuccess() : node.Status;
+    }
+
+    private ResultObject<VirtualNode> VirtualNodeFor(string? path, bool write)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return ResultObjectFactory.CreateFailure<VirtualNode>(ResultCode.InvalidArgument, "cause='InvalidPath' message='Ein Pfad muss angegeben werden.'");
+        // Ohne Anmeldung zuerst ablehnen, damit auch die Existenz eines Namens nicht erkennbar ist.
+        if (session?.UserId == null) return ResultObjectFactory.CreateFailure<VirtualNode>(FileAccessControl.Denied());
+        var node = VirtualTree.Find(VirtualTree.Normalize(path, CurrentDirectory));
+        if (node is null)
+            return ResultObjectFactory.CreateFailure<VirtualNode>(ResultCode.NotFound, "cause='NotFound' message='Nicht gefunden.'");
+        var allowed = VirtualAccess.Check(node, session, write);
+        return allowed.IsOK() ? ResultObjectFactory.CreateSuccess(node) : ResultObjectFactory.CreateFailure<VirtualNode>(allowed);
+    }
+
+    /// <summary>Hoechstens <paramref name="maximumLength"/> + 1 Bytes, damit der Aufrufer die Ueberschreitung erkennt.</summary>
+    private ResultObject<byte[]> ReadVirtualBytes(VirtualNode node, int maximumLength)
+    {
+        if (node.Kind == VirtualKind.Directory)
+            return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "cause='IsDirectory' message='Ist ein Verzeichnis.'");
+        if (node.Kind == VirtualKind.CharacterDevice)
+        {
+            var handle = DeviceFileSystem.Open(node.Path["/dev/".Length..]);
+            if (!handle.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(handle.Status);
+            var data = new byte[maximumLength + 1];
+            int total = 0;
+            try
+            {
+                while (total < data.Length)
+                {
+                    var read = handle.Value!.Read(data.AsSpan(total));
+                    if (!read.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(read.Status);
+                    if (read.Value == 0) break;
+                    total += read.Value;
+                }
+            }
+            finally
+            {
+                handle.Value!.Close();
+            }
+
+            return ResultObjectFactory.CreateSuccess(data[..total]);
+        }
+
+        var unavailable = ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure,
+            "cause='SystemDataUnavailable' message='Systemdaten nicht verfuegbar.'");
+        try
+        {
+            var snapshot = virtualSource?.Invoke(node.Path);
+            return snapshot != null && snapshot.IsOK() && snapshot.Value != null ? snapshot : unavailable;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Ein werfender Erzeuger darf die Shell nicht beenden (Spec §2); die Ausnahme bleibt als Diagnose im Ergebnis.
             return ResultObjectFactory.CreateFromException<byte[]>(exception);
         }
     }
@@ -375,6 +509,8 @@ internal sealed class FileService
             // Oeffnen prueft auch fehlende Quellen, bevor Zielrechte angelegt werden.
             using (var input = new FileStream(from.Value!, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
+                // Geraete liefern kein EOF (/dev/zero wuerde die Platte fuellen); geprueft vor jedem Ziel oder Rechte-Eintrag.
+                if (!isRegularFile(from.Value!)) throw new IOException("Keine regulaere Datei (Geraet oder Sonderdatei).");
                 if (access != null && (session == null || !access.Check(session, to.Value!, FilePermission.Write, true).IsOK()))
                     throw new UnauthorizedAccessException("Zugriff verweigert.");
                 if (File.Exists(to.Value!) || Directory.Exists(to.Value!) || (access?.Contains(to.Value!) ?? false))
@@ -578,6 +714,19 @@ internal sealed class FileService
         catch (Exception exception) when (IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
+        }
+    }
+
+    /// <summary>Hoststandard: vorhandener Eintrag ohne Verzeichnis-, Geraete- oder Reparse-Kennung; Fehler gelten als nicht regulaer.</summary>
+    private static bool IsRegularHostFile(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) == 0;
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            return false;
         }
     }
 

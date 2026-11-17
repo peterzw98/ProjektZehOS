@@ -10,8 +10,10 @@ Stand: 17. November 2026, Basis `origin/master` @ `0a5547e` (E5a/E6a-Hostlogik #
 4. **`GetAttr` meldet Größe 0** für `/proc`/`/sys` (wie Linux, kein Snapshot beim `stat`). Alle ZehOS-Leser lesen deshalb bis EOF mit Grenze (`FileService.ReadText` tut das schon; `ReadBytes` wird für Größe 0 auf begrenztes Lesen bis EOF umgestellt).
 5. **`FileService` bekommt drei schmale Einstiege, die Pipeline bleibt unverändert** (huang P2-1): `ReadVirtual(path, session)`, `ListVirtual(path)`, `WriteNull(path)`. Sie lesen **direkt aus den Erzeugern** (`SystemInfoSnapshot`, `DeviceFileSystem`), nicht über `System.IO`, und werden von `cat`, Umleitung, Textbetrachter, `ls` **und dem Dateimanager** aufgerufen – alle auf denselben Knoten (Bedingung der Leitung 12:07). `ResolvePath`/`Authorize` und alle übrigen Methoden bleiben wie heute: für sie sind `/proc`, `/sys`, `/dev` fremde Mounts und werden in beiden Profilen abgelehnt. `cp /dev/zero`, `pkg install-local /dev/…`, Suche, Prüfsumme usw. kommen damit strukturell nie dorthin; §3 ist zusätzliche Absicherung. Direktes Lesen aus dem Erzeuger schließt auch aus, dass bei fehlgeschlagenem Mount eine darunterliegende Datei auf Root gelesen wird (huang P3 d).
 6. **Wasm bekommt nichts.** Paket-Apps sehen nur ihr Paketverzeichnis über `PREOPEN_FD` (`zehos_wasm.c:325-345`, `is_safe_path`); daran ändert sich nichts. Test belegt, dass `/proc`, `/sys`, `/dev` aus einer App nicht erreichbar sind.
-7. **Cosmos-Treiber jetzt** (Leitung 12:07): der Plan verlangt „alles als Datei“ – Verzeichnisse und `stat` über dieselbe Dateischnittstelle, `/proc/mounts` mit den virtuellen Mounts selbst, `ls /` im `Root`-Profil, spätere Verbraucher außerhalb `FileService`. Der Treiber lehnt jede Mutation selbst ab (`Create`, `Mkdir`, `Unlink`, `Rmdir`, `Rename`, `SetAttr`, `Symlink`, `Write` außer `/dev/null`). Die drei Einstiege aus §0.5 ersetzen die zuvor erwogene Allowlist im Pfadwächter (Leitung 12:07: sicherer, Pipeline unverändert).
+7. **Cosmos-Treiber jetzt** (Leitung 12:07): der Plan verlangt „alles als Datei“ – Verzeichnisse und `stat` über dieselbe Dateischnittstelle, `/proc/mounts` mit den virtuellen Mounts selbst, `ls /` im `Root`-Profil, spätere Verbraucher außerhalb `FileService`. Der Treiber lehnt jede Mutation selbst ab (`Create`, `Mkdir`, `Unlink`, `Rmdir`, `Rename`, `SetAttr`, `Symlink`, `Write` auf `/proc` und `/sys`; die Geräte verwerfen Schreibzugriffe wie unter Linux, das Verbot für `/dev/zero` aus §1 setzt `FileService` über `VirtualAccess` durch). Die drei Einstiege aus §0.5 ersetzen die zuvor erwogene Allowlist im Pfadwächter (Leitung 12:07: sicherer, Pipeline unverändert).
 8. **Kopieren, Prüfsumme und `pkg install-local` nehmen nur reguläre Dateien als Quelle** (Typprüfung per `FileTypeMask`), unabhängig vom Pfad (Leitung 12:06).
+
+**Regel für künftige Verbraucher (huang, Review des Adapters):** Der Cosmos-Treiber kennt keine ZehOS-Konten; wer `/proc`, `/sys` oder `/dev` über `System.IO` liest, umgeht die Rechte aus §1 (etwa `/proc/log` nur für Administratoren). Neue Verbraucher lesen deshalb über `FileService` (`ReadVirtual`/`ListVirtual`/`WriteNull`); Paket-Apps erreichen die Bäume nicht (G7).
 
 ## 1. Dateien und Rechte
 
@@ -90,7 +92,7 @@ Shell und Dateimanager navigieren über `FileService.CurrentDirectory`/`ResolveP
 7. `ReadVirtual` liest aus dem Erzeuger auch dann, wenn unter Root eine gleichnamige Datei `/proc/version` liegt (Mount fehlgeschlagen).
 
 **Gasttests (QEMU, dann VMware; Ansage, ein Gast):**
-- G1 `ls /proc`, `cat /proc/version` (Version = Build), `cat /proc/meminfo` (frei ≤ gesamt).
+- G1 `ls /proc`, `cat /proc/version` (Version = Build), `cat /proc/meminfo` (frei ≤ gesamt); keine Zeile `Error VirtualFiles` im seriellen Protokoll.
 - G2 `cat /proc/mounts` zeigt `/data`, `/proc`, `/sys`, `/dev` mit Schreibschutz-Spalte.
 - G3 `cat /proc/log` als Benutzer verweigert, als Admin ohne MAC-Adressen, Befehle oder Pfade (Gegenprobe mit Netzwerk aktiv).
 - G4 `rm`, `mv`, `mkdir`, Schreiben unter `/proc` und `/sys` ⇒ abgelehnt, Shell bleibt bedienbar.

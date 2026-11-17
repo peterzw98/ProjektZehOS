@@ -29,6 +29,7 @@ public sealed class Kernel : Sys.Kernel
     private InteractiveSession interactive = null!;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly SystemLog systemLog;
+    private readonly CosmosSystemFiles systemFiles;
     private bool startDesktop;
     private static UpdateVersion CurrentVersion
     {
@@ -63,11 +64,13 @@ public sealed class Kernel : Sys.Kernel
     private readonly NetworkAutoConfiguration automaticNetwork;
     private readonly CosmosRoundRobinScheduler scheduler = new();
     private readonly MessageDemoService messages;
+    private UserSession desktopIdentity = null!;
 
     public Kernel()
     {
         messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
 #if ZEHOS_INSTALLER
@@ -102,10 +105,17 @@ public sealed class Kernel : Sys.Kernel
         accounts.IsDataMounted = () => VfsManager.TryGetMount(systemPaths.AdminRoot, out _);
         // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
         packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
-        var desktopIdentity = accounts.CreateSession();
+        desktopIdentity = accounts.CreateSession();
+#if ZEHOS_WASM
+        // Etappe 13.4: App-Speicher mit demselben Waechter wie die Kontendatei.
+        Runtime.Wasm.WasmRuntime.SavePathGuard = CosmosPathGuard.For(systemPaths.AdminRoot);
+        Runtime.Wasm.WasmRuntime.SaveDiskSpace = CosmosSystemInfo.DiskSpace;
+        Runtime.Wasm.WasmRuntime.SaveComparison = systemPaths.Comparison;
+#endif
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
-                diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory),
+                diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
+                virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -163,9 +173,27 @@ public sealed class Kernel : Sys.Kernel
             string id = installed.Value[index].Manifest.Id;
             apps[index] = new(id, installed.Value[index].Manifest.Name,
                 painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter,
-                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n")));
+                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n"), SaveRootFor));
         }
         return apps;
+    }
+
+    /// <summary>
+    /// Etappe 13.4: /save einer App fuer das angemeldete Desktopkonto, nur mit eingebundenem /data. Der Ordner wird bei
+    /// Bedarf ueber einen Dateidienst ohne Rechteverwaltung mit Waechter angelegt; ohne ihn laeuft die App ohne Speichern.
+    /// </summary>
+    private string? SaveRootFor(string packageId)
+    {
+        if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
+        var path = systemPaths.AppState(packageId, user);
+        if (!path.IsOK()) return null;
+        var created = new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot)).CreateDirectory(path.Value!);
+        if (!created.IsOK())
+        {
+            systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);
+            return null;
+        }
+        return path.Value;
     }
 
 #endif
@@ -182,10 +210,13 @@ public sealed class Kernel : Sys.Kernel
     private ShellService CreateShell(UserSession identity)
     {
         var files = new FileService(identity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: identity,
-            diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory);
+            diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
+            virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
-        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
+        var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.IsVirtualPath(path)
+                ? ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument, "cause='VirtualSource' message='Pakete nur aus normalen Verzeichnissen installieren.'")
+                : files.ResolvePath(path), tasks,
             () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
         ShellService? shell = null;
         shell = new ShellService(
@@ -293,6 +324,8 @@ public sealed class Kernel : Sys.Kernel
             return mounted;
 #endif
         });
+        // In beiden Profilen und unabhaengig von /data (Spec E5b/E6b §0.2); ein Fehler wird nur protokolliert.
+        boot.RunStep("VirtualFiles", MountVirtualFiles);
 #if !ZEHOS_INSTALLER
         systemLog.Information("Network", $"Cosmos: aktiviert={Cosmos.Kernel.System.Network.NetworkManager.IsEnabled}, initialisiert={Cosmos.Kernel.System.Network.NetworkManager.IsInitialized}, Adapter={Cosmos.Kernel.System.Network.NetworkManager.DeviceCount}, Link={Cosmos.Kernel.System.Network.NetworkManager.LinkUp}.");
         if (Cosmos.Kernel.System.Network.NetworkManager.IsEnabled && Cosmos.Kernel.System.Network.NetworkManager.IsInitialized)
@@ -443,6 +476,21 @@ public sealed class Kernel : Sys.Kernel
         var snapshot = scheduler.Snapshot();
         return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
+    }
+
+    /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
+    /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>
+    private ResultErr MountVirtualFiles()
+    {
+        var failed = new System.Collections.Generic.List<string>();
+        foreach (var (name, root, flags) in new[] { ("zehos-proc", "/proc", MountFlags.ReadOnly), ("zehos-sys", "/sys", MountFlags.ReadOnly), ("zehos-dev", "/dev", MountFlags.None) })
+        {
+            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce))) failed.Add(name + " nicht registriert");
+            else if (!VfsManager.TryMount(name, "", flags, root, out _)) failed.Add(root + " nicht eingehaengt");
+        }
+
+        return failed.Count == 0 ? ResultErr.CreateSuccess()
+            : ResultErr.CreateFailure(ResultCode.Failure, $"cause='MountFailed' message='{string.Join(", ", failed)}.'");
     }
 
     private long GetElapsedMilliseconds()

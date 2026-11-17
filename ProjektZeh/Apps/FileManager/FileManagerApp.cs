@@ -5,6 +5,7 @@ using System.IO;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Storage;
+using ProjektZeh.Storage.Virtual;
 using ProjektZeh.UI;
 
 namespace ProjektZeh.Apps.FileManager;
@@ -15,6 +16,7 @@ internal sealed class FileManagerApp : IApplication
     private const int MaximumHistory = 32;
     // Groessen werden je Eintrag einzeln abgefragt; grosse Ordner zeigen deshalb nur Namen.
     private const int MaximumSizedEntries = 256;
+    private const string ReadOnlyMessage = "/proc, /sys und /dev sind nur lesbar.";
     private enum NameMode { None, NewFolder, Rename }
     private readonly FileService files;
     private readonly Func<string, bool> edit;
@@ -44,6 +46,8 @@ internal sealed class FileManagerApp : IApplication
     private string? renameSource;
     private NameMode naming;
     private int listColumns;
+    // Ort in /proc, /sys oder /dev: liegt ausserhalb von FileService.CurrentDirectory, das unveraendert der letzte normale Ort bleibt.
+    private string? virtualLocation;
     private string header = "Name";
     private long now;
     private int width = 796;
@@ -65,9 +69,9 @@ internal sealed class FileManagerApp : IApplication
         newFolder = new("Ordner neu", () => BeginNaming(NameMode.NewFolder));
         rename = new("Umbenennen", () => BeginNaming(NameMode.Rename));
         delete = new("Loeschen", DeleteSelected);
-        placePaths = [files.CurrentDirectory, "/data"];
-        places.SetItems(["Persoenlich", "Laufwerk"]);
-        places.Icons = [AppIcon.Files, AppIcon.Files];
+        placePaths = [files.CurrentDirectory, "/data", "/proc", "/sys", "/dev"];
+        places.SetItems(["Persoenlich", "Laufwerk", "System (/proc)", "System (/sys)", "Geraete (/dev)"]);
+        places.Icons = [AppIcon.Files, AppIcon.Files, AppIcon.Files, AppIcon.Files, AppIcon.Files];
         places.Activated = () => { if (places.SelectedIndex >= 0) LoadDirectory(placePaths[places.SelectedIndex], true); };
         path.Submitted = () => LoadDirectory(path.Text, true);
         name.Submitted = CommitName;
@@ -86,7 +90,7 @@ internal sealed class FileManagerApp : IApplication
         {
             switch ((PhysicalKey)value.KeyCode)
             {
-                case PhysicalKey.F5: LoadDirectory(files.CurrentDirectory, false); return;
+                case PhysicalKey.F5: LoadDirectory(virtualLocation ?? files.CurrentDirectory, false); return;
                 case PhysicalKey.F2 when naming == NameMode.None && panel.Focused == list: BeginNaming(NameMode.Rename); return;
                 case PhysicalKey.Delete when naming == NameMode.None && panel.Focused == list: DeleteSelected(); return;
                 case PhysicalKey.Backspace when panel.Focused == list: LoadDirectory("..", true); return;
@@ -115,22 +119,28 @@ internal sealed class FileManagerApp : IApplication
         if (!LoadDirectory(history[target], false)) historyIndex = previous;
     }
 
-    private bool LoadDirectory(string destination, bool remember)
+    /// <summary>Angezeigter Ort (virtuell oder normal) und Statuszeile, fuer Tests.</summary>
+    internal string Location => virtualLocation ?? files.CurrentDirectory;
+    internal string Status => status;
+
+    internal bool LoadDirectory(string destination, bool remember)
     {
+        if (virtualLocation != null || files.IsVirtualPath(destination))
+        {
+            // Hostpfade wie C:\... (Windows-Tests) sind nie virtuell und verlassen den Baum direkt.
+            bool rooted = Path.IsPathRooted(destination);
+            if (!rooted || destination.StartsWith('/'))
+            {
+                string target = VirtualTree.Normalize(destination, virtualLocation ?? files.CurrentDirectory);
+                if (VirtualTree.IsVirtualPath(target)) return LoadVirtual(target, remember);
+            }
+            // Relativ aus einem Baum heraus (etwa "Hoch" an /proc): zurueck zum letzten normalen Ort.
+            if (!rooted) destination = files.CurrentDirectory;
+        }
+
         var changed = files.ChangeDirectory(destination);
         if (!changed.IsOK()) { status = changed.Message; return false; }
-        // Ein Ordnerwechsel beendet jede offene Namenseingabe, sonst landete Umbenennen ungefragt im neuen Ordner.
-        if (naming != NameMode.None) EndNaming("");
-        if (remember && (historyIndex < 0 || !string.Equals(history[historyIndex], files.CurrentDirectory, StringComparison.Ordinal)))
-        {
-            history.RemoveRange(historyIndex + 1, history.Count - historyIndex - 1);
-            history.Add(files.CurrentDirectory);
-            if (history.Count > MaximumHistory) history.RemoveAt(0);
-            historyIndex = history.Count - 1;
-        }
-        back.Enabled = historyIndex > 0;
-        forward.Enabled = historyIndex < history.Count - 1;
-        path.SetText(files.CurrentDirectory);
+        SetVirtual(null, remember);
         var listed = files.ListDirectory(".");
         entries = listed.IsOK() ? listed.Value! : [];
         sizes = new long[entries.Length];
@@ -151,6 +161,46 @@ internal sealed class FileManagerApp : IApplication
         summary = listed.IsOK() ? $"{folders} Ordner, {entries.Length - folders} Dateien" + FreeSpace() : listed.Status.Message;
         status = "";
         return true;
+    }
+
+    /// <summary>Virtueller Ort: Eintraege per ListVirtual, keine Groessen (Snapshots melden 0), alle Schreibaktionen aus.</summary>
+    private bool LoadVirtual(string target, bool remember)
+    {
+        var listed = files.ListVirtual(target);
+        if (!listed.IsOK()) { status = listed.Status.Message; return false; }
+        SetVirtual(target, remember);
+        entries = listed.Value!;
+        sizes = new long[entries.Length];
+        Array.Fill(sizes, -1);
+        int folders = Array.FindAll(entries, entry => entry.IsDirectory).Length;
+        pendingDelete = null;
+        listColumns = -1;
+        RefreshLabels();
+        list.Select(entries.Length == 0 ? -1 : 0);
+        ShowPreview();
+        summary = $"{folders} Ordner, {entries.Length - folders} Dateien | nur lesbar";
+        status = "";
+        return true;
+    }
+
+    /// <summary>Gemeinsamer Ortswechsel: Namenseingabe beenden, Verlauf, Pfadfeld und Schreibaktionen.</summary>
+    private void SetVirtual(string? location, bool remember)
+    {
+        // Ein Ordnerwechsel beendet jede offene Namenseingabe, sonst landete Umbenennen ungefragt im neuen Ordner.
+        if (naming != NameMode.None) EndNaming("");
+        virtualLocation = location;
+        string shown = location ?? files.CurrentDirectory;
+        if (remember && (historyIndex < 0 || !string.Equals(history[historyIndex], shown, StringComparison.Ordinal)))
+        {
+            history.RemoveRange(historyIndex + 1, history.Count - historyIndex - 1);
+            history.Add(shown);
+            if (history.Count > MaximumHistory) history.RemoveAt(0);
+            historyIndex = history.Count - 1;
+        }
+        back.Enabled = historyIndex > 0;
+        forward.Enabled = historyIndex < history.Count - 1;
+        path.SetText(shown);
+        editor.Enabled = newFolder.Enabled = rename.Enabled = delete.Enabled = location == null;
     }
 
     private string FreeSpace()
@@ -212,7 +262,9 @@ internal sealed class FileManagerApp : IApplication
         preview.SetText("");
         // Ohne sichtbare Vorschau keine Plattenarbeit in der gemeinsamen Ereignisschleife.
         if (!preview.Enabled || Selected is not { IsDirectory: false } entry || sizes[list.SelectedIndex] > FileService.MaximumTextLength) return;
-        var result = files.ReadText(entry.Path);
+        // Geraete haben keinen Vorschauinhalt; /dev/zero wuerde je Auswahl 64 KiB lesen und mit dem Grenzfehler enden.
+        if (virtualLocation != null && VirtualTree.Find(entry.Path)?.Kind == VirtualKind.CharacterDevice) return;
+        var result = files.ReadTextOrVirtual(entry.Path);
         if (result.IsOK()) preview.SetText(result.Value!.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'));
     }
 
@@ -225,12 +277,14 @@ internal sealed class FileManagerApp : IApplication
 
     private void EditSelected()
     {
+        if (virtualLocation != null) { status = ReadOnlyMessage; return; }
         if (Selected is not { IsDirectory: false } entry) { status = "Eine Textdatei auswaehlen."; return; }
         if (!edit(entry.Path)) status = "Kein weiteres Fenster moeglich.";
     }
 
     private void BeginNaming(NameMode mode)
     {
+        if (virtualLocation != null) { status = ReadOnlyMessage; return; }
         // Ein zweiter Klick auf dieselbe Schaltflaeche bricht ab.
         if (naming == mode) { EndNaming("Abgebrochen."); return; }
         if (mode == NameMode.Rename && Selected is not { IsDirectory: false }) { status = "Eine Datei zum Umbenennen auswaehlen."; return; }
@@ -270,6 +324,7 @@ internal sealed class FileManagerApp : IApplication
     // Zweistufig statt Dialogfenster: der erste Klick fragt nach, erst der zweite loescht denselben Eintrag.
     private void DeleteSelected()
     {
+        if (virtualLocation != null) { status = ReadOnlyMessage; return; }
         if (Selected is not { } entry) { status = "Kein Eintrag ausgewaehlt."; return; }
         if (!string.Equals(pendingDelete, entry.Path, StringComparison.Ordinal))
         {
