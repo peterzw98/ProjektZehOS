@@ -57,9 +57,15 @@ internal sealed class AccountService
     public IReadOnlyDictionary<string, bool> AdministratorCommands => administratorCommands;
 
     public AccountService(string root, PasswordHasher hasher)
+        : this(root, hasher, StringComparison.OrdinalIgnoreCase, null)
     {
-        Access = new FileAccessControl(root);
-        metadata = new FileService(Access.RootDirectory);
+    }
+
+    /// <summary>Etappe 3: Vergleich und Pfadwaechter der Verwaltungswurzel gelten auch fuer die Kontendatei selbst.</summary>
+    public AccountService(string root, PasswordHasher hasher, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard)
+    {
+        Access = new FileAccessControl(root, comparison, pathGuard);
+        metadata = new FileService(Access.RootDirectory, pathGuard: pathGuard);
         this.hasher = hasher;
         // Neue Dateieintraege duerfen an einer vollen Rechtedatei scheitern, ohne alles zu sperren (siehe Save).
         Access.Persist = () => Save(lockWhenFull: false);
@@ -225,6 +231,9 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
+            // Home-Topologie vor jeder Pruefung mit System.IO (folgt Links) und vor dem Speichern abweisen.
+            var topology = CheckHomeTopology(name);
+            if (!topology.IsOK()) return topology;
             if (!IsAdmin(actor) || accounts.ContainsKey(name) || accounts.Count >= 32 || Access.Contains(Home(name)) ||
                 Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
             var account = new Account(Guid.NewGuid().ToString("N"), name, administrator, encoded);
@@ -248,13 +257,18 @@ internal sealed class AccountService
             string encoded = hasher.Hash(password);
             return () =>
             {
-            if (File.Exists(Path.Combine(Access.RootDirectory, MetadataFile)))
+            string metadataPath = Path.Combine(Access.RootDirectory, MetadataFile);
+            string recoveredPath = Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db");
+            // Quelle, Ziel und Home-Topologie vor jeder Mutation pruefen (Etappe 3): nichts verschieben oder speichern,
+            // wenn ein Teil davon ueber einen Symlink oder einen fremden Mount liefe.
+            foreach (var guarded in new[] { Access.Guard(metadataPath, creating: true), Access.Guard(recoveredPath, creating: true), CheckHomeTopology(name) })
+                if (!guarded.IsOK()) return guarded;
+            if (File.Exists(metadataPath))
             {
                 try
                 {
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
-                    File.Move(Path.Combine(Access.RootDirectory, MetadataFile),
-                        Path.Combine(Access.RootDirectory, $".zehos-security-recovery-{Guid.NewGuid():N}.db"), false);
+                    File.Move(metadataPath, recoveredPath, false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
                 { return ResultErr.CreateFromException(exception); }
@@ -358,9 +372,55 @@ internal sealed class AccountService
 
     private string Home(string name) => Path.Combine(Access.RootDirectory, "home", name);
 
+    /// <summary>home und home/&lt;name&gt; duerfen nur fehlen oder echte Verzeichnisse im Mount der Wurzel sein.</summary>
+    private ResultErr CheckHomeTopology(string name)
+    {
+        var homes = DirectoryOrMissing(Path.Combine(Access.RootDirectory, "home"));
+        if (!homes.IsOK()) return homes.Status;
+        // Fehlt home, entstehen beide Stufen neu; CreateHome prueft jede Stufe vor dem Anlegen erneut.
+        if (!homes.Value) return ResultErr.CreateSuccess();
+        var home = DirectoryOrMissing(Home(name));
+        return home.IsOK() ? ResultErr.CreateSuccess() : home.Status;
+    }
+
+    /// <summary>
+    /// Nach dem Pfadwaechter: true fuer ein Verzeichnis, false fuer einen wirklich fehlenden Eintrag. Eine Datei oder ein
+    /// anderer Eintrag an dieser Stelle wird abgelehnt; echte E/A-Fehler werden weitergegeben, nicht als "fehlt" gewertet.
+    /// </summary>
+    private ResultObject<bool> DirectoryOrMissing(string path)
+    {
+        var guarded = Access.Guard(path, creating: true);
+        if (!guarded.IsOK()) return ResultObjectFactory.CreateFailure<bool>(guarded);
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.Directory) != 0
+                ? ResultObjectFactory.CreateSuccess(true)
+                : ResultObjectFactory.CreateFailure<bool>(ResultCode.Failure, $"cause='HomeNotDirectory' message='Kein Verzeichnis: {path}'");
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return ResultObjectFactory.CreateSuccess(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return ResultObjectFactory.CreateFromException<bool>(exception);
+        }
+    }
+
+    /// <summary>Legt home und home/&lt;name&gt; stufenweise an, jede Stufe erst nach dem Pfadwaechter.</summary>
     private ResultErr CreateHome(string name)
     {
-        try { Directory.CreateDirectory(Home(name)); return ResultErr.CreateSuccess(); }
+        try
+        {
+            foreach (string directory in new[] { Path.Combine(Access.RootDirectory, "home"), Home(name) })
+            {
+                var guarded = Access.Guard(directory, creating: true);
+                if (!guarded.IsOK()) { Lock(); return guarded; }
+                Directory.CreateDirectory(directory);
+            }
+
+            return ResultErr.CreateSuccess();
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         { Lock(); return ResultErr.CreateFromException(exception); }
     }
