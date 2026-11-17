@@ -12,7 +12,7 @@
 - `texpack/`: freies Texturpaket (Schrift aus font8x8, Public Domain; Blockatlas aus Minetest Game, CC BY-SA 3.0; `gui.png`, `icons.png`, `char.png` als eigene Zeichnungen, CC0), Herkunft je Datei in `texpack/TEXTURES.txt`, reproduzierbar mit `texpack/build_texpack.py`.
 - Maus: ClassiCube fängt den Zeiger beim Spielstart und nach dem Pausenmenü. Lehnt der Kernel ab (Fenster nicht aktiv), fängt der nächste Klick ins Bild ihn ein, ohne im Spiel zu wirken. Esc gibt ihn frei; erst dann erreicht die Maus den Fensterrahmen.
 
-Das Paket startet ClassiCubes Launcher. *Singleplayer* erzeugt eine Welt im Speicher. *Direct connect* verbindet mit einem Classic-Server: Name, `IP:Port` (etwa `10.0.2.2:25565` für einen Server auf dem Host einer QEMU-VM mit Usermode-Netz) und optional mppass eintragen, dann *Connect*. Das braucht `capability=net` im Paketmanifest (`build-package.py --network`); ohne sie meldet ClassiCube „Failed to connect“, Einzelspieler läuft weiter. Pakete sind nur lesbar. `Platform_ReadonlyFilesystem` unterdrückt Chatprotokolle und Texturcache; Optionen und Welten gehen beim Beenden verloren (dauerhaftes Speichern: Etappe 4).
+Das Paket startet ClassiCubes Launcher. *Singleplayer* erzeugt eine Welt im Speicher. *Direct connect* verbindet mit einem Classic-Server: Name, `IP:Port` (etwa `10.0.2.2:25565` für einen Server auf dem Host einer QEMU-VM mit Usermode-Netz) und optional mppass eintragen, dann *Connect*. Das braucht `capability=net` im Paketmanifest (`build-package.py --network`); ohne sie meldet ClassiCube „Failed to connect“, Einzelspieler läuft weiter. Pakete sind nur lesbar. Mit `capability=storage` (`build-package.py --storage`, App-Speicher aus Etappe 13.4, siehe [PAKETE_ERSTELLEN.md](../../docs/PAKETE_ERSTELLEN.md#app-speicher-save-etappe-134)) bildet `Platform_ZehOS.c` `maps/…` und `options.txt` auf den Preopen `/save` ab: *Save level* im Pausenmenü schreibt `maps/<Name>.cw`, *Load level* listet `maps/` über `fd_readdir`, `options.txt` liest und schreibt ClassiCube ebenfalls dort (im Gast nicht eigens geprüft). Ob `/save` da ist, erkennt das Modul an `fd_prestat_get(4)`. Fehlt `/save` (keine Fähigkeit, keine Anmeldung, kein `/data`), bleibt alles wie bisher: Speichern scheitert mit einer Meldung im Chat, das Spiel läuft weiter. Schreibfehler des App-Speichers (`ENOSPC`, `EIO`, `EBUSY`, `ENOENT`) meldet ClassiCube ebenso im Chat. `Platform_ReadonlyFilesystem` bleibt auch mit `/save` gesetzt: Es unterdrückt nur Chatprotokolle und Texturcache, die nicht in die Quote sollen.
 
 ## Bauen
 
@@ -22,7 +22,7 @@ git -C <Ordner> checkout --detach 2b01bee867fe81331d0a898e7ad40a71882131de
 python experiments/ClassiCube.Wasi/build.py --source <Ordner> --wasi-sdk <wasi-sdk-25.0>
 ```
 
-`build.py` kopiert `src/` nach `.tools/classicube-build/`, wendet die Patches dort an (die Arbeitskopie bleibt unverändert) und schreibt `bin/classicube.wasm` mit SHA-256 sowie den unsignierten Paketinhalt `bin/package/`: Modul, `texpacks/default.zip` und `licenses/` (ClassiCube, Texturpaket, wasi-libc, compiler-rt, `SOURCES.txt`). Das Modul importiert nur `zehos_v1` (`present`, `poll_event`, `pointer_capture`, `should_exit`, `sleep_ms`) und lesende WASI-Dateifunktionen. Es braucht damit ZehOS ab 0.2.22; Typ 10 nutzt es ab 0.5.1, ältere Kernel liefern ihn nur nicht.
+`build.py` kopiert `src/` nach `.tools/classicube-build/`, wendet die Patches dort an (die Arbeitskopie bleibt unverändert) und schreibt `bin/classicube.wasm` mit SHA-256 sowie den unsignierten Paketinhalt `bin/package/`: Modul, `texpacks/default.zip` und `licenses/` (ClassiCube, Texturpaket, wasi-libc, compiler-rt, `SOURCES.txt`). Das Modul importiert nur `zehos_v1` (`present`, `poll_event`, `pointer_capture`, `should_exit`, `sleep_ms`) und WASI-Dateifunktionen; `path_create_directory` und `fd_readdir` ruft es nur unter `/save` auf. Es braucht damit ZehOS ab 0.2.22; Typ 10 nutzt es ab 0.5.1, ältere Kernel liefern ihn nur nicht.
 
 ## Prüfen
 
@@ -33,7 +33,11 @@ python experiments/ClassiCube.Wasi/build.py --source <Ordner> --wasi-sdk <wasi-s
 python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem>
 ```
 
-Das Skript installiert das Paket lokal in einer Wegwerfplatte und prüft: Start aus dem Menü, *Singleplayer* im Launcher, Welt sichtbar, Bewegung, Mausblick, Block entfernen und setzen, Schließen und drei Starts mit freiem Speicher.
+Das Skript installiert das Paket lokal in einer Wegwerfplatte und prüft: Start aus dem Menü, *Singleplayer* im Launcher, Welt sichtbar, Bewegung, Mausblick, Block entfernen und setzen, *Save level* scheitert ohne `/save` mit Fehler im Chat und ohne Abbruch, Schließen und drei Starts mit freiem Speicher. Mit `--storage` erhält das Testpaket `capability=storage`: Die Welt wird mit einem zusätzlichen Block als `zehtest.cw` gespeichert, die App geschlossen, im zweiten Start über *Load level* gefunden und geladen; die geladene Welt muss sich von der frisch erzeugten unterscheiden (Spieler an der gespeicherten Position). Kernel 0.5.56 legt von `/data/.zehos-apps/<paket>/<konto>` nur den letzten Ordner an; das Skript legt deshalb `.zehos-apps/classicube/` auf der Testplatte vor.
+
+```powershell
+python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel whpx --storage
+```
 
 Mehrspieler gegen den lokalen Testserver `scripts/classic-test-server.py` (nur Standardbibliothek, Protokoll 7 ohne CPE; allein gestartet lauscht er auf `127.0.0.1:25565` und schreibt Ereignisse als JSON-Zeilen):
 
@@ -60,13 +64,13 @@ Diese Messungen liefen noch mit Zufallswelt (je Lauf eine andere); die Werte hä
 
 ## Grenzen
 
-- Ohne Ton und Speicherstände; Eingaben im Launcher (Name, Server) gehen beim Beenden verloren.
+- Ohne Ton. Ohne `capability=storage` auch ohne Speicherstände; Eingaben im Launcher (Name, Server) gehen dann beim Beenden verloren. Mit App-Speicher landen nur `maps/` und `options.txt` in `/save`, Bildschirmfotos (`screenshots/`) und Chatprotokolle nicht.
 - Mehrspieler nur über IPv4 oder DNS-Namen ohne TLS und ohne HTTP: Mitspieler mit Standardskin, keine Server-Texturpakete. Ein Server, der stumm bleibt, ohne die Verbindung zu schließen, wird nicht erkannt; bei vollem Sendepuffer wartet ClassiCube bis zu 10 s (das Spielbild steht, der Desktop nicht). Solange das Fenster inaktiv ist, pausiert das Spiel und liest keine Netzdaten.
 - `particles.png`, `clouds.png` und Mob-Texturen fehlen im Texturpaket; ClassiCube zeichnet dort nichts.
-- Ordner legt das Paket nie an (`Directory_Create2` meldet „existiert“), Schreibzugriffe scheitern mit eigenem Fehler.
+- Ordner legt das Paket nur unter `/save` an; sonst meldet `Directory_Create2` „existiert“, und Schreibzugriffe scheitern mit eigenem Fehler.
 - Fenster über 960×600 zeichnet ClassiCube in einem ganzzahligen Bruchteil der Größe (maximiert 1920×1200 also in 960×600), der Kernel skaliert hoch.
 - SoftGPU wertet VSync nicht aus; die Bildratenbegrenzung von ClassiCube greift nicht. Bei der heutigen Bildrate ohne Folgen.
 - Unter TCG ist das Spiel mit gut 1 Bild/s nicht spielbar; unter WHPX/KVM mit rund 6 Bildern/s eingeschränkt.
 - Esc bei freiem Zeiger führt laut Vertrag zur Textshell. Pausenmenü, Chat und Inventar schließt man deshalb über ihre Schaltflächen bzw. Enter, nicht mit Esc.
 - Bei Fokusverlust öffnet ClassiCube das Pausenmenü; der nächste Klick oder Tastendruck im wieder aktiven Fenster setzt den Fokus zurück.
-- Veröffentlichung: `--no-measure` bauen und `build-package.py ... --min-kernel 0.2.22 --network` setzen (Import `pointer_capture`; die Netzfunktionen sind älter).
+- Veröffentlichung: `--no-measure` bauen und `build-package.py ... --min-kernel 0.2.22 --network` setzen (Import `pointer_capture`; die Netzfunktionen sind älter). Mit App-Speicher zusätzlich `--storage` und `--min-kernel 0.5.56` (erste Version mit `/save`); das Modul selbst bleibt dasselbe, `build.py` kennt keine Speicheroption.

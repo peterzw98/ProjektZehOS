@@ -7,7 +7,10 @@ Das Paket mit build.py --world-seed 1 bauen: Die Schritte sind fuer diese feste 
 Spawnpunkt); mit Zufallswelt stand der Spieler etwa in einer Baumkrone oder Wasser trieb die Schwelle hoch.
 Vorhandene VM-Images werden nicht gelesen. Bilder/Protokolle bleiben unter .tools/classicube-guest/ erhalten.
 Ablauf: lokal installieren, Start aus dem Menue, Launcher "Singleplayer", Welt sichtbar, Bewegung (W), Blick per Maus,
-Block entfernen (links) und setzen (rechts), Schliessen ueber das Fenster, drei Starts mit freiem Speicher.
+Block entfernen (links) und setzen (rechts), "Save level" im Pausenmenue, Schliessen ueber das Fenster, drei Starts
+mit freiem Speicher. Ohne --storage muss das Speichern scheitern, ohne das Spiel zu beenden. Mit --storage erhaelt das
+Paket den App-Speicher /save (Etappe 13.4): die Welt wird mit einem zusaetzlich gesetzten Block gespeichert, im
+zweiten Start ueber "Load level" gefunden und geladen.
 """
 import argparse
 import importlib.util
@@ -32,6 +35,7 @@ def main():
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="tcg")
     # Paket aus build.py --raster-toggle: F8 wechselt zwischen Kernel- und Gast-Rasterisierung derselben Szene.
     parser.add_argument("--raster-compare", action="store_true")
+    parser.add_argument("--storage", action="store_true", help="Paket mit capability=storage: Welt speichern und laden")
     args = parser.parse_args()
     work = ROOT / ".tools/classicube-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
@@ -39,7 +43,13 @@ def main():
              for p in sorted(args.package.rglob("*")) if p.is_file()]
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
                     "--repo", str(work / "seed/pkgs"), "--id", "classicube", "--version", "1.0.0", "--name", "ClassiCube",
-                    "--entry", args.entry, "--min-kernel", "0.2.22", *files], check=True)
+                    "--entry", args.entry, "--min-kernel", "0.2.22", *(["--storage"] if args.storage else []), *files],
+                   check=True)
+    if args.storage:
+        # shortcut: Kernel 0.5.56 legt nur den letzten Ordner von /data/.zehos-apps/<paket>/<konto> an (Kernel.SaveRootFor,
+        # PathGuard ohne Elternordner); auf einer frischen Platte fehlte /save sonst. Entfernen, sobald der Kernel
+        # die Elternordner selbst anlegt.
+        (work / "seed/.zehos-apps/classicube").mkdir(parents=True)
     tools.create_disk(work / "seed", work / "data.qcow2")
     port = tools.free_port()
     vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
@@ -136,6 +146,54 @@ def main():
             guest.qmp.command("input-send-event", {"events":[{"type":"btn", "data":{"button":name,"down":down}}]})
             time.sleep(.15)
 
+    # Pausenmenue (Menus.c, Ankerpunkt Inhaltsmitte 399,259): "Load level..." bei +160,0, "Save level..." bei +160,+50;
+    # im Speicherdialog "Save" bei 0,+20, in der Liste von "Load level" der erste Eintrag bei 0,-100.
+    def save_level(run, expect_saved):
+        left, top = 33 + 399 + 28*run, 120 + 259 + 28*run
+        pause = view(capture("pausenmenue-speichern"))
+        guest.qmp.click(left + 160, top + 50, *guest.size)
+        time.sleep(2)
+        dialog = view(capture("speichern-dialog"))
+        assert difference(pause, dialog) > len(pause) // 120, "Save level... oeffnet keinen Dialog"
+        # Das Namensfeld ist gewaehlt und enthaelt den Weltnamen.
+        guest.qmp.tap("end")
+        for _ in range(24):
+            guest.qmp.tap("backspace", hold=0.02)
+        guest.qmp.text("zehtest")
+        guest.qmp.click(left, top + 20, *guest.size)
+        # Nach Erfolg kehrt ClassiCube ins Pausenmenue zurueck, nach einem Fehler bleibt der Dialog (Fehler im Chat).
+        # Komprimieren und Schreiben dauern unter wasm3 einige Sekunden.
+        deadline = time.monotonic() + 30
+        while True:
+            time.sleep(2)
+            after = view(capture("gespeichert" if expect_saved else "speichern-abgelehnt"))
+            saved = difference(pause, after) < difference(dialog, after)
+            if saved or time.monotonic() > deadline:
+                break
+        assert saved == expect_saved, "Welt gespeichert" if saved else "Speichern scheitert"
+
+    def load_level(run, fresh):
+        # Die Liste bleibt nach dem Laden offen; "Done" (unten, 0,+213) fuehrt ins Pausenmenue, "Back to game" liegt
+        # an derselben Stelle. Die geladene Welt traegt den vor dem Speichern gesetzten Block und den gespeicherten
+        # Spawnpunkt; sie muss sich deshalb deutlich von der frisch erzeugten Welt unterscheiden.
+        left, top = 33 + 399 + 28*run, 120 + 259 + 28*run
+        guest.qmp.click(left + 160, top, *guest.size)
+        time.sleep(2)
+        capture("load-level-liste")
+        guest.qmp.click(left, top - 100, *guest.size)
+        time.sleep(10)
+        capture("welt-geladen-liste")
+        guest.qmp.click(left, top + 213, *guest.size)
+        time.sleep(2)
+        guest.qmp.click(left, top + 213, *guest.size)
+        loaded = world("welt-geladen")
+        time.sleep(5)
+        loaded = view(capture("welt-geladen-ruhig"))
+        change = difference(fresh, loaded)
+        print(f"Geladene Welt weicht von der frisch erzeugten um {change} Stichproben ab (Schwelle {threshold})",
+              flush=True)
+        assert change > threshold, "Load level laedt die gespeicherte Welt nicht"
+
     try:
         guest.wait("Desktop ist bereit", 180)
         guest.connect()
@@ -185,17 +243,29 @@ def main():
         button("right")
         state = changed(state, "block-gesetzt", "Rechtsklick setzt keinen Block")
         button("left")
-        changed(state, "block-entfernt", "Linksklick entfernt keinen Block")
-        # Esc gibt den Zeiger frei; danach ist das Schliessen-Symbol des Fensters erreichbar.
+        state = changed(state, "block-entfernt", "Linksklick entfernt keinen Block")
+        if args.storage:
+            # Die gespeicherte Welt soll sich von der frisch erzeugten unterscheiden.
+            button("right")
+            changed(state, "block-fuer-speicherstand", "Rechtsklick setzt keinen Block")
+        # Esc gibt den Zeiger frei und oeffnet das Pausenmenue; danach ist das Schliessen-Symbol erreichbar.
         guest.qmp.tap("esc")
         time.sleep(1)
+        save_level(0, args.storage)
         for run in range(3):
             if run:
                 start()
                 world(f"neustart-{run}")
+                # Nachladende Chunks abwarten; die Ansicht dient als Vergleich fuer die geladene Welt.
+                time.sleep(5)
+                fresh = view(capture(f"neustart-{run}-ruhig"))
             # Ist das Fenster beim Start aktiv, faengt ClassiCube die Maus sofort; Esc gibt sie frei und oeffnet
             # das Pausenmenue.
             if run:
+                guest.qmp.tap("esc")
+                time.sleep(3)
+            if run == 1 and args.storage:
+                load_level(run, fresh)
                 guest.qmp.tap("esc")
                 time.sleep(3)
             mark = guest.mark()
@@ -212,8 +282,10 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
+        saving = ("Welt speichern, nach Neustart ueber Load level laden" if args.storage
+                  else "Speichern ohne /save scheitert ohne Abbruch")
         print("CLASSICUBE_GUEST PASS: lokal installieren, Start aus Menue, Welt, W-Bewegung, Mausblick, "
-              "Block entfernen/setzen, 2x Schliessen ueber X, 1x Quit game", flush=True)
+              f"Block entfernen/setzen, {saving}, 2x Schliessen ueber X, 1x Quit game", flush=True)
         print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)
         return 0
     finally:
