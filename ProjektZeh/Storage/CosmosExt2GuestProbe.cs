@@ -142,7 +142,7 @@ internal static class CosmosExt2GuestProbe
         File.Delete(directory + "/renamed");
         File.Delete(directory + "/two");
         Directory.Delete(directory);
-        Pass("ext2=8190; FileService-Anlegen, Ablehnen, Rename und Originalerhalt mit Testgrenze 2");
+        Pass("ext2=" + FileService.MaximumExt2DirectoryEntries + "; FileService-Anlegen, Ablehnen, Rename und Originalerhalt mit Testgrenze 2");
     }
 
     private static IBlockDevice FindProbeDevice()
