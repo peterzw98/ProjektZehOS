@@ -160,6 +160,24 @@ In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Le
 
 Medianwerte der Anteile in ms. Unter TCG ist `app` ≈ Bildzeit; darin stecken aber auch rund 33 s Desktop- und Anzeigearbeit je 60 s (894 Desktopbilder, davon rund 600 Lebenszeichen), reine Rechenbegrenzung von Doom ist damit nicht belegt; unter KVM dominieren ebenfalls `app` und die Konkurrenz um die CPU, die Bildkopie und `Canvas.Display()` sind klein. Die KVM-Bildzeiten schwanken wegen der Host-Last stark; ein Vorher/Nachher-Vergleich der Doom-Bildzeit ist daraus nicht belastbar, belegt ist die Halbierung der Desktoparbeit. Der Limine-Bildpuffer ist laut Codebefund voraussichtlich bereits write-combining ([COSMOS_SUPPORT.md](COSMOS_SUPPORT.md)); `anzeige` (1,4 ms unter KVM) bestätigt keinen Engpass dort. Offen: Messung unter geringer Host-Last, KVM mit Lebenszeichen (ausgelieferter Stand; jedes Lebenszeichen setzt den Desktop vollständig zusammen), VMware (VM ohne Datenlaufwerk, Paket-Apps dort nicht prüfbar), Bereichsübertragung statt Vollbild-Zusammensetzung (Anteil `desktop`).
 
+## ClassiCube: Sichtweite unter KVM und WHPX (17. November 2026)
+
+Frage: Begrenzt die Geometrie (Sichtweite) oder ein fester Aufwand die Bildrate von ClassiCube unter wasm3 mit Host-Raster? Kernel `master` 1227e60 (0.5.71) mit Testschlüssel, Paket aus ClassiCube 2b01bee mit `build.py --world-seed 1` (Messpunkte an), Fenster 798×519, Spieler ohne Eingabe am Spawnpunkt. Gemessen wurde mit `measure-wasm-frametimes.py` vom Branch `task/aot-measure` (085cc54, noch nicht in `master`): `--runs 3 --seconds 130`, Starttasten `ret wait:25` und danach 0, 2 oder 4× `shift-f` für die Sichtweiten 512, 128 und 32. Gewertet ist das letzte 60-s-Fenster jedes Laufs.
+
+| Sichtweite | KVM Bildzeit median/p95 ms | KVM Bilder je 60 s | WHPX median/p95 ms |
+| --- | --- | --- | --- |
+| 512 (Standard) | 23/120, 24/102, 23/101 | 1462, 1495, 1564 | 28/83, 59/104, 44/100 |
+| 128 | 33/101, 25/120, 24/124 | 1476, 1466, 1426 | 44/97, 54/98, 61/108 |
+| 32 | 22/100, 19/77, 20/82 | 1703, 2284, 1990 | 39/76, 53/100, 37/82 |
+
+KVM: Linux-Host mit 22 Kernen, Last 1–2 durch andere Gäste. WHPX: Messung von agent-peter-cc-lead auf dem Windows-Entwicklungsrechner; dort liefen zeitweise zwei `dotnet`-Builds parallel, die Streuung ist deshalb größer.
+
+- **Nur 32 verringert die Geometrie.** Mit Sichtweite 128 und 512 zeigen die Endfotos dieselbe Szene (108 618 bzw. 108 630 Vertices, mit 32 dagegen 71 478). Die Welt mit Seed 1 ist für 128 zu klein; laut cc-lead gilt das ebenso für die WHPX-Läufe. Der Vergleich 512/128 zeigt deshalb nur die Streuung zwischen Läufen.
+- **Sichtweite 32 bringt unter KVM rund 30 % mehr Bilder je Minute** und ein niedrigeres p95. Der Median ändert sich kaum (20 statt 23 ms), weil die Bildzeiten zweigipflig verteilt sind; die Bildzahl je Fenster ist hier das bessere Maß.
+- **Engpass ist die App, nicht Desktop oder Anzeige.** Medianwerte der Anteile bei allen drei Sichtweiten: `app` 19–30 ms, `desktop` 2,1–2,6 ms (p95 10–12 ms), `anzeige` 0,8–0,9 ms, `kopie` 0,2 ms, `skalierung` 0,3–0,4 ms. In `app` liegen wasm3 und die Aufrufe des Host-Rasters. Die eigene Messung von ClassiCube (nur auf den Endfotos lesbar) zeigt Raster 31–32 ms je Bild bei 512 und 20–21 ms bei 32; Mesh, Present und Rest liegen bei 0–3 ms.
+
+Nicht geprüft: Bewegung und andere Blickrichtungen, andere Fenstergrößen (ohne Kerneländerung nicht einstellbar), TCG und VMware.
+
 ## Messung wasm3 gegen AOT (AOT-Plan Etappe F)
 
 Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes Testschlüsselpaar (`python3 scripts/build-package.py keygen <dir>`), nie der Herausgeberschlüssel. `<wamrc>` ist das zugelassene wamrc 2.4.5 (Hash in `scripts/build-package.py`); `aot` legt den Beleg `<app.aot>.json` daneben, den `package --aot-file` prüft.
