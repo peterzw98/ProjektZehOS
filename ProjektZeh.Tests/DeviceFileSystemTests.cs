@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Storage.Virtual;
 
@@ -17,7 +18,7 @@ public sealed class DeviceFileSystemTests
     [TestMethod]
     public void NamesAreNullAndZeroOnlyAndUnknownIsNotFound()
     {
-        CollectionAssert.AreEqual(new[] { "null", "zero" }, DeviceFileSystem.Names);
+        CollectionAssert.AreEqual(new[] { "null", "zero" }, new List<string>(DeviceFileSystem.Names));
         foreach (string name in new[] { "tty", "random", "", "NULL", "null/", "sda" })
         {
             var result = DeviceFileSystem.Open(name);
@@ -43,7 +44,7 @@ public sealed class DeviceFileSystemTests
     public void ZeroFillsExactlyTheRequestedBuffer()
     {
         var handle = Open("zero");
-        foreach (int length in new[] { 0, 1, 4095, 4096, 65537 })
+        foreach (int length in new[] { 0, 1, 4095, 4096, 65535, 65536 })
         {
             var buffer = new byte[length + 2];
             Array.Fill(buffer, (byte)0xAA);
@@ -55,6 +56,21 @@ public sealed class DeviceFileSystemTests
         }
 
         Assert.AreEqual(5, handle.Write(new byte[5]).Value);
+    }
+
+    [TestMethod]
+    public void ZeroReadIsCappedAndTheRestIsAShortRead()
+    {
+        var handle = Open("zero");
+        var buffer = new byte[DeviceHandle.MaxReadBytes + 4096];
+        Array.Fill(buffer, (byte)0xAA);
+        Assert.AreEqual(DeviceHandle.MaxReadBytes, handle.Read(buffer).Value);
+        Assert.AreEqual(0, buffer[DeviceHandle.MaxReadBytes - 1]);
+        Assert.AreEqual(0xAA, buffer[DeviceHandle.MaxReadBytes], "hinter der Grenze bleibt der Puffer unberuehrt");
+        Assert.AreEqual(0xAA, buffer[^1]);
+        // Ein int.MaxValue-Fenster wuerde ohne Grenze 2 GiB loeschen; mit der Grenze bleibt der Aufruf klein.
+        Assert.AreEqual(DeviceHandle.MaxReadBytes, handle.Read(System.Runtime.InteropServices.MemoryMarshal.CreateSpan(
+            ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(buffer), buffer.Length)).Value);
     }
 
     [TestMethod]
