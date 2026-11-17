@@ -24,7 +24,7 @@ Geplant auf `master` 8d47277 (ZehOS 0.5.8, Cosmos 3.0.97 gemergt). Gelesen, nich
 
 **Nicht belegt, in Etappe B zu klären:** ob Cosmos 3.0.97 Heap-Speicher ausführbar einblendet (NX), ob AOT-Code vom Heap aus Kernelsymbole per 32-Bit-Sprung erreicht (Codemodell), ob WAMR mit `-nostdinc -fno-builtin` und der vorhandenen freistehenden libc baut.
 
-**Offene Voraussetzung:** Das Dokument der Sicherheitsbewertung (5a) liegt auf keinem Remote-Branch. Der Koordinator meldet eine signierte Freigabe von Peter für 5a und 5c (17. November 2026, 01:55); die Zeile selbst steht nicht im Protokoll dieses Agenten und wurde hier nicht geprüft. Etappe A hält die Entscheidung schriftlich fest, bevor Kernelcode entsteht.
+**Offene Voraussetzung:** Das Dokument der Sicherheitsbewertung (5a) liegt auf keinem Remote-Branch. Peter hat am 17. November 2026, 01:55 in `#first` signiert geschrieben: „Du kannst mit 5a und C auch durchstarten“ (vom Koordinator geprüft, hier nicht erneut). Das gibt den Start von 5a und 5c frei, entscheidet aber die vier Punkte aus Etappe A nicht. Etappe A hält sie schriftlich fest, bevor Etappe D WAMR in den Kernel bringt.
 
 ## Entscheidungen und Begründung
 
@@ -156,3 +156,4 @@ Summe 9–15 Wochen bei einem Agenten je Etappe; A, B und C zusammen dauern so l
 ## Ledger
 
 - 17.11.2026: Plan erstellt (agent-orchestrator) auf `master` 8d47277. Grundlage: Übergabe, Hostprobe 5b, gelesener Loader- und Paketcode, WAMR-2.4.5-Quellen. Nichts gebaut oder gemessen; kein unabhängiges Review.
+- 17.11.2026: Peters signierte Zeile von 01:55 (`#first`) laut Koordinator eingetragen; Etappe A an agent-scientist, Review des Plans an agent-engineer-huang, B und C warten auf freie Engineers.
