@@ -15,6 +15,11 @@ dieselbe Platte als sata1: automatisch eingebunden, Anmeldung geht, D) leere ZEH
 Ersteinrichtung, E) zwei ZEHOSDATA-Platten: kein Mount, keine Ersteinrichtung; mit --legacy-image zusaetzlich: Bestand
 auf sata0 gewinnt gegen eine ZEHOSDATA-Platte. Vorhandene Images werden nie beschrieben; der Arbeitsordner darf nicht
 existieren.
+
+G) immer (nur --iso-recovery): "disk init sata1" auf GPT-Spuren muss mit cause InstalledLayout scheitern und die Platte
+unveraendert lassen; G1 Schutz-MBR 0xEE und "EFI PART" in LBA 1 und letzter LBA, G2 nur "EFI PART" in der letzten LBA
+(abgebrochenes Schreiben). Dass eine GPT-ZEHOSDATA-Platte nie Installationsziel ist, prueft der Gast nicht (kein
+Installerpfad); das decken die Hosttests ab.
 """
 import argparse
 import hashlib
@@ -129,6 +134,10 @@ def device_line(name: str, size: int, partitions: int) -> str:
     return f"Laufwerk {name}: {size} Bytes, {partitions} Partition(en)"
 
 
+# Alle gestarteten Gaeste: main beendet uebrig gebliebene auch nach einer Ausnahme, sonst laeuft QEMU weiter.
+GUESTS: list = []
+
+
 def boot(args: argparse.Namespace, run: Path, disks: list[Path], desktop: bool = False) -> tuple[object, "tools.Qmp"]:
     """Startet QEMU mit den Platten an AHCI-Port 0, 1, ... und wartet auf die Textshell (Recovery-ISO) bzw. den Desktop (normales ISO)."""
     machine = list(MACHINE_BASE)
@@ -140,6 +149,7 @@ def boot(args: argparse.Namespace, run: Path, disks: list[Path], desktop: bool =
     subprocess.run([*tool, "create", "-f", "qcow2", str(unused), "1M"], check=True, stdout=subprocess.DEVNULL, env=environment)
     port = tools.free_port()
     process = tools.start_qemu(args.iso_normal if desktop else args.iso_recovery, unused, run, port, args.accel, None)
+    GUESTS.append(process)
     tools.wait_serial(run, "Desktop ist bereit." if desktop else "Textshell ist bereit.", args.timeout)
     qmp = tools.Qmp(port)
     # Nach "bereit" laeuft noch der Netzwerkstart; Eingaben davor gingen im Test verloren oder blieben liegen.
@@ -356,6 +366,46 @@ def run_probes(args: argparse.Namespace, base: Path, legacy: Path | None) -> Non
     print("F) Bestand auf sata0 gewinnt gegen ZEHOSDATA auf sata1, Hinweis im Protokoll", flush=True)
 
 
+def write_gpt_traces(path: Path, primary: bool) -> None:
+    """Schreibt nur die Merkmale, an denen der Kernel GPT-Spuren erkennt; eine gueltige Tabelle ist dafuer nicht noetig."""
+    sectors = path.stat().st_size // 512
+    with path.open("r+b") as image:
+        if primary:
+            image.seek(0x1C2)  # Typbyte des ersten MBR-Eintrags: Schutz-MBR
+            image.write(b"\xEE")
+            image.seek(0x1FE)
+            image.write(b"\x55\xAA")
+            image.seek(512)
+            image.write(b"EFI PART")
+        image.seek((sectors - 1) * 512)
+        image.write(b"EFI PART")
+
+
+def run_gpt(args: argparse.Namespace, base: Path) -> None:
+    work = new_work_dir(base / "gpt")
+    blank = work / "blank.img"
+    create_sparse(blank, 64 * MIB)
+    for name, primary in (("G1 Schutz-MBR, Primaer- und Backupheader", True), ("G2 nur Backupheader", False)):
+        disk = work / f"gpt-{'voll' if primary else 'backup'}.img"
+        create_sparse(disk, 64 * MIB)
+        write_gpt_traces(disk, primary)
+        before = sha256(disk)
+        run = new_work_dir(work / disk.stem)
+        process, qmp = boot(args, run, [blank, disk])
+        mark = send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
+        try:
+            wait_init(qmp, run, mark, args.init_timeout)
+        except RuntimeError as error:
+            if "InstalledLayout" not in str(error):
+                raise
+        else:
+            raise RuntimeError(f"{name}: disk init lief trotz GPT-Spuren durch")
+        stop(process, qmp, run)  # getipptes shutdown: die Shell ist nach der Ablehnung weiter bedienbar
+        if sha256(disk) != before:
+            raise RuntimeError(f"{name}: die Platte wurde trotz Ablehnung veraendert")
+        print(f"{name}: disk init verweigert (InstalledLayout), Platte unveraendert", flush=True)
+
+
 def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
     before = sha256(original)
     work = new_work_dir(base / "legacy")
@@ -392,16 +442,23 @@ def main() -> int:
     args.iso_normal = args.iso_normal.resolve() if args.iso_normal else None
     base = new_work_dir(args.work.resolve())
     sizes = args.size or [parse_size(text) for text in DEFAULT_SIZES]
-    for size in sizes:
-        run_size(args, base, size)
-    if args.iso_normal:
-        run_probes(args, base, legacy)
-    else:
-        print("Sicherheitsproben A-F uebersprungen (kein --iso-normal).", flush=True)
-    if legacy:
-        run_legacy(args, base, legacy)
-    else:
-        print("Gegenprobe uebersprungen (kein --legacy-image).", flush=True)
+    try:
+        for size in sizes:
+            run_size(args, base, size)
+        run_gpt(args, base)
+        if args.iso_normal:
+            run_probes(args, base, legacy)
+        else:
+            print("Sicherheitsproben A-F uebersprungen (kein --iso-normal).", flush=True)
+        if legacy:
+            run_legacy(args, base, legacy)
+        else:
+            print("Gegenprobe uebersprungen (kein --legacy-image).", flush=True)
+    finally:
+        for process in GUESTS:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
     return 0
 
 

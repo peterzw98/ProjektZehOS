@@ -1,0 +1,8 @@
+# CodeQL fuer Python und GitHub Actions: fremder und erzeugter Code wird nicht analysiert.
+name: ZehOS other
+
+paths-ignore:
+  - '**/ThirdParty/**'
+  - '**/bin/**'
+  - '**/obj/**'
+  - '**/output-*/**'

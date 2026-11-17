@@ -95,7 +95,7 @@ internal sealed class Desktop
         Func<ExternalApplication[]>? listExternal = null, Func<NetworkStatus>? getNetwork = null,
         Func<DateTime>? getUtcNow = null)
     {
-        this.getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
+        this.getUtcNow = getUtcNow ?? (() => ProjektZeh.SystemServices.SystemClock.UtcNow);
         this.getNetwork = getNetwork;
         this.listExternal = listExternal;
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);

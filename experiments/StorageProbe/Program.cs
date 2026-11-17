@@ -10,9 +10,11 @@ using Cosmos.Kernel.System.FileSystem.Ext2;
 // selftest: Grenz- und Argumentpruefungen sowie Layoutpruefung der korrigierten Quelle, ohne e2fsck.
 if (args.Length == 1 && args[0] == "selftest") return SelfTest.Run();
 if (args.Length == 1 && args[0] == "readonly-selftest") return ReadOnlySelfTest.Run();
+if (args.Length >= 1 && args[0] == "layout") return LayoutCommand.Layout(args);
+if (args.Length >= 1 && args[0] == "verify") return LayoutCommand.Verify(args);
 if (args.Length < 2 || args[0] != "format")
 {
-    Console.Error.WriteLine("Aufruf: format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L] [--formatter original|fixed] | selftest | readonly-selftest");
+    Console.Error.WriteLine("Aufruf: format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L] [--formatter original|fixed] | layout IMAGE --size BYTES [--guid-seed HEX] | verify IMAGE | selftest | readonly-selftest");
     return 2;
 }
 string? problem = FormatRequest.TryParse(args, out var request);

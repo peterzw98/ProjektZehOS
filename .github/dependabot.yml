@@ -1,0 +1,12 @@
+# Nur GitHub Actions (feste Commit-Pins mit Versionskommentar). Paket-, SDK- und Cosmos-Updates bleiben ausdruecklich
+# abstimmungspflichtig (AGENTS.md) und sind hier nicht eingerichtet. Jeder Dependabot-PR braucht vor dem Merge eine hoehere
+# ZehOS-Version in ProjektZeh/ProjektZeh.csproj.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "CI"
