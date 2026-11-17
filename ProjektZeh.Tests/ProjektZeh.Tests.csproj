@@ -40,6 +40,7 @@
     <Compile Include="..\ProjektZeh\SystemServices\SystemLogEntry.cs" Link="SystemServices\SystemLogEntry.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\ISystemLogSink.cs" Link="SystemServices\ISystemLogSink.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\SystemLog.cs" Link="SystemServices\SystemLog.cs" />
+    <Compile Include="..\ProjektZeh\SystemServices\SystemClock.cs" Link="SystemServices\SystemClock.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\BootService.cs" Link="SystemServices\BootService.cs" />
     <Compile Include="..\ProjektZeh\SystemServices\LocalTime.cs" Link="SystemServices\LocalTime.cs" />
     <Compile Include="..\ProjektZeh\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
