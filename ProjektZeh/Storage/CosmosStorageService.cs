@@ -46,7 +46,7 @@ internal sealed class CosmosStorageService : IStorageService
     /// <summary>
     /// Erstellt MBR und FAT32 ausschliesslich auf einer vollstaendig leeren Platte von 64 MiB bis 128 GiB; die Partition erhaelt das Label ZEHOSDATA.
     /// </summary>
-    public ResultErr InitializeTestDisk(string? deviceName, bool confirmLarge)
+    public ResultErr InitializeTestDisk(string? deviceName, bool confirmLarge, bool confirmOverwrite)
     {
         var found = FindDevice(deviceName);
         if (!found.IsOK())
@@ -66,6 +66,12 @@ internal sealed class CosmosStorageService : IStorageService
             if (StorageManager.GetPartitions(device).Count != 0)
             {
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
+            }
+
+            var overwrite = DataDiskSelector.CheckOverwrite(ReadCandidates(), VfsManager.TryGetMount(MountPoint, out _), confirmOverwrite);
+            if (!overwrite.IsOK())
+            {
+                return overwrite;
             }
 
             var clock = Stopwatch.StartNew();
@@ -157,46 +163,110 @@ internal sealed class CosmosStorageService : IStorageService
     }
 
     /// <summary>
-    /// Bindet die per Label ZEHOSDATA gewaehlte Partition ein; ohne Treffer gilt der Rueckfall sata0, bei mehreren Treffern wird nichts eingebunden.
+    /// Boot-Einbindung: nur ein Bestand auf sata0 wird eingebunden. Eine ZEHOSDATA-Platte wird weder bevorzugt noch automatisch
+    /// verwendet (disk use); bei Mehrdeutigkeit oder einem unbrauchbaren Bestand wird nichts eingebunden und seriell gemeldet.
     /// </summary>
     public ResultErr MountData()
     {
         try
         {
-            var candidates = new List<DataDiskCandidate>();
-            foreach (IBlockDevice device in StorageManager.Devices)
+            var decision = DataDiskSelector.Decide(ReadCandidates());
+            if (decision.Hint != null)
             {
-                // Ein unlesbares Geraet (CD/ATAPI, Lesefehler) darf den Mount der uebrigen nicht verhindern.
-                try
+                Note("Hinweis: " + decision.Hint);
+            }
+
+            if (decision.Action == DataDiskAction.Mount)
+            {
+                var found = FindDevice(decision.DeviceName);
+                if (!found.IsOK())
                 {
-                    candidates.Add(CosmosDataDisk.Describe(device));
+                    return found.Status;
                 }
-                catch (Exception exception)
-                {
-                    Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE {device.Name} uebersprungen: {exception.Message}\n");
-                }
+
+                var prepared = PrepareMount();
+                return prepared.IsOK() ? MountPartition(found.Value!, decision.PartitionIndex) : prepared;
             }
 
-            var selection = DataDiskSelector.Select(candidates);
-            if (!selection.IsOK())
+            if (decision.Action != DataDiskAction.NoDataDisk)
             {
-                return selection.Status;
+                // Ohne Mount gibt es keine Kontodatei und damit keine Admin-Ersteinrichtung (AccountService.Load).
+                Note("Fehler: " + decision.Message + " Keine Ersteinrichtung.");
             }
 
-            var found = FindDevice(selection.Value!.DeviceName);
-            if (!found.IsOK())
-            {
-                return found.Status;
-            }
-
-            var prepared = PrepareMount();
-            return prepared.IsOK() ? MountPartition(found.Value!, selection.Value.PartitionIndex) : prepared;
+            return ResultErr.CreateFailure(ResultCode.Failure, decision.Message);
         }
         catch (Exception exception)
         {
             return ResultErr.CreateFromException(exception);
         }
     }
+
+    /// <summary>
+    /// Wechselt ausdruecklich auf die ZEHOSDATA-Partition des Laufwerks; ein eingebundenes /data wird vorher ausgehaengt.
+    /// </summary>
+    public ResultErr UseDataDisk(string? deviceName)
+    {
+        var found = FindDevice(deviceName);
+        if (!found.IsOK())
+        {
+            return found.Status;
+        }
+
+        try
+        {
+            IBlockDevice device = found.Value!;
+            var index = DataDiskSelector.FindLabelled(CosmosDataDisk.Describe(device));
+            if (!index.IsOK())
+            {
+                return index.Status;
+            }
+
+            if (VfsManager.TryGetMount(MountPoint, out _))
+            {
+                if (!VfsManager.TryUnmount(MountPoint))
+                {
+                    return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
+                }
+
+                Note("use: bisheriges /data ausgehaengt");
+            }
+
+            var prepared = PrepareMount();
+            var mounted = prepared.IsOK() ? MountPartition(device, index.Value) : prepared;
+            if (mounted.IsOK())
+            {
+                Note($"use ok {device.Name}");
+            }
+
+            return mounted;
+        }
+        catch (Exception exception)
+        {
+            return ResultErr.CreateFromException(exception);
+        }
+    }
+
+    private static List<DataDiskCandidate> ReadCandidates()
+    {
+        var candidates = new List<DataDiskCandidate>();
+        foreach (IBlockDevice device in StorageManager.Devices)
+        {
+            // Ein unlesbares Geraet (CD/ATAPI, Lesefehler) darf die uebrigen nicht verhindern.
+            try
+            {
+                candidates.Add(CosmosDataDisk.Describe(device));
+            }
+            catch (Exception exception)
+            {
+                Note($"{device.Name} uebersprungen: {exception.Message}");
+            }
+        }
+
+        return candidates;
+    }
+
+    private static void Note(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE " + text + "\n");
 
     private ResultErr PrepareMount()
     {

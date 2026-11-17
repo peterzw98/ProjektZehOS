@@ -24,7 +24,7 @@ internal sealed class StorageShellCommands
         this.commandLog = commandLog;
         Commands =
         [
-            new("disk", "disk list|init <Name> [--yes-large]|mount <Name>|unmount",
+            new("disk", "disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount <Name>|unmount",
                 "Listet Laufwerke oder richtet eine leere Platte (64 MiB bis 128 GiB) als Datenplatte ZEHOSDATA ein.", true, Execute)
         ];
     }
@@ -50,10 +50,10 @@ internal sealed class StorageShellCommands
         {
             case "list" when arguments.Length == 1:
                 return ListDevices(output);
-            case "init" when arguments.Length == 2:
-                return Changed(storage.InitializeTestDisk(arguments[1], false));
-            case "init" when arguments.Length == 3 && arguments[2] == "--yes-large":
-                return Changed(storage.InitializeTestDisk(arguments[1], true));
+            case "init" when arguments.Length >= 2 && TryParseInitFlags(arguments, out bool confirmLarge, out bool confirmOverwrite):
+                return Changed(storage.InitializeTestDisk(arguments[1], confirmLarge, confirmOverwrite));
+            case "use" when arguments.Length == 3 && arguments[2] == "--yes":
+                return Changed(storage.UseDataDisk(arguments[1]));
             case "mount" when arguments.Length == 2:
                 return Changed(storage.Mount(arguments[1]));
             case "unmount" when arguments.Length == 1:
@@ -61,6 +61,20 @@ internal sealed class StorageShellCommands
             default:
                 return InvalidArguments();
         }
+    }
+
+    /// <summary>Hinter dem Namen sind nur --yes-large und --yes-overwrite erlaubt, jedes hoechstens einmal, in beliebiger Reihenfolge.</summary>
+    private static bool TryParseInitFlags(string[] arguments, out bool confirmLarge, out bool confirmOverwrite)
+    {
+        confirmLarge = confirmOverwrite = false;
+        for (int index = 2; index < arguments.Length; index++)
+        {
+            if (arguments[index] == "--yes-large" && !confirmLarge) confirmLarge = true;
+            else if (arguments[index] == "--yes-overwrite" && !confirmOverwrite) confirmOverwrite = true;
+            else return false;
+        }
+
+        return true;
     }
 
     private ResultErr Changed(ResultErr result)
@@ -93,6 +107,6 @@ internal sealed class StorageShellCommands
     private static ResultErr InvalidArguments()
     {
         return ResultErr.CreateFailure(ResultCode.InvalidArgument,
-            "cause='InvalidArguments' message='Verwendung: disk list|init <Name> [--yes-large]|mount <Name>|unmount'");
+            "cause='InvalidArguments' message='Verwendung: disk list|init <Name> [--yes-large] [--yes-overwrite]|use <Name> --yes|mount <Name>|unmount'");
     }
 }

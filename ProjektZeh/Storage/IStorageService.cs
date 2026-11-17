@@ -8,9 +8,11 @@ namespace ProjektZeh.Storage;
 internal interface IStorageService
 {
     ResultObject<StorageDeviceInfo[]> GetDevices();
-    ResultErr InitializeTestDisk(string? deviceName, bool confirmLarge);
+    ResultErr InitializeTestDisk(string? deviceName, bool confirmLarge, bool confirmOverwrite);
     ResultErr Mount(string? deviceName);
-    /// <summary>Waehlt die Datenpartition per Label ZEHOSDATA (Rueckfall sata0) und bindet sie unter /data ein.</summary>
+    /// <summary>Boot: bindet einen Bestand auf sata0 unter /data ein; eine ZEHOSDATA-Platte nie automatisch.</summary>
     ResultErr MountData();
+    /// <summary>Wechselt ausdruecklich auf die ZEHOSDATA-Partition des benannten Laufwerks.</summary>
+    ResultErr UseDataDisk(string? deviceName);
     ResultErr Unmount();
 }

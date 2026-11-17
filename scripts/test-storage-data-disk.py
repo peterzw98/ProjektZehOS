@@ -202,15 +202,64 @@ def run_size(args: argparse.Namespace, base: Path, size: int) -> None:
     stop(process, qmp, run)
     run = new_work_dir(work / "lauf2")
     process, qmp = boot(args, run, [blank, data])
-    tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
+    # Eine ZEHOSDATA-Platte wird nie automatisch eingebunden: der Boot meldet sie nur, eingebunden wird per disk use.
+    tools.wait_serial(run, "DataDiskNotMounted", args.timeout)
     tools.wait_serial(run, device_line("sata1", size, 1), 5)
+    if "Datenlaufwerk unter /data eingebunden." in (run / "serial.log").read_text(encoding="utf-8", errors="replace"):
+        raise RuntimeError("ZEHOSDATA-Platte wurde ohne disk use eingebunden")
+    mark = send_command(qmp, run, "disk use sata1 --yes", "Befehl: disk use sata1 --yes")
+    tools.wait_serial(run, "STORAGE use ok sata1", args.init_timeout, mark)
     qmp.shot(run / "nach-mount.png")
     provision_admin(qmp)
     send_command(qmp, run, "disk list", "Befehl: disk list", tries=3)
     time.sleep(2)
     qmp.shot(run / "disk-list.png")
     stop(process, qmp, run)
-    print(f"{label}: init, Neustart, Einbindung ueber Label und Groesse ok (Bild: {run / 'disk-list.png'})", flush=True)
+    print(f"{label}: init, Neustart, disk use, Groesse und Neustart ohne Automount ok (Bild: {run / 'disk-list.png'})", flush=True)
+
+
+def quit_guest(process, qmp) -> None:
+    """Beendet QEMU ohne Herunterfahren (Wegwerfkopien); bis 30 s warten, sonst kill."""
+    qmp.quit()
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def run_policy(args: argparse.Namespace, base: Path, labelled: Path, legacy: Path | None) -> None:
+    """Sicherheitsregeln: zwei ZEHOSDATA-Platten werden nicht geraten, ein Bestand auf sata0 gewinnt gegen eine ZEHOSDATA-Platte."""
+    work = new_work_dir(base / "policy")
+    blank = work / "blank.img"
+    create_sparse(blank, 64 * MIB)
+    first, second = work / "daten-a.img", work / "daten-b.img"
+    shutil.copyfile(labelled, first)
+    shutil.copyfile(labelled, second)
+    run = new_work_dir(work / "mehrdeutig")
+    process, qmp = boot(args, run, [blank, first, second])
+    tools.wait_serial(run, "AmbiguousDataDisk", args.timeout)
+    tools.wait_serial(run, "Keine Ersteinrichtung", 5)
+    time.sleep(3)
+    qmp.shot(run / "mehrdeutig.png")  # Bild: keine Admin-Ersteinrichtung sichtbar
+    if "Datenlaufwerk unter /data eingebunden." in (run / "serial.log").read_text(encoding="utf-8", errors="replace"):
+        raise RuntimeError("Bei zwei ZEHOSDATA-Platten darf nichts eingebunden werden")
+    quit_guest(process, qmp)
+    print("Zwei ZEHOSDATA-Platten: kein Mount, Fehlerzeile, keine Ersteinrichtung", flush=True)
+    if legacy is None:
+        print("Bestand-gewinnt-Probe uebersprungen (kein --legacy-image).", flush=True)
+        return
+    before = sha256(legacy)
+    existing = work / "bestand.img"
+    shutil.copyfile(legacy, existing)
+    run = new_work_dir(work / "bestand-gewinnt")
+    process, qmp = boot(args, run, [existing, first])
+    tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
+    tools.wait_serial(run, "Hinweis: Datenplatte ZEHOSDATA auf sata1 vorhanden", 5)
+    quit_guest(process, qmp)
+    if sha256(legacy) != before:
+        raise RuntimeError("Das Original des Bestandsimages hat sich veraendert")
+    print("Bestand auf sata0 gewinnt gegen ZEHOSDATA auf sata1, Hinweis im Protokoll", flush=True)
 
 
 def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
@@ -224,12 +273,7 @@ def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
     tools.wait_serial(run, device_line("sata0", LEGACY_SIZE, 1), 5)
     # Kein sauberes Herunterfahren: das Bestandsimage hat Konten, die Shell zeigt die Anmeldung und ein getipptes
     # shutdown landete im Benutzernamen. Geprueft werden nur Mount und das unveraenderte Original; die Kopie ist Wegwerf.
-    qmp.quit()
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+    quit_guest(process, qmp)
     if sha256(original) != before:
         raise RuntimeError("Das Original des Bestandsimages hat sich veraendert")
     print("Bestandsimage: Rueckfall sata0 mountet, Original unveraendert", flush=True)
@@ -250,8 +294,11 @@ def main() -> int:
     legacy = check_legacy(args.legacy_image) if args.legacy_image else None
     args.iso = args.iso.resolve()
     base = new_work_dir(args.work.resolve())
-    for size in args.size or [parse_size(text) for text in DEFAULT_SIZES]:
+    sizes = args.size or [parse_size(text) for text in DEFAULT_SIZES]
+    for size in sizes:
         run_size(args, base, size)
+    # Das erste initialisierte Image dient den Sicherheitsproben (nach lauf2 enthaelt es zusaetzlich Konten).
+    run_policy(args, base, base / size_label(sizes[0]) / "data.img", legacy)
     if legacy:
         run_legacy(args, base, legacy)
     else:

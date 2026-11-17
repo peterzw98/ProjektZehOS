@@ -23,7 +23,8 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `mkdir <Pfad>` | Verzeichnis anlegen |
 | `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
 | `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
-| `disk init <Name> [--yes-large]` | Leere Platte (64 MiB bis 128 GiB; über 4 GiB nur Stichprobenprüfung und nur mit `--yes-large`) mit MBR und FAT32 (Label `ZEHOSDATA`) einrichten; der Boot bindet die Partition mit diesem Label unter `/data` ein, sonst `sata0` |
+| `disk init <Name> [--yes-large] [--yes-overwrite]` | Leere Platte (64 MiB bis 128 GiB; über 4 GiB nur Stichprobenprüfung und nur mit `--yes-large`) mit MBR und FAT32 (Label `ZEHOSDATA`) einrichten; ist schon `/data` eingebunden oder trägt `sata0` eine Partition, verlangt der Befehl zusätzlich `--yes-overwrite` |
+| `disk use <Name> --yes` | Auf die `ZEHOSDATA`-Partition des Laufwerks umschalten; ein eingebundenes `/data` wird vorher ausgehängt. Der Boot bindet eine `ZEHOSDATA`-Platte nie selbst ein |
 | `disk mount <Name>` | Einzige FAT-Partition des Laufwerks unter `/data` einbinden |
 | `disk unmount` | `/data` mit Schreiben der Dateisystempuffer aushängen |
 | `version` | Versionen der geladenen ZehOS- und Cosmos-Assemblies anzeigen |
@@ -125,7 +126,7 @@ disk init sata0
 disk mount sata0
 ```
 
-`disk init` ist auf leere Platten von 64 MiB bis 128 GiB mit 512-Byte-Sektoren begrenzt. Bis 4 GiB wird die ganze Platte auf Nullen geprüft; darüber nur Kopf und Ende (je 64 MiB, mit MBR/GPT- und Dateisystemkennungen) sowie 4 KiB alle 64 MiB, und nur mit `disk init <Name> --yes-large`. Daten zwischen den Stichproben werden dort nicht erkannt. Bereits vorhandene Partitionen oder Daten werden abgelehnt. Die Einrichtung erstellt eine FAT32-LBA-Partition (MBR-Typ `0x0C`) und formatiert FAT32; Cosmos bestimmt die dazu passende Clustergröße. Das Laufwerk wird anschließend mit `disk mount` eingebunden. Ein fehlgeschlagener oder abgebrochener Einrichtungsvorgang wird beim Booten nicht automatisch repariert oder wiederholt.
+`disk init` ist auf leere Platten von 64 MiB bis 128 GiB mit 512-Byte-Sektoren begrenzt. Bis 4 GiB wird die ganze Platte auf Nullen geprüft; darüber nur Kopf und Ende (je 64 MiB, mit MBR/GPT- und Dateisystemkennungen) sowie 4 KiB alle 64 MiB, und nur mit `disk init <Name> --yes-large`. Daten zwischen den Stichproben werden dort nicht erkannt. Bereits vorhandene Partitionen oder Daten werden abgelehnt. Die Einrichtung erstellt eine FAT32-LBA-Partition (MBR-Typ `0x0C`) und formatiert FAT32; Cosmos bestimmt die dazu passende Clustergröße. Das Laufwerk wird anschließend mit `disk mount` eingebunden. Ein fehlgeschlagener oder abgebrochener Einrichtungsvorgang wird beim Booten nicht automatisch repariert oder wiederholt. Beim Boot gewinnt ein Bestand: trägt `sata0` eine Partition, wird nur sie (genau eine) unter `/data` eingebunden; eine `ZEHOSDATA`-Platte daneben wird nicht bevorzugt und nur im seriellen Protokoll vermerkt. Ohne Bestand wird eine einzelne `ZEHOSDATA`-Platte gemeldet, aber erst mit `disk use <Name> --yes` eingebunden; bei zwei oder mehr gibt es einen Fehler. In diesen Fällen wird nichts eingebunden und deshalb keine Administrator-Ersteinrichtung angeboten.
 
 Danach beispielsweise:
 
