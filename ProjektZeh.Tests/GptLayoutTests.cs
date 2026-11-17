@@ -225,7 +225,7 @@ public sealed class GptLayoutTests
         Assert.IsTrue(Write(disk).IsOK);
         ulong n = Blocks32;
         CollectionAssert.AreEqual(
-            new[] { "W0+2048", "F", $"W{n - 33}+32", $"W{n - 1}+1", "F", "W2+32", "F", "W1+1", "F", "W0+1", "F" },
+            new[] { "W0+2048", $"W{n - 33}+33", "F", $"W{n - 33}+32", $"W{n - 1}+1", "F", "W2+32", "F", "W1+1", "F", "W0+1", "F" },
             disk.Log);
     }
 
@@ -300,27 +300,32 @@ public sealed class GptLayoutTests
     // --- Abbruch nach jedem Schritt ---
 
     [TestMethod]
-    [DataRow(1, DisplayName = "Abbruch in Schritt 1 (Loeschen)")]
-    [DataRow(2, DisplayName = "nach Schritt 1")]
-    [DataRow(3, DisplayName = "nach Backup-Eintraegen")]
-    [DataRow(4, DisplayName = "nach Schritt 2 (Backup)")]
-    [DataRow(5, DisplayName = "nach Schritt 3 (Primaer-Eintraege)")]
-    [DataRow(6, DisplayName = "nach Schritt 4 (Primaerkopf)")]
+    [DataRow(1, DisplayName = "Abbruch in Schritt 1 (Loeschen vorn)")]
+    [DataRow(2, DisplayName = "Abbruch in Schritt 1 (Loeschen hinten)")]
+    [DataRow(3, DisplayName = "nach Schritt 1")]
+    [DataRow(4, DisplayName = "nach Backup-Eintraegen")]
+    [DataRow(5, DisplayName = "nach Schritt 2 (Backup)")]
+    [DataRow(6, DisplayName = "nach Schritt 3 (Primaer-Eintraege)")]
+    [DataRow(7, DisplayName = "nach Schritt 4 (Primaerkopf)")]
     public void Write_AbortAfterEachStep_NeverValidNeverLegacy(int failAtWrite)
     {
         var disk = new SparseDisk(Blocks32, failAtWrite);
         disk.Put(0, LegacyMbr());
-        disk.Put(1, Encoding.ASCII.GetBytes("EFI PART".PadRight(512, '\0')));
+        byte[] oldHeader = Encoding.ASCII.GetBytes("EFI PART alt".PadRight(512, '\0'));
+        disk.Put(1, oldHeader);
+        disk.Put(Blocks32 - 1, oldHeader); // Backupkopf einer frueheren Installation
         Assert.ThrowsException<IOException>(() => Write(disk));
 
         // Der Schutz-MBR kommt als letzter Schritt; vorher ist die Platte nie gueltig.
         AssertCause(Verify(disk), "ProtectiveMbrInvalid");
         bool wiped = failAtWrite > 1;
         if (!wiped) return; // Schritt 1 selbst abgebrochen: alter Zustand bleibt, der Installer meldet den Fehler.
+        if (failAtWrite > 2)
+            CollectionAssert.AreNotEqual(oldHeader, disk.ReadSector(Blocks32 - 1), "alter Backupkopf ist nach Schritt 1 weg");
         byte[] mbr = disk.ReadSector(0);
         Assert.IsFalse(mbr[510] == 0x55 && mbr[511] == 0xAA, "kein MBR mehr: weder Legacy-Partition noch Schutz-MBR sichtbar");
         bool primaryHeader = disk.ReadSector(1).AsSpan(0, 8).SequenceEqual("EFI PART"u8);
-        Assert.AreEqual(failAtWrite == 6, primaryHeader, "Primaerkopf erst nach Schritt 4; davor sieht Cosmos keine GPT (0 Partitionen)");
+        Assert.AreEqual(failAtWrite == 7, primaryHeader, "Primaerkopf erst nach Schritt 4; davor sieht Cosmos keine GPT (0 Partitionen)");
     }
 
     // --- Verify: Negativfaelle ---
@@ -398,6 +403,15 @@ public sealed class GptLayoutTests
         var entries = Entries(Blocks32);
         entries[1] = entries[1] with { FirstLba = entries[0].LastLba };
         AssertCause(Verify(Sealed(Blocks32, entries)), "EntriesOverlap");
+    }
+
+    [TestMethod]
+    public void Verify_EmptyDiskGuid_Invalid()
+    {
+        var disk = Installed(Blocks32);
+        Seal(disk, Blocks32, Entries(Blocks32), primary: true, diskGuid: Guid.Empty);
+        Seal(disk, Blocks32, Entries(Blocks32), primary: false, diskGuid: Guid.Empty);
+        AssertCause(Verify(disk), "EmptyDiskGuid");
     }
 
     [TestMethod]

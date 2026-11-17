@@ -56,7 +56,7 @@ internal static class GptLayoutWriter
     }
 
     /// <summary>
-    /// Schreibt in fester Reihenfolge, jeweils mit Flush: (1) LBA 0..2047 nullen (alter MBR, alter Primaerkopf),
+    /// Schreibt in fester Reihenfolge, jeweils mit Flush: (1) LBA 0..2047 und die letzten 33 Sektoren nullen (alter MBR, alte Koepfe),
     /// (2) Backup-Eintraege und Backupkopf, (3) Primaer-Eintraege, (4) Primaerkopf, (5) Schutz-MBR. Bricht ein Schritt ab,
     /// ist die Platte nie gueltig und zeigt nie mehr die alte MBR-Partition; die Ausnahme geht an den Aufrufer.
     /// RescanPartitions und Verify danach sind Sache des Aufrufers.
@@ -71,7 +71,9 @@ internal static class GptLayoutWriter
         uint entriesCrc = Crc32.Compute(entries);
         ulong backupHeader = GptLayout.BackupHeaderLba(blockCount), backupEntries = GptLayout.BackupEntriesLba(blockCount);
 
+        // Auch das Ende nullen: ein alter gueltiger Backupkopf liesse Firmware/Linux nach einem Abbruch die alte Tabelle herstellen.
         write(0, new byte[WipeSectors * GptLayout.SectorSize]);
+        write(backupEntries, new byte[(GptLayout.EntrySectors + 1) * GptLayout.SectorSize]);
         flush();
         write(backupEntries, entries);
         write(backupHeader, GptLayout.BuildHeader(blockCount, table.DiskGuid, backupHeader, GptLayout.PrimaryHeaderLba, backupEntries, entriesCrc));

@@ -130,6 +130,8 @@ internal static class GptLayout
         // Gleich sein muessen alle Felder ausser CRC, MyLBA, AlternateLBA und EntryLBA (die unterscheiden sich gewollt).
         if (!primary.AsSpan(40, 32).SequenceEqual(backup.AsSpan(40, 32)) || !primary.AsSpan(80, 8).SequenceEqual(backup.AsSpan(80, 8)))
             return Failure("HeadersDiffer", "Primaer- und Backupkopf beschreiben verschiedene Tabellen.");
+        if (new Guid(primary.AsSpan(56, 16)) == Guid.Empty)
+            return Failure("EmptyDiskGuid", "Die Disk-GUID fehlt.");
 
         var primaryEntries = new byte[EntryCount * EntrySize];
         read(PrimaryEntriesLba, EntrySectors, primaryEntries);
