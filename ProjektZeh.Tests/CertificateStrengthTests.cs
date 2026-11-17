@@ -100,6 +100,15 @@ public sealed class CertificateStrengthTests
         Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(Pss(sha1, sha1))), "SHA-1");
         Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(new AlgorithmIdentifier(PkcsObjectIdentifiers.IdRsassaPss))), "ohne Parameter = SHA-1");
         Assert.IsFalse(CertificateVerifier.HasStrongSignature(WithAlgorithm(new AlgorithmIdentifier(PkcsObjectIdentifiers.IdRsassaPss, DerNull.Instance))), "NULL-Parameter");
+        foreach (var malformed in new Asn1Encodable[] { new DerSequence(), new DerSequence(DerInteger.ValueOf(1)), new DerSequence(NistObjectIdentifiers.IdSha256, DerNull.Instance, DerNull.Instance) })
+        {
+            var algorithm = new AlgorithmIdentifier(PkcsObjectIdentifiers.IdRsassaPss, new DerSequence(
+                new DerTaggedObject(true, 0, sha256), new DerTaggedObject(true, 1, new DerSequence(PkcsObjectIdentifiers.IdMgf1, malformed))));
+            var certificate = WithAlgorithm(algorithm);
+            Assert.IsFalse(CertificateVerifier.HasStrongSignature(certificate), "kaputter MGF1-Parameter: " + malformed);
+            // Verify prueft zuerst den Namen; entscheidend ist, dass ein Grund zurueckkommt statt einer Ausnahme.
+            Assert.IsNotNull(CertificateVerifier.Verify([certificate], "x", [Root], Now), "Verify meldet einen Grund statt zu werfen");
+        }
     }
 
     private static AlgorithmIdentifier Pss(AlgorithmIdentifier hash, AlgorithmIdentifier maskHash) =>

@@ -422,8 +422,8 @@ namespace Cosmos.Network.Http
             }
 
             // RSASSA-PSS: a SHA-2 hash and MGF1 with the same hash (CA/B Baseline Requirements). Missing parameters
-            // would mean SHA-1; they are tested without throwing, as exceptions are slow on Cosmos and two at once on
-            // different threads halt it.
+            // would mean SHA-1. Missing, NULL and malformed MGF1 parameters are refused without an exception (slow on
+            // Cosmos; two at once on different threads halt it); only a malformed outer sequence is caught.
             if (!algorithm.Algorithm.Equals(PkcsObjectIdentifiers.IdRsassaPss) || algorithm.Parameters?.ToAsn1Object() is not Asn1Sequence sequence)
             {
                 return false;
@@ -443,7 +443,8 @@ namespace Cosmos.Network.Http
             DerObjectIdentifier hash = parameters.HashAlgorithm.Algorithm;
             AlgorithmIdentifier mask = parameters.MaskGenAlgorithm;
             return Array.IndexOf(s_strongHashes, hash) >= 0 && mask.Algorithm.Equals(PkcsObjectIdentifiers.IdMgf1) &&
-                mask.Parameters?.ToAsn1Object() is Asn1Sequence maskHash && AlgorithmIdentifier.GetInstance(maskHash).Algorithm.Equals(hash);
+                mask.Parameters?.ToAsn1Object() is Asn1Sequence maskHash && maskHash.Count is 1 or 2 &&
+                maskHash[0] is DerObjectIdentifier maskOid && maskOid.Equals(hash);
         }
 
         /// <summary>
