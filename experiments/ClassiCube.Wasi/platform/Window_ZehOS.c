@@ -30,6 +30,9 @@ enum {
 #define MAX_HEIGHT 1200
 
 static cc_int32 frameTic;
+#ifdef ZEHOS_RASTER_TOGGLE
+void ZehOS_RasterToggle(void);
+#endif
 /* ClassiCube will die Maus fangen; der Kernel lehnt ab, solange das Fenster nicht aktiv ist (etwa beim Spielstart),
    und gibt sie bei Esc und Fokusverlust selbst frei. Dann faengt der naechste Klick ins Bild sie wieder ein. */
 static cc_bool wantRawMouse;
@@ -180,6 +183,9 @@ void Window_ProcessEvents(float delta) {
 		switch (event[0]) {
 		case EVENT_KEY_DOWN:
 			SetFocused(true);
+#ifdef ZEHOS_RASTER_TOGGLE
+			if (event[1] == 66) { ZehOS_RasterToggle(); break; } /* F8, nur in Testbuilds */
+#endif
 			if ((key = MapKey(event[1]))) Input_SetPressed(key);
 			break;
 		case EVENT_KEY_UP:
