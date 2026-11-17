@@ -52,6 +52,11 @@ Getrennt nach Projektregel Hardware/Logik:
 - **Kopieren, Prüfsumme, Suche, Paketinstallation** erreichen die Bäume nicht (§0.5); zusätzlich prüfen sie vor dem Lesen den Typ: Zeichengerät nur über `(mode & FileTypeMask) == CharacterDevice` bzw. die `VfsStat`-Helfer, nie mit `HasFlag` (Typwerte überlappen, `VfsMode.cs:15-21`), ⇒ Ablehnung „Gerätedatei“ (huang P3 c). Die Suche steigt nicht in `/proc`, `/sys`, `/dev` ab (heute schon fremde Mounts, bleibt so). `cp /dev/zero x` darf nie die Platte füllen.
 - Dateimanager: Größe 0 wird für diese Bäume als „–“ angezeigt; Öffnen im Textbetrachter nutzt `ReadText`.
 
+**Hinweise für den Code (huang, Delta-Review):**
+- `ReadVirtual`/`ListVirtual` normalisieren den Pfad vor dem Tabellenvergleich wie `ResolvePath` (`Path.GetFullPath` gegen das Arbeitsverzeichnis, dann Ordinal-Vergleich): `/proc/./version`, `//proc/version`, `/proc/../proc/version` dürfen weder durchfallen noch eine falsche Datei treffen.
+- `ReadVirtual` hat für `/dev/zero` dieselbe 64-Ki-Grenze mit Fehler wie `ReadText`; `cat /dev/zero` endet so mit einem Grenzfehler (G5), auch wenn es direkt aus dem Erzeuger liest.
+- Ob ein Aufrufer `ReadVirtual` statt `ReadText` nimmt (`cat`, Umleitung, Textbetrachter, `ls`, Dateimanager), entscheidet eine gemeinsame Funktion `IsVirtualPath` (nach derselben Normalisierung), nicht jeder Befehl für sich.
+
 ## 4. Arbeitspakete
 
 | Paket | Inhalt | Prüfung |
@@ -71,6 +76,7 @@ Getrennt nach Projektregel Hardware/Logik:
 4. Erzeuger wirft ⇒ Fehlerergebnis, keine Ausnahme bis `FileService`.
 5. `ReadBytes` mit gemeldeter Länge 0 und 10 KiB Inhalt ⇒ 10 KiB; mit endlosem Strom ⇒ Fehler bei Grenze; echte leere Datei ⇒ 0 Bytes.
 6. Kopieren/Prüfsumme/Suche/`pkg install-local` mit Pfaden unter `/proc`, `/sys`, `/dev` ⇒ abgelehnt (fremder Mount), 0 Bytes geschrieben; Typprüfung über `FileTypeMask` erkennt Zeichengeräte, nicht Symlinks (Überlappung).
+7a. Normalisierung: `/proc/./version`, `//proc/version`, `/proc/../proc/version` ⇒ dieselbe Datei; `/proc/../etc/x` ⇒ kein virtueller Pfad. `ReadVirtual("/dev/zero")` ⇒ Grenzfehler bei 64 Ki.
 7. `ReadVirtual` liest aus dem Erzeuger auch dann, wenn unter Root eine gleichnamige Datei `/proc/version` liegt (Mount fehlgeschlagen).
 
 **Gasttests (QEMU, dann VMware; Ansage, ein Gast):**
