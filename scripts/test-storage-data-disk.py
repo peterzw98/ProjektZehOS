@@ -5,8 +5,8 @@ Das ISO muss mit -p:ZehOSSecurityRecovery=true gebaut sein (Textshell "Textshell
 Recovery-Build lehnt disk init ohne Administrator ab). Je Groesse in einem NEUEN Arbeitsordner:
 sparse RAW-Image als zweite Platte (sata1; sata0 ist eine leere 64-MiB-Platte), Boot, "disk init sata1", Ende,
 Neustart; dann muss das serielle Protokoll "Datenlaufwerk unter /data eingebunden." (ohne Befehl, nur ueber das
-Label, sata0 ist leer) und "Laufwerk sata1: <Bytes> Bytes, 1 Partition(en)" zeigen. "disk list" wird zusaetzlich
-fotografiert. Gegenprobe mit --legacy-image (Bestandsimage 64 MiB, Label ZEHOS): die Kopie liegt an sata0,
+Label, sata0 ist leer) und "Laufwerk sata1: <Bytes> Bytes, 1 Partition(en)" zeigen. Nach der Admin-Ersteinrichtung
+(leeres /data) wird "disk list" zusaetzlich fotografiert. Gegenprobe mit --legacy-image (Bestandsimage 64 MiB, Label ZEHOS): die Kopie liegt an sata0,
 der Rueckfall muss einbinden; SHA-256 des Originals vor und nach dem Lauf muss gleich sein.
 Vorhandene Images werden nie beschrieben; der Arbeitsordner darf nicht existieren.
 """
@@ -168,6 +168,18 @@ def wait_init(qmp, run: Path, mark: int, timeout: float) -> None:
     raise TimeoutError(f"disk init nach {timeout:.0f} s ohne Ergebnis; letzte STORAGE-Zeile: {last}; Bild {run / 'init-timeout.png'}")
 
 
+def provision_admin(qmp) -> None:
+    """Ein leeres /data loest die Admin-Ersteinrichtung aus; sie nimmt die naechsten Zeilen als Geheimeingabe.
+
+    Wie scripts/test-network.py (Name, Kennwort, Wiederholung); danach braucht PBKDF2 unter TCG etwas Zeit,
+    die Eingangsquittung von disk list wartet ohnehin bis zu 3 x 60 s.
+    """
+    for line in ("netadmin", "testpassword12345", "testpassword12345"):
+        qmp.line(line)
+        time.sleep(1)
+    time.sleep(12)
+
+
 def run_size(args: argparse.Namespace, base: Path, size: int) -> None:
     label = size_label(size).upper()
     work = new_work_dir(base / size_label(size))
@@ -187,7 +199,9 @@ def run_size(args: argparse.Namespace, base: Path, size: int) -> None:
     process, qmp = boot(args, run, [blank, data])
     tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
     tools.wait_serial(run, device_line("sata1", size, 1), 5)
-    send_command(qmp, run, "disk list", "Befehl: disk list")
+    qmp.shot(run / "nach-mount.png")
+    provision_admin(qmp)
+    send_command(qmp, run, "disk list", "Befehl: disk list", tries=3)
     time.sleep(2)
     qmp.shot(run / "disk-list.png")
     stop(process, qmp, run)
