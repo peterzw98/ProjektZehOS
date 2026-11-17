@@ -14,7 +14,9 @@ namespace ProjektZeh.Storage;
 internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
-    internal const int MaximumExt2DirectoryEntries = 8190;
+    // Cosmos 3.0.97 liest hoechstens 8192 Datensaetze inkl. "." und "..". Ein Platz bleibt frei, weil Cosmos beim
+    // Umbenennen erst den neuen Namen anlegt; im vollen Verzeichnis (8190) wird der Eintrag sonst unsichtbar (E4.0, Lauf 9).
+    internal const int MaximumExt2DirectoryEntries = 8189;
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly Func<string, int?>? directoryEntryLimit;
