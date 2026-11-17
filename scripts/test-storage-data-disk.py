@@ -134,6 +134,10 @@ def device_line(name: str, size: int, partitions: int) -> str:
     return f"Laufwerk {name}: {size} Bytes, {partitions} Partition(en)"
 
 
+# Alle gestarteten Gaeste: main beendet uebrig gebliebene auch nach einer Ausnahme, sonst laeuft QEMU weiter.
+GUESTS: list = []
+
+
 def boot(args: argparse.Namespace, run: Path, disks: list[Path], desktop: bool = False) -> tuple[object, "tools.Qmp"]:
     """Startet QEMU mit den Platten an AHCI-Port 0, 1, ... und wartet auf die Textshell (Recovery-ISO) bzw. den Desktop (normales ISO)."""
     machine = list(MACHINE_BASE)
@@ -145,6 +149,7 @@ def boot(args: argparse.Namespace, run: Path, disks: list[Path], desktop: bool =
     subprocess.run([*tool, "create", "-f", "qcow2", str(unused), "1M"], check=True, stdout=subprocess.DEVNULL, env=environment)
     port = tools.free_port()
     process = tools.start_qemu(args.iso_normal if desktop else args.iso_recovery, unused, run, port, args.accel, None)
+    GUESTS.append(process)
     tools.wait_serial(run, "Desktop ist bereit." if desktop else "Textshell ist bereit.", args.timeout)
     qmp = tools.Qmp(port)
     # Nach "bereit" laeuft noch der Netzwerkstart; Eingaben davor gingen im Test verloren oder blieben liegen.
@@ -437,17 +442,23 @@ def main() -> int:
     args.iso_normal = args.iso_normal.resolve() if args.iso_normal else None
     base = new_work_dir(args.work.resolve())
     sizes = args.size or [parse_size(text) for text in DEFAULT_SIZES]
-    for size in sizes:
-        run_size(args, base, size)
-    run_gpt(args, base)
-    if args.iso_normal:
-        run_probes(args, base, legacy)
-    else:
-        print("Sicherheitsproben A-F uebersprungen (kein --iso-normal).", flush=True)
-    if legacy:
-        run_legacy(args, base, legacy)
-    else:
-        print("Gegenprobe uebersprungen (kein --legacy-image).", flush=True)
+    try:
+        for size in sizes:
+            run_size(args, base, size)
+        run_gpt(args, base)
+        if args.iso_normal:
+            run_probes(args, base, legacy)
+        else:
+            print("Sicherheitsproben A-F uebersprungen (kein --iso-normal).", flush=True)
+        if legacy:
+            run_legacy(args, base, legacy)
+        else:
+            print("Gegenprobe uebersprungen (kein --legacy-image).", flush=True)
+    finally:
+        for process in GUESTS:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
     return 0
 
 

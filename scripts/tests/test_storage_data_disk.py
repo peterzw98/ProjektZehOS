@@ -70,6 +70,22 @@ class DataDiskHostTests(unittest.TestCase):
         self.assertNotIn('ide-hd,drive=appdisk,bus=ahci.0', disk.MACHINE_BASE)
         self.assertIn('ahci,id=ahci', disk.MACHINE_BASE)
 
+    def test_failure_kills_running_guest(self):
+        # Ein Fehler zwischen boot() und stop() darf keinen QEMU-Prozess stehen lassen.
+        import subprocess, sys
+        from unittest import mock
+        guest = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        iso = self.dir / 'x.iso'
+        iso.write_bytes(b'')
+        argv = ['x', '--iso', str(iso), '--work', str(self.dir / 'lauf'), '--size', '64M']
+        def fail(*_):
+            disk.GUESTS.append(guest)
+            raise RuntimeError('falsche Ursache')
+        with mock.patch.object(sys, 'argv', argv), mock.patch.object(disk, 'run_size', fail), \
+                mock.patch.object(disk, 'GUESTS', []), self.assertRaises(RuntimeError):
+            disk.main()
+        self.assertIsNotNone(guest.poll())
+
 
 if __name__ == '__main__':
     unittest.main()
