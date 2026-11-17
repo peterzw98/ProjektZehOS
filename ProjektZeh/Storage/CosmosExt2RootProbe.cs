@@ -449,16 +449,24 @@ internal static class CosmosExt2RootProbe
     private static void StepE(IBlockDevice root)
     {
         Begin("e");
+        // Phasenmarken nur als INFO: der Schrittname bleibt "e" fuer die Auswertung, ein FAIL ist so trotzdem verortbar
+        // (Lauf 1 am 17.11.: ArgumentNullException 'destinationArray' ohne Ort, mit 512M und 1G gleich).
         Directory.CreateDirectory("/e");
+        Write("e INFO Phase anlegen");
         for (int index = 0; index < RootProbeCatalog.EEntries; index++)
             WriteGenerated(RootProbeCatalog.EName(index), RootProbeCatalog.EName(index), "e", RootProbeCatalog.ELength(index));
+        Write("e INFO Phase umbenennen");
         for (int index = 1; index < RootProbeCatalog.EEntries; index += 10) File.Move(RootProbeCatalog.EName(index), $"/e/r{index:D5}");
+        Write("e INFO Phase loeschen");
         for (int index = 2; index < RootProbeCatalog.EEntries; index += 10) File.Delete(RootProbeCatalog.EName(index));
+        Write("e INFO Phase ersetzen");
         for (int index = 0; index < RootProbeCatalog.EChanged; index++) WriteGenerated($"/e/x{index:D5}", $"/e/x{index:D5}", "e", RootProbeCatalog.ELength(index));
 
+        Write("e INFO Phase auflisten");
         var listed = Directory.GetFileSystemEntries("/e");
         var unique = new HashSet<string>(listed, StringComparer.Ordinal);
         Check(unique.Count == listed.Length, $"{listed.Length - unique.Count} Doppelnamen");
+        Write($"e INFO Phase pruefen ({listed.Length} Eintraege)");
         int expected = 0;
         foreach (var entry in RootProbeCatalog.Expected(1))
         {
