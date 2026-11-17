@@ -31,6 +31,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `uptime` | Millisekunden seit ZehOS-Start anzeigen; ohne initialisierten Timer als nicht verfügbar melden |
 | `log` | Die letzten maximal 128 Systemdiagnosen in zeitlicher Reihenfolge anzeigen |
 | `frametimes [on\|off]` | Bildzeit laufender Paket-Apps in Anteile zerlegen (App-Wanduhrzeit einschließlich Verdrängung durch den Desktop, `sleep_ms`, Bildkopie, Skalierung, Desktop, Anzeige); bei `on` je 60-s-Messfenster eine Zeile `Anteile …` im seriellen Protokoll, ohne Argument der aktuelle Stand |
+| `wasmaot [on\|off]` | Paket-Apps mit passendem `.aot` beim nächsten Start nativ über WAMR ausführen (Standard aus). Nur in Kernels mit `-p:ZehOSWasmAot=true` wirksam; sonst meldet der Befehl „nicht verfügbar“, und Apps laufen unter wasm3. Jeder App-Start schreibt `WASM Start <id> Laufzeit=…` ins serielle Protokoll |
 
 Befehlsnamen sind unabhängig von Groß- und Kleinschreibung. Doppelte Anführungszeichen fassen Argumente zusammen, beispielsweise `echo "Hallo ZehOS"`. Backslashes bleiben normale Zeichen; Escape-Sequenzen werden nicht ausgewertet. Pipes (`|`) und abschließende Ausgabeumleitung (`>`/`>>`) funktionieren außerhalb doppelter Anführungszeichen. Leerzeilen werden ignoriert. Bei unbekannten Befehlen, falschen Argumenten oder nicht geschlossenen Anführungszeichen erscheint eine Fehlermeldung und danach der nächste Prompt.
 
@@ -308,7 +309,7 @@ Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was 
 - Höchstens 256 MiB Speicher; die App muss `should_exit` abfragen.
 - Der Interpreter ist unter QEMU deutlich langsamer als nativer Code.
 
-**In Arbeit, nicht für Apps freigegeben:** Ein nativer AOT-Pfad (WAMR 2.4.5 als reiner AOT-Lader, [AOT-Plan](docs/superpowers/plans/2026-11-17-aot-kernel.md), Etappe D) ist nur in Kernel gebaut, die ausdrücklich `-p:ZehOSWasmAot=true` oder die Gastprobe `-p:ZehOSAotProbe=true` verwenden. Der normale Build enthält ihn nicht; Paket-Apps laufen weiterhin ausschließlich unter wasm3. Paketformat, Auswahl und Laufzeitschalter folgen in Etappe E, AOT bleibt danach bis Etappe F standardmäßig aus. Probe und Fixtures: [ProjektZeh/Native/AotProbe/fixture/README.md](ProjektZeh/Native/AotProbe/fixture/README.md).
+**In Arbeit, nicht für Apps freigegeben:** Ein nativer AOT-Pfad (WAMR 2.4.5 als reiner AOT-Lader, [AOT-Plan](docs/superpowers/plans/2026-11-17-aot-kernel.md), Etappe D) ist nur in Kernel gebaut, die ausdrücklich `-p:ZehOSWasmAot=true` oder die Gastprobe `-p:ZehOSAotProbe=true` verwenden. Der normale Build enthält ihn nicht; dort laufen Paket-Apps ausschließlich unter wasm3. Mit dem Schalter wählt der Kernel seit Etappe E ein `.aot` mit eigener Kennung aus dem Paket, aber erst nach `wasmaot on`; AOT bleibt bis Etappe F standardmäßig aus. Namensregel, Hashprüfung und Rückfall: [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md#aot-datei-optional-aot-plan-etappe-e). Probe und Fixtures: [ProjektZeh/Native/AotProbe/fixture/README.md](ProjektZeh/Native/AotProbe/fixture/README.md).
 
 `help` zeigt `pkg` mit seinen Unterbefehlen. Nur ausdrücklich mit `-p:ZehOSWasm=false` gebaute Kernel und das Installer-ISO bieten keinen `pkg`-Befehl.
 

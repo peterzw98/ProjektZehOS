@@ -79,15 +79,15 @@ internal static unsafe class WasmRuntime
 
     /// <summary>
     /// Wie oben, laedt Modul und optionales .aot aber erst auf dem Worker, etwa nach einer Integritaetspruefung grosser
-    /// Paketdateien. Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung. log erhaelt die
-    /// gewaehlte Laufzeit beim Start und einen Rueckfall auf wasm3 (Gasttests fragen beides ab).
+    /// Paketdateien. Liefert load kein Modul, endet der Lauf mit LoadFailed und der Fehlermeldung. Mit name meldet der Lauf
+    /// seriell die gewaehlte Laufzeit und einen Rueckfall auf wasm3 (Gasttests fragen beides ab).
     /// </summary>
     public static void Enqueue(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas, IWasmSession session,
-        Action<WasmStatus, int, string> completed, Action<string>? log = null) =>
-        EnqueueLoaded(load, entry, gas, session, completed, log);
+        Action<WasmStatus, int, string> completed, string? name = null) =>
+        EnqueueLoaded(load, entry, gas, session, completed, name);
 
     private static void EnqueueLoaded(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas,
-        IWasmSession session, Action<WasmStatus, int, string> completed, Action<string>? log)
+        IWasmSession session, Action<WasmStatus, int, string> completed, string? name)
     {
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
@@ -104,7 +104,7 @@ internal static unsafe class WasmRuntime
                 // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
                 try { loaded = load(); }
                 catch (Exception exception) { loaded = (null, null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, log, out result, out message);
+                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
                 else message = loaded.Error ?? "Modul nicht geladen.";
                 // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
                 lock (gate) pending--;
@@ -177,7 +177,7 @@ internal static unsafe class WasmRuntime
     }
 
     private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session,
-        Action<string>? log, out int result, out string message)
+        string? name, out int result, out string message)
     {
         byte[] entryBytes = Encoding.ASCII.GetBytes(entry + "\0");
         byte* text = stackalloc byte[256];
@@ -188,18 +188,18 @@ internal static unsafe class WasmRuntime
         WaitedTicks = 0;
         try
         {
-            fixed (byte* name = entryBytes)
+            fixed (byte* entryName = entryBytes)
             {
                 bool native = WasmEngineSelection.Select(WasmEngineSelection.AotBuiltIn, aot, gas) == WasmEngine.Aot;
-                log?.Invoke(native ? "Start Laufzeit=aot " + WasmEngineSelection.AotAbi : "Start Laufzeit=wasm3");
-                code = native ? RunAot(aot!, name, &value, text) : RunWasm3(module, name, gas, &value, text);
+                ReportEngine(name, native ? "aot " + WasmEngineSelection.AotAbi : "wasm3");
+                code = native ? RunAot(aot!, entryName, &value, text) : RunWasm3(module, entryName, gas, &value, text);
                 // Scheitert das .aot vor dem Start (Laden, Instanz, Einstieg), laeuft dieselbe App unter wasm3. Nach einem
                 // Trap gibt es keinen zweiten Versuch. Ohne .wasm (AOT-Probe) bleibt der AOT-Status stehen.
                 if (native && module.Length > 0 && IsBeforeStart((WasmStatus)code))
                 {
-                    log?.Invoke($"Start Laufzeit=wasm3 AOT-Rueckfall: {(WasmStatus)code} {Marshal.PtrToStringAnsi((IntPtr)text)}");
+                    ReportEngine(name, $"wasm3 AOT-Rueckfall: {(WasmStatus)code} {Marshal.PtrToStringAnsi((IntPtr)text)}");
                     value = 0;
-                    code = RunWasm3(module, name, gas, &value, text);
+                    code = RunWasm3(module, entryName, gas, &value, text);
                 }
             }
         }
@@ -238,6 +238,13 @@ internal static unsafe class WasmRuntime
     [DllImport("*", EntryPoint = "zehos_wasm_run", ExactSpelling = true)]
     private static extern int NativeRun(byte* bytes, uint length, byte* entry, ulong gas, uint stackBytes, ulong memoryBytes,
         int* result, byte* message, uint messageLength);
+
+    // Eigene WASM-Zeile statt "APP <id> ...": Gasttests werten jede andere APP-Zeile beim Warten auf "erstes Bild" als
+    // Fehlschlag. Format: "WASM Start <name> Laufzeit=aot <AotAbi>" bzw. "Laufzeit=wasm3[ AOT-Rueckfall: <Status> <Text>]".
+    private static void ReportEngine(string? name, string engine)
+    {
+        if (name != null) Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Start {name} Laufzeit={engine}\n");
+    }
 
     // Statuscodes, die zehos_wasm_run_aot nur vor dem Aufruf des Einstiegs liefert (zehos_host_wamr.c).
     private static bool IsBeforeStart(WasmStatus status) =>

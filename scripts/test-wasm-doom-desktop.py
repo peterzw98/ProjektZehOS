@@ -24,7 +24,14 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   upgrade  Installation, Katalog mit hoeherer Generation, pkg upgrade auf 1.1.0, Start.
   corrupt  Server liefert eine veraenderte testapp.wasm; die Installation muss mit Pruefsummenfehler scheitern.
   minkernel  testapp 1.1.0 verlangt ZehOS 99.0.0; pkg upgrade muss ablehnen, danach startet testapp (Fotos: 1.0.0).
-Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien (vor dem PR).
+  aot      AOT-Plan Etappe E, ISO mit -p:ZehOSWasmAot=true: Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
+           Windows gibt es kein wamrc). AOT aus -> wasm3; "wasmaot on" -> aotapp laeuft nativ (Exitcode 7 der
+           Fixture); fremde Kennung -> wasm3; .aot ohne _start -> Rueckfall auf wasm3. Geprueft ueber die Zeilen
+           "WASM Start <id> Laufzeit=...".
+  aotold   Paket mit .aot auf einem Kernel ohne AOT-Auswahl (aelteres ISO): Installation und Start unter wasm3.
+  aotcorrupt  Server liefert ein veraendertes .aot; die Installation muss mit Pruefsummenfehler scheitern.
+Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien ausser den AOT-Faellen
+(vor dem PR), aotall = aot aotcorrupt (Gruppennamen duerfen keine Szenarionamen sein: Kindprozesse expandieren sonst endlos).
 """
 
 import argparse
@@ -51,8 +58,12 @@ TEST_USER, TEST_PASSWORD = "tester", "testkennwort1"
 # Deutsche Tastaturbelegung des Gasts (DEStandardLayout) liegt zentral in scripts/guest_keys.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from guest_keys import key_for  # noqa: E402
-SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel"]
-GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS}
+SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel", "aot", "aotold", "aotcorrupt"]
+GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS[:6], "aotall": ["aot", "aotcorrupt"]}
+# Kennung und Namensregel wie WasmEngineSelection.AotAbi im Kernel.
+AOT_FILE = "testapp.wamr245-aot5-x64-bc.aot"
+FOREIGN_AOT_FILE = "testapp.wamr999-aot6-x64-bc.aot"
+AOT_FIXTURES = ROOT / "ProjektZeh" / "Native" / "AotProbe"
 # Bei Aenderungen am Vorbereitungsablauf erhoehen, damit alte Snapshots nicht weiterverwendet werden.
 SNAPSHOT_FORMAT = "1"
 SNAPSHOTS = ROOT / ".tools" / "guest-snapshots"
@@ -472,6 +483,10 @@ class Guest:
     def quit_testapp(self) -> None:
         self.quit_app("testapp", ("q", 0))
 
+    def quit_testapp_named(self, name: str) -> None:
+        """Pakete, deren Einstieg testapp.wasm ist, enden ebenfalls mit q."""
+        self.quit_app(name, ("q", 0))
+
     def quit_doom(self) -> None:
         self.quit_app("doom", ("backspace", 1), ("up", 0.5), ("ret", 1), ("y", 0))
 
@@ -689,8 +704,75 @@ def scenario_minkernel(guest: Guest, args: argparse.Namespace, fixtures: Path, r
     guest.quit_testapp()
 
 
+def install_aot_apps(guest: Guest, fixtures: Path, repository: Repository, *apps: str) -> None:
+    repository.directory = fixtures / "repo-aot"
+    guest.use_source()
+    for app in apps:
+        guest.pkg(f"install {app}", f"{app} 1.0.0 installiert.")
+    guest.desktop()
+
+
+def start_engine(guest: Guest, name: str, result: str, *engines: str) -> int:
+    """Startet name, wartet auf die APP-Zeile result und prueft danach die Laufzeitzeilen in dieser Reihenfolge."""
+    mark = guest.mark()
+    guest.launch(name)
+    end = guest.wait(f"APP {name} {result}", 180, mark)
+    for engine in engines:
+        # Die Zeile steht vor dem Start im Protokoll; eine andere Laufzeit faellt hier nach kurzer Zeit auf.
+        mark = guest.wait(f"WASM Start {name} Laufzeit={engine}", 5, mark)
+    guest.shot(f"{name}-{result.split()[0].lower().rstrip(':')}")
+    return end
+
+
+def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
+    install_aot_apps(guest, fixtures, repository, "aotapp", "aotfremd", "aotfallback")
+    # Standard aus (bis Etappe F): trotz passendem .aot laeuft das .wasm.
+    start_engine(guest, "aotapp", "erstes Bild", "wasm3")
+    guest.quit_testapp_named("aotapp")
+    guest.shell("wasmaot on")
+    guest.desktop()
+    # Die Host-Fixture endet nach WASI-Ausgabe mit proc_exit(7); testapp.wasm lieferte stattdessen Bilder.
+    end = start_engine(guest, "aotapp", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc")
+    guest.wait("WASM Speicher", 60, end)
+    start_engine(guest, "aotfremd", "erstes Bild", "wasm3")
+    guest.quit_testapp_named("aotfremd")
+    # Das .aot der Probe-B-Fixture hat kein _start: Laden scheitert vor dem Start, dieselbe App laeuft unter wasm3.
+    start_engine(guest, "aotfallback", "erstes Bild", "aot wamr245-aot5-x64-bc", "wasm3 AOT-Rueckfall: EntryMissing")
+    guest.quit_testapp_named("aotfallback")
+
+
+def scenario_aotold(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
+    install_aot_apps(guest, fixtures, repository, "aotapp")
+    guest.start_app("aotapp")
+    guest.shot("aotapp-old-kernel")
+    guest.quit_testapp_named("aotapp")
+
+
+def scenario_aotcorrupt(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
+    repository.directory = fixtures / "repo-aot"
+    guest.use_source()
+    guest.pkg("install aotapp", "Pruefsumme falsch: " + AOT_FILE)
+    guest.qmp.line("pkg list")
+    time.sleep(1)
+    guest.shot("aotcorrupt-rejected")
+
+
 RUN = {"full": scenario_full, "remove": scenario_remove, "reboot": scenario_reboot, "upgrade": scenario_upgrade,
-       "corrupt": scenario_corrupt, "minkernel": scenario_minkernel}
+       "corrupt": scenario_corrupt, "minkernel": scenario_minkernel, "aot": scenario_aot, "aotold": scenario_aotold,
+       "aotcorrupt": scenario_aotcorrupt}
+
+
+def aot_fixture(source: str, symbol: str) -> bytes:
+    """Bytes eines eingebundenen .aot (von fixture/build*.sh erzeugtes C-Feld)."""
+    text = (AOT_FIXTURES / source).read_text(encoding="utf-8")
+    body = re.search(r"const uint8_t " + symbol + r"\[\] = \{(.*?)\};", text, re.DOTALL)
+    size = re.search(r"const uint32_t " + symbol + r"_size = (\d+);", text)
+    if not body or not size:
+        raise ValueError(f"{symbol} fehlt in {source}.")
+    data = bytes(int(value, 16) for value in re.findall(r"0x[0-9a-fA-F]{2}", body.group(1)))
+    if len(data) != int(size.group(1)):
+        raise ValueError(f"{symbol}: {len(data)} statt {size.group(1)} Bytes.")
+    return data
 
 
 def catalog_generation(repo: Path) -> int:
@@ -733,6 +815,20 @@ def build_fixtures(args: argparse.Namespace, target: Path) -> Path:
     shutil.copytree(repo, minkernel)
     add_testapp(minkernel, "1.1.0", "--min-kernel", "99.0.0")
     subprocess.run([*tool, "catalog", "--key", str(args.key), "--repo", str(minkernel), "--generation", str(generation + 1)],
+                   check=True, stdout=subprocess.DEVNULL)
+    # Pakete mit .aot neben testapp.wasm; Inhalt sind die AOT-Fixtures, weil unter Windows kein wamrc laeuft.
+    aot_repo = target / "repo-aot"
+    shutil.copytree(repo, aot_repo)
+    host = aot_fixture("aot_runtime_fixture_data.c", "zehos_aot_host_fixture")
+    no_start = aot_fixture("aot_fixture_data.c", "zehos_aot_fixture")
+    for app, name, data in (("aotapp", AOT_FILE, host), ("aotfremd", FOREIGN_AOT_FILE, host),
+                            ("aotfallback", AOT_FILE, no_start)):
+        aot = target / f"{app}.aot"
+        aot.write_bytes(data)
+        subprocess.run([*tool, "package", "--key", str(args.key), "--repo", str(aot_repo), "--id", app, "--version", "1.0.0",
+                        "--name", app.capitalize(), "--entry", "testapp.wasm", f"{target / 'testapp-1.0.0.wasm'}=testapp.wasm",
+                        f"{aot}={name}"], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([*tool, "catalog", "--key", str(args.key), "--repo", str(aot_repo), "--generation", str(generation + 1)],
                    check=True, stdout=subprocess.DEVNULL)
     shutil.copytree(repo / "testapp" / "1.0.0", target / "disk" / "pkgs" / "testapp" / "1.0.0")
     return target
@@ -804,7 +900,7 @@ def run_scenario(args: argparse.Namespace, scenario: str, fixtures: Path | None,
     work.mkdir(parents=True)
     repository = None
     if args.source is None:
-        repository = Repository(fixtures / "repo", args.tls, "testapp.wasm" if scenario == "corrupt" else None)
+        repository = Repository(fixtures / "repo", args.tls, {"corrupt": "testapp.wasm", "aotcorrupt": AOT_FILE}.get(scenario))
     source = args.source or repository.source
     disk = work / "data.qcow2"
     if base is not None:

@@ -88,7 +88,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, log);
+        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, packageId);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
