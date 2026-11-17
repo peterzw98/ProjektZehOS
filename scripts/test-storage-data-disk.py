@@ -130,6 +130,26 @@ def stop(process, qmp, run: Path) -> None:
         raise RuntimeError(f"Gast beendete sich nicht: {run}")
 
 
+def wait_init(qmp, run: Path, mark: int, timeout: float) -> None:
+    """Wartet auf das Ende von disk init; ein Fehlertext des Kernels beendet sofort, bei Timeout bleiben Bild und Protokollende."""
+    deadline, shown = time.monotonic() + timeout, mark
+    while time.monotonic() < deadline:
+        text = (run / "serial.log").read_text(encoding="utf-8", errors="replace")
+        for line in text[shown:].splitlines():
+            if "STORAGE init:" in line:
+                print(line.strip(), flush=True)
+        shown = len(text)
+        if "Laufwerksaenderung abgeschlossen." in text[mark:]:
+            return
+        failure = text.find("Befehl: Fehler:", mark)
+        if failure >= 0:
+            raise RuntimeError(text[failure:text.find("\n", failure)].strip())
+        time.sleep(2)
+    qmp.shot(run / "init-timeout.png")
+    tail = "\n".join(text.splitlines()[-15:])
+    raise TimeoutError(f"disk init nach {timeout:.0f} s ohne Ergebnis; Bild {run / 'init-timeout.png'}; Protokollende:\n{tail}")
+
+
 def run_size(args: argparse.Namespace, base: Path, gib: int) -> None:
     work = new_work_dir(base / f"{gib}g")
     blank, data = work / "blank.img", work / "data.img"
@@ -141,7 +161,7 @@ def run_size(args: argparse.Namespace, base: Path, gib: int) -> None:
     command = "disk init sata1" + (" --yes-large" if gib > 4 else "")
     mark = send_command(qmp, run, command, "Befehl: " + command)
     started = time.monotonic()
-    tools.wait_serial(run, "Laufwerksaenderung abgeschlossen.", args.init_timeout, mark)
+    wait_init(qmp, run, mark, args.init_timeout)
     print(f"{gib} GiB: disk init dauerte {time.monotonic() - started:.0f} s", flush=True)
     stop(process, qmp, run)
     run = new_work_dir(work / "lauf2")

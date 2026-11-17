@@ -31,8 +31,15 @@ internal sealed class StorageShellCommands
 
     private ResultErr Execute(string[] arguments, ITextOutput output)
     {
-        // Eingangsquittung fuer Gasttests: die Shell-Ausgabe erscheint nur auf dem Bildschirm.
+        // Eingangsquittung und Fehlertext fuer Gasttests: die Shell-Ausgabe erscheint nur auf dem Bildschirm.
         commandLog?.Invoke("disk " + string.Join(' ', arguments));
+        var result = Run(arguments, output);
+        if (!result.IsOK()) commandLog?.Invoke("Fehler: " + result.Message);
+        return result;
+    }
+
+    private ResultErr Run(string[] arguments, ITextOutput output)
+    {
         if (isAdministrator != null && !isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Laufwerksverwaltung erfordert Administratorrechte.");
         if (arguments.Length == 0)
         {

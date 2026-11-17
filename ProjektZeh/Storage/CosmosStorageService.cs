@@ -67,12 +67,14 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("ExistingPartitions", "Das Laufwerk hat bereits Partitionen; es wird nicht formatiert.");
             }
 
+            Progress("Leerpruefung beginnt");
             var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, device.ReadBlock);
             if (!blank.IsOK())
             {
                 return blank;
             }
 
+            Progress("Leerpruefung ok");
             var registration = RegisterFileSystem();
             if (!registration.IsOK())
             {
@@ -80,11 +82,13 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             Mbr.Create(device);
+            Progress("MBR geschrieben");
             if (!PartitionManager.Create(device, PartitionStart, device.BlockCount - PartitionStart, 0x0C, Guid.Empty))
             {
                 return Failure("PartitionCreationRefused", "Cosmos hat das Anlegen der Partition abgelehnt.");
             }
 
+            Progress("Partition angelegt");
             StorageManager.RescanPartitions(device);
             var partitions = StorageManager.GetPartitions(device);
             if (partitions.Count != 1)
@@ -103,6 +107,7 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             device.Flush();
+            Progress("formatiert");
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception)
@@ -110,6 +115,9 @@ internal sealed class CosmosStorageService : IStorageService
             return ResultErr.CreateFromException(exception);
         }
     }
+
+    // Fortschritt seriell: die Shell blockiert bei grossen Platten, der Bildschirm zeigt erst am Ende etwas.
+    private static void Progress(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE init: " + text + "\n");
 
     /// <summary>
     /// Bindet die einzige Partition des benannten Laufwerks ein, ohne sie zu formatieren.
