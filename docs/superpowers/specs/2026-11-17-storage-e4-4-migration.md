@@ -12,7 +12,7 @@ Stand: 17. November 2026, Basis `origin/master` (Etappe-4-Entwurf #145 gemergt).
 | `MigrationJournal` | **rein** Parse/Format; Schreiben über das Ziel | keine |
 | `LayoutMarker` | Root-Marker `state=fresh/migrating/ready` | Format wie `InstallMarker` (gleiche crc32-Regel, eigene Felder) |
 | `LayoutMigration.Run(...)` | Ablauf Schritte 1–10 aus Etappe 4 §3 | `IMigrationTarget`, `Func<IDisposable> lockSource` (Schreibsperre der Quelle; `Run` hält sie per `using`, die Sperre selbst baut 4.5) |
-| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename), `AppendJournal` (mit Flush), `Delete`, `ReadBack`, `FreeBytes` (verfügbare, nicht reservierte Blöcke × Blockgröße, huang P3 e), `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
+| `IMigrationTarget` | Schreibseite: `CreateDirectory`, `WriteFile` (Temp + Rename; Temp-Name fest `<pfad>.zehos-tmp`; flusht nicht selbst), `AppendJournal` (`W`/`D` mit Flush, `F` ohne eigenen Flush, weil `W` schon vor der Datei steht), `Delete`, `ReadBack`, `List` (alle Pfade unter der Zielwurzel, ohne Mountgrenzen zu überschreiten; nötig für die Wiederholungsregel §4/Test 20), `FreeBytes` (verfügbare, nicht reservierte Blöcke × Blockgröße, huang P3 e), `FreeInodes`, `Sync` | Hostfake in Tests; Cosmos-Umsetzung erst 4.5 |
 
 Die Quelle wird nur über `System.IO` gelesen (Hosttests mit Temp-Verzeichnis). Alle Ziel- und ACL-Pfade sind Kernelpfade mit `/` und werden mit einer reinen `/`-Pfadfunktion behandelt, nie mit `Path.GetFullPath`, damit die Tests auf Linux- und Windows-Hosts gleich laufen.
 
@@ -37,7 +37,7 @@ Relativ zu `/data`, Vergleich der Quelle **OrdinalIgnoreCase** (FAT), Ziel **Ord
 | jede andere `.zehos-*`-Datei | – | **Konflikt** (unbekannte Systemdatei, fail-closed) |
 | alles andere | `/srv/legacy-data/<relativer Pfad>` | Lead-Entscheid 11:23 |
 
-**Konflikte (stoppen vor jedem Schreibzugriff, mit Liste):** zwei Quellen auf dasselbe Ziel (Ordinal), unbekannte `.zehos-*`-Datei, Zielpfad verletzt die Komponentenregeln (reine Funktion `PathComponent.IsValid`, aus der Schleife in `FileAccessControl.IsManagedPath` herausgezogen und dort weiterverwendet; `PathGuard.Check` prüft das echte Verzeichnis und läuft erst beim Ausführen, huang P3 b), Konto-Name, der keine gültige Pfadkomponente ist, `home/<name>` ohne Konto (wird nach `/srv/legacy-data/home/<name>` gelegt, **kein** Konflikt, aber protokolliert).
+**Konflikte (stoppen vor jedem Schreibzugriff, mit Liste):** Datei ≥ 2 GiB (Root hat kein `large_file`, Gate/E4.0 Schritt k); Namenskomponente > 255 UTF-8-Bytes (ext2 `name_len`; FAT-LFN erlaubt 255 UTF-16-Einheiten); zwei Quellen auf dasselbe Ziel (Ordinal), unbekannte `.zehos-*`-Datei, Zielpfad verletzt die Komponentenregeln (reine Funktion `PathComponent.IsValid`, aus der Schleife in `FileAccessControl.IsManagedPath` herausgezogen und dort weiterverwendet; `PathGuard.Check` prüft das echte Verzeichnis und läuft erst beim Ausführen, huang P3 b), Konto-Name, der keine gültige Pfadkomponente ist, `home/<name>` ohne Konto (wird nach `/srv/legacy-data/home/<name>` gelegt, **kein** Konflikt, aber protokolliert).
 
 **Platzbedarf:** je Datei `ceil(size / 4096) * 4096`, je Verzeichnis 4096; Inodes = Dateien + Verzeichnisse; jeweils plus 10 % Reserve, mindestens 1 MiB bzw. 64 Inodes (Etappe 4 §3 Schritt 4).
 
@@ -65,7 +65,7 @@ F <pfad> <sha256>           Datei geschrieben und zurückgelesen
 
 `Parse` behandelt am **Ende** eine abgeschnittene Zeile sowie einen Schwanz aus Nullbytes oder ungültigen Zeichen als nicht vorhanden (ext2 ohne Journal kann nach einem Absturz die Dateigröße schon erhöht haben, huang P2-3); jede ungültige Zeile davor ⇒ Journal ungültig ⇒ Wiederholung verweigert. `D` ist wie `W` eine Absicht vor der Aktion; `CreateDirectory` ist bei der Wiederholung idempotent.
 
-**Wiederholung:** erlaubt, wenn Root-Marker `state=migrating` und jede Datei/jedes Verzeichnis auf Root entweder vom Installer stammt (`/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc/zehos`, Root-Marker – Liste aus 7a S4) oder im Journal als `D`, `W` oder `F` steht. Dann: Dateien aus `W`/`F` löschen, Verzeichnisse aus `D` von unten nach oben löschen, Journal löschen, neu beginnen. Abweichender Quellinventar-Hash ist kein Hindernis (die Quelle darf sich zwischen zwei Läufen geändert haben), wird aber protokolliert.
+**Wiederholung:** erlaubt, wenn Root-Marker `state=migrating` und jede Datei/jedes Verzeichnis auf Root entweder vom Installer stammt (`/boot`, `/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc`, `/etc/zehos`, Root-Marker – Liste aus 7a-S4 §3) oder im Journal als `D`, `W` oder `F` steht, oder ein Temp-Rest `<pfad>.zehos-tmp` zu einem dieser Pfade ist. Dann: Dateien aus `W`/`F` und Temp-Reste löschen, Verzeichnisse aus `D` von unten nach oben löschen, Journal löschen, neu beginnen. **Auch bei `state=fresh`** wird vor dem ersten Schreibzugriff geprüft, dass Root nur Installereinträge enthält; jede andere Datei ⇒ Konflikt, nichts geschrieben (sonst würde ein vorhandenes `/home/anna` still ersetzt). Abweichender Quellinventar-Hash ist kein Hindernis (die Quelle darf sich zwischen zwei Läufen geändert haben), wird aber protokolliert.
 
 **Root-Marker** (`LayoutMarker`, `/etc/zehos/.zehos-layout`): Zeilen `format=1`, `state=fresh|migrating|ready`, `disk=<GUID>`, bei `ready` nach Migration zusätzlich `source=<sha256>`, `files=<zahl>`; letzte Zeile `crc32=<hex>` wie `InstallMarker`. ≤ 512 Byte. Gemeinsame CRC-/Zeilenlogik mit `InstallMarker` wiederverwenden statt kopieren.
 
@@ -120,3 +120,32 @@ Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateC
 1. 7a S4: endgültige Liste der vom Installer auf Root angelegten Einträge (§4, Wiederholungsregel).
 2. *Entschieden 11:51:* `/srv` und `/srv/legacy-data` mit den Rechten des bisherigen `/data`-Eintrags.
 3. `FreeInodes` ist in Cosmos 3.0.97 nur über den Superblock lesbar (`s_free_inodes_count`); ob `VfsManager`/`VfsStatFs` ihn liefert, prüft 4.5.
+
+## 8. Umsetzungsstand
+
+Umgesetzt auf `task/storage-e4-4-migration` in `ProjektZeh/Storage/Migration/` (Hostlogik). Tests: `LayoutMigrationTests` (1–22, 21a) und `PackageTests.InstalledPackageStaysValidAfterLayoutMigration` (23). Kein Cosmos-`IMigrationTarget`, kein Shellbefehl und kein Gasttest; das bleibt bei 4.5.
+
+Präzisierungen gegenüber §1–§5:
+
+- `IMigrationTarget.List` wie in #164. Fehlende Pfade meldet das Ziel mit `ResultCode.NotFound`.
+- Das Home-Verzeichnis trägt im Ziel den **Kontonamen** (`SystemPaths.Root.Home`, Ordinal), Dateien und Ordner darunter den tatsächlichen Namen der Auflistung. Sonst fände das Root-Profil `/home/<konto>` bei abweichender Schreibweise auf FAT nicht.
+- Die CRC-/Zeilenregel liegt als `ChecksummedText` neben `Crc32`. `InstallMarker` (7a, noch nicht auf `master`) soll beim Merge darauf umgestellt werden.
+- Die Installerverzeichnisse aus 7a-S4 werden weder journalisiert noch angelegt noch gelöscht.
+- Die Rückleseprobe mit `FileAccessControl("/", Ordinal).Restore` läuft nur als Linux-Hosttest (12); im Ablauf folgt sie mit 4.5 im Kernel.
+- Schritt 8 erkennt eine Änderung gleicher Größe nur bei geändertem Zeitstempel (bewusste Grenze aus Test 21).
+- `IOException` und `UnauthorizedAccessException` aus Quelle oder Ziel werden zu einem Fehlerergebnis; andere Ausnahmen laufen durch. Die Schreibsperre wird in beiden Fällen freigegeben.
+- Vor `ready` steht eine Sync-Schranke (zweifach), danach noch einmal zweifach Sync; ohne die Schranke könnte nach einem Absturz `ready` dauerhaft sein, gepufferte Dateien aber nicht (Review peter-review P2-1). Scheitert ein `Sync` nach `ready`, meldet der Lauf einen Fehler; der Marker steht dann bereits auf `ready`.
+- `WriteFile` schreibt über `<pfad>.zehos-tmp` (`IMigrationTarget.TemporarySuffix`, wie #167). `AppendJournal` flusht `D`/`W` und den Kopf, `F` nicht. Ein Rest davon zu einer journalisierten Datei oder zum Marker gilt bei der Wiederholung (und bei `fresh` für den Marker) als eigene Spur und wird gelöscht, statt die Wiederholung zu verweigern.
+- Ein unvollständiger Journalkopf ohne gültige Folgezeilen gilt als leeres Journal (Absturz direkt nach `migrating`); ein ungültiger Kopf vor gültigen Zeilen bleibt ein Schaden.
+- Auch bei `state=fresh` darf das Ziel nur die Installereinträge enthalten; sonst `ForeignEntry`, nichts geschrieben. Journalpfade unter `/boot`, `/mnt`, `/proc`, `/sys` oder `/dev` gelten als fremd. `List()` darf `/` selbst liefern.
+- Grenzen von Root vor dem Schreiben: Dateien ab 2 GiB (ext2 ohne `large_file`), Verzeichnisnamen über 255 und Dateinamen über 245 UTF-8-Byte (Platz für die Temp-Endung) sowie Dateinamen, die selbst auf `.zehos-tmp` enden (würden vom Temp-Namen der gleichnamigen Datei überschrieben), sind Konflikte.
+- Desktopdatei: ein Hintergrundziel unter Systemdaten oder länger als `DesktopSettings.MaximumImageLength` wird geleert und protokolliert.
+- `/srv/legacy-data/home` (nur bei Homes ohne Konto) erbt wie alle neuen Verzeichnisse vom nächsten Elterneintrag, also von `/` (bisher `/data`), nicht von `/data/home`. Nach der Ersteinrichtung haben beide dieselben Rechte.
+
+Offen für 4.5 (aus den Reviews):
+
+- Rücklesen der umgeschriebenen Kontendatei mit `FileAccessControl("/", Ordinal).Restore` im Ablauf (Etappe 4 §3 Schritt 7) ist Pflicht.
+- Journalkosten: je Datei drei geflushte Zeilen und vollständiges Einlesen bei der Wiederholung; unter TCG mit vielen Dateien messen, gegebenenfalls `F`-Zeilen bündeln.
+- Der Hostfake bildet keine Schreibpufferung ab; die Dauerhaftigkeit vor `ready` belegt erst G4–G6.
+- Ein Nutzerordner `boot` unter `/data` wird als alte ESP ausgeschlossen; der Befehl zeigt das vor dem Bestätigen an.
+- `LayoutMigration.InstallerEntries` ist bisher eine eigene Liste neben 7a-S4 `PreparingRoot`; beim Bau des Installers eine gemeinsame Konstante verwenden und testen, dass ein frisch installiertes Root die Fremdprüfung besteht.
