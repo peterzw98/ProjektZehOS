@@ -265,18 +265,18 @@ internal sealed class CosmosStorageService : IStorageService
 
     private static ResultErr CheckEmptyDisk(IBlockDevice device)
     {
-        const ulong batchBlocks = 128;
+        // shortcut: liest die ganze Platte; der AHCI-Treiber bewegt nur 8 Sektoren (4 KiB) je Befehl, das dauert bei 32 GiB Minuten, bei 128 GiB Stunden. Vor Gastlaeufen ab 32 GiB entscheiden, ob nur Anfang und Ende geprueft werden.
+        ulong batchBlocks = 1024 * 1024 / device.BlockSize;
         var buffer = new byte[batchBlocks * device.BlockSize];
         for (ulong block = 0; block < device.BlockCount; block += batchBlocks)
         {
-            // Die festgelegte Testplattengroesse ist durch die Stapelgroesse teilbar.
-            device.ReadBlock(block, batchBlocks, buffer);
-            foreach (byte value in buffer)
+            // Die Plattengroesse ist nicht mehr durch die Stapelgroesse teilbar; der letzte Stapel wird gekuerzt.
+            ulong count = Math.Min(batchBlocks, device.BlockCount - block);
+            var span = buffer.AsSpan(0, (int)(count * device.BlockSize));
+            device.ReadBlock(block, count, span);
+            if (span.IndexOfAnyExcept((byte)0) >= 0)
             {
-                if (value != 0)
-                {
-                    return Failure("DiskNotEmpty", "Das Laufwerk enthaelt Daten; es wird nicht formatiert.");
-                }
+                return Failure("DiskNotEmpty", "Das Laufwerk enthaelt Daten; es wird nicht formatiert.");
             }
         }
 

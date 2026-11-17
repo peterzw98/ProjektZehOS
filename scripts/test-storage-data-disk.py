@@ -90,7 +90,34 @@ def boot(args: argparse.Namespace, run: Path, disks: list[Path]) -> tuple[object
     port = tools.free_port()
     process = tools.start_qemu(args.iso, unused, run, port, args.accel, None)
     tools.wait_serial(run, "Textshell ist bereit.", args.timeout)
-    return process, tools.Qmp(port)
+    qmp = tools.Qmp(port)
+    # Nach "bereit" laeuft noch der Netzwerkstart; Eingaben davor gingen im Test verloren oder blieben liegen.
+    try:
+        tools.wait_serial(run, "NET DHCP IPv4", 60)
+    except TimeoutError:
+        print("Kein DHCP-Ergebnis in 60 s; Eingabe trotzdem versucht.", flush=True)
+    time.sleep(3)
+    qmp.tap("ret")  # die erste Taste nach dem Start kann verloren gehen
+    qmp.shot(run / "00-bereit.png")
+    return process, qmp
+
+
+def send_command(qmp, run: Path, command: str, ack: str, tries: int = 2, ack_timeout: float = 60) -> int:
+    """Tippt command und wartet auf die Eingangsquittung des Kernels (serielle Zeile); danach bleibt die Ergebniszeit offen.
+
+    Ohne Quittung wird einmal erneut getippt; ein Bild pro Versuch zeigt, was die Shell wirklich anzeigt.
+    shortcut: Bildschirmtext wird nur als PNG festgehalten, nicht gelesen (kein OCR); bei Bedarf Textausgabe der Shell seriell spiegeln.
+    """
+    for attempt in range(1, tries + 1):
+        log = run / "serial.log"
+        mark = len(log.read_text(encoding="utf-8", errors="replace")) if log.exists() else 0
+        qmp.line(command)
+        try:
+            return tools.wait_serial(run, ack, ack_timeout, mark)
+        except TimeoutError:
+            qmp.shot(run / f"eingabe-versuch-{attempt}.png")
+            print(f"Keine Quittung '{ack}' nach Versuch {attempt}; Bild: {run / f'eingabe-versuch-{attempt}.png'}", flush=True)
+    raise TimeoutError(f"Eingabe '{command}' kam im Gast nicht an (Quittung '{ack}' fehlt)")
 
 
 def stop(process, qmp, run: Path) -> None:
@@ -110,15 +137,16 @@ def run_size(args: argparse.Namespace, base: Path, gib: int) -> None:
     create_sparse(data, gib * GIB)
     run = new_work_dir(work / "lauf1")
     process, qmp = boot(args, run, [blank, data])
-    mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
-    qmp.line("disk init sata1")
+    mark = send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
+    started = time.monotonic()
     tools.wait_serial(run, "Laufwerksaenderung abgeschlossen.", args.init_timeout, mark)
+    print(f"{gib} GiB: disk init dauerte {time.monotonic() - started:.0f} s", flush=True)
     stop(process, qmp, run)
     run = new_work_dir(work / "lauf2")
     process, qmp = boot(args, run, [blank, data])
     tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
     tools.wait_serial(run, device_line("sata1", gib * GIB, 1), 5)
-    qmp.line("disk list")
+    send_command(qmp, run, "disk list", "Befehl: disk list")
     time.sleep(2)
     qmp.shot(run / "disk-list.png")
     stop(process, qmp, run)

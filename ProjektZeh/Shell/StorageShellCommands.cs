@@ -12,14 +12,16 @@ internal sealed class StorageShellCommands
     private readonly IStorageService storage;
     private readonly Func<bool>? isAdministrator;
     private readonly Action? storageChanged;
+    private readonly Action<string>? commandLog;
 
     public ShellCommand[] Commands { get; }
 
-    public StorageShellCommands(IStorageService storage, Func<bool>? isAdministrator = null, Action? storageChanged = null)
+    public StorageShellCommands(IStorageService storage, Func<bool>? isAdministrator = null, Action? storageChanged = null, Action<string>? commandLog = null)
     {
         this.storage = storage;
         this.isAdministrator = isAdministrator;
         this.storageChanged = storageChanged;
+        this.commandLog = commandLog;
         Commands =
         [
             new("disk", "disk list|init <Name>|mount <Name>|unmount",
@@ -29,6 +31,8 @@ internal sealed class StorageShellCommands
 
     private ResultErr Execute(string[] arguments, ITextOutput output)
     {
+        // Eingangsquittung fuer Gasttests: die Shell-Ausgabe erscheint nur auf dem Bildschirm.
+        commandLog?.Invoke("disk " + string.Join(' ', arguments));
         if (isAdministrator != null && !isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Laufwerksverwaltung erfordert Administratorrechte.");
         if (arguments.Length == 0)
         {
