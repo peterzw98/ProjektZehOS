@@ -26,7 +26,7 @@ internal sealed record IdentityResult(InstalledState State, string Reason)
 }
 
 /// <summary>Ergebnis der Root-Superblockpruefung; Unclean trennt "nur s_state" von unbekanntem RoCompat (Etappe 4, §2).</summary>
-internal enum RootCheck
+public enum RootCheck
 {
     Ok,
     Unclean,
@@ -51,7 +51,7 @@ internal static class InstalledIdentity
         if (decision == Ext2MountDecision.Ok) return RootCheck.Ok;
         if (decision == Ext2MountDecision.Reject) return RootCheck.Reject;
         byte[] clean = superblock[..1024].ToArray();
-        BitConverter.TryWriteBytes(clean.AsSpan(58, 2), (ushort)1);
+        BitConverter.TryWriteBytes(clean.AsSpan(Ext2FeatureGate.StateOffset, 2), (ushort)1);
         return Ext2FeatureGate.Evaluate(clean) == Ext2MountDecision.Ok ? RootCheck.Unclean : RootCheck.ReadOnly;
     }
 
