@@ -154,7 +154,7 @@ internal sealed class CosmosNetworkService : INetworkService
         CosmosSaltSource.Fill(nonce);
         byte[] request = Sntp.CreateRequest(nonce);
         // Der parameterlose Cosmos-Konstruktor bindet Port 0, Antworten kaemen dann nie an (3.0.97, wie DnsClient mit Port 53).
-        var client = new Cosmos.Kernel.System.Network.UdpClient(Sntp.Port); Exception? failure = null; DateTime network = default, rtc = default; bool answered = false;
+        var client = new Cosmos.Kernel.System.Network.UdpClient(Sntp.Port); Exception? failure = null; DateTime network = default, rtc = default, current = default; bool answered = false;
         try
         {
             client.Connect(server, port);
@@ -170,6 +170,7 @@ internal sealed class CosmosNetworkService : INetworkService
                 {
                     network = parsed.Value;
                     rtc = DateTime.UtcNow;
+                    current = SystemClock.UtcNow;
                     answered = true;
                 }
                 if (!answered && !repeated && clock.ElapsedMilliseconds >= NtpRetryMilliseconds) { client.Send(request); repeated = true; }
@@ -179,10 +180,12 @@ internal sealed class CosmosNetworkService : INetworkService
         catch (Exception exception) { failure = exception; }
         try { client.Close(); } catch (Exception exception) { failure = CleanupFailure(failure, "NTP", exception); }
         if (failure != null) throw failure;
-        var offset = ClockCorrection.Offset(rtc, network, TlsRoots.MinimumTime);
+        var offset = ClockCorrection.Offset(rtc, current, network, TlsRoots.MinimumTime);
         if (!offset.IsOK()) throw new IOException("Zeitabgleich nicht uebernommen: " + offset.Status.Message);
         SystemClock.Apply(offset.Value);
-        return "Uhr abgeglichen mit " + host + ": " + network.ToString("u") + " (Versatz zur RTC " + offset.Value.TotalSeconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " s).";
+        // Eine unplausible Uhr wird ohne Rueckschrittgrenze korrigiert; das soll im Protokoll sichtbar sein.
+        string warning = ClockCorrection.IsPlausible(current, TlsRoots.MinimumTime) ? "" : " Warnung: Die Uhr war unplausibel und wurde ungeprueft uebernommen (SNTP ist nicht authentifiziert).";
+        return "Uhr abgeglichen mit " + host + ": " + network.ToString("u") + " (Versatz zur RTC " + offset.Value.TotalSeconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " s)." + warning;
     }
 
     private static string Ping(Address address, CancellationToken token)

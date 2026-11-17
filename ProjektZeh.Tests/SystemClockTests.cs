@@ -71,6 +71,15 @@ public sealed class SystemClockTests
         var era1 = Response(new DateTime(2040, 1, 1, 0, 0, 0, DateTimeKind.Utc));
         Assert.AreEqual(new DateTime(2040, 1, 1, 0, 0, 0, 500, DateTimeKind.Utc), Sntp.ParseResponse(era1, Nonce).Value);
         Assert.IsTrue(Sntp.ParseResponse(Response(Server, first: 0x1C), Nonce).IsOK(), "Version 3 wird angenommen");
+
+        // Letzte Sekunde von Era 0 (oberstes Bit gesetzt) und erste von Era 1.
+        var lastEra0 = Response(new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        BinaryPrimitives.WriteUInt32BigEndian(lastEra0.AsSpan(40), uint.MaxValue);
+        BinaryPrimitives.WriteUInt32BigEndian(lastEra0.AsSpan(44), 0);
+        Assert.AreEqual(new DateTime(2036, 2, 7, 6, 28, 15, DateTimeKind.Utc), Sntp.ParseResponse(lastEra0, Nonce).Value);
+        BinaryPrimitives.WriteUInt32BigEndian(lastEra0.AsSpan(40), 0);
+        BinaryPrimitives.WriteUInt32BigEndian(lastEra0.AsSpan(44), 0xC0000000);
+        Assert.AreEqual(new DateTime(2036, 2, 7, 6, 28, 16, 750, DateTimeKind.Utc), Sntp.ParseResponse(lastEra0, Nonce).Value, "Era 1 mit 0,75 s");
     }
 
     [TestMethod]
@@ -92,21 +101,33 @@ public sealed class SystemClockTests
     public void PlausibleClockMayGoForwardButOnlyFiveMinutesBack()
     {
         DateTime rtc = Server;
-        Assert.AreEqual(TimeSpan.FromDays(3), ClockCorrection.Offset(rtc, rtc.AddDays(3), Bound).Value);
-        Assert.AreEqual(TimeSpan.FromMinutes(-5), ClockCorrection.Offset(rtc, rtc.AddMinutes(-5), Bound).Value);
-        var refused = ClockCorrection.Offset(rtc, rtc.AddMinutes(-6), Bound);
+        Assert.AreEqual(TimeSpan.FromDays(3), ClockCorrection.Offset(rtc, rtc, rtc.AddDays(3), Bound).Value);
+        Assert.AreEqual(TimeSpan.FromMinutes(-5), ClockCorrection.Offset(rtc, rtc, rtc.AddMinutes(-5), Bound).Value);
+        var refused = ClockCorrection.Offset(rtc, rtc, rtc.AddMinutes(-6), Bound);
         Assert.IsFalse(refused.IsOK());
         StringAssert.Contains(refused.Status.Message, "BackwardStepRefused");
+    }
+
+    [TestMethod]
+    public void LaterSyncCannotUndoAnEarlierForwardCorrection()
+    {
+        // RTC zwei Tage nach; der erste Abgleich stellt vor. Ein zweiter (gefaelschter) darf nur 5 Minuten hinter die
+        // aktuelle Kernelzeit, nicht zurueck auf die RTC.
+        DateTime rtc = Server.AddDays(-2), current = Server;
+        StringAssert.Contains(ClockCorrection.Offset(rtc, current, Server.AddDays(-1), Bound).Status.Message, "BackwardStepRefused");
+        Assert.AreEqual(Server.AddMinutes(-4) - rtc, ClockCorrection.Offset(rtc, current, Server.AddMinutes(-4), Bound).Value, "Versatz bleibt relativ zur RTC");
     }
 
     [TestMethod]
     public void ImplausibleClockIsFullyCorrectedButNeverToAnImplausibleTime()
     {
         var rtc2020 = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        Assert.AreEqual(Server - rtc2020, ClockCorrection.Offset(rtc2020, Server, Bound).Value, "RTC vor dem Bundle");
+        Assert.AreEqual(Server - rtc2020, ClockCorrection.Offset(rtc2020, rtc2020, Server, Bound).Value, "RTC vor dem Bundle");
         var rtcFuture = new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        Assert.AreEqual(Server - rtcFuture, ClockCorrection.Offset(rtcFuture, Server, Bound).Value, "RTC weit in der Zukunft darf zurueck");
-        StringAssert.Contains(ClockCorrection.Offset(Server, Bound.AddDays(-1), Bound).Status.Message, "NetworkTimeImplausible");
-        StringAssert.Contains(ClockCorrection.Offset(rtc2020, Bound.AddYears(16), Bound).Status.Message, "NetworkTimeImplausible");
+        Assert.AreEqual(Server - rtcFuture, ClockCorrection.Offset(rtcFuture, rtcFuture, Server, Bound).Value, "RTC weit in der Zukunft darf zurueck");
+        var rtcJustTooLate = Bound.AddYears(15).AddDays(1);
+        Assert.AreEqual(Server - rtcJustTooLate, ClockCorrection.Offset(rtcJustTooLate, rtcJustTooLate, Server, Bound).Value, "knapp ueber 15 Jahre gilt als unplausibel");
+        StringAssert.Contains(ClockCorrection.Offset(Server, Server, Bound.AddDays(-1), Bound).Status.Message, "NetworkTimeImplausible");
+        StringAssert.Contains(ClockCorrection.Offset(rtc2020, rtc2020, Bound.AddYears(16), Bound).Status.Message, "NetworkTimeImplausible");
     }
 }

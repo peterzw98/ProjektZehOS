@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace ProjektZeh.Network;
 
@@ -8,7 +9,8 @@ internal static class TlsRoots
 {
     private static byte[]? bundle;
 
-    private static DateTime? minimumTime;
+    // Ticks statt DateTime?: Netzwerk-Worker und Wasm-Thread lesen gleichzeitig; ein long laesst sich atomar lesen.
+    private static long minimumTicks;
 
     // Einmal je Start lesen: jeder HTTPS-Abruf (ein Paket sind 4 + Dateienzahl) las sonst 189 KB neu.
     internal static byte[] Load() => bundle ??= Read("ZehOS.TlsRoots");
@@ -17,7 +19,20 @@ internal static class TlsRoots
     /// Etappe 12.2: Stand des eingebetteten Mozilla-Bundles als Untergrenze jeder TLS-Uhrzeit. Eine Uhr davor ist sicher
     /// falsch, weil das Bundle nicht aus der Zukunft stammen kann.
     /// </summary>
-    internal static DateTime MinimumTime => minimumTime ??= ParseBundleDate(Load());
+    internal static DateTime MinimumTime
+    {
+        get
+        {
+            long ticks = Volatile.Read(ref minimumTicks);
+            if (ticks == 0)
+            {
+                ticks = ParseBundleDate(Load()).Ticks;
+                Volatile.Write(ref minimumTicks, ticks);
+            }
+
+            return new DateTime(ticks, DateTimeKind.Utc);
+        }
+    }
 
     private const string DateMarker = "Certificate data from Mozilla as of:";
     private const string Months = "JanFebMarAprMayJunJulAugSepOctNovDec";

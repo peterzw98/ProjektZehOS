@@ -39,17 +39,19 @@ internal static class ClockCorrection
         utc.Kind == DateTimeKind.Utc && utc >= lowerBound && utc <= lowerBound.AddYears(PlausibleYears);
 
     /// <summary>
-    /// Versatz, der die RTC auf die Netzwerkzeit bringt. Eine unplausible RTC wird vollstaendig korrigiert; eine plausible
-    /// darf beliebig vor-, aber hoechstens <see cref="MaximumBackward"/> zurueckgestellt werden.
+    /// Versatz, der die RTC (<paramref name="rtcUtc"/>) auf die Netzwerkzeit bringt. Massgeblich fuer Plausibilitaet und
+    /// Rueckschritt ist die aktuelle Kernelzeit (<paramref name="currentUtc"/>, RTC plus bisherigem Versatz), damit ein
+    /// spaeterer Abgleich eine fruehere Vorwaertskorrektur nicht weiter als 5 Minuten zuruecknimmt. Eine unplausible Zeit
+    /// wird vollstaendig korrigiert; dann kann ein Angreifer auf dem Pfad jede Zeit ab dem Bundle-Stand setzen (Spec §2.3).
     /// </summary>
-    public static ResultObject<TimeSpan> Offset(DateTime rtcUtc, DateTime networkUtc, DateTime lowerBound)
+    public static ResultObject<TimeSpan> Offset(DateTime rtcUtc, DateTime currentUtc, DateTime networkUtc, DateTime lowerBound)
     {
         if (!IsPlausible(networkUtc, lowerBound))
             return Refused("NetworkTimeImplausible", "Netzwerkzeit " + networkUtc.ToString("u") + " liegt ausserhalb des plausiblen Bereichs.");
-        TimeSpan offset = networkUtc - rtcUtc;
-        if (IsPlausible(rtcUtc, lowerBound) && offset < -MaximumBackward)
-            return Refused("BackwardStepRefused", "Netzwerkzeit liegt " + (-offset).ToString(@"d\.hh\:mm\:ss") + " hinter der Uhr; mehr als 5 Minuten Rueckschritt werden nicht uebernommen.");
-        return ResultObjectFactory.CreateSuccess(offset);
+        TimeSpan step = networkUtc - currentUtc;
+        if (IsPlausible(currentUtc, lowerBound) && step < -MaximumBackward)
+            return Refused("BackwardStepRefused", "Netzwerkzeit liegt " + (-step).ToString(@"d\.hh\:mm\:ss") + " hinter der Uhr; mehr als 5 Minuten Rueckschritt werden nicht uebernommen.");
+        return ResultObjectFactory.CreateSuccess(networkUtc - rtcUtc);
     }
 
     private static ResultObject<TimeSpan> Refused(string cause, string message) =>
