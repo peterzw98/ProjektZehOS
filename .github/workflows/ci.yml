@@ -18,6 +18,35 @@ env:
   DOTNET_NOLOGO: 'true'
 
 jobs:
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # Ein PR, der nur Markdown oder Dateien unter docs/ aendert, braucht keinen Kernelbuild. Als Bedingung am Job
+      # statt als Pfadfilter am Workflow, damit uebersprungene Jobs spaeter als Pflichtpruefung nicht haengen bleiben.
+      - name: Check whether anything but documentation changed
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FILES_URL: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files
+        run: |
+          code=true
+          if [ "$EVENT" = "pull_request" ]; then
+            # Laesst sich die Dateiliste nicht lesen, wird gebaut: lieber ein Build zu viel als einer zu wenig.
+            if files=$(gh api "$FILES_URL" --paginate --jq '.[].filename') && [ -n "$files" ] \
+              && ! printf '%s\n' "$files" | grep -qvE '(\.md$|^docs/)'; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Kernelbuild noetig: $code"
+
   tests:
     name: Shell tests and .NET analysis
     runs-on: ubuntu-24.04
@@ -78,6 +107,9 @@ jobs:
 
   kernel:
     name: Cosmos x64 build
+    needs: changes
+    # Der Gastlauf haengt an diesem Job und entfaellt bei reinen Doku-PRs mit.
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
