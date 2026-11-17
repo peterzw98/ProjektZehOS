@@ -22,6 +22,8 @@ internal sealed class FileService
     private readonly Func<string, bool, ResultErr>? pathGuard;
     // Erzeuger der /proc- und /sys-Dateien (normalisierter Pfad -> Snapshot); der Kernel liefert ihn aus Cosmos-Werten.
     private readonly Func<string, ResultObject<byte[]>>? virtualSource;
+    // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
+    private readonly Func<string, bool> isRegularFile;
 
     public string CurrentDirectory { get; private set; }
 
@@ -29,9 +31,11 @@ internal sealed class FileService
         FileAccessControl? access = null, UserSession? session = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
         Func<string, bool, ResultErr>? pathGuard = null,
-        Func<string, ResultObject<byte[]>>? virtualSource = null)
+        Func<string, ResultObject<byte[]>>? virtualSource = null,
+        Func<string, bool>? isRegularFile = null)
     {
         this.virtualSource = virtualSource;
+        this.isRegularFile = isRegularFile ?? IsRegularHostFile;
         this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
@@ -494,6 +498,8 @@ internal sealed class FileService
             // Oeffnen prueft auch fehlende Quellen, bevor Zielrechte angelegt werden.
             using (var input = new FileStream(from.Value!, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
+                // Geraete liefern kein EOF (/dev/zero wuerde die Platte fuellen); geprueft vor jedem Ziel oder Rechte-Eintrag.
+                if (!isRegularFile(from.Value!)) throw new IOException("Keine regulaere Datei (Geraet oder Sonderdatei).");
                 if (access != null && (session == null || !access.Check(session, to.Value!, FilePermission.Write, true).IsOK()))
                     throw new UnauthorizedAccessException("Zugriff verweigert.");
                 if (File.Exists(to.Value!) || Directory.Exists(to.Value!) || (access?.Contains(to.Value!) ?? false))
@@ -692,6 +698,19 @@ internal sealed class FileService
         catch (Exception exception) when (IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
+        }
+    }
+
+    /// <summary>Hoststandard: vorhandener Eintrag ohne Verzeichnis-, Geraete- oder Reparse-Kennung; Fehler gelten als nicht regulaer.</summary>
+    private static bool IsRegularHostFile(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) == 0;
+        }
+        catch (Exception exception) when (IsFileError(exception))
+        {
+            return false;
         }
     }
 

@@ -121,6 +121,26 @@ public sealed class VirtualFileServiceTests
     }
 
     [TestMethod]
+    public void CopyAndMoveRejectNonRegularSourcesBeforeWriting()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "geraet"), "x");
+            var files = new FileService(root, isRegularFile: _ => false);
+            Assert.IsFalse(files.CopyFile("geraet", "kopie").IsOK());
+            Assert.IsFalse(files.MoveFile("geraet", "verschoben").IsOK());
+            CollectionAssert.AreEqual(new[] { Path.Combine(root, "geraet") }, Directory.GetFileSystemEntries(root), "Kein Ziel und keine Temporaerdatei.");
+            Assert.IsTrue(new FileService(root).CopyFile("geraet", "kopie").IsOK(), "Hoststandard nimmt normale Dateien.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [TestMethod]
     public void ReadBytesReadsToEofWhenLengthIsZeroAndKeepsEmptyFilesEmpty()
     {
         using (var stream = new MemoryStream(new byte[10 * 1024]))
