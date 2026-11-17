@@ -20,6 +20,17 @@ WAMR 2.4.5 läuft im selben Probe-Build als reiner AOT-Lader (`ThirdParty/wamr`,
 
 Quellbefund (efcf20c, kein Gasttest mit Symlinks): `VfsManager.TryResolve` (`VfsManager.cs:508ff`) ist privat, folgt Symlinks in jedem Segment einschließlich des letzten (höchstens 8), lehnt `..` ab und liefert keinen kanonischen Pfad; öffentliche Aufrufe wie `TryStat` und `TryOpenFile` folgen ebenfalls. Ein `lstat` ohne Folgen gibt es nicht. In `System.IO` ist `LStat` gleich `Stat`, `SymLink` liefert `EPERM`, `ReadLink` nichts (`InteropSysFilePlug.cs:207-287`): ZehOS selbst legt keine Links an, sieht vorhandene ext2-Links aber nie als solche. `IsReadOnlyPath` prüft den unaufgelösten Text (`FileDescriptorTable.cs:98`, `VfsManager.Paths.cs:212`), ein Symlink-Elternpfad kann ein Lese-Mount-Flag also umgehen. Die Zuordnung Pfad → Mount (`FindMount`, `VfsManager.cs:671`) ist privat; öffentlich ist nur `VfsManager.Mounts`. ZehOS prüft deshalb vor jedem Dateizugriff jede Komponente ohne Folgen und lehnt jeden Symlink und jeden fremden Mount ab (`ProjektZeh/Security/PathGuard.cs`, Cosmos-Anbindung `CosmosPathGuard.cs`). Restrisiko: Änderungen am Baum zwischen Prüfung und Zugriff.
 
+## Mounts für die Migration (Etappe 4.5) in Cosmos 3.0.97 am 17. November 2026
+
+Befund aus Reflection und IL der installierten Assembly `Cosmos.Kernel.System` 3.0.97 (kein Gasttest):
+
+- Es gibt kein `VfsManager.UnregisterFileSystem`. ZehOS registriert deshalb je Zweck einen festen Namen (`CosmosSwitchableFileSystem`), dessen inneren Typ es direkt vor dem Einhängen setzt.
+- `VfsManager.TryMount(name, Partition, flags, mountPoint, out mount)` reicht den Partitionsindex als Quelltext weiter und setzt `VfsMount.Partition`. Die Überladung mit Quelle **und** Partition ist nicht öffentlich.
+- `FatFileSystemType` hat einen Konstruktor mit `IBlockDevice`. Das injizierte Gerät gilt nur bei leerer Quelle; ein Index als Quelle öffnet die echte Partition aus `StorageManager.Partitions`. Der Wechseltyp verwirft den Index deshalb und gibt eine leere Quelle weiter. So liest die Quelle `/data` während der Migration über `CosmosReadOnlyFileSystem` und `CosmosReadOnlyBlockDevice`, und `VfsMount.Partition` bleibt für Identitätsprüfung und `IsPartitionMounted` gesetzt.
+- Grund für den Lese-Wrapper: Auch ein nur lesend geöffneter FAT-Handle ruft beim Release `Fsync` auf (Verzeichniseintrag und Flush). `MountFlags.ReadOnly` allein verhindert das nicht.
+
+Der Ablauf ist nur unter `-p:ZehOSRootMigration=true` gebaut; der Gastnachweis (G4–G6) steht aus.
+
 ## ext2-Verzeichnisgrenze in Cosmos 3.0.97
 
 Quellbefund: `Ext2DirectoryHelper.ParseDirectory` beendet die Auflistung nach 8192 Datensätzen einschließlich `.` und `..`. ZehOS begrenzt neue FileService-Einträge deshalb auf 8189 direkte Kinder je beschreibbarem ext2-Verzeichnis; ein Platz bleibt frei, weil Cosmos beim Umbenennen erst den neuen Namen anlegt (siehe Abschnitt zur ext2-Verzeichnisgrenze). Der Adapter verwendet den innersten exakten VFS-Mount und dessen `StatFs.Type` (`0xEF53`); ein darunter eingehängtes FAT erbt die Grenze nicht. MigrationPlan zählt Quelle und geplantes Ziel einschließlich erzeugter Eltern sowie Marker-/Journalplatz vor Zielschreibzugriffen. [Entwurf und versionsgebundene Cosmos-Quellen](superpowers/specs/2026-11-17-ext2-directory-limit.md).

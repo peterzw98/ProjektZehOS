@@ -38,7 +38,7 @@ internal static class CosmosLayoutProfile
         if (device is null || !Gpt.IsGpt(device)) return legacy;
         var table = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
         if (!table.IsOK()) return legacy;
-        Partition? esp = PartitionOf(device, table.Value!, GptLayout.EspType, null);
+        Partition? esp = CosmosGptPartitions.Find(device, table.Value!, GptLayout.EspType, null);
         if (esp is null) return legacy;
 
         // 1. ESP direkt unter /boot/efi, ESP-Marker lesen, Identitaet wie 7a.
@@ -48,7 +48,7 @@ internal static class CosmosLayoutProfile
         if (identity is { State: InstalledState.Healthy or InstalledState.RootUnclean })
         {
             var marker = InstallMarker.Parse(CosmosInstalledIdentity.ReadMarker(EfiMount) ?? string.Empty);
-            if (marker.IsOK()) root = PartitionOf(device, table.Value!, GptLayout.LinuxFileSystemType, marker.Value!.RootGuid);
+            if (marker.IsOK()) root = CosmosGptPartitions.Find(device, table.Value!, GptLayout.LinuxFileSystemType, marker.Value!.RootGuid);
         }
 
         // 2. Root nur lesend pruefen: Root-Marker und Kontendatei.
@@ -60,7 +60,7 @@ internal static class CosmosLayoutProfile
             try
             {
                 string probe = CosmosReadOnlyExt2FileSystem.MountPoint;
-                layout = ReadLayout(probe + LayoutMarker.Path);
+                layout = LayoutMarker.ReadFile(probe + LayoutMarker.Path);
                 hasAccounts = File.Exists(probe + SystemPaths.Root.SecurityDirectory + "/" + AccountService.MetadataFile);
             }
             finally
@@ -139,26 +139,6 @@ internal static class CosmosLayoutProfile
         return new(decision, null);
     }
 
-    private static ResultObject<LayoutMarker>? ReadLayout(string path)
-    {
-        try
-        {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
-            if (stream.Length > LayoutMarker.MaximumBytes) return LayoutMarker.Parse(string.Empty);
-            using var reader = new StreamReader(stream);
-            return LayoutMarker.Parse(reader.ReadToEnd());
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return null;
-        }
-        catch (IOException)
-        {
-            // Nur "fehlt" ist fehlend; jeder andere Lesefehler macht den Marker ungueltig (Unclear).
-            return LayoutMarker.Parse(string.Empty);
-        }
-    }
-
     private static bool MountEfi(Partition esp)
     {
         if (!efiRegistered)
@@ -174,19 +154,6 @@ internal static class CosmosLayoutProfile
     {
         foreach (IBlockDevice device in StorageManager.Devices)
             if (string.Equals(device.Name, SystemDevice, StringComparison.Ordinal)) return device;
-        return null;
-    }
-
-    /// <summary>Cosmos-Partition zum GPT-Eintrag des Typs (und der Partitions-GUID); Zuordnung ueber den Startsektor.</summary>
-    private static Partition? PartitionOf(IBlockDevice device, GptTable table, Guid type, Guid? unique)
-    {
-        foreach (var entry in table.Entries)
-        {
-            if (entry.Type != type || (unique is { } wanted && entry.Unique != wanted)) continue;
-            foreach (Partition partition in StorageManager.GetPartitions(device))
-                if (partition.StartSector == entry.FirstLba) return partition;
-        }
-
         return null;
     }
 }

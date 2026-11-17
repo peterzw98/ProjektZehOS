@@ -183,7 +183,7 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 - **Eine App zur Zeit:** Alle Paket-Apps teilen einen Worker. Läuft eine, startet keine zweite.
 - **Ressourcen:** höchstens 256 MiB lineare Memory, 1 MiB Wasm-Stack, Modul höchstens 64 MiB, kein Gaslimit für Paket-Apps.
 - **Beenden:** Eine App, die `should_exit()` nie abfragt, lässt sich nicht beenden. Das Paket bleibt dann bis zum Neustart gesperrt (kein Entfernen, kein Upgrade). Die Hauptschleife muss die Abfrage enthalten.
-- **Keine Speicherstände:** Apps können nichts dauerhaft speichern.
+- **Speicherstände nur mit `capability=storage`:** Ohne diese Fähigkeit können Apps nichts dauerhaft speichern; mit ihr nur im eigenen Ordner `/save` (siehe [App-Speicher](#app-speicher-save-etappe-134)).
 - **Tasten:**
   - Das erste Esc bei eingefangener Maus gibt den Zeiger frei und erreicht die App als Taste; Wiederholungen eines gehaltenen Esc gehen nicht weiter. Ein erneutes Esc bei freiem Zeiger führt zur Textshell. F4 wechselt jederzeit zwischen Desktop und Textshell.
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.

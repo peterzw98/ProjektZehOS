@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
@@ -119,6 +120,291 @@ public sealed class LayoutMigrationTests
         public int Released { get; private set; }
         public Lock Take() { Taken++; return this; }
         public void Dispose() => Released++;
+    }
+
+    [TestMethod]
+    public void CancellationBeforeReadyLeavesTheTargetUnreadyAndReleasesTheSource()
+    {
+        StandardSource();
+        foreach (MigrationStep step in Enum.GetValues<MigrationStep>())
+        {
+            var target = Target();
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var result = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add,
+                current => { if (current == step) cancellation.Cancel(); }, cancellation.Token);
+            Assert.AreEqual(1, sourceLock.Released, step.ToString());
+            if (step == MigrationStep.Ready)
+                Assert.IsTrue(result.IsOK(), "Ein bereits abgeschlossener Commit wird nicht rueckwirkend abgebrochen.");
+            else
+            {
+                Assert.IsFalse(result.IsOK(), step.ToString());
+                StringAssert.Contains(result.Status.Message, "cause='MigrationCancelled'");
+                Assert.AreNotEqual(LayoutState.Ready, target.Marker().State, step.ToString());
+            }
+        }
+    }
+
+    [TestMethod]
+    public void AlreadyCancelledMigrationDoesNotWriteAndReleasesTheSource()
+    {
+        StandardSource();
+        var target = Target();
+        var sourceLock = new Lock();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var result = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add, cancellation: cancellation.Token);
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Status.Message, "cause='MigrationCancelled'");
+        Assert.IsFalse(Writes(target));
+        Assert.AreEqual(1, sourceLock.Released);
+    }
+
+    [TestMethod]
+    public void RealFileTargetRepeatsAnInterruptedMigrationWithOnlyKnownBackups()
+    {
+        StandardSource();
+        string before = SourceHash();
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-real-migration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            foreach (string path in LayoutMigration.InstallerEntries)
+                if (path != LayoutMarker.Path) Directory.CreateDirectory(Path.Combine(targetRoot, path[1..].Replace('/', Path.DirectorySeparatorChar)));
+            string markerPath = Path.Combine(targetRoot, "etc", "zehos", ".zehos-layout");
+            File.WriteAllText(markerPath, new LayoutMarker(LayoutState.Fresh, Disk).Serialize());
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess());
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var first = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add,
+                step => { if (step == MigrationStep.Copied) cancellation.Cancel(); }, cancellation.Token);
+            Assert.IsFalse(first.IsOK());
+            using (var reader = new StreamReader(target.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Migrating, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+
+            string note = Path.Combine(targetRoot, "srv", "legacy-data", "notizen.txt");
+            File.Move(note, note + IMigrationTarget.BackupSuffix);
+            File.Move(markerPath, markerPath + IMigrationTarget.BackupSuffix);
+            var second = LayoutMigration.Run(source, target, () => sourceLock.Take(), log.Add);
+            Assert.IsTrue(second.IsOK(), second.Status.Message + "\n" + string.Join("\n", log));
+            using (var reader = new StreamReader(target.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Ready, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*", SearchOption.AllDirectories).Any(path =>
+                path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) || path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)));
+            Assert.AreEqual(before, SourceHash());
+            Assert.AreEqual(2, sourceLock.Released);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    // Review peter-review P3-f (4.5): Abbruch ueber das Token mitten im Kopieren einer Datei, danach Wiederholung.
+    [TestMethod]
+    public void RealFileTargetRepeatsAMigrationCancelledInsideWriteFile()
+    {
+        StandardSource();
+        string before = SourceHash();
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-cancel-migration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            foreach (string path in LayoutMigration.InstallerEntries)
+                if (path != LayoutMarker.Path) Directory.CreateDirectory(Path.Combine(targetRoot, path[1..].Replace('/', Path.DirectorySeparatorChar)));
+            File.WriteAllText(Path.Combine(targetRoot, "etc", "zehos", ".zehos-layout"), new LayoutMarker(LayoutState.Fresh, Disk).Serialize());
+            var real = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess());
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var cancelling = new CancelInsideWrite(real, cancellation);
+
+            var first = LayoutMigration.Run(source, cancelling, () => sourceLock.Take(), log.Add, cancellation: cancellation.Token);
+
+            Assert.IsFalse(first.IsOK());
+            Assert.IsTrue(cancelling.Cancelled, "Das Token wurde erst waehrend eines WriteFile ausgeloest.");
+            // Seit P2-1 liegt die halbe neue Datei unter ihrem endgueltigen Namen (keine Temp-Datei); die W-Zeile im Journal
+            // macht sie zur eigenen Spur, die die Wiederholung entfernt.
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*" + IMigrationTarget.TemporarySuffix, SearchOption.AllDirectories).Any(),
+                "Neue Dateien entstehen ohne Temp-Datei.");
+            var second = LayoutMigration.Run(source, real, () => sourceLock.Take(), log.Add);
+            Assert.IsTrue(second.IsOK(), second.Status.Message + "\n" + string.Join("\n", log));
+            using (var reader = new StreamReader(real.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Ready, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*", SearchOption.AllDirectories).Any(path =>
+                path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) || path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)));
+            Assert.AreEqual(before, SourceHash());
+            Assert.AreEqual(2, sourceLock.Released);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    // Review peter-review P2-1: Cosmos-Rename entfernt den Temp-Eintrag und kann dabei ein ext2-Verzeichnis an einer
+    // Blockgrenze beschaedigen. Neue Dateien duerfen deshalb nie umbenannt werden; nur das Ersetzen nutzt Temp und Rename.
+    [TestMethod]
+    public void NewFilesAreWrittenWithoutRenameAndOnlyReplacementsMove()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-direct-write-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            var moves = new List<string>();
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess(),
+                (from, to, overwrite) => { moves.Add(Path.GetFileName(from) + ">" + Path.GetFileName(to)); File.Move(from, to, overwrite); });
+            Assert.IsTrue(target.WriteFile("/neu", new MemoryStream([1, 2, 3])).IsOK());
+            Assert.AreEqual(0, moves.Count, "Neue Datei ohne Rename");
+            CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(targetRoot, "neu")));
+            Assert.IsFalse(File.Exists(Path.Combine(targetRoot, "neu" + IMigrationTarget.TemporarySuffix)));
+
+            Assert.IsTrue(target.WriteFile("/neu", new MemoryStream([4])).IsOK());
+            CollectionAssert.AreEqual(new[] { "neu>neu" + IMigrationTarget.BackupSuffix, "neu" + IMigrationTarget.TemporarySuffix + ">neu" }, moves);
+            CollectionAssert.AreEqual(new byte[] { 4 }, File.ReadAllBytes(Path.Combine(targetRoot, "neu")));
+
+            File.WriteAllBytes(Path.Combine(targetRoot, "alt" + IMigrationTarget.BackupSuffix), [9]);
+            moves.Clear();
+            Assert.IsTrue(target.WriteFile("/alt", new MemoryStream([5])).IsOK());
+            Assert.AreEqual(1, moves.Count, "Mit eigener Sicherung bleibt der bisherige Weg, damit sie danach verworfen wird.");
+            Assert.IsFalse(File.Exists(Path.Combine(targetRoot, "alt" + IMigrationTarget.BackupSuffix)));
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    // Review peter-review P2-2: das Journal wird zeilenweise und begrenzt gelesen.
+    [TestMethod]
+    public void JournalParsingIsBoundedInLinesAndLineLength()
+    {
+        var many = new System.Text.StringBuilder(MigrationJournal.HeaderLine(SourceSha));
+        for (int i = 0; i < MigrationJournal.MaximumLines; i++) many.Append("x\n");
+        var tooMany = MigrationJournal.Parse(new StringReader(many.ToString()));
+        Assert.IsFalse(tooMany.IsOK());
+        StringAssert.Contains(tooMany.Status.Message, "zu viele Zeilen");
+
+        string overlong = MigrationJournal.HeaderLine(SourceSha) + new string('W', MigrationJournal.MaximumLineLength + 10) + "\n";
+        var tail = MigrationJournal.Parse(overlong);
+        Assert.IsTrue(tail.IsOK(), "Ueberlange Zeile am Ende gilt wie Muell als nicht geschrieben.");
+        Assert.AreEqual(0, tail.Value!.Files.Count);
+        Assert.IsFalse(MigrationJournal.Parse(overlong + MigrationJournal.WriteLine("/a")).IsOK(), "Gueltige Zeile nach ueberlanger");
+    }
+
+    // Aus CosmosLayoutProfile.ReadLayout verschoben (4.3 und 4.5 lesen den Marker damit): fehlt = null, sonst nie "fehlt".
+    [TestMethod]
+    public void ReadFileDistinguishesMissingValidOversizedAndBrokenMarkers()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "zehos-marker-read-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "marker");
+            Assert.IsNull(LayoutMarker.ReadFile(path));
+            Assert.IsNull(LayoutMarker.ReadFile(Path.Combine(directory, "fehlt", "marker")), "fehlender Ordner zaehlt als fehlend");
+            File.WriteAllText(path, new LayoutMarker(LayoutState.Migrating, Disk).Serialize());
+            Assert.AreEqual(LayoutState.Migrating, LayoutMarker.ReadFile(path)!.Value!.State);
+            File.WriteAllText(path, new string('x', LayoutMarker.MaximumBytes + 1));
+            Assert.IsFalse(LayoutMarker.ReadFile(path)!.IsOK());
+            File.WriteAllText(path, "state=ready");
+            Assert.IsFalse(LayoutMarker.ReadFile(path)!.IsOK());
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    // Audit zu #212: Marker wurden erst ganz in einen MemoryStream kopiert und danach gegen die Grenze geprueft.
+    [TestMethod]
+    public void OversizedMarkerIsRejectedAfterTheLimitWithoutReadingItCompletely()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-endless-marker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            using var inner = new FakeMigrationTarget(Disk);
+            var endless = new EndlessMarker(inner);
+            var result = LayoutMigration.Run(targetRoot, endless, () => new MemoryStream(), _ => { });
+            Assert.IsFalse(result.IsOK());
+            StringAssert.Contains(result.Status.Message, "TooLarge");
+            Assert.IsTrue(endless.BytesRead <= LayoutMarker.MaximumBytes + 4096, $"gelesen: {endless.BytesRead}");
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    private sealed class EndlessMarker(IMigrationTarget inner) : IMigrationTarget
+    {
+        public long BytesRead { get; private set; }
+        public ResultErr CreateDirectory(string path) => inner.CreateDirectory(path);
+        public ResultErr WriteFile(string path, Stream content) => inner.WriteFile(path, content);
+        public ResultErr AppendJournal(string line, bool flush) => inner.AppendJournal(line, flush);
+        public ResultErr Delete(string path) => inner.Delete(path);
+        public ResultObject<Stream> ReadBack(string path) =>
+            path == LayoutMarker.Path ? ResultObjectFactory.CreateSuccess<Stream>(new Endless(this)) : inner.ReadBack(path);
+        public ResultObject<string[]> List() => inner.List();
+        public ResultObject<long> FreeBytes() => inner.FreeBytes();
+        public ResultObject<long> FreeInodes() => inner.FreeInodes();
+        public ResultErr Sync() => inner.Sync();
+
+        private sealed class Endless(EndlessMarker owner) : Stream
+        {
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                Array.Fill(buffer, (byte)'x', offset, count);
+                owner.BytesRead += count;
+                return count;
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+    }
+
+    /// <summary>Gibt beim ersten Dateiinhalt ein Byte weiter und loest dann das Token aus; der naechste Read wirft im Kopieren.</summary>
+    private sealed class CancelInsideWrite(IMigrationTarget inner, CancellationTokenSource cancellation) : IMigrationTarget
+    {
+        public bool Cancelled { get; private set; }
+        public ResultErr CreateDirectory(string path) => inner.CreateDirectory(path);
+        public ResultErr WriteFile(string path, Stream content) =>
+            inner.WriteFile(path, Cancelled || path == LayoutMarker.Path ? content : new Trickle(content, this));
+        public ResultErr AppendJournal(string line, bool flush) => inner.AppendJournal(line, flush);
+        public ResultErr Delete(string path) => inner.Delete(path);
+        public ResultObject<Stream> ReadBack(string path) => inner.ReadBack(path);
+        public ResultObject<string[]> List() => inner.List();
+        public ResultObject<long> FreeBytes() => inner.FreeBytes();
+        public ResultObject<long> FreeInodes() => inner.FreeInodes();
+        public ResultErr Sync() => inner.Sync();
+
+        private sealed class Trickle(Stream content, CancelInsideWrite owner) : Stream
+        {
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int read = content.Read(buffer, offset, Math.Min(count, 1));
+                if (!owner.Cancelled) { owner.Cancelled = true; owner.Cancel(); }
+                return read;
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+
+        private void Cancel() => cancellation.Cancel();
+    }
+
+    [TestMethod]
+    public void SourceFileCollidingWithTheBackupSuffixConflictsBeforeWriting()
+    {
+        StandardSource();
+        File.WriteAllText(Path.Combine(source, "note" + IMigrationTarget.BackupSuffix), "user content");
+        var target = Target();
+        var result = Run(target);
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Status.Message, "PlanConflict");
+        Assert.IsFalse(Writes(target));
     }
 
     private ResultObject<MigrationReport> Run(FakeMigrationTarget target, Lock? sourceLock = null, Action<MigrationStep>? progress = null)
@@ -302,7 +588,7 @@ public sealed class LayoutMigrationTests
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 245), SystemPaths.Root, isFile: true));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 246), SystemPaths.Root, isFile: true));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/brief.txt.zehos-tmp", SystemPaths.Root, isFile: true), "kollidiert mit dem Temp-Namen von brief.txt");
-        Assert.IsTrue(MigrationPlan.ValidTarget("/srv/ordner.zehos-tmp", SystemPaths.Root, isFile: false));
+        Assert.IsFalse(MigrationPlan.ValidTarget("/srv/ordner.zehos-tmp", SystemPaths.Root, isFile: false), "Ordner belegt ebenfalls den Temp-Namen (P3-c)");
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255), SystemPaths.Root, isFile: false));
         Assert.IsFalse(MigrationPlan.ValidTarget("/srv/" + new string('a', 256), SystemPaths.Root, isFile: false));
         Assert.IsTrue(MigrationPlan.ValidTarget("/srv/" + new string('a', 255) + "/x", SystemPaths.Root, isFile: true), "Verzeichnisteil darf 255 Byte haben");

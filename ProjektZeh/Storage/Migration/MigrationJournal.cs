@@ -14,6 +14,10 @@ internal sealed class MigrationJournal
 {
     public const string Path = "/etc/zehos/.zehos-migration-journal";
     private const string Header = "ZEHOS-MIGRATION-1 ";
+    // Kopf plus hoechstens D- oder W+F-Zeilen je Inventareintrag; Reserve fuer vom Plan ergaenzte Elternordner.
+    internal const int MaximumLines = 2 * MigrationInventory.MaximumEntries + 1024;
+    // Laengere Zeilen sind ungueltig; ihr Rest wird ueberlesen statt gepuffert.
+    internal const int MaximumLineLength = 16 * 1024;
 
     private MigrationJournal(string? sourceHash, List<string> directories, List<string> files)
     {
@@ -40,21 +44,28 @@ internal sealed class MigrationJournal
     /// gueltige, ist das Journal beschaedigt und eine Wiederholung wird verweigert. Das gilt auch fuer den Kopf: ist er
     /// unvollstaendig und folgt nichts Gueltiges, wurde vor dem Absturz noch nichts begonnen (leeres Journal).
     /// </summary>
-    public static ResultObject<MigrationJournal> Parse(string text)
+    public static ResultObject<MigrationJournal> Parse(string text) => Parse(new System.IO.StringReader(text));
+
+    /// <summary>
+    /// Wie <see cref="Parse(string)"/>, aber zeilenweise aus dem Strom (Review peter-review P2-2): bei 100 000 Eintraegen waeren
+    /// Text, Kopie und Zeilenfeld mehrere grosse Arrays, an denen Cosmos im E4.0-Lauf 10 null statt OutOfMemory lieferte.
+    /// </summary>
+    public static ResultObject<MigrationJournal> Parse(System.IO.TextReader reader)
     {
-        string[] lines = text.Split('\n');
-        // Das letzte Element steht hinter dem letzten Umbruch: unvollstaendig geschrieben, nie ausgewertet.
-        int complete = lines.Length - 1;
-        bool header = complete >= 1 && lines[0].StartsWith(Header, StringComparison.Ordinal) && LayoutMarker.IsSha256(lines[0][Header.Length..]);
+        // Eine Zeile ohne abschliessenden Umbruch wurde unvollstaendig geschrieben und wird nie ausgewertet.
+        string? first = ReadCompleteLine(reader);
+        bool header = first != null && first.StartsWith(Header, StringComparison.Ordinal) && LayoutMarker.IsSha256(first[Header.Length..]);
 
         var directories = new List<string>();
         var files = new List<string>();
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
         var seenDirectories = new HashSet<string>(StringComparer.Ordinal);
         int firstInvalid = -1;
-        for (int i = 1; i < complete; i++)
+        int i = 0;
+        for (string? line = first == null ? null : ReadCompleteLine(reader); line != null; line = ReadCompleteLine(reader))
         {
-            bool valid = TryParseLine(lines[i], out char kind, out string path);
+            if (++i >= MaximumLines) return Invalid("Journal hat zu viele Zeilen.");
+            bool valid = TryParseLine(line, out char kind, out string path);
             if (!valid)
             {
                 if (firstInvalid < 0) firstInvalid = i;
@@ -65,7 +76,21 @@ internal sealed class MigrationJournal
             if (kind == 'D') { if (seenDirectories.Add(path)) directories.Add(path); }
             else if (seenFiles.Add(path)) files.Add(path);
         }
-        return ResultObjectFactory.CreateSuccess(new MigrationJournal(header ? lines[0][Header.Length..] : null, directories, files));
+        return ResultObjectFactory.CreateSuccess(new MigrationJournal(header ? first![Header.Length..] : null, directories, files));
+    }
+
+    /// <summary>Naechste Zeile ohne Umbruch; null am Ende, auch fuer einen Rest ohne Umbruch. Ueberlange Zeilen ergeben "".</summary>
+    private static string? ReadCompleteLine(System.IO.TextReader reader)
+    {
+        var line = new StringBuilder();
+        bool overlong = false;
+        for (int next = reader.Read(); next != -1; next = reader.Read())
+        {
+            if (next == '\n') return overlong ? string.Empty : line.ToString();
+            if (line.Length < MaximumLineLength) line.Append((char)next);
+            else overlong = true;
+        }
+        return null;
     }
 
     private static bool TryParseLine(string line, out char kind, out string path)
