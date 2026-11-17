@@ -27,15 +27,17 @@ COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
 MAX_FILES, MAX_CONTENT, MAX_MANIFEST = 128, 128 * 1024 * 1024, 16 * 1024
 # AOT (Plan docs/superpowers/plans/2026-11-17-aot-kernel.md, Etappe E): Nur dieses wamrc ist zugelassen, weil der Kernel
 # Speicher- und Stackpruefungen eines .aot nicht selbst feststellen kann (Sicherheitsdokument, Abschnitt 3.2 und 5).
-# Pruefsumme aus der Hostprobe 5b (ProjektZeh/Native/AotProbe/fixture/README.md im Branch feature/wasm-aot-runtime);
-# ein neues wamrc ist eine eigene Aufgabe.
+# Zugelassen ist nur das wamrc 2.4.5 mit dem Patch fixture/wamrc-noredzone.patch (alle erzeugten Funktionen ohne
+# Red Zone; Cosmos betritt Interrupts ohne Stackwechsel und ueberschrieb sonst Werte unter RSP, WASM_FEASIBILITY.md).
+# Das fruehere wamrc ohne Patch (6b400e9c...) ist bewusst nicht mehr zugelassen. Ein anderes wamrc ist eine eigene Aufgabe.
 WAMRC_VERSION = re.compile(r"(?<![0-9.])2\.4\.5(?![0-9.])")
-WAMRC_SHA256 = frozenset({"6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774"})
+WAMRC_SHA256 = frozenset({"5809858be58ab78b00d970b5d50cae40e1a38d2a99abe16f8b952f74e128902c"})
 # Gleich fixture/compile-aot.sh desselben Branches: feste Zielmaschine (TCG-tauglich), Pruefungen im erzeugten Code,
 # kein SIMD. Weitere Schalter nimmt das Werkzeug bewusst nicht an.
 WAMRC_FLAGS = ("--target=x86_64", "--cpu=x86-64", "--bounds-checks=1", "--stack-bounds-checks=1", "--size-level=0", "--disable-simd")
-# WAMR-Version, AOT-Formatversion (AOT_CURRENT_VERSION 5 in 2.4.5), Ziel und Pruefschalter; muss der Kernelkonstante gleichen.
-AOT_ABI = "wamr245-aot5-x64-bc"
+# WAMR-Version, AOT-Formatversion (AOT_CURRENT_VERSION 5 in 2.4.5), Ziel, Pruefschalter und nrz (ohne Red Zone);
+# muss der Kernelkonstante gleichen. Kernel mit dieser Kennung laden .aot des alten wamrc nicht mehr.
+AOT_ABI = "wamr245-aot5-x64-bc-nrz"
 
 
 def valid_path(path: str) -> bool:
