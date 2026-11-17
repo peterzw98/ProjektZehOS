@@ -44,7 +44,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--network", action="store_true", help="an build-package.py package durchgereicht")
     parser.add_argument("--aot-file", type=Path, help="an build-package.py package durchgereicht (Beleg .json daneben)")
     parser.add_argument("--aot", choices=["on", "off"], default="off")
-    parser.add_argument("--start-keys", nargs="*", default=[], help="QMP-Tasten nach dem ersten Bild, etwa ret")
+    parser.add_argument("--start-keys", nargs="*", default=[],
+                        help="QMP-Tasten nach dem ersten Bild, etwa ret; shift-f drueckt beide zusammen, "
+                             "wait:<s> wartet dazwischen (Welt laden)")
     parser.add_argument("--runs", type=int, default=1)
     args = parser.parse_args(argv)
     if args.package and not args.key:
@@ -106,7 +108,10 @@ def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
             # Der Launcher von ClassiCube nimmt Eingaben erst nach einigen Sekunden an (siehe test-classicube-desktop.py).
             time.sleep(3)
             for key in args.start_keys:
-                guest.qmp.tap(key)
+                if key.startswith("wait:"):
+                    time.sleep(float(key[len("wait:"):]))
+                    continue
+                guest.qmp.tap(*key.split("-"))
                 time.sleep(0.5)
         time.sleep(args.seconds)
         guest.shot("ende")
