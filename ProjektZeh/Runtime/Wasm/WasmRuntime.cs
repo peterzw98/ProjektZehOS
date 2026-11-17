@@ -175,7 +175,10 @@ internal static unsafe class WasmRuntime
             // zusammenhaengende Allokation liefert bei vollem Heap NULL statt zu sammeln. Nach einer Online-Installation
             // (TLS, Katalog, Paketdateien) lagen rund 2 Mio. tote Objekte im Heap; ClassiCube scheiterte dann am
             // Wachstum des Wasm-Speichers ("Out of VRAM", Exitcode 1).
+            long collectStart = Stopwatch.GetTimestamp();
             GC.Collect();
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+                $"WASM GC vor Lauf {(long)Stopwatch.GetElapsedTime(collectStart).TotalMilliseconds} ms\n");
             job();
             // Apps wie Doom lesen zweistellige MiB ueber FileStream; ohne Sammeln blieb dieser Muell im Desktop
             // ueber mehrere Starts liegen (gemessen: rund 30 MiB je Doom-Lauf), obwohl er freigebbar ist.
