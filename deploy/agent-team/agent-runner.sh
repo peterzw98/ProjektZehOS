@@ -5,7 +5,7 @@
 set -u
 home=$1; nick=$2; model=$3
 here=$(cd "$(dirname "$0")" && pwd)
-CLAUDE=${CLAUDE:-/home/laser/.local/bin/claude}
+CLAUDE=${CLAUDE:-$HOME/.local/bin/claude}
 cd "$home" || exit 1
 run() {
   local cont=(); [ -e .started ] && cont=(--continue)
