@@ -66,6 +66,10 @@ class Observer:
     def place(self, x, y, z, block):
         self.socket.sendall(struct.pack(">BhhhBB", 0x05, x, y, z, 1, block))
 
+    def move(self, x, y, z):
+        """Position in Blockeinheiten (Server rechnet in 1/32 Block)."""
+        self.socket.sendall(struct.pack(">BbhhhBB", 0x08, -1, x * 32 + 16, y * 32, z * 32 + 16, 0, 0))
+
     def close(self):
         self.socket.close()
 
@@ -198,6 +202,9 @@ def main():
         state = world("welt")
         observer = Observer(server.port)
         server_event(lambda e: e["type"] == "joined" and e["player"] == OBSERVER, 10, 0, "Beobachter nicht angemeldet")
+        # Weg vom Spawnpunkt: Sonst steht der Beobachter beim erneuten Verbinden direkt vor der Kamera des Gasts, und
+        # sein Kopf fuellt das Bild (welt-2 fand dann zu wenige Farben).
+        observer.move(4, server.world.ground + 2, 4)
         # Hat ClassiCube die Maus schon gefangen, wirkt der Klick als Spielklick (Block entfernen); erst danach zaehlen.
         click(399, 259)
         time.sleep(2)
