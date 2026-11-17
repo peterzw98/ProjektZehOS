@@ -517,7 +517,7 @@ namespace Cosmos.Network.Http
                 try
                 {
                     NameConstraints constraints = NameConstraints.GetInstance(X509ExtensionUtilities.FromExtensionValue(extension));
-                    error = constraints == null
+                    error = constraints == null || (constraints.PermittedSubtreesValue == null && constraints.ExcludedSubtreesValue == null)
                         ? "The name constraints of " + Name(authority) + " can't be read."
                         : CheckSubtrees(authority, Subtrees(constraints.PermittedSubtreesValue), true, dnsNames, addresses)
                             ?? CheckSubtrees(authority, Subtrees(constraints.ExcludedSubtreesValue), false, dnsNames, addresses);
@@ -543,10 +543,12 @@ namespace Cosmos.Network.Http
                 return null;
             }
 
-            var result = new GeneralSubtree[sequence.Count];
-            for (int i = 0; i < result.Length; i++)
+            // RFC 5280: SIZE (1..MAX), minimum 0, no maximum. Anything else is refused (null entry -> "can't be read").
+            var result = new GeneralSubtree[sequence.Count == 0 ? 1 : sequence.Count];
+            for (int i = 0; i < sequence.Count; i++)
             {
-                result[i] = GeneralSubtree.GetInstance(sequence[i]);
+                GeneralSubtree subtree = GeneralSubtree.GetInstance(sequence[i]);
+                result[i] = (subtree.MinimumObject == null || subtree.MinimumObject.Value.SignValue == 0) && subtree.MaximumObject == null ? subtree : null;
             }
 
             return result;
@@ -561,8 +563,15 @@ namespace Cosmos.Network.Http
 
             var dnsBases = new List<string>();
             var addressBases = new List<byte[]>();
+            // RFC 5280: iPAddress is one name type; a permitted IPv6-only list permits no IPv4 address.
+            bool addressSubtrees = false;
             foreach (GeneralSubtree subtree in subtrees)
             {
+                if (subtree == null)
+                {
+                    return "The name constraints of " + Name(authority) + " can't be read.";
+                }
+
                 GeneralName name = subtree.Base;
                 if (name.TagNo == GeneralName.DnsName)
                 {
@@ -571,6 +580,7 @@ namespace Cosmos.Network.Http
                 else if (name.TagNo == GeneralName.IPAddress)
                 {
                     byte[] range = Asn1OctetString.GetInstance(name.Name).GetOctets();
+                    addressSubtrees = true;
                     if (range.Length == 8)
                     {
                         addressBases.Add(range);
@@ -580,7 +590,7 @@ namespace Cosmos.Network.Http
                         return "The name constraints of " + Name(authority) + " can't be read.";
                     }
 
-                    // An IPv6 range (32 bytes) constrains no IPv4 address.
+                    // An IPv6 range (32 bytes) never contains an IPv4 address.
                 }
                 else
                 {
@@ -590,7 +600,9 @@ namespace Cosmos.Network.Http
 
             foreach (string dnsName in dnsNames)
             {
-                bool inside = dnsBases.Exists(constraint => WithinDnsSubtree(dnsName, constraint));
+                // An excluded subtree also catches a wildcard that could name a host in it (*.example.com against
+                // excluded secret.example.com), as Chromium does; for permitted, the plain rule is already strict.
+                bool inside = dnsBases.Exists(constraint => WithinDnsSubtree(dnsName, constraint) || (!permitted && WildcardReaches(dnsName, constraint)));
                 // A permitted list of a form constrains names of that form only (RFC 5280 4.2.1.10).
                 if (permitted ? dnsBases.Count > 0 && !inside : inside)
                 {
@@ -601,7 +613,7 @@ namespace Cosmos.Network.Http
             foreach (byte[] address in addresses)
             {
                 bool inside = addressBases.Exists(range => WithinAddressRange(address, range));
-                if (permitted ? addressBases.Count > 0 && !inside : inside)
+                if (permitted ? addressSubtrees && !inside : inside)
                 {
                     return "The certificate of " + Name(authority) + " may not issue for that IP address.";
                 }
@@ -670,6 +682,20 @@ namespace Cosmos.Network.Http
 
             return string.Equals(name, constraint, StringComparison.OrdinalIgnoreCase)
                 || name.EndsWith("." + constraint, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // "*.X" can name every host one label below X; it reaches a constraint at or below that level.
+        private static bool WildcardReaches(string name, string constraint)
+        {
+            if (!name.StartsWith("*.", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string covered = name.Substring(2).TrimEnd('.');
+            constraint = constraint.TrimEnd('.').TrimStart('.');
+            return constraint.Length == 0 || string.Equals(constraint, covered, StringComparison.OrdinalIgnoreCase)
+                || constraint.EndsWith("." + covered, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool WithinAddressRange(byte[] address, byte[] range)

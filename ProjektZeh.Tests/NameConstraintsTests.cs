@@ -94,8 +94,69 @@ public sealed class NameConstraintsTests
         StringAssert.Contains(Check(constraints, "192.168.1.1", Ip(192, 168, 1, 1)), "IP address");
         Assert.IsNull(Check(constraints, "www.example.com", Dns("www.example.com")), "nur-IP-Liste beschraenkt keine DNS-Namen");
 
+        // iPAddress ist ein Namenstyp: eine nur aus IPv6 bestehende Erlaubtliste erlaubt keine IPv4-Adresse (RFC 5280, Chromium).
         var ipv6Only = Permitted(Ip(new byte[32]));
-        Assert.IsNull(Check(ipv6Only, "192.168.1.1", Ip(192, 168, 1, 1)), "IPv6-Bereich beschraenkt keine IPv4-Adresse");
+        StringAssert.Contains(Check(ipv6Only, "192.168.1.1", Ip(192, 168, 1, 1)), "IP address");
+
+        var excluded = Excluded(Ip(192, 168, 0, 0, 255, 255, 0, 0));
+        StringAssert.Contains(Check(excluded, "192.168.1.1", Ip(192, 168, 1, 1)), "IP address");
+        Assert.IsNull(Check(excluded, "10.0.0.1", Ip(10, 0, 0, 1)));
+        Assert.IsNull(Check(Excluded(Ip(new byte[32])), "192.168.1.1", Ip(192, 168, 1, 1)), "ausgeschlossener IPv6-Bereich trifft keine IPv4-Adresse");
+        StringAssert.Contains(Check(Permitted(Ip(10, 0, 0, 0, 255)), "10.0.0.1", Ip(10, 0, 0, 1)), "can't be read", "5-Byte-Bereich");
+    }
+
+    [TestMethod]
+    public void WildcardCannotEscapeAnExcludedSubtree()
+    {
+        StringAssert.Contains(Check(Excluded(Dns("secret.example.com")), "secret.example.com", Dns("*.example.com")), "may not issue");
+        StringAssert.Contains(Check(Excluded(Dns(".example.com")), "a.example.com", Dns("*.example.com")), "may not issue");
+        Assert.IsNull(Check(Excluded(Dns("other.org")), "a.example.com", Dns("*.example.com")));
+        StringAssert.Contains(Check(Excluded(Dns("deep.secret.example.com")), "a.secret.example.com", Dns("*.secret.example.com")), "may not issue",
+            "auch tiefer liegende Ausschluesse gelten als erreichbar (konservativ)");
+        StringAssert.Contains(Check(Permitted(Dns("secret.example.com")), "secret.example.com", Dns("*.example.com")), "may not issue", "Erlaubtliste bleibt streng");
+    }
+
+    [TestMethod]
+    public void EmptyExcludedDnsConstraintRefusesEveryName() =>
+        StringAssert.Contains(Check(Excluded(Dns("")), "www.example.com", Dns("www.example.com")), "may not issue");
+
+    [TestMethod]
+    public void OutOfProfileConstraintsAreRefused()
+    {
+        var withMaximum = new NameConstraints(GeneralSubtrees.GetInstance(new DerSequence(new GeneralSubtree(Dns("example.com"), DerInteger.Zero, DerInteger.One))), (GeneralSubtrees?)null);
+        StringAssert.Contains(Check(withMaximum, "www.example.com", Dns("www.example.com")), "can't be read");
+        var withMinimum = new NameConstraints(GeneralSubtrees.GetInstance(new DerSequence(new GeneralSubtree(Dns("example.com"), DerInteger.One, (DerInteger?)null))), (GeneralSubtrees?)null);
+        StringAssert.Contains(Check(withMinimum, "www.example.com", Dns("www.example.com")), "can't be read");
+        StringAssert.Contains(Check(new NameConstraints((GeneralSubtrees?)null, (GeneralSubtrees?)null), "www.example.com", Dns("www.example.com")), "can't be read", "weder erlaubt noch ausgeschlossen");
+    }
+
+    [TestMethod]
+    public void ConstraintsOfSeveralAuthoritiesIntersect()
+    {
+        var root = Issue("CN=Root", RootKey.Public, "CN=Root", RootKey.Private, ca: true, Permitted(Dns("example.com")));
+        var intermediate = Issue("CN=Constrained", IntermediateKey.Public, "CN=Root", RootKey.Private, ca: true, Permitted(Dns("www.example.com"), Dns("other.org")));
+        var inBoth = Issue("CN=leaf", LeafKey.Public, "CN=Constrained", IntermediateKey.Private, ca: false, null, Dns("www.example.com"));
+        var onlyIntermediate = Issue("CN=leaf", LeafKey.Public, "CN=Constrained", IntermediateKey.Private, ca: false, null, Dns("other.org"));
+        Assert.IsNull(CertificateVerifier.Verify([inBoth, intermediate], "www.example.com", [root], Now));
+        StringAssert.Contains(CertificateVerifier.Verify([onlyIntermediate, intermediate], "other.org", [root], Now), "may not issue");
+    }
+
+    [TestMethod]
+    public void TrustedIntermediateEndingTheChainKeepsItsConstraints()
+    {
+        var root = Issue("CN=Root", RootKey.Public, "CN=Root", RootKey.Private, ca: true);
+        var intermediate = Issue("CN=Constrained", IntermediateKey.Public, "CN=Root", RootKey.Private, ca: true, Permitted(Dns("example.com")));
+        var bad = Issue("CN=leaf", LeafKey.Public, "CN=Constrained", IntermediateKey.Private, ca: false, null, Dns("www.other.org"));
+        StringAssert.Contains(CertificateVerifier.Verify([bad, intermediate], "www.other.org", [root, intermediate], Now), "may not issue");
+        StringAssert.Contains(CertificateVerifier.Verify([bad], "www.other.org", [intermediate], Now), "may not issue", "Zwischenzertifikat selbst als Anker");
+    }
+
+    [TestMethod]
+    public void ShippedBundleHasNoRootWithNameConstraints()
+    {
+        // Gepruefter Stand 17.11.2026 (Spec §5.2); eine kuenftige Wurzel mit Beschraenkung soll bewusst auffallen.
+        foreach (var root in new X509CertificateParser().ReadCertificates(ProjektZeh.Network.TlsRoots.Load()))
+            Assert.IsNull(root.GetExtensionValue(X509Extensions.NameConstraints), root.SubjectDN.ToString());
     }
 
     [TestMethod]
