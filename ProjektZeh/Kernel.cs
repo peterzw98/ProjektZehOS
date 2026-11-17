@@ -186,7 +186,7 @@ public sealed class Kernel : Sys.Kernel
             output.WriteLine("ZehOS Setup: setup list, dann setup install <Laufwerk> [--erase].");
             return ResultErr.CreateSuccess();
 #else
-            var mounted = storage.Mount("sata0");
+            var mounted = storage.MountData();
             if (mounted.IsOK())
             {
                 output.WriteLine("Datenlaufwerk unter /data eingebunden.");

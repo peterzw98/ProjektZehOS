@@ -29,9 +29,7 @@ internal static class DataDiskSelector
         {
             for (int index = 0; index < device.Partitions.Count; index++)
             {
-                var partition = device.Partitions[index];
-                if (partition.Type != FatLbaType
-                    || !string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!IsDataPartition(device.Partitions[index])) continue;
                 if (found != null) return Fail(ResultCode.Failure, "AmbiguousDataDisk", "Mehr als eine Datenpartition ZEHOSDATA gefunden; es wird nichts eingebunden.");
                 found = new(device.Name, index, false);
             }
@@ -47,6 +45,9 @@ internal static class DataDiskSelector
         }
         return Fail(ResultCode.NotFound, "DeviceNotFound", "Keine Datenplatte gefunden.");
     }
+
+    internal static bool IsDataPartition(DataDiskPartition partition) =>
+        partition.Type == FatLbaType && string.Equals(partition.Label?.TrimEnd(), DataLabel, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>512-Byte-Sektoren und 64 MiB bis 128 GiB; die Division verhindert einen Ueberlauf von BlockCount * BlockSize.</summary>
     public static ResultErr CheckInitSize(ulong blockSize, ulong blockCount)

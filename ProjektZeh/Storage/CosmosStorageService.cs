@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
@@ -14,7 +15,6 @@ internal sealed class CosmosStorageService : IStorageService
 {
     private const string FileSystemName = "zehos-fat";
     private const string MountPoint = "/data";
-    private const ulong TestDiskSize = 64UL * 1024 * 1024;
     private const ulong PartitionStart = 2048;
     private bool registered;
 
@@ -43,7 +43,7 @@ internal sealed class CosmosStorageService : IStorageService
     }
 
     /// <summary>
-    /// Erstellt MBR und FAT32 ausschliesslich auf einer vollstaendig leeren 64-MiB-Testplatte.
+    /// Erstellt MBR und FAT32 ausschliesslich auf einer vollstaendig leeren Platte von 64 MiB bis 128 GiB; die Partition erhaelt das Label ZEHOSDATA.
     /// </summary>
     public ResultErr InitializeTestDisk(string? deviceName)
     {
@@ -56,14 +56,10 @@ internal sealed class CosmosStorageService : IStorageService
         try
         {
             IBlockDevice device = found.Value!;
-            if (device.BlockSize != 512)
+            var size = DataDiskSelector.CheckInitSize(device.BlockSize, device.BlockCount);
+            if (!size.IsOK())
             {
-                return Failure("UnsupportedSectorSize", "Die Testplatte benoetigt 512-Byte-Sektoren.");
-            }
-
-            if (device.BlockCount != TestDiskSize / device.BlockSize)
-            {
-                return Failure("UnsupportedDiskSize", "Die Testplatte muss genau 64 MiB gross sein.");
+                return size;
             }
 
             if (StorageManager.GetPartitions(device).Count != 0)
@@ -99,7 +95,7 @@ internal sealed class CosmosStorageService : IStorageService
             var options = new FatFormatOptions
             {
                 Type = FatType.Fat32,
-                VolumeLabel = "ZEHOS"
+                VolumeLabel = DataDiskSelector.DataLabel
             };
             if (!VfsManager.TryFormat(FileSystemName, partitions[0], options))
             {
@@ -128,34 +124,66 @@ internal sealed class CosmosStorageService : IStorageService
 
         try
         {
-            if (VfsManager.TryGetMount(MountPoint, out _))
-            {
-                return Failure("AlreadyMounted", "Unter /data ist bereits ein Laufwerk eingebunden.");
-            }
-
-            var registration = RegisterFileSystem();
-            if (!registration.IsOK())
-            {
-                return registration;
-            }
-
-            var partitions = StorageManager.GetPartitions(found.Value!);
-            if (partitions.Count != 1)
+            if (StorageManager.GetPartitions(found.Value!).Count != 1)
             {
                 return Failure("UnexpectedPartitionCount", "Zum Einbinden wird genau eine Datenpartition erwartet.");
             }
 
-            if (!VfsManager.TryMount(FileSystemName, partitions[0], MountFlags.None, MountPoint, out _))
-            {
-                return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
-            }
-
-            return ResultErr.CreateSuccess();
+            return MountPartition(found.Value!, 0);
         }
         catch (Exception exception)
         {
             return ResultErr.CreateFromException(exception);
         }
+    }
+
+    /// <summary>
+    /// Bindet die per Label ZEHOSDATA gewaehlte Partition ein; ohne Treffer gilt der Rueckfall sata0, bei mehreren Treffern wird nichts eingebunden.
+    /// </summary>
+    public ResultErr MountData()
+    {
+        try
+        {
+            var candidates = new List<DataDiskCandidate>();
+            foreach (IBlockDevice device in StorageManager.Devices)
+            {
+                candidates.Add(CosmosDataDisk.Describe(device));
+            }
+
+            var selection = DataDiskSelector.Select(candidates);
+            if (!selection.IsOK())
+            {
+                return selection.Status;
+            }
+
+            var found = FindDevice(selection.Value!.DeviceName);
+            return found.IsOK() ? MountPartition(found.Value!, selection.Value.PartitionIndex) : found.Status;
+        }
+        catch (Exception exception)
+        {
+            return ResultErr.CreateFromException(exception);
+        }
+    }
+
+    private ResultErr MountPartition(IBlockDevice device, int partitionIndex)
+    {
+        if (VfsManager.TryGetMount(MountPoint, out _))
+        {
+            return Failure("AlreadyMounted", "Unter /data ist bereits ein Laufwerk eingebunden.");
+        }
+
+        var registration = RegisterFileSystem();
+        if (!registration.IsOK())
+        {
+            return registration;
+        }
+
+        if (!VfsManager.TryMount(FileSystemName, StorageManager.GetPartitions(device)[partitionIndex], MountFlags.None, MountPoint, out _))
+        {
+            return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
+        }
+
+        return ResultErr.CreateSuccess();
     }
 
     /// <summary>

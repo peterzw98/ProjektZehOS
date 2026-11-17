@@ -23,7 +23,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `mkdir <Pfad>` | Verzeichnis anlegen |
 | `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
 | `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
-| `disk init <Name>` | Vollständig leere virtuelle 64-MiB-Testplatte mit MBR und FAT32 einrichten |
+| `disk init <Name>` | Vollständig leere Platte (64 MiB bis 128 GiB) mit MBR und FAT32 (Label `ZEHOSDATA`) einrichten; der Boot bindet die Partition mit diesem Label unter `/data` ein, sonst `sata0` |
 | `disk mount <Name>` | Einzige FAT-Partition des Laufwerks unter `/data` einbinden |
 | `disk unmount` | `/data` mit Schreiben der Dateisystempuffer aushängen |
 | `version` | Versionen der geladenen ZehOS- und Cosmos-Assemblies anzeigen |

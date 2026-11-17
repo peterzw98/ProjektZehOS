@@ -36,6 +36,8 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             var candidates = new List<InstallCandidate>();
             foreach (IBlockDevice device in StorageManager.Devices)
             {
+                // Die Datenplatte ZEHOSDATA ist nie Installationsziel und erscheint nicht in der Liste.
+                if (CosmosDataDisk.HasDataPartition(device)) continue;
                 candidates.Add(new(new InstallDisk(device.Name, checked(device.BlockCount * device.BlockSize),
                     StorageManager.GetPartitions(device).Count, CachedIsBlank(device)), IsInstallMedium(device)));
             }
@@ -52,6 +54,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             {
                 if (!string.Equals(device.Name, diskName, StringComparison.OrdinalIgnoreCase)) continue;
                 if (IsInstallMedium(device)) return Failure("Das Installationsmedium darf nicht beschrieben werden.");
+                if (CosmosDataDisk.HasDataPartition(device)) return Failure("Die Datenplatte ZEHOSDATA darf nicht ueberschrieben werden, auch nicht mit --erase.");
                 if (device.BlockSize != 512 || device.BlockCount < InstallService.MinimumDiskSize / 512 || device.BlockCount - 2048 > uint.MaxValue)
                     return Failure("Unterstuetzt werden Platten ab 128 MiB mit 512-Byte-Sektoren und hoechstens 2 TiB.");
                 foreach (var mount in VfsManager.Mounts)

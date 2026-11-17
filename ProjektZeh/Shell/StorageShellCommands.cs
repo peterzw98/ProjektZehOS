@@ -23,7 +23,7 @@ internal sealed class StorageShellCommands
         Commands =
         [
             new("disk", "disk list|init <Name>|mount <Name>|unmount",
-                "Listet Laufwerke oder richtet eine leere 64-MiB-Testplatte ein.", true, Execute)
+                "Listet Laufwerke oder richtet eine leere Platte (64 MiB bis 128 GiB) als Datenplatte ZEHOSDATA ein.", true, Execute)
         ];
     }
 
