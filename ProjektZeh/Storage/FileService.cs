@@ -207,6 +207,9 @@ internal sealed class FileService
             : ResultObjectFactory.CreateSuccess(Encoding.UTF8.GetString(bytes.Value));
     }
 
+    /// <summary>Gemeinsame Weiche fuer Textleser (cat, Filter, Betrachter): virtuelle Pfade aus dem Erzeuger, sonst <see cref="ReadText"/>.</summary>
+    public ResultObject<string> ReadTextOrVirtual(string? path) => IsVirtualPath(path) ? ReadVirtual(path) : ReadText(path);
+
     /// <summary>Kinder eines virtuellen Verzeichnisses als absolute Pfade, Verzeichnisse zuerst wie <see cref="ListDirectory"/>.</summary>
     public ResultObject<FileEntry[]> ListVirtual(string? path)
     {

@@ -137,6 +137,8 @@ internal sealed partial class ShellService
             if (target != null)
             {
                 if (PagerText != null) { DismissPager(); return Invalid("less kann nicht umgeleitet werden."); }
+                // Nur /dev/null nimmt Umleitungen an (verworfen); /proc und /sys lehnt WriteNull als nur lesbar ab.
+                if (files!.IsVirtualPath(target)) return files.WriteNull(target);
                 if (append)
                 {
                     var existing = files!.ReadText(target, true);
@@ -264,7 +266,7 @@ internal sealed partial class ShellService
         {
             if (pipelineInput != null) return Invalid("Datei und Pipe nicht gleichzeitig verwenden.");
             if (files == null) return Invalid("Dateidienst ist nicht verfuegbar.");
-            var read = files.ReadText(arguments[position]);
+            var read = files.ReadTextOrVirtual(arguments[position]);
             if (!read.IsOK()) return read.Status;
             text = read.Value!;
         }
