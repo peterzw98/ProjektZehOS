@@ -55,8 +55,11 @@ internal static unsafe class WasmRuntime
     private static int nextHandle;
     private static uint[] indexedFrame = [];
 
-    /// <summary>Summe der Wartezeit des letzten Laufs in Millisekunden; trennt Rechen- von Wartezeit bei Messungen.</summary>
-    public static long WaitedMilliseconds { get; private set; }
+    /// <summary>Summe der Wartezeit (sleep_ms) des laufenden bzw. letzten Laufs in Stopwatch-Ticks; trennt Rechen- von Wartezeit.</summary>
+    public static long WaitedTicks { get; private set; }
+
+    // Aus der Tick-Summe statt je Aufruf abgerundet: viele kurze Schlafaufrufe gingen sonst verloren.
+    public static long WaitedMilliseconds => WaitedTicks * 1000 / Stopwatch.Frequency;
 
     /// <summary>true, solange ein Lauf aussteht oder laeuft; der gemeinsame Worker fuehrt nur einen zur Zeit aus.</summary>
     public static bool IsBusy { get { lock (gate) return pending > 0; } }
@@ -171,7 +174,7 @@ internal static unsafe class WasmRuntime
         int code;
         current = session;
         network = new WasmNetworkSession(new CosmosWasmNetworkConnector(CreateTlsClient), session.AllowsNetwork);
-        WaitedMilliseconds = 0;
+        WaitedTicks = 0;
         try
         {
             fixed (byte* bytes = module)
@@ -400,7 +403,7 @@ internal static unsafe class WasmRuntime
     {
         long start = Stopwatch.GetTimestamp();
         Thread.Sleep((int)milliseconds);
-        WaitedMilliseconds += (Stopwatch.GetTimestamp() - start) * 1000 / Stopwatch.Frequency;
+        WaitedTicks += Stopwatch.GetTimestamp() - start;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_poll_key")]
