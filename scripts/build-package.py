@@ -156,17 +156,22 @@ def package(args: argparse.Namespace) -> None:
         lines.append("capability=storage")
     if args.min_kernel is not None:
         lines.append(f"min-kernel={args.min_kernel}")
-    for name in sorted(files):
-        data = files[name].read_bytes()
-        lines.append(f"file={hashlib.sha256(data).hexdigest()} {len(data)} {name}")
-        destination = target / "files" / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(files[name], destination)
-    manifest = ("\n".join(lines) + "\nend\n").encode("utf-8")
-    if len(manifest) > MAX_MANIFEST:
-        raise ValueError("Manifest groesser als 16 KiB.")
-    (target / "manifest").write_bytes(manifest)
-    sign(args.key, target / "manifest", target / "manifest.sig")
+    try:
+        for name in sorted(files):
+            data = files[name].read_bytes()
+            lines.append(f"file={hashlib.sha256(data).hexdigest()} {len(data)} {name}")
+            destination = target / "files" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(files[name], destination)
+        manifest = ("\n".join(lines) + "\nend\n").encode("utf-8")
+        if len(manifest) > MAX_MANIFEST:
+            raise ValueError("Manifest groesser als 16 KiB.")
+        (target / "manifest").write_bytes(manifest)
+        sign(args.key, target / "manifest", target / "manifest.sig")
+    except BaseException:
+        # Ein halber Versionsordner sperrt die Version (unveraenderlich) und gelangte sonst unsigniert in den Katalog.
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     print(f"{args.id} {args.version}: {hashlib.sha256(manifest).hexdigest()}")
 
 
@@ -181,7 +186,7 @@ def catalog(args: argparse.Namespace) -> None:
             raise ValueError(f"Generation muss groesser als die vorhandene ({known.group(1)}) sein.")
     entries = []
     for directory in sorted(p for p in args.repo.iterdir() if p.is_dir() and ID.match(p.name)):
-        versions = [p for p in directory.iterdir() if VERSION.match(p.name) and (p / "manifest").exists()]
+        versions = [p for p in directory.iterdir() if VERSION.match(p.name) and (p / "manifest").exists() and (p / "manifest.sig").exists()]
         if versions:
             newest = max(versions, key=lambda p: version_key(p.name))
             entries.append(f"package={directory.name} {newest.name} {hashlib.sha256((newest / 'manifest').read_bytes()).hexdigest()}")
