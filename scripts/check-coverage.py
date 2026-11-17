@@ -22,14 +22,13 @@ def relative_path(filename):
     return None if index < 0 else path[index + len(MARKER):]
 
 
-def read_report(report):
+def read_report(report, files):
     try:
         root = ET.parse(report).getroot()
     except OSError as error:
         raise InputError(f'Bericht kann nicht gelesen werden: {error}')
     except ET.ParseError as error:
         raise InputError(f'Bericht ist kein gültiges XML: {error}')
-    files = {}
     for element in root.iter('class'):
         path = relative_path(element.get('filename', ''))
         if path is None:
@@ -38,7 +37,6 @@ def read_report(report):
         for line in element.iter('line'):
             number = line.get('number')
             merged[number] = merged.get(number, False) or int(line.get('hits', '0')) > 0
-    return files
 
 
 def read_exclusions(path):
@@ -63,7 +61,7 @@ def percent(hit, total):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Prüft einen Cobertura-Bericht.')
-    parser.add_argument('report')
+    parser.add_argument('report', nargs='+', help='ein oder mehrere Cobertura-Berichte; ihre Treffer werden zusammengefuehrt')
     parser.add_argument('--min-total', type=float, default=0.0)
     parser.add_argument('--min-file', type=float, default=0.0)
     parser.add_argument('--exclusions')
@@ -72,7 +70,9 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
 
     try:
-        files = read_report(arguments.report)
+        files = {}
+        for report in arguments.report:
+            read_report(report, files)
         excluded = read_exclusions(arguments.exclusions) if arguments.exclusions else set()
     except InputError as error:
         print(error, file=sys.stderr)
