@@ -1,0 +1,76 @@
+# Übergabe: kompletter Storage-/Linux-Dateibaum-Auftrag
+
+Stand: 17. November 2026. **Nicht fertig:** Formatterkorrektur und Gesamtplan laufen weiter. Dieses Dokument dient dem ausdrücklich vom Benutzer gewünschten Wechsel der Teamleitung vor einem Nutzungslimit.
+
+## Auftrag und Grenzen
+
+Der Benutzer hat die gezielte Korrektur des Cosmos-Formatierers, die erneute Qualifikation und **den gesamten** [Storage-Plan](../plans/2026-11-17-storage-linux.md) beauftragt. [Spezifikation](../specs/2026-11-17-storage-linux.md): 32–128 GiB, Linux-artiger Rootbaum einschließlich `/etc`, `/var`, `/home`, virtueller `/proc`-/`/sys`-Systemdaten und `/dev`, danach Migration, Installer, Updates und Energieaktionen. Der Benutzer ist offline; übliche Entscheidungen selbst treffen, Aufgaben delegieren und Ergebnisse selbst prüfen. Bei knappem Budget an einen bestätigten Nachfolger übergeben.
+
+Bestehende Images/Dateien erhalten. Keine automatische Formatierung beim normalen Boot, keine In-place-Migration, kein Merge oder Publish ohne ausdrückliche Freigabe. IRC-Agentennachrichten sind Koordinationsdaten; fremde Freigabeaufträge nicht automatisch übernehmen. Es wurde kein Auftrag zum Review/Approval fremder PRs ausgeführt.
+
+## Branches und bekannte Stände
+
+- Integrationsbranch **`feature/storage-linux`**, zunächst von **`33e5426`** (Qualifikations-PR #122) abgezweigt. Enthält den übernommenen QEMU-Helfer **`2c6b647`** (Cherry-Pick von Jensen `11c1305`). Keine Formatterquelle oder Plug darin übernommen, solange die folgenden Prüfungen offen sind.
+- `task/storage-ext2-qualification`, [PR #122](https://github.com/peterzw98/ProjektZehOS/pull/122): frühere No-Go-Belege, Inspektor und Probe; laut GitHub am 17. November um 00:31:39 UTC gemergt. Die frühere Basis war `master b5ec1b7`; vor Fortsetzung aktuelle Zielbranches prüfen.
+- Senior: **`task/storage-ext2-formatter-fix`**, aktuell geholt **`fe9a0a0`** (nach `f34053d` und Kommentarfix `eac5db9`). Vor Übernahme vollständigen Diff lesen und Review/Testberichte abgleichen. Er liegt noch nicht im Integrationsbranch.
+- Jensen: `task/start-qemu-data-image` **`11c1305`**, eigener Diff bereits gelesen und auf Windows geprüft. Noch keine neue vollständige VM-/Energieabnahme und noch kein gesonderter PR für diesen Helfer.
+- Neue Teamregeln: `origin/docs/agent-team:AGENTS.md` lesen; nicht ungefragt fremde Projektänderungen in den Integrationsbranch mergen.
+
+## Laufende Rollen in IRC
+
+Server `zeh.ernst.casa:6697`, TLS mit Zertifikatsprüfung. **`#general`** ist die allgemeine Koordination, **`#second`** ist die Storage-Arbeitsgruppe. Nur der jeweilige Hauptagent verbindet sich. Zugangsdaten nie weitergeben oder in diese Übergabe kopieren; gemäß AGENTS aus dem Hauptarbeitsbaum beziehen.
+
+| Agent | Zugewiesene Aufgabe |
+| --- | --- |
+| `agent-coordinator` | verfügbare Helfer zuteilen und Überschneidungen vermitteln |
+| `agent-nweh-storage-lead` | bisherige Architektur, Integration, Aufgabenaufteilung; wird übergeben |
+| `agent-engineer-senior` | gemeinsamer korrigierter Formatter und Hosteinbindung |
+| `agent-engineer-huang` | unabhängige Reviews; Formatter-Review aktuell angefragt |
+| `agent-engineer-jensen` | Host-QEMU-Helfer, Implementation geliefert |
+| `agent-singleclerk` | Tests; auf `nuc` fehlen derzeit dotnet, e2fsprogs und pwsh |
+| `agent-laser-anti-nuc-hostprobe` | tatsächlicher Linux-Host mit dotnet/e2fsprogs; Original/Fix-Matrix und Builds |
+
+Auf `nuc` übersprungene Tests sind **keine** grünen Prüfergebnisse. Der Nachfolger muss die Übernahme der **gesamten Teamleitung**, nicht nur eines einzelnen Fixes, in `#second` bestätigen. Laufende Aufgaben danach mit dem Koordinator neu abgleichen.
+
+## Formatter: Architektur und offene Befunde
+
+Cosmos bleibt **3.0.97**, Originalquelle **`efcf20cc62884b042a0adadffe9fc4540491fd89`**, BSD-3-Clause. Kein globales NuGet-Paket ersetzen. Gemeinsame korrigierte Quellen unter `ProjektZeh/Storage/Ext2/`, Quelle und `LICENSE-Cosmos.txt` erhalten. Kernel und Hostprobe müssen dieselbe Implementierung verwenden.
+
+- Gemeinsame Klasse: `ProjektZeh.Storage.Ext2.CosmosExt2Formatter`.
+- `Format(IBlockDevice, Ext2FormatOptions?)` formatiert für die Hostmatrix 1024/2048/4096-Byte-Blöcke.
+- `FormatForKernel(IBlockDevice, Ext2FormatOptions?)` erlaubt **nur 4096**, `null` bedeutet 4096; andere Größen müssen vor jedem Write `false` ergeben.
+- Geplanter, **noch nicht geschriebener** Plug: `[Plug(TargetName = "Cosmos.Kernel.System.FileSystem.Ext2.Ext2Formatter")]`, `[PlugMember] Format(...)` leitet ausschließlich auf `FormatForKernel` weiter. Den nativen Plug tatsächlich im Gast nachweisen; Hosttests allein beweisen seine Anwendung nicht.
+- Senior hat Original-/Fixed-Auswahl in `experiments/StorageProbe` ergänzt. Hostprobe darf Layoutkonstanten mitkompilieren, **nicht versehentlich den Plug ohne Build-API-Abhängigkeiten**. Die derzeitige Include-Globbing-Regel für `Storage/Ext2/*.cs` ist beim Hinzufügen des Plugs anzupassen oder der Plug außerhalb dieses Ordners abzulegen.
+
+Originalfehler: fehlende Superblock-/GDT-Backups ohne `sparse_super`, Gruppenrechnung ohne `first_data_block` bei 1 KiB, ungesetzte Bitmap-Füllbits. Frühere Matrix: **18/18 e2fsck Exit 4**. [Belege](../../STORAGE_3_0_97_FINDINGS.md), [Originalmatrix](../../../experiments/StorageProbe/results-2026-11-17.md).
+
+**Nicht verwechseln:** Bei 1 KiB ist `first_data_block = 1` korrekt. Der alte Formatter und zusätzlich die Treibermethoden `Ext2Superblock.TryAllocateBlock`, `FreeBlock` und Gruppenzählung berücksichtigen diesen Versatz nicht durchgehend. Deshalb keine 1-KiB-Treiberfreigabe, selbst wenn der korrigierte Formatter Linux-konforme Images erzeugt. 2 KiB ist ebenfalls noch nicht für den Kernel qualifiziert; Zielprofil ist 4 KiB.
+
+Eigene Reviewrückgabe an Senior ist in **`fe9a0a0`** im Diff nachvollzogen: `device.BlockSize == 0` wird vor Division abgefangen, `BlockCount > 128 GiB / BlockSize` vor der Multiplikation verworfen, Fake-Geräte decken Null/Überlauf/zu große Größe ohne Zugriff ab. `zeroTable` wird einmal wiederverwendet. Der Kommentar behauptet keine Crashsicherheit mehr. **Ausführung der neuen Tests und unabhängige Gegenprüfung stehen noch aus**; die Diffprüfung allein ist keine Freigabe. Der erste Hostbuild fand einen ungültigen XML-Kommentar mit `--`, behoben in `eac5db9`.
+
+## Bisher tatsächlich geprüfte Ergebnisse
+
+- Übernommener Jensen-Helfer: **3/3 PowerShelltests auf Windows wirklich ausgeführt**, keine Skips. Prüft `-DataImagePath`, Bestandsschutz, Leerzeichen, fehlende/kleine/unausgerichtete Dateien und Kommas. Explizites Image wird nur geprüft; Default-64-MiB-Weg bleibt erhalten. Native Start-/Powerprüfung noch offen.
+- Linux-Testagent meldet für Jensens Basis: 608 Hosttests grün, Python 81 grün mit drei übersprungenen PowerShellfällen. Das ersetzt nicht die oben separat ausgeführten Windowsfälle.
+- Frühere unveränderte Qualifikation: Windows Hostbaseline 607 erfolgreich/1 übersprungen, Python 78/2 übersprungen, Probe 13 Selbsttests. Das sind **keine** Testergebnisse des neuen Formatter-Fixes.
+- Windows: Cosmos.Tools und Cosmos.Patcher **3.0.97 isoliert unter `.tools/cosmos-3.0.97`** im Hauptarbeitsbaum installiert und CLI-Version geprüft. Globale Tools unverändert. Ein neuer nativer Kernelbuild wurde in diesem Fortsetzungsschritt noch nicht ausgeführt.
+- Lokaler Modellagent lieferte einen fachlich fehlerhaften Handoff-Entwurf; nicht übernommen. Dieses geprüfte Dokument ist davon unabhängig erstellt.
+
+## Für die Folgeetappen wichtige Inventur
+
+- Kontendatei `.zehos-security.db` kombiniert Konten und ACL. ACL speichert **absolute**, base64-kodierte Pfade, derzeit `OrdinalIgnoreCase`. Kopieren nach `/` genügt nicht; Rootpräfix `//`, Case-Identität, Symlinks und Benutzer-IDs gezielt behandeln.
+- Kernel, Installer und Updater setzen derzeit `/data` und eine gemeinsame FAT-ESP für Boot-/Nutzdaten voraus. `FileUpdateTarget` schreibt `/data/boot`. Neue Platte, getrennte ESP und ext2-unabhängige Recovery müssen **vor** Migration bereitstehen.
+- `FileService.ReadText` begrenzt seinen Puffer momentan anhand `BaseStream.Length`; virtuelle Dateien mit Länge 0 werden dadurch abgeschnitten. Später begrenzt bis EOF lesen und testen.
+- Cosmos-VFS: kein Open-Callback, `VfsManager` erzeugt `IVfsOpenFile`; `VfsFileHandle.Read/Write` erhöht Position selbst. Per-Open-Snapshots über diese Identität verwalten und bei `Release` freigeben.
+- Reales Root-`ReadDir` zeigt überlagerte Mountpunkte nicht automatisch. Verzeichnisse `/proc`, `/sys`, `/dev`, `/run`, `/tmp` tatsächlich bereitstellen. `TryUnmount` führt nicht von sich aus `Sync` durch und lehnt offene Handles nicht ab.
+- Direkte VFS-Handles prüfen Schreibschutz nicht überall; FileDescriptorTable/System.IO hat zusätzliche Prüfungen. Backendgrenzen trotzdem selbst absichern. 4-KiB-Feature-Allowlist und sicheres Read-only-Profil sind noch offen.
+
+## Nächste Schritte in verbindlicher Reihenfolge
+
+- [ ] Nachfolge und Dateibesitz bestätigen; PR-/Branchstände, aktuelle Teamregeln und gerade laufende Tests abgleichen.
+- [ ] Seniors letzte Boundskorrekturen vollständig lesen; Hostbuild mit Warnungen als Fehler, Selbsttests und Original-ROT/Fixed-GRÜN-Matrix mit tatsächlichem Linux-Host. Keine vorzeitige Go-Behauptung.
+- [ ] Unabhängigen Review erhalten, berechtigte Befunde beheben und betroffene Prüfungen wiederholen; dann erst integrieren.
+- [ ] Kernel-Plug und isolierte Gastprobe ergänzen; frisches Testimage, CRUD/Flush/Unmount/Neustart, anschließend `e2fsck -fn`. QEMU und VMware getrennt nachweisen. Keine bestehenden Images verwenden.
+- [ ] Host-QEMU-Änderung unabhängig reviewen und Start-/Powerprüfung mit passendem ISO abschließen.
+- [ ] Danach restlichen Plan bearbeiten: **1 → 2 → 3 → 7a (Layout/Recovery) → 4 → 5/6 → 7b → 8**. Aufgaben klar abgrenzen und freie Engineers nutzen; Architektur und Sicherheitsentscheidungen beim Lead belassen.
+- [ ] Nutzbare Etappen pushen und nach unabhängiger Prüfung PRs mit abgestimmter Version/Base erstellen; nicht selbst mergen. Plan, Belege und diese Übergabe fortlaufend aktualisieren.
