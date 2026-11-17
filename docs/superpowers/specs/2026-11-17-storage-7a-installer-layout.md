@@ -9,8 +9,10 @@ Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (
 3. **Identität des installierten Systems** (Abschnitt 5): fehlendes Root muss auch bei **gelöschtem GPT-Eintrag** erkannt werden (ESP-Marker + Root-GUID); unklare Identität sperrt die Einrichtung. Ein Rootfehler führt in die Recovery; **vorhandene Konten werden niemals neu angelegt oder ersetzt.**
 4. **GUIDs eindeutig:** Disk- und Partitions-GUIDs aus der Hardware-Zufallsquelle, **keine** aus der Plattengröße abgeleiteten (deterministischen) Cosmos-GUIDs.
 5. **Reihenfolge/Aktivierung:** Writer-Code erst nach der SIMD-Aufgabe (ClassiCube S1) und nach dem Designreview; **keine Installeraktivierung vor Etappe 3 und vor der Qualifikation**.
-6. **Formatter:** das No-Go des **Original**-Cosmos-ext2-Formatters ist ein historischer Befund; die Korrekturmatrix des korrigierten Formatters ist belegt. Die aktuellen Zieltests (32/64/128 GiB, 4-KiB-Blöcke, im Kernel-Plug) sind trotzdem noch offen.
-7. **Beweisregel:** kein byteidentischer Python-Spiegel als Nachweis. Die Hostprobe führt den **produktiven** Writer (dieselbe C#-Quelle) aus.
+6. **`security recover`:** wird bei `RootMissing`, `RootDamaged` und `Unclear` ebenfalls verweigert (09:18/09:29); eine Kontendatei wird nie umbenannt oder ersetzt. Die Recovery erlaubt Diagnose und Backup (lesend); ein neuer schreibender Reparaturvertrag kommt später.
+7. **Installer:** der neue GPT-Installer gilt nur für 32 bis 128 GiB und ist eine **ausdrücklich gewählte Option**; der bestehende Legacy-Installer bleibt vorerst erhalten, es gibt **nie ein stilles Fallback** zwischen beiden.
+8. **Formatter:** das No-Go des **Original**-Cosmos-ext2-Formatters ist ein historischer Befund; die Korrekturmatrix des korrigierten Formatters ist belegt. Die aktuellen Zieltests (32/64/128 GiB, 4-KiB-Blöcke, im Kernel-Plug) sind trotzdem noch offen.
+9. **Beweisregel:** kein byteidentischer Python-Spiegel als Nachweis. Die Hostprobe führt den **produktiven** Writer (dieselbe C#-Quelle) aus.
 
 ## 1. Inventar: heutiger Installer-, Boot-, Update- und Recovery-Pfad
 
@@ -73,7 +75,7 @@ Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zäh
 | Marker unlesbar/beschädigt, Disk-GUID passt nicht, Tabelle ungültig oder mehrdeutig | `Unclear` |
 
 - **Folge:** `RootMissing`, `RootDamaged` und `Unclear` ergeben `Blocked` → `DataDiskSelector.SetupBlockedReason` → `AccountService.SetupBlockedReason` (Mechanik aus Etappe 2): keine Ersteinrichtung, kein neues Konto, serielle Fehlerzeile `STORAGE Fehler: … Keine Ersteinrichtung.` **Unklare Identität sperrt grundsätzlich.** Der Boot führt in die Recovery-Shell (Anzeige/Textshell), nicht in eine Neueinrichtung.
-- **Vorhandene Konten werden niemals neu angelegt oder ersetzt:** Der Rootfehler-Pfad enthält keinen Aufruf von `RecoveryWork`/`SetupWork`. Offen für die Leitung: `security recover` (Sicherheits-Recovery-Build) verschiebt heute eine vorhandene Kontendatei und legt ein neues Konto an (`AccountService.RecoveryWork`); bei Zuständen ≠ `Healthy/Legacy` soll er verweigern oder ist das ausdrücklich gewollt?
+- **Vorhandene Konten werden niemals neu angelegt oder ersetzt:** Der Rootfehler-Pfad enthält keinen Aufruf von `RecoveryWork`/`SetupWork`. Entscheid: `security recover` (Sicherheits-Recovery-Build, verschiebt heute die Kontendatei und legt ein neues Konto an, `AccountService.RecoveryWork`) wird bei `RootMissing/RootDamaged/Unclear` **verweigert**. Umsetzungsvorschlag: `AccountService.RecoveryBlockedReason` (Gegenstück zu `SetupBlockedReason`), vom Kernel aus `InstalledIdentity` gesetzt; Test: Kontendatei vor/nach byteidentisch, keine `.zehos-security-recovery-*.db`-Datei entsteht. Erlaubt bleiben Diagnose und lesendes Backup.
 - **Grenze:** Ein Angreifer mit Schreibzugriff auf die ESP kann den Marker löschen (dann `Legacy`); das ist kein Schutz gegen Offline-Manipulation, nur gegen Versehen und Teilfehler. Zu dokumentieren.
 
 ## 6. Entwurf: Recovery ohne ext2
@@ -113,5 +115,5 @@ Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zäh
 3. **Aktuelle Zieltests des korrigierten ext2-Formatters** (32/64/128 GiB, 4-KiB-Blöcke, Kernel-Plug) stehen aus; der Root-Format-Schritt bleibt bis dahin hinter einem Schalter.
 4. **GPT-Typen im Kernel lesen:** `CosmosDataDisk.Describe` liest heute nur MBR (GPT ⇒ Typ 0); gemeinsam mit dem Installer-Ausschluss (`HasDataPartition`) für GPT erweitern, sonst wäre eine GPT-`ZEHOSDATA`-Platte als Installationsziel sichtbar.
 5. **GPT-Boot unter OVMF** ist ungeprüft (belegt ist nur MBR-Boot, `docs/INSTALLER_UPDATES_TESTS.md`).
-6. **`security recover` bei Rootfehlern** (Abschnitt 5) und Verhalten kleiner/großer Platten außerhalb 32 bis 128 GiB brauchen eine Leitungsentscheidung.
+6. **Installerwahl:** wie der Legacy-Installer und der neue GPT-Installer in `setup list`/`setup install`/`SetupWizard` ausdrücklich gewählt werden (eigene Option, kein Fallback), ist für den Entwurf der Bedienung noch zu spezifizieren; Platten außerhalb 32 bis 128 GiB sind für den neuen Installer nicht wählbar.
 7. VMware (eigene AHCI-Platte), Zeitbudgets wie in Etappe 2 (`DiskEmptyCheck`: ≈100 MB/s Vollscan unter KVM).
