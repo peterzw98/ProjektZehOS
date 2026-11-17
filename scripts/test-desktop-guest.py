@@ -259,6 +259,11 @@ def main() -> int:
     (work / "empty").mkdir(parents=True)
     disk = work / "data.qcow2"
     tools.create_disk(work / "empty", disk)
+    if args.recovery:
+        # Ohne Datenplatte: auf einer leeren Platte bietet Recovery die Ersteinrichtung an, und uname/shutdown wuerden
+        # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
+        device = tools.MACHINE.index("ide-hd,drive=appdisk,bus=ahci.0")
+        tools.MACHINE = tools.MACHINE[:device - 1] + tools.MACHINE[device + 1:]
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
                args.boot_timeout)
 
