@@ -71,18 +71,26 @@ Ab ZehOS 0.5.2 bleiben relative PS/2-Mauspakete beim Zeigerfang auch am Rand des
 Tablets entstehen Deltas weiterhin aus Bildschirmpositionen; ihre Bewegung endet am Gastbildschirm- beziehungsweise
 Hostfensterrand. Der Desktopzeiger bleibt sichtbar.
 
-**Rasterisierung über `zehos_v1` (ab ZehOS 0.5.8):**
+**Rasterisierung über `zehos_v1` (ab ZehOS 0.5.13):**
 
 Der Kernel zeichnet texturierte Quads nativ in Puffer im Speicher der App, damit 3D-Apps nicht jedes Pixel im Interpreter rechnen. Grundlage und Bildregeln sind die des Software-Renderers SoftGPU von ClassiCube. Den Aufbau beschreibt [der Entwurf](superpowers/specs/2026-11-17-rasterizer-hostfunktion.md).
 
 | Import | Verhalten |
 | --- | --- |
-| `raster_draw(call)` | Zeichnet nach der 140-Byte-Beschreibung `zehos_raster_call` (Version 1) an Adresse `call`. Erfasst werden Vertices (Quads, 16 oder 24 Byte je Vertex), Farbpuffer (`0xAARRGGBB`, Zeilenabstand), Tiefenpuffer (float), Textur (Zweierpotenzen bis 4096), Scissor, Viewport, Texturversatz und MVP-Matrix. Flags: Tiefentest, Tiefe schreiben, Farbe schreiben, Alphatest (A < 128), Alphablending, Backface-Culling, 2D, Sprite, texturiert. |
+| `raster_draw(call)` | Zeichnet nach der 140-Byte-Beschreibung `zehos_raster_call` (Version 1) an Adresse `call`. Erfasst werden Vertices, Farbpuffer, Tiefenpuffer, Textur, Scissor, Viewport, Texturversatz und MVP-Matrix. Flags: Tiefentest, Tiefe schreiben, Farbe schreiben, Alphatest (A < 128), Alphablending, Backface-Culling, 2D, Sprite, texturiert. Je 4 Vertices bilden ein Quad. |
 | `raster_fill(ptr, count, value)` | Füllt `count` 32-Bit-Werte ab `ptr` mit `value` (Farb- oder Tiefenpuffer löschen). |
 
-Beide liefern 0 oder `EINVAL` (28) bei unzulässigen Werten. Unzulässig sind unbekannte Version oder Flags, `count` nicht durch 4 teilbar oder über 262 144, Bild über 1920×1200, Zeilenabstand kleiner als die Breite, Textur keine Zweierpotenz und Scissor außerhalb. Liegt ein Bereich (Beschreibung, Vertices, Puffer, Textur) nicht im linearen Speicher, trappt der Aufruf. Der Kernel hält keinen Zustand und keine Handles; alle Puffer bleiben im Speicher der App. Die App sollte bei `EINVAL` selbst zeichnen.
+Datenformate (Little Endian):
 
-Ob der Kernel die Funktionen hat, meldet die WASI-Umgebung (siehe unten): `ZEHOS_FEATURES` enthält dann `raster_v1`. Ältere Kernel liefern eine leere Umgebung. Ein Modul mit diesen Imports lädt dort trotzdem, denn wasm3 übersetzt eine Funktion erst beim ersten Aufruf. Es trappt aber, sobald eine Funktion übersetzt wird, die den Import aufruft. Den Aufruf deshalb in eine eigene, nicht eingebettete Funktion legen (`__attribute__((noinline))`) und sie nur aufrufen, wenn `raster_v1` gemeldet ist. Dann braucht das Paket kein höheres `min-kernel`. Beispiel: `experiments/ClassiCube.Wasi/platform/Raster_ZehOS.c`.
+- **Vertex:** Position `x, y, z` als float an Offset 0, 4 und 8; Farbe als u32 an Offset 12 mit den Bytes R, G, B, A (also `0xAABBGGRR`). Texturiert folgen `u, v` als float an Offset 16 und 20 (24 Byte je Vertex), sonst endet der Vertex nach 16 Byte.
+- **Farbpuffer und Textur:** u32 `0xAARRGGBB` (B im niedrigsten Byte), wie bei `present`. Die Textur wird immer gelesen, auch bei farbigen Vertices im Sprite-Pfad; ohne eigene Textur eine weiße 1×1-Textur übergeben.
+- **Tiefenpuffer:** float, nur nötig für 3D mit Tiefentest oder Tiefe schreiben; Löschwert üblich 1e8.
+
+Die genaue Feldtabelle steht im Entwurf.
+
+Beide liefern 0 oder `EINVAL` (28) bei unzulässigen Werten. Unzulässig sind unbekannte Version oder Flags, `count` nicht durch 4 teilbar oder über 262 144, Bild über 1920×1200, Zeilenabstand kleiner als die Breite oder über 7680, Textur keine Zweierpotenz und Scissor außerhalb; bei `raster_fill` mehr als 9 216 000 Werte. Liegt ein Bereich (Beschreibung, Vertices, Puffer, Textur) nicht im linearen Speicher, trappt der Aufruf. Der Kernel hält keinen Zustand und keine Handles; alle Puffer bleiben im Speicher der App. Die App sollte bei `EINVAL` selbst zeichnen. Ein Aufruf läuft ohne Unterbrechung im Worker der App; sehr viele große Quads können ihn entsprechend lange belegen, wie jede Rechenschleife der App selbst.
+
+Ob der Kernel die Funktionen hat, meldet die WASI-Umgebung (siehe unten): `ZEHOS_FEATURES` enthält dann `raster_v1`. Ältere Kernel liefern eine leere Umgebung. Ein Modul mit diesen Imports lädt dort trotzdem: Der Loader ignoriert unbekannte Imports, und wasm3 meldet einen fehlenden Import erst, wenn er tatsächlich aufgerufen wird (Trap). Die App ruft die Funktionen deshalb nur, wenn `raster_v1` gemeldet ist, und braucht dann kein höheres `min-kernel`. Beispiel: `experiments/ClassiCube.Wasi/platform/Raster_ZehOS.c`.
 
 **Netzwerk über `zehos_v1`:**
 
@@ -116,7 +124,7 @@ Nach `close_notify` meldet `net_recv` EOF wie bei TCP. Endet die Verbindung ohne
 | Bereich | Stand |
 | --- | --- |
 | Konsole | `fd_write` nur auf stdout/stderr. stderr wird gesammelt; die letzte Zeile erscheint bei Exitcode ≠ 0 im Fenster. |
-| Argumente, Umgebung | `argv` ist nur `["app"]`. Die Umgebung enthält ab ZehOS 0.5.8 genau `ZEHOS_FEATURES=<Liste>`, eine kommagetrennte Liste optionaler `zehos_v1`-Fähigkeiten (heute `raster_v1`). Ältere Kernel liefern eine leere Umgebung. |
+| Argumente, Umgebung | `argv` ist nur `["app"]`. Die Umgebung enthält ab ZehOS 0.5.13 genau `ZEHOS_FEATURES=<Liste>`, eine kommagetrennte Liste optionaler `zehos_v1`-Fähigkeiten (heute `raster_v1`). Ältere Kernel liefern eine leere Umgebung. |
 | Uhren, Zufall | `clock_time_get` (Uhr 0 = UTC, sonst monoton) und `random_get` (Hardwarezufall über RDSEED/RDRAND, sonst virtio-rng; fehlt er oder versagt er, liefert der Aufruf `EIO` (29) statt Erfolg, und der Puffer ist nicht zu verwenden. Apps müssen den Status prüfen und dürfen keinen eigenen Rückfall auf Uhr oder Konstanten bauen. In wasi-libc (wasi-sdk 25) meldet `getentropy` (höchstens 256 Byte je Aufruf) den Fehler als `EIO`; `arc4random`/`arc4random_buf` brechen dagegen mit einem Trap ab, und die .NET-WASI-Laufzeit nutzt voraussichtlich diesen Weg. Solche Apps starten ohne Hardwarezufall also nicht). |
 | Dateien | Nur lesend. Das eigene Paketverzeichnis `files/` ist als `/` freigegeben. Pfade relativ ohne `..`. `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_close`; höchstens 16 offene Dateien. |
 | Nicht vorhanden | Schreiben, Anlegen, Löschen, Verzeichnisse lesen, `poll_oneoff` (also kein `sleep`/`nanosleep` der libc; `zehos_v1.sleep_ms` verwenden), WASI-Sockets, Threads. Diese Aufrufe liefern `ENOSYS` oder `EBADF`. |

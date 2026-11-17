@@ -58,7 +58,9 @@ Rückgabe: WASI-Fehlercode, 0 bei Erfolg, `EINVAL` (28) bei unzulässigen Werten
 | 68 | f32 | `tex_offset_u`, 72 `tex_offset_v` |
 | 76 | f32[16] | `mvp` (row1.x, row1.y, … row4.w), nur 3D; endet bei Offset 140 |
 
-`version` erlaubt spätere Erweiterungen; ein Kernel lehnt unbekannte Versionen mit `EINVAL` ab.
+`version` erlaubt spätere Erweiterungen; ein Kernel lehnt unbekannte Versionen mit `EINVAL` ab. Vertexfarben sind u32 mit den Bytes R, G, B, A (`0xAABBGGRR`), Farbpuffer und Textur `0xAARRGGBB`; Vertexoffsets: Position 0/4/8, Farbe 12, u/v 16/20.
+
+Die Umwandlung float→int bildet clang für wasm32 ohne `nontrapping-fptoint` nach (außerhalb von int und NaN ergeben `INT_MIN`). `experiments/ClassiCube.Wasi/build.py` setzt deshalb `-mno-nontrapping-fptoint` ausdrücklich, damit ein späteres wasi-sdk das Bild nicht verändert.
 
 ### 3.4 Grenzen und Prüfungen
 
@@ -71,9 +73,9 @@ Rückgabe: WASI-Fehlercode, 0 bei Erfolg, `EINVAL` (28) bei unzulässigen Werten
 
 ### 3.5 Erkennbar auf älteren Kerneln
 
-wasm3 übersetzt eine Funktion erst bei ihrem ersten Aufruf (`op_Compile`), und der Loader ignoriert unbekannte Imports (`zehos_wasm.c`, `m3Err_functionLookupFailed`). Ein Modul, das `raster_draw` importiert, lädt also auch auf älteren Kerneln. Es trappt erst, wenn eine Funktion übersetzt wird, die den Import aufruft.
+wasm3 übersetzt eine Funktion erst bei ihrem ersten Aufruf (`op_Compile`), und der Loader ignoriert unbekannte Imports (`zehos_wasm.c`, `m3Err_functionLookupFailed`). Ein Modul, das `raster_draw` importiert, lädt also auch auf älteren Kerneln. Es trappt erst, wenn der fehlende Import tatsächlich aufgerufen wird: wasm3 setzt auch für Imports das Modul (`m3_module.c`), übersetzt den Aufruf deshalb als `op_Compile` und meldet `functionImportMissing` erst zur Laufzeit (`m3_compile.c`). (Ursprünglich hieß es hier, schon das Übersetzen des Aufrufers trappe; das unabhängige Review hat das am Code widerlegt.)
 
-Der Kernel meldet die Fähigkeit deshalb über die WASI-Umgebung: `ZEHOS_FEATURES=raster_v1` (kommagetrennte Liste, künftig erweiterbar). Ältere Kernel liefern eine leere Umgebung (`docs/PAKETE_ERSTELLEN.md`). Die App prüft die Variable einmal beim Start und ruft den Import nur aus einer eigenen, nicht eingebetteten Funktion (`__attribute__((noinline))`) auf; sonst bleibt sie bei SoftGPU. So läuft dasselbe Paket ohne `min-kernel`-Sprung auf alten und neuen Kerneln. Die Umgebungsvariable ist eine neue, allgemeine Zusage im Vertrag (`docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md`).
+Der Kernel meldet die Fähigkeit deshalb über die WASI-Umgebung: `ZEHOS_FEATURES=raster_v1` (kommagetrennte Liste, künftig erweiterbar). Ältere Kernel liefern eine leere Umgebung (`docs/PAKETE_ERSTELLEN.md`). Die App prüft die Variable einmal beim Start und ruft den Import nur, wenn `raster_v1` gemeldet ist; sonst bleibt sie bei SoftGPU. So läuft dasselbe Paket ohne `min-kernel`-Sprung auf alten und neuen Kerneln. Die Umgebungsvariable ist eine neue, allgemeine Zusage im Vertrag (`docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md`).
 
 ## 4 Ort der Umsetzung im Kernel
 
@@ -113,7 +115,7 @@ Bisher nutzt ZehOS aus `System.Runtime.Intrinsics` nur skalare X86-Befehle (`Cos
 - `scripts/test-classicube-desktop.py` mit Raster-Hostfunktion: gleiche Abläufe wie Etappe 2; zusätzlich Bildvergleich `--raster host` gegen `--raster soft` an fester Position (Saat und Blick fest), höchstens wenige abweichende Pixel.
 - Doom und NetSurf unverändert (`test-wasm-doom-desktop.py --scenario quick`, `test-netsurf-desktop.py`).
 - Messung vorher/nachher mit `Measure_ZehOS.c` unter WHPX/KVM und TCG, mit Datum.
-- Ein Paket mit Raster-Import auf einem Kernel **ohne** die Funktion (ISO 0.5.7): startet und zeichnet mit SoftGPU.
+- Ein Paket mit Raster-Import auf einem Kernel **ohne** die Funktion (ISO 0.5.7 oder 0.5.8 von `master`): startet und zeichnet mit SoftGPU.
 
 **Fertig, wenn** (Plan): gleiches Bild wie SoftGPU (Referenzvergleich), messbar höhere Bildrate, Fehlerfälle beenden nur die App, QEMU- und VMware-Ergebnis dokumentiert; dazu Hosttests mit `-warnaserror`, nativer Normal- und Recovery-Build.
 

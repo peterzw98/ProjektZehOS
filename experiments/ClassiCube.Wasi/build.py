@@ -65,6 +65,9 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(clang), "--target=wasm32-wasip1", f"--sysroot={args.wasi_sdk / 'share' / 'wasi-sysroot'}",
                "-O2", "-D__ZEHOS__", f"-DCC_GFX_BACKEND=CC_GFX_BACKEND_{args.gfx.upper()}",
+               # Ausdruecklich ohne saettigende Umwandlung float->int (wasi-sdk 25 Standard): Der Kernel-Rasterizer
+               # bildet genau diese Semantik nach; spaetere wasi-sdk-Versionen schalten sie sonst ein.
+               "-mno-nontrapping-fptoint",
                *(["-DZEHOS_RASTER_SOFT"] if args.raster == "soft" else []),
                *(["-DZEHOS_RASTER_TOGGLE"] if args.raster_toggle else []), "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS",
                "-Wno-everything", "-I", str(build / "src"),

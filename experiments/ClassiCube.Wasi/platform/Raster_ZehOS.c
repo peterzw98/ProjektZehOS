@@ -34,8 +34,9 @@ static int RasterAvailable(void) {
 #endif
 }
 
-/* wasm3 uebersetzt eine Funktion erst beim ersten Aufruf. Aeltere Kernel ohne raster_* trappen deshalb nur, wenn
-   eine Funktion mit dem Import uebersetzt wird; noinline haelt die Importaufrufe aus den Aufrufern heraus. */
+/* Aeltere Kernel ohne raster_* laden das Modul trotzdem; wasm3 trapt erst beim Aufruf eines fehlenden Imports.
+   Gerufen wird deshalb nur nach RasterAvailable(). noinline ist dafuer nicht noetig, haelt die Importaufrufe aber an
+   einer Stelle. */
 __attribute__((noinline)) static int CallDraw(const cc_uint32* call) { return zehos_raster_draw(call); }
 __attribute__((noinline)) static int CallFill(void* data, cc_uint32 count, cc_uint32 value) {
 	return zehos_raster_fill(data, count, value);

@@ -212,6 +212,81 @@ public sealed class WasmRasterizerTests
     }
 
     [TestMethod]
+    public void EveryNearClippingMaskIsHandled()
+    {
+        // Ecken mit z = -1 liegen vor der Near-Ebene (z = 0) und werden abgeschnitten; w = z + 2 bleibt dabei positiv
+        // wie bei einer echten Projektion. Masken 5 und 10 (gegenueberliegende Ecken) sind wie in SoftGPU entartet und
+        // zeichnen nichts; alle anderen Masken mit sichtbaren Ecken zeichnen.
+        float[] perspective = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 2 };
+        (float X, float Y)[] corners = { (-1, 1), (1, 1), (1, -1), (-1, -1) };
+        for (int mask = 0; mask < 16; mask++)
+        {
+            var scene = Scene3D();
+            scene.Flags &= ~WasmRasterizer.FlagDepthTest;
+            scene.Mvp = perspective;
+            var quad = new (float, float, float, float, float)[4];
+            for (int corner = 0; corner < 4; corner++)
+                quad[corner] = (corners[corner].X, corners[corner].Y, (mask & (1 << corner)) != 0 ? 1 : -1, 0, 0);
+            scene.Quad(Red, quad);
+            Assert.AreEqual(WasmRasterizer.Success, scene.Draw(), $"Maske {mask}");
+            int drawn = Count(scene, RedPixel);
+            bool expectDrawn = mask != 0 && mask != 5 && mask != 10;
+            Assert.AreEqual(expectDrawn, drawn > 0, $"Maske {mask}: {drawn} Pixel");
+        }
+    }
+
+    private static Scene SpriteScene()
+    {
+        var scene = new Scene
+        {
+            Flags = WasmRasterizer.FlagColorWrite | WasmRasterizer.Flag2D | WasmRasterizer.FlagSprite | WasmRasterizer.FlagTextured,
+            TexWidth = 4,
+            TexHeight = 4,
+        };
+        for (int index = 0; index < 16; index++) scene.SetTexel(index, 0xFF000000u | (uint)(index * 16) << 16 | (uint)index);
+        return scene;
+    }
+
+    private static uint Texel(int x, int y) => 0xFF000000u | (uint)((y * 4 + x) * 16) << 16 | (uint)(y * 4 + x);
+
+    [TestMethod]
+    public void SpriteFastPathCopiesTexelsOneToOne()
+    {
+        // Breite 3 und u-Spanne 3 Texel: schneller Pfad, Pixel (x, y) zeigt Texel (x, y).
+        var scene = SpriteScene();
+        scene.Quad(0xFFFFFFFF, (0, 0, 0, 0, 0), (3, 0, 0, 0.75f, 0), (3, 3, 0, 0.75f, 0.75f), (0, 3, 0, 0, 0.75f));
+        Assert.AreEqual(WasmRasterizer.Success, scene.Draw());
+        for (int y = 0; y <= 3; y++)
+            for (int x = 0; x <= 3; x++)
+                Assert.AreEqual(Texel(x, y), scene.Pixel(x, y), $"({x},{y})");
+    }
+
+    [TestMethod]
+    public void SpriteSlowPathScalesAndTintsWithVertexColor()
+    {
+        // Breite 8 bei 4 Texeln: langsamer Pfad mit Skalierung; Vertexfarbe halbiert Rot (R=128 in PackedCol).
+        var scene = SpriteScene();
+        scene.Quad(0xFFFFFF80, (0, 0, 0, 0, 0), (8, 0, 0, 1, 0), (8, 8, 0, 1, 1), (0, 8, 0, 0, 1));
+        Assert.AreEqual(WasmRasterizer.Success, scene.Draw());
+        uint texel = Texel(1, 1);  // Pixel (2, 2) -> Texel (4*2/8, 4*2/8)
+        uint expected = 0xFF000000u | (uint)((128 * (int)((texel >> 16) & 0xFF)) >> 8) << 16 | (uint)((255 * (int)(texel & 0xFF)) >> 8);
+        Assert.AreEqual(expected, scene.Pixel(2, 2));
+    }
+
+    [TestMethod]
+    public void SinglePixelWideTextureUsesOneColorPerTriangle()
+    {
+        var scene = Scene3D(WasmRasterizer.FlagTextured);
+        scene.TexWidth = 1;
+        scene.TexHeight = 2;
+        scene.SetTexel(0, 0xFFFF0000);
+        scene.SetTexel(1, 0xFF00FF00);
+        scene.Quad(0xFFFFFFFF, (-1, 1, 0.5f, 0, 0), (1, 1, 0.5f, 0, 0), (1, -1, 0.5f, 0, 0), (-1, -1, 0.5f, 0, 0));
+        Assert.AreEqual(WasmRasterizer.Success, scene.Draw());
+        Assert.AreEqual(0xFFFE0000u, scene.Pixel(4, 4)); // (255 * 255) >> 8 = 254, Zeile 0 der Textur
+    }
+
+    [TestMethod]
     public void InvalidDescriptionsAreRejected()
     {
         var scene = new Scene { Flags = WasmRasterizer.FlagColorWrite | WasmRasterizer.Flag2D };

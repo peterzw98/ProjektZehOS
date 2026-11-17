@@ -8,7 +8,7 @@ namespace ProjektZeh.Graphics.Raster;
 /// Software-Rasterizer fuer Wasm-Apps (zehos_v1.raster_draw und raster_fill, Vertrag in docs/PAKETE_ERSTELLEN.md).
 /// Zeichnet Quads direkt in Farb- und Tiefenpuffer im linearen Speicher der App; der Kernel haelt keinen Zustand.
 /// Die Rechenschritte sind aus ClassiCube Graphics_SoftGPU.c uebertragen (BSD-3-Clause, Copyright (c) 2014 - 2024,
-/// UnknownShadow200), damit das Bild dem Wasm-Renderer der App gleicht. Ganzzahlen laufen wie i32 in Wasm ueber,
+/// UnknownShadow200; Lizenztext in LICENSE-ClassiCube.txt), damit das Bild dem Wasm-Renderer der App gleicht. Ganzzahlen laufen wie i32 in Wasm ueber,
 /// Gleitkomma wird nie zusammengezogen; die Umwandlung nach int bildet die Absenkung von clang fuer wasm32 nach.
 /// </summary>
 internal static class WasmRasterizer
@@ -160,9 +160,9 @@ internal static class WasmRasterizer
     private static int BitmapG(uint color) => (int)((color >> 8) & 0xFF);
     private static int BitmapB(uint color) => (int)(color & 0xFF);
     private static int BitmapA(uint color) => (int)(color >> 24);
-    // Wie BitmapCol_Make: Werte werden ohne Begrenzung in ihre Bytes geschoben.
+    // Wie BitmapCol_Make: jeder Kanal wird auf sein Byte gekuerzt ((cc_uint8)value << shift).
     private static uint Make(int r, int g, int b, int a) =>
-        unchecked(((uint)a << 24) | ((uint)r << 16) | ((uint)g << 8) | (uint)b);
+        unchecked(((uint)(a & 0xFF) << 24) | ((uint)(r & 0xFF) << 16) | ((uint)(g & 0xFF) << 8) | (uint)(b & 0xFF));
 
     private static void ReadVertex(ref Context context, int index, ref Vertex vertex, bool transform)
     {
@@ -306,7 +306,8 @@ internal static class WasmRasterizer
         }
     }
 
-    // Wasm i32.div_s trapt bei Division durch null; height/width sind hier nie null, INT_MIN / -1 kann nicht entstehen.
+    // width/height sind hier nie null. Ein Teiler -1 entsteht im Zeichenpfad nicht; der Sonderfall verhindert nur,
+    // dass INT_MIN / -1 in C# eine Ausnahme statt des Wasm-Ergebnisses (Ueberlauf) liefert.
     private static int Divide(int value, int divisor) => divisor == -1 ? unchecked(-value) : value / divisor;
 
     // Ausserhalb der Textur (nur bei widerspruechlichen Sprite-Koordinaten moeglich) liest SoftGPU fremden Speicher;
@@ -417,7 +418,9 @@ internal static class WasmRasterizer
         else if (context.TexWidth == 1)
         {
             // Wie SoftGPU: Eine 1 Pixel breite Textur liefert eine feste Farbe je Dreieck.
-            float rawY = Math.Min(t0 / w0, t1 / w1);
+            // Wie das C-Makro min(a, b) = a < b ? a : b; Math.Min verhielte sich bei NaN anders.
+            float rawY0 = t0 / w0, rawY1 = t1 / w1;
+            float rawY = rawY0 < rawY1 ? rawY0 : rawY1;
             uint texel = context.Texture[(ToInt(rawY + 0.01f) & context.TexHeightMask) * context.TexWidth];
             a = (A(color) * BitmapA(texel)) >> 8;
             r = (R(color) * BitmapR(texel)) >> 8;
