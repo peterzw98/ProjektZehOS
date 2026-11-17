@@ -228,8 +228,10 @@ def smoke(qemu, socket_path, serial, prefix, recovery, timeout, provision=False)
             monitor.write_line('disk mount sata0')
             time.sleep(3)
             monitor.screenshot(prefix.with_name(prefix.name + '-setup-prompt.ppm'))
-            monitor.write_line('netadmin')
-            monitor.write_line('testpassword12345')
+            # Die Ersteinrichtung gibt es nur beim Boot; in der laufenden Sitzung legt der Sicherheits-Recovery-Build
+            # den ersten Administrator mit security recover an (eine Kennwortabfrage, kein Wiederholen).
+            monitor.write_line('security recover netadmin')
+            time.sleep(1)
             monitor.write_line('testpassword12345')
             time.sleep(12)
             monitor.screenshot(prefix.with_name(prefix.name + '-provision.ppm'))
