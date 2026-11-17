@@ -1,6 +1,9 @@
 #if ZEHOS_AOT_PROBE
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
 using ProjektZeh.Runtime.Wasm;
@@ -10,7 +13,8 @@ namespace ProjektZeh.Runtime;
 /// <summary>
 /// Gastprobe fuer Etappe B des AOT-Plans: Laeuft Maschinencode aus dem Cosmos-Heap? Ergebnis seriell als
 /// AOT_PROBE-Zeilen. Endet der Aufruf mit einer Seitenschutzverletzung, fehlt die PASS-Zeile; die vorher
-/// gemeldeten Register und Adressen bleiben im seriellen Protokoll.
+/// gemeldeten Register und Adressen bleiben im seriellen Protokoll. Etappe D prueft danach denselben Weg wie
+/// Paket-Apps: WasmRuntime mit .aot-Bytes ueber zehos_wasm_run_aot (RunRuntime).
 /// </summary>
 internal static unsafe class CosmosAotProbe
 {
@@ -85,8 +89,211 @@ internal static unsafe class CosmosAotProbe
             return false;
         }
         Write($"fixture PASS {passed}/{FixtureCases}");
+        if (!RunRuntime()) return false;
         Write("PASS");
         return true;
+    }
+
+    // Etappe D: Laeufe ueber WasmRuntime (gemeinsamer Worker, Hostfunktionstabelle, Statuscodes wie wasm3).
+    private const string DataRoot = "/data";
+    private const string ProbeFile = "/data/aotprobe.txt";
+    private const string DoomAotPath = "/data/doom.aot";
+    private const int MaximumModuleBytes = 64 * 1024 * 1024;
+    private const int Restarts = 20;
+    private const int FileRounds = 20;
+    // WAMR startet je Lauf neu; ab dem zweiten Lauf darf kein Speicher mehr verloren gehen (der erste legt Caches an).
+    // 64 KiB = 16 Seiten Schwankung des Seitenallokators; schon 4 KiB Verlust je Lauf fielen ueber 18 Laeufe auf.
+    private const ulong LeakToleranceBytes = 64 * 1024;
+    private const int DoomSeconds = 20;
+    private const string DoomTestFrame = "ff0000/00ff00/0000ff/ffffff";
+    private static readonly byte[] NoModule = [];
+
+    private static bool RunRuntime()
+    {
+        try
+        {
+            byte[] fixture = FixtureBytes(0);
+            Expect("d ret42", fixture, "ret42", WasmStatus.Ok, 42);
+            Expect("d oob", fixture, "oob", WasmStatus.Trap, 0, "out of bounds memory access");
+            Expect("d recurse", fixture, "recurse", WasmStatus.Trap, 0, "out of bounds memory access");
+            Expect("d recurse_native", fixture, "recurse_native", WasmStatus.Trap, 0, "native stack overflow");
+            // Importe ausserhalb der Hostfunktionstabelle (B-Fixture: zehos.host_add) trappen erst beim Aufruf.
+            Expect("d unlinked", fixture, "call_host", WasmStatus.Trap, 0, "unlinked import function");
+            // Die B-Fixture hat keinen WASI-Einstieg.
+            Expect("d entry", fixture, "_start", WasmStatus.EntryMissing, 0);
+            byte[] invalid = (byte[])fixture.Clone();
+            invalid[1] = (byte)'x';
+            Expect("d invalid", invalid, "ret42", WasmStatus.InvalidModule, 0, "kein AOT-Modul");
+            byte[] version = (byte[])fixture.Clone();
+            version[4] = 4;
+            Expect("d version", version, "ret42", WasmStatus.InvalidModule, 0, "unknown binary version");
+            Expect("d truncated", fixture.AsSpan(0, 64).ToArray(), "ret42", WasmStatus.InvalidModule, 0);
+            // Ein .wasm ist kein .aot: der Kernel enthaelt keinen WAMR-Interpreter.
+            Expect("d wasm", Convert.FromHexString("0061736d01000000"), "ret42", WasmStatus.InvalidModule, 0, "kein AOT-Modul");
+            RunRestarts(fixture);
+            RunHostFixture();
+            RunLimitFixture();
+            RunDoom();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Write($"FAIL {exception.Message}");
+            return false;
+        }
+    }
+
+    // 20 Starts hintereinander; der freie Speicher nach dem letzten darf nicht unter dem nach dem zweiten liegen.
+    private static void RunRestarts(byte[] fixture)
+    {
+        ulong freeAfterSecond = 0;
+        for (int run = 1; run <= Restarts; run++)
+        {
+            Expect($"d restart={run}", fixture, "ret42", WasmStatus.Ok, 42);
+            ulong free = FreeBytes();
+            if (run == 2) freeAfterSecond = free;
+            Write($"d restart={run} freeKiB={free / 1024}");
+        }
+        ulong freeAfterLast = FreeBytes();
+        Write($"d memory afterSecondKiB={freeAfterSecond / 1024} afterLastKiB={freeAfterLast / 1024}");
+        Check(freeAfterSecond - Math.Min(freeAfterSecond, freeAfterLast) <= LeakToleranceBytes,
+            "Speicher waechst ueber wiederholte AOT-Starts.");
+    }
+
+    private static void RunHostFixture()
+    {
+        byte[] host = FixtureBytes(1);
+        if (host.Length == 0)
+        {
+            Write("d host SKIP (aot_runtime_fixture_data.c nicht gebaut, braucht wamrc unter Linux)");
+            return;
+        }
+        var session = new ProbeSession(null);
+        Expect("d host _start", host, "_start", WasmStatus.Ok, 7, session: session);
+        Check(session.Output.ToString().Contains("AOT_HOST hallo", StringComparison.Ordinal), "d host: Ausgabe fehlt.");
+        Expect("d host calls", host, "hostcalls", WasmStatus.Ok, 31);
+        Expect("d host oob", host, "host_oob", WasmStatus.Trap, 0, "out of bounds memory access");
+        // Zeiger gueltig, Laenge nicht: den Trap meldet erst die Kernfunktion (wamrc prueft nur das erste Byte).
+        Expect("d host badlen", host, "host_badlen", WasmStatus.Trap, 0, "out of bounds memory access");
+        Expect("d host badwritten", host, "host_badwritten", WasmStatus.Trap, 0, "out of bounds memory access");
+        // call_indirect auf den Import: Weg ueber invokeNative mit der registrierten "*"-Signatur.
+        var indirect = new ProbeSession(null);
+        Expect("d host indirect", host, "host_indirect", WasmStatus.Ok, 0, session: indirect);
+        Check(indirect.Output.ToString().Contains("AOT_HOST indirekt", StringComparison.Ordinal), "d host indirect: Ausgabe fehlt.");
+        Expect("d host indirect_badlen", host, "host_indirect_badlen", WasmStatus.Trap, 0, "out of bounds memory access");
+        Expect("d host grow", host, "grow", WasmStatus.Ok, -1);
+        if (!File.Exists(ProbeFile))
+        {
+            Write($"d host open SKIP (keine {ProbeFile})");
+            return;
+        }
+        // Offene Datei nach Trap und nach proc_exit: der Kernel schliesst sie. Wiederholt ueber die 16 Plaetze hinaus,
+        // damit ein Leck als "Datei nicht geoeffnet" (99) auffiele.
+        for (int round = 1; round <= FileRounds; round++)
+        {
+            Expect($"d host opentrap={round}", host, "opentrap", WasmStatus.Trap, 0, root: DataRoot);
+            Expect($"d host openexit={round}", host, "openexit", WasmStatus.Ok, 7, root: DataRoot);
+        }
+    }
+
+    private static void RunLimitFixture()
+    {
+        byte[] limit = FixtureBytes(2);
+        if (limit.Length == 0)
+        {
+            Write("d limit SKIP (aot_runtime_fixture_data.c nicht gebaut, braucht wamrc unter Linux)");
+            return;
+        }
+        Expect("d limit", limit, "hostcalls", WasmStatus.LoadFailed, 0, "memory size exceeds limit");
+    }
+
+    // Von Hand bereitgestelltes Doom-.aot (scripts/test-wasm-loader.py --probe aot --doom-aot) laeuft bis zum ersten Bild
+    // und endet nach DoomSeconds regulaer.
+    private static void RunDoom()
+    {
+        if (!File.Exists(DoomAotPath))
+        {
+            Write($"d doom SKIP (keine {DoomAotPath})");
+            return;
+        }
+        byte[] aot = File.ReadAllBytes(DoomAotPath);
+        Check(aot.Length <= MaximumModuleBytes, "doom.aot zu gross.");
+        var session = new ProbeSession(DataRoot, DoomSeconds * 1000);
+        var watch = Stopwatch.StartNew();
+        WasmStatus status = WasmRuntime.Run(NoModule, "_start", 0, session, out int result, out string message, aot);
+        double playSeconds = Math.Max(1, session.LastFrameMs - session.FirstFrameMs) / 1000.0;
+        Write($"d doom status={status} exit={result} ms={watch.ElapsedMilliseconds} firstFrameMs={session.FirstFrameMs} " +
+            $"frames={session.Frames} fps={session.Frames / playSeconds:F1} testFrame={session.TestFrame} {message}");
+        Check(status == WasmStatus.Ok && result == 0, "Doom-AOT nicht regulaer beendet.");
+        Check(session.Frames > 0, "Doom-AOT ohne Bild.");
+        Check(session.TestFrame == DoomTestFrame, "Doom-AOT: Pruefbild mit falscher Kanal- oder Zeilenfolge.");
+    }
+
+    private static void Expect(string name, byte[] aot, string entry, WasmStatus expectedStatus, int expectedResult,
+        string? messagePart = null, string? root = null, ProbeSession? session = null)
+    {
+        var watch = Stopwatch.StartNew();
+        WasmStatus status = WasmRuntime.Run(NoModule, entry, 0, session ?? new ProbeSession(root), out int result,
+            out string message, aot);
+        Write($"{name} status={status} result={result} ms={watch.ElapsedMilliseconds} {message}");
+        Check(status == expectedStatus && result == expectedResult, $"{name}: erwartet {expectedStatus}/{expectedResult}.");
+        Check(messagePart == null || message.Contains(messagePart, StringComparison.Ordinal),
+            $"{name}: Meldung ohne '{messagePart}'.");
+    }
+
+    private static byte[] FixtureBytes(int which)
+    {
+        uint size;
+        byte* bytes = NativeFixtureBytes(which, &size);
+        return bytes == null || size == 0 ? [] : new ReadOnlySpan<byte>(bytes, (int)size).ToArray();
+    }
+
+    private static ulong FreeBytes()
+    {
+        GC.Collect();
+        return CosmosSystemInfo.PhysicalMemory().Free;
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    // Wie die Sitzung der wasm3-Probe: ohne Fenster und Eingabe, Ausgabe seriell, Bilder nur gezaehlt.
+    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue) : IWasmSession
+    {
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        public StringBuilder Output { get; } = new();
+        public string? Root => root;
+        public bool AllowsNetwork => false;
+        public int Frames { get; private set; }
+        public long FirstFrameMs { get; private set; } = -1;
+        public long LastFrameMs { get; private set; }
+        public string TestFrame { get; private set; } = "-";
+        public bool ShouldExit => clock.ElapsedMilliseconds >= runMilliseconds;
+        public uint TicksMilliseconds => (uint)clock.ElapsedMilliseconds;
+        public int PollKey() => -1;
+        public bool TryReadEvent(out WasmInputEvent value) { value = default; return false; }
+        public bool SetPointerCapture(bool enabled) => false;
+
+        public void Write(int fd, ReadOnlySpan<byte> data)
+        {
+            string text = Encoding.UTF8.GetString(data);
+            if (Output.Length < 4096) Output.Append(text);
+            Log.WriteString(text);
+        }
+
+        public void Present(ReadOnlySpan<uint> pixels, int width, int height, int tic, bool test)
+        {
+            if (test)
+            {
+                TestFrame = $"{pixels[0]:x6}/{pixels[width - 1]:x6}/{pixels[(height - 1) * width]:x6}/{pixels[height * width - 1]:x6}";
+                return;
+            }
+            if (FirstFrameMs < 0) FirstFrameMs = clock.ElapsedMilliseconds;
+            Frames++;
+            LastFrameMs = clock.ElapsedMilliseconds;
+        }
     }
 
     // Referenzwert des Nebenthreads auf demselben Rechenweg.
@@ -127,5 +334,8 @@ internal static unsafe class CosmosAotProbe
 
     [DllImport("*", EntryPoint = "zehos_aot_probe_exec", ExactSpelling = true)]
     private static extern int NativeExec(ulong* blockAddress);
+
+    [DllImport("*", EntryPoint = "zehos_aot_probe_fixture_bytes", ExactSpelling = true)]
+    private static extern byte* NativeFixtureBytes(int which, uint* size);
 }
 #endif

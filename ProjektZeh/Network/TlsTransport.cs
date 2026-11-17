@@ -41,7 +41,8 @@ internal static class TlsTransport
 
     internal static void CheckClock(DateTime utcNow)
     {
-        if (utcNow.Kind != DateTimeKind.Utc || utcNow.Year is < 2026 or > 2100)
+        // Etappe 12.2: nicht vor dem Stand des Wurzelbundles, hoechstens 15 Jahre danach (vorher nur Jahr 2026-2100).
+        if (!ProjektZeh.SystemServices.ClockCorrection.IsPlausible(utcNow, TlsRoots.MinimumTime))
             throw new InvalidOperationException("Ungueltige UTC-Uhr; TLS ist gesperrt.");
     }
 
@@ -74,7 +75,7 @@ internal static class TlsTransport
             {
                 if (oid != X509Extensions.BasicConstraints.Id && oid != X509Extensions.KeyUsage.Id &&
                     oid != X509Extensions.ExtendedKeyUsage.Id && oid != X509Extensions.SubjectAlternativeName.Id &&
-                    oid != X509Extensions.CertificatePolicies.Id) return false;
+                    oid != X509Extensions.CertificatePolicies.Id && oid != X509Extensions.NameConstraints.Id) return false;
             }
         }
         return AllowsServerPurpose(root);
