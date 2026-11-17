@@ -395,7 +395,7 @@ def main():
             # "shutdown" haengt /data aus und schreibt die Puffer, ein Abbruch der VM koennte Eintraege verlieren.
             try:
                 guest.shell("shutdown")
-            except OSError:
+            except ConnectionError:
                 # Unter KVM schaltet der Gast schon beim Druecken von Enter ab; das Loslassen per QMP erreicht dann
                 # kein QEMU mehr. Ob das Herunterfahren sauber war, entscheidet allein der Exitcode.
                 pass
