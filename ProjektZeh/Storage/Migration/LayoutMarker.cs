@@ -45,7 +45,10 @@ internal sealed record LayoutMarker(LayoutState State, Guid DiskGuid, string? So
     /// Marker direkt aus einem eingehaengten Root lesen (Profilwahl 4.3, Zielpruefung 4.5): null = Datei fehlt; eine zu grosse
     /// Datei und jeder andere Lesefehler ergeben einen ungueltigen Marker (Unclear), nie "fehlt".
     /// </summary>
-    internal static ResultObject<LayoutMarker>? ReadFile(string path)
+    internal static ResultObject<LayoutMarker>? ReadFile(string path) => StorageLock.Run(() => ReadFileStorageLocked(path));
+
+    // Hoechstens MaximumBytes: Oeffnen, Lesen und Schliessen als ein Abschnitt.
+    private static ResultObject<LayoutMarker>? ReadFileStorageLocked(string path)
     {
         try
         {

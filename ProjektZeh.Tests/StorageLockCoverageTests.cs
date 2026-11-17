@@ -10,23 +10,28 @@ namespace ProjektZeh.Tests;
 
 /// <summary>
 /// Quellpruefung zur Speicher-Sperre (Diagnoselauf 13, 18.11.): Jeder Plattenzugriff im Kernel steht entweder im Argument
-/// eines <c>StorageLock.Run(...)</c> oder in einer Methode mit Endung <c>Locked</c>, und solche Methoden werden nur aus
-/// gesperrten Bereichen gerufen. Neue ungesperrte Aufrufer machen den Test rot, nicht nur die heute bekannten.
+/// eines <c>StorageLock.Run(...)</c> oder in einer Methode mit Endung <c>StorageLocked</c>, und solche Methoden werden nur
+/// aus gesperrten Bereichen gerufen oder referenziert. Neue ungesperrte Aufrufer machen den Test rot, nicht nur die heute
+/// bekannten. Eigene Endung, weil <c>Locked</c> im Projekt schon fuer andere Sperren steht (Review blue-lockscan).
 /// </summary>
 /// <remarks>
-/// Grenze: Die Pruefung erkennt Zugriffe an API-Namen (File, Directory, FileStream, VfsManager, ...). Lesen und Schreiben
-/// auf einem schon geoeffneten Stream ausserhalb dieser Methoden erkennt sie nicht; offene Streams ueber mehrere Aufrufe
-/// (WASI-Dateihandles) sind deshalb in <c>WasmRuntime</c> von Hand gesperrt und hier als Muster mitgeprueft.
+/// Grenzen: Die Pruefung erkennt Zugriffe an API-Namen (File, Directory, FileStream, VfsManager, InodeOperations, ...).
+/// Lesen und Schreiben auf einem schon geoeffneten Stream ausserhalb dieser Bereiche erkennt sie nicht; offene Streams ueber
+/// mehrere Aufrufe (WASI-Dateihandles) sind in <c>WasmRuntime</c> von Hand gesperrt. Ausdruecke in interpolierten
+/// Zeichenketten werden mit der Zeichenkette ausgeblendet.
 /// </remarks>
 [TestClass]
 public sealed class StorageLockCoverageTests
 {
     private static readonly Regex Access = new(
-        @"\b(?:File|Directory)\.[A-Z]\w*\s*\(|\bnew\s+(?:FileStream|FileInfo|DirectoryInfo|StreamReader|StreamWriter)\s*\(|\bVfsManager\.[A-Z]\w*|\bDriveInfo\b",
+        @"\b(?:File|Directory)\.[A-Z]\w*\s*\(|\bnew\s+(?:FileStream|FileInfo|DirectoryInfo|StreamReader|StreamWriter)\s*\(|\b(?:VfsManager|FileSystemManager|InodeOperations)\.[A-Z]\w*|\bDriveInfo\b|\.(?:EnumerateFileSystemInfos|GetFileSystemInfos|EnumerateFiles|EnumerateDirectories)\s*\(",
         RegexOptions.Compiled);
 
-    // Aufruf (nicht Deklaration) einer gesperrten Hilfsmethode.
-    private static readonly Regex LockedCall = new(@"\b(\w+Locked)\s*\(", RegexOptions.Compiled);
+    // Aufruf oder Methodengruppe (nicht Deklaration) einer gesperrten Hilfsmethode.
+    private static readonly Regex LockedCall = new(@"\b(\w+StorageLocked)\b", RegexOptions.Compiled);
+
+    // Faule Aufzaehlung: im Run-Ausdruck ohne Block liefe die Aufzaehlung erst ausserhalb der Sperre (Review blue-lockscan).
+    private static readonly Regex LazyEnumeration = new(@"\bEnumerate\w*\s*\(", RegexOptions.Compiled);
 
     private static readonly Regex Member = new(
         @"^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|internal|protected|static|override|async|unsafe|readonly|sealed|virtual|extern|new|partial)\s+)+[\w<>\[\]?,\s.()]*?\b(\w+)\s*(?:<[^>]*>)?\s*\(",
@@ -44,12 +49,17 @@ public sealed class StorageLockCoverageTests
         ["Runtime/CosmosSimdProbe.cs"] = "Probe",
         ["Messaging/MessageGuestProbe.cs"] = "Probe",
         ["Network/CosmosNetworkProbe.cs"] = "Probe",
+        ["Runtime/CosmosSecurityProbe.cs"] = "Probe",
+        // VFS-Schicht: Cosmos ruft diese Inode-Operationen nur innerhalb eines Zugriffs, den der Aufrufer schon unter der
+        // Speicher-Sperre ausfuehrt; die eigenen Mount-Aufrufe der Datei sind gesperrt. Span-Parameter liessen sich hier
+        // ohnehin nicht in ein Run-Lambda fassen.
+        ["Storage/CosmosReadOnlyVfs.cs"] = "VFS-Schicht",
     };
 
     [TestMethod]
     public void EveryDiskAccessRunsUnderStorageLock()
     {
-        string root = SourceRoot();
+        string root = Path.Combine(Golden.RepositoryRoot(), "ProjektZeh");
         var findings = new List<string>();
         foreach (string path in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
@@ -82,13 +92,15 @@ public sealed class StorageLockCoverageTests
             {
                 public bool Exists(string p) => StorageLock.Run(() =>
                     File.Exists(p));
-                public void Save(string p) => StorageLock.Run(() => SaveLocked(p));
-                private void SaveLocked(string p)
+                public void Save(string p) => StorageLock.Run(() => SaveStorageLocked(p));
+                public string[] Names(string p) => StorageLock.Run(() => Directory.EnumerateFiles(p).ToArray());
+                private void SaveStorageLocked(string p)
                 {
                     using var s = new FileStream(p, FileMode.Create);
-                    HelperLocked();
+                    HelperStorageLocked();
+                    foreach (string n in Directory.EnumerateFiles(p)) { }
                 }
-                private static void HelperLocked() { Directory.CreateDirectory("d"); }
+                private static void HelperStorageLocked() { Directory.CreateDirectory("d"); }
             }
             """;
         Assert.AreEqual(0, Check(source).Count, string.Join("\n", Check(source)));
@@ -100,13 +112,30 @@ public sealed class StorageLockCoverageTests
         const string source = """
             class A
             {
-                public void Save(string p) { SaveLocked(p); }
-                private void SaveLocked(string p) { File.Delete(p); }
+                public void Save(string p) { SaveStorageLocked(p); }
+                public void All(List<string> l) { l.ForEach(SaveStorageLocked); }
+                private void SaveStorageLocked(string p) { File.Delete(p); }
             }
             """;
         var findings = Check(source);
-        Assert.AreEqual(1, findings.Count);
-        StringAssert.Contains(findings[0], "SaveLocked");
+        Assert.AreEqual(2, findings.Count, string.Join("\n", findings));
+        Assert.IsTrue(findings.All(finding => finding.Contains("SaveStorageLocked", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void Detects_LazyEnumerationAndInstanceApis()
+    {
+        const string source = """
+            class A
+            {
+                public IEnumerable<string> Names(string p) => StorageLock.Run(() => Directory.EnumerateFiles(p));
+                public void Infos(DirectoryInfo d) { foreach (var i in d.EnumerateFileSystemInfos()) { } }
+                public bool Look(IVfsInode n) => n.InodeOperations.Lookup(n, "x", out _);
+                public string Old() => RunLocked();
+            }
+            """;
+        var findings = Check(source);
+        Assert.AreEqual(3, findings.Count, string.Join("\n", findings));
     }
 
     [TestMethod]
@@ -141,6 +170,9 @@ public sealed class StorageLockCoverageTests
                 if (!regions.Covered(offset + match.Index)) findings.Add($"{index + 1}: {match.Groups[1].Value} ohne Sperre gerufen");
             }
 
+            foreach (Match match in LazyEnumeration.Matches(line))
+                if (regions.InLazyRun(offset + match.Index)) findings.Add($"{index + 1}: {match.Value.Trim()} im Run-Ausdruck ohne ToArray/ToList (Aufzaehlung ausserhalb der Sperre)");
+
             offset += line.Length + 1;
         }
 
@@ -156,12 +188,16 @@ public sealed class StorageLockCoverageTests
     private sealed class Coverage
     {
         public readonly List<(int Start, int End)> Ranges = [];
+        // Run-Argumente als Ausdruckslambda ohne Block und ohne ToArray/ToList.
+        public readonly List<(int Start, int End)> LazyRuns = [];
 
         public bool Covered(int position) => Ranges.Any(range => position >= range.Start && position < range.End);
+
+        public bool InLazyRun(int position) => LazyRuns.Any(range => position >= range.Start && position < range.End);
     }
 
     /// <summary>
-    /// Gesperrte Bereiche: das Klammerargument jedes <c>StorageLock.Run(</c> und der Rumpf jeder Methode mit Endung Locked
+    /// Gesperrte Bereiche: das Klammerargument jedes <c>StorageLock.Run(</c> und der Rumpf jeder Methode mit Endung StorageLocked
     /// (Block bis zur schliessenden Klammer oder Ausdruckskoerper bis zum Semikolon).
     /// </summary>
     private static Coverage Regions(string code)
@@ -170,10 +206,15 @@ public sealed class StorageLockCoverageTests
         foreach (Match match in Regex.Matches(code, @"\bStorageLock\.Run\s*\("))
         {
             int open = match.Index + match.Length - 1;
-            coverage.Ranges.Add((open, Matching(code, open, '(', ')')));
+            int close = Matching(code, open, '(', ')');
+            coverage.Ranges.Add((open, close));
+            string argument = code[open..close];
+            if (!argument.Contains('{') && !argument.Contains(".ToArray()", StringComparison.Ordinal)
+                && !argument.Contains(".ToList()", StringComparison.Ordinal))
+                coverage.LazyRuns.Add((open, close));
         }
 
-        foreach (Match match in Regex.Matches(code, @"\b\w+Locked\s*(?:<[^>]*>)?\s*\(", RegexOptions.Multiline))
+        foreach (Match match in Regex.Matches(code, @"\b\w+StorageLocked\s*(?:<[^>]*>)?\s*\(", RegexOptions.Multiline))
         {
             int lineStart = code.LastIndexOf('\n', match.Index) + 1;
             int lineEnd = code.IndexOf('\n', match.Index);
@@ -280,16 +321,5 @@ public sealed class StorageLockCoverageTests
     private static void Blank(string source, int start, int end, StringBuilder result)
     {
         for (int index = start; index < end; index++) result.Append(source[index] == '\n' ? '\n' : ' ');
-    }
-
-    private static string SourceRoot()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
-        {
-            string candidate = Path.Combine(directory.FullName, "ProjektZeh", "ProjektZeh.csproj");
-            if (File.Exists(candidate)) return Path.GetDirectoryName(candidate)!;
-        }
-
-        throw new AssertFailedException("ProjektZeh-Quellordner nicht gefunden");
     }
 }

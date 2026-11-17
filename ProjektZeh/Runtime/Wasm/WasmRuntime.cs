@@ -227,7 +227,7 @@ internal static unsafe partial class WasmRuntime
         network = null;
         foreach (var stream in files.Values)
         {
-            try { stream.Dispose(); }
+            try { StorageLock.Run(stream.Dispose); }
             catch (Exception) { code = (int)WasmStatus.Trap; }
         }
         files.Clear();

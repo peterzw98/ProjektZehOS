@@ -18,6 +18,14 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
     /// <summary>Etappe 4.3: im Fall RootUnclean haengt der Kernel die Lesekomponente direkt auf / ein.</summary>
     public bool TryMount(string mountPoint, [NotNullWhen(true)] out VfsMount? mount)
     {
+        VfsMount? mounted = null;
+        bool success = StorageLock.Run(() => TryMountStorageLocked(mountPoint, out mounted));
+        mount = mounted;
+        return success;
+    }
+
+    private bool TryMountStorageLocked(string mountPoint, [NotNullWhen(true)] out VfsMount? mount)
+    {
         mount = null;
         foreach (VfsMount existing in VfsManager.Mounts)
         {

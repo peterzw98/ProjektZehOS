@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -34,6 +35,9 @@ internal static class StorageLock
     /// <summary>Empfaenger langer Warte- und Haltezeiten; der Kernel setzt das Bootprotokoll ein.</summary>
     internal static Action<string>? Report { get; set; }
 
+    /// <summary>Groesster Abschnitt je Sperre beim Lesen grosser Dateien; der Hauptthread wartet so hoechstens Millisekunden.</summary>
+    public const int ChunkBytes = 1024 * 1024;
+
     /// <summary>Haelt der aktuelle Thread die Sperre?</summary>
     public static bool IsHeldByCurrentThread => Monitor.IsEntered(Gate);
 
@@ -65,6 +69,22 @@ internal static class StorageLock
             operation();
             return true;
         }, caller, file);
+    }
+
+    /// <summary>
+    /// Fuellt <paramref name="buffer"/> aus einem schon geoeffneten Stream in Abschnitten von hoechstens
+    /// <see cref="ChunkBytes"/>, jeden unter der Sperre (Wasm-Module und AOT-Dateien bis 64 MiB).
+    /// </summary>
+    public static void ReadExactly(Stream stream, byte[] buffer)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(buffer);
+        for (int offset = 0; offset < buffer.Length; offset += ChunkBytes)
+        {
+            int start = offset;
+            int count = Math.Min(ChunkBytes, buffer.Length - offset);
+            Run(() => stream.ReadExactly(buffer, start, count));
+        }
     }
 
     /// <summary>

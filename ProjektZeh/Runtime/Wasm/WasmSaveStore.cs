@@ -140,12 +140,12 @@ internal sealed class WasmSaveStore
         if (directory)
         {
             if (create || truncate || write) return WasiErrno.Invalid;
-            if (!Directory.Exists(path)) return File.Exists(path) ? WasiErrno.NotDirectory : WasiErrno.NotFound;
+            if (!DirectoryExists(path)) return FileExists(path) ? WasiErrno.NotDirectory : WasiErrno.NotFound;
             handle = Add(new Entry(path, true, false));
             return WasiErrno.Success;
         }
-        if (Directory.Exists(path)) return WasiErrno.IsDirectory;
-        bool exists = File.Exists(path);
+        if (DirectoryExists(path)) return WasiErrno.IsDirectory;
+        bool exists = FileExists(path);
         if (exists && create && exclusive) return WasiErrno.Exists;
         if (!exists && !create) return WasiErrno.NotFound;
         if (write && CountWritable() >= limits.WritableFiles) return WasiErrno.TooManyFiles;
@@ -154,7 +154,7 @@ internal sealed class WasmSaveStore
         byte[] data = [];
         if (exists && !truncate)
         {
-            long size = new FileInfo(path).Length;
+            long size = FileLength(path);
             if (size > limits.FileBytes) return WasiErrno.FileTooLarge;
             if (buffered + size > limits.BufferBytes) return WasiErrno.NoSpace;
             var read = files.ReadBytes(path, limits.FileBytes);
@@ -247,9 +247,9 @@ internal sealed class WasmSaveStore
         directory = false;
         int status = Resolve(relative, out string path);
         if (status != WasiErrno.Success) return status;
-        if (Directory.Exists(path)) { directory = true; return WasiErrno.Success; }
-        if (!File.Exists(path)) return WasiErrno.NotFound;
-        size = new FileInfo(path).Length;
+        if (DirectoryExists(path)) { directory = true; return WasiErrno.Success; }
+        if (!FileExists(path)) return WasiErrno.NotFound;
+        size = FileLength(path);
         return WasiErrno.Success;
     }
 
@@ -267,8 +267,8 @@ internal sealed class WasmSaveStore
         int status = Resolve(relative, out string path);
         if (status != WasiErrno.Success) return status;
         if (path == root) return WasiErrno.Exists;
-        if (Directory.Exists(path) || File.Exists(path)) return WasiErrno.Exists;
-        if (!Directory.Exists(Path.GetDirectoryName(path)!)) return WasiErrno.NotFound;
+        if (DirectoryExists(path) || FileExists(path)) return WasiErrno.Exists;
+        if (!DirectoryExists(Path.GetDirectoryName(path)!)) return WasiErrno.NotFound;
         var usage = Usage();
         if (usage.Entries >= limits.Entries || usage.Bytes + DirectoryBytes > limits.TotalBytes) return WasiErrno.NoSpace;
         return disk(() =>
@@ -284,7 +284,7 @@ internal sealed class WasmSaveStore
         int status = Resolve(relative, out string path);
         if (status != WasiErrno.Success) return status;
         if (path == root) return WasiErrno.Access;
-        if (!Directory.Exists(path)) return File.Exists(path) ? WasiErrno.NotDirectory : WasiErrno.NotFound;
+        if (!DirectoryExists(path)) return FileExists(path) ? WasiErrno.NotDirectory : WasiErrno.NotFound;
         status = List(path, out var children);
         if (status != WasiErrno.Success) return status;
         if (children.Length != 0) return WasiErrno.NotEmpty;
@@ -300,8 +300,8 @@ internal sealed class WasmSaveStore
         if (writesBlocked()) return WasiErrno.Busy;
         int status = Resolve(relative, out string path);
         if (status != WasiErrno.Success) return status;
-        if (Directory.Exists(path)) return WasiErrno.IsDirectory;
-        if (!File.Exists(path)) return WasiErrno.NotFound;
+        if (DirectoryExists(path)) return WasiErrno.IsDirectory;
+        if (!FileExists(path)) return WasiErrno.NotFound;
         return disk(() =>
         {
             var removed = files.DeleteFile(path);
@@ -324,14 +324,14 @@ internal sealed class WasmSaveStore
         // Gleicher Name (auf FAT auch nur in anderer Schreibweise): nichts zu tun. Sonst loeschte das Ersetzen unten die
         // einzige Fassung (Review). Eine reine Aenderung der Schreibweise bleibt damit ohne Wirkung.
         if (string.Equals(from, target, comparison))
-            return File.Exists(from) || Directory.Exists(from) ? WasiErrno.Success : WasiErrno.NotFound;
+            return FileExists(from) || DirectoryExists(from) ? WasiErrno.Success : WasiErrno.NotFound;
         if (target.StartsWith(from + Path.DirectorySeparatorChar, comparison)) return WasiErrno.Invalid;
-        if (Directory.Exists(from)) return Directory.Exists(target) || File.Exists(target) ? WasiErrno.Exists : MovedDirectory(from, target);
-        if (!File.Exists(from)) return WasiErrno.NotFound;
-        if (Directory.Exists(target)) return WasiErrno.IsDirectory;
-        if (!Directory.Exists(Path.GetDirectoryName(target)!)) return WasiErrno.NotFound;
-        if (!File.Exists(target)) return Moved(from, target);
-        long size = new FileInfo(from).Length;
+        if (DirectoryExists(from)) return DirectoryExists(target) || FileExists(target) ? WasiErrno.Exists : MovedDirectory(from, target);
+        if (!FileExists(from)) return WasiErrno.NotFound;
+        if (DirectoryExists(target)) return WasiErrno.IsDirectory;
+        if (!DirectoryExists(Path.GetDirectoryName(target)!)) return WasiErrno.NotFound;
+        if (!FileExists(target)) return Moved(from, target);
+        long size = FileLength(from);
         if (size > limits.FileBytes) return WasiErrno.FileTooLarge;
         if (buffered + size > limits.BufferBytes) return WasiErrno.NoSpace;
         var data = files.ReadBytes(from, limits.FileBytes);
@@ -355,17 +355,17 @@ internal sealed class WasmSaveStore
     // FileService verschiebt nur Dateien; beide Pfade sind ueber Resolve geprueft und bewacht.
     private int MovedDirectory(string from, string to)
     {
-        if (!Directory.Exists(Path.GetDirectoryName(to)!)) return WasiErrno.NotFound;
+        if (!DirectoryExists(Path.GetDirectoryName(to)!)) return WasiErrno.NotFound;
         return disk(() =>
         {
             try
             {
-                Directory.Move(from, to);
+                StorageLock.Run(() => Directory.Move(from, to));
                 return WasiErrno.Success;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                return Directory.Exists(root) ? WasiErrno.Io : WasiErrno.NotFound;
+                return DirectoryExists(root) ? WasiErrno.Io : WasiErrno.NotFound;
             }
         });
     }
@@ -409,8 +409,8 @@ internal sealed class WasmSaveStore
     private int Persist(Entry entry)
     {
         if (writesBlocked()) return WasiErrno.Busy;
-        if (!Directory.Exists(root)) return WasiErrno.NotFound;
-        long existing = File.Exists(entry.Path) ? new FileInfo(entry.Path).Length : 0;
+        if (!DirectoryExists(root)) return WasiErrno.NotFound;
+        long existing = FileExists(entry.Path) ? FileLength(entry.Path) : 0;
         if (Usage().Bytes - existing + entry.Length > limits.TotalBytes) return WasiErrno.NoSpace;
         if (!HasDiskSpace(entry.Length)) return WasiErrno.NoSpace;
         // Ohne Kopie (bis 16 MiB, Audit-Befund): der Puffer aendert sich waehrend des synchronen Schreibens nicht.
@@ -432,21 +432,31 @@ internal sealed class WasmSaveStore
         return !space.IsOK() || space.Value.AvailableBytes >= bytes + 64 * 1024;
     }
 
-    private (long Bytes, int Entries) Usage()
+    private (long Bytes, int Entries) Usage() => StorageLock.Run(UsageStorageLocked);
+
+    private (long Bytes, int Entries) UsageStorageLocked()
     {
         long bytes = 0;
         int entries = 0;
-        if (!Directory.Exists(root)) return (0, 0);
+        if (!DirectoryExists(root)) return (0, 0);
         foreach (string path in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
         {
             if (Path.GetFileName(path).StartsWith(".zehos-", StringComparison.OrdinalIgnoreCase)) continue;
             entries++;
-            bytes += File.Exists(path) ? new FileInfo(path).Length : DirectoryBytes;
+            bytes += FileExists(path) ? FileLength(path) : DirectoryBytes;
         }
         return (bytes, entries);
     }
 
     private int List(string path, out (string Name, bool Directory)[] entries)
+    {
+        (string Name, bool Directory)[] listed = [];
+        int status = StorageLock.Run(() => ListStorageLocked(path, out listed));
+        entries = listed;
+        return status;
+    }
+
+    private int ListStorageLocked(string path, out (string Name, bool Directory)[] entries)
     {
         entries = [];
         var guarded = FileAccessControl.RunGuard(pathGuard, path, false);
@@ -458,7 +468,7 @@ internal sealed class WasmSaveStore
             {
                 string name = Path.GetFileName(child);
                 if (name.StartsWith(".zehos-", StringComparison.OrdinalIgnoreCase)) continue;
-                result.Add((name, Directory.Exists(child)));
+                result.Add((name, DirectoryExists(child)));
             }
             result.Sort((a, b) => string.CompareOrdinal(a.Item1, b.Item1));
             entries = result.ToArray();
@@ -466,7 +476,7 @@ internal sealed class WasmSaveStore
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return Directory.Exists(root) ? WasiErrno.Io : WasiErrno.NotFound;
+            return DirectoryExists(root) ? WasiErrno.Io : WasiErrno.NotFound;
         }
     }
 
@@ -477,16 +487,24 @@ internal sealed class WasmSaveStore
     private int Resolve(string relative, out string path)
     {
         path = root;
-        if (relative == ".") return Directory.Exists(root) ? WasiErrno.Success : WasiErrno.NotFound;
+        if (relative == ".") return DirectoryExists(root) ? WasiErrno.Success : WasiErrno.NotFound;
         if (relative.Length is 0 or > 255 || relative[0] == '/') return WasiErrno.Access;
         foreach (string part in relative.Split('/'))
             if (!PathComponent.IsValid(part)) return WasiErrno.Access;
-        if (!Directory.Exists(root)) return WasiErrno.NotFound;
+        if (!DirectoryExists(root)) return WasiErrno.NotFound;
         path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
         var guarded = FileAccessControl.RunGuard(pathGuard, path, true);
         return guarded.IsOK() ? WasiErrno.Success : WasiErrno.Access;
     }
 
-    private int Failed(ResultErr result) => !Directory.Exists(root) ? WasiErrno.NotFound :
+    // Einzelpruefungen unter der Speicher-Sperre (Diagnoselauf 13); Pruefen und spaeteres Handeln bleiben wie zuvor zwei
+    // Schritte, die Mutation selbst sperrt der Dateidienst.
+    private static bool DirectoryExists(string path) => StorageLock.Run(() => Directory.Exists(path));
+
+    private static bool FileExists(string path) => StorageLock.Run(() => File.Exists(path));
+
+    private static long FileLength(string path) => StorageLock.Run(() => new FileInfo(path).Length);
+
+    private int Failed(ResultErr result) => !DirectoryExists(root) ? WasiErrno.NotFound :
         result.Code == ResultCode.NotFound ? WasiErrno.NotFound : WasiErrno.Io;
 }
