@@ -146,7 +146,12 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
 #if ZEHOS_INSTALLER
             // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
+#if ZEHOS_GPT_GUEST_PROBE
+            .. new SetupShellCommands(installer, () => true, GptInstaller,
+                text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("GPT_TEST " + text + "\n")).Commands,
+#else
             .. new SetupShellCommands(installer, () => true, GptInstaller).Commands,
+#endif
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif

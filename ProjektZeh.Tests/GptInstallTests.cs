@@ -195,6 +195,22 @@ public sealed class GptInstallTests
         Assert.IsFalse(disabled.Lines.Any(line => line.Contains("gpt", StringComparison.Ordinal)));
     }
 
+    [TestMethod]
+    public void Shell_TraceForwardsOutputAndReportsSuccessAndFailure()
+    {
+        var installer = new RecordingService { Disks = [new("a", 32 * GiB, 0, true)] };
+        var trace = new List<string>();
+        var output = new Output();
+        var shell = new ShellService(new SetupShellCommands(installer, () => true, true, trace.Add).Commands);
+
+        Assert.IsTrue(shell.ExecuteLine("setup list", output).IsOK());
+        Assert.AreEqual("OUTPUT " + output.Lines[0], trace[0]);
+        Assert.AreEqual("RESULT OK", trace[^1]);
+        Assert.IsFalse(shell.ExecuteLine("setup install a --layout gpt", output).IsOK());
+        StringAssert.StartsWith(trace[^1], "RESULT ERROR ");
+        StringAssert.Contains(trace[^1], "--erase");
+    }
+
     // Test 4: Stufenfolge und Schranken.
     [TestMethod]
     public void Job_RunsStagesInSpecOrder_MarkerIsLastWriteBetweenFlushes()

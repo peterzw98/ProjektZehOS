@@ -1,5 +1,4 @@
 import importlib.util
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,6 +28,16 @@ class PartitionTests(unittest.TestCase):
             data = table()
             data["partitiontable"]["partitions"][1].update(start=start, size=size)
             with self.subTest(start=start, size=size), self.assertRaises(ValueError):
+                guest.partitions(data, 8192 * 512)
+
+    def test_rejects_bad_sector_size_and_partition_count(self):
+        for change in ("sector", "count"):
+            data = table()
+            if change == "sector":
+                data["partitiontable"]["sectorsize"] = 4096
+            else:
+                data["partitiontable"]["partitions"].pop()
+            with self.subTest(change=change), self.assertRaises(ValueError):
                 guest.partitions(data, 8192 * 512)
 
     def test_rejects_wrong_type(self):

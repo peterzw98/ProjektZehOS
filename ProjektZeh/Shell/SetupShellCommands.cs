@@ -6,7 +6,7 @@ using ProjektZeh.Shared;
 namespace ProjektZeh.Shell;
 
 /// <param name="gptEnabled">Freischaltung von --layout gpt (Spec 7a-S4); ohne sie sind Option und gpt-Spalte unsichtbar.</param>
-internal sealed class SetupShellCommands(IInstallService installer, Func<bool> isAdministrator, bool gptEnabled = false)
+internal sealed class SetupShellCommands(IInstallService installer, Func<bool> isAdministrator, bool gptEnabled = false, Action<string>? trace = null)
 {
     private string Usage => gptEnabled ? "setup list|install <Laufwerk> [--erase] [--layout gpt]" : "setup list|install <Laufwerk> [--erase]";
 
@@ -14,6 +14,13 @@ internal sealed class SetupShellCommands(IInstallService installer, Func<bool> i
         "Installiert ZehOS auf eine Zielplatte; --erase bestaetigt das Loeschen vorhandener Partitionen.", true, Execute)];
 
     private ResultErr Execute(string[] arguments, ITextOutput output)
+    {
+        var result = ExecuteCore(arguments, trace == null ? output : new TraceOutput(output, trace));
+        trace?.Invoke(result.IsOK() ? "RESULT OK" : "RESULT ERROR " + result.Message);
+        return result;
+    }
+
+    private ResultErr ExecuteCore(string[] arguments, ITextOutput output)
     {
         if (!isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Die Installation erfordert Administratorrechte.");
         if (arguments.Length == 1 && arguments[0] == "list")
@@ -47,6 +54,12 @@ internal sealed class SetupShellCommands(IInstallService installer, Func<bool> i
             return ResultErr.CreateSuccess();
         }
         return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: " + Usage);
+    }
+
+    private sealed class TraceOutput(ITextOutput output, Action<string> trace) : ITextOutput
+    {
+        public void WriteLine(string text) { output.WriteLine(text); trace("OUTPUT " + text); }
+        public void Clear() => output.Clear();
     }
 
     // Jede Option hoechstens einmal; --layout kennt nur gpt und nur mit Freischaltung.
