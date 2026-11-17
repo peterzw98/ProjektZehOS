@@ -13,8 +13,10 @@ namespace ProjektZeh.Storage;
 internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
+    internal const int MaximumExt2DirectoryEntries = 8190;
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
+    private readonly Func<string, int?>? directoryEntryLimit;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
     // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
@@ -25,12 +27,13 @@ internal sealed class FileService
     public FileService(string initialDirectory, Action<string, string, bool>? moveFile = null,
         FileAccessControl? access = null, UserSession? session = null,
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
-        Func<string, bool, ResultErr>? pathGuard = null)
+        Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null)
     {
         this.pathGuard = pathGuard ?? access?.PathGuard;
         CurrentDirectory = initialDirectory;
         this.moveFile = moveFile ?? File.Move;
         this.diskSpace = diskSpace;
+        this.directoryEntryLimit = directoryEntryLimit;
         this.access = access;
         this.session = session;
     }
@@ -209,6 +212,7 @@ internal sealed class FileService
             if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
             byte[] data = getData();
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
+            EnsureDirectoryEntryAvailable(temporaryPath);
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
             using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
             {
@@ -311,6 +315,7 @@ internal sealed class FileService
         try
         {
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
+            EnsureDirectoryEntryAvailable(resolved.Value!, createParents: true);
             Directory.CreateDirectory(resolved.Value!);
             return ResultErr.CreateSuccess();
         }
@@ -374,6 +379,9 @@ internal sealed class FileService
                     throw new UnauthorizedAccessException("Zugriff verweigert.");
                 if (File.Exists(to.Value!) || Directory.Exists(to.Value!) || (access?.Contains(to.Value!) ?? false))
                     throw new IOException("Das Ziel existiert bereits.");
+                // Gleichverzeichniges Rename verbraucht dauerhaft keinen weiteren Eintrag.
+                if (moving && !string.Equals(Path.GetDirectoryName(from.Value!), Path.GetDirectoryName(to.Value!), StringComparison.Ordinal))
+                    EnsureDirectoryEntryAvailable(to.Value!);
                 if (moving && access != null)
                 {
                     if (!access.PrepareMove(from.Value!, to.Value!).IsOK())
@@ -384,6 +392,7 @@ internal sealed class FileService
                 if (!moving)
                 {
                     temporary = Path.Combine(Path.GetDirectoryName(to.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
+                    EnsureDirectoryEntryAvailable(temporary);
                     using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1);
                     temporaryStream = output;
                     input.CopyTo(output, 4096);
@@ -442,6 +451,7 @@ internal sealed class FileService
         try
         {
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
+            EnsureDirectoryEntryAvailable(resolved.Value!);
             using (var stream = new FileStream(resolved.Value!, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
                 stream.Flush(true);
             // Cosmos 3.0.94 bestaetigt Zeitstempel ohne Aenderung; auf dem Host werden sie aktualisiert.
@@ -568,6 +578,23 @@ internal sealed class FileService
         catch (Exception exception) when (IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
+        }
+    }
+
+    private void EnsureDirectoryEntryAvailable(string path, bool createParents = false)
+    {
+        if (directoryEntryLimit == null || File.Exists(path) || Directory.Exists(path)) return;
+        string? parent = Path.GetDirectoryName(path);
+        // mkdir -p benoetigt nur im ersten vorhandenen Elternordner einen neuen Eintrag; darunter sind die Ordner neu.
+        while (createParents && parent != null && !Directory.Exists(parent)) parent = Path.GetDirectoryName(parent);
+        if (parent == null || !Directory.Exists(parent)) return;
+        int? maximum = directoryEntryLimit(parent);
+        if (maximum == null) return;
+        int count = 0;
+        foreach (string _ in Directory.EnumerateFileSystemEntries(parent))
+        {
+            if (++count >= maximum.Value)
+                throw new IOException($"cause='DirectoryEntryLimit' message='Verzeichnis {parent} ist auf {maximum.Value} Eintraege begrenzt; zuerst einen Eintrag entfernen oder einen anderen Ordner verwenden.'");
         }
     }
 
