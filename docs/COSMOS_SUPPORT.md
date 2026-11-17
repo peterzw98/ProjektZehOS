@@ -2,6 +2,10 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## ext2-Formatierer aus Cosmos 3.0.97 am 17. November 2026
+
+**Keine Freigabe:** Die Linux-Hostprobe mit dem unveränderten Cosmos-Formatierer erzeugte in allen 18 Kombinationen (4/8/64 MiB und 32/64/128 GiB, jeweils 1/2/4 KiB-Blöcke) Dateisysteme, für die `e2fsck -fn` Exit 4 meldet. Festgestellt wurden fehlende Backup-Metadaten, eine falsche 1-KiB-Gruppengeometrie und ungesetzte Bitmap-Füllbits. Die Windows-Gegenprobe bestätigt Formatteraufruf und Headerwerte, keine Konsistenzprüfung im Gast. ext2-Aktivierung und Root-Migration bleiben gesperrt. Reproducer, Zuständigkeiten und Grenzen: [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md).
+
 ## Cosmos 3.0.97 am 16. November 2026
 
 ZehOS 0.5.4 wechselt von Cosmos 3.0.94 auf **3.0.97** (SDK `Cosmos.Sdk/3.0.97`, `Cosmos.Kernel`, `Cosmos.Kernel.System`, CI-/Release-Werkzeuge `Cosmos.Tools`/`Cosmos.Patcher` 3.0.97). Die Standard-`CCCompilerFlags` sind unverändert, die wasm3-Ergänzung bleibt gültig. Freigabe durch Peter am 16. November 2026; Änderungsliste `v3.0.94...v3.0.97` (129 Commits) geprüft, Tabelle im Pull Request.
