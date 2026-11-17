@@ -219,6 +219,8 @@ public sealed class Kernel : Sys.Kernel
             return mounted;
 #endif
         });
+        // In beiden Profilen und unabhaengig von /data (Spec E5b/E6b §0.2); ein Fehler wird nur protokolliert.
+        boot.RunStep("VirtualFiles", MountVirtualFiles);
 #if !ZEHOS_INSTALLER
         systemLog.Information("Network", $"Cosmos: aktiviert={Cosmos.Kernel.System.Network.NetworkManager.IsEnabled}, initialisiert={Cosmos.Kernel.System.Network.NetworkManager.IsInitialized}, Adapter={Cosmos.Kernel.System.Network.NetworkManager.DeviceCount}, Link={Cosmos.Kernel.System.Network.NetworkManager.LinkUp}.");
         if (Cosmos.Kernel.System.Network.NetworkManager.IsEnabled && Cosmos.Kernel.System.Network.NetworkManager.IsInitialized)
@@ -363,6 +365,20 @@ public sealed class Kernel : Sys.Kernel
         var snapshot = scheduler.Snapshot();
         return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
+    }
+
+    /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; der erste Fehler bricht ab.</summary>
+    private ResultErr MountVirtualFiles()
+    {
+        foreach (var (name, root, flags) in new[] { ("zehos-proc", "/proc", MountFlags.ReadOnly), ("zehos-sys", "/sys", MountFlags.ReadOnly), ("zehos-dev", "/dev", MountFlags.None) })
+        {
+            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce)))
+                return ResultErr.CreateFailure(ResultCode.Failure, $"cause='RegisterFailed' message='{name} nicht registriert.'");
+            if (!VfsManager.TryMount(name, "", flags, root, out _))
+                return ResultErr.CreateFailure(ResultCode.Failure, $"cause='MountFailed' message='{root} nicht eingehaengt.'");
+        }
+
+        return ResultErr.CreateSuccess();
     }
 
     private long GetElapsedMilliseconds()
