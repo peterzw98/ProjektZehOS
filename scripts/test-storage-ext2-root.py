@@ -52,8 +52,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 11):
-        raise ValueError(f"Lauf ausserhalb 1..10: {run}")
+    if run not in range(1, 12):
+        raise ValueError(f"Lauf ausserhalb 1..11: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
@@ -150,7 +150,9 @@ def boot(ctx: Context, name: str, run: int, root: Path, root_format: str = "qcow
     directory = new_work_dir(ctx.work / name)
     control = ctx.work / "control.img"
     write_control(control, run)
-    tools.MACHINE = [*MACHINE_BASE, *drives(root, root_format, ctx.work / "inodes.qcow2", control)]
+    base = list(MACHINE_BASE)
+    base[base.index("-m") + 1] = ctx.args.memory
+    tools.MACHINE = [*base, *drives(root, root_format, ctx.work / "inodes.qcow2", control)]
     process = tools.start_qemu(ctx.args.iso, ctx.work / "fat.qcow2", directory, tools.free_port(), ctx.args.accel, None)
     return process, directory
 
@@ -307,7 +309,9 @@ def main() -> int:
                         help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
     parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit) auf 2 GiB; kein Go")
-    parser.add_argument("--diagnose-run", type=int, choices=[9, 10], help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen); kein Go")
+    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11],
+                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse); kein Go")
+    parser.add_argument("--memory", default="512M", help="Gastspeicher (QEMU -m), Standard 512M wie das Produktprofil")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
     parser.add_argument("--timeout", type=float, default=3600, help="Sekunden je Lauf bis STORAGE_ROOT DONE")

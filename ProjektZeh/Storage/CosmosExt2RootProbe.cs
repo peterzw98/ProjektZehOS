@@ -64,7 +64,7 @@ internal static class CosmosExt2RootProbe
             Begin("select");
             int run = ReadControl();
             // Laeufe 1-5 auf 2 GiB, Hochgruppenlauf 6-8 auf 32/128 GiB (Leitungsentscheid 19:02, Vollfuellung zu langsam).
-            IBlockDevice root = run is <= 5 or 9 or 10
+            IBlockDevice root = run is <= 5 or >= 9
                 ? FindDevice(RootDeviceName, size => size == 2 * GiB, "2 GiB")
                 : FindDevice(RootDeviceName, size => size == 32 * GiB || size == 128 * GiB, "32 oder 128 GiB");
             Pass($"Lauf {run}, {RootDeviceName} {root.BlockCount * root.BlockSize / GiB} GiB");
@@ -78,6 +78,7 @@ internal static class CosmosExt2RootProbe
                 case 6: RunFormatOnly(root); break;
                 case 9: RunLimitOnly(root, renameWhenFull: false); break;
                 case 10: RunDeleteSpan(root); break;
+                case 11: RunScale(root); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -262,6 +263,64 @@ internal static class CosmosExt2RootProbe
         Write($"delete-span INFO sichtbar nach Loeschen: {visible} (erwartet 300)");
         Check(visible == 300, $"{visible} statt 300 Eintraege sichtbar");
         Pass("300 von 600 geloescht, 300 sichtbar");
+        AfterPhase(root);
+        StepM(root);
+    }
+
+    /// <summary>
+    /// Messlauf 11 (Leitung 21:45): Eintragszahl beim ersten Fehler in EINEM Verzeichnis (bis 8190, Fortschritt und
+    /// GC-Heap je 512) und ob vier Verzeichnisse mit je 2048 Eintraegen Anlegen, Umbenennen und Loeschen stabil schaffen.
+    /// Kein Aufraeumen des grossen Verzeichnisses: Loeschen vieler Eintraege ist selbst ein offener Befund (Lauf 9/10).
+    /// </summary>
+    private static void RunScale(IBlockDevice root)
+    {
+        Begin("format11");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        Pass("Format, Mount /, s_state 0");
+
+        Begin("scale-one");
+        Directory.CreateDirectory("/one");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int created = 0;
+        string failure = "keiner";
+        for (; created < RootProbeCatalog.DirectoryLimit; created++)
+        {
+            try
+            {
+                File.WriteAllBytes($"/one/n{created:D4}", [1]);
+            }
+            catch (Exception exception)
+            {
+                failure = $"{exception.GetType().Name}: {exception.Message}";
+                break;
+            }
+
+            if ((created + 1) % 512 == 0)
+                Write($"scale-one INFO {created + 1} Eintraege, {clock.ElapsedMilliseconds} ms, GC-Heap {GC.GetTotalMemory(false) / 1024} KiB");
+        }
+
+        Write($"scale-one INFO Ende bei {created} Eintraegen, erster Fehler: {failure}, {clock.ElapsedMilliseconds} ms");
+        Pass($"{created} Eintraege in einem Verzeichnis");
+        AfterPhase(root);
+
+        Begin("scale-multi");
+        for (int folder = 0; folder < 4; folder++)
+        {
+            string directory = $"/multi{folder}";
+            Directory.CreateDirectory(directory);
+            for (int index = 0; index < 2048; index++) File.WriteAllBytes($"{directory}/n{index:D4}", [2]);
+            for (int index = 0; index < 100; index++) File.Move($"{directory}/n{index:D4}", $"{directory}/r{index:D4}");
+            for (int index = 100; index < 200; index++) File.Delete($"{directory}/n{index:D4}");
+            int visible = Directory.GetFileSystemEntries(directory).Length;
+            Check(visible == 1948, $"{directory}: {visible} statt 1948 Eintraege");
+            Check(File.Exists($"{directory}/r0000") && !File.Exists($"{directory}/n0150"), $"{directory}: Umbenennen/Loeschen falsch");
+            Write($"scale-multi INFO {directory} fertig, GC-Heap {GC.GetTotalMemory(false) / 1024} KiB");
+        }
+
+        Pass("4 x 2048 angelegt, je 100 umbenannt und 100 geloescht, Auflistung stimmt");
         AfterPhase(root);
         StepM(root);
     }
@@ -877,8 +936,10 @@ internal static class CosmosExt2RootProbe
         control.ReadBlock(0, 1, sector);
         string text = Encoding.ASCII.GetString(sector);
         Check(text.StartsWith(ControlPrefix, StringComparison.Ordinal), "Steuerplatte ohne Kennung; nichts geschrieben");
-        int run = text[ControlPrefix.Length] - '0';
-        Check(run is >= 1 and <= 10, "Lauf ausserhalb 1..10; nichts geschrieben");
+        int end = text.IndexOf('\n', ControlPrefix.Length);
+        bool parsed = int.TryParse(text.AsSpan(ControlPrefix.Length, (end < 0 ? text.Length : end) - ControlPrefix.Length),
+            System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int run);
+        Check(parsed && run is >= 1 and <= 11, "Lauf ausserhalb 1..11; nichts geschrieben");
         return run;
     }
 
