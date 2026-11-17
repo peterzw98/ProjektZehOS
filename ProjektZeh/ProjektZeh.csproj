@@ -79,7 +79,8 @@
   <!-- Cosmos.Build.CC 3.0.97 (CCBuildTask) benennt Objektdateien nur nach dem Inhalt der .c-Datei und ueberspringt
        vorhandene. Geaenderte Header oder C-Flags (etwa d_m3MaxNativeStack, ZehOSAotProbe) liessen so alte Objekte in
        cobj/ stehen, bis zu "undefined symbol" beim Linken. Ein Stempel aus Flags, Include-Pfaden und dem Inhalt aller
-       eigenen Header leert cobj/, sobald sich davon etwas aendert; danach uebersetzt Cosmos alle C-Dateien neu. -->
+       eigenen Header leert cobj/, sobald sich davon etwas aendert; danach uebersetzt Cosmos alle C-Dateien neu.
+       Bewusst grob: auch Header, die der jeweilige Build nicht einbindet (etwa WAMR ohne ZehOSAotProbe), loesen das aus. -->
   <Target Name="InvalidateStaleCObjects" BeforeTargets="BuildCC" DependsOnTargets="MapNativeSourcePaths;FindCSourceFilesForCC">
     <PropertyGroup>
       <ZehOSCObjDir>$(IntermediateOutputPath)cosmos/cobj/</ZehOSCObjDir>
@@ -91,7 +92,7 @@
     <GetFileHash Files="@(ZehOSCHeader)">
       <Output TaskParameter="Items" ItemName="ZehOSCHeaderHash" />
     </GetFileHash>
-    <Hash ItemsToHash="$(CCCompilerFlags);$(TargetArchitecture);@(GCCIncludePath);@(ZehOSCHeaderHash->'%(Identity)=%(FileHash)')">
+    <Hash ItemsToHash="$(CCCompilerFlags);$(TargetArchitecture);@(GCCIncludePath);@(GCCProject->'%(FullPath)');@(ZehOSCHeaderHash->'%(Identity)=%(FileHash)')">
       <Output TaskParameter="HashResult" PropertyName="ZehOSCStamp" />
     </Hash>
     <ReadLinesFromFile File="$(ZehOSCStampFile)" Condition="Exists('$(ZehOSCStampFile)')">
