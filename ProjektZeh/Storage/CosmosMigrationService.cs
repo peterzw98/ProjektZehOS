@@ -60,7 +60,9 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         IBlockDevice? device = FindDevice(diskName);
         if (device is null) return Failure("DeviceNotFound", "Laufwerk nicht gefunden: " + diskName);
         if (ReferenceEquals(device, source.Host)) return Failure("TargetIsSource", "Das Ziel ist das Laufwerk mit /data.");
-        // VfsManager.IsPartitionMounted ist in Cosmos 3.0.97 nicht oeffentlich; die Mounttabelle nennt die Partition.
+        // VfsManager.IsPartitionMounted ist in Cosmos 3.0.97 nicht oeffentlich; die Mounttabelle nennt die Partition. Das
+        // gilt nur fuer Mounts ueber die Partitions-Ueberladung; alle produktiven Mounts (CosmosStorageService, Installer,
+        // Layoutprofil, Migration) nutzen sie (Review P3-a).
         foreach (VfsMount mount in VfsManager.Mounts)
             if (mount.Partition is { } mounted && ReferenceEquals(mounted.Host, device))
                 return Failure("TargetMounted", "Eine Partition des Ziels ist eingehaengt.");
@@ -68,9 +70,9 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         if (!Gpt.IsGpt(device)) return Failure("TargetNotGpt", "Das Ziel hat kein ZehOS-Layout (keine GPT).");
         var table = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
         if (!table.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(table.Status);
-        var root = CheckIdentity(device, table.Value!);
+        var root = CheckIdentity(device, table.Value!, log);
         if (!root.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(root.Status);
-        var state = CheckRootMarker(root.Value!);
+        var state = CheckRootMarker(root.Value!, log);
         if (!state.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(state.Status);
         log($"Ziel {device.Name}: Identitaet Healthy, Root-Marker {(state.Value == LayoutState.Fresh ? "fresh" : "migrating")}; Root wird unter {TargetMount} eingehaengt.");
         log("Hinweis: /data ist waehrend der Migration nur lesbar und beim Umhaengen kurz nicht erreichbar.");
@@ -78,7 +80,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
     }
 
     /// <summary>ESP nur lesend: Identitaet muss Healthy sein; der Installationsmarker nennt die Root-Partition.</summary>
-    private static ResultObject<Partition> CheckIdentity(IBlockDevice device, GptTable table)
+    private static ResultObject<Partition> CheckIdentity(IBlockDevice device, GptTable table, Action<string> log)
     {
         Partition? esp = CosmosGptPartitions.Find(device, table, GptLayout.EspType, null);
         if (esp is null) return Failure<Partition>("TargetNoEsp", "Das Ziel hat keine ESP.");
@@ -87,15 +89,18 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
             return Failure<Partition>("TargetEspUnreadable", "ESP des Ziels nicht lesbar.");
         IdentityResult? identity;
         string? text;
-        bool unmounted;
+        bool unmounted, completed = false;
         try
         {
             identity = CosmosInstalledIdentity.Evaluate(TargetEfiMount);
             text = CosmosInstalledIdentity.ReadMarker(TargetEfiMount);
+            completed = true;
         }
         finally
         {
             unmounted = VfsManager.TryUnmount(TargetEfiMount);
+            // Bei einer Ausnahme geht das Ergebnis sonst verloren und faellt erst beim naechsten Lauf auf (Review P3-b).
+            if (!completed && !unmounted) log("Fehler: ESP des Ziels liess sich nach einem Lesefehler nicht aushaengen.");
         }
 
         // Ohne Aushaengen bliebe ein fremder Mount stehen; dann lieber gar nicht weiter.
@@ -110,19 +115,21 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
     }
 
     /// <summary>Root nur lesend: ready wird abgelehnt, bevor ein Schreibmount Superblock oder s_state anfasst.</summary>
-    private static ResultObject<LayoutState> CheckRootMarker(Partition root)
+    private static ResultObject<LayoutState> CheckRootMarker(Partition root, Action<string> log)
     {
         if (!readOnly.TryMount(new CosmosReadOnlyExt2FileSystem(root), root, MountFlags.ReadOnly, TargetMount))
             return Failure<LayoutState>("TargetRootUnreadable", "Root des Ziels nicht lesbar.");
         ResultObject<LayoutMarker>? marker;
-        bool unmounted;
+        bool unmounted, completed = false;
         try
         {
             marker = LayoutMarker.ReadFile(TargetMount + LayoutMarker.Path);
+            completed = true;
         }
         finally
         {
             unmounted = VfsManager.TryUnmount(TargetMount);
+            if (!completed && !unmounted) log("Fehler: Root des Ziels liess sich nach einem Lesefehler nicht aushaengen.");
         }
 
         if (!unmounted) return Failure<LayoutState>("TargetRootBusy", "Root des Ziels liess sich nicht aushaengen.");
