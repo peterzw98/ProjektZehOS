@@ -25,7 +25,10 @@ python experiments/ClassiCube.Wasi/build.py --source <Ordner> --wasi-sdk <wasi-s
 
 ## Prüfen
 
+Für den Gasttest das Paket mit fester Welt bauen: `--world-seed 1` ersetzt den von der Uhr abgeleiteten Seed der Einzelspielerwelt (über den Messpunkt `Gen_Start`, deshalb nicht mit `--no-measure`). Mit Zufallswelt scheiterte der Blockschritt je nach Welt, etwa wenn der Spieler in einer Baumkrone stand oder Wasser im Bild die Schwelle hochtrieb. `--raster-toggle` ergänzt den F8-Wechsel für `--raster-compare`.
+
 ```powershell
+python experiments/ClassiCube.Wasi/build.py --source <Ordner> --wasi-sdk <wasi-sdk-25.0> --raster-toggle --world-seed 1
 python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem>
 ```
 
@@ -44,7 +47,7 @@ Kernel-ISO von `master` 61bc0be (ZehOS 0.5.3; dieser Branch ändert keinen Kerne
 | TCG, alleinige VM | 1,1–1,2 | 607–655 ms | 0 ms | 2–5 ms | 192–232 ms | 15 674 ms (6 434 ms) |
 | TCG, unter Wasser (Wasserfläche über das ganze Bild) | 0,2–0,3 | 2 198–2 985 ms | 253–304 ms | 0 ms | 307–473 ms | – |
 
-Jeder Lauf erzeugt eine andere Zufallswelt; die Werte hängen deshalb auch vom Blickfeld ab. Alle Zeilen außer der mit 0.5.7 liefen auf dem ISO von `master` 61bc0be (Cosmos 3.0.94). Die Werte schwanken stark mit der Last auf dem Entwicklungsrechner; belastbar ist vor allem das Verhältnis der Anteile. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 70–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
+Diese Messungen liefen noch mit Zufallswelt (je Lauf eine andere); die Werte hängen deshalb auch vom Blickfeld ab. Mit `--world-seed` sind künftige Messungen vergleichbar. Alle Zeilen außer der mit 0.5.7 liefen auf dem ISO von `master` 61bc0be (Cosmos 3.0.94). Die Werte schwanken stark mit der Last auf dem Entwicklungsrechner; belastbar ist vor allem das Verhältnis der Anteile. Die Rasterisierung (Dreiecke und Pufferlöschen in `Graphics_SoftGPU.c` unter wasm3) belegt unter WHPX rund 70–90 % der Bildzeit, unter TCG gut 70 %. Spiellogik, Eingabe und Oberfläche („Rest“) und die Übergabe an den Kernel fallen unter WHPX kaum ins Gewicht. Die Weltgenerierung ist unter WHPX in unter einer Sekunde fertig. KVM und VMware sind nicht gemessen; die Messung aus Etappe 1 des Plans gibt es noch nicht.
 
 ## Grenzen
 
