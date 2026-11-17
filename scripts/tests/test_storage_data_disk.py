@@ -1,3 +1,4 @@
+import argparse
 import importlib.util
 import shutil
 import tempfile
@@ -23,15 +24,24 @@ class DataDiskHostTests(unittest.TestCase):
                 disk.new_work_dir(path)
         self.assertEqual((self.dir / 'datei').read_bytes(), b'x')
 
+    def test_parse_size(self):
+        self.assertEqual(disk.parse_size('64M'), 64 * disk.MIB)
+        self.assertEqual(disk.parse_size('5g'), 5 * disk.GIB)
+        self.assertEqual(disk.parse_size('128G'), 128 * disk.GIB)
+        for bad in ('1M', '129G', '32', '4T', '-1G', ''):
+            with self.subTest(bad=bad), self.assertRaises(argparse.ArgumentTypeError):
+                disk.parse_size(bad)
+        self.assertEqual(disk.size_label(32 * disk.GIB), '32g')
+        self.assertEqual(disk.size_label(64 * disk.MIB), '64m')
+
     def test_sparse_image_sizes(self):
-        for gib in disk.SIZES_GIB:
-            path = self.dir / f'{gib}.img'
-            disk.create_sparse(path, gib * disk.GIB)
-            self.assertEqual(path.stat().st_size, gib * disk.GIB)
-        with self.assertRaises(ValueError):
-            disk.create_sparse(self.dir / 'x.img', 16 * disk.GIB)
-        with self.assertRaises(ValueError):
-            disk.create_sparse(self.dir / 'y.img', 32 * disk.GIB + 512)
+        for size in (64 * disk.MIB, 5 * disk.GIB, 128 * disk.GIB):
+            path = self.dir / f'{size}.img'
+            disk.create_sparse(path, size)
+            self.assertEqual(path.stat().st_size, size)
+        for size in (16 * disk.MIB, 129 * disk.GIB, 32 * disk.GIB + 1):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                disk.create_sparse(self.dir / 'x.img', size)
 
     def test_sparse_image_never_overwrites(self):
         existing = self.dir / 'e.img'

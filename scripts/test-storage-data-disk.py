@@ -12,6 +12,7 @@ Vorhandene Images werden nie beschrieben; der Arbeitsordner darf nicht existiere
 import argparse
 import hashlib
 import importlib.util
+import re
 import shutil
 import subprocess
 import sys
@@ -25,7 +26,8 @@ spec.loader.exec_module(tools)
 
 GIB = 1024 ** 3
 MIB = 1024 ** 2
-SIZES_GIB = (32, 64, 128)
+DEFAULT_SIZES = ("32G", "64G", "128G")
+MIN_SIZE, MAX_SIZE = 64 * MIB, 128 * GIB
 LEGACY_SIZE = 64 * MIB
 
 
@@ -52,8 +54,23 @@ def new_work_dir(path: Path) -> Path:
     return path
 
 
+def parse_size(text: str) -> int:
+    """'64M', '4G', '32G' in Bytes; nur 64 MiB bis 128 GiB (Bereich von disk init)."""
+    match = re.fullmatch(r"(\d+)([MG])", text.strip().upper())
+    if not match:
+        raise argparse.ArgumentTypeError(f"Groesse wie 64M, 4G oder 32G erwartet: {text}")
+    size = int(match.group(1)) * (MIB if match.group(2) == "M" else GIB)
+    if not MIN_SIZE <= size <= MAX_SIZE:
+        raise argparse.ArgumentTypeError(f"Groesse ausserhalb von 64M bis 128G: {text}")
+    return size
+
+
+def size_label(size: int) -> str:
+    return f"{size // GIB}g" if size % GIB == 0 else f"{size // MIB}m"
+
+
 def create_sparse(path: Path, size: int) -> None:
-    if size not in [s * GIB for s in SIZES_GIB] and size != LEGACY_SIZE:
+    if not MIN_SIZE <= size <= MAX_SIZE or size % 512:
         raise ValueError(f"Nicht vorgesehene Imagegroesse: {size}")
     with path.open("xb") as image:  # "x": nie ein vorhandenes Image ueberschreiben
         image.truncate(size)
@@ -131,48 +148,49 @@ def stop(process, qmp, run: Path) -> None:
 
 
 def wait_init(qmp, run: Path, mark: int, timeout: float) -> None:
-    """Wartet auf das Ende von disk init; ein Fehlertext des Kernels beendet sofort, bei Timeout bleiben Bild und Protokollende."""
-    deadline, shown = time.monotonic() + timeout, mark
+    """Wartet auf das Ende von disk init; ein Fehlertext des Kernels beendet sofort, bei Timeout bleiben Bild und letzte STORAGE-Zeile."""
+    deadline, shown, last = time.monotonic() + timeout, mark, "(keine)"
     while time.monotonic() < deadline:
         text = (run / "serial.log").read_text(encoding="utf-8", errors="replace")
         for line in text[shown:].splitlines():
-            if "STORAGE init:" in line:
-                print(line.strip(), flush=True)
+            if "STORAGE " in line:
+                last = line.strip()
+                print(last, flush=True)
         shown = len(text)
         if "Laufwerksaenderung abgeschlossen." in text[mark:]:
             return
         failure = text.find("Befehl: Fehler:", mark)
         if failure >= 0:
             raise RuntimeError(text[failure:text.find("\n", failure)].strip())
-        time.sleep(2)
+        time.sleep(1)
     qmp.shot(run / "init-timeout.png")
-    tail = "\n".join(text.splitlines()[-15:])
-    raise TimeoutError(f"disk init nach {timeout:.0f} s ohne Ergebnis; Bild {run / 'init-timeout.png'}; Protokollende:\n{tail}")
+    raise TimeoutError(f"disk init nach {timeout:.0f} s ohne Ergebnis; letzte STORAGE-Zeile: {last}; Bild {run / 'init-timeout.png'}")
 
 
-def run_size(args: argparse.Namespace, base: Path, gib: int) -> None:
-    work = new_work_dir(base / f"{gib}g")
+def run_size(args: argparse.Namespace, base: Path, size: int) -> None:
+    label = size_label(size).upper()
+    work = new_work_dir(base / size_label(size))
     blank, data = work / "blank.img", work / "data.img"
     create_sparse(blank, 64 * MIB)
-    create_sparse(data, gib * GIB)
+    create_sparse(data, size)
     run = new_work_dir(work / "lauf1")
     process, qmp = boot(args, run, [blank, data])
     # Ueber 4 GiB prueft der Kernel nur stichprobenartig und verlangt --yes-large.
-    command = "disk init sata1" + (" --yes-large" if gib > 4 else "")
+    command = "disk init sata1" + (" --yes-large" if size > 4 * GIB else "")
     mark = send_command(qmp, run, command, "Befehl: " + command)
     started = time.monotonic()
     wait_init(qmp, run, mark, args.init_timeout)
-    print(f"{gib} GiB: disk init dauerte {time.monotonic() - started:.0f} s", flush=True)
+    print(f"{label}: disk init dauerte {time.monotonic() - started:.0f} s", flush=True)
     stop(process, qmp, run)
     run = new_work_dir(work / "lauf2")
     process, qmp = boot(args, run, [blank, data])
     tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
-    tools.wait_serial(run, device_line("sata1", gib * GIB, 1), 5)
+    tools.wait_serial(run, device_line("sata1", size, 1), 5)
     send_command(qmp, run, "disk list", "Befehl: disk list")
     time.sleep(2)
     qmp.shot(run / "disk-list.png")
     stop(process, qmp, run)
-    print(f"{gib} GiB: init, Neustart, Einbindung ueber Label und Groesse ok (Bild: {run / 'disk-list.png'})", flush=True)
+    print(f"{label}: init, Neustart, Einbindung ueber Label und Groesse ok (Bild: {run / 'disk-list.png'})", flush=True)
 
 
 def run_legacy(args: argparse.Namespace, base: Path, original: Path) -> None:
@@ -194,19 +212,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True, help="neuer Arbeitsordner (darf nicht existieren)")
-    parser.add_argument("--size", type=int, choices=SIZES_GIB, action="append", help="nur diese Groesse in GiB (mehrfach moeglich)")
+    parser.add_argument("--size", type=parse_size, action="append", help="Groesse wie 64M, 4G, 5G, 32G (64M..128G, mehrfach moeglich; Standard 32G 64G 128G)")
     parser.add_argument("--legacy-image", type=Path, help="Bestandsimage (64 MiB, Label ZEHOS) fuer die Gegenprobe")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="tcg")
     parser.add_argument("--timeout", type=float, default=600, help="Sekunden bis zur Bootmarke")
-    parser.add_argument("--init-timeout", type=float, default=1800, help="Sekunden fuer disk init (128 GiB unter TCG gemessen)")
+    parser.add_argument("--init-timeout", type=float, default=120, help="Sekunden fuer disk init; bei Timeout wird die letzte STORAGE-Zeile ausgegeben")
     args = parser.parse_args()
     if not args.iso.is_file():
         sys.exit(f"ISO nicht gefunden: {args.iso}")
     legacy = check_legacy(args.legacy_image) if args.legacy_image else None
     args.iso = args.iso.resolve()
     base = new_work_dir(args.work.resolve())
-    for gib in args.size or SIZES_GIB:
-        run_size(args, base, gib)
+    for size in args.size or [parse_size(text) for text in DEFAULT_SIZES]:
+        run_size(args, base, size)
     if legacy:
         run_legacy(args, base, legacy)
     else:

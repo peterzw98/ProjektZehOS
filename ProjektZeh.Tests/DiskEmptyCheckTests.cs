@@ -103,6 +103,37 @@ public sealed class DiskEmptyCheckTests
     }
 
     [TestMethod]
+    public void LargeDisk_Confirmed_ReportsProgressBeforeAndAfterEachArea()
+    {
+        var disk = new FakeDisk(32 * GiB);
+        var messages = new List<string>();
+
+        Assert.IsTrue(new ResultErrView(DiskEmptyCheck.Check(Sector, disk.BlockCount, true, disk.Read, messages.Add)).Ok);
+
+        ulong tailStart = disk.BlockCount - 64 * MiB / Sector;
+        CollectionAssert.IsSubsetOf(new[]
+        {
+            "scan Kopf start LBA 0", "scan Kopf ok LBA 131072",
+            "scan Stichprobe 16 start LBA 2097152", "scan Stichprobe 16 ok LBA 2097152",
+            "scan Stichprobe 496 start LBA 65011712", "scan Stichprobe 496 ok LBA 65011712",
+            $"scan Ende start LBA {tailStart}", $"scan Ende ok LBA {disk.BlockCount}"
+        }, messages);
+        Assert.AreEqual("scan Kopf start LBA 0", messages[0]);
+        Assert.AreEqual($"scan Ende ok LBA {disk.BlockCount}", messages[^1]);
+        Assert.AreEqual(31, messages.FindAll(m => m.StartsWith("scan Stichprobe") && m.Contains(" start ")).Count, "jede 16. von 511 Stichproben");
+    }
+
+    [TestMethod]
+    public void SmallDisk_ReportsOneArea()
+    {
+        var messages = new List<string>();
+
+        DiskEmptyCheck.Check(Sector, 64 * MiB / Sector, false, new FakeDisk(64 * MiB).Read, messages.Add);
+
+        CollectionAssert.AreEqual(new[] { "scan Gesamt start LBA 0", "scan Gesamt ok LBA 131072" }, messages);
+    }
+
+    [TestMethod]
     public void LargeDisk_Confirmed_OddSizeStaysInsideDisk()
     {
         Assert.IsTrue(Run(new FakeDisk(5 * GiB + 3 * Sector), true).Ok);

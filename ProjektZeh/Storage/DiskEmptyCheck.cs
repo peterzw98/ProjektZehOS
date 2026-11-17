@@ -23,7 +23,7 @@ internal static class DiskEmptyCheck
     /// shortcut: ueber 4 GiB bleiben Daten zwischen den Stichproben unentdeckt (nur die ersten 4 KiB je 64 MiB werden gelesen);
     /// bei Bedarf dichter pruefen, die Vollpruefung kostet beim AHCI-Treiber (4 KiB je Befehl) Minuten je 32 GiB.
     /// </summary>
-    public static ResultErr Check(ulong blockSize, ulong blockCount, bool confirmedLarge, BlockReader read)
+    public static ResultErr Check(ulong blockSize, ulong blockCount, bool confirmedLarge, BlockReader read, Action<string>? progress = null)
     {
         if (blockSize == 0 || blockCount > ulong.MaxValue / blockSize)
         {
@@ -33,7 +33,7 @@ internal static class DiskEmptyCheck
         ulong totalBytes = blockCount * blockSize;
         if (totalBytes <= FullScanLimit)
         {
-            return ScanRange(blockSize, 0, blockCount, read);
+            return ScanRange(blockSize, 0, blockCount, read, progress, "Gesamt");
         }
 
         if (!confirmedLarge)
@@ -43,9 +43,7 @@ internal static class DiskEmptyCheck
         }
 
         ulong edgeBlocks = EdgeBytes / blockSize;
-        var result = ScanRange(blockSize, 0, edgeBlocks, read);
-        if (!result.IsOK()) return result;
-        result = ScanRange(blockSize, blockCount - edgeBlocks, blockCount, read);
+        var result = ScanRange(blockSize, 0, edgeBlocks, read, progress, "Kopf");
         if (!result.IsOK()) return result;
         ulong sampleBlocks = Math.Max(1, SampleBytes / blockSize);
         var sample = new byte[sampleBlocks * blockSize];
@@ -54,15 +52,23 @@ internal static class DiskEmptyCheck
             ulong block = offset / blockSize;
             ulong count = Math.Min(sampleBlocks, blockCount - block);
             var span = sample.AsSpan(0, (int)(count * blockSize));
+            // Nur jede 16. Stichprobe meldet sich, sonst wird das serielle Protokoll bei 128 GiB sehr lang.
+            bool report = offset / SampleStep % 16 == 0;
+            if (report) progress?.Invoke($"scan Stichprobe {offset / SampleStep} start LBA {block}");
             read(block, count, span);
             if (span.IndexOfAnyExcept((byte)0) >= 0) return NotEmpty();
+            if (report) progress?.Invoke($"scan Stichprobe {offset / SampleStep} ok LBA {block}");
         }
+
+        result = ScanRange(blockSize, blockCount - edgeBlocks, blockCount, read, progress, "Ende");
+        if (!result.IsOK()) return result;
 
         return ResultErr.CreateSuccess();
     }
 
-    private static ResultErr ScanRange(ulong blockSize, ulong first, ulong end, BlockReader read)
+    private static ResultErr ScanRange(ulong blockSize, ulong first, ulong end, BlockReader read, Action<string>? progress, string area)
     {
+        progress?.Invoke($"scan {area} start LBA {first}");
         ulong batchBlocks = Math.Max(1, BatchBytes / blockSize);
         var buffer = new byte[batchBlocks * blockSize];
         for (ulong block = first; block < end; block += batchBlocks)
@@ -74,6 +80,7 @@ internal static class DiskEmptyCheck
             if (span.IndexOfAnyExcept((byte)0) >= 0) return NotEmpty();
         }
 
+        progress?.Invoke($"scan {area} ok LBA {end}");
         return ResultErr.CreateSuccess();
     }
 
