@@ -6,8 +6,12 @@ Formatiert ein neues, dünn belegtes Rohimage (eine Partition ohne Partitionstab
 ```bash
 dotnet run -c Release --project experiments/StorageProbe -- selftest
 dotnet run -c Release --project experiments/StorageProbe -- format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L]
-experiments/StorageProbe/matrix.sh .tools/storage-probe
+experiments/StorageProbe/matrix.sh .tools/storage-probe [original|fixed]
 ```
+
+`--formatter fixed` (bzw. `matrix.sh … fixed`) formatiert mit der korrigierten gemeinsamen Quelle
+[ProjektZeh/Storage/Ext2](../../ProjektZeh/Storage/Ext2/README.md) statt mit dem Paketformatter; Standard bleibt
+`original`. `selftest` prüft zusätzlich das Layout der korrigierten Quelle an einem 16-MiB-/1K-Image.
 
 Die Cosmos-Pakete kommen über `PackageDownload` (genau `[3.0.97]`, ohne Cosmos-Build-Props); die Probe baut
 deshalb auch ohne vorherigen Kernel-Restore (mit leerem NuGet-Ordner geprüft).

@@ -244,6 +244,9 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_SECURITY_PROBE
         if (!CosmosSecurityProbe.Run()) { Stop(); return; }
 #endif
+#if ZEHOS_STORAGE_PROBE
+        if (RunStorageProbeAndPowerOff()) return;
+#endif
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
 #endif
@@ -268,6 +271,20 @@ public sealed class Kernel : Sys.Kernel
         interactive.Run(startDesktop);
     }
 
+#if ZEHOS_STORAGE_PROBE
+    // scripts/test-storage-ext2-guest.py wartet nach STORAGE_PROBE DONE auf das Gastende, auch nach FAIL; der Gast
+    // bootet deshalb nie weiter. Als Methode, damit der restliche Run()-Code nicht als unerreichbar gilt (CS0162).
+    private bool RunStorageProbeAndPowerOff()
+    {
+        CosmosExt2GuestProbe.Run();
+        var power = PreparePowerAction();
+        if (power.IsOK()) Sys.Power.Shutdown();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_PROBE shutdown FAIL {power.Message}\n");
+        Stop();
+        return true;
+    }
+
+#endif
     private ResultErr PreparePowerAction()
     {
         if (ShellService.HasRunningPasswordOperations)
