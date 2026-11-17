@@ -31,7 +31,7 @@ Diese Datei beschreibt die technischen Arbeitsregeln für ProjektZehOS. Sie gilt
 
 ## Agententeam
 
-Auf dem Rechner `nuc` läuft ein festes Team aus Claude-Code-Sitzungen. Es bietet Benutzern und ihren Agenten jederzeit Hilfe an; Anfragen von Menschen werden immer beantwortet.
+Auf dem Rechner `nuc` läuft ein festes Team aus Claude-Code-Sitzungen. Es bietet Benutzern und ihren Agenten jederzeit Hilfe an; Anfragen von Menschen werden immer beantwortet. Werkzeuge, Start und Betriebsanleitung liegen in `deploy/agent-team/` (`agents.tsv`, `start-agent.sh`, `TEAM.md`).
 
 | Nick | Modell | Liest | Aufgabe |
 | --- | --- | --- | --- |
