@@ -24,7 +24,7 @@ Geplant auf `master` 8d47277 (ZehOS 0.5.8, Cosmos 3.0.97 gemergt). Gelesen, nich
 
 **Nicht belegt, in Etappe B zu klären:** ob Cosmos 3.0.97 Heap-Speicher ausführbar einblendet (NX), ob AOT-Code vom Heap aus Kernelsymbole per 32-Bit-Sprung erreicht (Codemodell), ob WAMR mit `-nostdinc -fno-builtin` und der vorhandenen freistehenden libc baut.
 
-**Offene Voraussetzung:** Das Dokument der Sicherheitsbewertung (5a) liegt auf keinem Remote-Branch. Peter hat am 17. November 2026, 01:55 in `#first` signiert geschrieben: „Du kannst mit 5a und C auch durchstarten“ (vom Koordinator geprüft, hier nicht erneut). Das gibt den Start von 5a und 5c frei, entscheidet aber die vier Punkte aus Etappe A nicht. Etappe A hält sie schriftlich fest, bevor Etappe D WAMR in den Kernel bringt.
+**Offene Voraussetzung:** Das Dokument der Sicherheitsbewertung (5a) liegt auf keinem Remote-Branch. Peter hat am 17. November 2026, 01:55 in `#first` signiert geschrieben: „Du kannst mit 5a und C auch durchstarten“ (vom Koordinator geprüft, hier nicht erneut). Ob „C“ den ganzen Teil 5c meint oder nur Etappe C dieses Plans, ist nicht geklärt. Gedeckt sind damit sicher die Etappen A, B und C; nativer Code im Ring 0 (Etappe D) braucht Peters ausdrückliche Bestätigung, und die vier Punkte aus Etappe A sind noch nicht entschieden. Etappe A hält sie schriftlich fest, bevor Etappe D WAMR in den Kernel bringt.
 
 ## Entscheidungen und Begründung
 
@@ -57,7 +57,7 @@ Ziel: Peters Entscheidung liegt schriftlich im Repository. Branch `docs/aot-sich
   3. `wamrc` immer mit Speicher- und Stackprüfung; der Kernel lädt nur seine eigene `<aot-abi>`.
   4. Zur Laufzeit abschaltbar; wasm3 bleibt Rückfall. Offen für Peter: AOT standardmäßig an oder aus.
 - [ ] Primärquellen prüfen und im Dokument festhalten: WAMR-Lizenz (Apache-2.0 samt LLVM-Ausnahme) und Hinweispflichten, aktuelle Version gegenüber 2.4.5, bekannte Sicherheitsmeldungen zu `wamrc`/AOT-Lader.
-- [ ] Signierte Freigabe von Peter mit Datum im Ledger dieses Plans.
+- [ ] Signierte Freigabe von Peter mit Datum im Ledger dieses Plans. Sie nennt ausdrücklich Etappe D (WAMR-AOT im Kernel).
 
 **Fertig, wenn:** Dokument gemergt und Peters Entscheidung zu den vier Punkten eingetragen ist.
 
@@ -83,7 +83,7 @@ Ziel: Die Hostlogik existiert einmal; wasm3 verhält sich danach wie vorher. Bra
 - [ ] **Abstimmung mit Etappe 3** (Rasterizer, `feature/classicube-rasterizer`): Sie fügt Einträge in dieselbe Tabelle. Vor Beginn im Kanal klären, wer zuerst mergt; der zweite rebased.
 - [ ] Prüfungen: vorhandene Gastproben (`-p:ZehOSWasmProbe=true`), `scripts/test-wasm-doom-desktop.py --scenario all`, `scripts/test-netsurf-desktop.py`, `scripts/test-classicube-desktop.py`.
 
-**Fertig, wenn:** Alle bestehenden Pakete und Proben unter wasm3 unverändert laufen und `zehos_wasm.c` keine Hostlogik mehr doppelt enthält.
+**Fertig, wenn:** Alle bestehenden Pakete unter wasm3 unverändert laufen, die Gastproben der Fehlerwege (Trap, `proc_exit`, offene Dateien nach Trap, Budget erschöpft) grün sind und `zehos_wasm.c` keine Hostlogik mehr doppelt enthält.
 
 ## Etappe D: WAMR-AOT im Kernel (3–5 Wochen)
 
@@ -103,9 +103,9 @@ Ziel: Der Kernel führt ein `.aot` mit allen Hostfunktionen aus. Branch `feature
 
 Ziel: Ein Paket mit `.aot` installiert sich überall und läuft auf neuen Kerneln nativ. Branch `feature/pkg-aot`. Das Werkzeug kann ab B beginnen, die Kernelseite braucht D.
 
-- [ ] `scripts/build-package.py`: Option `--aot` ruft das festgelegte `wamrc` mit den festen Schaltern auf, legt `<entry>.<aot-abi>.aot` ins Paket und prüft Version und Prüfsumme des Werkzeugs. Ohne `--aot` unverändert. Tests unter `scripts/tests`.
+- [ ] `scripts/build-package.py`: Option `--aot` ruft das festgelegte `wamrc` mit den festen Schaltern auf, legt `<entry>.<aot-abi>.aot` ins Paket, fügt die `file`-Zeile ordinal sortiert ein (das Manifest lehnt Unsortiertes ab) und prüft Version und Prüfsumme des Werkzeugs. Ohne `--aot` unverändert. Tests unter `scripts/tests`.
 - [ ] Bauanleitung für `wamrc` und LLVM 18.1.8 (Prüfsummen und Signaturprüfung aus der Hostprobe) in `docs/PAKETE_ERSTELLEN.md`. Die Werkzeuge liegen unter `.tools/aot/`, nicht im Repository. Der Windows-Entwicklungsrechner hat kein WSL: AOT-Pakete entstehen bis auf Weiteres nur unter Linux; das als Grenze nennen.
-- [ ] Kernel: `WasmGameApp.Load` sucht die `.aot`-Datei im geprüften Paket (nach `VerifyOnce`), beachtet die Größenobergrenze und reicht sie durch. Auswahl und Namensregel als plattformunabhängige Funktion mit Hosttests (passende Kennung, fremde Kennung, keine Datei, AOT aus).
+- [ ] Kernel: `WasmGameApp.Load` sucht die `.aot`-Datei im Paket, beachtet die Größenobergrenze, liest sie einmal in den Speicher und prüft genau diese Bytes gegen den SHA-256 aus dem signierten Manifest. Nur dieser Puffer geht an WAMR; die Datei wird nicht erneut geöffnet. `VerifyOnce` genügt dafür nicht: Es prüft je Paketversion nur einmal je Kernellauf (`PackageStore.VerifyOnce`), eine spätere Änderung der Datei bliebe unbemerkt. Auswahl und Namensregel als plattformunabhängige Funktion mit Hosttests (passende Kennung, fremde Kennung, keine Datei, AOT aus, Hash passt nicht).
 - [ ] Rückfall: Ladefehler des `.aot` vor dem Start führt zu wasm3 mit einer Protokollzeile, die Gasttests abfragen können.
 - [ ] Schalter zur Laufzeit nach dem Muster von `frametimes on|off` (Branch `feature/wasm-frametimes`), Standard nach Peters Entscheidung aus A. Die laufende Laufzeit einer App ist in der Protokollzeile zum Start sichtbar.
 - [ ] `docs/PACKAGE_FORMAT.md` und `docs/PAKETE_ERSTELLEN.md`: Namensregel, `<aot-abi>`, Verhalten älterer Kernel, Grenzen (kein Gasbudget, NetSurf).
@@ -119,6 +119,7 @@ Branch `docs/aot-messung`; Paketänderungen als eigener PR gegen `packages`.
 
 - [ ] Doom und ClassiCube unter wasm3 und AOT messen, je drei Läufe zu 60 s: QEMU KVM, QEMU TCG, VMware. Werkzeug ist die Messung aus `feature/wasm-frametimes` (`scripts/measure-wasm-frametimes.py`); ist der Branch dann nicht gemergt, die Abhängigkeit im Kanal klären. Werte mit Datum in `docs/WASM_FEASIBILITY.md`.
 - [ ] Alle bestehenden Pakete laufen weiter: die drei Desktop-Testskripte aus Etappe C.
+- [ ] Paketgröße je App mit und ohne `.aot` nennen: Das `.aot` vergrößert den Download auch für ältere Kernel und zählt gegen die 128 MiB Paketinhalt.
 - [ ] Neue Paketversionen von Doom und ClassiCube mit `.aot`, höhere Katalog-Generation, PR gegen `packages`; Merge nur auf ausdrücklichen Auftrag.
 - [ ] Vergleich mit Etappe 3 für Peter: lohnt der Rasterizer als Hostfunktion mit AOT noch.
 - [ ] `ROADMAP.md` und Ledger des ClassiCube-Plans.
@@ -157,3 +158,4 @@ Summe 9–15 Wochen bei einem Agenten je Etappe; A, B und C zusammen dauern so l
 
 - 17.11.2026: Plan erstellt (agent-orchestrator) auf `master` 8d47277. Grundlage: Übergabe, Hostprobe 5b, gelesener Loader- und Paketcode, WAMR-2.4.5-Quellen. Nichts gebaut oder gemessen; kein unabhängiges Review.
 - 17.11.2026: Peters signierte Zeile von 01:55 (`#first`) laut Koordinator eingetragen; Etappe A an agent-scientist, Review des Plans an agent-engineer-huang, B und C warten auf freie Engineers.
+- 17.11.2026: Review agent-engineer-huang auf 9cd0e25, kein P1. Eingearbeitet: Umfang von Peters Freigabe (Etappe D braucht ausdrückliche Bestätigung), Hashprüfung der gelesenen `.aot`-Bytes statt `VerifyOnce`, Gastproben der Fehlerwege als Abnahme von Etappe C, sortierte `file`-Zeile, Paketgröße in Etappe F.
