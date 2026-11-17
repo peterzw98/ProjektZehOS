@@ -18,17 +18,18 @@ public sealed class MigrationDirectoryLimitTests
         Directory.CreateDirectory(bulk);
         try
         {
-            for (int i = 0; i < 8190; i++) File.Create(Path.Combine(bulk, $"f{i:D4}.txt")).Dispose();
-            Assert.AreEqual(0, Plan(source).Conflicts.Count, "8190 direkte Kinder passen.");
+            Assert.AreEqual(8189, FileService.MaximumExt2DirectoryEntries, "Ein Eintrag Reserve unter der Cosmos-Parsergrenze fuer Umbenennen.");
+            for (int i = 0; i < FileService.MaximumExt2DirectoryEntries; i++) File.Create(Path.Combine(bulk, $"f{i:D4}.txt")).Dispose();
+            Assert.AreEqual(0, Plan(source).Conflicts.Count, "Genau die Grenze an direkten Kindern passt.");
             string extra = Path.Combine(bulk, "extra.txt");
             File.Create(extra).Dispose();
             var tooLarge = Plan(source);
             Assert.IsTrue(tooLarge.Conflicts.Any(conflict => conflict.Contains("DirectoryEntryLimit", StringComparison.Ordinal)
-                && conflict.Contains("bulk", StringComparison.Ordinal)), "8191 Kinder muessen einen benannten Konflikt ausloesen.");
+                && conflict.Contains("bulk", StringComparison.Ordinal)), "Ein Kind ueber der Grenze muss einen benannten Konflikt ausloesen.");
             string other = Path.Combine(source, "other");
             Directory.CreateDirectory(other);
             File.Move(extra, Path.Combine(other, "extra.txt"));
-            Assert.AreEqual(0, Plan(source).Conflicts.Count, "Die Gesamtzahl darf ueber 8190 liegen, solange jeder Ordner passt.");
+            Assert.AreEqual(0, Plan(source).Conflicts.Count, "Die Gesamtzahl darf ueber der Grenze liegen, solange jeder Ordner passt.");
 
             string home = Path.Combine(source, "home", "Alice");
             Directory.CreateDirectory(Path.Combine(home, ".config"));
