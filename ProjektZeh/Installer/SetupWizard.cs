@@ -784,7 +784,8 @@ internal sealed class SetupDiskList : UiControl
         const ulong mebibyte = 1024UL * 1024;
         const ulong gibibyte = mebibyte * 1024;
         if (bytes < gibibyte) return $"{bytes / mebibyte} MB";
-        ulong tenths = bytes / (gibibyte / 10);
+        // Ganzzahlteil plus abgeschnittenes Zehntel; der Rest ist kleiner als 1 GiB, das Mal 10 laeuft nicht ueber.
+        ulong tenths = bytes / gibibyte * 10 + bytes % gibibyte * 10 / gibibyte;
         return $"{tenths / 10},{tenths % 10} GB";
     }
 
