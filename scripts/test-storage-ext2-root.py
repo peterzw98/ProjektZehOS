@@ -3,7 +3,7 @@
 
 Das ISO muss mit -p:ZehOSStorageRootProbe=true gebaut sein. Geraete je Lauf (AHCI-Port = sataN im Gast):
   sata0 fat.qcow2 64 MiB (FAT fuer /boot/efi, formatiert die Probe in Lauf 1), sata1 Root qcow2 32 oder 128 GiB,
-  sata2 inodes.qcow2 1 GiB (nur Lauf 1 benutzt), sata3 control.img 1 MiB RAW mit "ZEHOS-ROOTPROBE run=N" in Sektor 0.
+  sata2 inodes.qcow2 64 MiB (nur Lauf 1 benutzt; eine Gruppe, 4096 Inodes), sata3 control.img 1 MiB RAW mit "ZEHOS-ROOTPROBE run=N" in Sektor 0.
 Laeufe (--size 2): 1 frisch mit Last, 2 Neustart und Pruefung, 3 harter Abbruch (kill) nach 0,3/2/7/20 s auf je einer
 Overlay-Kopie, 4 Gate ReadOnly und unveraendertes Image je Kopie, danach e2fsck -fy auf einer weiteren Kopie, 5 auf der
 reparierten Kopie. Hochgruppenlauf (--size 32|128, Leitungsentscheid 19:02): 6 nur formatieren, Host belegt die unteren
@@ -331,7 +331,7 @@ def main() -> int:
 
     ctx.qemu_img("create", "-f", "qcow2", str(ctx.work / "fat.qcow2"), "64M")
     inodes = ctx.work / "inodes.qcow2"
-    ctx.qemu_img("create", "-f", "qcow2", str(inodes), "1G")
+    ctx.qemu_img("create", "-f", "qcow2", str(inodes), "64M")
     if args.diagnose_run:
         args.limit_only = True
     if args.limit_only:

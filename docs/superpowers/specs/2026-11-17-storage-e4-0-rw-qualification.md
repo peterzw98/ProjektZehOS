@@ -34,18 +34,28 @@ Je Größe (32 GiB, 128 GiB) ein frisches Image im neuen Arbeitsordner (`new_wor
 | a | Format, Gate, Mount `/`, `/boot/efi` daneben | Gate `Ok`, beide Mounts sichtbar, `/boot/efi` über `/` erreichbar, `FileService` lehnt `/boot/efi/...` als fremden Mount ab |
 | b | `s_state` lesen (= 1), auf 0 setzen, `Device.Flush()` | danach erst Daten; Wert nach jeder Phase c–l2 und i2 erneut gelesen und = 0 (Sync/Flush des Treibers fasst ihn nicht an) |
 | c | Baum `/etc/zehos`, `/home/test/.config/zehos`, Tiefe 8; Schreiben, Lesen, Umbenennen, Löschen in `/home/test` (`FileService`) | alle Ergebnisse `IsOK()` |
-| d | **10 000 Dateien** in 10 Verzeichnissen × 1 000, Größen 0, 1, 4095, 4096, 4097, 64 KiB, 1 MiB, einige 16 MiB (`System.IO`) | Rücklesen = neu berechnete Erwartung |
-| e | **Großes Verzeichnis:** 20 000 Einträge in einem Verzeichnis (über die 12 direkten Blöcke hinaus, Indirektblock), darin 2 000 umbenennen, 2 000 löschen (Zusammenführen von `rec_len`), 2 000 neu anlegen | Auflistung vollständig, keine Doppelnamen, Inhalte stimmen |
+| d | **4 000 Dateien** in 10 Verzeichnissen × 400 (bis 17.11.: 10 000, siehe Reduktionen), Größen 0, 1, 4095, 4096, 4097, 64 KiB, 1 MiB, einige 16 MiB (`System.IO`) | Rücklesen = neu berechnete Erwartung |
+| e | **Großes Verzeichnis:** 3 000 Einträge in einem Verzeichnis (über die 12 direkten Blöcke hinaus, Indirektblock), darin 300 umbenennen, 300 löschen (Zusammenführen von `rec_len`), 300 neu anlegen (bis 17.11.: 8 000/800, siehe Reduktionen) | Auflistung vollständig, keine Doppelnamen, Inhalte stimmen |
 | f | **Umbenennen:** 1 000 Dateien im Verzeichnis, 1 000 über Verzeichnisgrenzen, ein ganzes Verzeichnis mit 1 000 Einträgen, 200 Umbenennungen **auf vorhandene Namen** | alter Name fehlt, Ziel hat den Inhalt der Quelle |
 | g | **Ersetzen wie das Produkt** (`FileService.WriteData` mit und ohne `keepBackup`): 1 000 Ersetzungen wachsend, schrumpfend und auf Länge 0 | Inhalt neu, keine `.zehos-*.tmp`/`.bak`-Reste, keine Inode-Lecks (`e2fsck`) |
 | h | **Löschen:** 2 000 Dateien, 3 Verzeichnisse rekursiv; danach 2 000 neue Dateien | Zähler steigen beim Löschen, sinken beim Neuanlegen passend |
 | i | **Namen:** 255 Byte, UTF-8 (`ä`, `ß`, Leerzeichen), `A` und `a` nebeneinander (Ordinal, beide getrennt lesbar) | Auflistung zeigt genau diese Namen; `FileService` findet sie mit Ordinal-Vergleich |
 | j | **Nebenläufigkeit:** 3 gleichzeitige Aufgaben (Anlegen, Umbenennen/Löschen, Lesen), zwei davon im selben Verzeichnis, 60 s; kein `s_state`-Zugriff in dieser Zeit | keine Ausnahme außer erwarteten `IOException`, Inhalte stimmen |
 | k | **Große Datei:** 2 GiB − 1 Byte schreiben und lesen, dann ein Byte anhängen | 2 GiB − 1 lesbar; Anhängen abgelehnt, `large_file` bleibt aus, Gate `Ok` |
-| l1 | **Blöcke erschöpfen:** 64-MiB-Nullen-Dateien bis zum ersten Fehler, dann 4-KiB-Dateien bis zum zweiten, dann `Mkdir` (braucht einen Block); `s_r_blocks_count` protokollieren | Fehler je über `System.IO` **und** `FileService` (`ResultCode`, Shell-Weg bedienbar); nach Löschen einer Datei wieder schreibbar; jede 50. Füll-Datei zurücklesen und auf „alles null“ prüfen (doppelt vergebene Blockketten fielen sonst nur über Integritätsdateien auf) |
+| l1 | **Blöcke erschöpfen:** 64-MiB-Nullen-Dateien bis zum ersten Fehler, dann 1-MiB-Dateien, dann 4-KiB-Dateien bis zum Fehler, dann `Mkdir` (braucht einen Block); `s_r_blocks_count` protokollieren | Fehler je über `System.IO` **und** `FileService` (`ResultCode`, Shell-Weg bedienbar); nach Löschen einer Datei wieder schreibbar; jede 50. Füll-Datei zurücklesen und auf „alles null“ prüfen (doppelt vergebene Blockketten fielen sonst nur über Integritätsdateien auf) |
 | l2 | **Ersetzen bei vollem Datenträger:** nach dem Löschen in l1 erst wieder bis zum Fehler auffüllen, dann `WriteData` auf eine vorhandene Integritätsdatei mit größerem Inhalt | Fehler, **Original unverändert** (Hash) |
-| i2 | **Inodes erschöpfen** auf der 1-GiB-Zusatzplatte (≈ 65 000 Inodes): 0-Byte-Dateien bis zum Fehler | Fehler über beide Wege, `s_free_inodes_count` = 0, danach löschen und neu anlegen gelingt; `e2fsck -fn` der Zusatzplatte = 0 |
+| i2 | **Inodes erschöpfen** auf der 64-MiB-Zusatzplatte (eine Gruppe, 4 096 Inodes; bis 17.11.: 1 GiB mit ≈ 65 000): 0-Byte-Dateien bis zum Fehler | Fehler über beide Wege, `s_free_inodes_count` = 0, danach löschen und neu anlegen gelingt; `e2fsck -fn` der Zusatzplatte = 0 |
 | m | Herunterfahren wie Produkt: Sync, Sync, `s_state` = 1, `Device.Flush()`; **kein** Unmount von `/` | `DONE`; der Host prüft `s_state` = 1 am Image (`dumpe2fs -h`: „clean“), nicht der Gast |
+
+**Reduktionen am 17. November 2026 (Variante 1, Koordinator 23:40, senior/lead2):** Cosmos 3.0.97 hält jedes berührte Inode bis zum Aushängen im Inode-Cache. Bei 17 519 Einträgen scheitert dessen Wachstum an der GC-Fragmentierung (E4.0-Lauf 1 Schritt e, Diagnoselauf 12). Lauf 1 und Lauf 2, der alle Integritätsdateien in einem Mount liest, bleiben deshalb unter etwa 11 500 Inodes je Mount. Jede Reduktion und wo die Grenze weiter abgedeckt ist:
+
+| Änderung | Grund | Abdeckung an anderer Stelle |
+|---|---|---|
+| d 10 000 → 4 000 Dateien | Inode-Cache je Mount | Grenze ≈ 17 500 Inodes: Doku [#228](https://github.com/peterzw98/ProjektZehOS/pull/228) (`COSMOS_SUPPORT.md`, Prüfbericht „Inode-Cache und GC-Fragmentierung“), Diagnoselauf 12 |
+| e 8 000/800 → 3 000/300 | Inode-Cache je Mount; der Indirektblock bleibt erreicht (3 000 Einträge ≈ 22 Blöcke > 12 direkte) | Verzeichnis-Löschen über Blockgrenzen: Diagnoselauf 10, RemoveEntry-Plug #225 mit Host- und Imagetests |
+| e-limit nicht mehr in Lauf 1 | trüge 8 190 Inodes zum Cache bei | Diagnoselauf 9 (8 190 Einträge, Leeren, `rmdir`, mit Rmdir-Plug #226 `e2fsck` Exit 0); Produktgrenze 8 189: Hosttests aus #211 |
+| l1/l2 Zwischenstufe 1 MiB | sonst bis zu 16 384 Kleindateien in einem Verzeichnis: Cosmos-Verzeichnisgrenze 8 190 würde als „voll“ gezählt | Blockerschöpfung unverändert geprüft (64 MiB → 1 MiB → 4 KiB bis zum Fehler) |
+| i2-Platte 1 GiB → 64 MiB | 65 536 Inodes passen nicht in ein Cosmos-Verzeichnis (8 190) und überschreiten den Cache | Inode-Erschöpfung unverändert geprüft (4 096 Inodes, `s_free_inodes_count` = 0); große Inodezahlen je Mount sind dokumentierte Cosmos-Grenze |
 
 **Lauf 2 – Neustart, Prüfung, weiterschreiben**
 

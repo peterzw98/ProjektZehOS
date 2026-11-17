@@ -105,7 +105,8 @@ internal static class CosmosExt2RootProbe
         Begin("a");
         Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; Lauf 1 nur auf leerer Platte, nichts geschrieben");
         IBlockDevice fat = FindDevice(FatDeviceName, size => size == 64 * MiB, "64 MiB");
-        IBlockDevice inodes = FindDevice(InodeDeviceName, size => size == GiB, "1 GiB");
+        // 64 MiB = eine Gruppe mit 4096 Inodes: Erschoepfung in einem Verzeichnis unter der Cosmos-Grenze von 8190 Eintraegen.
+        IBlockDevice inodes = FindDevice(InodeDeviceName, size => size == 64 * MiB, "64 MiB");
         Check(IsBlank(fat), $"{FatDeviceName}: nicht leer; nichts geschrieben");
         Check(IsBlank(inodes), $"{InodeDeviceName}: nicht leer; nichts geschrieben");
         Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
@@ -129,7 +130,7 @@ internal static class CosmosExt2RootProbe
         StepC(root, files);
         StepD(root);
         StepE(root);
-        StepELimit(root);
+        // e-limit (8190 Eintraege) laeuft nur noch im Diagnoselauf 9: in Lauf 1 truege er 8190 Inodes zum Cosmos-Inode-Cache bei.
         StepF(root);
         StepG(root, files, 1, RootProbeCatalog.GCount);
         StepH(root, files);
@@ -876,6 +877,9 @@ internal static class CosmosExt2RootProbe
         Begin("l1");
         Directory.CreateDirectory("/l");
         int large = FillUntilFull("/l/z", FillFileMiB * IoChunk, 0);
+        // Zwischenstufe 1 MiB: der Rest nach den 64-MiB-Dateien faende sonst bis zu 16 384 Kleindateien in einem Verzeichnis
+        // (Cosmos-Grenze 8190 Eintraege, Inode-Cache) und meldete "Verzeichnis voll" statt "Datentraeger voll".
+        int medium = FillUntilFull("/l/m", IoChunk, 0);
         int small = FillUntilFull("/l/s", SmallFill, 0);
         Check(!Refused(() => Directory.CreateDirectory("/l/dirfull")) || !Directory.Exists("/l/dirfull"), "Mkdir trotz vollem Datentraeger");
         Check(!files.WriteBytes("/l/fs-full.bin", new byte[SmallFill]).IsOK(), "FileService schrieb trotz vollem Datentraeger");
@@ -884,11 +888,12 @@ internal static class CosmosExt2RootProbe
         for (int index = 0; index < large; index += 50) Check(IsZero($"/l/z{index:D5}"), $"/l/z{index:D5} nicht nur Nullen");
         File.Delete("/l/z00000");
         File.WriteAllBytes("/l/after.bin", new byte[SmallFill]);
-        Pass($"{large} x 64 MiB, {small} x 4 KiB bis voll, Fehler ueber System.IO und FileService, s_r_blocks_count {reserved}, nach Loeschen schreibbar");
+        Pass($"{large} x 64 MiB, {medium} x 1 MiB, {small} x 4 KiB bis voll, Fehler ueber System.IO und FileService, s_r_blocks_count {reserved}, nach Loeschen schreibbar");
         AfterPhase(root);
 
         Begin("l2");
         FillUntilFull("/l/y", FillFileMiB * IoChunk, 0);
+        FillUntilFull("/l/n", IoChunk, 0);
         FillUntilFull("/l/t", SmallFill, 0);
         target ??= new RootProbeEntry(RootProbeCatalog.FullReplaceTarget, RootProbeCatalog.FullReplaceTarget, "d", 65536);
         var replaced = files.WriteBytes(target.Path, new byte[2 * 65536]);

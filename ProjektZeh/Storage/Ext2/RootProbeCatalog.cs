@@ -15,14 +15,16 @@ internal sealed record RootProbeEntry(string Path, string Source, string Seed, l
 /// </summary>
 internal static class RootProbeCatalog
 {
-    internal const int DFiles = 10000;
+    // Cosmos-Inode-Cache (Befund 17.11.): je Mount bleiben Lauf 1 und 2 unter ~15 000 verschiedenen Inodes; bei 17 519
+    // scheitert das Wachstum des Cache-Dictionary an der GC-Fragmentierung (COSMOS_SUPPORT, Diagnoselauf 12).
+    internal const int DFiles = 4000;
     internal const int DDirectories = 10;
     // 2-GiB-Root fuer die Laeufe 1-5 (Leitungsentscheid 19:02): Groessen nur bis 64 KiB, zusammen ~0,2 GB.
     internal static readonly long[] DSizes = [0, 1, 4095, 4096, 4097, 65536];
     // Cosmos 3.0.97 liest je Verzeichnis hoechstens 8192 Records ('.' und '..' eingeschlossen, MaxParseIters); Schritt e
     // bleibt deshalb unter der Grenze, die Grenze selbst prueft Schritt e-limit (Leitungsentscheid 16:39).
-    internal const int EEntries = 8000;
-    internal const int EChanged = 800;
+    internal const int EEntries = 3000;
+    internal const int EChanged = 300;
     /// <summary>Groesste Zahl an Eintraegen, die ein Cosmos-3.0.97-Verzeichnis neben '.' und '..' fasst.</summary>
     internal const int DirectoryLimit = 8190;
     internal const int FCount = 1000;
