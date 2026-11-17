@@ -154,3 +154,29 @@ sieben P3. Das ersetzt kein Abschlussreview des noch fehlenden Adapters:
 - `6ba201e`: master 2316a45 (#211, #212) eingearbeitet; Konstruktoren AccountService/FileService tragen beide Seiten (securityDirectory bzw. virtualSource/isRegularFile, tryBeginWrite zuletzt). Hosttests 1289/1289, nativer Build ok.
 - P3-g Schritt 1: `CosmosReadOnlyVfs` (Lese-Wrapper aus CosmosReadOnlyExt2FileSystem herausgeloest) und generische `CosmosReadOnlyFileSystem(inner)` fuer die FAT-Quelle. Entwurf (Frage an lead2 20:16, Antwort ausstehend): waehrend der Migration /data aushaengen und dieselbe FAT-Partition ueber `new CosmosReadOnlyFileSystem(new FatFileSystemType())` lesend einhaengen, danach normal zurueck. Noch NICHT verdrahtet, kein Gastlauf.
 - Offen: CosmosMigrationService (RO-Pruefung Ziel, /mnt/target RW, RootVolumeState.Open/Close, LayoutMigration.Run mit AppStorageGate.TryLockSource), Kernelflag `-p:ZehOSRootMigration=true` auf Basis von InitializeServices (#212), Vollsuite + Flag-Build, Review peter-review.
+
+## Stand agent-peter-jensen nach der Pause (17.11.2026, ab 21:45)
+
+- P3-g nach Entscheidung lead2 (21:47): `MigrationSourceSwap` haengt /data unter dem Quelllease aus, haengt dieselbe Partition ueber den Lese-Wrapper ein und haengt sie nach dem Lauf normal wieder ein. Scheitert das Zurueckhaengen, bleibt der Lease gehalten (Schreiber gesperrt bis zum Neustart) und das Ergebnis nennt den Zustand. Es gibt 9 Hosttests, einen je Fehlerstelle.
+- Audit zu #212: `LayoutMigration.ReadText` liest blockweise und bricht an der Grenze ab; ein Test mit endlosem Marker deckt das ab.
+- `CosmosMigrationService` und Flag `-p:ZehOSRootMigration=true`:
+  - Prueft das Ziel nur lesend: kein Quelllaufwerk, keine eingehaengte Partition, GPT, ESP-Identitaet `Healthy`, Root-Marker `fresh`/`migrating`.
+  - Haengt erst dann Root unter `/mnt/target` beschreibbar ein, setzt `RootVolumeState.Open` und startet `LayoutMigration.Run`.
+  - Schliesst danach mit `Close` und Unmount.
+  - Nachlaufende Fehler (Close, Unmount, Zurueckhaengen der Quelle) werden zusammen mit dem Kopierergebnis gemeldet.
+- Cosmos-Befunde (Reflection/IL, siehe `docs/COSMOS_SUPPORT.md`):
+  - Die Ueberladung von `TryMount` mit Quelle und Partition ist nicht oeffentlich.
+  - Die Partitions-Ueberladung reicht den Index weiter; `FatFileSystemType(IBlockDevice)` nutzt das injizierte Geraet nur bei leerer Quelle.
+  - Loesung: `CosmosSwitchableFileSystem` mit fester Registrierung, das den Index verwirft.
+- Kernel (nur unter dem Flag):
+  - Schreiber-Leases fuer Konten, Pakete ("Paketinstallation"), Updates und das Anlegen des App-Speichers. Schreibende App-Aufrufe liefen schon vorher ueber `AppStorageGate.Run`.
+  - `system migrate`/`system cancel`, Strg+C ueber `InterruptJob`.
+  - Energieaktionen lehnen eine laufende Migration ab, statt sie ueber `StopAll` still abzubrechen. Nach gescheitertem Zurueckhaengen ist ein Neustart trotzdem moeglich.
+- Pruefungen:
+  - Hosttests 1300/1300.
+  - Nativer Build ohne Flag, mit Flag und mit `ZehOSRootProfile` + Flag; Installer- und Recovery-Build: alle mit 0 Fehlern.
+- Offen:
+  - Unabhaengiges Review (peter-review).
+  - Gastlauf G4–G6 erst nach dem 4.0-Go.
+  - P3-d/e messen.
+  - VMware und echte Hardware ungeprueft.
