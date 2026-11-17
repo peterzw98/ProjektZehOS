@@ -15,6 +15,7 @@ public sealed class DesktopMetricsTests
         metrics.Sample(1000, 0, 0);
         StringAssert.Contains(metrics.Summary, "60 FPS");
         metrics.Sample(2000, 0, 0);
-        StringAssert.Contains(metrics.Summary, "0 FPS");
+        Assert.AreEqual(0L, metrics.FramesPerSecond);
+        StringAssert.StartsWith(metrics.Summary, "0 FPS");
     }
 }

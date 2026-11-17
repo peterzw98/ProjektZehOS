@@ -75,6 +75,7 @@ internal sealed class Desktop
     private bool leftShift;
     private bool rightShift;
     private readonly Func<NetworkStatus>? getNetwork;
+    private readonly Func<DateTime> getUtcNow;
     private NetworkStatus networkStatus;
     private string? networkAddress;
     private long networkSample = -1;
@@ -91,8 +92,10 @@ internal sealed class Desktop
     public Desktop(int width, int height, byte[] font, int glyphWidth, int glyphHeight,
         Func<ShellService> createShell, Func<FileService> createFiles,
         DisplaySettings? display = null, TaskManagerSection[]? systemSections = null, DesktopSession? session = null,
-        Func<ExternalApplication[]>? listExternal = null, Func<NetworkStatus>? getNetwork = null)
+        Func<ExternalApplication[]>? listExternal = null, Func<NetworkStatus>? getNetwork = null,
+        Func<DateTime>? getUtcNow = null)
     {
+        this.getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
         this.getNetwork = getNetwork;
         this.listExternal = listExternal;
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 640);
@@ -275,6 +278,8 @@ internal sealed class Desktop
         Windows.Reset();
         menu.Handle(new(InputEventType.Reset));
         menu.Focus(search);
+        // Jede Suche beginnt leer; sonst haengt neuer Text an die letzte Suche an und findet nichts.
+        search.SetText("");
         menuStatus = "";
         menuOpen = true;
         RefreshExternal();
@@ -810,7 +815,7 @@ internal sealed class Desktop
         // Die CMOS-Uhr nur zum erwarteten Minutenwechsel lesen, nicht in jedem Bild.
         if (milliseconds >= clockNextRead)
         {
-            DateTime utc = DateTime.UtcNow;
+            DateTime utc = getUtcNow();
             clockNextRead = milliseconds + (60 - utc.Second) * 1000L - utc.Millisecond;
             DateTime local = LocalTime.FromUtc(utc).Time;
             clock = $"{local.Hour:00}:{local.Minute:00}";

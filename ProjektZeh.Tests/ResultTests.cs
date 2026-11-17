@@ -21,14 +21,20 @@ public sealed class ResultTests
     }
 
     [TestMethod]
-    public void CreateSuccess_WithoutAValue_ReportsSuccess()
+    public void CreateSuccess_ReportsSuccess_AndPreservesTheValue()
     {
         var status = ResultErr.CreateSuccess();
+        var result = ResultObjectFactory.CreateSuccess<string>("Ergebnis");
 
         Assert.IsTrue(status.IsOK(), "Ausdruecklich gesetzter Erfolg muss erkennbar sein.");
         Assert.AreEqual(ResultCode.Success, status.Code, "Erfolg muss den passenden Status setzen.");
         Assert.AreEqual(string.Empty, status.Message, "Erfolg braucht keine Fehlermeldung.");
         Assert.IsNull(status.ExceptionDetails, "Erfolg darf keine Exceptiondetails enthalten.");
+        Assert.IsTrue(result.IsOK(), "Ein ausdruecklich erfolgreiches Ergebnis muss als Erfolg gelten.");
+        Assert.AreEqual("Ergebnis", result.Value, "Der Wert muss unveraendert ankommen.");
+        var empty = ResultObjectFactory.CreateSuccess<string>(null);
+        Assert.IsTrue(empty.IsOK(), "Auch ein erlaubter null-Wert gilt als Erfolg.");
+        Assert.IsNull(empty.Value, "Ein erlaubter null-Wert muss unveraendert bleiben.");
     }
 
     [DataTestMethod]
@@ -44,6 +50,10 @@ public sealed class ResultTests
         Assert.IsFalse(status.IsOK(), "Ein Fehlercode darf keinen Erfolg ergeben.");
         Assert.AreEqual(code, status.Code, "Die Ursache muss beim Aufrufer ankommen.");
         Assert.AreEqual("Die Operation ist fehlgeschlagen.", status.Message, "Der echte Meldungstext muss erhalten bleiben.");
+        var result = ResultObjectFactory.CreateFailure<int>(code, "Kein Wert gefunden.");
+        Assert.IsFalse(result.IsOK(), "Der Standardwert eines Werttyps darf keinen Erfolg vortaeuschen.");
+        Assert.AreEqual(code, result.Status.Code, "Die Ursache muss vom Wert getrennt bleiben.");
+        Assert.AreEqual(0, result.Value, "Ohne Wert bleibt der Standardwert des Typs erhalten.");
     }
 
     [TestMethod]
@@ -63,27 +73,6 @@ public sealed class ResultTests
 
         Assert.IsFalse(status.IsOK(), "Eine fehlende Meldung aendert den Fehlerstatus nicht.");
         Assert.AreEqual(string.Empty, status.Message, "Aufrufer sollen einen verwendbaren Meldungstext erhalten.");
-    }
-
-    [DataTestMethod]
-    [DataRow("Ergebnis")]
-    [DataRow(null)]
-    public void CreateSuccess_WithAValue_PreservesTheValue(string? value)
-    {
-        var result = ResultObjectFactory.CreateSuccess<string>(value);
-
-        Assert.IsTrue(result.IsOK(), "Ein ausdruecklich erfolgreiches Ergebnis muss als Erfolg gelten.");
-        Assert.AreEqual(value, result.Value, "Auch ein erlaubter null-Wert muss unveraendert bleiben.");
-    }
-
-    [TestMethod]
-    public void CreateFailure_WithAValueType_DoesNotTurnTheDefaultValueIntoSuccess()
-    {
-        var result = ResultObjectFactory.CreateFailure<int>(ResultCode.NotFound, "Kein Wert gefunden.");
-
-        Assert.IsFalse(result.IsOK(), "Ein Standardwert darf keinen Erfolg vortaeuschen.");
-        Assert.AreEqual(ResultCode.NotFound, result.Status.Code, "Die Ursache muss vom Wert getrennt bleiben.");
-        Assert.AreEqual(0, result.Value, "Ohne Wert bleibt der Standardwert des Typs erhalten.");
     }
 
     [TestMethod]
