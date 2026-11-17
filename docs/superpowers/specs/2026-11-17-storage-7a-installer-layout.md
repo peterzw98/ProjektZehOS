@@ -2,6 +2,16 @@
 
 Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (ZehOS 0.5.12). **Nur lesen und entwerfen:** keine Formatier-, Boot- oder Installeränderung, nichts davon im Gast ausgeführt. Grundlage: [Plan, Etappe 7](../plans/2026-11-17-storage-linux.md#etappe-7-installer-updates-und-energieaktionen), [Aufrufer-Inventar](2026-11-17-storage-callers.md), [Etappe-2-Entscheidungen](2026-11-17-storage-etappe2-design.md), Cosmos-Quelle `efcf20c` (= 3.0.97). Aussagen zu Cosmos stammen aus dem Quellbaum, nicht aus dem Gast.
 
+## 0. Entscheidungen der Storage-Leitung (09:12/09:15, nachgezogen)
+
+1. **Zielumfang:** 32 bis 128 GiB, 512-Byte-Sektoren, ESP 512 MiB (Payload ≈ 19,7 MiB × 2 reicht), Root = Rest. **Keine Freigabe über 128 GiB**, **kein `repair-root`** und keine neue Löschfunktion in 7a.
+2. **GPT:** mit CRC32 und Backup, als schmaler, geprüfter eigener Writer statt `Gpt.Create/AddPartition` (CRC 0, kein Backup; Befund lokal gegen 3.0.97 bestätigt). `Gpt.Parse`, `Partition` und `RescanPartitions` von Cosmos werden wiederverwendet.
+3. **Identität des installierten Systems** (Abschnitt 5): fehlendes Root muss auch bei **gelöschtem GPT-Eintrag** erkannt werden (ESP-Marker + Root-GUID); unklare Identität sperrt die Einrichtung. Ein Rootfehler führt in die Recovery; **vorhandene Konten werden niemals neu angelegt oder ersetzt.**
+4. **GUIDs eindeutig:** Disk- und Partitions-GUIDs aus der Hardware-Zufallsquelle, **keine** aus der Plattengröße abgeleiteten (deterministischen) Cosmos-GUIDs.
+5. **Reihenfolge/Aktivierung:** Writer-Code erst nach der SIMD-Aufgabe (ClassiCube S1) und nach dem Designreview; **keine Installeraktivierung vor Etappe 3 und vor der Qualifikation**.
+6. **Formatter:** das No-Go des **Original**-Cosmos-ext2-Formatters ist ein historischer Befund; die Korrekturmatrix des korrigierten Formatters ist belegt. Die aktuellen Zieltests (32/64/128 GiB, 4-KiB-Blöcke, im Kernel-Plug) sind trotzdem noch offen.
+7. **Beweisregel:** kein byteidentischer Python-Spiegel als Nachweis. Die Hostprobe führt den **produktiven** Writer (dieselbe C#-Quelle) aus.
+
 ## 1. Inventar: heutiger Installer-, Boot-, Update- und Recovery-Pfad
 
 | Bereich | Fundstelle | Annahme heute | Betroffen vom neuen Layout |
@@ -25,20 +35,20 @@ Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (
 | Baustein | Befund | Nutzung |
 |---|---|---|
 | `StorageManager.Devices/GetPartitions/RescanPartitions`, `Partition` (`Host/StartSector/BlockCount/BlockSize`) | `Partition` kennt keinen Typ; `Gpt.Parse` akzeptiert Einträge ab `LBA 34`, prüft **keine CRCs** (`Gpt.cs:20-21`, `:236-246`) | Partitionsliste und Neuerkennung nach dem Schreiben der Tabelle |
-| `Gpt.Create/AddPartition` (`Gpt.cs:255-330`) | schreibt Schutz-MBR und Primärheader, **CRC32 des Headers und der Eintragstabelle = 0** (`:73`, `:296`, `:307`), **keinen Backup-Header** | **für UEFI-Boot untauglich**: Firmware verlangt gültige CRCs (Annahme aus der UEFI-Spezifikation, nicht im Gast geprüft). Eigener GPT-Schreiber mit CRC32 + Backup nötig (reine Funktion, hosttestbar) |
+| `Gpt.Create/AddPartition` (`Gpt.cs:255-330`) | schreibt Schutz-MBR und Primärheader, **CRC32 des Headers und der Eintragstabelle = 0** (`:73`, `:296`, `:307`), **keinen Backup-Header** | **für UEFI-Boot untauglich** (Firmware verlangt gültige CRCs; Befund von der Storage-Leitung lokal bestätigt). Entscheid: eigener schmaler GPT-Writer mit CRC32 + Backup, `Gpt.Create/AddPartition` wird **nicht** verwendet |
 | `Gpt`-Konstanten | nur `BasicDataPartitionType`; ESP-GUID `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` und Linux-Dateisystem `0FC63DAF-8483-4772-8E79-3D69D8477DE4` fehlen; keine Partitionsnamen/Attribute | eigene Konstanten |
 | `Mbr.Create/AddPartition`, `PartitionManager.Create(…, mbrSystemId, gptType)` | Fassade: GPT wenn `Gpt.IsGpt`, sonst MBR; MBR-Felder 32 Bit (2 TiB) | aktuelle Installerbasis; `PartitionManager.Create` verwendet bei GPT den CRC-losen Weg |
 | `VfsManager.TryFormat/TryMount/TryUnmount/RegisterFileSystem`, `FatFileSystemType`, `FatFormatOptions` (Label, Typ) | FAT32-Formatter schreibt Bootsektor, FSInfo, Backup, FATs, Root (`FatFormatter.cs:166-195`); Label wird übernommen | ESP-Format wie heute |
-| `Ext2FileSystemType`, `Ext2FormatOptions`, Plug `CosmosExt2FormatterPlug` → `CosmosExt2Formatter.FormatForKernel` | Cosmos-Formatter ist laut `docs/STORAGE_3_0_97_FINDINGS.md` inkonsistent (18/18 Images, `e2fsck`-Fehler); korrigierter Formatter im Repo (`Storage/Ext2/README.md`), im Produkt **nirgends eingehängt**, Obergrenze 128 GiB | Root-Format **erst nach** dokumentiertem Go der e2fsck-Matrix; `Ext2FeatureGate.Evaluate` vor jedem Mount |
+| `Ext2FileSystemType`, `Ext2FormatOptions`, Plug `CosmosExt2FormatterPlug` → `CosmosExt2Formatter.FormatForKernel` | *Historisch:* der **Original**-Cosmos-Formatter war laut `docs/STORAGE_3_0_97_FINDINGS.md` inkonsistent (18/18 Images, `e2fsck`-Fehler, No-Go). Der korrigierte Formatter im Repo (`Storage/Ext2/README.md`) hat eine belegte Korrekturmatrix; im Produkt **nirgends eingehängt**, Obergrenze 128 GiB, aktuelle Zieltests offen | Root-Format **erst nach** dokumentiertem Go der e2fsck-Matrix; `Ext2FeatureGate.Evaluate` vor jedem Mount |
 | `Ext2Superblock.TryCreate`/Gate | Superblock lesbar ohne Mount; Gate liefert `Ok/ReadOnly/Reject` | Root-Gesundheitsprobe (Abschnitt 5) |
 | `DiskEmptyCheck` (Etappe 2) | Vollscan ≤4 GiB, darüber Stichprobe mit `--yes-large`-Bestätigung | ersetzt die 256-MiB-`IsBlank`-Kürzung im Installer (Entscheidung offen) |
 
 ## 3. Entwurf: Ziel-Layout
 
-- **Partitionstabelle:** GPT mit Schutz-MBR, 1-MiB-Ausrichtung (LBA 2048 wie heute), Primär- und Backup-Header, korrekte CRC32. Schreiber als reine, injizierbare Klasse (`GptLayoutWriter`: Plattengröße, Sektorgröße 512, GUID-Quelle → Byte-Image von Sektor 0..33 und letzten 33 Sektoren). Disk-/Partitions-GUIDs aus der vorhandenen Zufallsquelle (`CosmosSaltSource`/Hardware-Random), im Test fest.
+- **Partitionstabelle:** GPT mit Schutz-MBR, 1-MiB-Ausrichtung (LBA 2048 wie heute), Primär- und Backup-Header, korrekte CRC32. Schreiber als schmale, injizierbare Klasse (`GptLayoutWriter`: Plattengröße, Sektorgröße 512, GUID-Quelle → Bytes für Sektor 0..33 und die letzten 33 Sektoren), nur für den Umfang 32 bis 128 GiB; alles andere wird **vor jedem Schreibzugriff** verweigert. **GUIDs:** Disk-GUID und Partitions-GUIDs kommen aus der Hardware-Zufallsquelle (Version-4-Bits gesetzt) und sind je Installation eindeutig; keine Ableitung aus der Plattengröße (das macht `Gpt.Create` mit `WriteDeterministicGuid` und würde gleich große Platten verwechselbar machen). Im Test wird die Quelle injiziert; zusätzlich ein Test, dass zwei Installationen verschiedene GUIDs erhalten.
 - **Partition 1 – ESP:** Typ `C12A7328-…`, FAT32, Label `ZEHOSBOOT`, Standard 512 MiB (Kernel + `.bak` + Limine; konkrete Größe nach Payloadmessung festlegen), Inhalt wie heute: `/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf(.bak)`, `/boot/zehos-version.txt`, `/boot/limine/limine.conf`. Bleibt bis Etappe 4 auch `/data` (Konten, Pakete, Updatekonfiguration).
-- **Partition 2 – Root:** Typ `0FC63DAF-…`, GPT-Name `ZEHOS-ROOT`, ext2 mit 4096-Byte-Blöcken, ext2-Volumename `zehos-root`, Größe = Rest der Platte, **höchstens 128 GiB** (Formatterobergrenze); der Rest bleibt unpartitioniert (für spätere Datenpartition, nicht Teil von 7a). Wird in 7a formatiert und geprüft, aber **nicht** als `/` eingehängt (Etappe 4).
-- **Mindestgröße:** ESP 512 MiB + Root ≥ 256 MiB + Ränder; praktische Untergrenze ≈ 1 GiB (heutige 128 MiB entfallen). Obergrenze 2 TiB entfällt (GPT).
+- **Partition 2 – Root:** Typ `0FC63DAF-…`, GPT-Name `ZEHOS-ROOT`, ext2 mit 4096-Byte-Blöcken, ext2-Volumename `zehos-root`, Größe = Rest der Platte (Zielumfang 32 bis 128 GiB, also Root ≤ ≈127,5 GiB, innerhalb der Formatterobergrenze). Wird in 7a formatiert und geprüft, aber **nicht** als `/` eingehängt (Etappe 4). Keine Freigabe über 128 GiB.
+- **Größenbereich:** 32 bis 128 GiB (Entscheid). Platten außerhalb bekommen das neue Layout nicht (offen, ob der bisherige Ein-Partition-Installer für kleine Platten bestehen bleibt oder sie abgelehnt werden); ESP 512 MiB, Root = Rest.
 - **Boot:** Limine bleibt auf der ESP; `boot():` verweist auf die Partition, von der `BOOTX64.EFI` startet. Kein ext2-Zugriff zum Booten, Rückfalleintrag `.bak` bleibt. Ob Limine/OVMF das neue GPT-Layout startet, ist die zentrale Gastprüfung.
 - **Auswahl beim Boot (`Decide`):** muss das Layout erkennen (Typ aus GPT lesen statt nur MBR). Ein installiertes System (ESP + Root auf `sata0`) mountet die ESP als `/data`, ohne dass „zwei Partitionen" zu `Blocked` führt. Vorschlag: reine Klassifikation `InstalledLayout.Classify(partitions)` → `None | Complete | RootMissing | RootDamaged`, Eingabe Typ-GUIDs/Namen aus einer GPT-fähigen `CosmosDataDisk.Describe`.
 - **Schutz:** Installer bietet Platten mit `ZEHOSDATA`-Partition weiter nicht an (GPT-Erkennung nachziehen!); Medium (CD001) und eingebundene Ziele bleiben ausgeschlossen; Löschen nur mit `--erase`.
@@ -47,35 +57,45 @@ Stand: 17. November 2026, Basis `origin/feature/storage-data-disk` @ `22dd279` (
 
 Stufen: Partitionieren (GPT schreiben, Backup, Flush, `RescanPartitions`, **Zählen: genau 2 mit erwarteten Typen**) → ESP formatieren und einhängen → Root formatieren (`TryFormat` ext2) → **Root prüfen** (Gate + Superblocklesen; Host-`e2fsck -fn` nur im Test) → Dateien kopieren → Limine-Config → Aushängen/Flush. Schlägt eine Stufe fehl: Abbruch mit Bereinigung wie `InstallJob.Step` (bestehendes Muster), Meldung nennt, dass Tabelle/Teile zurückbleiben (Hinweis wie P3 (d) bei `disk init`). Kein stilles Weiterverwenden einer Root-Partition, die das Gate nicht mit `Ok` passiert.
 
-## 5. Entwurf: fehlendes oder beschädigtes Root sperrt die Kontoeinrichtung
+## 5. Entwurf: Identität des installierten Systems, fehlendes oder beschädigtes Root
 
-Zustände (pure Funktion `RootHealth.Evaluate(layout, rootSuperblockBytes?)`):
-1. **Kein installiertes Layout** (keine Root-Partition erwartet): Verhalten wie heute.
-2. **Installiertes Layout, Root vollständig und Gate `Ok`:** normal.
-3. **Installiertes Layout, Root fehlt** (Partitionstyp fehlt/Eintrag gelöscht): `Blocked` (`RootMissing`).
-4. **Root vorhanden, aber Magic falsch, Gate `Reject`, Superblock nicht lesbar oder `e2fsck`-ähnliche Plausibilitätsprüfung (Größe > Partition) scheitert:** `Blocked` (`RootDamaged`); `ReadOnly` bei unbekanntem RoCompat bleibt lesbar, aber ohne Einrichtung.
+**Problem:** Wird der Root-GPT-Eintrag gelöscht, sieht die Platte wie eine reine ESP-Platte aus; ohne weitere Information wäre das „kein installiertes Layout" und die Einrichtung würde angeboten. Deshalb trägt die ESP die Identität:
 
-In den Zuständen 3 und 4 gilt dieselbe Mechanik wie Etappe 2: `DataDiskSelector.SetupBlockedReason` → `AccountService.SetupBlockedReason`, serielle Fehlerzeile `STORAGE Fehler: … Keine Ersteinrichtung.`, **kein Konto, keine Ersteinrichtung**, auch nicht beim Boot-Fenster. Die ESP darf für die Shell/Recovery eingehängt bleiben; Konten werden dann **nicht** neu angelegt, auch wenn dort keine Kontendatei liegt. Offen: ob eine vorhandene Kontendatei auf der ESP bei Root-Schaden weiter zur Anmeldung dient (Vorschlag: ja, nur Einrichtung gesperrt).
+- **ESP-Marker** `/boot/zehos-install.id` (Textdatei, Format-Version, Disk-GUID, Root-Partitions-GUID, Root-Startsektor/-Größe, vom Installer als letzter Schritt geschrieben). Der Dateiname gehört zum Schutz der `.zehos-`-/Systempfade (Etappe 3 festlegen).
+- **Prüfung beim Boot** (reine Funktion `InstalledIdentity.Evaluate(marker?, gptEntries, diskGuid, rootSuperblock?)`):
+
+| Lage | Ergebnis |
+|---|---|
+| kein Marker, ESP ohne Root-Partition (Altinstallation/Datenplatte) | `Legacy`: Verhalten wie heute |
+| Marker lesbar, Disk-GUID passt, GPT-Eintrag mit Root-GUID vorhanden, Lage/Größe passen, Gate `Ok` | `Healthy` |
+| Marker lesbar, aber **kein GPT-Eintrag mit der Root-GUID** (auch bei sonst gültiger Tabelle) | `RootMissing` |
+| Eintrag vorhanden, Lage/Größe weichen ab, Magic falsch, Gate `Reject` oder Superblock unlesbar | `RootDamaged` (`ReadOnly` bei unbekanntem RoCompat: lesbar, keine Einrichtung) |
+| Marker unlesbar/beschädigt, Disk-GUID passt nicht, Tabelle ungültig oder mehrdeutig | `Unclear` |
+
+- **Folge:** `RootMissing`, `RootDamaged` und `Unclear` ergeben `Blocked` → `DataDiskSelector.SetupBlockedReason` → `AccountService.SetupBlockedReason` (Mechanik aus Etappe 2): keine Ersteinrichtung, kein neues Konto, serielle Fehlerzeile `STORAGE Fehler: … Keine Ersteinrichtung.` **Unklare Identität sperrt grundsätzlich.** Der Boot führt in die Recovery-Shell (Anzeige/Textshell), nicht in eine Neueinrichtung.
+- **Vorhandene Konten werden niemals neu angelegt oder ersetzt:** Der Rootfehler-Pfad enthält keinen Aufruf von `RecoveryWork`/`SetupWork`. Offen für die Leitung: `security recover` (Sicherheits-Recovery-Build) verschiebt heute eine vorhandene Kontendatei und legt ein neues Konto an (`AccountService.RecoveryWork`); bei Zuständen ≠ `Healthy/Legacy` soll er verweigern oder ist das ausdrücklich gewollt?
+- **Grenze:** Ein Angreifer mit Schreibzugriff auf die ESP kann den Marker löschen (dann `Legacy`); das ist kein Schutz gegen Offline-Manipulation, nur gegen Versehen und Teilfehler. Zu dokumentieren.
 
 ## 6. Entwurf: Recovery ohne ext2
 
 - **FAT-Recovery:** Kernel, Limine, Rückfalleintrag und Konten liegen auf der ESP und starten ohne ext2. Root-Schaden verhindert den Boot nicht, sperrt nur die Einrichtung.
-- **ISO-Recovery:** der vorhandene Installer-/Recovery-ISO-Build (kein ext2 nötig, `ZEHOS_SECURITY_RECOVERY`). Ergänzung vorgeschlagen: Shellbefehl `setup repair-root <Laufwerk> --erase-root` (formatiert nur die Root-Partition neu, ESP und Konten bleiben, braucht Bestätigung und Admin/Recovery); in 7a nur entwerfen und mit Hosttest des Zustandsautomaten absichern, nicht implementieren, bevor das Gate/Formatter-Go vorliegt.
+- **ISO-Recovery:** der vorhandene Installer-/Recovery-ISO-Build (kein ext2 nötig, `ZEHOS_SECURITY_RECOVERY`). **Keine** neue Reparatur-/Löschfunktion (`repair-root` entfällt in 7a); Root-Reparatur ist später und gesondert freizugeben. Die Recovery darf bei Rootfehlern lesen, `disk list` und Diagnose anbieten, aber keine Konten anlegen oder ersetzen.
 - **Auswahl-Rückfall:** der Rückfall „`sata0` mit genau einer Partition" bleibt für alte MBR-Installationen (0xEF) gültig; neue GPT-Installationen werden über die Klassifikation erkannt.
 
 ## 7. Testspezifikation (Tests zuerst)
 
 **Hosttests (reine Logik, `ProjektZeh.Tests`, einzelne Compile-Includes):**
-1. `GptLayoutWriter`: für 1 GiB, 32 GiB, 128 GiB und `2 TiB + 512`: Header-CRC und Tabellen-CRC gegen feste Referenzwerte (aus `zlib.crc32` des Testgenerators), Primär bei LBA 1, Backup in den letzten 33 Sektoren, `FirstUsable=34`, `LastUsable=BlockCount-34`, Partitionen 1-MiB-ausgerichtet und innerhalb der nutzbaren Grenzen, Root ≤ 128 GiB, keine Überlappung, zu kleine Platte (< ≈1 GiB) und Sektor ≠ 512 verweigert **vor jedem Schreibzugriff** (Zähl-Fakegerät: 0 Zugriffe).
+1. `GptLayoutWriter`: für 32 GiB, 64 GiB, 128 GiB (Umfang) sowie 31 GiB, 128 GiB + 512 B und `2 TiB + 512` (verweigert): Header-CRC und Tabellen-CRC gegen feste Referenzwerte (aus `zlib.crc32` des Testgenerators), Primär bei LBA 1, Backup in den letzten 33 Sektoren, `FirstUsable=34`, `LastUsable=BlockCount-34`, Partitionen 1-MiB-ausgerichtet und innerhalb der nutzbaren Grenzen, Root ≤ 128 GiB, keine Überlappung, Platte außerhalb 32 bis 128 GiB und Sektor ≠ 512 verweigert **vor jedem Schreibzugriff** (Zähl-Fakegerät: 0 Zugriffe).
 2. Typ-GUID-Bytereihenfolge (gemischtes Endian): `C12A7328-…` und `0FC63DAF-…` als Rohbytes.
-3. `InstalledLayout.Classify`/`DataDiskSelector.Decide`-Erweiterung: GPT-Typen statt MBR; ESP+Root ⇒ eingehängt wird die ESP, **nicht** `Blocked`; ESP ohne Root ⇒ `RootMissing`; Root mit zerstörtem Magic ⇒ `RootDamaged`; weiterhin: Bestand `0x0C`, `ZEHOSDATA`, zwei Labels.
-4. `RootHealth`/`SetupBlockedReason`: Zustände 1-4, `NoDataDisk` unverändert, Meldung enthält Ursache; Integration mit `AccountService` (Fenster offen, gemountet, Datei fehlt) ⇒ `NeedsSetup=false`.
+3. `InstalledIdentity.Evaluate` (Tabelle Abschnitt 5): jede Zeile ein Test, insbesondere **gelöschter Root-Eintrag bei vorhandenem Marker ⇒ `RootMissing`**, falsche Disk-GUID/unlesbarer Marker ⇒ `Unclear`; `DataDiskSelector.Decide`-Erweiterung: GPT-Typen statt MBR; ESP+Root ⇒ eingehängt wird die ESP, **nicht** `Blocked`; weiterhin Bestand `0x0C`, `ZEHOSDATA`, zwei Labels.
+3a. GUIDs: zwei Läufe mit der Hardware-Quelle ⇒ verschiedene Disk-/Partitions-GUIDs, Version-4-Bits; gleich große Platten ⇒ verschieden (Gegenprobe zu `WriteDeterministicGuid`).
+4. `SetupBlockedReason` für `RootMissing/RootDamaged/Unclear`, `NoDataDisk` unverändert, Meldung enthält Ursache; Integration mit `AccountService` (Fenster offen, gemountet, Datei fehlt) ⇒ `NeedsSetup=false`; **vorhandene Kontendatei bleibt byteidentisch** (Prüfsumme vor/nach).
 5. `InstallJob`: neue Stufenreihenfolge, Abbruch in jeder Stufe ruft `Abort` und meldet zurückbleibende Teile; Prozentwerte monoton; Ziel-Fake zählt Aufrufe (Partitionieren genau einmal, Root-Format nach ESP).
 6. `InstallService.Begin`: neue Mindestgröße, 2-TiB-Grenze entfernt, `ZEHOSDATA`-Platte und Medium geschützt, Leerprüfung über `DiskEmptyCheck` (Stichprobe nur mit Bestätigung).
 7. Update-Ziel: `FileUpdateTarget`/`UpdateController` unverändert grün mit ESP als `/data` (Regression, Pfade `boot/…`).
 8. Bestandsimages: ein 64-MiB-MBR-Image mit Prüfsumme bleibt von `Decide`/Installer-Auswahl unverändert.
 
-**Host-Gegenprüfung (Python, Werkzeuge nur wenn vorhanden, sonst „offen"):** `scripts/test-installer-layout.py` erzeugt ein neues sparse Image (existierender Pfad = Abbruch), lässt den Host-Schreiber-Ausgabe (Hosttest-Binary oder byteidentischer Python-Spiegel) anwenden und prüft mit `sfdisk -l`/`sgdisk -v` (Tabelle gültig), `fsck.fat -n` auf der ESP und `e2fsck -fn` auf der Root-Partition. Exit 0 nur wenn alles grün.
+**Host-Gegenprüfung (Beweisregel: produktiver Writer, kein Python-Spiegel):** ein Hostprogramm unter `experiments/` (wie `StorageProbe`, bindet die **produktiven** Quellen `GptLayoutWriter`/Identität per Compile-Include ein) schreibt in ein NEUES sparse Image (existierender Pfad = Abbruch); `scripts/test-installer-layout.py` ruft es auf und prüft das Ergebnis mit `sfdisk -l`/`sgdisk -v` (Tabelle und Backup gültig), `fsck.fat -n` auf der ESP und `e2fsck -fn` auf der Root-Partition. Exit 0 nur wenn alles grün; fehlende Werkzeuge werden als offen gemeldet, nicht als bestanden. Python kennt nur Aufruf und Auswertung, nie die Tabellenbytes selbst.
 
 **Gasttests (QEMU+OVMF, danach VMware; nur auf Ansage, ein Gast gleichzeitig):**
 - G1 frische Installation auf 1 GiB, 32 GiB, 128 GiB: Boot per OVMF von der installierten GPT-Platte (zentrale Annahme), `disk list` zeigt zwei Partitionen, ESP als `/data`, Anmeldung/Ersteinrichtung wie heute.
@@ -86,12 +106,12 @@ In den Zuständen 3 und 4 gilt dieselbe Mechanik wie Etappe 2: `DataDiskSelector
 - G6 Installer verweigert Medium, `ZEHOSDATA`-Platte und eingebundenes Ziel; Bestandsplatte nur mit `--erase`.
 - G7 Auswahl bei zwei Platten (installierte Platte + `ZEHOSDATA`): Bestand gewinnt, Hinweis im Protokoll.
 
-## 8. Offene Entscheidungen und Risiken
+## 8. Offene Punkte nach den Entscheidungen
 
-1. **Eigener GPT-Schreiber vs. MBR bleiben:** Cosmos-`Gpt` ist für UEFI-Boot unbrauchbar (CRC 0, kein Backup). Empfehlung: eigener Schreiber (klein, rein, hosttestbar). Alternative für 7a: MBR mit zwei Primärpartitionen (0xEF + 0x83), behält die 2-TiB-Grenze und mehrere UEFI-Firmwares verlangen GPT; Entscheidung des Leads.
-2. **Formatter-Go:** Root-Format erst nach belegter `e2fsck`-Matrix des korrigierten Formatters (Etappe 1); bis dahin Installer-Root-Stufe hinter Schalter/ohne Aktivierung.
-3. **ESP-Größe** nach gemessener Payload (Kernel × 2 + EFI); **Root-Cap 128 GiB** und Rest der Platte.
-4. **GPT-Typen im Kernel lesen:** `CosmosDataDisk.Describe` liest heute nur MBR; GPT ⇒ Typ 0. Muss zusammen mit dem Installer-Ausschluss (`HasDataPartition`) für GPT erweitert werden, sonst wäre eine GPT-`ZEHOSDATA`-Platte als Installationsziel sichtbar.
-5. **Gast belegt nur MBR-Boot unter OVMF** (`docs/INSTALLER_UPDATES_TESTS.md`); GPT-Boot ist neu.
-6. **Konten bei Root-Schaden** (Abschnitt 5, offene Frage) und **`setup repair-root`** brauchen eine Leitungsentscheidung, bevor Code entsteht.
-7. VMware (eigene AHCI-Platte), Prüfgrößen und Zeitbudgets wie in Etappe 2 (`DiskEmptyCheck`: ≈100 MB/s Vollscan unter KVM gemessen).
+1. **Reihenfolge:** SIMD (S1) zuerst, dann Designreview dieses Dokuments, dann Writer-Code und Hostprobe; **keine Installeraktivierung vor Etappe 3 und Qualifikation.**
+2. **ESP-Größe** 512 MiB ist entschieden; Details (Marker-Pfad/-Format, Root-Identität) nach der API-Prüfung.
+3. **Aktuelle Zieltests des korrigierten ext2-Formatters** (32/64/128 GiB, 4-KiB-Blöcke, Kernel-Plug) stehen aus; der Root-Format-Schritt bleibt bis dahin hinter einem Schalter.
+4. **GPT-Typen im Kernel lesen:** `CosmosDataDisk.Describe` liest heute nur MBR (GPT ⇒ Typ 0); gemeinsam mit dem Installer-Ausschluss (`HasDataPartition`) für GPT erweitern, sonst wäre eine GPT-`ZEHOSDATA`-Platte als Installationsziel sichtbar.
+5. **GPT-Boot unter OVMF** ist ungeprüft (belegt ist nur MBR-Boot, `docs/INSTALLER_UPDATES_TESTS.md`).
+6. **`security recover` bei Rootfehlern** (Abschnitt 5) und Verhalten kleiner/großer Platten außerhalb 32 bis 128 GiB brauchen eine Leitungsentscheidung.
+7. VMware (eigene AHCI-Platte), Zeitbudgets wie in Etappe 2 (`DiskEmptyCheck`: ≈100 MB/s Vollscan unter KVM).
