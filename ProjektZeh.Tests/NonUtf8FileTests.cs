@@ -60,6 +60,16 @@ public sealed class NonUtf8FileTests
     }
 
     [TestMethod]
+    public void EditorProtectionHoldsForAnotherSpellingOfTheSamePath()
+    {
+        var editor = new TextEditorApp(new FileService(directory), painter, "./latin1.txt");
+        editor.Start();
+        editor.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F3));
+        editor.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.F2));
+        CollectionAssert.AreEqual(Latin1, File.ReadAllBytes(file));
+    }
+
+    [TestMethod]
     public void EditorAlsoProtectsFilesThatAreTooLargeToLoad()
     {
         // Gleiches Muster wie bei Nicht-UTF-8: Laden scheitert, die Datei existiert, Speichern darf sie nicht leeren.

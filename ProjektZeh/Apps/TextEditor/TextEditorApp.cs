@@ -74,7 +74,7 @@ internal sealed class TextEditorApp : IApplication
         var result = files.ReadTextOrVirtual(path.Text);
         if (!result.IsOK())
         {
-            if (files.GetFileSize(path.Text).IsOK()) unloadedPath = path.Text;
+            if (files.GetFileSize(path.Text).IsOK()) unloadedPath = files.ResolvePath(path.Text).Value;
             status = result.Status.Message;
             return;
         }
@@ -101,7 +101,8 @@ internal sealed class TextEditorApp : IApplication
     private void Save() => SaveDocument();
     private bool SaveDocument()
     {
-        if (unloadedPath != null && string.Equals(path.Text, unloadedPath, StringComparison.Ordinal))
+        // Aufgeloest und ohne Gross-/Kleinschreibung (FAT): ./datei oder ein absoluter Pfad umgehen die Sperre nicht.
+        if (unloadedPath != null && string.Equals(files.ResolvePath(path.Text).Value, unloadedPath, StringComparison.OrdinalIgnoreCase))
         {
             status = "Datei wurde nicht geladen und bleibt unveraendert; unter anderem Pfad speichern.";
             return false;
