@@ -98,9 +98,60 @@ def inspect_g8(image: Path, work: Path, payload: Path, version: str, config: Pat
         raise ValueError("ESP-Marker ist bereits vorhanden")
 
 
+def new_sparse(path: Path, size: int) -> None:
+    if size not in (31 * GIB, 32 * GIB, 129 * GIB):
+        raise ValueError("Nur die vorgesehenen G6-Groessen sind erlaubt")
+    with path.open("xb") as image:
+        if os.name == "nt":
+            storage._set_sparse_windows(image.fileno())
+            image.seek(size - 1)
+            image.write(b"\0")
+        else:
+            image.truncate(size)
+
+
+def assert_blank(path: Path) -> None:
+    # Bei sparse RAW ist jedes vom Gast geschriebene Byte als belegter Bereich erkennbar.
+    with path.open("rb") as image:
+        try:
+            os.lseek(image.fileno(), 0, os.SEEK_DATA)
+        except OSError as error:
+            if error.errno == errno.ENXIO:
+                return
+            raise
+    raise ValueError(f"Unerwarteter Schreibzugriff auf {path}")
+
+
+def run_g6_basic(args, work: Path) -> None:
+    disks = [work / "small.img", work / "large.img", work / "valid.img"]
+    for path, size in zip(disks, (31 * GIB, 129 * GIB, 32 * GIB), strict=True):
+        new_sparse(path, size)
+    run = storage.new_work_dir(work / "guest-g6")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, disks)
+        cases = [("setup install sata0 --layout gpt --erase", "GPT-Layout nur fuer 32 bis 128 GiB"),
+                 ("setup install sata1 --layout gpt --erase", "GPT-Layout nur fuer 32 bis 128 GiB"),
+                 ("setup install sata2 --layout gpt", "--erase erforderlich")]
+        for command, reason in cases:
+            mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
+            qmp.line(command)
+            storage.tools.wait_serial(run, "GPT_TEST RESULT ERROR " + reason, args.timeout, mark)
+        storage.stop(process, qmp, run)
+        process = None
+        for disk in disks:
+            assert_blank(disk)
+        print("PASS G6 Teil: 31/129 GiB und fehlendes --erase abgewiesen, keine Schreibzugriffe", flush=True)
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-g8", action="store_true", help="G8 mit vorbereitetem Recovery-Setup-ISO ausfuehren")
+    parser.add_argument("--run-g6-basic", action="store_true", help="G6-Groessengrenzen und --erase pruefen")
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--iso", type=Path)
     parser.add_argument("--payload", type=Path)
@@ -112,28 +163,39 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=1200)
     args = parser.parse_args()
     print("OFFEN G1-G7 und G9: Gastablaeufe noch nicht implementiert", flush=True)
-    if not args.run_g8:
+    if not args.run_g8 and not args.run_g6_basic:
         print("OFFEN G8: --run-g8 nicht angegeben", flush=True)
         return 2
-    missing = [name for name in ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if not shutil.which(name)]
+    if args.run_g8 and args.run_g6_basic:
+        parser.error("G8 und G6 brauchen getrennte Arbeitsordner")
+    required = ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if args.run_g8 else ()
+    missing = [name for name in required if not shutil.which(name)]
     if missing:
         print("OFFEN G8: Werkzeuge fehlen: " + ", ".join(missing), flush=True)
         return 2
-    if not all((args.iso, args.payload, args.version, args.boot_config, args.ovmf_code, args.ovmf_vars)):
-        parser.error("G8 benoetigt --iso, --payload, --version, --boot-config, --ovmf-code und --ovmf-vars")
-    for file in (args.iso, args.boot_config, args.ovmf_code, args.ovmf_vars, args.payload / "ProjektZeh.elf", args.payload / "BOOTX64.EFI"):
+    if not all((args.iso, args.ovmf_code, args.ovmf_vars)):
+        parser.error("Gastlauf benoetigt --iso, --ovmf-code und --ovmf-vars")
+    if args.run_g8 and not all((args.payload, args.version, args.boot_config)):
+        parser.error("G8 benoetigt --payload, --version und --boot-config")
+    files = [args.iso, args.ovmf_code, args.ovmf_vars]
+    if args.run_g8:
+        files += [args.boot_config, args.payload / "ProjektZeh.elf", args.payload / "BOOTX64.EFI"]
+    for file in files:
         if not file.is_file():
             parser.error(f"Datei fehlt: {file}")
     work = storage.new_work_dir(args.work)
-    target = work / "target.img"
-    storage.create_sparse(target, 32 * GIB)
     vars_copy = work / "ovmf-vars.fd"
     with args.ovmf_vars.open("rb") as src, vars_copy.open("xb") as dst:
         shutil.copyfileobj(src, dst)
     storage.MACHINE_BASE += ["-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code.resolve()}",
                              "-drive", f"if=pflash,format=raw,file={vars_copy.resolve()}"]
-    run = storage.new_work_dir(work / "guest")
     args.iso_recovery = args.iso
+    if args.run_g6_basic:
+        run_g6_basic(args, work)
+        return 2
+    target = work / "target.img"
+    storage.create_sparse(target, 32 * GIB)
+    run = storage.new_work_dir(work / "guest")
     process = None
     try:
         process, qmp = storage.boot(args, run, [target])

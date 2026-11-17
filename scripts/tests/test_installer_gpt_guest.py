@@ -58,6 +58,18 @@ class ExtractTests(unittest.TestCase):
                 guest.extract_sparse(source, 0, 5, target)
             self.assertEqual(target.read_bytes(), b"23456")
 
+    def test_g6_image_is_new_and_writes_are_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "small.img"
+            guest.new_sparse(image, 31 * guest.GIB)
+            guest.assert_blank(image)
+            with self.assertRaises(FileExistsError):
+                guest.new_sparse(image, 31 * guest.GIB)
+            with image.open("r+b") as target:
+                target.write(b"x")
+            with self.assertRaises(ValueError):
+                guest.assert_blank(image)
+
     def test_unsupported_sparse_seek_is_error(self):
         with tempfile.TemporaryDirectory() as directory:
             source, target = Path(directory) / "source", Path(directory) / "target"
