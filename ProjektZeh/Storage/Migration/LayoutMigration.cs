@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 
@@ -24,30 +24,40 @@ internal static class LayoutMigration
     internal static readonly string[] InstallerEntries = ["/boot", "/boot/efi", "/mnt", "/proc", "/sys", "/dev", "/etc", "/etc/zehos", LayoutMarker.Path];
 
     public static ResultObject<MigrationReport> Run(string sourceRoot, IMigrationTarget target, Func<IDisposable> lockSource,
-        Action<string> log, Action<MigrationStep>? progress = null)
+        Action<string> log, Action<MigrationStep>? progress = null, CancellationToken cancellation = default)
     {
         try
         {
             // Schritt 1: Schreibsperre der Quelle; using gibt sie auch bei einer Ausnahme frei. Auch ein Fehler beim Erwerben
             // der Sperre wird zum Fehlerergebnis.
             using (lockSource())
-                return RunLocked(sourceRoot, target, log, progress ?? (_ => { }));
+            {
+                cancellation.ThrowIfCancellationRequested();
+                return RunLocked(sourceRoot, target, log, step =>
+                {
+                    progress?.Invoke(step);
+                    // Nach ready ist der Commit abgeschlossen; ein spaetes Cancel macht ihn nicht rueckgaengig.
+                    if (step != MigrationStep.Ready) cancellation.ThrowIfCancellationRequested();
+                }, cancellation);
+            }
         }
+        catch (OperationCanceledException) { return Failure("MigrationCancelled", "Migration abgebrochen; Ziel ist noch nicht eingerichtet."); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             return Failure("MigrationIoFailed", exception.Message);
         }
     }
 
-    private static ResultObject<MigrationReport> RunLocked(string sourceRoot, IMigrationTarget target, Action<string> log, Action<MigrationStep> progress)
+    private static ResultObject<MigrationReport> RunLocked(string sourceRoot, IMigrationTarget target, Action<string> log,
+        Action<MigrationStep> progress, CancellationToken cancellation)
     {
         progress(MigrationStep.Locked);
-        var marker = ReadMarker(target);
+        var marker = ReadMarker(target, cancellation);
         if (!marker.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(marker.Status);
         if (marker.Value!.State == LayoutState.Ready) return Failure("TargetReady", "Ziel ist bereits eingerichtet.");
 
         // Schritt 2: Inventar, nur lesen.
-        var inventory = MigrationInventory.Read(sourceRoot);
+        var inventory = MigrationInventory.Read(sourceRoot, cancellation: cancellation);
         if (!inventory.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(inventory.Status);
         progress(MigrationStep.Inventory);
 
@@ -55,7 +65,7 @@ internal static class LayoutMigration
         string? securityText = null;
         foreach (var file in inventory.Value!.Entries)
             if (!file.IsDirectory && string.Equals(file.RelativePath, AccountService.MetadataFile, StringComparison.OrdinalIgnoreCase))
-                securityText = File.ReadAllText(MigrationInventory.HostPath(sourceRoot, file.RelativePath), Encoding.UTF8);
+                securityText = ReadSourceText(MigrationInventory.HostPath(sourceRoot, file.RelativePath), cancellation);
         if (securityText == null) return Failure("SecurityDatabaseMissing", "Keine Kontendatei in der Quelle.");
         var names = MigrationAcl.ReadAccountNames(securityText);
         if (!names.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(names.Status);
@@ -71,7 +81,7 @@ internal static class LayoutMigration
         progress(MigrationStep.Planned);
 
         // Schritt 4: eine Wiederholung raeumt erst die eigenen Spuren weg, dann zaehlt der freie Platz.
-        var cleaned = PrepareTarget(target, marker.Value.State, inventory.Value.Hash, log);
+        var cleaned = PrepareTarget(target, marker.Value.State, inventory.Value.Hash, log, cancellation);
         if (!cleaned.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(cleaned);
         var space = CheckSpace(target, plan);
         if (!space.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(space);
@@ -87,6 +97,7 @@ internal static class LayoutMigration
         if (!step.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(step);
         foreach (string directory in plan.Directories)
         {
+            cancellation.ThrowIfCancellationRequested();
             if (IsInstallerEntry(directory)) continue;
             step = target.AppendJournal(MigrationJournal.DirectoryLine(directory), flush: true);
             if (step.IsOK()) step = target.CreateDirectory(directory);
@@ -94,13 +105,14 @@ internal static class LayoutMigration
         }
         foreach (var file in plan.Files)
         {
-            step = CopyFile(sourceRoot, target, file, plan, acl.Value!, log);
+            cancellation.ThrowIfCancellationRequested();
+            step = CopyFile(sourceRoot, target, file, plan, acl.Value!, log, cancellation);
             if (!step.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(step);
         }
         progress(MigrationStep.Copied);
 
         // Schritt 8: hat sich die Quelle trotz Sperre geaendert, ist die Kopie nicht konsistent.
-        var unchanged = inventory.Value.VerifyUnchanged(sourceRoot);
+        var unchanged = inventory.Value.VerifyUnchanged(sourceRoot, cancellation);
         if (!unchanged.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(unchanged);
         progress(MigrationStep.Verified);
 
@@ -110,6 +122,7 @@ internal static class LayoutMigration
         written = target.Sync();
         if (written.IsOK()) written = target.Sync();
         if (!written.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(written);
+        cancellation.ThrowIfCancellationRequested();
         written = WriteMarker(target, marker.Value with { State = LayoutState.Ready, SourceHash = inventory.Value.Hash, Files = plan.Files.Count });
         if (written.IsOK()) written = target.Sync();
         if (written.IsOK()) written = target.Sync();
@@ -118,13 +131,14 @@ internal static class LayoutMigration
         return ResultObjectFactory.CreateSuccess(new MigrationReport(plan.Files.Count, inventory.Value.Hash));
     }
 
-    private static ResultErr CopyFile(string sourceRoot, IMigrationTarget target, PlanFile file, MigrationPlan plan, string securityText, Action<string> log)
+    private static ResultErr CopyFile(string sourceRoot, IMigrationTarget target, PlanFile file, MigrationPlan plan,
+        string securityText, Action<string> log, CancellationToken cancellation)
     {
         byte[]? replaced = file.Content switch
         {
             PlanContent.SecurityDatabase => Encoding.UTF8.GetBytes(securityText),
             PlanContent.DesktopSettings => Encoding.UTF8.GetBytes(MigrationAcl.RewriteDesktop(
-                File.ReadAllText(MigrationInventory.HostPath(sourceRoot, file.Source), Encoding.UTF8), plan, log)),
+                ReadSourceText(MigrationInventory.HostPath(sourceRoot, file.Source), cancellation), plan, log)),
             _ => null,
         };
         var step = target.AppendJournal(MigrationJournal.WriteLine(file.Target), flush: true);
@@ -132,15 +146,15 @@ internal static class LayoutMigration
         string expected;
         if (replaced != null)
         {
-            expected = Convert.ToHexStringLower(SHA256.HashData(replaced));
-            using var content = new MemoryStream(replaced, false);
+            expected = MigrationHash.Hex(replaced);
+            using var content = new CancellationReadStream(new MemoryStream(replaced, false), cancellation);
             step = target.WriteFile(file.Target, content);
         }
         else
         {
             // Unveraenderte Dateien muessen dem Inventar entsprechen; eine Abweichung faellt beim Zuruecklesen auf.
             expected = file.Sha256;
-            using var content = File.OpenRead(MigrationInventory.HostPath(sourceRoot, file.Source));
+            using var content = new CancellationReadStream(File.OpenRead(MigrationInventory.HostPath(sourceRoot, file.Source)), cancellation);
             step = target.WriteFile(file.Target, content);
         }
         if (!step.IsOK()) return step;
@@ -148,7 +162,7 @@ internal static class LayoutMigration
         var back = target.ReadBack(file.Target);
         if (!back.IsOK()) return back.Status;
         string actual;
-        using (var stream = back.Value!) actual = Convert.ToHexStringLower(SHA256.HashData(stream));
+        using (var stream = new CancellationReadStream(back.Value!, cancellation)) actual = MigrationHash.Hex(stream);
         if (!string.Equals(actual, expected, StringComparison.Ordinal))
             return ResultErr.CreateFailure(ResultCode.Failure, $"cause='VerifyFailed' message='Pruefsumme nach dem Schreiben falsch: {file.Target}'");
         return target.AppendJournal(MigrationJournal.DoneLine(file.Target, actual), flush: false);
@@ -160,13 +174,14 @@ internal static class LayoutMigration
     /// Marker (auch bei "fresh": ein Absturz vor dem Rename von "migrating" laesst den alten Marker stehen). Sonst koennte eine spaetere Wiederholung fremde Daten loeschen. Bei einer Wiederholung werden genau diese Spuren
     /// entfernt (Verzeichnisse von unten nach oben); fehlende Pfade sind Absichten ohne Aktion.
     /// </summary>
-    private static ResultErr PrepareTarget(IMigrationTarget target, LayoutState state, string sourceHash, Action<string> log)
+    private static ResultErr PrepareTarget(IMigrationTarget target, LayoutState state, string sourceHash, Action<string> log,
+        CancellationToken cancellation)
     {
         bool repeating = state == LayoutState.Migrating;
         MigrationJournal? journal = null;
         if (repeating)
         {
-            var read = ReadJournal(target);
+            var read = ReadJournal(target, cancellation);
             if (!read.IsOK()) return read.Status;
             journal = read.Value;
         }
@@ -189,7 +204,15 @@ internal static class LayoutMigration
         if (!listed.IsOK()) return listed.Status;
         foreach (string path in listed.Value!)
         {
+            cancellation.ThrowIfCancellationRequested();
             if (known.Contains(path)) continue;
+            if (path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) &&
+                writable.Contains(path[..^IMigrationTarget.BackupSuffix.Length]))
+            {
+                // Der Marker kann nur noch in der Sicherung stehen; erst sein erfolgreicher Austausch entfernt sie.
+                if (path != LayoutMarker.Path + IMigrationTarget.BackupSuffix) temporaries.Add(path);
+                continue;
+            }
             if (path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal) &&
                 writable.Contains(path[..^IMigrationTarget.TemporarySuffix.Length]))
             {
@@ -200,6 +223,7 @@ internal static class LayoutMigration
         }
         foreach (string path in temporaries)
         {
+            cancellation.ThrowIfCancellationRequested();
             var deleted = DeleteTolerant(target, path);
             if (!deleted.IsOK()) return deleted;
         }
@@ -208,11 +232,13 @@ internal static class LayoutMigration
 
         foreach (string path in files)
         {
+            cancellation.ThrowIfCancellationRequested();
             var deleted = DeleteTolerant(target, path);
             if (!deleted.IsOK()) return deleted;
         }
         for (int i = directories.Count - 1; i >= 0; i--)
         {
+            cancellation.ThrowIfCancellationRequested();
             var deleted = DeleteTolerant(target, directories[i]);
             if (!deleted.IsOK()) return deleted;
         }
@@ -250,31 +276,40 @@ internal static class LayoutMigration
         return ResultErr.CreateSuccess();
     }
 
-    private static ResultObject<LayoutMarker> ReadMarker(IMigrationTarget target)
+    private static ResultObject<LayoutMarker> ReadMarker(IMigrationTarget target, CancellationToken cancellation)
     {
-        var text = ReadText(target, LayoutMarker.Path, LayoutMarker.MaximumBytes);
+        var text = ReadText(target, LayoutMarker.Path, LayoutMarker.MaximumBytes, cancellation);
         if (!text.IsOK()) return ResultObjectFactory.CreateFailure<LayoutMarker>(text.Status);
         return LayoutMarker.Parse(text.Value!);
     }
 
     /// <summary>Kein Journal ist gueltig (Abbruch vor dem Kopf); der Wert ist dann <see langword="null"/>.</summary>
-    private static ResultObject<MigrationJournal?> ReadJournal(IMigrationTarget target)
+    private static ResultObject<MigrationJournal?> ReadJournal(IMigrationTarget target, CancellationToken cancellation)
     {
-        var text = ReadText(target, MigrationJournal.Path, int.MaxValue);
-        if (text.Status.Code == ResultCode.NotFound) return ResultObjectFactory.CreateSuccess<MigrationJournal?>(null);
-        if (!text.IsOK()) return ResultObjectFactory.CreateFailure<MigrationJournal?>(text.Status);
-        var journal = MigrationJournal.Parse(text.Value!);
+        var stream = target.ReadBack(MigrationJournal.Path);
+        if (stream.Status.Code == ResultCode.NotFound) return ResultObjectFactory.CreateSuccess<MigrationJournal?>(null);
+        if (!stream.IsOK()) return ResultObjectFactory.CreateFailure<MigrationJournal?>(stream.Status);
+        using var content = new CancellationReadStream(stream.Value!, cancellation);
+        // Ungueltige Bytes werden wie bisher ersetzt statt zu werfen; das Journal prueft seine Zeilen selbst.
+        using var reader = new StreamReader(content, new UTF8Encoding(false, false), detectEncodingFromByteOrderMarks: false);
+        var journal = MigrationJournal.Parse(reader);
         return journal.IsOK() ? ResultObjectFactory.CreateSuccess<MigrationJournal?>(journal.Value) : ResultObjectFactory.CreateFailure<MigrationJournal?>(journal.Status);
     }
 
-    private static ResultObject<string> ReadText(IMigrationTarget target, string path, int maximumBytes)
+    private static ResultObject<string> ReadText(IMigrationTarget target, string path, int maximumBytes, CancellationToken cancellation)
     {
         var stream = target.ReadBack(path);
         if (!stream.IsOK()) return ResultObjectFactory.CreateFailure<string>(stream.Status);
-        using var content = stream.Value!;
+        using var content = new CancellationReadStream(stream.Value!, cancellation);
         using var copy = new MemoryStream();
-        content.CopyTo(copy);
-        if (copy.Length > maximumBytes) return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, $"cause='TooLarge' message='{path} zu gross.'");
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = content.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            // Grenze vor dem Puffern pruefen: eine uebergrosse Datei landet nicht erst ganz im Kernel-Heap (Audit zu #212).
+            if (copy.Length + read > maximumBytes) return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, $"cause='TooLarge' message='{path} zu gross.'");
+            copy.Write(buffer, 0, read);
+        }
         // Ungueltige Bytes (etwa ein Nullbyte-Schwanz) werden ersetzt statt zu werfen; Marker und Journal pruefen selbst.
         return ResultObjectFactory.CreateSuccess(Encoding.UTF8.GetString(copy.GetBuffer(), 0, (int)copy.Length));
     }
@@ -283,6 +318,13 @@ internal static class LayoutMigration
     {
         using var content = new MemoryStream(Encoding.UTF8.GetBytes(marker.Serialize()), false);
         return target.WriteFile(LayoutMarker.Path, content);
+    }
+
+    private static string ReadSourceText(string path, CancellationToken cancellation)
+    {
+        using var content = new CancellationReadStream(File.OpenRead(path), cancellation);
+        using var reader = new StreamReader(content, Encoding.UTF8);
+        return reader.ReadToEnd();
     }
 
     private static bool IsInstallerEntry(string path) => Array.IndexOf(InstallerEntries, path) >= 0;

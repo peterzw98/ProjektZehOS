@@ -66,6 +66,11 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             if (value.KeyCode == (byte)PhysicalKey.Control) { control = down; return; }
             if (value.KeyCode is (byte)PhysicalKey.LeftShift or (byte)PhysicalKey.RightShift) { shift = down; return; }
         }
+        if (control && !shift && value.Type == InputEventType.KeyDown && value.KeyCode == 46 && shell.TryInterrupt(Buffer))
+        {
+            ScrollOffset = 0;
+            return;
+        }
         if (HandlePointer(value)) return;
         if (value.Type == InputEventType.KeyDown && !value.IsTextKey)
         {
