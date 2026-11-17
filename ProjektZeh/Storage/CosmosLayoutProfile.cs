@@ -105,9 +105,14 @@ internal static class CosmosLayoutProfile
             string temporary = LayoutMarker.Path + ".tmp";
             File.WriteAllText(temporary, new LayoutMarker(LayoutState.Ready, diskGuid).Serialize());
             File.Move(temporary, LayoutMarker.Path, true);
-            return volume.Sync() ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Root-Marker geschrieben, Sync fehlgeschlagen.'");
+            // Spec Etappe 4 §2: zweifacher Sync, dann Device.Flush (Cosmos schreibt den Superblock erst danach).
+            for (int pass = 0; pass < 2; pass++)
+                if (!volume.Sync()) return ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Root-Marker geschrieben, Sync fehlgeschlagen.'");
+            volume.Flush();
+            return ResultErr.CreateSuccess();
         }
-        catch (IOException exception)
+        // Auch Rechte- und Pfadfehler aus File.Move duerfen nicht ueber accounts.Saved in den Speicherpfad laufen.
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return ResultErr.CreateFailure(ResultCode.Failure, $"cause='LayoutMarkerWrite' message='Root-Marker nicht geschrieben: {exception.Message}'");
         }
