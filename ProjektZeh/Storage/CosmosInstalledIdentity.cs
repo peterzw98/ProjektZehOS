@@ -4,7 +4,6 @@ using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Storage;
 using ProjektZeh.Shared;
-using ProjektZeh.Storage.Ext2;
 using ProjektZeh.Storage.Partitioning;
 
 namespace ProjektZeh.Storage;
@@ -58,7 +57,7 @@ internal static class CosmosInstalledIdentity
     }
 
     /// <summary>ext2-Superblock (Byte 1024..2047 der Partition) durch das Feature-Gate; IOException geht an Evaluate.</summary>
-    private static Ext2MountDecision RootGate(IBlockDevice host, GptEntry root)
+    private static RootCheck RootGate(IBlockDevice host, GptEntry root)
     {
         var superblock = new byte[1024];
         try
@@ -69,6 +68,6 @@ internal static class CosmosInstalledIdentity
         {
             throw new IOException("Root-Superblock ausserhalb der Platte.", exception);
         }
-        return Ext2FeatureGate.Evaluate(superblock);
+        return InstalledIdentity.CheckRoot(superblock);
     }
 }

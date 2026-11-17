@@ -3,7 +3,6 @@ using System.IO;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Shared;
-using ProjektZeh.Storage.Ext2;
 using ProjektZeh.Storage.Partitioning;
 
 namespace ProjektZeh.Tests;
@@ -23,7 +22,7 @@ public sealed class InstalledIdentityTests
     private static ResultObject<GptTable> Table(params GptEntry[] entries) => ResultObjectFactory.CreateSuccess(new GptTable(Disk, entries));
     private static readonly ResultObject<GptTable> InvalidTable = GptLayout.Failure("PrimaryHeaderCrc", "kaputt");
 
-    private static InstalledState Evaluate(string? marker, ResultObject<GptTable>? table, Ext2MountDecision gate = Ext2MountDecision.Ok) =>
+    private static InstalledState Evaluate(string? marker, ResultObject<GptTable>? table, RootCheck gate = RootCheck.Ok) =>
         InstalledIdentity.Evaluate(marker, table, _ => gate).State;
 
     // --- Marker-Format ---
@@ -130,15 +129,61 @@ public sealed class InstalledIdentityTests
     }
 
     [TestMethod]
-    [DataRow(Ext2MountDecision.Reject)]
-    [DataRow(Ext2MountDecision.ReadOnly)]
-    public void Marker_GateNotOk_RootDamaged(Ext2MountDecision gate) =>
+    [DataRow(RootCheck.Reject)]
+    [DataRow(RootCheck.ReadOnly)]
+    public void Marker_GateNotOk_RootDamaged(RootCheck gate) =>
         Assert.AreEqual(InstalledState.RootDamaged, Evaluate(Marker.Serialize(), Table(Esp, Root), gate));
+
+    [TestMethod]
+    public void Marker_RootUnclean_OwnStateAndBlocked()
+    {
+        var result = InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => RootCheck.Unclean);
+        Assert.AreEqual(InstalledState.RootUnclean, result.State);
+        StringAssert.Contains(result.BlockedReason, "e2fsck");
+    }
+
+    // --- CheckRoot: s_state getrennt von unbekanntem RoCompat ---
+
+    [TestMethod]
+    [DataRow((ushort)1, 0x1u, RootCheck.Ok, DisplayName = "sauber")]
+    [DataRow((ushort)0, 0x1u, RootCheck.Unclean, DisplayName = "s_state 0")]
+    [DataRow((ushort)2, 0x1u, RootCheck.Unclean, DisplayName = "s_state Fehler")]
+    [DataRow((ushort)1, 0x9u, RootCheck.ReadOnly, DisplayName = "unbekanntes RoCompat")]
+    [DataRow((ushort)0, 0x9u, RootCheck.ReadOnly, DisplayName = "RoCompat und s_state: bleibt ReadOnly")]
+    public void CheckRoot_SeparatesStateFromRoCompat(ushort state, uint roCompat, RootCheck expected) =>
+        Assert.AreEqual(expected, InstalledIdentity.CheckRoot(Superblock(state, roCompat)));
+
+    [TestMethod]
+    public void CheckRoot_WrongMagic_Reject()
+    {
+        byte[] superblock = Superblock(1, 0x1);
+        superblock[56] = 0;
+        Assert.AreEqual(RootCheck.Reject, InstalledIdentity.CheckRoot(superblock));
+    }
+
+    /// <summary>Minimaler Superblock im geprueften Profil (4 KiB, eine Gruppe, FILETYPE, SPARSE_SUPER).</summary>
+    private static byte[] Superblock(ushort state, uint roCompat)
+    {
+        var block = new byte[1024];
+        void U32(int offset, uint value) => BitConverter.TryWriteBytes(block.AsSpan(offset, 4), value);
+        U32(0, 8192);
+        U32(4, 32768);
+        U32(24, 2);
+        U32(32, 32768);
+        U32(40, 8192);
+        BitConverter.TryWriteBytes(block.AsSpan(56, 2), (ushort)0xEF53);
+        BitConverter.TryWriteBytes(block.AsSpan(58, 2), state);
+        U32(76, 1);
+        BitConverter.TryWriteBytes(block.AsSpan(88, 2), (ushort)256);
+        U32(96, 0x2);
+        U32(100, roCompat);
+        return block;
+    }
 
     [TestMethod]
     public void Marker_SuperblockIoError_RootDamagedWithRestartHint()
     {
-        var result = InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => throw new IOException("AHCI-Fehler"));
+        var result = InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), RootCheck (_) => throw new IOException("AHCI-Fehler"));
         Assert.AreEqual(InstalledState.RootDamaged, result.State);
         StringAssert.Contains(result.Reason, "cause='RootIoError'");
         StringAssert.Contains(result.Reason, "Neustart");
@@ -148,23 +193,23 @@ public sealed class InstalledIdentityTests
     public void Gate_OnlyAskedForTheMarkedRootEntry()
     {
         GptEntry? asked = null;
-        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), entry => { asked = entry; return Ext2MountDecision.Ok; });
+        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), entry => { asked = entry; return RootCheck.Ok; });
         Assert.AreEqual(Root, asked);
         bool called = false;
-        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => { called = true; return Ext2MountDecision.Ok; });
+        InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => { called = true; return RootCheck.Ok; });
         Assert.IsFalse(called, "ohne Root-Eintrag kein Plattenzugriff");
     }
 
     [TestMethod]
     public void BlockedReason_OnlyForRootFailures()
     {
-        Assert.IsNull(InstalledIdentity.Evaluate(null, null, _ => Ext2MountDecision.Ok).BlockedReason);
-        Assert.IsNull(InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => Ext2MountDecision.Ok).BlockedReason);
+        Assert.IsNull(InstalledIdentity.Evaluate(null, null, _ => RootCheck.Ok).BlockedReason);
+        Assert.IsNull(InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => RootCheck.Ok).BlockedReason);
         foreach (var result in new[]
         {
-            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => Ext2MountDecision.Ok),
-            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => Ext2MountDecision.Reject),
-            InstalledIdentity.Evaluate(null, Table(Esp, Root), _ => Ext2MountDecision.Ok),
+            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp), _ => RootCheck.Ok),
+            InstalledIdentity.Evaluate(Marker.Serialize(), Table(Esp, Root), _ => RootCheck.Reject),
+            InstalledIdentity.Evaluate(null, Table(Esp, Root), _ => RootCheck.Ok),
         })
         {
             Assert.IsNotNull(result.BlockedReason, result.State.ToString());

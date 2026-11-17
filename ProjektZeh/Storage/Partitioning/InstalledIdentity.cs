@@ -12,6 +12,8 @@ internal enum InstalledState
     Healthy,
     RootMissing,
     RootDamaged,
+    /// <summary>Root nur wegen s_state nicht sauber (Absturz ohne sauberes Aushaengen): nur lesend, offline e2fsck noetig.</summary>
+    RootUnclean,
     /// <summary>Identitaet nicht sicher bestimmbar; sperrt grundsaetzlich.</summary>
     Unclear,
 }
@@ -20,7 +22,16 @@ internal enum InstalledState
 internal sealed record IdentityResult(InstalledState State, string Reason)
 {
     /// <summary>Sperrgrund fuer Ersteinrichtung und security recover, sonst null.</summary>
-    public string? BlockedReason => State is InstalledState.RootMissing or InstalledState.RootDamaged or InstalledState.Unclear ? Reason : null;
+    public string? BlockedReason => State is InstalledState.RootMissing or InstalledState.RootDamaged or InstalledState.RootUnclean or InstalledState.Unclear ? Reason : null;
+}
+
+/// <summary>Ergebnis der Root-Superblockpruefung; Unclean trennt "nur s_state" von unbekanntem RoCompat (Etappe 4, §2).</summary>
+internal enum RootCheck
+{
+    Ok,
+    Unclean,
+    ReadOnly,
+    Reject,
 }
 
 /// <summary>
@@ -30,7 +41,21 @@ internal sealed record IdentityResult(InstalledState State, string Reason)
 /// </summary>
 internal static class InstalledIdentity
 {
-    public static IdentityResult Evaluate(string? markerText, ResultObject<GptTable>? table, Func<GptEntry, Ext2MountDecision> rootGate)
+    /// <summary>
+    /// Feature-Gate mit getrenntem Ausgang fuer s_state: meldet das Gate ReadOnly und waere derselbe Superblock mit sauberem
+    /// Zustand Ok, ist nur s_state schuld (Unclean); sonst bleibt es ReadOnly (unbekanntes RoCompat).
+    /// </summary>
+    public static RootCheck CheckRoot(ReadOnlySpan<byte> superblock)
+    {
+        var decision = Ext2FeatureGate.Evaluate(superblock);
+        if (decision == Ext2MountDecision.Ok) return RootCheck.Ok;
+        if (decision == Ext2MountDecision.Reject) return RootCheck.Reject;
+        byte[] clean = superblock[..1024].ToArray();
+        BitConverter.TryWriteBytes(clean.AsSpan(58, 2), (ushort)1);
+        return Ext2FeatureGate.Evaluate(clean) == Ext2MountDecision.Ok ? RootCheck.Unclean : RootCheck.ReadOnly;
+    }
+
+    public static IdentityResult Evaluate(string? markerText, ResultObject<GptTable>? table, Func<GptEntry, RootCheck> rootGate)
     {
         if (markerText is null)
         {
@@ -57,7 +82,7 @@ internal static class InstalledIdentity
         if (root.Type != GptLayout.LinuxFileSystemType || root.FirstLba != marker.Value.RootFirstLba || root.LastLba - root.FirstLba + 1 != marker.Value.RootSectors)
             return Blocked(InstalledState.RootDamaged, "RootChanged", "Root-Partition weicht in Typ, Lage oder Groesse vom Marker ab.");
 
-        Ext2MountDecision gate;
+        RootCheck gate;
         try
         {
             gate = rootGate(root);
@@ -66,9 +91,12 @@ internal static class InstalledIdentity
         {
             return Blocked(InstalledState.RootDamaged, "RootIoError", "E/A-Fehler beim Lesen des Root-Superblocks, Neustart versuchen.");
         }
-        return gate == Ext2MountDecision.Ok
-            ? new(InstalledState.Healthy, Cause("Healthy", "Installiertes System vollstaendig."))
-            : Blocked(InstalledState.RootDamaged, "RootGate", $"ext2-Pruefung des Root ergab {gate}.");
+        return gate switch
+        {
+            RootCheck.Ok => new(InstalledState.Healthy, Cause("Healthy", "Installiertes System vollstaendig.")),
+            RootCheck.Unclean => Blocked(InstalledState.RootUnclean, "RootUnclean", "Root nicht sauber ausgehaengt, offline e2fsck noetig."),
+            _ => Blocked(InstalledState.RootDamaged, "RootGate", $"ext2-Pruefung des Root ergab {gate}."),
+        };
     }
 
     private static IdentityResult Blocked(InstalledState state, string cause, string message) => new(state, Cause(cause, message + " Keine Ersteinrichtung."));
