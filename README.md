@@ -121,7 +121,7 @@ python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.c
 $env:ZEHOS_UPDATE_GOLDEN = "1"; dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"; Remove-Item Env:ZEHOS_UPDATE_GOLDEN
 ```
 
-Unter Linux oder macOS entsprechend `ZEHOS_UPDATE_GOLDEN=1 dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"`. Ist zugleich `CI` gesetzt, scheitert das Aktualisieren absichtlich. Ein Test prüft, dass jedes PNG genau die Pixel seiner Prüfsumme zeigt.
+Unter Linux oder macOS entsprechend `ZEHOS_UPDATE_GOLDEN=1 dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --filter "FullyQualifiedName~DesktopE2ETests"`. Die Referenzbilder der Setup-Seiten (`setup-*`) gehören zu `SetupWizardTests`; dafür denselben Aufruf mit `FullyQualifiedName~SetupWizardTests` verwenden. Ist zugleich `CI` gesetzt, scheitert das Aktualisieren absichtlich. Ein Test prüft, dass jedes PNG genau die Pixel seiner Prüfsumme zeigt.
 
 ## Dateisystem in QEMU
 
@@ -220,10 +220,12 @@ GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows
 
 - **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen.
 - **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
+- **Detect code changes** prüft bei Pull Requests, ob etwas anderes als Markdown oder Dateien unter `docs/` geändert wurde. Reine Doku-PRs überspringen **Cosmos x64 build** und damit auch den Gastlauf; Hosttests, Paketbuilds und CodeQL laufen weiter.
 - **Guest boot and desktop (QEMU)** startet das ISO aus dem Job **Cosmos x64 build** unter QEMU mit TCG und bedient es mit `scripts/test-desktop-guest.py`: Boot, Anmeldung, Fenster öffnen und schließen, Textshell und `shutdown`. Bildschirmfotos und Protokolle liegen im Artefakt `guest-desktop`.
+- **Guest recovery boot (QEMU)** baut das Recovery-ISO (`-p:ZehOSRecovery=true`) und prüft mit `scripts/test-desktop-guest.py --recovery` den Boot bis zur Textshell, das Ausbleiben des Desktops und `shutdown`. Der Job läuft nur auf `master` und bei manuellem Start, nicht bei Pull Requests; Bilder und Protokolle liegen im Artefakt `guest-recovery`.
 - **CodeQL (C#)** prüft den eigenen C#-Produktionscode mit der erweiterten Sicherheitsabfrage. Eine zusätzliche Analyse läuft wöchentlich. Ergebnisse stehen unter **Security → Code scanning** und gegebenenfalls direkt am Pull Request.
 
-Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Hosttests laufen ohne Kernel. Der Gastlauf belegt nur den oben genannten Ablauf unter QEMU mit TCG; KVM, VMware, echte Hardware, das Recovery-ISO und alle übrigen Funktionen prüft die CI nicht.
+Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Hosttests laufen ohne Kernel. Die Gastläufe belegen nur die oben genannten Abläufe unter QEMU mit TCG; KVM, VMware, echte Hardware und alle übrigen Funktionen prüft die CI nicht. Das Recovery-ISO wird bei Pull Requests nicht gestartet.
 
 Lokal prüft `python3 scripts/test-desktop-guest.py --iso ProjektZeh/output-x64/ProjektZeh.iso [--accel tcg|kvm|whpx] [--boot-timeout 300]` ein ISO in QEMU: Boot, Ersteinrichtung des Kontos auf einer leeren Wegwerfplatte, Terminal öffnen, tippen und über **X** schließen, Dateien und Einstellungen, Ab- und Anmeldung in der Textshell, F4 und `shutdown` (QEMU muss mit Exitcode 0 enden); Error-Zeilen im seriellen Protokoll lassen ihn scheitern. Mit `--recovery` (ISO aus `dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true` unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`, ohne Datenplatte gestartet) prüft er beim Recovery-ISO nur Boot bis zur Textshell, das Ausbleiben des Desktops und `shutdown`; `uname` wird nur fotografiert. Bilder, `serial.log` und `stderr.log` liegen unter `.tools/desktop-guest/<Kennung>/`. Das ist nur ein QEMU-Ergebnis; VMware bleibt ungeprüft.
 
