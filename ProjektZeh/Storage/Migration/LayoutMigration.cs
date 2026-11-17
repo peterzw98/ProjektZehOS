@@ -299,8 +299,14 @@ internal static class LayoutMigration
         if (!stream.IsOK()) return ResultObjectFactory.CreateFailure<string>(stream.Status);
         using var content = new CancellationReadStream(stream.Value!, cancellation);
         using var copy = new MemoryStream();
-        content.CopyTo(copy);
-        if (copy.Length > maximumBytes) return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, $"cause='TooLarge' message='{path} zu gross.'");
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = content.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            // Grenze vor dem Puffern pruefen: eine uebergrosse Datei landet nicht erst ganz im Kernel-Heap (Audit zu #212).
+            if (copy.Length + read > maximumBytes) return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, $"cause='TooLarge' message='{path} zu gross.'");
+            copy.Write(buffer, 0, read);
+        }
         // Ungueltige Bytes (etwa ein Nullbyte-Schwanz) werden ersetzt statt zu werfen; Marker und Journal pruefen selbst.
         return ResultObjectFactory.CreateSuccess(Encoding.UTF8.GetString(copy.GetBuffer(), 0, (int)copy.Length));
     }

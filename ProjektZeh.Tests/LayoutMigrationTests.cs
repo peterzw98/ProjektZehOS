@@ -235,6 +235,58 @@ public sealed class LayoutMigrationTests
         finally { Directory.Delete(targetRoot, true); }
     }
 
+    // Audit zu #212: Marker wurden erst ganz in einen MemoryStream kopiert und danach gegen die Grenze geprueft.
+    [TestMethod]
+    public void OversizedMarkerIsRejectedAfterTheLimitWithoutReadingItCompletely()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-endless-marker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            using var inner = new FakeMigrationTarget(Disk);
+            var endless = new EndlessMarker(inner);
+            var result = LayoutMigration.Run(targetRoot, endless, () => new MemoryStream(), _ => { });
+            Assert.IsFalse(result.IsOK());
+            StringAssert.Contains(result.Status.Message, "TooLarge");
+            Assert.IsTrue(endless.BytesRead <= LayoutMarker.MaximumBytes + 4096, $"gelesen: {endless.BytesRead}");
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    private sealed class EndlessMarker(IMigrationTarget inner) : IMigrationTarget
+    {
+        public long BytesRead { get; private set; }
+        public ResultErr CreateDirectory(string path) => inner.CreateDirectory(path);
+        public ResultErr WriteFile(string path, Stream content) => inner.WriteFile(path, content);
+        public ResultErr AppendJournal(string line, bool flush) => inner.AppendJournal(line, flush);
+        public ResultErr Delete(string path) => inner.Delete(path);
+        public ResultObject<Stream> ReadBack(string path) =>
+            path == LayoutMarker.Path ? ResultObjectFactory.CreateSuccess<Stream>(new Endless(this)) : inner.ReadBack(path);
+        public ResultObject<string[]> List() => inner.List();
+        public ResultObject<long> FreeBytes() => inner.FreeBytes();
+        public ResultObject<long> FreeInodes() => inner.FreeInodes();
+        public ResultErr Sync() => inner.Sync();
+
+        private sealed class Endless(EndlessMarker owner) : Stream
+        {
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                Array.Fill(buffer, (byte)'x', offset, count);
+                owner.BytesRead += count;
+                return count;
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+    }
+
     /// <summary>Gibt beim ersten Dateiinhalt ein Byte weiter und loest dann das Token aus; der naechste Read wirft im Kopieren.</summary>
     private sealed class CancelInsideWrite(IMigrationTarget inner, CancellationTokenSource cancellation) : IMigrationTarget
     {
