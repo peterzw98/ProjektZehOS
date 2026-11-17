@@ -9,7 +9,7 @@
 
 ## Global Constraints
 
-- 8190 direkte Kinder je ext2-Verzeichnis; keine Paket-/SDK-/Werkzeugupdates.
+- 8190 direkte Kinder je ext2-Verzeichnis (Nachtrag: Produktgrenze 8189, ein Platz Reserve fuer Umbenennen, fix/ext2-directory-reserve); keine Paket-/SDK-/Werkzeugupdates.
 - Bestehende Daten, ACLs und Wiederherstellung erhalten; Gasttests nur auf isolierten Images.
 - Kommentartexte Deutsch; produktiven Stil und Zeilenenden erhalten.
 
