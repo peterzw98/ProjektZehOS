@@ -106,6 +106,15 @@ dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
 
 Unter Windows benötigen die Symlink-Prüfungen das Recht zum Erstellen symbolischer Links (etwa über den Entwicklermodus). Ohne dieses Recht werden nur diese Tests als nicht ausführbar gemeldet; die übrigen Pfadprüfungen laufen weiter. Die Python-Skripttests starten mit `python -m unittest discover -s scripts/tests`. Für die Release-Skripttests muss Bash im `PATH` liegen, unter Windows beispielsweise Git Bash.
 
+Die CI misst die Zeilenabdeckung der im Hostbuild enthaltenen Produktivquellen und scheitert unter der in `.github/workflows/ci.yml` gesetzten Grenze. Lokal entsteht der Bericht mit dem Sammler des Test-SDK; `scripts/check-coverage.py` wertet ihn aus:
+
+```powershell
+dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --configuration Release --collect "Code Coverage;Format=cobertura" --results-directory TestResults
+python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.cobertura.xml)[0].FullName --min-total 90 --exclusions scripts/coverage-exclusions.txt
+```
+
+`scripts/coverage-exclusions.txt` nennt die wenigen Dateien, die nicht mitzählen, jeweils mit Grund. Die Abdeckung sagt nur, welche Zeilen ein Test ausführt; Kernelstart, Treiber und alle `Cosmos*`-Adapter sind darin nicht enthalten.
+
 ## Dateisystem in QEMU
 
 Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
