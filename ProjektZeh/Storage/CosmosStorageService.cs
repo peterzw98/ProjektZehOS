@@ -247,9 +247,11 @@ internal sealed class CosmosStorageService : IStorageService
 
             if (VfsManager.TryGetMount(MountPoint, out _))
             {
-                if (!VfsManager.TryUnmount(MountPoint))
+                // Derselbe Weg wie disk unmount: erst die App-Schreibsperre (Etappe 13.4), dann aushaengen.
+                var unmounted = Unmount();
+                if (!unmounted.IsOK())
                 {
-                    return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
+                    return unmounted;
                 }
 
                 Note("use: bisheriges /data ausgehaengt");
@@ -338,6 +340,9 @@ internal sealed class CosmosStorageService : IStorageService
             return Failure("MountRefused", "Cosmos hat das Einbinden unter /data abgelehnt.");
         }
 
+        // Etappe 13.4: nach dem Einbinden duerfen Apps wieder in ihren App-Speicher schreiben. Die schreibgeschuetzte
+        // Probeeinbindung beim Boot gibt die Sperre nicht frei, weil sie gleich wieder aushaengt.
+        if ((flags & MountFlags.ReadOnly) == 0) AppStorageGate.Release();
         return ResultErr.CreateSuccess();
     }
 
@@ -346,10 +351,14 @@ internal sealed class CosmosStorageService : IStorageService
     /// </summary>
     public ResultErr Unmount()
     {
+        // Etappe 13.4: keine App darf mitten in ein Ersetzen (Temp, Sicherung, Rename) hinein ausgehaengt werden. Block wartet
+        // auf einen laufenden App-Schreibvorgang; bleibt /data eingebunden, wird die Sperre wieder aufgehoben.
+        AppStorageGate.Block();
         try
         {
             if (!VfsManager.TryUnmount(MountPoint))
             {
+                AppStorageGate.Release();
                 return Failure("UnmountRefused", "Cosmos hat das Aushaengen von /data abgelehnt.");
             }
 
@@ -357,6 +366,7 @@ internal sealed class CosmosStorageService : IStorageService
         }
         catch (Exception exception)
         {
+            if (VfsManager.TryGetMount(MountPoint, out _)) AppStorageGate.Release();
             return ResultErr.CreateFromException(exception);
         }
     }

@@ -2,7 +2,7 @@
 """Erzeugt signierte ZehOS-Pakete und den Repositorykatalog (Format: docs/PACKAGE_FORMAT.md).
 
   keygen <Ordner>                         neues Ed25519-Schluesselpaar: private.pem und public.b64
-  package --key K --repo R --id I --version V --name N --entry E [--network] [--min-kernel X.Y.Z] [--aot-file A] QUELLE=ZIEL ...
+  package --key K --repo R --id I --version V --name N --entry E [--network] [--storage] [--min-kernel X.Y.Z] [--aot-file A] QUELLE=ZIEL ...
   aot WAMRC EINGABE.wasm -o AUSGABE.aot   mit dem zugelassenen wamrc 2.4.5 uebersetzen, Beleg AUSGABE.aot.json; ohne Schluessel
   catalog --key K --repo R --generation G hoechste Version je Paket in R/catalog(.sig)
 
@@ -152,6 +152,8 @@ def package(args: argparse.Namespace) -> None:
     lines = ["zehos-package 1", f"id={args.id}", f"version={args.version}", "runtime=zehos-wasm32-v1", f"name={args.name}", f"entry={args.entry}"]
     if args.network:
         lines.append("capability=net")
+    if args.storage:
+        lines.append("capability=storage")
     if args.min_kernel is not None:
         lines.append(f"min-kernel={args.min_kernel}")
     for name in sorted(files):
@@ -198,6 +200,7 @@ def main() -> int:
     for name in ("--id", "--version", "--name", "--entry"):
         build.add_argument(name, required=True)
     build.add_argument("--network", action="store_true", help="Netzwerkzugriff im signierten Manifest erlauben")
+    build.add_argument("--storage", action="store_true", help="Schreibenden App-Speicher /save im signierten Manifest erlauben (13.4)")
     build.add_argument("--min-kernel", help="niedrigste ZehOS-Version X.Y.Z, deren Hostfunktionen das Paket braucht")
     build.add_argument("--aot-file", type=Path, help=f"mit dem Unterbefehl aot erzeugte Datei (Beleg .json daneben) als <entry>.{AOT_ABI}.aot aufnehmen")
     build.add_argument("files", nargs="+", help="QUELLE=ZIELPFAD im Paket")
