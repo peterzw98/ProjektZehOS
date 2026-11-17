@@ -56,6 +56,11 @@ Stand: 17. November 2026, Basis `origin/master` @ `06ac97a`. Plan [Etappe 7b](..
 
 Reihenfolge der Umsetzung: 4.3 liefert den Baustein; S4 und 7b nutzen ihn; die 4.0-Probe darf ihn vorab als Kopie in der Probe tragen, bis 4.3 gemergt ist (Probe ist kein Produktcode).
 
+**Hinweise für den Code (huang, Delta-Review):**
+- Die Schreibsperre hat einen **Halter**: nur der Energiepfad (der die Sperre gesetzt hat) darf darunter schreiben, also `RootVolumeState.Close`/`Reopen` und das Aushängen; jeder andere Schreiber wird abgelehnt. Test: fremder Schreiber abgelehnt, `Close`/`Reopen` laufen.
+- `ZehOSPowerFaultProbe` existiert nur per `#if` im Testbuild; Hosttests nutzen Fakes, nicht den Schalter.
+- `task/update-manifest-testkey`: der Testschlüssel-Weg ist im Normalbuild unerreichbar (leerer Standardwert, kein Eintrag in Release-Skripten); ein Testkernel lehnt Manifeste mit dem Produktionsschlüssel ab und ist in Version/Protokoll als Testbuild erkennbar.
+
 ## 4. Tests
 
 **Hosttests:**
