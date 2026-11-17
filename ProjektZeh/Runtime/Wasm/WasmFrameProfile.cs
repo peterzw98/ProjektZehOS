@@ -48,6 +48,8 @@ internal sealed class WasmFrameProfile
         long duration = Math.Max(0, microseconds);
         lock (gate)
         {
+            // Erneut pruefen: ein Wert nach SetEnabled(false) soll nicht im naechsten Peek auftauchen.
+            if (!enabled) return;
             counts[index][Math.Min(duration / BucketMicroseconds, Buckets)]++;
             totals[index]++;
             maxima[index] = Math.Max(maxima[index], duration);

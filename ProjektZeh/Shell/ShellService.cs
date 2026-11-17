@@ -209,7 +209,8 @@ internal sealed partial class ShellService
     private static ResultErr ExecuteFrametimes(string[] arguments, ITextOutput output)
     {
         var profile = WasmFrameProfile.Shared;
-        if (arguments.Length == 1 && arguments[0] is "on" or "off") profile.SetEnabled(arguments[0] == "on");
+        bool on = arguments.Length == 1 && string.Equals(arguments[0], "on", StringComparison.OrdinalIgnoreCase);
+        if (on || arguments.Length == 1 && string.Equals(arguments[0], "off", StringComparison.OrdinalIgnoreCase)) profile.SetEnabled(on);
         else if (arguments.Length != 0) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: frametimes [on|off]");
         output.WriteLine((profile.Enabled ? "Bildzeitmessung an. " : "Bildzeitmessung aus. ") + profile.Peek());
         return ResultErr.CreateSuccess();
