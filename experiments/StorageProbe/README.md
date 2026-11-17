@@ -7,7 +7,18 @@ Formatiert ein neues, dünn belegtes Rohimage (eine Partition ohne Partitionstab
 dotnet run -c Release --project experiments/StorageProbe -- selftest
 dotnet run -c Release --project experiments/StorageProbe -- format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L]
 experiments/StorageProbe/matrix.sh .tools/storage-probe [original|fixed]
+dotnet run -c Release --project experiments/StorageProbe -- layout IMAGE --size BYTES [--guid-seed HEX]
+dotnet run -c Release --project experiments/StorageProbe -- verify IMAGE
+python3 scripts/test-installer-layout.py .tools/installer-layout
 ```
+
+`layout` (Etappe 7a Schritt 2) partitioniert ein neues sparse Image mit dem produktiven `GptLayoutWriter`
+(32 bis 128 GiB, sonst keine Datei), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
+(4 KiB, `zehos-root`) und prüft mit `GptLayout.Verify`; `verify` prüft ein vorhandenes Image nur lesend.
+`scripts/test-installer-layout.py` prüft das Ergebnis mit `sgdisk -v`, `sfdisk -J`, `mkfs.fat`/`fsck.fat` im
+ESP-Fenster (Grenze: das belegt nur Lage und Größe der ESP, nicht ZehOS' eigenen FAT-Formatter; der ist nicht
+hosttauglich und bleibt Gasttest G1), `e2fsck -fn` und `dumpe2fs -h` im Root-Fenster sowie Gegenproben mit zerstörtem Byte; fehlende
+Werkzeuge gelten als offen.
 
 `--formatter fixed` (bzw. `matrix.sh … fixed`) formatiert mit der korrigierten gemeinsamen Quelle
 [ProjektZeh/Storage/Ext2](../../ProjektZeh/Storage/Ext2/README.md) statt mit dem Paketformatter; Standard bleibt

@@ -177,3 +177,35 @@ Verzeichnislisten (`fd_readdir`) und Öffnen von Verzeichnis-Handles bleiben nic
 6. In ZehOS: `pkg install <id>` oder `pkg upgrade`; beide laden den signierten Katalog automatisch. `pkg update` bleibt als freiwilliger Einzelabruf verfügbar.
 
 Den privaten Herausgeberschlüssel nie ins Repository, in Logs oder auf den Server legen. Geht er verloren, lassen sich keine Pakete mehr veröffentlichen. Ein neuer Schlüssel braucht ein Kernelupdate mit neuem `ProjektZeh/Packages/package-key.pub`.
+
+## AOT-Datei erzeugen (Werkzeug, noch ohne Kernelnutzung)
+
+Übersetzen und Signieren sind zwei getrennte Schritte, weil `wamrc` fremde `.wasm` liest und deshalb ohne Zugriff auf den privaten Schlüssel laufen soll (Sicherheitsdokument, Abschnitt 5, Punkt 2). `scripts/build-package.py aot <wamrc> <app.wasm> -o <app.aot>` übersetzt den Einstiegspunkt mit `wamrc` in nativen x86-64-Code und braucht keinen Schlüssel. `package … --aot-file <app.aot>` legt die fertige Datei danach als `<entry ohne .wasm>.wamr245-aot5-x64-bc.aot` ins Paket, etwa `doom.wamr245-aot5-x64-bc.aot` neben `doom.wasm`. Die Datei steht als gewöhnliche, ordinal einsortierte `file`-Zeile im signierten Manifest; ein neues Manifestfeld gibt es nicht. Hintergrund und Sicherheitsabwägung: [AOT-Plan](superpowers/plans/2026-11-17-aot-kernel.md), Etappe E, und [Sicherheitsdokument](superpowers/specs/2026-11-17-aot-sicherheit.md).
+
+- **Kennung `wamr245-aot5-x64-bc`:** WAMR 2.4.5, AOT-Formatversion 5 (`AOT_CURRENT_VERSION` in 2.4.5), Ziel x86-64, mit Speicher- und Stackprüfung. Ein anderes WAMR ergibt eine neue Kennung. Die Kennung ist nur eine Behauptung im Dateinamen; der Kernel kann sie nicht prüfen. Dass Schalter und `wamrc` stimmen, stellt allein das Werkzeug beim Übersetzen sicher (siehe Beleg).
+- **Feste Schalter:** `--target=x86_64 --cpu=x86-64 --bounds-checks=1 --stack-bounds-checks=1 --size-level=0 --disable-simd`, gleich `ProjektZeh/Native/AotProbe/fixture/compile-aot.sh` im Branch `feature/wasm-aot-runtime`. Weitere Schalter nimmt das Werkzeug nicht an.
+- **Festes Werkzeug:** `aot` kopiert die angegebene `wamrc`-Datei in ein temporäres Verzeichnis und führt nur diese Kopie mit absolutem Pfad aus, also ohne Suche im `PATH` und ohne Austausch zwischen Prüfung und Start. Vorher prüft es den SHA-256 der Kopie gegen die Liste `WAMRC_SHA256` im Skript (derzeit nur das `wamrc` der Hostprobe 5b, `6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774`) und danach `wamrc --version` auf 2.4.5. Ein unbekanntes `wamrc` läuft nicht einmal für `--version`. Der Hash deckt nur diese eine Datei: `wamrc` muss LLVM statisch gelinkt enthalten (Standard eines LLVM-Baus ohne `BUILD_SHARED_LIBS`/`LLVM_LINK_LLVM_DYLIB`). Gemeinsame Systembibliotheken wie die C-Bibliothek deckt die Prüfung nicht ab; das bleibt eine Grenze. `aot` lehnt eine Ausgabe ab, die gleich der Eingabe ist, und löscht eine Teil-Ausgabe, wenn `wamrc` scheitert.
+- **Beleg:** `aot` schreibt neben die Ausgabe `<app.aot>.json` mit Kennung, `wamrc`-Version, SHA-256 von `wamrc`, `.wasm` und `.aot` sowie den festen Schaltern. `package --aot-file` verlangt diesen Beleg und bricht ab, wenn der Hash der `.aot` nicht passt, das `.wasm` nicht genau der Einstiegsdatei dieses Aufrufs entspricht, das `wamrc` nicht zugelassen ist oder Schalter oder Kennung abweichen. Der Beleg schützt gegen Verwechslung und veraltete Dateien, etwa eine `.aot` aus einer älteren App-Version. Er ist nicht signiert und schützt nicht gegen einen Angreifer, der auf der Übersetzungs- oder Signiermaschine Dateien ändern kann.
+- **Temporäres Verzeichnis:** `aot` führt `wamrc` aus dem temporären Verzeichnis aus. Ist `/tmp` mit `noexec` eingehängt, `TMPDIR` auf ein ausführbares Verzeichnis setzen.
+- **Grenzen:** Das `.aot` zählt gegen 128 Dateien und 128 MiB Paketinhalt und vergrößert den Download auch für Kernel, die es nicht nutzen. Der Pfad mit Suffix darf wie jeder Paketpfad höchstens 200 Zeichen lang sein, sonst bricht `package` ab. Ohne `--aot-file` arbeitet `package` unverändert.
+- **Kernelstand:** Der Kernel nutzt `.aot` erst mit der Kernelseite von Etappe E; bis dahin startet jede App unter wasm3. Heutige Kernel behandeln die Datei als gewöhnliche Paketdatei: `PackageManifest.Parse` nimmt jeden gültigen Pfad an, `pkg install` lädt und prüft sie wie jede andere Datei per SHA-256, gestartet wird nur `entry`. Die Datei kostet dort also nur Download, Speicherplatz und Prüfzeit.
+- **Nur unter Linux:** Für Windows gibt es kein `wamrc`, und der Windows-Entwicklungsrechner hat kein WSL. `.aot`-Dateien entstehen deshalb bis auf Weiteres nur auf einem Linux-Rechner; signiert werden kann danach wie bisher.
+
+### wamrc 2.4.5 und LLVM 18.1.8 bauen
+
+Die Werkzeuge liegen unter `.tools/aot/` und gehören nicht ins Repository. Grundlage ist die Hostprobe 5b (Branch `experiments/aot-hostprobe`, `experiments/AOT.Probe/README.md`).
+
+1. **LLVM 18.1.8 aus den Quellen:** `llvm-project-18.1.8.src.tar.xz` vom GitHub-Release `llvmorg-18.1.8` laden und die beiliegende Signatur (Tom Stellard) prüfen. Die Hostprobe hat den SHA-256 nur gekürzt festgehalten (`0b58557a…db2f2a`); er muss an Anfang und Ende übereinstimmen. Bauen nur für X86, ohne Clang und Tests, mit `-DCMAKE_CXX_FLAGS="-include cstdint"`, weil GCC 16 `<cstdint>` nicht mehr implizit einbindet. Das vorgebaute LLVM-18.1.8-Paket (Ubuntu 18.04) passt nicht (`wamrc` stürzt in `X86TargetMachine` ab); mit LLVM 23 baut WAMR 2.4.5 nicht (API-Brüche).
+2. **WAMR 2.4.5:** `WAMR-2.4.5.tar.gz` von GitHub laden und den SHA-256 `1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b` prüfen. `wamr-compiler` gegen das eigene, statisch gebaute LLVM bauen.
+3. **Prüfen:** `wamrc --version` muss 2.4.5 melden. Ein neu gebautes `wamrc` hat fast sicher einen anderen SHA-256 als das der Hostprobe und wird vom Skript abgelehnt. Es in `WAMRC_SHA256` aufzunehmen ist eine eigene Änderung mit Rückfrage; vorher belegen Trap-Tests mit genau diesem `wamrc` (Speicherzugriff außerhalb, tiefe Rekursion) die Prüfungen im erzeugten Code (Sicherheitsdokument, Abschnitt 5, Punkt 3; Fixtures unter `ProjektZeh/Native/AotProbe/fixture/` im Branch `feature/wasm-aot-runtime`).
+
+Ablauf:
+
+```bash
+# 1. Übersetzen unter Linux in einer getrennten Umgebung (etwa einem Container) ohne den privaten Schlüssel:
+python scripts/build-package.py aot .tools/aot/<wamrc> <app.wasm> -o <app.aot>
+# 2. Signieren wie unter „Veröffentlichen“, mit der übersetzten Datei:
+python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <packages-Worktree> --id <id> --version <x.y.z> --name "<Name>" --entry <app.wasm> --aot-file <app.aot> <datei>=<pfad> ...
+```
+
+Die Belegdatei `<app.aot>.json` muss neben `<app.aot>` mit auf die Signiermaschine; ist das `.wasm` in Schritt 2 ein anderes als in Schritt 1, bricht `package` ab.

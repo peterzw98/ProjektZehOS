@@ -47,7 +47,10 @@ public sealed class Kernel : Sys.Kernel
 #endif
     // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
     private readonly AccountService accounts = new(Paths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), Paths.Comparison,
-        CosmosPathGuard.For(Paths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory);
+        CosmosPathGuard.For(Paths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory)
+    {
+        MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
+    };
     // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
     private readonly PackageStore packages = new(Paths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion);
     private static bool SecurityRecovery =>
