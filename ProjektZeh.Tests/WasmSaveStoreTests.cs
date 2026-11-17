@@ -338,12 +338,19 @@ public sealed class WasmSaveStoreTests
     [TestMethod]
     public void SaveRootIsCreatedLevelByLevelUnderAStrictGuard()
     {
-        // Wie CosmosPathGuard: beim Anlegen darf nur das Blatt fehlen. Kernelpfade mit '/' unter root als Einhaengepunkt.
-        string mount = root.Replace(Path.DirectorySeparatorChar, '/');
-        Func<string, bool, ResultErr> guard = (path, creating) => ProjektZeh.Security.PathGuard.Check(mount, path.Replace(Path.DirectorySeparatorChar, '/'), [mount],
+        // Wie CosmosPathGuard: beim Anlegen darf nur das Blatt fehlen. PathGuard prueft Kernelpfade ("/data/..."); der Test
+        // uebersetzt Hostpfade unter root dorthin und zurueck, damit er auf Linux- und Windows-Hosts gleich laeuft.
+        string Kernel(string host)
+        {
+            string relative = Path.GetRelativePath(root, host).Replace(Path.DirectorySeparatorChar, '/');
+            return relative == "." ? "/data" : "/data/" + relative;
+        }
+        string Host(string kernel) => kernel == "/data" ? root : Path.Combine(root, kernel["/data/".Length..].Replace('/', Path.DirectorySeparatorChar));
+        string mount = root;
+        Func<string, bool, ResultErr> guard = (path, creating) => ProjektZeh.Security.PathGuard.Check("/data", Kernel(path), ["/data"],
             (parent, name) =>
             {
-                string host = Path.Combine(parent, name);
+                string host = Path.Combine(Host(parent), name);
                 return Directory.Exists(host) ? ProjektZeh.Security.PathNodeKind.Directory
                     : File.Exists(host) ? ProjektZeh.Security.PathNodeKind.File : ProjektZeh.Security.PathNodeKind.Missing;
             }, creating);
