@@ -36,7 +36,7 @@ dotnet build experiments/Wasm.CSharpProbe/Wasm.CSharpProbe.csproj -c Release
 ## Kernelanbindung
 
 - `ProjektZeh/Native/Wasm/libc/`: minimale freistehende C-Laufzeit (Heap über `__cosmos_heap_alloc`, Zeichenketten, `snprintf`, `fabs`/`copysign`/`rint`, gesperrte Datei-Stubs). `mem*` sind exakte eigene Implementierungen (siehe Cosmos-Befund).
-- `ProjektZeh/Native/Wasm/host/zehos_wasm.c`: `zehos_wasm_run` mit Gas-, Speicher- und Stacklimit, WASI-Teilmenge (stdout/stderr, `argv[0]`, Uhren, Zufall über RDRAND/RDSEED, `proc_exit`); Dateisystem und Sockets antworten mit `EBADF`/`ENOSYS`. Nur primitive Typen über die C/C#-Grenze.
+- `ProjektZeh/Native/Wasm/host/zehos_host_wasm3.c` (wasm3-Bindung) und `zehos_host_core.c` (Hostfunktionen, Tabelle `ZEHOS_HOST_FUNCTIONS` in `zehos_host_core.h`): `zehos_wasm_run` mit Gas-, Speicher- und Stacklimit, WASI-Teilmenge (stdout/stderr, `argv[0]`, Uhren, Zufall über RDRAND/RDSEED, `proc_exit`); Dateisystem und Sockets antworten mit `EBADF`/`ENOSYS`. Nur primitive Typen über die C/C#-Grenze.
 - `ProjektZeh/Runtime/CosmosWasmProbe.cs`: Probe, nur mit `-p:ZehOSWasmProbe=true`. Alle Läufe auf **einem** Worker-Thread mit 8 MiB Stack; wasm3 erhält `d_m3MaxNativeStack` = 7 MiB.
 - Der normale Kernel enthält weder wasm3 noch die Probe.
 

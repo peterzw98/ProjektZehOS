@@ -74,7 +74,7 @@ weiterhin `ENOTSUP`.
 
 - **Abwärtskompatibel:** Ein älterer Kernel antwortet heute schon mit `ENOTSUP` (58). Eine App kann HTTPS dann
   ausdrücklich als nicht verfügbar anzeigen. Ein neuer Import `net_open_tls` bliebe auf älteren Kerneln dagegen
-  ungebunden: `link_wasi` in `Native/Wasm/host/zehos_wasm.c` bindet nur angebotene Funktionen, und wasm3 meldet
+  ungebunden: `link_host` in `Native/Wasm/host/zehos_host_wasm3.c` bindet nur angebotene Funktionen, und wasm3 meldet
   `m3Err_functionImportMissing` erst beim ersten Aufruf. Die App startet also, endet aber beim ersten HTTPS-Versuch
   mit einem Trap.
 - **Gleiche Handles:** `net_status`, `net_send`, `net_recv` und `net_close` bleiben unverändert. Sie übertragen bei

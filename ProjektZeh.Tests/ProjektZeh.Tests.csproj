@@ -12,6 +12,8 @@
     <PackageReference Include="MSTest.TestAdapter" Version="3.6.4" />
     <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
     <PackageReference Include="Moq" Version="4.20.72" />
+    <!-- Nur die Cosmos-Schrift fuer Referenzbilder; dieselbe Version wie im Kernel, nicht im Build referenziert. -->
+    <PackageDownload Include="Cosmos.Kernel.System" Version="[3.0.97]" />
   </ItemGroup>
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->
@@ -64,6 +66,7 @@
     <Compile Include="..\ProjektZeh\Storage\DiskEmptyCheck.cs" Link="Storage\DiskEmptyCheck.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\SystemInfoSnapshot.cs" Link="Storage\Virtual\SystemInfoSnapshot.cs" />
     <Compile Include="..\ProjektZeh\Storage\Virtual\DeviceFileSystem.cs" Link="Storage\Virtual\DeviceFileSystem.cs" />
+    <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
@@ -76,6 +79,8 @@
     <Compile Include="..\ProjektZeh\Storage\StorageDeviceInfo.cs" Link="Storage\StorageDeviceInfo.cs" />
     <Compile Include="..\ProjektZeh\Installer\SetupWizard.cs" Link="Installer\SetupWizard.cs" />
     <Compile Include="..\ProjektZeh\Messaging\**\*.cs" Link="Messaging\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- Dasselbe Wurzelbundle wie im Kernel, damit TlsRoots.Load auf dem Host die ausgelieferte Datei liest. -->
+    <EmbeddedResource Include="..\ProjektZeh\ThirdParty\CosmosHttp\cacert.pem" LogicalName="ZehOS.TlsRoots" Link="ThirdParty\cacert.pem" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 </Project>
