@@ -17,7 +17,6 @@ public sealed class DataDiskInstallExclusionTests
     // 1 GiB: innerhalb der disk-init-Grenzen, aber ausserhalb der 32..128 GiB, die GptLayout.Verify kennt.
     private const ulong SmallDisk = 2097152;
     private const ulong LargeDisk = GptLayout.MinBlockCount;
-    private static readonly Guid BasicDataType = new("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7");
 
     /// <summary>Duennes Plattenabbild: nur beschriebene Sektoren werden gehalten, alle anderen lesen sich als Nullen.</summary>
     private sealed class SparseDisk(ulong blockCount)
@@ -145,7 +144,7 @@ public sealed class DataDiskInstallExclusionTests
 
     [TestMethod]
     public void IsInstallExcluded_GptBasicDataPartition() =>
-        Assert.IsTrue(DataDiskSelector.IsInstallExcluded(new(0, "ZEHOSDATA  ", BasicDataType)));
+        Assert.IsTrue(DataDiskSelector.IsInstallExcluded(new(0, "ZEHOSDATA  ", GptLayout.BasicDataType)));
 
     [TestMethod]
     public void IsInstallExcluded_GptEspLabelledData() =>
@@ -161,16 +160,21 @@ public sealed class DataDiskInstallExclusionTests
 
     [TestMethod]
     public void IsInstallExcluded_OtherLabelNotExcluded() =>
-        Assert.IsFalse(DataDiskSelector.IsInstallExcluded(new(0, "DATA       ", BasicDataType)));
+        Assert.IsFalse(DataDiskSelector.IsInstallExcluded(new(0, "DATA       ", GptLayout.BasicDataType)));
 
     [TestMethod]
     public void GptBasicDataZehosData_NotMountedByDecide()
     {
         // Einbinden bleibt bei MBR 0x0C; eine GPT-ZEHOSDATA wird nur vom Installer ausgeschlossen, nicht eingebunden.
-        var decision = DataDiskSelector.Decide([new("sata1", 512, 67108864, [new(0, "ZEHOSDATA  ", BasicDataType)])]);
+        var decision = DataDiskSelector.Decide([new("sata1", 512, 67108864, [new(0, "ZEHOSDATA  ", GptLayout.BasicDataType)])]);
         Assert.AreEqual(DataDiskAction.NoDataDisk, decision.Action);
     }
 
     [TestMethod]
-    public void BasicDataTypeConstant() => Assert.AreEqual(BasicDataType, GptLayout.BasicDataType);
+    public void GptBasicDataZehosDataOnSata0_OldFallbackUnchanged()
+    {
+        // Unveraendert: sata0 mit genau einer Partition bindet der bisherige Rueckfall ein, unabhaengig von GPT/Label.
+        var decision = DataDiskSelector.Decide([new("sata0", 512, 67108864, [new(0, "ZEHOSDATA  ", GptLayout.BasicDataType)])]);
+        Assert.AreEqual(DataDiskAction.Mount, decision.Action);
+    }
 }

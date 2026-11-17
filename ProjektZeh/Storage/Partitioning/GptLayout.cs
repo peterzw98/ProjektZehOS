@@ -172,7 +172,8 @@ internal static class GptLayout
     /// <summary>
     /// Irgendeine GPT-Spur: ein 0xEE-Eintrag im MBR oder die Signatur EFI PART am Anfang von LBA 1 oder der letzten LBA.
     /// Anders als <see cref="Verify"/> unabhaengig von Geometrie und Gueltigkeit, damit auch ein abgebrochener oder
-    /// beschaedigter Schreibvorgang als belegt gilt. Liest hoechstens drei Sektoren; erwartet Sektoren ab 512 Byte.
+    /// beschaedigter Schreibvorgang als belegt gilt, sobald Schutz-MBR oder ein Kopf geschrieben ist (nur die Eintragstabelle
+    /// ohne Kopf erkennt erst DiskEmptyCheck). Liest hoechstens drei Sektoren; erwartet Sektoren ab 512 Byte.
     /// </summary>
     internal static bool HasTraces(ulong blockSize, ulong blockCount, BlockReader read)
     {

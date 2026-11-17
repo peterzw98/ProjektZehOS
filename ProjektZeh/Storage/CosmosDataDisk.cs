@@ -31,7 +31,8 @@ internal static class CosmosDataDisk
             Guid gptType = Guid.Empty;
             foreach (var entry in gptEntries)
                 if (entry.StartSector == partition.StartSector) gptType = entry.PartitionType;
-            // Basic Data mitlesen, damit der Installer auch eine GPT-ZEHOSDATA erkennt (IsInstallExcluded).
+            // Basic Data mitlesen, damit der Installer auch eine GPT-ZEHOSDATA erkennt (IsInstallExcluded). Wirft das Lesen
+            // (etwa bei beschaedigtem Bootsektor), fehlt das Geraet in der Auswahl; fuer den Installer ist das die sichere Seite.
             bool fat = type == DataDiskSelector.FatLbaType || gptType == Partitioning.GptLayout.EspType || gptType == Partitioning.GptLayout.BasicDataType;
             partitions.Add(new(type, fat ? ReadFat32Label(partition) : null, gptType));
         }
@@ -39,7 +40,7 @@ internal static class CosmosDataDisk
     }
 
     /// <summary>Installer-Ausschluss: ZEHOSDATA mit MBR oder GPT (<see cref="DataDiskSelector.IsInstallExcluded"/>).</summary>
-    public static bool HasDataPartition(IBlockDevice device)
+    public static bool HasZehosDataLabel(IBlockDevice device)
     {
         foreach (var partition in Describe(device).Partitions)
             if (DataDiskSelector.IsInstallExcluded(partition)) return true;
