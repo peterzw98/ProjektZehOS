@@ -187,6 +187,27 @@ def run_g6_basic(args, work: Path) -> None:
             process.wait(timeout=30)
 
 
+def boot_installed(args, case: Path, target: Path) -> None:
+    run = storage.new_work_dir(case / "boot-installed")
+    machine = list(storage.MACHINE_BASE)
+    machine[machine.index("-boot") + 1] = "c"
+    machine += ["-drive", f"file={target.resolve()},format=raw,if=none,id=d0",
+                "-device", "ide-hd,drive=d0,bus=ahci.0"]
+    storage.tools.MACHINE = machine
+    unused = run / "unused.qcow2"
+    tool, environment = storage.tools.qemu_img()
+    subprocess.run([*tool, "create", "-f", "qcow2", str(unused), "1M"], check=True,
+                   stdout=subprocess.DEVNULL, env=environment)
+    process = storage.tools.start_qemu(args.iso, unused, run, storage.tools.free_port(), args.accel, None)
+    try:
+        storage.tools.wait_serial(run, "GPT_TEST IDENTITY Healthy SETUP True", args.timeout)
+        storage.tools.wait_serial(run, "Desktop ist bereit.", args.timeout)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=30)
+
+
 def run_g1_basic(args, work: Path) -> None:
     for size in (32 * GIB, 128 * GIB):
         case = storage.new_work_dir(work / f"g1-{size // GIB}g")
@@ -202,12 +223,13 @@ def run_g1_basic(args, work: Path) -> None:
             storage.stop(process, qmp, run)
             process = None
             inspect_image(target, case, args.payload, args.version, args.boot_config, marker_expected=True)
-            print(f"PASS G1 Teil: {size // GIB} GiB installiert und offline geprueft", flush=True)
+            boot_installed(args, case, target)
+            print(f"PASS G1 Teil: {size // GIB} GiB installiert, offline geprueft und Healthy gestartet", flush=True)
         finally:
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=30)
-    print("OFFEN G1: Boot von GPT, Identitaet, Ersteinrichtung und VMware", flush=True)
+    print("OFFEN G1: Kontoanlage und VMware", flush=True)
 
 
 def main() -> int:
