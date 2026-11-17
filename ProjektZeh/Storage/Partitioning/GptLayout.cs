@@ -31,6 +31,8 @@ internal static class GptLayout
 
     public static readonly Guid EspType = new("C12A7328-F81F-11D2-BA4B-00A0C93EC93B");
     public static readonly Guid LinuxFileSystemType = new("0FC63DAF-8483-4772-8E79-3D69D8477DE4");
+    /// <summary>Microsoft Basic Data; so traegt eine GPT-Platte eine FAT-Datenpartition wie ZEHOSDATA.</summary>
+    public static readonly Guid BasicDataType = new("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7");
 
     private const ulong Signature = 0x5452415020494645UL; // "EFI PART"
     private const uint Revision = 0x00010000;
@@ -165,6 +167,28 @@ internal static class GptLayout
             entries.Add(entry);
         }
         return ResultObjectFactory.CreateSuccess(new GptTable(new Guid(primary.AsSpan(56, 16)), entries));
+    }
+
+    /// <summary>
+    /// Irgendeine GPT-Spur: ein 0xEE-Eintrag im MBR oder die Signatur EFI PART am Anfang von LBA 1 oder der letzten LBA.
+    /// Anders als <see cref="Verify"/> unabhaengig von Geometrie und Gueltigkeit, damit auch ein abgebrochener oder
+    /// beschaedigter Schreibvorgang als belegt gilt. Liest hoechstens drei Sektoren; erwartet Sektoren ab 512 Byte.
+    /// </summary>
+    internal static bool HasTraces(ulong blockSize, ulong blockCount, BlockReader read)
+    {
+        var sector = new byte[blockSize];
+        read(0, 1, sector);
+        for (int slot = 0; slot < 4; slot++)
+            if (sector[MbrTableOffset + slot * 16 + 4] == ProtectiveType) return true;
+        if (blockCount > PrimaryHeaderLba && HasSignature(read, PrimaryHeaderLba, sector)) return true;
+        ulong last = blockCount - 1;
+        return last > PrimaryHeaderLba && HasSignature(read, last, sector);
+    }
+
+    private static bool HasSignature(BlockReader read, ulong lba, byte[] sector)
+    {
+        read(lba, 1, sector);
+        return BitConverter.ToUInt64(sector, 0) == Signature;
     }
 
     private static bool ProtectiveMbrValid(ReadOnlySpan<byte> mbr, ulong blockCount)
