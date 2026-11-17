@@ -21,7 +21,7 @@ jobs:
   tests:
     name: Shell tests and .NET analysis
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -44,7 +44,16 @@ jobs:
           dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj
           --configuration Release --no-build --no-restore
           --logger "trx;LogFileName=shell-tests.trx"
+          --collect "Code Coverage;Format=cobertura"
           --results-directory TestResults
+
+      - name: Check coverage
+        # Ohne Bericht liefert find nichts; das Skript meldet dann einen Eingabefehler statt 0 % durchzuwinken.
+        run: >-
+          python3 scripts/check-coverage.py "$(find TestResults -name '*.cobertura.xml' | head -n 1)"
+          --min-total 90 --min-file 0
+          --exclusions scripts/coverage-exclusions.txt
+          --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Check isolated FAT32 test-copy helper
         run: python3 -m unittest discover -s scripts/tests -v
@@ -54,7 +63,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: shell-test-results
-          path: TestResults/*.trx
+          path: |
+            TestResults/*.trx
+            TestResults/**/*.cobertura.xml
           if-no-files-found: warn
           retention-days: 14
 
