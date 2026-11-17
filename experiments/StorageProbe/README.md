@@ -59,3 +59,7 @@ Alle 18 Fälle (4 MiB, 8 MiB, 64 MiB, 32/64/128 GiB je 1K/2K/4K) formatieren ohn
 `dumpe2fs -h`: Revision 1, einziges Merkmal `filetype`, Inode 128 Byte, 8 MiB je Gruppe. Folgerung: Cosmos-ext2
 nicht für Gastdatenträger freigeben; ein Upstream-Fix braucht `sparse_super` mit Backups in Gruppe 0, 1 und den
 Potenzen von 3, 5 und 7, den korrekten Gruppenanfang bei 1 KiB und gesetzte Füllbits.
+
+## Diagnose: ext2-Löschen an einer Blockgrenze
+
+`dotnet restore experiments/StorageProbe/StorageProbe.csproj` und danach `python3 experiments/StorageProbe/test-boundary.py <neues-Verzeichnis>` nutzen den echten Cosmos-3.0.97-Treiber auf isolierten 32-MiB-Rohimages. Das Skript prüft den Eintrag am Beginn des zweiten 4-KiB-Blocks und einen Eintrag innerhalb desselben Blocks, vergleicht Namen/Inodes und ruft `debugfs` sowie `e2fsck -fn` auf. Es überschreibt keine vorhandenen Ergebnisse. Ein Fehler im ext2-Treiber führt zu Exit 1; die Rohimages bleiben zur Diagnose erhalten. Dateiinhalte, Rename, Kernel-Plugs und ein Gastlauf sind damit nicht geprüft.
