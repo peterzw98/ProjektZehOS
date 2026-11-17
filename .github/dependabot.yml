@@ -1,6 +1,6 @@
 # Nur GitHub Actions (feste Commit-Pins mit Versionskommentar). Paket-, SDK- und Cosmos-Updates bleiben ausdruecklich
-# abstimmungspflichtig (AGENTS.md) und sind hier nicht eingerichtet. Jeder Dependabot-PR braucht vor dem Merge eine hoehere
-# ZehOS-Version in ProjektZeh/ProjektZeh.csproj.
+# abstimmungspflichtig (AGENTS.md) und sind hier nicht eingerichtet. Dependabot-PRs, die nur .github/ aendern (kein Kernel- oder
+# Produktcode), sind vom ZehOS-Versionsbump ausgenommen (Entscheidung 17. November 2026).
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,3 +10,8 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "CI"
+    # init und analyze muessen dieselbe Version haben (sonst bricht die Analyse ab); ein Gruppen-PR hebt beide gemeinsam.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
