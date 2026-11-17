@@ -148,6 +148,13 @@ internal static class SelfTest
             expect(formatted && BitConverter.ToUInt32(header, 24) == 2, "kernel: null formatiert mit 4096-Byte-Bloecken");
         }
         File.Delete(kernelPath);
+
+        // Ungueltige Geraete: Sektorgroesse 0, Ueberlauf von BlockCount * BlockSize, mehr als 128 GiB.
+        foreach (var (sector, count, name) in new[] { (0UL, 1UL << 20, "Sektorgroesse 0"), (512UL, ulong.MaxValue, "Ueberlauf"), (512UL, (128UL << 30) / 512 + 1, "ueber 128 GiB") })
+        {
+            var fake = new CountingBlockDevice(sector, count);
+            expect(!ProjektZeh.Storage.Ext2.CosmosExt2Formatter.Format(fake, new Ext2FormatOptions { BlockSize = 4096 }) && fake.Accesses == 0, "fixed: " + name + " ohne Zugriff abgelehnt");
+        }
         uint U32(long offset) => BitConverter.ToUInt32(image, (int)offset);
         ushort U16(long offset) => BitConverter.ToUInt16(image, (int)offset);
         const long Primary = 1024, Backup = 8193L * 1024;
@@ -205,4 +212,16 @@ internal sealed class FileBlockDevice(FileStream file, string name) : IBlockDevi
         if (blockNo > BlockCount || blockCount > BlockCount - blockNo || (ulong)length < blockCount * 512)
             throw new ArgumentOutOfRangeException(nameof(blockNo));
     }
+}
+
+/// <summary>Geraet ohne Speicher fuer Grenzfaelle; zaehlt jeden Zugriff.</summary>
+internal sealed class CountingBlockDevice(ulong blockSize, ulong blockCount) : IBlockDevice
+{
+    public ulong BlockSize => blockSize;
+    public ulong BlockCount => blockCount;
+    public string Name => "zaehler";
+    public int Accesses { get; private set; }
+    public void ReadBlock(ulong blockNo, ulong count, Span<byte> data) => Accesses++;
+    public void WriteBlock(ulong blockNo, ulong count, ReadOnlySpan<byte> data) => Accesses++;
+    public void Flush() => Accesses++;
 }

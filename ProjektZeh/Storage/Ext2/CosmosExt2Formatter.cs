@@ -56,6 +56,9 @@ internal static class CosmosExt2Formatter
     /// <summary>Read-only compatible feature flag stamped at format time: sparse superblock backups.</summary>
     private const uint FeatureRoCompatSparseSuper = 1;
 
+    /// <summary>Largest device the formatter accepts (128 GiB, qualified target range).</summary>
+    private const ulong MaxVolumeBytes = 128UL * 1024 * 1024 * 1024;
+
     /// <summary>Longest volume label in characters.</summary>
     private const int MaxVolumeLabelLength = 16;
 
@@ -101,17 +104,18 @@ internal static class CosmosExt2Formatter
         };
 
         ulong deviceBlockSize = device.BlockSize;
-        if (blockSize % deviceBlockSize != 0)
+        if (deviceBlockSize == 0 || blockSize % deviceBlockSize != 0)
+        {
+            return false;
+        }
+
+        // Änderung: Zielumfang höchstens 128 GiB; die Division verhindert den Überlauf von BlockCount * BlockSize.
+        if (device.BlockCount > MaxVolumeBytes / deviceBlockSize)
         {
             return false;
         }
 
         ulong totalBytes = device.BlockCount * deviceBlockSize;
-        if (totalBytes / blockSize > uint.MaxValue)
-        {
-            return false;
-        }
-
         uint totalBlocks = (uint)(totalBytes / blockSize);
         if (totalBlocks < MinTotalBlocks)
         {
@@ -215,6 +219,7 @@ internal static class CosmosExt2Formatter
         // Inodetabelle, in Gruppe 0 danach der Wurzelverzeichnisblock.
         byte[] descriptorTable = new byte[descriptorBlocks * blockSize];
         uint[] inodeTableStarts = new uint[groups];
+        byte[] zeroTable = new byte[inodeTableBlocksPerGroup * blockSize];
         for (uint g = 0; g < groups; g++)
         {
             uint groupStart = firstDataBlock + g * blocksPerGroup;
@@ -238,7 +243,6 @@ internal static class CosmosExt2Formatter
             SetBits(inodeBitmap, inodesPerGroup, blockSize * 8);
             WriteBlocks(device, inodeBitmapBlock, 1, blockSize, inodeBitmap);
 
-            byte[] zeroTable = new byte[inodeTableBlocksPerGroup * blockSize];
             WriteBlocks(device, inodeTableStart, inodeTableBlocksPerGroup, blockSize, zeroTable);
 
             int descriptorOffset = (int)g * CosmosExt2SuperblockLayout.GroupDescSize;
@@ -291,8 +295,9 @@ internal static class CosmosExt2Formatter
         directoryBlock[dotDotOffset + CosmosExt2InodeLayout.DirEntryNameOffset + 1] = (byte)'.';
         WriteBlocks(device, rootBlock, 1, blockSize, directoryBlock);
 
-        // Änderung: Superblock und Deskriptortabelle zuletzt, damit ein abgebrochenes Formatieren keine
-        // gültige Signatur hinterlässt; Sicherungen tragen ihre Gruppennummer in s_block_group_nr.
+        // Änderung: Superblock und Deskriptortabellen zuletzt, erst wenn ihr Inhalt feststeht. Keine
+        // Absturzsicherheit: eine ältere Signatur auf dem Gerät wird vorher nicht gelöscht.
+        // Sicherungen tragen ihre Gruppennummer in s_block_group_nr.
         for (uint g = groups; g-- > 0;)
         {
             if (!HasSuperblockBackup(g))

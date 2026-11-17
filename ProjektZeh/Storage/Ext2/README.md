@@ -35,8 +35,11 @@ Jede Änderung ist im Code mit `Änderung:` markiert.
    (bis zu 7 Restblöcke bleiben frei), `inodes_per_group` auf ganze Inodetabellenblöcke aufgerundet. Eine letzte
    Gruppe, die ihre eigenen Metadaten nicht fasst, wird abgeschnitten statt das Formatieren abzulehnen.
 5. **Reihenfolge:** Superblock und Deskriptortabellen werden zuletzt geschrieben; freie Zähler werden direkt aus
-   dem Layout berechnet statt aus zurückgelesenen Bitmaps.
-6. **Standardblockgröße:** `options == null` formatiert mit 4096 statt 1024 Byte (siehe Grenze unten).
+   dem Layout berechnet statt aus zurückgelesenen Bitmaps. Das ist keine Absturzsicherheit: eine ältere
+   Signatur auf dem Gerät wird vorher nicht gelöscht.
+6. **Grenzen vor jedem Schreibzugriff:** Gerätesektorgröße 0 und Geräte über 128 GiB (Zielumfang) werden mit
+   `false` abgelehnt; die Größenprüfung kann nicht überlaufen.
+7. **Standardblockgröße:** `options == null` formatiert mit 4096 statt 1024 Byte (siehe Grenze unten).
 
 ## Bekannte Grenze: 1K-Blöcke nicht mit dem Cosmos-Treiber verwenden
 
