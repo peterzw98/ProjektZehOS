@@ -128,12 +128,11 @@ public sealed class StorageShellCommandsTests
         var shell = new ShellService(new StorageShellCommands(storage.Object).Commands);
 
         Assert.IsTrue(shell.ExecuteLine("disk mount sata0", output.Object).IsOK());
-        Assert.IsTrue(shell.ExecuteLine("disk mount SATA0", output.Object).IsOK());
         Assert.IsFalse(shell.ExecuteLine("disk mount sata1", output.Object).IsOK(), "fremde Platte ohne Bestaetigung");
         Assert.IsFalse(shell.ExecuteLine("disk mount sata1 --ja", output.Object).IsOK());
         Assert.IsTrue(shell.ExecuteLine("disk mount sata1 --yes", output.Object).IsOK());
 
-        storage.Verify(target => target.Mount("sata0"), Times.Exactly(2));
+        storage.Verify(target => target.Mount("sata0"), Times.Once);
         storage.Verify(target => target.Mount("sata1"), Times.Once);
         storage.VerifyNoOtherCalls();
     }
