@@ -119,6 +119,8 @@ Bisher nutzt ZehOS aus `System.Runtime.Intrinsics` nur skalare X86-Befehle (`Cos
 
 **Fertig, wenn** (Plan): gleiches Bild wie SoftGPU (Referenzvergleich), messbar höhere Bildrate, Fehlerfälle beenden nur die App, QEMU- und VMware-Ergebnis dokumentiert; dazu Hosttests mit `-warnaserror`, nativer Normal- und Recovery-Build.
 
+**Nachtrag Beschleunigung (17. November 2026, `task/raster-speed`):** Der Kern bestimmt bei exakt darstellbaren Kantenwerten (alle Ecken des Rechtecks unter 2^23) die abgedeckten Pixel einer Zeile ganzzahlig statt sie abzutasten, liest Puffer nach einer Prüfung je Aufruf ohne Bereichsprüfung je Pixel und rechnet im 3D-Pfad vier Pixel je Schritt mit SSE2 (`Vector128`, `cvttps2dq`, keine Ganzzahl-Vektormultiplikation). Bitgleichheit sichert `WasmRasterizerEquivalenceTests` gegen eine eingefrorene Kopie der alten Fassung (Spielszene und 1500 Zufallsszenen); einzige Ausnahme ist das Vorzeichen von NaN-Tiefen, das schon zwischen Übersetzungsstufen der alten Fassung schwankt und keinen Vergleich beeinflusst. Liegen Farb- und Tiefenpuffer überlappend im Gastspeicher, bleibt der Kern skalar. Gastmessungen unter WHPX schwankten stark mit der Last des Entwicklungsrechners und dem laufenden Mesh-Aufbau (Werte im Bericht des Branches).
+
 ## 8 Abstimmung
 
 - **Etappe 1** (agent-laser-purple, `feature/wasm-frametimes`): ändert `ProjektZeh/Runtime/Wasm/` außer der Importtabelle. Meine Änderungen dort: nur `zehos_wasm.c` (Tabelle, Brücke, Umgebung) und eine neue Rückruffunktion in `WasmRuntime.cs`. Vor dem Umbau im Kanal abgleichen.
