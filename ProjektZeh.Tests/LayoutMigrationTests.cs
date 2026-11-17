@@ -221,8 +221,10 @@ public sealed class LayoutMigrationTests
 
             Assert.IsFalse(first.IsOK());
             Assert.IsTrue(cancelling.Cancelled, "Das Token wurde erst waehrend eines WriteFile ausgeloest.");
-            Assert.IsTrue(Directory.EnumerateFiles(targetRoot, "*" + IMigrationTarget.TemporarySuffix, SearchOption.AllDirectories).Any(),
-                "Der Abbruch traf eine halb geschriebene Temp-Datei.");
+            // Seit P2-1 liegt die halbe neue Datei unter ihrem endgueltigen Namen (keine Temp-Datei); die W-Zeile im Journal
+            // macht sie zur eigenen Spur, die die Wiederholung entfernt.
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*" + IMigrationTarget.TemporarySuffix, SearchOption.AllDirectories).Any(),
+                "Neue Dateien entstehen ohne Temp-Datei.");
             var second = LayoutMigration.Run(source, real, () => sourceLock.Take(), log.Add);
             Assert.IsTrue(second.IsOK(), second.Status.Message + "\n" + string.Join("\n", log));
             using (var reader = new StreamReader(real.ReadBack(LayoutMarker.Path).Value!))
@@ -233,6 +235,54 @@ public sealed class LayoutMigrationTests
             Assert.AreEqual(2, sourceLock.Released);
         }
         finally { Directory.Delete(targetRoot, true); }
+    }
+
+    // Review peter-review P2-1: Cosmos-Rename entfernt den Temp-Eintrag und kann dabei ein ext2-Verzeichnis an einer
+    // Blockgrenze beschaedigen. Neue Dateien duerfen deshalb nie umbenannt werden; nur das Ersetzen nutzt Temp und Rename.
+    [TestMethod]
+    public void NewFilesAreWrittenWithoutRenameAndOnlyReplacementsMove()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-direct-write-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            var moves = new List<string>();
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess(),
+                (from, to, overwrite) => { moves.Add(Path.GetFileName(from) + ">" + Path.GetFileName(to)); File.Move(from, to, overwrite); });
+            Assert.IsTrue(target.WriteFile("/neu", new MemoryStream([1, 2, 3])).IsOK());
+            Assert.AreEqual(0, moves.Count, "Neue Datei ohne Rename");
+            CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(targetRoot, "neu")));
+            Assert.IsFalse(File.Exists(Path.Combine(targetRoot, "neu" + IMigrationTarget.TemporarySuffix)));
+
+            Assert.IsTrue(target.WriteFile("/neu", new MemoryStream([4])).IsOK());
+            CollectionAssert.AreEqual(new[] { "neu>neu" + IMigrationTarget.BackupSuffix, "neu" + IMigrationTarget.TemporarySuffix + ">neu" }, moves);
+            CollectionAssert.AreEqual(new byte[] { 4 }, File.ReadAllBytes(Path.Combine(targetRoot, "neu")));
+
+            File.WriteAllBytes(Path.Combine(targetRoot, "alt" + IMigrationTarget.BackupSuffix), [9]);
+            moves.Clear();
+            Assert.IsTrue(target.WriteFile("/alt", new MemoryStream([5])).IsOK());
+            Assert.AreEqual(1, moves.Count, "Mit eigener Sicherung bleibt der bisherige Weg, damit sie danach verworfen wird.");
+            Assert.IsFalse(File.Exists(Path.Combine(targetRoot, "alt" + IMigrationTarget.BackupSuffix)));
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    // Review peter-review P2-2: das Journal wird zeilenweise und begrenzt gelesen.
+    [TestMethod]
+    public void JournalParsingIsBoundedInLinesAndLineLength()
+    {
+        var many = new System.Text.StringBuilder(MigrationJournal.HeaderLine(SourceSha));
+        for (int i = 0; i < MigrationJournal.MaximumLines; i++) many.Append("x\n");
+        var tooMany = MigrationJournal.Parse(new StringReader(many.ToString()));
+        Assert.IsFalse(tooMany.IsOK());
+        StringAssert.Contains(tooMany.Status.Message, "zu viele Zeilen");
+
+        string overlong = MigrationJournal.HeaderLine(SourceSha) + new string('W', MigrationJournal.MaximumLineLength + 10) + "\n";
+        var tail = MigrationJournal.Parse(overlong);
+        Assert.IsTrue(tail.IsOK(), "Ueberlange Zeile am Ende gilt wie Muell als nicht geschrieben.");
+        Assert.AreEqual(0, tail.Value!.Files.Count);
+        Assert.IsFalse(MigrationJournal.Parse(overlong + MigrationJournal.WriteLine("/a")).IsOK(), "Gueltige Zeile nach ueberlanger");
     }
 
     // Aus CosmosLayoutProfile.ReadLayout verschoben (4.3 und 4.5 lesen den Marker damit): fehlt = null, sonst nie "fehlt".

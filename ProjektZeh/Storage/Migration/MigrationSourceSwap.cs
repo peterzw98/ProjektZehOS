@@ -30,6 +30,9 @@ internal sealed class MigrationSourceSwap(Func<IDisposable?> tryLockSource, Func
 
         if (!Attempt(mountReadOnly, "Lesemount der Quelle"))
         {
+            // Wirft der Lesemount erst nach dem Einhaengen, belegte er /data noch (Review P3-a); scheitert das, weil nichts
+            // haengt, ist das harmlos.
+            Attempt(unmountReadOnly, "Aushaengen eines halben Lesemounts");
             if (Attempt(mountWritable, "Wiedereinhaengen von /data"))
             {
                 lease.Dispose();

@@ -286,10 +286,13 @@ internal static class LayoutMigration
     /// <summary>Kein Journal ist gueltig (Abbruch vor dem Kopf); der Wert ist dann <see langword="null"/>.</summary>
     private static ResultObject<MigrationJournal?> ReadJournal(IMigrationTarget target, CancellationToken cancellation)
     {
-        var text = ReadText(target, MigrationJournal.Path, int.MaxValue, cancellation);
-        if (text.Status.Code == ResultCode.NotFound) return ResultObjectFactory.CreateSuccess<MigrationJournal?>(null);
-        if (!text.IsOK()) return ResultObjectFactory.CreateFailure<MigrationJournal?>(text.Status);
-        var journal = MigrationJournal.Parse(text.Value!);
+        var stream = target.ReadBack(MigrationJournal.Path);
+        if (stream.Status.Code == ResultCode.NotFound) return ResultObjectFactory.CreateSuccess<MigrationJournal?>(null);
+        if (!stream.IsOK()) return ResultObjectFactory.CreateFailure<MigrationJournal?>(stream.Status);
+        using var content = new CancellationReadStream(stream.Value!, cancellation);
+        // Ungueltige Bytes werden wie bisher ersetzt statt zu werfen; das Journal prueft seine Zeilen selbst.
+        using var reader = new StreamReader(content, new UTF8Encoding(false, false), detectEncodingFromByteOrderMarks: false);
+        var journal = MigrationJournal.Parse(reader);
         return journal.IsOK() ? ResultObjectFactory.CreateSuccess<MigrationJournal?>(journal.Value) : ResultObjectFactory.CreateFailure<MigrationJournal?>(journal.Status);
     }
 

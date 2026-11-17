@@ -45,6 +45,12 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         {
             return Failure("MigrationIoFailed", exception.Message);
         }
+        // Treiberfehler anderer Art erst nach Close/Unmount im finally; die Hintergrundaufgabe meldet sie als Ergebnis (Review P3-c).
+        catch (Exception exception)
+        {
+            log($"Fehler: {exception.GetType().Name}: {exception.Message}");
+            return Failure("MigrationFailed", exception.GetType().Name + ": " + exception.Message);
+        }
     }
 
     private ResultObject<MigrationReport> RunChecked(string diskName, Action<string> log, CancellationToken cancellation)
@@ -65,6 +71,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         var state = CheckRootMarker(root.Value!);
         if (!state.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(state.Status);
         log($"Ziel {device.Name}: Identitaet Healthy, Root-Marker {(state.Value == LayoutState.Fresh ? "fresh" : "migrating")}; Root wird unter {TargetMount} eingehaengt.");
+        log("Hinweis: /data ist waehrend der Migration nur lesbar und beim Umhaengen kurz nicht erreichbar.");
         return MigrateMounted(root.Value!, source, log, cancellation);
     }
 

@@ -44,6 +44,18 @@ internal sealed class FileMigrationTarget(string root, Func<ResultObject<long>> 
             string temporary = Resolve(path + IMigrationTarget.TemporarySuffix, creating: true, entry: true);
             string backup = Resolve(path + IMigrationTarget.BackupSuffix, creating: true, entry: true);
             if (Directory.Exists(destination)) throw new IOException("Zieldatei ist ein Verzeichnis: " + path);
+            // Neue Datei direkt unter dem endgueltigen Namen (Review peter-review P2-1): Cosmos-Rename legt auf ext2 einen
+            // neuen Eintrag an und entfernt den alten; liegt der Temp-Eintrag als erster in einem neuen Verzeichnisblock,
+            // beschaedigt das Entfernen das Verzeichnis (e2fsck Exit 12). Gegen einen Absturz schuetzt hier schon die
+            // W-Zeile im Journal: die Wiederholung loescht die halbe Datei. Temp und Rename nur noch beim Ersetzen.
+            if (!File.Exists(destination) && !File.Exists(backup))
+            {
+                using var direct = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1);
+                content.CopyTo(direct, 64 * 1024);
+                direct.Flush(true);
+                return ResultErr.CreateSuccess();
+            }
+
             // Nur eine vorhandene Hauptfassung erlaubt es, eine aeltere, eigene Sicherung zu verwerfen.
             if (File.Exists(destination)) File.Delete(backup);
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))

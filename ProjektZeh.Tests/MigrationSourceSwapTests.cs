@@ -85,6 +85,15 @@ public sealed class MigrationSourceSwapTests
         Assert.IsNotNull(writer);
     }
 
+    // Review P3-a: ein Lesemount, der erst nach dem Einhaengen wirft, wird vor dem Zurueckhaengen ausgehaengt.
+    [TestMethod]
+    public void FailedReadOnlyMountIsUnmountedBeforeTheWritableMountReturns()
+    {
+        var fixture = new Fixture { MountReadOnly = false };
+        Assert.ThrowsException<IOException>(() => fixture.Create().Acquire());
+        CollectionAssert.AreEqual(new[] { "unmount-rw", "mount-ro", "unmount-ro", "mount-rw" }, fixture.Steps);
+    }
+
     [TestMethod]
     public void FailedReadOnlyMountAndFailedRestoreKeepTheSourceLocked()
     {

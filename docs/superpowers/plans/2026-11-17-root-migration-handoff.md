@@ -180,3 +180,15 @@ sieben P3. Das ersetzt kein Abschlussreview des noch fehlenden Adapters:
   - Gastlauf G4–G6 erst nach dem 4.0-Go.
   - P3-d/e messen.
   - VMware und echte Hardware ungeprueft.
+
+### Review peter-review zu f9502e0 (22:04): kein P1, zwei P2, sieben P3
+
+- P2-1 behoben: `FileMigrationTarget.WriteFile` schreibt neue Dateien direkt unter dem endgueltigen Namen (`CreateNew`, Flush). Temp und Rename gibt es nur noch beim Ersetzen vorhandener Dateien, etwa beim Marker in `/etc/zehos`, der in Block 0 liegt. Damit loest der Normalpfad kein Cosmos-`RemoveEntry` mehr aus. **Restrisiko:** Die Wiederholung loescht journalisierte Dateien (`RemoveEntry`) in Verzeichnissen, die sie danach selbst entfernt. Ob Cosmos ein dabei beschaedigtes Verzeichnis noch korrekt per rmdir entfernt, ist ungeprueft und haengt am zentralen Produktschutz (senior/codex-upper). G4–G6 erst danach.
+- P2-2 behoben: Das Journal wird zeilenweise aus dem Strom gelesen, hoechstens `MigrationJournal.MaximumLines` Zeilen zu je 16 KiB Zeichen. Es gibt keinen Gesamttext und kein Zeilenfeld mehr.
+- P3-a behoben: Scheitert der Lesemount, wird erst ein halber Lesemount ausgehaengt, dann /data zurueckgehaengt.
+- P3-b behoben: Hinweis im Migrationsprotokoll, dass /data nur lesbar und beim Umhaengen kurz nicht erreichbar ist.
+- P3-c behoben: `CosmosMigrationService.Run` meldet auch andere Ausnahmen als Ergebnis (nach Close/Unmount im finally).
+- P3-d (nur Doku): `RootVolumeState.Close` im finally setzt s_state auch nach Abbruch oder Fehler wieder auf "sauber". "Sauber" heisst nur: das Dateisystem ist konsistent geschlossen. Ob die Migration fertig ist, sagt allein der Root-Marker (`migrating` gegenueber `ready`).
+- P3-e: SHA-256-Kosten unter TCG in G5 messen. Offen.
+- P3-f: war schon mit f78acce erledigt; der Review lag auf einem Stand, der das enthaelt, bitte gegenpruefen.
+- P3-g: Shell-/Terminalteil war nicht Teil dieses Reviews.
