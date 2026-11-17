@@ -43,7 +43,10 @@ public sealed class Kernel : Sys.Kernel
     private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget());
 #endif
     // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
-    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill), StringComparison.OrdinalIgnoreCase, CosmosPathGuard.For("/data"));
+    private readonly AccountService accounts = new("/data", new PasswordHasher(CosmosSaltSource.Fill), StringComparison.OrdinalIgnoreCase, CosmosPathGuard.For("/data"))
+    {
+        MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
+    };
     // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
     private readonly PackageStore packages = new("/data/.zehos-packages", PackageTrust.FromBuild(), CurrentVersion);
     private static bool SecurityRecovery =>

@@ -4,7 +4,8 @@ using ProjektZeh.Shared;
 
 namespace ProjektZeh.Storage;
 
-internal sealed record DataDiskPartition(byte Type, string? Label);
+/// <param name="GptType">Typ-GUID aus der GPT (Guid.Empty bei MBR-Platten).</param>
+internal sealed record DataDiskPartition(byte Type, string? Label, Guid GptType = default);
 
 internal sealed record DataDiskCandidate(string Name, ulong BlockSize, ulong BlockCount, IReadOnlyList<DataDiskPartition> Partitions);
 
@@ -67,6 +68,26 @@ internal static class DataDiskSelector
             string? hint = other.Device == null ? null
                 : $"Datenplatte ZEHOSDATA auf {other.Device} vorhanden; der Bestand auf {existing.Name} hat Vorrang (Umschalten: disk use {other.Device} --yes).";
             return new(DataDiskAction.Mount, existing.Name, 0, string.Empty, hint);
+        }
+
+        // Installiertes GPT-Layout (7a): die ESP wird immer eingebunden, auch ohne Root; die Identitaet bewertet erst danach
+        // der Marker auf der ESP. Zuordnung ueber den Typ, nie ueber den Index.
+        if (existing != null)
+        {
+            int esp = -1;
+            for (int index = 0; index < existing.Partitions.Count; index++)
+            {
+                if (existing.Partitions[index].GptType != Partitioning.GptLayout.EspType) continue;
+                if (esp >= 0) return new(DataDiskAction.Blocked, existing.Name, -1, Cause("AmbiguousEsp", "Mehr als eine EFI-Systempartition auf sata0; es wird nichts eingebunden."));
+                esp = index;
+            }
+            if (esp >= 0)
+            {
+                var other = labelled.Find(entry => !string.Equals(entry.Device, existing.Name, StringComparison.OrdinalIgnoreCase));
+                string? hint = other.Device == null ? null
+                    : $"Datenplatte ZEHOSDATA auf {other.Device} vorhanden; das installierte System auf {existing.Name} hat Vorrang (Umschalten: disk use {other.Device} --yes).";
+                return new(DataDiskAction.Mount, existing.Name, esp, string.Empty, hint);
+            }
         }
 
         if (labelled.Count > 1)
