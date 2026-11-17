@@ -4,7 +4,7 @@
 Normales ISO: Boot bis "Desktop ist bereit", Ersteinrichtung des Kontos auf einer leeren Wegwerfplatte, Terminal
 oeffnen, tippen und ueber X schliessen, Dateien und Einstellungen oeffnen, Textshell mit Ab- und Anmeldung, zurueck
 zum Desktop (F4), shutdown ueber die Textshell. Danach darf das serielle Protokoll keine Error-Zeile enthalten.
-Mit --recovery: Boot bis "Textshell ist bereit.", kein Desktop, uname, shutdown.
+Mit --recovery: Boot bis "Textshell ist bereit.", kein Desktop, shutdown; uname wird nur fotografiert, nicht geprueft.
 
 Geprueft wird ueber serielle Marken und Ausschnitte der Bildschirmfotos (ohne Leiste mit Uhr); der Fensterinhalt
 selbst ist Sache der Hosttests. Jeder Schritt hat eine Zeitgrenze; bei einem Fehlschlag bleiben Bildschirmfoto,
@@ -80,16 +80,22 @@ class Run:
         if self.guest.qmp is None:
             self.guest.connect()
 
-    def screen(self, name: str) -> bytes:
-        """Bildschirmfoto als PNG ablegen und den Ausschnitt der Arbeitsflaeche ohne Leiste liefern."""
+    def screen(self, name: str, keep: bool = True) -> bytes:
+        """Ausschnitt der Arbeitsflaeche ohne Leiste; mit keep zusaetzlich als nummeriertes PNG."""
         ppm = self.work / "screen.ppm"
         self.guest.qmp.command("screendump", {"filename": str(ppm)})
         data = ppm.read_bytes()
         _, size, _ = data.split(b"\n", 3)[:3]
         width, height = map(int, size.split())
         self.guest.size = (width, height)
-        self.guest.shot(name)
+        if keep:
+            self.guest.shot(name)
         return region(data, (0, 0, width, height - BAR_HEIGHT))
+
+    def patch(self, workspace: bytes, box: tuple[int, int, int, int]) -> bytes:
+        """Teil eines Ausschnitts aus screen(); dessen Koordinaten entsprechen denen des Bildschirms."""
+        width, height = self.guest.size
+        return region(b"P6\n%d %d\n255\n" % (width, height - BAR_HEIGHT) + workspace, box)
 
     def park_pointer(self) -> None:
         # Zeiger in die linke untere Ecke der Leiste: dort liegt kein Bedienelement, und der Ausschnitt enthaelt ihn nicht.
@@ -97,28 +103,26 @@ class Run:
         self.guest.qmp.move(0, height - 1, width, height)
         time.sleep(0.3)
 
-    def until(self, name: str, test, timeout: float = 60) -> bytes:
-        """Fotografiert, bis test(Ausschnitt) gilt; scheitert nach timeout mit dem letzten Foto."""
+    def settle(self, name: str, test=lambda current: True, timeout: float = 60) -> bytes:
+        """Fotografiert, bis test(Ausschnitt) gilt und zwei Fotos nacheinander gleich sind.
+
+        Das zweite Kriterium haelt Uebergaenge (Zeichnen, Startmenue) aus Vergleichen heraus. Gespeichert wird nur das
+        Ergebnis; bei einem Fehlschlag sichert failed() das letzte Bild.
+        """
         deadline = time.monotonic() + timeout
+        last = None
         while True:
-            current = self.screen(name)
-            if test(current):
+            current = self.screen(name, keep=False)
+            if current == last and test(current):
+                self.guest.shot(name)
                 return current
             if time.monotonic() > deadline:
-                raise AssertionError(f"{name}: erwartete Bildaenderung blieb aus")
+                raise AssertionError(f"{name}: erwartetes Bild blieb aus")
+            last = current
             time.sleep(1)
 
     def changed(self, name: str, previous: bytes, timeout: float = 60) -> bytes:
-        return self.until(name, lambda current: current != previous, timeout)
-
-    def stable(self, name: str, timeout: float = 30) -> bytes:
-        """Wartet, bis zwei aufeinanderfolgende Fotos gleich sind; Uebergaenge sollen nicht ins Ausgangsbild geraten."""
-        previous = [self.screen(name)]
-
-        def same(current: bytes) -> bool:
-            result, previous[0] = current == previous[0], current
-            return result
-        return self.until(name, same, timeout)
+        return self.settle(name, lambda current: current != previous, timeout)
 
     def close_terminal(self) -> None:
         # Erstes Terminal nach dem Boot: Position 72/72, Breite wie Desktop.OpenTerminal; X 20 px vor dem rechten Rand.
@@ -144,10 +148,13 @@ class Run:
         guest.login(first=True)
         self.park_pointer()
         # Nach der Anmeldung ist die leere Arbeitsflaeche das Ausgangsbild fuer Terminal und Schliessen.
-        empty = self.stable("arbeitsflaeche")
+        empty = self.settle("arbeitsflaeche")
 
         guest.launch("Terminal")
-        terminal = self.changed("terminal", empty)
+        # Linker Teil der Titelleiste des Terminals (72/72): das mittige Startmenue (hoechstens 600 breit) liegt ab
+        # 800 px Breite rechts davon, eine Aenderung dort stammt also vom Fenster.
+        title = (76, 76, 96, 108)
+        terminal = self.settle("terminal", lambda current: self.patch(current, title) != self.patch(empty, title))
         # Getippte Zeichen koennen unter Last verloren gehen; dann nur die Eingabe wiederholen.
         for attempt in range(3):
             guest.qmp.line("echo e2e")
@@ -159,7 +166,7 @@ class Run:
                     raise
         self.close_terminal()
         self.park_pointer()
-        self.until("terminal-geschlossen", lambda current: current == empty)
+        self.settle("terminal-geschlossen", lambda current: current == empty)
 
         before = self.screen("vor-dateien")
         guest.launch("Dateien")
@@ -219,6 +226,9 @@ def run(work: Path, start_vm, recovery: bool, boot_timeout: float) -> int:
         return 0
     except BaseException:
         current.failed()
+        # Error-Zeilen erklaeren einen Fehlschlag oft; so muss niemand erst in serial.log suchen.
+        for line in error_lines(current.serial()):
+            print(line, flush=True)
         raise
     finally:
         current.stop()
