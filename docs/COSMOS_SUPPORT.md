@@ -269,7 +269,7 @@ VMware: Ein separater Start ohne Datenlaufwerk erreichte laut serieller Diagnose
 
 ## SIMD-Probe (S1, 17. November 2026)
 
-Frage: Funktionieren `System.Runtime.Intrinsics` (`Vector128/256`, `Sse2/Sse41/Avx2.IsSupported`, `Vector128.IsHardwareAccelerated`) im Cosmos-3.0.97-/NativeAOT-Kernel korrekt und schneller als skalar? **Stand: Probe gebaut zur Prüfung, noch nicht im Gast gelaufen; die Ergebnistabelle ist leer.**
+Frage: Funktionieren `System.Runtime.Intrinsics` (`Vector128/256`, `Sse2/Sse41/Avx2.IsSupported`, `Vector128.IsHardwareAccelerated`) im Cosmos-3.0.97-/NativeAOT-Kernel korrekt und schneller als skalar? **Stand: Standard-ILC-Läufe auf TCG und KVM bestanden (siehe Tabelle); die v3-Läufe stehen aus.**
 
 **Probe:** `ProjektZeh/Runtime/CosmosSimdProbe.cs`, nur mit `-p:ZehOSSimdProbe=true` (Konstante `ZEHOS_SIMD_PROBE`, Muster `ZehOSThreadProbe`); kein normaler Build ändert sich. Optional `-p:ZehOSSimdInstructionSet=<Wert>` reicht `--instruction-set:<Wert>` an ILC durch (etwa `x86-64-v3`, `native`); ohne Angabe gilt der Cosmos-Standard. `ProjektZeh/ThirdParty/wamr` bleibt unberührt.
 
@@ -285,14 +285,22 @@ python3 scripts/test-simd-probe.py --iso <ISO> --accel tcg --cpu max
 python3 scripts/test-simd-probe.py --iso <ISO> --accel kvm --cpu host        # über einen Clerk
 ```
 
-| Lauf | `isa` (Sse2/Sse41/Avx2/Fma) | Korrektheit | Beschleunigung (`speedup_permille`) | Threadzustand | Anmerkung |
-|---|---|---|---|---|---|
-| TCG `qemu64`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
-| TCG `max`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
-| KVM `host`, Standard-ILC | ausstehend | ausstehend | ausstehend | ausstehend | |
-| KVM `host`, `x86-64-v3` | ausstehend | ausstehend | ausstehend | ausstehend | |
-| VMware | **offen** (nicht geprüft) | | | | |
+| Lauf (Build `5347b06`, Standard-ILC) | `isa` Sse41/Avx2/Fma | Korrektheit | Beschleunigung (`speedup_permille`) | Threadzustand |
+|---|---|---|---|---|
+| TCG `qemu64` | `SKIP` (IsSupported=false) | PASS | int-dot 263 (NOT_FASTER), float-dot 1008, byte-count 1212 | 0 Abweichungen |
+| TCG `max` | `SKIP` (IsSupported=false) | PASS | int-dot 243 (NOT_FASTER), float-dot 1030, byte-count 1225 | 0 Abweichungen |
+| KVM `host` | `SKIP` (IsSupported=false, auch auf dem Host-CPU) | PASS | int-dot `Vector128` 1602 (`Vector<T>` 1601), float-dot 2776, byte-count `Sse2` 4358 | 0 Abweichungen |
+| KVM `host`, `x86-64-v3` | ausstehend (Tester: tripleclerk) | | | |
+| TCG `max`, `x86-64-v3` | ausstehend | | | |
+| VMware | **offen** (nicht geprüft) | | | |
 
-**Empfehlung für R1 (SIMD ja/nein, welche Stufe):** erst nach den Gastläufen. Entscheidungsregel: SIMD nur, wenn (1) Korrektheit und Threadzustand auf allen Pflichtläufen PASS sind, (2) die Stufe ohne Absturz läuft (kein `#UD` bei AVX durch fehlendes OS-XCR0, das die Probe nur über das letzte `begin` sichtbar macht) und (3) KVM eine Beschleunigung > 1000 ‰ zeigt. Unter TCG ist ein Rückgang erwartbar und kein Ausschlussgrund.
+Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille gegenüber der Skalarstufe derselben Gruppe. Die vollständigen `isa`/`accel`-Zeilen liegen im Protokoll des Testers und sind hier nicht abgedruckt; `IsSupported=false` für `Sse41`, `Avx2` und `Fma` ist aus den `SKIP`-Stufen abgeleitet. Ursache laut Koordinator: Der Kernel wird ohne ILC-`--instruction-set` gebaut, der Befehlssatz ist die x64-Baseline mit SSE2; er wird zur Kompilierzeit festgelegt und folgt nicht der CPU (dasselbe Ergebnis mit `-cpu max` und auf dem Host-CPU).
+
+**Empfehlung für R1 (Stand der Standard-ILC-Läufe):**
+
+- **`Vector128` über SSE2: ja.** Korrekt auf TCG (`qemu64`, `max`) und KVM, 0 Abweichungen beim Registerzustand über Threadwechsel, und auf KVM klar schneller (int-dot 1,6×, float-dot 2,8×, byte-count 4,4×). Die Baseline SSE2 genügt dafür; kein Build-Schalter nötig.
+- **Vorsicht bei Ganzzahl-Multiplikation (32 Bit):** SSE2 hat kein `pmulld`; die Probe zeigt unter TCG 0,24–0,26× (langsamer als skalar). Für Wasm-SIMD heißt das: `f32x4`/`i8x16`/Vergleichs- und Maskenoperationen bilden sich gut ab, `i32x4.mul` kostet ohne SSE4.1 einen Emulationsaufschlag; unter KVM war int-dot trotzdem schneller.
+- **SSE4.1/AVX2/FMA im Standardbuild: nein**, weil `IsSupported=false` (Baseline). Ein Build mit `-p:ZehOSSimdInstructionSet=x86-64-v3` ist nur eine **Option mit Laufzeitprüfung**; ob der Kernel auf allen Zielen mit v3 laufen darf (ohne AVX2 stürzt der Boot ab), entscheidet cc-lead. Die v3-Läufe stehen aus; ohne sie ist offen, ob der Kernel XCR0 für AVX freischaltet.
+- **Mindestens zu belegen vor einer v3-Freigabe:** Lauf `x86-64-v3` auf KVM `host` und TCG `max` (Absturz zeigt die letzte `begin`-Stufe), VMware, und eine echte CPU ohne AVX2.
 
 Bekannte Grenzen der Probe: `IsSupported` ist im NativeAOT-Code entweder eine Kompilierzeitkonstante des gewählten Befehlssatzes oder ein Laufzeitwert aus der CPU-Erkennung der Runtime; welcher der beiden Fälle im Cosmos-Kernel gilt, zeigt erst der Lauf (`isa`-Zeile mit und ohne `ZehOSSimdInstructionSet`). Die Probe liest `XCR0` nicht direkt.
