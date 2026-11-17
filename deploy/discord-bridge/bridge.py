@@ -19,6 +19,10 @@ CATEGORY = os.environ.get("DISCORD_CATEGORY", "IRC")
 SIGN_KEY = os.environ.get("SIGN_KEY", "bridge@zeh.ernst.casa")
 
 FORMAT_CODES = re.compile(r"\x03\d{0,2}(,\d{1,2})?|[\x02\x0f\x11\x16\x1d\x1e\x1f]")
+NICKCHARS = r"[A-Za-z0-9_\-\[\]\\^{}|`]+"
+# Wie teambot.PREFIX: "nick1 nick2: text"; Trenner zwischen Nicks ist Pflicht, sonst backtrackt der Ausdruck exponentiell
+PREFIX = re.compile(rf"^((?:{NICKCHARS}[ ,]+)*{NICKCHARS}:)\s+(.*)$")
+MAX_LINES = 5
 
 
 def parse(line):
@@ -37,17 +41,34 @@ def parse(line):
 
 
 def irc_lines(text, limit=200):
-    """Split a Discord message into chunks of at most `limit` UTF-8 bytes (room left for the signature)."""
+    """Split a Discord message into IRC lines of about `limit` UTF-8 bytes (room left for the signature).
+
+    Ein führendes "nick:" steht in jedem Teil und mehrteilige Nachrichten tragen "(i/n)": Spezialisten erhalten nur
+    Zeilen mit ihrem Nick, und eine Bedingung in Zeile 2 darf einer Freigabe in Zeile 1 nicht verloren gehen.
+    """
+    rows = [raw.strip() for raw in text.splitlines() if raw.strip()]
+    match = PREFIX.match(rows[0]) if rows else None
+    prefix = match.group(1) + " " if match and len(match.group(1).encode()) <= limit // 2 else ""
+    if prefix:
+        rows[0] = match.group(2)
+    # Platz für Präfix und " (99/99)"; mindestens ein UTF-8-Zeichen je Teil, sonst endet die Schleife nie
+    budget = max(4, limit - len(prefix.encode()) - 8)
     out = []
-    for raw in text.splitlines():
-        raw = raw.strip()
+    for raw in rows:
         while raw:
-            n = limit
-            while len(raw[:n].encode()) > limit:
+            n = budget
+            while len(raw[:n].encode()) > budget:
                 n -= 1
             out.append(raw[:n])
             raw = raw[n:]
-    return out
+    total = len(out)
+    if total > MAX_LINES:
+        # shortcut: lange Discord-Nachrichten werden gekappt, statt Flood-Schutz des Servers zu riskieren
+        out = out[:MAX_LINES] + [f"[… {total - MAX_LINES} more lines on Discord]"]
+    if total > 1:
+        # Die Zählung nennt die volle Teilzahl; eine gekappte Nachricht bleibt so erkennbar unvollständig.
+        out = [f"{line} ({i + 1}/{total})" if i < MAX_LINES else line for i, line in enumerate(out)]
+    return [prefix + line for line in out]
 
 
 def signed_payload(channel, user_id, timestamp, text):
@@ -224,9 +245,6 @@ class Bridge(discord.Client):
         for attachment in message.attachments:
             text += "\n" + attachment.url
         lines = irc_lines(text)
-        if len(lines) > 5:
-            # shortcut: lange Discord-Nachrichten werden gekappt, statt Flood-Schutz des Servers zu riskieren
-            lines = lines[:5] + [f"[… {len(lines) - 5} more lines on Discord]"]
         name = message.author.display_name.replace(" ", "_")[:24]
         user_id = message.author.id
         try:
