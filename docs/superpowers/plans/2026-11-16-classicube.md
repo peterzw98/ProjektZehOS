@@ -46,7 +46,7 @@ Ziel: Einzelspieler im Fenster, Welt nur im Speicher, ohne Kernelerweiterung.
 
 - [ ] Quellstand festlegen (Commit von `ClassiCube/ClassiCube`), Lizenz vollständig prüfen und dokumentieren.
 - [ ] Buildweg unter `experiments/ClassiCube.Wasi/` nach dem Muster von `experiments/NetSurf.Wasi/` und `experiments/Wasm.DoomProbe/`: wasi-sdk, eigene Patches statt Fork, reproduzierbarer Build mit Hash.
-- [ ] Plattformschicht: Fenster, Bild und Eingabe über `zehos_v1` (`poll_event`, Zeigerfang mit relativer Maus Typ 9 wie bei Doom, Fenstergröße Typ 10), Zeit und Zufall über WASI, `Audio_Null`, kein HTTP-Worker. Grafik zuerst über `SoftMin`.
+- [ ] Plattformschicht: Fenster, Bild und Eingabe über `zehos_v1` (`poll_event`, Zeigerfang mit relativer Maus Typ 9 wie bei Doom, Fenstergröße Typ 10), Zeit und Zufall über WASI, `Audio_Null`, kein HTTP-Worker. Grafik zuerst über `SoftMin`. *Umgesetzt mit `SoftGPU`: `SoftMin` hat keinen Alphatest, Schrift und Oberfläche wurden im Gast zu Balken (17.11.2026).*
 - [ ] Ohne Threads bauen (Web-Client-Pfad als Vorlage). Falls ClassiCube zwingend Threads braucht: Befund dokumentieren und vor dem Weiterbauen mit Peter abstimmen.
 - [ ] Schreibzugriffe (Optionen, Welt, Texturcache) auf Speicher umleiten oder abschalten; Pakete sind nur lesbar.
 - [ ] Freies Texturpaket wählen, Lizenz belegen, ins Paket legen.
@@ -76,15 +76,15 @@ Erwartung (nicht gemessen): Die Rasterisierung bremst die Bildrate, die Spiellog
 Ziel: Das Rasterisieren läuft nativ im Kernel statt im Interpreter, auf QEMU, VMware und echter Hardware.
 
 - [ ] Funktionsumfang aus dem tatsächlichen Bedarf von ClassiCubes Grafikschicht ableiten: texturierte Dreiecke/Quads, Tiefenpuffer, Alphatest/-mischung, Nebel, Matrizen, Clipping, Texturen als Handles. Nicht mehr.
-- [ ] ABI entwerfen: ein Befehlspuffer je Bild in den Gastspeicher, Texturen hochladen per Kopie, Ziel ist das eigene Fenster. Jeder Zeiger, jede Länge, jeder Index und jede Texturgröße wird überlaufsicher geprüft; Obergrenzen für Dreiecke je Bild, Texturspeicher und Handles. Ältere Kernel ohne diese Funktion müssen für die App erkennbar sein (Rückfall auf `SoftMin`). Kurzer Entwurf unter `docs/superpowers/specs/` vor der Umsetzung.
+- [ ] ABI entwerfen: ein Befehlspuffer je Bild in den Gastspeicher, Texturen hochladen per Kopie, Ziel ist das eigene Fenster. Jeder Zeiger, jede Länge, jeder Index und jede Texturgröße wird überlaufsicher geprüft; Obergrenzen für Dreiecke je Bild, Texturspeicher und Handles. Ältere Kernel ohne diese Funktion müssen für die App erkennbar sein (Rückfall auf `SoftGPU`). Kurzer Entwurf unter `docs/superpowers/specs/` vor der Umsetzung.
 - [ ] Vorab-Probe: SIMD (`Vector128`/SSE) unter Cosmos/NativeAOT im Gast nachweisen; ohne SIMD skalare Variante.
 - [ ] Rasterizer in C# (oder C über `GCCProject`, dann mit Begründung), plattformunabhängiger Kern mit Hosttests (Pixelvergleich gegen Referenzbilder, Grenz- und Fehlerfälle, ungültige Befehle).
 - [ ] Hostfunktion im Loader, Handles an die App-Instanz gebunden und beim Beenden freigegeben, auch bei Traps.
-- [ ] ClassiCube-Grafik-Backend `Graphics_ZehOS.c` auf die neue Hostfunktion; `SoftMin` bleibt als Rückfall.
+- [ ] ClassiCube-Grafik-Backend `Graphics_ZehOS.c` auf die neue Hostfunktion; `SoftGPU` bleibt als Rückfall.
 - [ ] `docs/PAKETE_ERSTELLEN.md`, `docs/PACKAGE_FORMAT.md` ergänzen; Vorher/Nachher-Messung.
 - [ ] Prüfungen nach den Global Constraints, ausdrücklich ClassiCube und Doom in QEMU und VMware; echte Hardware nur nennen, wenn dort getestet.
 
-**Fertig, wenn:** Gleiches Bild wie mit `SoftMin` (Referenzvergleich), messbar höhere Bildrate, Fehlerfälle beenden nur die App, QEMU- und VMware-Ergebnis dokumentiert.
+**Fertig, wenn:** Gleiches Bild wie mit `SoftGPU` (Referenzvergleich), messbar höhere Bildrate, Fehlerfälle beenden nur die App, QEMU- und VMware-Ergebnis dokumentiert.
 
 ## Etappe 4: App-Speicher, Welten speichern (3–5 Wochen)
 
@@ -136,3 +136,4 @@ Ziel: Rechenlastige Apps laufen nahezu nativ.
 
 - 16.11.2026: Plan erstellt (agent-peter-classicube-plan). Grundlage: gelesene Quellen und Paketinhalte, nichts gebaut oder gemessen.
 - 16.11.2026: Unabhängiges Review ohne P1; eingearbeitet: Messgrößen Doom getrennt (Rechenzeit vs. Bildabstand), Wiederverwendung von `WasmFrameTimes`, Cosmos-Voraussetzung geklärt, VMware/Recovery/Version/Review je Etappe, Paketkatalog und Manifest, Speicherfreigabe nach Starts, Roadmap 12.4 und 6c benannt, Rückfall für ältere Kernel.
+- 17.11.2026: Etappe 2 umgesetzt (feature/classicube-port, agent-peter-classicube-port): SoftGPU statt SoftMin, Messung unter QEMU WHPX 5–6 Bilder/s, Rasterisierung rund 70–90 % der Bildzeit. Entscheidung Peter: Etappe 3 als Nächstes, AOT (Etappe 5) parallel vorbereiten.

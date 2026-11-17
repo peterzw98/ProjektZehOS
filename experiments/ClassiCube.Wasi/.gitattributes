@@ -1,0 +1,2 @@
+# ClassiCube speichert seine Quellen mit CRLF; die Patches muessen die Zeilenenden unveraendert behalten.
+*.patch -text

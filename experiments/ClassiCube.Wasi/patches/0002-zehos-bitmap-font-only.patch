@@ -1,0 +1,61 @@
+diff --git a/src/Drawer2D.c b/src/Drawer2D.c
+index 8b206a334..1eb056ff1 100644
+--- a/src/Drawer2D.c
++++ b/src/Drawer2D.c
+@@ -711,6 +711,10 @@ static void OnInit(void) {
+ 	TextureEntry_Register(&default_entry);
+ 
+ 	Drawer2D.BitmappedText    = Game_ClassicMode || !Options_GetBool(OPT_USE_CHAT_FONT, false);
++#ifdef CC_BUILD_ZEHOS
++	/* ZehOS: ohne Systemschriften gibt es nur die Bitmapschrift aus default.png */
++	Drawer2D.BitmappedText    = true;
++#endif
+ 	Drawer2D.BlackTextShadows = Options_GetBool(OPT_BLACK_TEXT, false);
+ }
+ 
+diff --git a/src/MenuOptions.c b/src/MenuOptions.c
+index c9a2d294c..4abf972ec 100644
+--- a/src/MenuOptions.c
++++ b/src/MenuOptions.c
+@@ -928,7 +928,9 @@ static void    GuO_SetTabAuto(cc_bool v) {
+ 
+ static cc_bool GuO_GetUseFont(void) { return !Drawer2D.BitmappedText; }
+ static void    GuO_SetUseFont(cc_bool v) {
++#ifndef CC_BUILD_ZEHOS
+ 	Drawer2D.BitmappedText = !v;
++#endif
+ 	Options_SetBool(OPT_USE_CHAT_FONT, v);
+ 	Event_RaiseVoid(&ChatEvents.FontChanged);
+ }
+diff --git a/src/SystemFonts.c b/src/SystemFonts.c
+index 3fda68e30..09f3e290b 100644
+--- a/src/SystemFonts.c
++++ b/src/SystemFonts.c
+@@ -39,13 +39,19 @@ struct IGameComponent SystemFonts_Component = {
+ #define SPACE_WIDTH 2
+ #define CELL_SIZE 8
+ 
++#ifdef CC_BUILD_ZEHOS
++/* ZehOS: Lizenz der Ersatzschrift ungeklaert; sie kommt nicht ins Paket, default.png ersetzt sie */
++#define FallbackFont_GetRows(c) missing_cell
++#else
+ #define FallbackFont_GetRows(c) (FallbackFont_ValidChar(c) ? font_bitmap[FallbackFont_ToIndex(c)] : missing_cell)
++#endif
+ #define FallbackFont_GetScale(size) max(1, ((size) >> 3))
+ 
+ static const cc_uint8 missing_cell[CELL_SIZE] = { 
+ 	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF 
+ };
+ 
++#ifndef CC_BUILD_ZEHOS
+ /* 8x8 font bitmap, represented with 1 bit for each pixel */
+ /* Source: Goodly's texture pack for ClassiCube */
+ static const cc_uint8 font_bitmap[][CELL_SIZE] = {
+@@ -144,6 +150,7 @@ static const cc_uint8 font_bitmap[][CELL_SIZE] = {
+ 	  { 0x01,0x02,0x02,0x04,0x02,0x02,0x01,0x00 }, /* } */
+ 	  { 0x00,0x00,0x26,0x19,0x00,0x00,0x00,0x00 }, /* ~ */
+ };
++#endif
+ 
+ static int Fallback_CellWidth(const cc_uint8* rows) {
+ 	int y, width, widest = 0;
