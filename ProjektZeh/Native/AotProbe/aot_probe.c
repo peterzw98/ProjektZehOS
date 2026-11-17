@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "wasm_export.h"
+#include "platform_api_vmcore.h"
 
 // mov eax, 42; ret
 static const uint8_t return_42[] = { 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
@@ -115,6 +116,15 @@ static void report(const char* text)
     __cosmos_serial_write("\n");
 }
 
+// Erste Bytes und Adresse eines Puffers, um Ladefehler einzugrenzen.
+static void report_head(const char* label, const uint8_t* data)
+{
+    char line[160];
+    snprintf(line, sizeof(line), "%s adr=0x%llx %02x %02x %02x %02x %02x %02x %02x %02x", label,
+             (unsigned long long)(uintptr_t)data, data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+    report(line);
+}
+
 // Ruft eine exportierte Funktion ohne Argumente auf. Erwartet entweder den Wert expected oder eine Ausnahme,
 // deren Text expected_trap enthaelt. Liefert 1 bei erwartetem Ausgang.
 static int run_case(wasm_module_inst_t instance, wasm_exec_env_t env, const char* name, int32_t expected,
@@ -150,8 +160,9 @@ int32_t zehos_aot_probe_fixture(void)
     if (!wasm_runtime_full_init(&init)) { report("fixture FAIL wasm_runtime_full_init"); return 0; }
 
     int32_t passed = 0;
-    // WAMR veraendert den Ladepuffer beim Laden; die Konstante bleibt deshalb unberuehrt.
-    uint8_t* bytes = (uint8_t*)malloc(zehos_aot_fixture_size);
+    // WAMR veraendert den Ladepuffer beim Laden; die Konstante bleibt deshalb unberuehrt. os_malloc statt malloc,
+    // weil der Lader 4-Byte-Ausrichtung voraussetzt.
+    uint8_t* bytes = (uint8_t*)os_malloc(zehos_aot_fixture_size);
     wasm_module_t module = NULL;
     wasm_module_inst_t instance = NULL;
     wasm_exec_env_t env = NULL;
@@ -159,8 +170,15 @@ int32_t zehos_aot_probe_fixture(void)
     memcpy(bytes, zehos_aot_fixture, zehos_aot_fixture_size);
     if (!wasm_runtime_register_natives("zehos", host_symbols, sizeof(host_symbols) / sizeof(host_symbols[0])))
     { report("fixture FAIL register_natives"); goto done; }
+    report_head("fixture vor load", bytes);
     module = wasm_runtime_load(bytes, zehos_aot_fixture_size, error, sizeof(error));
-    if (module == NULL) { snprintf(line, sizeof(line), "fixture FAIL load %s", error); report(line); goto done; }
+    if (module == NULL)
+    {
+        snprintf(line, sizeof(line), "fixture FAIL load %s", error);
+        report(line);
+        report_head("fixture nach load", bytes);
+        goto done;
+    }
     instance = wasm_runtime_instantiate(module, 64 * 1024, 0, error, sizeof(error));
     if (instance == NULL) { snprintf(line, sizeof(line), "fixture FAIL instantiate %s", error); report(line); goto done; }
     env = wasm_runtime_create_exec_env(instance, 64 * 1024);
@@ -183,7 +201,7 @@ done:
     if (env != NULL) wasm_runtime_destroy_exec_env(env);
     if (instance != NULL) wasm_runtime_deinstantiate(instance);
     if (module != NULL) wasm_runtime_unload(module);
-    free(bytes);
+    os_free(bytes);
     wasm_runtime_destroy();
     return passed;
 }

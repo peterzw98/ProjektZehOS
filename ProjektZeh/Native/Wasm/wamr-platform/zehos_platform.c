@@ -9,9 +9,38 @@ extern void __cosmos_serial_write(const char* text);
 int bh_platform_init(void) { return 0; }
 void bh_platform_destroy(void) {}
 
-void* os_malloc(unsigned size) { return malloc(size); }
-void* os_realloc(void* ptr, unsigned size) { return realloc(ptr, size); }
-void os_free(void* ptr) { free(ptr); }
+// malloc der freistehenden C-Laufzeit liefert unter Cosmos nur 2-Byte-ausgerichtete Bloecke (Probe B3); WAMR liest
+// Puffer 4-Byte-ausgerichtet und der Compiler setzt 16 Byte (max_align_t) voraus. Vor dem Block stehen deshalb der
+// Zeiger aus malloc und die Groesse.
+typedef struct { void* raw; size_t size; } zehos_aligned_header;
+#define ZEHOS_ALIGN 16u
+
+void* os_malloc(unsigned size)
+{
+    uint8_t* raw = (uint8_t*)malloc((size_t)size + sizeof(zehos_aligned_header) + ZEHOS_ALIGN);
+    if (raw == NULL) return NULL;
+    uintptr_t aligned = ((uintptr_t)raw + sizeof(zehos_aligned_header) + ZEHOS_ALIGN - 1) & ~(uintptr_t)(ZEHOS_ALIGN - 1);
+    zehos_aligned_header* header = (zehos_aligned_header*)aligned - 1;
+    header->raw = raw;
+    header->size = size;
+    return (void*)aligned;
+}
+
+void os_free(void* ptr)
+{
+    if (ptr != NULL) free(((zehos_aligned_header*)ptr - 1)->raw);
+}
+
+void* os_realloc(void* ptr, unsigned size)
+{
+    if (ptr == NULL) return os_malloc(size);
+    void* result = os_malloc(size);
+    if (result == NULL) return NULL;
+    size_t old_size = ((zehos_aligned_header*)ptr - 1)->size;
+    memcpy(result, ptr, old_size < size ? old_size : size);
+    os_free(ptr);
+    return result;
+}
 
 int os_vprintf(const char* format, va_list ap)
 {
@@ -124,8 +153,38 @@ int strncasecmp(const char* left, const char* right, size_t count)
     return 0;
 }
 
-int atoi(const char* text) { return (int)strtoll(text, NULL, 10); }
-unsigned long strtoul(const char* text, char** end, int base) { return (unsigned long)strtoull(text, end, base); }
+// strtoll/strtoull/strtod der C-Laufzeit sind nur Platzhalter, die 0 liefern; der AOT-Lader liest aber Funktionsnummern
+// aus Symbolnamen wie "aot_func#3" (aot_loader.c). Ohne eigene Zahlenumwandlung landet jeder interne Aufruf bei Funktion 0.
+unsigned long strtoul(const char* text, char** end, int base)
+{
+    const char* p = text;
+    while (isspace((unsigned char)*p)) p++;
+    if (*p == '+') p++;
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; base = 16; }
+    else if (base == 0) base = p[0] == '0' ? 8 : 10;
+    unsigned long value = 0;
+    const char* digits = p;
+    for (;; p++)
+    {
+        int c = lower((unsigned char)*p);
+        int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : 99;
+        if (digit >= base) break;
+        value = value * (unsigned long)base + (unsigned long)digit;
+    }
+    if (end != NULL) *end = (char*)(p == digits ? text : p);
+    return value;
+}
+
+int atoi(const char* text)
+{
+    while (isspace((unsigned char)*text)) text++;
+    int negative = *text == '-';
+    if (*text == '-' || *text == '+') text++;
+    unsigned long value = strtoul(text, NULL, 10);
+    return negative ? -(int)value : (int)value;
+}
+
+// shortcut: nur fuer den nicht genutzten Kommandozeilenaufruf in wasm_application.c; liefert wie strtod der C-Laufzeit 0.
 float strtof(const char* text, char** end) { return (float)strtod(text, end); }
 long labs(long value) { return value < 0 ? -value : value; }
 
