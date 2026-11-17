@@ -25,7 +25,7 @@ public sealed class RootProbeCatalogTests
         var d = RootProbeCatalog.Expected(1).Where(entry => entry.Path.StartsWith("/d/", StringComparison.Ordinal)).ToList();
         Assert.AreEqual(10000, d.Count);
         Assert.AreEqual(10, d.Select(entry => entry.Path[..6]).Distinct(StringComparer.Ordinal).Count());
-        Assert.AreEqual(4, d.Count(entry => entry.Length == RootProbeCatalog.SixteenMiB));
+        Assert.IsTrue(d.Sum(entry => entry.Length) < 256L * 1024 * 1024, "d passt auf den 2-GiB-Root");
         foreach (long size in RootProbeCatalog.DSizes) Assert.IsTrue(d.Any(entry => entry.Length == size), $"Groesse {size} fehlt");
     }
 
@@ -71,7 +71,7 @@ public sealed class RootProbeCatalogTests
         var entries = RootProbeCatalog.Expected(1).ToList();
         Assert.IsTrue(entries.Any(entry => entry.Path == "/i/" + new string('n', 255)));
         Assert.IsTrue(entries.Any(entry => entry.Path == "/i/A") && entries.Any(entry => entry.Path == "/i/a"));
-        Assert.AreEqual((long)int.MaxValue, entries.Single(entry => entry.Path == RootProbeCatalog.BigPath).Length);
+        Assert.IsFalse(entries.Any(entry => entry.Path == RootProbeCatalog.BigPath), "k gehoert in den Hochgruppenlauf");
         Assert.AreEqual(65536, entries.Single(entry => entry.Path == RootProbeCatalog.FullReplaceTarget).Length);
     }
 

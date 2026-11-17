@@ -4,8 +4,11 @@
 Das ISO muss mit -p:ZehOSStorageRootProbe=true gebaut sein. Geraete je Lauf (AHCI-Port = sataN im Gast):
   sata0 fat.qcow2 64 MiB (FAT fuer /boot/efi, formatiert die Probe in Lauf 1), sata1 Root qcow2 32 oder 128 GiB,
   sata2 inodes.qcow2 1 GiB (nur Lauf 1 benutzt), sata3 control.img 1 MiB RAW mit "ZEHOS-ROOTPROBE run=N" in Sektor 0.
-Laeufe: 1 frisch mit Last, 2 Neustart und Pruefung, 3 harter Abbruch (kill) nach 0,3/2/7/20 s auf je einer Overlay-Kopie,
-4 Gate ReadOnly und unveraendertes Image je Kopie, danach e2fsck -fy auf einer weiteren Kopie, 5 auf der reparierten Kopie.
+Laeufe (--size 2): 1 frisch mit Last, 2 Neustart und Pruefung, 3 harter Abbruch (kill) nach 0,3/2/7/20 s auf je einer
+Overlay-Kopie, 4 Gate ReadOnly und unveraendertes Image je Kopie, danach e2fsck -fy auf einer weiteren Kopie, 5 auf der
+reparierten Kopie. Hochgruppenlauf (--size 32|128, Leitungsentscheid 19:02): 6 nur formatieren, Host belegt die unteren
+Gruppen per debugfs fallocate in 1-GiB-Dateien unter /fill, 7 schreibt 2 GiB - 1 in die oberen Gruppen (8 mit --k-boundary
+nur den letzten Abschnitt per Seek) und fuellt bis ENOSPC.
 Nach jedem Lauf e2fsck -fn und dumpe2fs -h auf einer sparse RAW-Kopie. Exit 0 nur bei Go (Spec Abschnitt 5),
 1 bei No-Go, 2 wenn Werkzeuge fehlen (offen, nie bestanden). Der Arbeitsordner muss neu sein.
 """
@@ -30,6 +33,9 @@ GIB = 1024 * MIB
 RESULT = re.compile(r"^STORAGE_ROOT (?!DONE|COUNTERS)(\S+) (PASS|FAIL)\b", re.MULTILINE)
 COUNTERS = re.compile(r"^STORAGE_ROOT COUNTERS (\S+) free_blocks=(\d+) free_inodes=(\d+) r_blocks=(\d+) state=(\d+)", re.MULTILINE)
 ABORT_DELAYS = (0.3, 2.0, 7.0, 20.0)
+# Frei bleiben die obersten Gruppen fuer k (2 GiB - 1) und etwas Luft fuer Verzeichnisse und l1/l2.
+HIGH_GROUP_FREE = 2 * GIB + 256 * MIB
+FILL_FILE_BLOCKS = GIB // 4096
 # Spec Abschnitt 6, Punkt 4: waechst das qcow2 ueber 16 GiB oder faellt der freie Hostplatz unter 10 GiB, wirkt die
 # Nullenerkennung nicht; Abbruch als Befund, kein Go.
 QCOW2_LIMIT = 16 * GIB
@@ -159,6 +165,49 @@ def watch_space(ctx: Context, image: Path, process: subprocess.Popen, stop: thre
             return
 
 
+def prefill_commands(free_blocks: int, keep_bytes: int = HIGH_GROUP_FREE) -> list[str]:
+    """debugfs-Befehle: /fill mit Dateien zu je 1 GiB (letzte kleiner), zusammen alle freien Bloecke ausser keep_bytes."""
+    remaining = free_blocks - keep_bytes // 4096
+    if remaining <= 0:
+        raise ValueError(f"zu wenig freie Bloecke fuer die Vorbelegung: {free_blocks}")
+    commands = ["mkdir fill", "cd fill"]
+    index = 0
+    while remaining > 0:
+        blocks = min(FILL_FILE_BLOCKS, remaining)
+        name = f"f{index:04d}"
+        commands += ["write /dev/null " + name, f"fallocate {name} 0 {blocks - 1}", f"sif {name} size {blocks * 4096}"]
+        remaining -= blocks
+        index += 1
+    return commands
+
+
+def free_blocks_of(dumpe2fs: str, image: Path) -> int:
+    result = subprocess.run([dumpe2fs, "-h", str(image)], capture_output=True, text=True, check=True)
+    value = parse_dumpe2fs(result.stdout).get("free_blocks")
+    if not isinstance(value, int):
+        raise ValueError("dumpe2fs lieferte keine Free blocks")
+    return value
+
+
+def high_group_run(ctx: "Context", boundary: bool) -> None:
+    """32/128 GiB: Format im Gast, Vorbelegung am Host, dann k und ENOSPC im Gast; RAW-Image, damit debugfs direkt arbeitet."""
+    root = ctx.work / "root.raw"
+    with root.open("xb") as image:
+        image.truncate(ctx.args.size * GIB)
+    if run_to_done(ctx, "lauf6", 6, root, "raw") is None or not ctx.go:
+        return
+    started = time.monotonic()
+    script = ctx.work / "prefill.debugfs"
+    script.write_text("\n".join(prefill_commands(free_blocks_of(ctx.args.dumpe2fs, root))) + "\n", encoding="ascii")
+    done = subprocess.run([ctx.args.debugfs, "-w", "-f", str(script), str(root)], capture_output=True, text=True)
+    (ctx.work / "prefill.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
+    ctx.note(f"Vorbelegung debugfs Exit {done.returncode}, {time.monotonic() - started:.0f} s, frei danach "
+             f"{free_blocks_of(ctx.args.dumpe2fs, root) * 4096 / GIB:.2f} GiB", done.returncode == 0)
+    if not ctx.go or fsck(ctx, root, "nach-vorbelegung") != 0:
+        return
+    clean_run(ctx, "lauf8" if boundary else "lauf7", 8 if boundary else 7, root, "raw")
+
+
 def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str = "qcow2") -> str | None:
     """Ein Lauf bis STORAGE_ROOT DONE und Gastende; liefert das serielle Protokoll oder None bei Haenger."""
     process, directory = boot(ctx, name, run, root, root_format)
@@ -254,7 +303,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True, help="neuer Arbeitsordner (darf nicht existieren)")
-    parser.add_argument("--size", type=int, choices=[32, 128], required=True, help="Root-Platte in GiB")
+    parser.add_argument("--size", type=int, choices=[2, 32, 128], required=True,
+                        help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
+    parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
+    parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
     parser.add_argument("--timeout", type=float, default=3600, help="Sekunden je Lauf bis STORAGE_ROOT DONE")
     parser.add_argument("--e2fsck", default="e2fsck")
@@ -263,19 +315,25 @@ def main() -> int:
     args = parser.parse_args()
     if not args.iso.is_file():
         sys.exit(f"ISO nicht gefunden: {args.iso}")
-    missing = [name for name in (args.e2fsck, args.dumpe2fs) if not shutil.which(name)]
+    missing = [name for name in (args.e2fsck, args.dumpe2fs, args.debugfs) if not shutil.which(name)]
     if missing:
         print(f"offen: {', '.join(missing)} fehlt; nichts gestartet, nicht bestanden", file=sys.stderr)
         return 2
-    args.e2fsck, args.dumpe2fs = shutil.which(args.e2fsck), shutil.which(args.dumpe2fs)
+    args.e2fsck, args.dumpe2fs, args.debugfs = shutil.which(args.e2fsck), shutil.which(args.dumpe2fs), shutil.which(args.debugfs)
     args.iso = args.iso.resolve()
     ctx = Context(args, new_work_dir(args.work.resolve()))
 
-    root = ctx.work / "root.qcow2"
-    ctx.qemu_img("create", "-f", "qcow2", str(root), f"{args.size}G")
     ctx.qemu_img("create", "-f", "qcow2", str(ctx.work / "fat.qcow2"), "64M")
     inodes = ctx.work / "inodes.qcow2"
     ctx.qemu_img("create", "-f", "qcow2", str(inodes), "1G")
+    if args.size != 2:
+        high_group_run(ctx, args.k_boundary)
+        verdict = "Go (Hochgruppenlauf)" if ctx.go else "No-Go"
+        ctx.note(f"ERGEBNIS {args.size} GiB: {verdict}; kein Stromausfall-Beleg (Spec Abschnitt 1)")
+        (ctx.work / "bericht.txt").write_text("\n".join(ctx.report) + "\n", encoding="utf-8")
+        return 0 if ctx.go else 1
+    root = ctx.work / "root.qcow2"
+    ctx.qemu_img("create", "-f", "qcow2", str(root), f"{args.size}G")
 
     if clean_run(ctx, "lauf1", 1, root):
         raw = ctx.raw_copy(inodes, "inodes")

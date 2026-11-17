@@ -59,7 +59,10 @@ internal static class CosmosExt2RootProbe
         {
             Begin("select");
             int run = ReadControl();
-            IBlockDevice root = FindDevice(RootDeviceName, size => size == 32 * GiB || size == 128 * GiB, "32 oder 128 GiB");
+            // Laeufe 1-5 auf 2 GiB, Hochgruppenlauf 6-8 auf 32/128 GiB (Leitungsentscheid 19:02, Vollfuellung zu langsam).
+            IBlockDevice root = run <= 5
+                ? FindDevice(RootDeviceName, size => size == 2 * GiB, "2 GiB")
+                : FindDevice(RootDeviceName, size => size == 32 * GiB || size == 128 * GiB, "32 oder 128 GiB");
             Pass($"Lauf {run}, {RootDeviceName} {root.BlockCount * root.BlockSize / GiB} GiB");
             switch (run)
             {
@@ -67,7 +70,9 @@ internal static class CosmosExt2RootProbe
                 case 2: RunSecond(root); break;
                 case 3: RunHardAbort(root); break;
                 case 4: RunAfterAbort(root); break;
-                default: RunAfterRepair(root); break;
+                case 5: RunAfterRepair(root); break;
+                case 6: RunFormatOnly(root); break;
+                default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
             Write("DONE");
@@ -122,8 +127,7 @@ internal static class CosmosExt2RootProbe
         StepH(root, files);
         StepI(root, files);
         StepJ(root);
-        StepK(root);
-        StepL(root, files);
+        StepL(root, files, null);
         StepI2(inodes);
         Verify(root, 1, "verify1");
         StepM(root);
@@ -216,6 +220,39 @@ internal static class CosmosExt2RootProbe
 
         Pass("100 Dateien");
         AfterPhase(root);
+        StepM(root);
+    }
+
+    /// <summary>Hochgruppenlauf, Teil 1: nur formatieren; danach belegt der Host die unteren Gruppen per debugfs fallocate.</summary>
+    private static void RunFormatOnly(IBlockDevice root)
+    {
+        Begin("format6");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        Check(GateOf(root) == Ext2MountDecision.Ok && ReadState(root) == 1, $"Gate {GateOf(root)}, s_state {ReadState(root)} nach Format");
+        root.Flush();
+        Pass("Format 4 KiB, Gate Ok, s_state 1");
+    }
+
+    /// <summary>
+    /// Hochgruppenlauf, Teil 2: die unteren Gruppen hat der Host belegt (/fill); k schreibt 2 GiB - 1 in die oberen Gruppen
+    /// (oder nur die Grenze per Seek, Lauf 8), danach l1/l2 bis ENOSPC und sauberes Herunterfahren.
+    /// </summary>
+    private static void RunHighGroups(IBlockDevice root, bool fullBig)
+    {
+        OpenExisting(root, mountEfi: false);
+        // Der Host belegt in 1-GiB-Dateien: eine einzelne Datei ueber 2 GiB braeuchte large_file, das Gate lehnte es ab.
+        Check(Directory.Exists("/fill"), "/fill der Host-Vorbelegung fehlt");
+        long filled = 0;
+        foreach (string entry in Directory.GetFiles("/fill")) filled += new FileInfo(entry).Length;
+        Write($"open INFO /fill {filled} Byte vorbelegt");
+        if (fullBig) StepK(root);
+        else StepKBoundary(root);
+        var files = Files();
+        Directory.CreateDirectory("/l2ziel");
+        var target = new RootProbeEntry("/l2ziel/datei", "/l2ziel/datei", "d", 65536);
+        WriteGenerated(target.Path, target.Source, target.Seed, target.Length);
+        StepL(root, files, target);
         StepM(root);
     }
 
@@ -521,8 +558,44 @@ internal static class CosmosExt2RootProbe
     {
         Begin("k");
         Directory.CreateDirectory("/k");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         WriteGenerated(RootProbeCatalog.BigPath, RootProbeCatalog.BigPath, "k", RootProbeCatalog.BigLength);
+        Write($"k INFO 2 GiB - 1 geschrieben in {clock.Elapsed.TotalSeconds:F0} s");
         Check(Matches(RootProbeCatalog.BigPath, new RootProbeEntry(RootProbeCatalog.BigPath, RootProbeCatalog.BigPath, "k", RootProbeCatalog.BigLength)), "2 GiB - 1 weicht ab");
+        Write($"k INFO geschrieben und gelesen in {clock.Elapsed.TotalSeconds:F0} s");
+        FinishBig(root, "2 GiB - 1 lesbar");
+    }
+
+    /// <summary>k verkuerzt (Lauf 8, Leitungsentscheid 19:02): nur der letzte Block vor der 2-GiB-Grenze per Seek, nicht der ganze Inhalt.</summary>
+    private static void StepKBoundary(IBlockDevice root)
+    {
+        Begin("k");
+        Directory.CreateDirectory("/k");
+        // Beginn eines 4-KiB-Abschnitts, damit RootProbeContent.Fill ab hier den Inhalt der vollen Datei liefert.
+        long start = (RootProbeCatalog.BigLength / RootProbeContent.ChunkSize - 1) * RootProbeContent.ChunkSize;
+        byte[] tail = new byte[RootProbeCatalog.BigLength - start];
+        RootProbeContent.Fill("k", RootProbeCatalog.BigPath, start, tail);
+        using (var stream = new FileStream(RootProbeCatalog.BigPath, FileMode.CreateNew, FileAccess.Write))
+        {
+            Check(stream.Seek(start, SeekOrigin.Begin) == start, "Seek vor die 2-GiB-Grenze gescheitert");
+            stream.Write(tail, 0, tail.Length);
+        }
+
+        byte[] read = new byte[tail.Length];
+        using (var stream = new FileStream(RootProbeCatalog.BigPath, FileMode.Open, FileAccess.Read))
+        {
+            Check(stream.Seek(start, SeekOrigin.Begin) == start, "Seek beim Lesen gescheitert");
+            int total = 0, got;
+            while (total < read.Length && (got = stream.Read(read, total, read.Length - total)) > 0) total += got;
+            Check(total == read.Length && read.AsSpan().SequenceEqual(tail), "letzter Abschnitt vor 2 GiB weicht ab");
+        }
+
+        FinishBig(root, "letzter Abschnitt vor 2 GiB per Seek lesbar");
+    }
+
+    /// <summary>Gemeinsamer Abschluss von k: Laenge 2 GiB - 1, ein weiteres Byte abgelehnt, large_file bleibt aus.</summary>
+    private static void FinishBig(IBlockDevice root, string what)
+    {
         bool refused = false;
         try
         {
@@ -540,11 +613,12 @@ internal static class CosmosExt2RootProbe
         Write($"k INFO Anhaengen {(refused ? "IOException" : "ohne Ausnahme")}, Laenge danach {length}, ro_compat 0x{roCompat:X}");
         Check(length == RootProbeCatalog.BigLength, $"Laenge {length}: 2 GiB - 1 still ueberschritten");
         Check((roCompat & 2) == 0 && GateOf(root) != Ext2MountDecision.Reject, $"large_file gesetzt (ro_compat 0x{roCompat:X})");
-        Pass("2 GiB - 1 lesbar, Anhaengen abgelehnt, large_file aus");
+        Pass(what + ", Anhaengen abgelehnt, large_file aus");
         AfterPhase(root);
     }
 
-    private static void StepL(IBlockDevice root, FileService files)
+    /// <param name="target">Datei fuer l2; null = Integritaetsdatei aus d (Lauf 1).</param>
+    private static void StepL(IBlockDevice root, FileService files, RootProbeEntry? target)
     {
         Begin("l1");
         Directory.CreateDirectory("/l");
@@ -563,7 +637,7 @@ internal static class CosmosExt2RootProbe
         Begin("l2");
         FillUntilFull("/l/y", FillFileMiB * IoChunk, 0);
         FillUntilFull("/l/t", SmallFill, 0);
-        var target = new RootProbeEntry(RootProbeCatalog.FullReplaceTarget, RootProbeCatalog.FullReplaceTarget, "d", 65536);
+        target ??= new RootProbeEntry(RootProbeCatalog.FullReplaceTarget, RootProbeCatalog.FullReplaceTarget, "d", 65536);
         var replaced = files.WriteBytes(target.Path, new byte[2 * 65536]);
         Check(!replaced.IsOK(), "Ersetzen bei vollem Datentraeger gelang");
         Check(Matches(target.Path, target), "Original nach fehlgeschlagenem Ersetzen veraendert");
@@ -735,7 +809,7 @@ internal static class CosmosExt2RootProbe
         string text = Encoding.ASCII.GetString(sector);
         Check(text.StartsWith(ControlPrefix, StringComparison.Ordinal), "Steuerplatte ohne Kennung; nichts geschrieben");
         int run = text[ControlPrefix.Length] - '0';
-        Check(run is >= 1 and <= 5, "Lauf ausserhalb 1..5; nichts geschrieben");
+        Check(run is >= 1 and <= 8, "Lauf ausserhalb 1..8; nichts geschrieben");
         return run;
     }
 

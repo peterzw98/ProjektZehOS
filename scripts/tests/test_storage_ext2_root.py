@@ -73,6 +73,20 @@ class Ext2RootHostTests(unittest.TestCase):
             self.assertIn(f'bus=ahci.{port}', joined)
         self.assertIn('detect-zeroes=unmap', joined)
 
+    def test_prefill_commands_one_gib_files(self):
+        free = 8 * root.GIB // 4096
+        commands = root.prefill_commands(free)
+        self.assertEqual(commands[:2], ['mkdir fill', 'cd fill'])
+        sizes = [int(c.split()[-1]) for c in commands if c.startswith('sif ')]
+        # Jede Datei hoechstens 1 GiB (kein large_file), zusammen alles ausser dem Hochgruppenrest.
+        self.assertTrue(all(size <= root.GIB for size in sizes))
+        self.assertEqual(sum(sizes), free * 4096 - root.HIGH_GROUP_FREE)
+        self.assertIn('fallocate f0000 0 262143', commands)
+
+    def test_prefill_commands_too_small(self):
+        with self.assertRaises(ValueError):
+            root.prefill_commands(root.HIGH_GROUP_FREE // 4096)
+
 
 if __name__ == '__main__':
     unittest.main()

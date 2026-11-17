@@ -17,8 +17,8 @@ internal static class RootProbeCatalog
 {
     internal const int DFiles = 10000;
     internal const int DDirectories = 10;
-    internal const long SixteenMiB = 16L * 1024 * 1024;
-    internal static readonly long[] DSizes = [0, 1, 4095, 4096, 4097, 65536, 1048576];
+    // 2-GiB-Root fuer die Laeufe 1-5 (Leitungsentscheid 19:02): Groessen nur bis 64 KiB, zusammen ~0,2 GB.
+    internal static readonly long[] DSizes = [0, 1, 4095, 4096, 4097, 65536];
     // Cosmos 3.0.97 liest je Verzeichnis hoechstens 8192 Records ('.' und '..' eingeschlossen, MaxParseIters); Schritt e
     // bleibt deshalb unter der Grenze, die Grenze selbst prueft Schritt e-limit (Leitungsentscheid 16:39).
     internal const int EEntries = 8000;
@@ -32,7 +32,7 @@ internal static class RootProbeCatalog
     internal const int HCount = 2000;
     internal const int HRun2 = 500;
     internal const int JReadFiles = 50;
-    /// <summary>2 GiB - 1 Byte: groesste Datei ohne large_file (Schritt k).</summary>
+    /// <summary>2 GiB - 1 Byte: groesste Datei ohne large_file (Schritt k, nur im Hochgruppenlauf 32/128 GiB).</summary>
     internal const long BigLength = int.MaxValue;
     internal const string BigPath = "/k/big";
     /// <summary>Ziel des Ersetzens bei vollem Datentraeger (l2): eine 64-KiB-Datei aus d.</summary>
@@ -41,7 +41,7 @@ internal static class RootProbeCatalog
 
     public static string DPath(int index) => $"/d/d{index / (DFiles / DDirectories):D2}/f{index:D4}";
 
-    public static long DLength(int index) => index % 2500 == 1234 ? SixteenMiB : DSizes[index % DSizes.Length];
+    public static long DLength(int index) => DSizes[index % DSizes.Length];
 
     public static string EName(int index) => $"/e/e{index:D5}";
 
@@ -118,8 +118,6 @@ internal static class RootProbeCatalog
         yield return Same("/i/a", "i", 13);
 
         for (int index = 0; index < JReadFiles; index++) yield return Same($"/j/c/r{index:D2}", "j", 4096);
-
-        yield return Same(BigPath, "k", BigLength);
     }
 
     private static RootProbeEntry Same(string path, string seed, long length) => new(path, path, seed, length);
