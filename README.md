@@ -170,6 +170,8 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 8190 direkte Einträge, einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
 
+Die Eintragsprüfung gilt für den Dateidienst (FileService). Direkte interne Schreibzugriffe, etwa des Paketbestands oder der Desktop-Einstellungen, sind davon nicht erfasst; sie ist deshalb keine harte Dateisystemgarantie.
+
 Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
 
 ## Entwicklungsplan
