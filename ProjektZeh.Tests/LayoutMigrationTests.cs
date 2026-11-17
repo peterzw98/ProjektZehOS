@@ -198,6 +198,80 @@ public sealed class LayoutMigrationTests
         finally { Directory.Delete(targetRoot, true); }
     }
 
+    // Review peter-review P3-f (4.5): Abbruch ueber das Token mitten im Kopieren einer Datei, danach Wiederholung.
+    [TestMethod]
+    public void RealFileTargetRepeatsAMigrationCancelledInsideWriteFile()
+    {
+        StandardSource();
+        string before = SourceHash();
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-cancel-migration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(targetRoot);
+        try
+        {
+            foreach (string path in LayoutMigration.InstallerEntries)
+                if (path != LayoutMarker.Path) Directory.CreateDirectory(Path.Combine(targetRoot, path[1..].Replace('/', Path.DirectorySeparatorChar)));
+            File.WriteAllText(Path.Combine(targetRoot, "etc", "zehos", ".zehos-layout"), new LayoutMarker(LayoutState.Fresh, Disk).Serialize());
+            var real = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess, (_, _) => ResultErr.CreateSuccess());
+            var sourceLock = new Lock();
+            using var cancellation = new CancellationTokenSource();
+            var cancelling = new CancelInsideWrite(real, cancellation);
+
+            var first = LayoutMigration.Run(source, cancelling, () => sourceLock.Take(), log.Add, cancellation: cancellation.Token);
+
+            Assert.IsFalse(first.IsOK());
+            Assert.IsTrue(cancelling.Cancelled, "Das Token wurde erst waehrend eines WriteFile ausgeloest.");
+            Assert.IsTrue(Directory.EnumerateFiles(targetRoot, "*" + IMigrationTarget.TemporarySuffix, SearchOption.AllDirectories).Any(),
+                "Der Abbruch traf eine halb geschriebene Temp-Datei.");
+            var second = LayoutMigration.Run(source, real, () => sourceLock.Take(), log.Add);
+            Assert.IsTrue(second.IsOK(), second.Status.Message + "\n" + string.Join("\n", log));
+            using (var reader = new StreamReader(real.ReadBack(LayoutMarker.Path).Value!))
+                Assert.AreEqual(LayoutState.Ready, LayoutMarker.Parse(reader.ReadToEnd()).Value!.State);
+            Assert.IsFalse(Directory.EnumerateFiles(targetRoot, "*", SearchOption.AllDirectories).Any(path =>
+                path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) || path.EndsWith(IMigrationTarget.TemporarySuffix, StringComparison.Ordinal)));
+            Assert.AreEqual(before, SourceHash());
+            Assert.AreEqual(2, sourceLock.Released);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
+    /// <summary>Gibt beim ersten Dateiinhalt ein Byte weiter und loest dann das Token aus; der naechste Read wirft im Kopieren.</summary>
+    private sealed class CancelInsideWrite(IMigrationTarget inner, CancellationTokenSource cancellation) : IMigrationTarget
+    {
+        public bool Cancelled { get; private set; }
+        public ResultErr CreateDirectory(string path) => inner.CreateDirectory(path);
+        public ResultErr WriteFile(string path, Stream content) =>
+            inner.WriteFile(path, Cancelled || path == LayoutMarker.Path ? content : new Trickle(content, this));
+        public ResultErr AppendJournal(string line, bool flush) => inner.AppendJournal(line, flush);
+        public ResultErr Delete(string path) => inner.Delete(path);
+        public ResultObject<Stream> ReadBack(string path) => inner.ReadBack(path);
+        public ResultObject<string[]> List() => inner.List();
+        public ResultObject<long> FreeBytes() => inner.FreeBytes();
+        public ResultObject<long> FreeInodes() => inner.FreeInodes();
+        public ResultErr Sync() => inner.Sync();
+
+        private sealed class Trickle(Stream content, CancelInsideWrite owner) : Stream
+        {
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int read = content.Read(buffer, offset, Math.Min(count, 1));
+                if (!owner.Cancelled) { owner.Cancelled = true; owner.Cancel(); }
+                return read;
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+
+        private void Cancel() => cancellation.Cancel();
+    }
+
     [TestMethod]
     public void SourceFileCollidingWithTheBackupSuffixConflictsBeforeWriting()
     {
