@@ -129,15 +129,18 @@ internal sealed class VirtualFileOperations(Func<ResultObject<byte[]>> produce) 
 
     private ResultObject<SystemInfoFile> Snapshot() => snapshot ??= SystemInfoFile.Open(produce);
 
+    // Fehler als 0 (EOF) wie die Cosmos-Treiber: VfsFileHandle addiert den Rueckgabewert auf die Position, -1 waere dort
+    // eine gueltige Laenge. Die Ursache sieht FileService direkt im Erzeuger, nicht ueber diesen Weg.
     public long Read(IVfsOpenFile openFile, Span<byte> buffer)
     {
         var file = Snapshot();
-        if (!file.IsOK()) return -1;
+        if (!file.IsOK()) return 0;
         var read = file.Value!.Read(openFile.Position, buffer);
-        return read.IsOK() ? read.Value : -1;
+        return read.IsOK() ? read.Value : 0;
     }
 
-    public long Write(IVfsOpenFile openFile, ReadOnlySpan<byte> buffer) => -1;
+    // /proc und /sys sind schreibgeschuetzt eingehaengt; Cosmos lehnt das Schreiben dort schon vorher ab.
+    public long Write(IVfsOpenFile openFile, ReadOnlySpan<byte> buffer) => 0;
 
     /// <summary>Jede nichtnegative Position ist erlaubt, auch hinter EOF; Read liefert dort 0 (Spec §2).</summary>
     public bool Seek(IVfsOpenFile openFile, long offset, SeekWhence whence, out long newPosition)
@@ -169,23 +172,27 @@ internal sealed class VirtualDeviceOperations(string path) : IFileOperations
 
     public long Read(IVfsOpenFile openFile, Span<byte> buffer)
     {
-        if (handle is null) return -1;
+        if (handle is null) return 0;
         var read = handle.Read(buffer);
-        return read.IsOK() ? read.Value : -1;
+        return read.IsOK() ? read.Value : 0;
     }
 
-    /// <summary>Nur /dev/null verwirft Daten; /dev/zero ist nach Spec §1 nur lesbar.</summary>
+    /// <summary>Beide Geraete verwerfen wie unter Linux; Nutzerpfade auf /dev/zero lehnt FileService (Spec §1) schon vorher ab.</summary>
     public long Write(IVfsOpenFile openFile, ReadOnlySpan<byte> buffer)
     {
-        if (handle is null || !string.Equals(path, "/dev/null", StringComparison.Ordinal)) return -1;
+        if (handle is null) return 0;
         var written = handle.Write(buffer);
-        return written.IsOK() ? written.Value : -1;
+        return written.IsOK() ? written.Value : 0;
     }
 
+    /// <summary>Geraete haben keine Laenge: End rechnet ab 0; jede nichtnegative Position ist erlaubt.</summary>
     public bool Seek(IVfsOpenFile openFile, long offset, SeekWhence whence, out long newPosition)
     {
-        newPosition = whence == SeekWhence.Set ? offset : openFile.Position + offset;
-        return newPosition >= 0;
+        long basis = whence == SeekWhence.Cur ? openFile.Position : 0;
+        newPosition = openFile.Position;
+        if ((offset > 0 && basis > long.MaxValue - offset) || basis + offset < 0) return false;
+        newPosition = basis + offset;
+        return true;
     }
 
     public bool Fsync(IVfsOpenFile openFile) => true;

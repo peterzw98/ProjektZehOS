@@ -367,18 +367,19 @@ public sealed class Kernel : Sys.Kernel
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
     }
 
-    /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; der erste Fehler bricht ab.</summary>
+    /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
+    /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>
     private ResultErr MountVirtualFiles()
     {
+        var failed = new System.Collections.Generic.List<string>();
         foreach (var (name, root, flags) in new[] { ("zehos-proc", "/proc", MountFlags.ReadOnly), ("zehos-sys", "/sys", MountFlags.ReadOnly), ("zehos-dev", "/dev", MountFlags.None) })
         {
-            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce)))
-                return ResultErr.CreateFailure(ResultCode.Failure, $"cause='RegisterFailed' message='{name} nicht registriert.'");
-            if (!VfsManager.TryMount(name, "", flags, root, out _))
-                return ResultErr.CreateFailure(ResultCode.Failure, $"cause='MountFailed' message='{root} nicht eingehaengt.'");
+            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce))) failed.Add(name + " nicht registriert");
+            else if (!VfsManager.TryMount(name, "", flags, root, out _)) failed.Add(root + " nicht eingehaengt");
         }
 
-        return ResultErr.CreateSuccess();
+        return failed.Count == 0 ? ResultErr.CreateSuccess()
+            : ResultErr.CreateFailure(ResultCode.Failure, $"cause='MountFailed' message='{string.Join(", ", failed)}.'");
     }
 
     private long GetElapsedMilliseconds()

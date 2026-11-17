@@ -13,6 +13,8 @@ Stand: 17. November 2026, Basis `origin/master` @ `0a5547e` (E5a/E6a-Hostlogik #
 7. **Cosmos-Treiber jetzt** (Leitung 12:07): der Plan verlangt „alles als Datei“ – Verzeichnisse und `stat` über dieselbe Dateischnittstelle, `/proc/mounts` mit den virtuellen Mounts selbst, `ls /` im `Root`-Profil, spätere Verbraucher außerhalb `FileService`. Der Treiber lehnt jede Mutation selbst ab (`Create`, `Mkdir`, `Unlink`, `Rmdir`, `Rename`, `SetAttr`, `Symlink`, `Write` außer `/dev/null`). Die drei Einstiege aus §0.5 ersetzen die zuvor erwogene Allowlist im Pfadwächter (Leitung 12:07: sicherer, Pipeline unverändert).
 8. **Kopieren, Prüfsumme und `pkg install-local` nehmen nur reguläre Dateien als Quelle** (Typprüfung per `FileTypeMask`), unabhängig vom Pfad (Leitung 12:06).
 
+**Regel für künftige Verbraucher (huang, Review des Adapters):** Der Cosmos-Treiber kennt keine ZehOS-Konten; wer `/proc`, `/sys` oder `/dev` über `System.IO` liest, umgeht die Rechte aus §1 (etwa `/proc/log` nur für Administratoren). Neue Verbraucher lesen deshalb über `FileService` (`ReadVirtual`/`ListVirtual`/`WriteNull`); Paket-Apps erreichen die Bäume nicht (G7).
+
 ## 1. Dateien und Rechte
 
 | Pfad | Quelle (E5a/E6a) | Modus (`VfsMode`) | Lesen | Schreiben |
@@ -90,7 +92,7 @@ Shell und Dateimanager navigieren über `FileService.CurrentDirectory`/`ResolveP
 7. `ReadVirtual` liest aus dem Erzeuger auch dann, wenn unter Root eine gleichnamige Datei `/proc/version` liegt (Mount fehlgeschlagen).
 
 **Gasttests (QEMU, dann VMware; Ansage, ein Gast):**
-- G1 `ls /proc`, `cat /proc/version` (Version = Build), `cat /proc/meminfo` (frei ≤ gesamt).
+- G1 `ls /proc`, `cat /proc/version` (Version = Build), `cat /proc/meminfo` (frei ≤ gesamt); keine Zeile `Error VirtualFiles` im seriellen Protokoll.
 - G2 `cat /proc/mounts` zeigt `/data`, `/proc`, `/sys`, `/dev` mit Schreibschutz-Spalte.
 - G3 `cat /proc/log` als Benutzer verweigert, als Admin ohne MAC-Adressen, Befehle oder Pfade (Gegenprobe mit Netzwerk aktiv).
 - G4 `rm`, `mv`, `mkdir`, Schreiben unter `/proc` und `/sys` ⇒ abgelehnt, Shell bleibt bedienbar.
