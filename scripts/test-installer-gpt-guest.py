@@ -9,6 +9,7 @@ import errno
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -75,15 +76,29 @@ def check_tool(name: str, *arguments: str) -> None:
         raise RuntimeError(f"{name} meldet Fehler {result.returncode}: {result.stdout} {result.stderr}")
 
 
+def check_gpt(image: Path) -> None:
+    result = subprocess.run(["sgdisk", "-v", str(image)], capture_output=True, text=True, check=False)
+    if result.returncode or "No problems found" not in result.stdout or "warning" in (result.stdout + result.stderr).lower():
+        raise RuntimeError("sgdisk meldet Fehler oder Warnungen: " + result.stdout + result.stderr)
+
+
+def check_ext2(image: Path) -> None:
+    result = subprocess.run(["e2fsck", "-fn", str(image)], capture_output=True, text=True, check=False)
+    output = result.stdout + result.stderr
+    # -n kann trotz nicht behobener Fehler Exit 0 liefern; die Ausgabe ist Teil der Pruefung.
+    if result.returncode or re.search(r"fix\?\s*no|wrong|corrupt|error|warning|unexpected|not clean", output, re.IGNORECASE):
+        raise RuntimeError("e2fsck meldet Fehler oder Warnungen: " + output)
+
+
 def inspect_g8(image: Path, work: Path, payload: Path, version: str, config: Path) -> None:
-    check_tool("sgdisk", "-v", str(image))
+    check_gpt(image)
     result = subprocess.run(["sfdisk", "-J", str(image)], capture_output=True, text=True, check=True)
     esp, root = partitions(json.loads(result.stdout), image.stat().st_size)
     esp_image, root_image = work / "esp.img", work / "root.img"
     extract_sparse(image, esp["start"] * SECTOR, esp["size"] * SECTOR, esp_image)
     extract_sparse(image, root["start"] * SECTOR, root["size"] * SECTOR, root_image)
     check_tool("fsck.fat", "-n", str(esp_image))
-    check_tool("e2fsck", "-fn", str(root_image))
+    check_ext2(root_image)
     expected = {"/EFI/BOOT/BOOTX64.EFI": (payload / "BOOTX64.EFI").read_bytes(),
                 "/boot/ProjektZeh.elf": (payload / "ProjektZeh.elf").read_bytes(),
                 "/boot/ProjektZeh.elf.bak": (payload / "ProjektZeh.elf").read_bytes(),

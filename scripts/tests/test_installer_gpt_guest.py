@@ -47,6 +47,20 @@ class PartitionTests(unittest.TestCase):
             guest.partitions(data, 8192 * 512)
 
 
+class OfflineCheckTests(unittest.TestCase):
+    def test_e2fsck_exit_zero_with_unfixed_error_fails(self):
+        result = mock.Mock(returncode=0, stdout="Free blocks count wrong. Fix? no\n", stderr="")
+        with mock.patch.object(guest.subprocess, "run", return_value=result):
+            with self.assertRaises(RuntimeError):
+                guest.check_ext2(Path("root.img"))
+
+    def test_sgdisk_exit_zero_with_warning_fails(self):
+        result = mock.Mock(returncode=0, stdout="Warning: problem found", stderr="")
+        with mock.patch.object(guest.subprocess, "run", return_value=result):
+            with self.assertRaises(RuntimeError):
+                guest.check_gpt(Path("disk.img"))
+
+
 class ExtractTests(unittest.TestCase):
     def test_window_and_existing_target(self):
         with tempfile.TemporaryDirectory() as directory:
