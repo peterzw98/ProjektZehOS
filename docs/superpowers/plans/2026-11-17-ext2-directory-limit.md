@@ -26,7 +26,7 @@
 - [x] FileService-Grenztests zuerst rot ausfuehren; optionalen Callback und Pruefungen an allen Erzeugungspfaden implementieren; Tests gruen.
 - [x] Migrationstests fuer 8190/8191 und getrennte Ordner zuerst rot, dann Quellzaehlung implementieren; Ziel bleibt bei Konflikt unangetastet.
 - [x] Cosmos-Adapter und produktive Callback-Weitergabe; nativer Build und isolierte Gastpruefung.
-- [ ] Bediengrenze dokumentieren, vollstaendige Hosttests und unabhaengiges Review, Version/PR nach aktueller Zielversion.
+- [x] Bediengrenze dokumentieren, vollstaendige Hosttests und unabhaengiges Review, Version/PR nach aktueller Zielversion.
 
 ## Arbeitsstand
 
@@ -34,4 +34,4 @@ Lokale Testdelegation versuchte OpenCode/Ollama, scheiterte vor einer Aenderung 
 
 13 gezielte Tests gruen nach den roten FileService-/Migrationsproben. Unabhaengiger Review fand eine Zielverdichtung durch die Desktop-Konfiguration; der zusaetzliche Regressionstest reproduzierte das rot. Zielzaehlung ergaenzt, Nachreview ohne offene Befunde. Vollstaendige Hosttests: 1041 bestanden, 3 plattformbedingt uebersprungen. Nach master-Integration 40 gezielte Datei-/Migrations-/Konten-/TLS-Tests bestanden; normaler nativer Release-Build sowie Storage-Probe-Build erfolgreich (je 0 Warnungen/Fehler). QEMU-TCG auf neuen isolierten 72/64-MiB-Images: 20+9 PASS, Nur-Lese-Image bitgleich. Gastgrenze 2 prueft den Pfad, nicht einen echten 8190-Dateien-Bestand. e2fsck, VMware und Hardware offen.
 
-Abschlussreview durch peter-review auf 9ba5b1a: kein P1/P2. P3: Zaehlkosten O(n) je Anlegen (kein unsicherer Cache eingefuehrt; grosser Gast-Messlauf offen), kosmetischer Schraegstrich an der Quellwurzel bleibt, Geltungsbereich FileService in README ausdruecklich ergaenzt. Metadaten-Callback und MutationBlockedReason nach master-Merge erhalten. Reservierte Version 0.5.48.
+Abschlussreview durch peter-review auf 9ba5b1a: kein P1/P2. P3: Zaehlkosten O(n) je Anlegen (kein unsicherer Cache eingefuehrt; grosser Gast-Messlauf offen), kosmetischer Schraegstrich an der Quellwurzel bleibt, Geltungsbereich FileService in README ausdruecklich ergaenzt. Metadaten-Callback und MutationBlockedReason nach master-Merge erhalten. Normaler QEMU-TCG-Desktop: Boot, Einrichtung/Anmeldung, Terminal/Echo, Dateien/Einstellungen, Logout/erneute Anmeldung, Shell und Shutdown erfolgreich (201 s). [PR #189](https://github.com/peterzw98/ProjektZehOS/pull/189); nach master 0.5.49 und Reservierungen .50/.51 auf 0.5.52 angehoben.
