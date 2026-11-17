@@ -38,8 +38,11 @@ internal static class ReadOnlySelfTest
             int writes = device.Writes;
             int flushes = device.Flushes;
             var readOnly = new CosmosReadOnlyExt2FileSystem(device);
-            var failing = new CosmosReadOnlyExt2FileSystem(new FailingReadDevice());
-            Expect(!failing.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out _), "Lesefehler wird als Mountfehler zurueckgegeben");
+            foreach (Exception failure in new Exception[] { new IOException("Test-Lesefehler"), new ArgumentOutOfRangeException("blockNo"), new InvalidOperationException("Treiberfehler") })
+            {
+                var failing = new CosmosReadOnlyExt2FileSystem(new FailingReadDevice(failure));
+                Expect(!failing.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out _), "Lesefehler wird als Mountfehler zurueckgegeben: " + failure.GetType().Name);
+            }
             Expect(!readOnly.TryMount("0", MountFlags.ReadOnly, out _), "Source kann Lesegeraet nicht umgehen");
             Expect(!readOnly.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out _), "Schreibmount wird abgelehnt");
             Expect(!readOnly.TryFormat(ReadOnlySpan<char>.Empty, null), "Formatieren wird abgelehnt");
@@ -122,12 +125,12 @@ internal static class ReadOnlySelfTest
         public long Position { get; set; }
     }
 
-    private sealed class FailingReadDevice : IBlockDevice
+    private sealed class FailingReadDevice(Exception failure) : IBlockDevice
     {
         public ulong BlockSize => 512;
         public ulong BlockCount => 16384;
         public string Name => "io-error";
-        public void ReadBlock(ulong blockNo, ulong blockCount, Span<byte> data) => throw new IOException("Test-Lesefehler");
+        public void ReadBlock(ulong blockNo, ulong blockCount, Span<byte> data) => throw failure;
         public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data) => throw new InvalidOperationException("Kein Schreibzugriff erwartet.");
         public void Flush() => throw new InvalidOperationException("Kein Flush erwartet.");
     }

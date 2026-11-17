@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Ext2;
@@ -40,7 +39,7 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
             || device.BlockCount < 4 || device.BlockCount > (ulong)Ext2FeatureGate.MaximumBlocks * 8) return false;
         byte[] header = new byte[1024];
         try { device.ReadBlock(2, 2, header); }
-        catch (IOException) { return false; }
+        catch (Exception) { return false; }
         if (Ext2FeatureGate.Evaluate(header) == Ext2MountDecision.Reject) return false;
 
         var native = new Ext2FileSystemType(new CosmosReadOnlyBlockDevice(device));

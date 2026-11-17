@@ -160,10 +160,10 @@ public sealed class Ext2FeatureGateTests
     public void Evaluate_128GiBFormatterGeometry_IsOk()
     {
         byte[] header = Superblock();
-        BitConverter.TryWriteBytes(header.AsSpan(0, 4), 4194304u);
+        BitConverter.TryWriteBytes(header.AsSpan(0, 4), 8388608u);
         BitConverter.TryWriteBytes(header.AsSpan(4, 4), 33554432u);
         BitConverter.TryWriteBytes(header.AsSpan(32, 4), 2048u);
-        BitConverter.TryWriteBytes(header.AsSpan(40, 4), 256u);
+        BitConverter.TryWriteBytes(header.AsSpan(40, 4), 512u);
         Assert.AreEqual(Ext2MountDecision.Ok, Ext2FeatureGate.Evaluate(header));
     }
 }

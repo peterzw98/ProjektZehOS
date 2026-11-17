@@ -5,9 +5,9 @@ namespace ProjektZeh.Storage.Ext2;
 /// <summary>Result of the pre-mount feature check of an ext2 superblock.</summary>
 public enum Ext2MountDecision
 {
-    /// <summary>Every feature is known; read-write mount allowed.</summary>
+    /// <summary>Unterstützter Header; weitere Mount- und Rechteprüfungen bleiben erforderlich.</summary>
     Ok,
-    /// <summary>Only unknown compat/ro_compat bits: mount read-only at most.</summary>
+    /// <summary>Zustandsfehler oder unbekannte Compat-/RoCompat-Bits: höchstens lesend einhängen.</summary>
     ReadOnly,
     /// <summary>Not mountable: not a supported ext2 volume or unknown incompat bits.</summary>
     Reject,
