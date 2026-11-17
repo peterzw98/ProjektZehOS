@@ -110,7 +110,7 @@ Die CI misst die Zeilenabdeckung der im Hostbuild enthaltenen Produktivquellen u
 
 ```powershell
 dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --configuration Release --collect "Code Coverage;Format=cobertura" --results-directory TestResults
-python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.cobertura.xml)[0].FullName --min-total 90 --exclusions scripts/coverage-exclusions.txt
+python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.cobertura.xml)[0].FullName --min-total 92 --min-file 50 --exclusions scripts/coverage-exclusions.txt
 ```
 
 `scripts/coverage-exclusions.txt` nennt die wenigen Dateien, die nicht mitzählen, jeweils mit Grund. Die Abdeckung sagt nur, welche Zeilen ein Test ausführt; Kernelstart, Treiber und alle `Cosmos*`-Adapter sind darin nicht enthalten.

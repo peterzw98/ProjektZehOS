@@ -51,7 +51,7 @@ jobs:
         # Ohne Bericht liefert find nichts; das Skript meldet dann einen Eingabefehler statt 0 % durchzuwinken.
         run: >-
           python3 scripts/check-coverage.py "$(find TestResults -name '*.cobertura.xml' | head -n 1)"
-          --min-total 90 --min-file 0
+          --min-total 92 --min-file 50
           --exclusions scripts/coverage-exclusions.txt
           --summary "$GITHUB_STEP_SUMMARY"
 
