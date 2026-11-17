@@ -1,10 +1,10 @@
 # Größere Datenträger und Linux-ähnlicher Dateibaum
 
-Stand: 17. November 2026. Planungsentwurf; keine Speicheränderung implementiert oder im Gast geprüft.
+Stand: 17. November 2026. Umsetzung nach Merge von #117/#118 freigegeben; die erste Hostprüfung ergibt ein No-Go für den Cosmos-ext2-Formatierer. Keine Speicheränderung im Kernel aktiviert oder im Gast freigegeben. Aktuelle Belege: [Prüfbericht](../../STORAGE_3_0_97_FINDINGS.md).
 
 ## Auftrag und Entscheidungen
 
-- Beauftragt ist die Planung, nicht die Implementierung oder Formatierung bestehender Platten.
+- Ursprünglich beauftragt war die Planung; der Benutzer hat anschließend die Umsetzung freigegeben. Bestehende Platten dürfen weiterhin nicht formatiert werden.
 - Der Benutzer benötigt zunächst **32–128 GiB** große virtuelle Datenträger.
 - Technische Zielbasis ist auf ausdrücklichen Wunsch **Cosmos 3.0.97**; das laufende Update gehört einem separaten Arbeitsauftrag.
 - Gewünscht sind ein neuer Datenträger-Dateisystemkandidat, ein Linux-ähnlicher Baum mit `/etc`, `/var` usw. und das Prinzip „alles ist eine Datei“, ausdrücklich auch zum Anschauen von Cosmos-Systemdaten.
@@ -20,7 +20,7 @@ Linux-ähnlich bedeutet hier eine gemeinsame Dateischnittstelle und vertraute Ve
 
 ## Befund im Projekt
 
-Untersuchte Basis: `43da4aa`, ZehOS 0.3.7; die Projektdatei verweist dort noch auf Cosmos 3.0.94. Vor Umsetzung mit dem dann integrierten 3.0.97-Stand abgleichen.
+Erstrecherche: `43da4aa`, ZehOS 0.3.7, Cosmos 3.0.94. Umsetzungsbasis nach den Merges: `d443931`, ZehOS 0.5.6, Cosmos 3.0.97. Folgende Speicherpfade wurden dort erneut betrachtet; weitere Änderungen sind vor jeder Folgeetappe abzugleichen.
 
 - `Storage/CosmosStorageService.cs`: FAT unter `/data`, genau eine Partition. Nur `InitializeTestDisk` beschränkt die Einrichtung auf eine vollständig leere 64-MiB-Platte mit 512-Byte-Sektoren und MBR.
 - `scripts/start-qemu.ps1`: erzeugt bzw. akzeptiert derzeit genau das 64-MiB-Image `.tools/qemu/data-fat32.img`. Größere Datenträger brauchen einen gesonderten, expliziten Weg; das Bestandsimage darf nicht ersetzt werden.
