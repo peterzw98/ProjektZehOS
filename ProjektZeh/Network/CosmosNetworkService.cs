@@ -205,6 +205,9 @@ internal sealed class CosmosNetworkService : INetworkService
         return $"Antwort von {address} nach {clock.ElapsedMilliseconds} ms.";
     }
 
+    // Frist je Abruf, gemessen ab TlsTransport.StartDeadline: DNS, Verbindung, TLS-Handshake und Antwort zusammen.
+    // Mit idleDeadline (Downloads) beginnt sie nach jedem empfangenen Block neu. Das einmalige Parsen der TLS-Wurzeln
+    // liegt vor dem Start der Uhr.
     private const int FetchTimeoutMilliseconds = 10000;
 
     internal static string Fetch(string text, CancellationToken token, byte[]? rootsOverride = null) =>
@@ -235,10 +238,11 @@ internal sealed class CosmosNetworkService : INetworkService
 
     private static T Exchange<T>(string text, byte[] roots, bool idleDeadline, Func<Stream, T> read, CancellationToken token)
     {
-        var clock = Stopwatch.StartNew();
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0)
             throw new ArgumentException("Nur HTTP- und HTTPS-URLs ohne Zugangsdaten oder Fragment werden unterstuetzt.");
         if (uri.Host.Length > 253 || uri.PathAndQuery.Length > 2048) throw new ArgumentException("URL ist zu lang.");
+        // Erst nach der Pruefung: eine ungueltige URL soll nicht vorher die Wurzeln parsen.
+        var clock = TlsTransport.StartDeadline(uri, roots);
         Address address = Resolve(uri.Host, token, clock);
         CheckDeadline(clock, token);
         CosmosHttpUpdateSource.RandomizeTcpStart();
