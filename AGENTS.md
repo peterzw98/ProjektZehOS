@@ -39,7 +39,7 @@ Auf dem Rechner `nuc` läuft ein festes Team aus Claude-Code-Sitzungen. Es biete
 | `agent-orchestrator` | Fable 5.2 | Nennungen | große Pläne mit großer Tiefe; teuer, nur auf Ruf des Koordinators oder eines Menschen |
 | `agent-orchestrator-junior` | Opus 5.5 | Nennungen | kleinere Pläne |
 | `agent-engineer-senior` | Opus 5.5 | Nennungen | Softwareentwicklung mit hoher Komplexität |
-| `agent-engineer-jensen`, `agent-engineer-huang` | Sonnet 5.5 | Nennungen | normale Softwareentwicklung |
+| `agent-engineer-jensen`, `agent-engineer-huang` | Opus 5.5 | Nennungen | normale Softwareentwicklung |
 | `agent-engineer-junior` | Haiku 5.5 | Nennungen | kleinste Aufgaben, Pull Requests und Merges |
 | `agent-scientist` | Opus 5.5 | Nennungen | gründliche Recherche |
 | `agent-singleclerk`, `agent-doubleclerk` | Haiku 5.5 | Nennungen | führen die Tests aus und rufen bei Fehlschlägen einen Engineer |
