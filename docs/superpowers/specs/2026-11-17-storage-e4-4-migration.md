@@ -120,3 +120,18 @@ Schreibsperre selbst (Kennzeichen in `FileAccessControl`/`PackageStore`/`UpdateC
 1. 7a S4: endgültige Liste der vom Installer auf Root angelegten Einträge (§4, Wiederholungsregel).
 2. *Entschieden 11:51:* `/srv` und `/srv/legacy-data` mit den Rechten des bisherigen `/data`-Eintrags.
 3. `FreeInodes` ist in Cosmos 3.0.97 nur über den Superblock lesbar (`s_free_inodes_count`); ob `VfsManager`/`VfsStatFs` ihn liefert, prüft 4.5.
+
+## 8. Umsetzungsstand
+
+Umgesetzt auf `task/storage-e4-4-migration` in `ProjektZeh/Storage/Migration/` (Hostlogik). Tests: `LayoutMigrationTests` (1–22, 21a) und `PackageTests.InstalledPackageStaysValidAfterLayoutMigration` (23). Kein Cosmos-`IMigrationTarget`, kein Shellbefehl und kein Gasttest; das bleibt bei 4.5.
+
+Präzisierungen gegenüber §1–§5:
+
+- `IMigrationTarget.List` wie in #164. Fehlende Pfade meldet das Ziel mit `ResultCode.NotFound`.
+- Das Home-Verzeichnis trägt im Ziel den **Kontonamen** (`SystemPaths.Root.Home`, Ordinal), Dateien und Ordner darunter den tatsächlichen Namen der Auflistung. Sonst fände das Root-Profil `/home/<konto>` bei abweichender Schreibweise auf FAT nicht.
+- Die CRC-/Zeilenregel liegt als `ChecksummedText` neben `Crc32`. `InstallMarker` (7a, noch nicht auf `master`) soll beim Merge darauf umgestellt werden.
+- Die Installerverzeichnisse aus 7a-S4 werden weder journalisiert noch angelegt noch gelöscht.
+- Die Rückleseprobe mit `FileAccessControl("/", Ordinal).Restore` läuft nur als Linux-Hosttest (12); im Ablauf folgt sie mit 4.5 im Kernel.
+- Schritt 8 erkennt eine Änderung gleicher Größe nur bei geändertem Zeitstempel (bewusste Grenze aus Test 21).
+- `IOException` und `UnauthorizedAccessException` aus Quelle oder Ziel werden zu einem Fehlerergebnis; andere Ausnahmen laufen durch. Die Schreibsperre wird in beiden Fällen freigegeben.
+- Scheitert einer der beiden `Sync` nach `ready`, meldet der Lauf einen Fehler; der Marker steht dann bereits auf `ready`.
