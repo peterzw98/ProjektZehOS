@@ -270,7 +270,7 @@ internal static unsafe class WasmRuntime
     // Das Bundle wird nur einmal je Kernellauf geparst. Es laeuft hoechstens eine Paket-App, daher greift nur ein
     // Thread auf den Zwischenspeicher zu.
     private static TlsClient CreateTlsClient(string host) => CosmosWasmNetworkConnector.CreateAppClient(host, CosmosSaltSource.Fill,
-        () => tlsAnchors ??= TlsTransport.LoadAnchors(TlsRoots.Load()), DateTime.UtcNow);
+        () => tlsAnchors ??= TlsTransport.LoadAnchors(TlsRoots.Load()), ProjektZeh.SystemServices.SystemClock.UtcNow);
 
     // Hostrueckrufe der C-Schicht. Ausnahmen duerfen die native Grenze nicht ueberqueren.
 
@@ -359,7 +359,7 @@ internal static unsafe class WasmRuntime
     private static ulong HostTime(int clockId)
     {
         // WASI-Uhr 0 ist Realzeit (UTC vom Hypervisor), alle anderen messen monoton ab Boot.
-        if (clockId == 0) return (ulong)(DateTime.UtcNow - DateTime.UnixEpoch).Ticks * 100;
+        if (clockId == 0) return (ulong)(ProjektZeh.SystemServices.SystemClock.UtcNow - DateTime.UnixEpoch).Ticks * 100;
         return (ulong)(Stopwatch.GetTimestamp() * (1_000_000_000.0 / Stopwatch.Frequency));
     }
 

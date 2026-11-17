@@ -169,6 +169,10 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 `write` schreibt zunächst eine temporäre Datei im selben Verzeichnis und ersetzt das Ziel erst nach erfolgreichem Schreiben und Leeren der Schreibpuffer. Die alte Datei wird dafür unter einem kurzen Zufallsnamen gesichert und bei einem fehlgeschlagenen Austausch zurückbenannt. Schlägt auch die Wiederherstellung fehl, bleibt die Sicherung erhalten und ihr Pfad steht in der Fehlermeldung. Ein Schreibfehler, etwa ein voller Datenträger, lässt den bisherigen Inhalt erhalten. Dafür muss vorübergehend Platz für die alte und die neue Datei vorhanden sein; ein Schutz vor Stromausfall während des Ersetzens ist damit nicht zugesichert. `write hallo.txt ""` leert die Datei. Ein bereits belegter Mountpunkt `/data` wird bei `disk mount` abgelehnt.
 
+Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 8190 direkte Einträge, einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
+
+Die Eintragsprüfung gilt für den Dateidienst (FileService). Direkte interne Schreibzugriffe, etwa des Paketbestands oder der Desktop-Einstellungen, sind davon nicht erfasst; sie ist deshalb keine harte Dateisystemgarantie.
+
 Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
 
 ## Entwicklungsplan
@@ -266,6 +270,8 @@ Das Gen3-Debugging verwendet QEMU und GDB. NativeAOT kann die Anzeige einzelner 
 `netinfo` zeigt Adapter, Link und IPv4-Konfiguration. Netzwerkbefehle starten einen Hintergrundauftrag pro Terminal; das Ergebnis erscheint automatisch in derselben Sitzung, `net cancel` fordert den Abbruch an. Ein laufender Auftrag blockiert keine weitere Shell-Eingabe. Beim Schließen des Terminals wird sein Auftrag abgebrochen.
 
 Nach dem Boot versucht ZehOS bei Link ohne IPv4-Adresse automatisch DHCP, bei fehlender Antwort erneut nach zehn Sekunden. Eine manuell als Administrator mit `net static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3` gesetzte Adresse bleibt erhalten; `net dhcp` fordert DHCP ausdrücklich erneut an. Das Netzwerksymbol unten rechts zwischen Desktopumschaltung und Uhr zeigt Verbindung, Suche oder fehlenden Link/Adapter. Ein Linksklick öffnet den Zustand und die IPv4-Adresse, der nächste Klick oder Esc schließt die Anzeige. „Verbunden“ bedeutet Link mit IPv4-Adresse, keine geprüfte Internetverbindung.
+
+Sobald eine IPv4-Adresse vorliegt, gleicht ZehOS die Uhr einmal per SNTP mit `pool.ntp.org` ab (bei Fehlern höchstens dreimal je Lauf der Netzwerkautomatik). Administratoren können das mit `net time [Server] [Port]` erneut anstoßen. Die Hardwareuhr wird dabei nicht verändert. Ein Abgleich darf die Uhr beliebig vor-, aber höchstens 5 Minuten zurückstellen, solange die Uhr plausibel ist. Eine unplausible Uhr (etwa vor dem Stand des Wurzelbundles) wird vollständig übernommen. SNTP ist nicht authentifiziert: In diesem Fall kann ein Angreifer im Netz jede Zeit ab dem Bundle-Stand setzen. Die Grenzen stehen in [NETWORK_TESTS.md](docs/NETWORK_TESTS.md).
 
 Mit konfigurierter Adresse stehen `ping <IPv4>`, `nslookup <Name>` und `fetch http://10.0.2.2:18080/ok` bereit. Der Testserver läuft auf dem Entwicklungsrechner; `10.0.2.2` bezeichnet ihn aus dem QEMU-Gast. `fetch https://Host/Pfad` verwendet TLS 1.2/1.3 mit Zertifikatsketten-, Namens- und Gültigkeitsprüfung gegen ein eingebettetes Mozilla-Rootbundle. HTTPS verlangt eine korrekte UTC-Uhr und Hardwarezufall (RDSEED/RDRAND oder virtio-rng); ohne diese Voraussetzungen scheitert der Abruf. Unterstützt werden IPv4 und ASCII-DNS-Namen; IPv6 und Unicode-Zielnamen werden abgelehnt.
 
@@ -450,7 +456,7 @@ Zusätzliche Shellbefehle:
 | `sort [Datei]` / `uniq [Datei]` | Zeilen ordinal sortieren / direkt aufeinanderfolgende gleiche Zeilen entfernen |
 | `less [Datei]` | Pager mit Pfeilen, Bildtasten, Home/End, Leertaste und `q`; Textshell und Desktop bleiben nichtblockierend |
 | `history` / `alias [Name=Befehl Argumente ...]` | Letzte 32 Befehle / bis zu 32 sitzungslokale Aliase anzeigen oder definieren |
-| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr, Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
+| `date` / `uname` / `free` | Ortszeit Europe/Berlin mit MEZ/MESZ aus der UTC-Hardwareuhr (nach einem SNTP-Abgleich korrigiert), Kernel/Architektur und tatsächliche physische Speicherwerte anzeigen |
 | `exit` | Aktive Terminalsitzung schließen; die Textshell bleibt als Wiederherstellungskonsole geöffnet |
 
 Textfilter können statt einer Datei die Ausgabe einer vorherigen Pipelinestufe lesen. Beispielsweise erzeugt `echo blau >> farben.txt` eine Datei oder hängt Text an, `cat farben.txt | sort | uniq > eindeutig.txt` speichert eine gefilterte Ausgabe und `help | less` öffnet die Hilfe im Pager. `alias ll=ls` legt einen Argumentalias an; eingebettete Pipelines und Umleitungen gehören nicht zu Aliaswerten. Für Gruppenargumente ist etwa `alias suche=grep "zwei Worte"` möglich.

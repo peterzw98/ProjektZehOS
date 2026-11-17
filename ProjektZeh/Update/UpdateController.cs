@@ -7,9 +7,9 @@ namespace ProjektZeh.Update;
 
 /// <summary>Haelt einen geprueften Stand an derselben Quelle fest; ein Quellenwechsel verwirft ihn.</summary>
 internal sealed class UpdateController(UpdateVersion currentVersion, Func<UpdateEndpoint, IUpdateSource> createSource,
-    IUpdateTarget target, string root = "/data")
+    IUpdateTarget target, string root = "/data", Func<string, int?>? directoryEntryLimit = null)
 {
-    private readonly FileService files = new(root);
+    private readonly FileService files = new(root, directoryEntryLimit: directoryEntryLimit);
     private UpdateService? service;
     private string? activeSource;
     private bool restartRequired;

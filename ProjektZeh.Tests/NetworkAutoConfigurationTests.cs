@@ -25,8 +25,7 @@ public sealed class NetworkAutoConfigurationTests
     [TestMethod]
     [DataRow(false, false, null)]
     [DataRow(true, false, null)]
-    [DataRow(true, true, "10.0.2.15")]
-    public void DoesNothingWithoutLinkOrWhenAddressExists(bool adapter, bool link, string? address)
+    public void DoesNothingWithoutLink(bool adapter, bool link, string? address)
     {
         var network = new FakeNetwork(new(adapter, link, address));
         var tasks = new BackgroundTaskService();
@@ -36,6 +35,25 @@ public sealed class NetworkAutoConfigurationTests
         Assert.IsTrue(read.Wait(2000));
         Assert.IsTrue(tasks.StopAll(2000));
         Assert.AreEqual(0, network.Calls);
+    }
+
+    [TestMethod]
+    public void WithAnAddressSyncsTheClockAtMostThreeTimes()
+    {
+        // Etappe 12.2: kein DHCP bei vorhandener Adresse, aber Zeitabgleich mit dem Standardserver; ein Fehler wird
+        // hoechstens dreimal je Lauf wiederholt, damit ein unerreichbarer Server nicht endlos Netzverkehr erzeugt.
+        var network = new FakeNetwork(new(true, true, "10.0.2.15"));
+        var operations = new List<string>();
+        network.ExecuteWork = _ => { lock (operations) operations.Add(network.Operation + " " + string.Join(' ', network.Arguments!)); return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, "kein NTP"); };
+        var tasks = new BackgroundTaskService();
+        var logs = new List<string>();
+        Assert.IsTrue(tasks.Start("auto", context => NetworkAutoConfiguration.Run(network, context, text => { lock (logs) logs.Add(text); }, 1)).IsOK());
+        Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref network.Calls) >= 3, 2000));
+        Thread.Sleep(50);
+        Assert.IsTrue(tasks.StopAll(2000));
+        CollectionAssert.AreEqual(new[] { "time pool.ntp.org", "time pool.ntp.org", "time pool.ntp.org" }, operations);
+        Assert.AreEqual(3, logs.Count);
+        StringAssert.StartsWith(logs[0], "Zeitabgleich fehlgeschlagen");
     }
 
     [TestMethod]
