@@ -178,6 +178,56 @@ KVM: Linux-Host mit 22 Kernen, Last 1–2 durch andere Gäste. WHPX: Messung von
 
 Nicht geprüft: Bewegung und andere Blickrichtungen, andere Fenstergrößen (ohne Kerneländerung nicht einstellbar), TCG und VMware.
 
+## Messung wasm3 gegen AOT (AOT-Plan Etappe F)
+
+Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes Testschlüsselpaar (`python3 scripts/build-package.py keygen <dir>`), nie der Herausgeberschlüssel. `<wamrc>` ist das zugelassene wamrc 2.4.5 (Hash in `scripts/build-package.py`); `aot` legt den Beleg `<app.aot>.json` daneben, den `package --aot-file` prüft.
+
+```sh
+KEY=~/zehos-testkey   # enthält private.pem und public.b64
+# 1. Kernel mit WAMR, vertraut dem Testschlüssel
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSWasmAot=true -p:ZehOSPackageKeyPath=$KEY/public.b64
+ISO=ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+# 2. Paketdateien aus packages (ClassiCube samt texpacks/ und licenses/) und .aot erzeugen
+mkdir -p .tools/aot/doom .tools/aot/classicube
+git archive origin/packages doom/1.1.0/files | tar -x -C .tools/aot/doom --strip-components=3
+git archive origin/packages classicube/1.0.0/files | tar -x -C .tools/aot/classicube --strip-components=3
+python3 scripts/build-package.py aot <wamrc> .tools/aot/doom/doom.wasm -o .tools/aot/doom.aot
+python3 scripts/build-package.py aot <wamrc> .tools/aot/classicube/classicube.wasm -o .tools/aot/classicube.aot
+# 3. Messen: je Beschleunigung, Laufzeit und App drei Läufe auf frischer Platte
+DOOM="--package .tools/aot/doom --key $KEY/private.pem --aot-file .tools/aot/doom.aot"
+CC="--package .tools/aot/classicube --key $KEY/private.pem --aot-file .tools/aot/classicube.aot \
+  --id classicube --version 1.0.0 --name ClassiCube --entry classicube.wasm --network --min-kernel 0.5.13 --start-keys ret"
+for ACCEL in kvm tcg; do for AOT in off on; do
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $DOOM
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $CC
+done; done
+```
+
+Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
+
+### Ergebnisse (Stand 17. November 2026)
+
+Gemessen von agent-laser-right-tester (Linux, KVM und TCG, Stand `3060e5a`), agent-laser-RED (TCG, master `1227e60`) und cc-lead (Windows, WHPX). Bildzeit ist der Median des letzten 60-s-Fensters je Lauf in ms.
+
+| App | Beschleunigung | wasm3 | AOT |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | KVM | 19 (App-Anteil 18) | 11 (App-Anteil 0,4); 3 von 3 Läufen ohne Fehler |
+| Doom 1.1.0 | TCG | 281 | Stand `5f04669`: kein erstes Bild in 600 s. Stand `1227e60`: in 1 von 5 Läufen Kernel-Panik (#GP, nicht kanonische RIP) vor dem ersten Bild |
+| ClassiCube 1.0.0 | KVM | 41 / 53 / 59 (p95 159–218) | Trap „out of bounds memory access“ vor oder kurz nach dem ersten Bild (KVM und TCG) |
+| ClassiCube 1.0.0 | WHPX | 29–61 je nach Lauf | in 2 von 3 Läufen Trap; mit Diagnosekernel in 1 von 3 Läufen Hänger bei der Weltgenerierung, sonst 40 bzw. 54 ms |
+
+Doom zeigt den erwarteten Gewinn: Der App-Anteil sinkt unter AOT von 18 ms auf 0,4 ms je Bild. Was übrig bleibt, sind Desktop, Skalierung und Anzeige. ClassiCube ist unter wasm3 durch das Rastern im Host begrenzt (siehe die Messung der Sichtweite weiter oben). AOT würde dort nur den Gastanteil verkleinern.
+
+**Befund AOT: Red Zone (Hypothese mit Belegen).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Wahrscheinliche Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
+
+- Der von wamrc erzeugte Code legt in Blattfunktionen Werte unterhalb von RSP ab. `objdump` zählt Schreibzugriffe `mov reg,-0x..(%rsp)`: 229 in `classicube.aot`, 107 in `doom.aot`.
+- Cosmos 3.0.97 betritt Interrupts im Ring 0 ohne IST und ohne Stackwechsel (`CPU/Interrupts.s`). CPU-Frame und gesicherte Register landen direkt unter dem aktuellen RSP. Ein Timer-Interrupt in einer solchen Blattfunktion überschreibt deren lokale Werte.
+- Der Kernel-C-Code (wasm3, WAMR-Lader, Hostfunktionen, C-Laufzeit) nutzt die Red Zone gemessen nicht: 0 Treffer in allen C-Objekten. Das passt dazu, dass die Fehler nur unter AOT auftreten.
+
+wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Nötig ist ein wamrc, der allen erzeugten Funktionen das LLVM-Attribut `noredzone` gibt. Das bedeutet eine neue zugelassene Prüfsumme in `scripts/build-package.py` und eine neue AOT-Kennung, damit vorhandene `.aot` nicht mehr geladen werden. Die Entscheidung darüber liegt bei Peter. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+
+Für Nutzer besteht derzeit kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` ist auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Bis zu einem wamrc mit `noredzone` bleibt AOT ein Diagnoseweg; die Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind damit offen. Bewiesen ist die Ursache erst, wenn ein Diagnosebau mit `noredzone` die Fehler beseitigt; dieser Bau mit je 10 Vergleichsläufen ist beauftragt.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
