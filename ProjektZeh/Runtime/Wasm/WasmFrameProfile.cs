@@ -3,19 +3,20 @@ using System.Text;
 
 namespace ProjektZeh.Runtime.Wasm;
 
-internal enum WasmFramePhase { App, Copy, Scale, Desktop, Display }
+internal enum WasmFramePhase { App, Sleep, Copy, Scale, Desktop, Display }
 
 /// <summary>
-/// Zerlegt die Bildzeit von Paket-Apps in Anteile (Wasm bis present, Bildkopie, Skalierung, Desktop, Canvas.Display).
+/// Zerlegt die Bildzeit von Paket-Apps in Anteile (Wasm-Rechnen bis present, sleep_ms der App, Bildkopie, Skalierung,
+/// Desktop, Canvas.Display).
 /// Zur Laufzeit zuschaltbar; ausgeschaltet kostet eine Messstelle nur die Abfrage von <see cref="Enabled"/>, und
 /// pro Messung wird nie allokiert. Die Anteile laufen auf verschiedenen Threads, deshalb eine eigene Sperre.
 /// </summary>
 internal sealed class WasmFrameProfile
 {
-    // 100-us-Eimer bis 100 ms; laengere Dauern landen im letzten Eimer, das Maximum bleibt genau.
+    // 100-us-Eimer bis 1 s (Doom erreicht p95 ueber 100 ms); laengere Dauern landen im letzten Eimer, das Maximum bleibt genau.
     private const int BucketMicroseconds = 100;
-    private const int Buckets = 1000;
-    private static readonly string[] Names = ["app", "kopie", "skalierung", "desktop", "anzeige"];
+    private const int Buckets = 10_000;
+    private static readonly string[] Names = ["app", "schlaf", "kopie", "skalierung", "desktop", "anzeige"];
 
     // Nach Names: statische Felder werden in Textreihenfolge initialisiert.
     public static WasmFrameProfile Shared { get; } = new();
@@ -26,6 +27,9 @@ internal sealed class WasmFrameProfile
     private volatile bool enabled;
 
     public bool Enabled => enabled;
+
+    public static long Microseconds(long startTicks, long endTicks) =>
+        (endTicks - startTicks) * 1_000_000 / System.Diagnostics.Stopwatch.Frequency;
 
     /// <summary>Schaltet die Messung um; beide Richtungen beginnen mit leeren Werten.</summary>
     public void SetEnabled(bool value)

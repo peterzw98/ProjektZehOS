@@ -11,7 +11,7 @@ public sealed class WasmFrameProfileTests
     {
         var profile = new WasmFrameProfile();
         profile.Record(WasmFramePhase.App, 5000);
-        Assert.AreEqual("Anteile (ms, median/p95/max) app=- kopie=- skalierung=- desktop=- anzeige=-", profile.Peek());
+        Assert.AreEqual("Anteile (ms, median/p95/max) app=- schlaf=- kopie=- skalierung=- desktop=- anzeige=-", profile.Peek());
     }
 
     [TestMethod]
@@ -22,9 +22,9 @@ public sealed class WasmFrameProfileTests
         for (int index = 0; index < 19; index++) profile.Record(WasmFramePhase.App, 2_050);
         profile.Record(WasmFramePhase.App, 9_000);
         profile.Record(WasmFramePhase.Display, 7_400);
-        Assert.AreEqual("Anteile (ms, median/p95/max) app=2.1/2.1/9.0 n=20 kopie=- skalierung=- desktop=- anzeige=7.4/7.4/7.4 n=1",
+        Assert.AreEqual("Anteile (ms, median/p95/max) app=2.1/2.1/9.0 n=20 schlaf=- kopie=- skalierung=- desktop=- anzeige=7.4/7.4/7.4 n=1",
             profile.TakeSummary());
-        Assert.AreEqual("Anteile (ms, median/p95/max) app=- kopie=- skalierung=- desktop=- anzeige=-", profile.Peek());
+        Assert.AreEqual("Anteile (ms, median/p95/max) app=- schlaf=- kopie=- skalierung=- desktop=- anzeige=-", profile.Peek());
     }
 
     [TestMethod]
@@ -34,7 +34,7 @@ public sealed class WasmFrameProfileTests
         profile.SetEnabled(true);
         profile.Record(WasmFramePhase.Copy, 250_000);
         profile.Record(WasmFramePhase.Scale, -5);
-        Assert.AreEqual("Anteile (ms, median/p95/max) app=- kopie=250.0/250.0/250.0 n=1 skalierung=0.0/0.0/0.0 n=1 desktop=- anzeige=-",
+        Assert.AreEqual("Anteile (ms, median/p95/max) app=- schlaf=- kopie=250.0/250.0/250.0 n=1 skalierung=0.0/0.0/0.0 n=1 desktop=- anzeige=-",
             profile.Peek());
     }
 

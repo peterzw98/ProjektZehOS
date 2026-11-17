@@ -28,8 +28,13 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private long pausedMilliseconds;
     private readonly object gate = new();
     private readonly WasmInputBuffer input = new();
-    // Nur fuer Doom: der Langlauf (ROADMAP 9.6) misst dessen Bildzeit; andere Apps bleiben ohne Messung und Logzeilen.
-    private readonly WasmFrameTimes? frameTimes = string.Equals(packageId, "doom", StringComparison.Ordinal) ? new() : null;
+    // Doom misst seine Bildzeit immer (Langlauf, ROADMAP 9.6); andere Apps nur, solange "frametimes on" gilt.
+    private readonly bool alwaysMeasured = string.Equals(packageId, "doom", StringComparison.Ordinal);
+    private WasmFrameTimes? frameTimes;
+    // Nur vom Wasm-Worker: Stopwatch-Zeitpunkt, an dem das letzte present zurueckkehrte (0 = ohne Messung), und die
+    // bis dahin geschlafene Zeit der App (WasmRuntime.WaitedTicks).
+    private long presentReturned;
+    private long sleptAtReturn;
     private uint[] frame = [];
     private int frameWidth;
     private int frameHeight;
@@ -42,6 +47,8 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private int frameRevision;
     private int drawnRevision = -1;
     private bool running;
+    // present wartet auf ein Zeichnen (Sichtbarkeitspruefung); der Desktop muss dann zeichnen, auch ohne neues Bild.
+    private bool presentWaiting;
     // Nur vom Wasm-Worker gelesen und geschrieben.
     private bool presented;
     private bool exitRequested;
@@ -51,7 +58,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
     private bool allowsNetwork;
     private readonly System.Text.StringBuilder errors = new();
 
-    public bool NeedsAnimation => running && active;
+    // Nur bei neuem Bild oder wartendem present: sonst setzte der Desktop jedes 60-Hz-Bild neu zusammen und gab es
+    // vollstaendig aus, und auf der einen CPU fehlte diese Zeit der App (Etappe 1, Messung in WASM_FEASIBILITY.md).
+    public bool NeedsAnimation { get { lock (gate) return running && active && (presentWaiting || drawnRevision != frameRevision); } }
     public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
     public bool IsCloseRequested { get; private set; }
     string? IWasmSession.Root => root;
@@ -144,7 +153,12 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
                     scaledFrameHeight = frameHeight;
                     drawnRevision = -1;
                 }
-                if (drawnRevision != frameRevision) Scale(targetWidth);
+                if (drawnRevision != frameRevision)
+                {
+                    long scaling = WasmFrameProfile.Shared.Enabled ? Stopwatch.GetTimestamp() : 0;
+                    Scale(targetWidth);
+                    if (scaling != 0) WasmFrameProfile.Shared.Record(WasmFramePhase.Scale, WasmFrameProfile.Microseconds(scaling, Stopwatch.GetTimestamp()));
+                }
                 drawnRevision = frameRevision;
                 surface.DrawPixels(scaled, x + (width - targetWidth) / 2, y + (height - targetHeight) / 2, targetWidth, targetHeight);
             }
@@ -203,6 +217,16 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         if (test) return;
         // Vor der Sichtbarkeitspause melden: die Marke belegt, dass das Modul laeuft, unabhaengig vom Fensterzustand.
         if (!presented) { presented = true; log?.Invoke("erstes Bild"); }
+        var profile = WasmFrameProfile.Shared;
+        // Seit der Rueckkehr aus dem vorigen present (ohne dessen Sichtbarkeitspause): sleep_ms der App und den Rest als
+        // Rechenanteil getrennt erfassen.
+        long entered = profile.Enabled ? Stopwatch.GetTimestamp() : 0;
+        if (entered != 0 && presentReturned != 0)
+        {
+            long slept = WasmRuntime.WaitedTicks - sleptAtReturn;
+            profile.Record(WasmFramePhase.Sleep, WasmFrameProfile.Microseconds(0, slept));
+            profile.Record(WasmFramePhase.App, WasmFrameProfile.Microseconds(presentReturned + slept, entered));
+        }
         string? frameReport = null;
         lock (gate)
         {
@@ -212,10 +236,14 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             while (!exitRequested && (!active || clock.ElapsedMilliseconds - lastDrawMilliseconds > VisibleTimeoutMilliseconds))
             {
                 paused = true;
+                presentWaiting = true;
                 long start = clock.ElapsedMilliseconds;
                 Monitor.Wait(gate, 100);
                 pausedMilliseconds += clock.ElapsedMilliseconds - start;
             }
+            presentWaiting = false;
+            if (alwaysMeasured || profile.Enabled) frameTimes ??= new();
+            else frameTimes = null;
             if (frameTimes != null)
             {
                 long now = clock.ElapsedMilliseconds - pausedMilliseconds;
@@ -224,13 +252,21 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             }
             // Nur wachsen: Folgt eine App der Fenstergroesse, aendert sich das Bild beim Ziehen fast jedes Mal.
             if (frame.Length < pixels.Length) frame = new uint[pixels.Length];
+            long copying = profile.Enabled ? Stopwatch.GetTimestamp() : 0;
             pixels.CopyTo(frame);
+            if (copying != 0) profile.Record(WasmFramePhase.Copy, WasmFrameProfile.Microseconds(copying, Stopwatch.GetTimestamp()));
             frameWidth = width;
             frameHeight = height;
             frameRevision++;
         }
         // Ausserhalb der Sperre: die serielle Ausgabe soll das Zeichnen des Desktops nicht aufhalten.
-        if (frameReport != null) log?.Invoke($"{frameReport} heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB");
+        if (frameReport != null)
+        {
+            log?.Invoke($"{frameReport} heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB");
+            if (profile.Enabled) log?.Invoke(profile.TakeSummary());
+        }
+        presentReturned = profile.Enabled ? Stopwatch.GetTimestamp() : 0;
+        sleptAtReturn = WasmRuntime.WaitedTicks;
     }
 
     bool IWasmSession.TryReadEvent(out WasmInputEvent value)
