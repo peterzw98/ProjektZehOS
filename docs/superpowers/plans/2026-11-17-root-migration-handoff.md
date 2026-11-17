@@ -1,7 +1,8 @@
 # Etappe 4.5: Zwischenstand und Uebergabe
 
-Stand: 17.11.2026, ca. 18:50 UTC. Autor: agent-peter-huang.
-Branch: `task/storage-root-migrate`; Basis-Merge `11c5224` (master `321bb92`).
+Stand: 17.11.2026, ca. 18:55 UTC. Autor: agent-peter-huang.
+Branch: `task/storage-root-migrate`; Code-Checkpoint `aacaffa`,
+Basis-Merge `11c5224` (master `321bb92`).
 **Unfertige Implementierung, kein Produkt-Go und noch kein PR.**
 
 ## Auftrag und Zustaendigkeit
@@ -44,21 +45,26 @@ Bereits ausgefuehrte, gezielte Pruefungen vor den letzten kleinen Aenderungen:
   geaendert; diese Variante ist noch nativ zu pruefen.
 - Hashvektoren/Abbruch/echte Zielwiederholung/CLI/AppGate: 14 PASS.
 - Zieladapter/CLI zuvor: 26 PASS; Shell/Terminal/ShellJob zuvor: 36 PASS.
-- Breitere Migration-Fokussuite wurde gestartet, Ergebnis beim Schreiben dieser
-  Uebergabe noch offen; Windows-Test mit 8191 Quelldateien braucht mehrere Minuten.
+- Breitere Migration-Fokussuite: 108 PASS, 3 Windows-Plattformskips, 6m31s.
+  Sie lief vor der letzten Temp-/ACL-Cleanup-Korrektur.
 - Neue Regression prueft bei Write/Copy-Fehler, dass beim Lease-Dispose keine
   Tempdatei mehr existiert. Der erste Versuch scheiterte an einem Test-API-Namen,
   der zweite am gesperrten Test-DLL durch die noch laufende Suite. Beides ist kein
-  fachlich roter Nachweis. API korrigiert; Regression und Fix noch gemeinsam pruefen.
+  fachlich roter Nachweis. API korrigiert; anschliessend 45 gezielte Tests gegen
+  aacaffa mit Release -warnaserror bestanden, einschliesslich beider Cleanup-
+  Fehlerfaelle, Gate/Writer/Hash, FileMigrationTarget, CLI/Interrupt und Abbruchstream.
 
-Keine Vollsuite, kein nativer Build und kein Gasttest dieses 4.5-Standes.
+Nativer normaler Release-Build aacaffa: erfolgreich, 0 Warnungen/0 Fehler, 1m38s.
+Das belegt den normalen Build, noch nicht die native Ausfuehrung aller neuen,
+teilweise noch nicht erreichbaren Migrationspfade oder Environment.CurrentManagedThreadId.
+Keine Vollsuite, kein Recovery-/Flag-Build und kein Gasttest dieses 4.5-Standes.
 Keinen Erfolg aus alten Logs oder PR189 fuer diese Aenderung uebernehmen.
 Keine parallelen Builds desselben Testprojekts: Windows sperrt die Test-DLL.
 
 ## Naechste Schritte
 
-1. Laufende Tests auslaufen lassen, neue Fehlerpfadtests und geaenderte Gates
-   Release mit `-warnaserror` pruefen. Testlogs lokal unter `.tools/migration-*.log`.
+1. Gezielte Tests sind beendet und gruen. Nach weiteren Aenderungen betroffene
+   Tests und zum Abschluss Vollsuite pruefen; lokale Logs unter `.tools/migration-*.log`.
 2. Cosmos-Adapter und Buildflag fehlen vollstaendig. Vor RW-Mount GPT,
    Partition-LBA/GUID, Installmarker/InstalledIdentity, Ext2FeatureGate und
    root.marker (fresh oder passend migrating) ausschliesslich lesend pruefen.
@@ -94,6 +100,31 @@ Keine parallelen Builds desselben Testprojekts: Windows sperrt die Test-DLL.
 
 ## Weitere technische Hinweise
 
+### Unabhaengiges Zwischenreview 18:52 UTC
+
+agent-peter-review las Produktdelta/Gates/Zieladapter, aber weder Tests noch
+Shell-/Terminalteil, und fuehrte nichts aus. Kein P1/P2 im gelesenen Umfang,
+sieben P3. Das ersetzt kein Abschlussreview des noch fehlenden Adapters:
+
+- P3-a: PackageStore.Publish haelt Lease einschliesslich Download. Vorlaeufige
+  Bewertung: WriteVersion verzahnt Netzwerk und Schreiben in derselben Transaktion;
+  nicht einfach den Lease zwischen Bloecken freigeben (Quelle wuerde sich waehrend
+  Migration weiter aendern). Benutzerhinweis auf laufende Paketinstallation verbessern
+  oder ein tatsaechliches Stagingkonzept gesondert bewerten. Noch nicht geaendert.
+- P3-b: FileAccessControl.Check meldet bei Gate-Ablehnung Denied statt StorageBusy.
+  Status/Text verbessern; FileService meldet bei eigener Lease-Ablehnung schon Busy.
+- P3-c: MigrationPlan lehnt reservierte Suffixe nur fuer Dateien ab. Verzeichnis
+  `x.zehos-tmp` neben Datei `x` kollidiert ebenfalls. Auch Verzeichnisse vorpruefen
+  und Regression ergaenzen; noch nicht behoben.
+- P3-d/e: Zwei Syncs je Journal-D/W-Zeile und Pfadwaechter pro List-Eintrag koennen
+  unter TCG teuer sein. Erst nach Go messen; Haltbarkeit und Grenzschutz erhalten.
+  Keine ungepruefte Optimierung an der Sicherheitsgrenze.
+- P3-f: Expliziter OperationCanceledException-Abbruch mitten im WriteFile mit
+  anschliessendem Wiederholen fehlt. Vorhanden sind IOException im Copy-Stream,
+  Tokenabbruch beim Hashen/Kopieren und echte Zielwiederholung nach Copied; der
+  kombinierte Fall ist nicht ausdruecklich nachgewiesen. Test ergaenzen.
+- P3-g: Quell-FAT Release/Fsync bleibt zentrales offenes Adapterrisiko (siehe oben).
+
 - FileMigrationTarget benoetigt obligatorischen Pfadwaechter; lehnt Dotdot,
   Doppelpunkte, Backslash und fremde Mount-/Symlinkpfade ab. Bekannte Tempnamen:
   IMigrationTarget.TemporarySuffix und BackupSuffix. Marker-Backup kann beim
@@ -103,7 +134,7 @@ Keine parallelen Builds desselben Testprojekts: Windows sperrt die Test-DLL.
 - Kernel bisher nicht angefasst; optionale Callbackparameter erhalten Callsite-
   Kompatibilitaet. Ohne Kernelverdrahtung ist noch kein umfassender Quellschutz aktiv.
 - Lokaler Agent huang-migration-shell-tests lieferte keinen Code, Diff war leer.
-  Eigene Tests geschrieben; Arbeitskopie noch zu bereinigen, nur nach Clean-Check.
+  Eigene Tests geschrieben; Arbeitskopie/Branch/Logs nach Clean-Check entfernt.
 - Installiertes SDK 10.0.404; keine Updates. Nativer Build bisheriger Arbeitsstaende
   brauchte `-p:XorrisoBinary=C:/Users/NWeh/.codex/worktrees/f451/ProjektZehOS/.tools/iso-tool/usr/bin/xorriso.exe`.
-  Dieser 4.5-Stand wurde damit noch nicht gebaut.
+  Der normale Release-Build dieses 4.5-Checkpoints ist damit erfolgreich durchgelaufen.
