@@ -130,7 +130,8 @@ internal sealed class FileService
                 throw new UnauthorizedAccessException("Vorhandener Eintrag ohne Rechtezuordnung.");
             }
             Authorize(resolved.Value!, FilePermission.Read);
-            using var reader = new StreamReader(resolved.Value!);
+            // Streng und ohne BOM-Umschaltung: ungueltige Bytes waeren sonst U+FFFD und beim Zurueckschreiben verloren (#201).
+            using var reader = new StreamReader(resolved.Value!, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: false);
             var text = ReadToEnd(reader, maximumLength);
             return text == null
                 ? ResultObjectFactory.CreateFailure<string>(TextTooLarge(maximumLength))
@@ -139,6 +140,11 @@ internal sealed class FileService
         catch (FileNotFoundException) when (allowMissing)
         {
             return ResultObjectFactory.CreateSuccess<string>(null);
+        }
+        catch (DecoderFallbackException)
+        {
+            return ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument,
+                "cause='NotUtf8' message='Die Datei ist kein gueltiges UTF-8 und wird nicht als Text gelesen oder veraendert.'");
         }
         catch (Exception exception) when (IsFileError(exception))
         {

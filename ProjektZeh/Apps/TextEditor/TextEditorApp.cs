@@ -22,6 +22,8 @@ internal sealed class TextEditorApp : IApplication
     private readonly UiButton discard;
     private readonly UiButton saveClose;
     private string savedText = "";
+    // Vorhandene Datei, die nicht geladen werden konnte (kein UTF-8, zu gross): Speichern unter diesem Pfad wuerde sie leeren (#201).
+    private string? unloadedPath;
     private string newline = "\n";
     private string status = "F3: oeffnen | F2: speichern | Tab: Fokus";
     private bool closing;
@@ -70,7 +72,13 @@ internal sealed class TextEditorApp : IApplication
         if (IsDirty) { status = "Ungespeichert: zuerst speichern oder Fenster schliessen."; return; }
         // Virtuelle Dateien (Oeffnen aus dem Dateimanager) aus dem Erzeuger; Speichern dorthin lehnt FileService ab.
         var result = files.ReadTextOrVirtual(path.Text);
-        if (!result.IsOK()) { status = result.Status.Message; return; }
+        if (!result.IsOK())
+        {
+            if (files.GetFileSize(path.Text).IsOK()) unloadedPath = path.Text;
+            status = result.Status.Message;
+            return;
+        }
+        unloadedPath = null;
         string text = result.Value!;
         newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         document.SetText(text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'));
@@ -93,6 +101,11 @@ internal sealed class TextEditorApp : IApplication
     private void Save() => SaveDocument();
     private bool SaveDocument()
     {
+        if (unloadedPath != null && string.Equals(path.Text, unloadedPath, StringComparison.Ordinal))
+        {
+            status = "Datei wurde nicht geladen und bleibt unveraendert; unter anderem Pfad speichern.";
+            return false;
+        }
         string text = newline == "\n" ? document.Text : document.Text.Replace("\n", newline, StringComparison.Ordinal);
         var result = files.WriteText(path.Text, text);
         if (!result.IsOK()) { status = result.Message; return false; }
