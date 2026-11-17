@@ -38,6 +38,12 @@ internal static class CosmosWasmProbe
     private static readonly byte[] OpenThenTrap = Convert.FromHexString("0061736d0100000001160360097f7f7f7f7f7e7e7f7f017f60017f006000017f02470216776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310970726f635f6578697400010302010205030100010707010372756e00020a2201200041034100418001410c410042004200410041c0001000450440000b41e3000b0b1301004180010b0c637370726f62652e7761736d");
     private static readonly byte[] OpenThenExit = Convert.FromHexString("0061736d0100000001160360097f7f7f7f7f7e7e7f7f017f60017f006000017f02470216776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310970726f635f6578697400010302010205030100010707010372756e00020a2501230041034100418001410c410042004200410041c0001000450440410710010b41e3000b0b1301004180010b0c637370726f62652e7761736d");
 
+    // Etappe 13.4: run legt /save/probe.txt an (O_CREAT|O_TRUNC), schreibt "Hallo", schliesst, oeffnet lesend und liest
+    // zurueck. Ergebnis: gelesene Bytes (5), +1000 bei falschem Inhalt; bei Fehler 100/200/.../600 + WASI-Fehlernummer.
+    // Erzeugt mit dem Modulbauer aus scripts/tests/test_wasm_input_native.py.
+    private static readonly byte[] SaveRoundTrip = Convert.FromHexString("0061736d01000000011f0460097f7f7f7f7f7e7e7f7f017f60047f7f7f7f017f60017f017f6000017f0289010416776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310866645f7772697465000116776173695f736e617073686f745f70726576696577310866645f636c6f7365000216776173695f736e617073686f745f70726576696577310766645f7265616400010302010305030100010707010372756e00040ae30101e00101017f410441004180014109410942c2004200410041800410002200044041e40020006a0f0b41d80441a00136020041dc04410536020041800428020041d804410141880410012200044041c80120006a0f0b41800428020010022200044041ac0220006a0f0b410441004180014109410042024200410041800410002200044041900320006a0f0b41d80441a00636020041dc04411036020041800428020041d8044101418c0410032200044041f40320006a0f0b41800428020010022200044041d80420006a0f0b418c0428020041a0062d000041c8004741e8076c6a0b0b1b02004180010b0970726f62652e7478740041a0010b0548616c6c6f");
+    private const string SaveProbeRoot = "/data/.zehos-apps/saveprobe/probe";
+
     public static bool Run()
     {
         try
@@ -56,6 +62,15 @@ internal static class CosmosWasmProbe
             // nur scripts/tests/test_wasm_input_native.py, weil WasmRuntime.Execute danach ohnehin alle Dateien schliesst.
             Expect("opentrap", OpenThenTrap, "run", WasmStatus.Trap, 0, "/data");
             Expect("openexit", OpenThenExit, "run", WasmStatus.Ok, 7, "/data");
+            // Mit /save gelingt der Rundweg ueber FileService auf dem Cosmos-Laufwerk; ohne Freigabe fehlt fd 4 (EBADF).
+            if (Directory.Exists("/data"))
+            {
+                Directory.CreateDirectory(SaveProbeRoot);
+                Expect("save", SaveRoundTrip, "run", WasmStatus.Ok, 5, null, SaveProbeRoot);
+                Check(File.ReadAllText(SaveProbeRoot + "/probe.txt") == "Hallo", "save: Datei auf dem Laufwerk falsch.");
+            }
+            else Write("save skipped (kein /data)");
+            Expect("save-absent", SaveRoundTrip, "run", WasmStatus.Ok, 108);
             RunApplication();
             if (File.Exists(DoomPath)) RunDoom();
             else Write("doom skipped (keine /data/doom.wasm)");
@@ -142,10 +157,10 @@ internal static class CosmosWasmProbe
     }
 
     private static long Expect(string name, byte[] module, string entry, WasmStatus expectedStatus, int expectedResult,
-        string? root = null)
+        string? root = null, string? saveRoot = null)
     {
         var watch = Stopwatch.StartNew();
-        WasmStatus status = WasmRuntime.Run(module, entry, FixtureGas, new ProbeSession(root), out int result, out string message);
+        WasmStatus status = WasmRuntime.Run(module, entry, FixtureGas, new ProbeSession(root, saveRoot: saveRoot), out int result, out string message);
         long elapsed = watch.ElapsedMilliseconds;
         Write($"{name} status={status} result={result} ms={elapsed} {message}");
         Check(status == expectedStatus && result == expectedResult, $"{name}: erwartet {expectedStatus}/{expectedResult}.");
@@ -171,11 +186,12 @@ internal static class CosmosWasmProbe
 
     private static void Write(string message) => Log.WriteString($"WASM_PROBE {message}\n");
 
-    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue) : IWasmSession
+    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue, string? saveRoot = null) : IWasmSession
     {
         private readonly Stopwatch clock = Stopwatch.StartNew();
         public StringBuilder Output { get; } = new();
         public string? Root => root;
+        public string? SaveRoot => saveRoot;
         public bool AllowsNetwork => false;
         public int Frames { get; private set; }
         public int FirstTic { get; private set; } = -1;

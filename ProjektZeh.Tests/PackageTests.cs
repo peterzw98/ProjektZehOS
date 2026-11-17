@@ -110,6 +110,28 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void ManifestStorageCapabilityFollowsNetwork()
+    {
+        // Etappe 13.4: Freigaben in fester Reihenfolge net, storage; jede einzeln oder beide.
+        string valid = Manifest("classicube", "1.1.0", ("app.wasm", [1]));
+        string storage = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=storage\n");
+        var parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(storage));
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.IsTrue(parsed.Value!.AllowsStorage);
+        Assert.IsFalse(parsed.Value.AllowsNetwork);
+        string both = valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=net\ncapability=storage\nmin-kernel=0.5.50\n");
+        parsed = PackageManifest.Parse(Encoding.UTF8.GetBytes(both));
+        Assert.IsTrue(parsed.IsOK(), parsed.Status.Message);
+        Assert.IsTrue(parsed.Value!.AllowsNetwork && parsed.Value.AllowsStorage);
+        Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(valid)).Value!.AllowsStorage);
+        foreach (string invalid in new[]
+        {
+            valid.Replace("entry=app.wasm\n", "entry=app.wasm\ncapability=storage\ncapability=net\n"),
+            storage.Replace("capability=storage\n", "capability=storage\ncapability=storage\n"),
+        }) Assert.IsFalse(PackageManifest.Parse(Encoding.UTF8.GetBytes(invalid)).IsOK(), invalid);
+    }
+
+    [TestMethod]
     public void ManifestMinimumKernelIsOptionalAndCanonical()
     {
         string valid = Manifest("doom", "1.1.0", ("app.wasm", [1]));

@@ -48,10 +48,12 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
-    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint), new FileUpdateTarget(Paths.UpdateRoot), Paths.AdminRoot);
+    private readonly UpdateController updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
+        new FileUpdateTarget(Paths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory), Paths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory);
 #endif
     // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
-    private readonly AccountService accounts = new(Paths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), Paths.Comparison, CosmosPathGuard.For(Paths.AdminRoot))
+    private readonly AccountService accounts = new(Paths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), Paths.Comparison,
+        CosmosPathGuard.For(Paths.AdminRoot), CosmosDirectoryEntryLimit.ForDirectory)
     {
         MutationBlockedReason = CosmosInstalledIdentity.MutationBlockedReason,
     };
@@ -68,6 +70,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly NetworkAutoConfiguration automaticNetwork;
     private readonly CosmosRoundRobinScheduler scheduler = new();
     private readonly MessageDemoService messages;
+    private readonly UserSession desktopIdentity;
 
     public Kernel()
     {
@@ -86,9 +89,16 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateSuccess();
         }, GptInstaller, Paths.InstallMount);
 #endif
-        var desktopIdentity = accounts.CreateSession();
+        desktopIdentity = accounts.CreateSession();
+#if ZEHOS_WASM
+        // Etappe 13.4: App-Speicher unter /data mit demselben Waechter wie die Kontendatei.
+        Runtime.Wasm.WasmRuntime.SavePathGuard = CosmosPathGuard.For(Paths.AdminRoot);
+        Runtime.Wasm.WasmRuntime.SaveDiskSpace = CosmosSystemInfo.DiskSpace;
+        Runtime.Wasm.WasmRuntime.SaveComparison = Paths.Comparison;
+#endif
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
-            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity, diskSpace: CosmosSystemInfo.DiskSpace),
+            () => new FileService(desktopIdentity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: desktopIdentity,
+                diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -117,9 +127,27 @@ public sealed class Kernel : Sys.Kernel
             string id = installed.Value[index].Manifest.Id;
             apps[index] = new(id, installed.Value[index].Manifest.Name,
                 painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter,
-                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n")));
+                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n"), SaveRootFor));
         }
         return apps;
+    }
+
+    /// <summary>
+    /// Etappe 13.4: /save einer App fuer das angemeldete Desktopkonto, nur mit eingebundenem /data. Der Ordner wird bei
+    /// Bedarf ueber einen Dateidienst ohne Rechteverwaltung mit Waechter angelegt; ohne ihn laeuft die App ohne Speichern.
+    /// </summary>
+    private string? SaveRootFor(string packageId)
+    {
+        if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
+        var path = Paths.AppState(packageId, user);
+        if (!path.IsOK()) return null;
+        var created = new FileService(Paths.AdminRoot, pathGuard: CosmosPathGuard.For(Paths.AdminRoot)).CreateDirectory(path.Value!);
+        if (!created.IsOK())
+        {
+            systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);
+            return null;
+        }
+        return path.Value;
     }
 
 #endif
@@ -131,11 +159,12 @@ public sealed class Kernel : Sys.Kernel
     }
 
     private static string VersionText =>
-        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell(UserSession identity)
     {
-        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity, diskSpace: CosmosSystemInfo.DiskSpace);
+        var files = new FileService(identity.HomeDirectory ?? Paths.StartDirectory, access: accounts.Access, session: identity,
+            diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.ResolvePath(path), tasks,
@@ -167,7 +196,7 @@ public sealed class Kernel : Sys.Kernel
             .. new MessageShellCommands(messages).Commands,
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands
         ], systemLog, GetAvailableUptime,
-            $"ZehOS {typeof(Kernel).Assembly.GetName().Version}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}",
+            VersionText,
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
         shell.TakeJobProgress = packageCommands.TakeProgress;
         shell.TakeJobResult = () => network.TakeResult() ?? packageCommands.TakeResult();
@@ -177,7 +206,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        systemLog.Information("Boot", $"ZehOS {CurrentVersion} startet.");
+        systemLog.Information("Boot", $"ZehOS {CurrentVersion}{ManifestSignature.BuildLabel} startet.");
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()

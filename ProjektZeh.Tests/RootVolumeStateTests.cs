@@ -182,6 +182,24 @@ public sealed class RootVolumeStateTests
         Assert.AreEqual(state, volume.State);
     }
 
+    /// <summary>Superblock, den Ext2FeatureGate als 4-KiB-ext2 mit sparse_super annimmt (Geometrie wie Ext2FeatureGateTests).</summary>
+    private static byte[] Superblock(ushort state)
+    {
+        var block = new byte[1024];
+        BitConverter.TryWriteBytes(block.AsSpan(0), 128u);
+        BitConverter.TryWriteBytes(block.AsSpan(4), 2048u);
+        BitConverter.TryWriteBytes(block.AsSpan(24), 2u);
+        BitConverter.TryWriteBytes(block.AsSpan(32), 32768u);
+        BitConverter.TryWriteBytes(block.AsSpan(40), 128u);
+        BitConverter.TryWriteBytes(block.AsSpan(56), (ushort)0xEF53);
+        BitConverter.TryWriteBytes(block.AsSpan(Ext2FeatureGate.StateOffset), state);
+        BitConverter.TryWriteBytes(block.AsSpan(76), 1u);
+        BitConverter.TryWriteBytes(block.AsSpan(88), (ushort)128);
+        BitConverter.TryWriteBytes(block.AsSpan(96), 2u);
+        BitConverter.TryWriteBytes(block.AsSpan(100), 1u);
+        return block;
+    }
+
     private sealed class Volume : IRootVolume
     {
         private readonly byte[] original;
@@ -190,7 +208,7 @@ public sealed class RootVolumeStateTests
 
         public Volume(ushort state)
         {
-            superblock = GptInstallTests.Superblock(state);
+            superblock = Superblock(state);
             original = (byte[])superblock.Clone();
         }
 
