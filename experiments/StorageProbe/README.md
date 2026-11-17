@@ -23,6 +23,10 @@ Argumentprüfung ohne Cosmos-Aufruf.
 Löschen ab und löscht nur die Images, die es in diesem Ordner selbst erzeugt hat (große sparse Images belegen
 mehrere GB); die e2fsck-Ausgaben bleiben liegen.
 
+Exit 0 des Matrixrunners bedeutet: alle Formate und alle Konsistenzprüfungen erfolgreich. Bei einem
+`e2fsck`-Fehler werden die übrigen Fälle noch erfasst, der gesamte Lauf endet dann mit Exit 1.
+Formatfehler sowie fehlende oder unbrauchbare `dumpe2fs`-Header brechen sofort mit Exit 1 ab.
+
 ## Ergebnis 17. November 2026 (Linux, e2fsprogs 1.47.4): NO-GO
 
 Host: Linux 7.2.9, .NET SDK 10.0.112, e2fsprogs 1.47.4, x86-64, Cosmos.Kernel.System 3.0.97 aus NuGet. Genaue Matrix, `dumpe2fs -h` und e2fsck-Meldungen: [results-2026-11-17.md](results-2026-11-17.md).
