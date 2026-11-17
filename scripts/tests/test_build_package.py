@@ -59,41 +59,41 @@ def load_tool():
 FAKE_WAMRC = """
 import json, sys
 from pathlib import Path
-here = Path(__file__).resolve().parent
 if sys.argv[1:] == ['--version']:
     print(VERSION)
     sys.exit(0)
-(here / 'calls.json').write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
+Path(LOG).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
 output = Path(sys.argv[sys.argv.index('-o') + 1])
 output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes())
 """
 
 
 class BuildPackageAotTests(unittest.TestCase):
-    """--aot: festes wamrc (Pruefsumme, Version), feste Schalter, Dateiname mit Kennung und sortierte file-Zeile."""
+    """aot uebersetzt nur mit dem zugelassenen wamrc und festen Schaltern; package --aot-file nimmt das Ergebnis auf."""
 
     ABI_FILE = 'app.wamr245-aot5-x64-bc.aot'
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name)
+        self.directory = Path(self.temp.name).resolve()
         self.tool = load_tool()
         self.assertEqual(self.call('keygen', str(self.directory / 'key'))[0], 0)
         for name, data in (('app.wasm', b'wasm'), ('App.txt', b'gross'), ('b.dat', b'b')):
             (self.directory / name).write_bytes(data)
 
-    def fake_wamrc(self, version='wamrc 2.4.5'):
-        """Ersatz-wamrc, das seine Schalter protokolliert und eine Ausgabedatei schreibt."""
-        tool = self.directory / 'fake'
+    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5'):
+        """Ersatz-wamrc, das seine Schalter in folder/calls.json protokolliert und eine Ausgabedatei schreibt."""
+        tool = self.directory / folder
         tool.mkdir()
-        (tool / 'fake_wamrc.py').write_text(f'VERSION = {version!r}\n' + FAKE_WAMRC, encoding='utf-8')
+        code = f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\n' + FAKE_WAMRC
+        (tool / 'fake_wamrc.py').write_text(code, encoding='utf-8')
         if os.name == 'nt':
             launcher = tool / 'wamrc.cmd'
             launcher.write_text(f'@"{sys.executable}" "{tool / "fake_wamrc.py"}" %*\r\n', encoding='ascii')
         else:
             launcher = tool / 'wamrc'
-            launcher.write_text(f'#!{sys.executable}\n' +(tool / 'fake_wamrc.py').read_text(encoding='utf-8'), encoding='utf-8')
+            launcher.write_text(f'#!{sys.executable}\n' + code, encoding='utf-8')
             launcher.chmod(0o755)
         return launcher
 
@@ -103,34 +103,67 @@ class BuildPackageAotTests(unittest.TestCase):
             code = self.tool.main()
         return code, stderr.getvalue()
 
-    def build(self, *extra):
-        return self.call('package', '--key', str(self.directory / 'key' / 'private.pem'), '--repo', str(self.directory / 'repo'),
-                         '--id', 'app', '--version', '1.0.0', '--name', 'App', '--entry', 'app.wasm', *extra,
-                         f"{self.directory / 'app.wasm'}=app.wasm", f"{self.directory / 'App.txt'}=App.txt",
-                         f"{self.directory / 'b.dat'}=b.dat")
-
     def allow(self, wamrc):
         digest = hashlib.sha256(wamrc.read_bytes()).hexdigest()
         return mock.patch.object(self.tool, 'WAMRC_SHA256', frozenset({digest}))
+
+    def translate(self, wamrc, allowed=True):
+        output = self.directory / 'out.aot'
+        if not allowed:
+            return self.call('aot', str(wamrc), str(self.directory / 'app.wasm'), '-o', str(output))
+        with self.allow(wamrc):
+            return self.call('aot', str(wamrc), str(self.directory / 'app.wasm'), '-o', str(output))
+
+    def build(self, *extra, entry='app.wasm', files=None):
+        files = files or [f"{self.directory / 'app.wasm'}=app.wasm", f"{self.directory / 'App.txt'}=App.txt",
+                          f"{self.directory / 'b.dat'}=b.dat"]
+        return self.call('package', '--key', str(self.directory / 'key' / 'private.pem'), '--repo', str(self.directory / 'repo'),
+                         '--id', 'app', '--version', '1.0.0', '--name', 'App', '--entry', entry, *extra, *files)
 
     def package_dir(self):
         return self.directory / 'repo' / 'app' / '1.0.0'
 
     def test_aot_uses_exactly_the_fixed_flags(self):
         wamrc = self.fake_wamrc()
-        with self.allow(wamrc):
-            code, error = self.build('--aot', str(wamrc))
+        code, error = self.translate(wamrc)
         self.assertEqual(code, 0, error)
         calls = json.loads((wamrc.parent / 'calls.json').read_text(encoding='utf-8'))
-        self.assertEqual(calls[:6], ['--target=x86_64', '--cpu=x86-64', '--bounds-checks=1', '--stack-bounds-checks=1',
-                                     '--size-level=0', '--disable-simd'])
-        self.assertEqual(calls[6], '-o')
-        self.assertEqual(calls[8:], [str(self.directory / 'app.wasm')])
+        self.assertEqual(calls, ['--target=x86_64', '--cpu=x86-64', '--bounds-checks=1', '--stack-bounds-checks=1',
+                                 '--size-level=0', '--disable-simd', '-o', str(self.directory / 'out.aot'),
+                                 str(self.directory / 'app.wasm')])
+        self.assertEqual((self.directory / 'out.aot').read_bytes(), b'AOT:wasm')
+
+    def test_relative_wamrc_runs_the_checked_copy_not_one_from_path(self):
+        checked = self.fake_wamrc('checked')
+        foreign = self.fake_wamrc('foreign')
+        previous = os.getcwd()
+        os.chdir(checked.parent)
+        self.addCleanup(os.chdir, previous)
+        with mock.patch.dict(os.environ, {'PATH': str(foreign.parent) + os.pathsep + os.environ.get('PATH', '')}):
+            code, error = self.translate(Path(checked.name))
+        self.assertEqual(code, 0, error)
+        self.assertTrue((checked.parent / 'calls.json').exists())
+        self.assertFalse((foreign.parent / 'calls.json').exists())
+
+    def test_wrong_version_aborts_without_compiling(self):
+        wamrc = self.fake_wamrc(version='wamrc 2.4.4')
+        code, error = self.translate(wamrc)
+        self.assertEqual(code, 1)
+        self.assertIn('2.4.5 erwartet', error)
+        self.assertFalse((wamrc.parent / 'calls.json').exists())
+        self.assertFalse((self.directory / 'out.aot').exists())
+
+    def test_unknown_checksum_aborts_before_running_wamrc(self):
+        wamrc = self.fake_wamrc()
+        code, error = self.translate(wamrc, allowed=False)
+        self.assertEqual(code, 1)
+        self.assertIn('nicht das zugelassene wamrc', error)
+        self.assertFalse((wamrc.parent / 'calls.json').exists())
+        self.assertFalse((self.directory / 'out.aot').exists())
 
     def test_aot_file_name_manifest_order_and_hash(self):
-        wamrc = self.fake_wamrc()
-        with self.allow(wamrc):
-            code, error = self.build('--aot', str(wamrc))
+        (self.directory / 'out.aot').write_bytes(b'AOT:wasm')
+        code, error = self.build('--aot-file', str(self.directory / 'out.aot'))
         self.assertEqual(code, 0, error)
         aot = (self.package_dir() / 'files' / self.ABI_FILE).read_bytes()
         self.assertEqual(aot, b'AOT:wasm')
@@ -141,21 +174,20 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertIn(f'file={hashlib.sha256(aot).hexdigest()} {len(aot)} {self.ABI_FILE}', lines)
         self.assertEqual((self.package_dir() / 'manifest.sig').stat().st_size, 64)
 
-    def test_wrong_version_aborts_without_compiling(self):
-        wamrc = self.fake_wamrc('wamrc 2.4.4')
-        with self.allow(wamrc):
-            code, error = self.build('--aot', str(wamrc))
-        self.assertEqual(code, 1)
-        self.assertIn('2.4.5 erwartet', error)
-        self.assertFalse((wamrc.parent / 'calls.json').exists())
-        self.assertFalse((self.directory / 'repo').exists())
-
-    def test_unknown_checksum_aborts_before_running_wamrc(self):
-        wamrc = self.fake_wamrc()
-        code, error = self.build('--aot', str(wamrc))
-        self.assertEqual(code, 1)
-        self.assertIn('nicht das zugelassene wamrc', error)
-        self.assertFalse((wamrc.parent / 'calls.json').exists())
+    def test_aot_file_rejects_case_collision_too_many_files_and_long_entry(self):
+        (self.directory / 'out.aot').write_bytes(b'AOT:wasm')
+        aot = ('--aot-file', str(self.directory / 'out.aot'))
+        app = f"{self.directory / 'app.wasm'}=app.wasm"
+        collision = [app, f"{self.directory / 'b.dat'}=APP.wamr245-aot5-x64-bc.aot"]
+        full = [app, *(f"{self.directory / 'b.dat'}=f{index:03}.dat" for index in range(127))]
+        # 195 Zeichen sind als Einstieg gueltig, mit dem AOT-Suffix aber laenger als 200.
+        long_entry = 'd/' + 'a' * 188 + '.wasm'
+        cases = ((collision, 'app.wasm', 'bereits als Paketdatei gelistet'), (full, 'app.wasm', 'mehr als 128 Dateien'),
+                 ([f"{self.directory / 'app.wasm'}={long_entry}"], long_entry, 'laenger als 200 Zeichen'))
+        for files, entry, message in cases:
+            code, error = self.build(*aot, entry=entry, files=files)
+            self.assertEqual(code, 1, message)
+            self.assertIn(message, error)
         self.assertFalse((self.directory / 'repo').exists())
 
     def test_without_aot_output_is_unchanged(self):
