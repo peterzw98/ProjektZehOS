@@ -28,8 +28,8 @@ Stand: 17. November 2026, Basis `origin/master` @ `06ac97a`. Plan [Etappe 7b](..
 1. Kennwortoperationen laufen ⇒ Abbruch (unverändert).
 2. `Sys.Power.IsSupported` ⇒ sonst Abbruch (unverändert).
 3. Netzwerk stoppen, Hintergrundaufgaben `StopAll(2000)` ⇒ sonst Abbruch (unverändert).
-4. **Laufende Paket-Apps** halten Dateien im Paketbestand offen ⇒ Abbruch mit Meldung „Apps zuerst schließen“. Grund: Cosmos verweigert das Aushängen bei offenen Dateien **nicht**, es nimmt den Mount einfach heraus und offene Dateien scheitern beim nächsten Zugriff (`VfsManager.cs:252-292`); einen „busy“-Zustand muss ZehOS selbst sicherstellen.
-5. **Weitere persistente Mounts aushängen**, in umgekehrter Einhängereihenfolge, `/boot/efi` zuletzt: je Mount zuerst `SuperOperations.Sync` (Rückgabewert geprüft) und `Device.Flush()`, dann `TryUnmount`. Grund: `TryUnmount` meldet einen Fehler in `Drop` nicht und eine Flush-Ausnahme erst, wenn der Mount schon entfernt ist (`VfsManager.cs:250-256`); der vorgezogene Sync macht Fehler sichtbar, solange noch zurückgerollt werden kann.
+4. **Laufende Aufträge** ⇒ Abbruch mit Meldung: Paket-Apps (halten Dateien im Paketbestand offen, „Apps zuerst schließen“), `update install`, Migration, Kopier-/Verschiebeaufträge (analog `HasRunningPasswordOperations`). Danach **Schreibsperre für Root** auf Ebene aller `FileService`-Instanzen (Nutzer-, Konten-, Paket-, Update-Instanz) und `RootVolumeState`; sie gilt auch für den Shell-/UI-Thread (Einstellungen, Verlauf, Protokolldatei, Editor) und wird **erst durch `Reopen` aufgehoben** (peter-review P2-2). Grund: Cosmos verweigert das Aushängen bei offenen Dateien **nicht**, es nimmt den Mount einfach heraus und offene Dateien scheitern beim nächsten Zugriff (`VfsManager.cs:252-292`); einen „busy“-Zustand muss ZehOS selbst sicherstellen.
+5. **Weitere persistente Mounts aushängen**, feste Reihenfolge: erst nachträglich eingehängte Datenträger (`disk mount`, `/mnt/*`, ggf. `/data`) in umgekehrter Einhängereihenfolge, **danach immer `/boot/efi`**: je Mount zuerst `SuperOperations.Sync` (Rückgabewert geprüft) und `Device.Flush()`, dann `TryUnmount`. Grund: `TryUnmount` meldet einen Fehler in `Drop` nicht und eine Flush-Ausnahme erst, wenn der Mount schon entfernt ist (`VfsManager.cs:250-256`); der vorgezogene Sync macht Fehler sichtbar, solange noch zurückgerollt werden kann. Für die Rücknahme wird der Zustand je Mount über `VfsManager.TryGetMount` neu bestimmt, nicht gezählt: ein Mount, dessen Flush beim Aushängen warf, ist schon entfernt und muss mit zurück (peter-review P2-3).
 6. Virtuelle Mounts (`/proc`, `/sys`, `/dev`) halten keine Daten und bleiben eingehängt.
 7. **Root:** `RootVolumeState.Close()` = Sync, Sync, `s_state` = 1 (Lesen-Ändern-Schreiben), `Device.Flush()`; `/` wird nicht ausgehängt.
 8. `Sys.Power.Reboot`/`Shutdown`.
@@ -39,9 +39,11 @@ Stand: 17. November 2026, Basis `origin/master` @ `06ac97a`. Plan [Etappe 7b](..
 | Fehler in | Rücknahme | Ergebnis |
 |---|---|---|
 | 1–4 | Netzwerk wieder starten (heute schon) | Shell bedienbar, nichts ausgehängt |
-| 5 (Sync, Flush oder Aushängen eines Mounts) | bereits ausgehängte Mounts in umgekehrter Reihenfolge wieder einhängen, Netzwerk starten | Shell bedienbar; scheitert das Wiedereinhängen, wird es protokolliert und gemeldet („/boot/efi nicht eingehängt, Updates gesperrt“), der Rest läuft weiter |
-| 7 (Sync/Flush von Root) | `s_state` bleibt 0; Rücknahme wie 5 | Shell bedienbar, nächster Boot nach Absturz wäre `RootUnclean` (gewollt) |
-| 8 kehrt zurück | `RootVolumeState.Reopen()` setzt `s_state` = 0 + Flush **vor** jedem weiteren Schreibzugriff, Mounts wie 5 zurück | Shell bedienbar; ohne `Reopen` stünde ein sauberes Kennzeichen über einem weiter beschriebenen Root |
+| 5 (Sync, Flush oder Aushängen eines Mounts) | alle Mounts, die laut `TryGetMount` fehlen (einschließlich des fehlgeschlagenen), in Einhängereihenfolge wieder einhängen; Schreibsperre aufheben (Root war unberührt, `s_state` noch 0); Netzwerk starten | Shell bedienbar; scheitert das Wiedereinhängen, wird es protokolliert und gemeldet („/boot/efi nicht eingehängt, Updates gesperrt“), der Rest läuft weiter |
+| 7, Fehler **vor** dem Schreiben von `s_state` = 1 (Sync) | `s_state` bleibt 0; Rücknahme wie 5 | Shell bedienbar, nächster Boot nach Absturz wäre `RootUnclean` (gewollt) |
+| 7, Fehler **nach** dem Schreiben von `s_state` = 1 (Flush, Neulesen) | auf der Platte kann schon 1 stehen ⇒ `Reopen` (`s_state` = 0 + Flush) vor jeder Aufhebung der Schreibsperre, dann Rücknahme wie 5 | Shell bedienbar (peter-review P2-1) |
+| `Reopen` scheitert | Root bleibt **schreibgesperrt** bis ein späteres `Reopen` gelingt; Meldung „Root schreibgesperrt, neu starten“; Lesen bleibt möglich | kein Schreiben über einem sauberen Kennzeichen |
+| 8 kehrt zurück | `RootVolumeState.Reopen()` setzt `s_state` = 0 + Flush, erst dann Schreibsperre aufheben, Mounts wie 5 zurück | Shell bedienbar; ohne `Reopen` stünde ein sauberes Kennzeichen über einem weiter beschriebenen Root |
 
 `Legacy`: unverändert (nur `/data` aushängen), zusätzlich §0.3 nicht nötig, weil `Unmount` dort ohnehin Drop/Flush auslöst.
 
@@ -59,16 +61,17 @@ Reihenfolge der Umsetzung: 4.3 liefert den Baustein; S4 und 7b nutzen ihn; die 4
 **Hosttests:**
 1. `UpdateController`/`FileUpdateTarget` im `Root`-Profil: Ziel `/boot/efi/boot/ProjektZeh.elf`, Konfiguration `/etc/zehos/update.conf`; Offline-Kernel unter `/home/admin/x.elf` erlaubt, unter `/boot/efi/…`, `/etc/zehos/…`, `/var/lib/zehos/…` abgelehnt; `Legacy` byteidentisch zu heute (bestehende Tests).
 2. `update install`: Sync/Flush-Fehler nach `ReplaceKernel` ⇒ Marker zurückgesetzt, Fehlermeldung, `.bak` unverändert.
-3. `PreparePowerAction` `Root` mit Fakes für Mounts, Sync, Flush, Unmount, `RootVolumeState`: Reihenfolge 1–8; Fehler in jedem Schritt ⇒ Rücknahme laut Tabelle, Netzwerk wieder an, Mounts wieder eingehängt in richtiger Reihenfolge; laufende Paket-App ⇒ Abbruch vor jedem Aushängen.
-4. Rückkehr aus Schritt 8 ⇒ `Reopen` vor dem nächsten Schreibzugriff (Fake zählt).
+3. `PreparePowerAction` `Root` mit Fakes für Mounts, Sync, Flush, Unmount, `RootVolumeState`: Reihenfolge 1–8; Fehler in jedem Schritt ⇒ Rücknahme laut Tabelle, Netzwerk wieder an, Mounts wieder eingehängt in richtiger Reihenfolge; laufende Paket-App, `update install`, Migration, Kopierauftrag ⇒ Abbruch vor jedem Aushängen; Schreibversuch (alle `FileService`-Instanzen) nach Schritt 4 abgelehnt; Fake „Flush wirft nach Entfernen des Mounts“ ⇒ dieser Mount wird mit zurückgehängt; Fehler nach dem `s_state`-Schreiben ⇒ `Reopen` vor Aufhebung der Sperre.
+4. Rückkehr aus Schritt 8 ⇒ Schreiben erst nach `Reopen` wieder erlaubt (Fake zählt); `Reopen` scheitert ⇒ Root bleibt gesperrt, Lesen geht.
 5. `RootVolumeState`: Offset 58, nur 2 Byte geändert, Flush nach jedem Schreiben, Neulesen nach `Close`.
 
-**Gastprüfung `scripts/test-power-commands.ps1` erweitert** (heute: Boot, `reboot`, `shutdown`, optional GDB):
+**Gastprüfung `scripts/test-power-commands.ps1` erweitert** (heute: Boot, `reboot`, `shutdown`, optional GDB, **ohne** Datenlaufwerk). Alle schreibenden Fälle P1–P6 laufen nur auf **isolierten Image-Kopien** in einem neuen Arbeitsordner (AGENTS.md); das Skript bekommt dafür neue Platten-Parameter:
 - P1 `Legacy` mit Datenplatte: `shutdown` hängt `/data` aus, `fsck.fat -n` des Images danach Exit 0 (Regression).
 - P2 `Root` (Platte aus 7a-G1 oder Hostprobe `scripts/test-installer-layout.py`): `shutdown` ⇒ `dumpe2fs -h` „clean“, `e2fsck -fn` 0, `fsck.fat -n` der ESP 0.
-- P3 `Root` `reboot` ⇒ Gast startet erneut im `Root`-Profil; während des Laufs zeigt das Image `s_state` = 0 (nicht sauber), nach dem nächsten `shutdown` wieder „clean“.
-- P4 Fehlerprobe (Testbuild `-p:ZehOSPowerFaultProbe=true`, schlägt Sync von `/boot/efi` bzw. Root einmal fehl): `shutdown` bricht ab, Shell bedienbar, `/boot/efi` wieder eingehängt, `s_state` bleibt 0; zweites `shutdown` gelingt.
-- P5 offline `update install` mit Testkernel, `reboot` ⇒ neue Version läuft, `.bak` = alte Version, Rückfalleintrag startet.
+- P3a `Root` `reboot` mit QEMU `-no-reboot` ⇒ QEMU endet, der Host liest die Superblockbytes am Rohimage (Offset 1024 + 58) = 1. Kein `dumpe2fs` auf einem laufenden Gast.
+- P3b getrennter Neustart-Rundlauf: `reboot` ohne `-no-reboot` ⇒ Gast startet erneut im `Root`-Profil; danach `shutdown`, Host prüft „clean“.
+- P4 Fehlerprobe (Testbuild `-p:ZehOSPowerFaultProbe=true` mit **Zählnummer** „n-ter Aufruf schlägt fehl“, damit jede Stufe einzeln trifft): Sync `/boot/efi`; Unmount mit bereits entferntem Mount; Root-Sync vor dem `s_state`-Schreiben; Root-Flush **nach** dem `s_state`-Schreiben; `Reopen`; Wiedereinhängen. Je Fall: `shutdown` bricht ab, Shell bedienbar, Zustand laut Tabelle §2 (insbesondere `s_state` = 0 am Image nach `shutdown` mit `-no-reboot` erzwungen hart beendet); zweites `shutdown` gelingt, wo die Tabelle es vorsieht.
+- P5 offline `update install`, `reboot` ⇒ neue Version läuft, `.bak` = alte Version, Rückfalleintrag startet. **Voraussetzung:** ein gültig signiertes Manifest. Der öffentliche Schlüssel ist fest im Kernel (`ManifestSignature.cs:10`), der private liegt nicht im Repository. P5 läuft daher nur mit einem Testschlüssel-Mechanismus analog `-p:ZehOSPackageKeyPath` (nur Testbuild, nie Normalbuild) – Entscheidung der Leitung, §5.5 – oder entfällt bis dahin.
 - P6 laufende Paket-App ⇒ `shutdown` verweigert mit Meldung, nach Schließen gelingt es.
 QEMU zuerst, VMware danach; Ansage, ein Gast.
 
@@ -77,4 +80,5 @@ QEMU zuerst, VMware danach; Ansage, ein Gast.
 1. **Leitung:** §0.4 Schritt 4 (laufende Paket-Apps verweigern die Energieaktion statt sie zu beenden) bestätigen.
 2. `test-power-commands.ps1` braucht PowerShell; auf dem Linux-Testrechner fehlt `pwsh` (Etappe 1). Entweder `pwsh` dort installieren (Nachfrage beim Benutzer) oder P1–P6 als Python-Skript nach dem Muster der Storage-Skripte; Vorschlag: Python, die PS1 bleibt für Windows.
 3. Ob ein offenes Handle nach `TryUnmount` beim nächsten Zugriff sauber scheitert oder hängt, ist ungeprüft; P6 und der Abbruch in Schritt 4 vermeiden den Fall, belegen ihn aber nicht.
-4. *Geklärt (Quelle):* FAT-`Sync` ruft nur `Device.Flush()` (`FatSuperblockOperations.cs:13-23`, `FatSuperblock.cs:47-50`), Clusterschreibzugriffe gehen direkt ans Gerät; `Drop` flusht ebenfalls. Der Sync vor dem Aushängen genügt also, liefert aber immer `true` – Fehler kommen nur als Ausnahme aus `Device.Flush()` und werden in Schritt 5 gefangen und als Abbruch behandelt.
+4. *Geklärt (Quelle, Voraussetzung für §2 Schritt 5):* FAT-`Sync` ruft nur `Device.Flush()` (`FatSuperblockOperations.cs:13-23`, `FatSuperblock.cs:47-50`), Clusterschreibzugriffe gehen direkt ans Gerät; `Drop` flusht ebenfalls. Der Sync vor dem Aushängen genügt also, liefert aber immer `true` – Fehler kommen nur als Ausnahme aus `Device.Flush()` und werden in Schritt 5 gefangen und als Abbruch behandelt.
+5. **Leitung:** Testschlüssel für Update-Manifeste (`-p:ZehOSUpdateTestKeyPath`, nur Testbuild, Schlüssel außerhalb des Repositorys) einführen oder P5 bis zur ersten signierten Testversion zurückstellen. Berührt Signaturvertrauen, daher ausdrücklich zu entscheiden.
