@@ -14,6 +14,38 @@ internal static class WasiErrno
         IsDirectory = 31, TooManyFiles = 33, NotFound = 44, NoSpace = 51, NotDirectory = 54, NotEmpty = 55;
 }
 
+/// <summary>
+/// Ordnereintraege im WASI-dirent-Format: d_next (u64, Cookie des naechsten Eintrags), d_ino (u64), d_namlen (u32),
+/// d_type (u8), 3 Byte Fuellung, danach der Name. Ein am Pufferende abgeschnittener Eintrag ist erlaubt; die WASI-libc
+/// erkennt den vollen Puffer und fragt mit groesserem Puffer erneut.
+/// </summary>
+internal static class WasiDirectoryEntries
+{
+    private const int HeaderBytes = 24;
+
+    public static int Write((string Name, bool Directory)[] entries, ulong cookie, Span<byte> buffer)
+    {
+        int used = 0;
+        Span<byte> header = stackalloc byte[HeaderBytes];
+        for (ulong index = cookie; index < (ulong)entries.Length && used < buffer.Length; index++)
+        {
+            byte[] name = System.Text.Encoding.UTF8.GetBytes(entries[index].Name);
+            header.Clear();
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(header, index + 1);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(header[8..], index + 1);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(header[16..], (uint)name.Length);
+            header[20] = entries[index].Directory ? (byte)3 : (byte)4;
+            int count = Math.Min(HeaderBytes, buffer.Length - used);
+            header[..count].CopyTo(buffer[used..]);
+            used += count;
+            count = Math.Min(name.Length, buffer.Length - used);
+            name.AsSpan(0, count).CopyTo(buffer[used..]);
+            used += count;
+        }
+        return used;
+    }
+}
+
 /// <summary>Grenzen je App und Konto (Spec 2026-11-17-app-storage-13-4.md §1).</summary>
 internal sealed record WasmSaveLimits(long TotalBytes = 64L * 1024 * 1024, int Entries = 1024, int FileBytes = 16 * 1024 * 1024,
     int BufferBytes = 16 * 1024 * 1024, int WritableFiles = 8);

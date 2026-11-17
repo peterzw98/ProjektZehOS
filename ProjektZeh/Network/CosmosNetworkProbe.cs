@@ -208,6 +208,7 @@ internal static class CosmosNetworkProbe
     private sealed class NetworkProbeSession(bool allowed) : ProjektZeh.Runtime.Wasm.IWasmSession
     {
         public string? Root => null;
+        public string? SaveRoot => null;
         public bool AllowsNetwork => allowed;
         public bool ShouldExit => false;
         public uint TicksMilliseconds => 0;

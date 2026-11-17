@@ -171,11 +171,12 @@ internal static class CosmosWasmProbe
 
     private static void Write(string message) => Log.WriteString($"WASM_PROBE {message}\n");
 
-    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue) : IWasmSession
+    private sealed class ProbeSession(string? root, long runMilliseconds = long.MaxValue, string? saveRoot = null) : IWasmSession
     {
         private readonly Stopwatch clock = Stopwatch.StartNew();
         public StringBuilder Output { get; } = new();
         public string? Root => root;
+        public string? SaveRoot => saveRoot;
         public bool AllowsNetwork => false;
         public int Frames { get; private set; }
         public int FirstTic { get; private set; } = -1;

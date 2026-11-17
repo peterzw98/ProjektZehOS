@@ -204,6 +204,26 @@ public sealed class WasmSaveStoreTests
     }
 
     [TestMethod]
+    public void DirectoryEntriesUseTheWasiLayoutAndResumeAtTheCookie()
+    {
+        (string, bool)[] entries = [("a.cw", false), ("maps", true)];
+        var buffer = new byte[256];
+        int used = WasiDirectoryEntries.Write(entries, 0, buffer);
+        Assert.AreEqual(24 + 4 + 24 + 4, used);
+        Assert.AreEqual(1UL, BitConverter.ToUInt64(buffer, 0), "d_next des ersten Eintrags");
+        Assert.AreEqual(4U, BitConverter.ToUInt32(buffer, 16), "d_namlen");
+        Assert.AreEqual(4, buffer[20], "regulaere Datei");
+        Assert.AreEqual("a.cw", Encoding.UTF8.GetString(buffer, 24, 4));
+        Assert.AreEqual(2UL, BitConverter.ToUInt64(buffer, 28));
+        Assert.AreEqual(3, buffer[28 + 20], "Ordner");
+
+        Assert.AreEqual(28, WasiDirectoryEntries.Write(entries, 1, buffer), "Fortsetzung ab Cookie 1");
+        Assert.AreEqual("maps", Encoding.UTF8.GetString(buffer, 24, 4));
+        Assert.AreEqual(0, WasiDirectoryEntries.Write(entries, 2, buffer), "Ende");
+        Assert.AreEqual(30, WasiDirectoryEntries.Write(entries, 0, buffer.AsSpan(0, 30)), "abgeschnitten, Puffer voll");
+    }
+
+    [TestMethod]
     public void RenameStaysInsideAndRefusesDirectoryClashes()
     {
         var store = Store();
