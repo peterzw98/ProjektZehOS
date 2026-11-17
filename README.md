@@ -106,6 +106,15 @@ dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj
 
 Unter Windows benötigen die Symlink-Prüfungen das Recht zum Erstellen symbolischer Links (etwa über den Entwicklermodus). Ohne dieses Recht werden nur diese Tests als nicht ausführbar gemeldet; die übrigen Pfadprüfungen laufen weiter. Die Python-Skripttests starten mit `python -m unittest discover -s scripts/tests`. Für die Release-Skripttests muss Bash im `PATH` liegen, unter Windows beispielsweise Git Bash.
 
+Die CI misst die Zeilenabdeckung der im Hostbuild enthaltenen Produktivquellen und scheitert unter der in `.github/workflows/ci.yml` gesetzten Grenze. Lokal entsteht der Bericht mit dem Sammler des Test-SDK; `scripts/check-coverage.py` wertet ihn aus:
+
+```powershell
+dotnet test ProjektZeh.Tests\ProjektZeh.Tests.csproj --configuration Release --collect "Code Coverage;Format=cobertura" --results-directory TestResults
+python scripts/check-coverage.py (Get-ChildItem TestResults -Recurse -Filter *.cobertura.xml | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName --min-total 92 --min-file 50 --exclusions scripts/coverage-exclusions.txt --sources ProjektZeh
+```
+
+`scripts/coverage-exclusions.txt` nennt die wenigen Dateien, die nicht mitzählen, jeweils mit Grund. Die Abdeckung sagt nur, welche Zeilen ein Test ausführt, und gilt nur für die Quellen, die das Testprojekt einbindet. Kernelstart, Treiber und die Cosmos-Hardwareadapter fehlen im Nenner; `--sources ProjektZeh` listet diese ungemessenen Dateien auf.
+
 ## Dateisystem in QEMU
 
 Der Dateizugriff verwendet das bereits eingebundene `Cosmos.Kernel.System` 3.0.97. Ein zusätzliches NuGet-Paket ist nicht erforderlich. `CosmosStorageService` übernimmt Laufwerkseinrichtung und Mounten, `FileService` den Zugriff über `System.IO`. Die Shell hat ein eigenes Arbeitsverzeichnis, anfangs `/data`; relative Pfade sowie `.` und `..` beziehen sich darauf. Textdateien sind beim Lesen und Schreiben auf 65.536 Zeichen begrenzt.
@@ -203,9 +212,12 @@ GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows
 
 - **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen.
 - **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
+- **Guest boot and desktop (QEMU)** startet das ISO aus dem Job **Cosmos x64 build** unter QEMU mit TCG und bedient es mit `scripts/test-desktop-guest.py`: Boot, Anmeldung, Fenster öffnen und schließen, Textshell und `shutdown`. Bildschirmfotos und Protokolle liegen im Artefakt `guest-desktop`.
 - **CodeQL (C#)** prüft den eigenen C#-Produktionscode mit der erweiterten Sicherheitsabfrage. Eine zusätzliche Analyse läuft wöchentlich. Ergebnisse stehen unter **Security → Code scanning** und gegebenenfalls direkt am Pull Request.
 
-Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Tests laufen auf dem Host; ein erfolgreicher CI-Lauf bestätigt keinen automatisierten Start oder Bedienungstest des Kernels in QEMU.
+Das ISO `ZehOS-x64`, der Kernel-Buildlog und die TRX-Testergebnisse werden am Workflow-Lauf für 14 Tage als Artefakte gespeichert. Die Hosttests laufen ohne Kernel. Der Gastlauf belegt nur den oben genannten Ablauf unter QEMU mit TCG; KVM, VMware, echte Hardware, das Recovery-ISO und alle übrigen Funktionen prüft die CI nicht.
+
+Lokal prüft `python3 scripts/test-desktop-guest.py --iso ProjektZeh/output-x64/ProjektZeh.iso [--accel tcg|kvm|whpx] [--boot-timeout 300]` ein ISO in QEMU: Boot, Ersteinrichtung des Kontos auf einer leeren Wegwerfplatte, Terminal öffnen, tippen und über **X** schließen, Dateien und Einstellungen, Ab- und Anmeldung in der Textshell, F4 und `shutdown` (QEMU muss mit Exitcode 0 enden); Error-Zeilen im seriellen Protokoll lassen ihn scheitern. Mit `--recovery` prüft er beim Recovery-ISO nur Boot bis zur Textshell, das Ausbleiben des Desktops und `shutdown`; `uname` wird nur fotografiert. Bilder, `serial.log` und `stderr.log` liegen unter `.tools/desktop-guest/<Kennung>/`. Das ist nur ein QEMU-Ergebnis; VMware bleibt ungeprüft.
 
 Die Action-Versionen sind auf feste Commits gesetzt. Die native Cosmos-Toolchain wird vom offiziellen, fortlaufend aktualisierten Release `tools-latest` bezogen. Für CodeQL werden keine separaten Sonar-Zugangsdaten benötigt. Die PR-Workflows verwenden `pull_request`, damit Code aus Forks ohne Zugriff auf Repository-Secrets geprüft werden kann.
 
