@@ -127,6 +127,12 @@ jobs:
       - name: Lint shell scripts
         run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=warning
 
+      # Bridge und Teambot entscheiden ueber Freigaben und Auftraege; ihre Selbsttests brauchen nur die Standardbibliothek.
+      - name: Test Discord bridge and agent team helpers
+        run: |
+          cd deploy/discord-bridge && python3 test_bridge.py
+          cd ../agent-team && python3 test_teambot.py
+
       # Aktualisieren: neue Version und deren SHA-256 aus actionlint_<Version>_checksums.txt des Releases eintragen (Dependabot hebt
       # einen curl-Pin nicht).
       - name: Lint workflows
