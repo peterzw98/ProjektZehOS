@@ -925,8 +925,14 @@ internal static class CosmosExt2RootProbe
         for (int index = 0; index < RootProbeCatalog.JReadFiles; index++) WriteGenerated($"/j/c/r{index:D2}", $"/j/c/r{index:D2}", "j", 4096);
 
         var worker = new JWorker();
-        var threads = new[] { new Thread(worker.Create), new Thread(worker.RenameDelete), new Thread(worker.Read) };
-        foreach (var thread in threads) thread.Start();
+        // Wie das Produkt ueber ThreadStarter: ohne Stack im nativen Heap ein Fehler statt Page Fault (1G-Lauf 18.11.).
+        var threads = new List<Thread>();
+        foreach (ThreadStart body in new ThreadStart[] { worker.Create, worker.RenameDelete, worker.Read })
+        {
+            var started = ProjektZeh.Scheduling.ThreadStarter.TryStart(body);
+            Check(started.IsOK(), "Thread-Start: " + started.Status.Message);
+            threads.Add(started.Value!);
+        }
         Thread.Sleep(ConcurrencySeconds * 1000);
         worker.Stop = true;
         foreach (var thread in threads) Check(thread.Join(30000), "Aufgabe endet nicht (Haenger)");
