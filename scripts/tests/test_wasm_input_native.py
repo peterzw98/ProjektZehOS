@@ -1,4 +1,5 @@
 """Prueft poll_event mit der echten C-Bruecke und wasm3 (benoetigt gcc)."""
+import concurrent.futures
 import ctypes
 import os
 from pathlib import Path
@@ -147,10 +148,17 @@ class NativeInputTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(dir=work, ignore_cleanup_errors=True)
         source = ROOT / "ProjektZeh/ThirdParty/wasm3/source"
         library = Path(cls.temp.name) / ("input.dll" if os.name == "nt" else "input.so")
-        subprocess.run([compiler, "-shared", "-fPIC", "-O2", "-I", str(source),
-                        *(str(ROOT / "ProjektZeh/Native/Wasm/host" / name) for name in ("zehos_host_core.c", "zehos_host_wasm3.c")),
-                        str(ROOT / "scripts/tests/wasm-input-host.c"),
-                        *map(str, sorted(source.glob("*.c"))), "-lm", "-o", str(library)], check=True)
+        # Die C-Dateien einzeln und parallel uebersetzen (ein gcc-Aufruf braucht sequenziell ~20 s), dann linken.
+        sources = [*(ROOT / "ProjektZeh/Native/Wasm/host" / name for name in ("zehos_host_core.c", "zehos_host_wasm3.c")),
+                   ROOT / "scripts/tests/wasm-input-host.c", *sorted(source.glob("*.c"))]
+        objects = [Path(cls.temp.name) / f"{index}.o" for index in range(len(sources))]
+
+        def compile_one(item):
+            subprocess.run([compiler, "-c", "-fPIC", "-O2", "-I", str(source), str(item[0]), "-o", str(item[1])], check=True)
+
+        with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+            list(pool.map(compile_one, zip(sources, objects)))
+        subprocess.run([compiler, "-shared", *map(str, objects), "-lm", "-o", str(library)], check=True)
         if os.name == "nt":
             cls.dll_directory = os.add_dll_directory(str(Path(compiler).parent))
         cls.lib = ctypes.CDLL(str(library))
