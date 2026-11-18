@@ -109,12 +109,28 @@ public class Ext2FreeInodeTests
         uint freeAfterFirst = _sb.FreeInodesCount;
         uint dtimeAfterFirst = OnDisk(target.InodeNumber).Dtime;
         uint onDiskFreeAfterFirst = Remount().FreeInodesCount; // the superblock copy is written lazily
+        uint group = _sb.GroupOfInode(target.InodeNumber);
+        uint groupFreeAfterFirst = Remount().GetGroup(group).FreeInodesCount; // written immediately
 
         _sb.FreeInode(target.InodeNumber);
 
         Assert.That(_sb.FreeInodesCount, Is.EqualTo(freeAfterFirst));
         Assert.That(Remount().FreeInodesCount, Is.EqualTo(onDiskFreeAfterFirst), "on-disk counters unchanged");
+        Assert.That(Remount().GetGroup(group).FreeInodesCount, Is.EqualTo(groupFreeAfterFirst), "group descriptor unchanged");
         Assert.That(OnDisk(target.InodeNumber).Dtime, Is.EqualTo(dtimeAfterFirst));
+    }
+
+    [Test]
+    public void FreeInode_HeldObjectWrittenLater_KeepsDtime()
+    {
+        Ext2Inode target = Create("a");
+
+        _sb.FreeInode(target.InodeNumber);
+        _sb.WriteInode(target); // e.g. an open handle updating mtime after unlink
+
+        Ext2Inode onDisk = OnDisk(target.InodeNumber);
+        Assert.That(onDisk.LinksCount, Is.Zero);
+        Assert.That(onDisk.Dtime, Is.Not.Zero);
     }
 
     [Test]

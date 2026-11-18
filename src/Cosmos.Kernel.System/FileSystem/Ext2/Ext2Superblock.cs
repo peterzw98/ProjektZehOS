@@ -644,10 +644,18 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         int slot = (int)((index % inodesPerBlock) * InodeSize);
         byte[] table = new byte[BlockSize];
         ReadBlocks(tableBlock, 1, table);
-        uint now = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        uint dtime = Math.Max((uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), 1u);
         BitConverter.TryWriteBytes(table.AsSpan(slot + Ext2InodeLayout.LinksCountOffset, 2), (ushort)0);
-        BitConverter.TryWriteBytes(table.AsSpan(slot + Ext2InodeLayout.DtimeOffset, 4), Math.Max(now, 1u));
+        BitConverter.TryWriteBytes(table.AsSpan(slot + Ext2InodeLayout.DtimeOffset, 4), dtime);
         WriteBlocks(tableBlock, 1, table);
+
+        // A handle still holding the object (an open, unlinked file) may
+        // call WriteInode later; it must not write dtime 0 back.
+        if (_inodeCache.TryGetValue(inodeNumber, out Ext2Inode? cached))
+        {
+            cached.LinksCount = 0;
+            cached.Dtime = dtime;
+        }
 
         bmp[byteIdx] &= (byte)~(1u << (int)bitIdx);
         WriteBlocks(gd.InodeBitmap, 1, bmp);
