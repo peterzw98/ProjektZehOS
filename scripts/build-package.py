@@ -13,6 +13,7 @@ scripts/sign-update.py. Das Werkzeug fuehrt keine Paketinhalte aus und packt nic
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -38,6 +39,9 @@ WAMRC_FLAGS = ("--target=x86_64", "--cpu=x86-64", "--bounds-checks=1", "--stack-
 # WAMR-Version, AOT-Formatversion (AOT_CURRENT_VERSION 5 in 2.4.5), Ziel, Pruefschalter und nrz (ohne Red Zone);
 # muss der Kernelkonstante gleichen. Kernel mit dieser Kennung laden .aot des alten wamrc nicht mehr.
 AOT_ABI = "wamr245-aot5-x64-bc-nrz"
+_redzone_spec = importlib.util.spec_from_file_location("check_aot_redzone", Path(__file__).with_name("check-aot-redzone.py"))
+redzone = importlib.util.module_from_spec(_redzone_spec)
+_redzone_spec.loader.exec_module(redzone)
 
 
 def valid_path(path: str) -> bool:
@@ -83,7 +87,8 @@ def compile_aot(args: argparse.Namespace) -> None:
         shutil.copyfile(args.wasm, wasm)
         try:
             subprocess.run([str(tool), *WAMRC_FLAGS, "-o", str(args.output), str(wasm)], check=True)
-        except subprocess.CalledProcessError:
+            check_redzone(args.output)
+        except (subprocess.CalledProcessError, ValueError):
             args.output.unlink(missing_ok=True)
             raise
         receipt = {"aot_abi": AOT_ABI, "wamrc_version": version, "wamrc_sha256": wamrc_sha, "flags": list(WAMRC_FLAGS),
@@ -91,6 +96,13 @@ def compile_aot(args: argparse.Namespace) -> None:
                    "aot_sha256": hashlib.sha256(args.output.read_bytes()).hexdigest()}
     receipt_path(args.output).write_text(json.dumps(receipt, indent=1) + "\n", encoding="utf-8")
     print(f"{args.output}: {receipt['aot_sha256']}")
+
+
+def check_redzone(aot: Path) -> None:
+    """Belegt am Ergebnis, dass kein Code unter RSP zugreift; die wamrc-Pruefsumme allein beweist das nicht."""
+    hits = redzone.count_below_rsp(redzone.disassemble(aot.read_bytes(), redzone.find_objdump()))
+    if hits:
+        raise ValueError(f"{aot} greift {hits}-mal unter RSP zu (Red Zone); mit dem zugelassenen wamrc neu uebersetzen.")
 
 
 def receipt_path(aot: Path) -> Path:
@@ -145,6 +157,7 @@ def package(args: argparse.Namespace) -> None:
         if len(files) >= MAX_FILES:
             raise ValueError("Mit der AOT-Datei waeren es mehr als 128 Dateien.")
         check_receipt(args.aot_file, files[args.entry])
+        check_redzone(args.aot_file)
         files[aot] = args.aot_file
     if sum(path.stat().st_size for path in files.values()) > MAX_CONTENT:
         raise ValueError("Paketinhalt groesser als 128 MiB.")
