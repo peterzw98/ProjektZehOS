@@ -36,6 +36,8 @@ TOPIC_EDIT_TIMEOUT = 10
 # Nur diese drei Discord-Konten (Projektbenutzer laut AGENTS.md) dürfen aus IRC heraus erwähnt werden.
 PING_USERS = {"peter": 458180351467061248, "lars": 137636974927413248, "azazel": 300868002994323456}
 MAX_PINGS = 3
+# Jede Person höchstens einmal je Minute über alle Kanäle: jeder IRC-Nick kann pingen, das soll nicht in Spam enden.
+PING_COOLDOWN = 60
 # Ganzes Wort: nicht in Adressen (x@peter), nicht als Präfix längerer Namen (@Peterle, @lars-bot).
 PING_NAME = re.compile(r"(?<![\w@＠])@(peter|lars|azazel)(?![\w-])", re.IGNORECASE)
 
@@ -170,6 +172,7 @@ class Bridge(discord.Client):
         self.message_lock = asyncio.Lock()
         self.last_message_sent = None
         self.members = {}  # IRC-Kanal (klein) -> Nicks, für Präsenz und QUIT/NICK-Meldungen
+        self.last_ping = {}  # Discord-ID -> monotoner Zeitpunkt des letzten Pings
 
     async def setup_hook(self):
         self.loop.create_task(self.irc_loop())
@@ -259,6 +262,14 @@ class Bridge(discord.Client):
         self.ready_event.set()
         print(f"Discord ready as {self.user}, mapped {list(self.channels)}", flush=True)
 
+    def due_pings(self, user_ids):
+        """Die IDs, deren letzter Ping mindestens PING_COOLDOWN zurückliegt; vermerkt für diese den Zeitpunkt."""
+        now = time.monotonic()
+        due = [user_id for user_id in user_ids if now - self.last_ping.get(user_id, -PING_COOLDOWN) >= PING_COOLDOWN]
+        for user_id in due:
+            self.last_ping[user_id] = now
+        return due
+
     async def post(self, irc_channel, embed, pings=()):
         channel = self.channels.get(irc_channel.lower())
         if not channel:
@@ -281,7 +292,7 @@ class Bridge(discord.Client):
             original = text
             signed = has_signed_line(original)
             # Eigene Zeilen kommen aus Discord und haben dort schon erwähnt; sonst pingte jede Nachricht doppelt.
-            pings = [] if nick.lower() == IRC_NICK.lower() else ping_ids(FORMAT_CODES.sub("", text))
+            pings = [] if nick.lower() == IRC_NICK.lower() else self.due_pings(ping_ids(FORMAT_CODES.sub("", text)))
             text = FORMAT_CODES.sub("", text).replace("@", "＠")
             action = text.startswith("\x01ACTION ") and text.endswith("\x01")
             if action:

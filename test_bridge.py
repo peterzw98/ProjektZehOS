@@ -96,6 +96,7 @@ def topic_bridge():
     client.channels = {"#general": Channel(), "#second": Channel()}
     client.topic_pending = {}
     client.topic_attempts = {}
+    client.last_ping = {}
     return client
 
 
@@ -462,6 +463,30 @@ async def check_pings():
         await client.on_irc("agent-x", "PRIVMSG", ["#general", "@Lars " + "y" * 4500])
         assert len(channel.sent) == 3
         assert channel.sent[0]["content"] == f"<@{LARS}>" and all(set(s) == {"embed"} for s in channel.sent[1:])
+        channel.sent.clear()
+
+    # Ratelimit je Person über alle Absender und Kanäle: höchstens ein Ping je PING_COOLDOWN Sekunden.
+    client = topic_bridge()
+    channel = SendChannel()
+    client.channels = {"#general": channel, "#second": channel}
+    clock = [1000.0]
+    with patch.object(bridge.discord, "Embed", Embed, create=True), \
+            patch.object(bridge.discord, "AllowedMentions", AllowedMentions, create=True), \
+            patch.object(bridge.discord, "Object", Object, create=True), \
+            patch("bridge.time.monotonic", side_effect=lambda: clock[0]):
+        await client.on_irc("agent-a", "PRIVMSG", ["#general", "@Peter eins"])
+        assert channel.sent.pop()["content"] == f"<@{PETER}>"
+        clock[0] += 59
+        # Anderer Absender, anderer Kanal: Peter ist noch gesperrt, Lars nicht; die Nachricht selbst kommt an.
+        await client.on_irc("human-b", "PRIVMSG", ["#second", "@Peter @Lars zwei"])
+        sent = channel.sent.pop()
+        assert sent["content"] == f"<@{LARS}>" and sent["embed"].description == "＠Peter ＠Lars zwei"
+        await client.on_irc("human-b", "PRIVMSG", ["#second", "@Peter drei"])
+        assert set(channel.sent.pop()) == {"embed"}
+        clock[0] += 1
+        await client.on_irc("agent-a", "PRIVMSG", ["#general", "@Peter vier"])
+        assert channel.sent.pop()["content"] == f"<@{PETER}>"
+        assert bridge.PING_COOLDOWN == 60
 
 
 asyncio.run(check_pings())
