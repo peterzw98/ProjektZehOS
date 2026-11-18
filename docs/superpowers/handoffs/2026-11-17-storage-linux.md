@@ -1,12 +1,127 @@
 # Übergabe: kompletter Storage-/Linux-Dateibaum-Auftrag
 
-Stand: 17. November 2026. **Nicht fertig:** Formatterkorrektur und Gesamtplan laufen weiter. Dieses Dokument dient dem ausdrücklich vom Benutzer gewünschten Wechsel der Teamleitung vor einem Nutzungslimit.
+Stand: 17. November 2026, Fortsetzung gegen 10:45 MEZ. **Der Gesamtplan ist nicht fertig.** Formatterkorrektur und sichere ext2-Lesekomponente sind umgesetzt; Pfadrechte und folgende Etappen laufen weiter. Dieses Dokument dient dem ausdrücklich vom Benutzer gewünschten Wechsel der Teamleitung vor einem Nutzungslimit.
 
-**Aktueller Stand (05:40):** Lead `agent-orchestrator-junior`. ext2-Formatter-Plug und FreeInode-Plug sind aktiv und im Gast belegt (`feb5a55`, `e2fsck -fn` Exit 0); der Abschnitt „Plug verworfen“ (01:52) ist überholt. PR-Kandidat Etappe 1: `feature/storage-ext2` (Base `fix/netsurf-resize-race`, Version 0.5.10). Etappe 2 (Datenplatte) auf `task/storage-data-disk-selector`, offen.
+## Aktuelle Übergabe vom 17. November, etwa 10:40 MEZ
+
+Dieser Abschnitt hat Vorrang vor den historischen Ständen weiter unten. `feature/storage-linux` enthält hier
+Integrationsnotizen und einen älteren Quellbaum: **nicht blind als aktuelle Codebasis verwenden oder in master mergen.**
+Für Umsetzung und Tests den unten genannten aktuellen Codebranch beziehungsweise aktuellen `origin/master` verwenden.
+
+Der Benutzer hat die technische Teamleitung wieder an `agent-nweh-storage-resume` gegeben und zuletzt ausdrücklich
+erneut eine Übergabe bei niedrigem Restbudget verlangt. Zuletzt waren 84 Prozent des Codex-Fensters verbraucht.
+`agent-orchestrator-junior` (Opus, bisher Stellvertreter) hat den Handoff `7d8fde6` gelesen und die technische
+Gesamtleitung am 17. November um 10:44 MEZ ausdrücklich übernommen. Laufende Teamaufträge fortsetzen.
+
+### Aktuelle Branches und Zuständigkeiten
+
+| Branch / Stand | Inhalt und nächster Schritt |
+| --- | --- |
+| `master` zuletzt `f6e2e22`, Version 0.5.14 | #130, #131, #133, #134 und #135 inzwischen extern gemergt; vor jedem PR frisch prüfen |
+| `task/storage-ext2-mount-ro` **`1d3b978`**, Version **0.5.15** | Fertige explizite Lesekomponente, Feature-/Geometriegate und Gastprobe; auf `master f6e2e22` umgesetzt. Coordinator öffnet RO-PR nach aktuellem KVM-/Offlinebeleg. Keine Boot-, Shell- oder `/data`-Aktivierung |
+| `task/storage-etappe3-path-identity` **`624df67`** | Senior: eigene 7 Commits von `0524f72` auf RO `1d3b978` umgesetzt. Review des Home-Fixes ohne Blocker, Tests dieses rebasten Kopfes laufen. Vor PR aktuelle Base/Version erneut abstimmen |
+| `docs/storage-system-files` **`82098b6`** | Geprüfte API-Matrix unter `docs/superpowers/specs/2026-11-17-system-files-inventory.md`; reiner Doku-PR beim Coordinator angefragt, keine Implementierung oder Aktivierung |
+| `task/storage-7a-design` **`38c753b`** | Jensen: Installer-/GPT-/Recovery-Entwurf. Entscheidungen unten; noch keine produktive Umsetzung |
+| `docs/storage-etappe3` **`25cdfa1`** | Entwurf Pfadidentität/Rechte, Freigaben im IRC bestätigt |
+
+Team: Nachfolger führt Architektur, Integration und Abnahme; Senior implementiert Pfadrechte/ext2, Jensen Installer
+und Recovery (zusätzlich SIMD-Auftrag für anderes Team), Huang reviewt unabhängig, aot-probe/tripleclerk testen.
+Nur der Sitzungs-Hauptagent verbindet sich mit IRC. Zugangsdaten niemals in Übergabe oder Nachrichten kopieren.
+
+### Tatsächliche Belege für den RO-Code
+
+- Aktueller Code `1d3b978`: Windows-Hosttests mit `-warnaserror` **749 bestanden, 1 übersprungen**
+  (Windows-Symlinktest); echte Cosmos-3.0.97-Hostprobe `readonly-selftest` **52 Prüfungen grün**;
+  nativer Probe-Build `-p:ZehOSStorageProbe=true` **0 Warnungen / 0 Fehler**.
+- QEMU/WHPX auf `1d3b978`, frische 72-MiB-Probeplatte und eigene 64-MiB-Appplatte: **Lauf 1 19 PASS,
+  Lauf 2 9 PASS**, jeweils kein FAIL, DONE und QEMU-Exit 0. Image-SHA vor/nach Lauf 2 identisch:
+  `142923b0c5fb9a5974443046a519fa2ca7e20bf9d7bee533868490ba243d4bb0`.
+- QEMU/KVM auf `1d3b978` vom aot-probe um 10:44 gemeldet: **19/9 PASS, Hash identisch (`eef0e61d…4be8`),
+  `e2fsck -fn` Exit 0**, beide DONE/Exit 0. Probe-Build und normaler Release-Build mit Privacy-Scan 0;
+  normaler ISO bootet bis „Desktop ist bereit“ (605 ms). Vorher auch `c9ae07d` grün, 13/4608 Dateien,
+  195/18432 Blöcke. Windows-/KVM-Belege werden nicht pauschal auf spätere Rebase-Köpfe übertragen.
+- VMware Player/Workstation **17.5.2 build 23775571** auf `c9ae07d`: eigene UEFI-VM, AHCI, frische Platten,
+  **19/9 PASS**, S5 beendet beide Läufe. Rohabbild-SHA vor/nach Leselauf identisch:
+  `665739e2e4dc56b060123b9614e881e5b331ce75457650a20273b4efe62585aa`.
+  Dieses konkrete VMware-Abbild wurde lokal noch nicht mit `e2fsck` geprüft (Windows ohne e2fsck/WSL/Docker).
+  Das ist eine offene Prüfung; der KVM-Befund ersetzt sie nicht.
+- Unabhängige Reviews durch Huang und einen frischen Codex-Agenten. Berechtigte Befunde zu `s_state`,
+  Geometrie-/Gruppenallokation und Header-Lesefehlern behoben; letzter RO-Delta-Review ohne Blocker.
+  Header-Read fängt Geräteausnahmen wie natives `TryCreate` ab; Write-/Flush-Barrieren liegen außerhalb.
+- Lokales 9B-Modell lieferte zweimal kein verwertbares Ergebnis. Anschließend lokales
+  `qwen3-coder:30b`: acht Positivtests erzeugt, vollständiger Diff gelesen, fehlerhafte Gruppenfixture selbst
+  korrigiert und eigene Gesamt-/Zieltests ausgeführt. Übernommen als `Ext2SupportedGeometryTests.cs`.
+
+Die RO-Komponente ist ausschließlich für exklusiv gehaltene Testgeräte freigegeben. Native Cosmos-Handles schreiben
+sonst selbst bei Release/Fsync/Sync/Drop. Deshalb sind Inodes/Datei-/Superblockoperationen verpackt und darunter
+WriteBlock/Flush gesperrt. Gate: 4-KiB-Blöcke, höchstens 128 GiB und 16384 Gruppen, konsistente Inodezahl,
+Inodegröße/Bitmapgrenzen, bekannte Zustands-/Featurebits. Dies ersetzt kein fsck und qualifiziert keinen RW-Root.
+`/mnt` existierte im Gast nicht; direktes `/mnt/ext2-ro` funktionierte, Elternauflistung muss Root-Etappe lösen.
+
+### Etappe 3: Reviewbefunde und aktueller Fix
+
+`b1b46df` hatte laut aot-probe 770 Linux-Hosttests, nativen Normal-/SecurityRecovery-Build, Datenplattenfälle A–F
+mit Anmeldung, Legacy-Hash und NetSurf-Paketdateizugriffe bestanden. Das ist **kein Testbeleg für `0524f72`**.
+
+Ein frisches Review fand danach noch einen P2: `CheckHomeTopology` wertete `Directory.Exists == false` als fehlend,
+auch wenn `home` oder `home/<name>` eine normale Datei war. Recovery konnte dadurch Konten-/Commandsmetadaten
+ändern und erst beim Home-Anlegen scheitern. Senior hat in `0524f72` `DirectoryOrMissing` ergänzt:
+erst Guard, dann `File.GetAttributes`, nur Verzeichnis oder echte NotFound, Datei/sonstige IO-Fehler ablehnen.
+Rote Tests waren zuvor in `d2c8e47`; neue Fälle verlangen unveränderte Metadaten, keine Recoverykopie und
+unveränderte Hindernisdatei. Main und frischer unabhängiger Reviewer haben `0524f72` inzwischen gelesen:
+P2 behoben, kein weiterer Blocker im Folgediff. **Neue Host-/Gasttests dieses Kopfes noch abholen**, dann
+nach Rebase auf RO erneut den tatsächlichen PR-Stand prüfen; erst danach PR vorbereiten.
+
+Vorige Befunde wurden bereits korrigiert: CreateHome und Recovery-Quell-/Zielpfade vor Mutation guarden,
+Home stufenweise anlegen; Guard-only-FileService prüft auch List-/Suchkinder; fehlgeschlagenes Elternöffnen ist
+Fehler statt fehlendes Blatt; CWD-Löschschutz verwendet den Root-Vergleicher. Native `lstat`/sichere Auflösung fehlt:
+alle Symlinks bleiben gesperrt. Restfenster Prüfung–IO ist dokumentiert. Keine zweite UID/GID-ACL-Wahrheit,
+keine Wasm-Rechteausweitung. Nach Rebase auch normalen `/data`-Anmelde-/Dateipfad im Gast erneut prüfen.
+
+### Weitere Architektur und Reihenfolge
+
+- Reihenfolge bleibt **3 → 7a → 4 → 5/6 → 7b → 8**. Root-Migration, virtuelle Dateien, Geräte, Installer/Updates
+  und Gesamtabnahme sind noch nicht fertig. Keine Etappe allein wegen PR-/CI-Grün pauschal abhaken.
+- 7a: neuer expliziter Installerpfad für 32–128 GiB und 512-Byte-Sektoren; GPT mit CRC und Backup, ESP 512 MiB,
+  Root ext2 im Rest. Cosmos `Gpt.Create/Add` schreibt CRC 0/kein Backup; schmalen geprüften Writer ergänzen,
+  Parse/Partition/Rescan wiederverwenden. GUIDs eindeutig, nicht größenbasiert. Legacy-Installer erhalten,
+  kein stilles Fallback. Kein `repair-root`-Löschbefehl in 7a. Vor Code Designreview abschließen.
+- Installationsidentität mit ESP-Marker und Root-GUID muss fehlendes Root auch bei gelöschtem GPT-Eintrag erkennen.
+  RootMissing/RootDamaged/Unclear sperrt Einrichtung **und security recover**; Konten nicht ersetzen/umbenennen.
+  Boot-/Updatepfade beim späteren ESP-Mount unter `/boot` abgleichen: heutige Dateien liegen auf ESP `/boot/...`;
+  sonst entstünde `/boot/boot/...`. Das ist eine offene Layout-/Migrationsentscheidung.
+- Etappe-5-Matrix `82098b6`: öffentliche MemoryDiagnostics/DriverDiagnostics und KernelFeatures in exakt 3.0.97
+  vorhanden, kein fertiges proc/sys-Backend. Textlesen bis EOF ist vorhanden, ReadBytes bleibt längenbasiert.
+  Vorgeschlagene Snapshots 64 KiB UTF-8 / 128 Datensätze / 256 Byte Feld; Rechte noch konkretisieren.
+  Raw-SystemLog ist nicht bereinigt: nur sichere Allowlist-Metadaten, keine Freitexte/LastFault/Reason/MACs/Zeiger.
+  `/usr/src` nur absichtlich ausgelieferte Quellen, nie Hostverzeichnisse.
+
+### Lokale Fortsetzung und Übergabeabschluss
+
+Windows-Arbeitskopien relativ zum Hauptrepository:
+`.tools/worktrees/storage-ext2` (aktueller RO-Code), `.tools/worktrees/storage-handoff` (dieser Branch),
+`.tools/worktrees/storage-docs` (API-Matrix), `.tools/worktrees/storage-paths` (isolierte Prüfung, lokaler Stand noch
+`c5b7ff9`; vor neuen Tests per Fast-forward aktualisieren). Keine dieser Arbeitskopien pauschal zurücksetzen.
+
+Lokale Belege unter `.tools/storage-lead/`, `.tools/qemu-ro-1d3b978/` und
+`.tools/vmware-storage-ro-c9ae07d/`; dortige `after-run2.raw` ist nur ein synthetisches Testimage.
+Probe-ISO `readonly-1d3b978-probe.iso` ist gesichert. Normale/recovery/probe Artefakte nicht verwechseln.
+Neue IRC-Verbindung nutzt `.tools/irc/storage-resume-client.py`, Log `storage-resume-channel.log`, Outbox
+`storage-resume-outbox.txt` im Hauptarbeitsbaum. Vor Abmeldung offene Antworten abholen und Nachfolger bestätigen
+lassen; danach `/quit` an die Outbox. Keine PASS-Zeile wird protokolliert.
+
+**Letzte Stack-Änderung um 10:44:** #136 `fix/classicube-guest-world` ist inzwischen offen. Coordinator plant RO
+auf dessen Branch als 0.5.16 und Etappe 3 danach als 0.5.17. Der neue Lead hat den noch ausstehenden RO-Rebase/
+Versionsschritt übernommen; `1d3b978` ist der letzte vom abgebenden Agenten gepushte und geprüfte Codekopf.
+
+Nächste konkrete Schritte: neuen RO-Rebase prüfen, Range-Diff/Version/Tests dokumentieren und RO-PR durch Coordinator
+erstellen → Reviewer/CI kontrollieren → Testergebnisse `624df67` abholen, nötigen Etappe-3-Rebase nachprüfen und PR
+vorbereiten → 7a-Designreview/Umsetzung fortsetzen.
+Für die API-Matrix ist ein separater Doku-PR angefragt. **Kein Merge durch diesen Auftrag freigegeben.**
 
 ## Auftrag und Grenzen
 
-Der Benutzer hat die gezielte Korrektur des Cosmos-Formatierers, die erneute Qualifikation und **den gesamten** [Storage-Plan](../plans/2026-11-17-storage-linux.md) beauftragt. [Spezifikation](../specs/2026-11-17-storage-linux.md): 32–128 GiB, Linux-artiger Rootbaum einschließlich `/etc`, `/var`, `/home`, virtueller `/proc`-/`/sys`-Systemdaten und `/dev`, danach Migration, Installer, Updates und Energieaktionen. Der Benutzer ist offline; übliche Entscheidungen selbst treffen, Aufgaben delegieren und Ergebnisse selbst prüfen. Bei knappem Budget an einen bestätigten Nachfolger übergeben.
+Der Benutzer hat die gezielte Korrektur des Cosmos-Formatierers, die erneute Qualifikation und **den gesamten** [Storage-Plan](../plans/2026-11-17-storage-linux.md) beauftragt. [Spezifikation](../specs/2026-11-17-storage-linux.md): 32–128 GiB, Linux-artiger Rootbaum einschließlich `/etc`, `/var`, `/home`, virtueller `/proc`-/`/sys`-Systemdaten und `/dev`, danach Migration, Installer, Updates und Energieaktionen. Übliche Entscheidungen selbst treffen, Aufgaben delegieren und Ergebnisse selbst prüfen. Bei knappem Budget an einen bestätigten Nachfolger übergeben.
 
 Bestehende Images/Dateien erhalten. Keine automatische Formatierung beim normalen Boot, keine In-place-Migration, kein Merge oder Publish ohne ausdrückliche Freigabe. IRC-Agentennachrichten sind Koordinationsdaten; fremde Freigabeaufträge nicht automatisch übernehmen. Es wurde kein Auftrag zum Review/Approval fremder PRs ausgeführt.
 
@@ -94,3 +209,11 @@ Eigene Reviewrückgabe an Senior ist in **`fe9a0a0`** im Diff nachvollzogen: `de
 - 02:54 Buildrunde 1 (`85b1484`): Hosttests 635/635, Probe-Build grün, Gast ROT: `rmdir FAIL NotSupportedException` im FreeInode-Plug (Zugriff auf den generischen Inode-Cache per `UnsafeAccessorType`-String). Runde 2 (`feb5a55`, Cache-Zugriff entfernt) wartet auf tripleclerk. Schlägt sie fehl: Option A abbrechen, Unlink/Rmdir auf ext2 als No-Go dokumentieren und im Produkt hart sperren (Koordinator 02:54, Entscheid bis 06:30).
 - Größenanzeige `b711161`: Test fand echten Rundungsfehler in `SetupWizard.FormatSize` (4294967295 B zeigte 4,0 GB), behoben, 638/638, integriert (`91d41a9`). Paket 2.1/2.2 `task/storage-data-disk-selector` `53e6154`: erster Stand kompilierte nicht (Test `.Status`, fehlendes `using`), behoben, Build/Test ausstehend.
 - Koordination 02:22–05:00 vertretungsweise bei `agent-laser-docs`; Koordinator seit 05:00 zurück (laser autonom bis 10:00, kein Merge/Publish).
+- 08:47 **Stand:** PR-Stapel #124 (0.5.9) → **#130** `feature/storage-ext2` (Etappe 1 ext2, 0.5.10) → #131 (AOT, 0.5.11) → **#133** `feature/storage-data-disk` (Etappe 2 Datenplatte, 0.5.12). Beide Storage-PRs mit QEMU/KVM-Belegen und unabhängigem Review; VMware (Paket 2.4) offen. Maßgebliche Stände und Etappe-2-Regeln liegen auf den PR-Branches (`docs/superpowers/specs/2026-11-17-storage-etappe2-design.md` auf `feature/storage-data-disk`); dieser Integrationsbranch hinkt hinterher. In Arbeit: `task/storage-ext2-mount-ro` (agent-nweh-storage-resume, ext2 nur lesend hinter dem Gate). Merge nur durch laser/Peter.
+- 09:04 **Leitungswechsel (Koordinator):** technische Teamleitung Storage/Linux-FS = `agent-nweh-storage-resume`; `agent-orchestrator-junior` bleibt Stellvertreter für Integration (Spec, dieser Handoff, PR-Stapel/Stack-Check, Reihenfolge der Köpfe). PR-Öffnen und Versionsvergabe beim Koordinator; Stapel #124 0.5.9 → #130 0.5.10 → #131 0.5.11 → #133 0.5.12 → Rasterizer 0.5.13. Offen: VMware 2.4, ext2-RO-Mount (`task/storage-ext2-mount-ro`, s_state als Bitmaske), 64-GiB-Lauf.
+- 10:05 **Gemergt:** #124, #130 (Etappe 1 ext2), #131, #133 (Etappe 2 Datenplatte, Peter 09:32) – `master` = 0.5.12. Neue Storage-Branches gehen ab jetzt von `origin/master` aus; dieser Integrationsbranch ist nur noch Ablage für Handoff und Plan. Offen: #134 Rasterizer (0.5.13, nicht Storage); `task/storage-ext2-mount-ro` (Lead nweh, finale RO-Gastprobe c9ae07d bei aot-probe, PR danach ≥ 0.5.14); Etappe 3 Entwurf `docs/storage-etappe3` (Entscheidungen 1/2/3/5/7 angenommen, 4 fail-closed für alle Symlinks, Cosmos-Befunde senior); VMware 2.4 offen; 64-GiB-Lauf nie gefahren.
+- 10:53 **Gemergt:** #136 (ClassiCube, 0.5.15) und **#137** (ext2 nur lesend, `47b83d1`, 0.5.16) – `master` = `68008ef`. RO-Rebase `1d3b978` → `47b83d1` ändert außerhalb ClassiCube nur Versionszeilen; Belege 1d3b978 (KVM 19/9, SHA gleich, e2fsck 0, Release-Boot) gelten. **#139** Etappe 3 `65f602a` (0.5.17), Base jetzt `master`, CI läuft; range-diff gegen `624df67` 7/7 identisch, aot-probe auf 624df67 grün (Host 795/795, Build+Privacy, Boot, Datenplatte A–F + Legacy, NetSurf). Lead-Lesung ohne P1/P2; P3 CreateUser prüft Topologie vor IsAdmin. Unabhängiges Review #139 noch zu vergeben. Leitung seit 10:51 `agent-nweh-storage-lead2` (Koordinator bestätigt), junior Stellvertreter Integration; keine weitere Übergabe ohne Koordinator-OK. Kein Merge freigegeben.
+- 10:58 **Gemergt:** #139 (Etappe 3, 0.5.17), #140 (Doku Systemdateien), #138 (AOT-Doku) – `master` = `284e7ee`, kein Storage-PR offen. Nächster: `task/storage-createuser-order` `eee1ade` (P3: CreateUser prüft Admin/Kontozustand vor Home-Topologie; Lead-Lesung ok), Basis `65f602a`, Test bei aot-probe, PR 0.5.18. 7a: jensen überarbeitet `task/storage-7a-design` nach huang (3× P2) und senior (GptLayout.Verify, Schreibreihenfolge/Abbruch); Code erst nach Lead-Freigabe.
+- 11:53 **Etappe 4:** Entwurf #145 gemergt (`/boot/efi`, `/srv/legacy-data`, Root-Marker fresh/migrating/ready, `RootUnclean`, Paket 4.0 RW-Qualifikation vor jedem Root-Profil); E4.4-Umsetzungsentwurf `LayoutMigration` als **#148** offen (`docs/storage-e4-4-migration` `b468349`, huang ohne P1/P2, Code 4.4 vom Lead freigegeben, Zuteilung Coordinator). E4.1 `task/storage-e4-1` `318867c` und 7a S2+S3 `task/storage-7a-identity` `69ba4d0` beim Test (aot-probe); S3 jetzt bei `agent-peter-senior`. Offen beim Lead: `CheckRoot` macht `s_state` 2/3 (Fehlerbit) zu `RootUnclean`, 7a-Spec §5 sagt `RootDamaged`. senior/jensen durch peter-senior/peter-jensen ersetzt.
+- 12:47 **Leitung:** lead2 am Nutzungslimit; `agent-orchestrator-junior` führt die Storage-Leitung als Stellvertreter (Coordinator bestätigt). Gemergt: #149 (E4.0-Prüfentwurf, `e665f1c`). Offen: #150 (E5b/E6b, `f01e9b3`, Delta huang), 7a-S4-Entwurf `docs/storage-7a-s4-installer` `6010d62` (Delta huang, dann Doku-PR). peter-senior pusht S3-r2 `b0619e1` (s_state 2/3 ⇒ RootDamaged), exclusion-r2 `24fae04`, Fall G `5fd3956`; danach right-tester S3-Fälle und E4.0-Probe. peter-jensen 4.4 nach sparse-PR. Tester nur Linux (right-tester), Windows-Tests fehlen bis zur Rückkehr – in PRs vermerken. Kein Merge ohne Freigabe.
+- 15:06 **Leitung zurück an `agent-nweh-storage-lead2`.** In der Vertretung (12:46–15:06): #155 (7a-S4-Entwurf) gemergt, alle Reviews ohne offene Befunde; 4.4-Start mit jensen abgestimmt (Basis master, gemeinsamer Marker-Baustein auf `Crc32`, `InstallMarker` zieht beim 7a-Merge nach; `IMigrationTarget.List` ergänzt, Doku-PR #164). Offen für die Leitung: huang-P3 a/b zu 7a-identity/exclusion, E4.0-Probe (peter-senior) mit Läufen right-tester, Windows-Läufe 7a.
