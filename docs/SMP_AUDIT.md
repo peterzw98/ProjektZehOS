@@ -1,8 +1,10 @@
 # Audit geteilter Zustände für mehrere CPUs
 
-Stand: 18. November 2026, `master` @ `83ad625`; Nachtrag (Stichprobe yellow zu #295) @ `4742a87`: Zeilen in `CosmosRoundRobinScheduler.cs` nach #292 verschoben, neue Zeile `firstCpu`/`WaitingThreads`. Plan: [Etappe 0](superpowers/plans/2026-11-18-multicore-e0-audit.md) des Nachtrag (Stichprobe zu #325) @ `8013e07`: zwei Zeilenangaben korrigiert (Netzwerk-Worker, Topologie-Decoder). Die Zeilen zu `CosmosRoundRobinScheduler.cs`, `RoundRobinCore.cs` und `RoundRobinQueue.cs` gelten bis zum Merge von E4-C; danach ersetzt der Klassenscheduler sie und das Audit wird nachgezogen.
+Stand: 18. November 2026, `master` @ `83ad625`; Nachtrag (Stichprobe yellow zu #295) @ `4742a87`: Zeilen in `CosmosRoundRobinScheduler.cs` nach #292 verschoben, neue Zeile `firstCpu`/`WaitingThreads`. Plan: [Etappe 0](superpowers/plans/2026-11-18-multicore-e0-audit.md) des
 [Multicore-Plans](superpowers/plans/2026-11-18-multicore.md), [Entwurf](superpowers/specs/2026-11-18-multicore-design.md) Abschnitte 5.4 und 5.5. Das Dokument ändert keinen
 Code; jeder Befund „Schutz fehlt“ wird in der genannten Etappe ein eigenes Paket.
+
+Nachtrag (Stichprobe zu #325) @ `8013e07`: zwei Zeilenangaben korrigiert (Netzwerk-Worker, Topologie-Decoder). Die Zeilen zu `CosmosRoundRobinScheduler.cs`, `RoundRobinCore.cs` und `RoundRobinQueue.cs` gelten bis zum Merge von E4-C; danach ersetzt der Klassenscheduler sie und das Audit wird nachgezogen.
 
 Drei Abschnitte, je Paket einer: E0-A (Interrupt gegen Thread) legt die Datei an, E0-B und E0-C füllen danach nur ihren
 Abschnitt.
