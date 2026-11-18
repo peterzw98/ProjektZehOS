@@ -271,6 +271,9 @@ def run_inode_limit(args, work: Path, installed: Path, results: Results) -> None
         guest.ready(args.timeout, extra=power.ROOT_READY)
         storage.login(guest.qmp, run, first=True)
         guest.to_textshell()
+        # Offline angelegte Dateien haben keinen ACL-Eintrag und bleiben gesperrt; du ueberspraenge sie (Lauf 386229d:
+        # "0 Bytes /home" trotz 18000 Bytes). Das Testkonto ist Administrator und ordnet die Ordner zuerst zu.
+        lines(guest, *(f"security adopt /home/inode{directory} {tools.TEST_USER}" for directory in range(INODE_DIRS)))
         start = guest.mark()
         lines(guest, "du /home")
         # shortcut: du meldet sein Ende nicht seriell; feste 120 s (gemessen deutlich kuerzer), bei Bedarf Bildvergleich.
