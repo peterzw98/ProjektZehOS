@@ -74,6 +74,7 @@ Diese Messungen liefen noch mit Zufallswelt (je Lauf eine andere); die Werte hä
 - Fenster über 960×600 zeichnet ClassiCube in einem ganzzahligen Bruchteil der Größe (maximiert 1920×1200 also in 960×600), der Kernel skaliert hoch.
 - SoftGPU wertet VSync nicht aus; die Bildratenbegrenzung von ClassiCube greift nicht. Bei der heutigen Bildrate ohne Folgen.
 - Unter TCG ist das Spiel mit gut 1 Bild/s nicht spielbar; unter WHPX/KVM mit rund 6 Bildern/s eingeschränkt.
+- Arbeitsspeicher der VM: empfohlen 1 GiB, mindestens 768 MiB. Mit 512 MiB kann das Spiel mit „Out of VRAM?“ abbrechen (unter WHPX beobachtet); die Speichersammlung vor dem App-Start seit 0.5.86 mildert das, garantiert aber nichts. Messwerte im [Haupt-README](../../README.md).
 - Esc bei freiem Zeiger führt laut Vertrag zur Textshell. Pausenmenü, Chat und Inventar schließt man deshalb über ihre Schaltflächen bzw. Enter, nicht mit Esc.
 - Bei Fokusverlust öffnet ClassiCube das Pausenmenü; der nächste Klick oder Tastendruck im wieder aktiven Fenster setzt den Fokus zurück.
 - Veröffentlichung: `--no-measure` bauen und `build-package.py ... --network --storage --min-kernel 0.5.65` setzen (`/save` auf frischer Platte erst mit dem Fix aus #210). Dasselbe Modul läuft in Paketen mit und ohne `capability=storage`, `build.py` kennt keine Speicheroption. Es importiert aber `fd_readdir`; ein Start auf einem Kernel vor 0.5.65 ist nicht geprüft, deshalb gilt `--min-kernel 0.5.65` auch für ein Paket ohne `--storage`.
