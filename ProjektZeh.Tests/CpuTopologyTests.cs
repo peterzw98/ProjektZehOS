@@ -137,4 +137,34 @@ public sealed class CpuTopologyTests
         var cpuid = Cpuid(new() { [(0, 0)] = (1, 0, 0, 0), [(1, 0)] = (0, 0, 0, 0) });
         Assert.AreEqual((0, CpuTopologyDecoder.SinglePackage), CpuTopologyDecoder.ReadShifts(cpuid));
     }
+
+    [TestMethod]
+    public void ReadShifts_LeafB_ModuleLevelsUseLastLevelAsPackage()
+    {
+        var cpuid = Cpuid(new()
+        {
+            [(0, 0)] = (0x0D, 0, 0, 0),
+            [(0x0B, 0)] = (1, 2, 0x100, 0),
+            [(0x0B, 1)] = (3, 8, 0x201, 0),
+            [(0x0B, 2)] = (5, 32, 0x302, 0),
+        });
+        Assert.AreEqual((1, 5), CpuTopologyDecoder.ReadShifts(cpuid));
+    }
+
+    [TestMethod]
+    public void ReadShifts_SmtShiftAbovePackageShift_IsClamped()
+    {
+        // AMD mit idSize 1, aber vier Threads je Kern: 2 Threadbits > 1 Verbundbit.
+        var cpuid = Cpuid(new()
+        {
+            [(0, 0)] = (0x0A, AmdEbx, AmdEcx, AmdEdx),
+            [(unchecked((int)0x80000000), 0)] = (unchecked((int)0x8000001E), 0, 0, 0),
+            [(unchecked((int)0x8000001E), 0)] = (0, 0x300, 0, 0),
+            [(unchecked((int)0x80000008), 0)] = (0, 0, 0x1000, 0),
+        });
+        var (smt, package) = CpuTopologyDecoder.ReadShifts(cpuid);
+        Assert.AreEqual(1, package);
+        Assert.IsTrue(smt <= package);
+        CpuTopology.FromApicIds([0, 1], smt, package); // wirft nicht
+    }
 }
