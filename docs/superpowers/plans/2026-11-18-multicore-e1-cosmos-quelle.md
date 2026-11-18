@@ -11,7 +11,7 @@ sondern baut sie aus dem Branch `cosmos` des eigenen Repositorys. Der Quellstand
 packt daraus die x64-Pakete mit eigener Versionsnummer in einen lokalen NuGet-Feed und installiert die beiden
 Werkzeuge daraus. `master` nennt Commit und Version in zwei Dateien.
 
-**Voraussetzung:** Peters Freigabe, den Branch `cosmos` anzulegen und zu schützen (Paket E1-A).
+**Voraussetzung:** keine mehr; der Branch `cosmos` besteht seit dem 18. November 2026 (Paket E1-A).
 
 **Entwurf:** [Abschnitt 7](../specs/2026-11-18-multicore-design.md).
 
@@ -51,7 +51,7 @@ Linux und Windows keinen Cosmos-Bau. Ändert ein späterer Patch die Schrift, is
 
 | Paket | Inhalt | Rolle | Nach | Neben |
 | --- | --- | --- | --- | --- |
-| E1-A | Branch `cosmos` anlegen | Engineer, mit Peter für Freigabe und Branchregel | Freigabe | keine |
+| E1-A | Branch `cosmos` anlegen | **erledigt** | – | – |
 | E1-B | Bauskript, Versionsdateien, Umstellung des Kernelprojekts | Engineer senior | E1-A | E1-F |
 | E1-C | CI und Release-Workflow | Agent eines Benutzers mit Workflow-Recht | E1-B | E1-E |
 | E1-D | Gleichstandsprüfung | Clerk | E1-C | E1-E |
@@ -81,21 +81,15 @@ Seit dem Entwurf (`6348c7a`) hat sich Folgendes geändert oder gezeigt; die Pake
 
 ### Paket E1-A: Branch `cosmos` anlegen
 
-**Voraussetzung:** Peter gibt frei und richtet für `cosmos` dieselbe Branchregel ein wie für `packages` (Änderungen nur per Pull Request).
+**Erledigt am 18. November 2026** (Freigabe Peter im Terminal). Ergebnis:
 
-**Inhalt des ersten Commits:** der Dateibaum von `efcf20c` einschließlich der Submodul-Verweise, **ohne** den Ordner
-`.github` (sonst liefen Cosmos' Workflows in unserem Repository, und Cosmos' `CODEOWNERS`-Regeln gälten für unsere
-PRs), dazu drei eigene Dateien.
+- Branch `cosmos`, ein Commit ohne Vorgänger: `bd5889b46a6b1175ff8b66620437e072b78636de`. Diesen Wert trägt E1-B in `deploy/cosmos/COMMIT` ein.
+- Inhalt: der Dateibaum von `efcf20c` mit 30 Abweichungen. Entfernt sind `.github/` (12 Workflows, Dependabot, Vorlagen, zwei Hilfsskripte), `.mcp.json`, `.claude/` und `.taskmaster/`; `CLAUDE.md` ist durch ZehOS-Regeln ersetzt; neu sind `ZEHOS.md`, `PATCHES.md` und `.github/CODEOWNERS`. Die Liste steht in `ZEHOS.md` im Branch.
+- Über den ursprünglichen Plan hinaus entfernt: `.mcp.json` hätte für jeden Agenten in diesem Baum einen fremden MCP-Server per `npx` gestartet; `.claude/`, `.taskmaster/` und Cosmos' `CLAUDE.md` sind Agentenkonfiguration des Cosmos-Projekts. `.github/scripts` braucht nur Cosmos' Doku-Bau (`Makefile:143`), nicht der Paketbau.
+- Geprüft: beide Submodul-Verweise sind erhalten (`dotnet/runtime` `4271d88e`, uACPI `686a9a52`), 1.707 Dateien, das Fixture mit dem überlangen Namen ist enthalten, keine gemeinsame Historie mit `master`.
+- Ruleset `cosmos` (Nummer 27547602), kopiert vom Ruleset `packages`: Änderungen nur per Pull Request mit einer Freigabe, kein Löschen, kein Force-Push; Administratoren dürfen umgehen.
 
-- [ ] **Schritt 1:** Arbeitsbaum außerhalb der ZehOS-Arbeitskopie: `git config core.longpaths true` (Windows), dann `git fetch --depth 1 https://github.com/CosmosOS/Cosmos efcf20cc62884b042a0adadffe9fc4540491fd89` und `git worktree add --detach ../zehos-cosmos FETCH_HEAD`.
-- [ ] **Schritt 2:** Prüfen, ob der Bau etwas aus `.github` braucht: `grep -rn "\.github" --include=*.csproj --include=*.props --include=*.targets --include=Makefile .` im neuen Arbeitsbaum. Erwartet: keine Treffer außerhalb von `.github` und `docs`. Bei Treffern nur `.github/workflows`, `.github/dependabot.yml`, `.github/ISSUE_TEMPLATE` entfernen und den Rest behalten.
-- [ ] **Schritt 3:** `git checkout --orphan cosmos`, `git rm -r -q --cached .github` und den Ordner löschen.
-- [ ] **Schritt 4:** Drei Dateien im Stamm anlegen:
-  - `ZEHOS.md`: Was dieser Branch ist (Cosmos-Quelle für ZehOS, Grundstand `efcf20c` = Paket 3.0.97), dass er keine Historie mit `master` teilt, dass Änderungen nur per PR kommen und in `PATCHES.md` stehen, dass nichts davon an CosmosOS gemeldet oder dort eingereicht wird, und der Lizenzhinweis: Cosmos steht unter BSD 3-Clause (`LICENSE`); eigene Änderungen stehen wie ZehOS unter GPL-3.0.
-  - `PATCHES.md`: Überschrift, Abschnitt „Grundstand“ (Repository, Commit, Datum), leere Tabelle `| Kurzname | Commit | Dateien | Grund | Entfernter ZehOS-Umweg | Prüfung |`.
-  - `.github/CODEOWNERS` mit `* @peterzw98 @larsernst`.
-- [ ] **Schritt 5:** `git add -A`, Commit `Cosmos 3.0.97 (efcf20c) als Grundstand`. Prüfen: `git diff --stat efcf20cc HEAD` nennt nur die entfernten Dateien unter `.github` und die drei neuen; `git ls-tree HEAD dotnet/runtime src/Cosmos.Kernel.Native.MultiArch/ACPI/uacpi` zeigt beide Einträge als `160000 commit` mit den Commits von oben.
-- [ ] **Schritt 6:** `git push origin cosmos`. Danach Peter um die Branchregel bitten und im Kanal den Commit melden.
+Nicht geprüft: Aus dem Branch ist noch nichts gebaut worden; das ist E1-B.
 
 ---
 
