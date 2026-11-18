@@ -12,7 +12,7 @@ export PROJECT_COORDINATOR_BASE=${PROJECT_COORDINATOR_BASE:-$HOME/zehos-team}
 export IRCKEY_FILE=${IRCKEY_FILE:-$main/.tools/IRCKEY}
 export CLONE_REFERENCE=${CLONE_REFERENCE:-$main}
 export PATH_PREFIX=${PATH_PREFIX:-$HOME/.dotnet:$HOME/.local/bin}
-export DISPATCH_PARALLEL=${DISPATCH_PARALLEL:-2}
+export DISPATCH_PARALLEL=${DISPATCH_PARALLEL:-3}   # 16 GB RAM: mehr nicht, wenn native Bauten oder KVM-Gaeste laufen
 # Wer Auftraege geben darf: Koordinator und Peters Leads (feste Nicks, siehe TEAM.md); dieselben duerfen Laeufe starten
 export TEAM_ASSIGNERS=${TEAM_ASSIGNERS:-agent-coordinator,agent-peter-lead,agent-nweh-lead1,agent-nweh-lead2}
 export DISPATCH_ALLOW=${DISPATCH_ALLOW:-$TEAM_ASSIGNERS}
