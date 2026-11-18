@@ -292,6 +292,14 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_ROOT_MIGRATION
             .. migration.Commands,
 #endif
+#if ZEHOS_POWER_FAULT_PROBE
+            // Nur P4-Testbuild: schaltet genau einen Fehlerpunkt der naechsten Energieaktion scharf.
+            new ShellCommand("powerfault", "powerfault <punkt> [punkt...]",
+                "Testbuild: naechste Energieaktion an diesen Punkten je einmal scheitern lassen.", true,
+                (arguments, output) => PowerFaultProbe.Arm(arguments)
+                    ? ResultErr.CreateSuccess()
+                    : ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: powerfault <" + string.Join("|", PowerFaultProbe.Points) + "> [...]")),
+#endif
         ], systemLog, GetAvailableUptime,
             VersionText,
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);

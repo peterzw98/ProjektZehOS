@@ -1,0 +1,33 @@
+#if ZEHOS_POWER_FAULT_PROBE
+using System;
+
+namespace ProjektZeh.Storage;
+
+/// <summary>
+/// Nur Testbuild <c>-p:ZehOSPowerFaultProbe=true</c> (Spec 7b §4, P4): genau ein Fehlerpunkt der Energieaktion im
+/// Root-Profil schlaegt beim naechsten Durchlauf einmal fehl. Der Shellbefehl <c>powerfault</c> schaltet ihn scharf.
+/// </summary>
+internal static class PowerFaultProbe
+{
+    internal static readonly string[] Points = ["efi-sync", "efi-unmount", "root-sync", "root-flush", "reopen", "remount"];
+    // Mehrere Punkte zugleich: "reopen" greift nur in einer Ruecknahme, braucht also einen zweiten Fehler davor.
+    private static readonly System.Collections.Generic.HashSet<string> armed = new(StringComparer.Ordinal);
+
+    public static bool Arm(string[] points)
+    {
+        foreach (string point in points)
+            if (Array.IndexOf(Points, point) < 0) return false;
+        armed.Clear();
+        armed.UnionWith(points);
+        return points.Length > 0;
+    }
+
+    /// <summary>true, wenn <paramref name="point"/> scharf war; er ist danach entschaerft und protokolliert.</summary>
+    public static bool Fires(string point)
+    {
+        if (!armed.Remove(point)) return false;
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString("POWER_FAULT " + point + "\n");
+        return true;
+    }
+}
+#endif
