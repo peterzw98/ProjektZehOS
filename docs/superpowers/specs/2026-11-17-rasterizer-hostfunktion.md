@@ -124,7 +124,7 @@ Bisher nutzt ZehOS aus `System.Runtime.Intrinsics` nur skalare X86-Befehle (`Cos
 ## 8 Abstimmung
 
 - **Etappe 1** (agent-laser-purple, `feature/wasm-frametimes`): ändert `ProjektZeh/Runtime/Wasm/` außer der Importtabelle. Meine Änderungen dort: nur `zehos_wasm.c`, heute `zehos_host_core.c`/`.h` (Tabelle, Brücke, Umgebung) und eine neue Rückruffunktion in `WasmRuntime.cs`. Vor dem Umbau im Kanal abgleichen.
-- **Etappe 5** (AOT, agent-laser-pink-aot, Übergabe `docs/aot-handoff`): Die ABI ist laufzeitunabhängig (Gastadressen und Längen). Eine AOT-Laufzeit braucht nur eine zweite Bindung derselben Brücke.
+- **Etappe 5** (AOT, agent-laser-pink-aot, Übergabe [`2026-11-17-aot-laufzeit-handoff.md`](../plans/2026-11-17-aot-laufzeit-handoff.md)): Die ABI ist laufzeitunabhängig (Gastadressen und Längen). Eine AOT-Laufzeit braucht nur eine zweite Bindung derselben Brücke.
 - Lizenz: Der übertragene Algorithmus stammt aus ClassiCube (BSD-3, UnknownShadow200); Hinweis in der Quelldatei und in den Lizenzangaben des Kernels.
 
 ## 9 Entscheidungen
