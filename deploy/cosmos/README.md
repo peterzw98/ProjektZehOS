@@ -18,3 +18,12 @@ Der Quellbaum liegt unter `.tools/cosmos-src`; das Skript schreibt nur unter `.t
 
 `deploy/cosmos/SDK` nennt das .NET-SDK, mit dem der Referenzbau entsteht (derzeit 10.0.404). `scripts/build-cosmos.sh` bricht
 bei einem anderen SDK ab; `--any-sdk` ist nur fuer lokale Versuche gedacht, solche Feeds nie fuer Release oder IL-Vergleich.
+
+## Grenzen
+
+- Die Versionsprüfung von `cosmos.patcher` (`ZehOSCheckPatcherVersion`) läuft nur unter Unix; unter Windows ruft das SDK
+  `$(CosmosPatcherExe)` und die Prüfung entfällt. Ein altes globales Werkzeug dort fällt nicht auf: nach einem Versionswechsel
+  `scripts/build-cosmos.sh --global` neu ausführen.
+- Das Skript prüft vor dem Bau, ob der NuGet-Cache des Rechners dieselbe Version aus einem anderen Commit enthält, und bricht
+  dann mit „VERSION erhöhen“ ab; nach dem Bau muss die nuspec von `Cosmos.Kernel` den Commit tragen.
+- Cosmos-Pakete (`Cosmos.*`, `_Cosmos.*`) stammen laut `NuGet.Config` ausschließlich aus `deploy/cosmos/feed`.
