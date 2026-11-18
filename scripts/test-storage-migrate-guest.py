@@ -153,9 +153,15 @@ def start_migration(args, run: Path, source: Path, target: Path):
     """Altplatte als sata0 (Legacy-Profil), Ziel als sata1; Anmeldung, Textshell, Befehl mit Eingangsquittung."""
     process, qmp = storage.boot(args.migrate, run, [source, target], desktop=True)
     try:
-        tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", args.timeout)
         # Nur der installierte Kernel (ZehOSRootProfile) meldet "Profil:"; dann haette OVMF die Zielplatte gestartet.
-        if "Profil: " in storage.serial_text(run):
+        # Er bindet /data nie ein, deshalb auf beide Marken warten statt den vollen Timeout abzusitzen (Review RED P3-1).
+        deadline = time.monotonic() + args.timeout
+        while not any(marker in (serial := storage.serial_text(run))
+                      for marker in ("Datenlaufwerk unter /data eingebunden.", "Profil: ")):
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"Migrations-ISO bindet /data nicht ein: {run}")
+            time.sleep(1)
+        if "Profil: " in serial:
             raise RuntimeError(f"Gast startete von der Zielplatte statt vom Migrations-ISO: {run}")
         storage.login(qmp, run, first=False)
         mark = len(storage.serial_text(run))
@@ -285,8 +291,9 @@ def check_migrated(target: Path, case: Path, name: str, bulk: bool = False) -> N
 def start_disk(args, run: Path, target: Path) -> tuple[object, int]:
     """Startet von der Zielplatte; liefert Prozess und QMP-Port."""
     # ISO-Vorrang (CDROM_FIRST) hier zuruecknehmen; OVMF beachtet -boot c nicht, die Platte bekommt bootindex=0 (RED 5792491).
-    machine = [item for index, item in enumerate(storage.MACHINE_BASE)
-               if CDROM_FIRST[1] not in storage.MACHINE_BASE[index:index + 2]]
+    machine = list(storage.MACHINE_BASE)
+    index = machine.index(CDROM_FIRST[1])
+    del machine[index - 1:index + 1]
     machine += ["-drive", f"file={target.resolve()},format=raw,if=none,id=d0",
                 "-device", "ide-hd,drive=d0,bus=ahci.0,bootindex=0"]
     tools.MACHINE = machine
@@ -389,7 +396,7 @@ def run_g5(args, work: Path) -> None:
         kill(process)
     aborted = root_image(target, case, "abort")
     # Ein harter Abbruch auf ext2 ohne Journal kann Belegungen verlieren (g5-3: Inode-Bitmap -25, Freizaehler); die Spec
-    # nennt kein Soll fuer diesen Zeitpunkt. Ergebnis festhalten, das Soll gilt nach der Wiederholung (Entscheidung offen).
+    # nennt kein Soll fuer diesen Zeitpunkt. Ergebnis festhalten, das Soll gilt nach der Wiederholung (Entscheidung lead2).
     result = subprocess.run(["e2fsck", "-fn", str(aborted)], capture_output=True, text=True, check=False)
     findings = [line.strip() for line in (result.stdout + result.stderr).splitlines()
                 if line.strip() and not line.startswith(("e2fsck ", "Pass ")) and "files (" not in line]
