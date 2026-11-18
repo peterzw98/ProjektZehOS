@@ -66,9 +66,9 @@ internal static class CosmosExt2GuestProbe
             Check(VfsManager.RegisterFileSystem(FileSystemName, new Ext2FileSystemType(device)), "Registrierung abgelehnt");
             Pass(FileSystemName);
 
-            // Der Kernel formatiert über das ZehOS-Profil (nur 4096 Byte); der Cosmos-Formatter schreibt das Layout.
-            // Der allgemeine VFS-Weg (VfsManager.TryFormat ohne Optionen) formatiert dagegen mit 1024 Byte, deshalb
-            // verbietet Ext2FormatterUsageTests ihn im Quelltext.
+            // Der Kernel formatiert über das ZehOS-Profil (nur 4096 Byte, höchstens 128 GiB, Sperre je Plattenoperation);
+            // der Cosmos-Formatter schreibt das Layout. Den allgemeinen VFS-Weg (VfsManager.TryFormat) verbietet
+            // Ext2FormatterUsageTests im Quelltext, weil er das Profil umginge.
             Begin("format");
             Check(CosmosExt2Formatter.FormatForKernel(device, null), "FormatForKernel abgelehnt");
             prefix = ReadPrefix(device);

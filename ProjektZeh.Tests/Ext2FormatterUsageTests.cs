@@ -6,9 +6,10 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace ProjektZeh.Tests;
 
-// Das Layout schreibt der Formatter aus Cosmos (Patch ext2-formatter); sein Standard ist 1024 Byte, und der Treiber
-// adressiert 1-KiB-Volumes falsch. Kernelcode formatiert ext2 deshalb nur ueber CosmosExt2Formatter.FormatForKernel
-// (nur 4096 Byte, hoechstens 128 GiB) und nie ueber Ext2Formatter, TryFormat mit Ext2FormatOptions oder "ext2".
+// Das Layout schreibt der Formatter aus Cosmos (Patch ext2-formatter; Standard 4096, 1024 wird abgelehnt). Das ZehOS-Profil
+// (nur 4096 Byte, hoechstens 128 GiB, StorageLock je Plattenoperation) steckt nur in CosmosExt2Formatter.FormatForKernel.
+// Kernelcode formatiert ext2 deshalb ausschliesslich darueber und nie ueber Ext2Formatter, TryFormat mit Ext2FormatOptions
+// oder "ext2" (Politik, nicht Technik: Cosmos wuerde auch 2048 Byte und Geraete ueber 128 GiB formatieren).
 [TestClass]
 public sealed class Ext2FormatterUsageTests
 {
