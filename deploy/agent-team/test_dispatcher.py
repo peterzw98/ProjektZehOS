@@ -182,7 +182,7 @@ prompt = e.calls_made()[0][-1]
 assert "tu etwas" in prompt and "nur Information" in prompt and "bitte Review" in prompt
 assert e.d.acked == 2
 
-# --- Zeitlimit: Lauf wird beendet und gilt als gescheitert ------------------------------------------------
+# --- Zeitlimit: Lauf wird beendet, nicht wiederholt, und es wird sofort einmal gewarnt ---------------------
 e = Env("--timeout", "0.3")
 os.environ["FAKE_SLEEP"] = "30"
 e.say("agent-coordinator", "agent-x: lange Aufgabe")
@@ -192,8 +192,13 @@ assert e.d.proc is not None
 t = time.time()
 while e.d.proc is not None and time.time() - t < 5:
     time.sleep(0.1); e.now += 0.2; e.d.step()
-assert e.d.proc is None and e.d.acked == 0 and e.d.failures == 1
+assert e.d.proc is None and e.d.acked == 0 and e.d.gave_up_at == 1
 assert time.time() - t < 5                                                # nicht 30 s gewartet
+warn = e.outbox()
+assert "[dispatcher] agent-x" in warn and "Zeitlimit" in warn, warn
+e.now += 10000
+e.d.step()
+assert e.d.proc is None and len(e.calls_made()) == 1                      # kein zweiter hängender Lauf
 os.environ["FAKE_SLEEP"] = "0"
 
 # --- Gemeinsame Slots: höchstens ein Lauf je Rechner bei --max-parallel 1 ---------------------------------

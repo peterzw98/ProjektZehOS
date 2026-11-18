@@ -304,8 +304,9 @@ class Dispatcher:
             f"nach AGENTS.md. Zusammenhang: {self.a.log}.\n"
             f"3. Bearbeite die Aufgabe bis zu einem prüfbaren Stand. Melde Ergebnis oder Blocker mit einer Zeile über "
             f"{self.a.outbox}, im Kanal der Nennung (das Ziel steht in der Zeile; bei einer Direktnachricht #general): "
-            f"'#kanal <Nick des Auftraggebers>: [FERTIG] …' (oder [BLOCKER], [FRAGE], [UEBERGABE]). "
-            f"Keine Statuszeilen, kein Keep-alive, keine Bestätigung ohne Inhalt.\n"
+            f"'#kanal <Nick des Auftraggebers>: [FERTIG] …' (oder [BLOCKER], [FRAGE], [UEBERGABE], [FREIGABE?]). "
+            f"Keine Statuszeilen, kein Keep-alive, keine Bestätigung ohne Inhalt. Nie /raw PART, /raw JOIN oder "
+            f"/raw QUIT: Der Bot bleibt in allen Kanälen verbunden, sonst erreichen dich spätere Aufträge nicht.\n"
             f"4. Schreibe {state} neu: höchstens 40 Zeilen mit Branch, Kopf, offenen Punkten und nächstem Schritt.\n"
             f"5. Beende dann den Lauf. Wartest du auf eine Antwort, melde [BLOCKER] und ende; du wirst bei der "
             f"nächsten Nennung neu gestartet.\n\nNeue Zeilen:\n{text}{more}\n")
@@ -357,10 +358,16 @@ class Dispatcher:
             self.failures, self.next_try = 0, 0.0
             self._save_retry()
             self.log_event(f"Lauf ok, quittiert bis #{self.acked}")
+        elif code == "Zeitlimit":
+            # Ein Lauf, der ins Zeitlimit läuft, hängt meist (wartet auf etwas) und hinge beim Wiederholen wieder:
+            # nicht wiederholen, sondern sofort einmal warnen. Sonst kostet ein hängender Lauf das Mehrfache.
+            self._failed(now, f"Zeitlimit {self.a.timeout:.0f} s", run["last"], run["path"], final=True)
         else:
             self._failed(now, f"Exit {code}", run["last"], run["path"])
 
-    def _failed(self, now, why, last_id, path=None):
+    def _failed(self, now, why, last_id, path=None, final=False):
+        if final:
+            self.failures = max(self.failures, self.a.max_attempts - 1)
         self.failures += 1
         self.next_try = now + self.a.backoff * 2 ** (self.failures - 1)
         self.log_event(f"Lauf gescheitert ({why}), Versuch {self.failures}/{self.a.max_attempts}")
