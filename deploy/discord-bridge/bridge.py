@@ -6,6 +6,8 @@ import hashlib
 import os
 import re
 import ssl
+import time
+import unicodedata
 
 import discord
 
@@ -25,6 +27,8 @@ PREFIX = re.compile(rf"^((?:{NICKCHARS}[ ,]+)*{NICKCHARS}:)\s+(.*)$")
 HEADER = re.compile(rf"^(?:{NICKCHARS}[ ,]+)*{NICKCHARS}:$")
 MAX_LINES = 5
 MIN_TEXT = 40
+TOPIC_DEBOUNCE = 2
+TOPIC_WINDOW = 600
 
 
 def parse(line):
@@ -102,6 +106,14 @@ def agent_count(members):
     return len({nick for nicks in members.values() for nick in nicks if nick.lower().startswith("agent-")})
 
 
+def clean_topic(text):
+    text = FORMAT_CODES.sub("", text)
+    text = "".join(" " if unicodedata.category(c) == "Cc" else c
+                   for c in text if unicodedata.category(c) not in ("Cf", "Cs"))
+    # AllowedMentions gilt nicht für Kanalbeschreibungen; Vollbreiten-@ kann niemanden erwähnen.
+    return " ".join(text.split()).replace("@", "＠")[:1024]
+
+
 def channel_name(irc_channel):
     return irc_channel.lstrip("#&").lower()
 
@@ -114,11 +126,67 @@ class Bridge(discord.Client):
         self.writer = None
         self.channels = {}  # IRC-Kanal (klein) -> Discord-Textkanal
         self.ready_event = asyncio.Event()
+        self.topic_pending = {}  # Kanal -> (neuester Solltext, frühester Versuch)
+        self.topic_attempts = {}  # Kanal -> höchstens zwei monotone Zeitpunkte
+        self.topic_task = None
         self.members = {}  # IRC-Kanal (klein) -> Nicks, für Präsenz und QUIT/NICK-Meldungen
 
     async def setup_hook(self):
         self.loop.create_task(self.irc_loop())
         self.loop.create_task(self.presence_loop())
+        self.topic_task = self.loop.create_task(self.topic_loop())
+
+    async def close(self):
+        if self.topic_task is not None:
+            self.topic_task.cancel()
+            await asyncio.gather(self.topic_task, return_exceptions=True)
+        await super().close()
+
+    def queue_topic(self, irc_channel, text):
+        target = irc_channel.lower()
+        if target not in self.channels:
+            return
+        topic = clean_topic(text)
+        if target in self.topic_pending and self.topic_pending[target][0] == topic:
+            return
+        self.topic_pending[target] = (topic, time.monotonic() + TOPIC_DEBOUNCE)
+
+    async def flush_topics(self):
+        for target in list(self.topic_pending):
+            # Nach einem await kann sich auch der nächste Kanal geändert haben.
+            topic, due = self.topic_pending[target]
+            now = time.monotonic()
+            if now < due:
+                continue
+            channel = self.channels[target]
+            if (channel.topic or "") == topic:
+                self.topic_pending.pop(target, None)
+                continue
+            attempts = [stamp for stamp in self.topic_attempts.get(target, []) if now - stamp < TOPIC_WINDOW]
+            self.topic_attempts[target] = attempts
+            if len(attempts) >= 2:
+                continue
+            # Auch Fehler zählen, damit fehlende Rechte keine schnelle Wiederholungsschleife auslösen.
+            attempts.append(now)
+            try:
+                updated = await channel.edit(topic=topic, reason="IRC topic sync")
+                self.channels[target] = updated
+            except discord.Forbidden:
+                print(f"Topic sync {target}: missing Manage Channels permission", flush=True)
+            except (discord.HTTPException, OSError) as error:
+                print(f"Topic sync {target}: {error!r}", flush=True)
+                if self.topic_pending.get(target) == (topic, due):
+                    self.topic_pending[target] = (topic, time.monotonic() + 30)
+                continue
+            # Während edit() kann ein neuerer IRC-Stand eintreffen; diesen nicht verwerfen.
+            if self.topic_pending.get(target) == (topic, due):
+                self.topic_pending.pop(target, None)
+
+    async def topic_loop(self):
+        await self.ready_event.wait()
+        while True:
+            await self.flush_topics()
+            await asyncio.sleep(1)
 
     async def presence_loop(self):
         # Discord begrenzt Präsenz-Updates; daher nur alle 30 s und nur bei Änderung senden
@@ -173,7 +241,10 @@ class Bridge(discord.Client):
             self.members.setdefault(params[2].lower(), set()).update(n.lstrip("~&@%+") for n in params[3].split())
         elif command == "JOIN" and params:
             self.members.setdefault(params[0].lower(), set()).add(nick)
-            if nick != IRC_NICK:
+            if nick.lower() == IRC_NICK.lower():
+                # Beim JOIN garantiert IRC für leere Topics keine 331; ausdrücklich nur abfragen.
+                self.send_irc(f"TOPIC {params[0]}")
+            else:
                 await self.event(params[0], f"➡️ **{nick}** joined", 0x3ba55c)
         elif command in ("PART", "KICK") and params:
             gone = params[1] if command == "KICK" and len(params) > 1 else nick
@@ -195,7 +266,12 @@ class Bridge(discord.Client):
                     nicks.discard(nick)
                     nicks.add(params[0])
                     await self.event(irc_channel, f"🔁 **{nick}** is now **{params[0]}**")
+        elif command == "332" and len(params) >= 3:
+            self.queue_topic(params[1], params[2])
+        elif command == "331" and len(params) >= 2:
+            self.queue_topic(params[1], "")
         elif command == "TOPIC" and len(params) == 2:
+            self.queue_topic(params[0], params[1])
             await self.event(params[0], f"📌 **{nick}** set the topic: {params[1]}", 0xfaa61a)
 
     def send_irc(self, line):
