@@ -22,8 +22,8 @@ public static class CosmosExt2RmdirPlug
 }
 
 /// <summary>
-/// Ersatz fuer Cosmos Ext2InodeOperations.Rmdir mit demselben Ablauf, aber vollstaendiger Blockfreigabe: Truncate gibt alle
-/// Datenbloecke frei, die Zeigerbloecke danach Ext2IndirectBlocks. Die Pruefungen nutzen die oeffentlichen
+/// Ersatz fuer Cosmos Ext2InodeOperations.Rmdir mit demselben Ablauf, aber vollstaendiger Blockfreigabe: Truncate (ZehOS-
+/// Truncate-Plug) gibt alle Daten- und Zeigerbloecke frei, Cosmos nur Block[0]. Die Pruefungen nutzen die oeffentlichen
 /// IInodeOperations (Lookup, ReadDir) statt der internen Verzeichnisparser.
 /// </summary>
 internal static class CosmosExt2DirectoryRmdir
@@ -47,20 +47,9 @@ internal static class CosmosExt2DirectoryRmdir
         object superblock = SuperblockOf(dir);
         if (!CosmosExt2DirectoryRemoval.Remove(superblock, dir, name.ToString())) return false;
 
-        // Zeigerbloecke vor Truncate einsammeln: Truncate nullt nur die Zeiger auf Datenbloecke, der Baum bleibt lesbar.
-        uint blockSize = GetBlockSize(superblock);
-        List<uint> indirect = Ext2IndirectBlocks.Collect(GetBlock(child), blockSize, GetBlocksCount(superblock),
-            block =>
-            {
-                byte[] buffer = new byte[blockSize];
-                ReadBlocks(superblock, block, 1, buffer);
-                return buffer;
-            });
+        // Truncate gibt Daten- und Zeigerbloecke frei und nullt i_block (ZehOS-Truncate-Plug); vorher sammelte Rmdir die
+        // Zeigerbloecke selbst ein, das waere jetzt eine doppelte Freigabe.
         Truncate(superblock, child, 0);
-        foreach (uint block in indirect) FreeBlock(superblock, block);
-        uint[] pointers = GetBlock(child);
-        for (int index = Ext2IndirectBlocks.SingleIndirectIndex; index < pointers.Length; index++) pointers[index] = 0;
-        SetSectors(child, 0);
         SetLinksCount(child, 0);
         // Die Freigabe ueber den ZehOS-FreeInode-Plug schreibt links_count 0 und dtime ins Inode auf der Platte.
         WriteInode(superblock, child);
@@ -85,20 +74,8 @@ internal static class CosmosExt2DirectoryRmdir
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "WriteUsedDirsCount")]
     private static extern void WriteUsedDirsCount([UnsafeAccessorType(Operations)] object operations, uint group);
 
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "get_BlockSize")]
-    private static extern uint GetBlockSize([UnsafeAccessorType(Superblock)] object superblock);
-
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "get_BlocksCount")]
-    private static extern uint GetBlocksCount([UnsafeAccessorType(Superblock)] object superblock);
-
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "ReadBlocks")]
-    private static extern void ReadBlocks([UnsafeAccessorType(Superblock)] object superblock, uint ext2Block, uint count, Span<byte> destination);
-
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "Truncate")]
     private static extern void Truncate([UnsafeAccessorType(Superblock)] object superblock, [UnsafeAccessorType(Inode)] object inode, ulong newSize);
-
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "FreeBlock")]
-    private static extern void FreeBlock([UnsafeAccessorType(Superblock)] object superblock, uint blockNumber);
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "FreeInode")]
     private static extern void FreeInode([UnsafeAccessorType(Superblock)] object superblock, uint inodeNumber);
@@ -116,9 +93,6 @@ internal static class CosmosExt2DirectoryRmdir
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "UsedDirsCount")]
     private static extern ref ushort UsedDirsCount([UnsafeAccessorType(GroupDesc)] object descriptor);
 
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "get_Block")]
-    private static extern uint[] GetBlock([UnsafeAccessorType(Inode)] object inode);
-
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "get_InodeNumber")]
     private static extern uint GetInodeNumber([UnsafeAccessorType(Inode)] object inode);
 
@@ -128,6 +102,4 @@ internal static class CosmosExt2DirectoryRmdir
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_LinksCount")]
     private static extern void SetLinksCount([UnsafeAccessorType(Inode)] object inode, ushort value);
 
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_Blocks")]
-    private static extern void SetSectors([UnsafeAccessorType(Inode)] object inode, uint value);
 }

@@ -50,6 +50,13 @@ class NativeLibcTests(unittest.TestCase):
         lib.realloc.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
         lib.free.argtypes = [ctypes.c_void_p]
         lib.heap_test_last_request.restype = ctypes.c_size_t
+        lib.zehos_memory_begin.argtypes = [ctypes.c_size_t, ctypes.c_int, ctypes.c_void_p]
+        lib.zehos_memory_begin.restype = ctypes.c_int
+        lib.zehos_memory_end.restype = None
+        for name in ("zehos_memory_used", "zehos_memory_peak"):
+            getattr(lib, name).restype = ctypes.c_size_t
+        cls.current_thread = ctypes.c_int(7)
+        cls.thread_callback = ctypes.CFUNCTYPE(ctypes.c_int)(lambda: cls.current_thread.value)
         for name, result in (("strtoull", ctypes.c_ulonglong), ("strtoll", ctypes.c_longlong), ("strtol", ctypes.c_long)):
             getattr(lib, name).restype = result
             getattr(lib, name).argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int]
@@ -62,7 +69,16 @@ class NativeLibcTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def setUp(self):
+        self.lib.zehos_memory_end()
         self.lib.heap_test_reset()
+        self.current_thread.value = 7
+
+    def tearDown(self):
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_host_depth(), 0)
+
+    def begin_run(self, limit=0, owner=7):
+        return self.lib.zehos_memory_begin(limit, owner, ctypes.cast(self.thread_callback, ctypes.c_void_p))
 
     def parse(self, name, text, base=10):
         """Liefert Wert, Anzahl gelesener Zeichen und errno."""
@@ -123,7 +139,8 @@ class NativeLibcTests(unittest.TestCase):
         self.assertEqual(ctypes.string_at(self.lib.calloc(4, 8), 32), bytes(32))
 
     def test_sizes_beyond_32_bit_heap_limit_fail_without_heap_call(self):
-        largest = 0xFFFFFFFF - 31
+        # Groesse/Rohzeiger plus zwei Arena-Zeiger und bis zu 15 Byte Ausrichtung.
+        largest = 0xFFFFFFFF - 47
         for size in (largest + 1, 0xFFFFFFFF, 1 << 40, (1 << 64) - 1):
             self.assertIsNone(self.lib.malloc(size), hex(size))
         self.assertIsNone(self.lib.calloc(1 << 33, 1 << 33))
@@ -139,6 +156,141 @@ class NativeLibcTests(unittest.TestCase):
         # Die groesste zulaessige Anforderung erreicht den Heap ungekuerzt (der Ersatzheap lehnt sie dann ab).
         self.assertIsNone(self.lib.malloc(largest))
         self.assertEqual(self.lib.heap_test_last_request(), 0xFFFFFFFF)
+
+    def test_run_budget_keeps_failed_allocation_and_releases_owner_blocks(self):
+        self.assertEqual(self.begin_run(128), 1)
+        try:
+            pointer = self.lib.malloc(32)
+            self.assertIsNotNone(pointer)
+            used = self.lib.zehos_memory_used()
+            self.assertEqual(used, self.lib.heap_test_last_request())
+            self.assertIsNone(self.lib.malloc(100))
+            self.assertEqual(self.lib.zehos_memory_used(), used)
+            self.assertEqual(self.lib.zehos_memory_exceeded(), 1)
+        finally:
+            self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.assertEqual(self.lib.heap_test_frees(), 1)
+
+    def test_run_free_reopens_budget_and_keeps_peak(self):
+        self.assertEqual(self.begin_run(128), 1)
+        pointer = self.lib.malloc(32)
+        used = self.lib.zehos_memory_used()
+        self.lib.free(pointer)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.assertEqual(self.lib.zehos_memory_peak(), used)
+        self.assertIsNotNone(self.lib.malloc(32))
+
+    def test_run_keeps_foreign_thread_allocations_outside_arena(self):
+        self.assertEqual(self.begin_run(128), 1)
+        self.current_thread.value = 8
+        foreign = self.lib.malloc(1024)
+        self.assertIsNotNone(foreign)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.current_thread.value = 7
+        self.assertIsNotNone(self.lib.malloc(32))
+        self.current_thread.value = 8
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 1)
+        self.lib.free(foreign)
+        self.assertEqual(self.lib.heap_test_frees(), 2)
+
+    def test_run_rejects_invalid_or_second_begin_without_reset(self):
+        self.assertEqual(self.lib.zehos_memory_begin(128, 7, None), 0)
+        self.assertEqual(self.begin_run(128, owner=8), 0)
+        self.assertEqual(self.begin_run(128, owner=-1), 0)
+        self.assertEqual(self.begin_run(128), 1)
+        self.assertIsNotNone(self.lib.malloc(32))
+        used = self.lib.zehos_memory_used()
+        self.assertEqual(self.begin_run(1024), 0)
+        self.assertEqual(self.lib.zehos_memory_used(), used)
+        self.assertIsNone(self.lib.malloc(100))
+
+    def test_run_realloc_rejection_preserves_old_content_and_charge(self):
+        self.assertEqual(self.begin_run(128), 1)
+        old = self.lib.malloc(32)
+        ctypes.memmove(old, b"keep", 4)
+        used = self.lib.zehos_memory_used()
+        self.assertIsNone(self.lib.realloc(old, 64))
+        self.assertEqual(ctypes.string_at(old, 4), b"keep")
+        self.assertEqual(self.lib.zehos_memory_used(), used)
+        self.assertEqual(self.lib.heap_test_frees(), 0)
+        self.lib.free(old)
+        self.assertIsNotNone(self.lib.malloc(64))
+
+    def test_run_realloc_counts_both_blocks_during_copy(self):
+        self.assertEqual(self.begin_run(), 1)
+        pointer = self.lib.calloc(4, 8)
+        first = self.lib.zehos_memory_used()
+        grown = self.lib.realloc(pointer, 64)
+        second = self.lib.heap_test_last_request()
+        self.assertEqual(self.lib.zehos_memory_used(), second)
+        self.assertEqual(self.lib.zehos_memory_peak(), first + second)
+        self.lib.free(grown)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+
+    def test_run_end_is_idempotent_and_next_begin_resets_diagnostics(self):
+        self.assertEqual(self.begin_run(256), 1)
+        for size in (16, 32, 48):
+            self.assertIsNotNone(self.lib.malloc(size))
+        peak = self.lib.zehos_memory_used()
+        self.assertIsNone(self.lib.malloc(256))
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 3)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.assertEqual(self.lib.zehos_memory_peak(), peak)
+        self.assertEqual(self.lib.zehos_memory_exceeded(), 1)
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 3)
+        self.assertEqual(self.begin_run(), 1)
+        self.assertEqual(self.lib.zehos_memory_peak(), 0)
+        self.assertEqual(self.lib.zehos_memory_exceeded(), 0)
+
+    def test_run_exact_raw_byte_limit_and_balanced_host_depth(self):
+        self.assertEqual(self.begin_run(), 1)
+        self.assertIsNotNone(self.lib.malloc(64))
+        exact = self.lib.heap_test_last_request()
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.begin_run(exact), 1)
+        self.assertIsNotNone(self.lib.malloc(64))
+        self.assertEqual(self.lib.zehos_memory_used(), exact)
+        self.assertIsNone(self.lib.malloc(0))
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_host_depth(), 0)
+
+    def test_run_unlinks_middle_head_and_tail_without_double_free(self):
+        self.assertEqual(self.begin_run(), 1)
+        first, middle, third, last = [self.lib.malloc(32) for _ in range(4)]
+        for pointer in (middle, first, last, third):
+            self.lib.free(pointer)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.lib.zehos_memory_end()
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 4)
+
+    def test_run_preserves_block_allocated_before_begin(self):
+        before = self.lib.malloc(32)
+        self.assertEqual(self.begin_run(), 1)
+        self.assertIsNotNone(self.lib.malloc(32))
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 1)
+        self.lib.free(before)
+        self.assertEqual(self.lib.heap_test_frees(), 2)
+
+    def test_run_heap_oom_and_calloc_rejection_leave_depth_balanced(self):
+        self.assertEqual(self.begin_run(), 1)
+        old = self.lib.malloc(32)
+        used = self.lib.zehos_memory_used()
+        self.assertIsNone(self.lib.realloc(old, 2 << 20))
+        self.assertEqual(self.lib.zehos_memory_used(), used)
+        self.assertEqual(self.lib.zehos_memory_exceeded(), 0)
+        self.assertEqual(self.lib.heap_test_host_depth(), 0)
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.begin_run(128), 1)
+        self.assertIsNone(self.lib.calloc(2, 100))
+        self.assertIsNone(self.lib.calloc(1 << 63, 3))
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.assertEqual(self.lib.heap_test_host_depth(), 0)
 
     def test_strtoull_bases_prefixes_and_end(self):
         cases = [("  42xyz", 10, 42, 4), ("+17", 10, 17, 3), ("0x1fG", 0, 31, 4), ("0X1F", 16, 31, 4),

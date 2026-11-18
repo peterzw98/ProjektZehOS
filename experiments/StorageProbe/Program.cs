@@ -8,6 +8,7 @@ using Cosmos.Kernel.System.FileSystem.Ext2;
 // mit dem unveraenderten Cosmos-Ext2Formatter (original, Standard) oder der korrigierten gemeinsamen Quelle
 // ProjektZeh/Storage/Ext2/CosmosExt2Formatter.cs (fixed) formatieren. Ergebnis als eine JSON-Zeile auf stdout.
 // selftest: Grenz- und Argumentpruefungen sowie Layoutpruefung der korrigierten Quelle, ohne e2fsck.
+if (args.Length == 3 && args[0] == "boundary-probe") return BoundaryProbe.Run(args[1], args[2]);
 if (args.Length == 1 && args[0] == "selftest") return SelfTest.Run();
 if (args.Length == 1 && args[0] == "readonly-selftest") return ReadOnlySelfTest.Run();
 if (args.Length >= 1 && args[0] == "layout") return LayoutCommand.Layout(args);

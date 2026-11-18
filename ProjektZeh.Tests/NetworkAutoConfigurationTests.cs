@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Network;
@@ -104,6 +105,32 @@ public sealed class NetworkAutoConfigurationTests
         automatic.Stop();
         Assert.IsTrue(tasks.StopAll(2000));
         Assert.AreEqual(1, maximum);
+    }
+
+    [TestMethod]
+    public void SelfRestartSucceedsWhenAllTaskSlotsAreTaken()
+    {
+        // #244: net auto endet (Fehlschlag des DHCP-Aufrufs ohne Abbruch zaehlt nicht), alle anderen Plaetze sind belegt.
+        var network = new FakeNetwork(new(true, true, null));
+        var tasks = new BackgroundTaskService();
+        var logs = new List<string>();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        network.ExecuteWork = _ => { entered.Set(); release.Wait(CancellationToken.None); return ResultObjectFactory.CreateFailure<string>(ResultCode.Failure, "kein DHCP"); };
+        var automatic = new NetworkAutoConfiguration(network, tasks, text => { lock (logs) logs.Add(text); });
+        try
+        {
+            Assert.IsTrue(automatic.Start().IsOK());
+            Assert.IsTrue(entered.Wait(2000));
+            for (int i = 1; i < BackgroundTaskService.Capacity; i++)
+                Assert.IsTrue(tasks.Start("wait", context => context.Sleep(Timeout.Infinite)).IsOK());
+            var autoId = tasks.Snapshot().Single(x => x.Name == "net auto").Id;
+            Assert.IsTrue(tasks.Cancel(autoId).IsOK());
+            release.Set();
+            Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref network.Calls) >= 2, 2000));
+            lock (logs) CollectionAssert.DoesNotContain(logs, "Netzwerkautomatik nicht gestartet: Aufgabenlimit erreicht (8); laufende Aufgaben zuerst abbrechen.");
+        }
+        finally { automatic.Stop(); Assert.IsTrue(tasks.StopAll(2000)); }
     }
 
     private sealed class FakeNetwork(NetworkStatus status) : INetworkService

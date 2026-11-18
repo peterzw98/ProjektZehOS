@@ -12,6 +12,10 @@ static int allocs, frees;
 static void* last_raw;
 static void* last_freed;
 static size_t last_request;
+// Wie zehos_host_core.c im Kernel: starke Definition statt des schwachen libc-Fallbacks.
+volatile int zehos_host_depth;
+
+int heap_test_host_depth(void) { return zehos_host_depth; }
 
 void* __cosmos_heap_alloc(size_t size)
 {
