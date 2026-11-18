@@ -9,14 +9,11 @@ namespace ProjektZeh.Scheduling;
 /// </summary>
 internal static class MainLoopIdle
 {
+    /// <param name="yieldNow">Liefert false, wenn sich der Wechsel nicht anfordern liess; dann schlaeft die Schleife wie sonst.</param>
     /// <returns><see langword="true"/>, wenn abgegeben wurde; <see langword="false"/> nach dem normalen Schlafen.</returns>
-    public static bool Wait(int waitingThreads, Action yieldNow, Action sleep)
+    public static bool Wait(int waitingThreads, Func<bool> yieldNow, Action sleep)
     {
-        if (waitingThreads > 0)
-        {
-            yieldNow();
-            return true;
-        }
+        if (waitingThreads > 0 && yieldNow()) return true;
         sleep();
         return false;
     }

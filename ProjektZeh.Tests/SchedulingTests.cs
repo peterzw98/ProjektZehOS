@@ -103,15 +103,23 @@ public sealed class SchedulingTests
     public void MainLoopIdle_YieldsWithoutSleepingWhenSomeoneWaits()
     {
         int yields = 0, sleeps = 0;
-        Assert.IsTrue(MainLoopIdle.Wait(1, () => yields++, () => sleeps++));
+        Assert.IsTrue(MainLoopIdle.Wait(1, () => { yields++; return true; }, () => sleeps++));
         Assert.AreEqual((1, 0), (yields, sleeps));
+    }
+
+    [TestMethod]
+    public void MainLoopIdle_SleepsWhenTheRescheduleCouldNotBeRaised()
+    {
+        int yields = 0, sleeps = 0;
+        Assert.IsFalse(MainLoopIdle.Wait(2, () => { yields++; return false; }, () => sleeps++));
+        Assert.AreEqual((1, 1), (yields, sleeps));
     }
 
     [TestMethod]
     public void MainLoopIdle_SleepsWhenNobodyWaits()
     {
         int yields = 0, sleeps = 0;
-        Assert.IsFalse(MainLoopIdle.Wait(0, () => yields++, () => sleeps++));
+        Assert.IsFalse(MainLoopIdle.Wait(0, () => { yields++; return true; }, () => sleeps++));
         Assert.AreEqual((0, 1), (yields, sleeps));
     }
 
