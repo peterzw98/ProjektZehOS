@@ -9,8 +9,8 @@
     <!-- Version = Prefix.(PatchBase + Merges auf master seit der letzten Aenderung dieser beiden Elementzeilen), Ziel
          ZehOSVersionFromGit. Jede Aenderung einer der beiden Zeilen setzt den Zaehler zurueck: PatchBase dann auf den aktuellen
          Patch + 1 (oder 0 mit neuem Prefix, etwa 0.6). PRs aendern keine Version; -p:Version (Release) gewinnt. -->
-    <ZehOSVersionPrefix>0.5</ZehOSVersionPrefix>
-    <ZehOSPatchBase>123</ZehOSPatchBase>
+    <ZehOSVersionPrefix>0.6</ZehOSVersionPrefix>
+    <ZehOSPatchBase>0</ZehOSPatchBase>
     <!-- Vor den SDK-Targets ausgewertet: nicht leer nur bei -p:Version von aussen (das SDK setzt sonst spaeter 1.0.0). -->
     <ZehOSVersionFromBuild>$(Version)</ZehOSVersionFromBuild>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
