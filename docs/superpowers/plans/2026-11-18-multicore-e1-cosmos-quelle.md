@@ -34,15 +34,15 @@ gelten für diese Stände; vor dem Ändern die Stelle über den zitierten Text s
 | Datei (Stand `6348c7a`) | Inhalt | Wird |
 | --- | --- | --- |
 | `ProjektZeh/ProjektZeh.csproj:1` | `Sdk="Cosmos.Sdk/3.0.97"` | `Sdk="Cosmos.Sdk"`, Version aus `global.json` |
-| `ProjektZeh/ProjektZeh.csproj:131-132` | zwei `PackageReference` mit `Version="3.0.97"` | `Version="[$(ZehOSCosmosVersion)]"` |
+| `ProjektZeh/ProjektZeh.csproj:137-138` | zwei `PackageReference` mit `Version="3.0.97"` | `Version="[$(ZehOSCosmosVersion)]"` |
 | `global.json` | kein `msbuild-sdks` | `"msbuild-sdks": { "Cosmos.Sdk": "<VERSION>" }` |
 | `ProjektZeh.Tests/ProjektZeh.Tests.csproj:17`, `ScreenshotSupport.cs:17-19`, `Golden.cs:25` | Schrift aus `Cosmos.Kernel.System` 3.0.97 im NuGet-Cache | **bleibt** bei 3.0.97 von nuget.org (siehe unten) |
 | `scripts/build-release.sh:21-25` | Limine aus `cosmos.build.common/3.0.97` im NuGet-Cache | Version aus `deploy/cosmos/VERSION` |
 | `scripts/tests/test_release_tools.py:106` | derselbe Pfad im Test | wie das Skript |
-| `.github/workflows/ci.yml:219-229`, `:279-289`, `:415-425` | `dotnet tool install … --version 3.0.97` in drei Jobs | gemeinsamer Schritt aus E1-C |
-| `.github/workflows/release.yml:32-40` | dasselbe im Release | gemeinsamer Schritt aus E1-C |
+| `.github/workflows/ci.yml:219-220`, `:279-280`, `:415-416` | `dotnet tool install … --version 3.0.97` in drei Jobs | gemeinsamer Schritt aus E1-C |
+| `.github/workflows/release.yml:32-33` | dasselbe im Release | gemeinsamer Schritt aus E1-C |
 | `experiments/StorageProbe/StorageProbe.csproj:8-16` | DLL-Pfade und `PackageDownload` mit `3.0.97` | Version als Eigenschaft (E1-F) |
-| `README.md:237`, `:254-259`, `:273-275`, `:402`; `AGENTS.md:87`, `:89` | Bauanleitung und Regeln | E1-E |
+| `README.md:237`, `:259`, `:402` (dazu Voraussetzungen ab `:254`); `AGENTS.md:87` | Bauanleitung und Regeln | E1-E |
 
 Die Hosttests bleiben bewusst bei der Schrift aus dem Originalpaket 3.0.97: So brauchen die Jobs „Shell tests“ unter
 Linux und Windows keinen Cosmos-Bau. Ändert ein späterer Patch die Schrift, ist das dort eigens zu behandeln.
@@ -60,11 +60,20 @@ Linux und Windows keinen Cosmos-Bau. Ändert ein späterer Patch die Schrift, is
 
 Workflow-Dateien kann das Token der Team-Agenten nicht pushen; E1-C übernimmt deshalb der Agent eines Benutzers.
 
+## Stand-Abgleich 18. November 2026 (master `5d9205d`, Befunde aus #second)
+
+Seit dem Entwurf (`6348c7a`) hat sich Folgendes geändert oder gezeigt; die Pakete E1-B bis E1-D gelten mit diesen Korrekturen.
+
+- **Zeilenangaben verschoben:** `ProjektZeh.csproj` hat die `PackageReference` jetzt in `:137-138` (Zeile 1 mit `Sdk="Cosmos.Sdk/3.0.97"` unverändert); die Werkzeuge installieren `ci.yml` nur noch in `:219-220`, `:279-280` und `:415-416` sowie `release.yml:32-33`; in `AGENTS.md` steht `3.0.97` nur noch in `:87`, in der `README.md` in `:237`, `:259` und `:402`. Vor dem Ändern deshalb mit `git grep -n "3\.0\.97"` die Stellen neu suchen.
+- **ZehOS-Version kommt aus Git (#267):** `ProjektZeh.csproj` rechnet die Version aus `ZehOSVersionPrefix`, `ZehOSPatchBase` und der Zahl der Commits (`ZehOSVersionFromGit`). Das ist unabhängig von `deploy/cosmos/VERSION` und `ZehOSCosmosVersion`; die Namen dürfen sich nicht überschneiden. Zu prüfen in E1-B: Die Git-Suche `git log -G "<ZehOSVersionPrefix>|<ZehOSPatchBase>"` darf von den neuen Zeilen in `ProjektZeh.csproj` nicht ausgelöst werden, sonst springt der Zähler.
+- **SDK-Voraussetzung (yellow-e1d, 18.11.):** Im Branch `cosmos` verlangt `global.json` `"sdk": "10.0.201"` mit `rollForward: latestFeature`; auf HPz ist nur 10.0.112 installiert, `dotnet` bricht im Quellbaum mit „compatible .NET SDK was not found“ ab. Das ZehOS-`global.json` bleibt bei `10.0.100`. `scripts/build-cosmos.sh` muss deshalb vor dem Bau im Quellbaum `dotnet --version` prüfen und mit einer Zeile Ursache und dem Hinweis auf SDK ≥ 10.0.201 abbrechen. Auf Entwicklungsrechnern darf ein zusätzliches SDK nur mit Freigabe nach `.tools/dotnet-<version>` (AGENTS.md: SDK-Änderungen nur nach Rückfrage; Peter hat das für yellow-e1d einmalig am 18.11. freigegeben, das gilt nicht für andere). Für die CI ist offen, ob `dotnet-version: '10.0.x'` ein SDK ≥ 10.0.201 liefert (Hypothese, nicht geprüft; E1-C muss es belegen oder `10.0.2xx` festlegen).
+- **Die gebauten DLLs sind nicht byteweise gleich (yellow-e1d):** `AssemblyInformationalVersion` trägt den Quell-Commit (`3.0.97+efcf20cc…`; ein Bau aus `cosmos` trägt `bd5889b`), die DLLs enthalten Quellpfade (`CallerFilePath`, PDB-Pfad `artifacts/obj/<Projekt>/release/<Projekt>.pdb`) als Zeichenketten. Die `PathMap` aus Schritt 4 von E1-B ist deshalb Pflicht, sonst stehen lokale Pfade in den DLLs. „Gleich“ heißt in E1-D: SHA-256 gleich oder IL-gleich (nur MVID, Modul-GUID und `InformationalVersion` weichen ab).
+
 ## Review-Schwerpunkte
 
 1. Der Feed enthält die gewünschte Version nicht, und NuGet nimmt still das Original 3.0.97 von nuget.org (E1-B: genaue Versionsklammern und `NU1603` als Fehler; Test in Schritt 9).
 2. Zwei Commits werden unter derselben Versionsnummer gebaut, der NuGet-Cache liefert den alten Stand (E1-B: Stempelprüfung im Skript; Test in Schritt 3).
-3. Auf einem Rechner mit mehreren Arbeitskopien ist der global installierte Patcher der eines anderen Standes (E1-B: Skript installiert immer die Version aus `VERSION`; Hinweis in der README).
+3. Auf einem Rechner mit mehreren Arbeitskopien ist der global installierte Patcher der eines anderen Standes (E1-B: Das Skript installiert die Werkzeuge lokal unter `.tools/cosmos-tools/<version>`, der Bau-Einstieg setzt sie vor `PATH`, zu Baubeginn muss `cosmos.patcher --version` gleich `VERSION` sein; global nur mit `--global` und in der CI; Hinweis in der README; Befund pink P2-1).
 4. Das Skript berührt den NuGet-Cache oder die NuGet-Konfiguration des Benutzers (E1-B: Review; es darf nur unter `.tools/` schreiben und die zwei Werkzeuge installieren).
 5. Lokale Pfade oder der Pfad des CI-Arbeitsordners geraten in die DLLs (E1-D: `check-release-paths.py`).
 
@@ -99,7 +108,7 @@ PRs), dazu drei eigene Dateien.
 - Anlegen: `deploy/cosmos/feed/.gitignore` mit den Zeilen `*` und `!.gitignore`. Der Ordner muss in jeder Arbeitskopie vorhanden sein: Eine fehlende lokale Paketquelle ließe auch `dotnet restore` des Testprojekts scheitern, ein leerer Ordner nicht.
 - Anlegen: `scripts/build-cosmos.sh`, Test `scripts/tests/test_build_cosmos.py`
 - Anlegen: `NuGet.Config` im Stamm
-- Ändern: `global.json`, `Directory.Build.props`, `ProjektZeh/ProjektZeh.csproj:1` und `:131-132`
+- Ändern: `global.json`, `Directory.Build.props`, `ProjektZeh/ProjektZeh.csproj:1` und `:137-138`
 - Ändern: `scripts/build-release.sh:21-25`, `scripts/tests/test_release_tools.py:106`
 
 **Schnittstelle des Skripts (liefert):**
@@ -110,7 +119,8 @@ scripts/build-cosmos.sh [--commit <sha>] [--version <version>] [--feed <ordner>]
   ohne Argumente: Commit aus deploy/cosmos/COMMIT, Version aus deploy/cosmos/VERSION,
                   Feed deploy/cosmos/feed, Quellbaum .tools/cosmos-src
   --commit:       anderer Commit (Patch in Arbeit); ohne --version gilt dann <Basis>-zehos.0.g<sha7>
-  --no-tools:     Pakete bauen, die globalen Werkzeuge nicht anfassen
+  --no-tools:     Pakete bauen, die Werkzeuge nicht installieren
+  --global:       Werkzeuge global statt unter .tools/cosmos-tools/<version> installieren (CI, frischer Rechner)
   --print-plan:   nur die Befehle ausgeben, nichts ausführen (für den Test)
   Ende 0: Feed enthält alle Pakete dieser Version; Ende ungleich 0 mit einer Zeile Ursache auf stderr.
 ```
@@ -129,8 +139,9 @@ scripts/build-cosmos.sh [--commit <sha>] [--version <version>] [--feed <ordner>]
    - für diese fünf Projekte: `nuspec` unter `artifacts/obj/<Projekt>` und altes `nupkg` löschen, `dotnet pack -p:NoBuild=true -o artifacts/package/release` (165-173)
    - `dotnet build src/Cosmos.Sdk/Cosmos.Sdk.csproj --no-incremental` (177)
    - Die ARM64-Schritte (83, 113-114, 120-121, 150-158) und `Cosmos.Build.Templates` (178) entfallen.
-6. Alle `*.nupkg` aus `artifacts/package/release` in den Feed kopieren, `<version>.commit` schreiben. Erwartete Paket-IDs, sonst Abbruch: `Cosmos.Sdk`, `Cosmos.Build.API`, `.Asm`, `.CC`, `.Common`, `.Ilc`, `.Patcher`, `.Analyzer.Patcher`, `Cosmos.Kernel`, `.Boot.Limine`, `.Core`, `.Core.X64`, `.Debug`, `.Drivers`, `.HAL`, `.HAL.X64`, `.Native.MultiArch`, `.Native.X64`, `.Plugs`, `.SourceGenerators`, `.System`, `Cosmos.Patcher`, `Cosmos.Tools`.
-7. Ohne `--no-tools`: `dotnet tool update --global Cosmos.Patcher --version <version> --add-source <feed>` und dasselbe für `Cosmos.Tools`.
+6. Alle `*.nupkg` aus `artifacts/package/release` in den Feed kopieren, `<version>.commit` schreiben. Erwartete Paket-IDs, sonst Abbruch: `Cosmos.Sdk`, `Cosmos.Build.API`, `.Asm`, `.CC`, `.Common`, `.Ilc`, `.Patcher`, `.Analyzer.Patcher` (siehe Anmerkung zu CodeFixes unten), `Cosmos.Kernel`, `.Boot.Limine`, `.Core`, `.Core.X64`, `.Debug`, `.Drivers`, `.HAL`, `.HAL.X64`, `.Native.MultiArch`, `.Native.X64`, `.Plugs`, `.SourceGenerators`, `.System`, `Cosmos.Patcher`, `Cosmos.Tools`.
+   - **Anmerkung zu `Cosmos.Build.Analyzer.Patcher.CodeFixes` (Befund pink, 18.11.):** Im NuGet-Cache liegt für 3.0.97 auch dieses Paket. Gelesen: `Sdk/Sdk.props:145` und `:154` referenzieren nur `Cosmos.Build.Analyzer.Patcher`; die nuspec von `Cosmos.Kernel` nennt es nicht; CodeFixes hängt von `_Cosmos.Build.Analyzer.Patcher` ab, nicht umgekehrt. Warum es im Cache liegt, ist nicht geklärt (Hypothese: Restore-Auswahl; nicht geprüft). Dazu ist die Paket-ID in der nuspec von `cosmos.build.analyzer.patcher` `_Cosmos.Build.Analyzer.Patcher`; die erwartete Liste in Punkt 6 ist deshalb am echten Ergebnis von `dotnet pack` zu prüfen und zu korrigieren. Entscheidung in E1-B (Schritt 5): Das Paket nur dann in Feed und Liste aufnehmen, wenn ein `dotnet restore` mit leerem Paketordner gegen den Feed ohne dieses Paket scheitert; sonst den Ausschluss mit diesem Ergebnis begründen.
+7. Werkzeuge installieren, **ohne die globalen Werkzeuge anderer Arbeitskopien zu ändern** (Befund pink P2-1: `dotnet tool update --global` tauscht auf einem Rechner mit mehreren Arbeitskopien den Patcher mitten im Bau eines anderen Agenten): lokal `dotnet tool install --tool-path .tools/cosmos-tools/<version> Cosmos.Patcher --version <version> --add-source <feed>` und dasselbe für `Cosmos.Tools`; der Bau-Einstieg setzt `.tools/cosmos-tools/<version>` vor `PATH` (der Kernelbau findet `cosmos.patcher` über `PATH`). Zu Baubeginn muss `cosmos.patcher --version` gleich `deploy/cosmos/VERSION` sein, sonst Abbruch mit einer Zeile Ursache. Nur mit `--global` (Schalter des Skripts) und in der CI auf einem frischen Runner darf global installiert werden (`dotnet tool update --global … --add-source <feed>`). Mit `--no-tools` entfällt dieser Schritt.
 
 Das Skript schreibt nur unter `.tools/` und `deploy/cosmos/feed/` und installiert die zwei Werkzeuge. Es löscht nichts im NuGet-Cache und
 ändert keine NuGet-Konfiguration außerhalb des Repositorys.
@@ -152,13 +163,14 @@ Das Skript schreibt nur unter `.tools/` und `deploy/cosmos/feed/` und installier
 ```
 
 - `global.json`: `"msbuild-sdks": { "Cosmos.Sdk": "3.0.97-zehos.1" }`. Das ist die zweite Stelle mit der Version, weil die SDK-Zeile keine Eigenschaften lesen kann; ein Test hält beide gleich (Schritt 1).
-- `ProjektZeh.csproj:1`: `Sdk="Cosmos.Sdk"`; `:131-132`: `Version="[$(ZehOSCosmosVersion)]"` (genaue Version); dazu `<WarningsAsErrors>$(WarningsAsErrors);NU1603;NU1601;NU1605</WarningsAsErrors>`, damit ein Ausweichen auf eine andere Paketversion den Bau abbricht.
+- `ProjektZeh.csproj:1`: `Sdk="Cosmos.Sdk"`; `:137-138`: `Version="[$(ZehOSCosmosVersion)]"` (genaue Version); dazu `<WarningsAsErrors>$(WarningsAsErrors);NU1603;NU1601;NU1605</WarningsAsErrors>`, damit ein Ausweichen auf eine andere Paketversion den Bau abbricht.
 - `scripts/build-release.sh`: Version aus `deploy/cosmos/VERSION` lesen statt `3.0.97`; der Paketordner im NuGet-Cache trägt die Version klein geschrieben.
 
 - [ ] **Schritt 1: Tests schreiben** (`scripts/tests/test_build_cosmos.py`, `unittest`, Stil der vorhandenen Tests):
   - `test_version_files_agree`: `deploy/cosmos/VERSION` (ohne Leerraum) ist gleich `global.json["msbuild-sdks"]["Cosmos.Sdk"]`.
   - `test_commit_is_full_sha`: `deploy/cosmos/COMMIT` besteht aus 40 Hexzeichen.
   - `test_plan_contains_no_user_level_side_effects`: Die Ausgabe von `--print-plan` enthält weder `nuget locals`, `nuget remove source`, `nuget add source`, `.nuget/packages` noch `postCreateCommand`.
+  - `test_plan_installs_tools_locally_by_default`: Die Ausgabe von `--print-plan` enthält `--tool-path` und `.tools/cosmos-tools/3.0.97-zehos.1`, aber nicht `--global`; mit `--global` ist es umgekehrt.
   - `test_plan_is_x64_only`: Die Ausgabe enthält kein `ARM64` und kein `arm64`.
   - `test_plan_sets_version_and_pathmap`: enthält `VersionPrefix=3.0.97-zehos.1` und `PathMap=` mit `/home/runner/work/Cosmos/Cosmos`.
   - `test_trial_version_from_commit`: `--print-plan --commit 0123456789abcdef0123456789abcdef01234567` nennt die Version `3.0.97-zehos.0.g0123456`.
@@ -168,7 +180,7 @@ Das Skript schreibt nur unter `.tools/` und `deploy/cosmos/feed/` und installier
 - [ ] **Schritt 5: Echter Lauf unter Linux:** `scripts/build-cosmos.sh`. Dauer notieren (sie bestimmt die Zeitgrenzen in E1-C). Erwartet: alle unter Punkt 6 genannten Paket-IDs im Feed, `cosmos --version` und `cosmos.patcher --version` nennen `3.0.97-zehos.1`.
 - [ ] **Schritt 6: Echter Lauf unter Windows** (Git Bash). Schlägt er fehl, die Ursache beheben oder, wenn sie in Cosmos' Bau liegt, als Befund in `deploy/cosmos/README.md` festhalten („Paketbau nur unter Linux belegt“) und im PR nennen.
 - [ ] **Schritt 7:** `NuGet.Config`, `global.json`, `Directory.Build.props`, `ProjektZeh.csproj`, `build-release.sh` und dessen Test umstellen.
-- [ ] **Schritt 8:** `cosmos check`, dann Hosttests und nativer Build nach der Übersicht. Erwartet: 0 Warnungen, 0 Fehler; im Build-Log stehen die Pakete mit `3.0.97-zehos.1`.
+- [ ] **Schritt 8:** `PATH="$PWD/.tools/cosmos-tools/<version>:$PATH"` setzen, `cosmos.patcher --version` gleich `deploy/cosmos/VERSION` prüfen, `cosmos check`, dann Hosttests und nativer Build nach der Übersicht. Erwartet: 0 Warnungen, 0 Fehler; im Build-Log stehen die Pakete mit `3.0.97-zehos.1`.
 - [ ] **Schritt 9: Gegenprobe für Schwerpunkt 1:** Die Pakete aus `deploy/cosmos/feed/` vorübergehend verschieben und den NuGet-Cache dieser Version leeren (nur die Ordner `cosmos.*/3.0.97-zehos.1`), dann `dotnet restore ProjektZeh/ProjektZeh.csproj`. Erwartet: Fehler (SDK oder Paket nicht gefunden), kein stilles Ausweichen. Danach `dotnet restore ProjektZeh.Tests/ProjektZeh.Tests.csproj`: erwartet Erfolg (die Hosttests brauchen den Feed nicht). Pakete zurücklegen.
 - [ ] **Schritt 10:** `python3 scripts/check-release-paths.py` wie in `ci.yml` gegen ein mit `scripts/build-release.sh 0.0.0 <ordner>` gebautes Abbild. Erwartet: bestanden, ohne Änderung an der Erlaubnisliste.
 - [ ] **Schritt 11:** Commit (`build: Cosmos aus dem Branch cosmos bauen (Stand 3.0.97)`), Review, PR. Der PR nennt die gemessene Bauzeit und das Ergebnis unter Windows.
@@ -186,7 +198,7 @@ Das Skript schreibt nur unter `.tools/` und `deploy/cosmos/feed/` und installier
 **Die Aktion** ersetzt in allen vier Stellen die zwei Zeilen `dotnet tool install --global Cosmos.Tools|Cosmos.Patcher --version 3.0.97`:
 
 1. Cache: `actions/cache` (auf einen Commit festgelegt, wie die übrigen Aktionen im Repository) für `deploy/cosmos/feed`, Schlüssel `cosmos-${{ runner.os }}-${{ hashFiles('deploy/cosmos/COMMIT', 'deploy/cosmos/VERSION', 'scripts/build-cosmos.sh') }}`.
-2. `scripts/build-cosmos.sh` (baut bei Cache-Treffer nichts, installiert die Werkzeuge).
+2. `scripts/build-cosmos.sh --global` (baut bei Cache-Treffer nichts, installiert die Werkzeuge global; auf dem frischen Runner stört das keinen anderen Bau).
 
 Die Schritte `cosmos install --auto --tools` und `cosmos check` bleiben, wie sie sind. Die Jobs brauchen `fetch-depth: 0`
 oder ein zusätzliches `git fetch origin <Commit>`, damit das Skript den Commit des Branches `cosmos` findet; der Job
@@ -208,6 +220,7 @@ oder ein zusätzliches `git fetch origin <Commit>`, damit das Skript den Commit 
 | Hosttests | `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror` | gleiche Testzahl, alle grün |
 | Plug-Bindung | `python3 scripts/check-plug-binding.py artifacts/kernel-build.log ProjektZeh` | alle Plugs gebunden, gleiche Liste wie vorher |
 | Pfade | `python3 scripts/check-release-paths.py` wie in `ci.yml` | bestanden |
+| Cosmos-DLLs | IL-Vergleich der NuGet-3.0.97-DLLs gegen den Feed (Werkzeug von yellow-e1d: SHA-256 je Datei, sonst `monodis`-IL ohne MVID, Modul-GUID und `InformationalVersion`; lokal unter `.tools/ccperf/tool/e1d-compare.py`, vor E1-D als Skript ins Repository oder die Methode in den PR schreiben) | je DLL gleich oder IL-gleich, alles andere mit Zeilen erklären |
 | Größe | `ls -l` der beiden `ProjektZeh.elf` | Abweichung unter 1 %; größere Abweichung erklären |
 | Desktop | `python3 scripts/test-desktop-guest.py --iso <ISO> --accel tcg`, ebenso `--accel kvm` | Erfolg |
 | Recovery | Recovery-ISO, `… --recovery` | Erfolg |
@@ -226,7 +239,7 @@ oder ein zusätzliches `git fetch origin <Commit>`, damit das Skript den Commit 
 
 **Branch:** `task/mc-e1-e-doku`. Der Teil in `AGENTS.md` braucht Peters Zustimmung zum Wortlaut.
 
-- [ ] `README.md`: Voraussetzungen und Bauanleitung (heute `:237`, `:254-259`, `:273-275`, `:402`): vor dem ersten Bau und nach jeder Änderung von `deploy/cosmos/COMMIT` `scripts/build-cosmos.sh` ausführen; die Werkzeuge kommen aus dem lokalen Feed; `cosmos install` nur mit `--tools`; Hinweis für Rechner mit mehreren Arbeitskopien (das Skript setzt die globalen Werkzeuge auf den Stand der Arbeitskopie, in der es zuletzt lief).
+- [ ] `README.md`: Voraussetzungen und Bauanleitung (heute `:237`, `:259`, `:402`, Voraussetzungen ab `:254`): vor dem ersten Bau und nach jeder Änderung von `deploy/cosmos/COMMIT` `scripts/build-cosmos.sh` ausführen; die Werkzeuge kommen aus dem lokalen Feed; `cosmos install` nur mit `--tools`; Hinweis für Rechner mit mehreren Arbeitskopien (das Skript installiert die Werkzeuge je Arbeitskopie unter `.tools/cosmos-tools/<version>`; der Bau-Einstieg setzt den Ordner vor `PATH`). Wer in Visual Studio mit F5 startet, braucht das global installierte `Cosmos.Tools` (`build-cosmos.sh --global`); das ist dort ausdrücklich zu nennen.
 - [ ] `AGENTS.md`, Abschnitt „Technischer Rahmen“ (`:87`, `:89`): Cosmos wird aus dem Branch `cosmos` gebaut; `deploy/cosmos/COMMIT` und `VERSION` ändern sich nur zusammen. Neuer Abschnitt nach „Wasm-Apps und Pakete“: die Regeln „Cosmos-Patches“ aus der [Übersicht](2026-11-18-multicore.md), dazu „Änderungen am Branch `cosmos` laufen nur per Pull Request“. Tabelle der Zuständigkeiten: Zeile `deploy/cosmos/`, Branch `cosmos`.
 - [ ] `docs/COSMOS_SUPPORT.md`: neuer datierter Abschnitt „Cosmos aus Quelle“ mit Commit, Version, Bauzeit, Ergebnis der Gleichstandsprüfung und dem Befund zu Windows.
 - [ ] `python scripts/check-doc-links.py`, Commit, PR.
