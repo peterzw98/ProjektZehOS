@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -27,7 +28,7 @@ internal static unsafe partial class WasmRuntime
         {
             string? full = ResolvePackagePath(path, length);
             if (full == null) return -1;
-            stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+            stream = StorageLock.Run(() => new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read));
             int handle = ++nextHandle;
             files[handle] = stream;
             return handle;
@@ -35,7 +36,7 @@ internal static unsafe partial class WasmRuntime
         catch (Exception)
         {
             // Erst nach erfolgreicher Registrierung besitzt die Handle-Tabelle den Stream.
-            try { stream?.Dispose(); }
+            try { if (stream != null) StorageLock.Run(stream.Dispose); }
             catch (Exception) { /* Auch die Freigabe darf keine Ausnahme ueber die native Grenze tragen. */ }
             return -1;
         }
@@ -50,7 +51,7 @@ internal static unsafe partial class WasmRuntime
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_size")]
     private static long HostFileSize(int handle)
     {
-        try { return files.TryGetValue(handle, out var stream) ? stream.Length : -1; }
+        try { return files.TryGetValue(handle, out var stream) ? StorageLock.Run(() => stream.Length) : -1; }
         catch (Exception) { return -1; }
     }
 
@@ -60,8 +61,24 @@ internal static unsafe partial class WasmRuntime
         try
         {
             if (!files.TryGetValue(handle, out var stream)) return -1;
-            stream.Position = (long)offset;
-            return stream.Read(new Span<byte>(buffer, (int)length));
+            // Offener Paket-Stream: je Abschnitt von hoechstens 1 MiB eine eigene Sperre (Cosmos-ext2/FAT nicht threadsicher,
+            // Diagnoselauf 13), damit ein grosser Lesewunsch einer App den Hauptthread nicht lange aufhaelt (Review blue).
+            nint address = (nint)buffer;
+            int total = 0;
+            while (total < (int)length)
+            {
+                int start = total;
+                int count = Math.Min(StorageLock.ChunkBytes, (int)length - total);
+                int read = StorageLock.Run(() =>
+                {
+                    stream.Position = (long)offset + start;
+                    return stream.Read(new Span<byte>((void*)(address + start), count));
+                });
+                if (read <= 0) break;
+                total += read;
+            }
+
+            return total;
         }
         catch (Exception) { return -1; }
     }
@@ -69,7 +86,7 @@ internal static unsafe partial class WasmRuntime
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_close")]
     private static void HostClose(int handle)
     {
-        try { if (files.Remove(handle, out var stream)) stream.Dispose(); }
+        try { if (files.Remove(handle, out var stream)) StorageLock.Run(stream.Dispose); }
         catch (Exception) { /* Das Handle ist bereits entfernt; ein Schliessfehler darf die native Grenze nicht verlassen. */ }
     }
 

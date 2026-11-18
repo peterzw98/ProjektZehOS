@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -32,10 +33,10 @@ internal static class WasmPackagePaths
         {
             if (root == null) return AccessDenied;
             string full = Resolve(root, relative);
-            FileAttributes attributes = File.GetAttributes(full);
+            FileAttributes attributes = StorageLock.Run(() => File.GetAttributes(full));
             if ((attributes & FileAttributes.ReparsePoint) != 0) return AccessDenied;
             bool directory = (attributes & FileAttributes.Directory) != 0;
-            size = directory ? 0 : (ulong)new FileInfo(full).Length;
+            size = directory ? 0 : (ulong)StorageLock.Run(() => new FileInfo(full).Length);
             type = directory ? TypeDirectory : TypeFile;
             return Success;
         }

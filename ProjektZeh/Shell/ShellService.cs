@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using ProjektZeh.Storage;
 using ProjektZeh.Security;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Runtime.Wasm;
@@ -140,7 +141,7 @@ internal sealed partial class ShellService
             }
             secretInput = null;
             Volatile.Write(ref passwordComplete, 0);
-            passwordWorker = new Thread(() =>
+            var started = ThreadStarter.TryStart(() =>
             {
                 try { completion = work(); }
                 catch (HardwareRandomUnavailableException)
@@ -155,13 +156,12 @@ internal sealed partial class ShellService
                 Interlocked.Decrement(ref runningPasswordWorkers);
                 Volatile.Write(ref passwordComplete, 1);
             });
-            try { passwordWorker.Start(); }
-            catch
+            if (!started.IsOK())
             {
-                passwordWorker = null;
                 Interlocked.Decrement(ref runningPasswordWorkers);
-                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden.");
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden: " + started.Status.Message);
             }
+            passwordWorker = started.Value;
             return ResultErr.CreateSuccess();
         }
         return ExecuteFeatures(line, output);

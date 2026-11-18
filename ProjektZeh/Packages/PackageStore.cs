@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using Org.BouncyCastle.Crypto.Digests;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 using ProjektZeh.Storage.Migration;
 using ProjektZeh.Update;
 
@@ -47,8 +48,9 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             var installed = new List<InstalledPackage>();
-            if (!Directory.Exists(Apps)) return ResultObjectFactory.CreateSuccess(installed.ToArray());
-            foreach (string directory in Directory.GetDirectories(Apps))
+            string[]? directories = StorageLock.Run(() => Directory.Exists(Apps) ? Directory.GetDirectories(Apps) : null);
+            if (directories == null) return ResultObjectFactory.CreateSuccess(installed.ToArray());
+            foreach (string directory in directories)
             {
                 string id = Path.GetFileName(directory);
                 if (!PackageManifest.IsValidId(id)) continue;
@@ -59,7 +61,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             installed.Sort(static (left, right) => string.CompareOrdinal(left.Manifest.Id, right.Manifest.Id));
             return ResultObjectFactory.CreateSuccess(installed.ToArray());
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<InstalledPackage[]>(exception);
         }
@@ -72,7 +74,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             string marker = Path.Combine(Apps, id, "active");
-            if (!File.Exists(marker)) return ResultObjectFactory.CreateSuccess<InstalledPackage>(null);
+            if (!StorageLock.Run(() => File.Exists(marker))) return ResultObjectFactory.CreateSuccess<InstalledPackage>(null);
             byte[] text = ReadSmall(marker, 32);
             if (!UpdateVersion.TryParse(Encoding.ASCII.GetString(text).TrimEnd('\n'), out var version)) return Damaged<InstalledPackage>(id);
             string directory = Path.Combine(Apps, id, version.ToString());
@@ -83,7 +85,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 return Damaged<InstalledPackage>(id);
             return ResultObjectFactory.CreateSuccess(new InstalledPackage(manifest.Value, directory));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return Damaged<InstalledPackage>(id, exception.Message);
         }
@@ -138,13 +140,17 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             foreach (var file in package.Manifest.Files)
             {
                 bool intact;
-                using (var stream = new FileStream(Path.Combine(package.FilesDirectory, file.Path), FileMode.Open, FileAccess.Read))
-                    intact = Matches(stream, file, buffer, cancellation);
+                string path = Path.Combine(package.FilesDirectory, file.Path);
+                // Grosse Dateien (Doom-WAD) nicht unter einer einzigen Sperre hashen: Oeffnen, jeder Leseblock und Schliessen
+                // nehmen die Speicher-Sperre einzeln, damit andere Threads dazwischen auf die Platte zugreifen koennen.
+                var stream = StorageLock.Run(() => new FileStream(path, FileMode.Open, FileAccess.Read));
+                try { intact = Matches(stream, file, buffer, cancellation); }
+                finally { StorageLock.Run(() => stream.Dispose()); }
                 if (!intact) return Modified(file.Path);
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketdateien nicht lesbar: " + exception.Message);
         }
@@ -152,12 +158,13 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
 
     private static bool Matches(FileStream stream, PackageFile file, byte[] buffer, CancellationToken cancellation)
     {
-        if (stream.Length != file.Size) return false;
+        if (StorageLock.Run(() => stream.Length) != file.Size) return false;
         var digest = new Sha256Digest();
         for (long left = file.Size; left > 0;)
         {
             cancellation.ThrowIfCancellationRequested();
-            int read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
+            int count = (int)Math.Min(buffer.Length, left);
+            int read = StorageLock.Run(() => stream.Read(buffer, 0, count));
             if (read <= 0) return false;
             digest.BlockUpdate(buffer, 0, read);
             left -= read;
@@ -209,7 +216,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         // Auch bei beschaedigtem Paket gilt die Version aus dem Marker als Rueckstufungsgrenze, sofern es diese Version
         // tatsaechlich gibt; ein Marker ohne Versionsordner ist Datenmuell und darf eine Reparatur nicht verhindern.
         UpdateVersion? marked = ReadMarker(Path.Combine(Apps, manifest.Id));
-        if (marked != null && !Directory.Exists(Path.Combine(Apps, manifest.Id, marked.Value.ToString()))) marked = null;
+        if (marked is { } markedVersion && !StorageLock.Run(() => Directory.Exists(Path.Combine(Apps, manifest.Id, markedVersion.ToString())))) marked = null;
         UpdateVersion? installed = previous?.Manifest.Version ?? marked;
         int order = installed?.CompareTo(manifest.Version) ?? -1;
         if (order > 0)
@@ -231,7 +238,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             TryDeleteTree(target);
             return ResultObjectFactory.CreateFailure<PackageManifest>(written);
         }
-        ReplaceFile(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"));
+        StorageLock.Run(() => ReplaceFileStorageLocked(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n")));
         // WriteVersion hat jede Datei beim Schreiben gehasht; ein erneuter Durchlauf vor dem ersten Start ist unnoetig.
         lock (gate) verified.Add(manifest.Id + "/" + manifest.Version);
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
@@ -245,9 +252,12 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private static ResultErr WriteVersion(IPackageSource source, string prefix, PackageManifest manifest, byte[] signature, string target, Action<PackageProgress>? progress, CancellationToken cancellation)
     {
         // Reste eines abgebrochenen Versuchs derselben Version sind nie aktiv gewesen und werden verworfen.
-        if (Directory.Exists(target)) DeleteTree(target);
         string files = Path.Combine(target, "files");
-        Directory.CreateDirectory(files);
+        StorageLock.Run(() =>
+        {
+            if (Directory.Exists(target)) DeleteTreeStorageLocked(target);
+            Directory.CreateDirectory(files);
+        });
         long total = 0, completed = 0;
         foreach (var file in manifest.Files) total += file.Size;
         foreach (var file in manifest.Files)
@@ -255,27 +265,32 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             cancellation.ThrowIfCancellationRequested();
             progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             string path = Path.Combine(files, file.Path.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var digest = new Sha256Digest();
             ResultErr copied;
-            HashingStream hashing;
-            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
+            // Die Quelle kann aus dem Netz lesen: nur Oeffnen, jeder Schreibblock (HashingStream) und Schliessen sperren.
+            var stream = StorageLock.Run(() =>
             {
-                hashing = new HashingStream(stream, digest, count =>
-                {
-                    completed += count;
-                    progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
-                });
-                copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation);
-            }
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                return new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+            });
+            var hashing = new HashingStream(stream, digest, count =>
+            {
+                completed += count;
+                progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
+            });
+            try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
+            finally { StorageLock.Run(() => stream.Dispose()); }
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
             progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
             if (!string.Equals(Finish(digest), file.Sha256, StringComparison.Ordinal))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Pruefsumme falsch: " + file.Path);
         }
-        File.WriteAllBytes(Path.Combine(target, "manifest"), manifest.Bytes);
-        File.WriteAllBytes(Path.Combine(target, "manifest.sig"), signature);
+        StorageLock.Run(() =>
+        {
+            File.WriteAllBytes(Path.Combine(target, "manifest"), manifest.Bytes);
+            File.WriteAllBytes(Path.Combine(target, "manifest.sig"), signature);
+        });
         return ResultErr.CreateSuccess();
     }
 
@@ -295,10 +310,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             using var writer = BeginWrite();
-            if (!File.Exists(Path.Combine(directory, "active"))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
+            if (!StorageLock.Run(() => File.Exists(Path.Combine(directory, "active")))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
             // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
-            File.Delete(Path.Combine(directory, "active"));
-            DeleteTree(directory);
+            StorageLock.Run(() => File.Delete(Path.Combine(directory, "active")));
+            StorageLock.Run(() => DeleteTreeStorageLocked(directory));
             return ResultErr.CreateSuccess();
         }
         catch (Exception exception)
@@ -313,7 +328,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         if (trust == null) return ResultObjectFactory.CreateFailure<PackageCatalog>(NoTrust());
         try
         {
-            if (!File.Exists(CatalogPath)) return ResultObjectFactory.CreateSuccess<PackageCatalog>(null);
+            if (!StorageLock.Run(() => File.Exists(CatalogPath))) return ResultObjectFactory.CreateSuccess<PackageCatalog>(null);
             byte[] stored = ReadSmall(CatalogPath, PackageTrust.SignatureBytes + PackageCatalog.MaximumBytes);
             if (stored.Length < PackageTrust.SignatureBytes) return DamagedCatalog();
             byte[] signature = stored[..PackageTrust.SignatureBytes], catalog = stored[PackageTrust.SignatureBytes..];
@@ -321,7 +336,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             var parsed = PackageCatalog.Parse(catalog);
             return parsed.IsOK() ? parsed : DamagedCatalog();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
         }
@@ -347,14 +362,17 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             try
             {
                 using var writer = BeginWrite();
-                Directory.CreateDirectory(root);
                 byte[] combined = new byte[signature.Length + catalog.Length];
                 signature.CopyTo(combined, 0);
                 catalog.CopyTo(combined, signature.Length);
-                ReplaceFile(CatalogPath, combined);
+                StorageLock.Run(() =>
+                {
+                    Directory.CreateDirectory(root);
+                    ReplaceFileStorageLocked(CatalogPath, combined);
+                });
                 return parsed;
             }
-            catch (Exception exception) when (IsFileError(exception))
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
                 return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
             }
@@ -365,10 +383,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     {
         try
         {
-            if (!File.Exists(SourcePath)) return ResultObjectFactory.CreateSuccess(DefaultSource);
+            if (!StorageLock.Run(() => File.Exists(SourcePath))) return ResultObjectFactory.CreateSuccess(DefaultSource);
             return ResultObjectFactory.CreateSuccess(Encoding.ASCII.GetString(ReadSmall(SourcePath, 2048)).TrimEnd('\n'));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -380,11 +398,14 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             using var writer = BeginWrite();
-            Directory.CreateDirectory(root);
-            ReplaceFile(SourcePath, Encoding.ASCII.GetBytes(url + "\n"));
+            StorageLock.Run(() =>
+            {
+                Directory.CreateDirectory(root);
+                ReplaceFileStorageLocked(SourcePath, Encoding.ASCII.GetBytes(url + "\n"));
+            });
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFromException(exception);
         }
@@ -406,26 +427,36 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             using var writer = BeginWrite();
-            RestorePending(CatalogPath);
-            RestorePending(SourcePath);
-            if (!Directory.Exists(Apps)) return ResultErr.CreateSuccess();
-            foreach (string directory in Directory.GetDirectories(Apps))
+            StorageLock.Run(() => RestorePendingStorageLocked(CatalogPath));
+            StorageLock.Run(() => RestorePendingStorageLocked(SourcePath));
+            string[]? directories = StorageLock.Run(() => Directory.Exists(Apps) ? Directory.GetDirectories(Apps) : null);
+            if (directories == null) return ResultErr.CreateSuccess();
+            foreach (string directory in directories)
             {
                 string id = Path.GetFileName(directory);
                 lock (gate) if (busy.Contains(id) || inUse.ContainsKey(id)) continue;
                 string marker = Path.Combine(directory, "active");
-                RestorePending(marker);
                 // Ohne Marker wurde nie etwas veroeffentlicht: der Ordner ist ein Rest und darf weg.
-                if (!File.Exists(marker)) { DeleteTree(directory); continue; }
+                bool published = StorageLock.Run(() =>
+                {
+                    RestorePendingStorageLocked(marker);
+                    if (File.Exists(marker)) return true;
+                    DeleteTreeStorageLocked(directory);
+                    return false;
+                });
+                if (!published) continue;
                 // Ein unlesbarer Marker oder einer ohne Zielordner loescht nichts; das Paket bleibt gesperrt statt Daten zu verlieren.
-                string? active = ReadMarker(directory)?.ToString();
-                if (active == null || !Directory.Exists(Path.Combine(directory, active))) continue;
-                foreach (string version in Directory.GetDirectories(directory))
-                    if (!string.Equals(Path.GetFileName(version), active, StringComparison.Ordinal)) DeleteTree(version);
+                if (ReadMarker(directory)?.ToString() is not { } active) continue;
+                StorageLock.Run(() =>
+                {
+                    if (!Directory.Exists(Path.Combine(directory, active))) return;
+                    foreach (string version in Directory.GetDirectories(directory))
+                        if (!string.Equals(Path.GetFileName(version), active, StringComparison.Ordinal)) DeleteTreeStorageLocked(version);
+                });
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketbestand nicht aufgeraeumt: " + exception.Message);
         }
@@ -437,10 +468,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         string marker = Path.Combine(directory, "active");
         try
         {
-            if (!File.Exists(marker)) return null;
+            if (!StorageLock.Run(() => File.Exists(marker))) return null;
             return UpdateVersion.TryParse(Encoding.ASCII.GetString(ReadSmall(marker, 32)).TrimEnd('\n'), out var version) ? version : null;
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return null;
         }
@@ -457,8 +488,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
     }
 
-    // Neue Fassung vollstaendig schreiben, erst dann die alte loeschen; RestorePending schliesst einen Abbruch dazwischen ab.
-    private static void ReplaceFile(string path, byte[] bytes)
+    // Neue Fassung vollstaendig schreiben, erst dann die alte loeschen; RestorePendingStorageLocked schliesst einen Abbruch dazwischen ab.
+    private static void ReplaceFileStorageLocked(string path, byte[] bytes)
     {
         string temporary = path + NewSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -468,7 +499,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         File.Move(temporary, path);
     }
 
-    private static void RestorePending(string path)
+    private static void RestorePendingStorageLocked(string path)
     {
         string temporary = path + NewSuffix;
         if (!File.Exists(temporary)) return;
@@ -477,20 +508,23 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     }
 
     // Cosmos-FAT bietet kein geprueftes rekursives Directory.Delete; deshalb Dateien und Ordner einzeln entfernen.
-    private static void DeleteTree(string directory)
+    private static void DeleteTreeStorageLocked(string directory)
     {
         foreach (string file in Directory.GetFiles(directory)) File.Delete(file);
-        foreach (string child in Directory.GetDirectories(directory)) DeleteTree(child);
+        foreach (string child in Directory.GetDirectories(directory)) DeleteTreeStorageLocked(child);
         Directory.Delete(directory);
     }
 
     private static void TryDeleteTree(string directory)
     {
-        try { if (Directory.Exists(directory)) DeleteTree(directory); }
-        catch (Exception exception) when (IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
+        try { StorageLock.Run(() => { if (Directory.Exists(directory)) DeleteTreeStorageLocked(directory); }); }
+        catch (Exception exception) when (FileErrors.IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
     }
 
-    private static byte[] ReadSmall(string path, int maximumBytes)
+    // Kleine Dateien (hoechstens Kataloggroesse, 256 KiB) werden in einem gesperrten Abschnitt gelesen.
+    private static byte[] ReadSmall(string path, int maximumBytes) => StorageLock.Run(() => ReadSmallStorageLocked(path, maximumBytes));
+
+    private static byte[] ReadSmallStorageLocked(string path, int maximumBytes)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
         if (stream.Length > maximumBytes) throw new IOException(Path.GetFileName(path) + " ist zu gross.");
@@ -506,7 +540,6 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         return Convert.ToHexStringLower(hash);
     }
 
-    internal static bool IsFileError(Exception exception) => exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     private static ResultErr NoTrust() => ResultErr.CreateFailure(ResultCode.Failure, "Dieser Build enthaelt keinen Paketschluessel; Pakete sind deaktiviert.");
     private static ResultErr Modified(string path) => ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {path} wurde veraendert; Start gesperrt.");
     private static ResultObject<T> Damaged<T>(string id, string? detail = null) =>
@@ -517,10 +550,11 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private sealed class HashingStream(Stream target, Sha256Digest digest, Action<int> progress) : Stream
     {
         public long Written { get; private set; }
+        // Das Ziel ist eine Paketdatei; jeder Block wird einzeln gesperrt, die Quelle liest ungesperrt (auch aus dem Netz).
         public override void Write(byte[] buffer, int offset, int count)
         {
             digest.BlockUpdate(buffer, offset, count);
-            target.Write(buffer, offset, count);
+            StorageLock.Run(() => target.Write(buffer, offset, count));
             Written += count;
             progress(count);
         }
@@ -529,7 +563,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         public override bool CanWrite => true;
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() => target.Flush();
+        public override void Flush() => StorageLock.Run(() => target.Flush());
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();

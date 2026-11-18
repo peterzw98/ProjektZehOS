@@ -118,14 +118,14 @@ internal sealed class CosmosSwitchableFileSystem(string name) : IVfsFileSystemTy
     {
         if (!registered)
         {
-            if (!VfsManager.RegisterFileSystem(name, this)) return false;
+            if (!StorageLock.Run(() => VfsManager.RegisterFileSystem(name, this))) return false;
             registered = true;
         }
 
         inner = type;
         try
         {
-            return VfsManager.TryMount(name, partition, flags, mountPoint, out _);
+            return StorageLock.Run(() => VfsManager.TryMount(name, partition, flags, mountPoint, out _));
         }
         finally
         {

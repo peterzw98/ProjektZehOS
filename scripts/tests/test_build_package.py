@@ -108,7 +108,7 @@ output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes())
 class BuildPackageAotTests(unittest.TestCase):
     """aot uebersetzt nur mit dem zugelassenen wamrc und festen Schaltern; package --aot-file nimmt das Ergebnis auf."""
 
-    ABI_FILE = 'app.wamr245-aot5-x64-bc.aot'
+    ABI_FILE = 'app.wamr245-aot5-x64-bc-nrz.aot'
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -186,7 +186,7 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertEqual((self.directory / 'out.aot').read_bytes(), b'AOT:wasm')
         receipt = json.loads(self.receipt().read_text(encoding='utf-8'))
         sha = lambda data: hashlib.sha256(data).hexdigest()
-        self.assertEqual(receipt, {'aot_abi': 'wamr245-aot5-x64-bc', 'wamrc_version': 'wamrc 2.4.5', 'flags': flags,
+        self.assertEqual(receipt, {'aot_abi': 'wamr245-aot5-x64-bc-nrz', 'wamrc_version': 'wamrc 2.4.5', 'flags': flags,
                                    'wamrc_sha256': sha(wamrc.read_bytes()), 'wasm_sha256': sha(b'wasm'), 'aot_sha256': sha(b'AOT:wasm')})
 
     def test_aot_rejects_output_equal_to_input_and_removes_partial_output(self):
@@ -247,7 +247,7 @@ class BuildPackageAotTests(unittest.TestCase):
         (self.directory / 'out.aot').write_bytes(b'AOT:wasm')
         aot = ('--aot-file', str(self.directory / 'out.aot'))
         app = f"{self.directory / 'app.wasm'}=app.wasm"
-        collision = [app, f"{self.directory / 'b.dat'}=APP.wamr245-aot5-x64-bc.aot"]
+        collision = [app, f"{self.directory / 'b.dat'}=APP.wamr245-aot5-x64-bc-nrz.aot"]
         full = [app, *(f"{self.directory / 'b.dat'}=f{index:03}.dat" for index in range(127))]
         # 195 Zeichen sind als Einstieg gueltig, mit dem AOT-Suffix aber laenger als 200.
         long_entry = 'd/' + 'a' * 188 + '.wasm'
