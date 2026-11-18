@@ -4,6 +4,8 @@ Stand: 18. November 2026, `master` @ `83ad625`; Nachtrag (Stichprobe yellow zu #
 [Multicore-Plans](superpowers/plans/2026-11-18-multicore.md), [Entwurf](superpowers/specs/2026-11-18-multicore-design.md) Abschnitte 5.4 und 5.5. Das Dokument ändert keinen
 Code; jeder Befund „Schutz fehlt“ wird in der genannten Etappe ein eigenes Paket.
 
+Nachtrag (Stichprobe zu #325) @ `8013e07`: zwei Zeilenangaben korrigiert (Netzwerk-Worker, Topologie-Decoder). Die Zeilen zu `CosmosRoundRobinScheduler.cs`, `RoundRobinCore.cs` und `RoundRobinQueue.cs` gelten bis zum Merge von E4-C; danach ersetzt der Klassenscheduler sie und das Audit wird nachgezogen.
+
 Drei Abschnitte, je Paket einer: E0-A (Interrupt gegen Thread) legt die Datei an, E0-B und E0-C füllen danach nur ihren
 Abschnitt.
 
@@ -14,7 +16,7 @@ Abschnitt.
 | IRQ | Interrupt-Handler (Tastatur, Maus, Tablet, Netz, Timer) | unterbricht jeden Thread | läuft auf CPU 0 |
 | HS | Hauptschleife (`Runtime/InteractiveSession.cs`, Desktop, Textshell, Apps im Kernel) | ein Thread | eigener Thread, Compute-CPUs |
 | WW | Wasm-Worker (`Runtime/Wasm/WasmRuntime.cs`, `Work`) | ein Thread, verdrängbar | läuft parallel zur HS |
-| WN | Wasm-Netzwerk-Worker (`Runtime/Wasm/CosmosWasmNetwork.cs:88`) | ein Thread | parallel |
+| WN | Wasm-Netzwerk-Worker (`Runtime/Wasm/CosmosWasmNetwork.cs`, Start `StartWorkerLocked` `:89`, Schleife `Work` `:102`) | ein Thread | parallel |
 | BG | Hintergrundaufgaben (`Scheduling/BackgroundTaskService.cs`) | mehrere Threads | parallel |
 | DW | Kennwort-Worker (`Scheduling/DedicatedWorker.cs`) | ein Thread | parallel |
 | SCH | Scheduler-Hooks (im Interrupt- oder Aufruferkontext) | Interrupts maskiert | je CPU unter deren Queue-Sperre |
@@ -333,7 +335,7 @@ Voraussetzung für alle `lock (...)`-Zeilen: `lock`/`Monitor` kommen aus der Cos
 - `Scheduling/DedicatedWorker.cs:17` `startThread`: readonly Delegat, nur gelesen.
 - `Scheduling/ThreadStarter.cs:20-22` `DefaultStackBytes`, `PageBytes`, `MinimumStackBytes`: Konstanten.
 - `Scheduling/ClassPlacement.cs:12-59` `SelectCpu`, `StealOrder`: reine Funktionen ohne eigenen Zustand; die übergebenen `running`/`queued`-Spannen sind ein Momentbild fremder CPUs, das der Aufrufer (E4-C) konsistent halten muss, die Klasse selbst hält nichts.
-- `Scheduling/CpuTopologyDecoder.cs:35-85` `ReadShifts` u. a.: reine Funktion über einen CPUID-Rückruf, kein Zustand.
+- `Scheduling/CpuTopologyDecoder.cs:14-60` `ReadShifts`, `TryReadLeaf`, `Clamp`, `CeilLog2`: reine Funktion über einen CPUID-Rückruf, kein Zustand.
 - `Scheduling/MainLoopIdle.cs:11-15` `Wait`: ohne Zustand, nur HS.
 - `Scheduling/CosmosMainLoopIdle.cs:13` `Wait`: HS; die gelesene `WaitingThreads` steht im Interrupt-Audit (Zeile `firstCpu`/`WaitingThreads`).
 - `Scheduling/CosmosRoundRobinScheduler.cs:17-18,78,84,95` (`firstCpu`, `WaitingThreads`, `MaskInterrupts`): im Interrupt-Audit bereits bewertet.
