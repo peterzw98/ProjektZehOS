@@ -10,39 +10,47 @@ namespace Cosmos.Kernel.System.FileSystem.Ext2;
 internal static class Ext2DirectoryHelper
 {
     /// <summary>Upper bound on a directory's parsed size: larger sizes come from corrupt inodes.</summary>
-    private const ulong MaxDirectorySize = 16 * 1024 * 1024;
+    internal const ulong MaxDirectorySize = 16 * 1024 * 1024;
 
     /// <summary>Upper bound on the blocks a single directory spans.</summary>
-    private const uint MaxDirectoryBlocks = 4096;
-
-    /// <summary>Upper bound on entries walked per parse: corrupt rec_len chains must terminate.</summary>
-    private const int MaxParseIters = 8192;
+    internal const uint MaxDirectoryBlocks = 4096;
 
     /// <summary>
     /// Parse the directory's entries. Stops on the first malformed record
     /// (zero or undersized rec_len, a name longer than its record, or a
     /// record leaving the data) instead of walking into the next block.
+    /// The walk ends by the record checks and the data length; free records do not count against a limit.
     /// </summary>
     /// <param name="sb">The mounted volume.</param>
     /// <param name="dir">Directory inode to list.</param>
-    public static List<Ext2DirEntry> ParseDirectory(Ext2Superblock sb, Ext2Inode dir)
+    /// <param name="entries">Living entries; empty for an empty or non-directory inode.</param>
+    /// <returns>false when the directory exceeds <see cref="MaxDirectorySize"/> or <see cref="MaxDirectoryBlocks"/>
+    /// and cannot be listed (callers must not treat it as empty).</returns>
+    public static bool TryParseDirectory(Ext2Superblock sb, Ext2Inode dir, out List<Ext2DirEntry> entries)
     {
+        // ZehOS patch ext2-directory-limit, see PATCHES.md
         List<Ext2DirEntry> result = [];
+        entries = result;
         if (!dir.IsDirectory)
         {
-            return result;
+            return true;
         }
 
         ulong size = dir.FullSize;
-        if (size == 0 || size > MaxDirectorySize)
+        if (size == 0)
         {
-            return result;
+            return true;
+        }
+
+        if (size > MaxDirectorySize)
+        {
+            return false;
         }
 
         uint blocks = (uint)((size + sb.BlockSize - 1) / sb.BlockSize);
-        if (blocks == 0 || blocks > MaxDirectoryBlocks)
+        if (blocks > MaxDirectoryBlocks)
         {
-            return result;
+            return false;
         }
 
         byte[] data = new byte[blocks * sb.BlockSize];
@@ -61,10 +69,8 @@ internal static class Ext2DirectoryHelper
         }
 
         int pos = 0;
-        int iters = 0;
-        while (pos + Ext2InodeLayout.DirEntryMinRecLen <= data.Length && (ulong)pos < size && iters < MaxParseIters)
+        while (pos + Ext2InodeLayout.DirEntryMinRecLen <= data.Length && (ulong)pos < size)
         {
-            iters++;
             if (pos + 8 > data.Length)
             {
                 break;
@@ -104,7 +110,7 @@ internal static class Ext2DirectoryHelper
             pos += recLen;
         }
 
-        return result;
+        return true;
     }
 
     /// <summary>
@@ -119,7 +125,11 @@ internal static class Ext2DirectoryHelper
     {
         entry = null!;
         string target = name.ToString();
-        List<Ext2DirEntry> entries = ParseDirectory(sb, dir);
+        if (!TryParseDirectory(sb, dir, out List<Ext2DirEntry> entries))
+        {
+            return false;
+        }
+
         for (int i = 0; i < entries.Count; i++)
         {
             if (entries[i].Name == target)
@@ -251,7 +261,13 @@ internal static class Ext2DirectoryHelper
             pos += recLen;
         }
 
-        // No slot has room: append a block whose single entry spans all of it.
+        // No slot has room: append a block whose single entry spans all of it. Past the parse limit the new
+        // entry would be invisible to every reader, so the directory refuses to grow.
+        if (blocks >= MaxDirectoryBlocks || (blocks + 1UL) * sb.BlockSize > MaxDirectorySize)
+        {
+            return false;
+        }
+
         if (!AllocateDirBlock(sb, dir))
         {
             return false;
