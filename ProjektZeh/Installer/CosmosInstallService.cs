@@ -109,7 +109,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
             if (mount.Partition != null && ReferenceEquals(mount.Partition.Host, device))
                 return GptFailure("Das Ziellaufwerk ist eingebunden. Vor der Installation aushaengen.");
         if (VfsManager.TryGetMount(installMount, out _) || VfsManager.TryGetMount(CosmosGptInstallTarget.RootMount, out _))
-            return GptFailure("Installations-Mountpunkt belegt.");
+            return GptFailure($"Installations-Mountpunkt belegt ({installMount} oder {CosmosGptInstallTarget.RootMount}); das dort eingebundene Laufwerk zuerst mit disk unmount aushaengen.");
         if (!registered)
         {
             if (!VfsManager.RegisterFileSystem(FileSystemName, new FatFileSystemType()))

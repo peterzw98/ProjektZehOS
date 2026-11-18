@@ -1088,6 +1088,37 @@ public sealed class LayoutMigrationTests
     }
 
     [TestMethod]
+    public void T20_EmptyLostAndFoundFromE2fsckAllowsTheRepetition()
+    {
+        // G5 (blue, KVM): nach hartem Abbruch und e2fsck -fy liegt ein leeres /lost+found auf dem Ziel.
+        StandardSource();
+        var reference = Target();
+        Assert.IsTrue(Run(reference).IsOK());
+        var target = Target();
+        target.FailWhen = operation => operation == "write /home/bob/brief.txt";
+        Assert.IsFalse(Run(target).IsOK());
+        Directory.CreateDirectory(target.Host("/lost+found"));
+        target.FailWhen = null;
+        Assert.IsTrue(Run(target).IsOK());
+        Assert.IsTrue(Directory.Exists(target.Host("/lost+found")), "e2fsck-Verzeichnis bleibt unangetastet.");
+    }
+
+    [TestMethod]
+    public void T20_FilesInLostAndFoundRefuseTheRepetition()
+    {
+        StandardSource();
+        var target = Target();
+        target.FailWhen = operation => operation == "write /home/bob/brief.txt";
+        Assert.IsFalse(Run(target).IsOK());
+        Directory.CreateDirectory(target.Host("/lost+found"));
+        File.WriteAllText(target.Host("/lost+found/#12"), "x");
+        target.FailWhen = null;
+        target.Operations.Clear();
+        StringAssert.Contains(Run(target).Status.Message, "ForeignEntry");
+        Assert.IsFalse(Writes(target));
+    }
+
+    [TestMethod]
     public void T20_DamagedJournalRefusesTheRepetition()
     {
         StandardSource();

@@ -536,9 +536,10 @@ internal sealed class SetupWizard
     // Der GPT-Weg loescht immer; die Bestaetigung ist dort stets die Loeschbestaetigung.
     private bool NeedsErase => target!.RequiresErase || gpt.Checked;
 
-    private string ConfirmWarningText() => NeedsErase
-        ? $"{Capitalize(target!.ContentText)} vorhanden. Bei der Installation werden alle Daten auf dieser Platte unwiderruflich geloescht."
-        : "Die Platte ist leer. Es werden keine vorhandenen Daten geloescht.";
+    // Ein installiertes ZehOS (GPT, Healthy) ist kein ausgeschlossenes Ziel; --erase loescht es samt /home (Review #268 P2-1).
+    private string ConfirmWarningText() => !NeedsErase ? "Die Platte ist leer. Es werden keine vorhandenen Daten geloescht."
+        : target!.RequiresErase ? $"{Capitalize(target.ContentText)} vorhanden. Alle Daten darauf, auch ein installiertes ZehOS, werden unwiderruflich geloescht."
+        : "Die Platte wird fuer GPT neu eingeteilt; alle Daten darauf werden unwiderruflich geloescht.";
 
     private void DrawConfirm(PixelSurface surface)
     {

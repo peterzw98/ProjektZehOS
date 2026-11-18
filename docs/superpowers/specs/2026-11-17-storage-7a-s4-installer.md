@@ -54,7 +54,8 @@ Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupW
 |---|---|---|
 | `Partitioning` vor Schritt 4 des Writers | alter Primärheader genullt, evtl. Backupheader neu, keine ESP | `Unclear` nur, wenn `InstalledIdentity` „Primär ungültig, Backup gültig“ und „GPT-Rest ohne Marker“ so einstuft – **im Identity-Test ausdrücklich festlegen**; sonst ist die Platte leer/unbekannt und braucht ohnehin `--erase` |
 | `Partitioning` danach bis `WritingBootConfig` | GPT gültig, Root-Partition vorhanden, kein ESP-Marker | `Unclear` |
-| `WritingMarker` | Temp-Datei, kein gültiger Marker | `Unclear` |
+| `WritingMarker` vor dem Rename | Temp-Datei, kein gültiger Marker | `Unclear` |
+| `WritingMarker` nach dem Rename (Flush oder Rücklesen scheitert) | gültiger Marker kann schon stehen | `Healthy` möglich; der Installer meldet trotzdem **Fehler** und „Marker eventuell bereits geschrieben“ (Review #268) |
 | `Completed` (Aushängen scheitert) | Marker und Bootdateien geflusht (Schranken §3) | `Healthy`, aber der Installer meldet **Fehler** (Exit ≠ 0) „Aushängen fehlgeschlagen“ |
 | Neuinstallation über ein `Healthy`-System, Abbruch vor `FormattingEsp` | alter ESP-Marker kann im ESP-Bereich stehen bleiben | `Unclear`, weil der alte Marker die alte Disk-GUID trägt und die neue GPT neue GUIDs hat; Test und G9 belegen das |
 

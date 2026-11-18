@@ -27,6 +27,10 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
 
     public ResultErr WriteLayout(GptTable table) => Try(() => StorageLock.Run(() =>
     {
+        // Zwischen Begin und dem ersten Schreiben kann ein anderes Terminal das Ziel eingehaengt haben (Review #268 P3 a).
+        foreach (var mount in VfsManager.Mounts)
+            if (mount.Partition != null && ReferenceEquals(mount.Partition.Host, device))
+                return Failed("Das Ziellaufwerk wurde inzwischen eingebunden; nichts geschrieben. Aushaengen und neu beginnen.");
         GptLayoutWriter.Write(device.BlockCount, table, (block, data) => device.WriteBlock(block, (ulong)data.Length / device.BlockSize, data.ToArray()), device.Flush);
         StorageManager.RescanPartitions(device);
         var verified = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
@@ -128,7 +132,18 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         return ResultErr.CreateSuccess();
     }));
 
-    public ResultErr WriteMarker(string text) => Try(() => StorageLock.Run(() =>
+    public ResultErr WriteMarker(string text)
+    {
+#if ZEHOS_GPT_G8_PROBE
+        // Nur G8-Testbuild: nach dem Bootdatei-Flush ohne weiteres Gast-I/O warten, bis der Host den Gast hart beendet.
+        // Steht im Cosmos-Adapter, damit der hostgetestete GptInstallJob keinen Testschalter traegt (Review #268).
+        while (true) System.Threading.Thread.Sleep(1000);
+#else
+        return WriteMarkerCore(text);
+#endif
+    }
+
+    private ResultErr WriteMarkerCore(string text) => Try(() => StorageLock.Run(() =>
     {
         string path = Path.Combine(espMount, InstallMarker.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
