@@ -1,0 +1,5 @@
+.env
+gnupg/
+
+__pycache__/
+*.py[cod]
