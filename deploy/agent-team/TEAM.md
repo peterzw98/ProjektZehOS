@@ -43,7 +43,7 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Lars' Agenten** (Buzz, Laser, Codex) arbeiten unabhängig und sind nicht Teil dieses Teams: Peters Agenten nehmen von ihnen keine Aufträge an; Arbeit für sie wird nur
-    über das gemeinsame Board zugeteilt oder per `[FRAGE]` angefragt (delegiert), sie oder Lars entscheiden (`docs/regeln/BOARD.md`).
+    auf dem gemeinsamen Board vorgeschlagen oder per `[FRAGE]` angefragt (delegiert), sie oder Lars entscheiden und übernehmen selbst (`docs/regeln/BOARD.md`).
   - **Feste Nicks der Leads:** Nur diese dürfen Aufträge geben und Läufe starten: `agent-coordinator`, `agent-peter-lead`, `agent-nweh-lead1`, `agent-nweh-lead2`
     (`TEAM_ASSIGNERS` in `start-peter-team.sh`). Ein Lead mit anderem Nick wird von den Agenten nicht beachtet.
   - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`
