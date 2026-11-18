@@ -9,6 +9,7 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Tests;
 
 /// <summary>Etappe 3.1: Pfadidentitaet und Rechte (Plan Etappe 3, docs/superpowers/specs/2026-11-17-storage-etappe3-design.md).</summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class PathIdentityTests
 {

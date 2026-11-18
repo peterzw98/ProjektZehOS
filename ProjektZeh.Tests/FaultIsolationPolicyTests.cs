@@ -4,6 +4,7 @@ using ProjektZeh.Runtime;
 namespace ProjektZeh.Tests;
 
 /// <summary>Roadmap 12.4-I1: Nur Gastcode des Wasm-Workers ohne gehaltene Kernelsperre wird isoliert, sonst Halt.</summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class FaultIsolationPolicyTests
 {

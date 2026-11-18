@@ -6,6 +6,7 @@ using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class MessageDemoTests
 {

@@ -8,6 +8,7 @@ using ProjektZeh.Storage;
 using ProjektZeh.Shared;
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class ShellSafetyTests
 {

@@ -10,6 +10,7 @@ namespace ProjektZeh.Tests;
 /// Der beschleunigte Rasterizer muss bitgleich zur eingefrorenen Fassung (WasmRasterizerReference) zeichnen:
 /// Das Bild der App darf sich durch Optimierungen nicht veraendern.
 /// </summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class WasmRasterizerEquivalenceTests
 {

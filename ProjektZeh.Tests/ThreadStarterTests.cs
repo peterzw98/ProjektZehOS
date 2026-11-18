@@ -10,6 +10,7 @@ namespace ProjektZeh.Tests;
 /// Thread-Start unter Speicherdruck: Cosmos 3.0.97 prueft den Threadstack nicht (Page Fault CR2=0x138, E4.0 1G Schritt j).
 /// ThreadStarter fragt vorher den nativen Heap in der Groesse, die Cosmos tatsaechlich anfordert.
 /// </summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class ThreadStarterTests
 {

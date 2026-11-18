@@ -6,6 +6,7 @@ using ProjektZeh.SystemServices;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class DiagnosticCommandTests
 {

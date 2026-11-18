@@ -9,6 +9,7 @@ using ProjektZeh.Runtime.Wasm;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class WasmEngineSelectionTests
 {

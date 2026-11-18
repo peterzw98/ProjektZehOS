@@ -20,6 +20,7 @@ namespace ProjektZeh.Tests;
 /// mehrere Aufrufe (WASI-Dateihandles) sind in <c>WasmRuntime</c> von Hand gesperrt. Ausdruecke in interpolierten
 /// Zeichenketten werden mit der Zeichenkette ausgeblendet.
 /// </remarks>
+[DoNotParallelize]
 [TestClass]
 public sealed class StorageLockCoverageTests
 {

@@ -10,6 +10,7 @@ using ProjektZeh.UI;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class DesktopWorkspaceTests
 {

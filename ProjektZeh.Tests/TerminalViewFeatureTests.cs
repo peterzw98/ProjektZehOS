@@ -7,6 +7,7 @@ using ProjektZeh.Shell;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class TerminalViewFeatureTests
 {

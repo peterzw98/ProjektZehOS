@@ -5,6 +5,7 @@ using ProjektZeh.Input;
 using ProjektZeh.Shell;
 using ProjektZeh.Shared;
 namespace ProjektZeh.Tests;
+[DoNotParallelize]
 [TestClass]
 public sealed class ShellFeatureTests
 {

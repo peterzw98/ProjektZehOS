@@ -15,6 +15,7 @@ using AlertDescription = Org.BouncyCastle.Tls.AlertDescription;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class TlsTransportTests
 {

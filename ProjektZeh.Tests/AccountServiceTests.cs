@@ -7,6 +7,7 @@ using ProjektZeh.Storage;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class AccountServiceTests
 {

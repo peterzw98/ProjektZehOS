@@ -9,6 +9,7 @@ using ProjektZeh.Update;
 
 namespace ProjektZeh.Tests;
 
+[DoNotParallelize]
 [TestClass]
 public sealed class MigrationSourceWriterTests
 {

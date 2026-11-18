@@ -11,6 +11,7 @@ namespace ProjektZeh.Tests;
 /// Etappe 7a Schritt 3b: Sperre bei Rootfehlern sitzt in AccountService und wird vor jeder Mutation neu ausgewertet
 /// (Spec 7a, Abschnitt 5, huang P2-2): nicht ruecksetzbar ueber SetupBlockedReason, gilt fuer Ersteinrichtung und Recovery.
 /// </summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class MutationBlockedTests
 {

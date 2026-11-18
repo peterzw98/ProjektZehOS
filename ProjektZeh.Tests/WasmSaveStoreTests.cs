@@ -9,6 +9,7 @@ using ProjektZeh.Shared;
 namespace ProjektZeh.Tests;
 
 /// <summary>Etappe 13.4 (Spec 2026-11-17-app-storage-13-4.md): App-Speicher /save einer Paket-App.</summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class WasmSaveStoreTests
 {

@@ -8,6 +8,7 @@ using ProjektZeh.SystemServices;
 namespace ProjektZeh.Tests;
 
 /// <summary>Etappe 12.2 PR C (Spec 2026-11-17-tls-12-2-audit.md §2.3): Bundle-Untergrenze, SNTP-Pakete, Versatzregel.</summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class SystemClockTests
 {

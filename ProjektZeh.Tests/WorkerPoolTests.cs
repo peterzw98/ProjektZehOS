@@ -13,6 +13,7 @@ namespace ProjektZeh.Tests;
 /// Hintergrundaufgaben auf wiederverwendeten Workern: Cosmos 3.0.97 kann nach Dateilast keine Threads mehr anlegen (E4.0 1G),
 /// deshalb entstehen Worker beim Boot und werden nur bei Bedarf und nur bis Capacity ergaenzt.
 /// </summary>
+[DoNotParallelize]
 [TestClass]
 public sealed class WorkerPoolTests
 {
