@@ -124,6 +124,18 @@ internal static class CosmosExt2RootProbe
         Check(!files.WriteBytes(EfiMount + "/fremd.bin", [1]).IsOK(), "FileService schrieb in den fremden Mount /boot/efi");
         Pass("Format 4 KiB, Gate Ok, / und /boot/efi eingehaengt, FileService lehnt /boot/efi ab");
 
+        // Gastbeleg der Sperrsemantik (Review blue-lockrev P2): Reentranz und Monitor.IsEntered unter Cosmos, wie sie
+        // FileService -> CosmosPathGuard und WasmSaveStore produktiv verschachtelt nutzen.
+        Begin("lock");
+        Check(StorageLock.Run(() => StorageLock.Run(() => StorageLock.IsHeldByCurrentThread)), "verschachteltes Run haelt die Sperre nicht");
+        Check(!StorageLock.IsHeldByCurrentThread, "Sperre nach Run nicht freigegeben");
+        bool refused = false;
+        try { StorageLock.Run(() => StorageLock.EnsureNotHeld("Probe")); }
+        catch (InvalidOperationException) { refused = true; }
+        Check(refused, "EnsureNotHeld warf unter der Sperre nicht");
+        StorageLock.EnsureNotHeld("Probe ausserhalb");
+        Pass("Reentranz, IsHeldByCurrentThread und EnsureNotHeld im Gast");
+
         Begin("b");
         ushort state = ReadState(root);
         Check(state == 1, $"s_state {state} nach Mount statt 1");
