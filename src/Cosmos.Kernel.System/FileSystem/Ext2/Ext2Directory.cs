@@ -60,7 +60,11 @@ internal static class Ext2DirectoryHelper
             uint blk = sb.GetBlockPointer(dir, i, false, out _);
             if (blk == 0)
             {
-                break;
+                // ZehOS patch ext2-rmdir, see PATCHES.md
+                // A hole inside i_size would hide every entry behind it; a
+                // partial list must not pass for the whole directory (Rmdir
+                // would take a non-empty directory for empty).
+                return false;
             }
 
             Span<byte> slice = data.AsSpan((int)offset, (int)sb.BlockSize);
@@ -81,14 +85,16 @@ internal static class Ext2DirectoryHelper
             byte nameLen = data[pos + Ext2InodeLayout.DirEntryNameLenOffset];
             byte fileType = data[pos + Ext2InodeLayout.DirEntryFileTypeOffset];
 
+            // ZehOS patch ext2-rmdir: a corrupt record ends parsing with a
+            // failure instead of a silently truncated list.
             if (recLen == 0 || recLen < Ext2InodeLayout.DirEntryMinRecLen || pos + recLen > data.Length)
             {
-                break;
+                return false;
             }
 
             if (nameLen > recLen - Ext2InodeLayout.DirEntryNameOffset)
             {
-                break;
+                return false;
             }
 
             if (inode != 0)
@@ -101,7 +107,7 @@ internal static class Ext2DirectoryHelper
                 }
                 catch
                 {
-                    break;
+                    return false;
                 }
 
                 result.Add(new Ext2DirEntry(inode, recLen, nameLen, fileType, name, pos));

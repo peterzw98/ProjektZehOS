@@ -78,16 +78,58 @@ public class Ext2RmdirTests
     }
 
     [Test]
-    public void Rmdir_WritesDtimeAndLinksZero()
+    public void Rmdir_WritesDtimeAndLinksZero_AndRestoresParentCounters()
     {
+        ushort parentLinks = ((Ext2Inode)_sb.Root).LinksCount;
         Ext2Inode dir = Mkdir("d");
+        uint group = _sb.GroupOfInode(dir.InodeNumber);
+        ushort usedDirs = Remount().GetGroup(group).UsedDirsCount;
 
         Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.True);
 
-        Ext2Inode onDisk = Remount().ReadInode(dir.InodeNumber, "d");
+        Ext2Superblock fresh = Remount();
+        Ext2Inode onDisk = fresh.ReadInode(dir.InodeNumber, "d");
         Assert.That(onDisk.LinksCount, Is.Zero);
         Assert.That(onDisk.Dtime, Is.Not.Zero);
         Assert.That(onDisk.Blocks, Is.Zero);
+        Assert.That(((Ext2Inode)fresh.Root).LinksCount, Is.EqualTo(parentLinks), "parent loses the \"..\" link");
+        Assert.That(fresh.GetGroup(group).UsedDirsCount, Is.EqualTo(usedDirs - 1));
+    }
+
+    // Two directory blocks: ~200-byte records, about 19 per 4 KiB block.
+    private Ext2Inode TwoBlockDirectory()
+    {
+        Ext2Inode dir = Mkdir("d");
+        string prefix = new('n', 190);
+        for (int i = 0; i < 30; i++)
+        {
+            Assert.That(dir.InodeOperations.Create(dir, prefix + i, FileMode, out _), Is.True);
+        }
+
+        Assert.That(dir.Block[1], Is.Not.Zero, "precondition: second directory block");
+        return dir;
+    }
+
+    [Test]
+    public void Rmdir_DirectoryWithHoleInFirstBlock_IsRefused()
+    {
+        Ext2Inode dir = TwoBlockDirectory();
+        dir.Block[0] = 0; // corrupt: hole inside i_size, entries behind it stay live
+
+        Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.False);
+        Assert.That(Ext2DirectoryHelper.TryFind(_sb, (Ext2Inode)_sb.Root, "d", out _), Is.True);
+    }
+
+    [Test]
+    public void ReadDirAndLookup_WithCorruptRecord_Fail()
+    {
+        Ext2Inode dir = TwoBlockDirectory();
+        _sb.WriteBlocks(dir.Block[1], 1, new byte[FsBlockSize]); // rec_len 0 at the start of block 1
+
+        Assert.That(dir.InodeOperations.ReadDir(dir, out IReadOnlyList<IVfsInode> entries), Is.False, "no partial listing");
+        Assert.That(entries, Is.Empty);
+        Assert.That(Ext2DirectoryHelper.TryFind(_sb, dir, new string('n', 190) + "0", out _), Is.False);
+        Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.False);
     }
 
     [TestCase(".")]
