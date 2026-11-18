@@ -410,6 +410,8 @@ def run_g5(args, work: Path, account_base: Path) -> None:
                 raise RuntimeError(f"{name}: Identitaet {identity}, erwartet {state} SETUP False")
             storage.tools.wait_serial(run, storage.device_line("sata0", 32 * GIB, parts), 5)
             storage.tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", 5)
+            # Die Kontobasis traegt ein Konto: auch die Recovery-Textshell verlangt zuerst die Anmeldung.
+            storage.login(qmp, run, first=False)
             qmp.line("disk list")
             time.sleep(2)
             qmp.shot(run / "disk-list.png")
