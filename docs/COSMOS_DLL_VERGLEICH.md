@@ -32,7 +32,7 @@ Ende 0, wenn nichts `VERSCHIEDEN` ist und beide Seiten dieselben DLLs haben.
 - **SDK:** Der Quellbaum verlangt SDK 10.0.201 oder neuer (`global.json`, `rollForward: latestFeature`). Gleichstand mit
   den NuGet-Paketen setzt dasselbe SDK voraus wie deren Bau.
 
-## Erster Befund (18.11.2026, HPz)
+## Erster Befund (18.11.2026, Linux-Entwicklungsrechner mit KVM)
 
 Bau von `cosmos` bd5889b mit SDK 10.0.201 gegen NuGet 3.0.97 (Ende 1): 23 DLLs `gleich`, 21 `bauangaben`, 3 `VERSCHIEDEN`, nur in A 6 (fünf linux-arm64-DLLs, gewollt nur x64 gebaut, und `lib/netstandard2.0/Cosmos.Build.Analyzer.Patcher.dll`), nur in B 38 (vier DLLs der Analyzer-Hülle, dazu 21 aus `Cosmos.Patcher` und 13 aus `Cosmos.Tools`, die als Werkzeugpakete nicht im NuGet-Cache liegen und deshalb in A fehlten)
 (`Cosmos.Kernel.Core`, `Cosmos.Kernel.Drivers`, `Cosmos.Kernel.System`). Alle Abweichungen passen zu einem anderen
@@ -52,7 +52,7 @@ Namens enthält dagegen nur die Bibliothek unter `lib/netstandard2.0/` mit ander
 Projektdateien; ob der Patcher-Analyzer im Kernelbau damit gleich wirkt, zeigt erst der Vergleich der Build-Logs
 (Analyzer-Meldungen, `check-plug-binding.py`).
 
-Kernelbau alt gegen neu (HPz, 18.11.2026, beide Seiten SDK 10.0.404 und eigener NuGet-Cache, damit nur die
+Kernelbau alt gegen neu (18.11.2026, derselbe Rechner, beide Seiten SDK 10.0.404 und eigener NuGet-Cache, damit nur die
 Cosmos-Pakete verschieden sind): alt `master` 6ec4e93 mit NuGet 3.0.97 und den global installierten Werkzeugen 3.0.97,
 neu E1-B (41470b4, wiederholt auf ae7af03) mit `scripts/build-cosmos.sh`, Feed 3.0.97-zehos.1 und Werkzeugen per
 `--tool-path`. Beide Seiten: `cosmos build … --verbose` Ende 0, `check-plug-binding.py` „11 ZehOS-Plugs gebunden“ mit
