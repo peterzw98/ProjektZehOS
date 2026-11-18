@@ -27,6 +27,8 @@
     <Compile Include="../../ProjektZeh/Storage/Partitioning/*.cs" Link="Partitioning/%(Filename)%(Extension)" />
     <Compile Include="../../ProjektZeh/Storage/DiskEmptyCheck.cs" Link="Storage/DiskEmptyCheck.cs" />
     <Compile Include="../../ProjektZeh/Storage/StorageLock.cs" Link="Storage/StorageLock.cs" />
+    <!-- Ext2/CosmosReadOnlyExt2FileSystem.cs braucht den schreibgeschuetzten VFS-Baustein aus Storage/. -->
+    <Compile Include="../../ProjektZeh/Storage/CosmosReadOnlyVfs.cs" Link="Storage/CosmosReadOnlyVfs.cs" />
     <Compile Include="../../ProjektZeh/Shared/*.cs" Link="Shared/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
