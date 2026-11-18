@@ -89,6 +89,7 @@ class Dispatcher:
         self.failures = int(retry.get("failures", 0))
         self.next_try = float(retry.get("next_try", 0.0))
         self.gave_up_at = int(retry.get("gave_up_at", 0))
+        self.timed_out_upto = int(retry.get("timed_out_upto", 0))
         self.starts = []          # Startzeiten der letzten Stunde (Ratengrenze)
         self.slot_fd = None
         self._reap_orphan()
@@ -120,7 +121,8 @@ class Dispatcher:
 
     def _save_retry(self):
         self._write("retry.json", json.dumps({"failures": self.failures, "next_try": self.next_try,
-                                              "gave_up_at": self.gave_up_at}) + "\n")
+                                              "gave_up_at": self.gave_up_at,
+                                              "timed_out_upto": self.timed_out_upto}) + "\n")
 
     def _load_inbox(self):
         out = []
@@ -295,6 +297,8 @@ class Dispatcher:
         skipped = len(batch) - len(lines)
         text = "\n".join(f"#{e['id']} {e['ts']} {e['sender']} -> {e['target']}: {e['text'][:MAX_LINE]}"
                          + ("" if e["trigger"] else "   [nur Information: Absender startet keine Läufe]")
+                         + ("   [lief schon einmal ins Zeitlimit: nicht erneut warten, sondern [BLOCKER] melden]"
+                            if e["id"] <= self.timed_out_upto else "")
                          for e in lines)
         more = f"\n({skipped} ältere Zeilen nicht aufgeführt, siehe Protokoll.)" if skipped else ""
         return (
@@ -361,6 +365,8 @@ class Dispatcher:
         elif code == "Zeitlimit":
             # Ein Lauf, der ins Zeitlimit läuft, hängt meist (wartet auf etwas) und hinge beim Wiederholen wieder:
             # nicht wiederholen, sondern sofort einmal warnen. Sonst kostet ein hängender Lauf das Mehrfache.
+            # Kommt später eine neue Nennung, läuft die alte mit; der Auftrag kennzeichnet sie (build_prompt).
+            self.timed_out_upto = max(self.timed_out_upto, run["last"])
             self._failed(now, f"Zeitlimit {self.a.timeout:.0f} s", run["last"], run["path"], final=True)
         else:
             self._failed(now, f"Exit {code}", run["last"], run["path"])
