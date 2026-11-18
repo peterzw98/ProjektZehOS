@@ -27,20 +27,31 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
 - Eine verwaltete Ganzzahldivision durch null löst unter Cosmos/NativeAOT eine echte CPU-Ausnahme (#DE) aus, keine
   `DivideByZeroException`.
 
-**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` (parameterlos, bindet nach `check-plug-binding.py`).
+**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` und `Panic.PrintCpuContext(ref IRQContext)` (beide
+binden nach `check-plug-binding.py`). Das echte `IRQContext` ist in `Cosmos.Kernel.Core` intern; Cosmos.Patcher vergleicht
+Parametertypen aber nur über den vollen Namen, deshalb genügt die leere öffentliche Attrappe
+`Cosmos.Kernel.Core.CPU.IRQContext` in ZehOS. Der Plug gibt die Register wie Cosmos aus, ergänzt Thread, Wasm-Worker und
+Gastzustand und merkt sich Vektor und RIP über feste Feldversätze (3.0.97: `interrupt` bei 120, `rip` bei 152).
 
-- **Isolieren** (`FaultIsolationPolicy`): nur wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
+- **Isolieren** (`FaultIsolationPolicy`): nur bei den Programmfehlern #DE (0), #UD (6), #GP (13) und #PF (14) und nur
+  wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
   läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
   beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
   `SchedulerManager.ScheduleFromInterrupt` (intern, per `UnsafeAccessor`) wechselt in den nächsten Thread.
-- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife).
+- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife), insbesondere bei NMI, Machine Check und Double Fault, die
+  einen Zustand der Maschine melden, und bei einem Halt ohne frisch gemerkten Vektor (anderer Panic-Pfad).
 - **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
   „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
   Paketdateien frei und startet einen neuen Worker.
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
-`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Zahlen im PR.
+`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
+gemerkten Vektor mit dem erwarteten (#DE 0, #PF 14) und fällt so bei verschobenen Feldversätzen auf. Die Gegenprobe
+`-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
+das System muss anhalten. Cosmos 3.0.97 maskiert beim Start LVT LINT1 (`LocalApic.cs:174`), und QEMU stellt `inject-nmi`
+nur über ein unmaskiertes LINT1 mit Zustellart NMI zu (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`); sonst wird der NMI
+still verworfen (RED 18.11.: 0/2). Nur der NMI-Probebau setzt LINT1 deshalb vor dem Fenster auf NMI, unmaskiert. Zahlen im PR.
 
 **Grenzen:**
 
@@ -48,8 +59,10 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
   App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben. Daher
   meldet der Kernel „Neustart empfohlen“ und startet nach 3 isolierten Ausnahmen keinen Worker mehr; Paket-Apps laufen
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
-- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
-  Schritt mit einem Plug, der `IRQContext` sieht.
+- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP steht seit dem `PrintCpuContext`-Plug zur
+  Verfügung und erscheint im Protokoll der Hauptschleife.
+- Die Feldversätze von `IRQContext` gelten für Cosmos 3.0.97 und sind bei jedem Cosmos-Update mit der Gastprobe neu zu
+  prüfen.
 - Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt, außerdem die
   verwalteten Objekte, auf die der aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die
   Speicherbereinigung ihn weiter durchsucht.
@@ -384,6 +397,8 @@ Gastbeleg: E4.0 2 GiB, Läufe 1–5, Go. Lauf 1 und Lauf 2 ergaben `e2fsck -fn` 
 **ext2: höchstens 8190 Einträge je Verzeichnis, ZehOS-Produktgrenze 8189 (Cosmos 3.0.97, 17. November 2026):** `Ext2DirectoryHelper.ParseDirectory` bricht nach `MaxParseIters = 8192` Records ab (Schutz gegen beschädigte `rec_len`-Ketten; Wert aus der 3.0.97-DLL gelesen). Mit `.` und `..` fasst ein Verzeichnis damit 8190 Einträge; das Anlegen des nächsten scheitert mit `IOException` (E4.0-Lauf 1, QEMU KVM, 32 GiB: `/e/e08190`). Dieselbe Grenze gilt beim Lesen: ein fremdes ext2-Verzeichnis mit mehr Einträgen wird ohne Fehlermeldung abgeschnitten aufgelistet. Umbenennen in einem vollen Verzeichnis (8190 Einträge) meldet Erfolg, danach sieht Cosmos in derselben Sitzung weder den alten noch den neuen Namen; auf der Platte ist der Eintrag korrekt (E4.0-Lauf 9, QEMU KVM, 2 GiB, `debugfs` gleicher Inode). `FileService` begrenzt deshalb auf 8189 Einträge und meldet darüber `cause='DirectoryEntryLimit'`.
 
 **FAT32 mit 16-KiB-Clustern (Cosmos 3.0.97, 17. November 2026):** Eine mit `mkfs.fat 4.2 -F 32` und Standardwerten formatierte 512-MiB-ESP (16 KiB je Cluster, `spc 32`) in einer GPT-Partition hängt Cosmos zwar als `/data` ein und liest das Volumelabel, sieht aber das vom Host angelegte Wurzelverzeichnis `boot` nicht (`Pfadkomponente fehlt: boot`); der Installationsmarker gilt dadurch als fehlend und die Identität als `Unclear` (`RootWithoutMarker`). Dieselbe Partition mit `mkfs.fat -F 32 -s 8` (4 KiB je Cluster) liest Cosmos korrekt (`Identitaet: Healthy`); `hidden sectors` 0 oder 2048 ändert nichts. Geprüft in QEMU 10.2.2 (TCG) mit dem normalen und dem Sicherheits-Recovery-Kernel, Befehl `ls /data/boot`. Die Ursache im Treiber ist nicht eingegrenzt. Folge: der Installer muss die ESP mit einer Clustergröße anlegen, die Cosmos liest, und extern formatierte FAT32-Volumes mit großen Clustern gelten bis zur Klärung als nicht unterstützt. Andere Clustergrößen, VMware und echte Hardware sind ungeprüft.
+
+**FAT: NT-Kleinschreib-Flag wird nicht ausgewertet (Cosmos 3.0.97, 18. November 2026):** Kurze kleingeschriebene Namen, die ein anderes System als 8.3-Eintrag mit Kleinschreib-Flag (Byte 12, 0x08/0x10) anlegt (etwa mtools: `notiz.txt`), erscheinen in ZehOS in Großbuchstaben (`NOTIZ.TXT`); die Migration nach ext2 übernimmt diese Schreibweise. Namen mit langem Eintrag (gemischte Schreibweise) bleiben erhalten. Quelle: `FatDirectory.cs` liest Byte 12 nur in LFN-Einträgen. Beobachtet im Gasttest G4 (QEMU/KVM, Lauf 2, blue-migrate); VMware und von ZehOS selbst angelegte Namen nicht geprüft.
 
 ## Desktopanwendungen am 13. November 2026
 
