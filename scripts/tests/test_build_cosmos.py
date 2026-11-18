@@ -21,6 +21,17 @@ class BuildCosmosTests(unittest.TestCase):
         sdks = json.loads((ROOT / 'global.json').read_text())['msbuild-sdks']
         self.assertEqual(VERSION, sdks['Cosmos.Sdk'])
 
+    def test_workflows_use_source_build_and_pinned_sdk(self):
+        sdk = (ROOT / 'deploy' / 'cosmos' / 'SDK').read_text().strip()
+        for name in ('ci.yml', 'release.yml'):
+            text = (ROOT / '.github' / 'workflows' / name).read_text()
+            # Keine Upstream-Werkzeuge mehr: sie wuerden die selbst gebauten Pakete mit fremdem Patcher verarbeiten.
+            self.assertNotIn('dotnet tool install --global Cosmos', text, name)
+            self.assertEqual(text.count('scripts/build-cosmos.sh --global'), text.count("dotnet-version: '" + sdk + "'"), name)
+            if name == 'ci.yml':
+                self.assertRegex(text, r'actions/cache@[0-9a-f]{40}')
+            else:
+                self.assertNotIn('actions/cache', text, 'Release baut Cosmos immer frisch aus dem Commit')
     def test_official_version_needs_explicit_feed(self):
         result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--version', '3.0.97'], capture_output=True, text=True, cwd=ROOT)
         self.assertNotEqual(0, result.returncode)
@@ -32,6 +43,16 @@ class BuildCosmosTests(unittest.TestCase):
             result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--feed', 'f'], capture_output=True, text=True, cwd=temp)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertTrue((Path(temp) / 'f').is_dir())
+
+    def test_commit_change_requires_version_change(self):
+        # Gleiche Version bei anderem Commit liesse den NuGet-Cache still den alten Stand liefern.
+        base = subprocess.run(['git', 'merge-base', 'HEAD', 'origin/master'], capture_output=True, text=True, cwd=ROOT)
+        if base.returncode != 0:
+            self.skipTest('origin/master nicht verfuegbar')
+        changed = subprocess.run(['git', 'diff', '--quiet', base.stdout.strip(), '--', 'deploy/cosmos/COMMIT'], cwd=ROOT).returncode != 0
+        if changed:
+            version_changed = subprocess.run(['git', 'diff', '--quiet', base.stdout.strip(), '--', 'deploy/cosmos/VERSION'], cwd=ROOT).returncode != 0
+            self.assertTrue(version_changed, 'deploy/cosmos/COMMIT geaendert, VERSION nicht')
 
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()

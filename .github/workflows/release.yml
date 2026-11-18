@@ -26,11 +26,10 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: '10.0.x'
-      - name: Install matching Cosmos CLI and patcher
-        run: |
-          dotnet tool install --global Cosmos.Tools --version 3.0.97
-          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+          dotnet-version: '10.0.404' # = deploy/cosmos/SDK (Test in scripts/tests)
+      - name: Build Cosmos from source and install tools
+        # Baut den Branch cosmos (deploy/cosmos/COMMIT) in den Feed und installiert Cosmos.Tools und cosmos.patcher in derselben Version.
+        run: scripts/build-cosmos.sh --global
       - name: Install Cosmos native toolchain
         # Wie in ci.yml: Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
         env:

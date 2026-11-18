@@ -212,12 +212,17 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.404' # = deploy/cosmos/SDK (Test in scripts/tests)
 
-      - name: Install matching Cosmos CLI and patcher
-        run: |
-          dotnet tool install --global Cosmos.Tools --version 3.0.97
-          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+      - name: Restore built Cosmos packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deploy/cosmos/feed
+          key: cosmos-feed-${{ runner.os }}-${{ hashFiles('deploy/cosmos/COMMIT', 'deploy/cosmos/VERSION', 'deploy/cosmos/SDK', 'scripts/build-cosmos.sh') }}
+
+      - name: Build Cosmos from source and install tools
+        # Baut den Branch cosmos (deploy/cosmos/COMMIT) in den Feed und installiert Cosmos.Tools und cosmos.patcher in derselben Version.
+        run: scripts/build-cosmos.sh --global
 
       - name: Install Cosmos native toolchain
         # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
@@ -272,12 +277,17 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.404' # = deploy/cosmos/SDK (Test in scripts/tests)
 
-      - name: Install matching Cosmos CLI and patcher
-        run: |
-          dotnet tool install --global Cosmos.Tools --version 3.0.97
-          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+      - name: Restore built Cosmos packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deploy/cosmos/feed
+          key: cosmos-feed-${{ runner.os }}-${{ hashFiles('deploy/cosmos/COMMIT', 'deploy/cosmos/VERSION', 'deploy/cosmos/SDK', 'scripts/build-cosmos.sh') }}
+
+      - name: Build Cosmos from source and install tools
+        # Baut den Branch cosmos (deploy/cosmos/COMMIT) in den Feed und installiert Cosmos.Tools und cosmos.patcher in derselben Version.
+        run: scripts/build-cosmos.sh --global
 
       - name: Install Cosmos native toolchain
         # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
@@ -408,12 +418,17 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.404' # = deploy/cosmos/SDK (Test in scripts/tests)
 
-      - name: Install matching Cosmos CLI and patcher
-        run: |
-          dotnet tool install --global Cosmos.Tools --version 3.0.97
-          dotnet tool install --global Cosmos.Patcher --version 3.0.97
+      - name: Restore built Cosmos packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deploy/cosmos/feed
+          key: cosmos-feed-${{ runner.os }}-${{ hashFiles('deploy/cosmos/COMMIT', 'deploy/cosmos/VERSION', 'deploy/cosmos/SDK', 'scripts/build-cosmos.sh') }}
+
+      - name: Build Cosmos from source and install tools
+        # Baut den Branch cosmos (deploy/cosmos/COMMIT) in den Feed und installiert Cosmos.Tools und cosmos.patcher in derselben Version.
+        run: scripts/build-cosmos.sh --global
 
       - name: Install Cosmos native toolchain
         # Mit Token gilt das API-Limit pro Repository statt geteilt pro Runner-IP (sonst 403).
