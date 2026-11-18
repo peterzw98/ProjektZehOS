@@ -26,5 +26,5 @@ bei einem anderen SDK ab; `--any-sdk` ist nur fuer lokale Versuche gedacht, solc
   `scripts/build-cosmos.sh --global` neu ausführen.
 - Das Skript prüft vor dem Bau, ob der NuGet-Cache des Rechners dieselbe Version aus einem anderen Commit enthält, und bricht
   dann mit „VERSION erhöhen“ ab; nach dem Bau muss die nuspec von `Cosmos.Kernel` den Commit tragen.
-- Der Kernel verlangt `Cosmos.*` in exakter Version (`[3.0.97-zehos.1]`, NU1603 ist ein Fehler); diese Version gibt es nur im Feed. Hosttests und `experiments/` laden weiter die offiziellen Pakete 3.0.97 von nuget.org (kein `packageSourceMapping`).
+- Der Kernel verlangt `Cosmos.*` in exakter Version (`[3.0.97-zehos.1]`, NU1603 ist ein Fehler); diese Version gibt es nur im Feed. `NuGet.Config` bildet `Cosmos.*` und `_Cosmos.*` per `packageSourceMapping` nur auf den Feed ab, alles andere nur auf nuget.org. Die Hosttests laden kein Cosmos-Paket mehr (die Referenzbild-Schrift liegt als `ProjektZeh.Tests/TestData/DefaultFont.psf` im Repository, Herkunft in `DefaultFont.ORIGIN.md`); `experiments/StorageProbe` lädt die Pakete der Version `$(ZehOSCosmosVersion)` aus dem Feed.
 - Unter Windows (Git Bash) startet das Skript die Git-Aufrufe im Quellbaum mit `-c core.longpaths=true`, nur für diese Aufrufe und ohne globale Git-Konfiguration; der Quellbau lief so mit SDK 10.0.404 (intake18, 925a33b).

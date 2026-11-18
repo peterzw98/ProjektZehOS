@@ -136,25 +136,33 @@ public sealed class GoldenTests
     }
 
     [TestMethod]
-    public void Font_MissingPackage_FailsInCiAndIsInconclusiveLocally()
+    public void Font_MissingFile_FailsInCiAndIsInconclusiveLocally()
     {
-        string? packages = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
         string? ci = Environment.GetEnvironmentVariable("CI");
         Directory.CreateDirectory(directory);
         try
         {
             // Ohne Schrift waeren alle Referenzbilder textlos; in der CI darf das nicht als uebersprungen durchgehen.
-            Environment.SetEnvironmentVariable("NUGET_PACKAGES", directory);
+            // Das leere Verzeichnis hat kein TestData/DefaultFont.psf.
             Environment.SetEnvironmentVariable("CI", "true");
-            Assert.ThrowsException<AssertFailedException>(() => Golden.Font());
+            Assert.ThrowsException<AssertFailedException>(() => Golden.Font(directory));
             Environment.SetEnvironmentVariable("CI", null);
-            Assert.ThrowsException<AssertInconclusiveException>(() => Golden.Font());
+            Assert.ThrowsException<AssertInconclusiveException>(() => Golden.Font(directory));
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable("NUGET_PACKAGES", packages);
-            Environment.SetEnvironmentVariable("CI", ci);
-        }
+        finally { Environment.SetEnvironmentVariable("CI", ci); }
+    }
+
+    [TestMethod]
+    public void Font_ShippedFile_HasExpectedGeometryAndChecksum()
+    {
+        // Die Datei ist byteweise die Cosmos-Ressource (TestData/DefaultFont.ORIGIN.md); eine Aenderung faellt hier auf.
+        string path = Path.Combine(AppContext.BaseDirectory, "TestData", "DefaultFont.psf");
+        Assert.AreEqual("f588cdf02336ee3f561ab5cfc6a5615422030fbd7bb493a30add4a74377e1207",
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant());
+        var (data, width, height) = Golden.Font();
+        Assert.AreEqual(16, width);
+        Assert.AreEqual(32, height);
+        Assert.AreEqual(256 * 64, data.Length);
     }
 
     [TestMethod]

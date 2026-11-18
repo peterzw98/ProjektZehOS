@@ -63,3 +63,6 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# Binaere Testdaten nie normalisieren (PSF-Schrift der Referenzbilder).
+*.psf binary

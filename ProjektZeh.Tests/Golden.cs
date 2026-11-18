@@ -19,10 +19,10 @@ internal static class Golden
         return new UiPainter(data, width, height);
     }
 
-    public static (byte[] Data, int Width, int Height) Font()
+    public static (byte[] Data, int Width, int Height) Font(string? baseDirectory = null)
     {
-        if (ScreenshotSupport.LoadCosmosFontData() is { } font) return font;
-        string message = "Cosmos-Schrift nicht im NuGet-Cache (Cosmos.Kernel.System 3.0.97); dotnet restore ausfuehren.";
+        if (ScreenshotSupport.LoadCosmosFontData(baseDirectory) is { } font) return font;
+        string message = "Testschrift TestData/DefaultFont.psf fehlt neben der Testassembly (Repository unvollstaendig?).";
         if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI"))) Assert.Fail(message);
         Assert.Inconclusive(message);
         return default;
