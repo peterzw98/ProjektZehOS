@@ -91,13 +91,14 @@ projects_arch_free="Cosmos.Kernel.Drivers Cosmos.Kernel.Debug Cosmos.Kernel.Boot
 projects_multi="Cosmos.Kernel.Core Cosmos.Kernel.HAL Cosmos.Kernel.System Cosmos.Kernel.Plugs Cosmos.Kernel"
 
 if [ "$rebuild" = 1 ]; then
+    # Unter Windows scheitern die Git-Aufrufe im Quellbaum sonst an Pfaden ueber 260 Zeichen; nur fuer diese Aufrufe, keine globale Konfiguration.
     run git -C "$root" fetch origin "$commit"
     if [ "$plan" = 1 ] || [ ! -e "$src/.git" ]; then
-        run git -C "$root" worktree add --detach "$src" "$commit"
+        run git -c core.longpaths=true -C "$root" worktree add --detach "$src" "$commit"
     else
-        run git -C "$src" checkout --detach "$commit"
+        run git -c core.longpaths=true -C "$src" checkout --detach "$commit"
     fi
-    run git -C "$src" submodule update --init --recursive --depth 1
+    run git -c core.longpaths=true -C "$src" submodule update --init --recursive --depth 1
     # Das SDK bestimmt IL-Details (Quellgenerator, Stackgroessen); Referenzbau nur mit dem in deploy/cosmos/SDK festgelegten.
     # Gemessen im Quellbaum, weil dort Cosmos' eigene global.json gilt. --any-sdk nur fuer lokale Versuche; solche Feeds
     # nie fuer Release oder IL-Vergleich (E1-D) verwenden.
