@@ -171,6 +171,14 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 8189 direkte Einträge (ein Platz unter der Cosmos-Grenze bleibt für Umbenennungen frei), einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
 
+Ist ext2 als `/` eingehängt, hält Cosmos 3.0.97 jede seit dem Start berührte Datei im Speicher, bis der Datenträger ausgehängt wird. Nach etwa 17.500 verschiedenen Dateien je Sitzung können weitere Dateioperationen mit einem Fehler scheitern, weil der Speicher zu stark zerstückelt ist. Die genaue Zahl hängt vom Arbeitsspeicher und vom bisherigen Verlauf ab.
+
+- **Betroffen** sind Vorgänge, die viele verschiedene Dateien berühren: große Ordner auflisten, ganze Bäume durchsuchen oder kopieren, Pakete mit vielen Dateien installieren.
+- **Kaum betroffen** ist das normale Speichern, weil es freigegebene Dateinummern wiederverwendet.
+- **Abhilfe:** ZehOS neu starten. Danach beginnt die Zählung von vorn.
+
+ZehOS umgeht die Grenze bewusst nicht (Entscheidung 17. November 2026). Hintergrund steht in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md).
+
 Die Eintragsprüfung gilt für den Dateidienst (FileService). Direkte interne Schreibzugriffe, etwa des Paketbestands oder der Desktop-Einstellungen, sind davon nicht erfasst; sie ist deshalb keine harte Dateisystemgarantie.
 
 Pfade mit Leerzeichen werden wie bei `echo` in Anführungszeichen gesetzt. Ohne Datenplatte oder bei einem Dateifehler bleibt die Shell bedienbar. Fehler werden über die gemeinsamen Result-Typen an den Kernel weitergereicht und dort einmal ausgegeben.
@@ -313,6 +321,15 @@ Paket. NetSurf ist noch nicht im öffentlichen Paketkatalog veröffentlicht. Bui
 geprüfte Grenzen stehen in [docs/NETSURF.md](docs/NETSURF.md). JavaScript ist standardmäßig aus;
 Strg+J schaltet es für die laufende Sitzung ein (Statusleiste „JS an“), siehe dort.
 
+ClassiCube 1.1.0 (`pkg install classicube`) braucht deutlich mehr Arbeitsspeicher als die übrigen Pakete. Gemessen
+unter QEMU/KVM mit einem Kernel ohne Speichersammlung vor dem App-Start (`master` a4a598c), acht Läufe zu je drei
+Minuten in einer Zufallswelt: Belegt waren rund 425 MB vor dem Start und rund 455 MB nach dem Spiel, unabhängig vom
+Arbeitsspeicher der VM. Frei blieben danach bei 512 MiB rund 50 MB, bei 768 MiB rund 318 MB, bei 1 GiB rund 586 MB
+und bei 2 GiB rund 1660 MB. Empfohlen ist 1 GiB, mindestens 768 MiB. Mit 512 MiB kann ClassiCube mit
+„Out of VRAM?“ abbrechen (unter WHPX beobachtet, unter KVM in diesen Läufen nicht). Seit 0.5.86 sammelt der Kernel
+vor jedem App-Start Speicher ein; das mildert diesen Fall, garantiert aber keinen sicheren Betrieb mit 512 MiB.
+Längere Spielzeit, größere Welten und VMware sind nicht gemessen.
+
 Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was eine App darf, erklärt [docs/PAKETE_ERSTELLEN.md](docs/PAKETE_ERSTELLEN.md), ebenso den Weg bis zur Veröffentlichung. Die wichtigsten Grenzen:
 - Nur grafische Fensterapps; eine App zur Zeit.
 - Dateien nur lesend und nur aus dem eigenen Paket.
@@ -405,7 +422,7 @@ reboot
 
 `update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
 
-Nur für lokale Update-Gasttests ersetzt `-p:ZehOSUpdateTestKeyPath=<Datei>` diesen Schlüssel durch einen eigenen öffentlichen Ed25519-Testschlüssel als Base64-Text. Die Option hat keinen Standardwert; `scripts/build-release.sh` erzwingt für beide Release-Builds einen leeren Wert, damit auch eine geerbte Umgebungsvariable keinen Testschlüssel einbettet. Je Testlauf ein neues Schlüsselpaar außerhalb des Repositorys erzeugen; nur die öffentliche Datei einbetten, den privaten Schlüssel weder veröffentlichen noch auf das ISO oder die Gastplatte kopieren. Der Testkernel akzeptiert ausschließlich Signaturen seines Testschlüssels, keine Produktionssignaturen. Fehlende, ungültige oder mit dem Produktionsschlüssel identische Testschlüssel sperren die Update-Prüfung ohne Rückfall. Versionstext und Bootprotokoll tragen `[UPDATE-TESTSCHLUESSEL]`, die Assembly-Information `+update-testkey`. Nach Testbuilds vor dem normalen Build die benötigten ISO-/ELF-Dateien separat sichern, da beide Varianten dieselben Ausgabepfade verwenden. Dieser Buildweg allein belegt noch keinen erfolgreichen Update-Gastlauf.
+Nur für lokale Update-Gasttests ersetzt `-p:ZehOSUpdateTestKeyPath=<Datei>` diesen Schlüssel durch einen eigenen öffentlichen Ed25519-Testschlüssel als Base64-Text. Die Option hat keinen Standardwert; `scripts/build-release.sh` entfernt vor beiden Release-Builds alle `ZehOS*`-Umgebungsvariablen, damit geerbte Testschlüssel, Test-CAs oder Probe-Schalter nicht ins Release gelangen. Je Testlauf ein neues Schlüsselpaar außerhalb des Repositorys erzeugen; nur die öffentliche Datei einbetten, den privaten Schlüssel weder veröffentlichen noch auf das ISO oder die Gastplatte kopieren. Der Testkernel akzeptiert ausschließlich Signaturen seines Testschlüssels, keine Produktionssignaturen. Fehlende, ungültige oder mit dem Produktionsschlüssel identische Testschlüssel sperren die Update-Prüfung ohne Rückfall. Versionstext und Bootprotokoll tragen `[UPDATE-TESTSCHLUESSEL]`, die Assembly-Information `+update-testkey`. Nach Testbuilds vor dem normalen Build die benötigten ISO-/ELF-Dateien separat sichern, da beide Varianten dieselben Ausgabepfade verwenden. Dieser Buildweg allein belegt noch keinen erfolgreichen Update-Gastlauf.
 
 Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-<Version>.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
 

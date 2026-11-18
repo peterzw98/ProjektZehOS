@@ -181,9 +181,9 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 
 - **Grafische Apps:** Eine App startet nur als Fenster aus dem Startmenü. Reine Konsolen-Apps und einen Shellbefehl `run` gibt es noch nicht.
 - **Eine App zur Zeit:** Alle Paket-Apps teilen einen Worker. Läuft eine, startet keine zweite.
-- **Ressourcen:** höchstens 256 MiB lineare Memory, 1 MiB Wasm-Stack, Modul höchstens 64 MiB, kein Gaslimit für Paket-Apps.
+- **Ressourcen:** höchstens 256 MiB lineare Memory, 1 MiB Wasm-Stack, Modul höchstens 64 MiB, kein Gaslimit für Paket-Apps. Die 256 MiB sind eine Obergrenze, keine Zusage: Nach Anmeldung, Netzstart und Paketinstallation waren unter QEMU/KVM rund 425 MB belegt (18. November 2026, vor dem Start von ClassiCube). In einer VM mit 512 MiB blieben damit für eine App rund 80 MB frei; Messwerte für ClassiCube stehen in der [README](../README.md).
 - **Beenden:** Eine App, die `should_exit()` nie abfragt, lässt sich nicht beenden. Das Paket bleibt dann bis zum Neustart gesperrt (kein Entfernen, kein Upgrade). Die Hauptschleife muss die Abfrage enthalten.
-- **Keine Speicherstände:** Apps können nichts dauerhaft speichern.
+- **Speicherstände nur mit `capability=storage`:** Ohne diese Fähigkeit können Apps nichts dauerhaft speichern; mit ihr nur im eigenen Ordner `/save` (siehe [App-Speicher](#app-speicher-save-etappe-134)).
 - **Tasten:**
   - Das erste Esc bei eingefangener Maus gibt den Zeiger frei und erreicht die App als Taste; Wiederholungen eines gehaltenen Esc gehen nicht weiter. Ein erneutes Esc bei freiem Zeiger führt zur Textshell. F4 wechselt jederzeit zwischen Desktop und Textshell.
   - Bei Fokusverlust werden gehaltene Tasten losgelassen.

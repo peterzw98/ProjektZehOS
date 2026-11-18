@@ -19,6 +19,12 @@ CATEGORY = os.environ.get("DISCORD_CATEGORY", "IRC")
 SIGN_KEY = os.environ.get("SIGN_KEY", "bridge@zeh.ernst.casa")
 
 FORMAT_CODES = re.compile(r"\x03\d{0,2}(,\d{1,2})?|[\x02\x0f\x11\x16\x1d\x1e\x1f]")
+NICKCHARS = r"[A-Za-z0-9_\-\[\]\\^{}|`]+"
+# Wie teambot.PREFIX: "nick1 nick2: text"; Trenner zwischen Nicks ist Pflicht, sonst backtrackt der Ausdruck exponentiell
+PREFIX = re.compile(rf"^((?:{NICKCHARS}[ ,]+)*{NICKCHARS}:)\s+(.*)$")
+HEADER = re.compile(rf"^(?:{NICKCHARS}[ ,]+)*{NICKCHARS}:$")
+MAX_LINES = 5
+MIN_TEXT = 40
 
 
 def parse(line):
@@ -36,18 +42,40 @@ def parse(line):
     return prefix.split("!", 1)[0], command, params
 
 
-def irc_lines(text, limit=200):
-    """Split a Discord message into chunks of at most `limit` UTF-8 bytes (room left for the signature)."""
+def irc_lines(text, message_id, limit=200):
+    """Split a Discord message into IRC lines of about `limit` UTF-8 bytes (room left for the signature).
+
+    Ein führendes "nick:" steht in jedem Teil, auch wenn es allein in der ersten Zeile steht: Spezialisten erhalten nur
+    Zeilen mit ihrem Nick. Mehrteilige Nachrichten tragen "(i/n m=<Discord-Nachrichten-ID>)" im signierten Text, damit
+    sich Teile zweier Nachrichten derselben Person nicht zu einer scheinbar vollständigen Freigabe mischen lassen.
+    Ein Präfix, neben dem kein Platz für Text bleibt, ist ein ValueError.
+    """
+    rows = [raw.strip() for raw in text.splitlines() if raw.strip()]
+    prefix = ""
+    match = PREFIX.match(rows[0]) if rows else None
+    if match:
+        prefix, rows[0] = match.group(1) + " ", match.group(2)
+    elif rows and HEADER.match(rows[0]) and len(rows) > 1:
+        prefix, rows = rows[0] + " ", rows[1:]
+    budget = limit - len(prefix.encode()) - len(f" (99/99 m={message_id})".encode())
+    if budget < MIN_TEXT:
+        raise ValueError(f"nick prefix of {len(prefix.encode())} bytes leaves no room for text")
     out = []
-    for raw in text.splitlines():
-        raw = raw.strip()
+    for raw in rows:
         while raw:
-            n = limit
-            while len(raw[:n].encode()) > limit:
+            n = budget
+            while len(raw[:n].encode()) > budget:
                 n -= 1
             out.append(raw[:n])
             raw = raw[n:]
-    return out
+    total = len(out)
+    if total > 1:
+        # Die Zählung nennt die volle Teilzahl; eine gekappte Nachricht bleibt so erkennbar unvollständig.
+        out = [f"{line} ({i + 1}/{total} m={message_id})" for i, line in enumerate(out)]
+    if total > MAX_LINES:
+        # shortcut: lange Discord-Nachrichten werden gekappt, statt Flood-Schutz des Servers zu riskieren
+        out = out[:MAX_LINES] + [f"[… {total - MAX_LINES} more lines on Discord] (m={message_id})"]
+    return [prefix + line for line in out]
 
 
 def signed_payload(channel, user_id, timestamp, text):
@@ -223,10 +251,12 @@ class Bridge(discord.Client):
         text = message.clean_content
         for attachment in message.attachments:
             text += "\n" + attachment.url
-        lines = irc_lines(text)
-        if len(lines) > 5:
-            # shortcut: lange Discord-Nachrichten werden gekappt, statt Flood-Schutz des Servers zu riskieren
-            lines = lines[:5] + [f"[… {len(lines) - 5} more lines on Discord]"]
+        try:
+            lines = irc_lines(text, message.id)
+        except ValueError as error:
+            print(f"not forwarded: {error}", flush=True)
+            await message.add_reaction("⚠️")
+            return
         name = message.author.display_name.replace(" ", "_")[:24]
         user_id = message.author.id
         try:

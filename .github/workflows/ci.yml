@@ -127,6 +127,12 @@ jobs:
       - name: Lint shell scripts
         run: git ls-files '*.sh' ':!:**/ThirdParty/**' | xargs shellcheck --severity=warning
 
+      # Bridge und Teambot entscheiden ueber Freigaben und Auftraege; ihre Selbsttests brauchen nur die Standardbibliothek.
+      - name: Test Discord bridge and agent team helpers
+        run: |
+          cd deploy/discord-bridge && python3 test_bridge.py
+          cd ../agent-team && python3 test_teambot.py
+
       # Aktualisieren: neue Version und deren SHA-256 aus actionlint_<Version>_checksums.txt des Releases eintragen (Dependabot hebt
       # einen curl-Pin nicht).
       - name: Lint workflows
@@ -214,6 +220,10 @@ jobs:
         run: |
           mkdir -p artifacts
           cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release --verbose 2>&1 | tee artifacts/kernel-build.log
+
+      - name: Check that all ZehOS plugs bind
+        # Der Patcher beendet den Build auch dann erfolgreich, wenn ein Plug sein Ziel nicht findet.
+        run: python3 scripts/check-plug-binding.py artifacts/kernel-build.log ProjektZeh
 
       - name: Upload bootable ISO
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

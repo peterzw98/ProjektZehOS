@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading;
 using Org.BouncyCastle.Crypto.Digests;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
+using ProjektZeh.Storage.Migration;
 using ProjektZeh.Update;
 
 namespace ProjektZeh.Packages;
@@ -22,7 +24,7 @@ internal sealed record InstalledPackage(PackageManifest Manifest, string Directo
 /// aktiven Version. Nur der Marker veroeffentlicht eine Version; ein unvollstaendiges Versionsverzeichnis ist nie startbar.
 /// Eine zweite Installed-Datenbank gibt es nicht: Marker plus signiertes Manifest sind maszgeblich.
 /// </summary>
-internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersion kernel)
+internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersion kernel, Func<IDisposable?>? tryBeginWrite = null)
 {
     public const string DefaultSource = "https://packages.pjoter.de/";
     private const int BufferBytes = 64 * 1024;
@@ -58,7 +60,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             installed.Sort(static (left, right) => string.CompareOrdinal(left.Manifest.Id, right.Manifest.Id));
             return ResultObjectFactory.CreateSuccess(installed.ToArray());
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<InstalledPackage[]>(exception);
         }
@@ -82,7 +84,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 return Damaged<InstalledPackage>(id);
             return ResultObjectFactory.CreateSuccess(new InstalledPackage(manifest.Value, directory));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return Damaged<InstalledPackage>(id, exception.Message);
         }
@@ -143,7 +145,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketdateien nicht lesbar: " + exception.Message);
         }
@@ -201,6 +203,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private ResultObject<PackageManifest> Publish(IPackageSource source, string prefix, ResultObject<PackageManifest> parsed, byte[] signature,
         Action<PackageProgress>? progress, CancellationToken cancellation)
     {
+        using var writer = BeginWrite();
         var manifest = parsed.Value!;
         var current = ReadActive(manifest.Id);
         InstalledPackage? previous = current.IsOK() ? current.Value : null;
@@ -292,6 +295,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         string directory = Path.Combine(Apps, id);
         try
         {
+            using var writer = BeginWrite();
             if (!File.Exists(Path.Combine(directory, "active"))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
             // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
             File.Delete(Path.Combine(directory, "active"));
@@ -318,7 +322,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             var parsed = PackageCatalog.Parse(catalog);
             return parsed.IsOK() ? parsed : DamagedCatalog();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
         }
@@ -343,6 +347,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             }
             try
             {
+                using var writer = BeginWrite();
                 Directory.CreateDirectory(root);
                 byte[] combined = new byte[signature.Length + catalog.Length];
                 signature.CopyTo(combined, 0);
@@ -350,7 +355,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 ReplaceFile(CatalogPath, combined);
                 return parsed;
             }
-            catch (Exception exception) when (IsFileError(exception))
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
                 return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
             }
@@ -364,7 +369,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             if (!File.Exists(SourcePath)) return ResultObjectFactory.CreateSuccess(DefaultSource);
             return ResultObjectFactory.CreateSuccess(Encoding.ASCII.GetString(ReadSmall(SourcePath, 2048)).TrimEnd('\n'));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -375,15 +380,19 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         if (!IsValidSource(url)) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Quelle muss eine HTTPS-URL ohne Zugangsdaten sein und auf / enden.");
         try
         {
+            using var writer = BeginWrite();
             Directory.CreateDirectory(root);
             ReplaceFile(SourcePath, Encoding.ASCII.GetBytes(url + "\n"));
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFromException(exception);
         }
     }
+
+    private IDisposable? BeginWrite() => tryBeginWrite == null ? null :
+        tryBeginWrite() ?? throw new IOException(MigrationWriteGate.BusyMessage);
 
     public static bool IsValidSource(string url) =>
         url.Length <= 512 && url.EndsWith('/') && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
@@ -397,6 +406,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     {
         try
         {
+            using var writer = BeginWrite();
             RestorePending(CatalogPath);
             RestorePending(SourcePath);
             if (!Directory.Exists(Apps)) return ResultErr.CreateSuccess();
@@ -416,7 +426,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketbestand nicht aufgeraeumt: " + exception.Message);
         }
@@ -431,7 +441,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             if (!File.Exists(marker)) return null;
             return UpdateVersion.TryParse(Encoding.ASCII.GetString(ReadSmall(marker, 32)).TrimEnd('\n'), out var version) ? version : null;
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return null;
         }
@@ -478,7 +488,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private static void TryDeleteTree(string directory)
     {
         try { if (Directory.Exists(directory)) DeleteTree(directory); }
-        catch (Exception exception) when (IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
+        catch (Exception exception) when (FileErrors.IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
     }
 
     private static byte[] ReadSmall(string path, int maximumBytes)
@@ -497,7 +507,6 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         return Convert.ToHexStringLower(hash);
     }
 
-    internal static bool IsFileError(Exception exception) => exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     private static ResultErr NoTrust() => ResultErr.CreateFailure(ResultCode.Failure, "Dieser Build enthaelt keinen Paketschluessel; Pakete sind deaktiviert.");
     private static ResultErr Modified(string path) => ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {path} wurde veraendert; Start gesperrt.");
     private static ResultObject<T> Damaged<T>(string id, string? detail = null) =>

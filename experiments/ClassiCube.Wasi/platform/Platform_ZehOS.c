@@ -1,7 +1,8 @@
 /* ZehOS-Plattformschicht fuer ClassiCube (BSD-3-Clause wie ClassiCube, Copyright (c) 2014 - 2024, UnknownShadow200).
    Abgeleitet von src/msdos/Platform_MSDOS.c: ein Faden, keine Prozesse. Laeuft als WASIp1-Programm im
-   ZehOS-Wasm-Loader; Dateien sind nur lesbar, Schreibversuche scheitern mit einem Fehlercode. TCP laeuft ueber die
-   Netzfunktionen von zehos_v1 (nur mit capability=net im Paketmanifest). */
+   ZehOS-Wasm-Loader; Paketdateien sind nur lesbar. Mit capability=storage landen Welten (maps/) und options.txt im
+   App-Speicher /save, sonst scheitern Schreibversuche mit einem Fehlercode. TCP laeuft ueber die Netzfunktionen von
+   zehos_v1 (nur mit capability=net im Paketmanifest). */
 #define CC_NO_UPDATER
 #define CC_NO_DYNLIB
 #define CC_NO_THREADING
@@ -28,6 +29,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <stdio.h>
+#include <wasi/api.h>
 
 #define ZEHOS_IMPORT(name) __attribute__((import_module("zehos_v1"), import_name(name)))
 /* WASI kennt kein poll_oneoff im Loader, usleep der libc wuerde scheitern. */
@@ -119,8 +121,37 @@ cc_uint64 Stopwatch_ElapsedMicroseconds(cc_uint64 beg, cc_uint64 end) {
 /*########################################################################################################################*
 *-----------------------------------------------------Directory/File------------------------------------------------------*
 *#########################################################################################################################*/
+/* App-Speicher (Etappe 13.4): Der Loader gibt ihn nur mit capability=storage, Anmeldung und eingebundenem /data als
+   zweiten Preopen "/save" (fd 4) frei. Nur Welten und Optionen wandern dorthin; alles andere bleibt im Paket. */
+#define SAVE_FD     4
+#define SAVE_PREFIX "/save/"
+static cc_bool saveAvailable;
+
+static cc_bool DetectSave(void) {
+	__wasi_prestat_t prestat;
+	char name[5];
+	if (__wasi_fd_prestat_get(SAVE_FD, &prestat) || prestat.tag != __WASI_PREOPENTYPE_DIR) return false;
+	if (prestat.u.dir.pr_name_len != sizeof(name)) return false;
+	return !__wasi_fd_prestat_dir_name(SAVE_FD, (uint8_t*)name, sizeof(name)) && !memcmp(name, "/save", sizeof(name));
+}
+
+static cc_bool IsSaveTarget(const cc_string* path) {
+	static const cc_string maps = String_FromConst("maps/");
+	return String_CaselessEqualsConst(path, "options.txt") || String_CaselessEqualsConst(path, "maps")
+		|| String_CaselessStarts(path, &maps);
+}
+
+static cc_bool IsSavePath(const char* path) {
+	return !strncmp(path, SAVE_PREFIX, sizeof(SAVE_PREFIX) - 1);
+}
+
 void Platform_EncodePath(cc_filepath* dst, const cc_string* path) {
-	String_EncodeUtf8(dst->buffer, path);
+	char* str = dst->buffer;
+	if (saveAvailable && IsSaveTarget(path)) {
+		Mem_Copy(str, SAVE_PREFIX, sizeof(SAVE_PREFIX) - 1);
+		str += sizeof(SAVE_PREFIX) - 1;
+	}
+	String_EncodeUtf8(str, path);
 }
 
 void Platform_DecodePath(cc_string* dst, const cc_filepath* path) {
@@ -131,9 +162,11 @@ void Platform_DecodePath(cc_string* dst, const cc_filepath* path) {
 void Directory_GetCachePath(cc_string* path) { }
 
 /* Der Paketordner ist nur lesbar. ClassiCube legt beim Start Ordner fuer spaetere Schreibzugriffe an (maps,
-   texturecache, audio) und zeigte dafuer rote Warnungen; die Schreibzugriffe selbst melden ihren eigenen Fehler. */
+   texturecache, audio) und zeigte dafuer rote Warnungen; die Schreibzugriffe selbst melden ihren eigenen Fehler.
+   Nur unter /save entsteht der Ordner wirklich. */
 cc_result Directory_Create2(const cc_filepath* path) {
-	return EEXIST;
+	if (!IsSavePath(path->buffer)) return EEXIST;
+	return mkdir(path->buffer, 0755) == -1 ? errno : 0;
 }
 
 int File_Exists(const cc_filepath* path) {
@@ -141,9 +174,39 @@ int File_Exists(const cc_filepath* path) {
 	return stat(path->buffer, &sb) == 0 && S_ISREG(sb.st_mode);
 }
 
-/* Der Loader liest keine Verzeichnisse (fd_readdir fehlt); ClassiCube behandelt den Fehler wie einen leeren Ordner. */
+/* Ordner des Pakets liest der Loader nicht (fd_readdir nur unter /save); ClassiCube behandelt den Fehler wie einen
+   leeren Ordner. Unter /save wie Platform_Posix.c. */
 cc_result Directory_Enum(const cc_string* dirPath, void* obj, Directory_EnumCallback callback) {
-	return ERR_NOT_SUPPORTED;
+	cc_string path; char pathBuffer[FILENAME_SIZE];
+	cc_filepath str;
+	DIR* dirPtr;
+	struct dirent* entry;
+	char* src;
+	cc_result res;
+
+	Platform_EncodePath(&str, dirPath);
+	if (!IsSavePath(str.buffer)) return ERR_NOT_SUPPORTED;
+	dirPtr = opendir(str.buffer);
+	if (!dirPtr) return errno;
+
+	/* readdir laesst errno am Ende unveraendert; deshalb vor jedem Aufruf zuruecksetzen. */
+	errno = 0;
+	String_InitArray(path, pathBuffer);
+
+	while ((entry = readdir(dirPtr))) {
+		src = entry->d_name;
+		if (src[0] == '.' && (src[1] == '\0' || (src[1] == '.' && src[2] == '\0'))) continue;
+
+		path.length = 0;
+		String_Format1(&path, "%s/", dirPath);
+		String_AppendUtf8(&path, src, String_Length(src));
+		callback(&path, obj, entry->d_type == DT_DIR);
+		errno = 0;
+	}
+
+	res = errno;
+	closedir(dirPtr);
+	return res;
 }
 
 static cc_result File_Do(cc_file* file, const char* path, int mode) {
@@ -322,7 +385,9 @@ cc_bool Platform_DescribeError(cc_result res, cc_string* dst) {
 }
 
 void Platform_Init(void) {
-	/* Paketdateien sind nur lesbar; ClassiCube legt dann weder Chatprotokolle noch Texturcache an. */
+	saveAvailable = DetectSave();
+	/* Die Kennung steuert in ClassiCube nur Chatprotokolle und Texturcache, nicht Welten und Optionen. Beide gehoeren
+	   nicht in die Quote von /save; sie bleiben deshalb auch mit App-Speicher aus. */
 	Platform_ReadonlyFilesystem = true;
 }
 

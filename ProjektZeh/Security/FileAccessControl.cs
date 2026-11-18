@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage.Migration;
 
 namespace ProjektZeh.Security;
 
@@ -16,6 +17,7 @@ internal sealed class FileAccessControl
     internal StringComparison Comparison => comparison;
     /// <summary>Prueft Symlinks und Mountgrenzen (Pfad, creating) vor jeder Rechteentscheidung; null nur ohne Dateisystem (Hosttests).</summary>
     internal Func<string, bool, ResultErr>? PathGuard { get; }
+    internal Func<IDisposable?>? TryBeginWrite { get; }
     public bool IsReady { get; private set; }
     internal Func<ResultErr>? Persist { get; set; }
 
@@ -27,13 +29,15 @@ internal sealed class FileAccessControl
     /// Verschieben und jede Praefix- und Elternpruefung. <paramref name="pathGuard"/> prueft vor jeder Entscheidung Symlinks
     /// und Mountgrenzen; seine Ablehnung oder Ausnahme sperrt, auch fuer Administratoren.
     /// </summary>
-    public FileAccessControl(string rootDirectory, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard = null)
+    public FileAccessControl(string rootDirectory, StringComparison comparison, Func<string, bool, ResultErr>? pathGuard = null,
+        Func<IDisposable?>? tryBeginWrite = null)
     {
         // TrimEndingDirectorySeparator laesst die Wurzel ("/", "C:\") mit ihrem Trenner stehen.
         RootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
         this.comparison = comparison;
         entries = new(StringComparer.FromComparison(comparison));
         PathGuard = pathGuard;
+        TryBeginWrite = tryBeginWrite;
     }
 
     /// <summary>Wendet den Waechter an; eine Ausnahme gilt als Ablehnung.</summary>
@@ -57,6 +61,10 @@ internal sealed class FileAccessControl
 
     public ResultErr Check(UserSession session, string path, FilePermission permission, bool creating = false)
     {
+        using var writer = (permission & FilePermission.Write) != 0 ? TryBeginWrite?.Invoke() : null;
+        // Gesperrte Quelle (Migration, Aushaengen) ist kein Rechteproblem; die Meldung nennt StorageBusy (Review peter-review P3-b).
+        if ((permission & FilePermission.Write) != 0 && TryBeginWrite != null && writer == null)
+            return ResultErr.CreateFailure(ResultCode.Failure, MigrationWriteGate.BusyMessage);
         if (!IsReady || session.UserId == null || !IsManagedPath(path)) return Denied();
         if (!Guard(path, creating).IsOK()) return Denied();
         if (entries.TryGetValue(path, out var rights))

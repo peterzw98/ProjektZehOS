@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Update;
 
@@ -20,7 +21,7 @@ internal sealed class FileUpdateSource(string directory) : IUpdateSource
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<byte[]>(exception); }
     }
 }

@@ -4,6 +4,7 @@ using System.Text;
 using System.Collections.Generic;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage.Migration;
 using ProjektZeh.Storage.Virtual;
 
 namespace ProjektZeh.Storage;
@@ -20,12 +21,16 @@ internal sealed class FileService
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
     private readonly Func<string, int?>? directoryEntryLimit;
+    private readonly Func<IDisposable?>? tryBeginWrite;
     private readonly FileAccessControl? access;
     private readonly UserSession? session;
     // Ohne Rechteverwaltung (Kontendatei) prueft dieser Waechter Symlinks und Mountgrenzen; mit Rechteverwaltung deren eigener.
     private readonly Func<string, bool, ResultErr>? pathGuard;
     // Erzeuger der /proc- und /sys-Dateien (normalisierter Pfad -> Snapshot); der Kernel liefert ihn aus Cosmos-Werten.
     private readonly Func<string, ResultObject<byte[]>>? virtualSource;
+
+    /// <summary>Grosse Lesepuffer (Bilder, App-Speicher bis 16 MiB) mit Null-Abwehr; Tests setzen eine Allokation, die null liefert.</summary>
+    internal Func<int, byte[]?> AllocateBuffer { get; init; } = BufferAllocation.TryAllocate;
     // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
     private readonly Func<string, bool> isRegularFile;
 
@@ -36,7 +41,8 @@ internal sealed class FileService
         Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace = null,
         Func<string, bool, ResultErr>? pathGuard = null, Func<string, int?>? directoryEntryLimit = null,
         Func<string, ResultObject<byte[]>>? virtualSource = null,
-        Func<string, bool>? isRegularFile = null)
+        Func<string, bool>? isRegularFile = null,
+        Func<IDisposable?>? tryBeginWrite = null)
     {
         this.virtualSource = virtualSource;
         this.isRegularFile = isRegularFile ?? IsRegularHostFile;
@@ -45,6 +51,7 @@ internal sealed class FileService
         this.moveFile = moveFile ?? File.Move;
         this.diskSpace = diskSpace;
         this.directoryEntryLimit = directoryEntryLimit;
+        this.tryBeginWrite = tryBeginWrite ?? access?.TryBeginWrite;
         this.access = access;
         this.session = session;
     }
@@ -69,7 +76,7 @@ internal sealed class FileService
                 if (Visible(entry)) visible.Add(entry);
             return ResultObjectFactory.CreateSuccess(visible.ToArray());
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string[]>(exception);
         }
@@ -94,7 +101,7 @@ internal sealed class FileService
             });
             return ResultObjectFactory.CreateSuccess(entries);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<FileEntry[]>(exception);
         }
@@ -133,7 +140,7 @@ internal sealed class FileService
         {
             return ResultObjectFactory.CreateSuccess<string>(null);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -170,31 +177,52 @@ internal sealed class FileService
             if (length < 0 || length > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
             // Laenge 0 kann auch "unbekannt" heissen (virtuelle Dateien wie unter Linux): dann begrenzt bis EOF lesen.
-            if (length == 0) return ReadUntilEnd(stream, maximumLength);
-            var data = new byte[(int)length];
+            if (length == 0) return ReadUntilEnd(stream, maximumLength, AllocateBuffer);
+            if (AllocateBuffer((int)length) is not { } data) return OutOfMemory<byte[]>();
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<byte[]>(exception);
         }
     }
 
-    /// <summary>Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei.</summary>
-    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength)
+    /// <summary>
+    /// Liest bis EOF; mehr als <paramref name="maximumLength"/> Bytes sind ein Fehler statt einer gekuerzten Datei. Gelesen wird in
+    /// Bloecken und erst am Ende in einen Puffer passender Groesse kopiert; jede Anforderung laeuft ueber
+    /// <paramref name="allocate"/>, damit ein ausgeschoepfter Kernel-Heap als OutOfMemory endet statt als Absturz.
+    /// </summary>
+    internal static ResultObject<byte[]> ReadUntilEnd(Stream stream, int maximumLength, Func<int, byte[]?>? allocate = null)
     {
-        using var data = new MemoryStream();
-        var chunk = new byte[4096];
-        int read;
-        while ((read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, (long)maximumLength + 1 - data.Length))) > 0)
+        allocate ??= BufferAllocation.TryAllocate;
+        const int BlockLength = 4096;
+        var blocks = new List<byte[]>();
+        long total = 0;
+        while (true)
         {
-            data.Write(chunk, 0, read);
-            if (data.Length > maximumLength)
+            if (allocate(BlockLength) is not { } block) return OutOfMemory<byte[]>();
+            int filled = 0, read;
+            while (filled < block.Length
+                   && (read = stream.Read(block, filled, (int)Math.Min(block.Length - filled, (long)maximumLength + 1 - total - filled))) > 0)
+                filled += read;
+            total += filled;
+            if (total > maximumLength)
                 return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Die Bilddatei ist zu gross.");
+            if (filled > 0) blocks.Add(block);
+            if (filled < block.Length) break;
         }
 
-        return ResultObjectFactory.CreateSuccess(data.ToArray());
+        if (allocate((int)total) is not { } data) return OutOfMemory<byte[]>();
+        int offset = 0;
+        foreach (byte[] block in blocks)
+        {
+            int count = (int)Math.Min(block.Length, total - offset);
+            block.AsSpan(0, count).CopyTo(data.AsSpan(offset));
+            offset += count;
+        }
+
+        return ResultObjectFactory.CreateSuccess(data);
     }
 
     /// <summary>Gehoert der Pfad (nach Normalisierung gegen das Arbeitsverzeichnis) zu /proc, /sys oder /dev?</summary>
@@ -270,7 +298,7 @@ internal sealed class FileService
         {
             var handle = DeviceFileSystem.Open(node.Path["/dev/".Length..]);
             if (!handle.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(handle.Status);
-            var data = new byte[maximumLength + 1];
+            if (AllocateBuffer(maximumLength + 1) is not { } data) return OutOfMemory<byte[]>();
             int total = 0;
             try
             {
@@ -324,12 +352,15 @@ internal sealed class FileService
     }
 
     /// <summary>Schreibt gepruefte Binaerdaten; auf Wunsch bleibt das Original als feste .bak-Datei erhalten.</summary>
-    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false)
+    internal ResultErr WriteBytes(string path, byte[] data, bool keepBackup = false) => WriteBytes(path, data.AsMemory(), keepBackup);
+
+    /// <summary>Wie oben fuer einen Ausschnitt eines Puffers, ohne ihn vorher zu kopieren (App-Speicher bis 16 MiB).</summary>
+    internal ResultErr WriteBytes(string path, ReadOnlyMemory<byte> data, bool keepBackup = false)
     {
         return WriteData(path, () => data, keepBackup);
     }
 
-    private ResultErr WriteData(string? path, Func<byte[]> getData, bool keepBackup)
+    private ResultErr WriteData(string? path, Func<ReadOnlyMemory<byte>> getData, bool keepBackup)
     {
         var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK())
@@ -342,11 +373,13 @@ internal sealed class FileService
         FileStream? temporaryStream = null;
         bool registered = false;
         bool backupRegistered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             if (keepBackup) backupRegistered = Authorize(resolved.Value! + ".bak", FilePermission.Write, true);
-            byte[] data = getData();
+            ReadOnlyMemory<byte> data = getData();
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             EnsureDirectoryEntryAvailable(temporaryPath);
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
@@ -354,14 +387,14 @@ internal sealed class FileService
             {
                 temporaryStream = stream;
                 temporaryCreated = true;
-                stream.Write(data);
+                stream.Write(data.Span);
                 stream.Flush(true);
             }
 
             ReplaceFile(temporaryPath, resolved.Value!, keepBackup);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             if (backupRegistered) access!.ForgetCreated(resolved.Value! + ".bak");
@@ -373,7 +406,7 @@ internal sealed class FileService
                     temporaryStream!.Dispose();
                     File.Delete(temporaryPath!);
                 }
-                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                catch (Exception cleanupException) when (FileErrors.IsFileError(cleanupException))
                 {
                     return ResultErr.CreateFromException(new AggregateException(exception, cleanupException));
                 }
@@ -381,7 +414,11 @@ internal sealed class FileService
 
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
+
+    private IDisposable? BeginWrite() => tryBeginWrite == null ? null :
+        tryBeginWrite() ?? throw new IOException(MigrationWriteGate.BusyMessage);
 
     private void ReplaceFile(string temporaryPath, string targetPath, bool keepBackup = false)
     {
@@ -407,10 +444,10 @@ internal sealed class FileService
             {
                 moveFile(temporaryPath, targetPath, false);
             }
-            catch (Exception exception) when (IsFileError(exception))
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
                 try { moveFile(backupPath, targetPath, false); }
-                catch (Exception restoreException) when (IsFileError(restoreException))
+                catch (Exception restoreException) when (FileErrors.IsFileError(restoreException))
                 {
                     throw new IOException($"Wiederherstellung fehlgeschlagen. Die Originaldatei liegt unter '{backupPath}'.",
                         new AggregateException(exception, restoreException));
@@ -418,13 +455,13 @@ internal sealed class FileService
                 throw;
             }
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             // Liegt das Original nach gescheiterter Wiederherstellung noch unter backupPath, bleibt die aeltere Sicherung unter ihrem Ausweichnamen.
             if (previousBackup != null && !File.Exists(backupPath))
             {
                 try { moveFile(previousBackup, backupPath, false); }
-                catch (Exception restoreException) when (IsFileError(restoreException))
+                catch (Exception restoreException) when (FileErrors.IsFileError(restoreException))
                 {
                     throw new IOException($"Vorherige Sicherung liegt unter '{previousBackup}'.", new AggregateException(exception, restoreException));
                 }
@@ -448,18 +485,21 @@ internal sealed class FileService
         }
 
         bool registered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             EnsureDirectoryEntryAvailable(resolved.Value!, createParents: true);
             Directory.CreateDirectory(resolved.Value!);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     /// <summary>
@@ -486,7 +526,7 @@ internal sealed class FileService
             CurrentDirectory = resolved.Value!;
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFromException(exception);
         }
@@ -504,8 +544,10 @@ internal sealed class FileService
         bool registered = false;
         string? temporary = null;
         FileStream? temporaryStream = null;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             Authorize(from.Value!, moving ? FilePermission.Read | FilePermission.Write : FilePermission.Read);
             if (moving) Authorize(Path.GetDirectoryName(from.Value!)!, FilePermission.Write);
             // Oeffnen prueft auch fehlende Quellen, bevor Zielrechte angelegt werden.
@@ -542,17 +584,18 @@ internal sealed class FileService
             if (moving && access != null) return access.RemoveEntry(from.Value!);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(to.Value!);
             if (temporary != null)
             {
                 try { temporaryStream?.Dispose(); File.Delete(temporary); }
-                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                catch (Exception cleanupException) when (FileErrors.IsFileError(cleanupException))
                 { return ResultErr.CreateFromException(new AggregateException(exception, cleanupException)); }
             }
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     public ResultErr DeleteFile(string? path) => DeleteEntry(path, false);
@@ -564,6 +607,7 @@ internal sealed class FileService
         if (!resolved.IsOK()) return resolved.Status;
         try
         {
+            using var writer = BeginWrite();
             Authorize(resolved.Value!, FilePermission.Write);
             Authorize(Path.GetDirectoryName(resolved.Value!)!, FilePermission.Write);
             StringComparison comparison = access?.Comparison ?? StringComparison.OrdinalIgnoreCase;
@@ -577,7 +621,7 @@ internal sealed class FileService
             else File.Delete(resolved.Value!);
             return access?.RemoveEntry(resolved.Value!) ?? ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
     }
 
@@ -586,8 +630,10 @@ internal sealed class FileService
         var resolved = ResolvePath(path, creating: true);
         if (!resolved.IsOK()) return resolved.Status;
         bool registered = false;
+        IDisposable? writer = null;
         try
         {
+            writer = BeginWrite();
             registered = Authorize(resolved.Value!, FilePermission.Write, true);
             EnsureDirectoryEntryAvailable(resolved.Value!);
             using (var stream = new FileStream(resolved.Value!, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
@@ -596,11 +642,12 @@ internal sealed class FileService
             File.SetLastWriteTimeUtc(resolved.Value!, DateTime.UtcNow);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
         }
+        finally { writer?.Dispose(); }
     }
 
     public ResultObject<long> GetFileSize(string? path)
@@ -613,7 +660,7 @@ internal sealed class FileService
             using var stream = new FileStream(resolved.Value!, FileMode.Open, FileAccess.Read, FileShare.Read);
             return ResultObjectFactory.CreateSuccess(stream.Length);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<long>(exception); }
     }
 
@@ -628,7 +675,7 @@ internal sealed class FileService
             return diskSpace?.Invoke(resolved.Value!) ??
                 ResultObjectFactory.CreateFailure<(long, long)>(ResultCode.Failure, "Speicherstatistik ist ohne Dateisystemadapter nicht verfuegbar.");
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<(long, long)>(exception); }
     }
 
@@ -665,7 +712,7 @@ internal sealed class FileService
                 }
             }
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<FileEntry[]>(exception); }
         return ResultObjectFactory.CreateSuccess(found.ToArray());
     }
@@ -679,7 +726,7 @@ internal sealed class FileService
             Authorize(resolved.Value!, FilePermission.Read);
             if ((File.GetAttributes(resolved.Value!) & FileAttributes.Directory) == 0) return GetFileSize(path);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<long>(exception); }
         var entries = FindEntries(path);
         if (!entries.IsOK()) return ResultObjectFactory.CreateFailure<long>(entries.Status);
@@ -713,7 +760,7 @@ internal sealed class FileService
             var guarded = FileAccessControl.RunGuard(pathGuard, full, creating);
             return guarded.IsOK() ? ResultObjectFactory.CreateSuccess(full) : ResultObjectFactory.CreateFailure<string>(guarded);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -726,7 +773,7 @@ internal sealed class FileService
         {
             return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) == 0;
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return false;
         }
@@ -749,10 +796,8 @@ internal sealed class FileService
         }
     }
 
-    private static bool IsFileError(Exception exception)
-    {
-        return exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
-    }
+    private static ResultObject<T> OutOfMemory<T>() =>
+        ResultObjectFactory.CreateFailure<T>(ResultCode.Failure, "cause='OutOfMemory' message='Kein Speicher fuer den Lesepuffer.'");
 
     /// <returns>true, wenn dafuer ein neuer Rechte-Eintrag angelegt wurde.</returns>
     private bool Authorize(string path, FilePermission permission, bool creating = false)

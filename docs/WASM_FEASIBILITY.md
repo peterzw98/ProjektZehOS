@@ -160,6 +160,83 @@ In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Le
 
 Medianwerte der Anteile in ms. Unter TCG ist `app` ≈ Bildzeit; darin stecken aber auch rund 33 s Desktop- und Anzeigearbeit je 60 s (894 Desktopbilder, davon rund 600 Lebenszeichen), reine Rechenbegrenzung von Doom ist damit nicht belegt; unter KVM dominieren ebenfalls `app` und die Konkurrenz um die CPU, die Bildkopie und `Canvas.Display()` sind klein. Die KVM-Bildzeiten schwanken wegen der Host-Last stark; ein Vorher/Nachher-Vergleich der Doom-Bildzeit ist daraus nicht belastbar, belegt ist die Halbierung der Desktoparbeit. Der Limine-Bildpuffer ist laut Codebefund voraussichtlich bereits write-combining ([COSMOS_SUPPORT.md](COSMOS_SUPPORT.md)); `anzeige` (1,4 ms unter KVM) bestätigt keinen Engpass dort. Offen: Messung unter geringer Host-Last, KVM mit Lebenszeichen (ausgelieferter Stand; jedes Lebenszeichen setzt den Desktop vollständig zusammen), VMware (VM ohne Datenlaufwerk, Paket-Apps dort nicht prüfbar), Bereichsübertragung statt Vollbild-Zusammensetzung (Anteil `desktop`).
 
+## ClassiCube: Sichtweite unter KVM und WHPX (17. November 2026)
+
+Frage: Begrenzt die Geometrie (Sichtweite) oder ein fester Aufwand die Bildrate von ClassiCube unter wasm3 mit Host-Raster? Kernel `master` 1227e60 (0.5.71) mit Testschlüssel, Paket aus ClassiCube 2b01bee mit `build.py --world-seed 1` (Messpunkte an), Fenster 798×519, Spieler ohne Eingabe am Spawnpunkt. Gemessen wurde mit `measure-wasm-frametimes.py` vom Branch `task/aot-measure` (085cc54, noch nicht in `master`): `--runs 3 --seconds 130`, Starttasten `ret wait:25` und danach 0, 2 oder 4× `shift-f` für die Sichtweiten 512, 128 und 32. Gewertet ist das letzte 60-s-Fenster jedes Laufs.
+
+| Sichtweite | KVM Bildzeit median/p95 ms | KVM Bilder je 60 s | WHPX median/p95 ms |
+| --- | --- | --- | --- |
+| 512 (Standard) | 23/120, 24/102, 23/101 | 1462, 1495, 1564 | 28/83, 59/104, 44/100 |
+| 128 | 33/101, 25/120, 24/124 | 1476, 1466, 1426 | 44/97, 54/98, 61/108 |
+| 32 | 22/100, 19/77, 20/82 | 1703, 2284, 1990 | 39/76, 53/100, 37/82 |
+
+KVM: Linux-Host mit 22 Kernen, Last 1–2 durch andere Gäste. WHPX: Messung von agent-peter-cc-lead auf dem Windows-Entwicklungsrechner; dort liefen zeitweise zwei `dotnet`-Builds parallel, die Streuung ist deshalb größer.
+
+- **Nur 32 verringert die Geometrie.** Mit Sichtweite 128 und 512 zeigen die Endfotos dieselbe Szene (108 618 bzw. 108 630 Vertices, mit 32 dagegen 71 478). Die Welt mit Seed 1 ist für 128 zu klein; laut cc-lead gilt das ebenso für die WHPX-Läufe. Der Vergleich 512/128 zeigt deshalb nur die Streuung zwischen Läufen.
+- **Sichtweite 32 bringt unter KVM rund 30 % mehr Bilder je Minute** und ein niedrigeres p95. Der Median ändert sich kaum (20 statt 23 ms), weil die Bildzeiten zweigipflig verteilt sind; die Bildzahl je Fenster ist hier das bessere Maß.
+- **Engpass ist die App, nicht Desktop oder Anzeige.** Medianwerte der Anteile bei allen drei Sichtweiten: `app` 19–30 ms, `desktop` 2,1–2,6 ms (p95 10–12 ms), `anzeige` 0,8–0,9 ms, `kopie` 0,2 ms, `skalierung` 0,3–0,4 ms. In `app` liegen wasm3 und die Aufrufe des Host-Rasters. Die eigene Messung von ClassiCube (nur auf den Endfotos lesbar) zeigt Raster 31–32 ms je Bild bei 512 und 20–21 ms bei 32; Mesh, Present und Rest liegen bei 0–3 ms.
+
+Nicht geprüft: Bewegung und andere Blickrichtungen, andere Fenstergrößen (ohne Kerneländerung nicht einstellbar), TCG und VMware.
+
+### Verworfen: skalarer Pfad für schmale Dreiecke
+
+Idee: ClassiCube zeichnet je Bild rund 18 500 Vierecke von wenigen Pixeln. Der Aufbau des Vierpixelpfads (`TriangleLanes`) kostet je Dreieck fest, die Vierpixelschritte sparen erst bei breiteren Flächen. Der Branch `task/raster-small-tri-scalar` (d2a3dce, nicht gemergt) zeichnet Dreiecke mit weniger als 8 Spalten (`maxX - minX`) skalar; beide Wege sind bitgleich (Hosttest `SmallQuadGridsMatchReference`).
+
+- **Host:** Auf künstlichen Szenen aus 1–20-px-Vierecken sinkt die Rasterzeit um 20–30 %. Auf der Spielszene des Projekts (12,0 ms je Bild) ändert sie sich nicht; dort dominiert das Texturlesen je Pixel, der feste Aufwand je Viereck liegt bei etwa 0,45 µs.
+- **Gast (KVM, gepinnt auf P-Kern, Sichtweite 512, je 3 Läufe):** mittlere Bildrate ohne Änderung 22,2/24,4/19,6 fps, mit Änderung 22,4/19,6/20,1 fps. Kein messbarer Gewinn.
+
+Die Änderung wurde deshalb nicht als PR eingereicht. Weitere Rasteroptimierungen zählen nur, wenn sie in der Spielszene messbar wirken.
+
+## Messung wasm3 gegen AOT (AOT-Plan Etappe F)
+
+Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes Testschlüsselpaar (`python3 scripts/build-package.py keygen <dir>`), nie der Herausgeberschlüssel. `<wamrc>` ist das zugelassene wamrc 2.4.5 (Hash in `scripts/build-package.py`); `aot` legt den Beleg `<app.aot>.json` daneben, den `package --aot-file` prüft.
+
+```sh
+KEY=~/zehos-testkey   # enthält private.pem und public.b64
+# 1. Kernel mit WAMR, vertraut dem Testschlüssel
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSWasmAot=true -p:ZehOSPackageKeyPath=$KEY/public.b64
+ISO=ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
+# 2. Paketdateien aus packages (ClassiCube samt texpacks/ und licenses/) und .aot erzeugen
+mkdir -p .tools/aot/doom .tools/aot/classicube
+git archive origin/packages doom/1.1.0/files | tar -x -C .tools/aot/doom --strip-components=3
+git archive origin/packages classicube/1.0.0/files | tar -x -C .tools/aot/classicube --strip-components=3
+python3 scripts/build-package.py aot <wamrc> .tools/aot/doom/doom.wasm -o .tools/aot/doom.aot
+python3 scripts/build-package.py aot <wamrc> .tools/aot/classicube/classicube.wasm -o .tools/aot/classicube.aot
+# 3. Messen: je Beschleunigung, Laufzeit und App drei Läufe auf frischer Platte
+DOOM="--package .tools/aot/doom --key $KEY/private.pem --aot-file .tools/aot/doom.aot"
+CC="--package .tools/aot/classicube --key $KEY/private.pem --aot-file .tools/aot/classicube.aot \
+  --id classicube --version 1.0.0 --name ClassiCube --entry classicube.wasm --network --min-kernel 0.5.13 --start-keys ret"
+for ACCEL in kvm tcg; do for AOT in off on; do
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $DOOM
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 3 --seconds 130 --aot $AOT $CC
+done; done
+```
+
+Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
+
+### Ergebnisse (Stand 17. November 2026)
+
+Gemessen von agent-laser-right-tester (Linux, KVM und TCG, Stand `3060e5a`), agent-laser-RED (TCG, master `1227e60`) und cc-lead (Windows, WHPX). Bildzeit ist der Median des letzten 60-s-Fensters je Lauf in ms.
+
+| App | Beschleunigung | wasm3 | AOT |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | KVM | 19 (App-Anteil 18) | 11 (App-Anteil 0,4); 3 von 3 Läufen ohne Fehler |
+| Doom 1.1.0 | TCG | 281 | Stand `5f04669`: kein erstes Bild in 600 s. Stand `1227e60`: in 1 von 5 Läufen Kernel-Panik (#GP, nicht kanonische RIP) vor dem ersten Bild |
+| ClassiCube 1.0.0 | KVM | 41 / 53 / 59 (p95 159–218) | Trap „out of bounds memory access“ vor oder kurz nach dem ersten Bild (KVM und TCG) |
+| ClassiCube 1.0.0 | WHPX | 29–61 je nach Lauf | in 2 von 3 Läufen Trap; mit Diagnosekernel in 1 von 3 Läufen Hänger bei der Weltgenerierung, sonst 40 bzw. 54 ms |
+
+Doom zeigt den erwarteten Gewinn: Der App-Anteil sinkt unter AOT von 18 ms auf 0,4 ms je Bild. Was übrig bleibt, sind Desktop, Skalierung und Anzeige. ClassiCube ist unter wasm3 durch das Rastern im Host begrenzt (siehe die Messung der Sichtweite weiter oben). AOT würde dort nur den Gastanteil verkleinern.
+
+**Befund AOT: Red Zone (Hypothese mit Belegen).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Wahrscheinliche Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
+
+- Der von wamrc erzeugte Code legt in Blattfunktionen Werte unterhalb von RSP ab. `objdump` zählt Schreibzugriffe `mov reg,-0x..(%rsp)`: 229 in `classicube.aot`, 107 in `doom.aot`.
+- Cosmos 3.0.97 betritt Interrupts im Ring 0 ohne IST und ohne Stackwechsel (`CPU/Interrupts.s`). CPU-Frame und gesicherte Register landen direkt unter dem aktuellen RSP. Ein Timer-Interrupt in einer solchen Blattfunktion überschreibt deren lokale Werte.
+- Der Kernel-C-Code (wasm3, WAMR-Lader, Hostfunktionen, C-Laufzeit) nutzt die Red Zone gemessen nicht: 0 Treffer in allen C-Objekten. Das passt dazu, dass die Fehler nur unter AOT auftreten.
+
+wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Nötig ist ein wamrc, der allen erzeugten Funktionen das LLVM-Attribut `noredzone` gibt. Das bedeutet eine neue zugelassene Prüfsumme in `scripts/build-package.py` und eine neue AOT-Kennung, damit vorhandene `.aot` nicht mehr geladen werden. Die Entscheidung darüber liegt bei Peter. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+
+Für Nutzer besteht derzeit kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` ist auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Bis zu einem wamrc mit `noredzone` bleibt AOT ein Diagnoseweg; die Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind damit offen. Bewiesen ist die Ursache erst, wenn ein Diagnosebau mit `noredzone` die Fehler beseitigt; dieser Bau mit je 10 Vergleichsläufen ist beauftragt.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
