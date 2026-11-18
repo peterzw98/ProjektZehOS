@@ -4,30 +4,39 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
-**Status: Platzhalter, keine Messwerte.** Dieser Abschnitt wird erst mit echten Läufen gefüllt. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Mittel des Klassenschedulers für Doom 1.1.0 und ClassiCube höchstens 3 % unter Round-Robin (KVM, 1 GiB, 1 vCPU, je 5 Läufe im Wechsel).
+**Status: Platzhalter, keine Messwerte.** Dieser Abschnitt wird erst mit echten Läufen gefüllt. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+
+Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
 
 | Stand | ZehOS-Commit | Cosmos-Pin | Feed |
 | --- | --- | --- | --- |
 | Round-Robin | `1e66ad46` (vor E4-C) | `bd5889b4` | `3.0.97-zehos.1` |
 | Klassenscheduler | `15adbae5` (master mit E4-C/E4-D) | `59d1fa49` | `3.0.97-zehos.2` |
 
-Messbefehl je Stand und Spiel:
+Gemessen wird ZehOS samt Cosmos-Pin, nicht der Scheduler allein. Zwischen den Pins liegen die ext2-Patches #344, #345, #346 und der CPU-Ausnahme-Hook #349. Keiner dieser Patches sollte im Bildpfad liegen. Dass die Abweichung trotzdem allein am Scheduler liegt, ist **vermutet, nicht gemessen**.
 
-Die Läufe wechseln zwischen den Ständen: je Spiel RR, Klasse, RR, Klasse … (zehn Läufe je Spiel, fünf je Stand). Dafür ruft man das Skript je Lauf mit `--runs 1` auf, nicht mit `--runs 5` (das führt fünf Läufe nacheinander auf einem ISO aus).
+Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Das CPU-Modell setzt das Messskript nicht selbst; die Läufe protokollieren die tatsächliche QEMU-Kommandozeile in `_offen_`. Host: _offen_. ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
+
+Messbefehl je Lauf (Reihenfolge RR, Klasse, RR, Klasse … je Spiel; Doom zuerst, dann ClassiCube):
 
 ```sh
 python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 1 -m 1G
 # ClassiCube zusätzlich: --id classicube --version 1.1.0 --name ClassiCube --entry classicube.wasm --start-keys ret
 ```
 
-| Spiel | Stand | Lauf | Bildrate (Mittel je Lauf) | Host-Lastmittel | Anmerkung |
-| --- | --- | --- | --- | --- | --- |
-| Doom 1.1.0 | RR | 1–5 | _offen_ | _offen_ | |
-| Doom 1.1.0 | Klasse | 1–5 | _offen_ | _offen_ | |
-| ClassiCube 1.1.0 | RR | 1–5 | _offen_ | _offen_ | Sichtweite 512, Seeds laut ROADMAP 13.2: _offen_ |
-| ClassiCube 1.1.0 | Klasse | 1–5 | _offen_ | _offen_ | Sichtweite 512, Seeds laut ROADMAP 13.2: _offen_ |
+Ein Aufruf mit `--runs 5` führt fünf Läufe nacheinander auf einem ISO aus und ist deshalb nicht zu verwenden.
 
-Auswertung (Mittel, Standardabweichung, Abweichung Klasse gegen RR in Prozent, Schwellenurteil): _offen_.
+Je Lauf eine Zeile (20 Zeilen insgesamt):
+
+| Nr. | Spiel | Stand | Lauf | Start (UTC) | fps (letztes Fenster) | Lastmittel | Fremde Last | Wiederholt |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| _offen_ | Doom 1.1.0 | RR | 1 | _offen_ | _offen_ | _offen_ | _offen_ | _offen_ |
+
+Die Rohdaten je Lauf liegen als CSV `spiel,stand,lauf,fps,last` für die Auswertung bereit und sind nicht committet.
+
+Mittel, Standardabweichung, Abweichung Klasse gegen RR in Prozent und Schwellenurteil je Spiel: _offen_.
+
+ClassiCube: Sichtweite und Seed sind nicht gesetzt (das Skript hat dafür keine Option), es gilt der Skriptstandard. Das ist eine bekannte Abweichung von ROADMAP 13.2.
 
 Hintergrundlast (`tasks start busy`, nur Doom, nur berichtet): _offen_. VMware und echte Hardware: _offen_, nicht geprüft.
 
