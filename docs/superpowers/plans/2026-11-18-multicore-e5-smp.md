@@ -278,6 +278,6 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 `docs/COSMOS_SUPPORT.md` („Je Ausnahme bleiben Thread, 8-MiB-Stack … belegt“) berichtigen.
 
 - [ ] **Schritt 1:** Entwurfsnotiz (eine Seite) im PR gegen `cosmos`: Stelle des Aufräumens, Sperren, Reihenfolge gegenüber GC. Review durch einen zweiten Engineer senior, bevor Code entsteht.
-- [ ] **Schritt 2:** Patch, `PATCHES.md`-Zeile, Pakete bauen.
+- [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Pakete bauen.
 - [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Isolationsprobe mit `--runs 20`: freier Speicher sinkt nicht um 8 MiB je Lauf.
 - [ ] **Schritt 4:** ZehOS-PR wie in „Cosmos-Patches“ beschrieben.

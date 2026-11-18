@@ -279,7 +279,7 @@ Platte und Bildschirm.
 - Naheliegend: ein eigener IPI-Vektor oder ein NMI an alle anderen (`LocalApic`, Ziel „alle außer mir“), dessen Handler nur anhält; `CpuStop` ist dafür ungeeignet, weil es auf Bestätigungen wartet.
 
 - [ ] **Schritt 1:** Entwurfsnotiz, Review.
-- [ ] **Schritt 2:** Patch, `PATCHES.md`-Zeile `panic-stop-cpus`, Commit, PR gegen `cosmos`.
+- [ ] **Schritt 2:** Patch, Datei `patches/panic-stop-cpus.md`, Commit, PR gegen `cosmos`.
 - [ ] **Schritt 3: Gastprobe:** In `CosmosSmpProbe` ein Schalter `-p:ZehOSSmpProbePanic=true`: Ein Thread auf einer Worker-CPU schreibt alle 50 ms `SMP_PROBE tick <n>` seriell; nach 1 s löst der Hauptthread eine Panic aus (`#PF` im Probe-Thread wie in `CosmosIsolationProbe`, negativer Fall). `scripts/test-smp-probe.py --panic` erwartet: nach `System halted.` erscheint 2 s lang keine weitere `tick`-Zeile. Mit `ZEHOS_QEMU_SMP=4`, KVM und TCG, je fünf Läufe.
 - [ ] **Schritt 4:** ZehOS-PR mit `COMMIT`/`VERSION`, Doku in `docs/COSMOS_SUPPORT.md`.
 

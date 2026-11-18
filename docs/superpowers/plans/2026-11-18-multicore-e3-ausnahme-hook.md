@@ -52,7 +52,7 @@ Nicht Teil dieser Etappe: Stacks aufgegebener Threads freigeben (Paket E5-K) und
 - Ändern: `PublicAPI.Unshipped.txt`, `Experimentals.cs`, `docs/articles/dev/public-api.md` (neue Typen, `[Experimental("COSMOS0001")]`)
 - Ändern: `src/Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs` (neue interne Methode neben `ScheduleFromInterrupt`, `:1213`)
 - Ändern: `src/Cosmos.Kernel/Panic.cs:19-34` (`CpuException`)
-- Ändern: `PATCHES.md`
+- Anlegen: `patches/ausnahme-hook.md`
 
 **Schnittstellen (liefert):**
 
@@ -140,7 +140,7 @@ zweite an. Das ist die sichere Richtung.
 - [ ] **Schritt 2:** `CpuExceptionHook.cs` mit `CpuExceptionInfo` anlegen (`IRQContext` bleibt intern). Prüfen, ob der Cosmos-Baum eine API-Liste führt (`docs/articles/dev/public-api.md` nennt die Regeln; nach `PublicAPI` und nach Analyzer-Meldungen zum Ring suchen) und sie im selben Commit nachziehen.
 - [ ] **Schritt 3:** `TryAbandonCurrentFromInterrupt` und die Änderung an `Panic.CpuException` umsetzen.
 - [ ] **Schritt 4:** Pakete bauen: im ZehOS-Arbeitsbaum `scripts/build-cosmos.sh --commit <Commit des Patch-Branches>` (Schnittstelle aus E1-B). Erwartet: Pakete ohne Warnungen als Fehler im Feed.
-- [ ] **Schritt 5:** `PATCHES.md`: Zeile `ausnahme-hook | CPU/CpuExceptionHook.cs, PublicAPI.Unshipped.txt, Scheduler/SchedulerManager.cs, Cosmos.Kernel/Panic.cs | öffentlicher Hook statt Plug auf Panic | CosmosPanicHaltPlug, CosmosIrqContextStub, UnsafeAccessor ScheduleFromInterrupt/Halt | test-isolation-probe.py positiv, negativ, NMI`.
+- [ ] **Schritt 5:** `patches/ausnahme-hook.md` (Dateien: `CPU/CpuExceptionHook.cs`, `PublicAPI.Unshipped.txt`, `Scheduler/SchedulerManager.cs`, `Cosmos.Kernel/Panic.cs`; Grund: öffentlicher Hook statt Plug auf Panic; Umweg: `CosmosPanicHaltPlug`, `CosmosIrqContextStub`, `UnsafeAccessor` `ScheduleFromInterrupt`/`Halt`; Prüfung: `test-isolation-probe.py` positiv, negativ, NMI).
 - [ ] **Schritt 6:** Ein Commit (`patch: public CPU exception hook`), PR gegen `cosmos`. Der PR nennt E3-B als Prüfung und wird erst gemergt, wenn E3-B mit diesem Commit grün ist.
 
 ---
@@ -198,14 +198,14 @@ Endlosschleife am Ende von `OnHalt`.
 **Branch Cosmos:** `cosmos-patch/lint1-nmi` (PR gegen `cosmos`). **Branch ZehOS:** `task/mc-e3-c-lint1`.
 
 **Dateien:**
-- Cosmos ändern: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs:172-174`, `PATCHES.md`
+- Cosmos ändern: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs:172-174`, anlegen `patches/lint1-nmi.md`
 - ZehOS ändern: `deploy/cosmos/COMMIT`, `deploy/cosmos/VERSION`, `ProjektZeh/Runtime/CosmosIsolationProbe.cs:40-44` (Entmaskierung entfernen), `docs/COSMOS_SUPPORT.md` (Absatz zu LINT1 in „CPU-Ausnahmen im Wasm-Worker“)
 
 **Änderung in Cosmos:** In `LocalApic.Initialize` bleibt `LINT0` maskiert. `LINT1` wird mit Zustellart NMI
 eingerichtet: neue Konstante `private const uint LVT_DELIVERY_NMI = 0b100u << 8;` und `Write(LAPIC_LINT1, LVT_DELIVERY_NMI);`.
 Kommentar im Code (englisch, wie der Baum): LINT1 ist auf PCs die NMI-Leitung; maskiert verliert der Kernel NMIs still.
 
-- [ ] **Schritt 1:** Cosmos-Patch schreiben, `PATCHES.md`-Zeile `lint1-nmi | Core.X64/Cpu/LocalApic.cs | NMI erreicht den Kernel | Entmaskierung in CosmosIsolationProbe | test-isolation-probe.py --nmi`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 1:** Cosmos-Patch schreiben, Datei `patches/lint1-nmi.md` (Dateien: `Core.X64/Cpu/LocalApic.cs`; Grund: NMI erreicht den Kernel; Umweg: Entmaskierung in `CosmosIsolationProbe`; Prüfung: `test-isolation-probe.py --nmi`), ein Commit, PR gegen `cosmos`.
 - [ ] **Schritt 2:** In ZehOS `COMMIT`/`VERSION` setzen, Pakete bauen, die Entmaskierung aus der Probe entfernen.
 - [ ] **Schritt 3: Gastläufe (Clerk):** `python3 scripts/test-isolation-probe.py --iso <NMI-ISO> --accel kvm --nmi` → Halt nach `inject-nmi`; `python3 scripts/test-desktop-guest.py --iso <normales ISO> --accel tcg` und `--accel kvm` → Erfolg (kein unerwarteter NMI im Normalbetrieb); `powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-power-commands.ps1` → Erfolg.
 - [ ] **Schritt 4:** VMware: Boot bis Desktop mit `scripts/start-vmware.ps1`. Kann niemand prüfen: „offen“ im PR.
