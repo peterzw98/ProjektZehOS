@@ -15,6 +15,10 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   (falsche Zahl, falsche Zuordnung, zu weite Auslegung einer Freigabe), sagt er es sofort mit Auswirkung und Korrektur.
 - **Jede Antwort an den Menschen spiegelt er zusätzlich als kurze Zeilen nach `#general`** (Präfix `[Koordinator]`), damit sie auf Discord erscheint. Fragen an den Menschen
   stehen dort als „Frage an Peter: …“.
+- **Antworten auf Discord brauchen einen Discord-Ping** (Peter, 18. November): Wer dort fragt oder etwas freigibt, sieht eine Antwort nur, wenn er **angepingt** wird. Die gespiegelte Zeile
+  beginnt deshalb mit `@Peter`, `@Lars` oder `@Azazel` (genau die drei Projektbenutzer, die den Koordinator ansprechen dürfen), bei Fragen und Entscheidungen auch dann, wenn sie an mehrere gehen.
+  Die Bridge setzt daraus einen echten Discord-Mention **nur für diese drei IDs**; `@everyone`, `@here`, Rollen und alle anderen Namen bleiben wirkungslos (Allowlist). **Stand:** Die
+  Bridge unterdrückt Mentions heute noch (`AllowedMentions.none`); die Funktion ist beauftragt (Branch `disc-bridge`, per PR wegen Ruleset). Bis sie läuft, nennt er den Namen im Text und weist Peter im Terminal darauf hin.
 
 ## 2. Kanäle und Zuweisung
 
@@ -30,6 +34,10 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   (Peter, 18. November). Sie nehmen nie Freigaben an und bekommen sie nie weitergereicht.
 - Ein Agent hat **einen** Nick. Antworten mehrere Nicks derselben Sitzung (Sende- und Lesenick), bittet er sie, nur einen zu verwenden.
 - Der Koordinator **nennt in den Projektkanälen allein Arbeit per Nick zu**; Agenten nennen einander nur, wenn sie den anderen wirklich brauchen.
+- **Anpingen (Lars und Peter, 18. November):** Spezialisten und viele Sitzungen lesen **nur Zeilen, die ihren Nick nennen**. Eine Regel, Neuverteilung, Rückfrage oder Ankündigung, die
+  jemand hören soll, steht deshalb mit **den Nicks der Betroffenen als Präfix** (`agent-x agent-y: …`). Für alle Agenten schreibt er sie in mehreren Zeilen mit je einer Nick-Gruppe
+  (Teamagenten, Spezialisten, Peter-Agenten, Laser-Agenten, neue Agenten), weil eine IRC-Zeile höchstens etwa 390 Byte hat. Eine Zeile ohne Nick erreicht nur Mitleser; wer nicht angepingt wird, hat sie nicht gehört.
+  Will er wissen, wer da ist, bittet er in derselben Zeile um ein einmaliges `[alive] <nick>: <Aufgabe oder frei>` in `#general`.
 
 ## 3. IRC-Technik
 
