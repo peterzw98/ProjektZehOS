@@ -8,12 +8,11 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 **Änderung.** Die Policy steckt jetzt in `RoundRobinCore` (ohne Cosmos-Typen, hostgetestet); `CosmosRoundRobinScheduler` delegiert nur.
 
-- Die Scheibe beginnt bei der Auswahl (`Pick`), nicht beim Bereitwerden. Bei leerer Queue wählt Cosmos den Idle-Thread selbst; seine Scheibe beginnt dann ebenfalls in `Pick`.
-- Hat der Tick den Idle-Thread aus dem Parken geweckt, wird er verdrängt, sobald ein anderer Thread wartet. Rechnet die Hauptschleife dagegen (Zeichnen, Eingabe), gilt die normale Scheibe von 20 ms.
+- Die Scheibe beginnt bei der Auswahl (`Pick`), nicht beim Bereitwerden.
+- Der Idle-Thread wird im Tick verdrängt, sobald ein anderer Thread wartet, auch wenn die Hauptschleife gerade rechnet. Ob sie parkt, ist im Tick nicht erkennbar: Eine Zwischenfassung, die eine rechnende Hauptschleife ihre volle 20-ms-Scheibe behalten ließ, brachte unter KVM keinen Gewinn mehr.
 - Ein laufender Thread, den der Tick in die Queue gestellt hat, kommt ans Ende, damit der nächste Pick einen wartenden Thread wählt.
-- Der Boot-Thread entsteht ohne `OnThreadCreate`; der Scheduler gibt ihm eine eigene Scheibe.
 
-CPU-Anteile laut Hosttest bei dauernd rechnendem Worker: rechnende Hauptschleife 50 %, parkende Hauptschleife ein Tick je Runde (ein Drittel). Ein echtes Leerlaufverhalten bleibt: Ist die Queue leer, parkt der Idle-Thread weiter mit `Halt`.
+Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Runde, also ein Drittel der CPU (Hosttest). Ist die Queue leer, parkt der Idle-Thread weiter mit `Halt`; ein Leerlauf ohne App bleibt deshalb unverändert.
 
 ## Wasm-Hostrückrufe: Ausnahmeschutz (17. November 2026, #204)
 

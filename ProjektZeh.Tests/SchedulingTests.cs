@@ -94,20 +94,19 @@ public sealed class SchedulingTests
     }
 
     [TestMethod]
-    public void IdleComputing_KeepsFullSliceBeforeWaitingWorker()
+    public void IdleComputing_PreemptedAtFirstTickWhenWorkerWaits()
     {
-        // Die Hauptschleife zeichnet (nicht geweckt, nicht in der Queue): normale Scheibe statt sofortiger Verdraengung.
+        // Auch eine rechnende Hauptschleife (nicht geweckt, nicht in der Queue) gibt ab: Parken ist im Tick nicht erkennbar.
         var core = Core();
         var idle = new FakeThread("idle", idle: true);
         var worker = new FakeThread("worker");
         core.Ready(worker);
-        Assert.IsFalse(core.Tick(idle, 10));
         Assert.IsTrue(core.Tick(idle, 10));
         Assert.AreSame(worker, core.Pick());
     }
 
     [TestMethod]
-    public void BusyWorkerAndComputingMainLoop_ShareCpuEvenly()
+    public void BusyWorkerAndComputingMainLoop_MainLoopGetsOneTickPerRound()
     {
         // Cosmos-Ablauf je Tick: Tick; bei Verdraengung OnThreadYield (Ready) des bisherigen Threads, dann PickNext ?? Idle.
         var core = Core();
@@ -123,7 +122,8 @@ public sealed class SchedulingTests
             core.Ready(current);
             current = core.Pick() ?? idle;
         }
-        Assert.AreEqual(6, idleTicks);
+        // Ein Tick Hauptschleife je zwei Ticks Worker: ein Drittel der CPU fuer Desktop und Eingabe unter Dauerlast.
+        Assert.AreEqual(4, idleTicks);
     }
 
     [TestMethod]

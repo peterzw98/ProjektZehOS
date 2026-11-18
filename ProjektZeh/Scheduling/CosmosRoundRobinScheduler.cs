@@ -11,13 +11,10 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     private int traceNext;
     private int traceCount;
     private ulong preemptions;
-    // Der Boot-Thread (Idle-Thread, unsere Hauptschleife) entsteht ohne OnThreadCreate und haette sonst keine Scheibe.
-    private readonly SchedulerTimeSlice idleSlice = new(QuantumNs);
     public string Name => "ZehOS RoundRobin";
 
     public void InitializeCpu(PerCpuState state) => state.SchedulerData =
-        new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount,
-            thread => thread.SchedulerData as SchedulerTimeSlice ?? (thread.IsIdle ? idleSlice : null), thread => thread.IsIdle);
+        new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount, thread => thread.SchedulerData as SchedulerTimeSlice, thread => thread.IsIdle);
     public void ShutdownCpu(PerCpuState state) => state.SchedulerData = null;
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) => thread.SchedulerData = new SchedulerTimeSlice(QuantumNs);
     public void OnThreadReady(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Ready(thread);

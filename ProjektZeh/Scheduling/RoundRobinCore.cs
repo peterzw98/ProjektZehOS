@@ -10,12 +10,13 @@ namespace ProjektZeh.Scheduling;
 /// Grund (18.11.2026, ClassiCube-Bursts): Unsere Hauptschleife ist in Cosmos der Idle-Thread. Cosmos parkt ihn in
 /// Thread.Sleep nur mit Halt, ohne die CPU abzugeben, und weckt ihn im naechsten Timer-Tick wieder (CheckSleepingThreads
 /// vor OnTick). Fuellte das Wecken seine Scheibe neu, lief sie nie ab, und ein bereiter Wasm-Worker wartete bis zu ~100 ms.
+/// Der Idle-Thread wird deshalb im Tick immer verdraengt, sobald ein anderer wartet. Eine Ausnahme fuer eine rechnende
+/// Hauptschleife (volle Scheibe) brachte unter KVM keinen Gewinn mehr: Ob sie gerade parkt, ist im Tick nicht erkennbar.
+/// Unter Dauerlast bekommt die Hauptschleife so einen Tick je Runde (ein Drittel der CPU).
 /// </remarks>
 internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice?> sliceOf, Func<T, bool> isIdle) where T : class
 {
     private readonly RoundRobinQueue<T> queue = new(capacity);
-    // Bei leerer Queue waehlt Cosmos den Idle-Thread selbst (PickNext ?? IdleThread); seine Scheibe beginnt dann in Pick.
-    private T? idle;
 
     public int Count => queue.Count;
     public T? At(int index) => queue.At(index);
@@ -26,8 +27,7 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
     public T? Pick()
     {
         T? next = queue.Take();
-        T? starting = next ?? idle;
-        if (starting != null) sliceOf(starting)?.Reset();
+        if (next != null) sliceOf(next)?.Reset();
         return next;
     }
 
@@ -37,12 +37,9 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
         // Der laufende Thread kann selbst in der Queue stehen, wenn der Tick ihn geweckt hat, ohne dass er gewechselt hat.
         bool queued = queue.Contains(current);
         int waiting = queue.Count - (queued ? 1 : 0);
-        bool currentIsIdle = isIdle(current);
-        if (currentIsIdle) idle = current;
-        if (currentIsIdle && queued)
+        if (isIdle(current))
         {
-            // Vom Tick geweckt: der Idle-Thread hat geparkt (Halt statt Wechsel). Wartet ein anderer, gehoert ihm die CPU
-            // sofort. Rechnet die Hauptschleife dagegen (nicht geweckt), gilt die normale Scheibe wie fuer jeden Thread.
+            // Der Idle-Thread gibt die CPU beim Parken nicht ab; wartet ein anderer, gehoert sie diesem ab diesem Tick.
             if (waiting == 0) return false;
         }
         else
