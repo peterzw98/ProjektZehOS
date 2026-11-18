@@ -222,6 +222,7 @@ def run_g6_basic(args, work: Path) -> None:
             process.wait(timeout=30)
 
 
+CDROM_FIRST = ["-global", "ide-cd.bootindex=0"]
 HEALTHY_DESKTOP = ("GPT_TEST IDENTITY Healthy SETUP True", "Desktop ist bereit.")
 
 
@@ -230,6 +231,9 @@ def boot_installed(args, case: Path, disks: list[Path], expected: tuple[str, ...
     """Startet von disks[0] (OVMF, -boot c), wartet auf alle erwarteten Zeilen und liefert den Laufordner."""
     run = storage.new_work_dir(case / "boot-installed")
     machine = list(storage.MACHINE_BASE)
+    if CDROM_FIRST[1] in machine:
+        index = machine.index(CDROM_FIRST[1])
+        del machine[index - 1:index + 1]
     machine[machine.index("-boot") + 1] = "c"
     for port, disk in enumerate(disks):
         # OVMF beachtet -boot c nicht; ohne bootindex startet es das immer angehaengte Installer-ISO statt der Platte.
@@ -714,6 +718,8 @@ def main() -> int:
         shutil.copyfileobj(src, dst)
     storage.MACHINE_BASE += ["-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code.resolve()}",
                              "-drive", f"if=pflash,format=raw,file={vars_copy.resolve()}"]
+    # OVMF startet sonst eine angehaengte Platte mit ESP (installiertes System) vor dem ISO; boot_installed nimmt das zurueck.
+    storage.MACHINE_BASE += CDROM_FIRST
     args.iso_recovery = args.iso
     if args.run_g6_basic:
         run_g6_basic(args, work)
