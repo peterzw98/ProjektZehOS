@@ -1195,6 +1195,45 @@ public static class SchedulerManager
         ScheduleFromInterrupt(cpuId, currentRsp);
     }
 
+    // ZehOS patch ausnahme-hook, see PATCHES.md
+    /// <summary>
+    /// Switches away from the current thread from a CPU exception handler,
+    /// for <see cref="CPU.CpuExceptionAction.AbandonThread"/>. The thread is
+    /// never resumed: <paramref name="currentRsp"/> only has to lie on its
+    /// stack. Keeping it off the run queues is the installed scheduler's job.
+    /// </summary>
+    /// <remarks>
+    /// Same constraints as <see cref="ScheduleFromInterrupt"/>: interrupts
+    /// masked, nothing may throw or allocate.
+    /// </remarks>
+    /// <param name="currentRsp">A stack address of the faulting thread.</param>
+    /// <returns>
+    /// True when a switch to another thread is staged for the interrupt exit.
+    /// False when none could be staged (scheduler not running, no current
+    /// thread, a switch already pending, or nothing else to run): the caller
+    /// must halt, because returning would resume the faulting code.
+    /// </returns>
+    internal static bool TryAbandonCurrentFromInterrupt(nuint currentRsp)
+    {
+        uint cpuId = GetCurrentCpuId();
+        if (!s_enabled || s_cpuStates is null || s_currentScheduler is null || cpuId >= s_cpuCount
+            || s_cpuStates[cpuId].CurrentThread is null)
+        {
+            return false;
+        }
+
+        // A switch staged before the fault means the fault hit the interrupt
+        // path itself, not thread code; the staged target says nothing about
+        // whether the faulting thread can be left.
+        if (ContextSwitchNative.GetContextSwitchSp() != 0)
+        {
+            return false;
+        }
+
+        ScheduleFromInterrupt(cpuId, currentRsp);
+        return ContextSwitchNative.GetContextSwitchSp() != 0;
+    }
+
     /// <summary>
     /// Performs scheduling from within an interrupt context.
     /// Picks next thread and sets up context switch if needed.
