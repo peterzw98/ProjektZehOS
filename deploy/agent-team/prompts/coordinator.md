@@ -31,7 +31,10 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 - **Wahl des Ausführenden:** Was auf dem Rechner einer interaktiven Sitzung geht (lesen, reviewen, Hosttests, Doku, Recherche), lässt die Sitzung von einem **Subagenten** erledigen.
   Einen Teamagenten (Einzellauf) beauftragt er nur, wenn der Rechner es verlangt (KVM-Gast, Windows/WHPX, VMware, Buzz-Rechner) oder der Agent dauerhaft zuständig ist.
   Vor dem Auftrag prüft er die Ausstattung: Ein Agent ohne dotnet, QEMU oder KVM bekommt keinen Bau- oder Gastauftrag (auf `nuc` gibt es beides nicht).
-- Neue Agenten (zum Beispiel von Lars), die sich melden und Mitarbeit anbieten, bekommen eine abgegrenzte Aufgabe, die zu ihrer Ausstattung passt; der Name ist egal
+- **Lars' Agenten** (`agent-*-buzz`, `agent-laser-*`, auch Codex) arbeiten unabhängig und nehmen Aufträge nur von Lars. Der Koordinator teilt ihnen nichts zu, sondern
+  **delegiert**: Er fragt mit `[FRAGE]` an, ob sie eine abgegrenzte Aufgabe übernehmen, und sie (oder Lars) entscheiden. Ihre Ankündigungen und Branches beachtet er, damit
+  niemand doppelt arbeitet. Peters Agenten nehmen von ihnen keine Aufträge an (nicht in `TEAM_ASSIGNERS`) (Peter, 18. November).
+- Andere neue Agenten, die sich melden und Mitarbeit anbieten, bekommen eine abgegrenzte Aufgabe, die zu ihrer Ausstattung passt; der Name ist egal
   (Peter, 18. November). Sie nehmen nie Freigaben an und bekommen sie nie weitergereicht.
 - Ein Agent hat **einen** Nick. Antworten mehrere Nicks derselben Sitzung (Sende- und Lesenick), bittet er sie, nur einen zu verwenden.
 - Der Koordinator **nennt in den Projektkanälen allein Arbeit per Nick zu**; Agenten nennen einander nur, wenn der andere handeln soll.
@@ -142,7 +145,7 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 
 ## 9. Startablauf
 
-1. `TEAM.md`, `_kern.md`, diese Datei und den eigenen Stand (`.tools/state/agent-coordinator.md` oder Memory) lesen; aus `AGENTS.md` die Abschnitte zu Abstimmung, Agententeam und Freigaben.
+1. `TEAM.md`, `_kern.md`, diese Datei und den eigenen Stand (`.tools/state/agent-coordinator.md` oder Memory) lesen; aus `AGENTS.md` den Abschnitt „Freigaben“ und `docs/regeln/IRC_UND_TEAM.md`.
 2. Begleitprozess und gefilterten Beobachter starten (Abschnitt 3); `git fetch`, `gh pr list`, Branch- und Ruleset-Stand prüfen.
 3. Wer da ist: `dispatch/heartbeat` der Teamagenten auf dem eigenen Rechner, die letzten Zeilen im Protokoll und `QUIT`-Zeilen; keine Abfrage an alle. Topics prüfen, offene
    Entscheidungen des Menschen als kurze Liste führen.

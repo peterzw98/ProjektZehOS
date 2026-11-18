@@ -1,6 +1,6 @@
 # Betriebsanleitung für das ZehOS-Agententeam
 
-Gilt für alle Teamagenten, die `start-agent.sh` startet (auf `nuc` oder einem anderen Rechner). Die Projektregeln stehen in `ProjektZehOS/AGENTS.md`, besonders in den Abschnitten „Abstimmung zwischen Agenten (IRC)“ und „Agententeam“; das Verhalten je Rolle in `prompts/`. Diese Datei beschreibt die Werkzeuge und den Betrieb.
+Gilt für alle Teamagenten, die `start-agent.sh` startet (auf `nuc` oder einem anderen Rechner). Die Projektregeln stehen in `ProjektZehOS/AGENTS.md`, besonders im Abschnitt „Freigaben“, die Team- und IRC-Regeln in `docs/regeln/IRC_UND_TEAM.md`; das Verhalten je Rolle in `prompts/`. Diese Datei beschreibt die Werkzeuge und den Betrieb.
 
 ## Aufbau
 
@@ -37,18 +37,19 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
 - **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
   (höchstens N Läufe je Tag und Rechner).
-- **Peters Team** (Rechner `MSI`, Liste `agents-peter.tsv`: Engineer, Senior mit KVM, Reviewer):
-
-  ```sh
-  cd ~/zehos/deploy/agent-team
-  AGENTS_FILE=$PWD/agents-peter.tsv PROJECT_COORDINATOR_BASE=$HOME/zehos-team IRCKEY_FILE=$HOME/zehos/.tools/IRCKEY \
-    CLONE_REFERENCE=$HOME/zehos PATH_PREFIX=$HOME/.dotnet DISPATCH_PARALLEL=2 \
-    TEAM_ASSIGNERS=agent-coordinator,<Nicks der Leads> DISPATCH_ALLOW=agent-coordinator,<Nicks der Leads> \
-    bash start-agent.sh --all >start.out 2>&1
-  ```
-
-  Die Leads (auch auf dem Windows-Laptop) bleiben interaktive Sitzungen; sie geben Arbeit per `[AUFTRAG]` an diese Agenten und erledigen Reviews und Recherche auf ihrem Rechner mit Subagenten.
-  `dispatcher.py` läuft nur unter Linux (`fcntl`, `/proc`, Prozessgruppen); auf Windows nur in WSL.
+- **Peters Team** (Rechner `MSI`): drei Agenten aus `agents-peter.tsv` (Engineer Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
+  1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
+     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe, Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
+  2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
+     vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
+  - **Lars' Agenten** (Buzz, Laser, Codex) arbeiten unabhängig und sind nicht Teil dieses Teams: Peters Agenten nehmen von ihnen keine Aufträge an; Arbeit für sie wird nur
+    per `[FRAGE]` angefragt (delegiert), sie oder Lars entscheiden.
+  - **Feste Nicks der Leads:** Nur diese dürfen Aufträge geben und Läufe starten: `agent-coordinator`, `agent-peter-lead`, `agent-nweh-lead1`, `agent-nweh-lead2`
+    (`TEAM_ASSIGNERS` in `start-peter-team.sh`). Ein Lead mit anderem Nick wird von den Agenten nicht beachtet.
+  - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`
+    (Pfad des Haupt-Arbeitsbaums anpassen). Cron kennt nur `PATH=/usr/bin:/bin`: Liegt `claude` woanders, `PATH_PREFIX=…` vor den Befehl setzen.
+  - Eine Lead-Sitzung endet mit dem Schließen von Claude; `start-lead.sh` meldet den Bot dann mit `QUIT` ab. Ihr IRC-Protokoll liegt in `.tools/irc-<nick>/` des Haupt-Arbeitsbaums.
+  - `dispatcher.py`, `teambot.py` und die Skripte laufen nur unter Linux (FIFOs, `fcntl`, `/proc`); Leads auf dem Windows-Laptop brauchen WSL.
 - **Kontingent:** Jeder Lauf zählt in `<basis>/.dispatch-slots/quota-claude.json`; diese Datei teilen alle Dienste des Rechners.
   Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst Claude für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
   einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten. Als Limitmeldung gilt
