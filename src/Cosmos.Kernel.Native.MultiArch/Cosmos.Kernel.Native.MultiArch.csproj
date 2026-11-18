@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <PackageId>Cosmos.Kernel.Native.MultiArch</PackageId>
+    <Title>Cosmos Kernel Multi-Arch Native C</Title>
+    <Description>Shared native C sources for Cosmos kernel (x64 and arm64).</Description>
+    <PackageTags>cosmos;kernel;native;c;multiarch</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="build\Cosmos.Kernel.Native.MultiArch.props" PackagePath="build\" />
+    <Content Include="C\*.c" PackagePath="build\C" />
+    <Content Include="ACPI\*.c" PackagePath="build\ACPI" />
+    <Content Include="ACPI\uacpi\source\*.c" PackagePath="build\ACPI\uacpi\source" />
+    <Content Include="ACPI\uacpi\include\**\*.h" PackagePath="build\ACPI\uacpi\include" />
+    <Content Include="ACPI\uacpi\LICENSE" PackagePath="build\ACPI\uacpi" />
+  </ItemGroup>
+</Project>

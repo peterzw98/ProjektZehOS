@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Multi-arch package: built for both x64 and arm64 -->
+    <IsMultiArchPackage>true</IsMultiArchPackage>
+    <!-- Unsafe code is contained in Cosmos.Kernel.Core. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+
+    <!-- Public surface tracked in PublicAPI.Shipped/Unshipped.txt (see Directory.Build.props) -->
+    <CosmosTrackPublicApi>true</CosmosTrackPublicApi>
+
+    <!-- SchedulerDiagnostics fronts the experimental scheduler seam (COSMOS0001). -->
+    <!-- COSMOS0002: this assembly declares the experimental packet seam and consumes it itself. -->
+    <NoWarn>$(NoWarn);COSMOS0001;COSMOS0002;COSMOS0003</NoWarn>
+
+    <!-- Package Metadata -->
+    <PackageId>Cosmos.Kernel.System</PackageId>
+    <Title>Cosmos Kernel System</Title>
+    <Description>System utilities for Cosmos kernel development including keyboard, network, timer, and conversion utilities.</Description>
+    <PackageTags>cosmos;kernel;system;utilities;keyboard;network;timer;conversion</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cosmos.Kernel.Core\Cosmos.Kernel.Core.csproj" PrivateAssets="none" />
+    <ProjectReference Include="..\Cosmos.Kernel.HAL\Cosmos.Kernel.HAL.csproj" PrivateAssets="none" />
+    <ProjectReference Include="..\Cosmos.Build.Analyzer.Patcher\Cosmos.Build.Analyzer.Patcher.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Graphics\Fonts\DefaultFont.psf" />
+  </ItemGroup>
+
+  <!--
+    Generate the C# version constant for Cosmos.Kernel.System.Kernel from
+    $(VersionPrefix). Becomes a partial of the public abstract Kernel base
+    class so user kernels read the version via Kernel.VersionString.
+  -->
+  <Target Name="GenerateKernelVersionCs"
+          BeforeTargets="CoreCompile"
+          Inputs="$(MSBuildProjectFullPath)"
+          Outputs="$(IntermediateOutputPath)KernelVersion.g.cs">
+    <PropertyGroup>
+      <_KernelVersionCsFile>$(IntermediateOutputPath)KernelVersion.g.cs</_KernelVersionCsFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_KernelVersionCsLine Include="// &lt;auto-generated/&gt;" />
+      <_KernelVersionCsLine Include="namespace Cosmos.Kernel.System%3B" />
+      <_KernelVersionCsLine Include="public abstract partial class Kernel" />
+      <_KernelVersionCsLine Include="{" />
+      <_KernelVersionCsLine Include="    /// &lt;summary&gt;The version of the Cosmos packages this kernel was built against.&lt;/summary&gt;" />
+      <_KernelVersionCsLine Include="    public const string VersionString = &quot;$(VersionPrefix)&quot;%3B" />
+      <_KernelVersionCsLine Include="}" />
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteLinesToFile File="$(_KernelVersionCsFile)"
+                      Lines="@(_KernelVersionCsLine)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_KernelVersionCsFile)" />
+      <FileWrites Include="$(_KernelVersionCsFile)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Multi-arch packaging support -->
+  <Import Project="../Directory.MultiArch.targets" />
+
+  <ItemGroup>
+    <!-- makes internal members visible to target project - unit tests -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Cosmos.Kernel.Tests.System</_Parameter1>
+    </AssemblyAttribute>
+    <!-- Plugs patch BCL entry points (Console, Sockets) onto the stack's
+         internals; those internals are framework plumbing, not user API. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Cosmos.Kernel.Plugs</_Parameter1>
+    </AssemblyAttribute>
+    <!-- White-box network tests observe the stack's ICMP echo counters and
+         the packet handler it attached to the internal INetworkDevice. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Cosmos.Kernel.Tests.Network</_Parameter1>
+    </AssemblyAttribute>
+    <!-- White-box FAT layout tests forge and corrupt raw directory bytes. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Cosmos.Kernel.Tests.Fat</_Parameter1>
+    </AssemblyAttribute>
+    <!-- White-box audio tests count the buffer completions the primary output
+         reported from its interrupt and read the formats its contract lists. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Cosmos.Kernel.Tests.Audio</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

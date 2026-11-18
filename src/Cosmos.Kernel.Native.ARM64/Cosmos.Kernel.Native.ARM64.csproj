@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- Package Metadata -->
+    <PackageId>Cosmos.Kernel.Native.ARM64</PackageId>
+    <Title>Cosmos Kernel ARM64 Native Assembly</Title>
+    <Description>ARM64/AArch64 native assembly routines for Cosmos kernel development including memory operations, barriers, and interrupt management.</Description>
+    <PackageTags>cosmos;kernel;arm64;aarch64;assembly;native;asm;memory;barriers</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="build\Cosmos.Kernel.Native.ARM64.props" PackagePath="build\" />
+    <Content Include="IO\*.s" PackagePath="build\IO" />
+    <Content Include="Debug\*.s" PackagePath="build\Debug" />
+    <Content Include="CPU\*.s" PackagePath="build\CPU" />
+    <Content Include="CPU\Gic\*.s" PackagePath="build\CPU\Gic" />
+    <Content Include="Runtime\*.s" PackagePath="build\Runtime" />
+    <Content Include="Memory\*.s" PackagePath="build\Memory" />
+    <Content Include="Devices\*.s" PackagePath="build\Devices" />
+  </ItemGroup>
+</Project>

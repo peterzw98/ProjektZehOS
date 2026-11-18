@@ -1,0 +1,402 @@
+{
+  // Global QEMU profile catalog. Two orthogonal axes:
+  //   * profiles: a hardware "shape": the disks, NIC ("nic"), input
+  //     devices ("keyboard"/"mouse"), VGA adapter ("vga", a -vga backend
+  //     name that REPLACES the architecture default rather than adding a
+  //     second adapter) and display device ("gpu", a -device model ADDED
+  //     alongside that default) attached. An optional "architectures" filter
+  //     pins a profile to the arch that can present that hardware; a suite
+  //     listing per-arch profiles runs the matching one on each.
+  //     Three optional fields pick the USB host controller the usb disks,
+  //     the usb-kbd and the usb-mouse sit on. "usbController" is "xhci"
+  //     (the default, qemu-xhci), "ehci" (usb-ehci alone), "ohci" (pci-ohci
+  //     alone, six root ports) or "ehci-ohci" (an ICH9 EHCI with a pci-ohci
+  //     companion over its six ports, which takes the full-speed devices).
+  //     "usbDeviceVersion" (1, or the default 2) is the USB version QEMU's
+  //     usb-kbd and usb-mouse present: 1 leaves them the full-speed
+  //     descriptor set alone, the shape an EHCI hands to its companion.
+  //     "usbHub" (false by default) puts a usb-hub on root port 1 with the
+  //     keyboard behind it on the hub's port 1; the hub is full speed only,
+  //     so it needs ohci or ehci-ohci. On the EHCI and OHCI models the
+  //     launcher pins each device to a root port (keyboard 1, mouse 2,
+  //     sticks from 3): QEMU fills their ports in command-line order and
+  //     inserts a hub of its own on the last free one, and the engine's
+  //     replug puts a device back on the port it left.
+  //   * modifiers: generic knobs that compose with a profile. Two flavors:
+  //       - deviceOptions: per-disk-kind overrides (msix tuning, cache mode)
+  //       - machineOptions: -M property overrides (gic-version, ...)
+  //     plus an optional architectures filter so arch-specific knobs (GIC) are
+  //     silently skipped on the wrong arch.
+  //
+  // A modifier with only deviceOptions is gated on at least one matching disk
+  // kind in the profile; a modifier with machineOptions applies regardless of
+  // what's attached. A suite opts in via <CosmosTestProfile/> and
+  // <CosmosTestModifier/> items; test names are prefixed [profile] or
+  // [profile+modifier].
+  "profiles": [
+    {
+      // No devices attached beyond the machine's own: on x64 q35's 8042
+      // with its PS/2 keyboard and mouse, which the Drivers suite's PS/2
+      // group drives through the engine's key-press and mouse requests. A
+      // base for non-storage suites (e.g. Interrupts) that only want machine
+      // modifiers like gic-version composed onto them.
+      "name": "bare"
+    },
+    {
+      // One disk on an ich9-ahci controller the engine adds to the machine.
+      // The kit's AhciDriver binds the controller, publishes the disk
+      // as sata0 and the storage manager registers and scans it inside the
+      // probe ("[StorageManager] sata0 registered by AhciDriver (primary)").
+      // The cell proves the polled SATA command path, one page per command,
+      // under the block-device, partition and reboot assertions, and that
+      // the disk shows in DriverDiagnostics as a consumed block device.
+      "name": "ahci",
+      "disks": [
+        { "type": "ahci" }
+      ]
+    },
+    {
+      // One NVMe controller with one namespace. The kit's NvmeDriver binds
+      // it, publishes the namespace as nvme0n1 and the storage manager
+      // registers and scans it inside the probe. The cell proves the NVMe
+      // queue path under the same assertions, in interrupt mode where the
+      // platform routes message 1 (x64, arm64 with gicv3) and polled where
+      // it cannot (gicv2), which Profile_NvmeInterruptModeMatches pins, and
+      // on x64 the 64-bit BAR relocation probes.
+      "name": "nvme",
+      "disks": [
+        { "type": "nvme" }
+      ]
+    },
+    {
+      // A USB stick: usb-storage (SCSI over the Bulk-Only Transport) on a
+      // qemu-xhci controller, which attaches it at SuperSpeed. The kit's
+      // XhciDriver binds the controller, its bus publishes the stick's mass
+      // storage interface as usb:1-1:0, UsbMassStorageDriver binds it and
+      // publishes the disk as usb0, and the storage manager registers and
+      // scans it inside the probe. Covers the xHCI bulk endpoints, the mass
+      // storage class driver and USB hot-plug (the UsbHotPlug_* tests pull
+      // the stick out and back in) under the same block-device assertions
+      // as the ahci and nvme cells.
+      "name": "usb",
+      "disks": [
+        { "type": "usb" }
+      ]
+    },
+    {
+      // The same stick on a usb-ehci controller alone, attached at high
+      // speed on root port 3 (the launcher's port plan keeps 1 and 2 for a
+      // keyboard and a mouse), so its node is usb:1-3:0. The kit's
+      // EhciDriver binds the controller and UsbMassStorageDriver runs the
+      // Bulk-Only Transport over the EHCI's async schedule: 20 KiB qTDs
+      // through the bounce page, the CBW in one 31-byte packet, the
+      // device's asynchronous completions. The UsbHotPlug_* tests pull the
+      // stick out and put it back on the same port. No NIC: the EHCI is an
+      // INTx-only function and with QEMU's default e1000e on the bus
+      // SeaBIOS routes its INTD# to the line the NIC's driver claims first,
+      // which would leave the EHCI polling and its handler untested; without
+      // the NIC the line is free (the AHCI polls).
+      "name": "usb-ehci",
+      "nic": "none",
+      "usbController": "ehci",
+      "disks": [
+        { "type": "usb" }
+      ]
+    },
+    {
+      // The same stick on a pci-ohci controller alone, attached at full
+      // speed (12 Mb/s, 64-byte bulk packets) on root port 3, node
+      // usb:1-3:0: the slowest disk the suite runs on. OhciDriver runs the
+      // Bulk-Only Transport over its bulk list, one 8 KiB TD per wait,
+      // under the same block-device, partition and reboot assertions as the
+      // other cells, and the UsbHotPlug_* tests pull the stick out and put
+      // it back on the same port. No NIC, for the OHCI's INTA# as above.
+      "name": "usb-ohci",
+      "nic": "none",
+      "usbController": "ohci",
+      "disks": [
+        { "type": "usb" }
+      ]
+    },
+    {
+      // A virtio-blk disk: a virtio-blk-pci function the kit's PCI
+      // transport binds (transitional 1af4:1001 on the root bus,
+      // modern-only 1af4:1042 behind a PCI Express root port);
+      // VirtioBlkDriver binds the virtio node beneath and publishes the
+      // disk as vblk0, and the storage manager registers and scans it
+      // inside the probe. The disk sits behind a PCI Express root port of
+      // its own (rp0): cold-plugged at boot behind the port, pulled and
+      // replugged by the Storage and Drivers suites' PciHotPlug and
+      // Pci_HotPlug tests through the engine's pci-unplug and pci-plug
+      // requests; on q35 the launcher turns the port to native hot-plug
+      // with the ICH9-LPC global. The driver was written in the Drivers
+      // suite's library over the public seam and promoted unchanged, so
+      // this cell is the standing proof that a third party's block driver
+      // runs the same block-device, partition and reboot assertions as the
+      // shipped ones. No machineOptions: the GIC version is the modifiers'
+      // business, so the arm64 cells cover the polled path (default GICv2,
+      // no ITS) and the message interrupt path (gicv3) both.
+      "name": "virtio-blk-pci",
+      "architectures": ["x64", "arm64"],
+      "disks": [
+        { "type": "virtio-blk", "hotplug": true }
+      ]
+    },
+    {
+      // The same disk as a virtio-blk-device in the virt machine's
+      // virtio-mmio window, bound through the MMIO transport on the GIC
+      // line the machine description routes: the legacy virtio interface
+      // and the one block cell that needs no PCI at all.
+      "name": "virtio-blk-mmio",
+      "architectures": ["arm64"],
+      "disks": [
+        { "type": "virtio-blk-mmio" }
+      ]
+    },
+    {
+      // A USB keyboard (usb-kbd) on a qemu-xhci controller, plugged in at
+      // boot. The kit's XhciDriver binds the controller and publishes the
+      // keyboard's HID interface as a usb: node, which UsbKeyboardDriver
+      // binds after the Drivers suite's UsbDeclineDriver opened its pipe
+      // and declined. The suite then unplugs and replugs it through the
+      // engine's usb-kbd-unplug and usb-kbd-plug host requests. The
+      // keyboard is a USB 2 device: QEMU's xHCI numbers its USB 3 ports
+      // 1 to 4 and its USB 2 ports 5 to 8, so the node is usb:1-5:0.
+      "name": "usb-kbd",
+      "keyboard": "usb-kbd"
+    },
+    {
+      // A USB mouse (usb-mouse) on a qemu-xhci controller, plugged in at
+      // boot. The kit's XhciDriver binds the controller and publishes the
+      // mouse's HID interface as a usb: node, which UsbMouseDriver binds.
+      // QEMU hands the engine's mouse-move and mouse-button events to the
+      // USB mouse once its driver polls it, ahead of q35's PS/2 mouse, so
+      // the Drivers suite reads them from the USB mouse here. A USB 2
+      // device too, so the node is usb:1-5:0.
+      "name": "usb-mouse",
+      "mouse": "usb-mouse"
+    },
+    {
+      // A USB keyboard (usb-kbd) on a usb-ehci controller alone, plugged in
+      // at boot on root port 1. The kit's EhciDriver binds the controller,
+      // enumerates the high-speed keyboard through its async schedule and
+      // publishes its HID interface as usb:1-1:0 (an EHCI numbers its ports
+      // from 1, with no USB 3 block ahead of them), which UsbKeyboardDriver
+      // binds after the Drivers suite's UsbDeclineDriver opened its pipe
+      // and declined. The cell proves the EHCI's control pipe, the LED
+      // write, the interrupt pipe (the key the engine types lands through
+      // the periodic schedule's dummy-qTD re-queue) and the unplug and
+      // replug the engine performs over QMP, which put the keyboard back
+      // on port 1. No NIC: the EHCI is an INTx-only function and with
+      // QEMU's default e1000e on the bus SeaBIOS routes its INTD# to the
+      // line the NIC's driver claims first, so the controller would poll
+      // and its handler would go untested; without the NIC the line is
+      // free (the AHCI polls) and Usb_EhciHost_Bound asserts the handler
+      // path on x64. ARM64 routes no legacy line, so the EHCI polls there.
+      "name": "usb-kbd-ehci",
+      "nic": "none",
+      "usbController": "ehci",
+      "keyboard": "usb-kbd"
+    },
+    {
+      // The same keyboard on a pci-ohci controller alone, where every
+      // device is full speed: OhciDriver enumerates it through its control
+      // list and polls its report endpoint through the periodic tree, and
+      // the key the engine types lands through the done-queue re-queue. The
+      // node is usb:1-1:0, as on the EHCI. No NIC for the same reason: on
+      // q35 the OHCI's INTA# shares the default NIC's line, and the cell
+      // proves the OHCI's handler path.
+      "name": "usb-kbd-ohci",
+      "nic": "none",
+      "usbController": "ohci",
+      "keyboard": "usb-kbd"
+    },
+    {
+      // An ICH9 EHCI with a pci-ohci companion over its six ports, and a
+      // usb_version=1 keyboard: a device with the full-speed descriptor set
+      // alone. The EHCI binds first (bus 1), resets the port, finds it not
+      // enabled (no high-speed handshake) and releases it to the companion
+      // (CompanionPortsReleased); the OHCI binds second (bus 2) and
+      // enumerates the keyboard, so its node is usb:2-1:0 under the OHCI's
+      // function node, the EHCI's bus stays empty and the keyboard group
+      // runs on the OHCI. The one cell with two host controllers and the
+      // only reachable companion hand-off: QEMU's standalone usb-ehci
+      // refuses a full-speed device outright. No NIC: both functions are
+      // INTx-only and the cell proves both handler paths.
+      "name": "usb-kbd-ehci-ohci",
+      "nic": "none",
+      "usbController": "ehci-ohci",
+      "usbDeviceVersion": 1,
+      "keyboard": "usb-kbd"
+    },
+    {
+      // A usb-hub on root port 1 of a pci-ohci controller with the keyboard
+      // behind it on the hub's port 1. UsbHubDriver binds the hub's
+      // interface node (usb:1-1:0), has the OHCI configure it as a hub
+      // (ConfigureAsHubCore) and enumerates the keyboard on the hub's port,
+      // publishing its node (usb:1-1.1:0) under the hub's. The cell proves
+      // hub-port enumeration on the full-speed host, which no xHCI cell
+      // covers (QEMU's hub is full speed only and cannot sit on an EHCI
+      // root port either), with the unplug and replug putting the keyboard
+      // back behind the hub. No NIC, as on the other OHCI cells.
+      "name": "usb-kbd-ohci-hub",
+      "nic": "none",
+      "usbController": "ohci",
+      "usbHub": true,
+      "keyboard": "usb-kbd"
+    },
+    {
+      // Intel E1000E NIC, the historical x64 default, kept as an explicit
+      // cell so the driver keeps its coverage now that the NIC is a choice.
+      "name": "e1000e",
+      "architectures": ["x64"],
+      "nic": "e1000e"
+    },
+    {
+      // virtio-net over PCI, NIC only: the data-path cell for the network
+      // suite. One shape on both arches; only the MSI backend differs
+      // underneath (LAPIC on x64, GICv3 ITS on arm64).
+      "name": "virtio-net-pci",
+      "architectures": ["x64", "arm64"],
+      "machineOptions": { "arm64": { "gic-version": "3" } },
+      "nic": "virtio-net-pci"
+    },
+    {
+      // virtio-net over MMIO, what the arm64 virt machine presents, and
+      // what the suite ran with before NICs became a profile axis.
+      "name": "virtio-net-mmio",
+      "architectures": ["arm64"],
+      "nic": "virtio-net-device"
+    },
+    {
+      // VMware SVGA II adapter in place of the default stdvga: the
+      // VmwareSvgaDriver cell. The driver binds the adapter and publishes
+      // its own display, and the firmware display Limine set up on the same
+      // adapter is retired ("firmware display "framebuffer" retired: inside
+      // pci:0000:00:01.0 bar 1"), so the manager lists the driver's display
+      // alone and the SVGA facet and FIFO wire tests run here. x64-only
+      // because the device is programmed through PCI port I/O.
+      "name": "vmware-svga",
+      "architectures": ["x64"],
+      "vga": "vmware"
+    },
+    {
+      // virtio-gpu on the PCI bus, ADDED next to the machine's default
+      // adapter rather than replacing it ("gpu", not "vga"). Two reasons it
+      // has to be additive:
+      //   * The default adapter is what the firmware hands Limine (VBE over
+      //     q35's std VGA, ramfb on virt), so keeping it means the firmware
+      //     display stays published beside the driver's, and the cell
+      //     differs from `bare` only by the device on the bus.
+      //   * -vga virtio would work on q35 (it resolves to the VGA-compatible
+      //     virtio-vga), but virt has no such variant and refuses it outright
+      //     with "Virtio VGA not available", so one shape spanning both
+      //     arches has to go through -device.
+      //
+      // This is the cell the virtio-gpu driver actually runs in: the
+      // VirtioGpuDriver publishes a display the manager prefers over the
+      // firmware one, so the suite's canvas tests render through it here and
+      // over the firmware framebuffer on bare, same assertions, both paths.
+      // The suite derives the cell from the device tree and fails when the
+      // driver did not bind; the binding shows in the boot log as
+      // "offer VirtioGpuDriver -> bound".
+      //
+      // gic-version=3 on arm64 for the same reason as virtio-pci: virtio-pci
+      // MSI-X is routed by the GICv3 ITS and virt defaults to GICv2, which has
+      // none. q35 rejects the property, hence the scoping.
+      "name": "virtio-gpu",
+      "architectures": ["x64", "arm64"],
+      "machineOptions": { "arm64": { "gic-version": "3" } },
+      "gpu": "virtio-gpu-pci"
+    },
+    {
+      // An Intel HD Audio controller (QEMU's ich6 intel-hda) with the
+      // hda-duplex codec the launcher always adds beside it: the controller
+      // is a bus, and on its own it enumerates with no converter behind it.
+      // The kit's HdAudioDriver binds it by PCI class 04.03.00, walks the
+      // codec to its line-out and publishes the output as "hda", which the
+      // audio manager lists as its primary. The engine plays it into QEMU's
+      // `none` backend: a runner has no audio server, and QEMU's default
+      // backend would then open no voice for the codec. `none` still takes
+      // the frames at the stream's rate, so the guest's stream engine runs
+      // and the Audio suite can watch its position move and its playback
+      // complete. The function is a plain PCI device on both machines.
+      //
+      // No NIC: the kit gives a legacy line to one handler and refuses a
+      // second, and on q35 the default e1000e at 00:02.0 takes the line the
+      // controller at 00:03.0 shares with it, which would leave the stream's
+      // completion interrupt unconnected on every cell.
+      "name": "hda",
+      "architectures": ["x64", "arm64"],
+      "nic": "none",
+      "audio": "intel-hda"
+    },
+    {
+      // Every virtio device kind the kernel has a driver for, over PCI.
+      // Exercises capability parsing, MSI-X setup and driver binding for the
+      // network and input paths, and the block path through VirtioBlkDriver's
+      // disk, vblk0. Runs on both arches: q35 has no
+      // virtio-mmio window at all, and the arm64 virt machine has a PCIe host
+      // bridge alongside its MMIO one, so this is the same hardware shape in
+      // both columns.
+      //
+      // gic-version=3 is required on arm64, not cosmetic: MSI-X is routed by
+      // the GICv3 ITS, and the virt machine defaults to GICv2, which has none:
+      // MsiRouting would get no binder, the transport would publish the
+      // device with no message entry and the leaf drivers would poll, which
+      // is what the virtio-pci+acpi-off cell on arm64 shows (no ITS without
+      // ACPI). q35 rejects the property, hence the scoping.
+      "name": "virtio-pci",
+      "architectures": ["x64", "arm64"],
+      "machineOptions": { "arm64": { "gic-version": "3" } },
+      "nic": "virtio-net-pci",
+      "keyboard": "virtio-keyboard-pci",
+      "mouse": "virtio-mouse-pci",
+      "disks": [
+        { "type": "virtio-blk" }
+      ]
+    },
+    {
+      // The same device set over the virt machine's virtio-mmio window, so
+      // one suite covers both transports with the same assertions.
+      "name": "virtio-mmio",
+      "architectures": ["arm64"],
+      "nic": "virtio-net-device",
+      "keyboard": "virtio-keyboard-device",
+      "mouse": "virtio-mouse-device",
+      "disks": [
+        { "type": "virtio-blk-mmio" }
+      ]
+    }
+  ],
+  "modifiers": [
+    {
+      // Force GICv2 (legacy distributor). cortex-a72 supports both v2 and v3,
+      // so flipping this exercises the kernel's GICv2 IRQ-ack/EOI path
+      // separate from GICv3 ICC_* system registers.
+      "name": "gicv2",
+      "architectures": ["arm64"],
+      "machineOptions": { "gic-version": "2" }
+    },
+    {
+      // Force GICv3. Default on most newer QEMU virt machines, but pinning
+      // it makes the test matrix explicit and disambiguates from `auto`.
+      "name": "gicv3",
+      "architectures": ["arm64"],
+      "machineOptions": { "gic-version": "3" }
+    },
+    {
+      // Disable ACPI on the machine. Default is acpi=on for both q35 and
+      // virt; flipping it forces the kernel onto its non-ACPI discovery
+      // paths: on arm64 no MADT, IORT or MCFG, the GIC on the virt defaults
+      // (no ITS, so no MSI) and the platform bus seeded from the device tree
+      // EDK2 exposes only then; on x64 SeaBIOS builds no ACPI tables at all,
+      // so there is no MADT and no I/O APIC: PCI enumerates over the port
+      // mechanism, the Local APIC comes up from IA32_APIC_BASE and routes
+      // MSI messages, and every line source is refused, so the 8042 and any
+      // INTx-only function poll.
+      "name": "acpi-off",
+      "machineOptions": { "acpi": "off" }
+    }
+  ]
+}

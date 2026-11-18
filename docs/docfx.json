@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+
+  "metadata": [
+    {
+      "src": [
+        { "src": "../src/Cosmos.Kernel.Core", "files": [ "Cosmos.Kernel.Core.csproj" ] },
+        { "src": "../src/Cosmos.Kernel.HAL", "files": [ "Cosmos.Kernel.HAL.csproj" ] },
+        { "src": "../src/Cosmos.Kernel.System", "files": [ "Cosmos.Kernel.System.csproj" ] }
+      ],
+      "dest": "api",
+      "disableGitFeatures": true,
+      "allowCompilationErrors": true,
+      "namespaceLayout": "nested"
+    }
+  ],
+
+  "build": {
+    "content": [
+      {
+        "src": ".",
+        "files": [ "**/*.md", "**/*.yml" ],
+        "exclude": [ "_site/**", "fr/**", "zh/**" ]
+      }
+    ],
+    "resource": [
+      {
+        "src": ".",
+        "files": [ "images/**", "articles/**/images/**" ]
+      }
+    ],
+    "output": "_site",
+    "template": [ "default", "modern", "templates/custom" ],
+    "globalMetadata": {
+      "_appName": "Cosmos Gen 3",
+      "_appTitle": "Cosmos Gen 3",
+      "_appLogoPath": "images/logo.png",
+      "_appFaviconPath": "images/favicon.ico",
+      "_enableSearch": true,
+      "_lang": "en",
+      "pdf": false
+    }
+  }
+}

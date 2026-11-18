@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Package Metadata -->
+    <PackageId>Cosmos.Kernel.Boot.Limine</PackageId>
+    <Title>Cosmos Kernel Limine Boot Support</Title>
+    <Description>Limine bootloader support for Cosmos kernel development including framebuffer and protocol structures.</Description>
+    <PackageTags>cosmos;kernel;limine;bootloader;framebuffer;boot;protocol;uefi;bios</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+  </PropertyGroup>
+</Project>

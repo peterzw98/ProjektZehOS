@@ -1,0 +1,1165 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using Cosmos.Tools.Platform;
+
+namespace Cosmos.Tools.Launcher;
+
+public sealed class QemuLaunchOptions
+{
+    /// <summary>Default guest RAM size passed to QEMU's <c>-m</c> flag, in megabytes.</summary>
+    private const int DefaultMemoryMb = 512;
+
+    public required string Architecture { get; init; }
+    public required string IsoPath { get; init; }
+    public int MemoryMb { get; init; } = DefaultMemoryMb;
+    public bool Headless { get; init; }
+    public bool Debug { get; init; }
+    /// <summary>If null, serial goes to stdio (interactive CLI). Otherwise, to this file path (test runner).</summary>
+    public string? SerialOutputFile { get; init; }
+    /// <summary>Adds the test-runner port forwards (UDP 5556, TCP 5558) needed by network tests.</summary>
+    public bool EnableNetworkTesting { get; init; }
+
+    /// <summary>
+    /// NIC model exposed to the guest. <c>null</c> leaves QEMU's default NIC in
+    /// place (the historical behaviour); <c>"none"</c> emits <c>-nic none</c> so
+    /// the guest gets no card at all; any other value emits a user-mode
+    /// <c>-netdev</c> + <c>-device &lt;model&gt;</c> pair (e.g. <c>e1000e</c>,
+    /// <c>virtio-net-device</c>). When <see cref="EnableNetworkTesting"/> is
+    /// set this still selects the model, but that path always adds its port
+    /// forwards and rejects <c>"none"</c>.
+    /// </summary>
+    public string? NetworkCard { get; init; }
+
+    /// <summary>
+    /// Host ports forwarded to the guest, each in QEMU's <c>hostfwd</c> form
+    /// <c>[tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport</c> (e.g.
+    /// <c>tcp::2323-:23</c> makes the guest's port 23 reachable at
+    /// <c>localhost:2323</c>). A forward is an option of the user-mode
+    /// backend, so it goes on the one the guest's NIC rides on: the backend
+    /// <see cref="NetworkCard"/> builds, the network-testing hub's, or, with no
+    /// card chosen, a <c>-nic user</c> standing in for QEMU's default NIC,
+    /// which takes no options. Rejected when the card is <c>"none"</c>.
+    /// </summary>
+    public IReadOnlyList<string> HostForwards { get; init; } = [];
+
+    /// <summary>
+    /// Keyboard device attached to the guest, or <c>null</c> to add none.
+    /// <c>"ps2"</c>/<c>"none"</c> add nothing (x64's PS/2 keyboard is built into
+    /// the q35 chipset); any other value (e.g. <c>virtio-keyboard-device</c>,
+    /// required on the ARM64 <c>virt</c> machine which has no PS/2 controller) is
+    /// emitted as a <c>-device</c> line.
+    /// </summary>
+    public string? KeyboardDevice { get; init; }
+
+    /// <summary>
+    /// Mouse device attached to the guest, or <c>null</c> to add none. Same
+    /// <c>"ps2"</c>/<c>"none"</c> handling as <see cref="KeyboardDevice"/>;
+    /// <c>virtio-mouse-device</c> is the ARM64 <c>virt</c> option, and
+    /// <see cref="QemuLauncher.UsbMouseModel"/> puts a USB mouse on the host
+    /// controller <see cref="UsbController"/> names, on either architecture.
+    /// </summary>
+    public string? MouseDevice { get; init; }
+
+    /// <summary>
+    /// The host controller the USB disks, the USB keyboard and the USB mouse
+    /// sit on, <see cref="UsbHostControllerModel.Xhci"/> by default. It is
+    /// emitted once, ahead of the first device that needs it, and only when
+    /// one does. On the EHCI and OHCI models every device is pinned to a
+    /// root port (<see cref="QemuLauncher.UsbKeyboardPortOf"/>,
+    /// <see cref="QemuLauncher.UsbMousePortOf"/> and
+    /// <see cref="QemuLauncher.UsbDiskPortOf"/>): their ports form one
+    /// numbered space that QEMU fills in command-line order, inserting a hub
+    /// of its own on the last free port.
+    /// </summary>
+    public UsbHostControllerModel UsbController { get; init; } = UsbHostControllerModel.Xhci;
+
+    /// <summary>
+    /// The USB version QEMU's <c>usb-kbd</c> and <c>usb-mouse</c> present:
+    /// <see cref="QemuLauncher.DefaultUsbDeviceVersion"/>, a device with a
+    /// high-speed descriptor set beside its full-speed one, or
+    /// <see cref="QemuLauncher.FullSpeedUsbDeviceVersion"/>, one with the
+    /// full-speed set alone, which an EHCI hands to its companion. A
+    /// <c>usb-storage</c> stick has no such property and follows the
+    /// controller.
+    /// </summary>
+    public int UsbDeviceVersion { get; init; } = QemuLauncher.DefaultUsbDeviceVersion;
+
+    /// <summary>
+    /// Puts a <c>usb-hub</c> on root port 1 and the USB keyboard behind it,
+    /// on the hub's port 1, so a run exercises hub enumeration. The hub is
+    /// full speed only: it needs an OHCI, alone or as the EHCI's companion,
+    /// and the launcher refuses it on the xHCI, whose port 1 is a USB 3 port,
+    /// and on a standalone EHCI, whose ports are high speed only.
+    /// </summary>
+    public bool UsbHub { get; init; }
+
+    /// <summary>
+    /// Audio controller attached to the guest as a <c>-device</c> line (e.g.
+    /// <c>intel-hda</c>), or <c>null</c>/<c>"none"</c> to add none. An HD Audio
+    /// controller is a bus rather than an endpoint, so a codec is attached
+    /// alongside it: the controller on its own enumerates on PCI with nothing
+    /// answering behind it, and a guest driver finds no converter to play
+    /// through. The host backend is <see cref="AudioBackend"/>, or QEMU's own
+    /// default when that is <c>null</c>.
+    /// </summary>
+    public string? AudioDevice { get; init; }
+
+    /// <summary>
+    /// Host backend the codec plays into, as a QEMU <c>-audiodev</c> driver
+    /// (e.g. <c>none</c>, <c>pa</c>, <c>wav</c>), or <c>null</c> to let QEMU
+    /// pick its default. A run with no audio server needs one named: QEMU's
+    /// default then fails to open the codec's output voice. <c>none</c> takes
+    /// the frames at the stream's rate and discards them, which is what the
+    /// test engine asks for. Ignored when <see cref="AudioDevice"/> adds
+    /// nothing.
+    /// </summary>
+    public string? AudioBackend { get; init; }
+
+    /// <summary>
+    /// VGA adapter exposed to the guest, as a <c>-vga</c> backend name (e.g.
+    /// <c>vmware</c>, <c>virtio</c>, <c>none</c>). <c>null</c> keeps the
+    /// architecture default (stdvga on q35, nothing beyond ramfb on virt).
+    /// Unlike <see cref="KeyboardDevice"/> this is not a <c>-device</c> model:
+    /// <c>-vga</c> replaces the machine's default adapter instead of adding a
+    /// second one alongside it.
+    /// </summary>
+    public string? VgaAdapter { get; init; }
+
+    /// <summary>
+    /// Display device attached as a <c>-device</c> line (e.g.
+    /// <c>virtio-gpu-pci</c>), or <c>null</c>/<c>"none"</c> to add none.
+    /// Unlike <see cref="VgaAdapter"/> this ADDS an adapter alongside the
+    /// machine's default one rather than replacing it, so the firmware keeps
+    /// the framebuffer it boots Limine on (VBE over q35's std VGA, ramfb on
+    /// virt) while the guest driver gets a second device to bind. That is the
+    /// only shape that works on both arches: <c>-vga virtio</c> resolves to
+    /// the VGA-compatible <c>virtio-vga</c> on q35, but the virt machine has
+    /// no such variant and rejects it with "Virtio VGA not available".
+    /// </summary>
+    public string? GpuDevice { get; init; }
+
+    /// <summary>
+    /// Disks to attach. Each <see cref="DiskAttachment"/> carries the image
+    /// path, the controller type (ahci or nvme), and an optional comma-prefixed
+    /// suffix appended to the QEMU <c>-device</c> line, used by test profiles
+    /// to toggle things like <c>msix=off</c> or <c>msix_qsize=1</c>. AHCI disks
+    /// share one <c>ich9-ahci</c> controller across successive ports; NVMe
+    /// disks each get a dedicated <c>nvme</c> controller. Honoured on x64 (q35)
+    /// and ARM64 (virt).
+    /// </summary>
+    public IReadOnlyList<DiskAttachment> Disks { get; init; } = Array.Empty<DiskAttachment>();
+
+    /// <summary>
+    /// Extra <c>-M</c> machine properties spliced after the architecture
+    /// defaults (e.g. <c>{"gic-version", "2"}</c> on ARM64 to force GICv2).
+    /// Empty by default. Caller is responsible for passing properties that
+    /// match the active architecture; nothing here filters on that.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> MachineOptions { get; init; }
+        = new Dictionary<string, string>();
+
+    /// <summary>
+    /// When false (default, dev path), x64 launches with <c>-no-shutdown</c> so a guest-initiated
+    /// ACPI _S5 / panic just pauses the VM and the user can inspect it. When true (test path),
+    /// the flag is omitted so a working <c>Power.Shutdown()</c> actually exits QEMU and the test
+    /// runner can observe a clean process exit.
+    /// </summary>
+    public bool AllowGuestShutdown { get; init; }
+
+    /// <summary>
+    /// QEMU CPU model (<c>-cpu</c>), e.g. <c>host</c>, <c>max</c>, <c>qemu64</c>,
+    /// <c>cortex-a72</c>. Null/empty = auto: on x64 that is <c>host</c> when KVM
+    /// is available and <c>max</c> under TCG; on ARM64 it is <c>cortex-a72</c>.
+    /// <c>host</c> is KVM-only, so it degrades to <c>max</c> when KVM is absent
+    /// rather than aborting QEMU at startup.
+    /// </summary>
+    public string? CpuModel { get; init; }
+
+    /// <summary>
+    /// TCP port on 127.0.0.1 that QEMU connects its QMP monitor to at
+    /// startup, or <c>null</c> for no monitor. Lets a test runner change the
+    /// machine under a running guest, such as pulling a USB stick out. The
+    /// port must already be listening: QEMU exits when it cannot connect.
+    /// </summary>
+    public int? MonitorPort { get; init; }
+
+    public IReadOnlyList<string> ExtraArgs { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>The controller or transport a <see cref="DiskAttachment"/> reaches the guest through.</summary>
+public enum DiskKind
+{
+    /// <summary>A SATA disk on the shared <c>ich9-ahci</c> controller.</summary>
+    Ahci,
+
+    /// <summary>A namespace on a dedicated <c>nvme</c> controller.</summary>
+    Nvme,
+
+    /// <summary>A <c>usb-storage</c> stick on the one host controller <see cref="QemuLaunchOptions.UsbController"/> names.</summary>
+    Usb,
+
+    /// <summary>
+    /// A virtio-blk-pci function on the root bus, or behind a PCI Express
+    /// root port of its own when the attachment is hot-pluggable.
+    /// </summary>
+    VirtioBlk,
+
+    /// <summary>A virtio-blk-device in the arm64 virt machine's virtio-mmio window; refused on x64.</summary>
+    VirtioBlkMmio
+}
+
+/// <summary>The host controller a run puts its USB devices on; see <see cref="QemuLaunchOptions.UsbController"/>.</summary>
+public enum UsbHostControllerModel
+{
+    /// <summary><c>qemu-xhci</c>, id <c>usbxhci0</c>: USB 3 ports 1 to 4 and USB 2 ports 5 to 8, every device at its own top speed, on the port QEMU picks.</summary>
+    Xhci,
+
+    /// <summary><c>usb-ehci</c> alone, id <c>usbehci0</c>: six high-speed root ports and no companion, so a full-speed-only device cannot attach.</summary>
+    Ehci,
+
+    /// <summary><c>pci-ohci</c> alone, id <c>usbohci0</c>, with six root ports: every device at full speed.</summary>
+    Ohci,
+
+    /// <summary><c>ich9-usb-ehci1</c>, id <c>usbehci0</c>, with a <c>pci-ohci</c> companion, id <c>usbohci0</c>, over its six ports: the devices attach on the EHCI's bus, and the EHCI hands a full-speed one to the companion.</summary>
+    EhciWithOhciCompanion
+}
+
+/// <summary>
+/// One disk image to expose to the guest. <see cref="ExtraDeviceOptions"/> is
+/// appended verbatim to the QEMU <c>-device</c> line (without the leading
+/// comma, the launcher inserts that), so a profile can pass things like
+/// <c>"msix=off"</c> or <c>"msix_qsize=1"</c> to exercise the kernel's
+/// interrupt-fallback paths.
+/// </summary>
+public sealed record DiskAttachment
+{
+    public required string Path { get; init; }
+    public required DiskKind Kind { get; init; }
+    public string ExtraDeviceOptions { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The disk sits behind a PCI Express root port of its own, so the test
+    /// engine can pull it out and plug it back in; <see cref="DiskKind.VirtioBlk"/> only.
+    /// </summary>
+    public bool HotPlug { get; init; }
+}
+
+public sealed record QemuLaunchPlan(string BinaryPath, string Arguments, ToolSource Source);
+
+/// <summary>
+/// Single source of truth for QEMU command-line construction. Used by both
+/// `cosmos run` and `Cosmos.TestRunner.Engine` so a tweak (e.g. dropping a
+/// broken display backend) propagates to all callers.
+/// </summary>
+public static class QemuLauncher
+{
+    /// <summary>UDP port forwarded host-to-guest for the network test runner's datagram traffic.</summary>
+    private const int NetworkTestUdpPort = 5556;
+
+    /// <summary>TCP port forwarded host-to-guest for the network test runner's stream traffic.</summary>
+    private const int NetworkTestTcpPort = 5558;
+
+    /// <summary>
+    /// TCP port of the test runner's raw-Ethernet listener (IcmpTestServer). Slirp's
+    /// hostfwd only forwards TCP/UDP, so host-sourced ICMP rides a stream netdev
+    /// hubbed with slirp: frames are 4-byte big-endian-length-prefixed Ethernet.
+    /// </summary>
+    private const int NetworkTestRawSocketPort = 5560;
+
+    /// <summary>QEMU id of the xHCI controller; its root hub is the bus <c>usbxhci0.0</c>.</summary>
+    public const string XhciControllerId = "usbxhci0";
+
+    /// <summary>QEMU id of the EHCI controller, alone or with its companion; its root hub is the bus <c>usbehci0.0</c>.</summary>
+    public const string EhciControllerId = "usbehci0";
+
+    /// <summary>QEMU id of the OHCI controller; alone, its root hub is the bus <c>usbohci0.0</c>, while as a companion it has no bus of its own.</summary>
+    public const string OhciControllerId = "usbohci0";
+
+    /// <summary>QEMU's driver name for the xHCI controller.</summary>
+    public const string XhciModel = "qemu-xhci";
+
+    /// <summary>QEMU's driver name for the standalone EHCI controller (Intel ICH4, 8086:24cd), which takes no companion.</summary>
+    public const string EhciModel = "usb-ehci";
+
+    /// <summary>QEMU's driver name for the EHCI controller that takes a companion (Intel ICH9, 8086:293a).</summary>
+    public const string CompanionEhciModel = "ich9-usb-ehci1";
+
+    /// <summary>QEMU's driver name for the OHCI controller (Apple, 106b:003f).</summary>
+    public const string OhciModel = "pci-ohci";
+
+    /// <summary>Root ports asked of the OHCI: QEMU gives it three by default and the EHCI six, and the port plan below wants six on either.</summary>
+    public const int UsbRootPortCount = 6;
+
+    /// <summary>QEMU's driver name for a hub.</summary>
+    public const string UsbHubModel = "usb-hub";
+
+    /// <summary>QEMU id of the hub <see cref="QemuLaunchOptions.UsbHub"/> adds.</summary>
+    public const string UsbHubId = "usbhub0";
+
+    /// <summary>Root port of the USB keyboard on a port-pinning controller, and of the hub when one is asked for.</summary>
+    public const string UsbKeyboardPort = "1";
+
+    /// <summary>The keyboard's port when a hub is asked for: root port 1, then port 1 of the hub.</summary>
+    public const string UsbKeyboardPortBehindHub = "1.1";
+
+    /// <summary>Root port of the USB mouse on a port-pinning controller.</summary>
+    public const string UsbMousePort = "2";
+
+    /// <summary>Root port of the first USB disk on a port-pinning controller; the next disks take the next ports.</summary>
+    public const int FirstUsbDiskPort = 3;
+
+    /// <summary>The USB version QEMU's usb-kbd and usb-mouse present by default: a high-speed descriptor set beside the full-speed one.</summary>
+    public const int DefaultUsbDeviceVersion = 2;
+
+    /// <summary>The USB version that leaves usb-kbd and usb-mouse with their full-speed descriptor set alone.</summary>
+    public const int FullSpeedUsbDeviceVersion = 1;
+
+    /// <summary>The spellings <see cref="TryParseUsbController"/> accepts, for the messages that list them.</summary>
+    public const string UsbControllerNames = "'xhci', 'ehci', 'ohci' or 'ehci-ohci'";
+
+    /// <summary>The keyboard model a profile names to get a USB keyboard on the host controller, and QEMU's driver name for it.</summary>
+    public const string UsbKeyboardModel = "usb-kbd";
+
+    /// <summary>QEMU id of the USB keyboard plugged in at boot, the one to unplug.</summary>
+    public const string UsbKeyboardId = "usbkbd0";
+
+    /// <summary>The mouse model a profile names to get a USB mouse on the host controller, and QEMU's driver name for it.</summary>
+    public const string UsbMouseModel = "usb-mouse";
+
+    /// <summary>QEMU id of the USB mouse plugged in at boot.</summary>
+    public const string UsbMouseId = "usbmouse0";
+
+    /// <summary>QEMU id of the controller the USB devices of a run sit on: the EHCI's for the companion model, whose OHCI has no bus of its own.</summary>
+    public static string UsbControllerId(UsbHostControllerModel model)
+    {
+        return model switch
+        {
+            UsbHostControllerModel.Xhci => XhciControllerId,
+            UsbHostControllerModel.Ehci or UsbHostControllerModel.EhciWithOhciCompanion => EhciControllerId,
+            UsbHostControllerModel.Ohci => OhciControllerId,
+            _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Unknown USB host controller model.")
+        };
+    }
+
+    /// <summary>The bus the USB devices of a run attach to, the root hub of <see cref="UsbControllerId"/>: <c>usbxhci0.0</c>, <c>usbehci0.0</c> or <c>usbohci0.0</c>.</summary>
+    public static string UsbBus(UsbHostControllerModel model)
+    {
+        return $"{UsbControllerId(model)}.0";
+    }
+
+    /// <summary>
+    /// True when the model pins each USB device to a root port: the EHCI and
+    /// OHCI models, whose ports form one numbered space that QEMU fills in
+    /// command-line order, inserting a hub of its own on the last free port.
+    /// The xHCI picks its own ports and takes no pin.
+    /// </summary>
+    public static bool PinsUsbPorts(UsbHostControllerModel model)
+    {
+        return model != UsbHostControllerModel.Xhci;
+    }
+
+    /// <summary>True when the model can carry the full-speed hub: an OHCI, alone or as the EHCI's companion.</summary>
+    public static bool TakesUsbHub(UsbHostControllerModel model)
+    {
+        return model is UsbHostControllerModel.Ohci or UsbHostControllerModel.EhciWithOhciCompanion;
+    }
+
+    /// <summary>The port the USB keyboard is pinned to, or null on the xHCI: root port 1, or the hub's port 1.1 when a hub is asked for.</summary>
+    public static string? UsbKeyboardPortOf(UsbHostControllerModel model, bool hub)
+    {
+        if (!PinsUsbPorts(model))
+        {
+            return null;
+        }
+
+        return hub ? UsbKeyboardPortBehindHub : UsbKeyboardPort;
+    }
+
+    /// <summary>The port the USB mouse is pinned to, or null on the xHCI: root port 2.</summary>
+    public static string? UsbMousePortOf(UsbHostControllerModel model)
+    {
+        return PinsUsbPorts(model) ? UsbMousePort : null;
+    }
+
+    /// <summary>The port the <paramref name="index"/>th USB disk is pinned to, or null on the xHCI: root ports from 3.</summary>
+    public static string? UsbDiskPortOf(UsbHostControllerModel model, int index)
+    {
+        return PinsUsbPorts(model) ? (FirstUsbDiskPort + index).ToString(CultureInfo.InvariantCulture) : null;
+    }
+
+    /// <summary>
+    /// Reads the spelling the profile catalog and <c>cosmos run</c> use for a
+    /// controller, whatever its case: <c>xhci</c>, <c>ehci</c>, <c>ohci</c>
+    /// or <c>ehci-ohci</c>.
+    /// </summary>
+    /// <returns>False for any other spelling, with <paramref name="model"/> left at the xHCI.</returns>
+    public static bool TryParseUsbController(string? name, out UsbHostControllerModel model)
+    {
+        switch ((name ?? string.Empty).Trim().ToLowerInvariant())
+        {
+            case "xhci":
+                model = UsbHostControllerModel.Xhci;
+                return true;
+            case "ehci":
+                model = UsbHostControllerModel.Ehci;
+                return true;
+            case "ohci":
+                model = UsbHostControllerModel.Ohci;
+                return true;
+            case "ehci-ohci":
+                model = UsbHostControllerModel.EhciWithOhciCompanion;
+                return true;
+            default:
+                model = UsbHostControllerModel.Xhci;
+                return false;
+        }
+    }
+
+    /// <summary>QEMU id of the drive behind the <paramref name="index"/>th USB disk.</summary>
+    public static string UsbDriveId(int index) => $"usbdisk{index}";
+
+    /// <summary>QEMU id of the <paramref name="index"/>th USB disk's usb-storage device, the one to unplug.</summary>
+    public static string UsbDeviceId(int index) => $"usbstick{index}";
+
+    /// <summary>QEMU id of the drive behind the <paramref name="index"/>th virtio-blk disk, both kinds counted together.</summary>
+    public static string VirtioBlkDriveId(int index) => $"vblkdisk{index}";
+
+    /// <summary>QEMU id of the <paramref name="index"/>th virtio-blk device, the one a hot-plug request deletes.</summary>
+    public static string VirtioBlkDeviceId(int index) => $"vblk{index}";
+
+    /// <summary>QEMU's driver name for a virtio-blk disk behind a PCI function.</summary>
+    public const string VirtioBlkPciModel = "virtio-blk-pci";
+
+    /// <summary>QEMU's driver name for a virtio-blk disk in the virt machine's virtio-mmio window.</summary>
+    public const string VirtioBlkMmioModel = "virtio-blk-device";
+
+    /// <summary>QEMU id of the root port the <paramref name="index"/>th virtio-blk disk sits behind, also its <c>bus=</c> name.</summary>
+    public static string RootPortId(int index) => $"rp{index}";
+
+    /// <summary>QEMU's driver name for a PCI Express root port.</summary>
+    public const string RootPortModel = "pcie-root-port";
+
+    /// <summary>
+    /// The global that turns q35's root ports to native PCI Express hot-plug;
+    /// without it QEMU 8.2 routes a root port hot-plug through ACPI, which the
+    /// kernel does not interpret; stage9-experiments.md E3. The virt machine's
+    /// ports are native always and the global is not emitted there.
+    /// </summary>
+    public const string Ich9NativeHotPlugGlobal = "ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off";
+
+    /// <summary>The <c>-audiodev</c> id the codec is wired to when a backend is named.</summary>
+    public const string AudioBackendId = "cosmosaudio0";
+
+    public static async Task<QemuLaunchPlan> BuildAsync(QemuLaunchOptions options)
+    {
+        CommandToolDefinition tool = options.Architecture switch
+        {
+            "x64" => ToolDefinitions.QemuX64,
+            "arm64" => ToolDefinitions.QemuArm64,
+            _ => throw new ArgumentException($"Unsupported architecture: {options.Architecture}", nameof(options))
+        };
+
+        ResolvedTool resolved = await ToolResolver.ResolveAsync(tool);
+        if (resolved.Source == ToolSource.NotFound)
+        {
+            throw new InvalidOperationException(
+                $"QEMU for {options.Architecture} not found. Run `cosmos install` to fetch the bundled toolchain, " +
+                $"or install qemu-system-{(options.Architecture == "x64" ? "x86_64" : "aarch64")} system-wide.");
+        }
+
+        StringBuilder args = new();
+
+        // Single rule, all OSes: when QEMU is bundled, point it at the bundle's
+        // share/qemu/ for BIOS/firmware lookup. The MSYS2 Windows build never
+        // auto-discovers its data dir, and even the Linux/macOS build's runtime
+        // search depends on the build's compile-time prefix matching the install
+        // prefix: we ship a portable bundle, so neither holds. Explicit -L is
+        // the only universally reliable mechanism.
+        if (resolved.Source == ToolSource.Bundle)
+        {
+            string shareQemu = Path.GetFullPath(
+                Path.Combine(Path.GetDirectoryName(resolved.Path)!, "..", "share", "qemu"));
+            args.Append($"-L \"{shareQemu}\" ");
+        }
+
+        RejectQuotes(options.IsoPath, "ISO path");
+        if (options.SerialOutputFile is not null)
+        {
+            RejectQuotes(options.SerialOutputFile, "serial output path");
+        }
+
+        if (options.Architecture == "x64")
+        {
+            AppendX64Args(args, options);
+        }
+        else
+        {
+            AppendArm64Args(args, options);
+        }
+
+        // Display: omit -display when a window is wanted so QEMU picks its compiled-in
+        // default (SDL on Windows, GTK on Linux/macOS). Passing a backend QEMU wasn't
+        // built with causes it to abort with "Display 'X' is not available".
+        if (options.Headless)
+        {
+            args.Append(" -display none");
+        }
+
+        // Serial: file for tests (parseable log), stdio for CLI (interactive).
+        if (options.SerialOutputFile is not null)
+        {
+            args.Append($" -serial file:\"{options.SerialOutputFile}\"");
+        }
+        else
+        {
+            args.Append(" -serial stdio");
+        }
+
+        if (options.EnableNetworkTesting)
+        {
+            string nic = ResolveNetworkTestNic(options.Architecture, options.NetworkCard);
+            // One hub joins three ports: slirp (DHCP/NAT + the UDP/TCP hostfwds),
+            // a raw-Ethernet stream socket to the runner's IcmpTestServer, and the
+            // guest NIC. The stream port exists because slirp cannot forward
+            // host-sourced ICMP; the runner must be listening before QEMU starts.
+            args.Append($" -netdev user,id=net0,hostfwd=udp::{NetworkTestUdpPort}-:{NetworkTestUdpPort},hostfwd=tcp::{NetworkTestTcpPort}-:{NetworkTestTcpPort}");
+            AppendHostForwards(args, options.HostForwards);
+            args.Append($" -netdev stream,id=rawnet0,addr.type=inet,addr.host=127.0.0.1,addr.port={NetworkTestRawSocketPort}");
+            args.Append(" -netdev hubport,id=hubport0,hubid=0,netdev=net0");
+            args.Append(" -netdev hubport,id=hubport1,hubid=0,netdev=rawnet0");
+            args.Append(" -netdev hubport,id=hubport2,hubid=0");
+            args.Append($" -device {nic},netdev=hubport2");
+        }
+        else if (options.NetworkCard is not null)
+        {
+            AppendNetworkCardArgs(args, options.NetworkCard, options.HostForwards);
+        }
+        else if (options.HostForwards.Count > 0)
+        {
+            // QEMU's default NIC takes no options, so a forward swaps it for
+            // a user-mode NIC of the machine's default model.
+            args.Append(" -nic user");
+            AppendHostForwards(args, options.HostForwards);
+        }
+
+        AppendInputDevice(args, options.KeyboardDevice);
+        AppendInputDevice(args, options.MouseDevice);
+        AppendAudioDevice(args, options.AudioDevice, options.AudioBackend);
+        AppendVgaAdapter(args, options.VgaAdapter);
+        AppendGpuDevice(args, options.GpuDevice);
+
+        if (options.MonitorPort is int monitorPort)
+        {
+            args.Append($" -chardev socket,id=qmp0,host=127.0.0.1,port={monitorPort} -mon chardev=qmp0,mode=control");
+        }
+
+        if (options.Debug)
+        {
+            args.Append(" -s -S");
+        }
+
+        foreach (string extra in options.ExtraArgs)
+        {
+            args.Append(' ');
+            args.Append(extra);
+        }
+
+        return new QemuLaunchPlan(resolved.Path, args.ToString().TrimStart(), resolved.Source);
+    }
+
+    private static void AppendX64Args(StringBuilder args, QemuLaunchOptions options)
+    {
+        args.Append("-M q35");
+        AppendMachineOptions(args, options.MachineOptions);
+        // KVM when the host offers it: TCG software emulation is roughly an
+        // order of magnitude slower and tanks guest-side rendering (every
+        // pixel blend and framebuffer memmove is binary-translated).
+        bool kvm = KvmAvailable();
+        string cpu = string.IsNullOrWhiteSpace(options.CpuModel)
+            ? (kvm ? "host" : "max")
+            : options.CpuModel.Trim();
+        if (!kvm && cpu.Equals("host", StringComparison.OrdinalIgnoreCase))
+        {
+            // -cpu host is KVM-only; QEMU aborts at startup under TCG.
+            cpu = "max";
+        }
+        ValidateOptionToken(cpu, "cpu model");
+        if (kvm)
+        {
+            args.Append(" -enable-kvm");
+        }
+        args.Append($" -cpu {cpu} -m {options.MemoryMb}M");
+        // Explicit CD drive with bootindex=0 so SeaBIOS picks the ISO over
+        // any attached HDDs whose 0xAA55 MBR signature would otherwise
+        // satisfy the BIOS and hang when their boot code is empty (the case
+        // for our Mbr.Create / Gpt protective-MBR writes).
+        args.Append($" -drive file=\"{EscapeDriveFileValue(options.IsoPath)}\",if=none,id=cosmoscd,format=raw,readonly=on");
+        args.Append(" -device ide-cd,drive=cosmoscd,bootindex=0");
+        args.Append(" -boot d -no-reboot");
+        if (!options.AllowGuestShutdown)
+        {
+            args.Append(" -no-shutdown");
+        }
+        // A profile-selected adapter is emitted later (shared path) and -vga
+        // may only appear once, so the windowed default steps aside for it.
+        if (!options.Headless && options.VgaAdapter is null)
+        {
+            args.Append(" -vga std");
+        }
+        AppendUsbMouseArgs(args, options, AppendUsbKeyboardArgs(args, options, AppendStorageArgs(args, options)));
+    }
+
+    /// <summary>
+    /// Emits the arm64 virt machine, its CPU, memory and EDK2 firmware, the
+    /// ISO behind a virtio-scsi controller, <c>ramfb</c>, the disks and the
+    /// USB keyboard and mouse.
+    /// </summary>
+    internal static void AppendArm64Args(StringBuilder args, QemuLaunchOptions options)
+    {
+        // -bios takes a bare filename when not absolute: QEMU resolves it
+        // through its data dir search, which our `-L "<exe>/../share/qemu"`
+        // (added above when Source==Bundle) points at the bundle's
+        // edk2-aarch64-code.fd. No separate firmware-lookup logic needed.
+        args.Append("-M virt,highmem=off");
+        AppendMachineOptions(args, options.MachineOptions);
+        string cpu = string.IsNullOrWhiteSpace(options.CpuModel)
+            ? "cortex-a72"
+            : options.CpuModel.Trim();
+        ValidateOptionToken(cpu, "cpu model");
+        args.Append($" -cpu {cpu} -m {options.MemoryMb}M");
+        args.Append(" -bios edk2-aarch64-code.fd");
+        // The ISO goes through a virtio-scsi controller, not -cdrom: the virt
+        // machine attaches -cdrom as a virtio-blk-pci function, which the
+        // shipped virtio-blk driver would bind and publish as a read-only disk
+        // on every cell; virtio-scsi has no driver, so the boot medium stays
+        // invisible to the block layer, as q35's ATAPI drive does on x64. EDK2
+        // and Limine boot it the same (stage9-experiments.md E5). A -drive file
+        // value doubles its commas, unlike -cdrom.
+        args.Append(" -device virtio-scsi-pci,id=scsi0");
+        args.Append($" -drive file=\"{EscapeDriveFileValue(options.IsoPath)}\",if=none,id=cosmoscd,format=raw,readonly=on,media=cdrom");
+        args.Append(" -device scsi-cd,drive=cosmoscd,bus=scsi0.0,bootindex=0");
+        args.Append(" -boot d -no-reboot");
+        // ramfb is required for Limine framebuffer support even when headless.
+        args.Append(" -device ramfb");
+        AppendUsbMouseArgs(args, options, AppendUsbKeyboardArgs(args, options, AppendStorageArgs(args, options)));
+    }
+
+    /// <summary>
+    /// True when the x64 guest can run under KVM: Linux x64 host with an
+    /// openable /dev/kvm (the open is the canonical access check, which also
+    /// catches "exists but not in the kvm group"). Set COSMOS_NO_KVM=1 to
+    /// force TCG, e.g. to reproduce a TCG-only bug.
+    /// </summary>
+    private static bool KvmAvailable()
+    {
+        if (Environment.GetEnvironmentVariable("COSMOS_NO_KVM") == "1")
+        {
+            return false;
+        }
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.OSArchitecture != Architecture.X64)
+        {
+            return false;
+        }
+        try
+        {
+            using FileStream fs = File.Open("/dev/kvm", FileMode.Open, FileAccess.ReadWrite);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void AppendMachineOptions(StringBuilder args, IReadOnlyDictionary<string, string> opts)
+    {
+        foreach (KeyValuePair<string, string> kv in opts)
+        {
+            ValidateOptionToken(kv.Key, "machine option key");
+            ValidateOptionToken(kv.Value, "machine option value");
+            args.Append(',');
+            args.Append(kv.Key);
+            args.Append('=');
+            args.Append(kv.Value);
+        }
+    }
+
+    /// <summary>
+    /// Attach AHCI/SATA, NVMe, USB and virtio-blk disks. AHCI disks share one <c>ich9-ahci</c>
+    /// controller and consume successive ports; NVMe disks each get a
+    /// dedicated <c>nvme</c> controller so the guest exercises multi-controller
+    /// binding; USB disks are <c>usb-storage</c> sticks on the one host
+    /// controller <see cref="QemuLaunchOptions.UsbController"/> names, pinned
+    /// to root ports from 3 to <see cref="UsbRootPortCount"/> on the EHCI and
+    /// OHCI models, which take four at most; <see cref="DiskKind.VirtioBlk"/> disks are
+    /// one <c>virtio-blk-pci</c> function each, a hot-pluggable one behind a
+    /// <c>pcie-root-port</c> of its own (on x64 with the ICH9 global that turns
+    /// the ports to native hot-plug, emitted once), and <see cref="DiskKind.VirtioBlkMmio"/>
+    /// disks one <c>virtio-blk-device</c> slot each (arm64 only), both kinds
+    /// numbered together. Per-disk <see cref="DiskAttachment.ExtraDeviceOptions"/> is
+    /// appended after the standard device properties so profiles can flip
+    /// things like <c>msix=off</c>.
+    /// </summary>
+    /// <returns>True when the USB host controller was emitted, so the USB keyboard and mouse can share it.</returns>
+    internal static bool AppendStorageArgs(StringBuilder args, QemuLaunchOptions options)
+    {
+        int ahciIndex = 0;
+        int nvmeIndex = 0;
+        int usbIndex = 0;
+        int virtioBlkIndex = 0;
+        bool ahciControllerEmitted = false;
+        bool usbControllerEmitted = false;
+        bool ich9GlobalEmitted = false;
+
+        foreach (DiskAttachment disk in options.Disks)
+        {
+            switch (disk.Kind)
+            {
+                case DiskKind.Ahci:
+                    if (!ahciControllerEmitted)
+                    {
+                        args.Append(" -device ich9-ahci,id=ahci0");
+                        ahciControllerEmitted = true;
+                    }
+                    args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id=ahcidisk{ahciIndex},format=raw");
+                    args.Append($" -device ide-hd,drive=ahcidisk{ahciIndex},bus=ahci0.{ahciIndex}");
+                    AppendDeviceOptions(args, disk.ExtraDeviceOptions);
+                    ahciIndex++;
+                    break;
+
+                case DiskKind.Nvme:
+                    args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id=nvmedisk{nvmeIndex},format=raw");
+                    args.Append($" -device nvme,id=nvme{nvmeIndex},drive=nvmedisk{nvmeIndex},serial=cosmos-nvme-{nvmeIndex}");
+                    AppendDeviceOptions(args, disk.ExtraDeviceOptions);
+                    nvmeIndex++;
+                    break;
+
+                case DiskKind.Usb:
+                    // The port plan pins the sticks from port 3 up, so a
+                    // port-pinning controller takes four; QEMU refuses a
+                    // port past the last with a message that names neither
+                    // the plan nor the disk.
+                    if (PinsUsbPorts(options.UsbController) && FirstUsbDiskPort + usbIndex > UsbRootPortCount)
+                    {
+                        throw new ArgumentException(
+                            $"At most {UsbRootPortCount - FirstUsbDiskPort + 1} USB disks fit the {UsbRootPortCount} root ports of the EHCI and OHCI models (ports {FirstUsbDiskPort} to {UsbRootPortCount}).",
+                            nameof(options));
+                    }
+                    AppendUsbController(args, options, usbControllerEmitted);
+                    usbControllerEmitted = true;
+                    args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id={UsbDriveId(usbIndex)},format=raw");
+                    args.Append($" -device usb-storage,drive={UsbDriveId(usbIndex)},bus={UsbBus(options.UsbController)},id={UsbDeviceId(usbIndex)}");
+                    AppendUsbPort(args, UsbDiskPortOf(options.UsbController, usbIndex));
+                    AppendDeviceOptions(args, disk.ExtraDeviceOptions);
+                    usbIndex++;
+                    break;
+
+                case DiskKind.VirtioBlk:
+                    if (disk.HotPlug)
+                    {
+                        if (!ich9GlobalEmitted && options.Architecture.Equals("x64", StringComparison.OrdinalIgnoreCase))
+                        {
+                            args.Append($" -global {Ich9NativeHotPlugGlobal}");
+                            ich9GlobalEmitted = true;
+                        }
+                        // QEMU resolves bus= against the devices already on the
+                        // command line, so the port precedes the disk; the
+                        // chassis and slot pair must be unique per port.
+                        args.Append($" -device {RootPortModel},id={RootPortId(virtioBlkIndex)},bus=pcie.0,chassis={virtioBlkIndex + 1},slot={virtioBlkIndex + 1}");
+                        args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id={VirtioBlkDriveId(virtioBlkIndex)},format=raw");
+                        args.Append($" -device {VirtioBlkPciModel},drive={VirtioBlkDriveId(virtioBlkIndex)},bus={RootPortId(virtioBlkIndex)},id={VirtioBlkDeviceId(virtioBlkIndex)}");
+                    }
+                    else
+                    {
+                        args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id={VirtioBlkDriveId(virtioBlkIndex)},format=raw");
+                        args.Append($" -device {VirtioBlkPciModel},drive={VirtioBlkDriveId(virtioBlkIndex)},id={VirtioBlkDeviceId(virtioBlkIndex)}");
+                    }
+                    AppendDeviceOptions(args, disk.ExtraDeviceOptions);
+                    virtioBlkIndex++;
+                    break;
+
+                case DiskKind.VirtioBlkMmio:
+                    if (!options.Architecture.Equals("arm64", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException("A virtio-blk disk over MMIO needs the arm64 virt machine: q35 has no virtio-mmio window.");
+                    }
+                    if (disk.HotPlug)
+                    {
+                        throw new ArgumentException("A virtio-blk disk over MMIO cannot be hot-pluggable: only a virtio-blk-pci function sits behind a root port.");
+                    }
+                    args.Append($" -drive file=\"{EscapeDriveFileValue(disk.Path)}\",if=none,id={VirtioBlkDriveId(virtioBlkIndex)},format=raw");
+                    args.Append($" -device {VirtioBlkMmioModel},drive={VirtioBlkDriveId(virtioBlkIndex)},id={VirtioBlkDeviceId(virtioBlkIndex)}");
+                    AppendDeviceOptions(args, disk.ExtraDeviceOptions);
+                    virtioBlkIndex++;
+                    break;
+            }
+        }
+
+        return usbControllerEmitted;
+    }
+
+    /// <summary>
+    /// Attaches the USB keyboard when <see cref="QemuLaunchOptions.KeyboardDevice"/>
+    /// is <see cref="UsbKeyboardModel"/>: on the host controller the USB
+    /// disks emitted, or on one added here when the run has no USB disk, so
+    /// the keyboard always sits on the bus of <see cref="QemuLaunchOptions.UsbController"/>
+    /// under the id the engine unplugs and replugs, pinned to root port 1
+    /// (or the hub's port 1.1) on the EHCI and OHCI models, and with
+    /// <c>usb_version=1</c> when <see cref="QemuLaunchOptions.UsbDeviceVersion"/>
+    /// asks for a full-speed device.
+    /// </summary>
+    /// <returns>True when the controller is on the command line, emitted before or here.</returns>
+    internal static bool AppendUsbKeyboardArgs(StringBuilder args, QemuLaunchOptions options, bool controllerEmitted)
+    {
+        if (!string.Equals(options.KeyboardDevice, UsbKeyboardModel, StringComparison.OrdinalIgnoreCase))
+        {
+            return controllerEmitted;
+        }
+
+        AppendUsbController(args, options, controllerEmitted);
+        args.Append($" -device {UsbKeyboardModel},bus={UsbBus(options.UsbController)},id={UsbKeyboardId}");
+        AppendUsbPort(args, UsbKeyboardPortOf(options.UsbController, options.UsbHub));
+        AppendUsbDeviceVersion(args, options);
+        return true;
+    }
+
+    /// <summary>
+    /// Attaches the USB mouse when <see cref="QemuLaunchOptions.MouseDevice"/>
+    /// is <see cref="UsbMouseModel"/>: on the host controller the USB disks or
+    /// the USB keyboard emitted, or on one added here, so the mouse always
+    /// sits on the bus of <see cref="QemuLaunchOptions.UsbController"/>, pinned
+    /// to root port 2 on the EHCI and OHCI models, with the same
+    /// <c>usb_version</c> handling as the keyboard.
+    /// </summary>
+    /// <returns>True when the controller is on the command line, emitted before or here.</returns>
+    internal static bool AppendUsbMouseArgs(StringBuilder args, QemuLaunchOptions options, bool controllerEmitted)
+    {
+        if (!string.Equals(options.MouseDevice, UsbMouseModel, StringComparison.OrdinalIgnoreCase))
+        {
+            return controllerEmitted;
+        }
+
+        AppendUsbController(args, options, controllerEmitted);
+        args.Append($" -device {UsbMouseModel},bus={UsbBus(options.UsbController)},id={UsbMouseId}");
+        AppendUsbPort(args, UsbMousePortOf(options.UsbController));
+        AppendUsbDeviceVersion(args, options);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the controller <see cref="QemuLaunchOptions.UsbController"/>
+    /// names unless an earlier device already did: the companion right after
+    /// the EHCI it serves, and the hub, when asked for, after the controller
+    /// on root port 1. QEMU resolves <c>bus=</c> and <c>port=</c> against the
+    /// devices already on the command line, so all of them precede every
+    /// device.
+    /// </summary>
+    private static void AppendUsbController(StringBuilder args, QemuLaunchOptions options, bool controllerEmitted)
+    {
+        if (controllerEmitted)
+        {
+            return;
+        }
+
+        switch (options.UsbController)
+        {
+            case UsbHostControllerModel.Xhci:
+                args.Append($" -device {XhciModel},id={XhciControllerId}");
+                break;
+            case UsbHostControllerModel.Ehci:
+                args.Append($" -device {EhciModel},id={EhciControllerId}");
+                break;
+            case UsbHostControllerModel.Ohci:
+                args.Append($" -device {OhciModel},id={OhciControllerId},num-ports={UsbRootPortCount}");
+                break;
+            case UsbHostControllerModel.EhciWithOhciCompanion:
+                args.Append($" -device {CompanionEhciModel},id={EhciControllerId}");
+                args.Append($" -device {OhciModel},id={OhciControllerId},masterbus={EhciControllerId}.0,firstport=0,num-ports={UsbRootPortCount}");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(options), options.UsbController, "Unknown USB host controller model.");
+        }
+
+        if (!options.UsbHub)
+        {
+            return;
+        }
+
+        if (!TakesUsbHub(options.UsbController))
+        {
+            throw new ArgumentException(
+                "A usb-hub is full speed only and needs an OHCI, alone or as the EHCI's companion: a standalone EHCI has high-speed ports only and port 1 of qemu-xhci is a USB 3 port.",
+                nameof(options));
+        }
+
+        args.Append($" -device {UsbHubModel},bus={UsbBus(options.UsbController)},id={UsbHubId},port={UsbKeyboardPort}");
+    }
+
+    /// <summary>Pins the device just written to <paramref name="port"/>; nothing on the xHCI, which picks its own.</summary>
+    private static void AppendUsbPort(StringBuilder args, string? port)
+    {
+        if (port is not null)
+        {
+            args.Append($",port={port}");
+        }
+    }
+
+    /// <summary>
+    /// Appends <c>usb_version=1</c> to the HID device just written when the
+    /// run asks for a full-speed one; QEMU's default is 2 and is left unsaid.
+    /// </summary>
+    private static void AppendUsbDeviceVersion(StringBuilder args, QemuLaunchOptions options)
+    {
+        if (options.UsbDeviceVersion == DefaultUsbDeviceVersion)
+        {
+            return;
+        }
+
+        if (options.UsbDeviceVersion != FullSpeedUsbDeviceVersion)
+        {
+            throw new ArgumentException(
+                $"The USB device version must be {FullSpeedUsbDeviceVersion} or {DefaultUsbDeviceVersion}, found {options.UsbDeviceVersion}.",
+                nameof(options));
+        }
+
+        args.Append($",usb_version={FullSpeedUsbDeviceVersion}");
+    }
+
+    /// <summary>
+    /// Emits the NIC selection: <c>"none"</c> disables QEMU's default card with
+    /// <c>-nic none</c>; any other value attaches a user-mode NIC of that model,
+    /// with <paramref name="hostForwards"/> on its backend. The model is
+    /// validated as an option token so it can't splice extra arguments into
+    /// the command line.
+    /// </summary>
+    internal static void AppendNetworkCardArgs(StringBuilder args, string card, IReadOnlyList<string>? hostForwards = null)
+    {
+        if (card.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            if (hostForwards is { Count: > 0 })
+            {
+                throw new ArgumentException("Port forwards need a network card, but the network card is set to \"none\".");
+            }
+
+            args.Append(" -nic none");
+            return;
+        }
+
+        ValidateOptionToken(card, "network card model");
+        args.Append(" -netdev user,id=net0");
+        AppendHostForwards(args, hostForwards ?? []);
+        args.Append($" -device {card},netdev=net0");
+    }
+
+    /// <summary>
+    /// Appends a <c>,hostfwd=</c> option per forward to the user-mode backend
+    /// just written. Each forward must be a whole QEMU <c>hostfwd</c> rule,
+    /// <c>[tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport</c> with IPv4
+    /// addresses, so a value can neither end the backend's options early nor
+    /// splice new arguments into the command line.
+    /// </summary>
+    internal static void AppendHostForwards(StringBuilder args, IReadOnlyList<string> hostForwards)
+    {
+        foreach (string forward in hostForwards)
+        {
+            string rule = forward.Trim();
+            Match match = Regex.Match(rule, @"^(?:tcp|udp)?:[0-9.]*:([0-9]{1,5})-[0-9.]*:([0-9]{1,5})$");
+            if (!match.Success || !IsPort(match.Groups[1].Value) || !IsPort(match.Groups[2].Value))
+            {
+                throw new ArgumentException(
+                    $"Port forward must look like [tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport, such as tcp::2323-:23, found: {forward}");
+            }
+
+            args.Append($",hostfwd={rule}");
+        }
+    }
+
+    private static bool IsPort(string value) => int.Parse(value) is >= 1 and <= 65535;
+
+    /// <summary>
+    /// Attaches an input device (keyboard/mouse) as a <c>-device</c> line.
+    /// <c>null</c>/empty and the sentinels <c>"none"</c>/<c>"ps2"</c> add
+    /// nothing (PS/2 is part of the x64 chipset, not a device you attach), so
+    /// only real QEMU models (e.g. <c>virtio-keyboard-device</c>) are emitted.
+    /// <see cref="UsbKeyboardModel"/> and <see cref="UsbMouseModel"/> add
+    /// nothing here either: they go on the USB host controller through
+    /// <see cref="AppendUsbKeyboardArgs"/> and <see cref="AppendUsbMouseArgs"/>.
+    /// </summary>
+    internal static void AppendInputDevice(StringBuilder args, string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)
+            || model.Equals("none", StringComparison.OrdinalIgnoreCase)
+            || model.Equals("ps2", StringComparison.OrdinalIgnoreCase)
+            || model.Equals(UsbKeyboardModel, StringComparison.OrdinalIgnoreCase)
+            || model.Equals(UsbMouseModel, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ValidateOptionToken(model, "input device model");
+        args.Append($" -device {model}");
+    }
+
+    /// <summary>
+    /// Attaches the audio controller together with the codec that answers on
+    /// it. <c>null</c>/empty and <c>"none"</c> add nothing. The codec is not a
+    /// separate choice: every controller this accepts is an HD Audio one, and
+    /// <c>hda-duplex</c> is the codec that presents both a line-out and a
+    /// line-in on it. A named <paramref name="backend"/> becomes an
+    /// <c>-audiodev</c> the codec is wired to; <c>null</c>/empty leaves the
+    /// codec on QEMU's default backend.
+    /// </summary>
+    internal static void AppendAudioDevice(StringBuilder args, string? model, string? backend = null)
+    {
+        if (string.IsNullOrWhiteSpace(model)
+            || model.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ValidateOptionToken(model, "audio device model");
+        if (string.IsNullOrWhiteSpace(backend))
+        {
+            args.Append($" -device {model} -device hda-duplex");
+            return;
+        }
+
+        ValidateOptionToken(backend, "audio backend");
+        args.Append($" -audiodev {backend},id={AudioBackendId} -device {model} -device hda-duplex,audiodev={AudioBackendId}");
+    }
+
+    /// <summary>
+    /// Selects the guest's VGA adapter as a <c>-vga</c> backend. <c>null</c>/empty
+    /// keeps the architecture default; any other value, including QEMU's own
+    /// <c>none</c>, is passed through. Emitted for both arches: the profile
+    /// catalog's architecture filter is what keeps an adapter off a machine
+    /// that cannot present it.
+    /// </summary>
+    internal static void AppendVgaAdapter(StringBuilder args, string? adapter)
+    {
+        if (string.IsNullOrWhiteSpace(adapter))
+        {
+            return;
+        }
+
+        ValidateOptionToken(adapter, "vga adapter");
+        args.Append($" -vga {adapter}");
+    }
+
+    /// <summary>
+    /// Attaches a display adapter as a <c>-device</c> line, additively: the
+    /// machine's default adapter stays, so this never disturbs the framebuffer
+    /// the bootloader came up on. <c>null</c>/empty and the sentinel
+    /// <c>"none"</c> add nothing. Emitted for both arches (q35 accepts
+    /// <c>virtio-gpu-pci</c> beside its std VGA, and virt accepts it beside
+    /// ramfb), so the catalog needs no architecture filter for it.
+    /// </summary>
+    internal static void AppendGpuDevice(StringBuilder args, string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)
+            || model.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ValidateOptionToken(model, "gpu device model");
+        args.Append($" -device {model}");
+    }
+
+    /// <summary>
+    /// Picks the NIC model for a network-testing run. A test profile selects
+    /// the model when it has an opinion (e.g. driving the suite over
+    /// virtio-net-pci rather than the architecture default); the port forwards
+    /// are added either way, since the runner reaches the guest through them
+    /// whatever the card is. <c>"none"</c> is rejected rather than silently
+    /// producing a run with no way to reach the guest.
+    /// </summary>
+    internal static string ResolveNetworkTestNic(string architecture, string? requested)
+    {
+        if (requested is not null && requested.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Network testing needs a NIC, but the network card is set to \"none\".", nameof(requested));
+        }
+
+        string nic = string.IsNullOrWhiteSpace(requested)
+            ? architecture == "x64" ? "e1000e" : "virtio-net-device"
+            : requested.Trim();
+
+        ValidateOptionToken(nic, "network card model");
+        return nic;
+    }
+
+    internal static void AppendDeviceOptions(StringBuilder args, string extra)
+    {
+        if (string.IsNullOrWhiteSpace(extra))
+        {
+            return;
+        }
+        // Allow callers to pass "msix=off" or ",msix=off": normalize to a
+        // single leading comma so it splices cleanly onto the -device line.
+        string trimmed = extra.Trim();
+        ValidateOptionToken(trimmed, "ExtraDeviceOptions");
+        if (!trimmed.StartsWith(','))
+        {
+            args.Append(',');
+        }
+        args.Append(trimmed);
+    }
+
+    /// <summary>
+    /// Validates and escapes a path spliced into a QEMU <c>-drive file=</c>
+    /// value: commas are doubled (QEMU's option-parser escape; an unescaped
+    /// comma truncates the filename and turns the remainder into bogus drive
+    /// options), and quotes are rejected because the surrounding
+    /// <c>file="…"</c> token has no way to carry one through the argument
+    /// string. Do not use for <c>-cdrom</c>, whose filename QEMU takes
+    /// verbatim.
+    /// </summary>
+    internal static string EscapeDriveFileValue(string path)
+    {
+        RejectQuotes(path, "drive path");
+        return path.Replace(",", ",,");
+    }
+
+    private static void RejectQuotes(string value, string what)
+    {
+        if (value.Contains('"'))
+        {
+            throw new ArgumentException($"QEMU {what} cannot contain a double quote: {value}");
+        }
+    }
+
+    // QEMU option splices (-M properties, -device properties) only ever need
+    // [A-Za-z0-9_.,=-]. Anything else, whitespace above all, would leave
+    // the current token and splice new arguments into the command line, so
+    // reject it instead of passing it through.
+    private static void ValidateOptionToken(string value, string what)
+    {
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('_' or '.' or ',' or '=' or '-'))
+            {
+                throw new ArgumentException(
+                    $"{what} may only contain [A-Za-z0-9_.,=-], found '{c}' in: {value}");
+            }
+        }
+    }
+
+    public static ProcessStartInfo ToProcessStartInfo(QemuLaunchPlan plan)
+    {
+        return new ProcessStartInfo
+        {
+            FileName = plan.BinaryPath,
+            Arguments = plan.Arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = false
+        };
+    }
+}

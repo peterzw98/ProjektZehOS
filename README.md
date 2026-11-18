@@ -1,0 +1,52 @@
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/63316499/89792973-43587480-daf3-11ea-99d6-82f89dd2ffc3.png" width="25%" />
+</p>
+
+<p align="center">
+  <a href="https://chat.gocosmos.org"><img src="https://img.shields.io/badge/official-chat-blue?logo=matrix" /></a>
+  <a href="https://github.com/CosmosOS/Cosmos/actions/workflows/dotnet.yml"><img src="https://img.shields.io/github/actions/workflow/status/CosmosOS/Cosmos/dotnet.yml?branch=gen3&label=.NET%20tests&logo=github" /></a>
+  <a href="https://github.com/CosmosOS/Cosmos/actions/workflows/kernel-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/CosmosOS/Cosmos/kernel-tests.yml?branch=gen3&label=kernel%20tests&logo=github" /></a>
+  <a href="https://github.com/CosmosOS/Cosmos/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/CosmosOS/Cosmos/release.yml?label=release&logo=github" /></a>
+</p>
+
+English | [Français](README_FR.md) | [简体中文](README_CN.md) | [Polski](README_PL.md)
+
+# Cosmos gen3
+
+A bare-metal C# kernel framework built on **NativeAOT**. Cosmos gen3 is the next generation of the [Cosmos](https://github.com/CosmosOS/Cosmos) operating system project, replacing the IL2CPU transpiler with the official .NET ahead-of-time compiler. The result is an ordinary `dotnet build` that produces a bootable kernel ELF for **x64 or ARM64**, linked with an integrated runtime, plugged with the Cosmos plug system, and packaged into an ISO with the Limine bootloader.
+
+Originally based on [Zarlo's NativeAOT patcher](https://gitlab.com/liquip/nativeaot-patcher). See [CosmosOS/Cosmos#3088](https://github.com/CosmosOS/Cosmos/issues/3088) for the design discussion behind the gen3 effort.
+
+## Why gen3?
+
+Cosmos gen2 compiled C# IL to x86 assembly through **IL2CPU**, a custom transpiler. IL2CPU is powerful but maintains its own JIT-like backend separate from the .NET ecosystem. Gen3 replaces it with **NativeAOT**, the official .NET ahead-of-time toolchain, so kernels benefit from the same optimizer used in the wider .NET ecosystem and stay aligned with upstream as it evolves. This also makes it possible to support modern .NET features and additional architectures (currently ARM64 and RISC-V in the future) without re-implementing them in the toolchain.
+
+## Features
+
+- NativeAOT compilation
+- x64 and ARM64
+- [Limine](https://github.com/Limine-Bootloader/Limine) boot protocol
+- [Cosmos plug system](https://cosmosos.github.io/articles/dev/plugs.html)
+- .NET runtime support
+- [Mark-and-sweep Garbage Collector](https://cosmosos.github.io/articles/dev/garbage-collector.html)
+- [Priority-based Stride Scheduler](https://cosmosos.github.io/articles/dev/scheduler.html)
+- Exception handling
+- Interrupts (APIC on x64, GIC on ARM64)
+- ACPI (via [uACPI](https://github.com/uACPI/uACPI))
+- PCI and MMIO drivers
+- UART serial
+- [Cosmos Graphics Subsystem](https://cosmosos.github.io/articles/user/graphics.html)
+- [Keyboard](https://cosmosos.github.io/articles/user/keyboard.html) and [Mouse](https://cosmosos.github.io/articles/user/mouse.html) input
+- [Network stack](https://cosmosos.github.io/articles/user/network.html)
+- Storage drivers (AHCI/SATA, NVMe, virtio-blk, USB mass storage) with MBR, GPT and EBR partitioning
+- [FAT12/16/32, ext2 and ISO 9660 filesystems](https://cosmosos.github.io/articles/user/filesystem.html) on a Unix-style VFS (mount, superblocks, inodes, read-only mounts)
+- Timer / Clock
+
+## Documentation
+
+[Documentation site](https://cosmosos.github.io/index.html): split into a **User Guide** (build your own OS with Cosmos) and **Contributor Docs** (contribute to Cosmos itself / architecture internals).
+
+## License
+
+[BSD 3-Clause](LICENSE), the original Cosmos license. Copyright (c) 2007-2026, CosmosOS, COSMOS Project.
+

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Cosmos.Sdk" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The suite exercises the experimental packet seam (COSMOS0002). -->
+    <NoWarn>$(NoWarn);COSMOS0002</NoWarn>
+  </PropertyGroup>
+
+  <!-- Run the whole protocol suite once per NIC driver, two cells per arch:
+       E1000E and virtio-net-pci on x64, virtio-net over MMIO and over PCI on
+       arm64. This is the data-path coverage for the virtio drivers —
+       DHCP/UDP/TCP/DNS over their rings — as opposed to the Virtio suite,
+       which only proves the devices bind.
+
+       Both transports now run on both arches, so a regression in the shared
+       virtio code has to survive four independent protocol runs, and the two
+       PCI cells differ exactly in their MSI backend (LAPIC vs GICv3 ITS). -->
+  <ItemGroup>
+    <CosmosTestProfile Include="e1000e" />
+    <CosmosTestProfile Include="virtio-net-pci" />
+    <CosmosTestProfile Include="virtio-net-mmio" />
+  </ItemGroup>
+
+  <!-- Core kernel packages (using project references for development) -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Cosmos.Kernel/Cosmos.Kernel.csproj" />
+    <ProjectReference Include="../../../src/Cosmos.Kernel.System/Cosmos.Kernel.System.csproj" />
+    <ProjectReference Include="../../Cosmos.TestRunner.Framework/Cosmos.TestRunner.Framework.csproj" />
+  </ItemGroup>
+
+  <!-- Architecture-specific HAL (using project references for development) -->
+  <ItemGroup Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_X64'))">
+    <ProjectReference Include="../../../src/Cosmos.Kernel.HAL.X64/Cosmos.Kernel.HAL.X64.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_ARM64'))">
+    <ProjectReference Include="../../../src/Cosmos.Kernel.HAL.ARM64/Cosmos.Kernel.HAL.ARM64.csproj" />
+  </ItemGroup>
+
+</Project>

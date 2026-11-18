@@ -1,0 +1,284 @@
+<Project>
+  <!-- Import architecture detection and configuration -->
+  <Import Project="Cosmos.Architecture.props"/>
+
+  <PropertyGroup>
+    <CosmosOutputPath Condition="$(CosmosOutputPath) == ''">$([MSBuild]::NormalizePath('$(OutputPath)', 'cosmos'))</CosmosOutputPath>
+    <CosmosIntermediateOutputPath Condition="$(CosmosIntermediateOutputPath) == ''">$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos'))</CosmosIntermediateOutputPath>
+    <IsoRoot Condition="$(IsoRoot) == ''">$([MSBuild]::NormalizePath('$(CosmosIntermediateOutputPath)', 'iso_root'))</IsoRoot>
+    <IsoOutput Condition="$(IsoOutput) == ''">$([MSBuild]::NormalizePath('$(CosmosOutputPath)', '$(AssemblyName).iso'))</IsoOutput>
+    <!-- The folder whose tree goes to the ISO root, gen2's isoFiles/. -->
+    <CosmosIsoFilesDirectory Condition="'$(CosmosIsoFilesDirectory)' == ''">$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'isoFiles'))</CosmosIsoFilesDirectory>
+  </PropertyGroup>
+
+  <!-- What the folder holds is shipped on the ISO, not built into the kernel:
+       a .cs or .resx file there would otherwise be caught by the SDK's
+       default globs. None items stay, so an IDE still lists the folder. -->
+  <ItemGroup>
+    <Compile Remove="$(CosmosIsoFilesDirectory)/**" />
+    <EmbeddedResource Remove="$(CosmosIsoFilesDirectory)/**" />
+  </ItemGroup>
+
+  <!-- Platform detection -->
+  <PropertyGroup>
+    <IsWindows Condition="'$(OS)' == 'Windows_NT'">true</IsWindows>
+    <IsMacOS Condition="'$(OS)' != 'Windows_NT' AND $([MSBuild]::IsOSPlatform('OSX'))">true</IsMacOS>
+    <IsLinux Condition="'$(OS)' != 'Windows_NT' AND '$(IsMacOS)' != 'true'">true</IsLinux>
+  </PropertyGroup>
+
+  <!-- Cross-OS tool resolution (xorriso, ld.lld) via ResolveCosmosToolTask. -->
+  <Import Project="Common.Build.Tools.targets"/>
+
+  <!-- Content-hash based linker caching: hash all .o/.obj + exports file -->
+  <Target Name="CheckLinkCache" DependsOnTargets="$(LinkTargetDependsOn)">
+    <PropertyGroup>
+      <ElfBinary>$([MSBuild]::NormalizePath('$(OutputPath)', '$(AssemblyName).elf'))</ElfBinary>
+      <AsmObjDir>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', 'asm'))</AsmObjDir>
+      <CObjDir>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', 'cobj'))</CObjDir>
+      <_LinkCacheFile>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', '.link-hash'))</_LinkCacheFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_LinkInputFiles Include="$(AsmObjDir)/*.obj"/>
+      <_LinkInputFiles Include="$(CObjDir)/*.obj"/>
+      <_LinkInputFiles Include="$(CObjDir)/*.o"/>
+      <_LinkInputFiles Include="%(ManagedBinary.OutputFile)"/>
+      <_LinkInputFiles Include="$(ExportsFile)" Condition="'$(ExportsFile)' != '' AND Exists('$(ExportsFile)')"/>
+    </ItemGroup>
+
+    <ComputeInputsHashTask InputFiles="@(_LinkInputFiles)">
+      <Output TaskParameter="Hash" PropertyName="_CurrentLinkHash" />
+    </ComputeInputsHashTask>
+
+    <ReadLinesFromFile File="$(_LinkCacheFile)" Condition="Exists('$(_LinkCacheFile)')">
+      <Output TaskParameter="Lines" ItemName="_PreviousLinkHashLines" />
+    </ReadLinesFromFile>
+
+    <PropertyGroup>
+      <_PreviousLinkHash>@(_PreviousLinkHashLines)</_PreviousLinkHash>
+      <_LinkCacheHit Condition="'$(_CurrentLinkHash)' != '' AND '$(_CurrentLinkHash)' == '$(_PreviousLinkHash)' AND Exists('$(ElfBinary)')">true</_LinkCacheHit>
+    </PropertyGroup>
+
+    <Message Condition="'$(_LinkCacheHit)' == 'true'" Importance="High"
+             Text="Linker cache hit — skipping link (hash: $(_CurrentLinkHash))" />
+  </Target>
+
+  <!-- Wrapper: runs CheckLinkCache, then conditionally invokes the link work via CallTarget. -->
+  <Target Name="LinkTarget" DependsOnTargets="CheckLinkCache" AfterTargets="Build">
+    <CallTarget Targets="_LinkTargetCore" Condition="'$(_LinkCacheHit)' != 'true'" />
+  </Target>
+
+  <Target Name="_LinkTargetCore">
+    <ItemGroup>
+      <ObjFiles Include="$(AsmObjDir)/*.obj"/>
+      <!-- GCC produced object files -->
+      <ObjFiles Include="$(CObjDir)/*.obj"/>
+      <ObjFiles Include="$(CObjDir)/*.o"/>
+    </ItemGroup>
+
+    <PropertyGroup>
+      <!-- Framework linker script paths (included in package) -->
+      <FrameworkLinkerScript>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', 'Linker', 'linker.$(CosmosArch).ld'))</FrameworkLinkerScript>
+      <FallbackLinkerScript>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', 'Linker', 'linker.ld'))</FallbackLinkerScript>
+      <!-- User project linker script paths (for backward compatibility) -->
+      <UserLinkerScript>$([MSBuild]::NormalizePath('Linker', 'linker.$(CosmosArch).ld'))</UserLinkerScript>
+      <UserFallbackLinkerScript>$([MSBuild]::NormalizePath('Linker', 'linker.ld'))</UserFallbackLinkerScript>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- Arguments for ld.lld -->
+      <!-- Priority: User project -> Framework architecture-specific -> Framework fallback -->
+      <LinkerArgs Include="-T $(UserLinkerScript)" Condition="Exists('$(UserLinkerScript)')"/>
+      <LinkerArgs Include="-T $(FrameworkLinkerScript)" Condition="!Exists('$(UserLinkerScript)') AND Exists('$(FrameworkLinkerScript)')"/>
+      <LinkerArgs Include="-T $(UserFallbackLinkerScript)" Condition="!Exists('$(UserLinkerScript)') AND !Exists('$(FrameworkLinkerScript)') AND Exists('$(UserFallbackLinkerScript)')"/>
+      <LinkerArgs Include="-T $(FallbackLinkerScript)" Condition="!Exists('$(UserLinkerScript)') AND !Exists('$(FrameworkLinkerScript)') AND !Exists('$(UserFallbackLinkerScript)') AND Exists('$(FallbackLinkerScript)')"/>
+      <LinkerArgs Include="-m $(CosmosLinkerEmulation)"/>
+      <LinkerArgs Include="-nostdlib"/>
+      <LinkerArgs Include="-static"/>
+      <LinkerArgs Include="-z max-page-size=0x1000"/>
+      <LinkerArgs Include="%(ManagedBinary.OutputFile)"/>
+      <LinkerArgs Include="@(ObjFiles->'%(FullPath)')"/>
+      <LinkerArgs Include="-o $(ElfBinary)"/>
+      <LinkerArgs Include="--error-limit=0"/>
+      <LinkerArgs Condition="$(ExportsFile) != ''" Include="--version-script &quot;$(ExportsFile)&quot;"/>
+    </ItemGroup>
+
+    <Error Condition="'$(LdLinkerPath)' == ''" Text="Error: 'ld.lld' linker was not found. Install llvm or set the 'LdLinkerPath' property"/>
+    <Exec Command="&quot;$(LdLinkerPath)&quot; @(LinkerArgs, ' ')"/>
+    <Message Text="Built ELF: $(AssemblyName).elf" Importance="High"/>
+
+    <!-- Write cache hash after successful linking -->
+    <WriteLinesToFile File="$(_LinkCacheFile)" Lines="$(_CurrentLinkHash)" Overwrite="true" />
+  </Target>
+
+  <!--
+    The files a kernel ships on its ISO: the tree under isoFiles/ (the
+    CosmosIsoFilesDirectory property), at the ISO root with its folders, and
+    every <CosmosIsoFile Include="..." />, at its IsoPath metadata (the file's
+    path on the ISO; one ending in / names a folder that keeps the file's
+    name; none puts the file at the root). /boot and /EFI are the SDK's, a
+    . or .. segment is refused since .. could leave the root, and so are two
+    files on one path, compared without case: on a Windows host the second
+    copy into iso_root would overwrite the first.
+
+    The manifest pairs each ISO path with its source, so the ISO cache sees a
+    file renamed or moved, not only a file whose bytes changed. Its first line
+    keeps it from being empty: the last file removed still changes it.
+  -->
+  <Target Name="CollectCosmosIsoFiles">
+    <PropertyGroup>
+      <_CosmosIsoFilesManifest>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', 'iso-files.txt'))</_CosmosIsoFilesManifest>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- RecursiveDir is set once the glob is expanded, so the ISO path is a second step. -->
+      <_CosmosIsoFolderFile Include="$(CosmosIsoFilesDirectory)/**/*" Condition="Exists('$(CosmosIsoFilesDirectory)')" />
+      <_CosmosIsoFolderFile IsoPath="%(_CosmosIsoFolderFile.RecursiveDir)%(Filename)%(Extension)" />
+      <_CosmosIsoFile Include="@(_CosmosIsoFolderFile)" />
+      <_CosmosIsoFile Include="@(CosmosIsoFile->'%(FullPath)')" />
+      <_CosmosIsoFile Condition="'%(_CosmosIsoFile.IsoPath)' == ''" IsoPath="%(Filename)%(Extension)" />
+      <_CosmosIsoFile IsoPath="$([System.String]::Copy('%(_CosmosIsoFile.IsoPath)').Replace('\', '/').TrimStart('/'))" />
+      <_CosmosIsoFile Condition="$([System.String]::Copy('%(_CosmosIsoFile.IsoPath)').EndsWith('/'))" IsoPath="%(_CosmosIsoFile.IsoPath)%(Filename)%(Extension)" />
+      <_CosmosIsoFile ManifestLine="%(_CosmosIsoFile.IsoPath) &lt;- $([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '%(_CosmosIsoFile.FullPath)'))" />
+    </ItemGroup>
+
+    <Error Condition="$([System.String]::Copy('/%(_CosmosIsoFile.IsoPath)').ToLowerInvariant().StartsWith('/boot/')) OR $([System.String]::Copy('/%(_CosmosIsoFile.IsoPath)').ToLowerInvariant().StartsWith('/efi/')) OR '%(_CosmosIsoFile.IsoPath)' == 'boot' OR '%(_CosmosIsoFile.IsoPath)' == 'EFI'"
+           Text="'%(_CosmosIsoFile.Identity)' would go to /%(_CosmosIsoFile.IsoPath) on the ISO, but /boot and /EFI hold the kernel and the bootloader the SDK writes there." />
+    <Error Condition="$([System.String]::Copy('/%(_CosmosIsoFile.IsoPath)/').Contains('/../')) OR $([System.String]::Copy('/%(_CosmosIsoFile.IsoPath)/').Contains('/./'))"
+           Text="'%(_CosmosIsoFile.Identity)' has the ISO path '%(_CosmosIsoFile.IsoPath)': a . or .. segment is refused, since .. could leave the ISO root." />
+    <Error Condition="'@(_CosmosIsoFile->Count())' &gt; '1'"
+           Text="Several files would go to /%(_CosmosIsoFile.IsoPath) on the ISO: @(_CosmosIsoFile, ', ')." />
+
+    <WriteLinesToFile File="$(_CosmosIsoFilesManifest)"
+                      Lines="Cosmos ISO files;@(_CosmosIsoFile->'%(ManifestLine)')"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Content-hash based ISO caching: hash ELF + limine.conf + the shipped files and their manifest -->
+  <Target Name="CheckIsoCache" DependsOnTargets="LinkTarget;CollectCosmosIsoFiles">
+    <PropertyGroup>
+      <_IsoCacheFile>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', '.iso-hash'))</_IsoCacheFile>
+      <_LimineConf>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'Bootloader', 'limine.conf'))</_LimineConf>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_IsoInputFiles Include="$(ElfBinary)" Condition="Exists('$(ElfBinary)')"/>
+      <_IsoInputFiles Include="$(_LimineConf)" Condition="Exists('$(_LimineConf)')"/>
+      <_IsoInputFiles Include="$(_CosmosIsoFilesManifest)"/>
+      <_IsoInputFiles Include="@(_CosmosIsoFile)"/>
+    </ItemGroup>
+
+    <ComputeInputsHashTask InputFiles="@(_IsoInputFiles)">
+      <Output TaskParameter="Hash" PropertyName="_CurrentIsoHash" />
+    </ComputeInputsHashTask>
+
+    <ReadLinesFromFile File="$(_IsoCacheFile)" Condition="Exists('$(_IsoCacheFile)')">
+      <Output TaskParameter="Lines" ItemName="_PreviousIsoHashLines" />
+    </ReadLinesFromFile>
+
+    <PropertyGroup>
+      <_PreviousIsoHash>@(_PreviousIsoHashLines)</_PreviousIsoHash>
+      <_IsoCacheHit Condition="'$(_CurrentIsoHash)' != '' AND '$(_CurrentIsoHash)' == '$(_PreviousIsoHash)' AND Exists('$(IsoOutput)')">true</_IsoCacheHit>
+    </PropertyGroup>
+
+    <Message Condition="'$(_IsoCacheHit)' == 'true'" Importance="High"
+             Text="ISO cache hit — skipping ISO creation (hash: $(_CurrentIsoHash))" />
+  </Target>
+
+  <!-- Wrapper: runs CheckIsoCache, then conditionally invokes the ISO work via CallTarget. -->
+  <Target Name="BuildISO" DependsOnTargets="CheckIsoCache" AfterTargets="LinkTarget">
+    <CallTarget Targets="_BuildIsoCore" Condition="'$(_IsoCacheHit)' != 'true'" />
+  </Target>
+
+  <Target Name="_BuildIsoCore" DependsOnTargets="GetXorriso">
+    <Message Text="Creating ISO image with Limine..." Importance="High"/>
+
+    <!-- Remove old ISO directory if it exists -->
+    <RemoveDir Directories="$(IsoRoot)"/>
+
+    <!-- Limine bootloader files bundled in the NuGet package (tools/Limine/) -->
+    <PropertyGroup>
+      <LiminePkgDir>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', 'tools', 'Limine'))</LiminePkgDir>
+      <LimineDir>$([MSBuild]::NormalizePath('$(CosmosIntermediateOutputPath)', 'limine'))</LimineDir>
+      <LimineBinary Condition="'$(IsWindows)' == 'true'">$([MSBuild]::NormalizePath('$(LimineDir)', 'limine.exe'))</LimineBinary>
+      <LimineBinary Condition="'$(IsWindows)' != 'true'">$([MSBuild]::NormalizePath('$(LimineDir)', 'limine'))</LimineBinary>
+      <IsoRootBoot>$([MSBuild]::NormalizePath('$(IsoRoot)', 'boot'))</IsoRootBoot>
+      <IsoRootBootLimine>$([MSBuild]::NormalizePath('$(IsoRoot)', 'boot', 'limine'))</IsoRootBootLimine>
+      <IsoRootEfiBoot>$([MSBuild]::NormalizePath('$(IsoRoot)', 'EFI', 'BOOT'))</IsoRootEfiBoot>
+    </PropertyGroup>
+
+    <!-- Create new directories for Limine and EFI boot files -->
+    <MakeDir Directories="$(LimineDir)"/>
+    <MakeDir Directories="$(IsoRootBootLimine)"/>
+    <MakeDir Directories="$(IsoRootEfiBoot)"/>
+
+    <!-- Copy bundled Limine files from NuGet package to intermediate output -->
+    <ItemGroup>
+      <BundledLimineFiles Include="$(LiminePkgDir)/*"/>
+    </ItemGroup>
+    <Copy SourceFiles="@(BundledLimineFiles)" DestinationFolder="$(LimineDir)" SkipUnchangedFiles="true"/>
+
+    <!-- On Unix, build the limine CLI tool from the bundled source -->
+    <Exec Condition="'$(IsWindows)' != 'true'" Command="make -C &quot;$(LimineDir)&quot;"/>
+
+    <!-- Copy built ELF and Limine config to ISO root -->
+    <Copy SourceFiles="$(ElfBinary)" DestinationFolder="$(IsoRootBoot)"/>
+    <Copy SourceFiles="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'Bootloader', 'limine.conf'))" DestinationFolder="$(IsoRootBootLimine)"/>
+
+    <!-- Copy Limine files -->
+    <Copy SourceFiles="$([MSBuild]::NormalizePath('$(LimineDir)', 'limine-bios.sys'));$([MSBuild]::NormalizePath('$(LimineDir)', 'limine-bios-cd.bin'));$([MSBuild]::NormalizePath('$(LimineDir)', 'limine-uefi-cd.bin'))" DestinationFolder="$(IsoRootBootLimine)"/>
+    <!-- Copy architecture-specific UEFI bootloader -->
+    <Copy Condition="'$(CosmosArch)' == 'x64'" SourceFiles="$([MSBuild]::NormalizePath('$(LimineDir)', 'BOOTX64.EFI'))" DestinationFolder="$(IsoRootEfiBoot)"/>
+    <Copy Condition="'$(CosmosArch)' == 'arm64'" SourceFiles="$([MSBuild]::NormalizePath('$(LimineDir)', 'BOOTAA64.EFI'))" DestinationFolder="$(IsoRootEfiBoot)"/>
+
+    <!-- Copy the files the kernel ships, CollectCosmosIsoFiles having placed and checked them -->
+    <Copy SourceFiles="@(_CosmosIsoFile)" DestinationFiles="@(_CosmosIsoFile->'$(IsoRoot)/%(IsoPath)')"/>
+    <Message Condition="'@(_CosmosIsoFile)' != ''" Importance="High" Text="Shipping @(_CosmosIsoFile->Count()) file(s) on the ISO"/>
+
+    <!-- Arguments for xorriso to generate an ISO with MBR and UEFI boot entries -->
+    <ItemGroup>
+      <XorrisoArgs Include="-as mkisofs"/>
+      <XorrisoArgs Include="-R"/>
+      <XorrisoArgs Include="-J"/>
+      <XorrisoArgs Include="-b boot/limine/limine-bios-cd.bin"/>
+      <XorrisoArgs Include="-no-emul-boot"/>
+      <XorrisoArgs Include="-boot-load-size 4"/>
+      <XorrisoArgs Include="-boot-info-table"/>
+      <XorrisoArgs Include="--efi-boot boot/limine/limine-uefi-cd.bin"/>
+      <XorrisoArgs Include="-efi-boot-part"/>
+      <XorrisoArgs Include="--efi-boot-image"/>
+      <XorrisoArgs Include="--protective-msdos-label $(FinalIsoRoot)"/>
+      <XorrisoArgs Include="-o $(IsoOutput)"/>
+    </ItemGroup>
+
+    <!-- Create Output Dir -->
+    <MakeDir Directories="$(CosmosOutputPath)"/>
+
+    <!-- Build the ISO -->
+    <Exec Command="&quot;$(XorrisoBinary)&quot; @(XorrisoArgs, ' ')"/>
+
+    <!-- Install Limine on the new ISO -->
+    <Exec Command="&quot;$(LimineBinary)&quot; bios-install &quot;$(IsoOutput)&quot;"/>
+    <Message Text="ISO created at: $(IsoOutput)" Importance="High"/>
+
+    <!-- Write cache hash after successful ISO creation -->
+    <WriteLinesToFile File="$(_IsoCacheFile)" Lines="$(_CurrentIsoHash)" Overwrite="true" />
+  </Target>
+
+  <Target Name="PublishISO" AfterTargets="Publish">
+    <!-- Recompute the ELF path: $(ElfBinary) is scoped to CheckLinkCache and
+         not visible here when publish runs with a warm build. -->
+    <PropertyGroup>
+      <_PublishElfBinary>$([MSBuild]::NormalizePath('$(OutputPath)', '$(AssemblyName).elf'))</_PublishElfBinary>
+    </PropertyGroup>
+
+    <!-- Copy the ISO and the ELF to the publish folder: the ELF carries the
+         debug symbols the VSCode launch configs (and addr2line workflows)
+         load from output-<arch>/ next to the ISO. -->
+    <Copy SourceFiles="$(IsoOutput)" DestinationFolder="$(PublishDir)"/>
+    <Copy SourceFiles="$(_PublishElfBinary)" DestinationFolder="$(PublishDir)" Condition="Exists('$(_PublishElfBinary)')"/>
+
+    <Message Text="✅ ISO and ELF copied to publish folder: $(PublishDir)" Importance="High"/>
+  </Target>
+</Project>

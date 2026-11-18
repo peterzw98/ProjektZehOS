@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Cosmos.Patcher</RootNamespace>
+    <!--pack as nuget-->
+    <PackAsTool>True</PackAsTool>
+    <ToolCommandName>cosmos.patcher</ToolCommandName>
+    <!--pack as nuget-->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="MonoMod.Utils" />
+    <PackageReference Include="Spectre.Console.Cli" />
+    <PackageReference Include="PolySharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cosmos.Build.API\Cosmos.Build.API.csproj" />
+  </ItemGroup>
+</Project>

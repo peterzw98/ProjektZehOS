@@ -1,0 +1,266 @@
+<Project>
+  <PropertyGroup>
+    <PatchedAssembly />
+    <EnablePatching Condition="'$(EnablePatching)'!='false'">true</EnablePatching>
+    <EnableAOT>true</EnableAOT>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PatcherTargetPlatform Condition="'$(PatcherTargetPlatform)' == '' and '$(CosmosArch)' != ''">$([System.String]::Copy('$(CosmosArch)').ToUpperInvariant())</PatcherTargetPlatform>
+  <PatcherTargetPlatform Condition="'$(PatcherTargetPlatform)' == ''">X64</PatcherTargetPlatform>
+  </PropertyGroup>
+
+  <UsingTask TaskName="Cosmos.Build.Patcher.Tasks.PatcherTask"
+             AssemblyFile="$(CosmosPatcherTasksAssembly)" />
+  <UsingTask TaskName="Cosmos.Build.Patcher.Tasks.FindPluggedAssembliesTask"
+             AssemblyFile="$(CosmosPatcherTasksAssembly)" />
+
+  <Target Name="Log" BeforeTargets="BeforeBuild">
+    <Message Importance="High" Text="MSBuildThisFileDirectory: '$(MSBuildThisFileDirectory)'" />
+    <Message Importance="High" Text="Configuration: '$(Configuration)'" />
+    <Message Importance="High" Text="OutputPath: '$(OutputPath)'" />
+    <Message Importance="High" Text="IntermediateOutputPath: '$(IntermediateOutputPath)'" />
+    <Message Importance="High" Text="PatcherBuildDll: '$(PatcherBuildDll)'" />
+    <Message Importance="High" Text="PatcherPath: '$(PatcherPath)'" />
+    <Message Importance="High" Text="PatcherOutputPath: '$(PatcherOutputPath)'" />
+    <Message Importance="High" Text="PatchedAssembly: '$(PatchedAssembly)'" />
+    <Message Importance="High" Text="TargetFramework: '$(TargetFramework)'" />
+    <Message Importance="High" Text="PatcherExists: Exists('$(PatcherPath)')" />
+    <Message Importance="High" Text="PatcherTask:$(PatcherTask)" />
+  </Target>
+
+  <!--
+    Run SetupPatcher before the ILCompiler step to ensure we operate on IL assemblies.
+    This avoids trying to read NativeAOT outputs (native PE) with Mono.Cecil.
+  -->
+  <Target Name="SetupPatcher" AfterTargets="Build" BeforeTargets="CompileWithIlc" DependsOnTargets="ResolveIlcPath">
+    <PropertyGroup>
+      <PatcherOutputPath Condition="$(PatcherOutputPath) == ''">$(IntermediateOutputPath)/cosmos/ref/</PatcherOutputPath>
+      <!-- The Main Assembly is patched to the root folder of Cosmos to make it easy to be found by other build tools -->
+      <PatchedAssembly Condition="$(PatcherOutputPath) == ''">$(IntermediateOutputPath)/cosmos/$(AssemblyName)_patched.dll</PatchedAssembly>
+    </PropertyGroup>
+
+    <!-- Build candidate set of assemblies with output destinations -->
+    <ItemGroup>
+      <CandidateAssemblies Include="$(OutputPath)$(AssemblyName).dll">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/$(AssemblyName)_patched.dll</PatcherOutputPath>
+      </CandidateAssemblies>
+      <CandidateAssemblies Include="@(ReferencePath)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </CandidateAssemblies>
+      <CandidateAssemblies Include="@(PrivateSdkAssemblies)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </CandidateAssemblies>
+      <CandidateAssemblies Include="@(FrameworkAssemblies)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </CandidateAssemblies>
+    </ItemGroup>
+
+    <!-- Include ILC SDK reference assemblies as candidates (System.Console, etc.) -->
+    <ItemGroup>
+      <IlcSdkAssemblies Include="$(IlcSdkPath)**/*.dll" Condition="'$(IlcSdkPath)' != ''" />
+      <CandidateAssemblies Include="@(IlcSdkAssemblies)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </CandidateAssemblies>
+    </ItemGroup>
+
+    <!-- Include RID-specific assemblies from Cosmos multi-arch packages -->
+    <ItemGroup Condition="'@(CosmosMultiArchReference)' != ''">
+      <CandidateAssemblies Include="@(CosmosMultiArchReference)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </CandidateAssemblies>
+    </ItemGroup>
+
+    <!-- Filter references to find plug assemblies based on PlugReference assembly names -->
+    <ItemGroup>
+      <!-- Always include the main assembly as a plug -->
+      <PlugRef Include="$(OutputPath)$(AssemblyName).dll" />
+
+      <!-- Filter ReferencePath items that match PlugReference assembly names -->
+      <PlugRef Include="@(ReferencePath)"
+               Condition="'%(ReferencePath.Filename)' != '' and '@(PlugReference)' != '' and $([System.String]::new('@(PlugReference, ';')').Contains('%(ReferencePath.Filename)'))" />
+
+      <!-- Also check for references in the output directory that match PlugReference names -->
+      <PlugRef Include="$(OutputPath)%(PlugReference.Identity).dll"
+               Condition="Exists('$(OutputPath)%(PlugReference.Identity).dll')" />
+    </ItemGroup>
+
+    <!-- Remove duplicates from PlugRef -->
+    <RemoveDuplicates Inputs="@(PlugRef)">
+      <Output TaskParameter="Filtered" ItemName="UniquePlugRef"/>
+    </RemoveDuplicates>
+
+    <ItemGroup>
+      <PlugRef Remove="@(PlugRef)" />
+      <PlugRef Include="@(UniquePlugRef)" />
+    </ItemGroup>
+
+    <!-- Note: We don't RemoveDir here anymore to enable incremental builds.
+         The Copy task uses SkipUnchangedFiles="true" for efficiency.
+         Use 'dotnet clean' to fully reset the output directory. -->
+
+    <!-- Ensure the output directories exist -->
+    <MakeDir Directories="$(PatcherOutputPath)" />
+    <MakeDir Directories="$([MSBuild]::NormalizePath('$(IntermediateOutputPath)/cosmos'))" />
+
+    <Message Importance="High" Text="PlugReference Assembly Names:" />
+    <Message Importance="High" Text="  %(PlugReference.Identity)" />
+
+    <Message Importance="High" Text="Resolved PlugRef DLL Paths:" />
+    <Message Importance="High" Text="  %(PlugRef.Identity)" />
+
+    <!-- Use FindPluggedAssembliesTask to filter only assemblies that contain target types -->
+    <FindPluggedAssembliesTask PlugAssemblies="@(PlugRef)"
+                               CandidateAssemblies="@(CandidateAssemblies)">
+      <Output TaskParameter="AssembliesToPatch" ItemName="FilteredAssembliesToPatch" />
+    </FindPluggedAssembliesTask>
+
+    <Message Importance="High" Text="Candidates:" />
+    <Message Importance="High" Text="  %(CandidateAssemblies.Identity)" />
+    <Message Importance="High" Text="Filtered assemblies (by plugs):" />
+    <Message Importance="High" Text="  %(FilteredAssembliesToPatch.Identity)" />
+
+    <!-- Build final patch list -->
+    <ItemGroup>
+      <!-- Always include the main assembly so ILC has a "patched" app binary -->
+      <AssembliesToPatch Include="$(OutputPath)$(AssemblyName).dll">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/$(AssemblyName)_patched.dll</PatcherOutputPath>
+      </AssembliesToPatch>
+
+      <!-- Add filtered assemblies; place them under ref/ by filename -->
+      <AssembliesToPatch Include="@(FilteredAssembliesToPatch)">
+        <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/ref/%(Filename).dll</PatcherOutputPath>
+      </AssembliesToPatch>
+    </ItemGroup>
+
+    <!-- De-dup final patch list -->
+    <RemoveDuplicates Inputs="@(AssembliesToPatch)">
+      <Output TaskParameter="Filtered" ItemName="AssembliesToPatch"/>
+    </RemoveDuplicates>
+
+    <Message Importance="High" Text="Assemblies selected for patching:" />
+    <Message Importance="High" Text="  %(AssembliesToPatch.Identity) -> %(AssembliesToPatch.PatcherOutputPath)" />
+
+    <!-- Compute patcher cache hash to skip patching when inputs haven't changed.
+         The patcher produces non-deterministic output (Mono.Cecil generates new MVIDs),
+         so we cache based on INPUTS, not outputs. -->
+    <PropertyGroup>
+      <_PatcherCacheFile>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', '.patcher-hash'))</_PatcherCacheFile>
+      <_PatcherOutputFile>$([MSBuild]::NormalizePath('$(IntermediateOutputPath)', 'cosmos', '$(AssemblyName)_patched.dll'))</_PatcherOutputFile>
+    </PropertyGroup>
+
+    <ComputeInputsHashTask InputFiles="@(AssembliesToPatch);@(PlugRef)">
+      <Output TaskParameter="Hash" PropertyName="_CurrentPatcherHash" />
+    </ComputeInputsHashTask>
+
+    <ReadLinesFromFile File="$(_PatcherCacheFile)" Condition="Exists('$(_PatcherCacheFile)')">
+      <Output TaskParameter="Lines" ItemName="_PreviousPatcherHashLines" />
+    </ReadLinesFromFile>
+
+    <PropertyGroup>
+      <_PreviousPatcherHash>@(_PreviousPatcherHashLines)</_PreviousPatcherHash>
+      <_PatcherCacheHit Condition="'$(_CurrentPatcherHash)' != '' AND '$(_CurrentPatcherHash)' == '$(_PreviousPatcherHash)' AND Exists('$(_PatcherOutputFile)')">true</_PatcherCacheHit>
+    </PropertyGroup>
+
+    <Message Condition="'$(_PatcherCacheHit)' == 'true'" Importance="High"
+             Text="Patcher cache hit — skipping patching (hash: $(_CurrentPatcherHash))" />
+
+    <!-- Build the set of non-patched assemblies to copy to ref/ for ILC resolution.
+         Use a delimited filename string for a robust Contains() check. -->
+    <PropertyGroup>
+      <_PatchedFilenamesList>;@(AssembliesToPatch->'%(Filename)', ';');</_PatchedFilenamesList>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssembliesToCopy Include="@(CandidateAssemblies)"
+                        Condition="!$(_PatchedFilenamesList.Contains(';%(CandidateAssemblies.Filename);'))" />
+    </ItemGroup>
+
+    <!-- Always copy non-patched assemblies (even on cache hit) so ILC sees updated references.
+         SkipUnchangedFiles avoids redundant I/O. -->
+    <Message Importance="Low" Text="Assemblies copied (no patch): %(AssembliesToCopy.Identity) -> %(AssembliesToCopy.PatcherOutputPath)" />
+
+    <!-- Ensure copy target directories exist -->
+    <ItemGroup>
+      <CopyDirs Include="@(AssembliesToCopy->'$([System.IO.Path]::GetDirectoryName(%(PatcherOutputPath)))')" />
+    </ItemGroup>
+    <RemoveDuplicates Inputs="@(CopyDirs)">
+      <Output TaskParameter="Filtered" ItemName="CopyDirs"/>
+    </RemoveDuplicates>
+    <MakeDir Directories="@(CopyDirs)" />
+
+    <Copy SourceFiles="@(AssembliesToCopy)"
+          DestinationFiles="@(AssembliesToCopy->'%(PatcherOutputPath)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Clean target to remove the asm folder -->
+  <Target Name="CleanPatcher" BeforeTargets="Clean">
+    <PropertyGroup>
+      <PatcherOutputPath>$(IntermediateOutputPath)/cosmos/asm/</PatcherOutputPath>
+    </PropertyGroup>
+
+    <RemoveDir Directories="$(PatcherOutputPath)" />
+  </Target>
+
+  <!-- Platform files only set $(_CosmosPatcherCommand) — the RunPatcher target itself is shared. -->
+  <Import Project="Patcher.Build.Unix.targets" Condition="'$(OS)' != 'Windows_NT'"/>
+  <Import Project="Patcher.Build.Windows.targets" Condition="'$(OS)' == 'Windows_NT'"/>
+
+  <!-- Wrapper: runs SetupPatcher (which sets _PatcherCacheHit), then conditionally
+       invokes the patch work via CallTarget. -->
+  <Target Name="RunPatcher"
+          AfterTargets="Build"
+          DependsOnTargets="SetupPatcher"
+          Condition="'$(EnablePatching)' == 'true'">
+    <CallTarget Targets="_RunPatcherCore" Condition="'$(_PatcherCacheHit)' != 'true'" />
+  </Target>
+
+  <Target Name="_RunPatcherCore">
+    <PropertyGroup>
+      <_PatcherCoverageFlag Condition="'$(CosmosCoverage)' == 'true'">--coverage</_PatcherCoverageFlag>
+      <_PatcherCoverageFlag Condition="'$(CosmosCoverage)' != 'true'"></_PatcherCoverageFlag>
+    </PropertyGroup>
+
+    <!-- Where the patcher resolves the assemblies a patched one references:
+         writing a constant typed as an enum from another assembly needs that
+         enum's definition, and Mono.Cecil looks only in the current directory
+         and the host runtime on its own. Every candidate's directory is
+         listed, plus ref/, where the non-patched references were copied. -->
+    <ItemGroup>
+      <_PatcherSearchDirectory Include="$([MSBuild]::NormalizeDirectory('$(IntermediateOutputPath)', 'cosmos', 'ref'))" />
+      <_PatcherSearchDirectory Include="@(CandidateAssemblies->'%(RootDir)%(Directory)')" />
+    </ItemGroup>
+    <RemoveDuplicates Inputs="@(_PatcherSearchDirectory)">
+      <Output TaskParameter="Filtered" ItemName="_PatcherSearchDirectoryUnique" />
+    </RemoveDuplicates>
+
+    <Message Importance="High"
+             Text="Batch patching: %(AssembliesToPatch.Identity) -> %(AssembliesToPatch.PatcherOutputPath)" />
+
+    <Exec
+      Command="$(_CosmosPatcherCommand) patch --target &quot;%(AssembliesToPatch.Identity)&quot; --target-platform &quot;$(PatcherTargetPlatform)&quot; --output &quot;%(AssembliesToPatch.PatcherOutputPath)&quot; --plugs &quot;@(PlugRef-&gt;'%(Identity)', ';')&quot; --search &quot;@(_PatcherSearchDirectoryUnique-&gt;'%(Identity)', ';')&quot; $(_PatcherCoverageFlag)"
+      ConsoleToMSBuild="true"
+      IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="PatcherExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="PatcherConsoleOutput" />
+    </Exec>
+
+    <Error Condition="'$(PatcherExitCode)' != '0'"
+           Text="Cosmos.Patcher failed for &quot;%(AssembliesToPatch.Identity)&quot; with code $(PatcherExitCode): $(PatcherConsoleOutput)" />
+
+    <Message Importance="High" Condition="'$(PatcherExitCode)' == '0'"
+             Text="Cosmos.Patcher successfully patched: '%(AssembliesToPatch.PatcherOutputPath)'" />
+
+    <!-- NOTE: do NOT copy the original $(OutputPath)$(AssemblyName).pdb over the
+         patcher's output. Cosmos.Patcher already writes a matching Portable PDB
+         next to the patched .dll via Mono.Cecil's WriterParameters.WriteSymbols.
+         Copying the unpatched PDB here overwrites that matching PDB with one
+         whose MVID no longer matches the patched DLL — ILC then silently drops
+         all sequence points for the user project, killing DWARF source line
+         info and breaking source-level breakpoints under gdb. -->
+
+    <!-- Write cache hash after successful patching -->
+    <WriteLinesToFile File="$(_PatcherCacheFile)" Lines="$(_CurrentPatcherHash)" Overwrite="true" />
+  </Target>
+
+</Project>

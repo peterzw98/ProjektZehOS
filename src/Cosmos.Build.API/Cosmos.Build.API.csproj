@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework Condition="$(TargetFramework) != ''">netstandard2.0</TargetFramework>
+    <!--pack as nuget-->
+    <IsPackable>true</IsPackable>
+    <!--pack as nuget-->
+  </PropertyGroup>
+</Project>

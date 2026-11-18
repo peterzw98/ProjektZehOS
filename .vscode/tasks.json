@@ -1,0 +1,123 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build x64 DevKernel",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "examples/DevKernel/DevKernel.csproj",
+        "-c", "Debug",
+        "-r", "linux-x64",
+        "-p:DefineConstants=ARCH_X64",
+        "-p:CosmosArch=x64",
+        "--verbosity", "minimal"
+      ],
+      "group": "build",
+      "problemMatcher": ["$msCompile"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Build ARM64 DevKernel",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "examples/DevKernel/DevKernel.csproj",
+        "-c", "Debug",
+        "-r", "linux-arm64",
+        "-p:DefineConstants=ARCH_ARM64",
+        "-p:CosmosArch=arm64",
+        "--verbosity", "minimal"
+      ],
+      "group": "build",
+      "problemMatcher": ["$msCompile"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Debug x64 DevKernel",
+      "type": "shell",
+      "command": "make",
+      "args": ["debug-dev", "ARCH=x64"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "qemu-devkernel",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^qemu",
+          "endsPattern": "QEMU-DEVKERNEL-DEBUG-READY"
+        },
+        "pattern": { "regexp": ".*" }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Debug ARM64 DevKernel",
+      "type": "shell",
+      "command": "make",
+      "args": ["debug-dev", "ARCH=arm64"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "qemu-devkernel-arm64",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^qemu",
+          "endsPattern": "QEMU-DEVKERNEL-ARM64-DEBUG-READY"
+        },
+        "pattern": { "regexp": ".*" }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Run QEMU x64 DevKernel",
+      "type": "shell",
+      "command": "make",
+      "args": ["run-dev", "ARCH=x64"],
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Run QEMU ARM64 DevKernel",
+      "type": "shell",
+      "command": "make",
+      "args": ["run-dev", "ARCH=arm64"],
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Stop QEMU x64",
+      "type": "shell",
+      "command": "pkill",
+      "args": ["-f", "qemu-system-x86_64.*DevKernel"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never"
+      }
+    },
+    {
+      "label": "Stop QEMU ARM64",
+      "type": "shell",
+      "command": "pkill",
+      "args": ["-f", "qemu-system-aarch64.*DevKernel"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never"
+      }
+    }
+  ]
+}

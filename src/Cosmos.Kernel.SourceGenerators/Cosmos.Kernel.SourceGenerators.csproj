@@ -1,0 +1,58 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <OutputItemType>Analyzer</OutputItemType>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <!-- RS2002 reads the release tracking tables (AnalyzerReleases.*.md) against
+         the SupportedDiagnostics of the DiagnosticAnalyzer types in the assembly.
+         A source generator has no SupportedDiagnostics, so every COSMOSGEN rule
+         it reports looks "removed" to that check although the generator still
+         reports it. The tables stay, so RS2000/RS2001 keep them well formed and
+         complete; only that one false positive is silenced. -->
+    <NoWarn>$(NoWarn);RS2002</NoWarn>
+  </PropertyGroup>
+  
+  <PropertyGroup>
+    <PackageId>Cosmos.Kernel.SourceGenerators</PackageId>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <!-- <PackageIconUrl>http://ICON_URL_HERE_OR_DELETE_THIS_LINE</PackageIconUrl> -->
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Description>Cosmos.Kernel.SourceGenerators</Description>
+    <PackageReleaseNotes>Release</PackageReleaseNotes>
+    <Copyright>Copyright</Copyright>
+    <PackageTags>Cosmos.Kernel.SourceGenerators, analyzers</PackageTags>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_AddAnalyzersToOutput</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <!-- Release tracking for the COSMOSGEN diagnostics (RS2008). -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="build\Cosmos.Kernel.SourceGenerators.props" PackagePath="build\" />
+    <Content Include="build\Cosmos.Kernel.SourceGenerators.targets" PackagePath="build\" />
+  </ItemGroup>
+
+  <Target Name="_AddAnalyzersToOutput">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(OutputPath)/*.dll" PackagePath="analyzers/dotnet/cs" />
+
+    </ItemGroup>
+  </Target>
+</Project>

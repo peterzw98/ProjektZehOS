@@ -1,0 +1,196 @@
+<Project>
+  <!-- Common Cosmos kernel properties -->
+  <PropertyGroup>
+    <UsingCosmosSdk>true</UsingCosmosSdk>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>true</PublishTrimmed>
+    <IlcSystemModule>System.Private.CoreLib</IlcSystemModule>
+    <!-- Write the generated entry point and driver manifest under obj/ (the
+         generated/ folder of the intermediate path), so a kernel author can read
+         which drivers the build registered. A project that sets the property
+         itself keeps its value. -->
+    <EmitCompilerGeneratedFiles Condition="'$(EmitCompilerGeneratedFiles)' == ''">true</EmitCompilerGeneratedFiles>
+
+    <!-- We require Microsoft.NET.Sdk for building propertly -->
+    <_ImportMicrosoftNETSdkFromCosmosSdk Condition=" '$(UsingMicrosoftNETSdk)' == '' ">true</_ImportMicrosoftNETSdkFromCosmosSdk>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition=" '$(_ImportMicrosoftNETSdkFromCosmosSdk)' == 'true' " />
+
+  <!-- Default startup object for Cosmos kernels -->
+  <PropertyGroup>
+    <StartupObject Condition="'$(StartupObject)' == ''">Cosmos.Kernel.System.Internal.CosmosEntryPoint</StartupObject>
+  </PropertyGroup>
+
+  <!-- ILC and build dependencies -->
+  <PropertyGroup>
+    <IlcDependsOn>RunPatcher;InstrumentCoverage;$(IlcDependsOn);PrepareForILLink</IlcDependsOn>
+    <LinkTargetDependsOn>CompileWithIlc;BuildAsm;BuildCC;$(LinkTargetDependsOn)</LinkTargetDependsOn>
+  </PropertyGroup>
+
+  <!-- Cosmos Feature Switches (defaults) -->
+  <PropertyGroup>
+    <CosmosEnableInterrupts Condition="'$(CosmosEnableInterrupts)' == ''">true</CosmosEnableInterrupts>
+    <CosmosEnableUART Condition="'$(CosmosEnableUART)' == ''">true</CosmosEnableUART>
+    <CosmosEnablePCI Condition="'$(CosmosEnablePCI)' == ''">true</CosmosEnablePCI>
+    <CosmosEnableTimer Condition="'$(CosmosEnableTimer)' == ''">true</CosmosEnableTimer>
+    <CosmosEnableKeyboard Condition="'$(CosmosEnableKeyboard)' == ''">true</CosmosEnableKeyboard>
+    <CosmosEnableMouse Condition="'$(CosmosEnableMouse)' == ''">true</CosmosEnableMouse>
+    <CosmosEnableNetwork Condition="'$(CosmosEnableNetwork)' == ''">true</CosmosEnableNetwork>
+    <CosmosEnableStorage Condition="'$(CosmosEnableStorage)' == ''">true</CosmosEnableStorage>
+    <CosmosEnableFat Condition="'$(CosmosEnableFat)' == ''">true</CosmosEnableFat>
+    <CosmosEnableGraphics Condition="'$(CosmosEnableGraphics)' == ''">true</CosmosEnableGraphics>
+    <CosmosEnableScheduler Condition="'$(CosmosEnableScheduler)' == ''">true</CosmosEnableScheduler>
+    <CosmosEnableAudio Condition="'$(CosmosEnableAudio)' == ''">true</CosmosEnableAudio>
+    <CosmosEnableFinalizerThread Condition="'$(CosmosEnableFinalizerThread)' == ''">true</CosmosEnableFinalizerThread>
+    <!-- CosmosEnableUsb has no default here: it follows CosmosEnableKeyboard,
+         CosmosEnableMouse and CosmosEnableStorage, which the kernel project sets
+         after this file is imported, so Sdk.targets defaults it once their
+         values are final. -->
+    <!-- CosmosDefaultFont has no default: when unset, PCScreenFont falls back to its
+         embedded Fonts.DefaultFont.psf. Set it to the manifest resource name of a PSF
+         embedded in the kernel project to override the default console font. -->
+  </PropertyGroup>
+
+  <!-- Default kernel class name - inferred from RootNamespace or AssemblyName -->
+  <PropertyGroup>
+    <CosmosKernelClass Condition="'$(CosmosKernelClass)' == '' AND '$(RootNamespace)' != ''">$(RootNamespace).Kernel</CosmosKernelClass>
+    <CosmosKernelClass Condition="'$(CosmosKernelClass)' == ''">$(AssemblyName).Kernel</CosmosKernelClass>
+  </PropertyGroup>
+
+  <!-- Compiler flags are set in Cosmos.Build.CC.targets based on TargetArchitecture.
+       Projects can override CCCompilerFlags to customize. -->
+
+  <!-- ILC arguments -->
+  <ItemGroup>
+    <!-- All [UnmanagedCallersOnly] entry points live in Cosmos.Kernel.Core/Bridge/Export/ -->
+    <UnmanagedEntryPointsAssembly Include="Cosmos.Kernel.Core"/>
+    <IlcArg Include="--feature:System.Diagnostics.Tracing.EventSource.IsSupported=false"/>
+    <!-- Cosmos Feature Switches -->
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.HAL.Interrupts.Enabled" Value="$(CosmosEnableInterrupts)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.HAL.UART.Enabled" Value="$(CosmosEnableUART)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.HAL.PCI.Enabled" Value="$(CosmosEnablePCI)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Timer.Enabled" Value="$(CosmosEnableTimer)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Input.Keyboard.Enabled" Value="$(CosmosEnableKeyboard)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Input.Mouse.Enabled" Value="$(CosmosEnableMouse)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Network.Enabled" Value="$(CosmosEnableNetwork)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Storage.Enabled" Value="$(CosmosEnableStorage)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Filesystems.Fat.Enabled" Value="$(CosmosEnableFat)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.HAL.Usb.Enabled" Value="$(CosmosEnableUsb)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Graphics.Enabled" Value="$(CosmosEnableGraphics)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.Core.Scheduler.Enabled" Value="$(CosmosEnableScheduler)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.System.Audio.Enabled" Value="$(CosmosEnableAudio)" Trim="true"/>
+    <RuntimeHostConfigurationOption Include="Cosmos.Kernel.Core.FinalizerThread.Enabled" Value="$(CosmosEnableFinalizerThread)" Trim="true"/>
+    <!-- Key must match PCScreenFont.Default.DefaultFontKey ("...Fonts.DefaultFont");
+         it was previously written as "...Fonts.CustomFont", which nothing reads. -->
+    <RuntimeHostConfigurationOption Condition="'$(CosmosDefaultFont)' != ''" Include="Cosmos.Kernel.System.Graphics.Fonts.DefaultFont" Value="$(CosmosDefaultFont)" />
+    <!-- Root architecture-specific HAL assemblies to ensure module initializers run -->
+    <IlcArg Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_X64'))" Include="--root:Cosmos.Kernel.HAL.X64"/>
+    <IlcArg Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_ARM64'))" Include="--root:Cosmos.Kernel.HAL.ARM64"/>
+  </ItemGroup>
+
+  <!-- Plugs -->
+  <ItemGroup>
+    <PlugReference Include="Cosmos.Kernel.Plugs" />
+  </ItemGroup>
+
+  <!-- Determine host runtime identifier (where the build runs) -->
+  <PropertyGroup>
+    <HostRuntimeIdentifier Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))">win-x64</HostRuntimeIdentifier>
+    <HostRuntimeIdentifier Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux))) AND '$(HostRuntimeIdentifier)' == ''">linux-x64</HostRuntimeIdentifier>
+    <HostRuntimeIdentifier Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX))) AND '$(HostRuntimeIdentifier)' == ''">osx-x64</HostRuntimeIdentifier>
+    <!-- Fallback for ARM64 hosts -->
+    <HostRuntimeIdentifier Condition="'$(HostRuntimeIdentifier)' == ''">$(RuntimeIdentifier)</HostRuntimeIdentifier>
+  </PropertyGroup>
+
+  <!-- Ensure AOT Reference and ILCompiler are present in nuget cache -->
+  <ItemGroup>
+    <PackageDownload Include="Microsoft.NETCore.App.Runtime.NativeAOT.$(RuntimeIdentifier)"
+                     Version="[$(BundledNETCoreAppPackageVersion)]"
+                     Condition="'$(RuntimeIdentifier)' != ''" />
+    <!-- ILC tool must match the host (build machine) architecture, not the target architecture, for cross-compilation support -->
+    <PackageDownload Include="runtime.$(HostRuntimeIdentifier).Microsoft.DotNet.ILCompiler"
+                     Version="[$(BundledNETCoreAppPackageVersion)]"
+                     Condition="'$(HostRuntimeIdentifier)' != ''" />
+    <PackageDownload Include="Microsoft.NETCore.App.Ref"
+             Version="[$(BundledNETCoreAppPackageVersion)]" />
+  </ItemGroup>
+
+  <!-- Library initializers, run by the ILC startup code before Main.
+       SortAutoInitialedAssemblies (Cosmos.Build.Ilc) orders them in three stages:
+       Stage="Runtime" first (Core brings up the heap, the GC and the managed
+       modules), then the runtime's own initializers, which Cosmos.Build.Ilc adds
+       as Stage="Framework", then the kernel libraries below, each after the
+       assemblies it references. Cosmos.Kernel and Cosmos.Kernel.System reference
+       neither the other, so their declared order is their run order: the
+       scheduler comes up before System's storage scan issues interrupt-driven I/O. -->
+  <ItemGroup>
+    <AutoInitializedAssemblies Include="Cosmos.Kernel.Core" Stage="Runtime" />
+    <AutoInitializedAssemblies Include="Cosmos.Kernel.HAL" />
+    <AutoInitializedAssemblies Include="Cosmos.Kernel" />
+    <AutoInitializedAssemblies Include="Cosmos.Kernel.System" />
+  </ItemGroup>
+
+  <!-- Build tools.
+       Non-CPM consumers get the literal version that was substituted at pack time
+       of Cosmos.Sdk (see Cosmos.Sdk.csproj). CPM consumers must declare versions
+       in their own Directory.Packages.props (NuGet forbids Version on PackageReference
+       under central package management). -->
+  <ItemGroup Condition="'$(ManagePackageVersionsCentrally)' != 'true'">
+    <PackageReference Include="Cosmos.Kernel.SourceGenerators" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.Analyzer.Patcher" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.Common" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.Ilc" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.Asm" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.Patcher" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Build.CC" Version="@CosmosPackageVersion@" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ManagePackageVersionsCentrally)' == 'true'">
+    <PackageReference Include="Cosmos.Kernel.SourceGenerators"/>
+    <PackageReference Include="Cosmos.Build.Analyzer.Patcher" />
+    <PackageReference Include="Cosmos.Build.Common" />
+    <PackageReference Include="Cosmos.Build.Ilc" />
+    <PackageReference Include="Cosmos.Build.Asm" />
+    <PackageReference Include="Cosmos.Build.Patcher" />
+    <PackageReference Include="Cosmos.Build.CC" />
+  </ItemGroup>
+
+  <!-- Derive CosmosArch from RuntimeIdentifier here, in the Sdk itself.
+       The same derivation exists in Cosmos.ArchitecturePicker.props, but that file
+       ships inside the Cosmos.Build.Common NuGet package, and NuGet restore excludes
+       package-provided props/targets from evaluation (ExcludeRestorePackageImports).
+       Without this copy, CosmosArch is empty during restore, the conditional
+       PackageReferences below drop out of the restore graph, and the build later
+       fails at link time with undefined _native_*/Rhp* symbols because
+       Cosmos.Kernel.Native.<arch> was never restored (issue #382). -->
+  <PropertyGroup>
+    <CosmosArch Condition="'$(RuntimeIdentifier)' != '' AND '$(CosmosArch)' == ''">$([System.String]::Copy('$(RuntimeIdentifier)').Split('-')[1])</CosmosArch>
+    <CosmosArch Condition="'$(CosmosArch)' == ''">x64</CosmosArch>
+    <CosmosArch Condition="'$(CosmosArch)' == 'x86_64'">x64</CosmosArch>
+    <CosmosArch Condition="'$(CosmosArch)' == 'aarch64'">arm64</CosmosArch>
+  </PropertyGroup>
+
+  <!-- Architecture-specific kernel packages -->
+  <ItemGroup Condition="'$(ManagePackageVersionsCentrally)' != 'true'">
+    <PackageReference Include="Cosmos.Kernel.Native.X64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.Native.ARM64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'arm64'" />
+    <PackageReference Include="Cosmos.Kernel.Native.MultiArch" Version="@CosmosPackageVersion@" />
+    <PackageReference Include="Cosmos.Kernel.Core.X64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.Core.ARM64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'arm64'" />
+    <PackageReference Include="Cosmos.Kernel.HAL.X64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.HAL.ARM64" Version="@CosmosPackageVersion@" Condition="'$(CosmosArch)' == 'arm64'" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ManagePackageVersionsCentrally)' == 'true'">
+    <PackageReference Include="Cosmos.Kernel.Native.X64" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.Native.ARM64" Condition="'$(CosmosArch)' == 'arm64'" />
+    <PackageReference Include="Cosmos.Kernel.Native.MultiArch" />
+    <PackageReference Include="Cosmos.Kernel.Core.X64" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.Core.ARM64" Condition="'$(CosmosArch)' == 'arm64'" />
+    <PackageReference Include="Cosmos.Kernel.HAL.X64" Condition="'$(CosmosArch)' == 'x64'" />
+    <PackageReference Include="Cosmos.Kernel.HAL.ARM64" Condition="'$(CosmosArch)' == 'arm64'" />
+  </ItemGroup>
+</Project>

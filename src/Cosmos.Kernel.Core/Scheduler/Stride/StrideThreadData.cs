@@ -1,0 +1,45 @@
+namespace Cosmos.Kernel.Core.Scheduler.Stride;
+
+/// <summary>
+/// Stride scheduler per-thread extension data.
+/// </summary>
+internal class StrideThreadData
+{
+    /// <summary>
+    /// Resource weight (higher = more CPU time).
+    /// </summary>
+    public ulong Tickets { get; internal set; }
+
+    /// <summary>
+    /// Stride value = Stride1 / Tickets.
+    /// </summary>
+    public ulong Stride { get; internal set; }
+
+    /// <summary>
+    /// Virtual time position.
+    /// </summary>
+    public long Pass { get; internal set; }
+
+    /// <summary>
+    /// Remaining stride saved when blocking.
+    /// </summary>
+    public long Remain { get; internal set; }
+
+    /// <summary>
+    /// Stopwatch timestamp of the last park (block or sleep), for measuring
+    /// how long the thread stayed parked when it next wakes.
+    /// </summary>
+    public ulong LastParked { get; internal set; }
+
+    /// <summary>
+    /// Nanoseconds the thread ran since its last wake (or its creation),
+    /// for interactive detection.
+    /// </summary>
+    public ulong RunSinceWakeNs { get; internal set; }
+
+    /// <summary>
+    /// Whether the last wake classified the thread interactive: it parked for
+    /// more than twice what it had run since the wake before.
+    /// </summary>
+    public bool IsInteractive { get; internal set; }
+}

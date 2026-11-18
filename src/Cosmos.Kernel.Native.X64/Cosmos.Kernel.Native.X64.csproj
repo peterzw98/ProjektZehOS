@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- Package Metadata -->
+    <PackageId>Cosmos.Kernel.Native.X64</PackageId>
+    <Title>Cosmos Kernel X64 Native Assembly</Title>
+    <Description>X64 (x86-64) native assembly routines for Cosmos kernel development including port I/O operations and CPU control.</Description>
+    <PackageTags>cosmos;kernel;x64;x86_64;assembly;native;asm;port;io;in;out;cpu</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="build\Cosmos.Kernel.Native.X64.props" PackagePath="build\" />
+    <Content Include="IO\*.s" PackagePath="build\IO" />
+    <Content Include="Debug\*.s" PackagePath="build\Debug" />
+    <Content Include="CPU\*.s" PackagePath="build\CPU" />
+    <Content Include="Memory\*.s" PackagePath="build\Memory" />
+    <Content Include="Runtime\*.s" PackagePath="build\Runtime" />
+  </ItemGroup>
+
+</Project>

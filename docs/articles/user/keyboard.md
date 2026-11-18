@@ -1,0 +1,224 @@
+# Keyboard
+
+In this article, we will discuss keyboard input on Cosmos Gen3: how to read text through the standard `Console` API, how to react to individual key presses, and how to switch keyboard layouts.
+
+The main differences if you come from Gen2:
+
+| | Gen2 | Gen3 |
+|---|---|---|
+| Manager API | `Cosmos.System.KeyboardManager` | Same API, in `Cosmos.Kernel.System.Input`, with `SetKeyLayout`/`GetKeyLayout` renamed to `SetLayout`/`GetLayout` |
+| `Console.ReadLine` / `Console.ReadKey` | Plugged, backed by the manager | Plugged, backed by the manager |
+| Key events | `KeyEvent` (`KeyChar`, `Key`, `Modifiers`), keys as `ConsoleKeyEx` | Same, keys as `Key` with the same members |
+| Layouts | US, FR, DE, ES, GB, TR, Dvorak layouts over `ScanMapBase` | Same set over `KeyboardLayout`, in `Cosmos.Kernel.System.Input.Layouts` |
+| Devices | PS/2 keyboard | PS/2 keyboard (x64), virtio-keyboard and USB keyboard, all over the driver kit (the 8042 on q35 and every PC; virtio over PCI on both architectures and MMIO on ARM64; USB on an xHCI, EHCI or OHCI controller on both) |
+
+If you find bugs or something abnormal, please [submit an issue](https://github.com/CosmosOS/Cosmos/issues/new/choose) on our repository.
+
+## Enable the keyboard in your kernel
+
+Keyboard support is behind a feature switch. Make sure your kernel's `.csproj` does not turn it off (it defaults to `true`):
+
+```xml
+<PropertyGroup>
+  <CosmosEnableKeyboard>true</CosmosEnableKeyboard>
+</PropertyGroup>
+```
+
+These are the `using`s the snippets below rely on:
+
+```csharp
+using System.Drawing;
+using Cosmos.Kernel.System.Graphics;
+using Cosmos.Kernel.System.Graphics.Fonts;
+using Cosmos.Kernel.System.Input;
+using Cosmos.Kernel.System.Input.Layouts;
+```
+
+There is nothing to initialize by hand: the PS/2 keyboard (x64), a virtio keyboard or a USB keyboard is bound by the driver kit's `Ps2KeyboardDriver`, `VirtioInputDriver` or `UsbKeyboardDriver` during the driver stage and published to the manager's consumer, which registers it ([PS/2 devices](drivers.md#ps2-devices), [Virtio devices](drivers.md#virtio-devices), [USB devices](drivers.md#usb-devices)).
+
+USB keyboards also need the USB drivers, `CosmosEnableUsb`. You do not have to set it: left unset, it is on whenever `CosmosEnableKeyboard` is. Setting it to `false` keeps PS/2 and virtio keyboards and drops the USB ones with the host controller drivers.
+
+## Reading a line
+
+`Console.ReadLine()` works the way it does everywhere else in .NET, so most kernels never need anything more:
+
+```csharp
+Console.WriteLine("What is your name?");
+Console.Write("> ");
+
+string? name = Console.ReadLine();
+Console.WriteLine("Hello, " + name + "!");
+```
+
+The line editor supports more than typing: Left and Right arrows move the cursor inside the input, Home and End jump to either end, Backspace and Delete remove characters, and typing in the middle of the line inserts rather than overwrites.
+
+<!-- video: typing "Comsos Gen3", then fixing the typo with Home, arrows and Delete before pressing Enter -->
+<video src="images/keyboard-readline.mp4" controls autoplay muted loop playsinline style="max-width:100%"></video>
+
+## Reading single keys
+
+For anything below the line level, `KeyboardManager.ReadKey()` blocks until a key is pressed and returns a `KeyEvent`:
+
+```csharp
+Console.WriteLine("Press keys to inspect them (Escape to leave):");
+
+while (true)
+{
+    KeyEvent key = KeyboardManager.ReadKey();
+    if (key.Key == Key.Escape)
+    {
+        break;
+    }
+
+    Console.WriteLine("Key: " + key.Key + "   Char: '" + key.KeyChar
+        + "'   Modifiers: " + key.Modifiers);
+}
+```
+
+A `KeyEvent` carries three things:
+
+| Property | Type | Meaning |
+|---|---|---|
+| `Key` | `Key` | The physical key, independent of layout and modifiers (`A`, `D5`, `F1`, `LeftArrow`, ...) |
+| `KeyChar` | `char` | The text character the key produces, `'\0'` if it produces none (function keys, arrows, Ctrl combinations) |
+| `Modifiers` | `ConsoleModifiers` | The Shift, Alt and Control flags active at the time of the press |
+
+<!-- video: the inspector loop printing Key/Char/Modifiers for letters, Shift+B, Shift+5, Ctrl+A, Alt+X, F1, F12, LeftArrow and Space -->
+<video src="images/keyboard-readkey.mp4" controls autoplay muted loop playsinline style="max-width:100%"></video>
+
+The standard `Console.ReadKey()` also works and returns a regular `ConsoleKeyInfo`; the `ReadKey(true)` overload suppresses the echo. It is a thin wrapper over `KeyboardManager.ReadKey()`, so use whichever fits your code.
+
+Once a kernel opens a second console session, the keyboard types into the session on the display, and both `Console` and `KeyboardManager` read the keys of the calling thread's session ([Console Sessions and Telnet](sessions.md)).
+
+## Polling without blocking
+
+A render loop cannot afford to block on `ReadKey()`. `KeyboardManager.TryReadKey()` dequeues a pending key press and returns `false` when there is none, so the frame goes on. Here it drives a square over a canvas from the [Graphics](graphics.md) article:
+
+```csharp
+Canvas canvas = Canvas.GetFullScreen();
+Font font = PCScreenFont.DefaultFont;
+
+int x = (canvas.Width - 60) / 2;
+int y = (canvas.Height - 60) / 2;
+const int Step = 20;
+
+bool running = true;
+while (running)
+{
+    /* Drain every key pressed since the last frame */
+    while (KeyboardManager.TryReadKey(out KeyEvent? key))
+    {
+        switch (key.Key)
+        {
+            case Key.UpArrow: y -= Step; break;
+            case Key.DownArrow: y += Step; break;
+            case Key.LeftArrow: x -= Step; break;
+            case Key.RightArrow: x += Step; break;
+            case Key.Escape: running = false; break;
+        }
+    }
+
+    canvas.Clear(Color.MidnightBlue);
+    canvas.DrawString("Move the square with the arrow keys", font, Color.White, 40, 40);
+    canvas.DrawFilledRectangle(Color.Gold, x, y, 60, 60);
+    canvas.Display();
+
+    Thread.Sleep(15);
+}
+```
+
+<!-- video: the gold square moving around the canvas under the arrow keys -->
+<video src="images/keyboard-square.mp4" controls autoplay muted loop playsinline style="max-width:100%"></video>
+
+`KeyboardManager.KeyAvailable` (or the plugged `Console.KeyAvailable`) tells you whether a key press is waiting without consuming it, and `KeyboardManager.Peek()` returns the next `KeyEvent` while leaving it in the queue.
+
+## Modifiers and lock keys
+
+`KeyboardManager` tracks the modifier and lock state globally, outside of any key event:
+
+| Property | Meaning |
+|---|---|
+| `ShiftPressed` | A Shift key is currently held |
+| `ControlPressed` | A Control key is currently held |
+| `AltPressed` | An Alt key is currently held |
+| `CapsLock` | Caps Lock is toggled on |
+| `NumLock` | Num Lock is toggled on |
+| `ScrollLock` | Scroll Lock is toggled on |
+
+The lock keys toggle their state on each press and update the keyboard LEDs (a virtio keyboard's stay as they are: the driver does not drive the device's status queue). Held modifiers also arrive on every `KeyEvent` through its `Modifiers` flags, which is usually the more convenient form.
+
+AltGr is the right Alt key on the layouts that give their keys a third level (German, Spanish, Turkish). While it is held, a key converts through the layout's Control+Alt column and the `KeyEvent` carries both `Control` and `Alt` in its `Modifiers`, the way Windows reports the same key. `ControlPressed` and `AltPressed` stay the state of the physical Control and Alt keys. On the other layouts the right Alt is a second Alt.
+
+## Keyboard layouts
+
+Key presses come out of the hardware as layout-neutral scan codes; a layout turns them into characters. The default is US QWERTY, and `SetLayout` switches at any time:
+
+```csharp
+KeyboardManager.SetLayout(new FRStandardLayout());
+```
+
+Seven layouts ship in `Cosmos.Kernel.System.Input.Layouts`:
+
+| Class | Layout |
+|---|---|
+| `USStandardLayout` | US QWERTY (default) |
+| `FRStandardLayout` | French AZERTY |
+| `DEStandardLayout` | German QWERTZ |
+| `ESStandardLayout` | Spanish QWERTY |
+| `GBStandardLayout` | British QWERTY |
+| `TRStandardLayout` | Turkish Q |
+| `USDvorakLayout` | US Dvorak |
+
+The switch is visible immediately: below, the same six physical keys are typed twice, first under the US layout, then under the French one.
+
+<!-- video: typing the six keys right of Tab under the US layout ("qwerty"), switching to FRStandardLayout, typing them again ("azerty") -->
+<video src="images/keyboard-layouts.mp4" controls autoplay muted loop playsinline style="max-width:100%"></video>
+
+`KeyboardManager.GetLayout()` returns the active layout, and a custom layout is a class deriving from `KeyboardLayout` that overrides `InitializeKeys()` to fill the `Keys` list with `KeyMapping` entries. It runs once, the first time a scan code reaches the layout.
+
+Scan codes are set 1 make codes with the `E0` prefix of an extended key dropped, which is how the bundled layouts list the Windows keys and the navigation cluster. The one exception is the right Alt, whose bare code is the left Alt's: the drivers report it as `0x60`, a code set 1 leaves unused. A layout maps that code to `Key.AltGr` to make the key its third-level modifier, and to `Key.RAlt` to keep it a plain Alt. A layout that maps it to neither loses the key. The third level of a key is the `ctrlAlt` argument of `KeyMapping`, and `ctrlAltShift` is its fourth:
+
+```csharp
+/* Right Alt selects the third level on this layout */
+Keys.Add(new KeyMapping(0x60, Key.AltGr));
+/* Q: q, Q, and @ under AltGr */
+Keys.Add(new KeyMapping(0x10, 'q', 'Q', 'q', 'Q', 'q', 'Q', '@', Key.Q));
+```
+
+## Current limitations
+
+- Key releases are not queued: `KeyEvent.Type` has a `Break` value, but only presses reach the buffer. Releases of Shift, Ctrl and Alt update the modifier state and are otherwise dropped.
+- The German, Spanish and Turkish layouts carry their AltGr characters; the French and British ones do not yet (`@`, `#`, `{` on AZERTY), so their right Alt stays a plain Alt. Dead keys are not composed: the Turkish `¨`, `~`, `´` and `` ` `` come out as those characters.
+- A PS/2 keyboard is published once, during the driver stage, when the keyboard driver bound the 8042 driver's keyboard port node and its reset was answered; a virtio keyboard present at boot once, when the stage offers its device. A USB keyboard is published when its node is bound and withdrawn when the node is retracted, and so is a virtio keyboard whose PCI function sits behind a PCI Express hot-plug slot, which the root port driver publishes and retracts, so those are the keyboards that can be plugged in and pulled out while the kernel runs; a modifier held on one pulled out stays down until pressed on another keyboard.
+
+## How it works
+
+Every key press on the PS/2 keyboard raises IRQ 1 on x64; the 8042 driver's handler reads the byte from the controller's data port and hands it to the keyboard port's `Ps2Access`, whose source wakes the keyboard driver's handler: it folds the 0xE0 prefix and the release bit into set 1 scan codes (the right Alt as 0x60) and reports them through the keyboard sink to the manager's consumer. A virtio keyboard delivers an event record on its queue instead: the queue's interrupt (an MSI-X message over PCI, the slot's GIC line over MMIO) schedules the driver's drain on the driver kit's worker, or the drain runs every 20 ms when no interrupt could be routed, and the drain converts the Linux key code to the same set 1 scan code and reports it through the keyboard sink to the manager's consumer, which feeds `KeyboardManager` as the PS/2 keyboard's does. A USB keyboard's 8-byte boot reports arrive on its interrupt IN pipe, delivered by the host controller driver's interrupt (an MSI-X message on xHCI, the function's legacy line on EHCI and OHCI) or, when none could be routed, by its 20 ms poll; `UsbKeyboardDriver`'s handler diffs each report against the previous one into the same set 1 scan codes and reports them through the same sink, and the lock keys light its indicators through `SetLeds`, one SET_REPORT control transfer on the kit worker. The lock keys light the PS/2 keyboard's indicators too, through `SetLeds` (0xED and the indicator byte) on the kit worker. The manager routes lock and modifier keys to the state properties and converts everything else through the active layout into a `KeyEvent`, queued in the key buffer. `ReadKey()` halts the CPU until an interrupt delivers the next event; `TryReadKey()` just dequeues. `Console.ReadLine` and `Console.ReadKey` are plugs on top of the same queue, so console input and raw key events never conflict.
+
+```
+Console.ReadLine / Console.ReadKey        (plugs, Cosmos.Kernel.Plugs)
+        │
+KeyboardManager ── KeyEvent queue ◀── active layout
+        │                                    ▲
+        │                              raw scan codes
+        │                                    │
+PS/2 keyboard over the driver kit (the 8042, IRQ 1, x64)  /  virtio-keyboard over the driver kit (PCI, MMIO)  /  USB keyboard over the driver kit (xHCI, EHCI, OHCI)
+```
+
+## Summary
+
+| Task | Call |
+|---|---|
+| Read a line | `Console.ReadLine()` |
+| Wait for a key press | `KeyboardManager.ReadKey()` |
+| Tell which key was pressed and what it typed | `KeyEvent.Key`, `KeyEvent.KeyChar`, `KeyEvent.Modifiers` |
+| Read a key through the console, with or without echo | `Console.ReadKey()`, `Console.ReadKey(true)` |
+| Poll for a key without blocking | `KeyboardManager.TryReadKey(out key)` |
+| Check whether a key is waiting | `KeyboardManager.KeyAvailable`, `Console.KeyAvailable` |
+| Look at the next key without taking it | `KeyboardManager.Peek()` |
+| Check whether Shift, Control or Alt is held | `KeyboardManager.ShiftPressed`, `ControlPressed`, `AltPressed` |
+| Read the lock key state | `KeyboardManager.CapsLock`, `NumLock`, `ScrollLock` |
+| Switch the layout | `KeyboardManager.SetLayout(layout)` |
+| Read the active layout | `KeyboardManager.GetLayout()` |
+| Write a custom layout | `KeyboardLayout`, `InitializeKeys()`, `KeyMapping` |
+| Make the right Alt an AltGr | `Keys.Add(new KeyMapping(0x60, Key.AltGr))` |

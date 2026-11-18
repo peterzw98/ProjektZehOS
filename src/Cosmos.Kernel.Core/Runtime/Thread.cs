@@ -1,0 +1,116 @@
+using System.Runtime;
+using System.Runtime.InteropServices.Marshalling;
+using Cosmos.Kernel.Core.Bridge;
+using Cosmos.Kernel.Core.IO;
+using Cosmos.Kernel.Core.Scheduler;
+
+namespace Cosmos.Kernel.Core.Runtime;
+
+internal class Thread
+{
+    /// <summary>
+    /// Thread-static storage of the boot code while it is not a scheduler
+    /// thread: always when the scheduler is compiled out, and otherwise
+    /// until the scheduler makes it CPU 0's idle thread, which happens after
+    /// HAL initialization (an exception thrown there reads thread statics).
+    /// Null until CoreLib allocates it through the reference below, the same
+    /// way a scheduled thread's slot starts.
+    /// </summary>
+    private static object[][]? s_threadData;
+
+    [RuntimeExport("RhGetThreadStaticStorage")]
+    internal static ref object[][]? RhGetThreadStaticStorage()
+    {
+        if (CosmosFeatures.SchedulerEnabled && SchedulerManager.CurrentCpuState?.CurrentThread is { } current)
+        {
+            return ref current.GetThreadStaticStorage();
+        }
+
+        return ref s_threadData;
+    }
+
+    [RuntimeExport("RhGetCurrentThreadStackBounds")]
+    internal static void RhGetCurrentThreadStackBounds(out IntPtr pStackLow, out IntPtr pStackHigh)
+    {
+        if (CosmosFeatures.SchedulerEnabled)
+        {
+            SchedulerThread? current = SchedulerManager.CurrentCpuState?.CurrentThread;
+            if (current is not null && current.StackBase != 0)
+            {
+                pStackLow = (nint)current.StackBase;
+                pStackHigh = (nint)(current.StackBase + current.StackSize);
+                return;
+            }
+        }
+
+        // Boot/idle thread: runs on the bootloader-provided stack.
+        pStackHigh = (nint)BootStack.Top;
+        pStackLow = pStackHigh - (nint)BootStack.Size;
+    }
+
+    /// <summary>
+    /// Default stack size CoreLib's Thread.CreateThread uses when the
+    /// constructor's maxStackSize is unset (&lt;= 0).
+    /// </summary>
+    [RuntimeExport("RhGetDefaultStackSize")]
+    internal static IntPtr RhGetDefaultStackSize()
+    {
+        return (nint)SchedulerThread.DefaultStackSize;
+    }
+
+    /// <summary>
+    /// Entry-point address CoreLib passes to SystemNative_CreateThread. Unused:
+    /// Cosmos threads start at ThreadNative.EntryPointStub and the scheduler's
+    /// InvokeCurrentThreadStart runs CoreLib's StartThread with the
+    /// GCHandle&lt;Thread&gt; parameter itself.
+    /// </summary>
+    [RuntimeExport("RhGetThreadEntryPointAddress")]
+    internal static IntPtr RhGetThreadEntryPointAddress()
+    {
+        return IntPtr.Zero;
+    }
+
+    [RuntimeExport("RhSetCurrentThreadName")]
+    internal static unsafe void RhSetCurrentThreadName(ushort* name)
+    {
+        // Do nothing, the managed thread holds the string on a field.
+        var managedName = Utf8StringMarshaller.ConvertToManaged((byte*)name);
+
+        Serial.WriteString($"[Thread] Setting current thread name to '{managedName}'\n");
+    }
+
+    [RuntimeExport("RhSetThreadExitCallback")]
+    internal static void RhSetThreadExitCallback(IntPtr callback)
+    {
+        if (CosmosFeatures.SchedulerEnabled)
+        {
+            SchedulerManager.OnThreadExitCallback = callback;
+        }
+    }
+
+    /// <summary>
+    /// Backs <c>Thread.Yield</c>, and through it CoreLib's spin waits: asks
+    /// the next interrupt exit to switch, and returns before it does.
+    /// </summary>
+    /// <returns>0: no other thread has run yet when it returns.</returns>
+    [RuntimeExport("RhYield")]
+    internal static int RhYield()
+    {
+        if (CosmosFeatures.SchedulerEnabled && SchedulerManager.CurrentCpuState is not null)
+        {
+            SchedulerManager.YieldThread(SchedulerManager.GetCurrentCpuId());
+        }
+
+        return 0;
+    }
+
+    [RuntimeExport("RhSpinWait")]
+    internal static void RhSpinWait(int iterations)
+    {
+        // Simple spin wait
+        for (int i = 0; i < iterations; i++)
+        {
+            // Spin
+        }
+    }
+}

@@ -1,0 +1,280 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Cosmos.TestRunner.Engine;
+using Cosmos.Tools.Launcher;
+
+namespace Cosmos.Tests.Patcher;
+
+/// <summary>
+/// Validates the real <c>tests/profiles.json</c> against the real suite
+/// csproj files, rather than a synthetic catalog like
+/// <see cref="TestProfileLoaderTests"/> does.
+///
+/// A suite naming a profile that does not exist, or whose profiles are all
+/// pinned to the other architecture, only surfaces today once CI has built a
+/// kernel and booted QEMU: minutes in, for what is a typo. These run in
+/// milliseconds and need no kernel build.
+/// </summary>
+[Collection("PatcherTests")]
+public class ProfileCatalogTests
+{
+    private static readonly string[] Architectures = ["x64", "arm64"];
+
+    /// <summary>Walks up from the test assembly to the repo root (the directory holding tests/profiles.json).</summary>
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "tests", "profiles.json")))
+            {
+                return dir.FullName;
+            }
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the repo root from " + AppContext.BaseDirectory);
+    }
+
+    /// <summary>Every kernel suite directory that opts into at least one profile.</summary>
+    public static TheoryData<string> SuitesDeclaringProfiles()
+    {
+        string kernels = Path.Combine(FindRepoRoot(), "tests", "Kernels");
+        var data = new TheoryData<string>();
+
+        foreach (string dir in Directory.EnumerateDirectories(kernels))
+        {
+            bool declares = Directory.EnumerateFiles(dir, "*.csproj")
+                .Any(p => File.ReadAllText(p).Contains("CosmosTestProfile", StringComparison.Ordinal));
+
+            if (declares)
+            {
+                data.Add(Path.GetFileName(dir));
+            }
+        }
+
+        Assert.NotEmpty(data);
+        return data;
+    }
+
+    // Resolution throws on an unknown profile name and on a suite left with no
+    // applicable cell, so simply loading every suite for every architecture is
+    // the whole assertion. The non-empty check pins the outcome: a suite that
+    // silently resolved to zero cells would report green having tested nothing.
+    [Theory]
+    [MemberData(nameof(SuitesDeclaringProfiles))]
+    public void EverySuiteResolvesOnEveryArchitecture(string suiteName)
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", suiteName);
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+            Assert.NotEmpty(cells);
+        }
+    }
+
+    // A virtio PCI profile is one hardware shape covering both arches, so each
+    // must produce a cell on each. Two profiles differing only by architecture
+    // would render as two half-empty rows in the results matrix.
+    [Theory]
+    [InlineData("Virtio", "virtio-pci")]
+    [InlineData("Network", "virtio-net-pci")]
+    public void VirtioPciProfilesProduceACellOnBothArchitectures(string suiteName, string profileName)
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests." + suiteName);
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile cell = Assert.Single(cells, c => c.Name == profileName);
+            Assert.Equal("virtio-net-pci", cell.NetworkCard);
+
+            // MSI-X on arm64 is routed by the GICv3 ITS, and the virt machine
+            // defaults to GICv2, which has none: losing this would not fail
+            // loudly, the device would simply never take an interrupt. q35
+            // rejects the property outright, so x64 must not carry it.
+            if (architecture == "arm64")
+            {
+                Assert.Equal("3", cell.MachineOptions["gic-version"]);
+            }
+            else
+            {
+                Assert.False(cell.MachineOptions.ContainsKey("gic-version"));
+            }
+        }
+    }
+
+    // virtio-blk-pci is one hardware shape on both arches; virtio-blk-mmio
+    // needs the virt machine's virtio-mmio window, so it stays off x64, where
+    // the launcher would refuse it. The Drivers suite lists both for its
+    // virtio-blk group.
+    [Fact]
+    public void VirtioBlkProfilesResolveOnBothArchitectures()
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Drivers");
+
+        IReadOnlyList<TestProfile> x64Cells = TestProfileLoader.LoadFor(suiteDir, "x64");
+        TestProfile x64Pci = Assert.Single(x64Cells, c => c.Name == "virtio-blk-pci");
+        Assert.Equal(DiskKind.VirtioBlk, Assert.Single(x64Pci.Disks).Kind);
+        Assert.DoesNotContain(x64Cells, c => c.Name == "virtio-blk-mmio");
+
+        IReadOnlyList<TestProfile> arm64Cells = TestProfileLoader.LoadFor(suiteDir, "arm64");
+        TestProfile arm64Pci = Assert.Single(arm64Cells, c => c.Name == "virtio-blk-pci");
+        Assert.Equal(DiskKind.VirtioBlk, Assert.Single(arm64Pci.Disks).Kind);
+        TestProfile arm64Mmio = Assert.Single(arm64Cells, c => c.Name == "virtio-blk-mmio");
+        Assert.Equal(DiskKind.VirtioBlkMmio, Assert.Single(arm64Mmio.Disks).Kind);
+    }
+
+    // The vmware-svga cell is the only run where the VMware SVGA II adapter
+    // is present at all: losing it would fail nothing, the suite would just
+    // never see that hardware again (and the future SVGAII driver would run
+    // untested). The bare cell keeps the default-adapter path covered.
+    [Fact]
+    public void GraphicSuiteCoversBothVgaAdapters()
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Graphic");
+
+        IReadOnlyList<TestProfile> x64Cells = TestProfileLoader.LoadFor(suiteDir, "x64");
+        Assert.Single(x64Cells, c => c.Name == "bare" && c.VgaAdapter == null);
+        TestProfile svga = Assert.Single(x64Cells, c => c.Name == "vmware-svga");
+        Assert.Equal("vmware", svga.VgaAdapter);
+
+        // The adapter is programmed through PCI port I/O, so the arm64 column
+        // runs only the cells whose hardware the virt machine can present.
+        IReadOnlyList<TestProfile> arm64Cells = TestProfileLoader.LoadFor(suiteDir, "arm64");
+        Assert.DoesNotContain(arm64Cells, c => c.Name == "vmware-svga");
+        TestProfile bare = Assert.Single(arm64Cells, c => c.Name == "bare");
+        Assert.Null(bare.VgaAdapter);
+    }
+
+    // The virtio-gpu cell is the only run with a virtio GPU on the bus, and it
+    // has to stay ADDITIVE: it attaches the device with -device and leaves the
+    // machine default alone, because that default is what hands Limine the
+    // framebuffer the whole suite renders into. A well-meaning rewrite to
+    // "vga": "virtio" would still pass on x64 (which has the VGA-compatible
+    // virtio-vga) and break arm64, where QEMU refuses it outright.
+    [Fact]
+    public void GraphicSuiteCoversVirtioGpuOnBothArchitectures()
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Graphic");
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile cell = Assert.Single(cells, c => c.Name == "virtio-gpu");
+            Assert.Equal("virtio-gpu-pci", cell.GpuDevice);
+            Assert.Null(cell.VgaAdapter);
+
+            // virtio-pci MSI-X is routed by the GICv3 ITS and virt defaults to
+            // GICv2, which has none; q35 rejects the property outright.
+            if (architecture == "arm64")
+            {
+                Assert.Equal("3", cell.MachineOptions["gic-version"]);
+            }
+            else
+            {
+                Assert.False(cell.MachineOptions.ContainsKey("gic-version"));
+            }
+        }
+    }
+
+    // The Drivers suite's four EHCI/OHCI cells are the only runs where those
+    // host controllers exist at all. Each drops the default NIC, which on
+    // q35 takes the INTx line the controller shares with it and would leave
+    // the handler path untested; the companion cell asks for a full-speed
+    // keyboard so the EHCI has something to hand to the OHCI; the hub cell
+    // is the one place a device sits behind a hub.
+    [Theory]
+    [InlineData("usb-kbd-ehci", UsbHostControllerModel.Ehci, QemuLauncher.DefaultUsbDeviceVersion, false)]
+    [InlineData("usb-kbd-ohci", UsbHostControllerModel.Ohci, QemuLauncher.DefaultUsbDeviceVersion, false)]
+    [InlineData("usb-kbd-ehci-ohci", UsbHostControllerModel.EhciWithOhciCompanion, QemuLauncher.FullSpeedUsbDeviceVersion, false)]
+    [InlineData("usb-kbd-ohci-hub", UsbHostControllerModel.Ohci, QemuLauncher.DefaultUsbDeviceVersion, true)]
+    public void DriversSuiteCoversTheUsbHostControllersOnBothArchitectures(string profileName, UsbHostControllerModel controller, int deviceVersion, bool hub)
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Drivers");
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile cell = Assert.Single(cells, c => c.Name == profileName);
+            Assert.Equal(controller, cell.UsbController);
+            Assert.Equal(deviceVersion, cell.UsbDeviceVersion);
+            Assert.Equal(hub, cell.UsbHub);
+            Assert.Equal("usb-kbd", cell.KeyboardDevice);
+            Assert.Equal("none", cell.NetworkCard);
+            Assert.Empty(cell.Disks);
+        }
+    }
+
+    // The xHCI cells keep the default controller, the default device
+    // version and q35's default NIC: the xHCI takes a message interrupt and
+    // shares no line with it.
+    [Theory]
+    [InlineData("usb-kbd")]
+    [InlineData("usb-mouse")]
+    public void DriversSuiteKeepsTheXhciCellsOnTheDefaultController(string profileName)
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Drivers");
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile cell = Assert.Single(cells, c => c.Name == profileName);
+            Assert.Equal(UsbHostControllerModel.Xhci, cell.UsbController);
+            Assert.Equal(QemuLauncher.DefaultUsbDeviceVersion, cell.UsbDeviceVersion);
+            Assert.False(cell.UsbHub);
+            Assert.Null(cell.NetworkCard);
+        }
+    }
+
+    // The Storage suite runs its one stick on every host controller model:
+    // the xHCI at SuperSpeed, the EHCI at high speed and the OHCI at full
+    // speed, under the same block-device assertions. The EHCI and OHCI
+    // cells drop the NIC for the line reason above.
+    [Theory]
+    [InlineData("usb", UsbHostControllerModel.Xhci, null)]
+    [InlineData("usb-ehci", UsbHostControllerModel.Ehci, "none")]
+    [InlineData("usb-ohci", UsbHostControllerModel.Ohci, "none")]
+    public void StorageSuiteCoversAUsbStickOnEveryHostController(string profileName, UsbHostControllerModel controller, string? nic)
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Storage");
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile cell = Assert.Single(cells, c => c.Name == profileName);
+            Assert.Equal(controller, cell.UsbController);
+            Assert.Equal(DiskKind.Usb, Assert.Single(cell.Disks).Kind);
+            Assert.Equal(nic, cell.NetworkCard);
+            Assert.False(cell.UsbHub);
+        }
+    }
+
+    // The hda cell is the only run with an audio controller on the bus, and
+    // the Audio suite pairs it with bare, where the manager must list none.
+    // It drops the default NIC, which on q35 holds the controller's line.
+    [Fact]
+    public void AudioSuiteCoversHdAudioOnBothArchitectures()
+    {
+        string suiteDir = Path.Combine(FindRepoRoot(), "tests", "Kernels", "Cosmos.Kernel.Tests.Audio");
+
+        foreach (string architecture in Architectures)
+        {
+            IReadOnlyList<TestProfile> cells = TestProfileLoader.LoadFor(suiteDir, architecture);
+
+            TestProfile hda = Assert.Single(cells, c => c.Name == "hda");
+            Assert.Equal("intel-hda", hda.AudioDevice);
+            Assert.Equal("none", hda.NetworkCard);
+            TestProfile bare = Assert.Single(cells, c => c.Name == "bare");
+            Assert.Null(bare.AudioDevice);
+        }
+    }
+}

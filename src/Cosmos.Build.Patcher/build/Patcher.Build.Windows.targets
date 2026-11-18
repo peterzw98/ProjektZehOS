@@ -1,0 +1,9 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Windows only: default location of the global tool -->
+    <CosmosPatcherExe Condition="'$(CosmosPatcherExe)' == ''">$(USERPROFILE)\.dotnet\tools\cosmos.patcher.exe</CosmosPatcherExe>
+    <_CosmosPatcherCommand Condition="'$(_CosmosPatcherCommand)' == ''">&quot;$(CosmosPatcherExe)&quot;</_CosmosPatcherCommand>
+  </PropertyGroup>
+
+</Project>

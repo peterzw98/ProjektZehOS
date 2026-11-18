@@ -1,0 +1,127 @@
+<Project>
+  <Import Project="src/Cosmos.Build.Common/build/Cosmos.ArchitecturePicker.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1998;NU1903;SYSLIB0011;</NoWarn>
+    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>true</AppendRuntimeIdentifierToOutputPath>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <!--pack as nuget-->
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <!--pack as nuget-->
+
+  </PropertyGroup>
+
+  <!--
+    Package identity shared by every Cosmos package. Gen3 ships from
+    CosmosOS/Cosmos and publishes under the CosmosOS profile on nuget.org, so
+    the repository links live here instead of being restated - and drifting -
+    in each packable csproj. Per-package identity (PackageId, Title,
+    Description, PackageTags) stays with the project it describes.
+  -->
+  <PropertyGroup>
+    <Authors>CosmosOS</Authors>
+    <Company>CosmosOS</Company>
+    <PackageProjectUrl>https://github.com/CosmosOS/Cosmos</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/CosmosOS/Cosmos</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!--
+    Single source of truth for the version of every Cosmos package.
+
+    The authoritative literal lives in `global.json` under
+    `msbuild-sdks.Cosmos.Sdk` — that's what MSBuild's SDK resolver reads for
+    `<Sdk Name="Cosmos.Sdk" />` references in every kernel csproj, so keeping
+    it in global.json lets in-repo kernels build without hardcoded versions.
+
+    Resolution order for $(VersionPrefix):
+      1. Env var / `-p:VersionPrefix=` override (Release CI sets this from the
+         git tag, e.g. `3.0.44`)
+      2. `msbuild-sdks.Cosmos.Sdk` in global.json (rewritten in-place by
+         `./.devcontainer/postCreateCommand.sh` to `<base>.<yyyyMMdd>` for
+         local dev / PR CI so packages get a unique dev version per day —
+         ALWAYS pick this up here so sibling csprojs built in a fresh shell
+         see the same value the setup script generated)
+
+    Everything else (Directory.Packages.props, the Cosmos.Sdk shipped Sdk.props,
+    the cosmos-kernel template, Cosmos.Kernel's generated VersionString and
+    kmain_version.h, the BuildCache test fixture) derives from $(VersionPrefix).
+  -->
+  <PropertyGroup>
+    <_CosmosGlobalJsonPath>$(MSBuildThisFileDirectory)global.json</_CosmosGlobalJsonPath>
+    <VersionPrefix Condition="'$(VersionPrefix)' == '' and Exists('$(_CosmosGlobalJsonPath)')">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_CosmosGlobalJsonPath)')), '&quot;Cosmos\.Sdk&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Groups[1].Value)</VersionPrefix>
+  </PropertyGroup>
+
+  <!--
+    AssemblyVersion / FileVersion must be `major.minor.build.revision` with each
+    component <= 65535, so we can't stuff a date-based revision (ddMMyyyy) in
+    there like VersionPrefix allows. Strip any trailing components beyond the
+    first three and append `.0` to produce a valid 4-part assembly version.
+    The full stamped $(VersionPrefix) is still used for the NuGet package
+    version, which has no such restriction.
+  -->
+  <PropertyGroup>
+    <_CosmosAssemblyBaseVersion>$([System.Text.RegularExpressions.Regex]::Match($(VersionPrefix), '^\d+\.\d+\.\d+').Value)</_CosmosAssemblyBaseVersion>
+    <AssemblyVersion Condition="'$(_CosmosAssemblyBaseVersion)' != ''">$(_CosmosAssemblyBaseVersion).0</AssemblyVersion>
+    <FileVersion Condition="'$(_CosmosAssemblyBaseVersion)' != ''">$(_CosmosAssemblyBaseVersion).0</FileVersion>
+  </PropertyGroup>
+
+  <!-- Normalize TargetArchitecture early so GCC targets pick the right toolchain -->
+  <PropertyGroup>
+    <TargetArchitecture Condition="'$(TargetArchitecture)' == '' and '$(RuntimeIdentifier)' != ''">$([System.String]::Copy('$(RuntimeIdentifier)').Split('-')[1])</TargetArchitecture>
+    <TargetArchitecture Condition="'$(TargetArchitecture)' == '' and '$(CosmosArch)' != ''">$(CosmosArch)</TargetArchitecture>
+  </PropertyGroup>
+
+  <!-- Clang defaults to 'clang' on PATH — set by Cosmos.Build.CC.props -->
+
+  <!--
+    Public API tracking, opt-in per project with
+    <CosmosTrackPublicApi>true</CosmosTrackPublicApi>.
+
+    Microsoft.CodeAnalysis.PublicApiAnalyzers requires every public symbol to
+    be declared in PublicAPI.Shipped.txt (frozen at release) or
+    PublicAPI.Unshipped.txt (pending), next to the csproj. Any surface change
+    then shows up as a reviewable txt diff in the PR; `make api` reseeds the
+    files after a deliberate change (RS0016/RS0017 code fixes).
+
+    The same flag enables NuGet package validation. Baseline validation
+    (breaking-change detection against the last published release) activates
+    once CosmosApiBaselineVersion is set below: leave it empty until the first
+    Gen3 release is on NuGet.org, then pin it to that version.
+  -->
+  <PropertyGroup>
+    <CosmosApiBaselineVersion></CosmosApiBaselineVersion>
+  </PropertyGroup>
+  <!--
+    Every driver assembly in the tree is listed here, semicolon separated. A driver
+    assembly is built as a kernel author's driver library would be: it references the
+    driver kit and the ring only, and no project grants it InternalsVisibleTo. The grant
+    check in Directory.Build.targets (CosmosForbidDriverAssemblyGrants) reads this list
+    and fails any project whose InternalsVisibleTo names one of these assemblies.
+  -->
+  <PropertyGroup>
+    <CosmosDriverAssemblyNames>Cosmos.Kernel.Drivers;Cosmos.Kernel.Tests.Drivers.Library</CosmosDriverAssemblyNames>
+  </PropertyGroup>
+
+  <!-- The property side of the flag (package validation, WarningsAsErrors) lives
+       in Directory.Build.targets: this file is imported before the project body
+       sets CosmosTrackPublicApi, so property conditions on it are always false
+       here. Item conditions evaluate after all properties, so this works. -->
+  <ItemGroup Condition="'$(CosmosTrackPublicApi)' == 'true'">
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Native ASM files come from the NuGet packages (Cosmos.Kernel.Native.X64/ARM64).
+       Local-source overrides removed to avoid duplicate-symbol conflicts when both the
+       local copy and the NuGet copy are picked up by AsmSearchPath. To iterate on native
+       ASM, rebuild the package via `make setup`. -->
+
+</Project>

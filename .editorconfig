@@ -1,0 +1,348 @@
+# editorconfig.org
+
+# top-most EditorConfig file
+root = true
+
+# Default settings:
+# A newline ending every file
+# Use 4 spaces as indentation
+[*]
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+# Generated code
+[*{_AssemblyInfo.cs,.notsupported.cs,AsmOffsets.cs}]
+generated_code = true
+
+# Vendored and upstream-mirroring code: keep diffable with its origin, skip
+# style analysis. The vendored trees under src/Cosmos.Kernel.System/ThirdParty
+# get one section at the end of this file, after the sections it overrides.
+
+# fdlibm port (via Cosmos Gen2)
+[src/Cosmos.Kernel.Core/Runtime/Math.cs]
+generated_code = true
+
+# Mirrors dotnet/runtime internals
+[src/Cosmos.Kernel.Core/Runtime/Internal/**.cs]
+generated_code = true
+
+# C# files
+[*.cs]
+# New line preferences
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# Indentation preferences
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+csharp_indent_case_contents = true
+csharp_indent_case_contents_when_block = false
+csharp_indent_switch_labels = true
+csharp_indent_labels = one_less_than_current
+
+# Modifier preferences
+csharp_preferred_modifier_order = public, private, protected, internal, file, static, extern, new, virtual, abstract, sealed, override, readonly, unsafe, required, volatile, async:suggestion
+
+# avoid this. unless absolutely necessary
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# Types: use keywords instead of BCL types, and permit var only when the type is clear
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = false:none
+csharp_style_var_elsewhere = false:suggestion
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_predefined_type_for_member_access = true:suggestion
+
+# name all constant fields using PascalCase
+dotnet_naming_rule.constant_fields_should_be_pascal_case.severity = error
+dotnet_naming_rule.constant_fields_should_be_pascal_case.symbols = constant_fields
+dotnet_naming_rule.constant_fields_should_be_pascal_case.style = pascal_case_style
+dotnet_naming_symbols.constant_fields.applicable_kinds = field
+dotnet_naming_symbols.constant_fields.required_modifiers = const
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+# static fields should have s_ prefix
+dotnet_naming_rule.static_fields_should_have_prefix.severity = error
+dotnet_naming_rule.static_fields_should_have_prefix.symbols = static_fields
+dotnet_naming_rule.static_fields_should_have_prefix.style = static_prefix_style
+dotnet_naming_symbols.static_fields.applicable_kinds = field
+dotnet_naming_symbols.static_fields.required_modifiers = static
+dotnet_naming_symbols.static_fields.applicable_accessibilities = private, internal, private_protected
+dotnet_naming_style.static_prefix_style.required_prefix = s_
+dotnet_naming_style.static_prefix_style.capitalization = camel_case
+
+# internal and private fields should be _camelCase
+dotnet_naming_rule.camel_case_for_private_internal_fields.severity = error
+dotnet_naming_rule.camel_case_for_private_internal_fields.symbols = private_internal_fields
+dotnet_naming_rule.camel_case_for_private_internal_fields.style = camel_case_underscore_style
+dotnet_naming_symbols.private_internal_fields.applicable_kinds = field
+dotnet_naming_symbols.private_internal_fields.applicable_accessibilities = private, internal
+dotnet_naming_style.camel_case_underscore_style.required_prefix = _
+dotnet_naming_style.camel_case_underscore_style.capitalization = camel_case
+
+# Code style defaults
+csharp_using_directive_placement = outside_namespace:suggestion
+dotnet_sort_system_directives_first = true
+csharp_prefer_braces = true:error
+csharp_preserve_single_line_blocks = true:none
+csharp_preserve_single_line_statements = false:none
+csharp_prefer_static_local_function = true:suggestion
+csharp_prefer_simple_using_statement = false:none
+csharp_style_prefer_switch_expression = true:suggestion
+dotnet_style_readonly_field = true:suggestion
+
+# Expression-level preferences
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_prefer_collection_expression = when_types_exactly_match
+dotnet_style_explicit_tuple_names = true:suggestion
+dotnet_style_coalesce_expression = true:error
+dotnet_style_null_propagation = true:error
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:error
+dotnet_style_prefer_inferred_tuple_names = true:suggestion
+dotnet_style_prefer_inferred_anonymous_type_member_names = true:suggestion
+dotnet_style_prefer_auto_properties = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+csharp_prefer_simple_default_expression = true:suggestion
+
+# Expression-bodied members
+csharp_style_expression_bodied_methods = false:silent
+csharp_style_expression_bodied_constructors = false:silent
+csharp_style_expression_bodied_operators = false:silent
+csharp_style_expression_bodied_properties = when_on_single_line:silent
+csharp_style_expression_bodied_indexers = when_on_single_line:silent
+csharp_style_expression_bodied_accessors = when_on_single_line:silent
+csharp_style_expression_bodied_lambdas = true:silent
+csharp_style_expression_bodied_local_functions = false:silent
+
+# Pattern matching
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:error
+csharp_style_inlined_variable_declaration = true:suggestion
+
+# Null checking preferences
+csharp_style_throw_expression = true:error
+csharp_style_conditional_delegate_call = true:error
+csharp_style_prefer_null_check_over_type_check = true:error
+
+# Other features
+csharp_style_prefer_index_operator = false:none
+csharp_style_prefer_range_operator = false:none
+csharp_style_pattern_local_over_anonymous_function = false:none
+
+# Space preferences
+csharp_space_after_cast = false
+csharp_space_after_colon_in_inheritance_clause = true
+csharp_space_after_comma = true
+csharp_space_after_dot = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_after_semicolon_in_for_statement = true
+csharp_space_around_binary_operators = before_and_after
+csharp_space_around_declaration_statements = do_not_ignore
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_before_comma = false
+csharp_space_before_dot = false
+csharp_space_before_open_square_brackets = false
+csharp_space_before_semicolon_in_for_statement = false
+csharp_space_between_empty_square_brackets = false
+csharp_space_between_method_call_empty_parameter_list_parentheses = false
+csharp_space_between_method_call_name_and_opening_parenthesis = false
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_empty_parameter_list_parentheses = false
+csharp_space_between_method_declaration_name_and_open_parenthesis = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_parentheses = false
+csharp_space_between_square_brackets = false
+
+# License header
+file_header_template = This code is licensed under the BSD 3-Clause license (see LICENSE for details)
+
+# C++ Files
+
+# CA2255: The 'ModuleInitializer' attribute should not be used in libraries
+dotnet_diagnostic.CA2255.severity = none
+
+# CA1051: Do not declare visible instance fields (structs excluded to preserve hardware layouts)
+dotnet_diagnostic.CA1051.severity = warning
+dotnet_code_quality.CA1051.exclude_structs = true
+
+# CA2211: Non-constant fields should not be visible
+dotnet_diagnostic.CA2211.severity = warning
+
+# IDE0002: Simplify member access (e.g. object.ReferenceEquals -> ReferenceEquals)
+dotnet_diagnostic.IDE0002.severity = warning
+
+# IDE0060: Flag unused parameters
+dotnet_code_quality_unused_parameters = all:warning
+
+# CA1065: Do not raise exceptions in unexpected locations (GetHashCode, Equals, ToString, ...)
+dotnet_diagnostic.CA1065.severity = warning
+
+# CA1819: Properties should not return arrays (prefer ImmutableArray/ReadOnlySpan)
+dotnet_diagnostic.CA1819.severity = warning
+
+# CA2201: Do not raise reserved exception types (e.g. bare System.Exception)
+dotnet_diagnostic.CA2201.severity = warning
+
+# MSBuild task contract requires array-typed properties (ITaskItem[], string[])
+[src/Cosmos.Build.*/**.cs]
+dotnet_diagnostic.CA1819.severity = none
+
+# Plug members are matched by name against their patch targets (BCL/runtime internals) - do not rename
+[src/Cosmos.Kernel.Plugs/**.cs]
+dotnet_diagnostic.IDE1006.severity = none
+
+[*.{cpp,h,in}]
+curly_bracket_next_line = true
+indent_brace_style = Allman
+
+# Xml project files
+[*.{csproj,vbproj,vcxproj,vcxproj.filters,proj,nativeproj,locproj}]
+indent_size = 2
+
+[*.{csproj,vbproj,proj,nativeproj,locproj}]
+charset = utf-8
+
+# Xml build files
+[*.builds]
+indent_size = 2
+
+# Xml files
+[*.{xml,stylecop,resx,ruleset}]
+indent_size = 2
+
+# Xml config files
+[*.{props,targets,config,nuspec}]
+indent_size = 2
+
+# YAML config files
+[*.{yml,yaml}]
+indent_size = 2
+
+# Shell scripts
+[*.sh]
+end_of_line = lf
+
+[*.{cmd,bat}]
+end_of_line = crlf
+
+# Public API tracking (Microsoft.CodeAnalysis.PublicApiAnalyzers, opt-in via
+# CosmosTrackPublicApi): every public surface change must land in the
+# project's PublicAPI.Unshipped.txt, reseeded with `make api`.
+[*.cs]
+dotnet_diagnostic.RS0016.severity = error
+dotnet_diagnostic.RS0017.severity = error
+# Optional-parameter overload style rules: not a goal for this surface.
+dotnet_diagnostic.RS0026.severity = none
+dotnet_diagnostic.RS0027.severity = none
+
+# A tracked public surface must be documented. The error severity is scoped to
+# the tracked projects' own paths (editorconfig severity outranks NoWarn, so a
+# repo-wide [*.cs] entry would fire in every project) and never reaches the
+# sources linked from the dotnet/runtime submodule, which sit under the
+# submodule's own root .editorconfig.
+[src/Cosmos.Kernel.{System,Core,HAL,Drivers}/**.cs]
+dotnet_diagnostic.CS1591.severity = error
+
+# CS1591 only guarantees that a member has a comment. These four say the
+# comment describes the member in front of it: a parameter list that stops
+# short (CS1573), a tag naming a parameter that is not there (CS1572, CS1734)
+# and a link that does not resolve (CS1574). Each was at zero when it was
+# raised, so the gate holds the surface where the audit left it rather than
+# asking for new work.
+#
+# CS1574 is the one that pays for itself. Inside `Cosmos.Kernel.System.*` the
+# identifier `System` binds to this assembly's own namespace, so a cref to
+# `System.ReadOnlySpan` or `System.Drawing.Color` silently fails to resolve
+# and the rendered page loses the link; `global::System.` is the spelling that
+# works. That trap cost seven links once already.
+#
+# CS0419 is the same defect one step earlier: an unqualified cref to an
+# overloaded member picks an arbitrary overload, so the reader follows a link
+# to a signature nobody meant.
+#
+# The vendored trees under ThirdParty/ inherit these too. They are clean today,
+# and a vendor drop that is not has to be documented like the rest of the
+# assembly.
+dotnet_diagnostic.CS1572.severity = error
+dotnet_diagnostic.CS1573.severity = error
+dotnet_diagnostic.CS1574.severity = error
+dotnet_diagnostic.CS1734.severity = error
+dotnet_diagnostic.CS0419.severity = error
+
+# Kernel.VersionString is generated from $(VersionPrefix) into the obj dir:
+# tracking a version-stamped constant would churn the file on every bump.
+[**/KernelVersion.g.cs]
+dotnet_diagnostic.RS0016.severity = none
+dotnet_diagnostic.RS0017.severity = none
+
+# Namespaces follow folders (IDE0130): a file declares its project's name
+# (every RootNamespace is the project name) followed by the folders between
+# the project and the file. Error, so `dotnet build` fails on a file that
+# drifts, and so does the format CI for the projects nativeaot-patcher.slnx
+# lists (not the test kernels). The host-side unit tests in
+# tests/Cosmos.Kernel.Tests.System follow the same rule. IDE0130 does not see
+# generated code (the generated_code sections), files linked from outside the
+# project, a namespace nested in or containing another, or a namespace holding
+# a partial type declared in more than one file, such as a [LibraryImport]
+# class; it compares ignoring case. The exemptions below must come after this
+# section (later sections win).
+[{src/Cosmos.Kernel*,tests/Kernels,tests/Cosmos.Kernel.Tests.System,examples}/**.cs]
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = error
+
+# ILC finds these by full name, so their namespaces cannot follow a folder:
+# each library's Internal.Runtime.CompilerHelpers.LibraryInitializer
+# (LibraryInitializers.cs), System.Runtime.CompilerServices.
+# EagerStaticClassConstructionAttribute (PreinitializationManager.cs), and
+# the System.Runtime attributes and IntrinsicAttribute in Stdllib.cs. The
+# source generators' IsExternalInit is the C# compiler's init-accessor marker.
+[src/Cosmos.Kernel*/Internal/Runtime/CompilerHelpers/LibraryInitializer.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+[src/Cosmos.Kernel.Core/Runtime/EagerStaticClassConstructionAttribute.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+[src/Cosmos.Kernel.Core/Runtime/Stdllib.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+[src/Cosmos.Kernel.SourceGenerators/IsExternalInit.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+# A bridge's direction is a folder, not a namespace: Bridge/Import (native
+# imports) and Bridge/Export (managed exports) share the project's Bridge
+# namespace. Bridge/Interop has a namespace of its own and stays checked.
+[src/Cosmos.Kernel.{Core,Core.X64,Core.ARM64}/Bridge/{Import,Export}/**.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+# The dotnet/runtime mirrors keep their upstream namespaces. Runtime/Internal
+# is already generated_code; listing it here keeps it exempt if that ever
+# changes.
+[src/Cosmos.Kernel.Core/Runtime/Internal/**.cs]
+dotnet_diagnostic.IDE0130.severity = none
+
+# Vendored code (BigGustave, LunarFonts, SharpZipLib, each with a README.md
+# recording its origin and local changes) keeps its upstream namespaces and
+# code shape (only whitespace and the expression-body rule follow the
+# repository style, each README listing the members that changed) so it stays
+# diffable against upstream: generated_code skips the style analyzers and the
+# format CI, and IDE0130 is off. It also stays out of the declared surface,
+# since the PublicAPI files list the repo's own API only. Last in the file
+# because it overrides the [*.cs] RS0016/RS0017 section and the IDE0130
+# section above (later sections win).
+[src/Cosmos.Kernel.System/ThirdParty/**.cs]
+generated_code = true
+dotnet_diagnostic.RS0016.severity = none
+dotnet_diagnostic.RS0017.severity = none
+dotnet_diagnostic.IDE0130.severity = none

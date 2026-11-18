@@ -1,0 +1,189 @@
+<Project>
+  <PropertyGroup>
+    <DefaultIlcDependsOn>ResolveIlcToolsPath</DefaultIlcDependsOn>
+    <IlcDependsOn>$(DefaultIlcDependsOn);$(IlcDependsOn)</IlcDependsOn>
+  </PropertyGroup>
+
+  <UsingTask
+    TaskName="GetPackageDirectory"
+    AssemblyFile="$(MicrosoftNETBuildTasksAssembly)"
+  />
+  <!-- ComputeInputsHashTask is registered in Cosmos.Build.Common.props -->
+
+  <!-- Resolves the path of 'ilc' to IlcToolsPath. -->
+  <Target Name="ResolveIlcToolsPath" AfterTargets="Build" DependsOnTargets="ResolvePackageAssets">
+    <PropertyGroup>
+      <!-- Determine host OS for ILC compiler selection -->
+      <IlcHostOs Condition="'$(OS)' == 'Windows_NT'">win</IlcHostOs>
+      <IlcHostOs Condition="'$(OS)' != 'Windows_NT' and Exists('/System/Library/CoreServices/SystemVersion.plist')">osx</IlcHostOs>
+      <IlcHostOs Condition="'$(IlcHostOs)' == ''">linux</IlcHostOs>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- Always use the host OS ILC tools (ILC runs on the build machine, not the target) -->
+      <HostILCompilerPack Include="runtime.$(IlcHostOs)-x64.Microsoft.DotNet.ILCompiler">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>runtime.$(IlcHostOs)-x64.Microsoft.DotNet.ILCompiler</NuGetPackageId>
+      </HostILCompilerPack>
+    </ItemGroup>
+
+    <GetPackageDirectory
+      Items="@(HostILCompilerPack)"
+      PackageFolders="@(AssetsFilePackageFolder)"
+    >
+      <Output TaskParameter="Output" ItemName="ResolvedILCompilerPack"/>
+    </GetPackageDirectory>
+
+    <PropertyGroup>
+      <IlcHostPackagePath>@(ResolvedILCompilerPack->'%(PackageDirectory)')</IlcHostPackagePath>
+      <IlcToolsPath Condition="$(IlcHostPackagePath) != ''">$([MSBuild]::NormalizePath($(IlcHostPackagePath)/tools/))</IlcToolsPath>
+    </PropertyGroup>
+    <Message Importance="High" Text="⚙️ [ILC] RuntimeIdentifier: $(RuntimeIdentifier)"/>
+    <Message Importance="High" Text="⚙️ [ILC] CosmosArch: $(CosmosArch)"/>
+    <Message Importance="High" Text="⚙️ [ILC] IlcHostOs: $(IlcHostOs)"/>
+    <Message Importance="High" Text="⚙️ [ILC] HostILCompilerPack: @(HostILCompilerPack->'%(NuGetPackageId)')"/>
+    <Message Importance="High" Text="⚙️ [ILC] ResolvedILCompilerPack count: @(ResolvedILCompilerPack->Count())"/>
+    <Message Importance="High" Text="⚙️ [ILC] IlcHostPackagePath: $(IlcHostPackagePath)"/>
+    <Message Importance="High" Text="⚙️ [ILC] Using ILCompiler from: $(IlcToolsPath)"/>
+  </Target>
+
+  <!-- Writes the response file for ILC compilation. -->
+  <Target Name="WriteIlcRsp" DependsOnTargets="$(IlcDependsOn)">
+    <PropertyGroup>
+      <FullIntermediateOutputPath>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)'))</FullIntermediateOutputPath>
+      <FullOutputPath>$([System.IO.Path]::GetFullPath('$(OutputPath)'))</FullOutputPath>
+
+      <NativeOutputPath>$([System.IO.Path]::GetFullPath('$(OutputPath)/cosmos/native/'))</NativeOutputPath>
+      <IlcIntermediateOutputPath>$(FullIntermediateOutputPath)/cosmos/native/</IlcIntermediateOutputPath>
+      <FinalAssembly>$(NativeOutputPath)$(AssemblyName)</FinalAssembly>
+      <IlcSystemModule Condition="$(IlcSystemModule) == ''">System.Private.CoreLib</IlcSystemModule>
+      <ExportsFile>$(IlcIntermediateOutputPath)$(AssemblyName).exports</ExportsFile>
+    </PropertyGroup>
+
+    <!-- The runtime's own library initializers. Stage="Framework" places them after
+         the kernel's Runtime stage (the heap they allocate from) and before every
+         kernel library: System.Private.CoreLib's initializer creates the class
+         constructor runner, and no lazily constructed static can be read until it
+         exists. SortAutoInitialedAssemblies applies the stages. -->
+    <ItemGroup Condition="$(IlcSystemModule) == 'System.Private.CoreLib'">
+      <AutoInitializedAssemblies Include="System.Private.CoreLib" Stage="Framework"/>
+      <AutoInitializedAssemblies Include="System.Private.StackTraceMetadata" Stage="Framework" Condition="$(StackTraceSupport) != 'false'"/>
+      <AutoInitializedAssemblies Include="System.Private.TypeLoader" Stage="Framework"/>
+      <AutoInitializedAssemblies Include="System.Private.Reflection.Execution" Stage="Framework" Condition="$(IlcDisableReflection) != 'true'"/>
+      <AutoInitializedAssemblies Include="System.Private.DisabledReflection" Stage="Framework" Condition="$(IlcDisableReflection) == 'true'"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <IlcCompileInput Include="$(FullIntermediateOutputPath)/cosmos/*.dll"/>
+      <ManagedBinary Include="@(IlcCompileInput)">
+        <RspFile>$([System.IO.Path]::GetFullPath('$(IlcIntermediateOutputPath)$(AssemblyName).ilc.rsp'))</RspFile>
+        <OutputFile>$([MSBuild]::NormalizePath('$(IlcIntermediateOutputPath)$(AssemblyName).o'))</OutputFile>
+      </ManagedBinary>
+
+      <IlcReferences Include="$(FullIntermediateOutputPath)/cosmos/ref/*.dll" />
+    </ItemGroup>
+
+
+    <SortAutoInitialedAssemblies
+      AssemblyNames="@(AutoInitializedAssemblies)"
+      AssemblyPaths="@(IlcReferences)">
+      <Output TaskParameter="SortedAssemblyNames" ItemName="SortedAutoInitializedAssemblies"/>
+    </SortAutoInitialedAssemblies>
+
+    <ItemGroup>
+      <AutoInitializedAssemblies Remove="@(AutoInitializedAssemblies)"/>
+      <AutoInitializedAssemblies Include="@(SortedAutoInitializedAssemblies)"/>
+    </ItemGroup>
+
+    <MakeDir Directories="$(IlcIntermediateOutputPath)"/>
+
+    <ItemGroup>
+      <IlcArg Include="@(IlcCompileInput)"/>
+      <IlcArg Include="-o:%(ManagedBinary.OutputFile)"/>
+      <IlcArg Include="@(IlcReferences->'-r:%(Identity)')"/>
+      <IlcArg Include="@(_TrimmerFeatureSettings->'--feature:%(Identity)=%(Value)')"/>
+      <IlcArg Include="@(RuntimeHostConfigurationOption->'--runtimeknob:%(Identity)=%(Value)')"/>
+      <IlcArg Include="--runtimeknob:RUNTIME_IDENTIFIER=$(RuntimeIdentifier)"/>
+      <IlcArg Include="--targetarch:$(CosmosArch)"/>
+      <IlcArg Include="--targetos:linux"/>
+      <IlcArg Include="--export-dynamic-symbol:g_compilerEmbeddedKnobsBlob"/> <!-- Required to implement 'RhGetKnobValues' -->
+      <IlcArg Condition="$(ExportsFile) != ''" Include="--exportsfile:&quot;$(ExportsFile)&quot;"/>
+      <IlcArg Include="@(AutoInitializedAssemblies->'--initassembly:%(Identity)')"/>
+      <IlcArg Include="--systemmodule:$(IlcSystemModule)"/>
+      <IlcArg Include="@(DirectPInvoke->'--directpinvoke:%(Identity)')"/>
+      <IlcArg Include="@(DirectPInvokeList->'--directpinvokelist:%(Identity)')"/>
+      <IlcArg Include="--splitinit"/>
+      <IlcArg Include="--nativelib"/>
+      <IlcArg Include="--noinlinetls"/>
+      <IlcArg Include="--scanreflection"/>
+      <IlcArg Include="-g"/>
+      <IlcArg Include="--gdwarf-5"/>
+      <IlcArg Include="-O"/>
+      <!-- Generate map file for debugging symbol resolution -->
+      <IlcArg Include="--map:$(IlcIntermediateOutputPath)$(AssemblyName).map.xml"/>
+      <IlcArg Include="--preinitstatics"/> <!-- Implied by -O, but we rely on this for Limine requests. -->
+      <IlcArg Include="@(UnmanagedEntryPointsAssembly->'--generateunmanagedentrypoints:%(Identity)')"/>
+      <IlcArg Condition="'$(StackTraceSupport)' != 'false'" Include="--stacktracedata"/>
+
+      <!-- The managed debugging support in libraries is unused - trim it -->
+      <IlcArg Condition="'$(DebuggerSupport)' != 'true'" Include="--feature:System.Diagnostics.Debugger.IsSupported=false"/>
+    </ItemGroup>
+
+    <WriteLinesToFile File="%(ManagedBinary.RspFile)" Lines="@(IlcArg)" Overwrite="true"/>
+  </Target>
+
+  <!-- Content-hash based ILC caching: hash all input DLLs + ref DLLs + the
+       response file, set _IlcCacheHit. The response file is an input like the
+       assemblies: a feature switch changes only the runtimeknob arguments in
+       it, and a hash over the assemblies alone would keep the object built
+       for the old value while the switch says otherwise. WriteIlcRsp has
+       already written it when this target runs. -->
+  <Target Name="CheckIlcCache">
+    <PropertyGroup>
+      <_IlcCacheFile>$(IlcIntermediateOutputPath).ilc-hash</_IlcCacheFile>
+      <_IlcOutputFile>$([MSBuild]::NormalizePath('$(IlcIntermediateOutputPath)$(AssemblyName).o'))</_IlcOutputFile>
+      <_IlcRspFile>$([System.IO.Path]::GetFullPath('$(IlcIntermediateOutputPath)$(AssemblyName).ilc.rsp'))</_IlcRspFile>
+    </PropertyGroup>
+
+    <ComputeInputsHashTask InputFiles="@(IlcCompileInput);@(IlcReferences);$(_IlcRspFile)">
+      <Output TaskParameter="Hash" PropertyName="_CurrentIlcHash" />
+    </ComputeInputsHashTask>
+
+    <ReadLinesFromFile File="$(_IlcCacheFile)" Condition="Exists('$(_IlcCacheFile)')">
+      <Output TaskParameter="Lines" ItemName="_PreviousIlcHashLines" />
+    </ReadLinesFromFile>
+
+    <PropertyGroup>
+      <_PreviousIlcHash>@(_PreviousIlcHashLines)</_PreviousIlcHash>
+      <_IlcCacheHit Condition="'$(_CurrentIlcHash)' != '' AND '$(_CurrentIlcHash)' == '$(_PreviousIlcHash)' AND Exists('$(_IlcOutputFile)')">true</_IlcCacheHit>
+    </PropertyGroup>
+
+    <Message Condition="'$(_IlcCacheHit)' == 'true'" Importance="High"
+             Text="ILC cache hit — skipping compilation (hash: $(_CurrentIlcHash))" />
+  </Target>
+
+  <!-- Wrapper: always runs dependencies (which set _IlcCacheHit), then conditionally invokes
+       the core via CallTarget. CallTarget is a task, so its Condition is evaluated at execution
+       time (after dependencies have run) — unlike a target-level Condition, which MSBuild
+       evaluates at dependency-resolution time before the dependencies run. -->
+  <Target Name="CompileWithIlc"
+          AfterTargets="Build"
+          DependsOnTargets="WriteIlcRsp;ResolveIlcToolsPath;CheckIlcCache">
+    <CallTarget Targets="_CompileWithIlcCore" Condition="'$(_IlcCacheHit)' != 'true'" />
+  </Target>
+
+  <Target Name="_CompileWithIlcCore">
+    <Message Importance="High" Text="[ILC] Compiling: %(ManagedBinary.Identity) with RSP: %(ManagedBinary.RspFile)"/>
+    <Exec
+      Command="&quot;$(IlcToolsPath)ilc&quot; @&quot;%(ManagedBinary.RspFile)&quot;"
+      WorkingDirectory="$(FullIntermediateOutputPath)"
+      IgnoreExitCode="false"
+      StandardOutputImportance="High"
+      StandardErrorImportance="High"
+    />
+
+    <Message Importance="High" Text="[ILC] Output: %(ManagedBinary.OutputFile)"/>
+
+    <WriteLinesToFile File="$(_IlcCacheFile)" Lines="$(_CurrentIlcHash)" Overwrite="true" />
+  </Target>
+</Project>

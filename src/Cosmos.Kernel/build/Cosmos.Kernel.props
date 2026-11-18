@@ -1,0 +1,9 @@
+<Project>
+  <ItemGroup>
+    <PlugReference Include="Cosmos.Kernel.Plugs" />
+    <!-- For NuGet package: Bootstrap is in build/Bootstrap/ -->
+    <GCCProject Include="$(MSBuildThisFileDirectory)Bootstrap/" Condition="Exists('$(MSBuildThisFileDirectory)Bootstrap/')"/>
+    <!-- For project reference: Bootstrap is in ../Bootstrap/ relative to build/ -->
+    <GCCProject Include="$(MSBuildThisFileDirectory)../Bootstrap/" Condition="!Exists('$(MSBuildThisFileDirectory)Bootstrap/') AND Exists('$(MSBuildThisFileDirectory)../Bootstrap/')"/>
+  </ItemGroup>
+</Project>

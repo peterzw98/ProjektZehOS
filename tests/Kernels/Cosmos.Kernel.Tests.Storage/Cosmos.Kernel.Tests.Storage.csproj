@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Cosmos.Sdk" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The suite names IRemovableMedia, a driver kit seam type, to tell the boot CD from its disk. -->
+    <NoWarn>$(NoWarn);COSMOS0003</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    QEMU profiles + modifiers this suite opts into. Definitions live in
+    tests/profiles.json; the test runner fails fast if any name here isn't
+    in that catalog. The loader enumerates every CONFLICT-FREE SUBSET of
+    the applicable modifiers, so each added modifier roughly doubles a
+    profile's cells (mutually exclusive ones like gicv2/gicv3 don't
+    combine, and arch-filtered ones drop out on the wrong arch). For this
+    suite that means: x64 = 6 profiles x {bare, acpi-off} = 12 cells;
+    arm64 = 7 profiles x {bare, gicv2, gicv3, acpi-off, gicv2+acpi-off,
+    gicv3+acpi-off} = 42 cells. Budget CI timeouts accordingly. The three
+    usb profiles are the same stick on each shipped host controller: the
+    xHCI, a usb-ehci and a pci-ohci.
+  -->
+  <ItemGroup>
+    <CosmosTestProfile Include="ahci" />
+    <CosmosTestProfile Include="nvme" />
+    <CosmosTestProfile Include="usb" />
+    <CosmosTestProfile Include="usb-ehci" />
+    <CosmosTestProfile Include="usb-ohci" />
+    <CosmosTestProfile Include="virtio-blk-pci" />
+    <CosmosTestProfile Include="virtio-blk-mmio" />
+    <CosmosTestModifier Include="gicv2" />
+    <CosmosTestModifier Include="gicv3" />
+    <CosmosTestModifier Include="acpi-off" />
+  </ItemGroup>
+
+  <!-- Core kernel packages (using project references for development) -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Cosmos.Kernel/Cosmos.Kernel.csproj" />
+    <ProjectReference Include="../../../src/Cosmos.Kernel.System/Cosmos.Kernel.System.csproj" />
+    <ProjectReference Include="../../Cosmos.TestRunner.Framework/Cosmos.TestRunner.Framework.csproj" />
+  </ItemGroup>
+
+  <!-- Architecture-specific HAL (using project references for development) -->
+  <ItemGroup Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_X64'))">
+    <ProjectReference Include="../../../src/Cosmos.Kernel.HAL.X64/Cosmos.Kernel.HAL.X64.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DefineConstants)' != '' AND $(DefineConstants.Contains('ARCH_ARM64'))">
+    <ProjectReference Include="../../../src/Cosmos.Kernel.HAL.ARM64/Cosmos.Kernel.HAL.ARM64.csproj" />
+  </ItemGroup>
+
+</Project>

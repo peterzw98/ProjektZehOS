@@ -1,0 +1,8 @@
+<Project>
+
+  <!-- On Unix the patcher is invoked as the global tool name on PATH. -->
+  <PropertyGroup>
+    <_CosmosPatcherCommand Condition="'$(_CosmosPatcherCommand)' == ''">cosmos.patcher</_CosmosPatcherCommand>
+  </PropertyGroup>
+
+</Project>

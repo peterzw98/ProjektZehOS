@@ -1,0 +1,263 @@
+<Project>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_ImportMicrosoftNETSdkFromCosmosSdk)' == 'true'" />
+
+  <!-- Feature hierarchy: cascade disabled states downward.
+       Evaluated after the user's project properties, so user overrides are respected.
+       MSBuild evaluates items (RuntimeHostConfigurationOption) after all properties,
+       so the final cascaded values are what ILC sees via runtimeknob arguments. -->
+  <PropertyGroup>
+    <!-- Interrupts off → everything that needs IRQs is disabled -->
+    <CosmosEnableTimer     Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableTimer>
+    <CosmosEnableKeyboard  Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableKeyboard>
+    <CosmosEnableMouse     Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableMouse>
+    <CosmosEnableNetwork   Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableNetwork>
+    <CosmosEnableStorage   Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableStorage>
+    <CosmosEnableScheduler Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnableScheduler>
+    <CosmosEnablePCI       Condition="'$(CosmosEnableInterrupts)' == 'false'">false</CosmosEnablePCI>
+    <!-- Timer off → preemptive scheduler can't tick -->
+    <CosmosEnableScheduler Condition="'$(CosmosEnableTimer)' == 'false'">false</CosmosEnableScheduler>
+    <!-- PCI off → AHCI/SATA discovery has no bus to enumerate -->
+    <CosmosEnableStorage   Condition="'$(CosmosEnablePCI)' == 'false'">false</CosmosEnableStorage>
+    <!-- Storage off → no block device for filesystems to mount on -->
+    <CosmosEnableFat       Condition="'$(CosmosEnableStorage)' == 'false'">false</CosmosEnableFat>
+    <!-- USB default: on while one of the kit's USB class drivers (USB keyboard,
+         USB mouse, USB mass storage) has a manager to feed. Decided here, after
+         the lines above, because it reads the final Keyboard, Mouse and Storage
+         values. A value the project set, including true with all three off, is
+         kept. -->
+    <CosmosEnableUsb       Condition="'$(CosmosEnableUsb)' == '' AND ('$(CosmosEnableKeyboard)' == 'true' OR '$(CosmosEnableMouse)' == 'true' OR '$(CosmosEnableStorage)' == 'true')">true</CosmosEnableUsb>
+    <CosmosEnableUsb       Condition="'$(CosmosEnableUsb)' == ''">false</CosmosEnableUsb>
+    <!-- PCI off → no USB host controller function (xHCI, EHCI or OHCI) for the
+         kit to offer. That also covers Interrupts off, which turned PCI off
+         above. USB follows no other switch: without an interrupt the host
+         controller drivers poll (the xHCI driver its event ring, the EHCI
+         driver its status register and descriptors, the OHCI driver its done
+         queue), their delays come from the kit, and the hot-plug thread's need
+         for the scheduler is checked by each host driver where it starts the
+         thread. -->
+    <CosmosEnableUsb       Condition="'$(CosmosEnablePCI)' == 'false'">false</CosmosEnableUsb>
+    <!-- PCI off → no HD Audio controller to find. That also covers Interrupts
+         off, which turned PCI off above. The stream is driven by the codec's
+         own clock and topped up from the kit worker, so audio rides no other
+         switch; without a scheduler the ring is written inline instead. -->
+    <CosmosEnableAudio     Condition="'$(CosmosEnablePCI)' == 'false'">false</CosmosEnableAudio>
+    <!-- Scheduler off → no thread for the finalizers to run on; they run on the
+         thread that collected or allocated. That also covers Interrupts off and
+         Timer off, which turned the scheduler off above. -->
+    <CosmosEnableFinalizerThread Condition="'$(CosmosEnableScheduler)' == 'false'">false</CosmosEnableFinalizerThread>
+  </PropertyGroup>
+
+  <!-- Driver policy: a kernel project drops a driver from its manifest with
+       <CosmosDriverExclude Include="Full.Type.Name" /> and opts into a
+       [Driver(Default = false)] one with <CosmosDriverInclude Include="..." />.
+       The manifest generator reads the two lists as build properties (declared
+       CompilerVisibleProperty in Cosmos.Kernel.SourceGenerators.props), so the
+       items are joined here. It has to happen in a target: item references do
+       not expand inside an evaluation-time PropertyGroup, and the properties
+       must exist before the compiler's editorconfig is written. The separator
+       is a comma, not MSBuild's semicolon: the compiler reads that file as an
+       editorconfig, where a semicolon starts a comment and would cut the list
+       after its first name. -->
+  <Target Name="CosmosCollectDriverPolicy" BeforeTargets="GenerateMSBuildEditorConfigFileCore">
+    <PropertyGroup>
+      <CosmosDriverExcludeList Condition="'@(CosmosDriverExclude)' != ''">@(CosmosDriverExclude, ',')</CosmosDriverExcludeList>
+      <CosmosDriverIncludeList Condition="'@(CosmosDriverInclude)' != ''">@(CosmosDriverInclude, ',')</CosmosDriverIncludeList>
+    </PropertyGroup>
+  </Target>
+
+  <!-- Disable standard ILLink - Cosmos uses custom NativeAOT compilation via Cosmos.Build.Ilc -->
+  <!-- This prevents the "Missing predefined 'System.NotSupportedException' type" error -->
+  <Target Name="_RunILLink" />
+  <Target Name="ILLink" />
+
+  <!-- Resolve Bootstrap from Cosmos.Kernel (project reference or package) -->
+  <Target Name="ResolveCosmosKernelBootstrap" BeforeTargets="BuildCC">
+    <ItemGroup>
+      <!-- Find Cosmos.Kernel project reference -->
+      <_CosmosKernelProjectRef Include="@(ProjectReference)" Condition="$([System.String]::Copy('%(Filename)').EndsWith('Cosmos.Kernel'))" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <!-- Get the directory of the Cosmos.Kernel project for project references -->
+      <_CosmosKernelProjectDir Condition="@(_CosmosKernelProjectRef) != ''">$([System.IO.Path]::GetDirectoryName('%(_CosmosKernelProjectRef.Identity)'))\</_CosmosKernelProjectDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_CosmosKernelProjectDir)' != '' AND Exists('$(_CosmosKernelProjectDir)Bootstrap\')">
+      <!-- Add Bootstrap from project reference location -->
+      <GCCProject Include="$(_CosmosKernelProjectDir)Bootstrap\" />
+    </ItemGroup>
+
+    <Message Importance="High" Text="⚙️ [SDK] Cosmos.Kernel Bootstrap: $(_CosmosKernelProjectDir)Bootstrap\" Condition="'$(_CosmosKernelProjectDir)' != ''" />
+  </Target>
+
+  <!-- Resolve InteropAPI.txt from Cosmos.Kernel.Core. Without this, ILC
+       has no DirectPInvokeList for project-referenced kernels and every
+       libSystem.Native P/Invoke routes through the runtime's LoadLibrary
+       fixup path at run time instead of being resolved at link time against
+       the kernel's plugs and [UnmanagedCallersOnly] exports, so a missing
+       one becomes a crash instead of an undefined-symbol error. -->
+  <Target Name="ResolveCosmosKernelCoreInteropAPI" BeforeTargets="CustomizeReferences">
+    <ItemGroup>
+      <_CosmosKernelCoreProjectRef Include="@(ProjectReference)" Condition="$([System.String]::Copy('%(Filename)').EndsWith('Cosmos.Kernel.Core'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <!-- %(FullPath) resolves the ProjectReference Include relative to the
+           consuming project, giving an absolute path. ILC runs from a deeply
+           nested obj/ folder, so the value MUST be absolute or it can't find
+           InteropAPI.txt and falls back to runtime P/Invoke fixup. -->
+      <_CosmosKernelCoreInteropApi Condition="@(_CosmosKernelCoreProjectRef) != ''">$([System.IO.Path]::GetDirectoryName('%(_CosmosKernelCoreProjectRef.FullPath)'))/build/InteropAPI.txt</_CosmosKernelCoreInteropApi>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_CosmosKernelCoreInteropApi)' != '' AND Exists('$(_CosmosKernelCoreInteropApi)')">
+      <DirectPInvokeList Include="&quot;$(_CosmosKernelCoreInteropApi)&quot;" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Resolves the path of 'ilc' to IlcToolsPath. -->
+  <Target Name="ResolveIlcPath" BeforeTargets="CustomizeReferences" DependsOnTargets="ResolvePackageAssets">
+    <PropertyGroup>
+      <!-- Detect macOS host so we pick the correct ILCompiler host pack. -->
+      <HostIsOsx Condition="'$(OS)' != 'Windows_NT' and Exists('/System/Library/CoreServices/SystemVersion.plist')">true</HostIsOsx>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- Prefer macOS host ILC packs when running on macOS -->
+      <HostILCompilerPack Include="runtime.osx-arm64.Microsoft.DotNet.ILCompiler"
+                          Condition="'$(HostIsOsx)' == 'true' and '$(CosmosArch)' == 'arm64'">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>runtime.osx-arm64.Microsoft.DotNet.ILCompiler</NuGetPackageId>
+      </HostILCompilerPack>
+
+      <HostILCompilerPack Include="runtime.osx-x64.Microsoft.DotNet.ILCompiler"
+                          Condition="'$(HostIsOsx)' == 'true' and '$(CosmosArch)' == 'x64'">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>runtime.osx-x64.Microsoft.DotNet.ILCompiler</NuGetPackageId>
+      </HostILCompilerPack>
+
+      <!-- Fallback: use target RID ILC pack when not on macOS (Linux/Windows hosts) -->
+      <HostILCompilerPack Include="runtime.$(RuntimeIdentifier).Microsoft.DotNet.ILCompiler"
+                          Condition="'$(HostIsOsx)' != 'true'">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>runtime.$(RuntimeIdentifier).Microsoft.DotNet.ILCompiler</NuGetPackageId>
+      </HostILCompilerPack>
+
+      <NAOTRuntimePack Include="Microsoft.NETCore.App.Runtime.NativeAOT.$(RuntimeIdentifier)">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>Microsoft.NETCore.App.Runtime.NativeAOT.$(RuntimeIdentifier)</NuGetPackageId>
+      </NAOTRuntimePack>
+    </ItemGroup>
+
+    <GetPackageDirectory
+      Items="@(NAOTRuntimePack)"
+      PackageFolders="@(AssetsFilePackageFolder)"
+    >
+
+      <Output TaskParameter="Output" ItemName="ResolvedRuntimePack" />
+    </GetPackageDirectory>
+    
+    <GetPackageDirectory
+      Items="@(HostILCompilerPack)"
+      PackageFolders="@(AssetsFilePackageFolder)"
+    >
+
+      <Output TaskParameter="Output" ItemName="ResolvedILCompilerPack" />
+    </GetPackageDirectory>
+
+    <ItemGroup>
+      <ReferencePack Include="Microsoft.NETCore.App.Ref">
+        <NuGetPackageVersion>$(BundledNETCoreAppPackageVersion)</NuGetPackageVersion>
+        <NuGetPackageId>Microsoft.NETCore.App.Ref</NuGetPackageId>
+      </ReferencePack>
+    </ItemGroup>
+
+    <GetPackageDirectory
+      Items="@(ReferencePack)"
+      PackageFolders="@(AssetsFilePackageFolder)">
+
+      <Output TaskParameter="Output" ItemName="ResolvedReferencePack" />
+    </GetPackageDirectory>
+
+    <!-- Pick one matching package directory instead of joining multiple values with semicolons.
+         Prefer the runtime package that contains a 'runtimes/<RID>/native' directory; otherwise fall back to any found package directory. -->
+    <ItemGroup>
+      <!-- find the runtime pack(s) that actually contain the native folder for this RID -->
+      <ResolvedRuntimeNative Include="@(ResolvedRuntimePack)"
+                             Condition="Exists('%(ResolvedRuntimePack.PackageDirectory)/runtimes/$(RuntimeIdentifier)/native')" />
+
+      <!-- If ResolvedRuntimeNative is empty, we'll fall back to the first ResolvedRuntimePack item -->
+      <ResolvedRuntimeFallback Include="@(ResolvedRuntimePack)" Condition="@(ResolvedRuntimeNative->Count()) == 0" />
+
+      <!-- pick ILCompiler host package dir that contains tools (should be unique) -->
+      <ResolvedIlcHostWithTools Include="@(ResolvedILCompilerPack)"
+                                Condition="Exists('%(ResolvedILCompilerPack.PackageDirectory)/tools')" />
+      <ResolvedIlcHostFallback Include="@(ResolvedILCompilerPack)" Condition="@(ResolvedIlcHostWithTools->Count()) == 0" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <IlcHostPackagePath Condition="@(ResolvedIlcHostWithTools) != ''">%(ResolvedIlcHostWithTools.PackageDirectory)</IlcHostPackagePath>
+      <IlcHostPackagePath Condition="@(ResolvedIlcHostWithTools) == '' and @(ResolvedIlcHostFallback) != ''">%(ResolvedIlcHostFallback.PackageDirectory)</IlcHostPackagePath>
+
+      <IlcRuntimePackagePath Condition="@(ResolvedRuntimeNative) != ''">%(ResolvedRuntimeNative.PackageDirectory)</IlcRuntimePackagePath>
+      <IlcRuntimePackagePath Condition="@(ResolvedRuntimeNative) == '' and @(ResolvedRuntimeFallback) != ''">%(ResolvedRuntimeFallback.PackageDirectory)</IlcRuntimePackagePath>
+
+      <IlcSdkPath Condition="$(IlcRuntimePackagePath) != ''">$([MSBuild]::NormalizePath('$(IlcRuntimePackagePath)/runtimes/$(RuntimeIdentifier)/native/'))</IlcSdkPath>
+      <IlcFrameworkPath Condition="$(IlcRuntimePackagePath) != ''">$([MSBuild]::NormalizePath('$(IlcRuntimePackagePath)/runtimes/$(RuntimeIdentifier)/lib/net10.0/'))</IlcFrameworkPath>
+      <IlcToolsPath Condition="$(IlcHostPackagePath) != ''">$([MSBuild]::NormalizePath('$(IlcHostPackagePath)/tools/'))</IlcToolsPath>
+      <IlcReferencePackagePath Condition="@(ResolvedReferencePack) != ''">%(ResolvedReferencePack.PackageDirectory)</IlcReferencePackagePath>
+      <IlcFrameworkPath Condition="$(IlcFrameworkPath) == '' and $(IlcReferencePackagePath) != ''">$([MSBuild]::NormalizePath('$(IlcReferencePackagePath)/ref/net10.0/'))</IlcFrameworkPath>
+    </PropertyGroup>
+    <Message Importance="High" Text="⚙️ [ILC] Using ILCompiler from: $(IlcToolsPath)" />
+    <Message Importance="High" Text="⚙️ [ILC] Using SDK Path: $(IlcSdkPath)" />
+    <Message Importance="High" Text="⚙️ [ILC] Using Framework Path: $(IlcFrameworkPath)" />
+  </Target>
+
+  <Target Name="CustomizeReferences" BeforeTargets="SetupPatcher">
+    <ItemGroup>
+      <PrivateSdkAssemblies Include="$(IlcSdkPath)**/*.dll"/>
+      <FrameworkAssemblies Include="$(IlcFrameworkPath)**/*.dll"/>
+      <ReferencePath Remove="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceOutputAssembly)' != 'true' and '%(ReferencePath.NuGetSourceType)' != 'Package'" />
+    </ItemGroup>
+  </Target>
+  
+  <!-- Coverage instrumentation: inserts CoverageTracker.Hit(id) calls into src/ assembly methods.
+       Only runs when CosmosCoverage=true. Must run after RunPatcher and before CompileWithIlc. -->
+  <Target Name="InstrumentCoverage"
+          AfterTargets="RunPatcher"
+          BeforeTargets="CompileWithIlc"
+          Condition="'$(CosmosCoverage)' == 'true'">
+    <PropertyGroup>
+      <CoverageAssemblyDir>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)'))/cosmos</CoverageAssemblyDir>
+      <CoverageMapPath>$(CoverageAssemblyDir)/coverage-map.txt</CoverageMapPath>
+    </PropertyGroup>
+    <Message Importance="High" Text="📊 [Coverage] Instrumenting assemblies in $(CoverageAssemblyDir)" />
+    <Exec
+      Command="cosmos.patcher instrument-coverage --assembly-dir &quot;$(CoverageAssemblyDir)&quot; --output-map &quot;$(CoverageMapPath)&quot; --include Cosmos.Kernel"
+      IgnoreExitCode="false"
+      StandardOutputImportance="High"
+      StandardErrorImportance="High"
+    />
+  </Target>
+
+  <!-- Ilc Generates an Invalid Exports File for ld, here we clean it up -->
+  <Target Name="CleanVersionScript" AfterTargets="CompileWithIlc" BeforeTargets="LinkTarget" Condition="$(ExportsFile) != ''">
+    <PropertyGroup>
+      <__Semicolon>;</__Semicolon>
+    </PropertyGroup>
+
+    <!-- Read the original version script -->
+    <ReadLinesFromFile File="$(ExportsFile)">
+      <Output TaskParameter="Lines" ItemName="RawVersionScriptLines" />
+    </ReadLinesFromFile>
+
+    <!-- Filter out lines that are just semicolons -->
+    <ItemGroup>
+      <CleanedVersionScriptLines Include="@(RawVersionScriptLines)"  Condition="$([System.String]::new('%(RawVersionScriptLines.Identity)').Trim().Equals($(__Semicolon)).ToString()) == 'False'" />
+    </ItemGroup>
+
+    <!-- Override file with Cleaned Lines -->
+    <!-- Only rewrite if semicolons were actually removed (preserves timestamp for incremental builds) -->
+    <WriteLinesToFile
+      File="$(ExportsFile)"
+      Lines="@(CleanedVersionScriptLines)"
+      Overwrite="true"
+      Condition="@(RawVersionScriptLines->Count()) != @(CleanedVersionScriptLines->Count())" />
+  </Target>
+</Project>
