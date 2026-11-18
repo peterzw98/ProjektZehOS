@@ -24,14 +24,6 @@ done
 
 fail() { echo "build-cosmos: $*" >&2; exit 1; }
 
-# Das SDK bestimmt IL-Details (Quellgenerator, Stackgroessen); Referenzbau nur mit dem in deploy/cosmos/SDK festgelegten.
-# --any-sdk gilt nur fuer lokale Versuche; solche Feeds nie fuer Release oder IL-Vergleich (E1-D) verwenden.
-if [ "$plan" = 0 ] && [ "$any_sdk" = 0 ]; then
-    want_sdk="$(tr -d '[:space:]' < "$root/deploy/cosmos/SDK")"
-    have_sdk="$(dotnet --version)"
-    [ "$have_sdk" = "$want_sdk" ] || fail "SDK $have_sdk, erwartet $want_sdk (deploy/cosmos/SDK); --any-sdk nur fuer lokale Versuche"
-fi
-
 default_commit="$(tr -d '[:space:]' < "$root/deploy/cosmos/COMMIT")"
 default_version="$(tr -d '[:space:]' < "$root/deploy/cosmos/VERSION")"
 [ -n "$commit" ] || commit="$default_commit"
@@ -53,6 +45,7 @@ src="$root/.tools/cosmos-src"
 out="$src/artifacts/package/release"
 toolpath="$root/.tools/cosmos-tools/$version"
 limine_tag="v10.8.5-binary"
+limine_commit="7a9013f305de0bea1f6310e76e7baba30499fef0"
 limine_sha256="91ef81c1f95c4ac8bf77c4393a0b2fcd2628550827d7abf89a43194400e17a85"
 build_path_map="$src=/home/runner/work/Cosmos/Cosmos"
 
@@ -65,6 +58,18 @@ if [ -f "$stamp" ]; then
         fail "Version $version gehoert zu Commit $stamped; deploy/cosmos/VERSION erhoehen"
     fi
     rebuild=0
+fi
+
+# Commit, den ein Kernpaket in seiner nuspec traegt (aus dem Paket selbst oder dem NuGet-Cache des Rechners).
+nuspec_commit() { grep -o '<repository[^>]*commit="[0-9a-f]*"' | grep -o 'commit="[0-9a-f]*"' | cut -d'"' -f2; }
+if [ "$plan" = 0 ]; then
+    cache_dir="$(dotnet nuget locals global-packages -l)"; cache_dir="${cache_dir#global-packages: }"
+    cached="$cache_dir/cosmos.kernel/$version/cosmos.kernel.nuspec"
+    if [ -f "$cached" ]; then
+        cached_commit="$(nuspec_commit < "$cached")"
+        [ -z "$cached_commit" ] || [ "$cached_commit" = "$commit" ] || \
+            fail "NuGet-Cache enthaelt Cosmos $version aus Commit $cached_commit, nicht $commit; deploy/cosmos/VERSION erhoehen"
+    fi
 fi
 
 run() {
@@ -86,8 +91,21 @@ if [ "$rebuild" = 1 ]; then
         run git -C "$src" checkout --detach "$commit"
     fi
     run git -C "$src" submodule update --init --recursive --depth 1
+    # Das SDK bestimmt IL-Details (Quellgenerator, Stackgroessen); Referenzbau nur mit dem in deploy/cosmos/SDK festgelegten.
+    # Gemessen im Quellbaum, weil dort Cosmos' eigene global.json gilt. --any-sdk nur fuer lokale Versuche; solche Feeds
+    # nie fuer Release oder IL-Vergleich (E1-D) verwenden.
+    if [ "$plan" = 0 ] && [ "$any_sdk" = 0 ]; then
+        want_sdk="$(tr -d '[:space:]' < "$root/deploy/cosmos/SDK")"
+        have_sdk="$(cd "$src" && dotnet --version)"
+        [ "$have_sdk" = "$want_sdk" ] || fail "SDK $have_sdk, erwartet $want_sdk (deploy/cosmos/SDK); --any-sdk nur fuer lokale Versuche"
+    fi
     run rm -rf "$src/artifacts/limine"
     run git clone --depth 1 --branch "$limine_tag" https://github.com/Limine-Bootloader/Limine.git "$src/artifacts/limine"
+    if [ "$plan" = 0 ]; then
+        # Gepackt wird der ganze Ordner (auch limine-bios*.bin); der feste Commit deckt alle Dateien ab, nicht nur BOOTX64.EFI.
+        actual_commit="$(git -C "$src/artifacts/limine" rev-parse HEAD)"
+        [ "$actual_commit" = "$limine_commit" ] || fail "Limine $limine_tag: Commit $actual_commit statt $limine_commit"
+    fi
     run rm -rf "$src/artifacts/limine/.git"
     if [ "$plan" = 0 ]; then
         actual="$(sha256sum "$src/artifacts/limine/BOOTX64.EFI" | cut -d' ' -f1)"
@@ -122,6 +140,8 @@ if [ "$rebuild" = 1 ]; then
                   Cosmos.Kernel.SourceGenerators Cosmos.Kernel.System Cosmos.Patcher Cosmos.Tools; do
             [ -f "$out/$id.$version.nupkg" ] || fail "Paket fehlt im Bau: $id.$version.nupkg"
         done
+        built_commit="$(unzip -p "$out/Cosmos.Kernel.$version.nupkg" Cosmos.Kernel.nuspec | nuspec_commit)"
+        [ "$built_commit" = "$commit" ] || fail "Cosmos.Kernel.$version.nupkg traegt Commit '$built_commit' statt $commit"
         cp "$out"/*."$version".nupkg "$feed/"
         printf '%s\n' "$commit" > "$stamp"
     else
