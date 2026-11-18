@@ -45,6 +45,8 @@ public static class LocalApic
     private const uint ICR_DEST_SHORTHAND_SELF = 0b01u << 18;
     /// <summary>LVT mask bit (bit 16) - masks delivery of the LVT entry's interrupt (Intel SDM Vol 3 §10.5.1).</summary>
     private const uint LVT_MASKED = 0x10000;
+    /// <summary>LVT delivery mode NMI (bits 10:8 = 100b, Intel SDM Vol 3 §10.5.1).</summary>
+    private const uint LVT_DELIVERY_NMI = 0b100u << 8;
     /// <summary>Timer LVT periodic mode bit (bit 17) - periodic vs one-shot.</summary>
     private const uint TIMER_PERIODIC = 0x20000;
     /// <summary>SVR APIC Software Enable bit (bit 8).</summary>
@@ -169,9 +171,10 @@ public static class LocalApic
 
         Serial.Write("[LocalAPIC] SVR set to 0x", svr.ToString("X"), "\n");
 
-        // Mask LINT0 and LINT1 (we use I/O APIC for external interrupts)
+        // Mask LINT0 (we use I/O APIC for external interrupts).
         Write(LAPIC_LINT0, LVT_MASKED);  // Masked
-        Write(LAPIC_LINT1, LVT_MASKED);  // Masked
+        // LINT1 is the NMI line on PCs; masked, the kernel silently loses NMIs.
+        Write(LAPIC_LINT1, LVT_DELIVERY_NMI);
 
         // Mask timer and error LVT entries
         Write(LAPIC_TIMER_LVT, LVT_MASKED);  // Masked
