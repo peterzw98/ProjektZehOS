@@ -69,7 +69,10 @@ Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import 
 eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen).
 Ab ZehOS 0.5.2 bleiben relative PS/2-Mauspakete beim Zeigerfang auch am Rand des Gastbildschirms als Deltas erhalten. Bei absoluten
 Tablets entstehen Deltas weiterhin aus Bildschirmpositionen; ihre Bewegung endet am Gastbildschirm- beziehungsweise
-Hostfensterrand. Der Desktopzeiger bleibt sichtbar.
+Hostfensterrand. Der Desktopzeiger wird solange nicht gezeichnet, wie ein Fenster den Zeiger einfängt (ab ZehOS 0.5.128, für jede App
+mit `pointer_capture`); die App zeichnet bei Bedarf selbst einen Zielpunkt. Für echtes Mouselook braucht die VM ein relatives Gerät: In QEMU
+startet `scripts/start-qemu.ps1 -RelativeMouse` ohne USB-Tablet (nur die PS/2-Maus; ein Klick ins Hostfenster fängt die Maus, Strg+Alt+G gibt sie zurück); mit Tablet
+endet die Bewegung am Rand. Das Verhalten unter VMware ist nicht geprüft.
 
 **Rasterisierung über `zehos_v1` (ab ZehOS 0.5.13):**
 

@@ -734,7 +734,8 @@ internal sealed class Desktop
         }
         pointerLeft = pointerX;
         pointerTop = pointerY;
-        DrawPointer(surface, pointerX, pointerY, buttons);
+        // Eine App mit eingefangenem Zeiger (Mouselook) zeichnet selbst; der Desktopzeiger bliebe sonst im Bild stehen.
+        if (!Windows.HasAppPointerCapture) DrawPointer(surface, pointerX, pointerY, buttons);
         return previousPointer;
     }
 
