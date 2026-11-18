@@ -392,6 +392,9 @@ public sealed class Kernel : Sys.Kernel
         LogWorkerStart("Wasm-Worker", Runtime.Wasm.WasmRuntime.StartWorker());
         LogWorkerStart("Wasm-Netzworker", Runtime.Wasm.CosmosWasmNetworkConnector.StartWorker());
 #endif
+#if ZEHOS_ISOLATION_PROBE
+        Runtime.CosmosIsolationProbe.Start();
+#endif
 #if ZEHOS_NETWORK_PROBE
         if (!CosmosNetworkProbe.Run(tasks)) { Stop(); return; }
 #endif
