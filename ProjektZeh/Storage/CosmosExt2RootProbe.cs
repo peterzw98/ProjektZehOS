@@ -142,6 +142,9 @@ internal static class CosmosExt2RootProbe
         WriteState(root, 0);
         Pass("s_state 1 -> 0, Device.Flush()");
 
+        // Die drei j-Threads entstehen jetzt, wie das Produkt seine Langlaeufer beim Boot anlegt: nach c-i fand der native Heap
+        // auf 1G keinen 256-KiB-Stack mehr, auch nach GC.Collect nicht (Experiment 18.11.). Sie warten bis Schritt j.
+        jWorkers = StartJWorkers();
         StepC(root, files);
         StepD(root);
         StepE(root);
@@ -150,7 +153,7 @@ internal static class CosmosExt2RootProbe
         StepG(root, files, 1, RootProbeCatalog.GCount);
         StepH(root, files);
         StepI(root, files);
-        StepJ(root);
+        StepJ(root, jWorkers!);
         StepL(root, files, null);
         StepI2(inodes);
         Verify(root, 1, "verify1");
@@ -929,13 +932,11 @@ internal static class CosmosExt2RootProbe
         AfterPhase(root);
     }
 
-    private static void StepJ(IBlockDevice root)
-    {
-        Begin("j");
-        Directory.CreateDirectory("/j/a");
-        Directory.CreateDirectory("/j/c");
-        for (int index = 0; index < RootProbeCatalog.JReadFiles; index++) WriteGenerated($"/j/c/r{index:D2}", $"/j/c/r{index:D2}", "j", 4096);
+    private static (JWorker Worker, List<Thread> Threads)? jWorkers;
 
+    private static (JWorker Worker, List<Thread> Threads) StartJWorkers()
+    {
+        Begin("j-start");
         var worker = new JWorker();
         // Wie das Produkt ueber ThreadStarter: ohne Stack im nativen Heap ein Fehler statt Page Fault (1G-Lauf 18.11.).
         var threads = new List<Thread>();
@@ -945,6 +946,20 @@ internal static class CosmosExt2RootProbe
             Check(started.IsOK(), "Thread-Start: " + started.Status.Message);
             threads.Add(started.Value!);
         }
+
+        Pass("3 Threads frueh angelegt, warten bis Schritt j");
+        return (worker, threads);
+    }
+
+    private static void StepJ(IBlockDevice root, (JWorker Worker, List<Thread> Threads) started)
+    {
+        Begin("j");
+        Directory.CreateDirectory("/j/a");
+        Directory.CreateDirectory("/j/c");
+        for (int index = 0; index < RootProbeCatalog.JReadFiles; index++) WriteGenerated($"/j/c/r{index:D2}", $"/j/c/r{index:D2}", "j", 4096);
+
+        var (worker, threads) = started;
+        worker.Go = true;
         Thread.Sleep(ConcurrencySeconds * 1000);
         worker.Stop = true;
         foreach (var thread in threads) Check(thread.Join(30000), "Aufgabe endet nicht (Haenger)");
@@ -1366,6 +1381,8 @@ internal static class CosmosExt2RootProbe
     private sealed class JWorker
     {
         public volatile bool Stop;
+        // Erst ab Schritt j arbeiten; bis dahin warten die frueh angelegten Threads.
+        public volatile bool Go;
         public volatile string? Unexpected;
         public int Created;
         public int Changed;
@@ -1402,6 +1419,7 @@ internal static class CosmosExt2RootProbe
 
         private void Loop(Action action)
         {
+            while (!Go && !Stop) Thread.Sleep(10);
             while (!Stop && Unexpected == null)
             {
                 try
