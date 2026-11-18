@@ -82,10 +82,11 @@ def extract_sparse(source: Path, offset: int, length: int, target: Path) -> None
             if data >= end:
                 break
             hole = min(os.lseek(src.fileno(), data, os.SEEK_HOLE), end)
-            src.seek(data)
             dst.seek(data - offset)
             while data < hole:
-                block = src.read(min(8 * 1024 * 1024, hole - data))
+                # pread statt src.seek/read: os.lseek verschiebt den Deskriptor am Puffer von src vorbei, und ein
+                # seek in den gepufferten Bereich liest danach ab der falschen Stelle (viele Extents, etwa btrfs).
+                block = os.pread(src.fileno(), min(8 * 1024 * 1024, hole - data), data)
                 if not block:
                     raise EOFError("Image waehrend des Kopierens verkuerzt")
                 dst.write(block)
@@ -548,10 +549,14 @@ def data_digest(path: Path) -> str:
                     break
                 raise
             hole = os.lseek(stream.fileno(), data, os.SEEK_HOLE)
-            stream.seek(data)
             digest.update(data.to_bytes(8, "little"))
-            for block in iter(lambda: stream.read(min(8 * 1024 * 1024, hole - stream.tell())), b""):
+            # pread wie in extract_sparse: kein gepuffertes Lesen neben os.lseek auf demselben Deskriptor.
+            while data < hole:
+                block = os.pread(stream.fileno(), min(8 * 1024 * 1024, hole - data), data)
+                if not block:
+                    raise EOFError("Image waehrend des Pruefens verkuerzt")
                 digest.update(block)
+                data += len(block)
             position = hole
     return digest.hexdigest()
 
