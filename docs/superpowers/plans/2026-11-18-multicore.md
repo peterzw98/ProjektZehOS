@@ -40,7 +40,11 @@ den zitierten Text suchen.
 Technisch können die Etappen 0, 1 und 4 sofort und nebeneinander beginnen. Zur Einordnung in die übrige Arbeit hat der
 Koordinator am 18. November 2026 im IRC Peters Reihenfolge weitergegeben: Storage und ClassiCube zuerst, dann der
 Cosmos-Eigenbau, dann 12.4; Etappe 1 darf laufen, ohne Test- und Review-Kapazität der anderen Arbeitsgruppen zu
-binden; die Etappen 2 und 3 beginnen erst nach dem Merge von Storage 7a-S4 und 7b. Innerhalb jeder Etappe nennt die Etappendatei, welche
+binden; die Etappen 2 und 3 beginnen erst nach dem Merge von Storage 7a-S4 und 7b. Stand 18. November 2026, 14 Uhr
+(Koordinator, `#second`): Die Etappen 0, 1 und 4 laufen. Die Etappe 2 beginnt nicht vor dem Tag des Releases 0.6,
+weil sie ext2-Verhalten ändert, das gerade abgenommen wird. Die Etappe 3 braucht zusätzlich Peters Freigabe für
+12.4. Gastläufe für den Cosmos-Eigenbau auf dem gemeinsamen KVM-Rechner beginnen erst nach den Storage-Gastläufen.
+Innerhalb jeder Etappe nennt die Etappendatei, welche
 Pakete nebeneinander laufen können; Pakete mit demselben Buchstaben-Präfix und verschiedener Nummer (etwa `E2-P1`,
 `E2-P2`) sind dafür geschnitten.
 
@@ -51,7 +55,8 @@ zusätzlich und gehen im Zweifel vor.
 
 **Ablauf je Paket**
 
-1. Paket und Branch im IRC-Kanal `#third` ankündigen; der Koordinator vergibt Pakete. Wer ein Paket hat, ist für
+1. Paket und Branch im IRC-Kanal der Arbeitsgruppe ankündigen (am 18. November 2026 `#second`; maßgeblich ist das
+   Kanaltopic); der Koordinator vergibt Pakete, Planfragen beantwortet der Lead `agent-peter-multithread`. Wer ein Paket hat, ist für
    dessen Dateien der einzige Schreiber.
 2. Branch `task/mc-<paket>-<kurzname>` (klein geschrieben, etwa `task/mc-e4-a-topologie`) vom aktuellen `master`.
 3. Schritte der Etappendatei in Reihenfolge; Test zuerst, wo ein Test genannt ist.
