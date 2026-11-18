@@ -15,6 +15,7 @@ internal sealed class NetworkAutoConfiguration(INetworkService network, Backgrou
     private bool enabled;
     private bool running;
     private int taskId;
+    private string? failure;
 
     public ResultErr Start()
     {
@@ -29,7 +30,7 @@ internal sealed class NetworkAutoConfiguration(INetworkService network, Backgrou
     private ResultErr StartWorker()
     {
         running = true;
-        var started = tasks.Start("net auto", Work);
+        var started = tasks.Start("net auto", Work, OnFinished);
         if (!started.IsOK()) { running = false; return started.Status; }
         taskId = started.Value;
         return ResultErr.CreateSuccess();
@@ -37,18 +38,27 @@ internal sealed class NetworkAutoConfiguration(INetworkService network, Backgrou
 
     private void Work(BackgroundTaskContext context)
     {
-        string? failure = null;
+        string? error = null;
         try { Run(network, context, log); }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { failure = exception.Message; }
+        catch (Exception exception) { error = exception.Message; }
+        lock (gate) failure = error;
+    }
+
+    // Erst nach dem Ende des alten Jobs: sonst zaehlt er beim Neustart noch gegen die Aufgabengrenze (#244).
+    private void OnFinished()
+    {
+        string? error;
         ResultErr restarted = ResultErr.CreateSuccess();
         lock (gate)
         {
             running = false;
+            error = failure;
+            failure = null;
             // Ein fehlgeschlagener Shutdown kann Start anfordern, waehrend Cosmos noch im alten DHCP-Aufruf wartet.
-            if (enabled && failure == null) restarted = StartWorker();
+            if (enabled && error == null) restarted = StartWorker();
         }
-        if (failure != null) log("Netzwerkautomatik fehlgeschlagen: " + failure);
+        if (error != null) log("Netzwerkautomatik fehlgeschlagen: " + error);
         if (!restarted.IsOK()) log("Netzwerkautomatik nicht gestartet: " + restarted.Message);
     }
 
