@@ -106,6 +106,14 @@ und `CosmosExt2TruncatePlug.cs:27-83` übernehmen. Reihenfolge, die ein Abbruch 
 Block machen kann: Plan über den Zeigerbaum **vor** dem Freigeben berechnen (Zeiger ab `BlocksCount` überspringen,
 doppelte einmal zählen); Datenblöcke freigeben; Einträge in teilweise genutzten Zeigerblöcken nullen; die Wurzeln
 `i_block[12..14]` nullen; dann erst die Zeigerblöcke freigeben; `inode.Blocks` auch für Zeigerblöcke verringern.
+**Schneller Symlink** (Befund Ada, 18. November 2026): `Unlink` ruft `Truncate(target, 0)` auch für Symlinks, deren Ziel
+in `i_block` steht (`Blocks == 0`, `Ext2FileOperations.WriteInlineSymlink`). Heute liest `GetBlockPointer(0)` die ersten
+vier Textbytes als Blocknummer und gibt einen fremden Block frei; `Blocks` läuft unter null. Deshalb zuerst: Ist der
+Inode ein Symlink und `Blocks == 0`, nur die Größe setzen und den Inode schreiben, nichts freigeben. Test
+`Unlink_FastSymlink_FreesNoBlock` (Blockbitmap und `free_blocks_count` vorher und nachher gleich). Derselbe Fehler steckt
+im ZehOS-Plug `CosmosExt2TruncatePlug`; er fällt mit E2-Z1. Auf `master` ist er nicht erreichbar, weil `PathGuard`
+jeden Symlink im Pfad verweigert und ZehOS selbst keine anlegt. **Wer `PathGuard` für Symlinks lockert, braucht vorher
+E2-Z1.**
 Dreifach indirekte **Daten**blöcke bleiben außerhalb dieses Patches (Cosmos legt sie nicht an); der Kommentar im Code
 nennt das.
 

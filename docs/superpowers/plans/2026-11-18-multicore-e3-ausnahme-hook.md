@@ -1,4 +1,4 @@
-# Etappe 3: Patchreihe 12.4 (Ausnahme-Hook, IRQContext, LINT1)
+# Etappe 3: Patchreihe 12.4 (Ausnahme-Hook, LINT1)
 
 > **Für ausführende Agenten:** Zuerst die [Übersicht](2026-11-18-multicore.md) lesen, besonders „Cosmos-Patches“.
 > Empfohlene Arbeitsweise: superpowers:executing-plans. Schritte haben Kästchen zum Abhaken.
@@ -25,7 +25,7 @@ Nicht Teil dieser Etappe: Stacks aufgegebener Threads freigeben (Paket E5-K) und
 
 | Paket | Inhalt | Rolle | Nach | Neben |
 | --- | --- | --- | --- | --- |
-| E3-A | Cosmos-Patch: `CpuExceptionHook`, `IRQContext` öffentlich | Engineer senior | Etappe 1 | E3-C |
+| E3-A | Cosmos-Patch: `CpuExceptionHook` mit `CpuExceptionInfo` | Engineer senior | Etappe 1 | E3-C |
 | E3-B | ZehOS: Fehlerisolation auf den Hook umstellen | Engineer senior | E3-A | E3-C |
 | E3-C | Cosmos-Patch LINT1 als NMI und ZehOS-Probe bereinigen | Engineer | Etappe 1 | E3-A, E3-B |
 
@@ -45,7 +45,11 @@ Nicht Teil dieser Etappe: Stacks aufgegebener Threads freigeben (Paket E5-K) und
 
 **Dateien (Pfade im Branch `cosmos`):**
 - Anlegen: `src/Cosmos.Kernel.Core/CPU/CpuExceptionHook.cs`
-- Ändern: `src/Cosmos.Kernel.Core/CPU/IRQContext.cs:16` und `:105` (`internal struct` → `public struct`, beide Architekturen)
+- **Nicht** ändern: `IRQContext` bleibt `internal`. (Abweichung bei der Umsetzung, 18. November 2026: `Cosmos.Kernel.Core` ist ein
+  Mehrarchitekturpaket mit einer `PublicAPI.Unshipped.txt`; `IRQContext` hat je Architektur andere Felder, ein öffentlicher
+  Typ ließe einen Architekturbau an `RS0017` scheitern, und `docs/articles/dev/public-api.md` führt ihn als interne
+  Plattformschnittstelle. Der Hook bekommt deshalb eine eigene öffentliche Struktur.)
+- Ändern: `PublicAPI.Unshipped.txt`, `Experimentals.cs`, `docs/articles/dev/public-api.md` (neue Typen, `[Experimental("COSMOS0001")]`)
 - Ändern: `src/Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs` (neue interne Methode neben `ScheduleFromInterrupt`, `:1213`)
 - Ändern: `src/Cosmos.Kernel/Panic.cs:19-34` (`CpuException`)
 - Ändern: `PATCHES.md`
@@ -65,9 +69,18 @@ public enum CpuExceptionAction
     AbandonThread = 1,
 }
 
+/// Architecture-neutral view of the exception, filled by the kernel from its internal IRQ context.
+public readonly struct CpuExceptionInfo
+{
+    public ulong Vector { get; }
+    public ulong InstructionPointer { get; }   // RIP on x64, ELR on ARM64
+    public ulong StackPointer { get; }
+    public ulong FaultAddress { get; }         // CR2 on x64, FAR on ARM64
+}
+
 /// Runs with interrupts masked on the faulting thread's stack: must not allocate, lock or log through anything
 /// that locks.
-public delegate CpuExceptionAction CpuExceptionHandler(ref IRQContext context);
+public delegate CpuExceptionAction CpuExceptionHandler(in CpuExceptionInfo exception);
 
 public static class CpuExceptionHook
 {
@@ -83,7 +96,8 @@ public static class CpuExceptionHook
 internal static bool TryAbandonCurrentFromInterrupt(nuint currentRsp);
 ```
 
-`TryAbandonCurrentFromInterrupt`: gibt `false` zurück, wenn `!IsRunning` oder kein `CurrentThread`; sonst
+`TryAbandonCurrentFromInterrupt`: gibt `false` zurück, wenn `!IsRunning`, kein `CurrentThread` oder **schon vor dem
+Aufruf ein Wechsel ansteht** (`GetContextSwitchSp() != 0`: der Fehler liegt dann im Interruptpfad selbst); sonst
 `ScheduleFromInterrupt(GetCurrentCpuId(), currentRsp)` und danach `ContextSwitchNative.GetContextSwitchSp() != 0`
 (derselbe Wert, den ZehOS heute über `_native_get_context_switch_sp` liest; den passenden Import in
 `ContextSwitchNative` verwenden oder dort ergänzen). Die Methode stellt den aufgegebenen Thread nicht selbst unter
@@ -103,7 +117,7 @@ internal static void CpuException(string exceptionName, ref IRQContext ctx)
 
     // A fault while a first one is still being reported is never handed to the hook.
     if (depth == 1 && CpuExceptionHook.Handler is { } handler
-        && handler(ref ctx) == CpuExceptionAction.AbandonThread
+        && handler(new CpuExceptionInfo(ref ctx)) == CpuExceptionAction.AbandonThread
         && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
     {
         Serial.WriteString("Thread abandoned.\n");
@@ -116,14 +130,17 @@ internal static void CpuException(string exceptionName, ref IRQContext ctx)
 }
 ```
 
+Den Wechsel führt nach `__managed__irq` der Interrupt-Stub aus, auf x64 und ARM64 gleich (`Interrupts.s` der
+jeweiligen Architektur); der Hook braucht deshalb keine Architekturweiche.
+
 Der Zähler ist bewusst einer für alle CPUs: Treffen nach Etappe 5 zwei CPUs gleichzeitig eine Ausnahme, hält die
 zweite an. Das ist die sichere Richtung.
 
 - [ ] **Schritt 1:** Branch `cosmos-patch/ausnahme-hook` von `origin/cosmos`. Unter Windows vorher `git config core.longpaths true`.
-- [ ] **Schritt 2:** `CpuExceptionHook.cs` anlegen, `IRQContext` öffentlich machen. Prüfen, ob der Cosmos-Baum eine API-Liste führt (`docs/articles/dev/public-api.md` nennt die Regeln; nach `PublicAPI` und nach Analyzer-Meldungen zum Ring suchen) und sie im selben Commit nachziehen.
+- [ ] **Schritt 2:** `CpuExceptionHook.cs` mit `CpuExceptionInfo` anlegen (`IRQContext` bleibt intern). Prüfen, ob der Cosmos-Baum eine API-Liste führt (`docs/articles/dev/public-api.md` nennt die Regeln; nach `PublicAPI` und nach Analyzer-Meldungen zum Ring suchen) und sie im selben Commit nachziehen.
 - [ ] **Schritt 3:** `TryAbandonCurrentFromInterrupt` und die Änderung an `Panic.CpuException` umsetzen.
 - [ ] **Schritt 4:** Pakete bauen: im ZehOS-Arbeitsbaum `scripts/build-cosmos.sh --commit <Commit des Patch-Branches>` (Schnittstelle aus E1-B). Erwartet: Pakete ohne Warnungen als Fehler im Feed.
-- [ ] **Schritt 5:** `PATCHES.md`: Zeile `ausnahme-hook | CPU/CpuExceptionHook.cs, CPU/IRQContext.cs, Scheduler/SchedulerManager.cs, Cosmos.Kernel/Panic.cs | öffentlicher Hook statt Plug auf Panic | CosmosPanicHaltPlug, CosmosIrqContextStub, UnsafeAccessor ScheduleFromInterrupt/Halt | test-isolation-probe.py positiv, negativ, NMI`.
+- [ ] **Schritt 5:** `PATCHES.md`: Zeile `ausnahme-hook | CPU/CpuExceptionHook.cs, PublicAPI.Unshipped.txt, Scheduler/SchedulerManager.cs, Cosmos.Kernel/Panic.cs | öffentlicher Hook statt Plug auf Panic | CosmosPanicHaltPlug, CosmosIrqContextStub, UnsafeAccessor ScheduleFromInterrupt/Halt | test-isolation-probe.py positiv, negativ, NMI`.
 - [ ] **Schritt 6:** Ein Commit (`patch: public CPU exception hook`), PR gegen `cosmos`. Der PR nennt E3-B als Prüfung und wird erst gemergt, wenn E3-B mit diesem Commit grün ist.
 
 ---
@@ -139,15 +156,15 @@ zweite an. Das ist die sichere Richtung.
 - Ändern: `ProjektZeh/Kernel.cs` (Hook setzen, direkt vor `InstallScheduler()` bei `:386`)
 - Doku: `docs/COSMOS_SUPPORT.md` (Abschnitt „CPU-Ausnahmen im Wasm-Worker“), `docs/superpowers/specs/2026-11-18-cosmos-umwege-inventar.md` (zwei Zeilen als erledigt kennzeichnen)
 
-**Schnittstellen (verwendet):** `CpuExceptionHook`, `CpuExceptionAction`, `IRQContext` aus E3-A.
+**Schnittstellen (verwendet):** `CpuExceptionHook`, `CpuExceptionAction`, `CpuExceptionInfo` aus E3-A.
 
-**Schnittstellen (liefert):** `internal static CpuExceptionAction FaultIsolation.OnCpuException(ref IRQContext context)`.
+**Schnittstellen (liefert):** `internal static CpuExceptionAction FaultIsolation.OnCpuException(in CpuExceptionInfo exception)`.
 Unverändert bleiben `RegisterWorker`, `EnterNativeRun`, `LeaveNativeRun`, `TakeIsolated`, `IsolatedVector`,
 `IsolatedRip`, `Quarantine` und `FaultIsolationPolicy.Decide`.
 
 **Was `OnCpuException` tut** (der Inhalt von `OnCpuContext` und `OnHalt` in einem Schritt):
 
-1. `vector = context.interrupt <= 255 ? (long)context.interrupt : FaultIsolationPolicy.UnknownVector`, `rip = context.rip`.
+1. `vector = exception.Vector <= 255 ? (long)exception.Vector : FaultIsolationPolicy.UnknownVector`, `rip = exception.InstructionPointer`.
 2. Die ZehOS-Zeile seriell ausgeben wie heute: `ZehOS: Thread <Id>, Wasm-Worker <Id>, Gastcode <0|1>` (`CosmosFaultIsolation.cs:118-125`); die Probeskripte lesen sie.
 3. Wie heute in `OnHalt` (`:147-166`) entscheiden: `FaultIsolationPolicy.Decide(...)` mit denselben Argumenten; bei `Isolate` und erfolgreichem `Quarantine.Add` die Felder `inNativeRun`, `workerThreadId`, `isolatedVector`, `isolatedRip`, `isolatedThreadId` setzen und `CpuExceptionAction.AbandonThread` zurückgeben.
 4. Sonst `CpuExceptionAction.Halt`.
