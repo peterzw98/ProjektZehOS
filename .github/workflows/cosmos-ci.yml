@@ -1,0 +1,32 @@
+# ZehOS: Pruefung der Patch-PRs gegen den Branch cosmos (nicht Upstream-CI). Faengt Tests ab, die erst im Zusammenspiel
+# mehrerer Patches brechen. Ob ZehOS mit dem Patch baut und laeuft, prueft der ZehOS-PR, der den Pin setzt.
+name: cosmos patches
+
+on:
+  pull_request:
+    branches: [cosmos]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cosmos-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Cosmos.Kernel.System tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Die Systemtests uebersetzen Quellen aus dotnet/runtime mit; flach holen wie scripts/build-cosmos.sh in ZehOS.
+      - name: Submodules
+        run: git -c core.longpaths=true submodule update --init --recursive --depth 1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.404' # = deploy/cosmos/SDK in ZehOS master
+      - name: Tests
+        run: dotnet test tests/Cosmos.Kernel.Tests.System/Cosmos.Kernel.Tests.System.csproj -c Release
