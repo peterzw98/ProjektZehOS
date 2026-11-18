@@ -37,6 +37,96 @@ public sealed class SchedulingTests
         Assert.IsTrue(slice.Charge(1));
     }
 
+    private sealed class FakeThread(string name, bool idle = false)
+    {
+        public SchedulerTimeSlice? Slice { get; } = idle ? null : new SchedulerTimeSlice(20);
+        public bool Idle { get; } = idle;
+        public override string ToString() => name;
+    }
+
+    private static RoundRobinCore<FakeThread> Core() => new(8, thread => thread.Slice, thread => thread.Idle);
+
+    [TestMethod]
+    public void IdleThreadWokenEveryTick_ReadyWorkerRunsAfterOneTick()
+    {
+        // Ablauf aus dem Gast: Hauptschleife (Idle-Thread) laeuft, schlaeft, wird von jedem Tick geweckt; der Worker ist bereit.
+        var core = Core();
+        var idle = new FakeThread("idle", idle: true);
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        core.Ready(idle);
+        Assert.IsTrue(core.Tick(idle, 10));
+        Assert.AreSame(worker, core.Pick());
+    }
+
+    [TestMethod]
+    public void ThreadWokenWhileRunning_DoesNotRefillItsSlice()
+    {
+        // Frueher setzte OnThreadReady die Scheibe zurueck: ein laufender Thread, den jeder Tick weckt, lief nie ab.
+        var core = Core();
+        var main = new FakeThread("main");
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        core.Ready(main);
+        Assert.AreSame(worker, core.Pick());
+        core.Ready(worker);
+        Assert.AreSame(main, core.Pick());
+        core.Ready(main);
+        Assert.IsFalse(core.Tick(main, 10));
+        core.Ready(main);
+        Assert.IsTrue(core.Tick(main, 10));
+        Assert.AreSame(worker, core.Pick());
+    }
+
+    [TestMethod]
+    public void Idle_KeepsCpuWithoutWaitingThreadsAndIsNotPickedAgainFirst()
+    {
+        var core = Core();
+        var idle = new FakeThread("idle", idle: true);
+        Assert.IsFalse(core.Tick(idle, 10));
+        core.Ready(idle);
+        Assert.IsFalse(core.Tick(idle, 10));
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        Assert.IsTrue(core.Tick(idle, 10));
+        Assert.AreSame(worker, core.Pick());
+        Assert.AreSame(idle, core.Pick());
+    }
+
+    [TestMethod]
+    public void TwoBusyThreads_AlternateAfterFullSlices()
+    {
+        var core = Core();
+        var first = new FakeThread("first");
+        var second = new FakeThread("second");
+        core.Ready(first);
+        core.Ready(second);
+        FakeThread current = core.Pick()!;
+        var runs = new System.Collections.Generic.List<string>();
+        for (int tick = 0; tick < 8; tick++)
+        {
+            runs.Add(current.ToString());
+            if (!core.Tick(current, 10)) continue;
+            core.Ready(current);
+            current = core.Pick()!;
+        }
+        CollectionAssert.AreEqual(new[] { "first", "first", "second", "second", "first", "first", "second", "second" }, runs);
+    }
+
+    [TestMethod]
+    public void BusyThreadAlone_KeepsCpuAndStartsFreshSliceWhenOtherArrives()
+    {
+        var core = Core();
+        var busy = new FakeThread("busy");
+        core.Ready(busy);
+        Assert.AreSame(busy, core.Pick());
+        Assert.IsFalse(core.Tick(busy, 10));
+        Assert.IsFalse(core.Tick(busy, 10));
+        core.Ready(new FakeThread("other"));
+        Assert.IsFalse(core.Tick(busy, 10));
+        Assert.IsTrue(core.Tick(busy, 10));
+    }
+
     [TestMethod]
     public void Queue_CapacityAndFailedPickPreserveOrder()
     {
