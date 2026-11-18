@@ -17,6 +17,7 @@ Abweichungen vom Upstream-Baum im ersten Commit:
 | `.claude/`, `.taskmaster/` | entfernt | Agenten- und Aufgabenkonfiguration des Cosmos-Projekts |
 | `CLAUDE.md` | ersetzt | die Regeln für Agenten in diesem Branch sind die von ZehOS |
 | `ZEHOS.md`, `PATCHES.md`, `.github/CODEOWNERS` | neu | Beschreibung, Patchliste, Zuständigkeit |
+| `.github/workflows/cosmos-ci.yml` | neu (Patch `zehos-ci`) | Tests für Pull Requests gegen `cosmos`; ZehOS-eigene CI, nicht die von Upstream |
 
 Alles andere ist unverändert, auch die beiden Submodul-Verweise (`dotnet/runtime`,
 `src/Cosmos.Kernel.Native.MultiArch/ACPI/uacpi`); der Bau braucht sie.

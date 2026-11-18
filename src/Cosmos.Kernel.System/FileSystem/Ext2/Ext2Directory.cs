@@ -179,6 +179,15 @@ internal static class Ext2DirectoryHelper
             return false;
         }
 
+        // ZehOS patch ext2-addentry-guard, see PATCHES.md
+        // Callers check for an existing name with TryFind, which also fails
+        // on a corrupt directory; adding then would create a duplicate. A
+        // hole would also make the write-back below hit block 0.
+        if (!TryParseDirectory(sb, dir, out _))
+        {
+            return false;
+        }
+
         int needed = Ext2InodeLayout.DirEntryNameOffset + nameBytes.Length;
         needed = (needed + 3) & ~3;
 
@@ -244,7 +253,10 @@ internal static class Ext2DirectoryHelper
                 for (uint i = 0; i < blocks; i++)
                 {
                     uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
+                    {
+                        sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+                    }
                 }
 
                 return true;
@@ -265,7 +277,10 @@ internal static class Ext2DirectoryHelper
                 for (uint i = 0; i < blocks; i++)
                 {
                     uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
+                    {
+                        sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+                    }
                 }
 
                 return true;
