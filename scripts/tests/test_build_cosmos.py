@@ -21,6 +21,15 @@ class BuildCosmosTests(unittest.TestCase):
         sdks = json.loads((ROOT / 'global.json').read_text())['msbuild-sdks']
         self.assertEqual(VERSION, sdks['Cosmos.Sdk'])
 
+    def test_workflows_use_source_build_and_pinned_sdk(self):
+        sdk = (ROOT / 'deploy' / 'cosmos' / 'SDK').read_text().strip()
+        for name in ('ci.yml', 'release.yml'):
+            text = (ROOT / '.github' / 'workflows' / name).read_text()
+            # Keine Upstream-Werkzeuge mehr: sie wuerden die selbst gebauten Pakete mit fremdem Patcher verarbeiten.
+            self.assertNotIn('dotnet tool install --global Cosmos', text, name)
+            self.assertEqual(text.count('scripts/build-cosmos.sh --global'), text.count("dotnet-version: '" + sdk + "'"), name)
+            self.assertRegex(text, r'actions/cache@[0-9a-f]{40}')
+
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
         self.assertRegex(commit, r'^[0-9a-f]{40}$')
