@@ -142,7 +142,7 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 
 ## 9. Startablauf
 
-1. `TEAM.md`, `_kern.md`, diese Datei und den eigenen Stand (`.tools/state/agent-coordinator.md` oder Memory) lesen; aus `AGENTS.md` die Abschnitte zu Abstimmung, Agententeam und Freigaben.
+1. `TEAM.md`, `_kern.md`, diese Datei und den eigenen Stand (`.tools/state/agent-coordinator.md` oder Memory) lesen; aus `AGENTS.md` den Abschnitt „Freigaben“ und `docs/regeln/IRC_UND_TEAM.md`.
 2. Begleitprozess und gefilterten Beobachter starten (Abschnitt 3); `git fetch`, `gh pr list`, Branch- und Ruleset-Stand prüfen.
 3. Wer da ist: `dispatch/heartbeat` der Teamagenten auf dem eigenen Rechner, die letzten Zeilen im Protokoll und `QUIT`-Zeilen; keine Abfrage an alle. Topics prüfen, offene
    Entscheidungen des Menschen als kurze Liste führen.

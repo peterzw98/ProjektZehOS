@@ -10,7 +10,9 @@ model=${3:-claude-sonnet-5-5}
 here=$(cd "$(dirname "$0")" && pwd)
 main=$(cd "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
 key=${IRCKEY_FILE:-$main/.tools/IRCKEY}
-case ${nick,,} in human-*) echo "start-lead: human-*-Nicks sind Menschen vorbehalten" >&2; exit 2 ;; esac
+# Der Nick landet in Pfaden und Suchmustern: nur Kleinbuchstaben, Ziffern und Bindestrich
+[[ $nick =~ ^[a-z0-9-]+$ ]] || { echo "start-lead: Nick nur aus a-z, 0-9 und -" >&2; exit 2; }
+case $nick in human-*) echo "start-lead: human-*-Nicks sind Menschen vorbehalten" >&2; exit 2 ;; esac
 [ -f "$here/prompts/$vorlage.md" ] || { echo "start-lead: Vorlage prompts/$vorlage.md fehlt" >&2; exit 2; }
 [ -r "$key" ] || { echo "start-lead: IRC-Passwort fehlt ($key)" >&2; exit 1; }
 irc=$main/.tools/irc-$nick
@@ -27,4 +29,10 @@ role=$main/.tools/state/$nick-role.md
     "$here" "$irc" "$nick" "$nick"
   for part in _kern "$vorlage"; do printf '\n'; cat "$here/prompts/$part.md"; done
 } >"$role"
-exec claude --model "$model" --append-system-prompt-file "$role"
+# Kein exec: Nach dem Ende der Sitzung meldet sich der Bot mit QUIT ab (Regel fuer interaktive Sitzungen)
+claude --model "$model" --append-system-prompt-file "$role" || true
+# Der Bot verbaende sich nach QUIT neu; deshalb danach beenden
+[ -p "$irc/outbox.fifo" ] && timeout 5 sh -c 'echo "/raw QUIT :Sitzung beendet" >"$1"' _ "$irc/outbox.fifo" || true
+sleep 2
+for pid in $(pgrep -f "teambot.py $nick "); do kill "$pid" 2>/dev/null || true; done
+echo "start-lead: $nick abgemeldet"

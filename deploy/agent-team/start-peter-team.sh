@@ -20,6 +20,8 @@ export DISPATCH_ALLOW=${DISPATCH_ALLOW:-$TEAM_ASSIGNERS}
 mkdir -p "$PROJECT_COORDINATOR_BASE"
 log=$PROJECT_COORDINATOR_BASE/start.log
 # In eine Datei, nicht in eine Pipe: Die abgekoppelten screen-Sitzungen hielten eine Pipe offen
-bash "$here/start-agent.sh" "${1:---all}" >>"$log" 2>&1 || { tail -n 20 "$log" >&2; exit 1; }
-grep -E '^(gestartet|laeuft schon|start-agent)' "$log" | tail -n 10
+run=$PROJECT_COORDINATOR_BASE/start.last
+bash "$here/start-agent.sh" "${1:---all}" >"$run" 2>&1 || { cat "$run" >>"$log"; tail -n 20 "$run" >&2; exit 1; }
+cat "$run" >>"$log"
+grep -E '^(gestartet|laeuft schon|start-agent)' "$run" || true
 echo "Zustand: cat $PROJECT_COORDINATOR_BASE/<nick>/dispatch/heartbeat   Beenden: screen -S <nick> -X quit"

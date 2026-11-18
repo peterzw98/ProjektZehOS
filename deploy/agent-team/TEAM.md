@@ -1,6 +1,6 @@
 # Betriebsanleitung für das ZehOS-Agententeam
 
-Gilt für alle Teamagenten, die `start-agent.sh` startet (auf `nuc` oder einem anderen Rechner). Die Projektregeln stehen in `ProjektZehOS/AGENTS.md`, besonders in den Abschnitten „Abstimmung zwischen Agenten (IRC)“ und „Agententeam“; das Verhalten je Rolle in `prompts/`. Diese Datei beschreibt die Werkzeuge und den Betrieb.
+Gilt für alle Teamagenten, die `start-agent.sh` startet (auf `nuc` oder einem anderen Rechner). Die Projektregeln stehen in `ProjektZehOS/AGENTS.md`, besonders im Abschnitt „Freigaben“, die Team- und IRC-Regeln in `docs/regeln/IRC_UND_TEAM.md`; das Verhalten je Rolle in `prompts/`. Diese Datei beschreibt die Werkzeuge und den Betrieb.
 
 ## Aufbau
 
@@ -48,7 +48,9 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Feste Nicks der Leads:** Nur diese dürfen Aufträge geben und Läufe starten: `agent-coordinator`, `agent-peter-lead`, `agent-nweh-lead1`, `agent-nweh-lead2`
     (`TEAM_ASSIGNERS` in `start-peter-team.sh`). Ein Lead mit anderem Nick wird von den Agenten nicht beachtet.
-  - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`.
+  - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`
+    (Pfad des Haupt-Arbeitsbaums anpassen). Cron kennt nur `PATH=/usr/bin:/bin`: Liegen `node` oder `claude` woanders (etwa über nvm), `PATH_PREFIX=…` vor den Befehl setzen.
+  - Eine Lead-Sitzung endet mit dem Schließen von Claude; `start-lead.sh` meldet den Bot dann mit `QUIT` ab. Ihr IRC-Protokoll liegt in `.tools/irc-<nick>/` des Haupt-Arbeitsbaums.
   - `dispatcher.py`, `teambot.py` und die Skripte laufen nur unter Linux (FIFOs, `fcntl`, `/proc`); Leads auf dem Windows-Laptop brauchen WSL.
 - **Zwei Kontingente (Claude und Codex):** Jeder Lauf zählt für seinen Anbieter in `<basis>/.dispatch-slots/quota-<anbieter>.json`; diese Datei teilen alle Dienste des Rechners.
   Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst den Anbieter für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau

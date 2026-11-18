@@ -50,7 +50,7 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 - Bei Boot- oder Anzeigeänderungen auch Recovery mit `dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true` bauen und starten. Normale und Recovery-Ausgabe eindeutig auseinanderhalten.
 - Für Änderungen an Energieaktionen oder VM-Startkonfiguration `powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-power-commands.ps1` verwenden. `-WithDebugger` prüft zusätzlich GDB und benötigt `gdb-multiarch` sowie die zum ISO passende ELF-Datei.
 - Die QEMU-Optionen `-action shutdown=poweroff,reboot=reset` und `ProjektZeh/.cosmos/config.json` berücksichtigen. Ohne sie hält Cosmos (geprüft mit 3.0.94) den Gast bei Energieaktionen an; im Debugger kann dabei `SIGQUIT` erscheinen.
-- QEMU und VMware sind Zielplattformen. Betroffene Kernelabläufe auf beiden prüfen; QEMU bleibt die erste Umgebung für die schnelle Entwicklung und den GDB-Debugger. Das VMware-Profil aus `scripts/start-vmware.ps1` und seine Grenzen stehen in `README.md`; derzeit besitzt diese VM kein Datenlaufwerk.
+- QEMU und VMware sind Zielplattformen. Betroffene Kernelabläufe auf beiden prüfen; QEMU bleibt die erste Umgebung für die schnelle Entwicklung und den GDB-Debugger. Das VMware-Profil aus `scripts/start-vmware.ps1` und seine Grenzen stehen in `docs/handbuch/ENTWICKLUNG.md`; derzeit besitzt diese VM kein Datenlaufwerk.
 - Fehlende Plattformprüfungen ausdrücklich als offen führen. Ein QEMU-Ergebnis belegt keine VMware-Kompatibilität. Echte Hardware nur dann als geprüft bezeichnen, wenn dort tatsächlich getestet wurde.
 - Bei reinen Dokumentationsänderungen Verweise, Befehle und Aussagen prüfen; dafür ist kein neuer Kernelbuild erforderlich.
 

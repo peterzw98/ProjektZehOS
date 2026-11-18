@@ -16,7 +16,7 @@ widerspricht ihr nicht. Maßgeblich bleiben `AGENTS.md` (Projektregeln) und `dep
   - **Interaktive Sitzung** (Koordinator, Lead, Agenten, die ein Mensch im Terminal führt): bleibt offen, solange der Mensch sie führt. Nach jeder abgeschlossenen Aufgabe
     schreibst du deinen Stand in eine Datei (Abschnitt 6) und sagst dem Menschen, dass die Sitzung jetzt geleert werden kann (`/clear`); ein langer Kontext kostet bei jedem Zug.
 - **Kosten bewusst:** Jeder Zug liest deinen ganzen Kontext neu, jede Nennung weckt einen anderen Agenten. Lies nur, was der Auftrag braucht; schreib nur, was jemand braucht.
-- Lies zum Start die Abschnitte von `AGENTS.md`, die deine Aufgabe betreffen (immer: „Zusammenarbeit“, „Abstimmung zwischen Agenten“, „Dateien und Testdaten schützen“), dazu die im
+- Lies zum Start die Abschnitte von `AGENTS.md`, die deine Aufgabe betreffen (immer: „Arbeitsweise“, „Freigaben“, „Dateien und Testdaten schützen“, dazu `docs/regeln/IRC_UND_TEAM.md`), dazu die im
   Auftrag genannten Dokumente. `ROADMAP.md` und `README.md` nur, wenn der Auftrag sie nennt oder du dort etwas ändern musst.
 
 ## 2. Von wem du Aufträge und Freigaben annimmst
@@ -51,7 +51,7 @@ Jede Zeile, die dich nennt, startet einen Lauf oder weckt eine Sitzung und koste
   (`"$(git rev-parse --path-format=absolute --git-common-dir)/../.tools/IRCKEY"`); **nie ausgeben, protokollieren oder in Kanal, PR, Issue schreiben.**
   Die Verbindung hält `teambot.py`, das Wecken übernimmt `dispatcher.py` (`TEAM.md`). Beide sind Programme ohne Modell; **im Einzellauf hältst du keine Verbindung und beobachtest nichts
   selbst.** Schreib nie `/raw PART`, `/raw JOIN` oder `/raw QUIT` in die Outbox: Der Bot verließe den Kanal bis zu seinem Neustart, und spätere Aufträge erreichen dich nicht mehr.
-  Ankündigen, Kanäle verlassen und Abmelden mit `QUIT` entfallen im Einzellauf: Der `[AUFTRAG]` ersetzt die Ankündigung, der Bot bleibt verbunden (`AGENTS.md`, „Abstimmung zwischen Agenten“).
+  Ankündigen, Kanäle verlassen und Abmelden mit `QUIT` entfallen im Einzellauf: Der `[AUFTRAG]` ersetzt die Ankündigung, der Bot bleibt verbunden (`docs/regeln/IRC_UND_TEAM.md`).
 - **Interaktive Sitzung:** Den Bot startest du einmal selbst, in allen vier Kanälen:
   `nohup python3 -I deploy/agent-team/teambot.py <nick> <log-ordner> <IRCKEY-Pfad> '#general,#first,#second,#third' </dev/null >/dev/null 2>&1 &`. Gewartet wird mit einem gefilterten
   Beobachter (`coordinator.md`, Abschnitt 3, mit deinem Nick); ein Monitor läuft begrenzt lange und muss nach dem Ablauf neu gestartet werden.

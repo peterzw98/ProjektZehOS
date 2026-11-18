@@ -31,7 +31,7 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
    - Fehlt dir dotnet oder KVM auf deinem Rechner: Hosttests und Bau über den Lead oder einen Clerk (Branch, **Kopf-Hash**, Befehl, gewünschte Filter). Gastläufe immer
      über einen Agenten mit KVM, mit derselben Angabe und den erwarteten Marken aus dem Plan.
    - Schreibende Gast- und Dateitests nur auf einer **isolierten Kopie** eines Datenimages, nie auf `.tools/qemu/data-fat32.img` oder vorhandenen Images.
-   - Doku im selben PR: geänderte Bedienung in `README.md`, neue Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`; `ROADMAP.md` nur, wenn das Paket eine Etappe abschließt.
+   - Doku im selben PR: geänderte Bedienung in `README.md` beziehungsweise `docs/handbuch/`, neue Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`; `ROADMAP.md` nur, wenn das Paket eine Etappe abschließt.
 5. **Unabhängiges Review** durch einen anderen Agenten (Koordinator teilt zu). Bist du im Einzellauf, meldest du dafür `[FERTIG]` mit „Review gebraucht“ und beendest den Lauf; die
    Befunde starten dich neu. Befunde selbst bewerten, berechtigte beheben, Gegenargumente begründen.
 6. **PR:** erst pushen, dann den Kopf auf `origin` prüfen, dann öffnen (`_kern.md`, Abschnitt 5). Der PR nennt Paket-ID, Plan, ausgeführte Prüfungen mit Zahlen, nicht geprüfte
