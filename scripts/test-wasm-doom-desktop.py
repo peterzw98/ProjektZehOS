@@ -247,15 +247,19 @@ MACHINE = ["-machine", "q35", "-m", "512M", "-vga", "std", "-boot", "d", "-displ
            "-device", "qemu-xhci,id=tabletbus", "-device", "usb-tablet,bus=tabletbus.0"]
 
 
-def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None) -> subprocess.Popen:
+def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None,
+               memory: str | None = None) -> subprocess.Popen:
     qemu = qemu_tool("qemu-system-x86_64")
+    # memory ersetzt nur den Wert hinter -m; Snapshots (loadvm) brauchen den Standard aus MACHINE.
+    machine = MACHINE if memory is None else [memory if previous == "-m" else value
+                                              for previous, value in zip(["", *MACHINE], MACHINE)]
     # Windows: bin/../share/qemu; Cosmos unter Linux: share/qemu neben dem Wrapper.
     share = next((d for d in (qemu.parent.parent / "share" / "qemu", qemu.parent / "share" / "qemu") if d.is_dir()),
                  qemu.parent.parent / "share" / "qemu")
     # Kennwortanlage und TLS brauchen RDSEED/RDRAND, die das Standardmodell nicht bietet. Unter WHPX bricht der
     # Gast mit -cpu max oder host jedoch sofort ab (Unexpected VP exit code 4); dort bleibt das Standardmodell.
     cpu = {"tcg": ["-cpu", "max"], "kvm": ["-cpu", "qemu64,+rdrand,+rdseed"]}.get(accel, [])
-    arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *MACHINE, "-cdrom", str(iso),
+    arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *machine, "-cdrom", str(iso),
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
                  *(["-loadvm", loadvm] if loadvm else [])]

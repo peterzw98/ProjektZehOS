@@ -50,7 +50,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--move", action="store_true",
                         help="waehrend der Messung abwechselnd w/a/s/d halten (bewegte Kamera, ClassiCube)")
+    parser.add_argument("-m", "--memory",
+                        help="Gastspeicher fuer QEMU -m (Standard: 1G fuer classicube, sonst 512M wie die Gasttests)")
     args = parser.parse_args(argv)
+    # ClassiCube braucht mindestens 768 MiB (#237); mit 512M lagen die Bildraten am 18.11.2026 rund 20 % zu niedrig.
+    if args.memory is None:
+        args.memory = "1G" if args.id == "classicube" else "512M"
     if args.package and not args.key:
         parser.error("--package braucht --key")
     if (args.key or args.aot_file or args.network or args.min_kernel) and not args.package:
@@ -104,7 +109,7 @@ def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
     work.mkdir(exist_ok=True)
     tools.create_disk(seed_dir, work / "data.qcow2")
     port = tools.free_port()
-    vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
+    vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None, args.memory)
     guest = tools.Guest(work, port, "", time.monotonic())
     try:
         guest.wait("Desktop ist bereit", 180)
