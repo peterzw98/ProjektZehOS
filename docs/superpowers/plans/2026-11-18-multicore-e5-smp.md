@@ -53,6 +53,7 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 3. Ein Plug bindet nach dem Stapel nicht mehr und wird stiller No-Op (E5-D, `check-plug-binding.py`).
 4. Code liest `GetCpuState(0)` und meint „diese CPU“ (E5-D, Suche).
 5. Eine CPU kommt beim Start nicht hoch: Cosmos hält mit Panic an; ZehOS muss das in der Abnahme mit vier und acht CPUs sehen, nicht erst auf Hardware (E5-J).
+6. Der neu angebrachte Patch `ausnahme-hook`: `TryAbandonCurrentFromInterrupt` ruft `ScheduleFromInterrupt`, das auf dem SMP-Stand `state._lock` nimmt. Fault oder Halt unter dieser Sperre = Hänger statt Halt (E5-A, Befund Trockenlauf 19.11.).
 
 ---
 
@@ -63,6 +64,7 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 - [ ] **Schritt 1:** Upstream als temporären Remote holen: `git remote add cosmos-upstream https://github.com/CosmosOS/Cosmos` und `git fetch cosmos-upstream 44952133e7820565552f30b057baa0660bd0a80d efcf20cc62884b042a0adadffe9fc4540491fd89`. Unter Windows vorher `git config core.longpaths true`.
 - [ ] **Schritt 2:** Kumulierten Unterschied anwenden: `git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index`. Konflikte entstehen nur dort, wo eigene Patches dieselben Zeilen ändern (sicher: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs`, falls E3-C schon gemergt ist; möglich: `src/Cosmos.Kernel/Panic.cs`, `SchedulerManager.cs` nach E3-A). Jeden Konflikt so lösen, dass Upstreams Fassung gilt und der eigene Patch darauf neu angebracht wird.
 - [ ] **Schritt 3:** Prüfen, dass nichts außer den eigenen Patches abweicht: `git diff --stat 44952133 -- . ':(exclude).github' ':(exclude)PATCHES.md'` listet genau die Dateien, die `PATCHES.md` nennt.
+  Trockenlauf 19.11. (agent-peter-senior, `origin/cosmos` fdc9da0a): 4 Konflikte (`CLAUDE.md`, `public-api.md`, `PublicAPI.Unshipped.txt`, `Experimentals.cs`; alle aus `ausnahme-hook` bzw. Grundstand), danach 42 Dateien. Zusätzlich zu den Patchdateien erscheinen erwartet die Grundstand-Dateien (`.taskmaster/`, `.claude/agents`, `.mcp.json`, `CLAUDE.md`, `ZEHOS.md`, `patches/`). Nicht in `patches/*.md` geführt und vor Schritt 3 nachzutragen: `Ext2FormatOptions.cs` (`ext2-formatter`), `Ext2Inode.cs` (`ext2-truncate`) und die Testdateien dieser Patches.
 - [ ] **Schritt 4:** `PATCHES.md`: neuer Abschnitt „Übernommener Upstream-Stand“ mit Branch, Commit, Datum und dem Befehl aus Schritt 2. Die bestehenden Patchzeilen bekommen den Vermerk, ob sie neu angebracht wurden.
 - [ ] **Schritt 5:** Ein Commit (`upstream: SMP stack feat/smp-phase5b@4495213`). Pakete bauen: `scripts/build-cosmos.sh --commit <Commit>`. Erwartet: alle Pakete im Feed.
 - [ ] **Schritt 6:** PR gegen `cosmos`. Gemergt wird er zusammen mit dem PR des Integrationsbranches nach `master`.
@@ -102,7 +104,8 @@ vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerD
 ```csharp
 ThreadStarter.ApplyClass = threadClass =>
 {
-    using var mask = SchedulerManager.MaskInterrupts();
+    // MaskInterrupts gibt es upstream nicht mehr; SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt
+    // KernelCpus.Current nur, solange der Thread nicht wandert (E5: alle auf CPU 0); E6-B prüft das neu.
     if (SchedulerManager.GetCpuState(KernelCpus.Current)?.CurrentThread is { } current)
         SchedulerManager.SetPriority(current, (long)threadClass);
 };
@@ -178,6 +181,8 @@ oder „entfallen“ eintragen.
 | `Security/CosmosSaltSource.cs`, `CosmosVirtioEntropyDriver.cs`, `Input/CosmosUsbTabletDriver.cs` | Driver Kit | Übersetzen und Bindung |
 | verbliebene ext2-Plugs (falls Etappe 2 nicht fertig) | `FileSystem/Ext2/**` (im Stapel unverändert) | Bindung |
 | `Runtime/CosmosThreadProbe.cs`, `Messaging/MessageGuestProbe.cs`, weitere Proben | `SchedulerManager` | Übersetzen |
+| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Lösung (kleiner Cosmos-Patch mit öffentlichem Masken-Scope oder Umbau der Sperre) vor E5-D mit dem Lead abstimmen |
+| `Scheduling/CosmosClassScheduler.cs:112-147` (fünf `MaskInterrupts`) | `SchedulerManager.LockCpu` | Teil von E5-B (Tabelle oben), hier nur prüfen, dass keine Stelle übrig bleibt: `grep -rn MaskInterrupts ProjektZeh` leer |
 
 - [ ] **Schritt 1:** `grep -rn "GetCpuState(0)\|UnsafeAccessor\|DllImport(\"\\*\"\|\[Plug" ProjektZeh --include=*.cs` als Arbeitsliste; mit der Tabelle abgleichen, Fehlendes ergänzen.
 - [ ] **Schritt 2:** Zeile für Zeile angleichen.
