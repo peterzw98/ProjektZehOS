@@ -78,15 +78,16 @@ Wichtige Zuständigkeiten:
 | `ProjektZeh/SystemServices/` und `ProjektZeh/Shared/` | Bootdiagnose, Protokoll und gemeinsame Result-Typen |
 | `ProjektZeh/Runtime/Wasm/`, `ProjektZeh/Native/Wasm/`, `ProjektZeh/ThirdParty/wasm3/` | Wasm-Loader (wasm3, nur mit `-p:ZehOSWasm=true`) und WASI-/`zehos_v1`-Hostfunktionen |
 | `ProjektZeh/Packages/`, `ProjektZeh/Apps/Wasm/` | signierter Paketbestand, `pkg`-Quellen und Fenster für Paket-Apps |
+| `deploy/cosmos/`, Branch `cosmos` | Cosmos-Quellstand, Paketversion und eigener Paketbau |
 | `deploy/package-repo/`, Branch `packages` | Paketserver (Docker) und veröffentlichte signierte Pakete |
 | `ProjektZeh.Tests/` | Tests der plattformunabhängigen Logik auf dem Entwicklungsrechner |
 | `scripts/` und `.github/workflows/` | VM-Helfer, Energiekommando-Prüfung und CI |
 
 ## Technischer Rahmen
 
-- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 3.0.97 und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
+- Maßgeblich sind `ProjektZeh/ProjektZeh.csproj`, `global.json` und `Directory.Build.props`: .NET 10, Cosmos Gen3 aus dem Branch `cosmos` und Zielplattform `linux-x64`. Der Kernel läuft direkt in der VM; er ist keine normale Linux-Anwendung.
 - `global.json` wählt ein installiertes SDK aus der 10.0-Reihe. Ein allein installiertes SDK 11 genügt für den bestehenden Cosmos-Build nicht. Bei Buildproblemen zuerst die lokale SDK-Version prüfen.
-- Cosmos SDK, Kernelpakete, CLI und Patcher müssen zusammenpassen. Versionswechsel als eigene technische Änderung behandeln und durch nativen Build und Gaststart prüfen.
+- `deploy/cosmos/COMMIT` und `VERSION` ändern sich nur zusammen; der Cosmos-Quellbau steht in `deploy/cosmos/README.md`. Cosmos SDK, Kernelpakete, CLI und Patcher müssen zusammenpassen. Versionswechsel als eigene technische Änderung behandeln und durch nativen Build und Gaststart prüfen.
 - Vorhandene Cosmos-Dienste zuerst verwenden. Bei neuen Schnittstellen die Verfügbarkeit in der tatsächlich verwendeten Version prüfen; aktuelle Online-Dokumentation kann einen neueren Stand beschreiben.
 - Die Unterstützung einer .NET-API auf dem Host beweist nicht ihre Verfügbarkeit im Cosmos-/NativeAOT-Kernel.
 - Seit Cosmos 3.0.95 laufen `finally`-Blöcke (auch aus `using` und `lock`) beim Exception-Unwind, mit Dispatcherzustand je Thread; im Gast belegt durch `MessageGuestProbe` (`-p:ZehOSThreadProbe=true`). Ressourcen deshalb wieder auf dem normalen .NET-Weg mit `using`/`finally` freigeben.
@@ -100,6 +101,13 @@ Wichtige Zuständigkeiten:
 - Den privaten Herausgeberschlüssel nie ins Repository, in Logs, Testfixtures oder auf den Server legen. Tests verwenden eigene Testschlüssel und `-p:ZehOSPackageKeyPath`/`-p:ZehOSPackageTestCaPath`; diese gehören nie in normale Builds.
 - Im Branch `packages` veröffentlichte Versionen sind unveränderlich. Änderungen brauchen eine neue Version und eine höhere Katalog-Generation. Änderungen am Branch `packages` laufen nur per Pull Request (Branchregel); der Merge veröffentlicht sofort und erfolgt nur auf ausdrücklichen Auftrag.
 - Lizenzen der Paketinhalte beachten: Lizenztexte ins Paket legen, bei GPL die Quellen öffentlich erreichbar halten. GPL-Code nicht in den Kernel übernehmen.
+
+## Cosmos-Patches
+
+- Änderungen am Branch `cosmos` laufen nur per Pull Request. Ein Patch ist genau ein Commit dort und erhält eine Zeile in `PATCHES.md`: Commit, Datei, Grund, entfernter ZehOS-Umweg und Prüfung.
+- Der ZehOS-PR, der den Patch verwendet, setzt `deploy/cosmos/COMMIT` auf den Patch-Commit, entfernt den Umweg und wiederholt dessen bisherige Prüfung. Er wird erst nach dem `cosmos`-PR gemergt. Der Umweg bleibt bis zum Merge des geprüften ZehOS-PRs unverändert in Kraft.
+- Patches beheben Fehler oder öffnen Schnittstellen. ZehOS-Policy wie Scheduler, Topologie und Appregeln gehört nicht in den Cosmos-Baum.
+- Keine Issues, Pull Requests oder Kommentare bei CosmosOS/Cosmos oder anderen fremden Projekten.
 
 ## Änderungen und Architektur
 
