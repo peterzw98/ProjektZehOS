@@ -27,11 +27,11 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `Runtime/CosmosVmwareClockPlug.cs:1-128`, `ThirdParty/CosmosTiming` | Plugs auf `LocalApic.CalibrateTimer` und `X64CpuOps`; Frequenzen unter VMware aus CPUID 0x40000010 | Q✓ `Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs:280-320` nur PIT, `X64CpuOps.cs:40-63` TSC nur über LAPIC; Fehlwerte Z | K–M | ja, samt Kopie |
 | `Runtime/CosmosFaultIsolation.cs:11-30, 177-189` | Plug auf `Panic.HaltCpu` und `PrintCpuContext`; `UnsafeAccessor` auf `ScheduleFromInterrupt` und `InternalCpu.Halt` | Q✓ `Cosmos.Kernel/Panic.cs:19-36, 167-174`: jede CPU-Ausnahme endet im Halt, kein Hook | M: öffentlicher Ausnahme-Hook | erledigt mit E3-A/E3-B (Patch `ausnahme-hook`, 3.0.97-zehos.2) |
 | `Runtime/CosmosIrqContextStub.cs:1-10` | leere öffentliche Attrappe `IRQContext`, Versätze 120/152 fest | Q✓ `Core/CPU/IRQContext.cs:16`: `internal struct`; Patcher vergleicht Typen nur über den Namen | K | erledigt mit E3-B (Hook bekommt `CpuExceptionInfo`, `IRQContext` bleibt intern) |
-| `Storage/CosmosExt2PlugTypes.cs` | Attrappen `Ext2Superblock`/`Ext2Inode` | Q✓ interne Typen | mit den ext2-Korrekturen | ja |
-| `Storage/CosmosExt2RemoveEntryPlug.cs:9-67` | Records nur innerhalb eines Blocks verschmelzen | Q✓ `FileSystem/Ext2/Ext2Directory.cs:302, 340-345` | K | ja |
-| `Storage/CosmosExt2RmdirPlug.cs:10-103` | gibt alle Blöcke frei | Q✓ `Ext2/Ext2InodeOperations.cs:472-482`: nur `Block[0]` | K | ja |
-| `Storage/CosmosExt2TruncatePlug.cs:8-130` | gibt auch geleerte Zeigerblöcke frei | Q✓ `Ext2/Ext2Superblock.cs:1043-1049`; dreifach indirekt liefert 0 (`:1014`) | M | ja |
-| `Storage/CosmosExt2FreeInodePlug.cs:8-91` | schreibt Inode samt dtime vor dem Bitmapbit | Q✓ `Ext2/Ext2Superblock.cs:617-632` | K | ja |
+| `Storage/CosmosExt2PlugTypes.cs` | Attrappen `Ext2Superblock`/`Ext2Inode` | Q✓ interne Typen | mit den ext2-Korrekturen | erledigt mit E2-Z1 (Attrappen entfallen mit den Plugs) |
+| `Storage/CosmosExt2RemoveEntryPlug.cs:9-67` | Records nur innerhalb eines Blocks verschmelzen | Q✓ `FileSystem/Ext2/Ext2Directory.cs:302, 340-345` | K | erledigt mit E2-Z1 (Patch `ext2-remove-entry`) |
+| `Storage/CosmosExt2RmdirPlug.cs:10-103` | gibt alle Blöcke frei | Q✓ `Ext2/Ext2InodeOperations.cs:472-482`: nur `Block[0]` | K | erledigt mit E2-Z1 (Patch `ext2-rmdir`) |
+| `Storage/CosmosExt2TruncatePlug.cs:8-130` | gibt auch geleerte Zeigerblöcke frei | Q✓ `Ext2/Ext2Superblock.cs:1043-1049`; dreifach indirekt liefert 0 (`:1014`) | M | erledigt mit E2-Z1 (Patch `ext2-truncate`) |
+| `Storage/CosmosExt2FreeInodePlug.cs:8-91` | schreibt Inode samt dtime vor dem Bitmapbit | Q✓ `Ext2/Ext2Superblock.cs:617-632` | K | erledigt mit E2-Z1 (Patch `ext2-free-inode`) |
 | `Storage/CosmosExt2FormatterPlug.cs:8-17`, `Storage/Ext2/CosmosExt2Formatter.cs` | eigener Formatter | Q✓ `Ext2/Ext2Formatter.cs:185`: keine Backup-Superblöcke; Geometrie Z | M | ja, samt Kopie |
 | `Storage/Ext2/Ext2FeatureGate.cs` | prüft Feature-Bits vor dem Mount | Q✓ `Ext2/Ext2Superblock.cs:154-156` liest sie nur | M | größtenteils |
 | `Graphics/DisplayService.cs:120-122` | `UnsafeAccessor` auf `Canvas._display` für Teilrechtecke | Q✓ `Graphics/Canvas.cs:65` privat | K | ja |

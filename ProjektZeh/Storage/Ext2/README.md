@@ -109,24 +109,14 @@ Branch `task/storage-ext2-kernel-plug`, Gegenprobe ohne Plug grün).
 `(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
 weitergereichte Dateisystemnamen erkennt die Suche nicht.
 
-## Löschen: Plug auf FreeInode
+## Löschen: Korrektur in der Cosmos-Quelle
 
-Cosmos 3.0.97 `Rmdir` schreibt das freigegebene Inode nie zurück, `Unlink` setzt kein `dtime`; e2fsck meldete das nach
-der Gastprobe (Details und Zeilen: [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md)).
-`ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs` ersetzt `Ext2Superblock.FreeInode`. Die Plattenlogik steht rein in
-`Ext2InodeRelease.Release` (Host-Tests `ProjektZeh.Tests/Ext2InodeReleaseTests.cs`): zuerst das Inode mit
-`links_count` 0 und `dtime` schreiben, dann das Bitmapbit löschen; ist das Bit schon frei, wird nichts geschrieben und
-die Zähler bleiben unverändert. Blöcke gibt sie nicht frei (Rmdir/Truncate tun das selbst). Zähler und Deskriptor
-schreibt der Plug wie das Original fort; den Inode-Cache-Eintrag entfernt er nicht (generischer Zugriff warf im Gast
-`NotSupportedException`; unschädlich, Begründung im Code); interne Member erreicht er nur über `UnsafeAccessor` mit Typnamen, der
-Plugkörper nennt keinen Typ aus `Cosmos.Kernel.System`.
-
-**Beleg (17. November 2026, QEMU/KVM):** Stand `feb5a55` (Plugcode identisch mit diesem Branch): Hosttests 635/635,
-Probe-Build mit `-warnaserror` grün, Gastprobe Lauf 1 16× PASS, Lauf 2 6× PASS, `e2fsck -fn` Exit 0 auf einem frischen
-72-MiB-Image. Vorher mit Originaltreiber (`1b7ef9c`): `e2fsck -fn` Exit 4 (Inode ohne `dtime`, unverbundenes
-Verzeichnis). PR-Stand `4e1c941` (zusätzlich Inode-Wiederverwendung nach Delete/Rmdir, Lauf 2 nur lesend): Hosttests
-646/646, Lauf 1 19× PASS, Lauf 2 7× PASS, `e2fsck -fn` Exit 0, normaler ISO bootet bis „Desktop ist bereit“. VMware
-ungeprüft.
+Bis E2-Z1 ersetzten vier Plugs (`RemoveEntry`, `Rmdir`, `Truncate`, `FreeInode`) fehlerhafte Methoden des
+Cosmos-ext2-Treibers 3.0.97. Seit E2-Z1 sind die Fehler im Branch `cosmos` behoben (`PATCHES.md`: `ext2-remove-entry`,
+`ext2-truncate`, `ext2-free-inode`, `ext2-rmdir`); die Plugs, ihre Attrappentypen und die Helfer `Ext2DirectoryRemoval`,
+`Ext2IndirectBlocks` und `Ext2InodeRelease` samt Hosttests sind entfernt, die Tests leben als NUnit-Tests im Cosmos-Baum
+(`tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/`). Hintergrund und frühere Gastbelege:
+[Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md) und `docs/COSMOS_SUPPORT.md`.
 
 ## Gastprobe
 
