@@ -38,7 +38,7 @@ internal sealed class SetupShellCommands(IInstallService installer, Func<bool> i
         if (arguments.Length >= 2 && arguments[0] == "install" && TryParseOptions(arguments, out bool erase, out bool gpt))
         {
             if (gpt && !erase)
-                return ResultErr.CreateFailure(ResultCode.Failure, "GPT-Installation loescht die Platte; --erase erforderlich.");
+                return ResultErr.CreateFailure(ResultCode.Failure, "GPT-Installation loescht die ganze Platte, auch ein dort installiertes ZehOS samt Konten und /home; --erase erforderlich.");
             var begin = gpt ? installer.BeginGpt(arguments[1], erase) : installer.Begin(arguments[1], erase);
             if (!begin.IsOK()) return begin.Status;
             var job = begin.Value!;

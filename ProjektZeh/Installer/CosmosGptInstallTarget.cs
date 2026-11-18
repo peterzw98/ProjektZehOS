@@ -27,6 +27,10 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
 
     public ResultErr WriteLayout(GptTable table) => Try(() => StorageLock.Run(() =>
     {
+        // Zwischen Begin und dem ersten Schreiben kann ein anderes Terminal das Ziel eingehaengt haben (Review #268 P3 a).
+        foreach (var mount in VfsManager.Mounts)
+            if (mount.Partition != null && ReferenceEquals(mount.Partition.Host, device))
+                return Failed("Das Ziellaufwerk wurde inzwischen eingebunden; nichts geschrieben. Aushaengen und neu beginnen.");
         GptLayoutWriter.Write(device.BlockCount, table, (block, data) => device.WriteBlock(block, (ulong)data.Length / device.BlockSize, data.ToArray()), device.Flush);
         StorageManager.RescanPartitions(device);
         var verified = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
