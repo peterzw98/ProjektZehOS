@@ -52,6 +52,8 @@ build_path_map="$src=/home/runner/work/Cosmos/Cosmos"
 # des Baus (Cosmos.*) kommen nur aus $out, alles andere aus nuget.org.
 build_nuget_config="$root/.tools/cosmos-build.NuGet.Config"
 tools_nuget_config="$root/.tools/cosmos-tools.NuGet.Config"
+# Pfade in den erzeugten NuGet-Konfigurationen liest dotnet selbst; unter Git Bash waere /c/... dort C:\c\..., daher Windows-Form.
+native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
 
 # Stempelpruefung: dieselbe Version darf nur zu demselben Commit gehoeren (sonst liefert der NuGet-Cache den alten Stand).
 stamp="$feed/$version.commit"
@@ -125,7 +127,7 @@ if [ "$rebuild" = 1 ]; then
 <configuration>
   <packageSources>
     <clear />
-    <add key="cosmos-build" value="$out" />
+    <add key="cosmos-build" value="$(native_path "$out")" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
@@ -188,7 +190,7 @@ if [ "$tools" = 1 ]; then
 <configuration>
   <packageSources>
     <clear />
-    <add key="cosmos-feed" value="$feed" />
+    <add key="cosmos-feed" value="$(native_path "$feed")" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
