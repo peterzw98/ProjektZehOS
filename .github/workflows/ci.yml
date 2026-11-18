@@ -432,7 +432,7 @@ jobs:
         # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
         if: always() && runner.environment == 'self-hosted'
         shell: bash
-        run: rm -rf "$RUNNER_TEMP/home"
+        run: rm -rf "${RUNNER_TEMP:?}/home"
 
   guest-recovery:
     name: Guest recovery boot (QEMU)
@@ -534,4 +534,4 @@ jobs:
         # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
         if: always() && runner.environment == 'self-hosted'
         shell: bash
-        run: rm -rf "$RUNNER_TEMP/home"
+        run: rm -rf "${RUNNER_TEMP:?}/home"

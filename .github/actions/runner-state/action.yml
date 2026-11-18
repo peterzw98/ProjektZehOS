@@ -12,7 +12,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        home="$RUNNER_TEMP/home"
+        home="${RUNNER_TEMP:?}/home"
         rm -rf "$home"
         mkdir -p "$home/.nuget/packages"
         qemu="$HOME/.cosmos/tools/qemu"

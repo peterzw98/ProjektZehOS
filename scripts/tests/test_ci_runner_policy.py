@@ -55,7 +55,7 @@ class CiRunnerPolicy(unittest.TestCase):
         for name in HEAVY:
             job = self.jobs[name]
             self.assertIn('uses: ./.github/actions/runner-state', job, name)
-            self.assertIn('rm -rf "$RUNNER_TEMP/home"', job, name)
+            self.assertIn('rm -rf "${RUNNER_TEMP:?}/home"', job, name)
             # Die Isolierung steht direkt hinter dem Checkout und vor jeder Installation.
             self.assertLess(job.index('Check out source'), job.index('runner-state'), name)
             for install in ('build-cosmos.sh --global', 'cosmos install', 'setup-dotnet'):
