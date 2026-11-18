@@ -366,6 +366,8 @@ cosmos build --project ProjektZeh\ProjektZeh.csproj --arch x64
 cosmos run --iso ProjektZeh\output-x64\ProjektZeh.iso --arch x64 -- -action shutdown=poweroff,reboot=reset -device qemu-xhci,id=tabletbus -device usb-tablet,bus=tabletbus.0
 ```
 
+Die ZehOS-Version entsteht beim Bau aus Git: `<ZehOSVersionPrefix>.<ZehOSPatchBase + first-parent-Commits seit der letzten Änderung dieser beiden Zeilen in ProjektZeh.csproj>`. Ein Bau braucht deshalb einen Git-Arbeitsbaum mit vollständiger Historie; ein flacher Klon bricht mit einer Meldung ab (`git fetch --unshallow`), ohne Git hilft `-p:Version=X.Y.Z`. Die Version eines Stands zeigt `dotnet msbuild ProjektZeh/ProjektZeh.csproj -t:GetAssemblyVersion -getProperty:Version`.
+
 Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
 
 ## Dateibetrachter, Texteditor und Pong
@@ -432,7 +434,7 @@ Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. De
 
 ## Releases und Updates
 
-`scripts/build-release.sh <Version> [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
+`scripts/build-release.sh <Version> [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Der Release-Workflow startet mit einem Tag `v<Version>` und bricht ab, wenn der Tag nicht der für diesen Commit abgeleiteten Version entspricht. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
 
 Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.
 
