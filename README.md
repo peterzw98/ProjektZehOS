@@ -231,7 +231,7 @@ Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md#aufg
 
 GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows können außerdem unter **Actions → Run workflow** manuell gestartet werden:
 
-- **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen. Der Job führt auch die Python-Skripttests und die Abdeckungsprüfung aus.
+- **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen. Der Job führt auch die Python-Skripttests, die Red-Zone-Prüfung der committeten AOT-Fixtures (`scripts/check-aot-redzone.py`, braucht `objdump`) und die Abdeckungsprüfung aus.
 - **Shell tests (Windows)** führt dieselben Hosttests zusätzlich auf `windows-2025` aus (ohne Abdeckungsbericht), weil Pfadtrenner, Zeilenenden und Groß-/Kleinschreibung dort abweichen. Der Linux-Job bleibt die maßgebliche Prüfung.
 - **Docs, scripts and workflow lint** läuft immer, auch bei reinen Doku-PRs: `scripts/check-doc-links.py` prüft relative Markdown-Verweise und Überschriften-Anker ohne Netzzugriff, `shellcheck` (Fehler und Warnungen) prüft die Shellskripte, `actionlint` die Workflows.
 - **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.

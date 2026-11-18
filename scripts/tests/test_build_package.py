@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -101,7 +102,8 @@ output = Path(sys.argv[sys.argv.index('-o') + 1])
 if FAIL:
     output.write_bytes(b'teil')
     sys.exit(1)
-output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes())
+# mov [rsp-0x8],rax: Code mit Red Zone, wie ihn ein wamrc ohne Patch erzeugt
+output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes() + (bytes.fromhex('48894424f8') if REDZONE else b''))
 """
 
 
@@ -111,6 +113,8 @@ class BuildPackageAotTests(unittest.TestCase):
     ABI_FILE = 'app.wamr245-aot5-x64-bc-nrz.aot'
 
     def setUp(self):
+        if shutil.which('objdump') is None:
+            self.skipTest('objdump fehlt (GNU Binutils); ohne ihn baut build-package.py keine AOT-Pakete')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name).resolve()
@@ -119,11 +123,12 @@ class BuildPackageAotTests(unittest.TestCase):
         for name, data in (('app.wasm', b'wasm'), ('App.txt', b'gross'), ('b.dat', b'b')):
             (self.directory / name).write_bytes(data)
 
-    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5', fail=False):
+    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5', fail=False, redzone=False):
         """Ersatz-wamrc, das seine Schalter in folder/calls.json protokolliert und eine Ausgabedatei schreibt."""
         tool = self.directory / folder
         tool.mkdir()
-        code = f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\nFAIL = {fail!r}\n' + FAKE_WAMRC
+        code = (f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\nFAIL = {fail!r}\nREDZONE = {redzone!r}\n'
+                + FAKE_WAMRC)
         (tool / 'fake_wamrc.py').write_text(code, encoding='utf-8')
         if os.name == 'nt':
             launcher = tool / 'wamrc.cmd'
@@ -229,6 +234,26 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertIn('nicht das zugelassene wamrc', error)
         self.assertFalse((wamrc.parent / 'calls.json').exists())
         self.assertFalse((self.directory / 'out.aot').exists())
+
+    def test_aot_with_red_zone_is_removed_after_translation(self):
+        code, error = self.translate(self.fake_wamrc(redzone=True))
+        self.assertEqual(code, 1)
+        self.assertIn('Red Zone', error)
+        self.assertFalse((self.directory / 'out.aot').exists())
+        self.assertFalse(self.receipt().exists())
+
+    def test_package_rejects_aot_with_red_zone_even_with_matching_receipt(self):
+        # Schutz auch fuer .aot, die nicht ueber den Unterbefehl aot entstanden sind (etwa ein von Hand angepasster Beleg).
+        wamrc = self.translated()
+        aot = self.directory / 'out.aot'
+        aot.write_bytes(aot.read_bytes() + bytes.fromhex('48894424f8'))
+        receipt = json.loads(self.receipt().read_text(encoding='utf-8'))
+        receipt['aot_sha256'] = hashlib.sha256(aot.read_bytes()).hexdigest()
+        self.receipt().write_text(json.dumps(receipt), encoding='utf-8')
+        code, error = self.build('--aot-file', str(aot), wamrc=wamrc)
+        self.assertEqual(code, 1)
+        self.assertIn('unter RSP', error)
+        self.assertFalse(self.package_dir().exists())
 
     def test_aot_file_name_manifest_order_and_hash(self):
         wamrc = self.translated()
