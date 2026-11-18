@@ -483,6 +483,7 @@ for _ in range(3):
     e.now += 120
     e.run_until_idle()
 assert len(e.calls_made()) == 3 and e.d.gave_up_at == 1 and e.d.acked == 0
+assert e.d.quota.blocked("claude", e.now) is not None                   # auch beim Aufgeben gesperrt
 assert "Limitmeldung für dieselben Nennungen" in e.outbox()
 e.now += 10000
 e.run_until_idle()

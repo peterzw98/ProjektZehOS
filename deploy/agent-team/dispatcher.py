@@ -57,8 +57,8 @@ def _pids():
 # Nur die festen Wendungen der Werkzeuge, keine Einzelwörter wie „quota“ oder „rate limit“: Die kommen auch in
 # echten Antworten vor (ein Review über Ratengrenzen), und eine falsche Sperre legt alle Agenten des Rechners still.
 LIMIT_PATTERNS = {
-    "claude": r"Claude AI usage limit reached|usage limit reached|you'?ve hit your (usage |session |weekly )?limit|"
-              r"out of (extra )?usage",
+    "claude": r"Claude AI usage limit reached|usage limit reached|(5-hour|weekly|session|opus|sonnet) limit reached|"
+              r"you'?ve hit your (usage |session |weekly )?limit|out of (extra )?usage",
     "codex": r"you'?ve hit your usage limit|usage limit reached|exceeded your (current )?quota",
 }
 LIMIT_OUTPUT_MAX = 600   # längere Ausgaben sind eine echte Antwort, kein Limithinweis
@@ -538,6 +538,10 @@ class Dispatcher:
             # Fehlschlag melden.
             self.limit_runs = self.limit_runs + 1 if self.limit_last == run["last"] else 1
             self.limit_last = run["last"]
+            until = parse_reset(limit, now) or now + self.a.cooldown
+            # Auch beim Aufgeben sperren: Ist es ein echtes Limit mit unlesbarer Zeit, liefen sonst die anderen Agenten
+            # des Rechners sofort wieder hinein
+            self.quota.block(run["backend"], until, "Limitmeldung")
             if self.limit_runs > LIMIT_REPEAT_MAX:
                 self.limit_runs = 0
                 self._failed(now, f"{LIMIT_REPEAT_MAX + 1}-mal Limitmeldung für dieselben Nennungen", run["last"],
@@ -545,8 +549,6 @@ class Dispatcher:
                 return
             # Kontingent leer: kein Fehlschlag des Auftrags und keine Quittung. Anbieter für alle Dienste des Rechners
             # sperren, bis er laut Meldung wieder frei ist; die Nennung startet danach erneut (oder beim Ersatz).
-            until = parse_reset(limit, now) or now + self.a.cooldown
-            self.quota.block(run["backend"], until, "Limitmeldung")
             self.next_try = 0.0
             self.log_event(f"Kontingent {run['backend']} erschöpft, gesperrt bis "
                            f"{time.strftime('%d.%m. %H:%M', time.localtime(until))}; Nennungen bleiben offen")

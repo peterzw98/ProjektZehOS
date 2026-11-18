@@ -60,6 +60,8 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Die Limitmeldungen von Claude und Codex sind nicht gegen echte Texte geprüft; `--limit-pattern` ersetzt das Muster.
   Codex muss installiert sein. Der Aufruf ist `codex exec --skip-git-repo-check --sandbox workspace-write [-m MODELL] <Rolle + Auftrag>` im Klon (`ProjektZehOS/`, dort liegt auch die
   Outbox); die Schalter sind gegen die installierte Version nicht geprüft und per `--codex-arg` ersetzbar (`codex exec --help`).
+  **Offen bis zur Prüfung mit installiertem Codex:** Mit `workspace-write` kann Codex `dispatch/state.md` (außerhalb des Klons) nicht schreiben und hat
+  vermutlich kein Netz (`git fetch`, `gh pr diff`); Schalter dafür erst nach `codex exec --help` setzen, nicht raten.
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.
