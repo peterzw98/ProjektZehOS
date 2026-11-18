@@ -44,6 +44,18 @@ public class Ext2DirectoryLimitTests
     }
 
     [Test]
+    public void Lookup_OfEntryBeyondOldParseLimit_Finds()
+    {
+        // Only API that exists before the patch: the 9000th entry lies past the old MaxParseIters of 8192 records.
+        for (int index = 0; index < 9000; index++)
+        {
+            Assert.That(Ext2DirectoryHelper.AddEntry(_sb, _root, Name(index), Ext2SuperblockLayout.RootInodeNumber, 1), Is.True, Name(index));
+        }
+
+        Assert.That(_root.InodeOperations.Lookup(_root, Name(8999), out _), Is.True);
+    }
+
+    [Test]
     public void Directory_With10000Entries_ListsAll()
     {
         // Fake inode numbers: ReadDir would read their inodes, so list through the parser here.
