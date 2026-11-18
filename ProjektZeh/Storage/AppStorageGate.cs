@@ -15,6 +15,15 @@ internal static class AppStorageGate
     /// <summary>Fuer den CPU-Ausnahmepfad (Roadmap 12.4-I1): unter dieser Sperre darf kein Thread aufgegeben werden.</summary>
     internal static bool IsHeldByCurrentThread => System.Threading.Monitor.IsEntered(operations);
     private static readonly MigrationWriteGate writes = new();
+    // Etappe 7b: Schreiber auf das Root-Volume, getrennt vom /data-Block der Datentraegerbefehle (Review 7b P1-1), sonst hoebe
+    // disk mount/unmount die Sperre der Energieaktion auf oder sperrte Root beim Aushaengen einer Zusatzplatte.
+    private static readonly MigrationWriteGate rootWrites = new();
+
+    public static IDisposable? TryBeginRootWrite() => rootWrites.TryBeginWrite();
+    public static IDisposable? TryBeginRootWrite(string activity) => rootWrites.TryBeginWrite(activity);
+    /// <summary>Sperrt alle Root-Schreiber ohne zu warten; false, solange einer schreibt. Nur die Energieaktion haelt sie.</summary>
+    public static bool TryLockRoot() => rootWrites.TryBlock();
+    public static void ReleaseRoot() => rootWrites.ReleaseBlock();
 
     public static bool IsBlocked
     {
@@ -34,7 +43,9 @@ internal static class AppStorageGate
         lock (operations)
         {
             using var writer = writes.TryBeginWrite();
-            return writer == null ? busy : operation();
+            // Im Root-Profil liegt /save auf dem Root; ausserhalb sperrt niemand rootWrites.
+            using var root = writer == null ? null : rootWrites.TryBeginWrite();
+            return writer == null || root == null ? busy : operation();
         }
     }
 

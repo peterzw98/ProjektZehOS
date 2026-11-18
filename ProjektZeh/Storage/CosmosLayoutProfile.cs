@@ -89,16 +89,6 @@ internal static class CosmosLayoutProfile
         }
     }
 
-    /// <summary>s_state 1 beim Herunterfahren (Spec Abschnitt 2, Energieaktionen): erst /boot/efi aushaengen, dann Root schliessen.</summary>
-    public static ResultErr Close(IRootVolume volume) => StorageLock.Run(() => CloseStorageLocked(volume));
-
-    private static ResultErr CloseStorageLocked(IRootVolume volume)
-    {
-        if (VfsManager.TryGetMount(EfiMount, out _) && !VfsManager.TryUnmount(EfiMount))
-            return ResultErr.CreateFailure(ResultCode.Failure, "cause='EfiUnmountFailed' message='/boot/efi konnte nicht ausgehaengt werden.'");
-        return RootVolumeState.Close(volume);
-    }
-
     /// <summary>Root-Marker auf state=ready setzen (Temp, Rename, Sync); einmal nach dem ersten Speichern der Konten.</summary>
     public static ResultErr MarkReady(Guid diskGuid, IRootVolume volume)
     {
