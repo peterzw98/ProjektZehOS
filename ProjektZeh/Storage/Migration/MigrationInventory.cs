@@ -26,6 +26,12 @@ internal sealed class MigrationInventory
         Hash = ComputeHash(entries);
     }
 
+    /// <summary>
+    /// Nur fuer Hosttests mit Groessen, die als echte Datei zu teuer zu hashen waeren (2 GiB). Produktcode erzeugt ein Inventar
+    /// ausschliesslich ueber <see cref="Read"/>, das die Grenzen (MaximumEntries, Pfade) prueft; diese Fabrik prueft nichts.
+    /// </summary>
+    internal static MigrationInventory ForTests(List<InventoryEntry> entries) => new(entries);
+
     /// <summary>Eltern vor Kindern, je Verzeichnis Ordinal sortiert.</summary>
     public IReadOnlyList<InventoryEntry> Entries { get; }
     /// <summary>SHA-256 ueber Pfade, Arten, Groessen und Inhaltspruefsummen; Grundlage von Journalkopf und Root-Marker.</summary>
