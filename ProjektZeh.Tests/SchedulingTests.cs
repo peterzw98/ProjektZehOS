@@ -80,6 +80,50 @@ public sealed class SchedulingTests
     }
 
     [TestMethod]
+    public void Waiting_FollowsReadyBlockedPickAndPickFailed()
+    {
+        var core = Core();
+        var first = new FakeThread("first");
+        var second = new FakeThread("second");
+        Assert.AreEqual(0, core.Waiting);
+        core.Ready(first);
+        core.Ready(second);
+        Assert.AreEqual(2, core.Waiting);
+        Assert.AreSame(first, core.Pick());
+        Assert.AreEqual(1, core.Waiting);
+        core.PickFailed(first);
+        Assert.AreEqual(2, core.Waiting);
+        core.Blocked(second);
+        Assert.AreEqual(1, core.Waiting);
+        Assert.AreSame(first, core.Pick());
+        Assert.AreEqual(0, core.Waiting);
+    }
+
+    [TestMethod]
+    public void MainLoopIdle_YieldsWithoutSleepingWhenSomeoneWaits()
+    {
+        int yields = 0, sleeps = 0;
+        Assert.IsTrue(MainLoopIdle.Wait(1, () => { yields++; return true; }, () => sleeps++));
+        Assert.AreEqual((1, 0), (yields, sleeps));
+    }
+
+    [TestMethod]
+    public void MainLoopIdle_SleepsWhenTheRescheduleCouldNotBeRaised()
+    {
+        int yields = 0, sleeps = 0;
+        Assert.IsFalse(MainLoopIdle.Wait(2, () => { yields++; return false; }, () => sleeps++));
+        Assert.AreEqual((1, 1), (yields, sleeps));
+    }
+
+    [TestMethod]
+    public void MainLoopIdle_SleepsWhenNobodyWaits()
+    {
+        int yields = 0, sleeps = 0;
+        Assert.IsFalse(MainLoopIdle.Wait(0, () => { yields++; return true; }, () => sleeps++));
+        Assert.AreEqual((0, 1), (yields, sleeps));
+    }
+
+    [TestMethod]
     public void Idle_KeepsCpuWithoutWaitingThreadsAndIsNotPickedAgainFirst()
     {
         var core = Core();
