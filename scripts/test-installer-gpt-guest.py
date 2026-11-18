@@ -308,7 +308,12 @@ def esp_tool(image: Path, esp: dict, tool: str, *arguments: str) -> bytes:
 
 def security_files(image: Path) -> dict[str, bytes]:
     """Kontendatei und Recovery-Sicherungen im ESP-Wurzelverzeichnis (= /data) mit Inhalt."""
-    _, esp, _ = layout(image)
+    # Nicht layout(): bei G3/G5 fehlt die Root-Partition absichtlich; die ESP wird ueber ihren Typ gefunden.
+    table = json.loads(subprocess.run(["sfdisk", "-J", str(image)], capture_output=True, text=True, check=True).stdout)
+    esps = [part for part in table["partitiontable"]["partitions"] if part["type"].upper() == ESP_TYPE]
+    if len(esps) != 1:
+        raise ValueError(f"Genau eine EFI-Systempartition erwartet: {image}")
+    esp = esps[0]
     listing = esp_tool(image, esp, "mdir", "-a", "-b", "::/").decode(errors="replace")
     names = [line.rstrip("/").rsplit("/", 1)[-1] for line in listing.splitlines()]
     return {name: esp_tool(image, esp, "mcopy", "::/" + name, "-")
