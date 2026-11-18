@@ -106,12 +106,13 @@ public class Ext2SmokeTest
         }
     }
 
-    [Test]
-    public void CaseSensitiveAndSymlink()
+    [TestCase(1024u, Ignore = "1K-Volumes: Treiber ohne FirstDataBlock, siehe PATCHES.md")]
+    [TestCase(4096u)]
+    public void CaseSensitiveAndSymlink(uint blockSize)
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = blockSize }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test2", fs), Is.True);
         try
@@ -160,21 +161,23 @@ public class Ext2SmokeTest
         }
     }
 
-    [Test]
-    public void LargeFileIndirectRoundtrip()
+    [TestCase(1024u, Ignore = "1K-Volumes: Treiber ohne FirstDataBlock, siehe PATCHES.md")]
+    [TestCase(4096u)]
+    public void LargeFileIndirectRoundtrip(uint blockSize)
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = blockSize }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test4", fs), Is.True);
         try
         {
             Assert.That(VfsManager.TryMount("ext2test4", ReadOnlySpan<char>.Empty, MountFlags.None, "/ext2d", out _), Is.True);
-            // 64 KiB with 4 KiB blocks: 12 direct + 4 single-indirect blocks.
-            const int Size = 64 * 1024;
-            byte[] payload = new byte[Size];
-            for (int i = 0; i < Size; i++)
+            // 16 blocks: 12 direct + 4 single-indirect blocks.
+            int size = (int)(16 * blockSize);
+            int patchOffset = (int)(13 * blockSize);
+            byte[] payload = new byte[size];
+            for (int i = 0; i < size; i++)
             {
                 payload[i] = (byte)(i * 7 + 13);
             }
@@ -182,22 +185,22 @@ public class Ext2SmokeTest
             Assert.That(VfsManager.TryCreateFile("/ext2d/big.bin", VfsMode.OwnerRead | VfsMode.OwnerWrite), Is.True);
             Assert.That(VfsManager.TryOpenFile("/ext2d/big.bin", out IVfsFileHandle? fh), Is.True);
             long written = fh!.Write(payload);
-            Assert.That(written, Is.EqualTo(Size));
+            Assert.That(written, Is.EqualTo(size));
             fh.Dispose();
 
             // Read back whole file; exercises the indirect-block cache path.
             Assert.That(VfsManager.TryOpenFile("/ext2d/big.bin", out IVfsFileHandle? rh), Is.True);
-            byte[] buf = new byte[Size];
+            byte[] buf = new byte[size];
             long read = rh!.Read(buf);
-            Assert.That(read, Is.EqualTo(Size));
+            Assert.That(read, Is.EqualTo(size));
             Assert.That(buf, Is.EqualTo(payload));
             rh.Dispose();
 
             // Overwrite a span inside the indirect region; the cache must
             // observe the new mapping, not stale entries.
             Assert.That(VfsManager.TryOpenFile("/ext2d/big.bin", out IVfsFileHandle? wh), Is.True);
-            wh!.TrySeek(52 * 1024, SeekWhence.Set);
-            byte[] patch = new byte[4096];
+            wh!.TrySeek(patchOffset, SeekWhence.Set);
+            byte[] patch = new byte[blockSize];
             for (int i = 0; i < patch.Length; i++)
             {
                 patch[i] = (byte)(255 - i);
@@ -207,12 +210,12 @@ public class Ext2SmokeTest
             wh.Dispose();
 
             Assert.That(VfsManager.TryOpenFile("/ext2d/big.bin", out IVfsFileHandle? vh), Is.True);
-            byte[] verify = new byte[Size];
-            Assert.That(vh!.Read(verify), Is.EqualTo(Size));
-            for (int i = 0; i < Size; i++)
+            byte[] verify = new byte[size];
+            Assert.That(vh!.Read(verify), Is.EqualTo(size));
+            for (int i = 0; i < size; i++)
             {
-                byte expected = i >= 52 * 1024 && i < 52 * 1024 + 4096
-                    ? (byte)(255 - (i - 52 * 1024))
+                byte expected = i >= patchOffset && i < patchOffset + patch.Length
+                    ? (byte)(255 - (i - patchOffset))
                     : (byte)(i * 7 + 13);
                 Assert.That(verify[i], Is.EqualTo(expected));
             }
