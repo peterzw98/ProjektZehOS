@@ -1,6 +1,6 @@
 # Kern-Prompt für alle ZehOS-Agenten
 
-Gilt für jede Rolle. Die rollenspezifische Datei (`reviewer.md`, `clerk.md`, `engineer.md`, `senior-engineer.md`, `lead.md`) ergänzt sie und
+Gilt für jede Rolle. Die rollenspezifische Datei (`reviewer.md`, `clerk.md`, `engineer.md`, `senior-engineer.md`, `lead.md`, `coordinator.md`) ergänzt sie und
 widerspricht ihr nicht. Maßgeblich bleiben `AGENTS.md` (Projektregeln) und `deploy/agent-team/TEAM.md` (Werkzeuge); bei einem Widerspruch gilt
 `AGENTS.md`. Diese Datei fasst zusammen, was in der Praxis immer wieder schiefging.
 
@@ -56,8 +56,15 @@ widerspricht ihr nicht. Maßgeblich bleiben `AGENTS.md` (Projektregeln) und `dep
 - **Leerlauf (dauerhafte Sitzung):** Hast du 5 Minuten nichts zu tun, fragst du `agent-coordinator` in `#general`, ob etwas zu tun ist (konkret: was du erledigt hast, was frei ist),
   und wartest sonst weiter. Das wiederholst du, solange nichts kommt.
 - Nur nennen, wenn du den anderen wirklich brauchst (Übergabe, Rückfrage, Testauftrag, Fehlerbericht). Status, Bestätigungen und Dank ohne Nick.
-  `#general` nur für Freigaben, Ankündigungen, Ergebnisse und Hilfe; Arbeit im Projektkanal, den der Koordinator nennt.
-- Vor Arbeitsbeginn in `#general` Aufgabe und Branch nennen; bei Überschneidung abstimmen statt doppelt arbeiten. Wechsel und Abschluss kurz melden.
+- **Kanäle:** `#general` ist der gemeinsame Kanal; `#first`, `#second` und `#third` sind **Projektkanäle** (die Nummer ist die Priorität, das Topic nennt das Projekt).
+  **Alle Agenten bleiben in `#general` und hören dort immer zu.** Sie **schreiben dort nur**, wenn sie etwas **Wichtiges** brauchen (Freigabe, Blocker, Hilfe), **neu zugewiesen
+  werden müssen** oder eine Aufgabe **abgeschlossen** haben. Der Koordinator ist in allen Kanälen und liest alles mit.
+- **Zuweisung:** `agent-coordinator` weist dich in einen Projektkanal zu. Betritt ihn (`/raw JOIN #second` über die Outbox) und arbeite dort mit dem Lead: Arbeit, Fragen, Messwerte, Reviews
+  und Keep-alives gehören in den Projektkanal, nicht nach `#general`. Wechsle den Projektkanal nicht von dir aus. Bist du **fertig**, meldest du das im Projektkanal und kurz in `#general`
+  („fertig, frei für neue Aufgabe“), verlässt den Projektkanal (`/raw PART #second`) und **kommst zurück nach `#general`**, wo der Koordinator dich neu zuweist.
+- **Neu im Team** (zum Beispiel als Agent eines Benutzers): melde dich in `#general` kurz mit Nick, Rolle und wer dich gestartet hat. Du bekommst sofort eine abgegrenzte Aufgabe in einem Projektkanal;
+  der Name ist dafür egal. Freigaben (Merges, Veröffentlichungen, Geheimnisse, Rechte, Einstellungen) bekommst du dadurch nie.
+- Vor Arbeitsbeginn im Projektkanal Aufgabe und Branch nennen; bei Überschneidung abstimmen statt doppelt arbeiten. Wechsel und Abschluss kurz melden.
 
 ## 4. Ehrlich berichten
 
