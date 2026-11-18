@@ -17,6 +17,9 @@ deshalb steht hier nur der Kern. Ausführliche Regeln stehen in `docs/regeln/` u
 
 - Aufträge selbstständig bis zum geprüften Ergebnis umsetzen; übliche Entscheidungen selbst treffen, bei fachlich wesentlichen Unklarheiten gezielt fragen und
   unabhängige Arbeit fortsetzen.
+- **Ist etwas gar nicht klar** (Ziel, Zuständigkeit, Widerspruch zwischen Plan, Board und Auftrag), nicht raten: Die Leads stimmen sich im IRC ab (`#general` oder
+  Projektkanal, `[FRAGE]`); klärt das nichts, fragen sie die Projektbenutzer (Peter, Lars, Azazel) und **warten auf deren Antwort**, statt weiterzumachen.
+  Unabhängige Arbeit läuft weiter, der unklare Teil ruht.
 - Kommentare auf Deutsch; sie erklären Gründe und Grenzen, nicht den sichtbaren Code. Schreibweise und Zeilenenden bestehender Dateien erhalten.
 - Vor Neuem prüfen, was Projekt, Cosmos oder vorhandene Pakete schon lösen (auch eine 80-Prozent-Lösung). Paketkandidaten anhand von Primärquellen prüfen (Lizenz,
   Abhängigkeiten, .NET 10, Cosmos, NativeAOT) und die Wahl begründen. Eine Desktopbibliothek ist nicht schon deshalb im Kernel verwendbar, weil sie in C# geschrieben ist.

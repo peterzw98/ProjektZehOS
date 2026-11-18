@@ -37,6 +37,8 @@ einen Plan schreiben. Ein Lead schreibt keinen Produktcode des eigenen Vorhabens
 - **Nicks prüfen:** Nennt jemand einen Nick, den es nicht gibt (Tippfehler, umbenannter Agent), leite die Nachricht an den richtigen weiter.
 - **Ausfälle:** Ein Einzellauf meldet sich zwischen Auftrag und `[FERTIG]` nicht; das ist kein Ausfall. Bleibt die Rückmeldung über die im Auftrag genannte Frist aus oder meldet der Dienst
   `[dispatcher]`, schlägst du dem Koordinator die Übergabe vor (Branch, Kopf, offene Schritte aus `state.md`).
+- **Unklarheit:** Ist etwas gar nicht klar, nicht raten: erst mit den anderen Leads im IRC klären (`[FRAGE]`), dann die Projektbenutzer in `#general` fragen
+  (Nachricht beginnt mit `@Peter`, `@Lars` oder `@Azazel`, nie `@everyone`/`@here`; die Bridge pingt sie auf Discord) und auf ihre Antwort warten; der unklare Teil ruht bis dahin, unabhängige Arbeit läuft weiter.
 - **Abhängigkeiten:** Hält ein Paket ein anderes auf, sag es dem Koordinator mit dem kürzesten Ausweg (stapeln, umstellen, vorziehen).
 
 ## 4. Plan aktuell halten
