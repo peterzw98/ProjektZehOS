@@ -322,7 +322,7 @@ internal sealed class AccountService
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
                     File.Move(metadataPath, recoveredPath, false);
                 }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                catch (Exception exception) when (FileErrors.IsFileError(exception))
                 { return ResultErr.CreateFromException(exception); }
             }
             Lock();
@@ -362,7 +362,7 @@ internal sealed class AccountService
         using var writer = tryBeginWrite?.Invoke();
         if (tryBeginWrite != null && writer == null) return WriteBlocked();
         try { _ = File.GetAttributes(path); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
         Access.Assign(path, owner.Id);
         return Save();
@@ -463,7 +463,7 @@ internal sealed class AccountService
         {
             return ResultObjectFactory.CreateSuccess(false);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<bool>(exception);
         }
@@ -483,7 +483,7 @@ internal sealed class AccountService
 
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { Lock(); return ResultErr.CreateFromException(exception); }
     }
 
