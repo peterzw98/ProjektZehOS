@@ -55,6 +55,21 @@ class QemuToolTests(unittest.TestCase):
         with mock.patch.object(guest.shutil, 'which', return_value=tool):
             self.assertEqual(guest.qemu_img(), ([tool], None))
 
+    def test_smp_arguments(self):
+        loader_spec = importlib.util.spec_from_file_location('loader', SCRIPTS / 'test-wasm-loader.py')
+        loader = importlib.util.module_from_spec(loader_spec)
+        loader_spec.loader.exec_module(loader)
+        tools = self.cosmos_linux()
+        (tools / 'qemu-system-x86_64').touch()
+        for value in ('', '4,cores=2,threads=2'):
+            with self.subTest(value=value), mock.patch.dict('os.environ', {'ZEHOS_QEMU_SMP': value}), mock.patch.object(guest.subprocess, 'Popen') as popen:
+                guest.start_qemu(Path('z.iso'), Path('d.qcow2'), self.home, 1234, 'tcg', None)
+                for args in (popen.call_args.args[0], loader.build_arguments(Path('qemu'), Path('z.iso'), None, Path('serial'), 'tcg')):
+                    if value:
+                        self.assertEqual(args[args.index('-smp'):args.index('-smp') + 2], ['-smp', value])
+                    else:
+                        self.assertNotIn('-smp', args)
+
     def test_cpu_model_per_accelerator(self):
         # KVM braucht RDRAND/RDSEED fuer die Kennwortanlage (#56); WHPX bricht mit -cpu max/host ab.
         expected = {'tcg': ['-cpu', 'max'], 'kvm': ['-cpu', 'qemu64,+rdrand,+rdseed'], 'whpx': []}

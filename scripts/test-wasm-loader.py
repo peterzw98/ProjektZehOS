@@ -6,6 +6,7 @@ Die App liegt in einem frisch angelegten Ordner, den QEMU als FAT-Laufwerk mit v
 aotprobe.txt fuer die Dateifaelle der AOT-Probe, optional doom.aot mit freedoom1.wad.
 """
 
+import os
 import argparse
 import shutil
 import subprocess
@@ -37,6 +38,8 @@ def build_arguments(qemu: Path, iso: Path, disk: Path | None, serial: Path, acce
                  "-vga", "std", "-boot", "d", "-cdrom", str(iso), "-display", "none",
                  "-serial", f"file:{serial}", "-monitor", "none",
                  "-action", "shutdown=poweroff,reboot=reset"]
+    if os.environ.get("ZEHOS_QEMU_SMP"):
+        arguments.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
     if disk is not None:
         arguments += ["-drive", f"file=fat:{disk},format=raw,if=none,id=appdisk,snapshot=on",
                       "-device", "ahci,id=ahci", "-device", "ide-hd,drive=appdisk,bus=ahci.0"]
