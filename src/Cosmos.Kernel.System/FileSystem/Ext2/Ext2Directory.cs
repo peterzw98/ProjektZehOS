@@ -319,8 +319,9 @@ internal static class Ext2DirectoryHelper
     public static bool RemoveEntry(Ext2Superblock sb, Ext2Inode dir, string name)
     {
         // ZehOS patch ext2-remove-entry, see PATCHES.md
-        if (dir.FullSize == 0)
+        if (dir.FullSize == 0 || dir.FullSize > MaxDirectorySize || (dir.FullSize + sb.BlockSize - 1) / sb.BlockSize > MaxDirectoryBlocks)
         {
+            // A corrupt inode size must not overflow the block count or request a huge buffer.
             return false;
         }
 
