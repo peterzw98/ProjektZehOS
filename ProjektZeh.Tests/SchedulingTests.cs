@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Scheduling;
+using ProjektZeh.Shared;
 
 namespace ProjektZeh.Tests;
 
@@ -238,6 +239,49 @@ public sealed class SchedulingTests
             Assert.IsTrue(next.Value > BackgroundTaskService.Capacity);
         }
         finally { Assert.IsTrue(tasks.StopAll(2000)); }
+    }
+
+    [TestMethod]
+    public void Tasks_FinishedCallbackMayStartAtFullCapacity()
+    {
+        // #244: der endende Job darf den eigenen Neustart nicht blockieren, wenn alle Plaetze belegt sind.
+        var tasks = new BackgroundTaskService();
+        using var restarted = new ManualResetEventSlim();
+        ResultObject<int>? result = null;
+        try
+        {
+            var first = tasks.Start("first", context => context.Sleep(Timeout.Infinite),
+                () => { result = tasks.Start("again", _ => restarted.Set()); });
+            for (int i = 1; i < BackgroundTaskService.Capacity; i++)
+                Assert.IsTrue(tasks.Start("wait", context => context.Sleep(Timeout.Infinite)).IsOK());
+            Assert.IsTrue(tasks.Cancel(first.Value).IsOK());
+            Assert.IsTrue(restarted.Wait(2000));
+            Assert.IsTrue(result!.IsOK());
+        }
+        finally { Assert.IsTrue(tasks.StopAll(2000)); }
+    }
+
+    [TestMethod]
+    public void Tasks_FinishedCallbackExceptionIsRecordedAndKeepsTheWorker()
+    {
+        var tasks = new BackgroundTaskService();
+        using var done = new ManualResetEventSlim();
+        try
+        {
+            var first = tasks.Start("first", _ => { }, () => throw new InvalidOperationException("kaputt"));
+            Assert.IsTrue(SpinWait.SpinUntil(() => tasks.Snapshot().Any(x => x.Id == first.Value && x.Error != null), 2000));
+            StringAssert.Contains(tasks.Snapshot().Single(x => x.Id == first.Value).Error, "kaputt");
+            Assert.IsTrue(tasks.Start("second", _ => done.Set()).IsOK());
+            Assert.IsTrue(done.Wait(2000));
+        }
+        finally { Assert.IsTrue(tasks.StopAll(2000)); }
+    }
+
+    [TestMethod]
+    public void StopAll_UnderStorageLock_IsRefusedInsteadOfDeadlocking()
+    {
+        var tasks = new BackgroundTaskService();
+        Assert.ThrowsException<InvalidOperationException>(() => ProjektZeh.Storage.StorageLock.Run(() => tasks.StopAll(0)));
     }
 
     [TestMethod]
