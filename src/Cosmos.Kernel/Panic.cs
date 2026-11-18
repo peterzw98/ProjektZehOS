@@ -1,6 +1,8 @@
+using System.Runtime.CompilerServices;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
 using Cosmos.Kernel.Core.Memory;
+using Cosmos.Kernel.Core.Scheduler;
 
 namespace Cosmos.Kernel;
 
@@ -9,16 +11,26 @@ namespace Cosmos.Kernel;
 /// </summary>
 internal static class Panic
 {
+    // ZehOS patch ausnahme-hook, see PATCHES.md
+    // One counter for all CPUs: a second exception anywhere while one is
+    // still being reported never reaches the hook and halts. That is the safe
+    // direction once several CPUs can fault at the same time.
+    private static int s_cpuExceptionDepth;
+
     /// <summary>
     /// Triggers a CPU exception panic with context information.
     /// This method is allocation-free to avoid recursive faults.
-    /// Disables interrupts and halts the CPU.
+    /// Disables interrupts and halts the CPU, unless the installed
+    /// <see cref="CpuExceptionHook"/> gives up the faulting thread and a switch
+    /// to another thread can be staged; then it returns and the interrupt exit
+    /// performs that switch.
     /// </summary>
     /// <param name="exceptionName">The name of the CPU exception.</param>
     /// <param name="ctx">The interrupt context with register state.</param>
-    internal static void CpuException(string exceptionName, ref IRQContext ctx)
+    internal static unsafe void CpuException(string exceptionName, ref IRQContext ctx)
     {
         InternalCpu.DisableInterrupts();
+        int depth = ++s_cpuExceptionDepth;
 
         // Use only Serial - allocation-free, no KernelConsole which may allocate
         Serial.WriteString("\n========================================\n");
@@ -28,10 +40,31 @@ internal static class Panic
         PrintCpuContext(ref ctx);
         PrintStackTrace(ref ctx);
         Serial.WriteString("========================================\n");
+
+        if (depth == 1 && CpuExceptionHook.Handler is { } handler
+            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address))
+                == CpuExceptionAction.AbandonThread
+            && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
+        {
+            Serial.WriteString("Thread abandoned.\n");
+            s_cpuExceptionDepth = 0;
+            return;
+        }
+
         Serial.WriteString("System halted.\n");
 
         HaltCpu();
     }
+
+#if ARCH_ARM64
+    private static ulong InstructionPointer(ref IRQContext ctx) => ctx.elr;
+
+    private static ulong StackPointer(ref IRQContext ctx) => ctx.sp;
+#else
+    private static ulong InstructionPointer(ref IRQContext ctx) => ctx.rip;
+
+    private static ulong StackPointer(ref IRQContext ctx) => ctx.rsp;
+#endif
 
     private static void PrintCpuContext(ref IRQContext ctx)
     {
