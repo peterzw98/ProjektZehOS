@@ -179,7 +179,7 @@ internal static class Ext2DirectoryHelper
             return false;
         }
 
-        // ZehOS patch ext2-rmdir, see PATCHES.md
+        // ZehOS patch ext2-addentry-guard, see PATCHES.md
         // Callers check for an existing name with TryFind, which also fails
         // on a corrupt directory; adding then would create a duplicate. A
         // hole would also make the write-back below hit block 0.
@@ -253,7 +253,7 @@ internal static class Ext2DirectoryHelper
                 for (uint i = 0; i < blocks; i++)
                 {
                     uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    if (blk != 0) // ZehOS patch ext2-rmdir: never write a hole to block 0
+                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
                     {
                         sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
                     }
@@ -277,7 +277,7 @@ internal static class Ext2DirectoryHelper
                 for (uint i = 0; i < blocks; i++)
                 {
                     uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    if (blk != 0) // ZehOS patch ext2-rmdir: never write a hole to block 0
+                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
                     {
                         sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
                     }
