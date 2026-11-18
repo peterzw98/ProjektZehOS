@@ -26,7 +26,12 @@ internal sealed class BackgroundTaskService
     public const int Capacity = 8;
     private readonly object gate = new();
     private readonly List<Job> jobs = new(Capacity);
+    private readonly Func<ThreadStart, ResultObject<Thread>> startThread;
     private int nextId;
+
+    /// <param name="startThread">Nur fuer Tests; sonst <see cref="ThreadStarter.TryStart(ThreadStart, int)"/>.</param>
+    public BackgroundTaskService(Func<ThreadStart, ResultObject<Thread>>? startThread = null) =>
+        this.startThread = startThread ?? (body => ThreadStarter.TryStart(body));
 
     public ResultObject<int> Start(string name, Action<BackgroundTaskContext> action)
     {
@@ -44,16 +49,17 @@ internal sealed class BackgroundTaskService
             }
             if (jobs.Count == Capacity || nextId == int.MaxValue)
                 return ResultObjectFactory.CreateFailure<int>(ResultCode.Failure, "Aufgabenlimit erreicht (8); laufende Aufgaben zuerst abbrechen.");
-            var job = new Job(++nextId, name);
-            job.Thread = new Thread(() => Run(job, action));
-            jobs.Add(job);
-            try { job.Thread.Start(); }
-            catch (Exception exception)
+            var job = new Job(nextId + 1, name);
+            // Run wartet auf gate; der Job ist deshalb vollstaendig eingetragen, bevor er seinen Zustand setzt.
+            var started = startThread(() => Run(job, action));
+            if (!started.IsOK())
             {
-                jobs.RemoveAt(jobs.Count - 1);
                 job.Cancellation.Dispose();
-                return ResultObjectFactory.CreateFromException<int>(exception);
+                return ResultObjectFactory.CreateFailure<int>(started.Status);
             }
+            nextId++;
+            job.Thread = started.Value!;
+            jobs.Add(job);
             return ResultObjectFactory.CreateSuccess(job.Id);
         }
     }

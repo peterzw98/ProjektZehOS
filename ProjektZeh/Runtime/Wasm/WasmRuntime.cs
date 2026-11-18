@@ -9,6 +9,7 @@ using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.X509;
 using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
@@ -88,12 +89,20 @@ internal static unsafe partial class WasmRuntime
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(completed);
         bool retired;
+        string? notStarted = null;
         lock (gate)
         {
             retired = workerRetired;
-            if (!retired) EnqueueLockedJob(load, entry, gas, session, completed, name);
+            if (!retired)
+            {
+                // Ohne Worker bliebe der Lauf ewig in der Warteschlange (Run wartet dann unbegrenzt).
+                var started = StartWorkerLocked();
+                if (!started.IsOK()) notStarted = "Wasm-Worker nicht gestartet: " + started.Message;
+                else EnqueueLockedJob(load, entry, gas, session, completed, name);
+            }
         }
         if (retired) completed(WasmStatus.CpuFault, 0, RetiredMessage);
+        else if (notStarted != null) completed(WasmStatus.LoadFailed, 0, notStarted);
     }
 
     // Unter gate gerufen.
@@ -122,18 +131,18 @@ internal static unsafe partial class WasmRuntime
             }
             completed(status, result, message);
         });
-        StartWorkerLocked();
         Monitor.Pulse(gate);
     }
 
     /// <summary>
     /// Legt den Worker beim Start an, solange der Heap noch frei von Netzmuell ist: Der 8-MiB-Stack kommt aus dem
     /// nativen Heap, dessen Fehlschlag keine Collection ausloest; Cosmos 3.0.97 benutzt dann einen Nullzeiger.
-    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie.
+    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert die Stackprobe (ThreadStarter), bleibt der
+    /// Worker aus; der naechste Lauf versucht es erneut und endet sonst mit LoadFailed statt zu haengen.
     /// </summary>
-    public static void StartWorker()
+    public static ResultErr StartWorker()
     {
-        lock (gate) StartWorkerLocked();
+        lock (gate) return StartWorkerLocked();
     }
 
     /// <summary>
@@ -188,12 +197,12 @@ internal static unsafe partial class WasmRuntime
             }
             else
             {
-                try { StartWorkerLocked(); }
-                catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
+                // Scheitert der Ersatzstart (Stackprobe, ThreadStarter), bleibt es wie bisher bei der Quarantaene ohne Worker.
+                var started = StartWorkerLocked();
+                if (!started.IsOK())
                 {
-                    worker = null;
                     workerRetired = true;
-                    restart = exception.Message;
+                    restart = started.Message;
                 }
             }
         }
@@ -223,11 +232,14 @@ internal static unsafe partial class WasmRuntime
     }
 
 #endif
-    private static void StartWorkerLocked()
+    private static ResultErr StartWorkerLocked()
     {
-        if (worker != null || workerRetired) return;
-        worker = new Thread(Work, ThreadStackBytes);
-        worker.Start();
+        if (worker != null) return ResultErr.CreateSuccess();
+        if (workerRetired) return ResultErr.CreateFailure(ResultCode.Failure, RetiredMessage);
+        var started = ThreadStarter.TryStart(Work, ThreadStackBytes);
+        if (!started.IsOK()) return started.Status;
+        worker = started.Value;
+        return ResultErr.CreateSuccess();
     }
 
     /// <summary>Fuehrt einen Lauf aus und wartet auf das Ergebnis; nur ausserhalb des Workers aufrufen.</summary>

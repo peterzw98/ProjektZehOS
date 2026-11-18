@@ -7,6 +7,8 @@ using System.Net.Sockets;
 using System.Threading;
 using Org.BouncyCastle.Tls;
 using ProjektZeh.Network;
+using ProjektZeh.Scheduling;
+using ProjektZeh.Shared;
 using ProjektZeh.Update;
 
 namespace ProjektZeh.Runtime.Wasm;
@@ -58,28 +60,39 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
             else
             {
                 Connections.Add(connection);
-                if (worker == null)
+                var started = StartWorkerLocked();
+                if (!started.IsOK())
                 {
-                    try
-                    {
-                        worker = new Thread(Work);
-#if ZEHOS_NETWORK_TEST
-                        worker.IsBackground = true;
-#endif
-                        worker.Start();
-                    }
-                    catch (Exception exception)
-                    {
-                        worker = null;
-                        Connections.Remove(connection);
-                        failure = exception;
-                    }
+                    Connections.Remove(connection);
+                    failure = new InvalidOperationException(started.Message);
                 }
                 Monitor.Pulse(Gate);
             }
         }
         if (failure != null) throw failure;
         return connection;
+    }
+
+    /// <summary>
+    /// Startet den gemeinsamen Netzworker beim Boot, damit die erste App-Verbindung keinen Thread unter Spiel-Last anlegt
+    /// (Cosmos prueft den Threadstack nicht, siehe ThreadStarter). Der Worker wartet ohne Verbindung auf Gate.
+    /// </summary>
+    public static ResultErr StartWorker()
+    {
+        lock (Gate) return StartWorkerLocked();
+    }
+
+    private static ResultErr StartWorkerLocked()
+    {
+        if (worker != null) return ResultErr.CreateSuccess();
+        var started = ThreadStarter.TryStart(Work);
+        if (!started.IsOK()) return started.Status;
+        worker = started.Value;
+#if ZEHOS_NETWORK_TEST
+        // Im Hosttest darf der dauerhaft wartende Worker das Prozessende nicht aufhalten.
+        worker!.IsBackground = true;
+#endif
+        return ResultErr.CreateSuccess();
     }
 
     private static void Work()
