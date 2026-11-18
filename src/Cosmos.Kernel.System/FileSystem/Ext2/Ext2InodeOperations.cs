@@ -454,6 +454,14 @@ internal sealed class Ext2InodeOperations : IInodeOperations
             return false;
         }
 
+        // ZehOS patch ext2-rmdir, see PATCHES.md
+        // "." would remove the parent's own entry for itself; ".." its link
+        // to the grandparent.
+        if (name.SequenceEqual(".") || name.SequenceEqual(".."))
+        {
+            return false;
+        }
+
         string childName = name.ToString();
         if (!Ext2DirectoryHelper.TryFind(_superblock, parent, name, out Ext2DirEntry entry))
         {
@@ -486,13 +494,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
             return false;
         }
 
-        uint block = target.Block[0];
-        if (block != 0)
-        {
-            _superblock.FreeBlock(block);
-        }
-
+        // ZehOS patch ext2-rmdir: free every block (including blocks past
+        // the first and indirect pointer blocks) and persist links_count 0
+        // before the inode is released.
+        _superblock.Truncate(target, 0);
         target.LinksCount = 0;
+        _superblock.WriteInode(target);
         _superblock.FreeInode(target.InodeNumber);
 
         // Removing a subdirectory drops one parent link.
