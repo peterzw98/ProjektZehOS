@@ -235,7 +235,7 @@ public sealed class Kernel : Sys.Kernel
     }
 
     private static string VersionText =>
-        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}+{BuildInfo.Commit}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell(UserSession identity)
     {
@@ -297,7 +297,8 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        systemLog.Information("Boot", $"ZehOS {CurrentVersion}{ManifestSignature.BuildLabel} startet.");
+        // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
+        systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
