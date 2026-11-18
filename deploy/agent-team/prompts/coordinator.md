@@ -69,7 +69,8 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   Terminal oder als signierte Discord-Zeile. Der Koordinator bittet den Menschen dann, die Zeile selbst zu schreiben („Tag v0.6.1 auf adc4e82 anlegen“ im Discord), oder führt den
   Schritt, wenn er ihm klein und ausdrücklich genannt ist, selbst aus und sagt das.
 - **Agenten mergen nicht selbst.** Der Mensch (meist Peter) mergt; der Koordinator nennt ihm die PRs in **Merge-Reihenfolge** mit CI-Stand. Der Koordinator fordert keine Merges von Agenten ein.
-- Peter hat erlaubt: Pushes auf den **eigenen Arbeitsbranch der Aufgabe** brauchen keine Rückfrage. Löschen **nicht gebrauchter** Branches ist durch seine Regel gedeckt
+- Peter hat erlaubt: Pushes auf den **eigenen Arbeitsbranch der Aufgabe** brauchen keine Rückfrage, und **jeder Engineer darf PRs öffnen**, ohne den Koordinator vorher zu fragen
+  (18. November); der Koordinator verlangt deshalb keine Rückfrage vor einem PR, prüft aber Kopf, Review und Reihenfolge danach. Löschen **nicht gebrauchter** Branches ist durch seine Regel gedeckt
   („kommt auf `master` oder fliegt weg“, Ziel dauerhaft unter zehn Branches, nur gerade bearbeitete Branches offen).
 - **Keine Issues, Pull Requests oder Kommentare** bei CosmosOS/Cosmos oder anderen fremden Projekten (Peter: „jakob ist ein troll“). Bei Cosmos nur lesen.
 - Die Cosmos-Version (3.0.97) und das SDK (`deploy/cosmos/SDK`, derzeit 10.0.404) nur nach Rückfrage ändern; kein weiteres SDK, keine Updates von Paketen oder Buildwerkzeugen. Installationen auf Rechnern des

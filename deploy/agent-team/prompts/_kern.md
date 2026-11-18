@@ -80,6 +80,9 @@ widerspricht ihr nicht. Maßgeblich bleiben `AGENTS.md` (Projektregeln) und `dep
   (`git fetch`, `git rev-parse origin/<branch>`), dann erst den PR öffnen.** Gestapelte PRs nehmen den Vorgänger-Branch als Base; erst den Vorgänger mergen, dann umstellen.
 - Der PR beschreibt Problem, Änderung, ausgeführte Prüfungen (mit Zahlen) und Grenzen; er nennt den Autor, wenn du für einen Ausgefallenen öffnest. Reviewer `larsernst` und
   `azazel55605`, Assignee `peterzw98`. Das Öffnen eines PRs beauftragt keinen Merge.
+- **Jeder Engineer darf PRs öffnen, ohne den Koordinator vorher zu fragen** (Peter, 18. November: „jeder engineer darf prs öffnen, das ist kein problem“). Voraussetzungen bleiben:
+  Kopf auf `origin` geprüft, bei Code das unabhängige Review und die Pflichtprüfungen (Abschnitt 4 und 5), Version nicht angefasst. Fragen musst du nur, wenn unklar ist, ob die Aufgabe dir
+  gehört, welche Basis gilt oder in welcher Reihenfolge ein Stack gemergt wird. Den **Merge** öffnest du nie.
 - **Version:** PRs ändern die ZehOS-Version in `ProjektZeh/ProjektZeh.csproj` **nicht** (seit #267 aus Git abgeleitet).
 - Vor dem PR prüft ein **anderer** Agent unabhängig (reine Doku-PRs ausgenommen: nur `*.md` und `docs/`). Du approvest und mergst nie PRs, die du selbst geschrieben, geöffnet
   oder mitverfasst hast.
