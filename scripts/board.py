@@ -87,7 +87,13 @@ def teams_of(data):
 
 
 def fields(body, prefix):
-    return dict(p.split("=", 1) for p in body[len(prefix):].split() if "=" in p)
+    # Nur die erste Zeile und das erste Vorkommen je Schlüssel: Ein Freitext („Grund … team=buzz“) darf nichts umdeuten
+    out = {}
+    for p in body[len(prefix):].split("\n", 1)[0].split():
+        if "=" in p:
+            k, v = p.split("=", 1)
+            out.setdefault(k, v)
+    return out
 
 
 def claims(data):
@@ -97,8 +103,13 @@ def claims(data):
     for c in data["comments"]:
         body = c["body"].strip()
         if body.startswith(FREE):
-            team = fields(body, FREE).get("team")
-            out = [x for x in out if team and x.get("team") != team]   # ohne team= (alte Form): alle
+            f = fields(body, FREE)
+            team, agents = f.get("team"), f.get("agents")
+            if agents is not None:   # beendet genau die beim Freigeben gelesenen Übernahmen, keine spätere
+                ended = {(team, x) for x in agents.split(",")}
+                out = [x for x in out if (x.get("team"), x.get("agent")) not in ended]
+            else:                    # ältere Formen: ganzes Team, ohne team= alle
+                out = [x for x in out if team and x.get("team") != team]
         elif body.startswith(WITHDRAW):
             f = fields(body, WITHDRAW)
             out = [x for x in out if (x.get("team"), x.get("agent")) != (f.get("team"), f.get("agent"))]
@@ -117,6 +128,21 @@ def comment(number, body):
     gh("issue", "comment", str(number), "-R", REPO, "--body", body)
 
 
+def remove_label_if_unowned(number, team):
+    """Team-Label nur entfernen, wenn danach keine gültige Übernahme dieses Teams mehr daran hängt (gemeinsames Label)."""
+    if not [x for x in claims(issue(number)) if x.get("team") == team]:
+        gh("issue", "edit", str(number), "-R", REPO, "--remove-label", f"team:{team}")
+
+
+def soft_status(number, column):
+    # Die Übernahme gilt auch, wenn das Board gerade nicht erreichbar ist; dann nur warnen
+    try:
+        set_status(number, column)
+    except SystemExit as e:
+        print(f"board: Übernahme gilt, Spalte nicht gesetzt ({e}); später 'board.py status {number} \"{column}\"'",
+              file=sys.stderr)
+
+
 def cmd_claim(a):
     team = a.team.lower()
     for v in (team, a.agent, a.branch):
@@ -129,37 +155,44 @@ def cmd_claim(a):
     other = [t for t in teams_of(data) if t != team]
     owner = owner_of(data)
     if other or (owner and (owner.get("team"), owner.get("agent")) != me):
-        who = f"{owner.get('team')} ({owner.get('agent')})" if owner else ", ".join(other)
+        if owner:
+            who = f"{owner.get('team')} ({owner.get('agent')})"
+        else:   # Label ohne Übernahme: vorgesehen (new --team) oder Rest eines Abbruchs; das klärt das andere Team
+            who = f"Label team:{', team:'.join(other)} ohne Übernahme (vorgesehen oder Rest, mit dem Team klären)"
         print(f"board: #{a.number} hat schon {who}; nicht übernehmen", file=sys.stderr)
         sys.exit(3)
     if owner:   # dieselbe Übernahme noch einmal: nichts zu tun
-        set_status(a.number, "Übernommen")
+        soft_status(a.number, "Übernommen")
         print(f"#{a.number} gehört schon {team} ({a.agent})")
         return
-    gh("issue", "edit", str(a.number), "-R", REPO, "--add-label", f"team:{team}")
+    had_label = team in teams_of(data)
+    if not had_label:
+        gh("issue", "edit", str(a.number), "-R", REPO, "--add-label", f"team:{team}")
     try:
         comment(a.number, f"{CLAIM} team={team} agent={a.agent} branch={a.branch}")
     except SystemExit:
-        # Ohne Kommentar bliebe ein Label ohne Inhaber stehen und sperrte den Block für andere Teams
-        gh("issue", "edit", str(a.number), "-R", REPO, "--remove-label", f"team:{team}")
+        # Ohne Kommentar bliebe ein Label ohne Inhaber stehen; ein gemeinsames Label anderer Agenten bleibt aber
+        if not had_label:
+            remove_label_if_unowned(a.number, team)
         raise
-    # Gleichzeitige Übernahmen: Der frühere Kommentar gilt. Den eigenen Kommentar abwarten, falls GitHub ihn noch nicht liefert.
-    for attempt in range(5):
+    # Gleichzeitige Übernahmen: Der frühere Kommentar gilt. Den eigenen Kommentar abwarten, falls GitHub ihn noch nicht
+    # liefert, und einmal mit Abstand nachlesen, falls der frühere Kommentar eines anderen verzögert erscheint.
+    for attempt in range(6):
         c = claims(issue(a.number))
         mine = [x for x in c if (x.get("team"), x.get("agent")) == me]
-        if mine:
+        if mine and (attempt > 0 or len(c) > 1):
             break
-        time.sleep(2)
-    else:
+        time.sleep(3)
+    if not mine:
         sys.exit(f"board: eigene Übernahme von #{a.number} nicht lesbar; mit 'board.py list' prüfen und erneut claimen")
     first = c[0]
     if (first.get("team"), first.get("agent")) != me:
-        comment(a.number, f"{WITHDRAW} team={team} agent={a.agent} (zeitgleich, {first.get('agent')} war früher)")
+        comment(a.number, f"{WITHDRAW} team={team} agent={a.agent}\nzeitgleich übernommen, {first.get('agent')} war früher")
         if first.get("team") != team:
-            gh("issue", "edit", str(a.number), "-R", REPO, "--remove-label", f"team:{team}")
+            remove_label_if_unowned(a.number, team)
         print(f"board: #{a.number} hat {first.get('team')} ({first.get('agent')}) zuerst übernommen", file=sys.stderr)
         sys.exit(3)
-    set_status(a.number, "Übernommen")
+    soft_status(a.number, "Übernommen")
     print(f"#{a.number} übernommen von {team} ({a.agent}, Branch {a.branch})")
 
 
@@ -168,11 +201,16 @@ def cmd_release(a):
     data = issue(a.number)
     if team not in teams_of(data):
         sys.exit(f"board: #{a.number} gehört nicht Team {team}; nur das eigene Team gibt frei")
-    gh("issue", "edit", str(a.number), "-R", REPO, "--remove-label", f"team:{team}")
-    comment(a.number, f"{FREE} team={team} {a.reason}".strip())
-    if not [t for t in teams_of(data) if t != team]:
-        set_status(a.number, "Offen")
-    print(f"#{a.number} freigegeben")
+    # Erst die gelesenen Übernahmen namentlich beenden, dann das Label nur entfernen, wenn keine neue dazugekommen ist
+    # (Übergabe im Team: Ein Agent übernimmt, während der andere freigibt)
+    ended = [x.get("agent") for x in claims(data) if x.get("team") == team]
+    reason = f"\n{a.reason}" if a.reason else ""
+    comment(a.number, f"{FREE} team={team} agents={','.join(ended)}{reason}")
+    remove_label_if_unowned(a.number, team)
+    rest = issue(a.number)
+    if not teams_of(rest):
+        soft_status(a.number, "Offen")
+    print(f"#{a.number} freigegeben" + ("" if team not in teams_of(rest) else " (Label bleibt: neue Übernahme im Team)"))
 
 
 def cmd_new(a):

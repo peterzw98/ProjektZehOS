@@ -37,4 +37,8 @@ python3 scripts/board.py status 123 "Review/PR"
 python3 scripts/board.py release 123 buzz "pausiert, Stand auf task/x"
 ```
 
+**Grenzen:** Wer kommentieren darf, könnte `[BOARD]`-Zeilen fälschen; das Board ist Abstimmung unter Kooperierenden, keine Zugangskontrolle (Freigaben bleiben in
+`AGENTS.md`). Ein Team-Label ohne Übernahme (vorgesehen per `new --team` oder Rest eines Abbruchs) sperrt den Block für andere Teams, bis das Team ihn
+übernimmt oder freigibt; `claim` meldet das.
+
 Teams (Labels): `team:peter`, `team:laser`, `team:buzz`, `team:azazel`; ein neues Team legt sein Label einmal mit `gh label create team:<name>` an.
