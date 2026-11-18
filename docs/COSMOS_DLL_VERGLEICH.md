@@ -52,6 +52,17 @@ Namens enthält dagegen nur die Bibliothek unter `lib/netstandard2.0/` mit ander
 Projektdateien; ob der Patcher-Analyzer im Kernelbau damit gleich wirkt, zeigt erst der Vergleich der Build-Logs
 (Analyzer-Meldungen, `check-plug-binding.py`).
 
+Kernelbau alt gegen neu (HPz, 18.11.2026, beide Seiten SDK 10.0.404 und eigener NuGet-Cache, damit nur die
+Cosmos-Pakete verschieden sind): alt `master` 6ec4e93 mit NuGet 3.0.97 und den global installierten Werkzeugen 3.0.97,
+neu E1-B (41470b4, wiederholt auf ae7af03) mit `scripts/build-cosmos.sh`, Feed 3.0.97-zehos.1 und Werkzeugen per
+`--tool-path`. Beide Seiten: `cosmos build … --verbose` Ende 0, `check-plug-binding.py` „11 ZehOS-Plugs gebunden“ mit
+gleicher Liste, Hosttests mit `-warnaserror` 1488/1488, ISO 25 063 424 Byte, ELF 21 109 600 beziehungsweise 21 109 536
+Byte (die ZehOS-Version aus Git ist je Branch anders lang), keine Compiler- oder Analyzer-Warnung. Der Patcher-Analyzer
+wird auf beiden Seiten geladen. Die alte Seite meldet zwölf NuGet-Warnungen „Expected package
+_Cosmos.Build.Analyzer.Patcher 3.0.97, but got package Cosmos.Build.Analyzer.Patcher 3.0.97“: nuget.org liefert unter
+der ID mit Unterstrich das andere Paket aus, daher auch das abweichende Layout oben. Der eigene Feed hat das nicht.
+Gaststarts (Desktop, Recovery, Threads, Isolation, ext2, Doom, Energie) und VMware sind noch offen.
+
 Reproduzierbarkeit: derselbe Commit, zweimal gebaut in zwei Arbeitsbäumen unter verschiedenen Pfaden, je mit eigenem
 NuGet-Cache und gleicher PathMap: 85 DLLs, davon 54 `gleich` und 31 `bauangaben`, keine `VERSCHIEDEN`; kein lokaler Pfad
 in einer DLL.
