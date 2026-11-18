@@ -8,8 +8,8 @@ namespace Cosmos.Kernel.Tests.System.FileSystem.Ext2;
 
 /// <summary>
 /// ZehOS patch ext2-directory-limit, see PATCHES.md: free records no longer count against a parse limit, and a
-/// directory beyond the size limits is refused instead of being listed as empty. Listing goes through the public
-/// ReadDir so the tests read the same on the unpatched driver.
+/// directory beyond the size limits is refused instead of being listed as empty. Only
+/// Lookup_OfEntryBeyondOldParseLimit_Finds uses API that exists before the patch; the others use TryParseDirectory.
 /// </summary>
 [TestFixture]
 public class Ext2DirectoryLimitTests
