@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace ProjektZeh.Scheduling;
 
@@ -17,19 +18,28 @@ namespace ProjektZeh.Scheduling;
 internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice?> sliceOf, Func<T, bool> isIdle) where T : class
 {
     private readonly RoundRobinQueue<T> queue = new(capacity);
+    private int waiting;
 
     public int Count => queue.Count;
+    /// <summary>
+    /// Anzahl der Threads in der Run-Queue, ohne Sperre lesbar: Der laufende Thread steht nicht darin (Pick entnimmt ihn),
+    /// ein Wert groesser 0 heisst also, dass ausser ihm jemand bereit ist. Nur ein Hinweis fuer die Hauptschleife.
+    /// </summary>
+    public int Waiting => Volatile.Read(ref waiting);
     public T? At(int index) => queue.At(index);
-    public void Ready(T thread) => queue.Add(thread);
-    public void Blocked(T thread) => queue.Remove(thread);
-    public void PickFailed(T thread) => queue.AddFirst(thread);
+    public void Ready(T thread) { queue.Add(thread); Publish(); }
+    public void Blocked(T thread) { queue.Remove(thread); Publish(); }
+    public void PickFailed(T thread) { queue.AddFirst(thread); Publish(); }
 
     public T? Pick()
     {
         T? next = queue.Take();
         if (next != null) sliceOf(next)?.Reset();
+        Publish();
         return next;
     }
+
+    private void Publish() => Volatile.Write(ref waiting, queue.Count);
 
     /// <summary>Timer-Tick fuer den laufenden Thread; true heisst verdraengen, danach waehlt Cosmos ueber <see cref="Pick"/>.</summary>
     public bool Tick(T current, ulong elapsedNs)
@@ -53,6 +63,7 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
         {
             queue.Remove(current);
             queue.Add(current);
+            Publish();
         }
         return true;
     }

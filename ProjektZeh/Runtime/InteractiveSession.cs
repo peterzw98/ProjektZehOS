@@ -5,6 +5,7 @@ using ProjektZeh.Apps.TaskManager;
 using ProjektZeh.Graphics;
 using ProjektZeh.Input;
 using ProjektZeh.Network;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Security;
 using ProjektZeh.Shell;
 using ProjektZeh.SystemServices;
@@ -142,8 +143,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 dirty = false;
                 nextFrame = FrameTiming.NextDeadline(now);
             }
-            // Der HAL-Wartetimer tickt im Referenzgast nur mit 18 Hz; der Scheduler weckt feiner auf.
-            Thread.Sleep(1);
+            CosmosMainLoopIdle.Wait();
         }
     }
 

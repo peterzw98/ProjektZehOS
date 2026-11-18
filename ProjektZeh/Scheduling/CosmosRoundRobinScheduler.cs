@@ -13,9 +13,21 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     private ulong preemptions;
     public string Name => "ZehOS RoundRobin";
 
-    public void InitializeCpu(PerCpuState state) => state.SchedulerData =
-        new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount, thread => thread.SchedulerData as SchedulerTimeSlice, thread => thread.IsIdle);
-    public void ShutdownCpu(PerCpuState state) => state.SchedulerData = null;
+    // Cosmos 3.0.97 nutzt nur eine CPU; der Hinweis der Hauptschleife liest deren Queue.
+    private static RoundRobinCore<SchedulerThread>? firstCpu;
+    internal static int WaitingThreads => firstCpu?.Waiting ?? 0;
+
+    public void InitializeCpu(PerCpuState state)
+    {
+        var core = new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount, thread => thread.SchedulerData as SchedulerTimeSlice, thread => thread.IsIdle);
+        state.SchedulerData = core;
+        firstCpu ??= core;
+    }
+    public void ShutdownCpu(PerCpuState state)
+    {
+        if (ReferenceEquals(firstCpu, state.SchedulerData)) firstCpu = null;
+        state.SchedulerData = null;
+    }
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) => thread.SchedulerData = new SchedulerTimeSlice(QuantumNs);
     public void OnThreadReady(PerCpuState state, SchedulerThread thread)
     {
