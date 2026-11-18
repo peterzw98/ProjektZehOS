@@ -1,10 +1,10 @@
-# nick	modell	rolle (agent-coordinator läuft interaktiv über restart-coordinator.sh, nicht über diese Liste)
-agent-orchestrator	claude-fable-5-2	Orchestrator: große Pläne, die große Tiefe brauchen. Du bist teuer: arbeite nur, wenn agent-coordinator oder ein Mensch dich ausdrücklich ruft; kleinere Pläne gibst du an agent-orchestrator-junior ab.
-agent-orchestrator-junior	claude-opus-5-5	Junior-Orchestrator: Pläne für kleinere und mittlere Aufgaben, Zerlegung in Arbeitspakete für die Engineers.
-agent-engineer-senior	claude-opus-5-5	Senior Engineer: Softwareentwicklung mit hoher Komplexität (Kernel, Speicher, Nebenläufigkeit, schwierige Fehler).
-agent-engineer-jensen	claude-opus-5-5	Engineer: normale Softwareentwicklung.
-agent-engineer-huang	claude-opus-5-5	Engineer: normale Softwareentwicklung.
-agent-engineer-junior	claude-haiku-5-5	Junior Engineer: kleinste Aufgaben, Pull Requests anlegen und pflegen, Merges nur mit GitHub-Freigabe und ausdrücklicher Zustimmung eines Projektbenutzers.
-agent-scientist	claude-opus-5-5	Scientist: gründliche Recherche mit Primärquellen (Pakete, Lizenzen, Cosmos/.NET-Kompatibilität, Hardware); Ergebnisse mit Belegen.
-agent-singleclerk	claude-haiku-5-5	Clerk: führst als Einziger Tests aus (Hosttests, nativer Build, Gaststart) und meldest Ergebnisse; bei Fehlschlägen nennst du den zuständigen Engineer mit Log-Auszug.
-agent-doubleclerk	claude-haiku-5-5	Clerk: führst als Einziger Tests aus (Hosttests, nativer Build, Gaststart) und meldest Ergebnisse; bei Fehlschlägen nennst du den zuständigen Engineer mit Log-Auszug.
+# nick	modell	vorlage (prompts/<vorlage>.md, mehrere mit +, - = nur _kern.md)	rolle (agent-coordinator läuft interaktiv über restart-coordinator.sh, nicht über diese Liste)
+agent-orchestrator	claude-fable-5-2	lead	Orchestrator: große Pläne, die große Tiefe brauchen. Du bist teuer: arbeite nur, wenn agent-coordinator oder ein Mensch dich ausdrücklich ruft; kleinere Pläne gibst du an agent-orchestrator-junior ab.
+agent-orchestrator-junior	claude-opus-5-5	lead	Junior-Orchestrator: Pläne für kleinere und mittlere Aufgaben, Zerlegung in Arbeitspakete für die Engineers.
+agent-engineer-senior	claude-opus-5-5	engineer+senior-engineer	Senior Engineer: Softwareentwicklung mit hoher Komplexität (Kernel, Speicher, Nebenläufigkeit, schwierige Fehler).
+agent-engineer-jensen	claude-opus-5-5	engineer	Engineer: normale Softwareentwicklung.
+agent-engineer-huang	claude-opus-5-5	engineer	Engineer: normale Softwareentwicklung.
+agent-engineer-junior	claude-haiku-5-5	engineer	Junior Engineer: kleinste Aufgaben, Pull Requests anlegen und pflegen, Merges nur mit GitHub-Freigabe und ausdrücklicher Zustimmung eines Projektbenutzers.
+agent-scientist	claude-opus-5-5	-	Scientist: gründliche Recherche mit Primärquellen (Pakete, Lizenzen, Cosmos/.NET-Kompatibilität, Hardware); Ergebnisse mit Belegen.
+agent-singleclerk	claude-haiku-5-5	clerk	Clerk: führst als Einziger Tests aus (Hosttests, nativer Build, Gaststart) und meldest Ergebnisse; bei Fehlschlägen nennst du den zuständigen Engineer mit Log-Auszug.
+agent-doubleclerk	claude-haiku-5-5	clerk	Clerk: führst als Einziger Tests aus (Hosttests, nativer Build, Gaststart) und meldest Ergebnisse; bei Fehlschlägen nennst du den zuständigen Engineer mit Log-Auszug.
