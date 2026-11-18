@@ -16,6 +16,7 @@
 //                  ImplAttributes, Aufrufkonvention, DllImport/RuntimeImport, Koerper als IL mit aufgeloesten Token samt
 //                  Lokalen und Ausnahmebereichen), Attribut-Zeichenketten, Assemblyverweise und eingebettete Ressourcen.
 //                  Nicht verglichen: Constraints generischer Parameter, Events, Properties und deren Methodenzuordnung.
+//                  Anfangsdaten, deren Laenge sich nicht aus der Feldsignatur ergibt, zaehlen als Hinweis (VERSCHIEDEN).
 //   VERSCHIEDEN    mit Hinweisen, was abweicht.
 // Ende 0, wenn keine Datei VERSCHIEDEN ist und beide Seiten dieselben DLLs haben; IL-gleich zaehlt als Gleichstand.
 // Dateibasierte Apps veroeffentlichen in .NET 10 standardmaessig mit NativeAOT und ziehen dafuer Microsoft.DotNet.ILCompiler
@@ -129,6 +130,9 @@ static class Assembly
         Diff(findings, "Attribut", viewA.AttributeStrings(), viewB.AttributeStrings());
         Diff(findings, "Typ", viewA.Types(), viewB.Types());
         Diff(findings, "Feld", viewA.Fields(), viewB.Fields());
+        // Nicht pruefbare Anfangsdaten nie still als gleich werten.
+        findings.AddRange(viewA.Unchecked.Select(name => $"nicht pruefbar in A: {name}"));
+        findings.AddRange(viewB.Unchecked.Select(name => $"nicht pruefbar in B: {name}"));
         Diff(findings, "Ressource", viewA.Resources(), viewB.Resources());
         var bodiesA = viewA.Bodies();
         var bodiesB = viewB.Bodies();
@@ -158,6 +162,8 @@ static class Assembly
     {
         private readonly MetadataReader md = pe.GetMetadataReader();
         private readonly Names names = new(pe.GetMetadataReader());
+        // Felder mit Anfangsdaten, die FieldData nicht vergleichen konnte; gefuellt von Fields().
+        public List<string> Unchecked { get; } = [];
 
         public HashSet<string> References() =>
             md.AssemblyReferences.Select(handle => md.GetAssemblyReference(handle))
@@ -211,14 +217,20 @@ static class Assembly
                     text.Append(" const ").Append(value.TypeCode).Append(' ').Append(Convert.ToHexString(md.GetBlobBytes(value.Value)));
                 }
                 int rva = field.GetRelativeVirtualAddress();
-                if (rva != 0) text.Append(" daten ").Append(FieldData(field, rva));
+                if (rva != 0)
+                {
+                    string? data = FieldData(field, rva);
+                    if (data == null) Unchecked.Add(names.Entity(handle));
+                    else text.Append(" daten ").Append(data);
+                }
                 result.Add(text.ToString());
             }
             return result;
         }
 
         // Laenge aus der Feldsignatur: Grundtyp oder Werttyp dieser Assembly mit festem Layout (__StaticArrayInitTypeSize=N).
-        private string FieldData(FieldDefinition field, int rva)
+        // null: Laenge unbekannt oder Daten ausserhalb des Abbilds, also nicht vergleichbar.
+        private string? FieldData(FieldDefinition field, int rva)
         {
             var reader = md.GetBlobReader(field.Signature);
             reader.ReadSignatureHeader();
@@ -232,9 +244,9 @@ static class Assembly
                     md.GetTypeDefinition((TypeDefinitionHandle)type).GetLayout().Size,
                 _ => -1,
             };
-            if (size <= 0) return "Laenge unbekannt";
+            if (size <= 0) return null;
             var block = pe.GetSectionData(rva);
-            if (block.Length < size) return "ausserhalb";
+            if (block.Length < size) return null;
             return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(block.GetContent(0, size).AsSpan()))[..16];
         }
 

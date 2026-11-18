@@ -18,7 +18,7 @@ für den Quellbau dieselbe Gliederung mit dem entpackten Inhalt der `*.nupkg`.
 | --- | --- |
 | `gleich` | bytegleich |
 | `bauangaben` | gleich nach Maskieren von COFF-Zeitstempel, PE-Prüfsumme, Debug-Verzeichnis (PDB-Pfad, -GUID, -Prüfsumme), MVID und dem Quell-Commit `+<40 Hex-Zeichen>` (UTF-8 in `AssemblyInformationalVersion`, UTF-16 in der Win32-Versionsressource) |
-| `IL-gleich` | nur Reihenfolge oder Nummern der Metadaten weichen ab; gleich sind Typen (Flags, Basistyp, Interfaces, Layout), Felder (Flags, `FieldOffset`, Konstante, Anfangsdaten per FieldRVA), Methoden (Flags, ImplAttributes, Aufrufkonvention, `DllImport`, Körper als IL mit aufgelösten Token samt Lokalen und Ausnahmebereichen), Attributtexte, Assemblyverweise und eingebettete Ressourcen. Nicht verglichen: Constraints generischer Parameter, Events, Properties |
+| `IL-gleich` | nur Reihenfolge oder Nummern der Metadaten weichen ab; gleich sind Typen (Flags, Basistyp, Interfaces, Layout), Felder (Flags, `FieldOffset`, Konstante, Anfangsdaten per FieldRVA), Methoden (Flags, ImplAttributes, Aufrufkonvention, `DllImport`, Körper als IL mit aufgelösten Token samt Lokalen und Ausnahmebereichen), Attributtexte, Assemblyverweise und eingebettete Ressourcen. Nicht verglichen: Constraints generischer Parameter, Events, Properties. Anfangsdaten, deren Länge sich nicht aus der Feldsignatur ergibt, zählen als Hinweis und damit als `VERSCHIEDEN` (in den DLLs von 3.0.97: keine von 135 Feldern) |
 | `VERSCHIEDEN` | mit Hinweisen: abweichende Attributtexte, Verweise, Felder, Methoden und die erste abweichende IL-Zeile je Methode |
 
 Ende 0, wenn nichts `VERSCHIEDEN` ist und beide Seiten dieselben DLLs haben.
