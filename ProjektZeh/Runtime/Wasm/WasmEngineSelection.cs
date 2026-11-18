@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using ProjektZeh.Packages;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
@@ -96,7 +97,7 @@ internal static class WasmEngineSelection
             if (stream.Length != file.Size) return Modified(file.Path);
             stream.ReadExactly(bytes);
         }
-        catch (Exception exception) when (PackageStore.IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, $"AOT-Datei {file.Path} nicht lesbar: {exception.Message}");
         }

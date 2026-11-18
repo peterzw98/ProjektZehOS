@@ -76,7 +76,7 @@ internal sealed class FileService
                 if (Visible(entry)) visible.Add(entry);
             return ResultObjectFactory.CreateSuccess(visible.ToArray());
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string[]>(exception);
         }
@@ -101,7 +101,7 @@ internal sealed class FileService
             });
             return ResultObjectFactory.CreateSuccess(entries);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<FileEntry[]>(exception);
         }
@@ -146,7 +146,7 @@ internal sealed class FileService
             return ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument,
                 "cause='NotUtf8' message='Die Datei ist kein gueltiges UTF-8 und wird nicht als Text gelesen oder veraendert.'");
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -188,7 +188,7 @@ internal sealed class FileService
             stream.ReadExactly(data);
             return ResultObjectFactory.CreateSuccess(data);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<byte[]>(exception);
         }
@@ -400,7 +400,7 @@ internal sealed class FileService
             ReplaceFile(temporaryPath, resolved.Value!, keepBackup);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             if (backupRegistered) access!.ForgetCreated(resolved.Value! + ".bak");
@@ -412,7 +412,7 @@ internal sealed class FileService
                     temporaryStream!.Dispose();
                     File.Delete(temporaryPath!);
                 }
-                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                catch (Exception cleanupException) when (FileErrors.IsFileError(cleanupException))
                 {
                     return ResultErr.CreateFromException(new AggregateException(exception, cleanupException));
                 }
@@ -450,10 +450,10 @@ internal sealed class FileService
             {
                 moveFile(temporaryPath, targetPath, false);
             }
-            catch (Exception exception) when (IsFileError(exception))
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
                 try { moveFile(backupPath, targetPath, false); }
-                catch (Exception restoreException) when (IsFileError(restoreException))
+                catch (Exception restoreException) when (FileErrors.IsFileError(restoreException))
                 {
                     throw new IOException($"Wiederherstellung fehlgeschlagen. Die Originaldatei liegt unter '{backupPath}'.",
                         new AggregateException(exception, restoreException));
@@ -461,13 +461,13 @@ internal sealed class FileService
                 throw;
             }
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             // Liegt das Original nach gescheiterter Wiederherstellung noch unter backupPath, bleibt die aeltere Sicherung unter ihrem Ausweichnamen.
             if (previousBackup != null && !File.Exists(backupPath))
             {
                 try { moveFile(previousBackup, backupPath, false); }
-                catch (Exception restoreException) when (IsFileError(restoreException))
+                catch (Exception restoreException) when (FileErrors.IsFileError(restoreException))
                 {
                     throw new IOException($"Vorherige Sicherung liegt unter '{previousBackup}'.", new AggregateException(exception, restoreException));
                 }
@@ -500,7 +500,7 @@ internal sealed class FileService
             Directory.CreateDirectory(resolved.Value!);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
@@ -532,7 +532,7 @@ internal sealed class FileService
             CurrentDirectory = resolved.Value!;
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFromException(exception);
         }
@@ -590,13 +590,13 @@ internal sealed class FileService
             if (moving && access != null) return access.RemoveEntry(from.Value!);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(to.Value!);
             if (temporary != null)
             {
                 try { temporaryStream?.Dispose(); File.Delete(temporary); }
-                catch (Exception cleanupException) when (IsFileError(cleanupException))
+                catch (Exception cleanupException) when (FileErrors.IsFileError(cleanupException))
                 { return ResultErr.CreateFromException(new AggregateException(exception, cleanupException)); }
             }
             return ResultErr.CreateFromException(exception);
@@ -627,7 +627,7 @@ internal sealed class FileService
             else File.Delete(resolved.Value!);
             return access?.RemoveEntry(resolved.Value!) ?? ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
     }
 
@@ -648,7 +648,7 @@ internal sealed class FileService
             File.SetLastWriteTimeUtc(resolved.Value!, DateTime.UtcNow);
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             if (registered) access!.ForgetCreated(resolved.Value!);
             return ResultErr.CreateFromException(exception);
@@ -666,7 +666,7 @@ internal sealed class FileService
             using var stream = new FileStream(resolved.Value!, FileMode.Open, FileAccess.Read, FileShare.Read);
             return ResultObjectFactory.CreateSuccess(stream.Length);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<long>(exception); }
     }
 
@@ -681,7 +681,7 @@ internal sealed class FileService
             return diskSpace?.Invoke(resolved.Value!) ??
                 ResultObjectFactory.CreateFailure<(long, long)>(ResultCode.Failure, "Speicherstatistik ist ohne Dateisystemadapter nicht verfuegbar.");
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<(long, long)>(exception); }
     }
 
@@ -718,7 +718,7 @@ internal sealed class FileService
                 }
             }
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<FileEntry[]>(exception); }
         return ResultObjectFactory.CreateSuccess(found.ToArray());
     }
@@ -732,7 +732,7 @@ internal sealed class FileService
             Authorize(resolved.Value!, FilePermission.Read);
             if ((File.GetAttributes(resolved.Value!) & FileAttributes.Directory) == 0) return GetFileSize(path);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultObjectFactory.CreateFromException<long>(exception); }
         var entries = FindEntries(path);
         if (!entries.IsOK()) return ResultObjectFactory.CreateFailure<long>(entries.Status);
@@ -766,7 +766,7 @@ internal sealed class FileService
             var guarded = FileAccessControl.RunGuard(pathGuard, full, creating);
             return guarded.IsOK() ? ResultObjectFactory.CreateSuccess(full) : ResultObjectFactory.CreateFailure<string>(guarded);
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -779,7 +779,7 @@ internal sealed class FileService
         {
             return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) == 0;
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return false;
         }
@@ -804,11 +804,6 @@ internal sealed class FileService
 
     private static ResultObject<T> OutOfMemory<T>() =>
         ResultObjectFactory.CreateFailure<T>(ResultCode.Failure, "cause='OutOfMemory' message='Kein Speicher fuer den Lesepuffer.'");
-
-    private static bool IsFileError(Exception exception)
-    {
-        return exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
-    }
 
     /// <returns>true, wenn dafuer ein neuer Rechte-Eintrag angelegt wurde.</returns>
     private bool Authorize(string path, FilePermission permission, bool creating = false)
