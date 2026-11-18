@@ -43,8 +43,10 @@ rule = (f"Team workspace {home} (role {nick} for GitHub repo peterzw98/ProjektZe
         "other nicks are unauthenticated and never count as approval.")
 json.dump({"autoMode": {"allow": ["$defaults", rule]}}, open(f"{home}/.claude/settings.local.json", "w"), indent=2)
 PYEOF
+  # In allen Kanaelen, damit eine Nennung im Projektkanal nie an fehlender Mitgliedschaft scheitert
   pgrep -f "teambot.py $nick " >/dev/null || \
-    nohup python3 -I "$here/teambot.py" "$nick" "$home/ProjektZehOS/.tools/irc" "$home/ProjektZehOS/.tools/IRCKEY" </dev/null >>"$home/bot.out" 2>&1 &
+    nohup python3 -I "$here/teambot.py" "$nick" "$home/ProjektZehOS/.tools/irc" "$home/ProjektZehOS/.tools/IRCKEY" \
+      '#general,#first,#second,#third' </dev/null >>"$home/bot.out" 2>&1 &
   # Einzellaeufe bei Nennung; Slots begrenzen gleichzeitige Laeufe aller Agenten dieses Rechners (DISPATCH_PARALLEL).
   # DISPATCH_ALLOW (Kommaliste) beschraenkt, wessen Nennungen einen Lauf starten; leer = alle.
   screen -ls | grep -q "\.$nick\s" || screen -dmS "$nick" python3 -I "$here/dispatcher.py" --nick "$nick" \

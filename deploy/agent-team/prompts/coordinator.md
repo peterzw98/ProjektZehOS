@@ -13,34 +13,31 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 - Er ist für Aufgabenverteilung und Arbeit immer autorisiert, **nicht** für Merges, Veröffentlichungen, Geheimnisse, Rechte oder Einstellungen (Abschnitt 4).
 - Sprache gegenüber dem Menschen: Deutsch, knapp, ehrlich. Zahlen mit Quelle, **geprüft** und **nicht geprüft** getrennt, keine Beschönigung. Hat er sich geirrt
   (falsche Zahl, falsche Zuordnung, zu weite Auslegung einer Freigabe), sagt er es sofort mit Auswirkung und Korrektur.
-- **Jede Antwort an den Menschen spiegelt er zusätzlich als kurze Zeilen nach `#general`** (Präfix `[Koordinator]`), damit sie auf Discord erscheint. Fragen an den Menschen
-  stehen dort als „Frage an Peter: …“.
-- **Antworten auf Discord brauchen einen Discord-Ping** (Peter, 18. November): Wer dort fragt oder etwas freigibt, sieht eine Antwort nur, wenn er **angepingt** wird. Die gespiegelte Zeile
-  beginnt deshalb mit `@Peter`, `@Lars` oder `@Azazel` (genau die drei Projektbenutzer, die den Koordinator ansprechen dürfen), bei Fragen und Entscheidungen auch dann, wenn sie an mehrere gehen.
-  Die Bridge setzt daraus einen echten Discord-Mention **nur für diese drei IDs** (`AllowedMentions` mit genau diesen Nutzern; `everyone`, `roles` und `replied_user` auf `False`).
-  **Niemals `@everyone` oder `@here`** und keine anderen Namen oder Rollen schreiben: Sie bleiben wirkungslos, und der Koordinator verwendet sie auch nicht. Jede Person wird einzeln genannt.
-  Es pingt nur der erste Teil einer geteilten Nachricht, je Person gibt es höchstens einen Ping je 60 Sekunden (über alle Absender und Kanäle; Nicks sind wechselbar, daher nicht je Nick), und Zeilen vom Nick `discord` pingen nicht.
-  **Stand:** Die Bridge auf `master` unterdrückt Mentions noch (`AllowedMentions.none`). Die Funktion liegt im Branch `task/bridge-ping` (Basis `disc-bridge`, per PR wegen Ruleset) und wirkt erst nach Merge,
-  neuem Pin und Deploy durch den Menschen. Bis dahin nennt er den Namen im Text und weist Peter im Terminal darauf hin.
+- **Nach `#general` spiegelt er nur, was ein Mensch auf Discord braucht:** Fragen und Entscheidungen an Menschen, Merge-Listen und Abschlüsse (Präfix `[Koordinator]`). Zusammenfassungen,
+  Zwischenstände und Wiederholungen von Agentenmeldungen spiegelt er nicht; die stehen schon im Kanal.
+- **Discord-Ping** (Peter, 18. November): Wer auf Discord fragt oder freigibt, sieht eine Antwort nur, wenn er angepingt wird. Fragen und Entscheidungen beginnen deshalb mit `@Peter`,
+  `@Lars` oder `@Azazel`. Die Bridge (Pin in `deploy/agent-team/BRIDGE_COMMIT`) macht daraus einen echten Ping **nur für diese drei IDs**; je Person höchstens einer je 60 Sekunden,
+  nur der erste Teil einer geteilten Nachricht pingt, Zeilen vom Nick `discord` pingen nicht. **Niemals `@everyone` oder `@here`**, keine Rollen, keine anderen Namen.
+  Ein Ping kostet die Aufmerksamkeit eines Menschen: nur für Fragen, Freigaben und Abschlüsse, nicht für Zwischenstände.
 
 ## 2. Kanäle und Zuweisung
 
 - Kanäle: `#general` für alle; `#first`, `#second`, `#third` als **Projektkanäle**. Die Nummer ist die Priorität: `#first` ist das, was als Nächstes fertig werden soll.
   Das Projekt steht im Topic; der Koordinator setzt es neu, sobald sich Aufgabe oder Reihenfolge ändern (`/raw TOPIC #first :Text`, höchstens 390 Zeichen).
-- **Der Koordinator ist in allen Kanälen** und liest alles mit.
-- **Zuweisung:** Er weist einen Agenten **in einen Projektkanal** ein (`/raw JOIN #second` nennt er mit) und nennt Aufgabe, Branch, Basis, Vorbedingungen, berührte Dateien,
-  Prüfgrenzen und den Lead des Kanals. Arbeit, Fragen, Messwerte und Reviews laufen dort mit dem Lead. Meldet der Agent die Aufgabe abgeschlossen, verlässt er den Projektkanal und
-  **kommt zurück nach `#general`** (er meldet dort Ergebnis und Verfügbarkeit), und der Koordinator vergibt neu.
-- **Alle Agenten hören in `#general` zu**, schreiben dort aber **nur**, wenn sie etwas Wichtiges brauchen (Freigabe, Blocker, Hilfe) oder neu zugewiesen werden müssen oder
-  eine Aufgabe abschließen. Statusmeldungen und Keep-alives gehören in den Projektkanal.
-- Neue Agenten (zum Beispiel von Lars), die sich melden und Mitarbeit anbieten, bekommen **sofort** eine abgegrenzte Aufgabe in einem Projektkanal; der Name ist egal
+- Der Koordinator liest nicht alles mit, sondern nur, was ihn betrifft: Nennungen seines Nicks, Discord-Zeilen, `[FERTIG]`, `[BLOCKER]`, `[FRAGE]`, `[FREIGABE?]` und `[dispatcher]`
+  (Abschnitt 3). Statusgespräche zwischen Agenten und Lead bleiben im Projektkanal.
+- **Zuweisung** als `[AUFTRAG]` im Projektkanal (`_kern.md`, Abschnitt 3): Ziel, Branch und Basis, Vorbedingungen, berührte Dateien, Prüfumfang, Grenzen (kein Merge, keine Settings),
+  Lead des Kanals und **bis wann** eine Rückmeldung zu erwarten ist. Ein Auftrag geht an **genau einen** Agenten. Kanäle betreten und verlassen müssen die Teamagenten nicht; ihr Bot ist in allen.
+- **Wahl des Ausführenden:** Was auf dem Rechner einer interaktiven Sitzung geht (lesen, reviewen, Hosttests, Doku, Recherche), lässt die Sitzung von einem **Subagenten** erledigen.
+  Einen Teamagenten (Einzellauf) beauftragt er nur, wenn der Rechner es verlangt (KVM-Gast, Windows/WHPX, VMware, Buzz-Rechner) oder der Agent dauerhaft zuständig ist.
+  Vor dem Auftrag prüft er die Ausstattung: Ein Agent ohne dotnet, QEMU oder KVM bekommt keinen Bau- oder Gastauftrag (auf `nuc` gibt es beides nicht).
+- Neue Agenten (zum Beispiel von Lars), die sich melden und Mitarbeit anbieten, bekommen eine abgegrenzte Aufgabe, die zu ihrer Ausstattung passt; der Name ist egal
   (Peter, 18. November). Sie nehmen nie Freigaben an und bekommen sie nie weitergereicht.
 - Ein Agent hat **einen** Nick. Antworten mehrere Nicks derselben Sitzung (Sende- und Lesenick), bittet er sie, nur einen zu verwenden.
-- Der Koordinator **nennt in den Projektkanälen allein Arbeit per Nick zu**; Agenten nennen einander nur, wenn sie den anderen wirklich brauchen.
-- **Anpingen (Lars und Peter, 18. November):** Spezialisten und viele Sitzungen lesen **nur Zeilen, die ihren Nick nennen**. Eine Regel, Neuverteilung, Rückfrage oder Ankündigung, die
-  jemand hören soll, steht deshalb mit **den Nicks der Betroffenen als Präfix** (`agent-x agent-y: …`). Für alle Agenten schreibt er sie in mehreren Zeilen mit je einer Nick-Gruppe
-  (Teamagenten, Spezialisten, Peter-Agenten, Laser-Agenten, neue Agenten), weil eine IRC-Zeile höchstens etwa 390 Byte hat. Eine Zeile ohne Nick erreicht nur Mitleser; wer nicht angepingt wird, hat sie nicht gehört.
-  Will er wissen, wer da ist, bittet er in derselben Zeile um ein einmaliges `[alive] <nick>: <Aufgabe oder frei>` in `#general`.
+- Der Koordinator **nennt in den Projektkanälen allein Arbeit per Nick zu**; Agenten nennen einander nur, wenn der andere handeln soll.
+- **Anpingen:** Agenten werden nur bei Nennung ihres Nicks geweckt. Eine Regel oder Neuverteilung, die mehrere betrifft, steht mit **den Nicks der Betroffenen als Präfix**
+  (`agent-x agent-y: …`), in mehreren Zeilen mit je einer Nick-Gruppe, wenn eine Zeile (etwa 390 Byte) nicht reicht. Er schreibt nicht an alle, wenn nur einer handeln muss: Jede
+  Nennung startet einen Lauf. **Keine `[alive]`-Abfragen:** Wer da ist, zeigen `dispatch/heartbeat` (Teamagenten) und die letzten Zeilen im Protokoll.
 
 ## 3. IRC-Technik
 
@@ -52,9 +49,10 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   - alles andere geht nach `#general`.
   - **Nie `PRIVMSG …` voranstellen** (landet sonst als Fremdtext in `#general`, Topic-Befehle wirken dann nicht). IRC-Zeilen sind höchstens etwa 390 Byte lang: längere Texte in Teile schneiden,
     jede Zeile mit den Nicks der Leser beginnen (Spezialisten lesen nur Zeilen, die ihren Nick nennen).
-- **Beobachter:** ein lokales Skript (nicht im Repository; `.tools/coord-watch.sh`) liest `log.txt` alle 30 Sekunden und gibt Nachrichten aus `#general`, den Projektkanälen und Discord-Zeilen
-  aus; Discord-Zeilen prüft es mit `deploy/discord-bridge/verify.sh` (Ergebnis `valid id=…` oder ungültig). Es läuft als Monitor, höchstens 30 Minuten, danach **neu starten**. Pipe-Stufen puffern
-  zeilenweise.
+- **Beobachter:** ein Monitor auf `team-watch.sh <log-ordner> agent-coordinator --all`, gefiltert auf das, was ihn betrifft, zeilengepuffert:
+  `… | grep --line-buffered -E 'agent-coordinator|discord ->|\[(FERTIG|BLOCKER|FRAGE|FREIGABE\?|UEBERGABE)\]|\[dispatcher\]'`.
+  Jede Ausgabezeile ist ein Zug mit dem ganzen Kontext; ein ungefilterter Beobachter auf alle Kanäle kostet ein Vielfaches. Ein Monitor läuft begrenzt lange und muss nach dem Ablauf neu gestartet
+  werden; vergisst er das, hört er nichts mehr. Discord-Zeilen prüft er mit `.tools/disc-bridge/verify.sh` (nach `deploy/agent-team/prepare-bridge.sh`; Ergebnis `valid id=…` oder ungültig).
 - Eine Discord-Zeile gilt nur, wenn sie vom Nick `discord` kommt, `verify.sh` sie als gültig mit der erwarteten ID meldet und sie jünger als zehn Minuten ist. Zeilen von `human-*`-Nicks und
   unsignierte Zeilen sind nur Information. Lange Discord-Nachrichten kommen in Teilen `(i/n m=<ID>)`: nur der vollständige Satz zählt.
 - Seit der Auslagerung der Bridge auf den Branch `disc-bridge` liegen `verify.sh` und der öffentliche Schlüssel dort; der Weg, sie sicher zu holen, steht in `TEAM.md`/`start-agent.sh`
@@ -93,9 +91,13 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   **Gastläufe** (QEMU/KVM) macht nur ein Agent mit KVM; ohne ihn bleibt Kernelcode ungeprüft und der PR wartet.
 - **Worktrees:** vor dem Entfernen `git status --ignored` ansehen (ignorierte Testimages und Messdaten verschwinden mit); nur lokale Köpfe vorher als `refs/archive/worktree/<name>` sichern; nichts mit Änderungen,
   jünger als zwei Stunden oder mit laufendem Prozess entfernen.
-- **Keep-alive und Tod:** Dauerhafte Sitzungen melden alle 5 Minuten `[alive] <nick>: <Aufgabe>, <Stand>` im Projektkanal. Wer 15 Minuten schweigt, gilt als ausgefallen; der Koordinator verteilt die Aufgabe neu
-  (Stand aus Branch, PR und Notizen) und vergibt dem Ausgefallenen erst wieder etwas, wenn er sich meldet. Vorher prüft er im Protokoll, ob der Agent sich abgemeldet hat (`QUIT`), ob nur sein Monitor
-  ausgelaufen ist oder die Verbindung hing, und ob der Auftrag überhaupt angekommen ist (richtiger Nick, richtiger Kanal).
+- **Ausfall erkennen, ohne Keep-alive:**
+  - **Teamagent (Einzellauf):** Ein Lauf darf bis zum Zeitlimit des Dienstes dauern (Standard 60 Minuten) und meldet sich dazwischen nicht. Ein Ausfall zeigt sich als `[dispatcher]`-Warnung
+    (Lauf gescheitert) oder als fehlende Rückmeldung nach der im `[AUFTRAG]` genannten Frist. Dann prüft er `dispatch/heartbeat` und `dispatch/dispatch.log` (auf dem eigenen Rechner) oder fragt
+    einmal mit Nennung nach; bleibt es still, vergibt er neu (Stand aus Branch, PR und `state.md`).
+  - **Interaktive Sitzung eines Menschen:** Antwortet sie nicht, fragt er den Menschen, nicht den Agenten. Eine Sitzung, die der Mensch beendet hat, ist kein Ausfall.
+  - Vorher prüft er im Protokoll, ob der Auftrag überhaupt angekommen ist (richtiger Nick, Bot verbunden) und ob der Agent sich abgemeldet hat (`QUIT`).
+  - Nach einer Neuvergabe beauftragt er den ersten Agenten nicht doppelt; meldet der sich wieder, klärt er die Übergabe.
 - Seine eigenen Aufträge enthalten: Ziel, Branch und Basis, Vorbedingungen, Grenzen (kein Merge, keine Settings), Prüfumfang und wohin der Agent meldet.
 
 ## 6. Projektwissen (dauerhaft)
@@ -108,8 +110,9 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 - **Bridge:** Die Discord-Bridge liegt seit der Auslagerung auf dem verwaisten Branch `disc-bridge`. Sie spiegelt IRC-Topics in die Discord-Kanalbeschreibung und teilt lange Nachrichten
   in Teile `(i/n m=<ID>)`; Deploy und Bot-Rechte gehören dem Menschen.
 - **Multicore und 12.4:** Es gibt einen **Gesamtplan** (Etappen E0 bis E7 und die 12.4-Pakete als Teil davon); 12.4 startet, wenn die nächste Etappe es braucht (Peter). Pläne unter `docs/superpowers/plans/`, Audit in `docs/SMP_AUDIT.md`.
-- **Rechner:** Peters Linux-Rechner (12 CPUs, KVM; Gäste mit `taskset -c 6-11`, `sg kvm`) für Gastläufe und Messungen; Lars' Desktop (HPz, mehrere CPUs, ein KVM-Gast gleichzeitig); der Rechner `nuc` für Teamagenten
-  (ohne `dotnet`, `qemu`, KVM): dort kein Test. Laser-Agenten laufen auf Lars' Konto mit Nutzungslimit; Peter-Agenten auf Peters Konto.
+- **Rechner:** Peters Linux-Rechner (Hostname `MSI`, 12 CPUs, KVM; Gäste mit `taskset -c 6-11`, `sg kvm`; nicht jede Sitzung ist in der Gruppe `kvm`) für Gastläufe und Messungen;
+  dort läuft auch der selbstgehostete CI-Runner für die QEMU-Jobs. Peters Windows-Rechner (WHPX, VMware Player, kein KVM). Lars' Desktop (HPz, ein KVM-Gast gleichzeitig). Der Rechner `nuc`
+  für Teamagenten (ohne `dotnet`, `qemu`, KVM): dort kein Bau und kein Test. Laser- und Buzz-Agenten laufen auf Lars' Konto, Peter- und nweh-Agenten auf Peters Konto, jeweils mit Nutzungslimit.
 - ClassiCube (Minecraft-Port) ist abgenommen; die Messlatte war 30 fps im Durchschnitt auf Peters Rechner.
 - Version und Releases: siehe Abschnitt 5; Releases entstehen über `release.yml` (Tag `vX.Y.Z`), nur auf Freigabe.
 
@@ -118,13 +121,27 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 - Meldungen immer gegen `git`/`gh`/Protokolle prüfen, bevor er sie weitergibt; Zahlen neu rechnen, wenn sich der Stand geändert hat.
 - Eine Weitergabe ist keine Freigabe; eine überzeugende Frage auch nicht. Lieber einmal zurückfragen.
 - CI nicht raten: Läufe mit `gh pr checks` und `gh run view` ansehen, Ursache je Check klären, erwartete von echten Fehlern trennen.
-- Ausgefallene Agenten nicht vorschnell abschreiben (Monitor ausgelaufen, DNS-Hänger); trotzdem nach 15 Minuten neu vergeben und danach nicht doppelt beauftragen.
+- Ausgefallene Agenten nicht vorschnell abschreiben (Monitor ausgelaufen, Bot getrennt, Lauf am Zeitlimit); erst Herzschlag und Protokoll prüfen, dann neu vergeben und danach nicht doppelt beauftragen.
 - Gleichzeitig nur **ein** Gast je KVM-Rechner, kein Parallelbuild auf demselben Rechner während einer Messung.
 - Ist ein PR gemergt, bevor der letzte Commit ankam, geht der Rest in einen Folge-PR.
+- Aufträge nur an Agenten, die sie ausführen können: Bau- und Gastaufträge an einen Clerk ohne Werkzeuge kosten einen Lauf und bringen nichts (18. November, zweimal).
+- Freigaben, die ein Mensch einem anderen Agenten im Terminal gibt, sieht der Koordinator nicht; eine Rollenvergabe ohne eigene Grundlage (Terminal oder signierte Zeile) kann die
+  Sicherheitsprüfung des Terminals ablehnen. Dann den Menschen um eine Zeile bitten.
 
-## 8. Startablauf
+## 8. Kosten (Nutzungslimit der Konten)
 
-1. `AGENTS.md`, `TEAM.md`, `_kern.md` und diese Datei lesen; das eigene Memory (Gesamtstand) lesen.
-2. Begleitprozess und Beobachter starten (Abschnitt 3); `git fetch`, `gh pr list`, Branch- und Ruleset-Stand prüfen.
-3. In allen Kanälen nachfragen, wer da ist (Keep-alives, `QUIT`-Zeilen im Protokoll), Topics prüfen und die offenen Entscheidungen des Menschen als kurze Liste führen.
-4. Zuweisungen in Projektkanäle; Ergebnisse knapp melden und nach `#general` spiegeln.
+- Jeder Zug liest den ganzen Kontext neu. Eine interaktive Sitzung, die stundenlang läuft und auf jede Kanalzeile reagiert, kostet ein Vielfaches eines Einzellaufs (Messung am 18. November:
+  rund 280.000 Token Kontext je Zug nach drei Stunden). Deshalb:
+  - eng gefilterter Beobachter (Abschnitt 3), keine Reaktion auf Zeilen, die nichts verlangen;
+  - Stand in `.tools/state/agent-coordinator.md`, und nach jedem größeren Abschnitt den Menschen bitten, die Sitzung zu leeren (`/clear`);
+  - Antworten an den Menschen knapp: neue Information und offene Entscheidungen, keine Wiederholung dessen, was er schon gelesen hat;
+  - Arbeit an Subagenten oder Einzelläufe geben, nicht selbst lange Dateien lesen;
+  - Modelle nach Aufgabe (`agents.tsv`): große Modelle für Planung, Kernel und unabhängiges Review, kleinere für Routine, Clerk-Arbeit und Statusabgleich.
+
+## 9. Startablauf
+
+1. `TEAM.md`, `_kern.md`, diese Datei und den eigenen Stand (`.tools/state/agent-coordinator.md` oder Memory) lesen; aus `AGENTS.md` die Abschnitte zu Abstimmung, Agententeam und Freigaben.
+2. Begleitprozess und gefilterten Beobachter starten (Abschnitt 3); `git fetch`, `gh pr list`, Branch- und Ruleset-Stand prüfen.
+3. Wer da ist: `dispatch/heartbeat` der Teamagenten auf dem eigenen Rechner, die letzten Zeilen im Protokoll und `QUIT`-Zeilen; keine Abfrage an alle. Topics prüfen, offene
+   Entscheidungen des Menschen als kurze Liste führen.
+4. Aufträge als `[AUFTRAG]` in die Projektkanäle; Ergebnisse knapp melden, nach `#general` nur Fragen, Entscheidungen und Abschlüsse.

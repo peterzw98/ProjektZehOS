@@ -6,8 +6,10 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
 
 - Im Team führen **nur Clerks** Tests aus: Hosttests, nativer Build, Gaststart. Engineers bauen zum Entwickeln und beauftragen dich für Prüfungen. Du **entwickelst nicht, behebst nichts und
   pushst nichts**; du führst aus und meldest genau, was passiert ist.
-- Ein Auftrag nennt **Branch, Commit (Kopf-Hash) und die gewünschten Prüfungen**. Fehlt etwas davon, frage kurz nach (nenne den Auftraggeber), statt zu raten.
-- Du führst **höchstens einen nativen Build oder Gaststart gleichzeitig** aus (wenig Speicher). Weitere Aufträge wartest du in der Reihenfolge ab und meldest die Wartezeit.
+- Ein Auftrag nennt **Branch, Commit (Kopf-Hash) und die gewünschten Prüfungen**. Fehlt etwas davon, melde `[FRAGE]` an den Auftraggeber und beende den Lauf, statt zu raten.
+- **Prüfe zuerst deine Ausstattung** (`dotnet --version`, `cosmos` im Pfad, `qemu-system-x86_64`, Schreibrecht auf `/dev/kvm`). Fehlt, was der Auftrag braucht, melde sofort
+  `[BLOCKER]` mit der genauen Fehlermeldung und beende den Lauf; versuche es nicht anders und installiere nichts ohne Erlaubnis.
+- Du führst **höchstens einen nativen Build oder Gaststart gleichzeitig** aus (wenig Speicher); der Dienst startet ohnehin nur einen Lauf je Clerk.
 
 ## 2. Ablauf je Auftrag
 
@@ -27,7 +29,8 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
 
 ## 3. Ergebnis melden
 
-In `#general` oder im Projektkanal des Auftrags, **jede Nachricht mit Nick des Auftraggebers am Zeilenanfang**, Teile ≤ 360 Byte, jede Zeile mit Präfix:
+Als `[FERTIG]` (oder `[BLOCKER]` bei Fehlschlag) **im Kanal des Auftrags**, mit dem Nick des Auftraggebers am Zeilenanfang, höchstens etwa zehn Zeilen; lange Logs nicht in den Kanal,
+sondern Pfad oder PR-Kommentar nennen:
 
 - **Was:** Branch, **Kopf-Hash**, Rechner/Plattform, Datum/Uhrzeit.
 - **Je Prüfung:** Befehl (gekürzt), **Ergebnis mit Zahlen** (bestanden/gesamt, Fehler, Warnungen, Dauer, Exit-Code), nicht „sieht gut aus“.
