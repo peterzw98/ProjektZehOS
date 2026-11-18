@@ -153,7 +153,7 @@ internal static class CosmosExt2RootProbe
         StepG(root, files, 1, RootProbeCatalog.GCount);
         StepH(root, files);
         StepI(root, files);
-        StepJ(root, jWorkers!);
+        StepJ(root, jWorkers!.Value);
         StepL(root, files, null);
         StepI2(inodes);
         Verify(root, 1, "verify1");
