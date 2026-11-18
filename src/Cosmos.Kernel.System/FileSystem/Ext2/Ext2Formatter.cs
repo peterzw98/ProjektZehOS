@@ -33,9 +33,6 @@ internal static class Ext2Formatter
     /// <summary>Inodes 1 through 10 are reserved; the root takes inode 2.</summary>
     private const uint ReservedInodeCount = 10;
 
-    /// <summary>Inodes consumed at format time (the 10 reserved plus the root).</summary>
-    private const uint UsedInodesAtFormat = 11;
-
     /// <summary>Filesystem state stamped at format time: cleanly unmounted.</summary>
     private const ushort ValidState = 1;
 
@@ -51,6 +48,9 @@ internal static class Ext2Formatter
     /// <summary>Incompatible feature flag stamped at format time: directory entries carry a file type.</summary>
     private const uint FeatureIncompatFiletype = 2;
 
+    /// <summary>Read-only compatible feature flag stamped at format time: sparse superblock backups.</summary>
+    private const uint FeatureRoCompatSparseSuper = 1;
+
     /// <summary>Longest volume label in characters.</summary>
     private const int MaxVolumeLabelLength = 16;
 
@@ -62,6 +62,7 @@ internal static class Ext2Formatter
     /// <returns>true when the volume was written.</returns>
     public static bool Format(IBlockDevice device, Ext2FormatOptions? options)
     {
+        // ZehOS patch ext2-formatter, see PATCHES.md
         uint blockSize = options?.BlockSize ?? 1024;
         if (blockSize is not (1024 or 2048 or 4096))
         {
@@ -76,17 +77,26 @@ internal static class Ext2Formatter
         };
 
         ulong deviceBlockSize = device.BlockSize;
-        if (blockSize % deviceBlockSize != 0)
+        if (deviceBlockSize == 0 || blockSize % deviceBlockSize != 0)
         {
             return false;
         }
 
         ulong totalBytes = device.BlockCount * deviceBlockSize;
+        if (totalBytes / blockSize > uint.MaxValue)
+        {
+            return false;
+        }
+
         uint totalBlocks = (uint)(totalBytes / blockSize);
         if (totalBlocks < MinTotalBlocks)
         {
             return false;
         }
+
+        // ZehOS patch ext2-formatter: Bei 1K-Blöcken liegt Block 0 vor der ersten Gruppe; Gruppe g beginnt bei
+        // firstDataBlock + g * blocksPerGroup, und Bit b ihrer Bitmap steht für Block groupStart + b.
+        uint firstDataBlock = blockSize == 1024 ? 1u : 0u;
 
         // Groups stay near 8 MiB regardless of block size; tiny devices
         // collapse to a single group.
@@ -96,46 +106,48 @@ internal static class Ext2Formatter
             2048 => BlocksPerGroup2K,
             _ => BlocksPerGroup4K,
         };
-        if (blocksPerGroup > totalBlocks)
+        if (blocksPerGroup >= totalBlocks - firstDataBlock)
         {
-            blocksPerGroup = totalBlocks;
+            // ZehOS patch ext2-formatter: e2fsck prüft das Bitmap-Ende byteweise; blocksPerGroup muss ein Vielfaches von 8 sein.
+            // Bis zu 7 Restblöcke bleiben dafür ungenutzt.
+            blocksPerGroup = (totalBlocks - firstDataBlock) & ~7u;
+            totalBlocks = firstDataBlock + blocksPerGroup;
         }
 
-        uint inodesPerGroup = blocksPerGroup / InodesPerBlockRatio;
-        if (inodesPerGroup < MinInodesPerGroup)
+        // ZehOS patch ext2-formatter: ganze Inode-Tabellenblöcke; Inodes je Block (8/16/32) sind zugleich Vielfache von 8.
+        uint inodesPerBlock = blockSize / Rev0InodeSize;
+        uint inodesPerGroup = Math.Max(blocksPerGroup / InodesPerBlockRatio, MinInodesPerGroup);
+        inodesPerGroup = (inodesPerGroup + inodesPerBlock - 1) / inodesPerBlock * inodesPerBlock;
+        uint inodeTableBlocksPerGroup = inodesPerGroup / inodesPerBlock;
+
+        uint groups = (totalBlocks - firstDataBlock + blocksPerGroup - 1) / blocksPerGroup;
+        uint descriptorBlocks = DescriptorBlocks(groups, blockSize);
+
+        // ZehOS patch ext2-formatter: Eine letzte Gruppe, die nicht einmal ihre Metadaten fasst, wird wie bei mke2fs
+        // abgeschnitten, statt das ganze Formatieren abzulehnen.
+        uint lastStart = firstDataBlock + (groups - 1) * blocksPerGroup;
+        if (groups > 1 && totalBlocks - lastStart <= MetadataBlocks(groups - 1, descriptorBlocks, inodeTableBlocksPerGroup))
         {
-            inodesPerGroup = MinInodesPerGroup;
+            totalBlocks = lastStart;
+            groups--;
+            descriptorBlocks = DescriptorBlocks(groups, blockSize);
         }
 
-        uint groups = (totalBlocks + blocksPerGroup - 1) / blocksPerGroup;
         uint totalInodes = inodesPerGroup * groups;
-        uint freeInodes = totalInodes - UsedInodesAtFormat;
-        uint overheadBlocks = 0;
-        uint descriptorBlocks = (groups * (uint)Ext2SuperblockLayout.GroupDescSize + blockSize - 1) / blockSize;
-        uint inodeTableBlocksPerGroup = (inodesPerGroup * Rev0InodeSize + blockSize - 1) / blockSize;
+        uint freeBlocks = 0;
         for (uint g = 0; g < groups; g++)
         {
-            uint blocksInGroup = g == groups - 1 ? totalBlocks - g * blocksPerGroup : blocksPerGroup;
-            uint overhead = 2 + inodeTableBlocksPerGroup;
-            if (g == 0)
-            {
-                overhead += 1;
-                overhead += descriptorBlocks;
-                if (blockSize == 1024)
-                {
-                    overhead += 1;
-                }
-            }
-
-            if (overhead > blocksInGroup)
+            uint used = MetadataBlocks(g, descriptorBlocks, inodeTableBlocksPerGroup);
+            uint blocksInGroup = GroupBlocks(g, firstDataBlock, blocksPerGroup, totalBlocks);
+            if (used > blocksInGroup)
             {
                 return false;
             }
 
-            overheadBlocks += overhead;
+            freeBlocks += blocksInGroup - used;
         }
 
-        uint freeBlocks = totalBlocks - overheadBlocks - 1;
+        uint freeInodes = totalInodes - ReservedInodeCount;
         if (freeBlocks == 0 || freeInodes == 0)
         {
             return false;
@@ -147,7 +159,6 @@ internal static class Ext2Formatter
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.RBlocksCountOffset, 4), (uint)0);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FreeBlocksCountOffset, 4), freeBlocks);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FreeInodesCountOffset, 4), freeInodes);
-        uint firstDataBlock = blockSize == 1024 ? 1u : 0u;
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FirstDataBlockOffset, 4), firstDataBlock);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.LogBlockSizeOffset, 4), logBlockSize);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.LogFragSizeOffset, 4), logBlockSize);
@@ -166,7 +177,7 @@ internal static class Ext2Formatter
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.InodeSizeOffset, 2), (ushort)Rev0InodeSize);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FeatureCompatOffset, 4), (uint)0);
         BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FeatureIncompatOffset, 4), FeatureIncompatFiletype);
-        BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FeatureRoCompatOffset, 4), (uint)0);
+        BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FeatureRoCompatOffset, 4), FeatureRoCompatSparseSuper);
         string volumeLabel = options?.VolumeLabel ?? "";
         if (volumeLabel.Length > MaxVolumeLabelLength)
         {
@@ -175,225 +186,49 @@ internal static class Ext2Formatter
 
         global::System.Text.Encoding.ASCII.GetBytes(volumeLabel).CopyTo(superblock.AsSpan(Ext2SuperblockLayout.VolumeNameOffset, volumeLabel.Length));
 
-        WriteBytes(device, Ext2SuperblockLayout.SuperblockOffset, superblock);
-
-        uint descriptorStartBlock = blockSize == 1024 ? 2u : 1u;
+        // ZehOS patch ext2-formatter: Metadaten liegen in jeder Gruppe zusammenhängend am Gruppenanfang:
+        // [Superblock + Deskriptortabelle, nur in Gruppen mit Sicherung] Blockbitmap, Inodebitmap,
+        // Inodetabelle, in Gruppe 0 danach der Wurzelverzeichnisblock.
         byte[] descriptorTable = new byte[descriptorBlocks * blockSize];
-
-        // Group 0's bitmaps sit after the descriptor table (the superblock
-        // and descriptors occupy its first blocks); other groups keep
-        // bitmaps and table at the group's head. No backup superblocks are
-        // written. Free counts are filled in after the bitmaps below.
-        List<uint> blockBitmapBlocks = new();
-        List<uint> inodeBitmapBlocks = new();
-        List<uint> inodeTableStarts = new();
-
+        uint[] inodeTableStarts = new uint[groups];
+        byte[] zeroTable = new byte[inodeTableBlocksPerGroup * blockSize];
         for (uint g = 0; g < groups; g++)
         {
-            uint groupStart = g * blocksPerGroup;
-            uint groupEnd = groupStart + (g == groups - 1 ? totalBlocks - g * blocksPerGroup : blocksPerGroup);
-            uint blockBitmapBlock, inodeBitmapBlock, inodeTableStart;
-            if (g == 0)
-            {
-                blockBitmapBlock = descriptorStartBlock + descriptorBlocks;
-                inodeBitmapBlock = blockBitmapBlock + 1;
-                inodeTableStart = inodeBitmapBlock + 1;
-            }
-            else
-            {
-                blockBitmapBlock = groupStart;
-                inodeBitmapBlock = groupStart + 1;
-                inodeTableStart = groupStart + 2;
-            }
+            uint groupStart = firstDataBlock + g * blocksPerGroup;
+            uint groupBlocks = GroupBlocks(g, firstDataBlock, blocksPerGroup, totalBlocks);
+            uint usedBlocks = MetadataBlocks(g, descriptorBlocks, inodeTableBlocksPerGroup);
+            uint blockBitmapBlock = groupStart + (HasSuperblockBackup(g) ? 1 + descriptorBlocks : 0);
+            uint inodeBitmapBlock = blockBitmapBlock + 1;
+            uint inodeTableStart = inodeBitmapBlock + 1;
+            inodeTableStarts[g] = inodeTableStart;
 
-            if (blockBitmapBlock >= groupEnd || inodeBitmapBlock >= groupEnd || inodeTableStart + inodeTableBlocksPerGroup > groupEnd)
-            {
-                return false;
-            }
+            // ZehOS patch ext2-formatter: Bits hinter dem Gruppenende bis zum Ende des Bitmapblocks sind gesetzt (Padding).
+            byte[] blockBitmap = new byte[blockSize];
+            SetBits(blockBitmap, 0, usedBlocks);
+            SetBits(blockBitmap, groupBlocks, blockSize * 8);
+            WriteBlocks(device, blockBitmapBlock, 1, blockSize, blockBitmap);
 
-            blockBitmapBlocks.Add(blockBitmapBlock);
-            inodeBitmapBlocks.Add(inodeBitmapBlock);
-            inodeTableStarts.Add(inodeTableStart);
+            // Reserved inodes 1..10 (including the root at 2) start allocated.
+            byte[] inodeBitmap = new byte[blockSize];
+            uint reservedHere = g == 0 ? ReservedInodeCount : 0;
+            SetBits(inodeBitmap, 0, reservedHere);
+            SetBits(inodeBitmap, inodesPerGroup, blockSize * 8);
+            WriteBlocks(device, inodeBitmapBlock, 1, blockSize, inodeBitmap);
+
+            WriteBlocks(device, inodeTableStart, inodeTableBlocksPerGroup, blockSize, zeroTable);
 
             int descriptorOffset = (int)g * Ext2SuperblockLayout.GroupDescSize;
             BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescBlockBitmapOffset, 4), blockBitmapBlock);
             BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescInodeBitmapOffset, 4), inodeBitmapBlock);
             BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescInodeTableOffset, 4), inodeTableStart);
+            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeBlocksCountOffset, 2), (ushort)(groupBlocks - usedBlocks));
+            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeInodesCountOffset, 2), (ushort)(inodesPerGroup - reservedHere));
+            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescUsedDirsCountOffset, 2), (ushort)(g == 0 ? 1 : 0));
         }
-
-        WriteBlocks(device, descriptorStartBlock, descriptorBlocks, blockSize, descriptorTable);
-
-        for (uint g = 0; g < groups; g++)
-        {
-            uint groupStart = g * blocksPerGroup;
-            uint groupBlocks = g == groups - 1 ? totalBlocks - g * blocksPerGroup : blocksPerGroup;
-            uint blockBitmapBlock = blockBitmapBlocks[(int)g];
-            uint inodeBitmapBlock = inodeBitmapBlocks[(int)g];
-            uint inodeTableStart = inodeTableStarts[(int)g];
-
-            // Metadata blocks (superblock, descriptors, bitmaps, tables,
-            // root directory) are marked allocated; data blocks stay free.
-            byte[] blockBitmap = new byte[blockSize];
-            for (uint b = 0; b < groupBlocks; b++)
-            {
-                uint absoluteBlock = groupStart + b;
-                bool isAllocated = false;
-                if (g == 0)
-                {
-                    if (blockSize == 1024)
-                    {
-                        if (absoluteBlock == 0)
-                        {
-                            isAllocated = true;
-                        }
-
-                        if (absoluteBlock == 1)
-                        {
-                            isAllocated = true;
-                        }
-                    }
-                    else
-                    {
-                        if (absoluteBlock == 0)
-                        {
-                            isAllocated = true;
-                        }
-                    }
-
-                    if (absoluteBlock >= descriptorStartBlock && absoluteBlock < descriptorStartBlock + descriptorBlocks)
-                    {
-                        isAllocated = true;
-                    }
-
-                    if (absoluteBlock == blockBitmapBlock || absoluteBlock == inodeBitmapBlock)
-                    {
-                        isAllocated = true;
-                    }
-
-                    if (absoluteBlock >= inodeTableStart && absoluteBlock < inodeTableStart + inodeTableBlocksPerGroup)
-                    {
-                        isAllocated = true;
-                    }
-
-                    if (absoluteBlock == inodeTableStart + inodeTableBlocksPerGroup)
-                    {
-                        isAllocated = true;
-                    }
-                }
-                else
-                {
-                    if (b == 0)
-                    {
-                        isAllocated = true; // block bitmap itself
-                    }
-
-                    if (b == 1)
-                    {
-                        isAllocated = true; // inode bitmap
-                    }
-
-                    if (b >= 2 && b < 2 + inodeTableBlocksPerGroup)
-                    {
-                        isAllocated = true;
-                    }
-                }
-
-                if (isAllocated)
-                {
-                    blockBitmap[b / 8] |= (byte)(1 << (int)(b % 8));
-                }
-
-                if (absoluteBlock >= totalBlocks)
-                {
-                    blockBitmap[b / 8] |= (byte)(1 << (int)(b % 8));
-                }
-            }
-
-            WriteBlocks(device, blockBitmapBlock, 1, blockSize, blockBitmap);
-
-            // Reserved inodes 1..10 (including the root at 2) start allocated.
-            byte[] inodeBitmap = new byte[blockSize];
-            uint inodesInThisGroup = g == groups - 1 ? totalInodes - g * inodesPerGroup : inodesPerGroup;
-            for (uint i = 0; i < inodesInThisGroup; i++)
-            {
-                uint inodeNumber = g * inodesPerGroup + i + 1;
-                if (inodeNumber <= ReservedInodeCount)
-                {
-                    inodeBitmap[i / 8] |= (byte)(1 << (int)(i % 8));
-                }
-            }
-
-            WriteBlocks(device, inodeBitmapBlock, 1, blockSize, inodeBitmap);
-
-            byte[] zeroTable = new byte[inodeTableBlocksPerGroup * blockSize];
-            WriteBlocks(device, inodeTableStart, inodeTableBlocksPerGroup, blockSize, zeroTable);
-        }
-
-        // The bitmaps are final: recount free blocks and inodes per group
-        // and stamp the descriptors a second time.
-        for (uint g = 0; g < groups; g++)
-        {
-            uint groupStart = g * blocksPerGroup;
-            uint groupBlocks = g == groups - 1 ? totalBlocks - g * blocksPerGroup : blocksPerGroup;
-            uint blockBitmapBlock = blockBitmapBlocks[(int)g];
-            byte[] blockBitmap = new byte[blockSize];
-            ReadBlocks(device, blockBitmapBlock, 1, blockSize, blockBitmap);
-            int groupFreeBlocks = 0;
-            for (uint b = 0; b < groupBlocks; b++)
-            {
-                if ((blockBitmap[b / 8] & (1 << (int)(b % 8))) == 0)
-                {
-                    groupFreeBlocks++;
-                }
-            }
-
-            uint inodeBitmapBlock = inodeBitmapBlocks[(int)g];
-            byte[] inodeBitmap = new byte[blockSize];
-            ReadBlocks(device, inodeBitmapBlock, 1, blockSize, inodeBitmap);
-            uint inodesInThisGroup = g == groups - 1 ? totalInodes - g * inodesPerGroup : inodesPerGroup;
-            int groupFreeInodes = 0;
-            for (uint i = 0; i < inodesInThisGroup; i++)
-            {
-                if ((inodeBitmap[i / 8] & (1 << (int)(i % 8))) == 0)
-                {
-                    groupFreeInodes++;
-                }
-            }
-
-            ushort usedDirectories = 0;
-            if (g == 0)
-            {
-                usedDirectories = 1;
-            }
-
-            int descriptorOffset = (int)g * Ext2SuperblockLayout.GroupDescSize;
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescBlockBitmapOffset, 4), blockBitmapBlock);
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescInodeBitmapOffset, 4), inodeBitmapBlock);
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescInodeTableOffset, 4), inodeTableStarts[(int)g]);
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeBlocksCountOffset, 2), (ushort)groupFreeBlocks);
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeInodesCountOffset, 2), (ushort)groupFreeInodes);
-            BitConverter.TryWriteBytes(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescUsedDirsCountOffset, 2), usedDirectories);
-        }
-
-        WriteBlocks(device, descriptorStartBlock, descriptorBlocks, blockSize, descriptorTable);
-
-        uint totalFreeBlocks = 0;
-        uint totalFreeInodes = 0;
-        for (uint g = 0; g < groups; g++)
-        {
-            int descriptorOffset = (int)g * Ext2SuperblockLayout.GroupDescSize;
-            totalFreeBlocks += BitConverter.ToUInt16(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeBlocksCountOffset, 2));
-            totalFreeInodes += BitConverter.ToUInt16(descriptorTable.AsSpan(descriptorOffset + Ext2SuperblockLayout.GroupDescFreeInodesCountOffset, 2));
-        }
-
-        BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FreeBlocksCountOffset, 4), totalFreeBlocks);
-        BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.FreeInodesCountOffset, 4), totalFreeInodes);
-        WriteBytes(device, Ext2SuperblockLayout.SuperblockOffset, superblock);
 
         // Inode 2 is the root: index 1 within group 0's table.
         uint rootIndex = 1;
         uint rootTable = inodeTableStarts[0];
-        uint inodesPerBlock = blockSize / Rev0InodeSize;
         uint tableBlock = rootIndex / inodesPerBlock;
         uint offsetInBlock = (rootIndex % inodesPerBlock) * Rev0InodeSize;
         byte[] inodeBlock = new byte[blockSize];
@@ -432,8 +267,64 @@ internal static class Ext2Formatter
         directoryBlock[dotDotOffset + Ext2InodeLayout.DirEntryNameOffset + 1] = (byte)'.';
         WriteBlocks(device, rootBlock, 1, blockSize, directoryBlock);
 
+        // ZehOS patch ext2-formatter: Superblock und Deskriptortabellen zuletzt, erst wenn ihr Inhalt feststeht. Keine
+        // Absturzsicherheit: eine ältere Signatur auf dem Gerät wird vorher nicht gelöscht.
+        // Sicherungen tragen ihre Gruppennummer in s_block_group_nr.
+        for (uint g = groups; g-- > 0;)
+        {
+            if (!HasSuperblockBackup(g))
+            {
+                continue;
+            }
+
+            uint groupStart = firstDataBlock + g * blocksPerGroup;
+            BitConverter.TryWriteBytes(superblock.AsSpan(Ext2SuperblockLayout.BlockGroupNrOffset, 2), (ushort)g);
+            WriteBlocks(device, groupStart + 1, descriptorBlocks, blockSize, descriptorTable);
+            // Der primäre Superblock liegt immer bei Byte 1024, Sicherungen am Anfang ihres Gruppenblocks.
+            ulong superblockOffset = g == 0 ? Ext2SuperblockLayout.SuperblockOffset : (ulong)groupStart * blockSize;
+            WriteBytes(device, superblockOffset, superblock);
+        }
+
         device.Flush();
         return true;
+    }
+
+    /// <summary>Blocks holding the group descriptor table.</summary>
+    private static uint DescriptorBlocks(uint groups, uint blockSize)
+        => (groups * (uint)Ext2SuperblockLayout.GroupDescSize + blockSize - 1) / blockSize;
+
+    /// <summary>
+    /// Metadata blocks at the head of group <paramref name="group"/>: superblock and descriptor
+    /// copies where present, both bitmaps, the inode table and, in group 0, the root directory.
+    /// </summary>
+    private static uint MetadataBlocks(uint group, uint descriptorBlocks, uint inodeTableBlocks)
+        => (HasSuperblockBackup(group) ? 1 + descriptorBlocks : 0) + 2 + inodeTableBlocks + (group == 0 ? 1u : 0u);
+
+    /// <summary>Blocks in group <paramref name="group"/>; only the last group may be shorter.</summary>
+    private static uint GroupBlocks(uint group, uint firstDataBlock, uint blocksPerGroup, uint totalBlocks)
+        => Math.Min(blocksPerGroup, totalBlocks - firstDataBlock - group * blocksPerGroup);
+
+    /// <summary>sparse_super: groups 0, 1 and powers of 3, 5 and 7 carry superblock copies.</summary>
+    private static bool HasSuperblockBackup(uint group)
+        => group <= 1 || IsPowerOf(group, 3) || IsPowerOf(group, 5) || IsPowerOf(group, 7);
+
+    private static bool IsPowerOf(uint value, uint radix)
+    {
+        while (value % radix == 0)
+        {
+            value /= radix;
+        }
+
+        return value == 1;
+    }
+
+    /// <summary>Set bits [<paramref name="from"/>, <paramref name="to"/>) of a bitmap.</summary>
+    private static void SetBits(byte[] bitmap, uint from, uint to)
+    {
+        for (uint b = from; b < to; b++)
+        {
+            bitmap[b / 8] |= (byte)(1 << (int)(b % 8));
+        }
     }
 
     /// <summary>
@@ -463,11 +354,11 @@ internal static class Ext2Formatter
     /// <param name="device">Block device to write to.</param>
     /// <param name="byteOffset">Byte offset of the first byte.</param>
     /// <param name="data">Bytes to write.</param>
-    private static void WriteBytes(IBlockDevice device, int byteOffset, ReadOnlySpan<byte> data)
+    private static void WriteBytes(IBlockDevice device, ulong byteOffset, ReadOnlySpan<byte> data)
     {
         ulong deviceBlockSize = device.BlockSize;
-        ulong lba = (ulong)byteOffset / deviceBlockSize;
-        int offsetInBlock = (int)((ulong)byteOffset % deviceBlockSize);
+        ulong lba = byteOffset / deviceBlockSize;
+        int offsetInBlock = (int)(byteOffset % deviceBlockSize);
         if (offsetInBlock == 0 && (ulong)data.Length % deviceBlockSize == 0)
         {
             ulong blocks = (ulong)data.Length / deviceBlockSize;
@@ -476,7 +367,7 @@ internal static class Ext2Formatter
         else
         {
             ulong start = lba;
-            ulong endByte = (ulong)byteOffset + (ulong)data.Length;
+            ulong endByte = byteOffset + (ulong)data.Length;
             ulong endLba = (endByte + deviceBlockSize - 1) / deviceBlockSize;
             ulong count = endLba - start;
             byte[] buffer = new byte[count * deviceBlockSize];

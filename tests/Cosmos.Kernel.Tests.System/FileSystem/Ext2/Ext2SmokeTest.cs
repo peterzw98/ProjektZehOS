@@ -54,6 +54,8 @@ internal sealed class MemoryBlockDevice : IBlockDevice
     }
 }
 
+// ZehOS patch ext2-formatter, see PATCHES.md: the writing tests format with 4096-byte blocks. The Format now
+// writes the correct 1 KiB layout (first_data_block = 1), which the driver does not address yet.
 [TestFixture]
 public class Ext2SmokeTest
 {
@@ -79,7 +81,7 @@ public class Ext2SmokeTest
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, null), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test1", fs), Is.True);
         try
@@ -109,7 +111,7 @@ public class Ext2SmokeTest
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, null), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test2", fs), Is.True);
         try
@@ -163,14 +165,14 @@ public class Ext2SmokeTest
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, null), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test4", fs), Is.True);
         try
         {
             Assert.That(VfsManager.TryMount("ext2test4", ReadOnlySpan<char>.Empty, MountFlags.None, "/ext2d", out _), Is.True);
-            // 32 KiB with 1 KiB blocks: 12 direct + 20 single-indirect blocks.
-            const int Size = 32 * 1024;
+            // 64 KiB with 4 KiB blocks: 12 direct + 4 single-indirect blocks.
+            const int Size = 64 * 1024;
             byte[] payload = new byte[Size];
             for (int i = 0; i < Size; i++)
             {
@@ -194,7 +196,7 @@ public class Ext2SmokeTest
             // Overwrite a span inside the indirect region; the cache must
             // observe the new mapping, not stale entries.
             Assert.That(VfsManager.TryOpenFile("/ext2d/big.bin", out IVfsFileHandle? wh), Is.True);
-            wh!.TrySeek(16 * 1024, SeekWhence.Set);
+            wh!.TrySeek(52 * 1024, SeekWhence.Set);
             byte[] patch = new byte[4096];
             for (int i = 0; i < patch.Length; i++)
             {
@@ -209,8 +211,8 @@ public class Ext2SmokeTest
             Assert.That(vh!.Read(verify), Is.EqualTo(Size));
             for (int i = 0; i < Size; i++)
             {
-                byte expected = i >= 16 * 1024 && i < 16 * 1024 + 4096
-                    ? (byte)(255 - (i - 16 * 1024))
+                byte expected = i >= 52 * 1024 && i < 52 * 1024 + 4096
+                    ? (byte)(255 - (i - 52 * 1024))
                     : (byte)(i * 7 + 13);
                 Assert.That(verify[i], Is.EqualTo(expected));
             }
@@ -229,7 +231,7 @@ public class Ext2SmokeTest
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, null), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test3", fs), Is.True);
         try
