@@ -9,6 +9,7 @@ using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.X509;
 using ProjektZeh.Graphics.Raster;
 using ProjektZeh.Network;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
@@ -81,44 +82,57 @@ internal static unsafe partial class WasmRuntime
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(completed);
+        string? notStarted = null;
         lock (gate)
         {
-            pending++;
-            jobs.Enqueue(() =>
+            // Ohne Worker bliebe der Lauf ewig in der Warteschlange (Run wartet dann unbegrenzt).
+            var started = StartWorkerLocked();
+            if (!started.IsOK())
             {
-                WasmStatus status = WasmStatus.LoadFailed;
-                int result = 0;
-                string message;
-                (byte[]? Module, byte[]? Aot, string? Error) loaded;
-                // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
-                try { loaded = load(); }
-                catch (Exception exception) { loaded = (null, null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
-                else message = loaded.Error ?? "Modul nicht geladen.";
-                // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
-                lock (gate) pending--;
-                completed(status, result, message);
-            });
-            StartWorkerLocked();
-            Monitor.Pulse(gate);
+                notStarted = "Wasm-Worker nicht gestartet: " + started.Message;
+            }
+            else
+            {
+                pending++;
+                jobs.Enqueue(() =>
+                {
+                    WasmStatus status = WasmStatus.LoadFailed;
+                    int result = 0;
+                    string message;
+                    (byte[]? Module, byte[]? Aot, string? Error) loaded;
+                    // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
+                    try { loaded = load(); }
+                    catch (Exception exception) { loaded = (null, null, exception.Message); }
+                    if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
+                    else message = loaded.Error ?? "Modul nicht geladen.";
+                    // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
+                    lock (gate) pending--;
+                    completed(status, result, message);
+                });
+                Monitor.Pulse(gate);
+            }
         }
+        if (notStarted != null) completed(WasmStatus.LoadFailed, 0, notStarted);
     }
 
     /// <summary>
     /// Legt den Worker beim Start an, solange der Heap noch frei von Netzmuell ist: Der 8-MiB-Stack kommt aus dem
     /// nativen Heap, dessen Fehlschlag keine Collection ausloest; Cosmos 3.0.97 benutzt dann einen Nullzeiger.
-    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie.
+    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert die Stackprobe (ThreadStarter), bleibt der
+    /// Worker aus; der naechste Lauf versucht es erneut und endet sonst mit LoadFailed statt zu haengen.
     /// </summary>
-    public static void StartWorker()
+    public static ResultErr StartWorker()
     {
-        lock (gate) StartWorkerLocked();
+        lock (gate) return StartWorkerLocked();
     }
 
-    private static void StartWorkerLocked()
+    private static ResultErr StartWorkerLocked()
     {
-        if (worker != null) return;
-        worker = new Thread(Work, ThreadStackBytes);
-        worker.Start();
+        if (worker != null) return ResultErr.CreateSuccess();
+        var started = ThreadStarter.TryStart(Work, ThreadStackBytes);
+        if (!started.IsOK()) return started.Status;
+        worker = started.Value;
+        return ResultErr.CreateSuccess();
     }
 
     /// <summary>Fuehrt einen Lauf aus und wartet auf das Ergebnis; nur ausserhalb des Workers aufrufen.</summary>
