@@ -49,7 +49,10 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
             return Failed("PowerBusy", "Ein Schreibvorgang laeuft noch; Energieaktion danach erneut ausfuehren.");
 
         // unmounted wird nicht geleert: ein frueher gescheitertes Wiedereinhaengen wird bei jeder Ruecknahme erneut versucht.
-        var mounts = new List<string>(platform.PersistentMounts());
+        List<string> mounts;
+        // Ohne diesen Fang bliebe die Root-Sperre nach einer Ausnahme haengen, weil prepare dann als gescheitert gilt (Review P3-c).
+        try { mounts = new List<string>(platform.PersistentMounts()); }
+        catch (Exception exception) { return RollBack(Failed("PowerUnmountFailed", "Mounts nicht lesbar (" + exception.Message + ")."), reopen: false); }
         // Zusatzplatten in umgekehrter Einhaengereihenfolge, /boot/efi immer zuletzt (Spec 7b §2.5).
         mounts.Reverse();
         int efi = mounts.IndexOf(SystemPaths.Root.UpdateRoot);
@@ -60,7 +63,10 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
             try { failure = platform.Sync(mount) ? platform.Unmount(mount) ? null : "Aushaengen" : "Sync"; }
             catch (Exception exception) { failure = exception.Message; }
             // Ein Mount, der beim Aushaengen warf, ist schon entfernt und muss mit zurueck (peter-review P2-3).
-            if (!platform.IsMounted(mount)) unmounted.Add(mount);
+            bool stillMounted;
+            try { stillMounted = platform.IsMounted(mount); }
+            catch (Exception exception) { stillMounted = false; failure ??= exception.Message; }
+            if (!stillMounted) unmounted.Add(mount);
             if (failure != null)
                 return RollBack(Failed("PowerUnmountFailed", $"{mount} nicht ausgehaengt ({failure})."), reopen: false);
         }

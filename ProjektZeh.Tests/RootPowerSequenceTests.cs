@@ -75,6 +75,14 @@ public sealed class RootPowerSequenceTests
     }
 
     [TestMethod]
+    public void MountListThatThrows_ReleasesWrites()
+    {
+        var platform = new Platform("/boot/efi") { ThrowMounts = true };
+        Assert.IsFalse(new RootPowerSequence(platform).Prepare().IsOK());
+        Assert.IsFalse(platform.Blocked);
+    }
+
+    [TestMethod]
     public void RestoreWithFailedReopen_RemountsForReadingButKeepsWritesBlocked()
     {
         var platform = new Platform("/boot/efi");
@@ -156,7 +164,8 @@ public sealed class RootPowerSequenceTests
         public string? BusyReason() => Busy;
         public bool TryBlockWrites() { Log.Add("block"); if (BlockFails) return false; Blocked = true; return true; }
         public void ReleaseWrites() { Log.Add("release"); Blocked = false; }
-        public IReadOnlyList<string> PersistentMounts() => Array.FindAll(mounts, Mounted.Contains);
+        public bool ThrowMounts { get; init; }
+        public IReadOnlyList<string> PersistentMounts() => ThrowMounts ? throw new IOException("VFS") : Array.FindAll(mounts, Mounted.Contains);
         public bool IsMounted(string mountPoint) => Mounted.Contains(mountPoint);
         public bool Sync(string mountPoint)
         {
