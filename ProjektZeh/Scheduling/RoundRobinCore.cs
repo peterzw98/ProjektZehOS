@@ -14,6 +14,8 @@ namespace ProjektZeh.Scheduling;
 internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice?> sliceOf, Func<T, bool> isIdle) where T : class
 {
     private readonly RoundRobinQueue<T> queue = new(capacity);
+    // Bei leerer Queue waehlt Cosmos den Idle-Thread selbst (PickNext ?? IdleThread); seine Scheibe beginnt dann in Pick.
+    private T? idle;
 
     public int Count => queue.Count;
     public T? At(int index) => queue.At(index);
@@ -24,7 +26,8 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
     public T? Pick()
     {
         T? next = queue.Take();
-        if (next != null) sliceOf(next)?.Reset();
+        T? starting = next ?? idle;
+        if (starting != null) sliceOf(starting)?.Reset();
         return next;
     }
 
@@ -34,9 +37,12 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
         // Der laufende Thread kann selbst in der Queue stehen, wenn der Tick ihn geweckt hat, ohne dass er gewechselt hat.
         bool queued = queue.Contains(current);
         int waiting = queue.Count - (queued ? 1 : 0);
-        if (isIdle(current))
+        bool currentIsIdle = isIdle(current);
+        if (currentIsIdle) idle = current;
+        if (currentIsIdle && queued)
         {
-            // Der Idle-Thread gibt die CPU beim Parken nicht ab; wartet ein anderer, gehoert sie diesem sofort.
+            // Vom Tick geweckt: der Idle-Thread hat geparkt (Halt statt Wechsel). Wartet ein anderer, gehoert ihm die CPU
+            // sofort. Rechnet die Hauptschleife dagegen (nicht geweckt), gilt die normale Scheibe wie fuer jeden Thread.
             if (waiting == 0) return false;
         }
         else

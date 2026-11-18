@@ -39,7 +39,7 @@ public sealed class SchedulingTests
 
     private sealed class FakeThread(string name, bool idle = false)
     {
-        public SchedulerTimeSlice? Slice { get; } = idle ? null : new SchedulerTimeSlice(20);
+        public SchedulerTimeSlice Slice { get; } = new(20);
         public bool Idle { get; } = idle;
         public override string ToString() => name;
     }
@@ -91,6 +91,63 @@ public sealed class SchedulingTests
         Assert.IsTrue(core.Tick(idle, 10));
         Assert.AreSame(worker, core.Pick());
         Assert.AreSame(idle, core.Pick());
+    }
+
+    [TestMethod]
+    public void IdleComputing_KeepsFullSliceBeforeWaitingWorker()
+    {
+        // Die Hauptschleife zeichnet (nicht geweckt, nicht in der Queue): normale Scheibe statt sofortiger Verdraengung.
+        var core = Core();
+        var idle = new FakeThread("idle", idle: true);
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        Assert.IsFalse(core.Tick(idle, 10));
+        Assert.IsTrue(core.Tick(idle, 10));
+        Assert.AreSame(worker, core.Pick());
+    }
+
+    [TestMethod]
+    public void BusyWorkerAndComputingMainLoop_ShareCpuEvenly()
+    {
+        // Cosmos-Ablauf je Tick: Tick; bei Verdraengung OnThreadYield (Ready) des bisherigen Threads, dann PickNext ?? Idle.
+        var core = Core();
+        var idle = new FakeThread("idle", idle: true);
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        FakeThread current = idle;
+        int idleTicks = 0;
+        for (int tick = 0; tick < 12; tick++)
+        {
+            if (ReferenceEquals(current, idle)) idleTicks++;
+            if (!core.Tick(current, 10)) continue;
+            core.Ready(current);
+            current = core.Pick() ?? idle;
+        }
+        Assert.AreEqual(6, idleTicks);
+    }
+
+    [TestMethod]
+    public void BusyWorkerAndParkingMainLoop_MainLoopGetsOneTickPerRound()
+    {
+        // Die Hauptschleife parkt nach kurzer Arbeit (Thread.Sleep); der Tick weckt sie, und sie gibt sofort ab.
+        var core = Core();
+        var idle = new FakeThread("idle", idle: true);
+        var worker = new FakeThread("worker");
+        core.Ready(worker);
+        FakeThread current = idle;
+        int idleTicks = 0;
+        for (int tick = 0; tick < 12; tick++)
+        {
+            if (ReferenceEquals(current, idle))
+            {
+                idleTicks++;
+                core.Ready(idle);
+            }
+            if (!core.Tick(current, 10)) continue;
+            core.Ready(current);
+            current = core.Pick() ?? idle;
+        }
+        Assert.AreEqual(4, idleTicks);
     }
 
     [TestMethod]
