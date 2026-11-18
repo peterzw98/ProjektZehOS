@@ -88,7 +88,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly BackgroundTaskService tasks = new();
     private readonly CosmosNetworkService networkService = new();
     private readonly NetworkAutoConfiguration automaticNetwork;
-    private readonly CosmosRoundRobinScheduler scheduler = new();
+    private readonly CosmosClassScheduler scheduler = new();
     private readonly MessageDemoService messages;
     private UserSession desktopIdentity = null!;
 
@@ -606,15 +606,23 @@ public sealed class Kernel : Sys.Kernel
 
     private void InstallScheduler()
     {
+        // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf).
+        ThreadStarter.ApplyClass = threadClass =>
+        {
+            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(0);
+            if (state?.CurrentThread is { } current)
+                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(0, current, (long)threadClass);
+        };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
-        systemLog.Information("Scheduler", $"{scheduler.Name}; Zeitscheibe={CosmosRoundRobinScheduler.QuantumNs}ns");
+        systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
 
     private string[] DescribeScheduler()
     {
         var snapshot = scheduler.Snapshot();
-        return [$"{scheduler.Name}; quantum={CosmosRoundRobinScheduler.QuantumNs}ns; preemptions={snapshot.Preemptions}",
+        return [$"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
+            $"Wartend: Interaktiv={snapshot.WaitingByClass[0]}, Normal={snapshot.WaitingByClass[1]}, Hintergrund={snapshot.WaitingByClass[2]}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
     }
 

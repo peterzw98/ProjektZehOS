@@ -13,7 +13,7 @@ internal sealed class TaskShellCommands
     {
         this.tasks = tasks;
         this.scheduler = scheduler;
-        Commands = [new("tasks", "tasks [list|start busy|start wait|cancel <ID>|scheduler]", "Hintergrundaufgaben und Round-Robin-Diagnose.", true, Execute)];
+        Commands = [new("tasks", "tasks [list|start busy|start wait|cancel <ID>|scheduler]", "Hintergrundaufgaben und Scheduler-Diagnose.", true, Execute)];
     }
     private ResultErr Execute(string[] arguments, ITextOutput output)
     {
