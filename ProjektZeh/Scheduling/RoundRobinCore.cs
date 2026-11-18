@@ -7,12 +7,12 @@ namespace ProjektZeh.Scheduling;
 /// Die Zeitscheibe eines Threads beginnt, wenn er ausgewaehlt wird, nicht wenn er bereit wird.
 /// </summary>
 /// <remarks>
-/// Grund (18.11.2026, ClassiCube-Bursts): Unsere Hauptschleife ist in Cosmos der Idle-Thread. Cosmos parkt ihn in
-/// Thread.Sleep nur mit Halt, ohne die CPU abzugeben, und weckt ihn im naechsten Timer-Tick wieder (CheckSleepingThreads
-/// vor OnTick). Fuellte das Wecken seine Scheibe neu, lief sie nie ab, und ein bereiter Wasm-Worker wartete bis zu ~100 ms.
+/// Grund (18.11.2026, ClassiCube-Bursts): Unsere Hauptschleife ist in Cosmos der Idle-Thread. Ihr Thread.Sleep endet in
+/// ConditionVariable.WaitPolling: Sie bleibt Running und wartet mit Halt, ohne die CPU abzugeben. Bisher bekam sie wie jeder
+/// Thread eine volle Scheibe, die jede Wiedereinreihung neu fuellte; ein bereiter Wasm-Worker wartete bis zu 137 ms.
 /// Der Idle-Thread wird deshalb im Tick immer verdraengt, sobald ein anderer wartet. Eine Ausnahme fuer eine rechnende
-/// Hauptschleife (volle Scheibe) brachte unter KVM keinen Gewinn mehr: Ob sie gerade parkt, ist im Tick nicht erkennbar.
-/// Unter Dauerlast bekommt die Hauptschleife so einen Tick je Runde (ein Drittel der CPU).
+/// Hauptschleife (volle Scheibe) brachte unter KVM keinen Gewinn: Ob sie gerade wartet, ist im Tick nicht erkennbar.
+/// Unter Dauerlast bekommt die Hauptschleife so einen Tick je Runde (ein Drittel der Ticks, bei n Rechnenden 1/(2n+1)).
 /// </remarks>
 internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice?> sliceOf, Func<T, bool> isIdle) where T : class
 {
@@ -34,12 +34,12 @@ internal sealed class RoundRobinCore<T>(int capacity, Func<T, SchedulerTimeSlice
     /// <summary>Timer-Tick fuer den laufenden Thread; true heisst verdraengen, danach waehlt Cosmos ueber <see cref="Pick"/>.</summary>
     public bool Tick(T current, ulong elapsedNs)
     {
-        // Der laufende Thread kann selbst in der Queue stehen, wenn der Tick ihn geweckt hat, ohne dass er gewechselt hat.
+        // Der laufende Thread kann selbst in der Queue stehen, wenn ihn ein Ready-Aufruf ohne Wechsel eingereiht hat.
         bool queued = queue.Contains(current);
         int waiting = queue.Count - (queued ? 1 : 0);
         if (isIdle(current))
         {
-            // Der Idle-Thread gibt die CPU beim Parken nicht ab; wartet ein anderer, gehoert sie diesem ab diesem Tick.
+            // Der Idle-Thread gibt die CPU beim Warten nicht ab (WaitPolling); wartet ein anderer, gehoert sie ihm ab diesem Tick.
             if (waiting == 0) return false;
         }
         else

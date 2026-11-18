@@ -122,7 +122,7 @@ public sealed class SchedulingTests
             core.Ready(current);
             current = core.Pick() ?? idle;
         }
-        // Ein Tick Hauptschleife je zwei Ticks Worker: ein Drittel der CPU fuer Desktop und Eingabe unter Dauerlast.
+        // Ein Tick Hauptschleife je zwei Ticks Worker: ein Drittel der Ticks fuer Desktop und Eingabe unter Dauerlast.
         Assert.AreEqual(4, idleTicks);
     }
 
