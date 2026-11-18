@@ -158,6 +158,7 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
     public static ulong SliceNs(ThreadClass threadClass);   // 1, 2, 4 Ticks für Interactive, Normal, Background
 
     public int Count { get; }                               // wartende Threads aller Klassen
+    public int Waiting { get; }                             // wie Count, aber ohne Sperre lesbar (Hinweis)
     public int CountOf(ThreadClass threadClass);
     public T? At(int index);                                // Diagnose: Klassen aufsteigend, je Klasse Queue-Reihenfolge
     public bool Contains(T thread);
@@ -197,6 +198,11 @@ internal static class ClassPlacement
   2. `RemainingNs` um `elapsedNs` verringern, nicht unter 0. Ist danach `RemainingNs > 0` → `false`.
   3. Wartet ein anderer mit gleichem oder höherem Vorrang → `current`, falls in der Queue, ans Ende; `true`.
   4. Sonst für jede nicht leere Klasse mit niedrigerem Vorrang den Zähler um 1 erhöhen. Erreicht einer `StarvationLimit` → `true`. Sonst `RemainingNs = SliceNs(Klasse)` und `false`.
+- `Waiting`: ein Feld, gelesen mit `Volatile.Read`, geschrieben mit `Volatile.Write(ref waiting, Count)` am Ende jeder
+  Methode, die eine Queue ändert (`Ready`, `Blocked`, `PickFailed`, `Yielded`, `Pick`, `Tick`, `SetClass`). Die
+  Hauptschleife liest den Wert ohne Sperre, um vor dem Schlafen abzugeben, wenn jemand bereit ist; fehlt er, schläft
+  sie wieder bis zum nächsten Tick (Befund aus #254). Vorlage: `RoundRobinCore.Waiting` im Branch
+  `task/main-loop-yield-on-ready` (`0e10ff7`). Der Wert ist nur ein Hinweis; keine Scheduler-Entscheidung hängt daran.
 - `PeekStealable`: geht die Klassen nach Vorrang durch und liefert den ersten Thread, für den `mayMove` `true` gibt; entnimmt nichts.
 
 **Regeln `ClassPlacement.SelectCpu`**, die erste zutreffende gilt; „frei“ heißt `running[cpu] == null` und `queued[cpu] == 0`; bei mehreren Treffern gewinnt der kleinste Index:
@@ -234,6 +240,7 @@ Ist keine CPU erlaubt: `ArgumentException`.
 | `Blocked_RemovesFromAnyClass` | `i`, `n`, `b` warten; `Blocked(n)` | `Count == 2`, `Pick` liefert `i`, dann `b` |
 | `PickFailed_ReturnsToFront` | `n1`, `n2` warten; `Pick` liefert `n1`; `PickFailed(n1)` | nächstes `Pick` liefert `n1` |
 | `PeekStealable_SkipsThreadsThatMayNotMove` | `i` (nicht verschiebbar), `n` | liefert `n`, `Count` bleibt 2 |
+| `Waiting_PublishedAfterEveryQueueChange` | nacheinander `Ready(a)`, `Ready(b)`, `Pick(null)`, `Yielded(a)`, `Blocked(b)`, `SetClass(a, Background)`, `Pick(null)`, `PickFailed(a)`, `Tick` mit Umsetzen ans Ende | nach jedem Aufruf `Waiting == Count`; Werte der ersten fünf: 1, 2, 1, 2, 1 |
 
 - [ ] **Schritt 2: Tests für `ClassPlacement` schreiben** (`ClassPlacementTests.cs`). Topologien: `T4x1 = CpuTopology.Flat(4)`, `T2x2 = FromApicIds([0,1,2,3], 1, 2)`, `T4x2 = FromApicIds([0..7], 1, 3)`.
 
@@ -281,6 +288,7 @@ internal sealed class CosmosClassScheduler : IScheduler
 {
     public string Name => "ZehOS Klassen";
     public (ulong Preemptions, uint[] ThreadIds, int[] WaitingByClass) Snapshot();   // WaitingByClass: 3 Einträge
+    internal static int WaitingThreads { get; }   // ClassRunQueues.Waiting der CPU 0, vor InitializeCpu 0
 }
 
 internal static class ThreadStarter
@@ -330,6 +338,13 @@ ThreadStarter.ApplyClass = threadClass =>
 ```
 
 `BackgroundTaskService` startet seine Worker mit `ThreadClass.Background`. Alle anderen Startstellen bleiben Normal.
+
+**Waiting-Hinweis:** `WaitingThreads` liest die Queues der CPU 0 (statisches Feld, in `InitializeCpu` für CPU 0
+gesetzt, in `ShutdownCpu` gelöscht), weil die Hauptschleife dort läuft und das ab Etappe 5 so bleibt. Ist
+`ProjektZeh/Scheduling/CosmosMainLoopIdle.cs` bei Beginn dieses Pakets in `master` (Branch
+`task/main-loop-yield-on-ready`, Peters Entscheidung steht aus), wird dort `CosmosRoundRobinScheduler.WaitingThreads`
+durch `CosmosClassScheduler.WaitingThreads` ersetzt und der zugehörige Hosttest in `SchedulingTests.cs` bleibt. Ist
+die Datei nicht in `master`, liefert dieses Paket nur die Eigenschaft.
 
 - [ ] **Schritt 1: Test schreiben** (`ThreadStarterTests`): `TryStart_WithBackgroundClass_AppliesClassOnTheNewThread`: `ApplyClass` auf eine Lambda setzen, die Klasse und `Environment.CurrentManagedThreadId` merkt; `TryStart(body, threadClass: ThreadClass.Background)`, `Join`; erwartet: gemerkte Klasse `Background`, gemerkte Thread-Id ungleich der des Tests, `body` lief danach. Zweiter Test `TryStart_NormalClass_DoesNotCallApplyClass`. `ApplyClass` im `finally` zurücksetzen.
 - [ ] **Schritt 2: Tests schlagen fehl** (Parameter fehlt).
