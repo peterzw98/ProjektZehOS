@@ -144,7 +144,9 @@ public sealed unsafe class WasmRuntimeCallbackTests
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-            if (Failure == "close") throw new InvalidOperationException("close");
+            // Nur beim ausdruecklichen Schliessen werfen: eine Ausnahme im Finalizer (disposing == false) beendet den ganzen
+            // Testprozess, sobald ein anderer Test den GC laufen laesst (CI #241: "Test host process crashed ... close").
+            if (disposing && Failure == "close") throw new InvalidOperationException("close");
         }
     }
 
