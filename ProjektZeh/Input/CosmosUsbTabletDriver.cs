@@ -48,20 +48,19 @@ public sealed class CosmosUsbTabletDriver : Driver
             if (!UsbTabletReport.TryDecode(report, MouseManager.ScreenWidth, MouseManager.ScreenHeight,
                 out int x, out int y, out byte buttons, out int wheel)) return;
 
-            // Ein PS/2-Interrupt darf die Paketfolge waehrend des Tabletberichts nicht unterbrechen.
-#pragma warning disable COSMOS0001, NAOT0007
-            var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
-#pragma warning restore COSMOS0001, NAOT0007
-            try
+            // Ein PS/2-Interrupt oder eine zweite CPU darf die Paketfolge waehrend des Tabletberichts nicht unterbrechen.
+            using (CosmosMousePlug.PointerLock.Enter())
             {
                 CosmosMousePlug.ApplyPending();
                 CosmosMousePlug.RecordTabletMotion(x - MouseManager.X, y - MouseManager.Y);
                 // HandleAbsolute in Cosmos 3.0.94 übernimmt nur die Tasten, nicht die Position.
                 MouseManager.SetPosition(x, y);
                 Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
-                if (wheel != 0) Sink?.ReportRelative(0, 0, (KitPointerButtons)buttons, wheel);
+                // Nicht ueber Sink.ReportRelative: das endet in CosmosMousePlug.HandleRelative und naehme PointerLock
+                // ein zweites Mal (Selbstblockade). Dasselbe Paket direkt unter der gehaltenen Sperre einreihen; anders als
+                // der Sink-Weg auch bei zurueckgezogenem Geraet, wie SetPosition und RecordTabletMotion oben.
+                if (wheel != 0) CosmosMousePlug.AddLocked(0, 0, (KitPointerButtons)buttons, wheel);
             }
-            finally { mask.Dispose(); }
         }
     }
 }

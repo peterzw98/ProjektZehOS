@@ -5,7 +5,7 @@ namespace ProjektZeh.Input;
 
 internal readonly record struct RelativeMousePacket(int X, int Y, PointerButtons Buttons, int Wheel);
 
-// Der Interrupt schreibt unter der Mausmaske; Lesen und Leeren erfolgen ebenfalls unter dieser Maske.
+// Der Interrupt schreibt unter CosmosMousePlug.PointerLock; Lesen und Leeren erfolgen unter derselben Sperre.
 internal struct RelativeMouseBuffer
 {
     private const int Capacity = 128;

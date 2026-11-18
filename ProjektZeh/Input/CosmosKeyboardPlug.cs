@@ -15,25 +15,31 @@ public static class CosmosKeyboardCapture
 {
     private static readonly InputEventQueue events = new(InputService.QueueCapacity);
     private static long dropped;
+    // Schreiber (Interrupt) und Leser (Hauptschleife) nehmen dieselbe Sperre; auf mehreren CPUs reicht die Maske nicht.
+    private static CosmosIrqLock bufferLock;
 
     internal static void Initialize()
     {
-        events.Clear();
-        dropped = 0;
+        // Der Tastatur-Interrupt kann schon laufen; ohne Sperre setzte Clear den Kopf mitten in einem Einreihen zurueck.
+        using (bufferLock.Enter())
+        {
+            events.Clear();
+            dropped = 0;
+        }
     }
 
     // shortcut: Cosmos 3.0.94 verwirft Break-Ereignisse; bei einer oeffentlichen Rohereignis-API diesen Plug entfernen.
     public static void ReportScanCode(byte scanCode, bool released)
     {
-        if (!events.TryEnqueue(new(released ? InputEventType.KeyUp : InputEventType.KeyDown, scanCode))) dropped++;
+        using (bufferLock.Enter())
+        {
+            if (!events.TryEnqueue(new(released ? InputEventType.KeyUp : InputEventType.KeyDown, scanCode))) dropped++;
+        }
     }
 
     internal static bool TryRead(out InputEvent value, out long lost)
     {
-#pragma warning disable COSMOS0001, NAOT0007 // Die in 3.0.94 gepruefte Core-Interruptmaske ist fuer diesen kurzen Eingabeschutz erforderlich.
-        var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
-#pragma warning restore COSMOS0001, NAOT0007
-        try
+        using (bufferLock.Enter())
         {
             lost = dropped;
             if (lost != 0)
@@ -43,6 +49,5 @@ public static class CosmosKeyboardCapture
             }
             return events.TryDequeue(out value);
         }
-        finally { mask.Dispose(); }
     }
 }

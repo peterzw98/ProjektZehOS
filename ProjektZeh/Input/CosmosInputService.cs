@@ -16,7 +16,11 @@ internal sealed class CosmosInputService
         CosmosKeyboardCapture.Initialize();
     }
 
-    public static void SetScreenSize(int width, int height) => MouseManager.SetScreenSize(width, height);
+    // Klemmt X/Y an die neue Groesse; ohne Sperre koennte ein gleichzeitiger Tablettbericht mit der alten Breite schreiben.
+    public static void SetScreenSize(int width, int height)
+    {
+        using (CosmosMousePlug.PointerLock.Enter()) MouseManager.SetScreenSize(width, height);
+    }
 
     public void Poll(InputService input)
     {
@@ -50,15 +54,12 @@ internal sealed class CosmosInputService
             input.ReportKey(raw.KeyCode, released, character);
         }
 
-        // Der Maus-Interrupt setzt X, Y und Tasten einzeln; ohne Maske mischt ein Paket dazwischen zwei Meldungen.
+        // Der Maus-Interrupt setzt X, Y und Tasten einzeln; ohne Sperre mischt ein Paket dazwischen zwei Meldungen.
         int x, y, scroll, deltaX, deltaY, tabletX, tabletY;
         bool hasRaw;
         long lostMouse;
         PointerButtons buttons = PointerButtons.None;
-#pragma warning disable COSMOS0001, NAOT0007 // Die in 3.0.94 gepruefte Core-Interruptmaske ist fuer diesen kurzen Eingabeschutz erforderlich.
-        var mask = Cosmos.Kernel.Core.Scheduler.SchedulerManager.MaskInterrupts();
-#pragma warning restore COSMOS0001, NAOT0007
-        try
+        using (CosmosMousePlug.PointerLock.Enter())
         {
             CosmosMousePlug.ApplyPending();
             x = MouseManager.X;
@@ -70,7 +71,6 @@ internal sealed class CosmosInputService
             if (MouseManager.RightButton) buttons |= PointerButtons.Right;
             if (MouseManager.MiddleButton) buttons |= PointerButtons.Middle;
         }
-        finally { mask.Dispose(); }
         if (lostMouse != 0) input.Reset(lostMouse);
         input.ReportPointer(x, y, buttons, scroll, deltaX, deltaY, hasRaw, tabletX, tabletY);
     }
