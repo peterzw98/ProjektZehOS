@@ -92,6 +92,13 @@ internal static class Ext2DirectoryHelper
                 return false;
             }
 
+            // A record crossing a block boundary would skip the entries at
+            // the start of the next block (Linux: "directory entry across blocks").
+            if ((pos % sb.BlockSize) + recLen > sb.BlockSize)
+            {
+                return false;
+            }
+
             if (nameLen > recLen - Ext2InodeLayout.DirEntryNameOffset)
             {
                 return false;
