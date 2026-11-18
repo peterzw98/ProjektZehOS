@@ -1,0 +1,81 @@
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / 'scripts' / 'build-cosmos.sh'
+VERSION = (ROOT / 'deploy' / 'cosmos' / 'VERSION').read_text().strip()
+
+
+def plan(*args, feed=None):
+    """Ruft das Bauskript mit --print-plan auf; nichts wird gebaut, geklont oder installiert."""
+    with tempfile.TemporaryDirectory() as temp:
+        arguments = ['bash', str(SCRIPT), '--print-plan', '--feed', feed or temp, *args]
+        return subprocess.run(arguments, capture_output=True, text=True, cwd=ROOT)
+
+
+class BuildCosmosTests(unittest.TestCase):
+    def test_version_files_agree(self):
+        sdks = json.loads((ROOT / 'global.json').read_text())['msbuild-sdks']
+        self.assertEqual(VERSION, sdks['Cosmos.Sdk'])
+
+    def test_commit_is_full_sha(self):
+        commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
+        self.assertRegex(commit, r'^[0-9a-f]{40}$')
+
+    def test_plan_contains_no_user_level_side_effects(self):
+        result = plan()
+        self.assertEqual(0, result.returncode, result.stderr)
+        for forbidden in ('nuget locals', 'nuget remove source', 'nuget add source', '.nuget/packages', 'postCreateCommand'):
+            self.assertNotIn(forbidden, result.stdout)
+
+    def test_plan_is_x64_only(self):
+        result = plan()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn('arm64', result.stdout.lower())
+
+    def test_plan_sets_version_and_pathmap(self):
+        result = plan()
+        self.assertIn(f'VersionPrefix={VERSION}', result.stdout)
+        self.assertIn('PathMap=', result.stdout)
+        self.assertIn('/home/runner/work/Cosmos/Cosmos', result.stdout)
+
+    def test_trial_version_from_commit(self):
+        result = plan('--commit', '0123456789abcdef0123456789abcdef01234567')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('VersionPrefix=3.0.97-zehos.0.g0123456', result.stdout)
+
+    def test_plan_installs_tools_locally_by_default(self):
+        local = plan()
+        self.assertIn('--tool-path', local.stdout)
+        self.assertIn(f'.tools/cosmos-tools/{VERSION}', local.stdout)
+        self.assertNotIn('--global', local.stdout)
+        global_plan = plan('--global')
+        self.assertIn('--global', global_plan.stdout)
+        self.assertNotIn('--tool-path', global_plan.stdout)
+
+    def test_no_tools_skips_tool_installation(self):
+        result = plan('--no-tools')
+        self.assertNotIn('dotnet tool', result.stdout)
+
+    def test_same_version_other_commit_is_refused(self):
+        with tempfile.TemporaryDirectory() as feed:
+            (Path(feed) / f'{VERSION}.commit').write_text('f' * 40 + '\n')
+            result = plan(feed=feed)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('VERSION erhoehen', result.stderr)
+
+    def test_same_version_same_commit_skips_the_build(self):
+        commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
+        with tempfile.TemporaryDirectory() as feed:
+            (Path(feed) / f'{VERSION}.commit').write_text(commit + '\n')
+            result = plan(feed=feed)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn('dotnet build', result.stdout)
+        self.assertIn('dotnet tool install', result.stdout)
+
+
+if __name__ == '__main__':
+    unittest.main()

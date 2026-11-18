@@ -4,6 +4,10 @@
     <BaseOutputPath>$(MSBuildProjectDirectory)\bin\</BaseOutputPath>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>10.0-recommended</AnalysisLevel>
+    <!-- Cosmos-Version aus der einen Quelle deploy/cosmos/VERSION; global.json (msbuild-sdks) muss denselben Wert tragen. -->
+    <ZehOSCosmosVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)deploy/cosmos/VERSION').Trim())</ZehOSCosmosVersion>
+    <!-- Keine stille Ersatzversion aus nuget.org oder dem Cache: genau die selbst gebaute Version oder Fehler. -->
+    <WarningsAsErrors>$(WarningsAsErrors);NU1603;NU1601;NU1605</WarningsAsErrors>
     <TreatWarningsAsErrors Condition="'$(CI)' == 'true'">true</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>

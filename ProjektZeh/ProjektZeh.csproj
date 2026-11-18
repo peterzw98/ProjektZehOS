@@ -1,4 +1,4 @@
-<Project Sdk="Cosmos.Sdk/3.0.97" TreatAsLocalProperty="DefineConstants">
+<Project Sdk="Cosmos.Sdk" TreatAsLocalProperty="DefineConstants">
 
   <!-- cosmos build setzt DefineConstants global; lokale Ergaenzungen wie ZEHOS_WASM muessen erhalten bleiben. -->
   <PropertyGroup>
@@ -132,10 +132,23 @@
     <WriteLinesToFile File="$(ZehOSCStampFile)" Lines="$(ZehOSCStamp)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
+  <!-- Unter Unix ruft das SDK `cosmos.patcher` aus dem PATH; ein globales Werkzeug anderer Version (etwa das Upstream-3.0.97)
+       wuerde die selbst gebauten Pakete still mit fremdem Patcher verarbeiten. Daher vor dem Patchen die Version abgleichen. -->
+  <Target Name="ZehOSCheckPatcherVersion" BeforeTargets="SetupPatcher" Condition="'$(OS)' != 'Windows_NT'">
+    <Exec Command="cosmos.patcher --version" ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSPatcherVersionLine" />
+    </Exec>
+    <PropertyGroup>
+      <ZehOSPatcherVersion>$(ZehOSPatcherVersionLine.Split('+')[0].Trim())</ZehOSPatcherVersion>
+    </PropertyGroup>
+    <Error Condition="'$(ZehOSPatcherVersion)' != '$(ZehOSCosmosVersion)'"
+           Text="cosmos.patcher im PATH hat Version '$(ZehOSPatcherVersion)', erwartet '$(ZehOSCosmosVersion)'. Passendes Werkzeug installieren: scripts/build-cosmos.sh (liegt unter .tools/cosmos-tools/$(ZehOSCosmosVersion)/) und dessen Ordner in den PATH legen." />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
-    <PackageReference Include="Cosmos.Kernel" Version="3.0.97" />
-    <PackageReference Include="Cosmos.Kernel.System" Version="3.0.97" />
+    <PackageReference Include="Cosmos.Kernel" Version="[$(ZehOSCosmosVersion)]" />
+    <PackageReference Include="Cosmos.Kernel.System" Version="[$(ZehOSCosmosVersion)]" />
   </ItemGroup>
 
   <ItemGroup>

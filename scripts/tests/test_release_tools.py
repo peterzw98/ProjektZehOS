@@ -103,7 +103,9 @@ class ReleaseToolsTests(unittest.TestCase):
             script = root / 'scripts/build-release.sh'
             shutil.copyfile(SCRIPTS / 'build-release.sh', script)
             (root / 'ProjektZeh/ProjektZeh.csproj').write_text('<ZehOSInstaller>true</ZehOSInstaller>')
-            boot = root / 'packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI'
+            (root / 'deploy/cosmos').mkdir(parents=True)
+            (root / 'deploy/cosmos/VERSION').write_text('3.0.97-test.1\n')
+            boot = root / 'packages/cosmos.build.common/3.0.97-test.1/tools/Limine/BOOTX64.EFI'
             boot.parent.mkdir(parents=True)
             boot.write_bytes(b'boot')
             # Nur dotnet ersetzen: der echte Releaseablauf muss beide Builds sicher aufrufen.
