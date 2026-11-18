@@ -102,6 +102,7 @@ internal sealed class TextEditorApp : IApplication
     private bool SaveDocument()
     {
         // Aufgeloest und ohne Gross-/Kleinschreibung (FAT): ./datei oder ein absoluter Pfad umgehen die Sperre nicht.
+        // Auf ext2 sperrt das auch eine andere Datei, die sich nur in der Schreibung unterscheidet; das ist gewollt vorsichtig.
         if (unloadedPath != null && string.Equals(files.ResolvePath(path.Text).Value, unloadedPath, StringComparison.OrdinalIgnoreCase))
         {
             status = "Datei wurde nicht geladen und bleibt unveraendert; unter anderem Pfad speichern.";
