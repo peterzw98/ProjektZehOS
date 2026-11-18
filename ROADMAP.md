@@ -202,7 +202,7 @@ Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien j
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (gemergt, erfüllt):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
 - **Thread-Start-Schutz #241 und Worker-Pool #246 (beide gemergt, erfüllt):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
-- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** Branch `fix/ext2-unlink-indirect-plug`, noch ohne PR; der PR wartet auf Peters Freigabe.
+- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** gemergt mit #259 (Grenze dokumentiert in #262/#263).
 
 Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
 
