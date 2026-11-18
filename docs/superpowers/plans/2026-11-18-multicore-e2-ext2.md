@@ -186,6 +186,10 @@ geschrieben (`:483-484`); `.` wird nicht abgelehnt.
 
 - [ ] **Schritt 5:** Doku anpassen, Commit (`refactor(storage): ext2-Plugs entfernt, Fehler in Cosmos behoben`), Review durch die Storage-Arbeitsgruppe, PR. Merge erst, wenn die vier `cosmos`-PRs gemergt sind und `COMMIT` auf den gemergten Stand zeigt.
 
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** E4.0 Lauf 9 (8190 Einträge) scheitert in Z1, weil die Probe noch die alte Grenze prüft; das ist kein Fehler von Z1.
+> Die Probe auf die neue Grenze umzustellen gehört zum ZehOS-Teil von E2-P7 (Schritt 3). Z1 führt Lauf 9 unter „Grenzen“ und nennt dort,
+> dass `rmdir` großer Verzeichnisse im Gast nur über die Läufe 1 bis 5 abgedeckt ist.
+
 ---
 
 ### Paket E2-P5: Formatter
@@ -213,6 +217,14 @@ Cosmos unverändert; der Treiberfehler für 1-KiB-Volumes (`Ext2Superblock.cs:65
 - [ ] **Schritt 4: Hostprobe (Linux):** `dotnet run -c Release --project experiments/StorageProbe -- selftest`; `experiments/StorageProbe/matrix.sh .tools/storage-probe fixed` (Ende 0 nur bei sauberer `e2fsck`-Matrix); `python3 scripts/test-installer-layout.py .tools/installer-layout`.
 - [ ] **Schritt 5: Gast:** kleine Probe wie in E2-Z1; Schritt `format` meldet „4096 Byte, sparse_super“. Danach das formatierte Image unter Linux einhängen und Dateien lesen.
 - [ ] **Schritt 6:** Doku (`ProjektZeh/Storage/Ext2/README.md`, `docs/COSMOS_SUPPORT.md` „ext2-Formatierer“), Commit, Review, PR.
+
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Der ZehOS-Teil (#363) pinnt `deploy/cosmos/COMMIT` auf `d25b8200`
+> (Kopf von `cosmos` mit #361 und #362, Nachfahre von `775666d7`) und setzt `VERSION`/`global.json` auf `3.0.97-zehos.5`.
+> `zehos.3` und `zehos.4` sind verbrannt: Sie liegen in NuGet-Caches schon aus anderen Commits (`zehos.3` aus `4490718` lokal,
+> `zehos.4` aus `75206e9` auf Peters Rechner; diese Angabe stammt aus einer Kanalmeldung vom 18.11.2026, Peters
+> Cache wurde nicht selbst eingesehen), und `scripts/build-cosmos.sh` bricht an der Stempelprüfung ab, wenn eine Version
+> zu einem anderen Commit gehört. Regel: Eine neue `-zehos.N` vor der Vergabe gegen alle bekannten Caches prüfen; Pin ist der
+> aktuelle Kopf von `cosmos`.
 
 ---
 
@@ -259,6 +271,11 @@ Teil dieses Plans, weil sie die Objektidentität berührt.
 - [ ] **Schritt 3: Gast:** E4.0 `--diagnose-run 12` und der Lauf mit 20.000 Einträgen aus E2-P7. Erwartet: kein Allokationsfehler, `free` vor und nach dem Aushängen gleich.
 - [ ] **Schritt 4: ZehOS:** nur Doku (`README.md:174`, `docs/COSMOS_SUPPORT.md:150-172`, `docs/STORAGE_3_0_97_FINDINGS.md` „Inode-Cache“), `COMMIT`/`VERSION`, PR.
 
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Die erste Stufe ist angenommen. Kosten: `Dictionary(65_536)` rundet auf
+> 75.431 Buckets, das sind rund 2,0 MiB je Mount (Review Jensen Huang); Laser hat die Kosten am 18.11.2026 akzeptiert (#375).
+> Bedingung für Schritt 4: Die Grenze verschiebt sich nur. `README.md` und `docs/COSMOS_SUPPORT.md` nennen statt rund 17.500
+> künftig „etwa 75.000 gecachte Inodes je Mount, darüber wie bisher“.
+
 ---
 
 ### Paket E2-P6: Feature-Prüfung und Lesemodus
@@ -287,6 +304,22 @@ Cosmos das Image nicht mehr verändert.
 - [ ] **Schritt 4: ZehOS** (Branch `task/mc-e2-p6-lesemodus`): `CosmosReadOnlyExt2FileSystem` auf den Cosmos-Lesemount umstellen oder entfernen; Aufrufer `CosmosLayoutProfile.cs`, `CosmosMigrationService.cs:126`, `CosmosExt2GuestProbe.cs:239-332` anpassen. Hosttests `Ext2FeatureGateTests`, `Ext2SupportedGeometryTests`, `RootVolumeStateTests` bleiben grün.
 - [ ] **Schritt 5: Hostprobe:** `dotnet run --project experiments/StorageProbe/StorageProbe.csproj -c Release -- readonly-selftest`. **Gast:** kleine Probe, Lauf 2 (`ReadOnlyRun`): Image-SHA vorher und nachher gleich, Marken „Create, Delete, Mkdir, Rename ohne Wirkung“ und „Image unveraendert“; E4.0 Lauf 4.
 - [ ] **Schritt 6:** Doku, Commit, Review durch die Storage-Arbeitsgruppe, PR.
+
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Antworten auf die Fragen der Entwurfsnotiz:
+> 1. Unbekannte compat-Bits, auch `ext_attr`, führen zum Lesemount. Das ist strenger als die Spezifikation, aber begründet:
+>    Cosmos pflegt `resize_inode`, `dir_index` und `has_journal` nicht, `Unlink` gibt den `i_file_acl`-Block nicht frei und der
+>    xattr-Refcount wird nicht gepflegt. Folge: Jedes mit `mke2fs -t ext2` erzeugte Image wird nur lesend eingehängt.
+> 2. Neue Signatur von `TryCreate`: zulässig; der PR listet alle Aufrufer im Cosmos-Baum und in den Tests.
+> 3. `Release` ruft `Fsync` nur im Lesemodus nicht mehr; im Schreibmodus bleibt alles gleich.
+> 4. `large_file`: Ist das Bit nicht gesetzt, wird die Dateigröße auf 2 GiB − 1 begrenzt; ist es gesetzt, bleibt das Verhalten.
+>    Der Superblock wird dabei nicht geändert. Der Test schreibt über 2 GiB − 1 auf ein Image ohne das Bit und ist ohne Fix rot.
+> 5. `s_state` (`EXT2_VALID_FS`) beim Schreibmount löschen und beim Aushängen setzen: nicht Teil von P6, eigener Block.
+> 6. `CosmosReadOnlyExt2FileSystem` entfällt nur, wenn `MigrationPlan` und `CosmosMigrationService` nicht mehr davon abhängen;
+>    sonst bleibt der Adapter und wird auf den Cosmos-Lesemount umgestellt.
+> 7. Ergänzung: `s_rev_level` über 1 führt zum Lesemount, wie `ext2_setup_super` in Linux.
+>
+> P6 wird nach E2-P8 (#375) gemergt. Die Lesung des Leads gilt als Gegenlesung nach Schritt 1 (Koordinator, 18.11.2026);
+> den PR reviewt zusätzlich ein Engineer.
 
 ---
 
