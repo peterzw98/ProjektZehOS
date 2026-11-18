@@ -75,7 +75,7 @@ if [ "$plan" = 0 ]; then
     if [ -f "$cached" ]; then
         cached_commit="$(nuspec_commit < "$cached")"
         [ "$cached_commit" = "$commit" ] || \
-            fail "NuGet-Cache enthaelt Cosmos $version aus Commit '"${cached_commit:-?}"', nicht $commit; deploy/cosmos/VERSION erhoehen"
+            fail "NuGet-Cache enthaelt Cosmos $version aus Commit '${cached_commit:-?}', nicht $commit; deploy/cosmos/VERSION erhoehen"
     fi
 fi
 

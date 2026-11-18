@@ -26,4 +26,4 @@ bei einem anderen SDK ab; `--any-sdk` ist nur fuer lokale Versuche gedacht, solc
   `scripts/build-cosmos.sh --global` neu ausführen.
 - Das Skript prüft vor dem Bau, ob der NuGet-Cache des Rechners dieselbe Version aus einem anderen Commit enthält, und bricht
   dann mit „VERSION erhöhen“ ab; nach dem Bau muss die nuspec von `Cosmos.Kernel` den Commit tragen.
-- Cosmos-Pakete (`Cosmos.*`, `_Cosmos.*`) stammen laut `NuGet.Config` ausschließlich aus `deploy/cosmos/feed`.
+- Der Kernel verlangt `Cosmos.*` in exakter Version (`[3.0.97-zehos.1]`, NU1603 ist ein Fehler); diese Version gibt es nur im Feed. Hosttests und `experiments/` laden weiter die offiziellen Pakete 3.0.97 von nuget.org (kein `packageSourceMapping`).
