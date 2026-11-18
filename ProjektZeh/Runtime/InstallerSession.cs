@@ -13,7 +13,7 @@ namespace ProjektZeh.Runtime;
 /// <summary>
 /// Ereignisschleife des Installer-Builds; zeigt ausschliesslich den Einrichtungsassistenten ohne Textshell oder Desktop.
 /// </summary>
-internal sealed class InstallerSession(IInstallService service)
+internal sealed class InstallerSession(IInstallService service, bool gptEnabled = false)
 {
     public void Run()
     {
@@ -25,7 +25,7 @@ internal sealed class InstallerSession(IInstallService service)
         var surface = new PixelSurface(width, height,
             canvas.GetBuffer() ?? throw new InvalidOperationException("Kein Grafikpuffer vorhanden."));
         var font = CosmosGermanFont.Default;
-        var wizard = new SetupWizard(service, new UiPainter(font.Data, font.Width, font.Height), width, height);
+        var wizard = new SetupWizard(service, new UiPainter(font.Data, font.Width, font.Height), width, height, gptEnabled);
         var devices = new CosmosInputService();
         var input = new InputService(width, height);
         CosmosInputService.SetScreenSize(width, height);

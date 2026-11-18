@@ -26,12 +26,21 @@ public sealed class Kernel : Sys.Kernel
     private readonly CosmosStorageService storage = new();
 #if ZEHOS_ROOT_MIGRATION
     // Etappe 4.5: jeder Schreiber auf /data nimmt einen Lease, damit system migrate die Quelle exklusiv sperren kann.
-    private static readonly Func<IDisposable?>? SourceWrites = AppStorageGate.TryBeginWrite;
-    private static readonly Func<IDisposable?>? PackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
+    private static readonly Func<IDisposable?>? DataWrites = AppStorageGate.TryBeginWrite;
+    private static readonly Func<IDisposable?>? DataPackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
 #else
     // Ohne Flag bleiben beide null: die Dienste verhalten sich wie vor 4.5.
-    private static Func<IDisposable?>? SourceWrites => null;
-    private static Func<IDisposable?>? PackageWrites => null;
+    private static Func<IDisposable?>? DataWrites => null;
+    private static Func<IDisposable?>? DataPackageWrites => null;
+#endif
+#if ZEHOS_ROOT_PROFILE
+    // Etappe 7b: im Root-Profil haelt eine eigene Sperre alle Root-Schreiber zwischen Aushaengen und Energieaktion an.
+    private Func<IDisposable?>? SourceWrites => systemPaths.Profile == PathProfile.Root ? AppStorageGate.TryBeginRootWrite : DataWrites;
+    private Func<IDisposable?>? PackageWrites => systemPaths.Profile == PathProfile.Root
+        ? () => AppStorageGate.TryBeginRootWrite("Paketinstallation") : DataPackageWrites;
+#else
+    private static Func<IDisposable?>? SourceWrites => DataWrites;
+    private static Func<IDisposable?>? PackageWrites => DataPackageWrites;
 #endif
     private readonly ConsoleTextOutput output = new();
     // Entsteht erst in InitializeServices, weil die Shell Konten, Pakete und das Pfadprofil braucht.
@@ -51,6 +60,12 @@ public sealed class Kernel : Sys.Kernel
     // Etappe 4.3: das Pfadprofil wird einmal beim Boot gewaehlt (InitializeServices); Konten, Pakete und Updates haengen davon ab
     // und entstehen deshalb erst dort, nicht als Feldinitialisierer vor jeder Plattenpruefung.
     private SystemPaths systemPaths = SystemPaths.Legacy;
+    // Einzige Stelle, die -p:ZehOSGptInstaller abbildet; der getestete Installercode bekommt nur den bool.
+#if ZEHOS_GPT_INSTALLER
+    private const bool GptInstaller = true;
+#else
+    private const bool GptInstaller = false;
+#endif
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
@@ -60,6 +75,8 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_ROOT_PROFILE
     // Etappe 4.3: Ergebnis der Profilwahl; RootVolume nur im schreibbaren Root-Fall (s_state beim Herunterfahren).
     private CosmosLayoutSelection? layout;
+    // Etappe 7b: eine Instanz, damit ein gescheitertes Reopen (Root schreibgesperrt) bis zum naechsten Versuch erhalten bleibt.
+    private RootPowerSequence? rootPower;
 #endif
     private PackageStore packages = null!;
     private static bool SecurityRecovery =>
@@ -91,7 +108,8 @@ public sealed class Kernel : Sys.Kernel
             if (!prepared.IsOK()) return prepared;
             Sys.Power.Reboot();
             return ResultErr.CreateSuccess();
-        });
+        // shortcut: Installer-ISOs waehlen kein Root-Profil (4.3), daher fest Legacy; erst bei einem Installer im Root-Profil auf systemPaths umstellen.
+        }, GptInstaller, SystemPaths.Legacy.InstallMount);
 #endif
     }
 
@@ -103,9 +121,14 @@ public sealed class Kernel : Sys.Kernel
     {
         systemPaths = paths;
 #if !ZEHOS_INSTALLER
+        // Root-Profil (Spec 7b §1): Konfiguration unter /etc/zehos, ESP-Sync vor der Erfolgsmeldung, kein Offline-Kernel aus Systembereichen.
+        bool rootProfile = systemPaths.Profile == PathProfile.Root;
         updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
-            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites), systemPaths.AdminRoot,
-            CosmosDirectoryEntryLimit.ForDirectory, SourceWrites);
+            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites, rootProfile ? PersistUpdateRoot : null,
+                rootProfile ? CosmosPathGuard.For(systemPaths.UpdateRoot) : null,
+                rootProfile ? () => StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.UpdateRoot, out _)) : null),
+            systemPaths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites, systemPaths.UpdateConfigPath,
+            rootProfile ? [systemPaths.UpdateRoot, systemPaths.SecurityDirectory, "/var/lib/zehos"] : null);
 #endif
         // /data ist FAT: Vergleich ohne Gross-/Kleinschreibung; der Waechter sperrt Symlinks und fremde Mounts (Etappe 3).
         accounts = new(systemPaths.AdminRoot, new PasswordHasher(CosmosSaltSource.Fill), systemPaths.Comparison,
@@ -219,7 +242,7 @@ public sealed class Kernel : Sys.Kernel
     }
 
     private static string VersionText =>
-        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
+        $"ZehOS {typeof(Kernel).Assembly.GetName().Version}+{BuildInfo.Commit}{ManifestSignature.BuildLabel}; Cosmos {typeof(Sys.Kernel).Assembly.GetName().Version}";
 
     private ShellService CreateShell(UserSession identity)
     {
@@ -242,7 +265,12 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
 #if ZEHOS_INSTALLER
             // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
-            .. new SetupShellCommands(installer, () => true).Commands,
+#if ZEHOS_GPT_GUEST_PROBE
+            .. new SetupShellCommands(installer, () => true, GptInstaller,
+                text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("GPT_TEST " + text + "\n")).Commands,
+#else
+            .. new SetupShellCommands(installer, () => true, GptInstaller).Commands,
+#endif
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
@@ -256,7 +284,11 @@ public sealed class Kernel : Sys.Kernel
 #endif
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
+#if ZEHOS_ROOT_PROFILE
+            .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown, RestoreAfterPowerAction).Commands,
+#else
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands,
+#endif
 #if ZEHOS_ROOT_MIGRATION
             .. migration.Commands,
 #endif
@@ -277,7 +309,8 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        systemLog.Information("Boot", $"ZehOS {CurrentVersion}{ManifestSignature.BuildLabel} startet.");
+        // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
+        systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
@@ -367,6 +400,11 @@ public sealed class Kernel : Sys.Kernel
         accounts.SetupWindowOpen = true;
         var security = accounts.Load();
         accounts.SetupWindowOpen = false;
+#if ZEHOS_GPT_GUEST_PROBE
+        // Der Gasttest braucht den Identitaetszustand und das Ergebnis der Boot-Ersteinrichtung ohne Bildschirm-OCR.
+        var guestIdentity = CosmosInstalledIdentity.EvaluateData();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"GPT_TEST IDENTITY {guestIdentity?.State.ToString() ?? "NoData"} SETUP {accounts.NeedsSetup}\n");
+#endif
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif
@@ -428,7 +466,7 @@ public sealed class Kernel : Sys.Kernel
         if (startDesktop)
         {
             // Der grafische Assistent ist der Normalfall; bei einem Anzeigefehler bleibt die Text-Einrichtung mit setup bedienbar.
-            try { new InstallerSession(installer).Run(); }
+            try { new InstallerSession(installer, GptInstaller).Run(); }
             catch (Exception exception)
             {
                 systemLog.Error("Setup", $"Grafische Einrichtung fehlgeschlagen: {exception.Message}");
@@ -496,8 +534,10 @@ public sealed class Kernel : Sys.Kernel
         else
 #endif
 #if ZEHOS_ROOT_PROFILE
-        // Root-Profil: / laesst sich nicht aushaengen; /boot/efi aushaengen, zweimal Sync, s_state = 1 (Spec Abschnitt 2).
-        unmounted = layout?.RootVolume is { } rootVolume ? CosmosLayoutProfile.Close(rootVolume)
+        // Root-Profil (Spec 7b §2): laufende Apps verweigern, Schreiber sperren, Zusatzplatten und /boot/efi aushaengen,
+        // zweimal Sync, s_state = 1; jeder Fehler nimmt das zurueck. / selbst laesst sich nicht aushaengen.
+        unmounted = layout?.RootVolume is { } rootVolume
+            ? (rootPower ??= new RootPowerSequence(new CosmosRootPowerPlatform(rootVolume, RunningAppReason))).Prepare()
             : systemPaths.Profile == PathProfile.Legacy && StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _)) ? storage.Unmount() : ResultErr.CreateSuccess();
 #else
         unmounted = StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _)) ? storage.Unmount() : ResultErr.CreateSuccess();
@@ -508,7 +548,40 @@ public sealed class Kernel : Sys.Kernel
         return unmounted;
     }
 
+#if ZEHOS_ROOT_PROFILE
+    /// <summary>
+    /// Cosmos kehrte aus Reboot/Shutdown zurueck: erst s_state = 0 (Reopen), dann Schreiber und Mounts wieder frei, sonst
+    /// stuende ein sauberes Kennzeichen ueber einem weiter beschriebenen Root (Spec 7b §2, Zeile 8). Legacy bleibt unveraendert.
+    /// </summary>
+    private ResultErr RestoreAfterPowerAction()
+    {
+        if (rootPower == null || layout?.RootVolume == null) return ResultErr.CreateSuccess();
+        var restored = rootPower.Restore();
+        if (!restored.IsOK()) systemLog.Error("Storage", restored.Message);
 #if !ZEHOS_INSTALLER
+        StartAutomaticNetwork();
+#endif
+        return restored;
+    }
+
+    private string? RunningAppReason() => packages?.RunningPackage is { } id ? $"Paket-App {id} laeuft;" : null;
+#endif
+
+#if !ZEHOS_INSTALLER
+    private ResultErr PersistUpdateRoot() => StorageLock.Run(PersistUpdateRootStorageLocked);
+
+    // Cosmos-FAT-Sync ruft Device.Flush; Fehler kommen nur als Ausnahme (Spec 7b §5.4).
+    private ResultErr PersistUpdateRootStorageLocked()
+    {
+        try
+        {
+            return VfsManager.TryGetMount(systemPaths.UpdateRoot, out VfsMount? mount) && mount.Superblock.SuperOperations.Sync(mount.Superblock)
+                ? ResultErr.CreateSuccess()
+                : ResultErr.CreateFailure(ResultCode.Failure, $"cause='SyncFailed' message='Sync von {systemPaths.UpdateRoot} fehlgeschlagen.'");
+        }
+        catch (Exception exception) { return ResultErr.CreateFromException(exception); }
+    }
+
     private void StartAutomaticNetwork()
     {
         var started = automaticNetwork.Start();

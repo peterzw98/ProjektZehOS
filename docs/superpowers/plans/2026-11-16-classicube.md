@@ -25,7 +25,7 @@
 - Lizenztexte ins Paket. Keine Mojang-Grafiken oder -Daten: nur Texturen mit belegter freier Lizenz. Prüfen, ob ClassiCube beim Start Ressourcen von Mojang oder eigenen Servern nachlädt, und das abschalten.
 - Keine Abhängigkeits- oder Werkzeugupdates ohne Rückfrage (wasi-sdk-Version wie bei Doom/NetSurf verwenden).
 - Veröffentlichung im Branch `packages` nur per PR; Merge nur auf ausdrücklichen Auftrag.
-- **Jeder Etappen-PR:** ZehOS-Version in `ProjektZeh/ProjektZeh.csproj` gegenüber dem Zielbranch erhöhen (Nummer erst beim PR, Abstimmung im IRC), unabhängiges Review vor dem PR, Reviewer nach `AGENTS.md`.
+- **Jeder Etappen-PR:** keine Versionsänderung (die Version entsteht beim Bau, Regel in `AGENTS.md`), unabhängiges Review vor dem PR, Reviewer nach `AGENTS.md`.
 - **Jede Etappe mit Kernelanteil:** Hosttests mit `-warnaserror`, nativer Normal- und Recovery-Build, betroffene Abläufe in QEMU **und VMware** prüfen; nicht ausführbare Prüfungen ausdrücklich als offen nennen.
 
 ## Etappe 1: Messen und Anzeigeweg (1–2 Wochen)

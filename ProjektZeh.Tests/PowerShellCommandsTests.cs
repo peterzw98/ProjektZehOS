@@ -112,4 +112,31 @@ public sealed class PowerShellCommandsTests
         output.Verify(target => target.WriteLine(It.Is<string>(line => line.StartsWith("reboot -", StringComparison.Ordinal))), Times.Once);
         output.Verify(target => target.WriteLine(It.Is<string>(line => line.StartsWith("shutdown -", StringComparison.Ordinal))), Times.Once);
     }
+
+    [TestMethod]
+    public void ExecuteLine_PowerActionThrows_RestoresAndReportsRestoreFailure()
+    {
+        var calls = new List<string>();
+        var output = new Mock<ITextOutput>();
+        var shell = new ShellService(new PowerShellCommands(ResultErr.CreateSuccess,
+            () => { calls.Add("reboot"); throw new InvalidOperationException("Power failed"); },
+            () => Assert.Fail("Shutdown wurde nicht angefordert."),
+            () => { calls.Add("restore"); return ResultErr.CreateFailure(ResultCode.Failure, "Root schreibgesperrt"); }).Commands);
+
+        var result = shell.ExecuteLine("reboot", output.Object);
+
+        CollectionAssert.AreEqual(new[] { "reboot", "restore" }, calls, "Auch nach einer Ausnahme muss zurueckgenommen werden.");
+        StringAssert.Contains(result.Message, "Power failed", StringComparison.Ordinal);
+        StringAssert.Contains(result.Message, "Root schreibgesperrt", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
+    public void ExecuteLine_PreparationFails_DoesNotRestore()
+    {
+        var shell = new ShellService(new PowerShellCommands(() => ResultErr.CreateFailure(ResultCode.Failure, "PowerBusy"),
+            () => Assert.Fail("Kein Neustart."), () => Assert.Fail("Kein Ausschalten."),
+            () => { Assert.Fail("Nichts vorbereitet, nichts zurueckzunehmen."); return ResultErr.CreateSuccess(); }).Commands);
+
+        Assert.IsFalse(shell.ExecuteLine("shutdown", new Mock<ITextOutput>().Object).IsOK());
+    }
 }

@@ -6,8 +6,20 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.122</Version>
+    <!-- Version = Prefix.(PatchBase + Merges auf master seit der letzten Aenderung dieser beiden Elementzeilen), Ziel
+         ZehOSVersionFromGit. Jede Aenderung einer der beiden Zeilen setzt den Zaehler zurueck: PatchBase dann auf den aktuellen
+         Patch + 1 (oder 0 mit neuem Prefix, etwa 0.6). PRs aendern keine Version; -p:Version (Release) gewinnt. -->
+    <ZehOSVersionPrefix>0.5</ZehOSVersionPrefix>
+    <ZehOSPatchBase>123</ZehOSPatchBase>
+    <!-- Vor den SDK-Targets ausgewertet: nicht leer nur bei -p:Version von aussen (das SDK setzt sonst spaeter 1.0.0). -->
+    <ZehOSVersionFromBuild>$(Version)</ZehOSVersionFromBuild>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
+    <!-- GPT-Installer (Spec 7a-S4) nur in Testbuilds bis zum Go von Paket 4.0 und gruenen Gasttests G1-G7. -->
+    <DefineConstants Condition="'$(ZehOSGptInstaller)' == 'true'">$(DefineConstants);ZEHOS_GPT_INSTALLER</DefineConstants>
+    <!-- Nur Gastabnahme: Setup-Ausgaben werden seriell fuer den Test gespiegelt. -->
+    <DefineConstants Condition="'$(ZehOSGptGuestProbe)' == 'true'">$(DefineConstants);ZEHOS_GPT_GUEST_PROBE</DefineConstants>
+    <!-- Nur fuer den G8-Abbruchtest: vor dem ESP-Marker bei 96 Prozent warten. -->
+    <DefineConstants Condition="'$(ZehOSGptInstaller)' == 'true' and '$(ZehOSGptG8Probe)' == 'true'">$(DefineConstants);ZEHOS_GPT_G8_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
@@ -143,8 +155,14 @@
   <!-- Ausschliesslich fuer lokale Update-Tests: ersetzt das Produktionsvertrauen, ohne Rueckfall. -->
   <PropertyGroup Condition="'$(ZehOSUpdateTestKeyPath)' != ''">
     <DefineConstants>$(DefineConstants);ZEHOS_UPDATE_TESTKEY</DefineConstants>
-    <InformationalVersion>$(Version)+update-testkey</InformationalVersion>
   </PropertyGroup>
+  <!-- Erst nach der Versionsbestimmung; GetAssemblyVersion uebernimmt einen gesetzten Wert unveraendert. -->
+  <Target Name="ZehOSUpdateTestKeyVersion" DependsOnTargets="ZehOSVersionFromGit" BeforeTargets="GetAssemblyVersion"
+          Condition="'$(ZehOSUpdateTestKeyPath)' != ''">
+    <PropertyGroup>
+      <InformationalVersion>$(Version)+update-testkey</InformationalVersion>
+    </PropertyGroup>
+  </Target>
   <ItemGroup Condition="'$(ZehOSUpdateTestKeyPath)' != ''">
     <EmbeddedResource Include="$(ZehOSUpdateTestKeyPath)" LogicalName="ZehOS.UpdateTestKey" />
   </ItemGroup>
@@ -183,6 +201,64 @@
     <InvertInstallerPayload Source="$(ZehOSPayloadDir)/ProjektZeh.elf" Destination="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" />
     <ItemGroup>
       <FileWrites Include="$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/installer/ProjektZeh.inverted.elf" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Auf master monoton: jeder Merge ist ein first-parent-Commit. Ohne vollstaendige Historie bricht der Bau ab, statt eine
+       zu niedrige Version einzubauen (Paket-Mindestversionen und Updatevergleich wuerden sonst falsch entscheiden). Keine
+       %-Platzhalter in den git-Aufrufen: Exec laeuft unter Windows ueber cmd. Das -G-Muster nennt die Elemente mit spitzen
+       Klammern, damit nur die beiden Eigenschaftszeilen eine neue Basis setzen, nicht Kommentare oder dieses Ziel selbst. -->
+  <Target Name="ZehOSVersionFromGit" BeforeTargets="GetAssemblyVersion" Condition="'$(ZehOSVersionFromBuild)' == ''">
+    <Exec Command="git rev-parse --is-shallow-repository" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSGitShallow" />
+      <Output TaskParameter="ExitCode" PropertyName="ZehOSGitExit" />
+    </Exec>
+    <Error Condition="'$(ZehOSGitExit)' != '0'" Text="ZehOS-Version: kein Git-Arbeitsbaum gefunden. Mit -p:Version=X.Y.Z bauen." />
+    <Error Condition="'$(ZehOSGitShallow)' != 'false'"
+           Text="ZehOS-Version: flacher Git-Klon. Vollstaendige Historie holen (git fetch --unshallow; CI: fetch-depth 0) oder -p:Version=X.Y.Z setzen." />
+    <Exec Command="git log -1 --first-parent --diff-merges=first-parent -s --pretty=oneline -G &quot;&lt;ZehOSVersionPrefix&gt;|&lt;ZehOSPatchBase&gt;&quot; -- ProjektZeh.csproj"
+          WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSVersionBaseLine" />
+    </Exec>
+    <PropertyGroup>
+      <ZehOSVersionBase>$(ZehOSVersionBaseLine.Split(' ')[0])</ZehOSVersionBase>
+    </PropertyGroup>
+    <Error Condition="'$(ZehOSVersionBase)' == ''"
+           Text="ZehOS-Version: kein Commit mit den Versions-Elementzeilen in der first-parent-Historie (lokal nicht committet?)." />
+    <Exec Command="git rev-list --count --first-parent $(ZehOSVersionBase)..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSVersionCommits" />
+    </Exec>
+    <PropertyGroup>
+      <Version>$(ZehOSVersionPrefix).$([MSBuild]::Add($(ZehOSPatchBase), $(ZehOSVersionCommits)))</Version>
+    </PropertyGroup>
+    <Message Importance="high" Text="ZehOS-Version $(Version) (Basis $(ZehOSVersionBase), $(ZehOSVersionCommits) Commits danach)" />
+  </Target>
+
+  <!-- Branch-Bauten tragen keine eindeutige Nummer; Anzeige und Bootzeile nennen deshalb den Commit dazu. Als Konstante,
+       weil Attribut-Reflexion im Cosmos-Kernel nicht belegt ist; ohne Git (nur mit -p:Version) steht dort "ohne-git". -->
+  <Target Name="ZehOSBuildInfo" BeforeTargets="CoreCompile">
+    <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="ZehOSCommitExit" />
+    </Exec>
+    <!-- Messbauten entstehen oft aus nicht committetem Stand; das soll in der Bootzeile sichtbar sein (Review pink). -->
+    <Exec Command="git diff --quiet HEAD --" WorkingDirectory="$(MSBuildProjectDirectory)" IgnoreExitCode="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" Condition="'$(ZehOSCommitExit)' == '0'">
+      <Output TaskParameter="ExitCode" PropertyName="ZehOSDirtyExit" />
+    </Exec>
+    <PropertyGroup>
+      <ZehOSCommit Condition="'$(ZehOSCommitExit)' != '0' or '$(ZehOSCommit)' == ''">ohne-git</ZehOSCommit>
+      <ZehOSCommit Condition="'$(ZehOSDirtyExit)' == '1'">$(ZehOSCommit)-dirty</ZehOSCommit>
+      <ZehOSBuildInfoFile>$(IntermediateOutputPath)ZehOSBuildInfo.g.cs</ZehOSBuildInfoFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(ZehOSBuildInfoFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="namespace ProjektZeh%3B;internal static class BuildInfo { internal const string Commit = &quot;$(ZehOSCommit)&quot;%3B }" />
+    <ItemGroup>
+      <Compile Include="$(ZehOSBuildInfoFile)" />
+      <FileWrites Include="$(ZehOSBuildInfoFile)" />
     </ItemGroup>
   </Target>
 </Project>

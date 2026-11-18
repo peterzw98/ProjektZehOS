@@ -18,12 +18,13 @@ internal sealed class InstallJob : IInstallJob
     private const int ChunkSize = 64 * 1024;
     private readonly IInstallTarget target;
     // Die .bak-Kopie macht den Rueckfalleintrag schon vor dem ersten Update startfaehig.
-    private readonly string[] paths = ["/EFI/BOOT/BOOTX64.EFI", "/boot/ProjektZeh.elf", "/boot/ProjektZeh.elf.bak", "/boot/zehos-version.txt"];
+    internal static readonly string[] Paths = ["/EFI/BOOT/BOOTX64.EFI", "/boot/ProjektZeh.elf", "/boot/ProjektZeh.elf.bak", "/boot/zehos-version.txt"];
+    private readonly string[] paths = Paths;
     private readonly byte[][] files;
     private int fileIndex;
     private int fileOffset;
     private ResultErr? failure;
-    private static readonly byte[] BootConfig = Encoding.UTF8.GetBytes(
+    internal static readonly byte[] BootConfig = Encoding.UTF8.GetBytes(
         // Die Auswahlpause bleibt fuer den Rueckfall auf den vorherigen Kernel erhalten.
         "timeout: 3\n\n/ZehOS\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf\n    resolution: 1920x1080x32\n\n" +
         "/ZehOS (vorherige Version)\n    protocol: limine\n    path: boot():/boot/ProjektZeh.elf.bak\n    resolution: 1024x768x32\n");
@@ -31,8 +32,11 @@ internal sealed class InstallJob : IInstallJob
     public InstallJob(IInstallTarget target, byte[] efi, byte[] kernel, string version)
     {
         this.target = target;
-        files = [efi, kernel, kernel, Encoding.UTF8.GetBytes(version + "\n")];
+        files = Files(efi, kernel, version);
     }
+
+    /// <summary>Dateiinhalte in der Reihenfolge von <see cref="Paths"/>; auch der GPT-Weg kopiert genau diese.</summary>
+    internal static byte[][] Files(byte[] efi, byte[] kernel, string version) => [efi, kernel, kernel, Encoding.UTF8.GetBytes(version + "\n")];
 
     public InstallStage Stage { get; private set; } = InstallStage.Partitioning;
     public int Percent => Stage switch
