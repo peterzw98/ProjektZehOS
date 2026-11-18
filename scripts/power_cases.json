@@ -41,7 +41,85 @@
       "rebootExits": false,
       "afterReboot": "shutdown",
       "checks": ["root-clean", "e2fsck", "fat-esp"]
+    },
+    {
+      "id": "P4a",
+      "title": "Sync von /boot/efi scheitert: Abbruch, /boot/efi bleibt, Shell bedienbar",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp", "s_state-running"],
+      "write": "/home/tester/p4a-vor.txt",
+      "fault": "efi-sync",
+      "writeAfterFault": "/home/tester/p4a-nach.txt",
+      "rootLockedAfterFault": false
+    },
+    {
+      "id": "P4b",
+      "title": "Aushaengen von /boot/efi wirft nach dem Entfernen: Wiedereinhaengen, Shell bedienbar",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp", "s_state-running"],
+      "write": "/home/tester/p4b-vor.txt",
+      "fault": "efi-unmount",
+      "writeAfterFault": "/home/tester/p4b-nach.txt",
+      "rootLockedAfterFault": false
+    },
+    {
+      "id": "P4c",
+      "title": "Root-Sync scheitert vor s_state = 1: Ruecknahme, Shell bedienbar",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp", "s_state-running"],
+      "write": "/home/tester/p4c-vor.txt",
+      "fault": "root-sync",
+      "writeAfterFault": "/home/tester/p4c-nach.txt",
+      "rootLockedAfterFault": false
+    },
+    {
+      "id": "P4d",
+      "title": "Flush nach s_state = 1 scheitert: Reopen, Ruecknahme, Shell bedienbar",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp", "s_state-running"],
+      "write": "/home/tester/p4d-vor.txt",
+      "fault": "root-flush",
+      "writeAfterFault": "/home/tester/p4d-nach.txt",
+      "rootLockedAfterFault": false
+    },
+    {
+      "id": "P4e",
+      "title": "Reopen scheitert: Schreiben danach landet nicht auf Root, zweites shutdown holt Reopen nach (Meldung per Bild)",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp"],
+      "write": "/home/tester/p4e-vor.txt",
+      "fault": "root-flush reopen",
+      "writeAfterFault": "/home/tester/p4e-nach.txt",
+      "rootLockedAfterFault": true
+    },
+    {
+      "id": "P4f",
+      "title": "Wiedereinhaengen von /boot/efi scheitert: Abbruch, Rest laeuft, zweites shutdown sauber (Meldung per Bild)",
+      "profile": "root",
+      "disk": "root",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp", "s_state-running"],
+      "write": "/home/tester/p4f-vor.txt",
+      "fault": "root-sync remount",
+      "writeAfterFault": "/home/tester/p4f-nach.txt",
+      "rootLockedAfterFault": false
     }
   ],
-  "open": ["P4 Fehlerprobe (ZehOSPowerFaultProbe)", "P5 offline update install (Testschluessel fuer Update-Manifeste)", "P6 laufende Paket-App"]
+  "open": ["P5 offline update install (Testschluessel fuer Update-Manifeste)", "P6 laufende Paket-App"]
 }
