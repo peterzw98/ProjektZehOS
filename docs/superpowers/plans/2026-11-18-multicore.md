@@ -28,7 +28,7 @@ den zitierten Text suchen.
 | Etappe | Inhalt | Plan | Voraussetzung |
 | --- | --- | --- | --- |
 | 0 | Audit geteilter Zustände (nur Dokument) | [e0-audit](2026-11-18-multicore-e0-audit.md) | keine |
-| 1 | Cosmos aus Quelle, unverändert | [e1-cosmos-quelle](2026-11-18-multicore-e1-cosmos-quelle.md) | Peters Freigabe für den Branch `cosmos` |
+| 1 | Cosmos aus Quelle, unverändert | [e1-cosmos-quelle](2026-11-18-multicore-e1-cosmos-quelle.md) | keine (Branch `cosmos` besteht) |
 | 2 | Patchreihe ext2 | [e2-ext2](2026-11-18-multicore-e2-ext2.md) | Etappe 1 |
 | 3 | Patchreihe 12.4 (Ausnahme-Hook, LINT1) | [e3-ausnahme-hook](2026-11-18-multicore-e3-ausnahme-hook.md) | Etappe 1 |
 | 4 | Klassenscheduler und Topologie auf einer CPU | [e4-scheduler](2026-11-18-multicore-e4-scheduler.md) | keine |
@@ -108,7 +108,7 @@ Diese Namen verwenden mehrere Etappen. Wer sie ändern will, ändert diese Tabel
 
 | Name | Bedeutung | Eingeführt |
 | --- | --- | --- |
-| Branch `cosmos` | Cosmos-Quellbaum im ZehOS-Repository | E1-A |
+| Branch `cosmos` | Cosmos-Quellbaum im ZehOS-Repository; Grundstand `bd5889b46a6b1175ff8b66620437e072b78636de` | E1-A (erledigt) |
 | `PATCHES.md` (Stamm des Branches `cosmos`) | Liste der eigenen Patches | E1-A |
 | `deploy/cosmos/COMMIT` | eine Zeile: Commit des Branches `cosmos`, der gebaut wird | E1-B |
 | `deploy/cosmos/VERSION` | eine Zeile: Paketversion, Start `3.0.97-zehos.1` | E1-B |
@@ -135,7 +135,6 @@ Messungen in E4-E und E5-I.
 
 | Frage | Wer entscheidet | Blockiert |
 | --- | --- | --- |
-| Freigabe, den Branch `cosmos` anzulegen und eine Branchregel dafür zu setzen | Peter | E1-A |
 | Lizenz der eigenen Cosmos-Patches. Der Plan nimmt an: wie ZehOS GPL-3.0, weil der Branch das Repository nie verlässt (E1-A, E2). Alternative: BSD 3-Clause wie Cosmos | Peter und Lars als Rechteinhaber | nichts; ändert nur den Text in `ZEHOS.md` und den Patch-Kommentar |
 | Kommt die E4.0-Gastprobe (`origin/task/storage-e4-0-root-probe`) nach `master`? | Storage-Lead | Gastläufe in Etappe 2 (Paket E2-P0) |
 | Neue Produktgrenze für Einträge je ext2-Verzeichnis; der Plan schlägt 65.536 vor | Storage-Lead | E2-P7, Schritt 3 |

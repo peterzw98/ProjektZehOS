@@ -28,7 +28,7 @@ Dateien: 7a-S4 sieht `CosmosExt2Formatter.FormatForKernel` im Installer vor; 4.3
    - Cosmos-Test: NUnit im Cosmos-Baum, `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/` (dort liegt `Ext2SmokeTest.cs`; `InternalsVisibleTo` für dieses Testprojekt ist gesetzt). Aufruf im Quellbaum: `dotnet test tests/Cosmos.Kernel.Tests.System/Cosmos.Kernel.Tests.System.csproj -c Release --filter "FullyQualifiedName~Ext2"`.
    - Hostprobe mit dem echten Treiber: `experiments/StorageProbe` (nach E1-F gegen die eigenen Pakete), Linux mit e2fsprogs.
    - Gastlauf mit `e2fsck -fn`, immer auf einer Kopie des Images.
-3. **Lizenz:** Die Logik der Plugs ist ZehOS-Code unter GPL-3.0; der Cosmos-Baum steht unter BSD 3-Clause. Der Branch `cosmos` bleibt Teil des ZehOS-Repositorys und wird nicht weitergegeben; der Plan nimmt deshalb an, dass übernommene ZehOS-Logik unter GPL-3.0 bleibt (offene Frage in der Übersicht, nicht blockierend). Jeder Patch trägt an der geänderten Stelle den Kommentar `// ZehOS patch <Kurzname>, GPL-3.0, see PATCHES.md`. `CosmosExt2Formatter.cs` ist aus Cosmos abgeleitet und steht schon unter BSD 3-Clause.
+3. **Lizenz:** Die Logik der Plugs ist ZehOS-Code unter GPL-3.0; der Cosmos-Baum steht unter BSD 3-Clause. Der Branch `cosmos` bleibt Teil des ZehOS-Repositorys und wird nicht weitergegeben; der Plan nimmt deshalb an, dass übernommene ZehOS-Logik unter GPL-3.0 bleibt (offene Frage in der Übersicht, nicht blockierend). Jeder Patch trägt an der geänderten Stelle den Kommentar `// ZehOS patch <Kurzname>, see PATCHES.md` (so steht es auch in `CLAUDE.md` des Branches `cosmos`). `CosmosExt2Formatter.cs` ist aus Cosmos abgeleitet und steht schon unter BSD 3-Clause.
 
 ## Gastwerkzeug E4.0
 

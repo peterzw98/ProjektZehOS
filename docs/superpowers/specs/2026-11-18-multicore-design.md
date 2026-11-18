@@ -412,7 +412,8 @@ Peter, 18. November 2026:
 - **6 Umwege werden an der Wurzel behoben,** zuerst ext2, dazu die Stellen aus 12.4; deshalb beginnt der eigene
   Build vor der SMP-Arbeit (Etappe 1).
 
-- **3 Die Cosmos-Quelle liegt im Branch `cosmos` des ZehOS-Repositorys** (Abschnitt 7).
+- **3 Die Cosmos-Quelle liegt im Branch `cosmos` des ZehOS-Repositorys** (Abschnitt 7). Der Branch besteht seit dem
+  18. November 2026 (Grundstand `bd5889b`), geschützt wie `packages`.
 
 Empfehlung, der Peter nicht widersprochen hat und die der Plan zugrunde legt:
 
