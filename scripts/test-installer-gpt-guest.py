@@ -437,25 +437,15 @@ def run_g7(args, work: Path, base: Path) -> None:
     case = storage.new_work_dir(work / "g7")
     image, data = case / "target.img", case / "data.img"
     copy_sparse(base, image)
-    storage.create_sparse(data, 64 * 1024 ** 2)
-    run = storage.new_work_dir(case / "init")
-    process = None
-    try:
-        process, qmp = storage.boot(security_args(args), run, [image, data])
-        mark = storage.send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
-        storage.wait_init(qmp, run, mark, args.timeout)
-        storage.stop(process, qmp, run)
-        process = None
-    finally:
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait(timeout=30)
-    checksum = storage.sha256(data)
+    # Offline wie disk init (MBR 0x0C, FAT32, Label ZEHOSDATA): ein Gast mit der kontolosen Basis landete in der
+    # Ersteinrichtung statt in der Shell. G7 prueft die Auswahl beim Boot, nicht disk init.
+    fat_disk(data, "ZEHOSDATA")
+    checksum = data_digest(data)
     boot_installed(args, case, [image, data], (
         "GPT_TEST IDENTITY Healthy SETUP True",
         "STORAGE Hinweis: Datenplatte ZEHOSDATA auf sata1 vorhanden; das installierte System auf sata0 hat Vorrang",
         "Datenlaufwerk unter /data eingebunden.", "Desktop ist bereit."))
-    if storage.sha256(data) != checksum:
+    if data_digest(data) != checksum:
         raise RuntimeError("G7: ZEHOSDATA-Platte wurde beim Start des installierten Systems veraendert")
     print("PASS G7: installierte Platte gewinnt gegen ZEHOSDATA, Hinweis im Protokoll, Datenplatte unveraendert", flush=True)
 
