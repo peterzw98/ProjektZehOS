@@ -1,6 +1,6 @@
 # Storage-Abnahme für ZehOS 0.6
 
-Stand: 18. November 2026. Grundlage für Peters Abnahme und das Release v0.6.0. Der Bericht sammelt die Gastergebnisse der
+Stand: 18. November 2026. Grundlage für Peters Abnahme (QEMU/WHPX auf seinem Rechner; die zutreffenden Fälle unten sind die Kriterien) und das Release v0.6.0. Der Bericht sammelt die Gastergebnisse der
 Storage-Etappen 7a-S4 (GPT-Installer), 4 (Root-Profil und Migration), 7b (Updates und Energieaktionen) und 8 (Matrix).
 Er nennt je Fall Ergebnis, Prüfstand und Quelle. **PASS** heißt: im genannten Gast so geprüft. **OFFEN** heißt: nicht oder
 nicht vollständig geprüft. **FAIL** heißt: geprüft und nicht bestanden.
