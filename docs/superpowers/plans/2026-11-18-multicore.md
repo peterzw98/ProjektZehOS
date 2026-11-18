@@ -126,8 +126,12 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
   genau ein Commit. In der Spalte „Commit“ steht im PR „Squash von #<PR>“; den echten Hash setzt der ZehOS-PR, der
   `deploy/cosmos/COMMIT` umstellt. Gestapelte Patches: nach dem Squash des Vorgängers `origin/cosmos` in den Folge-Branch
   mergen, nicht rebasen (Lead-Entscheid 18. November 2026).
-- Geprüft wird ein Patch durch den ZehOS-PR, der ihn verwendet: Er setzt `deploy/cosmos/COMMIT` auf den Patch-Commit,
-  entfernt den Umweg und wiederholt dessen bisherige Prüfung. Der ZehOS-PR wird erst nach dem `cosmos`-PR gemergt.
+- Geprüft wird ein Patch durch den ZehOS-PR, der ihn verwendet: Er entfernt den Umweg und wiederholt dessen bisherige
+  Prüfung. Während der Prüfung bleibt `deploy/cosmos/COMMIT` unverändert; gebaut wird mit
+  `scripts/build-cosmos.sh --commit <Kopf des Patch-Branches>` (Versuchsversion `3.0.97-zehos.0.g<sha>`), Kernelbau und
+  Gastläufe mit `-p:ZehOSCosmosVersion=<diese Version>`. Erst nach dem Squash-Merge des `cosmos`-PRs setzt der ZehOS-PR
+  `COMMIT` auf den entstandenen Hash, `VERSION` auf die nächste `-zehos.N` und `global.json` gleich, baut einmal nativ,
+  wiederholt die kürzeste Gastprüfung und wird danach gemergt (Lead-Entscheid 18. November 2026, Befund zu E3-B).
 - Ein Patch behebt einen Fehler oder öffnet eine Schnittstelle. ZehOS-Policy (Scheduler, Topologie, Appregeln)
   gehört nie in den Cosmos-Baum.
 - Keine Issues, PRs oder Kommentare bei CosmosOS/Cosmos oder anderen fremden Projekten.
