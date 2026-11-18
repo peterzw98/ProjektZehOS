@@ -122,6 +122,10 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 
 - Ein Patch ist genau ein Commit im Branch `cosmos`, eingebracht per PR gegen `cosmos`, mit einer Zeile in
   `PATCHES.md`: Commit, Datei, Grund, entfernter ZehOS-Umweg, Prüfung.
+  Im Patch-Branch sind Folgecommits erlaubt (kein Force-Push); gemergt wird per **Squash-Merge**, so wird jeder Patch
+  genau ein Commit. In der Spalte „Commit“ steht im PR „Squash von #<PR>“; den echten Hash setzt der ZehOS-PR, der
+  `deploy/cosmos/COMMIT` umstellt. Gestapelte Patches: nach dem Squash des Vorgängers `origin/cosmos` in den Folge-Branch
+  mergen, nicht rebasen (Lead-Entscheid 18. November 2026).
 - Geprüft wird ein Patch durch den ZehOS-PR, der ihn verwendet: Er setzt `deploy/cosmos/COMMIT` auf den Patch-Commit,
   entfernt den Umweg und wiederholt dessen bisherige Prüfung. Der ZehOS-PR wird erst nach dem `cosmos`-PR gemergt.
 - Ein Patch behebt einen Fehler oder öffnet eine Schnittstelle. ZehOS-Policy (Scheduler, Topologie, Appregeln)
