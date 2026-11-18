@@ -13,8 +13,8 @@ namespace ProjektZeh.Storage;
 
 /// <summary>
 /// Gastprobe (-p:ZehOSStorageProbe=true) fuer ext2 auf der ganzen Testplatte ohne Partitionstabelle; Gegenstueck
-/// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber VfsManager.TryFormat, damit der
-/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): nur die
+/// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber CosmosExt2Formatter.FormatForKernel,
+/// Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): nur die
 /// Lesekomponente CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro, verweigerte Mutationen, Imagehash vor/nach unveraendert.
 /// Jedes andere Geraet und jeder andere Inhalt bleibt unberuehrt.
 /// </summary>
