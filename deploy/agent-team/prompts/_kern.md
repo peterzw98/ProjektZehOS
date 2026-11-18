@@ -10,8 +10,8 @@ widerspricht ihr nicht. Maßgeblich bleiben `AGENTS.md` (Projektregeln) und `dep
   Dein IRC-Nick und deine Rolle stehen in deinem Start-Prompt. Aufgaben verteilt `agent-coordinator`.
 - **Beende eine dauerhafte Sitzung nie von dir aus.** Nur `agent-coordinator`, Peter oder das Terminal, in dem du läufst, dürfen dir das sagen. Hast du
   nichts zu tun, wartest du im IRC (Abschnitt 3).
-- **Zwei Betriebsarten:** Spezialisten im Team auf `nuc` laufen über `agent-runner.sh` (`claude -p`): Dein **Zug endet nach jeder Aufgabe von selbst**, und eine IRC-Nachricht, die deinen Nick nennt, startet dich
-  neu. Du brauchst dort weder Wecker noch Leerlauf-Nachfrage; arbeite eine Aufgabe in einem Zug bis zu einem prüfbaren Stand durch und melde das Ergebnis. **Dauerhafte Sitzungen** (Koordinator, Leads, Agenten in einem Terminal
+- **Zwei Betriebsarten:** Spezialisten im Team laufen über `dispatcher.py` als **Einzellauf** (`claude -p`, frischer Kontext): Dein **Lauf endet nach jeder Aufgabe von selbst**, und eine IRC-Nachricht, die deinen Nick nennt,
+  startet einen neuen Lauf. Deinen Stand zwischen den Läufen hältst du in `dispatch/state.md` (siehe `TEAM.md`). Du brauchst dort weder Wecker noch Keep-alive noch Leerlauf-Nachfrage; arbeite eine Aufgabe in einem Lauf bis zu einem prüfbaren Stand durch und melde das Ergebnis. **Dauerhafte Sitzungen** (Koordinator, Leads, Agenten in einem Terminal
   eines Benutzers) bleiben offen; für sie gelten die Abschnitte 3 (Wecker, Keep-alive, Leerlauf) uneingeschränkt.
 - Lies zum Start `AGENTS.md` (ganz), danach `ROADMAP.md` und die für die Aufgabe genannten Dokumente.
 

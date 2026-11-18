@@ -4,8 +4,13 @@ Gilt für alle Teamagenten auf `nuc`. Die Projektregeln stehen in `ProjektZehOS/
 
 ## Wie du geweckt wirst
 
-- Spezialisten laufen über `agent-runner.sh`. Er startet deine Sitzung erst und nur dann, wenn eine IRC-Nachricht deinen Nick nennt, und übergibt dir die neuen Zeilen. Danach endet dein Zug; zwischen den Nennungen verbrauchst du nichts.
-- Arbeite eine Aufgabe in einem Zug bis zu einem prüfbaren Stand durch. Lange Arbeit unterbrichst du nicht zum Warten; schau zwischendurch mit `tail -n 30 ProjektZehOS/.tools/irc/log.txt` nach neuen Nachrichten.
+- Spezialisten laufen über `dispatcher.py`, ein kleines Programm ohne Modell. Es liest das Protokoll von `teambot.py`, legt jede Nennung deines Nicks in eine dauerhafte Inbox (`<agentenverzeichnis>/dispatch/inbox.jsonl`) und startet dafür einen **Einzellauf**: `claude -p` mit frischem Kontext, ohne `--continue`. Zwischen den Nennungen verbrauchst du nichts.
+- Jeder Lauf beginnt ohne Erinnerung. Was du über Läufe hinweg brauchst (Branch, Kopf, offene Punkte, nächster Schritt), steht in `dispatch/state.md`; du liest die Datei am Anfang und schreibst sie am Ende neu (höchstens 40 Zeilen).
+- Quittiert wird eine Nennung erst, wenn dein Lauf erfolgreich endet. Scheitert er oder überschreitet er das Zeitlimit, startet der Dienst ihn mit wachsendem Abstand neu und meldet nach mehreren Fehlschlägen einmal `[dispatcher]` an `agent-coordinator`. Deshalb brauchst du kein Keep-alive: Eine Nennung geht nicht verloren, auch wenn Dienst, Lauf oder Verbindung abbrechen.
+- Arbeite eine Aufgabe in einem Lauf bis zu einem prüfbaren Stand durch und melde das Ergebnis mit einer Zeile (`[FERTIG]`, `[BLOCKER]` oder `[UEBERGABE]`). Wartest du auf eine Antwort, melde `[BLOCKER]` und beende den Lauf; die Antwort startet dich neu.
+- Lebenszeichen des Dienstes: `dispatch/heartbeat` (JSON mit offenen Nennungen, laufendem Lauf, Fehlschlägen), Verlauf in `dispatch/dispatch.log`, Ausgabe jedes Laufs unter `dispatch/runs/`.
+- Umstellung eines Agenten mit altem `agent-runner.sh`: `screen -S <nick> -X quit`, dann `start-agent.sh <nick>`. Beim ersten Start gelten ältere Nennungen als erledigt.
+- Grenzen des Dienstes: Die Ratengrenze (`--max-runs-per-hour`, Standard 6) gilt je Nick, nicht je Konto; zehn Agenten können zusammen also bis zu 60 Läufe je Stunde starten. `--allow` prüft nur den Absender-Nick: Steht `discord` darin, kann jeder, der über die Bridge schreibt, Läufe auslösen. Ob `claude -p` beim Erreichen des Nutzungslimits mit einem Fehlercode endet, ist nicht geprüft; endet er mit 0, gilt die Nennung als erledigt. Enkelprozesse, die sich selbst mit `setsid`, `nohup` oder `screen` abkoppeln, beendet das Zeitlimit nicht.
 - Was du als Rolle mitbekommst, setzt `start-agent.sh` aus `prompts/_kern.md` und deiner Vorlage (`agents.tsv`, Spalte „vorlage“, etwa `prompts/engineer.md`) zu `role.md` zusammen. Änderungen an den Vorlagen wirken erst nach `start-agent.sh <nick>`.
 - Der Koordinator läuft interaktiv und beobachtet alles mit `Monitor` auf `team-watch.sh <irc-dir> agent-coordinator --all`.
 
