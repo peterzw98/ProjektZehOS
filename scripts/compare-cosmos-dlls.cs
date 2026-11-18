@@ -11,10 +11,16 @@
 //                  (PDB-Pfad, -GUID, -Pruefsumme), MVID und "+<40 Hex-Zeichen>" (Commit in InformationalVersion und
 //                  Win32-Versionsressource). Maskiert wird an Ort und Stelle; das geht, weil ein Commit-SHA immer
 //                  40 Zeichen hat.
-//   IL-gleich      gleiche Typen, Felder, Methoden, Methodenkoerper (IL mit aufgeloesten Token, Lokale, Ausnahmebereiche),
-//                  Attribut-Zeichenketten und Assemblyverweise; nur Reihenfolge oder Nummern der Metadaten weichen ab.
+//   IL-gleich      nur Reihenfolge oder Nummern der Metadaten weichen ab; gleich sind: Typen (Flags, Basistyp, Interfaces,
+//                  Layout), Felder (Flags, Offset, Konstante, Anfangsdaten per FieldRVA), Methoden (Flags,
+//                  ImplAttributes, Aufrufkonvention, DllImport/RuntimeImport, Koerper als IL mit aufgeloesten Token samt
+//                  Lokalen und Ausnahmebereichen), Attribut-Zeichenketten, Assemblyverweise und eingebettete Ressourcen.
+//                  Nicht verglichen: Constraints generischer Parameter, Events, Properties und deren Methodenzuordnung.
 //   VERSCHIEDEN    mit Hinweisen, was abweicht.
 // Ende 0, wenn keine Datei VERSCHIEDEN ist und beide Seiten dieselben DLLs haben; IL-gleich zaehlt als Gleichstand.
+// Dateibasierte Apps veroeffentlichen in .NET 10 standardmaessig mit NativeAOT und ziehen dafuer Microsoft.DotNet.ILCompiler
+// (mit CI=true waere dessen NU1903 ein Fehler); fuer dieses Pruefwerkzeug unnoetig.
+#:property PublishAot=false
 using System.Collections.Immutable;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
@@ -121,7 +127,9 @@ static class Assembly
         var findings = new List<string>();
         Diff(findings, "Assemblyverweis", viewA.References(), viewB.References());
         Diff(findings, "Attribut", viewA.AttributeStrings(), viewB.AttributeStrings());
+        Diff(findings, "Typ", viewA.Types(), viewB.Types());
         Diff(findings, "Feld", viewA.Fields(), viewB.Fields());
+        Diff(findings, "Ressource", viewA.Resources(), viewB.Resources());
         var bodiesA = viewA.Bodies();
         var bodiesB = viewB.Bodies();
         Diff(findings, "Methode", bodiesA.Keys.ToHashSet(StringComparer.Ordinal), bodiesB.Keys.ToHashSet(StringComparer.Ordinal));
@@ -171,8 +179,81 @@ static class Assembly
             return result;
         }
 
-        public HashSet<string> Fields() =>
-            md.FieldDefinitions.Select(handle => names.Entity(handle)).ToHashSet(StringComparer.Ordinal);
+        // Flags, Basistyp, Interfaces und Layout: [StructLayout] ist ein Pseudoattribut und steht nicht in den Attributtexten.
+        public HashSet<string> Types()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in md.TypeDefinitions)
+            {
+                var type = md.GetTypeDefinition(handle);
+                var layout = type.GetLayout();
+                string baseType = type.BaseType.IsNil ? "-" : names.Entity(type.BaseType);
+                var interfaces = type.GetInterfaceImplementations()
+                    .Select(item => names.Entity(md.GetInterfaceImplementation(item).Interface)).Order(StringComparer.Ordinal);
+                result.Add($"{names.Entity(handle)} [{type.Attributes}] : {baseType} ({string.Join(",", interfaces)}) pack {layout.PackingSize} size {layout.Size}");
+            }
+            return result;
+        }
+
+        // Flags, [FieldOffset], Konstante und Anfangsdaten (FieldRVA, etwa Tabellen in <PrivateImplementationDetails>).
+        public HashSet<string> Fields()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in md.FieldDefinitions)
+            {
+                var field = md.GetFieldDefinition(handle);
+                var text = new StringBuilder(names.Entity(handle)).Append(" [").Append(field.Attributes).Append(']');
+                if (field.GetOffset() >= 0) text.Append(" offset ").Append(field.GetOffset());
+                var constant = field.GetDefaultValue();
+                if (!constant.IsNil)
+                {
+                    var value = md.GetConstant(constant);
+                    text.Append(" const ").Append(value.TypeCode).Append(' ').Append(Convert.ToHexString(md.GetBlobBytes(value.Value)));
+                }
+                int rva = field.GetRelativeVirtualAddress();
+                if (rva != 0) text.Append(" daten ").Append(FieldData(field, rva));
+                result.Add(text.ToString());
+            }
+            return result;
+        }
+
+        // Laenge aus der Feldsignatur: Grundtyp oder Werttyp dieser Assembly mit festem Layout (__StaticArrayInitTypeSize=N).
+        private string FieldData(FieldDefinition field, int rva)
+        {
+            var reader = md.GetBlobReader(field.Signature);
+            reader.ReadSignatureHeader();
+            int size = reader.ReadSignatureTypeCode() switch
+            {
+                SignatureTypeCode.Boolean or SignatureTypeCode.SByte or SignatureTypeCode.Byte => 1,
+                SignatureTypeCode.Char or SignatureTypeCode.Int16 or SignatureTypeCode.UInt16 => 2,
+                SignatureTypeCode.Int32 or SignatureTypeCode.UInt32 or SignatureTypeCode.Single => 4,
+                SignatureTypeCode.Int64 or SignatureTypeCode.UInt64 or SignatureTypeCode.Double => 8,
+                SignatureTypeCode.TypeHandle when reader.ReadTypeHandle() is { Kind: HandleKind.TypeDefinition } type =>
+                    md.GetTypeDefinition((TypeDefinitionHandle)type).GetLayout().Size,
+                _ => -1,
+            };
+            if (size <= 0) return "Laenge unbekannt";
+            var block = pe.GetSectionData(rva);
+            if (block.Length < size) return "ausserhalb";
+            return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(block.GetContent(0, size).AsSpan()))[..16];
+        }
+
+        // Eingebettete Ressourcen mit Laenge und Pruefsumme, verlinkte nur mit Ziel.
+        public HashSet<string> Resources()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            var directory = pe.PEHeaders.CorHeader!.ResourcesDirectory;
+            foreach (var handle in md.ManifestResources)
+            {
+                var resource = md.GetManifestResource(handle);
+                string name = $"{md.GetString(resource.Name)} [{resource.Attributes}]";
+                if (!resource.Implementation.IsNil) { result.Add($"{name} -> {resource.Implementation.Kind}"); continue; }
+                var reader = pe.GetSectionData(directory.RelativeVirtualAddress + (int)resource.Offset).GetReader();
+                byte[] data = reader.ReadBytes(reader.ReadInt32());
+                result.Add($"{name} {data.Length} Byte {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data))[..16]}");
+            }
+            return result;
+        }
 
         public Dictionary<string, string> Bodies()
         {
@@ -181,8 +262,15 @@ static class Assembly
             {
                 string key = names.Entity(handle);
                 for (int n = 2; result.ContainsKey(key); n++) key = $"{names.Entity(handle)}#{n}";
-                int rva = md.GetMethodDefinition(handle).RelativeVirtualAddress;
-                result[key] = rva == 0 ? "<ohne Koerper>" : Body(pe.GetMethodBody(rva));
+                var method = md.GetMethodDefinition(handle);
+                // Flags und Import vor dem Koerper: NoInlining, InternalCall oder ein anderes DllImport-Ziel aendern das
+                // Verhalten auch bei gleichem IL.
+                string head = $"flags {method.Attributes} impl {method.ImplAttributes}";
+                var import = method.GetImport();
+                if (!import.Module.IsNil)
+                    head += $" import {md.GetString(md.GetModuleReference(import.Module).Name)}!{md.GetString(import.Name)} [{import.Attributes}]";
+                int rva = method.RelativeVirtualAddress;
+                result[key] = head + "\n" + (rva == 0 ? "<ohne Koerper>" : Body(pe.GetMethodBody(rva)));
             }
             return result;
         }
@@ -273,8 +361,9 @@ static class Assembly
             }
         }
 
+        // Mit Aufrufkonvention und instance/explicit-this: sonst sehen statische und Instanzmethoden gleich aus.
         private static string Method(MethodSignature<string> signature) =>
-            $"<{signature.GenericParameterCount}>({string.Join(",", signature.ParameterTypes)}) : {signature.ReturnType}";
+            $"{signature.Header.CallingConvention}{(signature.Header.IsInstance ? " instance" : "")}{(signature.Header.HasExplicitThis ? " explicit" : "")}<{signature.GenericParameterCount}>({string.Join(",", signature.ParameterTypes)}) : {signature.ReturnType}";
 
         public string GetArrayType(string elementType, ArrayShape shape) => $"{elementType}[{new string(',', shape.Rank - 1)}]";
         public string GetByReferenceType(string elementType) => elementType + "&";
