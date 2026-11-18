@@ -28,7 +28,10 @@ class BuildCosmosTests(unittest.TestCase):
             # Keine Upstream-Werkzeuge mehr: sie wuerden die selbst gebauten Pakete mit fremdem Patcher verarbeiten.
             self.assertNotIn('dotnet tool install --global Cosmos', text, name)
             self.assertEqual(text.count('scripts/build-cosmos.sh --global'), text.count("dotnet-version: '" + sdk + "'"), name)
-            self.assertRegex(text, r'actions/cache@[0-9a-f]{40}')
+            if name == 'ci.yml':
+                self.assertRegex(text, r'actions/cache@[0-9a-f]{40}')
+            else:
+                self.assertNotIn('actions/cache', text, 'Release baut Cosmos immer frisch aus dem Commit')
     def test_official_version_needs_explicit_feed(self):
         result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--version', '3.0.97'], capture_output=True, text=True, cwd=ROOT)
         self.assertNotEqual(0, result.returncode)
