@@ -58,6 +58,20 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void Suspend_ReleasesAppPointerCaptureSoTheDesktopPointerReturns()
+    {
+        // F4 verlaesst die Grafik ueber Suspend; die Eingabe der Apps wird dabei zurueckgesetzt.
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        app.Input.SetCapture(true);
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        Assert.IsTrue(desktop.Windows.HasAppPointerCapture);
+        desktop.Suspend();
+        Assert.IsFalse(app.Input.IsCaptured);
+        Assert.IsFalse(desktop.Windows.HasAppPointerCapture);
+    }
+
+    [TestMethod]
     public void Escape_ClosesMenuOpenedDuringAppCaptureBeforeRecovery()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
