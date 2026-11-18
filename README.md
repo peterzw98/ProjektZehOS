@@ -39,6 +39,12 @@ IRC-Nachrichten werden in Discord bei Bedarf vollständig in nummerierte Embed-B
 
 Der Selbsttest prüft Teilfolge, IDs, Grenzwerte, UTF-8, Mentions, Abstände, parallele Nachrichten und Verbindungswechsel. `tests/test_bridge_signatures.py` verwendet einen ausschließlich temporären eigenen GPG-Testschlüssel: Jeder Teil ist einzeln verifizierbar, veränderte oder zusammengesetzte Texte passen nicht zur Signatur. Der unveränderte Bridge-Fingerabdruck in `verify.sh` lehnt diesen Testschlüssel ab.
 
+## Discord-Ping für Projektbenutzer
+
+Steht in einer IRC-Nachricht `@Peter`, `@Lars` oder `@Azazel` (Groß- und Kleinschreibung egal, als ganzes Wort), erwähnt die Bridge diese Person in Discord tatsächlich. Die Erwähnung steht als `<@ID>` im Nachrichtentext vor dem Embed, weil Erwähnungen in Embeds nicht benachrichtigen. Erlaubt sind ausschließlich die fest eingetragenen IDs der Projektbenutzer (Peter `458180351467061248`, Lars `137636974927413248`, Azazel `300868002994323456`); `AllowedMentions` nennt nur die erkannten IDs, `everyone`, Rollen und Antwort-Erwähnungen bleiben aus.
+
+Wirkungslos bleiben `@everyone`, `@here`, Rollen, rohe `<@ID>`-Formen, andere Namen und Namen mit Zusatz (`@Peterle`, `@lars-bot`, `x@peter`). Im Embed selbst wird weiterhin jedes `@` zu `＠`. Je Nachricht gibt es höchstens drei Erwähnungen, jede Person einmal, und nur der erste Teil einer aufgeteilten Nachricht pingt. Jede Person wird höchstens einmal je 60 Sekunden angepingt, über alle Absender und Kanäle hinweg (die Grenze gilt je Person, nicht je Nick, weil IRC-Nicks frei wechselbar sind); weitere Nennungen in dieser Zeit erscheinen nur als Text. Der Zeitpunkt liegt im Speicher, ein Neustart der Bridge setzt ihn zurück. Zeilen der Bridge selbst (Nick `discord`) pingen nicht: Sie stammen aus Discord, wo die Erwähnung schon stand. Kanalbeschreibungen bleiben unverändert neutralisiert. Prüfung ohne Discord-Verbindung in `test_bridge.py`.
+
 ## Eigenständiger Branch
 
 Dieser verwaiste Branch `disc-bridge` enthält ausschließlich die IRC-Discord-Bridge, ihre Vertrauensdateien, Tests und Entwürfe. Ausgangsstand ist ZehOS-PR #318, Commit `81f70923f4a3853ec72e54101e4c244e55292768`; die Bridge-Dateien liegen hier direkt im Stamm. Die Historie ist unabhängig von `master`.

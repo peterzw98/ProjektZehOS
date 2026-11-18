@@ -96,6 +96,7 @@ def topic_bridge():
     client.channels = {"#general": Channel(), "#second": Channel()}
     client.topic_pending = {}
     client.topic_attempts = {}
+    client.last_ping = {}
     return client
 
 
@@ -385,7 +386,7 @@ async def check_discord_transport():
     client = topic_bridge()
     shown = []
     footers = []
-    async def post(target, embed):
+    async def post(target, embed, pings=()):
         shown.append(embed.description)
         footers.append(embed.footer)
     client.post = post
@@ -405,4 +406,88 @@ async def check_discord_transport():
 
 
 asyncio.run(check_discord_transport())
+
+
+# Discord-Ping: nur Peter, Lars und Azazel als ganzes @Wort, höchstens drei, ohne everyone/here/Rollen/Rohformen.
+PETER, LARS, AZAZEL = 458180351467061248, 137636974927413248, 300868002994323456
+assert bridge.ping_ids("@Peter bitte #337 ansehen") == [PETER]
+assert bridge.ping_ids("Frage an @lars und @AZAZEL, cc @Peter") == [LARS, AZAZEL, PETER]
+assert bridge.ping_ids("@Peter @peter @PETER: einmal") == [PETER]
+assert bridge.ping_ids("@Peter's PR, (@Lars), @Azazel.") == [PETER, LARS, AZAZEL]
+for quiet in ("@everyone @here", "<@&123> <@123> <@!458180351467061248>", "@Peterle @lars-bot @azazel_2",
+              "mail an x@peter", "＠Peter", "@@Lars", "Peter ohne At", "@Jakob @Bob"):
+    assert bridge.ping_ids(quiet) == [], quiet
+assert bridge.MAX_PINGS == 3 and len(bridge.ping_ids("@Peter @Lars @Azazel @Peter")) == 3
+
+
+class AllowedMentions:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Object:
+    def __init__(self, id):
+        self.id = id
+
+
+class SendChannel:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, **kwargs):
+        self.sent.append(kwargs)
+
+
+async def check_pings():
+    client = topic_bridge()
+    channel = SendChannel()
+    client.channels = {"#general": channel}
+    with patch.object(bridge.discord, "Embed", Embed, create=True), \
+            patch.object(bridge.discord, "AllowedMentions", AllowedMentions, create=True), \
+            patch.object(bridge.discord, "Object", Object, create=True):
+        await client.on_irc("agent-coordinator", "PRIVMSG", ["#general", "@Peter @everyone <@1> #337 wartet"])
+        sent = channel.sent.pop()
+        assert sent["content"] == f"<@{PETER}>"
+        allowed = sent["allowed_mentions"].kwargs
+        assert [user.id for user in allowed["users"]] == [PETER]
+        assert allowed["everyone"] is False and allowed["roles"] is False and allowed["replied_user"] is False
+        # Im Embed bleibt alles neutralisiert, auch der erkannte Name und die Rohform.
+        assert sent["embed"].description == "＠Peter ＠everyone <＠1> #337 wartet"
+        # Ohne erlaubten Namen: kein content, keine Erwähnung (Client-Standard AllowedMentions.none()).
+        await client.on_irc("agent-x", "PRIVMSG", ["#general", "@everyone @Jakob"])
+        assert set(channel.sent.pop()) == {"embed"}
+        # Zeilen der Bridge selbst stammen aus Discord und pingen nicht ein zweites Mal.
+        await client.on_irc(bridge.IRC_NICK, "PRIVMSG", ["#general", "<Lars_Eric> @Peter schau [id=1 t=2 sig=AAAA]"])
+        assert set(channel.sent.pop()) == {"embed"}
+        # Lange Nachricht: nur der erste Teil pingt.
+        await client.on_irc("agent-x", "PRIVMSG", ["#general", "@Lars " + "y" * 4500])
+        assert len(channel.sent) == 3
+        assert channel.sent[0]["content"] == f"<@{LARS}>" and all(set(s) == {"embed"} for s in channel.sent[1:])
+        channel.sent.clear()
+
+    # Ratelimit je Person über alle Absender und Kanäle: höchstens ein Ping je PING_COOLDOWN Sekunden.
+    client = topic_bridge()
+    channel = SendChannel()
+    client.channels = {"#general": channel, "#second": channel}
+    clock = [1000.0]
+    with patch.object(bridge.discord, "Embed", Embed, create=True), \
+            patch.object(bridge.discord, "AllowedMentions", AllowedMentions, create=True), \
+            patch.object(bridge.discord, "Object", Object, create=True), \
+            patch("bridge.time.monotonic", side_effect=lambda: clock[0]):
+        await client.on_irc("agent-a", "PRIVMSG", ["#general", "@Peter eins"])
+        assert channel.sent.pop()["content"] == f"<@{PETER}>"
+        clock[0] += 59
+        # Anderer Absender, anderer Kanal: Peter ist noch gesperrt, Lars nicht; die Nachricht selbst kommt an.
+        await client.on_irc("human-b", "PRIVMSG", ["#second", "@Peter @Lars zwei"])
+        sent = channel.sent.pop()
+        assert sent["content"] == f"<@{LARS}>" and sent["embed"].description == "＠Peter ＠Lars zwei"
+        await client.on_irc("human-b", "PRIVMSG", ["#second", "@Peter drei"])
+        assert set(channel.sent.pop()) == {"embed"}
+        clock[0] += 1
+        await client.on_irc("agent-a", "PRIVMSG", ["#general", "@Peter vier"])
+        assert channel.sent.pop()["content"] == f"<@{PETER}>"
+        assert bridge.PING_COOLDOWN == 60
+
+
+asyncio.run(check_pings())
 print("ok")
