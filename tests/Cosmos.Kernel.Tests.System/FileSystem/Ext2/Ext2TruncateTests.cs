@@ -186,11 +186,7 @@ public class Ext2TruncateTests
     [TestCase(12u + 1024u + 40u, Description = "double indirect")]
     public void TruncateToZero_FreesAllBlocksIncludingPointerBlocks(uint fileBlocks)
     {
-        MemoryBlockDevice device = new("ram0", DeviceBlockSize, DeviceBlockCount);
-        Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = FsBlockSize }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
-        Ext2Superblock sb = (Ext2Superblock)vsb!;
+        Ext2Superblock sb = Mount(out MemoryBlockDevice device);
         uint freeBefore = sb.FreeBlocksCount;
 
         Assert.That(sb.Root.InodeOperations.Create(sb.Root, "big.bin", VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out IVfsInode? created), Is.True);
@@ -216,6 +212,12 @@ public class Ext2TruncateTests
         Assert.That(inode.Blocks, Is.Zero);
         Assert.That(inode.Block[Ext2InodeLayout.SingleIndirectIndex], Is.Zero);
         Assert.That(inode.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Zero);
+
+        // The cleared roots and the sector count must be on disk, not only in the cached object.
+        Ext2Inode onDisk = Remount(device).ReadInode(inode.InodeNumber, "big.bin");
+        Assert.That(onDisk.Blocks, Is.Zero);
+        Assert.That(onDisk.Block[Ext2InodeLayout.SingleIndirectIndex], Is.Zero);
+        Assert.That(onDisk.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Zero);
     }
 
     [Test]
@@ -247,11 +249,37 @@ public class Ext2TruncateTests
         Assert.That(sb.FreeBlocksCount, Is.EqualTo(freeBefore));
     }
 
-    private static Ext2Superblock Mount()
+    [Test]
+    public void Unlink_FastSymlinkWithAttributeBlock_FreesNoBlock()
     {
-        MemoryBlockDevice device = new("ram0", DeviceBlockSize, DeviceBlockCount);
+        Ext2Superblock sb = Mount();
+        Assert.That(sb.Root.InodeOperations.Symlink(sb.Root, "fast", "\u0001\u0002", out IVfsInode? created), Is.True);
+
+        // As created by Linux with ext_attr: the only allocated block is the xattr block.
+        Ext2Inode link = (Ext2Inode)created!;
+        link.FileAcl = 600;
+        link.Blocks = FsBlockSize / 512;
+        uint freeBefore = sb.FreeBlocksCount;
+
+        Assert.That(sb.Root.InodeOperations.Unlink(sb.Root, "fast"), Is.True);
+
+        Assert.That(sb.FreeBlocksCount, Is.EqualTo(freeBefore));
+    }
+
+    private static Ext2Superblock Mount() => Mount(out _);
+
+    private static Ext2Superblock Mount(out MemoryBlockDevice device)
+    {
+        device = new("ram0", DeviceBlockSize, DeviceBlockCount);
         Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = FsBlockSize }), Is.True);
+        return Remount(device);
+    }
+
+    // A fresh mount has an empty inode cache, so ReadInode returns what is on disk.
+    private static Ext2Superblock Remount(MemoryBlockDevice device)
+    {
+        Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
         return (Ext2Superblock)vsb!;
     }
@@ -259,11 +287,7 @@ public class Ext2TruncateTests
     [Test]
     public void TruncateInsideDoubleRange_KeepsLivingBlocksAndFreesTheRest()
     {
-        MemoryBlockDevice device = new("ram0", DeviceBlockSize, DeviceBlockCount);
-        Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = FsBlockSize }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
-        Ext2Superblock sb = (Ext2Superblock)vsb!;
+        Ext2Superblock sb = Mount(out MemoryBlockDevice device);
         Assert.That(sb.Root.InodeOperations.Create(sb.Root, "big.bin", VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out IVfsInode? created), Is.True);
         Ext2Inode inode = (Ext2Inode)created!;
 
@@ -278,11 +302,15 @@ public class Ext2TruncateTests
         inode.Size = FileBlocks * FsBlockSize;
         sb.WriteInode(inode);
         uint freeFull = sb.FreeBlocksCount;
+        uint blocksFull = inode.Blocks;
 
         // Keep 5 blocks of the double range: frees 1024 + 10 - 5 data blocks and the second second-level block.
         sb.Truncate(inode, (ulong)(DoubleStart + 5) * FsBlockSize);
 
-        Assert.That(sb.FreeBlocksCount, Is.EqualTo(freeFull + 1024 + 10 - 5 + 1));
+        const uint Freed = 1024 + 10 - 5 + 1;
+        Assert.That(sb.FreeBlocksCount, Is.EqualTo(freeFull + Freed));
+        Assert.That(inode.Blocks, Is.EqualTo(blocksFull - (Freed * (FsBlockSize / 512))));
+        Assert.That(Remount(device).ReadInode(inode.InodeNumber, "big.bin").Blocks, Is.EqualTo(inode.Blocks));
         Assert.That(inode.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Not.Zero);
         Assert.That(sb.GetBlockPointer(inode, DoubleStart + 4, false, out _), Is.Not.Zero);
         Assert.That(sb.GetBlockPointer(inode, DoubleStart + 5, false, out _), Is.Zero);

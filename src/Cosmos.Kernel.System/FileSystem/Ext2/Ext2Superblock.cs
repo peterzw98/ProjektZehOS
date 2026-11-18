@@ -481,6 +481,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         ushort links = BitConverter.ToUInt16(raw.Slice(Ext2InodeLayout.LinksCountOffset, 2));
         uint blocks = BitConverter.ToUInt32(raw.Slice(Ext2InodeLayout.BlocksOffset, 4));
         uint flags = BitConverter.ToUInt32(raw.Slice(Ext2InodeLayout.FlagsOffset, 4));
+        uint fileAcl = BitConverter.ToUInt32(raw.Slice(Ext2InodeLayout.FileAclOffset, 4)); // ZehOS patch ext2-truncate
         uint sizeHigh = 0;
         if (InodeSize >= Ext2InodeLayout.DirAclOrSizeHighOffset + 4)
         {
@@ -507,6 +508,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             LinksCount = links,
             Blocks = blocks,
             Flags = flags,
+            FileAcl = fileAcl,
             Block = block,
         };
         _inodeCache[inodeNumber] = inode;
@@ -1058,10 +1060,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
         // ZehOS patch ext2-truncate, see PATCHES.md
         // i_block holds no block pointers for a fast symlink (target stored
-        // inline, Blocks == 0) or for device, fifo and socket inodes; reading
-        // it as pointers would free blocks owned by other files. Like Linux
-        // ext2_truncate_blocks, release nothing for them.
-        bool hasBlockPointers = inode.IsRegularFile || inode.IsDirectory || (inode.IsSymlink && inode.Blocks != 0);
+        // inline, no blocks apart from an extended attribute block) or for
+        // device, fifo and socket inodes; reading it as pointers would free
+        // blocks owned by other files. Like Linux ext2_truncate_blocks and
+        // ext2_inode_is_fast_symlink, release nothing for them.
+        uint eaSectors = inode.FileAcl != 0 ? BlockSize / 512 : 0;
+        bool hasBlockPointers = inode.IsRegularFile || inode.IsDirectory || (inode.IsSymlink && inode.Blocks > eaSectors);
         if (!hasBlockPointers)
         {
             oldBlocks = 0;
@@ -1086,8 +1090,11 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 uint blk = GetBlockPointer(inode, i, false, out _);
                 if (blk != 0)
                 {
-                    FreeBlock(blk);
+                    // ZehOS patch ext2-truncate: clear the pointer before
+                    // freeing, so an interruption never leaves an indirect
+                    // entry pointing to a free block.
                     SetBlockPointer(inode, i, 0);
+                    FreeBlock(blk);
                     inode.Blocks -= BlockSize / 512;
                 }
             }
