@@ -318,4 +318,14 @@ public class Ext2RemoveEntryTests
         _device.ReadBlock(1, 1, after);
         Assert.That(after, Is.EqualTo(sector1), "device sector 1 (superblock) untouched");
     }
+
+    [Test]
+    public void CorruptHugeDirectorySize_IsRefusedWithoutAllocation()
+    {
+        WriteDirectory(BuildDirectory(10, out _));
+        _dir.Size = uint.MaxValue;
+        _dir.SizeHigh = 1;
+
+        Assert.That(Remove("n0001"), Is.False);
+    }
 }
