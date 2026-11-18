@@ -349,11 +349,17 @@ def run_g2(args, work: Path, base: Path) -> None:
     copy_sparse(base, image)
     _, esp, _ = layout(image)
     config = esp_tool(image, esp, "mcopy", "::/boot/limine/limine.conf", "-")
-    if not config.startswith(b"timeout: 3\n") or b"default_entry" in config:
-        raise ValueError("limine.conf hat nicht den erwarteten Anfang")
-    # Eintrag 3 ist "/ZehOS (vorherige Version)"; ohne Hauptkernel kann nur er starten (keine Menuetasten noetig).
+    if b"default_entry" in config:
+        raise ValueError("limine.conf setzt bereits default_entry")
+    # Nummer des Eintrags mit dem .bak-Kernel (Zaehlung ab 1 ueber die "/"-Zeilen), unabhaengig von der Menuegestaltung;
+    # ohne Hauptkernel kann nur er starten (keine Menuetasten noetig).
+    entries = [line for line in config.decode().splitlines() if line.startswith("/")]
+    paths = [section for section in config.decode().split("\n/")[1:]]
+    fallback = [index for index, section in enumerate(paths, 1) if "path: boot():/boot/ProjektZeh.elf.bak" in section]
+    if len(entries) != len(paths) or len(fallback) != 1:
+        raise ValueError("limine.conf hat nicht genau einen Rueckfalleintrag mit ProjektZeh.elf.bak")
     changed = case / "limine.conf"
-    changed.write_bytes(b"timeout: 3\ndefault_entry: 3\n" + config[len(b"timeout: 3\n"):])
+    changed.write_bytes(f"default_entry: {fallback[0]}\n".encode() + config)
     esp_tool(image, esp, "mcopy", "-o", str(changed), "::/boot/limine/limine.conf")
     esp_tool(image, esp, "mdel", "::/boot/ProjektZeh.elf")
     boot_installed(args, case, [image])
