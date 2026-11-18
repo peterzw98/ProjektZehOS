@@ -57,6 +57,10 @@ internal sealed class Ext2Inode : IVfsInode
     /// <summary>Inode flags (i_flags).</summary>
     public uint Flags { get; internal set; }
 
+    // ZehOS patch ext2-truncate, see PATCHES.md
+    /// <summary>Extended attribute block (i_file_acl); 0 when none. Read only, never written back.</summary>
+    public uint FileAcl { get; internal set; }
+
     /// <summary>15 block pointers: 12 direct, then single, double and triple indirect.</summary>
     public uint[] Block { get; internal set; } = new uint[Ext2InodeLayout.BlockCount];
 
