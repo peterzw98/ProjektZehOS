@@ -33,6 +33,11 @@ MIN_TEXT = 40
 TOPIC_DEBOUNCE = 2
 TOPIC_WINDOW = 600
 TOPIC_EDIT_TIMEOUT = 10
+# Nur diese drei Discord-Konten (Projektbenutzer laut AGENTS.md) dürfen aus IRC heraus erwähnt werden.
+PING_USERS = {"peter": 458180351467061248, "lars": 137636974927413248, "azazel": 300868002994323456}
+MAX_PINGS = 3
+# Ganzes Wort: nicht in Adressen (x@peter), nicht als Präfix längerer Namen (@Peterle, @lars-bot).
+PING_NAME = re.compile(r"(?<![\w@＠])@(peter|lars|azazel)(?![\w-])", re.IGNORECASE)
 
 
 def parse(line):
@@ -103,6 +108,16 @@ def discord_lines(text, limit=2000):
         raise ValueError(f"message needs more than {MAX_LINES} Discord parts")
     return [text[start:start + budget] + f" ({i + 1}/{total})"
             for i, start in enumerate(range(0, len(text), budget))]
+
+
+def ping_ids(text):
+    """Discord-IDs der als @Name genannten Projektbenutzer in Reihenfolge des ersten Auftretens, höchstens MAX_PINGS."""
+    ids = []
+    for match in PING_NAME.finditer(text):
+        user_id = PING_USERS[match.group(1).lower()]
+        if user_id not in ids:
+            ids.append(user_id)
+    return ids[:MAX_PINGS]
 
 
 def signed_payload(channel, user_id, timestamp, text):
@@ -244,10 +259,18 @@ class Bridge(discord.Client):
         self.ready_event.set()
         print(f"Discord ready as {self.user}, mapped {list(self.channels)}", flush=True)
 
-    async def post(self, irc_channel, embed):
+    async def post(self, irc_channel, embed, pings=()):
         channel = self.channels.get(irc_channel.lower())
-        if channel:
+        if not channel:
+            return
+        if not pings:
             await channel.send(embed=embed)
+            return
+        # Embeds erwähnen niemanden; der Ping steht im content und gilt nur für genau diese IDs.
+        allowed = discord.AllowedMentions(users=[discord.Object(id=user_id) for user_id in pings],
+                                          everyone=False, roles=False, replied_user=False)
+        await channel.send(content=" ".join(f"<@{user_id}>" for user_id in pings), embed=embed,
+                           allowed_mentions=allowed)
 
     async def event(self, irc_channel, text, color=0x5c5f66):
         await self.post(irc_channel, discord.Embed(description=text, color=color))
@@ -257,6 +280,8 @@ class Bridge(discord.Client):
             target, text = params
             original = text
             signed = has_signed_line(original)
+            # Eigene Zeilen kommen aus Discord und haben dort schon erwähnt; sonst pingte jede Nachricht doppelt.
+            pings = [] if nick.lower() == IRC_NICK.lower() else ping_ids(FORMAT_CODES.sub("", text))
             text = FORMAT_CODES.sub("", text).replace("@", "＠")
             action = text.startswith("\x01ACTION ") and text.endswith("\x01")
             if action:
@@ -270,7 +295,7 @@ class Bridge(discord.Client):
                 print(f"not relayed to Discord: {error}", flush=True)
                 await self.event(target, f"⚠️ IRC message not relayed: {error}")
                 return
-            for part in parts:
+            for index, part in enumerate(parts):
                 embed = discord.Embed(description=part, color=nick_color(nick),
                                       timestamp=datetime.datetime.now(datetime.timezone.utc))
                 embed.set_author(name=nick)
@@ -278,7 +303,8 @@ class Bridge(discord.Client):
                 if signed and text != original:
                     footer += " · Bereinigte Anzeige; Original im IRC prüfen"
                 embed.set_footer(text=footer)
-                await self.post(target, embed)
+                # Nur der erste Teil pingt: eine lange Nachricht soll niemanden mehrfach benachrichtigen.
+                await self.post(target, embed, pings if index == 0 else ())
         elif command == "353" and len(params) >= 4:
             self.members.setdefault(params[2].lower(), set()).update(n.lstrip("~&@%+") for n in params[3].split())
         elif command == "JOIN" and params:
