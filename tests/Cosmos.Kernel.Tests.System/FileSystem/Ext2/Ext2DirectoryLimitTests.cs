@@ -16,7 +16,7 @@ public class Ext2DirectoryLimitTests
 {
     private const ulong DeviceBlockSize = 512;
     private const ulong DeviceBlockCount = 16384; // 8 MiB
-    private const int BlockSize = 1024;
+    private const int BlockSize = 2048;
     private const uint MaxDirectoryBlocks = 4096;
 
     private Ext2Superblock _sb = null!;
