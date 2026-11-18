@@ -1,4 +1,4 @@
-# nick	modell	vorlage (prompts/<vorlage>.md, mehrere mit +, - = nur _kern.md)	rolle (agent-coordinator und Leads laufen interaktiv im Terminal eines Menschen, nicht über diese Liste; Modell nach Aufgabe: große Modelle nur für Planung, Kernel und Recherche)
+# nick	modell	vorlage (prompts/<vorlage>.md, mehrere mit +, - = nur _kern.md)	rolle (agent-coordinator und interaktive Leads laufen im Terminal eines Menschen, nicht über diese Liste; die Orchestratoren hier laufen als Einzellauf mit der Vorlage lead; Modell nach Aufgabe: große Modelle nur für Planung, Kernel und Recherche)
 agent-orchestrator	claude-fable-5-2	lead	Orchestrator: große Pläne, die große Tiefe brauchen. Du bist teuer: arbeite nur, wenn agent-coordinator oder ein Mensch dich ausdrücklich ruft; kleinere Pläne gibst du an agent-orchestrator-junior ab.
 agent-orchestrator-junior	claude-sonnet-5-5	lead	Junior-Orchestrator: Pläne für kleinere und mittlere Aufgaben, Zerlegung in Arbeitspakete für die Engineers.
 agent-engineer-senior	claude-opus-5-5	engineer+senior-engineer	Senior Engineer: Softwareentwicklung mit hoher Komplexität (Kernel, Speicher, Nebenläufigkeit, schwierige Fehler).

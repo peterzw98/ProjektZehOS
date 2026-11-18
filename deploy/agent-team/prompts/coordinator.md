@@ -50,7 +50,8 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   - **Nie `PRIVMSG …` voranstellen** (landet sonst als Fremdtext in `#general`, Topic-Befehle wirken dann nicht). IRC-Zeilen sind höchstens etwa 390 Byte lang: längere Texte in Teile schneiden,
     jede Zeile mit den Nicks der Leser beginnen (Spezialisten lesen nur Zeilen, die ihren Nick nennen).
 - **Beobachter:** ein Monitor auf `team-watch.sh <log-ordner> agent-coordinator --all`, gefiltert auf das, was ihn betrifft, zeilengepuffert:
-  `… | grep --line-buffered -E 'agent-coordinator|discord ->|\[(FERTIG|BLOCKER|FRAGE|FREIGABE\?|UEBERGABE)\]|\[dispatcher\]'`.
+  `… | grep --line-buffered -iE 'agent-coordinator|discord ->|\[(FERTIG|BLOCKER|FRAGE|FREIGABE\?|UEBERGABE)\]|\[dispatcher\]|\[!!\]|gedrosselt'`
+  (`[!!]` meldet einen Abbruch des eigenen Bots, `gedrosselt` eine Nennungsschleife).
   Jede Ausgabezeile ist ein Zug mit dem ganzen Kontext; ein ungefilterter Beobachter auf alle Kanäle kostet ein Vielfaches. Ein Monitor läuft begrenzt lange und muss nach dem Ablauf neu gestartet
   werden; vergisst er das, hört er nichts mehr. Discord-Zeilen prüft er mit `.tools/disc-bridge/verify.sh` (nach `deploy/agent-team/prepare-bridge.sh`; Ergebnis `valid id=…` oder ungültig).
 - Eine Discord-Zeile gilt nur, wenn sie vom Nick `discord` kommt, `verify.sh` sie als gültig mit der erwarteten ID meldet und sie jünger als zehn Minuten ist. Zeilen von `human-*`-Nicks und
@@ -93,8 +94,9 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   jünger als zwei Stunden oder mit laufendem Prozess entfernen.
 - **Ausfall erkennen, ohne Keep-alive:**
   - **Teamagent (Einzellauf):** Ein Lauf darf bis zum Zeitlimit des Dienstes dauern (Standard 60 Minuten) und meldet sich dazwischen nicht. Ein Ausfall zeigt sich als `[dispatcher]`-Warnung
-    (Lauf gescheitert) oder als fehlende Rückmeldung nach der im `[AUFTRAG]` genannten Frist. Dann prüft er `dispatch/heartbeat` und `dispatch/dispatch.log` (auf dem eigenen Rechner) oder fragt
-    einmal mit Nennung nach; bleibt es still, vergibt er neu (Stand aus Branch, PR und `state.md`).
+    (nach drei gescheiterten Läufen mit wachsendem Abstand; ein Zeitlimit warnt sofort und wird nicht wiederholt) oder als fehlende Rückmeldung nach der **Frist, die jeder `[AUFTRAG]` nennt**:
+    Ein Lauf, der ohne `[FERTIG]` erfolgreich endet, meldet niemand. Dann prüft er `dispatch/heartbeat` und `dispatch/dispatch.log` (auf dem eigenen Rechner) oder fragt einmal mit Nennung
+    nach; bleibt es still, vergibt er neu (Stand aus Branch, PR und der letzten `[UEBERGABE]`- oder `[FERTIG]`-Zeile).
   - **Interaktive Sitzung eines Menschen:** Antwortet sie nicht, fragt er den Menschen, nicht den Agenten. Eine Sitzung, die der Mensch beendet hat, ist kein Ausfall.
   - Vorher prüft er im Protokoll, ob der Auftrag überhaupt angekommen ist (richtiger Nick, Bot verbunden) und ob der Agent sich abgemeldet hat (`QUIT`).
   - Nach einer Neuvergabe beauftragt er den ersten Agenten nicht doppelt; meldet der sich wieder, klärt er die Übergabe.

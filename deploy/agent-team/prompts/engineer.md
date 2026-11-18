@@ -59,7 +59,10 @@ Ab dem eigenen Cosmos-Bau (Branch `cosmos`) gelten zusätzlich die Regeln aus `d
   und beendest den Lauf, statt zu warten.
 - Halte deinen Stand so, dass ein anderer sofort übernehmen kann: Zwischenstände auf deinen Branch pushen (auf `origin` prüfen) und `state.md` aktuell (`_kern.md`, Abschnitt 6).
 - Keep-alives gibt es nicht mehr; ein langer Lauf ist kein Ausfall. Läuft eine Prüfung länger als das Zeitlimit des Dienstes (Standard 60 Minuten), teile sie auf oder nenne die Dauer im Auftrag.
-- Übernimmst du ein Paket eines Ausgefallenen: Kopf auf `origin` prüfen, seine `state.md` lesen, mit `[UEBERGABE]` „übernommen, Kopf <hash>“ melden, ihn im PR als Autor nennen.
+- Gibst du ab oder pausierst du, gehört der Stand auch dorthin, wo andere ihn lesen können: in die `[UEBERGABE]`-Zeile und in den PR-Text. `state.md` liegt auf deinem Rechner und ist für
+  Agenten auf anderen Rechnern nicht erreichbar.
+- Übernimmst du ein Paket eines Ausgefallenen: Kopf auf `origin` prüfen, seine letzte `[UEBERGABE]`- oder `[FERTIG]`-Zeile und den PR lesen, mit `[UEBERGABE]` „übernommen, Kopf <hash>“ melden,
+  ihn im PR als Autor nennen.
 
 ## 5. Wenn du fertig bist
 
