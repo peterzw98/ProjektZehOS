@@ -238,8 +238,14 @@
       <Output TaskParameter="ConsoleOutput" PropertyName="ZehOSCommit" />
       <Output TaskParameter="ExitCode" PropertyName="ZehOSCommitExit" />
     </Exec>
+    <!-- Messbauten entstehen oft aus nicht committetem Stand; das soll in der Bootzeile sichtbar sein (Review pink). -->
+    <Exec Command="git diff --quiet HEAD --" WorkingDirectory="$(MSBuildProjectDirectory)" IgnoreExitCode="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" Condition="'$(ZehOSCommitExit)' == '0'">
+      <Output TaskParameter="ExitCode" PropertyName="ZehOSDirtyExit" />
+    </Exec>
     <PropertyGroup>
       <ZehOSCommit Condition="'$(ZehOSCommitExit)' != '0' or '$(ZehOSCommit)' == ''">ohne-git</ZehOSCommit>
+      <ZehOSCommit Condition="'$(ZehOSDirtyExit)' == '1'">$(ZehOSCommit)-dirty</ZehOSCommit>
       <ZehOSBuildInfoFile>$(IntermediateOutputPath)ZehOSBuildInfo.g.cs</ZehOSBuildInfoFile>
     </PropertyGroup>
     <WriteLinesToFile File="$(ZehOSBuildInfoFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
