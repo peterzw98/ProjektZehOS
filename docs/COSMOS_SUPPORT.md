@@ -2,6 +2,19 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Round-Robin: Idle-Thread und Zeitscheibe (18. November 2026)
+
+**Befund.** In Cosmos 3.0.97 macht `SchedulerManager.SetupIdleThread` den Boot-Thread zum Idle-Thread (Id 0); das ist die ZehOS-Hauptschleife mit Desktop und Textshell. Für ihn löst `SchedulerManager.Park` keinen Reschedule aus, sondern hält nur mit `Halt` bis zum nächsten Interrupt. `Thread.Sleep(1)` am Ende jeder Runde gibt die CPU also nicht an einen bereiten Thread ab. Im Timer-Tick weckt Cosmos schlafende Threads vor `IScheduler.OnTick` (`CheckSleepingThreads` → `ReadyThread` → `OnThreadReady`). Der bisherige `CosmosRoundRobinScheduler` füllte dabei die Zeitscheibe neu, sodass die Scheibe der Hauptschleife nie ablief: Ein bereiter Wasm-Worker wartete bis zu ~140 ms. Gemessen mit einem Diagnosebau (Zweig `task/irq-count-diag`, nie mergen): In Bildern über 100 ms war der Worker nicht blockiert, sondern bereit, und Thread 0 bekam alle Ticks.
+
+**Änderung.** Die Policy steckt jetzt in `RoundRobinCore` (ohne Cosmos-Typen, hostgetestet); `CosmosRoundRobinScheduler` delegiert nur.
+
+- Die Scheibe beginnt bei der Auswahl (`Pick`), nicht beim Bereitwerden. Bei leerer Queue wählt Cosmos den Idle-Thread selbst; seine Scheibe beginnt dann ebenfalls in `Pick`.
+- Hat der Tick den Idle-Thread aus dem Parken geweckt, wird er verdrängt, sobald ein anderer Thread wartet. Rechnet die Hauptschleife dagegen (Zeichnen, Eingabe), gilt die normale Scheibe von 20 ms.
+- Ein laufender Thread, den der Tick in die Queue gestellt hat, kommt ans Ende, damit der nächste Pick einen wartenden Thread wählt.
+- Der Boot-Thread entsteht ohne `OnThreadCreate`; der Scheduler gibt ihm eine eigene Scheibe.
+
+CPU-Anteile laut Hosttest bei dauernd rechnendem Worker: rechnende Hauptschleife 50 %, parkende Hauptschleife ein Tick je Runde (ein Drittel). Ein echtes Leerlaufverhalten bleibt: Ist die Queue leer, parkt der Idle-Thread weiter mit `Halt`.
+
 ## Wasm-Hostrückrufe: Ausnahmeschutz (17. November 2026, #204)
 
 `present`, `present_indexed`, `open`, `file_size`, `file_read` und `close` fangen verwaltete Ausnahmen vor der nativen Rückkehr ab. `open`, `file_size` und `file_read` liefern bei Fehlern `-1`; `close` entfernt das Handle auch bei einem Schließfehler. Eine fehlgeschlagene Bildausgabe verwirft das Bild und meldet höchstens einmal je Lauf den Ausnahmetyp, die App läuft weiter. Auch die Diagnose darf keine Ausnahme weitergeben. Scheitert nach dem Öffnen die Handle-Registrierung, wird der noch nicht übernommene Stream geschützt freigegeben. Gastzeiger und Bildmaße prüft weiterhin die gemeinsame C-Brücke.
