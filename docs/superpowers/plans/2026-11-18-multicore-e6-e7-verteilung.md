@@ -123,7 +123,7 @@ Jede Zeile ist ein eigenes kleines Paket `E6-C.<n>` (Branch `task/mc-e6-c<n>-<ku
 ein Hosttest, wo die Logik plattformunabhängig ist, PR. Diese Pakete laufen nebeneinander, solange sie verschiedene
 Dateien ändern; der Koordinator vergibt sie anhand der Tabelle. Zahl und Inhalt stehen erst nach Etappe 0 fest.
 
-**Dann die Freigabe.** Branch `task/mc-e6-c-worker-freigeben`.
+**Dann die Freigabe.** Branch `task/mc-e6-c-worker-freigeben`. **Voraussetzung:** E5-A Schritt 2a (`ausnahme-hook` setzt den aufgegebenen Thread auf `Dead`) ist gemergt. Ohne ihn hält eine isolierte Ausnahme auf einer Worker-CPU mit leerer Queue an (E5-Plan, Review-Schwerpunkt 7).
 
 **Dateien:**
 - Anlegen: `ProjektZeh/Scheduling/CpuSelection.cs` (ohne Cosmos-Typen), Test `ProjektZeh.Tests/CpuSelectionTests.cs`
