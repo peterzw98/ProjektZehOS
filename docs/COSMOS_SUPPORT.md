@@ -50,7 +50,9 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
   Schritt mit einem Plug, der `IRQContext` sieht.
-- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
+- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt, außerdem die
+  verwalteten Objekte, auf die der aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die
+  Speicherbereinigung ihn weiter durchsucht.
 - Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
 - Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
@@ -310,7 +312,7 @@ Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`
 | Monotone Zeit | `Stopwatch.GetTimestamp`/Frequenz sind in der installierten x64-Version an TSC und dessen Kalibrierung gebunden. Fortschreitende Statuszeit ohne Eingabe wurde im Gast geprüft. `Environment.TickCount64` wird nicht verwendet: Die installierte Laufzeit zählt dort Aufrufe statt Millisekunden. |
 | Kurze Pause | `Thread.Sleep(1)` am Ende jeder Runde. `TimerManager.Wait(1)` nutzte im QEMU-Referenzgast einen 18-Hz-Timer und begrenzte dadurch Eingabe und Bildausgabe auf etwa 15–16 FPS. Die bereits geprüfte Scheduler-Wartefunktion beseitigt diese grobe Pause, ohne die HAL-Timerfrequenz zu verändern. [Messung](DESKTOP_PERFORMANCE.md). |
 | Grafik | `Canvas.GetFullScreen()`, `GetBuffer()` und `Display()` verwenden den schon vorhandenen Bildpuffer. Keine neue Vollbildallokation pro Bild. |
-| Auflösung | Limine setzt die Bootauflösung aus `Bootloader/limine.conf` (1920×1080×32, Rückfall 1024×768×32); in QEMU geprüft. `Canvas.GetFullScreen(Mode)` wechselt zur Laufzeit nur bei Treibern mit `IDisplayModes`, in 3.0.94 nur `VmwareSvgaDriver`; der Limine-Bildpuffer meldet genau einen Modus. Nach einem Wechsel liefert `GetBuffer()` einen neuen Puffer; `KernelConsole` berechnet Spalten/Zeilen erst beim erneuten Setzen von `Font`. Am 15. November 2026 in QEMU 10.2.2 mit `-vga vmware` geprüft: `VmwareSvgaDriver` meldet 11 Modi von 1024×768 bis 1920×1080, der Gast startet mit 1024×768, der Wechsel auf 1920×1080 zur Laufzeit gelingt und kehrt ohne Bestätigung nach 15 s zurück. Die serielle Zeile `Anzeige …, Modi: …` nennt beim Desktopstart die angebotenen Modi. Laufzeitwechsel in VMware selbst ist nicht geprüft. |
+| Auflösung | Limine fordert die Bootauflösung aus `Bootloader/limine.conf` an (1920×1080×32); das ISO startet ohne Auflösungsauswahl und Auswahlpause. Die tatsächlich verfügbare Auflösung hängt vom Anzeigetreiber ab. `Canvas.GetFullScreen(Mode)` wechselt zur Laufzeit nur bei Treibern mit `IDisplayModes`, in 3.0.94 nur `VmwareSvgaDriver`; der Limine-Bildpuffer meldet genau einen Modus. Nach einem Wechsel liefert `GetBuffer()` einen neuen Puffer; `KernelConsole` berechnet Spalten/Zeilen erst beim erneuten Setzen von `Font`. Am 15. November 2026 in QEMU 10.2.2 mit `-vga vmware` geprüft: `VmwareSvgaDriver` meldet 11 Modi von 1024×768 bis 1920×1080, der Gast startet mit 1024×768, der Wechsel auf 1920×1080 zur Laufzeit gelingt und kehrt ohne Bestätigung nach 15 s zurück. Die serielle Zeile `Anzeige …, Modi: …` nennt beim Desktopstart die angebotenen Modi. Laufzeitwechsel in VMware selbst ist nicht geprüft. |
 | Systeminfos | `NetworkManager` (Adapter, MAC, Link, IPv4) ist öffentlich und lieferte in QEMU den e1000e-Adapter. Freie/gesamte Seiten stammen aus dem internen `PageAllocator` und werden per `UnsafeAccessor`/`UnsafeAccessorType` gelesen; der native Build und QEMU zeigten plausible Werte (≈ 499 MiB bei 512 MiB Gast). `GC.GetGCMemoryInfo().HeapSizeBytes` meldete im Gast 0. |
 | Schrift | `PCScreenFont.DefaultFont` ist eine echte 16×32-Schrift (keine verdoppelte 8×16). Eine kleinere Schrift bräuchte eine zusätzliche Schriftdatei. |
 | Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
@@ -373,6 +375,7 @@ E4.0 2 GiB Lauf 1 meldete nach dem Löschen der 64-MiB-Fülldateien rund 520 „
 `CosmosExt2TruncatePlug` ersetzt die Methode:
 - Datenblöcke gibt er wie Cosmos frei.
 - Zusätzlich gibt er die Zeigerblöcke frei, deren ganzer Bereich hinter der neuen Länge liegt (`Ext2IndirectBlocks.PlanTruncate`, einfach, doppelt und dreifach indirekt, mit Hosttests).
+- **Grenze:** Vollständig frei wird nur der Bereich bis doppelt indirekt (bei 4-KiB-Blöcken etwa 4 GiB). Cosmos 3.0.97 `GetBlockPointer` liefert für dreifach indirekte Blöcke 0; dort gibt der Plug die Zeigerblöcke frei, die Datenblöcke aber nicht (Review intake18, 18.11.).
 - Einträge in teilweise genutzten Zeigerblöcken nullt er, und er führt `i_blocks` mit.
 - Der Rmdir-Plug verlässt sich darauf.
 
