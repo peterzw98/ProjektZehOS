@@ -61,7 +61,7 @@ Byte (die ZehOS-Version aus Git ist je Branch anders lang), keine Compiler- oder
 wird auf beiden Seiten geladen. Die alte Seite meldet zwölf NuGet-Warnungen „Expected package
 _Cosmos.Build.Analyzer.Patcher 3.0.97, but got package Cosmos.Build.Analyzer.Patcher 3.0.97“: nuget.org liefert unter
 der ID mit Unterstrich das andere Paket aus, daher auch das abweichende Layout oben. Der eigene Feed hat das nicht.
-Gaststarts: siehe „Gastzeilen alt gegen neu“ unten; Doom und VMware sind noch offen.
+Gaststarts: siehe „Gastzeilen alt gegen neu“ unten; VMware ist noch offen.
 
 Reproduzierbarkeit (Ende 0): derselbe Commit, zweimal gebaut in zwei Arbeitsbäumen unter verschiedenen Pfaden, je mit eigenem
 NuGet-Cache und gleicher PathMap: 85 DLLs, davon 54 `gleich` und 31 `bauangaben`, keine `VERSCHIEDEN`; kein lokaler Pfad
@@ -97,7 +97,7 @@ Versionstexte des Eigenbaus (`3.0.97-zehos.1+bd5889b…` statt `3.0.97+efcf20c�
 | Isolation NMI | `… --nmi`, je 4 Läufe | 1/4, sonst „Gegenprobe ohne Aussage“ | 0/4, jeweils „Gegenprobe ohne Aussage“ |
 | ext2 | `test-storage-ext2-guest.py --accel kvm` | Lauf 1 PASS=20, Lauf 2 PASS=9, `DONE` | gleich |
 | Energie | `reboot` in derselben VM, dann `shutdown` (KVM) | beide PASS, Exit 0 | beide PASS, Exit 0 |
-| Doom | `test-wasm-doom-desktop.py --scenario quick` | offen | offen |
+| Doom | `test-wasm-doom-desktop.py --scenario quick` (TCG, Snapshot) | remove, upgrade, corrupt, minkernel je Exit 0 (44/24/14/23 s) | dieselben vier je Exit 0 (44/23/14/23 s) |
 | VMware | `start-vmware.ps1` | offen | offen |
 
 **Anmerkungen:**
@@ -115,5 +115,12 @@ Versionstexte des Eigenbaus (`3.0.97-zehos.1+bd5889b…` statt `3.0.97+efcf20c�
   bereit.“, der Kernel zeigt dann aber den Desktop (ohne Datenplatte „Konten gesperrt“). Geprüft wurde deshalb
   derselbe Ablauf mit vorherigem Esc zur Textshell: `reboot` startet in derselben VM bis zum Desktop, `shutdown`
   beendet QEMU mit Exit 0. Das veraltete Skript ist eine eigene Aufgabe.
-- **Doom:** Es braucht wasi-sdk 25 für die Testapp und ein Doom-Testrepository; beides fehlt auf diesem Rechner. Die
-  Installation von wasi-sdk wartet auf eine Entscheidung.
+- **Doom** (Peters Freigabe 18.11., nur unter `.tools`, nichts committet): eigene Builds beider Seiten mit
+  `-p:ZehOSPackageKeyPath` und `-p:ZehOSPackageTestCaPath` (0 Warnungen, 0 Fehler, ELF je 21 109 600 Byte).
+  - wasi-sdk 25.0 `x86_64-linux` aus dem offiziellen Release `WebAssembly/wasi-sdk` `wasi-sdk-25` (clang 19.1.5-wasi-sdk).
+    Das Release veröffentlicht keine Prüfsumme. Geprüft ist deshalb nur die Größe gegen die Release-Angabe
+    (114 450 290 Byte); SHA-256 `52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c`.
+  - Doom 1.0.0 aus dem Branch `packages` (Commit `be24dc9`): doomgeneric unter GPL-2.0, Freedoom unter BSD-3-Clause,
+    Lizenztexte im Paket. Mit einem frischen Testschlüssel neu signiert; das Manifest ist bytegleich mit
+    `packages/doom/1.0.0`.
+  - Test-CA: ECDSA P-256 mit Serverzertifikat für 10.0.2.2.
