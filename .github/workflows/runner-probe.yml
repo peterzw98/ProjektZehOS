@@ -1,8 +1,8 @@
 name: Self-hosted runner probe
 
-# Prueft, was der self-hosted Runner 'MSI' fuer die schweren CI-Jobs (kernel, release-images, guest, guest-recovery) bietet.
+# Prueft, was der self-hosted Runner 'MSI' fuer die QEMU-Jobs (guest, guest-recovery) bietet.
 # Laeuft nur von Hand oder beim Push auf den Arbeitsbranch dieser Pruefung; er liest nur, installiert nichts und aendert nichts am Rechner.
-# Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf diesen Runner (siehe ci.yml, runs-on der schweren Jobs).
+# Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf diesen Runner (siehe ci.yml, runs-on der QEMU-Jobs).
 
 on:
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
 
       - name: Other tools
         run: |
-          for tool in git python3 gh e2fsck debugfs dumpe2fs sgdisk sfdisk mkfs.fat xorriso gdb-multiarch; do
+          for tool in git python3 gh docker e2fsck debugfs dumpe2fs sgdisk sfdisk mkfs.fat xorriso gdb-multiarch; do
             if command -v "$tool" >/dev/null 2>&1; then echo "ok   $tool"; else echo "fehlt $tool"; fi
           done
           python3 --version

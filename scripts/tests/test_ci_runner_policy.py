@@ -5,7 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / '.github' / 'workflows'
-HEAVY = ('kernel', 'release-images', 'guest', 'guest-recovery')
+# Nur die beiden QEMU-Jobs laufen auf dem Runner MSI (Entscheid des Koordinators 19:21); alles andere bleibt auf GitHub-Runnern.
+HEAVY = ('guest', 'guest-recovery')
 GUARD = "github.event.pull_request.head.repo.full_name == github.repository"
 
 
@@ -34,6 +35,7 @@ class CiRunnerPolicy(unittest.TestCase):
             self.assertTrue(runner.rstrip().endswith("|| 'ubuntu-24.04' }}"), name)
 
     def test_other_jobs_never_use_self_hosted(self):
+        self.assertIn('kernel', self.jobs)
         for name, job in self.jobs.items():
             if name not in HEAVY:
                 self.assertNotIn('self-hosted', runs_on(job), name)

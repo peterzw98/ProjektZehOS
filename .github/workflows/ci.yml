@@ -197,10 +197,7 @@ jobs:
     needs: changes
     # Der Gastlauf haengt an diesem Job und entfaellt bei reinen Doku-PRs mit.
     if: needs.changes.outputs.code == 'true'
-    # Schwerer Job auf dem self-hosted Runner (Peters Rechner), aber nur fuer Push, manuelle Laeufe und Pull Requests aus
-    # diesem Repository. Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf den eigenen Rechner,
-    # er laeuft auf ubuntu-24.04. scripts/tests/test_ci_runner_policy.py prueft das.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -209,9 +206,6 @@ jobs:
           persist-credentials: false
           # Die ZehOS-Version zaehlt first-parent-Commits (ProjektZeh.csproj, ZehOSVersionFromGit); ein flacher Klon bricht ab.
           fetch-depth: 0
-
-      - name: Isolate runner state
-        uses: ./.github/actions/runner-state
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -264,31 +258,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Remove isolated runner state
-        # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
-        if: always() && runner.environment == 'self-hosted'
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/home"
-
   # Eigener Job statt Schritte im Kernel-Job: der Gastlauf haengt nur am ISO und soll nicht auf den vollstaendigen Neubau der
   # Release-Images (Live- und Installer-ISO, rund eine Minute) warten. Der Job baut die Toolchain selbst und laeuft parallel.
   release-images:
     name: Release images (live and installer)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # Schwerer Job auf dem self-hosted Runner (Peters Rechner), aber nur fuer Push, manuelle Laeufe und Pull Requests aus
-    # diesem Repository. Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf den eigenen Rechner,
-    # er laeuft auf ubuntu-24.04. scripts/tests/test_ci_runner_policy.py prueft das.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Isolate runner state
-        uses: ./.github/actions/runner-state
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -319,12 +301,6 @@ jobs:
 
       - name: Check release artifacts for local paths
         run: python3 scripts/check-release-paths.py "$RUNNER_TEMP"/zehos-release-check/*
-
-      - name: Remove isolated runner state
-        # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
-        if: always() && runner.environment == 'self-hosted'
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/home"
 
   netsurf:
     name: NetSurf offline package
@@ -386,9 +362,10 @@ jobs:
 
   guest:
     name: Guest boot and desktop (QEMU)
-    # Schwerer Job auf dem self-hosted Runner (Peters Rechner), aber nur fuer Push, manuelle Laeufe und Pull Requests aus
-    # diesem Repository. Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf den eigenen Rechner,
-    # er laeuft auf ubuntu-24.04. scripts/tests/test_ci_runner_policy.py prueft das.
+    # Dieser QEMU-Job laeuft auf dem self-hosted Runner MSI (Peters Rechner): dort entfallen Cache und Downloads. Nur fuer
+    # Push, manuelle Laeufe und Pull Requests aus diesem Repository; das Repository ist oeffentlich, ein Pull Request aus einem
+    # Fork faellt auf ubuntu-24.04 zurueck. Ein Runner fuehrt einen Job nach dem anderen aus, zwei Gast-Jobs laufen also nie
+    # gleichzeitig. scripts/tests/test_ci_runner_policy.py prueft das.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
     needs: kernel
     timeout-minutes: 25
@@ -463,9 +440,10 @@ jobs:
     # die Pipeline nicht; er entfaellt wie der Gastlauf bei reinen Doku-PRs.
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # Schwerer Job auf dem self-hosted Runner (Peters Rechner), aber nur fuer Push, manuelle Laeufe und Pull Requests aus
-    # diesem Repository. Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf den eigenen Rechner,
-    # er laeuft auf ubuntu-24.04. scripts/tests/test_ci_runner_policy.py prueft das.
+    # Dieser QEMU-Job laeuft auf dem self-hosted Runner MSI (Peters Rechner): dort entfallen Cache und Downloads. Nur fuer
+    # Push, manuelle Laeufe und Pull Requests aus diesem Repository; das Repository ist oeffentlich, ein Pull Request aus einem
+    # Fork faellt auf ubuntu-24.04 zurueck. Ein Runner fuehrt einen Job nach dem anderen aus, zwei Gast-Jobs laufen also nie
+    # gleichzeitig. scripts/tests/test_ci_runner_policy.py prueft das.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 25
     steps:
