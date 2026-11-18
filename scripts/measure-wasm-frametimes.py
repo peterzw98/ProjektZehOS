@@ -60,12 +60,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     return args
 
 
-# Bewegung fuer --move: vor und zurueck, dazwischen seitlich; die Welt bleibt dadurch im Bild und der Spieler am Ort.
+# Bewegung fuer --move: vor und zurueck, dazwischen seitlich; die Welt bleibt dadurch im Bild. Auf ebenem Boden bleibt
+# der Spieler etwa am Ort, an Kanten und Bloecken driftet er; Laeufe sind vergleichbar, aber nicht exakt gleich.
 MOVE_STEPS = (("w", 2.5), ("a", 1.0), ("s", 2.5), ("d", 1.0))
 
 
 def last_average_fps(lines: list[str]) -> float | None:
-    """Durchschnittliche Bilder je Sekunde im letzten 60-s-Fenster: Bildzahl n der letzten Zeile "Bildzeit ..." / 60."""
+    """Durchschnittliche Bilder je Sekunde im letzten 60-s-Fenster: Bildzahl n der letzten Zeile "Bildzeit ..." / 60.
+
+    Der Kernel schliesst das Fenster erst mit dem ersten Bild nach 60 s; n/60 ist dadurch um hoechstens ein Bild zu hoch
+    (bei 30 fps unter 0,1 %).
+    """
     found = [int(m.group(1)) for line in lines if (m := re.search(r"^Bildzeit n=(\d+)", line))]
     return round(found[-1] / 60, 1) if found else None
 
