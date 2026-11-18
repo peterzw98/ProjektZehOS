@@ -201,10 +201,10 @@ Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien j
 
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (PR offen):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
-- **Thread-Start-Schutz #241 und Worker-Pool #246 (PRs offen):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
+- **Thread-Start-Schutz #241 (gemergt) und Worker-Pool #246 (PR offen):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
 - **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** in Vorbereitung, kein PR ohne Peters Freigabe.
 
-Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, PR offen). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
+Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
 
 VMware ist für alle Punkte offen.
 
@@ -345,12 +345,17 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
     - **Vorbehalt Speicher:** Die meisten Reihen liefen mit 512 MiB Gastspeicher. Das liegt am Minimum: #237 empfiehlt mindestens 768 MiB und nennt keinen belegten sicheren Mindestwert. Auf Seed 5 (stehend) brachte 1 GiB statt 512 MiB 20,0 statt 16,3 fps und einen niedrigeren p95 (agent-laser-YELLOW, IRC 18.11., je 2 Läufe).
     - **Werte mit 512 MiB:** Seed 1 stehend 25–27 fps; Zufallswelt bewegt 26,3 fps. In Wäldern mit rund 100.000 Eckpunkten liegt die Rasterzeit bei 42–58 ms je Bild, das 30-fps-Ziel ist dort nicht erreicht (Seed-Reihe agent-laser-YELLOW, IRC 18.11.).
     - **Hebel:** Die Sichtweite hilft je nach Szene; die Voreinstellung ist mit #242 (PR offen) möglich, den Wert wählt Peter. Für Wälder hilft sie bis 64 nicht.
-    - **Messweg:** Das Messskript #239 (PR offen) misst bewegte Kamera und avg fps; für ClassiCube ist dort 1 GiB Standard.
-    - **1-GiB-Kernreihe (agent-laser-YELLOW, IRC 18.11.; KVM, Sichtweite 512, wasm3, Seeds 2–5, je 2 Läufe stehend und bewegt):**
+    - **Messweg:** Das Messskript #239 (gemergt) misst bewegte Kamera und avg fps; für ClassiCube ist dort 1 GiB Standard.
+    - **1-GiB-Kernreihe vor dem Scheduler-Fix (agent-laser-YELLOW, IRC 18.11.; KVM, Sichtweite 512, wasm3, Seeds 2–5, je 2 Läufe stehend und bewegt):**
       - Mittel stehend 22,8 fps, bewegt 25,5 fps, gesamt 24,2 fps.
       - Das Ziel von 30 fps im Durchschnitt ist damit nicht erreicht. Nur Seed 3 und 4 liegen bewegt darüber, die Waldwelten Seed 2 und 5 bei 17–21 fps.
       - p95 liegt bei 79–220 ms.
-    - **Offen:** die Ursache der Bildzeit-Ausreißer. Dasselbe Bild kostet im Gast 20,8 ms, auf dem Host 16,2 ms, dazu kommen Bursts (IRC 18.11.).
+    - **Ursache der Bildzeit-Ausreißer (#254, PR offen):** Ein Diagnosebau zeigte in jedem Ausreißer einen bereiten, nicht blockierten Wasm-Worker, der 76–137 ms auf die CPU wartete. Laut Cosmos-Quelle macht `SetupIdleThread` die Hauptschleife zum Idle-Thread, und `Park` gibt für ihn die CPU nicht ab. #254 verdrängt den Idle-Thread im Tick, sobald ein anderer Thread wartet.
+    - **Scheduler-Fix #254 unter KVM (1 GiB, Sichtweite 512, gepinnt, Drift ≤ 0,4 %; master gegen Fix, avg fps; PR-Text und agent-laser-YELLOW, IRC 18.11.):**
+      - Seed 5 stehend 21,0 → 36,0 (+71 %, n 3/2), Seed 5 bewegt 23,5 → 49,0 (n 2/2), Seed 2 stehend 19,6 → 38,5 (n 2/2), Seed 3 stehend 33,5 → 75,3 (+125 %, n=1).
+      - Unter WHPX (Seed 1 stehend): master 29,1 / 21,6, Fix 47,2 / 49,2.
+      - In diesen Szenen liegt der Fix über 30 fps. Das Ziel gilt damit noch nicht als erreicht: n ist klein, Seed 3 bewegt und Seed 4 fehlen unter KVM, ebenso Zufallswelten nach Peters Abnahmekriterium. VMware ist nicht gemessen.
+      - Die Oberflächen-Latenz unter Last ist nicht kleiner geworden (F4 unter WHPX 84–90 statt 85–94 ms). Ein freiwilliger Yield des Workers nach jedem Bild ist als Folgeschritt geplant, nicht gemessen.
 - [ ] 13.4 App-Speicher: begrenztes Schreiben im eigenen Bereich auf `/data`, Welten speichern. Abnahme: Welt übersteht Beenden und Neustart, voller Datenträger oder fehlendes Laufwerk bleiben bedienbar. ClassiCube (`experiments/ClassiCube.Wasi`) bildet `maps/` und `options.txt` auf `/save` ab; in QEMU WHPX geprüft: Welt speichern, App schließen, nach App-Neustart und nach VM-Neustart (`reboot`, dieselbe Platte) über *Load level* laden, `options.txt` und Welt (ClassicWorld-NBT) danach auf der frischen Testplatte gelesen (`test-classicube-desktop.py --storage`, mit dem Elternordner-Fix aus #210); fast volle Platte (`--disk-full`): *Save level* meldet `ENOSPC` im Chat, Spiel und Fenster bleiben bedienbar, `/save` war aktiv und die Welt fehlt auf der Platte; ohne `/save` scheitert *Save level* mit Chatmeldung ohne Abbruch. Offen mit ClassiCube: ausgehängtes Laufwerk (`EBUSY`/`ENOENT`), Quote im Gast (Konto-ID zufällig, nur Hosttests), VMware.
   - Stand 17. November 2026: Loader-Teil umgesetzt ([Spec](docs/superpowers/specs/2026-11-17-app-storage-13-4.md)). `capability=storage` gibt Paketen einen eigenen schreibbaren Ordner `/save` mit Quote, Pufferbudget, Rechten je fd und ganzen Dateien bei `fd_sync`/`fd_close`. Hosttests und ein Gast-Rundweg (Schreiben und Zurücklesen auf dem Cosmos-FAT-Laufwerk, KVM) sind belegt. Die ClassiCube-Prüfungen stehen in der Zeile darüber. Offen für die Abnahme: ausgehängtes bzw. fehlendes Laufwerk während eine App läuft, die Quote im Gast und VMware. Das Paket ClassiCube 1.1.0 mit `capability=storage` ist seit #216 im Branch `packages` veröffentlicht (Katalog-Generation 7); Kernel vor 0.5.65 können es nicht installieren. Offen ist noch der Test des Release-Pakets mit Installation aus dem Katalog.
   - Stand 18. November 2026: Das Release-Paket 1.1.0 wurde aus dem echten Katalog installiert und gestartet.
@@ -362,7 +367,8 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
   - Stand 18. November 2026:
     - **Etappe F (Messung, #223):** Die zufälligen Abstürze unter AOT lagen an der Red Zone. wamrc legt Werte unterhalb von RSP ab, und Cosmos betritt Interrupts ohne Stackwechsel.
     - **wamrc ohne Red Zone (#238, PR offen, Freigabe Peter 17.11.):** Neue Kennung `wamr245-aot5-x64-bc-nrz`. Gegenprobe von agent-laser-RED: mit dem alten `.aot` hatten 17 von 40 Läufen Trap, Stillstand oder Panik, mit dem gepatchten wamrc 0 von 40.
-    - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB):** 14 Läufe mit AOT-nrz ohne Panik, Trap oder Stillstand: 12 Läufe à 20 Minuten und 2 unter Hostlast.
+    - **Red-Zone-Prüfung (#252, PR offen, auf #238 gestapelt):** prüft die erzeugte `.aot` am Ergebnis.
+    - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB; festgehalten in `docs/WASM_FEASIBILITY.md` durch #253, das in den Branch von #238 gemergt ist und mit #238 nach master kommt):** 14 Läufe mit AOT-nrz ohne Panik, Trap oder Stillstand: 12 Läufe à 20 Minuten und 2 unter Hostlast.
       - Unter Last: ClassiCube unter KVM 20–26 fps; Doom unter TCG neben einer Rechenschleife auf dem SMT-Geschwister 39–50 fps.
       - Grenzen: n=3 je Kombination, nur QEMU.
       - Doom unter KVM 62–69 fps, unter TCG 43–63 fps.
