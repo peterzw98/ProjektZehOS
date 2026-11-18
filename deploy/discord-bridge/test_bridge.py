@@ -71,9 +71,12 @@ class Channel:
         self.calls = []
         self.error = None
         self.during_edit = None
+        self.block = False
 
     async def edit(self, *, topic, reason):
         self.calls.append(topic)
+        if self.block:
+            await asyncio.Future()
         if self.during_edit:
             self.during_edit()
         if self.error:
@@ -130,8 +133,8 @@ async def check_topics():
         assert client.channels["#second"].topic == "Unabhaengig"
         clock.return_value = 602
         await client.flush_topics()
-        assert client.channels["#general"].topic == ""
-        assert client.channels["#general"].calls == ["Start", "Neuester Stand", ""]
+        assert client.channels["#general"].topic == "no topic"
+        assert client.channels["#general"].calls == ["Start", "Neuester Stand", "no topic"]
         client.queue_topic("#general", "")
         clock.return_value = 604
         await client.flush_topics()
@@ -153,6 +156,7 @@ async def check_topics():
     client = topic_bridge()
     with patch("bridge.time.monotonic", return_value=0) as clock:
         client.queue_topic("#general", "Allgemein")
+        client.channels["#second"].topic = "no topic"
         client.queue_topic("#second", "")
         client.channels["#general"].during_edit = lambda: client.queue_topic("#second", "Neuester")
         clock.return_value = 2
@@ -183,6 +187,17 @@ async def check_topics():
                 assert "#general" not in client.topic_pending
 
 
+async def check_topic_timeout():
+    client = topic_bridge()
+    client.channels["#general"].block = True
+    with patch("bridge.TOPIC_DEBOUNCE", 0), patch("bridge.TOPIC_EDIT_TIMEOUT", 0.01, create=True):
+        client.queue_topic("#general", "Wartet auf 429")
+        client.queue_topic("#second", "Unabhaengig")
+        await asyncio.wait_for(client.flush_topics(), timeout=0.2)
+        assert client.channels["#second"].topic == "Unabhaengig"
+        assert "#general" in client.topic_pending
+
+
 async def check_close():
     client = topic_bridge()
     client.topic_task = asyncio.create_task(asyncio.sleep(3600))
@@ -193,5 +208,6 @@ async def check_close():
 
 
 asyncio.run(check_topics())
+asyncio.run(check_topic_timeout())
 asyncio.run(check_close())
 print("ok")

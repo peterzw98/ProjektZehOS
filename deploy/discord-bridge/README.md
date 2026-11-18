@@ -17,6 +17,8 @@ IRC ist die Quelle der Kanalbeschreibung: `TOPIC`-Änderungen und der nach dem e
 
 Die Bridge bündelt Änderungen zwei Sekunden lang und hält pro Kanal nur den neuesten Stand vor. Pro Kanal erfolgen höchstens zwei Änderungsversuche innerhalb von zehn Minuten; weitere Änderungen warten und ersetzen ältere vorgemerkte Texte. Unveränderte Beschreibungen benötigen keinen API-Aufruf. Die Queue läuft unabhängig vom IRC-Empfang. Nach einem Prozessneustart ist das lokale Zeitfenster leer; zusätzliche serverseitige Rate-Limits behandelt discord.py.
 
-IRC-Formatierung und Steuerzeichen werden bereinigt, `@` wird durch `＠` ersetzt und der Text auf 1024 Zeichen begrenzt. Ein leeres IRC-Topic leert auch die Discord-Beschreibung.
+IRC-Formatierung und Steuerzeichen werden bereinigt, `@` wird durch `＠` ersetzt und der Text auf 1024 Zeichen begrenzt. Ein leeres IRC-Topic (auch beim Start) setzt die Discord-Beschreibung auf `no topic`.
 
 Der Bot benötigt **Manage Channels**. Fehlt diese Berechtigung, wird der Fehler protokolliert und dieser Stand verworfen; nach manueller Korrektur der Rechte einen neuen Topic-Abgleich auslösen (Topic ändern oder Bridge neu verbinden). Temporäre HTTP-/Verbindungsfehler werden protokolliert und frühestens nach 30 Sekunden erneut versucht, weiterhin innerhalb des Zehn-Minuten-Limits. Die Bridge ändert keine Rechte selbst.
+
+Jeder Topic-API-Aufruf hat eine Frist von zehn Sekunden. Wartet discord.py intern auf ein serverseitiges Rate-Limit, wird dieser Versuch danach abgebrochen; andere Kanäle werden weiterbearbeitet. Der neueste Sollstand bleibt für einen späteren Versuch vorgemerkt.

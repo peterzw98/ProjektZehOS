@@ -29,6 +29,7 @@ MAX_LINES = 5
 MIN_TEXT = 40
 TOPIC_DEBOUNCE = 2
 TOPIC_WINDOW = 600
+TOPIC_EDIT_TIMEOUT = 10
 
 
 def parse(line):
@@ -146,7 +147,7 @@ class Bridge(discord.Client):
         target = irc_channel.lower()
         if target not in self.channels:
             return
-        topic = clean_topic(text)
+        topic = clean_topic(text) or "no topic"
         if target in self.topic_pending and self.topic_pending[target][0] == topic:
             return
         self.topic_pending[target] = (topic, time.monotonic() + TOPIC_DEBOUNCE)
@@ -169,7 +170,9 @@ class Bridge(discord.Client):
             # Auch Fehler zählen, damit fehlende Rechte keine schnelle Wiederholungsschleife auslösen.
             attempts.append(now)
             try:
-                updated = await channel.edit(topic=topic, reason="IRC topic sync")
+                # discord.py kann intern auf 429 warten; andere Kanäle sollen trotzdem weiterlaufen.
+                updated = await asyncio.wait_for(
+                    channel.edit(topic=topic, reason="IRC topic sync"), timeout=TOPIC_EDIT_TIMEOUT)
                 self.channels[target] = updated
             except discord.Forbidden:
                 print(f"Topic sync {target}: missing Manage Channels permission", flush=True)
