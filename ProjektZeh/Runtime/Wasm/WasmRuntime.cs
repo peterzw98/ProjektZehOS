@@ -207,7 +207,11 @@ internal static unsafe partial class WasmRuntime
         // die Isolation wird gezaehlt (Review senior).
         bool clean;
         try { clean = ReleaseRunResources(); }
-        catch (Exception) { clean = false; }
+        catch (Exception exception)
+        {
+            clean = false;
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Aufraeumen nach CPU-Ausnahme fehlgeschlagen: {exception.GetType().Name}\n");
+        }
         lock (gate)
         {
             cleaningUp = false;
