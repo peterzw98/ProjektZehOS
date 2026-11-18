@@ -5,12 +5,15 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# global.json (SDK-Wahl) wird ueber das Arbeitsverzeichnis gesucht; immer im Repository arbeiten.
+call_dir="$PWD"
+cd "$root"
 commit="" version="" feed="" tools=1 global=0 plan=0 any_sdk=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --commit) commit="${2:?--commit braucht einen Wert}"; shift 2 ;;
         --version) version="${2:?--version braucht einen Wert}"; shift 2 ;;
-        --feed) feed="${2:?--feed braucht einen Wert}"; shift 2 ;;
+        --feed) feed="${2:?--feed braucht einen Wert}"; [[ "$feed" = /* ]] || feed="$call_dir/$feed"; shift 2 ;;
         --no-tools) tools=0; shift ;;
         --global) global=1; shift ;;
         --any-sdk) any_sdk=1; shift ;;
@@ -25,7 +28,7 @@ fail() { echo "build-cosmos: $*" >&2; exit 1; }
 # --any-sdk gilt nur fuer lokale Versuche; solche Feeds nie fuer Release oder IL-Vergleich (E1-D) verwenden.
 if [ "$plan" = 0 ] && [ "$any_sdk" = 0 ]; then
     want_sdk="$(tr -d '[:space:]' < "$root/deploy/cosmos/SDK")"
-    have_sdk="$(cd "$root" && dotnet --version)"
+    have_sdk="$(dotnet --version)"
     [ "$have_sdk" = "$want_sdk" ] || fail "SDK $have_sdk, erwartet $want_sdk (deploy/cosmos/SDK); --any-sdk nur fuer lokale Versuche"
 fi
 
@@ -39,6 +42,10 @@ if [ -z "$version" ]; then
         # Versuchsbau aus einem anderen Commit: eindeutige Version, kollidiert nie mit einer veroeffentlichten.
         version="${default_version%%-*}-zehos.0.g${commit:0:7}"
     fi
+fi
+# Eine offizielle Versionsnummer (ohne "-zehos.") im Standardfeed wuerde Eigenbau und nuget.org verwechselbar machen.
+if [ -n "$version" ] && [[ "$version" != *-zehos.* ]] && [ -z "$feed" ]; then
+    fail "Version $version ohne -zehos.: nur mit ausdruecklichem --feed (ausserhalb von deploy/cosmos/feed) erlaubt"
 fi
 [ -n "$feed" ] || feed="$root/deploy/cosmos/feed"
 feed="$(mkdir -p "$feed" && cd "$feed" && pwd)"
@@ -108,7 +115,8 @@ if [ "$rebuild" = 1 ]; then
     done
     dn build "$src/src/Cosmos.Sdk/Cosmos.Sdk.csproj" --no-incremental
     if [ "$plan" = 0 ]; then
-        for id in Cosmos.Sdk Cosmos.Build.API Cosmos.Build.Asm Cosmos.Build.CC Cosmos.Build.Common Cosmos.Build.Ilc Cosmos.Build.Patcher \
+        for id in Cosmos.Sdk Cosmos.Build.API Cosmos.Build.Analyzer.Patcher _Cosmos.Build.Analyzer.Patcher Cosmos.Build.Analyzer.Patcher.CodeFixes \
+                  Cosmos.Build.Asm Cosmos.Build.CC Cosmos.Build.Common Cosmos.Build.Ilc Cosmos.Build.Patcher \
                   Cosmos.Kernel Cosmos.Kernel.Boot.Limine Cosmos.Kernel.Core Cosmos.Kernel.Core.X64 Cosmos.Kernel.Debug Cosmos.Kernel.Drivers \
                   Cosmos.Kernel.HAL Cosmos.Kernel.HAL.X64 Cosmos.Kernel.Native.MultiArch Cosmos.Kernel.Native.X64 Cosmos.Kernel.Plugs \
                   Cosmos.Kernel.SourceGenerators Cosmos.Kernel.System Cosmos.Patcher Cosmos.Tools; do

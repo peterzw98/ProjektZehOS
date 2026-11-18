@@ -29,6 +29,17 @@ class BuildCosmosTests(unittest.TestCase):
             self.assertNotIn('dotnet tool install --global Cosmos', text, name)
             self.assertEqual(text.count('scripts/build-cosmos.sh --global'), text.count("dotnet-version: '" + sdk + "'"), name)
             self.assertRegex(text, r'actions/cache@[0-9a-f]{40}')
+    def test_official_version_needs_explicit_feed(self):
+        result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--version', '3.0.97'], capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('--feed', result.stderr)
+        self.assertEqual(0, plan('--version', '3.0.97').returncode)
+
+    def test_runs_from_repository_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--feed', 'f'], capture_output=True, text=True, cwd=temp)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((Path(temp) / 'f').is_dir())
 
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
