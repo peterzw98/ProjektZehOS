@@ -13,7 +13,8 @@ python3 scripts/test-installer-layout.py .tools/installer-layout
 ```
 
 `layout` (Etappe 7a Schritt 2) partitioniert ein neues sparse Image mit dem produktiven `GptLayoutWriter`
-(32 bis 128 GiB, sonst keine Datei), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
+(32 bis 128 GiB, sonst keine Datei; unter Windows wie bei `format` verweigert, solange die sparse Anlage dort nicht
+geprüft ist, Exitcode 2), formatiert die Root-Partition mit `CosmosExt2Formatter.FormatForKernel`
 (4 KiB, `zehos-root`) und prüft mit `GptLayout.Verify`; `verify` prüft ein vorhandenes Image nur lesend.
 `scripts/test-installer-layout.py` prüft das Ergebnis mit `sgdisk -v`, `sfdisk -J`, `mkfs.fat`/`fsck.fat` im
 ESP-Fenster (Grenze: das belegt nur Lage und Größe der ESP, nicht ZehOS' eigenen FAT-Formatter; der ist nicht
@@ -59,3 +60,7 @@ Alle 18 Fälle (4 MiB, 8 MiB, 64 MiB, 32/64/128 GiB je 1K/2K/4K) formatieren ohn
 `dumpe2fs -h`: Revision 1, einziges Merkmal `filetype`, Inode 128 Byte, 8 MiB je Gruppe. Folgerung: Cosmos-ext2
 nicht für Gastdatenträger freigeben; ein Upstream-Fix braucht `sparse_super` mit Backups in Gruppe 0, 1 und den
 Potenzen von 3, 5 und 7, den korrekten Gruppenanfang bei 1 KiB und gesetzte Füllbits.
+
+## Diagnose: ext2-Löschen an einer Blockgrenze
+
+`dotnet restore experiments/StorageProbe/StorageProbe.csproj` und danach `python3 experiments/StorageProbe/test-boundary.py <neues-Verzeichnis>` nutzen den echten Cosmos-3.0.97-Treiber auf isolierten 32-MiB-Rohimages. Das Skript prüft den Eintrag am Beginn des zweiten 4-KiB-Blocks und einen Eintrag innerhalb desselben Blocks, vergleicht Namen/Inodes und ruft `debugfs` sowie `e2fsck -fn` auf. Es überschreibt keine vorhandenen Ergebnisse. Ein Fehler im ext2-Treiber führt zu Exit 1; die Rohimages bleiben zur Diagnose erhalten. Dateiinhalte, Rename, Kernel-Plugs und ein Gastlauf sind damit nicht geprüft.

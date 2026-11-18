@@ -392,15 +392,21 @@ def run_gpt(args: argparse.Namespace, base: Path) -> None:
         before = sha256(disk)
         run = new_work_dir(work / disk.stem)
         process, qmp = boot(args, run, [blank, disk])
-        mark = send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
         try:
-            wait_init(qmp, run, mark, args.init_timeout)
-        except RuntimeError as error:
-            if "InstalledLayout" not in str(error):
-                raise
-        else:
-            raise RuntimeError(f"{name}: disk init lief trotz GPT-Spuren durch")
-        stop(process, qmp, run)  # getipptes shutdown: die Shell ist nach der Ablehnung weiter bedienbar
+            mark = send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
+            try:
+                wait_init(qmp, run, mark, args.init_timeout)
+            except RuntimeError as error:
+                if "InstalledLayout" not in str(error):
+                    raise
+            else:
+                raise RuntimeError(f"{name}: disk init lief trotz GPT-Spuren durch")
+            stop(process, qmp, run)  # getipptes shutdown: die Shell ist nach der Ablehnung weiter bedienbar
+        finally:
+            # Scheitert ein Schritt vor stop(), liefe der Gast sonst weiter und belegte KVM/CPU fuer spaetere Laeufe.
+            if process.poll() is None:
+                process.kill()
+                process.wait()
         if sha256(disk) != before:
             raise RuntimeError(f"{name}: die Platte wurde trotz Ablehnung veraendert")
         print(f"{name}: disk init verweigert (InstalledLayout), Platte unveraendert", flush=True)
