@@ -12,6 +12,11 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
 - Planfragen beantwortet der **Lead** des Vorhabens (im Kanaltopic genannt). Rate nicht, wenn der Plan einem Befund widerspricht: Nenne den Lead mit Befund
   (Datei:Zeile, was der Plan sagt, was der Code sagt) und arbeite an dem Teil weiter, der davon nicht abhängt.
 
+- **Wiederverwenden vor Neubauen:** Vor einer neuen Funktion prüfen, was Projekt, Cosmos oder vorhandene Pakete schon lösen. Paketkandidaten anhand
+  von Primärquellen bewerten (Lizenz, Abhängigkeiten, .NET 10, Cosmos, NativeAOT) und die Wahl im PR begründen.
+- **Keine Updates** von Paketen, SDKs, Cosmos-Versionen oder Buildwerkzeugen ohne Rückfrage beim Koordinator; er holt die Freigabe eines Projektbenutzers.
+- **Nichts außerhalb des Auftrags:** keine Merges, Releases, Tags, Einstellungen, Rechte; keine Aufräumarbeiten in fremden Dateien.
+
 ## 2. Ablauf je Paket
 
 1. **Ankündigen** im Projektkanal: Paket-ID, Branch, berührte Dateien.
@@ -25,9 +30,12 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
    - Neue plattformunabhängige Dateien in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` aufnehmen; Dateien mit Cosmos-Typen beginnen mit `Cosmos` und gehören nicht in den Hostbuild.
    - Fehlt dir dotnet oder KVM auf deinem Rechner: Hosttests und Bau über den Lead oder einen Clerk (Branch, **Kopf-Hash**, Befehl, gewünschte Filter). Gastläufe immer
      über einen Agenten mit KVM, mit derselben Angabe und den erwarteten Marken aus dem Plan.
+   - Schreibende Gast- und Dateitests nur auf einer **isolierten Kopie** eines Datenimages, nie auf `.tools/qemu/data-fat32.img` oder vorhandenen Images.
+   - Doku im selben PR: geänderte Bedienung in `README.md`, neue Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`; `ROADMAP.md` nur, wenn das Paket eine Etappe abschließt.
 5. **Unabhängiges Review** durch einen anderen Agenten (Koordinator teilt zu). Befunde selbst bewerten, berechtigte beheben, Gegenargumente begründen.
 6. **PR:** erst pushen, dann den Kopf auf `origin` prüfen, dann öffnen (`_kern.md`, Abschnitt 5). Der PR nennt Paket-ID, Plan, ausgeführte Prüfungen mit Zahlen, nicht geprüfte
    Punkte (Gast, VMware, Windows) und jede Abweichung vom Plan mit Grund. Gestapelt: Reihenfolge der Merges in den PR-Text.
+   Konflikte mit `master` löst du per Merge von `origin/master` in deinen Branch, nie mit Force-Push; jeden Commit nur einmal pushen.
 7. **Nach dem Öffnen** keine Commits ohne Meldung im Kanal und Kommentar im PR. Nach einem Merge ist der Branch zu: Nachträge kommen als neuer PR.
 
 ## 3. Cosmos-Patches
@@ -43,6 +51,7 @@ Ab dem eigenen Cosmos-Bau (Branch `cosmos`) gelten zusätzlich die Regeln aus `d
 
 ## 4. Übergabe und Ausfall
 
+- Steckst du länger als 30 Minuten fest, frag den Koordinator mit einer konkreten Frage (was versucht, was gesehen, welche Entscheidung fehlt).
 - Halte deinen Stand so, dass ein anderer sofort übernehmen kann: Zwischenstände auf deinen Branch pushen (auf `origin` prüfen) und eine Notiz in `.tools/<dein-nick>/STAND.md`
   (Aufgabe, Branch, Kopf, offene Schritte, nächster Schritt; keine Geheimnisse).
 - Wer 15 Minuten schweigt, gilt als ausgefallen (`_kern.md`, Abschnitt 3). Bei langen Läufen schreibst du `[alive] <nick>: <Paket>, Lauf bis HH:MM`.

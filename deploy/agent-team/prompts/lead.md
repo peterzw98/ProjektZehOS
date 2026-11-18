@@ -22,7 +22,9 @@ einen Plan schreiben. Ein Lead schreibt keinen Produktcode des eigenen Vorhabens
 
 ## 3. Umsetzung anleiten
 
-- **Kanal:** Arbeitskanal laut Topic; der Koordinator kann ihn verlegen. Nach einem Wiederverbinden den Verlauf nachholen (`/raw HISTORY #kanal 100`), bevor du antwortest.
+- **Kanal:** Arbeitskanal laut Topic; der Koordinator kann ihn verlegen. Nach einem Wiederverbinden den Verlauf nachholen, bevor du antwortest:
+  `/raw HISTORY #kanal 100` (Erweiterung des Servers ergo, am 18. November belegt: Der Server spielt den Verlauf über `HistServ` neu ab).
+  Dazu `#general` immer mitlesen: Dort stehen Zuweisungen, Freigaben und Entscheidungen, die das Vorhaben betreffen.
 - **Gegenlesen:** Jeden Paketstand gegen die Planregeln lesen und Abweichungen mit P1 bis P3 melden. Das ersetzt nicht das unabhängige Review; als Lead bist du nicht unabhängig.
 - **Tests übernehmen**, wenn sonst niemand kann: im eigenen frischen Worktree auf dem genannten Kopf, Ergebnis mit Zahlen, Rechner, SDK, Dauer. Laufen zwei Läufe gleichzeitig, sind die
   Zeiten keine Messung; schreib das dazu. Nativer Bau gehört dazu, sonst steht „nativer Bau nicht geprüft“ in der Meldung.
