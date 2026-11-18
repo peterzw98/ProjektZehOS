@@ -13,7 +13,7 @@ start() {
   bash "$here/prepare-bridge.sh" "$home/ProjektZehOS" >/dev/null
   mkdir -p "$home/ProjektZehOS/.tools/irc"
   install -m 600 "$key" "$home/ProjektZehOS/.tools/IRCKEY"
-  # role.md = Kopfzeile + gemeinsamer Kern + Rollenvorlage; agent-runner.sh haengt sie an den Systemprompt an.
+  # role.md = Kopfzeile + gemeinsamer Kern + Rollenvorlage; dispatcher.py haengt sie an den Systemprompt jedes Laufs an.
   # Wirkt erst nach erneutem start-agent.sh <nick>; fehlt eine Vorlage, startet der Agent mit dem, was da ist.
   {
     printf 'Du bist %s im ZehOS-Agententeam (Modell %s). %s\nBetriebsanleitung: %s/TEAM.md\n' \
@@ -45,7 +45,11 @@ json.dump({"autoMode": {"allow": ["$defaults", rule]}}, open(f"{home}/.claude/se
 PYEOF
   pgrep -f "teambot.py $nick " >/dev/null || \
     nohup python3 -I "$here/teambot.py" "$nick" "$home/ProjektZehOS/.tools/irc" "$home/ProjektZehOS/.tools/IRCKEY" </dev/null >>"$home/bot.out" 2>&1 &
-  screen -ls | grep -q "\.$nick\s" || screen -dmS "$nick" "$here/agent-runner.sh" "$home" "$nick" "$model"
+  # Einzellaeufe bei Nennung; Slots begrenzen gleichzeitige Laeufe aller Agenten dieses Rechners (DISPATCH_PARALLEL).
+  # DISPATCH_ALLOW (Kommaliste) beschraenkt, wessen Nennungen einen Lauf starten; leer = alle.
+  screen -ls | grep -q "\.$nick\s" || screen -dmS "$nick" python3 -I "$here/dispatcher.py" --nick "$nick" \
+    --irc-dir "$home/ProjektZehOS/.tools/irc" --home "$home" --role "$home/role.md" --model "$model" \
+    --slots-dir "$base/.dispatch-slots" --max-parallel "${DISPATCH_PARALLEL:-2}" --allow "${DISPATCH_ALLOW:-}"
   echo "gestartet: $nick ($model)"
 }
 grep -v '^#' "$here/agents.tsv" | tr -d '\r' | while IFS=$'\t' read -r nick model vorlage role; do

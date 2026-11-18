@@ -140,7 +140,7 @@ jobs:
 
       # Der Teambot steuert Auftraege; die Bridge hat auf disc-bridge eine eigene CI.
       - name: Test agent team helpers
-        run: cd deploy/agent-team && python3 test_teambot.py
+        run: cd deploy/agent-team && python3 test_teambot.py && python3 test_dispatcher.py
 
       # Aktualisieren: neue Version und deren SHA-256 aus actionlint_<Version>_checksums.txt des Releases eintragen (Dependabot hebt
       # einen curl-Pin nicht).
