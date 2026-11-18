@@ -1,6 +1,7 @@
 # Multicore und Hyperthreading: Architekturentwurf
 
 Stand 18. November 2026, Auftrag Peter. Entwurf; Peters Entscheidungen vom 18. November sind eingearbeitet (Abschnitt 10).
+Umsetzungsplan mit Arbeitspaketen je Etappe: [2026-11-18-multicore.md](../plans/2026-11-18-multicore.md).
 Kein Kernelcode ist geändert. Belege beziehen sich auf ZehOS master `5c5538d`, Cosmos 3.0.97 (Paketcommit `efcf20c`)
 und den Upstream-Branch `feat/smp-phase5b` (`4495213`, gelesen am 18. November 2026).
 
@@ -285,16 +286,19 @@ Muster des Branches `packages`.
 
 Für einen Baum, der nur diese Patchreihe trägt und danach nicht weiterlebt, überwiegen die Vorteile des Branches.
 
-- Der Branch beginnt mit einem einzelnen Commit, der den Dateibaum von `efcf20c` enthält, ohne `.github/workflows`
-  (sonst liefen Cosmos' eigene Workflows in unserem Repository). Unter Windows braucht die Arbeitskopie
-  `core.longpaths=true` (ein Testfixture hat einen überlangen Dateinamen).
+- Der Branch beginnt mit einem einzelnen Commit, der den Dateibaum von `efcf20c` enthält, ohne den Ordner `.github`
+  (sonst liefen Cosmos' eigene Workflows in unserem Repository). Die beiden Submodule (`dotnet/runtime`, uACPI)
+  bleiben als Verweise erhalten; der Bau braucht sie. Unter Windows braucht die Arbeitskopie `core.longpaths=true`
+  (ein Testfixture hat einen überlangen Dateinamen).
 - Änderungen am Branch `cosmos` laufen per Pull Request gegen diesen Branch (Branchregel wie bei `packages`).
 - ZehOS master nennt den zu bauenden Commit in einer Datei (`deploy/cosmos/COMMIT`). `scripts/build-cosmos.sh` holt
   genau diesen Commit, packt die Pakete mit der Version `3.0.97-zehos.N` in einen lokalen Feed und installiert CLI
   und Patcher daraus. Die eigene Nummer verhindert, dass der NuGet-Cache das gleichnamige Paket von nuget.org liefert.
-- `NuGet.Config` im ZehOS-Stamm leitet `Cosmos.*` auf den lokalen Feed (`packageSourceMapping`), alles andere bleibt
-  bei nuget.org. `ProjektZeh.csproj` (SDK-Zeile, zwei `PackageReference`) und die CI (`ci.yml:217-218`, heute fest
-  `--version 3.0.97`) lesen die Version aus einer Eigenschaft.
+  Upstreams eigenes Bauskript ist dafür ungeeignet: Es löscht den NuGet-Cache für `cosmos.*`, ändert die
+  NuGet-Konfiguration des Benutzers und installiert die Werkzeuge ohne Versionsangabe.
+- `NuGet.Config` im ZehOS-Stamm nennt den lokalen Feed zusätzlich zu nuget.org. Das Kernelprojekt verlangt die genaue
+  Version, damit NuGet nie still auf das Original 3.0.97 ausweicht. Die Hosttests bleiben beim Originalpaket (sie
+  brauchen daraus nur die Schrift) und kommen so ohne Cosmos-Bau aus.
 - Die CI baut die Pakete einmal je Commit und legt sie im Cache ab. Veröffentlicht werden sie nicht.
 - **Ein Cosmos-Patch wird durch den ZehOS-PR geprüft, der ihn verwendet:** Dieser PR setzt `deploy/cosmos/COMMIT`
   auf den Patch-Commit und entfernt den Umweg; die normale ZehOS-CI (Hosttests, nativer Build, Gastläufe) läuft
@@ -304,8 +308,7 @@ Für einen Baum, der nur diese Patchreihe trägt und danach nicht weiterlebt, ü
 Upstream-Stands ist eine eigene Änderung mit nativem Build und Gastsuite. Mit `PathMap` im eigenen Build verschwinden
 die festen Upstream-Pfade aus den DLLs; `scripts/check-release-paths.py` braucht dann keine Ausnahmeliste mehr.
 
-Nicht geprüft: ob der Paketbau unter Windows ohne Anpassung durchläuft (`postCreateCommand.ps1` liegt bei), und die
-Bauzeit.
+Nicht geprüft: ob der Paketbau unter Windows durchläuft, und die Bauzeit; beides misst Etappe 1.
 
 ## 8. Umwege an der Wurzel beheben
 
