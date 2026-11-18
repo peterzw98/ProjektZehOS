@@ -630,11 +630,15 @@ public sealed class LayoutMigrationTests
     public void T07_FileOfTwoGibibytesIsAConflict()
     {
         Write(".zehos-security.db", StandardSecurity());
-        string path = Path.Combine(source, "gross.img");
-        using (var file = File.Create(path)) file.SetLength(MigrationPlan.MaximumFileBytes);
-        Assert.AreEqual(0, Plan().Conflicts.Count, "2 GiB - 1 passt");
-        using (var file = File.OpenWrite(path)) file.SetLength(MigrationPlan.MaximumFileBytes + 1);
-        var plan = Plan();
+        // Die Grenze prueft MigrationPlan anhand der Inventargroesse; eine echte 2-GiB-Datei muesste das Inventar
+        // zweimal vollstaendig hashen (rund 17 s je Lauf), ohne mehr zu pruefen.
+        var inventory = MigrationInventory.Read(source);
+        Assert.IsTrue(inventory.IsOK(), inventory.Status.Message);
+        MigrationPlan PlanWith(long size) => MigrationPlan.Create(new MigrationInventory(
+            [.. inventory.Value!.Entries, new InventoryEntry("gross.img", false, size, new string('0', 64), 0)]),
+            ["anna", "bob"], SystemPaths.Legacy, SystemPaths.Root);
+        Assert.AreEqual(0, PlanWith(MigrationPlan.MaximumFileBytes).Conflicts.Count, "2 GiB - 1 passt");
+        var plan = PlanWith(MigrationPlan.MaximumFileBytes + 1);
         Assert.AreEqual(1, plan.Conflicts.Count);
         StringAssert.Contains(plan.Conflicts[0], "gross.img");
     }
