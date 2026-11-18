@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Gastabnahme der Energieaktionen P1-P3 (Etappe 7b, Spec 2026-11-17-storage-7b-updates-power.md §4) fuer Linux/KVM.
+"""Gastabnahme der Energieaktionen P1-P4 (Etappe 7b, Spec 2026-11-17-storage-7b-updates-power.md §4) fuer Linux/KVM.
 
-Die Faelle stehen als Daten in scripts/power_cases.json; P4-P6 sind dort als offen gefuehrt. Jeder Fall laeuft in
+Die Faelle stehen als Daten in scripts/power_cases.json; P5-P6 sind dort als offen gefuehrt. Jeder Fall laeuft in
 einem NEUEN Arbeitsordner auf einer eigenen Sparse-Kopie (cp --sparse=always); --root-disk und andere vorhandene
 Images werden nie beschrieben. Erfolg hat keine eigene serielle Zeile: entscheidend sind die Offlinepruefungen nach
 dem Ende von QEMU (Fehler der Energieaktion erscheinen als Shellfehler, etwa cause='PowerBusy').
@@ -12,9 +12,11 @@ Benoetigte Builds und Platten:
 - --root-disk: installierte GPT-Platte (Root-Profil), etwa aus scripts/test-installer-gpt-guest.py --run-g1-basic
   (Branch task/storage-7a-s4-installer) mit einem Payload-Kernel aus dem 7b-Stand, gebaut mit -p:ZehOSRootProfile=true.
   Sie startet ueber OVMF von der Platte (--ovmf-code/--ovmf-vars); das angehaengte --iso-normal bleibt unbenutzt.
+  P4a-P4f brauchen eine eigene Root-Platte, deren Payload zusaetzlich mit -p:ZehOSPowerFaultProbe=true gebaut ist
+  (Shellbefehl powerfault, serielle Zeile POWER_FAULT <punkt>); dieser Build gehoert nie in ein Release.
 Werkzeuge: sfdisk, fsck.fat, e2fsck, dumpe2fs, mtools (mtype), debugfs.
 
-Exitcodes: 0 = alle ausgewaehlten Faelle bestanden (P4-P6 bleiben offen), 1 = mindestens ein Fall gescheitert.
+Exitcodes: 0 = alle ausgewaehlten Faelle bestanden (P5-P6 bleiben offen), 1 = mindestens ein Fall gescheitert.
 """
 import argparse
 import errno
@@ -257,7 +259,7 @@ def run_p1(args, case: Path, spec: dict) -> None:
     print(f"  {spec['write']} auf der Platte: {text}", flush=True)
 
 
-def root_checks(image: Path, case: Path, spec: dict, written: str) -> None:
+def root_checks(image: Path, case: Path, spec: dict, written: str) -> Path:
     root = extract_sparse(image, find_partition(image, ROOT_TYPE), case / "root-part.img")
     esp = extract_sparse(image, find_partition(image, ESP_TYPE), case / "esp-part.img")
     if "root-clean" in spec["checks"]:
@@ -266,10 +268,21 @@ def root_checks(image: Path, case: Path, spec: dict, written: str) -> None:
         check_ext2(root)
     if "fat-esp" in spec["checks"]:
         check_fat(esp)
-    content = subprocess.run(["debugfs", "-R", f"cat {spec['write']}", str(root)], capture_output=True, text=True, check=False)
-    if written not in content.stdout:
-        raise RuntimeError(f"{spec['write']} fehlt oder falsch auf dem Root: {content.stdout[:200]!r} {content.stderr[-200:]!r}")
-    print(f"  {spec['write']} auf dem Root: {written}", flush=True)
+    expect_root_file(root, spec["write"], written)
+    return root
+
+
+def expect_root_file(root: Path, path: str, text: str | None) -> None:
+    """text=None: die Datei darf auf dem Root nicht stehen (Schreibversuch waehrend der Root-Schreibsperre)."""
+    content = subprocess.run(["debugfs", "-R", f"cat {path}", str(root)], capture_output=True, text=True, check=False)
+    if text is None:
+        if content.stdout.strip():
+            raise RuntimeError(f"{path} steht auf dem Root, obwohl Root schreibgesperrt war: {content.stdout[:200]!r}")
+        print(f"  {path} fehlt auf dem Root (Schreibsperre griff)", flush=True)
+        return
+    if text not in content.stdout:
+        raise RuntimeError(f"{path} fehlt oder falsch auf dem Root: {content.stdout[:200]!r} {content.stderr[-200:]!r}")
+    print(f"  {path} auf dem Root: {text}", flush=True)
 
 
 def run_root(args, case: Path, spec: dict) -> None:
@@ -310,6 +323,53 @@ def run_root(args, case: Path, spec: dict) -> None:
     root_checks(image, case, spec, written)
 
 
+def run_fault(args, case: Path, spec: dict) -> None:
+    """P4 (Fehlerprobe-Build -p:ZehOSPowerFaultProbe=true): powerfault schaltet Punkte scharf, das erste shutdown muss
+    abbrechen und die Shell bedienbar lassen; ein zweites shutdown ohne Probe faehrt sauber herunter (Spec 7b §2)."""
+    image = case / "target.img"
+    copy_sparse(args.root_disk, image)
+    run = storage.new_work_dir(case / "lauf")
+    guest = Guest(args, run, [image], args.iso_normal, from_disk=True, reboot_exits=False)
+    points = spec["fault"].split()
+    try:
+        guest.ready(args.timeout, extra=ROOT_READY)
+        storage.login(guest.qmp, run, first=args.root_first_setup)
+        guest.to_textshell()
+        before = write_file(guest, spec["write"], spec["id"] + "-vor")
+        guest.qmp.line("powerfault " + spec["fault"])
+        time.sleep(2)
+        start = guest.mark()
+        guest.power(spec["action"], expect_exit=False)
+        for point in points:
+            # Fires() protokolliert jeden Punkt genau einmal; fehlt die Zeile, hat die Probe nicht gegriffen.
+            tools.wait_serial(run, f"POWER_FAULT {point}", 60, start)
+        try:
+            guest.process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            raise RuntimeError(f"Gast endete trotz Fehlerpunkt {spec['fault']} (Exit {guest.process.returncode})")
+        guest.qmp.shot(run / "nach-fehler.png")
+        print(f"  POWER_FAULT {', '.join(points)} gemeldet, Gast laeuft weiter (Bild {run / 'nach-fehler.png'})", flush=True)
+        if "s_state-running" in spec["checks"]:
+            # Nach der Ruecknahme ist Root wieder beschreibbar eingehaengt: auf dem Rohimage muss 0 stehen (P2-1).
+            state = read_s_state(image)
+            if state != 0:
+                raise RuntimeError(f"s_state nach der Ruecknahme = {state}, erwartet 0")
+            print("  s_state nach der Ruecknahme = 0", flush=True)
+        # Bedienbarkeit: die Shell nimmt den naechsten Befehl an; unter Schreibsperre darf er nichts auf Root schreiben.
+        after = write_file(guest, spec["writeAfterFault"], spec["id"] + "-nach")
+        guest.power(spec["action"], expect_exit=True)
+    finally:
+        guest.kill()
+    root = root_checks(image, case, spec, before)
+    expect_root_file(root, spec["writeAfterFault"], None if spec["rootLockedAfterFault"] else after)
+    state = read_s_state(image)
+    if state != 1:
+        raise RuntimeError(f"s_state am Rohimage = {state}, erwartet 1 (zweites shutdown sauber)")
+    print("  s_state am Rohimage = 1", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--work", required=True, type=Path, help="neuer Arbeitsordner")
@@ -340,7 +400,7 @@ def main() -> int:
         print(f"== {name}: {spec['title']}", flush=True)
         case = storage.new_work_dir(work / name)
         try:
-            (run_p1 if spec["disk"] == "data" else run_root)(args, case, spec)
+            (run_p1 if spec["disk"] == "data" else run_fault if "fault" in spec else run_root)(args, case, spec)
             print(f"PASS {name}", flush=True)
         except Exception as error:  # Jeder Fall meldet seine Ursache; die naechsten laufen weiter.
             failed.append(name)
