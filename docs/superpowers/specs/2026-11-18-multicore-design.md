@@ -1,6 +1,6 @@
 # Multicore und Hyperthreading: Architekturentwurf
 
-Stand 18. November 2026, Auftrag Peter. Entwurf, noch nicht freigegeben; die Entscheidungen in Abschnitt 10 sind offen.
+Stand 18. November 2026, Auftrag Peter. Entwurf; Peters Entscheidungen vom 18. November sind eingearbeitet (Abschnitt 10).
 Kein Kernelcode ist geändert. Belege beziehen sich auf ZehOS master `5c5538d`, Cosmos 3.0.97 (Paketcommit `efcf20c`)
 und den Upstream-Branch `feat/smp-phase5b` (`4495213`, gelesen am 18. November 2026).
 
@@ -10,7 +10,10 @@ ZehOS nutzt alle logischen CPUs des Rechners, kennt deren Aufbau (Verbund, Kern,
 danach. Der Round-Robin-Scheduler wird durch einen Scheduler ersetzt, der Klassen, mehrere CPUs und Hyperthreads kennt.
 
 Leitregel (Peter, 18. November): **so isoliert wie möglich bauen.** Stellt Cosmos seine eigene SMP-Umsetzung fertig,
-bauen wir unsere Übergangslösung aus und deren Stand ein, ohne ZehOS umzuschreiben.
+bauen wir den SMP-Teil unseres Builds aus und deren Stand ein, ohne ZehOS umzuschreiben.
+
+Zum selben Vorhaben gehört jetzt: Cosmos wird aus Quelle gebaut, und Umwege um Cosmos-Fehler werden dort an der
+Wurzel behoben, zuerst ext2 und die Stellen aus 12.4 (Abschnitt 8).
 
 Nicht-Ziele: Prozessisolation (12.4), Threads für Pakete (12.7), NUMA, CPU-Hotplug, Energiesparzustände, ARM64.
 
@@ -66,7 +69,10 @@ Lücken im Upstream-Stapel, die ZehOS betreffen:
 - **Kein x2APIC** (APIC-IDs bis 255; Rechner, die xAPIC sperren, starten laut Entwurfsreview nicht).
 - **Kein Schalter für die CPU-Zahl** auf der Kernel-Kommandozeile.
 - **CPU 0 ist „Housekeeping“**: Geräteinterrupts und Treiberthreads bleiben dort, `Main` und seine Threads laufen
-  auf den übrigen. Bei zwei CPUs hat der Hauptfluss damit weiter genau eine.
+  auf den übrigen. Bei zwei CPUs hat der Hauptfluss damit weiter genau eine. Übernommen (Entscheidung 4); erwartet
+  werden mindestens vier CPUs.
+- **Kein TSS, keine IST-Stacks, kein Hook für CPU-Ausnahmen, keine Operation „Thread von außen beenden“.** Das sind
+  die Stellen, an denen 12.4 heute Umwege braucht; der Stapel ändert daran nichts.
 - `SpinLock` dreht ohne `pause`; auf Hyperthreads bremst das den Geschwisterthread.
 
 ## 4. Wege
@@ -74,17 +80,16 @@ Lücken im Upstream-Stapel, die ZehOS betreffen:
 | | A: auf Upstream-Release warten | B: Cosmos aus Quelle bauen, Upstream-Stapel einspielen | C: SMP-Mechanismus selbst schreiben |
 | --- | --- | --- | --- |
 | Eigener Code im heikelsten Teil (CPU-Start, GC-Stopp, Sperrordnung) | keiner | keiner, nur Upstream-Commits | rund 6.000 Zeilen Entsprechung |
-| SMP in ZehOS ab | unbekannt (Release-Takt bis 1. November: fünf Versionen in vier Wochen) | sofort nach Etappe 2 | Monate |
-| Ausbau, wenn Upstream fertig ist | entfällt | Paketquelle zurück auf NuGet stellen | großer Umbau, zwei Mechanismen weichen ab |
-| Umwege an der Wurzel beheben | nein | möglich, aber gegen die Leitregel abzuwägen (Abschnitt 8) | möglich |
+| SMP in ZehOS ab | unbekannt (Release-Takt bis 1. November: fünf Versionen in vier Wochen) | nach Etappe 5 | Monate |
+| Ausbau, wenn Upstream fertig ist | entfällt | Grundstand wechseln, die SMP-Schicht entfällt (Isolationsregel 6) | großer Umbau, zwei Mechanismen weichen ab |
+| Umwege an der Wurzel beheben | nein | ja (Abschnitt 8) | möglich |
 | Risiko | Termin, Lücken aus Abschnitt 3 bleiben | Entwurfscode ändert sich; 12 ungeprüfte `gen3`-Commits kommen mit | Fehler in GC und Sperren, Dauerpflege |
 
-**Empfehlung: B, mit A als Rückfall.** 3.0.97 selbst bringt kein SMP mit, es gibt dort also nichts „Schlechtes“ zu
+**Entschieden: Weg B.** 3.0.97 selbst bringt kein SMP mit, es gibt dort also nichts „Schlechtes“ zu
 ersetzen. Der Upstream-Stapel ist nicht schlecht, sondern unfertig; ein Eigenbau (C) würde dieselbe Arbeit mit mehr
 Risiko wiederholen und widerspricht der Leitregel, weil er sich nicht mehr austauschen lässt. Weg B ist zugleich die
 isolierteste Lösung: Unser „eigener Bau“ ist Upstreams eigener Code, nur früher.
 
-Die Etappen 0 und 1 (Abschnitt 9) nützen in Weg A und B gleichermaßen und brauchen keine Cosmos-Änderung.
 
 ## 5. Zielarchitektur
 
@@ -96,23 +101,26 @@ ZehOS (bleibt beim Tausch unverändert)
   Scheduling/CosmosCpuTopologyReader   liest CPUID und APIC-IDs
   Kernel.cs                            wählt Scheduler, setzt Affinitäten
 ------------------------------ Naht: öffentliche Cosmos-API in der Form des Upstream-Stapels -----------
-Cosmos (austauschbar: selbst gebaute Pakete heute, NuGet-Release später)
+Cosmos (Branch cosmos: Release-Stand + Upstream-SMP-Stapel + ZehOS-Patchreihe)
   Per-CPU-Block, CPU-Start, IPIs, Sperren, GC-Stopp, Affinität, Platzierungsaufrufe
 ```
 
 ### 5.1 Isolationsregeln
 
-1. **Im Cosmos-Baum liegt keine ZehOS-Logik.** Er enthält Upstream-Commits und höchstens eine nummerierte Liste
-   kleiner Patches (`PATCHES.md`, je Patch ein Commit, mit Grund und Ausbaubedingung).
-2. **ZehOS spricht nur die API, die Upstream einführt** (`IScheduler` in der Form von Phase 3b/5b, `ThreadAffinity`,
-   `KernelCpus`, `Environment.ProcessorCount`). Kein neuer `UnsafeAccessor` auf SMP-Interna.
-3. **Alle Naht-Signaturen stehen in einer Datei** (`CosmosClassScheduler.cs`). Ändert Upstream die experimentelle
-   Naht noch einmal, ändert sich nur sie.
-4. **Die Paketversion ist der Schalter.** `ProjektZeh.csproj` bezieht `Cosmos.*` über eine Versionseigenschaft:
-   `3.0.97-zehos.N` aus dem lokalen Feed oder später `3.0.x` von NuGet. Der Ausbau ist diese eine Zeile plus das
-   Entfernen von Feed und Quellbaum.
-5. **Was Upstream nicht hat, baut ZehOS oberhalb der Naht** (Topologie, Policy, CPU-Zahl-Schalter über Affinität).
-   Nur was sich dort nicht lösen lässt, wird ein Patch nach Regel 1.
+1. **Der Cosmos-Baum hat drei getrennte Schichten:** den Stand eines Releases (heute 3.0.97), darauf unverändert
+   übernommene Upstream-Commits (der SMP-Stapel), darauf die ZehOS-Patchreihe. Jeder eigene Patch ist ein eigener
+   Commit und steht in `PATCHES.md` mit Grund, entferntem ZehOS-Umweg und Prüfung.
+2. **Im Cosmos-Baum liegt keine ZehOS-Policy.** Patches beheben Fehler oder öffnen eine Schnittstelle; Scheduler,
+   Topologie und Appregeln bleiben in ZehOS.
+3. **ZehOS spricht für SMP nur die API, die Upstream einführt** (`IScheduler` in der Form von Phase 3b/5b,
+   `ThreadAffinity`, `KernelCpus`, `Environment.ProcessorCount`). Kein neuer `UnsafeAccessor` auf SMP-Interna.
+4. **Alle Naht-Signaturen des Schedulers stehen in einer Datei** (`CosmosClassScheduler.cs`). Ändert Upstream die
+   experimentelle Naht noch einmal, ändert sich nur sie.
+5. **Die Paketversion ist der Schalter.** `ProjektZeh.csproj` und die CI lesen die Cosmos-Version aus einer
+   Eigenschaft (`3.0.97-zehos.N` aus dem lokalen Feed).
+6. **Tausch, wenn ein Cosmos-Release SMP enthält:** Die unterste Schicht wird das neue Release, die mittlere entfällt,
+   die Patchreihe wird darauf neu aufgespielt. Der eigene Build bleibt, solange `PATCHES.md` nicht leer ist: Upstream
+   erfährt von unseren Korrekturen nichts (keine Issues oder PRs bei Cosmos), ein reines NuGet-Release enthielte sie nicht.
 
 ### 5.2 CPU-Start und Per-CPU-Zustand
 
@@ -144,8 +152,8 @@ Was die Policy daraus macht:
 Grenzen: VMware zeigt Gästen in der Regel Kerne, keine Hyperthreads; dort wirkt nur die Mehrkernverteilung. QEMU
 bildet Hyperthreads mit `-smp 4,cores=2,threads=2` nach, das prüft die Logik, nicht die Leistung. Leistungsaussagen zu
 Hyperthreading brauchen echte Hardware und bleiben bis dahin offen. Hybrid-CPUs (P- und E-Kerne) behandelt der Entwurf
-wie gleiche Kerne. Zwei Wasm-Apps auf Geschwistern teilen sich Caches (Seitenkanäle); eine Regel „nie zwei Apps auf
-einem Kern“ gehört zu 12.4 und ist hier nur als Entscheidung 5 vermerkt.
+wie gleiche Kerne. Zwei Wasm-Apps dürfen sich einen Kern teilen (Entscheidung 5); sie teilen sich dann Caches
+(Seitenkanäle). Eine Regel „nie zwei Apps auf einem Kern“ bleibt eine mögliche Verschärfung für 12.4.
 
 ### 5.4 Sperren und GC
 
@@ -155,7 +163,7 @@ Gelten für jeden ZehOS-Code, der in Scheduler-Hooks oder Interrupts läuft:
   arbeitet deshalb auf vorab dimensionierten Feldern, wie heute `RoundRobinQueue`.
 - Eine Interruptmaske ist keine Sperre mehr. Wo Unterbrechung und Thread Daten teilen, braucht es eine IRQ-sichere Sperre.
 - Der GC bleibt „Welt anhalten“. Mit mehr CPUs stehen bei jeder Sammlung alle; die Pausen werden gemessen
-  (Abnahme in Etappe 4), bevor die Oberfläche auf eine andere CPU als die Treiber wandert.
+  (Abnahme in Etappe 6), bevor die Oberfläche auf eine andere CPU als die Treiber wandert.
 
 ### 5.5 Was sich in ZehOS ändern muss
 
@@ -177,7 +185,7 @@ Gelten für jeden ZehOS-Code, der in Scheduler-Hooks oder Interrupts läuft:
 ## 6. Scheduler-Ersatz
 
 Der neue Scheduler heißt hier **Klassenscheduler**. Er ersetzt Round-Robin auch auf einer CPU und kommt deshalb
-schon in Etappe 1, vor jedem Cosmos-Wechsel.
+schon in Etappe 4, vor dem SMP-Stapel.
 
 **Aufbau.** `ClassSchedulerCore<T>` (ohne Cosmos-Typen) hält je CPU drei Queues fester Größe.
 `CosmosClassScheduler` reicht die Hooks durch. Auf 3.0.97 implementiert der Adapter die alte Naht, danach die neue;
@@ -211,9 +219,26 @@ und der Name in der Bootzeile (`Scheduler=ZehOS Klassen`).
 Platzierung auf den Topologien 1×1, 2×1, 2×2 und 4×2; Quarantäne; volle Queue. Die bestehenden Round-Robin-Tests
 gelten sinngemäß für die Klasse Normal weiter.
 
-**Kleinere Alternative:** Cosmos' eigene Stride-Policy (im Upstream-Stapel bereits SMP-fähig) wieder verwenden und
-nur Klassen auf Tickets abbilden. `StrideScheduler` ist aber `internal`, und Hyperthread-Platzierung fehlt ihr; das
-bräuchte einen Cosmos-Patch und verletzt damit Isolationsregel 1. Deshalb nicht empfohlen.
+**Vergleich mit Cosmos' eigener Policy (Stride).** Stride ist der Standard-Scheduler von Cosmos; ZehOS ersetzt ihn
+heute durch `SetScheduler`. Die kleinste Lösung wäre, den eigenen Scheduler zu löschen und Klassen über
+`SchedulerManager.SetPriority` auf Tickets abzubilden.
+
+| | Stride (Cosmos) | Klassenscheduler (ZehOS) |
+| --- | --- | --- |
+| Eigener Code | fast keiner | rund 400 Zeilen plus Hosttests |
+| Kosten je Entscheidung | sortiertes Einfügen, linear in der Queue-Länge (`StrideScheduler.cs:653-677`) | drei feste Queues, konstant |
+| Oberfläche unter Last | Vorsprung von einer halben Zeitscheibe für „interaktive“ Threads, per Heuristik | verdrängt sofort, per Regel |
+| Fairness bei vielen gleichen Threads | anteilig nach Tickets, sehr gut | reihum in der Klasse |
+| Hyperthreads | unbekannt; wählt die CPU mit der kürzesten Queue, ein freies Geschwister eines belegten Kerns zählt wie ein freier Kern | erst ganze Kerne (5.3) |
+| Verhalten nachvollziehbar und hostgetestet | Cosmos-intern, `internal` | ja |
+
+Bei den zehn bis zwanzig Threads von ZehOS sind die Kosten je Entscheidung in beiden Fällen unerheblich. Was die
+Leistung bestimmt, ist die Platzierung: Zwei rechnende Threads auf den Geschwistern eines Kerns leisten zusammen
+deutlich weniger als auf zwei Kernen. Auf Rechnern mit Hyperthreading ist der Klassenscheduler deshalb vom Entwurf her
+die bessere Wahl, und er gibt der Oberfläche eine feste Zusage statt einer Heuristik. **Empfehlung: Klassenscheduler.**
+Gemessen ist das nicht. Etappe 4 misst deshalb auf einer CPU drei Stände gegeneinander (Round-Robin, Stride,
+Klassenscheduler); Stride kostet dafür nur einen Build ohne `SetScheduler`. Liegt der Klassenscheduler dort nicht
+mindestens gleichauf, wird die Empfehlung neu bewertet.
 
 ## 7. Eigener Cosmos-Build
 
@@ -226,82 +251,121 @@ Abhängigkeitsreihenfolge mit `dotnet pack` nach `artifacts/package/release` gep
 `Cosmos.Patcher` sind globale Tools aus demselben Feed. ILC selbst kommt weiter von Microsoft. Ein `ProjectReference`
 auf die Cosmos-Projekte funktioniert nicht, weil SDK, Patcher und ILC Pakete mit `build/`-Targets erwarten.
 
-**Einbindung in ZehOS:**
+**Einbindung in ZehOS: ein eigener Branch `cosmos` im ZehOS-Repository** (Empfehlung zu Entscheidung 3), nach dem
+Muster des Branches `packages`.
 
-- Ein Spiegel-Repository hält den festen Upstream-Commit vor. Nötig, weil die Entwurfsbranches bei Upstream
-  überschrieben oder gelöscht werden können. Der Spiegel enthält keine eigenen Commits außer den Patches aus `PATCHES.md`.
-- Ein Skript (`scripts/build-cosmos.sh`) baut daraus die Pakete mit eigener Version `3.0.97-zehos.N` in einen lokalen
-  Feed. Die eigene Nummer verhindert, dass der NuGet-Cache das gleichnamige Paket von nuget.org liefert.
+| | Branch `cosmos` in ZehOS | eigenes Repository |
+| --- | --- | --- |
+| Review, Branchregeln, Reviewer, Agentenzugriff | vorhanden | alles neu einzurichten |
+| Größe | nur der Dateibaum: 1.730 Dateien, 13 MB (ohne Upstream-Historie) | volle Historie, rund 290 MB |
+| Versehentlicher PR bei Upstream | nicht möglich | bei einem GitHub-Fork der Standardweg von `gh pr create` |
+| Fester Commit für den Build | `git fetch origin <sha>` im selben Repository | zweites Repository mit eigenem Zugriff |
+| Upstream nachziehen | Commits aus einem temporären Remote aufspielen | normales `git merge` |
+
+Für einen Baum, der nur diese Patchreihe trägt und danach nicht weiterlebt, überwiegen die Vorteile des Branches.
+
+- Der Branch beginnt mit einem einzelnen Commit, der den Dateibaum von `efcf20c` enthält, ohne `.github/workflows`
+  (sonst liefen Cosmos' eigene Workflows in unserem Repository). Unter Windows braucht die Arbeitskopie
+  `core.longpaths=true` (ein Testfixture hat einen überlangen Dateinamen).
+- Änderungen am Branch `cosmos` laufen per Pull Request gegen diesen Branch (Branchregel wie bei `packages`).
+- ZehOS master nennt den zu bauenden Commit in einer Datei (`deploy/cosmos/COMMIT`). `scripts/build-cosmos.sh` holt
+  genau diesen Commit, packt die Pakete mit der Version `3.0.97-zehos.N` in einen lokalen Feed und installiert CLI
+  und Patcher daraus. Die eigene Nummer verhindert, dass der NuGet-Cache das gleichnamige Paket von nuget.org liefert.
 - `NuGet.Config` im ZehOS-Stamm leitet `Cosmos.*` auf den lokalen Feed (`packageSourceMapping`), alles andere bleibt
   bei nuget.org. `ProjektZeh.csproj` (SDK-Zeile, zwei `PackageReference`) und die CI (`ci.yml:217-218`, heute fest
   `--version 3.0.97`) lesen die Version aus einer Eigenschaft.
-- Die CI baut die Pakete einmal je Commit-Stand und legt sie im Cache ab. Eine Veröffentlichung der Pakete ist nicht
-  vorgesehen.
+- Die CI baut die Pakete einmal je Commit und legt sie im Cache ab. Veröffentlicht werden sie nicht.
+- **Ein Cosmos-Patch wird durch den ZehOS-PR geprüft, der ihn verwendet:** Dieser PR setzt `deploy/cosmos/COMMIT`
+  auf den Patch-Commit und entfernt den Umweg; die normale ZehOS-CI (Hosttests, nativer Build, Gastläufe) läuft
+  dann gegen den gepatchten Stand.
 
-**Aufwand und Pflege:** einmalig Skript, Feed und CI-Umstellung (Etappe 2). Laufend: Jedes Nachziehen des
+**Aufwand und Pflege:** einmalig Skript, Feed und CI-Umstellung (Etappe 1). Laufend: Jedes Nachziehen des
 Upstream-Stands ist eine eigene Änderung mit nativem Build und Gastsuite. Mit `PathMap` im eigenen Build verschwinden
 die festen Upstream-Pfade aus den DLLs; `scripts/check-release-paths.py` braucht dann keine Ausnahmeliste mehr.
 
 Nicht geprüft: ob der Paketbau unter Windows ohne Anpassung durchläuft (`postCreateCommand.ps1` liegt bei), und die
 Bauzeit.
 
-## 8. Umwege, die ein eigener Build beheben könnte
+## 8. Umwege an der Wurzel beheben
 
 Vollständiges Inventar mit ZehOS-Datei und Ursache in der Cosmos-Quelle:
-[2026-11-18-cosmos-umwege-inventar.md](2026-11-18-cosmos-umwege-inventar.md). Hier nach Wirkung sortiert.
+[2026-11-18-cosmos-umwege-inventar.md](2026-11-18-cosmos-umwege-inventar.md). Entschieden (6): beheben, zuerst ext2,
+dann 12.4. Upstream hat an `FileSystem/Ext2` seit 3.0.97 nichts geändert; die Fehler sind dort also noch vorhanden.
 
-**a) Entfallen mit dem Upstream-Stapel selbst, ohne eigenen Patch**
+Jeder Patch folgt demselben Ablauf: Commit im Branch `cosmos` mit Eintrag in `PATCHES.md`, dann ein ZehOS-PR, der
+den Commit einbindet, den Umweg entfernt und die bisherige Prüfung des Umwegs gegen den gepatchten Stand wiederholt.
+Der Plug bleibt bis zu diesem PR unverändert in Kraft.
 
-| Umweg in ZehOS | Ursache in 3.0.97 | Im Upstream-Stapel |
+### 8.1 Patchreihe ext2 (Etappe 2)
+
+| Patch in Cosmos | Entfernt in ZehOS | Prüfung |
 | --- | --- | --- |
-| Idle-Sonderregel in `RoundRobinCore.cs:42` | Hauptschleife ist der Idle-Thread und wartet per Halt (`ConditionVariable.cs:170`) | Phase 5b: `Main` ist ein normaler Thread |
-| Stackprobe `ThreadStarter`/`CosmosStackProbe` | `InitializeStack` prüft `MemoryOp.Alloc` nicht (`SchedulerThread.cs:167`) | Nullprüfung mit GC-Versuch (`SchedulerThread.cs:261-271`) |
-| Zwang zu langlebigen Workern (`BackgroundTaskService`, `DedicatedWorker`) | Threadstacks werden nie freigegeben | `ReleaseStack` (`SchedulerThread.cs:311`) |
+| `RemoveEntry` verschmilzt nur innerhalb eines Blocks (`Ext2Directory.cs:302, 340`) | `CosmosExt2RemoveEntryPlug` | E4.0-Lauf mit `e2fsck -fn` |
+| `Rmdir` gibt alle Blöcke frei (`Ext2InodeOperations.cs:472`) | `CosmosExt2RmdirPlug` | wie oben |
+| `Truncate` gibt geleerte Zeigerblöcke frei, auch dreifach indirekt (`Ext2Superblock.cs:1014, 1043`) | `CosmosExt2TruncatePlug` | wie oben, dazu große Datei |
+| `FreeInode` schreibt Inode und dtime (`Ext2Superblock.cs:617`) | `CosmosExt2FreeInodePlug`, `Ext2InodeRelease` | wie oben |
+| Formatter schreibt Backup-Superblöcke und korrekte Geometrie (`Ext2Formatter.cs:185`) | `CosmosExt2FormatterPlug`, `CosmosExt2Formatter` samt Kopie | Formatieren, `e2fsck`, Mount unter Linux |
+| Mount prüft Feature-Bits (`Ext2Superblock.cs:154`) | `Ext2FeatureGate` großteils | Ablehnung fremder Features |
+| Verzeichnisgrenze an die Blockzahl koppeln (`Ext2Directory.cs:19`) | Grenze 8189 in `FileService`, `CosmosDirectoryEntryLimit` | Verzeichnis über 8189 Einträge |
+| Inode-Cache begrenzen (`Ext2Superblock.cs:20, 759`) | dokumentierte Grenze bei rund 17.500 Inodes | Speicherlauf |
 
-Ob die drei Umwege danach wirklich entfallen können, zeigt erst der Gastlauf in Etappe 3.
+Mit dem letzten ext2-Plug entfallen auch die Attrappentypen in `CosmosExt2PlugTypes.cs`. Die Reihe gehört fachlich
+zur Storage-Arbeitsgruppe und wird mit ihr abgestimmt; sie berührt deren laufende Qualifikation.
 
-**b) Vermutlich schon heute überholt** (Doku beschreibt 3.0.94; Gasttest steht aus)
+### 8.2 Patchreihe 12.4 (Etappe 3)
 
-- `UnsafeAccessor` auf `PageAllocator` in `CosmosSystemInfo.cs:30`: `MemoryDiagnostics` ist öffentlich und wird in
-  `CosmosSystemFiles.cs:36` schon genutzt.
-- Fehlendes TLS-`close_notify`: `SocketPlug.cs:253` meldet Schreibbereitschaft inzwischen auch bei `CLOSE_WAIT`.
-- „Serielle Ausgabe nicht zeilenatomar“: `Serial.WriteString` sperrt inzwischen je Aufruf (`Serial.cs:109-134`).
+Betroffen ist nur, was I1 schon gemergt hat. I2 ist geplant, aber nicht umgesetzt und derzeit zurückgestellt.
 
-**c) Brauchen einen Patch in der Cosmos-Quelle**
-
-| Gruppe | Umwege in ZehOS | Größe der Korrektur |
+| Patch in Cosmos | Entfernt in ZehOS | Prüfung |
 | --- | --- | --- |
-| ext2 | fünf Plugs (`RemoveEntry`, `Rmdir`, `Truncate`, `FreeInode`, Formatter), Feature-Prüfung, Verzeichnisgrenze 8189, Attrappentypen | je klein bis mittel |
-| VFS | Nur-Lese-Wrapper (`Release` ruft immer `Fsync`), kein `Unregister`, private Mount-Abfrage, `lstat` = `stat`, wirkungsloses `utimensat` | klein bis mittel |
-| Dateisystem-Sperre | `StorageLock` um jeden Plattenzugriff (rund 60 Methoden) | groß |
-| GPT | eigener Leser und Schreiber, weil Cosmos CRC 0 schreibt und nicht prüft | mittel |
-| Eingabe | Tastatur-Plug (Break-Codes gehen verloren), Maus-Plug mit sechs `UnsafeAccessor`, deutsches Layout, USB-Tablet | klein bis mittel |
-| Zeit | VMware-Kalibrierung über CPUID statt PIT, samt kopierter Cosmos-Quelle | klein bis mittel |
-| CPU-Ausnahmen | `CosmosPanicHaltPlug`, `IRQContext`-Attrappe mit festen Versätzen 120/152 | mittel (öffentlicher Hook) |
-| Kleinteile | Teilrechteck-Ausgabe (`Canvas._display`), zufälliger TCP-Startport, RDSEED/RDRAND-Importe, `malloc` über 4 GiB | klein |
-| Build | `InvalidateStaleCObjects`, `MapNativeSourcePaths`, `TreatAsLocalProperty`, `check-plug-binding.py` | klein |
+| Öffentlicher Hook für CPU-Ausnahmen: bekommt Vektor und Kontext, entscheidet „anhalten“ oder „Thread aufgeben“ (`Cosmos.Kernel/Panic.cs:19-36`) | `CosmosPanicHaltPlug`, `UnsafeAccessor` auf `ScheduleFromInterrupt` und `InternalCpu.Halt`, Import `_native_get_context_switch_sp` | `test-isolation-probe.py`, positiv und negativ |
+| `IRQContext` öffentlich (`Core/CPU/IRQContext.cs:16`) | `CosmosIrqContextStub`, feste Versätze 120/152 | wie oben |
+| LINT1 als NMI einrichten (`LocalApic.cs:172`) | Entmaskierung in `CosmosIsolationProbe` | NMI-Gegenprobe |
+| Thread aus dem Ausnahmepfad endgültig beenden und seinen Stack freigeben (nach Etappe 5, baut auf `ReleaseStack` des SMP-Stapels) | Quarantäne-Zeile im Scheduler; Leck von 8 MiB je Fehler | Isolationsprobe wiederholt, Speicher bleibt konstant |
 
-**Abwägung gegen die Leitregel.** Jeder Patch aus Gruppe c bleibt nur wirksam, solange wir selbst bauen. Beim
-Rücktausch auf ein NuGet-Release müsste der zugehörige Plug zurückkommen, denn Upstream erfährt von den Fehlern nichts
-(keine Issues oder PRs bei Cosmos). Solange der eigene Build als Übergang gedacht ist, bleiben die Plugs deshalb
-stehen, und `PATCHES.md` bleibt leer bis auf das, was SMP zwingend braucht. Gruppe c lohnt erst, wenn der eigene
-Build dauerhaft bleiben soll (Entscheidung 6). Das wäre dann ein eigenes Vorhaben, ein Patch je PR.
+**12.4 muss dafür nicht vorher fertig sein.** Die Reihenfolge ist umgekehrt günstiger: I2 (erzwungenes Beenden)
+braucht genau die Operation aus der letzten Zeile und baut besser auf dem öffentlichen Hook auf als auf den heutigen
+Plugs. Bindend ist nur: I2 wird nicht gleichzeitig mit Etappe 3 oder Etappe 5 umgesetzt, weil alle drei
+`CosmosFaultIsolation.cs` und `WasmRuntime.cs` ändern. Empfohlen: I2 nach Etappe 5 wieder aufnehmen.
+
+Nicht in dieser Reihe, aber jetzt möglich und eigens zu entscheiden: eigenes TSS mit IST-Stacks. Das beseitigte die
+Red-Zone-Gefahr für AOT-Code (heute Umweg `wamrc-noredzone` und `check-aot-redzone.py`) und machte Stacküberläufe
+erkennbar, verlangt aber einen Umbau des Kontextwechsels und ist groß.
+
+### 8.3 Weitere Umwege (Vorrat, je nach Bedarf)
+
+- **Entfallen mit dem SMP-Stapel selbst, ohne eigenen Patch** (zu belegen in Etappe 5): Idle-Sonderregel des
+  Schedulers (Phase 5b), Stackprobe `ThreadStarter`/`CosmosStackProbe` (Nullprüfung in `SchedulerThread.cs:261-271`),
+  Zwang zu langlebigen Workern (`ReleaseStack`).
+- **Vermutlich schon heute überholt** (Doku beschreibt 3.0.94, Gasttest steht aus): `UnsafeAccessor` auf
+  `PageAllocator` (`MemoryDiagnostics` ist öffentlich), fehlendes TLS-`close_notify` (`SocketPlug.cs:253`),
+  „serielle Ausgabe nicht zeilenatomar“ (`Serial.cs:109-134`).
+- **Mit Patch behebbar:** VFS (Nur-Lese-Wrapper, `Unregister`, Mount-Abfrage, `lstat`, `utimensat`), GPT mit CRC,
+  Eingabe (Break-Codes, Rohdeltas der Maus, deutsches Layout, Tablet), VMware-Zeitkalibrierung, Teilrechteck-Ausgabe,
+  zufälliger TCP-Startport, Zufallsbefehle, `malloc` über 4 GiB, Build (`InvalidateStaleCObjects`,
+  `MapNativeSourcePaths`, `TreatAsLocalProperty`, Plug-Bindung als Fehler).
+- **Bewusst nicht:** `StorageLock`. Die globale Sperre funktioniert und ist unter SMP nötig; eine feinere Sperre in
+  Cosmos wäre groß und brächte erst bei parallelem Plattenzugriff etwas.
 
 ## 9. Etappen
 
-Jede Etappe ist ein eigener Auftrag mit eigenem Plan; die Reihenfolge ist bindend, weil jede die vorige voraussetzt.
+Jede Etappe ist ein eigener Auftrag mit eigenem Plan.
 
 | Etappe | Inhalt | Abnahme |
 | --- | --- | --- |
 | 0 Audit | Liste aller geteilten Zustände zwischen Interrupt, Hauptschleife und Workern (C# und C), je Eintrag die Sperre oder der Befund „fehlt“ | Dokument; keine Codeänderung |
-| 1 Scheduler und Topologie auf 3.0.97 | Klassenscheduler ersetzt Round-Robin auf einer CPU; `CpuTopology` mit Hosttests; Eingabe-Sperren | Hosttests; Gast: `THREAD_PROBE`, `MESSAGES_PROBE` PASS; ClassiCube- und Doom-Bildraten nicht unter master; Wartezeit der Hauptschleife unter Last gemessen |
-| 2 Cosmos aus Quelle, ohne SMP | Quellbaum, Paketbau, lokaler Feed, CI; Stand genau `efcf20c` | ISO aus eigenen Paketen besteht dieselben Host- und Gastprüfungen wie mit NuGet 3.0.97 |
-| 3 SMP-Stapel, alle Threads auf CPU 0 | Upstream-Stapel einspielen; Adapter auf neue Naht; Hauptschleife als Thread; Plugs angleichen; Standardaffinität = CPU 0 | `-smp 1` und `-smp 4`: gesamte Gastsuite grün; weitere CPUs online und im Idle |
-| 4 Worker auf weiteren CPUs | Wasm-Worker, dann Hintergrundaufgaben über Affinität freigeben; Platzierung und Ausgleich aktiv | neue `SMP_PROBE` (parallele Zähler, GC unter Last, Sperrstress, Migration) PASS; Speicherprobe aus #247 fehlerfrei; GC-Pausen gemessen |
-| 5 Hauptschleife frei, Hyperthreads | Oberfläche verlässt CPU 0; Regeln aus 5.3; Panic und Energieaktionen über alle CPUs | Matrix aus Abschnitt 9a; `test-power-commands.ps1` mit 4 CPUs; Recovery mit einer CPU |
-| 6 Ausbau | sobald ein Cosmos-Release SMP enthält: Version umstellen, Feed und Quellbaum entfernen, Patches gegenprüfen | gesamte Suite grün mit NuGet-Paketen; `PATCHES.md` leer oder Rest begründet |
+| 1 Cosmos aus Quelle | Branch `cosmos` mit dem Stand `efcf20c`, Bauskript, lokaler Feed, CI | ISO aus eigenen Paketen besteht dieselben Host- und Gastprüfungen wie mit NuGet 3.0.97 |
+| 2 Patchreihe ext2 | Abschnitt 8.1, ein Patch je PR-Paar | je Patch die genannte Prüfung; am Ende kein ext2-Plug mehr |
+| 3 Patchreihe 12.4 | Abschnitt 8.2 ohne die letzte Zeile | Isolationsprobe positiv und negativ; kein Plug auf `Panic` mehr |
+| 4 Scheduler und Topologie | Klassenscheduler ersetzt Round-Robin auf einer CPU; `CpuTopology` mit Hosttests; Eingabe-Sperren | Hosttests; Gast: `THREAD_PROBE`, `MESSAGES_PROBE` PASS; Bildraten von ClassiCube und Doom und Wartezeit der Hauptschleife im Dreiervergleich (Abschnitt 6) |
+| 5 SMP-Stapel, alle Threads auf CPU 0 | Upstream-Stapel aufspielen; Adapter auf neue Naht; Hauptschleife als Thread; verbliebene Plugs angleichen; Standardaffinität = CPU 0; letzte Zeile aus 8.2 | `-smp 1` und `-smp 4`: gesamte Gastsuite grün; weitere CPUs online und im Idle; Speicherqualifikation für den neuen Cosmos-Stand wiederholt |
+| 6 Worker auf weiteren CPUs | Wasm-Worker, dann Hintergrundaufgaben über Affinität freigeben; Platzierung und Ausgleich aktiv | neue `SMP_PROBE` (parallele Zähler, GC unter Last, Sperrstress, Migration) PASS; Speicherprobe aus #247 fehlerfrei; GC-Pausen gemessen |
+| 7 Hauptschleife frei, Hyperthreads | Oberfläche verlässt CPU 0; Regeln aus 5.3; Panic und Energieaktionen über alle CPUs | Matrix aus Abschnitt 9a; `test-power-commands.ps1` mit 4 CPUs; Recovery mit einer CPU |
+| 8 Basiswechsel | sobald ein Cosmos-Release SMP enthält: neuer Grundstand, SMP-Schicht entfällt, Patchreihe neu aufspielen | gesamte Suite grün; `PATCHES.md` aktuell |
 
-In Weg A entfallen die Etappen 2 und 6; Etappe 3 beginnt mit dem Release.
+**Abhängigkeiten:** 0 und 4 brauchen kein geändertes Cosmos und können sofort beginnen. 2 und 3 setzen 1 voraus und
+sind voneinander unabhängig. 5 setzt 1 und 4 voraus und kommt nach 3, damit die festen Rahmen-Versätze der
+12.4-Plugs weg sind, bevor der Stapel den Interruptrahmen ändert. 6 und 7 folgen in dieser Reihenfolge.
 
 ### 9a. Prüfmatrix
 
@@ -313,23 +377,39 @@ In Weg A entfallen die Etappen 2 und 6; Etappe 3 beginnt mit dem Release.
 | VMware | `numvcpus` 2 und 4 | offen; keine Hyperthreads im Gast |
 | echte Hardware | mit Hyperthreading | offen |
 
-## 10. Offene Entscheidungen (Peter)
+## 10. Entscheidungen
 
-1. **Weg A oder B.** Empfohlen B. Das ändert die bisherige Linie „Cosmos-DLL nicht patchen“: Die Pakete kämen aus
-   eigenem Bau, inhaltlich aber aus Upstream-Commits.
-2. **Scheduler:** Klassenscheduler (Abschnitt 6) oder die kleinere Stride-Variante.
-3. **Ort der Cosmos-Quelle:** eigenes Repository als Submodul oder Unterordner in ZehOS (Abschnitt 7).
-4. **CPU 0 als Housekeeping-CPU** wie Upstream. Bei zwei CPUs hat die Oberfläche dann weiter nur eine.
-5. **Hyperthreads und Wasm-Apps:** Kern teilen erlaubt (Entwurf) oder schon jetzt verbieten.
-6. **Umwege aus Abschnitt 8:** im eigenen Build beheben oder der Isolation wegen stehen lassen.
+Peter, 18. November 2026:
+
+- **1 Weg B:** Cosmos aus Quelle bauen, Upstreams SMP-Stapel aufspielen.
+- **4 CPU 0 bleibt Housekeeping-CPU** wie bei Upstream; erwartet werden mindestens vier CPUs.
+- **5 Wasm-Apps dürfen sich einen Kern teilen.**
+- **6 Umwege werden an der Wurzel behoben,** zuerst ext2, dazu die Stellen aus 12.4; deshalb beginnt der eigene
+  Build vor der SMP-Arbeit (Etappe 1).
+
+Empfehlungen, die Peters Bestätigung brauchen:
+
+- **2 Scheduler:** Klassenscheduler, abgesichert durch den Dreiervergleich in Etappe 4 (Abschnitt 6).
+- **3 Ort der Cosmos-Quelle:** Branch `cosmos` im ZehOS-Repository (Abschnitt 7).
+
+Folge von Entscheidung 6, bitte bewusst mittragen: Der eigene Cosmos-Build ist damit kein Übergang mehr. Er bleibt,
+solange eigene Patches bestehen; austauschbar bleibt der SMP-Teil (Isolationsregel 6).
+
+Offen:
+
+- **7 TSS mit IST-Stacks** als eigenes, großes Vorhaben (Abschnitt 8.2), ja oder nein.
 
 ## 11. Risiken
 
-- Upstream ändert den Entwurfsstapel oder die experimentelle Naht noch. Gegenmittel: fester Commit, Nachziehen als
-  eigene Änderung mit nativem Build und Gastlauf, Naht in einer Datei.
+- Upstream ändert den Entwurfsstapel oder die experimentelle Naht noch. Gegenmittel: fester Commit im Branch
+  `cosmos`, Nachziehen als eigene Änderung mit nativem Build und Gastlauf, Naht in einer Datei.
 - Mit dem Stapel kommen 12 unveröffentlichte `gen3`-Commits. Die Speicherqualifikation (Etappe E4) gilt für 3.0.97
-  und müsste für diesen Stand wiederholt werden.
+  und wird für diesen Stand in Etappe 5 wiederholt.
+- Eigene Patches in ext2 können Daten zerstören. Gegenmittel: je Patch die bestehende Gastprüfung mit `e2fsck` auf
+  einer Kopie des Datenimages, der Plug bleibt bis zum bestandenen Lauf in Kraft.
+- Jeder Cosmos-Patch muss bei jedem Basiswechsel neu aufgespielt und geprüft werden; die Reihe klein zu halten ist
+  Teil der Pflege.
 - Rennen, die auf einer CPU nie auffielen (ZehOS und Cosmos). Gegenmittel: Etappe 0, stufenweise Freigabe über
-  Affinität (Etappen 3 bis 5), Rückfall „Ein Kern“.
+  Affinität (Etappen 5 bis 7), Rückfall „Ein Kern“.
 - Längere GC-Pausen mit mehr CPUs.
 - Kein Nachweis auf echter Hardware und unter VMware/WHPX, bis dort gemessen ist.
