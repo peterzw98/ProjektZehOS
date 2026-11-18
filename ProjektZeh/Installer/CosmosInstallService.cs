@@ -5,6 +5,8 @@ using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
 using Cosmos.Kernel.System.Storage;
+using Cosmos.Kernel.System.FileSystem.Ext2;
+using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
 
@@ -13,21 +15,29 @@ namespace ProjektZeh.Installer;
 internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
 {
     private const string FileSystemName = "zehos-setup-fat";
+    private const string RootFileSystemName = "zehos-setup-ext2";
     private readonly InstallService service;
     private readonly Func<ResultErr> restart;
+    private readonly string installMount;
     private bool registered;
+    private bool rootRegistered;
     // Die Vollpruefung dauert spuerbar; sie laeuft pro Platte nur einmal, bis diese Platte beschrieben wird.
     private readonly Dictionary<string, bool> blankDisks = new(StringComparer.OrdinalIgnoreCase);
 
-    public CosmosInstallService(string version, Func<ResultErr> restart)
+    /// <param name="gptEnabled">Freischaltung des GPT-Wegs aus Kernel.cs (-p:ZehOSGptInstaller).</param>
+    /// <param name="installMount">Einhaengepunkt der ESP waehrend der GPT-Installation (SystemPaths.InstallMount).</param>
+    public CosmosInstallService(string version, Func<ResultErr> restart, bool gptEnabled = false, string installMount = "/data")
     {
         this.restart = restart;
-        service = new InstallService(this, ReadPayload("ZehOS.Payload.Efi"), ReadPayload("ZehOS.Payload.Kernel", inverted: true), version);
+        this.installMount = installMount;
+        service = new InstallService(this, ReadPayload("ZehOS.Payload.Efi"), ReadPayload("ZehOS.Payload.Kernel", inverted: true), version,
+            gptEnabled, CosmosSaltSource.Fill);
     }
 
     public string ProductVersion => service.ProductVersion;
     public ResultObject<InstallDisk[]> GetDisks() => service.GetDisks();
     public ResultObject<IInstallJob> Begin(string diskName, bool eraseExisting) => service.Begin(diskName, eraseExisting);
+    public ResultObject<IInstallJob> BeginGpt(string diskName, bool eraseExisting) => service.BeginGpt(diskName, eraseExisting);
     public ResultErr Restart() => restart();
 
     public ResultObject<InstallCandidate[]> GetCandidates()
@@ -42,7 +52,7 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
                 try { if (StorageLock.Run(() => CosmosDataDisk.HasZehosDataLabel(device))) continue; }
                 catch (Exception) { continue; }
                 candidates.Add(new(new InstallDisk(device.Name, checked(device.BlockCount * device.BlockSize),
-                    StorageManager.GetPartitions(device).Count, CachedIsBlank(device)), IsInstallMedium(device)));
+                    StorageManager.GetPartitions(device).Count, CachedIsBlank(device), device.BlockSize), IsInstallMedium(device)));
             }
             return ResultObjectFactory.CreateSuccess(candidates.ToArray());
         }
@@ -70,6 +80,53 @@ internal sealed class CosmosInstallService : IInstallService, IInstallPlatform
         }
         catch (Exception exception) { return ResultObjectFactory.CreateFromException<IInstallTarget>(exception); }
     }
+
+    public ResultObject<IGptInstallTarget> OpenGptTarget(string diskName)
+    {
+        try
+        {
+            foreach (IBlockDevice device in StorageManager.Devices)
+            {
+                if (!string.Equals(device.Name, diskName, StringComparison.OrdinalIgnoreCase)) continue;
+                // Wie OpenTarget, zusaetzlich beide Installationsmountpunkte; nichts davon schreibt (Spec 7a-S4, Abschnitt 2).
+                if (IsInstallMedium(device)) return GptFailure("Das Installationsmedium darf nicht beschrieben werden.");
+                if (StorageLock.Run(() => CosmosDataDisk.HasZehosDataLabel(device))) return GptFailure("Datenplatte/installiertes System, nicht als Ziel erlaubt.");
+                // Mountpruefung und Registrierung als ein Abschnitt, damit dazwischen niemand einhaengt.
+                var refused = StorageLock.Run(() => PrepareGptTargetStorageLocked(device));
+                if (refused != null) return refused;
+                blankDisks.Remove(device.Name);
+                return ResultObjectFactory.CreateSuccess<IGptInstallTarget>(new CosmosGptInstallTarget(device, FileSystemName, RootFileSystemName, installMount));
+            }
+            return ResultObjectFactory.CreateFailure<IGptInstallTarget>(ResultCode.NotFound, "Ziellaufwerk nicht gefunden.");
+        }
+        catch (Exception exception) { return ResultObjectFactory.CreateFromException<IGptInstallTarget>(exception); }
+    }
+
+    /// <summary>Fehlerergebnis oder null, wenn Ziel und beide Mountpunkte frei und beide Dateisysteme registriert sind.</summary>
+    private ResultObject<IGptInstallTarget>? PrepareGptTargetStorageLocked(IBlockDevice device)
+    {
+        foreach (var mount in VfsManager.Mounts)
+            if (mount.Partition != null && ReferenceEquals(mount.Partition.Host, device))
+                return GptFailure("Das Ziellaufwerk ist eingebunden. Vor der Installation aushaengen.");
+        if (VfsManager.TryGetMount(installMount, out _) || VfsManager.TryGetMount(CosmosGptInstallTarget.RootMount, out _))
+            return GptFailure($"Installations-Mountpunkt belegt ({installMount} oder {CosmosGptInstallTarget.RootMount}); das dort eingebundene Laufwerk zuerst mit disk unmount aushaengen.");
+        if (!registered)
+        {
+            if (!VfsManager.RegisterFileSystem(FileSystemName, new FatFileSystemType()))
+                return GptFailure("Das Installer-Dateisystem konnte nicht registriert werden.");
+            registered = true;
+        }
+        if (!rootRegistered)
+        {
+            // Ohne Geraet: Format und Mount bekommen die Partition ueber VfsManager, der Plug erzwingt das 4-KiB-Profil.
+            if (!VfsManager.RegisterFileSystem(RootFileSystemName, new Ext2FileSystemType()))
+                return GptFailure("Das Root-Dateisystem konnte nicht registriert werden.");
+            rootRegistered = true;
+        }
+        return null;
+    }
+
+    private static ResultObject<IGptInstallTarget> GptFailure(string message) => ResultObjectFactory.CreateFailure<IGptInstallTarget>(ResultCode.Failure, message);
 
     /// <summary>Fehlerergebnis oder null, wenn das Ziel ausgehaengt und das Installer-Dateisystem registriert ist.</summary>
     private ResultObject<IInstallTarget>? PrepareTargetStorageLocked(IBlockDevice device)

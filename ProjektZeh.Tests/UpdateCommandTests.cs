@@ -50,6 +50,7 @@ public sealed class UpdateCommandTests
         public ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup) => throw new AssertFailedException("Schreibzugriff");
         public ResultErr WriteVersion(string version) => throw new AssertFailedException("Schreibzugriff");
         public ResultObject<string> ReadVersion() => throw new AssertFailedException("Lesezugriff");
+        public ResultErr Persist() => throw new AssertFailedException("Schreibzugriff");
     }
     private sealed class Installer : IInstallService
     {

@@ -32,6 +32,46 @@ public sealed class DesktopTests
     }
 
     [TestMethod]
+    public void DesktopPointerIsHiddenWhileAppCapturesAndReturnsAfterRelease()
+    {
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        var pixels = new int[1024 * 768];
+        var surface = new PixelSurface(1024, 768, pixels);
+        // Zeiger ueber dem Hintergrund, ausserhalb des Fensters: dort liegt sonst nur Zeigerfarbe ueber dem Bild.
+        const int x = 700, y = 400;
+        int PointerPixelCount()
+        {
+            desktop.Render(surface, 1000, x, y, PointerButtons.None);
+            int white = 0;
+            for (int row = 0; row < 15; row++)
+                for (int column = 0; column < 8; column++)
+                    if (pixels[(y + row) * 1024 + x + column] == -1) white++;
+            return white;
+        }
+        Assert.IsTrue(PointerPixelCount() > 0);
+        app.Input.SetCapture(true);
+        Assert.AreEqual(0, PointerPixelCount());
+        app.Input.SetCapture(false);
+        Assert.IsTrue(PointerPixelCount() > 0);
+    }
+
+    [TestMethod]
+    public void Suspend_ReleasesAppPointerCaptureSoTheDesktopPointerReturns()
+    {
+        // F4 verlaesst die Grafik ueber Suspend; die Eingabe der Apps wird dabei zurueckgesetzt.
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));
+        var app = new CaptureProbeApp();
+        app.Input.SetCapture(true);
+        desktop.Windows.Add(new Window("Probe", 20, 30, 300, 200, app));
+        Assert.IsTrue(desktop.Windows.HasAppPointerCapture);
+        desktop.Suspend();
+        Assert.IsFalse(app.Input.IsCaptured);
+        Assert.IsFalse(desktop.Windows.HasAppPointerCapture);
+    }
+
+    [TestMethod]
     public void Escape_ClosesMenuOpenedDuringAppCaptureBeforeRecovery()
     {
         var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(), () => new FileService("/data"));

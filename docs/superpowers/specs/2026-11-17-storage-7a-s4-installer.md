@@ -1,6 +1,6 @@
 # Etappe 7a, Schritt S4: GPT-Installer – Umsetzungsentwurf
 
-Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a §4 und §7](2026-11-17-storage-7a-installer-layout.md) für den Installer. Baut auf S2 (`GptLayoutWriter`, `GptLayout.Verify`, `Crc32`) und S3 (`InstallMarker`, `InstalledIdentity`) aus `task/storage-7a-identity` sowie auf `task/storage-7a-installer-exclusion` (Ausschluss von Marker-/Root-/GPT-`ZEHOSDATA`-Platten) auf. **Nur Entwurf**, kein Code, nichts im Gast.
+Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a §4 und §7](2026-11-17-storage-7a-installer-layout.md) für den Installer. Baut auf S2 (`GptLayoutWriter`, `GptLayout.Verify`, `Crc32`) und S3 (`InstallMarker`, `InstalledIdentity`) aus `task/storage-7a-identity` sowie auf `task/storage-7a-installer-exclusion` (Ausschluss von Marker-/Root-/GPT-`ZEHOSDATA`-Platten) auf. Der GPT-Weg ist als Testbuild implementiert; die Gastabnahme steht noch aus.
 
 ## 0. Entscheidungen (§0.2/§0.3 von der Leitung am 12:03 bestätigt)
 
@@ -38,7 +38,7 @@ Stand: 17. November 2026, Basis `origin/master` @ `0a5547e`. Konkretisiert [7a �
 | `FormattingEsp` | FAT32 Label `ZEHOSBOOT`, Einhängen am Installationsmountpunkt (`SystemPaths.InstallMount` des laufenden Profils) | 5 |
 | `FormattingRoot` | `CosmosExt2Formatter.FormatForKernel` auf Partition 2 (Formatter ist fester Teil des Builds, kein Laufzeit-Vorabtest); danach `log_block_size` = 2 und `sparse_super` prüfen wie die Etappe-1-Probe, sonst Abbruch | 10 |
 | `VerifyingRoot` | Superblock lesen, `InstalledIdentity.CheckRoot` = `Ok` | 25 |
-| `PreparingRoot` | Root schreibbar unter `/mnt/install-root` einhängen, `s_state` = 0 + Flush; Verzeichnisse `/boot`, `/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc`, `/etc/zehos` (**vollständige Liste der vom Installer auf Root angelegten Einträge**, zusammen mit dem Root-Marker; E4.4 §4 „vom Installer angelegt“ verweist genau hierauf); Root-Marker `/etc/zehos/.zehos-layout` `state=fresh`, Disk-GUID (Temp + Rename) über eine **eigene `FileService`-Instanz ohne Rechteverwaltung** mit `CosmosPathGuard.For("/mnt/install-root")` (wie die Kontendatei in `AccountService`; der Nutzer-`FileService` sperrt `.zehos-`-Namen); Sync, Sync, `s_state` = 1, Flush; aushängen, danach ein eigenes `Device.Flush()` (Aushängen schreibt über `UpdateSuperblock` zuletzt, nach dem Treiber-Flush; das Rücklesen belegt wegen des Gerätecaches nur Sichtbarkeit); **danach Superblock neu lesen**: `s_state` = 1 und `CheckRoot` = `Ok`, sonst Abbruch (der Treiber könnte beim Aushängen einen gepufferten Superblock zurückschreiben) | 27 |
+| `PreparingRoot` | Root schreibbar unter `/mnt/install-root` einhängen, `s_state` = 0 + Flush; Verzeichnisse `/boot`, `/boot/efi`, `/mnt`, `/proc`, `/sys`, `/dev`, `/etc`, `/etc/zehos` (**vollständige Liste der vom Installer auf Root angelegten Einträge**, zusammen mit dem Root-Marker; E4.4 §4 „vom Installer angelegt“ verweist genau hierauf); Root-Marker `/etc/zehos/.zehos-layout` `state=fresh`, Disk-GUID (Temp + Rename) direkt über den ausschließlich für die Installation eingehängten Root-Mount (der Nutzer-`FileService` sperrt `.zehos-`-Namen); Sync, Sync, `s_state` = 1, Flush; aushängen, danach ein eigenes `Device.Flush()` (Aushängen schreibt über `UpdateSuperblock` zuletzt, nach dem Treiber-Flush; das Rücklesen belegt wegen des Gerätecaches nur Sichtbarkeit); **danach Superblock neu lesen**: `s_state` = 1 und `CheckRoot` = `Ok`, sonst Abbruch (der Treiber könnte beim Aushängen einen gepufferten Superblock zurückschreiben) | 27 |
 | `CopyingFiles` | wie heute auf die ESP (`/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf`, `.bak`, `/boot/zehos-version.txt`) | 30–90 |
 | `WritingBootConfig` | `/boot/limine/limine.conf` wie heute (`boot():` zeigt auf die ESP), danach **Flush/Sync der ESP** (Dauerhaftigkeitsschranke: der Marker darf nie vor den Bootdateien auf der Platte stehen, Cosmos-FAT puffert) | 92 |
 | `WritingMarker` | ESP-Marker `boot/.zehos-install.id` (`InstallMarker.Serialize`) per Temp + Rename, erneut Flush, zurücklesen und `Parse` = gleich | 96 |
@@ -54,7 +54,8 @@ Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupW
 |---|---|---|
 | `Partitioning` vor Schritt 4 des Writers | alter Primärheader genullt, evtl. Backupheader neu, keine ESP | `Unclear` nur, wenn `InstalledIdentity` „Primär ungültig, Backup gültig“ und „GPT-Rest ohne Marker“ so einstuft – **im Identity-Test ausdrücklich festlegen**; sonst ist die Platte leer/unbekannt und braucht ohnehin `--erase` |
 | `Partitioning` danach bis `WritingBootConfig` | GPT gültig, Root-Partition vorhanden, kein ESP-Marker | `Unclear` |
-| `WritingMarker` | Temp-Datei, kein gültiger Marker | `Unclear` |
+| `WritingMarker` vor dem Rename | Temp-Datei, kein gültiger Marker | `Unclear` |
+| `WritingMarker` nach dem Rename (Flush oder Rücklesen scheitert) | gültiger Marker kann schon stehen | `Healthy` möglich; der Installer meldet trotzdem **Fehler** und „Marker eventuell bereits geschrieben“ (Review #268) |
 | `Completed` (Aushängen scheitert) | Marker und Bootdateien geflusht (Schranken §3) | `Healthy`, aber der Installer meldet **Fehler** (Exit ≠ 0) „Aushängen fehlgeschlagen“ |
 | Neuinstallation über ein `Healthy`-System, Abbruch vor `FormattingEsp` | alter ESP-Marker kann im ESP-Bereich stehen bleiben | `Unclear`, weil der alte Marker die alte Disk-GUID trägt und die neue GPT neue GUIDs hat; Test und G9 belegen das |
 
@@ -76,9 +77,9 @@ Prozentwerte monoton steigend; `InstallJobTests`, `InstallServiceTests`, `SetupW
 - G2 Rückfalleintrag `.bak` startet.
 - G3/G4 Root offline gelöscht bzw. beschädigt ⇒ Boot normal, Einrichtung und `security recover` gesperrt.
 - G5 Recovery-ISO bei G3/G4.
-- G6 Installer verweigert Medium, `ZEHOSDATA`-Platte, eingebundenes Ziel, 31 GiB, 129 GiB, fehlendes `--erase`.
+- G6 Installer verweigert Medium, `ZEHOSDATA`-Platte, eingebundenes Ziel, 31 GiB, 129 GiB, fehlendes `--erase`. Zusätzlich mit einer anderen bereits unter `/data` eingebundenen Datenplatte prüfen, ob der belegte Installationsmountpunkt die Installation verhindert und die Meldung verständlich ist.
 - G7 installierte Platte + `ZEHOSDATA`-Platte: Bestand gewinnt.
-- G8 Abbruch: Gast während `CopyingFiles` hart beenden ⇒ nächster Boot von der Platte nicht möglich bzw. Identität `Unclear`, Neuinstallation mit `--erase` gelingt. Abbrüche in `Partitioning` (zwischen den Writer-Schritten) und `PreparingRoot` sind im Gast nicht zeitgenau auslösbar; sie deckt der Zähl-Fake der Hosttests 4/5 ab.
+- G8 Abbruch: Gast während `CopyingFiles` hart beenden ⇒ nächster Boot von der Platte nicht möglich bzw. Identität `Unclear`, Neuinstallation mit `--erase` gelingt. Zusätzlich mit `-p:ZehOSGptG8Probe=true` (nur zusammen mit `ZehOSGptInstaller=true`) bei 96 % unmittelbar nach dem Flush der Bootdateien vor `WritingMarker` hart beenden und das Image offline prüfen: vollständige Bootdateien, kein ESP-Marker; `fsck.fat -n` und Inhaltsprüfung etwa mit mtools. Der [Quellbefund zu FAT-Sync](2026-11-17-storage-7b-updates-power.md) beschreibt direkte FAT-Schreibzugriffe und Device.Flush; der Gastlauf zur Dauerhaftigkeitsschranke steht noch aus. Er belegt nur Bestand gegen einen Gast-Absturz (Daten nach dem Gast-Flush im Image), nicht Stromausfallfestigkeit der Platte. Abbrüche in `Partitioning` (zwischen den Writer-Schritten) und `PreparingRoot` sind im Gast nicht zeitgenau auslösbar; sie deckt der Zähl-Fake der Hosttests 4/5 ab.
 - G9 Neuinstallation über ein `Healthy`-System, Abbruch in `CopyingFiles` ⇒ nicht `Healthy`, keine Einrichtung.
 - TCG ohne RDRAND ⇒ Installer verweigert mit Zufallsquellen-Fehler (Gegenprobe, kein Fehlschlag).
 

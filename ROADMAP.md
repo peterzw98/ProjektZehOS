@@ -202,11 +202,13 @@ Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien j
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (gemergt, erfüllt):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
 - **Thread-Start-Schutz #241 und Worker-Pool #246 (beide gemergt, erfüllt):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
-- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** Branch `fix/ext2-unlink-indirect-plug`, noch ohne PR; der PR wartet auf Peters Freigabe.
+- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** gemergt mit #259 (Grenze dokumentiert in #262/#263).
 
 Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
 
 VMware ist für alle Punkte offen.
+
+**Version 0.6 (Storage-Abnahme):** 0.6 steht für einen fertigen Speicherteil: GPT-Installer, Root-Profil mit ext2, Migration vom Legacy-Bestand, Updates und Energieaktionen im Root-Profil sowie die Gesamtmatrix 32/64/128 GiB unter QEMU. Die Abnahme macht Peter selbst unter QEMU/WHPX auf seinem Rechner, mit den zutreffenden Fällen aus dem Bericht als Kriterien; danach folgt das Release v0.6.0. Den Minor hebt ein eigener PR (`ZehOSVersionPrefix` 0.6, `ZehOSPatchBase` 0). VMware und der volle Datenträger liegen ausdrücklich außerhalb von 0.6 (Entscheidung Peter, 18. November 2026). Ergebnisse je Fall, offene Punkte und Grenzen: [Storage-Abnahme 0.6](docs/STORAGE_0_6_ABNAHME.md).
 
 ## 8 Kleine Desktopanwendungen bauen
 
@@ -379,6 +381,13 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
       - Der Speicher blieb über die Laufzeit stabil.
     - **Gewinn (KVM, je 5 Paare wasm3/AOT, [WASM_FEASIBILITY](docs/WASM_FEASIBILITY.md#leistung-und-langzeitstabilität-mit-wamrc-noredzone-18-november-2026)):** Für Doom 1.1.0 belegt, 50,8 → 68,5 avg fps (+35 %). Für ClassiCube 1.0.0 nicht belegt: 27,0 → 30,2 liegt im Rauschen, weil das Rastern schon nativ im Kernel läuft.
     - AOT bleibt standardmäßig aus. Kein veröffentlichtes Paket enthält ein `.aot`, und VMware ist nicht geprüft.
+    - **Stand 18. November 2026 (Nachmittag, Abschluss der Leistungsarbeit; Peter hat ClassiCube ohne erreichte 30 fps auf seinem Rechner abgenommen):** Die Zahlen sind klein (n=1 bis 6) und streuen stark; einzelne Läufe sind kein Beleg, auch nicht die Ausreißer (master Seed 2 auf Peters Rechner 196 ms je Bild, auf HPz master Seed 4 einmal 15,1 fps bei sonst 26–36).
+      - **Anteile (Peters Rechner, i5-10500H, KVM, 1 GiB, je ein Lauf Seed 2/4/5, 60-s-Fenster):** Die Bildzeit ist fast reine App-Zeit; `schlaf` ist 0, der Desktop braucht 2,3–2,8 ms je Zeichnung, Kopie 0,2 ms und Skalierung 0,7 ms. Die Hauptschleife kostet damit im Median nur wenige Prozent der Bildzeit.
+      - **Raster gegen wasm3 (nur ein Datenpunkt):** Ein Messbau (HPz, KVM, 1 GiB, Seed 5 stehend, n=1, Last etwa 3) ergab Raster 17,9 von 18,8 ms App-Zeit (95 %, aus den Medianen je Bild), wasm3 und übrige Hostaufrufe rund 1 ms je Bild. Die geplante Messung auf Peters Rechner (3 Seeds, n=3) lief nicht mehr; der Anteil ist dort nicht belegt. Die ältere Zerlegung in der README von `experiments/ClassiCube.Wasi` stammt von vor der Raster-Hostfunktion und gilt nicht mehr.
+      - **Yield nach jedem Bild (V1, `task/worker-yield-after-frame`, f0b3da4, und `task/worker-yield-after-frame-pr`, a1dada1, beide gelöscht und ohne PR):** kein messbarer Gewinn. HPz, n=6 je Seed, abwechselnd: Seed 5 29,3 gegen 28,7 fps (master), Seed 4 29,0 gegen 27,5, Standardabweichung 6–8 fps; der frühere Einbruch von 29 % auf Seed 4 (n=3) war Streuung. Nebenwirkung: längstes Hauptschleifenbild 120–490 ms gegen 11–25 ms, Pausen des Workers nur bei V1. Auf Peters Rechner (n=1) zeigte sich dieselbe Nebenwirkung (208/217/340 ms gegen 90/62/54 ms). Die F4-Latenz ist gleich (71–72 ms); die Methode (QMP-Taste bis serielle Zeile) löst nur die feste Pfadzeit. V1 ist verworfen.
+      - **Hauptschleife gibt vor `Sleep(1)` ab, wenn ein Thread bereit ist (`task/main-loop-yield-on-ready`, 0e10ff7; Stand als geschlossener Archiv-PR #275 erreichbar):** Review ohne offene Befunde (`Thread.Yield` plus `InterruptManager.TryRaiseReschedule` über `UnsafeAccessor`, in 3.0.97 `internal static bool`). Gemessen nur ein Paar auf Peters Rechner (Seed 2, n=1): Bildzeit-Median 24 und 26 ms gegen 40 und 40 ms bei master. Das ist nicht wiederholt und aus den Anteilen nicht zu erwarten (höchstens ein einstelliger bis niedriger zweistelliger Prozentsatz); der Hebel gilt als ungeprüft.
+      - **Messbau:** `-p:ZehOSAppProfile=true` (Branch `task/app-profile-measure`, 486fc57; Branch gelöscht, Stand als geschlossener Archiv-PR #276 erreichbar) ergänzt die Anteile-Zeile um `raster` (Summe von `raster_draw`/`raster_fill` je Bild) und `rasteraufrufe`; ohne das Flag ändert sich nichts.
+      - **Nächste Hebel, falls das Ziel wieder aufgenommen wird:** Rasteroptimierung im nativen Kernelcode (SSE2-Vierpixelpfad besteht; SIMD-Breite, Tiling, Frühabbruch, ohne Bildabweichung) mit Messung auf Peters Rechner. AOT hilft ClassiCube nach der Messung oben kaum, weil das Rastern nativ läuft.
 - [ ] 13.6 Mehrspieler über die Netz-ABI (`capability=net`). Abnahme: zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
 **Fertig, wenn:** 13.2 erfüllt ist; 13.3 bis 13.6 folgen je nach Messung und Entscheidung.

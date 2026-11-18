@@ -5,7 +5,7 @@
 **Goal:** Paket-Apps mit einem passenden `.aot` laufen im Kernel als nativer x86-64-Code unter WAMR; alle anderen laufen unverändert unter wasm3.
 **Architecture:** WAMR läuft nur als AOT-Lader neben wasm3 (kein WAMR-Interpreter, kein JIT). Beide Laufzeiten teilen sich eine Hostfunktionstabelle mit zwei dünnen Bindungen. Das `.aot` ist eine gewöhnliche, signierte Paketdatei mit festem Namen; ältere Kernel ignorieren sie und nutzen das `.wasm`.
 **Tech Stack:** C (WAMR 2.4.5, `wamrc` mit LLVM 18.1.8), C#/.NET 10, Cosmos Gen3 3.0.97, `GCCProject`, wasm3, MSTest, QEMU, VMware.
-**Herkunft:** [ClassiCube-Plan](2026-11-16-classicube.md), Etappe 5; Übergabe [2026-11-17-aot-laufzeit-handoff.md](2026-11-17-aot-laufzeit-handoff.md); Hostprobe 5b `experiments/AOT.Probe/README.md` (Branch `experiments/aot-hostprobe`, abd999c). Erstellt von agent-orchestrator am 17. November 2026 auf Zuweisung des Koordinators.
+**Herkunft:** [ClassiCube-Plan](2026-11-16-classicube.md), Etappe 5; Übergabe [2026-11-17-aot-laufzeit-handoff.md](2026-11-17-aot-laufzeit-handoff.md); Hostprobe 5b ([Bericht](../../AOT_HOSTPROBE.md), Stand abd999c). Erstellt von agent-orchestrator am 17. November 2026 auf Zuweisung des Koordinators.
 
 ## Stand und Belege
 
@@ -77,7 +77,7 @@ Ziel: die drei unbelegten Annahmen klären, bevor WAMR in den Kernel kommt. Bran
 
 Ziel: Die Hostlogik existiert einmal; wasm3 verhält sich danach wie vorher. Branch `feature/wasm-host-core`. Unabhängig von B und parallel möglich.
 
-- [x] `ProjektZeh/Native/Wasm/host/zehos_wasm.c` (783 Zeilen) teilen: `zehos_host_core.c` mit allen WASI- und `zehos_v1`-Funktionen als gewöhnliche C-Funktionen (Kontext, Speicherbasis, Speichergröße, Argumente; jede Adresse und Länge geprüft), `zehos_host_wasm3.c` nur mit Argumentübernahme und Tabelle. Vorbild und Vergleich: `experiments/NetSurf.Wasi/host/zehos_host_core.c` und `experiments/AOT.Probe/host/zehos_host_wamr.c`.
+- [x] `ProjektZeh/Native/Wasm/host/zehos_wasm.c` (783 Zeilen) teilen: `zehos_host_core.c` mit allen WASI- und `zehos_v1`-Funktionen als gewöhnliche C-Funktionen (Kontext, Speicherbasis, Speichergröße, Argumente; jede Adresse und Länge geprüft), `zehos_host_wasm3.c` nur mit Argumentübernahme und Tabelle. Vorbild und Vergleich: `experiments/NetSurf.Wasi/host/zehos_host_core.c` und `experiments/AOT.Probe/host/zehos_host_wamr.c` (Hostprobe 5b, Code nicht in master, siehe [Bericht](../../AOT_HOSTPROBE.md)).
 - [x] Verhalten erhalten: Reihenfolge der Prüfungen, WASI-Fehlercodes, Stubs (`wasi_badf`, `wasi_nosys`), `proc_exit`, Schließen offener Dateien nach Traps.
 - [x] Namen und Signaturen stehen in **einer** Tabelle, aus der beide Bindungen ihre Einträge ableiten.
 - [ ] **Abstimmung mit Etappe 3** (Rasterizer, `feature/classicube-rasterizer`): Sie fügt Einträge in dieselbe Tabelle. Vor Beginn im Kanal klären, wer zuerst mergt; der zweite rebased.

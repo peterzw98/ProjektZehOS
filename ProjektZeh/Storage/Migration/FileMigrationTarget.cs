@@ -30,6 +30,9 @@ internal sealed class FileMigrationTarget(string root, Func<ResultObject<long>> 
         if (physical != directory && !physical.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new IOException("cause='MigrationPathInvalid' message='Pfad verlaesst das Ziel.'");
         var guarded = FileAccessControl.RunGuard(pathGuard, physical, creating);
+        // Fehlende Elternkomponente heisst "nicht vorhanden": eine Journalabsicht vor dem Anlegen (G5, blue) ist dann keine Ursache
+        // fuer einen Abbruch der Wiederholung (Spec E4.4 Test 4). Symlinks und fremde Mounts bleiben harte Fehler.
+        if (!guarded.IsOK() && guarded.Message.Contains("cause='Missing'", StringComparison.Ordinal)) throw new DirectoryNotFoundException(guarded.Message);
         if (!guarded.IsOK()) throw new IOException(guarded.Message);
         return physical;
     }

@@ -108,6 +108,19 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
     }
 
+    /// <summary>Eine laufende Paket-App (sie haelt Dateien im Paketbestand offen), sonst null; fuer die Energieaktion (7b).</summary>
+    public string? RunningPackage
+    {
+        get
+        {
+            lock (gate)
+            {
+                foreach (string id in inUse.Keys) return id;
+                return null;
+            }
+        }
+    }
+
     public void Release(string id)
     {
         lock (gate)

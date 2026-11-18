@@ -69,7 +69,10 @@ Eine App ohne Aufruf von `pointer_capture` verhält sich wie bisher. Der Import 
 eine App, die ihn importiert, startet dort nicht und setzt deshalb `min-kernel` (siehe unten, Veröffentlichen).
 Ab ZehOS 0.5.2 bleiben relative PS/2-Mauspakete beim Zeigerfang auch am Rand des Gastbildschirms als Deltas erhalten. Bei absoluten
 Tablets entstehen Deltas weiterhin aus Bildschirmpositionen; ihre Bewegung endet am Gastbildschirm- beziehungsweise
-Hostfensterrand. Der Desktopzeiger bleibt sichtbar.
+Hostfensterrand. Der Desktopzeiger wird solange nicht gezeichnet, wie ein Fenster den Zeiger einfängt (ab ZehOS 0.5.128, für jede App
+mit `pointer_capture`); die App zeichnet bei Bedarf selbst einen Zielpunkt. Für echtes Mouselook braucht die VM ein relatives Gerät: In QEMU
+startet `scripts/start-qemu.ps1 -RelativeMouse` ohne USB-Tablet (nur die PS/2-Maus; ein Klick ins Hostfenster fängt die Maus, Strg+Alt+G gibt sie zurück); mit Tablet
+endet die Bewegung am Rand. Das Verhalten unter VMware ist nicht geprüft.
 
 **Rasterisierung über `zehos_v1` (ab ZehOS 0.5.13):**
 
@@ -236,7 +239,7 @@ Den privaten Herausgeberschlüssel nie ins Repository, in Logs oder auf den Serv
 
 ### wamrc 2.4.5 und LLVM 18.1.8 bauen
 
-Die Werkzeuge liegen unter `.tools/aot/` und gehören nicht ins Repository. Grundlage ist die Hostprobe 5b (Branch `experiments/aot-hostprobe`, `experiments/AOT.Probe/README.md`).
+Die Werkzeuge liegen unter `.tools/aot/` und gehören nicht ins Repository. Grundlage ist die Hostprobe 5b ([Bericht](AOT_HOSTPROBE.md)).
 
 1. **LLVM 18.1.8 aus den Quellen:** `llvm-project-18.1.8.src.tar.xz` vom GitHub-Release `llvmorg-18.1.8` laden und die beiliegende Signatur (Tom Stellard) prüfen. Die Hostprobe hat den SHA-256 nur gekürzt festgehalten (`0b58557a…db2f2a`); er muss an Anfang und Ende übereinstimmen. Bauen nur für X86, ohne Clang und Tests, mit `-DCMAKE_CXX_FLAGS="-include cstdint"`, weil GCC 16 `<cstdint>` nicht mehr implizit einbindet. Das vorgebaute LLVM-18.1.8-Paket (Ubuntu 18.04) passt nicht (`wamrc` stürzt in `X86TargetMachine` ab); mit LLVM 23 baut WAMR 2.4.5 nicht (API-Brüche).
 2. **WAMR 2.4.5 mit Patch:** `WAMR-2.4.5.tar.gz` von GitHub laden und den SHA-256 `1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b` prüfen. Danach `ProjektZeh/Native/AotProbe/fixture/wamrc-noredzone.patch` anwenden: Er gibt in `aot_compile_wasm` (`core/iwasm/compilation/aot_compiler.c`) nach den LLVM-Optimierungen jeder definierten Funktion das Attribut `noredzone`. Grund: Cosmos 3.0.97 betritt Interrupts ohne Stackwechsel; ohne den Patch überschrieb ein Timer-Interrupt Werte, die der erzeugte Code unterhalb von RSP ablegt (zufällige Traps, Hänger und #GP-Paniken, [Machbarkeit](WASM_FEASIBILITY.md#messung-wasm3-gegen-aot-aot-plan-etappe-f)). `wamr-compiler` gegen das eigene, statisch gebaute LLVM bauen: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DWAMR_BUILD_WITH_CUSTOM_LLVM=1 -DLLVM_DIR=<llvm-build>/lib/cmake/llvm <wamr>/wamr-compiler && ninja` (GCC 16.2.1).

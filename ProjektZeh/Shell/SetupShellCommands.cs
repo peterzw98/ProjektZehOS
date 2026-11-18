@@ -5,24 +5,41 @@ using ProjektZeh.Shared;
 
 namespace ProjektZeh.Shell;
 
-internal sealed class SetupShellCommands(IInstallService installer, Func<bool> isAdministrator)
+/// <param name="gptEnabled">Freischaltung von --layout gpt (Spec 7a-S4); ohne sie sind Option und gpt-Spalte unsichtbar.</param>
+internal sealed class SetupShellCommands(IInstallService installer, Func<bool> isAdministrator, bool gptEnabled = false, Action<string>? trace = null)
 {
-    public ShellCommand[] Commands => [new("setup", "setup list|install <Laufwerk> [--erase]",
+    private string Usage => gptEnabled ? "setup list|install <Laufwerk> [--erase] [--layout gpt]" : "setup list|install <Laufwerk> [--erase]";
+
+    public ShellCommand[] Commands => [new("setup", Usage,
         "Installiert ZehOS auf eine Zielplatte; --erase bestaetigt das Loeschen vorhandener Partitionen.", true, Execute)];
 
     private ResultErr Execute(string[] arguments, ITextOutput output)
+    {
+        var result = ExecuteCore(arguments, trace == null ? output : new TraceOutput(output, trace));
+        trace?.Invoke(result.IsOK() ? "RESULT OK" : "RESULT ERROR " + result.Message);
+        return result;
+    }
+
+    private ResultErr ExecuteCore(string[] arguments, ITextOutput output)
     {
         if (!isAdministrator()) return ResultErr.CreateFailure(ResultCode.Failure, "Die Installation erfordert Administratorrechte.");
         if (arguments.Length == 1 && arguments[0] == "list")
         {
             var disks = installer.GetDisks();
             if (!disks.IsOK()) return disks.Status;
-            foreach (var disk in disks.Value!) output.WriteLine($"{disk.Name}: {disk.SizeBytes} Bytes, {disk.ContentText}");
+            foreach (var disk in disks.Value!)
+            {
+                string line = $"{disk.Name}: {disk.SizeBytes} Bytes, {disk.ContentText}";
+                if (gptEnabled) line += disk.GptBlockedReason is { } reason ? $", gpt: nein ({reason})" : ", gpt: ja";
+                output.WriteLine(line);
+            }
             return ResultErr.CreateSuccess();
         }
-        if (arguments.Length is 2 or 3 && arguments[0] == "install" && (arguments.Length == 2 || arguments[2] == "--erase"))
+        if (arguments.Length >= 2 && arguments[0] == "install" && TryParseOptions(arguments, out bool erase, out bool gpt))
         {
-            var begin = installer.Begin(arguments[1], arguments.Length == 3);
+            if (gpt && !erase)
+                return ResultErr.CreateFailure(ResultCode.Failure, "GPT-Installation loescht die ganze Platte, auch ein dort installiertes ZehOS samt Konten und /home; --erase erforderlich.");
+            var begin = gpt ? installer.BeginGpt(arguments[1], erase) : installer.Begin(arguments[1], erase);
             if (!begin.IsOK()) return begin.Status;
             var job = begin.Value!;
             InstallStage? previous = null;
@@ -36,6 +53,29 @@ internal sealed class SetupShellCommands(IInstallService installer, Func<bool> i
             output.WriteLine($"ZehOS {installer.ProductVersion} installiert. Installationsmedium entfernen und neu starten.");
             return ResultErr.CreateSuccess();
         }
-        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: setup list|install <Laufwerk> [--erase]");
+        return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: " + Usage);
+    }
+
+    private sealed class TraceOutput(ITextOutput output, Action<string> trace) : ITextOutput
+    {
+        public void WriteLine(string text) { output.WriteLine(text); trace("OUTPUT " + text); }
+        public void Clear() => output.Clear();
+    }
+
+    // Jede Option hoechstens einmal; --layout kennt nur gpt und nur mit Freischaltung.
+    private bool TryParseOptions(string[] arguments, out bool erase, out bool gpt)
+    {
+        erase = gpt = false;
+        for (int index = 2; index < arguments.Length; index++)
+        {
+            if (arguments[index] == "--erase" && !erase) erase = true;
+            else if (arguments[index] == "--layout" && gptEnabled && !gpt && index + 1 < arguments.Length && arguments[index + 1] == "gpt")
+            {
+                gpt = true;
+                index++;
+            }
+            else return false;
+        }
+        return true;
     }
 }

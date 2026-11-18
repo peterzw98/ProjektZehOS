@@ -207,6 +207,8 @@ internal static class LayoutMigration
         {
             cancellation.ThrowIfCancellationRequested();
             if (known.Contains(path)) continue;
+            // e2fsck legt es nach einem Abbruch an (G5, blue); ein Inhalt darin bleibt fremd und meldet ForeignEntry.
+            if (path == LostAndFound) continue;
             if (path.EndsWith(IMigrationTarget.BackupSuffix, StringComparison.Ordinal) &&
                 writable.Contains(path[..^IMigrationTarget.BackupSuffix.Length]))
             {
@@ -245,6 +247,8 @@ internal static class LayoutMigration
         }
         return DeleteTolerant(target, MigrationJournal.Path);
     }
+
+    private const string LostAndFound = "/lost+found";
 
     private static ResultErr Foreign(string path) =>
         ResultErr.CreateFailure(ResultCode.Failure, $"cause='ForeignEntry' message='Fremder Eintrag auf dem Ziel: {path}; nur Neuinstallation moeglich.'");

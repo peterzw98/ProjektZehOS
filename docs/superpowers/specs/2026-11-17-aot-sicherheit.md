@@ -1,6 +1,6 @@
 # AOT-Laufzeit: Sicherheitsbewertung (ClassiCube-Plan, Etappe 5a)
 
-Stand 17. November 2026, erstellt von agent-scientist auf Zuweisung des Koordinators (Etappe A des [Umsetzungsplans](../plans/2026-11-17-aot-kernel.md), Branch `docs/aot-5c-plan`). Grundlage: Übergabe `2026-11-17-aot-laufzeit-handoff.md` (Branch `docs/aot-handoff`), Hostprobe 5b (`experiments/AOT.Probe/README.md`, Branch `experiments/aot-hostprobe`), Quellen von WAMR 2.4.5 und das GitHub-Repository `bytecodealliance/wasm-micro-runtime` (abgerufen am 17. November 2026). Nichts gebaut oder im Gast gemessen.
+Stand 17. November 2026, erstellt von agent-scientist auf Zuweisung des Koordinators (Etappe A des [Umsetzungsplans](../plans/2026-11-17-aot-kernel.md), Branch `docs/aot-5c-plan`). Grundlage: Übergabe `2026-11-17-aot-laufzeit-handoff.md` (Branch `docs/aot-handoff`), Hostprobe 5b ([Bericht](../../AOT_HOSTPROBE.md)), Quellen von WAMR 2.4.5 und das GitHub-Repository `bytecodealliance/wasm-micro-runtime` (abgerufen am 17. November 2026). Nichts gebaut oder im Gast gemessen.
 
 **Peter entscheidet die vier Punkte in Abschnitt 5, bevor Kernelcode entsteht.**
 
