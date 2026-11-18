@@ -203,26 +203,26 @@ internal static unsafe partial class WasmRuntime
         // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
         // laeuft: Cosmos reiht ihn nur ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und
         // CosmosRoundRobinScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
+        // catch statt finally: Auch wenn das Aufraeumen unerwartet wirft, erhalten Lauf und Warteschlange ihr Ende und
+        // die Isolation wird gezaehlt (Review senior).
         bool clean;
         try { clean = ReleaseRunResources(); }
-        finally
+        catch (Exception) { clean = false; }
+        lock (gate)
         {
-            lock (gate)
+            cleaningUp = false;
+            if (!retiredNow)
             {
-                cleaningUp = false;
-                if (!retiredNow)
-                {
-                    // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App
-                    // startet den Worker ueber EnqueueLoaded erneut.
-                    var started = StartWorkerLocked();
-                    if (!started.IsOK()) restart = started.Message;
-                }
-                // Ohne Worker laeuft die Warteschlange nie an; ihre Fenster erhalten ein Ende statt "beschaeftigt".
-                if (worker == null)
-                {
-                    dropped = jobs.Drain();
-                    pending -= dropped.Count;
-                }
+                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App
+                // startet den Worker ueber EnqueueLoaded erneut.
+                var started = StartWorkerLocked();
+                if (!started.IsOK()) restart = started.Message;
+            }
+            // Ohne Worker laeuft die Warteschlange nie an; ihre Fenster erhalten ein Ende statt "beschaeftigt".
+            if (worker == null)
+            {
+                dropped = jobs.Drain();
+                pending -= dropped.Count;
             }
         }
         Interlocked.Increment(ref isolatedRuns);
