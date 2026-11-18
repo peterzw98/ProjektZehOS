@@ -25,7 +25,10 @@ NICKCHARS = r"[A-Za-z0-9_\-\[\]\\^{}|`]+"
 # Wie teambot.PREFIX: "nick1 nick2: text"; Trenner zwischen Nicks ist Pflicht, sonst backtrackt der Ausdruck exponentiell
 PREFIX = re.compile(rf"^((?:{NICKCHARS}[ ,]+)*{NICKCHARS}:)\s+(.*)$")
 HEADER = re.compile(rf"^(?:{NICKCHARS}[ ,]+)*{NICKCHARS}:$")
-MAX_LINES = 5
+MAX_LINES = 100
+IRC_PAYLOAD_BYTES = 390
+MESSAGE_INTERVAL = 1
+SIGNED_LINE = re.compile(r"\[id=\d+ t=\d+ sig=[A-Za-z0-9+/=]+\]$")
 MIN_TEXT = 40
 TOPIC_DEBOUNCE = 2
 TOPIC_WINDOW = 600
@@ -47,6 +50,10 @@ def parse(line):
     return prefix.split("!", 1)[0], command, params
 
 
+def has_signed_line(text):
+    return any(SIGNED_LINE.search(row) for row in text.splitlines())
+
+
 def irc_lines(text, message_id, limit=200):
     """Split a Discord message into IRC lines of about `limit` UTF-8 bytes (room left for the signature).
 
@@ -62,7 +69,7 @@ def irc_lines(text, message_id, limit=200):
         prefix, rows[0] = match.group(1) + " ", match.group(2)
     elif rows and HEADER.match(rows[0]) and len(rows) > 1:
         prefix, rows = rows[0] + " ", rows[1:]
-    budget = limit - len(prefix.encode()) - len(f" (99/99 m={message_id})".encode())
+    budget = limit - len(prefix.encode()) - len(f" ({MAX_LINES}/{MAX_LINES} m={message_id})".encode())
     if budget < MIN_TEXT:
         raise ValueError(f"nick prefix of {len(prefix.encode())} bytes leaves no room for text")
     out = []
@@ -74,13 +81,28 @@ def irc_lines(text, message_id, limit=200):
             out.append(raw[:n])
             raw = raw[n:]
     total = len(out)
-    if total > 1:
-        # Die Zählung nennt die volle Teilzahl; eine gekappte Nachricht bleibt so erkennbar unvollständig.
-        out = [f"{line} ({i + 1}/{total} m={message_id})" for i, line in enumerate(out)]
     if total > MAX_LINES:
-        # shortcut: lange Discord-Nachrichten werden gekappt, statt Flood-Schutz des Servers zu riskieren
-        out = out[:MAX_LINES] + [f"[… {total - MAX_LINES} more lines on Discord] (m={message_id})"]
+        raise ValueError(f"message needs more than {MAX_LINES} IRC parts")
+    if total > 1:
+        if has_signed_line(text):
+            raise ValueError("already signed lines must not be split")
+        out = [f"{line} ({i + 1}/{total} m={message_id})" for i, line in enumerate(out)]
     return [prefix + line for line in out]
+
+
+def discord_lines(text, limit=2000):
+    if len(text) <= limit:
+        return [text]
+    if has_signed_line(text):
+        raise ValueError("already signed lines must not be split")
+    budget = limit - len(f" ({MAX_LINES}/{MAX_LINES})")
+    if budget <= 0:
+        raise ValueError("Discord part limit is too small")
+    total = (len(text) + budget - 1) // budget
+    if total > MAX_LINES:
+        raise ValueError(f"message needs more than {MAX_LINES} Discord parts")
+    return [text[start:start + budget] + f" ({i + 1}/{total})"
+            for i, start in enumerate(range(0, len(text), budget))]
 
 
 def signed_payload(channel, user_id, timestamp, text):
@@ -130,6 +152,8 @@ class Bridge(discord.Client):
         self.topic_pending = {}  # Kanal -> (neuester Solltext, frühester Versuch)
         self.topic_attempts = {}  # Kanal -> höchstens zwei monotone Zeitpunkte
         self.topic_task = None
+        self.message_lock = asyncio.Lock()
+        self.last_message_sent = None
         self.members = {}  # IRC-Kanal (klein) -> Nicks, für Präsenz und QUIT/NICK-Meldungen
 
     async def setup_hook(self):
@@ -231,15 +255,23 @@ class Bridge(discord.Client):
     async def on_irc(self, nick, command, params):
         if command == "PRIVMSG" and len(params) == 2 and params[0].lower() in self.channels:
             target, text = params
-            text = FORMAT_CODES.sub("", text)
+            if not has_signed_line(text):
+                text = FORMAT_CODES.sub("", text).replace("@", "＠")
             action = text.startswith("\x01ACTION ") and text.endswith("\x01")
             if action:
                 text = f"*{discord.utils.escape_markdown(nick)} {text[8:-1]}*"
-            embed = discord.Embed(description=text[:4096], color=nick_color(nick),
-                                  timestamp=datetime.datetime.now(datetime.timezone.utc))
-            embed.set_author(name=nick)
-            embed.set_footer(text=f"{target} · IRC")
-            await self.post(target, embed)
+            try:
+                parts = discord_lines(text)
+            except ValueError as error:
+                print(f"not relayed to Discord: {error}", flush=True)
+                await self.event(target, f"⚠️ IRC message not relayed: {error}")
+                return
+            for part in parts:
+                embed = discord.Embed(description=part, color=nick_color(nick),
+                                      timestamp=datetime.datetime.now(datetime.timezone.utc))
+                embed.set_author(name=nick)
+                embed.set_footer(text=f"{target} · IRC")
+                await self.post(target, embed)
         elif command == "353" and len(params) >= 4:
             self.members.setdefault(params[2].lower(), set()).update(n.lstrip("~&@%+") for n in params[3].split())
         elif command == "JOIN" and params:
@@ -327,28 +359,51 @@ class Bridge(discord.Client):
         if self.writer is None:
             await message.add_reaction("⚠️")
             return
-        text = message.clean_content
+        text = message.clean_content.replace("@", "＠")
         for attachment in message.attachments:
             text += "\n" + attachment.url
+        # IRC-Steuerzeichen dürfen weder zusätzliche Befehle noch unsichtbare Textteile einschleusen.
+        text = "".join(c for c in text if unicodedata.category(c) != "Cc" or c in "\n\r\t")
+        name = clean_topic(message.author.display_name).replace(" ", "_").replace("<", "_").replace(">", "_")
+        name = name.encode()[:24].decode(errors="ignore") or "Discord"
+        user_id = message.author.id
+        timestamp = int(message.created_at.timestamp())
         try:
-            lines = irc_lines(text, message.id)
-        except ValueError as error:
+            async with self.message_lock:
+                writer = self.writer
+                if writer is None:
+                    raise ConnectionError("IRC disconnected before message")
+                # Signaturlänge hängt am Schlüssel; mit Reserve berechnen und alle fertigen Zeilen erneut prüfen.
+                sample = await sign(signed_payload(target, user_id, timestamp, ""))
+                overhead = len(f"<{name}>  [id={user_id} t={timestamp} sig={sample}]".encode()) + 8
+                lines = irc_lines(text, message.id, limit=min(200, IRC_PAYLOAD_BYTES - overhead))
+                packets = []
+                for line in lines:
+                    sig = await sign(signed_payload(target, user_id, timestamp, line))
+                    payload = f"<{name}> {line} [id={user_id} t={timestamp} sig={sig}]"
+                    if len(payload.encode()) > IRC_PAYLOAD_BYTES:
+                        raise ValueError("signed IRC line exceeds byte budget")
+                    packets.append(f"PRIVMSG {target} :{payload}")
+                age = time.time() - timestamp
+                if age < -60 or age + len(packets) * MESSAGE_INTERVAL > 600:
+                    raise ValueError("message falls outside signature time window")
+                for packet in packets:
+                    if self.last_message_sent is not None:
+                        delay = self.last_message_sent + MESSAGE_INTERVAL - time.monotonic()
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                    if self.writer is not writer:
+                        raise ConnectionError("IRC connection changed during message")
+                    self.last_message_sent = time.monotonic()
+                    writer.write((packet + "\r\n").encode())
+                    await writer.drain()
+        except (OSError, RuntimeError, ValueError) as error:
+            # Nie einen unsignierten Ersatz oder einen Restsatz über eine neue Verbindung senden.
             print(f"not forwarded: {error}", flush=True)
             await message.add_reaction("⚠️")
-            return
-        name = message.author.display_name.replace(" ", "_")[:24]
-        user_id = message.author.id
-        try:
-            for line in lines:
-                timestamp = int(message.created_at.timestamp())
-                sig = await sign(signed_payload(target, user_id, timestamp, line))
-                self.send_irc(f"PRIVMSG {target} :<{name}> {line} [id={user_id} t={timestamp} sig={sig}]")
-        except (OSError, RuntimeError) as error:
-            # Unsigniert nichts weiterleiten: Freigaben hängen an gültiger Signatur
-            print(f"signing failed: {error}", flush=True)
-            await message.add_reaction("⚠️")
-        if self.writer:
-            await self.writer.drain()
+            reason = str(error) if isinstance(error, ValueError) else "IRC forwarding interrupted; resend the complete message"
+            await message.reply(f"⚠️ Not forwarded completely: {reason}", mention_author=False)
+
 
 
 if __name__ == "__main__":

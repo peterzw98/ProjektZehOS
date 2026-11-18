@@ -22,3 +22,19 @@ IRC-Formatierung und Steuerzeichen werden bereinigt, `@` wird durch `＠` ersetz
 Der Bot benötigt **Manage Channels**. Fehlt diese Berechtigung, wird der Fehler protokolliert und dieser Stand verworfen; nach manueller Korrektur der Rechte einen neuen Topic-Abgleich auslösen (Topic ändern oder Bridge neu verbinden). Temporäre HTTP-/Verbindungsfehler werden protokolliert und frühestens nach 30 Sekunden erneut versucht, weiterhin innerhalb des Zehn-Minuten-Limits. Die Bridge ändert keine Rechte selbst.
 
 Jeder Topic-API-Aufruf hat eine Frist von zehn Sekunden. Wartet discord.py intern auf ein serverseitiges Rate-Limit, wird dieser Versuch danach abgebrochen; andere Kanäle werden weiterbearbeitet. Der neueste Sollstand bleibt für einen späteren Versuch vorgemerkt.
+
+## Lange Nachrichten
+
+Discord-Nachrichten werden vollständig als `(i/n m=<Discord-Nachrichten-ID>)` ins IRC gesendet; das bisherige Abschneiden nach fünf Teilen entfällt. Ein führendes Empfängerpräfix wie `agent-x agent-y:` steht weiterhin in jedem Teil. Auch dreistellige Teilnummern und UTF-8-Grenzen werden berücksichtigt.
+
+Die Bridge erlaubt höchstens **100 Teile pro Nachricht**. Benötigt der Text mehr Teile oder bleibt neben einem langen Empfängerpräfix zu wenig Textplatz, wird die gesamte Nachricht vor dem ersten Versand abgelehnt. Der Absender erhält eine Warnreaktion und eine erklärende Antwort in Discord. Es gibt keinen gekappten Ersatztext. Unverändert gilt: die Bridge leitet nur Nachrichten aus den zugeordneten Kanälen weiter.
+
+Jeder Teil wird separat signiert. Erst wenn alle fertigen signierten Zeilen in das Budget von 390 UTF-8-Bytes IRC-Nutzlast passen, beginnt der Versand. Dieses Budget umfasst Anzeigename, Text und Signaturmetadaten; der Textplatz wird aus der tatsächlichen Signaturlänge berechnet. Anzeigenamen werden für den IRC-Rahmen bereinigt und auf 24 UTF-8-Bytes begrenzt. Mentions werden mit `＠` neutralisiert, IRC-Steuerzeichen entfernt.
+
+Ein gemeinsames Sendelock hält Nachrichtensätze zusammen. Zwischen zwei IRC-Nachrichten liegen mindestens eine Sekunde und nach jeder Zeile wird der Stream geleert. Wechselt die IRC-Verbindung oder scheitert der Versand, stoppt der Restsatz; eine neue Verbindung erhält keine automatische Fortsetzung. Die Warnantwort fordert dann zum erneuten Senden der vollständigen Nachricht auf. Der ursprüngliche Discord-Zeitstempel bleibt erhalten; Nachrichten außerhalb des Signaturzeitfensters werden abgelehnt.
+
+**Freigaben:** `verify.sh` bleibt unverändert ein Prüfer einer einzigen vollständigen Originalzeile. `valid id=...` belegt nur deren Signatur und Zeitfenster. Bei Mehrteilern zählt ausschließlich der vollständige Satz: gleiche `m=`-ID, gleicher Absender und Kanal, gleiche Teilzahl, alle Teile von 1 bis n lückenlos und in Reihenfolge, jeder unverändert und gültig signiert, innerhalb des Zeitfensters. Einzelteile, fehlende, doppelte, vertauschte oder fremde Teile ergeben keine Freigabe. Teile niemals zu einer scheinbar neuen signierten Zeile zusammensetzen. Diese Satzprüfung bleibt Aufgabe des Empfängers; die Bridge führt keinen neuen Freigabeprüfer ein.
+
+IRC-Nachrichten werden in Discord bei Bedarf vollständig in nummerierte Embed-Beschreibungen mit höchstens 2000 Zeichen aufgeteilt, ebenfalls höchstens 100 Teile. Bereits signierte Originalzeilen werden weder bereinigt noch nachträglich aufgeteilt; ein zu großes signiertes Original wird sichtbar abgelehnt. API-Rate-Limits behandelt weiterhin discord.py.
+
+Der Selbsttest prüft Teilfolge, IDs, Grenzwerte, UTF-8, Mentions, Abstände, parallele Nachrichten und Verbindungswechsel. `scripts/tests/test_bridge_signatures.py` verwendet einen ausschließlich temporären eigenen GPG-Testschlüssel: Jeder Teil ist einzeln verifizierbar, veränderte oder zusammengesetzte Texte passen nicht zur Signatur. Der unveränderte Bridge-Fingerabdruck in `verify.sh` lehnt diesen Testschlüssel ab.
