@@ -37,7 +37,10 @@ den zitierten Text suchen.
 | 7 | Oberfläche verlässt CPU 0, Hyperthreads, Panic, Energie | [e6-e7-verteilung](2026-11-18-multicore-e6-e7-verteilung.md) | Etappe 6 |
 | 8 | Basiswechsel auf ein Cosmos-Release mit SMP | Abschnitt unten | ein solches Release |
 
-Sofort beginnen können die Etappen 0, 1 und 4, nebeneinander. Innerhalb jeder Etappe nennt die Etappendatei, welche
+Technisch können die Etappen 0, 1 und 4 sofort und nebeneinander beginnen. Zur Einordnung in die übrige Arbeit hat der
+Koordinator am 18. November 2026 im IRC Peters Reihenfolge weitergegeben: Storage und ClassiCube zuerst, dann der
+Cosmos-Eigenbau, dann 12.4; Etappe 1 darf laufen, ohne Test- und Review-Kapazität der anderen Arbeitsgruppen zu
+binden; die Etappen 2 und 3 beginnen erst nach dem Merge von Storage 7a-S4 und 7b. Innerhalb jeder Etappe nennt die Etappendatei, welche
 Pakete nebeneinander laufen können; Pakete mit demselben Buchstaben-Präfix und verschiedener Nummer (etwa `E2-P1`,
 `E2-P2`) sind dafür geschnitten.
 
