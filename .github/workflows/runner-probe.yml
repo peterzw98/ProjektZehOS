@@ -1,14 +1,11 @@
 name: Self-hosted runner probe
 
 # Prueft, was der self-hosted Runner 'MSI' fuer die QEMU-Jobs (guest, guest-recovery) bietet.
-# Laeuft nur von Hand oder beim Push auf den Arbeitsbranch dieser Pruefung; er liest nur, installiert nichts und aendert nichts am Rechner.
+# Laeuft nur von Hand (Actions -> Run workflow); er liest nur, installiert nichts und aendert nichts am Rechner.
 # Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf diesen Runner (siehe ci.yml, runs-on der QEMU-Jobs).
 
 on:
   workflow_dispatch:
-  push:
-    branches: [task/ci-self-hosted-runner]
-    paths: ['.github/workflows/runner-probe.yml']
 
 permissions:
   contents: read
