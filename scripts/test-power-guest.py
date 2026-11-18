@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gastabnahme der Energieaktionen P1-P4 (Etappe 7b, Spec 2026-11-17-storage-7b-updates-power.md §4) fuer Linux/KVM.
 
-Die Faelle stehen als Daten in scripts/power_cases.json; P5-P6 sind dort als offen gefuehrt. Jeder Fall laeuft in
+Die Faelle stehen als Daten in scripts/power_cases.json. Jeder Fall laeuft in
 einem NEUEN Arbeitsordner auf einer eigenen Sparse-Kopie (cp --sparse=always); --root-disk und andere vorhandene
 Images werden nie beschrieben. Erfolg hat keine eigene serielle Zeile: entscheidend sind die Offlinepruefungen nach
 dem Ende von QEMU (Fehler der Energieaktion erscheinen als Shellfehler, etwa cause='PowerBusy').
@@ -16,7 +16,7 @@ Benoetigte Builds und Platten:
   (Shellbefehl powerfault, serielle Zeile POWER_FAULT <punkt>); dieser Build gehoert nie in ein Release.
 Werkzeuge: sfdisk, fsck.fat, e2fsck, dumpe2fs, mtools (mtype), debugfs.
 
-Exitcodes: 0 = alle ausgewaehlten Faelle bestanden (P5-P6 bleiben offen), 1 = mindestens ein Fall gescheitert.
+Exitcodes: 0 = alle ausgewaehlten Faelle bestanden, 1 = mindestens ein Fall gescheitert.
 """
 import argparse
 import errno
@@ -381,21 +381,25 @@ def run_fault(args, case: Path, spec: dict) -> None:
 
 
 def seed_root(image: Path, case: Path, repo: Path, target: str) -> None:
-    """Legt das signierte Paketverzeichnis offline auf die Root-Partition der Kopie (debugfs, dann zurueck an ihren Platz)."""
-    part = find_partition(image, ROOT_TYPE)
-    root = extract_sparse(image, part, case / "root-seed.img")
-    commands = [f"mkdir {target}"]
-    for path in sorted(repo.rglob("*")):
-        inside = f"{target}/{path.relative_to(repo).as_posix()}"
-        commands.append(f"mkdir {inside}" if path.is_dir() else f"write {path.resolve()} {inside}")
+    """Legt einen Ordner offline auf die Root-Partition der Kopie (debugfs direkt ueber ?offset=, kein Zurueckkopieren)."""
+    device = f"{image}?offset={find_partition(image, ROOT_TYPE)['start'] * SECTOR}"
+    files = {f"{target}/{path.relative_to(repo).as_posix()}": path for path in sorted(repo.rglob("*"))}
+    commands = [f'mkdir "{target}"']
+    for inside, path in files.items():
+        commands.append(f'mkdir "{inside}"' if path.is_dir() else f'write "{path.resolve()}" "{inside}"')
     script = case / "seed.debugfs"
     script.write_text("\n".join(commands) + "\n", encoding="utf-8")
-    result = subprocess.run(["debugfs", "-w", "-f", str(script), str(root)], capture_output=True, text=True, check=False)
-    if result.returncode != 0 or "rror" in result.stderr:
-        raise RuntimeError(f"debugfs konnte das Paket nicht ablegen: {result.stderr[-400:]!r}")
-    subprocess.run(["dd", f"if={root}", f"of={image}", "bs=1M", f"seek={part['start'] * SECTOR}", "oflag=seek_bytes",
-                    "conv=notrunc,sparse", "status=none"], check=True)
-    root.unlink()
+    result = subprocess.run(["debugfs", "-w", "-f", str(script), device], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"debugfs Exit {result.returncode}: {result.stderr[-400:]!r}")
+    # debugfs meldet Fehler einzelner Befehle nicht im Exitcode; deshalb jede Datei mit ihrer Groesse nachpruefen.
+    for inside, path in files.items():
+        if path.is_dir():
+            continue
+        stat = subprocess.run(["debugfs", "-R", f'stat "{inside}"', device], capture_output=True, text=True, check=False)
+        size = re.search(r"Size: (\d+)", stat.stdout)
+        if not size or int(size.group(1)) != path.stat().st_size:
+            raise RuntimeError(f"{inside} fehlt oder hat die falsche Groesse auf der Root-Kopie: {stat.stderr[-200:]!r}")
 
 
 def run_package(args, case: Path, spec: dict) -> None:
@@ -504,6 +508,9 @@ def run_update(args, case: Path, spec: dict) -> None:
         guest.ready(args.timeout, extra=ROOT_READY)
         version_a = booted_version(guest, 0)
         print(f"  gestartet: {version_a}", flush=True)
+        # Nur unterschiedliche Versionen belegen, welcher Kernel laeuft; bei gleicher Nummer waere P5 ohne Aussage.
+        if version_a.split("+")[0] == version_b:
+            raise RuntimeError(f"Kernel A und B tragen dieselbe Version {version_b}; B mit hoeherer -p:Version bauen")
         storage.login(guest.qmp, run, first=args.root_first_setup)
         guest.to_textshell()
         written = write_file(guest, spec["write"], spec["id"])
@@ -515,7 +522,7 @@ def run_update(args, case: Path, spec: dict) -> None:
         guest.power("reboot", expect_exit=False)
         guest.ready(args.timeout, start, extra=ROOT_READY)
         after = booted_version(guest, start)
-        if not after.startswith(version_b):
+        if after.split("+")[0] != version_b:
             raise RuntimeError(f"Nach dem Neustart laeuft {after}, erwartet {version_b}")
         print(f"  nach Neustart: {after}", flush=True)
         storage.login(guest.qmp, run, first=False)
@@ -550,6 +557,10 @@ def run_update(args, case: Path, spec: dict) -> None:
         guest.qmp = qmp
         guest.ready(args.timeout, extra=ROOT_READY)
         fallback = booted_version(guest, 0)
+        # Der Rueckfalleintrag startet mit 1024x768 (limine.conf des Installers), der Standardeintrag mit 1920x1080.
+        width, height = guest.qmp.shot(run / "rueckfall-gestartet.png")
+        if (width, height) != (1024, 768):
+            raise RuntimeError(f"Rueckfallstart mit {width}x{height}, erwartet 1024x768 (Eintrag 'vorherige Version')")
         if fallback != version_a:
             raise RuntimeError(f"Rueckfalleintrag startet {fallback}, erwartet {version_a}")
         print(f"  Rueckfalleintrag startet {fallback} (Kernel A)", flush=True)
