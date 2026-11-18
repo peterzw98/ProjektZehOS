@@ -75,8 +75,8 @@ public sealed class DiagnosticCommandTests
             Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
         }
         finally { Runtime.Wasm.WasmEngineSelection.AotEnabled = false; }
-        output.Verify(target => target.WriteLine("WAMR-AOT aus (Kennung wamr245-aot5-x64-bc)."), Times.Exactly(2));
-        output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc)."), Times.Once);
+        output.Verify(target => target.WriteLine("WAMR-AOT aus (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Exactly(2));
+        output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Once);
         // Der Hostbuild enthaelt kein WAMR; die Shell sagt das bei jeder Abfrage.
         output.Verify(target => target.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3."), Times.Exactly(3));
     }

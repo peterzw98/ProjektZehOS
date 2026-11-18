@@ -212,7 +212,7 @@ for ACCEL in kvm tcg; do for AOT in off on; do
 done; done
 ```
 
-Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
+Der Gastspeicher ist für `--id classicube` 1 GiB, sonst 512 MiB (`-m`/`--memory` überschreibt): ClassiCube braucht mindestens 768 MiB, und mit 512 MiB lag die Bildrate im Vergleich vom 18. November 2026 (Seed 5, stehend, KVM, je 2 Läufe) bei 16,3 statt 20,0 avg fps. Ältere ClassiCube-Reihen in diesem Dokument liefen mit 512 MiB und sind dadurch zu niedrig. Mit `--move` hält das Skript während der Messung abwechselnd W/A/S/D (bewegte Kamera, fester Tastenpfad); jede Zusammenfassung nennt zusätzlich die durchschnittliche Bildrate (`avg fps` = Bilder des letzten 60-s-Fensters / 60), die Messlatte für ClassiCube. Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
 
 ### Ergebnisse (Stand 17. November 2026)
 
@@ -227,15 +227,55 @@ Gemessen von agent-laser-right-tester (Linux, KVM und TCG, Stand `3060e5a`), age
 
 Doom zeigt den erwarteten Gewinn: Der App-Anteil sinkt unter AOT von 18 ms auf 0,4 ms je Bild. Was übrig bleibt, sind Desktop, Skalierung und Anzeige. ClassiCube ist unter wasm3 durch das Rastern im Host begrenzt (siehe die Messung der Sichtweite weiter oben). AOT würde dort nur den Gastanteil verkleinern.
 
-**Befund AOT: Red Zone (Hypothese mit Belegen).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Wahrscheinliche Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
+**Befund AOT: Red Zone (durch Gegenprobe belegt).** Die Fehler unter AOT sind zufällig: Trap, Hänger, #GP mit Müll-RIP, je nach Lauf. Kein Hostaufruf trappt dabei, und keine Speicheranforderung scheitert (Diagnosekernel mit Protokoll jedes `os_mmap`/`os_mremap`: `memory.grow` bis 16 MiB ohne NULL). Ursache ist die 128-Byte-Red-Zone der System-V-ABI:
 
 - Der von wamrc erzeugte Code legt in Blattfunktionen Werte unterhalb von RSP ab. `objdump` zählt Schreibzugriffe `mov reg,-0x..(%rsp)`: 229 in `classicube.aot`, 107 in `doom.aot`.
 - Cosmos 3.0.97 betritt Interrupts im Ring 0 ohne IST und ohne Stackwechsel (`CPU/Interrupts.s`). CPU-Frame und gesicherte Register landen direkt unter dem aktuellen RSP. Ein Timer-Interrupt in einer solchen Blattfunktion überschreibt deren lokale Werte.
 - Der Kernel-C-Code (wasm3, WAMR-Lader, Hostfunktionen, C-Laufzeit) nutzt die Red Zone gemessen nicht: 0 Treffer in allen C-Objekten. Das passt dazu, dass die Fehler nur unter AOT auftreten.
 
-wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Nötig ist ein wamrc, der allen erzeugten Funktionen das LLVM-Attribut `noredzone` gibt. Das bedeutet eine neue zugelassene Prüfsumme in `scripts/build-package.py` und eine neue AOT-Kennung, damit vorhandene `.aot` nicht mehr geladen werden. Die Entscheidung darüber liegt bei Peter. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Zone-Option). Deshalb gibt ein Patch (`ProjektZeh/Native/AotProbe/fixture/wamrc-noredzone.patch`, Bauanleitung in [PAKETE_ERSTELLEN.md](PAKETE_ERSTELLEN.md)) allen erzeugten Funktionen das LLVM-Attribut `noredzone`. Gegenprobe von agent-laser-RED (je 10 Läufe Doom und ClassiCube unter TCG und KVM): mit dem alten `.aot` 17 von 40 Läufen mit Trap, Stillstand oder #GP-Panik (ClassiCube TCG 10/10, ClassiCube KVM 3/10, Doom TCG 4/10 mit stets derselben RSP, Doom KVM 0/10), mit dem gepatchten wamrc 0 von 40; die Bildzeiten sind gleich. `objdump` findet in den neuen `doom.aot`/`classicube.aot` und in den Probe-Fixtures keinen Zugriff unterhalb von RSP mehr.
 
-Für Nutzer besteht derzeit kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` ist auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Bis zu einem wamrc mit `noredzone` bleibt AOT ein Diagnoseweg; die Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind damit offen. Bewiesen ist die Ursache erst, wenn ein Diagnosebau mit `noredzone` die Fehler beseitigt; dieser Bau mit je 10 Vergleichsläufen ist beauftragt.
+Peter hat am 17. November 2026 freigegeben, das gepatchte wamrc zu übernehmen. `scripts/build-package.py` lässt nur noch dieses wamrc zu (das frühere ohne Patch ist aus `WAMRC_SHA256` entfernt), und die AOT-Kennung heißt jetzt `wamr245-aot5-x64-bc-nrz` in Werkzeug und Kernel. Ein Kernel mit der neuen Kennung findet `.aot` des alten wamrc nicht mehr und startet die App unter wasm3. Rückweg: Kennung und Prüfsumme zurücksetzen; wasm3 bleibt immer der Rückfall. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
+
+Für Nutzer besteht kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` bleibt auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Eingeschaltet wird AOT erst, wenn zu jeder Veröffentlichung eines Pakets mit `.aot` mindestens 10 Gastläufe je App unter KVM und TCG ohne Trap belegt sind. Wiederholbare Gegenprobe mit dem Messskript (gescheiterte Läufe zählt die Zusammenfassung als `None`, das Skript läuft weiter):
+
+```sh
+for ACCEL in kvm tcg; do
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 10 --seconds 90 --aot on $DOOM
+  python3 scripts/measure-wasm-frametimes.py --iso $ISO --accel $ACCEL --runs 10 --seconds 90 --aot on $CC
+done
+grep -h "Ende: App abgebrochen\|EXCEPTION\|Panic" .tools/frametimes/*/lauf*/serial.log   # muss leer bleiben
+```
+
+Die übrigen Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind offen. Für ClassiCube bringt AOT wenig, weil das Rastern schon nativ im Kernel läuft.
+
+### Leistung und Langzeitstabilität mit wamrc-noredzone (18. November 2026)
+
+Gemessen von agent-laser-RED unter Linux (QEMU 10.2.2, Kernel `1227e60` mit `-p:ZehOSWasmAot=true` und Testschlüssel, `.aot` aus dem gepatchten wamrc). Dieser Kernel stammt von vor der Umstellung der Kennung und lädt `.aot` unter `wamr245-aot5-x64-bc`; die gepatchten Dateien liefen deshalb unter dem alten Namen, die neue Kennung `-nrz` ist hier nicht mitgeprüft. Die Treiberskripte und Rohdaten liegen nur lokal; hier stehen Methode und Ergebnis.
+
+**wasm3 gegen AOT, je 5 Paare.** KVM, ein Gast gepinnt auf einen Kern, Hostlast 1,2–1,5, Diagnosekernel mit Anteilszeilen (Raster gegen übrige App-Zeit), wasm3 und AOT abwechselnd mit demselben Paket, gewertet das letzte 60-s-Fenster (avg fps = Bilder/60). Doom 1.1.0 im Demo, ClassiCube 1.0.0 stehend am Spawnpunkt mit dem Standardspeicher des Messskripts (512 MiB).
+
+| App | wasm3 avg fps | AOT avg fps | weitere Werte |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | 50,8 (49,5–51,6) | 68,5 (68,2–68,7), +35 % | p95 40 → 30 ms, max 204–283 → 89–110 ms, App-Anteil Median 3,2 → 0,3 ms |
+| ClassiCube 1.0.0 | 27,0 | 30,2 | Spannweite je Laufzeit 23,6–38,6; App-Zeit = Raster-Zeit bis auf < 1 ms |
+
+Für Doom ist der Gewinn belastbar. Für ClassiCube ist der Unterschied nicht belegt: Er liegt in der Streuung, und fast die ganze Bildzeit ist Rastern im Kernel, auf das die Wasm-Laufzeit keinen Einfluss hat. In beiden Laufzeiten gab es je einen langsamen Lauf (~35 ms Median), also vermutlich eine Eigenschaft von Szene oder Host. Mit 512 MiB liegen die ClassiCube-Werte am unteren Rand; mit 1 GiB sind es etwa 20 % mehr (Messung agent-laser-YELLOW).
+
+**Langzeit, je 3 × 20 Minuten.** AOT mit Gast 1 GiB, ein Gast je Kern. Doom 1.1.0 im Demo, ClassiCube 1.1.0 (Release-Paket) mit Zufallswelt und bewegter Kamera (w/a/s/d im Wechsel). Am Laufende wechselt der Treiber mit F4 in die Textshell und liest `free`. Fehler sind Kernel-Panik, Trap oder fehlende 60-s-Fenster bei laufender Gastuhr.
+
+| App | Beschleunigung | Läufe | Panik / Trap / Stillstand | avg fps je 60-s-Fenster | belegt am Ende |
+| --- | --- | --- | --- | --- | --- |
+| Doom 1.1.0 | KVM | 3 | 0 | 62–69 | 139–146 MB |
+| Doom 1.1.0 | TCG | 3 | 0 (altes `.aot`: 4 von 10 mit #GP) | 43–63 | 144 MB |
+| ClassiCube 1.1.0 | KVM | 3 | 0 | 21–42 | 97 MB (nach 2 Minuten ebenfalls 97 MB) |
+| ClassiCube 1.1.0 | TCG | 3 | 0 | 1,4–2,3 | 96–97 MB |
+
+Zusätzlich je ein 20-Minuten-Lauf unter künstlicher Hostlast (Rechenschleife auf dem SMT-Geschwister des Doom-Kerns, 256-MiB-Kopierschleife auf einem weiteren Kern, Hostlast bis 3,6): ClassiCube KVM 20–26 fps, Doom TCG 39–50 fps, beide ohne Fehler, Speicher wie oben. Zusammen 14 von 14 Läufen ohne Panik, Trap oder Stillstand.
+
+**Gastuhr.** Die Bildzeitfenster messen Gastzeit (LAPIC-Ticks, 100 je Sekunde). Unter Hostlast um 5 lief die Gastuhr in einem Doom-KVM-Lauf rund 14 % langsamer (106 600 statt etwa 123 000 Ticks in derselben Wandzeit); dadurch entstanden 17 statt 19 Fenster, ohne dass die App stand. Wer fps oder Fensterzahlen vergleicht, sollte die Ticks je Wandsekunde mitschreiben (`[LAPIC] Timer tick`-Zeilen im seriellen Protokoll). In allen anderen Läufen waren es 100 je Sekunde.
+
+**Grenzen.** Drei Läufe je Kombination sind eine kleine Stichprobe. Geprüft ist nur QEMU, nicht VMware und keine echte Hardware. ClassiCube erreicht unter TCG nur etwa 2 fps und durchläuft dort entsprechend wenige Bilder. `free` ist nur ein Wert am Laufende, kein Verlauf. Die Engine-Messung lief stehend; bewegt und in schweren Welten (Wald) wurde AOT nicht gegen wasm3 verglichen.
 
 ## Grenzen und offene Punkte
 
