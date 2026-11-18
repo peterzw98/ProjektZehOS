@@ -164,6 +164,7 @@ Das Skript schreibt nur unter `.tools/` und `deploy/cosmos/feed/` und installier
 
 - `global.json`: `"msbuild-sdks": { "Cosmos.Sdk": "3.0.97-zehos.1" }`. Das ist die zweite Stelle mit der Version, weil die SDK-Zeile keine Eigenschaften lesen kann; ein Test hält beide gleich (Schritt 1).
 - `ProjektZeh.csproj:1`: `Sdk="Cosmos.Sdk"`; `:137-138`: `Version="[$(ZehOSCosmosVersion)]"` (genaue Version); dazu `<WarningsAsErrors>$(WarningsAsErrors);NU1603;NU1601;NU1605</WarningsAsErrors>`, damit ein Ausweichen auf eine andere Paketversion den Bau abbricht.
+- **Bau-Einstieg (Befund pink, 18.11.):** Wer wie heute `cosmos build` oder `dotnet build` direkt aufruft, bekäme sonst den globalen Patcher (offizielles 3.0.97) oder keinen. Deshalb ein MSBuild-Target in `ProjektZeh.csproj`, das vor dem Patchen `cosmos.patcher --version` mit `$(ZehOSCosmosVersion)` vergleicht und bei Abweichung mit einer Meldung abbricht, die `scripts/build-cosmos.sh` und den `PATH`-Eintrag `.tools/cosmos-tools/<version>` nennt. Damit fängt es jeden Einstieg; das Setzen von `PATH` bleibt ein Handschritt der README (E1-E), die Prüfung nicht. Zum Test gehört ein Lauf mit absichtlich falschem Patcher (Schritt 9).
 - `scripts/build-release.sh`: Version aus `deploy/cosmos/VERSION` lesen statt `3.0.97`; der Paketordner im NuGet-Cache trägt die Version klein geschrieben.
 
 - [ ] **Schritt 1: Tests schreiben** (`scripts/tests/test_build_cosmos.py`, `unittest`, Stil der vorhandenen Tests):
