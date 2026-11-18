@@ -41,7 +41,9 @@ class ArgumentTests(unittest.TestCase):
 
     def test_start_qemu_replaces_only_memory_value(self):
         tools = measure.tools
-        with tempfile.TemporaryDirectory() as work,                 mock.patch.object(tools, 'qemu_tool', return_value=Path(work) / 'qemu'),                 mock.patch.object(tools.subprocess, 'Popen') as popen:
+        with (tempfile.TemporaryDirectory() as work,
+              mock.patch.object(tools, 'qemu_tool', return_value=Path(work) / 'qemu'),
+              mock.patch.object(tools.subprocess, 'Popen') as popen):
             tools.start_qemu(Path('x.iso'), Path('d.qcow2'), Path(work), 1, 'kvm', None, '1G')
             arguments = popen.call_args.args[0]
         index = arguments.index('-m')

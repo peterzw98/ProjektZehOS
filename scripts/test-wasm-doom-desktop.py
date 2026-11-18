@@ -251,6 +251,8 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
                memory: str | None = None) -> subprocess.Popen:
     qemu = qemu_tool("qemu-system-x86_64")
     # memory ersetzt nur den Wert hinter -m; Snapshots (loadvm) brauchen den Standard aus MACHINE.
+    if memory is not None and loadvm:
+        raise ValueError("memory und loadvm schliessen sich aus")
     machine = MACHINE if memory is None else [memory if previous == "-m" else value
                                               for previous, value in zip(["", *MACHINE], MACHINE)]
     # Windows: bin/../share/qemu; Cosmos unter Linux: share/qemu neben dem Wrapper.
