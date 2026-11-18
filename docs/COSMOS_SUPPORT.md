@@ -373,6 +373,7 @@ E4.0 2 GiB Lauf 1 meldete nach dem Löschen der 64-MiB-Fülldateien rund 520 „
 `CosmosExt2TruncatePlug` ersetzt die Methode:
 - Datenblöcke gibt er wie Cosmos frei.
 - Zusätzlich gibt er die Zeigerblöcke frei, deren ganzer Bereich hinter der neuen Länge liegt (`Ext2IndirectBlocks.PlanTruncate`, einfach, doppelt und dreifach indirekt, mit Hosttests).
+- **Grenze:** Vollständig frei wird nur der Bereich bis doppelt indirekt (bei 4-KiB-Blöcken etwa 4 GiB). Cosmos 3.0.97 `GetBlockPointer` liefert für dreifach indirekte Blöcke 0; dort gibt der Plug die Zeigerblöcke frei, die Datenblöcke aber nicht (Review intake18, 18.11.).
 - Einträge in teilweise genutzten Zeigerblöcken nullt er, und er führt `i_blocks` mit.
 - Der Rmdir-Plug verlässt sich darauf.
 
