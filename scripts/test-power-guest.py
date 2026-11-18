@@ -543,7 +543,10 @@ def run_update(args, case: Path, spec: dict) -> None:
             time.sleep(0.2)
         qmp.shot(run / "limine-auswahl.png")
         print(f"BILD {spec['id']} Limine-Auswahl vor Enter: Sichtpruefung {run / 'limine-auswahl.png'}", flush=True)
+        time.sleep(1)  # direkt nach den Pfeiltasten startete Limine im Lauf den Standardeintrag
         qmp.command("send-key", {"keys": [{"type": "qcode", "data": "ret"}], "hold-time": 150})
+        time.sleep(2)
+        qmp.shot(run / "nach-enter.png")
         guest.qmp = qmp
         guest.ready(args.timeout, extra=ROOT_READY)
         fallback = booted_version(guest, 0)
