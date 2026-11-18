@@ -231,7 +231,8 @@ internal static unsafe partial class WasmRuntime
         }
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-            $"WASM CPU-Ausnahme im App-Code, Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
+            $"WASM CPU-Ausnahme im App-Code (Vektor {ProjektZeh.Runtime.FaultIsolation.IsolatedVector}, RIP 0x{ProjektZeh.Runtime.FaultIsolation.IsolatedRip:x}), " +
+            $"Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
             (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n"
                 : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"
                 : $"; kein neuer Worker ({restart}). Die naechste App versucht den Start erneut.\n"));
