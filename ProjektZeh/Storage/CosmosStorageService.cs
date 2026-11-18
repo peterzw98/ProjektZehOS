@@ -66,7 +66,14 @@ internal sealed class CosmosStorageService : IStorageService
             }
 
             // Vor ExistingPartitions, damit eine GPT unabhaengig davon abgelehnt wird, ob Cosmos ihre Eintraege erkennt.
-            var layout = DataDiskSelector.CheckNoInstalledLayout(device.BlockSize, device.BlockCount, device.ReadBlock);
+            // Jeder Blocklesevorgang unter der Speicher-Sperre (Review PURPLE-lockrev P2-1): disk init laeuft auf dem Hauptthread,
+            // waehrend Wasm-Worker und Aufgaben gesperrt lesen koennen.
+            void LockedRead(ulong block, ulong count, Span<byte> buffer)
+            {
+                using (StorageLock.Enter()) device.ReadBlock(block, count, buffer);
+            }
+
+            var layout = DataDiskSelector.CheckNoInstalledLayout(device.BlockSize, device.BlockCount, LockedRead);
             if (!layout.IsOK())
             {
                 return layout;
@@ -85,7 +92,7 @@ internal sealed class CosmosStorageService : IStorageService
 
             var clock = Stopwatch.StartNew();
             Progress("init start", clock);
-            var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, device.ReadBlock, text => Progress(text, clock));
+            var blank = DiskEmptyCheck.Check(device.BlockSize, device.BlockCount, confirmLarge, LockedRead, text => Progress(text, clock));
             if (!blank.IsOK())
             {
                 return blank;
@@ -97,15 +104,22 @@ internal sealed class CosmosStorageService : IStorageService
                 return registration;
             }
 
-            Mbr.Create(device);
+            // MBR, Partition und Neueinlesen als ein Abschnitt: dazwischen darf kein anderer Thread die Tabelle lesen.
+            bool created;
+            using (StorageLock.Enter())
+            {
+                Mbr.Create(device);
+                created = PartitionManager.Create(device, PartitionStart, device.BlockCount - PartitionStart, 0x0C, Guid.Empty);
+                if (created) StorageManager.RescanPartitions(device);
+            }
+
             Progress("mbr ok", clock);
-            if (!PartitionManager.Create(device, PartitionStart, device.BlockCount - PartitionStart, 0x0C, Guid.Empty))
+            if (!created)
             {
                 return Failure("PartitionCreationRefused", "Cosmos hat das Anlegen der Partition abgelehnt." + MbrLeftBehind);
             }
 
             Progress("partition ok", clock);
-            StorageManager.RescanPartitions(device);
             var partitions = StorageManager.GetPartitions(device);
             if (partitions.Count != 1)
             {
@@ -123,7 +137,7 @@ internal sealed class CosmosStorageService : IStorageService
                 return Failure("FormatRefused", "Cosmos hat die FAT32-Formatierung abgelehnt." + MbrLeftBehind);
             }
 
-            device.Flush();
+            using (StorageLock.Enter()) device.Flush();
             Progress("format ok", clock);
             return ResultErr.CreateSuccess();
         }

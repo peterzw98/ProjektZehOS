@@ -24,7 +24,10 @@ namespace ProjektZeh.Tests;
 public sealed class StorageLockCoverageTests
 {
     private static readonly Regex Access = new(
-        @"\b(?:File|Directory)\.[A-Z]\w*\s*\(|\bnew\s+(?:FileStream|FileInfo|DirectoryInfo|StreamReader|StreamWriter)\s*\(|\b(?:VfsManager|FileSystemManager|InodeOperations)\.[A-Z]\w*|\bDriveInfo\b|\.(?:EnumerateFileSystemInfos|GetFileSystemInfos|EnumerateFiles|EnumerateDirectories)\s*\(",
+        @"\b(?:File|Directory)\.[A-Z]\w*\s*\(|\bnew\s+(?:FileStream|FileInfo|DirectoryInfo|StreamReader|StreamWriter)\s*\(|\b(?:VfsManager|FileSystemManager|InodeOperations)\.[A-Z]\w*|\bDriveInfo\b|\.(?:EnumerateFileSystemInfos|GetFileSystemInfos|EnumerateFiles|EnumerateDirectories)\s*\("
+        // Rohe Blockzugriffe (Review PURPLE-lockrev P2-2): Lesen/Schreiben auch als Methodengruppe, Partitionstabellen, Flush.
+        // StorageManager.GetPartitions fehlt bewusst: es liefert nur die zwischengespeicherte Tabelle (StorageManager.cs:171).
+        + @"|\.(?:ReadBlock|WriteBlock)\b|\b(?:Mbr|Gpt|PartitionManager)\.[A-Z]\w*\s*\(|\bStorageManager\.RescanPartitions\s*\(|\b\w*(?:[Dd]evice|Host)\.Flush\s*\(|\bSuperOperations\.[A-Z]\w*",
         RegexOptions.Compiled);
 
     // Aufruf oder Methodengruppe (nicht Deklaration) einer gesperrten Hilfsmethode.
@@ -139,6 +142,24 @@ public sealed class StorageLockCoverageTests
     }
 
     [TestMethod]
+    public void RawBlockAccess_NeedsLockOrEnterScope()
+    {
+        const string source = """
+            class A
+            {
+                public void Bad(IBlockDevice device, Span<byte> b) { device.ReadBlock(0, 1, b); Mbr.Create(device); device.Flush(); }
+                public void Check(IBlockDevice device) => DiskEmptyCheck.Check(1, 2, device.ReadBlock);
+                public void Good(IBlockDevice device, Span<byte> b)
+                {
+                    using (StorageLock.Enter()) device.ReadBlock(0, 1, b);
+                    using (StorageLock.Enter()) { Mbr.Create(device); device.Flush(); }
+                }
+            }
+            """;
+        Assert.AreEqual(4, Check(source).Count, string.Join("\n", Check(source)));
+    }
+
+    [TestMethod]
     public void IgnoresCommentsAndStrings()
     {
         const string source = """
@@ -212,6 +233,14 @@ public sealed class StorageLockCoverageTests
             if (!argument.Contains('{') && !argument.Contains(".ToArray()", StringComparison.Ordinal)
                 && !argument.Contains(".ToList()", StringComparison.Ordinal))
                 coverage.LazyRuns.Add((open, close));
+        }
+
+        // using (StorageLock.Enter()) Anweisung: Block bis zur schliessenden Klammer oder Einzelanweisung bis zum Semikolon.
+        foreach (Match match in Regex.Matches(code, @"\busing\s*\(\s*StorageLock\.Enter\s*\(\s*\)\s*\)"))
+        {
+            int cursor = match.Index + match.Length;
+            while (cursor < code.Length && char.IsWhiteSpace(code[cursor])) cursor++;
+            coverage.Ranges.Add((cursor, cursor < code.Length && code[cursor] == '{' ? Matching(code, cursor, '{', '}') : ExpressionEnd(code, cursor)));
         }
 
         foreach (Match match in Regex.Matches(code, @"\b\w+StorageLocked\s*(?:<[^>]*>)?\s*\(", RegexOptions.Multiline))

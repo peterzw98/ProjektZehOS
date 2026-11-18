@@ -72,6 +72,27 @@ internal static class StorageLock
     }
 
     /// <summary>
+    /// Sperrbereich als <c>using (StorageLock.Enter()) ...</c> fuer Code mit Span-Parametern, die sich nicht in ein
+    /// Run-Lambda fassen lassen (rohe Blockzugriffe: ReadBlock in eine Span).
+    /// </summary>
+    public static Scope Enter([CallerMemberName] string caller = "", [CallerFilePath] string file = "")
+    {
+        long requested = Stopwatch.GetTimestamp();
+        Monitor.Enter(Gate);
+        return new Scope(requested, Stopwatch.GetTimestamp(), caller, file);
+    }
+
+    /// <summary>Gibt die mit <see cref="Enter"/> genommene Sperre frei.</summary>
+    public readonly struct Scope(long requested, long entered, string caller, string file) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { Measure(requested, entered, caller, file); }
+            finally { Monitor.Exit(Gate); }
+        }
+    }
+
+    /// <summary>
     /// Fuellt <paramref name="buffer"/> aus einem schon geoeffneten Stream in Abschnitten von hoechstens
     /// <see cref="ChunkBytes"/>, jeden unter der Sperre (Wasm-Module und AOT-Dateien bis 64 MiB).
     /// </summary>

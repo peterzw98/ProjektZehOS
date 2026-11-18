@@ -92,7 +92,7 @@ internal static class CosmosInstalledIdentity
         var superblock = new byte[1024];
         try
         {
-            host.ReadBlock(root.FirstLba + 1024 / host.BlockSize, 1024 / host.BlockSize, superblock);
+            using (StorageLock.Enter()) host.ReadBlock(root.FirstLba + 1024 / host.BlockSize, 1024 / host.BlockSize, superblock);
         }
         catch (ArgumentOutOfRangeException exception)
         {
