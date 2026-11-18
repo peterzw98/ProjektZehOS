@@ -66,15 +66,16 @@ internal static class CosmosExt2GuestProbe
             Check(VfsManager.RegisterFileSystem(FileSystemName, new Ext2FileSystemType(device)), "Registrierung abgelehnt");
             Pass(FileSystemName);
 
-            // Bewusst der allgemeine VFS-Weg: ohne Optionen formatiert der Paketformatter mit 1024 Byte,
-            // 4096 Byte und sparse_super belegen also den Plug auf FormatForKernel.
+            // Der Kernel formatiert über das ZehOS-Profil (nur 4096 Byte); der Cosmos-Formatter schreibt das Layout.
+            // Der allgemeine VFS-Weg (VfsManager.TryFormat ohne Optionen) formatiert dagegen mit 1024 Byte, deshalb
+            // verbietet Ext2FormatterUsageTests ihn im Quelltext.
             Begin("format");
-            Check(VfsManager.TryFormat(FileSystemName, "", null), "TryFormat abgelehnt");
+            Check(CosmosExt2Formatter.FormatForKernel(device, null), "FormatForKernel abgelehnt");
             prefix = ReadPrefix(device);
             uint logBlockSize = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.LogBlockSizeOffset);
             uint roCompat = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.FeatureRoCompatOffset);
-            Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: Plug nicht aktiv");
-            Pass("4096 Byte, sparse_super (Plug aktiv)");
+            Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: nicht 4096 Byte mit sparse_super");
+            Pass("4096 Byte, sparse_super");
 
             Begin("gate");
             var decision = Ext2FeatureGate.Evaluate(prefix.AsSpan(CosmosExt2SuperblockLayout.SuperblockOffset, CosmosExt2SuperblockLayout.SuperblockSize));

@@ -6,9 +6,9 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace ProjektZeh.Tests;
 
-// Cosmos 3.0.97 formatiert ext2 inkonsistent. Storage/CosmosExt2FormatterPlug.cs leitet den Paketformatter auf
-// FormatForKernel um (object-Signatur, sonst ILC-Initialisierer-Zyklus). Kernelcode ruft trotzdem bevorzugt
-// CosmosExt2Formatter.FormatForKernel direkt auf und nie CosmosExt2Formatter.Format (erlaubt 1K/2K).
+// Das Layout schreibt der Formatter aus Cosmos (Patch ext2-formatter); sein Standard ist 1024 Byte, und der Treiber
+// adressiert 1-KiB-Volumes falsch. Kernelcode formatiert ext2 deshalb nur ueber CosmosExt2Formatter.FormatForKernel
+// (nur 4096 Byte, hoechstens 128 GiB) und nie ueber Ext2Formatter, TryFormat mit Ext2FormatOptions oder "ext2".
 [TestClass]
 public sealed class Ext2FormatterUsageTests
 {

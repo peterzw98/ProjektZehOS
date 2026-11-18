@@ -32,7 +32,7 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `Storage/CosmosExt2RmdirPlug.cs:10-103` | gibt alle Blöcke frei | Q✓ `Ext2/Ext2InodeOperations.cs:472-482`: nur `Block[0]` | K | ja |
 | `Storage/CosmosExt2TruncatePlug.cs:8-130` | gibt auch geleerte Zeigerblöcke frei | Q✓ `Ext2/Ext2Superblock.cs:1043-1049`; dreifach indirekt liefert 0 (`:1014`) | M | ja |
 | `Storage/CosmosExt2FreeInodePlug.cs:8-91` | schreibt Inode samt dtime vor dem Bitmapbit | Q✓ `Ext2/Ext2Superblock.cs:617-632` | K | ja |
-| `Storage/CosmosExt2FormatterPlug.cs:8-17`, `Storage/Ext2/CosmosExt2Formatter.cs` | eigener Formatter | Q✓ `Ext2/Ext2Formatter.cs:185`: keine Backup-Superblöcke; Geometrie Z | M | ja, samt Kopie |
+~~| `Storage/CosmosExt2FormatterPlug.cs:8-17`, `Storage/Ext2/CosmosExt2Formatter.cs` | eigener Formatter | Q✓ `Ext2/Ext2Formatter.cs:185`: keine Backup-Superblöcke; Geometrie Z | M | ja, samt Kopie |~~ erledigt am 18. November 2026: Patch `ext2-formatter` (Plug und Kopie entfernt, `FormatForKernel` bleibt als ZehOS-Profil).
 | `Storage/Ext2/Ext2FeatureGate.cs` | prüft Feature-Bits vor dem Mount | Q✓ `Ext2/Ext2Superblock.cs:154-156` liest sie nur | M | größtenteils |
 | `Graphics/DisplayService.cs:120-122` | `UnsafeAccessor` auf `Canvas._display` für Teilrechtecke | Q✓ `Graphics/Canvas.cs:65` privat | K | ja |
 | `Runtime/CosmosSystemInfo.cs:30-37` | `UnsafeAccessor` auf `PageAllocator` | Q✓ intern, aber `Diagnostics/MemoryDiagnostics.cs:19` ist öffentlich | keine | ja, schon heute |

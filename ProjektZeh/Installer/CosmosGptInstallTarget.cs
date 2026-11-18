@@ -58,9 +58,10 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         return ResultErr.CreateSuccess();
     }));
 
-    // Der Plug leitet auf CosmosExt2Formatter.FormatForKernel um (4096 Byte, sparse_super); GptInstallJob prueft das danach.
-    public ResultErr FormatRoot() => Try(() => StorageLock.Run(() =>
-        VfsManager.TryFormat(rootFileSystem, root!, null) ? ResultErr.CreateSuccess() : Failed("ext2-Formatierung der Root-Partition fehlgeschlagen.")));
+    // Nur das ZehOS-Profil (4096 Byte, sparse_super): VfsManager.TryFormat ohne Optionen formatierte seit dem Wegfall des
+    // Plugs mit 1024 Byte. FormatForKernel sperrt je Plattenoperation selbst; GptInstallJob prueft das Ergebnis danach.
+    public ResultErr FormatRoot() => Try(() =>
+        CosmosExt2Formatter.FormatForKernel(root!, null) ? ResultErr.CreateSuccess() : Failed("ext2-Formatierung der Root-Partition fehlgeschlagen."));
 
     public ResultObject<byte[]> ReadRootSuperblock()
     {
