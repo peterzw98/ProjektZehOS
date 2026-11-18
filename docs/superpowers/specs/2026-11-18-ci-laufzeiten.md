@@ -80,8 +80,29 @@ Abstimmung: 5–8 berühren `ci.yml` und damit PR #291 (E1-C, agent-peter-jensen
 - **8:** nein: 10 s sind die neue Pflegepflicht einer NuGet-Lockdatei nicht wert.
 - **1–4** (Testcode) gehören nicht zum Multicore-Plan; Zuständigkeit beim Koordinator.
 
+## Messung des Feed-Caches (Block #411, 19. November 2026)
+
+Quelle: `gh api .../actions/runs/<id>/jobs` für die letzten 60 Läufe von `ci.yml` (23 erfolgreiche mit Cosmos-Bau, 17.-18. November, `master` @ `f6bbaed9`);
+Treffer = Schritt `Build Cosmos from source and install tools` unter 30 s, Fehlschlag darüber. Nur gemessen, `ci.yml` unverändert.
+
+| Job | Treffer (Anzahl) | Jobzeit Median / Max | Fehlschlag (Anzahl) | Jobzeit Median / Max | Bauschritt Fehlschlag |
+| --- | --- | --- | --- | --- | --- |
+| Cosmos x64 build (`kernel`) | 19 | 83 s / 97 s | 4 | 182 s / 218 s | 121 s |
+| Release images | 19 | 114 s / 125 s | 4 | 212 s / 237 s | 119 s |
+| Guest recovery boot | 19 | 122 s / 218 s | 4 | 227 s / 342 s | 112 s |
+
+- **Treffer:** der Bauschritt kostet 1-7 s (Median), Cachewiederherstellung 1-4 s. Ein Treffer spart je Job ~100 s gegenüber dem Quellbau.
+- **Fehlschläge** (4 von 23 Läufen, 17 %) sind immer alle drei Jobs zugleich: der Schlüssel (`COMMIT`, `VERSION`, `SDK`, `build-cosmos.sh`) hatte sich
+  geändert (Cosmos-Pin, Bauskript), danach füllt der erste Lauf den Cache. Der Cache-Speicher zeigt Einträge für `refs/heads/master` und PR-Merge-Refs
+  (4,6-4,8 MB); PR-Läufe lesen die von `master` mit.
+- Der Treffer ist gemessen, die Befürchtung aus Vorschlag 6 (Fehlschläge bleiben häufig) bestätigt sich nicht.
+
+**Entscheidung Artefakt-Job: nein.** Ein Job, der den Feed einmal baut und als Artefakt weitergibt, würde bei einem Fehlschlag ~2 der 3 parallelen Quellbauten
+(~230 Runner-s) sparen, die Wanduhr aber kaum: `kernel` müsste vor den anderen fertig sein (zusätzlich ~25 s Setup und Artefakt-Hoch-/Herunterladen), und
+das nur in 17 % der Läufe. Neue Jobabhängigkeit und Pflege stehen dazu nicht im Verhältnis. Neu bewerten, wenn der Anteil der Fehlschläge deutlich über ~30 % steigt.
+
 ## Nicht geprüft
 
-- Zeit eines Cache-Treffers für den Cosmos-Feed (#291 bisher nur Fehlschläge).
 - Wie stark die Parallelisierung (4) tatsächlich hilft und welche Tests dabei flackern; das zeigt erst ein Versuchslauf.
 - Läufe von `release.yml` und `codeql.yml` (nicht Teil des Auftrags).
+- Ursache jedes einzelnen Fehlschlags (Schlüsseländerung angenommen aus dem Schlüsselaufbau, nicht je Lauf nachgewiesen).
