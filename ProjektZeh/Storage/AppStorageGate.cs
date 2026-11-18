@@ -12,9 +12,8 @@ namespace ProjektZeh.Storage;
 internal static class AppStorageGate
 {
     private static readonly object operations = new();
-#if ZEHOS_ISOLATION_PROBE
+    /// <summary>Fuer den CPU-Ausnahmepfad (Roadmap 12.4-I1): unter dieser Sperre darf kein Thread aufgegeben werden.</summary>
     internal static bool IsHeldByCurrentThread => System.Threading.Monitor.IsEntered(operations);
-#endif
     private static readonly MigrationWriteGate writes = new();
 
     public static bool IsBlocked

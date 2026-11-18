@@ -117,6 +117,11 @@ typedef struct
     X(zehos_v1, raster_fill, i, "iii", zehos_host_raster_fill, 3) \
     X(wasi_snapshot_preview1, proc_exit, v, "i", zehos_host_proc_exit, 1)
 
+// Tiefe laufender Hostaufrufe des Wasm-Workers (Roadmap 12.4-I1): Nur bei 0 laeuft Gastcode, und nur dann darf eine
+// CPU-Ausnahme den Worker aufgeben, weil Hostcode Kernelsperren halten kann. Die Wrapper beider Engines zaehlen.
+extern volatile int32_t zehos_host_depth;
+volatile int32_t* zehos_host_depth_address(void);
+
 uint32_t zehos_host_fd_write(zehos_host_call* call, int32_t fd, uint32_t iovs, uint32_t iovsCount, uint32_t written);
 uint32_t zehos_host_args_sizes_get(zehos_host_call* call, uint32_t count, uint32_t bytes);
 uint32_t zehos_host_environ_sizes_get(zehos_host_call* call, uint32_t count, uint32_t bytes);

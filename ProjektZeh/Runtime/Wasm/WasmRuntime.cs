@@ -15,7 +15,8 @@ using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
-internal enum WasmStatus { Ok = 0, NoMemory = 1, InvalidModule = 2, LoadFailed = 3, EntryMissing = 4, Trap = 5, OutOfGas = 6, LimitFailed = 7 }
+// CpuFault liefert nur der Kernel (Roadmap 12.4-I1), nicht die C-Schicht.
+internal enum WasmStatus { Ok = 0, NoMemory = 1, InvalidModule = 2, LoadFailed = 3, EntryMissing = 4, Trap = 5, OutOfGas = 6, LimitFailed = 7, CpuFault = 8 }
 
 /// <summary>
 /// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
@@ -32,6 +33,8 @@ internal static unsafe partial class WasmRuntime
     private static readonly object gate = new();
     private static readonly Queue<Action> jobs = new();
     private static Thread? worker;
+    private static Action<WasmStatus, int, string>? running;
+    private static int isolatedRuns;
     private static WasmNetworkSession? network;
     private static IList<X509Certificate>? tlsAnchors;
     private static WasmSaveStore? save;
@@ -86,6 +89,8 @@ internal static unsafe partial class WasmRuntime
             pending++;
             jobs.Enqueue(() =>
             {
+                // Fuer PollFaultIsolation: endet der Worker in einer CPU-Ausnahme, meldet die Hauptschleife das Ende.
+                lock (gate) running = completed;
                 WasmStatus status = WasmStatus.LoadFailed;
                 int result = 0;
                 string message;
@@ -96,7 +101,11 @@ internal static unsafe partial class WasmRuntime
                 if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
                 else message = loaded.Error ?? "Modul nicht geladen.";
                 // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
-                lock (gate) pending--;
+                lock (gate)
+                {
+                    pending--;
+                    running = null;
+                }
                 completed(status, result, message);
             });
             StartWorkerLocked();
@@ -114,6 +123,68 @@ internal static unsafe partial class WasmRuntime
         lock (gate) StartWorkerLocked();
     }
 
+    /// <summary>
+    /// Gibt die Ressourcen eines Laufs frei: Sitzung, App-Speicher, Netz und offene Paketdateien. Nach einer isolierten
+    /// CPU-Ausnahme ruft sie die Hauptschleife, weil der aufgegebene Worker sein Ende nie erreicht. Liefert false, wenn
+    /// ein Teil nicht sauber schloss.
+    /// </summary>
+    private static bool ReleaseRunResources()
+    {
+        bool clean = true;
+        current = null;
+        presentFailureReported = false;
+        // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
+        try { save?.CloseAll(); }
+        catch (Exception) { clean = false; }
+        save = null;
+        if (network != null && network.CloseAll() != WasmNetworkError.Success) clean = false;
+        network = null;
+        foreach (var stream in files.Values)
+        {
+            try { StorageLock.Run(stream.Dispose); }
+            catch (Exception) { clean = false; }
+        }
+        files.Clear();
+        return clean;
+    }
+
+    /// <summary>Zahl der Laeufe, die seit dem Start durch eine isolierte CPU-Ausnahme endeten.</summary>
+    public static int IsolatedRuns => Volatile.Read(ref isolatedRuns);
+
+    /// <summary>
+    /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, beendet sie den Lauf von aussen,
+    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread, 8-MiB-Stack und der
+    /// native Speicher der Instanz bleiben bis zum Neustart belegt.
+    /// </summary>
+    public static void PollFaultIsolation()
+    {
+        int thread = ProjektZeh.Runtime.FaultIsolation.TakeIsolated();
+        if (thread < 0) return;
+        Action<WasmStatus, int, string>? completed;
+        string? restart = null;
+        lock (gate)
+        {
+            completed = running;
+            running = null;
+            if (completed != null) pending--;
+            worker = null;
+            try { StartWorkerLocked(); }
+            catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
+            {
+                worker = null;
+                restart = exception.Message;
+            }
+        }
+        bool clean = ReleaseRunResources();
+        Interlocked.Increment(ref isolatedRuns);
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+            $"WASM CPU-Ausnahme im App-Code, Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
+            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n" : $"; neuer Worker scheiterte: {restart}. Paket-Apps erst nach Neustart.\n"));
+        completed?.Invoke(WasmStatus.CpuFault, 0, CpuFaultMessage);
+    }
+
+    private const string CpuFaultMessage = "CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.";
+
 #if ZEHOS_ISOLATION_PROBE
     internal static void ProbeEnqueue(Action job)
     {
@@ -122,16 +193,6 @@ internal static unsafe partial class WasmRuntime
             jobs.Enqueue(job);
             StartWorkerLocked();
             Monitor.Pulse(gate);
-        }
-    }
-
-    /// <summary>Der alte Worker ist in Quarantaene und laeuft nie weiter; ein neuer uebernimmt die Warteschlange.</summary>
-    internal static void ProbeReplaceWorker()
-    {
-        lock (gate)
-        {
-            worker = null;
-            StartWorkerLocked();
         }
     }
 
@@ -160,9 +221,7 @@ internal static unsafe partial class WasmRuntime
 
     private static void Work()
     {
-#if ZEHOS_ISOLATION_PROBE
         ProjektZeh.Runtime.FaultIsolation.RegisterWorker();
-#endif
         while (true)
         {
             Action job;
@@ -242,21 +301,7 @@ internal static unsafe partial class WasmRuntime
             for (int i = 0; i < count; i++) text[i] = failure[i];
             text[count] = 0;
         }
-        current = null;
-        presentFailureReported = false;
-        // Offene Dateien im App-Speicher werden geschrieben und ihre Puffer freigegeben, auch nach einem Trap.
-        try { save?.CloseAll(); }
-        catch (Exception) { code = (int)WasmStatus.Trap; }
-        save = null;
-        int networkCleanup = network.CloseAll();
-        network = null;
-        foreach (var stream in files.Values)
-        {
-            try { StorageLock.Run(stream.Dispose); }
-            catch (Exception) { code = (int)WasmStatus.Trap; }
-        }
-        files.Clear();
-        if (networkCleanup != WasmNetworkError.Success) code = (int)WasmStatus.Trap;
+        if (!ReleaseRunResources()) code = (int)WasmStatus.Trap;
         result = value;
         message = Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
         return (WasmStatus)code;
@@ -266,7 +311,9 @@ internal static unsafe partial class WasmRuntime
     {
         fixed (byte* bytes = module)
         {
-            return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+            ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
+            try { return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256); }
+            finally { ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun(); }
         }
     }
 
@@ -289,7 +336,9 @@ internal static unsafe partial class WasmRuntime
     {
         fixed (byte* bytes = aot)
         {
-            return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated);
+            ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
+            try { return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated); }
+            finally { ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun(); }
         }
     }
 
