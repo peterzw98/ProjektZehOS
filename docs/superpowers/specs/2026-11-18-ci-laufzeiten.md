@@ -76,7 +76,8 @@ Abstimmung: 5–8 berühren `ci.yml` und damit PR #291 (E1-C, agent-peter-jensen
 
 - **6:** ja, zuerst messen: nach dem Merge von #290 den Feed-Cache auf `master` befüllen und einen Treffer messen; ein Job, der den Feed als Artefakt weitergibt, nur wenn Fehlschläge häufig bleiben. `release.yml` bleibt ohne Cache (Herkunft der Pakete = Commit).
 - **5:** ja, als eigener kleiner PR nach #290, Cache-Schlüssel nach Runner-Image.
-- **7, 8:** Urteil in #second; die Zeile ist im Kanalprotokoll gekürzt und hier deshalb nicht wiedergegeben.
+- **7:** nein für jetzt: spart keine Wanduhr, und die Paketskripte blieben ungeprüft.
+- **8:** nein: 10 s sind die neue Pflegepflicht einer NuGet-Lockdatei nicht wert.
 - **1–4** (Testcode) gehören nicht zum Multicore-Plan; Zuständigkeit beim Koordinator.
 
 ## Nicht geprüft
