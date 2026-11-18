@@ -265,6 +265,8 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
                  *(["-loadvm", loadvm] if loadvm else [])]
+    if os.environ.get("ZEHOS_QEMU_SMP"):
+        arguments.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
     with (work / "stderr.log").open("w") as stderr:
         return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=stderr)
 
@@ -854,7 +856,7 @@ def snapshot_key(args: argparse.Namespace, fixtures: Path) -> str:
     """Alles, wovon der gespeicherte Gastzustand abhaengt: Ablauf, QEMU, Geraete, ISO, Katalog und Datenlaufwerk."""
     digest = hashlib.sha256(SNAPSHOT_FORMAT.encode())
     version = subprocess.run([str(qemu_tool("qemu-system-x86_64")), "--version"], check=True, capture_output=True, text=True)
-    digest.update((version.stdout + " ".join(MACHINE)).encode())
+    digest.update((version.stdout + " ".join(MACHINE) + "|smp=" + os.environ.get("ZEHOS_QEMU_SMP", "")).encode())
     with args.iso.open("rb") as iso:
         for block in iter(lambda: iso.read(1 << 20), b""):
             digest.update(block)

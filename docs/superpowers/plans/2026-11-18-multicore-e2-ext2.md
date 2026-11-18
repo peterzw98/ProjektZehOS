@@ -88,7 +88,7 @@ geänderten Block schreiben. Die Signatur bleibt.
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2RemoveEntryTests.cs` neben `Ext2SmokeTest.cs`): die elf Fälle aus ZehOS `ProjektZeh.Tests/Ext2DirectoryRemovalTests.cs` übernehmen (`FirstEntryOfLaterBlock_OnlyFreedNotMerged`, `EntryInsideBlock_MergesWithPredecessorInSameBlock`, `LastEntryOfBlock_MergesUpToBlockEnd`, `ManyConsecutiveDeletes_NoRecordCrossesBlockOrOverflows`, `FreedFirstSlotThenNextEntry_MergesIntoFreedSlot`, `OnlyEntryOfBlock_FreedInPlace`, `Missing_ReturnsNotFoundAndChangesNothing`, `RecordCrossingBlock_RefusedWithoutWrite`, `ZeroRecLen_RefusedWithoutWrite`, `NamesCompareExactBytes`, `Layout_SpansSeveralBlocks`), jetzt gegen `Ext2DirectoryHelper.RemoveEntry` auf einem RAM-Gerät wie im Smoke-Test. Neu: `DirectoryWithHole_DoesNotWriteBlockZero` (Blockzeiger 1 des Verzeichnisses ist 0; nach `RemoveEntry` ist Block 0 des Geräts unverändert).
 - [ ] **Schritt 2:** Tests schlagen fehl. Patch schreiben, Tests bestehen, `Ext2SmokeTest` weiter grün.
-- [ ] **Schritt 3:** `PATCHES.md`-Zeile `ext2-remove-entry`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 3:** Datei `patches/ext2-remove-entry.md`, ein Commit, PR gegen `cosmos`.
 - [ ] **Schritt 4: Hostprobe:** in ZehOS mit `scripts/build-cosmos.sh --commit <Commit>` bauen, dann `python3 experiments/StorageProbe/test-boundary.py <neuer Ordner>` mit `-p:ZehOSCosmosVersion=<Version aus der Skriptausgabe>`. Erwartet nach dem Löschen des ersten Eintrags im zweiten Block: Verzeichnisstruktur gültig (ohne Patch meldet `e2fsck` „directory corrupted“). `e2fsck -fn` endet hier noch **nicht** mit 0: Es bleibt „Deleted inode … has zero dtime“, auch im Kontrollfall ohne Blockgrenze. Das behebt erst E2-P4 (`FreeInode`); Ende 0 ist die Abnahme von E2-Z1 mit P1 bis P4 (Befund der Hostprobe am 18. November 2026).
 
 ---
@@ -119,7 +119,7 @@ nennt das.
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2TruncateTests.cs`): die zwölf Fälle aus ZehOS `ProjektZeh.Tests/Ext2IndirectBlocksTests.cs` für die Planlogik übernehmen. Dazu zwei Tests am echten Treiber: `TruncateToZero_SingleIndirectFile_FreesPointerBlock` und `TruncateToZero_DoubleIndirectFile_FreesAllPointerBlocks` (Datei schreiben wie in `LargeFileIndirectRoundtrip`, freie Blöcke vor dem Anlegen und nach `Truncate(inode, 0)` vergleichen: gleich).
 - [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen.
-- [ ] **Schritt 3:** `PATCHES.md`-Zeile `ext2-truncate`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 3:** Datei `patches/ext2-truncate.md`, ein Commit, PR gegen `cosmos`.
 
 ---
 
@@ -138,7 +138,7 @@ entweder direkt über den Tabellenblock schreiben oder `Remove` nach `WriteInode
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2FreeInodeTests.cs`): die fünf Fälle aus ZehOS `ProjektZeh.Tests/Ext2InodeReleaseTests.cs` am echten Treiber (`Release_LiveDirectory_WritesLinksZeroAndDtimeThenClearsBit`, `Release_LastInodeOfTableBlock_MarksOnlyThatSlot`, `Release_AlreadyFree_WritesNothingAndReportsFalse` als „Zähler unverändert“, `Release_WithoutClock_StoresNonZeroDtime`, `Release_InodeInSecondTableBlock_UsesThatBlock`). Dazu `FreeInode_RemovesFromCache`: nach `FreeInode` liefert ein erneutes Lesen des Inodes `LinksCount == 0` und `Dtime != 0`.
 - [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen.
-- [ ] **Schritt 3:** `PATCHES.md`-Zeile `ext2-free-inode`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 3:** Datei `patches/ext2-free-inode.md`, ein Commit, PR gegen `cosmos`.
 
 ---
 
@@ -156,7 +156,7 @@ geschrieben (`:483-484`); `.` wird nicht abgelehnt.
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2RmdirTests.cs`): `Rmdir_DirectoryWithManyBlocks_FreesAllBlocksAndPointerBlock` (Verzeichnis mit mehr als 12 Blöcken füllen, leeren, entfernen; freie Blöcke und freie Inodes wie vor dem Anlegen), `Rmdir_Dot_IsRefused`, `Rmdir_DotDot_IsRefused`, `Rmdir_NonEmpty_IsRefused`, `Rmdir_WritesDtime`.
 - [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen.
-- [ ] **Schritt 3:** `PATCHES.md`-Zeile `ext2-rmdir`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 3:** Datei `patches/ext2-rmdir.md`, ein Commit, PR gegen `cosmos`.
 
 ---
 
@@ -208,7 +208,7 @@ Cosmos unverändert; der Treiberfehler für 1-KiB-Volumes (`Ext2Superblock.cs:65
 `FirstDataBlock`) wird hier nicht behoben, weil ZehOS solche Volumes nie anlegt und `Ext2FeatureGate` sie ablehnt.
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2FormatterTests.cs`): `Format_4K_SetsSparseSuperAndWritesBackups` (Superblock-Kopien in den Gruppen 1, 3, 5, 7, 9 mit passendem `s_block_group_nr`), `Format_BitmapsHavePaddingBitsSet`, `Format_LastGroupTooSmall_IsCutOff`, `Format_SingleGroup_RoundsBlocksPerGroupToMultipleOfEight`, `Format_ZeroSectorSize_IsRefused`. `Ext2SmokeTest.FormatAndMount` (formatiert mit 1024) bleibt grün.
-- [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen. `PATCHES.md`-Zeile `ext2-formatter`, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen. Datei `patches/ext2-formatter.md`, ein Commit, PR gegen `cosmos`.
 - [ ] **Schritt 3: ZehOS** (Branch `task/mc-e2-p5-formatter`): `CosmosExt2FormatterPlug.cs` löschen; `CosmosExt2Formatter.cs` auf `FormatForKernel` als dünne Hülle kürzen (Datei bleibt, damit `Ext2FormatterUsageTests` und die Aufrufer unverändert gelten); `CosmosExt2SuperblockLayout.cs` und `CosmosExt2InodeLayout.cs` bleiben, solange `CosmosExt2GuestProbe.cs` und `experiments/StorageProbe` ihre Konstanten nutzen; die Gastprobe (`CosmosExt2GuestProbe.cs:69-77`) formatiert über `FormatForKernel` statt mit `options = null`.
 - [ ] **Schritt 4: Hostprobe (Linux):** `dotnet run -c Release --project experiments/StorageProbe -- selftest`; `experiments/StorageProbe/matrix.sh .tools/storage-probe fixed` (Ende 0 nur bei sauberer `e2fsck`-Matrix); `python3 scripts/test-installer-layout.py .tools/installer-layout`.
 - [ ] **Schritt 5: Gast:** kleine Probe wie in E2-Z1; Schritt `format` meldet „4096 Byte, sparse_super“. Danach das formatierte Image unter Linux einhängen und Dateien lesen.
@@ -233,7 +233,7 @@ die vier Aufrufer (`Ext2Directory.cs:122`, `Ext2InodeOperations.cs:67`, `:106`, 
 `MaxDirectoryBlocks` wüchse.
 
 - [ ] **Schritt 1: Cosmos-Tests** (`Ext2DirectoryLimitTests.cs`): `Directory_With10000Entries_ListsAll`, `Directory_AfterDeletingEveryOtherEntry_StillListsAllLiving` (Schwerpunkt 4), `AddEntry_BeyondMaxDirectoryBlocks_IsRefused`, `Rmdir_OfDirectoryThatCannotBeParsed_IsRefused` (Schwerpunkt 3).
-- [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen. `PATCHES.md`-Zeile, ein Commit, PR gegen `cosmos`.
+- [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen. Datei `patches/<Kurzname>.md`, ein Commit, PR gegen `cosmos`.
 - [ ] **Schritt 3: ZehOS** (Branch `task/mc-e2-p7-verzeichnisgrenze`): `FileService.MaximumExt2DirectoryEntries` (`FileService.cs:18-20`) auf die neue Grenze setzen. Sie ergibt sich aus Cosmos: 4096 Blöcke zu 4096 Byte bei mindestens 12 Byte je Record sind rechnerisch über eine Million Einträge; als Produktgrenze schlägt der Plan **65.536** vor (Verzeichnisse darüber sind nicht geprüft). Den Wert bestätigt der Storage-Lead vor diesem Schritt. Der Mechanismus (`EnsureDirectoryEntryAvailableStorageLocked`, `CosmosDirectoryEntryLimit.cs`) bleibt. `ProjektZeh.Tests/MigrationDirectoryLimitTests.cs:21` und `DirectoryEntryLimitTests.cs` auf die Konstante statt auf die Zahl `8189` beziehen.
 - [ ] **Schritt 4: Gast:** E4.0 Lauf 9 mit 8190 Einträgen (`--limit-only`) und ein neuer Lauf mit 20.000 Einträgen in einem Verzeichnis: anlegen, auflisten (Anzahl stimmt), jeden zweiten löschen, auflisten, Rest löschen, `rmdir`; `e2fsck -fn` Ende 0. Der Lauf mit 20.000 Einträgen berührt die Inode-Cache-Grenze; scheitert er daran, ist E2-P8 Voraussetzung.
 - [ ] **Schritt 5:** Doku (`README.md:172`, `docs/COSMOS_SUPPORT.md` „ext2-Verzeichnisgrenze“, `docs/superpowers/specs/2026-11-17-ext2-directory-limit.md` als historisch kennzeichnen), Commit, Review, PR.
@@ -255,7 +255,7 @@ Umkopieren. Eine zweite Stufe (Einträge verdrängen, deren Inode niemand mehr h
 Teil dieses Plans, weil sie die Objektidentität berührt.
 
 - [ ] **Schritt 1: Cosmos-Test:** `InodeCache_ReadDirOf30000Entries_DoesNotGrowDictionary` (über ein internes Zählfeld oder `EnsureCapacity`-Rückgabe prüfbar; sonst als Speicherlauf im Gast).
-- [ ] **Schritt 2:** Patch, `PATCHES.md`-Zeile, Commit, PR gegen `cosmos`.
+- [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Commit, PR gegen `cosmos`.
 - [ ] **Schritt 3: Gast:** E4.0 `--diagnose-run 12` und der Lauf mit 20.000 Einträgen aus E2-P7. Erwartet: kein Allokationsfehler, `free` vor und nach dem Aushängen gleich.
 - [ ] **Schritt 4: ZehOS:** nur Doku (`README.md:174`, `docs/COSMOS_SUPPORT.md:150-172`, `docs/STORAGE_3_0_97_FINDINGS.md` „Inode-Cache“), `COMMIT`/`VERSION`, PR.
 
@@ -283,7 +283,7 @@ Cosmos das Image nicht mehr verändert.
 
 - [ ] **Schritt 1:** Entwurfsnotiz, Review durch den Storage-Lead.
 - [ ] **Schritt 2: Cosmos-Tests** (`Ext2ReadOnlyTests.cs`): `Mount_UnknownIncompat_IsRefused`, `Mount_UnknownRoCompat_IsReadOnly`, `ReadOnlyMount_OpenReadClose_DoesNotChangeDevice` (Hash des RAM-Geräts vorher und nachher gleich), `ReadOnlyMount_CreateWriteUnlinkMkdirRename_AreRefused`, `ReadWriteMount_StillWorks`.
-- [ ] **Schritt 3:** Patch, `PATCHES.md`-Zeile, Commit, PR gegen `cosmos`.
+- [ ] **Schritt 3:** Patch, Datei `patches/<Kurzname>.md`, Commit, PR gegen `cosmos`.
 - [ ] **Schritt 4: ZehOS** (Branch `task/mc-e2-p6-lesemodus`): `CosmosReadOnlyExt2FileSystem` auf den Cosmos-Lesemount umstellen oder entfernen; Aufrufer `CosmosLayoutProfile.cs`, `CosmosMigrationService.cs:126`, `CosmosExt2GuestProbe.cs:239-332` anpassen. Hosttests `Ext2FeatureGateTests`, `Ext2SupportedGeometryTests`, `RootVolumeStateTests` bleiben grün.
 - [ ] **Schritt 5: Hostprobe:** `dotnet run --project experiments/StorageProbe/StorageProbe.csproj -c Release -- readonly-selftest`. **Gast:** kleine Probe, Lauf 2 (`ReadOnlyRun`): Image-SHA vorher und nachher gleich, Marken „Create, Delete, Mkdir, Rename ohne Wirkung“ und „Image unveraendert“; E4.0 Lauf 4.
 - [ ] **Schritt 6:** Doku, Commit, Review durch die Storage-Arbeitsgruppe, PR.

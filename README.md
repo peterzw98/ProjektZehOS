@@ -306,6 +306,8 @@ Der erste HTTP-Vertrag verlangt Status 200, unkomprimierte Inhalte und `Content-
 
 Der normale Kernelbuild enthält standardmäßig den WebAssembly-Loader (wasm3) und den Paketmanager `pkg`. Apps werden nicht mehr in den Kernel gebaut, sondern als signierte Pakete installiert. Sie erscheinen danach im Startmenü. Doom ist das erste Paket: doomgeneric als Wasm plus Freedoom.
 
+Für QEMU-Start- und Testskripte setzt `ZEHOS_QEMU_SMP` optional die CPU-Topologie, z. B. `4,cores=2,threads=2`; leer bleibt die QEMU-Vorgabe. `start-qemu.ps1 -Smp` überschreibt die Umgebungsvariable. Für VMware setzt `start-vmware.ps1 -Cpus 2` die Anzahl virtueller CPUs (Standard 1).
+
 Nach `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release` startet `scripts/start-qemu.ps1` das normale ISO einschließlich Paketmanager. Alternativ mit `dotnet build` bauen und dessen ISO ausdrücklich auswählen:
 
 ```powershell

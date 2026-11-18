@@ -8,6 +8,7 @@ $qemu = (Get-Command qemu-system-x86_64 -ErrorAction Stop).Source
 $share = Join-Path (Split-Path (Split-Path $qemu -Parent) -Parent) 'share/qemu'
 $iso = (Resolve-Path -LiteralPath $IsoPath).Path
 $arguments = @('-L', ('"{0}"' -f $share), '-machine', 'q35', '-cpu', 'max', '-m', '512M', '-vga', 'std', '-boot', 'd', '-cdrom', ('"{0}"' -f $iso), '-display', 'none', '-serial', ('"file:{0}"' -f $logPath), '-monitor', 'none', '-action', 'shutdown=poweroff,reboot=reset')
+if ($env:ZEHOS_QEMU_SMP) { $arguments += @('-smp', $env:ZEHOS_QEMU_SMP) }
 $guest = Start-Process -FilePath $qemu -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardError (Join-Path $result 'stderr.log')
 try {
     $watch = [Diagnostics.Stopwatch]::StartNew()

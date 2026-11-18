@@ -103,7 +103,7 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
 - ZehOS ist ein C#-Kernel auf **Cosmos Gen3** (.NET 10, NativeAOT, x64) mit Desktop, Terminals und Textshell; Repository `peterzw98/ProjektZehOS`, Hauptbranch `master`.
   Zuständigkeiten, Build- und Testbefehle stehen in `AGENTS.md`; Ziele und Etappen in `ROADMAP.md`; Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`.
 - **Eigener Cosmos-Build:** Cosmos 3.0.97 baut ZehOS aus dem Branch `cosmos` (Quellstand des Pakets, `deploy/cosmos/COMMIT`, `VERSION` = `3.0.97-zehos.N`); `scripts/build-cosmos.sh` baut ihn einmal je Arbeitskopie
-  in einen lokalen Feed (SDK exakt `deploy/cosmos/SDK`). Patches an Cosmos laufen nur per PR auf diesen Branch (ein Patch = ein Commit + eine Zeile in `PATCHES.md`); der ZehOS-PR setzt den Pin und entfernt den Umweg.
+  in einen lokalen Feed (SDK exakt `deploy/cosmos/SDK`). Patches an Cosmos laufen nur per PR auf diesen Branch (ein Patch = ein Squash-Commit + eine Datei `patches/<Kurzname>.md`); der ZehOS-PR setzt den Pin und entfernt den Umweg.
 - **Branchregeln (Rulesets):** `master` (PR mit Vier-Augen-Freigabe), `packages`, `cosmos` und `disc-bridge` sind per PR geschützt; Änderungen an `packages` veröffentlichen sofort (Paketserver).
 - **Bridge:** Die Discord-Bridge liegt seit der Auslagerung auf dem verwaisten Branch `disc-bridge`. Sie spiegelt IRC-Topics in die Discord-Kanalbeschreibung und teilt lange Nachrichten
   in Teile `(i/n m=<ID>)`; Deploy und Bot-Rechte gehören dem Menschen.

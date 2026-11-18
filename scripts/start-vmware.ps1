@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string] $IsoPath
+    [string] $IsoPath,
+    [ValidateRange(1, 1024)]
+    [int] $Cpus = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,7 +38,7 @@ virtualHW.version = "17"
 displayName = "ProjektZeh (Cosmos Gen3)"
 guestOS = "other-64"
 memsize = "1024"
-numvcpus = "1"
+numvcpus = "$Cpus"
 firmware = "efi"
 efi.secureBoot.enabled = "FALSE"
 ide1:0.present = "TRUE"

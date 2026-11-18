@@ -429,6 +429,10 @@ public sealed class Kernel : Sys.Kernel
     {
         // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
+        // Vor dem ersten Worker: Ausnahmen in dessen Gastcode gibt der Hook auf (12.4-I1), alle anderen halten an.
+#pragma warning disable COSMOS0001 // Der Ausnahme-Hook gehoert zur experimentellen Scheduler-Schnittstelle.
+        Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler = FaultIsolation.OnCpuException;
+#pragma warning restore COSMOS0001
         InstallScheduler();
         // Worker fuer Hintergrundaufgaben jetzt anlegen: spaetere Thread-Starts scheitern nach Dateilast (nativer Heap zerstueckelt).
         LogWorkerStart($"{BackgroundTaskService.BootWorkers} Aufgaben-Worker", tasks.StartWorkers());
@@ -463,6 +467,9 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_STORAGE_PROBE
         if (RunStorageProbeAndPowerOff()) return;
+#endif
+#if ZEHOS_STORAGE_ROOT_PROBE
+        if (RunStorageRootProbeAndPowerOff()) return;
 #endif
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
@@ -500,6 +507,20 @@ public sealed class Kernel : Sys.Kernel
         var power = PreparePowerAction();
         if (power.IsOK()) Sys.Power.Shutdown();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_PROBE shutdown FAIL {power.Message}\n");
+        Stop();
+        return true;
+    }
+
+#endif
+#if ZEHOS_STORAGE_ROOT_PROBE
+    // scripts/test-storage-ext2-root.py wartet nach STORAGE_ROOT DONE auf das Gastende; / bleibt wie im Produkt eingehaengt,
+    // die Probe hat Sync und s_state selbst erledigt. Lauf 3 kehrt nie zurueck, der Host beendet QEMU.
+    private bool RunStorageRootProbeAndPowerOff()
+    {
+        CosmosExt2RootProbe.Run();
+        var power = PreparePowerAction();
+        if (power.IsOK()) Sys.Power.Shutdown();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_ROOT shutdown FAIL {power.Message}\n");
         Stop();
         return true;
     }
