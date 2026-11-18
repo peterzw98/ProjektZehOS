@@ -13,7 +13,9 @@ Benoetigte Builds (sonst fehlen die seriellen GPT_TEST-Quittungen):
 
 --run-cases installiert einmal 32 GiB und prueft jeden Fall auf einer eigenen Sparse-Kopie (cp --sparse=always):
 G2 Rueckfalleintrag, G3/G4 Root offline geloescht/beschaedigt, G5 Security-Recovery-ISO auf G3/G4 mit Konto,
-G7 installierte Platte + ZEHOSDATA, G9 Neuinstallation ueber Healthy mit Abbruch in CopyingFiles.
+G7 installierte Platte + ZEHOSDATA, G9 Neuinstallation ueber Healthy mit Abbruch in CopyingFiles; dazu G6-Ziele
+(roh geschriebenes ISO, ZEHOSDATA, eingebundenes Ziel, belegtes /data) und G8 Abbruch auf frischer Platte -> Unclear ->
+Neuinstallation mit --erase.
 --run-rdrand startet den Installer unter TCG mit qemu64 ohne RDRAND/RDSEED und erwartet die Verweigerung.
 
 Exitcodes: 2 = alle ausgefuehrten Faelle bestanden, andere Faelle offen (VMware und Teile von G1/G2/G6 sind offen,
@@ -21,6 +23,7 @@ deshalb gibt es derzeit kein 0); 1 = Fehler. Nicht implementierte Faelle und feh
 """
 import argparse
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -423,10 +426,8 @@ def run_g7(args, work: Path, base: Path) -> None:
     print("PASS G7: installierte Platte gewinnt gegen ZEHOSDATA, Hinweis im Protokoll, Datenplatte unveraendert", flush=True)
 
 
-def run_g9(args, work: Path, base: Path) -> None:
-    case = storage.new_work_dir(work / "g9")
-    image = case / "target.img"
-    copy_sparse(base, image)
+def kill_in_copy(args, case: Path, image: Path) -> None:
+    """GPT-Installation auf sata0 starten und den Gast bei Beginn von CopyingFiles hart beenden."""
     run = storage.new_work_dir(case / "install")
     process = None
     try:
@@ -438,9 +439,9 @@ def run_g9(args, work: Path, base: Path) -> None:
             # Eine Verweigerung vor dem Kopieren waere kein Abbruchtest; ihr Text erklaert den Grund.
             text = storage.serial_text(run)
             if (error := text.find("GPT_TEST RESULT ", mark)) >= 0:
-                raise RuntimeError("G9: Installation endete vor CopyingFiles: " + text[error:text.find("\n", error)])
+                raise RuntimeError(f"{case.name}: Installation endete vor CopyingFiles: " + text[error:text.find("\n", error)])
             if time.monotonic() > deadline:
-                raise TimeoutError("G9: CopyingFiles nicht erreicht")
+                raise TimeoutError(f"{case.name}: CopyingFiles nicht erreicht")
             time.sleep(0.2)
         process.kill()
         process.wait(timeout=30)
@@ -449,7 +450,12 @@ def run_g9(args, work: Path, base: Path) -> None:
         if process is not None and process.poll() is None:
             process.kill()
             process.wait(timeout=30)
+
+
+def identity_with_security_iso(args, case: Path, image: Path) -> str:
+    """Identitaet der Platte aus Sicht eines normalen Kernels (Security-Recovery-ISO), ohne von ihr zu starten."""
     run = storage.new_work_dir(case / "check")
+    process = None
     try:
         process, qmp = storage.boot(security_args(args), run, [image])
         identity = serial_identity(run, 5)
@@ -459,9 +465,115 @@ def run_g9(args, work: Path, base: Path) -> None:
         if process is not None and process.poll() is None:
             process.kill()
             process.wait(timeout=30)
+    return identity
+
+
+def run_g8_copy(args, work: Path) -> None:
+    case = storage.new_work_dir(work / "g8-copy")
+    image = case / "target.img"
+    storage.create_sparse(image, 32 * GIB)
+    kill_in_copy(args, case, image)
+    identity = identity_with_security_iso(args, case, image)
+    if identity != "Unclear SETUP False":
+        raise RuntimeError(f"G8: Identitaet nach Abbruch {identity}, erwartet Unclear SETUP False")
+    run = storage.new_work_dir(case / "reinstall")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, [image])
+        mark = len(storage.serial_text(run))
+        qmp.line("setup install sata0 --layout gpt --erase")
+        storage.tools.wait_serial(run, "GPT_TEST RESULT OK", args.timeout, mark)
+        storage.stop(process, qmp, run)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    inspect_image(image, storage.new_work_dir(case / "inspect"), args.payload, args.version, args.boot_config, marker_expected=True)
+    print("PASS G8 Teil: Abbruch in CopyingFiles auf frischer Platte ergibt Unclear, Neuinstallation mit --erase "
+          "gelingt und besteht die Offline-Pruefung", flush=True)
+
+
+def run_g9(args, work: Path, base: Path) -> None:
+    case = storage.new_work_dir(work / "g9")
+    image = case / "target.img"
+    copy_sparse(base, image)
+    kill_in_copy(args, case, image)
+    identity = identity_with_security_iso(args, case, image)
     if identity.startswith("Healthy") or not identity.endswith("SETUP False"):
         raise RuntimeError(f"G9: Identitaet nach Abbruch {identity}, erwartet nicht Healthy und SETUP False")
     print(f"PASS G9: Neuinstallation ueber Healthy in CopyingFiles abgebrochen, danach {identity}", flush=True)
+
+
+def fat_disk(path: Path, label: str) -> None:
+    """32 GiB sparse mit einer MBR-0x0C-Partition und FAT32-Label wie disk init bzw. ein Bestand."""
+    new_sparse(path, 32 * GIB)
+    subprocess.run(["sfdisk", "-q", str(path)], input="label: dos\n2048,,c\n", text=True, check=True, capture_output=True)
+    sectors = 32 * GIB // SECTOR - 2048
+    subprocess.run(["mkfs.fat", "-F", "32", "-n", label, "--offset", "2048", str(path), str(sectors // 2)],
+                   check=True, capture_output=True)
+
+
+def data_digest(path: Path) -> str:
+    """SHA-256 ueber Lage und Inhalt der belegten Bereiche; ein Schreibzugriff des Gastes aendert ihn."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        position, end = 0, path.stat().st_size
+        while position < end:
+            try:
+                data = os.lseek(stream.fileno(), position, os.SEEK_DATA)
+            except OSError as error:
+                if error.errno == errno.ENXIO:
+                    break
+                raise
+            hole = os.lseek(stream.fileno(), data, os.SEEK_HOLE)
+            stream.seek(data)
+            digest.update(data.to_bytes(8, "little"))
+            for block in iter(lambda: stream.read(min(8 * 1024 * 1024, hole - stream.tell())), b""):
+                digest.update(block)
+            position = hole
+    return digest.hexdigest()
+
+
+def run_g6_targets(args, work: Path) -> None:
+    case = storage.new_work_dir(work / "g6-targets")
+    medium, data, existing, blank = (case / name for name in ("medium.img", "data.img", "existing.img", "blank.img"))
+    new_sparse(medium, 32 * GIB)
+    # Wie ein roh auf USB geschriebenes ISO: Kopf des Installer-ISO samt CD001 bei Byte 32769.
+    with args.iso.open("rb") as source, medium.open("r+b") as target:
+        target.write(source.read(64 * 1024))
+    fat_disk(data, "ZEHOSDATA")
+    fat_disk(existing, "ZEHOS")
+    new_sparse(blank, 32 * GIB)
+    unchanged = {path: data_digest(path) for path in (medium, data)}
+    run = storage.new_work_dir(case / "guest")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, [medium, data, existing, blank])
+        for disk, reason in (("sata0", "Das Installationsmedium ist kein Installationsziel."),
+                             ("sata1", "Datenplatte/installiertes System, nicht als Ziel erlaubt.")):
+            mark = len(storage.serial_text(run))
+            qmp.line(f"setup install {disk} --layout gpt --erase")
+            storage.tools.wait_serial(run, "GPT_TEST RESULT ERROR " + reason, args.timeout, mark)
+        # Belegt zugleich den Installationsmountpunkt /data (Legacy-Profil); das Ziel selbst wird zuerst erkannt.
+        mark = storage.send_command(qmp, run, "disk mount sata2 --yes", "Befehl: disk mount sata2 --yes")
+        storage.tools.wait_serial(run, "Laufwerksaenderung abgeschlossen.", 60, mark)
+        for disk, reason in (("sata2", "Das Ziellaufwerk ist eingebunden."), ("sata3", "Installations-Mountpunkt belegt.")):
+            mark = len(storage.serial_text(run))
+            qmp.line(f"setup install {disk} --layout gpt --erase")
+            storage.tools.wait_serial(run, "GPT_TEST RESULT ERROR " + reason, args.timeout, mark)
+        storage.quit_guest(process, qmp)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    assert_blank(blank)
+    for path, digest in unchanged.items():
+        if data_digest(path) != digest:
+            raise RuntimeError(f"G6: {path.name} wurde beschrieben")
+    print("PASS G6 Teil: Medium, ZEHOSDATA, eingebundenes Ziel und belegter Installationsmountpunkt abgewiesen, "
+          "keine Schreibzugriffe", flush=True)
 
 
 def run_cases(args, work: Path) -> None:
@@ -483,6 +595,8 @@ def run_cases(args, work: Path) -> None:
     run_g5(args, work, account_base)
     run_g7(args, work, base)
     run_g9(args, work, base)
+    run_g6_targets(args, work)
+    run_g8_copy(args, work)
     print("OFFEN: VMware fuer alle Faelle", flush=True)
 
 
@@ -543,7 +657,7 @@ def main() -> int:
     if args.run_g1_basic or args.run_cases:
         required += ("debugfs",)
     if args.run_cases:
-        required += ("mdel", "cp")
+        required += ("mdel", "cp", "mkfs.fat")
     missing = [name for name in required if not shutil.which(name)]
     if missing:
         print("OFFEN: Werkzeuge fehlen: " + ", ".join(missing), flush=True)
