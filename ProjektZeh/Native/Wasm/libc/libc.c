@@ -16,6 +16,11 @@ extern void* __cosmos_heap_alloc(size_t size);
 extern void __cosmos_heap_free(void* pointer);
 extern void __cosmos_serial_write(const char* text);
 
+// Roadmap 12.4-I1: Heapaufrufe nehmen die Seiten-/Heapsperre von Cosmos. Faellt der Wasm-Worker darin, darf der Kernel
+// ihn nicht aufgeben (die Sperre bliebe fuer immer belegt); deshalb zaehlen sie wie Hostaufrufe. Definiert in
+// zehos_host_core.c; schwach, damit der Hosttest libc.c allein binden kann.
+__attribute__((weak)) volatile int zehos_host_depth;
+
 int errno;
 
 // Cosmos-Rohbloecke sind teils nur 2 Byte ausgerichtet (AOT-Probe B3), C sagt aber 16 Byte (max_align_t) zu.
@@ -28,7 +33,9 @@ void* malloc(size_t size)
 {
     // __cosmos_heap_alloc kuerzt die Groesse auf 32 Bit (HeapNative.Alloc, Cosmos 3.0.97); groessere Bloecke scheitern hier.
     if (size > UINT32_MAX - ZEHOS_BLOCK_EXTRA) return NULL;
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     uint8_t* raw = (uint8_t*)__cosmos_heap_alloc(ZEHOS_BLOCK_EXTRA + size);
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     if (raw == NULL) return NULL;
     uintptr_t aligned = ((uintptr_t)raw + ZEHOS_BLOCK_EXTRA) & ~(uintptr_t)(ZEHOS_ALIGN - 1);
     zehos_block_header* header = (zehos_block_header*)aligned - 1;
@@ -39,7 +46,10 @@ void* malloc(size_t size)
 
 void free(void* pointer)
 {
-    if (pointer != NULL) __cosmos_heap_free(((zehos_block_header*)pointer - 1)->raw);
+    if (pointer == NULL) return;
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+    __cosmos_heap_free(((zehos_block_header*)pointer - 1)->raw);
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
 }
 
 void* calloc(size_t count, size_t size)

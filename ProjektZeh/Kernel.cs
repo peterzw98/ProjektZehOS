@@ -79,6 +79,8 @@ public sealed class Kernel : Sys.Kernel
     {
         messages = new MessageDemoService(tasks);
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
+        // Lange Warte- oder Haltezeiten der Speicher-Sperre nur seriell melden: das Protokoll selbst schreibt keine Datei.
+        StorageLock.Report = text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE " + text + "\n");
         systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -112,7 +114,7 @@ public sealed class Kernel : Sys.Kernel
             MutationBlockedReason = MutationBlockedReason,
         };
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
-        accounts.IsDataMounted = () => VfsManager.TryGetMount(systemPaths.AdminRoot, out _);
+        accounts.IsDataMounted = () => StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _));
         // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
         packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion, PackageWrites);
         desktopIdentity = accounts.CreateSession();
@@ -379,10 +381,19 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
+        // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
+        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         InstallScheduler();
+        // Worker fuer Hintergrundaufgaben jetzt anlegen: spaetere Thread-Starts scheitern nach Dateilast (nativer Heap zerstueckelt).
+        LogWorkerStart($"{BackgroundTaskService.BootWorkers} Aufgaben-Worker", tasks.StartWorkers());
+        LogWorkerStart("Kennwort-Worker", ShellService.StartPasswordWorker());
 #if ZEHOS_WASM && !ZEHOS_INSTALLER
-        // Vor dem ersten Netzabruf, solange der 8-MiB-Workerstack noch sicher Platz findet (WasmRuntime.StartWorker).
-        Runtime.Wasm.WasmRuntime.StartWorker();
+        // Langlaeufer beim Boot anlegen, solange der Heap noch frei von Netz- und App-Muell ist; spaeter nur wiederverwenden.
+        LogWorkerStart("Wasm-Worker", Runtime.Wasm.WasmRuntime.StartWorker());
+        LogWorkerStart("Wasm-Netzworker", Runtime.Wasm.CosmosWasmNetworkConnector.StartWorker());
+#endif
+#if ZEHOS_ISOLATION_PROBE
+        Runtime.CosmosIsolationProbe.Start();
 #endif
 #if ZEHOS_NETWORK_PROBE
         if (!CosmosNetworkProbe.Run(tasks)) { Stop(); return; }
@@ -478,16 +489,16 @@ public sealed class Kernel : Sys.Kernel
         // Nach gescheitertem Zurueckhaengen haengt /data hoechstens ueber den Lese-Wrapper; dort ist nichts zu schreiben, und
         // Unmount() scheiterte an der bewusst gehaltenen Quellsperre.
         if (stranded)
-            unmounted = !VfsManager.TryGetMount(systemPaths.AdminRoot, out _) || CosmosStorageService.UnmountData() ? ResultErr.CreateSuccess()
+            unmounted = !StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _)) || CosmosStorageService.UnmountData() ? ResultErr.CreateSuccess()
                 : ResultErr.CreateFailure(ResultCode.Failure, "cause='UnmountRefused' message='Lesemount von /data liess sich nicht aushaengen.'");
         else
 #endif
 #if ZEHOS_ROOT_PROFILE
         // Root-Profil: / laesst sich nicht aushaengen; /boot/efi aushaengen, zweimal Sync, s_state = 1 (Spec Abschnitt 2).
         unmounted = layout?.RootVolume is { } rootVolume ? CosmosLayoutProfile.Close(rootVolume)
-            : systemPaths.Profile == PathProfile.Legacy && VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+            : systemPaths.Profile == PathProfile.Legacy && StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _)) ? storage.Unmount() : ResultErr.CreateSuccess();
 #else
-        unmounted = VfsManager.TryGetMount(systemPaths.AdminRoot, out _) ? storage.Unmount() : ResultErr.CreateSuccess();
+        unmounted = StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _)) ? storage.Unmount() : ResultErr.CreateSuccess();
 #endif
 #if !ZEHOS_INSTALLER
         if (!unmounted.IsOK()) StartAutomaticNetwork();
@@ -504,6 +515,12 @@ public sealed class Kernel : Sys.Kernel
 #endif
 
 #pragma warning disable COSMOS0001
+    private void LogWorkerStart(string name, ResultErr started)
+    {
+        if (started.IsOK()) systemLog.Information("Scheduler", $"{name} gestartet.");
+        else systemLog.Error("Scheduler", $"{name} nicht gestartet: {started.Message}");
+    }
+
     private void InstallScheduler()
     {
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
@@ -525,8 +542,8 @@ public sealed class Kernel : Sys.Kernel
         var failed = new System.Collections.Generic.List<string>();
         foreach (var (name, root, flags) in new[] { ("zehos-proc", "/proc", MountFlags.ReadOnly), ("zehos-sys", "/sys", MountFlags.ReadOnly), ("zehos-dev", "/dev", MountFlags.None) })
         {
-            if (!VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce))) failed.Add(name + " nicht registriert");
-            else if (!VfsManager.TryMount(name, "", flags, root, out _)) failed.Add(root + " nicht eingehaengt");
+            if (!StorageLock.Run(() => VfsManager.RegisterFileSystem(name, new CosmosVirtualFileSystemType(root, systemFiles.Produce)))) failed.Add(name + " nicht registriert");
+            else if (!StorageLock.Run(() => VfsManager.TryMount(name, "", flags, root, out _))) failed.Add(root + " nicht eingehaengt");
         }
 
         return failed.Count == 0 ? ResultErr.CreateSuccess()

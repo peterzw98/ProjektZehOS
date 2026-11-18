@@ -7,6 +7,11 @@
 #include <string.h>
 #include "zehos_host_core.h"
 
+volatile int32_t zehos_host_depth;
+
+// Der Kernel liest den Zaehler im Ausnahmepfad ohne Aufruf: die Adresse holt er einmal beim Start des Workers.
+volatile int32_t* zehos_host_depth_address(void) { return &zehos_host_depth; }
+
 // Exporte des C#-Kernels (UnmanagedCallersOnly).
 extern void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length);
 extern uint64_t zehos_wasm_host_time_ns(int32_t clockId);

@@ -35,14 +35,14 @@ internal static class CosmosLayoutProfile
         var legacy = new CosmosLayoutSelection(new LayoutDecision(LayoutOutcome.Legacy, false, false, null), null);
         // 0. Nur ein gueltiges 7a-Layout auf sata0 fuehrt zu /boot/efi; alles andere bleibt bei der bisherigen Auswahl.
         IBlockDevice? device = FindDevice();
-        if (device is null || !Gpt.IsGpt(device)) return legacy;
-        var table = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
+        if (device is null || !StorageLock.Run(() => Gpt.IsGpt(device))) return legacy;
+        var table = StorageLock.Run(() => GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock));
         if (!table.IsOK()) return legacy;
         Partition? esp = CosmosGptPartitions.Find(device, table.Value!, GptLayout.EspType, null);
         if (esp is null) return legacy;
 
         // 1. ESP direkt unter /boot/efi, ESP-Marker lesen, Identitaet wie 7a.
-        if (!MountEfi(esp)) return legacy;
+        if (!StorageLock.Run(() => MountEfiStorageLocked(esp))) return legacy;
         IdentityResult? identity = CosmosInstalledIdentity.Evaluate(EfiMount);
         Partition? root = null;
         if (identity is { State: InstalledState.Healthy or InstalledState.RootUnclean })
@@ -55,18 +55,18 @@ internal static class CosmosLayoutProfile
         ResultObject<LayoutMarker>? layout = null;
         bool hasAccounts = false;
         var readOnly = root is null ? null : new CosmosReadOnlyExt2FileSystem(root);
-        if (readOnly != null && readOnly.TryMount(out _))
+        if (readOnly != null && StorageLock.Run(() => readOnly.TryMount(out _)))
         {
             try
             {
                 string probe = CosmosReadOnlyExt2FileSystem.MountPoint;
                 layout = LayoutMarker.ReadFile(probe + LayoutMarker.Path);
-                hasAccounts = File.Exists(probe + SystemPaths.Root.SecurityDirectory + "/" + AccountService.MetadataFile);
+                hasAccounts = StorageLock.Run(() => File.Exists(probe + SystemPaths.Root.SecurityDirectory + "/" + AccountService.MetadataFile));
             }
             finally
             {
                 // 3. RO-Zugriff schliessen, bevor geschrieben eingehaengt wird.
-                VfsManager.TryUnmount(CosmosReadOnlyExt2FileSystem.MountPoint);
+                StorageLock.Run(() => VfsManager.TryUnmount(CosmosReadOnlyExt2FileSystem.MountPoint));
             }
         }
         else if (identity is { State: InstalledState.Healthy or InstalledState.RootUnclean })
@@ -80,7 +80,7 @@ internal static class CosmosLayoutProfile
         {
             case LayoutOutcome.Root:
                 return MountRootWritable(root!, decision, table.Value.DiskGuid, note);
-            case LayoutOutcome.RootReadOnly when readOnly!.TryMount("/", out _):
+            case LayoutOutcome.RootReadOnly when StorageLock.Run(() => readOnly!.TryMount("/", out _)):
                 return new(decision, null);
             case LayoutOutcome.RootReadOnly:
                 return FallBack(new(LayoutOutcome.Blocked, false, false, "cause='RootMountFailed' message='Root nicht lesbar einhaengbar. Keine Ersteinrichtung.'"));
@@ -90,7 +90,9 @@ internal static class CosmosLayoutProfile
     }
 
     /// <summary>s_state 1 beim Herunterfahren (Spec Abschnitt 2, Energieaktionen): erst /boot/efi aushaengen, dann Root schliessen.</summary>
-    public static ResultErr Close(IRootVolume volume)
+    public static ResultErr Close(IRootVolume volume) => StorageLock.Run(() => CloseStorageLocked(volume));
+
+    private static ResultErr CloseStorageLocked(IRootVolume volume)
     {
         if (VfsManager.TryGetMount(EfiMount, out _) && !VfsManager.TryUnmount(EfiMount))
             return ResultErr.CreateFailure(ResultCode.Failure, "cause='EfiUnmountFailed' message='/boot/efi konnte nicht ausgehaengt werden.'");
@@ -102,14 +104,8 @@ internal static class CosmosLayoutProfile
     {
         try
         {
-            string temporary = LayoutMarker.Path + ".tmp";
-            File.WriteAllText(temporary, new LayoutMarker(LayoutState.Ready, diskGuid).Serialize());
-            File.Move(temporary, LayoutMarker.Path, true);
-            // Spec Etappe 4 §2: zweifacher Sync, dann Device.Flush (Cosmos schreibt den Superblock erst danach).
-            for (int pass = 0; pass < 2; pass++)
-                if (!volume.Sync()) return ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Root-Marker geschrieben, Sync fehlgeschlagen.'");
-            volume.Flush();
-            return ResultErr.CreateSuccess();
+            // Schreiben, Umbenennen, Sync und Flush als ein kurzer Abschnitt: der Marker ist wenige Byte gross.
+            return StorageLock.Run(() => MarkReadyStorageLocked(diskGuid, volume));
         }
         // Auch Rechte- und Pfadfehler aus File.Move duerfen nicht ueber accounts.Saved in den Speicherpfad laufen.
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
@@ -118,28 +114,48 @@ internal static class CosmosLayoutProfile
         }
     }
 
+    private static ResultErr MarkReadyStorageLocked(Guid diskGuid, IRootVolume volume)
+    {
+        string temporary = LayoutMarker.Path + ".tmp";
+        File.WriteAllText(temporary, new LayoutMarker(LayoutState.Ready, diskGuid).Serialize());
+        File.Move(temporary, LayoutMarker.Path, true);
+        // Spec Etappe 4 §2: zweifacher Sync, dann Device.Flush (Cosmos schreibt den Superblock erst danach).
+        for (int pass = 0; pass < 2; pass++)
+            if (!volume.Sync()) return ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Root-Marker geschrieben, Sync fehlgeschlagen.'");
+        volume.Flush();
+        return ResultErr.CreateSuccess();
+    }
+
     private static CosmosLayoutSelection MountRootWritable(Partition root, LayoutDecision decision, Guid diskGuid, Action<string> note)
     {
-        if (!VfsManager.RegisterFileSystem(RootFileSystem, new Ext2FileSystemType(root))
-            || !VfsManager.TryMount(RootFileSystem, "", MountFlags.None, "/", out VfsMount? mount))
+        VfsMount? mount = StorageLock.Run(() => MountRootStorageLocked(root));
+        if (mount is null)
             return FallBack(new(LayoutOutcome.Blocked, false, false, "cause='RootMountFailed' message='Root nicht schreibbar einhaengbar. Keine Ersteinrichtung.'"));
         var volume = new CosmosRootVolume(root, mount);
         // s_state 0 direkt nach dem Mount, vor jedem anderen Schreiber (Spec Abschnitt 2, Sauber-Kennzeichen).
-        var opened = RootVolumeState.Open(volume);
+        var opened = StorageLock.Run(() => RootVolumeState.Open(volume));
         if (opened.IsOK()) return new(decision, volume, diskGuid);
         note("Root nicht als offen markierbar: " + opened.Message);
-        VfsManager.TryUnmount("/");
+        StorageLock.Run(() => VfsManager.TryUnmount("/"));
         return FallBack(new(LayoutOutcome.Blocked, false, false, "cause='RootOpenFailed' message='s_state nicht setzbar. Keine Ersteinrichtung.'"));
     }
+
+    /// <summary>Registrieren und Einhaengen als ein Abschnitt; null = nicht schreibbar einhaengbar.</summary>
+    private static VfsMount? MountRootStorageLocked(Partition root) =>
+        VfsManager.RegisterFileSystem(RootFileSystem, new Ext2FileSystemType(root))
+            && VfsManager.TryMount(RootFileSystem, "", MountFlags.None, "/", out VfsMount? mount) ? mount : null;
 
     /// <summary>4. Kein Root-Fall: /boot/efi aushaengen, damit die bisherige Auswahl die ESP unter /data einhaengt.</summary>
     private static CosmosLayoutSelection FallBack(LayoutDecision decision)
     {
-        if (VfsManager.TryGetMount(EfiMount, out _)) VfsManager.TryUnmount(EfiMount);
+        StorageLock.Run(() =>
+        {
+            if (VfsManager.TryGetMount(EfiMount, out _)) VfsManager.TryUnmount(EfiMount);
+        });
         return new(decision, null);
     }
 
-    private static bool MountEfi(Partition esp)
+    private static bool MountEfiStorageLocked(Partition esp)
     {
         if (!efiRegistered)
         {

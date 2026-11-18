@@ -5,6 +5,8 @@
 #include "platform_api_extension.h"
 
 extern void __cosmos_serial_write(const char* text);
+// Roadmap 12.4-I1: die serielle Ausgabe sperrt in Cosmos; zaehlt deshalb wie ein Hostaufruf (zehos_host_core.c).
+extern volatile int32_t zehos_host_depth;
 
 int bh_platform_init(void) { return 0; }
 void bh_platform_destroy(void) {}
@@ -46,7 +48,9 @@ int os_vprintf(const char* format, va_list ap)
 {
     char buffer[512];
     int length = vsnprintf(buffer, sizeof(buffer), format, ap);
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     __cosmos_serial_write(buffer);
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     return length;
 }
 

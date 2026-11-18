@@ -39,6 +39,9 @@ def main() -> int:
     parser.add_argument("--raster-toggle", action="store_true")
     # Nur fuer Gastpruefungen: feste Welt statt Zufallsseed; wirkt ueber den Gen_Start-Messpunkt.
     parser.add_argument("--world-seed", type=int)
+    # Voreingestellte Sichtweite: ClassiCube liest options-default.txt vor options.txt (Options_Load). Die Datei liegt im
+    # Paket, nicht in /save; was der Nutzer mit F aendert, speichert ClassiCube weiter in options.txt.
+    parser.add_argument("--view-distance", type=int, choices=[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096])
     args = parser.parse_args()
     if args.world_seed is not None and args.no_measure:
         parser.error("--world-seed braucht die Messpunkte (ohne --no-measure)")
@@ -98,7 +101,7 @@ def main() -> int:
         return result.returncode
     digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
     print(f"{args.output} ({args.output.stat().st_size} Bytes, SHA-256 {digest})")
-    assemble_package(args.source, args.output, args.output.parent / "package")
+    assemble_package(args.source, args.output, args.output.parent / "package", args.view_distance)
     return 0
 
 
@@ -110,12 +113,15 @@ def recipe_reference(recipe: Path, *inputs: Path) -> list[str]:
     return netsurf.recipe_reference(recipe, *inputs)
 
 
-def assemble_package(source: Path, module: Path, package: Path) -> None:
-    """Legt den unsignierten Paketinhalt an: Modul, Texturpaket und alle Lizenz- und Quellenangaben."""
+def assemble_package(source: Path, module: Path, package: Path, view_distance: int | None = None) -> None:
+    """Legt den unsignierten Paketinhalt an: Modul, Texturpaket, Lizenz- und Quellenangaben und auf Wunsch
+    options-default.txt mit der voreingestellten Sichtweite."""
     if package.exists():
         shutil.rmtree(package)
     (package / "texpacks").mkdir(parents=True)
     shutil.copyfile(module, package / "classicube.wasm")
+    if view_distance is not None:
+        (package / "options-default.txt").write_bytes(f"viewdist={view_distance}\n".encode("ascii"))
     # ClassiCube sucht texpacks/default.zip; feste Zeitstempel halten das Archiv bytegleich.
     with zipfile.ZipFile(package / "texpacks" / "default.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted((HERE / "texpack").glob("*.png")):

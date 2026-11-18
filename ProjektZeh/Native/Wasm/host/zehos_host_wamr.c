@@ -43,6 +43,7 @@ static zehos_host_call begin_call(wasm_exec_env_t env)
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(env);
     zehos_wamr_run* run = (zehos_wamr_run*)wasm_runtime_get_user_data(env);
     zehos_host_call call = { &run->context, NULL, 0, ZEHOS_HOST_CONTINUE };
+    zehos_host_depth++;
     uint8_t* base = (uint8_t*)wasm_runtime_addr_app_to_native(instance, 0);
     uint8_t* start = NULL;
     uint8_t* end = NULL;
@@ -57,6 +58,7 @@ static zehos_host_call begin_call(wasm_exec_env_t env)
 // Ein Trap der Kernfunktion wird zur WAMR-Ausnahme; der AOT-Code prueft sie nach jedem Hostaufruf und kehrt zurueck.
 static void end_call(wasm_exec_env_t env, const zehos_host_call* call)
 {
+    zehos_host_depth--;
     if (call->trap == ZEHOS_HOST_CONTINUE) return;
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(env);
     if (call->trap == ZEHOS_HOST_TRAP_EXIT)

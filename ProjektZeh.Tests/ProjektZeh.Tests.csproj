@@ -28,6 +28,8 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\IWasmSession.cs" Link="Runtime\Wasm\IWasmSession.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmJobQueue.cs" Link="Runtime\Wasm\WasmJobQueue.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmStatus.cs" Link="Runtime\Wasm\WasmStatus.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRuntime.HostCallbacks.cs" Link="Runtime\Wasm\WasmRuntime.HostCallbacks.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
@@ -64,9 +66,11 @@
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
     <Compile Include="..\ProjektZeh\Runtime\FrameTiming.cs" Link="Runtime\FrameTiming.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\FaultIsolationPolicy.cs" Link="Runtime\FaultIsolationPolicy.cs" />
     <Compile Include="..\ProjektZeh\Runtime\LoginFlow.cs" Link="Runtime\LoginFlow.cs" />
     <Compile Include="..\ProjektZeh\Graphics\LoginScreen.cs" Link="Graphics\LoginScreen.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileEntry.cs" Link="Storage\FileEntry.cs" />
+    <Compile Include="..\ProjektZeh\Storage\FileErrors.cs" Link="Storage\FileErrors.cs" />
     <Compile Include="..\ProjektZeh\Storage\FileService.cs" Link="Storage\FileService.cs" />
     <Compile Include="..\ProjektZeh\Storage\DataDiskSelector.cs" Link="Storage\DataDiskSelector.cs" />
     <Compile Include="..\ProjektZeh\Storage\LayoutProfile.cs" Link="Storage\LayoutProfile.cs" />
@@ -76,6 +80,7 @@
     <Compile Include="..\ProjektZeh\Storage\Virtual\VirtualTree.cs" Link="Storage\Virtual\VirtualTree.cs" />
     <Compile Include="..\ProjektZeh\Storage\SystemPaths.cs" Link="Storage\SystemPaths.cs" />
     <Compile Include="..\ProjektZeh\Storage\AppStorageGate.cs" Link="Storage\AppStorageGate.cs" />
+    <Compile Include="..\ProjektZeh\Storage\StorageLock.cs" Link="Storage\StorageLock.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2DirectoryRemoval.cs" Link="Storage\Ext2\Ext2DirectoryRemoval.cs" />

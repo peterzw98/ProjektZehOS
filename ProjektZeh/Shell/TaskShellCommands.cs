@@ -20,7 +20,11 @@ internal sealed class TaskShellCommands
         if (arguments.Length == 0 || (arguments.Length == 1 && arguments[0] == "list"))
         {
             foreach (var task in tasks.Snapshot())
-                output.WriteLine($"{task.Id} {task.Name} {task.State} progress={task.Progress} {task.Error}");
+            {
+                // Ready heisst im Worker-Pool: eingereiht, alle Worker belegt (etwa consumer hinter producer).
+                string state = task.State == BackgroundTaskState.Ready ? "Ready (wartet auf freien Worker)" : task.State.ToString();
+                output.WriteLine($"{task.Id} {task.Name} {state} progress={task.Progress} {task.Error}");
+            }
             return ResultErr.CreateSuccess();
         }
         if (arguments.Length == 1 && arguments[0] == "scheduler")

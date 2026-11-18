@@ -19,7 +19,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `pwd` | Aktuelles Arbeitsverzeichnis anzeigen |
 | `cd <Pfad>` | Arbeitsverzeichnis wechseln |
 | `ls [Pfad]` | Dateien und Unterverzeichnisse auflisten |
-| `cat <Datei>` | Textdatei lesen |
+| `cat <Datei>` | Textdatei lesen (nur gültiges UTF-8; andere Kodierungen werden mit `NotUtf8` abgelehnt statt umkodiert, auch beim Anhängen mit `>>` und im Texteditor) |
 | `mkdir <Pfad>` | Verzeichnis anlegen |
 | `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
 | `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
@@ -320,6 +320,15 @@ Formulareingabe. Der Kernel enthält nur die allgemeinen Hostdienste; NetSurf un
 Paket. NetSurf ist noch nicht im öffentlichen Paketkatalog veröffentlicht. Build, lokale Testinstallation und
 geprüfte Grenzen stehen in [docs/NETSURF.md](docs/NETSURF.md). JavaScript ist standardmäßig aus;
 Strg+J schaltet es für die laufende Sitzung ein (Statusleiste „JS an“), siehe dort.
+
+ClassiCube 1.1.0 (`pkg install classicube`) braucht deutlich mehr Arbeitsspeicher als die übrigen Pakete. Gemessen
+unter QEMU/KVM mit einem Kernel ohne Speichersammlung vor dem App-Start (`master` a4a598c), acht Läufe zu je drei
+Minuten in einer Zufallswelt: Belegt waren rund 425 MB vor dem Start und rund 455 MB nach dem Spiel, unabhängig vom
+Arbeitsspeicher der VM. Frei blieben danach bei 512 MiB rund 50 MB, bei 768 MiB rund 318 MB, bei 1 GiB rund 586 MB
+und bei 2 GiB rund 1660 MB. Empfohlen ist 1 GiB, mindestens 768 MiB. Mit 512 MiB kann ClassiCube mit
+„Out of VRAM?“ abbrechen (unter WHPX beobachtet, unter KVM in diesen Läufen nicht). Seit 0.5.86 sammelt der Kernel
+vor jedem App-Start Speicher ein; das mildert diesen Fall, garantiert aber keinen sicheren Betrieb mit 512 MiB.
+Längere Spielzeit, größere Welten und VMware sind nicht gemessen.
 
 Eigene Apps baut man als wasm32-WASIp1-Modul, etwa mit wasi-sdk für C/C++. Was eine App darf, erklärt [docs/PAKETE_ERSTELLEN.md](docs/PAKETE_ERSTELLEN.md), ebenso den Weg bis zur Veröffentlichung. Die wichtigsten Grenzen:
 - Nur grafische Fensterapps; eine App zur Zeit.

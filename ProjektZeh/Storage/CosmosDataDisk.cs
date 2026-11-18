@@ -23,9 +23,9 @@ internal static class CosmosDataDisk
         // Der Typ steht nur in der MBR-Tabelle; Partition kennt ihn nicht, daher Zuordnung ueber den Startsektor.
         var found = StorageManager.GetPartitions(device);
         if (found.Count == 0) return new(device.Name, device.BlockSize, device.BlockCount, []);
-        var entries = Mbr.IsMbr(device) ? Mbr.Parse(device) : new List<MbrPartitionEntry>();
+        var entries = StorageLock.Run(() => Mbr.IsMbr(device) ? Mbr.Parse(device) : new List<MbrPartitionEntry>());
         // GPT-Typen fuer das 7a-Layout; Cosmos nummeriert die Partitionen in Parse-Reihenfolge, zugeordnet wird trotzdem ueber den Startsektor.
-        var gptEntries = Gpt.IsGpt(device) ? Gpt.Parse(device) : new List<GptPartitionEntry>();
+        var gptEntries = StorageLock.Run(() => Gpt.IsGpt(device) ? Gpt.Parse(device) : new List<GptPartitionEntry>());
         var partitions = new List<DataDiskPartition>();
         foreach (Partition partition in found)
         {
@@ -56,7 +56,7 @@ internal static class CosmosDataDisk
     {
         if (partition.BlockSize < 512 || partition.BlockCount == 0) return null;
         var sector = new byte[partition.BlockSize];
-        partition.ReadBlock(0, 1, sector);
+        using (StorageLock.Enter()) partition.ReadBlock(0, 1, sector);
         if (sector[510] != 0x55 || sector[511] != 0xAA
             || Encoding.ASCII.GetString(sector, Fat32TypeOffset, 5) != "FAT32") return null;
         return Encoding.ASCII.GetString(sector, Fat32LabelOffset, Fat32LabelLength);
