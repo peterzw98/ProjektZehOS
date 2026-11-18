@@ -49,7 +49,9 @@ Gastzustand und merkt sich Vektor und RIP über feste Feldversätze (3.0.97: `in
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
 gemerkten Vektor mit dem erwarteten (#DE 0, #PF 14) und fällt so bei verschobenen Feldversätzen auf. Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
-das System muss anhalten. Zahlen im PR.
+das System muss anhalten. Cosmos 3.0.97 maskiert beim Start LVT LINT1 (`LocalApic.cs:174`), und QEMU stellt `inject-nmi`
+nur über ein unmaskiertes LINT1 mit Zustellart NMI zu (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`); sonst wird der NMI
+still verworfen (RED 18.11.: 0/2). Nur der NMI-Probebau setzt LINT1 deshalb vor dem Fenster auf NMI, unmaskiert. Zahlen im PR.
 
 **Grenzen:**
 
