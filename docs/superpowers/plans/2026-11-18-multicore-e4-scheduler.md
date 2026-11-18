@@ -341,10 +341,22 @@ ThreadStarter.ApplyClass = threadClass =>
 
 **Waiting-Hinweis:** `WaitingThreads` liest die Queues der CPU 0 (statisches Feld, in `InitializeCpu` für CPU 0
 gesetzt, in `ShutdownCpu` gelöscht), weil die Hauptschleife dort läuft und das ab Etappe 5 so bleibt. Ist
-`ProjektZeh/Scheduling/CosmosMainLoopIdle.cs` bei Beginn dieses Pakets in `master` (Branch
-`task/main-loop-yield-on-ready`, Peters Entscheidung steht aus), wird dort `CosmosRoundRobinScheduler.WaitingThreads`
-durch `CosmosClassScheduler.WaitingThreads` ersetzt und der zugehörige Hosttest in `SchedulingTests.cs` bleibt. Ist
-die Datei nicht in `master`, liefert dieses Paket nur die Eigenschaft.
+`ProjektZeh/Scheduling/CosmosMainLoopIdle.cs` bei Beginn dieses Pakets in `master`, wird dort
+`CosmosRoundRobinScheduler.WaitingThreads` durch `CosmosClassScheduler.WaitingThreads` ersetzt und der zugehörige
+Hosttest in `SchedulingTests.cs` bleibt. Das ist seit #292 (18. November 2026) der Fall.
+
+**Merker aus E4-A, E4-B und dem Audit** (Reviews zu #311 und #312, `docs/SMP_AUDIT.md`):
+
+- `Yielded` und `PickFailed` verwerfen einen Thread ohne Meldung, wenn seine Klasse voll ist. Der Adapter legt die
+  Queues deshalb mit `SchedulerThread.MaxThreadCount` je Klasse an (Tabelle oben) und prüft das beim Anlegen mit
+  einer `Debug.Assert`-Zeile.
+- `CpuTopology.FromApicIds` wirft bei unbrauchbaren Eingaben. Wer die Topologie liest (ab Etappe 6), fängt das und
+  nimmt `CpuTopology.Flat(cpuCount)`; der Kernel startet dann ohne Hyperthread-Wissen statt gar nicht.
+- `SetClass` liefert `bool` (falsch, wenn die Zielklasse voll ist oder der Thread keinen Zustand hat); `SetPriority`
+  ignoriert das Ergebnis.
+- Auswahlspur und Zähler `preemptions` sind heute Felder der einen Scheduler-Instanz. In diesem Paket bleiben sie
+  so (eine CPU); E5-B legt beide je CPU an (steht dort). Im Kommentar an den Feldern vermerken.
+- `firstCpu` des Round-Robin-Schedulers entfällt mit dessen Dateien; der Ersatz ist das Feld für CPU 0 oben.
 
 - [ ] **Schritt 1: Test schreiben** (`ThreadStarterTests`): `TryStart_WithBackgroundClass_AppliesClassOnTheNewThread`: `ApplyClass` auf eine Lambda setzen, die Klasse und `Environment.CurrentManagedThreadId` merkt; `TryStart(body, threadClass: ThreadClass.Background)`, `Join`; erwartet: gemerkte Klasse `Background`, gemerkte Thread-Id ungleich der des Tests, `body` lief danach. Zweiter Test `TryStart_NormalClass_DoesNotCallApplyClass`. `ApplyClass` im `finally` zurücksetzen.
 - [ ] **Schritt 2: Tests schlagen fehl** (Parameter fehlt).
