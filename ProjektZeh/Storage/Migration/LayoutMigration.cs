@@ -154,7 +154,8 @@ internal static class LayoutMigration
         {
             // Unveraenderte Dateien muessen dem Inventar entsprechen; eine Abweichung faellt beim Zuruecklesen auf.
             expected = file.Sha256;
-            using var content = new CancellationReadStream(File.OpenRead(MigrationInventory.HostPath(sourceRoot, file.Source)), cancellation);
+            // Der Quellstrom sperrt jedes Lesestueck einzeln; WriteFile kopiert ebenfalls stueckweise.
+            using var content = new CancellationReadStream(StorageLockReadStream.OpenRead(MigrationInventory.HostPath(sourceRoot, file.Source)), cancellation);
             step = target.WriteFile(file.Target, content);
         }
         if (!step.IsOK()) return step;
@@ -290,8 +291,9 @@ internal static class LayoutMigration
         if (stream.Status.Code == ResultCode.NotFound) return ResultObjectFactory.CreateSuccess<MigrationJournal?>(null);
         if (!stream.IsOK()) return ResultObjectFactory.CreateFailure<MigrationJournal?>(stream.Status);
         using var content = new CancellationReadStream(stream.Value!, cancellation);
-        // Ungueltige Bytes werden wie bisher ersetzt statt zu werfen; das Journal prueft seine Zeilen selbst.
-        using var reader = new StreamReader(content, new UTF8Encoding(false, false), detectEncodingFromByteOrderMarks: false);
+        // Ungueltige Bytes werden wie bisher ersetzt statt zu werfen; das Journal prueft seine Zeilen selbst. Der Leser selbst
+        // greift erst ueber den Strom zu, den ReadBack je Lesestueck sperrt; die Sperre hier deckt nur das Anlegen ab.
+        using var reader = StorageLock.Run(() => new StreamReader(content, new UTF8Encoding(false, false), detectEncodingFromByteOrderMarks: false));
         var journal = MigrationJournal.Parse(reader);
         return journal.IsOK() ? ResultObjectFactory.CreateSuccess<MigrationJournal?>(journal.Value) : ResultObjectFactory.CreateFailure<MigrationJournal?>(journal.Status);
     }
@@ -320,7 +322,11 @@ internal static class LayoutMigration
         return target.WriteFile(LayoutMarker.Path, content);
     }
 
-    private static string ReadSourceText(string path, CancellationToken cancellation)
+    // Nur kleine Textdateien (Kontendatei, Desktopeinstellungen): Oeffnen, Lesen und Schliessen als ein Abschnitt.
+    private static string ReadSourceText(string path, CancellationToken cancellation) =>
+        StorageLock.Run(() => ReadSourceTextStorageLocked(path, cancellation));
+
+    private static string ReadSourceTextStorageLocked(string path, CancellationToken cancellation)
     {
         using var content = new CancellationReadStream(File.OpenRead(path), cancellation);
         using var reader = new StreamReader(content, Encoding.UTF8);

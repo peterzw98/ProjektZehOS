@@ -43,6 +43,10 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         if (startDesktop) ToggleGraphics(input);
         while (true)
         {
+#if ZEHOS_WASM
+            // Nach einer isolierten CPU-Ausnahme im Wasm-Worker den Lauf hier beenden (Roadmap 12.4-I1).
+            Wasm.WasmRuntime.PollFaultIsolation();
+#endif
             if (!graphics && shell.Poll(output)) { BeginLine(); dirty = true; }
             SyncSession();
             editor.IsSecret = IsLocked ? login.IsSecret : shell.IsSecretInput;

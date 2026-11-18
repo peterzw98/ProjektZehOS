@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using ProjektZeh.Storage;
 using ProjektZeh.Security;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Shared;
 using ProjektZeh.SystemServices;
 using ProjektZeh.Runtime.Wasm;
@@ -24,7 +25,9 @@ internal sealed partial class ShellService
     private readonly string? version;
     private readonly Func<string, ResultErr>? authorize;
     private Func<string, Func<Func<ResultErr>>>? secretInput;
-    private Thread? passwordWorker;
+    /// <summary>Gemeinsamer Kennwort-Worker aller Shells; der Kernel startet ihn beim Boot (<see cref="StartPasswordWorker"/>).</summary>
+    private static readonly DedicatedWorker PasswordWorker = new();
+    private bool passwordPending;
     private Func<ResultErr>? completion;
     private int passwordComplete;
     private bool closed;
@@ -35,7 +38,10 @@ internal sealed partial class ShellService
     internal Func<string?>? TakeJobProgress { get; set; }
     internal Func<ITextOutput, bool>? InterruptJob { get; set; }
     public bool IsSecretInput => secretInput != null;
-    public bool IsBusy => passwordWorker != null;
+    public bool IsBusy => passwordPending;
+
+    /// <summary>Legt den Kennwort-Worker beim Boot an, solange ein Thread-Start noch sicher Platz findet.</summary>
+    internal static ResultErr StartPasswordWorker() => PasswordWorker.Start();
 
     public bool TryInterrupt(ITextOutput output) => !closed && !IsSecretInput && InterruptJob?.Invoke(output) == true;
 
@@ -58,8 +64,8 @@ internal sealed partial class ShellService
             output.WriteLine(text);
             written = true;
         }
-        if (passwordWorker == null || Volatile.Read(ref passwordComplete) == 0 || !passwordWorker.Join(0)) return written;
-        passwordWorker = null;
+        if (!passwordPending || Volatile.Read(ref passwordComplete) == 0) return written;
+        passwordPending = false;
         var apply = completion;
         completion = null;
         if (!closed)
@@ -140,7 +146,7 @@ internal sealed partial class ShellService
             }
             secretInput = null;
             Volatile.Write(ref passwordComplete, 0);
-            passwordWorker = new Thread(() =>
+            var started = PasswordWorker.Post(() =>
             {
                 try { completion = work(); }
                 catch (HardwareRandomUnavailableException)
@@ -155,13 +161,12 @@ internal sealed partial class ShellService
                 Interlocked.Decrement(ref runningPasswordWorkers);
                 Volatile.Write(ref passwordComplete, 1);
             });
-            try { passwordWorker.Start(); }
-            catch
+            if (!started.IsOK())
             {
-                passwordWorker = null;
                 Interlocked.Decrement(ref runningPasswordWorkers);
-                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden.");
+                return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation konnte nicht gestartet werden: " + started.Message);
             }
+            passwordPending = true;
             return ResultErr.CreateSuccess();
         }
         return ExecuteFeatures(line, output);

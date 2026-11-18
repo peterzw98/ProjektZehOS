@@ -2,6 +2,89 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Round-Robin: Idle-Thread und Zeitscheibe (18. November 2026)
+
+**Befund.** In Cosmos 3.0.97 macht `SchedulerManager.SetupIdleThread` den Boot-Thread zum Idle-Thread (Id 0); das ist die ZehOS-Hauptschleife mit Desktop und Textshell. Ihr `Thread.Sleep(1)` am Ende jeder Runde läuft über `LowLevelMonitor_TimedWait` → `Monitor.Wait` → `ConditionVariable.WaitTimeout`. Für den Idle-Thread nimmt `WaitTimeout` den Weg `WaitPolling`: Der Thread bleibt `Running` und wartet in einer `Halt`-Schleife, ohne die CPU abzugeben (kein `BlockThread`, `Park` oder `OnThreadReady`). Der bisherige `CosmosRoundRobinScheduler` behandelte ihn wie jeden Thread: Er wurde erst nach seiner 20-ms-Scheibe verdrängt, und `OnThreadReady` füllte die Scheibe bei jeder Wiedereinreihung (Verdrängung, Yield) neu. Gemessen mit einem Diagnosebau (Zweig `task/irq-count-diag`, nie mergen): In Bildern über 100 ms war der Wasm-Worker nicht blockiert, sondern bereit und wartete bis zu 137 ms, während Thread 0 alle Ticks bekam. Warum die Wartezeit mehrere Scheiben erreicht, ist nicht belegt; Vermutung: Jeder freiwillige Yield des Workers (etwa in Monitor-Operationen) reihte ihn hinter die Hauptschleife, die dabei wieder eine volle Scheibe bekam.
+
+**Änderung.** Die Policy steckt jetzt in `RoundRobinCore` (ohne Cosmos-Typen, hostgetestet); `CosmosRoundRobinScheduler` delegiert nur.
+
+- Die Scheibe beginnt bei der Auswahl (`Pick`), nicht beim Bereitwerden.
+- Der Idle-Thread wird im Tick verdrängt, sobald ein anderer Thread wartet, auch wenn die Hauptschleife gerade rechnet. Ob sie parkt, ist im Tick nicht erkennbar: Eine Zwischenfassung, die eine rechnende Hauptschleife ihre volle 20-ms-Scheibe behalten ließ, brachte unter KVM keinen Gewinn mehr.
+- Ein laufender Thread, den der Tick in die Queue gestellt hat, kommt ans Ende, damit der nächste Pick einen wartenden Thread wählt.
+
+Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Runde, also ein Drittel der Ticks (Hosttest); bei n rechnenden Threads ist es ein Tick je 2n+1, gemessen ist nur n = 1. Im eigenen Tick zeichnet sie und wartet danach in `WaitPolling` bis zum nächsten Tick, auch wenn der Desktop nichts zu tun hat; ein Dauerlast-Worker bekommt deshalb höchstens zwei Drittel der CPU. Ist die Queue leer, parkt der Idle-Thread weiter mit `Halt`; ein Leerlauf ohne App bleibt deshalb unverändert.
+
+## CPU-Ausnahmen im Wasm-Worker (Roadmap 12.4-I1, 18. November 2026)
+
+**Befund in Cosmos 3.0.97** (Assembler `CPU/Interrupts.s` und IL von `Cosmos.Kernel`, `Cosmos.Kernel.Core`,
+`Cosmos.Kernel.Core.X64` gelesen):
+
+- Jeder Vektor landet über `irqN_stub` in `__managed__irq` und `X64InterruptController.Dispatch`. Der Rahmen liegt auf dem
+  Stack des unterbrochenen Threads (kein TSS/IST).
+- `Cosmos.Kernel.ExceptionHandler.Initialize` trägt für die Vektoren 0, 2–8, 10–14 und 16–19 Handler ein. Jeder ruft
+  `Panic.CpuException` (Register und Stackadressen seriell, `System halted.`) und am Ende `Panic.HaltCpu()`.
+- Nach dem Handler wechselt der Stub den Stack, wenn ein Kontextwechsel angefordert ist (derselbe Weg wie beim Timer).
+- Eine verwaltete Ganzzahldivision durch null löst unter Cosmos/NativeAOT eine echte CPU-Ausnahme (#DE) aus, keine
+  `DivideByZeroException`.
+
+**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` (parameterlos, bindet nach `check-plug-binding.py`).
+
+- **Isolieren** (`FaultIsolationPolicy`): nur wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
+  läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
+  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
+  `SchedulerManager.ScheduleFromInterrupt` (intern, per `UnsafeAccessor`) wechselt in den nächsten Thread.
+- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife).
+- **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
+  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
+  Paketdateien frei und startet einen neuen Worker.
+
+**Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
+`GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
+`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Zahlen im PR.
+
+**Grenzen:**
+
+- Unter wasm3 läuft kein Gastcode nativ: Eine CPU-Ausnahme dort ist ein Fehler im Interpreter-C, ausgelöst durch das
+  App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben. Daher
+  meldet der Kernel „Neustart empfohlen“ und startet nach 3 isolierten Ausnahmen keinen Worker mehr; Paket-Apps laufen
+  dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
+- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
+  Schritt mit einem Plug, der `IRQContext` sieht.
+- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
+- Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
+- Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
+- Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
+  VMware.
+
+## Dateisysteme nicht threadsicher: StorageLock (18. November 2026)
+
+**Befund:** Cosmos 3.0.97 schützt ext2 und FAT nicht gegen gleichzeitige Zugriffe. Gemessen mit den E4.0-Diagnoseläufen (KVM, je 1 GiB und 2 GiB RAM):
+
+- **Lauf 13 ohne Sperre:**
+  - Zwei Leser oder ein Leser neben einem Anleger lasen unveränderte Dateien falsch, etwa 1 von 30 000 Lesungen. Es gab keine Ausnahme.
+  - Danach meldete `e2fsck -fn` Exit 4: doppelt belegte Blöcke (Wurzelverzeichnis und neue Inodes teilen Blöcke) und überschriebene reservierte Inodes.
+  - Ein einzelner Leser allein las fehlerfrei.
+- **Läufe 14 (ext2) und 15 (FAT) mit gemeinsamer Sperre, inklusive Umbenenner:**
+  - 0 Falschlesungen in rund 260 000 Lesungen.
+  - `e2fsck -fn` Exit 0.
+  - `fsck.fat -n` zeigt nur die Merkmale des Cosmos-FAT-Formatierers (siehe unten).
+
+ZehOS greift seitdem über `StorageLock` (`ProjektZeh/Storage/StorageLock.cs`) auf Platten zu:
+
+- **Eine gemeinsame Sperre:** Hauptschleife, Wasm-Worker und Hintergrundaufgaben greifen nur noch über diese eine, reentrante Sperre auf Platten zu.
+- **Je Einzeloperation:** gesperrt wird in den Speicher-Grenzklassen je einzelner Operation, nie um die ganze Hauptschleife.
+- **Große Lesevorgänge** (Wasm-Module, AOT, Update-Images, WASI-Lesungen) laufen in Abschnitten von höchstens 1 MiB.
+- **Lange Warte- oder Haltezeiten** über 2 s werden seriell gemeldet. Abgebrochen wird nicht.
+- **Kein Warten unter der Sperre:** `MigrationWriteGate.Block` wartet nie unter der Sperre (`StorageLock.EnsureNotHeld`).
+- **Quellprüfung:** `StorageLockCoverageTests` prüft jede Zugriffsstelle (File, Directory, FileStream, VfsManager, InodeOperations und weitere) auf einen gesperrten Bereich.
+
+**Grenzen:**
+- Lesen und Schreiben auf schon geöffneten Streams erkennt die Quellprüfung nicht; diese Stellen sind von Hand gesperrt.
+- Ausdrücke in interpolierten Zeichenketten werden nicht geprüft.
+- Cosmos-interne Hintergrundzugriffe sind nicht abgedeckt; bekannt ist keiner.
+- `WasmSaveStore.Usage()` durchläuft `/save` bei jedem Schreiben unter einer Sperre. Das ist durch die Eintragsgrenze kurz.
+- Der Cosmos-FAT-Formatierer legt keinen Volume-Label-Eintrag im Wurzelverzeichnis an und lässt die Free-Cluster-Summary uninitialisiert. `fsck.fat -n` meldet das schon direkt nach dem Formatieren mit Exit 1; es ist kein Strukturfehler.
+
 ## Wasm-Hostrückrufe: Ausnahmeschutz (17. November 2026, #204)
 
 `present`, `present_indexed`, `open`, `file_size`, `file_read` und `close` fangen verwaltete Ausnahmen vor der nativen Rückkehr ab. `open`, `file_size` und `file_read` liefern bei Fehlern `-1`; `close` entfernt das Handle auch bei einem Schließfehler. Eine fehlgeschlagene Bildausgabe verwirft das Bild und meldet höchstens einmal je Lauf den Ausnahmetyp, die App läuft weiter. Auch die Diagnose darf keine Ausnahme weitergeben. Scheitert nach dem Öffnen die Handle-Registrierung, wird der noch nicht übernommene Stream geschützt freigegeben. Gastzeiger und Bildmaße prüft weiterhin die gemeinsame C-Brücke.

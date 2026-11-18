@@ -282,7 +282,7 @@ internal sealed class AccountService
             if (tryBeginWrite != null && writer == null) return WriteBlocked();
             var topology = CheckHomeTopology(name);
             if (!topology.IsOK()) return topology;
-            if (Directory.Exists(Home(name)) || File.Exists(Home(name))) return FileAccessControl.Denied();
+            if (StorageLock.Run(() => Directory.Exists(Home(name))) || StorageLock.Run(() => File.Exists(Home(name)))) return FileAccessControl.Denied();
             var account = new Account(Guid.NewGuid().ToString("N"), name, administrator, encoded);
             accounts.Add(name, account);
             Access.Assign(Home(name), account.Id);
@@ -315,12 +315,12 @@ internal sealed class AccountService
             // wenn ein Teil davon ueber einen Symlink oder einen fremden Mount liefe.
             foreach (var guarded in new[] { Access.Guard(metadataPath, creating: true), Access.Guard(recoveredPath, creating: true), CheckHomeTopology(name) })
                 if (!guarded.IsOK()) return guarded;
-            if (File.Exists(metadataPath))
+            if (StorageLock.Run(() => File.Exists(metadataPath)))
             {
                 try
                 {
                     // Auch beliebig beschaedigte Metadaten ohne das Shell-Textlimit erhalten.
-                    File.Move(metadataPath, recoveredPath, false);
+                    StorageLock.Run(() => File.Move(metadataPath, recoveredPath, false));
                 }
                 catch (Exception exception) when (FileErrors.IsFileError(exception))
                 { return ResultErr.CreateFromException(exception); }
@@ -361,7 +361,7 @@ internal sealed class AccountService
         if (!IsAdmin(actor) || !Access.IsManagedPath(path) || Access.Contains(path) || !accounts.TryGetValue(ownerName, out var owner)) return FileAccessControl.Denied();
         using var writer = tryBeginWrite?.Invoke();
         if (tryBeginWrite != null && writer == null) return WriteBlocked();
-        try { _ = File.GetAttributes(path); }
+        try { _ = StorageLock.Run(() => File.GetAttributes(path)); }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
         Access.Assign(path, owner.Id);
@@ -455,7 +455,7 @@ internal sealed class AccountService
         if (!guarded.IsOK()) return ResultObjectFactory.CreateFailure<bool>(guarded);
         try
         {
-            return (File.GetAttributes(path) & FileAttributes.Directory) != 0
+            return (StorageLock.Run(() => File.GetAttributes(path)) & FileAttributes.Directory) != 0
                 ? ResultObjectFactory.CreateSuccess(true)
                 : ResultObjectFactory.CreateFailure<bool>(ResultCode.Failure, $"cause='HomeNotDirectory' message='Kein Verzeichnis: {path}'");
         }
@@ -478,7 +478,7 @@ internal sealed class AccountService
             {
                 var guarded = Access.Guard(directory, creating: true);
                 if (!guarded.IsOK()) { Lock(); return guarded; }
-                Directory.CreateDirectory(directory);
+                StorageLock.Run(() => Directory.CreateDirectory(directory));
             }
 
             return ResultErr.CreateSuccess();

@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -101,16 +102,19 @@ output = Path(sys.argv[sys.argv.index('-o') + 1])
 if FAIL:
     output.write_bytes(b'teil')
     sys.exit(1)
-output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes())
+# mov [rsp-0x8],rax: Code mit Red Zone, wie ihn ein wamrc ohne Patch erzeugt
+output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes() + (bytes.fromhex('48894424f8') if REDZONE else b''))
 """
 
 
 class BuildPackageAotTests(unittest.TestCase):
     """aot uebersetzt nur mit dem zugelassenen wamrc und festen Schaltern; package --aot-file nimmt das Ergebnis auf."""
 
-    ABI_FILE = 'app.wamr245-aot5-x64-bc.aot'
+    ABI_FILE = 'app.wamr245-aot5-x64-bc-nrz.aot'
 
     def setUp(self):
+        if shutil.which('objdump') is None:
+            self.skipTest('objdump fehlt (GNU Binutils); ohne ihn baut build-package.py keine AOT-Pakete')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name).resolve()
@@ -119,11 +123,12 @@ class BuildPackageAotTests(unittest.TestCase):
         for name, data in (('app.wasm', b'wasm'), ('App.txt', b'gross'), ('b.dat', b'b')):
             (self.directory / name).write_bytes(data)
 
-    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5', fail=False):
+    def fake_wamrc(self, folder='fake', version='wamrc 2.4.5', fail=False, redzone=False):
         """Ersatz-wamrc, das seine Schalter in folder/calls.json protokolliert und eine Ausgabedatei schreibt."""
         tool = self.directory / folder
         tool.mkdir()
-        code = f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\nFAIL = {fail!r}\n' + FAKE_WAMRC
+        code = (f'VERSION = {version!r}\nLOG = {str(tool / "calls.json")!r}\nFAIL = {fail!r}\nREDZONE = {redzone!r}\n'
+                + FAKE_WAMRC)
         (tool / 'fake_wamrc.py').write_text(code, encoding='utf-8')
         if os.name == 'nt':
             launcher = tool / 'wamrc.cmd'
@@ -186,7 +191,7 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertEqual((self.directory / 'out.aot').read_bytes(), b'AOT:wasm')
         receipt = json.loads(self.receipt().read_text(encoding='utf-8'))
         sha = lambda data: hashlib.sha256(data).hexdigest()
-        self.assertEqual(receipt, {'aot_abi': 'wamr245-aot5-x64-bc', 'wamrc_version': 'wamrc 2.4.5', 'flags': flags,
+        self.assertEqual(receipt, {'aot_abi': 'wamr245-aot5-x64-bc-nrz', 'wamrc_version': 'wamrc 2.4.5', 'flags': flags,
                                    'wamrc_sha256': sha(wamrc.read_bytes()), 'wasm_sha256': sha(b'wasm'), 'aot_sha256': sha(b'AOT:wasm')})
 
     def test_aot_rejects_output_equal_to_input_and_removes_partial_output(self):
@@ -230,6 +235,26 @@ class BuildPackageAotTests(unittest.TestCase):
         self.assertFalse((wamrc.parent / 'calls.json').exists())
         self.assertFalse((self.directory / 'out.aot').exists())
 
+    def test_aot_with_red_zone_is_removed_after_translation(self):
+        code, error = self.translate(self.fake_wamrc(redzone=True))
+        self.assertEqual(code, 1)
+        self.assertIn('Red Zone', error)
+        self.assertFalse((self.directory / 'out.aot').exists())
+        self.assertFalse(self.receipt().exists())
+
+    def test_package_rejects_aot_with_red_zone_even_with_matching_receipt(self):
+        # Schutz auch fuer .aot, die nicht ueber den Unterbefehl aot entstanden sind (etwa ein von Hand angepasster Beleg).
+        wamrc = self.translated()
+        aot = self.directory / 'out.aot'
+        aot.write_bytes(aot.read_bytes() + bytes.fromhex('48894424f8'))
+        receipt = json.loads(self.receipt().read_text(encoding='utf-8'))
+        receipt['aot_sha256'] = hashlib.sha256(aot.read_bytes()).hexdigest()
+        self.receipt().write_text(json.dumps(receipt), encoding='utf-8')
+        code, error = self.build('--aot-file', str(aot), wamrc=wamrc)
+        self.assertEqual(code, 1)
+        self.assertIn('unter RSP', error)
+        self.assertFalse(self.package_dir().exists())
+
     def test_aot_file_name_manifest_order_and_hash(self):
         wamrc = self.translated()
         code, error = self.build('--aot-file', str(self.directory / 'out.aot'), wamrc=wamrc)
@@ -247,7 +272,7 @@ class BuildPackageAotTests(unittest.TestCase):
         (self.directory / 'out.aot').write_bytes(b'AOT:wasm')
         aot = ('--aot-file', str(self.directory / 'out.aot'))
         app = f"{self.directory / 'app.wasm'}=app.wasm"
-        collision = [app, f"{self.directory / 'b.dat'}=APP.wamr245-aot5-x64-bc.aot"]
+        collision = [app, f"{self.directory / 'b.dat'}=APP.wamr245-aot5-x64-bc-nrz.aot"]
         full = [app, *(f"{self.directory / 'b.dat'}=f{index:03}.dat" for index in range(127))]
         # 195 Zeichen sind als Einstieg gueltig, mit dem AOT-Suffix aber laenger als 200.
         long_entry = 'd/' + 'a' * 188 + '.wasm'
