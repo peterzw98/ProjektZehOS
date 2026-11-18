@@ -8,8 +8,15 @@ Benoetigte Builds (sonst fehlen die seriellen GPT_TEST-Quittungen):
   fuer G8 zusaetzlich -p:ZehOSGptG8Probe=true.
 - --payload/ProjektZeh.elf: der eingebettete Kernel ebenfalls mit -p:ZehOSGptGuestProbe=true, sonst fehlt
   "GPT_TEST IDENTITY" beim Start der installierten Platte.
+- --iso-security (nur --run-cases): normaler Kernel mit -p:ZehOSSecurityRecovery=true -p:ZehOSGptGuestProbe=true
+  fuer G5, die ZEHOSDATA-Platte von G7 und die Identitaetspruefung nach G9.
 
-Exitcodes: 2 = alle ausgefuehrten Faelle bestanden, andere Faelle offen (G1-G7/G9 sind noch nicht vollstaendig,
+--run-cases installiert einmal 32 GiB und prueft jeden Fall auf einer eigenen Sparse-Kopie (cp --sparse=always):
+G2 Rueckfalleintrag, G3/G4 Root offline geloescht/beschaedigt, G5 Security-Recovery-ISO auf G3/G4 mit Konto,
+G7 installierte Platte + ZEHOSDATA, G9 Neuinstallation ueber Healthy mit Abbruch in CopyingFiles.
+--run-rdrand startet den Installer unter TCG mit qemu64 ohne RDRAND/RDSEED und erwartet die Verweigerung.
+
+Exitcodes: 2 = alle ausgefuehrten Faelle bestanden, andere Faelle offen (VMware und Teile von G1/G2/G6 sind offen,
 deshalb gibt es derzeit kein 0); 1 = Fehler. Nicht implementierte Faelle und fehlende Werkzeuge sind offen (2).
 """
 import argparse
@@ -22,6 +29,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 import zlib
 
@@ -195,49 +203,309 @@ def run_g6_basic(args, work: Path) -> None:
             process.wait(timeout=30)
 
 
-def boot_installed(args, case: Path, target: Path) -> None:
+HEALTHY_DESKTOP = ("GPT_TEST IDENTITY Healthy SETUP True", "Desktop ist bereit.")
+
+
+def boot_installed(args, case: Path, disks: list[Path], expected: tuple[str, ...] = HEALTHY_DESKTOP,
+                   create_account: bool = False) -> Path:
+    """Startet von disks[0] (OVMF, -boot c), wartet auf alle erwarteten Zeilen und liefert den Laufordner."""
     run = storage.new_work_dir(case / "boot-installed")
     machine = list(storage.MACHINE_BASE)
     machine[machine.index("-boot") + 1] = "c"
-    machine += ["-drive", f"file={target.resolve()},format=raw,if=none,id=d0",
-                "-device", "ide-hd,drive=d0,bus=ahci.0"]
+    for port, disk in enumerate(disks):
+        machine += ["-drive", f"file={disk.resolve()},format=raw,if=none,id=d{port}",
+                    "-device", f"ide-hd,drive=d{port},bus=ahci.{port}"]
     storage.tools.MACHINE = machine
     unused = run / "unused.qcow2"
     tool, environment = storage.tools.qemu_img()
     subprocess.run([*tool, "create", "-f", "qcow2", str(unused), "1M"], check=True,
                    stdout=subprocess.DEVNULL, env=environment)
-    process = storage.tools.start_qemu(args.iso, unused, run, storage.tools.free_port(), args.accel, None)
+    port = storage.tools.free_port()
+    process = storage.tools.start_qemu(args.iso, unused, run, port, args.accel, None)
     try:
-        storage.tools.wait_serial(run, "GPT_TEST IDENTITY Healthy SETUP True", args.timeout)
-        storage.tools.wait_serial(run, "Desktop ist bereit.", args.timeout)
+        for text in expected:
+            storage.tools.wait_serial(run, text, args.timeout)
+        if create_account:
+            # Ersteinrichtung wie ein Benutzer am Desktop, danach sauber herunterfahren (ESP aushaengen).
+            qmp = storage.tools.Qmp(port)
+            storage.login(qmp, run, first=True)
+            storage.desktop_shutdown(process, qmp, run)
     finally:
         if process.poll() is None:
             process.kill()
         process.wait(timeout=30)
+    return run
+
+
+def install(args, case: Path, size: int) -> Path:
+    """Frische Zielplatte im eigenen Fallordner, GPT-Installation im Installer-ISO, danach Offline-Pruefung."""
+    target = case / "target.img"
+    storage.create_sparse(target, size)
+    run = storage.new_work_dir(case / "guest")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, [target])
+        mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
+        qmp.line("setup install sata0 --layout gpt --erase")
+        storage.tools.wait_serial(run, "GPT_TEST RESULT OK", args.timeout, mark)
+        storage.stop(process, qmp, run)
+        process = None
+        inspect_image(target, case, args.payload, args.version, args.boot_config, marker_expected=True)
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    return target
 
 
 def run_g1_basic(args, work: Path) -> None:
     for size in (32 * GIB, 128 * GIB):
         case = storage.new_work_dir(work / f"g1-{size // GIB}g")
-        target = case / "target.img"
-        storage.create_sparse(target, size)
+        target = install(args, case, size)
+        boot_installed(args, case, [target])
+        print(f"PASS G1 Teil: {size // GIB} GiB installiert, offline geprueft und Healthy gestartet", flush=True)
+    print("OFFEN G1: Kontoanlage (siehe --run-cases) und VMware", flush=True)
+
+
+def copy_sparse(source: Path, target: Path) -> None:
+    if target.exists():
+        raise ValueError(f"Kopie existiert bereits: {target}")
+    subprocess.run(["cp", "--sparse=always", str(source), str(target)], check=True)
+
+
+def layout(image: Path) -> tuple[dict, dict, dict]:
+    table = json.loads(subprocess.run(["sfdisk", "-J", str(image)], capture_output=True, text=True, check=True).stdout)
+    return (table, *partitions(table, image.stat().st_size))
+
+
+def esp_tool(image: Path, esp: dict, tool: str, *arguments: str) -> bytes:
+    """mtools direkt auf der ESP im Image (image@@Byteoffset), ohne Extrakt und Zurueckschreiben."""
+    environment = dict(os.environ, MTOOLS_SKIP_CHECK="1")
+    result = subprocess.run([tool, "-i", f"{image}@@{esp['start'] * SECTOR}", *arguments],
+                            capture_output=True, check=True, env=environment)
+    return result.stdout
+
+
+def security_files(image: Path) -> dict[str, bytes]:
+    """Kontendatei und Recovery-Sicherungen im ESP-Wurzelverzeichnis (= /data) mit Inhalt."""
+    _, esp, _ = layout(image)
+    listing = esp_tool(image, esp, "mdir", "-a", "-b", "::/").decode(errors="replace")
+    names = [line.rstrip("/").rsplit("/", 1)[-1] for line in listing.splitlines()]
+    return {name: esp_tool(image, esp, "mcopy", "::/" + name, "-")
+            for name in names if name.lower().startswith(".zehos-security")}
+
+
+def serial_identity(run: Path, timeout: float) -> str:
+    """Rest der Zeile "GPT_TEST IDENTITY <Zustand> SETUP <bool>" ab dem Zustand."""
+    end = storage.tools.wait_serial(run, "GPT_TEST IDENTITY ", timeout)
+    text = storage.serial_text(run)
+    newline = text.find("\n", end)
+    return text[end:newline if newline >= 0 else len(text)].strip()
+
+
+def damage_root(image: Path, delete: bool) -> None:
+    """G3: Partition 2 per sgdisk loeschen; G4: ext2-Magic (Superblock-Offset 56) offline nullen."""
+    _, _, root = layout(image)
+    if delete:
+        subprocess.run(["sgdisk", "-d", "2", str(image)], capture_output=True, check=True)
+        return
+    offset = root["start"] * SECTOR + 1024 + 56
+    with image.open("r+b") as stream:
+        stream.seek(offset)
+        if stream.read(2) != b"\x53\xef":
+            raise ValueError("ext2-Magic des Root nicht gefunden")
+        stream.seek(offset)
+        stream.write(b"\0\0")
+
+
+def security_args(args):
+    """storage.boot startet args.iso_recovery; fuer G5/G7/G9 ist das das Security-Recovery-ISO."""
+    copy = argparse.Namespace(**vars(args))
+    copy.iso_recovery = args.iso_security
+    return copy
+
+
+def run_g2(args, work: Path, base: Path) -> None:
+    case = storage.new_work_dir(work / "g2")
+    image = case / "target.img"
+    copy_sparse(base, image)
+    _, esp, _ = layout(image)
+    config = esp_tool(image, esp, "mcopy", "::/boot/limine/limine.conf", "-")
+    if not config.startswith(b"timeout: 3\n") or b"default_entry" in config:
+        raise ValueError("limine.conf hat nicht den erwarteten Anfang")
+    # Eintrag 3 ist "/ZehOS (vorherige Version)"; ohne Hauptkernel kann nur er starten (keine Menuetasten noetig).
+    changed = case / "limine.conf"
+    changed.write_bytes(b"timeout: 3\ndefault_entry: 3\n" + config[len(b"timeout: 3\n"):])
+    esp_tool(image, esp, "mcopy", "-o", str(changed), "::/boot/limine/limine.conf")
+    esp_tool(image, esp, "mdel", "::/boot/ProjektZeh.elf")
+    boot_installed(args, case, [image])
+    print("PASS G2 Teil: Rueckfalleintrag .bak startet ohne Hauptkernel bis zum Desktop, Identitaet Healthy", flush=True)
+    print("OFFEN G2: update-Regression (7b) und Auswahl per Menue", flush=True)
+
+
+def run_g3_g4(args, work: Path, base: Path) -> None:
+    for name, delete, state, cause, parts in (("g3", True, "RootMissing", "RootMissing", 1),
+                                               ("g4", False, "RootDamaged", "RootGate", 2)):
+        case = storage.new_work_dir(work / name)
+        image = case / "target.img"
+        copy_sparse(base, image)
+        damage_root(image, delete)
+        boot_installed(args, case, [image], (f"GPT_TEST IDENTITY {state} SETUP False",
+                                             f"STORAGE Fehler: cause='{cause}'",
+                                             storage.device_line("sata0", 32 * GIB, parts),
+                                             "Datenlaufwerk unter /data eingebunden.", "Desktop ist bereit."))
+        print(f"PASS {name.upper()}: Boot normal, ESP als /data, {state}, keine Ersteinrichtung", flush=True)
+
+
+def run_g5(args, work: Path, account_base: Path) -> None:
+    for name, delete, state, parts in (("g5-g3", True, "RootMissing", 1), ("g5-g4", False, "RootDamaged", 2)):
+        case = storage.new_work_dir(work / name)
+        image = case / "target.img"
+        copy_sparse(account_base, image)
+        damage_root(image, delete)
+        before = security_files(image)
+        if ".zehos-security.db" not in before:
+            raise ValueError("Kontendatei der Kontobasis fehlt")
         run = storage.new_work_dir(case / "guest")
         process = None
         try:
-            process, qmp = storage.boot(args, run, [target])
-            mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
-            qmp.line("setup install sata0 --layout gpt --erase")
-            storage.tools.wait_serial(run, "GPT_TEST RESULT OK", args.timeout, mark)
+            process, qmp = storage.boot(security_args(args), run, [image])
+            identity = serial_identity(run, 5)
+            if identity != f"{state} SETUP False":
+                raise RuntimeError(f"{name}: Identitaet {identity}, erwartet {state} SETUP False")
+            storage.tools.wait_serial(run, storage.device_line("sata0", 32 * GIB, parts), 5)
+            storage.tools.wait_serial(run, "Datenlaufwerk unter /data eingebunden.", 5)
+            qmp.line("disk list")
+            time.sleep(2)
+            qmp.shot(run / "disk-list.png")
+            qmp.line(f"security recover {storage.tools.TEST_USER}")
+            time.sleep(2)
+            qmp.line(storage.tools.TEST_PASSWORD)
+            # Das Kennwort wird vor der Sperrpruefung gehasht (PBKDF2); danach muss die Sperre greifen.
+            time.sleep(30)
+            qmp.shot(run / "security-recover.png")
             storage.stop(process, qmp, run)
             process = None
-            inspect_image(target, case, args.payload, args.version, args.boot_config, marker_expected=True)
-            boot_installed(args, case, target)
-            print(f"PASS G1 Teil: {size // GIB} GiB installiert, offline geprueft und Healthy gestartet", flush=True)
         finally:
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=30)
-    print("OFFEN G1: Kontoanlage und VMware", flush=True)
+        if security_files(image) != before:
+            raise RuntimeError(f"{name}: Kontendateien nach security recover veraendert")
+        print(f"PASS {name.upper()}: Recovery-ISO bootet bei {state}, ESP lesbar, security recover ohne Wirkung, "
+              f"Konten unveraendert (Bilder: {run})", flush=True)
+
+
+def run_g7(args, work: Path, base: Path) -> None:
+    case = storage.new_work_dir(work / "g7")
+    image, data = case / "target.img", case / "data.img"
+    copy_sparse(base, image)
+    storage.create_sparse(data, 64 * 1024 ** 2)
+    run = storage.new_work_dir(case / "init")
+    process = None
+    try:
+        process, qmp = storage.boot(security_args(args), run, [image, data])
+        mark = storage.send_command(qmp, run, "disk init sata1", "Befehl: disk init sata1")
+        storage.wait_init(qmp, run, mark, args.timeout)
+        storage.stop(process, qmp, run)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    checksum = storage.sha256(data)
+    boot_installed(args, case, [image, data], (
+        "GPT_TEST IDENTITY Healthy SETUP True",
+        "STORAGE Hinweis: Datenplatte ZEHOSDATA auf sata1 vorhanden; das installierte System auf sata0 hat Vorrang",
+        "Datenlaufwerk unter /data eingebunden.", "Desktop ist bereit."))
+    if storage.sha256(data) != checksum:
+        raise RuntimeError("G7: ZEHOSDATA-Platte wurde beim Start des installierten Systems veraendert")
+    print("PASS G7: installierte Platte gewinnt gegen ZEHOSDATA, Hinweis im Protokoll, Datenplatte unveraendert", flush=True)
+
+
+def run_g9(args, work: Path, base: Path) -> None:
+    case = storage.new_work_dir(work / "g9")
+    image = case / "target.img"
+    copy_sparse(base, image)
+    run = storage.new_work_dir(case / "install")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, [image])
+        mark = len(storage.serial_text(run))
+        qmp.line("setup install sata0 --layout gpt --erase")
+        deadline = time.monotonic() + args.timeout
+        while storage.tools.find_marker(storage.serial_text(run), "GPT_TEST OUTPUT Installation: CopyingFiles", mark) < 0:
+            # Eine Verweigerung vor dem Kopieren waere kein Abbruchtest; ihr Text erklaert den Grund.
+            text = storage.serial_text(run)
+            if (error := text.find("GPT_TEST RESULT ", mark)) >= 0:
+                raise RuntimeError("G9: Installation endete vor CopyingFiles: " + text[error:text.find("\n", error)])
+            if time.monotonic() > deadline:
+                raise TimeoutError("G9: CopyingFiles nicht erreicht")
+            time.sleep(0.2)
+        process.kill()
+        process.wait(timeout=30)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    run = storage.new_work_dir(case / "check")
+    try:
+        process, qmp = storage.boot(security_args(args), run, [image])
+        identity = serial_identity(run, 5)
+        storage.quit_guest(process, qmp)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    if identity.startswith("Healthy") or not identity.endswith("SETUP False"):
+        raise RuntimeError(f"G9: Identitaet nach Abbruch {identity}, erwartet nicht Healthy und SETUP False")
+    print(f"PASS G9: Neuinstallation ueber Healthy in CopyingFiles abgebrochen, danach {identity}", flush=True)
+
+
+def run_cases(args, work: Path) -> None:
+    case = storage.new_work_dir(work / "base")
+    base = install(args, case, 32 * GIB)
+    boot_installed(args, case, [base])
+    print("PASS Basis: 32 GiB installiert, offline geprueft und Healthy gestartet", flush=True)
+    # Die Kontobasis traegt ein Konto (G1-Kontoanlage, fuer G5 "Konten unveraendert"); G3/G4 bleiben ohne Konto,
+    # damit "keine Ersteinrichtung" dort wirklich an der Root-Pruefung haengt.
+    case = storage.new_work_dir(work / "account")
+    account_base = case / "target.img"
+    copy_sparse(base, account_base)
+    boot_installed(args, case, [account_base], create_account=True)
+    if ".zehos-security.db" not in security_files(account_base):
+        raise RuntimeError("Kontoanlage: keine Kontendatei auf der ESP")
+    print("PASS G1 Teil: Ersteinrichtung auf der installierten Platte legt das Konto auf der ESP an", flush=True)
+    run_g2(args, work, base)
+    run_g3_g4(args, work, base)
+    run_g5(args, work, account_base)
+    run_g7(args, work, base)
+    run_g9(args, work, base)
+    print("OFFEN: VMware fuer alle Faelle", flush=True)
+
+
+def run_rdrand(args, work: Path) -> None:
+    target = work / "target.img"
+    new_sparse(target, 32 * GIB)
+    # Spaeteres -cpu gewinnt gegen das "-cpu max" von start_qemu; ohne virtio-rng bleibt keine Zufallsquelle.
+    storage.MACHINE_BASE += ["-cpu", "qemu64,-rdrand,-rdseed"]
+    run = storage.new_work_dir(work / "guest")
+    process = None
+    try:
+        process, qmp = storage.boot(args, run, [target])
+        mark = len(storage.serial_text(run))
+        qmp.line("setup install sata0 --layout gpt --erase")
+        storage.tools.wait_serial(run, "GPT_TEST RESULT ERROR Keine brauchbare Hardware-Zufallsquelle", args.timeout, mark)
+        storage.quit_guest(process, qmp)
+        process = None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+    assert_blank(target)
+    print("PASS TCG ohne RDRAND: Installer verweigert mit Zufallsquellen-Fehler, keine Schreibzugriffe", flush=True)
 
 
 def main() -> int:
@@ -245,8 +513,11 @@ def main() -> int:
     parser.add_argument("--run-g8", action="store_true", help="G8 mit vorbereitetem Recovery-Setup-ISO ausfuehren")
     parser.add_argument("--run-g6-basic", action="store_true", help="G6-Groessengrenzen und --erase pruefen")
     parser.add_argument("--run-g1-basic", action="store_true", help="G1-Installation und Offline-Pruefung vorbereiten")
+    parser.add_argument("--run-cases", action="store_true", help="G2-G5, G7 und G9 auf Kopien einer 32-GiB-Installation")
+    parser.add_argument("--run-rdrand", action="store_true", help="Installer unter TCG ohne RDRAND/RDSEED muss verweigern")
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--iso", type=Path)
+    parser.add_argument("--iso-security", type=Path)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--version")
     parser.add_argument("--boot-config", type=Path)
@@ -255,30 +526,39 @@ def main() -> int:
     parser.add_argument("--accel", choices=["tcg", "kvm"], default="tcg")
     parser.add_argument("--timeout", type=float, default=1200)
     args = parser.parse_args()
-    print("OFFEN G1-G7 und G9: Gastablaeufe noch nicht implementiert", flush=True)
     # Die Schreibfreiheits- und Sparse-Pruefungen brauchen SEEK_DATA/SEEK_HOLE (unter Windows nicht vorhanden).
     if not hasattr(os, "SEEK_DATA") or not hasattr(os, "SEEK_HOLE"):
         print("OFFEN: os.SEEK_DATA/SEEK_HOLE fehlen auf dieser Plattform (Linux erforderlich)", flush=True)
         return 2
-    if not args.run_g8 and not args.run_g6_basic and not args.run_g1_basic:
-        print("OFFEN G8: --run-g8 nicht angegeben", flush=True)
+    modes = (args.run_g8, args.run_g6_basic, args.run_g1_basic, args.run_cases, args.run_rdrand)
+    if not any(modes):
+        print("OFFEN: kein Lauf angegeben (--run-g1-basic, --run-g6-basic, --run-g8, --run-cases, --run-rdrand)", flush=True)
         return 2
-    if sum((args.run_g8, args.run_g6_basic, args.run_g1_basic)) > 1:
-        parser.error("G1, G6 und G8 brauchen getrennte Arbeitsordner")
-    required = ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if args.run_g8 or args.run_g1_basic else ()
-    if args.run_g1_basic:
+    if sum(modes) > 1:
+        parser.error("Jeder Lauf braucht einen eigenen Arbeitsordner")
+    if args.run_rdrand and args.accel != "tcg":
+        parser.error("--run-rdrand prueft gerade TCG ohne RDRAND (--accel tcg)")
+    installs = args.run_g8 or args.run_g1_basic or args.run_cases
+    required = ("sgdisk", "sfdisk", "fsck.fat", "e2fsck", "mcopy", "mdir") if installs else ()
+    if args.run_g1_basic or args.run_cases:
         required += ("debugfs",)
+    if args.run_cases:
+        required += ("mdel", "cp")
     missing = [name for name in required if not shutil.which(name)]
     if missing:
-        print("OFFEN G8: Werkzeuge fehlen: " + ", ".join(missing), flush=True)
+        print("OFFEN: Werkzeuge fehlen: " + ", ".join(missing), flush=True)
         return 2
     if not all((args.iso, args.ovmf_code, args.ovmf_vars)):
         parser.error("Gastlauf benoetigt --iso, --ovmf-code und --ovmf-vars")
-    if (args.run_g8 or args.run_g1_basic) and not all((args.payload, args.version, args.boot_config)):
-        parser.error("G8 benoetigt --payload, --version und --boot-config")
+    if installs and not all((args.payload, args.version, args.boot_config)):
+        parser.error("Installationslaeufe benoetigen --payload, --version und --boot-config")
+    if args.run_cases and not args.iso_security:
+        parser.error("--run-cases benoetigt --iso-security")
     files = [args.iso, args.ovmf_code, args.ovmf_vars]
-    if args.run_g8 or args.run_g1_basic:
+    if installs:
         files += [args.boot_config, args.payload / "ProjektZeh.elf", args.payload / "BOOTX64.EFI"]
+    if args.run_cases:
+        files.append(args.iso_security)
     for file in files:
         if not file.is_file():
             parser.error(f"Datei fehlt: {file}")
@@ -294,6 +574,12 @@ def main() -> int:
         return 2
     if args.run_g1_basic:
         run_g1_basic(args, work)
+        return 2
+    if args.run_cases:
+        run_cases(args, work)
+        return 2
+    if args.run_rdrand:
+        run_rdrand(args, work)
         return 2
     target = work / "target.img"
     storage.create_sparse(target, 32 * GIB)
