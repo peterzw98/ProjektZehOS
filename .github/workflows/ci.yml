@@ -377,8 +377,29 @@ jobs:
           name: ZehOS-x64
           path: iso
 
+      - name: Identify runner image
+        id: runner-image
+        run: echo "version=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore QEMU packages
+        id: qemu-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qemu-apt
+          key: qemu-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}
+
       - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y qemu-system-x86 qemu-utils
+        shell: bash
+        run: |
+          cache="$RUNNER_TEMP/qemu-apt"
+          mkdir -p "$cache/archives/partial" "$cache/lists/partial"
+          apt_opts=(-o "Dir::Cache::archives=$cache/archives" -o "Dir::State::lists=$cache/lists")
+          if [[ "${{ steps.qemu-cache.outputs.cache-hit }}" != 'true' ]] ||
+             ! sudo apt-get "${apt_opts[@]}" install --no-download --no-install-recommends -y qemu-system-x86 qemu-utils; then
+            sudo apt-get "${apt_opts[@]}" update
+            sudo apt-get "${apt_opts[@]}" install --no-install-recommends -y qemu-system-x86 qemu-utils
+          fi
+          sudo chmod -R a+rX "$cache"
 
       # Ohne KVM: der Lauf prueft den Weg Eingabe -> Treiber -> Bildpuffer unter TCG, nicht die Geschwindigkeit.
       - name: Boot the ISO and drive the desktop
@@ -440,8 +461,29 @@ jobs:
       - name: Build the recovery ISO
         run: dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true
 
+      - name: Identify runner image
+        id: runner-image
+        run: echo "version=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore QEMU packages
+        id: qemu-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qemu-apt
+          key: qemu-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}
+
       - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y qemu-system-x86 qemu-utils
+        shell: bash
+        run: |
+          cache="$RUNNER_TEMP/qemu-apt"
+          mkdir -p "$cache/archives/partial" "$cache/lists/partial"
+          apt_opts=(-o "Dir::Cache::archives=$cache/archives" -o "Dir::State::lists=$cache/lists")
+          if [[ "${{ steps.qemu-cache.outputs.cache-hit }}" != 'true' ]] ||
+             ! sudo apt-get "${apt_opts[@]}" install --no-download --no-install-recommends -y qemu-system-x86 qemu-utils; then
+            sudo apt-get "${apt_opts[@]}" update
+            sudo apt-get "${apt_opts[@]}" install --no-install-recommends -y qemu-system-x86 qemu-utils
+          fi
+          sudo chmod -R a+rX "$cache"
 
       - name: Boot the recovery ISO to the text shell
         # Eigene Grenze unter der des Jobs, damit der Upload der Bilder auch nach einem haengenden Gast noch laeuft.
