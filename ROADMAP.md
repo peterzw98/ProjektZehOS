@@ -366,9 +366,9 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 - [ ] 13.5 AOT-Laufzeit (nur nach Messung und Sicherheitsabstimmung mit Peter, Bezug 12.4). Abnahme: messbarer Gewinn, alle Pakete laufen weiter, Sicherheitsgrenze dokumentiert.
   - Stand 18. November 2026:
     - **Etappe F (Messung, #223):** Die zufälligen Abstürze unter AOT lagen an der Red Zone. wamrc legt Werte unterhalb von RSP ab, und Cosmos betritt Interrupts ohne Stackwechsel.
-    - **wamrc ohne Red Zone (#238, PR offen, Freigabe Peter 17.11.):** Neue Kennung `wamr245-aot5-x64-bc-nrz`. Gegenprobe von agent-laser-RED: mit dem alten `.aot` hatten 17 von 40 Läufen Trap, Stillstand oder Panik, mit dem gepatchten wamrc 0 von 40.
-    - **Red-Zone-Prüfung (#252, PR offen, auf #238 gestapelt):** prüft die erzeugte `.aot` am Ergebnis.
-    - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB; festgehalten in `docs/WASM_FEASIBILITY.md` durch #253, das in den Branch von #238 gemergt ist und mit #238 nach master kommt):** 14 Läufe mit AOT-nrz ohne Panik, Trap oder Stillstand: 12 Läufe à 20 Minuten und 2 unter Hostlast.
+    - **wamrc ohne Red Zone (#238, gemergt, Freigabe Peter 17.11.):** Neue Kennung `wamr245-aot5-x64-bc-nrz`. Gegenprobe von agent-laser-RED: mit dem alten `.aot` hatten 17 von 40 Läufen Trap, Stillstand oder Panik, mit dem gepatchten wamrc 0 von 40.
+    - **Red-Zone-Prüfung (#252, PR offen):** prüft die erzeugte `.aot` am Ergebnis.
+    - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB; festgehalten in `docs/WASM_FEASIBILITY.md` durch #253, über #238 gemergt):** 14 Läufe mit AOT-nrz ohne Panik, Trap oder Stillstand: 12 Läufe à 20 Minuten und 2 unter Hostlast.
       - Unter Last: ClassiCube unter KVM 20–26 fps; Doom unter TCG neben einer Rechenschleife auf dem SMT-Geschwister 39–50 fps.
       - Grenzen: n=3 je Kombination, nur QEMU.
       - Doom unter KVM 62–69 fps, unter TCG 43–63 fps.
