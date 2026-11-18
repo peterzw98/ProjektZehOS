@@ -178,6 +178,15 @@ KVM: Linux-Host mit 22 Kernen, Last 1–2 durch andere Gäste. WHPX: Messung von
 
 Nicht geprüft: Bewegung und andere Blickrichtungen, andere Fenstergrößen (ohne Kerneländerung nicht einstellbar), TCG und VMware.
 
+### Verworfen: skalarer Pfad für schmale Dreiecke
+
+Idee: ClassiCube zeichnet je Bild rund 18 500 Vierecke von wenigen Pixeln. Der Aufbau des Vierpixelpfads (`TriangleLanes`) kostet je Dreieck fest, die Vierpixelschritte sparen erst bei breiteren Flächen. Der Branch `task/raster-small-tri-scalar` (d2a3dce, nicht gemergt) zeichnet Dreiecke mit weniger als 8 Spalten (`maxX - minX`) skalar; beide Wege sind bitgleich (Hosttest `SmallQuadGridsMatchReference`).
+
+- **Host:** Auf künstlichen Szenen aus 1–20-px-Vierecken sinkt die Rasterzeit um 20–30 %. Auf der Spielszene des Projekts (12,0 ms je Bild) ändert sie sich nicht; dort dominiert das Texturlesen je Pixel, der feste Aufwand je Viereck liegt bei etwa 0,45 µs.
+- **Gast (KVM, gepinnt auf P-Kern, Sichtweite 512, je 3 Läufe):** mittlere Bildrate ohne Änderung 22,2/24,4/19,6 fps, mit Änderung 22,4/19,6/20,1 fps. Kein messbarer Gewinn.
+
+Die Änderung wurde deshalb nicht als PR eingereicht. Weitere Rasteroptimierungen zählen nur, wenn sie in der Spielszene messbar wirken.
+
 ## Messung wasm3 gegen AOT (AOT-Plan Etappe F)
 
 Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes Testschlüsselpaar (`python3 scripts/build-package.py keygen <dir>`), nie der Herausgeberschlüssel. `<wamrc>` ist das zugelassene wamrc 2.4.5 (Hash in `scripts/build-package.py`); `aot` legt den Beleg `<app.aot>.json` daneben, den `package --aot-file` prüft.
