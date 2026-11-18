@@ -1,0 +1,47 @@
+{
+  "_comment": "Gastfaelle der Energieaktionen (Spec 2026-11-17-storage-7b-updates-power.md §4). Einmal als Daten, damit Python- und PowerShell-Skript nicht auseinanderlaufen. Jeder Fall laeuft auf einer eigenen Kopie; vorhandene Images werden nie beschrieben.",
+  "cases": [
+    {
+      "id": "P1",
+      "title": "Legacy mit Datenplatte: shutdown haengt /data aus",
+      "profile": "legacy",
+      "disk": "data",
+      "write": "/data/p1-power.txt",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["fat-data"]
+    },
+    {
+      "id": "P2",
+      "title": "Root: shutdown hinterlaesst Root sauber und ESP konsistent",
+      "profile": "root",
+      "disk": "root",
+      "write": "/home/tester/p2-power.txt",
+      "action": "shutdown",
+      "rebootExits": false,
+      "checks": ["root-clean", "e2fsck", "fat-esp"]
+    },
+    {
+      "id": "P3a",
+      "title": "Root: reboot mit -no-reboot, s_state am Rohimage = 1",
+      "profile": "root",
+      "disk": "root",
+      "write": "/home/tester/p3a-power.txt",
+      "action": "reboot",
+      "rebootExits": true,
+      "checks": ["s_state"]
+    },
+    {
+      "id": "P3b",
+      "title": "Root: Neustart-Rundlauf, danach shutdown sauber",
+      "profile": "root",
+      "disk": "root",
+      "write": "/home/tester/p3b-power.txt",
+      "action": "reboot",
+      "rebootExits": false,
+      "afterReboot": "shutdown",
+      "checks": ["root-clean", "e2fsck", "fat-esp"]
+    }
+  ],
+  "open": ["P4 Fehlerprobe (ZehOSPowerFaultProbe)", "P5 offline update install (Testschluessel fuer Update-Manifeste)", "P6 laufende Paket-App"]
+}
