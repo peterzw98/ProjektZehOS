@@ -281,6 +281,14 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 `ThreadQuarantine` entfernen, wenn der aufgegebene Thread durch Cosmos als tot gilt und nie wieder bereit wird;
 `docs/COSMOS_SUPPORT.md` („Je Ausnahme bleiben Thread, 8-MiB-Stack … belegt“) berichtigen.
 
+> **Entscheidung Koordinator 19.11.2026 (Umfang E5-K):** E5-K deckt nur den normalen Abschluss über `ExitThread` ab
+> (eigenes Ende, `SchedulerDiagnostics.RequestKill`, gescheiterter Start). Aufgegebene Wasm-Worker erreichen `ExitThread`
+> nicht: `ProjektZeh/Runtime/CosmosFaultIsolation.cs:79-93` liefert `AbandonThread`, der Thread bleibt laut
+> `ProjektZeh/Runtime/Wasm/WasmRuntime.cs:174-177,203-205` bis zum Neustart belegt (statischer Befund Robert Oppenheimer).
+> Ihre Freigabe, der Abbau der Quarantäne und die Berichtigung in `docs/COSMOS_SUPPORT.md` gehören deshalb zu E6-C (#390),
+> nicht zu E5-K; der E5-K-PR nennt die 8 MiB je aufgegebenem Worker unter „Grenzen“. Die Randbedingung „und für
+> aufgegebene“ oben und der Absatz „ZehOS danach“ gelten entsprechend erst mit E6-C.
+
 - [ ] **Schritt 1:** Entwurfsnotiz (eine Seite) im PR gegen `cosmos`: Stelle des Aufräumens, Sperren, Reihenfolge gegenüber GC. Review durch einen zweiten Engineer senior, bevor Code entsteht.
 - [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Pakete bauen.
 - [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Isolationsprobe mit `--runs 20`: freier Speicher sinkt nicht um 8 MiB je Lauf.
