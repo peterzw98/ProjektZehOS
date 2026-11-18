@@ -24,7 +24,9 @@ Grenze 0.6: cp aus /proc, /sys, /dev wird verweigert (cause=ForeignMount); virtu
 Exitcodes: 2 = alle ausgefuehrten Pruefungen bestanden, Teile offen; 1 = mindestens ein Fehler.
 """
 import argparse
+import errno
 import importlib.util
+import os
 import secrets
 import shutil
 import subprocess
@@ -177,18 +179,23 @@ def run_size(args, work: Path, size: int, results: Results) -> Path | None:
     gpt.copy_sparse(image, pristine)
     tokens = {name: f"{name}-{secrets.token_hex(6)}" for name in ("t1a", "t2a", "t1b", "boot1", "boot2")}
     run = storage.new_work_dir(case / "lauf")
-    guest = power.Guest(args, run, [image], args.iso, from_disk=True, reboot_exits=False)
+    guest = None
     try:
+        guest = power.Guest(args, run, [image], args.iso, from_disk=True, reboot_exits=False)
         first_boot(args, guest, run, tokens)
         second_boot(args, guest, run, tokens)
-        results.report("PASS", f"{label} Boot, Ersteinrichtung, Terminals, Textshell, Neustart, Anmeldung, shutdown ohne Haenger")
+        # Ob Terminals und Neustart wirkten, belegen erst die Offline-Pruefungen; hier nur der Ablauf ohne Haenger.
+        results.report("PASS", f"{label} Gastablauf bis shutdown ohne Haenger (Boot, Ersteinrichtung, Eingaben, Neustart)")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
         results.report("FEHLER", f"{label} Gastablauf: {error} (Bilder/Protokolle: {run})")
-        guest.kill()
         return pristine
     finally:
-        guest.kill()
-    offline_checks(results, image, case, label, tokens)
+        if guest is not None:
+            guest.kill()
+    try:
+        offline_checks(results, image, case, label, tokens)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        results.report("FEHLER", f"{label} Offline-Pruefung: {error}")
     return pristine
 
 
@@ -198,35 +205,74 @@ def fill_inodes(root_part: Path, work: Path) -> None:
     empty.write_bytes(b"")
     commands = work / "debugfs.cmd"
     per_dir = -(-INODE_FILES // INODE_DIRS)
+    counts = [min(per_dir, INODE_FILES - directory * per_dir) for directory in range(INODE_DIRS)]
     with commands.open("w") as stream:
-        for directory in range(INODE_DIRS):
+        # Die frische Root hat noch kein /home (das legt erst die Ersteinrichtung an); mkdir auf ein vorhandenes /home
+        # meldet debugfs nur und macht weiter.
+        stream.write("mkdir /home\n")
+        for directory, count in enumerate(counts):
             stream.write(f"mkdir /home/inode{directory}\n")
-            for index in range(min(per_dir, INODE_FILES - directory * per_dir)):
+            for index in range(count):
                 stream.write(f"write {empty} /home/inode{directory}/f{index}\n")
     subprocess.run(["debugfs", "-w", "-f", str(commands), str(root_part)], capture_output=True, check=True)
+    # debugfs endet auch nach gescheiterten Befehlen mit 0; deshalb die angelegten Eintraege nachzaehlen.
+    for directory, count in enumerate(counts):
+        listing = subprocess.run(["debugfs", "-R", f"ls -p /home/inode{directory}", str(root_part)],
+                                 capture_output=True, text=True, check=True).stdout
+        found = sum(1 for line in listing.splitlines() if line.count("/") >= 6 and line.split("/")[5].startswith("f"))
+        if found != count:
+            raise RuntimeError(f"Inode-Fuellung: /home/inode{directory} hat {found} statt {count} Dateien")
+
+
+def write_back(extract: Path, image: Path, offset: int) -> None:
+    """Belegte Bereiche einer Partitionskopie an offset ins Image; Luecken bleiben Luecken (beide aus derselben
+    Sparse-Extraktion, debugfs stanzt keine Luecken). pread/pwrite statt gepuffertem Lesen neben os.lseek."""
+    end = extract.stat().st_size
+    if offset < 0 or offset + end > image.stat().st_size:
+        raise ValueError("Partitionskopie passt nicht ins Image")
+    with extract.open("rb") as source, image.open("r+b") as target:
+        position = 0
+        while position < end:
+            try:
+                data = os.lseek(source.fileno(), position, os.SEEK_DATA)
+            except OSError as error:
+                if error.errno == errno.ENXIO:
+                    break
+                raise
+            hole = os.lseek(source.fileno(), data, os.SEEK_HOLE)
+            while data < hole:
+                block = os.pread(source.fileno(), min(8 * 1024 * 1024, hole - data), data)
+                if not block:
+                    raise EOFError("Partitionskopie waehrend des Zurueckschreibens verkuerzt")
+                os.pwrite(target.fileno(), block, offset + data)
+                data += len(block)
+            position = hole
 
 
 def run_inode_limit(args, work: Path, installed: Path, results: Results) -> None:
     case = storage.new_work_dir(work / "inode-grenze")
     image = case / "target.img"
-    gpt.copy_sparse(installed, image)
-    part = power.find_partition(image, power.ROOT_TYPE)
-    root = power.extract_sparse(image, part, case / "root-vorher.img")
-    fill_inodes(root, case)
-    # Die gefuellte Partition zurueck ins Image schreiben (nur ihr Bereich, Sparse-Datei bleibt erhalten).
-    with root.open("rb") as source, image.open("r+b") as target:
-        target.seek(part["start"] * power.SECTOR)
-        shutil.copyfileobj(source, target, 8 * 1024 * 1024)
+    try:
+        gpt.copy_sparse(installed, image)
+        part = power.find_partition(image, power.ROOT_TYPE)
+        root = power.extract_sparse(image, part, case / "root-vorher.img")
+        fill_inodes(root, case)
+        write_back(root, image, part["start"] * power.SECTOR)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        results.report("FEHLER", f"Inode-Grenze Vorbereitung: {error}")
+        return
     results.check("Inode-Grenze: Vorbereitung e2fsck sauber", lambda: power.check_ext2(root))
     run = storage.new_work_dir(case / "lauf")
     token = f"inode-{secrets.token_hex(6)}"
-    guest = power.Guest(args, run, [image], args.iso, from_disk=True, reboot_exits=False)
+    guest = None
     try:
+        guest = power.Guest(args, run, [image], args.iso, from_disk=True, reboot_exits=False)
         guest.ready(args.timeout, extra=power.ROOT_READY)
         storage.login(guest.qmp, run, first=True)
         guest.to_textshell()
         start = guest.mark()
         lines(guest, "du /home")
+        # shortcut: du meldet sein Ende nicht seriell; feste 120 s (gemessen deutlich kuerzer), bei Bedarf Bildvergleich.
         time.sleep(120)
         guest.qmp.shot(run / "du.png")
         serial = storage.serial_text(run)[start:]
@@ -239,8 +285,13 @@ def run_inode_limit(args, work: Path, installed: Path, results: Results) -> None
         results.report("FEHLER", f"Inode-Grenze Gastablauf: {error} (Bilder/Protokolle: {run})")
         return
     finally:
-        guest.kill()
-    after = power.extract_sparse(image, part, case / "root-nachher.img")
+        if guest is not None:
+            guest.kill()
+    try:
+        after = power.extract_sparse(image, part, case / "root-nachher.img")
+    except (OSError, ValueError) as error:
+        results.report("FEHLER", f"Inode-Grenze Offline-Pruefung: {error}")
+        return
     results.check("Inode-Grenze: e2fsck -fn nach dem Lauf sauber", lambda: power.check_ext2(after))
     results.check("Inode-Grenze: Datei nach du geschrieben", expect_text(after, f"{USER_HOME}/nach-du.txt", token))
 
