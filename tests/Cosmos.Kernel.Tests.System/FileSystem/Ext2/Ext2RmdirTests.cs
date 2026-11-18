@@ -121,6 +121,37 @@ public class Ext2RmdirTests
     }
 
     [Test]
+    public void RecordCrossingBlockBoundary_Fails()
+    {
+        Ext2Inode dir = TwoBlockDirectory();
+        byte[] block = new byte[FsBlockSize];
+        byte[] next = new byte[FsBlockSize];
+        _sb.ReadBlocks(dir.Block[0], 1, block);
+        _sb.ReadBlocks(dir.Block[1], 1, next);
+        ushort skipped = BitConverter.ToUInt16(next, Ext2InodeLayout.DirEntryRecLenOffset);
+        int pos = 0;
+        while (true)
+        {
+            ushort recLen = BitConverter.ToUInt16(block, pos + Ext2InodeLayout.DirEntryRecLenOffset);
+            if (pos + recLen == FsBlockSize)
+            {
+                // The last record of block 0 now spans the first record of
+                // block 1 and lands on a valid record: that entry would
+                // silently disappear from the listing.
+                BitConverter.TryWriteBytes(block.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2), (ushort)(recLen + skipped));
+                break;
+            }
+
+            pos += recLen;
+        }
+
+        _sb.WriteBlocks(dir.Block[0], 1, block);
+
+        Assert.That(dir.InodeOperations.ReadDir(dir, out _), Is.False, "no partial listing");
+        Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.False);
+    }
+
+    [Test]
     public void ReadDirAndLookup_WithCorruptRecord_Fail()
     {
         Ext2Inode dir = TwoBlockDirectory();
