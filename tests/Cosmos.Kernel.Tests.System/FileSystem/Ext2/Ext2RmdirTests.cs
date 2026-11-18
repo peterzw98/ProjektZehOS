@@ -186,4 +186,32 @@ public class Ext2RmdirTests
         Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.False);
         Assert.That(Ext2DirectoryHelper.TryFind(_sb, (Ext2Inode)_sb.Root, "d", out _), Is.True);
     }
+
+    [Test]
+    public void Create_InDirectoryWithHole_IsRefusedAndBlockZeroUntouched()
+    {
+        Ext2Inode dir = TwoBlockDirectory();
+        // Free room in block 0 so AddEntry would place the new entry there.
+        Assert.That(dir.InodeOperations.Unlink(dir, new string('n', 190) + "0"), Is.True);
+        dir.Block[1] = 0; // corrupt: hole inside i_size
+        byte[] before = new byte[FsBlockSize];
+        _sb.ReadBlocks(0, 1, before);
+
+        Assert.That(dir.InodeOperations.Create(dir, "new", FileMode, out _), Is.False);
+
+        byte[] after = new byte[FsBlockSize];
+        _sb.ReadBlocks(0, 1, after);
+        Assert.That(after, Is.EqualTo(before), "block 0 holds the primary superblock");
+    }
+
+    [Test]
+    public void Create_ExistingNameInCorruptDirectory_IsRefused()
+    {
+        Ext2Inode dir = TwoBlockDirectory();
+        _sb.WriteBlocks(dir.Block[1], 1, new byte[FsBlockSize]); // rec_len 0 at the start of block 1
+
+        // The name lives in block 0; TryFind fails on the corrupt directory,
+        // so without the guard a duplicate would be added.
+        Assert.That(dir.InodeOperations.Create(dir, new string('n', 190) + "0", FileMode, out _), Is.False);
+    }
 }
