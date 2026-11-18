@@ -4,8 +4,9 @@
 Alle Images und der Arbeitsordner werden neu angelegt; bereits vorhandene Daten werden nie beschrieben.
 
 Benoetigte Builds (sonst fehlen die seriellen GPT_TEST-Quittungen):
-- --iso: Installer-ISO mit -p:ZehOSInstaller=true -p:ZehOSGptInstaller=true -p:ZehOSGptGuestProbe=true,
-  fuer G8 zusaetzlich -p:ZehOSGptG8Probe=true.
+- --iso: Installer-ISO mit -p:ZehOSInstaller=true -p:ZehOSGptInstaller=true -p:ZehOSGptGuestProbe=true
+  -p:ZehOSRecovery=true (nur im Recovery-Modus startet die Textshell statt des grafischen Assistenten, der keine
+  Shell anbietet), fuer G8 zusaetzlich -p:ZehOSGptG8Probe=true.
 - --payload/ProjektZeh.elf: der eingebettete Kernel ebenfalls mit -p:ZehOSGptGuestProbe=true, sonst fehlt
   "GPT_TEST IDENTITY" beim Start der installierten Platte.
 - --iso-security (nur --run-cases): normaler Kernel mit -p:ZehOSSecurityRecovery=true -p:ZehOSGptGuestProbe=true
