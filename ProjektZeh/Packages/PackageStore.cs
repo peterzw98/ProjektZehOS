@@ -61,7 +61,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             installed.Sort(static (left, right) => string.CompareOrdinal(left.Manifest.Id, right.Manifest.Id));
             return ResultObjectFactory.CreateSuccess(installed.ToArray());
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<InstalledPackage[]>(exception);
         }
@@ -85,7 +85,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 return Damaged<InstalledPackage>(id);
             return ResultObjectFactory.CreateSuccess(new InstalledPackage(manifest.Value, directory));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return Damaged<InstalledPackage>(id, exception.Message);
         }
@@ -150,7 +150,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketdateien nicht lesbar: " + exception.Message);
         }
@@ -336,7 +336,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             var parsed = PackageCatalog.Parse(catalog);
             return parsed.IsOK() ? parsed : DamagedCatalog();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
         }
@@ -372,7 +372,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 });
                 return parsed;
             }
-            catch (Exception exception) when (IsFileError(exception))
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
                 return ResultObjectFactory.CreateFromException<PackageCatalog>(exception);
             }
@@ -386,7 +386,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             if (!StorageLock.Run(() => File.Exists(SourcePath))) return ResultObjectFactory.CreateSuccess(DefaultSource);
             return ResultObjectFactory.CreateSuccess(Encoding.ASCII.GetString(ReadSmall(SourcePath, 2048)).TrimEnd('\n'));
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFromException<string>(exception);
         }
@@ -405,7 +405,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             });
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFromException(exception);
         }
@@ -456,7 +456,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             }
             return ResultErr.CreateSuccess();
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketbestand nicht aufgeraeumt: " + exception.Message);
         }
@@ -471,7 +471,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             if (!StorageLock.Run(() => File.Exists(marker))) return null;
             return UpdateVersion.TryParse(Encoding.ASCII.GetString(ReadSmall(marker, 32)).TrimEnd('\n'), out var version) ? version : null;
         }
-        catch (Exception exception) when (IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return null;
         }
@@ -518,7 +518,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     private static void TryDeleteTree(string directory)
     {
         try { StorageLock.Run(() => { if (Directory.Exists(directory)) DeleteTreeStorageLocked(directory); }); }
-        catch (Exception exception) when (IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
+        catch (Exception exception) when (FileErrors.IsFileError(exception)) { /* Reconcile entfernt den Rest beim naechsten Einbinden. */ }
     }
 
     // Kleine Dateien (hoechstens Kataloggroesse, 256 KiB) werden in einem gesperrten Abschnitt gelesen.
@@ -540,7 +540,6 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         return Convert.ToHexStringLower(hash);
     }
 
-    internal static bool IsFileError(Exception exception) => exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
     private static ResultErr NoTrust() => ResultErr.CreateFailure(ResultCode.Failure, "Dieser Build enthaelt keinen Paketschluessel; Pakete sind deaktiviert.");
     private static ResultErr Modified(string path) => ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {path} wurde veraendert; Start gesperrt.");
     private static ResultObject<T> Damaged<T>(string id, string? detail = null) =>
