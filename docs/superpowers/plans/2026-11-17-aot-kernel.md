@@ -5,7 +5,7 @@
 **Goal:** Paket-Apps mit einem passenden `.aot` laufen im Kernel als nativer x86-64-Code unter WAMR; alle anderen laufen unverändert unter wasm3.
 **Architecture:** WAMR läuft nur als AOT-Lader neben wasm3 (kein WAMR-Interpreter, kein JIT). Beide Laufzeiten teilen sich eine Hostfunktionstabelle mit zwei dünnen Bindungen. Das `.aot` ist eine gewöhnliche, signierte Paketdatei mit festem Namen; ältere Kernel ignorieren sie und nutzen das `.wasm`.
 **Tech Stack:** C (WAMR 2.4.5, `wamrc` mit LLVM 18.1.8), C#/.NET 10, Cosmos Gen3 3.0.97, `GCCProject`, wasm3, MSTest, QEMU, VMware.
-**Herkunft:** [ClassiCube-Plan](2026-11-16-classicube.md), Etappe 5; Übergabe `2026-11-17-aot-laufzeit-handoff.md` (Branch `docs/aot-handoff`); Hostprobe 5b `experiments/AOT.Probe/README.md` (Branch `experiments/aot-hostprobe`, abd999c). Erstellt von agent-orchestrator am 17. November 2026 auf Zuweisung des Koordinators.
+**Herkunft:** [ClassiCube-Plan](2026-11-16-classicube.md), Etappe 5; Übergabe [2026-11-17-aot-laufzeit-handoff.md](2026-11-17-aot-laufzeit-handoff.md); Hostprobe 5b `experiments/AOT.Probe/README.md` (Branch `experiments/aot-hostprobe`, abd999c). Erstellt von agent-orchestrator am 17. November 2026 auf Zuweisung des Koordinators.
 
 ## Stand und Belege
 
