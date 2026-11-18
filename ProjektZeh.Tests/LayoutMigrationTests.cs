@@ -198,6 +198,38 @@ public sealed class LayoutMigrationTests
         finally { Directory.Delete(targetRoot, true); }
     }
 
+    // G5 (blue, KVM): das Journal nannte /srv/legacy-data, der Abbruch kam vor dem Anlegen. Der Pfadwaechter meldet die fehlende
+    // Komponente als cause='Missing'; fuer die Wiederholung muss das "nicht vorhanden" sein, sonst endet sie mit einem Fehler.
+    [TestMethod]
+    public void RealFileTarget_DeleteBehindAMissingComponent_IsNotFound()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-real-missing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(targetRoot, "srv"));
+        try
+        {
+            // Der echte PathGuard ueber dem Host-Verzeichnis; symlink nennt eine Komponente, die als Symlink gelten soll.
+            string? symlink = null;
+            PathNodeKind Lookup(string parent, string name)
+            {
+                if (name == symlink) return PathNodeKind.Symlink;
+                string host = Path.Combine(targetRoot, (parent.TrimStart('/') + "/" + name).TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+                return Directory.Exists(host) ? PathNodeKind.Directory : File.Exists(host) ? PathNodeKind.File : PathNodeKind.Missing;
+            }
+            string Vfs(string physical) => physical == targetRoot ? "/" : "/" + Path.GetRelativePath(targetRoot, physical).Replace(Path.DirectorySeparatorChar, '/');
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess,
+                (physical, creating) => PathGuard.Check("/", Vfs(physical), ["/"], Lookup, creating));
+            Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data").Code);
+            Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data/notizen.txt").Code);
+            // Gegenprobe: ein Symlink im Pfad bleibt ein harter Fehler und wird nie als "nicht vorhanden" geduldet.
+            symlink = "srv";
+            var refused = target.Delete("/srv/legacy-data");
+            Assert.AreNotEqual(ResultCode.NotFound, refused.Code);
+            StringAssert.Contains(refused.Message, "Symlink", StringComparison.Ordinal);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
     // Review peter-review P3-f (4.5): Abbruch ueber das Token mitten im Kopieren einer Datei, danach Wiederholung.
     [TestMethod]
     public void RealFileTargetRepeatsAMigrationCancelledInsideWriteFile()
