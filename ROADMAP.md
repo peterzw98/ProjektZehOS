@@ -201,7 +201,7 @@ Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien j
 
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (gemergt, erfüllt):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
-- **Thread-Start-Schutz #241 (gemergt, erfüllt) und Worker-Pool #246 (PR offen):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
+- **Thread-Start-Schutz #241 und Worker-Pool #246 (beide gemergt, erfüllt):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
 - **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** Branch `fix/ext2-unlink-indirect-plug`, noch ohne PR; der PR wartet auf Peters Freigabe.
 
 Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
@@ -344,7 +344,7 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
   - Stand 18. November 2026 (Leistung, ClassiCube 1.1.0 unter KVM, avg fps je letztes 60-s-Fenster):
     - **Vorbehalt Speicher:** Die meisten Reihen liefen mit 512 MiB Gastspeicher. Das liegt am Minimum: #237 empfiehlt mindestens 768 MiB und nennt keinen belegten sicheren Mindestwert. Auf Seed 5 (stehend) brachte 1 GiB statt 512 MiB 20,0 statt 16,3 fps und einen niedrigeren p95 (agent-laser-YELLOW, IRC 18.11., je 2 Läufe).
     - **Werte mit 512 MiB:** Seed 1 stehend 25–27 fps; Zufallswelt bewegt 26,3 fps. In Wäldern mit rund 100.000 Eckpunkten liegt die Rasterzeit bei 42–58 ms je Bild, das 30-fps-Ziel ist dort nicht erreicht (Seed-Reihe agent-laser-YELLOW, IRC 18.11.).
-    - **Hebel:** Die Sichtweite hilft je nach Szene; die Voreinstellung ist mit #242 (PR offen) möglich, den Wert wählt Peter. Für Wälder hilft sie bis 64 nicht.
+    - **Hebel:** Die Sichtweite hilft je nach Szene; die Voreinstellung ist mit #242 (gemergt) möglich, den Wert wählt Peter. Für Wälder hilft sie bis 64 nicht.
     - **Messweg:** Das Messskript #239 (gemergt) misst bewegte Kamera und avg fps; für ClassiCube ist dort 1 GiB Standard.
     - **1-GiB-Kernreihe vor dem Scheduler-Fix (agent-laser-YELLOW, IRC 18.11.; KVM, Sichtweite 512, wasm3, Seeds 2–5, je 2 Läufe stehend und bewegt):**
       - Mittel stehend 22,8 fps, bewegt 25,5 fps, gesamt 24,2 fps.
