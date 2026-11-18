@@ -68,4 +68,40 @@ public sealed class ThreadStarterTests
         Assert.AreEqual(1, accepted.Value, "der gescheiterte Start verbraucht keine Id");
         Assert.IsTrue(tasks.StopAll(5000));
     }
+
+    [TestMethod]
+    public void TryStart_WithBackgroundClass_AppliesClassOnTheNewThread()
+    {
+        var original = ThreadStarter.ApplyClass;
+        try
+        {
+            ThreadClass? applied = null;
+            int appliedOn = -1;
+            bool bodyRanAfterApply = false;
+            ThreadStarter.ApplyClass = threadClass => { applied = threadClass; appliedOn = Environment.CurrentManagedThreadId; };
+            var started = ThreadStarter.TryStart(() => bodyRanAfterApply = applied != null, 0, _ => true, threadClass: ThreadClass.Background);
+            Assert.IsTrue(started.IsOK());
+            Assert.IsTrue(started.Value!.Join(5000));
+            Assert.AreEqual(ThreadClass.Background, applied);
+            Assert.AreNotEqual(Environment.CurrentManagedThreadId, appliedOn);
+            Assert.IsTrue(bodyRanAfterApply);
+        }
+        finally { ThreadStarter.ApplyClass = original; }
+    }
+
+    [TestMethod]
+    public void TryStart_NormalClass_DoesNotCallApplyClass()
+    {
+        var original = ThreadStarter.ApplyClass;
+        try
+        {
+            int calls = 0;
+            ThreadStarter.ApplyClass = _ => calls++;
+            var started = ThreadStarter.TryStart(() => { }, 0, _ => true);
+            Assert.IsTrue(started.IsOK());
+            Assert.IsTrue(started.Value!.Join(5000));
+            Assert.AreEqual(0, calls);
+        }
+        finally { ThreadStarter.ApplyClass = original; }
+    }
 }

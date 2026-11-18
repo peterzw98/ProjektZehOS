@@ -29,17 +29,31 @@ internal static class ThreadStarter
     internal static Func<int, bool> StackProbe { get; set; } = _ => true;
 
     /// <summary>
+    /// Vom Kernel gesetzt: ordnet dem AUFRUFENDEN Thread eine Klasse zu (SetPriority des Klassenschedulers). Auf dem Host und
+    /// vor dem Setzen geschieht nichts.
+    /// </summary>
+    internal static Action<ThreadClass> ApplyClass { get; set; } = _ => { };
+
+    /// <summary>
     /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) nach der Stackprobe.
     /// <paramref name="background"/> markiert dauerhaft wartende Worker, damit sie ein Prozessende (Hosttests) nicht aufhalten.
     /// </summary>
-    public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false) =>
-        TryStart(body, stackBytes, StackProbe, background);
+    public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false,
+        ThreadClass threadClass = ThreadClass.Normal) =>
+        TryStart(body, stackBytes, StackProbe, background, threadClass);
 
-    internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe, bool background = false)
+    internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe, bool background = false,
+        ThreadClass threadClass = ThreadClass.Normal)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentOutOfRangeException.ThrowIfNegative(stackBytes);
         ArgumentNullException.ThrowIfNull(probe);
+        if (threadClass != ThreadClass.Normal)
+        {
+            var inner = body;
+            // Die Klasse gilt fuer den neuen Thread; ApplyClass setzt sie fuer den gerade laufenden, also diesen.
+            body = () => { ApplyClass(threadClass); inner(); };
+        }
         int effective = EffectiveStackBytes(stackBytes);
         if (!probe(effective))
             return ResultObjectFactory.CreateFailure<Thread>(ResultCode.Failure,

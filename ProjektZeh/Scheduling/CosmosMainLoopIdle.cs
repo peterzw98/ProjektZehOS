@@ -10,7 +10,7 @@ internal static class CosmosMainLoopIdle
     private const string InterruptManagerType = "Cosmos.Kernel.Core.CPU.InterruptManager, Cosmos.Kernel.Core";
 
     // Der HAL-Wartetimer tickt im Referenzgast nur mit 18 Hz; der Scheduler weckt feiner auf.
-    public static void Wait() => MainLoopIdle.Wait(CosmosRoundRobinScheduler.WaitingThreads, YieldNow, () => Thread.Sleep(1));
+    public static void Wait() => MainLoopIdle.Wait(CosmosClassScheduler.WaitingThreads, YieldNow, () => Thread.Sleep(1));
 
     // Yield merkt nur den Wechsel vor; ohne Interrupt wartet er bis zum naechsten Tick oder Geraeteinterrupt. Ist der
     // Interruptcontroller nicht bereit, schlaeft die Schleife normal, statt bis dahin zu drehen.

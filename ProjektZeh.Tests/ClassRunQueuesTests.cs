@@ -231,7 +231,7 @@ public sealed class ClassRunQueuesTests
     }
 
     [TestMethod]
-    public void MainLoopAndBusyWorker_SameShareAsRoundRobin()
+    public void MainLoopAndBusyWorker_KeepTheShareOfTheFormerScheduler()
     {
         var queues = Queues();
         var main = Make("main");

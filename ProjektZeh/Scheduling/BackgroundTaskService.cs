@@ -42,9 +42,9 @@ internal sealed class BackgroundTaskService
     private int busyWorkers;
     private int nextId;
 
-    /// <param name="startThread">Nur fuer Tests; sonst <see cref="ThreadStarter.TryStart(ThreadStart, int, bool)"/>.</param>
+    /// <param name="startThread">Nur fuer Tests; sonst <see cref="ThreadStarter.TryStart(ThreadStart, int, bool, ThreadClass)"/>.</param>
     public BackgroundTaskService(Func<ThreadStart, ResultObject<Thread>>? startThread = null) =>
-        this.startThread = startThread ?? (body => ThreadStarter.TryStart(body, background: true));
+        this.startThread = startThread ?? (body => ThreadStarter.TryStart(body, background: true, threadClass: ThreadClass.Background));
 
     /// <summary>Legt bis zu <paramref name="count"/> Worker an (beim Boot, solange der Heap noch zusammenhaengend ist).</summary>
     public ResultErr StartWorkers(int count = BootWorkers)

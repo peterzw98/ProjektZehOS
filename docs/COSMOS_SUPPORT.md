@@ -2,6 +2,10 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
+
+`CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread (bis dahin gilt der Standard Normal; fest CPU 0, Etappe 5 stellt auf die laufende CPU um). Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
+
 ## Cosmos aus Quelle (18. November 2026)
 
 Der Referenzstand ist Cosmos-Commit `bd5889b46a6b1175ff8b66620437e072b78636de`, Paketversion `3.0.97-zehos.1`, mit SDK 10.0.404. Der gemessene Paketbau mit SDK 10.0.404 und offizieller Vergleichsversion 3.0.97 dauerte 64 Sekunden. Der Vergleich ergab gleiche IL für die verglichenen DLLs; eine DLL unterschied sich im Text des Quellgenerator-Attributs, außerdem gab es Unterschiede im Paketlayout. Zwei Quellbauten desselben Commits ergaben keine verschiedenen DLLs nach Bereinigung der Bauangaben. Kernelbau und Hosttests bestanden auf beiden Seiten; Gast- und VMware-Vergleich waren beim Befund noch offen. Details und Grenzen: [DLL-Vergleich](COSMOS_DLL_VERGLEICH.md).

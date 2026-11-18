@@ -202,7 +202,7 @@ internal static unsafe partial class WasmRuntime
         }
         // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
         // laeuft: Cosmos reiht ihn nur ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und
-        // CosmosRoundRobinScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
+        // CosmosClassScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
         // catch statt finally: Auch wenn das Aufraeumen unerwartet wirft, erhalten Lauf und Warteschlange ihr Ende und
         // die Isolation wird gezaehlt (Review senior).
         bool clean;
