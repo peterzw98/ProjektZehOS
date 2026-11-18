@@ -21,6 +21,18 @@ class BuildCosmosTests(unittest.TestCase):
         sdks = json.loads((ROOT / 'global.json').read_text())['msbuild-sdks']
         self.assertEqual(VERSION, sdks['Cosmos.Sdk'])
 
+    def test_official_version_needs_explicit_feed(self):
+        result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--version', '3.0.97'], capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('--feed', result.stderr)
+        self.assertEqual(0, plan('--version', '3.0.97').returncode)
+
+    def test_runs_from_repository_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run(['bash', str(SCRIPT), '--print-plan', '--feed', 'f'], capture_output=True, text=True, cwd=temp)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((Path(temp) / 'f').is_dir())
+
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
         self.assertRegex(commit, r'^[0-9a-f]{40}$')
