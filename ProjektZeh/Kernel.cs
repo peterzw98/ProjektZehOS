@@ -382,6 +382,9 @@ public sealed class Kernel : Sys.Kernel
         // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         InstallScheduler();
+        // Worker fuer Hintergrundaufgaben jetzt anlegen: spaetere Thread-Starts scheitern nach Dateilast (nativer Heap zerstueckelt).
+        LogWorkerStart($"{BackgroundTaskService.BootWorkers} Aufgaben-Worker", tasks.StartWorkers());
+        LogWorkerStart("Kennwort-Worker", ShellService.StartPasswordWorker());
 #if ZEHOS_WASM && !ZEHOS_INSTALLER
         // Langlaeufer beim Boot anlegen, solange der Heap noch frei von Netz- und App-Muell ist; spaeter nur wiederverwenden.
         LogWorkerStart("Wasm-Worker", Runtime.Wasm.WasmRuntime.StartWorker());
@@ -507,13 +510,11 @@ public sealed class Kernel : Sys.Kernel
 #endif
 
 #pragma warning disable COSMOS0001
-#if ZEHOS_WASM && !ZEHOS_INSTALLER
     private void LogWorkerStart(string name, ResultErr started)
     {
         if (started.IsOK()) systemLog.Information("Scheduler", $"{name} gestartet.");
         else systemLog.Error("Scheduler", $"{name} nicht gestartet: {started.Message}");
     }
-#endif
 
     private void InstallScheduler()
     {
