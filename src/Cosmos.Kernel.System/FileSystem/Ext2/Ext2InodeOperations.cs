@@ -64,7 +64,11 @@ internal sealed class Ext2InodeOperations : IInodeOperations
                 return true;
             }
 
-            List<Ext2DirEntry> entries = Ext2DirectoryHelper.ParseDirectory(_superblock, parent);
+            if (!Ext2DirectoryHelper.TryParseDirectory(_superblock, parent, out List<Ext2DirEntry> entries))
+            {
+                return false;
+            }
+
             for (int i = 0; i < entries.Count; i++)
             {
                 if (entries[i].Name == "..")
@@ -103,7 +107,11 @@ internal sealed class Ext2InodeOperations : IInodeOperations
             return false;
         }
 
-        List<Ext2DirEntry> rawEntries = Ext2DirectoryHelper.ParseDirectory(_superblock, parent);
+        if (!Ext2DirectoryHelper.TryParseDirectory(_superblock, parent, out List<Ext2DirEntry> rawEntries))
+        {
+            return false;
+        }
+
         List<IVfsInode> result = new(rawEntries.Count);
         for (int i = 0; i < rawEntries.Count; i++)
         {
@@ -459,7 +467,11 @@ internal sealed class Ext2InodeOperations : IInodeOperations
         }
 
         // Only "." and ".." may remain.
-        List<Ext2DirEntry> entries = Ext2DirectoryHelper.ParseDirectory(_superblock, target);
+        if (!Ext2DirectoryHelper.TryParseDirectory(_superblock, target, out List<Ext2DirEntry> entries))
+        {
+            return false;
+        }
+
         for (int i = 0; i < entries.Count; i++)
         {
             string entryName = entries[i].Name;
