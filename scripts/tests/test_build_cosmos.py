@@ -41,6 +41,16 @@ class BuildCosmosTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertTrue((Path(temp) / 'f').is_dir())
 
+    def test_commit_change_requires_version_change(self):
+        # Gleiche Version bei anderem Commit liesse den NuGet-Cache still den alten Stand liefern.
+        base = subprocess.run(['git', 'merge-base', 'HEAD', 'origin/master'], capture_output=True, text=True, cwd=ROOT)
+        if base.returncode != 0:
+            self.skipTest('origin/master nicht verfuegbar')
+        changed = subprocess.run(['git', 'diff', '--quiet', base.stdout.strip(), '--', 'deploy/cosmos/COMMIT'], cwd=ROOT).returncode != 0
+        if changed:
+            version_changed = subprocess.run(['git', 'diff', '--quiet', base.stdout.strip(), '--', 'deploy/cosmos/VERSION'], cwd=ROOT).returncode != 0
+            self.assertTrue(version_changed, 'deploy/cosmos/COMMIT geaendert, VERSION nicht')
+
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
         self.assertRegex(commit, r'^[0-9a-f]{40}$')
