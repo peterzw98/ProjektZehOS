@@ -213,3 +213,7 @@ Kommentar im Code (englisch, wie der Baum): LINT1 ist auf PCs die NMI-Leitung; m
 
 Wird E3-C nach Etappe 5 bearbeitet, steht die Stelle im SMP-Stand zweimal (`LocalApic.cs:183-185` für die Boot-CPU,
 `:225-226` für weitere CPUs); beide ändern.
+
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** E3-C übernimmt den Pin von E2-P5 (#363): `COMMIT` `d25b8200`,
+> `3.0.97-zehos.5`, ohne eigenen Feed, solange sich `cosmos` bis zum Merge nicht ändert. Ändert es sich, nimmt E3-C die
+> nächste freie `-zehos.N` auf dem neuen Kopf (vorher gegen alle bekannten Caches prüfen).

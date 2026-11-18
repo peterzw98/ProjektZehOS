@@ -20,6 +20,10 @@ Angleichen vorhandener Plugs und Messen. Verteilt wird erst in Etappe 6.
 Ist der Commit nicht mehr abrufbar, nimmt E5-A die aktuelle Spitze, hält ihren Commit in `PATCHES.md` fest und meldet
 das im Kanal; die Schnittstellen in diesem Plan sind dann gegen diesen Stand neu zu prüfen.
 
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Am 18.11.2026 sind `44952133` und die Basis `efcf20cc` noch abrufbar
+> (`git ls-remote`, `git fetch`). Erster Schritt von E5-A, sobald das Gate offen ist (E3-C gemergt, E4-E erledigt): beide
+> Commits sofort in den eigenen Branch `cosmos-upstream/smp-phase5b` spiegeln, damit E5 nicht mehr an Upstream hängt.
+
 ## Integrationsbranch
 
 Zwischen dem Einspielen des Stapels und der Anpassung von Adapter und Plugs lässt sich ZehOS nicht bauen. Deshalb
