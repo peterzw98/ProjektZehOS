@@ -579,7 +579,8 @@ def run_g6_targets(args, work: Path) -> None:
     try:
         process, qmp = storage.boot(args, run, [medium, data, existing, blank])
         for disk, reason in (("sata0", "Das Installationsmedium ist kein Installationsziel."),
-                             ("sata1", "Datenplatte/installiertes System, nicht als Ziel erlaubt.")):
+                             # ZEHOSDATA steht gar nicht in der Kandidatenliste (CosmosInstallService.GetCandidates).
+                             ("sata1", "Installationsziel nicht gefunden.")):
             mark = len(storage.serial_text(run))
             qmp.line(f"setup install {disk} --layout gpt --erase")
             storage.tools.wait_serial(run, "GPT_TEST RESULT ERROR " + reason, args.timeout, mark)
