@@ -464,6 +464,9 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_STORAGE_PROBE
         if (RunStorageProbeAndPowerOff()) return;
 #endif
+#if ZEHOS_STORAGE_ROOT_PROBE
+        if (RunStorageRootProbeAndPowerOff()) return;
+#endif
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
 #endif
@@ -500,6 +503,20 @@ public sealed class Kernel : Sys.Kernel
         var power = PreparePowerAction();
         if (power.IsOK()) Sys.Power.Shutdown();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_PROBE shutdown FAIL {power.Message}\n");
+        Stop();
+        return true;
+    }
+
+#endif
+#if ZEHOS_STORAGE_ROOT_PROBE
+    // scripts/test-storage-ext2-root.py wartet nach STORAGE_ROOT DONE auf das Gastende; / bleibt wie im Produkt eingehaengt,
+    // die Probe hat Sync und s_state selbst erledigt. Lauf 3 kehrt nie zurueck, der Host beendet QEMU.
+    private bool RunStorageRootProbeAndPowerOff()
+    {
+        CosmosExt2RootProbe.Run();
+        var power = PreparePowerAction();
+        if (power.IsOK()) Sys.Power.Shutdown();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_ROOT shutdown FAIL {power.Message}\n");
         Stop();
         return true;
     }
