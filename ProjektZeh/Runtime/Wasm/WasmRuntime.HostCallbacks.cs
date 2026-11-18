@@ -61,13 +61,24 @@ internal static unsafe partial class WasmRuntime
         try
         {
             if (!files.TryGetValue(handle, out var stream)) return -1;
-            // Offener Paket-Stream: die Sperre gilt je Lesevorgang (Cosmos-ext2/FAT nicht threadsicher, Diagnoselauf 13).
+            // Offener Paket-Stream: je Abschnitt von hoechstens 1 MiB eine eigene Sperre (Cosmos-ext2/FAT nicht threadsicher,
+            // Diagnoselauf 13), damit ein grosser Lesewunsch einer App den Hauptthread nicht lange aufhaelt (Review blue).
             nint address = (nint)buffer;
-            return StorageLock.Run(() =>
+            int total = 0;
+            while (total < (int)length)
             {
-                stream.Position = (long)offset;
-                return stream.Read(new Span<byte>((void*)address, (int)length));
-            });
+                int start = total;
+                int count = Math.Min(StorageLock.ChunkBytes, (int)length - total);
+                int read = StorageLock.Run(() =>
+                {
+                    stream.Position = (long)offset + start;
+                    return stream.Read(new Span<byte>((void*)(address + start), count));
+                });
+                if (read <= 0) break;
+                total += read;
+            }
+
+            return total;
         }
         catch (Exception) { return -1; }
     }
