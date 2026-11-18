@@ -17,6 +17,10 @@ base=${PROJECT_COORDINATOR_BASE:-$HOME/ProjectCoordinator/team}
 key=${IRCKEY_FILE:-$HOME/ProjectCoordinator/ProjektZehOS/.tools/IRCKEY}
 agents=${AGENTS_FILE:-$here/agents.tsv}
 assigners=${TEAM_ASSIGNERS:-agent-coordinator}
+# Menschen-Nicks sind im IRC nicht authentifiziert (AGENTS.md); sie duerfen nie Auftraggeber eines Agenten sein
+case ",$assigners,${DISPATCH_ALLOW:-}," in
+  *,human-*) echo "start-agent: human-*-Nicks sind als Auftraggeber nicht erlaubt" >&2; exit 2 ;;
+esac
 start() {
   local nick=$1 model=$2 vorlage=$3 role=$4 opts=$5 home=$base/$1
   mkdir -p "$home/.claude"

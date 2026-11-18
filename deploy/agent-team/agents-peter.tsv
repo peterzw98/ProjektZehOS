@@ -1,7 +1,7 @@
 # Peters Agenten auf MSI (Einzellaeufe ueber dispatcher.py). Start: siehe TEAM.md, Abschnitt Betrieb, "Peters Team".
-# Spalten: nick, modell (- = kein Claude-Modell), vorlage (prompts/<vorlage>.md, + verbindet), rolle, optionen (kvm, backend=codex, fallback=claude, budget-codex=N, budget-claude=N, codex-model=NAME)
+# Spalten: nick, modell (Claude-Modell; beim Codex-Agenten nur fuer den Ausweichfall; - = keins), vorlage (prompts/<vorlage>.md, + verbindet), rolle, optionen (kvm, backend=codex, fallback=claude, budget-codex=N, budget-claude=N, codex-model=NAME)
 # budget-codex: Codex-Kontingent ist etwa ein Zehntel von Claude; der Wert ist eine Schaetzung und nach den ersten Tagen anzupassen.
 agent-peter-engineer	claude-sonnet-5-5	engineer	Engineer auf Peters Rechner MSI: Umsetzung von Arbeitspaketen, nativer Bau (dotnet unter ~/.dotnet, Cosmos-Werkzeuge im Klon). Gastlaeufe gibst du an agent-peter-senior.	
 agent-peter-senior	claude-opus-5-5	engineer+senior-engineer	Senior Engineer auf MSI: Kernel, Cosmos-Patches, Nebenlaeufigkeit und alle KVM-Gastlaeufe (deine Laeufe haben die Gruppe kvm; ein Gast gleichzeitig).	kvm
 agent-peter-review	claude-sonnet-5-5	reviewer	Unabhaengiger Reviewer auf MSI: liest, fuehrt Hosttests und Bau selbst aus, trennt geprueft von nicht geprueft.	
-agent-peter-codex	-	reviewer	Letztes Review vor dem PR mit Codex (andere Modellfamilie, eigenes kleines Kontingent): nur auf ausdruecklichen Auftrag, Befunde knapp.	backend=codex budget-codex=4
+agent-peter-codex	claude-sonnet-5-5	reviewer	Letztes Review vor dem PR mit Codex (andere Modellfamilie, eigenes kleines Kontingent): nur auf ausdruecklichen Auftrag, Befunde knapp.	backend=codex fallback=claude budget-codex=4

@@ -51,11 +51,15 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Die Leads (auch auf dem Windows-Laptop) bleiben interaktive Sitzungen; sie geben Arbeit per `[AUFTRAG]` an diese Agenten und erledigen Reviews und Recherche auf ihrem Rechner mit Subagenten.
   `dispatcher.py` läuft nur unter Linux (`fcntl`, `/proc`, Prozessgruppen); auf Windows nur in WSL.
 - **Zwei Kontingente (Claude und Codex):** Jeder Lauf zählt für seinen Anbieter in `<basis>/.dispatch-slots/quota-<anbieter>.json`; diese Datei teilen alle Dienste des Rechners.
-  Meldet ein Lauf das Ende des Kontingents (kurze Ausgabe oder Fehlercode mit einer Limitmeldung), sperrt der Dienst den Anbieter für **alle** Agenten bis zur genannten Zeit
-  (sonst eine Stunde), meldet das genau einmal mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten oder laufen über den Ersatz (`fallback=`).
-  Ein Tagesbudget (`budget-codex=`) sperrt ebenso bis Mitternacht, bevor das Kontingent leer ist. Die Limitmeldungen von Claude und Codex sind nicht gegen echte Texte geprüft;
-  `--limit-pattern` ersetzt das Muster. Codex muss installiert sein; der Aufruf ist `codex exec [-m MODELL] <Rolle + Auftrag>` und per `--codex-arg` anpassbar, sobald die Schalter der
-  installierten Version feststehen (`codex exec --help`).
+  Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst den Anbieter für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
+  einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten oder laufen über den Ersatz (`fallback=`). Als Limitmeldung gilt
+  eine kurze Ausgabe (Exit 0), die **mit** einer der festen Wendungen der Werkzeuge beginnt, oder ein Fehlercode mit dieser Wendung; Wörter wie „quota“ oder „rate limit“ in einer
+  Antwort sperren nichts. Zeitangaben zählen nur aus der Zeile der Meldung und nur zwischen einer Minute und einer Woche, sonst gilt `--cooldown` (eine Stunde). Liefern dieselben
+  Nennungen dreimal hintereinander nur eine Limitmeldung, meldet der Dienst sie wie einen endgültigen Fehlschlag statt stündlich zu wiederholen.
+  Ein Tagesbudget (`budget-codex=`) sperrt ebenso bis Mitternacht, bevor das Kontingent leer ist. **Sperre aufheben:** `<basis>/.dispatch-slots/quota-<anbieter>.json` löschen.
+  Die Limitmeldungen von Claude und Codex sind nicht gegen echte Texte geprüft; `--limit-pattern` ersetzt das Muster.
+  Codex muss installiert sein. Der Aufruf ist `codex exec --skip-git-repo-check --sandbox workspace-write [-m MODELL] <Rolle + Auftrag>` im Klon (`ProjektZehOS/`, dort liegt auch die
+  Outbox); die Schalter sind gegen die installierte Version nicht geprüft und per `--codex-arg` ersetzbar (`codex exec --help`).
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.
