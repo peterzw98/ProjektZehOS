@@ -2,6 +2,33 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
+
+**Status: Platzhalter, keine Messwerte.** Dieser Abschnitt wird erst mit echten Läufen gefüllt. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Mittel des Klassenschedulers für Doom 1.1.0 und ClassiCube höchstens 3 % unter Round-Robin (KVM, 1 GiB, 1 vCPU, je 5 Läufe im Wechsel).
+
+| Stand | ZehOS-Commit | Cosmos-Pin | Feed |
+| --- | --- | --- | --- |
+| Round-Robin | `1e66ad46` (vor E4-C) | `bd5889b4` | `3.0.97-zehos.1` |
+| Klassenscheduler | `15adbae5` (master mit E4-C/E4-D) | `59d1fa49` | `3.0.97-zehos.2` |
+
+Messbefehl je Stand und Spiel:
+
+```sh
+python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 5 -m 1G
+# ClassiCube zusätzlich: --id classicube --version 1.1.0 --name ClassiCube --entry classicube.wasm --start-keys ret
+```
+
+| Spiel | Stand | Lauf | Bildrate (Mittel je Lauf) | Host-Lastmittel | Anmerkung |
+| --- | --- | --- | --- | --- | --- |
+| Doom 1.1.0 | RR | 1–5 | _offen_ | _offen_ | |
+| Doom 1.1.0 | Klasse | 1–5 | _offen_ | _offen_ | |
+| ClassiCube 1.1.0 | RR | 1–5 | _offen_ | _offen_ | Sichtweite 512, Seeds laut ROADMAP 13.2: _offen_ |
+| ClassiCube 1.1.0 | Klasse | 1–5 | _offen_ | _offen_ | Sichtweite 512, Seeds laut ROADMAP 13.2: _offen_ |
+
+Auswertung (Mittel, Standardabweichung, Abweichung Klasse gegen RR in Prozent, Schwellenurteil): _offen_.
+
+Hintergrundlast (`tasks start busy`, nur Doom, nur berichtet): _offen_. VMware und echte Hardware: _offen_, nicht geprüft.
+
 ## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
 
 `CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread (bis dahin gilt der Standard Normal; fest CPU 0, Etappe 5 stellt auf die laufende CPU um). Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
