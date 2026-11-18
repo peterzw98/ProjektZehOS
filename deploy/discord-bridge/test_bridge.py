@@ -372,19 +372,22 @@ for boundary in ("\n", "\r\n", "\u2028"):
 class Embed:
     def __init__(self, *, description, **kwargs):
         self.description = description
+        self.footer = ""
 
     def set_author(self, **kwargs):
         pass
 
     def set_footer(self, **kwargs):
-        pass
+        self.footer = kwargs["text"]
 
 
 async def check_discord_transport():
     client = topic_bridge()
     shown = []
+    footers = []
     async def post(target, embed):
         shown.append(embed.description)
+        footers.append(embed.footer)
     client.post = post
     with patch.object(bridge.discord, "Embed", Embed, create=True):
         raw = "@everyone " + "😀" * 4500
@@ -394,7 +397,8 @@ async def check_discord_transport():
         shown.clear()
         signed = "<Test> @everyone \x0304body [id=1 t=2 sig=AAAA]"
         await client.on_irc("discord", "PRIVMSG", ["#general", signed])
-        assert shown == [signed]
+        assert shown == [signed.replace("@", "＠").replace("\x0304", "")]
+        assert "Original im IRC prüfen" in footers[-1]
         shown.clear()
         await client.on_irc("agent-x", "PRIVMSG", ["#general", "x" * 2100 + " [id=1 t=2 sig=AAAA]\ntail"])
         assert len(shown) == 1 and "not relayed" in shown[0]

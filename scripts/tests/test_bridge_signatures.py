@@ -1,6 +1,7 @@
 """Echte Testsignaturen prÃ¼fen, ohne den privaten Bridge-SchlÃ¼ssel oder PrÃ¼f-Ausnahmen."""
 import asyncio
 import base64
+import datetime
 import importlib.util
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import tempfile
 import time
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 GPG = shutil.which('gpg')
@@ -76,6 +77,27 @@ class BridgeSignatureTests(unittest.TestCase):
                         self.bridge.signed_payload('#general', 1, 3, parts[0]),
                         self.bridge.signed_payload('#general', 1, 2, parts[0].replace('m=123', 'm=124'))):
             self.assertNotEqual(0, self.verify(changed, signatures[0]))
+
+    def test_long_rsa_signature_is_rejected_before_any_send(self):
+        subprocess.run([GPG, '--batch', '--pinentry-mode', 'loopback', '--passphrase', '',
+                        '--quick-generate-key', 'Bridge RSA tests <bridge-rsa@example.invalid>',
+                        'rsa2048', 'sign', '1d'], env=self.environment, capture_output=True, check=True, timeout=30)
+        client = object.__new__(self.bridge.Bridge)
+        client.channels = {'#general': types.SimpleNamespace(id=1)}
+        client.writer = types.SimpleNamespace(write=Mock(), drain=AsyncMock())
+        client.message_lock, client.last_message_sent = asyncio.Lock(), None
+        message = types.SimpleNamespace(author=types.SimpleNamespace(bot=False, id=1, display_name='Test'),
+                                        guild=object(), channel=types.SimpleNamespace(id=1), clean_content='RSA test',
+                                        attachments=[], id=123, created_at=datetime.datetime.now(datetime.timezone.utc),
+                                        add_reaction=AsyncMock(), reply=AsyncMock())
+        with patch.object(self.bridge, 'SIGN_KEY', 'bridge-rsa@example.invalid'):
+            signature = self.sign(self.bridge.signed_payload('#general', 1, 2, 'test'))
+            self.assertGreater(len(signature), self.bridge.IRC_PAYLOAD_BYTES)
+            with patch.dict(os.environ, self.environment):
+                asyncio.run(client.on_message(message))
+        client.writer.write.assert_not_called()
+        message.add_reaction.assert_awaited_once()
+        message.reply.assert_awaited_once()
 
     def test_single_valid_test_part_does_not_bypass_bridge_fingerprint(self):
         shell = shutil.which('sh', path=self.environment['PATH'])

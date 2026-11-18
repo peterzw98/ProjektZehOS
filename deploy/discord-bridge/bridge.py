@@ -71,7 +71,7 @@ def irc_lines(text, message_id, limit=200):
         prefix, rows = rows[0] + " ", rows[1:]
     budget = limit - len(prefix.encode()) - len(f" ({MAX_LINES}/{MAX_LINES} m={message_id})".encode())
     if budget < MIN_TEXT:
-        raise ValueError(f"nick prefix of {len(prefix.encode())} bytes leaves no room for text")
+        raise ValueError(f"IRC text budget {limit} is too small for prefix and text")
     out = []
     for raw in rows:
         while raw:
@@ -255,12 +255,16 @@ class Bridge(discord.Client):
     async def on_irc(self, nick, command, params):
         if command == "PRIVMSG" and len(params) == 2 and params[0].lower() in self.channels:
             target, text = params
-            if not has_signed_line(text):
-                text = FORMAT_CODES.sub("", text).replace("@", "＠")
+            original = text
+            signed = has_signed_line(original)
+            text = FORMAT_CODES.sub("", text).replace("@", "＠")
             action = text.startswith("\x01ACTION ") and text.endswith("\x01")
             if action:
                 text = f"*{discord.utils.escape_markdown(nick)} {text[8:-1]}*"
             try:
+                if signed:
+                    # Ein zu großes Original darf auch nach bereinigter Anzeige nicht aufgeteilt werden.
+                    discord_lines(original)
                 parts = discord_lines(text)
             except ValueError as error:
                 print(f"not relayed to Discord: {error}", flush=True)
@@ -270,7 +274,10 @@ class Bridge(discord.Client):
                 embed = discord.Embed(description=part, color=nick_color(nick),
                                       timestamp=datetime.datetime.now(datetime.timezone.utc))
                 embed.set_author(name=nick)
-                embed.set_footer(text=f"{target} · IRC")
+                footer = f"{target} · IRC"
+                if signed and text != original:
+                    footer += " · Bereinigte Anzeige; Original im IRC prüfen"
+                embed.set_footer(text=footer)
                 await self.post(target, embed)
         elif command == "353" and len(params) >= 4:
             self.members.setdefault(params[2].lower(), set()).update(n.lstrip("~&@%+") for n in params[3].split())
@@ -403,7 +410,6 @@ class Bridge(discord.Client):
             await message.add_reaction("⚠️")
             reason = str(error) if isinstance(error, ValueError) else "IRC forwarding interrupted; resend the complete message"
             await message.reply(f"⚠️ Not forwarded completely: {reason}", mention_author=False)
-
 
 
 if __name__ == "__main__":
