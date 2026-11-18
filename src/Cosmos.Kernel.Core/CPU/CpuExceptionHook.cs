@@ -20,8 +20,10 @@ public enum CpuExceptionAction
     /// <summary>
     /// Give up the faulting thread: switch to another thread and never return
     /// to the faulting code. Keeping the thread off the CPU afterwards is the
-    /// installed scheduler's job (it must not queue it again). When no switch
-    /// can be staged, the kernel halts instead.
+    /// installed scheduler's job: the switch hands the thread to
+    /// <see cref="IScheduler.OnThreadYield"/>, which must not queue it again
+    /// (its saved stack pointer is not a frame that can be resumed). When no
+    /// switch can be staged, the kernel halts instead.
     /// </summary>
     AbandonThread = 1,
 }
@@ -61,9 +63,10 @@ public readonly struct CpuExceptionInfo
 }
 
 /// <summary>
-/// Decides what happens after a CPU exception. Runs with interrupts masked on
-/// the faulting thread's stack: it must not allocate, take a lock, or log
-/// through anything that may take a lock (the interrupted thread may hold it).
+/// Decides what happens after a CPU exception. Runs in the exception path with
+/// interrupts masked (x64: on the faulting thread's stack; ARM64: on the
+/// exception stack): it must not allocate, take a lock, or log through anything
+/// that may take a lock (the interrupted thread may hold it).
 /// </summary>
 /// <param name="exception">The exception being handled.</param>
 /// <returns>What the kernel does next.</returns>

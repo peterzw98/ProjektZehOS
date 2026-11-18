@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
 using Cosmos.Kernel.Core.Memory;
@@ -30,7 +31,7 @@ internal static class Panic
     internal static unsafe void CpuException(string exceptionName, ref IRQContext ctx)
     {
         InternalCpu.DisableInterrupts();
-        int depth = ++s_cpuExceptionDepth;
+        int depth = Interlocked.Increment(ref s_cpuExceptionDepth);
 
         // Use only Serial - allocation-free, no KernelConsole which may allocate
         Serial.WriteString("\n========================================\n");
@@ -47,7 +48,7 @@ internal static class Panic
             && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
         {
             Serial.WriteString("Thread abandoned.\n");
-            s_cpuExceptionDepth = 0;
+            Volatile.Write(ref s_cpuExceptionDepth, 0);
             return;
         }
 
