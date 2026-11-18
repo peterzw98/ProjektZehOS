@@ -353,8 +353,8 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
       - Mittel stehend 22,8 fps, bewegt 25,5 fps, gesamt 24,2 fps.
       - Das Ziel von 30 fps im Durchschnitt ist damit nicht erreicht. Nur Seed 3 und 4 liegen bewegt darüber, die Waldwelten Seed 2 und 5 bei 17–21 fps.
       - p95 liegt bei 79–220 ms.
-    - **Ursache der Bildzeit-Ausreißer (#254, PR offen):** Ein Diagnosebau zeigte in jedem Ausreißer einen bereiten, nicht blockierten Wasm-Worker, der 76–137 ms auf die CPU wartete. Laut Cosmos-Quelle macht `SetupIdleThread` die Hauptschleife zum Idle-Thread. Ihr `Thread.Sleep(1)` wartet für den Idle-Thread per Polling weiter, statt die CPU abzugeben, und auf master begann die Idle-Zeitscheibe bei jeder Verdrängung neu. #254 verdrängt den Idle-Thread im Tick, sobald ein anderer Thread wartet. Die genaue Kette wird im PR-Text von #254 noch nach dem Review korrigiert (IRC 18.11.).
-    - **Scheduler-Fix #254 unter KVM (1 GiB, Sichtweite 512, gepinnt, Drift ≤ 0,4 %; master gegen Fix, avg fps; PR-Text und agent-laser-YELLOW, IRC 18.11.):**
+    - **Ursache der Bildzeit-Ausreißer (#254, gemergt):** Ein Diagnosebau zeigte in jedem Ausreißer einen bereiten, nicht blockierten Wasm-Worker, der 76–137 ms auf die CPU wartete. Laut Cosmos-Quelle macht `SetupIdleThread` die Hauptschleife zum Idle-Thread. Ihr `Thread.Sleep(1)` wartet für den Idle-Thread per Polling weiter, statt die CPU abzugeben, und auf master begann die Idle-Zeitscheibe bei jeder Verdrängung neu. #254 verdrängt den Idle-Thread im Tick, sobald ein anderer Thread wartet. Die belegte Kette steht in [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#round-robin-idle-thread-und-zeitscheibe-18-november-2026).
+    - **Scheduler-Fix #254 (gemergt, 0.5.104) unter KVM (1 GiB, Sichtweite 512, gepinnt, Drift ≤ 0,4 %; master gegen Fix, avg fps; PR-Text und agent-laser-YELLOW, IRC 18.11.):**
       - Seed 5 stehend 21,0 → 36,0 (+71 %, n 3/2), Seed 5 bewegt 23,5 → 49,0 (n 2/2), Seed 2 stehend 19,6 → 38,5 (n 2/2), Seed 3 stehend 33,5 → 75,3 (+125 %, n=1).
       - Unter WHPX (Seed 1 stehend): master 29,1 / 21,6, Fix 47,2 / 49,2.
       - In diesen Szenen liegt der Fix über 30 fps. Das Ziel gilt damit noch nicht als erreicht: n ist klein, Seed 3 bewegt und Seed 4 fehlen unter KVM, ebenso Zufallswelten nach Peters Abnahmekriterium. VMware ist nicht gemessen.
@@ -370,14 +370,14 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
   - Stand 18. November 2026:
     - **Etappe F (Messung, #223):** Die zufälligen Abstürze unter AOT lagen an der Red Zone. wamrc legt Werte unterhalb von RSP ab, und Cosmos betritt Interrupts ohne Stackwechsel.
     - **wamrc ohne Red Zone (#238, gemergt, Freigabe Peter 17.11.):** Neue Kennung `wamr245-aot5-x64-bc-nrz`. Gegenprobe von agent-laser-RED: mit dem alten `.aot` hatten 17 von 40 Läufen Trap, Stillstand oder Panik, mit dem gepatchten wamrc 0 von 40.
-    - **Red-Zone-Prüfung (#252, PR offen):** prüft die erzeugte `.aot` am Ergebnis.
+    - **Red-Zone-Prüfung (#252, gemergt):** prüft die erzeugte `.aot` am Ergebnis.
     - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB; festgehalten in `docs/WASM_FEASIBILITY.md` durch #253, über #238 gemergt):** 14 Läufe mit AOT-nrz ohne Panik, Trap oder Stillstand: 12 Läufe à 20 Minuten und 2 unter Hostlast.
       - Unter Last: ClassiCube unter KVM 20–26 fps; Doom unter TCG neben einer Rechenschleife auf dem SMT-Geschwister 39–50 fps.
       - Grenzen: n=3 je Kombination, nur QEMU.
       - Doom unter KVM 62–69 fps, unter TCG 43–63 fps.
       - ClassiCube (Zufallswelt, bewegt) unter KVM 21–42 fps, unter TCG 1,4–2,3 fps.
       - Der Speicher blieb über die Laufzeit stabil.
-    - **Gewinn (KVM, IRC 18.11.):** Für Doom belegt, 50,8 → 68,5 avg fps (+35 %). Für ClassiCube nicht belegt: 27,0 → 30,2 liegt im Rauschen, weil das Rastern schon nativ im Kernel läuft.
+    - **Gewinn (KVM, je 5 Paare wasm3/AOT, [WASM_FEASIBILITY](docs/WASM_FEASIBILITY.md#leistung-und-langzeitstabilität-mit-wamrc-noredzone-18-november-2026)):** Für Doom 1.1.0 belegt, 50,8 → 68,5 avg fps (+35 %). Für ClassiCube 1.0.0 nicht belegt: 27,0 → 30,2 liegt im Rauschen, weil das Rastern schon nativ im Kernel läuft.
     - AOT bleibt standardmäßig aus. Kein veröffentlichtes Paket enthält ein `.aot`, und VMware ist nicht geprüft.
 - [ ] 13.6 Mehrspieler über die Netz-ABI (`capability=net`). Abnahme: zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
