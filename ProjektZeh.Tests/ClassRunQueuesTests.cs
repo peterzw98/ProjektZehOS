@@ -322,4 +322,33 @@ public sealed class ClassRunQueuesTests
         Assert.AreSame(a, queues.Pick(null));
         Assert.IsFalse(queues.Tick(a, Tick));
     }
+
+    [TestMethod]
+    public void Waiting_PublishedAfterEveryQueueChange()
+    {
+        var queues = Queues();
+        FakeThread a = Make("a"), b = Make("b");
+        queues.Ready(a);
+        queues.Ready(b);
+        Assert.AreEqual(2, queues.Waiting);
+        Assert.AreSame(a, queues.Pick(null));
+        Assert.AreEqual(1, queues.Waiting);
+        queues.Yielded(a);
+        Assert.AreEqual(2, queues.Waiting);
+        queues.Blocked(b);
+        Assert.AreEqual(1, queues.Waiting);
+        Assert.IsTrue(queues.SetClass(a, ThreadClass.Background));
+        Assert.AreEqual(1, queues.Waiting);
+        Assert.AreSame(a, queues.Pick(null));
+        queues.PickFailed(a);
+        Assert.AreEqual(1, queues.Waiting);
+        // Tick mit Umsetzen ans Ende: die Zahl bleibt gleich.
+        var c = Make("c", remaining: Tick);
+        queues.Ready(c);
+        queues.Ready(Make("d"));
+        int before = queues.Waiting;
+        Assert.IsTrue(queues.Tick(c, Tick));
+        Assert.AreEqual(before, queues.Waiting);
+        Assert.AreEqual(queues.Count, queues.Waiting);
+    }
 }

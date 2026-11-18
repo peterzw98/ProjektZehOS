@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace ProjektZeh.Scheduling;
 
@@ -19,6 +20,7 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
     private readonly int[] starvation = new int[ClassCount];
     // Von Pick gemerkt: dieser Thread wurde verdrängt, ohne seine Scheibe verbraucht zu haben, und kommt vorn zurück.
     private T? requeueFront;
+    private int waiting;
 
     /// <summary>1, 2, 4 Ticks für Interactive, Normal, Background.</summary>
     public static ulong SliceNs(ThreadClass threadClass) => threadClass switch
@@ -30,6 +32,11 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
 
     /// <summary>Wartende Threads aller Klassen.</summary>
     public int Count => counts[0] + counts[1] + counts[2];
+    /// <summary>
+    /// Wartende Threads aller Klassen, ohne Sperre lesbar: Der laufende Thread steht nicht darin (Pick entnimmt ihn), ein Wert
+    /// größer 0 heißt also, dass außer ihm jemand bereit ist. Nur ein Hinweis, veröffentlicht am Ende jeder ändernden Methode.
+    /// </summary>
+    public int Waiting => Volatile.Read(ref waiting);
     public int CountOf(ThreadClass threadClass) => counts[(int)threadClass];
 
     /// <summary>Diagnose: Klassen aufsteigend, je Klasse in Queue-Reihenfolge.</summary>
@@ -50,24 +57,33 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
     public bool Ready(T thread)
     {
         if (Contains(thread)) return true;
-        return Insert(ClassOf(thread), thread, atFront: false);
+        bool added = Insert(ClassOf(thread), thread, atFront: false);
+        Publish();
+        return added;
     }
 
     public void Blocked(T thread)
     {
         if (Find(thread, out int c, out int i)) RemoveAt(c, i);
+        Publish();
     }
 
     /// <summary>Die Auswahl ist gescheitert: zurück an den Anfang seiner Klasse.</summary>
     public void PickFailed(T thread)
     {
         if (!Contains(thread)) Insert(ClassOf(thread), thread, atFront: true);
+        Publish();
     }
 
     /// <summary>Nach Verdrängung: vorn mit Rest der Scheibe, wenn Pick das gemerkt hat, sonst hinten mit neuer Scheibe.</summary>
     public void Yielded(T thread)
     {
-        if (Contains(thread)) return;
+        if (!Contains(thread)) Reinsert(thread);
+        Publish();
+    }
+
+    private void Reinsert(T thread)
+    {
         bool front = ReferenceEquals(requeueFront, thread);
         requeueFront = null;
         if (!front && stateOf(thread) is { } state) state.RemainingNs = 0;
@@ -76,6 +92,13 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
 
     /// <summary>Liefert running zurück, wenn er weiterlaufen soll; null, wenn nichts wartet.</summary>
     public T? Pick(T? running)
+    {
+        var picked = PickCore(running);
+        Publish();
+        return picked;
+    }
+
+    private T? PickCore(T? running)
     {
         int starved = StarvedClass();
         int serve = starved >= 0 ? starved : FirstNonEmpty();
@@ -100,6 +123,13 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
 
     /// <summary>true = neu auswählen. current darf selbst in der Queue stehen (geweckt, bevor er die CPU verlassen hat).</summary>
     public bool Tick(T current, ulong elapsedNs)
+    {
+        bool preempt = TickCore(current, elapsedNs);
+        Publish();
+        return preempt;
+    }
+
+    private bool TickCore(T current, ulong elapsedNs)
     {
         var state = stateOf(current);
         int own = ClassOf(current);
@@ -135,6 +165,13 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
     /// <summary>Setzt die Klasse; ein wartender Thread zieht in die neue Queue um. false, wenn die neue Queue voll ist oder der Thread keinen Zustand hat.</summary>
     public bool SetClass(T thread, ThreadClass threadClass)
     {
+        bool changed = SetClassCore(thread, threadClass);
+        Publish();
+        return changed;
+    }
+
+    private bool SetClassCore(T thread, ThreadClass threadClass)
+    {
         if (stateOf(thread) is not { } state) return false;
         if (Find(thread, out int c, out int i))
         {
@@ -157,6 +194,8 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
                 if (mayMove(items[c][i]!)) return items[c][i];
         return null;
     }
+
+    private void Publish() => Volatile.Write(ref waiting, Count);
 
     private int ClassOf(T thread) => (int)(stateOf(thread)?.Class ?? ThreadClass.Normal);
 
