@@ -35,35 +35,27 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   (Standard `agent-coordinator`), Werkzeugpfade für die Läufe `PATH_PREFIX`; `CLONE_REFERENCE` lässt neue Klone die Objekte eines vorhandenen Klons mitbenutzen (wenige hundert KB statt 1,6 GB).
   Alle Einstellungen stehen im Kopf von `start-agent.sh`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
-- **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `backend=codex` (Läufe mit Codex statt Claude),
-  `fallback=claude` (bei gesperrtem Codex-Kontingent ersatzweise Claude; ohne diese Option warten die Aufträge), `budget-codex=N` und `budget-claude=N` (höchstens N Läufe je Tag und Rechner),
-  `codex-model=NAME`. Modell `-` heißt: kein Claude-Modell (reiner Codex-Agent).
-- **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (Engineer Sonnet, Senior Opus mit KVM, Reviewer Sonnet, Codex-Reviewer für das letzte Review vor
-  dem PR, weicht bei leerem Codex-Kontingent auf Claude aus) und dazu interaktive Leads.
-  1. **Einmalig:** Codex installieren und anmelden (`npm config set prefix ~/.local`, `npm install -g @openai/codex`, dann `codex login`); ohne Codex weicht der
-     Codex-Reviewer auf Claude aus.
-  2. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
+- **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
+  (höchstens N Läufe je Tag und Rechner).
+- **Peters Team** (Rechner `MSI`): drei Agenten aus `agents-peter.tsv` (Engineer Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
+  1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
      IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe, Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
-  3. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
+  2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Feste Nicks der Leads:** Nur diese dürfen Aufträge geben und Läufe starten: `agent-coordinator`, `agent-peter-lead`, `agent-nweh-lead1`, `agent-nweh-lead2`
     (`TEAM_ASSIGNERS` in `start-peter-team.sh`). Ein Lead mit anderem Nick wird von den Agenten nicht beachtet.
   - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`
-    (Pfad des Haupt-Arbeitsbaums anpassen). Cron kennt nur `PATH=/usr/bin:/bin`: Liegen `node` oder `claude` woanders (etwa über nvm), `PATH_PREFIX=…` vor den Befehl setzen.
+    (Pfad des Haupt-Arbeitsbaums anpassen). Cron kennt nur `PATH=/usr/bin:/bin`: Liegt `claude` woanders, `PATH_PREFIX=…` vor den Befehl setzen.
   - Eine Lead-Sitzung endet mit dem Schließen von Claude; `start-lead.sh` meldet den Bot dann mit `QUIT` ab. Ihr IRC-Protokoll liegt in `.tools/irc-<nick>/` des Haupt-Arbeitsbaums.
   - `dispatcher.py`, `teambot.py` und die Skripte laufen nur unter Linux (FIFOs, `fcntl`, `/proc`); Leads auf dem Windows-Laptop brauchen WSL.
-- **Zwei Kontingente (Claude und Codex):** Jeder Lauf zählt für seinen Anbieter in `<basis>/.dispatch-slots/quota-<anbieter>.json`; diese Datei teilen alle Dienste des Rechners.
-  Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst den Anbieter für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
-  einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten oder laufen über den Ersatz (`fallback=`). Als Limitmeldung gilt
-  eine kurze Ausgabe (Exit 0), die **mit** einer der festen Wendungen der Werkzeuge beginnt, oder ein Fehlercode mit dieser Wendung; Wörter wie „quota“ oder „rate limit“ in einer
+- **Kontingent:** Jeder Lauf zählt in `<basis>/.dispatch-slots/quota-claude.json`; diese Datei teilen alle Dienste des Rechners.
+  Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst Claude für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
+  einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten. Als Limitmeldung gilt
+  eine kurze Ausgabe (Exit 0), die **mit** einer der festen Wendungen von Claude Code beginnt, oder ein Fehlercode mit dieser Wendung; Wörter wie „quota“ oder „rate limit“ in einer
   Antwort sperren nichts. Zeitangaben zählen nur aus der Zeile der Meldung und nur zwischen einer Minute und einer Woche, sonst gilt `--cooldown` (eine Stunde). Liefern dieselben
   Nennungen dreimal hintereinander nur eine Limitmeldung, meldet der Dienst sie wie einen endgültigen Fehlschlag statt stündlich zu wiederholen.
-  Ein Tagesbudget (`budget-codex=`) sperrt ebenso bis Mitternacht, bevor das Kontingent leer ist. **Sperre aufheben:** `<basis>/.dispatch-slots/quota-<anbieter>.json` löschen.
-  Die Limitmeldungen von Claude und Codex sind nicht gegen echte Texte geprüft; `--limit-pattern` ersetzt das Muster.
-  Codex muss installiert sein. Der Aufruf ist `codex exec --skip-git-repo-check --sandbox workspace-write [-m MODELL] <Rolle + Auftrag>` im Klon (`ProjektZehOS/`, dort liegt auch die
-  Outbox); die Schalter sind gegen die installierte Version nicht geprüft und per `--codex-arg` ersetzbar (`codex exec --help`).
-  **Offen bis zur Prüfung mit installiertem Codex:** Mit `workspace-write` kann Codex `dispatch/state.md` (außerhalb des Klons) nicht schreiben und hat
-  vermutlich kein Netz (`git fetch`, `gh pr diff`); Schalter dafür erst nach `codex exec --help` setzen, nicht raten.
+  Ein Tagesbudget (`budget-claude=`) sperrt ebenso bis Mitternacht. **Sperre aufheben:** `<basis>/.dispatch-slots/quota-claude.json` löschen.
+  Die Limitmeldungen sind nicht gegen echte Texte geprüft; `--limit-pattern` ersetzt das Muster.
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.

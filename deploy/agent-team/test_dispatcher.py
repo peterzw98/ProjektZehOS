@@ -526,37 +526,20 @@ e.run_until_idle()
 assert e.d.acked == 1 and e.d.quota.blocked("claude", e.now) is None
 os.environ["FAKE_OUT"] = ""
 
-# --- Codex: Aufruf, Tagesbudget gemeinsam je Rechner, Ausweichen auf Claude --------------------------------
+# --- Tagesbudget gemeinsam je Rechner: danach warten die Aufträge, eine Warnung ------------------------------
 quota = tempfile.mkdtemp()
-role = os.path.join(tempfile.mkdtemp(), "role.md")
-with open(role, "w") as f:
-    f.write("ROLLE: letzter Reviewer")
-e = Env("--backend", "codex", "--codex-model", "gpt-x", "--quota-dir", quota, "--budget-codex", "1",
-        "--role", role)
-e.args.codex = e.claude                                                   # gleiches Ersatzskript
-e.say("agent-coordinator", "agent-x: letztes Review vor dem PR")
+e = Env("--quota-dir", quota, "--budget-claude", "1")
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", "agent-x: erster Lauf")
 e.now += 6
 e.run_until_idle()
-argv = e.calls_made()[-1]
-assert argv[:6] == ["exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "-m", "gpt-x"], argv[:6]
-assert argv[-1].startswith("ROLLE: letzter Reviewer")
-assert e.d.acked == 1
-e.say("agent-coordinator", "agent-x: noch ein Review")
+assert e.d.acked == 1 and len(e.calls_made()) == 1
+e.say("agent-coordinator", "agent-x: zweiter Lauf")
 e.now += 6
 e.d.step()
 assert e.d.proc is None and len(e.calls_made()) == 1                      # Tagesbudget 1 erreicht
 warn = e.outbox()
-assert "Kontingent codex gesperrt" in warn and "Tagesbudget 1" in warn and "Aufträge warten" in warn, warn
-# Mit Ersatz: derselbe Auftrag läuft über Claude und sagt das im Auftrag
-e2 = Env("--backend", "codex", "--fallback", "claude", "--quota-dir", quota, "--budget-codex", "1")
-e2.args.codex = e2.claude
-os.environ["FAKE_CALLS"] = e2.calls
-e2.say("agent-coordinator", "agent-x: Review mit Ersatz")
-e2.now += 6
-e2.run_until_idle()
-argv = e2.calls_made()[-1]
-assert argv[0] == "-p" and "ersatzweise über claude" in argv[-1] and e2.d.acked == 1, argv[:2]
-assert "Kontingent codex" not in e2.outbox()                              # e hat die Sperre schon gemeldet (einmal je Rechner)
+assert "Kontingent claude gesperrt" in warn and "Tagesbudget 1" in warn and "Aufträge warten" in warn, warn
 
 # --- Relative Pfade werden absolut: der Lauf startet in --home und muss state.md dort finden -------------
 cwd = os.getcwd()

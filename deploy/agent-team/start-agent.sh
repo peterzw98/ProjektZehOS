@@ -40,7 +40,7 @@ start() {
   mkdir -p "$home/ProjektZehOS/.tools/irc"
   install -m 600 "$key" "$home/ProjektZehOS/.tools/IRCKEY"
   # role.md = Kopfzeile + gemeinsamer Kern + Rollenvorlage; dispatcher.py haengt sie an den Systemprompt jedes Laufs an
-  # (bei Codex steht sie vor dem Auftrag). Wirkt erst nach erneutem start-agent.sh <nick>.
+  # Wirkt erst nach erneutem start-agent.sh <nick>.
   {
     printf 'Du bist %s im ZehOS-Agententeam (Modell %s). %s\nBetriebsanleitung: %s/TEAM.md\nAuftraege erteilen: %s.\n' \
       "$nick" "$model" "$role" "$here" "$assigners"
@@ -73,17 +73,15 @@ PYEOF
   pgrep -f "teambot.py $nick " >/dev/null || \
     nohup python3 -I "$here/teambot.py" "$nick" "$home/ProjektZehOS/.tools/irc" "$home/ProjektZehOS/.tools/IRCKEY" \
       '#general,#first,#second,#third' </dev/null >>"$home/bot.out" 2>&1 &
-  # Optionen aus der fuenften Spalte: kvm (Laeufe mit Gruppe kvm fuer Gastlaeufe), backend=codex, fallback=claude,
-  # budget-codex=N, budget-claude=N, codex-model=NAME. Modell "-" = kein Claude-Modell (reiner Codex-Agent).
+  # Optionen aus der fuenften Spalte: kvm (Laeufe mit Gruppe kvm fuer Gastlaeufe), budget-claude=N.
   local usekvm=0 opt
   local -a cmd=(python3 -I "$here/dispatcher.py" --nick "$nick" --irc-dir "$home/ProjektZehOS/.tools/irc" --home "$home"
                 --role "$home/role.md" --slots-dir "$base/.dispatch-slots" --max-parallel "${DISPATCH_PARALLEL:-2}"
-                --allow "${DISPATCH_ALLOW:-}" --alert-to "${assigners%%,*}")
-  [ "$model" = - ] || cmd+=(--model "$model")
+                --allow "${DISPATCH_ALLOW:-}" --alert-to "${assigners%%,*}" --model "$model")
   for opt in $opts; do
     case $opt in
       kvm) usekvm=1 ;;
-      backend=*|fallback=*|budget-codex=*|budget-claude=*|codex-model=*) cmd+=("--${opt%%=*}" "${opt#*=}") ;;
+      budget-claude=*) cmd+=("--${opt%%=*}" "${opt#*=}") ;;
       *) echo "start-agent: unbekannte Option '$opt' fuer $nick" >&2 ;;
     esac
   done
