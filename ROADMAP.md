@@ -328,7 +328,7 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
       - Der Ersatzworker kann starten, bevor der alte Lauf aufgeräumt ist. Die Hauptschleife kann dann den neuen Lauf schließen.
       - Die Isolation prüft den Ausnahmevektor nicht. Auch NMI, #MC, #BP, #OF, #BR und #NM werden isoliert statt angehalten.
   - **I2, nur Plan (#251, gemergt):** Erzwungenes Beenden und ein Speicherbudget je Lauf; nichts davon ist umgesetzt oder gemessen.
-  - **Umsetzungsplan (18. November 2026, von Peter freigegeben):** [Plan 12.4 mit Arbeitspaketen](docs/superpowers/plans/2026-11-18-isolation-12-4.md) für die Cosmos-Patches (Hook, LINT1), die fehlenden I1-Nachweise und I2.
+  - **Umsetzungsplan (18. November 2026; Teil des Multicore-Plans, Pakete starten, wenn eine Multicore-Etappe sie braucht):** [Plan 12.4 mit Arbeitspaketen](docs/superpowers/plans/2026-11-18-isolation-12-4.md) für die Cosmos-Patches (Hook, LINT1), die fehlenden I1-Nachweise und I2.
 - [ ] 12.5 Danach externe Programme, einen Programmlader und breitere Hardwareunterstützung planen. Die Benutzer- und Dateirechte aus Etappe 6c an Prozessisolation und kontrollierte Systemaufrufe anbinden, damit fremde Programme die Prüfungen nicht umgehen können. Ein stabiler virtueller Referenzrechner bleibt für die Entwicklung erhalten.
 - [ ] 12.6 Paketgrenzen: Speicher- und Modulgrenze je Paket im Manifest wählbar bis zu einem Systemwert; Bedarf und freien Speicher des Referenzrechners messen.
 - [ ] 12.7 Threads für Pakete: geteilter Speicher und Threads unter der AOT-Laufzeit (13.5), begrenzte Threadzahl je App, Hostfunktionen threadsicher.
