@@ -232,8 +232,9 @@ def boot_installed(args, case: Path, disks: list[Path], expected: tuple[str, ...
     machine = list(storage.MACHINE_BASE)
     machine[machine.index("-boot") + 1] = "c"
     for port, disk in enumerate(disks):
+        # OVMF beachtet -boot c nicht; ohne bootindex startet es das immer angehaengte Installer-ISO statt der Platte.
         machine += ["-drive", f"file={disk.resolve()},format=raw,if=none,id=d{port}",
-                    "-device", f"ide-hd,drive=d{port},bus=ahci.{port}"]
+                    "-device", f"ide-hd,drive=d{port},bus=ahci.{port}" + (",bootindex=0" if port == 0 else "")]
     storage.tools.MACHINE = machine
     unused = run / "unused.qcow2"
     tool, environment = storage.tools.qemu_img()
