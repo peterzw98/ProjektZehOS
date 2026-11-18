@@ -294,11 +294,11 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_POWER_FAULT_PROBE
             // Nur P4-Testbuild: schaltet genau einen Fehlerpunkt der naechsten Energieaktion scharf.
-            new ShellCommand("powerfault", "powerfault <" + string.Join("|", PowerFaultProbe.Points) + ">",
-                "Testbuild: naechste Energieaktion an diesem Punkt einmal scheitern lassen.", true,
-                (arguments, output) => arguments.Length == 1 && PowerFaultProbe.Arm(arguments[0])
+            new ShellCommand("powerfault", "powerfault <punkt> [punkt...]",
+                "Testbuild: naechste Energieaktion an diesen Punkten je einmal scheitern lassen.", true,
+                (arguments, output) => PowerFaultProbe.Arm(arguments)
                     ? ResultErr.CreateSuccess()
-                    : ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: powerfault <" + string.Join("|", PowerFaultProbe.Points) + ">")),
+                    : ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: powerfault <" + string.Join("|", PowerFaultProbe.Points) + "> [...]")),
 #endif
         ], systemLog, GetAvailableUptime,
             VersionText,

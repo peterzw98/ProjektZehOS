@@ -10,20 +10,22 @@ namespace ProjektZeh.Storage;
 internal static class PowerFaultProbe
 {
     internal static readonly string[] Points = ["efi-sync", "efi-unmount", "root-sync", "root-flush", "reopen", "remount"];
-    private static string? armed;
+    // Mehrere Punkte zugleich: "reopen" greift nur in einer Ruecknahme, braucht also einen zweiten Fehler davor.
+    private static readonly System.Collections.Generic.HashSet<string> armed = new(StringComparer.Ordinal);
 
-    public static bool Arm(string point)
+    public static bool Arm(string[] points)
     {
-        if (Array.IndexOf(Points, point) < 0) return false;
-        armed = point;
-        return true;
+        foreach (string point in points)
+            if (Array.IndexOf(Points, point) < 0) return false;
+        armed.Clear();
+        armed.UnionWith(points);
+        return points.Length > 0;
     }
 
     /// <summary>true, wenn <paramref name="point"/> scharf war; er ist danach entschaerft und protokolliert.</summary>
     public static bool Fires(string point)
     {
-        if (armed != point) return false;
-        armed = null;
+        if (!armed.Remove(point)) return false;
         Cosmos.Kernel.System.Diagnostics.Log.WriteString("POWER_FAULT " + point + "\n");
         return true;
     }
