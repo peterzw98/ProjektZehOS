@@ -48,6 +48,9 @@ limine_tag="v10.8.5-binary"
 limine_commit="7a9013f305de0bea1f6310e76e7baba30499fef0"
 limine_sha256="91ef81c1f95c4ac8bf77c4393a0b2fcd2628550827d7abf89a43194400e17a85"
 build_path_map="$src=/home/runner/work/Cosmos/Cosmos"
+# Eigene NuGet-Konfiguration fuer den Quellbau: unabhaengig von NuGet.Config des Repositorys und vom Benutzer; die Zwischenpakete
+# des Baus (Cosmos.*) kommen nur aus $out, alles andere aus nuget.org.
+build_nuget_config="$root/.tools/cosmos-build.NuGet.Config"
 
 # Stempelpruefung: dieselbe Version darf nur zu demselben Commit gehoeren (sonst liefert der NuGet-Cache den alten Stand).
 stamp="$feed/$version.commit"
@@ -67,8 +70,8 @@ if [ "$plan" = 0 ]; then
     cached="$cache_dir/cosmos.kernel/$version/cosmos.kernel.nuspec"
     if [ -f "$cached" ]; then
         cached_commit="$(nuspec_commit < "$cached")"
-        [ -z "$cached_commit" ] || [ "$cached_commit" = "$commit" ] || \
-            fail "NuGet-Cache enthaelt Cosmos $version aus Commit $cached_commit, nicht $commit; deploy/cosmos/VERSION erhoehen"
+        [ "$cached_commit" = "$commit" ] || \
+            fail "NuGet-Cache enthaelt Cosmos $version aus Commit '"${cached_commit:-?}"', nicht $commit; deploy/cosmos/VERSION erhoehen"
     fi
 fi
 
@@ -77,7 +80,7 @@ run() {
 }
 dn() { # dotnet im Quellbaum mit Version und PathMap
     local verb="$1"; shift
-    run dotnet "$verb" "$@" -c Release "-p:VersionPrefix=$version" "-p:PathMap=$build_path_map" "-p:RestoreAdditionalProjectSources=$out"
+    run dotnet "$verb" "$@" -c Release "-p:VersionPrefix=$version" "-p:PathMap=$build_path_map" "-p:RestoreConfigFile=$build_nuget_config"
 }
 projects_build="Cosmos.Build.API Cosmos.Build.Common Cosmos.Build.Asm Cosmos.Build.CC Cosmos.Build.Ilc Cosmos.Build.Patcher Cosmos.Build.Analyzer.Patcher.Package Cosmos.Patcher Cosmos.Tools"
 projects_arch_free="Cosmos.Kernel.Drivers Cosmos.Kernel.Debug Cosmos.Kernel.Boot.Limine Cosmos.Kernel.SourceGenerators"
@@ -113,6 +116,30 @@ if [ "$rebuild" = 1 ]; then
     fi
     export VersionPrefix="$version"
     run mkdir -p "$out"
+    if [ "$plan" = 0 ]; then
+        mkdir -p "$(dirname "$build_nuget_config")"
+        cat > "$build_nuget_config" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="cosmos-build" value="$out" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="cosmos-build">
+      <package pattern="Cosmos.*" />
+      <package pattern="_Cosmos.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+XML
+    else
+        echo "schreibe $build_nuget_config"
+    fi
     for p in $projects_build; do dn build "$src/src/$p/$p.csproj" --no-incremental; done
     for p in Cosmos.Kernel.Native.X64 Cosmos.Kernel.Native.MultiArch; do dn pack "$src/src/$p/$p.csproj" -o "$out"; done
     for p in $projects_arch_free Cosmos.Kernel.Core.X64 Cosmos.Kernel.HAL.X64; do
