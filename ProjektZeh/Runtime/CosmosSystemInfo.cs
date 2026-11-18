@@ -36,7 +36,9 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
     [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_FreePageCount")]
     private static extern ulong FreePages([UnsafeAccessorType(PageAllocatorType)] object? owner);
 
-    public static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpace(string path)
+    public static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpace(string path) => StorageLock.Run(() => DiskSpaceStorageLocked(path));
+
+    private static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpaceStorageLocked(string path)
     {
         string? mount = path;
         while (mount != null)
@@ -57,7 +59,7 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
     {
         var lines = new List<string>
         {
-            VfsManager.TryGetMount("/data", out _) ? "/data: eingebunden" : "/data: nicht eingebunden (disk use <Name> --yes oder disk mount <Name>)"
+            StorageLock.Run(() => VfsManager.TryGetMount("/data", out _)) ? "/data: eingebunden" : "/data: nicht eingebunden (disk use <Name> --yes oder disk mount <Name>)"
         };
         var devices = storage.GetDevices();
         if (!devices.IsOK()) lines.Add("Laufwerke nicht lesbar: " + devices.Status.Message);

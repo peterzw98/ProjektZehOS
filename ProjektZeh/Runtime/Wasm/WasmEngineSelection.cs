@@ -94,9 +94,17 @@ internal static class WasmEngineSelection
         byte[] bytes = new byte[file.Size];
         try
         {
-            using var stream = new FileStream(Path.Combine(filesDirectory, file.Path), FileMode.Open, FileAccess.Read);
-            if (stream.Length != file.Size) return Modified(file.Path);
-            stream.ReadExactly(bytes);
+            var stream = StorageLock.Run(() => new FileStream(Path.Combine(filesDirectory, file.Path), FileMode.Open, FileAccess.Read));
+            try
+            {
+                if (StorageLock.Run(() => stream.Length) != file.Size) return Modified(file.Path);
+                // In 1-MiB-Abschnitten: bis 64 MiB unter einer Sperre hielten Desktop und Dateidienst an.
+                StorageLock.ReadExactly(stream, bytes);
+            }
+            finally
+            {
+                StorageLock.Run(stream.Dispose);
+            }
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
