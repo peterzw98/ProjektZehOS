@@ -50,7 +50,9 @@ static M3Result trap_result(zehos_host_trap trap)
     { \
         zehos_host_call call = { (zehos_wasm_context*)_ctx->userdata, (uint8_t*)_mem, m3_GetMemorySizeAt(_mem), \
             ZEHOS_HOST_CONTINUE }; \
+        zehos_host_depth++; \
         ZEHOS_M3_CALL_##result(function, count) \
+        zehos_host_depth--; \
         return trap_result(call.trap); \
     }
 ZEHOS_HOST_FUNCTIONS(ZEHOS_M3_WRAPPER)

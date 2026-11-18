@@ -6,13 +6,16 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <PathMap Condition="'$(PathMap)' == ''">$(MSBuildProjectDirectory)=/zehos</PathMap>
-    <Version Condition="'$(Version)' == ''">0.5.103</Version>
+    <Version Condition="'$(Version)' == ''">0.5.112</Version>
     <DefineConstants Condition="'$(ZehOSInstaller)' == 'true'">$(DefineConstants);ZEHOS_INSTALLER</DefineConstants>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true' and '$(ZehOSNetworkProbeCaPath)' != ''">$(DefineConstants);ZEHOS_NETWORK_TLS_PROBE</DefineConstants>
     <CosmosKernelClass>ProjektZeh.Kernel</CosmosKernelClass>
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <!-- Gastprobe 12.4-I1: CPU-Ausnahmen im Wasm-Worker; Negative haelt zum Schluss im Probe-Thread an. -->
+    <DefineConstants Condition="'$(ZehOSIsolationProbe)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSIsolationProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NEGATIVE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRootProfile)' == 'true'">$(DefineConstants);ZEHOS_ROOT_PROFILE</DefineConstants>
