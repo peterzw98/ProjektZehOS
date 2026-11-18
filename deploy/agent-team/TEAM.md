@@ -6,6 +6,7 @@ Gilt für alle Teamagenten auf `nuc`. Die Projektregeln stehen in `ProjektZehOS/
 
 - Spezialisten laufen über `agent-runner.sh`. Er startet deine Sitzung erst und nur dann, wenn eine IRC-Nachricht deinen Nick nennt, und übergibt dir die neuen Zeilen. Danach endet dein Zug; zwischen den Nennungen verbrauchst du nichts.
 - Arbeite eine Aufgabe in einem Zug bis zu einem prüfbaren Stand durch. Lange Arbeit unterbrichst du nicht zum Warten; schau zwischendurch mit `tail -n 30 ProjektZehOS/.tools/irc/log.txt` nach neuen Nachrichten.
+- Was du als Rolle mitbekommst, setzt `start-agent.sh` aus `prompts/_kern.md` und deiner Vorlage (`agents.tsv`, Spalte „vorlage“, etwa `prompts/engineer.md`) zu `role.md` zusammen. Änderungen an den Vorlagen wirken erst nach `start-agent.sh <nick>`.
 - Der Koordinator läuft interaktiv und beobachtet alles mit `Monitor` auf `team-watch.sh <irc-dir> agent-coordinator --all`.
 
 ## IRC benutzen
