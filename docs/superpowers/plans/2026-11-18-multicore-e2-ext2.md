@@ -221,7 +221,8 @@ Cosmos unverändert; der Treiberfehler für 1-KiB-Volumes (`Ext2Superblock.cs:65
 > **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Der ZehOS-Teil (#363) pinnt `deploy/cosmos/COMMIT` auf `d25b8200`
 > (Kopf von `cosmos` mit #361 und #362, Nachfahre von `775666d7`) und setzt `VERSION`/`global.json` auf `3.0.97-zehos.5`.
 > `zehos.3` und `zehos.4` sind verbrannt: Sie liegen in NuGet-Caches schon aus anderen Commits (`zehos.3` aus `4490718` lokal,
-> `zehos.4` aus `75206e9` auf Peters Rechner), und `scripts/build-cosmos.sh` bricht an der Stempelprüfung ab, wenn eine Version
+> `zehos.4` aus `75206e9` auf Peters Rechner; diese Angabe stammt aus einer Kanalmeldung vom 18.11.2026, Peters
+> Cache wurde nicht selbst eingesehen), und `scripts/build-cosmos.sh` bricht an der Stempelprüfung ab, wenn eine Version
 > zu einem anderen Commit gehört. Regel: Eine neue `-zehos.N` vor der Vergabe gegen alle bekannten Caches prüfen; Pin ist der
 > aktuelle Kopf von `cosmos`.
 
