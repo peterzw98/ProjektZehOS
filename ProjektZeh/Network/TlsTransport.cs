@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using Cosmos.Network.Http;
 using Org.BouncyCastle.Crypto.Prng;
 using Org.BouncyCastle.Asn1.X509;
@@ -26,7 +27,9 @@ internal static class TlsTransport
         return protocol.Stream;
     }
 
-    private static (byte[] Pem, IList<X509Certificate> Anchors)? cachedAnchors;
+    // Ein Verweis statt eines Werttupels: Lesen und Ersetzen sind so atomar, kein Thread sieht Pem und Anker zweier Staende.
+    private sealed record AnchorCache(byte[] Pem, IList<X509Certificate> Anchors);
+    private static AnchorCache? cachedAnchors;
 
     // Das Parsen aller Wurzeln je Verbindung erzeugte den Grossteil des Muells eines Downloads; der Cosmos-GC laeuft
     // erst, wenn der Seitenallokator erschoepft ist. Gilt fuer dasselbe Bundle-Array (TlsRoots.Load liefert stets dasselbe).
@@ -43,10 +46,10 @@ internal static class TlsTransport
 
     internal static IList<X509Certificate> CachedAnchors(byte[] trustedPem)
     {
-        var cached = cachedAnchors;
-        if (cached is { } entry && ReferenceEquals(entry.Pem, trustedPem)) return entry.Anchors;
+        var cached = Volatile.Read(ref cachedAnchors);
+        if (cached != null && ReferenceEquals(cached.Pem, trustedPem)) return cached.Anchors;
         var anchors = LoadAnchors(trustedPem);
-        cachedAnchors = (trustedPem, anchors);
+        Volatile.Write(ref cachedAnchors, new AnchorCache(trustedPem, anchors));
         return anchors;
     }
 
