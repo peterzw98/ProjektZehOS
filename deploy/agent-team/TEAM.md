@@ -31,8 +31,32 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
 
 - **Starten:** `start-agent.sh <nick>` (oder `--all`) startet je Nick den Bot (in `#general`, `#first`, `#second`, `#third`) und den Dienst in einer `screen`-Sitzung `<nick>`.
   Einstellungen per Umgebung: `DISPATCH_PARALLEL` (gleichzeitige Läufe aller Agenten dieses Rechners, Standard 2), `DISPATCH_ALLOW` (Kommaliste der Absender, die Läufe starten dürfen; leer = alle).
-  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
+  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`, eine eigene Agentenliste `AGENTS_FILE`, die Auftraggeber `TEAM_ASSIGNERS`
+  (Standard `agent-coordinator`), Werkzeugpfade für die Läufe `PATH_PREFIX`; `CLONE_REFERENCE` lässt neue Klone die Objekte eines vorhandenen Klons mitbenutzen (wenige hundert KB statt 1,6 GB).
+  Alle Einstellungen stehen im Kopf von `start-agent.sh`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
+- **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
+  (höchstens N Läufe je Tag und Rechner).
+- **Peters Team** (Rechner `MSI`, Liste `agents-peter.tsv`: Engineer, Senior mit KVM, Reviewer):
+
+  ```sh
+  cd ~/zehos/deploy/agent-team
+  AGENTS_FILE=$PWD/agents-peter.tsv PROJECT_COORDINATOR_BASE=$HOME/zehos-team IRCKEY_FILE=$HOME/zehos/.tools/IRCKEY \
+    CLONE_REFERENCE=$HOME/zehos PATH_PREFIX=$HOME/.dotnet DISPATCH_PARALLEL=2 \
+    TEAM_ASSIGNERS=agent-coordinator,<Nicks der Leads> DISPATCH_ALLOW=agent-coordinator,<Nicks der Leads> \
+    bash start-agent.sh --all >start.out 2>&1
+  ```
+
+  Die Leads (auch auf dem Windows-Laptop) bleiben interaktive Sitzungen; sie geben Arbeit per `[AUFTRAG]` an diese Agenten und erledigen Reviews und Recherche auf ihrem Rechner mit Subagenten.
+  `dispatcher.py` läuft nur unter Linux (`fcntl`, `/proc`, Prozessgruppen); auf Windows nur in WSL.
+- **Kontingent:** Jeder Lauf zählt in `<basis>/.dispatch-slots/quota-claude.json`; diese Datei teilen alle Dienste des Rechners.
+  Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst Claude für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
+  einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten. Als Limitmeldung gilt
+  eine kurze Ausgabe (Exit 0), die **mit** einer der festen Wendungen von Claude Code beginnt, oder ein Fehlercode mit dieser Wendung; Wörter wie „quota“ oder „rate limit“ in einer
+  Antwort sperren nichts. Zeitangaben zählen nur aus der Zeile der Meldung und nur zwischen einer Minute und einer Woche, sonst gilt `--cooldown` (eine Stunde). Liefern dieselben
+  Nennungen dreimal hintereinander nur eine Limitmeldung, meldet der Dienst sie wie einen endgültigen Fehlschlag statt stündlich zu wiederholen.
+  Ein Tagesbudget (`budget-claude=`) sperrt ebenso bis Mitternacht. **Sperre aufheben:** `<basis>/.dispatch-slots/quota-claude.json` löschen.
+  Die Limitmeldungen sind nicht gegen echte Texte geprüft; `--limit-pattern` ersetzt das Muster.
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.

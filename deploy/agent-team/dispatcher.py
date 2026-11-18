@@ -51,6 +51,125 @@ def _pids():
     return [int(p) for p in os.listdir("/proc") if p.isdigit()]
 
 
+# Meldungen der Werkzeuge, wenn das Kontingent erschöpft ist. Nicht gegen die echten Texte geprüft (die kommen erst,
+# wenn ein Limit erreicht ist); deshalb per --limit-pattern ersetzbar und zusätzlich an kurze Ausgabe oder Exit ≠ 0
+# gebunden, damit eine Antwort, die nur über Ratengrenzen spricht, kein Kontingent sperrt.
+# Nur die festen Wendungen der Werkzeuge, keine Einzelwörter wie „quota“ oder „rate limit“: Die kommen auch in
+# echten Antworten vor (ein Review über Ratengrenzen), und eine falsche Sperre legt alle Agenten des Rechners still.
+LIMIT_PATTERN = (r"Claude AI usage limit reached|usage limit reached|(5-hour|weekly|session|opus|sonnet) limit reached|"
+                 r"you'?ve hit your (usage |session |weekly )?limit|out of (extra )?usage")
+BACKEND = "claude"       # Name der Kontingentdatei (quota-claude.json); andere Werkzeuge gibt es derzeit nicht
+LIMIT_OUTPUT_MAX = 600   # längere Ausgaben sind eine echte Antwort, kein Limithinweis
+LIMIT_HEAD = 300         # bei Exit 0 muss die Meldung am Anfang der Ausgabe stehen, nicht irgendwo im Text
+LIMIT_REPEAT_MAX = 2     # so oft hintereinander Limit für dieselben Nennungen, dann wie ein Fehlschlag
+RESET_MAX = 7 * 86400    # Sperren länger als eine Woche sind ein Lesefehler
+
+
+def parse_reset(text, now):
+    """Zeitpunkt, ab dem das Kontingent wieder frei ist, aus der Zeile der Limitmeldung; sonst None.
+
+    Nur Zeiten zwischen einer Minute und einer Woche in der Zukunft gelten, alles andere ist ein Lesefehler und führt
+    zur festen Wartezeit (--cooldown)."""
+    def valid(t):
+        return t if now + 60 <= t <= now + RESET_MAX else None
+    m = re.search(r"\|(\d{10})\b", text)                       # „…limit reached|1795030000“
+    if m:
+        return valid(float(m.group(1)))
+    m = re.search(r"\bin\s+(\d+)\s*(minutes?|min\b|hours?|h\b|stunden?)", text, re.IGNORECASE)
+    if m:
+        n = int(m.group(1))
+        return valid(now + n * (60 if m.group(2).lower().startswith("min") else 3600))
+    m = re.search(r"\b(?:resets?(?:\s+at)?|at|um)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", text, re.IGNORECASE)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2) or 0)
+        if m.group(3):
+            h = h % 12 + (12 if m.group(3).lower() == "pm" else 0)
+        if h < 24 and mi < 60:
+            t = time.localtime(now)
+            cand = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, h, mi, 0, 0, 0, -1))
+            return valid(cand if cand > now else cand + 86400)
+    return None
+
+
+class QuotaStore:
+    """Gemeinsamer Kontingentstand je Anbieter (derzeit nur claude) für alle Dienste eines Rechners.
+
+    Eine Datei je Anbieter mit Sperre bis zu einem Zeitpunkt und Zahl der Läufe des Tages. Erkennt ein Dienst eine
+    Limitmeldung, sperrt er den Anbieter für alle; ist das Tagesbudget aufgebraucht, ebenso bis Mitternacht.
+    """
+
+    def __init__(self, directory, budgets):
+        self.dir, self.budgets = directory, budgets
+        os.makedirs(directory, exist_ok=True)
+
+    def _locked(self):
+        fd = os.open(os.path.join(self.dir, "quota.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def _load(self, backend):
+        try:
+            with open(os.path.join(self.dir, f"quota-{backend}.json")) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self, backend, data):
+        path = os.path.join(self.dir, f"quota-{backend}.json")
+        with open(path + ".tmp", "w") as f:
+            json.dump(data, f)
+        os.replace(path + ".tmp", path)
+
+    @staticmethod
+    def _day(now):
+        return time.strftime("%Y-%m-%d", time.localtime(now))
+
+    def blocked(self, backend, now):
+        """(bis, grund), wenn der Anbieter gerade nicht genutzt werden soll, sonst None."""
+        d = self._load(backend)
+        if d.get("blocked_until", 0) > now:
+            return d["blocked_until"], d.get("reason", "Limit")
+        budget = self.budgets.get(backend, 0)
+        if budget and d.get("day") == self._day(now) and d.get("runs", 0) >= budget:
+            t = time.localtime(now)
+            midnight = time.mktime((t.tm_year, t.tm_mon, t.tm_mday + 1, 0, 0, 0, 0, 0, -1))
+            return midnight, f"Tagesbudget {budget} Läufe aufgebraucht"
+        return None
+
+    def count_start(self, backend, now):
+        fd = self._locked()
+        try:
+            d = self._load(backend)
+            if d.get("day") != self._day(now):
+                d["day"], d["runs"] = self._day(now), 0
+            d["runs"] = d.get("runs", 0) + 1
+            self._save(backend, d)
+        finally:
+            os.close(fd)
+
+    def block(self, backend, until, reason):
+        fd = self._locked()
+        try:
+            d = self._load(backend)
+            d["blocked_until"], d["reason"] = max(until, d.get("blocked_until", 0)), reason
+            self._save(backend, d)
+        finally:
+            os.close(fd)
+
+    def claim_alert(self, backend, until):
+        """True genau für den ersten Dienst des Rechners, der diese Sperre meldet (eine Warnung je Sperre)."""
+        fd = self._locked()
+        try:
+            d = self._load(backend)
+            if d.get("alerted_until", 0) >= until:
+                return False
+            d["alerted_until"] = until
+            self._save(backend, d)
+            return True
+        finally:
+            os.close(fd)
+
+
 def mention_pattern(nick):
     # Ganzer Nick, nicht Teil eines längeren (agent-orchestrator gegen agent-orchestrator-junior);
     # IRC-Nicks sind unabhängig von Groß- und Kleinschreibung (wie grep -i im früheren team-watch.sh)
@@ -92,6 +211,9 @@ class Dispatcher:
         self.timed_out_upto = int(retry.get("timed_out_upto", 0))
         self.starts = []          # Startzeiten der letzten Stunde (Ratengrenze)
         self.slot_fd = None
+        self.quota = QuotaStore(a.quota_dir, {BACKEND: a.budget_claude})
+        self.quota_alerted = {}   # je Anbieter: bis wann schon gewarnt wurde (eine Warnung je Sperre)
+        self.limit_runs, self.limit_last = 0, 0   # aufeinanderfolgende Limitläufe derselben Nennungen
         self._reap_orphan()
 
     # --- Dateien ------------------------------------------------------------------------------------
@@ -315,15 +437,32 @@ class Dispatcher:
             f"5. Beende dann den Lauf. Wartest du auf eine Antwort, melde [BLOCKER] und ende; du wirst bei der "
             f"nächsten Nennung neu gestartet.\n\nNeue Zeilen:\n{text}{more}\n")
 
+    def quota_free(self, now):
+        """True, wenn das Kontingent frei ist; sonst warten die Nennungen ohne Fehlschlag (eine Warnung je Sperre)."""
+        hit = self.quota.blocked(BACKEND, now)
+        if not hit:
+            return True
+        until, reason = hit
+        # Eine Warnung je Sperre und Rechner, nicht je Agent: die Kontingentdatei hält fest, wer schon gemeldet hat
+        if self.quota_alerted.get(BACKEND, 0) < until and self.quota.claim_alert(BACKEND, until):
+            self.alert(f"{self.a.alert_to}: [dispatcher] Kontingent {BACKEND} gesperrt bis "
+                       f"{time.strftime('%d.%m. %H:%M', time.localtime(until))} ({reason}); Aufträge warten "
+                       f"(gemeldet von {self.a.nick})")
+        self.quota_alerted[BACKEND] = until
+        return False
+
+    def build_cmd(self, prompt):
+        cmd = [self.a.claude, "-p", "--model", self.a.model, "--permission-mode", self.a.permission_mode]
+        if self.a.role:
+            cmd += ["--append-system-prompt-file", self.a.role]
+        return cmd + self.a.claude_arg + [prompt]
+
     def start(self, now):
         batch = self.pending()
         prompt = self.build_prompt(batch)
         out_path = os.path.join(self.a.state, "runs", time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
                                 + f"-{batch[-1]['id']}.log")
-        cmd = [self.a.claude, "-p", "--model", self.a.model, "--permission-mode", self.a.permission_mode]
-        if self.a.role:
-            cmd += ["--append-system-prompt-file", self.a.role]
-        cmd += self.a.claude_arg + [prompt]
+        cmd = self.build_cmd(prompt)
         out = None
         try:
             out = open(out_path, "w")
@@ -339,6 +478,7 @@ class Dispatcher:
         # Erst den Lauf vermerken, dann die Datei schreiben: scheitert das Schreiben (volle Platte), wird der Lauf
         # trotzdem überwacht, beendet und sein Slot freigegeben
         self.run = {"start": now, "last": batch[-1]["id"], "first": batch[0]["id"], "out": out, "path": out_path}
+        self.quota.count_start(BACKEND, now)
         # Prozessgruppe und Startzeit festhalten: endet der Dienst hart, beendet der nächste Start genau diesen
         # Lauf (_reap_orphan); die Startzeit verhindert, dass eine wiederverwendete PID einen fremden Lauf trifft
         try:
@@ -346,7 +486,8 @@ class Dispatcher:
         except OSError as e:
             self.log_event(f"running nicht geschrieben ({e}); ein verwaister Lauf würde nicht aufgeräumt")
         self.starts.append(now)
-        self.log_event(f"Lauf gestartet für #{batch[0]['id']}..#{batch[-1]['id']} ({len(batch)} Zeilen), Log {out_path}")
+        self.log_event(f"Lauf gestartet für #{batch[0]['id']}..#{batch[-1]['id']} ({len(batch)} Zeilen), "
+                       f"Log {out_path}")
 
     def _finish(self, now, code):
         run, self.proc, self.run = self.run, None, None
@@ -356,6 +497,29 @@ class Dispatcher:
             os.remove(self._path("running"))
         except FileNotFoundError:
             pass
+        limit = self._limit_message(run, code)
+        if limit is not None:
+            # Dieselben Nennungen liefern wieder nur eine Limitmeldung: Das ist kein Kontingent, sondern ein Lauf, der
+            # immer so endet (oder ein falsch erkannter Text). Nicht stündlich wiederholen, sondern wie ein endgültiger
+            # Fehlschlag melden.
+            self.limit_runs = self.limit_runs + 1 if self.limit_last == run["last"] else 1
+            self.limit_last = run["last"]
+            until = parse_reset(limit, now) or now + self.a.cooldown
+            # Auch beim Aufgeben sperren: Ist es ein echtes Limit mit unlesbarer Zeit, liefen sonst die anderen Agenten
+            # des Rechners sofort wieder hinein
+            self.quota.block(BACKEND, until, "Limitmeldung")
+            if self.limit_runs > LIMIT_REPEAT_MAX:
+                self.limit_runs = 0
+                self._failed(now, f"{LIMIT_REPEAT_MAX + 1}-mal Limitmeldung für dieselben Nennungen", run["last"],
+                             run["path"], final=True)
+                return
+            # Kontingent leer: kein Fehlschlag des Auftrags und keine Quittung. Anbieter für alle Dienste des Rechners
+            # sperren, bis er laut Meldung wieder frei ist; die Nennung startet danach erneut.
+            self.next_try = 0.0
+            self.log_event(f"Kontingent {BACKEND} erschöpft, gesperrt bis "
+                           f"{time.strftime('%d.%m. %H:%M', time.localtime(until))}; Nennungen bleiben offen")
+            return
+        self.limit_runs, self.limit_last = 0, 0
         if code == 0:
             self.acked = run["last"]
             self._write("acked", f"{self.acked}\n")
@@ -370,6 +534,37 @@ class Dispatcher:
             self._failed(now, f"Zeitlimit {self.a.timeout:.0f} s", run["last"], run["path"], final=True)
         else:
             self._failed(now, f"Exit {code}", run["last"], run["path"])
+
+    def _limit_message(self, run, code):
+        """Text der Limitmeldung, wenn der Lauf am Kontingent scheiterte, sonst None."""
+        if code == "Zeitlimit":
+            return None
+        try:
+            with open(run["path"], "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 4096))
+                tail = f.read().decode(errors="replace")
+        except OSError:
+            return None
+        # Bei Exit 0 nur eine kurze Ausgabe, die mit der Meldung beginnt: Eine Antwort, die über Limits spricht, ist
+        # Arbeit. Bei einem Fehlercode reicht die Meldung im Rest der Ausgabe.
+        pattern = self.a.limit_pattern or LIMIT_PATTERN
+        if code == 0:
+            # Exit 0: Die Ausgabe muss mit der Meldung beginnen (so endet ein Lauf am Limit); steht die Wendung mitten
+            # in einer Antwort, ist es Inhalt, kein Limit
+            if size > LIMIT_OUTPUT_MAX:
+                return None
+            tail = tail.lstrip()[:LIMIT_HEAD]
+            m = re.match(rf"(?:{pattern})", tail, re.IGNORECASE)
+        else:
+            m = re.search(pattern, tail, re.IGNORECASE)
+        if not m:
+            return None
+        # Für die Zeitangabe nur die Zeile der Meldung, damit Zahlen aus anderem Text keine Sperrzeit ergeben
+        start = tail.rfind("\n", 0, m.start()) + 1
+        end = tail.find("\n", m.end())
+        return tail[start:end if end >= 0 else len(tail)]
 
     def _failed(self, now, why, last_id, path=None, final=False):
         if final:
@@ -417,7 +612,7 @@ class Dispatcher:
             if code is not None:
                 self._finish(now, code)
         elif self._should_start(now):
-            if self._acquire_slot():
+            if self.quota_free(now) and self._acquire_slot():
                 self.start(now)
         self.heartbeat(now)
 
@@ -451,7 +646,8 @@ class Dispatcher:
             "nick": self.a.nick, "time": now, "pid": os.getpid(), "acked": self.acked,
             "pending": len(pend), "oldest_pending": pend[0]["ts"] if pend else None,
             "running": self.run and {"since": self.run["start"], "ids": [self.run["first"], self.run["last"]]},
-            "failures": self.failures, "gave_up_at": self.gave_up_at or None}) + "\n")
+            "failures": self.failures, "gave_up_at": self.gave_up_at or None,
+            "quota": (lambda h: h and {"until": h[0], "reason": h[1]})(self.quota.blocked(BACKEND, now))}) + "\n")
 
 
 def parse_args(argv):
@@ -460,7 +656,11 @@ def parse_args(argv):
     p.add_argument("--irc-dir", required=True, help="Verzeichnis von teambot.py (log.txt, outbox.fifo)")
     p.add_argument("--home", required=True, help="Arbeitsverzeichnis der Läufe")
     p.add_argument("--role", help="Rollenprompt, wird an den Systemprompt angehängt")
-    p.add_argument("--model", required=True)
+    p.add_argument("--model", required=True, help="Claude-Modell")
+    p.add_argument("--quota-dir", help="gemeinsamer Kontingentstand (Standard: --slots-dir oder Zustand)")
+    p.add_argument("--budget-claude", type=int, default=0, help="höchstens so viele Claude-Läufe je Tag und Rechner")
+    p.add_argument("--cooldown", type=float, default=3600, help="Sperre nach Limitmeldung ohne erkennbare Zeit")
+    p.add_argument("--limit-pattern", default="", help="eigener regulärer Ausdruck für die Limitmeldung")
     p.add_argument("--state", help="Zustandsverzeichnis (Standard: <home>/dispatch)")
     p.add_argument("--allow", default="", help="Kommaliste: nur diese Absender starten Läufe; leer = alle")
     p.add_argument("--alert-to", default="agent-coordinator")
@@ -477,12 +677,14 @@ def parse_args(argv):
     p.add_argument("--poll", type=float, default=2)
     a = p.parse_args(argv)
     # Absolut, weil der Lauf im Arbeitsverzeichnis startet und die Pfade aus dem Auftrag dort gelten müssen
-    for k in ("irc_dir", "home", "role", "state", "slots_dir"):
+    for k in ("irc_dir", "home", "role", "state", "slots_dir", "quota_dir"):
         if getattr(a, k):
             setattr(a, k, os.path.abspath(getattr(a, k)))
     a.log = os.path.join(a.irc_dir, "log.txt")
     a.outbox = os.path.join(a.irc_dir, "outbox.fifo")
     a.state = a.state or os.path.join(a.home, "dispatch")
+    # Ohne gemeinsamen Ordner kennt nur dieser Dienst das Kontingent; mit --slots-dir teilen ihn alle des Rechners
+    a.quota_dir = a.quota_dir or a.slots_dir or a.state
     return a
 
 
