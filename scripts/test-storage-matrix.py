@@ -3,7 +3,7 @@
 
 Je Groesse (Standard 32, 64, 128 GiB) in einem NEUEN Arbeitsordner: GPT-Installation wie test-installer-gpt-guest.py,
 dann Start von der Platte im Root-Profil (ext2 als /): Ersteinrichtung, zwei Terminals mit eigenem Arbeitsverzeichnis,
-Dateimanager, in der Textshell Kopien der virtuellen Dateien (/proc, /sys, /dev/null) nach /home, Neustart, zweite
+Dateimanager, in der Textshell cat der virtuellen Dateien (/proc, /sys, /dev/null) mit Bild, Neustart, zweite
 Anmeldung, shutdown. Die Shell spiegelt ihre Ausgabe nicht seriell; deshalb hinterlaesst der Gast Dateien, die nach
 dem Ende von QEMU offline geprueft werden (debugfs, e2fsck, fsck.fat, s_state). Jede Pruefung meldet einzeln
 PASS/OFFEN/FEHLER, ein Fehlschlag verdeckt die uebrigen nicht.
@@ -20,6 +20,7 @@ Benoetigte Builds:
 Werkzeuge wie test-installer-gpt-guest.py und test-power-guest.py, dazu debugfs.
 
 Runde 1 OFFEN: VMware, voller Datentraeger, pkg install, update install, Dateimanager-Inhalt (nur Bild).
+Grenze 0.6: cp aus /proc, /sys, /dev wird verweigert (cause=ForeignMount); virtuelle Dateien nur per cat (BILD-Zeilen).
 Exitcodes: 2 = alle ausgefuehrten Pruefungen bestanden, Teile offen; 1 = mindestens ein Fehler.
 """
 import argparse
@@ -48,6 +49,8 @@ GIB = 1024 ** 3
 USER_HOME = f"/home/{tools.TEST_USER}"
 # Inode-Cache: bei 512 MiB scheitert das Dictionary bei 17519 Eintraegen; je Verzeichnis hoechstens 8189 Kinder.
 INODE_FILES, INODE_DIRS = 18000, 3
+VIRTUAL_FILES = (("version", "/proc/version"), ("meminfo", "/proc/meminfo"), ("mounts", "/proc/mounts"),
+                 ("components", "/sys/kernel/components"), ("null", "/dev/null"))
 
 
 class Results:
@@ -101,19 +104,6 @@ def expect_text(root: Path, path: str, expected: str):
     return check
 
 
-def expect_virtual(root: Path, path: str, contains: str | None):
-    def check() -> str:
-        content = debugfs_cat(root, path)
-        if contains is None:
-            if content:
-                raise RuntimeError(f"{path} sollte leer sein, hat {len(content)} Bytes")
-            return "leer"
-        if not content or contains.encode() not in content:
-            raise RuntimeError(f"{path}: {len(content)} Bytes, ohne {contains!r}")
-        return f"{len(content)} Bytes"
-    return check
-
-
 def first_boot(args, guest, run: Path, tokens: dict) -> None:
     guest.ready(args.timeout, extra=power.ROOT_READY)
     storage.login(guest.qmp, run, first=True)
@@ -131,11 +121,12 @@ def first_boot(args, guest, run: Path, tokens: dict) -> None:
     launch(guest, "Dateien")
     guest.qmp.shot(run / "04-dateimanager.png")
     guest.to_textshell()
-    lines(guest, f"mkdir {USER_HOME}/v",
-          f"cp /proc/version {USER_HOME}/v/version", f"cp /proc/meminfo {USER_HOME}/v/meminfo",
-          f"cp /proc/mounts {USER_HOME}/v/mounts", f"cp /sys/kernel/components {USER_HOME}/v/components",
-          f"cp /dev/null {USER_HOME}/v/null", f"write {USER_HOME}/boot1.txt {tokens['boot1']}")
-    guest.qmp.shot(run / "05-textshell.png")
+    # cp aus /proc, /sys, /dev ist fuer 0.6 bewusst nicht unterstuetzt (ForeignMount, Entscheid lead2): lesen per cat,
+    # die Shell spiegelt nicht seriell, Beleg ist je ein Bild.
+    for name, path in VIRTUAL_FILES:
+        lines(guest, "clear", f"cat {path}")
+        guest.qmp.shot(run / f"05-cat-{name}.png")
+    lines(guest, "clear", f"write {USER_HOME}/boot1.txt {tokens['boot1']}")
 
 
 def second_boot(args, guest, run: Path, tokens: dict) -> None:
@@ -167,11 +158,8 @@ def offline_checks(results: Results, image: Path, case: Path, label: str, tokens
     results.check(f"{label} Terminal 1 behaelt cwd nach Terminal 2", expect_text(root, f"{USER_HOME}/t1/b.txt", tokens["t1b"]))
     results.check(f"{label} Datei vor Neustart", expect_text(root, f"{USER_HOME}/boot1.txt", tokens["boot1"]))
     results.check(f"{label} Datei nach Neustart", expect_text(root, f"{USER_HOME}/boot2.txt", tokens["boot2"]))
-    results.check(f"{label} /proc/version kopierbar", expect_virtual(root, f"{USER_HOME}/v/version", "ZehOS"))
-    results.check(f"{label} /proc/meminfo kopierbar", expect_virtual(root, f"{USER_HOME}/v/meminfo", ":"))
-    results.check(f"{label} /proc/mounts kopierbar", expect_virtual(root, f"{USER_HOME}/v/mounts", "/"))
-    results.check(f"{label} /sys/kernel/components kopierbar", expect_virtual(root, f"{USER_HOME}/v/components", ""))
-    results.check(f"{label} /dev/null liefert leer", expect_virtual(root, f"{USER_HOME}/v/null", None))
+    for name, path in VIRTUAL_FILES:
+        results.report("BILD", f"{label} cat {path}: Sichtpruefung {case / 'lauf' / f'05-cat-{name}.png'}")
     results.report("OFFEN", f"{label} Dateimanager: nur geoeffnet und fotografiert ({case / 'lauf' / '04-dateimanager.png'})")
 
 
