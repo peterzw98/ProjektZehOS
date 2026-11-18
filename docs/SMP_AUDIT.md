@@ -116,8 +116,14 @@ CPU-Ausnahmepfad (EXC) hinzu (`zehos_host_depth`, siehe oben `CosmosFaultIsolati
 
 ### Geprüft, nur ein Kontext oder unveränderlich
 
-- `ThirdParty/wasm3/source/`: keine einzige beschreibbare Dateiebenen- oder `static`-Variable (alle `m3_*`-Objekte ohne
-  `.data`/`.bss`-Symbol); der ganze Zustand liegt in Umgebung, Laufzeit und Modul, die `zehos_host_wasm3.c` je Lauf anlegt.
+- `ThirdParty/wasm3/source/`: in diesem Bau keine beschreibbare Dateiebenen- oder `static`-Variable (alle `m3_*`-Objekte
+  ohne `.data`/`.bss`-Symbol); der ganze Zustand liegt in Umgebung, Laufzeit und Modul, die `zehos_host_wasm3.c` je Lauf
+  anlegt. In den Quellen stehen zwar `m3_core.c:194-198` `g_guard*` (nur mit `d_m3GuardedMemory`) und `stack_start` (nur
+  mit `d_m3LogNativeStack`), beide abgeschaltet, sowie `m3_core.c:321` `static M3_THREAD_LOCAL u8* base` in
+  `m3_NativeStackLimit` (clang setzt `M3_HAS_THREAD_LOCAL`). Diese Variable entfällt nur, weil `m3_HostStackBase` auf dem
+  Ziel `x86_64-elf` (`m3_host_none`) `NULL` liefert und der Compiler sie wegoptimiert. Liefert eine künftige
+  Plattform dort einen Wert, entsteht eine threadlokale Variable im Kernel; ob Cosmos threadlokalen Speicher je Thread
+  bereitstellt, ist dann vorher zu prüfen.
 - `Native/Wasm/host/zehos_host_wasm3.c` `bindings`, `zehos_host_core.c` `environment_entry`, `program_name`, `save_name`:
   nur lesbar (`.rodata`). Der Hostzustand eines Laufs (`zehos_host_context`, offene Dateien) liegt auf dem Stack des
   Workers (`zehos_host_wamr.c:224`) bzw. im Laufkontext.
