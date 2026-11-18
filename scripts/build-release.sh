@@ -17,7 +17,9 @@ cd "$root"
 # MSBuild uebernimmt jede Umgebungsvariable als Property (ohne Gross-/Kleinschreibung); geerbte Test-Schluessel, Test-CAs,
 # Probe-Schalter oder Konstanten (die csproj haengt an DefineConstants an) duerfen nicht ins Release gelangen.
 for name in $(compgen -e | grep -i -E '^(zehos|defineconstants$)' || true); do unset "$name"; done
-dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version"
+# Ab 0.6 (Entscheidung Peter, 18.11.): Release mit Root-Profil (ext2 als /) und Migration; der Kernel waehlt das Profil
+# beim Boot und startet eine Legacy-Platte weiter als /data. Im Code bleiben es Schalter.
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSRootProfile=true -p:ZehOSRootMigration=true
 # Erst der Build stellt die Cosmos-Pakete im NuGet-Cache her; auf einem frischen CI-Rechner fehlt Limine vorher.
 packages=$(dotnet nuget locals global-packages -l)
 packages=${packages#global-packages: }
@@ -32,7 +34,8 @@ if ! grep -q 'ZehOSInstaller' ProjektZeh/ProjektZeh.csproj; then
   echo 'Installer-Build ist im Projekt noch nicht eingerichtet.' >&2
   exit 1
 fi
-dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
+# Der Installer bietet zusaetzlich das GPT-Layout mit ext2-Root an (Spec 7a-S4 §0.3: nach 4.0-Go und G1-G9).
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -t:Rebuild -p:Version="$version" -p:ZehOSInstaller=true -p:ZehOSGptInstaller=true -p:ZehOSPayloadDir="$payload"
 cp ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso "$out/ZehOS-Setup-$version.iso"
 size=$(wc -c < "$out/ProjektZeh-$version.elf" | tr -d '[:space:]')
 hash=$(sha256sum "$out/ProjektZeh-$version.elf" | cut -d ' ' -f 1)
