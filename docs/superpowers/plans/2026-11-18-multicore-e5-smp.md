@@ -59,7 +59,13 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 
 ### Paket E5-A: Stapel einspielen
 
-**Branch:** `cosmos-upstream/smp-phase5b`, von `cosmos`, PR gegen `cosmos`.
+**Branch:** `cosmos-patch/smp-phase5b`, von `cosmos`, PR gegen `cosmos` (Spiegel siehe Entscheidung unten).
+
+> **Entscheidungen Peter, 19.11.2026, Terminal von agent-nweh-lead1** (Wortlaut „1. ja 2. ja“ auf die beiden Fragen):
+> 1. Die Upstream-Commits werden **vor** dem Gate gespiegelt: `cosmos-upstream/smp-phase5b` zeigt auf `44952133`, `cosmos-upstream/smp-base` auf
+>    `efcf20cc`. Beide Branches sind reine Spiegel und werden nie geändert; E5-A arbeitet deshalb auf `cosmos-patch/smp-phase5b` (von `cosmos`, PR gegen `cosmos`).
+> 2. Für `Input/CosmosIrqLock.cs` kommt ein kleiner Cosmos-Patch `irq-mask-scope` (öffentlicher Masken-Scope über Upstreams `IrqLockScope`),
+>    als eigener PR gegen `cosmos`, gestapelt auf E5-A; kein Umbau der Sperre in ZehOS. E5-D stellt `CosmosIrqLock` darauf um.
 
 - [ ] **Schritt 1:** Upstream als temporären Remote holen: `git remote add cosmos-upstream https://github.com/CosmosOS/Cosmos` und `git fetch cosmos-upstream 44952133e7820565552f30b057baa0660bd0a80d efcf20cc62884b042a0adadffe9fc4540491fd89`. Unter Windows vorher `git config core.longpaths true`.
 - [ ] **Schritt 2:** Kumulierten Unterschied anwenden: `git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index`. Konflikte entstehen nur dort, wo eigene Patches dieselben Zeilen ändern (sicher: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs`, falls E3-C schon gemergt ist; möglich: `src/Cosmos.Kernel/Panic.cs`, `SchedulerManager.cs` nach E3-A). Jeden Konflikt so lösen, dass Upstreams Fassung gilt und der eigene Patch darauf neu angebracht wird.
@@ -181,7 +187,7 @@ oder „entfallen“ eintragen.
 | `Security/CosmosSaltSource.cs`, `CosmosVirtioEntropyDriver.cs`, `Input/CosmosUsbTabletDriver.cs` | Driver Kit | Übersetzen und Bindung |
 | verbliebene ext2-Plugs (falls Etappe 2 nicht fertig) | `FileSystem/Ext2/**` (im Stapel unverändert) | Bindung |
 | `Runtime/CosmosThreadProbe.cs`, `Messaging/MessageGuestProbe.cs`, weitere Proben | `SchedulerManager` | Übersetzen |
-| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Lösung (kleiner Cosmos-Patch mit öffentlichem Masken-Scope oder Umbau der Sperre) vor E5-D mit dem Lead abstimmen |
+| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Entschieden (Peter, 19.11.): Patch `irq-mask-scope`, siehe E5-A |
 | `Scheduling/CosmosClassScheduler.cs:112-147` (fünf `MaskInterrupts`) | `SchedulerManager.LockCpu` | Teil von E5-B (Tabelle oben), hier nur prüfen, dass keine Stelle übrig bleibt: `grep -rn MaskInterrupts ProjektZeh` leer |
 
 - [ ] **Schritt 1:** `grep -rn "GetCpuState(0)\|UnsafeAccessor\|DllImport(\"\\*\"\|\[Plug" ProjektZeh --include=*.cs` als Arbeitsliste; mit der Tabelle abgleichen, Fehlendes ergänzen.
