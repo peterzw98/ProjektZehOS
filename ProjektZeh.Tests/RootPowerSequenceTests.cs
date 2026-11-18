@@ -41,7 +41,7 @@ public sealed class RootPowerSequenceTests
         Assert.IsFalse(result.IsOK());
         StringAssert.Contains(result.Message, "PowerUnmountFailed", StringComparison.Ordinal);
         CollectionAssert.AreEqual(new[] { "block", "sync /mnt/b", "unmount /mnt/b", "sync /mnt/a", "unmount /mnt/a",
-            "sync /boot/efi", "release", "remount /mnt/a", "remount /mnt/b" }, platform.Log);
+            "sync /boot/efi", "remount /mnt/a", "remount /mnt/b", "release" }, platform.Log);
         Assert.IsFalse(platform.Blocked);
         CollectionAssert.AreEquivalent(new[] { "/boot/efi", "/mnt/a", "/mnt/b" }, platform.Mounted);
     }
@@ -56,12 +56,47 @@ public sealed class RootPowerSequenceTests
     }
 
     [TestMethod]
-    public void CloseRootFailure_ReopensBeforeReleasingWritesThenRemounts()
+    public void CloseRootFailure_ReopensThenRemountsThenReleasesWrites()
     {
         var platform = new Platform("/boot/efi") { CloseFails = true };
         Assert.IsFalse(new RootPowerSequence(platform).Prepare().IsOK());
-        CollectionAssert.AreEqual(new[] { "block", "sync /boot/efi", "unmount /boot/efi", "close", "reopen", "release",
-            "remount /boot/efi" }, platform.Log);
+        CollectionAssert.AreEqual(new[] { "block", "sync /boot/efi", "unmount /boot/efi", "close", "reopen", "remount /boot/efi",
+            "release" }, platform.Log);
+    }
+
+    [TestMethod]
+    public void SyncThatThrows_RollsBackAndNamesTheCause()
+    {
+        var platform = new Platform("/boot/efi", "/mnt/a") { ThrowSync = "/boot/efi" };
+        var result = new RootPowerSequence(platform).Prepare();
+        StringAssert.Contains(result.Message, "Geraetefehler", StringComparison.Ordinal);
+        CollectionAssert.AreEquivalent(new[] { "/boot/efi", "/mnt/a" }, platform.Mounted);
+        Assert.IsFalse(platform.Blocked);
+    }
+
+    [TestMethod]
+    public void RestoreWithFailedReopen_RemountsForReadingButKeepsWritesBlocked()
+    {
+        var platform = new Platform("/boot/efi");
+        var sequence = new RootPowerSequence(platform);
+        Assert.IsTrue(sequence.Prepare().IsOK());
+        platform.ReopenFails = true;
+        var restored = sequence.Restore();
+        StringAssert.Contains(restored.Message, "Root schreibgesperrt", StringComparison.Ordinal);
+        CollectionAssert.Contains(platform.Mounted, "/boot/efi");
+        Assert.IsTrue(platform.Blocked);
+    }
+
+    [TestMethod]
+    public void FailedRemount_IsRetriedAtTheNextRollback()
+    {
+        var platform = new Platform("/boot/efi") { CloseFails = true, RemountFails = true };
+        var sequence = new RootPowerSequence(platform);
+        Assert.IsFalse(sequence.Prepare().IsOK());
+        CollectionAssert.DoesNotContain(platform.Mounted, "/boot/efi");
+        platform.RemountFails = false;
+        Assert.IsFalse(sequence.Prepare().IsOK(), "Close scheitert weiter.");
+        CollectionAssert.Contains(platform.Mounted, "/boot/efi");
     }
 
     [TestMethod]
@@ -79,7 +114,7 @@ public sealed class RootPowerSequenceTests
         platform.CloseFails = false;
         platform.Log.Clear();
         Assert.IsTrue(sequence.Prepare().IsOK());
-        CollectionAssert.AreEqual(new[] { "reopen", "release", "block", "sync /boot/efi", "unmount /boot/efi", "close" }, platform.Log);
+        CollectionAssert.AreEqual(new[] { "reopen", "sync /boot/efi", "unmount /boot/efi", "close" }, platform.Log);
         Assert.IsFalse(sequence.RootWriteLocked);
     }
 
@@ -100,7 +135,7 @@ public sealed class RootPowerSequenceTests
         Assert.IsTrue(sequence.Prepare().IsOK());
         platform.Log.Clear();
         Assert.IsTrue(sequence.Restore().IsOK());
-        CollectionAssert.AreEqual(new[] { "reopen", "release", "remount /boot/efi", "remount /mnt/a" }, platform.Log);
+        CollectionAssert.AreEqual(new[] { "reopen", "remount /boot/efi", "remount /mnt/a", "release" }, platform.Log);
         Assert.IsFalse(platform.Blocked);
     }
 
@@ -115,14 +150,20 @@ public sealed class RootPowerSequenceTests
         public string? ThrowAfterUnmount { get; init; }
         public bool CloseFails { get; set; }
         public bool ReopenFails { get; set; }
-        public bool RemountFails { get; init; }
+        public bool RemountFails { get; set; }
+        public string? ThrowSync { get; init; }
 
         public string? BusyReason() => Busy;
         public bool TryBlockWrites() { Log.Add("block"); if (BlockFails) return false; Blocked = true; return true; }
         public void ReleaseWrites() { Log.Add("release"); Blocked = false; }
-        public IReadOnlyList<string> PersistentMounts() => [.. mounts];
+        public IReadOnlyList<string> PersistentMounts() => Array.FindAll(mounts, Mounted.Contains);
         public bool IsMounted(string mountPoint) => Mounted.Contains(mountPoint);
-        public bool Sync(string mountPoint) { Log.Add("sync " + mountPoint); return mountPoint != FailSync; }
+        public bool Sync(string mountPoint)
+        {
+            Log.Add("sync " + mountPoint);
+            if (mountPoint == ThrowSync) throw new IOException("Geraetefehler");
+            return mountPoint != FailSync;
+        }
         public bool Unmount(string mountPoint)
         {
             Log.Add("unmount " + mountPoint);

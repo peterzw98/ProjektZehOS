@@ -95,6 +95,61 @@ public sealed class Ext2IndirectBlocksTests
         CollectionAssert.AreEquivalent(new List<uint> { 910, 911 }, result);
     }
 
+    // Bei 1-KiB-Bloecken: 256 Zeiger je Block; einfach 12..267, doppelt 268..65803, dreifach danach.
+    private const ulong DoubleStart = 12 + 256;
+
+    [TestMethod]
+    [DataRow(0UL)]
+    [DataRow(12UL)]
+    public void PlanTruncate_ToDirectRange_FreesEveryTree(ulong newBlocks)
+    {
+        PointerBlock(910, 911, 912);
+        PointerBlock(920, 921);
+        PointerBlock(921, 922);
+        var plan = Ext2IndirectBlocks.PlanTruncate(Inode(single: 900, dbl: 910, triple: 920), newBlocks, BlockSize, BlocksCount, Read);
+        CollectionAssert.AreEquivalent(new List<uint> { 900, 910, 911, 912, 920, 921, 922 }, plan.Free);
+        CollectionAssert.AreEquivalent(new List<int> { 12, 13, 14 }, plan.ClearRoots);
+        Assert.AreEqual(0, plan.ClearEntries.Count);
+    }
+
+    [TestMethod]
+    public void PlanTruncate_InsideSingle_KeepsSingleFreesDouble()
+    {
+        PointerBlock(910, 911);
+        var plan = Ext2IndirectBlocks.PlanTruncate(Inode(single: 900, dbl: 910), 13, BlockSize, BlocksCount, Read);
+        CollectionAssert.AreEquivalent(new List<uint> { 910, 911 }, plan.Free);
+        CollectionAssert.AreEqual(new List<int> { 13 }, plan.ClearRoots);
+        Assert.AreEqual(0, plan.ClearEntries.Count);
+    }
+
+    [TestMethod]
+    public void PlanTruncate_InsideDouble_FreesOnlyChildrenBehindNewEnd()
+    {
+        // Kinder 0..3 des doppelt indirekten Blocks; neue Laenge endet in Kind 2 -> Kind 3 frei, Wurzel und 0..2 bleiben.
+        PointerBlock(910, 911, 912, 913, 914);
+        var plan = Ext2IndirectBlocks.PlanTruncate(Inode(single: 900, dbl: 910), DoubleStart + 2 * 256 + 5, BlockSize, BlocksCount, Read);
+        CollectionAssert.AreEqual(new List<uint> { 914 }, plan.Free);
+        Assert.AreEqual(0, plan.ClearRoots.Count);
+        CollectionAssert.AreEqual(new List<(uint, int)> { (910, 3) }, plan.ClearEntries);
+    }
+
+    [TestMethod]
+    public void PlanTruncate_AtChildBoundary_FreesThatChild()
+    {
+        PointerBlock(910, 911, 912);
+        var plan = Ext2IndirectBlocks.PlanTruncate(Inode(single: 900, dbl: 910), DoubleStart + 256, BlockSize, BlocksCount, Read);
+        CollectionAssert.AreEqual(new List<uint> { 912 }, plan.Free);
+        CollectionAssert.AreEqual(new List<(uint, int)> { (910, 1) }, plan.ClearEntries);
+    }
+
+    [TestMethod]
+    public void PlanTruncate_BeyondUsedRange_NothingToDo()
+    {
+        PointerBlock(910, 911);
+        var plan = Ext2IndirectBlocks.PlanTruncate(Inode(single: 900, dbl: 910), DoubleStart + 256 * 256, BlockSize, BlocksCount, Read);
+        Assert.AreEqual(0, plan.Free.Count + plan.ClearRoots.Count + plan.ClearEntries.Count);
+    }
+
     [TestMethod]
     public void ShortInodeArray_NoOutOfRange()
     {

@@ -37,6 +37,13 @@ internal static class LayoutCommand
             Console.WriteLine(JsonSerializer.Serialize(new { ok = false, size, cause = "UnsupportedDiskSize" }));
             return 1;
         }
+        // Wie format: ohne nachgewiesene sparse Anlage schreibt SetLength unter Windows die volle Groesse (bis 128 GiB).
+        // Nach der Geometriepruefung, damit abgelehnte Groessen auf allen Hosts dieselbe Ursache melden.
+        if (OperatingSystem.IsWindows() && size > FormatRequest.WindowsMaximum)
+        {
+            Console.Error.WriteLine("Unter Windows hoechstens 64 MiB, bis sparse Anlage dort geprueft ist; layout braucht mindestens 32 GiB.");
+            return 2;
+        }
 
         FileStream file;
         try { file = new FileStream(args[1], FileMode.CreateNew, FileAccess.ReadWrite); }

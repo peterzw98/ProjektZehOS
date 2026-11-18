@@ -11,6 +11,7 @@
 #include <math.h>
 #include <ctype.h>
 #include <errno.h>
+#include <zehos_memory.h>
 
 extern void* __cosmos_heap_alloc(size_t size);
 extern void __cosmos_heap_free(void* pointer);
@@ -26,21 +27,84 @@ int errno;
 // Cosmos-Rohbloecke sind teils nur 2 Byte ausgerichtet (AOT-Probe B3), C sagt aber 16 Byte (max_align_t) zu.
 // Der Kopf direkt vor dem ausgerichteten Nutzzeiger haelt Groesse (fuer realloc) und Rohzeiger (fuer free).
 #define ZEHOS_ALIGN 16u
-typedef struct { size_t size; void* raw; } zehos_block_header;
+typedef struct zehos_block_header
+{
+    size_t size;
+    void* raw;
+    struct zehos_block_header* previous;
+    struct zehos_block_header* next;
+} zehos_block_header;
 #define ZEHOS_BLOCK_EXTRA (sizeof(zehos_block_header) + ZEHOS_ALIGN - 1)
+
+static zehos_block_header* memory_head;
+static size_t memory_limit, memory_used, memory_peak;
+static int memory_active, memory_owner, memory_exceeded;
+static int (*memory_current_thread)(void);
+
+int zehos_memory_begin(size_t limit, int owner, int (*current_thread)(void))
+{
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+    if (memory_active || owner < 0 || current_thread == NULL || current_thread() != owner)
+    {
+        __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+        return 0;
+    }
+    memory_limit = limit;
+    memory_owner = owner;
+    memory_current_thread = current_thread;
+    memory_used = memory_peak = 0;
+    memory_exceeded = 0;
+    memory_active = 1;
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+    return 1;
+}
+
+void zehos_memory_end(void)
+{
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+    memory_active = 0;
+    while (memory_head != NULL) free(memory_head + 1);
+    memory_current_thread = NULL;
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+}
+
+size_t zehos_memory_used(void) { return memory_used; }
+size_t zehos_memory_peak(void) { return memory_peak; }
+int zehos_memory_exceeded(void) { return memory_exceeded; }
 
 void* malloc(size_t size)
 {
     // __cosmos_heap_alloc kuerzt die Groesse auf 32 Bit (HeapNative.Alloc, Cosmos 3.0.97); groessere Bloecke scheitern hier.
     if (size > UINT32_MAX - ZEHOS_BLOCK_EXTRA) return NULL;
     __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
-    uint8_t* raw = (uint8_t*)__cosmos_heap_alloc(ZEHOS_BLOCK_EXTRA + size);
-    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
-    if (raw == NULL) return NULL;
+    size_t total = ZEHOS_BLOCK_EXTRA + size;
+    int tracked = memory_active && memory_current_thread() == memory_owner;
+    if (tracked && (total > SIZE_MAX - memory_used || (memory_limit != 0 && total > memory_limit - memory_used)))
+    {
+        memory_exceeded = 1;
+        __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+        return NULL;
+    }
+    uint8_t* raw = (uint8_t*)__cosmos_heap_alloc(total);
+    if (raw == NULL)
+    {
+        __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+        return NULL;
+    }
     uintptr_t aligned = ((uintptr_t)raw + ZEHOS_BLOCK_EXTRA) & ~(uintptr_t)(ZEHOS_ALIGN - 1);
     zehos_block_header* header = (zehos_block_header*)aligned - 1;
     header->size = size;
     header->raw = raw;
+    header->previous = header->next = NULL;
+    if (tracked)
+    {
+        header->next = memory_head;
+        if (memory_head != NULL) memory_head->previous = header;
+        memory_head = header;
+        memory_used += total;
+        if (memory_used > memory_peak) memory_peak = memory_used;
+    }
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     return (void*)aligned;
 }
 
@@ -48,15 +112,27 @@ void free(void* pointer)
 {
     if (pointer == NULL) return;
     __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
-    __cosmos_heap_free(((zehos_block_header*)pointer - 1)->raw);
+    zehos_block_header* header = (zehos_block_header*)pointer - 1;
+    // Die Blockherkunft entscheidet, auch wenn die Hauptschleife einen aufgegebenen Lauf aufraeumt.
+    if (header == memory_head || header->previous != NULL || header->next != NULL)
+    {
+        if (header->previous != NULL) header->previous->next = header->next;
+        else memory_head = header->next;
+        if (header->next != NULL) header->next->previous = header->previous;
+        memory_used -= ZEHOS_BLOCK_EXTRA + header->size;
+    }
+    __cosmos_heap_free(header->raw);
     __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
 }
 
 void* calloc(size_t count, size_t size)
 {
     if (size != 0 && count > SIZE_MAX / size) return NULL;
+    // Auch Nullsetzen/Kopieren gehoert zum Allokator; ein Kill darf keine halbfertige Mutation sehen.
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     void* pointer = malloc(count * size);
     if (pointer != NULL) memset(pointer, 0, count * size);
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     return pointer;
 }
 
@@ -64,11 +140,17 @@ void* realloc(void* pointer, size_t size)
 {
     if (pointer == NULL) return malloc(size);
     if (size == 0) { free(pointer); return NULL; }
+    __atomic_add_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     size_t previous = ((zehos_block_header*)pointer - 1)->size;
     void* result = malloc(size);
-    if (result == NULL) return NULL;
+    if (result == NULL)
+    {
+        __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
+        return NULL;
+    }
     memcpy(result, pointer, previous < size ? previous : size);
     free(pointer);
+    __atomic_sub_fetch(&zehos_host_depth, 1, __ATOMIC_SEQ_CST);
     return result;
 }
 

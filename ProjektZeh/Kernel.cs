@@ -24,15 +24,23 @@ namespace ProjektZeh;
 public sealed class Kernel : Sys.Kernel
 {
     private readonly CosmosStorageService storage = new();
-#if ZEHOS_ROOT_MIGRATION || ZEHOS_ROOT_PROFILE
+#if ZEHOS_ROOT_MIGRATION
     // Etappe 4.5: jeder Schreiber auf /data nimmt einen Lease, damit system migrate die Quelle exklusiv sperren kann.
-    // Etappe 7b: dieselbe Sperre haelt im Root-Profil alle Schreiber zwischen Aushaengen und Energieaktion an.
-    private static readonly Func<IDisposable?>? SourceWrites = AppStorageGate.TryBeginWrite;
-    private static readonly Func<IDisposable?>? PackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
+    private static readonly Func<IDisposable?>? DataWrites = AppStorageGate.TryBeginWrite;
+    private static readonly Func<IDisposable?>? DataPackageWrites = () => AppStorageGate.TryBeginWrite("Paketinstallation");
 #else
     // Ohne Flag bleiben beide null: die Dienste verhalten sich wie vor 4.5.
-    private static Func<IDisposable?>? SourceWrites => null;
-    private static Func<IDisposable?>? PackageWrites => null;
+    private static Func<IDisposable?>? DataWrites => null;
+    private static Func<IDisposable?>? DataPackageWrites => null;
+#endif
+#if ZEHOS_ROOT_PROFILE
+    // Etappe 7b: im Root-Profil haelt eine eigene Sperre alle Root-Schreiber zwischen Aushaengen und Energieaktion an.
+    private Func<IDisposable?>? SourceWrites => systemPaths.Profile == PathProfile.Root ? AppStorageGate.TryBeginRootWrite : DataWrites;
+    private Func<IDisposable?>? PackageWrites => systemPaths.Profile == PathProfile.Root
+        ? () => AppStorageGate.TryBeginRootWrite("Paketinstallation") : DataPackageWrites;
+#else
+    private static Func<IDisposable?>? SourceWrites => DataWrites;
+    private static Func<IDisposable?>? PackageWrites => DataPackageWrites;
 #endif
     private readonly ConsoleTextOutput output = new();
     // Entsteht erst in InitializeServices, weil die Shell Konten, Pakete und das Pfadprofil braucht.
@@ -109,7 +117,9 @@ public sealed class Kernel : Sys.Kernel
         // Root-Profil (Spec 7b §1): Konfiguration unter /etc/zehos, ESP-Sync vor der Erfolgsmeldung, kein Offline-Kernel aus Systembereichen.
         bool rootProfile = systemPaths.Profile == PathProfile.Root;
         updates = new(CurrentVersion, endpoint => new CosmosHttpUpdateSource(endpoint),
-            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites, rootProfile ? PersistUpdateRoot : null),
+            new FileUpdateTarget(systemPaths.UpdateRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites, rootProfile ? PersistUpdateRoot : null,
+                rootProfile ? CosmosPathGuard.For(systemPaths.UpdateRoot) : null,
+                rootProfile ? () => StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.UpdateRoot, out _)) : null),
             systemPaths.AdminRoot, CosmosDirectoryEntryLimit.ForDirectory, SourceWrites, systemPaths.UpdateConfigPath,
             rootProfile ? [systemPaths.UpdateRoot, systemPaths.SecurityDirectory, "/var/lib/zehos"] : null);
 #endif
@@ -133,7 +143,7 @@ public sealed class Kernel : Sys.Kernel
         interactive = new InteractiveSession(CreateShell(desktopIdentity), () => CreateTerminalShell(desktopIdentity),
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
-                virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile, tryBeginWrite: SourceWrites),
+                virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
             output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
@@ -231,7 +241,7 @@ public sealed class Kernel : Sys.Kernel
     {
         var files = new FileService(identity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: identity,
             diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
-            virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile, tryBeginWrite: SourceWrites);
+            virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile);
         var network = new NetworkShellCommands(networkService, tasks, () => accounts.IsAdmin(identity),
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"), () => identity.Generation);
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.IsVirtualPath(path)
@@ -263,8 +273,7 @@ public sealed class Kernel : Sys.Kernel
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
 #if ZEHOS_ROOT_PROFILE
-            .. new PowerShellCommands(PreparePowerAction, () => { Sys.Power.Reboot(); RestoreAfterPowerAction(); },
-                () => { Sys.Power.Shutdown(); RestoreAfterPowerAction(); }).Commands,
+            .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown, RestoreAfterPowerAction).Commands,
 #else
             .. new PowerShellCommands(PreparePowerAction, Sys.Power.Reboot, Sys.Power.Shutdown).Commands,
 #endif
@@ -487,6 +496,8 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateFailure(ResultCode.Failure, "cause='MigrationRunning' message='Migration laeuft; erst abwarten oder mit system cancel abbrechen.'");
 #endif
 
+        // Vor Stop(): StopAll lehnt das Warten unter der Speicher-Sperre mit einer Ausnahme ab; die Automatik bliebe sonst aus.
+        StorageLock.EnsureNotHeld("Energieaktion");
         automaticNetwork.Stop();
         if (!tasks.StopAll(2000))
         {
@@ -524,14 +535,15 @@ public sealed class Kernel : Sys.Kernel
     /// Cosmos kehrte aus Reboot/Shutdown zurueck: erst s_state = 0 (Reopen), dann Schreiber und Mounts wieder frei, sonst
     /// stuende ein sauberes Kennzeichen ueber einem weiter beschriebenen Root (Spec 7b §2, Zeile 8). Legacy bleibt unveraendert.
     /// </summary>
-    private void RestoreAfterPowerAction()
+    private ResultErr RestoreAfterPowerAction()
     {
-        if (rootPower == null || layout?.RootVolume == null) return;
+        if (rootPower == null || layout?.RootVolume == null) return ResultErr.CreateSuccess();
         var restored = rootPower.Restore();
         if (!restored.IsOK()) systemLog.Error("Storage", restored.Message);
 #if !ZEHOS_INSTALLER
         StartAutomaticNetwork();
 #endif
+        return restored;
     }
 
     private string? RunningAppReason() => packages?.RunningPackage is { } id ? $"Paket-App {id} laeuft;" : null;

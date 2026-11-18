@@ -39,15 +39,16 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
     {
         if (platform.BusyReason() is { } busy)
             return Failed("PowerBusy", busy + " zuerst schliessen, dann erneut ausfuehren.");
+        // Nach gescheitertem Reopen haelt diese Instanz die Sperre noch; sie bleibt bis zum Ende dieses Laufs gesetzt.
         if (RootWriteLocked)
         {
             var reopened = Reopen();
             if (!reopened.IsOK()) return reopened;
         }
-        if (!platform.TryBlockWrites())
+        else if (!platform.TryBlockWrites())
             return Failed("PowerBusy", "Ein Schreibvorgang laeuft noch; Energieaktion danach erneut ausfuehren.");
 
-        unmounted.Clear();
+        // unmounted wird nicht geleert: ein frueher gescheitertes Wiedereinhaengen wird bei jeder Ruecknahme erneut versucht.
         var mounts = new List<string>(platform.PersistentMounts());
         // Zusatzplatten in umgekehrter Einhaengereihenfolge, /boot/efi immer zuletzt (Spec 7b §2.5).
         mounts.Reverse();
@@ -69,9 +70,11 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
         return closed.IsOK() ? closed : RollBack(closed, reopen: true);
     }
 
-    /// <summary>Die Energieaktion kehrte zurueck: erst Reopen, dann Schreiber und Mounts wieder freigeben.</summary>
+    /// <summary>Die Energieaktion kehrte zurueck: erst Reopen, dann Mounts, zuletzt die Schreiber wieder freigeben.</summary>
     public ResultErr Restore() => RollBack(ResultErr.CreateSuccess(), reopen: true);
 
+    // Reihenfolge laut Spec §2: Reopen, Mounts zurueck, erst dann Schreiber frei. Scheitert Reopen, bleibt die Sperre
+    // fuer alle Root-Schreiber (fail-closed); Zusatzplatten und /boot/efi werden trotzdem zum Lesen eingehaengt.
     private ResultErr RollBack(ResultErr failure, bool reopen)
     {
         string notes = "";
@@ -80,17 +83,19 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
             var reopened = Reopen();
             if (!reopened.IsOK()) notes += " " + reopened.Message;
         }
-        else platform.ReleaseWrites();
 
         for (int i = unmounted.Count - 1; i >= 0; i--)
         {
             string mount = unmounted[i];
+            string? error = null;
             bool back;
             try { back = platform.IsMounted(mount) || platform.Remount(mount); }
-            catch (Exception) { back = false; }
-            if (back) unmounted.RemoveAt(i);
-            else notes += mount == SystemPaths.Root.UpdateRoot ? $" {mount} nicht eingehaengt, Updates gesperrt." : $" {mount} nicht eingehaengt.";
+            catch (Exception exception) { back = false; error = exception.Message; }
+            if (back) { unmounted.RemoveAt(i); continue; }
+            notes += mount == SystemPaths.Root.UpdateRoot ? $" {mount} nicht eingehaengt, Updates gesperrt." : $" {mount} nicht eingehaengt.";
+            if (error != null) notes += $" ({error})";
         }
+        if (!RootWriteLocked) platform.ReleaseWrites();
         if (notes.Length == 0) return failure;
         return failure.IsOK() ? Failed("PowerRestoreIncomplete", notes.Trim())
             : ResultErr.CreateFailure(failure.Code, failure.Message + notes);
@@ -100,10 +105,7 @@ internal sealed class RootPowerSequence(IRootPowerPlatform platform)
     {
         var reopened = platform.ReopenRoot();
         RootWriteLocked = !reopened.IsOK();
-        if (RootWriteLocked)
-            return Failed("RootWriteLocked", "Root schreibgesperrt, bitte neu starten (" + reopened.Message + ").");
-        platform.ReleaseWrites();
-        return reopened;
+        return RootWriteLocked ? Failed("RootWriteLocked", "Root schreibgesperrt, bitte neu starten (" + reopened.Message + ").") : reopened;
     }
 
     private static ResultErr Failed(string cause, string message) =>

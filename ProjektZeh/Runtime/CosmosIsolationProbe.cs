@@ -1,5 +1,6 @@
 #if ZEHOS_ISOLATION_PROBE
 using System;
+using System.Diagnostics;
 using System.Threading;
 
 namespace ProjektZeh.Runtime;
@@ -7,12 +8,17 @@ namespace ProjektZeh.Runtime;
 /// <summary>
 /// Gastprobe 12.4-I1 (<c>-p:ZehOSIsolationProbe=true</c>, nur Probe): #DE und #PF im Wasm-Worker, danach GC und ein
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
-/// Probe-Thread aus; das System muss dann wie bisher anhalten.
+/// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
+/// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
 /// </summary>
 internal static class CosmosIsolationProbe
 {
     private static volatile int zero;
     private static volatile int sink;
+#if ZEHOS_ISOLATION_PROBE_NMI
+    private const ulong LapicLint1 = 0x360;
+    private const uint LvtDeliveryNmi = 0b100u << 8;
+#endif
 
     internal static void Start() => new Thread(Probe).Start();
 
@@ -27,6 +33,29 @@ internal static class CosmosIsolationProbe
         Log("ISOLATION_PROBE gc ok");
         Fault("none", () => sink = 1);
         Log("ISOLATION_PROBE DONE");
+#if ZEHOS_ISOLATION_PROBE_NMI
+        // Der Worker rechnet bis zu zwei Minuten im Gastzustand; das Skript loest waehrenddessen den NMI aus.
+        Wasm.WasmRuntime.ProbeEnqueue(() =>
+        {
+            // QEMU stellt inject-nmi unter KVM nur ueber LVT LINT1 zu, und nur wenn LINT1 unmaskiert auf NMI steht
+            // (hw/i386/kvm/apic.c do_inject_external_nmi). Cosmos 3.0.97 maskiert LINT1 (LocalApic.cs:174); ohne
+            // diese Zeile kommt der NMI nie an (RED 18.11.: 0/2). Nur Probe: LINT1 = unmaskiert, Zustellart NMI.
+            // Wie Cosmos' internes MMIO.Write32 ein einfacher Speicherzugriff auf die LAPIC-Basis.
+            Volatile.Write(ref *(uint*)(Cosmos.Kernel.Core.X64.Cpu.LocalApic.BaseAddress + LapicLint1), LvtDeliveryNmi);
+            FaultIsolation.EnterNativeRun();
+            try
+            {
+                Log("ISOLATION_PROBE nmi window open");
+                long end = Stopwatch.GetTimestamp() + 120 * Stopwatch.Frequency;
+                while (Stopwatch.GetTimestamp() < end) sink++;
+                Log("ISOLATION_PROBE nmi window closed");
+            }
+            finally
+            {
+                FaultIsolation.LeaveNativeRun();
+            }
+        });
+#endif
 #if ZEHOS_ISOLATION_PROBE_NEGATIVE
         Log("ISOLATION_PROBE negative pf on probe thread");
         FaultIsolation.EnterNativeRun();
@@ -64,7 +93,7 @@ internal static class CosmosIsolationProbe
             if (Volatile.Read(ref done) == 1) return;
             if (Wasm.WasmRuntime.IsolatedRuns != before)
             {
-                Log("ISOLATION_PROBE fault=" + kind + " handled=1");
+                Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
                 return;
             }
             Thread.Sleep(100);
