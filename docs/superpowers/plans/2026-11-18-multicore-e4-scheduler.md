@@ -317,8 +317,8 @@ internal static class ThreadStarter
 | `SelectCpu` | `currentCpu` |
 | `OnThreadMigrate` | `Blocked` auf der Quelle, `Ready` auf dem Ziel |
 | `Balance` | leer |
-| `SetPriority` | `priority` 0, 1, 2 → `queues.SetClass(thread, (ThreadClass)priority)`; andere Werte ignorieren |
-| `GetPriority` | Klasse als Zahl, ohne Zustand `1` |
+| `SetPriority` | unter `SchedulerManager.MaskInterrupts()` (try/finally wie `GetRunQueueCount`): `priority` 0, 1, 2 → `queues.SetClass(thread, (ThreadClass)priority)`; andere Werte ignorieren. Cosmos verlangt die Maske für diesen Einstieg; ohne sie kann ein Tick die Queue mitten im Umhängen lesen (Review zu E4-C) |
+| `GetPriority` | unter derselben Maske: Klasse als Zahl, ohne Zustand `1` |
 | `GetRunQueueCount`, `GetRunQueueThread` | unter `SchedulerManager.MaskInterrupts()` wie heute: `queues.Count`, `queues.At(index)` |
 
 Hinweis zum Mechanismus von 3.0.97 (`SchedulerManager.cs:1213-1280`): `PickNext` wird aufgerufen, bevor der bisherige
@@ -357,6 +357,8 @@ Hosttest in `SchedulingTests.cs` bleibt. Das ist seit #292 (18. November 2026) d
 - Auswahlspur und Zähler `preemptions` sind heute Felder der einen Scheduler-Instanz. In diesem Paket bleiben sie
   so (eine CPU); E5-B legt beide je CPU an (steht dort). Im Kommentar an den Feldern vermerken.
 - `firstCpu` des Round-Robin-Schedulers entfällt mit dessen Dateien; der Ersatz ist das Feld für CPU 0 oben.
+- Das Feld für den Waiting-Hinweis wird nur gesetzt, wenn `state.CpuId == 0` ist, nicht für die erste initialisierte CPU
+  (Review zu E4-C, P3-a); ab Etappe 5 gibt es mehrere.
 
 - [ ] **Schritt 1: Test schreiben** (`ThreadStarterTests`): `TryStart_WithBackgroundClass_AppliesClassOnTheNewThread`: `ApplyClass` auf eine Lambda setzen, die Klasse und `Environment.CurrentManagedThreadId` merkt; `TryStart(body, threadClass: ThreadClass.Background)`, `Join`; erwartet: gemerkte Klasse `Background`, gemerkte Thread-Id ungleich der des Tests, `body` lief danach. Zweiter Test `TryStart_NormalClass_DoesNotCallApplyClass`. `ApplyClass` im `finally` zurücksetzen.
 - [ ] **Schritt 2: Tests schlagen fehl** (Parameter fehlt).
