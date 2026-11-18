@@ -11,24 +11,24 @@ internal static class ScreenshotSupport
 {
     private static readonly uint[] CrcTable = CreateCrcTable();
 
-    /// <summary>Liest die im Cosmos-Paket eingebettete PSF2-Standardschrift, ohne die Kernelassembly zu laden.</summary>
-    public static (byte[] Data, int Width, int Height)? LoadCosmosFontData()
+    /// <summary>
+    /// Liest die PSF2-Standardschrift aus TestData/DefaultFont.psf (byteweise die Ressource von Cosmos.Kernel.System, Herkunft
+    /// in TestData/DefaultFont.ORIGIN.md). Null, wenn die Datei neben der Testassembly fehlt.
+    /// </summary>
+    public static (byte[] Data, int Width, int Height)? LoadCosmosFontData(string? baseDirectory = null)
     {
-        string packages = Environment.GetEnvironmentVariable("NUGET_PACKAGES") ??
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-        string path = Path.Combine(packages, "cosmos.kernel.system", "3.0.97", "runtimes", "linux-x64", "lib", "net10.0", "Cosmos.Kernel.System.dll");
+        string path = Path.Combine(baseDirectory ?? AppContext.BaseDirectory, "TestData", "DefaultFont.psf");
         if (!File.Exists(path)) return null;
-        byte[] assembly = File.ReadAllBytes(path);
-        // Das Magic steht auch im Ladecode; die Ressource erkennt man am folgenden Version-0-/32-Byte-Kopf.
+        byte[] file = File.ReadAllBytes(path);
+        // PSF2: Magic 72 b5 4a 86, Version 0, Kopfgroesse 32; dahinter 256 Glyphen (Kopf: Glyphgroesse, Hoehe, Breite).
         ReadOnlySpan<byte> magic = [0x72, 0xb5, 0x4a, 0x86, 0, 0, 0, 0, 32, 0, 0, 0];
-        int start = assembly.AsSpan().IndexOf(magic);
-        if (start < 0) return null;
-        var header = assembly.AsSpan(start);
-        int headerSize = BinaryPrimitives.ReadInt32LittleEndian(header[8..]);
-        int glyphBytes = BinaryPrimitives.ReadInt32LittleEndian(header[20..]);
-        int height = BinaryPrimitives.ReadInt32LittleEndian(header[24..]);
-        int width = BinaryPrimitives.ReadInt32LittleEndian(header[28..]);
-        return (header.Slice(headerSize, 256 * glyphBytes).ToArray(), width, height);
+        if (file.Length < 32 || !file.AsSpan().StartsWith(magic)) return null;
+        int headerSize = BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(8));
+        int glyphBytes = BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(20));
+        int height = BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(24));
+        int width = BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(28));
+        if (file.Length < headerSize + 256 * glyphBytes) return null;
+        return (file.AsSpan(headerSize, 256 * glyphBytes).ToArray(), width, height);
     }
 
     public static void WritePng(string path, int width, int height, int[] pixels)

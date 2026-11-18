@@ -66,6 +66,17 @@ class BuildCosmosTests(unittest.TestCase):
             for line in lines:
                 self.assertIn('-c core.longpaths=true', line)
 
+    def test_tool_install_uses_own_config_not_add_source(self):
+        # --add-source geht nicht mit packageSourceMapping; die Werkzeuge kommen aus einer erzeugten Konfiguration.
+        for args in ((), ('--global',)):
+            result = plan(*args)
+            self.assertEqual(0, result.returncode, result.stderr)
+            lines = [l for l in result.stdout.splitlines() if 'dotnet tool' in l]
+            self.assertEqual(2, len(lines))
+            for line in lines:
+                self.assertIn('--configfile', line)
+                self.assertNotIn('--add-source', line)
+
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
         self.assertRegex(commit, r'^[0-9a-f]{40}$')
