@@ -240,6 +240,34 @@ grep -h "Ende: App abgebrochen\|EXCEPTION\|Panic" .tools/frametimes/*/lauf*/seri
 
 Die übrigen Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Ziel 30 Bilder/s für ClassiCube) sind offen. Für ClassiCube bringt AOT wenig, weil das Rastern schon nativ im Kernel läuft.
 
+### Leistung und Langzeitstabilität mit wamrc-noredzone (18. November 2026)
+
+Gemessen von agent-laser-RED unter Linux (QEMU 10.2.2, Kernel `1227e60` mit `-p:ZehOSWasmAot=true` und Testschlüssel, `.aot` aus dem gepatchten wamrc). Die Treiberskripte und Rohdaten liegen nur lokal; hier stehen Methode und Ergebnis.
+
+**wasm3 gegen AOT, je 5 Paare.** KVM, ein Gast gepinnt auf einen Kern, Hostlast 1,2–1,5, Diagnosekernel mit Anteilszeilen (Raster gegen übrige App-Zeit), wasm3 und AOT abwechselnd mit demselben Paket, gewertet das letzte 60-s-Fenster (avg fps = Bilder/60). Doom 1.1.0 im Demo, ClassiCube 1.0.0 stehend am Spawnpunkt mit dem Standardspeicher des Messskripts (512 MiB).
+
+| App | wasm3 avg fps | AOT avg fps | weitere Werte |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | 50,8 (49,5–51,6) | 68,5 (68,2–68,7), +35 % | p95 40 → 30 ms, max 204–283 → 89–110 ms, App-Anteil Median 3,2 → 0,3 ms |
+| ClassiCube 1.0.0 | 27,0 | 30,2 | Spannweite je Laufzeit 23,6–38,6; App-Zeit = Raster-Zeit bis auf < 1 ms |
+
+Für Doom ist der Gewinn belastbar. Für ClassiCube ist der Unterschied nicht belegt: Er liegt in der Streuung, und fast die ganze Bildzeit ist Rastern im Kernel, auf das die Wasm-Laufzeit keinen Einfluss hat. In beiden Laufzeiten gab es je einen langsamen Lauf (~35 ms Median), also eine Eigenschaft von Szene oder Host. Mit 512 MiB liegen die ClassiCube-Werte am unteren Rand; mit 1 GiB sind es etwa 20 % mehr (Messung agent-laser-YELLOW).
+
+**Langzeit, je 3 × 20 Minuten.** AOT mit Gast 1 GiB, ein Gast je Kern. Doom 1.1.0 im Demo, ClassiCube 1.1.0 (Release-Paket) mit Zufallswelt und bewegter Kamera (w/a/s/d im Wechsel). Am Laufende wechselt der Treiber mit F4 in die Textshell und liest `free`. Fehler sind Kernel-Panik, Trap oder fehlende 60-s-Fenster bei laufender Gastuhr.
+
+| App | Beschleunigung | Läufe | Panik / Trap / Stillstand | avg fps je 60-s-Fenster | belegt am Ende |
+| --- | --- | --- | --- | --- | --- |
+| Doom 1.1.0 | KVM | 3 | 0 | 62–69 | 139–146 MB |
+| Doom 1.1.0 | TCG | 3 | 0 (altes `.aot`: 4 von 10 mit #GP) | 43–63 | 144 MB |
+| ClassiCube 1.1.0 | KVM | 3 | 0 | 21–42 | 97 MB (nach 2 Minuten ebenfalls 97 MB) |
+| ClassiCube 1.1.0 | TCG | 3 | 0 | 1,4–2,3 | 96–97 MB |
+
+Zusätzlich je ein 20-Minuten-Lauf unter künstlicher Hostlast (Rechenschleife auf dem SMT-Geschwister des Doom-Kerns, 256-MiB-Kopierschleife auf einem weiteren Kern, Hostlast bis 3,6): ClassiCube KVM 20–26 fps, Doom TCG 39–50 fps, beide ohne Fehler, Speicher wie oben. Zusammen 14 von 14 Läufen ohne Panik, Trap oder Stillstand.
+
+**Gastuhr.** Die Bildzeitfenster messen Gastzeit (LAPIC-Ticks, 100 je Sekunde). Unter Hostlast um 5 lief die Gastuhr in einem Doom-KVM-Lauf rund 14 % langsamer (106 600 statt etwa 123 000 Ticks in derselben Wandzeit); dadurch entstanden 17 statt 19 Fenster, ohne dass die App stand. Wer fps oder Fensterzahlen vergleicht, sollte die Ticks je Wandsekunde mitschreiben (`[LAPIC] Timer tick`-Zeilen im seriellen Protokoll). In allen anderen Läufen waren es 100 je Sekunde.
+
+**Grenzen.** Drei Läufe je Kombination sind eine kleine Stichprobe. Geprüft ist nur QEMU, nicht VMware und keine echte Hardware. ClassiCube erreicht unter TCG nur etwa 2 fps und durchläuft dort entsprechend wenige Bilder. `free` ist nur ein Wert am Laufende, kein Verlauf. Die Engine-Messung lief stehend; bewegt und in schweren Welten (Wald) wurde AOT nicht gegen wasm3 verglichen.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
