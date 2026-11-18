@@ -252,6 +252,22 @@ public class Ext2ReadOnlyTests
     }
 
     [Test]
+    public void Write_Beyond2GiB_Rev0WithRawLargeFileBit_IsRefused()
+    {
+        MemoryBlockDevice device = Formatted();
+        PatchSuperblock(device, Ext2SuperblockLayout.RevLevelOffset, 0);
+        PatchSuperblock(device, Ext2SuperblockLayout.FeatureRoCompatOffset, 0x0001 | Ext2SuperblockLayout.FeatureRoCompatLargeFile);
+        Ext2Superblock sb = Mount(device);
+        Assert.That(sb.IsReadOnly, Is.False);
+        Ext2Inode root = (Ext2Inode)sb.Root;
+        Assert.That(root.InodeOperations.Create(root, "big", VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out IVfsInode? big), Is.True);
+        OpenFile of = new(big!) { Position = int.MaxValue };
+        Assert.That(of.Operations.Write(of, "ab"u8), Is.Zero);
+        VfsStat attr = new() { Size = (ulong)int.MaxValue + 1 };
+        Assert.That(root.InodeOperations.SetAttr(big!, SetAttrFlags.Size, attr), Is.False);
+    }
+
+    [Test]
     public void Write_Beyond2GiB_WithLargeFile_IsAllowed()
     {
         MemoryBlockDevice device = Formatted();

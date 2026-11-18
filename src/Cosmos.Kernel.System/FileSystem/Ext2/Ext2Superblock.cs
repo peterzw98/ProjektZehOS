@@ -107,8 +107,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// </summary>
     public bool IsReadOnly { get; }
 
-    /// <summary>Largest regular file size this volume can record (2 GiB - 1 without LARGE_FILE).</summary>
-    internal ulong MaxFileSize => (FeatureRoCompat & Ext2SuperblockLayout.FeatureRoCompatLargeFile) != 0
+    /// <summary>
+    /// Largest regular file size this volume can record: 2 GiB - 1 without
+    /// LARGE_FILE. Revision 0 has no feature fields, so a raw bit there does
+    /// not lift the limit.
+    /// </summary>
+    internal ulong MaxFileSize => RevLevel >= 1 && (FeatureRoCompat & Ext2SuperblockLayout.FeatureRoCompatLargeFile) != 0
         ? ulong.MaxValue
         : Ext2SuperblockLayout.MaxSizeWithoutLargeFile;
 
