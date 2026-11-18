@@ -135,7 +135,12 @@ export -f dotnet
                                      (root / 'release').as_posix()], capture_output=True, text=True,
                                     env=environment, timeout=30)
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(2, len((root / 'release-builds.log').read_text().splitlines()))
+            builds = (root / 'release-builds.log').read_text().splitlines()
+            self.assertEqual(2, len(builds))
+            # Ab 0.6: Release mit Root-Profil und Migration, Installer mit GPT-Layout; geerbte Testschalter bleiben draussen.
+            self.assertIn('-p:ZehOSRootProfile=true -p:ZehOSRootMigration=true', builds[0])
+            self.assertIn('-p:ZehOSGptInstaller=true', builds[1])
+            self.assertNotIn('Probe', '\n'.join(builds))
             self.assertTrue((root / 'release/update-manifest.txt').is_file())
 
 
