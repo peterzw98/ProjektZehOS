@@ -1,9 +1,15 @@
 using System;
 using System.Text;
+using System.Threading;
 
 namespace ProjektZeh.Runtime.Wasm;
 
+#if ZEHOS_APP_PROFILE
+// Raster: Zeit in raster_draw/raster_fill je Bild; RasterCalls: Aufrufe je Bild (als "ms" ausgegeben, 1 Aufruf = 1,0).
+internal enum WasmFramePhase { App, Sleep, Copy, Scale, Desktop, Display, Raster, RasterCalls }
+#else
 internal enum WasmFramePhase { App, Sleep, Copy, Scale, Desktop, Display }
+#endif
 
 /// <summary>
 /// Zerlegt die Bildzeit von Paket-Apps in Anteile (Wasm-Rechnen bis present, sleep_ms der App, Bildkopie, Skalierung,
@@ -16,7 +22,28 @@ internal sealed class WasmFrameProfile
     // 100-us-Eimer bis 1 s (Doom erreicht p95 ueber 100 ms); laengere Dauern landen im letzten Eimer, das Maximum bleibt genau.
     private const int BucketMicroseconds = 100;
     private const int Buckets = 10_000;
+#if ZEHOS_APP_PROFILE
+    private static readonly string[] Names = ["app", "schlaf", "kopie", "skalierung", "desktop", "anzeige", "raster", "rasteraufrufe"];
+
+    private static long rasterTicks;
+    private static long rasterCalls;
+
+    /// <summary>Summiert die Zeit eines Rasteraufrufs (Worker-Thread) bis zum naechsten present.</summary>
+    public static void AddRaster(long startTicks)
+    {
+        Interlocked.Add(ref rasterTicks, System.Diagnostics.Stopwatch.GetTimestamp() - startTicks);
+        Interlocked.Increment(ref rasterCalls);
+    }
+
+    /// <summary>Holt und leert die seit dem letzten present aufgelaufene Rasterzeit in us und die Aufrufzahl.</summary>
+    public static (long Microseconds, long Calls) TakeRaster()
+    {
+        long ticks = Interlocked.Exchange(ref rasterTicks, 0);
+        return (ticks * 1_000_000 / System.Diagnostics.Stopwatch.Frequency, Interlocked.Exchange(ref rasterCalls, 0));
+    }
+#else
     private static readonly string[] Names = ["app", "schlaf", "kopie", "skalierung", "desktop", "anzeige"];
+#endif
 
     // Nach Names: statische Felder werden in Textreihenfolge initialisiert.
     public static WasmFrameProfile Shared { get; } = new();

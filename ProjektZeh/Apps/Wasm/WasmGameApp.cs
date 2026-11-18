@@ -273,6 +273,11 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             long slept = WasmRuntime.WaitedTicks - sleptAtReturn;
             profile.Record(WasmFramePhase.Sleep, WasmFrameProfile.Microseconds(0, slept));
             profile.Record(WasmFramePhase.App, WasmFrameProfile.Microseconds(presentReturned + slept, entered));
+#if ZEHOS_APP_PROFILE
+            var (rasterMicroseconds, rasterCalls) = WasmFrameProfile.TakeRaster();
+            profile.Record(WasmFramePhase.Raster, rasterMicroseconds);
+            profile.Record(WasmFramePhase.RasterCalls, rasterCalls * 1000);
+#endif
         }
         string? frameReport = null;
         lock (gate)

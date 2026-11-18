@@ -492,15 +492,27 @@ internal static unsafe partial class WasmRuntime
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_raster_draw")]
     private static int HostRasterDraw(byte* memory, uint length, uint call)
     {
+#if ZEHOS_APP_PROFILE
+        long started = Stopwatch.GetTimestamp();
+#endif
         try { return length > int.MaxValue ? WasmRasterizer.OutOfBounds : WasmRasterizer.Draw(new Span<byte>(memory, (int)length), call); }
         catch (Exception exception) { return ReportRasterFailure(exception); }
+#if ZEHOS_APP_PROFILE
+        finally { WasmFrameProfile.AddRaster(started); }
+#endif
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_raster_fill")]
     private static int HostRasterFill(byte* memory, uint length, uint offset, uint count, uint value)
     {
+#if ZEHOS_APP_PROFILE
+        long started = Stopwatch.GetTimestamp();
+#endif
         try { return length > int.MaxValue ? WasmRasterizer.OutOfBounds : WasmRasterizer.Fill(new Span<byte>(memory, (int)length), offset, count, value); }
         catch (Exception exception) { return ReportRasterFailure(exception); }
+#if ZEHOS_APP_PROFILE
+        finally { WasmFrameProfile.AddRaster(started); }
+#endif
     }
 
     private static int ReportRasterFailure(Exception exception)
