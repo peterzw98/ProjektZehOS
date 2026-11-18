@@ -34,7 +34,7 @@ internal sealed class DisplayService
         canvas = Canvas.GetFullScreen();
         if (canvas.Mode.ColorDepth != ColorDepth.ColorDepth32 || !DisplayMode.IsSupportedSize(canvas.Width, canvas.Height))
             throw new InvalidOperationException(
-                $"Der Desktop benoetigt 1024x720 bis 1920x1080 mit 32 Bit, gemeldet: {canvas.Width}x{canvas.Height}. Im Bootmenue 1024x768 waehlen.");
+                $"Der Desktop benoetigt 1024x720 bis 1920x1080 mit 32 Bit, gemeldet: {canvas.Width}x{canvas.Height}.");
         surface = CreateSurface();
         var current = new DisplayMode(canvas.Width, canvas.Height);
         Display = new DisplaySettings(current, ReadModes(current), SetMode, () => new(canvas.Width, canvas.Height));
