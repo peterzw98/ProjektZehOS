@@ -96,6 +96,13 @@ internal static class CosmosIsolationProbe
         Log("ISOLATION_PROBE gc ok");
         Fault("none", () => sink = 1);
         Log("ISOLATION_PROBE DONE");
+#if ZEHOS_ISOLATION_PROBE_NEGATIVE
+        // Gegenprobe: dieselbe Ausnahme ausserhalb des Workers muss das System weiterhin anhalten.
+        Log("ISOLATION_PROBE negative pf on probe thread");
+        FaultIsolation.EnterGuest();
+        sink = *(int*)0;
+        Log("ISOLATION_PROBE negative NOT HALTED");
+#endif
     }
 
     private static void Fault(string kind, Action trigger)
