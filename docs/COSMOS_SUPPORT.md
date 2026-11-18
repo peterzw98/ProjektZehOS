@@ -2,6 +2,35 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Dateisysteme nicht threadsicher: StorageLock (18. November 2026)
+
+**Befund:** Cosmos 3.0.97 schützt ext2 und FAT nicht gegen gleichzeitige Zugriffe. Gemessen mit den E4.0-Diagnoseläufen (KVM, je 1 GiB und 2 GiB RAM):
+
+- **Lauf 13 ohne Sperre:**
+  - Zwei Leser oder ein Leser neben einem Anleger lasen unveränderte Dateien falsch, etwa 1 von 30 000 Lesungen. Es gab keine Ausnahme.
+  - Danach meldete `e2fsck -fn` Exit 4: doppelt belegte Blöcke (Wurzelverzeichnis und neue Inodes teilen Blöcke) und überschriebene reservierte Inodes.
+  - Ein einzelner Leser allein las fehlerfrei.
+- **Läufe 14 (ext2) und 15 (FAT) mit gemeinsamer Sperre, inklusive Umbenenner:**
+  - 0 Falschlesungen in rund 260 000 Lesungen.
+  - `e2fsck -fn` Exit 0.
+  - `fsck.fat -n` zeigt nur die Merkmale des Cosmos-FAT-Formatierers (siehe unten).
+
+ZehOS greift seitdem über `StorageLock` (`ProjektZeh/Storage/StorageLock.cs`) auf Platten zu:
+
+- **Eine gemeinsame Sperre:** Hauptschleife, Wasm-Worker und Hintergrundaufgaben greifen nur noch über diese eine, reentrante Sperre auf Platten zu.
+- **Je Einzeloperation:** gesperrt wird in den Speicher-Grenzklassen je einzelner Operation, nie um die ganze Hauptschleife.
+- **Große Lesevorgänge** (Wasm-Module, AOT, Update-Images, WASI-Lesungen) laufen in Abschnitten von höchstens 1 MiB.
+- **Lange Warte- oder Haltezeiten** über 2 s werden seriell gemeldet. Abgebrochen wird nicht.
+- **Kein Warten unter der Sperre:** `MigrationWriteGate.Block` wartet nie unter der Sperre (`StorageLock.EnsureNotHeld`).
+- **Quellprüfung:** `StorageLockCoverageTests` prüft jede Zugriffsstelle (File, Directory, FileStream, VfsManager, InodeOperations und weitere) auf einen gesperrten Bereich.
+
+**Grenzen:**
+- Lesen und Schreiben auf schon geöffneten Streams erkennt die Quellprüfung nicht; diese Stellen sind von Hand gesperrt.
+- Ausdrücke in interpolierten Zeichenketten werden nicht geprüft.
+- Cosmos-interne Hintergrundzugriffe sind nicht abgedeckt; bekannt ist keiner.
+- `WasmSaveStore.Usage()` durchläuft `/save` bei jedem Schreiben unter einer Sperre. Das ist durch die Eintragsgrenze kurz.
+- Der Cosmos-FAT-Formatierer legt keinen Volume-Label-Eintrag im Wurzelverzeichnis an und lässt die Free-Cluster-Summary uninitialisiert. `fsck.fat -n` meldet das schon direkt nach dem Formatieren mit Exit 1; es ist kein Strukturfehler.
+
 ## Wasm-Hostrückrufe: Ausnahmeschutz (17. November 2026, #204)
 
 `present`, `present_indexed`, `open`, `file_size`, `file_read` und `close` fangen verwaltete Ausnahmen vor der nativen Rückkehr ab. `open`, `file_size` und `file_read` liefern bei Fehlern `-1`; `close` entfernt das Handle auch bei einem Schließfehler. Eine fehlgeschlagene Bildausgabe verwirft das Bild und meldet höchstens einmal je Lauf den Ausnahmetyp, die App läuft weiter. Auch die Diagnose darf keine Ausnahme weitergeben. Scheitert nach dem Öffnen die Handle-Registrierung, wird der noch nicht übernommene Stream geschützt freigegeben. Gastzeiger und Bildmaße prüft weiterhin die gemeinsame C-Brücke.

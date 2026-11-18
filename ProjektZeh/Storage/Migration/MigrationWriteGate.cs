@@ -62,6 +62,8 @@ internal sealed class MigrationWriteGate
 
     public void Block()
     {
+        // Wartet auf Schreiber, die fuer ihren naechsten Plattenzugriff die Speicher-Sperre brauchen.
+        StorageLock.EnsureNotHeld("Block");
         lock (gate)
         {
             if (migrating) throw new IOException("cause='MigrationBusy' message='Migration sperrt die Quelle.'");

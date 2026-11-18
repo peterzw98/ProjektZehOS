@@ -320,7 +320,7 @@ internal static class CosmosExt2Formatter
             WriteBytes(device, superblockOffset, superblock);
         }
 
-        device.Flush();
+        using (StorageLock.Enter()) device.Flush();
         return true;
     }
 
@@ -377,7 +377,7 @@ internal static class CosmosExt2Formatter
         if (offsetInBlock == 0 && (ulong)data.Length % deviceBlockSize == 0)
         {
             ulong blocks = (ulong)data.Length / deviceBlockSize;
-            device.WriteBlock(lba, blocks, data);
+            using (StorageLock.Enter()) device.WriteBlock(lba, blocks, data);
         }
         else
         {
@@ -386,9 +386,9 @@ internal static class CosmosExt2Formatter
             ulong endLba = (endByte + deviceBlockSize - 1) / deviceBlockSize;
             ulong count = endLba - start;
             byte[] buffer = new byte[count * deviceBlockSize];
-            device.ReadBlock(start, count, buffer);
+            using (StorageLock.Enter()) device.ReadBlock(start, count, buffer);
             data.CopyTo(buffer.AsSpan(offsetInBlock, data.Length));
-            device.WriteBlock(start, count, buffer);
+            using (StorageLock.Enter()) device.WriteBlock(start, count, buffer);
         }
     }
 
@@ -406,7 +406,7 @@ internal static class CosmosExt2Formatter
         ulong byteOffset = (ulong)ext2Block * blockSize;
         ulong lba = byteOffset / deviceBlockSize;
         ulong deviceBlocks = (ulong)count * blockSize / deviceBlockSize;
-        device.WriteBlock(lba, deviceBlocks, data);
+        using (StorageLock.Enter()) device.WriteBlock(lba, deviceBlocks, data);
     }
 
     /// <summary>
@@ -423,6 +423,6 @@ internal static class CosmosExt2Formatter
         ulong byteOffset = (ulong)ext2Block * blockSize;
         ulong lba = byteOffset / deviceBlockSize;
         ulong deviceBlocks = (ulong)count * blockSize / deviceBlockSize;
-        device.ReadBlock(lba, deviceBlocks, destination);
+        using (StorageLock.Enter()) device.ReadBlock(lba, deviceBlocks, destination);
     }
 }
