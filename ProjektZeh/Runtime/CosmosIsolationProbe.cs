@@ -1,5 +1,6 @@
 #if ZEHOS_ISOLATION_PROBE
 using System;
+using System.Diagnostics;
 using System.Threading;
 
 namespace ProjektZeh.Runtime;
@@ -7,7 +8,8 @@ namespace ProjektZeh.Runtime;
 /// <summary>
 /// Gastprobe 12.4-I1 (<c>-p:ZehOSIsolationProbe=true</c>, nur Probe): #DE und #PF im Wasm-Worker, danach GC und ein
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
-/// Probe-Thread aus; das System muss dann wie bisher anhalten.
+/// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
+/// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
 /// </summary>
 internal static class CosmosIsolationProbe
 {
@@ -27,6 +29,24 @@ internal static class CosmosIsolationProbe
         Log("ISOLATION_PROBE gc ok");
         Fault("none", () => sink = 1);
         Log("ISOLATION_PROBE DONE");
+#if ZEHOS_ISOLATION_PROBE_NMI
+        // Der Worker rechnet bis zu zwei Minuten im Gastzustand; das Skript loest waehrenddessen den NMI aus.
+        Wasm.WasmRuntime.ProbeEnqueue(() =>
+        {
+            FaultIsolation.EnterNativeRun();
+            try
+            {
+                Log("ISOLATION_PROBE nmi window open");
+                long end = Stopwatch.GetTimestamp() + 120 * Stopwatch.Frequency;
+                while (Stopwatch.GetTimestamp() < end) sink++;
+                Log("ISOLATION_PROBE nmi window closed");
+            }
+            finally
+            {
+                FaultIsolation.LeaveNativeRun();
+            }
+        });
+#endif
 #if ZEHOS_ISOLATION_PROBE_NEGATIVE
         Log("ISOLATION_PROBE negative pf on probe thread");
         FaultIsolation.EnterNativeRun();
@@ -64,7 +84,7 @@ internal static class CosmosIsolationProbe
             if (Volatile.Read(ref done) == 1) return;
             if (Wasm.WasmRuntime.IsolatedRuns != before)
             {
-                Log("ISOLATION_PROBE fault=" + kind + " handled=1");
+                Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
                 return;
             }
             Thread.Sleep(100);

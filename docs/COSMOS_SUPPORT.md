@@ -27,20 +27,29 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
 - Eine verwaltete Ganzzahldivision durch null löst unter Cosmos/NativeAOT eine echte CPU-Ausnahme (#DE) aus, keine
   `DivideByZeroException`.
 
-**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` (parameterlos, bindet nach `check-plug-binding.py`).
+**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` und `Panic.PrintCpuContext(ref IRQContext)` (beide
+binden nach `check-plug-binding.py`). Das echte `IRQContext` ist in `Cosmos.Kernel.Core` intern; Cosmos.Patcher vergleicht
+Parametertypen aber nur über den vollen Namen, deshalb genügt die leere öffentliche Attrappe
+`Cosmos.Kernel.Core.CPU.IRQContext` in ZehOS. Der Plug gibt die Register wie Cosmos aus, ergänzt Thread, Wasm-Worker und
+Gastzustand und merkt sich Vektor und RIP über feste Feldversätze (3.0.97: `interrupt` bei 120, `rip` bei 152).
 
-- **Isolieren** (`FaultIsolationPolicy`): nur wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
+- **Isolieren** (`FaultIsolationPolicy`): nur bei den Programmfehlern #DE (0), #UD (6), #GP (13) und #PF (14) und nur
+  wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
   läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
   beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
   `SchedulerManager.ScheduleFromInterrupt` (intern, per `UnsafeAccessor`) wechselt in den nächsten Thread.
-- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife).
+- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife), insbesondere bei NMI, Machine Check und Double Fault, die
+  einen Zustand der Maschine melden, und bei einem Halt ohne frisch gemerkten Vektor (anderer Panic-Pfad).
 - **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
   „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
   Paketdateien frei und startet einen neuen Worker.
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
-`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Zahlen im PR.
+`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
+gemerkten Vektor mit dem erwarteten (#DE 0, #PF 14) und fällt so bei verschobenen Feldversätzen auf. Die Gegenprobe
+`-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
+das System muss anhalten. Zahlen im PR.
 
 **Grenzen:**
 
@@ -48,8 +57,10 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
   App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben. Daher
   meldet der Kernel „Neustart empfohlen“ und startet nach 3 isolierten Ausnahmen keinen Worker mehr; Paket-Apps laufen
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
-- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
-  Schritt mit einem Plug, der `IRQContext` sieht.
+- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP steht seit dem `PrintCpuContext`-Plug zur
+  Verfügung und erscheint im Protokoll der Hauptschleife.
+- Die Feldversätze von `IRQContext` gelten für Cosmos 3.0.97 und sind bei jedem Cosmos-Update mit der Gastprobe neu zu
+  prüfen.
 - Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
 - Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
