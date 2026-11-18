@@ -39,10 +39,6 @@ fi
 if [ -n "$version" ] && [[ "$version" != *-zehos.* ]] && [ -z "$feed" ]; then
     fail "Version $version ohne -zehos.: nur mit ausdruecklichem --feed (ausserhalb von deploy/cosmos/feed) erlaubt"
 fi
-# dotnet tool install liest nur den Standardfeed deploy/cosmos/feed (aus dem NuGet.Config des Repositorys); andere Feeds wuerde es nicht finden.
-if [ -n "$feed" ] && [ "$tools" = 1 ] && [ "$plan" = 0 ] && [ "$(cd "$feed" 2>/dev/null && pwd)" != "$root/deploy/cosmos/feed" ]; then
-    fail "--feed ausserhalb von deploy/cosmos/feed nur zusammen mit --no-tools (Werkzeuginstallation liest nur den Standardfeed)"
-fi
 [ -n "$feed" ] || feed="$root/deploy/cosmos/feed"
 feed="$(mkdir -p "$feed" && cd "$feed" && pwd)"
 src="$root/.tools/cosmos-src"
@@ -55,6 +51,7 @@ build_path_map="$src=/home/runner/work/Cosmos/Cosmos"
 # Eigene NuGet-Konfiguration fuer den Quellbau: unabhaengig von NuGet.Config des Repositorys und vom Benutzer; die Zwischenpakete
 # des Baus (Cosmos.*) kommen nur aus $out, alles andere aus nuget.org.
 build_nuget_config="$root/.tools/cosmos-build.NuGet.Config"
+tools_nuget_config="$root/.tools/cosmos-tools.NuGet.Config"
 
 # Stempelpruefung: dieselbe Version darf nur zu demselben Commit gehoeren (sonst liefert der NuGet-Cache den alten Stand).
 stamp="$feed/$version.commit"
@@ -182,11 +179,37 @@ XML
 fi
 
 if [ "$tools" = 1 ]; then
+    # Eigene Konfiguration fuer die Werkzeuginstallation: --add-source geht nicht mit packageSourceMapping (NuGet.Config des
+    # Repositorys), und so gilt auch ein --feed ausserhalb von deploy/cosmos/feed. Cosmos.* nur aus dem Feed.
+    if [ "$plan" = 0 ]; then
+        mkdir -p "$(dirname "$tools_nuget_config")"
+        cat > "$tools_nuget_config" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="cosmos-feed" value="$feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="cosmos-feed">
+      <package pattern="Cosmos.*" />
+      <package pattern="_Cosmos.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+XML
+    else
+        echo "schreibe $tools_nuget_config"
+    fi
     for tool in Cosmos.Patcher Cosmos.Tools; do
         if [ "$global" = 1 ]; then
-            run dotnet tool update --global "$tool" --version "$version" --add-source "$feed"
+            run dotnet tool update --global "$tool" --version "$version" --configfile "$tools_nuget_config"
         else
-            run dotnet tool install --tool-path "$toolpath" "$tool" --version "$version" --add-source "$feed"
+            run dotnet tool install --tool-path "$toolpath" "$tool" --version "$version" --configfile "$tools_nuget_config"
         fi
     done
 fi
