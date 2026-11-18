@@ -28,10 +28,14 @@ internal static class ThreadStarter
     /// </summary>
     internal static Func<int, bool> StackProbe { get; set; } = _ => true;
 
-    /// <summary>Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) nach der Stackprobe.</summary>
-    public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0) => TryStart(body, stackBytes, StackProbe);
+    /// <summary>
+    /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) nach der Stackprobe.
+    /// <paramref name="background"/> markiert dauerhaft wartende Worker, damit sie ein Prozessende (Hosttests) nicht aufhalten.
+    /// </summary>
+    public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false) =>
+        TryStart(body, stackBytes, StackProbe, background);
 
-    internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe)
+    internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe, bool background = false)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentOutOfRangeException.ThrowIfNegative(stackBytes);
@@ -43,6 +47,7 @@ internal static class ThreadStarter
         try
         {
             var thread = stackBytes == 0 ? new Thread(body) : new Thread(body, stackBytes);
+            thread.IsBackground = background;
             thread.Start();
             return ResultObjectFactory.CreateSuccess(thread);
         }
