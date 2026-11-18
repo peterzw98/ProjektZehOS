@@ -67,7 +67,7 @@ Belegungsdifferenzen einzelner Inodes auf, einmal war das Ergebnis sauber (Entsc
 | --- | --- | --- | --- |
 | Matrix 32 GiB | Installation, Boot im Profil `Root`, Ersteinrichtung, zwei Terminals mit eigenem Arbeitsverzeichnis, Dateimanager, Neustart (`s_state` 1), offline `e2fsck` und `fsck.fat` der ESP | PASS | f22e311 (0.5.129), red-matrix |
 | Matrix 32 GiB | virtuelle Dateien per `cat` und Bild: `/proc/version`, `/proc/meminfo`, `/proc/mounts`, `/sys/kernel/components`, `/dev/null` | PASS | f22e311, red-matrix |
-| Matrix 32 GiB | Inode-Grenzfall (~17.500 Dateien je Mount): saubere Meldung, kein Absturz, `e2fsck` sauber | PASS | red-matrix |
+| Matrix 32 GiB | Inode-Grenzfall (~17.500 Dateien je Mount): saubere Meldung, kein Absturz, `e2fsck` sauber | OFFEN | erster Lauf ungültig: die Vorbereitung legte die 18.000 Dateien nie an (frische Root ohne `/home`, `debugfs` endet trotz Fehlern mit 0); Wiederholung mit Zählprüfung steht aus, red-matrix |
 | Matrix 64/128 GiB | wie 32 GiB (ohne Inode-Grenze), virtuelle Dateien per Bild | PASS | f22e311 (0.5.130), senior; erster 128-GiB-Lauf FEHLER unter Hostlast, Wiederholung allein PASS (siehe Grenzen) |
 | Legacy | Regression mit 64-MiB-Datenplatte (P1) | PASS | 875e94c-Stand, red-matrix |
 | `pkg install`, `update install` | in der Matrix | OFFEN | Runde 2 (Testschlüsselbau, lokaler Server) |
