@@ -15,25 +15,28 @@ namespace Cosmos.Kernel.Tests.System.FileSystem.Ext2;
 public class Ext2InodeCacheTests
 {
     [Test]
-    public void InodeCache_ManyInodes_DoesNotGrowDictionary()
+    public void InodeCache_ReadDirOf30000Entries_DoesNotGrowDictionary()
     {
-        MemoryBlockDevice device = new("ram0", 512, 65536); // 32 MiB
-        Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
+        // 256 MiB with 2 KiB blocks: 8 groups of 4096 inodes, directory fits into direct + single indirect blocks.
+        MemoryBlockDevice device = new("ram0", 512, 524288);
+        Assert.That(new Ext2FileSystemType(device).TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 2048 }), Is.True);
+
+        const int Files = 30_000;
+        Assert.That(new Ext2FileSystemType(device).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? writer), Is.True);
+        Assert.That(((Ext2Superblock)writer!).InodesCount, Is.GreaterThan((uint)Files + 16), "precondition: enough inodes");
+        Ext2Inode writeRoot = (Ext2Inode)writer.Root;
+        for (int i = 0; i < Files; i++)
+        {
+            Assert.That(writeRoot.InodeOperations.Create(writeRoot, "f" + i, VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out _), Is.True, $"create {i}");
+        }
+
+        // Fresh mount: ReadDir alone fills the cache with all 30,000 inodes; a dictionary starting small would resize many times.
+        Assert.That(new Ext2FileSystemType(device).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
         Ext2Superblock sb = (Ext2Superblock)vsb!;
         int capacity = sb.InodeCacheCapacity;
         Assert.That(capacity, Is.GreaterThanOrEqualTo(Ext2Superblock.InitialInodeCacheSize(sb.InodesCount)));
 
-        // Every created inode is cached; a dictionary starting small would resize many times.
-        const int Files = 1500;
-        Assert.That(sb.InodesCount, Is.GreaterThan((uint)Files + 16), "precondition: enough inodes");
         Ext2Inode root = (Ext2Inode)sb.Root;
-        for (int i = 0; i < Files; i++)
-        {
-            Assert.That(root.InodeOperations.Create(root, "f" + i, VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out _), Is.True, $"create {i}");
-        }
-
         Assert.That(root.InodeOperations.ReadDir(root, out IReadOnlyList<IVfsInode> entries), Is.True);
         Assert.That(entries.Count, Is.GreaterThanOrEqualTo(Files));
         Assert.That(sb.InodeCacheCapacity, Is.EqualTo(capacity));
