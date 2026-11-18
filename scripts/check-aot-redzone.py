@@ -8,8 +8,10 @@ wamrc (fixture/wamrc-noredzone.patch) erzeugt deshalb keine Zugriffe der Form [r
 Ergebnis selbst, unabhaengig von der wamrc-Pruefsumme in build-package.py.
 
 Grenzen: objdump disassembliert die ganze Datei roh, auch Kopf und Daten. Ein Treffer in Daten waere ein Fehlalarm und
-muss von Hand geklaert werden; bei den bisherigen nrz-Dateien (Doom, ClassiCube, Probe-Fixtures) gab es keinen. Zugriffe
-ueber ein anderes Basisregister, das RSP kopiert hat, erkennt die Pruefung nicht.
+muss von Hand geklaert werden; bei den bisherigen nrz-Dateien (Doom, ClassiCube, Probe-Fixtures) gab es keinen. Laeuft
+die Dekodierung ueber Daten aus dem Takt, kann sie umgekehrt einen echten Befehl verfehlen; lea [rsp-0x..] zaehlt mit,
+obwohl es nur eine Adresse berechnet. Zugriffe ueber ein anderes Basisregister, das RSP kopiert hat, erkennt die
+Pruefung nicht.
 """
 
 import re
