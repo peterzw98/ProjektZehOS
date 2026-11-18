@@ -34,8 +34,8 @@ Cosmos 3.0.97 läuft auf genau einer CPU. Die Schnittstellen sind für mehrere C
 | Platzierung | `SelectCpu` und `Balance` haben keinen Aufrufer | `docs/articles/dev/scheduler.md:373` |
 | MADT | CPU-Liste wird bereits gelesen (bis 256) | `Native.MultiArch/ACPI/acpi_wrapper.c:166` |
 
-Vorhanden und brauchbar: `PerCpuState`, `SpinLock` mit IRQ-sicherer Variante, Heap-, Seiten- und Seriell-Sperre,
-Ausnahmezustand je Thread (Phase 0 von Upstream, in 3.0.97 enthalten).
+Vorhanden: `PerCpuState`, Heap-, Seiten- und Seriell-Sperre, Ausnahmezustand je Thread (Phase 0 von Upstream, in
+3.0.97 enthalten). Cosmos' `SpinLock` ist `internal` (`Core/Scheduler/SpinLock.cs:17`), ZehOS kann ihn nicht nutzen.
 
 ## 3. Befund: Upstream baut SMP gerade selbst
 
@@ -74,6 +74,11 @@ Lücken im Upstream-Stapel, die ZehOS betreffen:
 - **Kein TSS, keine IST-Stacks, kein Hook für CPU-Ausnahmen, keine Operation „Thread von außen beenden“.** Das sind
   die Stellen, an denen 12.4 heute Umwege braucht; der Stapel ändert daran nichts.
 - `SpinLock` dreht ohne `pause`; auf Hyperthreads bremst das den Geschwisterthread.
+- **Stacks beendeter Threads bleiben belegt.** `ReleaseStack` gibt nur den Stack eines Threads frei, der nie gelaufen
+  ist (`SchedulerThread.cs:307-321`, drei Aufrufer beim Ablehnen eines Threads).
+- **`Main` wird mit der Affinität „Compute“ erzeugt**, also auf allen CPUs außer 0. `KernelCpus.DefaultAffinity` zu
+  setzen verschiebt den Hauptthread nicht; das tut nur `ThreadAffinity.Current` (`KernelCpus.cs:62-72`).
+  `Environment.ProcessorCount` liest die Standardaffinität beim ersten Zugriff und behält den Wert.
 
 ## 4. Wege
 
@@ -81,7 +86,7 @@ Lücken im Upstream-Stapel, die ZehOS betreffen:
 | --- | --- | --- | --- |
 | Eigener Code im heikelsten Teil (CPU-Start, GC-Stopp, Sperrordnung) | keiner | keiner, nur Upstream-Commits | rund 6.000 Zeilen Entsprechung |
 | SMP in ZehOS ab | unbekannt (Release-Takt bis 1. November: fünf Versionen in vier Wochen) | nach Etappe 5 | Monate |
-| Ausbau, wenn Upstream fertig ist | entfällt | Grundstand wechseln, die SMP-Schicht entfällt (Isolationsregel 6) | großer Umbau, zwei Mechanismen weichen ab |
+| Ausbau, wenn Upstream fertig ist | entfällt | Grundstand wechseln, die übernommenen SMP-Commits entfallen (Isolationsregel 6) | großer Umbau, zwei Mechanismen weichen ab |
 | Umwege an der Wurzel beheben | nein | ja (Abschnitt 8) | möglich |
 | Risiko | Termin, Lücken aus Abschnitt 3 bleiben | Entwurfscode ändert sich; 12 ungeprüfte `gen3`-Commits kommen mit | Fehler in GC und Sperren, Dauerpflege |
 
@@ -107,9 +112,10 @@ Cosmos (Branch cosmos: Release-Stand + Upstream-SMP-Stapel + ZehOS-Patchreihe)
 
 ### 5.1 Isolationsregeln
 
-1. **Der Cosmos-Baum hat drei getrennte Schichten:** den Stand eines Releases (heute 3.0.97), darauf unverändert
-   übernommene Upstream-Commits (der SMP-Stapel), darauf die ZehOS-Patchreihe. Jeder eigene Patch ist ein eigener
-   Commit und steht in `PATCHES.md` mit Grund, entferntem ZehOS-Umweg und Prüfung.
+1. **Der Cosmos-Baum enthält drei Arten von Commits:** den Stand eines Releases (heute 3.0.97), unverändert
+   übernommene Upstream-Commits (der SMP-Stapel) und eigene Patches. Jeder eigene Patch ist ein eigener Commit und
+   steht in `PATCHES.md` mit Commit, Grund, entferntem ZehOS-Umweg und Prüfung. Die Reihenfolge im Verlauf ist die
+   der Entstehung; `PATCHES.md` ist die Liste, nach der die Patches auf einen neuen Grundstand übertragen werden.
 2. **Im Cosmos-Baum liegt keine ZehOS-Policy.** Patches beheben Fehler oder öffnen eine Schnittstelle; Scheduler,
    Topologie und Appregeln bleiben in ZehOS.
 3. **ZehOS spricht für SMP nur die API, die Upstream einführt** (`IScheduler` in der Form von Phase 3b/5b,
@@ -118,8 +124,8 @@ Cosmos (Branch cosmos: Release-Stand + Upstream-SMP-Stapel + ZehOS-Patchreihe)
    experimentelle Naht noch einmal, ändert sich nur sie.
 5. **Die Paketversion ist der Schalter.** `ProjektZeh.csproj` und die CI lesen die Cosmos-Version aus einer
    Eigenschaft (`3.0.97-zehos.N` aus dem lokalen Feed).
-6. **Tausch, wenn ein Cosmos-Release SMP enthält:** Die unterste Schicht wird das neue Release, die mittlere entfällt,
-   die Patchreihe wird darauf neu aufgespielt. Der eigene Build bleibt, solange `PATCHES.md` nicht leer ist: Upstream
+6. **Tausch, wenn ein Cosmos-Release SMP enthält:** Der Branch beginnt neu mit dem Stand dieses Releases, die
+   übernommenen Upstream-Commits entfallen, die Patches aus `PATCHES.md` werden darauf neu aufgespielt. Der eigene Build bleibt, solange `PATCHES.md` nicht leer ist: Upstream
    erfährt von unseren Korrekturen nichts (keine Issues oder PRs bei Cosmos), ein reines NuGet-Release enthielte sie nicht.
 
 ### 5.2 CPU-Start und Per-CPU-Zustand
@@ -129,15 +135,19 @@ Cosmos gibt sie nacheinander frei, jede richtet APIC und Timer ein und endet in 
 ZehOS ergänzt nur:
 
 - Bootzeile und `sysinfo`: Zahl der CPUs, Kerne und Hyperthreads.
-- CPU-Begrenzung ohne Cosmos-Patch: Mit `zehos.cpus=1` auf der Kernel-Kommandozeile (`Bootloader/limine.conf`) setzt
-  ZehOS die Standardaffinität auf CPU 0. Die anderen CPUs sind online, bleiben aber im Idle. Der Recovery-Build
+- CPU-Begrenzung ohne Cosmos-Patch: Mit `zehos.cpus=1` auf der Kernel-Kommandozeile (`Bootloader/limine.conf`,
+  gelesen über `Limine.Cmdline`) setzt ZehOS als Erstes im Hauptthread `ThreadAffinity.Current` und
+  `KernelCpus.DefaultAffinity` auf CPU 0, vor dem ersten Threadstart und vor dem ersten Zugriff auf
+  `Environment.ProcessorCount`. Die anderen CPUs sind online, bleiben aber im Idle. Der Recovery-Build
   (`ZehOSRecovery`) verhält sich immer so.
 - `zehos.smt=off` nimmt die zweiten Hyperthreads jedes Kerns aus der Standardaffinität.
 
 ### 5.3 Topologie und Hyperthreading
 
-`CpuTopology` ordnet jedem CPU-Index Verbund, Kern und Geschwister zu. Quelle sind die APIC-IDs (Limine-MP-Liste) und
-die Feldbreiten aus CPUID, einmal auf der Boot-CPU gelesen (`X86Base.CpuId`, wie in `CosmosVmwareClockPlug`):
+`CpuTopology` ordnet jedem CPU-Index Verbund, Kern und Geschwister zu. Quelle sind die APIC-ID jeder CPU und die
+Feldbreiten aus CPUID (`X86Base.CpuId`, wie in `CosmosVmwareClockPlug`). Die Zuordnung CPU-Index zu APIC-ID ist in
+Cosmos intern (`Smp.TryGetHardwareId`); ZehOS liest sie deshalb selbst, indem je CPU ein dorthin gepinnter Thread
+seine APIC-ID liest (CPUID-Blatt `0x0B`, Register EDX, sonst `LocalApic.GetId()`). Feldbreiten:
 Blatt `0x1F`, sonst `0x0B`, sonst `0x04`/`0x01`, bei AMD `0x8000001E`. Ohne verwertbare Angaben gilt jede CPU als
 eigener Kern. Die Zerlegung ist eine reine Funktion und wird mit aufgezeichneten CPUID-Werten im Hosttest geprüft.
 
@@ -159,9 +169,13 @@ wie gleiche Kerne. Zwei Wasm-Apps dürfen sich einen Kern teilen (Entscheidung 5
 
 Gelten für jeden ZehOS-Code, der in Scheduler-Hooks oder Interrupts läuft:
 
-- Unter einem Spinlock und in jedem Scheduler-Hook wird nichts allokiert und nichts protokolliert. Der Scheduler-Kern
-  arbeitet deshalb auf vorab dimensionierten Feldern, wie heute `RoundRobinQueue`.
-- Eine Interruptmaske ist keine Sperre mehr. Wo Unterbrechung und Thread Daten teilen, braucht es eine IRQ-sichere Sperre.
+- Unter einem Spinlock und in den Scheduler-Hooks für Bereitwerden, Auswahl, Tick und Platzierung wird nichts
+  allokiert und nichts protokolliert. Der Scheduler-Kern arbeitet deshalb auf vorab dimensionierten Feldern, wie heute
+  `RoundRobinQueue`. Allokieren dürfen nur `OnThreadCreate` und die übrigen Lebenszyklus-Hooks (`IScheduler.cs:18-21`).
+- Eine Interruptmaske ist keine Sperre mehr. Wo Unterbrechung und Thread Daten teilen, braucht es eine IRQ-sichere
+  Sperre. ZehOS bringt dafür eine eigene mit (`CosmosIrqLock`: Interrupts maskieren, dann drehen). Sie nimmt nicht am
+  Stopp-Protokoll des GC teil; deshalb gilt in ihr ohne Ausnahme: keine Allokation, kein Protokoll, keine zweite
+  Sperre, nur wenige Zeilen.
 - Der GC bleibt „Welt anhalten“. Mit mehr CPUs stehen bei jeder Sammlung alle; die Pausen werden gemessen
   (Abnahme in Etappe 6), bevor die Oberfläche auf eine andere CPU als die Treiber wandert.
 
@@ -169,7 +183,7 @@ Gelten für jeden ZehOS-Code, der in Scheduler-Hooks oder Interrupts läuft:
 
 | Stelle | Heute | Mit SMP |
 | --- | --- | --- |
-| `Input/CosmosInputService.cs:59`, `CosmosKeyboardPlug.cs:34`, `CosmosUsbTabletDriver.cs:53` | Maske schützt Puffer zwischen Interrupt und Hauptschleife | IRQ-sichere Sperre; Plug gegen Upstreams neue `KeyboardManager`-Sperre (4b) abgleichen |
+| `Input/CosmosInputService.cs:59`, `CosmosKeyboardPlug.cs:34`, `CosmosUsbTabletDriver.cs:53` | Maske schützt Puffer zwischen Interrupt und Hauptschleife | `CosmosIrqLock` (5.4); Plug gegen Upstreams neue `KeyboardManager`-Sperre (4b) abgleichen |
 | `Scheduling/CosmosRoundRobinScheduler.cs`, `RoundRobinCore`, `RoundRobinQueue` | Policy mit Idle-Sonderfall | entfällt, ersetzt durch Abschnitt 6 |
 | `Runtime/InteractiveSession.cs:146` (Hauptschleife) | läuft als Idle-Thread, `Thread.Sleep(1)` wartet per Halt | läuft nach 5b als normaler Thread und parkt wirklich |
 | `Runtime/CosmosFaultIsolation.cs:168-186` | `UnsafeAccessor` auf `ScheduleFromInterrupt`, Quarantäne-Menge | Signatur und Rahmen-Offsets (120/152) gegen neue `Interrupts.s` prüfen; Quarantäne ohne Sperre lesbar halten |
@@ -184,26 +198,32 @@ Gelten für jeden ZehOS-Code, der in Scheduler-Hooks oder Interrupts läuft:
 
 ## 6. Scheduler-Ersatz
 
-Der neue Scheduler heißt hier **Klassenscheduler**. Er ersetzt Round-Robin auch auf einer CPU und kommt deshalb
-schon in Etappe 4, vor dem SMP-Stapel.
+Der neue Scheduler heißt hier **Klassenscheduler**. Er ersetzt Round-Robin schon in Etappe 4, vor dem SMP-Stapel.
+
+**Grenze bis Etappe 5.** Auf 3.0.97 ist die Hauptschleife der Idle-Thread und blockiert nie; ihr `Thread.Sleep`
+wartet per Halt, ohne die CPU abzugeben. Als Klasse „Interaktiv“ würde sie die Worker auf 2 von 10 Ticks drücken, auch
+wenn die Oberfläche nichts zu tun hat. In Etappe 4 läuft sie deshalb in der Klasse Normal mit der heutigen
+Idle-Sonderregel und verhält sich wie unter Round-Robin; neu ist dort nur die Klasse Hintergrund. Der Vorrang der
+Oberfläche kommt in Etappe 5, sobald `Main` ein normaler Thread ist (Phase 5b).
 
 **Aufbau.** `ClassSchedulerCore<T>` (ohne Cosmos-Typen) hält je CPU drei Queues fester Größe.
 `CosmosClassScheduler` reicht die Hooks durch. Auf 3.0.97 implementiert der Adapter die alte Naht, danach die neue;
 der Kern bleibt gleich.
 
-**Klassen.** Gesetzt beim Start über `ThreadStarter.TryStart` (einziger Startweg im Kernel, neuer Parameter) und
-`SchedulerManager.SetPriority`:
+**Klassen.** Gesetzt beim Start über `ThreadStarter.TryStart` (neuer Parameter; einziger Startweg im Produktivcode,
+die Proben starten Threads direkt und bleiben Normal) und `SchedulerManager.SetPriority`:
 
 | Klasse | Threads | Zeitscheibe |
 | --- | --- | --- |
-| Interaktiv | Hauptschleife (Desktop, Textshell, Eingabe) | 1 Tick (10 ms) |
+| Interaktiv | Hauptschleife (Desktop, Textshell, Eingabe), ab Etappe 5 | 1 Tick (10 ms) |
 | Normal | Wasm-Worker, Kennwort-Worker, Shell-Jobs | 2 Ticks (wie heute) |
 | Hintergrund | `BackgroundTaskService`, Netzautomatik, Downloads | 4 Ticks |
 
 **Auswahl je CPU.** Die höchste nicht leere Klasse läuft, innerhalb der Klasse reihum. Wird ein Thread einer höheren
 Klasse bereit, verdrängt er sofort. Gegen Verhungern gilt eine feste Regel statt Alterung: Wartet eine niedrigere
-Klasse, kommt sie nach 8 aufeinanderfolgenden Scheiben der höheren einmal dran. Eine dauernd rechnende
-Hauptschleife behält so neben einem Wasm-Worker 8 von 10 Ticks; heute bekommt sie unter Last ein Drittel.
+Klasse, kommt sie nach 8 aufeinanderfolgenden Scheiben der höheren einmal dran. Ab Etappe 5 behält eine dauernd
+rechnende Hauptschleife so neben einem Wasm-Worker 8 von 10 Ticks; eine wartende gibt die CPU ganz ab. Heute bekommt
+sie unter Last ein Drittel, ob sie rechnet oder wartet.
 
 **Platzierung** (`SelectCpu`): unter den erlaubten CPUs in dieser Reihenfolge: die letzte CPU des Threads, wenn sie
 frei ist; eine CPU auf ganz freiem Kern; eine freie CPU, deren Geschwister keine höhere Klasse ausführt; sonst die
@@ -226,19 +246,20 @@ heute durch `SetScheduler`. Die kleinste Lösung wäre, den eigenen Scheduler zu
 | | Stride (Cosmos) | Klassenscheduler (ZehOS) |
 | --- | --- | --- |
 | Eigener Code | fast keiner | rund 400 Zeilen plus Hosttests |
-| Kosten je Entscheidung | sortiertes Einfügen, linear in der Queue-Länge (`StrideScheduler.cs:653-677`) | drei feste Queues, konstant |
+| Kosten je Entscheidung | sortiertes Einfügen, linear in der Queue-Länge (`InsertByPass`, 3.0.97: `StrideScheduler.cs:532`) | drei feste Queues, konstant |
 | Oberfläche unter Last | Vorsprung von einer halben Zeitscheibe für „interaktive“ Threads, per Heuristik | verdrängt sofort, per Regel |
 | Fairness bei vielen gleichen Threads | anteilig nach Tickets, sehr gut | reihum in der Klasse |
-| Hyperthreads | unbekannt; wählt die CPU mit der kürzesten Queue, ein freies Geschwister eines belegten Kerns zählt wie ein freier Kern | erst ganze Kerne (5.3) |
+| Platzierung | bleibt auf der letzten CPU, wechselt nur zu einer CPU mit unter 80 % von deren Ticketlast (SMP-Stand `StrideScheduler.cs:363-412`); Hyperthreads unbekannt, ein freies Geschwister eines belegten Kerns zählt wie ein freier Kern | erst ganze Kerne (5.3) |
 | Verhalten nachvollziehbar und hostgetestet | Cosmos-intern, `internal` | ja |
 
 Bei den zehn bis zwanzig Threads von ZehOS sind die Kosten je Entscheidung in beiden Fällen unerheblich. Was die
 Leistung bestimmt, ist die Platzierung: Zwei rechnende Threads auf den Geschwistern eines Kerns leisten zusammen
 deutlich weniger als auf zwei Kernen. Auf Rechnern mit Hyperthreading ist der Klassenscheduler deshalb vom Entwurf her
 die bessere Wahl, und er gibt der Oberfläche eine feste Zusage statt einer Heuristik. **Empfehlung: Klassenscheduler.**
-Gemessen ist das nicht. Etappe 4 misst deshalb auf einer CPU drei Stände gegeneinander (Round-Robin, Stride,
-Klassenscheduler); Stride kostet dafür nur einen Build ohne `SetScheduler`. Liegt der Klassenscheduler dort nicht
-mindestens gleichauf, wird die Empfehlung neu bewertet.
+Gemessen ist das nicht. Zwei Messungen sichern die Wahl ab: Etappe 4 vergleicht auf 3.0.97 Round-Robin mit dem
+Klassenscheduler (darf nicht schlechter sein). Etappe 5 vergleicht auf dem SMP-Stand Stride mit dem Klassenscheduler,
+dort erstmals mit der Hauptschleife als Thread; Stride kostet dafür nur einen Build ohne `SetScheduler`. Liegt der
+Klassenscheduler dort nicht mindestens gleichauf, wird die Empfehlung neu bewertet.
 
 ## 7. Eigener Cosmos-Build
 
@@ -251,7 +272,7 @@ Abhängigkeitsreihenfolge mit `dotnet pack` nach `artifacts/package/release` gep
 `Cosmos.Patcher` sind globale Tools aus demselben Feed. ILC selbst kommt weiter von Microsoft. Ein `ProjectReference`
 auf die Cosmos-Projekte funktioniert nicht, weil SDK, Patcher und ILC Pakete mit `build/`-Targets erwarten.
 
-**Einbindung in ZehOS: ein eigener Branch `cosmos` im ZehOS-Repository** (Empfehlung zu Entscheidung 3), nach dem
+**Einbindung in ZehOS: ein eigener Branch `cosmos` im ZehOS-Repository** (Entscheidung 3), nach dem
 Muster des Branches `packages`.
 
 | | Branch `cosmos` in ZehOS | eigenes Repository |
@@ -321,11 +342,12 @@ Betroffen ist nur, was I1 schon gemergt hat. I2 ist geplant, aber nicht umgesetz
 | Öffentlicher Hook für CPU-Ausnahmen: bekommt Vektor und Kontext, entscheidet „anhalten“ oder „Thread aufgeben“ (`Cosmos.Kernel/Panic.cs:19-36`) | `CosmosPanicHaltPlug`, `UnsafeAccessor` auf `ScheduleFromInterrupt` und `InternalCpu.Halt`, Import `_native_get_context_switch_sp` | `test-isolation-probe.py`, positiv und negativ |
 | `IRQContext` öffentlich (`Core/CPU/IRQContext.cs:16`) | `CosmosIrqContextStub`, feste Versätze 120/152 | wie oben |
 | LINT1 als NMI einrichten (`LocalApic.cs:172`) | Entmaskierung in `CosmosIsolationProbe` | NMI-Gegenprobe |
-| Thread aus dem Ausnahmepfad endgültig beenden und seinen Stack freigeben (nach Etappe 5, baut auf `ReleaseStack` des SMP-Stapels) | Quarantäne-Zeile im Scheduler; Leck von 8 MiB je Fehler | Isolationsprobe wiederholt, Speicher bleibt konstant |
+| Stacks beendeter und aufgegebener Threads freigeben. Ein Thread kann seinen eigenen Stack nicht freigeben; nötig ist ein Aufräumer, der tote Threads nach dem Wechsel weg von ihnen abräumt. Eigener, mittlerer Patch nach Etappe 5 | Quarantäne-Zeile im Scheduler; Leck von 8 MiB je Fehler; Zwang zu langlebigen Workern | Isolationsprobe wiederholt und 100 kurze Threads, freier Speicher bleibt konstant |
 
 **12.4 muss dafür nicht vorher fertig sein.** Die Reihenfolge ist umgekehrt günstiger: I2 (erzwungenes Beenden)
 braucht genau die Operation aus der letzten Zeile und baut besser auf dem öffentlichen Hook auf als auf den heutigen
-Plugs. Bindend ist nur: I2 wird nicht gleichzeitig mit Etappe 3 oder Etappe 5 umgesetzt, weil alle drei
+Plugs. Vorhanden ist bereits `SchedulerDiagnostics.RequestKill` (öffentlich, schon in 3.0.97): Es beendet einen
+wartenden Thread sofort und markiert einen laufenden nur als tot, räumt ihn aber nie ab. Bindend ist nur: I2 wird nicht gleichzeitig mit Etappe 3 oder Etappe 5 umgesetzt, weil alle drei
 `CosmosFaultIsolation.cs` und `WasmRuntime.cs` ändern. Empfohlen: I2 nach Etappe 5 wieder aufnehmen.
 
 Nicht in dieser Reihe, aber jetzt möglich und eigens zu entscheiden: eigenes TSS mit IST-Stacks. Das beseitigte die
@@ -335,8 +357,7 @@ erkennbar, verlangt aber einen Umbau des Kontextwechsels und ist groß.
 ### 8.3 Weitere Umwege (Vorrat, je nach Bedarf)
 
 - **Entfallen mit dem SMP-Stapel selbst, ohne eigenen Patch** (zu belegen in Etappe 5): Idle-Sonderregel des
-  Schedulers (Phase 5b), Stackprobe `ThreadStarter`/`CosmosStackProbe` (Nullprüfung in `SchedulerThread.cs:261-271`),
-  Zwang zu langlebigen Workern (`ReleaseStack`).
+  Schedulers (Phase 5b), Stackprobe `ThreadStarter`/`CosmosStackProbe` (Nullprüfung in `SchedulerThread.cs:261-271`).
 - **Vermutlich schon heute überholt** (Doku beschreibt 3.0.94, Gasttest steht aus): `UnsafeAccessor` auf
   `PageAllocator` (`MemoryDiagnostics` ist öffentlich), fehlendes TLS-`close_notify` (`SocketPlug.cs:253`),
   „serielle Ausgabe nicht zeilenatomar“ (`Serial.cs:109-134`).
@@ -357,15 +378,16 @@ Jede Etappe ist ein eigener Auftrag mit eigenem Plan.
 | 1 Cosmos aus Quelle | Branch `cosmos` mit dem Stand `efcf20c`, Bauskript, lokaler Feed, CI | ISO aus eigenen Paketen besteht dieselben Host- und Gastprüfungen wie mit NuGet 3.0.97 |
 | 2 Patchreihe ext2 | Abschnitt 8.1, ein Patch je PR-Paar | je Patch die genannte Prüfung; am Ende kein ext2-Plug mehr |
 | 3 Patchreihe 12.4 | Abschnitt 8.2 ohne die letzte Zeile | Isolationsprobe positiv und negativ; kein Plug auf `Panic` mehr |
-| 4 Scheduler und Topologie | Klassenscheduler ersetzt Round-Robin auf einer CPU; `CpuTopology` mit Hosttests; Eingabe-Sperren | Hosttests; Gast: `THREAD_PROBE`, `MESSAGES_PROBE` PASS; Bildraten von ClassiCube und Doom und Wartezeit der Hauptschleife im Dreiervergleich (Abschnitt 6) |
-| 5 SMP-Stapel, alle Threads auf CPU 0 | Upstream-Stapel aufspielen; Adapter auf neue Naht; Hauptschleife als Thread; verbliebene Plugs angleichen; Standardaffinität = CPU 0; letzte Zeile aus 8.2 | `-smp 1` und `-smp 4`: gesamte Gastsuite grün; weitere CPUs online und im Idle; Speicherqualifikation für den neuen Cosmos-Stand wiederholt |
+| 4 Scheduler und Topologie | Klassenscheduler ersetzt Round-Robin auf einer CPU (Hauptschleife noch Klasse Normal mit Idle-Regel); `CpuTopology` mit Hosttests; Eingabe-Sperren | Hosttests; Gast: `THREAD_PROBE`, `MESSAGES_PROBE` PASS; Bildraten von ClassiCube und Doom nicht unter Round-Robin |
+| 5 SMP-Stapel, alle Threads auf CPU 0 | Upstream-Stapel auf den Branch `cosmos` aufspielen und Konflikte mit den eigenen Patches lösen (sicher: LINT1 in `LocalApic.cs`); Adapter auf neue Naht; Hauptschleife als Thread in Klasse Interaktiv, Idle-Regel entfällt; verbliebene Plugs angleichen; Hauptthread und Standardaffinität auf CPU 0; Patch „Stacks freigeben“ aus 8.2 | `-smp 1` und `-smp 4`: gesamte Gastsuite grün; weitere CPUs online und im Idle; Speicherqualifikation für den neuen Cosmos-Stand wiederholt; Vergleich Stride gegen Klassenscheduler (Abschnitt 6) |
 | 6 Worker auf weiteren CPUs | Wasm-Worker, dann Hintergrundaufgaben über Affinität freigeben; Platzierung und Ausgleich aktiv | neue `SMP_PROBE` (parallele Zähler, GC unter Last, Sperrstress, Migration) PASS; Speicherprobe aus #247 fehlerfrei; GC-Pausen gemessen |
 | 7 Hauptschleife frei, Hyperthreads | Oberfläche verlässt CPU 0; Regeln aus 5.3; Panic und Energieaktionen über alle CPUs | Matrix aus Abschnitt 9a; `test-power-commands.ps1` mit 4 CPUs; Recovery mit einer CPU |
 | 8 Basiswechsel | sobald ein Cosmos-Release SMP enthält: neuer Grundstand, SMP-Schicht entfällt, Patchreihe neu aufspielen | gesamte Suite grün; `PATCHES.md` aktuell |
 
 **Abhängigkeiten:** 0 und 4 brauchen kein geändertes Cosmos und können sofort beginnen. 2 und 3 setzen 1 voraus und
-sind voneinander unabhängig. 5 setzt 1 und 4 voraus und kommt nach 3, damit die festen Rahmen-Versätze der
-12.4-Plugs weg sind, bevor der Stapel den Interruptrahmen ändert. 6 und 7 folgen in dieser Reihenfolge.
+sind voneinander unabhängig. 5 setzt 1 und 4 voraus. 3 und 5 hängen fachlich nicht voneinander ab (der Stapel lässt
+`IRQContext.cs` und `Panic.cs` unverändert), ändern in ZehOS aber dieselben Dateien und laufen deshalb nacheinander;
+empfohlen 3 vor 5. 6 und 7 folgen in dieser Reihenfolge.
 
 ### 9a. Prüfmatrix
 
@@ -387,10 +409,11 @@ Peter, 18. November 2026:
 - **6 Umwege werden an der Wurzel behoben,** zuerst ext2, dazu die Stellen aus 12.4; deshalb beginnt der eigene
   Build vor der SMP-Arbeit (Etappe 1).
 
-Empfehlungen, die Peters Bestätigung brauchen:
+- **3 Die Cosmos-Quelle liegt im Branch `cosmos` des ZehOS-Repositorys** (Abschnitt 7).
 
-- **2 Scheduler:** Klassenscheduler, abgesichert durch den Dreiervergleich in Etappe 4 (Abschnitt 6).
-- **3 Ort der Cosmos-Quelle:** Branch `cosmos` im ZehOS-Repository (Abschnitt 7).
+Empfehlung, der Peter nicht widersprochen hat und die der Plan zugrunde legt:
+
+- **2 Scheduler:** Klassenscheduler, abgesichert durch die Messungen in Etappe 4 und 5 (Abschnitt 6).
 
 Folge von Entscheidung 6, bitte bewusst mittragen: Der eigene Cosmos-Build ist damit kein Übergang mehr. Er bleibt,
 solange eigene Patches bestehen; austauschbar bleibt der SMP-Teil (Isolationsregel 6).
