@@ -2,6 +2,42 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## CPU-Ausnahmen im Wasm-Worker (Roadmap 12.4-I1, 18. November 2026)
+
+**Befund in Cosmos 3.0.97** (Assembler `CPU/Interrupts.s` und IL von `Cosmos.Kernel`, `Cosmos.Kernel.Core`,
+`Cosmos.Kernel.Core.X64` gelesen):
+
+- Jeder Vektor landet über `irqN_stub` in `__managed__irq` und `X64InterruptController.Dispatch`. Der Rahmen liegt auf dem
+  Stack des unterbrochenen Threads (kein TSS/IST).
+- `Cosmos.Kernel.ExceptionHandler.Initialize` trägt für die Vektoren 0, 2–8, 10–14 und 16–19 Handler ein. Jeder ruft
+  `Panic.CpuException` (Register und Stackadressen seriell, `System halted.`) und am Ende `Panic.HaltCpu()`.
+- Nach dem Handler wechselt der Stub den Stack, wenn ein Kontextwechsel angefordert ist (derselbe Weg wie beim Timer).
+- Eine verwaltete Ganzzahldivision durch null löst unter Cosmos/NativeAOT eine echte CPU-Ausnahme (#DE) aus, keine
+  `DivideByZeroException`.
+
+**Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` (parameterlos, bindet nach `check-plug-binding.py`).
+
+- **Isolieren** (`FaultIsolationPolicy`): nur wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
+  läuft (Zähler `zehos_host_depth` in den C-Wrappern beider Engines) und weder `StorageLock` noch `AppStorageGate`
+  gehalten werden. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
+  `SchedulerManager.ScheduleFromInterrupt` (intern, per `UnsafeAccessor`) wechselt in den nächsten Thread.
+- **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife).
+- **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
+  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
+  Paketdateien frei und startet einen neuen Worker.
+
+**Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
+`GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
+`-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Zahlen im PR.
+
+**Grenzen:**
+
+- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
+- Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
+- Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
+- Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
+  VMware.
+
 ## Dateisysteme nicht threadsicher: StorageLock (18. November 2026)
 
 **Befund:** Cosmos 3.0.97 schützt ext2 und FAT nicht gegen gleichzeitige Zugriffe. Gemessen mit den E4.0-Diagnoseläufen (KVM, je 1 GiB und 2 GiB RAM):
