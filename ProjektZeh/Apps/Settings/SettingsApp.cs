@@ -174,8 +174,7 @@ internal sealed class SettingsApp : IApplication
         else
         {
             painter.Text(surface, display.Current.ToString(), left, y + modes.Bounds.Y, inner);
-            painter.Paragraph(surface, "Der Anzeigetreiber meldet nur diese Aufloesung und kann sie nicht zur Laufzeit wechseln. " +
-                "Eine andere Aufloesung beim Start im Bootmenue waehlen (Full HD oder 1024 x 768).",
+            painter.Paragraph(surface, "Der Anzeigetreiber meldet nur diese Aufloesung und kann sie nicht zur Laufzeit wechseln.",
                 left, y + modes.Bounds.Y + line, inner, UiPainter.Secondary);
         }
         int top = y + apply.Bounds.Y + apply.Bounds.Height + 20;
