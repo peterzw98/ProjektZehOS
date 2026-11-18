@@ -51,6 +51,12 @@ public sealed class Kernel : Sys.Kernel
     // Etappe 4.3: das Pfadprofil wird einmal beim Boot gewaehlt (InitializeServices); Konten, Pakete und Updates haengen davon ab
     // und entstehen deshalb erst dort, nicht als Feldinitialisierer vor jeder Plattenpruefung.
     private SystemPaths systemPaths = SystemPaths.Legacy;
+    // Einzige Stelle, die -p:ZehOSGptInstaller abbildet; der getestete Installercode bekommt nur den bool.
+#if ZEHOS_GPT_INSTALLER
+    private const bool GptInstaller = true;
+#else
+    private const bool GptInstaller = false;
+#endif
 #if ZEHOS_INSTALLER
     private readonly IInstallService installer;
 #else
@@ -91,7 +97,8 @@ public sealed class Kernel : Sys.Kernel
             if (!prepared.IsOK()) return prepared;
             Sys.Power.Reboot();
             return ResultErr.CreateSuccess();
-        });
+        // shortcut: Installer-ISOs waehlen kein Root-Profil (4.3), daher fest Legacy; erst bei einem Installer im Root-Profil auf systemPaths umstellen.
+        }, GptInstaller, SystemPaths.Legacy.InstallMount);
 #endif
     }
 
@@ -242,7 +249,12 @@ public sealed class Kernel : Sys.Kernel
             .. new FileShellCommands(files).Commands,
 #if ZEHOS_INSTALLER
             // Das Live-Installationsmedium startet ohne Kontendatei in einer lokalen Einrichtungssitzung.
-            .. new SetupShellCommands(installer, () => true).Commands,
+#if ZEHOS_GPT_GUEST_PROBE
+            .. new SetupShellCommands(installer, () => true, GptInstaller,
+                text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("GPT_TEST " + text + "\n")).Commands,
+#else
+            .. new SetupShellCommands(installer, () => true, GptInstaller).Commands,
+#endif
 #else
             .. new UpdateShellCommands(updates, () => accounts.IsAdmin(identity)).Commands,
 #endif
@@ -368,6 +380,11 @@ public sealed class Kernel : Sys.Kernel
         accounts.SetupWindowOpen = true;
         var security = accounts.Load();
         accounts.SetupWindowOpen = false;
+#if ZEHOS_GPT_GUEST_PROBE
+        // Der Gasttest braucht den Identitaetszustand und das Ergebnis der Boot-Ersteinrichtung ohne Bildschirm-OCR.
+        var guestIdentity = CosmosInstalledIdentity.EvaluateData();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"GPT_TEST IDENTITY {guestIdentity?.State.ToString() ?? "NoData"} SETUP {accounts.NeedsSetup}\n");
+#endif
         if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif
@@ -429,7 +446,7 @@ public sealed class Kernel : Sys.Kernel
         if (startDesktop)
         {
             // Der grafische Assistent ist der Normalfall; bei einem Anzeigefehler bleibt die Text-Einrichtung mit setup bedienbar.
-            try { new InstallerSession(installer).Run(); }
+            try { new InstallerSession(installer, GptInstaller).Run(); }
             catch (Exception exception)
             {
                 systemLog.Error("Setup", $"Grafische Einrichtung fehlgeschlagen: {exception.Message}");
