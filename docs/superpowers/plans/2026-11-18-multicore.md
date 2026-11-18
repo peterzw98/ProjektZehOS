@@ -10,7 +10,7 @@ und ersetzt Round-Robin durch einen Klassenscheduler, der Hyperthreads kennt.
 
 **Architektur:** Den SMP-Mechanismus liefert Cosmos (Upstreams eigener Entwurfsstapel, im Branch `cosmos` des
 ZehOS-Repositorys gebaut). Policy, Topologie und Appregeln liegen in ZehOS oberhalb der Scheduler-Schnittstelle. Eigene
-Cosmos-Patches sind einzelne, in `PATCHES.md` gelistete Commits.
+Cosmos-Patches sind einzelne Commits, je mit einer Datei `patches/<Kurzname>.md`.
 
 **Technik:** C# / .NET 10, Cosmos Gen3 3.0.97 (Commit `efcf20c`), NativeAOT, Limine, MSTest und Moq für Hosttests,
 QEMU (TCG, KVM, WHPX) und VMware für Gastläufe.
@@ -120,10 +120,11 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 
 **Cosmos-Patches** (ab Etappe 1)
 
-- Ein Patch ist genau ein Commit im Branch `cosmos`, eingebracht per PR gegen `cosmos`, mit einer Zeile in
-  `PATCHES.md`: Commit, Datei, Grund, entfernter ZehOS-Umweg, Prüfung.
+- Ein Patch ist genau ein Commit im Branch `cosmos`, eingebracht per PR gegen `cosmos`, mit einer eigenen Datei
+  `patches/<Kurzname>.md`: Commit, Dateien, Grund, entfernter ZehOS-Umweg, Prüfung (seit #357; vorher eine Tabellenzeile
+  in `PATCHES.md`, die bei jedem Merge Konflikte brachte).
   Im Patch-Branch sind Folgecommits erlaubt (kein Force-Push); gemergt wird per **Squash-Merge**, so wird jeder Patch
-  genau ein Commit. In der Spalte „Commit“ steht im PR „Squash von #<PR>“; den echten Hash setzt der ZehOS-PR, der
+  genau ein Commit. Im Feld „Commit“ steht im PR „Squash von #<PR>“; den echten Hash setzt der ZehOS-PR, der
   `deploy/cosmos/COMMIT` umstellt. Gestapelte Patches: nach dem Squash des Vorgängers `origin/cosmos` in den Folge-Branch
   mergen, nicht rebasen (Lead-Entscheid 18. November 2026).
 - Geprüft wird ein Patch durch den ZehOS-PR, der ihn verwendet: Er entfernt den Umweg und wiederholt dessen bisherige
@@ -162,7 +163,7 @@ Diese Namen verwenden mehrere Etappen. Wer sie ändern will, ändert diese Tabel
 | Name | Bedeutung | Eingeführt |
 | --- | --- | --- |
 | Branch `cosmos` | Cosmos-Quellbaum im ZehOS-Repository; Grundstand `bd5889b46a6b1175ff8b66620437e072b78636de` | E1-A (erledigt) |
-| `PATCHES.md` (Stamm des Branches `cosmos`) | Liste der eigenen Patches | E1-A |
+| `PATCHES.md` und `patches/<Kurzname>.md` (Branch `cosmos`) | Grundstand und Regel; je Patch eine Datei | E1-A, #357 |
 | `deploy/cosmos/COMMIT` | eine Zeile: Commit des Branches `cosmos`, der gebaut wird | E1-B |
 | `deploy/cosmos/VERSION` | eine Zeile: Paketversion, Start `3.0.97-zehos.1` | E1-B |
 | `deploy/cosmos/SDK` | eine Zeile: .NET-SDK des Referenzbaus, `10.0.404`; `scripts/build-cosmos.sh` bricht bei einem anderen SDK ab (`--any-sdk` nur für lokale Versuche) | E1-B |
@@ -215,8 +216,8 @@ Auslöser: Ein veröffentlichtes Cosmos-Release enthält den SMP-Stapel. Ein Pak
 
 - [ ] Im Cosmos-Repository den Release-Commit bestimmen (`nuspec` des Pakets `Cosmos.Kernel.Core`, Feld `repository commit`).
 - [ ] Im Branch `cosmos` einen neuen Grundstand-Commit mit dem Dateibaum dieses Commits anlegen (ohne `.github/workflows`), wie in E1-A.
-- [ ] Jeden Eintrag aus `PATCHES.md` in Reihenfolge darauf übertragen (`git cherry-pick <commit>`); Einträge, die Upstream inzwischen selbst behoben hat, streichen und das in `PATCHES.md` vermerken.
+- [ ] Jeden Patch aus `patches/` in der Reihenfolge von `git log --first-parent --reverse` darauf übertragen (`git cherry-pick <commit>`, bei den Merge-Commits von #344 bis #346 mit `-m 1`); Patches, die Upstream inzwischen selbst behoben hat, streichen und das in `PATCHES.md` vermerken.
 - [ ] `deploy/cosmos/VERSION` auf `<neue Version>-zehos.1`, `deploy/cosmos/COMMIT` auf den neuen Stand.
 - [ ] `CosmosClassScheduler.cs` gegen die veröffentlichte `IScheduler`-Schnittstelle übersetzen; Abweichungen dort beheben.
 - [ ] Gesamte Host- und Gastsuite samt Matrix aus E7-E; Speicherqualifikation wie in E5-H.
-- [ ] Ist `PATCHES.md` leer: `deploy/cosmos/`, `scripts/build-cosmos.sh`, `NuGet.Config`-Zuordnung und den Branch `cosmos` entfernen und die Pakete wieder von nuget.org beziehen.
+- [ ] Ist `patches/` leer: `deploy/cosmos/`, `scripts/build-cosmos.sh`, `NuGet.Config`-Zuordnung und den Branch `cosmos` entfernen und die Pakete wieder von nuget.org beziehen.
