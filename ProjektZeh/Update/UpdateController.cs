@@ -6,15 +6,17 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Update;
 
 /// <summary>Haelt einen geprueften Stand an derselben Quelle fest; ein Quellenwechsel verwirft ihn.</summary>
+/// <param name="configPath">Root-Profil: /etc/zehos/update.conf; ohne Angabe wie bisher root/.zehos-update.conf.</param>
+/// <param name="offlineExcluded">Systembereiche unter root, aus denen kein Offline-Kernel gelesen wird (Spec 7b §1).</param>
 internal sealed class UpdateController(UpdateVersion currentVersion, Func<UpdateEndpoint, IUpdateSource> createSource,
     IUpdateTarget target, string root = "/data", Func<string, int?>? directoryEntryLimit = null,
-    Func<IDisposable?>? tryBeginWrite = null)
+    Func<IDisposable?>? tryBeginWrite = null, string? configPath = null, string[]? offlineExcluded = null)
 {
     private readonly FileService files = new(root, directoryEntryLimit: directoryEntryLimit, tryBeginWrite: tryBeginWrite);
     private UpdateService? service;
     private string? activeSource;
     private bool restartRequired;
-    private string ConfigPath => System.IO.Path.Combine(root, ".zehos-update.conf");
+    private string ConfigPath => configPath ?? System.IO.Path.Combine(root, ".zehos-update.conf");
     public string CurrentVersion => currentVersion.ToString();
 
     public ResultObject<string> GetSource()
@@ -66,8 +68,11 @@ internal sealed class UpdateController(UpdateVersion currentVersion, Func<Update
         try
         {
             string path = Path.GetFullPath(file, root);
-            if (!path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            if (!IsBelow(path, root))
                 return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Offline-Kernel muss unter " + root + " liegen.");
+            foreach (string excluded in offlineExcluded ?? [])
+                if (IsBelow(path, excluded))
+                    return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Offline-Kernel darf nicht unter " + excluded + " liegen.");
             var source = new FileUpdateSource(Path.GetDirectoryName(path)!);
             var offline = new UpdateService(source, target, currentVersion);
             var check = offline.Check();
@@ -80,6 +85,14 @@ internal sealed class UpdateController(UpdateVersion currentVersion, Func<Update
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         { return ResultErr.CreateFromException(exception); }
+    }
+
+    // Die Wurzel "/" behaelt ihren Schraegstrich; sonst verlangte der Vergleich im Root-Profil ein Praefix "//".
+    private static bool IsBelow(string path, string directory)
+    {
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        string prefix = Path.EndsInDirectorySeparator(full) ? full : full + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, StringComparison.Ordinal);
     }
 
     private ResultErr Prepare()

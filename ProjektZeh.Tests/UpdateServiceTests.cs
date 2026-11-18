@@ -85,6 +85,64 @@ public sealed class UpdateServiceTests
     }
 
     [TestMethod]
+    public void PersistFailure_AfterReplace_KeepsNewMarkerAndWritesNothingMore()
+    {
+        var target = new Target { FailPersist = true };
+        var service = new UpdateService(new Source(), target, new(0, 1, 0));
+        Assert.IsTrue(service.Check().IsOK());
+        var result = service.Install();
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Message, "nicht dauerhaft", StringComparison.Ordinal);
+        // Spec 7b §1: Marker bleibt neu, kein Ruecksetzen, Neustart verlangt.
+        Assert.AreEqual("0.2.0", target.Version);
+        Assert.AreEqual(1, target.Writes);
+        Assert.AreEqual(1, target.Replacements);
+        Assert.IsTrue(service.RequiresRestart);
+    }
+
+    [TestMethod]
+    public void ReplaceFailure_DoesNotPersist()
+    {
+        var target = new Target { FailReplace = true };
+        var service = new UpdateService(new Source(), target, new(0, 1, 0));
+        Assert.IsTrue(service.Check().IsOK());
+        Assert.IsFalse(service.Install().IsOK());
+        Assert.AreEqual(0, target.Persists);
+        Assert.AreEqual("0.1.0", target.Version);
+    }
+
+    [TestMethod]
+    public void OfflineInstall_RejectsExcludedSystemAreasAndUsesConfigPath()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        string boot = Path.Combine(root, "boot", "efi");
+        Directory.CreateDirectory(boot);
+        try
+        {
+            foreach (string directory in new[] { root, boot })
+            {
+                File.WriteAllText(Path.Combine(directory, "update-manifest.txt"), Manifest);
+                File.WriteAllBytes(Path.Combine(directory, "update-manifest.sig"), Convert.FromBase64String(Signature));
+                File.WriteAllText(Path.Combine(directory, "kernel.elf"), new string('x', 42));
+            }
+            string config = Path.Combine(root, "update.conf");
+            var target = new Target();
+            var controller = new UpdateController(new(0, 1, 0), _ => throw new AssertFailedException("Netzwerkzugriff"), target, root,
+                configPath: config, offlineExcluded: [boot]);
+            var refused = controller.InstallOffline("boot/efi/kernel.elf");
+            Assert.IsFalse(refused.IsOK());
+            StringAssert.Contains(refused.Message, "nicht unter", StringComparison.Ordinal);
+            Assert.AreEqual(0, target.Replacements);
+            Assert.IsTrue(controller.SetSource("mirror.example:8000").IsOK());
+            Assert.AreEqual("mirror.example:8000\n", File.ReadAllText(config));
+            Assert.IsFalse(File.Exists(Path.Combine(root, ".zehos-update.conf")));
+            Assert.IsTrue(controller.InstallOffline("kernel.elf").IsOK());
+            Assert.AreEqual(1, target.Persists);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void FallbackBoot_RejectsOlderVersionAndKeepsWorkingBackup()
     {
         var newer = new Target { InstalledVersion = "0.3.0\n" };
@@ -244,6 +302,10 @@ public sealed class UpdateServiceTests
         public ResultObject<string> ReadVersion() => ResultObjectFactory.CreateSuccess(InstalledVersion);
         public bool? RotatedBackup { get; private set; }
         public ResultErr ReplaceKernel(byte[] kernel, bool rotateBackup) { Replacements++; RotatedBackup = rotateBackup; return FailReplace ? ResultErr.CreateFailure(ResultCode.Failure, "Austauschfehler") : ResultErr.CreateSuccess(); }
-        public ResultErr WriteVersion(string version) { Version = version; return FailVersion ? ResultErr.CreateFailure(ResultCode.Failure, "Versionsfehler") : ResultErr.CreateSuccess(); }
+        public ResultErr WriteVersion(string version) { Version = version; Writes++; return FailVersion ? ResultErr.CreateFailure(ResultCode.Failure, "Versionsfehler") : ResultErr.CreateSuccess(); }
+        public bool FailPersist { get; init; }
+        public int Persists { get; private set; }
+        public int Writes { get; private set; }
+        public ResultErr Persist() { Persists++; return FailPersist ? ResultErr.CreateFailure(ResultCode.Failure, "Syncfehler") : ResultErr.CreateSuccess(); }
     }
 }

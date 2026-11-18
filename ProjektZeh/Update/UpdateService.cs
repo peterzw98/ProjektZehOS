@@ -17,6 +17,8 @@ internal interface IUpdateTarget
     ResultErr WriteVersion(string version);
     /// <summary>Installierte Version laut Versionsmarker; Erfolg ohne Wert, wenn kein Marker existiert.</summary>
     ResultObject<string> ReadVersion();
+    /// <summary>Macht Kernel und Marker dauerhaft (Root-Profil: Sync der ESP); ohne Puffer ein Erfolg ohne Wirkung.</summary>
+    ResultErr Persist();
 }
 
 internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, UpdateVersion currentVersion)
@@ -87,7 +89,14 @@ internal sealed class UpdateService(IUpdateSource source, IUpdateTarget target, 
         RequiresRestart = true;
         checkedManifest = null;
         ResultErr replaced = target.ReplaceKernel(kernel, rotateBackup: !runningFromFallback);
-        if (replaced.IsOK()) return replaced;
+        if (replaced.IsOK())
+        {
+            // Spec 7b §1: Scheitert erst das Dauerhaftmachen, bleibt der Marker neu. Ein Ruecksetzen auf "alt" liesse einen
+            // halb geschriebenen Hauptkernel beim naechsten Update nach .bak rotieren und zerstoerte die letzte gute Version.
+            ResultErr persisted = target.Persist();
+            return persisted.IsOK() ? replaced : ResultErr.CreateFailure(ResultCode.Failure,
+                "Update nicht dauerhaft bestaetigt; bei Startproblem den Rueckfalleintrag waehlen. " + persisted.Message);
+        }
         ResultErr restored = target.WriteVersion(previousMarker ?? currentVersion.ToString());
         return restored.IsOK() ? replaced : ResultErr.CreateFailure(ResultCode.Failure,
             $"{replaced.Message} Der Versionsmarker konnte nicht zurueckgesetzt werden: {restored.Message}");
