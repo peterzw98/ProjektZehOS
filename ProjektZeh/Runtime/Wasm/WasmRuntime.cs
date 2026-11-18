@@ -35,6 +35,9 @@ internal static unsafe partial class WasmRuntime
     private static Thread? worker;
     private static Action<WasmStatus, int, string>? running;
     private static int isolatedRuns;
+    // Jede Isolation laesst Thread und 8-MiB-Stack liegen, und ein neuer Stack scheitert nach Dateilast leicht (E4.0 1G).
+    private const int MaximumIsolatedRuns = 3;
+    private static bool workerRetired;
     private static WasmNetworkSession? network;
     private static IList<X509Certificate>? tlsAnchors;
     private static WasmSaveStore? save;
@@ -84,33 +87,43 @@ internal static unsafe partial class WasmRuntime
         ArgumentNullException.ThrowIfNull(load);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(completed);
+        bool retired;
         lock (gate)
         {
-            pending++;
-            jobs.Enqueue(() =>
-            {
-                // Fuer PollFaultIsolation: endet der Worker in einer CPU-Ausnahme, meldet die Hauptschleife das Ende.
-                lock (gate) running = completed;
-                WasmStatus status = WasmStatus.LoadFailed;
-                int result = 0;
-                string message;
-                (byte[]? Module, byte[]? Aot, string? Error) loaded;
-                // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
-                try { loaded = load(); }
-                catch (Exception exception) { loaded = (null, null, exception.Message); }
-                if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
-                else message = loaded.Error ?? "Modul nicht geladen.";
-                // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
-                lock (gate)
-                {
-                    pending--;
-                    running = null;
-                }
-                completed(status, result, message);
-            });
-            StartWorkerLocked();
-            Monitor.Pulse(gate);
+            retired = workerRetired;
+            if (!retired) EnqueueLockedJob(load, entry, gas, session, completed, name);
         }
+        if (retired) completed(WasmStatus.CpuFault, 0, RetiredMessage);
+    }
+
+    // Unter gate gerufen.
+    private static void EnqueueLockedJob(Func<(byte[]? Module, byte[]? Aot, string? Error)> load, string entry, ulong gas,
+        IWasmSession session, Action<WasmStatus, int, string> completed, string? name)
+    {
+        pending++;
+        jobs.Enqueue(() =>
+        {
+            // Fuer PollFaultIsolation: endet der Worker in einer CPU-Ausnahme, meldet die Hauptschleife das Ende.
+            lock (gate) running = completed;
+            WasmStatus status = WasmStatus.LoadFailed;
+            int result = 0;
+            string message;
+            (byte[]? Module, byte[]? Aot, string? Error) loaded;
+            // Ein Ladefehler darf den gemeinsamen Worker nicht beenden.
+            try { loaded = load(); }
+            catch (Exception exception) { loaded = (null, null, exception.Message); }
+            if (loaded.Module != null) status = Execute(loaded.Module, loaded.Aot, entry, gas, session, name, out result, out message);
+            else message = loaded.Error ?? "Modul nicht geladen.";
+            // Vor completed freigeben: das Fenster darf danach sofort eine neue App starten (IsBusy).
+            lock (gate)
+            {
+                pending--;
+                running = null;
+            }
+            completed(status, result, message);
+        });
+        StartWorkerLocked();
+        Monitor.Pulse(gate);
     }
 
     /// <summary>
@@ -168,22 +181,35 @@ internal static unsafe partial class WasmRuntime
             running = null;
             if (completed != null) pending--;
             worker = null;
-            try { StartWorkerLocked(); }
-            catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
+            if (Volatile.Read(ref isolatedRuns) + 1 >= MaximumIsolatedRuns)
             {
-                worker = null;
-                restart = exception.Message;
+                workerRetired = true;
+                restart = $"nach {MaximumIsolatedRuns} CPU-Fehlern kein weiterer Worker";
+            }
+            else
+            {
+                try { StartWorkerLocked(); }
+                catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
+                {
+                    worker = null;
+                    workerRetired = true;
+                    restart = exception.Message;
+                }
             }
         }
+        // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
+        // laeuft: Cosmos reiht ihn nur ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und
+        // CosmosRoundRobinScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
         bool clean = ReleaseRunResources();
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
             $"WASM CPU-Ausnahme im App-Code, Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
-            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n" : $"; neuer Worker scheiterte: {restart}. Paket-Apps erst nach Neustart.\n"));
+            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n" : $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"));
         completed?.Invoke(WasmStatus.CpuFault, 0, CpuFaultMessage);
     }
 
     private const string CpuFaultMessage = "CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.";
+    private const string RetiredMessage = "Nach CPU-Fehlern starten Paket-Apps erst nach einem Neustart des Systems wieder.";
 
 #if ZEHOS_ISOLATION_PROBE
     internal static void ProbeEnqueue(Action job)
@@ -199,7 +225,7 @@ internal static unsafe partial class WasmRuntime
 #endif
     private static void StartWorkerLocked()
     {
-        if (worker != null) return;
+        if (worker != null || workerRetired) return;
         worker = new Thread(Work, ThreadStackBytes);
         worker.Start();
     }

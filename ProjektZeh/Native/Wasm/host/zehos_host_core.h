@@ -118,7 +118,9 @@ typedef struct
     X(wasi_snapshot_preview1, proc_exit, v, "i", zehos_host_proc_exit, 1)
 
 // Tiefe laufender Hostaufrufe des Wasm-Workers (Roadmap 12.4-I1): Nur bei 0 laeuft Gastcode, und nur dann darf eine
-// CPU-Ausnahme den Worker aufgeben, weil Hostcode Kernelsperren halten kann. Die Wrapper beider Engines zaehlen.
+// CPU-Ausnahme den Worker aufgeben, weil Hostcode Kernelsperren halten kann. Es zaehlen die Wrapper beider Engines,
+// die Heapaufrufe in libc.c und die serielle Ausgabe der WAMR-Plattform. Einfaches ++/-- in den Wrappern genuegt, weil nur
+// der eine Wasm-Worker Gastcode ausfuehrt; libc.c zaehlt atomar, weil der Allokator auch anderen nativen Code bedient.
 extern volatile int32_t zehos_host_depth;
 volatile int32_t* zehos_host_depth_address(void);
 

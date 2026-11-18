@@ -181,7 +181,7 @@ Pakete mit `capability=storage` erhalten einen eigenen, schreibbaren Ordner als 
 
 - **Grafische Apps:** Eine App startet nur als Fenster aus dem Startmenü. Reine Konsolen-Apps und einen Shellbefehl `run` gibt es noch nicht.
 - **Eine App zur Zeit:** Alle Paket-Apps teilen einen Worker. Läuft eine, startet keine zweite.
-- **CPU-Fehler:** Löst der App-Code eine CPU-Ausnahme aus (etwa einen Fehler im Interpreter oder im AOT-Code), beendet der Kernel nur die App. Das Fenster meldet „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Bis zum Neustart bleiben Thread und Speicher dieses Laufs belegt. Eine Ausnahme in einer Hostfunktion hält das System wie bisher an.
+- **CPU-Fehler:** Löst der App-Code eine CPU-Ausnahme aus (etwa einen Fehler im Interpreter oder im AOT-Code), beendet der Kernel nur die App. Das Fenster meldet „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Bis zum Neustart bleiben Thread und Speicher dieses Laufs belegt; nach drei solchen Fehlern starten Paket-Apps erst nach einem Neustart wieder. Eine Ausnahme in einer Hostfunktion hält das System wie bisher an.
 - **Ressourcen:** höchstens 256 MiB lineare Memory, 1 MiB Wasm-Stack, Modul höchstens 64 MiB, kein Gaslimit für Paket-Apps.
 - **Beenden:** Eine App, die `should_exit()` nie abfragt, lässt sich nicht beenden. Das Paket bleibt dann bis zum Neustart gesperrt (kein Entfernen, kein Upgrade). Die Hauptschleife muss die Abfrage enthalten.
 - **Speicherstände nur mit `capability=storage`:** Ohne diese Fähigkeit können Apps nichts dauerhaft speichern; mit ihr nur im eigenen Ordner `/save` (siehe [App-Speicher](#app-speicher-save-etappe-134)).

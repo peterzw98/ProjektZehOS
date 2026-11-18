@@ -18,8 +18,8 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 **Umsetzung:** `CosmosPanicHaltPlug` ersetzt `Panic.HaltCpu()` (parameterlos, bindet nach `check-plug-binding.py`).
 
 - **Isolieren** (`FaultIsolationPolicy`): nur wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
-  läuft (Zähler `zehos_host_depth` in den C-Wrappern beider Engines) und weder `StorageLock` noch `AppStorageGate`
-  gehalten werden. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
+  läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
+  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
   `SchedulerManager.ScheduleFromInterrupt` (intern, per `UnsafeAccessor`) wechselt in den nächsten Thread.
 - **Sonst:** Halt wie bisher (`InternalCpu.Halt` in Schleife).
 - **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
@@ -32,6 +32,12 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 **Grenzen:**
 
+- Unter wasm3 läuft kein Gastcode nativ: Eine CPU-Ausnahme dort ist ein Fehler im Interpreter-C, ausgelöst durch das
+  App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben. Daher
+  meldet der Kernel „Neustart empfohlen“ und startet nach 3 isolierten Ausnahmen keinen Worker mehr; Paket-Apps laufen
+  dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
+- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
+  Schritt mit einem Plug, der `IRQContext` sieht.
 - Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
 - Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.

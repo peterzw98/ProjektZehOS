@@ -43,6 +43,9 @@ internal static unsafe class FaultIsolation
     {
 #if ZEHOS_WASM
         hostDepth = HostDepthAddress();
+#else
+        // Ohne Wasm-Laufzeit gibt es keinen Zaehler; OnHalt haelt dann immer an.
+        hostDepth = null;
 #endif
         SchedulerThread? current = SchedulerManager.GetCpuState(0)?.CurrentThread;
         if (current != null) Volatile.Write(ref workerThreadId, (int)current.Id);
@@ -74,11 +77,16 @@ internal static unsafe class FaultIsolation
             Volatile.Write(ref isolatedThreadId, id);
             // Der gespeicherte Stackzeiger wird nie wieder geladen; er muss nur im Stack dieses Threads liegen.
             ScheduleFromInterrupt(null, state.CpuId, (nuint)(&id));
-            return;
+            // Den Wechsel fuehrt erst der Interrupt-Stub nach der Rueckkehr aus. Ist keiner angefordert, liefe der
+            // fehlerhafte Code weiter: dann wie bisher anhalten.
+            if (ContextSwitchTarget() != 0) return;
         }
 
         while (true) Halt(null);
     }
+
+    [DllImport("*", EntryPoint = "_native_get_context_switch_sp", ExactSpelling = true)]
+    private static extern nuint ContextSwitchTarget();
 
 #if ZEHOS_WASM
     [DllImport("*", EntryPoint = "zehos_host_depth_address", ExactSpelling = true)]
