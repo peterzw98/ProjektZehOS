@@ -19,7 +19,7 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `pwd` | Aktuelles Arbeitsverzeichnis anzeigen |
 | `cd <Pfad>` | Arbeitsverzeichnis wechseln |
 | `ls [Pfad]` | Dateien und Unterverzeichnisse auflisten |
-| `cat <Datei>` | Textdatei lesen |
+| `cat <Datei>` | Textdatei lesen (nur gültiges UTF-8; andere Kodierungen werden mit `NotUtf8` abgelehnt statt umkodiert, auch beim Anhängen mit `>>` und im Texteditor) |
 | `mkdir <Pfad>` | Verzeichnis anlegen |
 | `write <Datei> <Text>` | Textdatei anlegen oder ihren Inhalt ersetzen |
 | `disk list` | Erkannte Laufwerke mit Größe und Partitionszahl anzeigen |
