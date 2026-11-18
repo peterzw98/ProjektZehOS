@@ -10,7 +10,9 @@ namespace ProjektZeh.Scheduling;
 /// auf null+0x138 (Page Fault, E4.0 1G Schritt j). Diese Stelle liegt hinter einer UnmanagedCallersOnly-Grenze, keine
 /// Ausnahme erreicht den Aufrufer. Deshalb fordert TryStart vorher einen Block in Stackgroesse ueber denselben Heap an und
 /// gibt ihn sofort frei; scheitert das, startet kein Thread und der Aufrufer erhaelt einen Fehler.
-/// Grenze: Zwischen Probe und Start kann ein anderer Thread den Platz belegen; das Fenster wird kleiner, nicht null.
+/// Grenze: Zwischen Probe-Free und InitializeStack kann der Platz wieder vergeben werden, durch einen anderen Thread oder durch
+/// Thread.Start selbst: dessen verwaltete Objekte (SchedulerThread, GCHandle) koennen ein neues GC-Segment aus demselben
+/// Seitenspeicher holen und die gerade freigegebenen Seiten belegen. Das Fenster wird kleiner, nicht null.
 /// </summary>
 internal static class ThreadStarter
 {
