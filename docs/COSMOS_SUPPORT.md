@@ -13,8 +13,10 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 Messbefehl je Stand und Spiel:
 
+Die Läufe wechseln zwischen den Ständen: je Spiel RR, Klasse, RR, Klasse … (zehn Läufe je Spiel, fünf je Stand). Dafür ruft man das Skript je Lauf mit `--runs 1` auf, nicht mit `--runs 5` (das führt fünf Läufe nacheinander auf einem ISO aus).
+
 ```sh
-python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 5 -m 1G
+python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 1 -m 1G
 # ClassiCube zusätzlich: --id classicube --version 1.1.0 --name ClassiCube --entry classicube.wasm --start-keys ret
 ```
 
