@@ -1,0 +1,51 @@
+name: Self-hosted runner probe
+
+# Prueft, was der self-hosted Runner 'MSI' fuer die schweren CI-Jobs (kernel, release-images, guest, guest-recovery) bietet.
+# Laeuft nur von Hand oder beim Push auf den Arbeitsbranch dieser Pruefung; er liest nur, installiert nichts und aendert nichts am Rechner.
+# Das Repository ist oeffentlich: ein Pull Request aus einem Fork darf nie auf diesen Runner (siehe ci.yml, runs-on der schweren Jobs).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [task/ci-self-hosted-runner]
+    paths: ['.github/workflows/runner-probe.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Runner capabilities
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - name: Host
+        run: |
+          set -u
+          echo "user: $(id)"
+          echo "kernel: $(uname -srm)"
+          echo "cpus: $(nproc)"
+          free -m
+          df -h "$GITHUB_WORKSPACE" "${RUNNER_TEMP:-/tmp}"
+          echo "runner: $RUNNER_NAME $RUNNER_OS $RUNNER_ARCH, temp=$RUNNER_TEMP, tool cache=${RUNNER_TOOL_CACHE:-}"
+
+      - name: .NET
+        run: |
+          command -v dotnet && dotnet --list-sdks || echo "dotnet: nicht im PATH"
+          echo "DOTNET_ROOT=${DOTNET_ROOT:-}"
+          echo "NUGET_PACKAGES=${NUGET_PACKAGES:-}"
+          ls -d "$HOME/.nuget/packages/cosmos."* 2>/dev/null | head -5 || true
+          ls "$HOME/.dotnet/tools" 2>/dev/null || echo "keine globalen dotnet-Werkzeuge"
+
+      - name: KVM and QEMU
+        run: |
+          ls -l /dev/kvm 2>&1 || true
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then echo "kvm: lesbar und schreibbar"; else echo "kvm: KEIN Zugriff fuer diesen Benutzer"; fi
+          command -v qemu-system-x86_64 || ls "$HOME/.cosmos/tools/qemu" 2>/dev/null | head -5 || echo "qemu: nicht gefunden"
+
+      - name: Other tools
+        run: |
+          for tool in git python3 gh e2fsck debugfs dumpe2fs sgdisk sfdisk mkfs.fat xorriso gdb-multiarch; do
+            if command -v "$tool" >/dev/null 2>&1; then echo "ok   $tool"; else echo "fehlt $tool"; fi
+          done
+          python3 --version
