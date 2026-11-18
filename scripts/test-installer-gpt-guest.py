@@ -222,6 +222,7 @@ def run_g6_basic(args, work: Path) -> None:
             process.wait(timeout=30)
 
 
+CDROM_FIRST = ["-global", "ide-cd.bootindex=0"]
 HEALTHY_DESKTOP = ("GPT_TEST IDENTITY Healthy SETUP True", "Desktop ist bereit.")
 
 
@@ -230,10 +231,14 @@ def boot_installed(args, case: Path, disks: list[Path], expected: tuple[str, ...
     """Startet von disks[0] (OVMF, -boot c), wartet auf alle erwarteten Zeilen und liefert den Laufordner."""
     run = storage.new_work_dir(case / "boot-installed")
     machine = list(storage.MACHINE_BASE)
+    if CDROM_FIRST[1] in machine:
+        index = machine.index(CDROM_FIRST[1])
+        del machine[index - 1:index + 1]
     machine[machine.index("-boot") + 1] = "c"
     for port, disk in enumerate(disks):
+        # OVMF beachtet -boot c nicht; ohne bootindex startet es das immer angehaengte Installer-ISO statt der Platte.
         machine += ["-drive", f"file={disk.resolve()},format=raw,if=none,id=d{port}",
-                    "-device", f"ide-hd,drive=d{port},bus=ahci.{port}"]
+                    "-device", f"ide-hd,drive=d{port},bus=ahci.{port}" + (",bootindex=0" if port == 0 else "")]
     storage.tools.MACHINE = machine
     unused = run / "unused.qcow2"
     tool, environment = storage.tools.qemu_img()
@@ -307,7 +312,12 @@ def esp_tool(image: Path, esp: dict, tool: str, *arguments: str) -> bytes:
 
 def security_files(image: Path) -> dict[str, bytes]:
     """Kontendatei und Recovery-Sicherungen im ESP-Wurzelverzeichnis (= /data) mit Inhalt."""
-    _, esp, _ = layout(image)
+    # Nicht layout(): bei G3/G5 fehlt die Root-Partition absichtlich; die ESP wird ueber ihren Typ gefunden.
+    table = json.loads(subprocess.run(["sfdisk", "-J", str(image)], capture_output=True, text=True, check=True).stdout)
+    esps = [part for part in table["partitiontable"]["partitions"] if part["type"].upper() == ESP_TYPE]
+    if len(esps) != 1:
+        raise ValueError(f"Genau eine EFI-Systempartition erwartet: {image}")
+    esp = esps[0]
     listing = esp_tool(image, esp, "mdir", "-a", "-b", "::/").decode(errors="replace")
     names = [line.rstrip("/").rsplit("/", 1)[-1] for line in listing.splitlines()]
     return {name: esp_tool(image, esp, "mcopy", "::/" + name, "-")
@@ -708,6 +718,8 @@ def main() -> int:
         shutil.copyfileobj(src, dst)
     storage.MACHINE_BASE += ["-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code.resolve()}",
                              "-drive", f"if=pflash,format=raw,file={vars_copy.resolve()}"]
+    # OVMF startet sonst eine angehaengte Platte mit ESP (installiertes System) vor dem ISO; boot_installed nimmt das zurueck.
+    storage.MACHINE_BASE += CDROM_FIRST
     args.iso_recovery = args.iso
     if args.run_g6_basic:
         run_g6_basic(args, work)
