@@ -22,6 +22,7 @@ geprüft und liegt außerhalb der Abnahme** (Entscheidung Peter, 18. November 20
 | G6 | eingebundenes Ziel, belegter Installationsmountpunkt | OFFEN | im Installer-Gast nicht herstellbar (kein Konto, `disk mount` verweigert) |
 | G7 | installierte Platte und `ZEHOSDATA`: installierte Platte gewinnt | PASS | 56c8c88, RED |
 | G8 | Abbruch in `CopyingFiles` auf frischer Platte ⇒ `Unclear`, Neuinstallation mit `--erase` | PASS | master 6d5ddc3 und #273, RED |
+| G8 Probe | Halt bei 96 % nach dem Bootdatei-Flush: Bootdateien vollständig, kein ESP-Marker, `fsck.fat` sauber | PASS | 56c8c88 mit G8-Probebau, RED |
 | G9 | Neuinstallation über `Healthy`, Abbruch in `CopyingFiles` ⇒ nicht `Healthy` | PASS | 56c8c88, RED |
 | RDRAND | TCG ohne RDRAND/RDSEED: Installer verweigert | PASS | 56c8c88, RED |
 
