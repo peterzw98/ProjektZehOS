@@ -336,6 +336,8 @@ def main() -> int:
         parser.error("Werkzeuge fehlen: " + ", ".join(missing))
     work = gpt.storage.new_work_dir(args.work)
     # Installationen starten vom ISO (CD vor der Platte), Root-Laeufe von der Platte (power.Guest setzt OVMF selbst).
+    # gpt.storage und power.storage sind getrennte Modulobjekte (je eigenes spec_from_file_location); OVMF hier landet
+    # nur in gpt.storage.MACHINE_BASE, sonst haette ein Root-Lauf vier pflash-Laufwerke und P1 liefe unter OVMF.
     vars_copy = work / "ovmf-vars.fd"
     shutil.copyfile(args.ovmf_vars, vars_copy)
     gpt.storage.MACHINE_BASE += ["-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code.resolve()}",
