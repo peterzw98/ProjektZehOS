@@ -90,7 +90,8 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 | `GetRunQueueCount`, `GetRunQueueThread`, `Snapshot` | statt `MaskInterrupts` die Sperre der CPU: `using (SchedulerManager.LockCpu(state)) { … }` |
 
 Allokation ist nur in `InitializeCpu`, `ShutdownCpu` und `OnThreadCreate` erlaubt; die Auswahlspur bleibt ein
-vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerData` oder ein Feld je CPU-Index umziehen).
+vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerData` oder ein Feld je CPU-Index umziehen). Der Zähler
+`preemptions` zieht mit um (Befund aus `docs/SMP_AUDIT.md`); `Snapshot` summiert ihn über die CPUs.
 
 **Klasse des Hauptthreads und `ApplyClass`:**
 

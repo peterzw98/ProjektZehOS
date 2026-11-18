@@ -61,7 +61,9 @@ zusätzlich und gehen im Zweifel vor.
 2. Branch `task/mc-<paket>-<kurzname>` (klein geschrieben, etwa `task/mc-e4-a-topologie`) vom aktuellen `master`.
 3. Schritte der Etappendatei in Reihenfolge; Test zuerst, wo ein Test genannt ist.
 4. Vor dem PR: Hosttests, bei Kernelcode nativer Build, dazu die im Paket genannten Gastläufe. Im Team führen Clerks
-   Gastläufe aus; der Engineer beauftragt sie mit Branch, Commit und Befehl.
+   Gastläufe aus; der Engineer beauftragt sie mit Branch, Commit und Befehl. Stand 18. November 2026: Auf dem
+   Team-Rechner `nuc` fehlen dotnet und QEMU. Hosttests laufen deshalb über den Lead oder einen Agenten mit SDK
+   10.0.404, Gastläufe über einen Agenten mit KVM; wer testet, steht im Kanal.
 5. Unabhängiges Review durch einen anderen Agenten, dann PR mit den Reviewern aus `AGENTS.md`. Kein Merge ohne
    Freigabe eines Projektbenutzers.
 
@@ -112,6 +114,7 @@ Diese Namen verwenden mehrere Etappen. Wer sie ändern will, ändert diese Tabel
 | `PATCHES.md` (Stamm des Branches `cosmos`) | Liste der eigenen Patches | E1-A |
 | `deploy/cosmos/COMMIT` | eine Zeile: Commit des Branches `cosmos`, der gebaut wird | E1-B |
 | `deploy/cosmos/VERSION` | eine Zeile: Paketversion, Start `3.0.97-zehos.1` | E1-B |
+| `deploy/cosmos/SDK` | eine Zeile: .NET-SDK des Referenzbaus, `10.0.404`; `scripts/build-cosmos.sh` bricht bei einem anderen SDK ab (`--any-sdk` nur für lokale Versuche) | E1-B |
 | `scripts/build-cosmos.sh` | baut die Pakete aus `COMMIT` in den lokalen Feed | E1-B |
 | `deploy/cosmos/feed/` | lokaler NuGet-Feed; der Ordner ist versioniert, sein Inhalt nicht | E1-B |
 | MSBuild-Eigenschaft `ZehOSCosmosVersion` | Cosmos-Version für SDK und Pakete | E1-B |
@@ -138,12 +141,23 @@ Messungen in E4-E und E5-I.
 | Lizenz der eigenen Cosmos-Patches. Der Plan nimmt an: wie ZehOS GPL-3.0, weil der Branch das Repository nie verlässt (E1-A, E2). Alternative: BSD 3-Clause wie Cosmos | Peter und Lars als Rechteinhaber | nichts; ändert nur den Text in `ZEHOS.md` und den Patch-Kommentar |
 | Kommt die E4.0-Gastprobe (`origin/task/storage-e4-0-root-probe`) nach `master`? | Storage-Lead | Gastläufe in Etappe 2 (Paket E2-P0) |
 | Neue Produktgrenze für Einträge je ext2-Verzeichnis; der Plan schlägt 65.536 vor | Storage-Lead | E2-P7, Schritt 3 |
-| Läuft der Cosmos-Paketbau unter Windows? | Messung in E1-B, Schritt 6 | lokale Kernelbuilds unter Windows |
-| Dauer des Paketbaus | Messung in E1-B, Schritt 5 | Zeitgrenzen in E1-C |
 | TSS mit IST-Stacks als eigenes Vorhaben | Peter | nichts in diesem Plan |
 | Wiederaufnahme von 12.4-I2 (empfohlen nach Etappe 5) | Peter | nichts in diesem Plan |
 | Einzelbefunde des Audits | ergeben sich aus Etappe 0 | Zuschnitt von E6-C |
 | Verhalten unter WHPX, VMware und echter Hardware | Messung in E7-E | Aussagen zu diesen Plattformen |
+
+## Was die Umsetzung bisher ergeben hat
+
+Stand 18. November 2026, 16 Uhr. Quelle sind die genannten Pull Requests und die Meldungen im Kanal `#second`.
+
+| Frage oder Annahme des Plans | Ergebnis | Beleg |
+| --- | --- | --- |
+| Läuft der Cosmos-Paketbau unter Windows? | Ja, in Git Bash, sobald für die git-Aufrufe im Quellbaum `core.longpaths` gilt; ohne scheitert das Auschecken an einem Fixture mit 128 Zeichen langem Namen. Der Kernelbau mit dem Feed läuft dort ebenfalls (3 min 52 s). Die Patcher-Versionsprüfung ist unter Windows ausgeschaltet | Prüfung auf `925a33b` (E1-C), ein Lauf |
+| Dauer des Paketbaus | 53 bis 64 s für 25 Pakete auf einem Entwicklungsrechner; der CI-Job „Cosmos x64 build“ braucht mit Quellbau gut 3 min | #290 |
+| Welches SDK baut Cosmos? | Festgelegt auf 10.0.404. Gegen die Pakete 3.0.97 von nuget.org weicht damit nur ein Attributtext in `Cosmos.Kernel.Core.dll` ab; mit 10.0.201 weicht Code in drei DLLs ab. Derselbe Commit zweimal gebaut ergibt keine Abweichung im Code | #296 |
+| Gleichstand des Kernels (E1-D) | Hostseitig gleich: 11 gebundene Plugs, Hosttests, ISO-Größe. Die Gastzeilen stehen aus | Kommentar in #290 |
+| Paketliste | 25 Pakete statt 23: dazu `_Cosmos.Build.Analyzer.Patcher` und `Cosmos.Build.Analyzer.Patcher.CodeFixes`. Das Paket `Cosmos.Build.Analyzer.Patcher` hat im Quellbau ein anderes Layout als auf nuget.org | #290, #296 |
+| `packageSourceMapping` | Erst nach E1-F möglich: Die Hosttests laden bis dahin `Cosmos.Kernel.System` 3.0.97 von nuget.org | #290 |
 
 ## Etappe 8: Basiswechsel
 
