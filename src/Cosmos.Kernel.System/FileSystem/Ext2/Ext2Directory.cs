@@ -292,77 +292,84 @@ internal static class Ext2DirectoryHelper
     }
 
     /// <summary>
-    /// Remove an entry by merging its record into the previous one (or
-    /// zeroing the inode when it is the first entry).
+    /// Remove an entry. A record is merged only into its predecessor in the same directory block (no record may
+    /// cross a block boundary); the first record of a block is only freed (inode 0, rec_len kept for reuse by
+    /// AddEntry). Exactly the one changed block is written back.
     /// </summary>
     /// <param name="sb">The mounted volume.</param>
     /// <param name="dir">Directory holding the entry.</param>
-    /// <param name="name">Name of the entry to remove.</param>
-    /// <returns>true when the entry was found and removed.</returns>
+    /// <param name="name">Name of the entry to remove (UTF-8, exact byte comparison).</param>
+    /// <returns>true when the entry was found and removed; false when it is missing or the directory is malformed up to the hit (nothing is written then).</returns>
     public static bool RemoveEntry(Ext2Superblock sb, Ext2Inode dir, string name)
     {
+        // ZehOS patch ext2-remove-entry, see PATCHES.md
         if (dir.FullSize == 0)
         {
             return false;
         }
 
+        int blockSize = (int)sb.BlockSize;
+        byte[] nameBytes = global::System.Text.Encoding.UTF8.GetBytes(name);
         uint blocks = (uint)((dir.FullSize + sb.BlockSize - 1) / sb.BlockSize);
+        uint[] pointers = new uint[blocks];
         byte[] data = new byte[blocks * sb.BlockSize];
+        uint present = 0;
         for (uint i = 0; i < blocks; i++)
         {
             uint blk = sb.GetBlockPointer(dir, i, false, out _);
             if (blk == 0)
             {
+                // A hole ends the scan; writing "block 0" of the device back would destroy the superblock area.
                 break;
             }
 
-            sb.ReadBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+            pointers[i] = blk;
+            sb.ReadBlocks(blk, 1, data.AsSpan((int)i * blockSize, blockSize));
+            present++;
         }
 
-        int pos = 0;
-        int prevPos = -1;
-        ushort prevRecLen = 0;
-        while (pos < data.Length)
+        for (int block = 0; block < present; block++)
         {
-            uint inode = BitConverter.ToUInt32(data.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4));
-            ushort recLen = BitConverter.ToUInt16(data.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2));
-            if (recLen == 0)
+            int start = block * blockSize;
+            int end = start + blockSize;
+            int previous = -1;
+            for (int pos = start; pos < end;)
             {
-                break;
-            }
-
-            byte nameLen = data[pos + Ext2InodeLayout.DirEntryNameLenOffset];
-            if (inode != 0)
-            {
-                int nameLenClamped = Math.Min(nameLen, recLen - Ext2InodeLayout.DirEntryNameOffset);
-                string entryName = global::System.Text.Encoding.UTF8.GetString(data, pos + Ext2InodeLayout.DirEntryNameOffset, nameLenClamped);
-                if (entryName == name)
+                if (pos + Ext2InodeLayout.DirEntryNameOffset > end)
                 {
-                    if (prevPos >= 0)
+                    return false;
+                }
+
+                ushort recLen = BitConverter.ToUInt16(data.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2));
+                if (recLen < Ext2InodeLayout.DirEntryNameOffset || recLen % Ext2InodeLayout.DirEntryAlignment != 0 || pos + recLen > end)
+                {
+                    return false;
+                }
+
+                uint inode = BitConverter.ToUInt32(data.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4));
+                int nameLen = data[pos + Ext2InodeLayout.DirEntryNameLenOffset];
+                if (inode != 0 && nameLen == nameBytes.Length && nameLen <= recLen - Ext2InodeLayout.DirEntryNameOffset
+                    && data.AsSpan(pos + Ext2InodeLayout.DirEntryNameOffset, nameLen).SequenceEqual(nameBytes))
+                {
+                    if (previous >= 0)
                     {
-                        // The previous record absorbs this one; its stale bytes stay behind the extended rec_len.
-                        ushort newLen = (ushort)(prevRecLen + recLen);
-                        BitConverter.TryWriteBytes(data.AsSpan(prevPos + Ext2InodeLayout.DirEntryRecLenOffset, 2), newLen);
+                        // The previous record in this block absorbs this one; its stale bytes stay behind the extended rec_len.
+                        ushort merged = (ushort)(BitConverter.ToUInt16(data.AsSpan(previous + Ext2InodeLayout.DirEntryRecLenOffset, 2)) + recLen);
+                        BitConverter.TryWriteBytes(data.AsSpan(previous + Ext2InodeLayout.DirEntryRecLenOffset, 2), merged);
                     }
                     else
                     {
-                        // No previous record to merge into: a zero inode frees the slot and keeps its rec_len for reuse.
+                        // First record of the block: a zero inode frees the slot and keeps its rec_len for reuse.
                         BitConverter.TryWriteBytes(data.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4), 0u);
                     }
 
-                    for (uint i = 0; i < blocks; i++)
-                    {
-                        uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                        sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
-                    }
-
+                    sb.WriteBlocks(pointers[block], 1, data.AsSpan(start, blockSize));
                     return true;
                 }
-            }
 
-            prevPos = pos;
-            prevRecLen = recLen;
-            pos += recLen;
+                previous = pos;
+                pos += recLen;
+            }
         }
 
         return false;
