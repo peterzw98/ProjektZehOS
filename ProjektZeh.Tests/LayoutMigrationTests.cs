@@ -634,7 +634,7 @@ public sealed class LayoutMigrationTests
         // zweimal vollstaendig hashen (rund 17 s je Lauf), ohne mehr zu pruefen.
         var inventory = MigrationInventory.Read(source);
         Assert.IsTrue(inventory.IsOK(), inventory.Status.Message);
-        MigrationPlan PlanWith(long size) => MigrationPlan.Create(new MigrationInventory(
+        MigrationPlan PlanWith(long size) => MigrationPlan.Create(MigrationInventory.ForTests(
             [.. inventory.Value!.Entries, new InventoryEntry("gross.img", false, size, new string('0', 64), 0)]),
             ["anna", "bob"], SystemPaths.Legacy, SystemPaths.Root);
         Assert.AreEqual(0, PlanWith(MigrationPlan.MaximumFileBytes).Conflicts.Count, "2 GiB - 1 passt");

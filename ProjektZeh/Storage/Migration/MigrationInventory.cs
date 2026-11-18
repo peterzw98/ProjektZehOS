@@ -20,12 +20,17 @@ internal sealed class MigrationInventory
     /// <summary>shortcut: feste Grenze gegen den Kernel-Heap (FAT erlaubt Millionen Dateien); anheben nach Messung von G6.</summary>
     public const int MaximumEntries = 100_000;
 
-    // internal fuer Hosttests mit Groessen, die als echte Datei zu teuer zu hashen waeren (2 GiB).
-    internal MigrationInventory(List<InventoryEntry> entries)
+    private MigrationInventory(List<InventoryEntry> entries)
     {
         Entries = entries;
         Hash = ComputeHash(entries);
     }
+
+    /// <summary>
+    /// Nur fuer Hosttests mit Groessen, die als echte Datei zu teuer zu hashen waeren (2 GiB). Produktcode erzeugt ein Inventar
+    /// ausschliesslich ueber <see cref="Read"/>, das die Grenzen (MaximumEntries, Pfade) prueft; diese Fabrik prueft nichts.
+    /// </summary>
+    internal static MigrationInventory ForTests(List<InventoryEntry> entries) => new(entries);
 
     /// <summary>Eltern vor Kindern, je Verzeichnis Ordinal sortiert.</summary>
     public IReadOnlyList<InventoryEntry> Entries { get; }
