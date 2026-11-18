@@ -1,8 +1,26 @@
 # Tests für dispatcher.py ohne Netz und ohne echtes claude: ein Ersatzskript protokolliert den Aufruf und
 # endet je nach Umgebungsvariable erfolgreich, mit Fehler oder erst nach einer Wartezeit.
-import json, os, stat, sys, tempfile, time
+import atexit, json, os, signal, stat, subprocess, sys, tempfile, time
 
 from dispatcher import Dispatcher, mention_pattern, parse_args, parse_mention
+
+# Als Prozess gestartete Dienste und Ersatzläufe immer beenden, auch wenn ein Test scheitert: Sonst halten sie
+# die Ausgabe offen, und die CI hängt statt rot zu werden.
+SPAWNED = []
+
+
+def spawn(cmd, **kw):
+    kw.setdefault("start_new_session", True)
+    p = subprocess.Popen(cmd, **kw)
+    SPAWNED.append(p)
+    return p
+
+
+@atexit.register
+def _cleanup():
+    for p in SPAWNED:
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError): pass
 
 NICK = "agent-x"
 FAKE = r'''#!{py}
@@ -297,7 +315,7 @@ os.environ["FAKE_SLEEP"] = "30"
 here = os.path.dirname(os.path.abspath(__file__))
 cmd = [sys.executable, "-I", os.path.join(here, "dispatcher.py"), "--nick", NICK, "--irc-dir", e.irc,
        "--home", e.dir, "--model", "m", "--claude", e.claude, "--quiet", "0", "--poll", "0.1"]
-svc = subprocess.Popen(cmd)
+svc = spawn(cmd)
 time.sleep(0.5)
 second = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 assert second.returncode != 0 and "läuft bereits" in second.stderr
@@ -307,7 +325,7 @@ t = time.time()
 while not os.path.exists(running) and time.time() - t < 5:
     time.sleep(0.1)
 with open(running) as f:
-    run_pid = int(f.read())
+    run_pid = int(f.read().split()[0])
 svc.send_signal(signal.SIGHUP)
 svc.wait(timeout=20)
 time.sleep(0.2)
@@ -318,13 +336,13 @@ except ProcessLookupError:
 assert not alive and not os.path.exists(running)                          # Lauf nicht verwaist
 
 # --- Harter Abbruch des Dienstes (kill -9): der nächste Start beendet den verwaisten Lauf ------------------
-svc = subprocess.Popen(cmd)
+svc = spawn(cmd)
 e.say("agent-coordinator", "agent-x: noch einmal", poll=False)
 t = time.time()
 while not os.path.exists(running) and time.time() - t < 5:
     time.sleep(0.1)
 with open(running) as f:
-    run_pid = int(f.read())
+    run_pid = int(f.read().split()[0])
 svc.kill(); svc.wait()
 os.killpg(run_pid, 0)                                                     # läuft verwaist weiter
 d2 = e.new()                                                              # Start räumt auf
@@ -338,7 +356,7 @@ os.environ["FAKE_SLEEP"] = "0"
 
 # --- Ein Fehler im Schritt beendet den Dienst nicht --------------------------------------------------------
 e = Env()
-svc = subprocess.Popen([sys.executable, "-I", os.path.join(here, "dispatcher.py"), "--nick", NICK,
+svc = spawn([sys.executable, "-I", os.path.join(here, "dispatcher.py"), "--nick", NICK,
                         "--irc-dir", e.irc, "--home", e.dir, "--model", "m", "--claude", e.claude,
                         "--quiet", "0", "--poll", "0.1"])
 time.sleep(0.5)
@@ -350,6 +368,53 @@ os.chmod(e.log, 0o600)
 with open(os.path.join(e.args.state, "dispatch.log")) as f:
     assert "Fehler im Schritt: PermissionError" in f.read()
 svc.terminate(); svc.wait(timeout=20)
+
+# --- Nachprüfung P2: Protokoll bei ausgeschaltetem Dienst geleert und über die alte Länge gewachsen ------
+e = Env()
+e.say("agent-coordinator", "agent-x: alt 1 " + "x" * 30)
+d2_offset = e.d.offset[1]
+with open(e.log, "r+") as f:
+    f.truncate(0)
+with open(e.log, "a") as f:                                               # anderer Zeitstempel am Anfang
+    f.write("2026-11-19 07:00:00 << :agent-coordinator!~u@h PRIVMSG #g :agent-x: neu 1\n")
+    f.write("2026-11-19 07:00:01 << :agent-coordinator!~u@h PRIVMSG #g :agent-x: neu 2\n")
+    f.write("2026-11-19 07:00:02 << :agent-coordinator!~u@h PRIVMSG #g :agent-x: neu 3\n")
+assert os.stat(e.log).st_size > d2_offset
+d2 = e.new(); d2.poll_log()
+assert [x["text"] for x in d2.entries][-3:] == ["agent-x: neu 1", "agent-x: neu 2", "agent-x: neu 3"], d2.entries
+
+# --- Nachprüfung P2: running nicht schreibbar, der Lauf wird trotzdem überwacht und beendet --------------
+e = Env("--slots-dir", tempfile.mkdtemp(), "--max-parallel", "1")
+orig_write = e.d._write
+def failing_write(name, text):
+    if name == "running":
+        raise OSError(28, "No space left on device")
+    orig_write(name, text)
+e.d._write = failing_write
+e.say("agent-coordinator", "agent-x: trotz voller Platte")
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 1 and e.d.slot_fd is None
+
+# --- Nachprüfung P3: wiederverwendete PID eines fremden Prozesses wird nicht beendet ----------------------
+import subprocess
+from dispatcher import _start_time
+fremd = spawn(["sleep", "30"])
+e = Env()
+with open(os.path.join(e.args.state, "running"), "w") as f:
+    f.write(f"{fremd.pid} 1\n")                                           # Startzeit passt nicht
+e.new()
+assert fremd.poll() is None                                               # lebt noch
+fremd.kill(); fremd.wait()
+# Toter Sitzungsführer, Kind lebt weiter: das Kind wird beendet
+sh = spawn(["sh", "-c", "sleep 30 & echo $!"], stdout=subprocess.PIPE, text=True)
+kind = int(sh.stdout.readline()); sh.wait()
+assert _start_time(sh.pid) is None and _start_time(kind) is not None
+with open(os.path.join(e.args.state, "running"), "w") as f:
+    f.write(f"{sh.pid} 999\n")
+e.new()
+time.sleep(0.2)
+assert _start_time(kind) is None or open(f"/proc/{kind}/stat").read().split(") ")[1][0] == "Z"
 
 # --- Relative Pfade werden absolut: der Lauf startet in --home und muss state.md dort finden -------------
 cwd = os.getcwd()

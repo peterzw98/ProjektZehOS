@@ -14,13 +14,41 @@
 #   offset       Lesestand im Protokoll (Inode und Byte)      state.md  Stand des Agenten zwischen den Läufen
 #   heartbeat    Lebenszeichen des Dienstes (JSON, je Schritt) runs/     Ausgabe jedes Laufs
 #   lock         verhindert einen zweiten Dienst für denselben Nick
-import argparse, errno, fcntl, json, os, re, signal, subprocess, sys, time
+import argparse, errno, fcntl, hashlib, json, os, re, signal, subprocess, sys, time
 
 SERVER_NOTICE = re.compile(r":zeh\.ernst\.casa NOTICE ")
 LINE = re.compile(r"^(\S+ \S+) << :([^!\s]+)!\S* (PRIVMSG|NOTICE|INVITE) (\S+) :?(.*)$")
 IGNORED_SENDERS = {"histserv"}  # Wiederholung alter Zeilen durch den Server, klein geschrieben verglichen
 MAX_LINE = 1000      # längere Zeilen werden im Auftrag gekürzt, das Protokoll bleibt vollständig
 MAX_BATCH = 40       # mehr Zeilen je Lauf nur als Verweis aufs Protokoll
+
+
+def _stat_fields(pid):
+    # Felder aus /proc/<pid>/stat nach dem Programmnamen (der Klammern und Leerzeichen enthalten kann)
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            data = f.read().decode(errors="replace")
+    except OSError:
+        return None
+    return data[data.rfind(")") + 2:].split()
+
+
+def _start_time(pid):
+    """Startzeit des Prozesses in Takten seit dem Systemstart (Feld 22) oder None, wenn es ihn nicht gibt."""
+    f = _stat_fields(pid)
+    return f[19] if f and len(f) > 19 else None
+
+
+def _session_of(pid):
+    f = _stat_fields(pid)
+    try:
+        return int(f[3]) if f else None
+    except (IndexError, ValueError):
+        return None
+
+
+def _pids():
+    return [int(p) for p in os.listdir("/proc") if p.isdigit()]
 
 
 def mention_pattern(nick):
@@ -122,6 +150,7 @@ class Dispatcher:
         try:
             ino, off = int(parts[0]), int(parts[1])
             gen = int(parts[2]) if len(parts) > 2 else 0
+            self.head = parts[3] if len(parts) > 3 and parts[3] != "-" else ""
             return (ino, off, gen)
         except (IndexError, ValueError):
             # Erster Start: nur neue Zeilen; alte Nennungen gelten als erledigt. Sofort festhalten, damit
@@ -131,8 +160,25 @@ class Dispatcher:
                 start = (st.st_ino, st.st_size, self._max_gen() + 1)
             except FileNotFoundError:
                 start = (0, 0, self._max_gen() + 1)
-            self._write("offset", "%d %d %d\n" % start)
+            self.head = self._head_hash(start[1])
+            self._save_offset(start)
             return start
+
+    def _head_hash(self, off):
+        # Fingerabdruck des Dateianfangs bis zur gelesenen Stelle (höchstens 64 Byte). Wird das Protokoll auf
+        # demselben Inode geleert und wächst danach über die alte Länge hinaus, ändert sich der Anfang
+        # (andere Zeitstempel); allein an der Dateigröße wäre die Kürzung dann nicht mehr zu erkennen.
+        n = min(off, 64)
+        if n <= 0:
+            return ""
+        try:
+            with open(self.a.log, "rb") as f:
+                return hashlib.sha1(f.read(n)).hexdigest()[:16]
+        except OSError:
+            return ""
+
+    def _save_offset(self, offset):
+        self._write("offset", "%d %d %d %s\n" % (*offset, self.head or "-"))
 
     def _max_gen(self):
         return max((e.get("gen", 0) for e in self.entries), default=0)
@@ -148,24 +194,26 @@ class Dispatcher:
     def _reap_orphan(self):
         # Endete der vorige Dienst hart (kill -9, Absturz), läuft sein Lauf in eigener Sitzung weiter.
         # Ihn beenden, bevor derselbe Auftrag erneut startet, sonst arbeiten zwei Läufe im selben Verzeichnis.
-        pid = self._read("running", "")
-        if not pid.isdigit():
+        parts = self._read("running", "").split()
+        if not parts or not parts[0].isdigit():
             return
-        pid = int(pid)
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmd = f.read().split(b"\0")
-            ours = any(os.path.basename(x.decode(errors="replace")) == os.path.basename(self.a.claude) for x in cmd[:2])
-        except OSError:
-            ours = False   # Prozess gibt es nicht mehr
+        pid, started = int(parts[0]), (parts[1] if len(parts) > 1 else None)
+        # Der Lauf ist Führer seiner eigenen Sitzung (start_new_session), also Sitzungs-ID = pid. Lebt der Führer noch,
+        # muss auch seine Startzeit passen; sonst gehört die PID inzwischen einem fremden Prozess. Ist der Führer tot,
+        # zählen nur Prozesse, deren Sitzung noch diese ID trägt: das sind die zurückgebliebenen Kinder des Laufs.
+        leader = _start_time(pid)
+        if leader is not None:
+            ours = started is not None and leader == started
+        else:
+            ours = any(_session_of(p) == pid for p in _pids())
         if ours:
-            self.log_event(f"Verwaister Lauf (Prozessgruppe {pid}) aus früherem Dienst wird beendet")
-            try:
-                os.killpg(pid, signal.SIGTERM)
-                time.sleep(2)
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            self.log_event(f"Verwaister Lauf (Sitzung {pid}) aus früherem Dienst wird beendet")
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                for p in [p for p in _pids() if _session_of(p) == pid]:
+                    try: os.kill(p, sig)
+                    except ProcessLookupError: pass
+                if sig == signal.SIGTERM:
+                    time.sleep(2)
         os.remove(self._path("running"))
 
     def log_event(self, text):
@@ -179,11 +227,13 @@ class Dispatcher:
         except FileNotFoundError:
             return 0
         ino, off, gen = self.offset
-        if st.st_ino != ino or st.st_size < off:
+        replaced = (st.st_ino != ino or st.st_size < off
+                    or (off > 0 and self.head and self._head_hash(off) != self.head))
+        if replaced:
             # Neues oder gekürztes Protokoll: von vorn, in einer neuen Generation (siehe _known_end)
             off, gen = 0, max(gen, self._max_gen()) + 1
-            self.offset = (st.st_ino, 0, gen)
-            self._write("offset", "%d %d %d\n" % self.offset)
+            self.offset, self.head = (st.st_ino, 0, gen), ""
+            self._save_offset(self.offset)
             self.log_event(f"Protokoll neu begonnen (Inode {st.st_ino}), Generation {gen}")
         if st.st_size == off:
             return 0
@@ -212,7 +262,8 @@ class Dispatcher:
                 added += 1
             inbox.flush(); os.fsync(inbox.fileno())
         self.offset = (st.st_ino, off + end + 1, gen)
-        self._write("offset", "%d %d %d\n" % self.offset)
+        self.head = self._head_hash(self.offset[1])
+        self._save_offset(self.offset)
         return added
 
     # --- Läufe --------------------------------------------------------------------------------------
@@ -280,9 +331,15 @@ class Dispatcher:
             self.log_event(f"Start gescheitert: {e}")
             self._failed(now, f"Start gescheitert ({e.strerror or e})", batch[-1]["id"])
             return
-        # Prozessgruppe festhalten: endet der Dienst hart, beendet der nächste Start diesen Lauf (_reap_orphan)
-        self._write("running", f"{self.proc.pid}\n")
+        # Erst den Lauf vermerken, dann die Datei schreiben: scheitert das Schreiben (volle Platte), wird der Lauf
+        # trotzdem überwacht, beendet und sein Slot freigegeben
         self.run = {"start": now, "last": batch[-1]["id"], "first": batch[0]["id"], "out": out, "path": out_path}
+        # Prozessgruppe und Startzeit festhalten: endet der Dienst hart, beendet der nächste Start genau diesen
+        # Lauf (_reap_orphan); die Startzeit verhindert, dass eine wiederverwendete PID einen fremden Lauf trifft
+        try:
+            self._write("running", f"{self.proc.pid} {_start_time(self.proc.pid)}\n")
+        except OSError as e:
+            self.log_event(f"running nicht geschrieben ({e}); ein verwaister Lauf würde nicht aufgeräumt")
         self.starts.append(now)
         self.log_event(f"Lauf gestartet für #{batch[0]['id']}..#{batch[-1]['id']} ({len(batch)} Zeilen), Log {out_path}")
 
@@ -325,6 +382,7 @@ class Dispatcher:
             self.log_event(f"Warnung nicht gesendet ({errno.errorcode.get(e.errno, e)}): {text}")
 
     def _kill(self):
+        # Zeitlimit oder Dienstende: die Prozessgruppe des Laufs beenden (Enkel, die sich selbst abkoppeln, nicht)
         try:
             os.killpg(self.proc.pid, signal.SIGTERM)
             try: self.proc.wait(timeout=10)
