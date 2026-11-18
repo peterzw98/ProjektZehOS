@@ -105,7 +105,7 @@ internal static class WasmEngineSelection
                 StorageLock.Run(stream.Dispose);
             }
         }
-        catch (Exception exception) when (PackageStore.IsFileError(exception))
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, $"AOT-Datei {file.Path} nicht lesbar: {exception.Message}");
         }
