@@ -32,9 +32,11 @@ public sealed class TlsTransportTests
         byte[] bundle = TlsRoots.Load();
 
         Assert.AreSame(bundle, TlsRoots.Load(), "Das Bundle wird je Start nur einmal gelesen.");
-        // cacert.pem enthaelt ueber hundert Wurzeln; deutlich weniger hiesse, dass das Einlesen abbricht.
-        Assert.IsTrue(TlsTransport.LoadAnchors(bundle).Count > 100);
-        Assert.AreSame(TlsTransport.CachedAnchors(bundle), TlsTransport.CachedAnchors(bundle));
+        // cacert.pem enthaelt ueber hundert Wurzeln; deutlich weniger hiesse, dass das Einlesen abbricht. Ueber den Cache
+        // statt LoadAnchors: das Bundle wird so hoechstens einmal geparst (jeder Lauf kostet einige Sekunden).
+        var anchors = TlsTransport.CachedAnchors(bundle);
+        Assert.IsTrue(anchors.Count > 100);
+        Assert.AreSame(anchors, TlsTransport.CachedAnchors(bundle));
     }
 
     [TestMethod]

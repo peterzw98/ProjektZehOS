@@ -234,7 +234,7 @@ GitHub Actions prüft Pull Requests und jeden Push auf `master`. Beide Workflows
 - **Shell tests and .NET analysis** baut das Testprojekt mit den empfohlenen .NET-10-Analyseregeln und führt die Shelltests aus. Compiler- und Analyzerwarnungen lassen den CI-Build fehlschlagen. Der Job führt auch die Python-Skripttests, die Red-Zone-Prüfung der committeten AOT-Fixtures (`scripts/check-aot-redzone.py`, braucht `objdump`) und die Abdeckungsprüfung aus. Lokal laufen die Python-Skripttests mit `python3 scripts/run-tests.py` schneller (parallel, je Modul ein Prozess, dieselben Tests); die CI bleibt bei `unittest discover`.
 - **Shell tests (Windows)** führt dieselben Hosttests zusätzlich auf `windows-2025` aus (ohne Abdeckungsbericht), weil Pfadtrenner, Zeilenenden und Groß-/Kleinschreibung dort abweichen. Der Linux-Job bleibt die maßgebliche Prüfung.
 - **Docs, scripts and workflow lint** läuft immer, auch bei reinen Doku-PRs: `scripts/check-doc-links.py` prüft relative Markdown-Verweise und Überschriften-Anker ohne Netzzugriff, `shellcheck` (Fehler und Warnungen) prüft die Shellskripte, `actionlint` die Workflows.
-- **Cosmos x64 build** installiert Cosmos CLI und Patcher in Version 3.0.97 samt nativer Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
+- **Cosmos x64 build** baut Cosmos CLI und Patcher aus dem festgelegten Quellstand, installiert die native Toolchain und erstellt ein bootfähiges Release-ISO. Auch hier gelten die .NET-Analyseregeln.
 - **Release images (live and installer)** baut parallel dazu die Live- und Installer-Images mit `scripts/build-release.sh` und prüft sie auf lokale Pfade. Der Job ist von **Cosmos x64 build** getrennt, damit der Gastlauf nicht auf diesen vollständigen Neubau wartet.
 - **Detect code changes** prüft bei Pull Requests, ob etwas anderes als Markdown oder Dateien unter `docs/` geändert wurde. Reine Doku-PRs überspringen alle Jobs außer **Docs, scripts and workflow lint** (Hosttests, Windows-Tests, Paketbuilds, Kernel, Release-Images und Gastläufe); übersprungene Jobs zählen als bestanden. CodeQL ignoriert Doku-PRs über `paths-ignore`. Dependabot schlägt monatlich Updates der angehefteten GitHub-Actions vor (`.github/dependabot.yml`); Paket-, SDK- und Cosmos-Updates sind davon ausgenommen.
 - **Guest boot and desktop (QEMU)** startet das ISO aus dem Job **Cosmos x64 build** unter QEMU mit TCG und bedient es mit `scripts/test-desktop-guest.py`: Boot, Anmeldung, Fenster öffnen und schließen, Textshell und `shutdown`. Bildschirmfotos und Protokolle liegen im Artefakt `guest-desktop`.
@@ -251,12 +251,24 @@ Die Regeln liegen in `Directory.Build.props`. Die `.editorconfig` enthält gezie
 
 ## Voraussetzungen
 
-- .NET SDK 10; `global.json` wählt die neueste installierte 10.0-Featureversion. Ein allein installiertes SDK 11 reicht für Cosmos 3.0.97 nicht aus.
-- Cosmos Gen3 CLI und Bauwerkzeuge (`cosmos check` muss erfolgreich sein)
+- .NET SDK 10; `global.json` wählt die neueste installierte 10.0-Featureversion. Ein allein installiertes SDK 11 reicht für den Cosmos-Bau nicht aus.
+- Git, Bash und Netz für den Cosmos-Quellbau. `scripts/build-cosmos.sh` verlangt genau das SDK aus `deploy/cosmos/SDK` (derzeit 10.0.404) und bricht bei einem anderen ab; `--any-sdk` ist nur für lokale Versuche gedacht.
+- Cosmos Gen3 CLI und native Bauwerkzeuge (`cosmos check` muss erfolgreich sein)
 - Für die Arbeit in Visual Studio: Visual Studio 2026 (Version 18.0 oder neuer). Visual Studio 2022 kann dieses `net10.0`-Projekt nicht bauen.
 - Für Breakpoints in Visual Studio: die [Cosmos-Visual-Studio-Erweiterung](https://github.com/CosmosOS/CosmosVsExtension/releases) und der Visual-Studio-Workload **Linux and embedded development with C++**. Der Workload stellt die GDB-Debugengine bereit.
 
-Das Projekt verwendet Cosmos 3.0.97. Die offizielle Installationsanleitung steht unter <https://cosmosos.github.io/articles/user/install.html>.
+Der Kernel verwendet Cosmos aus dem eigenen Branch `cosmos`; `deploy/cosmos/COMMIT` und `VERSION` legen Quellstand und Paketversion fest. Vor dem ersten Kernelbau und nach jeder Änderung von `COMMIT` im Repository-Stamm ausführen:
+
+```bash
+scripts/build-cosmos.sh
+export PATH="$PWD/.tools/cosmos-tools/$(cat deploy/cosmos/VERSION):$PATH"
+cosmos install --auto --tools
+cosmos check
+```
+
+Das Skript baut den lokalen Paketfeed und installiert CLI und Patcher je Arbeitskopie unter `.tools/cosmos-tools/<version>`. Den passenden Ordner in jeder Shell vor den Kernelbau an den Anfang von `PATH` setzen, insbesondere bei mehreren Arbeitskopien. `cosmos install` immer mit `--tools` aufrufen; ohne diese Option ersetzt es den Patcher durch die offizielle Version. Für Visual Studio und F5 zusätzlich `scripts/build-cosmos.sh --global` ausführen; nach einem Versionswechsel wiederholen. Unter Windows prüft der Kernelbau die Patcher-Version nicht automatisch; das Skript setzt `core.longpaths` für seine Git-Aufrufe selbst (siehe [Befund](docs/COSMOS_SUPPORT.md#cosmos-aus-quelle-18-november-2026)). Einzelheiten und Voraussetzungen: [Cosmos-Quellbau](deploy/cosmos/README.md). Die offizielle Installationsanleitung steht unter <https://cosmosos.github.io/articles/user/install.html>.
+
+**Fehlermeldung `Unable to find package Cosmos.Sdk with version (= 3.0.97-zehos.1)` oder `The SDK 'Cosmos.Sdk' specified could not be found`:** Der lokale Paketfeed fehlt noch (oder ist veraltet). Abhilfe: `scripts/build-cosmos.sh` im Repository-Stamm ausführen (die Version steht in `deploy/cosmos/VERSION`) und den Werkzeugordner wie oben in `PATH` setzen. `cosmos build` nimmt keine zusätzlichen MSBuild-Eigenschaften (`-p:…`) an; dafür nach dem Setzen von `PATH` direkt `dotnet build` verwenden (siehe Installer-Build).
 
 Die Solution `ProjektZeh.sln` muss ausdrücklich in Visual Studio 2026 geöffnet werden. Visual Studio 2022 meldet bei diesem Projekt einen Fehler zum .NET-10-Ziel und gegebenenfalls einen Folgefehler zur Assembly-Kürzung.
 
@@ -399,7 +411,7 @@ payload="$PWD/.tools/installer-payload"
 mkdir -p "$payload"
 dotnet build ProjektZeh/ProjektZeh.csproj -c Release
 cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
-cp "$HOME/.nuget/packages/cosmos.build.common/3.0.97/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
+cp "$HOME/.nuget/packages/cosmos.build.common/$(cat deploy/cosmos/VERSION)/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
 dotnet build ProjektZeh/ProjektZeh.csproj -c Release \
   -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
 ```

@@ -187,8 +187,9 @@ public sealed class CertificateStrengthTests
         Assert.AreEqual(1, anchors.Count, "nur die starke Wurzel");
 
         // Gepruefter Stand 17.11.2026: 121 Wurzeln, keine faellt durch die Regeln heraus (Spec §5.2).
-        var shipped = new X509CertificateParser().ReadCertificates(TlsRoots.Load()).Count;
-        Assert.AreEqual(shipped, TlsTransport.LoadAnchors(TlsRoots.Load()).Count,
+        // Zahl der Wurzeln aus den PEM-Kopfzeilen statt aus einem zweiten Parserlauf; die Anker kommen aus dem Cache.
+        int shipped = System.Text.RegularExpressions.Regex.Count(Encoding.ASCII.GetString(TlsRoots.Load()), "-----BEGIN CERTIFICATE-----");
+        Assert.AreEqual(shipped, TlsTransport.CachedAnchors(TlsRoots.Load()).Count,
             "Stolperdraht: eine neue Wurzel faellt heraus (Schluessel, kritische Erweiterung oder Zweck) - Bundle pruefen, Regel nicht still lockern.");
     }
 
