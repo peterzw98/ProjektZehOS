@@ -56,11 +56,9 @@ def _pids():
 # gebunden, damit eine Antwort, die nur über Ratengrenzen spricht, kein Kontingent sperrt.
 # Nur die festen Wendungen der Werkzeuge, keine Einzelwörter wie „quota“ oder „rate limit“: Die kommen auch in
 # echten Antworten vor (ein Review über Ratengrenzen), und eine falsche Sperre legt alle Agenten des Rechners still.
-LIMIT_PATTERNS = {
-    "claude": r"Claude AI usage limit reached|usage limit reached|(5-hour|weekly|session|opus|sonnet) limit reached|"
-              r"you'?ve hit your (usage |session |weekly )?limit|out of (extra )?usage",
-    "codex": r"you'?ve hit your usage limit|usage limit reached|exceeded your (current )?quota",
-}
+LIMIT_PATTERN = (r"Claude AI usage limit reached|usage limit reached|(5-hour|weekly|session|opus|sonnet) limit reached|"
+                 r"you'?ve hit your (usage |session |weekly )?limit|out of (extra )?usage")
+BACKEND = "claude"       # Name der Kontingentdatei (quota-claude.json); andere Werkzeuge gibt es derzeit nicht
 LIMIT_OUTPUT_MAX = 600   # längere Ausgaben sind eine echte Antwort, kein Limithinweis
 LIMIT_HEAD = 300         # bei Exit 0 muss die Meldung am Anfang der Ausgabe stehen, nicht irgendwo im Text
 LIMIT_REPEAT_MAX = 2     # so oft hintereinander Limit für dieselben Nennungen, dann wie ein Fehlschlag
@@ -94,7 +92,7 @@ def parse_reset(text, now):
 
 
 class QuotaStore:
-    """Gemeinsamer Kontingentstand je Anbieter (claude, codex) für alle Dienste eines Rechners.
+    """Gemeinsamer Kontingentstand je Anbieter (derzeit nur claude) für alle Dienste eines Rechners.
 
     Eine Datei je Anbieter mit Sperre bis zu einem Zeitpunkt und Zahl der Läufe des Tages. Erkennt ein Dienst eine
     Limitmeldung, sperrt er den Anbieter für alle; ist das Tagesbudget aufgebraucht, ebenso bis Mitternacht.
@@ -213,7 +211,7 @@ class Dispatcher:
         self.timed_out_upto = int(retry.get("timed_out_upto", 0))
         self.starts = []          # Startzeiten der letzten Stunde (Ratengrenze)
         self.slot_fd = None
-        self.quota = QuotaStore(a.quota_dir, {"claude": a.budget_claude, "codex": a.budget_codex})
+        self.quota = QuotaStore(a.quota_dir, {BACKEND: a.budget_claude})
         self.quota_alerted = {}   # je Anbieter: bis wann schon gewarnt wurde (eine Warnung je Sperre)
         self.limit_runs, self.limit_last = 0, 0   # aufeinanderfolgende Limitläufe derselben Nennungen
         self._reap_orphan()
@@ -439,68 +437,37 @@ class Dispatcher:
             f"5. Beende dann den Lauf. Wartest du auf eine Antwort, melde [BLOCKER] und ende; du wirst bei der "
             f"nächsten Nennung neu gestartet.\n\nNeue Zeilen:\n{text}{more}\n")
 
-    def choose_backend(self, now):
-        """Anbieter für den nächsten Lauf: der eigene, sonst der Ersatz, sonst None (warten, ohne Fehlschlag)."""
-        candidates = [self.a.backend] + ([self.a.fallback] if self.a.fallback else [])
-        blocked = {}
-        for backend in candidates:
-            hit = self.quota.blocked(backend, now)
-            if not hit:
-                chosen = backend
-                break
-            blocked[backend] = hit
-        else:
-            chosen = None
-        for backend, (until, reason) in blocked.items():
-            # Eine Warnung je Sperre und Rechner, nicht je Agent: die Kontingentdatei hält fest, wer schon gemeldet hat
-            if self.quota_alerted.get(backend, 0) < until and self.quota.claim_alert(backend, until):
-                what = f"weiche auf {chosen} aus" if chosen else "Aufträge warten"
-                self.alert(f"{self.a.alert_to}: [dispatcher] Kontingent {backend} gesperrt bis "
-                           f"{time.strftime('%d.%m. %H:%M', time.localtime(until))} ({reason}); {what} "
-                           f"(gemeldet von {self.a.nick})")
-            self.quota_alerted[backend] = until
-        return chosen
+    def quota_free(self, now):
+        """True, wenn das Kontingent frei ist; sonst warten die Nennungen ohne Fehlschlag (eine Warnung je Sperre)."""
+        hit = self.quota.blocked(BACKEND, now)
+        if not hit:
+            return True
+        until, reason = hit
+        # Eine Warnung je Sperre und Rechner, nicht je Agent: die Kontingentdatei hält fest, wer schon gemeldet hat
+        if self.quota_alerted.get(BACKEND, 0) < until and self.quota.claim_alert(BACKEND, until):
+            self.alert(f"{self.a.alert_to}: [dispatcher] Kontingent {BACKEND} gesperrt bis "
+                       f"{time.strftime('%d.%m. %H:%M', time.localtime(until))} ({reason}); Aufträge warten "
+                       f"(gemeldet von {self.a.nick})")
+        self.quota_alerted[BACKEND] = until
+        return False
 
-    def build_cmd(self, backend, prompt):
-        if backend == "codex":
-            # Codex liest AGENTS.md selbst; einen Schalter für einen zusätzlichen Systemprompt nutzen wir nicht,
-            # deshalb steht die Rolle vor dem Auftrag. Standard-Schalter: Start auch außerhalb eines Git-Baums und
-            # Schreibrecht im Arbeitsbereich (sonst keine Antwort über die Outbox). Gegen die installierte Version
-            # nicht geprüft; per --codex-arg ersetzbar.
-            role = ""
-            if self.a.role:
-                try:
-                    with open(self.a.role) as f:
-                        role = f.read() + "\n\n"
-                except OSError as e:
-                    self.log_event(f"Rolle nicht lesbar ({e}); Codex-Lauf ohne Rolle")
-            model = [self.a.codex_model_flag, self.a.codex_model] if self.a.codex_model else []
-            args = self.a.codex_arg or ["exec", "--skip-git-repo-check", "--sandbox", "workspace-write"]
-            return [self.a.codex] + args + model + [role + prompt]
+    def build_cmd(self, prompt):
         cmd = [self.a.claude, "-p", "--model", self.a.model, "--permission-mode", self.a.permission_mode]
         if self.a.role:
             cmd += ["--append-system-prompt-file", self.a.role]
         return cmd + self.a.claude_arg + [prompt]
 
-    def start(self, now, backend=None):
-        backend = backend or self.a.backend
+    def start(self, now):
         batch = self.pending()
         prompt = self.build_prompt(batch)
-        if backend != self.a.backend:
-            prompt = (f"Hinweis: Dieser Lauf läuft ersatzweise über {backend}, weil das Kontingent von "
-                      f"{self.a.backend} gerade gesperrt ist; nenne das in deiner Rückmeldung.\n" + prompt)
         out_path = os.path.join(self.a.state, "runs", time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
                                 + f"-{batch[-1]['id']}.log")
-        cmd = self.build_cmd(backend, prompt)
+        cmd = self.build_cmd(prompt)
         out = None
         try:
             out = open(out_path, "w")
-            # Codex startet im Klon: Es verlangt einen Git-Baum, und mit Schreibrecht nur im Arbeitsbereich muss die
-            # Outbox (ProjektZehOS/.tools/irc) darin liegen. Claude startet im Agentenverzeichnis wie bisher.
-            clone = os.path.join(self.a.home, "ProjektZehOS")
-            cwd = clone if backend == "codex" and os.path.isdir(clone) else self.a.home
             # Eigene Prozessgruppe: bei Zeitüberschreitung wird der Lauf mit allen Kindprozessen beendet
-            self.proc = self.popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
+            self.proc = self.popen(cmd, cwd=self.a.home, stdin=subprocess.DEVNULL, stdout=out,
                                    stderr=subprocess.STDOUT, start_new_session=True)
         except OSError as e:
             if out: out.close()
@@ -510,9 +477,8 @@ class Dispatcher:
             return
         # Erst den Lauf vermerken, dann die Datei schreiben: scheitert das Schreiben (volle Platte), wird der Lauf
         # trotzdem überwacht, beendet und sein Slot freigegeben
-        self.run = {"start": now, "last": batch[-1]["id"], "first": batch[0]["id"], "out": out, "path": out_path,
-                    "backend": backend}
-        self.quota.count_start(backend, now)
+        self.run = {"start": now, "last": batch[-1]["id"], "first": batch[0]["id"], "out": out, "path": out_path}
+        self.quota.count_start(BACKEND, now)
         # Prozessgruppe und Startzeit festhalten: endet der Dienst hart, beendet der nächste Start genau diesen
         # Lauf (_reap_orphan); die Startzeit verhindert, dass eine wiederverwendete PID einen fremden Lauf trifft
         try:
@@ -520,7 +486,7 @@ class Dispatcher:
         except OSError as e:
             self.log_event(f"running nicht geschrieben ({e}); ein verwaister Lauf würde nicht aufgeräumt")
         self.starts.append(now)
-        self.log_event(f"Lauf gestartet für #{batch[0]['id']}..#{batch[-1]['id']} ({len(batch)} Zeilen, {backend}), "
+        self.log_event(f"Lauf gestartet für #{batch[0]['id']}..#{batch[-1]['id']} ({len(batch)} Zeilen), "
                        f"Log {out_path}")
 
     def _finish(self, now, code):
@@ -541,16 +507,16 @@ class Dispatcher:
             until = parse_reset(limit, now) or now + self.a.cooldown
             # Auch beim Aufgeben sperren: Ist es ein echtes Limit mit unlesbarer Zeit, liefen sonst die anderen Agenten
             # des Rechners sofort wieder hinein
-            self.quota.block(run["backend"], until, "Limitmeldung")
+            self.quota.block(BACKEND, until, "Limitmeldung")
             if self.limit_runs > LIMIT_REPEAT_MAX:
                 self.limit_runs = 0
                 self._failed(now, f"{LIMIT_REPEAT_MAX + 1}-mal Limitmeldung für dieselben Nennungen", run["last"],
                              run["path"], final=True)
                 return
             # Kontingent leer: kein Fehlschlag des Auftrags und keine Quittung. Anbieter für alle Dienste des Rechners
-            # sperren, bis er laut Meldung wieder frei ist; die Nennung startet danach erneut (oder beim Ersatz).
+            # sperren, bis er laut Meldung wieder frei ist; die Nennung startet danach erneut.
             self.next_try = 0.0
-            self.log_event(f"Kontingent {run['backend']} erschöpft, gesperrt bis "
+            self.log_event(f"Kontingent {BACKEND} erschöpft, gesperrt bis "
                            f"{time.strftime('%d.%m. %H:%M', time.localtime(until))}; Nennungen bleiben offen")
             return
         self.limit_runs, self.limit_last = 0, 0
@@ -583,7 +549,7 @@ class Dispatcher:
             return None
         # Bei Exit 0 nur eine kurze Ausgabe, die mit der Meldung beginnt: Eine Antwort, die über Limits spricht, ist
         # Arbeit. Bei einem Fehlercode reicht die Meldung im Rest der Ausgabe.
-        pattern = self.a.limit_pattern or LIMIT_PATTERNS.get(run["backend"], LIMIT_PATTERNS["claude"])
+        pattern = self.a.limit_pattern or LIMIT_PATTERN
         if code == 0:
             # Exit 0: Die Ausgabe muss mit der Meldung beginnen (so endet ein Lauf am Limit); steht die Wendung mitten
             # in einer Antwort, ist es Inhalt, kein Limit
@@ -646,9 +612,8 @@ class Dispatcher:
             if code is not None:
                 self._finish(now, code)
         elif self._should_start(now):
-            backend = self.choose_backend(now)
-            if backend and self._acquire_slot():
-                self.start(now, backend)
+            if self.quota_free(now) and self._acquire_slot():
+                self.start(now)
         self.heartbeat(now)
 
     def _should_start(self, now):
@@ -682,9 +647,7 @@ class Dispatcher:
             "pending": len(pend), "oldest_pending": pend[0]["ts"] if pend else None,
             "running": self.run and {"since": self.run["start"], "ids": [self.run["first"], self.run["last"]]},
             "failures": self.failures, "gave_up_at": self.gave_up_at or None,
-            "backend": self.a.backend, "fallback": self.a.fallback or None,
-            "quota": {b: (lambda h: h and {"until": h[0], "reason": h[1]})(self.quota.blocked(b, now))
-                      for b in filter(None, {self.a.backend, self.a.fallback})}}) + "\n")
+            "quota": (lambda h: h and {"until": h[0], "reason": h[1]})(self.quota.blocked(BACKEND, now))}) + "\n")
 
 
 def parse_args(argv):
@@ -693,18 +656,9 @@ def parse_args(argv):
     p.add_argument("--irc-dir", required=True, help="Verzeichnis von teambot.py (log.txt, outbox.fifo)")
     p.add_argument("--home", required=True, help="Arbeitsverzeichnis der Läufe")
     p.add_argument("--role", help="Rollenprompt, wird an den Systemprompt angehängt")
-    p.add_argument("--model", default="", help="Claude-Modell (Pflicht bei --backend claude)")
-    p.add_argument("--backend", choices=("claude", "codex"), default="claude", help="Werkzeug für die Läufe")
-    p.add_argument("--fallback", choices=("", "claude", "codex"), default="",
-                   help="Ersatz, wenn das Kontingent des eigenen Werkzeugs gesperrt ist; leer = warten")
-    p.add_argument("--codex", default=os.environ.get("CODEX", "codex"))
-    p.add_argument("--codex-arg", action="append", default=[],
-                   help="Argumente nach codex (mehrfach); Standard: exec")
-    p.add_argument("--codex-model", default="", help="Codex-Modell; leer = Standard von Codex")
-    p.add_argument("--codex-model-flag", default="-m")
+    p.add_argument("--model", required=True, help="Claude-Modell")
     p.add_argument("--quota-dir", help="gemeinsamer Kontingentstand (Standard: --slots-dir oder Zustand)")
     p.add_argument("--budget-claude", type=int, default=0, help="höchstens so viele Claude-Läufe je Tag und Rechner")
-    p.add_argument("--budget-codex", type=int, default=0, help="höchstens so viele Codex-Läufe je Tag und Rechner")
     p.add_argument("--cooldown", type=float, default=3600, help="Sperre nach Limitmeldung ohne erkennbare Zeit")
     p.add_argument("--limit-pattern", default="", help="eigener regulärer Ausdruck für die Limitmeldung")
     p.add_argument("--state", help="Zustandsverzeichnis (Standard: <home>/dispatch)")
@@ -723,11 +677,6 @@ def parse_args(argv):
     p.add_argument("--poll", type=float, default=2)
     a = p.parse_args(argv)
     # Absolut, weil der Lauf im Arbeitsverzeichnis startet und die Pfade aus dem Auftrag dort gelten müssen
-    if a.backend == "claude" or a.fallback == "claude":
-        if not a.model:
-            p.error("--model ist für Claude-Läufe Pflicht")
-    if a.fallback == a.backend:
-        a.fallback = ""
     for k in ("irc_dir", "home", "role", "state", "slots_dir", "quota_dir"):
         if getattr(a, k):
             setattr(a, k, os.path.abspath(getattr(a, k)))
