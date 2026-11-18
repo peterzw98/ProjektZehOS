@@ -8,9 +8,10 @@ Anmeldung, shutdown. Die Shell spiegelt ihre Ausgabe nicht seriell; deshalb hint
 dem Ende von QEMU offline geprueft werden (debugfs, e2fsck, fsck.fat, s_state). Jede Pruefung meldet einzeln
 PASS/OFFEN/FEHLER, ein Fehlschlag verdeckt die uebrigen nicht.
 
-Zusaetzlich (--inode-limit): eine Kopie der 32-GiB-Installation wird offline mit mehr als 17.519 leeren Dateien
-gefuellt (Inode-Cache-Grenze je Sitzung, docs/COSMOS_SUPPORT.md); der Gast beruehrt sie per du. Erwartet: kein
-Absturz, Shell und shutdown bleiben bedienbar, e2fsck sauber. Ersatzfall fuer "voller Datentraeger" (Runde 1).
+Zusaetzlich (--inode-limit): eine Kopie der 32-GiB-Installation wird offline mit 18000 1-Byte-Dateien gefuellt, das
+Testkonto ordnet die Ordner per security adopt zu und ruft du auf. Erwartet: kein Absturz, Shell und shutdown bleiben
+bedienbar, e2fsck sauber. Die Inode-Cache-Grenze je Sitzung (~17.519, docs/COSMOS_SUPPORT.md) erreicht die Shell nicht:
+du und find enden nach 1024 Eintraegen; sie bleibt OFFEN.
 Legacy-Regression (--legacy): Fall P1 aus test-power-guest.py (64-MiB-Datenplatte, Schreiben, shutdown, fsck.fat).
 
 Benoetigte Builds:
@@ -279,13 +280,17 @@ def run_inode_limit(args, work: Path, installed: Path, results: Results) -> None
         # shortcut: du meldet sein Ende nicht seriell; feste 120 s (gemessen deutlich kuerzer), bei Bedarf Bildvergleich.
         time.sleep(120)
         guest.qmp.shot(run / "du.png")
-        results.report("BILD", f"Inode-Grenze: du muss {INODE_FILES} Bytes fuer /home zeigen (Sichtpruefung {run / 'du.png'})")
+        # du und find sind in der Shell auf 1024 Eintraege begrenzt (Lauf 8bb42d4: "Suche auf 1024 Eintraege begrenzt").
+        results.report("BILD", f"Inode-Fuellung: du-Ausgabe (Sichtpruefung {run / 'du.png'})")
         serial = storage.serial_text(run)[start:]
         if "CPU EXCEPTION" in serial or "System halted" in serial:
             raise RuntimeError("Absturz waehrend du (CPU EXCEPTION/System halted im seriellen Protokoll)")
         lines(guest, f"write {USER_HOME}/nach-du.txt {token}")
         guest.power("shutdown", expect_exit=True)
-        results.report("PASS", f"Inode-Grenze: du ueber {INODE_FILES} Dateien ohne Absturz, Shell und shutdown bedienbar")
+        results.report("PASS", f"Inode-Fuellung: {INODE_FILES} zusaetzliche Dateien auf der Root, du endet ohne Absturz, "
+                               "Shell und shutdown bedienbar")
+        results.report("OFFEN", "Inode-Cache-Grenze (~17.519 je Sitzung) ueber die Shell nicht erreichbar: du/find enden "
+                                "nach 1024 Eintraegen")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
         results.report("FEHLER", f"Inode-Grenze Gastablauf: {error} (Bilder/Protokolle: {run})")
         return
