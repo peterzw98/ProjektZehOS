@@ -13,7 +13,11 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --commit) commit="${2:?--commit braucht einen Wert}"; shift 2 ;;
         --version) version="${2:?--version braucht einen Wert}"; shift 2 ;;
-        --feed) feed="${2:?--feed braucht einen Wert}"; [[ "$feed" = /* ]] || feed="$call_dir/$feed"; shift 2 ;;
+        --feed)
+            feed="${2:?--feed braucht einen Wert}"
+            if command -v cygpath >/dev/null 2>&1; then feed="$(cygpath -u -- "$feed")"; fi
+            [[ "$feed" = /* ]] || feed="$call_dir/$feed"
+            shift 2 ;;
         --no-tools) tools=0; shift ;;
         --global) global=1; shift ;;
         --any-sdk) any_sdk=1; shift ;;
