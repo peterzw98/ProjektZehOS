@@ -17,6 +17,7 @@ $arguments = @('-L', ('"{0}"' -f $sharePath), '-machine', 'q35', '-cpu', 'max', 
     '-vga', 'std', '-boot', 'd', '-cdrom', ('"{0}"' -f $resolvedIso), '-display', 'none',
     '-serial', ('"file:{0}"' -f $serialLog), '-monitor', 'none',
     '-action', 'shutdown=poweroff,reboot=reset')
+if ($env:ZEHOS_QEMU_SMP) { $arguments += @('-smp', $env:ZEHOS_QEMU_SMP) }
 $guest = Start-Process -FilePath $qemuPath -ArgumentList $arguments -PassThru -WindowStyle Hidden `
     -RedirectStandardError (Join-Path $resultDirectory 'stderr.log')
 try {

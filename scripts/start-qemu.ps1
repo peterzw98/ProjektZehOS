@@ -4,7 +4,8 @@ param(
     [switch] $WaitForDebugger,
     [switch] $StandardVga,
     [switch] $RelativeMouse,
-    [string] $DataImagePath
+    [string] $DataImagePath,
+    [string] $Smp = $env:ZEHOS_QEMU_SMP
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +73,7 @@ if ($WaitForDebugger) {
 }
 # Cosmos (geprueft mit 3.0.94) haelt den Gast sonst bei Shutdown und Reboot nur an.
 $runArguments += @('--', '-action', 'shutdown=poweroff,reboot=reset')
+if ($Smp) { $runArguments += @('-smp', $Smp) }
 # Ein USB-Tablet meldet absolute Positionen; ein eingefangener Zeiger (Mouselook) endet dann am Fensterrand. Mit
 # -RelativeMouse entfaellt es: QEMU liefert dann nur die relative PS/2-Maus (Hostfenster mit Strg+Alt+G einfangen).
 if (-not $RelativeMouse) {

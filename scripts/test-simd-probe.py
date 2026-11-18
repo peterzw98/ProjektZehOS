@@ -5,6 +5,7 @@ Matrix (S1): --accel tcg mit --cpu qemu64 (Grundausstattung) und --cpu max; --ac
 "SIMD_PROBE PASS". Die Zeilen "INFO ... speedup_permille" sind Zeiten und kein Fehlerkriterium. Bei Absturz oder Timeout
 steht die letzte "begin ..."-Stufe im Protokoll (vermutlich die Stufe, die den Gast beendet hat).
 """
+import os
 import argparse
 import re
 import shutil
@@ -58,6 +59,8 @@ def main() -> int:
     command = [qemu, *(["-L", str(share)] if share.is_dir() else []), "-accel", args.accel, "-cpu", cpu, "-machine", "q35",
                "-m", "512M", "-vga", "std", "-boot", "d", "-cdrom", str(args.iso.resolve()), "-display", "none",
                "-serial", f"file:{serial}", "-monitor", "none", "-action", "shutdown=poweroff,reboot=reset"]
+    if os.environ.get("ZEHOS_QEMU_SMP"):
+        command.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
     print(f"QEMU: accel={args.accel} cpu={cpu}; Protokoll: {serial}", flush=True)
     with (work / "stderr.log").open("w") as stderr:
         guest = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=stderr)

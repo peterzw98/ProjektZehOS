@@ -42,7 +42,8 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
 
 Ab dem eigenen Cosmos-Bau (Branch `cosmos`) gelten zusätzlich die Regeln aus `docs/superpowers/plans/2026-11-18-multicore.md`, „Cosmos-Patches“:
 
-- Ein Patch ist genau ein Commit im Branch `cosmos`, per PR gegen `cosmos`, mit einer Zeile in dessen `PATCHES.md`. Kommentar an der Stelle:
+- Ein Patch wird per Squash-Merge genau ein Commit im Branch `cosmos`, per PR gegen `cosmos`, mit einer eigenen Datei
+  `patches/<Kurzname>.md` (Muster und Regel in `PATCHES.md` des Branches). Kommentar an der Stelle:
   `// ZehOS patch <Kurzname>, see PATCHES.md`. ZehOS-Policy gehört nie in den Cosmos-Baum.
 - Der ZehOS-PR, der den Patch nutzt, setzt `deploy/cosmos/COMMIT`, erhöht `deploy/cosmos/VERSION` um eins und trägt dieselbe Version in `global.json` (`msbuild-sdks`) ein.
   Mergt vor dir ein anderer Patch, nimmst du beim Rebase die nächste Nummer.

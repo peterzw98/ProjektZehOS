@@ -5,7 +5,7 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_UPDATE_TESTS</DefineConstants>
+    <DefineConstants>$(DefineConstants);ZEHOS_NETWORK_TEST;ZEHOS_HOST_TESTS;ZEHOS_UPDATE_TESTS</DefineConstants>
     <!-- Nur fuer Job_G8Probe: mit dem Haltepunkt bleiben vollstaendige Laeufe bei 96 % stehen; dann nur mit dem Testfilter Job_G8Probe testen. -->
     <DefineConstants Condition="'$(ZehOSGptG8Probe)' == 'true'">$(DefineConstants);ZEHOS_GPT_G8_PROBE</DefineConstants>
   </PropertyGroup>
@@ -88,6 +88,8 @@
     <Compile Include="..\ProjektZeh\Storage\AppStorageGate.cs" Link="Storage\AppStorageGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\StorageLock.cs" Link="Storage\StorageLock.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeCatalog.cs" Link="Storage\Ext2\RootProbeCatalog.cs" />
+    <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeContent.cs" Link="Storage\Ext2\RootProbeContent.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\ChecksummedText.cs" Link="Storage\Partitioning\ChecksummedText.cs" />
