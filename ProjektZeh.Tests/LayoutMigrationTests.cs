@@ -198,6 +198,25 @@ public sealed class LayoutMigrationTests
         finally { Directory.Delete(targetRoot, true); }
     }
 
+    // G5 (blue, KVM): das Journal nannte /srv/legacy-data, der Abbruch kam vor dem Anlegen. Der Pfadwaechter meldet die fehlende
+    // Komponente als cause='Missing'; fuer die Wiederholung muss das "nicht vorhanden" sein, sonst endet sie mit einem Fehler.
+    [TestMethod]
+    public void RealFileTarget_DeleteBehindAMissingComponent_IsNotFound()
+    {
+        string targetRoot = Path.Combine(Path.GetTempPath(), "zehos-real-missing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(targetRoot, "srv"));
+        try
+        {
+            var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
+                () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess,
+                (path, creating) => creating || File.Exists(path) || Directory.Exists(path) ? ResultErr.CreateSuccess()
+                    : ResultErr.CreateFailure(ResultCode.Failure, "cause='Missing' message='Pfadkomponente fehlt: legacy-data'"));
+            Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data").Code);
+            Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data/notizen.txt").Code);
+        }
+        finally { Directory.Delete(targetRoot, true); }
+    }
+
     // Review peter-review P3-f (4.5): Abbruch ueber das Token mitten im Kopieren einer Datei, danach Wiederholung.
     [TestMethod]
     public void RealFileTargetRepeatsAMigrationCancelledInsideWriteFile()
