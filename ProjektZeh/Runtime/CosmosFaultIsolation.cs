@@ -47,6 +47,7 @@ internal static unsafe class FaultIsolation
     private static volatile int* hostDepth;
     private static int isolatedThreadId = -1;
     private static long contextVector = FaultIsolationPolicy.UnknownVector;
+    private static int contextClaimed;
     private static long isolatedVector = FaultIsolationPolicy.UnknownVector;
     private static ulong isolatedRip;
     private static ulong contextRip;
@@ -90,8 +91,14 @@ internal static unsafe class FaultIsolation
     {
         byte* frame = (byte*)context;
         ulong vector = Field(frame, Interrupt);
-        Volatile.Write(ref contextRip, Field(frame, Rip));
-        Volatile.Write(ref contextVector, vector <= 255 ? (long)vector : FaultIsolationPolicy.UnknownVector);
+        // Der erste Kontext gewinnt (Review pink P3-1): Faellt die Ausgabe danach selbst (etwa PrintStackTrace ueber eine
+        // kaputte RBP-Kette), darf der innere #PF die aeussere NMI/#MC nicht zur isolierbaren Ausnahme machen. Eigener
+        // Merker statt CompareExchange auf den Vektor, weil ein ungueltiger aeusserer Vektor ebenfalls Unknown ist.
+        if (Interlocked.CompareExchange(ref contextClaimed, 1, 0) == 0)
+        {
+            Volatile.Write(ref contextRip, Field(frame, Rip));
+            Volatile.Write(ref contextVector, vector <= 255 ? (long)vector : FaultIsolationPolicy.UnknownVector);
+        }
 
         Serial.WriteString("Interrupt Vector: ");
         Serial.WriteNumber(vector);
@@ -142,6 +149,7 @@ internal static unsafe class FaultIsolation
     {
         // Einmal verbrauchen: Ein spaeterer Halt ohne neuen Kontext (anderer Panic-Pfad) sieht keinen alten Vektor.
         long vector = Interlocked.Exchange(ref contextVector, FaultIsolationPolicy.UnknownVector);
+        Volatile.Write(ref contextClaimed, 0);
         PerCpuState? state = SchedulerManager.GetCpuState(0);
         SchedulerThread? current = state?.CurrentThread;
         int* depth = hostDepth;
