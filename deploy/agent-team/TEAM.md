@@ -31,8 +31,31 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
 
 - **Starten:** `start-agent.sh <nick>` (oder `--all`) startet je Nick den Bot (in `#general`, `#first`, `#second`, `#third`) und den Dienst in einer `screen`-Sitzung `<nick>`.
   Einstellungen per Umgebung: `DISPATCH_PARALLEL` (gleichzeitige Läufe aller Agenten dieses Rechners, Standard 2), `DISPATCH_ALLOW` (Kommaliste der Absender, die Läufe starten dürfen; leer = alle).
-  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
+  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`, eine eigene Agentenliste `AGENTS_FILE`, die Auftraggeber `TEAM_ASSIGNERS`
+  (Standard `agent-coordinator`), Werkzeugpfade für die Läufe `PATH_PREFIX`; `CLONE_REFERENCE` lässt neue Klone die Objekte eines vorhandenen Klons mitbenutzen (wenige hundert KB statt 1,6 GB).
+  Alle Einstellungen stehen im Kopf von `start-agent.sh`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
+- **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `backend=codex` (Läufe mit Codex statt Claude),
+  `fallback=claude` (bei gesperrtem Codex-Kontingent ersatzweise Claude; ohne diese Option warten die Aufträge), `budget-codex=N` und `budget-claude=N` (höchstens N Läufe je Tag und Rechner),
+  `codex-model=NAME`. Modell `-` heißt: kein Claude-Modell (reiner Codex-Agent).
+- **Peters Team** (Rechner `MSI`, Liste `agents-peter.tsv`: Engineer, Senior mit KVM, Reviewer, Codex-Reviewer als letztes Review vor dem PR):
+
+  ```sh
+  cd ~/zehos/deploy/agent-team
+  AGENTS_FILE=$PWD/agents-peter.tsv PROJECT_COORDINATOR_BASE=$HOME/zehos-team IRCKEY_FILE=$HOME/zehos/.tools/IRCKEY \
+    CLONE_REFERENCE=$HOME/zehos PATH_PREFIX=$HOME/.dotnet DISPATCH_PARALLEL=2 \
+    TEAM_ASSIGNERS=agent-coordinator,<Nicks der Leads> DISPATCH_ALLOW=agent-coordinator,<Nicks der Leads> \
+    bash start-agent.sh --all >start.out 2>&1
+  ```
+
+  Die Leads (auch auf dem Windows-Laptop) bleiben interaktive Sitzungen; sie geben Arbeit per `[AUFTRAG]` an diese Agenten und erledigen Reviews und Recherche auf ihrem Rechner mit Subagenten.
+  `dispatcher.py` läuft nur unter Linux (`fcntl`, `/proc`, Prozessgruppen); auf Windows nur in WSL.
+- **Zwei Kontingente (Claude und Codex):** Jeder Lauf zählt für seinen Anbieter in `<basis>/.dispatch-slots/quota-<anbieter>.json`; diese Datei teilen alle Dienste des Rechners.
+  Meldet ein Lauf das Ende des Kontingents (kurze Ausgabe oder Fehlercode mit einer Limitmeldung), sperrt der Dienst den Anbieter für **alle** Agenten bis zur genannten Zeit
+  (sonst eine Stunde), meldet das genau einmal mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten oder laufen über den Ersatz (`fallback=`).
+  Ein Tagesbudget (`budget-codex=`) sperrt ebenso bis Mitternacht, bevor das Kontingent leer ist. Die Limitmeldungen von Claude und Codex sind nicht gegen echte Texte geprüft;
+  `--limit-pattern` ersetzt das Muster. Codex muss installiert sein; der Aufruf ist `codex exec [-m MODELL] <Rolle + Auftrag>` und per `--codex-arg` anpassbar, sobald die Schalter der
+  installierten Version feststehen (`codex exec --help`).
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.
