@@ -13,11 +13,24 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     private ulong preemptions;
     public string Name => "ZehOS RoundRobin";
 
+#if ZEHOS_ISOLATION_PROBE
+    private static readonly int[] Quarantined = new int[SchedulerThread.MaxThreadCount];
+
+    /// <summary>Im Ausnahmepfad gerufen: ohne Allokation und ohne Sperre.</summary>
+    internal static void Quarantine(int threadId)
+    {
+        if ((uint)threadId < (uint)Quarantined.Length) System.Threading.Volatile.Write(ref Quarantined[threadId], 1);
+    }
+#endif
     public void InitializeCpu(PerCpuState state) => state.SchedulerData = new RoundRobinQueue<SchedulerThread>(SchedulerThread.MaxThreadCount);
     public void ShutdownCpu(PerCpuState state) => state.SchedulerData = null;
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) => thread.SchedulerData = new SchedulerTimeSlice(QuantumNs);
     public void OnThreadReady(PerCpuState state, SchedulerThread thread)
     {
+#if ZEHOS_ISOLATION_PROBE
+        // Aufgegebene Worker nie wieder einreihen (Diagnose 12.4-I1).
+        if (thread.Id < Quarantined.Length && System.Threading.Volatile.Read(ref Quarantined[thread.Id]) != 0) return;
+#endif
         (thread.SchedulerData as SchedulerTimeSlice)?.Reset();
         (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Add(thread);
     }

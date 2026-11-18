@@ -114,6 +114,28 @@ internal static unsafe partial class WasmRuntime
         lock (gate) StartWorkerLocked();
     }
 
+#if ZEHOS_ISOLATION_PROBE
+    internal static void ProbeEnqueue(Action job)
+    {
+        lock (gate)
+        {
+            jobs.Enqueue(job);
+            StartWorkerLocked();
+            Monitor.Pulse(gate);
+        }
+    }
+
+    /// <summary>Der alte Worker ist in Quarantaene und laeuft nie weiter; ein neuer uebernimmt die Warteschlange.</summary>
+    internal static void ProbeReplaceWorker()
+    {
+        lock (gate)
+        {
+            worker = null;
+            StartWorkerLocked();
+        }
+    }
+
+#endif
     private static void StartWorkerLocked()
     {
         if (worker != null) return;
@@ -138,6 +160,9 @@ internal static unsafe partial class WasmRuntime
 
     private static void Work()
     {
+#if ZEHOS_ISOLATION_PROBE
+        ProjektZeh.Runtime.FaultIsolation.RegisterWorker();
+#endif
         while (true)
         {
             Action job;

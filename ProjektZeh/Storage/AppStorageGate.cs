@@ -12,6 +12,9 @@ namespace ProjektZeh.Storage;
 internal static class AppStorageGate
 {
     private static readonly object operations = new();
+#if ZEHOS_ISOLATION_PROBE
+    internal static bool IsHeldByCurrentThread => System.Threading.Monitor.IsEntered(operations);
+#endif
     private static readonly MigrationWriteGate writes = new();
 
     public static bool IsBlocked

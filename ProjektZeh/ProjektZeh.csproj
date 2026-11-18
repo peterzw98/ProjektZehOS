@@ -13,6 +13,8 @@
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <!-- Nur Diagnose 12.4-I1 (diag/i1-fault-isolation, nie mergen): CPU-Ausnahme im Wasm-Worker isolieren. -->
+    <DefineConstants Condition="'$(ZehOSIsolationProbe)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRootProfile)' == 'true'">$(DefineConstants);ZEHOS_ROOT_PROFILE</DefineConstants>

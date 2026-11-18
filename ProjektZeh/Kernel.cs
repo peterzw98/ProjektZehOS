@@ -386,6 +386,9 @@ public sealed class Kernel : Sys.Kernel
         // Vor dem ersten Netzabruf, solange der 8-MiB-Workerstack noch sicher Platz findet (WasmRuntime.StartWorker).
         Runtime.Wasm.WasmRuntime.StartWorker();
 #endif
+#if ZEHOS_ISOLATION_PROBE
+        Runtime.CosmosIsolationProbe.Start();
+#endif
 #if ZEHOS_NETWORK_PROBE
         if (!CosmosNetworkProbe.Run(tasks)) { Stop(); return; }
 #endif
