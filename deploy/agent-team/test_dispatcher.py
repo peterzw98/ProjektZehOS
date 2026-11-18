@@ -200,6 +200,12 @@ e.now += 10000
 e.d.step()
 assert e.d.proc is None and len(e.calls_made()) == 1                      # kein zweiter hängender Lauf
 os.environ["FAKE_SLEEP"] = "0"
+e.say("agent-coordinator", "agent-x: neue Aufgabe nach dem Zeitlimit")    # hebt das Aufgeben auf
+e.now += 6
+e.run_until_idle()
+prompt = e.calls_made()[-1][-1]
+assert "lange Aufgabe   [lief schon einmal ins Zeitlimit" in prompt and e.d.acked == 2, prompt
+assert "neue Aufgabe nach dem Zeitlimit   [lief" not in prompt
 
 # --- Gemeinsame Slots: höchstens ein Lauf je Rechner bei --max-parallel 1 ---------------------------------
 slots = tempfile.mkdtemp()
