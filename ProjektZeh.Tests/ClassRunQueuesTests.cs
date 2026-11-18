@@ -351,4 +351,17 @@ public sealed class ClassRunQueuesTests
         Assert.AreEqual(before, queues.Waiting);
         Assert.AreEqual(queues.Count, queues.Waiting);
     }
+
+    [TestMethod]
+    public void Starvation_CounterResetsWhenClassBecomesEmpty()
+    {
+        var queues = Queues();
+        FakeThread n = Make("n", remaining: Tick), b1 = Make("b1", ThreadClass.Background), b2 = Make("b2", ThreadClass.Background);
+        queues.Ready(b1);
+        for (int slice = 1; slice < ClassRunQueues<FakeThread>.StarvationLimit; slice++) Assert.IsFalse(queues.Tick(n, n.State.RemainingNs));
+        queues.Blocked(b1);
+        queues.Ready(b2);
+        // b2 ist neu bereit und erbt die sieben Scheiben von b1 nicht.
+        Assert.IsFalse(queues.Tick(n, n.State.RemainingNs));
+    }
 }

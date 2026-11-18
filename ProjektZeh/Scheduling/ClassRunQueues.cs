@@ -237,12 +237,16 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
         var queue = items[threadClass];
         for (int i = index; i < counts[threadClass] - 1; i++) queue[i] = queue[i + 1];
         queue[--counts[threadClass]] = null;
+        // Eine leere Klasse hungert nicht; ein später bereiter Thread erbt den alten Zähler nicht.
+        if (counts[threadClass] == 0) starvation[threadClass] = 0;
     }
 
     private void MoveToBack(T thread)
     {
         if (!Find(thread, out int c, out int i)) return;
+        int kept = starvation[c];
         RemoveAt(c, i);
         Insert(c, thread, atFront: false);
+        starvation[c] = kept; // Umreihen ändert nicht, wie lange die Klasse wartet.
     }
 }
