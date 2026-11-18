@@ -17,8 +17,11 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   stehen dort als „Frage an Peter: …“.
 - **Antworten auf Discord brauchen einen Discord-Ping** (Peter, 18. November): Wer dort fragt oder etwas freigibt, sieht eine Antwort nur, wenn er **angepingt** wird. Die gespiegelte Zeile
   beginnt deshalb mit `@Peter`, `@Lars` oder `@Azazel` (genau die drei Projektbenutzer, die den Koordinator ansprechen dürfen), bei Fragen und Entscheidungen auch dann, wenn sie an mehrere gehen.
-  Die Bridge setzt daraus einen echten Discord-Mention **nur für diese drei IDs**; `@everyone`, `@here`, Rollen und alle anderen Namen bleiben wirkungslos (Allowlist). **Stand:** Die
-  Bridge unterdrückt Mentions heute noch (`AllowedMentions.none`); die Funktion ist beauftragt (Branch `disc-bridge`, per PR wegen Ruleset). Bis sie läuft, nennt er den Namen im Text und weist Peter im Terminal darauf hin.
+  Die Bridge setzt daraus einen echten Discord-Mention **nur für diese drei IDs** (`AllowedMentions` mit genau diesen Nutzern; `everyone`, `roles` und `replied_user` auf `False`).
+  **Niemals `@everyone` oder `@here`** und keine anderen Namen oder Rollen schreiben: Sie bleiben wirkungslos, und der Koordinator verwendet sie auch nicht. Jede Person wird einzeln genannt.
+  Es pingt nur der erste Teil einer geteilten Nachricht, ein Nick pingt höchstens einmal je 60 Sekunden, und Zeilen vom Nick `discord` pingen nicht.
+  **Stand:** Die Bridge auf `master` unterdrückt Mentions noch (`AllowedMentions.none`). Die Funktion liegt im Branch `task/bridge-ping` (Basis `disc-bridge`, per PR wegen Ruleset) und wirkt erst nach Merge,
+  neuem Pin und Deploy durch den Menschen. Bis dahin nennt er den Namen im Text und weist Peter im Terminal darauf hin.
 
 ## 2. Kanäle und Zuweisung
 
