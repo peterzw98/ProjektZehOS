@@ -40,6 +40,18 @@ Compiler: anderer `GeneratedCode`-Stand des Quellgenerators (10.0.15.2326 gegen 
 `Span`-Code andere Stackgrößen und Lokale. 3.0.97 erschien am 1. 11. 2026; das damals neueste SDK war 10.0.403. Dass
 Cosmos mit diesem SDK gebaut hat, ist eine Vermutung, nicht geprüft.
 
+Gegenprobe auf Peters Rechner (jensen, SDK 10.0.404, `--version 3.0.97`, 64 s): 54 `gleich`, 26 `bauangaben`,
+1 `VERSCHIEDEN`. Die eine Abweichung ist nur der `GeneratedCode`-Text in `Cosmos.Kernel.Core` (10.0.15.2326 gegen
+10.0.15.3008), kein IL-Unterschied. Mit SDK 10.0.404 liefert der Quellbau also denselben Code wie die NuGet-Pakete;
+`deploy/cosmos/SDK` nennt deshalb 10.0.404.
+
+Paketlayout `Cosmos.Build.Analyzer.Patcher`: Im Quellstand trägt das Hüllprojekt
+`src/Cosmos.Build.Analyzer.Patcher.Package` diese Paket-ID (mit `build/*.props` und den Analyzern unter
+`analyzers/dotnet/cs/`), die Analyzer-Bibliothek selbst heißt `_Cosmos.Build.Analyzer.Patcher`. Das NuGet-Paket gleichen
+Namens enthält dagegen nur die Bibliothek unter `lib/netstandard2.0/` mit anderen Abhängigkeiten. Der Quellbau folgt den
+Projektdateien; ob der Patcher-Analyzer im Kernelbau damit gleich wirkt, zeigt erst der Vergleich der Build-Logs
+(Analyzer-Meldungen, `check-plug-binding.py`).
+
 Reproduzierbarkeit: derselbe Commit, zweimal gebaut in zwei Arbeitsbäumen unter verschiedenen Pfaden, je mit eigenem
 NuGet-Cache und gleicher PathMap: 85 DLLs, davon 54 `gleich` und 31 `bauangaben`, keine `VERSCHIEDEN`; kein lokaler Pfad
 in einer DLL.
