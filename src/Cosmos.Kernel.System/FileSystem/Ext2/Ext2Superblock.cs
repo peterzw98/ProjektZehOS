@@ -1040,9 +1040,10 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     }
 
     /// <summary>
-    /// Shrink a file to <paramref name="newSize"/>, freeing blocks past the
-    /// new end. Emptied indirect blocks leak (they are not reclaimed), which
-    /// only costs space, not correctness.
+    /// Shrink a file to <paramref name="newSize"/>, freeing data blocks past
+    /// the new end and the pointer blocks whose whole range lies past it.
+    /// Triple-indirect data blocks are not freed: this driver never maps or
+    /// allocates them (see <see cref="GetBlockPointer"/>).
     /// </summary>
     /// <param name="inode">File inode.</param>
     /// <param name="newSize">New size in bytes.</param>
@@ -1053,6 +1054,29 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         if (newSize == 0)
         {
             newBlocks = 0;
+        }
+
+        // ZehOS patch ext2-truncate, see PATCHES.md
+        // i_block holds no block pointers for a fast symlink (target stored
+        // inline, Blocks == 0) or for device, fifo and socket inodes; reading
+        // it as pointers would free blocks owned by other files. Like Linux
+        // ext2_truncate_blocks, release nothing for them.
+        bool hasBlockPointers = inode.IsRegularFile || inode.IsDirectory || (inode.IsSymlink && inode.Blocks != 0);
+        if (!hasBlockPointers)
+        {
+            oldBlocks = 0;
+        }
+
+        // Plan before freeing data blocks, while the pointer tree is intact.
+        Ext2IndirectBlocks.TruncatePlan? plan = null;
+        if (newBlocks < oldBlocks)
+        {
+            plan = Ext2IndirectBlocks.PlanTruncate(inode.Block, newBlocks, BlockSize, BlocksCount, block =>
+            {
+                byte[] buffer = new byte[BlockSize];
+                ReadBlocks(block, 1, buffer);
+                return buffer;
+            });
         }
 
         if (newBlocks < oldBlocks)
@@ -1066,6 +1090,36 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                     SetBlockPointer(inode, i, 0);
                     inode.Blocks -= BlockSize / 512;
                 }
+            }
+        }
+
+        if (plan is not null)
+        {
+            // Clear and persist the pointers to freed subtrees before freeing
+            // the pointer blocks: an interruption then leaks space at worst,
+            // never leaves a pointer to a free pointer block.
+            byte[] buffer = new byte[BlockSize];
+            foreach ((uint block, int index) in plan.ClearEntries)
+            {
+                ReadBlocks(block, 1, buffer);
+                BitConverter.TryWriteBytes(buffer.AsSpan(index * 4, 4), 0u);
+                WriteBlocks(block, 1, buffer);
+            }
+
+            foreach (int root in plan.ClearRoots)
+            {
+                inode.Block[root] = 0;
+            }
+
+            if (plan.ClearRoots.Count != 0)
+            {
+                WriteInode(inode);
+            }
+
+            foreach (uint block in plan.Free)
+            {
+                FreeBlock(block);
+                inode.Blocks -= BlockSize / 512;
             }
         }
 
