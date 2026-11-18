@@ -317,11 +317,14 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 - [ ] 12.4 Speicher- und Prozessisolation, kontrollierte Systemaufrufe sowie Fehlerbehandlung für Anwendungen untersuchen und umsetzen. Die dafür nötigen Cosmos-Erweiterungen getrennt bewerten. Stand 18. November 2026: I0 entschieden (Wasm-Grenze härten, Ring 3 später); Plan für I1 (CPU-Fehler im App-Thread) und I2 (Beenden, Speicherbudget, Hostfunktionen) in [Isolation 12.4](docs/superpowers/specs/2026-11-18-isolation-12-4.md).
   - **I0 (#245, gemergt):** Peters Entscheidungen und der Plan I1/I2.
   - **I1, Vorarbeit (#248, gemergt):** wie CPU-Ausnahmen in Cosmos 3.0.97 laufen.
-  - **I1, Umsetzung #250 (0.5.101, PR offen):** Eine CPU-Ausnahme im Wasm-Worker beendet nur die App, der Worker wird ersetzt und das System läuft weiter.
+  - **I1, Umsetzung #250 (0.5.101, gemergt):** Eine CPU-Ausnahme im Wasm-Worker beendet nur die App, der Worker wird ersetzt und das System läuft weiter.
     - Gast (QEMU), #DE und #PF im Worker: KVM 10/10 und 5/5, TCG 3/3 und 1/1.
     - Gegenprobe: ein #PF im Probe-Thread hält das System weiter an.
     - Nicht geprüft: #UD/#GP, Fehler mitten im wasm3-Interpreter und VMware.
     - Grenze: Je Fehler bleiben 8 MiB Stack und die Instanz belegt.
+    - Offene Review-Befunde (agent-laser-pink, IRC 18.11.), als Folgeaufgabe `fix/i1-followup` beauftragt:
+      - Der Ersatzworker kann starten, bevor der alte Lauf aufgeräumt ist. Die Hauptschleife kann dann den neuen Lauf schließen.
+      - Die Isolation prüft den Ausnahmevektor nicht. Auch NMI, #MC, #BP, #OF, #BR und #NM werden isoliert statt angehalten.
   - **I2, nur Plan (#251, gemergt):** Erzwungenes Beenden und ein Speicherbudget je Lauf; nichts davon ist umgesetzt oder gemessen.
 - [ ] 12.5 Danach externe Programme, einen Programmlader und breitere Hardwareunterstützung planen. Die Benutzer- und Dateirechte aus Etappe 6c an Prozessisolation und kontrollierte Systemaufrufe anbinden, damit fremde Programme die Prüfungen nicht umgehen können. Ein stabiler virtueller Referenzrechner bleibt für die Entwicklung erhalten.
 - [ ] 12.6 Paketgrenzen: Speicher- und Modulgrenze je Paket im Manifest wählbar bis zu einem Systemwert; Bedarf und freien Speicher des Referenzrechners messen.
