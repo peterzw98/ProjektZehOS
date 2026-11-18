@@ -1,5 +1,6 @@
 # Peters Agenten auf MSI (Einzellaeufe ueber dispatcher.py). Start: siehe TEAM.md, Abschnitt Betrieb, "Peters Team".
 # Spalten: nick, modell, vorlage (prompts/<vorlage>.md, + verbindet), rolle, optionen (kvm, budget-claude=N)
 agent-peter-engineer	claude-sonnet-5-5	engineer	Engineer auf Peters Rechner MSI: Umsetzung von Arbeitspaketen, nativer Bau (dotnet unter ~/.dotnet, Cosmos-Werkzeuge im Klon). Gastlaeufe gibst du an agent-peter-senior.	
+agent-peter-engineer2	claude-sonnet-5-5	engineer	Zweiter Engineer auf Peters Rechner MSI (parallel zu agent-peter-engineer, eigene Pakete): Umsetzung von Arbeitspaketen, nativer Bau (dotnet unter ~/.dotnet, Cosmos-Werkzeuge im Klon). Gastlaeufe gibst du an agent-peter-senior.	
 agent-peter-senior	claude-opus-5-5	engineer+senior-engineer	Senior Engineer auf MSI: Kernel, Cosmos-Patches, Nebenlaeufigkeit und alle KVM-Gastlaeufe (deine Laeufe haben die Gruppe kvm; ein Gast gleichzeitig).	kvm
 agent-peter-review	claude-sonnet-5-5	reviewer	Unabhaengiger Reviewer auf MSI: liest, fuehrt Hosttests und Bau selbst aus, trennt geprueft von nicht geprueft.	

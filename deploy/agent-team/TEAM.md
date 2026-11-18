@@ -37,7 +37,7 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
 - **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
   (höchstens N Läufe je Tag und Rechner).
-- **Peters Team** (Rechner `MSI`): drei Agenten aus `agents-peter.tsv` (Engineer Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
+- **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
   1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
      IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe, Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
   2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
