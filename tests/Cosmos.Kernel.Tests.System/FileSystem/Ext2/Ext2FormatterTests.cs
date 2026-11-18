@@ -126,4 +126,23 @@ public class Ext2FormatterTests
         Assert.That(Field32(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.LogBlockSizeOffset), Is.EqualTo(2u));
         Assert.That(Field32(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.FirstDataBlockOffset), Is.EqualTo(0u));
     }
+
+    [Test]
+    public void Format_1K_IsRefused()
+    {
+        // Until the driver handles first_data_block (E2-P9) a correct 1 KiB volume would be written to at the wrong blocks.
+        MemoryBlockDevice device = Device(8 * 1024 * 1024);
+
+        Assert.That(Ext2Formatter.Format(device, new Ext2FormatOptions { BlockSize = 1024 }), Is.False);
+        Assert.That(Field16(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.MagicOffset), Is.Not.EqualTo(Ext2SuperblockLayout.Magic), "nothing written");
+    }
+
+    [Test]
+    public void Format_2K_StillWorks()
+    {
+        MemoryBlockDevice device = Device(8 * 1024 * 1024);
+
+        Assert.That(Ext2Formatter.Format(device, new Ext2FormatOptions { BlockSize = 2048 }), Is.True);
+        Assert.That(Field32(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.FirstDataBlockOffset), Is.EqualTo(0u));
+    }
 }

@@ -71,6 +71,14 @@ internal static class Ext2Formatter
             return false;
         }
 
+        // ZehOS patch ext2-formatter: the driver addresses blocks without first_data_block, which a correct 1 KiB
+        // volume has (= 1). Refuse until the driver is fixed (optional package E2-P9) instead of creating a volume
+        // that is written to at the wrong blocks.
+        if (blockSize == 1024)
+        {
+            return false;
+        }
+
         uint logBlockSize = blockSize switch
         {
             2048 => 1u,

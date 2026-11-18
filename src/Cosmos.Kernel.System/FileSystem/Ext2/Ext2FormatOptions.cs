@@ -7,8 +7,8 @@ namespace Cosmos.Kernel.System.FileSystem.Ext2;
 /// </summary>
 public sealed class Ext2FormatOptions : IVfsFormatOptions
 {
-    /// <summary>Block size in bytes (1024, 2048, or 4096).</summary>
-    public uint BlockSize { get; set; } = 1024;
+    /// <summary>Block size in bytes (2048 or 4096; 1024 is refused until the driver handles first_data_block).</summary>
+    public uint BlockSize { get; set; } = 4096;
 
     /// <summary>Volume label, up to 16 characters.</summary>
     public string VolumeLabel { get; set; } = "";

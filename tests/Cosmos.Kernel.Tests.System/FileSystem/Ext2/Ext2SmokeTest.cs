@@ -67,13 +67,13 @@ public class Ext2SmokeTest
     {
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 1024 }), Is.True);
+        Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
         Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
         Assert.That(sb, Is.Not.Null);
         Assert.That(sb!.Root, Is.Not.Null);
         Assert.That(sb.SuperOperations.StatFs(sb, out VfsStatFs stat), Is.True);
         Assert.That(stat.Type, Is.EqualTo(0xEF53u));
-        Assert.That(stat.BlockSize, Is.EqualTo(1024u));
+        Assert.That(stat.BlockSize, Is.EqualTo(4096u));
     }
 
     [Test]
