@@ -162,14 +162,20 @@ namespace ProjektZeh.Tests
             listener.Start();
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var session = new WasmNetworkSession(new CosmosWasmNetworkConnector(), true);
-            lock (ProjektZeh.Network.CosmosNetworkService.Gate)
+            // Kurze Frist statt der 10 s des Kernels; geprueft wird das Verhalten nach Ablauf, nicht die Dauer.
+            CosmosWasmNetworkConnector.TimeoutMs = 1000;
+            try
             {
-                Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, 0, out int handle));
-                var clock = Stopwatch.StartNew();
-                while (session.Status(handle) == WasmNetworkError.Again && clock.ElapsedMilliseconds < 12000) Thread.Sleep(50);
-                Assert.AreEqual(WasmNetworkError.TimedOut, session.Status(handle));
-                Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+                lock (ProjektZeh.Network.CosmosNetworkService.Gate)
+                {
+                    Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, 0, out int handle));
+                    var clock = Stopwatch.StartNew();
+                    while (session.Status(handle) == WasmNetworkError.Again && clock.ElapsedMilliseconds < 5000) Thread.Sleep(50);
+                    Assert.AreEqual(WasmNetworkError.TimedOut, session.Status(handle));
+                    Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+                }
             }
+            finally { CosmosWasmNetworkConnector.TimeoutMs = 10000; }
             Thread.Sleep(100);
             Assert.IsFalse(listener.Pending(), "Ein abgelaufener Verbindungsversuch darf nicht spaeter starten.");
         }
@@ -414,24 +420,30 @@ namespace ProjektZeh.Tests
             listener.Start();
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
             using var authority = new TestAuthority("ZehOS Test-CA");
-            // Der Server nimmt die Verbindung an und schweigt; die App fragt nur Send ab, nie Status.
-            Task silent = Task.Run(() =>
+            // Der Server nimmt die Verbindung an und schweigt laenger als die (fuer den Test verkuerzte) Frist; die App
+            // fragt nur Send ab, nie Status.
+            CosmosWasmNetworkConnector.TimeoutMs = 1000;
+            try
             {
-                using Socket peer = listener.AcceptSocket();
-                Thread.Sleep(11500);
-            });
-            var session = TlsSession(authority.Pem);
-            Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, WasmNetworkSession.FlagTls, out int handle));
-            var clock = Stopwatch.StartNew();
-            int result = WasmNetworkError.Again;
-            while (result == WasmNetworkError.Again && clock.ElapsedMilliseconds < 15000)
-            {
-                result = session.Send(handle, "ping"u8, out _);
-                Thread.Sleep(50);
+                Task silent = Task.Run(() =>
+                {
+                    using Socket peer = listener.AcceptSocket();
+                    Thread.Sleep(2500);
+                });
+                var session = TlsSession(authority.Pem);
+                Assert.AreEqual(WasmNetworkError.Success, session.Open("127.0.0.1", port, WasmNetworkSession.FlagTls, out int handle));
+                var clock = Stopwatch.StartNew();
+                int result = WasmNetworkError.Again;
+                while (result == WasmNetworkError.Again && clock.ElapsedMilliseconds < 5000)
+                {
+                    result = session.Send(handle, "ping"u8, out _);
+                    Thread.Sleep(50);
+                }
+                Assert.AreEqual(WasmNetworkError.TimedOut, result);
+                Assert.IsTrue(silent.Wait(5000));
+                Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
             }
-            Assert.AreEqual(WasmNetworkError.TimedOut, result);
-            Assert.IsTrue(silent.Wait(5000));
-            Assert.AreEqual(WasmNetworkError.Success, session.Close(handle));
+            finally { CosmosWasmNetworkConnector.TimeoutMs = 10000; }
         }
 
         [TestMethod]
