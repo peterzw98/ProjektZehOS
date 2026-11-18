@@ -613,7 +613,9 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     }
 
     /// <summary>
-    /// Release an inode back to its group's bitmap.
+    /// Release an inode back to its group's bitmap. The on-disk slot is
+    /// marked deleted (links_count 0, dtime set) before the bitmap bit is
+    /// cleared. An inode that is already free is left untouched.
     /// </summary>
     /// <param name="inodeNumber">One-based inode number to free.</param>
     internal void FreeInode(uint inodeNumber)
@@ -625,6 +627,36 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         ReadBlocks(gd.InodeBitmap, 1, bmp);
         uint byteIdx = index / 8;
         uint bitIdx = index % 8;
+
+        // ZehOS patch ext2-free-inode, see PATCHES.md
+        // Freeing a free inode again would raise the free counters twice.
+        if ((bmp[byteIdx] & (1u << (int)bitIdx)) == 0)
+        {
+            _inodeCache.Remove(inodeNumber);
+            return;
+        }
+
+        // Write the slot directly instead of WriteInode, which would put the
+        // inode back into the cache. dtime 0 means "not deleted" to e2fsck,
+        // so store at least 1 without a valid clock.
+        uint inodesPerBlock = BlockSize / InodeSize;
+        uint tableBlock = gd.InodeTable + (index / inodesPerBlock);
+        int slot = (int)((index % inodesPerBlock) * InodeSize);
+        byte[] table = new byte[BlockSize];
+        ReadBlocks(tableBlock, 1, table);
+        uint dtime = Math.Max((uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), 1u);
+        BitConverter.TryWriteBytes(table.AsSpan(slot + Ext2InodeLayout.LinksCountOffset, 2), (ushort)0);
+        BitConverter.TryWriteBytes(table.AsSpan(slot + Ext2InodeLayout.DtimeOffset, 4), dtime);
+        WriteBlocks(tableBlock, 1, table);
+
+        // A handle still holding the object (an open, unlinked file) may
+        // call WriteInode later; it must not write dtime 0 back.
+        if (_inodeCache.TryGetValue(inodeNumber, out Ext2Inode? cached))
+        {
+            cached.LinksCount = 0;
+            cached.Dtime = dtime;
+        }
+
         bmp[byteIdx] &= (byte)~(1u << (int)bitIdx);
         WriteBlocks(gd.InodeBitmap, 1, bmp);
         gd.FreeInodesCount++;
