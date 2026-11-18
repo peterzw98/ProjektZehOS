@@ -85,6 +85,17 @@ jobs:
       - name: Run Python script tests
         run: python3 -m unittest discover -s scripts/tests -v
 
+      # Die committeten AOT-Fixtures duerfen keinen Code unter RSP enthalten (Cosmos-Interrupts ohne Stackwechsel,
+      # WASM_FEASIBILITY.md). Die Python-Tests ueberspringen die Pruefung ohne objdump; hier wird das sichtbar.
+      - name: Check AOT fixtures for red zone
+        run: |
+          if command -v objdump >/dev/null; then
+            python3 scripts/check-aot-redzone.py ProjektZeh/Native/AotProbe/aot_fixture_data.c \
+              ProjektZeh/Native/AotProbe/aot_runtime_fixture_data.c
+          else
+            echo "::warning::objdump fehlt; Red-Zone-Pruefung der AOT-Fixtures uebersprungen."
+          fi
+
       - name: Check coverage
         # Alle gefundenen Berichte werden zusammengefuehrt (die Hang-Erkennung legt eine zweite Kopie ab). Ohne Treffer
         # bricht das Skript mit einem Eingabefehler ab, statt 0 % durchzuwinken.
