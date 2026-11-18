@@ -133,6 +133,10 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
   Gastläufe mit `-p:ZehOSCosmosVersion=<diese Version>`. Erst nach dem Squash-Merge des `cosmos`-PRs setzt der ZehOS-PR
   `COMMIT` auf den entstandenen Hash, `VERSION` auf die nächste `-zehos.N` und `global.json` gleich, baut einmal nativ,
   wiederholt die kürzeste Gastprüfung und wird danach gemergt (Lead-Entscheid 18. November 2026, Befund zu E3-B).
+- ZehOS-PRs, die `deploy/cosmos/COMMIT` setzen, werden **nacheinander** gemergt. Direkt vor dem Merge pinnt der PR den
+  dann aktuellen Kopf von `origin/cosmos` (er enthält alle früheren Patches) und nimmt die nächste freie `-zehos.N`. Der
+  neue Pin muss Nachfahre des Pins auf `master` sein (`git merge-base --is-ancestor <alt> <neu>`), sonst fiele ein
+  schon eingespielter Patch still heraus (Befund zu E2-P5, 18. November 2026).
 - Ein Patch behebt einen Fehler oder öffnet eine Schnittstelle. ZehOS-Policy (Scheduler, Topologie, Appregeln)
   gehört nie in den Cosmos-Baum.
 - Keine Issues, PRs oder Kommentare bei CosmosOS/Cosmos oder anderen fremden Projekten.
