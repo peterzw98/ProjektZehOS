@@ -31,7 +31,8 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
 
 - **Starten:** `start-agent.sh <nick>` (oder `--all`) startet je Nick den Bot (in `#general`, `#first`, `#second`, `#third`) und den Dienst in einer `screen`-Sitzung `<nick>`.
   Einstellungen per Umgebung: `DISPATCH_PARALLEL` (gleichzeitige Läufe aller Agenten dieses Rechners, Standard 2), `DISPATCH_ALLOW` (Kommaliste der Absender, die Läufe starten dürfen; leer = alle).
-  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`.
+  Ein anderes Basisverzeichnis setzt `PROJECT_COORDINATOR_BASE`, die IRC-Passwortdatei `IRCKEY_FILE`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
+  Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
 - **Zustand ansehen** (ohne Nutzung): `cat <agentenverzeichnis>/dispatch/heartbeat` (offene Nennungen, laufender Lauf, Fehlschläge), `tail <…>/dispatch/dispatch.log`,
   Ausgabe des letzten Laufs unter `dispatch/runs/`.
 - **Beenden:** `screen -S <nick> -X quit` beendet den Dienst und einen laufenden Lauf geordnet; eine nicht quittierte Nennung startet beim nächsten Start erneut.
