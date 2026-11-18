@@ -190,6 +190,24 @@ Ein RAM-Dateisystem ist für frühe Experimente möglich, erfüllt aber keine da
 
 Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. Dateien mit Unterordnern und Leerzeichen im Namen bleiben nach einem vollständigen VM-Neustart erhalten. Vorhandene Partitionen, nicht leere Images und abweichende Plattengrößen werden bei der Einrichtung abgelehnt. Auch auf einem vollen Datenträger bleiben bisherige Dateien bei einem Schreibfehler erhalten; temporäre Dateien werden entfernt. Doppelte Mounts unter `/data` werden abgelehnt. Schritt 7.5 ist am 13. November 2026 im Desktop mit fehlendem Laufwerk, Pfadfehlern und vollständig belegter isolierter FAT32-Testkopie in QEMU geprüft. Dateierhalt, Bereinigung, Weiterbedienung und Neustart sind nachgewiesen; VMware bleibt offen. Ablauf und Grenzen stehen in [docs/DESKTOP_STORAGE_TESTS.md](docs/DESKTOP_STORAGE_TESTS.md). Start und Einrichtung beschreibt die README.
 
+**Stand am 18. November 2026 (ext2-Root, Storage-Etappe 4):** Diese Arbeiten gehen über die abgehakten Punkte 7.1 bis 7.6 hinaus. Grundlage ist die E4.0-Qualifikation mit der Probe `-p:ZehOSStorageRootProbe=true` unter QEMU/KVM (2 GiB Root).
+
+Gemergt sind drei Plugs für Cosmos-3.0.97-Fehler:
+- #225: `RemoveEntry`, keine Verzeichniseinträge über Blockgrenzen. E4.0-Lauf 10 `e2fsck -fn` Exit 0, ohne Plug Exit 12. #230 belegt die Logik zusätzlich an einem echten ext2-Image.
+- #226: `Rmdir` gibt alle Verzeichnisblöcke frei. Lauf 9 mit 8190 Einträgen: `e2fsck` Exit 0.
+- #229: Null-Abwehr für große Puffer. Nur auf dem Host belegt.
+
+Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien je Mount (#228, #233; Peter: kein Plug) und die E4.0-Befunde (#224).
+
+Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
+- **Speicher-Sperre #247 (PR offen):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
+- **Thread-Start-Schutz #241 und Worker-Pool #246 (PRs offen):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
+- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** in Vorbereitung, kein PR ohne Peters Freigabe.
+
+Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, PR offen). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
+
+VMware ist für alle Punkte offen.
+
 ## 8 Kleine Desktopanwendungen bauen
 
 **Zweck:** Die gemeinsamen Bausteine an überschaubaren Anwendungen prüfen, bevor Browser und Doom zusätzliche Komplexität bringen.
@@ -294,8 +312,17 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 
 - [ ] 12.2 HTTPS über eine geeignete TLS-Implementierung ermöglichen. Dafür Zufallsquelle, verlässliche Uhrzeit, Zertifikatsspeicher und Prüfung von Zertifikatskette sowie Hostnamen bereitstellen. Zertifikatsprüfung gehört zum Zielumfang.
   - Stand 17. November 2026 (Audit und Plan: [Spec](docs/superpowers/specs/2026-11-17-tls-12-2-audit.md)): Zufallsquelle, Ketten- und Hostnamenprüfung sind belegt; seit #177 werden SHA-1/MD5 und schwache Schlüssel abgelehnt und gilt kein CN-Rückfall mehr; #181 wertet `nameConstraints` aus; PR C bringt die Bundle-Untergrenze und den SNTP-Zeitabgleich (nicht authentifiziert). Offen und dokumentiert: Widerruf (OCSP/CRL), Aktualisierung des Wurzelbundles außerhalb von Kernelupdates, authentifizierte Zeit, Public-Suffix-Liste, IPv6. Ob 12.2 damit als erledigt gilt, entscheidet ein Projektbenutzer.
+  - Stand 18. November 2026: Der erste HTTPS-Abruf nach dem Boot scheiterte immer am Zeitlimit von 10 s, weil das Parsen der Wurzelzertifikate in die Frist fiel. Seit #227 laufen die Wurzeln vor dem Start der Frist durch. Im Gast (WHPX, 2 Läufe, echter Katalog) klappt der erste `pkg update` jetzt (25–30 s), danach `pkg install classicube`. Er bleibt langsam; KVM, TCG und VMware sind nicht geprüft.
 - [ ] 12.3 HTML, CSS, Schrift- und Bildformate schrittweise erweitern. Falls JavaScript zum Ziel gehört, eine geeignete Laufzeit mit kontrollierten Ressourcen integrieren und benötigte Browser-APIs ergänzen.
-- [ ] 12.4 Speicher- und Prozessisolation, kontrollierte Systemaufrufe sowie Fehlerbehandlung für Anwendungen untersuchen und umsetzen. Die dafür nötigen Cosmos-Erweiterungen getrennt bewerten. Stand 18. November 2026: I0 entschieden (Wasm-Grenze härten, Ring 3 später); Plan für I1 (CPU-Fehler im App-Thread) und I2 (Beenden, Speicherbudget, Hostfunktionen) in [Isolation 12.4](docs/superpowers/specs/2026-11-18-isolation-12-4.md), noch nicht umgesetzt.
+- [ ] 12.4 Speicher- und Prozessisolation, kontrollierte Systemaufrufe sowie Fehlerbehandlung für Anwendungen untersuchen und umsetzen. Die dafür nötigen Cosmos-Erweiterungen getrennt bewerten. Stand 18. November 2026: I0 entschieden (Wasm-Grenze härten, Ring 3 später); Plan für I1 (CPU-Fehler im App-Thread) und I2 (Beenden, Speicherbudget, Hostfunktionen) in [Isolation 12.4](docs/superpowers/specs/2026-11-18-isolation-12-4.md).
+  - **I0 (#245, gemergt):** Peters Entscheidungen und der Plan I1/I2.
+  - **I1, Vorarbeit (#248, gemergt):** wie CPU-Ausnahmen in Cosmos 3.0.97 laufen.
+  - **I1, Umsetzung #250 (0.5.101, PR offen):** Eine CPU-Ausnahme im Wasm-Worker beendet nur die App, der Worker wird ersetzt und das System läuft weiter.
+    - Gast (QEMU), #DE und #PF im Worker: KVM 10/10 und 5/5, TCG 3/3 und 1/1.
+    - Gegenprobe: ein #PF im Probe-Thread hält das System weiter an.
+    - Nicht geprüft: #UD/#GP, Fehler mitten im wasm3-Interpreter und VMware.
+    - Grenze: Je Fehler bleiben 8 MiB Stack und die Instanz belegt.
+  - **I2, nur Plan (#251, gemergt):** Erzwungenes Beenden und ein Speicherbudget je Lauf; nichts davon ist umgesetzt oder gemessen.
 - [ ] 12.5 Danach externe Programme, einen Programmlader und breitere Hardwareunterstützung planen. Die Benutzer- und Dateirechte aus Etappe 6c an Prozessisolation und kontrollierte Systemaufrufe anbinden, damit fremde Programme die Prüfungen nicht umgehen können. Ein stabiler virtueller Referenzrechner bleibt für die Entwicklung erhalten.
 - [ ] 12.6 Paketgrenzen: Speicher- und Modulgrenze je Paket im Manifest wählbar bis zu einem Systemwert; Bedarf und freien Speicher des Referenzrechners messen.
 - [ ] 12.7 Threads für Pakete: geteilter Speicher und Threads unter der AOT-Laufzeit (13.5), begrenzte Threadzahl je App, Hostfunktionen threadsicher.
@@ -314,9 +341,29 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 - [x] 13.2 Port, erster spielbarer Stand: Einzelspieler im Fenster, Welt nur im Speicher, Software-Renderer SoftGPU (SoftMin hat keinen Alphatest, Schrift und Oberfläche werden dort zu Balken), ohne Threads, freie Texturen, Paket ohne `capability=net`, Gastskript. Abnahme: startet als Paket, Welt spielbar, endet ohne Neustart, Speicher nach Beenden frei, Messwerte liegen vor.
 - [ ] 13.3 Software-Rasterizer als Hostfunktion (nur wenn die Messung aus 13.2 die Rasterisierung als Engpass zeigt). Abnahme: gleiches Bild wie SoftGPU, messbar höhere Bildrate, Fehler beenden nur die App, QEMU und VMware dokumentiert.
   - Stand 17. November 2026: umgesetzt (#134, `zehos_v1.raster_draw`/`raster_fill`, Rückfall auf SoftGPU) und beschleunigt (#160, 0.5.32: ganzzahlige Zeilenspannen, `Vector128`/SSE2 im 3D-Pfad). Unter QEMU WHPX bitgleich zu SoftGPU (0 von 26000 Stichproben mit fester Welt), Rasterisierung je Bild 27–44 statt 63–73 ms. Offen für die Abnahme: VMware und eine KVM-Messung des beschleunigten Stands.
+  - Stand 18. November 2026 (Leistung, ClassiCube 1.1.0 unter KVM, avg fps je letztes 60-s-Fenster):
+    - **Vorbehalt Speicher:** Die meisten Reihen liefen mit 512 MiB Gastspeicher. Das liegt am Minimum: #237 empfiehlt mindestens 768 MiB und nennt keinen belegten sicheren Mindestwert. Auf Seed 5 (stehend) brachte 1 GiB statt 512 MiB 20,0 statt 16,3 fps und einen niedrigeren p95 (agent-laser-YELLOW, IRC 18.11., je 2 Läufe).
+    - **Werte mit 512 MiB:** Seed 1 stehend 25–27 fps; Zufallswelt bewegt 26,3 fps. In Wäldern mit rund 100.000 Eckpunkten liegt die Rasterzeit bei 42–58 ms je Bild, das 30-fps-Ziel ist dort nicht erreicht (Seed-Reihe agent-laser-YELLOW, IRC 18.11.).
+    - **Hebel:** Die Sichtweite hilft je nach Szene; die Voreinstellung ist mit #242 (PR offen) möglich, den Wert wählt Peter. Für Wälder hilft sie bis 64 nicht.
+    - **Messweg:** Das Messskript #239 (PR offen) misst bewegte Kamera und avg fps; für ClassiCube ist dort 1 GiB Standard.
+    - **Offen:** Die 1-GiB-Kernreihe mit festen Seeds läuft noch (agent-laser-YELLOW). Ebenso offen ist die Ursache der Bildzeit-Ausreißer: dasselbe Bild kostet im Gast 20,8 ms, auf dem Host 16,2 ms, dazu kommen Bursts (IRC 18.11.).
 - [ ] 13.4 App-Speicher: begrenztes Schreiben im eigenen Bereich auf `/data`, Welten speichern. Abnahme: Welt übersteht Beenden und Neustart, voller Datenträger oder fehlendes Laufwerk bleiben bedienbar. ClassiCube (`experiments/ClassiCube.Wasi`) bildet `maps/` und `options.txt` auf `/save` ab; in QEMU WHPX geprüft: Welt speichern, App schließen, nach App-Neustart und nach VM-Neustart (`reboot`, dieselbe Platte) über *Load level* laden, `options.txt` und Welt (ClassicWorld-NBT) danach auf der frischen Testplatte gelesen (`test-classicube-desktop.py --storage`, mit dem Elternordner-Fix aus #210); fast volle Platte (`--disk-full`): *Save level* meldet `ENOSPC` im Chat, Spiel und Fenster bleiben bedienbar, `/save` war aktiv und die Welt fehlt auf der Platte; ohne `/save` scheitert *Save level* mit Chatmeldung ohne Abbruch. Offen mit ClassiCube: ausgehängtes Laufwerk (`EBUSY`/`ENOENT`), Quote im Gast (Konto-ID zufällig, nur Hosttests), VMware.
   - Stand 17. November 2026: Loader-Teil umgesetzt ([Spec](docs/superpowers/specs/2026-11-17-app-storage-13-4.md)). `capability=storage` gibt Paketen einen eigenen schreibbaren Ordner `/save` mit Quote, Pufferbudget, Rechten je fd und ganzen Dateien bei `fd_sync`/`fd_close`. Hosttests und ein Gast-Rundweg (Schreiben und Zurücklesen auf dem Cosmos-FAT-Laufwerk, KVM) sind belegt. Die ClassiCube-Prüfungen stehen in der Zeile darüber. Offen für die Abnahme: ausgehängtes bzw. fehlendes Laufwerk während eine App läuft, die Quote im Gast und VMware. Das Paket ClassiCube 1.1.0 mit `capability=storage` ist seit #216 im Branch `packages` veröffentlicht (Katalog-Generation 7); Kernel vor 0.5.65 können es nicht installieren. Offen ist noch der Test des Release-Pakets mit Installation aus dem Katalog.
+  - Stand 18. November 2026: Das Release-Paket 1.1.0 wurde aus dem echten Katalog installiert und gestartet.
+    - Unter WHPX, mit dem TLS-Fix #227: ClassiCube brach danach mit „Out of VRAM“ ab, weil der native Heap ohne vorheriges Sammeln `null` liefert.
+    - Mit #231 (GC vor jedem Wasm-Lauf) liefen 2 von 2 Läufen ohne Abbruch.
+    - Unter KVM bestätigt #241 Installation, erstes Bild und Eingabe.
+    - Die übrigen offenen Punkte für 13.4 bleiben.
 - [ ] 13.5 AOT-Laufzeit (nur nach Messung und Sicherheitsabstimmung mit Peter, Bezug 12.4). Abnahme: messbarer Gewinn, alle Pakete laufen weiter, Sicherheitsgrenze dokumentiert.
+  - Stand 18. November 2026:
+    - **Etappe F (Messung, #223):** Die zufälligen Abstürze unter AOT lagen an der Red Zone. wamrc legt Werte unterhalb von RSP ab, und Cosmos betritt Interrupts ohne Stackwechsel.
+    - **wamrc ohne Red Zone (#238, PR offen, Freigabe Peter 17.11.):** Neue Kennung `wamr245-aot5-x64-bc-nrz`. Gegenprobe von agent-laser-RED: mit dem alten `.aot` hatten 17 von 40 Läufen Trap, Stillstand oder Panik, mit dem gepatchten wamrc 0 von 40.
+    - **Langlauf (agent-laser-RED, IRC-Bericht 18.11., Kernel 1227e60, 1 GiB):** 12 Läufe à 20 Minuten mit AOT-nrz, ohne Panik, Trap oder Stillstand.
+      - Doom unter KVM 62–69 fps, unter TCG 43–63 fps.
+      - ClassiCube (Zufallswelt, bewegt) unter KVM 21–42 fps, unter TCG 1,4–2,3 fps.
+      - Der Speicher blieb über die Laufzeit stabil.
+    - **Gewinn (KVM, IRC 18.11.):** Für Doom belegt, 50,8 → 68,5 avg fps (+35 %). Für ClassiCube nicht belegt: 27,0 → 30,2 liegt im Rauschen, weil das Rastern schon nativ im Kernel läuft.
+    - AOT bleibt standardmäßig aus. Kein veröffentlichtes Paket enthält ein `.aot`, und VMware ist nicht geprüft.
 - [ ] 13.6 Mehrspieler über die Netz-ABI (`capability=net`). Abnahme: zwei Clients sehen auf einem lokalen Testserver dieselben Blockänderungen, Verbindungsfehler lassen Spiel und Desktop bedienbar.
 
 **Fertig, wenn:** 13.2 erfüllt ist; 13.3 bis 13.6 folgen je nach Messung und Entscheidung.
