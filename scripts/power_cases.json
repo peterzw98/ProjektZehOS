@@ -96,7 +96,7 @@
     },
     {
       "id": "P4e",
-      "title": "Reopen scheitert: Root schreibgesperrt, zweites shutdown holt Reopen nach",
+      "title": "Reopen scheitert: Schreiben danach landet nicht auf Root, zweites shutdown holt Reopen nach (Meldung per Bild)",
       "profile": "root",
       "disk": "root",
       "action": "shutdown",
@@ -109,7 +109,7 @@
     },
     {
       "id": "P4f",
-      "title": "Wiedereinhaengen von /boot/efi scheitert: Meldung Updates gesperrt, Rest laeuft",
+      "title": "Wiedereinhaengen von /boot/efi scheitert: Abbruch, Rest laeuft, zweites shutdown sauber (Meldung per Bild)",
       "profile": "root",
       "disk": "root",
       "action": "shutdown",

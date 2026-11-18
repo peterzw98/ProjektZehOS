@@ -213,7 +213,7 @@ def write_file(guest: Guest, path: str, case_id: str) -> str:
     text = f"{case_id}-power-ok"
     guest.qmp.line(f"write {path} {text}")
     time.sleep(2)
-    guest.qmp.shot(guest.run / "write.png")
+    guest.qmp.shot(guest.run / f"write-{Path(path).stem}.png")
     return text
 
 
@@ -350,7 +350,9 @@ def run_fault(args, case: Path, spec: dict) -> None:
         else:
             raise RuntimeError(f"Gast endete trotz Fehlerpunkt {spec['fault']} (Exit {guest.process.returncode})")
         guest.qmp.shot(run / "nach-fehler.png")
-        print(f"  POWER_FAULT {', '.join(points)} gemeldet, Gast laeuft weiter (Bild {run / 'nach-fehler.png'})", flush=True)
+        print(f"  POWER_FAULT {', '.join(points)} gemeldet, Gast laeuft weiter", flush=True)
+        # Shellausgaben erscheinen nicht seriell; die Fehlermeldung (etwa "Updates gesperrt") bleibt Sichtpruefung.
+        print(f"BILD {spec['id']} Meldung der abgebrochenen Energieaktion: Sichtpruefung {run / 'nach-fehler.png'}", flush=True)
         if "s_state-running" in spec["checks"]:
             # Nach der Ruecknahme ist Root wieder beschreibbar eingehaengt: auf dem Rohimage muss 0 stehen (P2-1).
             state = read_s_state(image)
@@ -359,6 +361,10 @@ def run_fault(args, case: Path, spec: dict) -> None:
             print("  s_state nach der Ruecknahme = 0", flush=True)
         # Bedienbarkeit: die Shell nimmt den naechsten Befehl an; unter Schreibsperre darf er nichts auf Root schreiben.
         after = write_file(guest, spec["writeAfterFault"], spec["id"] + "-nach")
+        if spec["rootLockedAfterFault"]:
+            # Die fehlende Datei allein belegt die Sperre nicht (Eingabe koennte fehlen); die Shell zeigt cause='StorageBusy'.
+            print(f"BILD {spec['id']} Schreibversuch unter Root-Sperre: Sichtpruefung "
+                  f"{run / ('write-' + Path(spec['writeAfterFault']).stem + '.png')}", flush=True)
         guest.power(spec["action"], expect_exit=True)
     finally:
         guest.kill()
