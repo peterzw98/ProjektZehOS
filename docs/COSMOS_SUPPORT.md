@@ -50,7 +50,9 @@ Unter Dauerlast eines Threads bekommt die Hauptschleife damit einen Tick je Rund
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt (im `HaltCpu`-Plug gibt es keinen Kontext); späterer
   Schritt mit einem Plug, der `IRQContext` sieht.
-- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt.
+- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt, außerdem die
+  verwalteten Objekte, auf die der aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die
+  Speicherbereinigung ihn weiter durchsucht.
 - Cosmos schreibt vor dem Plug weiterhin `CPU EXCEPTION … System halted.`, obwohl das System weiterläuft.
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
 - Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
