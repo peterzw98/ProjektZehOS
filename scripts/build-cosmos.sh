@@ -39,6 +39,10 @@ fi
 if [ -n "$version" ] && [[ "$version" != *-zehos.* ]] && [ -z "$feed" ]; then
     fail "Version $version ohne -zehos.: nur mit ausdruecklichem --feed (ausserhalb von deploy/cosmos/feed) erlaubt"
 fi
+# dotnet tool install laeuft unter dem NuGet.Config des Repositorys (Cosmos.* nur aus deploy/cosmos/feed).
+if [ -n "$feed" ] && [ "$tools" = 1 ] && [ "$plan" = 0 ] && [ "$(cd "$feed" 2>/dev/null && pwd)" != "$root/deploy/cosmos/feed" ]; then
+    fail "--feed ausserhalb von deploy/cosmos/feed nur zusammen mit --no-tools (Werkzeuginstallation liest nur den Standardfeed)"
+fi
 [ -n "$feed" ] || feed="$root/deploy/cosmos/feed"
 feed="$(mkdir -p "$feed" && cd "$feed" && pwd)"
 src="$root/.tools/cosmos-src"
