@@ -200,9 +200,10 @@ def run_size(args, work: Path, size: int, results: Results) -> Path | None:
 
 
 def fill_inodes(root_part: Path, work: Path) -> None:
-    """Legt INODE_FILES leere Dateien in INODE_DIRS Verzeichnissen unter /home an (offline, debugfs -w)."""
-    empty = work / "leer"
-    empty.write_bytes(b"")
+    """Legt INODE_FILES 1-Byte-Dateien in INODE_DIRS Verzeichnissen unter /home an (offline, debugfs -w)."""
+    # Je ein Byte: du muss dann INODE_FILES Bytes zeigen; bei leeren Dateien saehe ein uebersprungener Ordner gleich aus.
+    empty = work / "ein-byte"
+    empty.write_bytes(b"x")
     commands = work / "debugfs.cmd"
     per_dir = -(-INODE_FILES // INODE_DIRS)
     counts = [min(per_dir, INODE_FILES - directory * per_dir) for directory in range(INODE_DIRS)]
@@ -275,6 +276,7 @@ def run_inode_limit(args, work: Path, installed: Path, results: Results) -> None
         # shortcut: du meldet sein Ende nicht seriell; feste 120 s (gemessen deutlich kuerzer), bei Bedarf Bildvergleich.
         time.sleep(120)
         guest.qmp.shot(run / "du.png")
+        results.report("BILD", f"Inode-Grenze: du muss {INODE_FILES} Bytes fuer /home zeigen (Sichtpruefung {run / 'du.png'})")
         serial = storage.serial_text(run)[start:]
         if "CPU EXCEPTION" in serial or "System halted" in serial:
             raise RuntimeError("Absturz waehrend du (CPU EXCEPTION/System halted im seriellen Protokoll)")

@@ -60,7 +60,7 @@ def debugfs_fake(missing: int = 0):
             return matrix.subprocess.CompletedProcess(command, 0, stdout="")
         directory = int(command[command.index("-R") + 1].rsplit("inode", 1)[1])
         count = min(per_dir, matrix.INODE_FILES - directory * per_dir) - (missing if directory == 0 else 0)
-        lines = ["/12/040755/0/0/.//", "/2/040755/0/0/..//"] + [f"/{20 + i}/100644/0/0/f{i}/0/" for i in range(count)]
+        lines = ["/12/040755/0/0/.//", "/2/040755/0/0/..//"] + [f"/{20 + i}/100644/0/0/f{i}/1/" for i in range(count)]
         return matrix.subprocess.CompletedProcess(command, 0, stdout="\n".join(lines) + "\n")
     return run
 
