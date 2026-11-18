@@ -21,6 +21,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Fuer den Abgleich Tag gegen abgeleitete Version (ZehOSVersionFromGit) braucht es die volle Historie.
+          fetch-depth: 0
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
@@ -40,6 +42,17 @@ jobs:
         run: |
           dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror
           python3 -m unittest discover -s scripts/tests
+      - name: Check tag against derived version
+        # Der Tag muss die Version sein, die ProjektZeh.csproj fuer diesen Commit ableitet; sonst traegt das Release eine
+        # andere Nummer als jeder Entwicklungsbau desselben Stands.
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+        run: |
+          derived=$(dotnet msbuild ProjektZeh/ProjektZeh.csproj -nologo -t:GetAssemblyVersion -getProperty:Version)
+          if [[ "v$derived" != "$RELEASE_REF" ]]; then
+            echo "Tag $RELEASE_REF passt nicht zur abgeleiteten Version $derived dieses Commits." >&2
+            exit 1
+          fi
       - name: Build release
         env:
           RELEASE_REF: ${{ github.ref_name }}
