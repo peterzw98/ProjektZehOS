@@ -108,14 +108,23 @@ d2 = e.new()
 d2.step()
 assert d2.acked == 2 and d2.pending() == [] and len(e.calls_made()) == 1
 
-# Abbruch nach dem Schreiben der Inbox, aber vor dem Offset: keine doppelten Einträge
+# Abbruch nach dem Schreiben der Inbox, aber vor dem Offset: Der alte Stand derselben Datei bleibt stehen
+with open(os.path.join(e.args.state, "offset")) as f:
+    old_offset = f.read()
 e.say("agent-coordinator", "agent-x: dritter Auftrag", poll=False)      # nur d2 soll lesen
 d2.poll_log()
 with open(os.path.join(e.args.state, "offset"), "w") as f:
-    f.write("0 0\n")                                                      # alter, unbrauchbarer Stand
+    f.write(old_offset)                                                   # Offset-Schreiben „verloren“
 d3 = e.new()
 d3.poll_log()
 assert [x["id"] for x in d3.entries] == [1, 2, 3], d3.entries
+
+# Kaputte Offset-Datei: Start ab Dateiende statt doppelt von vorn
+with open(os.path.join(e.args.state, "offset"), "w") as f:
+    f.write("Unsinn\n")
+d4 = e.new()
+d4.poll_log()
+assert [x["id"] for x in d4.entries] == [1, 2, 3]
 
 # --- Fehlschlag: nicht quittieren, mit Abstand wiederholen, nach max_attempts genau einmal warnen ----------
 e = Env("--max-attempts", "2")
@@ -207,6 +216,140 @@ with open(e.log, "a") as f:
     f.write(" fertig\n")
 e.d.poll_log()
 assert e.d.entries[-1]["text"] == "agent-x: halb fertig"
+
+# --- Review P1: Protokoll auf demselben Inode geleert (copytruncate, > log.txt): neue Nennungen kommen an --
+e = Env()
+for i in range(5):
+    e.say("agent-coordinator", f"agent-x: alter Auftrag {i} " + "x" * 50)
+ino = os.stat(e.log).st_ino
+with open(e.log, "r+") as f:
+    f.truncate(0)
+assert os.stat(e.log).st_ino == ino
+e.say("agent-coordinator", "agent-x: nach dem Leeren")
+assert e.d.entries[-1]["text"] == "agent-x: nach dem Leeren", e.d.entries[-1]
+# und nach Neustart nicht doppelt
+d2 = e.new(); d2.poll_log()
+assert [x["text"] for x in d2.entries].count("agent-x: nach dem Leeren") == 1
+
+# --- Review P2: halbe letzte Zeile in inbox.jsonl nach Absturz -------------------------------------------
+e = Env()
+e.say("agent-coordinator", "agent-x: eins")
+with open(os.path.join(e.args.state, "acked"), "w") as f:
+    f.write("1\n")
+with open(e.d.inbox_path, "a") as f:
+    f.write('{"id": 2, "ts": "x", "sen')                                  # Absturz mitten im Schreiben
+e.say("agent-coordinator", "agent-x: zwei", poll=False)
+d2 = e.new()
+d2.poll_log()
+assert [x["id"] for x in d2.entries] == [1, 2] and d2.entries[-1]["text"] == "agent-x: zwei", d2.entries
+with open(d2.inbox_path) as f:
+    assert all(json.loads(l) for l in f)                                  # Datei wieder gültig
+# Nummern starten nie unter der Quittung, auch ohne Inbox
+os.remove(d2.inbox_path)
+with open(os.path.join(e.args.state, "acked"), "w") as f:
+    f.write("7\n")
+d3 = e.new()
+e.say("agent-coordinator", "agent-x: drei", poll=False)
+d3.poll_log()
+assert d3.entries[-1]["id"] == 8 and len(d3.pending()) == 1
+
+# --- Review P2: Groß- und Kleinschreibung der Nicks ---------------------------------------------------
+assert parse_mention(line("a", "#g", "Agent-X: bitte").strip(), NICK, p)
+assert parse_mention(line("a", "AGENT-X", "privat").strip(), NICK, p)
+assert parse_mention(line("Agent-X", "#g", "agent-x selbst").strip(), NICK, p) is None
+assert parse_mention(line("histserv", "#g", "agent-x alt").strip(), NICK, p) is None
+e = Env("--allow", "Agent-Coordinator")
+e.say("agent-coordinator", "agent-x: Liste ohne Rücksicht auf Schreibweise")
+assert e.d.entries[-1]["trigger"] is True
+
+# --- Nennung während eines laufenden Laufs bleibt offen und startet danach einen eigenen Lauf --------------
+e = Env()
+os.environ["FAKE_SLEEP"] = "0.5"
+e.say("agent-coordinator", "agent-x: erster")
+e.now += 6
+e.d.step()
+assert e.d.proc is not None
+e.say("agent-coordinator", "agent-x: kommt während des Laufs")
+e.run_until_idle()
+assert e.d.acked == 1 and [x["id"] for x in e.d.pending()] == [2]
+os.environ["FAKE_SLEEP"] = "0"
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 2 and "kommt während des Laufs" in e.calls_made()[-1][-1]
+
+# --- Fehlschläge überstehen einen Neustart des Dienstes ------------------------------------------------
+e = Env("--max-attempts", "2")
+os.environ["FAKE_EXIT"] = "1"
+e.say("agent-coordinator", "agent-x: scheitert")
+e.now += 6; e.run_until_idle()
+e.now += 61; e.run_until_idle()
+assert e.d.gave_up_at == 1
+d2 = e.new()
+e.now += 10000
+d2.step()
+assert d2.proc is None and len(e.calls_made()) == 2                       # kein neuer Dreierversuch
+os.environ["FAKE_EXIT"] = "0"
+
+# --- Dienst als Prozess: SIGHUP (screen -X quit) beendet ihn samt Lauf, zweite Instanz wird abgewiesen ------
+import signal, subprocess
+e = Env()
+os.environ["FAKE_SLEEP"] = "30"
+here = os.path.dirname(os.path.abspath(__file__))
+cmd = [sys.executable, "-I", os.path.join(here, "dispatcher.py"), "--nick", NICK, "--irc-dir", e.irc,
+       "--home", e.dir, "--model", "m", "--claude", e.claude, "--quiet", "0", "--poll", "0.1"]
+svc = subprocess.Popen(cmd)
+time.sleep(0.5)
+second = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+assert second.returncode != 0 and "läuft bereits" in second.stderr
+e.say("agent-coordinator", "agent-x: lang", poll=False)
+running = os.path.join(e.args.state, "running")
+t = time.time()
+while not os.path.exists(running) and time.time() - t < 5:
+    time.sleep(0.1)
+with open(running) as f:
+    run_pid = int(f.read())
+svc.send_signal(signal.SIGHUP)
+svc.wait(timeout=20)
+time.sleep(0.2)
+try:
+    os.killpg(run_pid, 0); alive = True
+except ProcessLookupError:
+    alive = False
+assert not alive and not os.path.exists(running)                          # Lauf nicht verwaist
+
+# --- Harter Abbruch des Dienstes (kill -9): der nächste Start beendet den verwaisten Lauf ------------------
+svc = subprocess.Popen(cmd)
+e.say("agent-coordinator", "agent-x: noch einmal", poll=False)
+t = time.time()
+while not os.path.exists(running) and time.time() - t < 5:
+    time.sleep(0.1)
+with open(running) as f:
+    run_pid = int(f.read())
+svc.kill(); svc.wait()
+os.killpg(run_pid, 0)                                                     # läuft verwaist weiter
+d2 = e.new()                                                              # Start räumt auf
+time.sleep(0.2)
+try:
+    os.killpg(run_pid, 0); alive = True
+except ProcessLookupError:
+    alive = False
+assert not alive and not os.path.exists(running)
+os.environ["FAKE_SLEEP"] = "0"
+
+# --- Ein Fehler im Schritt beendet den Dienst nicht --------------------------------------------------------
+e = Env()
+svc = subprocess.Popen([sys.executable, "-I", os.path.join(here, "dispatcher.py"), "--nick", NICK,
+                        "--irc-dir", e.irc, "--home", e.dir, "--model", "m", "--claude", e.claude,
+                        "--quiet", "0", "--poll", "0.1"])
+time.sleep(0.5)
+e.say("agent-coordinator", "agent-x: macht das Protokoll größer", poll=False)
+os.chmod(e.log, 0)                                                        # Lesen scheitert im Schritt
+time.sleep(0.5)
+assert svc.poll() is None                                                 # läuft weiter
+os.chmod(e.log, 0o600)
+with open(os.path.join(e.args.state, "dispatch.log")) as f:
+    assert "Fehler im Schritt: PermissionError" in f.read()
+svc.terminate(); svc.wait(timeout=20)
 
 # --- Relative Pfade werden absolut: der Lauf startet in --home und muss state.md dort finden -------------
 cwd = os.getcwd()
