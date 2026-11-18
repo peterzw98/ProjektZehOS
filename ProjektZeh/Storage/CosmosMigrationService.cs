@@ -63,12 +63,11 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         // VfsManager.IsPartitionMounted ist in Cosmos 3.0.97 nicht oeffentlich; die Mounttabelle nennt die Partition. Das
         // gilt nur fuer Mounts ueber die Partitions-Ueberladung; alle produktiven Mounts (CosmosStorageService, Installer,
         // Layoutprofil, Migration) nutzen sie (Review P3-a).
-        foreach (VfsMount mount in VfsManager.Mounts)
-            if (mount.Partition is { } mounted && ReferenceEquals(mounted.Host, device))
-                return Failure("TargetMounted", "Eine Partition des Ziels ist eingehaengt.");
+        if (StorageLock.Run(() => IsTargetMountedStorageLocked(device)))
+            return Failure("TargetMounted", "Eine Partition des Ziels ist eingehaengt.");
 
-        if (!Gpt.IsGpt(device)) return Failure("TargetNotGpt", "Das Ziel hat kein ZehOS-Layout (keine GPT).");
-        var table = GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock);
+        if (!StorageLock.Run(() => Gpt.IsGpt(device))) return Failure("TargetNotGpt", "Das Ziel hat kein ZehOS-Layout (keine GPT).");
+        var table = StorageLock.Run(() => GptLayout.Verify(device.BlockSize, device.BlockCount, device.ReadBlock));
         if (!table.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(table.Status);
         var root = CheckIdentity(device, table.Value!, log);
         if (!root.IsOK()) return ResultObjectFactory.CreateFailure<MigrationReport>(root.Status);
@@ -79,13 +78,20 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         return MigrateMounted(root.Value!, source, log, cancellation);
     }
 
+    private static bool IsTargetMountedStorageLocked(IBlockDevice device)
+    {
+        foreach (VfsMount mount in VfsManager.Mounts)
+            if (mount.Partition is { } mounted && ReferenceEquals(mounted.Host, device)) return true;
+        return false;
+    }
+
     /// <summary>ESP nur lesend: Identitaet muss Healthy sein; der Installationsmarker nennt die Root-Partition.</summary>
     private static ResultObject<Partition> CheckIdentity(IBlockDevice device, GptTable table, Action<string> log)
     {
         Partition? esp = CosmosGptPartitions.Find(device, table, GptLayout.EspType, null);
         if (esp is null) return Failure<Partition>("TargetNoEsp", "Das Ziel hat keine ESP.");
-        var reader = new CosmosReadOnlyFileSystem(new FatFileSystemType(new CosmosReadOnlyBlockDevice(esp)));
-        if (!readOnly.TryMount(reader, esp, MountFlags.ReadOnly, TargetEfiMount))
+        if (!StorageLock.Run(() => readOnly.TryMount(new CosmosReadOnlyFileSystem(new FatFileSystemType(new CosmosReadOnlyBlockDevice(esp))),
+                esp, MountFlags.ReadOnly, TargetEfiMount)))
             return Failure<Partition>("TargetEspUnreadable", "ESP des Ziels nicht lesbar.");
         IdentityResult? identity;
         string? text;
@@ -98,7 +104,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         }
         finally
         {
-            unmounted = VfsManager.TryUnmount(TargetEfiMount);
+            unmounted = StorageLock.Run(() => VfsManager.TryUnmount(TargetEfiMount));
             // Bei einer Ausnahme geht das Ergebnis sonst verloren und faellt erst beim naechsten Lauf auf (Review P3-b).
             if (!completed && !unmounted) log("Fehler: ESP des Ziels liess sich nach einem Lesefehler nicht aushaengen.");
         }
@@ -117,7 +123,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
     /// <summary>Root nur lesend: ready wird abgelehnt, bevor ein Schreibmount Superblock oder s_state anfasst.</summary>
     private static ResultObject<LayoutState> CheckRootMarker(Partition root, Action<string> log)
     {
-        if (!readOnly.TryMount(new CosmosReadOnlyExt2FileSystem(root), root, MountFlags.ReadOnly, TargetMount))
+        if (!StorageLock.Run(() => readOnly.TryMount(new CosmosReadOnlyExt2FileSystem(root), root, MountFlags.ReadOnly, TargetMount)))
             return Failure<LayoutState>("TargetRootUnreadable", "Root des Ziels nicht lesbar.");
         ResultObject<LayoutMarker>? marker;
         bool unmounted, completed = false;
@@ -128,7 +134,7 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         }
         finally
         {
-            unmounted = VfsManager.TryUnmount(TargetMount);
+            unmounted = StorageLock.Run(() => VfsManager.TryUnmount(TargetMount));
             if (!completed && !unmounted) log("Fehler: Root des Ziels liess sich nach einem Lesefehler nicht aushaengen.");
         }
 
@@ -142,23 +148,29 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
 
     private ResultObject<MigrationReport> MigrateMounted(Partition root, Partition source, Action<string> log, CancellationToken cancellation)
     {
-        if (!writable.TryMount(new Ext2FileSystemType(root), root, MountFlags.None, TargetMount) || !VfsManager.TryGetMount(TargetMount, out VfsMount? mount))
+        VfsMount? mount = StorageLock.Run(() => MountTargetWritableStorageLocked(root));
+        if (mount is null)
             return Failure("TargetMountFailed", "Root des Ziels nicht schreibbar einhaengbar.");
         var volume = new CosmosRootVolume(root, mount);
         // s_state "nicht sauber" vor dem ersten Dateischreiber (Spec Abschnitt 2); ein Abbruch hinterlaesst damit ein unklares Ziel.
-        var opened = RootVolumeState.Open(volume);
+        var opened = StorageLock.Run(() => RootVolumeState.Open(volume));
         if (!opened.IsOK())
         {
-            if (!VfsManager.TryUnmount(TargetMount)) log("Fehler: Ziel liess sich nicht aushaengen.");
+            if (!StorageLock.Run(() => VfsManager.TryUnmount(TargetMount))) log("Fehler: Ziel liess sich nicht aushaengen.");
             return ResultObjectFactory.CreateFailure<MigrationReport>(opened);
         }
 
-        var swap = new MigrationSourceSwap(AppStorageGate.TryLockSource, () => AppStorageGate.BusyDescription,
+        // Der Quelllease steht in der Sperrreihenfolge vor StorageLock; LayoutMigration erwirbt ihn ohne gehaltene Speicher-Sperre.
+        var swap = new MigrationSourceSwap(() =>
+            {
+                StorageLock.EnsureNotHeld("Quelllease der Migration");
+                return AppStorageGate.TryLockSource();
+            }, () => AppStorageGate.BusyDescription,
             CosmosStorageService.UnmountData, () => CosmosStorageService.MountDataReadOnly(source),
             CosmosStorageService.UnmountData, () => storage.MountDataWritable(source), log);
         var target = new FileMigrationTarget(TargetMount, () => FreeSpace(stats => stats.AvailableBlocks * stats.BlockSize),
             () => FreeSpace(stats => stats.FreeInodes),
-            () => volume.Sync() ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Sync des Ziels fehlgeschlagen.'"),
+            () => StorageLock.Run(() => volume.Sync()) ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, "cause='SyncFailed' message='Sync des Ziels fehlgeschlagen.'"),
             CosmosPathGuard.For(TargetMount));
         ResultObject<MigrationReport> result;
         ResultErr closed;
@@ -169,12 +181,17 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         }
         finally
         {
-            closed = RootVolumeState.Close(volume);
-            unmounted = VfsManager.TryUnmount(TargetMount);
+            closed = StorageLock.Run(() => RootVolumeState.Close(volume));
+            unmounted = StorageLock.Run(() => VfsManager.TryUnmount(TargetMount));
         }
 
         return Combine(result, closed, unmounted, swap.RestoreFailure, log);
     }
+
+    /// <summary>Einhaengen und Mount nachschlagen als ein Abschnitt; null = nicht schreibbar einhaengbar.</summary>
+    private static VfsMount? MountTargetWritableStorageLocked(Partition root) =>
+        writable.TryMount(new Ext2FileSystemType(root), root, MountFlags.None, TargetMount) && VfsManager.TryGetMount(TargetMount, out VfsMount? mount)
+            ? mount : null;
 
     /// <summary>Nachlaufende Fehler machen ein erfolgreiches Kopieren nicht unsichtbar: Ergebnis und Folgezustand in einer Meldung.</summary>
     private static ResultObject<MigrationReport> Combine(ResultObject<MigrationReport> result, ResultErr closed, bool unmounted,
@@ -194,7 +211,9 @@ internal sealed class CosmosMigrationService(CosmosStorageService storage) : IMi
         return result;
     }
 
-    private static ResultObject<long> FreeSpace(Func<VfsStatFs, ulong> select)
+    private static ResultObject<long> FreeSpace(Func<VfsStatFs, ulong> select) => StorageLock.Run(() => FreeSpaceStorageLocked(select));
+
+    private static ResultObject<long> FreeSpaceStorageLocked(Func<VfsStatFs, ulong> select)
     {
         if (!VfsManager.TryStatFs(TargetMount, out VfsStatFs stats))
             return Failure<long>("TargetStatFailed", "Keine Dateisystemstatistik fuer das Ziel.");

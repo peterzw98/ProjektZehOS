@@ -6,7 +6,9 @@ namespace ProjektZeh.Storage;
 /// <summary>Die Cosmos-3.0.97-Parsergrenze gilt nur auf beschreibbarem ext2, auch unter verschachtelten Mounts.</summary>
 internal static class CosmosDirectoryEntryLimit
 {
-    public static int? ForDirectory(string directory)
+    public static int? ForDirectory(string directory) => StorageLock.Run(() => ForDirectoryStorageLocked(directory));
+
+    private static int? ForDirectoryStorageLocked(string directory)
     {
         string? candidate = directory;
         while (candidate != null)

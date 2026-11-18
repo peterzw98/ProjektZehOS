@@ -25,7 +25,8 @@ internal static class CosmosInstalledIdentity
     {
         try
         {
-            return EvaluateMounted(mountPoint);
+            // Mounttabelle, GPT, Marker und Root-Superblock als ein kurzer Abschnitt: kleine Lesezugriffe, ein konsistenter Stand.
+            return StorageLock.Run(() => EvaluateMountedStorageLocked(mountPoint));
         }
         catch (Exception exception)
         {
@@ -33,7 +34,7 @@ internal static class CosmosInstalledIdentity
         }
     }
 
-    private static IdentityResult? EvaluateMounted(string mountPoint)
+    private static IdentityResult? EvaluateMountedStorageLocked(string mountPoint)
     {
         Partition? partition = null;
         foreach (VfsMount mount in VfsManager.Mounts)
@@ -50,14 +51,16 @@ internal static class CosmosInstalledIdentity
         {
             table = GptLayout.Failure("TableIoError", "GPT nicht lesbar: " + exception.GetType().Name);
         }
-        return InstalledIdentity.Evaluate(ReadMarker(mountPoint), table, entry => RootGate(host, entry));
+        return InstalledIdentity.Evaluate(ReadMarkerStorageLocked(mountPoint), table, entry => RootGate(host, entry));
     }
 
     /// <summary>Fuer AccountService.MutationBlockedReason.</summary>
     public static string? MutationBlockedReason() => EvaluateData()?.BlockedReason;
 
     /// <summary>Markertext der ESP unter <paramref name="mountPoint"/>; null = Datei fehlt, leer = unlesbar (ergibt Unclear).</summary>
-    internal static string? ReadMarker(string mountPoint)
+    internal static string? ReadMarker(string mountPoint) => StorageLock.Run(() => ReadMarkerStorageLocked(mountPoint));
+
+    private static string? ReadMarkerStorageLocked(string mountPoint)
     {
         // Rohes System.IO ohne Pfadwaechter: die ESP ist FAT und kennt keine Symlinks.
         string path = Path.Combine(mountPoint, InstallMarker.RelativePath);
@@ -80,13 +83,16 @@ internal static class CosmosInstalledIdentity
         }
     }
 
-    /// <summary>ext2-Superblock (Byte 1024..2047 der Partition) durch das Feature-Gate; IOException geht an Evaluate.</summary>
+    /// <summary>
+    /// ext2-Superblock (Byte 1024..2047 der Partition) durch das Feature-Gate; IOException geht an Evaluate. Laeuft nur aus
+    /// <see cref="EvaluateMountedStorageLocked"/>, also unter der Speicher-Sperre.
+    /// </summary>
     private static RootCheck RootGate(IBlockDevice host, GptEntry root)
     {
         var superblock = new byte[1024];
         try
         {
-            host.ReadBlock(root.FirstLba + 1024 / host.BlockSize, 1024 / host.BlockSize, superblock);
+            using (StorageLock.Enter()) host.ReadBlock(root.FirstLba + 1024 / host.BlockSize, 1024 / host.BlockSize, superblock);
         }
         catch (ArgumentOutOfRangeException exception)
         {

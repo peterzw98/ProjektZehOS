@@ -17,7 +17,12 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
         new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount, thread => thread.SchedulerData as SchedulerTimeSlice, thread => thread.IsIdle);
     public void ShutdownCpu(PerCpuState state) => state.SchedulerData = null;
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) => thread.SchedulerData = new SchedulerTimeSlice(QuantumNs);
-    public void OnThreadReady(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Ready(thread);
+    public void OnThreadReady(PerCpuState state, SchedulerThread thread)
+    {
+        // Ein nach einer CPU-Ausnahme aufgegebener Wasm-Worker wird nie wieder eingereiht (Roadmap 12.4-I1).
+        if (Runtime.FaultIsolation.Quarantine.Contains(thread.Id)) return;
+        (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Ready(thread);
+    }
     public void OnThreadBlocked(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Blocked(thread);
     public void OnThreadYield(PerCpuState state, SchedulerThread thread) => OnThreadReady(state, thread);
     public void OnThreadExit(PerCpuState state, SchedulerThread thread)

@@ -26,11 +26,12 @@ internal static class WasmEngineSelection
 {
     /// <summary>
     /// Kennung der eigenen AOT-ABI im Dateinamen <c>&lt;entry ohne .wasm&gt;.&lt;AotAbi&gt;.aot</c>: WAMR 2.4.5,
-    /// AOT-Format 5, Ziel x86-64 und Speicher-/Stackpruefung (wamrc-Schalter in
-    /// Native/AotProbe/fixture/compile-aot.sh). Aendert sich einer davon, aendert sich die Kennung; aeltere .aot werden
-    /// dann nicht mehr gefunden und die App laeuft unter wasm3.
+    /// AOT-Format 5, Ziel x86-64, Speicher-/Stackpruefung (wamrc-Schalter in Native/AotProbe/fixture/compile-aot.sh) und
+    /// nrz: wamrc mit fixture/wamrc-noredzone.patch, ohne Red Zone (Cosmos-Interrupts ueberschrieben sonst Werte unter
+    /// RSP). Aendert sich einer davon, aendert sich die Kennung; aeltere .aot werden dann nicht mehr gefunden und die App
+    /// laeuft unter wasm3.
     /// </summary>
-    internal const string AotAbi = "wamr245-aot5-x64-bc";
+    internal const string AotAbi = "wamr245-aot5-x64-bc-nrz";
 
     // Wie die Obergrenze fuer das .wasm in WasmGameApp; das .aot wird vollstaendig in den Speicher gelesen.
     internal const int MaximumAotBytes = 64 * 1024 * 1024;
@@ -93,9 +94,17 @@ internal static class WasmEngineSelection
         byte[] bytes = new byte[file.Size];
         try
         {
-            using var stream = new FileStream(Path.Combine(filesDirectory, file.Path), FileMode.Open, FileAccess.Read);
-            if (stream.Length != file.Size) return Modified(file.Path);
-            stream.ReadExactly(bytes);
+            var stream = StorageLock.Run(() => new FileStream(Path.Combine(filesDirectory, file.Path), FileMode.Open, FileAccess.Read));
+            try
+            {
+                if (StorageLock.Run(() => stream.Length) != file.Size) return Modified(file.Path);
+                // In 1-MiB-Abschnitten: bis 64 MiB unter einer Sperre hielten Desktop und Dateidienst an.
+                StorageLock.ReadExactly(stream, bytes);
+            }
+            finally
+            {
+                StorageLock.Run(stream.Dispose);
+            }
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {

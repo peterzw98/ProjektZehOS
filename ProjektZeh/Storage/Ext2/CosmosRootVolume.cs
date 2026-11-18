@@ -14,20 +14,26 @@ internal sealed class CosmosRootVolume(Partition partition, VfsMount? mount) : I
     private const ulong SuperblockSector = 1024 / 512;
     private const ulong SuperblockSectors = 1024 / 512;
 
-    public bool Sync() => mount != null && mount.Superblock.SuperOperations.Sync(mount.Superblock);
+    public bool Sync()
+    {
+        using (StorageLock.Enter()) return mount != null && mount.Superblock.SuperOperations.Sync(mount.Superblock);
+    }
 
     public void ReadSuperblock(Span<byte> superblock)
     {
         if (partition.Host.BlockSize != 512) throw new InvalidOperationException("Root nur mit 512-Byte-Sektoren.");
-        partition.Host.ReadBlock(partition.StartSector + SuperblockSector, SuperblockSectors, superblock[..(int)(SuperblockSectors * 512)]);
+        using (StorageLock.Enter()) partition.Host.ReadBlock(partition.StartSector + SuperblockSector, SuperblockSectors, superblock[..(int)(SuperblockSectors * 512)]);
     }
 
     public void WriteSuperblock(ReadOnlySpan<byte> superblock)
     {
         if (partition.Host.BlockSize != 512) throw new InvalidOperationException("Root nur mit 512-Byte-Sektoren.");
         // Nur der erste Sektor: s_state liegt bei Byte 58; ein kleineres Fenster fuer einen nebenlaeufigen Treiber-Rueckschreib.
-        partition.Host.WriteBlock(partition.StartSector + SuperblockSector, 1, superblock[..512].ToArray());
+        using (StorageLock.Enter()) partition.Host.WriteBlock(partition.StartSector + SuperblockSector, 1, superblock[..512].ToArray());
     }
 
-    public void Flush() => partition.Host.Flush();
+    public void Flush()
+    {
+        using (StorageLock.Enter()) partition.Host.Flush();
+    }
 }

@@ -6,6 +6,7 @@ using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Storage;
 using Cosmos.Kernel.System.Timers;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 using ProjektZeh.Storage.Virtual;
 using ProjektZeh.SystemServices;
 
@@ -39,7 +40,7 @@ internal sealed class CosmosSystemFiles(string version, Func<long> elapsedMillis
     private static List<SystemInfoMount> Mounts()
     {
         // Cosmos ersetzt das Array bei Mountaenderungen; einmal lesen ergibt einen in sich gleichen Stand.
-        var mounts = VfsManager.Mounts;
+        var mounts = StorageLock.Run(() => VfsManager.Mounts);
         var result = new List<SystemInfoMount>(Math.Min(mounts.Count, SystemInfoSnapshot.MaxRecords + 1));
         for (int index = 0; index < mounts.Count && result.Count <= SystemInfoSnapshot.MaxRecords; index++)
             result.Add(new(mounts[index].Name, mounts[index].Source, mounts[index].MountPoint, mounts[index].IsReadOnly));
@@ -90,5 +91,5 @@ internal sealed class CosmosSystemFiles(string version, Func<long> elapsedMillis
     }
 
     /// <summary>Typquelle fuer FileService (Spec §0.8): nur was Cosmos als regulaere Datei meldet; ohne Stat-Ergebnis ablehnen.</summary>
-    public static bool IsRegularFile(string path) => VfsManager.TryStat(path, out var stat) && stat.IsRegularFile;
+    public static bool IsRegularFile(string path) => StorageLock.Run(() => VfsManager.TryStat(path, out var stat) && stat.IsRegularFile);
 }

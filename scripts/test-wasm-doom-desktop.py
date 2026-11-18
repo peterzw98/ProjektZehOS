@@ -63,7 +63,7 @@ from guest_keys import key_for  # noqa: E402
 SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel", "aot", "aotold", "aotcorrupt"]
 GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS[:6], "aotall": ["aot", "aotcorrupt"]}
 # Kennung und Namensregel wie WasmEngineSelection.AotAbi im Kernel.
-AOT_FILE = "testapp.wamr245-aot5-x64-bc.aot"
+AOT_FILE = "testapp.wamr245-aot5-x64-bc-nrz.aot"
 FOREIGN_AOT_FILE = "testapp.wamr999-aot6-x64-bc.aot"
 AOT_FIXTURES = ROOT / "ProjektZeh" / "Native" / "AotProbe"
 # Bei Aenderungen am Vorbereitungsablauf erhoehen, damit alte Snapshots nicht weiterverwendet werden.
@@ -247,15 +247,21 @@ MACHINE = ["-machine", "q35", "-m", "512M", "-vga", "std", "-boot", "d", "-displ
            "-device", "qemu-xhci,id=tabletbus", "-device", "usb-tablet,bus=tabletbus.0"]
 
 
-def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None) -> subprocess.Popen:
+def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None,
+               memory: str | None = None) -> subprocess.Popen:
     qemu = qemu_tool("qemu-system-x86_64")
+    # memory ersetzt nur den Wert hinter -m; Snapshots (loadvm) brauchen den Standard aus MACHINE.
+    if memory is not None and loadvm:
+        raise ValueError("memory und loadvm schliessen sich aus")
+    machine = MACHINE if memory is None else [memory if previous == "-m" else value
+                                              for previous, value in zip(["", *MACHINE], MACHINE)]
     # Windows: bin/../share/qemu; Cosmos unter Linux: share/qemu neben dem Wrapper.
     share = next((d for d in (qemu.parent.parent / "share" / "qemu", qemu.parent / "share" / "qemu") if d.is_dir()),
                  qemu.parent.parent / "share" / "qemu")
     # Kennwortanlage und TLS brauchen RDSEED/RDRAND, die das Standardmodell nicht bietet. Unter WHPX bricht der
     # Gast mit -cpu max oder host jedoch sofort ab (Unexpected VP exit code 4); dort bleibt das Standardmodell.
     cpu = {"tcg": ["-cpu", "max"], "kvm": ["-cpu", "qemu64,+rdrand,+rdseed"]}.get(accel, [])
-    arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *MACHINE, "-cdrom", str(iso),
+    arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *machine, "-cdrom", str(iso),
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
                  "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
                  *(["-loadvm", loadvm] if loadvm else [])]
@@ -734,15 +740,15 @@ def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, reposit
     guest.shell("wasmaot on")
     guest.desktop()
     # Die Host-Fixture endet nach WASI-Ausgabe mit proc_exit(7); testapp.wasm lieferte stattdessen Bilder.
-    end = start_engine(guest, "aotapp", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc")
+    end = start_engine(guest, "aotapp", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
     guest.wait("WASM Speicher", 60, end)
     start_engine(guest, "aotfremd", "erstes Bild", "wasm3")
     guest.quit_testapp_named("aotfremd")
     # Falsche AOT-Formatversion: WAMR lehnt beim Laden ab, vor dem Instanziieren; dieselbe App laeuft unter wasm3.
-    start_engine(guest, "aotfallback", "erstes Bild", "aot wamr245-aot5-x64-bc", "wasm3 AOT-Rueckfall: InvalidModule")
+    start_engine(guest, "aotfallback", "erstes Bild", "aot wamr245-aot5-x64-bc-nrz", "wasm3 AOT-Rueckfall: InvalidModule")
     guest.quit_testapp_named("aotfallback")
     # Probe-B-Fixture ohne _start: der Fehler faellt erst nach dem Instanziieren auf, deshalb kein wasm3-Neustart.
-    end = start_engine(guest, "aotnoentry", "Ende: App abgebrochen: EntryMissing", "aot wamr245-aot5-x64-bc")
+    end = start_engine(guest, "aotnoentry", "Ende: App abgebrochen: EntryMissing", "aot wamr245-aot5-x64-bc-nrz")
     log = (guest.work / "serial.log").read_text(encoding="utf-8", errors="replace")
     if "WASM Start aotnoentry Laufzeit=wasm3" in log:
         raise RuntimeError("aotnoentry lief nach dem Instanziieren erneut unter wasm3.")
