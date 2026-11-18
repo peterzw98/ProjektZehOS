@@ -93,7 +93,8 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 | `Balance(PerCpuState cpuState, PerCpuState[] allCpuStates)` | Liefert `SchedulerThread?`; in dieser Etappe `null`. |
 | `OnThreadMigrate` | Ist der Thread `Ready`: `Blocked` auf der Quelle, `Ready` auf dem Ziel. Ist er `Running`: nur `Ready` auf dem Ziel. |
 | `SetPriority(PerCpuState, SchedulerThread, long)` | unverändert; Aufrufer ist jetzt `SchedulerManager.SetPriority(SchedulerThread thread, long priority)` ohne CPU-Nummer. |
-| `GetRunQueueCount`, `GetRunQueueThread`, `Snapshot` | statt `MaskInterrupts` die Sperre der CPU: `using (SchedulerManager.LockCpu(state)) { … }` |
+| `GetRunQueueCount`, `GetRunQueueThread` | `MaskInterrupts` entfällt **ersatzlos**, ohne `LockCpu`: Der Mechanismus ruft diese Hooks schon unter der Queue-Sperre der CPU auf, und die Sperre ist nicht reentrant. Ein Hook, der sie nimmt, dreht sich auf sich selbst (Upstream `IScheduler.cs:12-17`, `SchedulerManager.cs:796-802`). Für `SetPriority` und `GetPriority` gilt dasselbe, die Sperre nimmt `SchedulerManager.SetPriority`. |
+| `Snapshot` (ZehOS, kein Hook) | Läuft im Thread-Kontext. Nimmt `using (SchedulerManager.LockCpu(state)) { … }`, je CPU nacheinander, nie zwei Sperren gleichzeitig. |
 
 Allokation ist nur in `InitializeCpu`, `ShutdownCpu` und `OnThreadCreate` erlaubt; die Auswahlspur bleibt ein
 vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerData` oder ein Feld je CPU-Index umziehen). Der Zähler
