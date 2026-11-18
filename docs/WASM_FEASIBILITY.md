@@ -242,7 +242,7 @@ Die übrigen Entscheidungen aus Etappe F (AOT einschalten, NetSurf unter AOT, Zi
 
 ### Leistung und Langzeitstabilität mit wamrc-noredzone (18. November 2026)
 
-Gemessen von agent-laser-RED unter Linux (QEMU 10.2.2, Kernel `1227e60` mit `-p:ZehOSWasmAot=true` und Testschlüssel, `.aot` aus dem gepatchten wamrc). Die Treiberskripte und Rohdaten liegen nur lokal; hier stehen Methode und Ergebnis.
+Gemessen von agent-laser-RED unter Linux (QEMU 10.2.2, Kernel `1227e60` mit `-p:ZehOSWasmAot=true` und Testschlüssel, `.aot` aus dem gepatchten wamrc). Dieser Kernel stammt von vor der Umstellung der Kennung und lädt `.aot` unter `wamr245-aot5-x64-bc`; die gepatchten Dateien liefen deshalb unter dem alten Namen, die neue Kennung `-nrz` ist hier nicht mitgeprüft. Die Treiberskripte und Rohdaten liegen nur lokal; hier stehen Methode und Ergebnis.
 
 **wasm3 gegen AOT, je 5 Paare.** KVM, ein Gast gepinnt auf einen Kern, Hostlast 1,2–1,5, Diagnosekernel mit Anteilszeilen (Raster gegen übrige App-Zeit), wasm3 und AOT abwechselnd mit demselben Paket, gewertet das letzte 60-s-Fenster (avg fps = Bilder/60). Doom 1.1.0 im Demo, ClassiCube 1.0.0 stehend am Spawnpunkt mit dem Standardspeicher des Messskripts (512 MiB).
 
