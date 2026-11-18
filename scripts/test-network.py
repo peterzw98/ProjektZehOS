@@ -396,6 +396,8 @@ def run(args):
                    '-vga', 'std', '-netdev', 'user,id=net0', '-device', 'e1000e,netdev=net0',
                    '-cdrom', str(args.iso.resolve()), '-boot', 'd', '-serial', f'file:{serial}',
                    '-monitor', 'none', '-display', 'none', '-action', 'shutdown=poweroff,reboot=reset']
+        if os.environ.get("ZEHOS_QEMU_SMP"):
+            command.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
         qemu_directory = args.qemu.resolve().parent
         share = next((path for path in (qemu_directory / 'share' / 'qemu', qemu_directory.parent / 'share' / 'qemu')
                       if path.is_dir()), qemu_directory / 'share' / 'qemu')

@@ -32,6 +32,7 @@ if ($WithDebugger) {
     $gdbPort = Get-FreePort
     $arguments += @('-gdb', "tcp:127.0.0.1:$gdbPort", '-S')
 }
+if ($env:ZEHOS_QEMU_SMP) { $arguments += @('-smp', $env:ZEHOS_QEMU_SMP) }
 $guest = Start-Process -FilePath $qemu -ArgumentList $arguments -PassThru -WindowStyle Hidden `
     -RedirectStandardError (Join-Path $outputDirectory 'stderr.log')
 # Windows PowerShell braucht den Handle vor Prozessende, um ExitCode zu behalten.
