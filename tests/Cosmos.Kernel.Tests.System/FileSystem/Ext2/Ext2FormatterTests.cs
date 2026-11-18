@@ -116,4 +116,14 @@ public class Ext2FormatterTests
 
         Assert.That(Ext2Formatter.Format(device, null), Is.False);
     }
+
+    [Test]
+    public void Format_NullOptions_Uses4096ByteBlocks()
+    {
+        MemoryBlockDevice device = Device(8 * 1024 * 1024);
+        Assert.That(Ext2Formatter.Format(device, null), Is.True);
+
+        Assert.That(Field32(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.LogBlockSizeOffset), Is.EqualTo(2u));
+        Assert.That(Field32(device, Ext2SuperblockLayout.SuperblockOffset, Ext2SuperblockLayout.FirstDataBlockOffset), Is.EqualTo(0u));
+    }
 }

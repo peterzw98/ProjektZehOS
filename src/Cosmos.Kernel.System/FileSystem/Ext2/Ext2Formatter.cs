@@ -58,12 +58,14 @@ internal static class Ext2Formatter
     /// Format <paramref name="device"/> with a fresh ext2 volume.
     /// </summary>
     /// <param name="device">Block device to format.</param>
-    /// <param name="options">Block size and label; null selects defaults.</param>
+    /// <param name="options">Block size and label; null selects 4096-byte blocks.</param>
     /// <returns>true when the volume was written.</returns>
     public static bool Format(IBlockDevice device, Ext2FormatOptions? options)
     {
         // ZehOS patch ext2-formatter, see PATCHES.md
-        uint blockSize = options?.BlockSize ?? 1024;
+        // A null options object selects 4096: the driver addresses 1 KiB volumes without first_data_block, so a
+        // default 1 KiB volume would be written to at the wrong blocks. 1 KiB stays available through explicit options.
+        uint blockSize = options?.BlockSize ?? 4096;
         if (blockSize is not (1024 or 2048 or 4096))
         {
             return false;
