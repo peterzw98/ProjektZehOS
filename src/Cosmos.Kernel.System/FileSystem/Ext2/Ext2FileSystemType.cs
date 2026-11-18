@@ -44,7 +44,7 @@ public sealed class Ext2FileSystemType : IVfsFileSystemType
             return false;
         }
 
-        if (!Ext2Superblock.TryCreate(device, out Ext2Superblock? sb))
+        if (!Ext2Superblock.TryCreate(device, (flags & MountFlags.ReadOnly) != 0, out Ext2Superblock? sb))
         {
             return false;
         }

@@ -140,6 +140,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     public bool Create(IVfsInode dir, ReadOnlySpan<char> name, VfsMode mode, [NotNullWhen(true)] out IVfsInode? inode)
     {
         inode = null;
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (dir is not Ext2Inode parent || !parent.IsDirectory)
         {
             return false;
@@ -203,6 +209,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     public bool Mkdir(IVfsInode dir, ReadOnlySpan<char> name, VfsMode mode, [NotNullWhen(true)] out IVfsInode? inode)
     {
         inode = null;
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (dir is not Ext2Inode parent || !parent.IsDirectory)
         {
             return false;
@@ -295,6 +307,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     public bool Symlink(IVfsInode dir, ReadOnlySpan<char> name, ReadOnlySpan<char> target, [NotNullWhen(true)] out IVfsInode? inode)
     {
         inode = null;
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (dir is not Ext2Inode parent || !parent.IsDirectory)
         {
             return false;
@@ -405,6 +423,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     /// <returns>true on success; false when the name does not exist or names a directory.</returns>
     public bool Unlink(IVfsInode dir, ReadOnlySpan<char> name)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (dir is not Ext2Inode parent || !parent.IsDirectory)
         {
             return false;
@@ -449,6 +473,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     /// <returns>true on success; false when the name does not exist, is not a directory, or is not empty.</returns>
     public bool Rmdir(IVfsInode dir, ReadOnlySpan<char> name)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (dir is not Ext2Inode parent || !parent.IsDirectory)
         {
             return false;
@@ -528,6 +558,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     /// <returns>true when the entry was moved.</returns>
     public bool Rename(IVfsInode oldParent, ReadOnlySpan<char> oldName, IVfsInode newParent, ReadOnlySpan<char> newName)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (oldParent is not Ext2Inode oldDir || newParent is not Ext2Inode newDir)
         {
             return false;
@@ -628,6 +664,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     /// <returns>true on success; false when a selected change is not supported.</returns>
     public bool SetAttr(IVfsInode inode, SetAttrFlags flags, in VfsStat attributes)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return false;
+        }
+
         if (inode is not Ext2Inode node)
         {
             return false;
@@ -641,6 +683,12 @@ internal sealed class Ext2InodeOperations : IInodeOperations
             }
 
             ulong newSize = attributes.Size;
+            // ZehOS patch ext2-readonly, see PATCHES.md
+            if (newSize > _superblock.MaxFileSize)
+            {
+                return false;
+            }
+
             if (newSize < node.FullSize)
             {
                 _superblock.Truncate(node, newSize);

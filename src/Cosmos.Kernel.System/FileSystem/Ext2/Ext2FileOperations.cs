@@ -135,10 +135,29 @@ internal sealed class Ext2FileOperations : IFileOperations
             return 0;
         }
 
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (_superblock.IsReadOnly)
+        {
+            return 0;
+        }
+
         long endPosition = position + buffer.Length;
         if (endPosition < 0)
         {
             return 0;
+        }
+
+        // Without LARGE_FILE i_size_high is not part of the size: writes stop
+        // short at 2 GiB - 1 instead of recording a size the volume cannot hold.
+        ulong maxSize = _superblock.MaxFileSize;
+        if ((ulong)position >= maxSize)
+        {
+            return 0;
+        }
+
+        if ((ulong)endPosition > maxSize)
+        {
+            buffer = buffer[..(int)(maxSize - (ulong)position)];
         }
 
         // Seeks past end-of-file leave holes: the write loop below

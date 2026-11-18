@@ -113,6 +113,22 @@ internal static class Ext2SuperblockLayout
     /// <summary>Byte offset of s_feature_ro_compat: read-only compatible feature flags (32-bit).</summary>
     public const int FeatureRoCompatOffset = 100;
 
+    // ZehOS patch ext2-readonly, see PATCHES.md
+    /// <summary>Highest s_rev_level the driver writes (EXT2_DYNAMIC_REV).</summary>
+    public const uint MaxRevLevel = 1;
+
+    /// <summary>s_feature_incompat bits the driver understands: FILETYPE.</summary>
+    public const uint SupportedFeatureIncompat = 0x0002;
+
+    /// <summary>s_feature_ro_compat bits the driver maintains: SPARSE_SUPER and LARGE_FILE.</summary>
+    public const uint SupportedFeatureRoCompat = 0x0001 | FeatureRoCompatLargeFile;
+
+    /// <summary>s_feature_ro_compat LARGE_FILE: i_size_high holds the upper 32 bits of a regular file's size.</summary>
+    public const uint FeatureRoCompatLargeFile = 0x0002;
+
+    /// <summary>Largest regular file size without LARGE_FILE (2 GiB - 1).</summary>
+    public const ulong MaxSizeWithoutLargeFile = int.MaxValue;
+
     /// <summary>Byte offset of s_uuid: 128-bit volume identifier (16 bytes).</summary>
     public const int UuidOffset = 104;
 
