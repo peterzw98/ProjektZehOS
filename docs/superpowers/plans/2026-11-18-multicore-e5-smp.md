@@ -121,7 +121,7 @@ ThreadStarter.ApplyClass(ThreadClass.Interactive);   // im Hauptthread, direkt n
 - Anlegen: `ProjektZeh/Runtime/BootOptions.cs` (ohne Cosmos-Typen), Test `ProjektZeh.Tests/BootOptionsTests.cs`; Eintrag in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` nach dem Muster von Zeile 36
 - Anlegen: `ProjektZeh/Runtime/CosmosBootOptions.cs` (liest `Limine.Cmdline`, setzt Affinitäten)
 - Ändern: `ProjektZeh/Kernel.cs` (erster Aufruf im Boot, vor jedem Threadstart)
-- Doku: `README.md` (Abschnitt zum VM-Start: Kommandozeilenschalter)
+- Doku: `docs/handbuch/ENTWICKLUNG.md` (VM-Start: Kommandozeilenschalter; früher in der README)
 
 **Schnittstellen (liefert):**
 

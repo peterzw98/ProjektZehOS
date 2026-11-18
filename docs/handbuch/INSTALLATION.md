@@ -1,0 +1,51 @@
+# Installation, Updates und Releases
+
+Teil des Handbuchs zu ZehOS; Überblick und Schnellstart in der [README](../../README.md).
+
+## UEFI-Installation und signierte Kernelupdates
+
+Der Installer ist ein eigener Build mit normalem Kernel und Limine-EFI als eingebetteter Payload. Beide Builds müssen dieselbe Version verwenden. `cosmos build` nimmt keine zusätzlichen MSBuild-Eigenschaften an; dafür direkt `dotnet build` verwenden:
+
+```bash
+payload="$PWD/.tools/installer-payload"
+mkdir -p "$payload"
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release
+cp ProjektZeh/bin/Release/net10.0/linux-x64/ProjektZeh.elf "$payload/ProjektZeh.elf"
+cp "$HOME/.nuget/packages/cosmos.build.common/$(cat deploy/cosmos/VERSION)/tools/Limine/BOOTX64.EFI" "$payload/BOOTX64.EFI"
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release \
+  -p:ZehOSInstaller=true -p:ZehOSPayloadDir="$payload"
+```
+
+Das ISO liegt unter `ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso`. Vor dem nächsten Build benötigte ISO-/ELF-Dateien kopieren; beide Varianten schreiben dieselben Ausgabepfade. Beide Builds übernehmen die Version aus `<Version>` in `ProjektZeh/ProjektZeh.csproj`; eine abweichende Version mit `-p:Version=<Version>` bei beiden Aufrufen setzen. `-p:ZehOSRecovery=true` lässt sich zusätzlich mit dem Installer kombinieren.
+
+Das Installer-ISO startet in den grafischen Einrichtungsassistenten (Willkommen → Hinweise → Zielplatte → Bestätigung → Installation → Neustart), bedienbar mit Maus und Tastatur. Bei einem Anzeigefehler oder mit `-p:ZehOSRecovery=true` startet stattdessen eine lokale Text-Einrichtungssitzung mit Installationsberechtigung, ohne vorher ein Konto auf der Zielplatte anzulegen. `setup list` zeigt Ziele und `setup install sata0` installiert auf eine Platte ohne Partitionen. Bei vorhandenen Partitionen ist die ausdrückliche Löschbestätigung `setup install sata0 --erase` nötig. Ohne Löschbestätigung wird nur eine Platte angenommen, die keine Partition hat und vollständig als leer gelesen wurde. Platten über 256 MiB werden dafür nicht gelesen und verlangen deshalb immer die Bestätigung. Mindestens 128 MiB, 512-Byte-Sektoren und höchstens 2 TiB werden unterstützt; eingebundene Platten werden abgewiesen. ISO9660-Medien werden als Installationsmedium ausgeschlossen, auch wenn das ISO roh auf einer USB-Platte liegt. Eine auf FAT entpackte Kopie des Installers ist kein unterstütztes Startmedium.
+
+Die Installation ersetzt das Partitionslayout durch einen MBR mit einer einzigen FAT32-EFI-Partition (`0xEF`) ab LBA 2048. Sie schreibt `/EFI/BOOT/BOOTX64.EFI`, `/boot/ProjektZeh.elf`, `/boot/ProjektZeh.elf.bak`, `/boot/zehos-version.txt` und `/boot/limine/limine.conf`. Nach dem Abschluss sind die Dateisystempuffer geschrieben und das Ziel ausgehängt. Installationsmedium entfernen und neu starten. Das installierte System benötigt UEFI; ein BIOS-Bootsektor wird nicht installiert. Im normalen System mountet dieselbe Partition unter `/data`, die Bootdateien sind daher dort unter `/data/boot` erreichbar. Beim ersten Start den Administrator anlegen. Neu installierte Systeme behalten ein Bootmenü mit drei Sekunden Auswahlzeit für **ZehOS** und **ZehOS (vorherige Version)** als Update-Rückfall; eine Auflösungsauswahl gibt es dort nicht. Bestehende Installationen behalten ihre bisherige Bootkonfiguration.
+
+GPT-Layout mit ext2-Root (Etappe 7a-S4) bietet ab 0.6 das Installer-ISO des Releases an (`scripts/build-release.sh` setzt `-p:ZehOSGptInstaller=true`, der normale Release-Kernel `-p:ZehOSRootProfile=true -p:ZehOSRootMigration=true`); eigene Builds brauchen dieselben Schalter. Dann zeigt `setup list` je Platte, ob sie für GPT taugt, und `setup install sata0 --layout gpt --erase` legt eine 512-MiB-EFI-Partition (FAT32, 4-KiB-Cluster) und den Rest als ext2-Root an; `--erase` ist dabei immer Pflicht. Unterstützt sind 32 bis 128 GiB mit 512-Byte-Sektoren. Datenplatten `ZEHOSDATA`, das Installationsmedium und eingebundene Platten werden abgewiesen, ebenso Rechner ohne Hardware-Zufallsquelle. Ein bereits installiertes ZehOS wird dagegen nicht abgewiesen: `--erase` löscht es samt Konten und `/home`. Der Installationsmarker auf der EFI-Partition wird als Letztes geschrieben; ein Abbruch davor hinterlässt eine als unklar erkannte Platte, die neu installiert werden muss. Das installierte System startet nur mit einem Kernel im Root-Profil (`-p:ZehOSRootProfile=true`, im Release enthalten) mit ext2 als `/`; derselbe Kernel startet eine bestehende Legacy-Platte weiter mit `/data`.
+
+Alle `update`-Operationen erfordern einen angemeldeten Administrator, unabhängig von einer Freigabe durch `chperm`:
+
+```text
+update status
+update source 10.0.2.2:8000
+update check
+update install
+reboot
+```
+
+`status` zeigt laufende Version und Quelle. Die Quelle steht in `/data/.zehos-update.conf`; ohne Datei gilt `10.0.2.2:8080`. Im Root-Profil (`-p:ZehOSRootProfile=true`, ext2 als `/`) steht sie in `/etc/zehos/update.conf`, und Kernel, Rückfallkernel und Versionsmarker liegen auf der EFI-Partition unter `/boot/efi/boot`. Ein Update meldet dort erst nach einem Sync der EFI-Partition Erfolg; scheitert nur der Sync, bleibt der neue Kernel eingetragen und ZehOS verlangt einen Neustart (bei Startproblemen den Rückfalleintrag wählen). Ist `/boot/efi` nicht eingehängt, sind Updates gesperrt. Ein Offline-Kernel darf dort nicht unter `/boot/efi`, `/etc/zehos` oder `/var/lib/zehos` liegen. Bei einem Hostnamen ohne Port gilt HTTP-Port 80. Der Gast verwendet DHCP, DNS für Hostnamen und einfaches HTTP/1.0. Der Spiegel muss `Content-Length` liefern; Weiterleitungen, Transfercodierungen und HTTPS werden nicht unterstützt. Manifest und Signatur heißen `update-manifest.txt` und `update-manifest.sig`, der Kernelname steht im Manifest. Manifest, Signatur und Kernel sind auf 4096 Byte, 64 Byte beziehungsweise 64 MiB begrenzt. Ein eigener Spiegel lässt sich auf dem Host mit `python3 -m http.server 8000 --directory <Paketverzeichnis>` bereitstellen; QEMU mit `e1000e` und User-Netz starten.
+
+`update check` prüft die rohe Ed25519-Signatur über die unveränderten Manifestbytes und verlangt eine echt höhere `major.minor.patch`-Version. `update install` verwendet diesen geprüften Stand und prüft Größe und SHA-256 des Kernels vor dem Schreiben. Der öffentliche Schlüssel ist eingebaut; der private Schlüssel gehört ausschließlich zur Veröffentlichung auf dem Host und nicht auf das ISO oder die Datenplatte.
+
+Nur für lokale Update-Gasttests ersetzt `-p:ZehOSUpdateTestKeyPath=<Datei>` diesen Schlüssel durch einen eigenen öffentlichen Ed25519-Testschlüssel als Base64-Text. Die Option hat keinen Standardwert; `scripts/build-release.sh` entfernt vor beiden Release-Builds alle `ZehOS*`-Umgebungsvariablen, damit geerbte Testschlüssel, Test-CAs oder Probe-Schalter nicht ins Release gelangen. Je Testlauf ein neues Schlüsselpaar außerhalb des Repositorys erzeugen; nur die öffentliche Datei einbetten, den privaten Schlüssel weder veröffentlichen noch auf das ISO oder die Gastplatte kopieren. Der Testkernel akzeptiert ausschließlich Signaturen seines Testschlüssels, keine Produktionssignaturen. Fehlende, ungültige oder mit dem Produktionsschlüssel identische Testschlüssel sperren die Update-Prüfung ohne Rückfall. Versionstext und Bootprotokoll tragen `[UPDATE-TESTSCHLUESSEL]`, die Assembly-Information `+update-testkey`. Nach Testbuilds vor dem normalen Build die benötigten ISO-/ELF-Dateien separat sichern, da beide Varianten dieselben Ausgabepfade verwenden. Dieser Buildweg allein belegt noch keinen erfolgreichen Update-Gastlauf.
+
+Für ein vollständig lokales Update die drei Paketdateien unter `/data` in dasselbe Verzeichnis kopieren und beispielsweise `update install /data/updates/ProjektZeh-<Version>.elf` ausführen. Das liest und prüft das benachbarte Manifest und seine Signatur ohne Netzwerk. Ein vorheriger Onlinecheck ist dafür nicht nötig.
+
+Beim Ersetzen bleibt der alte Kernel als `/boot/ProjektZeh.elf.bak` erhalten. Der Installer richtet mit drei Sekunden Timeout die beiden Limine-Einträge **ZehOS** (1920×1080) und **ZehOS (vorherige Version)** ein. Der Installer legt dazu bereits eine Kopie des installierten Kernels als `.bak` an. Nach einem Start über den Rückfalleintrag (laufende und installierte Version in `/boot/zehos-version.txt` weichen ab) darf ein Update nicht älter als die installierte Version sein; es ersetzt dann nur den Hauptkernel und lässt den laufenden Kernel in `.bak` unverändert. Nach Beginn des Dateiaustauschs ist bis zum Neustart kein weiteres Update erlaubt, auch wenn Austausch oder Bereinigung einen Fehler melden. Die Sicherungs-/Wiederherstellungslogik schützt vor behandelten Dateifehlern; sie garantiert keine Wiederherstellung nach Stromausfall. Netzwerk- und Dateioperationen der Shell laufen synchron; antwortet ein Spiegel nach dem Verbindungsaufbau nicht, steht das System bis zum Cosmos-Zeitlimit (wegen des groben Cosmos-Wartetimers deutlich länger als die angeforderten 10 s). [Prüfergebnisse und Plattformgrenzen](../../docs/INSTALLER_UPDATES_TESTS.md).
+
+## Releases und Updates
+
+`scripts/build-release.sh <Version> [Ausgabeverzeichnis]` baut Live-ISO, Setup-ISO, Kernel und Update-Manifest. Der Release-Workflow startet mit einem Tag `v<Version>` und bricht ab, wenn der Tag nicht der für diesen Commit abgeleiteten Version entspricht. Zum Signieren erzeugt `python3 scripts/sign-update.py <Manifest> <privater-Ed25519-PEM>` die rohe Datei `update-manifest.sig` neben dem Manifest. Mit `python3 scripts/sign-update.py verify <Manifest> <Signatur> <öffentlicher-Schlüssel-base64>` lässt sich die Signatur prüfen. Der private Schlüssel bleibt außerhalb des Repositories; der Release-Workflow verwendet das Secret `ZEHOS_UPDATE_SIGNING_KEY`.
+
+Für Online-Updates stellt `python3 scripts/update-mirror.py --repo owner/name` das neueste GitHub-Release bereit; `GITHUB_TOKEN` ist optional. Alternativ dient `--dir <Releaseverzeichnis>` für lokale Dateien. Der Spiegel bindet standardmäßig an `0.0.0.0:8080`; QEMU erreicht ihn über `10.0.2.2:8080`. `--bind` und `--port` ändern diese Werte. Der Gast verwendet HTTP; die Signatur schützt die Echtheit des Manifests. Der Spiegel lädt die Dateien beim Start und muss für ein neues Release neu gestartet werden.

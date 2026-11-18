@@ -27,6 +27,7 @@ FAKE = r'''#!{py}
 import json, os, sys, time
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
+print(os.environ.get("FAKE_OUT", ""), flush=True)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 '''
@@ -52,7 +53,7 @@ class Env:
             f.write(FAKE.format(py=sys.executable))
         os.chmod(self.claude, os.stat(self.claude).st_mode | stat.S_IEXEC)
         self.calls = os.path.join(self.dir, "calls.jsonl")
-        os.environ.update(FAKE_CALLS=self.calls, FAKE_EXIT="0", FAKE_SLEEP="0")
+        os.environ.update(FAKE_CALLS=self.calls, FAKE_EXIT="0", FAKE_SLEEP="0", FAKE_OUT="")
         self.now = 1000.0
         self.args = parse_args(["--nick", NICK, "--irc-dir", self.irc, "--home", self.dir, "--model", "m",
                                 "--claude", self.claude, "--quiet", "5", "--backoff", "60", *extra])
@@ -426,6 +427,119 @@ with open(os.path.join(e.args.state, "running"), "w") as f:
 e.new()
 time.sleep(0.2)
 assert _start_time(kind) is None or open(f"/proc/{kind}/stat").read().split(") ")[1][0] == "Z"
+
+# --- Kontingent: Zeitpunkt aus der Limitmeldung ----------------------------------------------------------
+from dispatcher import parse_reset
+assert parse_reset("Claude AI usage limit reached|1795030000", 1795030000 - 3600) == 1795030000
+assert parse_reset("You've hit your usage limit. Try again in 30 minutes.", 1000) == 1000 + 1800
+assert parse_reset("Limit erreicht, wieder frei in 2 Stunden", 1000) == 1000 + 7200
+r = parse_reset("Your limit resets at 3pm", time.time())
+assert r and time.localtime(r).tm_hour == 15 and r > time.time()
+assert parse_reset("ohne Zeitangabe", 0) is None
+
+# --- Kontingent leer (kurze Limitmeldung, Exit 0): keine Quittung, Sperre für alle Dienste des Rechners -----
+quota = tempfile.mkdtemp()
+e = Env("--quota-dir", quota, "--cooldown", "600")
+os.environ["FAKE_OUT"] = "Claude AI usage limit reached"
+e.say("agent-coordinator", "agent-x: Aufgabe bei leerem Kontingent")
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 0 and e.d.failures == 0, (e.d.acked, e.d.failures)  # kein Fehlschlag, nur gesperrt
+assert e.d.quota.blocked("claude", e.now)[0] == e.now + 600
+other = Env("--quota-dir", quota)                                          # anderer Agent desselben Rechners
+os.environ["FAKE_CALLS"] = other.calls
+other.say("agent-coordinator", "agent-x: anderer Auftrag")
+other.now = e.now + 6
+other.d.step()
+assert other.d.proc is None and other.calls_made() == []                  # startet nicht
+warn = other.outbox()
+assert "[dispatcher] Kontingent claude gesperrt bis" in warn and "Aufträge warten" in warn and "gemeldet von agent-x" in warn, warn
+other.now += 30
+other.d.step()
+assert other.outbox() == ""                                               # nur eine Warnung je Sperre
+os.environ["FAKE_OUT"] = ""
+other.now += 600
+other.run_until_idle()
+assert other.d.acked == 1                                                 # nach der Sperre läuft er
+os.environ["FAKE_CALLS"] = e.calls
+e.now += 700
+e.run_until_idle()
+assert e.d.acked == 1 and len(e.calls_made()) == 2                        # Auftrag lief erneut und ist erledigt
+
+# --- Review P1: kurze echte Antwort mit Wörtern wie „rate limit“ oder „quota“ sperrt nichts -----------------
+quota = tempfile.mkdtemp()
+e = Env("--quota-dir", quota)
+os.environ["FAKE_OUT"] = "[BLOCKER] rate limit in X fehlt; quota-Prüfung fehlt; usage limit reached steht nur im Test"
+e.say("agent-coordinator", "agent-x: kurze Antwort")
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 1 and e.d.quota.blocked("claude", e.now) is None, e.d.quota.blocked("claude", e.now)
+
+# --- Dieselben Nennungen liefern immer wieder nur eine Limitmeldung: nach drei Läufen endgültig gemeldet ------
+e = Env("--quota-dir", tempfile.mkdtemp(), "--cooldown", "60")
+os.environ["FAKE_OUT"] = "Claude AI usage limit reached"
+e.say("agent-coordinator", "agent-x: hängt immer am Limit")
+for _ in range(3):
+    e.now += 120
+    e.run_until_idle()
+assert len(e.calls_made()) == 3 and e.d.gave_up_at == 1 and e.d.acked == 0
+assert e.d.quota.blocked("claude", e.now) is not None                   # auch beim Aufgeben gesperrt
+assert "Limitmeldung für dieselben Nennungen" in e.outbox()
+e.now += 10000
+e.run_until_idle()
+assert len(e.calls_made()) == 3                                           # keine stündliche Schleife
+os.environ["FAKE_OUT"] = ""
+
+# --- Review P2: Zahlen aus anderem Text ergeben keine Sperrzeit, ferne und vergangene Zeiten nicht -----------
+now0 = time.time()
+assert parse_reset("Format 3 Seiten", now0) is None
+assert parse_reset("Datum 18.11.", now0) is None
+assert parse_reset("usage limit reached|9999999999", now0) is None       # Jahr 2286: Lesefehler
+assert parse_reset("usage limit reached|1000000000", now0) is None       # Vergangenheit
+assert parse_reset("within 5 minutes", 1000) is None                       # „within“ ist kein „in“
+e = Env("--quota-dir", tempfile.mkdtemp(), "--cooldown", "900")
+os.environ["FAKE_OUT"] = "Erledigt um 3 Uhr.\nClaude AI usage limit reached"  # Zahl in anderer Zeile
+os.environ["FAKE_EXIT"] = "1"                                              # Werkzeug am Limit endet mit Fehler
+e.say("agent-coordinator", "agent-x: Zeit aus anderer Zeile")
+e.now += 6
+e.run_until_idle()
+assert e.d.quota.blocked("claude", e.now)[0] == e.now + 900               # feste Wartezeit, nicht 03:00
+os.environ["FAKE_OUT"], os.environ["FAKE_EXIT"] = "", "0"
+
+# --- Eine Warnung je Sperre und Rechner, nicht je Agent ----------------------------------------------------
+quota = tempfile.mkdtemp()
+from dispatcher import QuotaStore
+QuotaStore(quota, {}).block("claude", time.time() + 600, "Limitmeldung")
+a1 = Env("--quota-dir", quota); a2 = Env("--quota-dir", quota)
+a1.say("agent-coordinator", "agent-x: eins"); a2.say("agent-coordinator", "agent-x: zwei")
+a1.now = a2.now = time.time() + 6
+a1.d.step(); a2.d.step()
+assert (a1.outbox() + a2.outbox()).count("Kontingent claude gesperrt") == 1
+
+# --- Lange Antwort, die nur über Ratengrenzen spricht, sperrt nichts ----------------------------------------
+quota = tempfile.mkdtemp()
+e = Env("--quota-dir", quota)
+os.environ["FAKE_OUT"] = "Ergebnis: die Ratengrenze (rate limit) gilt je Nick. " + "Begründung. " * 80
+e.say("agent-coordinator", "agent-x: prüfe die Ratengrenze")
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 1 and e.d.quota.blocked("claude", e.now) is None
+os.environ["FAKE_OUT"] = ""
+
+# --- Tagesbudget gemeinsam je Rechner: danach warten die Aufträge, eine Warnung ------------------------------
+quota = tempfile.mkdtemp()
+e = Env("--quota-dir", quota, "--budget-claude", "1")
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", "agent-x: erster Lauf")
+e.now += 6
+e.run_until_idle()
+assert e.d.acked == 1 and len(e.calls_made()) == 1
+e.say("agent-coordinator", "agent-x: zweiter Lauf")
+e.now += 6
+e.d.step()
+assert e.d.proc is None and len(e.calls_made()) == 1                      # Tagesbudget 1 erreicht
+warn = e.outbox()
+assert "Kontingent claude gesperrt" in warn and "Tagesbudget 1" in warn and "Aufträge warten" in warn, warn
 
 # --- Relative Pfade werden absolut: der Lauf startet in --home und muss state.md dort finden -------------
 cwd = os.getcwd()
