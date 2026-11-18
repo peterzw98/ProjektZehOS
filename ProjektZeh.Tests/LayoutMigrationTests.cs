@@ -207,12 +207,25 @@ public sealed class LayoutMigrationTests
         Directory.CreateDirectory(Path.Combine(targetRoot, "srv"));
         try
         {
+            // Der echte PathGuard ueber dem Host-Verzeichnis; symlink nennt eine Komponente, die als Symlink gelten soll.
+            string? symlink = null;
+            PathNodeKind Lookup(string parent, string name)
+            {
+                if (name == symlink) return PathNodeKind.Symlink;
+                string host = Path.Combine(targetRoot, (parent.TrimStart('/') + "/" + name).TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+                return Directory.Exists(host) ? PathNodeKind.Directory : File.Exists(host) ? PathNodeKind.File : PathNodeKind.Missing;
+            }
+            string Vfs(string physical) => physical == targetRoot ? "/" : "/" + Path.GetRelativePath(targetRoot, physical).Replace(Path.DirectorySeparatorChar, '/');
             var target = new FileMigrationTarget(targetRoot, () => ResultObjectFactory.CreateSuccess(1L << 30),
                 () => ResultObjectFactory.CreateSuccess(100_000L), ResultErr.CreateSuccess,
-                (path, creating) => creating || File.Exists(path) || Directory.Exists(path) ? ResultErr.CreateSuccess()
-                    : ResultErr.CreateFailure(ResultCode.Failure, "cause='Missing' message='Pfadkomponente fehlt: legacy-data'"));
+                (physical, creating) => PathGuard.Check("/", Vfs(physical), ["/"], Lookup, creating));
             Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data").Code);
             Assert.AreEqual(ResultCode.NotFound, target.Delete("/srv/legacy-data/notizen.txt").Code);
+            // Gegenprobe: ein Symlink im Pfad bleibt ein harter Fehler und wird nie als "nicht vorhanden" geduldet.
+            symlink = "srv";
+            var refused = target.Delete("/srv/legacy-data");
+            Assert.AreNotEqual(ResultCode.NotFound, refused.Code);
+            StringAssert.Contains(refused.Message, "Symlink", StringComparison.Ordinal);
         }
         finally { Directory.Delete(targetRoot, true); }
     }
