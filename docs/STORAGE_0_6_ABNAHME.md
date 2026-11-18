@@ -57,7 +57,7 @@ Belegungsdifferenzen einzelner Inodes auf, einmal war das Ergebnis sauber (Entsc
 | P1 | `Legacy` mit Datenplatte: `shutdown` hängt `/data` aus, `fsck.fat -n` 0 | PASS | 0.5.125 (#270), senior |
 | P2 | `Root`: `shutdown` ⇒ „clean“, `e2fsck -fn` 0, ESP `fsck.fat -n` 0 | PASS | 0.5.125 (#270), senior |
 | P3a/P3b | `Root`: `reboot` setzt `s_state` 1; Neustart im Profil `Root`, danach sauber | PASS | 0.5.125 (#270), senior |
-| P4 | Fehlerprobe je Stufe (Sync, Unmount, Root-Sync) | OFFEN | als Grenze im PR #270 |
+| P4a–f | Fehlerprobe je Stufe (ESP-Sync, ESP-Unmount, Root-Sync, Root-Flush, Root-Flush mit Reopen, Root-Sync mit Remount): Gast läuft weiter, Shell bedienbar, zweites `shutdown` sauber, `e2fsck -fn` 0, `fsck.fat` nur tolerierte Meldungen, `s_state` 1; bei P4e greift die Schreibsperre (`RootWriteLocked`) | PASS | Probebau bb28345 (`PowerFaultProbe`), Skript `task/storage-7b-p4-guest` 6d05342, senior |
 | P5 | offline `update install`, Rückfall | OFFEN | braucht signiertes Manifest (Testschlüsselbau) |
 | P6 | laufende Paket-App verhindert `shutdown` | OFFEN | als Grenze im PR #270 |
 
@@ -67,14 +67,15 @@ Belegungsdifferenzen einzelner Inodes auf, einmal war das Ergebnis sauber (Entsc
 | --- | --- | --- | --- |
 | Matrix 32 GiB | Installation, Boot im Profil `Root`, Ersteinrichtung, zwei Terminals mit eigenem Arbeitsverzeichnis, Dateimanager, Neustart (`s_state` 1), offline `e2fsck` und `fsck.fat` der ESP | PASS | f22e311 (0.5.129), red-matrix |
 | Matrix 32 GiB | virtuelle Dateien per `cat` und Bild: `/proc/version`, `/proc/meminfo`, `/proc/mounts`, `/sys/kernel/components`, `/dev/null` | PASS | f22e311, red-matrix |
-| Matrix 32 GiB | Inode-Grenzfall (~17.500 Dateien je Mount): saubere Meldung, kein Absturz, `e2fsck` sauber | PASS | red-matrix |
-| Matrix 64/128 GiB | wie 32 GiB | ausstehend | f22e311, senior (Peters Rechner) |
+| Matrix 32 GiB | Inode-Grenzfall (~17.500 Dateien je Mount): saubere Meldung, kein Absturz, `e2fsck` sauber | OFFEN | erster Lauf ungültig: die Vorbereitung legte die 18.000 Dateien nie an (frische Root ohne `/home`, `debugfs` endet trotz Fehlern mit 0); Wiederholung mit Zählprüfung steht aus, red-matrix |
+| Matrix 64/128 GiB | wie 32 GiB (ohne Inode-Grenze), virtuelle Dateien per Bild | PASS | f22e311 (0.5.130), senior; erster 128-GiB-Lauf FEHLER unter Hostlast, Wiederholung allein PASS (siehe Grenzen) |
 | Legacy | Regression mit 64-MiB-Datenplatte (P1) | PASS | 875e94c-Stand, red-matrix |
 | `pkg install`, `update install` | in der Matrix | OFFEN | Runde 2 (Testschlüsselbau, lokaler Server) |
 | voller Datenträger | Schreiben bis `ENOSPC` auf 32+ GiB | OFFEN | Dauer über Cosmos-ext2 (Stunden); Ersatz: Inode-Grenzfall (Entscheidung Peter) |
 
 ## Bekannte Grenzen
 
+- Unter starker Hostlast (paralleler Build auf denselben CPUs) brach eine 128-GiB-Installation in `CopyingFiles` mit `SATA: command completion timeout` ab (ein Schreibblock brauchte über 5 s); ohne Parallellast bestanden. Ein eigener Timeout-Test fehlt.
 - `cp` aus `/proc`, `/sys` und `/dev` wird mit `cause='ForeignMount'` verweigert (virtuelle Dateien haben keine verlässliche Größe); lesen geht per `cat`. Als Grenze geführt nach Empfehlung des Koordinators, Bestätigung durch lead2 ausstehend.
 - Höchstens etwa 17.500 verschiedene Dateien je Mount (Cosmos-Inode-Cache, #228/#233) und 8189 Einträge je Verzeichnis.
 - FAT: kurze kleingeschriebene 8.3-Namen fremder Systeme erscheinen groß (Cosmos wertet das NT-Kleinschreib-Flag nicht aus,
