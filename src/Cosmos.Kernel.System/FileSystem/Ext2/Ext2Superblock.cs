@@ -17,7 +17,21 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     private readonly Ext2GroupDesc[] _groups;
 
     /// <summary>Live inodes by number; keeps open handles coherent with metadata writes.</summary>
-    private readonly Dictionary<uint, Ext2Inode> _inodeCache = [];
+    private readonly Dictionary<uint, Ext2Inode> _inodeCache;
+
+    // ZehOS patch ext2-inode-cache, see PATCHES.md
+    // Upper bound for presizing the inode cache at mount. Growing a large
+    // dictionary later copies it into a new, larger array, which fails on a
+    // fragmented kernel heap (about 17,500 cached inodes per mount). Beyond
+    // the presize (rounded up to the prime 75,431) the dictionary grows as
+    // before; the up-front cost is about 2 MiB per mount.
+    internal const int InodeCachePresize = 65_536;
+
+    /// <summary>Initial inode cache size for a volume with <paramref name="inodesCount"/> inodes.</summary>
+    internal static int InitialInodeCacheSize(uint inodesCount) => (int)Math.Min(inodesCount, (uint)InodeCachePresize);
+
+    /// <summary>Current capacity of the inode cache (test hook).</summary>
+    internal int InodeCacheCapacity => _inodeCache.EnsureCapacity(0);
 
     /// <summary>Reusable buffer for indirect block reads (single and double first level).</summary>
     private byte[]? _indirBuf1;
@@ -138,6 +152,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         Ext2GroupDesc[] groups)
     {
         Device = device;
+        _inodeCache = new Dictionary<uint, Ext2Inode>(InitialInodeCacheSize(inodesCount));
         InodesCount = inodesCount;
         BlocksCount = blocksCount;
         FreeBlocksCount = freeBlocksCount;
