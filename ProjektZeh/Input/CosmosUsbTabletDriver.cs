@@ -57,7 +57,8 @@ public sealed class CosmosUsbTabletDriver : Driver
                 MouseManager.SetPosition(x, y);
                 Sink?.ReportAbsolute(x, y, (KitPointerButtons)buttons);
                 // Nicht ueber Sink.ReportRelative: das endet in CosmosMousePlug.HandleRelative und naehme PointerLock
-                // ein zweites Mal (Selbstblockade). Dasselbe Paket direkt unter der gehaltenen Sperre einreihen.
+                // ein zweites Mal (Selbstblockade). Dasselbe Paket direkt unter der gehaltenen Sperre einreihen; anders als
+                // der Sink-Weg auch bei zurueckgezogenem Geraet, wie SetPosition und RecordTabletMotion oben.
                 if (wheel != 0) CosmosMousePlug.AddLocked(0, 0, (KitPointerButtons)buttons, wheel);
             }
         }

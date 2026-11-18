@@ -20,8 +20,12 @@ public static class CosmosKeyboardCapture
 
     internal static void Initialize()
     {
-        events.Clear();
-        dropped = 0;
+        // Der Tastatur-Interrupt kann schon laufen; ohne Sperre setzte Clear den Kopf mitten in einem Einreihen zurueck.
+        using (bufferLock.Enter())
+        {
+            events.Clear();
+            dropped = 0;
+        }
     }
 
     // shortcut: Cosmos 3.0.94 verwirft Break-Ereignisse; bei einer oeffentlichen Rohereignis-API diesen Plug entfernen.

@@ -14,6 +14,8 @@ namespace ProjektZeh.Input;
 /// (Etappe 4, E4-D). Auf einer CPU kann sie nach der Maske nie belegt sein, das Verhalten bleibt dort wie bisher.
 /// Nicht wiedereintrittsfaehig: wer sie haelt, darf keinen Pfad aufrufen, der sie erneut nimmt (Selbstblockade).
 /// Als veraenderliches statisches Feld neben dem Puffer halten; ein readonly-Feld wuerde je Aufruf kopiert.
+/// Eine aeussere Sperre ist zulaessig, wenn die Reihenfolge immer gleich bleibt: Der Tablettbericht kann unter der
+/// DeviceLock des USB-Controllers laufen (USB-Sperre, dann diese); einen umgekehrten Weg gibt es nicht.
 /// </remarks>
 internal struct CosmosIrqLock
 {
@@ -33,6 +35,8 @@ internal struct CosmosIrqLock
     {
         private ref int taken;
         private InterruptMaskScope mask;
+        // Ein zweites Dispose gaebe sonst eine Sperre frei, die inzwischen ein anderer haelt (wie IrqLockScope in Cosmos).
+        private bool disposed;
 
         internal Scope(ref int taken, InterruptMaskScope mask)
         {
@@ -43,6 +47,8 @@ internal struct CosmosIrqLock
         /// <summary>Gibt erst die Sperre frei und stellt dann die Maske wieder her.</summary>
         public void Dispose()
         {
+            if (disposed) return;
+            disposed = true;
             Volatile.Write(ref taken, 0);
             mask.Dispose();
         }
