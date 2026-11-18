@@ -1,4 +1,4 @@
-"""Echte Testsignaturen prÃ¼fen, ohne den privaten Bridge-SchlÃ¼ssel oder PrÃ¼f-Ausnahmen."""
+"""Echte Testsignaturen prüfen, ohne den privaten Bridge-Schlüssel oder Prüf-Ausnahmen."""
 import asyncio
 import base64
 import datetime
@@ -20,7 +20,7 @@ if not GPG and Path('C:/Program Files/Git/usr/bin/gpg.exe').exists():
     GPG = 'C:/Program Files/Git/usr/bin/gpg.exe'
 
 
-@unittest.skipUnless(GPG, 'GPG wird fÃ¼r echte Testsignaturen benÃ¶tigt')
+@unittest.skipUnless(GPG, 'GPG wird für echte Testsignaturen benötigt')
 class BridgeSignatureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
