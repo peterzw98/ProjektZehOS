@@ -236,7 +236,7 @@ die vier Aufrufer (`Ext2Directory.cs:122`, `Ext2InodeOperations.cs:67`, `:106`, 
 - [ ] **Schritt 2:** Tests schlagen fehl, Patch, Tests bestehen. Datei `patches/<Kurzname>.md`, ein Commit, PR gegen `cosmos`.
 - [ ] **Schritt 3: ZehOS** (Branch `task/mc-e2-p7-verzeichnisgrenze`): `FileService.MaximumExt2DirectoryEntries` (`FileService.cs:18-20`) auf die neue Grenze setzen. Sie ergibt sich aus Cosmos: 4096 Blöcke zu 4096 Byte bei mindestens 12 Byte je Record sind rechnerisch über eine Million Einträge; als Produktgrenze schlägt der Plan **65.536** vor (Verzeichnisse darüber sind nicht geprüft). Den Wert bestätigt der Storage-Lead vor diesem Schritt. Der Mechanismus (`EnsureDirectoryEntryAvailableStorageLocked`, `CosmosDirectoryEntryLimit.cs`) bleibt. `ProjektZeh.Tests/MigrationDirectoryLimitTests.cs:21` und `DirectoryEntryLimitTests.cs` auf die Konstante statt auf die Zahl `8189` beziehen.
 - [ ] **Schritt 4: Gast:** E4.0 Lauf 9 mit 8190 Einträgen (`--limit-only`) und ein neuer Lauf mit 20.000 Einträgen in einem Verzeichnis: anlegen, auflisten (Anzahl stimmt), jeden zweiten löschen, auflisten, Rest löschen, `rmdir`; `e2fsck -fn` Ende 0. Der Lauf mit 20.000 Einträgen berührt die Inode-Cache-Grenze; scheitert er daran, ist E2-P8 Voraussetzung.
-- [ ] **Schritt 5:** Doku (`README.md:172`, `docs/COSMOS_SUPPORT.md` „ext2-Verzeichnisgrenze“, `docs/superpowers/specs/2026-11-17-ext2-directory-limit.md` als historisch kennzeichnen), Commit, Review, PR.
+- [ ] **Schritt 5:** Doku (`docs/handbuch/ENTWICKLUNG.md`, Abschnitt „Dateisystem in QEMU“, früher `README.md:172`; `docs/COSMOS_SUPPORT.md` „ext2-Verzeichnisgrenze“, `docs/superpowers/specs/2026-11-17-ext2-directory-limit.md` als historisch kennzeichnen), Commit, Review, PR.
 
 ---
 

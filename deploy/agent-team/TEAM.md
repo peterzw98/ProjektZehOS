@@ -38,18 +38,18 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
 - **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `backend=codex` (Läufe mit Codex statt Claude),
   `fallback=claude` (bei gesperrtem Codex-Kontingent ersatzweise Claude; ohne diese Option warten die Aufträge), `budget-codex=N` und `budget-claude=N` (höchstens N Läufe je Tag und Rechner),
   `codex-model=NAME`. Modell `-` heißt: kein Claude-Modell (reiner Codex-Agent).
-- **Peters Team** (Rechner `MSI`, Liste `agents-peter.tsv`: Engineer, Senior mit KVM, Reviewer, Codex-Reviewer als letztes Review vor dem PR):
-
-  ```sh
-  cd ~/zehos/deploy/agent-team
-  AGENTS_FILE=$PWD/agents-peter.tsv PROJECT_COORDINATOR_BASE=$HOME/zehos-team IRCKEY_FILE=$HOME/zehos/.tools/IRCKEY \
-    CLONE_REFERENCE=$HOME/zehos PATH_PREFIX=$HOME/.dotnet DISPATCH_PARALLEL=2 \
-    TEAM_ASSIGNERS=agent-coordinator,<Nicks der Leads> DISPATCH_ALLOW=agent-coordinator,<Nicks der Leads> \
-    bash start-agent.sh --all >start.out 2>&1
-  ```
-
-  Die Leads (auch auf dem Windows-Laptop) bleiben interaktive Sitzungen; sie geben Arbeit per `[AUFTRAG]` an diese Agenten und erledigen Reviews und Recherche auf ihrem Rechner mit Subagenten.
-  `dispatcher.py` läuft nur unter Linux (`fcntl`, `/proc`, Prozessgruppen); auf Windows nur in WSL.
+- **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (Engineer Sonnet, Senior Opus mit KVM, Reviewer Sonnet, Codex-Reviewer für das letzte Review vor
+  dem PR, weicht bei leerem Codex-Kontingent auf Claude aus) und dazu interaktive Leads.
+  1. **Einmalig:** Codex installieren und anmelden (`npm config set prefix ~/.local`, `npm install -g @openai/codex`, dann `codex login`); ohne Codex weicht der
+     Codex-Reviewer auf Claude aus.
+  2. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
+     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe, Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
+  3. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
+     vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
+  - **Feste Nicks der Leads:** Nur diese dürfen Aufträge geben und Läufe starten: `agent-coordinator`, `agent-peter-lead`, `agent-nweh-lead1`, `agent-nweh-lead2`
+    (`TEAM_ASSIGNERS` in `start-peter-team.sh`). Ein Lead mit anderem Nick wird von den Agenten nicht beachtet.
+  - **Nach einem Neustart des Rechners** laufen die Agenten nicht von selbst; dafür einmal `crontab -e` und `@reboot bash $HOME/zehos/deploy/agent-team/start-peter-team.sh`.
+  - `dispatcher.py`, `teambot.py` und die Skripte laufen nur unter Linux (FIFOs, `fcntl`, `/proc`); Leads auf dem Windows-Laptop brauchen WSL.
 - **Zwei Kontingente (Claude und Codex):** Jeder Lauf zählt für seinen Anbieter in `<basis>/.dispatch-slots/quota-<anbieter>.json`; diese Datei teilen alle Dienste des Rechners.
   Meldet ein Lauf das Ende des Kontingents, sperrt der Dienst den Anbieter für **alle** Agenten des Rechners (gleiches Basisverzeichnis) bis zur genannten Zeit, meldet das genau
   einmal je Rechner mit `[dispatcher]`, wertet es nicht als Fehlschlag und quittiert nicht: Die Aufträge warten oder laufen über den Ersatz (`fallback=`). Als Limitmeldung gilt
