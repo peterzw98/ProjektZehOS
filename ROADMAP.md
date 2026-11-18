@@ -208,6 +208,8 @@ Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). G
 
 VMware ist für alle Punkte offen.
 
+**Version 0.6 (Storage-Abnahme):** 0.6 steht für einen fertigen Speicherteil: GPT-Installer, Root-Profil mit ext2, Migration vom Legacy-Bestand, Updates und Energieaktionen im Root-Profil sowie die Gesamtmatrix 32/64/128 GiB unter QEMU. Die Abnahme macht Peter selbst; danach folgt das Release v0.6.0. Den Minor hebt ein eigener PR (`ZehOSVersionPrefix` 0.6, `ZehOSPatchBase` 0). VMware und der volle Datenträger liegen ausdrücklich außerhalb von 0.6 (Entscheidung Peter, 18. November 2026). Ergebnisse je Fall, offene Punkte und Grenzen: [Storage-Abnahme 0.6](docs/STORAGE_0_6_ABNAHME.md).
+
 ## 8 Kleine Desktopanwendungen bauen
 
 **Zweck:** Die gemeinsamen Bausteine an überschaubaren Anwendungen prüfen, bevor Browser und Doom zusätzliche Komplexität bringen.
