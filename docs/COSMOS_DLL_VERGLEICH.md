@@ -61,7 +61,7 @@ Byte (die ZehOS-Version aus Git ist je Branch anders lang), keine Compiler- oder
 wird auf beiden Seiten geladen. Die alte Seite meldet zwölf NuGet-Warnungen „Expected package
 _Cosmos.Build.Analyzer.Patcher 3.0.97, but got package Cosmos.Build.Analyzer.Patcher 3.0.97“: nuget.org liefert unter
 der ID mit Unterstrich das andere Paket aus, daher auch das abweichende Layout oben. Der eigene Feed hat das nicht.
-Gaststarts (Desktop, Recovery, Threads, Isolation, ext2, Doom, Energie) und VMware sind noch offen.
+Gaststarts: siehe „Gastzeilen alt gegen neu“ unten; Doom und VMware sind noch offen.
 
 Reproduzierbarkeit (Ende 0): derselbe Commit, zweimal gebaut in zwei Arbeitsbäumen unter verschiedenen Pfaden, je mit eigenem
 NuGet-Cache und gleicher PathMap: 85 DLLs, davon 54 `gleich` und 31 `bauangaben`, keine `VERSCHIEDEN`; kein lokaler Pfad
@@ -69,3 +69,51 @@ in einer DLL.
 
 `monodis` eignet sich für diesen Vergleich nicht: Es lässt Methoden neuerer Assemblies still aus und hätte die
 Abweichungen in `Cosmos.Kernel.Drivers` und `Cosmos.Kernel.System` übersehen.
+
+## Gastzeilen alt gegen neu (18.11.2026, Peters Rechner, QEMU/KVM bzw. TCG)
+
+**Stände:** Verglichen wurden zwei Kernelstände, die sich nur im Cosmos-Bau unterscheiden; dazwischen ändern sich nur
+Bau- und CI-Dateien, keine Kernelquelle.
+
+- **alt:** `1e9a5aa` (`master` direkt vor E1-B, NuGet 3.0.97, global installierte Werkzeuge 3.0.97).
+- **neu:** `100a55f` (Merge von E1-B, Feed 3.0.97-zehos.1 aus `cosmos` bd5889b, Werkzeuge je Arbeitskopie).
+
+**Builds:** Je Seite sieben Builds, alle mit 0 Warnungen und 0 Fehlern: normal, `ZehOSRecovery`, `ZehOSThreadProbe`,
+`ZehOSIsolationProbe`, `…Negative`, `…Nmi`, `ZehOSStorageProbe`. Die ELF-Größen sind je Build auf beiden Seiten
+bytegenau gleich, etwa normal 21 109 600 Byte und Storage-Probe 21 414 544 Byte.
+
+**Inhalt:** Die ELFs sind nicht bytegleich. Die ersten Abweichungen in `.rodata` sind 16-Byte-GUIDs (MVIDs). Der
+größte Block (654 KB) ist derselbe Inhalt, um wenige Byte verschoben. Vermutung, nicht geprüft: Das sind die längeren
+Versionstexte des Eigenbaus (`3.0.97-zehos.1+bd5889b…` statt `3.0.97+efcf20c…`).
+
+| Fall | Befehl | alt | neu |
+| --- | --- | --- | --- |
+| Desktop KVM | `test-desktop-guest.py --accel kvm` | Erfolg (42 s) | Erfolg (41 s) |
+| Desktop TCG | `test-desktop-guest.py --accel tcg` | Erfolg (82 s) | Erfolg (80 s) |
+| Recovery | `test-desktop-guest.py --recovery --accel kvm` | Erfolg | Erfolg |
+| Threads | `test-thread-probe.ps1`, nach Python übertragen (TCG) | `THREAD_PROBE PASS` | `THREAD_PROBE PASS` |
+| Isolation | `test-isolation-probe.py --accel kvm --runs 5` | 5/5 | 5/5 |
+| Isolation negativ | `… --negative` | 1/1 | 1/1 |
+| Isolation NMI | `… --nmi`, je 4 Läufe | 1/4, sonst „Gegenprobe ohne Aussage“ | 0/4, jeweils „Gegenprobe ohne Aussage“ |
+| ext2 | `test-storage-ext2-guest.py --accel kvm` | Lauf 1 PASS=20, Lauf 2 PASS=9, `DONE` | gleich |
+| Energie | `reboot` in derselben VM, dann `shutdown` (KVM) | beide PASS, Exit 0 | beide PASS, Exit 0 |
+| Doom | `test-wasm-doom-desktop.py --scenario quick` | offen | offen |
+| VMware | `start-vmware.ps1` | offen | offen |
+
+**Anmerkungen:**
+
+- **Isolation NMI:** Kein Hinweis auf eine Abweichung durch den Cosmos-Bau.
+  - Beide Stände enthalten die LINT1-Freischaltung der Probe (#265). Die NMI kommt in jedem Lauf an
+    („CPU EXCEPTION: Non-Maskable Interrupt“, Vektor 2).
+  - In den gescheiterten Läufen trifft sie Thread 0 statt des Workers im Gastcode. Welcher Thread gerade läuft, hängt
+    vom Zeitpunkt ab; das Skript wertet einen solchen Lauf ausdrücklich als „ohne Aussage, wiederholen“.
+  - 1/4 gegen 0/4 ist bei dieser Laufzahl kein belastbarer Unterschied. Dass der Worker heute seltener getroffen
+    wird als in #265 (2/2), ist offen.
+- **Threads:** Ohne PowerShell als 1:1-Übertragung des Skripts nach Python ausgeführt, mit denselben QEMU-Argumenten
+  und Marken.
+- **Energie:** `test-power-commands.ps1` scheitert heute auf beiden Seiten gleich. Es tippt direkt nach „Textshell ist
+  bereit.“, der Kernel zeigt dann aber den Desktop (ohne Datenplatte „Konten gesperrt“). Geprüft wurde deshalb
+  derselbe Ablauf mit vorherigem Esc zur Textshell: `reboot` startet in derselben VM bis zum Desktop, `shutdown`
+  beendet QEMU mit Exit 0. Das veraltete Skript ist eine eigene Aufgabe.
+- **Doom:** Es braucht wasi-sdk 25 für die Testapp und ein Doom-Testrepository; beides fehlt auf diesem Rechner. Die
+  Installation von wasi-sdk wartet auf eine Entscheidung.

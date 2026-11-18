@@ -54,6 +54,18 @@ class BuildCosmosTests(unittest.TestCase):
             version_changed = subprocess.run(['git', 'diff', '--quiet', base.stdout.strip(), '--', 'deploy/cosmos/VERSION'], cwd=ROOT).returncode != 0
             self.assertTrue(version_changed, 'deploy/cosmos/COMMIT geaendert, VERSION nicht')
 
+    def test_git_calls_in_source_tree_use_process_local_longpaths(self):
+        result = plan()
+        self.assertEqual(0, result.returncode, result.stderr)
+        # Der Zweig "checkout" kommt im Plan nie vor (Plan legt immer den Arbeitsbaum an); er wird am Skripttext geprueft.
+        script = SCRIPT.read_text()
+        self.assertIn('git -c core.longpaths=true -C "$src" checkout --detach', script)
+        for verb in ('worktree add', 'submodule update'):
+            lines = [l for l in result.stdout.splitlines() if l.startswith('git ') and verb in l]
+            self.assertTrue(lines, verb)
+            for line in lines:
+                self.assertIn('-c core.longpaths=true', line)
+
     def test_commit_is_full_sha(self):
         commit = (ROOT / 'deploy' / 'cosmos' / 'COMMIT').read_text().strip()
         self.assertRegex(commit, r'^[0-9a-f]{40}$')
