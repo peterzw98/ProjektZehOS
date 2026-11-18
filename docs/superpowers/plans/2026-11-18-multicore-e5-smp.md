@@ -287,7 +287,8 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 > `ProjektZeh/Runtime/Wasm/WasmRuntime.cs:174-177,203-205` bis zum Neustart belegt (statischer Befund Robert Oppenheimer).
 > Ihre Freigabe, der Abbau der Quarantäne und die Berichtigung in `docs/COSMOS_SUPPORT.md` gehören deshalb zu E6-C (#390),
 > nicht zu E5-K; der E5-K-PR nennt die 8 MiB je aufgegebenem Worker unter „Grenzen“. Die Randbedingung „und für
-> aufgegebene“ oben und der Absatz „ZehOS danach“ gelten entsprechend erst mit E6-C.
+> aufgegebene“ oben, der Absatz „ZehOS danach“ und in Schritt 3 die Isolationsprobe mit `--runs 20` (kein Verlust von
+> 8 MiB je Lauf) gelten entsprechend erst mit E6-C; die E5-K-Abnahme ist in Schritt 3 nur der Teil mit 100 Threads.
 
 - [ ] **Schritt 1:** Entwurfsnotiz (eine Seite) im PR gegen `cosmos`: Stelle des Aufräumens, Sperren, Reihenfolge gegenüber GC. Review durch einen zweiten Engineer senior, bevor Code entsteht.
 - [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Pakete bauen.
