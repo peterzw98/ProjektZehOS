@@ -13,8 +13,8 @@ internal sealed class CosmosRootPowerPlatform(IRootVolume root, Func<string?> bu
     private readonly Dictionary<string, VfsMount> removed = new(StringComparer.Ordinal);
 
     public string? BusyReason() => busyReason();
-    public bool TryBlockWrites() => AppStorageGate.TryBlock();
-    public void ReleaseWrites() => AppStorageGate.Release();
+    public bool TryBlockWrites() => AppStorageGate.TryLockRoot();
+    public void ReleaseWrites() => AppStorageGate.ReleaseRoot();
 
     public IReadOnlyList<string> PersistentMounts() => StorageLock.Run(PersistentMountsStorageLocked);
 

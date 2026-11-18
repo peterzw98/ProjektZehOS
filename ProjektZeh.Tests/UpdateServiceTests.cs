@@ -143,6 +143,34 @@ public sealed class UpdateServiceTests
     }
 
     [TestMethod]
+    public void FileUpdateTarget_WithoutMountedUpdateRoot_WritesNothing()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var target = new FileUpdateTarget(root, isMounted: () => false);
+            StringAssert.Contains(target.WriteVersion("0.2.0").Message, "UpdateRootMissing", StringComparison.Ordinal);
+            Assert.IsFalse(target.ReplaceKernel(new byte[42], rotateBackup: true).IsOK());
+            Assert.AreEqual(0, Directory.GetFileSystemEntries(root).Length, "Ohne ESP darf nichts ins Root-Verzeichnis geschrieben werden.");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void OfflineInstall_RootProfileOnUnix_AllowsHomeAndRejectsSystemAreas()
+    {
+        // Path.GetFullPath(file, "/") ist nur auf Unix die echte Root-Wurzel.
+        if (!OperatingSystem.IsLinux()) Assert.Inconclusive("Nur unter Linux pruefbar.");
+        var controller = new UpdateController(new(0, 1, 0), _ => throw new AssertFailedException("Netzwerkzugriff"), new Target(), "/",
+            offlineExcluded: ["/boot/efi", "/etc/zehos", "/var/lib/zehos"]);
+        foreach (string path in new[] { "/boot/efi/x.elf", "/etc/zehos/x.elf", "/var/lib/zehos/x.elf" })
+            StringAssert.Contains(controller.InstallOffline(path).Message, "nicht unter", StringComparison.Ordinal);
+        // Unter /home bestanden die Bereichspruefungen; die Datei fehlt nur.
+        Assert.IsFalse(controller.InstallOffline("/home/admin/fehlt-" + Guid.NewGuid().ToString("N") + ".elf").Message.Contains("liegen", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void FallbackBoot_RejectsOlderVersionAndKeepsWorkingBackup()
     {
         var newer = new Target { InstalledVersion = "0.3.0\n" };
