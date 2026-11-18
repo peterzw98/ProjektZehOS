@@ -429,6 +429,10 @@ public sealed class Kernel : Sys.Kernel
     {
         // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
+        // Vor dem ersten Worker: Ausnahmen in dessen Gastcode gibt der Hook auf (12.4-I1), alle anderen halten an.
+#pragma warning disable COSMOS0001 // Der Ausnahme-Hook gehoert zur experimentellen Scheduler-Schnittstelle.
+        Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler = FaultIsolation.OnCpuException;
+#pragma warning restore COSMOS0001
         InstallScheduler();
         // Worker fuer Hintergrundaufgaben jetzt anlegen: spaetere Thread-Starts scheitern nach Dateilast (nativer Heap zerstueckelt).
         LogWorkerStart($"{BackgroundTaskService.BootWorkers} Aufgaben-Worker", tasks.StartWorkers());

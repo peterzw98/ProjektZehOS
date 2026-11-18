@@ -22,7 +22,7 @@ tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
-# Erwarteter Vektor je Probe; ein anderer Wert heisst meist, dass sich der Feldversatz von IRQContext verschoben hat.
+# Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
 
@@ -93,7 +93,7 @@ def run(args: argparse.Namespace, number: int) -> bool:
         return serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
 
     try:
-        # Cosmos schreibt auch bei isolierter Ausnahme "System halted."; erst DONE oder TIMEOUT beendet das Warten.
+        # Nach einer isolierten Ausnahme laeuft das System weiter ("Thread abandoned."); erst DONE oder TIMEOUT beendet das Warten.
         end = ("ISOLATION_PROBE negative pf on probe thread" if args.negative
                else NMI_WINDOW if args.nmi else "ISOLATION_PROBE DONE")
         started = time.monotonic()
