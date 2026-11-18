@@ -6,6 +6,7 @@ namespace ProjektZeh.Runtime;
 internal enum IsolationDecision
 {
     Isolate,
+    NotProgramFault,
     NotWorker,
     OutsideGuest,
     InHostFunction,
@@ -19,9 +20,20 @@ internal enum IsolationDecision
 /// </summary>
 internal static class FaultIsolationPolicy
 {
-    public static IsolationDecision Decide(int currentThreadId, int workerThreadId, bool inNativeRun, int hostDepth,
-        bool holdsStorageLock, bool holdsAppStorageGate)
+    /// <summary>Kein gueltiger Vektor: Der Halt kam nicht ueber Panic.CpuException oder ohne frischen Kontext.</summary>
+    public const long UnknownVector = -1;
+
+    /// <summary>
+    /// Nur Fehler, die der ausgefuehrte Code selbst ausloest: #DE (0), #UD (6), #GP (13) und #PF (14). NMI, Machine
+    /// Check, Double Fault und alle uebrigen Vektoren melden einen Zustand der Maschine statt einen App-Fehler und halten
+    /// deshalb an, auch wenn sie zufaellig waehrend Gastcode eintreffen (Review pink P2-1).
+    /// </summary>
+    public static bool IsProgramFault(long vector) => vector is 0 or 6 or 13 or 14;
+
+    public static IsolationDecision Decide(long vector, int currentThreadId, int workerThreadId, bool inNativeRun,
+        int hostDepth, bool holdsStorageLock, bool holdsAppStorageGate)
     {
+        if (!IsProgramFault(vector)) return IsolationDecision.NotProgramFault;
         if (workerThreadId < 0 || currentThreadId != workerThreadId) return IsolationDecision.NotWorker;
         if (!inNativeRun) return IsolationDecision.OutsideGuest;
         if (hostDepth != 0) return IsolationDecision.InHostFunction;

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using ProjektZeh.Shared;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Scheduling;
 
@@ -60,7 +61,11 @@ internal sealed class BackgroundTaskService
         return ResultErr.CreateSuccess();
     }
 
-    public ResultObject<int> Start(string name, Action<BackgroundTaskContext> action)
+    /// <param name="finished">
+    /// Optional; laeuft auf dem Worker, nachdem der Job als beendet zaehlt und seinen Platz freigegeben hat, ohne die
+    /// Dienstsperre. Hier darf der Aufrufer sich selbst neu starten, ohne am eigenen endenden Job am Limit zu scheitern.
+    /// </param>
+    public ResultObject<int> Start(string name, Action<BackgroundTaskContext> action, Action? finished = null)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 40 || action is null)
             return ResultObjectFactory.CreateFailure<int>(ResultCode.InvalidArgument, "Aufgabenname/Aktion ungueltig.");
@@ -75,7 +80,7 @@ internal sealed class BackgroundTaskService
                 var grown = AddWorkerLocked();
                 if (!grown.IsOK() && workers.Count == 0) return ResultObjectFactory.CreateFailure<int>(grown);
             }
-            var job = new Job(++nextId, name, action);
+            var job = new Job(++nextId, name, action, finished);
             jobs.Add(job);
             queue.Enqueue(job);
             Monitor.PulseAll(gate);
@@ -134,6 +139,18 @@ internal sealed class BackgroundTaskService
                 busyWorkers--;
                 FinishLocked(job);
             }
+            RunFinished(job);
+        }
+    }
+
+    // Eine Ausnahme des Rueckrufs darf den Worker nicht beenden (Worker enden nie); sie bleibt als Fehler der Aufgabe sichtbar.
+    private void RunFinished(Job job)
+    {
+        if (job.OnFinished is not { } callback) return;
+        try { callback(); }
+        catch (Exception exception)
+        {
+            lock (gate) job.Error ??= "Abschlussrueckruf: " + exception.Message;
         }
     }
 
@@ -188,6 +205,8 @@ internal sealed class BackgroundTaskService
     public bool StopAll(int timeoutMilliseconds)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(timeoutMilliseconds);
+        // Unter der Speicher-Sperre wuerde das Warten die Worker blockieren, die fuer ihr Ende dieselbe Sperre brauchen.
+        StorageLock.EnsureNotHeld("Warten auf Hintergrundaufgaben");
         var clock = Stopwatch.StartNew();
         lock (gate)
         {
@@ -202,11 +221,12 @@ internal sealed class BackgroundTaskService
         return true;
     }
 
-    private sealed class Job(int id, string name, Action<BackgroundTaskContext> action)
+    private sealed class Job(int id, string name, Action<BackgroundTaskContext> action, Action? finished)
     {
         public int Id { get; } = id;
         public string Name { get; } = name;
         public Action<BackgroundTaskContext> Action { get; } = action;
+        public Action? OnFinished { get; } = finished;
         public CancellationTokenSource Cancellation { get; } = new();
         public Thread? Worker { get; set; }
         public BackgroundTaskState State { get; set; } = BackgroundTaskState.Ready;

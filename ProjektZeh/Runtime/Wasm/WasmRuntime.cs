@@ -36,6 +36,7 @@ internal static unsafe partial class WasmRuntime
     // Jede Isolation laesst Thread und 8-MiB-Stack liegen, und ein neuer Stack scheitert nach Dateilast leicht (E4.0 1G).
     private const int MaximumIsolatedRuns = 3;
     private static bool workerRetired;
+    private static bool cleaningUp;
     private static WasmNetworkSession? network;
     private static IList<X509Certificate>? tlsAnchors;
     private static WasmSaveStore? save;
@@ -189,16 +190,35 @@ internal static unsafe partial class WasmRuntime
             running = null;
             if (completed != null) pending--;
             worker = null;
+            // Bis zum Ende des Aufraeumens startet niemand einen Ersatzworker (auch nicht EnqueueLoaded): ein neuer Lauf
+            // setzte sonst current/save/network/files, und ReleaseRunResources schloesse dessen Ressourcen (Review pink P2-2).
+            cleaningUp = true;
             if (Volatile.Read(ref isolatedRuns) + 1 >= MaximumIsolatedRuns)
             {
                 workerRetired = true;
                 retiredNow = true;
                 restart = $"nach {MaximumIsolatedRuns} CPU-Fehlern kein weiterer Worker";
             }
-            else
+        }
+        // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
+        // laeuft: Cosmos reiht ihn nur ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und
+        // CosmosRoundRobinScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
+        // catch statt finally: Auch wenn das Aufraeumen unerwartet wirft, erhalten Lauf und Warteschlange ihr Ende und
+        // die Isolation wird gezaehlt (Review senior).
+        bool clean;
+        try { clean = ReleaseRunResources(); }
+        catch (Exception exception)
+        {
+            clean = false;
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Aufraeumen nach CPU-Ausnahme fehlgeschlagen: {exception.GetType().Name}\n");
+        }
+        lock (gate)
+        {
+            cleaningUp = false;
+            if (!retiredNow)
             {
-                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App startet
-                // den Worker ueber EnqueueLoaded erneut.
+                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App
+                // startet den Worker ueber EnqueueLoaded erneut.
                 var started = StartWorkerLocked();
                 if (!started.IsOK()) restart = started.Message;
             }
@@ -209,22 +229,30 @@ internal static unsafe partial class WasmRuntime
                 pending -= dropped.Count;
             }
         }
-        // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
-        // laeuft: Cosmos reiht ihn nur ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und
-        // CosmosRoundRobinScheduler.OnThreadReady verwirft Threads in FaultIsolation.Quarantine.
-        bool clean = ReleaseRunResources();
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-            $"WASM CPU-Ausnahme im App-Code, Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
+            $"WASM CPU-Ausnahme im App-Code (Vektor {ProjektZeh.Runtime.FaultIsolation.IsolatedVector}, RIP 0x{ProjektZeh.Runtime.FaultIsolation.IsolatedRip:x}), " +
+            $"Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
             (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n"
                 : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"
                 : $"; kein neuer Worker ({restart}). Die naechste App versucht den Start erneut.\n"));
-        completed?.Invoke(WasmStatus.CpuFault, 0, CpuFaultMessage);
+        if (completed != null) NotifyEnded(completed, WasmStatus.CpuFault, CpuFaultMessage);
         if (dropped == null) return;
         foreach (var waiting in dropped)
         {
-            if (retiredNow) waiting(WasmStatus.CpuFault, 0, RetiredMessage);
-            else waiting(WasmStatus.LoadFailed, 0, "Wasm-Worker nicht gestartet: " + restart);
+            if (retiredNow) NotifyEnded(waiting, WasmStatus.CpuFault, RetiredMessage);
+            else NotifyEnded(waiting, WasmStatus.LoadFailed, "Wasm-Worker nicht gestartet: " + restart);
+        }
+    }
+
+    // Nach einer Isolation laufen die Rueckrufe in der Hauptschleife statt im Worker; eine Ausnahme daraus darf weder die
+    // Sitzung beenden noch die uebrigen Fenster ohne Ende lassen (Review pink P3-4).
+    private static void NotifyEnded(Action<WasmStatus, int, string> completed, WasmStatus status, string message)
+    {
+        try { completed(status, 0, message); }
+        catch (Exception exception)
+        {
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Rueckruf nach CPU-Ausnahme fehlgeschlagen: {exception.GetType().Name}\n");
         }
     }
 
@@ -246,6 +274,8 @@ internal static unsafe partial class WasmRuntime
     private static ResultErr StartWorkerLocked()
     {
         if (worker != null) return ResultErr.CreateSuccess();
+        // Waehrend PollFaultIsolation aufraeumt, bleibt der Lauf eingereiht; der Ersatzworker startet direkt danach.
+        if (cleaningUp) return ResultErr.CreateSuccess();
         if (workerRetired) return ResultErr.CreateFailure(ResultCode.Failure, RetiredMessage);
         var started = ThreadStarter.TryStart(Work, ThreadStackBytes);
         if (!started.IsOK()) return started.Status;

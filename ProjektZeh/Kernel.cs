@@ -493,6 +493,8 @@ public sealed class Kernel : Sys.Kernel
             return ResultErr.CreateFailure(ResultCode.Failure, "cause='MigrationRunning' message='Migration laeuft; erst abwarten oder mit system cancel abbrechen.'");
 #endif
 
+        // Vor Stop(): StopAll lehnt das Warten unter der Speicher-Sperre mit einer Ausnahme ab; die Automatik bliebe sonst aus.
+        StorageLock.EnsureNotHeld("Energieaktion");
         automaticNetwork.Stop();
         if (!tasks.StopAll(2000))
         {
