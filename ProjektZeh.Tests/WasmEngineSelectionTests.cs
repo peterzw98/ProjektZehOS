@@ -57,8 +57,8 @@ public sealed class WasmEngineSelectionTests
     [TestMethod]
     public void AotFileNameFollowsEntryAndAbi()
     {
-        Assert.AreEqual("app.wamr245-aot5-x64-bc.aot", WasmEngineSelection.AotPath("app.wasm"));
-        Assert.AreEqual("bin/doom.wamr245-aot5-x64-bc.aot", WasmEngineSelection.AotPath("bin/doom.wasm"));
+        Assert.AreEqual("app.wamr245-aot5-x64-bc-nrz.aot", WasmEngineSelection.AotPath("app.wasm"));
+        Assert.AreEqual("bin/doom.wamr245-aot5-x64-bc-nrz.aot", WasmEngineSelection.AotPath("bin/doom.wasm"));
     }
 
     [TestMethod]

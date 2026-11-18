@@ -1,5 +1,5 @@
 // ZehOS: von fixture/build.sh erzeugt, nicht von Hand aendern.
-// Werkzeuge: wamrc 2.4.5 (SHA-256 6b400e9cf9cf46fe96b38b1800bd0149f9da903ac6e95ad011a16e5dca1fa774); wasi-sdk 25.0, wasi-libc: 574b88da4815, clang SHA-256 30526c225dad03d986faf9051d1c24883b62682c6e7581f3efbf218adb92267e
+// Werkzeuge: wamrc 2.4.5 (SHA-256 5809858be58ab78b00d970b5d50cae40e1a38d2a99abe16f8b952f74e128902c); wasi-sdk 25.0, wasi-libc: 574b88da4815, clang SHA-256 30526c225dad03d986faf9051d1c24883b62682c6e7581f3efbf218adb92267e
 #include <stdint.h>
 
 const uint32_t zehos_aot_fixture_size = 5892;

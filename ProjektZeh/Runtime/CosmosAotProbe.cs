@@ -267,6 +267,8 @@ internal static unsafe class CosmosAotProbe
         public StringBuilder Output { get; } = new();
         public string? Root => root;
         public bool AllowsNetwork => false;
+        // Die AOT-Probe prueft keinen App-Speicher (13.4); ohne Wurzel meldet der Loader kein /save.
+        public string? SaveRoot => null;
         public int Frames { get; private set; }
         public long FirstFrameMs { get; private set; } = -1;
         public long LastFrameMs { get; private set; }
