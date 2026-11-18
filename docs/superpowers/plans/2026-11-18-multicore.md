@@ -30,7 +30,7 @@ den zitierten Text suchen.
 | 0 | Audit geteilter Zustände (nur Dokument) | [e0-audit](2026-11-18-multicore-e0-audit.md) | keine |
 | 1 | Cosmos aus Quelle, unverändert | [e1-cosmos-quelle](2026-11-18-multicore-e1-cosmos-quelle.md) | keine (Branch `cosmos` besteht) |
 | 2 | Patchreihe ext2 | [e2-ext2](2026-11-18-multicore-e2-ext2.md) | Etappe 1 |
-| 3 | Patchreihe 12.4 (Ausnahme-Hook, LINT1) | [e3-ausnahme-hook](2026-11-18-multicore-e3-ausnahme-hook.md) | Etappe 1 |
+| 3 | Patchreihe 12.4 (Ausnahme-Hook, LINT1) | [e3-ausnahme-hook](2026-11-18-multicore-e3-ausnahme-hook.md); eingeordnet als Bahn H im [Plan 12.4](2026-11-18-isolation-12-4.md) | Etappe 1 |
 | 4 | Klassenscheduler und Topologie auf einer CPU | [e4-scheduler](2026-11-18-multicore-e4-scheduler.md) | keine |
 | 5 | SMP-Stapel, alle Threads auf CPU 0 | [e5-smp](2026-11-18-multicore-e5-smp.md) | Etappen 1 und 4; nicht gleichzeitig mit 3 |
 | 6 | Worker auf weiteren CPUs | [e6-e7-verteilung](2026-11-18-multicore-e6-e7-verteilung.md) | Etappen 0 und 5 |
@@ -42,8 +42,8 @@ Koordinator am 18. November 2026 im IRC Peters Reihenfolge weitergegeben: Storag
 Cosmos-Eigenbau, dann 12.4; Etappe 1 darf laufen, ohne Test- und Review-Kapazität der anderen Arbeitsgruppen zu
 binden; die Etappen 2 und 3 beginnen erst nach dem Merge von Storage 7a-S4 und 7b. Stand 18. November 2026, 14 Uhr
 (Koordinator, `#second`): Die Etappen 0, 1 und 4 laufen. Die Etappe 2 beginnt nicht vor dem Tag des Releases 0.6,
-weil sie ext2-Verhalten ändert, das gerade abgenommen wird. Die Etappe 3 braucht zusätzlich Peters Freigabe für
-12.4. Gastläufe für den Cosmos-Eigenbau auf dem gemeinsamen KVM-Rechner beginnen erst nach den Storage-Gastläufen.
+weil sie ext2-Verhalten ändert, das gerade abgenommen wird. Die Etappe 3 brauchte zusätzlich Peters Freigabe für
+12.4; sie liegt seit dem 18. November 2026 vor, die Reihenfolge steht im [Plan 12.4](2026-11-18-isolation-12-4.md). Gastläufe für den Cosmos-Eigenbau auf dem gemeinsamen KVM-Rechner beginnen erst nach den Storage-Gastläufen.
 Innerhalb jeder Etappe nennt die Etappendatei, welche
 Pakete nebeneinander laufen können; Pakete mit demselben Buchstaben-Präfix und verschiedener Nummer (etwa `E2-P1`,
 `E2-P2`) sind dafür geschnitten.
@@ -142,7 +142,6 @@ Messungen in E4-E und E5-I.
 | Kommt die E4.0-Gastprobe (`origin/task/storage-e4-0-root-probe`) nach `master`? | Storage-Lead | Gastläufe in Etappe 2 (Paket E2-P0) |
 | Neue Produktgrenze für Einträge je ext2-Verzeichnis; der Plan schlägt 65.536 vor | Storage-Lead | E2-P7, Schritt 3 |
 | TSS mit IST-Stacks als eigenes Vorhaben | Peter | nichts in diesem Plan |
-| Wiederaufnahme von 12.4-I2 (empfohlen nach Etappe 5) | Peter | nichts in diesem Plan |
 | Einzelbefunde des Audits | ergeben sich aus Etappe 0 | Zuschnitt von E6-C |
 | Verhalten unter WHPX, VMware und echter Hardware | Messung in E7-E | Aussagen zu diesen Plattformen |
 
