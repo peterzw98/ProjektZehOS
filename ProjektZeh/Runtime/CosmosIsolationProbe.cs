@@ -15,10 +15,6 @@ internal static class CosmosIsolationProbe
 {
     private static volatile int zero;
     private static volatile int sink;
-#if ZEHOS_ISOLATION_PROBE_NMI
-    private const ulong LapicLint1 = 0x360;
-    private const uint LvtDeliveryNmi = 0b100u << 8;
-#endif
 
     internal static void Start() => new Thread(Probe).Start();
 
@@ -37,11 +33,8 @@ internal static class CosmosIsolationProbe
         // Der Worker rechnet bis zu zwei Minuten im Gastzustand; das Skript loest waehrenddessen den NMI aus.
         Wasm.WasmRuntime.ProbeEnqueue(() =>
         {
-            // QEMU stellt inject-nmi unter KVM nur ueber LVT LINT1 zu, und nur wenn LINT1 unmaskiert auf NMI steht
-            // (hw/i386/kvm/apic.c do_inject_external_nmi). Cosmos 3.0.97 maskiert LINT1 (LocalApic.cs:174); ohne
-            // diese Zeile kommt der NMI nie an (RED 18.11.: 0/2). Nur Probe: LINT1 = unmaskiert, Zustellart NMI.
-            // Wie Cosmos' internes MMIO.Write32 ein einfacher Speicherzugriff auf die LAPIC-Basis.
-            Volatile.Write(ref *(uint*)(Cosmos.Kernel.Core.X64.Cpu.LocalApic.BaseAddress + LapicLint1), LvtDeliveryNmi);
+            // QEMU stellt inject-nmi unter KVM nur ueber LVT LINT1 zu; Cosmos richtet LINT1 seit Patch lint1-nmi
+            // (patches/lint1-nmi.md im Branch cosmos) selbst unmaskiert mit Zustellart NMI ein.
             FaultIsolation.EnterNativeRun();
             try
             {

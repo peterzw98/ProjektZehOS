@@ -20,6 +20,10 @@ Angleichen vorhandener Plugs und Messen. Verteilt wird erst in Etappe 6.
 Ist der Commit nicht mehr abrufbar, nimmt E5-A die aktuelle Spitze, hält ihren Commit in `PATCHES.md` fest und meldet
 das im Kanal; die Schnittstellen in diesem Plan sind dann gegen diesen Stand neu zu prüfen.
 
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Am 18.11.2026 sind `44952133` und die Basis `efcf20cc` noch abrufbar
+> (`git ls-remote`, `git fetch`). Erster Schritt von E5-A, sobald das Gate offen ist (E3-C gemergt, E4-E erledigt): beide
+> Commits sofort in den eigenen Branch `cosmos-upstream/smp-phase5b` spiegeln, damit E5 nicht mehr an Upstream hängt.
+
 ## Integrationsbranch
 
 Zwischen dem Einspielen des Stapels und der Anpassung von Adapter und Plugs lässt sich ZehOS nicht bauen. Deshalb
@@ -121,7 +125,7 @@ ThreadStarter.ApplyClass(ThreadClass.Interactive);   // im Hauptthread, direkt n
 - Anlegen: `ProjektZeh/Runtime/BootOptions.cs` (ohne Cosmos-Typen), Test `ProjektZeh.Tests/BootOptionsTests.cs`; Eintrag in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` nach dem Muster von Zeile 36
 - Anlegen: `ProjektZeh/Runtime/CosmosBootOptions.cs` (liest `Limine.Cmdline`, setzt Affinitäten)
 - Ändern: `ProjektZeh/Kernel.cs` (erster Aufruf im Boot, vor jedem Threadstart)
-- Doku: `README.md` (Abschnitt zum VM-Start: Kommandozeilenschalter)
+- Doku: `docs/handbuch/ENTWICKLUNG.md` (VM-Start: Kommandozeilenschalter; früher in der README)
 
 **Schnittstellen (liefert):**
 
@@ -277,7 +281,16 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 `ThreadQuarantine` entfernen, wenn der aufgegebene Thread durch Cosmos als tot gilt und nie wieder bereit wird;
 `docs/COSMOS_SUPPORT.md` („Je Ausnahme bleiben Thread, 8-MiB-Stack … belegt“) berichtigen.
 
+> **Entscheidung Koordinator 19.11.2026 (Umfang E5-K):** E5-K deckt nur den normalen Abschluss über `ExitThread` ab
+> (eigenes Ende, `SchedulerDiagnostics.RequestKill`, gescheiterter Start). Aufgegebene Wasm-Worker erreichen `ExitThread`
+> nicht: `ProjektZeh/Runtime/CosmosFaultIsolation.cs:79-93` liefert `AbandonThread`, der Thread bleibt laut
+> `ProjektZeh/Runtime/Wasm/WasmRuntime.cs:174-177,203-205` bis zum Neustart belegt (statischer Befund Robert Oppenheimer).
+> Ihre Freigabe, der Abbau der Quarantäne und die Berichtigung in `docs/COSMOS_SUPPORT.md` gehören deshalb zum eigenen Block E6-G (#433),
+> nicht zu E5-K; der E5-K-PR nennt die 8 MiB je aufgegebenem Worker unter „Grenzen“. Die Randbedingung „und für
+> aufgegebene“ oben und der Absatz „ZehOS danach“ gelten entsprechend erst mit E6-G; Schritt 3 ist danach angepasst. E6-G ist ein eigener
+> Block, weil „Wasm-Worker freigeben“ in E6-C (#390) die Affinität meint, nicht die Rückgabe von Thread und Stack.
+
 - [ ] **Schritt 1:** Entwurfsnotiz (eine Seite) im PR gegen `cosmos`: Stelle des Aufräumens, Sperren, Reihenfolge gegenüber GC. Review durch einen zweiten Engineer senior, bevor Code entsteht.
 - [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Pakete bauen.
-- [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Isolationsprobe mit `--runs 20`: freier Speicher sinkt nicht um 8 MiB je Lauf.
+- [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Die Threads enden normal (kein Quarantäne-Pfad). Dazu im Cosmos-Testkern `tests/Kernels/Cosmos.Kernel.Tests.Threading` der Fall `Thread_ExitedStacks_AreFreed` (100 Threads starten und beenden; belegt über den Diagnosezähler `SchedulerDiagnostics.ReleasedStacks`: nach 100 Threads um mindestens 99 gestiegen, ohne Patch 0; ein Vergleich freier Seiten höchstens zusätzlich mit grober Toleranz). Die Isolationsprobe mit `--runs 20` (kein Verlust von 8 MiB je Lauf) gehört zu E6-G (#433).
 - [ ] **Schritt 4:** ZehOS-PR wie in „Cosmos-Patches“ beschrieben.

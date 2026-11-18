@@ -63,9 +63,10 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
 gemeldeten Vektor mit dem erwarteten (#DE 0, #PF 14). Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
-das System muss anhalten. Cosmos 3.0.97 maskiert beim Start LVT LINT1 (`LocalApic.cs:174`), und QEMU stellt `inject-nmi`
-nur über ein unmaskiertes LINT1 mit Zustellart NMI zu (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`); sonst wird der NMI
-still verworfen (RED 18.11.: 0/2). Nur der NMI-Probebau setzt LINT1 deshalb vor dem Fenster auf NMI, unmaskiert. Zahlen im PR.
+das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
+(`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
+wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `patches/lint1-nmi.md`) richtet `LocalApic.Initialize`
+LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
 
 **Grenzen:**
 
