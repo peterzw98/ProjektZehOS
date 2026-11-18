@@ -15,7 +15,8 @@ Benoetigte Builds (sonst fehlen die seriellen GPT_TEST-Quittungen):
 G2 Rueckfalleintrag, G3/G4 Root offline geloescht/beschaedigt, G5 Security-Recovery-ISO auf G3/G4 mit Konto,
 G7 installierte Platte + ZEHOSDATA, G9 Neuinstallation ueber Healthy mit Abbruch in CopyingFiles; dazu G6-Ziele
 (roh geschriebenes ISO, ZEHOSDATA, eingebundenes Ziel, belegtes /data) und G8 Abbruch auf frischer Platte -> Unclear ->
-Neuinstallation mit --erase.
+Neuinstallation mit --erase. Werkzeuge: sgdisk, sfdisk, fsck.fat, mkfs.fat, e2fsck, debugfs, mtools (mcopy, mdir, mdel), cp.
+Grenze G5: security recover schreibt keine serielle Zeile; die Sperre belegen unveraenderte Kontendateien und ein Bild.
 --run-rdrand startet den Installer unter TCG mit qemu64 ohne RDRAND/RDSEED und erwartet die Verweigerung.
 
 Exitcodes: 2 = alle ausgefuehrten Faelle bestanden, andere Faelle offen (VMware und Teile von G1/G2/G6 sind offen,
