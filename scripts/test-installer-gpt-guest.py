@@ -93,10 +93,23 @@ def extract_sparse(source: Path, offset: int, length: int, target: Path) -> None
             pos = hole
 
 
-def check_tool(name: str, *arguments: str) -> None:
-    result = subprocess.run([name, *arguments], capture_output=True, text=True, check=False)
-    if result.returncode:
-        raise RuntimeError(f"{name} meldet Fehler {result.returncode}: {result.stdout} {result.stderr}")
+# Artefakte des Cosmos-FAT-Formatierers (Entscheidung Koordinator 18.11.): FatFormatOptions.VolumeLabel setzt das Label
+# nur im Bootsektor, und der FSInfo-Freizaehler bleibt 0xFFFFFFFF ("unbekannt", laut FAT-Spezifikation zulaessig).
+FAT_TOLERATED = (re.compile(r"Label in boot sector is '.*', but there is no volume label in root directory\."),
+                 re.compile(r"Auto-removing label from boot sector\."),
+                 re.compile(r"Free cluster summary uninitialized \(should be \d+\)"))
+
+
+def check_fat(image: Path) -> None:
+    result = subprocess.run(["fsck.fat", "-n", str(image)], capture_output=True, text=True, check=False)
+    lines = [line.strip() for line in (result.stdout + result.stderr).splitlines()]
+    findings = [line for line in lines if line and not line.startswith(("fsck.fat ", str(image) + ":"))
+                and line != "Leaving filesystem unchanged."]
+    unexpected = [line for line in findings if not any(pattern.fullmatch(line) for pattern in FAT_TOLERATED)]
+    if result.returncode not in (0, 1) or unexpected:
+        raise RuntimeError(f"fsck.fat meldet Fehler {result.returncode}: " + " | ".join(unexpected or lines))
+    if findings:
+        print("HINWEIS fsck.fat (toleriertes Formatierer-Artefakt): " + " | ".join(findings), flush=True)
 
 
 def check_gpt(image: Path) -> None:
@@ -131,7 +144,7 @@ def inspect_image(image: Path, work: Path, payload: Path, version: str, config: 
     esp_image, root_image = work / "esp.img", work / "root.img"
     extract_sparse(image, esp["start"] * SECTOR, esp["size"] * SECTOR, esp_image)
     extract_sparse(image, root["start"] * SECTOR, root["size"] * SECTOR, root_image)
-    check_tool("fsck.fat", "-n", str(esp_image))
+    check_fat(esp_image)
     check_ext2(root_image)
     expected = {"/EFI/BOOT/BOOTX64.EFI": (payload / "BOOTX64.EFI").read_bytes(),
                 "/boot/ProjektZeh.elf": (payload / "ProjektZeh.elf").read_bytes(),
