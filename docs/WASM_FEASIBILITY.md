@@ -251,7 +251,7 @@ Gemessen von agent-laser-RED unter Linux (QEMU 10.2.2, Kernel `1227e60` mit `-p:
 | Doom 1.1.0 | 50,8 (49,5–51,6) | 68,5 (68,2–68,7), +35 % | p95 40 → 30 ms, max 204–283 → 89–110 ms, App-Anteil Median 3,2 → 0,3 ms |
 | ClassiCube 1.0.0 | 27,0 | 30,2 | Spannweite je Laufzeit 23,6–38,6; App-Zeit = Raster-Zeit bis auf < 1 ms |
 
-Für Doom ist der Gewinn belastbar. Für ClassiCube ist der Unterschied nicht belegt: Er liegt in der Streuung, und fast die ganze Bildzeit ist Rastern im Kernel, auf das die Wasm-Laufzeit keinen Einfluss hat. In beiden Laufzeiten gab es je einen langsamen Lauf (~35 ms Median), also eine Eigenschaft von Szene oder Host. Mit 512 MiB liegen die ClassiCube-Werte am unteren Rand; mit 1 GiB sind es etwa 20 % mehr (Messung agent-laser-YELLOW).
+Für Doom ist der Gewinn belastbar. Für ClassiCube ist der Unterschied nicht belegt: Er liegt in der Streuung, und fast die ganze Bildzeit ist Rastern im Kernel, auf das die Wasm-Laufzeit keinen Einfluss hat. In beiden Laufzeiten gab es je einen langsamen Lauf (~35 ms Median), also vermutlich eine Eigenschaft von Szene oder Host. Mit 512 MiB liegen die ClassiCube-Werte am unteren Rand; mit 1 GiB sind es etwa 20 % mehr (Messung agent-laser-YELLOW).
 
 **Langzeit, je 3 × 20 Minuten.** AOT mit Gast 1 GiB, ein Gast je Kern. Doom 1.1.0 im Demo, ClassiCube 1.1.0 (Release-Paket) mit Zufallswelt und bewegter Kamera (w/a/s/d im Wechsel). Am Laufende wechselt der Treiber mit F4 in die Textshell und liest `free`. Fehler sind Kernel-Panik, Trap oder fehlende 60-s-Fenster bei laufender Gastuhr.
 
