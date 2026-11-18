@@ -20,6 +20,7 @@ Exitcodes: 0 = alle ausgewaehlten Faelle bestanden (P5-P6 bleiben offen), 1 = mi
 """
 import argparse
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -42,6 +43,9 @@ ROOT_TYPE = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 S_STATE_OFFSET = 1024 + 58  # ext2-Superblock ab Byte 1024, s_state (le16) an Versatz 58; 1 = sauber
 ROOT_READY = "Root-Profil: / (ext2) und /boot/efi eingebunden."
 CDROM_FIRST = "ide-cd.bootindex=0"
+SCREEN = (1920, 1080)
+# Das erste Paketfenster liegt bei 32,80 (800x560); sein Schliessen-Feld wie in test-wasm-doom-desktop.py.
+FIRST_WINDOW_CLOSE = (813, 100)
 
 # Artefakte des Cosmos-FAT-Formatierers (Entscheidung Koordinator 18.11., wie in test-installer-gpt-guest.py):
 # das Label steht nur im Bootsektor, der FSInfo-Freizaehler bleibt "unbekannt".
@@ -376,6 +380,186 @@ def run_fault(args, case: Path, spec: dict) -> None:
     print("  s_state am Rohimage = 1", flush=True)
 
 
+def seed_root(image: Path, case: Path, repo: Path, target: str) -> None:
+    """Legt das signierte Paketverzeichnis offline auf die Root-Partition der Kopie (debugfs, dann zurueck an ihren Platz)."""
+    part = find_partition(image, ROOT_TYPE)
+    root = extract_sparse(image, part, case / "root-seed.img")
+    commands = [f"mkdir {target}"]
+    for path in sorted(repo.rglob("*")):
+        inside = f"{target}/{path.relative_to(repo).as_posix()}"
+        commands.append(f"mkdir {inside}" if path.is_dir() else f"write {path.resolve()} {inside}")
+    script = case / "seed.debugfs"
+    script.write_text("\n".join(commands) + "\n", encoding="utf-8")
+    result = subprocess.run(["debugfs", "-w", "-f", str(script), str(root)], capture_output=True, text=True, check=False)
+    if result.returncode != 0 or "rror" in result.stderr:
+        raise RuntimeError(f"debugfs konnte das Paket nicht ablegen: {result.stderr[-400:]!r}")
+    subprocess.run(["dd", f"if={root}", f"of={image}", "bs=1M", f"seek={part['start'] * SECTOR}", "oflag=seek_bytes",
+                    "conv=notrunc,sparse", "status=none"], check=True)
+    root.unlink()
+
+
+def run_package(args, case: Path, spec: dict) -> None:
+    """P6: eine laufende Paket-App laesst shutdown mit PowerBusy abbrechen (Spec 7b §2.4); nach dem Schliessen sauber."""
+    package = spec["package"]
+    image = case / "target.img"
+    copy_sparse(args.root_disk, image)
+    seed_root(image, case, args.package_repo, package["seedDir"])
+    run = storage.new_work_dir(case / "lauf")
+    guest = Guest(args, run, [image], args.iso_normal, from_disk=True, reboot_exits=False)
+    app = package["id"]
+    try:
+        guest.ready(args.timeout, extra=ROOT_READY)
+        storage.login(guest.qmp, run, first=args.root_first_setup)
+        guest.to_textshell()
+        written = write_file(guest, spec["write"], spec["id"])
+        mark = guest.mark()
+        guest.qmp.line(f"pkg install-local {package['seedDir']}/{app}/{package['version']}")
+        tools.wait_serial(run, f"PKG {app} {package['version']} installiert.", 600, mark)
+        to_desktop(guest)
+        mark = guest.mark()
+        launch(guest, app)
+        tools.wait_serial(run, f"APP {app} erstes Bild", 180, mark)
+        time.sleep(3)
+        guest.qmp.shot(run / "app-laeuft.png")
+        guest.to_textshell()
+        guest.power(spec["action"], expect_exit=False)
+        try:
+            guest.process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            raise RuntimeError(f"Gast endete trotz laufender Paket-App {app}")
+        guest.qmp.shot(run / "nach-shutdown.png")
+        print(f"  shutdown bei laufender App {app}: Gast laeuft weiter", flush=True)
+        # Shellausgaben erscheinen nicht seriell; cause='PowerBusy' bleibt Sichtpruefung.
+        print(f"BILD {spec['id']} Meldung bei laufender App: Sichtpruefung {run / 'nach-shutdown.png'}", flush=True)
+        to_desktop(guest)
+        mark = guest.mark()
+        guest.qmp.click(*FIRST_WINDOW_CLOSE, *SCREEN)
+        tools.wait_serial(run, f"APP {app} beendet", 60, mark)
+        print(f"  {app} ueber das Schliessen-Feld beendet", flush=True)
+        guest.to_textshell()
+        guest.power(spec["action"], expect_exit=True)
+    finally:
+        guest.kill()
+    root_checks(image, case, spec, written)
+    state = read_s_state(image)
+    if state != 1:
+        raise RuntimeError(f"s_state am Rohimage = {state}, erwartet 1")
+    print("  s_state am Rohimage = 1", flush=True)
+
+
+def to_desktop(guest: Guest) -> None:
+    start = guest.mark()
+    guest.qmp.tap("f4")
+    tools.wait_serial(guest.run, "Desktop ist bereit.", 30, start)
+    time.sleep(1)
+
+
+def launch(guest: Guest, name: str) -> None:
+    """Startmenue (Alt+F1), Suche nach dem Namen, Enter; wie test-wasm-doom-desktop.py."""
+    guest.qmp.tap("alt", "f1")
+    time.sleep(0.5)
+    guest.qmp.text(name)
+    time.sleep(0.5)
+    guest.qmp.tap("ret")
+
+
+# Testbuilds haengen eine Kennzeichnung an, etwa " [UPDATE-TESTSCHLUESSEL]".
+BOOT_VERSION = re.compile(r"Boot: ZehOS (\S+)(?: \[[^\]]*\])? startet\.")
+# Dritter Eintrag in limine.conf des Installers: "/ZehOS (vorherige Version)" mit boot():/boot/ProjektZeh.elf.bak.
+FALLBACK_DOWNS = 2
+
+
+def booted_version(guest: Guest, start: int) -> str:
+    log = (guest.run / "serial.log").read_text(encoding="utf-8", errors="replace")[start:]
+    match = BOOT_VERSION.search(log)
+    if not match:
+        raise RuntimeError("Keine Zeile 'Boot: ZehOS <version> startet.' im seriellen Protokoll")
+    return match.group(1)
+
+
+def esp_sha256(esp: Path, name: str) -> str:
+    data = subprocess.run(["mtype", "-i", str(esp), "::" + name], capture_output=True, check=True,
+                          env=dict(os.environ, MTOOLS_SKIP_CHECK="1")).stdout
+    return hashlib.sha256(data).hexdigest()
+
+
+def manifest_value(directory: Path, key: str) -> str:
+    for line in (directory / "update-manifest.txt").read_text(encoding="ascii").splitlines():
+        if line.startswith(key + "="):
+            return line[len(key) + 1:]
+    raise RuntimeError(f"update-manifest.txt ohne {key}=")
+
+
+def run_update(args, case: Path, spec: dict) -> None:
+    """P5: update install aus einem Ordner auf Root, Neustart startet B; offline ESP pruefen; Rueckfalleintrag startet A."""
+    update = spec["update"]
+    version_b, kernel_b = manifest_value(args.update_dir, "version"), manifest_value(args.update_dir, "kernel")
+    hash_a, hash_b = (hashlib.sha256(path.read_bytes()).hexdigest() for path in (args.kernel_a, args.update_dir / kernel_b))
+    image = case / "target.img"
+    copy_sparse(args.root_disk, image)
+    seed_root(image, case, args.update_dir, update["seedDir"])
+    run = storage.new_work_dir(case / "lauf")
+    guest = Guest(args, run, [image], args.iso_normal, from_disk=True, reboot_exits=False)
+    try:
+        guest.ready(args.timeout, extra=ROOT_READY)
+        version_a = booted_version(guest, 0)
+        print(f"  gestartet: {version_a}", flush=True)
+        storage.login(guest.qmp, run, first=args.root_first_setup)
+        guest.to_textshell()
+        written = write_file(guest, spec["write"], spec["id"])
+        guest.qmp.line(f"update install {update['seedDir']}/{kernel_b}")
+        time.sleep(30)  # Ersetzen des Kernels auf /boot/efi; Ergebnis nur auf dem Bildschirm
+        guest.qmp.shot(run / "update-install.png")
+        print(f"BILD {spec['id']} update install: Sichtpruefung {run / 'update-install.png'}", flush=True)
+        start = guest.mark()
+        guest.power("reboot", expect_exit=False)
+        guest.ready(args.timeout, start, extra=ROOT_READY)
+        after = booted_version(guest, start)
+        if not after.startswith(version_b):
+            raise RuntimeError(f"Nach dem Neustart laeuft {after}, erwartet {version_b}")
+        print(f"  nach Neustart: {after}", flush=True)
+        storage.login(guest.qmp, run, first=False)
+        guest.to_textshell()
+        guest.power("shutdown", expect_exit=True)
+    finally:
+        guest.kill()
+    root_checks(image, case, spec, written)
+    esp = extract_sparse(image, find_partition(image, ESP_TYPE), case / "esp-update.img")
+    for name, expected, label in (("/boot/ProjektZeh.elf", hash_b, "B"), ("/boot/ProjektZeh.elf.bak", hash_a, "A")):
+        actual = esp_sha256(esp, name)
+        if actual != expected:
+            raise RuntimeError(f"{name} auf der ESP ist nicht Kernel {label} ({actual[:12]} statt {expected[:12]})")
+        print(f"  ESP {name} = Kernel {label}", flush=True)
+
+    # Rueckfall: im Limine-Menue den Eintrag der vorherigen Version waehlen. Jeder Tastendruck haelt den Zeitablauf an;
+    # Tasten vor dem Menue (OVMF) gehen verloren, deshalb mehrfach bis kurz nach dem Erscheinen des Menues.
+    run = storage.new_work_dir(case / "rueckfall")
+    guest = Guest(args, run, [image], args.iso_normal, from_disk=True, reboot_exits=False)
+    try:
+        qmp = tools.Qmp(guest.port)
+        end = time.monotonic() + 12
+        while time.monotonic() < end:
+            for _ in range(FALLBACK_DOWNS):
+                qmp.tap("down")
+            time.sleep(0.4)
+        qmp.shot(run / "limine-auswahl.png")
+        qmp.tap("ret")
+        guest.qmp = qmp
+        guest.ready(args.timeout, extra=ROOT_READY)
+        fallback = booted_version(guest, 0)
+        if fallback != version_a:
+            raise RuntimeError(f"Rueckfalleintrag startet {fallback}, erwartet {version_a}")
+        print(f"  Rueckfalleintrag startet {fallback} (Kernel A)", flush=True)
+        storage.login(guest.qmp, run, first=False)
+        guest.to_textshell()
+        guest.power("shutdown", expect_exit=True)
+    finally:
+        guest.kill()
+    check_clean(extract_sparse(image, find_partition(image, ROOT_TYPE), case / "root-rueckfall.img"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--work", required=True, type=Path, help="neuer Arbeitsordner")
@@ -385,6 +569,12 @@ def main() -> int:
     parser.add_argument("--root-disk", type=Path, help="installierte Root-Platte (P2/P3), wird nur kopiert")
     parser.add_argument("--root-first-setup", action="store_true",
                         help="Root-Platte ohne Konto: Ersteinrichtung statt Anmeldung beim ersten Start")
+    parser.add_argument("--package-repo", type=Path,
+                        help="P6: signiertes Paketverzeichnis (<id>/<version>, build-package.py package), passend zu "
+                             "-p:ZehOSPackageKeyPath des Payloads")
+    parser.add_argument("--update-dir", type=Path,
+                        help="P5: Ordner mit update-manifest.txt, update-manifest.sig und Kernel B (Update-Testschluessel)")
+    parser.add_argument("--kernel-a", type=Path, help="P5: ELF des installierten Kernels A (Vergleich mit .bak)")
     parser.add_argument("--ovmf-code", type=Path)
     parser.add_argument("--ovmf-vars", type=Path)
     parser.add_argument("--accel", choices=["tcg", "kvm"], default="kvm")
@@ -397,6 +587,10 @@ def main() -> int:
         parser.error(f"Unbekannte Faelle: {unknown}")
     if any(cases[name]["disk"] == "root" for name in wanted) and not all((args.root_disk, args.ovmf_code, args.ovmf_vars)):
         parser.error("Root-Faelle brauchen --root-disk, --ovmf-code und --ovmf-vars")
+    if "P5" in wanted and not (args.update_dir and args.kernel_a):
+        parser.error("P5 braucht --update-dir und --kernel-a")
+    if "P6" in wanted and not args.package_repo:
+        parser.error("P6 braucht --package-repo")
     if "P1" in wanted and not args.iso_recovery:
         parser.error("P1 braucht --iso-recovery")
     work = storage.new_work_dir(args.work)
@@ -406,7 +600,8 @@ def main() -> int:
         print(f"== {name}: {spec['title']}", flush=True)
         case = storage.new_work_dir(work / name)
         try:
-            (run_p1 if spec["disk"] == "data" else run_fault if "fault" in spec else run_root)(args, case, spec)
+            (run_p1 if spec["disk"] == "data" else run_fault if "fault" in spec
+             else run_package if "package" in spec else run_update if "update" in spec else run_root)(args, case, spec)
             print(f"PASS {name}", flush=True)
         except Exception as error:  # Jeder Fall meldet seine Ursache; die naechsten laufen weiter.
             failed.append(name)
