@@ -467,8 +467,6 @@ def launch(guest: Guest, name: str) -> None:
 
 # Testbuilds haengen eine Kennzeichnung an, etwa " [UPDATE-TESTSCHLUESSEL]".
 BOOT_VERSION = re.compile(r"Boot: ZehOS (\S+)(?: \[[^\]]*\])? startet\.")
-# Dritter Eintrag in limine.conf des Installers: "/ZehOS (vorherige Version)" mit boot():/boot/ProjektZeh.elf.bak.
-FALLBACK_DOWNS = 2
 
 
 def booted_version(guest: Guest, start: int) -> str:
@@ -534,18 +532,18 @@ def run_update(args, case: Path, spec: dict) -> None:
         print(f"  ESP {name} = Kernel {label}", flush=True)
 
     # Rueckfall: im Limine-Menue den Eintrag der vorherigen Version waehlen. Jeder Tastendruck haelt den Zeitablauf an;
-    # Tasten vor dem Menue (OVMF) gehen verloren, deshalb mehrfach bis kurz nach dem Erscheinen des Menues.
+    # Tasten vor dem Menue (OVMF) gehen verloren, deshalb ab dem Start mehrfach. Limine liest die Pfeiltasten ueber
+    # UEFI ConIn nur mit gehaltener Taste (send-key mit hold-time); ein kurzes input-send-event kommt nicht an.
     run = storage.new_work_dir(case / "rueckfall")
     guest = Guest(args, run, [image], args.iso_normal, from_disk=True, reboot_exits=False)
     try:
         qmp = tools.Qmp(guest.port)
-        end = time.monotonic() + 12
-        while time.monotonic() < end:
-            for _ in range(FALLBACK_DOWNS):
-                qmp.tap("down")
-            time.sleep(0.4)
+        for _ in range(16):
+            qmp.command("send-key", {"keys": [{"type": "qcode", "data": "down"}], "hold-time": 150})
+            time.sleep(0.2)
         qmp.shot(run / "limine-auswahl.png")
-        qmp.tap("ret")
+        print(f"BILD {spec['id']} Limine-Auswahl vor Enter: Sichtpruefung {run / 'limine-auswahl.png'}", flush=True)
+        qmp.command("send-key", {"keys": [{"type": "qcode", "data": "ret"}], "hold-time": 150})
         guest.qmp = qmp
         guest.ready(args.timeout, extra=ROOT_READY)
         fallback = booted_version(guest, 0)
