@@ -1,0 +1,19 @@
+--- a/core/iwasm/compilation/aot_compiler.c
++++ b/core/iwasm/compilation/aot_compiler.c
+@@ -4045,6 +4045,16 @@
+         bh_print_time("Finish llvm optimization passes");
+     }
+ 
++    /* ZehOS: keine Red Zone, Cosmos-Interrupts schreiben ohne Stackwechsel unter den RSP des Gastcodes. */
++    {
++        unsigned kind = LLVMGetEnumAttributeKindForName("noredzone", strlen("noredzone"));
++        LLVMAttributeRef attr = LLVMCreateEnumAttribute(comp_ctx->context, kind, 0);
++        LLVMValueRef f;
++        for (f = LLVMGetFirstFunction(comp_ctx->module); f; f = LLVMGetNextFunction(f))
++            if (!LLVMIsDeclaration(f))
++                LLVMAddAttributeAtIndex(f, LLVMAttributeFunctionIndex, attr);
++    }
++
+ #ifdef DUMP_MODULE
+     LLVMDumpModule(comp_ctx->module);
+     os_printf("\n");
