@@ -13,17 +13,17 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     private ulong preemptions;
     public string Name => "ZehOS RoundRobin";
 
-    public void InitializeCpu(PerCpuState state) => state.SchedulerData = new RoundRobinQueue<SchedulerThread>(SchedulerThread.MaxThreadCount);
+    public void InitializeCpu(PerCpuState state) => state.SchedulerData =
+        new RoundRobinCore<SchedulerThread>(SchedulerThread.MaxThreadCount, thread => thread.SchedulerData as SchedulerTimeSlice, thread => thread.IsIdle);
     public void ShutdownCpu(PerCpuState state) => state.SchedulerData = null;
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) => thread.SchedulerData = new SchedulerTimeSlice(QuantumNs);
     public void OnThreadReady(PerCpuState state, SchedulerThread thread)
     {
         // Ein nach einer CPU-Ausnahme aufgegebener Wasm-Worker wird nie wieder eingereiht (Roadmap 12.4-I1).
         if (Runtime.FaultIsolation.Quarantine.Contains(thread.Id)) return;
-        (thread.SchedulerData as SchedulerTimeSlice)?.Reset();
-        (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Add(thread);
+        (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Ready(thread);
     }
-    public void OnThreadBlocked(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Remove(thread);
+    public void OnThreadBlocked(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Blocked(thread);
     public void OnThreadYield(PerCpuState state, SchedulerThread thread) => OnThreadReady(state, thread);
     public void OnThreadExit(PerCpuState state, SchedulerThread thread)
     {
@@ -32,7 +32,7 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     }
     public SchedulerThread? PickNext(PerCpuState state)
     {
-        var next = (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Take();
+        var next = (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Pick();
         if (next != null)
         {
             selectedThreads[traceNext] = next.Id;
@@ -41,15 +41,13 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
         }
         return next;
     }
-    public void OnPickFailed(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.AddFirst(thread);
+    public void OnPickFailed(PerCpuState state, SchedulerThread thread) => (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.PickFailed(thread);
     public bool OnTick(PerCpuState state, SchedulerThread current, ulong elapsedNs)
     {
-        var queue = state.SchedulerData as RoundRobinQueue<SchedulerThread>;
+        var queue = state.SchedulerData as RoundRobinCore<SchedulerThread>;
         if (queue is null || current is null) return false;
         current.TotalRuntime += elapsedNs;
-        var slice = current.SchedulerData as SchedulerTimeSlice;
-        if (slice != null && !slice.Charge(elapsedNs)) return false;
-        if (queue.Count == 0) { slice?.Reset(); return false; }
+        if (!queue.Tick(current, elapsedNs)) return false;
         preemptions++;
         return true;
     }
@@ -66,13 +64,13 @@ internal sealed class CosmosRoundRobinScheduler : IScheduler
     public int GetRunQueueCount(PerCpuState state)
     {
         var mask = SchedulerManager.MaskInterrupts();
-        try { return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.Count ?? 0; }
+        try { return (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.Count ?? 0; }
         finally { mask.Dispose(); }
     }
     public SchedulerThread? GetRunQueueThread(PerCpuState state, int index)
     {
         var mask = SchedulerManager.MaskInterrupts();
-        try { return (state.SchedulerData as RoundRobinQueue<SchedulerThread>)?.At(index); }
+        try { return (state.SchedulerData as RoundRobinCore<SchedulerThread>)?.At(index); }
         finally { mask.Dispose(); }
     }
     public (ulong Preemptions, uint[] ThreadIds) Snapshot()
