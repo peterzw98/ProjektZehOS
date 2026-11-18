@@ -10,8 +10,10 @@ keinen `UnsafeAccessor` mehr.
 **Architektur:** Zwei kleine Cosmos-Patches (Hook, LINT1) und je ein ZehOS-PR, der den Umweg entfernt. Die
 Entscheidung „anhalten oder Thread aufgeben“ bleibt in ZehOS (`FaultIsolationPolicy`), Cosmos führt sie nur aus.
 
-**Voraussetzung:** Etappe 1 (Cosmos wird aus dem Branch `cosmos` gebaut). **Nicht gleichzeitig** mit Etappe 5 und
-nicht gleichzeitig mit Arbeit an 12.4-I2: alle ändern `ProjektZeh/Runtime/CosmosFaultIsolation.cs`.
+**Voraussetzung:** Etappe 1 (Cosmos wird aus dem Branch `cosmos` gebaut; erfüllt seit #290) und Peters Freigabe für
+12.4 (liegt seit dem 18. November 2026 vor). **Nicht gleichzeitig** mit Etappe 5. Die Einordnung in den Rest von
+12.4 und die Hinweise zu Version und Commit stehen im [Plan 12.4](2026-11-18-isolation-12-4.md), Bahn H; dessen Paket
+I2-C ändert in `ProjektZeh/Runtime/CosmosFaultIsolation.cs` nur eine neue Methode und läuft nach E3-B.
 
 **Entwurf:** [Abschnitt 8.2](../specs/2026-11-18-multicore-design.md); Hintergrund in
 [Isolation 12.4](../specs/2026-11-18-isolation-12-4.md), Abschnitt 5, und `docs/COSMOS_SUPPORT.md`, „CPU-Ausnahmen im

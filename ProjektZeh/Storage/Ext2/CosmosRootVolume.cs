@@ -16,6 +16,9 @@ internal sealed class CosmosRootVolume(Partition partition, VfsMount? mount) : I
 
     public bool Sync()
     {
+#if ZEHOS_POWER_FAULT_PROBE
+        if (PowerFaultProbe.Fires("root-sync")) return false;
+#endif
         using (StorageLock.Enter()) return mount != null && mount.Superblock.SuperOperations.Sync(mount.Superblock);
     }
 
@@ -34,6 +37,10 @@ internal sealed class CosmosRootVolume(Partition partition, VfsMount? mount) : I
 
     public void Flush()
     {
+#if ZEHOS_POWER_FAULT_PROBE
+        // Beim Herunterfahren ist das der erste Flush nach dem Schreiben von s_state = 1 (RootVolumeState.Close).
+        if (PowerFaultProbe.Fires("root-flush")) throw new System.IO.IOException("cause='PowerFaultProbe' message='root-flush'");
+#endif
         using (StorageLock.Enter()) partition.Host.Flush();
     }
 }

@@ -26,6 +26,10 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
 #if ZEHOS_NETWORK_TEST
     internal static Action? BeforeConnect;
     internal static Action? AfterConnect;
+    // Hosttests pruefen die Fristen mit kurzer Dauer statt 10 s zu warten; der Kernel kennt nur den festen Wert.
+    internal static int TimeoutMs = 10000;
+#else
+    private const int TimeoutMs = 10000;
 #endif
 
     // Vorbedingungen fuer App-TLS im Gastthread: Uhr und Hardwarezufall kosten wenig, die Anker liefert der Aufrufer
@@ -122,7 +126,6 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
     private sealed class Connection(string host, int port, TlsClient? tlsClient) : IWasmNetworkConnection
     {
         private const int Limit = WasmNetworkSession.MaximumTransferBytes;
-        private const int TimeoutMs = 10000;
         private readonly object gate = new();
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private readonly Queue<byte> input = new();

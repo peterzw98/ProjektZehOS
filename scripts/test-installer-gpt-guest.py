@@ -206,7 +206,7 @@ def run_g6_basic(args, work: Path) -> None:
         process, qmp = storage.boot(args, run, disks)
         cases = [("setup install sata0 --layout gpt --erase", "GPT-Layout nur fuer 32 bis 128 GiB"),
                  ("setup install sata1 --layout gpt --erase", "GPT-Layout nur fuer 32 bis 128 GiB"),
-                 ("setup install sata2 --layout gpt", "--erase erforderlich")]
+                 ("setup install sata2 --layout gpt", "GPT-Installation loescht die ganze Platte")]
         for command, reason in cases:
             mark = len((run / "serial.log").read_text(encoding="utf-8", errors="replace"))
             qmp.line(command)
