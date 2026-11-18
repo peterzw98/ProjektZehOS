@@ -24,7 +24,7 @@ Alles andere ist unverändert, auch die beiden Submodul-Verweise (`dotnet/runtim
 ## Regeln
 
 - Änderungen kommen nur per Pull Request gegen diesen Branch.
-- Jeder eigene Patch ist genau ein Commit und hat eine Zeile in `PATCHES.md`.
+- Jeder eigene Patch wird per Squash genau ein Commit und hat eine eigene Datei `patches/<Kurzname>.md`.
 - Ein Patch behebt einen Fehler oder öffnet eine Schnittstelle. ZehOS-Policy (Scheduler, Topologie, Appregeln) gehört
   nicht hierher.
 - Übernommene Upstream-Stände werden unverändert eingespielt und in `PATCHES.md` mit Branch und Commit vermerkt.
