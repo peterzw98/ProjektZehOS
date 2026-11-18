@@ -16,9 +16,6 @@ using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime.Wasm;
 
-// CpuFault liefert nur der Kernel (Roadmap 12.4-I1), nicht die C-Schicht.
-internal enum WasmStatus { Ok = 0, NoMemory = 1, InvalidModule = 2, LoadFailed = 3, EntryMissing = 4, Trap = 5, OutOfGas = 6, LimitFailed = 7, CpuFault = 8 }
-
 /// <summary>
 /// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
 /// optional nativ ueber WAMR-AOT (-p:ZehOSWasmAot=true). Alle Laeufe teilen sich einen langlebigen Worker mit festem
@@ -32,7 +29,7 @@ internal static unsafe partial class WasmRuntime
     private const ulong MemoryLimitBytes = 256ul * 1024 * 1024;
 
     private static readonly object gate = new();
-    private static readonly Queue<Action> jobs = new();
+    private static readonly WasmJobQueue jobs = new();
     private static Thread? worker;
     private static Action<WasmStatus, int, string>? running;
     private static int isolatedRuns;
@@ -130,7 +127,7 @@ internal static unsafe partial class WasmRuntime
                 running = null;
             }
             completed(status, result, message);
-        });
+        }, completed);
         Monitor.Pulse(gate);
     }
 
@@ -184,6 +181,8 @@ internal static unsafe partial class WasmRuntime
         if (thread < 0) return;
         Action<WasmStatus, int, string>? completed;
         string? restart = null;
+        bool retiredNow = false;
+        List<Action<WasmStatus, int, string>>? dropped = null;
         lock (gate)
         {
             completed = running;
@@ -193,17 +192,21 @@ internal static unsafe partial class WasmRuntime
             if (Volatile.Read(ref isolatedRuns) + 1 >= MaximumIsolatedRuns)
             {
                 workerRetired = true;
+                retiredNow = true;
                 restart = $"nach {MaximumIsolatedRuns} CPU-Fehlern kein weiterer Worker";
             }
             else
             {
-                // Scheitert der Ersatzstart (Stackprobe, ThreadStarter), bleibt es wie bisher bei der Quarantaene ohne Worker.
+                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App startet
+                // den Worker ueber EnqueueLoaded erneut.
                 var started = StartWorkerLocked();
-                if (!started.IsOK())
-                {
-                    workerRetired = true;
-                    restart = started.Message;
-                }
+                if (!started.IsOK()) restart = started.Message;
+            }
+            // Ohne Worker laeuft die Warteschlange nie an; ihre Fenster erhalten ein Ende statt "beschaeftigt".
+            if (worker == null)
+            {
+                dropped = jobs.Drain();
+                pending -= dropped.Count;
             }
         }
         // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
@@ -213,8 +216,16 @@ internal static unsafe partial class WasmRuntime
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
             $"WASM CPU-Ausnahme im App-Code, Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
-            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n" : $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"));
+            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n"
+                : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"
+                : $"; kein neuer Worker ({restart}). Die naechste App versucht den Start erneut.\n"));
         completed?.Invoke(WasmStatus.CpuFault, 0, CpuFaultMessage);
+        if (dropped == null) return;
+        foreach (var waiting in dropped)
+        {
+            if (retiredNow) waiting(WasmStatus.CpuFault, 0, RetiredMessage);
+            else waiting(WasmStatus.LoadFailed, 0, "Wasm-Worker nicht gestartet: " + restart);
+        }
     }
 
     private const string CpuFaultMessage = "CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.";
@@ -225,7 +236,7 @@ internal static unsafe partial class WasmRuntime
     {
         lock (gate)
         {
-            jobs.Enqueue(job);
+            jobs.Enqueue(job, null);
             StartWorkerLocked();
             Monitor.Pulse(gate);
         }

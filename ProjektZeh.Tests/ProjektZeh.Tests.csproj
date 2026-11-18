@@ -28,6 +28,8 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmInputBuffer.cs" Link="Runtime\Wasm\WasmInputBuffer.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmPackagePaths.cs" Link="Runtime\Wasm\WasmPackagePaths.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\IWasmSession.cs" Link="Runtime\Wasm\IWasmSession.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmJobQueue.cs" Link="Runtime\Wasm\WasmJobQueue.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmStatus.cs" Link="Runtime\Wasm\WasmStatus.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRuntime.HostCallbacks.cs" Link="Runtime\Wasm\WasmRuntime.HostCallbacks.cs" />
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
