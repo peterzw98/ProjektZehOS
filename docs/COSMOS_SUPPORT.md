@@ -4,14 +4,13 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 ## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
 
-`CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread. Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
+`CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread (bis dahin gilt der Standard Normal; fest CPU 0, Etappe 5 stellt auf die laufende CPU um). Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
 
 ## Cosmos aus Quelle (18. November 2026)
 
 Der Referenzstand ist Cosmos-Commit `bd5889b46a6b1175ff8b66620437e072b78636de`, Paketversion `3.0.97-zehos.1`, mit SDK 10.0.404. Der gemessene Paketbau mit SDK 10.0.404 und offizieller Vergleichsversion 3.0.97 dauerte 64 Sekunden. Der Vergleich ergab gleiche IL für die verglichenen DLLs; eine DLL unterschied sich im Text des Quellgenerator-Attributs, außerdem gab es Unterschiede im Paketlayout. Zwei Quellbauten desselben Commits ergaben keine verschiedenen DLLs nach Bereinigung der Bauangaben. Kernelbau und Hosttests bestanden auf beiden Seiten; Gast- und VMware-Vergleich waren beim Befund noch offen. Details und Grenzen: [DLL-Vergleich](COSMOS_DLL_VERGLEICH.md).
 
 Unter Windows bestand ein Quellbau von `925a33b` mit SDK 10.0.404, leerem Cache und `--no-tools` (25 Pakete, Exit 0; `core.longpaths` prozesslokal). Ein anschließender Windows-Kernelbau mit diesem Feed gelang in 3:51 Minuten ohne MSBuild-Warnungen oder -Fehler und erzeugte ISO und ELF; Gäste, VMware und Hardware wurden dabei nicht geprüft. Ohne prozesslokales `core.longpaths` scheiterte der erste Quellbau; seit #317 setzt das Skript es für seine Git-Aufrufe selbst. Unter Windows entfällt die automatische Patcher-Versionsprüfung; nach Versionswechsel die globalen Werkzeuge erneut installieren. Der [Quellbau](../deploy/cosmos/README.md) beschreibt den Ablauf.
-
 
 ## Round-Robin: Idle-Thread und Zeitscheibe (18. November 2026)
 

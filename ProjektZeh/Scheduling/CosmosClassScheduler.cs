@@ -16,7 +16,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     private const int CapacityPerClass = SchedulerThread.MaxThreadCount;
     private const int TraceLength = 128;
 
-    // Queues der ersten CPU: dort laeuft die Hauptschleife (ab Etappe 5 weiter); ohne Sperre lesbarer Hinweis.
+    // Queues der CPU 0: dort laeuft die Hauptschleife (ab Etappe 5 weiter); ohne Sperre lesbarer Hinweis.
     private static ClassRunQueues<SchedulerThread>? firstCpu;
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
     internal static int WaitingThreads => firstCpu?.Waiting ?? 0;
@@ -32,7 +32,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     {
         var queues = new ClassRunQueues<SchedulerThread>(CapacityPerClass, thread => thread.SchedulerData as ClassThreadState);
         state.SchedulerData = queues;
-        firstCpu ??= queues;
+        if (state.CpuId == 0) firstCpu = queues;
     }
 
     public void ShutdownCpu(PerCpuState state)
@@ -108,11 +108,18 @@ internal sealed class CosmosClassScheduler : IScheduler
     public void SetPriority(PerCpuState state, SchedulerThread thread, long priority)
     {
         if (priority is < 0 or > 2) return;
-        Queues(state)?.SetClass(thread, (ThreadClass)priority);
+        // Cosmos ruft diesen Einstieg ohne Maske auf (SchedulerManager.cs ~Z. 1000): ohne sie kaeme der Tick mitten in SetClass.
+        var mask = SchedulerManager.MaskInterrupts();
+        try { Queues(state)?.SetClass(thread, (ThreadClass)priority); }
+        finally { mask.Dispose(); }
     }
 
-    public long GetPriority(SchedulerThread thread) =>
-        thread.SchedulerData is ClassThreadState classState ? (long)classState.Class : (long)ThreadClass.Normal;
+    public long GetPriority(SchedulerThread thread)
+    {
+        var mask = SchedulerManager.MaskInterrupts();
+        try { return thread.SchedulerData is ClassThreadState classState ? (long)classState.Class : (long)ThreadClass.Normal; }
+        finally { mask.Dispose(); }
+    }
 
     public int GetRunQueueCount(PerCpuState state)
     {
@@ -128,7 +135,7 @@ internal sealed class CosmosClassScheduler : IScheduler
         finally { mask.Dispose(); }
     }
 
-    /// <summary>Verdraengungen, Auswahlspur und wartende Threads je Klasse (Interaktiv, Normal, Hintergrund) der ersten CPU.</summary>
+    /// <summary>Verdraengungen, Auswahlspur und wartende Threads je Klasse (Interaktiv, Normal, Hintergrund) der CPU 0.</summary>
     public (ulong Preemptions, uint[] ThreadIds, int[] WaitingByClass) Snapshot()
     {
         // Nicht unter der Maske allokieren: seit Cosmos 3.0.97 sperrt der Heap statt zu maskieren, und Parken mit

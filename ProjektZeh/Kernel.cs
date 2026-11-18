@@ -606,7 +606,8 @@ public sealed class Kernel : Sys.Kernel
 
     private void InstallScheduler()
     {
-        // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf).
+        // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
+        // der Standard Normal). Fest CPU 0: Etappe 5 muss auf die laufende CPU umstellen (docs/SMP_AUDIT.md).
         ThreadStarter.ApplyClass = threadClass =>
         {
             var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(0);
