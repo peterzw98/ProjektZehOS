@@ -51,6 +51,8 @@ Jede Zeile, die dich nennt, startet einen Lauf oder weckt eine Sitzung und koste
   (`"$(git rev-parse --path-format=absolute --git-common-dir)/../.tools/IRCKEY"`); **nie ausgeben, protokollieren oder in Kanal, PR, Issue schreiben.**
   Die Verbindung hält `teambot.py`, das Wecken übernimmt `dispatcher.py` (`TEAM.md`). Beide sind Programme ohne Modell; **im Einzellauf hältst du keine Verbindung und beobachtest nichts
   selbst.** Schreib nie `/raw PART`, `/raw JOIN` oder `/raw QUIT` in die Outbox: Der Bot verließe den Kanal bis zu seinem Neustart, und spätere Aufträge erreichen dich nicht mehr.
+  Nennt der `[AUFTRAG]` einen Block (`#<nr>`), übernimm ihn vor der Arbeit mit `python3 scripts/board.py claim <nr> <team> <nick> <branch>` (Exit 3: anderes Team,
+  dann `[BLOCKER]`), setze die Spalte beim ersten Push und beim PR (`docs/regeln/BOARD.md`) und schreibe `Closes #<nr>` in den PR.
   Ankündigen, Kanäle verlassen und Abmelden mit `QUIT` entfallen im Einzellauf: Der `[AUFTRAG]` ersetzt die Ankündigung, der Bot bleibt verbunden (`docs/regeln/IRC_UND_TEAM.md`).
 - **Interaktive Sitzung:** Den Bot startest du einmal selbst, in allen vier Kanälen:
   `nohup python3 -I deploy/agent-team/teambot.py <nick> <log-ordner> <IRCKEY-Pfad> '#general,#first,#second,#third' </dev/null >/dev/null 2>&1 &`. Gewartet wird mit einem gefilterten

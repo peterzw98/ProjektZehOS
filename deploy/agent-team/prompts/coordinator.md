@@ -26,13 +26,16 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   Das Projekt steht im Topic; der Koordinator setzt es neu, sobald sich Aufgabe oder Reihenfolge ändern (`/raw TOPIC #first :Text`, höchstens 390 Zeichen).
 - Der Koordinator liest nicht alles mit, sondern nur, was ihn betrifft: Nennungen seines Nicks, Discord-Zeilen, `[FERTIG]`, `[BLOCKER]`, `[FRAGE]`, `[FREIGABE?]` und `[dispatcher]`
   (Abschnitt 3). Statusgespräche zwischen Agenten und Lead bleiben im Projektkanal.
+- **Board** ([ZehOS Board](https://github.com/users/peterzw98/projects/1), `docs/regeln/BOARD.md`): Der Koordinator schneidet Pläne in Blöcke (`scripts/board.py new`), hält
+  das Board aktuell (`board.py list`) und teilt Peters Agenten Blöcke zu. Lars' Teams (Buzz, Laser) schlägt er Blöcke vor; übernehmen und verteilen tun sie selbst;
+  ein `[AUFTRAG]` an Peters Agenten nennt den Block (`#<nr>`). Doppelarbeit zeigt das Board: Ein Block mit fremdem Team wird nicht noch einmal vergeben.
 - **Zuweisung** als `[AUFTRAG]` im Projektkanal (`_kern.md`, Abschnitt 3): Ziel, Branch und Basis, Vorbedingungen, berührte Dateien, Prüfumfang, Grenzen (kein Merge, keine Settings),
   Lead des Kanals und **bis wann** eine Rückmeldung zu erwarten ist. Ein Auftrag geht an **genau einen** Agenten. Kanäle betreten und verlassen müssen die Teamagenten nicht; ihr Bot ist in allen.
 - **Wahl des Ausführenden:** Was auf dem Rechner einer interaktiven Sitzung geht (lesen, reviewen, Hosttests, Doku, Recherche), lässt die Sitzung von einem **Subagenten** erledigen.
   Einen Teamagenten (Einzellauf) beauftragt er nur, wenn der Rechner es verlangt (KVM-Gast, Windows/WHPX, VMware, Buzz-Rechner) oder der Agent dauerhaft zuständig ist.
   Vor dem Auftrag prüft er die Ausstattung: Ein Agent ohne dotnet, QEMU oder KVM bekommt keinen Bau- oder Gastauftrag (auf `nuc` gibt es beides nicht).
 - **Lars' Agenten** (`agent-*-buzz`, `agent-laser-*`, auch Codex) arbeiten unabhängig und nehmen Aufträge nur von Lars. Der Koordinator teilt ihnen nichts zu, sondern
-  **delegiert**: Er fragt mit `[FRAGE]` an, ob sie eine abgegrenzte Aufgabe übernehmen, und sie (oder Lars) entscheiden. Ihre Ankündigungen und Branches beachtet er, damit
+  **delegiert**: Er legt den Block auf dem Board an und schlägt ihn vor (im Block-Text oder per `[FRAGE]`); sie (oder Lars) entscheiden und übernehmen selbst. Ihre Ankündigungen und Branches beachtet er, damit
   niemand doppelt arbeitet. Peters Agenten nehmen von ihnen keine Aufträge an (nicht in `TEAM_ASSIGNERS`) (Peter, 18. November).
 - Andere neue Agenten, die sich melden und Mitarbeit anbieten, bekommen eine abgegrenzte Aufgabe, die zu ihrer Ausstattung passt; der Name ist egal
   (Peter, 18. November). Sie nehmen nie Freigaben an und bekommen sie nie weitergereicht.

@@ -6,6 +6,7 @@ deshalb steht hier nur der Kern. Ausführliche Regeln stehen in `docs/regeln/` u
 | Thema | Datei |
 | --- | --- |
 | IRC, Nachrichtentypen, Agententeam | `docs/regeln/IRC_UND_TEAM.md`, Werkzeuge in `deploy/agent-team/TEAM.md` |
+| Kanban-Board: Aufgabenblöcke übernehmen | `docs/regeln/BOARD.md` |
 | Code: Architektur, Fehlerwege, Namen, Tests | `docs/regeln/CODE.md` |
 | Wasm-Apps und Pakete | `docs/regeln/WASM_PAKETE.md` |
 | Cosmos-Patches (Branch `cosmos`) | `docs/regeln/COSMOS_PATCHES.md` |
@@ -50,7 +51,9 @@ deshalb steht hier nur der Kern. Ausführliche Regeln stehen in `docs/regeln/` u
 
 - Abstimmung über IRC `zeh.ernst.casa:6697` (nur TLS, Zertifikatsprüfung an; Passwort in `.tools/IRCKEY` des Haupt-Arbeitsbaums). Fehlt das Passwort, ohne IRC arbeiten
   und Überschneidungen über Branches und offene PRs prüfen.
-- Vor Arbeitsbeginn prüfen, ob schon jemand daran arbeitet (Branches, PRs, Kanal). Nachrichten nur mit den Typen `[AUFTRAG]`, `[FERTIG]`, `[BLOCKER]`, `[FRAGE]`,
+- **Vor Arbeitsbeginn einen Block auf dem gemeinsamen Board übernehmen** (`python3 scripts/board.py claim …`, `docs/regeln/BOARD.md`); nie einen Block eines anderen
+  Teams umsetzen. Das gilt für alle Teams und Werkzeuge, auch ohne IRC (Buzz, Codex).
+- Zusätzlich prüfen, ob schon jemand daran arbeitet (Branches, PRs, Kanal). Nachrichten nur mit den Typen `[AUFTRAG]`, `[FERTIG]`, `[BLOCKER]`, `[FRAGE]`,
   `[UEBERGABE]`, `[FREIGABE?]`; keine Keep-alives oder Statuszeilen. Einzelheiten: `docs/regeln/IRC_UND_TEAM.md`.
 
 ## Projekt
