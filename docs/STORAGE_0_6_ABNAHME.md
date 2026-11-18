@@ -17,7 +17,8 @@ geprüft und liegt außerhalb der Abnahme** (Entscheidung Peter, 18. November 20
 | G2 | Rückfalleintrag `.bak` startet | PASS | 56c8c88, RED |
 | G3/G4 | Root offline gelöscht/beschädigt: Boot normal, Einrichtung und `security recover` gesperrt | PASS | 56c8c88, RED |
 | G5 | Security-Recovery-ISO bei G3/G4 | PASS | 56c8c88, RED |
-| G6 | Installer verweigert Medium, `ZEHOSDATA`, 31/129 GiB, fehlendes `--erase` | PASS | 982f302, RED |
+| G6 | Installer verweigert Medium und `ZEHOSDATA`-Platte | PASS | 982f302, RED |
+| G6 | Installer verweigert 31 und 129 GiB und fehlendes `--erase` (`--run-g6-basic`) | OFFEN | nicht gefahren; RED nach der Matrix |
 | G6 | eingebundenes Ziel, belegter Installationsmountpunkt | OFFEN | im Installer-Gast nicht herstellbar (kein Konto, `disk mount` verweigert) |
 | G7 | installierte Platte und `ZEHOSDATA`: installierte Platte gewinnt | PASS | 56c8c88, RED |
 | G8 | Abbruch in `CopyingFiles` auf frischer Platte ⇒ `Unclear`, Neuinstallation mit `--erase` | PASS | master 6d5ddc3 und #273, RED |
