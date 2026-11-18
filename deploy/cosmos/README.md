@@ -9,7 +9,7 @@ ZehOS baut Cosmos nicht aus nuget.org, sondern aus dem Branch `cosmos` dieses Re
 Regel: **neuer Commit, neue Version.** Beide Dateien ändern sich nur zusammen, und `global.json` (`msbuild-sdks`) nennt dieselbe Version.
 Das Skript `scripts/build-cosmos.sh` verweigert dieselbe Version mit anderem Commit.
 
-Bauen: `scripts/build-cosmos.sh` (Voraussetzung: .NET SDK ab 10.0.201, git, Netz). Die Werkzeuge `cosmos` und `cosmos.patcher`
+Bauen: `scripts/build-cosmos.sh` (Voraussetzung: genau das .NET SDK aus `SDK`, siehe unten; git, Netz). Die Werkzeuge `cosmos` und `cosmos.patcher`
 liegen danach je Arbeitskopie unter `.tools/cosmos-tools/<version>`; diesen Ordner vor den Kernelbau in `PATH` setzen.
 Mit `--global` installiert das Skript sie global (CI, frischer Rechner; nötig für F5 in Visual Studio).
 Der Quellbaum liegt unter `.tools/cosmos-src`; das Skript schreibt nur unter `.tools/`, `deploy/cosmos/feed/` und installiert die Werkzeuge.
