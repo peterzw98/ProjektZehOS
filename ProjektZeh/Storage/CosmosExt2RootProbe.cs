@@ -76,13 +76,14 @@ internal static class CosmosExt2RootProbe
                 case 4: RunAfterAbort(root); break;
                 case 5: RunAfterRepair(root); break;
                 case 6: RunFormatOnly(root); break;
-                case 9: RunLimitOnly(root, renameWhenFull: false); break;
+                case 9: RunLimitOnly(root, RootProbeCatalog.LegacyDirectoryLimit + 1); break;
                 case 10: RunDeleteSpan(root); break;
                 case 11: RunScale(root); break;
                 case 12: RunHeapFragmentation(root); break;
                 case 13: RunConcurrency(root, lockedOnly: false); break;
                 case 14: RunConcurrency(root, lockedOnly: true); break;
                 case 15: RunConcurrency(root, lockedOnly: true, onFat: true); break;
+                case 16: RunLimitOnly(root, RootProbeCatalog.ScaleEntries); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -250,8 +251,8 @@ internal static class CosmosExt2RootProbe
         StepM(root);
     }
 
-    /// <summary>Diagnoselauf 9 (2 GiB, leer): nur Format, Mount und Schritt e-limit, ohne die langen Schritte davor.</summary>
-    private static void RunLimitOnly(IBlockDevice root, bool renameWhenFull)
+    /// <summary>Diagnoselaeufe 9 und 16 (2 GiB, leer): nur Format, Mount und Schritt e-limit, ohne die langen Schritte davor.</summary>
+    private static void RunLimitOnly(IBlockDevice root, int entries)
     {
         Begin("format9");
         Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
@@ -259,7 +260,7 @@ internal static class CosmosExt2RootProbe
         MountRoot(root);
         WriteState(root, 0);
         Pass("Format, Mount /, s_state 0");
-        StepELimit(root, renameWhenFull);
+        StepELimit(root, entries);
         StepM(root);
     }
 
@@ -542,7 +543,7 @@ internal static class CosmosExt2RootProbe
         var clock = System.Diagnostics.Stopwatch.StartNew();
         int created = 0;
         string failure = "keiner";
-        for (; created < RootProbeCatalog.DirectoryLimit; created++)
+        for (; created < RootProbeCatalog.LegacyDirectoryLimit; created++)
         {
             try
             {
@@ -724,70 +725,39 @@ internal static class CosmosExt2RootProbe
     }
 
     /// <summary>
-    /// Grenzfall zu e: Cosmos 3.0.97 fasst je Verzeichnis 8190 Eintraege neben '.' und '..'; der naechste muss mit IOException
-    /// scheitern, ohne das Verzeichnis zu beschaedigen. Danach Umbenennen und Loeschen darin und ein Ersatzeintrag; am Ende geraeumt.
+    /// Grosses Verzeichnis (E2-P7, Plan Schritt 4): <paramref name="entries"/> Eintraege anlegen, vollstaendig auflisten,
+    /// jeden zweiten loeschen, wieder auflisten, umbenennen, Rest loeschen, rmdir. Lauf 9 liegt einen Eintrag ueber der
+    /// alten Cosmos-Grenze von 8190 (vor cosmos #345 abgelehnt und danach teils unsichtbar), Lauf 16 bei 20.000.
     /// </summary>
-    /// <param name="renameWhenFull">
-    /// Nur Diagnose: Umbenennen im vollen Verzeichnis. Danach sieht Cosmos nur noch einen Teil der Eintraege, und das
-    /// Aufraeumen loescht das Verzeichnis samt unsichtbarer Eintraege (Lauf 9 am 17.11.: 4097 verwaiste Inodes). Ueber
-    /// ZehOS ist der Fall wegen der Produktgrenze 8189 nicht erreichbar; die Laeufe 1-5 pruefen ihn deshalb nicht.
-    /// </param>
-    private static void StepELimit(IBlockDevice root, bool renameWhenFull = false)
+    private static void StepELimit(IBlockDevice root, int entries)
     {
         // Teilschritte einzeln benannt: ein FAIL nennt so die Operation (Lauf 32 GiB: ArgumentNullException ohne Ort).
         Begin("e-limit-create");
         const string directory = "/elimit";
         Directory.CreateDirectory(directory);
-        for (int index = 0; index < RootProbeCatalog.DirectoryLimit; index++) File.WriteAllBytes($"{directory}/n{index:D4}", [unchecked((byte)index)]);
-        Begin("e-limit-over");
-        bool refused = Refused(() => File.WriteAllBytes($"{directory}/over", [1]));
-        Check(refused, $"Eintrag {RootProbeCatalog.DirectoryLimit + 1} ohne IOException angelegt");
+        for (int index = 0; index < entries; index++) File.WriteAllBytes($"{directory}/n{index:D5}", [unchecked((byte)index)]);
         Begin("e-limit-list");
-        Check(!File.Exists($"{directory}/over"), "abgelehnter Eintrag sichtbar");
-        var listed = Directory.GetFileSystemEntries(directory);
-        Check(listed.Length == RootProbeCatalog.DirectoryLimit, $"{listed.Length} statt {RootProbeCatalog.DirectoryLimit} Eintraege nach der Ablehnung");
-        // Umbenennen im vollen Verzeichnis braucht kurz einen Record mehr. Cosmos meldet Erfolg, sieht danach in derselben
-        // Sitzung aber keinen der beiden Namen (am Image korrekt, e2fsck sauber). Nur protokolliert (Leitung 19:26); die
-        // Produktgrenze liegt deshalb einen Eintrag tiefer (8189).
-        if (renameWhenFull)
-        {
-            Begin("e-limit-rename-full");
-            string fullRename = "ohne Ausnahme";
-            try { File.Move($"{directory}/n0002", $"{directory}/v0002"); }
-            catch (Exception exception) { fullRename = exception.GetType().Name + ": " + exception.Message; }
-            bool oldName = File.Exists($"{directory}/n0002"), newName = File.Exists($"{directory}/v0002");
-            Write($"e-limit INFO Umbenennen im vollen Verzeichnis: {fullRename}; alt={oldName} neu={newName}");
-        }
-
-        Begin("e-limit-delete");
-        File.Delete($"{directory}/n0001");
-        Check(!File.Exists($"{directory}/n0001"), "n0001 nach Loeschen noch da");
+        int listed = Directory.GetFileSystemEntries(directory).Length;
+        Check(listed == entries, $"{listed} statt {entries} Eintraege nach dem Anlegen");
+        Begin("e-limit-delete-half");
+        for (int index = 1; index < entries; index += 2) File.Delete($"{directory}/n{index:D5}");
+        int living = entries - entries / 2;
+        listed = Directory.GetFileSystemEntries(directory).Length;
+        Check(listed == living, $"{listed} statt {living} Eintraege nach dem Loeschen jedes zweiten");
+        Check(!File.Exists($"{directory}/n00001"), "n00001 nach Loeschen noch da");
+        int last = (entries - 1) / 2 * 2;
+        Check(File.ReadAllBytes($"{directory}/n{last:D5}")[0] == unchecked((byte)last), $"n{last:D5} unlesbar");
         Begin("e-limit-rename");
-        File.Move($"{directory}/n0000", $"{directory}/m0000");
-        Check(File.Exists($"{directory}/m0000") && !File.Exists($"{directory}/n0000"), $"Umbenennen nach Loeschen: m0000={File.Exists($"{directory}/m0000")} n0000={File.Exists($"{directory}/n0000")}");
-        Begin("e-limit-replace");
-        File.WriteAllBytes($"{directory}/ersatz", [2]);
-        Check(File.Exists($"{directory}/ersatz"), "Ersatzeintrag fehlt");
-        Begin("e-limit");
-        Check(File.ReadAllBytes($"{directory}/n{RootProbeCatalog.DirectoryLimit - 1:D4}")[0] == unchecked((byte)(RootProbeCatalog.DirectoryLimit - 1)), "letzter Eintrag unlesbar");
+        File.Move($"{directory}/n00000", $"{directory}/m00000");
+        Check(File.Exists($"{directory}/m00000") && !File.Exists($"{directory}/n00000"), $"Umbenennen: m00000={File.Exists($"{directory}/m00000")} n00000={File.Exists($"{directory}/n00000")}");
         Begin("e-limit-cleanup");
-        // Der abgelehnte 8191. Eintrag liegt trotz IOException auf der Platte, aber hinter dem Lesefenster von 8192 Records;
-        // er wird erst sichtbar, wenn Platz frei ist. Deshalb in Runden leeren und jeden Nachzuegler protokollieren.
-        string[] rest = Directory.GetFileSystemEntries(directory);
-        for (int round = 0; round < 3 && rest.Length > 0; round++)
-        {
-            if (round > 0) Write($"e-limit INFO nachtraeglich sichtbar: {string.Join(",", rest, 0, Math.Min(5, rest.Length))}");
-            foreach (string entry in rest) File.Delete(entry);
-            rest = Directory.GetFileSystemEntries(directory);
-        }
-
-        Write($"e-limit INFO nach dem Leeren sichtbar: {rest.Length}");
-        string rmdir = "ok";
-        try { Directory.Delete(directory); }
-        catch (Exception exception) { rmdir = exception.GetType().Name + ": " + exception.Message; }
-        Write($"e-limit INFO rmdir {directory}: {rmdir}");
-        Check(!Directory.Exists(directory), $"/elimit nicht geraeumt (sichtbar {rest.Length}, rmdir {rmdir})");
-        Pass($"{RootProbeCatalog.DirectoryLimit} Eintraege gehen, der naechste ergibt IOException, Verzeichnis bleibt bedienbar");
+        foreach (string entry in Directory.GetFileSystemEntries(directory)) File.Delete(entry);
+        int rest = Directory.GetFileSystemEntries(directory).Length;
+        Check(rest == 0, $"{rest} Eintraege nach dem Leeren sichtbar");
+        Directory.Delete(directory);
+        Check(!Directory.Exists(directory), "/elimit nach rmdir noch da");
+        Begin("e-limit");
+        Pass($"{entries} Eintraege angelegt, gelistet, zur Haelfte und ganz geloescht, rmdir");
         AfterPhase(root);
     }
 
@@ -1240,7 +1210,7 @@ internal static class CosmosExt2RootProbe
         int end = text.IndexOf('\n', ControlPrefix.Length);
         bool parsed = int.TryParse(text.AsSpan(ControlPrefix.Length, (end < 0 ? text.Length : end) - ControlPrefix.Length),
             System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int run);
-        Check(parsed && run is >= 1 and <= 15, "Lauf ausserhalb 1..15; nichts geschrieben");
+        Check(parsed && run is >= 1 and <= 16, "Lauf ausserhalb 1..16; nichts geschrieben");
         return run;
     }
 

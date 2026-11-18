@@ -21,12 +21,13 @@ internal static class RootProbeCatalog
     internal const int DDirectories = 10;
     // 2-GiB-Root fuer die Laeufe 1-5 (Leitungsentscheid 19:02): Groessen nur bis 64 KiB, zusammen ~0,2 GB.
     internal static readonly long[] DSizes = [0, 1, 4095, 4096, 4097, 65536];
-    // Cosmos 3.0.97 liest je Verzeichnis hoechstens 8192 Records ('.' und '..' eingeschlossen, MaxParseIters); Schritt e
-    // bleibt deshalb unter der Grenze, die Grenze selbst prueft Schritt e-limit (Leitungsentscheid 16:39).
+    // Schritt e bleibt klein (Inode-Cache); grosse Verzeichnisse pruefen die Diagnoselaeufe 9 und 16 (Schritt e-limit).
     internal const int EEntries = 3000;
     internal const int EChanged = 300;
-    /// <summary>Groesste Zahl an Eintraegen, die ein Cosmos-3.0.97-Verzeichnis neben '.' und '..' fasst.</summary>
-    internal const int DirectoryLimit = 8190;
+    /// <summary>Alte Cosmos-Grenze vor cosmos #345 (MaxParseIters 8192 inkl. '.' und '..'); Lauf 9 legt einen mehr an.</summary>
+    internal const int LegacyDirectoryLimit = 8190;
+    /// <summary>Eintraege im Diagnoselauf 16 (E2-P7, Plan Schritt 4).</summary>
+    internal const int ScaleEntries = 20000;
     internal const int FCount = 1000;
     internal const int FOverwrite = 200;
     internal const int GCount = 1000;
