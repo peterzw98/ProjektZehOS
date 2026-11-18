@@ -17,7 +17,7 @@ public class Ext2RemoveEntryTests
 {
     private const ulong DeviceBlockSize = 512;
     private const ulong DeviceBlockCount = 16384; // 8 MiB
-    private const int BlockSize = 1024;
+    private const int BlockSize = 2048;
 
     private MemoryBlockDevice _device = null!;
     private Ext2Superblock _sb = null!;
@@ -300,23 +300,23 @@ public class Ext2RemoveEntryTests
     public void DirectoryWithHole_DoesNotWriteBlockZero()
     {
         // Pointer 1 of a three-block directory is 0 (sparse directory). The old code wrote every block back,
-        // including "block 0" of the device (boot area and superblock).
-        WriteDirectory(BuildDirectory(150, out _));
+        // including "block 0" of the device (boot area; with 2 KiB blocks it also covers the primary superblock).
+        WriteDirectory(BuildDirectory(400, out _));
         Assert.That(_dir.FullSize, Is.GreaterThanOrEqualTo(3u * BlockSize));
         _dir.Block[1] = 0;
         byte[] marker = new byte[DeviceBlockSize];
         Array.Fill(marker, (byte)0xAA);
         _device.WriteBlock(0, 1, marker);
-        byte[] sector1 = new byte[DeviceBlockSize];
-        _device.ReadBlock(1, 1, sector1);
+        byte[] superblockSector = new byte[DeviceBlockSize];
+        _device.ReadBlock(2, 1, superblockSector);
 
         Assert.That(Remove("n0001"), Is.True);
 
         byte[] after = new byte[DeviceBlockSize];
         _device.ReadBlock(0, 1, after);
         Assert.That(after, Is.EqualTo(marker), "device sector 0 untouched");
-        _device.ReadBlock(1, 1, after);
-        Assert.That(after, Is.EqualTo(sector1), "device sector 1 (superblock) untouched");
+        _device.ReadBlock(2, 1, after);
+        Assert.That(after, Is.EqualTo(superblockSector), "device sector 2 (superblock) untouched");
     }
 
     [Test]
