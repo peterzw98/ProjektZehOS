@@ -18,7 +18,7 @@ geprüft und liegt außerhalb der Abnahme** (Entscheidung Peter, 18. November 20
 | G3/G4 | Root offline gelöscht/beschädigt: Boot normal, Einrichtung und `security recover` gesperrt | PASS | 56c8c88, RED |
 | G5 | Security-Recovery-ISO bei G3/G4 | PASS | 56c8c88, RED |
 | G6 | Installer verweigert Medium und `ZEHOSDATA`-Platte | PASS | 982f302, RED |
-| G6 | Installer verweigert 31 und 129 GiB und fehlendes `--erase` (`--run-g6-basic`) | OFFEN | nicht gefahren; RED nach der Matrix |
+| G6 | Installer verweigert 31 und 129 GiB und fehlendes `--erase`, keine Schreibzugriffe | PASS | 875e94c-Stand, red-matrix |
 | G6 | eingebundenes Ziel, belegter Installationsmountpunkt | OFFEN | im Installer-Gast nicht herstellbar (kein Konto, `disk mount` verweigert) |
 | G7 | installierte Platte und `ZEHOSDATA`: installierte Platte gewinnt | PASS | 56c8c88, RED |
 | G8 | Abbruch in `CopyingFiles` auf frischer Platte ⇒ `Unclear`, Neuinstallation mit `--erase` | PASS | master 6d5ddc3 und #273, RED |
@@ -34,18 +34,18 @@ Testkonto und Testdateien (lange Namen), Ziel per GPT-Installer.
 | Fall | Inhalt | Ergebnis | Stand und Quelle |
 | --- | --- | --- | --- |
 | G4 | 64 MiB → 32 GiB: Quelle unverändert, `e2fsck -fn` sauber, Marker `ready`, Dateien gleich, Ziel startet im Profil `Root` mit altem Kennwort, Altplatte startet weiter | PASS | 0.5.106-Stand, blue |
-| G5 | harter Abbruch in der Kopierphase ⇒ Ziel nicht fertig (`Blocked`), offline `e2fsck -fy`, Wiederholung gelingt, danach `e2fsck -fn` sauber | **FAIL** | 875e94c, blue; Befunde unten |
+| G5 | harter Abbruch in der Kopierphase ⇒ Marker `migrating`, Profil `Blocked`, offline `e2fsck -fy`, Wiederholung migriert (305 Dateien), danach `e2fsck -fn` sauber, Dateien gleich, Quelle unverändert | PASS | Kernelcode = master 6ec4e93 (#273, #284), blue |
 | G5 | volles Ziel (kleine Root per Testlayout) | OFFEN | kein Testlayout mit kleiner Root vorhanden |
 | G6 | 64 GiB und 128 GiB: Migration, Start im Profil `Root`, `e2fsck -fn` sauber | PASS | 875e94c, blue |
 | G4 | ACL-Vergleich, NetSurf-Start nach der Migration | OFFEN | nicht im Harness |
 
-**G5-Befunde (Produkt):**
+**G5-Befunde (Produkt), beide behoben:**
 
 1. Nach `e2fsck -fy` verweigerte die Wiederholung wegen `/lost+found` (`e2fsck` legt es an, der Formatter nicht). Behoben mit
-   #273; im Gast bestätigt (die Wiederholung kommt seitdem über diesen Punkt hinaus).
+   #273.
 2. Bricht der Gast zwischen Journalzeile und Aktion ab, scheitert die Wiederholung mit `cause='Missing'`
    (`Pfadkomponente fehlt`): `DeleteTolerant` duldet nur `ResultCode.NotFound`, `PathGuard` meldet fehlende Komponenten als
-   `Failure`. Fix bei lead2 (Folge-PR), G5 danach erneut.
+   `Failure`. Behoben mit #284; G5 danach im Gast bestanden.
 
 Direkt nach einem harten Abbruch verlangt die Abnahme kein sauberes `e2fsck` (ext2 ohne Journal); in den Läufen traten
 Belegungsdifferenzen einzelner Inodes auf, einmal war das Ergebnis sauber (Entscheidung lead2).
@@ -66,7 +66,7 @@ Belegungsdifferenzen einzelner Inodes auf, einmal war das Ergebnis sauber (Entsc
 | Fall | Inhalt | Ergebnis | Stand und Quelle |
 | --- | --- | --- | --- |
 | Matrix | Root-Profil 32/64/128 GiB: Boot, Anmeldung, Shell, zwei Terminals, Dateimanager, Lesen/Schreiben, `/proc`, `/sys`, `/dev`, Inode-Grenzfall, `shutdown`/`reboot`, offline `e2fsck`/`fsck.fat` | ausstehend | `scripts/test-storage-matrix.py`, red-matrix |
-| Legacy | Regression mit 64-MiB-Datenplatte | ausstehend | red-matrix |
+| Legacy | Regression mit 64-MiB-Datenplatte (P1) | PASS | 875e94c-Stand, red-matrix |
 | `pkg install`, `update install` | in der Matrix | OFFEN | Runde 2 (Testschlüsselbau, lokaler Server) |
 | voller Datenträger | Schreiben bis `ENOSPC` auf 32+ GiB | OFFEN | Dauer über Cosmos-ext2 (Stunden); Ersatz: Inode-Grenzfall (Entscheidung Peter) |
 
