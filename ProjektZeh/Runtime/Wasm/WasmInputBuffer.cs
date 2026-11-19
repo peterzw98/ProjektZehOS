@@ -75,8 +75,6 @@ internal sealed class WasmInputBuffer
                 if (value.KeyCode == (byte)PhysicalKey.Escape) captured = false;
                 // Nur gemeldete Druecke gelten als gehalten; ihr Loslassen wird nie verworfen, damit keine
                 // Taste haengen bleibt. Die Warteschlange bleibt durch maximal 256 Tastencodes begrenzt.
-                if (!value.IsRepeat && keys.Count >= LegacyCapacity)
-                    Report?.Invoke("DIAG input key dropped (legacy queue full) code=" + value.KeyCode);
                 if (!value.IsRepeat && keys.Count < LegacyCapacity && held.Add(value.KeyCode))
                     keys.Enqueue(0x100 | value.KeyCode);
                 Enqueue(new(WasmInputEventType.KeyDown, value.KeyCode));
@@ -204,7 +202,7 @@ internal sealed class WasmInputBuffer
                 // Bei Mausstrom nicht jede Zeile, sondern die erste und dann jede 64.
                 if (++droppedMoves % 64 == 1) Report?.Invoke("DIAG input overflow, oldest PointerMove dropped, total=" + droppedMoves);
             }
-            else Report?.Invoke("DIAG input overflow reset, queue holds only non-move events, droppedMoves=" + droppedMoves + " new=" + value.Type);
+            else Report?.Invoke("DIAG input overflow reset, discarding " + CountKeysAndText() + " key/text events, droppedMoves=" + droppedMoves + " new=" + value.Type);
         }
         if (count == Capacity)
         {
@@ -214,6 +212,17 @@ internal sealed class WasmInputBuffer
         }
         events[(head + count) % Capacity] = value;
         count++;
+    }
+
+    private int CountKeysAndText()
+    {
+        int n = 0;
+        for (int i = 0; i < count; i++)
+        {
+            var type = events[(head + i) % Capacity].Type;
+            if (type == WasmInputEventType.KeyDown || type == WasmInputEventType.KeyUp || type == WasmInputEventType.Text) n++;
+        }
+        return n;
     }
 
     private bool DropOldestPointerMove()
