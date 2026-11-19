@@ -104,6 +104,8 @@ internal class TcpConnection : IDisposable
     /// and every other access takes the same lock.
     /// </summary>
     private byte[] _data = [];
+    // DIAG E5-O: Laenge des Arrays bei der Zuweisung, gegen _data.Length nach GC.
+    private int _diagCap;
     /// <summary>
     /// Holds real data length as _data is usually longer.
     /// </summary>
@@ -559,7 +561,14 @@ internal class TcpConnection : IDisposable
                 // no state when it throws, so the segment is then neither
                 // stored nor acknowledged and the peer resends it from RcvNxt;
                 // moving RcvNxt first acknowledged bytes that were lost.
-                AppendToData(packet.TcpData);
+                DiagStage = 20;
+                byte[] diagPayload = packet.TcpData;
+                if (diagPayload.Length != packet.TcpDataLength)
+                {
+                    Serial.WriteString("[DIAG530] TcpData length mismatch\n");
+                }
+                DiagStage = 21;
+                AppendToData(diagPayload);
 
                 TCB.RcvNxt += packet.TcpDataLength;
 
@@ -870,6 +879,36 @@ internal class TcpConnection : IDisposable
     /// </summary>
     internal void AppendToData(ReadOnlySpan<byte> other)
     {
+        int diagOff = _dataOffset, diagLen = _dataLength, diagCap = _data.Length, diagShadow = _diagCap;
+        try
+        {
+            AppendToDataCore(other);
+        }
+        catch
+        {
+            Serial.WriteString("[DIAG530] AppendToData threw: off=");
+            Serial.WriteNumber((ulong)diagOff);
+            Serial.WriteString(" len=");
+            Serial.WriteNumber((ulong)diagLen);
+            Serial.WriteString(" cap=");
+            Serial.WriteNumber((ulong)diagCap);
+            Serial.WriteString(" shadow=");
+            Serial.WriteNumber((ulong)diagShadow);
+            Serial.WriteString(" capNow=");
+            Serial.WriteNumber((ulong)_data.Length);
+            Serial.WriteString(" other=");
+            Serial.WriteNumber((ulong)other.Length);
+            Serial.WriteString(" stage=");
+            Serial.WriteNumber((ulong)DiagStage);
+            Serial.WriteString("\n");
+            throw;
+        }
+    }
+
+    internal static int DiagStage;
+
+    private void AppendToDataCore(ReadOnlySpan<byte> other)
+    {
         if (other.Length == 0)
         {
             return;
@@ -880,8 +919,11 @@ internal class TcpConnection : IDisposable
         // just append to existing buffer
         if (_dataOffset + _dataLength + other.Length <= _data.Length)
         {
+            DiagStage = 1;
             target = _data.AsSpan(_dataOffset + _dataLength);
+            DiagStage = 2;
             other.CopyTo(target);
+            DiagStage = 3;
             _dataLength += other.Length;
             return;
         }
@@ -895,11 +937,16 @@ internal class TcpConnection : IDisposable
         byte[] result = requiredLength <= _data.Length
             ? _data
             : new byte[Math.Max(requiredLength, _data.Length * 2)];
+        DiagStage = 4;
         _data.AsSpan(_dataOffset, _dataLength).CopyTo(result);
+        DiagStage = 5;
         target = result.AsSpan(_dataLength);
+        DiagStage = 6;
         other.CopyTo(target);
+        DiagStage = 7;
 
         _data = result;
+        _diagCap = result.Length;
         _dataOffset = 0;
         _dataLength = requiredLength;
     }
@@ -923,6 +970,7 @@ internal class TcpConnection : IDisposable
         using (NetworkStackLock.Enter())
         {
             _data = [];
+            _diagCap = 0;
             _dataOffset = 0;
             _dataLength = 0;
         }

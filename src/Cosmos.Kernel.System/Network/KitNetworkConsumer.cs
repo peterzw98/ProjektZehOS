@@ -86,6 +86,7 @@ internal sealed class KitNetworkConsumer : NetworkConsumer
         }
 
         byte[] copy = frame.ToArray();
+        Protocols.Tcp.TcpConnection.DiagStage = 0;
         try
         {
             handler(copy, copy.Length);
@@ -94,7 +95,11 @@ internal sealed class KitNetworkConsumer : NetworkConsumer
         {
             Serial.WriteString("[NetworkManager] packet handler threw: ");
             Serial.WriteString(exception.Message);
-            Serial.WriteString("\n");
+            Serial.WriteString(" [DIAG530 stage=");
+            Serial.WriteNumber((ulong)Protocols.Tcp.TcpConnection.DiagStage);
+            Serial.WriteString(" frame=");
+            Serial.WriteNumber((ulong)copy.Length);
+            Serial.WriteString("]\n");
         }
     }
 

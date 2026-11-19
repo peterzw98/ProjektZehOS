@@ -210,8 +210,34 @@ public class TcpPacket
     {
         get
         {
-            byte[] data = new byte[TcpDataLength];
-            RawData.AsSpan(DataOffset + TcpHeaderLength, data.Length).CopyTo(data);
+            int want = TcpDataLength;
+            byte[] data = new byte[want];
+            if (data.Length != want)
+            {
+                // DIAG E5-O: frisch allokiertes Array mit falscher Laenge = Heap/GC.
+                Serial.WriteString("[DIAG530] new byte[] length wrong: want=");
+                Serial.WriteNumber((ulong)want);
+                Serial.WriteString(" got=");
+                Serial.WriteNumber((ulong)data.Length);
+                Serial.WriteString("\n");
+            }
+            try
+            {
+                RawData.AsSpan(DataOffset + TcpHeaderLength, data.Length).CopyTo(data);
+            }
+            catch
+            {
+                Serial.WriteString("[DIAG530] TcpData threw: raw=");
+                Serial.WriteNumber((ulong)RawData.Length);
+                Serial.WriteString(" off=");
+                Serial.WriteNumber((ulong)(DataOffset + TcpHeaderLength));
+                Serial.WriteString(" want=");
+                Serial.WriteNumber((ulong)want);
+                Serial.WriteString(" got=");
+                Serial.WriteNumber((ulong)data.Length);
+                Serial.WriteString("\n");
+                throw;
+            }
             return data;
         }
     }
