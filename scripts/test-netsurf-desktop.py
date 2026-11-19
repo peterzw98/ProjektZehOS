@@ -229,6 +229,49 @@ def main():
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 
+        # Vorwaerts (11.5): Startseite -> Linkziel -> Zurueck -> Vorwaerts muss wieder das Linkziel zeigen.
+        click(*frame(99,209))
+        page("vor-linkziel", "d8ffd8")
+        click(*frame(10,13))
+        page("vor-zurueck", "d8ecff")
+        click(*frame(65,15))
+        page("vorwaerts", "d8ffd8")
+        click(*frame(10,13))
+        page("vor-zurueck-2", "d8ecff")
+
+        # Fehlerhaftes HTML (11.7): ungeschlossene Elemente, offenes Attribut, fehlendes Bild; die Seite muss erscheinen
+        # und der Rueckweg bedienbar bleiben.
+        click(*frame(99,294))
+        page("fehlerhaftes-html", "ffd8d8")
+        click(*frame(10,13))
+        page("nach-fehlerhaftem-html", "d8ecff")
+
+        # GIF und BMP (11.7): je 40x40 Pixel einfarbig; beide Farben muessen vollstaendig gezeichnet sein.
+        click(*frame(99,315))
+        pixels = page("bilder", "d8fff0")
+        for name, colour in (("GIF", "c00000"), ("BMP", "0000c0")):
+            assert pixels.count(bytes.fromhex(colour)) >= 1500, f"{name}-Bild ({colour}) nicht gezeichnet"
+        click(*frame(10,13))
+        page("nach-bildern", "d8ecff")
+
+        # Abbrechen (11.7): Gegenprobe zeigt, dass die langsame Seite ohne Stopp erscheint; danach Stopp waehrend des
+        # Ladens, die alte Seite bleibt stehen, der Rumpf kommt nie an und die Bedienung funktioniert weiter.
+        slow = hexcolor(pages.HTTP_SLOW)
+        address(f"{base}/langsam-gegenprobe")
+        page("langsam-gegenprobe", slow)
+        address(f"{base}/langsam-abbruch")
+        time.sleep(2)
+        click(*frame(91,15)) # Stopp
+        time.sleep(pages.SLOW_DELAY_S + 3)
+        stopped = capture("nach-abbruch")
+        assert stopped.count(bytes.fromhex(slow)) < 100, "Abgebrochene Seite ist trotzdem erschienen"
+        address("file:///pages/index.html")
+        page("nach-abbruch-lokal", "d8ecff")
+        click(*frame(99,209))
+        page("nach-abbruch-link", "d8ffd8")
+        click(*frame(10,13))
+        page("nach-abbruch-zurueck", "d8ecff")
+
         # Paketminimum 640x440 (Inhalt 638x399): NetSurf folgt der Fenstergroesse (poll_event Typ 10) und zeichnet
         # 1:1 ab 33,120; Adressleiste und Zurueck muessen sichtbar und treffbar bleiben (#78).
         def small(x, y):
@@ -284,7 +327,7 @@ def main():
         free = guest.free_memory(memory_mark)
         assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
-        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, HTTP (Seite, Weiterleitung, chunked, 404), Paketminimum 640x440 und maximiert mit Bild in Fenstergroesse (Adressleiste, Zurueck), 3 Starts/Schliessen",flush=True)
+        print("NETSURF_GUEST PASS: lokal installieren, HTML/CSS, Links/Zurueck, Reset ohne Klick, Rad/Bild ab, Fehlernavigation, Vorwaerts, fehlerhaftes HTML, GIF/BMP, HTTP (Seite, Weiterleitung, chunked, 404, Abbrechen eines langsamen Ladens), Paketminimum 640x440 und maximiert mit Bild in Fenstergroesse (Adressleiste, Zurueck), 3 Starts/Schliessen",flush=True)
         print("Textfeld/Fehlerseiten (auch HTTPS) anhand der Bildschirmfotos visuell pruefen. Freier Speicher (KiB):",free,flush=True)
         return 0
     finally:

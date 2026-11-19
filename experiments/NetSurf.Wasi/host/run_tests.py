@@ -26,6 +26,8 @@ PACKAGE = Path(__file__).resolve().parents[1] / "bin" / "package"
 START, TARGET, FORM, LONG = (0x00, 0x50, 0xa0), (0x00, 0x80, 0x00), (0x60, 0x00, 0xa0), (0xa0, 0x60, 0x00)
 LONG_BACKGROUND = (0xff, 0xf4, 0xd0)
 HTTP_PAGE, HTTP_CHUNKED, HTTP_MISSING = (0x00, 0x60, 0x60), (0x60, 0x60, 0x00), (0x80, 0x00, 0x30)
+# Langsame Seite (/langsam...): der Rumpf kommt erst nach SLOW_DELAY_S, so bleibt Zeit zum Abbrechen mit Stopp.
+HTTP_SLOW, SLOW_DELAY_S = (0x00, 0x40, 0x80), 6
 CLICK_TARGET, CLICK_LONG, CLICK_FORM, CLICK_BROKEN = (80, 209), (80, 230), (80, 251), (80, 272)
 
 
@@ -97,6 +99,9 @@ class TestServer(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path.startswith("/warte-") and self.path.endswith(".css"):
             queued_stylesheet(self)
+        elif self.path.startswith("/langsam"):
+            time.sleep(SLOW_DELAY_S)
+            self.send_page(200, page(HTTP_SLOW, "Langsame Seite"))
         elif self.path == "/viele":
             self.send_page(200, queue_page())
         elif self.path == "/seite.html":
