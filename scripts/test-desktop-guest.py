@@ -264,7 +264,8 @@ class Run:
         self.settle("arbeitsflaeche")
         width, height = guest.size
         # Nur der Bereich um Start- und Zielposition des Zeigers: andere Bildteile (Uhr, Fenster) duerfen nicht
-        # entscheiden. 10 x (15, 10) relativ endete im Vorlauf bei etwa (550, 405).
+        # entscheiden. 10 x (15, 10) relativ endete im Vorlauf bei etwa (550, 405); gilt nur bei Mausempfindlichkeit 1
+        # und einem Desktop von mindestens 640 x 480.
         box = (380, 280, 640, 480)
         pointer = lambda image: self.patch(image, box)
         guest.qmp.move(400, 300, width, height)
@@ -278,6 +279,9 @@ class Run:
         for index in range(50):
             guest.qmp.move(200 + index * 4, 200, width, height)
             relative(guest.qmp, -3, 2)
+        # PS/2 (IRQ 12) und Tablet (XHCI-Abfrageintervall) erreichen den Gast auf getrennten Wegen; ohne Pause kann der
+        # letzte relative Schritt den abschliessenden Tabletbericht ueberholen und den Zeiger um (-3, 2) versetzen.
+        time.sleep(0.5)
         guest.qmp.move(400, 300, width, height)
         self.settle("nach-mischfolge", lambda current: pointer(current) == start, 30)
         guest.shell("shutdown")
@@ -345,6 +349,9 @@ def main() -> int:
     parser.add_argument("--ps2", action="store_true", help="PS/2-Maus neben dem USB-Tablet pruefen (normales ISO)")
     parser.add_argument("--boot-timeout", type=float, default=300, help="Sekunden bis zur Bootmarke")
     args = parser.parse_args()
+    if args.ps2 and (args.recovery or args.power):
+        # --recovery und --power laufen ohne AppDisk, --ps2 braucht die Ersteinrichtung auf der Platte.
+        parser.error("--ps2 ist nicht mit --recovery oder --power kombinierbar")
     iso = args.iso.resolve()
     if not iso.is_file():
         parser.error(f"ISO nicht gefunden: {iso}")
