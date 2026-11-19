@@ -1,6 +1,7 @@
 #if ZEHOS_WASM || ZEHOS_NETWORK_TEST
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -23,6 +24,25 @@ internal static unsafe partial class WasmRuntime
 
     // Auflösung der Stopwatch in ns, mindestens 1 (clock_res_get darf nie 0 melden).
     internal static ulong ClockResolutionNs(long frequency) => frequency <= 0 ? 1 : (ulong)Math.Max(1L, 1_000_000_000L / frequency);
+
+    // Cosmos (5d0b953) liefert keine letzte Aenderungszeit: FatInodeOperations.GetAttr setzt alle Zeiten auf 0 und
+    // FatAttributes.UnpackDateTime wird nirgends aufgerufen. Deshalb meldet der Host 0 = unbekannt (12.8 P4-D).
+    private const ulong UnknownModifiedNs = 0;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_fstat")]
+    private static int HostFstat(int handle, ulong* modifiedNs)
+    {
+        try
+        {
+            if (!files.ContainsKey(handle)) return WasiErrno.BadFile;
+            *modifiedNs = UnknownModifiedNs;
+            return WasiErrno.Success;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_clock_res_ns")]
+    private static ulong HostClockResolution(int clockId) => ClockResolutionNs(Stopwatch.Frequency);
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]
     private static int HostOpen(byte* path, uint length)

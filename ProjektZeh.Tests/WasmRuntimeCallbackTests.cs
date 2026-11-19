@@ -47,6 +47,29 @@ public sealed unsafe class WasmRuntimeCallbackTests
     }
 
     [TestMethod]
+    public void HostClockResolutionIsPositiveForEveryClock()
+    {
+        for (int clock = 0; clock < 4; clock++)
+            Assert.IsTrue(((delegate* unmanaged<int, ulong>)Entry("HostClockResolution"))(clock) >= 1UL);
+    }
+
+    [TestMethod]
+    public void HostFstatReportsUnknownTimeForOpenFileAndBadFileOtherwise()
+    {
+        File.WriteAllText(Path.Combine(directory, "zeit.txt"), "x");
+        WasmRuntime.SetTestSession(new Session { RootDirectory = directory });
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes("zeit.txt");
+        int handle;
+        fixed (byte* data = bytes) handle = ((delegate* unmanaged<byte*, uint, int>)Entry("HostOpen"))(data, (uint)bytes.Length);
+        ulong modified = 123;
+        Assert.AreEqual(0, ((delegate* unmanaged<int, ulong*, int>)Entry("HostFstat"))(handle, &modified));
+        Assert.AreEqual(0UL, modified);
+        Assert.AreEqual(8, ((delegate* unmanaged<int, ulong*, int>)Entry("HostFstat"))(handle + 100, &modified), "WASI BADF");
+        ((delegate* unmanaged<int, void>)Entry("HostClose"))(handle);
+        Assert.AreEqual(8, ((delegate* unmanaged<int, ulong*, int>)Entry("HostFstat"))(handle, &modified));
+    }
+
+    [TestMethod]
     public void PresentExceptionsStayInsideBothNativeCallbacksAndReportOnlyOnce()
     {
         var session = new Session { Failure = new InvalidOperationException("present") };

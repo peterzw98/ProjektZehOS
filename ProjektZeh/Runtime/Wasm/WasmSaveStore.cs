@@ -219,6 +219,13 @@ internal sealed class WasmSaveStore
         return WasiErrno.Success;
     }
 
+    /// <summary>fd_filestat_get: Zeit je offenem Handle; Cosmos liefert keine Aenderungszeit, daher 0 = unbekannt.</summary>
+    public int Fstat(int handle, out ulong modifiedNs)
+    {
+        modifiedNs = 0;
+        return open.ContainsKey(handle) ? WasiErrno.Success : WasiErrno.BadFile;
+    }
+
     public int Sync(int handle)
     {
         if (!open.TryGetValue(handle, out var entry)) return WasiErrno.BadFile;
