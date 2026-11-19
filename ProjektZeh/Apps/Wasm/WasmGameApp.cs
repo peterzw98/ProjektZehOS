@@ -18,9 +18,12 @@ namespace ProjektZeh.Apps.Wasm;
 /// Die Paketversion bleibt bis zum Ende des Laufs gesichert, damit Entfernen oder Aktualisieren sie nicht loescht.
 /// </summary>
 /// <remarks><paramref name="log"/> erhaelt erstes Bild und Ende des Laufs, damit Gasttests darauf warten koennen.</remarks>
-/// <param name="saveRootFor">
-/// Etappe 13.4: liefert den Ordner fuer /save dieses Pakets (eigenes Konto, eingebundenes /data) oder null; nur fuer
-/// Pakete mit capability=storage gefragt.
+/// <param name="saveRootPathFor">
+/// Etappe 13.4: liefert auf der Hauptschleife den /save-Pfad dieses Pakets (eigenes Konto, eingebundenes /data) oder null;
+/// nur fuer Pakete mit capability=storage gefragt.
+/// </param>
+/// <param name="createSaveRoot">
+/// Legt auf dem Worker nach der Pruefung den Ordner an und liefert ihn oder null.
 /// </param>
 internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null,
     Func<string, string?>? saveRootPathFor = null, Func<string, string, string?>? createSaveRoot = null)
