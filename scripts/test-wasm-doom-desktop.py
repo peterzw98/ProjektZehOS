@@ -198,6 +198,9 @@ class Repository:
         self.source = f"https://10.0.2.2:{self.server.server_address[1]}/"
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(tls / "server.pem", tls / "server.key")
+        # Diagnose (#530): SSLContext liest SSLKEYLOGFILE nicht selbst, nur create_default_context.
+        if os.environ.get("SSLKEYLOGFILE"):
+            context.keylog_filename = os.environ["SSLKEYLOGFILE"]
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -267,6 +270,9 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
                  *(["-loadvm", loadvm] if loadvm else [])]
     if os.environ.get("ZEHOS_QEMU_SMP"):
         arguments.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
+    # Diagnose (#530): Mitschnitt aller Rahmen von und zum Gast, mit dem TLS-Schluessellog des Servers entschluesselbar.
+    if os.environ.get("ZEHOS_QEMU_PCAP"):
+        arguments.extend(["-object", f"filter-dump,id=dump0,netdev=net0,file={work / 'net.pcap'},maxlen=65535"])
     with (work / "stderr.log").open("w") as stderr:
         return subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=stderr)
 
