@@ -2,7 +2,7 @@
 
 [![Build and tests](https://github.com/peterzw98/ProjektZehOS/actions/workflows/ci.yml/badge.svg)](https://github.com/peterzw98/ProjektZehOS/actions/workflows/ci.yml)
 
-ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und einer kleinen Shell in unabhängigen Terminalfenstern. `sysinfo` und der Taskmanager zeigen die CPU-Topologie.
+ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und einer kleinen Shell in unabhängigen Terminalfenstern. Der Taskmanager zeigt die CPU-Topologie.
 
 ## Handbuch
 

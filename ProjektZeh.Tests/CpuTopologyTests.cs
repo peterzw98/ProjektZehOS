@@ -30,8 +30,8 @@ public sealed class CpuTopologyTests
     public void DescribeLines_ReportsSmtOnSeparateLine()
     {
         var measured = CpuTopology.FromApicIds([0, 1, 2, 3], 1, 2);
-        CollectionAssert.AreEqual(new[] { "4 CPUs, 2 Kerne", "1 Verbund, Hyperthreading ja" }, measured.DescribeLines());
-        CollectionAssert.AreEqual(new[] { "4 CPUs, Topologie unbekannt" }, CpuTopology.Flat(4).DescribeLines());
+        CollectionAssert.AreEqual(new[] { "4 CPUs, 2 Kerne", "1 Verbund", "Hyperthreading ja" }, measured.DescribeLines());
+        CollectionAssert.AreEqual(new[] { "4 CPUs", "Topologie unbekannt" }, CpuTopology.Flat(4).DescribeLines());
     }
 
     [TestMethod]

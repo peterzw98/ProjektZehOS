@@ -118,7 +118,7 @@ public sealed class Kernel : Sys.Kernel
     /// Baut die profilabhaengigen Dienste genau einmal beim Boot, vor dem ersten Zugriff im Storage-Schritt (Etappe 4.3).
     /// Reihenfolge wie frueher im Konstruktor: Updates, Konten, Pakete, dann Sitzung und Shell.
     /// </summary>
-    private void InitializeServices(SystemPaths paths)
+    private void InitializeServices(SystemPaths paths, CpuTopology topology)
     {
         systemPaths = paths;
 #if !ZEHOS_INSTALLER
@@ -152,7 +152,7 @@ public sealed class Kernel : Sys.Kernel
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
                 virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, scheduler.Topology).Sections,
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, topology).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
 #else
@@ -288,8 +288,6 @@ public sealed class Kernel : Sys.Kernel
             // Ohne Wasm-Loader liessen sich Pakete zwar installieren, aber nicht starten.
             .. packageCommands.Commands,
 #endif
-            new ShellCommand("sysinfo", "sysinfo", "Zeigt die CPU-Topologie.", false,
-                (_, output) => output.WriteLine(DescribeTopology())),
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
 #if ZEHOS_ROOT_PROFILE
@@ -332,8 +330,9 @@ public sealed class Kernel : Sys.Kernel
         systemLog.Information("Boot", cpuLine);
         // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
-        scheduler = new CosmosClassScheduler(CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text)));
-        systemLog.Information("Boot", DescribeTopology());
+        var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
+        scheduler = new CosmosClassScheduler(topology);
+        systemLog.Information("Boot", "Topologie: " + topology.Describe());
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
@@ -353,10 +352,10 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_ROOT_PROFILE
         if (StorageManager.IsEnabled && StorageManager.IsInitialized)
             layout = CosmosLayoutProfile.Select(text => systemLog.Information("Storage", text));
-        InitializeServices(layout?.Decision.Profile == PathProfile.Root ? SystemPaths.Root : SystemPaths.Legacy);
+        InitializeServices(layout?.Decision.Profile == PathProfile.Root ? SystemPaths.Root : SystemPaths.Legacy, topology);
         ApplyLayout();
 #else
-        InitializeServices(SystemPaths.Legacy);
+        InitializeServices(SystemPaths.Legacy, topology);
 #endif
         boot.RunStep("Storage", () =>
         {
@@ -655,8 +654,6 @@ public sealed class Kernel : Sys.Kernel
         systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
-
-    private string DescribeTopology() => "Topologie: " + scheduler.Topology.Describe();
 
     private string[] DescribeScheduler()
     {

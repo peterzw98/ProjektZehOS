@@ -26,7 +26,6 @@ Nach der Anmeldung lässt sich über das Startmenü oder die angeheftete Termina
 | `disk mount <Name> [--yes]` | Einzige FAT-Partition des Laufwerks unter `/data` einbinden; `sata0` (Bestand) ohne, jede andere Platte nur mit `--yes` |
 | `disk unmount` | `/data` mit Schreiben der Dateisystempuffer aushängen |
 | `version` | Versionen der geladenen ZehOS- und Cosmos-Assemblies anzeigen |
-| `sysinfo` | CPU-Topologie mit logischen CPUs, Kernen, Verbünden und Hyperthreading anzeigen. Bei fehlgeschlagener Messung wird die Topologie als unbekannt angezeigt. |
 | `uptime` | Millisekunden seit ZehOS-Start anzeigen; ohne initialisierten Timer als nicht verfügbar melden |
 | `log` | Die letzten maximal 128 Systemdiagnosen in zeitlicher Reihenfolge anzeigen |
 | `frametimes [on\|off]` | Bildzeit laufender Paket-Apps in Anteile zerlegen (App-Wanduhrzeit einschließlich Verdrängung durch den Desktop, `sleep_ms`, Bildkopie, Skalierung, Desktop, Anzeige); bei `on` je 60-s-Messfenster eine Zeile `Anteile …` im seriellen Protokoll, ohne Argument der aktuelle Stand |
