@@ -504,6 +504,9 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_STORAGE_ROOT_PROBE
         if (RunStorageRootProbeAndPowerOff()) return;
 #endif
+#if ZEHOS_STORAGE_RATE_PROBE
+        if (RunStorageRateProbeAndPowerOff()) return;
+#endif
 #if ZEHOS_WASM_PROBE
         if (!CosmosWasmProbe.Run()) { Stop(); return; }
 #endif
@@ -540,6 +543,19 @@ public sealed class Kernel : Sys.Kernel
         var power = PreparePowerAction();
         if (power.IsOK()) Sys.Power.Shutdown();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_PROBE shutdown FAIL {power.Message}\n");
+        Stop();
+        return true;
+    }
+
+#endif
+#if ZEHOS_STORAGE_RATE_PROBE
+    // scripts/test-storage-rate-guest.py wartet auf STORAGE_RATE DONE und dann auf das Gastende (Issue #542).
+    private bool RunStorageRateProbeAndPowerOff()
+    {
+        CosmosStorageRateProbe.Run();
+        var power = PreparePowerAction();
+        if (power.IsOK()) Sys.Power.Shutdown();
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"STORAGE_RATE shutdown FAIL {power.Message}\n");
         Stop();
         return true;
     }
