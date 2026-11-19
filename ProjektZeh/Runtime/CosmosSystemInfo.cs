@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using ProjektZeh.Shared;
-using System.Runtime.CompilerServices;
+using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Network;
 using ProjektZeh.Apps.TaskManager;
@@ -16,9 +16,6 @@ namespace ProjektZeh.Runtime;
 /// </summary>
 internal sealed class CosmosSystemInfo(IStorageService storage, string version)
 {
-    private const string PageAllocatorType = "Cosmos.Kernel.Core.Memory.PageAllocator, Cosmos.Kernel.Core";
-    private const ulong PageSize = 4096;
-
     public TaskManagerSection[] Sections =>
     [
         new("Datentraeger", ReadStorage),
@@ -27,14 +24,9 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
             "Grafik: " + (Cosmos.Kernel.System.Graphics.Canvas.GetFullScreen().Name ?? "unbekannt")])
     ];
 
-    // Der Seitenverwalter ist in Cosmos 3.0.94 intern; gelesen werden nur seine Zaehler.
-    public static (ulong Total, ulong Free) PhysicalMemory() => (TotalPages(null) * PageSize, FreePages(null) * PageSize);
-
-    [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "TotalPageCount")]
-    private static extern ref ulong TotalPages([UnsafeAccessorType(PageAllocatorType)] object? owner);
-
-    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_FreePageCount")]
-    private static extern ulong FreePages([UnsafeAccessorType(PageAllocatorType)] object? owner);
+    // Oeffentliche Zaehler des Seitenverwalters (Cosmos MemoryDiagnostics), einzeln gelesen: kein gemeinsamer Stand.
+    public static (ulong Total, ulong Free) PhysicalMemory() =>
+        (MemoryDiagnostics.TotalPages * MemoryDiagnostics.PageSizeBytes, MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes);
 
     public static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpace(string path) => StorageLock.Run(() => DiskSpaceStorageLocked(path));
 
