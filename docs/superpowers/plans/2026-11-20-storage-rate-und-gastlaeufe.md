@@ -122,13 +122,12 @@ Daraus folgt nur ein Verdacht, kein Beleg: Die Kosten je Befehl (VM-Exits für P
 - [ ] **Schritt 2:** Probe M, E4.0 Lauf 1 und die E5-J-Suite auf dem neuen Pin über `run-guest-suite.py`. Vergleich mit den Ausgangswerten oben.
 - [ ] **Schritt 3:** Ergebnis in `docs/COSMOS_SUPPORT.md` (Abschnitt Speicherrate) und an #542.
 
-**Abnahme (Vorschlag):**
-- l1 mindestens zehnmal schneller als 900 s.
+**Abnahme (Peter, 20.11.2026):**
+- Schreibrate im Gast mindestens zehnmal so hoch wie gemessen (gemessen ~2,3 MB/s, also mindestens ~23 MB/s; l1 höchstens 90 s). Ziel sind 100 MB/s.
 - E4.0 Lauf 1 unter 15 min.
 - E5-J-Suite in Wanduhrzeit unter 45 min.
 - Kein Integritätsfehler, `e2fsck` Ende 0 in allen Läufen.
 
 ## Offene Fragen an Peter
 
-1. Sind die Abnahmewerte oben (Faktor 10 für l1, E4.0 Lauf 1 unter 15 min, E5-J unter 45 min) die richtige Messlatte?
-2. Darf E4.0 Lauf 3/4 im Skript von laser parallelisiert werden, oder macht laser das selbst?
+1. Darf E4.0 Lauf 3/4 im Skript von laser parallelisiert werden, oder macht laser das selbst?
