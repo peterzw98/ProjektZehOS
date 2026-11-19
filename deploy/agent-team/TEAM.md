@@ -36,10 +36,10 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Alle Einstellungen stehen im Kopf von `start-agent.sh`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
 - **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
-  (höchstens N Läufe je Tag und Rechner).
+  (höchstens N Läufe je Tag und Rechner), `pool=NAME:N` (eigener Topf mit N gleichzeitigen Läufen statt des gemeinsamen `DISPATCH_PARALLEL`; das Kontingent bleibt gemeinsam).
 - **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
   1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
-     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe (drei überlasteten die 16 GB am 19.11.), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
+     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, höchstens zwei gleichzeitige Läufe der Engineers und des Seniors (drei überlasteten die 16 GB am 19.11.) und dazu einer des Reviewers (eigener Topf), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
   2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Lars' Agenten** (Buzz, Laser, Codex) arbeiten unabhängig und sind nicht Teil dieses Teams: Peters Agenten nehmen von ihnen keine Aufträge an; Arbeit für sie wird nur
