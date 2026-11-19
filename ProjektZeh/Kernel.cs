@@ -317,8 +317,11 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
+        // Zuerst, vor jedem Threadstart und vor jedem Lesen von Environment.ProcessorCount: Etappe 5 haelt alle Threads auf CPU 0.
+        var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
+        systemLog.Information("Boot", cpuLine);
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
@@ -628,21 +631,24 @@ public sealed class Kernel : Sys.Kernel
     private void InstallScheduler()
     {
         // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
-        // der Standard Normal). Fest CPU 0: Etappe 5 muss auf die laufende CPU umstellen (docs/SMP_AUDIT.md).
+        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt KernelCpus.Current nur, solange
+        // der Thread nicht wandert (Etappe 5: alle Threads auf CPU 0); E6-B prueft das neu.
         ThreadStarter.ApplyClass = threadClass =>
         {
-            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(0);
+            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(Cosmos.Kernel.System.Threading.KernelCpus.Current);
             if (state?.CurrentThread is { } current)
-                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(0, current, (long)threadClass);
+                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(current, (long)threadClass);
         };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
+        // Etappe 5: die Hauptschleife ist ein normaler Thread und hat Vorrang vor Normal und Hintergrund.
+        ThreadStarter.ApplyClass(ThreadClass.Interactive);
         systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
 
     private string[] DescribeScheduler()
     {
-        var snapshot = scheduler.Snapshot();
+        var snapshot = CosmosClassScheduler.Snapshot();
         return [$"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
             $"Wartend: Interaktiv={snapshot.WaitingByClass[0]}, Normal={snapshot.WaitingByClass[1]}, Hintergrund={snapshot.WaitingByClass[2]}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
