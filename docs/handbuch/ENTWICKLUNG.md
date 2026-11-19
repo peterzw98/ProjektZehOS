@@ -108,7 +108,7 @@ Der Kernel liest die Limine-Kommandozeile (`cmdline:` in `boot/limine/limine.con
 | `zehos.cpus=<n>` (n ≥ 1) | begrenzt die CPUs für den Wasm-Worker und den Wasm-Netzwerk-Worker auf Indizes kleiner als n |
 | `zehos.smt=off` | wird gelesen; die Filterung der Worker-CPUs folgt mit E7-D |
 
-Der Boot setzt als Erstes die Affinität des Hauptthreads und die Standardaffinität neuer Threads auf CPU 0, bevor ein Thread startet. Die beiden Wasm-Worker wechseln anschließend auf die erlaubten Online-CPUs ab Index 1. Ist keine solche CPU verfügbar, laufen sie auf CPU 0. Für einen Versuch die Zeile `cmdline: zehos.cpus=1` unter `path:` in die `limine.conf` einer Kopie des ISO schreiben (`xorriso -dev kopie.iso -boot_image any keep -map limine.conf /boot/limine/limine.conf -commit`).
+Der Boot setzt als Erstes die Affinität des Hauptthreads und die Standardaffinität neuer Threads auf CPU 0, bevor ein Thread startet. Die beiden Wasm-Worker wechseln anschließend auf die erlaubten Online-CPUs ab Index 1. Ist keine solche CPU verfügbar oder läuft der Recovery-Build, bleiben sie auf CPU 0. Für einen Versuch die Zeile `cmdline: zehos.cpus=1` unter `path:` in die `limine.conf` einer Kopie des ISO schreiben (`xorriso -dev kopie.iso -boot_image any keep -map limine.conf /boot/limine/limine.conf -commit`).
 
 ## Desktop-Dateifehler gezielt prüfen
 

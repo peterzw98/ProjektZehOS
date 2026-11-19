@@ -16,7 +16,9 @@ using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Storage;
+#if !ZEHOS_RECOVERY
 using Cosmos.Kernel.System.Threading;
+#endif
 using Cosmos.Kernel.System.Timers;
 using Sys = Cosmos.Kernel.System;
 
@@ -332,11 +334,14 @@ public sealed class Kernel : Sys.Kernel
         // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
+#if !ZEHOS_RECOVERY
+        // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.
         CosmosBootOptions.ConfigureWorkerCpus(topology);
         ThreadStarter.ApplyPlacement = placement =>
         {
             if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
         };
+#endif
         scheduler = new CosmosClassScheduler(topology);
         systemLog.Information("Boot", "Topologie: " + topology.Describe());
         var boot = new BootService(systemLog);
