@@ -123,6 +123,8 @@ Quellbefunde zu wiederholtem Parsen/Allokieren und zum Inodecache sind Hinweise 
 
 Zwei Objekte für dasselbe Inode könnten einander mit veralteten Werten überschreiben. Ein solcher Plug bräuchte eigene Gastnachweise und eine Entscheidung von Peter. Ein vorab dimensionierter Cache ist per `UnsafeAccessor` nicht erreichbar, weil der Zugriff auf das generische Dictionary mit internem Typargument im Gast `NotSupportedException` warf (vgl. `CosmosExt2FreeInodePlug`).
 
+**Nachtrag 19. November 2026:** Cosmos #427 (Pin `3.0.97-zehos.6`) dimensioniert den Cache beim Mount vorab (etwa 75.000 Inodes je Mount); Belege und offener Befund (E4.0 Lauf 1, Schritt l2) in [COSMOS_SUPPORT.md](COSMOS_SUPPORT.md). Die Aussage "per `UnsafeAccessor` nicht erreichbar" oben bleibt für 3.0.97 ohne Patch richtig.
+
 ### Produktgrenze 8189
 
 [PR #211](https://github.com/peterzw98/ProjektZehOS/pull/211) setzt `FileService.MaximumExt2DirectoryEntries` auf **8189 direkte Kinder** je beschreibbarem ext2-Verzeichnis. Cosmos `ParseDirectory` betrachtet höchstens 8192 Records einschließlich `.` und `..`; der verbleibende Platz ist nötig, weil Rename zunächst den neuen Namen anlegt. Lauf 9 meldete bei 8190 Kindern eine erfolgreiche Umbenennung, nach der Cosmos in derselben Sitzung weder alten noch neuen Namen sah, obwohl `debugfs` den korrekten Platteneintrag zeigte.
