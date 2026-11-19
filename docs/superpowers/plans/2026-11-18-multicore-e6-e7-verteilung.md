@@ -55,14 +55,16 @@ Threadgruppe ist behoben, bevor die Gruppe freigegeben wird.
 **Dateien:**
 - Anlegen: `ProjektZeh/Scheduling/CosmosCpuTopologyReader.cs`
 - Ändern: `ProjektZeh/Scheduling/CpuTopology.cs` (Methode `Describe`), Test in `ProjektZeh.Tests/CpuTopologyTests.cs`
-- Ändern: `ProjektZeh/Kernel.cs` (Aufruf nach `CosmosBootOptions.Apply()`, Übergabe an `CosmosClassScheduler`), `ProjektZeh/Runtime/CosmosSystemInfo.cs` (Zeile für `sysinfo`)
+- Ändern: `ProjektZeh/Kernel.cs` (Aufruf nach `CosmosBootOptions.Apply()`, Übergabe an `CosmosClassScheduler`), `ProjektZeh/Runtime/CosmosSystemInfo.cs` (Zeile in der Systeminfo des Taskmanagers; einen Shell-Befehl `sysinfo` gibt es nicht und er entsteht nicht)
 
 **Schnittstellen (liefert):**
 
 ```csharp
 internal sealed class CpuTopology
 {
-    /// "4 CPUs, 2 Kerne, 1 Verbund, Hyperthreading ja"
+    /// true nur aus FromApicIds (gemessen); Flat ist Rückfall oder Annahme.
+    public bool Measured { get; }
+    /// "4 CPUs, 2 Kerne, 1 Verbund, Hyperthreading ja"; ist Measured false: "4 CPUs, Topologie unbekannt"
     public string Describe();
 }
 
@@ -82,8 +84,10 @@ sonst `LocalApic.GetId()`. Auf den Thread warten (`Join` mit 2 s Zeitlimit; Zeit
 Verschiebungen kommen einmal von `CpuTopologyDecoder.ReadShifts(X86Base.CpuId)`. Ergebnis:
 `CpuTopology.FromApicIds(ids, smtShift, packageShift)`.
 
-- [ ] **Schritt 1: Test** `Describe_TwoCoresTwoThreads`: `FromApicIds([0,1,2,3], 1, 2).Describe()` ist `"4 CPUs, 2 Kerne, 1 Verbund, Hyperthreading ja"`; `Flat(1).Describe()` ist `"1 CPU, 1 Kern, 1 Verbund, Hyperthreading nein"`. Schlägt fehl, dann umsetzen.
-- [ ] **Schritt 2:** `CosmosCpuTopologyReader` schreiben, in `Kernel.cs` aufrufen, Ergebnis ins Systemprotokoll (`Topologie: <Describe()>`) und in `sysinfo`.
+**Bevorzugte Variante, falls Cosmos sie anbietet (Entscheidung Koordinator 19.11.):** Limine liefert die LAPIC-ID jeder CPU (`Limine.Mp`, `LimineMpResponseX64.Cpus[i]->LapicId`), und Cosmos vergibt die Indizes aus dieser Liste (Upstream `44952133` `Smp.cs:225-246`). Mit einem öffentlichen Zugriff `KernelCpus.HardwareId(index)`, einem kleinen Cosmos-Patch als Vorschlag an den E5-A-Besitzer, entfallen Thread, Affinität und Zeitlimit je CPU. ZehOS bildet die Indexvergabe nicht selbst nach. Bis der Zugriff existiert, gilt der Weg oben.
+
+- [ ] **Schritt 1: Test** `Describe_TwoCoresTwoThreads`: `FromApicIds([0,1,2,3], 1, 2).Describe()` ist `"4 CPUs, 2 Kerne, 1 Verbund, Hyperthreading ja"`; `FromApicIds([0], 0, CpuTopologyDecoder.SinglePackage).Describe()` ist `"1 CPU, 1 Kern, 1 Verbund, Hyperthreading nein"`; `Flat(4).Describe()` ist `"4 CPUs, Topologie unbekannt"` (ein Rückfall behauptet kein gemessenes „nein“). Dazu `FromApicIds_DuplicateIds_Rejected`: doppelte APIC-IDs werfen (sonst legt `DenseIndex` sie zu einem Kern zusammen und meldet falsch „Hyperthreading ja“); der Leser fällt dann mit Warnung auf `Flat` zurück. Schlägt fehl, dann umsetzen.
+- [ ] **Schritt 2:** `CosmosCpuTopologyReader` schreiben, in `Kernel.cs` aufrufen, Ergebnis ins Systemprotokoll (Bootzeile `Topologie: <Describe()>`) und in die Systeminfo des Taskmanagers (`CosmosSystemInfo`). Die Abnahme gilt für beide Oberflächen.
 - [ ] **Schritt 3:** Hosttests, nativer Build.
 - [ ] **Schritt 4: Gast (Clerk):** `python3 scripts/test-desktop-guest.py --iso <ISO> --accel kvm` je mit `ZEHOS_QEMU_SMP` = leer, `4`, `4,cores=2,threads=2`, `8,cores=4,threads=2`. Erwartet im seriellen Log: `Topologie: 1 CPU, 1 Kern, …`, `4 CPUs, 4 Kerne, … nein`, `4 CPUs, 2 Kerne, … ja`, `8 CPUs, 4 Kerne, … ja`. Dasselbe mit `--accel tcg`.
 - [ ] **Schritt 5:** Commit (`feat(scheduling): CPU-Topologie beim Boot lesen`), Review, PR.
