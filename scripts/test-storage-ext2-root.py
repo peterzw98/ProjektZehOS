@@ -52,8 +52,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 16):
-        raise ValueError(f"Lauf ausserhalb 1..15: {run}")
+    if run not in range(1, 17):
+        raise ValueError(f"Lauf ausserhalb 1..16: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
