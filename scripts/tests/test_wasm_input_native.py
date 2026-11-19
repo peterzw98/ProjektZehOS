@@ -4,6 +4,7 @@ import ctypes
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -135,6 +136,47 @@ def wasi_module(name, params, args, data=b"", read_back=None):
             + section(7, b"\x01" + string("run") + b"\x00\x01")
             + section(10, b"\x01" + leb(len(code)) + code)
             + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
+
+
+def poll_module(subs, count=None, open_first=False, in_pointer=128, out_pointer=4096, nevents=8192):
+    # run ruft poll_oneoff auf (optional nach path_open von asset.txt -> fd 5) und liefert
+    # errno | nevents << 8 | Fehler des ersten Ereignisses << 16 | (nbytes & 0xff) << 24.
+    def const(value):
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    count = len(subs) // 48 if count is None else count
+    code = b"\x01\x01\x7f"
+    if open_first:
+        code += b"\x41\x03\x41\x00\x41\x10\x41\x09\x41\x00\x42\x00\x42\x00\x41\x00\x41\xc0\x00\x10\x01\x1a"
+    code += const(in_pointer) + const(out_pointer) + const(count) + const(nevents) + b"\x10\x00\x21\x00"
+    code += b"\x20\x00" + const(nevents) + b"\x28\x02\x00" + const(256) + b"\x6c\x6a"
+    code += const(out_pointer + 8) + b"\x2f\x01\x00" + const(65536) + b"\x6c\x6a"
+    code += const(out_pointer + 16) + b"\x2d\x00\x00" + const(1 << 24) + b"\x6c\x6a\x0b"
+    run = 2 if open_first else 1
+    imports = [("poll_oneoff", 0)] + ([("path_open", 2)] if open_first else [])
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x03\x60\x04" + b"\x7f" * 4 + b"\x01\x7f\x60\x00\x01\x7f"
+                      + b"\x60\x09" + b"\x7f" * 5 + b"\x7e\x7e\x7f\x7f\x01\x7f")
+            + section(2, bytes([len(imports)]) + b"".join(
+                string("wasi_snapshot_preview1") + string(name) + b"\x00" + bytes([kind]) for name, kind in imports))
+            + section(3, b"\x01\x01") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00" + bytes([run]))
+            + section(10, b"\x01" + leb(len(code)) + code)
+            + section(11, b"\x02\x00" + const(16) + b"\x0b" + leb(9) + b"asset.txt"
+                      + b"\x00" + const(128) + b"\x0b" + leb(len(subs)) + subs))
+
+
+def clock_sub(milliseconds, clock=1, absolute=False, userdata=9, base_ns=0):
+    # Abo-Layout (48 Byte): userdata u64, tag u8 @8, Uhr u32 @16, timeout u64 @24, precision u64 @32, flags u16 @40.
+    return struct.pack("<QB7xIxxxxQQHxxxxxx", userdata, 0, clock, base_ns + milliseconds * 1000000, 0, 1 if absolute else 0)
+
+
+def fd_sub(fd, tag, userdata=5):
+    return struct.pack("<QB7xI", userdata, tag, fd).ljust(48, b"\0")
+
+
+def decode_poll(value):
+    value &= 0xffffffff
+    return value & 255, (value >> 8) & 255, (value >> 16) & 255, value >> 24
 
 
 class NativeInputTests(unittest.TestCase):
@@ -379,6 +421,80 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 9, 64, 0, 0, 512), b"w.cw", read_back=512), 5)
         self.assertEqual(self.lib.save_test_flags(), 25)
         self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 0x10, 64, 0, 0, 512), b"w.cw"), 28, "unbekanntes oflag")
+
+    # Etappe 12.8 (P4-C): poll_oneoff
+    def poll(self, subs, exit_after=-1, **kwargs):
+        self.lib.poll_test_reset(exit_after)
+        self.lib.file_test_reset()
+        status, value, message = self.execute(poll_module(subs, **kwargs))
+        self.assertEqual(status, 0, message)
+        return decode_poll(value)
+
+    def test_poll_clock_relative_sleeps_and_reports_event(self):
+        errno, events, error, _ = self.poll(clock_sub(25))
+        self.assertEqual((errno, events, error), (0, 1, 0))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 25)
+        self.assertEqual(self.lib.poll_test_sleeps(), 3)
+        self.assertLessEqual(self.lib.poll_test_sleep_max_ms(), 10)
+
+    def test_poll_clock_abstime(self):
+        now = 1000000000000
+        errno, events, _, _ = self.poll(clock_sub(15, absolute=True, base_ns=now))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 15)
+        # Ein bereits verstrichener Zeitpunkt wartet nicht.
+        errno, events, _, _ = self.poll(clock_sub(0, absolute=True, base_ns=now - 1))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_fd_ready_does_not_sleep(self):
+        errno, events, error, nbytes = self.poll(fd_sub(5, 1) + clock_sub(10000, userdata=7), open_first=True)
+        self.assertEqual((errno, events, error, nbytes), (0, 1, 0, 7))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+        for fd, tag in ((1, 2), (2, 2)):
+            errno, events, error, nbytes = self.poll(fd_sub(fd, tag))
+            self.assertEqual((errno, events, error, nbytes), (0, 1, 0, 0))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_unknown_fd_reports_ebadf_event(self):
+        for fd in (0, 3, 77, 0xffffffff):
+            with self.subTest(fd=fd):
+                errno, events, error, _ = self.poll(fd_sub(fd, 1))
+                self.assertEqual((errno, events, error), (0, 1, 8))
+                self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_invalid_clock_reports_einval_event(self):
+        errno, events, error, _ = self.poll(clock_sub(10, clock=9))
+        self.assertEqual((errno, events, error), (0, 1, 28))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_zero_subscriptions_is_einval(self):
+        self.assertEqual(self.poll(clock_sub(1), count=0)[0], 28)
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_65_subscriptions_is_einval(self):
+        self.assertEqual(self.poll(fd_sub(1, 2) * 65)[0], 28)
+        self.assertEqual(self.poll(fd_sub(1, 2) * 64)[:2], (0, 64))
+
+    def test_poll_should_exit_returns_within_10ms(self):
+        errno, events, _, _ = self.poll(clock_sub(3600000), exit_after=1)
+        self.assertEqual((errno, events), (0, 0))
+        self.assertEqual(self.lib.poll_test_sleeps(), 1)
+        self.assertLessEqual(self.lib.poll_test_sleep_max_ms(), 10)
+
+    def test_poll_long_sleep_is_not_capped(self):
+        errno, events, _, _ = self.poll(clock_sub(5000))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 5000)
+
+    def test_poll_traps_before_host_when_guest_memory_is_invalid(self):
+        for kwargs in ({"in_pointer": 65500}, {"out_pointer": 65530}, {"nevents": 65534}):
+            with self.subTest(kwargs=kwargs):
+                self.lib.poll_test_reset(-1)
+                status, _, message = self.execute(poll_module(clock_sub(50), **kwargs))
+                self.assertEqual(status, 5, message)
+                self.assertIn("out of bounds", message.lower())
+                self.assertEqual(self.lib.poll_test_sleeps(), 0)
 
 
 if __name__ == "__main__":

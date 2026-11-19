@@ -779,6 +779,106 @@ uint32_t zehos_host_badf(zehos_host_call* call)
     return WASI_EBADF;
 }
 
+// poll_oneoff (Etappe 12.8): Abo 48 Byte (userdata u64, tag u8 @8, Union @16), Ereignis 32 Byte (userdata u64, error u16 @8, type u8 @10,
+// nbytes u64 @16, flags u16 @24). Uhren schlafen in Scheiben von hoechstens 10 ms, damit should_exit zeitnah greift; eine Obergrenze fuer
+// die Gesamtdauer gibt es nicht (wasi-libc ruft nanosleep als ein einziges poll_oneoff auf und prueft die Ereigniszahl nicht).
+enum { POLL_MAXIMUM = 64, POLL_SLICE_MS = 10, POLL_CLOCK = 0, POLL_FD_READ = 1, POLL_FD_WRITE = 2 };
+
+typedef struct { uint64_t userdata; uint64_t deadline; uint8_t tag; uint8_t clock; } poll_clock;
+typedef struct { uint64_t userdata; uint64_t nbytes; uint16_t error; uint8_t tag; } poll_event;
+
+static void poll_store(uint8_t* target, const poll_event* event)
+{
+    memset(target, 0, 32);
+    memcpy(target, &event->userdata, 8);
+    memcpy(target + 8, &event->error, 2);
+    target[10] = event->tag;
+    memcpy(target + 16, &event->nbytes, 8);
+}
+
+uint32_t zehos_host_poll_oneoff(zehos_host_call* call, uint32_t subscriptions, uint32_t events, uint32_t count, uint32_t written)
+{
+    if (!guest_range(call, written, 4)) return 0;
+    if (count == 0 || count > POLL_MAXIMUM) return WASI_EINVAL;
+    if (!guest_range(call, subscriptions, (uint64_t)count * 48)) return 0;
+    if (!guest_range(call, events, (uint64_t)count * 32)) return 0;
+
+    // Eingabe und Ausgabe duerfen sich ueberlappen: erst alle Abos lesen, dann Ereignisse sammeln, zuletzt schreiben.
+    poll_clock clocks[POLL_MAXIMUM];
+    poll_event ready[POLL_MAXIMUM];
+    uint32_t clockCount = 0, readyCount = 0;
+    for (uint32_t index = 0; index < count; index++)
+    {
+        const uint8_t* entry = call->memory + subscriptions + (size_t)index * 48;
+        uint64_t userdata;
+        memcpy(&userdata, entry, 8);
+        uint8_t tag = entry[8];
+        if (tag == POLL_CLOCK)
+        {
+            uint32_t clock;
+            uint64_t timeout;
+            uint16_t flags;
+            memcpy(&clock, entry + 16, 4);
+            memcpy(&timeout, entry + 24, 8);
+            memcpy(&flags, entry + 40, 2);
+            if (clock > 3) { ready[readyCount++] = (poll_event){ userdata, 0, WASI_EINVAL, tag }; continue; }
+            uint64_t deadline = timeout;
+            if (!(flags & 1))
+            {
+                uint64_t now = zehos_wasm_host_time_ns((int32_t)clock);
+                deadline = timeout > UINT64_MAX - now ? UINT64_MAX : now + timeout;
+            }
+            clocks[clockCount++] = (poll_clock){ userdata, deadline, tag, (uint8_t)clock };
+        }
+        else if (tag == POLL_FD_READ || tag == POLL_FD_WRITE)
+        {
+            uint32_t fd;
+            memcpy(&fd, entry + 16, 4);
+            poll_event event = { userdata, 0, 0, tag };
+            if (fd == 1 || fd == 2) { /* sofort bereit, nichts zu lesen */ }
+            else
+            {
+                const zehos_wasm_file* file = fd <= INT32_MAX ? file_of(call->context, (int32_t)fd) : NULL;
+                if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY) event.error = WASI_EBADF;
+                else if (tag == POLL_FD_READ)
+                {
+                    uint64_t size = file_size(file);
+                    event.nbytes = size > file->position ? size - file->position : 0;
+                }
+            }
+            ready[readyCount++] = event;
+        }
+        else ready[readyCount++] = (poll_event){ userdata, 0, WASI_EINVAL, tag };
+    }
+
+    // Nur Uhren: schlafen, bis eine verstrichen ist; fd- und Fehlerereignisse sind schon bereit und warten nie.
+    int stopped = 0;
+    while (readyCount == 0 && clockCount > 0 && !stopped)
+    {
+        uint64_t shortest = UINT64_MAX;
+        for (uint32_t index = 0; index < clockCount; index++)
+        {
+            uint64_t now = zehos_wasm_host_time_ns(clocks[index].clock);
+            uint64_t remaining = clocks[index].deadline > now ? clocks[index].deadline - now : 0;
+            if (remaining < shortest) shortest = remaining;
+        }
+        if (shortest > 0)
+        {
+            uint64_t milliseconds = shortest / 1000000 + (shortest % 1000000 != 0);
+            zehos_wasm_host_sleep_ms((uint32_t)(milliseconds < POLL_SLICE_MS ? milliseconds : POLL_SLICE_MS));
+            if (zehos_wasm_host_should_exit()) { stopped = 1; break; }
+        }
+        for (uint32_t index = 0; index < clockCount; index++)
+            if (clocks[index].deadline <= zehos_wasm_host_time_ns(clocks[index].clock))
+                ready[readyCount++] = (poll_event){ clocks[index].userdata, 0, 0, clocks[index].tag };
+    }
+    if (stopped) readyCount = 0;
+    // Uhren, die gleichzeitig mit fd-Ereignissen verstrichen sind, melden erst der naechste Aufruf.
+    for (uint32_t index = 0; index < readyCount; index++) poll_store(call->memory + events + (size_t)index * 32, &ready[index]);
+    memcpy(call->memory + written, &readyCount, 4);
+    return WASI_SUCCESS;
+}
+
 uint32_t zehos_host_nosys(zehos_host_call* call)
 {
     (void)call;
