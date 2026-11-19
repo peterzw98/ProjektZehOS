@@ -23,8 +23,9 @@ enum
 
 enum { ZEHOS_HOST_MAXIMUM_FILES = 16 };
 
-// kind: Paketdatei (nur lesend), Datei oder Ordner im App-Speicher /save (Etappe 13.4). Rechte gelten je fd.
-enum { ZEHOS_FILE_PACKAGE = 0, ZEHOS_FILE_SAVE = 1, ZEHOS_FILE_SAVE_DIRECTORY = 2 };
+// kind: Paketdatei (nur lesend), Datei oder Ordner im App-Speicher /save (Etappe 13.4), Ordner im Paket (12.8 P4-B,
+// nur lesend; handle ist das Ordner-Handle des C#-Teils). Rechte gelten je fd.
+enum { ZEHOS_FILE_PACKAGE = 0, ZEHOS_FILE_SAVE = 1, ZEHOS_FILE_SAVE_DIRECTORY = 2, ZEHOS_FILE_PACKAGE_DIRECTORY = 3 };
 
 typedef struct { int32_t handle; uint64_t position; uint64_t size; uint8_t kind; uint8_t writable; uint8_t append; } zehos_wasm_file;
 

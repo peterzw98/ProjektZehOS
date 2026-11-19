@@ -35,6 +35,12 @@ extern int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, u
 extern int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32_t length);
 extern int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength);
 extern int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used);
+// Paketordner (12.8 P4-B): Rueckgaben sind WASI-Fehlernummern; dirHandle -1 ist die Paketwurzel.
+extern int32_t zehos_wasm_host_package_opendir(int32_t dirHandle, const uint8_t* path, uint32_t length, int32_t* handle);
+extern int32_t zehos_wasm_host_package_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used);
+extern void zehos_wasm_host_package_closedir(int32_t handle);
+extern int32_t zehos_wasm_host_package_openat(int32_t dirHandle, const uint8_t* path, uint32_t length, int32_t* handle, uint64_t* size);
+extern int32_t zehos_wasm_host_package_statat(int32_t dirHandle, const uint8_t* path, uint32_t length, uint8_t* type, uint64_t* size);
 // zehos_v1: Bild, Zeit und Eingabe fuer Anwendungen mit eigener Darstellung.
 extern void zehos_wasm_host_present(const uint32_t* pixels, int32_t width, int32_t height, int32_t tic, int32_t test);
 extern void zehos_wasm_host_present_indexed(const uint8_t* indices, const uint32_t* palette, int32_t width, int32_t height, int32_t tic);
@@ -56,7 +62,7 @@ extern int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uin
 enum
 {
     WASI_SUCCESS = 0, WASI_EACCES = 2, WASI_EBADF = 8, WASI_EINVAL = 28, WASI_EIO = 29,
-    WASI_EMFILE = 33, WASI_ENOENT = 44, WASI_ENOSYS = 52, WASI_ENOTCAPABLE = 76
+    WASI_EISDIR = 31, WASI_EMFILE = 33, WASI_ENOENT = 44, WASI_ENOSYS = 52, WASI_ENOTCAPABLE = 76
 };
 
 // fd 3 ist das Paket ("/", nur lesend), fd 4 der App-Speicher ("/save", nur mit Freigabe); geoeffnete Dateien belegen
@@ -83,6 +89,7 @@ void zehos_host_context_close_files(zehos_wasm_context* context)
         zehos_wasm_file* file = &context->files[index];
         if (file->handle < 0) continue;
         if (file->kind == ZEHOS_FILE_PACKAGE) zehos_wasm_host_close(file->handle);
+        else if (file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) zehos_wasm_host_package_closedir(file->handle);
         else (void)zehos_wasm_host_save_close(file->handle);
         file->handle = -1;
     }
@@ -101,6 +108,16 @@ static zehos_wasm_file* file_of(zehos_wasm_context* context, int32_t fd)
     if (fd < FIRST_FILE_FD || fd >= FIRST_FILE_FD + MAXIMUM_FILES) return NULL;
     zehos_wasm_file* file = &context->files[fd - FIRST_FILE_FD];
     return file->handle >= 0 ? file : NULL;
+}
+
+// Ordner im Paket: Handle des C#-Teils fuer fd 3 (Wurzel, -1) oder einen offenen Paketordner; sonst 0.
+static int package_dir_handle(zehos_wasm_context* context, int32_t fd, int32_t* handle)
+{
+    if (fd == PREOPEN_FD) { *handle = -1; return 1; }
+    zehos_wasm_file* file = file_of(context, fd);
+    if (file == NULL || file->kind != ZEHOS_FILE_PACKAGE_DIRECTORY) return 0;
+    *handle = file->handle;
+    return 1;
 }
 
 // [offset, offset + length) liegt im linearen Speicher; als Differenz gerechnet, damit nichts ueberlaeuft.
@@ -259,15 +276,16 @@ uint32_t zehos_host_fd_fdstat_get(zehos_host_call* call, int32_t fd, uint32_t st
 {
     if (!guest_range(call, stat, 24)) return 0;
     uint8_t type;
-    int writable = 0;
+    int writable = 0, directory = 0;
     uint16_t flags = 0;
     zehos_wasm_file* file = file_of(call->context, fd);
     if (fd >= 0 && fd <= 2) type = 2;
-    else if (fd == PREOPEN_FD) type = 3;
+    else if (fd == PREOPEN_FD) { type = 3; directory = 1; }
     else if (fd == SAVE_FD && save_open()) { type = 3; writable = 1; }
     else if (file != NULL)
     {
-        type = file->kind == ZEHOS_FILE_SAVE_DIRECTORY ? 3 : 4;
+        directory = file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY;
+        type = directory || file->kind == ZEHOS_FILE_SAVE_DIRECTORY ? 3 : 4;
         writable = file->writable || file->kind == ZEHOS_FILE_SAVE_DIRECTORY;
         if (file->append) flags = 1;
     }
@@ -280,6 +298,7 @@ uint32_t zehos_host_fd_fdstat_get(zehos_host_call* call, int32_t fd, uint32_t st
     // zusaetzlich alle Schreib- und Ordnerrechte (0..29), die tatsaechliche Pruefung erfolgt je Aufruf.
     uint64_t rights = writable ? (1ull << 30) - 1 :
         (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 13) | (1ull << 15) | (1ull << 18) | (1ull << 21);
+    if (directory) rights |= 1ull << 14; // fd_readdir auf fd 3 und Paketordnern; fd 4 meldet es ueber alle Schreibrechte
     memcpy(target + 8, &rights, 8);
     memcpy(target + 16, &rights, 8);
     return WASI_SUCCESS;
@@ -346,13 +365,22 @@ uint32_t zehos_host_path_filestat_get(zehos_host_call* call, int32_t dirFd, uint
     if (!guest_range(call, stat, 64)) return 0;
     if (!guest_range(call, path, pathLength)) return 0;
     int save = dirFd == SAVE_FD && save_open();
-    if (dirFd != PREOPEN_FD && !save) return WASI_EBADF;
+    int32_t directory = -1;
+    int relative = dirFd != PREOPEN_FD && package_dir_handle(call->context, dirFd, &directory);
+    if (dirFd != PREOPEN_FD && !save && !relative) return WASI_EBADF;
     if ((lookupFlags & ~1u) != 0) return WASI_EINVAL;
     const uint8_t* name = call->memory + path;
     if (!is_safe_path(name, pathLength)) return WASI_EACCES;
     uint64_t size = 0;
     int32_t type = 0;
-    int32_t error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type) : zehos_wasm_host_stat(name, pathLength, &size, &type);
+    int32_t error;
+    if (relative)
+    {
+        uint8_t kind = 0;
+        error = zehos_wasm_host_package_statat(directory, name, pathLength, &kind, &size);
+        type = kind;
+    }
+    else error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type) : zehos_wasm_host_stat(name, pathLength, &size, &type);
     if (error != WASI_SUCCESS) return (uint32_t)error;
     uint8_t* target = call->memory + stat;
     memset(target, 0, 64);
@@ -428,19 +456,49 @@ uint32_t zehos_host_path_open(zehos_host_call* call, int32_t dirFd, uint32_t loo
     if (!guest_range(call, path, pathLength)) return 0;
     if (dirFd == SAVE_FD && save_open())
         return save_path_open(call, call->memory + path, pathLength, openFlags, rightsBase, fdFlags, openedFd);
-    if (dirFd != PREOPEN_FD) return WASI_EBADF;
-    // Anlegen, Leeren, Ordner und jede Schreib- oder Anhaengeabsicht sind in diesem Profil gesperrt.
+    int32_t directory = -1;
+    if (!package_dir_handle(call->context, dirFd, &directory)) return WASI_EBADF;
+    // Anlegen, Leeren, Exklusiv und jede Schreib- oder Anhaengeabsicht sind in diesem Profil gesperrt; erlaubt sind nur
+    // ein Ordner (genau O_DIRECTORY) oder eine Datei (keine oflags).
     const uint64_t writeRights = (1ull << 4) | (1ull << 6) | (1ull << 7) | (1ull << 9) | (1ull << 10) | (1ull << 22);
-    if ((openFlags & 0xF) != 0 || (rightsBase & writeRights) != 0 || (fdFlags & 0x1F & ~0x4) != 0) return WASI_ENOTCAPABLE;
+    if ((openFlags != 0 && openFlags != 2) || (rightsBase & writeRights) != 0 || (fdFlags & 0x1F & ~0x4) != 0) return WASI_ENOTCAPABLE;
     const uint8_t* name = call->memory + path;
     if (!is_safe_path(name, pathLength)) return WASI_EACCES;
     zehos_wasm_context* context = call->context;
     int32_t slot = free_slot(context);
     if (slot < 0) return WASI_EMFILE;
-    int32_t handle = zehos_wasm_host_open(name, pathLength);
-    if (handle < 0) return WASI_ENOENT;
-    int64_t size = zehos_wasm_host_file_size(handle);
-    if (size < 0) { zehos_wasm_host_close(handle); return WASI_EIO; }
+    if (openFlags == 2)
+    {
+        int32_t opened = -1;
+        int32_t error = zehos_wasm_host_package_opendir(directory, name, pathLength, &opened);
+        if (error != WASI_SUCCESS) return (uint32_t)error;
+        context->files[slot].handle = opened;
+        context->files[slot].position = 0;
+        context->files[slot].size = 0;
+        context->files[slot].kind = ZEHOS_FILE_PACKAGE_DIRECTORY;
+        context->files[slot].writable = 0;
+        context->files[slot].append = 0;
+        uint32_t fd = (uint32_t)(FIRST_FILE_FD + slot);
+        memcpy(call->memory + openedFd, &fd, 4);
+        return WASI_SUCCESS;
+    }
+    int32_t handle;
+    int64_t size;
+    if (dirFd == PREOPEN_FD)
+    {
+        handle = zehos_wasm_host_open(name, pathLength);
+        if (handle < 0) return WASI_ENOENT;
+        size = zehos_wasm_host_file_size(handle);
+        if (size < 0) { zehos_wasm_host_close(handle); return WASI_EIO; }
+    }
+    else
+    {
+        uint64_t bytes = 0;
+        handle = -1;
+        int32_t error = zehos_wasm_host_package_openat(directory, name, pathLength, &handle, &bytes);
+        if (error != WASI_SUCCESS) return (uint32_t)error;
+        size = (int64_t)bytes;
+    }
     context->files[slot].handle = handle;
     context->files[slot].position = 0;
     context->files[slot].size = (uint64_t)size;
@@ -493,6 +551,7 @@ uint32_t zehos_host_fd_read(zehos_host_call* call, int32_t fd, uint32_t iovs, ui
     if (!guest_range(call, readBytes, 4)) return 0;
     zehos_wasm_file* file = file_of(call->context, fd);
     if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY) return WASI_EBADF;
+    if (file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) return WASI_EISDIR;
     uint32_t total;
     uint32_t error = read_vectors(call, file, iovs, count, file->position, &total);
     if (error == WASI_SUCCESS) file->position += total;
@@ -506,6 +565,7 @@ uint32_t zehos_host_fd_pread(zehos_host_call* call, int32_t fd, uint32_t iovs, u
     if (!guest_range(call, readBytes, 4)) return 0;
     zehos_wasm_file* file = file_of(call->context, fd);
     if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY) return WASI_EBADF;
+    if (file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) return WASI_EISDIR;
     uint32_t total;
     uint32_t error = read_vectors(call, file, iovs, count, offset, &total);
     memcpy(call->memory + readBytes, &total, 4);
@@ -517,6 +577,7 @@ uint32_t zehos_host_fd_seek(zehos_host_call* call, int32_t fd, int64_t offset, u
     if (!guest_range(call, newOffset, 8)) return 0;
     zehos_wasm_file* file = file_of(call->context, fd);
     if (file == NULL) return WASI_EBADF;
+    if (file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) return WASI_EISDIR;
     int64_t base;
     if (whence == 0) base = 0;
     else if (whence == 1) base = (int64_t)file->position;
@@ -544,8 +605,9 @@ uint32_t zehos_host_fd_filestat_get(zehos_host_call* call, int32_t fd, uint32_t 
     if (file == NULL && fd != PREOPEN_FD && !(fd == SAVE_FD && save_open())) return WASI_EBADF;
     uint8_t* target = call->memory + stat;
     memset(target, 0, 64);
-    target[16] = file != NULL && file->kind != ZEHOS_FILE_SAVE_DIRECTORY ? 4 : 3;
-    if (file != NULL && file->kind != ZEHOS_FILE_SAVE_DIRECTORY)
+    int directory = file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY || file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY;
+    target[16] = directory ? 3 : 4;
+    if (!directory)
     {
         uint64_t size = file_size(file);
         memcpy(target + 32, &size, 8);
@@ -560,6 +622,7 @@ uint32_t zehos_host_fd_close(zehos_host_call* call, int32_t fd)
     // Im App-Speicher schreibt Close den Inhalt; ein Fehler (ENOSPC, EBUSY ...) wird gemeldet, der fd ist trotzdem frei.
     int32_t error = WASI_SUCCESS;
     if (file->kind == ZEHOS_FILE_PACKAGE) zehos_wasm_host_close(file->handle);
+    else if (file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) zehos_wasm_host_package_closedir(file->handle); // nie save_close
     else error = zehos_wasm_host_save_close(file->handle);
     file->handle = -1;
     return (uint32_t)error;
@@ -717,10 +780,36 @@ uint32_t zehos_host_fd_readdir(zehos_host_call* call, int32_t fd, uint32_t buffe
 {
     if (!guest_range(call, used, 4)) return 0;
     if (!guest_range(call, buffer, length)) return 0;
-    zehos_wasm_file* file = file_of(call->context, fd);
-    if (file == NULL || file->kind != ZEHOS_FILE_SAVE_DIRECTORY) return WASI_EBADF;
     uint32_t count = 0;
-    int32_t error = zehos_wasm_host_save_readdir(file->handle, call->memory + buffer, length, cookie, &count);
+    int32_t error;
+    zehos_wasm_file* file = file_of(call->context, fd);
+    if (fd == PREOPEN_FD || fd == SAVE_FD)
+    {
+        // Die Preopens sind keine Handles: je Aufruf den Ordner "." oeffnen, ab cookie lesen und wieder schliessen.
+        // Der Handle zaehlt nur waehrend des Aufrufs gegen die Grenze; scheitert das Oeffnen, meldet es den Fehler.
+        int32_t handle = -1;
+        static const uint8_t dot = '.';
+        if (fd == SAVE_FD)
+        {
+            if (!save_open()) return WASI_EBADF;
+            error = zehos_wasm_host_save_open(&dot, 1, SAVE_DIRECTORY, &handle);
+            if (error != WASI_SUCCESS) return (uint32_t)error;
+            error = zehos_wasm_host_save_readdir(handle, call->memory + buffer, length, cookie, &count);
+            (void)zehos_wasm_host_save_close(handle);
+        }
+        else
+        {
+            error = zehos_wasm_host_package_opendir(-1, &dot, 1, &handle);
+            if (error != WASI_SUCCESS) return (uint32_t)error;
+            error = zehos_wasm_host_package_readdir(handle, call->memory + buffer, length, cookie, &count);
+            zehos_wasm_host_package_closedir(handle);
+        }
+    }
+    else if (file != NULL && file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY)
+        error = zehos_wasm_host_package_readdir(file->handle, call->memory + buffer, length, cookie, &count);
+    else if (file != NULL && file->kind == ZEHOS_FILE_SAVE_DIRECTORY)
+        error = zehos_wasm_host_save_readdir(file->handle, call->memory + buffer, length, cookie, &count);
+    else return WASI_EBADF;
     if (error != WASI_SUCCESS) return (uint32_t)error;
     if (count > length) return WASI_EIO;
     memcpy(call->memory + used, &count, 4);
@@ -839,7 +928,7 @@ uint32_t zehos_host_poll_oneoff(zehos_host_call* call, uint32_t subscriptions, u
             else
             {
                 const zehos_wasm_file* file = fd <= INT32_MAX ? file_of(call->context, (int32_t)fd) : NULL;
-                if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY) event.error = WASI_EBADF;
+                if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY || file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) event.error = WASI_EBADF;
                 else if (tag == POLL_FD_READ)
                 {
                     uint64_t size = file_size(file);
