@@ -34,6 +34,24 @@ internal static class Panic
         ref ulong depthSlot = ref PerCpuBlock.Current.CpuExceptionDepth;
         ulong depth = ++depthSlot;
 
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // The hook decides first, the report follows: on the halt path the other CPUs are
+        // stopped before the first line, so they write nothing into it, and a second CPU that
+        // faults meanwhile (it lost the claim) halts without a report of its own instead of
+        // interleaving one. The price: an exception inside the hook reports only itself.
+        bool abandoned = depth == 1 && CpuExceptionHook.Handler is { } handler
+            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
+                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
+                == CpuExceptionAction.AbandonThread
+            && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx));
+
+        // Giving up a thread stops no CPU; only a halt does, and it claims the panic. While
+        // another CPU owns it, this one halts without a word.
+        if (!abandoned && !PanicStop.StopOthers())
+        {
+            PanicStop.HaltForever();
+        }
+
         // Use only Serial - allocation-free, no KernelConsole which may allocate
         Serial.WriteString("\n========================================\n");
         Serial.WriteString("CPU EXCEPTION: ");
@@ -43,24 +61,11 @@ internal static class Panic
         PrintStackTrace(ref ctx);
         Serial.WriteString("========================================\n");
 
-        if (depth == 1 && CpuExceptionHook.Handler is { } handler
-            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
-                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
-                == CpuExceptionAction.AbandonThread
-            && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
+        if (abandoned)
         {
             Serial.WriteString("Thread abandoned.\n");
             depthSlot = depth - 1;
             return;
-        }
-
-        // ZehOS patch panic-stop-cpus, see PATCHES.md
-        // Only here, after the hook declined: giving up a thread stops no CPU. The other CPUs
-        // stop before the last line, so nothing follows it; while another CPU owns the panic,
-        // this one halts without the line.
-        if (!PanicStop.StopOthers())
-        {
-            PanicStop.HaltForever();
         }
 
         Serial.WriteString("System halted.\n");

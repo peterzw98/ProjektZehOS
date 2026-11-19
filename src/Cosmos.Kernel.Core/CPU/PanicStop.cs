@@ -32,8 +32,31 @@ internal static class PanicStop
     // and the CPU takes no further NMI before an IRET.
     private static int s_halted;
 
+    // 1 once the owner has sent the NMIs and waited for the count: from then on nothing but
+    // the owner writes (or the timeout let a CPU that does not answer through).
+    private static int s_othersStopped;
+
     /// <summary>True once a CPU has claimed the panic.</summary>
     internal static bool IsStopping => Volatile.Read(ref s_owner) != 0;
+
+    /// <summary>
+    /// True on the CPU that owns the panic once the others are stopped: its report needs no
+    /// lock (<see cref="IO.Serial"/> skips its port lock, which a stopped CPU may hold).
+    /// Allocation-free; any context.
+    /// </summary>
+    internal static bool WritesAlone
+    {
+        get
+        {
+            // Set only after a claim, so the per-CPU register is loaded when it is read.
+            if (Volatile.Read(ref s_othersStopped) == 0)
+            {
+                return false;
+            }
+
+            return Volatile.Read(ref s_owner) == (int)PerCpuBlock.CurrentIndex + 1;
+        }
+    }
 
     /// <summary>
     /// Claims the panic for the calling CPU and stops every other online CPU. Interrupts are
@@ -44,9 +67,10 @@ internal static class PanicStop
     /// </summary>
     internal static bool StopOthers()
     {
-        // One CPU, or a halt before the application processors start (the count is set with
-        // them): nothing to stop, and nothing claims, so the per-CPU register is not read
-        // before it may be loaded.
+        // One CPU, or a halt before the scheduler set the count (SchedulerManager.Initialize):
+        // nothing to stop yet, since no application processor has started, and nothing claims,
+        // so the per-CPU register is not read before it may be loaded. An application processor
+        // that comes online after the claim halts itself (Smp.ApMain checks IsStopping).
         uint cpuCount = SchedulerManager.CpuCount;
         if (cpuCount <= 1)
         {
@@ -72,18 +96,17 @@ internal static class PanicStop
             sent++;
         }
 
-        if (sent == 0)
+        if (sent != 0)
         {
-            return true;
+            // Bounded: a CPU that does not answer (NMI blocked, not delivered, ARM64) costs at
+            // most the timeout, never the report.
+            long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * TimeoutMilliseconds / 1000;
+            while (Volatile.Read(ref s_halted) < sent && Stopwatch.GetTimestamp() < deadline)
+            {
+            }
         }
 
-        // Bounded: a CPU that does not answer (NMI blocked, not delivered, ARM64) costs at
-        // most the timeout, never the report.
-        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * TimeoutMilliseconds / 1000;
-        while (Volatile.Read(ref s_halted) < sent && Stopwatch.GetTimestamp() < deadline)
-        {
-        }
-
+        Volatile.Write(ref s_othersStopped, 1);
         return true;
     }
 

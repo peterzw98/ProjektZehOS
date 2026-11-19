@@ -1,5 +1,6 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using Cosmos.Kernel.Core;
@@ -291,6 +292,11 @@ public static class LocalApic
     }
 
     // ZehOS patch panic-stop-cpus, see PATCHES.md
+    // The longest SendNmi waits for the previous ICR write to be delivered: far above the
+    // microsecond a delivery takes, far below the panic's 100 ms wait for the other CPUs.
+    private const long NmiIcrWaitMicroseconds = 1000;
+
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
     /// <summary>
     /// Sends a non-maskable interrupt to the CPU whose Local APIC has <paramref name="apicId"/>,
     /// as <see cref="SendIpi"/> does a fixed one (same ICR protocol, same masking by the caller):
@@ -305,8 +311,12 @@ public static class LocalApic
             return;
         }
 
-        // Bounded by the hardware, as in SendIpi.
-        while ((Read(LAPIC_ICR_LOW) & ICR_DELIVERY_STATUS_PENDING) != 0)
+        // Bounded by the counter, unlike SendIpi: this runs on the panic path, where a delivery
+        // status bit that never clears must not keep the report from coming out. After the
+        // bound the NMI is written anyway; at worst it, or the one still pending, is lost, and
+        // the owner's wait for the halted count times out as for a CPU that does not answer.
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * NmiIcrWaitMicroseconds / 1_000_000;
+        while ((Read(LAPIC_ICR_LOW) & ICR_DELIVERY_STATUS_PENDING) != 0 && Stopwatch.GetTimestamp() < deadline)
         {
         }
 
