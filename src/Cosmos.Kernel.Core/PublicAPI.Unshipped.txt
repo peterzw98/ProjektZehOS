@@ -103,3 +103,9 @@
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread, long priority) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(Cosmos.Kernel.Core.Scheduler.IScheduler! scheduler) -> void
 [COSMOS0001]virtual Cosmos.Kernel.Core.CPU.CpuExceptionHandler.Invoke(in Cosmos.Kernel.Core.CPU.CpuExceptionInfo exception) -> Cosmos.Kernel.Core.CPU.CpuExceptionAction
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock.Acquire() -> Cosmos.Kernel.Core.Scheduler.IrqSpinLockScope
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock.IrqSpinLock() -> void
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLockScope
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLockScope.Dispose() -> void
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLockScope.IrqSpinLockScope() -> void
