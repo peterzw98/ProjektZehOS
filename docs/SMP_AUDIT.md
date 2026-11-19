@@ -338,7 +338,7 @@ Voraussetzung für alle `lock (...)`-Zeilen: `lock`/`Monitor` kommen aus der Cos
 - `Scheduling/CpuTopologyDecoder.cs:14-60` `ReadShifts`, `TryReadLeaf`, `Clamp`, `CeilLog2`: reine Funktion über einen CPUID-Rückruf, kein Zustand.
 - `Scheduling/MainLoopIdle.cs`: entfernt in E5-B.
 - `Scheduling/CosmosMainLoopIdle.cs` `Wait`: HS, nur `Thread.Sleep(1)`, ohne Zustand (seit E5-B).
-- `Scheduling/CosmosClassScheduler.cs:20-22,112,119,126,133,147` (`MaskInterrupts`; `firstCpu` und `WaitingThreads` in E5-B entfernt): im Interrupt-Audit bereits bewertet.
+- `Scheduling/CosmosClassScheduler.cs` (`MaskInterrupts`; `firstCpu` und `WaitingThreads` in E5-B entfernt, Zeilen seitdem verschoben): im Interrupt-Audit bereits bewertet.
 - `Scheduling/ClassRunQueues.cs:17-23,39` `items`, `counts`, `starvation`, `waiting`/`Waiting`: im Interrupt-Audit unter „`ClassRunQueues` je CPU“ mit erfasst (Queue ist der innere Zustand des Kerns).
 - `Scheduling/ClassRunQueues.cs:39,198` `Waiting`/`Publish`: in der Haupttabelle unter `ClassRunQueues.cs:17-23` mitbewertet.
 - `Scheduling/CosmosStackProbe.cs:10-25`: ohne Zustand; Wirkung auf den Heap siehe Zeile `ThreadStarter.cs:44-49`.
