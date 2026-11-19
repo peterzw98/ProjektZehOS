@@ -317,17 +317,17 @@ public unsafe class Kernel : Sys.Kernel
         TR.Run("RhpGcSafeZeroMemory_ZerosBuffer", Test_RhpGcSafeZeroMemory_ZerosBuffer);
         // -- RhpNewArray --
         TR.Run("RhpNewArray_Int_Length10", Test_RhpNewArray_Int_Length10);
-        TR.Run("RhpNewArray_NegativeLength_Null", Test_RhpNewArray_NegativeLength_Null);
+        TR.Run("RhpNewArray_NegativeLength_Throws", Test_RhpNewArray_NegativeLength_Throws);
         TR.Run("RhpNewArray_ZeroLength_Empty", Test_RhpNewArray_ZeroLength_Empty);
         TR.Run("RhpNewArray_Long_ComponentSize", Test_RhpNewArray_Long_ComponentSize);
         // -- RhpNewArrayFast --
         TR.Run("RhpNewArrayFast_Byte_Length5", Test_RhpNewArrayFast_Byte_Length5);
-        TR.Run("RhpNewArrayFast_NegativeLength_Null", Test_RhpNewArrayFast_NegativeLength_Null);
+        TR.Run("RhpNewArrayFast_NegativeLength_Throws", Test_RhpNewArrayFast_NegativeLength_Throws);
         // -- RhpNewFast --
         TR.Run("RhpNewFast_Object_NonNull", Test_RhpNewFast_Object_NonNull);
         // -- RhpNewPtrArrayFast --
         TR.Run("RhpNewPtrArrayFast_ObjectArray_Length3", Test_RhpNewPtrArrayFast_ObjectArray_Length3);
-        TR.Run("RhpNewPtrArrayFast_NegativeLength_Null", Test_RhpNewPtrArrayFast_NegativeLength_Null);
+        TR.Run("RhpNewPtrArrayFast_NegativeLength_Throws", Test_RhpNewPtrArrayFast_NegativeLength_Throws);
         // -- RhSpanHelpers_MemCopy --
         TR.Run("RhSpanHelpers_MemCopy_CopiesBuffer", Test_RhSpanHelpers_MemCopy_CopiesBuffer);
 
@@ -686,10 +686,21 @@ public unsafe class Kernel : Sys.Kernel
         }
     }
 
-    private static void Test_RhpNewArray_NegativeLength_Null()
+    // ZehOS patch gc-oom-throw, see PATCHES.md: compiled code never checks the helper's result,
+    // so a negative length throws OverflowException as in .NET instead of returning null.
+    private static void Test_RhpNewArray_NegativeLength_Throws()
     {
-        void* raw = RuntimeMemory.RhpNewArray(MethodTable.Of<int[]>(), -1);
-        Assert.True(raw == null, "RhpNewArray must return null for negative length");
+        bool threw = false;
+        try
+        {
+            RuntimeMemory.RhpNewArray(MethodTable.Of<int[]>(), -1);
+        }
+        catch (OverflowException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "RhpNewArray must throw OverflowException for negative length");
     }
 
     private static void Test_RhpNewArray_ZeroLength_Empty()
@@ -725,10 +736,21 @@ public unsafe class Kernel : Sys.Kernel
         Assert.Equal(5, arr.Length, "RhpNewArrayFast length");
     }
 
-    private static void Test_RhpNewArrayFast_NegativeLength_Null()
+    // ZehOS patch gc-oom-throw, see PATCHES.md: compiled code never checks the helper's result,
+    // so a negative length throws OverflowException as in .NET instead of returning null.
+    private static void Test_RhpNewArrayFast_NegativeLength_Throws()
     {
-        void* raw = RuntimeMemory.RhpNewArrayFast(MethodTable.Of<byte[]>(), -1);
-        Assert.True(raw == null, "RhpNewArrayFast must return null for negative length");
+        bool threw = false;
+        try
+        {
+            RuntimeMemory.RhpNewArrayFast(MethodTable.Of<byte[]>(), -1);
+        }
+        catch (OverflowException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "RhpNewArrayFast must throw OverflowException for negative length");
     }
 
     // -- RhpNewFast --
@@ -753,10 +775,21 @@ public unsafe class Kernel : Sys.Kernel
         Assert.Equal(3, arr.Length, "RhpNewPtrArrayFast length");
     }
 
-    private static void Test_RhpNewPtrArrayFast_NegativeLength_Null()
+    // ZehOS patch gc-oom-throw, see PATCHES.md: compiled code never checks the helper's result,
+    // so a negative length throws OverflowException as in .NET instead of returning null.
+    private static void Test_RhpNewPtrArrayFast_NegativeLength_Throws()
     {
-        void* raw = RuntimeMemory.RhpNewPtrArrayFast(MethodTable.Of<object[]>(), -1);
-        Assert.True(raw == null, "RhpNewPtrArrayFast must return null for negative length");
+        bool threw = false;
+        try
+        {
+            RuntimeMemory.RhpNewPtrArrayFast(MethodTable.Of<object[]>(), -1);
+        }
+        catch (OverflowException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "RhpNewPtrArrayFast must throw OverflowException for negative length");
     }
 
     // -- RhSpanHelpers_MemCopy --
