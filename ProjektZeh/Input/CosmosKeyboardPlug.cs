@@ -1,6 +1,7 @@
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Build.API.Attributes;
 using Cosmos.Kernel.System.Input;
+#pragma warning disable COSMOS0001 // IrqSpinLock (ZehOS-Patch irq-mask-scope, #473) ist als COSMOS0001 markiert; die Nutzung ist bewusst.
 
 namespace ProjektZeh.Input;
 
@@ -52,3 +53,4 @@ public static class CosmosKeyboardCapture
         }
     }
 }
+#pragma warning restore COSMOS0001
