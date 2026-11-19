@@ -1,0 +1,8 @@
+# ausnahme-interrupts
+
+- **Commit:** Squash des PRs gegen `cosmos`
+- **Dateien:** `src/Cosmos.Kernel.Core/CPU/CpuExceptionHook.cs` (`CpuExceptionInfo.InterruptsEnabled`, Konstruktor um `interruptsEnabled` erweitert), `src/Cosmos.Kernel/Panic.cs` (`InterruptsEnabled(ref ctx)` je Architektur), `src/Cosmos.Kernel.Core/PublicAPI.Unshipped.txt`
+- **Grund:** Interrupt-Handler laufen maskiert (x64 Interrupt-Gates `0x8E00`, `Idt.cs`; kein `sti` im Handler) auf dem Stack des Threads, den sie unterbrochen haben. Löst ein Handler selbst eine CPU-Ausnahme aus, meldet `CpuExceptionInfo.ThreadId` den unterbrochenen Thread; der Hook konnte eine Ausnahme im Handler nicht von einer im Code des Threads unterscheiden. ZehOS hätte so einen Wasm-Worker im Gastcode aufgegeben, obwohl der Fehler im Kernel-Handler lag, der Sperren halten kann (ZehOS E6-C.10, #390, `FaultIsolationPolicy.Decide`). Neu: `InterruptsEnabled` aus dem gesicherten Rahmen der Ausnahme (x64 `RFLAGS.IF`, Bit 9 von `ctx.rflags`, vom CPU gepusht; ARM64 `SPSR.I`, Bit 7, gesetzt = maskiert). Keine Policy im Cosmos-Baum: Der Kernel liefert nur die Tatsache, der Hook entscheidet.
+- **Grenzen:** Erkennt jede Ausnahme in maskiertem Code (Handler, maskierte Abschnitte), nicht eine in einem Handler, der selbst Interrupts freigibt (Vertrag: Handler laufen maskiert). Der Konstruktor ist ersetzt (API nur in `PublicAPI.Unshipped.txt`, experimentell `COSMOS0001`).
+- **Entfernter ZehOS-Umweg:** keiner (es gab keinen; ZehOS isolierte im genannten Fall fälschlich)
+- **Prüfung:** ZehOS E6-C.10: nativer Bau mit gepinntem Stand, `scripts/test-isolation-probe.py` positiv (Gastcode, `IF=1`, isoliert) und negativ (hält an) unter KVM

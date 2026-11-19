@@ -47,8 +47,9 @@ public readonly struct CpuExceptionInfo
     /// <param name="faultAddress">Faulting data address (CR2 or FAR), zero when the exception has none.</param>
     /// <param name="cpuId">Index of the CPU the exception was raised on.</param>
     /// <param name="threadId">Id of the thread running on that CPU, <see cref="NoThread"/> when none.</param>
+    /// <param name="interruptsEnabled">Whether the faulting code ran with interrupts enabled (x64 RFLAGS.IF, ARM64 SPSR.I clear).</param>
     public CpuExceptionInfo(ulong vector, ulong instructionPointer, ulong stackPointer, ulong faultAddress,
-        uint cpuId, uint threadId)
+        uint cpuId, uint threadId, bool interruptsEnabled)
     {
         Vector = vector;
         InstructionPointer = instructionPointer;
@@ -56,6 +57,7 @@ public readonly struct CpuExceptionInfo
         FaultAddress = faultAddress;
         CpuId = cpuId;
         ThreadId = threadId;
+        InterruptsEnabled = interruptsEnabled;
     }
 
     /// <summary>The <see cref="ThreadId"/> when no thread was running on the CPU.</summary>
@@ -86,6 +88,17 @@ public readonly struct CpuExceptionInfo
     /// <see cref="NoThread"/> when the scheduler runs no thread there.
     /// </summary>
     public uint ThreadId { get; }
+
+    // ZehOS patch ausnahme-interrupts, see PATCHES.md
+    /// <summary>
+    /// Whether the faulting code ran with interrupts enabled (x64: RFLAGS.IF of
+    /// the interrupted frame; ARM64: the I bit of SPSR clear). Interrupt
+    /// handlers run masked on the stack of the thread they interrupted, so an
+    /// exception inside one reports that thread in <see cref="ThreadId"/>; a
+    /// false here tells the hook the fault is in masked kernel code (a handler,
+    /// a masked section) and not in the thread's own code.
+    /// </summary>
+    public bool InterruptsEnabled { get; }
 }
 
 /// <summary>
