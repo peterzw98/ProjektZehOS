@@ -96,6 +96,13 @@ public class Kernel : Sys.Kernel
 
         TR.Run("GC_MallocHeapNotSwept", TestGCMallocHeapNotSwept);
 
+        // A failed allocation throws instead of returning null (ZehOS patch gc-oom-throw). The
+        // suite's guest has 512 MB, so 1 GiB never fits; the heap must stay usable afterwards.
+        TR.Run("GC_OutOfMemory_HeapExhaustedThrows", TestGCOutOfMemoryHeapExhaustedThrows);
+        TR.Run("GC_OutOfMemory_SizeOverflowThrows", TestGCOutOfMemorySizeOverflowThrows);
+        TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
+        TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
+
         // GC Info & Configuration Tests
         TR.Run("GC_Info_SimpleMemoryInfo", TestGCInfoSimpleMemoryInfo);
         TR.Run("GC_Info_HeapAndCommittedRelations", TestGCInfoHeapAndCommittedRelations);
@@ -391,6 +398,152 @@ public class Kernel : Sys.Kernel
 
         Assert.True(!weakRef.IsAlive, "GC: weak reference cleared after collection");
         Assert.True(weakRef.Target == null, "GC: weak reference target is null after collection");
+    }
+
+    // ZehOS patch gc-oom-throw: the length comes through a non-inlined call, so ILC cannot fold
+    // the allocation or the size check.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int OpaqueLength(int length) => length;
+
+    private static void TestGCOutOfMemoryHeapExhaustedThrows()
+    {
+        bool threw = false;
+        byte[]? huge = null;
+        try
+        {
+            huge = new byte[OpaqueLength(1 << 30)];
+        }
+        catch (OutOfMemoryException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: byte[1 GiB] on a 512 MB guest must throw OutOfMemoryException");
+        Assert.True(huge is null, "GC: no array may come back from a failed allocation");
+
+        // The failed attempt collected; the heap still serves ordinary allocations.
+        byte[] after = new byte[OpaqueLength(64 * 1024)];
+        after[0] = 0x5A;
+        after[after.Length - 1] = 0xA5;
+        Assert.Equal((byte)0x5A, after[0], "GC: allocation after OutOfMemoryException, first byte");
+        Assert.Equal((byte)0xA5, after[after.Length - 1], "GC: allocation after OutOfMemoryException, last byte");
+    }
+
+    private static void TestGCOutOfMemorySizeOverflowThrows()
+    {
+        // 2^29 + 1 longs: 4 GiB + 8 + header. In 32-bit size arithmetic this wrapped to a
+        // 40-byte object with Length 2^29 + 1, and writes went past it into the heap.
+        bool threw = false;
+        try
+        {
+            long[] wrapped = new long[OpaqueLength((1 << 29) + 1)];
+            wrapped[wrapped.Length - 1] = 1;
+        }
+        catch (OutOfMemoryException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: long[2^29 + 1] must throw OutOfMemoryException, not wrap to a small object");
+    }
+
+    private static void TestGCNegativeArrayLengthThrowsOverflow()
+    {
+        bool threw = false;
+        try
+        {
+            byte[] negative = new byte[OpaqueLength(-1)];
+            negative[0] = 1;
+        }
+        catch (OverflowException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: a negative array length must throw OverflowException");
+    }
+
+    // ZehOS patch gc-oom-throw: a chain of blocks that keeps the whole heap reachable.
+    private sealed class FillNode
+    {
+        public byte[]? Data;
+        public FillNode? Next;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static FillNode? FillHeap(int blockSize, FillNode? head)
+    {
+        try
+        {
+            while (true)
+            {
+                FillNode node = new FillNode();
+                node.Next = head;
+                head = node;
+                node.Data = new byte[OpaqueLength(blockSize)];
+            }
+        }
+        catch (OutOfMemoryException)
+        {
+        }
+
+        return head;
+    }
+
+    private static void TestGCOutOfMemoryExhaustedHeapCatchable()
+    {
+        // The heap really runs out: blocks from 1 MiB down to 16 bytes until even the smallest
+        // fails. The OutOfMemoryException itself then has no room (the reserve instance is
+        // thrown), and the dispatch must not allocate a stack trace: that second OOM would halt
+        // as a recursive exception instead of reaching the catch below.
+        FillNode? head = null;
+        for (int blockSize = 1 << 20; blockSize >= 16; blockSize >>= 2)
+        {
+            head = FillHeap(blockSize, head);
+        }
+
+        int caught = 0;
+        Exception? first = null;
+        Exception? second = null;
+        for (int i = 0; i < 2; i++)
+        {
+            try
+            {
+                FillNode extra = new FillNode();
+                extra.Data = new byte[OpaqueLength(16)];
+                extra.Next = head;
+                head = extra;
+            }
+            catch (OutOfMemoryException e)
+            {
+                caught++;
+                if (i == 0)
+                {
+                    first = e;
+                }
+                else
+                {
+                    second = e;
+                }
+            }
+        }
+
+        bool reserveUsed = first is not null && ReferenceEquals(first, second);
+        GC.KeepAlive(head);
+        head = null;
+        first = null;
+        second = null;
+        CoreGC.Collect();
+
+        Serial.WriteString(reserveUsed
+            ? "[GarbageCollector] exhausted heap: reserve OutOfMemoryException thrown\n"
+            : "[GarbageCollector] exhausted heap: fresh OutOfMemoryException thrown\n");
+        Assert.True(caught == 2, "GC: both allocations on an exhausted heap must throw a catchable OutOfMemoryException");
+
+        // Released and collected, the heap serves allocations again.
+        byte[] after = new byte[OpaqueLength(1 << 20)];
+        after[after.Length - 1] = 0x3C;
+        Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
     }
 
     private static void TestGCLargeAllocationAndCollect()
