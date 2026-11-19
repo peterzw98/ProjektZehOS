@@ -138,7 +138,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     /// Verdraengungen ueber alle CPUs, Auswahlspur und Wartende je Klasse (Interaktiv, Normal, Hintergrund) der CPU 0.
     /// Thread-Kontext, kein Hook: nimmt die Sperre jeder CPU einzeln, nie zwei zugleich, und allokiert nur ausserhalb.
     /// </summary>
-    public (ulong Preemptions, uint[] ThreadIds, int[] WaitingByClass) Snapshot()
+    public static (ulong Preemptions, uint[] ThreadIds, int[] WaitingByClass) Snapshot()
     {
         var buffer = new uint[TraceLength];
         var waitingByClass = new int[3];

@@ -645,7 +645,7 @@ public sealed class Kernel : Sys.Kernel
 
     private string[] DescribeScheduler()
     {
-        var snapshot = scheduler.Snapshot();
+        var snapshot = CosmosClassScheduler.Snapshot();
         return [$"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
             $"Wartend: Interaktiv={snapshot.WaitingByClass[0]}, Normal={snapshot.WaitingByClass[1]}, Hintergrund={snapshot.WaitingByClass[2]}",
             "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
