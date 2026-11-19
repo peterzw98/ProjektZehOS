@@ -106,6 +106,52 @@ public sealed class WasmInputTests
     }
 
     [TestMethod]
+    public void OverflowKeepsOrderOfClicksKeysAndTextBetweenMoves()
+    {
+        var input = new WasmInputBuffer();
+        SetViewport(input, 640, 480, 640, 480);
+        var expected = new List<WasmInputEvent>();
+        for (int index = 0; index < 70; index++)
+        {
+            input.Handle(new(InputEventType.PointerMove, X: index, Y: 1));
+            char c = (char)('A' + index % 26);
+            input.Handle(new(InputEventType.Text, Character: c));
+            expected.Add(new(WasmInputEventType.Text, c));
+            if (index == 20)
+            {
+                input.Handle(new(InputEventType.PointerDown, X: 5, Y: 6, Button: PointerButtons.Left));
+                input.Handle(new(InputEventType.KeyDown, 30));
+                input.Handle(new(InputEventType.KeyUp, 30));
+                input.Handle(new(InputEventType.PointerUp, X: 5, Y: 6, Button: PointerButtons.Left));
+                expected.Add(new(WasmInputEventType.PointerDown, 1, 5, 6));
+                expected.Add(new(WasmInputEventType.KeyDown, 30));
+                expected.Add(new(WasmInputEventType.KeyUp, 30));
+                expected.Add(new(WasmInputEventType.PointerUp, 1, 5, 6));
+            }
+        }
+        var actual = new List<WasmInputEvent>();
+        while (input.TryRead(out WasmInputEvent value))
+            if (value.Type != WasmInputEventType.PointerMove) actual.Add(value);
+        CollectionAssert.AreEqual(expected, actual, "Reihenfolge und Vollstaendigkeit ohne Bewegungen, kein Reset.");
+    }
+
+    [TestMethod]
+    public void OverflowWithOnlyKeysStillResetsAndKeepsLegacyQueue()
+    {
+        var input = new WasmInputBuffer();
+        for (byte code = 1; code <= 65; code++)
+        {
+            input.Handle(new(InputEventType.KeyDown, code));
+            input.Handle(new(InputEventType.KeyUp, code));
+        }
+        bool reset = false;
+        while (input.TryRead(out WasmInputEvent value))
+            reset |= value.Type == WasmInputEventType.Reset;
+        Assert.IsTrue(reset, "Ohne Bewegungen bleibt es beim Reset.");
+        Assert.AreEqual(0x100 | 1, input.PollKey());
+    }
+
+    [TestMethod]
     public void PointerUsesDisplayedScaleAndLetterboxAndKeepsRelease()
     {
         var input = new WasmInputBuffer();
