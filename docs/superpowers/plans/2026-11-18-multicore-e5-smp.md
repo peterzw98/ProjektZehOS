@@ -59,7 +59,13 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 
 ### Paket E5-A: Stapel einspielen
 
-**Branch:** `cosmos-upstream/smp-phase5b`, von `cosmos`, PR gegen `cosmos`.
+**Branch:** `cosmos-patch/smp-phase5b`, von `cosmos`, PR gegen `cosmos` (Spiegel siehe Entscheidung unten).
+
+> **Entscheidungen Peter, 19.11.2026, Terminal von agent-nweh-lead1** (Wortlaut „1. ja 2. ja“ auf die beiden Fragen):
+> 1. Die Upstream-Commits werden **vor** dem Gate gespiegelt: `cosmos-upstream/smp-phase5b` zeigt auf `44952133`, `cosmos-upstream/smp-base` auf
+>    `efcf20cc`. Beide Branches sind reine Spiegel und werden nie geändert; E5-A arbeitet deshalb auf `cosmos-patch/smp-phase5b` (von `cosmos`, PR gegen `cosmos`).
+> 2. Für `Input/CosmosIrqLock.cs` kommt ein kleiner Cosmos-Patch `irq-mask-scope` (öffentlicher Masken-Scope über Upstreams `IrqLockScope`),
+>    als eigener PR gegen `cosmos`, gestapelt auf E5-A; kein Umbau der Sperre in ZehOS. E5-D stellt `CosmosIrqLock` darauf um.
 
 - [ ] **Schritt 1:** Upstream als temporären Remote holen: `git remote add cosmos-upstream https://github.com/CosmosOS/Cosmos` und `git fetch cosmos-upstream 44952133e7820565552f30b057baa0660bd0a80d efcf20cc62884b042a0adadffe9fc4540491fd89`. Unter Windows vorher `git config core.longpaths true`.
 - [ ] **Schritt 2:** Kumulierten Unterschied anwenden: `git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index`. Konflikte entstehen nur dort, wo eigene Patches dieselben Zeilen ändern (sicher: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs`, falls E3-C schon gemergt ist; möglich: `src/Cosmos.Kernel/Panic.cs`, `SchedulerManager.cs` nach E3-A). Jeden Konflikt so lösen, dass Upstreams Fassung gilt und der eigene Patch darauf neu angebracht wird.
