@@ -14,7 +14,7 @@
 #   offset       Lesestand im Protokoll (Inode und Byte)      state.md  Stand des Agenten zwischen den Läufen
 #   heartbeat    Lebenszeichen des Dienstes (JSON, je Schritt) runs/     Ausgabe jedes Laufs
 #   lock         verhindert einen zweiten Dienst für denselben Nick
-import argparse, errno, fcntl, hashlib, json, os, re, signal, subprocess, sys, time
+import argparse, errno, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time
 
 SERVER_NOTICE = re.compile(r":zeh\.ernst\.casa NOTICE ")
 LINE = re.compile(r"^(\S+ \S+) << :([^!\s]+)!\S* (PRIVMSG|NOTICE|INVITE) (\S+) :?(.*)$")
@@ -214,6 +214,7 @@ class Dispatcher:
         self.quota = QuotaStore(a.quota_dir, {BACKEND: a.budget_claude})
         self.quota_alerted = {}   # je Anbieter: bis wann schon gewarnt wurde (eine Warnung je Sperre)
         self.limit_runs, self.limit_last = 0, 0   # aufeinanderfolgende Limitläufe derselben Nennungen
+        self.mem_limit = self._memory_limit()
         self._reap_orphan()
 
     # --- Dateien ------------------------------------------------------------------------------------
@@ -451,8 +452,25 @@ class Dispatcher:
         self.quota_alerted[BACKEND] = until
         return False
 
+    def _memory_limit(self):
+        """--memory-max nur, wenn ein Benutzer-systemd erreichbar ist (ohne Linger fehlt er nach einem Neustart ohne
+        Anmeldung); sonst liefe jeder Lauf in einen Startfehler. Dann ohne Grenze und mit Warnung im Protokoll."""
+        if not self.a.memory_max:
+            return ""
+        bus = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "bus")
+        if shutil.which("systemd-run") and os.path.exists(bus):
+            return self.a.memory_max
+        self.log_event(f"Speichergrenze {self.a.memory_max} nicht möglich (kein Benutzer-systemd unter {bus}); Läufe ohne Grenze")
+        return ""
+
     def build_cmd(self, prompt):
         cmd = [self.a.claude, "-p", "--model", self.a.model, "--permission-mode", self.a.permission_mode]
+        if self.mem_limit:
+            # Eigene cgroup je Lauf: Braucht ein Lauf (nativer Bau, Gast) zu viel, beendet der Kernel nur ihn, statt dass
+            # der ganze Rechner ins Auslagern faellt (19.11.: Stillstand mit drei Bauten auf 16 GB). Wenig Swap erlaubt,
+            # sonst lagert die Gruppe selbst stundenlang aus.
+            cmd = ["systemd-run", "--user", "--scope", "-q", "-p", f"MemoryMax={self.mem_limit}",
+                   "-p", "MemorySwapMax=512M"] + cmd
         if self.a.role:
             cmd += ["--append-system-prompt-file", self.a.role]
         return cmd + self.a.claude_arg + [prompt]
@@ -533,7 +551,13 @@ class Dispatcher:
             self.timed_out_upto = max(self.timed_out_upto, run["last"])
             self._failed(now, f"Zeitlimit {self.a.timeout:.0f} s", run["last"], run["path"], final=True)
         else:
-            self._failed(now, f"Exit {code}", run["last"], run["path"])
+            if code == -signal.SIGKILL and self.mem_limit:
+                # SIGKILL kommt hier praktisch nur vom Speicherwaechter der cgroup (Zeitlimit ist oben eigener Fall); ein
+                # erneuter Versuch braeuchte wieder genauso viel Speicher
+                self._failed(now, f"Speichergrenze {self.mem_limit} überschritten (vom Kernel beendet)", run["last"],
+                             run["path"], final=True)
+            else:
+                self._failed(now, f"Exit {code}", run["last"], run["path"])
 
     def _limit_message(self, run, code):
         """Text der Limitmeldung, wenn der Lauf am Kontingent scheiterte, sonst None."""
@@ -669,6 +693,7 @@ def parse_args(argv):
     p.add_argument("--permission-mode", default="auto")
     p.add_argument("--quiet", type=float, default=5, help="Sekunden Ruhe nach der letzten Nennung")
     p.add_argument("--timeout", type=float, default=3600, help="höchste Laufzeit eines Laufs in Sekunden")
+    p.add_argument("--memory-max", default="", help="Speichergrenze je Lauf (systemd MemoryMax, etwa 6G); leer = keine")
     p.add_argument("--backoff", type=float, default=60, help="Abstand nach erstem Fehlschlag, verdoppelt sich")
     p.add_argument("--max-attempts", type=int, default=3)
     p.add_argument("--max-runs-per-hour", type=int, default=6)
