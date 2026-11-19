@@ -128,6 +128,6 @@ Daraus folgt nur ein Verdacht, kein Beleg: Die Kosten je Befehl (VM-Exits für P
 - E5-J-Suite in Wanduhrzeit unter 45 min.
 - Kein Integritätsfehler, `e2fsck` Ende 0 in allen Läufen.
 
-## Offene Fragen an Peter
+## Entscheidungen
 
-1. Darf E4.0 Lauf 3/4 im Skript von laser parallelisiert werden, oder macht laser das selbst?
+- Peter, 20.11.2026: Team peter parallelisiert E4.0 Lauf 3/4/5 in `scripts/test-storage-ext2-root.py` (Branch `feature/e40-abort-parallel`), laser reviewt.
