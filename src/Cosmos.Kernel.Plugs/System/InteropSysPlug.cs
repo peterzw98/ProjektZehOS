@@ -147,6 +147,10 @@ public static class InteropSysPlug
         Log.WriteString(Encoding.UTF8.GetString(buffer, count));
     }
 
+    // ZehOS patch monitor-quiet, see PATCHES.md
+    // No serial log in the LowLevelMonitor plugs: they back every contended
+    // lock, Monitor.Wait and wait handle, and one synchronous UART line per
+    // call (one VM exit per byte under KVM) cost ~55 ms per cross-CPU handoff.
     [PlugMember]
     internal static IntPtr LowLevelMonitor_Create()
     {
@@ -167,16 +171,13 @@ public static class InteropSysPlug
     [PlugMember]
     internal static void LowLevelMonitor_Acquire(IntPtr monitor)
     {
-        Log.Write("[LowLevelMonitor] Acquire BEGIN\n");
         var gchandle = GCHandle<Monitor>.FromIntPtr(monitor);
         gchandle.Target.Acquire();
-        Log.Write("[LowLevelMonitor] Acquire END\n");
     }
 
     [PlugMember]
     internal static void LowLevelMonitor_Release(IntPtr monitor)
     {
-        Log.Write("[LowLevelMonitor] Release\n");
         var gchandle = GCHandle<Monitor>.FromIntPtr(monitor);
         gchandle.Target.Release();
     }
@@ -184,18 +185,13 @@ public static class InteropSysPlug
     [PlugMember]
     internal static void LowLevelMonitor_Wait(IntPtr monitor)
     {
-        Log.Write("[LowLevelMonitor] Wait BEGIN\n");
         var gchandle = GCHandle<Monitor>.FromIntPtr(monitor);
         gchandle.Target.Wait();
-        Log.Write("[LowLevelMonitor] Wait END\n");
     }
 
     [PlugMember]
     internal static bool LowLevelMonitor_TimedWait(IntPtr monitor, int timeoutMilliseconds)
     {
-        Log.Write("[LowLevelMonitor] LowLevelMonitor_TimedWait: BEGIN, timeout=");
-        Log.WriteNumber(timeoutMilliseconds);
-        Log.Write("ms\n");
         var mon = GCHandle<Monitor>.FromIntPtr(monitor).Target;
 
         if (timeoutMilliseconds < 0)
@@ -212,7 +208,6 @@ public static class InteropSysPlug
     [PlugMember]
     internal static void LowLevelMonitor_Signal_Release(IntPtr monitor)
     {
-        Log.Write("[LowLevelMonitor] Signal_Release\n");
         var gchandle = GCHandle<Monitor>.FromIntPtr(monitor);
         gchandle.Target.Signal();
     }
