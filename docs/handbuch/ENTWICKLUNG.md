@@ -87,6 +87,8 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 ./scripts/test-thread-probe.ps1 -IsoPath ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
 ```
 
+Ohne PowerShell (Linux) leistet `python3 scripts/test-thread-probe.py --iso <ISO>` dasselbe mit denselben QEMU-Argumenten; `--accel kvm` und `ZEHOS_QEMU_SMP` wirken wie in den übrigen Gastskripten. Es verlangt zusätzlich die Zeile `MESSAGES_PROBE PASS`.
+
 Der Helfer startet eine eigene QEMU-VM ohne Datenlaufwerk, wartet höchstens 45 Sekunden auf `THREAD_PROBE PASS` und beendet nur diese Test-VM. Serielle Ausgabe und QEMU-Fehlerausgabe liegen in einem jeweils neuen Ordner unter `.tools/thread-probe/`. Fehlendes Ergebnis, `THREAD_PROBE FAIL` oder ein vorzeitiges VM-Ende lassen den Helfer fehlschlagen. Ein normales ISO erfüllt diese Probe ausdrücklich nicht.
 
 Der Test verwendet den ZehOS-Round-Robin-Scheduler und prüft auch Ressourcenbereinigung der Aufgabenverwaltung sowie die Nachrichtenwarteschlangen aus 6b. Ohne Buildoption ist die Probe nicht enthalten. Da beide Builds denselben ISO-Ausgabepfad verwenden, anschließend für den normalen Betrieb erneut ohne Probe bauen:
