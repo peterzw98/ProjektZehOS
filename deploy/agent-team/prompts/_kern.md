@@ -119,5 +119,7 @@ Jede Zeile, die dich nennt, startet einen Lauf oder weckt eine Sitzung und koste
 
 - Dein Stand zwischen Läufen oder vor einem `/clear` steht in **einer** Datei: im Einzellauf `dispatch/state.md` (Pfad im Auftrag), in einer interaktiven Sitzung `.tools/state/<nick>.md`
   außerhalb des Repositorys. Inhalt höchstens 40 Zeilen: laufende Aufgabe, Branch, Kopf-Hash, PR, offene Punkte, Freigabestand, nächster Schritt; keine Geheimnisse, kein Verlauf.
+- **Keine fremden Sitzungsprotokolle durchsuchen** (`~/.claude/projects`, Logs anderer Agenten): Das kostet Kontext und liest fremde Gespräche. Früherer Stand steht in
+  `state.md`, im PR, auf dem Board und im IRC-Protokoll deines Bots; fehlt dort etwas, frag mit `[FRAGE]`.
 - Lies die Datei zu Beginn, schreibe sie am Ende jeder Aufgabe neu. Sie ersetzt das Mitschleppen langer Kontexte: Nach `/clear` oder einem neuen Lauf reicht sie zum Weitermachen.
 - Wird dein Kontext automatisch zusammengefasst, lies die Datei sofort wieder; Regeln und Freigabestand können bei der Zusammenfassung verloren gehen.
