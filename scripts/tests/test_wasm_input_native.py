@@ -138,7 +138,6 @@ def wasi_module(name, params, args, data=b"", read_back=None):
             + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
 
 
-<<<<<<< ours
 def seq_module(calls, data=b"", read_back=None):
     # run ruft nacheinander WASI-Imports (name, Parametertypen, Argumente) auf und liefert das Ergebnis des letzten
     # (oder das u32 an read_back danach). Daten liegen ab Adresse 128.
@@ -174,8 +173,6 @@ def seq_module(calls, data=b"", read_back=None):
             + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
 
 
-=======
->>>>>>> theirs
 def poll_module(subs, count=None, open_first=False, in_pointer=128, out_pointer=4096, nevents=8192):
     # run ruft poll_oneoff auf (optional nach path_open von asset.txt -> fd 5) und liefert
     # errno | nevents << 8 | Fehler des ersten Ereignisses << 16 | (nbytes & 0xff) << 24.
@@ -534,7 +531,6 @@ class NativeInputTests(unittest.TestCase):
                 self.assertIn("out of bounds", message.lower())
                 self.assertEqual(self.lib.poll_test_sleeps(), 0)
 
-<<<<<<< ours
     # Etappe 12.8 (P4-B): Paketordner im Host-Kern
     OPEN = "iiiiiIIii"
 
@@ -621,8 +617,6 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(self.package(calls, b"sub"), 33, "17. Handle: EMFILE")
         self.assertEqual(self.lib.pkg_test_opendirs(), 16, "ohne freien Platz kein Hostaufruf")
 
-=======
->>>>>>> theirs
 
 if __name__ == "__main__":
     unittest.main()
