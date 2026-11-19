@@ -28,6 +28,7 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
    - **Nativer Kernelbau bei jeder Änderung unter `ProjektZeh/`**, mit `-warnaserror` und den Werkzeugen aus `.tools/cosmos-tools/<version>` im `PATH`.
      Der Hostbuild sieht nicht alles: Ein Feld, das nur Tests setzen, ist im Kernel `CS0649` und bricht die CI (E4-B, 18. November).
    - Neue plattformunabhängige Dateien in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` aufnehmen; Dateien mit Cosmos-Typen beginnen mit `Cosmos` und gehören nicht in den Hostbuild.
+   - Hast du KVM (Peters Engineers auf MSI): Gastläufe und Messungen mit vorhandenem Skript machst du selbst, nicht der Senior. Ein Gast gleichzeitig je Lauf.
    - Fehlt dir dotnet oder KVM auf deinem Rechner: Hosttests und Bau über den Lead oder einen Clerk (Branch, **Kopf-Hash**, Befehl, gewünschte Filter). Gastläufe immer
      über einen Agenten mit KVM, mit derselben Angabe und den erwarteten Marken aus dem Plan.
    - Schreibende Gast- und Dateitests nur auf einer **isolierten Kopie** eines Datenimages, nie auf `.tools/qemu/data-fat32.img` oder vorhandenen Images.

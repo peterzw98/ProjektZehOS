@@ -28,6 +28,9 @@ FAKE = r'''#!{py}
 import json, os, sys, time
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
+if os.environ.get("FAKE_ENV"):
+    with open(os.environ["FAKE_ENV"], "w") as f:
+        f.write(os.environ.get("MSBUILDDISABLENODEREUSE", "-"))
 print(os.environ.get("FAKE_OUT", ""), flush=True)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 if os.environ.get("FAKE_KILL"): os.kill(os.getpid(), 9)
@@ -582,5 +585,43 @@ e.run_until_idle()
 os.environ["FAKE_KILL"] = ""
 assert len(e.calls_made()) == 1 and e.d.gave_up_at == 1, (e.calls_made(), e.d.gave_up_at)   # kein zweiter Versuch
 assert "Speichergrenze 6G überschritten" in e.outbox(), e.outbox()
+
+# --- Läufe ohne MSBuild-Node-Reuse: sonst bleiben Arbeitsknoten nach dem Bau mit ihrem Speicher liegen -----------
+reuse_before = os.environ.get("MSBUILDDISABLENODEREUSE")
+e = Env()
+os.environ["FAKE_ENV"] = os.path.join(e.dir, "env.txt")
+e.say("agent-coordinator", "agent-x: bauen")
+e.now += 6
+e.run_until_idle()
+del os.environ["FAKE_ENV"]
+with open(os.path.join(e.dir, "env.txt")) as f:
+    assert f.read() == "1"
+assert os.environ.get("MSBUILDDISABLENODEREUSE") == reuse_before                # nur für den Lauf, nicht für den Dienst
+
+# --- Nur Adressaten wecken: Nennung im Text ist Kontext, kein Lauf ----------------------------------------------
+from dispatcher import addressed
+pat = mention_pattern(NICK)
+assert addressed(f"{NICK}: tu was", "#general", NICK, pat)
+assert addressed(f"agent-y {NICK}: tu was", "#general", NICK, pat)
+assert addressed(f"[AUFTRAG] {NICK}: tu was", "#first", NICK, pat)
+assert not addressed(f"[AUFTRAG] agent-y: Review, dann [FERTIG] an {NICK}", "#first", NICK, pat)
+assert not addressed(f"agent-y (Lead X): plane mit {NICK}", "#first", NICK, pat)
+assert addressed(f"bitte {NICK} melden", "#general", NICK, pat)              # ohne Doppelpunkt wie bisher
+assert addressed("hallo du", NICK, NICK, pat)                                 # Direktnachricht
+assert addressed(f"agent-y: X; {NICK}: Y", "#first", NICK, pat)               # Sammelzeile
+assert addressed(f"<Peda> um 10:19 bitte {NICK} pruefen: X", "#general", NICK, pat)  # Uhrzeit vor dem Nick
+assert addressed(f"siehe https://x.y/z, {NICK} bitte: X", "#general", NICK, pat)    # URL vor dem Nick
+e = Env()
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", f"[AUFTRAG] agent-y: pruefe X, dann [FERTIG] an {NICK}")
+e.now += 6
+e.run_until_idle()
+assert e.calls_made() == [] and len(e.d.pending()) == 1                       # gespeichert, kein Lauf
+e.say("agent-coordinator", f"{NICK}: jetzt du")
+e.now += 6
+e.run_until_idle()
+calls = e.calls_made()
+assert len(calls) == 1 and "pruefe X" in calls[0][-1] and "jetzt du" in calls[0][-1], calls  # Kontext kommt mit
+assert "an andere adressiert" in calls[0][-1] and "Absender startet keine" not in calls[0][-1]
 
 print("ok")

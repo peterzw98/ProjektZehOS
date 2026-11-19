@@ -847,6 +847,24 @@ uint32_t zehos_host_fd_filestat_set_size(zehos_host_call* call, int32_t fd, uint
     return (uint32_t)zehos_wasm_host_save_set_size(file->handle, size);
 }
 
+// d_ino der Ordnereintraege (12.8 P4-F): Die Hostseite zaehlt nur durch (Index+1); die WASI-libc vergleicht d_ino aber mit
+// st_ino (fdopendir mit Zugriffspruefung trappt sonst). Deshalb schreibt C nach dem Lesen in jeden vollstaendigen Header
+// denselben FNV-1a-Wert ein, den path_filestat_get fuer den Namen liefert. Ein am Pufferende abgeschnittener Eintrag
+// (Header oder Name unvollstaendig) bleibt unveraendert; die libc fragt mit groesserem Puffer erneut.
+static void fix_dirent_inodes(uint8_t* buffer, uint32_t used, uint64_t directoryState)
+{
+    uint32_t offset = 0;
+    while (used - offset >= 24)
+    {
+        uint32_t nameLength;
+        memcpy(&nameLength, buffer + offset + 16, 4);
+        if (nameLength > used - offset - 24) break;
+        uint64_t inode = path_inode(directoryState, buffer + offset + 24, nameLength);
+        memcpy(buffer + offset + 8, &inode, 8);
+        offset += 24 + nameLength;
+    }
+}
+
 uint32_t zehos_host_fd_readdir(zehos_host_call* call, int32_t fd, uint32_t buffer, uint32_t length, uint64_t cookie,
     uint32_t used)
 {
@@ -884,6 +902,7 @@ uint32_t zehos_host_fd_readdir(zehos_host_call* call, int32_t fd, uint32_t buffe
     else return WASI_EBADF;
     if (error != WASI_SUCCESS) return (uint32_t)error;
     if (count > length) return WASI_EIO;
+    fix_dirent_inodes(call->memory + buffer, count, file != NULL && fd != PREOPEN_FD && fd != SAVE_FD ? file->inode : FNV_BASIS);
     memcpy(call->memory + used, &count, 4);
     return WASI_SUCCESS;
 }
