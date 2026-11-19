@@ -71,7 +71,9 @@ rule = (f"Team workspace {home} (role {nick} for GitHub repo peterzw98/ProjektZe
 # Kontext, ohne dass ein kurzer Lauf sie braucht; hier aus, in den eigenen Sitzungen des Benutzers bleiben sie an
 try:
     plugins = json.load(open(os.path.expanduser("~/.claude/settings.json"))).get("enabledPlugins", {})
-except (OSError, ValueError):
+except (OSError, ValueError, AttributeError):
+    plugins = {}
+if not isinstance(plugins, dict):
     plugins = {}
 json.dump({"autoMode": {"allow": ["$defaults", rule]}, "enabledPlugins": {p: False for p in plugins}},
           open(f"{home}/.claude/settings.local.json", "w"), indent=2)
