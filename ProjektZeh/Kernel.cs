@@ -336,7 +336,7 @@ public sealed class Kernel : Sys.Kernel
         var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
 #if !ZEHOS_RECOVERY
         // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.
-        CosmosBootOptions.ConfigureWorkerCpus(topology);
+        systemLog.Information("Boot", CosmosBootOptions.ConfigureWorkerCpus(topology));
         ThreadStarter.ApplyPlacement = placement =>
         {
             if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;

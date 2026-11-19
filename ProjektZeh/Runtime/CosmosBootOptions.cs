@@ -12,16 +12,19 @@ internal static unsafe class CosmosBootOptions
 
     public static CpuSet WorkerCpus { get; private set; } = CpuSet.Single(0);
 
-    public static void ConfigureWorkerCpus(CpuTopology topology)
+    public static string ConfigureWorkerCpus(CpuTopology topology)
     {
-        // zehos.smt=off wird erst mit E7-D aktiviert.
-        bool[] selected = CpuSelection.Workers(topology, Current.Cpus, smtOff: false);
+        bool[] selected = CpuSelection.Workers(topology, Current.Cpus, Current.SmtOff);
         var mask = CpuSet.Empty;
         for (uint cpu = 0; cpu < selected.Length; cpu++)
             if (selected[cpu]) mask = mask.With(cpu);
 
         mask = mask.Intersect(KernelCpus.Online);
         WorkerCpus = mask.IsEmpty ? CpuSet.Single(0) : mask;
+
+        if (!topology.Measured) return "Hyperthreading: unbekannt";
+        if (topology.CpuCount == topology.CoreCount) return "Hyperthreading: nicht vorhanden";
+        return Current.SmtOff ? "Hyperthreading: abgeschaltet (zehos.smt=off)" : "Hyperthreading: genutzt";
     }
 
     /// <summary>
