@@ -98,7 +98,7 @@ Verschiebungen kommen einmal von `CpuTopologyDecoder.ReadShifts(X86Base.CpuId)`.
 
 **Branch:** `task/mc-e6-b-platzierung`. **Datei:** `ProjektZeh/Scheduling/CosmosClassScheduler.cs`.
 
-**Schnittstellen (verwendet):** `ClassPlacement.SelectCpu`, `ClassPlacement.StealOrder`, `ClassRunQueues<T>.PeekStealable`
+**Schnittstellen (verwendet):** `ClassPlacement.SelectCpu`, `ClassPlacement.StealOrder`, `ClassRunQueues<T>.At` (statt `PeekStealable`, siehe `Balance`)
 (E4-B); `CpuTopology` aus E6-A, dem Scheduler im Konstruktor übergeben; `SchedulerManager.LockCpu` (Cosmos).
 
 **`SelectCpu(thread, cpus, allowed)`:** drei `stackalloc`-Spannen der Länge `cpus.Length` füllen: `allowed[i] = allowedSet.Contains(i)`;
@@ -109,9 +109,11 @@ genügt). Klasse und `LastCpu` des Threads aus seinem Zustand. Rückgabe von `Cl
 **`PickNext`:** zusätzlich `LastCpu` des gewählten Threads auf `cpuState.CpuId` setzen.
 
 **`Balance(cpuState, allCpuStates)`:** `StealOrder` in eine `stackalloc`-Spanne; die CPUs in dieser Reihenfolge
-durchgehen, je CPU `using (SchedulerManager.LockCpu(victim))` und `PeekStealable(t => nicht gepinnt und
-t.Affinity.Contains(cpuState.CpuId))`; den ersten Fund zurückgeben, sonst `null`. Immer nur eine fremde Sperre zur
-gleichen Zeit, nie die eigene.
+durchgehen, je CPU `using (SchedulerManager.LockCpu(victim))` und die Queues dieser CPU mit `ClassRunQueues<T>.At(i)`
+(gleiche Reihenfolge wie `PeekStealable`) nach dem ersten Thread absuchen, der nicht gepinnt ist und
+`t.Affinity.Contains(cpuState.CpuId)` erfüllt; den ersten Fund zurückgeben, sonst `null`. Immer nur eine fremde Sperre zur
+gleichen Zeit, nie die eigene. (Umgesetzt mit `At(i)` statt `PeekStealable(Lambda)`: Ein Lambda mit `cpuId` wäre eine
+Closure-Allokation im Interruptkontext; eine allokationsfreie Überladung `PeekStealable(uint cpuId)` bleibt Nacharbeit.)
 
 - [ ] **Schritt 1:** Umsetzen. Die Regeln selbst sind in E4-B hostgetestet; hier entsteht nur die Übersetzung.
 - [ ] **Schritt 2:** Hosttests, nativer Build.
