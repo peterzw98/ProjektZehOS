@@ -554,9 +554,14 @@ internal class TcpConnection : IDisposable
                     return;
                 }
 
-                TCB.RcvNxt += packet.TcpDataLength;
-
+                // ZehOS patch tcp-rcvnxt-after-append, see PATCHES.md: RcvNxt
+                // moves only once the bytes are stored. AppendToData changes
+                // no state when it throws, so the segment is then neither
+                // stored nor acknowledged and the peer resends it from RcvNxt;
+                // moving RcvNxt first acknowledged bytes that were lost.
                 AppendToData(packet.TcpData);
+
+                TCB.RcvNxt += packet.TcpDataLength;
 
                 if (packet._fin)
                 {
