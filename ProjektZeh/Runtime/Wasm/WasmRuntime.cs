@@ -143,6 +143,12 @@ internal static unsafe partial class WasmRuntime
         lock (gate) return StartWorkerLocked();
     }
 
+    /// <summary>Der aktuelle Worker-Thread oder null; fuer die Diagnose in <c>tasks scheduler</c> (E6-C2).</summary>
+    internal static Thread? WorkerThread
+    {
+        get { lock (gate) return worker; }
+    }
+
     /// <summary>
     /// Gibt die Ressourcen eines Laufs frei: Sitzung, App-Speicher, Netz und offene Paketdateien. Nach einer isolierten
     /// CPU-Ausnahme ruft sie die Hauptschleife, weil der aufgegebene Worker sein Ende nie erreicht. Liefert false, wenn

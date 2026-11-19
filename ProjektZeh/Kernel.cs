@@ -681,12 +681,46 @@ public sealed class Kernel : Sys.Kernel
             $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
         };
         ulong allNs = CosmosClassScheduler.ElapsedNs;
-        for (uint cpu = 0; cpu < (uint)Cosmos.Kernel.System.Threading.KernelCpus.Count; cpu++)
-            if (CosmosClassScheduler.Snapshot(cpu) is { } state)
-                lines.Add(CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyNs, allNs));
+        int count = Cosmos.Kernel.System.Threading.KernelCpus.Count;
+        // "Last" ist das Mittel seit dem Boot und verdeckt eine App, die erst seit kurzem rechnet (E6-C2: Doom auf einer
+        // Worker-CPU sah nach 3 % aus). Darum zusaetzlich die Last seit der vorigen Abfrage; Shells koennen parallel fragen.
+        lock (schedulerSampleGate)
+        {
+            if (lastBusyNs.Length != count) { lastBusyNs = new ulong[count]; lastAllNs = 0; }
+            ulong intervalNs = allNs - lastAllNs;
+            for (uint cpu = 0; cpu < (uint)count; cpu++)
+            {
+                if (CosmosClassScheduler.Snapshot(cpu) is not { } state) continue;
+                string line = CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyNs, allNs);
+                lines.Add(line + $", seit letzter Abfrage {CpuDiagnostics.LoadPercent(state.BusyNs - lastBusyNs[cpu], intervalNs)} %");
+                lastBusyNs[cpu] = state.BusyNs;
+            }
+            lastAllNs = allNs;
+        }
         lines.Add("Auswahl CPU 0 (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds));
+#if ZEHOS_WASM && !ZEHOS_INSTALLER
+        // Belegt die Platzierung direkt: die CPU-Menge, die der Scheduler fuer den Worker fuehrt.
+        var wasmWorker = Runtime.Wasm.WasmRuntime.WorkerThread;
+        if (wasmWorker == null) lines.Add("Wasm-Worker: nicht gestartet");
+        else if (!Cosmos.Kernel.System.Threading.ThreadAffinity.TryGet(wasmWorker, out var affinity)) lines.Add("Wasm-Worker: nicht beim Scheduler");
+        else lines.Add($"Wasm-Worker: CPUs {DescribeCpus(affinity, count)}");
+#endif
         return [.. lines];
     }
+
+#if ZEHOS_WASM && !ZEHOS_INSTALLER
+    private static string DescribeCpus(Cosmos.Kernel.System.Threading.CpuSet cpus, int count)
+    {
+        var names = new System.Collections.Generic.List<string>();
+        for (uint cpu = 0; cpu < (uint)count; cpu++)
+            if (cpus.Contains(cpu)) names.Add(cpu.ToString());
+        return string.Join(",", names);
+    }
+#endif
+
+    private readonly object schedulerSampleGate = new();
+    private ulong[] lastBusyNs = [];
+    private ulong lastAllNs;
 
     /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
     /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>
