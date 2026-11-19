@@ -28,6 +28,9 @@ FAKE = r'''#!{py}
 import json, os, sys, time
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
+if os.environ.get("FAKE_ENV"):
+    with open(os.environ["FAKE_ENV"], "w") as f:
+        f.write(os.environ.get("MSBUILDDISABLENODEREUSE", "-"))
 print(os.environ.get("FAKE_OUT", ""), flush=True)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 if os.environ.get("FAKE_KILL"): os.kill(os.getpid(), 9)
@@ -582,5 +585,16 @@ e.run_until_idle()
 os.environ["FAKE_KILL"] = ""
 assert len(e.calls_made()) == 1 and e.d.gave_up_at == 1, (e.calls_made(), e.d.gave_up_at)   # kein zweiter Versuch
 assert "Speichergrenze 6G überschritten" in e.outbox(), e.outbox()
+
+# --- Läufe ohne MSBuild-Node-Reuse: sonst bleiben Arbeitsknoten nach dem Bau mit ihrem Speicher liegen -----------
+e = Env()
+os.environ["FAKE_ENV"] = os.path.join(e.dir, "env.txt")
+e.say("agent-coordinator", "agent-x: bauen")
+e.now += 6
+e.run_until_idle()
+del os.environ["FAKE_ENV"]
+with open(os.path.join(e.dir, "env.txt")) as f:
+    assert f.read() == "1"
+assert "MSBUILDDISABLENODEREUSE" not in os.environ                          # nur für den Lauf, nicht für den Dienst
 
 print("ok")
