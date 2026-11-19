@@ -138,6 +138,7 @@ das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LI
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
 wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `patches/lint1-nmi.md`) richtet `LocalApic.Initialize`
 LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
+**Grenze:** NMI kommt nur auf CPU 0 an; `LocalApic.InitializeCurrentCpu` maskiert LINT1 auf den APs (wie Linux). QEMU stellt `inject-nmi` allen CPUs zu, daher pinnt die Probe den Worker auf CPU 0 und parkt die Hauptschleife (E5-M, #515). Ein NMI-Halt für Code auf APs ist damit nicht belegt.
 
 **Grenzen:**
 
@@ -584,3 +585,11 @@ Prüfnachtrag zu #204 nach dem Coverage-Umbau: Auf dem integrierten Stand "38996
 ## WASI-Zeitstempel (12.8 P4-D)
 
 Geprüft im Quelltext des Cosmos-Commits `5d0b9535251472db7ecfe012f0435f0a04ffca16` (nicht im Gast): `FatInodeOperations.GetAttr` setzt `AccessTime`, `ModificationTime` und `ChangeTime` fest auf 0; `FatAttributes.UnpackDateTime` wird nirgends aufgerufen. Der WASI-Host meldet deshalb `atim = mtim = ctim = 0` (unbekannt) für Paket- und `/save`-Dateien; die Rückrufe `zehos_wasm_host_stat`, `save_stat`, `fstat` und `save_fstat` liefern die Zeit schon heute durch, bis Cosmos sie füllt.
+
+## Sperren-Übergabe zwischen CPUs (E6-H, 19. November 2026)
+
+Die Plugs `LowLevelMonitor_*` in `Cosmos.Kernel.Plugs/System/InteropSysPlug.cs` tragen jede umkämpfte `lock`-Sperre, `Monitor.Wait`/`PulseAll` und jedes Warten auf ein Wait-Handle. Bis Cosmos `3.0.97-zehos.6-smp.3` schrieben sie bei jedem Aufruf eine Zeile synchron auf die serielle Schnittstelle; unter KVM ist jedes Byte ein VM-Exit. Die SMP-Probe brauchte dadurch ~55 ms je Übergabe zwischen zwei CPUs (SMP 8: 1000 Übergaben je Paar in 141 s, 11 MB Serial-Log). Das Aufwecken selbst war nicht die Ursache: `ReadyThread` sendet den Reschedule-IPI an die Ziel-CPU. Patch `monitor-quiet` (`3.0.97-zehos.6-smp.4`) entfernt die Zeilen; danach 10.000 Übergaben je Paar unter KVM SMP 4 in 536–561 ms (MSI, drei Läufe). Offen: `LowLevelMonitor_TimedWait` meldet auch nach Zeitablauf `true`.
+
+## Frühboot-#GP beim PIC-Remap (E5-N, 19. November 2026)
+
+`_native_x64_load_idt` endet mit `sti`; `LegacyPic.RemapAndDisable` lief danach mit IF=1. ICW1 löscht die Maske der 8259, und bis zum letzten Maskenschreiben kam ein anstehender PIT-Tick (IRQ0) noch auf der Firmware-Vektorbasis 0x08 an, also über den Stub von #DF, der ein nie gelegtes Fehlerwort vom Stack nimmt. Der verschobene Rahmen endete beim ersten `movaps` mit `[INT] FATAL: Exception 13` (Fehlercode 0, RFLAGS 0x10046), vor jedem ZehOS-Code. Unter Hostlast (je `out` ein VM-Exit) fiel der Tick oft ins Fenster: KVM SMP 4, Last ~20, 9 von 10 Boots (MSI). Patch `pic-remap-cli` (`3.0.97-zehos.6-smp.8`, cosmos e3c6ff0c) sperrt Interrupts für die ganze Folge; danach 50/50 Boots SMP 4 bis `APIC system initialized` bei Last ~19. Bleibt zu beachten: Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen genauso.

@@ -9,6 +9,7 @@ using ProjektZeh.Input;
 using ProjektZeh.Network;
 using ProjektZeh.Runtime;
 using ProjektZeh.Runtime.Wasm;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
 using ProjektZeh.Storage;
@@ -60,9 +61,18 @@ internal sealed class DisplayService
             long heap = GC.GetGCMemoryInfo().HeapSizeBytes, allocated = GC.GetTotalAllocatedBytes(false);
             desktop.Metrics.Sample(milliseconds, heap, allocated);
             desktop.System.Sample(milliseconds, heap, allocated, total, free);
+            SampleCpuLoads();
             nextSample = milliseconds + 1000;
         }
         desktop.System.RecordWork(ElapsedMicroseconds(started));
+    }
+
+    private void SampleCpuLoads()
+    {
+        var busy = new ulong[Cosmos.Kernel.System.Threading.KernelCpus.Count];
+        for (uint cpu = 0; cpu < (uint)busy.Length; cpu++)
+            busy[cpu] = CosmosClassScheduler.Snapshot(cpu)?.BusyNs ?? 0;
+        desktop.System.SampleCpuLoads(busy, CosmosClassScheduler.ElapsedNs);
     }
 
     public void Suspend() => desktop.Suspend();

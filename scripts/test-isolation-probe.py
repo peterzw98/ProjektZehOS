@@ -25,6 +25,8 @@ MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahm
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
+# Erst wenn die Hauptschleife parkt, rechnet auf CPU 0 nur noch der Worker; nur dort kommt der NMI an (#515).
+NMI_PARKED = "ISOLATION_PROBE nmi main parked"
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -67,10 +69,14 @@ def evaluate_nmi(log: str) -> list[str]:
     if len(tail) < 2:
         return ["NMI-Fenster nicht geoeffnet"]
     after = tail[1]
+    if NMI_PARKED not in after:
+        return ["Hauptschleife nicht geparkt"]
     if "Interrupt Vector: 2" not in after:
         return ["kein NMI (Vektor 2) im Log"]
     missing = []
-    target = re.search(r"ZehOS: Thread (-?\d+), Wasm-Worker (-?\d+), Gastcode (\d)", after.split("Interrupt Vector: 2", 1)[1])
+    # Seit Patch panic-stop-cpus entscheidet der Hook vor dem Bericht: seine Zeile steht vor "Interrupt Vector: 2", nicht
+    # danach (#515). Nach dem Fenster loest nur der NMI den Hook aus, also gilt die erste Zeile dahinter.
+    target = re.search(r"ZehOS: Thread (-?\d+), Wasm-Worker (-?\d+), Gastcode (\d)", after)
     if not target or target.group(1) != target.group(2) or target.group(3) != "1":
         missing.append("NMI traf nicht den Worker im Gastcode (Gegenprobe ohne Aussage, wiederholen)")
     if "WASM CPU-Ausnahme im App-Code" in after:
@@ -95,11 +101,11 @@ def run(args: argparse.Namespace, number: int) -> bool:
     try:
         # Nach einer isolierten Ausnahme laeuft das System weiter ("Thread abandoned."); erst DONE oder TIMEOUT beendet das Warten.
         end = ("ISOLATION_PROBE negative pf on probe thread" if args.negative
-               else NMI_WINDOW if args.nmi else "ISOLATION_PROBE DONE")
+               else NMI_PARKED if args.nmi else "ISOLATION_PROBE DONE")
         started = time.monotonic()
         while time.monotonic() - started < 300 and end not in text() and "TIMEOUT" not in text():
             time.sleep(1)
-        if args.nmi and NMI_WINDOW in text():
+        if args.nmi and NMI_WINDOW in text() and NMI_PARKED in text():
             time.sleep(2)
             qmp = tools.Qmp(port)
             qmp.command("inject-nmi")
