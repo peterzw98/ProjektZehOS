@@ -20,16 +20,36 @@ internal sealed class CosmosNetworkService : INetworkService
     private const int DnsRetryMilliseconds = 2000;
     private const int MaximumBody = 16384;
 
+    // E6-C.11 (#390): die Adresse liest nur, wer Gate haelt; Leser ohne Gate bekommen den zuletzt veroeffentlichten Wert.
+    private static readonly NetworkAddressSnapshot AddressSnapshot = new(Gate);
+    private static readonly Func<string?> ReadAddressLocked = ReadPrimaryAddress;
+
     public NetworkStatus Status => ReadStatus();
 
+    /// <summary>
+    /// Adapter und Link kommen aus der Geraetetabelle, die Cosmos unter ihrer eigenen IRQ-sicheren Sperre fuehrt; die Adresse
+    /// steht in <c>IPConfig</c>, das Cosmos ohne Sperre liest, und kommt deshalb ueber <see cref="NetworkAddressSnapshot"/>.
+    /// Haelt ein langer Auftrag (DHCP, Abruf) Gate, zeigt der Status die Adresse vor dem Auftrag; der Auftrag veroeffentlicht
+    /// die neue vor dem Freigeben (<see cref="Execute"/>).
+    /// </summary>
     private static NetworkStatus ReadStatus()
     {
         if (!NetworkManager.IsEnabled || !NetworkManager.IsInitialized || NetworkManager.DeviceCount == 0)
             return new(false, false, null);
         var adapter = NetworkManager.Primary;
-        var address = adapter.IPConfig?.Address;
-        return new(adapter.IsValid, adapter.LinkUp,
-            address is null || address.Equals(Address4.Zero) ? null : address.ToString());
+        return new(adapter.IsValid, adapter.LinkUp, AddressSnapshot.Read(ReadAddressLocked));
+    }
+
+    private static string? ReadPrimaryAddress()
+    {
+        var address = NetworkManager.Primary.IPConfig?.Address;
+        return address is null || address.Equals(Address4.Zero) ? null : address.ToString();
+    }
+
+    /// <summary>Fuer Schreiber ausserhalb dieses Dienstes (Update-Quelle mit eigenem DHCP), die Gate halten.</summary>
+    internal static void PublishStatusLocked()
+    {
+        if (NetworkManager.IsEnabled && NetworkManager.IsInitialized) AddressSnapshot.PublishLocked(ReadAddressLocked);
     }
 
     public ResultObject<string> Execute(string operation, string[] arguments, CancellationToken cancellation)
@@ -38,6 +58,9 @@ internal sealed class CosmosNetworkService : INetworkService
         ResultObject<string> result;
         try { cancellation.ThrowIfCancellationRequested(); result = ResultObjectFactory.CreateSuccess(Perform(operation, arguments, cancellation)); }
         catch (Exception exception) { result = ResultObjectFactory.CreateFromException<string>(exception); }
+        // Auch nach einem Fehler: ein abgebrochenes DHCP kann die Konfiguration schon gesetzt haben. Scheitert das Lesen,
+        // bleibt der alte Wert stehen; das Ergebnis des Auftrags geht vor.
+        try { PublishStatusLocked(); } catch (Exception) { }
         Monitor.Exit(Gate);
         return result;
     }
