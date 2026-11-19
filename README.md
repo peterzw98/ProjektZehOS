@@ -65,6 +65,15 @@ ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --iso <ISO> --accel kvm   # Z
 
 Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 10.000 Nachrichten.
 
+Die Panic-Probe (E7-B) belegt, dass eine Panic alle CPUs anhält (Cosmos-Patch `panic-stop-cpus`): Ein Thread schreibt alle 50 ms `SMP_PROBE tick`, nach 1 s löst ein Thread auf einer anderen CPU einen #PF aus.
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbePanic=true -warnaserror
+ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --panic --iso <ISO> --accel kvm --runs 5
+```
+
+Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System halted.` und 2 s lang keine weitere `tick`-Zeile.
+
 ## Lizenz
 
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:

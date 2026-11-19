@@ -30,6 +30,8 @@
     <DefineConstants Condition="'$(ZehOSIsolationProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NEGATIVE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNmi)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NMI</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSmpProbe)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE</DefineConstants>
+    <!-- E7-B: Panic auf einer CPU muss die Ticks eines Threads auf einer anderen CPU anhalten; ersetzt die Schritte der SMP-Probe. -->
+    <DefineConstants Condition="'$(ZehOSSmpProbePanic)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE;ZEHOS_SMP_PROBE_PANIC</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>

@@ -26,6 +26,10 @@ internal static class CosmosSmpProbe
         try
         {
             workers = ListWorkers();
+#if ZEHOS_SMP_PROBE_PANIC
+            ok &= Step("cpus", StepCpus);
+            ok &= RunPanic(); // kehrt nur bei FAIL zurueck
+#else
             ok &= Step("cpus", StepCpus);
             ok &= Step("counters", StepCounters);
             ok &= Step("parallel", StepParallel);
@@ -35,6 +39,7 @@ internal static class CosmosSmpProbe
             ok &= Step("threads", StepThreads);
             ok &= Step("timedwait", StepTimedWait);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
+#endif
         }
         catch (Exception exception)
         {
@@ -430,6 +435,50 @@ internal static class CosmosSmpProbe
         if (signaledEventMs >= 4000 || signaledMonitorMs >= 4000) return "Signal weckt erst nach der Frist";
         return null;
     }
+
+#if ZEHOS_SMP_PROBE_PANIC
+    private const int TickMs = 50;
+    private const int PanicAfterMs = 1000;
+
+    /// <summary>
+    /// E7-B (Cosmos-Patch panic-stop-cpus): Ein Thread auf einer Worker-CPU schreibt alle 50 ms <c>SMP_PROBE tick</c>; nach
+    /// 1 s loest ein Thread auf einer anderen CPU einen #PF aus. Er ist nicht der Wasm-Worker, der Ausnahme-Hook haelt also
+    /// an (wie die Gegenprobe der Isolationsprobe). Nach <c>System halted.</c> darf keine tick-Zeile mehr folgen; das prueft
+    /// <c>scripts/test-smp-probe.py --panic</c>. Die tick-Zeilen schreibt bewusst der Tickthread selbst: Haelt der NMI ihn
+    /// mitten in einer Zeile mit der seriellen Sperre an, ist genau das der Fall, den der Patch abdecken muss.
+    /// Kehrt nur zurueck, wenn die Probe nicht ausgefuehrt werden kann (FAIL).
+    /// </summary>
+    private static unsafe bool RunPanic()
+    {
+        if (KernelCpus.Count < 2) { Write($"panic FAIL nur {KernelCpus.Count} CPU, Halt anderer CPUs nicht pruefbar"); return false; }
+        uint tickCpu = workers[workers.Length - 1];
+        // Die fehlerhafte CPU muss eine andere sein, sonst belegt das Ende der Ticks nur den Halt der eigenen CPU.
+        uint faultCpu = tickCpu == 0 ? 1u : 0u;
+        var ticker = Pinned(tickCpu, () =>
+        {
+            for (int n = 1; ; n++)
+            {
+                Log.WriteString($"SMP_PROBE tick {n} cpu={KernelCpus.Current}\n");
+                Thread.Sleep(TickMs);
+            }
+        });
+        ticker.Start();
+        Thread.Sleep(PanicAfterMs);
+        var faulter = Pinned(faultCpu, () =>
+        {
+            Write($"panic fault cpu={KernelCpus.Current} tick_cpu={tickCpu}");
+            // Unter Cosmos/NativeAOT ein echter #PF wie in CosmosIsolationProbe (negativer Fall).
+            Volatile.Write(ref panicSink, *(int*)0);
+            Write("panic FAIL nach dem #PF weitergelaufen");
+        });
+        faulter.Start();
+        faulter.Join(5000);
+        Write("panic FAIL System laeuft 5 s nach dem #PF weiter");
+        return false;
+    }
+
+    private static int panicSink;
+#endif
 
     private static void Write(string message) => Log.WriteString($"SMP_PROBE {message}\n");
 }

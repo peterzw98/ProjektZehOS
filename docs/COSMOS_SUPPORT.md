@@ -140,6 +140,9 @@ wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `p
 LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
 **Grenze:** NMI kommt nur auf CPU 0 an; `LocalApic.InitializeCurrentCpu` maskiert LINT1 auf den APs (wie Linux). QEMU stellt `inject-nmi` allen CPUs zu, daher pinnt die Probe den Worker auf CPU 0 und parkt die Hauptschleife (E5-M, #515). Ein NMI-Halt für Code auf APs ist damit nicht belegt.
 
+**Panic hält alle CPUs an (E7-B, #395):** Seit dem Cosmos-Patch `panic-stop-cpus` (Branch `cosmos`, `patches/panic-stop-cpus.md`) beansprucht die erste anhaltende CPU die Panic und schickt jeder anderen Online-CPU einen NMI; deren Handler hält sie mit gesperrten Interrupts an. Die anhaltende CPU wartet höchstens 100 ms und nimmt keine Sperre; der Bericht folgt erst danach, ohne die serielle Sperre. Der Weg `AbandonThread` (Isolation des Wasm-Workers) hält keine CPU an. Gastprobe `-p:ZehOSSmpProbePanic=true` mit `scripts/test-smp-probe.py --panic`: Ein Thread auf der letzten Worker-CPU schreibt alle 50 ms `SMP_PROBE tick`, nach 1 s löst ein Thread auf CPU 0 einen #PF aus (kein Wasm-Worker, also Halt); nach `System halted.` darf 2 s lang keine `tick`-Zeile folgen. Zahlen im PR.
+**Grenze:** ARM64 sendet keinen NMI (die anderen CPUs laufen dort weiter). Der NMI hat keinen eigenen Stack (kein IST). Geprüft nur unter QEMU (KVM, TCG), nicht unter VMware oder auf Hardware.
+
 **Grenzen:**
 
 - Unter wasm3 läuft kein Gastcode nativ: Eine CPU-Ausnahme dort ist ein Fehler im Interpreter-C, ausgelöst durch das
