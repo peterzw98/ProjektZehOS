@@ -223,9 +223,23 @@ def main():
         page("http-chunked", hexcolor(pages.HTTP_CHUNKED))
         address(f"{base}/fehlt.html")
         page("http-404", hexcolor(pages.HTTP_MISSING))
+        # Der TLS-Handshake blockiert die NetSurf-Schleife (#493): Tippen waehrend dessen ueberlaeuft die Eingabe.
+        # Erst weitertippen, wenn die 404-Seite aus dem Inhalt verschwunden ist (nicht nur die Adresszeile ist neu)
+        # und das Bild zweimal gleich ist (Fehlerseite fertig).
+        alt = bytes.fromhex("".join(f"{c:02x}" for c in pages.HTTP_MISSING))
+        start = time.monotonic()
         address("https://10.0.2.2/")
-        time.sleep(2)
-        capture("https-fehlerseite")
+        deadline = start + 60
+        letztes = None
+        while True:
+            time.sleep(.5)
+            aktuell = capture("https-fehlerseite")
+            if aktuell.count(alt) < 4000 and aktuell == letztes:
+                break
+            letztes = aktuell
+            if time.monotonic() > deadline:
+                raise AssertionError("https-fehlerseite: HTTPS-Schritt nach 60 s nicht abgeschlossen")
+        print(f"HTTPS-Schritt (Handshake bis Fehlerseite stabil): {time.monotonic() - start:.1f} s", flush=True)
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 

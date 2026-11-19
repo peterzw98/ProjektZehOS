@@ -26,6 +26,8 @@ internal sealed class CosmosHttpUpdateSource(UpdateEndpoint endpoint) : IUpdateS
         ResultObject<byte[]> result;
         try { result = ReadLocked(name, maxBytes); }
         catch (Exception exception) { result = ResultObjectFactory.CreateFromException<byte[]>(exception); }
+        // E6-C.11: das eigene DHCP oben kann eine Adresse gesetzt haben; Statusleser ohne Gate sehen sie erst nach dem Veroeffentlichen.
+        try { CosmosNetworkService.PublishStatusLocked(); } catch (Exception) { }
         Monitor.Exit(CosmosNetworkService.Gate);
         return result;
     }
