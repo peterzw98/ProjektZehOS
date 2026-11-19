@@ -101,6 +101,7 @@ public class Kernel : Sys.Kernel
         TR.Run("GC_OutOfMemory_HeapExhaustedThrows", TestGCOutOfMemoryHeapExhaustedThrows);
         TR.Run("GC_OutOfMemory_SizeOverflowThrows", TestGCOutOfMemorySizeOverflowThrows);
         TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
+        TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
 
         // GC Info & Configuration Tests
         TR.Run("GC_Info_SimpleMemoryInfo", TestGCInfoSimpleMemoryInfo);
@@ -460,6 +461,89 @@ public class Kernel : Sys.Kernel
         }
 
         Assert.True(threw, "GC: a negative array length must throw OverflowException");
+    }
+
+    // ZehOS patch gc-oom-throw: a chain of blocks that keeps the whole heap reachable.
+    private sealed class FillNode
+    {
+        public byte[]? Data;
+        public FillNode? Next;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static FillNode? FillHeap(int blockSize, FillNode? head)
+    {
+        try
+        {
+            while (true)
+            {
+                FillNode node = new FillNode();
+                node.Next = head;
+                head = node;
+                node.Data = new byte[OpaqueLength(blockSize)];
+            }
+        }
+        catch (OutOfMemoryException)
+        {
+        }
+
+        return head;
+    }
+
+    private static void TestGCOutOfMemoryExhaustedHeapCatchable()
+    {
+        // The heap really runs out: blocks from 1 MiB down to 16 bytes until even the smallest
+        // fails. The OutOfMemoryException itself then has no room (the reserve instance is
+        // thrown), and the dispatch must not allocate a stack trace: that second OOM would halt
+        // as a recursive exception instead of reaching the catch below.
+        FillNode? head = null;
+        for (int blockSize = 1 << 20; blockSize >= 16; blockSize >>= 2)
+        {
+            head = FillHeap(blockSize, head);
+        }
+
+        int caught = 0;
+        Exception? first = null;
+        Exception? second = null;
+        for (int i = 0; i < 2; i++)
+        {
+            try
+            {
+                FillNode extra = new FillNode();
+                extra.Data = new byte[OpaqueLength(16)];
+                extra.Next = head;
+                head = extra;
+            }
+            catch (OutOfMemoryException e)
+            {
+                caught++;
+                if (i == 0)
+                {
+                    first = e;
+                }
+                else
+                {
+                    second = e;
+                }
+            }
+        }
+
+        bool reserveUsed = first is not null && ReferenceEquals(first, second);
+        GC.KeepAlive(head);
+        head = null;
+        first = null;
+        second = null;
+        CoreGC.Collect();
+
+        Serial.WriteString(reserveUsed
+            ? "[GarbageCollector] exhausted heap: reserve OutOfMemoryException thrown\n"
+            : "[GarbageCollector] exhausted heap: fresh OutOfMemoryException thrown\n");
+        Assert.True(caught == 2, "GC: both allocations on an exhausted heap must throw a catchable OutOfMemoryException");
+
+        // Released and collected, the heap serves allocations again.
+        byte[] after = new byte[OpaqueLength(1 << 20)];
+        after[after.Length - 1] = 0x3C;
+        Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
     }
 
     private static void TestGCLargeAllocationAndCollect()

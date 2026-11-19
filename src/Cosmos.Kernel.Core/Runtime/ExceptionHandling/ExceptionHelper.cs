@@ -525,7 +525,7 @@ internal static unsafe partial class ExceptionHelper
     /// <paramref name="pRegDisplay"/> when non-null) returns non-zero. Finally and fault clauses do
     /// not catch: pass 2 runs them on the way to the catch. <paramref name="clauseIndex"/> is the
     /// clause's position in the method's clause table. Also appends the method name to the
-    /// exception's stack trace.
+    /// exception's stack trace, except for an <see cref="OutOfMemoryException"/>.
     /// </summary>
     private static bool TryFindHandler(Exception ex, nuint instructionPointer, nuint framePointer, out EHClause clause, out int clauseIndex, REGDISPLAY* pRegDisplay)
     {
@@ -536,7 +536,13 @@ internal static unsafe partial class ExceptionHelper
             return false;
         }
 
+        // ZehOS patch gc-oom-throw, see PATCHES.md
+        // Formatting the method name and joining the trace allocate. On an exhausted heap that
+        // throws a second OutOfMemoryException from inside this dispatch, which halts as a
+        // recursive exception instead of reaching the program's catch. An OutOfMemoryException
+        // therefore collects no stack trace; the dispatch itself allocates nothing else.
         if (StackTraceMetadata.IsSupported
+            && ex is not OutOfMemoryException
             && StackTraceMetadata.TryGetMethodNameFromStartAddress(clauses.MethodStart, out string methodName))
         {
             ref string? stackTraceString = ref StackTraceMetadata.GetStackTraceString(ex);
