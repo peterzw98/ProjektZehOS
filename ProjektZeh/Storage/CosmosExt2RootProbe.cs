@@ -84,6 +84,7 @@ internal static class CosmosExt2RootProbe
                 case 14: RunConcurrency(root, lockedOnly: true); break;
                 case 15: RunConcurrency(root, lockedOnly: true, onFat: true); break;
                 case 16: RunLimitOnly(root, RootProbeCatalog.ScaleEntries); break;
+                case 17: RunLateThreads(root); break;
                 default: RunHighGroups(root, fullBig: run == 7); break;
             }
 
@@ -261,6 +262,53 @@ internal static class CosmosExt2RootProbe
         WriteState(root, 0);
         Pass("Format, Mount /, s_state 0");
         StepELimit(root, entries);
+        StepM(root);
+    }
+
+    /// <summary>
+    /// Diagnoselauf 17 (E5-F, #386): erst die Dateilast aus Lauf 1 (c bis i), dann Threads starten. Lauf 1 startet seine
+    /// j-Threads vorher, weil Cosmos 3.0.97 einen fehlenden Stack nicht meldete (Page Fault). Hier wird der spaete Start
+    /// je Groesse zweimal versucht: ueber ThreadStarter (mit Stackprobe) und direkt mit Thread.Start (ohne Probe). Ohne
+    /// Probe muss ein Fehlschlag als Ausnahme ankommen, nicht als Page Fault.
+    /// </summary>
+    private static void RunLateThreads(IBlockDevice root)
+    {
+        Begin("format17");
+        Check(IsBlank(root), $"{RootDeviceName}: erstes MiB nicht leer; nichts geschrieben");
+        Check(CosmosExt2Formatter.FormatForKernel(root, new Ext2FormatOptions { BlockSize = 4096, VolumeLabel = RootLabel }), "FormatForKernel abgelehnt");
+        MountRoot(root);
+        WriteState(root, 0);
+        Pass("Format, Mount /, s_state 0");
+        var files = Files();
+        StepC(root, files);
+        StepD(root);
+        StepE(root);
+        StepF(root);
+        StepG(root, files, 1, RootProbeCatalog.GCount);
+        StepH(root, files);
+        StepI(root, files);
+        foreach (int bytes in new[] { 256 * 1024, 256 * 1024, 256 * 1024, 8 * 1024 * 1024 })
+        {
+            Begin($"late-probe-{bytes / 1024}k");
+            var started = ProjektZeh.Scheduling.ThreadStarter.TryStart(() => { }, bytes);
+            if (started.IsOK()) Check(started.Value!.Join(10000), "Thread mit Probe endet nicht");
+            Pass(started.IsOK() ? "gestartet" : "abgelehnt: " + started.Status.Message);
+            Begin($"late-direct-{bytes / 1024}k");
+            string outcome;
+            try
+            {
+                var thread = new Thread(() => { }, bytes);
+                thread.Start();
+                Check(thread.Join(10000), "Thread ohne Probe endet nicht");
+                outcome = "gestartet";
+            }
+            catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
+            {
+                // Erwarteter Fehlerweg ohne Probe; ein Page Fault kaeme hier nie an.
+                outcome = $"abgelehnt: {exception.GetType().Name}: {exception.Message}";
+            }
+            Pass(outcome);
+        }
         StepM(root);
     }
 
@@ -1210,7 +1258,7 @@ internal static class CosmosExt2RootProbe
         int end = text.IndexOf('\n', ControlPrefix.Length);
         bool parsed = int.TryParse(text.AsSpan(ControlPrefix.Length, (end < 0 ? text.Length : end) - ControlPrefix.Length),
             System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int run);
-        Check(parsed && run is >= 1 and <= 16, "Lauf ausserhalb 1..16; nichts geschrieben");
+        Check(parsed && run is >= 1 and <= 17, "Lauf ausserhalb 1..17; nichts geschrieben");
         return run;
     }
 
