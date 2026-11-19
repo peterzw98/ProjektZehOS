@@ -608,6 +608,9 @@ assert not addressed(f"[AUFTRAG] agent-y: Review, dann [FERTIG] an {NICK}", "#fi
 assert not addressed(f"agent-y (Lead X): plane mit {NICK}", "#first", NICK, pat)
 assert addressed(f"bitte {NICK} melden", "#general", NICK, pat)              # ohne Doppelpunkt wie bisher
 assert addressed("hallo du", NICK, NICK, pat)                                 # Direktnachricht
+assert addressed(f"agent-y: X; {NICK}: Y", "#first", NICK, pat)               # Sammelzeile
+assert addressed(f"<Peda> um 10:19 bitte {NICK} pruefen: X", "#general", NICK, pat)  # Uhrzeit vor dem Nick
+assert addressed(f"siehe https://x.y/z, {NICK} bitte: X", "#general", NICK, pat)    # URL vor dem Nick
 e = Env()
 os.environ["FAKE_CALLS"] = e.calls
 e.say("agent-coordinator", f"[AUFTRAG] agent-y: pruefe X, dann [FERTIG] an {NICK}")
@@ -619,5 +622,6 @@ e.now += 6
 e.run_until_idle()
 calls = e.calls_made()
 assert len(calls) == 1 and "pruefe X" in calls[0][-1] and "jetzt du" in calls[0][-1], calls  # Kontext kommt mit
+assert "an andere adressiert" in calls[0][-1] and "Absender startet keine" not in calls[0][-1]
 
 print("ok")
