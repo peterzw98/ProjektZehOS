@@ -50,6 +50,11 @@ class SmpProbeTests(unittest.TestCase):
         self.assertTrue(smp.evaluate(sample(skip=("migrate",)), "kvm", "4"))
         self.assertTrue(smp.evaluate(sample(skip=("migrate",)), "tcg", "4"))
 
+    def test_skip_boundary_two_workers(self):
+        # Grenzfall: genau zwei Worker-CPUs (3 CPUs) -> SKIP ist FAIL; ein Worker (2 CPUs) -> SKIP bleibt erlaubt.
+        self.assertTrue(smp.evaluate(sample(3, 2, skip=("migrate",)), "kvm", "3"))
+        self.assertEqual([], smp.evaluate(sample(2, 1, skip=("parallel", "migrate")), "tcg", "2"))
+
     def test_speedup_only_judged_on_kvm(self):
         self.assertTrue(smp.evaluate(sample(speedup=900), "kvm", "4"))
         self.assertEqual([], smp.evaluate(sample(speedup=900), "tcg", "4"))
