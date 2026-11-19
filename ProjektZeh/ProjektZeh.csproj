@@ -25,6 +25,8 @@
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <!-- Nur Diagnose (E5-I): ohne ZehOS-Klassenscheduler laeuft der Upstream-Stride, zum Vergleich der Policies. -->
+    <DefineConstants Condition="'$(ZehOSStrideScheduler)' == 'true'">$(DefineConstants);ZEHOS_STRIDE_SCHEDULER</DefineConstants>
     <!-- Gastprobe 12.4-I1: CPU-Ausnahmen im Wasm-Worker; Negative haelt zum Schluss im Probe-Thread an. -->
     <DefineConstants Condition="'$(ZehOSIsolationProbe)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NEGATIVE</DefineConstants>
