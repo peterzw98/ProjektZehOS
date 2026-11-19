@@ -138,6 +138,7 @@ das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LI
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
 wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `patches/lint1-nmi.md`) richtet `LocalApic.Initialize`
 LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
+**Grenze:** NMI kommt nur auf CPU 0 an; `LocalApic.InitializeCurrentCpu` maskiert LINT1 auf den APs (wie Linux). QEMU stellt `inject-nmi` allen CPUs zu, daher pinnt die Probe den Worker auf CPU 0 und parkt die Hauptschleife (E5-M, #515). Ein NMI-Halt für Code auf APs ist damit nicht belegt.
 
 **Grenzen:**
 

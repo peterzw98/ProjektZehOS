@@ -43,11 +43,12 @@ internal static class CosmosIsolationProbe
             Thread.Sleep(1);
             // Auf CPU 0 laeuft auch die Hauptschleife und haette den NMI in allen Laeufen abgefangen (Thread = Hauptthread);
             // sie parkt, sobald sie das Fenster sieht (ParkMainInNmiWindow), und meldet das, bevor das Skript den NMI sendet.
-            Volatile.Write(ref nmiWindow, 1);
             FaultIsolation.EnterNativeRun();
             try
             {
                 Log("ISOLATION_PROBE nmi window open cpu=" + KernelCpus.Current);
+                // Erst nach der Zeile "window open": Das Skript wertet ab dort aus (evaluate_nmi), "main parked" muss dahinter stehen.
+                Volatile.Write(ref nmiWindow, 1);
                 long end = Stopwatch.GetTimestamp() + 120 * Stopwatch.Frequency;
                 while (Stopwatch.GetTimestamp() < end) sink++;
                 Log("ISOLATION_PROBE nmi window closed");
