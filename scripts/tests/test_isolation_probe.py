@@ -47,10 +47,12 @@ class EvaluateTests(unittest.TestCase):
 
 NMI_HALT = PASS_LOG + '\n'.join([
     '',
-    'ISOLATION_PROBE nmi window open',
+    'ISOLATION_PROBE nmi window open cpu=0',
+    'ISOLATION_PROBE nmi main parked',
+    # Reihenfolge wie im Gast seit panic-stop-cpus: erst die Zeile des Hooks, dann der Bericht (#515).
+    'ZehOS: Thread 9, Wasm-Worker 9, Gastcode 1',
     'CPU EXCEPTION: Non-Maskable Interrupt',
     'Interrupt Vector: 2',
-    'ZehOS: Thread 9, Wasm-Worker 9, Gastcode 1',
     'System halted.',
 ])
 
@@ -69,8 +71,13 @@ class NmiTests(unittest.TestCase):
                       isolation.evaluate(log, negative=False, nmi=True))
 
     def test_missing_nmi_is_reported(self):
-        log = PASS_LOG + '\nISOLATION_PROBE nmi window open\nISOLATION_PROBE nmi window closed'
+        log = (PASS_LOG + '\nISOLATION_PROBE nmi window open\nISOLATION_PROBE nmi main parked'
+               '\nISOLATION_PROBE nmi window closed')
         self.assertEqual(isolation.evaluate(log, negative=False, nmi=True), ['kein NMI (Vektor 2) im Log'])
+
+    def test_main_loop_not_parked_is_reported(self):
+        log = NMI_HALT.replace('ISOLATION_PROBE nmi main parked\n', '')
+        self.assertEqual(isolation.evaluate(log, negative=False, nmi=True), ['Hauptschleife nicht geparkt'])
 
     def test_modes_exclude_each_other(self):
         with self.assertRaises(SystemExit):

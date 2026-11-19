@@ -1,5 +1,6 @@
 using System;
 using Cosmos.Kernel.System.Threading;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Runtime;
 
@@ -9,9 +10,26 @@ internal static unsafe class CosmosBootOptions
     /// <summary>Die geparsten Optionen; vor <see cref="Apply"/> alle leer.</summary>
     public static BootOptions Current { get; private set; }
 
+    public static CpuSet WorkerCpus { get; private set; } = CpuSet.Single(0);
+
+    public static string ConfigureWorkerCpus(CpuTopology topology)
+    {
+        bool[] selected = CpuSelection.Workers(topology, Current.Cpus, Current.SmtOff);
+        var mask = CpuSet.Empty;
+        for (uint cpu = 0; cpu < selected.Length; cpu++)
+            if (selected[cpu]) mask = mask.With(cpu);
+
+        mask = mask.Intersect(KernelCpus.Online);
+        WorkerCpus = mask.IsEmpty ? CpuSet.Single(0) : mask;
+
+        if (!topology.Measured) return "Hyperthreading: unbekannt";
+        if (topology.CpuCount == topology.CoreCount) return "Hyperthreading: nicht vorhanden";
+        return Current.SmtOff ? "Hyperthreading: abgeschaltet (zehos.smt=off)" : "Hyperthreading: genutzt";
+    }
+
     /// <summary>
-    /// Zuerst im Hauptthread aufrufen, vor jedem Threadstart. Etappe 5: setzt immer die Affinität des Hauptthreads und die
-    /// Standardaffinität neuer Threads auf CPU 0, unabhängig von den Optionen (die Optionen werden nur gelesen).
+    /// Zuerst im Hauptthread aufrufen, vor jedem Threadstart. Der Hauptthread und neue Threads bleiben standardmäßig
+    /// auf CPU 0. Explizit platzierte Worker verwenden später <see cref="WorkerCpus"/>.
     /// Gibt eine Protokollzeile zurück, weil das Systemprotokoll hier noch nicht bekannt sein muss.
     /// </summary>
     public static string Apply()
@@ -22,7 +40,7 @@ internal static unsafe class CosmosBootOptions
             // Die Standardaffinität zuerst: CoreLib merkt sich Environment.ProcessorCount beim ersten Lesen.
             KernelCpus.DefaultAffinity = CpuSet.Single(0);
             ThreadAffinity.Current = CpuSet.Single(0);
-            return $"CPUs online={KernelCpus.Count}, genutzt=1 (zehos.cpus={(Current.Cpus?.ToString() ?? "-")}, Etappe 5: immer CPU 0)";
+            return $"CPUs online={KernelCpus.Online.Count}, Hauptthread und Standardaffinität: CPU 0 (zehos.cpus={Current.Cpus?.ToString() ?? "-"})";
         }
         catch (InvalidOperationException exception)
         {

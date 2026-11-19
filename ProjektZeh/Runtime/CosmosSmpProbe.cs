@@ -6,6 +6,7 @@ using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 using ProjektZeh.Messaging;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Runtime;
 
@@ -17,8 +18,11 @@ namespace ProjektZeh.Runtime;
 /// </summary>
 internal static class CosmosSmpProbe
 {
-    private const int HandoffCount = 1000;
+    private const int HandoffCount = 10000;
     private static uint[] workers = [];
+
+    /// <summary>Vom Kernel nach dem Lesen der Topologie gesetzt; der Schritt placement braucht die Geschwister.</summary>
+    public static CpuTopology? Topology { get; set; }
 
     public static bool Run()
     {
@@ -26,6 +30,10 @@ internal static class CosmosSmpProbe
         try
         {
             workers = ListWorkers();
+#if ZEHOS_SMP_PROBE_PANIC
+            ok &= Step("cpus", StepCpus);
+            ok &= RunPanic(); // kehrt nur bei FAIL zurueck
+#else
             ok &= Step("cpus", StepCpus);
             ok &= Step("counters", StepCounters);
             ok &= Step("parallel", StepParallel);
@@ -33,7 +41,11 @@ internal static class CosmosSmpProbe
             ok &= Step("locks", StepLocks);
             ok &= Step("gc", StepGc);
             ok &= Step("threads", StepThreads);
+            ok &= Step("placement", StepPlacement);
+            ok &= Step("smt", StepSmt);
+            ok &= Step("timedwait", StepTimedWait);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
+#endif
         }
         catch (Exception exception)
         {
@@ -117,6 +129,10 @@ internal static class CosmosSmpProbe
         }
         start.Set();
         Thread.Sleep(300);
+        // Unter TCG laufen die vCPUs reihum und ein Thread kann in 300 ms noch gar nicht gezaehlt haben:
+        // bis zu 10 s warten, bis jeder eigene Zaehler > 0 ist.
+        var window = Stopwatch.StartNew();
+        while (window.ElapsedMilliseconds < 10000 && !AllStarted(own, n)) Thread.Sleep(50);
         Volatile.Write(ref stop, 1);
         if (!JoinAll(threads, 5000)) return "Zaehlerthreads enden nicht";
         long sum = 0;
@@ -127,6 +143,13 @@ internal static class CosmosSmpProbe
         }
         Write($"INFO counters shared={shared} sum={sum}");
         return shared == sum ? null : $"gemeinsamer Zaehler {shared} != Summe {sum}";
+    }
+
+    private static bool AllStarted(long[] own, int n)
+    {
+        for (int i = 0; i < n; i++)
+            if (Volatile.Read(ref own[i * 8]) <= 0) return false;
+        return true;
     }
 
     // Feste Rechenlast ohne Speicherzugriffe; das Ergebnis verhindert, dass der Bau die Schleife entfernt.
@@ -365,6 +388,181 @@ internal static class CosmosSmpProbe
         Write($"INFO threads free_delta_kib={delta}");
         return ran == 100 ? null : $"nur {ran} von 100 Threads liefen";
     }
+
+    // E7-D: Ein Interaktiv- und ein Normal-Thread (Platzierung Workers) rechnen 500 ms und melden alle 50 ms ihre CPU.
+    // Bestanden, wenn bei mindestens zwei Kernen unter den Worker-CPUs in mindestens 9 von 10 Meldungen die CPUs keine Geschwister sind.
+    private static string? StepPlacement()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured) return $"SKIP cpus={KernelCpus.Count}";
+        var cores = new HashSet<int>();
+        foreach (uint cpu in workers) if (CosmosBootOptions.WorkerCpus.Contains(cpu)) cores.Add(topology.CoreOf((int)cpu)); // mit zehos.smt=off bleibt oft nur ein Kern: SKIP
+        if (cores.Count < 2) return $"SKIP cpus={KernelCpus.Count}";
+        const int samples = 10;
+        var interactive = new int[samples];
+        var normal = new int[samples];
+        var first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers);
+        var second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
+        if (!first.IsOK() || !second.IsOK()) return "Platzierungsthread startet nicht";
+        if (first.Value?.Join(10000) != true || second.Value?.Join(10000) != true) return "Platzierungsthread endet nicht";
+        int apart = 0;
+        var line = new System.Text.StringBuilder();
+        for (int i = 0; i < samples; i++)
+        {
+            int a = interactive[i], b = normal[i];
+            bool sibling = a == b || (a >= 0 && b >= 0 && topology.CoreOf(a) == topology.CoreOf(b));
+            if (!sibling) apart++;
+            line.Append(a).Append('/').Append(b).Append(' ');
+        }
+        Write($"INFO placement apart={apart}/{samples} pairs={line.ToString().TrimEnd()}");
+        return apart >= 9 ? null : $"nur {apart} von {samples} Meldungen auf getrennten Kernen";
+    }
+
+    // E7-D: So viele rechnende Normal-Threads wie Worker-CPUs melden 500 ms lang ihre CPU. Mit zehos.smt=off darf nie ein zweiter
+    // logischer Prozessor eines Kerns auftauchen (FAIL); ohne den Schalter ist das Ergebnis nur INFO (dort treten sie bei voller Last auf).
+    private static string? StepSmt()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured || topology.CpuCount == topology.CoreCount) return $"SKIP cpus={KernelCpus.Count}";
+        int count = workers.Length;
+        if (count < 2) return $"SKIP cpus={KernelCpus.Count}";
+        var seen = new int[count][];
+        var threads = new Thread[count];
+        for (int t = 0; t < count; t++)
+        {
+            int index = t;
+            seen[index] = new int[10];
+            var started = ThreadStarter.TryStart(() => Sample(seen[index]), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
+            if (!started.IsOK()) return "Thread startet nicht";
+            threads[index] = started.Value!;
+        }
+        foreach (var thread in threads)
+            if (!thread.Join(10000)) return "Thread endet nicht";
+        var used = new SortedSet<int>();
+        foreach (int[] list in seen) foreach (int cpu in list) if (cpu >= 0) used.Add(cpu);
+        // Zweiter logischer Prozessor: nicht die kleinste Nummer seines Kerns unter allen Online-CPUs.
+        var firstOfCore = new Dictionary<int, int>();
+        for (int cpu = 0; cpu < KernelCpus.Count; cpu++)
+        {
+            int core = topology.CoreOf(cpu);
+            if (!firstOfCore.ContainsKey(core)) firstOfCore[core] = cpu;
+        }
+        int second = 0;
+        foreach (int cpu in used) if (firstOfCore[topology.CoreOf(cpu)] != cpu) second++;
+        bool off = CosmosBootOptions.Current.SmtOff;
+        Write($"INFO smt off={(off ? 1 : 0)} used={string.Join(",", used)} second={second}");
+        return off && second > 0 ? $"{second} zweite logische Prozessoren trotz zehos.smt=off genutzt" : null;
+    }
+
+    private static void Sample(int[] cpus)
+    {
+        var watch = Stopwatch.StartNew();
+        long sink = 0;
+        for (int i = 0; i < cpus.Length; i++)
+        {
+            cpus[i] = (int)KernelCpus.Current;
+            long until = (i + 1) * 50;
+            while (watch.ElapsedMilliseconds < until) sink = sink * 31 + 7;
+        }
+        if (sink == 42) Write("INFO placement sink");
+    }
+
+    // E6-J: Ein Warten mit Frist muss nach Ablauf false liefern und darf nicht vor der Frist enden; mit Signal
+    // vor Ablauf true. Alle drei Wege enden in Cosmos in LowLevelMonitor_TimedWait.
+    private const int TimedWaitMs = 100;
+    private const int TimedWaitSlackMs = 10; // Taktauflösung des Schedulers
+
+    private static string? StepTimedWait()
+    {
+        var clock = Stopwatch.StartNew();
+        using var unset = new ManualResetEvent(false);
+        bool eventResult = unset.WaitOne(TimedWaitMs);
+        long eventMs = clock.ElapsedMilliseconds;
+
+        object gate = new();
+        clock.Restart();
+        bool monitorResult;
+        lock (gate) monitorResult = Monitor.Wait(gate, TimedWaitMs);
+        long monitorMs = clock.ElapsedMilliseconds;
+
+        using var empty = new SemaphoreSlim(0);
+        clock.Restart();
+        bool semaphoreResult = empty.Wait(TimedWaitMs);
+        long semaphoreMs = clock.ElapsedMilliseconds;
+
+        // Gegenproben: Signal nach 20 ms, Frist 5 s.
+        using var later = new ManualResetEvent(false);
+        var setter = new Thread(() => { Thread.Sleep(20); later.Set(); });
+        clock.Restart();
+        setter.Start();
+        bool signaledEvent = later.WaitOne(5000);
+        long signaledEventMs = clock.ElapsedMilliseconds;
+        if (!setter.Join(5000)) return "Setzer-Thread endet nicht";
+
+        bool pulsed = false;
+        var pulser = new Thread(() => { Thread.Sleep(20); lock (gate) { pulsed = true; Monitor.PulseAll(gate); } });
+        clock.Restart();
+        pulser.Start();
+        bool signaledMonitor = true;
+        lock (gate) while (!pulsed && signaledMonitor) signaledMonitor = Monitor.Wait(gate, 5000);
+        long signaledMonitorMs = clock.ElapsedMilliseconds;
+        if (!pulser.Join(5000)) return "Puls-Thread endet nicht";
+
+        Write($"INFO timedwait event={eventResult}/{eventMs}ms monitor={monitorResult}/{monitorMs}ms " +
+              $"semaphore={semaphoreResult}/{semaphoreMs}ms signal_event={signaledEvent}/{signaledEventMs}ms " +
+              $"signal_monitor={signaledMonitor}/{signaledMonitorMs}ms");
+
+        if (eventResult || monitorResult || semaphoreResult) return "Warten ohne Signal meldet true";
+        long earliest = TimedWaitMs - TimedWaitSlackMs;
+        if (eventMs < earliest || monitorMs < earliest || semaphoreMs < earliest) return "Warten endet vor der Frist";
+        if (!signaledEvent || !signaledMonitor) return "Warten mit Signal meldet false";
+        if (signaledEventMs >= 4000 || signaledMonitorMs >= 4000) return "Signal weckt erst nach der Frist";
+        return null;
+    }
+
+#if ZEHOS_SMP_PROBE_PANIC
+    private const int TickMs = 50;
+    private const int PanicAfterMs = 1000;
+
+    /// <summary>
+    /// E7-B (Cosmos-Patch panic-stop-cpus): Ein Thread auf einer Worker-CPU schreibt alle 50 ms <c>SMP_PROBE tick</c>; nach
+    /// 1 s loest ein Thread auf einer anderen CPU einen #PF aus. Er ist nicht der Wasm-Worker, der Ausnahme-Hook haelt also
+    /// an (wie die Gegenprobe der Isolationsprobe). Nach <c>System halted.</c> darf keine tick-Zeile mehr folgen; das prueft
+    /// <c>scripts/test-smp-probe.py --panic</c>. Die tick-Zeilen schreibt bewusst der Tickthread selbst: Haelt der NMI ihn
+    /// mitten in einer Zeile mit der seriellen Sperre an, ist genau das der Fall, den der Patch abdecken muss.
+    /// Kehrt nur zurueck, wenn die Probe nicht ausgefuehrt werden kann (FAIL).
+    /// </summary>
+    private static unsafe bool RunPanic()
+    {
+        if (KernelCpus.Count < 2) { Write($"panic FAIL nur {KernelCpus.Count} CPU, Halt anderer CPUs nicht pruefbar"); return false; }
+        uint tickCpu = workers[workers.Length - 1];
+        // Die fehlerhafte CPU muss eine andere sein, sonst belegt das Ende der Ticks nur den Halt der eigenen CPU.
+        uint faultCpu = tickCpu == 0 ? 1u : 0u;
+        var ticker = Pinned(tickCpu, () =>
+        {
+            for (int n = 1; ; n++)
+            {
+                Log.WriteString($"SMP_PROBE tick {n} cpu={KernelCpus.Current}\n");
+                Thread.Sleep(TickMs);
+            }
+        });
+        ticker.Start();
+        Thread.Sleep(PanicAfterMs);
+        var faulter = Pinned(faultCpu, () =>
+        {
+            Write($"panic fault cpu={KernelCpus.Current} tick_cpu={tickCpu}");
+            // Unter Cosmos/NativeAOT ein echter #PF wie in CosmosIsolationProbe (negativer Fall).
+            Volatile.Write(ref panicSink, *(int*)0);
+            Write("panic FAIL nach dem #PF weitergelaufen");
+        });
+        faulter.Start();
+        faulter.Join(5000);
+        Write("panic FAIL System laeuft 5 s nach dem #PF weiter");
+        return false;
+    }
+
+    private static int panicSink;
+#endif
 
     private static void Write(string message) => Log.WriteString($"SMP_PROBE {message}\n");
 }

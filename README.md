@@ -56,14 +56,25 @@ Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Star
 
 ### Gastproben
 
-Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, GC und Threadstart/-ende:
+Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, Warten mit Frist (`timedwait`), GC und Threadstart/-ende:
 
 ```bash
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbe=true -warnaserror
 ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --iso <ISO> --accel kvm   # ZEHOS_QEMU_SMP leer = eine CPU
 ```
 
-Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 1000 Nachrichten (nicht 10.000 wie im Plan): Auf vier CPUs dauert eine Übergabe zwischen zwei CPUs rund 50 ms.
+Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 10.000 Nachrichten.
+
+Die Schritte `placement` und `smt` (E7-D) brauchen Hyperthreading im Gast (`ZEHOS_QEMU_SMP=4,cores=2,threads=2`; ohne `threads=2` meldet `smt` SKIP, das Skript lässt das zu). `placement` belegt, dass ein Interaktiv- und ein Normal-Thread auf getrennten Kernen rechnen. `smt` lässt so viele Threads rechnen wie Worker-CPUs und meldet `INFO smt off=<0|1> used=<CPUs> second=<n>`: Mit `zehos.smt=off` (Zeile `cmdline: zehos.smt=off` im Limine-Eintrag des ISO, nicht committen) darf nie ein zweiter logischer Prozessor eines Kerns auftauchen (`second=0`, sonst FAIL); ohne den Schalter treten sie bei voller Last auf (Messung KVM, 4 CPUs als 2 Kerne × 2: `used=1,2,3 second=2` gegen `used=2 second=0`). `placement` meldet mit dem Schalter SKIP, weil unter den Worker-CPUs nur ein Kern bleibt.
+
+Die Panic-Probe (E7-B) belegt, dass eine Panic alle CPUs anhält (Cosmos-Patch `panic-stop-cpus`): Ein Thread schreibt alle 50 ms `SMP_PROBE tick`, nach 1 s löst ein Thread auf einer anderen CPU einen #PF aus.
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbePanic=true -warnaserror
+ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --panic --iso <ISO> --accel kvm --runs 5
+```
+
+Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System halted.` und 2 s lang keine weitere `tick`-Zeile. Ein ISO mit `ZehOSSmpProbePanic` führt nur den Schritt `cpus` und die Panic-Probe aus, keinen der übrigen Schritte; `SMP_PROBE PASS` erscheint dort nie, weil das System anhält (das Urteil fällt `--panic`). Gegenprobe: Mit einem Cosmos ohne den Patch `panic-stop-cpus` muss `--panic` FAIL melden (Ticks laufen nach `System halted.` weiter).
 
 ## Lizenz
 

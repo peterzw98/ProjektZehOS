@@ -24,7 +24,8 @@ internal static unsafe class FaultIsolation
     private static int workerThreadId = -1;
     private static int inNativeRun;
     private static volatile int* hostDepth;
-    private static int isolatedThreadId = -1;
+    // Angemeldet im Ausnahmepfad, uebernommen erst nach dem Wechsel weg vom Worker (E6-C.9, IsolationHandoff).
+    private static readonly IsolationHandoff isolated = new();
     private static long isolatedVector = FaultIsolationPolicy.UnknownVector;
     private static ulong isolatedRip;
 
@@ -54,8 +55,20 @@ internal static unsafe class FaultIsolation
 
     internal static void LeaveNativeRun() => Volatile.Write(ref inNativeRun, 0);
 
-    /// <summary>Id des zuletzt aufgegebenen Workers oder -1; liest und loescht.</summary>
-    internal static int TakeIsolated() => Interlocked.Exchange(ref isolatedThreadId, -1);
+    /// <summary>
+    /// Id des aufgegebenen Workers oder -1; liest und loescht. Liefert ihn erst, wenn die CPU der Ausnahme ihn nicht mehr
+    /// als laufenden Thread fuehrt, Cosmos ihn also wirklich aufgegeben hat (E6-C.9); bis dahin -1, die Hauptschleife fragt
+    /// in der naechsten Runde erneut. Haelt Cosmos statt des Wechsels an, kommt die Id nie an.
+    /// </summary>
+    internal static int TakeIsolated()
+    {
+        int cpu = isolated.PendingCpu;
+        if (cpu < 0) return -1;
+        // Ohne Sperre gelesen: den laufenden Thread einer CPU setzt nur diese selbst, hier nur noch der Wechsel aus dem
+        // Ausnahmepfad (TryAbandonCurrentFromInterrupt). Ein veralteter Wert verzoegert die Uebernahme um eine Runde.
+        long running = SchedulerManager.GetCpuState((uint)cpu)?.CurrentThread is { } thread ? thread.Id : IsolationHandoff.NoThread;
+        return isolated.TryTake(running);
+    }
 
     /// <summary>Vektor der zuletzt isolierten Ausnahme (fuer Protokoll und Gastprobe).</summary>
     internal static long IsolatedVector => Volatile.Read(ref isolatedVector);
@@ -84,12 +97,15 @@ internal static unsafe class FaultIsolation
         Serial.WriteNumber(Volatile.Read(ref workerThreadId));
         Serial.WriteString(", Gastcode ");
         Serial.WriteNumber(Volatile.Read(ref inNativeRun));
+        // E6-C.10: 0 heisst maskierter Kernelcode (etwa ein Interrupt-Handler ueber dem Worker), dann nie isolieren.
+        Serial.WriteString(", IF ");
+        Serial.WriteNumber(exception.InterruptsEnabled ? 1 : 0);
         Serial.WriteString("\n");
 
         int* depth = hostDepth;
         if (currentId < 0 || depth == null
             || FaultIsolationPolicy.Decide(vector, currentId, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
-                *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
+                exception.InterruptsEnabled, *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
             || !Quarantine.Add(currentId))
         {
             return CpuExceptionAction.Halt;
@@ -99,7 +115,8 @@ internal static unsafe class FaultIsolation
         Volatile.Write(ref workerThreadId, -1);
         Volatile.Write(ref isolatedVector, vector);
         Volatile.Write(ref isolatedRip, exception.InstructionPointer);
-        Volatile.Write(ref isolatedThreadId, currentId);
+        // Nur anmelden: Cosmos legt den Wechsel erst nach der Rueckkehr an und haelt an, wenn das nicht geht.
+        isolated.Stage(currentId, (int)exception.CpuId);
         return CpuExceptionAction.AbandonThread;
     }
 

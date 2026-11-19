@@ -4,6 +4,8 @@ using ProjektZeh.Shared;
 
 namespace ProjektZeh.Scheduling;
 
+internal enum ThreadPlacement { Inherit = 0, Workers = 1 }
+
 /// <summary>
 /// Einziger Weg fuer Thread-Starts im Kernel. Cosmos 3.0.97 holt den Threadstack in SchedulerThread.InitializeStack ueber
 /// MemoryOp.Alloc aus dem nativen Heap und prueft das Ergebnis nicht: bei fragmentiertem Heap schreibt es den Threadkontext
@@ -34,25 +36,32 @@ internal static class ThreadStarter
     /// </summary>
     internal static Action<ThreadClass> ApplyClass { get; set; } = _ => { };
 
+    internal static Action<ThreadPlacement> ApplyPlacement { get; set; } = _ => { };
+
     /// <summary>
     /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) nach der Stackprobe.
     /// <paramref name="background"/> markiert dauerhaft wartende Worker, damit sie ein Prozessende (Hosttests) nicht aufhalten.
     /// </summary>
     public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false,
-        ThreadClass threadClass = ThreadClass.Normal) =>
-        TryStart(body, stackBytes, StackProbe, background, threadClass);
+        ThreadClass threadClass = ThreadClass.Normal, ThreadPlacement placement = ThreadPlacement.Inherit) =>
+        TryStart(body, stackBytes, StackProbe, background, threadClass, placement);
 
     internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe, bool background = false,
-        ThreadClass threadClass = ThreadClass.Normal)
+        ThreadClass threadClass = ThreadClass.Normal, ThreadPlacement placement = ThreadPlacement.Inherit)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentOutOfRangeException.ThrowIfNegative(stackBytes);
         ArgumentNullException.ThrowIfNull(probe);
-        if (threadClass != ThreadClass.Normal)
+        if (threadClass != ThreadClass.Normal || placement != ThreadPlacement.Inherit)
         {
             var inner = body;
-            // Die Klasse gilt fuer den neuen Thread; ApplyClass setzt sie fuer den gerade laufenden, also diesen.
-            body = () => { ApplyClass(threadClass); inner(); };
+            body = () =>
+            {
+                // Die Klasse noch auf der geerbten CPU setzen, bevor die Affinitaet den neuen Thread verschiebt.
+                if (threadClass != ThreadClass.Normal) ApplyClass(threadClass);
+                if (placement != ThreadPlacement.Inherit) ApplyPlacement(placement);
+                inner();
+            };
         }
         int effective = EffectiveStackBytes(stackBytes);
         if (!probe(effective))
