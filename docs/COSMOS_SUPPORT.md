@@ -4,7 +4,7 @@ Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-E
 
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
-**Status: Platzhalter, keine Messwerte.** Dieser Abschnitt wird erst mit echten Läufen gefüllt. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
 
 Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
 
@@ -15,7 +15,7 @@ Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Laun
 
 Gemessen wird ZehOS samt Cosmos-Pin, nicht der Scheduler allein. Zwischen den Pins liegen die ext2-Patches #344, #345, #346 und der CPU-Ausnahme-Hook #349. Keiner dieser Patches sollte im Bildpfad liegen. Dass die Abweichung trotzdem allein am Scheduler liegt, ist **vermutet, nicht gemessen**.
 
-Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Das CPU-Modell setzt das Messskript nicht selbst; die Läufe protokollieren die tatsächliche QEMU-Kommandozeile in `_offen_`. Host: _offen_. ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
+Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Die Läufe protokollieren die QEMU-Kommandozeile nicht. Das Messskript setzt laut Jensen kein eigenes `-cpu`; die KVM-Startfunktion in `scripts/test-wasm-doom-desktop.py` nutzt `-cpu qemu64,+rdrand,+rdseed`. Ob das Messskript diese Funktion verwendet, ist nicht bestätigt; die tatsächliche Kommandozeile ist _offen_. Host: Intel Core Ultra 9 185H, 22 logische CPUs; während der Läufe lief `Wow.exe` (Lastmittel 1,7 bis 5,8). ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
 
 Messbefehl je Lauf (Reihenfolge RR, Klasse, RR, Klasse … je Spiel; Doom zuerst, dann ClassiCube):
 
@@ -26,19 +26,52 @@ python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 1 -m 1
 
 Ein Aufruf mit `--runs 5` führt fünf Läufe nacheinander auf einem ISO aus und ist deshalb nicht zu verwenden.
 
-Je Lauf eine Zeile (20 Zeilen insgesamt):
+Je Lauf eine Zeile (20 Zeilen insgesamt). Lastmittel ist der 1-Minuten-Wert des Hosts beim Start des Laufs. Die Spalte „Fremde Last“ zeigt die alte Schwelle 2; alle Läufe liegen darüber und zählen wegen WoW nicht als Wiederholgrund. Kein Lauf wurde wiederholt.
 
 | Nr. | Spiel | Stand | Lauf | Start (UTC) | fps (letztes Fenster) | Lastmittel | Fremde Last | Wiederholt |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _offen_ | Doom 1.1.0 | RR | 1 | _offen_ | _offen_ | _offen_ | _offen_ | _offen_ |
+| 1 | Doom 1.1.0 | RR | 1 | 2026-11-18 23:58:08 | 69,9 | 4,12 | ja | nein |
+| 2 | Doom 1.1.0 | Klasse | 1 | 2026-11-19 00:00:42 | 69,8 | 5,44 | ja | nein |
+| 3 | Doom 1.1.0 | RR | 2 | 2026-11-19 00:03:19 | 69,8 | 5,77 | ja | nein |
+| 4 | Doom 1.1.0 | Klasse | 2 | 2026-11-19 00:05:53 | 69,9 | 4,24 | ja | nein |
+| 5 | Doom 1.1.0 | RR | 3 | 2026-11-19 00:08:30 | 69,9 | 4,60 | ja | nein |
+| 6 | Doom 1.1.0 | Klasse | 3 | 2026-11-19 00:11:04 | 70,0 | 3,40 | ja | nein |
+| 7 | Doom 1.1.0 | RR | 4 | 2026-11-19 00:13:40 | 70,0 | 3,93 | ja | nein |
+| 8 | Doom 1.1.0 | Klasse | 4 | 2026-11-19 00:16:13 | 70,0 | 4,25 | ja | nein |
+| 9 | Doom 1.1.0 | RR | 5 | 2026-11-19 00:18:49 | 70,0 | 3,28 | ja | nein |
+| 10 | Doom 1.1.0 | Klasse | 5 | 2026-11-19 00:21:21 | 70,0 | 4,50 | ja | nein |
+| 11 | ClassiCube 1.1.0 | RR | 1 | 2026-11-19 00:23:56 | 85,4 | 3,50 | ja | nein |
+| 12 | ClassiCube 1.1.0 | Klasse | 1 | 2026-11-19 00:26:29 | 71,1 | 4,01 | ja | nein |
+| 13 | ClassiCube 1.1.0 | RR | 2 | 2026-11-19 00:29:02 | 70,4 | 3,87 | ja | nein |
+| 14 | ClassiCube 1.1.0 | Klasse | 2 | 2026-11-19 00:31:35 | 57,7 | 3,23 | ja | nein |
+| 15 | ClassiCube 1.1.0 | RR | 3 | 2026-11-19 00:34:09 | 77,3 | 5,11 | ja | nein |
+| 16 | ClassiCube 1.1.0 | Klasse | 3 | 2026-11-19 00:36:43 | 78,4 | 4,40 | ja | nein |
+| 17 | ClassiCube 1.1.0 | RR | 4 | 2026-11-19 00:39:17 | 113,8 | 3,02 | ja | nein |
+| 18 | ClassiCube 1.1.0 | Klasse | 4 | 2026-11-19 00:41:49 | 99,0 | 1,73 | ja | nein |
+| 19 | ClassiCube 1.1.0 | RR | 5 | 2026-11-19 00:44:22 | 81,1 | 1,76 | ja | nein |
+| 20 | ClassiCube 1.1.0 | Klasse | 5 | 2026-11-19 00:46:54 | 98,7 | 1,86 | ja | nein |
 
 Die Rohdaten je Lauf liegen als CSV `spiel,stand,lauf,fps,last` für die Auswertung bereit und sind nicht committet.
 
-Mittel, Standardabweichung, Abweichung Klasse gegen RR in Prozent und Schwellenurteil je Spiel: _offen_.
+Mittel ± Standardabweichung (Stichprobe), Klasse gegen RR und Schwellenurteil je Spiel (Auswertung durch Jensen):
+
+| Spiel | RR fps | Klasse fps | Klasse/RR | Urteil |
+| --- | --- | --- | --- | --- |
+| Doom 1.1.0 | 69,9 ± 0,1 | 69,9 ± 0,1 | 100,0 % | bestanden, mit Vorbehalt (Bildrate nahe 70 fps, s. u.) |
+| ClassiCube 1.1.0 | 85,6 ± 16,7 | 81,0 ± 17,9 | 94,6 % | nicht entscheidbar (Spannweite 51 %) |
+
+Lastmittel je Lauf: 1,7 bis 5,8, Mittel 3,8.
+
+**Einordnung:**
+1. Doom liegt in allen zehn Läufen zwischen 69,8 und 70,0 fps. Das spricht für eine Bildratenobergrenze. Im Code ist sie nicht geprüft. Der Vergleich zeigt dann nur, dass der Klassenscheduler das Limit ebenso erreicht wie Round-Robin. Einen Unterschied unterhalb des Limits deckt er nicht auf.
+2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die Streuung hängt nach den Lastwerten kaum an WoW. Vermutet, nicht gemessen: Ohne festen Seed und feste Sichtweite läuft jeder Lauf in einer anderen Welt. Das Messskript kann beides heute nicht festlegen.
+3. Ausreißer `classicube-RR-1` mit 5671 ms maximalem Bildabstand. Der Median bleibt niedrig, die mittlere fps ist kaum betroffen. Keine Wiederholung.
+4. Der Pin-Störfaktor (zehos.1 gegen zehos.2) bleibt wie oben vermerkt.
+5. Eine ClassiCube-Wiederholung braucht eine feste Welt (ROADMAP 13.2) und mehr Läufe je Stand. Sie ist noch nicht eingeplant.
 
 ClassiCube: Sichtweite und Seed sind nicht gesetzt (das Skript hat dafür keine Option), es gilt der Skriptstandard. Das ist eine bekannte Abweichung von ROADMAP 13.2.
 
-Hintergrundlast (`tasks start busy`, nur Doom, nur berichtet): _offen_. VMware und echte Hardware: _offen_, nicht geprüft.
+Hintergrundlast: Die Läufe nutzten kein `tasks start busy`. Die Last kam von `Wow.exe` auf dem Host, also von außen und unkontrolliert. VMware und echte Hardware: offen, nicht geprüft.
 
 ## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
 
