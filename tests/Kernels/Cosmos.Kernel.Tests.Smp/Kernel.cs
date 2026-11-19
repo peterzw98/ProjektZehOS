@@ -1088,6 +1088,7 @@ public class Kernel : Sys.Kernel
     private const int GuardHolderNotEntered = 0;
     private const int GuardHolderInside = 1;
     private const int GuardHolderRelease = 2;
+    private const int GuardHolderLeft = 3;
     private static int s_guardHolderPhase;
     private static bool s_guardHolderSawHandler;
 
@@ -1109,6 +1110,9 @@ public class Kernel : Sys.Kernel
             }
 
             InterruptContextGuard.Exit();
+
+            // Left on its own when the bound ran out: Main then sees that it looked too late.
+            Interlocked.CompareExchange(ref s_guardHolderPhase, GuardHolderLeft, GuardHolderInside);
         }
 
         ThreadAffinity.Current = CpuSet.Single(0);
@@ -1131,7 +1135,6 @@ public class Kernel : Sys.Kernel
             TimerManager.Wait(1);
         }
 
-        bool inside = Volatile.Read(ref s_guardHolderPhase) == GuardHolderInside;
         uint here = KernelCpus.Current;
         bool seenHere = InterruptContextGuard.IsInHandler;
         bool refusedHere = false;
@@ -1144,7 +1147,8 @@ public class Kernel : Sys.Kernel
             refusedHere = true;
         }
 
-        Volatile.Write(ref s_guardHolderPhase, GuardHolderRelease);
+        // Inside only if the holder is still there now: released by Main, not by its own bound.
+        bool inside = Interlocked.CompareExchange(ref s_guardHolderPhase, GuardHolderRelease, GuardHolderInside) == GuardHolderInside;
         Assert.True(holder.Join(JoinTimeoutMs), "the holder leaves the guard and exits");
         Assert.True(inside, "CPU 1 was inside the guard while CPU 0 looked");
         Assert.True(s_guardHolderSawHandler, "CPU 1 sees its own handler");
