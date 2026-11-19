@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Input.Layouts;
-#pragma warning disable COSMOS0001 // IrqSpinLock (ZehOS-Patch irq-mask-scope, #473) ist als COSMOS0001 markiert; die Nutzung ist bewusst.
+#pragma warning disable COSMOS0001, NAOT0007 // IrqSpinLock (ZehOS-Patch irq-mask-scope, #473) ist als COSMOS0001 markiert; die Nutzung ist bewusst.
 
 namespace ProjektZeh.Input;
 
@@ -81,4 +81,4 @@ internal sealed class CosmosInputService
     private static extern KeyEvent? ConvertScanCode(KeyboardLayout layout, byte scanCode,
         bool control, bool shift, bool alt, bool numLock, bool capsLock);
 }
-#pragma warning restore COSMOS0001
+#pragma warning restore COSMOS0001, NAOT0007
