@@ -14,6 +14,25 @@ public sealed class CpuTopologyTests
         (leaf, subleaf) => table.TryGetValue((leaf, subleaf), out var value) ? value : (0, 0, 0, 0);
 
     [TestMethod]
+    public void Describe_ReportsMeasuredAndUnknownTopology()
+    {
+        var measured = CpuTopology.FromApicIds([0, 1, 2, 3], 1, 2);
+        Assert.IsTrue(measured.Measured);
+        Assert.AreEqual("4 CPUs, 2 Kerne, 1 Verbund, Hyperthreading ja", measured.Describe());
+        Assert.AreEqual("1 CPU, 1 Kern, 1 Verbund, Hyperthreading nein", CpuTopology.FromApicIds([0], 0, CpuTopologyDecoder.SinglePackage).Describe());
+        var flat = CpuTopology.Flat(4);
+        Assert.IsFalse(flat.Measured);
+        Assert.AreEqual("4 CPUs, Topologie unbekannt", flat.Describe());
+        Assert.AreEqual("4 CPUs, 2 Kerne, 2 Verbünde, Hyperthreading ja", CpuTopology.FromApicIds([0, 1, 16, 17], 1, 4).Describe());
+    }
+
+    [TestMethod]
+    public void FromApicIds_DuplicateIds_Rejected()
+    {
+        Assert.ThrowsException<ArgumentException>(() => CpuTopology.FromApicIds([0, 1, 0], 1, 2));
+    }
+
+    [TestMethod]
     public void Flat_FourCpus_EachItsOwnCore()
     {
         var topology = CpuTopology.Flat(4);
