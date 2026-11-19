@@ -35,6 +35,11 @@ internal sealed class WasmInputBuffer
     private int lastX;
     private int lastY;
 
+    /// <summary>Diagnosehook (Kernel setzt ihn auf die serielle Schnittstelle): Meldung bei Ueberlauf und verworfenen Tasten (#478).</summary>
+    internal static Action<string>? Report { get; set; }
+
+    private int droppedMoves;
+
     /// <summary>Eingefangener Zeiger: Bewegungen kommen nur noch relativ; Fokusverlust und Esc geben ihn frei.</summary>
     public bool IsCaptured => captured;
 
@@ -70,6 +75,8 @@ internal sealed class WasmInputBuffer
                 if (value.KeyCode == (byte)PhysicalKey.Escape) captured = false;
                 // Nur gemeldete Druecke gelten als gehalten; ihr Loslassen wird nie verworfen, damit keine
                 // Taste haengen bleibt. Die Warteschlange bleibt durch maximal 256 Tastencodes begrenzt.
+                if (!value.IsRepeat && keys.Count >= LegacyCapacity)
+                    Report?.Invoke("DIAG input key dropped (legacy queue full) code=" + value.KeyCode);
                 if (!value.IsRepeat && keys.Count < LegacyCapacity && held.Add(value.KeyCode))
                     keys.Enqueue(0x100 | value.KeyCode);
                 Enqueue(new(WasmInputEventType.KeyDown, value.KeyCode));
@@ -190,7 +197,15 @@ internal sealed class WasmInputBuffer
         // Beim Laden einer Seite pollt NetSurf nur einmal je Durchlauf; Mausbewegungen zwischen den Tasten fuellen die
         // Warteschlange. Zuerst die aeltesten Bewegungen opfern (die Position steht auch in jedem Klick), damit Tasten
         // und Text den Ueberlauf mit Reset nicht verlieren.
-        if (count == Capacity) DropOldestPointerMove();
+        if (count == Capacity)
+        {
+            if (DropOldestPointerMove())
+            {
+                // Bei Mausstrom nicht jede Zeile, sondern die erste und dann jede 64.
+                if (++droppedMoves % 64 == 1) Report?.Invoke("DIAG input overflow, oldest PointerMove dropped, total=" + droppedMoves);
+            }
+            else Report?.Invoke("DIAG input overflow reset, queue holds only non-move events, droppedMoves=" + droppedMoves + " new=" + value.Type);
+        }
         if (count == Capacity)
         {
             // Nach verlorenen Ereignissen darf die App keine Taste oder Maustaste als gehalten behalten.
@@ -201,7 +216,7 @@ internal sealed class WasmInputBuffer
         count++;
     }
 
-    private void DropOldestPointerMove()
+    private bool DropOldestPointerMove()
     {
         for (int index = 0; index < count; index++)
         {
@@ -209,7 +224,8 @@ internal sealed class WasmInputBuffer
             for (int next = index + 1; next < count; next++)
                 events[(head + next - 1) % Capacity] = events[(head + next) % Capacity];
             count--;
-            return;
+            return true;
         }
+        return false;
     }
 }
