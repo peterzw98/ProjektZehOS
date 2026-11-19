@@ -2457,24 +2457,34 @@ public static class SchedulerManager
     /// Switches away from the current thread from a CPU exception handler,
     /// for <see cref="CPU.CpuExceptionAction.AbandonThread"/>. The thread is
     /// never resumed: <paramref name="currentRsp"/> only has to lie on its
-    /// stack. Keeping it off the run queues is the installed scheduler's job.
+    /// stack. It is marked <see cref="SchedulerThreadState.Dead"/> under the
+    /// CPU's queue lock before the pick, so it neither keeps the CPU (an empty
+    /// queue is the normal case on a worker CPU) nor goes back to the policy
+    /// through <see cref="IScheduler.OnThreadYield"/>; the CPU pulls work from
+    /// another CPU or runs its idle thread. The thread stays registered and
+    /// known to the policy: reaping it (stack, registry slot) is the
+    /// installed scheduler's job. From here on its stack is no GC root.
     /// </summary>
     /// <remarks>
     /// Same constraints as <see cref="ScheduleFromInterrupt"/>: interrupts
-    /// masked, nothing may throw or allocate.
+    /// masked, nothing may throw or allocate. The queue lock is only tried,
+    /// never waited for: the fault may have hit code that holds it already
+    /// (a policy hook under the tick), and the lock has no owner to tell
+    /// that case apart from another CPU holding it briefly. Either way the
+    /// caller halts, which is the safe direction.
     /// </remarks>
     /// <param name="currentRsp">A stack address of the faulting thread.</param>
     /// <returns>
     /// True when a switch to another thread is staged for the interrupt exit.
     /// False when none could be staged (scheduler not running, no current
-    /// thread, a switch already pending, or nothing else to run): the caller
-    /// must halt, because returning would resume the faulting code.
+    /// thread, the idle thread or a thread not Running faulted, a switch
+    /// already pending, the queue lock taken, or nothing to switch to): the
+    /// caller must halt, because returning would resume the faulting code.
     /// </returns>
     internal static bool TryAbandonCurrentFromInterrupt(nuint currentRsp)
     {
         uint cpuId = GetCurrentCpuId();
-        if (!s_enabled || s_cpuStates is null || s_currentScheduler is null || cpuId >= s_cpuCount
-            || s_cpuStates[cpuId].CurrentThread is null)
+        if (!s_enabled || s_cpuStates is null || s_currentScheduler is null || cpuId >= s_cpuCount)
         {
             return false;
         }
@@ -2487,8 +2497,36 @@ public static class SchedulerManager
             return false;
         }
 
-        ScheduleFromInterrupt(cpuId, currentRsp);
-        return ContextSwitchNative.GetContextSwitchSp() != 0;
+        PerCpuState state = s_cpuStates[cpuId];
+        if (!state._lock.TryAcquire())
+        {
+            return false;
+        }
+
+        // Only a thread that runs thread code can be given up. The idle
+        // thread is the CPU's fallback, and a thread that is not Running
+        // faulted while it parked itself: it may be queued already, and a
+        // Dead entry in a queue would be picked.
+        SchedulerThread? prev = state.CurrentThread;
+        if (prev is null || prev.IsIdle || prev.State != SchedulerThreadState.Running)
+        {
+            state._lock.Release();
+            return false;
+        }
+
+        prev.State = SchedulerThreadState.Dead;
+        ScheduleFromInterruptLocked(state, currentRsp);
+        bool staged = ContextSwitchNative.GetContextSwitchSp() != 0;
+        if (!staged)
+        {
+            // Nothing to switch to (no idle thread yet): the caller halts,
+            // the thread is left as it was.
+            prev.State = SchedulerThreadState.Running;
+        }
+
+        state._lock.Release();
+        MigratePending(state);
+        return staged;
     }
 
     /// <summary>

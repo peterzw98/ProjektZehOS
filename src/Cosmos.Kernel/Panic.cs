@@ -43,7 +43,8 @@ internal static class Panic
         Serial.WriteString("========================================\n");
 
         if (depth == 1 && CpuExceptionHook.Handler is { } handler
-            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address))
+            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
+                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
                 == CpuExceptionAction.AbandonThread
             && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
         {
@@ -56,6 +57,11 @@ internal static class Panic
 
         HaltCpu();
     }
+
+    // The thread on this CPU, read without the queue lock: only this CPU
+    // switches its own current thread, and it is in this handler.
+    private static uint CurrentThreadId()
+        => SchedulerManager.CurrentCpuState?.CurrentThread is { } thread ? thread.Id : CpuExceptionInfo.NoThread;
 
 #if ARCH_ARM64
     private static ulong InstructionPointer(ref IRQContext ctx) => ctx.elr;

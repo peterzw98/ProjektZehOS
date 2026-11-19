@@ -1,4 +1,5 @@
 #nullable enable
+[COSMOS0001]const Cosmos.Kernel.Core.CPU.CpuExceptionInfo.NoThread = 4294967295 -> uint
 [COSMOS0001]const Cosmos.Kernel.Core.Scheduler.CpuSet.Capacity = 256 -> int
 [COSMOS0001]const Cosmos.Kernel.Core.Scheduler.SchedulerManager.DefaultQuantumNs = 10000000 -> ulong
 [COSMOS0001]const Cosmos.Kernel.Core.Scheduler.SchedulerManager.NanosecondsPerMillisecond = 1000000 -> ulong
@@ -11,10 +12,12 @@
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionHook
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.CpuExceptionInfo() -> void
-[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.CpuExceptionInfo(ulong vector, ulong instructionPointer, ulong stackPointer, ulong faultAddress) -> void
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.CpuExceptionInfo(ulong vector, ulong instructionPointer, ulong stackPointer, ulong faultAddress, uint cpuId, uint threadId) -> void
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.CpuId.get -> uint
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.FaultAddress.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.InstructionPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.StackPointer.get -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.ThreadId.get -> uint
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.Vector.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.CpuLockScope() -> void
