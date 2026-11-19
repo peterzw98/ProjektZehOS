@@ -37,9 +37,9 @@ internal static unsafe class FaultIsolation
         // Ohne Wasm-Laufzeit gibt es keinen Zaehler; OnCpuException haelt dann immer an.
         hostDepth = null;
 #endif
-        // Der Worker kann zwischen zwei Lesezugriffen die CPU wechseln (seit SMP 5b laufen Threads auf allen CPUs);
-        // KernelCpus.Current mit GetCpuState lieferte dann den Thread einer anderen CPU. Cosmos' CurrentThread liest CPU
-        // und Thread mit maskierten Interrupts in einem Schritt.
+        // Vorher fest GetCpuState(0): auf mehreren CPUs der Thread von CPU 0. KernelCpus.Current mit GetCpuState waere
+        // ohne Maske nicht besser, der Worker kann dazwischen die CPU wechseln (seit SMP 5b laufen Threads auf allen
+        // CPUs). Cosmos' CurrentThread liest CPU und Thread mit maskierten Interrupts in einem Schritt.
         SchedulerThread? current = CurrentThread(null);
         if (current != null) Volatile.Write(ref workerThreadId, (int)current.Id);
     }
