@@ -928,7 +928,11 @@ uint32_t zehos_host_poll_oneoff(zehos_host_call* call, uint32_t subscriptions, u
             else
             {
                 const zehos_wasm_file* file = fd <= INT32_MAX ? file_of(call->context, (int32_t)fd) : NULL;
+<<<<<<< ours
                 if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY || file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY) event.error = WASI_EBADF;
+=======
+                if (file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY) event.error = WASI_EBADF;
+>>>>>>> theirs
                 else if (tag == POLL_FD_READ)
                 {
                     uint64_t size = file_size(file);

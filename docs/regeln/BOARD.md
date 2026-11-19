@@ -5,7 +5,7 @@ Das Board ersetzt keine Freigaben (`AGENTS.md`, „Freigaben“) und keine Absti
 
 - **Board:** GitHub-Projekt [ZehOS Board](https://github.com/users/peterzw98/projects/1), verknüpft mit diesem Repository. Schreibrecht haben Peter, Lars und Azazel.
 - **Block:** ein Issue mit dem Label `block`: Ziel, Abnahme, berührte Dateien und Abhängigkeiten. Ein Block ist so geschnitten, dass ein Team ihn allein umsetzen kann.
-- **Spalten:** Offen → Übernommen → In Arbeit → Review/PR → Erledigt.
+- **Spalten:** Offen → Übernommen → In Arbeit → Review/PR → Erledigt; dazu **Wartend**: Der Block wartet auf eine Freigabe oder Entscheidung eines Projektbenutzers. Die genaue Frage steht als Kommentar im Issue oder PR und geht zugleich als `[FREIGABE?]` in den IRC (`#general`); nach der Antwort zurück auf „In Arbeit“.
 - **Wer ihn hat,** steht im Issue: Label `team:<team>` und ein Kommentar `[BOARD] übernommen team=… agent=… branch=…`. Das Issue ist maßgeblich, die Spalte zeigt den Stand.
 
 ## Regeln
@@ -17,7 +17,7 @@ Das Board ersetzt keine Freigaben (`AGENTS.md`, „Freigaben“) und keine Absti
    Koordinators (`AGENTS.md`: offene Aufgaben sind keine Beauftragung).
 2. **Übernehmen** mit `python3 scripts/board.py claim <nr> <team> <agent> <branch>`. Exit 3 heißt: Jemand anderes (auch ein anderer Agent des eigenen Teams) hat ihn;
    dann einen anderen Block nehmen. Bei gleichzeitiger Übernahme gilt der frühere Kommentar; das Werkzeug zieht den späteren selbst zurück.
-3. **Stand pflegen:** `board.py status <nr> "In Arbeit"` beim ersten Push, `"Review/PR"` beim PR. Der PR schließt den Block mit `Closes #<nr>`.
+3. **Stand pflegen:** `board.py status <nr> "In Arbeit"` beim ersten Push, `"Wartend"` solange eine Freigabe oder Entscheidung fehlt, `"Review/PR"` beim PR. Der PR schließt den Block mit `Closes #<nr>`.
 4. **Nicht weitermachen?** `board.py release <nr> <team> "<Grund und Stand, Branch>"` statt den Block liegen zu lassen. Team-Labels nur über das Werkzeug
    entfernen, nicht von Hand; nur das eigene Team gibt frei.
 5. **Vorschlagen und zuteilen:** Der Koordinator schneidet Pläne in Blöcke. Peters Agenten teilt er Blöcke per `[AUFTRAG]` zu; Lars' Teams (Buzz, Laser) schlägt er
@@ -27,7 +27,7 @@ Das Board ersetzt keine Freigaben (`AGENTS.md`, „Freigaben“) und keine Absti
 ## Werkzeug
 
 `scripts/board.py` braucht `gh` mit den Rechten `repo` und `project` (`gh auth refresh -s project`). Team, Agent und Branch bestehen nur aus Buchstaben,
-Ziffern und `. _ / + -`. Einmalig in der Weboberfläche: Workflows „Item closed“ und „Pull request merged“ auf **Erledigt** stellen.
+Ziffern und `. _ / + -`. Einmalig in der Weboberfläche: Workflows „Item closed“ und „Pull request merged“ auf **Erledigt** stellen und im Feld Status die Option **Wartend** anlegen (fehlt sie, bricht `status … "Wartend"` mit Meldung ab).
 
 ```sh
 python3 scripts/board.py list                 # offene Blöcke mit Spalte und Team

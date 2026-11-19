@@ -135,7 +135,7 @@ Kommt vollständig aus Cosmos (Phasen 1 und 2): Limine startet jede logische CPU
 Cosmos gibt sie nacheinander frei, jede richtet APIC und Timer ein und endet in ihrem Idle-Thread (`hlt`-Schleife).
 ZehOS ergänzt nur:
 
-- Bootzeile und `sysinfo`: Zahl der CPUs, Kerne und Hyperthreads.
+- Bootzeile und Systeminfo im Taskmanager (`CosmosSystemInfo`): Zahl der CPUs, Kerne und Hyperthreads; nicht gemessene Topologie erscheint als „unbekannt“.
 - CPU-Begrenzung ohne Cosmos-Patch: Mit `zehos.cpus=1` auf der Kernel-Kommandozeile (`Bootloader/limine.conf`,
   gelesen über `Limine.Cmdline`) setzt ZehOS als Erstes im Hauptthread `ThreadAffinity.Current` und
   `KernelCpus.DefaultAffinity` auf CPU 0, vor dem ersten Threadstart und vor dem ersten Zugriff auf

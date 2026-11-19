@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Formatiert je Groesse und Blockgroesse ein frisches sparse Image mit dem Cosmos-Ext2Formatter, prueft es mit
 # e2fsck -fn (nur lesend) und dumpe2fs -h. Ausgabe: eine Zeile je Fall.
-# Zweites Argument: original (Standard, unveraendertes Cosmos 3.0.97) oder fixed (ProjektZeh/Storage/Ext2).
+# Zweites Argument: original oder fixed; beide formatieren seit dem Patch ext2-formatter mit dem Cosmos-Formatter.
 # Jeder Lauf arbeitet in einem neu angelegten Ordner (mktemp -d) unter dem angegebenen Arbeitsordner; geloescht
 # werden nur Images, die dieser Lauf dort selbst erzeugt hat. Scheitert ein Format, bricht das Skript ab und
 # loescht nichts.
@@ -17,7 +17,8 @@ echo "Lauf: $run formatter=$formatter"
 dotnet build -c Release "$here" > /dev/null
 overall=0
 for size in 4194304 8388608 67108864 34359738368 68719476736 137438953472; do
-  for block in 1024 2048 4096; do
+  # 1024 lehnt der Cosmos-Formatter ab, bis der Treiber FirstDataBlock beachtet (Patch ext2-formatter, E2-P9).
+  for block in 2048 4096; do
     image="$run/cosmos-ext2-$formatter-$size-$block.img"
     if ! result=$(dotnet run -c Release --no-build --project "$here" -- format "$image" --size "$size" --block-size "$block" --formatter "$formatter"); then
       echo "size=$size block=$block Formatfehler: $result" >&2

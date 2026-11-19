@@ -66,6 +66,24 @@ class BuildCosmosTests(unittest.TestCase):
             for line in lines:
                 self.assertIn('-c core.longpaths=true', line)
 
+    def test_config_paths_use_windows_form_under_git_bash(self):
+        # Die erzeugten NuGet-Konfigurationen liest dotnet selbst; ein Git-Bash-Pfad /c/... waere dort C:\c\... (Befund #329).
+        script = SCRIPT.read_text()
+        self.assertIn('value="$(native_path "$out")"', script)
+        self.assertIn('value="$(native_path "$feed")"', script)
+        definition = next(l for l in script.splitlines() if l.startswith('native_path()'))
+        with tempfile.TemporaryDirectory() as temp:
+            fake = Path(temp) / 'cygpath'
+            # Attrappe: meldet Aufruf und Argument statt einen echten Windows-Pfad zu bilden.
+            fake.write_text('#!/bin/sh\necho "cygpath $1 $2"\n', newline='\n')
+            fake.chmod(0o755)
+            with_cygpath = subprocess.run(['bash', '-c', f'PATH="{temp}:$PATH"\n{definition}\nnative_path /c/Users/x'],
+                                          capture_output=True, text=True)
+            self.assertEqual('cygpath -w /c/Users/x', with_cygpath.stdout.strip(), with_cygpath.stderr)
+        without = subprocess.run(['bash', '-c', f'command() {{ return 1; }}\n{definition}\nnative_path "/home/a b"'],
+                                 capture_output=True, text=True)
+        self.assertEqual('/home/a b', without.stdout.strip(), without.stderr)
+
     def test_tool_install_uses_own_config_not_add_source(self):
         # --add-source geht nicht mit packageSourceMapping; die Werkzeuge kommen aus einer erzeugten Konfiguration.
         for args in ((), ('--global',)):

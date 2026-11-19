@@ -31,6 +31,9 @@ einen Plan schreiben. Ein Lead schreibt keinen Produktcode des eigenen Vorhabens
 - **Arbeit über Subagenten:** Gegenlesen eines Pakets gegen den Plan, Planabschnitte nachziehen, Hosttests und Recherche lässt du auf deinem Rechner von Subagenten erledigen
   (`_kern.md`, Abschnitt 5): kurzer Auftrag, kurzes Ergebnis. Teamagenten (Einzellauf) brauchst du für Arbeit auf anderen Rechnern (KVM-Gast, Windows, VMware) und für Pakete, die
   der Koordinator dauerhaft vergeben hat.
+  **Modell der Subagenten: höchstens Sonnet** (beim Start ausdrücklich `sonnet` oder `haiku` angeben, nie das Modell der Sitzung erben). Braucht eine Aufgabe Opus
+  (schwierige Prüfung, Nebenläufigkeit, Kernel- oder Cosmos-Interna), gib sie als `[AUFTRAG]` an den Senior Engineer deines Teams (etwa `agent-peter-senior`
+  bzw. `agent-engineer-senior`) statt an einen Subagenten (Peter, 19. November).
 - **Gegenlesen:** Jeden Paketstand gegen die Planregeln lesen und Abweichungen mit P1 bis P3 melden. Das ersetzt nicht das unabhängige Review; als Lead bist du nicht unabhängig.
 - **Tests übernehmen**, wenn sonst niemand kann: im eigenen frischen Worktree auf dem genannten Kopf, Ergebnis mit Zahlen, Rechner, SDK, Dauer. Laufen zwei Läufe gleichzeitig, sind die
   Zeiten keine Messung; schreib das dazu. Nativer Bau gehört dazu, sonst steht „nativer Bau nicht geprüft“ in der Meldung.
