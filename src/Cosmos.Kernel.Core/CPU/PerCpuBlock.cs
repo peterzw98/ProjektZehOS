@@ -106,7 +106,16 @@ internal struct PerCpuBlock
     /// </summary>
     public ulong CollectorLockDepth;
 
-    private ulong _reserved2;
+    // ZehOS patch ausnahme-hook, see PATCHES.md
+    /// <summary>
+    /// How deep this CPU is in the CPU exception path (<c>Cosmos.Kernel.Panic.CpuException</c>):
+    /// 1 while it reports an exception and asks the exception hook, more for an exception inside
+    /// that, which skips the hook and halts. Per CPU, so an exception on one CPU never makes
+    /// another CPU's, at the same time, skip the hook. Only the CPU itself touches it, with
+    /// interrupts masked. Managed code alone reads it: no stub mirrors its offset.
+    /// </summary>
+    public ulong CpuExceptionDepth;
+
     private ulong _reserved3;
 
     /// <summary>

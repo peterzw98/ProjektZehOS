@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Threading;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
 using Cosmos.Kernel.Core.Memory;
@@ -12,12 +11,6 @@ namespace Cosmos.Kernel;
 /// </summary>
 internal static class Panic
 {
-    // ZehOS patch ausnahme-hook, see PATCHES.md
-    // One counter for all CPUs: a second exception anywhere while one is
-    // still being reported never reaches the hook and halts. That is the safe
-    // direction once several CPUs can fault at the same time.
-    private static int s_cpuExceptionDepth;
-
     /// <summary>
     /// Triggers a CPU exception panic with context information.
     /// This method is allocation-free to avoid recursive faults.
@@ -31,7 +24,15 @@ internal static class Panic
     internal static unsafe void CpuException(string exceptionName, ref IRQContext ctx)
     {
         InternalCpu.DisableInterrupts();
-        int depth = Interlocked.Increment(ref s_cpuExceptionDepth);
+
+        // ZehOS patch ausnahme-hook, see PATCHES.md
+        // The depth is this CPU's (PerCpuBlock.CpuExceptionDepth): an exception inside the
+        // report or the hook on this CPU skips the hook and halts, while an exception on
+        // another CPU at the same time still reaches the hook there. One counter for all
+        // CPUs made two simultaneous faults halt the system, and one CPU's reset cleared the
+        // other's count. Only this CPU touches it, with interrupts masked: no atomics.
+        ref ulong depthSlot = ref PerCpuBlock.Current.CpuExceptionDepth;
+        ulong depth = ++depthSlot;
 
         // Use only Serial - allocation-free, no KernelConsole which may allocate
         Serial.WriteString("\n========================================\n");
@@ -49,7 +50,7 @@ internal static class Panic
             && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
         {
             Serial.WriteString("Thread abandoned.\n");
-            Volatile.Write(ref s_cpuExceptionDepth, 0);
+            depthSlot = depth - 1;
             return;
         }
 
