@@ -5,7 +5,7 @@ Gemeinsame Quelle für Kernel (Plug) und Hostprobe `experiments/StorageProbe` (`
 (`Ext2Formatter.Format`) und die Inode-Freigabe beim Löschen (`Ext2Superblock.FreeInode`, siehe unten).
 
 Im Produkt wird ext2 noch nirgends beim Booten oder über die Shell eingehängt. Die neue explizite Lesekomponente
-`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Mount und verwendet einen eigenen
+`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Lesemount und verwendet einen eigenen
 Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Sie ist noch nicht als Produktfunktion aktiviert.
 
 ## Abgesicherter Lesemount
@@ -22,19 +22,15 @@ Volumen und Gerät sind auf 128 GiB begrenzt; höchstens 16384 Gruppen entsprech
 mit 8-MiB-Gruppen. Die Inodezahl muss exakt Gruppenzahl × Inodes je Gruppe entsprechen (überlaufsicher mit `ulong`
 berechnet). Diese Grenzen verhindern unkontrollierte Gruppendeskriptor-Allokationen aus manipulierten Headern.
 
-Das Mountflag allein verhindert in Cosmos 3.0.97 nicht alle Schreibzugriffe. Erneute ILSpy-Prüfung der installierten
-`Cosmos.Kernel.System.dll` aus Paket 3.0.97 bestätigte (Zeilen im dekompilierten Quelltext):
-
-- `Ext2FileOperations.cs:170–182`: `Fsync` schreibt jeden nativen Inode und flusht immer; `Release` ruft es ohne
-  Dirty- oder Read-only-Prüfung auf. `VfsFileHandle.cs:88–92` ruft `Release` auch nach reinem Lesen auf.
-- `Ext2Superblock.cs:537–547`: auch `Drop` selbst ruft `Flush` auf; dieses flusht das Gerät und aktualisiert
-  anschließend den Superblock. Nur den Aufruf in `Ext2SuperblockOperations` zu umgehen genügt deshalb nicht.
-
-Die Lesesicht verpackt alle über Lookup und ReadDir gelieferten Inodes, verweigert Mutationen und delegiert
-Read/Seek mit dem nativen Inode. Release/Fsync/Sync/Drop schreiben nicht und benötigen keine native Freigabe:
-die Caches sind verwaltet. Darunter verweigert `CosmosReadOnlyBlockDevice` jeden WriteBlock- und Flush-Aufruf
-mit einer sichtbaren Ausnahme. Eine nichtleere Source wird abgelehnt, weil sie im Cosmos-Treiber das injizierte
-Gerät umgehen würde. Die Komponente unterstützt zunächst nur 512-Byte-Sektoren.
+Den Schreibschutz liefert der Cosmos-Treiber selbst (Pin `3.0.97-zehos.6`, Cosmos #432): `MountFlags.ReadOnly` setzt
+`IsReadOnly`; im Lesemodus schreiben `WriteBlocks`, `WriteInode`, `UpdateSuperblock`, `Fsync`, `Release`, `Drop` und
+`Flush` nichts, mutierende Inode-Operationen liefern `false`, Öffnen zum Schreiben scheitert. Unbekannte Incompat-Bits
+lehnt Cosmos beim Mount ab, unbekannte Compat-/RoCompat-Bits und `s_rev_level` über 1 ergeben einen Lesemount; das
+`Ext2FeatureGate` bleibt das strengere Projektprofil davor. Unter Cosmos 3.0.97 (ohne Patch) schrieben Release und Drop
+auch bei einem Lesemount; dafür gab es die Lesesicht `CosmosReadOnlyVfs` und `CosmosReadOnlyBlockDevice` um das Gerät.
+Beide bleiben für FAT (der FAT-Treiber hat keinen Lesemodus), werden für ext2 aber nicht mehr verwendet. Darunter liegt
+nur noch `CosmosLockedBlockDevice` (Sperre je Operation). Eine nichtleere Source wird abgelehnt, weil sie im
+Cosmos-Treiber das injizierte Gerät umgehen würde. Die Komponente unterstützt zunächst nur 512-Byte-Sektoren.
 
 Ein langlebiges Komponentenobjekt registriert seinen Namen einmal und kann denselben Datenträger erneut mounten.
 Für die spätere Produktintegration fehlen noch Gerätebesitz, Rechteprüfung und die allgemeine Mountverwaltung;
@@ -42,7 +38,8 @@ derzeit darf die Komponente ausschließlich mit exklusiv gehaltenen Testdatentr�
 
 Die Hostprobe `dotnet run --project experiments/StorageProbe/StorageProbe.csproj -c Release -- readonly-selftest`
 prüft mit den echten Cosmos-Assemblies ein frisches RAM-Volume einschließlich Datei-/Verzeichnislesen,
-Schließen, Sync/Drop, verbotenen Mutationen und unverändertem Volumenhash. Sie ersetzt keinen Gasttest des VFS-Mounts.
+Schließen, Sync/Drop, verbotenen Mutationen und unverändertem Volumenhash; das Gerät zählt dabei jeden WriteBlock- und
+Flush-Aufruf, erwartet wird 0 (der Schutz kommt aus Cosmos, nicht aus einer Gerätehülle). Sie ersetzt keinen Gasttest des VFS-Mounts.
 
 ## Herkunft und Lizenz
 
