@@ -89,7 +89,7 @@ internal sealed class CosmosWasmNetworkConnector(Func<string, TlsClient>? create
     private static ResultErr StartWorkerLocked()
     {
         if (worker != null) return ResultErr.CreateSuccess();
-        var started = ThreadStarter.TryStart(Work);
+        var started = ThreadStarter.TryStart(Work, placement: ThreadPlacement.Workers);
         if (!started.IsOK()) return started.Status;
         worker = started.Value;
 #if ZEHOS_NETWORK_TEST

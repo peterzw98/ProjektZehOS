@@ -277,7 +277,7 @@ internal static unsafe partial class WasmRuntime
         // Waehrend PollFaultIsolation aufraeumt, bleibt der Lauf eingereiht; der Ersatzworker startet direkt danach.
         if (cleaningUp) return ResultErr.CreateSuccess();
         if (workerRetired) return ResultErr.CreateFailure(ResultCode.Failure, RetiredMessage);
-        var started = ThreadStarter.TryStart(Work, ThreadStackBytes);
+        var started = ThreadStarter.TryStart(Work, ThreadStackBytes, placement: ThreadPlacement.Workers);
         if (!started.IsOK()) return started.Status;
         worker = started.Value;
         return ResultErr.CreateSuccess();

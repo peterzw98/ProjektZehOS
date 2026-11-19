@@ -16,6 +16,7 @@ using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Storage;
+using Cosmos.Kernel.System.Threading;
 using Cosmos.Kernel.System.Timers;
 using Sys = Cosmos.Kernel.System;
 
@@ -323,7 +324,7 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        // Zuerst, vor jedem Threadstart und vor jedem Lesen von Environment.ProcessorCount: Etappe 5 haelt alle Threads auf CPU 0.
+        // Vor dem ersten Threadstart und Lesen von Environment.ProcessorCount die Standardaffinitaet festlegen.
         var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
@@ -331,6 +332,11 @@ public sealed class Kernel : Sys.Kernel
         // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
         ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
+        CosmosBootOptions.ConfigureWorkerCpus(topology);
+        ThreadStarter.ApplyPlacement = placement =>
+        {
+            if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
+        };
         scheduler = new CosmosClassScheduler(topology);
         systemLog.Information("Boot", "Topologie: " + topology.Describe());
         var boot = new BootService(systemLog);

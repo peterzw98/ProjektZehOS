@@ -90,6 +90,27 @@ public sealed class ThreadStarterTests
     }
 
     [TestMethod]
+    public void TryStart_WithWorkersPlacement_AppliesPlacementOnTheNewThreadBeforeBody()
+    {
+        var original = ThreadStarter.ApplyPlacement;
+        try
+        {
+            ThreadPlacement? applied = null;
+            int appliedOn = -1;
+            bool bodyRanAfterApply = false;
+            ThreadStarter.ApplyPlacement = placement => { applied = placement; appliedOn = Environment.CurrentManagedThreadId; };
+            var started = ThreadStarter.TryStart(() => bodyRanAfterApply = applied != null, 0, _ => true,
+                placement: ThreadPlacement.Workers);
+            Assert.IsTrue(started.IsOK(), started.Status.Message);
+            Assert.IsTrue(started.Value!.Join(5000));
+            Assert.AreEqual(ThreadPlacement.Workers, applied);
+            Assert.AreNotEqual(Environment.CurrentManagedThreadId, appliedOn);
+            Assert.IsTrue(bodyRanAfterApply);
+        }
+        finally { ThreadStarter.ApplyPlacement = original; }
+    }
+
+    [TestMethod]
     public void TryStart_NormalClass_DoesNotCallApplyClass()
     {
         var original = ThreadStarter.ApplyClass;
