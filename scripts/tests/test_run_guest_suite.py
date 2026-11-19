@@ -122,13 +122,27 @@ class RunGuestSuiteTests(unittest.TestCase):
         path.write_text(json.dumps([entry("d", "import time; time.sleep(1)")]), encoding="utf-8")
         started = time.monotonic()
         self.assertEqual(suite_module.main([str(path), "--out", str(self.out), "--detach"]), 0)
-        self.assertLess(time.monotonic() - started, 0.9)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(suite_module.main(["--status", str(self.out)]), 2)
         for _ in range(60):
             time.sleep(0.5)
             if (self.out / "summary.json").exists() and self.summary()["counts"]["pass"] == 1:
                 break
         self.assertEqual(self.summary()["counts"]["pass"], 1)
         self.assertTrue((self.out / "runner.log").is_file())
+
+
+    def test_runner_error_marks_fail(self):
+        path = self.dir / "suite.json"
+        path.write_text(json.dumps([entry("x", "pass")]), encoding="utf-8")
+        original = suite_module.execute
+        suite_module.execute = lambda run: (_ for _ in ()).throw(RuntimeError("kaputt"))
+        try:
+            self.assertEqual(suite_module.main([str(path), "--out", str(self.out)]), 1)
+        finally:
+            suite_module.execute = original
+        self.assertEqual(self.summary()["counts"]["fail"], 1)
+        self.assertEqual(suite_module.main(["--status", str(self.out)]), 1)
 
 
 if __name__ == "__main__":

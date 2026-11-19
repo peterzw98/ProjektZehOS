@@ -6,6 +6,7 @@ SUITE ist eine JSON-Liste aus {"name", "cmd", "env"?, "repeat"?, "timeout"?}. In
 Je Lauf entstehen DIR/<name>-<i>/log.txt; nach jedem Lauf werden DIR/summary.json und DIR/summary.md neu geschrieben.
   run-guest-suite.py SUITE --out DIR [--parallel N] [--var iso=PFAD ...] [--detach]
   run-guest-suite.py --status DIR      (Exit 0 alles pass, 1 Fehlschlag, 2 laeuft noch)
+shortcut: stirbt der Runner selbst, bleibt der Stand auf "running" (Exit 2); bei Bedarf runner.pid pruefen.
 """
 import argparse
 import concurrent.futures
@@ -63,10 +64,16 @@ def kill_tree(process: subprocess.Popen) -> None:
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
     else:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        # Erst SIGTERM, damit die Testskripte in finally ihre Plattenkopien aufraeumen; KILL nur, wenn das haengt.
+        for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 0)):
+            try:
+                os.killpg(process.pid, sig)
+                process.wait(timeout=grace)
+                break
+            except ProcessLookupError:
+                break
+            except subprocess.TimeoutExpired:
+                continue
     process.kill()
     process.wait()
 
@@ -127,7 +134,10 @@ def run_suite(runs: list[dict], out: Path, parallel: int) -> int:
         with lock:
             run["status"] = "running"
             write_summary(out, runs, started)
-        execute(run)
+        try:
+            execute(run)
+        except Exception as error:  # sonst bliebe der Lauf fuer --status dauerhaft "running"
+            run["status"], run["tail"] = "fail", [f"Runner-Fehler: {error!r}"]
         with lock:
             write_summary(out, runs, started)
             print(f"{run['status']:7} {run['name']}-{run['repeat']} ({run['seconds']} s)", flush=True)
@@ -150,8 +160,10 @@ def status(out: Path) -> int:
     return 0 if counts["pass"] == summary["total"] else 1
 
 
-def detach(args: argparse.Namespace) -> int:
+def detach(args: argparse.Namespace, runs: list[dict]) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
+    # Vor der Rueckkehr einen Stand "pending" schreiben: --status meldet sofort 2 und liest kein altes summary.
+    write_summary(args.out, runs, time.monotonic())
     command = [sys.executable, str(Path(__file__).resolve()), str(args.suite), "--out", str(args.out), "--parallel", str(args.parallel)]
     for var in args.var:
         command += ["--var", var]
@@ -191,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Fehler: {error}", file=sys.stderr)
         return 2
     if args.detach:
-        return detach(args)
+        return detach(args, runs)
     return run_suite(runs, args.out, args.parallel)
 
 
