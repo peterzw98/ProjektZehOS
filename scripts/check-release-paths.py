@@ -8,13 +8,17 @@ import sys
 
 def check_file(path, patterns):
     data = path.read_bytes()
-    # Cosmos enthaelt diesen festen Pfad bereits in vorgebauten Assemblies.
+    # Cosmos enthaelt diesen festen Pfad bereits in vorgebauten Assemblies (build-cosmos.sh bildet den Quellbaum per PathMap darauf ab,
+    # er ist also kein lokaler Pfad); neue Dateien kommen mit einem neuen Cosmos-Pin dazu (Pin a6bd07d8: CpuStop, Smp, Idt).
     upstream_root = '/home/runner/work/Cosmos/Cosmos/src/'
     upstream_files = (
+        'Cosmos.Kernel.Core/CPU/CpuStop.cs',
+        'Cosmos.Kernel.Core/CPU/Smp.cs',
         'Cosmos.Kernel.Core/Scheduler/ConditionVariable.cs',
         'Cosmos.Kernel.Core/Scheduler/InterruptEvent.cs',
         'Cosmos.Kernel.Core/Scheduler/Mutex.cs',
         'Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs',
+        'Cosmos.Kernel.Core.X64/Cpu/Idt.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/DriverEngine.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/InterruptContextGuard.cs',
         'Cosmos.Kernel.HAL/Internal/Runtime/CompilerHelpers/LibraryInitializer.cs',
