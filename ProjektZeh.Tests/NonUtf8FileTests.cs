@@ -12,6 +12,7 @@ namespace ProjektZeh.Tests;
 
 /// <summary>Issue #201: Nicht-UTF-8-Dateien duerfen weder Editor noch >> stillschweigend umkodieren (U+FFFD).</summary>
 [TestClass]
+[DoNotParallelize]
 public sealed class NonUtf8FileTests
 {
     // "Grüße\n" in Latin-1: das Byte 0xFC ist kein gueltiges UTF-8.
