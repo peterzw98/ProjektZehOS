@@ -1,0 +1,15 @@
+--- a/netsurf/desktop/browser_window.c
++++ b/netsurf/desktop/browser_window.c
+@@ -4127,6 +4127,12 @@
+ 		browser_window_refresh_url_bar(bw);
+ 	}
+ 
++	/* ZehOS patch stop-status: Der Abbruch setzt "Loading" nie zurueck (wird nur beim Start gesetzt),
++	 * die Statuszeile bliebe stehen. Zurueck auf die Meldung der angezeigten Seite, sonst leer. */
++	browser_window_set_status(bw, (bw->current_content != NULL &&
++			content_get_status(bw->current_content) == CONTENT_STATUS_DONE) ?
++			content_get_status_message(bw->current_content) : "");
++
+ 	browser_window_stop_throbber(bw);
+ }
+ 
