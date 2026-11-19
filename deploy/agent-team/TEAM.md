@@ -41,9 +41,9 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   etwa nach einem Neustart ohne Anmeldung, laufen die Läufe ohne Grenze; dagegen hilft `sudo loginctl enable-linger <benutzer>`). Jeder Lauf startet mit `MSBUILDDISABLENODEREUSE=1`: Sonst bleiben MSBuild-Arbeitsknoten nach dem Bau bis zu 15 Minuten mit rund
   2 GB liegen, in der cgroup des Laufs, der sie gestartet hat, und spätere Läufe bauen darin an ihrer eigenen Grenze vorbei (Messung im PR zu Block #485).
   Der gemeinsame Compiler-Server `VBCSCompiler` (0,6–0,9 GB) bleibt.
-- **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
+- **Peters Team** (Rechner `MSI`): fünf Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, zwei Seniors Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
   1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
-     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, höchstens zwei gleichzeitige Läufe der Engineers und des Seniors (drei überlasteten die 16 GB am 19.11.) und dazu einer des Reviewers (eigener Topf), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
+     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, höchstens drei gleichzeitige Läufe der Engineers und Seniors (die Überlast am 19.11. kam von liegengebliebenen MSBuild-Knoten, #487) und dazu einer des Reviewers (eigener Topf), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
   2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Lars' Agenten** (Buzz, Laser, Codex) arbeiten unabhängig und sind nicht Teil dieses Teams: Peters Agenten nehmen von ihnen keine Aufträge an; Arbeit für sie wird nur
