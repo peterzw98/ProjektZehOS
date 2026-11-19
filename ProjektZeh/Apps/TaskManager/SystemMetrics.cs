@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Apps.TaskManager;
 
@@ -17,6 +18,10 @@ internal sealed class SystemMetrics
     public bool HasCpuSample { get; private set; }
     public int CpuPercent { get; private set; }
     public int HistoryCount { get; private set; }
+    /// <summary>Last je CPU seit der letzten Abfrage; leer, solange <see cref="SampleCpuLoads"/> nie aufgerufen wurde.</summary>
+    public int[] CpuLoads { get; private set; } = [];
+    private ulong[] previousBusy = [];
+    private ulong previousAllTicks;
 
     public void RecordWork(long microseconds)
     {
@@ -48,6 +53,25 @@ internal sealed class SystemMetrics
         HistoryCount = Math.Min(history.Length, HistoryCount + 1);
         previousSample = milliseconds;
         work = 0;
+    }
+
+    /// <summary>Aus kumulierten Zaehlern (belegte Ticks je CPU, alle Ticks) die Last seit dem vorigen Aufruf; der erste Aufruf misst seit Start.</summary>
+    public void SampleCpuLoads(ReadOnlySpan<ulong> busyTicks, ulong allTicks)
+    {
+        if (previousBusy.Length != busyTicks.Length)
+        {
+            previousBusy = new ulong[busyTicks.Length];
+            CpuLoads = new int[busyTicks.Length];
+        }
+        // Zaehler laufen nie rueckwaerts; ein Rueckgang (neu angelegte CPU-Zustaende) zaehlt als 0 statt als Ueberlauf.
+        ulong elapsed = allTicks >= previousAllTicks ? allTicks - previousAllTicks : 0;
+        for (int cpu = 0; cpu < busyTicks.Length; cpu++)
+        {
+            ulong busy = busyTicks[cpu] >= previousBusy[cpu] ? busyTicks[cpu] - previousBusy[cpu] : 0;
+            CpuLoads[cpu] = CpuDiagnostics.LoadPercent(busy, elapsed);
+            previousBusy[cpu] = busyTicks[cpu];
+        }
+        previousAllTicks = allTicks;
     }
 
     public int GetHistory(int index)

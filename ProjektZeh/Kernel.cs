@@ -646,9 +646,16 @@ public sealed class Kernel : Sys.Kernel
     private string[] DescribeScheduler()
     {
         var snapshot = CosmosClassScheduler.Snapshot();
-        return [$"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
-            $"Wartend: Interaktiv={snapshot.WaitingByClass[0]}, Normal={snapshot.WaitingByClass[1]}, Hintergrund={snapshot.WaitingByClass[2]}",
-            "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
+        var lines = new System.Collections.Generic.List<string>
+        {
+            $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
+        };
+        ulong allTicks = CosmosClassScheduler.ElapsedTicks;
+        for (uint cpu = 0; cpu < (uint)Cosmos.Kernel.System.Threading.KernelCpus.Count; cpu++)
+            if (CosmosClassScheduler.Snapshot(cpu) is { } state)
+                lines.Add(CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyTicks, allTicks));
+        lines.Add("Auswahl CPU 0 (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds));
+        return [.. lines];
     }
 
     /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
