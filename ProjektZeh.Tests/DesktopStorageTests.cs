@@ -11,6 +11,7 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopStorageTests
 {
     private string directory = null!;

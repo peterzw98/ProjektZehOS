@@ -11,6 +11,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class SettingsAppTests
 {
     private static readonly DisplayMode Boot = new(1024, 768);
