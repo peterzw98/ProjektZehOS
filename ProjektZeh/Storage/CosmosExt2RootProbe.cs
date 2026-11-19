@@ -1037,7 +1037,12 @@ internal static class CosmosExt2RootProbe
         FillUntilFull("/l/n", IoChunk, 0);
         FillUntilFull("/l/t", SmallFill, 0);
         target ??= new RootProbeEntry(RootProbeCatalog.FullReplaceTarget, RootProbeCatalog.FullReplaceTarget, "d", 65536);
+        Sync();
+        Counters(root, "l2-voll");
         var replaced = files.WriteBytes(target.Path, new byte[2 * 65536]);
+        Sync();
+        Counters(root, "l2-nach");
+        Write($"l2 DIAG Ersetzen {(replaced.IsOK() ? "OK" : "Fehler")}, Original gleich {Matches(target.Path, target)}, Laenge {new FileInfo(target.Path).Length}, Nullen {IsZero(target.Path)}");
         Check(!replaced.IsOK(), "Ersetzen bei vollem Datentraeger gelang");
         Check(Matches(target.Path, target), "Original nach fehlgeschlagenem Ersetzen veraendert");
         DeleteTree("/l");
