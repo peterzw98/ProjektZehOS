@@ -27,9 +27,10 @@ internal sealed class CosmosClassScheduler : IScheduler
         public int TraceNext;
         public int TraceCount;
         public ulong Preemptions;
-        public ulong BusyTicks;
+        public ulong BusyNs;
     }
 
+    // Beginnt mit dem ersten Typzugriff (praktisch die Registrierung des Schedulers), nicht mit dem Boot.
     private static readonly long startTimestamp = Stopwatch.GetTimestamp();
 
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
@@ -95,7 +96,8 @@ internal sealed class CosmosClassScheduler : IScheduler
     {
         if (Cpu(state) is not { } cpu) return false;
         current.TotalRuntime += elapsedNs;
-        cpu.BusyTicks++;
+        // Last in echten Nanosekunden (unabhaengig von der Tickrate); der Idle-Thread zaehlt nicht, falls Cosmos ihn doch meldet.
+        if (!current.IsIdle) cpu.BusyNs += elapsedNs;
         if (!cpu.Queues.Tick(current, elapsedNs)) return false;
         cpu.Preemptions++;
         return true;
@@ -161,10 +163,10 @@ internal sealed class CosmosClassScheduler : IScheduler
     }
 
     /// <summary>
-    /// Diagnose einer CPU: laufender Thread (null = Idle), seine Klasse, Wartende je Klasse und belegte Ticks (OnTick-Aufrufe
-    /// mit einem Nicht-Idle-Thread). Thread-Kontext wie <see cref="Snapshot()"/>: nimmt nur die Sperre dieser CPU.
+    /// Diagnose einer CPU: laufender Thread (null = Idle), seine Klasse, Wartende je Klasse und belegte Nanosekunden (Summe der
+    /// OnTick-Zeitanteile mit einem Nicht-Idle-Thread). Thread-Kontext wie <see cref="Snapshot()"/>: nimmt nur die Sperre dieser CPU.
     /// </summary>
-    public static (uint? RunningId, ThreadClass RunningClass, int[] WaitingByClass, ulong BusyTicks)? Snapshot(uint cpuId)
+    public static (uint? RunningId, ThreadClass RunningClass, int[] WaitingByClass, ulong BusyNs)? Snapshot(uint cpuId)
     {
         if (cpuId >= (uint)KernelCpus.Count || SchedulerManager.GetCpuState(cpuId) is not { } state) return null;
         var waitingByClass = new int[3];
@@ -175,12 +177,12 @@ internal sealed class CosmosClassScheduler : IScheduler
             var current = state.CurrentThread;
             bool running = current is { IsIdle: false };
             var threadClass = running && current!.SchedulerData is ClassThreadState classState ? classState.Class : ThreadClass.Normal;
-            return (running ? (uint?)current!.Id : null, threadClass, waitingByClass, cpu.BusyTicks);
+            return (running ? (uint?)current!.Id : null, threadClass, waitingByClass, cpu.BusyNs);
         }
     }
 
-    /// <summary>Ticks seit dem Start der Zaehlung, Nenner fuer die Last aus <see cref="CpuDiagnostics.LoadPercent"/> (Cosmos liefert keinen Tickzaehler je CPU).</summary>
-    public static ulong ElapsedTicks => (ulong)(Stopwatch.GetElapsedTime(startTimestamp).Ticks * 100 / (long)TickNs);
+    /// <summary>Gemessene Nanosekunden seit dem Start der Zaehlung, Nenner fuer die Last aus <see cref="CpuDiagnostics.LoadPercent"/>.</summary>
+    public static ulong ElapsedNs => (ulong)(Stopwatch.GetElapsedTime(startTimestamp).Ticks * 100);
 
     private static CpuQueues? Cpu(PerCpuState state) => state.SchedulerData as CpuQueues;
 }

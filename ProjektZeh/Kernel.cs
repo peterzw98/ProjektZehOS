@@ -650,10 +650,10 @@ public sealed class Kernel : Sys.Kernel
         {
             $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
         };
-        ulong allTicks = CosmosClassScheduler.ElapsedTicks;
+        ulong allNs = CosmosClassScheduler.ElapsedNs;
         for (uint cpu = 0; cpu < (uint)Cosmos.Kernel.System.Threading.KernelCpus.Count; cpu++)
             if (CosmosClassScheduler.Snapshot(cpu) is { } state)
-                lines.Add(CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyTicks, allTicks));
+                lines.Add(CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyNs, allNs));
         lines.Add("Auswahl CPU 0 (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds));
         return [.. lines];
     }

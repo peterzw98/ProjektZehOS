@@ -23,14 +23,16 @@ public sealed class CpuDiagnosticsTests
     }
 
     [TestMethod]
-    public void LoadPercent_ZeroTicksIsZeroAndOverflowIsClamped()
+    public void LoadPercent_ZeroTotalIsZeroAndOverflowIsClamped()
     {
         Assert.AreEqual(0, CpuDiagnostics.LoadPercent(5, 0));
         Assert.AreEqual(100, CpuDiagnostics.LoadPercent(300, 100));
+        Assert.AreEqual(25, CpuDiagnostics.LoadPercent(2_500_000, 10_000_000));
+        Assert.AreEqual(0, CpuDiagnostics.LoadPercent(0, 10_000_000));
     }
 
     [TestMethod]
-    public void SystemMetrics_CpuLoads_UseTicksSinceLastQuery()
+    public void SystemMetrics_CpuLoads_UseNanosecondsSinceLastQuery()
     {
         var metrics = new SystemMetrics();
         metrics.SampleCpuLoads([10, 0], 100);

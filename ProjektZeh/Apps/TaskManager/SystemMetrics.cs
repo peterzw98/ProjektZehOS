@@ -55,23 +55,23 @@ internal sealed class SystemMetrics
         work = 0;
     }
 
-    /// <summary>Aus kumulierten Zaehlern (belegte Ticks je CPU, alle Ticks) die Last seit dem vorigen Aufruf; der erste Aufruf misst seit Start.</summary>
-    public void SampleCpuLoads(ReadOnlySpan<ulong> busyTicks, ulong allTicks)
+    /// <summary>Aus kumulierten Zaehlern (belegte Nanosekunden je CPU, Gesamtzeit in ns) die Last seit dem vorigen Aufruf; der erste Aufruf misst seit Start.</summary>
+    public void SampleCpuLoads(ReadOnlySpan<ulong> busyNs, ulong allNs)
     {
-        if (previousBusy.Length != busyTicks.Length)
+        if (previousBusy.Length != busyNs.Length)
         {
-            previousBusy = new ulong[busyTicks.Length];
-            CpuLoads = new int[busyTicks.Length];
+            previousBusy = new ulong[busyNs.Length];
+            CpuLoads = new int[busyNs.Length];
         }
         // Zaehler laufen nie rueckwaerts; ein Rueckgang (neu angelegte CPU-Zustaende) zaehlt als 0 statt als Ueberlauf.
-        ulong elapsed = allTicks >= previousAllTicks ? allTicks - previousAllTicks : 0;
-        for (int cpu = 0; cpu < busyTicks.Length; cpu++)
+        ulong elapsed = allNs >= previousAllTicks ? allNs - previousAllTicks : 0;
+        for (int cpu = 0; cpu < busyNs.Length; cpu++)
         {
-            ulong busy = busyTicks[cpu] >= previousBusy[cpu] ? busyTicks[cpu] - previousBusy[cpu] : 0;
+            ulong busy = busyNs[cpu] >= previousBusy[cpu] ? busyNs[cpu] - previousBusy[cpu] : 0;
             CpuLoads[cpu] = CpuDiagnostics.LoadPercent(busy, elapsed);
-            previousBusy[cpu] = busyTicks[cpu];
+            previousBusy[cpu] = busyNs[cpu];
         }
-        previousAllTicks = allTicks;
+        previousAllTicks = allNs;
     }
 
     public int GetHistory(int index)

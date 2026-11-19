@@ -71,8 +71,8 @@ internal sealed class DisplayService
     {
         var busy = new ulong[Cosmos.Kernel.System.Threading.KernelCpus.Count];
         for (uint cpu = 0; cpu < (uint)busy.Length; cpu++)
-            busy[cpu] = CosmosClassScheduler.Snapshot(cpu)?.BusyTicks ?? 0;
-        desktop.System.SampleCpuLoads(busy, CosmosClassScheduler.ElapsedTicks);
+            busy[cpu] = CosmosClassScheduler.Snapshot(cpu)?.BusyNs ?? 0;
+        desktop.System.SampleCpuLoads(busy, CosmosClassScheduler.ElapsedNs);
     }
 
     public void Suspend() => desktop.Suspend();
