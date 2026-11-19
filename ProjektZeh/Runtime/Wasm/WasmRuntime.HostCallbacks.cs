@@ -1,6 +1,7 @@
 #if ZEHOS_WASM || ZEHOS_NETWORK_TEST
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -13,16 +14,40 @@ internal static unsafe partial class WasmRuntime
 {
     private const int MaximumOpenFiles = 16;
     private static readonly Dictionary<int, FileStream> files = [];
+    // Offene Paketordner: Handle -> Pfad relativ zur Paketwurzel. Sie zaehlen gegen MaximumOpenFiles wie Dateien.
+    private static readonly Dictionary<int, string> directories = [];
     private static IWasmSession? current;
     private static int nextHandle;
     private static uint[] indexedFrame = [];
     // Einmal je Lauf melden: present laeuft je Bild, ein Dauerfehler darf das serielle Protokoll nicht fluten.
     private static bool presentFailureReported;
 
+    // Auflösung der Stopwatch in ns, mindestens 1 (clock_res_get darf nie 0 melden).
+    internal static ulong ClockResolutionNs(long frequency) => frequency <= 0 ? 1 : (ulong)Math.Max(1L, 1_000_000_000L / frequency);
+
+    // Cosmos (5d0b953) liefert keine letzte Aenderungszeit: FatInodeOperations.GetAttr setzt alle Zeiten auf 0 und
+    // FatAttributes.UnpackDateTime wird nirgends aufgerufen. Deshalb meldet der Host 0 = unbekannt (12.8 P4-D).
+    private const ulong UnknownModifiedNs = 0;
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_fstat")]
+    private static int HostFstat(int handle, ulong* modifiedNs)
+    {
+        try
+        {
+            if (!files.ContainsKey(handle)) return WasiErrno.BadFile;
+            *modifiedNs = UnknownModifiedNs;
+            return WasiErrno.Success;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_clock_res_ns")]
+    private static ulong HostClockResolution(int clockId) => ClockResolutionNs(Stopwatch.Frequency);
+
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]
     private static int HostOpen(byte* path, uint length)
     {
-        if (files.Count >= MaximumOpenFiles) return -1;
+        if (files.Count + directories.Count >= MaximumOpenFiles) return -1;
         FileStream? stream = null;
         try
         {
@@ -45,7 +70,7 @@ internal static unsafe partial class WasmRuntime
     private static string? ResolvePackagePath(byte* path, uint length)
     {
         string? root = current?.Root;
-        return root == null ? null : WasmPackagePaths.Resolve(root, Encoding.UTF8.GetString(path, (int)length));
+        return root == null ? null : WasmPackagePaths.ResolveChecked(root, Encoding.UTF8.GetString(path, (int)length));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_file_size")]
@@ -88,6 +113,100 @@ internal static unsafe partial class WasmRuntime
     {
         try { if (files.Remove(handle, out var stream)) StorageLock.Run(stream.Dispose); }
         catch (Exception) { /* Das Handle ist bereits entfernt; ein Schliessfehler darf die native Grenze nicht verlassen. */ }
+    }
+
+    // Paketordner (Block #419, P4-A): jede Rueckgabe ist eine WASI-Fehlernummer, Ausnahmen werden zu EIO.
+    // dirHandle -1 meint die Paketwurzel.
+    private static int ResolveDirectory(int dirHandle, byte* path, uint length, out string relative)
+    {
+        relative = "";
+        string directory = "";
+        if (dirHandle != -1 && !directories.TryGetValue(dirHandle, out directory!)) return WasmPackagePaths.BadFile;
+        try { relative = WasmPackagePaths.Join(directory, Encoding.UTF8.GetString(path, (int)length)); }
+        catch (UnauthorizedAccessException) { return WasmPackagePaths.AccessDenied; }
+        return WasmPackagePaths.Success;
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_package_opendir")]
+    private static int HostPackageOpenDir(int dirHandle, byte* path, uint length, int* handle)
+    {
+        try
+        {
+            int status = ResolveDirectory(dirHandle, path, length, out string relative);
+            if (status != WasmPackagePaths.Success) return status;
+            if (files.Count + directories.Count >= MaximumOpenFiles) return WasmPackagePaths.TooManyFiles;
+            status = WasmPackagePaths.List(current?.Root, relative, out _);
+            if (status != WasmPackagePaths.Success) return status;
+            int newHandle = ++nextHandle;
+            directories[newHandle] = relative;
+            *handle = newHandle;
+            return WasmPackagePaths.Success;
+        }
+        catch (Exception) { return WasmPackagePaths.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_package_readdir")]
+    private static int HostPackageReadDir(int handle, byte* buffer, uint length, ulong cookie, uint* used)
+    {
+        try
+        {
+            if (!directories.TryGetValue(handle, out string? relative)) return WasmPackagePaths.BadFile;
+            int status = WasmPackagePaths.List(current?.Root, relative, out var entries);
+            if (status != WasmPackagePaths.Success) return status;
+            *used = (uint)WasiDirectoryEntries.Write(entries, cookie, new Span<byte>(buffer, (int)length));
+            return WasmPackagePaths.Success;
+        }
+        catch (Exception) { return WasmPackagePaths.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_package_closedir")]
+    private static void HostPackageCloseDir(int handle) => directories.Remove(handle);
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_package_openat")]
+    private static int HostPackageOpenAt(int dirHandle, byte* path, uint length, int* handle, ulong* size)
+    {
+        FileStream? stream = null;
+        try
+        {
+            int status = ResolveDirectory(dirHandle, path, length, out string relative);
+            if (status != WasmPackagePaths.Success) return status;
+            if (files.Count + directories.Count >= MaximumOpenFiles) return WasmPackagePaths.TooManyFiles;
+            string? root = current?.Root;
+            if (root == null) return WasmPackagePaths.AccessDenied;
+            status = WasmPackagePaths.Stat(root, relative, out ulong bytes, out int type);
+            if (status != WasmPackagePaths.Success) return status;
+            if (type != WasmPackagePaths.TypeFile) return WasiErrno.IsDirectory;
+            string full = WasmPackagePaths.ResolveChecked(root, relative);
+            stream = StorageLock.Run(() => new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read));
+            int newHandle = ++nextHandle;
+            files[newHandle] = stream;
+            *handle = newHandle;
+            *size = bytes;
+            return WasmPackagePaths.Success;
+        }
+        catch (Exception exception)
+        {
+            try { if (stream != null) StorageLock.Run(stream.Dispose); }
+            catch (Exception) { /* Auch die Freigabe darf keine Ausnahme ueber die native Grenze tragen. */ }
+            return exception is FileNotFoundException or DirectoryNotFoundException ? WasmPackagePaths.NotFound
+                : exception is UnauthorizedAccessException ? WasmPackagePaths.AccessDenied : WasmPackagePaths.Io;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_package_statat")]
+    private static int HostPackageStatAt(int dirHandle, byte* path, uint length, byte* type, ulong* size)
+    {
+        try
+        {
+            int status = ResolveDirectory(dirHandle, path, length, out string relative);
+            if (status != WasmPackagePaths.Success) return status;
+            status = WasmPackagePaths.Stat(current?.Root, relative, out ulong bytes, out int kind);
+            if (status != WasmPackagePaths.Success) return status;
+            *type = (byte)kind;
+            *size = bytes;
+            return WasmPackagePaths.Success;
+        }
+        catch (Exception) { return WasmPackagePaths.Io; }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_present")]

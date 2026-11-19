@@ -9,6 +9,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class FileManagerTests
 {
     // Standardlayout 796 x 526 mit 8 x 16-Schrift: Werkzeugleiste y 8..52, Aktionen y 60..104, erste Zeile ab y 140.

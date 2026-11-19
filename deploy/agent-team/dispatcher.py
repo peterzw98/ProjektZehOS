@@ -14,13 +14,17 @@
 #   offset       Lesestand im Protokoll (Inode und Byte)      state.md  Stand des Agenten zwischen den Läufen
 #   heartbeat    Lebenszeichen des Dienstes (JSON, je Schritt) runs/     Ausgabe jedes Laufs
 #   lock         verhindert einen zweiten Dienst für denselben Nick
-import argparse, errno, fcntl, hashlib, json, os, re, signal, subprocess, sys, time
+import argparse, errno, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time
 
 SERVER_NOTICE = re.compile(r":zeh\.ernst\.casa NOTICE ")
 LINE = re.compile(r"^(\S+ \S+) << :([^!\s]+)!\S* (PRIVMSG|NOTICE|INVITE) (\S+) :?(.*)$")
 IGNORED_SENDERS = {"histserv"}  # Wiederholung alter Zeilen durch den Server, klein geschrieben verglichen
 MAX_LINE = 1000      # längere Zeilen werden im Auftrag gekürzt, das Protokoll bleibt vollständig
 MAX_BATCH = 40       # mehr Zeilen je Lauf nur als Verweis aufs Protokoll
+# Ohne Node-Reuse enden die MSBuild-Arbeitsknoten mit jedem dotnet-Aufruf. Sonst warten sie bis zu 15 Minuten auf den
+# nächsten Bau (gemessen nach build-cosmos.sh: 10 Knoten, 1,8 GB), sammeln sich über Läufe an und bleiben in der
+# cgroup des Laufs, der sie gestartet hat, statt in der des Laufs, der sie nutzt. Kosten: Cosmos-Quellbau 62 s -> 73 s.
+RUN_ENV = {"MSBUILDDISABLENODEREUSE": "1"}
 
 
 def _stat_fields(pid):
@@ -176,6 +180,19 @@ def mention_pattern(nick):
     return re.compile(rf"(?<![A-Za-z0-9_\-]){re.escape(nick)}(?![A-Za-z0-9_\-])", re.IGNORECASE)
 
 
+def addressed(text, target, nick, pattern):
+    """Ist der Nick Adressat? Ja bei Direktnachricht, bei „nick:“ irgendwo (Sammelzeilen „a: X; b: Y“) und wenn er vor dem
+    ersten „: “ steht („a b: …“, „[AUFTRAG] a: …“). Nur Adressaten werden geweckt; wer bloß im Text vorkommt („… [FERTIG]
+    an a“), bekommt die Zeile als Kontext beim nächsten Lauf. Doppelpunkte ohne Leerzeichen (10:19, https:) beenden das
+    Adressfeld nicht. Ohne „: “ in den ersten 160 Zeichen zählt wie bisher jede Nennung."""
+    if target.lower() == nick.lower():
+        return True
+    if re.search(rf"{pattern.pattern}\s*:", text, re.IGNORECASE):
+        return True
+    head, sep, _ = text[:160].partition(": ")
+    return bool(pattern.search(head if sep else text))
+
+
 def parse_mention(raw, nick, pattern):
     """Liefert (zeit, absender, ziel, text), wenn die Protokollzeile den Nick nennt oder an ihn geht."""
     if SERVER_NOTICE.search(raw):
@@ -214,6 +231,7 @@ class Dispatcher:
         self.quota = QuotaStore(a.quota_dir, {BACKEND: a.budget_claude})
         self.quota_alerted = {}   # je Anbieter: bis wann schon gewarnt wurde (eine Warnung je Sperre)
         self.limit_runs, self.limit_last = 0, 0   # aufeinanderfolgende Limitläufe derselben Nennungen
+        self.mem_limit = self._memory_limit()
         self._reap_orphan()
 
     # --- Dateien ------------------------------------------------------------------------------------
@@ -379,7 +397,9 @@ class Dispatcher:
                 ts, sender, target, text = hit
                 e = {"id": self._next_id(), "ts": ts, "sender": sender,
                      "target": target, "text": text, "seen": self.clock(),
-                     "trigger": self.allow is None or sender.lower() in self.allow,
+                     "allowed": self.allow is None or sender.lower() in self.allow,
+                     "trigger": (self.allow is None or sender.lower() in self.allow)
+                                and addressed(text, target, self.a.nick, self.pattern),
                      "ino": st.st_ino, "gen": gen, "end": pos}
                 inbox.write(json.dumps(e, ensure_ascii=False) + "\n")
                 self.entries.append(e)
@@ -418,7 +438,8 @@ class Dispatcher:
         lines = batch[-MAX_BATCH:]
         skipped = len(batch) - len(lines)
         text = "\n".join(f"#{e['id']} {e['ts']} {e['sender']} -> {e['target']}: {e['text'][:MAX_LINE]}"
-                         + ("" if e["trigger"] else "   [nur Information: Absender startet keine Läufe]")
+                         + ("" if e["trigger"] else "   [nur Information: Absender startet keine Läufe]" if not e.get("allowed", True)
+                            else "   [nur Information: nennt dich, ist aber an andere adressiert]")
                          + ("   [lief schon einmal ins Zeitlimit: nicht erneut warten, sondern [BLOCKER] melden]"
                             if e["id"] <= self.timed_out_upto else "")
                          for e in lines)
@@ -451,8 +472,25 @@ class Dispatcher:
         self.quota_alerted[BACKEND] = until
         return False
 
+    def _memory_limit(self):
+        """--memory-max nur, wenn ein Benutzer-systemd erreichbar ist (ohne Linger fehlt er nach einem Neustart ohne
+        Anmeldung); sonst liefe jeder Lauf in einen Startfehler. Dann ohne Grenze und mit Warnung im Protokoll."""
+        if not self.a.memory_max:
+            return ""
+        bus = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "bus")
+        if shutil.which("systemd-run") and os.path.exists(bus):
+            return self.a.memory_max
+        self.log_event(f"Speichergrenze {self.a.memory_max} nicht möglich (kein Benutzer-systemd unter {bus}); Läufe ohne Grenze")
+        return ""
+
     def build_cmd(self, prompt):
         cmd = [self.a.claude, "-p", "--model", self.a.model, "--permission-mode", self.a.permission_mode]
+        if self.mem_limit:
+            # Eigene cgroup je Lauf: Braucht ein Lauf (nativer Bau, Gast) zu viel, beendet der Kernel nur ihn, statt dass
+            # der ganze Rechner ins Auslagern faellt (19.11.: Stillstand mit drei Bauten auf 16 GB). Wenig Swap erlaubt,
+            # sonst lagert die Gruppe selbst stundenlang aus.
+            cmd = ["systemd-run", "--user", "--scope", "-q", "-p", f"MemoryMax={self.mem_limit}",
+                   "-p", "MemorySwapMax=512M"] + cmd
         if self.a.role:
             cmd += ["--append-system-prompt-file", self.a.role]
         return cmd + self.a.claude_arg + [prompt]
@@ -468,7 +506,7 @@ class Dispatcher:
             out = open(out_path, "w")
             # Eigene Prozessgruppe: bei Zeitüberschreitung wird der Lauf mit allen Kindprozessen beendet
             self.proc = self.popen(cmd, cwd=self.a.home, stdin=subprocess.DEVNULL, stdout=out,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
+                                   stderr=subprocess.STDOUT, start_new_session=True, env={**os.environ, **RUN_ENV})
         except OSError as e:
             if out: out.close()
             self._release_slot()
@@ -533,7 +571,13 @@ class Dispatcher:
             self.timed_out_upto = max(self.timed_out_upto, run["last"])
             self._failed(now, f"Zeitlimit {self.a.timeout:.0f} s", run["last"], run["path"], final=True)
         else:
-            self._failed(now, f"Exit {code}", run["last"], run["path"])
+            if code == -signal.SIGKILL and self.mem_limit:
+                # SIGKILL kommt hier praktisch nur vom Speicherwaechter der cgroup (Zeitlimit ist oben eigener Fall); ein
+                # erneuter Versuch braeuchte wieder genauso viel Speicher
+                self._failed(now, f"Speichergrenze {self.mem_limit} überschritten (vom Kernel beendet)", run["last"],
+                             run["path"], final=True)
+            else:
+                self._failed(now, f"Exit {code}", run["last"], run["path"])
 
     def _limit_message(self, run, code):
         """Text der Limitmeldung, wenn der Lauf am Kontingent scheiterte, sonst None."""
@@ -669,6 +713,7 @@ def parse_args(argv):
     p.add_argument("--permission-mode", default="auto")
     p.add_argument("--quiet", type=float, default=5, help="Sekunden Ruhe nach der letzten Nennung")
     p.add_argument("--timeout", type=float, default=3600, help="höchste Laufzeit eines Laufs in Sekunden")
+    p.add_argument("--memory-max", default="", help="Speichergrenze je Lauf (systemd MemoryMax, etwa 6G); leer = keine")
     p.add_argument("--backoff", type=float, default=60, help="Abstand nach erstem Fehlschlag, verdoppelt sich")
     p.add_argument("--max-attempts", type=int, default=3)
     p.add_argument("--max-runs-per-hour", type=int, default=6)

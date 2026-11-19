@@ -362,11 +362,7 @@ jobs:
 
   guest:
     name: Guest boot and desktop (QEMU)
-    # Dieser QEMU-Job laeuft auf dem self-hosted Runner MSI (Peters Rechner): dort entfallen Cache und Downloads. Nur fuer
-    # Push, manuelle Laeufe und Pull Requests aus diesem Repository; das Repository ist oeffentlich, ein Pull Request aus einem
-    # Fork faellt auf ubuntu-24.04 zurueck. Ein Runner fuehrt einen Job nach dem anderen aus, zwei Gast-Jobs laufen also nie
-    # gleichzeitig. scripts/tests/test_ci_runner_policy.py prueft das.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     needs: kernel
     timeout-minutes: 25
     steps:
@@ -375,9 +371,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Isolate runner state
-        uses: ./.github/actions/runner-state
-
       - name: Download bootable ISO
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -385,12 +378,10 @@ jobs:
           path: iso
 
       - name: Identify runner image
-        if: runner.environment != 'self-hosted'
         id: runner-image
         run: echo "version=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
 
       - name: Restore QEMU packages
-        if: runner.environment != 'self-hosted'
         id: qemu-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -398,7 +389,6 @@ jobs:
           key: qemu-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}
 
       - name: Install QEMU
-        if: runner.environment != 'self-hosted'
         shell: bash
         run: |
           cache="$RUNNER_TEMP/qemu-apt"
@@ -428,23 +418,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Remove isolated runner state
-        # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
-        if: always() && runner.environment == 'self-hosted'
-        shell: bash
-        run: rm -rf "${RUNNER_TEMP:?}/home"
-
   guest-recovery:
     name: Guest recovery boot (QEMU)
     # Das Recovery-ISO braucht einen eigenen Kernelbuild (rund 40 s). Der Job laeuft parallel zu den uebrigen und verlaengert
     # die Pipeline nicht; er entfaellt wie der Gastlauf bei reinen Doku-PRs.
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # Dieser QEMU-Job laeuft auf dem self-hosted Runner MSI (Peters Rechner): dort entfallen Cache und Downloads. Nur fuer
-    # Push, manuelle Laeufe und Pull Requests aus diesem Repository; das Repository ist oeffentlich, ein Pull Request aus einem
-    # Fork faellt auf ubuntu-24.04 zurueck. Ein Runner fuehrt einen Job nach dem anderen aus, zwei Gast-Jobs laufen also nie
-    # gleichzeitig. scripts/tests/test_ci_runner_policy.py prueft das.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -453,9 +433,6 @@ jobs:
           persist-credentials: false
           # Die ZehOS-Version zaehlt first-parent-Commits (ProjektZeh.csproj, ZehOSVersionFromGit); ein flacher Klon bricht ab.
           fetch-depth: 0
-
-      - name: Isolate runner state
-        uses: ./.github/actions/runner-state
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -485,12 +462,10 @@ jobs:
         run: dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSRecovery=true
 
       - name: Identify runner image
-        if: runner.environment != 'self-hosted'
         id: runner-image
         run: echo "version=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
 
       - name: Restore QEMU packages
-        if: runner.environment != 'self-hosted'
         id: qemu-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -498,7 +473,6 @@ jobs:
           key: qemu-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}
 
       - name: Install QEMU
-        if: runner.environment != 'self-hosted'
         shell: bash
         run: |
           cache="$RUNNER_TEMP/qemu-apt"
@@ -529,9 +503,3 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Remove isolated runner state
-        # Der Runner raeumt RUNNER_TEMP nicht von selbst auf; Cosmos-Feed, NuGet-Cache und ~/.cosmos wuerden sonst anwachsen.
-        if: always() && runner.environment == 'self-hosted'
-        shell: bash
-        run: rm -rf "${RUNNER_TEMP:?}/home"

@@ -25,6 +25,8 @@ REPO = "peterzw98/ProjektZehOS"
 OWNER, NUMBER = "peterzw98", 1
 COLUMNS = ("Offen", "Übernommen", "In Arbeit", "Wartend", "Review/PR", "Erledigt")
 CLAIM, FREE, WITHDRAW = "[BOARD] übernommen", "[BOARD] freigegeben", "[BOARD] zurückgezogen"
+# Verantwortliche Person je Team: Beim Übernehmen wird sie dem Issue zugewiesen, beim Freigeben wieder entfernt
+ASSIGNEES = {"peter": "peterzw98", "laser": "larsernst", "buzz": "larsernst", "azazel": "azazel55605"}
 TOKEN = re.compile(r"[A-Za-z0-9._/+-]+")   # Team, Agent und Branch stehen als key=wert im Kommentar
 
 
@@ -147,6 +149,17 @@ def soft_status(number, column, what):
               file=sys.stderr)
 
 
+def soft_assignee(number, team, add):
+    # Zuweisung ist nur Anzeige; Übernahme und Freigabe gelten auch ohne sie
+    person = ASSIGNEES.get(team)
+    if not person:
+        return
+    try:
+        gh("issue", "edit", str(number), "-R", REPO, "--add-assignee" if add else "--remove-assignee", person)
+    except (SystemExit, Exception) as e:
+        print(f"board: Zuweisung an {person} nicht geändert ({e})", file=sys.stderr)
+
+
 def cmd_claim(a):
     team = a.team.lower()
     for v in (team, a.agent, a.branch):
@@ -167,6 +180,7 @@ def cmd_claim(a):
         sys.exit(3)
     if owner:   # dieselbe Übernahme noch einmal: nichts zu tun
         soft_status(a.number, "Übernommen", "Übernahme")
+        soft_assignee(a.number, team, True)   # holt eine fehlgeschlagene Zuweisung nach
         print(f"#{a.number} gehört schon {team} ({a.agent})")
         return
     had_label = team in teams_of(data)
@@ -200,6 +214,7 @@ def cmd_claim(a):
         print(f"board: #{a.number} hat {first.get('team')} ({first.get('agent')}) zuerst übernommen", file=sys.stderr)
         sys.exit(3)
     soft_status(a.number, "Übernommen", "Übernahme")
+    soft_assignee(a.number, team, True)
     print(f"#{a.number} übernommen von {team} ({a.agent}, Branch {a.branch})")
 
 
@@ -214,6 +229,8 @@ def cmd_release(a):
     reason = f"\n{a.reason}" if a.reason else ""
     comment(a.number, f"{FREE} team={team} agents={','.join(ended)}{reason}")
     removed = remove_label_if_unowned(a.number, team, [(team, x) for x in ended])
+    if removed:
+        soft_assignee(a.number, team, False)
     if removed and not [t for t in teams_of(data) if t != team]:
         soft_status(a.number, "Offen", "Freigabe")
     print(f"#{a.number} freigegeben" + ("" if removed else " (Label bleibt: neue Übernahme im Team)"))
@@ -233,6 +250,8 @@ def cmd_new(a):
     url = gh(*args, retry=False).strip()
     number = int(url.rsplit("/", 1)[1])
     set_status(number, "Offen")
+    if a.team:
+        soft_assignee(number, a.team.lower(), True)
     print(url)
 
 

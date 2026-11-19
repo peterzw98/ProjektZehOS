@@ -2,6 +2,77 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
+
+**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+
+Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
+
+| Stand | ZehOS-Commit | Cosmos-Pin | Feed |
+| --- | --- | --- | --- |
+| Round-Robin | `1e66ad46` (vor E4-C) | `bd5889b4` | `3.0.97-zehos.1` |
+| Klassenscheduler | `15adbae5` (master mit E4-C/E4-D) | `59d1fa49` | `3.0.97-zehos.2` |
+
+Gemessen wird ZehOS samt Cosmos-Pin, nicht der Scheduler allein. Zwischen den Pins liegen die ext2-Patches #344, #345, #346 und der CPU-Ausnahme-Hook #349. Keiner dieser Patches sollte im Bildpfad liegen. Dass die Abweichung trotzdem allein am Scheduler liegt, ist **vermutet, nicht gemessen**.
+
+Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Die Läufe protokollieren die QEMU-Kommandozeile nicht. `scripts/measure-wasm-frametimes.py` lädt `scripts/test-wasm-doom-desktop.py` (Z. 26) und startet QEMU über `tools.start_qemu` (Z. 112). Unter KVM wird dort `-cpu qemu64,+rdrand,+rdseed` gesetzt (`test-wasm-doom-desktop.py`, Z. 263). Die tatsächliche Kommandozeile der Läufe ist nicht protokolliert und bleibt _offen_. Host: Intel Core Ultra 9 185H, 22 logische CPUs; während der Läufe lief `Wow.exe` (Lastmittel 1,7 bis 5,8). ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
+
+Messbefehl je Lauf (Reihenfolge RR, Klasse, RR, Klasse … je Spiel; Doom zuerst, dann ClassiCube):
+
+```sh
+python3 scripts/measure-wasm-frametimes.py --iso <ISO> --accel kvm --runs 1 -m 1G
+# ClassiCube zusätzlich: --id classicube --version 1.1.0 --name ClassiCube --entry classicube.wasm --start-keys ret
+```
+
+Ein Aufruf mit `--runs 5` führt fünf Läufe nacheinander auf einem ISO aus und ist deshalb nicht zu verwenden.
+
+Je Lauf eine Zeile (20 Zeilen insgesamt). Lastmittel ist der 1-Minuten-Wert des Hosts beim Start des Laufs. Die Spalte „Fremde Last“ zeigt die alte Schwelle 2; alle Läufe liegen darüber und zählen wegen WoW nicht als Wiederholgrund. Kein Lauf wurde wiederholt.
+
+| Nr. | Spiel | Stand | Lauf | Start (UTC) | fps (letztes Fenster) | Lastmittel | Fremde Last | Wiederholt |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Doom 1.1.0 | RR | 1 | 2026-11-18 23:58:08 | 69,9 | 4,12 | ja | nein |
+| 2 | Doom 1.1.0 | Klasse | 1 | 2026-11-19 00:00:42 | 69,8 | 5,44 | ja | nein |
+| 3 | Doom 1.1.0 | RR | 2 | 2026-11-19 00:03:19 | 69,8 | 5,77 | ja | nein |
+| 4 | Doom 1.1.0 | Klasse | 2 | 2026-11-19 00:05:53 | 69,9 | 4,24 | ja | nein |
+| 5 | Doom 1.1.0 | RR | 3 | 2026-11-19 00:08:30 | 69,9 | 4,60 | ja | nein |
+| 6 | Doom 1.1.0 | Klasse | 3 | 2026-11-19 00:11:04 | 70,0 | 3,40 | ja | nein |
+| 7 | Doom 1.1.0 | RR | 4 | 2026-11-19 00:13:40 | 70,0 | 3,93 | ja | nein |
+| 8 | Doom 1.1.0 | Klasse | 4 | 2026-11-19 00:16:13 | 70,0 | 4,25 | ja | nein |
+| 9 | Doom 1.1.0 | RR | 5 | 2026-11-19 00:18:49 | 70,0 | 3,28 | ja | nein |
+| 10 | Doom 1.1.0 | Klasse | 5 | 2026-11-19 00:21:21 | 70,0 | 4,50 | ja | nein |
+| 11 | ClassiCube 1.1.0 | RR | 1 | 2026-11-19 00:23:56 | 85,4 | 3,50 | ja | nein |
+| 12 | ClassiCube 1.1.0 | Klasse | 1 | 2026-11-19 00:26:29 | 71,1 | 4,01 | ja | nein |
+| 13 | ClassiCube 1.1.0 | RR | 2 | 2026-11-19 00:29:02 | 70,4 | 3,87 | ja | nein |
+| 14 | ClassiCube 1.1.0 | Klasse | 2 | 2026-11-19 00:31:35 | 57,7 | 3,23 | ja | nein |
+| 15 | ClassiCube 1.1.0 | RR | 3 | 2026-11-19 00:34:09 | 77,3 | 5,11 | ja | nein |
+| 16 | ClassiCube 1.1.0 | Klasse | 3 | 2026-11-19 00:36:43 | 78,4 | 4,40 | ja | nein |
+| 17 | ClassiCube 1.1.0 | RR | 4 | 2026-11-19 00:39:17 | 113,8 | 3,02 | ja | nein |
+| 18 | ClassiCube 1.1.0 | Klasse | 4 | 2026-11-19 00:41:49 | 99,0 | 1,73 | ja | nein |
+| 19 | ClassiCube 1.1.0 | RR | 5 | 2026-11-19 00:44:22 | 81,1 | 1,76 | ja | nein |
+| 20 | ClassiCube 1.1.0 | Klasse | 5 | 2026-11-19 00:46:54 | 98,7 | 1,86 | ja | nein |
+
+Die Rohdaten je Lauf liegen als CSV `spiel,stand,lauf,fps,last` für die Auswertung bereit und sind nicht committet.
+
+Mittel ± Standardabweichung (Stichprobe), Klasse gegen RR und Schwellenurteil je Spiel (Auswertung durch Jensen):
+
+| Spiel | RR fps | Klasse fps | Klasse/RR | Urteil |
+| --- | --- | --- | --- | --- |
+| Doom 1.1.0 | 69,9 ± 0,1 | 69,9 ± 0,1 | 100,0 % | bestanden, mit Vorbehalt (Bildrate nahe 70 fps, s. u.) |
+| ClassiCube 1.1.0 | 85,6 ± 16,7 | 81,0 ± 17,9 | 94,6 % | nicht entscheidbar (Spannweite 51 %) |
+
+Lastmittel je Lauf: 1,7 bis 5,8, Mittel 3,8.
+
+**Einordnung:**
+1. Doom liegt in allen zehn Läufen zwischen 69,8 und 70,0 fps. Doom ist taktbegrenzt. In den `Anteile`-Zeilen liegt `app` im Median bei 4,5 ms je Bild, `schlaf` bei p95 22,5 ms (`doom-RR-1`, `doom-K-1`). Doom wartet über `DG_SleepMs` → `zehos_sleep_ms` (`experiments/Wasm.DoomProbe/platform/doomgeneric_zehos.c:80`) auf den Spieltakt, 35 Takte je Sekunde, also etwa 70 Bilder je Sekunde. Doom zeigt deshalb nur „nicht schlechter“, keinen Unterschied zwischen den Schedulern.
+2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die App rechnet ohne Schlaf (`app` 16,6 ms, `schlaf` 0). Die Streuung hängt nach den Lastwerten kaum an WoW. Wahrscheinlich ist die Welt die Ursache: ROADMAP (Scheduler-Fix #254, KVM, Sichtweite 512, gepinnt) zeigt für denselben Stand Seed 5 mit 36,0 fps und Seed 3 mit 75,3 fps. Unser Lauf setzt keinen Seed. Der Seed wird beim Bau des Pakets festgelegt (`experiments/ClassiCube.Wasi/build.py --world-seed <N>`), nicht zur Laufzeit. Das veröffentlichte Paket erzeugt deshalb bei jedem Lauf eine Zufallswelt; dass die Streuung daher kommt, ist vermutet und nicht gemessen. Die Sichtweite ist mit dem Standard 512 gelaufen, sie ist nicht die Abweichung.
+3. Ausreißer `classicube-RR-1` mit 5671 ms maximalem Bildabstand. Der Median bleibt niedrig, die mittlere fps ist kaum betroffen. Keine Wiederholung.
+4. Der Pin-Störfaktor (zehos.1 gegen zehos.2) bleibt wie oben vermerkt.
+5. Eine ClassiCube-Wiederholung braucht eine feste Welt (ROADMAP 13.2) und mehr Läufe je Stand. Sie ist noch nicht eingeplant.
+
+ClassiCube: Der Seed ist nicht gesetzt. Er ist beim Paketbau festzulegen (`build.py --world-seed`), das Messskript hat dafür keine Option. Die Sichtweite war der ClassiCube-Standard 512 und entspricht ROADMAP 13.2. Die Abweichung betrifft also nur den Seed.
+
+Hintergrundlast: Die Läufe nutzten kein `tasks start busy`. Die Last kam von `Wow.exe` auf dem Host, also von außen und unkontrolliert. VMware und echte Hardware: offen, nicht geprüft.
+
 ## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
 
 `CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread (bis dahin gilt der Standard Normal; fest CPU 0, Etappe 5 stellt auf die laufende CPU um). Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
@@ -149,7 +220,7 @@ Der Ablauf ist nur unter `-p:ZehOSRootMigration=true` gebaut; der Gastnachweis (
 
 ## ext2-Verzeichnisgrenze in Cosmos 3.0.97
 
-Quellbefund: `Ext2DirectoryHelper.ParseDirectory` beendet die Auflistung nach 8192 Datensätzen einschließlich `.` und `..`. ZehOS begrenzt neue FileService-Einträge deshalb auf 8189 direkte Kinder je beschreibbarem ext2-Verzeichnis; ein Platz bleibt frei, weil Cosmos beim Umbenennen erst den neuen Namen anlegt (siehe Abschnitt zur ext2-Verzeichnisgrenze). Der Adapter verwendet den innersten exakten VFS-Mount und dessen `StatFs.Type` (`0xEF53`); ein darunter eingehängtes FAT erbt die Grenze nicht. MigrationPlan zählt Quelle und geplantes Ziel einschließlich erzeugter Eltern sowie Marker-/Journalplatz vor Zielschreibzugriffen. [Entwurf und versionsgebundene Cosmos-Quellen](superpowers/specs/2026-11-17-ext2-directory-limit.md).
+Quellbefund (bis Cosmos-Pin `zehos.1`): `Ext2DirectoryHelper.ParseDirectory` beendete die Auflistung nach 8192 Datensätzen einschließlich `.` und `..`; seit cosmos #345 (`TryParseDirectory`) entfällt das, siehe Abschnitt zur ext2-Verzeichnisgrenze. ZehOS begrenzt neue FileService-Einträge auf 65.535 direkte Kinder je beschreibbarem ext2-Verzeichnis; ein Platz bleibt frei, weil Cosmos beim Umbenennen erst den neuen Namen anlegt (siehe Abschnitt zur ext2-Verzeichnisgrenze). Der Adapter verwendet den innersten exakten VFS-Mount und dessen `StatFs.Type` (`0xEF53`); ein darunter eingehängtes FAT erbt die Grenze nicht. MigrationPlan zählt Quelle und geplantes Ziel einschließlich erzeugter Eltern sowie Marker-/Journalplatz vor Zielschreibzugriffen. [Entwurf und versionsgebundene Cosmos-Quellen](superpowers/specs/2026-11-17-ext2-directory-limit.md).
 
 Isolierte QEMU-TCG-Probe (damals noch mit Grenze 8190): ext2-Erkennung liefert die Grenze; FileService-Anlegen, Ablehnen weiterer Einträge, gleichverzeichniges Rename und Originalerhalt beim abgelehnten Ersetzen sind mit Testgrenze 2 geprüft. Schreibdurchlauf 20 PASS, anschließender Nur-Lese-Durchlauf 9 PASS, Image dabei bitgleich. Die reale 8190/8191-Grenze ist im Host-Migrationstest geprüft, nicht mit 8190 Dateien im Gast. `e2fsck` war auf diesem Windows-Host nicht verfügbar; VMware und Hardware sind ungeprüft. Dies ist keine Freigabe des Root-Layouts.
 
@@ -395,6 +466,8 @@ Die [Nachprüfung von Roadmap 7.5](DESKTOP_STORAGE_TESTS.md) besteht mit dem unv
 
 Der FAT32-Formatter dieser Version schreibt den primären FSInfo-Sektor und den Sicherungs-Bootsektor, lässt aber in dieser Probe den FSInfo-Sicherungssektor leer. Der Offline-Testhelfer erhält diesen Zustand; daraus wird kein allgemeiner Nachweis für alle FAT32-Layouts abgeleitet.
 
+**Stand E2-Z1 (18. November 2026):** Die vier ext2-Plugs dieses Abschnitts (`RemoveEntry`, `Rmdir`, `Truncate`, `FreeInode`) sind entfernt; die Fehler sind in der Cosmos-Quelle behoben (`PATCHES.md`: `ext2-remove-entry`, `ext2-truncate`, `ext2-free-inode`, `ext2-rmdir`). Der folgende Text beschreibt den historischen Stand mit Plugs.
+
 **ext2: Löschen verschmolz Einträge über Blockgrenzen, ZehOS-Plug (Cosmos 3.0.97, 17. November 2026):** `Ext2DirectoryHelper.RemoveEntry` (Quelle `efcf20cc`, `Ext2Directory.cs:302-365`) ließ den Vorgänger-Record auch über eine 4-KiB-Blockgrenze hinweg den gelöschten Eintrag aufnehmen und lief bei vielen Löschungen in Folge in den 16-Bit-`rec_len` über. Folge: `e2fsck` meldete `directory corrupted` schon nach dem Löschen des ersten Eintrags eines zweiten Blocks (E4.0-Lauf 10, Hostbeweis mit dem echten Treiber), nach dem Leeren eines Verzeichnisses mit 8190 Einträgen blieben 4096 Inodes verwaist (Lauf 9). Betroffen waren Unlink, Rmdir und Rename, also auch jedes Speichern per Temp-Datei und Umbenennen. `CosmosExt2RemoveEntryPlug` ersetzt die Methode: verschmolzen wird nur im selben Block, der erste Record eines Blocks wird nur freigegeben (`inode = 0`, `AddEntry` nutzt den Platz wieder), und nur der geänderte Block wird geschrieben. Der Patcher vergleicht Parametertypen nach vollem Namen; die Plug-Signatur nennt deshalb gleichnamige Attrappentypen (`CosmosExt2PlugTypes.cs`), mit `object` meldet er nur `Target method not found` und der Build bleibt grün. **Grenze:** Ein schon vom alten Treiber beschädigtes Verzeichnis (Record über die Blockgrenze) erkennt der Plug als ungültig; Löschen schlägt dort mit Fehler fehl, statt weiter zu beschädigen. Reparatur nur offline mit `e2fsck`. **Rmdir gab nur `Block[0]` frei, ZehOS-Plug:** Cosmos-`Rmdir` (`Ext2InodeOperations.cs:477-482`) ließ bei einem mehrblockigen Verzeichnis (mehr als etwa 250 Einträge) die übrigen Datenblöcke und den Indirektblock belegt (E4.0-Lauf 9 mit RemoveEntry-Plug: `Block bitmap differences -277 -(525--556)`). `CosmosExt2RmdirPlug` ersetzt die Methode mit demselben Ablauf: Prüfung über die öffentlichen `Lookup`/`ReadDir`, Entfernen des Eintrags über den RemoveEntry-Plug, dann `Truncate` (ZehOS-Truncate-Plug, siehe unten) für alle Daten- und Zeigerblöcke; `.` und `..` lehnt er ab. Gastbeleg Lauf 9 (8190 Einträge, Leeren, `rmdir`): `e2fsck -fn` Exit 0, Zähler Gast/`dumpe2fs` gleich. Der Plug-Rumpf darf keinen öffentlichen Typ aus `Cosmos.Kernel.System` in einer Aufrufsignatur nennen (der Helfer nimmt `object`), sonst bricht ILC mit `The library initializer assemblies Cosmos.Kernel.System reference each other in a cycle` ab; nur die Plug-Signatur selbst nennt `IVfsInode`. **Truncate-Plug (18. November 2026):** Cosmos `Ext2Superblock.Truncate` gibt nur Datenblöcke frei und lässt die Zeigerblöcke belegt (Quelle: „Emptied indirect blocks leak“). Betroffen sind deshalb jedes Löschen (`Unlink`), `Rmdir` und jede Verkürzung (`SetAttr` Size).
 
 E4.0 2 GiB Lauf 1 meldete nach dem Löschen der 64-MiB-Fülldateien rund 520 „Block bitmap differences“.
@@ -409,6 +482,8 @@ E4.0 2 GiB Lauf 1 meldete nach dem Löschen der 64-MiB-Fülldateien rund 520 „
 Gastbeleg: E4.0 2 GiB, Läufe 1–5, Go. Lauf 1 und Lauf 2 ergaben `e2fsck -fn` Exit 0, Lauf 9 (Rmdir) ebenfalls Exit 0. Außerdem legt ein am Verzeichnislimit abgelehnter Eintrag (`IOException`) trotzdem einen Record hinter dem Lesefenster an, der erst nach dem Löschen anderer Einträge sichtbar wird (Lauf 9: `over`).
 
 **ext2: höchstens 8190 Einträge je Verzeichnis, ZehOS-Produktgrenze 8189 (Cosmos 3.0.97, 17. November 2026):** `Ext2DirectoryHelper.ParseDirectory` bricht nach `MaxParseIters = 8192` Records ab (Schutz gegen beschädigte `rec_len`-Ketten; Wert aus der 3.0.97-DLL gelesen). Mit `.` und `..` fasst ein Verzeichnis damit 8190 Einträge; das Anlegen des nächsten scheitert mit `IOException` (E4.0-Lauf 1, QEMU KVM, 32 GiB: `/e/e08190`). Dieselbe Grenze gilt beim Lesen: ein fremdes ext2-Verzeichnis mit mehr Einträgen wird ohne Fehlermeldung abgeschnitten aufgelistet. Umbenennen in einem vollen Verzeichnis (8190 Einträge) meldet Erfolg, danach sieht Cosmos in derselben Sitzung weder den alten noch den neuen Namen; auf der Platte ist der Eintrag korrekt (E4.0-Lauf 9, QEMU KVM, 2 GiB, `debugfs` gleicher Inode). `FileService` begrenzt deshalb auf 8189 Einträge und meldet darüber `cause='DirectoryEntryLimit'`.
+
+**Nachtrag E2-P7 (19. November 2026):** Seit cosmos #345 (`TryParseDirectory`, in den Pins `zehos.2` und neuer) zählt der Parser keine Records mehr; ein Verzeichnis über 4096 Blöcke oder 16 MiB lässt den Aufrufer scheitern, statt leer zu erscheinen, und `AddEntry` lehnt das Wachsen darüber ab. Die ZehOS-Produktgrenze ist jetzt **65.536** je ext2-Verzeichnis, ein Platz Reserve für Rename, also 65.535 über `FileService` (Lead-Entscheid Ada Lovelace, 19.11.). **Grenzen:** Geprüft sind 30.000 Einträge im Host, nur im Cosmos-Test von P8 (`Ext2InodeCacheTests`, #427, cosmos `fdc9da0a`; der Pin `zehos.5` enthält P8 noch nicht); im Gast E4.0 Diagnoselauf 9 (8191 Einträge, 518 s) und Diagnoselauf 16 (10.000 Einträge, 754 s): anlegen, listen, jeden zweiten löschen, umbenennen, leeren, `rmdir`, jeweils `e2fsck -fn` Exit 0 (QEMU KVM, 512 MiB, Versuchsfeed `zehos.0.gfdc9da0` mit P8); darüber bis 65.535 ist ungeprüft. **Laufzeit O(n²):** Cosmos liest beim Anlegen das ganze Verzeichnis zweimal ein (`TryFind`, `Ext2Directory.cs:137`, und `AddEntry`, `:169/186`, beide über `TryParseDirectory` mit einem Puffer über alle Verzeichnisblöcke, `:56`, und einem Objekt je Eintrag). Gemessen (QEMU KVM, 512 MiB, cosmos `fdc9da0a`, jeweils ganzer Lauf, nicht nur das Anlegen): 8191 Einträge anlegen, listen, löschen in 518 s (Lauf 9); 20.000 Einträge waren nach 3600 s noch nicht angelegt. Daraus hochgerechnet, nicht gemessen: 20.000 etwa 1,5–2 h, 65.535 etwa 18 h. Mit 255-Byte-Namen fassen 4096 Blöcke zu 4 KiB rechnerisch nur etwa 63.500 Einträge; Cosmos lehnt den nächsten dann mit `IOException` statt `DirectoryEntryLimit` ab. Die Grenze schützt nicht vor dem Inode-Cache: Er gilt je Mount, leert sich nur beim Aushängen und reicht seit P8 für etwa 75.000 Inodes; ein volles Verzeichnis passt, zwei volle Verzeichnisse auf einem Mount (ReadDir lädt jeden Inode) lassen ihn wieder wachsen, und das Wachstum kann an der Heap-Fragmentierung scheitern. Lauf 9 legt jetzt 8191 Einträge an (einen über der alten Grenze) und erwartet, dass alle sichtbar und löschbar bleiben.
 
 **FAT32 mit 16-KiB-Clustern (Cosmos 3.0.97, 17. November 2026):** Eine mit `mkfs.fat 4.2 -F 32` und Standardwerten formatierte 512-MiB-ESP (16 KiB je Cluster, `spc 32`) in einer GPT-Partition hängt Cosmos zwar als `/data` ein und liest das Volumelabel, sieht aber das vom Host angelegte Wurzelverzeichnis `boot` nicht (`Pfadkomponente fehlt: boot`); der Installationsmarker gilt dadurch als fehlend und die Identität als `Unclear` (`RootWithoutMarker`). Dieselbe Partition mit `mkfs.fat -F 32 -s 8` (4 KiB je Cluster) liest Cosmos korrekt (`Identitaet: Healthy`); `hidden sectors` 0 oder 2048 ändert nichts. Geprüft in QEMU 10.2.2 (TCG) mit dem normalen und dem Sicherheits-Recovery-Kernel, Befehl `ls /data/boot`. Die Ursache im Treiber ist nicht eingegrenzt. Folge: der Installer muss die ESP mit einer Clustergröße anlegen, die Cosmos liest (der 7a-S4-Installer formatiert sie deshalb mit `SectorsPerCluster = 8`, `CosmosGptInstallTarget.cs`, Branch `task/storage-7a-s4-installer`), und extern formatierte FAT32-Volumes mit großen Clustern gelten bis zur Klärung als nicht unterstützt. Andere Clustergrößen, VMware und echte Hardware sind ungeprüft.
 
@@ -505,3 +580,7 @@ Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille geg
 Bekannte Grenzen der Probe: `IsSupported` ist im NativeAOT-Code entweder eine Kompilierzeitkonstante des gewählten Befehlssatzes oder ein Laufzeitwert aus der CPU-Erkennung der Runtime; welcher der beiden Fälle im Cosmos-Kernel gilt, zeigt erst der Lauf (`isa`-Zeile mit und ohne `ZehOSSimdInstructionSet`). Die Probe liest `XCR0` nicht direkt.
 
 Prüfnachtrag zu #204 nach dem Coverage-Umbau: Auf dem integrierten Stand "3899625" besteht der Linux-CI-Job mit 1339 .NET- und 186 Skripttests sowie 95,3 % Gesamtabdeckung. Die Grenzwerte wurden nicht geändert. Die sieben lokalen Rückruftests messen 97,67 % für die gemeinsame Rückrufdatei; normaler und Probe-Kernel bauen, Desktopablauf (52 s) und gezielte Ausnahme-Gastprobe unter QEMU/WHPX bestehen erneut. Die abschließende Versionsanhebung auf 0.5.89 ändert keine Ausführungslogik.
+
+## WASI-Zeitstempel (12.8 P4-D)
+
+Geprüft im Quelltext des Cosmos-Commits `5d0b9535251472db7ecfe012f0435f0a04ffca16` (nicht im Gast): `FatInodeOperations.GetAttr` setzt `AccessTime`, `ModificationTime` und `ChangeTime` fest auf 0; `FatAttributes.UnpackDateTime` wird nirgends aufgerufen. Der WASI-Host meldet deshalb `atim = mtim = ctim = 0` (unbekannt) für Paket- und `/save`-Dateien; die Rückrufe `zehos_wasm_host_stat`, `save_stat`, `fstat` und `save_fstat` liefern die Zeit schon heute durch, bis Cosmos sie füllt.

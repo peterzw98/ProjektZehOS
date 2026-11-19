@@ -1,5 +1,6 @@
 # Tests für dispatcher.py ohne Netz und ohne echtes claude: ein Ersatzskript protokolliert den Aufruf und
 # endet je nach Umgebungsvariable erfolgreich, mit Fehler oder erst nach einer Wartezeit.
+import shutil
 import atexit, json, os, signal, stat, subprocess, sys, tempfile, time
 
 from dispatcher import Dispatcher, mention_pattern, parse_args, parse_mention
@@ -27,8 +28,12 @@ FAKE = r'''#!{py}
 import json, os, sys, time
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
+if os.environ.get("FAKE_ENV"):
+    with open(os.environ["FAKE_ENV"], "w") as f:
+        f.write(os.environ.get("MSBUILDDISABLENODEREUSE", "-"))
 print(os.environ.get("FAKE_OUT", ""), flush=True)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+if os.environ.get("FAKE_KILL"): os.kill(os.getpid(), 9)
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 '''
 
@@ -553,5 +558,70 @@ e.d.step()
 with open(os.path.join(e.args.state, "heartbeat")) as f:
     hb = json.load(f)
 assert hb["nick"] == NICK and "pending" in hb
+
+# --- Speichergrenze je Lauf: systemd-run-Präfix, Rückfall ohne Benutzer-systemd, SIGKILL endgültig -------------
+rt = tempfile.mkdtemp()
+open(os.path.join(rt, "bus"), "w").close()
+old_rt = os.environ.get("XDG_RUNTIME_DIR")
+os.environ["XDG_RUNTIME_DIR"] = rt
+e = Env("--memory-max", "6G")
+if shutil.which("systemd-run"):
+    cmd = e.d.build_cmd("auftrag")
+    assert cmd[:4] == ["systemd-run", "--user", "--scope", "-q"] and "MemoryMax=6G" in cmd and cmd[-1] == "auftrag", cmd
+os.environ["XDG_RUNTIME_DIR"] = tempfile.mkdtemp()                         # kein bus: ohne Grenze, mit Warnung
+e = Env("--memory-max", "6G")
+assert e.d.mem_limit == "" and e.d.build_cmd("x")[0] != "systemd-run"
+with open(os.path.join(e.args.state, "dispatch.log")) as f:
+    assert "Speichergrenze 6G nicht möglich" in f.read()
+if old_rt is None: del os.environ["XDG_RUNTIME_DIR"]
+else: os.environ["XDG_RUNTIME_DIR"] = old_rt
+e = Env()
+e.d.mem_limit = "6G"                                                       # Grenze gesetzt, Lauf ohne echtes systemd
+os.environ["FAKE_KILL"] = "1"
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", "agent-x: baut zu viel")
+e.now += 6
+e.run_until_idle()
+os.environ["FAKE_KILL"] = ""
+assert len(e.calls_made()) == 1 and e.d.gave_up_at == 1, (e.calls_made(), e.d.gave_up_at)   # kein zweiter Versuch
+assert "Speichergrenze 6G überschritten" in e.outbox(), e.outbox()
+
+# --- Läufe ohne MSBuild-Node-Reuse: sonst bleiben Arbeitsknoten nach dem Bau mit ihrem Speicher liegen -----------
+reuse_before = os.environ.get("MSBUILDDISABLENODEREUSE")
+e = Env()
+os.environ["FAKE_ENV"] = os.path.join(e.dir, "env.txt")
+e.say("agent-coordinator", "agent-x: bauen")
+e.now += 6
+e.run_until_idle()
+del os.environ["FAKE_ENV"]
+with open(os.path.join(e.dir, "env.txt")) as f:
+    assert f.read() == "1"
+assert os.environ.get("MSBUILDDISABLENODEREUSE") == reuse_before                # nur für den Lauf, nicht für den Dienst
+
+# --- Nur Adressaten wecken: Nennung im Text ist Kontext, kein Lauf ----------------------------------------------
+from dispatcher import addressed
+pat = mention_pattern(NICK)
+assert addressed(f"{NICK}: tu was", "#general", NICK, pat)
+assert addressed(f"agent-y {NICK}: tu was", "#general", NICK, pat)
+assert addressed(f"[AUFTRAG] {NICK}: tu was", "#first", NICK, pat)
+assert not addressed(f"[AUFTRAG] agent-y: Review, dann [FERTIG] an {NICK}", "#first", NICK, pat)
+assert not addressed(f"agent-y (Lead X): plane mit {NICK}", "#first", NICK, pat)
+assert addressed(f"bitte {NICK} melden", "#general", NICK, pat)              # ohne Doppelpunkt wie bisher
+assert addressed("hallo du", NICK, NICK, pat)                                 # Direktnachricht
+assert addressed(f"agent-y: X; {NICK}: Y", "#first", NICK, pat)               # Sammelzeile
+assert addressed(f"<Peda> um 10:19 bitte {NICK} pruefen: X", "#general", NICK, pat)  # Uhrzeit vor dem Nick
+assert addressed(f"siehe https://x.y/z, {NICK} bitte: X", "#general", NICK, pat)    # URL vor dem Nick
+e = Env()
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", f"[AUFTRAG] agent-y: pruefe X, dann [FERTIG] an {NICK}")
+e.now += 6
+e.run_until_idle()
+assert e.calls_made() == [] and len(e.d.pending()) == 1                       # gespeichert, kein Lauf
+e.say("agent-coordinator", f"{NICK}: jetzt du")
+e.now += 6
+e.run_until_idle()
+calls = e.calls_made()
+assert len(calls) == 1 and "pruefe X" in calls[0][-1] and "jetzt du" in calls[0][-1], calls  # Kontext kommt mit
+assert "an andere adressiert" in calls[0][-1] and "Absender startet keine" not in calls[0][-1]
 
 print("ok")
