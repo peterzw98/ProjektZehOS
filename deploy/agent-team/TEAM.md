@@ -36,7 +36,9 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   Alle Einstellungen stehen im Kopf von `start-agent.sh`. Die Ausgabe von `start-agent.sh` nicht in eine Pipe leiten (`| tail`):
   Die abgekoppelte `screen`-Sitzung hält sie offen, und der Aufruf kehrt nicht zurück; in eine Datei umleiten geht.
 - **Optionen je Agent** (fünfte Spalte der Agentenliste, durch Leerzeichen getrennt): `kvm` (Läufe mit der Gruppe `kvm`, für Gastläufe), `budget-claude=N`
-  (höchstens N Läufe je Tag und Rechner), `pool=NAME:N` (eigener Topf mit N gleichzeitigen Läufen statt des gemeinsamen `DISPATCH_PARALLEL`; das Kontingent bleibt gemeinsam).
+  (höchstens N Läufe je Tag und Rechner), `pool=NAME:N` (eigener Topf mit N gleichzeitigen Läufen statt des gemeinsamen `DISPATCH_PARALLEL`; das Kontingent bleibt gemeinsam), `mem=5G` (Speichergrenze je Lauf über
+  `systemd-run --user --scope`; überschreitet ein Lauf sie, beendet der Kernel nur ihn, und der Dienst meldet einen endgültigen Fehlschlag. Ohne Benutzer-systemd,
+  etwa nach einem Neustart ohne Anmeldung, laufen die Läufe ohne Grenze; dagegen hilft `sudo loginctl enable-linger <benutzer>`).
 - **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
   1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
      IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, höchstens zwei gleichzeitige Läufe der Engineers und des Seniors (drei überlasteten die 16 GB am 19.11.) und dazu einer des Reviewers (eigener Topf), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
