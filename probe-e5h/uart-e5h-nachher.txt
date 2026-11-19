@@ -1,0 +1,2074 @@
+
+========================================
+  CosmosOS v3.0.97 (gen3)
+  Architecture: x86-64
+========================================
+
+[KMAIN] Phase 1: CPU initialization
+
+[KMAIN] Phase 2: Platform initialization
+[KMAIN]   - Querying Limine for RSDP...
+[KMAIN]   - RSDP found at: 0x0xFFFF8000000F52E0
+[KMAIN]   - HHDM offset: 0x0xFFFF800000000000
+[KMAIN]   - Initializing ACPI...
+[ACPI] acpi_early_init()
+[uACPI] starting uACPI, version 7.0.0
+[uACPI] RSDP 0x00000000000F52E0 00000014 v00 (BOCHS )
+[uACPI] RSDT 0x000000001FFE2351 00000038 v01 (BOCHS  BXPC    )
+[uACPI] DSDT 0x000000001FFE0040 00002109 v01 (BOCHS  BXPC    )
+[uACPI] FACP 0x000000001FFE2149 000000F4 v03 (BOCHS  BXPC    )
+[uACPI] APIC 0x000000001FFE223D 00000078 v03 (BOCHS  BXPC    )
+[uACPI] HPET 0x000000001FFE22B5 00000038 v01 (BOCHS  BXPC    )
+[uACPI] MCFG 0x000000001FFE22ED 0000003C v01 (BOCHS  BXPC    )
+[uACPI] WAET 0x000000001FFE2329 00000028 v01 (BOCHS  BXPC    )
+[ACPI] MADT found, parsing...
+[ACPI] Local APIC at: 0x0xFEE00000
+[ACPI] CPU (ID=0 APIC=0)
+[ACPI] I/O APIC (ID=0 at 0x0xFEC00000)
+[ACPI] MADT parsing complete
+[ACPI] MCFG found, parsing...
+[ACPI-MCFG] ECAM base=0x0xB0000000 segment=0 bus=0-255
+[ACPI] Init complete
+[KMAIN]   - ACPI initialized
+
+[KMAIN] Phase 3: Managed kernel initialization
+[ModuleHelpers] - RhpRegisterOsModule called for OS Module 0x4800216549358D48
+[KERNEL]   - Initializing heap...
+[PageAllocator] Initializing heap using Limine memory map...
+[PageAllocator] Memory map detected with 16 entries:
+[MemMap] Entry 0: 0x1000 - 0x60000 (0 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 1: 0x60000 - 0x9F000 (0 MB) Type: 0 (Usable)
+[MemMap] Entry 2: 0x9FC00 - 0xA0000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 3: 0xF0000 - 0x100000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 4: 0x100000 - 0x1F4BA000 (499 MB) Type: 0 (Usable)
+[MemMap] Entry 5: 0x1F4BA000 - 0x1F5BE000 (1 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 6: 0x1F5BE000 - 0x1F844000 (2 MB) Type: 6 (Kernel and Modules)
+[MemMap] Entry 7: 0x1F844000 - 0x1FF53000 (7 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 8: 0x1FF53000 - 0x1FF7B000 (0 MB) Type: 0 (Usable)
+[MemMap] Entry 9: 0x1FF7B000 - 0x1FFDF000 (0 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 10: 0x1FFDF000 - 0x20000000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 11: 0xB0000000 - 0xC0000000 (256 MB) Type: 1 (Reserved)
+[MemMap] Entry 12: 0xFD000000 - 0xFD3E8000 (3 MB) Type: 7 (Framebuffer)
+[MemMap] Entry 13: 0xFED1C000 - 0xFED20000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 14: 0xFEFFC000 - 0xFF000000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 15: 0xFFFC0000 - 0x100000000 (0 MB) Type: 1 (Reserved)
+[PageAllocator] Searching for largest safe usable memory region...
+[PageAllocator] Protected: Kernel/Modules 0x1F5BE000 - 0x1F844000 (2 MB)
+[PageAllocator] Protected: Framebuffer 0xFD000000 - 0xFD3E8000 (3 MB)
+[PageAllocator] Evaluating region: phys 0x60000 - 0x9F000 (0 MB)
+[PageAllocator]  Best candidate so far: 0 MB
+[PageAllocator] Evaluating region: phys 0x100000 - 0x1F4BA000 (499 MB)
+[PageAllocator]  Best candidate so far: 499 MB
+[PageAllocator] Evaluating region: phys 0x1FF53000 - 0x1FF7B000 (0 MB)
+[PageAllocator] Selected largest usable region:
+  Start (virt): 0xFFFF800000100000
+  Size: 499 MB (524001280 bytes)
+[PageAllocator] Total pages: 127930, RAT pages: 32, RAT size: 128 KB
+[PageAllocator] Memory layout (Cosmos-style):
+  RamStart (heap): 0xFFFF800000100000
+  s_heapEnd: 0xFFFF80001F49A000
+  RAT location: 0xFFFF80001F49A000
+  RAT end: 0xFFFF80001F4BA000
+  Heap size: 499 MB
+[PageAllocator] Initializing 127930 RAT entries...
+[PageAllocator] Testing first RAT write at 0xFFFF80001F49A000...
+[PageAllocator] First write successful, initializing all entries...
+[PageAllocator] Initialized 10000 / 127930 entries...
+[PageAllocator] Initialized 20000 / 127930 entries...
+[PageAllocator] Initialized 30000 / 127930 entries...
+[PageAllocator] Initialized 40000 / 127930 entries...
+[PageAllocator] Initialized 50000 / 127930 entries...
+[PageAllocator] Initialized 60000 / 127930 entries...
+[PageAllocator] Initialized 70000 / 127930 entries...
+[PageAllocator] Initialized 80000 / 127930 entries...
+[PageAllocator] Initialized 90000 / 127930 entries...
+[PageAllocator] Initialized 100000 / 127930 entries...
+[PageAllocator] Initialized 110000 / 127930 entries...
+[PageAllocator] Initialized 120000 / 127930 entries...
+[PageAllocator] All RAT entries initialized.
+[PageAllocator] Marking RAT pages (32 pages starting at index 127898)...
+[PageAllocator] Heap initialization complete!
+  Total pages: 127930
+  Free pages: 127898
+  Usable heap: 499 MB
+[PageAllocator] Testing RAT write access...
+[PageAllocator] RAT write test passed
+[PageAllocator] Initializing SmallHeap...
+[SmallHeap] Init started
+[SmallHeap] Max item size: 1020
+[SmallHeap] InitSMTPage - Allocating SMT page
+[SmallHeap] SMT page allocated at: 0xFFFF800000100000
+[SmallHeap] Adding root SMT blocks
+[SmallHeap] AddRootSMTBlock - size: 16
+[SmallHeap] CreatePage - itemSize: 16
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000101000
+[SmallHeap] AddRootSMTBlock - size: 24
+[SmallHeap] CreatePage - itemSize: 24
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000102000
+[SmallHeap] AddRootSMTBlock - size: 48
+[SmallHeap] CreatePage - itemSize: 48
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000103000
+[SmallHeap] AddRootSMTBlock - size: 64
+[SmallHeap] CreatePage - itemSize: 64
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000104000
+[SmallHeap] AddRootSMTBlock - size: 128
+[SmallHeap] CreatePage - itemSize: 128
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000105000
+[SmallHeap] AddRootSMTBlock - size: 256
+[SmallHeap] CreatePage - itemSize: 256
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000106000
+[SmallHeap] AddRootSMTBlock - size: 512
+[SmallHeap] CreatePage - itemSize: 512
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000107000
+[SmallHeap] AddRootSMTBlock - size: 1024
+[SmallHeap] CreatePage - itemSize: 1024
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000108000
+[SmallHeap] AddRootSMTBlock - size: 2048
+[SmallHeap] CreatePage - itemSize: 2048
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000109000
+[SmallHeap] InitSMTPage complete
+[SmallHeap] Init complete, SMT at: 0xFFFF800000100000
+[KERNEL]   - Initializing garbage collector...
+[GC] Initializing with free list allocator
+[GC] Initialization complete
+[KERNEL]   - Initializing managed modules...
+[ManagedModule] - Initilizing Module Handlers - Starting
+[ManagedModule] - Found 1 modules
+[ManagedModule] - Setting TypeManagerSlot for module 0
+[ManagedModule] - Initializing Statics for module 0
+[GC] Registered frozen segment at 0xFFFFFFFF801E5540, size: 193176
+[ManagedModule] - Running Static Constructors for all modules
+[ManagedModule] - Running Initializers, found 4 initializers for section 205
+[ManagedModule] - Running Initializer at address 801E5000
+[ManagedModule] - Completed Initializer at address 801E5000
+[ManagedModule] - Running Initializer at address 801E5004
+[ManagedModule] - Completed Initializer at address 801E5004
+[ManagedModule] - Running Initializer at address 801E5008
+[ManagedModule] - Completed Initializer at address 801E5008
+[ManagedModule] - Running Initializer at address 801E500C
+[ManagedModule] - Completed Initializer at address 801E500C
+[ManagedModule] - Initilizing Module Handlers - Complete
+[KERNEL]   - Architecture: x86-64
+[KERNEL]   - Initializing HAL...
+[KERNEL]   - Recording the firmware device tree...
+[Firmware] No device tree
+[KERNEL]   - Initializing interrupts...
+[InterruptManager.Initialize] Allocating handlers array...
+[InterruptManager.Initialize] Initializing platform interrupt controller...
+[X64InterruptController] Starting IDT initialization...
+[IDT] Initializing with CS=0x28
+[IDT] Allocating s_idtEntries array...
+[IDT] s_idtEntries length: 256
+[IDT] Setting entry 0
+[IDT] Setting entry 255
+[IDT] IDT base: 0xFFFF80000010F068
+[IDT] IDT Limit: 0xFFF
+[IDT] Loaded 256 interrupt vectors at 0xFFFF80000010F068
+[IDT] IDT loaded.
+[X64InterruptController] IDT initialization complete
+[InterruptManager.Initialize] Interrupt system ready
+[KERNEL]   - Initializing platform hardware...
+[X64HAL] Displaying ACPI MADT info...
+[ACPI] Local APIC at 0xFEE00000
+[ACPI] Found 1 CPU(s)
+[ACPI]   CPU 0 -> APIC ID 0 (enabled)
+[ACPI] Found 1 I/O APIC(s)
+[ACPI]   I/O APIC 0 at 0xFEC00000 (GSI base: 0)
+[ACPI] Found 5 IRQ override(s)
+[ACPI]   IRQ 0 -> GSI 2
+[ACPI]   IRQ 5 -> GSI 5 (level triggered)
+[ACPI]   IRQ 9 -> GSI 9 (level triggered)
+[ACPI]   IRQ A -> GSI 10 (level triggered)
+[ACPI]   IRQ B -> GSI 11 (level triggered)
+[X64HAL] Initializing APIC...
+[ApicManager] Starting APIC initialization...
+[LegacyPIC] Remapping and disabling 8259 PIC...
+[LegacyPIC] 8259 PIC remapped and disabled
+[ApicManager] Initializing Local APIC...
+[LocalAPIC] Initializing at 0xFEE00000
+[LocalAPIC] ID: 0
+[LocalAPIC] Version: 0x50014
+[LocalAPIC] SVR set to 0x1FF
+[LocalAPIC] Initialization complete
+[ApicManager] Calibrating LAPIC timer...
+[LocalAPIC] Calibrating timer using PIT...
+[LocalAPIC] Timer calibrated: 62544 ticks/ms
+[ApicManager] Initializing I/O APIC...
+[IOAPIC] Initializing at 0xFEC00000
+[IOAPIC] GSI base: 0
+[IOAPIC] ID: 0
+[IOAPIC] Version: 17
+[IOAPIC] Max redirection entries: 24
+[IOAPIC] Initialization complete
+[ApicManager] APIC system initialized
+[X64HAL] Calibrating TSC frequency...
+[X64HAL] TSC frequency: 2498750000 Hz
+[X64HAL] Initializing RTC...
+[RTC] Initializing...
+[RTC] EFI system table response is null
+[RTC] Boot time (Limine): 2026-11-19 23:20:04 UTC
+[RTC] Initialized
+[X64HAL] Initializing PIT...
+[PIT] Initializing...
+[PIT] Initialized
+[PIT] Registering IRQ 0 handler...
+[InterruptManager] Routing IRQ 0 -> vector 0x20
+[PIT] IRQ 0 handler registered
+[KERNEL]   - Publishing platform nodes...
+[X64HAL] Publishing the 8042 node...
+[X64HAL] Publishing the legacy PCI host node...
+[KERNEL]   - Recording the firmware framebuffer...
+[KERNEL]   - Initializing exception handlers...
+[ExceptionHandler] CPU exception handlers registered
+[KERNEL]   - Initializing scheduler...
+[SCHED] Detected 1 CPU(s)
+[SCHED] Idle thread 0 for CPU 0
+[SCHED] Using Stride scheduler
+[SCHED] Scheduler enabled
+[KERNEL]   - Starting scheduler timer...
+[X64HAL] Registering LAPIC timer handler...
+[LocalAPIC] Registering timer handler for vector 0xEF
+[X64HAL] Starting LAPIC timer for scheduling...
+[LocalAPIC] Starting periodic timer:
+[LocalAPIC]   TicksPerMs: 62544
+[LocalAPIC]   Interval: 10ms
+[LocalAPIC]   Ticks: 625440
+[LocalAPIC]   Vector: 0xEF
+[KERNEL]   - Starting application processors...
+[SMP] One CPU
+[KERNEL]   - Initializing timer manager...
+[KERNEL]   - Initializing keyboard manager...
+[KERNEL]   - Initializing mouse manager...
+[KERNEL]   - Initializing network manager...
+[KERNEL]   - Initializing display manager...
+[KERNEL]   - Initializing audio manager...
+[KERNEL]   - Initializing storage manager...
+[ManagedModule] - Running Module Initializers for module 0
+[ManagedModule] - Running Initializers, found 1 initializers for section 213
+[ManagedModule] - Running Initializer at address 80218EF0
+[ManagedModule] - Completed Initializer at address 80218EF0
+
+[KMAIN] Phase 4: User kernel
+[SCHED] CreateThread: entering
+[SCHED] CreateThread: done
+[SCHED] Running thread 1
+[SCHED] Invoking thread entry
+[LAPIC] Timer tick 1 RSP=FFFF80001F498D90
+[SCHED] Tick 1 enabled=1
+[SCHED] Setting thread exit callback: 0xFFFFFFFF800E5A70
+[Kernel] Constructing Cosmos.Kernel.System.Kernel instance
+[KernelEntry] Registering kernel
+[KernelEntry] Start called
+[KernelEntry] Starting kernel...
+[Kernel] Starting kernel...
+[Kernel] Enabling interrupts...
+[Kernel] Starting the finalizer thread...
+[SCHED] CreateThread: entering
+[SCHED] CreateThread: done
+[SCHED] Running thread 2
+[SCHED] Invoking thread entry
+[LAPIC] Timer tick 2 RSP=FFFF80001F397D90
+[SCHED] Tick 2 enabled=1
+[LAPIC] Timer tick 3 RSP=FFFF80001F498B70
+[SCHED] Tick 3 enabled=1
+[Kernel] Starting drivers...
+[Drivers] manifest: HdAudioDriver(prio 0) EhciDriver(prio 0) OhciDriver(prio 0) PcieRootPortDriver(prio 0) VirtioPciTransportDriver(prio 0) XhciDriver(prio 0) AmdDcnDriver(prio 0) IntelGraphicsDriver(prio 0) VmwareSvgaDriver(prio 0) E1000EDriver(prio 0) AhciDriver(prio 0) NvmeDriver(prio 0) I8042Driver(prio 0) PciHostDriver(prio 0) VirtioMmioTransportDriver(prio 0) Ps2KeyboardDriver(prio 0) Ps2MouseDriver(prio 0) UsbHubDriver(prio 0) UsbKeyboardDriver(prio 0) UsbMouseDriver(prio 0) UsbMassStorageDriver(prio 0) VirtioGpuDriver(prio 0) VirtioInputDriver(prio 0) VirtioNetDriver(prio 0) VirtioBlkDriver(prio 0)
+[Display] primary: firmware "framebuffer" (the only display)
+[Drivers] firmware published display "framebuffer" (consumed)
+[SCHED] CreateThread: entering
+[SCHED] CreateThread: done
+[LAPIC] Timer tick 4 RSP=FFFF80001F498B70
+[SCHED] Tick 4 enabled=1
+[SCHED] Running thread 3
+[SCHED] Invoking thread entry
+[Drivers] engine started, worker thread
+[LAPIC] Timer tick 5 RSP=FFFF80001F5B9D10
+[SCHED] Tick 5 enabled=1
+[Drivers] platform:i8042@60 candidates: I8042Driver(prio 0, spec 1)
+[InterruptManager] Routing IRQ 1 -> vector 0x21
+[InterruptManager] Routing IRQ C -> vector 0x2C
+[Drivers] platform:i8042@60 I8042Driver: dual channel, translation on, lines 1 and 12
+[Drivers] platform:i8042@60 offer I8042Driver -> bound
+[Drivers] platform:pci@cf8 candidates: PciHostDriver(prio 0, spec 1)
+[SCHED] Tick 6 enabled=1
+[Drivers] platform:pci@cf8 PciHostDriver: 6 functions on 1 buses
+[Drivers] platform:pci@cf8 offer PciHostDriver -> bound
+[Drivers] ps2:kbd candidates: Ps2KeyboardDriver(prio 0, spec 1)
+[KeyboardManager] Registered keyboard, total: 1
+[Drivers] ps2:kbd Ps2KeyboardDriver published keyboard "ps2-keyboard" (consumed)
+[Drivers] ps2:kbd Ps2KeyboardDriver: MF2 keyboard (id ab 41), scanning
+[Drivers] ps2:kbd offer Ps2KeyboardDriver -> bound
+[Drivers] ps2:aux candidates: Ps2MouseDriver(prio 0, spec 1)
+[MouseManager] Registered mouse, total: 1
+[Drivers] ps2:aux Ps2MouseDriver published pointer "ps2-mouse" (consumed)
+[Drivers] [SCHED] Tick 7 enabled=1
+ps2:aux Ps2MouseDriver: wheel mouse (id 03), 4-byte packets, reporting
+[Drivers] ps2:aux offer Ps2MouseDriver -> bound
+[Drivers] pci:0000:00:00.0 no driver
+[Drivers] pci:0000:00:01.0 no driver
+[Drivers] pci:0000:00:02.0 candidates: E1000EDriver(prio 0, spec 2)
+[InterruptManager] Routing IRQ B -> vector 0x2B
+[Drivers] pci:0000:00:02.0 E1000EDriver published network "e1000e" (consumed)
+[Drivers] pci:0000:00:02.0 E1000EDriver: mac 52:54:00:12:34:56, link up, line 11, polling every 10 ms
+[Drivers] pci:0000:00:02.0 offer E1000EDriver -> bound
+[Drivers] pci:0000:00:1f.0 no driver
+[Drivers] pci:0000:00:1f.2 candidates: AhciDriver(prio 0, spec 3)[SCHED] Tick 8 enabled=1
+
+[SCHED] Tick 9 enabled=1
+[SCHED] Tick 10 enabled=1
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 0: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 1: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 2: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 3: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 4: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 5: cdrom0, QEMU QEMU DVD-ROM, 5728 sectors of 2048 bytes
+[StorageManager] cdrom0 registered by AhciDriver (primary)
+[Drivers] pci:0000:00:1f.2 AhciDriver published block "cdrom0" (consumed)
+[Drivers] pci:0000:00:1f.2 AhciDriver: 0 sata ports and 1 satapi ports of 6 implemented, version 1.0, 32 slots, 64-bit
+[Drivers] pci:0000:00:1f.2 offer AhciDriver -> bound
+[Drivers] pci:0000:00:1f.3 no driver
+[Kernel] Calling OnBoot()...
+[Kernel] OnBoot() called
+[Kernel] Initializing KernelConsole...
+Cosmos.Kernel.HAL.Interrupts.Enabled = true
+Cosmos.Kernel.HAL.UART.Enabled = true
+Cosmos.Kernel.HAL.PCI.Enabled = true
+Cosmos.Kernel.System.Timer.Enabled = true
+Cosmos.Kernel.System.Input.Keyboard.Enabled = true
+Cosmos.Kernel.System.Input.Mouse.Enabled = true
+Cosmos.Kernel.System.Network.Enabled = true
+Cosmos.Kernel.System.Storage.Enabled = true
+Cosmos.Kernel.System.Filesystems.Fat.Enabled = true
+Cosmos.Kernel.HAL.Usb.Enabled = true
+Cosmos.Kernel.System.Graphics.Enabled = true
+Cosmos.Kernel.Core.Scheduler.Enabled = true
+Cosmos.Kernel.System.Audio.Enabled = true
+Cosmos.Kernel.Core.FinalizerThread.Enabled = true
+Microsoft.Extensions.DependencyInjection.VerifyOpenGenericServiceTrimmability = true
+System.ComponentModel.DefaultValueAttribute.IsSupported = false
+System.ComponentModel.Design.IDesignerHost.IsSupported = false
+System.ComponentModel.TypeConverter.EnableUnsafeBinaryFormatterInDesigntimeLicenseContextSerialization = false
+System.ComponentModel.TypeDescriptor.IsComObjectDescriptorSupported = false
+System.Data.DataSet.XmlSerializationIsSupported = false
+System.Globalization.Invariant = true
+System.Globalization.PredefinedCulturesOnly = true
+System.Net.Security.UseManagedNtlm = false
+System.Net.SocketsHttpHandler.Http3Support = false
+System.Reflection.Metadata.MetadataUpdater.IsSupported = false
+System.Resources.ResourceManager.AllowCustomResourceTypes = false
+System.Resources.UseSystemResourceKeys = false
+System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported = true
+System.Runtime.InteropServices.BuiltInComInterop.IsSupported = false
+System.Runtime.InteropServices.EnableConsumingManagedCodeFromNativeHosting = false
+System.Runtime.InteropServices.EnableCppCLIHostActivation = false
+System.Runtime.InteropServices.Marshalling.EnableGeneratedComInterfaceComImportInterop = false
+System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization = false
+System.StartupHookProvider.IsSupported = false
+System.Text.Encoding.EnableUnsafeUTF7Encoding = false
+System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault = false
+System.Threading.Thread.EnableAutoreleasePool = false
+RUNTIME_IDENTIFIER = linux-x64
+Found resource: Cosmos.Kernel.System.Graphics.Fonts.DefaultFont.psf
+Loading default PSF font from resources...
+Font Key: Cosmos.Kernel.System.Graphics.Fonts.DefaultFont.psfFont size: 17403 bytes
+[Kernel] KernelConsole initialized: 80x25 chars
+[Kernel] Calling BeforeRun()...
+[GarbageCollector] BeforeRun() reached!
+[GarbageCollector] Starting tests...
+td  E5H Probete  E5H_FragProbe[GC] Collection #1, refills since the last: 37
+[GC] Freed 364 objects
+[E5H] A-start requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #2, refills since the last: 100
+[GC] Freed 5 objects
+[E5H] A-oom requested=8388608 needPages=2049 liveMiB=487 totalPages=127930 freePages=1517 freeMiB=5 longestFreeRun=1517 freeRuns=1 runs>=257=1 runs>=2049=0 runs<16=0 gcSegs=104 gcSegs<=16p=5 gcSegPages=125865 unmanagedStarts=16 ext=126248
+[E5H] map 4.....4#############################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+[GC] Collection #3, refills since the last: 3
+[GC] Freed 108 objects
+[E5H] A-end requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #4, refills since the last: 3
+[GC] Freed 4 objects
+[E5H] B40-start requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] B40 step=0
+[E5H] B40-step requested=4194304 needPages=1025 liveMiB=4 totalPages=127930 freePages=125260 freeMiB=489 longestFreeRun=125260 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2122 unmanagedStarts=16 ext=2601
+[E5H] map 4........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8##########
+[LAPIC] Timer tick 100 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #5, refills since the last: 1333
+[GC] Freed 6665 objects
+[GC] Collection #6, refills since the last: 689
+[GC] Freed 3447 objects
+[GC] Collection #7, refills since the last: 647
+[GC] Freed 3318 objects
+[GC] Collection #8, refills since the last: 656
+[GC] Freed 3384 objects
+[GC] Collection #9, refills since the last: 551
+[GC] Freed 2864 objects
+[GC] Collection #10, refills since the last: 705
+[GC] Freed 3449 objects
+[GC] Collection #11, refills since the last: 716
+[GC] Freed 3514 objects
+[GC] Collection #12, refills since the last: 681
+[GC] Freed 3514 objects
+[E5H] B40 step=500
+[E5H] B40-step requested=7340032 needPages=1793 liveMiB=158 totalPages=127930 freePages=39834 freeMiB=155 longestFreeRun=7440 freeRuns=26 runs>=257=24 runs>=2049=6 runs<16=0 gcSegs=154 gcSegs<=16p=76 gcSegPages=87548 unmanagedStarts=16 ext=87881
+[E5H] map ####0.............4###5........4#######5........4##5......4###########5....4#########4.......5####4....5###########4.....5#####4.......5##4......5#######4..5#############4...5##4............................6##################3...6#####3...6######################3..6#################26########################################27######2.....7############################2..7##########2...7##################1...8##################1...8#############18#######################1.8#######1....8#############
+[GC] Collection #13, refills since the last: 774
+[GC] Freed 3905 objects
+[GC] Collection #14, refills since the last: 761
+[GC] Freed 3839 objects
+[GC] Collection #15, refills since the last: 821
+[GC] Freed 4099 objects
+[GC] Collection #16, refills since the last: 700
+[GC] Freed 3644 objects
+[GC] Collection #17, refills since the last: 633
+[GC] Freed 3124 objects
+[GC] Collection #18, refills since the last: 706
+[GC] Freed 3514 objects
+[GC] Collection #19, refills since the last: 642
+[GC] Freed 3254 objects
+[GC] Collection #20, refills since the last: 645
+[GC] Freed 3384 objects
+[GC] Collection #21, refills since the last: 573
+[GC] Freed 2864 objects
+[GC] Collection #22, refills since the last: 556
+[GC] Freed 2864 objects
+[E5H] B40 step=1000
+[E5H] B40-step requested=6291456 needPages=1537 liveMiB=207 totalPages=127930 freePages=64357 freeMiB=251 longestFreeRun=8969 freeRuns=23 runs>=257=20 runs>=2049=12 runs<16=0 gcSegs=65 gcSegs<=16p=17 gcSegPages=63025 unmanagedStarts=16 ext=63447
+[E5H] map #7...........4##############################54##5.............4######54#####################4..5######4.............5#########4.5#######4.................5#######4........................5#############3.....6######3........6######3..........6#######################3.....63....6####3.......6###2........................7#####2..................................7#######2......................8####1.......................8########1.....8###############18########18######################18#############
+[GC] Collection #23, refills since the last: 695
+[GC] Freed 3515 objects
+[GC] Collection #24, refills since the last: 638
+[GC] Freed 3189 objects
+[GC] Collection #25, refills since the last: 820
+[GC] Freed 4099 objects
+[GC] Collection #26, refills since the last: 741
+[GC] Freed 3774 objects
+[GC] Collection #27, refills since the last: 671
+[GC] Freed 3319 objects
+[LAPIC] Timer tick 200 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #28, refills since the last: 742
+[GC] Freed 3775 objects
+[GC] Collection #29, refills since the last: 849
+[GC] Freed 4294 objects
+[GC] Collection #30, refills since the last: 762
+[GC] Freed 3839 objects
+[E5H] B40 step=1500
+[E5H] B40-step requested=2097152 needPages=513 liveMiB=154 totalPages=127930 freePages=27942 freeMiB=109 longestFreeRun=4609 freeRuns=24 runs>=257=19 runs>=2049=4 runs<16=1 gcSegs=188 gcSegs<=16p=98 gcSegPages=99440 unmanagedStarts=16 ext=99739
+[E5H] map ######6................4###5....4######5.................4###4........5##4..5#######4..5############4....5##############4..........5###################4.....5#########4.5#################################################################################################3..6#36##########2.6#######2..7#######2.7######27#############2.7#27#############2..7###27##################################################################################0########18#############1...8###################1.....8######
+[GC] Collection #31, refills since the last: 754
+[GC] Freed 3840 objects
+[GC] Collection #32, refills since the last: 796
+[GC] Freed 4099 objects
+[GC] Collection #33, refills since the last: 721
+[GC] Freed 3774 objects
+[GC] Collection #34, refills since the last: 768
+[GC] Freed 3904 objects
+[GC] Collection #35, refills since the last: 611
+[GC] Freed 3059 objects
+[GC] Collection #36, refills since the last: 648
+[GC] Freed 3319 objects
+[GC] Collection #37, refills since the last: 797
+[GC] Freed 3969 objects
+[GC] Collection #38, refills since the last: 729
+[GC] Freed 3644 objects
+[GC] Collection #39, refills since the last: 631
+[GC] Freed 3254 objects
+[E5H] B40 step=2000
+[E5H] B40-step requested=7340032 needPages=1793 liveMiB=196 totalPages=127930 freePages=18616 freeMiB=72 longestFreeRun=2049 freeRuns=20 runs>=257=17 runs>=2049=1 runs<16=2 gcSegs=174 gcSegs<=16p=89 gcSegPages=108766 unmanagedStarts=16 ext=109079
+[E5H] map #####2.....4#########5.......4###############5..4#####5...4#######################################################################################4......5########0##################################3.6#####################0###################################3.6#####################2......6######################################2...7######2....7#################27#############################2.....7########17#########1.8######1....8############1...8############18#############1....8#################
+[GC] Collection #40, refills since the last: 612
+[GC] Freed 3125 objects
+[GC] Collection #41, refills since the last: 622
+[GC] Freed 3254 objects
+[GC] Collection #42, refills since the last: 614
+[GC] Freed 3059 objects
+[GC] Collection #43, refills since the last: 644
+[GC] Freed 3189 objects
+[GC] Collection #44, refills since the last: 658
+[GC] Freed 3319 objects
+[GC] Collection #45, refills since the last: 778
+[GC] Freed 3904 objects
+[GC] Collection #46, refills since the last: 839
+[GC] Freed 4229 objects
+[GC] Collection #47, refills since the last: 724
+[GC] Freed 3644 objects
+[GC] Collection #48, refills since the last: 698
+[GC] Freed 3514 objects
+[GC] Collection #49, refills since the last: 793
+[GC] Freed 3969 objects
+[E5H] B40 step=2500
+[E5H] B40-step requested=3145728 needPages=769 liveMiB=172 totalPages=127930 freePages=77793 freeMiB=303 longestFreeRun=11276 freeRuns=26 runs>=257=25 runs>=2049=14 runs<16=0 gcSegs=54 gcSegs<=16p=10 gcSegPages=49589 unmanagedStarts=16 ext=50022
+[E5H] map 1.......4######################5..4#####54###54##########5.................4######4...........54........5##############4...............................5#####4........53...6######3.............6######3.....6###########3..63.......6########3.....................6########3..6#############3..............7######2...........................................72...7###2..............7#27####2................8##1..........8#####1.....................................8##1.8##1...8############################
+[GC] Collection #50, refills since the last: 758
+[GC] Freed 3840 objects
+[LAPIC] Timer tick 300 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=3 runQ=1
+[GC] Collection #51, refills since the last: 740
+[GC] Freed 3710 objects
+[GC] Collection #52, refills since the last: 661
+[GC] Freed 3384 objects
+[GC] Collection #53, refills since the last: 745
+[GC] Freed 3774 objects
+[GC] Collection #54, refills since the last: 671
+[GC] Freed 3384 objects
+[GC] Collection #55, refills since the last: 737
+[GC] Freed 3709 objects
+[GC] Collection #56, refills since the last: 662
+[GC] Freed 3449 objects
+[GC] Collection #57, refills since the last: 699
+[GC] Freed 3514 objects
+[GC] Collection #58, refills since the last: 542
+[GC] Freed 2734 objects
+[E5H] B40 step=3000
+[E5H] B40-step requested=5242880 needPages=1281 liveMiB=174 totalPages=127930 freePages=58845 freeMiB=229 longestFreeRun=8966 freeRuns=24 runs>=257=23 runs>=2049=8 runs<16=1 gcSegs=101 gcSegs<=16p=41 gcSegPages=68537 unmanagedStarts=16 ext=68923
+[E5H] map ##2...........4###5....................4#5.4###5....4#######4..................................5##########4..5############4.............5#####4................5##3......5####################################3.6###3......6#3......6#3...6#######3.................6##########3............6######2...6####2..7##########0###2.................................7####2.....7###############2...7##########2.7###########################1....8############################1....8####################################
+[GC] Collection #59, refills since the last: 681
+[GC] Freed 3450 objects
+[GC] Collection #60, refills since the last: 696
+[GC] Freed 3579 objects
+[GC] Collection #61, refills since the last: 785
+[GC] Freed 3904 objects
+[GC] Collection #62, refills since the last: 877
+[GC] Freed 4424 objects
+[GC] Collection #63, refills since the last: 737
+[GC] Freed 3709 objects
+[GC] Collection #64, refills since the last: 686
+[GC] Freed 3384 objects
+[GC] Collection #65, refills since the last: 638
+[GC] Freed 3189 objects
+[GC] Collection #66, refills since the last: 868
+[GC] Freed 4424 objects
+[GC] Collection #67, refills since the last: 557
+[GC] Freed 2799 objects
+[E5H] B40 step=3500
+[E5H] B40-step requested=2097152 needPages=513 liveMiB=199 totalPages=127930 freePages=56187 freeMiB=219 longestFreeRun=13579 freeRuns=22 runs>=257=20 runs>=2049=9 runs<16=1 gcSegs=86 gcSegs<=16p=31 gcSegPages=71195 unmanagedStarts=16 ext=71596
+[E5H] map ##8......4#5.............4###########################4..5##45############4......5#############4...........5#####0#########4......................5##4.....5####4.......5#######################3.................................6####3.......6######3.6#######3..6##########3.......6#3.......6##################2.7#############2....................................................7###2.7#######2...........7###############18##############1....8#############################################################
+[GC] Collection #68, refills since the last: 750
+[GC] Freed 3775 objects
+[GC] Collection #69, refills since the last: 784
+[GC] Freed 4034 objects
+[GC] Collection #70, refills since the last: 655
+[GC] Freed 3319 objects
+[GC] Collection #71, refills since the last: 660
+[GC] Freed 3319 objects
+[GC] Collection #72, refills since the last: 768
+[GC] Freed 3904 objects
+[GC] Collection #73, refills since the last: 688
+[GC] Freed 3514 objects
+[LAPIC] Timer tick 400 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #74, refills since the last: 796
+[GC] Freed 3970 objects
+[GC] Collection #75, refills since the last: 689
+[GC] Freed 3514 objects
+[GC] Collection #76, refills since the last: 736
+[GC] Freed 3709 objects
+[E5H] B40-noOOM requested=0 needPages=1 liveMiB=188 totalPages=127930 freePages=72601 freeMiB=283 longestFreeRun=8712 freeRuns=28 runs>=257=27 runs>=2049=13 runs<16=0 gcSegs=60 gcSegs<=16p=14 gcSegPages=54781 unmanagedStarts=16 ext=55208
+[E5H] map #9.....4#######5.....4#5.........................4#####5.............................5####45######4.......5#############4.......54.......5#########4.................................5###########3.......63..............6######3......6###3.........6#####3...............6####3..6##3................6#######2...............6#######3...7#2......................7#############2.......7##2....7#######################1.....8######1.8####1...8####1..8########1...8###########18#######1...8###################
+[GC] Collection #77, refills since the last: 67
+[GC] Freed 372 objects
+[E5H] B40-end requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #78, refills since the last: 3
+[GC] Freed 5 objects
+[E5H] C40k8-start requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] C40k8 step=0
+[E5H] C40k8-step requested=5242880 needPages=1281 liveMiB=5 totalPages=127930 freePages=125004 freeMiB=488 longestFreeRun=125004 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2378 unmanagedStarts=16 ext=2857
+[E5H] map 4.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8###########
+[GC] Collection #79, refills since the last: 1331
+[GC] Freed 5839 objects
+[GC] Collection #80, refills since the last: 708
+[GC] Freed 3365 objects
+[GC] Collection #81, refills since the last: 694
+[GC] Freed 2797 objects
+[GC] Collection #82, refills since the last: 1223
+[GC] Freed 3082 objects
+[GC] Collection #83, refills since the last: 1693
+[GC] Freed 3253 objects
+[GC] Collection #84, refills since the last: 1818
+[GC] Freed 3310 objects
+[GC] Collection #85, refills since the last: 1884
+[GC] Freed 3481 objects
+[GC] Collection #86, refills since the last: 1689
+[GC] Freed 3196 objects
+[E5H] C40k8 step=500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=187 totalPages=127930 freePages=69897 freeMiB=273 longestFreeRun=10504 freeRuns=24 runs>=257=24 runs>=2049=10 runs<16=0 gcSegs=292 gcSegs<=16p=247 gcSegPages=57485 unmanagedStarts=16 ext=57680
+[E5H] map ###############3.4##############################5.....4#######5................4#5........4##############4....5##############4..54...5#######4.5############4.........5#####4.................5###4......................................6#######3.6#####3..............6#####3.....6##3......6#####3......6##########2....................7#2.....................7####2.................7######2.....7#####1......8###1........................................8################1..8############1..8##############
+[GC] Collection #87, refills since the last: 1517
+[GC] Freed 3005 objects
+[GC] Collection #88, refills since the last: 1737
+[GC] Freed 3449 objects
+[GC] Collection #89, refills since the last: 1759
+[GC] Freed 3319 objects
+[GC] Collection #90, refills since the last: 1887
+[GC] Freed 3514 objects
+[GC] Collection #91, refills since the last: 1699
+[GC] Freed 3514 objects
+[GC] Collection #92, refills since the last: 1714
+[GC] Freed 3514 objects
+[GC] Collection #93, refills since the last: 1284
+[GC] Freed 2929 objects
+[GC] Collection #94, refills since the last: 1181
+[GC] Freed 2734 objects
+[GC] Collection #95, refills since the last: 1408
+[GC] Freed 2929 objects
+[GC] Collection #96, refills since the last: 1650
+[GC] Freed 3189 objects
+[LAPIC] Timer tick 500 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[E5H] C40k8 step=1000
+[E5H] C40k8-step requested=4194304 needPages=1025 liveMiB=195 totalPages=127930 freePages=61367 freeMiB=239 longestFreeRun=8967 freeRuns=27 runs>=257=25 runs>=2049=11 runs<16=1 gcSegs=334 gcSegs<=16p=284 gcSegPages=66015 unmanagedStarts=16 ext=66168
+[E5H] map #############0####9...4######5..4#######5...4#######5..................4#######5...4#######5.....4##########5..4###########4..5#############4....................5####4.........5############4..............53.6####3........63........6######3..................6###3...6###3.....636####3..................................7######2..................7###2....7##################2.............7######2..........8#################1......8###1.....8##########################################0##################
+[GC] Collection #97, refills since the last: 1712
+[GC] Freed 3321 objects
+[GC] Collection #98, refills since the last: 1461
+[GC] Freed 2995 objects
+[GC] Collection #99, refills since the last: 1557
+[GC] Freed 3190 objects
+[GC] Collection #100, refills since the last: 1777
+[GC] Freed 3580 objects
+[GC] Collection #101, refills since the last: 1864
+[GC] Freed 3645 objects
+[GC] Collection #102, refills since the last: 1936
+[GC] Freed 3775 objects
+[GC] Collection #103, refills since the last: 1961
+[GC] Freed 3775 objects
+[GC] Collection #104, refills since the last: 1707
+[GC] Freed 3450 objects
+[GC] Collection #105, refills since the last: 1598
+[GC] Freed 3255 objects
+[E5H] C40k8 step=1500
+[E5H] C40k8-step requested=2097152 needPages=513 liveMiB=176 totalPages=127930 freePages=35324 freeMiB=137 longestFreeRun=5379 freeRuns=31 runs>=257=20 runs>=2049=6 runs<16=0 gcSegs=368 gcSegs<=16p=294 gcSegPages=92058 unmanagedStarts=16 ext=92177
+[E5H] map #########01#####1109......4########5................4##########5...........4#############5....................5##4..5###########4..5####4......54.......5#####4........5########4........5#########################3....6########36#############################3..6###3...6###3...6#################2....7##########2.7#######2...7#########################################2...7######27################################1.8##18###########################################1....8##################################
+[GC] Collection #106, refills since the last: 1621
+[GC] Freed 3386 objects
+[GC] Collection #107, refills since the last: 1530
+[GC] Freed 3254 objects
+[GC] Collection #108, refills since the last: 1669
+[GC] Freed 3319 objects
+[GC] Collection #109, refills since the last: 1986
+[GC] Freed 3839 objects
+[GC] Collection #110, refills since the last: 2116
+[GC] Freed 3969 objects
+[GC] Collection #111, refills since the last: 1837
+[GC] Freed 3839 objects
+[GC] Collection #112, refills since the last: 1428
+[GC] Freed 3319 objects
+[GC] Collection #113, refills since the last: 1808
+[GC] Freed 3709 objects
+[GC] Collection #114, refills since the last: 1483
+[GC] Freed 3254 objects
+[E5H] C40k8 step=2000
+[E5H] C40k8-step requested=5242880 needPages=1281 liveMiB=165 totalPages=127930 freePages=28432 freeMiB=111 longestFreeRun=4105 freeRuns=28 runs>=257=21 runs>=2049=2 runs<16=0 gcSegs=392 gcSegs<=16p=308 gcSegPages=98950 unmanagedStarts=16 ext=99045
+[E5H] map #########0##00####02.....4##5....4######5......4################5...............4###5...........5####4..5#######################4......5########4.5###################################45##############3...6################3....6##############36#####################################3....6#2.6########################################2.7################2....7#####################2...7#####2......72..7######17######################################1..8#############################1..81......8#############
+[GC] Collection #115, refills since the last: 1728
+[GC] Freed 3580 objects
+[GC] Collection #116, refills since the last: 1664
+[GC] Freed 3579 objects
+[GC] Collection #117, refills since the last: 1813
+[GC] Freed 3709 objects
+[GC] Collection #118, refills since the last: 1524
+[GC] Freed 3189 objects
+[LAPIC] Timer tick 600 RSP=FFFF80001F498B70
+[GC] Collection #119, refills since the last: 1313
+[GC] Freed 2930 objects
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #120, refills since the last: 1796
+[GC] Freed 3579 objects
+[GC] Collection #121, refills since the last: 1413
+[GC] Freed 3189 objects
+[GC] Collection #122, refills since the last: 1857
+[GC] Freed 3774 objects
+[GC] Collection #123, refills since the last: 1211
+[GC] Freed 2929 objects
+[GC] Collection #124, refills since the last: 1476
+[GC] Freed 3124 objects
+[E5H] C40k8 step=2500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=171 totalPages=127930 freePages=47920 freeMiB=187 longestFreeRun=11783 freeRuns=31 runs>=257=20 runs>=2049=6 runs<16=2 gcSegs=375 gcSegs<=16p=307 gcSegPages=79462 unmanagedStarts=16 ext=79574
+[E5H] map #01###00#####0###0#14#5.....4#######5.................4#######5...........................4##454....5#######4.....5####4....5#4......5##############4..........5#######0######################4.......6###########3.6#####0####3.............................................6######3..........6##########################27############################2....7##########2.7###################2.....7##############################################1...8##############1...8#######1..8################1......8######
+[GC] Collection #125, refills since the last: 1749
+[GC] Freed 3580 objects
+[GC] Collection #126, refills since the last: 2093
+[GC] Freed 4164 objects
+[GC] Collection #127, refills since the last: 1747
+[GC] Freed 3579 objects
+[GC] Collection #128, refills since the last: 1647
+[GC] Freed 3449 objects
+[GC] Collection #129, refills since the last: 2086
+[GC] Freed 4034 objects
+[GC] Collection #130, refills since the last: 1106
+[GC] Freed 2864 objects
+[GC] Collection #131, refills since the last: 2210
+[GC] Freed 4164 objects
+[GC] Collection #132, refills since the last: 1887
+[GC] Freed 3774 objects
+[GC] Collection #133, refills since the last: 1785
+[GC] Freed 3644 objects
+[E5H] C40k8 step=3000
+[E5H] C40k8-step requested=1048576 needPages=257 liveMiB=185 totalPages=127930 freePages=54895 freeMiB=214 longestFreeRun=8194 freeRuns=29 runs>=257=24 runs>=2049=10 runs<16=0 gcSegs=393 gcSegs<=16p=336 gcSegPages=72487 unmanagedStarts=16 ext=72581
+[E5H] map #############0#####0#64#######5.4####5...4####5..........4#####5......................4#########5..............5####4....5######4..................5#############4.5#######45#####4.......5########4..............6###3........................6####3...............................6##########36##3..6######27############2.......7######2...7#######2...............7#########2..7###########################27####################1..8###1.8############################18##1....8#1..8##########################
+[GC] Collection #134, refills since the last: 1893
+[GC] Freed 3710 objects
+[GC] Collection #135, refills since the last: 1839
+[GC] Freed 3709 objects
+[GC] Collection #136, refills since the last: 1992
+[GC] Freed 3969 objects
+[GC] Collection #137, refills since the last: 1399
+[GC] Freed 3319 objects
+[GC] Collection #138, refills since the last: 1941
+[GC] Freed 3839 objects
+[GC] Collection #139, refills since the last: 1842
+[GC] Freed 3709 objects
+[GC] Collection #140, refills since the last: 1328
+[GC] Freed 3124 objects
+[GC] Collection #141, refills since the last: 1832
+[GC] Freed 3644 objects
+[LAPIC] Timer tick 700 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #142, refills since the last: 1341
+[GC] Freed 3060 objects
+[E5H] C40k8 step=3500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=181 totalPages=127930 freePages=44691 freeMiB=174 longestFreeRun=6662 freeRuns=32 runs>=257=23 runs>=2049=8 runs<16=1 gcSegs=413 gcSegs<=16p=349 gcSegPages=82691 unmanagedStarts=16 ext=82765
+[E5H] map ###########0010#00####7.......8....4##############54######5.......4############5.......4###########4.......................54.........................5#######4................5############45########3.....6###3.6##########3...63..6####3....6############3.........6###3.6###########3....................7#######2.....7#######################27###############27###############2.7#################2..7#0################################1.....8#################################1...8########################
+[GC] Collection #143, refills since the last: 1937
+[GC] Freed 3645 objects
+[GC] Collection #144, refills since the last: 1488
+[GC] Freed 3124 objects
+[GC] Collection #145, refills since the last: 1546
+[GC] Freed 3319 objects
+[GC] Collection #146, refills since the last: 1754
+[GC] Freed 3579 objects
+[GC] Collection #147, refills since the last: 2002
+[GC] Freed 3904 objects
+[GC] Collection #148, refills since the last: 1938
+[GC] Freed 3839 objects
+[GC] Collection #149, refills since the last: 1877
+[GC] Freed 3709 objects
+[GC] Collection #150, refills since the last: 1641
+[GC] Freed 3319 objects
+[GC] Collection #151, refills since the last: 2259
+[GC] Freed 4359 objects
+[E5H] C40k8-noOOM requested=0 needPages=1 liveMiB=187 totalPages=127930 freePages=57258 freeMiB=223 longestFreeRun=7430 freeRuns=29 runs>=257=27 runs>=2049=10 runs<16=0 gcSegs=439 gcSegs<=16p=380 gcSegPages=70124 unmanagedStarts=16 ext=70172
+[E5H] map ###################0###1......8..4###########5............4####5.......4##########5....4###4..................54..5####4.....5##4........5#4......54......5#########4...............5##########3......................6######3.6#####3..............6##########3............................6####26###########2.....7###########2....7####2.......7#############2.7############################2..7#########2....7############1.8#1..8#######1....8########################1.......8#########1...8##################
+[GC] Collection #152, refills since the last: 271
+[GC] Freed 5313 objects
+[E5H] C40k8-end requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #153, refills since the last: 3
+[GC] Freed 5 objects
+[E5H] D56k8-start requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] D56k8 step=0
+[E5H] D56k8-step requested=6291456 needPages=1537 liveMiB=6 totalPages=127930 freePages=124748 freeMiB=487 longestFreeRun=124748 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2634 unmanagedStarts=16 ext=3113
+[E5H] map 4......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8############
+[GC] Collection #154, refills since the last: 1473
+[GC] Freed 6510 objects
+[GC] Collection #155, refills since the last: 646
+[GC] Freed 3192 objects
+[GC] Collection #156, refills since the last: 506
+[GC] Freed 2169 objects
+[GC] Collection #157, refills since the last: 497
+[GC] Freed 1999 objects
+[GC] Collection #158, refills since the last: 672
+[GC] Freed 2170 objects
+[GC] Collection #159, refills since the last: 669
+[GC] Freed 1771 objects
+[GC] Collection #160, refills since the last: 743
+[GC] Freed 1657 objects
+[GC] Collection #161, refills since the last: 1091
+[GC] Freed 2113 objects
+[GC] Collection #162, refills since the last: 1480
+[GC] Freed 2284 objects
+[GC] Collection #163, refills since the last: 1452
+[GC] Freed 2056 objects
+[GC] Collection #164, refills since the last: 1522
+[GC] Freed 2113 objects
+[E5H] D56k8 step=500
+[E5H] D56k8-step requested=5242880 needPages=1281 liveMiB=262 totalPages=127930 freePages=43553 freeMiB=170 longestFreeRun=4610 freeRuns=32 runs>=257=31 runs>=2049=8 runs<16=0 gcSegs=294 gcSegs<=16p=228 gcSegPages=83829 unmanagedStarts=16 ext=84022
+[E5H] map ##############5.4######5....45.....4####5.......4################5.....4#####5.4#######5........4#########4....5##########################45######4..........5######4.....5########4......5#######45######3......6######36#####3.6####################3........6######3..........6###########36#######2...............7#####2.7###2........72....7###2..7##########27#####2.................7######27######1.7######################18##############1..8##########1.8#################################1......8######
+[GC] Collection #165, refills since the last: 1635
+[GC] Freed 2445 objects
+[GC] Collection #166, refills since the last: 1680
+[GC] Freed 3189 objects
+[LAPIC] Timer tick 800 RSP=FFFF80001F498B70
+[GC] Collection #167, refills since the last: 1575
+[GC] Freed 3060 objects
+[STRIDE] OnTick: current=1 runQ=1
+[GC] Collection #168, refills since the last: 1136
+[GC] Freed 2409 objects
+[GC] Collection #169, refills since the last: 1152
+[GC] Freed 2344 objects
+[GC] Collection #170, refills since the last: 868
+[GC] Freed 1889 objects
+[GC] Collection #171, refills since the last: 1073
+[GC] Freed 2084 objects
+[GC] Collection #172, refills since the last: 1440
+[GC] Freed 2604 objects
+[GC] Collection #173, refills since the last: 719
+[GC] Freed 1759 objects
+[GC] Collection #174, refills since the last: 1091
+[GC] Freed 2084 objects
+[GC] Collection #175, refills since the last: 1129
+[GC] Freed 2149 objects
+[GC] Collection #176, refills since the last: 787
+[GC] Freed 1694 objects
+[GC] Collection #177, refills since the last: 924
+[GC] Freed 1889 objects
+[GC] Collection #178, refills since the last: 1125
+[GC] Freed 2149 objects
+[E5H] D56k8 step=1000
+[E5H] D56k8-step requested=2097152 needPages=513 liveMiB=251 totalPages=127930 freePages=32197 freeMiB=125 longestFreeRun=6667 freeRuns=34 runs>=257=26 runs>=2049=3 runs<16=2 gcSegs=341 gcSegs<=16p=265 gcSegPages=95185 unmanagedStarts=16 ext=95331
+[E5H] map ########0##00###4......54#########54#####################5....4###############5.4##########5...4########4..4#######4.........5#####4..5##########4.........................5##########4..5###########3..6##########3..6######################3......6#############3.......6######################36########3.6###2.7###########2.....7##########0################2...7##########27########0#######2....7##############1...8####1.8#####################1.8###################1...8########1...8#######18#1.8########
+[GC] Collection #179, refills since the last: 913
+[GC] Freed 1825 objects
+[GC] Collection #180, refills since the last: 1307
+[GC] Freed 2279 objects
+[GC] Collection #181, refills since the last: 1458
+[GC] Freed 2474 objects
+[GC] Collection #182, refills since the last: 1543
+[GC] Freed 2669 objects
+[GC] Collection #183, refills since the last: 985
+[GC] Freed 2019 objects
+[GC] Collection #184, refills since the last: 686
+[GC] Freed 1564 objects
+[GC] Collection #185, refills since the last: 753
+[GC] Freed 1629 objects
+[GC] Collection #186, refills since the last: 1241
+[GC] Freed 2149 objects
+[GC] Collection #187, refills since the last: 1356
+[GC] Freed 2409 objects
+[GC] Collection #188, refills since the last: 1314
+[GC] Freed 2344 objects
+[GC] Collection #189, refills since the last: 1476
+[GC] Freed 2539 objects
+[GC] Collection #190, refills since the last: 1041
+[GC] Freed 2084 objects
+[GC] Collection #191, refills since the last: 1381
+[GC] Freed 2409 objects
+[GC] Collection #192, refills since the last: 1026
+[GC] Freed 2019 objects
+[GC] Collection #193, refills since the last: 1231
+[GC] Freed 2279 objects
+[E5H] D56k8 step=1500
+[E5H] D56k8-step requested=1048576 needPages=257 liveMiB=256 totalPages=127930 freePages=36987 freeMiB=144 longestFreeRun=4098 freeRuns=33 runs>=257=27 runs>=2049=5 runs<16=1 gcSegs=344 gcSegs<=16p=270 gcSegPages=90395 unmanagedStarts=16 ext=90538
+[E5H] map #0##############24#####1..........4##5......4#5........4#########5....4####5.4#############0##################45#######4......5#########4..5#################4...5####4...5#######45#####4.......5##45####4..5#####4...............6######36######3........6####3...........6#######3..6######################3....7#############################2....7##########2.....7##############2....7#################2....718####################1..8###########1..8##############################18#######18######1.8######
+[GC] Collection #194, refills since the last: 1209
+[GC] Freed 2280 objects
+[GC] Collection #195, refills since the last: 1025
+[GC] Freed 2149 objects
+[GC] Collection #196, refills since the last: 831
+[GC] Freed 1824 objects
+[GC] Collection #197, refills since the last: 862
+[GC] Freed 1759 objects
+[GC] Collection #198, refills since the last: 1032
+[GC] Freed 2019 objects
+[GC] Collection #199, refills since the last: 1044
+[GC] Freed 2019 objects
+[GC] Collection #200, refills since the last: 978
+[GC] Freed 1954 objects
+[GC] Collection #201, refills since the last: 879
+[GC] Freed 1824 objects
+[GC] Collection #202, refills since the last: 1381
+[GC] Freed 2409 objects
+[GC] Collection #203, refills since the last: 1565
+[GC] Freed 2734 objects
+[LAPIC] Timer tick 900 RSP=FFFF80001F498B70
+[GC] Collection #204, refills since the last: 1586
+[GC] Freed 2800 objects
+[STRIDE] OnTick: current=1 runQ=1
+[GC] Collection #205, refills since the last: 788
+[GC] Freed 1890 objects
+[GC] Collection #206, refills since the last: 1204
+[GC] Freed 2280 objects
+[GC] Collection #207, refills since the last: 789
+[GC] Freed 1759 objects
+[GC] Collection #208, refills since the last: 1473
+[GC] Freed 2474 objects
+[E5H] D56k8 step=2000
+[E5H] D56k8-step requested=6291456 needPages=1537 liveMiB=280 totalPages=127930 freePages=27283 freeMiB=106 longestFreeRun=3588 freeRuns=37 runs>=257=24 runs>=2049=2 runs<16=3 gcSegs=348 gcSegs<=16p=268 gcSegPages=100099 unmanagedStarts=16 ext=100238
+[E5H] map ##0#####00#0000#0......54#########0##5......4#############54#############5.............5####4........5##4....54...5###4....5#############4..54...5###################4.5################4.5#############3.....6####3....6#################3..6#########3.6##3....6###3.6####################################################################2...7###############################################27##########2.7#################18###########1.....8###0######################1..8#############0###18######1.8######
+[GC] Collection #209, refills since the last: 1163
+[GC] Freed 2215 objects
+[GC] Collection #210, refills since the last: 997
+[GC] Freed 2019 objects
+[GC] Collection #211, refills since the last: 896
+[GC] Freed 1889 objects
+[GC] Collection #212, refills since the last: 1186
+[GC] Freed 2149 objects
+[GC] Collection #213, refills since the last: 988
+[GC] Freed 1889 objects
+[GC] Collection #214, refills since the last: 1509
+[GC] Freed 2539 objects
+[GC] Collection #215, refills since the last: 1069
+[GC] Freed 2214 objects
+[GC] Collection #216, refills since the last: 1087
+[GC] Freed 2149 objects
+[GC] Collection #217, refills since the last: 984
+[GC] Freed 2084 objects
+[GC] Collection #218, refills since the last: 596
+[GC] Freed 1499 objects
+[GC] Collection #219, refills since the last: 615
+[GC] Freed 1434 objects
+[GC] Collection #220, refills since the last: 1157
+[GC] Freed 2149 objects
+[GC] Collection #221, refills since the last: 1289
+[GC] Freed 2279 objects
+[GC] Collection #222, refills since the last: 1632
+[GC] Freed 2734 objects
+[GC] Collection #223, refills since the last: 1449
+[GC] Freed 2539 objects
+[GC] Collection #224, refills since the last: 1244
+[GC] Freed 2279 objects
+[E5H] D56k8 step=2500
+[E5H] D56k8-step requested=8388608 needPages=2049 liveMiB=258 totalPages=127930 freePages=55839 freeMiB=218 longestFreeRun=5385 freeRuns=41 runs>=257=34 runs>=2049=10 runs<16=2 gcSegs=334 gcSegs<=16p=277 gcSegPages=71543 unmanagedStarts=16 ext=71696
+[E5H] map #########10######6.....5.......4####5....4###########5.....4##########5......4#5..4####54##5...4######5.4######4............5#####4....5#############45#######4..5#############4.....5########0###########3...6###3.................6####3.6############3........6#####0#########################3........7####2....7#####2...7######2....7###2..7####2.........7#27####2............7########27##2.......7#######2....................8#####1.....8#####1........8#1.....8#######1.........8#######1.8####1.8######
+[GC] Collection #225, refills since the last: 1168
+[GC] Freed 2280 objects
+[GC] Collection #226, refills since the last: 1414
+[GC] Freed 2669 objects
+[GC] Collection #227, refills since the last: 1098
+[GC] Freed 2344 objects
+[GC] Collection #228, refills since the last: 1214
+[GC] Freed 2539 objects
+[GC] Collection #229, refills since the last: 689
+[GC] Freed 1824 objects
+[GC] Collection #230, refills since the last: 859
+[GC] Freed 1954 objects
+[GC] Collection #231, refills since the last: 1082
+[GC] Freed 2149 objects
+[GC] Collection #232, refills since the last: 1408
+[GC] Freed 2539 objects
+[GC] Collection #233, refills since the last: 1618
+[GC] Freed 2864 objects
+[GC] Collection #234, refills since the last: 1922
+[GC] Freed 3449 objects
+[GC] Collection #235, refills since the last: 732
+[GC] Freed 1954 objects
+[GC] Collection #236, refills since the last: 1647
+[GC] Freed 3059 objects
+[GC] Collection #237, refills since the last: 995
+[GC] Freed 2344 objects
+[E5H] D56k8 step=3000
+[E5H] D56k8-step requested=4194304 needPages=1025 liveMiB=241 totalPages=127930 freePages=50321 freeMiB=196 longestFreeRun=6656 freeRuns=31 runs>=257=27 runs>=2049=12 runs<16=0 gcSegs=367 gcSegs<=16p=301 gcSegPages=77061 unmanagedStarts=16 ext=77181
+[E5H] map ###############0##5....48.454#######5..........4######5..4##########5..............4######5.............44...........4########4....5##4...5#4.5######4.5#4..........5##########4........5##############3....6##############3.........6#####3.......63.........................63.......6##36##3.........6#########3.6######################2.............7#######2.....7#############2.7###################27###################18##########18#######1.8############################1..8############################
+[GC] Collection #238, refills since the last: 1805
+[GC] Freed 3190 objects
+[GC] Collection #239, refills since the last: 996
+[GC] Freed 2214 objects
+[LAPIC] Timer tick 1000 RSP=FFFF80001F498B70
+[STRIDE] OnTick: current=1 runQ=0
+[GC] Collection #240, refills since the last: 1251
+[GC] Freed 2475 objects
+[GC] Collection #241, refills since the last: 1290
+[GC] Freed 2475 objects
+[GC] Collection #242, refills since the last: 712
+[GC] Freed 1760 objects
+[GC] Collection #243, refills since the last: 1316
+[GC] Freed 2410 objects
+[GC] Collection #244, refills since the last: 1129
+[GC] Freed 2280 objects
+[GC] Collection #245, refills since the last: 1284
+[GC] Freed 2540 objects
+[GC] Collection #246, refills since the last: 1497
+[GC] Freed 2930 objects
+[GC] Collection #247, refills since the last: 1119
+[GC] Freed 2475 objects
+[GC] Collection #248, refills since the last: 1399
+[GC] Freed 2735 objects
+[GC] Collection #249, refills since the last: 769
+[GC] Freed 1890 objects
+[GC] Collection #250, refills since the last: 1162
+[GC] Freed 2280 objects
+[E5H] D56k8 step=3500
+[E5H] D56k8-step requested=8388608 needPages=2049 liveMiB=262 totalPages=127930 freePages=27540 freeMiB=107 longestFreeRun=3333 freeRuns=35 runs>=257=25 runs>=2049=3 runs<16=2 gcSegs=396 gcSegs<=16p=316 gcSegPages=99842 unmanagedStarts=16 ext=99933
+[E5H] map ##########1#0######5.4#01############5............45.4#######5............45.4#######0##############4............5#######45#######45#################45###########4..5#######4.5############0#####################3..5#######################36############3...6########3....6##################3.6####################2..7####################2.7#################################2..7#############2.7###27###########1....8#1.....8######1......8#######1...8############1.8###########################1...8######
+[GC] Collection #251, refills since the last: 1174
+[GC] Freed 2346 objects
+[GC] Collection #252, refills since the last: 1084
+[GC] Freed 2150 objects
+[GC] Collection #253, refills since the last: 980
+[GC] Freed 2020 objects
+[GC] Collection #254, refills since the last: 1313
+[GC] Freed 2474 objects
+[GC] Collection #255, refills since the last: 891
+[GC] Freed 1954 objects
+[GC] Collection #256, refills since the last: 725
+[GC] Freed 1694 objects
+[GC] Collection #257, refills since the last: 1054
+[GC] Freed 2084 objects
+[GC] Collection #258, refills since the last: 1539
+[GC] Freed 2864 objects
+[GC] Collection #259, refills since the last: 1266
+[GC] Freed 2669 objects
+[GC] Collection #260, refills since the last: 706
+[GC] Freed 1889 objects
+[GC] Collection #261, refills since the last: 1004
+[GC] Freed 2149 objects
+[GC] Collection #262, refills since the last: 1682
+[GC] Freed 2929 objects
+[GC] Collection #263, refills since the last: 1447
+[GC] Freed 2669 objects
+[GC] Collection #264, refills since the last: 1399
+[GC] Freed 2669 objects
+[E5H] D56k8-noOOM requested=0 needPages=1 liveMiB=220 totalPages=127930 freePages=40215 freeMiB=157 longestFreeRun=6661 freeRuns=40 runs>=257=30 runs>=2049=4 runs<16=3 gcSegs=419 gcSegs<=16p=340 gcSegPages=87167 unmanagedStarts=16 ext=87235
+[E5H] map #############0#####3...408....8..........4###5...45.4#########54#######5.4######5....4##########4.......5#########4..5#####0###4....5########4.....54...5#######4.......5###4.....5##########4.....5#######4..............5##########3.........................6#3.6#####36####3...6########36#####3...6#########################0#########2.7####2.....7####27###27###############27###############2.7#########2.8##########18################1...8#1.8#########################18########0#########18#############
+[GC] Collection #265, refills since the last: 558
+[GC] Freed 5589 objects
+[E5H] D56k8-end requested=0 needPages=1 liveMiB=0 totalPages=127930 freePages=126301 freeMiB=493 longestFreeRun=126301 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=6 gcSegs<=16p=5 gcSegPages=1081 unmanagedStarts=16 ext=1562
+[E5H] map 4............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] done
+tf  q'  ti       
+Test Suite: E5H Probe
+Total: 1  Passed: 1  Failed: 0
+
+[Tests Complete - System Halting]
+[Kernel] Entering main loop...
+[Kernel] Calling Run()...
+[Kernel] Run() returned
+[Kernel] Main loop exited, calling AfterRun()...
+Þ­¾ïÊþº¾[Kernel] Halting CPU...
+[LAPIC] Timer tick 1100 RSP=FFFF80001F498CE0
+[STRIDE] OnTick: current=1 runQ=0
+
+========================================
+  CosmosOS v3.0.97 (gen3)
+  Architecture: x86-64
+========================================
+
+[KMAIN] Phase 1: CPU initialization
+
+[KMAIN] Phase 2: Platform initialization
+[KMAIN]   - Querying Limine for RSDP...
+[KMAIN]   - RSDP found at: 0x0xFFFF8000000F52E0
+[KMAIN]   - HHDM offset: 0x0xFFFF800000000000
+[KMAIN]   - Initializing ACPI...
+[ACPI] acpi_early_init()
+[uACPI] starting uACPI, version 7.0.0
+[uACPI] RSDP 0x00000000000F52E0 00000014 v00 (BOCHS )
+[uACPI] RSDT 0x000000001FFE2468 00000038 v01 (BOCHS  BXPC    )
+[uACPI] DSDT 0x000000001FFE0040 00002208 v01 (BOCHS  BXPC    )
+[uACPI] FACP 0x000000001FFE2248 000000F4 v03 (BOCHS  BXPC    )
+[uACPI] APIC 0x000000001FFE233C 00000090 v03 (BOCHS  BXPC    )
+[uACPI] HPET 0x000000001FFE23CC 00000038 v01 (BOCHS  BXPC    )
+[uACPI] MCFG 0x000000001FFE2404 0000003C v01 (BOCHS  BXPC    )
+[uACPI] WAET 0x000000001FFE2440 00000028 v01 (BOCHS  BXPC    )
+[ACPI] MADT found, parsing...
+[ACPI] Local APIC at: 0x0xFEE00000
+[ACPI] CPU (ID=0 APIC=0)
+[ACPI] CPU (ID=1 APIC=1)
+[ACPI] CPU (ID=2 APIC=2)
+[ACPI] CPU (ID=3 APIC=3)
+[ACPI] I/O APIC (ID=0 at 0x0xFEC00000)
+[ACPI] MADT parsing complete
+[ACPI] MCFG found, parsing...
+[ACPI-MCFG] ECAM base=0x0xB0000000 segment=0 bus=0-255
+[ACPI] Init complete
+[KMAIN]   - ACPI initialized
+
+[KMAIN] Phase 3: Managed kernel initialization
+[ModuleHelpers] - RhpRegisterOsModule called for OS Module 0x4800216549358D48
+[KERNEL]   - Initializing heap...
+[PageAllocator] Initializing heap using Limine memory map...
+[PageAllocator] Memory map detected with 16 entries:
+[MemMap] Entry 0: 0x1000 - 0x61000 (0 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 1: 0x61000 - 0x9F000 (0 MB) Type: 0 (Usable)
+[MemMap] Entry 2: 0x9FC00 - 0xA0000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 3: 0xF0000 - 0x100000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 4: 0x100000 - 0x1F1BA000 (496 MB) Type: 0 (Usable)
+[MemMap] Entry 5: 0x1F1BA000 - 0x1F5BE000 (4 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 6: 0x1F5BE000 - 0x1F844000 (2 MB) Type: 6 (Kernel and Modules)
+[MemMap] Entry 7: 0x1F844000 - 0x1FF53000 (7 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 8: 0x1FF53000 - 0x1FF79000 (0 MB) Type: 0 (Usable)
+[MemMap] Entry 9: 0x1FF79000 - 0x1FFDF000 (0 MB) Type: 5 (Bootloader Reclaimable)
+[MemMap] Entry 10: 0x1FFDF000 - 0x20000000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 11: 0xB0000000 - 0xC0000000 (256 MB) Type: 1 (Reserved)
+[MemMap] Entry 12: 0xFD000000 - 0xFD3E8000 (3 MB) Type: 7 (Framebuffer)
+[MemMap] Entry 13: 0xFED1C000 - 0xFED20000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 14: 0xFEFFC000 - 0xFF000000 (0 MB) Type: 1 (Reserved)
+[MemMap] Entry 15: 0xFFFC0000 - 0x100000000 (0 MB) Type: 1 (Reserved)
+[PageAllocator] Searching for largest safe usable memory region...
+[PageAllocator] Protected: Kernel/Modules 0x1F5BE000 - 0x1F844000 (2 MB)
+[PageAllocator] Protected: Framebuffer 0xFD000000 - 0xFD3E8000 (3 MB)
+[PageAllocator] Evaluating region: phys 0x61000 - 0x9F000 (0 MB)
+[PageAllocator]  Best candidate so far: 0 MB
+[PageAllocator] Evaluating region: phys 0x100000 - 0x1F1BA000 (496 MB)
+[PageAllocator]  Best candidate so far: 496 MB
+[PageAllocator] Evaluating region: phys 0x1FF53000 - 0x1FF79000 (0 MB)
+[PageAllocator] Selected largest usable region:
+  Start (virt): 0xFFFF800000100000
+  Size: 496 MB (520855552 bytes)
+[PageAllocator] Total pages: 127162, RAT pages: 32, RAT size: 128 KB
+[PageAllocator] Memory layout (Cosmos-style):
+  RamStart (heap): 0xFFFF800000100000
+  s_heapEnd: 0xFFFF80001F19A000
+  RAT location: 0xFFFF80001F19A000
+  RAT end: 0xFFFF80001F1BA000
+  Heap size: 496 MB
+[PageAllocator] Initializing 127162 RAT entries...
+[PageAllocator] Testing first RAT write at 0xFFFF80001F19A000...
+[PageAllocator] First write successful, initializing all entries...
+[PageAllocator] Initialized 10000 / 127162 entries...
+[PageAllocator] Initialized 20000 / 127162 entries...
+[PageAllocator] Initialized 30000 / 127162 entries...
+[PageAllocator] Initialized 40000 / 127162 entries...
+[PageAllocator] Initialized 50000 / 127162 entries...
+[PageAllocator] Initialized 60000 / 127162 entries...
+[PageAllocator] Initialized 70000 / 127162 entries...
+[PageAllocator] Initialized 80000 / 127162 entries...
+[PageAllocator] Initialized 90000 / 127162 entries...
+[PageAllocator] Initialized 100000 / 127162 entries...
+[PageAllocator] Initialized 110000 / 127162 entries...
+[PageAllocator] Initialized 120000 / 127162 entries...
+[PageAllocator] All RAT entries initialized.
+[PageAllocator] Marking RAT pages (32 pages starting at index 127130)...
+[PageAllocator] Heap initialization complete!
+  Total pages: 127162
+  Free pages: 127130
+  Usable heap: 496 MB
+[PageAllocator] Testing RAT write access...
+[PageAllocator] RAT write test passed
+[PageAllocator] Initializing SmallHeap...
+[SmallHeap] Init started
+[SmallHeap] Max item size: 1020
+[SmallHeap] InitSMTPage - Allocating SMT page
+[SmallHeap] SMT page allocated at: 0xFFFF800000100000
+[SmallHeap] Adding root SMT blocks
+[SmallHeap] AddRootSMTBlock - size: 16
+[SmallHeap] CreatePage - itemSize: 16
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000101000
+[SmallHeap] AddRootSMTBlock - size: 24
+[SmallHeap] CreatePage - itemSize: 24
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000102000
+[SmallHeap] AddRootSMTBlock - size: 48
+[SmallHeap] CreatePage - itemSize: 48
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000103000
+[SmallHeap] AddRootSMTBlock - size: 64
+[SmallHeap] CreatePage - itemSize: 64
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000104000
+[SmallHeap] AddRootSMTBlock - size: 128
+[SmallHeap] CreatePage - itemSize: 128
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000105000
+[SmallHeap] AddRootSMTBlock - size: 256
+[SmallHeap] CreatePage - itemSize: 256
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000106000
+[SmallHeap] AddRootSMTBlock - size: 512
+[SmallHeap] CreatePage - itemSize: 512
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000107000
+[SmallHeap] AddRootSMTBlock - size: 1024
+[SmallHeap] CreatePage - itemSize: 1024
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000108000
+[SmallHeap] AddRootSMTBlock - size: 2048
+[SmallHeap] CreatePage - itemSize: 2048
+[SmallHeap] HeapSmall page allocated at: 0xFFFF800000109000
+[SmallHeap] InitSMTPage complete
+[SmallHeap] Init complete, SMT at: 0xFFFF800000100000
+[KERNEL]   - Initializing garbage collector...
+[GC] Initializing with free list allocator
+[GC] Initialization complete
+[KERNEL]   - Initializing managed modules...
+[ManagedModule] - Initilizing Module Handlers - Starting
+[ManagedModule] - Found 1 modules
+[ManagedModule] - Setting TypeManagerSlot for module 0
+[ManagedModule] - Initializing Statics for module 0
+[GC] Registered frozen segment at 0xFFFFFFFF801E5540, size: 193176
+[ManagedModule] - Running Static Constructors for all modules
+[ManagedModule] - Running Initializers, found 4 initializers for section 205
+[ManagedModule] - Running Initializer at address 801E5000
+[ManagedModule] - Completed Initializer at address 801E5000
+[ManagedModule] - Running Initializer at address 801E5004
+[ManagedModule] - Completed Initializer at address 801E5004
+[ManagedModule] - Running Initializer at address 801E5008
+[ManagedModule] - Completed Initializer at address 801E5008
+[ManagedModule] - Running Initializer at address 801E500C
+[ManagedModule] - Completed Initializer at address 801E500C
+[ManagedModule] - Initilizing Module Handlers - Complete
+[KERNEL]   - Architecture: x86-64
+[KERNEL]   - Initializing HAL...
+[KERNEL]   - Recording the firmware device tree...
+[Firmware] No device tree
+[KERNEL]   - Initializing interrupts...
+[InterruptManager.Initialize] Allocating handlers array...
+[InterruptManager.Initialize] Initializing platform interrupt controller...
+[X64InterruptController] Starting IDT initialization...
+[IDT] Initializing with CS=0x28
+[IDT] Allocating s_idtEntries array...
+[IDT] s_idtEntries length: 256
+[IDT] Setting entry 0
+[IDT] Setting entry 255
+[IDT] IDT base: 0xFFFF80000010F068
+[IDT] IDT Limit: 0xFFF
+[IDT] Loaded 256 interrupt vectors at 0xFFFF80000010F068
+[IDT] IDT loaded.
+[X64InterruptController] IDT initialization complete
+[InterruptManager.Initialize] Interrupt system ready
+[KERNEL]   - Initializing platform hardware...
+[X64HAL] Displaying ACPI MADT info...
+[ACPI] Local APIC at 0xFEE00000
+[ACPI] Found 4 CPU(s)
+[ACPI]   CPU 0 -> APIC ID 0 (enabled)
+[ACPI]   CPU 1 -> APIC ID 1 (enabled)
+[ACPI]   CPU 2 -> APIC ID 2 (enabled)
+[ACPI]   CPU 3 -> APIC ID 3 (enabled)
+[ACPI] Found 1 I/O APIC(s)
+[ACPI]   I/O APIC 0 at 0xFEC00000 (GSI base: 0)
+[ACPI] Found 5 IRQ override(s)
+[ACPI]   IRQ 0 -> GSI 2
+[ACPI]   IRQ 5 -> GSI 5 (level triggered)
+[ACPI]   IRQ 9 -> GSI 9 (level triggered)
+[ACPI]   IRQ A -> GSI 10 (level triggered)
+[ACPI]   IRQ B -> GSI 11 (level triggered)
+[X64HAL] Initializing APIC...
+[ApicManager] Starting APIC initialization...
+[LegacyPIC] Remapping and disabling 8259 PIC...
+[LegacyPIC] 8259 PIC remapped and disabled
+[ApicManager] Initializing Local APIC...
+[LocalAPIC] Initializing at 0xFEE00000
+[LocalAPIC] ID: 0
+[LocalAPIC] Version: 0x50014
+[LocalAPIC] SVR set to 0x1FF
+[LocalAPIC] Initialization complete
+[ApicManager] Calibrating LAPIC timer...
+[LocalAPIC] Calibrating timer using PIT...
+[LocalAPIC] Timer calibrated: 62527 ticks/ms
+[ApicManager] Initializing I/O APIC...
+[IOAPIC] Initializing at 0xFEC00000
+[IOAPIC] GSI base: 0
+[IOAPIC] ID: 0
+[IOAPIC] Version: 17
+[IOAPIC] Max redirection entries: 24
+[IOAPIC] Initialization complete
+[ApicManager] APIC system initialized
+[X64HAL] Calibrating TSC frequency...
+[X64HAL] TSC frequency: 2498412000 Hz
+[X64HAL] Initializing RTC...
+[RTC] Initializing...
+[RTC] EFI system table response is null
+[RTC] Boot time (Limine): 2026-11-19 23:20:16 UTC
+[RTC] Initialized
+[X64HAL] Initializing PIT...
+[PIT] Initializing...
+[PIT] Initialized
+[PIT] Registering IRQ 0 handler...
+[InterruptManager] Routing IRQ 0 -> vector 0x20
+[PIT] IRQ 0 handler registered
+[KERNEL]   - Publishing platform nodes...
+[X64HAL] Publishing the 8042 node...
+[X64HAL] Publishing the legacy PCI host node...
+[KERNEL]   - Recording the firmware framebuffer...
+[KERNEL]   - Initializing exception handlers...
+[ExceptionHandler] CPU exception handlers registered
+[KERNEL]   - Initializing scheduler...
+[SCHED] Detected 4 CPU(s)
+[SCHED] Idle thread 0 for CPU 0
+[SCHED] Idle thread 1 for CPU 1
+[SCHED] Idle thread 2 for CPU 2
+[SCHED] Idle thread 3 for CPU 3
+[SCHED] Using Stride scheduler
+[SCHED] Scheduler enabled
+[KERNEL]   - Starting scheduler timer...
+[X64HAL] Registering LAPIC timer handler...
+[LocalAPIC] Registering timer handler for vector 0xEF
+[X64HAL] Starting LAPIC timer for scheduling...
+[LocalAPIC] Starting periodic timer:
+[LocalAPIC]   TicksPerMs: 62527
+[LocalAPIC]   Interval: 10ms
+[LocalAPIC]   Ticks: 625270
+[LocalAPIC]   Vector: 0xEF
+[KERNEL]   - Starting application processors...
+[SMP] Starting CPU 1 (hw id 0x1)
+[SMP] CPU 1 up, hw id 0x1, counter skew 42222 ticks
+[SMP] Starting CPU 2 (hw id 0x2)
+[SMP] CPU 2 up, hw id 0x2, counter skew 34484 ticks
+[SMP] Starting CPU 3 (hw id 0x3)
+[SMP] CPU 3 up, hw id 0x3, counter skew 71148 ticks
+[KERNEL]   - Initializing timer manager...
+[KERNEL]   - Initializing keyboard manager...
+[KERNEL]   - Initializing mouse manager...
+[KERNEL]   - Initializing network manager...
+[KERNEL]   - Initializing display manager...
+[KERNEL]   - Initializing audio manager...
+[KERNEL]   - Initializing storage manager...
+[ManagedModule] - Running Module Initializers for module 0
+[ManagedModule] - Running Initializers, found 1 initializers for section 213
+[ManagedModule] - Running Initializer at address [LAPIC] Timer tick 1 RSP=FFFF80001F5B9D30
+[SCHED] Tick 1 enabled=1
+80218EF0
+[ManagedModule] - Completed Initializer at address 80218EF0
+
+[KMAIN] Phase 4: User kernel
+[SCHED] CreateThread: entering
+[SCHED] CreateThread: done
+[SCHED] Running thread 4
+[SCHED] Invoking thread entry
+[SCHED] Setting thread exit callback: 0xFFFFFFFF800E5A70
+[Kernel] Constructing Cosmos.Kernel.System.Kernel instance
+[KernelEntry] Registering kernel
+[KernelEntry] Start called
+[KernelEntry] Starting kernel...
+[Kernel] Starting kernel...
+[Kernel] Enabling interrupts...
+[Kernel] Starting the finalizer thread...
+[SCHED] CreateThread: entering
+[SCHED] CreateThread: done
+[SCHED] Running thread 5
+[SCHED] Invoking thread entry
+[Kernel] Starting drivers...
+[Drivers] manifest: HdAudioDriver(prio 0) EhciDriver(prio 0) OhciDriver(prio 0) PcieRootPortDriver(prio 0) VirtioPciTransportDriver(prio 0) XhciDriver(prio 0) AmdDcnDriver(prio 0) IntelGraphicsDriver(prio 0) VmwareSvgaDriver(prio 0) E1000EDriver(prio 0) AhciDriver(prio 0) NvmeDriver(prio 0) I8042Driver(prio 0) PciHostDriver(prio 0) VirtioMmioTransportDriver(prio 0) Ps2KeyboardDriver(prio 0) Ps2MouseDriver(prio 0) UsbHubDriver(prio 0) UsbKeyboardDriver(prio 0) UsbMouseDriver(prio 0) UsbMassStorageDriver(prio 0) VirtioGpuDriver(prio 0) VirtioInputDriver(prio 0) Virt[iLoANPeItCD]r iTviemre(rp rtiioc k0 ) VirtioBlkDriver(prio 0)2
+ RSP=[Display] primary: firmware "framebuffer" (the only display)
+FFFF80001F5B9D10[Drivers] 
+firmware published display "framebuffer" (consumed)[SCHED] Tick 
+2 enabled=[SCHED] CreateThread: entering
+1[SCHED] CreateThread: done
+
+[SCHED] Running thread [LAPIC] Timer tick 3 RSP=FFFF80001F056D90
+[SCHED] Tick 3 enabled=1
+6
+[SCHED] Invoking thread entry
+[Drivers] engine started, worker thread
+[LAPIC] Timer tick 4 RSP=FFFF80001F5B9D10
+[SCHED] Tick 4 enabled=1
+[Drivers] platform:i8042@60 candidates: I8042Driver(prio 0, spec 1)
+[InterruptManager] Routing IRQ 1 -> vector 0x21
+[InterruptManager] Routing IRQ C -> vector 0x2C
+[Drivers] platform:i8042@60 I8042Driver: dual channel, translation on, lines 1 and 12
+[Drivers] platform:i8042@60 offer I8042Driver -> bound
+[Drivers] platform:pci@cf8 candidates: PciHostDriver(prio 0, spec 1)
+[LAPIC] Timer tick 5 RSP=FFFF80001F056860
+[SCHED] Tick 5 enabled=1
+[Drivers] platform:pci@cf8 PciHostDriver: 6 functions on 1 buses
+[Drivers] platform:pci@cf8 offer PciHostDriver -> bound
+[Drivers] ps2:kbd candidates: Ps2KeyboardDriver(prio 0, spec 1)
+[KeyboardManager] Registered keyboard, total: 1
+[Drivers] ps2:kbd Ps2KeyboardDriver published keyboard "ps2-keyboard" (consumed)
+[Drivers] ps2:kbd Ps2KeyboardDriver: MF2 keyboard (id ab 41), scanning
+[Drivers] ps2:kbd offer Ps2KeyboardDriver -> bound
+[Drivers] ps2:aux candidates: Ps2MouseDriver(prio 0, spec 1)
+[MouseManager] Registered mouse, total: 1
+[Drivers] ps2:aux Ps2MouseDriver published pointer "ps2-mouse" (consumed)[SCHED] Tick 6 enabled=1
+
+[Drivers] ps2:aux Ps2MouseDriver: wheel mouse (id 03), 4-byte packets, reporting
+[Drivers] ps2:aux offer Ps2MouseDriver -> bound
+[Drivers] pci:0000:00:00.0 no driver
+[Drivers] pci:0000:00:01.0 no driver
+[Drivers] pci:0000:00:02.0 candidates: E1000EDriver(prio 0, spec 2)
+[InterruptManager] Routing IRQ B -> vector 0x2B
+[Drivers] pci:0000:00:02.0 E1000EDriver published network "e1000e" (consumed)
+[Drivers] pci:0000:00:02.0 E1000EDriver: mac 52:54:00:12:34:56, link up, line 11, polling every 10 ms
+[Drivers] pci:0000:00:02.0 offer E1000EDriver -> bound
+[Drivers] [SCHED] Tick 7 enabled=1
+pci:0000:00:1f.0 no driver
+[Drivers] pci:0000:00:1f.2 candidates: AhciDriver(prio 0, spec 3)
+[SCHED] Tick 8 enabled=1
+[SCHED] Tick 9 enabled=1
+[SCHED] Tick 10 enabled=1
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 0: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 1: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 2: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 3: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 4: no device (SSTS 0x0)
+[Drivers] pci:0000:00:1f.2 AhciDriver: port 5: cdrom0, QEMU QEMU DVD-ROM, 5728 sectors of 2048 bytes
+[StorageManager] cdrom0 registered by AhciDriver (primary)
+[Drivers] pci:0000:00:1f.2 AhciDriver published block "cdrom0" (consumed)
+[Drivers] pci:0000:00:1f.2 AhciDriver: 0 sata ports and 1 satapi ports of 6 implemented, version 1.0, 32 slots, 64-bit
+[Drivers] pci:0000:00:1f.2 offer AhciDriver -> bound
+[Drivers] pci:0000:00:1f.3 no driver
+[Kernel] Calling OnBoot()...
+[Kernel] OnBoot() called
+[Kernel] Initializing KernelConsole...
+Cosmos.Kernel.HAL.Interrupts.Enabled = true
+Cosmos.Kernel.HAL.UART.Enabled = true
+Cosmos.Kernel.HAL.PCI.Enabled = true
+Cosmos.Kernel.System.Timer.Enabled = true
+Cosmos.Kernel.System.Input.Keyboard.Enabled = true
+Cosmos.Kernel.System.Input.Mouse.Enabled = true
+Cosmos.Kernel.System.Network.Enabled = true
+Cosmos.Kernel.System.Storage.Enabled = true
+Cosmos.Kernel.System.Filesystems.Fat.Enabled = true
+Cosmos.Kernel.HAL.Usb.Enabled = true
+Cosmos.Kernel.System.Graphics.Enabled = true
+Cosmos.Kernel.Core.Scheduler.Enabled = true
+Cosmos.Kernel.System.Audio.Enabled = true
+Cosmos.Kernel.Core.FinalizerThread.Enabled = true
+Microsoft.Extensions.DependencyInjection.VerifyOpenGenericServiceTrimmability = true
+System.ComponentModel.DefaultValueAttribute.IsSupported = false
+System.ComponentModel.Design.IDesignerHost.IsSupported = false
+System.ComponentModel.TypeConverter.EnableUnsafeBinaryFormatterInDesigntimeLicenseContextSerialization = false
+System.ComponentModel.TypeDescriptor.IsComObjectDescriptorSupported = false
+System.Data.DataSet.XmlSerializationIsSupported = false
+System.Globalization.Invariant = true
+System.Globalization.PredefinedCulturesOnly = true
+System.Net.Security.UseManagedNtlm = false
+System.Net.SocketsHttpHandler.Http3Support = false
+System.Reflection.Metadata.MetadataUpdater.IsSupported = false
+System.Resources.ResourceManager.AllowCustomResourceTypes = false
+System.Resources.UseSystemResourceKeys = false
+System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported = true
+System.Runtime.InteropServices.BuiltInComInterop.IsSupported = false
+System.Runtime.InteropServices.EnableConsumingManagedCodeFromNativeHosting = false
+System.Runtime.InteropServices.EnableCppCLIHostActivation = false
+System.Runtime.InteropServices.Marshalling.EnableGeneratedComInterfaceComImportInterop = false
+System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization = false
+System.StartupHookProvider.IsSupported = false
+System.Text.Encoding.EnableUnsafeUTF7Encoding = false
+System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault = false
+System.Threading.Thread.EnableAutoreleasePool = false
+RUNTIME_IDENTIFIER = linux-x64
+Found resource: Cosmos.Kernel.System.Graphics.Fonts.DefaultFont.psf
+Loading default PSF font from resources...
+Font Key: Cosmos.Kernel.System.Graphics.Fonts.DefaultFont.psfFont size: 17403 bytes
+[Kernel] KernelConsole initialized: 80x25 chars
+[Kernel] Calling BeforeRun()...
+[GarbageCollector] BeforeRun() reached!
+[GarbageCollector] Starting tests...
+td  E5H Probete  E5H_FragProbe[GC] Collection #1, refills since the last: 37
+[GC] Freed 370 objects
+[E5H] A-start requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #2, refills since the last: 100
+[GC] Freed 6 objects
+[E5H] A-oom requested=8388608 needPages=2049 liveMiB=487 totalPages=127162 freePages=733 freeMiB=2 longestFreeRun=733 freeRuns=1 runs>=257=1 runs>=2049=0 runs<16=0 gcSegs=105 gcSegs<=16p=6 gcSegPages=125881 unmanagedStarts=16 ext=126263
+[E5H] map 4..4#############################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+[GC] Collection #3, refills since the last: 3
+[GC] Freed 109 objects
+[E5H] A-end requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #4, refills since the last: 3
+[GC] Freed 5 objects
+[E5H] B40-start requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] B40 step=0
+[E5H] B40-step requested=4194304 needPages=1025 liveMiB=4 totalPages=127162 freePages=124492 freeMiB=486 longestFreeRun=124492 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2122 unmanagedStarts=16 ext=2601
+[E5H] map 4.....................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8##########
+[GC] Collection #5, refills since the last: 1315
+[GC] Freed 6600 objects
+[LAPIC] Timer tick 100 RSP=FFFF80001F5B9D10
+[GC] Collection #6, refills since the last: 701
+[GC] Freed 3449 objects
+[GC] Collection #7, refills since the last: 620
+[GC] Freed 3124 objects
+[GC] Collection #8, refills since the last: 669
+[GC] Freed 3450 objects
+[GC] Collection #9, refills since the last: 586
+[GC] Freed 3060 objects
+[GC] Collection #10, refills since the last: 644
+[GC] Freed 3125 objects
+[GC] Collection #11, refills since the last: 590
+[GC] Freed 2930 objects
+[GC] Collection #12, refills since the last: 671
+[GC] Freed 3385 objects
+[E5H] B40 step=500
+[E5H] B40-step requested=7340032 needPages=1793 liveMiB=158 totalPages=127162 freePages=20618 freeMiB=80 longestFreeRun=1795 freeRuns=27 runs>=257=22 runs>=2049=0 runs<16=1 gcSegs=202 gcSegs<=16p=108 gcSegPages=105996 unmanagedStarts=16 ext=106281
+[E5H] map ######04####5......4#########5.....4########5.4##5..4###############5.4#############5..4###########45######################4..5#######4...5############4...5#####4.5#######################################3..6#############3...6#########36#############3....6##3.6###############3....6#############################27#############2.7##########27##################2..7########################################1......8###############18#########0######################1..8###############1....8#############
+[GC] Collection #13, refills since the last: 721
+[GC] Freed 3711 objects
+[GC] Collection #14, refills since the last: 744
+[GC] Freed 3775 objects
+[GC] Collection #15, refills since the last: 666
+[GC] Freed 3320 objects
+[GC] Collection #16, refills since the last: 715
+[GC] Freed 3645 objects
+[GC] Collection #17, refills since the last: 751
+[GC] Freed 3775 objects
+[GC] Collection #18, refills since the last: 716
+[GC] Freed 3515 objects
+[GC] Collection #19, refills since the last: 695
+[GC] Freed 3450 objects
+[GC] Collection #20, refills since the last: 612
+[GC] Freed 3190 objects
+[GC] Collection #21, refills since the last: 574
+[GC] Freed 2930 objects
+[GC] Collection #22, refills since the last: 567
+[GC] Freed 2930 objects
+[E5H] B40 step=1000
+[E5H] B40-step requested=6291456 needPages=1537 liveMiB=207 totalPages=127162 freePages=41166 freeMiB=160 longestFreeRun=6658 freeRuns=24 runs>=257=23 runs>=2049=7 runs<16=0 gcSegs=125 gcSegs<=16p=57 gcSegPages=85448 unmanagedStarts=16 ext=85810
+[E5H] map ###2...4############5..........4#######54###########5.........................4######5.......4#######5..4###4............5########4............5###########4...............5#####3............6#3.....6#######3....6#####################3.6#############3...6##3..6######################2....7##############2....7##############2......7######27#######2.7############2......7################################################################1.8######################18#############1..8#####################
+[GC] Collection #23, refills since the last: 680
+[GC] Freed 3451 objects
+[GC] Collection #24, refills since the last: 659
+[GC] Freed 3320 objects
+[GC] Collection #25, refills since the last: 721
+[GC] Freed 3580 objects
+[GC] Collection #26, refills since the last: 764
+[GC] Freed 3840 objects
+[GC] Collection #27, refills since the last: 787
+[GC] Freed 3970 objects
+[GC] Collection #28, refills since the last: 700
+[GC] Freed 3515 objects
+[GC] Collection #29, refills since the last: 696
+[GC] Freed 3515 objects
+[LAPIC] Timer tick 200 RSP=FFFF80001F5B9D10
+[GC] Collection #30, refills since the last: 840
+[GC] Freed 4296 objects
+[GC] Collection #31, refills since the last: 789
+[GC] Freed 4035 objects
+[E5H] B40 step=1500
+[E5H] B40-step requested=2097152 needPages=513 liveMiB=154 totalPages=127162 freePages=70562 freeMiB=275 longestFreeRun=8194 freeRuns=25 runs>=257=22 runs>=2049=12 runs<16=0 gcSegs=82 gcSegs<=16p=29 gcSegPages=56052 unmanagedStarts=16 ext=56457
+[E5H] map ##9......4####5.....4####54#####54################5........4#5.................4#######5.........5##4......5#######4...............................5#######4.................54....6#####3.6##################3.6###3........6#################3............................6######2......7#2..................7#######2................7########2......................7###2............7###2......7###17#######2........................8##############################1...8############1..8###################
+[GC] Collection #32, refills since the last: 753
+[GC] Freed 3906 objects
+[GC] Collection #33, refills since the last: 694
+[GC] Freed 3580 objects
+[GC] Collection #34, refills since the last: 720
+[GC] Freed 3775 objects
+[GC] Collection #35, refills since the last: 686
+[GC] Freed 3450 objects
+[GC] Collection #36, refills since the last: 639
+[GC] Freed 3125 objects
+[GC] Collection #37, refills since the last: 605
+[GC] Freed 3125 objects
+[GC] Collection #38, refills since the last: 757
+[GC] Freed 3840 objects
+[GC] Collection #39, refills since the last: 696
+[GC] Freed 3580 objects
+[GC] Collection #40, refills since the last: 594
+[GC] Freed 2995 objects
+[E5H] B40 step=2000
+[E5H] B40-step requested=7340032 needPages=1793 liveMiB=196 totalPages=127162 freePages=35689 freeMiB=139 longestFreeRun=6922 freeRuns=23 runs>=257=22 runs>=2049=7 runs<16=0 gcSegs=134 gcSegs<=16p=63 gcSegPages=90925 unmanagedStarts=16 ext=91278
+[E5H] map ####8.....4###5.........4#############5.4#################5.......4######54########4.........5###################4..........................5#####4.......5#####4.......5#######3..6#####3.........6#########3.......6######################3.....6#####3...6#################3.6####################2...7##########################2....7#############################2..7################################1.8##############1...8#####1818##########################################################1.....8######
+[GC] Collection #41, refills since the last: 572
+[GC] Freed 2866 objects
+[GC] Collection #42, refills since the last: 651
+[GC] Freed 3385 objects
+[GC] Collection #43, refills since the last: 686
+[GC] Freed 3450 objects
+[GC] Collection #44, refills since the last: 667
+[GC] Freed 3255 objects
+[GC] Collection #45, refills since the last: 781
+[GC] Freed 3970 objects
+[GC] Collection #46, refills since the last: 677
+[GC] Freed 3385 objects
+[GC] Collection #47, refills since the last: 862
+[GC] Freed 4360 objects
+[GC] Collection #48, refills since the last: 634
+[GC] Freed 3190 objects
+[GC] Collection #49, refills since the last: 817
+[GC] Freed 4100 objects
+[E5H] B40 step=2500
+[E5H] B40-step requested=3145728 needPages=769 liveMiB=172 totalPages=127162 freePages=38251 freeMiB=149 longestFreeRun=6406 freeRuns=25 runs>=257=19 runs>=2049=5 runs<16=1 gcSegs=159 gcSegs<=16p=79 gcSegPages=88363 unmanagedStarts=16 ext=88691
+[E5H] map #####8....4#####5.......4##########5.....4###5........................4#####4..........5##4....5##454..................5#####4.5########45#4.....5#######4.....................6##########3...6##########3..6##########################################################################3.6#############26############27#####################0############################2..7####################27###2....7#############1....8############################1.....8#######1...8##################1..8#############
+[GC] Collection #50, refills since the last: 777
+[GC] Freed 3906 objects
+[GC] Collection #51, refills since the last: 737
+[GC] Freed 3710 objects
+[GC] Collection #52, refills since the last: 638
+[GC] Freed 3190 objects
+[LAPIC] Timer tick 300 RSP=FFFF80001F5B9D10
+[GC] Collection #53, refills since the last: 668
+[GC] Freed 3451 objects
+[GC] Collection #54, refills since the last: 598
+[GC] Freed 2995 objects
+[GC] Collection #55, refills since the last: 561
+[GC] Freed 2800 objects
+[GC] Collection #56, refills since the last: 692
+[GC] Freed 3515 objects
+[GC] Collection #57, refills since the last: 732
+[GC] Freed 3710 objects
+[GC] Collection #58, refills since the last: 753
+[GC] Freed 3840 objects
+[GC] Collection #59, refills since the last: 659
+[GC] Freed 3385 objects
+[E5H] B40 step=3000
+[E5H] B40-step requested=5242880 needPages=1281 liveMiB=174 totalPages=127162 freePages=70440 freeMiB=275 longestFreeRun=8968 freeRuns=28 runs>=257=26 runs>=2049=13 runs<16=1 gcSegs=71 gcSegs<=16p=21 gcSegPages=56174 unmanagedStarts=16 ext=56590
+[E5H] map #4.................4#5..4#####5.........4####5.4###5.......4#5......5######4............5####4.....5#####4......................5##4........5###4.........................5######################3......5#########3............6####3..63..6##########3....................6#####0#############2...7#####2.......7######2......7######2..................................7######2...72..............7####1.....8#########1................8###########18#############1.8##################1...8##################
+[GC] Collection #60, refills since the last: 751
+[GC] Freed 3776 objects
+[GC] Collection #61, refills since the last: 677
+[GC] Freed 3450 objects
+[GC] Collection #62, refills since the last: 752
+[GC] Freed 3775 objects
+[GC] Collection #63, refills since the last: 829
+[GC] Freed 4165 objects
+[GC] Collection #64, refills since the last: 681
+[GC] Freed 3450 objects
+[GC] Collection #65, refills since the last: 766
+[GC] Freed 3775 objects
+[GC] Collection #66, refills since the last: 760
+[GC] Freed 3840 objects
+[GC] Collection #67, refills since the last: 693
+[GC] Freed 3580 objects
+[GC] Collection #68, refills since the last: 586
+[GC] Freed 2865 objects
+[E5H] B40 step=3500
+[E5H] B40-step requested=2097152 needPages=513 liveMiB=199 totalPages=127162 freePages=63042 freeMiB=246 longestFreeRun=10762 freeRuns=23 runs>=257=20 runs>=2049=11 runs<16=1 gcSegs=67 gcSegs<=16p=19 gcSegPages=63572 unmanagedStarts=16 ext=63992
+[E5H] map #5........4#######5...4###################5......4##############5.............................5#######4..................5#######4..............5#4......5######4......5#4..5######4.......5######4.6###########3..............6####3...........6#####3................6###################3...................7#2............7##2......7####2.........................................7#######27#################18###############0####################1....8###########1.8#####################################
+[GC] Collection #69, refills since the last: 791
+[GC] Freed 4036 objects
+[GC] Collection #70, refills since the last: 832
+[GC] Freed 4230 objects
+[GC] Collection #71, refills since the last: 699
+[GC] Freed 3515 objects
+[GC] Collection #72, refills since the last: 752
+[GC] Freed 3840 objects
+[GC] Collection #73, refills since the last: 712
+[GC] Freed 3645 objects
+[GC] Collection #74, refills since the last: 652
+[GC] Freed 3320 objects
+[GC] Collection #75, refills since the last: 783
+[GC] Freed 3970 objects
+[LAPIC] Timer tick 400 RSP=FFFF80001F5B9D10
+[GC] Collection #76, refills since the last: 749
+[GC] Freed 3776 objects
+[E5H] B40-noOOM requested=0 needPages=1 liveMiB=188 totalPages=127162 freePages=27233 freeMiB=106 longestFreeRun=4356 freeRuns=26 runs>=257=22 runs>=2049=3 runs<16=3 gcSegs=160 gcSegs<=16p=79 gcSegPages=99381 unmanagedStarts=16 ext=99708
+[E5H] map #####8.4###########5.......4###############5................4###################5.4#######5.4########4..............5#4..5#######4......5#########4.........5###########0##############3.6#################3......6######0#################################################36#####################2.7##################2.......7###########27#################27######2..7###################27#2...7##############2.71..8#########################1..8##########0############1.8################################
+[GC] Collection #77, refills since the last: 505
+[GC] Freed 2648 objects
+[E5H] B40-end requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #78, refills since the last: 3
+[GC] Freed 6 objects
+[E5H] C40k8-start requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] C40k8 step=0
+[E5H] C40k8-step requested=5242880 needPages=1281 liveMiB=5 totalPages=127162 freePages=124236 freeMiB=485 longestFreeRun=124236 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2378 unmanagedStarts=16 ext=2857
+[E5H] map 4....................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8###########
+[GC] Collection #79, refills since the last: 1336
+[GC] Freed 5840 objects
+[GC] Collection #80, refills since the last: 708
+[GC] Freed 3366 objects
+[GC] Collection #81, refills since the last: 676
+[GC] Freed 2798 objects
+[GC] Collection #82, refills since the last: 1197
+[GC] Freed 3083 objects
+[GC] Collection #83, refills since the last: 1710
+[GC] Freed 3254 objects
+[GC] Collection #84, refills since the last: 1854
+[GC] Freed 3311 objects
+[GC] Collection #85, refills since the last: 1876
+[GC] Freed 3482 objects
+[GC] Collection #86, refills since the last: 1686
+[GC] Freed 3254 objects
+[E5H] C40k8 step=500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=187 totalPages=127162 freePages=70890 freeMiB=276 longestFreeRun=15121 freeRuns=25 runs>=257=22 runs>=2049=12 runs<16=1 gcSegs=293 gcSegs<=16p=249 gcSegPages=55724 unmanagedStarts=16 ext=55918
+[E5H] map #############0###44######################24#######5.....4##5................4#5.......5###########4.........5#######4....5##########4.5############4...............5#####4.......5###4...5#####4...5###4..5########3..................6#######3.................6#####3...6##3..................6#####36#####2..................7#######2.....7##2...................................7####2........7#########2..........................................................8#########1.8############################
+[GC] Collection #87, refills since the last: 1586
+[GC] Freed 3144 objects
+[GC] Collection #88, refills since the last: 1819
+[GC] Freed 3645 objects
+[GC] Collection #89, refills since the last: 1822
+[GC] Freed 3515 objects
+[GC] Collection #90, refills since the last: 1834
+[GC] Freed 3710 objects
+[GC] Collection #91, refills since the last: 1979
+[GC] Freed 3905 objects
+[GC] Collection #92, refills since the last: 1403
+[GC] Freed 3125 objects
+[GC] Collection #93, refills since the last: 1185
+[GC] Freed 2800 objects
+[GC] Collection #94, refills since the last: 1248
+[GC] Freed 2800 objects
+[GC] Collection #95, refills since the last: 1620
+[GC] Freed 3125 objects
+[E5H] C40k8 step=1000
+[E5H] C40k8-step requested=4194304 needPages=1025 liveMiB=195 totalPages=127162 freePages=18353 freeMiB=71 longestFreeRun=1792 freeRuns=29 runs>=257=21 runs>=2049=0 runs<16=1 gcSegs=367 gcSegs<=16p=282 gcSegPages=108261 unmanagedStarts=16 ext=108381
+[E5H] map ########0######2#0..4####5.....4######5..7.4####5...4##############5......4###############5..4#########################################45##################4.5###0####################################4..5############36############3.6#####36###############################3.6###36####36############3...7##############2.7######2.....7##############2...7######################27###############1...8##################1.....8###############18##########18###########################18#####################
+[GC] Collection #96, refills since the last: 1471
+[GC] Freed 2931 objects
+[GC] Collection #97, refills since the last: 1480
+[GC] Freed 2995 objects
+[LAPIC] Timer tick 500 RSP=FFFF80001F5B9D10
+[GC] Collection #98, refills since the last: 1244
+[GC] Freed 2671 objects
+[GC] Collection #99, refills since the last: 1610
+[GC] Freed 3190 objects
+[GC] Collection #100, refills since the last: 1996
+[GC] Freed 3840 objects
+[GC] Collection #101, refills since the last: 1890
+[GC] Freed 3710 objects
+[GC] Collection #102, refills since the last: 2014
+[GC] Freed 3905 objects
+[GC] Collection #103, refills since the last: 1803
+[GC] Freed 3645 objects
+[GC] Collection #104, refills since the last: 1528
+[GC] Freed 3320 objects
+[GC] Collection #105, refills since the last: 1506
+[GC] Freed 3190 objects
+[E5H] C40k8 step=1500
+[E5H] C40k8-step requested=2097152 needPages=513 liveMiB=176 totalPages=127162 freePages=37966 freeMiB=148 longestFreeRun=6849 freeRuns=31 runs>=257=23 runs>=2049=4 runs<16=2 gcSegs=361 gcSegs<=16p=289 gcSegPages=88648 unmanagedStarts=16 ext=88774
+[E5H] map ##1#0###0######0##6....4##5......4#######2..........................4########5......4##########5.......4##############4...................5###4..........5####4......5########3....5##########3.6################3......6#################3.6########36#############3.6###3....6######################0####################2..7####2..7####################27#############2.......7##############################1.....8####1..8###########################18##1.8##########1.8#########1..8#####################
+[GC] Collection #106, refills since the last: 1470
+[GC] Freed 3256 objects
+[GC] Collection #107, refills since the last: 1514
+[GC] Freed 3255 objects
+[GC] Collection #108, refills since the last: 1645
+[GC] Freed 3320 objects
+[GC] Collection #109, refills since the last: 1673
+[GC] Freed 3320 objects
+[GC] Collection #110, refills since the last: 2061
+[GC] Freed 3775 objects
+[GC] Collection #111, refills since the last: 1991
+[GC] Freed 3905 objects
+[GC] Collection #112, refills since the last: 1215
+[GC] Freed 2930 objects
+[GC] Collection #113, refills since the last: 1628
+[GC] Freed 3320 objects
+[GC] Collection #114, refills since the last: 1192
+[GC] Freed 2735 objects
+[GC] Collection #115, refills since the last: 1892
+[GC] Freed 3580 objects
+[E5H] C40k8 step=2000
+[E5H] C40k8-step requested=5242880 needPages=1281 liveMiB=165 totalPages=127162 freePages=56796 freeMiB=221 longestFreeRun=5640 freeRuns=32 runs>=257=25 runs>=2049=10 runs<16=1 gcSegs=356 gcSegs<=16p=297 gcSegPages=69818 unmanagedStarts=16 ext=69949
+[E5H] map 0#######00###0#0##1.........4############2...............4##5.....................4#####5.5####4..........5#######4..........5###4................5###4....5#####4...5##############4....5###4...............53...6#####3....................6##########3....................6########3..............72.....7##2......7#####2..727###########2....7#######27######2....7#####################27#####2.7######2...8##########################18###############1.....8#############################################
+[GC] Collection #116, refills since the last: 1576
+[GC] Freed 3256 objects
+[GC] Collection #117, refills since the last: 1844
+[GC] Freed 3710 objects
+[GC] Collection #118, refills since the last: 1654
+[GC] Freed 3385 objects
+[GC] Collection #119, refills since the last: 1451
+[GC] Freed 3125 objects
+[GC] Collection #120, refills since the last: 1297
+[GC] Freed 2865 objects
+[GC] Collection #121, refills since the last: 1829
+[GC] Freed 3645 objects
+[LAPIC] Timer tick 600 RSP=FFFF80001F5B9D10
+[GC] Collection #122, refills since the last: 1620
+[GC] Freed 3386 objects
+[GC] Collection #123, refills since the last: 1745
+[GC] Freed 3580 objects
+[GC] Collection #124, refills since the last: 961
+[GC] Freed 2475 objects
+[GC] Collection #125, refills since the last: 1826
+[GC] Freed 3580 objects
+[E5H] C40k8 step=2500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=171 totalPages=127162 freePages=66084 freeMiB=258 longestFreeRun=9732 freeRuns=30 runs>=257=21 runs>=2049=10 runs<16=2 gcSegs=361 gcSegs<=16p=309 gcSegPages=60530 unmanagedStarts=16 ext=60656
+[E5H] map 0###0####0#0###0###5.......9..4###5......7.............4##5.....45...4#######54#############################5.....4##4..............................5###########4.5#####4............5####0#45######3...........................6####3..................6########3..........6####2...................7######2...7####2...........7#####2...............7####2.....................................7#2......8#######################################1...8###############1.8####################18#################
+[GC] Collection #126, refills since the last: 1792
+[GC] Freed 3711 objects
+[GC] Collection #127, refills since the last: 1702
+[GC] Freed 3645 objects
+[GC] Collection #128, refills since the last: 1513
+[GC] Freed 3255 objects
+[GC] Collection #129, refills since the last: 1579
+[GC] Freed 3320 objects
+[GC] Collection #130, refills since the last: 1975
+[GC] Freed 3840 objects
+[GC] Collection #131, refills since the last: 1094
+[GC] Freed 2735 objects
+[GC] Collection #132, refills since the last: 2277
+[GC] Freed 4295 objects
+[GC] Collection #133, refills since the last: 1825
+[GC] Freed 3775 objects
+[GC] Collection #134, refills since the last: 1566
+[GC] Freed 3450 objects
+[E5H] C40k8 step=3000
+[E5H] C40k8-step requested=1048576 needPages=257 liveMiB=185 totalPages=127162 freePages=48859 freeMiB=190 longestFreeRun=8967 freeRuns=30 runs>=257=22 runs>=2049=8 runs<16=3 gcSegs=389 gcSegs<=16p=329 gcSegPages=77755 unmanagedStarts=16 ext=77853
+[E5H] map ######00#######0##0#5.8....8.4####5......8...............4############5......4###########5.......4#######44#####4.......5###4.5####0###########4...........5######4..........6##3.....................6######3..................................6###3..6##36############3........................6##############26####3...7###########27#####0##################2.....7####################################1...8######################################################1....8######1..8###########################
+[GC] Collection #135, refills since the last: 1452
+[GC] Freed 3191 objects
+[GC] Collection #136, refills since the last: 1686
+[GC] Freed 3515 objects
+[GC] Collection #137, refills since the last: 1829
+[GC] Freed 3775 objects
+[GC] Collection #138, refills since the last: 1484
+[GC] Freed 3320 objects
+[GC] Collection #139, refills since the last: 1575
+[GC] Freed 3320 objects
+[GC] Collection #140, refills since the last: 1981
+[GC] Freed 3710 objects
+[GC] Collection #141, refills since the last: 1605
+[GC] Freed 3255 objects
+[GC] Collection #142, refills since the last: 1587
+[GC] Freed 3385 objects
+[GC] Collection #143, refills since the last: 1186
+[GC] Freed 2865 objects
+[GC] Collection #144, refills since the last: 1465
+[GC] Freed 3125 objects
+[E5H] C40k8 step=3500
+[E5H] C40k8-step requested=3145728 needPages=769 liveMiB=181 totalPages=127162 freePages=66297 freeMiB=258 longestFreeRun=7945 freeRuns=38 runs>=257=27 runs>=2049=10 runs<16=2 gcSegs=390 gcSegs<=16p=344 gcSegPages=60317 unmanagedStarts=16 ext=60414
+[E5H] map ####0####0##1##0#####384###45###4.5###4..8...4################5......4###5...........4##########4..5#########4.........54.............................5#4....5#######4........5##4..5######4....5#####4...5#4.5###########3.......63.....6#####3...........6######3..............................7#####2....72......7######2......................7#######2..............7############2.......7#######2...........................8#######0#########1.....8###################################18###1......8######
+[GC] Collection #145, refills since the last: 1579
+[GC] Freed 3191 objects
+[GC] Collection #146, refills since the last: 1356
+[GC] Freed 2930 objects
+[LAPIC] Timer tick 700 RSP=FFFF80001F5B9D10
+[GC] Collection #147, refills since the last: 1429
+[GC] Freed 2996 objects
+[GC] Collection #148, refills since the last: 1820
+[GC] Freed 3580 objects
+[GC] Collection #149, refills since the last: 1981
+[GC] Freed 3710 objects
+[GC] Collection #150, refills since the last: 1955
+[GC] Freed 3775 objects
+[GC] Collection #151, refills since the last: 1856
+[GC] Freed 3775 objects
+[GC] Collection #152, refills since the last: 1301
+[GC] Freed 2995 objects
+[GC] Collection #153, refills since the last: 2053
+[GC] Freed 3905 objects
+[E5H] C40k8-noOOM requested=0 needPages=1 liveMiB=187 totalPages=127162 freePages=46942 freeMiB=183 longestFreeRun=7681 freeRuns=28 runs>=257=21 runs>=2049=7 runs<16=3 gcSegs=439 gcSegs<=16p=368 gcSegPages=79672 unmanagedStarts=16 ext=79720
+[E5H] map ###############0######09...95####4.......8.4##5...4##################5.........4########5......4##5............................5##########4...5#####4.............5##4..5##4.........5#######4.....................6###3.............................6###3....6#####36##########3.6#########2....7############2.....6#########################2..7##########2...7########2..7#############2....7#######################################################18##0#####################################################
+[GC] Collection #154, refills since the last: 686
+[GC] Freed 6094 objects
+[E5H] C40k8-end requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[GC] Collection #155, refills since the last: 3
+[GC] Freed 6 objects
+[E5H] D56k8-start requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] D56k8 step=0
+[E5H] D56k8-step requested=6291456 needPages=1537 liveMiB=6 totalPages=127162 freePages=123980 freeMiB=484 longestFreeRun=123980 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=8 gcSegs<=16p=6 gcSegPages=2634 unmanagedStarts=16 ext=3113
+[E5H] map 4...................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8############
+[GC] Collection #156, refills since the last: 1462
+[GC] Freed 6454 objects
+[GC] Collection #157, refills since the last: 586
+[GC] Freed 2908 objects
+[GC] Collection #158, refills since the last: 479
+[GC] Freed 2113 objects
+[GC] Collection #159, refills since the last: 572
+[GC] Freed 2342 objects
+[GC] Collection #160, refills since the last: 674
+[GC] Freed 2171 objects
+[GC] Collection #161, refills since the last: 547
+[GC] Freed 1544 objects
+[GC] Collection #162, refills since the last: 702
+[GC] Freed 1601 objects
+[GC] Collection #163, refills since the last: 1268
+[GC] Freed 2285 objects
+[GC] Collection #164, refills since the last: 1420
+[GC] Freed 2228 objects
+[GC] Collection #165, refills since the last: 1662
+[GC] Freed 2285 objects
+[GC] Collection #166, refills since the last: 1361
+[GC] Freed 1943 objects
+[E5H] D56k8 step=500
+[E5H] D56k8-step requested=5242880 needPages=1281 liveMiB=262 totalPages=127162 freePages=40254 freeMiB=157 longestFreeRun=5384 freeRuns=31 runs>=257=28 runs>=2049=4 runs<16=2 gcSegs=295 gcSegs<=16p=226 gcSegPages=86360 unmanagedStarts=16 ext=86552
+[E5H] map ##############64##############5...4##5...4###5..4#############5.....4#####################5.......4######4.....5#############45######0######4....................54....5###################4...5#######35######363.6##########3....6#######3......6##3.....63................6#######36###########2......7####2......7#######2......7#2...7######2.........7#########0#########2.7#####################2......7###########1.8######################1....8#####################1..8###############################
+[GC] Collection #167, refills since the last: 963
+[GC] Freed 1447 objects
+[GC] Collection #168, refills since the last: 1323
+[GC] Freed 2215 objects
+[GC] Collection #169, refills since the last: 1522
+[GC] Freed 2735 objects
+[GC] Collection #170, refills since the last: 1611
+[GC] Freed 3125 objects
+[GC] Collection #171, refills since the last: 1100
+[GC] Freed 2410 objects
+[GC] Collection #172, refills since the last: 928
+[GC] Freed 2085 objects
+[GC] Collection #173, refills since the last: 1027
+[GC] Freed 2085 objects
+[GC] Collection #174, refills since the last: 1236
+[GC] Freed 2280 objects
+[GC] Collection #175, refills since the last: 1034
+[GC] Freed 2150 objects
+[LAPIC] Timer tick 800 RSP=FFFF80001F5B9D10
+[GC] Collection #176, refills since the last: 1081
+[GC] Freed 2151 objects
+[GC] Collection #177, refills since the last: 1511
+[GC] Freed 2670 objects
+[GC] Collection #178, refills since the last: 1351
+[GC] Freed 2475 objects
+[GC] Collection #179, refills since the last: 848
+[GC] Freed 1955 objects
+[GC] Collection #180, refills since the last: 1257
+[GC] Freed 2410 objects
+[E5H] D56k8 step=1000
+[E5H] D56k8-step requested=2097152 needPages=513 liveMiB=251 totalPages=127162 freePages=36218 freeMiB=141 longestFreeRun=6406 freeRuns=32 runs>=257=23 runs>=2049=5 runs<16=2 gcSegs=342 gcSegs<=16p=270 gcSegPages=90396 unmanagedStarts=16 ext=90541
+[E5H] map ###########00####1#########5..4###########5.4#5............4##############################44#######4.......5#####4...5###4.....5#####4.5#####0######4..............5####4.............5##########3.6#3........................6####3.6####3......6#############3....6#########################36#######################27#####################2.7#######2....7######################27##########2....7#######17#############################1.8#1.....8####1...8#######0######1.8#################1.8############
+[GC] Collection #181, refills since the last: 1047
+[GC] Freed 2086 objects
+[GC] Collection #182, refills since the last: 1778
+[GC] Freed 3060 objects
+[GC] Collection #183, refills since the last: 973
+[GC] Freed 2085 objects
+[GC] Collection #184, refills since the last: 1428
+[GC] Freed 2670 objects
+[GC] Collection #185, refills since the last: 638
+[GC] Freed 1565 objects
+[GC] Collection #186, refills since the last: 1175
+[GC] Freed 2215 objects
+[GC] Collection #187, refills since the last: 1383
+[GC] Freed 2410 objects
+[GC] Collection #188, refills since the last: 1287
+[GC] Freed 2410 objects
+[GC] Collection #189, refills since the last: 1464
+[GC] Freed 2605 objects
+[GC] Collection #190, refills since the last: 1517
+[GC] Freed 2670 objects
+[GC] Collection #191, refills since the last: 1257
+[GC] Freed 2475 objects
+[GC] Collection #192, refills since the last: 1127
+[GC] Freed 2215 objects
+[GC] Collection #193, refills since the last: 1104
+[GC] Freed 2150 objects
+[GC] Collection #194, refills since the last: 1230
+[GC] Freed 2345 objects
+[E5H] D56k8 step=1500
+[E5H] D56k8-step requested=1048576 needPages=257 liveMiB=256 totalPages=127162 freePages=45796 freeMiB=178 longestFreeRun=9994 freeRuns=33 runs>=257=29 runs>=2049=5 runs<16=2 gcSegs=346 gcSegs<=16p=280 gcSegPages=80818 unmanagedStarts=16 ext=80959
+[E5H] map #################2....................4####5..........4#######5.........4##5...4######5.4#########5.4##5.4#######4.............5#4......5#4....5################45###4.5#######4......................................6############3.6#36#####3...6#######36##########3....6##3..6#####3.....6####0#################################0###########2...7###########2...7##############2..7####2..7######2..7#######2.7##################1..8##############1...8#########1..8###1.....8#############1.8##############
+[GC] Collection #195, refills since the last: 1211
+[GC] Freed 2346 objects
+[GC] Collection #196, refills since the last: 1370
+[GC] Freed 2540 objects
+[GC] Collection #197, refills since the last: 662
+[GC] Freed 1695 objects
+[GC] Collection #198, refills since the last: 1006
+[GC] Freed 1955 objects
+[GC] Collection #199, refills since the last: 964
+[GC] Freed 1955 objects
+[GC] Collection #200, refills since the last: 1059
+[GC] Freed 2085 objects
+[GC] Collection #201, refills since the last: 1252
+[GC] Freed 2280 objects
+[GC] Collection #202, refills since the last: 1699
+[GC] Freed 2865 objects
+[GC] Collection #203, refills since the last: 1085
+[GC] Freed 2150 objects
+[GC] Collection #204, refills since the last: 1398
+[GC] Freed 2540 objects
+[GC] Collection #205, refills since the last: 1113
+[GC] Freed 2215 objects
+[GC] Collection #206, refills since the last: 1114
+[GC] Freed 2150 objects
+[GC] Collection #207, refills since the last: 977
+[GC] Freed 1955 objects
+[GC] Collection #208, refills since the last: 1216
+[GC] Freed 2150 objects
+[E5H] D56k8 step=2000
+[E5H] D56k8-step requested=6291456 needPages=1537 liveMiB=280 totalPages=127162 freePages=13574 freeMiB=53 longestFreeRun=1537 freeRuns=33 runs>=257=18 runs>=2049=0 runs<16=5 gcSegs=368 gcSegs<=16p=276 gcSegPages=113040 unmanagedStarts=16 ext=113159
+[E5H] map #########0#0#11##14#######54##########5.4###################################5...4################4.5########4.5####0###############################################4.....5######0###########3..5################################0############3..6################3..6###########################27###########2.7#################2.7##2..7####2727##########2..7#######2.7##################0#################1....8#1..8###############1.8########################18#################0##########################
+[GC] Collection #209, refills since the last: 1315
+[GC] Freed 2346 objects
+[LAPIC] Timer tick 900 RSP=FFFF80001F5B9D10
+[GC] Collection #210, refills since the last: 1003
+[GC] Freed 2021 objects
+[GC] Collection #211, refills since the last: 990
+[GC] Freed 1955 objects
+[GC] Collection #212, refills since the last: 870
+[GC] Freed 1695 objects
+[GC] Collection #213, refills since the last: 1142
+[GC] Freed 2020 objects
+[GC] Collection #214, refills since the last: 862
+[GC] Freed 1695 objects
+[GC] Collection #215, refills since the last: 1551
+[GC] Freed 2540 objects
+[GC] Collection #216, refills since the last: 1226
+[GC] Freed 2345 objects
+[GC] Collection #217, refills since the last: 958
+[GC] Freed 1955 objects
+[GC] Collection #218, refills since the last: 1082
+[GC] Freed 2085 objects
+[GC] Collection #219, refills since the last: 1216
+[GC] Freed 2215 objects
+[GC] Collection #220, refills since the last: 1522
+[GC] Freed 2605 objects
+[GC] Collection #221, refills since the last: 1600
+[GC] Freed 2995 objects
+[GC] Collection #222, refills since the last: 1485
+[GC] Freed 2865 objects
+[GC] Collection #223, refills since the last: 852
+[GC] Freed 2150 objects
+[E5H] D56k8 step=2500
+[E5H] D56k8-step requested=8388608 needPages=2049 liveMiB=258 totalPages=127162 freePages=33161 freeMiB=129 longestFreeRun=4607 freeRuns=37 runs>=257=25 runs>=2049=2 runs<16=2 gcSegs=363 gcSegs<=16p=285 gcSegPages=93453 unmanagedStarts=16 ext=93577
+[E5H] map #0#####00##00#####0####5...4###5....4#####5......4########5.4######5..4##############45######################4...5##4................5#######4.................5#########4......5#########4.....545#4...6#########################3..6#############36###############3.6######0########26##################################2....7###2.7##############27##2.7#############27#######27##27############################1......8#############0#####1......8############1....8####1.....8######1....8##################
+[GC] Collection #224, refills since the last: 1102
+[GC] Freed 2411 objects
+[GC] Collection #225, refills since the last: 667
+[GC] Freed 1760 objects
+[GC] Collection #226, refills since the last: 1282
+[GC] Freed 2475 objects
+[GC] Collection #227, refills since the last: 1484
+[GC] Freed 2735 objects
+[GC] Collection #228, refills since the last: 1059
+[GC] Freed 2280 objects
+[GC] Collection #229, refills since the last: 858
+[GC] Freed 1955 objects
+[GC] Collection #230, refills since the last: 851
+[GC] Freed 1890 objects
+[GC] Collection #231, refills since the last: 1401
+[GC] Freed 2410 objects
+[GC] Collection #232, refills since the last: 1356
+[GC] Freed 2605 objects
+[GC] Collection #233, refills since the last: 1255
+[GC] Freed 2475 objects
+[GC] Collection #234, refills since the last: 1801
+[GC] Freed 3125 objects
+[GC] Collection #235, refills since the last: 1362
+[GC] Freed 2605 objects
+[GC] Collection #236, refills since the last: 1448
+[GC] Freed 2670 objects
+[E5H] D56k8 step=3000
+[E5H] D56k8-step requested=4194304 needPages=1025 liveMiB=241 totalPages=127162 freePages=14750 freeMiB=57 longestFreeRun=1282 freeRuns=29 runs>=257=18 runs>=2049=0 runs<16=2 gcSegs=394 gcSegs<=16p=298 gcSegPages=111864 unmanagedStarts=16 ext=111957
+[E5H] map ##################14###################0#####5..4#####################################4..5########4....545#45##########45########################4..5#######4.5#################################36##36###########################3.6############36#######################3.6###############2...7################2.7#######272....7######27##########27#######27########2..7#######0###########################################1.8#########1..8###############1..8##############18#1...8##########################
+[GC] Collection #237, refills since the last: 1366
+[GC] Freed 2736 objects
+[GC] Collection #238, refills since the last: 1478
+[GC] Freed 2735 objects
+[GC] Collection #239, refills since the last: 1241
+[GC] Freed 2410 objects
+[GC] Collection #240, refills since the last: 1503
+[GC] Freed 2735 objects
+[GC] Collection #241, refills since the last: 1024
+[GC] Freed 2215 objects
+[GC] Collection #242, refills since the last: 947
+[GC] Freed 2020 objects
+[GC] Collection #243, refills since the last: 1110
+[GC] Freed 2150 objects
+[GC] Collection #244, refills since the last: 942
+[GC] Freed 1955 objects
+[LAPIC] Timer tick 1000 RSP=FFFF80001F5B9D10
+[GC] Collection #245, refills since the last: 1459
+[GC] Freed 2541 objects
+[GC] Collection #246, refills since the last: 1443
+[GC] Freed 2735 objects
+[GC] Collection #247, refills since the last: 1101
+[GC] Freed 2280 objects
+[GC] Collection #248, refills since the last: 1555
+[GC] Freed 2930 objects
+[GC] Collection #249, refills since the last: 853
+[GC] Freed 2020 objects
+[GC] Collection #250, refills since the last: 1071
+[GC] Freed 2150 objects
+[E5H] D56k8 step=3500
+[E5H] D56k8-step requested=8388608 needPages=2049 liveMiB=262 totalPages=127162 freePages=26708 freeMiB=104 longestFreeRun=1794 freeRuns=35 runs>=257=27 runs>=2049=0 runs<16=2 gcSegs=400 gcSegs<=16p=320 gcSegPages=99906 unmanagedStarts=16 ext=99993
+[E5H] map ###############0####74##5......4###5.....4#5.....4######################54####5...4####5.....4#5.....4#########4.5##################45#####45#######################4..5##########################3..6###36#######3.6###########36####################3...63.6###################3.....6#########################0##########2...7######2.7###2...7#2...7##2....7##########2..7###########0###############################1....8#1.8#######1..8########18#######1...8############1.8#######1.8####################
+[GC] Collection #251, refills since the last: 751
+[GC] Freed 1761 objects
+[GC] Collection #252, refills since the last: 1327
+[GC] Freed 2345 objects
+[GC] Collection #253, refills since the last: 1150
+[GC] Freed 2150 objects
+[GC] Collection #254, refills since the last: 1173
+[GC] Freed 2280 objects
+[GC] Collection #255, refills since the last: 981
+[GC] Freed 1955 objects
+[GC] Collection #256, refills since the last: 867
+[GC] Freed 1825 objects
+[GC] Collection #257, refills since the last: 665
+[GC] Freed 1500 objects
+[GC] Collection #258, refills since the last: 1023
+[GC] Freed 1890 objects
+[GC] Collection #259, refills since the last: 1743
+[GC] Freed 2735 objects
+[GC] Collection #260, refills since the last: 1162
+[GC] Freed 2215 objects
+[GC] Collection #261, refills since the last: 1358
+[GC] Freed 2410 objects
+[GC] Collection #262, refills since the last: 1580
+[GC] Freed 2670 objects
+[GC] Collection #263, refills since the last: 1762
+[GC] Freed 3125 objects
+[GC] Collection #264, refills since the last: 1443
+[GC] Freed 2800 objects
+[E5H] D56k8-noOOM requested=0 needPages=1 liveMiB=220 totalPages=127162 freePages=23912 freeMiB=93 longestFreeRun=2050 freeRuns=34 runs>=257=28 runs>=2049=1 runs<16=2 gcSegs=427 gcSegs<=16p=334 gcSegPages=102702 unmanagedStarts=16 ext=102762
+[E5H] map #####################9......4####5.......9.....4#############54####54##############4..5##############4.....5#####4.5########4.....5#######4..5###########4...5##4.5#########45##########46############3..63.6##########3.....6########363.6#############0##################26############2...7############2.6##0##############2.7############################2..7##############2.72.7#######27##################17###1.8#######1..8##############1...8##################18#######################################
+[GC] Collection #265, refills since the last: 1136
+[GC] Freed 6500 objects
+[E5H] D56k8-end requested=0 needPages=1 liveMiB=0 totalPages=127162 freePages=125517 freeMiB=490 longestFreeRun=125517 freeRuns=1 runs>=257=1 runs>=2049=1 runs<16=0 gcSegs=7 gcSegs<=16p=6 gcSegPages=1097 unmanagedStarts=16 ext=1577
+[E5H] map 4.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................8######
+[E5H] done
+tf  Ý&  ti       
+Test Suite: E5H Probe
+Total: 1  Passed: 1  Failed: 0
+
+[Tests Complete - System Halting]
+[Kernel] Entering main loop...
+[Kernel] Calling Run()...
+[Kernel] Run() returned
+[Kernel] Main loop exited, calling AfterRun()...
+Þ­¾ïÊþº¾[Kernel] Halting CPU...
