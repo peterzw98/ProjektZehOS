@@ -11,6 +11,4 @@ internal sealed class ClassThreadState
     public ulong RemainingNs;
     /// <summary>CPU der letzten Auswahl, -1 = noch nie.</summary>
     public int LastCpu = -1;
-    /// <summary>Nur bis Etappe 5: Idle-Thread von Cosmos 3.0.97 (Hauptschleife), der nie blockiert.</summary>
-    public bool AlwaysYields { get; set; }
 }

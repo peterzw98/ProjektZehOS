@@ -99,6 +99,17 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 
 Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](../../docs/COSMOS_SUPPORT.md#aufgabenverwaltung-und-round-robin-am-13-november-2026).
 
+## Kommandozeilenschalter des Kernels
+
+Der Kernel liest die Limine-Kommandozeile (`cmdline:` in `boot/limine/limine.conf` des ISO). Erkannt werden nur ganze, durch Leerzeichen getrennte Wörter; Unbekanntes und ungültige Werte werden ignoriert.
+
+| Schalter | Wirkung |
+| --- | --- |
+| `zehos.cpus=<n>` (n ≥ 1) | wird gelesen und im Systemprotokoll genannt; in Etappe 5 laufen alle Threads ohnehin auf CPU 0 |
+| `zehos.smt=off` | wird gelesen; wirkt erst mit der CPU-Topologie in späteren Etappen |
+
+Der Boot setzt als Erstes die Affinität des Hauptthreads und die Standardaffinität neuer Threads auf CPU 0, bevor ein Thread startet. Die Bootzeile lautet `CPUs online=<n>, genutzt=1 (zehos.cpus=<Wert oder ->, …)`. Für einen Versuch die Zeile `cmdline: zehos.cpus=1` unter `path:` in die `limine.conf` einer Kopie des ISO schreiben (`xorriso -dev kopie.iso -boot_image any keep -map limine.conf /boot/limine/limine.conf -commit`).
+
 ## Desktop-Dateifehler gezielt prüfen
 
 Roadmap 7.5 ist mit fehlendem Datenlaufwerk und einer vollständig belegten isolierten FAT32-Kopie in QEMU geprüft. Die [Prüfanleitung](../../docs/DESKTOP_STORAGE_TESTS.md) beschreibt den Ablauf und den Helfer `scripts/create-full-fat32-test-copy.py`. Dieser erzeugt ausschliesslich eine neue Testkopie und ersetzt kein vorhandenes Image. VMware-Dateiprüfungen bleiben offen.
