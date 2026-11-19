@@ -98,6 +98,9 @@
     <!-- Drivers: installs its keyboard and pointer consumers through DeviceRegistry.SetConsumer; its
          [Driver] classes live in Cosmos.Kernel.Tests.Drivers.Library, which holds no grant. -->
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Drivers" />
+    <!-- ZehOS patch irq-guard-per-cpu, see PATCHES.md
+         Smp: enters InterruptContextGuard on one CPU and asks it on another. -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Smp" />
   </ItemGroup>
 </Project>
 

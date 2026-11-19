@@ -8,6 +8,7 @@ using System.Threading;
 using Cosmos.Kernel.Core.Bridge;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.Scheduler;
+using Cosmos.Kernel.HAL.DriverKit.Engine;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Sessions;
@@ -51,7 +52,7 @@ namespace Cosmos.Kernel.Tests.Smp;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 41;
+    private const int ExpectedTestCount = 42;
 
     /// <summary>CPUs the smp4 cell's machine has: what the bootloader lists and the kernel starts there.</summary>
     private const uint Smp4CpuCount = 4;
@@ -261,6 +262,10 @@ public class Kernel : Sys.Kernel
         // The ring's locks across CPUs (SMP phase 4b)
         TR.RunIf(smp, "Keyboard_EnqueueFromCpu0_ReadFromComputeCpu", TestKeyboardEnqueueFromCpu0ReadFromComputeCpu, OneCpuCell);
         TR.RunIf(smp, "Timer_RegisterFromComputeCpu_FiresOnCpu0", TestTimerRegisterFromComputeCpuFiresOnCpu0, OneCpuCell);
+
+        // ZehOS patch irq-guard-per-cpu, see PATCHES.md
+        // The driver kit's interrupt guard is per CPU: a handler on CPU 1 is not one on CPU 0
+        TR.RunIf(smp, "InterruptGuard_HandlerOnOtherCpu_NotSeenHere", TestInterruptGuardHandlerOnOtherCpuNotSeenHere, OneCpuCell);
 
         // Placement and load balancing (SMP phase 5). The pool cell after the ones that
         // count on idle compute CPUs: its workers stay around once it is done.
@@ -1074,6 +1079,79 @@ public class Kernel : Sys.Kernel
         Assert.Equal(before, Counter(1), "nothing counts on CPU 1 any more");
 
         StopSpinner(worker);
+    }
+
+    // ZehOS patch irq-guard-per-cpu, see PATCHES.md
+    // How long the holder keeps CPU 1 in the guard at most, with interrupts masked, should
+    // CPU 0 never answer: long enough for Main to look, short enough not to hang the cell.
+    private const int GuardHoldMs = 5000;
+    private const int GuardHolderNotEntered = 0;
+    private const int GuardHolderInside = 1;
+    private const int GuardHolderRelease = 2;
+    private static int s_guardHolderPhase;
+    private static bool s_guardHolderSawHandler;
+
+    // Enters the driver kit's interrupt guard on CPU 1 the way the trampoline does for a
+    // synthetic dispatch (interrupts masked), stays inside until Main has looked from CPU 0,
+    // and leaves. Nothing allocates while interrupts are masked: the collector stops CPUs
+    // with an interrupt, and the bound keeps a lost answer from holding it up for long.
+    private static void GuardHolder()
+    {
+        ThreadAffinity.Current = CpuSet.Single(1);
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * GuardHoldMs / 1000;
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            InterruptContextGuard.Enter(synthetic: true);
+            s_guardHolderSawHandler = InterruptContextGuard.IsInHandler;
+            Volatile.Write(ref s_guardHolderPhase, GuardHolderInside);
+            while (Volatile.Read(ref s_guardHolderPhase) == GuardHolderInside && Stopwatch.GetTimestamp() < deadline)
+            {
+            }
+
+            InterruptContextGuard.Exit();
+        }
+
+        ThreadAffinity.Current = CpuSet.Single(0);
+    }
+
+    // A driver interrupt handler running on CPU 1 does not put CPU 0 into one: while CPU 1
+    // is inside the guard, thread code on CPU 0 is not refused. With one depth for all CPUs
+    // the thread-context members on CPU 0 threw (synthetic) or halted (a real interrupt,
+    // Panic.Halt with the member's name) whenever another CPU was in a handler.
+    private static void TestInterruptGuardHandlerOnOtherCpuNotSeenHere()
+    {
+        Volatile.Write(ref s_guardHolderPhase, GuardHolderNotEntered);
+        s_guardHolderSawHandler = false;
+        SysThread holder = new(GuardHolder);
+        holder.Start();
+
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * GuardHoldMs / 1000;
+        while (Volatile.Read(ref s_guardHolderPhase) == GuardHolderNotEntered && Stopwatch.GetTimestamp() < deadline)
+        {
+            TimerManager.Wait(1);
+        }
+
+        bool inside = Volatile.Read(ref s_guardHolderPhase) == GuardHolderInside;
+        uint here = KernelCpus.Current;
+        bool seenHere = InterruptContextGuard.IsInHandler;
+        bool refusedHere = false;
+        try
+        {
+            InterruptContextGuard.ThrowIfInHandler(nameof(TestInterruptGuardHandlerOnOtherCpuNotSeenHere));
+        }
+        catch (InvalidOperationException)
+        {
+            refusedHere = true;
+        }
+
+        Volatile.Write(ref s_guardHolderPhase, GuardHolderRelease);
+        Assert.True(holder.Join(JoinTimeoutMs), "the holder leaves the guard and exits");
+        Assert.True(inside, "CPU 1 was inside the guard while CPU 0 looked");
+        Assert.True(s_guardHolderSawHandler, "CPU 1 sees its own handler");
+        Assert.Equal(0u, here, "Main looked from CPU 0");
+        Assert.False(seenHere, "CPU 0 is not in a handler while CPU 1 is");
+        Assert.False(refusedHere, "a thread-context member on CPU 0 runs while CPU 1 is in a handler");
+        Assert.False(InterruptContextGuard.IsInHandler, "and after the holder left, neither");
     }
 
     private static void SelfMover()
