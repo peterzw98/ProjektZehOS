@@ -12,7 +12,7 @@ namespace ProjektZeh.Scheduling;
 /// <see cref="ClassRunQueues{T}"/> (hostgetestet); Etappe 5 passt nur diesen Adapter an die neue Schnittstelle an.
 /// Ab Etappe 5 (Upstream 5b) ist die Hauptschleife ein normaler Thread der Klasse Interaktiv; die Policy sieht nie einen Idle-Thread.
 /// </summary>
-internal sealed class CosmosClassScheduler : IScheduler
+internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
 {
     // Yielded und PickFailed haben keinen Fehlerweg; die Kapazitaet je Klasse muss die Threadzahl decken (Cosmos kennt kein Mehr).
     private const int CapacityPerClass = SchedulerThread.MaxThreadCount;
@@ -31,6 +31,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
 
     public string Name => "ZehOS Klassen";
+    internal CpuTopology Topology { get; } = topology;
 
     // Allokation ist nur hier, in ShutdownCpu und in OnThreadCreate erlaubt (IScheduler-Vertrag, Upstream 5b).
     public void InitializeCpu(PerCpuState state)
