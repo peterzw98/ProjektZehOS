@@ -4,6 +4,7 @@ using ProjektZeh.Graphics;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopMetricsTests
 {
     [TestMethod]

@@ -1,5 +1,7 @@
 # ext2-Verzeichnisgrenze
 
+> **Historisch (19. November 2026):** Die Cosmos-Parsergrenze von 8190 entfällt mit cosmos #345; die Produktgrenze ist seit E2-P7 65.536 (65.535 über FileService). Aktueller Stand: [COSMOS_SUPPORT.md](../../COSMOS_SUPPORT.md), Abschnitt zur ext2-Verzeichnisgrenze.
+
 Auftrag des IRC-Koordinators vom 17. November 2026: Auf ext2 hoechstens 8190 sichtbare Eintraege je Verzeichnis; die Produktgrenze ist 8189 (Nachtrag: ein Platz Reserve fuer Umbenennen). FileService meldet bei einem weiteren Eintrag `cause='DirectoryEntryLimit'`; eine Migration mit einem groesseren Quellverzeichnis endet vor Zielschreibzugriffen als Konflikt. FAT und Host-Dateisysteme behalten ihr Verhalten.
 
 ## Entwurf

@@ -90,3 +90,12 @@ Byte formatieren, aber ohne Größenbegrenzung und ohne Sperre je Plattenoperati
 Politik, nicht Technik. `ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht deshalb in `ProjektZeh/**/*.cs` außerhalb
 dieses Ordners nach `(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
 weitergereichte Dateisystemnamen erkennt die Suche nicht.
+
+## Löschen: Korrektur in der Cosmos-Quelle
+
+Bis E2-Z1 ersetzten vier Plugs (`RemoveEntry`, `Rmdir`, `Truncate`, `FreeInode`) fehlerhafte Methoden des
+Cosmos-ext2-Treibers 3.0.97. Seit E2-Z1 sind die Fehler im Branch `cosmos` behoben (`PATCHES.md`: `ext2-remove-entry`,
+`ext2-truncate`, `ext2-free-inode`, `ext2-rmdir`); die Plugs, ihre Attrappentypen und die Helfer `Ext2DirectoryRemoval`,
+`Ext2IndirectBlocks` und `Ext2InodeRelease` samt Hosttests sind entfernt, die Tests leben als NUnit-Tests im Cosmos-Baum
+(`tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/`). Hintergrund und frühere Gastbelege:
+[Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md) und `docs/COSMOS_SUPPORT.md`.

@@ -16,6 +16,7 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class UserManagementTests
 {
     private const string AdminPassword = "admin-password-123";
