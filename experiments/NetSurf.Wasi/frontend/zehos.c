@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -262,7 +263,27 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
     if (width <= 0 || height <= 0 || width > ZEHOS_MAX_WIDTH || height > ZEHOS_MAX_HEIGHT) return -1;
     if (width == nsfb->width && height == nsfb->height) return 0;
     uint8_t *buffer = realloc(nsfb->ptr, (size_t)width * height * 4);
-    if (buffer == NULL) return -1;
+    if (buffer == NULL) {
+        // Ein Scheitern war bisher still: gui_resize kehrt dann ohne Neuzeichnen zurueck (Issue #483, Maximieren
+        // zeigte weiter das alte, hochskalierte Bild). realloc braucht alt und neu zugleich; erst den alten Puffer
+        // freigeben und neu anlegen, damit der Allokator zusammenhaengenden Platz findet (kein Kopieren, kein Spitzenbedarf).
+        fprintf(stderr, "zehos: set_geometry %dx%d: realloc (%zu Byte) fehlgeschlagen, neuer Versuch\n", width, height,
+            (size_t)width * height * 4);
+        free(nsfb->ptr);
+        nsfb->ptr = NULL;
+        buffer = malloc((size_t)width * height * 4);
+        if (buffer == NULL) {
+            // Alte Groesse wiederherstellen (sie passte vorher in den freigegebenen Platz); NetSurf behaelt sie.
+            fprintf(stderr, "zehos: set_geometry %dx%d: Speicher erschoepft, Groesse bleibt %dx%d\n", width, height,
+                nsfb->width, nsfb->height);
+            nsfb->ptr = malloc((size_t)nsfb->width * nsfb->height * 4);
+            if (nsfb->ptr != NULL) {
+                memset(nsfb->ptr, 0, (size_t)nsfb->width * nsfb->height * 4);
+                dirty = true;
+            }
+            return -1;
+        }
+    }
     // realloc behaelt die alten Bildpunkte mit der alten Zeilenlaenge; bis NetSurf neu zeichnet, waeren sie schraeg
     // versetzt sichtbar. Leer ist der Rest schwarz statt verzerrt.
     memset(buffer, 0, (size_t)width * height * 4);

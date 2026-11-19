@@ -2,9 +2,15 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "libnsfb.h"
 #define NSFB_SURFACE_ZEHOS NSFB_SURFACE_RAM
+// realloc ueber einer Schwelle scheitern lassen, wie im Gast bei knappem Speicher (Issue #483).
+static size_t realloc_limit = (size_t)-1;
+static void *test_realloc(void *ptr, size_t size) { return size > realloc_limit ? NULL : realloc(ptr, size); }
+#define realloc test_realloc
 #include "../frontend/zehos.c"
+#undef realloc
 
 void _nsfb_register_surface(const enum nsfb_type_e type, const nsfb_surface_rtns_t *rtns, const char *name) { }
 bool select_plotters(nsfb_t *nsfb) { return true; }
@@ -79,6 +85,12 @@ int main(void) {
     assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
     assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
     for (size_t i = 0; i < (size_t)1920 * 1200 * 4; i += 4099) assert(surface.ptr[i] == 0);
+    // realloc scheitert: neuer Versuch mit malloc gelingt, die Groesse wechselt trotzdem.
+    realloc_limit = 100;
+    assert(zehos_set_geometry(&surface, 1918, 983, NSFB_FMT_ANY) == 0 && surface.width == 1918 && surface.height == 983);
+    assert(surface.linelen == 1918 * 4 && surface.ptr != NULL);
+    realloc_limit = (size_t)-1;
+    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0);
     surface.ptr[(size_t)1920 * 1200 * 4 - 1] = 1; // Puffer deckt das ganze neue Bild ab (ASan/Valgrind).
     // Mehrere Widget-Updates eines Neuzeichnens ergeben genau ein Bild, gesendet vor der naechsten Eingabeabfrage.
     nsfb_bbox_t box = {0, 0, 1, 1};

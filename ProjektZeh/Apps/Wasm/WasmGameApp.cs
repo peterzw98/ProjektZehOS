@@ -309,7 +309,6 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             long copying = profile.Enabled ? Stopwatch.GetTimestamp() : 0;
             pixels.CopyTo(frame);
             if (copying != 0) profile.Record(WasmFramePhase.Copy, WasmFrameProfile.Microseconds(copying, Stopwatch.GetTimestamp()));
-            if (width != frameWidth || height != frameHeight) log?.Invoke($"DIAG483 present {width}x{height}");
             frameWidth = width;
             frameHeight = height;
             frameRevision++;
@@ -326,10 +325,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
 
     bool IWasmSession.TryReadEvent(out WasmInputEvent value)
     {
-        bool got;
-        lock (gate) got = input.TryRead(out value);
-        if (got && value.Type == WasmInputEventType.Resize) log?.Invoke($"DIAG483 resize-event {value.X}x{value.Y}");
-        return got;
+        lock (gate) return input.TryRead(out value);
     }
 
     // Nur das aktive Fenster darf einfangen; Fokusverlust setzt die Eingabe und damit das Einfangen zurueck.
