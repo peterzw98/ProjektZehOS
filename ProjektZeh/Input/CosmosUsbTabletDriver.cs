@@ -49,7 +49,7 @@ public sealed class CosmosUsbTabletDriver : Driver
                 out int x, out int y, out byte buttons, out int wheel)) return;
 
             // Ein PS/2-Interrupt oder eine zweite CPU darf die Paketfolge waehrend des Tabletberichts nicht unterbrechen.
-            using (CosmosMousePlug.PointerLock.Enter())
+            using (CosmosMousePlug.PointerLock.Acquire())
             {
                 CosmosMousePlug.ApplyPending();
                 CosmosMousePlug.RecordTabletMotion(x - MouseManager.X, y - MouseManager.Y);

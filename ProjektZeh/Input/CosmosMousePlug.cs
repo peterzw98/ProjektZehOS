@@ -1,3 +1,4 @@
+using Cosmos.Kernel.Core.Scheduler;
 using System.Runtime.CompilerServices;
 using Cosmos.Build.API.Attributes;
 using Cosmos.Kernel.System.Input;
@@ -12,13 +13,13 @@ public static class CosmosMousePlug
     private const string MouseType = "Cosmos.Kernel.System.Input.MouseManager, Cosmos.Kernel.System";
     private static RelativeMouseBuffer packets;
     // Eine Sperre fuer Maus und Tablet: PS/2-Plug und Tablettreiber schreiben, CosmosInputService liest.
-    internal static CosmosIrqLock PointerLock;
+    internal static IrqSpinLock PointerLock;
 
     // Kein Rueckruf in MouseManager: der NativeAOT-Initialisierer haette sonst einen Zyklus.
     [PlugMember]
     public static void HandleRelative(int deltaX, int deltaY, KitPointerButtons buttons, int wheel)
     {
-        using (PointerLock.Enter()) AddLocked(deltaX, deltaY, buttons, wheel);
+        using (PointerLock.Acquire()) AddLocked(deltaX, deltaY, buttons, wheel);
     }
 
     // Fuer Aufrufer, die PointerLock schon halten; HandleRelative wuerde die nicht wiedereintrittsfaehige Sperre erneut nehmen.

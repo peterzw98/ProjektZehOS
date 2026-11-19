@@ -19,7 +19,7 @@ internal sealed class CosmosInputService
     // Klemmt X/Y an die neue Groesse; ohne Sperre koennte ein gleichzeitiger Tablettbericht mit der alten Breite schreiben.
     public static void SetScreenSize(int width, int height)
     {
-        using (CosmosMousePlug.PointerLock.Enter()) MouseManager.SetScreenSize(width, height);
+        using (CosmosMousePlug.PointerLock.Acquire()) MouseManager.SetScreenSize(width, height);
     }
 
     public void Poll(InputService input)
@@ -59,7 +59,7 @@ internal sealed class CosmosInputService
         bool hasRaw;
         long lostMouse;
         PointerButtons buttons = PointerButtons.None;
-        using (CosmosMousePlug.PointerLock.Enter())
+        using (CosmosMousePlug.PointerLock.Acquire())
         {
             CosmosMousePlug.ApplyPending();
             x = MouseManager.X;
