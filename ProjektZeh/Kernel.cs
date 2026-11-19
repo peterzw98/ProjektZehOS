@@ -669,6 +669,10 @@ public sealed class Kernel : Sys.Kernel
 
     private string[] DescribeScheduler()
     {
+#if ZEHOS_STRIDE_SCHEDULER
+        // Die Klassenpolicy ist nicht installiert; ihre Zaehler waeren durchgehend 0 und der Name falsch.
+        return ["Stride (Diagnose ZEHOS_STRIDE_SCHEDULER); Klassenzaehler nicht erfasst"];
+#else
         var snapshot = CosmosClassScheduler.Snapshot();
         var lines = new System.Collections.Generic.List<string>
         {
@@ -680,6 +684,7 @@ public sealed class Kernel : Sys.Kernel
                 lines.Add(CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyNs, allNs));
         lines.Add("Auswahl CPU 0 (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds));
         return [.. lines];
+#endif
     }
 
     /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
