@@ -143,6 +143,12 @@ internal static unsafe partial class WasmRuntime
         lock (gate) return StartWorkerLocked();
     }
 
+    /// <summary>Der aktuelle Worker-Thread oder null; fuer die Diagnose in <c>tasks scheduler</c> (E6-C2).</summary>
+    internal static Thread? WorkerThread
+    {
+        get { lock (gate) return worker; }
+    }
+
     /// <summary>
     /// Gibt die Ressourcen eines Laufs frei: Sitzung, App-Speicher, Netz und offene Paketdateien. Nach einer isolierten
     /// CPU-Ausnahme ruft sie die Hauptschleife, weil der aufgegebene Worker sein Ende nie erreicht. Liefert false, wenn
@@ -280,7 +286,7 @@ internal static unsafe partial class WasmRuntime
         // Waehrend PollFaultIsolation aufraeumt, bleibt der Lauf eingereiht; der Ersatzworker startet direkt danach.
         if (cleaningUp) return ResultErr.CreateSuccess();
         if (workerRetired) return ResultErr.CreateFailure(ResultCode.Failure, RetiredMessage);
-        var started = ThreadStarter.TryStart(Work, ThreadStackBytes);
+        var started = ThreadStarter.TryStart(Work, ThreadStackBytes, placement: ThreadPlacement.Workers);
         if (!started.IsOK()) return started.Status;
         worker = started.Value;
         return ResultErr.CreateSuccess();
