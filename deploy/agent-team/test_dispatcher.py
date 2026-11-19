@@ -1,5 +1,6 @@
 # Tests für dispatcher.py ohne Netz und ohne echtes claude: ein Ersatzskript protokolliert den Aufruf und
 # endet je nach Umgebungsvariable erfolgreich, mit Fehler oder erst nach einer Wartezeit.
+import shutil
 import atexit, json, os, signal, stat, subprocess, sys, tempfile, time
 
 from dispatcher import Dispatcher, mention_pattern, parse_args, parse_mention
@@ -29,6 +30,7 @@ with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
 print(os.environ.get("FAKE_OUT", ""), flush=True)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+if os.environ.get("FAKE_KILL"): os.kill(os.getpid(), 9)
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 '''
 
@@ -553,5 +555,32 @@ e.d.step()
 with open(os.path.join(e.args.state, "heartbeat")) as f:
     hb = json.load(f)
 assert hb["nick"] == NICK and "pending" in hb
+
+# --- Speichergrenze je Lauf: systemd-run-Präfix, Rückfall ohne Benutzer-systemd, SIGKILL endgültig -------------
+rt = tempfile.mkdtemp()
+open(os.path.join(rt, "bus"), "w").close()
+old_rt = os.environ.get("XDG_RUNTIME_DIR")
+os.environ["XDG_RUNTIME_DIR"] = rt
+e = Env("--memory-max", "6G")
+if shutil.which("systemd-run"):
+    cmd = e.d.build_cmd("auftrag")
+    assert cmd[:4] == ["systemd-run", "--user", "--scope", "-q"] and "MemoryMax=6G" in cmd and cmd[-1] == "auftrag", cmd
+os.environ["XDG_RUNTIME_DIR"] = tempfile.mkdtemp()                         # kein bus: ohne Grenze, mit Warnung
+e = Env("--memory-max", "6G")
+assert e.d.mem_limit == "" and e.d.build_cmd("x")[0] != "systemd-run"
+with open(os.path.join(e.args.state, "dispatch.log")) as f:
+    assert "Speichergrenze 6G nicht möglich" in f.read()
+if old_rt is None: del os.environ["XDG_RUNTIME_DIR"]
+else: os.environ["XDG_RUNTIME_DIR"] = old_rt
+e = Env()
+e.d.mem_limit = "6G"                                                       # Grenze gesetzt, Lauf ohne echtes systemd
+os.environ["FAKE_KILL"] = "1"
+os.environ["FAKE_CALLS"] = e.calls
+e.say("agent-coordinator", "agent-x: baut zu viel")
+e.now += 6
+e.run_until_idle()
+os.environ["FAKE_KILL"] = ""
+assert len(e.calls_made()) == 1 and e.d.gave_up_at == 1, (e.calls_made(), e.d.gave_up_at)   # kein zweiter Versuch
+assert "Speichergrenze 6G überschritten" in e.outbox(), e.outbox()
 
 print("ok")
