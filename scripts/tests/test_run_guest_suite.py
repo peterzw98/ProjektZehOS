@@ -131,7 +131,6 @@ class RunGuestSuiteTests(unittest.TestCase):
         self.assertEqual(self.summary()["counts"]["pass"], 1)
         self.assertTrue((self.out / "runner.log").is_file())
 
-
     def test_runner_error_marks_fail(self):
         path = self.dir / "suite.json"
         path.write_text(json.dumps([entry("x", "pass")]), encoding="utf-8")
