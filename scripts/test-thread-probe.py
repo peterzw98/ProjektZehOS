@@ -50,8 +50,9 @@ def command(qemu: str, iso: Path, serial: Path, accel: str) -> list[str]:
     return arguments
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def run_probe(name: str, classify_log, markers: tuple[str, ...], description: str) -> int:
+    """Gemeinsamer Ablauf der plattenlosen Probe-Skripte (Thread- und Kryptografieprobe): Start, Warten, Auswertung."""
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--accel", choices=["tcg", "kvm"], default="tcg")
     parser.add_argument("--timeout", type=int, default=45, choices=range(1, 121), metavar="1..120")
@@ -59,7 +60,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.iso.is_file():
         sys.exit(f"ISO nicht gefunden: {args.iso}")
-    work = ROOT / ".tools/thread-probe" / uuid.uuid4().hex
+    work = ROOT / ".tools" / name / uuid.uuid4().hex
     serial = work / "serial.log"
     arguments = command(qemu_binary(), args.iso.resolve(), serial, args.accel)
     if args.dry_run:
@@ -74,26 +75,30 @@ def main() -> int:
         while verdict == "RUNNING" and guest.poll() is None and time.monotonic() < deadline:
             time.sleep(0.1)
             log = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
-            verdict = classify(log)
+            verdict = classify_log(log)
         log = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
-        verdict = classify(log)
+        verdict = classify_log(log)
     finally:
         # Nur die eigene plattenlose Test-VM beenden; bestehende Sitzungen bleiben erhalten.
         if guest.poll() is None:
             guest.kill()
             guest.wait()
     for line in log.splitlines():
-        if "THREAD_PROBE" in line or "MESSAGES_PROBE" in line:
+        if any(marker in line for marker in markers):
             print(line)
     if verdict == "FAIL":
-        print(f"Threadprobe fehlgeschlagen. Log: {serial}", file=sys.stderr)
+        print(f"Probe fehlgeschlagen. Log: {serial}", file=sys.stderr)
         return 1
     if verdict == "RUNNING":
-        print(f"Kein THREAD_PROBE PASS innerhalb von {args.timeout} s (QEMU-Exit {guest.returncode}). Log: {serial}",
+        print(f"Kein {markers[0]} PASS innerhalb von {args.timeout} s (QEMU-Exit {guest.returncode}). Log: {serial}",
               file=sys.stderr)
         return 1
     print(f"Gastprobe bestanden. Log: {serial}")
     return 0
+
+
+def main() -> int:
+    return run_probe("thread-probe", classify, ("THREAD_PROBE", "MESSAGES_PROBE"), __doc__)
 
 
 if __name__ == "__main__":

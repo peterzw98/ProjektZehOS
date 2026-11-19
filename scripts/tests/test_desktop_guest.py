@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('desktop_guest', SCRIPTS / 'test-desktop-guest.py')
@@ -82,6 +83,36 @@ class BootTimeoutTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 30)
             self.assertIsNotNone(processes[0].poll(), 'Attrappenprozess laeuft noch')
             self.assertTrue((work / 'serial.log').is_file())
+
+
+class PowerFlowTests(unittest.TestCase):
+    def flow(self, exits_on_reboot: bool, running: bool):
+        current = guest.Run.__new__(guest.Run)
+        current.boot = mock.Mock()
+        current.powered_off = mock.Mock()
+        current.vm = mock.Mock(returncode=0)
+        current.vm.poll.return_value = 0 if exits_on_reboot else None
+        current.guest = mock.Mock()
+        current.guest.qmp.command.return_value = {'return': {'running': running, 'status': 'running'}}
+        return current
+
+    def test_reboot_then_shutdown(self):
+        current = self.flow(exits_on_reboot=False, running=True)
+        current.power_flow()
+        lines = [call.args[0] for call in current.guest.qmp.line.call_args_list]
+        self.assertEqual(lines, ['reboot', 'shutdown'])
+        current.guest.wait.assert_called_once()
+        current.powered_off.assert_called_once()
+
+    def test_qemu_exit_on_reboot_fails(self):
+        current = self.flow(exits_on_reboot=True, running=True)
+        with self.assertRaises(AssertionError):
+            current.power_flow()
+        current.powered_off.assert_not_called()
+
+    def test_stopped_guest_after_reboot_fails(self):
+        with self.assertRaises(AssertionError):
+            self.flow(exits_on_reboot=False, running=False).power_flow()
 
 
 if __name__ == '__main__':
