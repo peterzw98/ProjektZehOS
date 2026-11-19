@@ -21,6 +21,10 @@ LINE = re.compile(r"^(\S+ \S+) << :([^!\s]+)!\S* (PRIVMSG|NOTICE|INVITE) (\S+) :
 IGNORED_SENDERS = {"histserv"}  # Wiederholung alter Zeilen durch den Server, klein geschrieben verglichen
 MAX_LINE = 1000      # längere Zeilen werden im Auftrag gekürzt, das Protokoll bleibt vollständig
 MAX_BATCH = 40       # mehr Zeilen je Lauf nur als Verweis aufs Protokoll
+# Ohne Node-Reuse enden die MSBuild-Arbeitsknoten mit jedem dotnet-Aufruf. Sonst warten sie bis zu 15 Minuten auf den
+# nächsten Bau (gemessen nach build-cosmos.sh: 10 Knoten, 1,8 GB), sammeln sich über Läufe an und bleiben in der
+# cgroup des Laufs, der sie gestartet hat, statt in der des Laufs, der sie nutzt. Kosten: Cosmos-Quellbau 62 s -> 73 s.
+RUN_ENV = {"MSBUILDDISABLENODEREUSE": "1"}
 
 
 def _stat_fields(pid):
@@ -486,7 +490,7 @@ class Dispatcher:
             out = open(out_path, "w")
             # Eigene Prozessgruppe: bei Zeitüberschreitung wird der Lauf mit allen Kindprozessen beendet
             self.proc = self.popen(cmd, cwd=self.a.home, stdin=subprocess.DEVNULL, stdout=out,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
+                                   stderr=subprocess.STDOUT, start_new_session=True, env={**os.environ, **RUN_ENV})
         except OSError as e:
             if out: out.close()
             self._release_slot()
