@@ -21,6 +21,12 @@ class ThreadProbeLogTests(unittest.TestCase):
         self.assertEqual(probe.classify(MESSAGES + 'THREAD_PROBE PASS\n'), 'PASS')
         self.assertEqual(probe.classify('THREAD_PROBE PASS\n'), 'FAIL')
 
+    def test_marker_after_interleaved_smp_output_counts(self):
+        # Unter SMP schreibt Cosmos manche Zeilen in mehreren Aufrufen; eine fremde Teilzeile steht dann vor der Marke.
+        self.assertEqual(probe.classify(MESSAGES + '[SCHED] Running thread THREAD_PROBE PASS\n7\n'), 'PASS')
+        self.assertEqual(probe.classify(MESSAGES + 'THREAD_PROBE PASS\r\n'), 'PASS')
+        self.assertEqual(probe.classify('[SCHED] Thread THREAD_PROBE FAIL x\n'), 'FAIL')
+
     def test_any_fail_line_is_fail(self):
         self.assertEqual(probe.classify('THREAD_PROBE FAIL Zeitlimit\n'), 'FAIL')
         self.assertEqual(probe.classify('MESSAGES_PROBE FAIL order\nTHREAD_PROBE PASS\n'), 'FAIL')

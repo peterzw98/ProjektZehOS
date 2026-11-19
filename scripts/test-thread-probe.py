@@ -28,11 +28,14 @@ def qemu_binary() -> str:
 
 def classify(log: str) -> str:
     """'PASS', 'FAIL' oder 'RUNNING' nach den seriellen Zeilen."""
-    if re.search(r"^(THREAD|MESSAGES)_PROBE FAIL", log, re.MULTILINE):
+    # Nicht am Zeilenanfang verankert: Unter SMP kann eine mehrteilig geschriebene Cosmos-Zeile (etwa "[SCHED] Thread ")
+    # vor der Marke stehen. Das Zeilenende bleibt verankert, damit Stufenzeilen wie "THREAD_PROBE preemption PASS ..."
+    # nicht als Abschluss gelten.
+    if re.search(r"(THREAD|MESSAGES)_PROBE FAIL", log):
         return "FAIL"
-    if re.search(r"^THREAD_PROBE PASS\s*$", log, re.MULTILINE):
+    if re.search(r"THREAD_PROBE PASS\r?$", log, re.MULTILINE):
         # Fehlt die Nachrichtenprobe trotz Abschlusszeile, ist der Probe-Build unvollstaendig: kein PASS.
-        return "PASS" if re.search(r"^MESSAGES_PROBE PASS", log, re.MULTILINE) else "FAIL"
+        return "PASS" if "MESSAGES_PROBE PASS" in log else "FAIL"
     return "RUNNING"
 
 
@@ -80,7 +83,7 @@ def main() -> int:
             guest.kill()
             guest.wait()
     for line in log.splitlines():
-        if line.startswith(("THREAD_PROBE", "MESSAGES_PROBE")):
+        if "THREAD_PROBE" in line or "MESSAGES_PROBE" in line:
             print(line)
     if verdict == "FAIL":
         print(f"Threadprobe fehlgeschlagen. Log: {serial}", file=sys.stderr)
