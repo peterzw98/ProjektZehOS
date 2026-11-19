@@ -2,7 +2,7 @@
 """Startet das SMP-Probe-ISO (-p:ZehOSSmpProbe=true) unter QEMU und wertet die seriellen SMP_PROBE-Zeilen aus (E6-D).
 
 Die CPU-Topologie setzt ZEHOS_QEMU_SMP wie in den anderen Gastskripten (leer = eine CPU). Bestanden heisst: alle Schritte
-PASS oder SKIP, Abschluss "SMP_PROBE PASS", die gemeldete CPU-Zahl gleich der ersten Zahl aus ZEHOS_QEMU_SMP und unter KVM
+PASS (SKIP nur bei weniger als zwei Worker-CPUs, sonst FAIL), Abschluss "SMP_PROBE PASS", die gemeldete CPU-Zahl gleich der ersten Zahl aus ZEHOS_QEMU_SMP und unter KVM
 mit mindestens zwei Worker-CPUs "parallel speedup_permille" >= 1500 (unter TCG nur Information). Die Test-VM ist plattenlos.
 """
 import argparse
@@ -62,6 +62,9 @@ def evaluate(log, accel, smp):
         missing.append(f"CPU-Zahl {cpus.group(1)} statt {want}")
     if int(cpus.group(2)) != want:
         missing.append(f"{cpus.group(2)} CPUs online statt {want}")
+    if int(cpus.group(3)) >= 2:
+        for step in re.findall(r"SMP_PROBE[ \t]+(\w+)[ \t]+SKIP", log):
+            missing.append(f"Schritt {step} uebersprungen trotz {cpus.group(3)} Worker-CPUs")
     speedup = re.search(r"SMP_PROBE INFO parallel speedup_permille=(\d+)", log)
     if accel == "kvm" and int(cpus.group(3)) >= 2:
         if not speedup:
