@@ -14,6 +14,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopReviewTests
 {
     private string root = "";

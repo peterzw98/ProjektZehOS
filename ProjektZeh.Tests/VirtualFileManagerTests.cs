@@ -13,6 +13,7 @@ namespace ProjektZeh.Tests;
 
 /// <summary>Dateimanager an /proc, /sys, /dev (Spec E5b/E6b §3a): eigener Ort, Hoch an der Wurzel verlaesst den Baum, nur lesbar.</summary>
 [TestClass]
+[DoNotParallelize]
 public sealed class VirtualFileManagerTests
 {
     // Wie FileManagerTests: Standardlayout 796 x 526 mit 8 x 16-Schrift.
