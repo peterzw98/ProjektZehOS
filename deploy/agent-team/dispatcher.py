@@ -180,6 +180,16 @@ def mention_pattern(nick):
     return re.compile(rf"(?<![A-Za-z0-9_\-]){re.escape(nick)}(?![A-Za-z0-9_\-])", re.IGNORECASE)
 
 
+def addressed(text, target, nick, pattern):
+    """Ist der Nick Adressat (Direktnachricht oder vor dem ersten Doppelpunkt: „a b: …“, „[AUFTRAG] a: …“)? Nur Adressaten
+    werden geweckt; wer bloß im Text vorkommt („… [FERTIG] an a“), bekommt die Zeile als Kontext beim nächsten Lauf.
+    Ohne Doppelpunkt in den ersten 160 Zeichen zählt wie bisher jede Nennung."""
+    if target.lower() == nick.lower():
+        return True
+    head, sep, _ = text[:160].partition(":")
+    return bool(pattern.search(head if sep else text))
+
+
 def parse_mention(raw, nick, pattern):
     """Liefert (zeit, absender, ziel, text), wenn die Protokollzeile den Nick nennt oder an ihn geht."""
     if SERVER_NOTICE.search(raw):
@@ -384,7 +394,8 @@ class Dispatcher:
                 ts, sender, target, text = hit
                 e = {"id": self._next_id(), "ts": ts, "sender": sender,
                      "target": target, "text": text, "seen": self.clock(),
-                     "trigger": self.allow is None or sender.lower() in self.allow,
+                     "trigger": (self.allow is None or sender.lower() in self.allow)
+                                and addressed(text, target, self.a.nick, self.pattern),
                      "ino": st.st_ino, "gen": gen, "end": pos}
                 inbox.write(json.dumps(e, ensure_ascii=False) + "\n")
                 self.entries.append(e)
