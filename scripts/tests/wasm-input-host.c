@@ -15,7 +15,16 @@ int32_t zehos_wasm_host_poll_event(int32_t* event) {
     return 1;
 }
 void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length) { }
-uint64_t zehos_wasm_host_time_ns(int32_t clock) { return 0; }
+// Simulierte Uhr fuer poll_oneoff: sleep_ms rueckt sie vor, should_exit liefert nach exit_after Aufrufen 1 (-1 = nie).
+static uint64_t sim_ns;
+static int sleep_calls, exit_calls, exit_after = -1;
+static uint32_t sleep_total_ms, sleep_max_ms;
+void poll_test_reset(int after) { sim_ns = 1000000000000ull; sleep_calls = exit_calls = 0; sleep_total_ms = sleep_max_ms = 0; exit_after = after; }
+int poll_test_sleeps(void) { return sleep_calls; }
+uint32_t poll_test_sleep_total_ms(void) { return sleep_total_ms; }
+uint32_t poll_test_sleep_max_ms(void) { return sleep_max_ms; }
+uint64_t poll_test_now_ns(void) { return sim_ns; }
+uint64_t zehos_wasm_host_time_ns(int32_t clock) { (void)clock; return sim_ns; }
 static int random_error, random_calls;
 void random_test_reset(int error) { random_error = error; random_calls = 0; }
 int random_test_calls(void) { return random_calls; }
@@ -41,10 +50,13 @@ void zehos_wasm_host_close(int32_t handle) { if (handle == 42) { open_files--; c
 void zehos_wasm_host_present(const uint32_t* p, int32_t w, int32_t h, int32_t tic, int32_t test) { }
 void zehos_wasm_host_present_indexed(const uint8_t* i, const uint32_t* p, int32_t w, int32_t h, int32_t tic) { }
 uint32_t zehos_wasm_host_ticks_ms(void) { return 0; }
-void zehos_wasm_host_sleep_ms(uint32_t ms) { }
+void zehos_wasm_host_sleep_ms(uint32_t ms) {
+    sleep_calls++; sleep_total_ms += ms; if (ms > sleep_max_ms) sleep_max_ms = ms;
+    sim_ns += (uint64_t)ms * 1000000ull;
+}
 int32_t zehos_wasm_host_poll_key(void) { return -1; }
 int32_t zehos_wasm_host_pointer_capture(int32_t enabled) { (void)enabled; return -1; }
-int32_t zehos_wasm_host_should_exit(void) { return 0; }
+int32_t zehos_wasm_host_should_exit(void) { exit_calls++; return exit_after >= 0 && exit_calls >= exit_after; }
 
 static int stat_calls;
 void stat_test_reset(void) { stat_calls = 0; }
