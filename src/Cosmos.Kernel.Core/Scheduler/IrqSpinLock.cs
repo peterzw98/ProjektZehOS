@@ -42,6 +42,12 @@ public struct IrqSpinLock
 /// Disposed once, in the context that acquired; a second call does nothing. A default instance
 /// holds nothing and disposes to nothing.
 /// </summary>
+/// <remarks>
+/// Never copy a held scope (assignment, passing by value): the "second call does nothing"
+/// guard lives in each copy, so disposing the original and a copy releases the lock twice and
+/// restores the interrupt flag twice, which can unlock another CPU's critical section. Keep it
+/// in the <c>using</c> that received it; pass it on by <c>ref</c> if at all.
+/// </remarks>
 [Experimental(Experimentals.SchedulerSeamDiagId)]
 public ref struct IrqSpinLockScope
 {
