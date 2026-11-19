@@ -32,6 +32,8 @@
     <DefineConstants Condition="'$(ZehOSSmpProbe)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE</DefineConstants>
     <!-- E7-B: Panic auf einer CPU muss die Ticks eines Threads auf einer anderen CPU anhalten; ersetzt die Schritte der SMP-Probe. -->
     <DefineConstants Condition="'$(ZehOSSmpProbePanic)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE;ZEHOS_SMP_PROBE_PANIC</DefineConstants>
+    <!-- Diagnose #530: Blockpruefsummen der empfangenen TCP-Bytes beim Abbruch eines Abrufs; nie in normalen Builds. -->
+    <DefineConstants Condition="'$(ZehOSTlsDiag)' == 'true'">$(DefineConstants);ZEHOS_TLS_DIAG</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>

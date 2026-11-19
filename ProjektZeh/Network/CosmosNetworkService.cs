@@ -248,11 +248,17 @@ internal sealed class CosmosNetworkService : INetworkService
         CosmosHttpUpdateSource.RandomizeTcpStart();
         var socket = new Socket(System.Net.Sockets.AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         Exception? failure = null; T result = default!;
+#if ZEHOS_TLS_DIAG
+        PollingStream? transportForDiag = null;
+#endif
         try
         {
             socket.Connect(IPAddress.Parse(address.ToString()!), uri.Port);
             CheckDeadline(clock, token);
             var transport = new PollingStream(socket, clock, idleDeadline, token);
+#if ZEHOS_TLS_DIAG
+            transportForDiag = transport;
+#endif
             Stream stream = transport;
             if (uri.Scheme == "https")
             {
@@ -265,7 +271,13 @@ internal sealed class CosmosNetworkService : INetworkService
             result = read(stream);
             CheckDeadline(clock, token);
         }
-        catch (Exception exception) { failure = exception; }
+        catch (Exception exception)
+        {
+            failure = exception;
+#if ZEHOS_TLS_DIAG
+            transportForDiag?.DumpDiag(exception);
+#endif
+        }
         // Kein close_notify: Eine gelesene Antwort ist laengengeprueft (HttpUpdateResponse), nach einem Fehler wird die
         // Verbindung verworfen. Hat der Server schon geschlossen, meldet Cosmos den Socket nie als schreibbar;
         // PollingStream.Write wartete bis zum 10-s-Zeitlimit, und Fetch scheiterte danach mit internal_error(80).
@@ -293,6 +305,9 @@ internal sealed class CosmosNetworkService : INetworkService
             }
             CheckDeadline(clock, token);
             int received = socket.Receive(buffer, offset, count, SocketFlags.None);
+#if ZEHOS_TLS_DIAG
+            Record(buffer, offset, received);
+#endif
             CheckDeadline(clock, token);
             if (idleDeadline && received > 0) clock.Restart();
             return received;
@@ -313,6 +328,33 @@ internal sealed class CosmosNetworkService : INetworkService
                 offset += sent; count -= sent;
             }
         }
+#if ZEHOS_TLS_DIAG
+        // Diagnose #530: die letzten 64 KiB in einem Ring; beim Abbruch je 1-KiB-Block (absolut ausgerichtet) FNV-1a,
+        // damit der Vergleich mit dem Mitschnitt zeigt, ob die Bytes schon vor der Entschluesselung falsch waren.
+        private const int RingBytes = 64 * 1024;
+        private readonly byte[] ring = new byte[RingBytes];
+        private long total;
+
+        private void Record(byte[] buffer, int offset, int count)
+        {
+            for (int i = 0; i < count; i++) ring[(int)((total + i) % RingBytes)] = buffer[offset + i];
+            if (count > 0) total += count;
+        }
+
+        internal void DumpDiag(Exception exception)
+        {
+            var log = new StringBuilder();
+            log.Append("TLSDIAG total=").Append(total).Append(' ').Append(exception.GetType().Name).Append('\n');
+            long first = Math.Max(0, total - RingBytes + 1023) / 1024 * 1024;
+            for (long block = first; block + 1024 <= total; block += 1024)
+            {
+                uint hash = 2166136261;
+                for (int i = 0; i < 1024; i++) hash = (hash ^ ring[(int)((block + i) % RingBytes)]) * 16777619;
+                log.Append("TLSDIAG ").Append(block).Append(' ').Append(hash.ToString("x8")).Append('\n');
+            }
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString(log.ToString());
+        }
+#endif
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => true;
