@@ -32,8 +32,9 @@ internal static class PanicStop
     // and the CPU takes no further NMI before an IRET.
     private static int s_halted;
 
-    // 1 once the owner has sent the NMIs and waited for the count: from then on nothing but
-    // the owner writes (or the timeout let a CPU that does not answer through).
+    // 1 once every CPU the owner sent an NMI to has halted: from then on nothing but the owner
+    // writes. Stays 0 after a timeout (ARM64, a CPU that does not answer), so the owner keeps
+    // taking the serial lock (bounded) and does not write in parallel with a running CPU.
     private static int s_othersStopped;
 
     /// <summary>True once a CPU has claimed the panic.</summary>
@@ -106,7 +107,13 @@ internal static class PanicStop
             }
         }
 
-        Volatile.Write(ref s_othersStopped, 1);
+        // Only when all answered: after a timeout another CPU may still be writing, and the
+        // serial lock (tried a bounded number of times) keeps the lines apart.
+        if (Volatile.Read(ref s_halted) >= sent)
+        {
+            Volatile.Write(ref s_othersStopped, 1);
+        }
+
         return true;
     }
 
