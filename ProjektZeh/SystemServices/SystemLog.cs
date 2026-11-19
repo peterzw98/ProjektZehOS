@@ -11,10 +11,12 @@ internal sealed class SystemLog
     private readonly Func<long> elapsedMilliseconds;
     private readonly ISystemLogSink? sink;
     private int nextEntry;
+    // Schreiber und Leser laufen auf verschiedenen Threads; der Sink wird bewusst ausserhalb gerufen.
+    private readonly object gate = new();
     private int count;
 
     public int Capacity => entries.Length;
-    public int Count => count;
+    public int Count { get { lock (gate) return count; } }
 
     public SystemLog(int capacity, Func<long> elapsedMilliseconds, ISystemLogSink? sink)
     {
@@ -64,14 +66,17 @@ internal sealed class SystemLog
     /// <returns></returns>
     public SystemLogEntry[] GetEntries()
     {
-        var snapshot = new SystemLogEntry[count];
-        int start = count == entries.Length ? nextEntry : 0;
-        for (int index = 0; index < count; index++)
+        lock (gate)
         {
-            snapshot[index] = entries[(start + index) % entries.Length]!;
-        }
+            var snapshot = new SystemLogEntry[count];
+            int start = count == entries.Length ? nextEntry : 0;
+            for (int index = 0; index < count; index++)
+            {
+                snapshot[index] = entries[(start + index) % entries.Length]!;
+            }
 
-        return snapshot;
+            return snapshot;
+        }
     }
 
     private void Write(LogLevel level, string component, string message)
@@ -84,11 +89,14 @@ internal sealed class SystemLog
         ArgumentNullException.ThrowIfNull(message);
 
         var entry = new SystemLogEntry(elapsedMilliseconds(), level, component, message);
-        entries[nextEntry] = entry;
-        nextEntry = (nextEntry + 1) % entries.Length;
-        if (count < entries.Length)
+        lock (gate)
         {
-            count++;
+            entries[nextEntry] = entry;
+            nextEntry = (nextEntry + 1) % entries.Length;
+            if (count < entries.Length)
+            {
+                count++;
+            }
         }
 
         sink?.Write(entry);

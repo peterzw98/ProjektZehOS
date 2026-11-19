@@ -80,7 +80,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
     public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
-    public bool IsCloseRequested { get; private set; }
+    // Wird auf dem Worker geschrieben und auf der Hauptschleife gelesen; ohne Barriere sieht der Leser den Wert nicht sicher.
+    private int closeRequested;
+    public bool IsCloseRequested { get => Volatile.Read(ref closeRequested) != 0; private set => Volatile.Write(ref closeRequested, value ? 1 : 0); }
     string? IWasmSession.Root => root;
     string? IWasmSession.SaveRoot => saveRoot;
     bool IWasmSession.AllowsNetwork => allowsNetwork;
@@ -96,7 +98,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, packageId);
+        // Der Ordner für /save wird auf dem Aufrufer (Hauptschleife) ermittelt, nicht auf dem gemeinsamen Worker.
+        string? storage = acquired.Value!.Manifest.AllowsStorage ? saveRootFor?.Invoke(packageId) : null;
+        WasmRuntime.Enqueue(() => Load(acquired.Value!, storage), "_start", 0, this, Finished, packageId);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
@@ -119,7 +123,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
-    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package)
+    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package, string? storage)
     {
         lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
@@ -135,7 +139,6 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             if (!read.IsOK()) return (null, null, read.Status.Message);
             aot = read.Value;
         }
-        string? storage = package.Manifest.AllowsStorage ? saveRootFor?.Invoke(packageId) : null;
         lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; saveRoot = storage; status = "Lade ..."; }
         return (module, aot, null);
     }
