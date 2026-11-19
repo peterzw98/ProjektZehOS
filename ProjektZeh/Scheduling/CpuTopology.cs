@@ -12,11 +12,13 @@ internal sealed class CpuTopology
     private readonly int[] package;
     private readonly int[][] siblings;
 
-    private CpuTopology(int[] core, int[] package, int coreCount)
+    private CpuTopology(int[] core, int[] package, int coreCount, int packageCount, bool measured)
     {
         this.core = core;
         this.package = package;
         CoreCount = coreCount;
+        PackageCount = packageCount;
+        Measured = measured;
         siblings = new int[core.Length][];
         for (int cpu = 0; cpu < core.Length; cpu++)
         {
@@ -30,6 +32,17 @@ internal sealed class CpuTopology
 
     public int CpuCount => core.Length;
     public int CoreCount { get; }
+    public int PackageCount { get; }
+    public bool Measured { get; }
+
+    public string Describe()
+    {
+        string cpus = CpuCount == 1 ? "1 CPU" : $"{CpuCount} CPUs";
+        if (!Measured) return $"{cpus}, Topologie unbekannt";
+        string cores = CoreCount == 1 ? "1 Kern" : $"{CoreCount} Kerne";
+        string packages = PackageCount == 1 ? "1 Verbund" : $"{PackageCount} Verbünde";
+        return $"{cpus}, {cores}, {packages}, Hyperthreading {(CpuCount > CoreCount ? "ja" : "nein")}";
+    }
     public int CoreOf(int cpu) => core[cpu];
     public int PackageOf(int cpu) => package[cpu];
     public ReadOnlySpan<int> SiblingsOf(int cpu) => siblings[cpu];
@@ -40,7 +53,8 @@ internal sealed class CpuTopology
         ArgumentOutOfRangeException.ThrowIfLessThan(cpuCount, 1);
         var ids = new uint[cpuCount];
         for (int cpu = 0; cpu < cpuCount; cpu++) ids[cpu] = (uint)cpu;
-        return FromApicIds(ids, 0, CpuTopologyDecoder.SinglePackage);
+        var topology = FromApicIds(ids, 0, CpuTopologyDecoder.SinglePackage);
+        return new CpuTopology(topology.core, topology.package, topology.CoreCount, topology.PackageCount, false);
     }
 
     public static CpuTopology FromApicIds(ReadOnlySpan<uint> apicIdByCpu, int smtShift, int packageShift)
@@ -55,10 +69,13 @@ internal sealed class CpuTopology
         int cores = 0, packages = 0;
         for (int cpu = 0; cpu < apicIdByCpu.Length; cpu++)
         {
+            for (int previous = 0; previous < cpu; previous++)
+                if (apicIdByCpu[previous] == apicIdByCpu[cpu])
+                    throw new ArgumentException("Doppelte APIC-ID.", nameof(apicIdByCpu));
             core[cpu] = DenseIndex(coreKeys, ref cores, Shift(apicIdByCpu[cpu], smtShift));
             package[cpu] = DenseIndex(packageKeys, ref packages, Shift(apicIdByCpu[cpu], packageShift));
         }
-        return new CpuTopology(core, package, cores);
+        return new CpuTopology(core, package, cores, packages, true);
     }
 
     // Eine Verschiebung um 32 oder mehr wirkt in C# modulo 32; hier heißt sie "alle gleich".
