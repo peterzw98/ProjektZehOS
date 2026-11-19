@@ -110,6 +110,14 @@ class PowerFlowTests(unittest.TestCase):
         current.power_flow()
         current.powered_off.assert_called_once()
 
+    def test_recovery_shutdown_tolerates_closed_connection(self):
+        current = self.flow(exits_on_reboot=False, running=True)
+        current.screen = mock.Mock()
+        current.serial = mock.Mock(return_value='Textshell ist bereit.\n')
+        current.guest.qmp.line.side_effect = [None, ConnectionError('QMP input-send-event: Verbindung beendet')]
+        current.recovery_flow()
+        current.powered_off.assert_called_once()
+
     def test_qemu_exit_on_reboot_fails(self):
         current = self.flow(exits_on_reboot=True, running=True)
         with self.assertRaises(AssertionError):

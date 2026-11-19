@@ -223,7 +223,15 @@ class Run:
         if tools.find_marker(self.serial(), "Desktop ist bereit", 0) >= 0:
             raise AssertionError("Recovery-Build startete den Desktop")
         # Die Textshell ist schon aktiv; shell() wartet sonst vergeblich auf "Textshell aktiv.".
-        guest.qmp.line("shutdown")
+        self.shutdown_from_textshell()
+
+    def shutdown_from_textshell(self) -> None:
+        try:
+            self.guest.qmp.line("shutdown")
+        except ConnectionError:
+            # Unter KVM schaltet der Gast aus, bevor QEMU das Loslassen der Eingabetaste bestaetigt (wie im .ps1);
+            # ob das ein sauberes Ausschalten war, entscheidet powered_off am Exitcode.
+            pass
         self.powered_off()
 
     def power_flow(self) -> None:
@@ -240,13 +248,7 @@ class Run:
             raise AssertionError("Der neu gestartete Gast laeuft nicht")
         guest.log("reboot in derselben VM")
         guest.qmp.tap("ret")
-        try:
-            guest.qmp.line("shutdown")
-        except ConnectionError:
-            # Unter KVM schaltet der Gast aus, bevor QEMU das Loslassen der Eingabetaste bestaetigt (wie im .ps1);
-            # ob das ein sauberes Ausschalten war, entscheidet powered_off am Exitcode.
-            pass
-        self.powered_off()
+        self.shutdown_from_textshell()
 
     def serial(self) -> str:
         log = self.work / "serial.log"
