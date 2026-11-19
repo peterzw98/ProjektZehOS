@@ -27,7 +27,8 @@ internal static class RootProbeCatalog
     /// <summary>Alte Cosmos-Grenze vor cosmos #345 (MaxParseIters 8192 inkl. '.' und '..'); Lauf 9 legt einen mehr an.</summary>
     internal const int LegacyDirectoryLimit = 8190;
     /// <summary>Eintraege im Diagnoselauf 16 (E2-P7, Plan Schritt 4).</summary>
-    internal const int ScaleEntries = 20000;
+    // 10.000 statt 20.000 (Koordinator 19.11.): Anlegen kostet in Cosmos O(n^2), 20.000 liefen nicht in 3600 s durch.
+    internal const int ScaleEntries = 10000;
     internal const int FCount = 1000;
     internal const int FOverwrite = 200;
     internal const int GCount = 1000;

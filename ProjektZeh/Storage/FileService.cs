@@ -16,7 +16,7 @@ internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
     // Produktgrenze 65.536 je ext2-Verzeichnis (Lead-Entscheid E2-P7, 19.11.2026), ein Platz Reserve fuer Rename wie zuvor.
-    // Cosmos selbst begrenzt seit TryParseDirectory (cosmos #345) nur noch auf 4096 Bloecke/16 MiB; Gastlauf 16 (20.000) ist geplant, noch offen.
+    // Cosmos selbst begrenzt seit TryParseDirectory (cosmos #345) nur noch auf 4096 Bloecke/16 MiB; Gastlauf 16 (10.000) ist geplant, noch offen.
     internal const int MaximumExt2DirectoryEntries = 65535;
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;

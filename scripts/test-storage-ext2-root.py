@@ -310,7 +310,7 @@ def main() -> int:
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
     parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit mit 8191 Eintraegen) auf 2 GiB; kein Go")
     parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15, 16],
-                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 20.000 Eintraege in einem Verzeichnis); kein Go")
+                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 10.000 Eintraege in einem Verzeichnis); kein Go")
     parser.add_argument("--memory", default="512M", help="Gastspeicher (QEMU -m), Standard 512M wie das Produktprofil")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")

@@ -727,7 +727,7 @@ internal static class CosmosExt2RootProbe
     /// <summary>
     /// Grosses Verzeichnis (E2-P7, Plan Schritt 4): <paramref name="entries"/> Eintraege anlegen, vollstaendig auflisten,
     /// jeden zweiten loeschen, wieder auflisten, umbenennen, Rest loeschen, rmdir. Lauf 9 liegt einen Eintrag ueber der
-    /// alten Cosmos-Grenze von 8190 (vor cosmos #345 abgelehnt und danach teils unsichtbar), Lauf 16 bei 20.000.
+    /// alten Cosmos-Grenze von 8190 (vor cosmos #345 abgelehnt und danach teils unsichtbar), Lauf 16 bei 10.000.
     /// </summary>
     private static void StepELimit(IBlockDevice root, int entries)
     {
