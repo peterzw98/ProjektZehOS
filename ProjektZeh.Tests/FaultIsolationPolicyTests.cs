@@ -82,4 +82,55 @@ public sealed class FaultIsolationPolicyTests
         Assert.IsFalse(quarantine.Add(-1));
         Assert.IsFalse(quarantine.Contains(8));
     }
+
+    // E6-C.9 (#390): Die Hauptschleife uebernimmt den Worker erst, wenn seine CPU ihn nicht mehr fuehrt.
+    [TestMethod]
+    public void Handoff_EmptyYieldsNothing()
+    {
+        var handoff = new IsolationHandoff();
+        Assert.AreEqual(-1, handoff.PendingCpu);
+        Assert.AreEqual(-1, handoff.TryTake(IsolationHandoff.NoThread));
+    }
+
+    [TestMethod]
+    public void Handoff_WaitsWhileWorkerStillRunsOnItsCpu()
+    {
+        var handoff = new IsolationHandoff();
+        handoff.Stage(Worker, 2);
+        Assert.AreEqual(2, handoff.PendingCpu);
+        // Gegenprobe: Cosmos hat den Wechsel noch nicht angelegt oder haelt an; nichts darf aufgeraeumt werden.
+        Assert.AreEqual(-1, handoff.TryTake(Worker));
+        Assert.AreEqual(-1, handoff.TryTake(Worker));
+        Assert.AreEqual(2, handoff.PendingCpu);
+    }
+
+    [TestMethod]
+    public void Handoff_DeliversOnceAfterSwitch()
+    {
+        var handoff = new IsolationHandoff();
+        handoff.Stage(Worker, 1);
+        Assert.AreEqual(Worker, handoff.TryTake(7));
+        Assert.AreEqual(-1, handoff.PendingCpu);
+        Assert.AreEqual(-1, handoff.TryTake(7));
+    }
+
+    [TestMethod]
+    public void Handoff_DeliversWhenCpuRunsNoThread()
+    {
+        var handoff = new IsolationHandoff();
+        handoff.Stage(Worker, 0);
+        Assert.AreEqual(Worker, handoff.TryTake(IsolationHandoff.NoThread));
+    }
+
+    [TestMethod]
+    public void Handoff_NextIsolationAfterTake()
+    {
+        var handoff = new IsolationHandoff();
+        handoff.Stage(Worker, 1);
+        Assert.AreEqual(Worker, handoff.TryTake(0));
+        handoff.Stage(9, 3);
+        Assert.AreEqual(3, handoff.PendingCpu);
+        Assert.AreEqual(-1, handoff.TryTake(9));
+        Assert.AreEqual(9, handoff.TryTake(0));
+    }
 }
