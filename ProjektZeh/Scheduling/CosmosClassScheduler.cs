@@ -28,10 +28,7 @@ internal sealed class CosmosClassScheduler : IScheduler
         public ulong Preemptions;
     }
 
-    // Queues der CPU 0: dort laeuft die Hauptschleife (Etappe 5: alle Threads auf CPU 0); ohne Sperre lesbarer Hinweis.
-    private static ClassRunQueues<SchedulerThread>? firstCpu;
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
-    internal static int WaitingThreads => firstCpu?.Waiting ?? 0;
 
     public string Name => "ZehOS Klassen";
 
@@ -40,12 +37,10 @@ internal sealed class CosmosClassScheduler : IScheduler
     {
         var queues = new ClassRunQueues<SchedulerThread>(CapacityPerClass, thread => thread.SchedulerData as ClassThreadState);
         state.SchedulerData = new CpuQueues(queues);
-        if (state.CpuId == 0) firstCpu = queues;
     }
 
     public void ShutdownCpu(PerCpuState state)
     {
-        if (ReferenceEquals(firstCpu, Cpu(state)?.Queues)) firstCpu = null;
         state.SchedulerData = null;
     }
 
