@@ -618,5 +618,174 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(self.lib.pkg_test_opendirs(), 16, "ohne freien Platz kein Hostaufruf")
 
 
+    # Etappe 12.8 (P4-D): Uhren, dev/ino/Zeitstempel, fehlende Imports
+    MTIME = 1700000000123456789
+    OPEN_ASSET = ("path_open", "iiiiiIIii", (3, 0, 128, 9, 0, 0, 0, 0, 512))
+
+    def u32(self, calls, data, read_back):
+        return self.package(calls, data, read_back=read_back) & 0xffffffff
+
+    def test_clock_res_get_invalid_id_is_einval(self):
+        for clock in (4, 9, -1):
+            with self.subTest(clock=clock):
+                self.assertEqual(self.package([("clock_res_get", "ii", (clock, 512))]), 28)
+        self.assertEqual(self.u32([("clock_res_get", "ii", (0, 512))], b"", 512), 1000000)
+        self.assertEqual(self.u32([("clock_res_get", "ii", (1, 512))], b"", 512), 1000, "Stopwatch-Aufloesung vom Host")
+
+    def test_filestat_dev_ino_stable_and_distinct(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        first = self.u32(stat, b"asset.txt", 608)
+        self.assertEqual(first, self.u32(stat, b"asset.txt", 608), "stabil")
+        self.assertEqual(self.u32(stat, b"asset.txt", 600), 1, "dev 1 = Paket")
+        other = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 3, 600))], b"sub", 608)
+        self.assertNotEqual(first, other, "verschiedene Pfade, verschiedene ino")
+        # "./asset.txt" ist derselbe normierte Pfad.
+        dotted = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 11, 600))], b"./asset.txt", 608)
+        self.assertEqual(first, dotted)
+        # Der offene Datei-fd meldet dieselbe ino wie der Pfad.
+        by_fd = self.u32([self.OPEN_ASSET, ("fd_filestat_get", "ii", (5, 600))], b"asset.txt", 608)
+        self.assertEqual(first, by_fd)
+
+    def test_filestat_ino_is_relative_to_package_root_through_dir_fd(self):
+        direct = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 13, 600))], b"sub/asset.txt", 608)
+        # Der Teststub kennt unterhalb des Ordner-Handles nur "asset.txt": derselbe Pfad "sub/asset.txt" wie oben.
+        via_dir = self.u32([self.open_dir(), ("path_filestat_get", "iiiii", (5, 0, 140, 9, 600))],
+                           b"sub" + b"\0" * 9 + b"asset.txt", 608)
+        self.assertEqual(via_dir, direct, "Ordner-fd rechnet ino weiter")
+        self.assertNotEqual(via_dir, self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))], b"asset.txt", 608))
+
+    def readdir_ino(self, calls, data, high=False):
+        """d_ino (u64 bei Offset 8 des ersten Eintrags im Puffer ab 1024), optional obere Haelfte."""
+        self.lib.dirent_test_mode(1)
+        try:
+            return self.u32(calls, data, 1036 if high else 1032)
+        finally:
+            self.lib.dirent_test_mode(0)
+
+    def test_readdir_ino_matches_stat(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        readdir = [("fd_readdir", "iiiIi", (3, 1024, 64, 0, 600))]
+        for high, offset in ((False, 608), (True, 612)):
+            with self.subTest(high=high):
+                self.assertEqual(self.readdir_ino(readdir, b"asset.txt", high), self.u32(stat, b"asset.txt", offset),
+                                 "d_ino des Paketeintrags = st_ino")
+
+    def test_readdir_ino_in_subdirectory_matches_stat_through_dir_fd(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 13, 600))]
+        readdir = [self.open_dir(), ("fd_readdir", "iiiIi", (5, 1024, 64, 0, 600))]
+        self.assertEqual(self.readdir_ino(readdir, b"sub", False), self.u32(stat, b"sub/asset.txt", 608))
+
+    def test_readdir_ino_on_save_fd4_matches_stat_formula(self):
+        # Wurzel von /save hat denselben Startwert wie die des Pakets: gleicher Name, gleiche ino.
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        self.assertEqual(self.readdir_ino([("fd_readdir", "iiiIi", (4, 1024, 64, 0, 600))], b"asset.txt"),
+                         self.u32(stat, b"asset.txt", 608))
+
+    def test_readdir_truncated_entry_keeps_host_bytes(self):
+        # 20 Byte: Header unvollstaendig, nichts wird umgeschrieben (d_ino bleibt 1 = Index+1 aus dem Stub).
+        self.lib.dirent_test_mode(1)
+        try:
+            value = self.u32([("fd_readdir", "iiiIi", (3, 1024, 20, 0, 600))], b"", 1032)
+        finally:
+            self.lib.dirent_test_mode(0)
+        self.assertEqual(value, 1)
+
+    @staticmethod
+    def fnv(*parts):
+        """Referenz: FNV-1a-64 ueber normierte Pfadteile, '/' zwischen den Teilen (wie path_inode)."""
+        state = 0xcbf29ce484222325
+        for index, part in enumerate(parts):
+            if index:
+                state = ((state ^ 0x2f) * 0x100000001b3) & 0xffffffffffffffff
+            for byte in part:
+                state = ((state ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+        return state
+
+    def test_readdir_truncated_name_keeps_host_bytes(self):
+        # 30 Byte: Header (24) vollstaendig, aber nur 6 von 9 Namensbyte -> Zweig nameLength > Rest, d_ino bleibt 1.
+        self.lib.dirent_test_mode(1)
+        try:
+            low = self.u32([("fd_readdir", "iiiIi", (3, 1024, 30, 0, 600))], b"", 1032)
+            high = self.u32([("fd_readdir", "iiiIi", (3, 1024, 30, 0, 600))], b"", 1036)
+        finally:
+            self.lib.dirent_test_mode(0)
+        self.assertEqual((low, high), (1, 0))
+
+    def test_readdir_multiple_entries_each_get_inode(self):
+        # Zwei Eintraege (33 + 25 Byte): beide d_ino = FNV des Namens; zweiter Header liegt bei Offset 33.
+        readdir = [("fd_readdir", "iiiIi", (3, 1024, 64, 0, 600))]
+        self.lib.dirent_test_mode(2)
+        try:
+            values = [self.u32(readdir, b"", off) for off in (1032, 1036, 1065, 1069)]
+        finally:
+            self.lib.dirent_test_mode(0)
+        first, second = self.fnv(b"asset.txt"), self.fnv(b"b")
+        self.assertEqual(values, [first & 0xffffffff, first >> 32, second & 0xffffffff, second >> 32])
+
+    def test_readdir_ino_in_save_subdirectory(self):
+        # /save/maps als Ordner-fd (5) oeffnen: ino der Kinder setzt den Zustand von "maps" fort.
+        readdir = [("path_open", self.OPEN, (4, 0, 128, 4, 2, 0, 0, 0, 512)),
+                   ("fd_readdir", "iiiIi", (5, 1024, 64, 0, 600))]
+        self.lib.dirent_test_mode(1)
+        try:
+            low = self.u32(readdir, b"maps", 1032)
+            high = self.u32(readdir, b"maps", 1036)
+        finally:
+            self.lib.dirent_test_mode(0)
+        expected = self.fnv(b"maps", b"asset.txt")
+        self.assertEqual((low, high), (expected & 0xffffffff, expected >> 32))
+
+    def test_filestat_has_mtime(self):
+        low = self.MTIME & 0xffffffff
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        for offset in (40, 48, 56):
+            with self.subTest(offset=offset):
+                self.assertEqual(self.u32(stat, b"asset.txt", 600 + offset), low)
+        self.assertEqual(self.u32(stat, b"asset.txt", 652), self.MTIME >> 32, "obere Haelfte von mtim")
+        self.assertEqual(self.u32([self.OPEN_ASSET, ("fd_filestat_get", "ii", (5, 600))], b"asset.txt", 648), low)
+        self.assertEqual(self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 3, 600))], b"sub", 648), 0, "unbekannt = 0")
+
+    def test_fd_renumber_moves_file(self):
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 6)),
+                                       ("fd_filestat_get", "ii", (6, 600))], b"asset.txt"), 0)
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 6)),
+                                       ("fd_filestat_get", "ii", (5, 600))], b"asset.txt"), 8, "alter fd ist frei")
+        self.assertEqual(self.lib.file_test_closes(), 1, "genau einmal geschlossen, am Laufende")
+
+    def test_fd_renumber_over_open_target_closes_it(self):
+        calls = [self.OPEN_ASSET, ("path_open", "iiiiiIIii", (3, 0, 128, 9, 0, 0, 0, 0, 516)), ("fd_renumber", "ii", (5, 6))]
+        self.assertEqual(self.package(calls, b"asset.txt"), 0)
+        self.assertEqual(self.lib.file_test_closes(), 2, "Ziel sofort, Quelle am Laufende")
+
+    def test_fd_renumber_same_fd_is_noop(self):
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 5)),
+                                       ("fd_filestat_get", "ii", (5, 600))], b"asset.txt"), 0)
+        self.assertEqual(self.package([("fd_renumber", "ii", (7, 7))]), 8, "nicht offen")
+
+    def test_fd_renumber_preopen_is_ebadf(self):
+        for source, target in ((3, 6), (4, 6), (1, 6), (5, 6)):
+            with self.subTest(source=source):
+                self.assertEqual(self.package([("fd_renumber", "ii", (source, target))]), 8)
+        for target in (3, 4, 0, 21, -1):
+            with self.subTest(target=target):
+                self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, target))], b"asset.txt"), 8)
+
+    def test_fd_datasync_flushes_like_sync(self):
+        save_open = ("path_open", "iiiiiIIii", (4, 0, 128, 1, 0, 1 << 6, 0, 0, 512))
+        self.assertEqual(self.package([save_open, ("fd_datasync", "i", (5,))], b"x"), 0)
+        calls_datasync = self.lib.save_test_calls()
+        self.assertEqual(self.package([save_open, ("fd_sync", "i", (5,))], b"x"), 0)
+        self.assertEqual(calls_datasync, self.lib.save_test_calls(), "datasync erreicht den Host wie sync")
+        self.assertEqual(calls_datasync, 3, "open, sync, close")
+        self.assertEqual(self.package([("fd_datasync", "i", (9,))]), 8)
+
+    def test_proc_raise_returns_enosys(self):
+        self.assertEqual(self.package([("proc_raise", "i", (6,))]), 52)
+
+    def test_fd_allocate_is_enotsup(self):
+        self.assertEqual(self.package([("fd_allocate", "iII", (1, 0, 10))]), 58)
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_allocate", "iII", (5, 0, 10))], b"asset.txt"), 58)
+
+
 if __name__ == "__main__":
     unittest.main()

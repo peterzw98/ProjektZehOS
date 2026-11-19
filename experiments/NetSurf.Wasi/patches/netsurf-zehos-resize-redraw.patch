@@ -30,3 +30,13 @@
  	browser_window_schedule_reformat(gw->bw);
  }
  
+@@ -2384,6 +2384,9 @@
+ 		height = 200;
+ 
+ 	if (framebuffer_resize(nsfb, width, height, febpp) == false) {
++		/* ZehOS: Scheitert der Groessenwechsel (Speicher), behaelt der Puffer die alte Groesse, ist aber leer
++		 * (zehos_set_geometry). Ohne Neuzeichnen bliebe die Flaeche schwarz bis zur naechsten Eingabe (Issue #483). */
++		fbtk_request_redraw(root);
+ 		return;
+ 	}
+ 

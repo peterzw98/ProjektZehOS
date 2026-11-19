@@ -2,9 +2,20 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "libnsfb.h"
 #define NSFB_SURFACE_ZEHOS NSFB_SURFACE_RAM
+// malloc ueber einer Schwelle oder fuer die ersten Aufrufe scheitern lassen, wie im Gast bei knappem Speicher (Issue #483).
+static size_t malloc_limit = (size_t)-1;
+static int malloc_fail_count;
+static void *test_malloc(size_t size)
+{
+    if (malloc_fail_count > 0) { malloc_fail_count--; return NULL; }
+    return size > malloc_limit ? NULL : malloc(size);
+}
+#define malloc test_malloc
 #include "../frontend/zehos.c"
+#undef malloc
 
 void _nsfb_register_surface(const enum nsfb_type_e type, const nsfb_surface_rtns_t *rtns, const char *name) { }
 bool select_plotters(nsfb_t *nsfb) { return true; }
@@ -79,6 +90,26 @@ int main(void) {
     assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
     assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
     for (size_t i = 0; i < (size_t)1920 * 1200 * 4; i += 4099) assert(surface.ptr[i] == 0);
+    // Zweig 1: malloc(neu) scheitert einmal; nach Freigabe des alten Puffers gelingt es, die Groesse wechselt.
+    malloc_fail_count = 1;
+    assert(zehos_set_geometry(&surface, 1918, 983, NSFB_FMT_ANY) == 0 && surface.width == 1918 && surface.height == 983);
+    assert(surface.linelen == 1918 * 4 && surface.ptr != NULL && surface.ptr != error_pixel && malloc_fail_count == 0);
+    // Zweig 2: neue Groesse bleibt unmoeglich, die alte passt: Groesse bleibt, Puffer leer, Bild wird gesendet.
+    surface.ptr[5] = 7;
+    dirty = false;
+    malloc_limit = (size_t)1918 * 983 * 4;
+    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == -1);
+    assert(surface.width == 1918 && surface.height == 983 && surface.linelen == 1918 * 4);
+    assert(surface.ptr != NULL && surface.ptr != error_pixel && surface.ptr[5] == 0 && dirty);
+    // Zweig 3: nichts ist anlegbar: Fehlerzustand mit einem Bildpunkt, nie ein NULL-Puffer.
+    malloc_limit = 0;
+    dirty = false;
+    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == -1);
+    assert(surface.ptr == error_pixel && surface.width == 1 && surface.height == 1 && surface.linelen == 4 && dirty);
+    // Aus dem Fehlerzustand heraus: spaeter wieder normal, der statische Punkt wird nicht freigegeben.
+    malloc_limit = (size_t)-1;
+    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0);
+    assert(surface.ptr != error_pixel && surface.width == 1920 && surface.linelen == 1920 * 4);
     surface.ptr[(size_t)1920 * 1200 * 4 - 1] = 1; // Puffer deckt das ganze neue Bild ab (ASan/Valgrind).
     // Mehrere Widget-Updates eines Neuzeichnens ergeben genau ein Bild, gesendet vor der naechsten Eingabeabfrage.
     nsfb_bbox_t box = {0, 0, 1, 1};

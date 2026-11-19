@@ -35,6 +35,9 @@ internal sealed class WasmInputBuffer
     private int lastX;
     private int lastY;
 
+    /// <summary>Meldehook (Kernel setzt ihn auf die serielle Schnittstelle): Zeile, wenn ein Ueberlauf Tasten oder Text verwirft.</summary>
+    internal static Action<string>? Report { get; set; }
+
     /// <summary>Eingefangener Zeiger: Bewegungen kommen nur noch relativ; Fokusverlust und Esc geben ihn frei.</summary>
     public bool IsCaptured => captured;
 
@@ -187,13 +190,43 @@ internal sealed class WasmInputBuffer
             };
             return;
         }
+        // Beim Laden einer Seite pollt NetSurf nur einmal je Durchlauf; Mausbewegungen zwischen den Tasten fuellen die
+        // Warteschlange. Zuerst die aeltesten Bewegungen opfern (die Position steht auch in jedem Klick), damit Tasten
+        // und Text den Ueberlauf mit Reset nicht verlieren.
+        if (count == Capacity) DropOldestPointerMove();
         if (count == Capacity)
         {
+            // Echter Verlust (selten): nur dann eine Zeile, Mausbewegungen werden nicht gemeldet.
+            int lost = CountKeysAndText();
+            if (lost > 0) Report?.Invoke("WASM input overflow: " + lost + " key/text events discarded");
             // Nach verlorenen Ereignissen darf die App keine Taste oder Maustaste als gehalten behalten.
             head = count = 0;
             events[count++] = new(WasmInputEventType.Reset);
         }
         events[(head + count) % Capacity] = value;
         count++;
+    }
+
+    private int CountKeysAndText()
+    {
+        int n = 0;
+        for (int i = 0; i < count; i++)
+        {
+            var type = events[(head + i) % Capacity].Type;
+            if (type == WasmInputEventType.KeyDown || type == WasmInputEventType.KeyUp || type == WasmInputEventType.Text) n++;
+        }
+        return n;
+    }
+
+    private void DropOldestPointerMove()
+    {
+        for (int index = 0; index < count; index++)
+        {
+            if (events[(head + index) % Capacity].Type != WasmInputEventType.PointerMove) continue;
+            for (int next = index + 1; next < count; next++)
+                events[(head + next - 1) % Capacity] = events[(head + next) % Capacity];
+            count--;
+            return;
+        }
     }
 }

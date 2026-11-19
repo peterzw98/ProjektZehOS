@@ -53,4 +53,36 @@ public sealed class SystemLogTests
         Assert.ThrowsException<ArgumentOutOfRangeException>(() => new SystemLog(capacity, () => 0, null),
             "Ein begrenzter Logpuffer benoetigt eine positive Kapazitaet.");
     }
+
+    [TestMethod]
+    public void Write_FromTwoThreads_KeepsEveryEntryWhole()
+    {
+        const int perThread = 20000;
+        var log = new SystemLog(64, () => 0, null);
+        var start = new System.Threading.ManualResetEventSlim(false);
+        var writers = new System.Threading.Thread[2];
+        for (int t = 0; t < writers.Length; t++)
+        {
+            int id = t;
+            writers[t] = new System.Threading.Thread(() =>
+            {
+                start.Wait();
+                for (int i = 0; i < perThread; i++) log.Information("Worker" + id, "m" + i);
+            });
+            writers[t].Start();
+        }
+
+        start.Set();
+        foreach (var writer in writers) writer.Join();
+
+        Assert.AreEqual(log.Capacity, log.Count, "Nach zwei Schreibern muss der Puffer voll sein.");
+        SystemLogEntry[] entries = log.GetEntries();
+        Assert.AreEqual(log.Capacity, entries.Length, "GetEntries muss die volle Zahl liefern.");
+        foreach (SystemLogEntry entry in entries)
+        {
+            Assert.IsNotNull(entry, "Kein Eintrag darf fehlen.");
+            Assert.IsTrue(entry.Component.StartsWith("Worker", StringComparison.Ordinal), "Komponente muss vollständig sein.");
+            Assert.IsTrue(entry.Message.StartsWith('m'), "Meldung muss vollständig sein.");
+        }
+    }
 }

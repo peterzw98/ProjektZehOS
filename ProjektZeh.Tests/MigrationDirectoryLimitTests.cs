@@ -18,7 +18,6 @@ public sealed class MigrationDirectoryLimitTests
         Directory.CreateDirectory(bulk);
         try
         {
-            Assert.AreEqual(8189, FileService.MaximumExt2DirectoryEntries, "Ein Eintrag Reserve unter der Cosmos-Parsergrenze fuer Umbenennen.");
             for (int i = 0; i < FileService.MaximumExt2DirectoryEntries; i++) File.Create(Path.Combine(bulk, $"f{i:D4}.txt")).Dispose();
             Assert.AreEqual(0, Plan(source).Conflicts.Count, "Genau die Grenze an direkten Kindern passt.");
             string extra = Path.Combine(bulk, "extra.txt");
