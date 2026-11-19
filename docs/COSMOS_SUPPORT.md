@@ -64,12 +64,12 @@ Lastmittel je Lauf: 1,7 bis 5,8, Mittel 3,8.
 
 **Einordnung:**
 1. Doom liegt in allen zehn Läufen zwischen 69,8 und 70,0 fps. Doom ist taktbegrenzt. In den `Anteile`-Zeilen liegt `app` im Median bei 4,5 ms je Bild, `schlaf` bei p95 22,5 ms (`doom-RR-1`, `doom-K-1`). Doom wartet über `DG_SleepMs` → `zehos_sleep_ms` (`experiments/Wasm.DoomProbe/platform/doomgeneric_zehos.c:80`) auf den Spieltakt, 35 Takte je Sekunde, also etwa 70 Bilder je Sekunde. Doom zeigt deshalb nur „nicht schlechter“, keinen Unterschied zwischen den Schedulern.
-2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die App rechnet ohne Schlaf (`app` 16,6 ms, `schlaf` 0). Die Streuung hängt nach den Lastwerten kaum an WoW. Wahrscheinlich ist die Welt die Ursache: ROADMAP (Scheduler-Fix #254, KVM, Sichtweite 512, gepinnt) zeigt für denselben Stand Seed 5 mit 36,0 fps und Seed 3 mit 75,3 fps. Unser Lauf setzt keinen Seed und keine Sichtweite, das Messskript kann beides heute nicht festlegen. Dass jeder Lauf in einer anderen Welt spielt, ist vermutet und nicht nachgesehen.
+2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die App rechnet ohne Schlaf (`app` 16,6 ms, `schlaf` 0). Die Streuung hängt nach den Lastwerten kaum an WoW. Wahrscheinlich ist die Welt die Ursache: ROADMAP (Scheduler-Fix #254, KVM, Sichtweite 512, gepinnt) zeigt für denselben Stand Seed 5 mit 36,0 fps und Seed 3 mit 75,3 fps. Unser Lauf setzt keinen Seed. Der Seed wird beim Bau des Pakets festgelegt (`experiments/ClassiCube.Wasi/build.py --world-seed <N>`), nicht zur Laufzeit. Das veröffentlichte Paket erzeugt deshalb bei jedem Lauf eine Zufallswelt; dass die Streuung daher kommt, ist vermutet und nicht gemessen. Die Sichtweite ist mit dem Standard 512 gelaufen, sie ist nicht die Abweichung.
 3. Ausreißer `classicube-RR-1` mit 5671 ms maximalem Bildabstand. Der Median bleibt niedrig, die mittlere fps ist kaum betroffen. Keine Wiederholung.
 4. Der Pin-Störfaktor (zehos.1 gegen zehos.2) bleibt wie oben vermerkt.
 5. Eine ClassiCube-Wiederholung braucht eine feste Welt (ROADMAP 13.2) und mehr Läufe je Stand. Sie ist noch nicht eingeplant.
 
-ClassiCube: Sichtweite und Seed sind nicht gesetzt (das Skript hat dafür keine Option), es gilt der Skriptstandard. Das ist eine bekannte Abweichung von ROADMAP 13.2.
+ClassiCube: Der Seed ist nicht gesetzt. Er ist beim Paketbau festzulegen (`build.py --world-seed`), das Messskript hat dafür keine Option. Die Sichtweite war der ClassiCube-Standard 512 und entspricht ROADMAP 13.2. Die Abweichung betrifft also nur den Seed.
 
 Hintergrundlast: Die Läufe nutzten kein `tasks start busy`. Die Last kam von `Wow.exe` auf dem Host, also von außen und unkontrolliert. VMware und echte Hardware: offen, nicht geprüft.
 
