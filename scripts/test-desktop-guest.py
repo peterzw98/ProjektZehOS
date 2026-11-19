@@ -5,6 +5,9 @@ Normales ISO: Boot bis "Desktop ist bereit", Ersteinrichtung des Kontos auf eine
 oeffnen, tippen und ueber X schliessen, Dateien und Einstellungen oeffnen, Textshell mit Ab- und Anmeldung, zurueck
 zum Desktop (F4), shutdown ueber die Textshell. Danach darf das serielle Protokoll keine Error-Zeile enthalten.
 Mit --recovery: Boot bis "Textshell ist bereit.", kein Desktop, shutdown; uname wird nur fotografiert, nicht geprueft.
+Mit --power (Recovery-ISO): Linux-Fassung von test-power-commands.ps1 ohne GDB. reboot muss den Gast in derselben VM
+erneut bis "Textshell ist bereit." starten (QEMU laeuft weiter, query-status running), danach endet QEMU nach shutdown
+mit Exitcode 0.
 
 Geprueft wird ueber serielle Marken und Ausschnitte der Bildschirmfotos (ohne Leiste mit Uhr); der Fensterinhalt
 selbst ist Sache der Hosttests. Jeder Schritt hat eine Zeitgrenze; bei einem Fehlschlag bleiben Bildschirmfoto,
@@ -220,8 +223,32 @@ class Run:
         if tools.find_marker(self.serial(), "Desktop ist bereit", 0) >= 0:
             raise AssertionError("Recovery-Build startete den Desktop")
         # Die Textshell ist schon aktiv; shell() wartet sonst vergeblich auf "Textshell aktiv.".
-        guest.qmp.line("shutdown")
+        self.shutdown_from_textshell()
+
+    def shutdown_from_textshell(self) -> None:
+        try:
+            self.guest.qmp.line("shutdown")
+        except ConnectionError:
+            # Unter KVM schaltet der Gast aus, bevor QEMU das Loslassen der Eingabetaste bestaetigt (wie im .ps1);
+            # ob das ein sauberes Ausschalten war, entscheidet powered_off am Exitcode.
+            pass
         self.powered_off()
+
+    def power_flow(self) -> None:
+        guest = self.guest
+        self.boot("Textshell ist bereit.")
+        guest.qmp.tap("ret")
+        mark = guest.mark()
+        guest.qmp.line("reboot")
+        # -action reboot=reset: Warmstart im selben QEMU-Prozess; die Shell muss erneut bereit werden.
+        guest.wait("Textshell ist bereit.", 60, mark)
+        if self.vm.poll() is not None:
+            raise AssertionError(f"QEMU endete beim reboot (Exitcode {self.vm.returncode})")
+        if not guest.qmp.command("query-status")["return"].get("running"):
+            raise AssertionError("Der neu gestartete Gast laeuft nicht")
+        guest.log("reboot in derselben VM")
+        guest.qmp.tap("ret")
+        self.shutdown_from_textshell()
 
     def serial(self) -> str:
         log = self.work / "serial.log"
@@ -241,11 +268,16 @@ class Run:
             self.vm.wait()
 
 
-def run(work: Path, start_vm, recovery: bool, boot_timeout: float) -> int:
+def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False) -> int:
     """Fuehrt den Ablauf aus; start_vm(port) startet den Gast und liefert seinen Prozess."""
     current = Run(work, start_vm, boot_timeout)
     try:
-        current.recovery_flow() if recovery else current.desktop_flow()
+        if power:
+            current.power_flow()
+        elif recovery:
+            current.recovery_flow()
+        else:
+            current.desktop_flow()
         errors = unexpected_errors(current.serial(), recovery)
         if errors:
             raise AssertionError("Error-Zeilen im seriellen Protokoll:\n" + "\n".join(errors))
@@ -268,6 +300,7 @@ def main() -> int:
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--accel", choices=["tcg", "kvm", "whpx"], default="tcg")
     parser.add_argument("--recovery", action="store_true", help="ISO mit -p:ZehOSRecovery=true")
+    parser.add_argument("--power", action="store_true", help="reboot und shutdown pruefen (Recovery-ISO)")
     parser.add_argument("--boot-timeout", type=float, default=300, help="Sekunden bis zur Bootmarke")
     args = parser.parse_args()
     iso = args.iso.resolve()
@@ -277,12 +310,14 @@ def main() -> int:
     (work / "empty").mkdir(parents=True)
     disk = work / "data.qcow2"
     tools.create_disk(work / "empty", disk)
+    if args.power:
+        args.recovery = True
     if args.recovery:
         # Ohne Datenplatte: auf einer leeren Platte bietet Recovery die Ersteinrichtung an, und uname/shutdown wuerden
         # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
         tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
-               args.boot_timeout)
+               args.boot_timeout, args.power)
 
 
 if __name__ == "__main__":
