@@ -7,6 +7,7 @@ Das Board ersetzt keine Freigaben (`AGENTS.md`, „Freigaben“) und keine Absti
 - **Block:** ein Issue mit dem Label `block`: Ziel, Abnahme, berührte Dateien und Abhängigkeiten. Ein Block ist so geschnitten, dass ein Team ihn allein umsetzen kann.
 - **Spalten:** Offen → Übernommen → In Arbeit → Review/PR → Erledigt; dazu **Wartend**: Der Block wartet auf eine Freigabe oder Entscheidung eines Projektbenutzers. Die genaue Frage steht als Kommentar im Issue oder PR und geht zugleich als `[FREIGABE?]` in den IRC (`#general`); nach der Antwort zurück auf „In Arbeit“.
 - **Wer ihn hat,** steht im Issue: Label `team:<team>` und ein Kommentar `[BOARD] übernommen team=… agent=… branch=…`. Das Issue ist maßgeblich, die Spalte zeigt den Stand.
+  Zusätzlich weist `claim` (und `new --team`) das Issue der verantwortlichen Person des Teams zu (Peters Team: `peterzw98`, Laser und Buzz: `larsernst`, Azazel: `azazel55605`; Tabelle `ASSIGNEES` in `scripts/board.py`); `release` nimmt die Zuweisung wieder weg. Auch Menschen übernehmen Blöcke mit `claim` (Agent = eigener Name), damit Label, Kommentar und Zuweisung stimmen.
 
 ## Regeln
 
@@ -41,4 +42,4 @@ python3 scripts/board.py release 123 buzz "pausiert, Stand auf task/x"
 `AGENTS.md`). Ein Team-Label ohne Übernahme (vorgesehen per `new --team` oder Rest eines Abbruchs) sperrt den Block für andere Teams, bis das Team ihn
 übernimmt oder freigibt; `claim` meldet das.
 
-Teams (Labels): `team:peter`, `team:laser`, `team:buzz`, `team:azazel`; ein neues Team legt sein Label einmal mit `gh label create team:<name>` an.
+Teams (Labels): `team:peter`, `team:laser`, `team:buzz`, `team:azazel`; ein neues Team legt sein Label einmal mit `gh label create team:<name>` an und trägt seine verantwortliche Person in `ASSIGNEES` ein.

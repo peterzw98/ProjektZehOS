@@ -21,6 +21,10 @@ LINE = re.compile(r"^(\S+ \S+) << :([^!\s]+)!\S* (PRIVMSG|NOTICE|INVITE) (\S+) :
 IGNORED_SENDERS = {"histserv"}  # Wiederholung alter Zeilen durch den Server, klein geschrieben verglichen
 MAX_LINE = 1000      # längere Zeilen werden im Auftrag gekürzt, das Protokoll bleibt vollständig
 MAX_BATCH = 40       # mehr Zeilen je Lauf nur als Verweis aufs Protokoll
+# Ohne Node-Reuse enden die MSBuild-Arbeitsknoten mit jedem dotnet-Aufruf. Sonst warten sie bis zu 15 Minuten auf den
+# nächsten Bau (gemessen nach build-cosmos.sh: 10 Knoten, 1,8 GB), sammeln sich über Läufe an und bleiben in der
+# cgroup des Laufs, der sie gestartet hat, statt in der des Laufs, der sie nutzt. Kosten: Cosmos-Quellbau 62 s -> 73 s.
+RUN_ENV = {"MSBUILDDISABLENODEREUSE": "1"}
 
 
 def _stat_fields(pid):
@@ -174,6 +178,19 @@ def mention_pattern(nick):
     # Ganzer Nick, nicht Teil eines längeren (agent-orchestrator gegen agent-orchestrator-junior);
     # IRC-Nicks sind unabhängig von Groß- und Kleinschreibung (wie grep -i im früheren team-watch.sh)
     return re.compile(rf"(?<![A-Za-z0-9_\-]){re.escape(nick)}(?![A-Za-z0-9_\-])", re.IGNORECASE)
+
+
+def addressed(text, target, nick, pattern):
+    """Ist der Nick Adressat? Ja bei Direktnachricht, bei „nick:“ irgendwo (Sammelzeilen „a: X; b: Y“) und wenn er vor dem
+    ersten „: “ steht („a b: …“, „[AUFTRAG] a: …“). Nur Adressaten werden geweckt; wer bloß im Text vorkommt („… [FERTIG]
+    an a“), bekommt die Zeile als Kontext beim nächsten Lauf. Doppelpunkte ohne Leerzeichen (10:19, https:) beenden das
+    Adressfeld nicht. Ohne „: “ in den ersten 160 Zeichen zählt wie bisher jede Nennung."""
+    if target.lower() == nick.lower():
+        return True
+    if re.search(rf"{pattern.pattern}\s*:", text, re.IGNORECASE):
+        return True
+    head, sep, _ = text[:160].partition(": ")
+    return bool(pattern.search(head if sep else text))
 
 
 def parse_mention(raw, nick, pattern):
@@ -380,7 +397,9 @@ class Dispatcher:
                 ts, sender, target, text = hit
                 e = {"id": self._next_id(), "ts": ts, "sender": sender,
                      "target": target, "text": text, "seen": self.clock(),
-                     "trigger": self.allow is None or sender.lower() in self.allow,
+                     "allowed": self.allow is None or sender.lower() in self.allow,
+                     "trigger": (self.allow is None or sender.lower() in self.allow)
+                                and addressed(text, target, self.a.nick, self.pattern),
                      "ino": st.st_ino, "gen": gen, "end": pos}
                 inbox.write(json.dumps(e, ensure_ascii=False) + "\n")
                 self.entries.append(e)
@@ -419,7 +438,8 @@ class Dispatcher:
         lines = batch[-MAX_BATCH:]
         skipped = len(batch) - len(lines)
         text = "\n".join(f"#{e['id']} {e['ts']} {e['sender']} -> {e['target']}: {e['text'][:MAX_LINE]}"
-                         + ("" if e["trigger"] else "   [nur Information: Absender startet keine Läufe]")
+                         + ("" if e["trigger"] else "   [nur Information: Absender startet keine Läufe]" if not e.get("allowed", True)
+                            else "   [nur Information: nennt dich, ist aber an andere adressiert]")
                          + ("   [lief schon einmal ins Zeitlimit: nicht erneut warten, sondern [BLOCKER] melden]"
                             if e["id"] <= self.timed_out_upto else "")
                          for e in lines)
@@ -486,7 +506,7 @@ class Dispatcher:
             out = open(out_path, "w")
             # Eigene Prozessgruppe: bei Zeitüberschreitung wird der Lauf mit allen Kindprozessen beendet
             self.proc = self.popen(cmd, cwd=self.a.home, stdin=subprocess.DEVNULL, stdout=out,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
+                                   stderr=subprocess.STDOUT, start_new_session=True, env={**os.environ, **RUN_ENV})
         except OSError as e:
             if out: out.close()
             self._release_slot()

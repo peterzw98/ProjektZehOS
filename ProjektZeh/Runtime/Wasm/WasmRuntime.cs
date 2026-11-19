@@ -533,7 +533,7 @@ internal static unsafe partial class WasmRuntime
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_stat")]
-    private static int HostStat(byte* path, uint length, ulong* size, int* type)
+    private static int HostStat(byte* path, uint length, ulong* size, int* type, ulong* modifiedNs)
     {
         try
         {
@@ -542,6 +542,7 @@ internal static unsafe partial class WasmRuntime
             {
                 *size = bytes;
                 *type = kind;
+                *modifiedNs = UnknownModifiedNs;
             }
             return result;
         }
@@ -622,7 +623,7 @@ internal static unsafe partial class WasmRuntime
     }
 
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_stat")]
-    private static int HostSaveStat(byte* path, uint length, ulong* size, int* type)
+    private static int HostSaveStat(byte* path, uint length, ulong* size, int* type, ulong* modifiedNs)
     {
         try
         {
@@ -630,7 +631,19 @@ internal static unsafe partial class WasmRuntime
             int status = save.Stat(Encoding.UTF8.GetString(path, (int)length), out long bytes, out bool directory);
             *size = (ulong)bytes;
             *type = directory ? 3 : 4;
+            *modifiedNs = UnknownModifiedNs;
             return status;
+        }
+        catch (Exception) { return WasiErrno.Io; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_save_fstat")]
+    private static int HostSaveFstat(int handle, ulong* modifiedNs)
+    {
+        try
+        {
+            if (save == null) return WasiErrno.BadFile;
+            return save.Fstat(handle, out *modifiedNs);
         }
         catch (Exception) { return WasiErrno.Io; }
     }

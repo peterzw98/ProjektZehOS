@@ -27,6 +27,18 @@ public sealed class WasmSaveStoreTests
     private WasmSaveStore Store(WasmSaveLimits? limits = null, long available = long.MaxValue) =>
         new(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, available)), limits: limits);
 
+    [TestMethod]
+    public void FstatReportsUnknownTimeForOpenHandlesAndBadFileOtherwise()
+    {
+        var store = new WasmSaveStore(root, () => blocked, diskSpace: _ => ResultObjectFactory.CreateSuccess((long.MaxValue, long.MaxValue)));
+        Assert.AreEqual(WasiErrno.BadFile, store.Fstat(99, out _), "unbekanntes Handle");
+        Assert.AreEqual(WasiErrno.Success, Create(store, "zeit.dat", out int handle));
+        Assert.AreEqual(WasiErrno.Success, store.Fstat(handle, out ulong modified));
+        Assert.AreEqual(0UL, modified, "Cosmos liefert keine Zeit: 0 = unbekannt");
+        Assert.AreEqual(WasiErrno.Success, store.Close(handle));
+        Assert.AreEqual(WasiErrno.BadFile, store.Fstat(handle, out _), "geschlossenes Handle");
+    }
+
     // Audit Speicher: Grow und das Laden einer vorhandenen Datei pruefen den Puffer vor jeder Zustandsaenderung.
     [TestMethod]
     public void MissingBufferReportsNoSpaceAndKeepsStateAndFile()
