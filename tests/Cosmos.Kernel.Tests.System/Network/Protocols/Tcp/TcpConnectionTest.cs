@@ -115,4 +115,50 @@ public class TcpConnectionTest
             Assert.That(_target.Data.Length, Is.Zero);
         }
     }
+
+    // ZehOS patch tcp-receive-window: das angebotene Fenster folgt dem freien Puffer.
+    [TestFixture]
+    public class ReceiveWindow : TcpConnectionTest
+    {
+        [Test]
+        public void WhileTheBufferHasRoom_TheWindowIsTheFullWindowSize()
+        {
+            _target.AppendToData(new byte[1000]);
+
+            Assert.That(_target.TCB.RcvWnd, Is.EqualTo((uint)TcpConnection.TcpWindowSize));
+        }
+
+        [Test]
+        public void NearTheLimit_TheWindowIsTheFreeRoom()
+        {
+            _target.AppendToData(new byte[TcpConnection.ReceiveBufferLimit - 1000]);
+
+            Assert.That(_target.TCB.RcvWnd, Is.EqualTo(1000u));
+        }
+
+        [Test]
+        public void AtTheLimit_TheWindowIsZero_AndReadingOpensIt()
+        {
+            _target.AppendToData(new byte[TcpConnection.ReceiveBufferLimit]);
+            Assert.That(_target.TCB.RcvWnd, Is.Zero);
+
+            _target.AdvanceDataOffset(TcpConnection.TcpWindowSize / 2);
+
+            Assert.That(_target.TCB.RcvWnd, Is.EqualTo((uint)(TcpConnection.TcpWindowSize / 2)));
+        }
+
+        [Test]
+        public void ReadDataOpensTheWindow_AndKeepsTheBytes()
+        {
+            byte[] sent = Enumerable.Range(0, TcpConnection.ReceiveBufferLimit).Select(i => (byte)i).ToArray();
+            _target.AppendToData(sent);
+
+            byte[] read = new byte[TcpConnection.TcpWindowSize];
+            int count = _target.ReadData(read);
+
+            Assert.That(count, Is.EqualTo(read.Length));
+            Assert.That(read, Is.EqualTo(sent.AsSpan(0, read.Length).ToArray()));
+            Assert.That(_target.TCB.RcvWnd, Is.EqualTo((uint)TcpConnection.TcpWindowSize));
+        }
+    }
 }

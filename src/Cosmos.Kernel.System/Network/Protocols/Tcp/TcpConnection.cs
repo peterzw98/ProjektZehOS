@@ -32,6 +32,17 @@ internal class TcpConnection : IDisposable
     public const ushort TcpWindowSize = 32768;
 
     /// <summary>
+    /// ZehOS patch tcp-receive-window, see PATCHES.md: the most received bytes
+    /// a connection holds unread. The advertised window is the free room below
+    /// this limit, capped at <see cref="TcpWindowSize"/>, so a reader slower
+    /// than the network stops the peer instead of letting the buffer grow
+    /// without bound (a download held 23 MB unread and the next doubling of the
+    /// array failed). Eight full windows, so a reader that takes its bytes in
+    /// bursts does not slow a download it keeps up with.
+    /// </summary>
+    public const int ReceiveBufferLimit = 8 * TcpWindowSize;
+
+    /// <summary>
     /// The first port of the dynamic range <see cref="GetDynamicPort"/> hands out.
     /// </summary>
     public const ushort DynamicPortStart = 49152;
@@ -331,8 +342,12 @@ internal class TcpConnection : IDisposable
         }
         else
         {
-            // Check sequence number and segment data.
-            if (TCB.RcvNxt <= packet.SequenceNumber && packet.SequenceNumber + packet.TcpDataLength < TCB.RcvNxt + TCB.RcvWnd)
+            // Check sequence number and segment data. ZehOS patch
+            // tcp-receive-window, see PATCHES.md: a segment may end right at
+            // the window's edge (<=, was <). With the window now shrinking to
+            // the free buffer room, < turned away the segment that filled it
+            // exactly and, at a zero window, every pure ACK and FIN at RcvNxt.
+            if (TCB.RcvNxt <= packet.SequenceNumber && packet.SequenceNumber + packet.TcpDataLength <= TCB.RcvNxt + TCB.RcvWnd)
             {
                 switch (Status)
                 {
@@ -554,7 +569,18 @@ internal class TcpConnection : IDisposable
                     return;
                 }
 
-                // ZehOS patch tcp-rcvnxt-after-append, see PATCHES.md: RcvNxt
+                // ZehOS patch tcp-receive-window, see PATCHES.md: a segment
+                // the buffer has no room for is not taken. The window check
+                // above already keeps it out while RcvWnd follows the buffer;
+                // this guards the limit on its own. The ACK carries the
+                // current window, and the peer resends once it opens.
+                if (packet.TcpDataLength > ReceiveBufferLimit - _dataLength)
+                {
+                    SendEmptyPacket(TcpFlags.ACK);
+                    return;
+                }
+
+                // ZehOS patch tcp-receive-window, see PATCHES.md: RcvNxt
                 // moves only once the bytes are stored. AppendToData changes
                 // no state when it throws, so the segment is then neither
                 // stored nor acknowledged and the peer resends it from RcvNxt;
@@ -818,17 +844,29 @@ internal class TcpConnection : IDisposable
     /// <returns>How many bytes were copied; zero when none are waiting.</returns>
     public int ReadData(Span<byte> destination)
     {
+        int count;
+        bool reopened = false;
         using (NetworkStackLock.Enter())
         {
-            int count = Math.Min(_dataLength, destination.Length);
+            count = Math.Min(_dataLength, destination.Length);
             if (count > 0)
             {
                 _data.AsSpan(_dataOffset, count).CopyTo(destination);
-                ConsumeData(count);
+                reopened = ConsumeData(count);
             }
-
-            return count;
         }
+
+        // ZehOS patch tcp-receive-window, see PATCHES.md: a peer that saw the
+        // window close sends nothing until it hears it opened, and otherwise
+        // only probes on its persist timer. The window update goes out once,
+        // when the read lifts the window past half of TcpWindowSize, after the
+        // lock is let go as every send here does.
+        if (reopened && Status == Status.ESTABLISHED)
+        {
+            SendEmptyPacket(TcpFlags.ACK);
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -853,14 +891,33 @@ internal class TcpConnection : IDisposable
     /// <see cref="_dataLength"/>. Once all of them are gone the next append
     /// starts again at the front of the same array. Never throws.
     /// </summary>
-    private void ConsumeData(int count)
+    /// <returns>Whether the receive window grew from below half of
+    /// <see cref="TcpWindowSize"/> to at least half, so the peer should hear
+    /// of it.</returns>
+    private bool ConsumeData(int count)
     {
+        uint before = TCB.RcvWnd;
         _dataOffset += count;
         _dataLength -= count;
         if (_dataLength == 0)
         {
             _dataOffset = 0;
         }
+
+        UpdateRcvWnd();
+        return before < TcpWindowSize / 2 && TCB.RcvWnd >= TcpWindowSize / 2;
+    }
+
+    /// <summary>
+    /// ZehOS patch tcp-receive-window, see PATCHES.md: sets the advertised
+    /// window to the free room below <see cref="ReceiveBufferLimit"/>, at most
+    /// <see cref="TcpWindowSize"/>. Its right edge (RcvNxt + RcvWnd) never
+    /// moves back: an append moves RcvNxt up by what it takes off the window.
+    /// Under the stack's lock wherever the buffer changes.
+    /// </summary>
+    private void UpdateRcvWnd()
+    {
+        TCB.RcvWnd = (uint)Math.Clamp(ReceiveBufferLimit - _dataLength, 0, TcpWindowSize);
     }
 
     /// <summary>
@@ -883,6 +940,7 @@ internal class TcpConnection : IDisposable
             target = _data.AsSpan(_dataOffset + _dataLength);
             other.CopyTo(target);
             _dataLength += other.Length;
+            UpdateRcvWnd();
             return;
         }
 
@@ -891,10 +949,12 @@ internal class TcpConnection : IDisposable
         // holds them plus the new bytes, they move to its front (CopyTo
         // copies overlapping spans correctly); otherwise they move to an array
         // twice as large, which keeps the copies linear in the bytes received.
+        // ZehOS patch tcp-receive-window, see PATCHES.md: the doubling stops at
+        // ReceiveBufferLimit, which the receive path keeps the data under.
         int requiredLength = _dataLength + other.Length;
         byte[] result = requiredLength <= _data.Length
             ? _data
-            : new byte[Math.Max(requiredLength, _data.Length * 2)];
+            : new byte[Math.Max(requiredLength, Math.Min(_data.Length * 2, ReceiveBufferLimit))];
         _data.AsSpan(_dataOffset, _dataLength).CopyTo(result);
         target = result.AsSpan(_dataLength);
         other.CopyTo(target);
@@ -902,6 +962,7 @@ internal class TcpConnection : IDisposable
         _data = result;
         _dataOffset = 0;
         _dataLength = requiredLength;
+        UpdateRcvWnd();
     }
 
     internal bool Equals(ushort localPort, ushort remotePort, Address localIp, Address remoteIp)
