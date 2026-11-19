@@ -187,6 +187,10 @@ internal sealed class WasmInputBuffer
             };
             return;
         }
+        // Beim Laden einer Seite pollt NetSurf nur einmal je Durchlauf; Mausbewegungen zwischen den Tasten fuellen die
+        // Warteschlange. Zuerst die aeltesten Bewegungen opfern (die Position steht auch in jedem Klick), damit Tasten
+        // und Text den Ueberlauf mit Reset nicht verlieren.
+        if (count == Capacity) DropOldestPointerMove();
         if (count == Capacity)
         {
             // Nach verlorenen Ereignissen darf die App keine Taste oder Maustaste als gehalten behalten.
@@ -195,5 +199,17 @@ internal sealed class WasmInputBuffer
         }
         events[(head + count) % Capacity] = value;
         count++;
+    }
+
+    private void DropOldestPointerMove()
+    {
+        for (int index = 0; index < count; index++)
+        {
+            if (events[(head + index) % Capacity].Type != WasmInputEventType.PointerMove) continue;
+            for (int next = index + 1; next < count; next++)
+                events[(head + next - 1) % Capacity] = events[(head + next) % Capacity];
+            count--;
+            return;
+        }
     }
 }

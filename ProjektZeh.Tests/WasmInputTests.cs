@@ -87,6 +87,25 @@ public sealed class WasmInputTests
     }
 
     [TestMethod]
+    public void OverflowDropsPointerMovesBeforeKeysAndText()
+    {
+        var input = new WasmInputBuffer();
+        input.SetViewport(800, 600, 0, 0);
+        for (int index = 0; index < 100; index++)
+        {
+            input.Handle(new(InputEventType.PointerMove, X: index, Y: 1));
+            input.Handle(new(InputEventType.Text, Character: 'a'));
+        }
+        int texts = 0;
+        while (input.TryRead(out WasmInputEvent value))
+        {
+            Assert.AreNotEqual(WasmInputEventType.Reset, value.Type, "Bewegungen weichen, Text bleibt.");
+            if (value.Type == WasmInputEventType.Text) texts++;
+        }
+        Assert.AreEqual(100, texts);
+    }
+
+    [TestMethod]
     public void PointerUsesDisplayedScaleAndLetterboxAndKeepsRelease()
     {
         var input = new WasmInputBuffer();
