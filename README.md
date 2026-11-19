@@ -56,7 +56,7 @@ Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Star
 
 ### Gastproben
 
-Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, GC und Threadstart/-ende:
+Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, Warten mit Frist (`timedwait`), GC und Threadstart/-ende:
 
 ```bash
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbe=true -warnaserror
