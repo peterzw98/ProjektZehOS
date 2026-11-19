@@ -407,6 +407,10 @@ def main() -> int:
     if ctx.go and args.last_run >= 2:
         clean_run(ctx, "lauf2", 2, root)
     if ctx.go and args.last_run >= 5:
+        if args.parallel > 1:
+            # Unter mehreren Gaesten mit geteilter CPU treffen die Abbruchzeitpunkte anderen Gastfortschritt.
+            ctx.note(f"Hinweis: Lauf 3/4/5 mit --parallel {args.parallel}; Abbruchzeitpunkte "
+                     f"{'/'.join(str(d) for d in ABORT_DELAYS)} s sind nominell (geteilte Host-CPU)")
         run_aborts(ctx, root, ABORT_DELAYS, args.parallel)
 
     complete = args.last_run == 5
