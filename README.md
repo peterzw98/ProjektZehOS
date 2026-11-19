@@ -72,7 +72,7 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpPro
 ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --panic --iso <ISO> --accel kvm --runs 5
 ```
 
-Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System halted.` und 2 s lang keine weitere `tick`-Zeile.
+Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System halted.` und 2 s lang keine weitere `tick`-Zeile. Ein ISO mit `ZehOSSmpProbePanic` führt nur den Schritt `cpus` und die Panic-Probe aus, keinen der übrigen Schritte; `SMP_PROBE PASS` erscheint dort nie, weil das System anhält (das Urteil fällt `--panic`). Gegenprobe: Mit einem Cosmos ohne den Patch `panic-stop-cpus` muss `--panic` FAIL melden (Ticks laufen nach `System halted.` weiter).
 
 ## Lizenz
 
