@@ -13,7 +13,8 @@ internal static class Experimentals
     /// The scheduler policy seam: <see cref="IScheduler"/>,
     /// <see cref="SchedulerManager"/>, <see cref="SchedulerThread"/>,
     /// <see cref="PerCpuState"/>, <see cref="SchedulerExtensible"/>,
-    /// <see cref="CpuLockScope"/>, the
+    /// <see cref="CpuLockScope"/>, <see cref="IrqSpinLock"/>/<see cref="IrqSpinLockScope"/>
+    /// (ZehOS patch irq-mask-scope, see PATCHES.md), the
     /// <see cref="SchedulerThreadState"/>/<see cref="SchedulerThreadFlags"/> enums,
     /// and the CPU exception hook that hands a faulting thread to the scheduler
     /// (<see cref="CPU.CpuExceptionHook"/>, <see cref="CPU.CpuExceptionHandler"/>,
