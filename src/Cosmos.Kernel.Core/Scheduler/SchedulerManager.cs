@@ -2470,11 +2470,13 @@ public static class SchedulerManager
     /// </summary>
     /// <remarks>
     /// Same constraints as <see cref="ScheduleFromInterrupt"/>: interrupts
-    /// masked, nothing may throw or allocate. The queue lock is only tried,
-    /// never waited for: the fault may have hit code that holds it already
-    /// (a policy hook under the tick), and the lock has no owner to tell
-    /// that case apart from another CPU holding it briefly. Either way the
-    /// caller halts, which is the safe direction.
+    /// masked, nothing may throw or allocate. The queue lock is tried for at
+    /// most <see cref="AbandonLockWaitMicroseconds"/>, never waited for
+    /// without a bound: the fault may have hit code that holds it already (a
+    /// policy hook under the tick), and the lock has no owner to tell that
+    /// case apart from another CPU holding it briefly (a migration, a steal).
+    /// The bound lets the brief case through and turns the own-CPU case into
+    /// a halt after the wait, which is the safe direction.
     /// </remarks>
     /// <param name="currentRsp">A stack address of the faulting thread.</param>
     /// <returns>
@@ -2501,7 +2503,7 @@ public static class SchedulerManager
         }
 
         PerCpuState state = s_cpuStates[cpuId];
-        if (!state._lock.TryAcquire())
+        if (!TryAcquireBounded(ref state._lock, AbandonLockWaitMicroseconds))
         {
             return false;
         }
@@ -2530,6 +2532,38 @@ public static class SchedulerManager
         state._lock.Release();
         MigratePending(state);
         return staged;
+    }
+
+    // ZehOS patch ausnahme-hook, see PATCHES.md
+    /// <summary>
+    /// How long <see cref="TryAbandonCurrentFromInterrupt"/> tries the CPU's
+    /// queue lock. Another CPU holds it for a few queue operations, far
+    /// below this; a CPU whose own fault interrupted a holder never gets it,
+    /// and pays this once before it halts.
+    /// </summary>
+    internal const long AbandonLockWaitMicroseconds = 1000;
+
+    // ZehOS patch ausnahme-hook, see PATCHES.md
+    // Tries the lock until it is taken or the time is up, on the CPU's counter:
+    // no interrupt, no allocation, no other lock, so it runs from an exception
+    // handler with interrupts masked.
+    private static bool TryAcquireBounded(ref SpinLock spinLock, long microseconds)
+    {
+        if (spinLock.TryAcquire())
+        {
+            return true;
+        }
+
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * microseconds / 1_000_000;
+        while (Stopwatch.GetTimestamp() < deadline)
+        {
+            if (spinLock.TryAcquire())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
