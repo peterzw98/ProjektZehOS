@@ -120,6 +120,13 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// </summary>
     internal nuint OnCpuSlot => (nuint)Unsafe.AsPointer(ref _onCpu);
 
+    // ZehOS patch thread-stack-reaper, see PATCHES.md
+    /// <summary>Next entry in the scheduler's list of exited threads whose stack is not yet freed.</summary>
+    internal SchedulerThread? _nextDeadStack;
+
+    /// <summary>Whether this thread is in that list; a second ExitThread must not link it twice.</summary>
+    internal bool _deadStackQueued;
+
     // ===== Context (architecture-specific values) =====
 
     private nuint _stackPointer;
@@ -253,6 +260,10 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <returns>False when there is no memory for the stack, even after a collection: the thread has none and must not be started.</returns>
     internal bool InitializeStack(nuint entryPoint, ushort codeSegment, nuint arg = 0, nuint stackSize = DefaultStackSize)
     {
+        // ZehOS patch thread-stack-reaper, see PATCHES.md: stacks of exited threads first, so
+        // this allocation can reuse them before the collection below is needed.
+        SchedulerManager.ReapDeadStacks();
+
         // The collector runs only when its own heap cannot grow, so by the
         // time a stack is asked for, the pages may all be held by segments
         // full of dead objects. A collection returns the empty ones, and the
@@ -305,8 +316,9 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     }
 
     /// <summary>
-    /// Frees the stack <see cref="InitializeStack"/> allocated, for a thread the registry
-    /// refused before it ever ran. Nothing of the thread lives on that stack yet.
+    /// Frees the stack <see cref="InitializeStack"/> allocated: for a thread the registry
+    /// refused before it ever ran, or (ZehOS patch thread-stack-reaper) for an exited thread
+    /// no CPU runs on any more, from <see cref="SchedulerManager.ReapDeadStacks"/>.
     /// </summary>
     internal void ReleaseStack()
     {
