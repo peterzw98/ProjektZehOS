@@ -15,7 +15,7 @@ Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Laun
 
 Gemessen wird ZehOS samt Cosmos-Pin, nicht der Scheduler allein. Zwischen den Pins liegen die ext2-Patches #344, #345, #346 und der CPU-Ausnahme-Hook #349. Keiner dieser Patches sollte im Bildpfad liegen. Dass die Abweichung trotzdem allein am Scheduler liegt, ist **vermutet, nicht gemessen**.
 
-Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Die Läufe protokollieren die QEMU-Kommandozeile nicht. Das Messskript setzt laut Jensen kein eigenes `-cpu`; die KVM-Startfunktion in `scripts/test-wasm-doom-desktop.py` nutzt `-cpu qemu64,+rdrand,+rdseed`. Ob das Messskript diese Funktion verwendet, ist nicht bestätigt; die tatsächliche Kommandozeile ist _offen_. Host: Intel Core Ultra 9 185H, 22 logische CPUs; während der Läufe lief `Wow.exe` (Lastmittel 1,7 bis 5,8). ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
+Umgebung: QEMU 10.2.2 unter `~/.cosmos/tools/qemu`, SDK 10.0.404, KVM, `-m 1G`, eine vCPU, `--seconds` 130 (Skriptstandard). Die Läufe protokollieren die QEMU-Kommandozeile nicht. `scripts/measure-wasm-frametimes.py` lädt `scripts/test-wasm-doom-desktop.py` (Z. 26) und startet QEMU über `tools.start_qemu` (Z. 112). Unter KVM wird dort `-cpu qemu64,+rdrand,+rdseed` gesetzt (`test-wasm-doom-desktop.py`, Z. 263). Die tatsächliche Kommandozeile der Läufe ist nicht protokolliert und bleibt _offen_. Host: Intel Core Ultra 9 185H, 22 logische CPUs; während der Läufe lief `Wow.exe` (Lastmittel 1,7 bis 5,8). ZehOS-Versionszeile aus dem Boot (`0.5.n+<Commit>`): _offen_.
 
 Messbefehl je Lauf (Reihenfolge RR, Klasse, RR, Klasse … je Spiel; Doom zuerst, dann ClassiCube):
 
