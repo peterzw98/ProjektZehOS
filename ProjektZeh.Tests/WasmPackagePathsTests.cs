@@ -150,6 +150,10 @@ public sealed class WasmPackagePathsTests
         string name = new('a', 256);
         Assert.AreEqual(WasmPackagePaths.NameTooLong, WasmPackagePaths.List(root, WasmPackagePaths.Join("res", name), out _));
         Assert.AreEqual(WasmPackagePaths.NameTooLong, WasmPackagePaths.Stat(root, name, out _, out _));
+        // Jede Komponente hat 100 Byte, der zusammengesetzte Pfad ist laenger als 255.
+        string part = new('b', 100);
+        Assert.AreEqual(WasmPackagePaths.NameTooLong, WasmPackagePaths.Stat(root, $"{part}/{part}/{part}", out _, out _));
+        Assert.AreEqual(WasmPackagePaths.NameTooLong, WasmPackagePaths.List(root, WasmPackagePaths.Join(part, $"{part}/{part}"), out _));
         Assert.AreEqual("res/x", WasmPackagePaths.Join("res", "x"));
         Assert.ThrowsException<UnauthorizedAccessException>(() => WasmPackagePaths.Join("res", "/etc"));
     }

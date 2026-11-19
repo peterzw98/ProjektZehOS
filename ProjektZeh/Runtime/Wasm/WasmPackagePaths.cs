@@ -32,7 +32,7 @@ internal static class WasmPackagePaths
 
     /// <summary>
     /// Wie <see cref="Resolve"/>, prueft zusaetzlich jede vorhandene Pfadkomponente: Verweise und ReparsePoints (auch in der Mitte des
-    /// Pfads) werden abgewiesen, Zwischenglieder muessen Ordner sein, Namen sind hoechstens 255 Byte lang. Wirft
+    /// Pfads) werden abgewiesen, Zwischenglieder muessen Ordner sein, Namen und der zusammengesetzte Pfad sind hoechstens 255 Byte lang. Wirft
     /// <see cref="UnauthorizedAccessException"/>, <see cref="FileNotFoundException"/> oder <see cref="PathTooLongException"/>.
     /// </summary>
     internal static string ResolveChecked(string root, string relative)
@@ -40,7 +40,10 @@ internal static class WasmPackagePaths
         string full = Resolve(root, relative);
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if (full == root) return full;
-        string[] parts = full[(root.Length + 1)..].Split(Path.DirectorySeparatorChar);
+        string relativePath = full[(root.Length + 1)..];
+        // Der zusammengesetzte Pfad (Ordnerpfad + / + Name) darf ebenfalls hoechstens 255 Byte lang sein.
+        if (System.Text.Encoding.UTF8.GetByteCount(relativePath) > MaximumNameBytes) throw new PathTooLongException();
+        string[] parts = relativePath.Split(Path.DirectorySeparatorChar);
         string current = root;
         for (int index = 0; index < parts.Length; index++)
         {
