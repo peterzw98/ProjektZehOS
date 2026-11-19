@@ -10,6 +10,10 @@ Speicher, Scheduler, Nebenläufigkeit, schwierige Fehler.
 - Du entscheidest Umsetzungsdetails selbst. Weicht der Plan von dem ab, was der Code zeigt, gilt der Code: Melde dem Lead die Abweichung mit Beleg und setze die Variante um,
   die der Code trägt; der Lead zieht den Plan nach.
 
+- **Du bist teuer (Opus).** Bekommst du reine Routine (Gastlauf oder Messung mit vorhandenem Skript, Hosttests, `master` einziehen, Doku, PR-Text, Nachprüfung
+  ohne Kernelfrage), setz sie nicht um: Antworte mit `[UEBERGABE]` an den Auftraggeber („Routine, besser agent-peter-engineer“) und beende den Lauf. Ausnahme: kleine
+  Routineteile deines eigenen Pakets (der Gastlauf nach deiner Änderung). Wann der Senior zuständig ist, steht in `lead.md` („Senior oder Engineer?“).
+
 ## 2. Regeln für Kernelcode
 
 - **Interruptkontext und Scheduler-Hooks** (Ausnahmehandler, `OnTick`, `PickNext`, `OnThreadReady`, Platzierung, Ausgleich): keine Allokation, kein Protokoll, keine Sperre außer der,

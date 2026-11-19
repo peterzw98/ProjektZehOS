@@ -18,12 +18,15 @@ namespace ProjektZeh.Apps.Wasm;
 /// Die Paketversion bleibt bis zum Ende des Laufs gesichert, damit Entfernen oder Aktualisieren sie nicht loescht.
 /// </summary>
 /// <remarks><paramref name="log"/> erhaelt erstes Bild und Ende des Laufs, damit Gasttests darauf warten koennen.</remarks>
-/// <param name="saveRootFor">
-/// Etappe 13.4: liefert den Ordner fuer /save dieses Pakets (eigenes Konto, eingebundenes /data) oder null; nur fuer
-/// Pakete mit capability=storage gefragt.
+/// <param name="saveRootPathFor">
+/// Etappe 13.4: liefert auf der Hauptschleife den /save-Pfad dieses Pakets (eigenes Konto, eingebundenes /data) oder null;
+/// nur fuer Pakete mit capability=storage gefragt.
+/// </param>
+/// <param name="createSaveRoot">
+/// Legt auf dem Worker nach der Pruefung den Ordner an und liefert ihn oder null.
 /// </param>
 internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null,
-    Func<string, string?>? saveRootFor = null)
+    Func<string, string?>? saveRootPathFor = null, Func<string, string, string?>? createSaveRoot = null)
     : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
@@ -80,7 +83,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
     public bool CapturesPointer { get { lock (gate) return input.IsCaptured; } }
-    public bool IsCloseRequested { get; private set; }
+    // Wird auf dem Worker geschrieben und auf der Hauptschleife gelesen; ohne Barriere sieht der Leser den Wert nicht sicher.
+    private int closeRequested;
+    public bool IsCloseRequested { get => Volatile.Read(ref closeRequested) != 0; private set => Volatile.Write(ref closeRequested, value ? 1 : 0); }
     string? IWasmSession.Root => root;
     string? IWasmSession.SaveRoot => saveRoot;
     bool IWasmSession.AllowsNetwork => allowsNetwork;
@@ -96,7 +101,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!), "_start", 0, this, Finished, packageId);
+        // Nur der Pfad wird auf dem Aufrufer (Hauptschleife) ermittelt; das Anlegen der Ordner macht der Worker nach VerifyOnce.
+        string? storagePath = acquired.Value!.Manifest.AllowsStorage ? saveRootPathFor?.Invoke(packageId) : null;
+        WasmRuntime.Enqueue(() => Load(acquired.Value!, storagePath), "_start", 0, this, Finished, packageId);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
@@ -119,7 +126,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
-    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package)
+    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package, string? storagePath)
     {
         lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
@@ -135,7 +142,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             if (!read.IsOK()) return (null, null, read.Status.Message);
             aot = read.Value;
         }
-        string? storage = package.Manifest.AllowsStorage ? saveRootFor?.Invoke(packageId) : null;
+        string? storage = storagePath == null ? null : createSaveRoot?.Invoke(packageId, storagePath);
         lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; saveRoot = storage; status = "Lade ..."; }
         return (module, aot, null);
     }

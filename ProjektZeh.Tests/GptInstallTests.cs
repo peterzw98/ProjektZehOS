@@ -16,6 +16,7 @@ namespace ProjektZeh.Tests;
 
 /// <summary>GPT-Installer (Spec 7a-S4, Abschnitt 5, Hosttests 1-8).</summary>
 [TestClass]
+[DoNotParallelize]
 public sealed class GptInstallTests
 {
     private const ulong GiB = 1024UL * 1024 * 1024;

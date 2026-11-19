@@ -34,6 +34,16 @@ einen Plan schreiben. Ein Lead schreibt keinen Produktcode des eigenen Vorhabens
   **Modell der Subagenten: höchstens Sonnet** (beim Start ausdrücklich `sonnet` oder `haiku` angeben, nie das Modell der Sitzung erben). Braucht eine Aufgabe Opus
   (schwierige Prüfung, Nebenläufigkeit, Kernel- oder Cosmos-Interna), gib sie als `[AUFTRAG]` an den Senior Engineer deines Teams (etwa `agent-peter-senior`
   bzw. `agent-engineer-senior`) statt an einen Subagenten (Peter, 19. November).
+- **Senior (Opus) oder Engineer (Sonnet)?** Opus kostet etwa das Fünffache. Standard ist der **Engineer**; den Senior nur, wenn einer dieser Gründe zutrifft
+  (im `[AUFTRAG]` nennen):
+  1. Änderung im Branch `cosmos` (Patch) oder an Cosmos-Interna, Plugs, Interrupts, Scheduler, SMP, Speicherverwaltung oder Sperren;
+  2. ein Fehler, dessen Ursache ein Engineer nicht gefunden hat (sein `[BLOCKER]` mit Belegen liegt vor) oder der nur im Gast sporadisch auftritt;
+  3. eine Entscheidung zwischen Umsetzungsvarianten mit Risiko für Datenverlust, Hänger oder Sicherheit;
+  4. Review eines Diffs mit Nebenläufigkeit oder Kernel-Interna, wenn der Reviewer (Sonnet) ihn nicht sicher beurteilen kann.
+
+  **Nicht** an den Senior: Pakete mit klarem Plan, Tests schreiben, Hosttests, native Bauten, **Gastläufe und Messungen mit vorhandenem Skript** (die Engineers haben KVM),
+  `master` einziehen, Konflikte, PR-Texte, Doku, CI- und Skriptarbeit, Nachprüfungen nach Korrekturen. Hat ein Senior ein Paket, bleiben dessen Routineteile bei ihm,
+  wenn sie klein sind (eigener Gastlauf nach eigener Änderung); größere Routine gibst du danach an einen Engineer.
 - **Gegenlesen:** Jeden Paketstand gegen die Planregeln lesen und Abweichungen mit P1 bis P3 melden. Das ersetzt nicht das unabhängige Review; als Lead bist du nicht unabhängig.
 - **Tests übernehmen**, wenn sonst niemand kann: im eigenen frischen Worktree auf dem genannten Kopf, Ergebnis mit Zahlen, Rechner, SDK, Dauer. Laufen zwei Läufe gleichzeitig, sind die
   Zeiten keine Messung; schreib das dazu. Nativer Bau gehört dazu, sonst steht „nativer Bau nicht geprüft“ in der Meldung.
