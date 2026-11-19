@@ -97,12 +97,15 @@ internal static unsafe class FaultIsolation
         Serial.WriteNumber(Volatile.Read(ref workerThreadId));
         Serial.WriteString(", Gastcode ");
         Serial.WriteNumber(Volatile.Read(ref inNativeRun));
+        // E6-C.10: 0 heisst maskierter Kernelcode (etwa ein Interrupt-Handler ueber dem Worker), dann nie isolieren.
+        Serial.WriteString(", IF ");
+        Serial.WriteNumber(exception.InterruptsEnabled ? 1 : 0);
         Serial.WriteString("\n");
 
         int* depth = hostDepth;
         if (currentId < 0 || depth == null
             || FaultIsolationPolicy.Decide(vector, currentId, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
-                *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
+                exception.InterruptsEnabled, *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
             || !Quarantine.Add(currentId))
         {
             return CpuExceptionAction.Halt;

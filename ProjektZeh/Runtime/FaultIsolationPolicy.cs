@@ -8,6 +8,7 @@ internal enum IsolationDecision
     Isolate,
     NotProgramFault,
     NotWorker,
+    InterruptsMasked,
     OutsideGuest,
     InHostFunction,
     HoldsStorageLock,
@@ -30,11 +31,18 @@ internal static class FaultIsolationPolicy
     /// </summary>
     public static bool IsProgramFault(long vector) => vector is 0 or 6 or 13 or 14;
 
+    /// <param name="interruptsEnabled">
+    /// Interruptflag des fehlerhaften Codes (Cosmos <c>CpuExceptionInfo.InterruptsEnabled</c>, Patch ausnahme-interrupts).
+    /// Gastcode laeuft immer mit freigegebenen Interrupts. Ein Interrupt-Handler laeuft maskiert auf dem Stack des Threads,
+    /// den er unterbrochen hat; trifft er den Worker im Gastcode, meldet Cosmos den Worker, <paramref name="inNativeRun"/>
+    /// ist 1 und die Hosttiefe 0. Eine Ausnahme im Handler ist aber Kernelcode, der Sperren halten kann: Halt (E6-C.10, #390).
+    /// </param>
     public static IsolationDecision Decide(long vector, int currentThreadId, int workerThreadId, bool inNativeRun,
-        int hostDepth, bool holdsStorageLock, bool holdsAppStorageGate)
+        bool interruptsEnabled, int hostDepth, bool holdsStorageLock, bool holdsAppStorageGate)
     {
         if (!IsProgramFault(vector)) return IsolationDecision.NotProgramFault;
         if (workerThreadId < 0 || currentThreadId != workerThreadId) return IsolationDecision.NotWorker;
+        if (!interruptsEnabled) return IsolationDecision.InterruptsMasked;
         if (!inNativeRun) return IsolationDecision.OutsideGuest;
         if (hostDepth != 0) return IsolationDecision.InHostFunction;
         if (holdsStorageLock) return IsolationDecision.HoldsStorageLock;
