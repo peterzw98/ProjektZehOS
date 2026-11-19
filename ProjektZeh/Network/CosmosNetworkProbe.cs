@@ -18,6 +18,8 @@ internal static class CosmosNetworkProbe
             var service = new CosmosNetworkService();
             Check(service.Execute("static", ["10.0.2.15", "255.255.255.0", "10.0.2.2", "10.0.2.3"], CancellationToken.None).IsOK(), "static");
             Write("static PASS");
+            // E6-C.11: der Statusleser sieht die unter Gate veroeffentlichte Adresse.
+            Check(service.Status.Address == "10.0.2.15", "status after static: " + service.Status.Address);
             Check(service.Execute("ping", ["10.0.2.2"], CancellationToken.None).IsOK(), "ping gateway");
             Write("ping PASS");
             Check(service.Execute("dns", ["example.com"], CancellationToken.None).IsOK(), "DNS example.com");
@@ -85,12 +87,22 @@ internal static class CosmosNetworkProbe
             var started = tasks.Start("network probe", context => Volatile.Write(ref cancelled, service.Execute("fetch", ["http://10.0.2.2:18080/stall"], context.Token)));
             Check(started.IsOK(), "worker start");
             Thread.Sleep(300);
+            // E6-C.11: der haengende Abruf haelt Gate; Status darf nicht warten und liefert den Schnappschuss.
+            bool gateFree = Monitor.TryEnter(CosmosNetworkService.Gate);
+            if (gateFree) Monitor.Exit(CosmosNetworkService.Gate);
+            var statusClock = Stopwatch.StartNew();
+            var busyStatus = service.Status;
+            long statusMilliseconds = statusClock.ElapsedMilliseconds;
+            Check(!gateFree && busyStatus.Address == "10.0.2.15" && statusMilliseconds < 100,
+                $"status while busy: gateFree={gateFree} address={busyStatus.Address} ms={statusMilliseconds}");
+            Write("status busy PASS");
             Check(tasks.Cancel(started.Value).IsOK(), "cancel");
             var clock = Stopwatch.StartNew(); int heartbeat = 0;
             while (Volatile.Read(ref cancelled) == null && clock.ElapsedMilliseconds < 15000) { heartbeat++; Thread.Sleep(20); }
             Check(Volatile.Read(ref cancelled) is { } response && !response.IsOK() && heartbeat > 0, "worker cancel/heartbeat");
             Write("cancel heartbeat PASS");
             Check(service.Execute("dhcp", [], CancellationToken.None).IsOK(), "DHCP");
+            Check(service.Status.Address != null, "status after DHCP");
             Write("dhcp PASS");
             Write("PASS");
             return true;
