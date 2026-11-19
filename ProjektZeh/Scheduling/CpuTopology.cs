@@ -35,13 +35,15 @@ internal sealed class CpuTopology
     public int PackageCount { get; }
     public bool Measured { get; }
 
-    public string Describe()
+    public string Describe() => string.Join(", ", DescribeLines());
+
+    public string[] DescribeLines()
     {
         string cpus = CpuCount == 1 ? "1 CPU" : $"{CpuCount} CPUs";
-        if (!Measured) return $"{cpus}, Topologie unbekannt";
+        if (!Measured) return [$"{cpus}, Topologie unbekannt"];
         string cores = CoreCount == 1 ? "1 Kern" : $"{CoreCount} Kerne";
         string packages = PackageCount == 1 ? "1 Verbund" : $"{PackageCount} Verbünde";
-        return $"{cpus}, {cores}, {packages}, Hyperthreading {(CpuCount > CoreCount ? "ja" : "nein")}";
+        return [$"{cpus}, {cores}", $"{packages}, Hyperthreading {(CpuCount > CoreCount ? "ja" : "nein")}"];
     }
     public int CoreOf(int cpu) => core[cpu];
     public int PackageOf(int cpu) => package[cpu];

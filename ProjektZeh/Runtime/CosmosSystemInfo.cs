@@ -6,6 +6,7 @@ using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Network;
 using ProjektZeh.Apps.TaskManager;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime;
@@ -14,13 +15,14 @@ namespace ProjektZeh.Runtime;
 /// Liest Systeminformationen fuer den Taskmanager ueber Cosmos. Nur lesend: es werden weder Laufwerke
 /// eingebunden noch Netzwerkadapter konfiguriert.
 /// </summary>
-internal sealed class CosmosSystemInfo(IStorageService storage, string version, string topology)
+internal sealed class CosmosSystemInfo(IStorageService storage, string version, CpuTopology topology)
 {
     public TaskManagerSection[] Sections =>
     [
         new("Datentraeger", ReadStorage),
         new("Netzwerk", ReadNetwork),
-        new("System", () => [version, topology, "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
+        new("System", () => [version, "CPU-Topologie", .. topology.DescribeLines(),
+            "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
             "Grafik: " + (Cosmos.Kernel.System.Graphics.Canvas.GetFullScreen().Name ?? "unbekannt")])
     ];
 

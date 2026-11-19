@@ -151,7 +151,7 @@ public sealed class Kernel : Sys.Kernel
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
                 virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, DescribeTopology()).Sections,
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, scheduler.Topology).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
 #else
