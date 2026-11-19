@@ -23,7 +23,7 @@ namespace ProjektZeh.Apps.Wasm;
 /// Pakete mit capability=storage gefragt.
 /// </param>
 internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainter painter, Action<string>? log = null,
-    Func<string, string?>? saveRootFor = null)
+    Func<string, string?>? saveRootPathFor = null, Func<string, string, string?>? createSaveRoot = null)
     : IApplication, IWasmSession
 {
     private const int MaximumModuleBytes = 64 * 1024 * 1024;
@@ -98,9 +98,9 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             return;
         }
         running = true;
-        // Der Ordner für /save wird auf dem Aufrufer (Hauptschleife) ermittelt, nicht auf dem gemeinsamen Worker.
-        string? storage = acquired.Value!.Manifest.AllowsStorage ? saveRootFor?.Invoke(packageId) : null;
-        WasmRuntime.Enqueue(() => Load(acquired.Value!, storage), "_start", 0, this, Finished, packageId);
+        // Nur der Pfad wird auf dem Aufrufer (Hauptschleife) ermittelt; das Anlegen der Ordner macht der Worker nach VerifyOnce.
+        string? storagePath = acquired.Value!.Manifest.AllowsStorage ? saveRootPathFor?.Invoke(packageId) : null;
+        WasmRuntime.Enqueue(() => Load(acquired.Value!, storagePath), "_start", 0, this, Finished, packageId);
     }
 
     // Laeuft auf dem Worker: die Dateien koennen nach der Installation veraendert worden sein und werden erneut geprueft.
@@ -123,7 +123,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
-    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package, string? storage)
+    private (byte[]? Module, byte[]? Aot, string? Error) Load(InstalledPackage package, string? storagePath)
     {
         lock (gate) if (exitRequested) return (null, null, "Start abgebrochen.");
         var verified = store.VerifyOnce(package, CancellationToken.None);
@@ -139,6 +139,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             if (!read.IsOK()) return (null, null, read.Status.Message);
             aot = read.Value;
         }
+        string? storage = storagePath == null ? null : createSaveRoot?.Invoke(packageId, storagePath);
         lock (gate) { root = package.FilesDirectory; allowsNetwork = package.Manifest.AllowsNetwork; saveRoot = storage; status = "Lade ..."; }
         return (module, aot, null);
     }
