@@ -18,6 +18,15 @@ internal static unsafe class Memory
     [RuntimeExport("RhNewArray")]
     internal static unsafe void* RhNewArray(MethodTable* pEEType, int length)
     {
+        // ZehOS patch gc-oom-throw, see PATCHES.md
+        // Cast to uint, a negative length would surface as OutOfMemoryException; the other int
+        // helpers throw OverflowException. RhAllocateNewArray takes a uint, its CoreLib callers
+        // (GC.AllocateNewArray) reject a negative length before the call.
+        if (length < 0)
+        {
+            ThrowOverflow();
+        }
+
         RhAllocateNewArray(pEEType, (uint)length, 0, out void* result);
         return result;
     }
