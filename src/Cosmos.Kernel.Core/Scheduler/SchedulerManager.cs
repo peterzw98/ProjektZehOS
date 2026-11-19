@@ -2462,8 +2462,11 @@ public static class SchedulerManager
     /// queue is the normal case on a worker CPU) nor goes back to the policy
     /// through <see cref="IScheduler.OnThreadYield"/>; the CPU pulls work from
     /// another CPU or runs its idle thread. The thread stays registered and
-    /// known to the policy: reaping it (stack, registry slot) is the
-    /// installed scheduler's job. From here on its stack is no GC root.
+    /// known to the policy; nothing here calls OnThreadExit, unregisters it,
+    /// retires its allocation context or releases its joiners. Reaping it is
+    /// the adapter's job through the exit path (<see cref="ExitThread"/> or
+    /// SchedulerDiagnostics.RequestKill, ZehOS plan E6-G). Locks it held stay
+    /// taken. From here on its stack is no GC root.
     /// </summary>
     /// <remarks>
     /// Same constraints as <see cref="ScheduleFromInterrupt"/>: interrupts
