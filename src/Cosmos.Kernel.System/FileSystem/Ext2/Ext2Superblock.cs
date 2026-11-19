@@ -99,6 +99,23 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <summary>Block size in bytes, derived from the log shift.</summary>
     public uint BlockSize { get; }
 
+    // ZehOS patch ext2-readonly, see PATCHES.md
+    /// <summary>
+    /// True when mounted read-only, by request or because the volume uses
+    /// features the driver does not maintain. Every write path of the driver
+    /// then returns without touching the device.
+    /// </summary>
+    public bool IsReadOnly { get; }
+
+    /// <summary>
+    /// Largest regular file size this volume can record: 2 GiB - 1 without
+    /// LARGE_FILE. Revision 0 has no feature fields, so a raw bit there does
+    /// not lift the limit.
+    /// </summary>
+    internal ulong MaxFileSize => RevLevel >= 1 && (FeatureRoCompat & Ext2SuperblockLayout.FeatureRoCompatLargeFile) != 0
+        ? ulong.MaxValue
+        : Ext2SuperblockLayout.MaxSizeWithoutLargeFile;
+
     /// <summary>Fragment size in bytes, derived from the log shift.</summary>
     public uint FragsSize { get; }
 
@@ -149,9 +166,11 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         uint featureCompat,
         uint featureIncompat,
         uint featureRoCompat,
-        Ext2GroupDesc[] groups)
+        Ext2GroupDesc[] groups,
+        bool readOnly)
     {
         Device = device;
+        IsReadOnly = readOnly;
         _inodeCache = new Dictionary<uint, Ext2Inode>(InitialInodeCacheSize(inodesCount));
         InodesCount = inodesCount;
         BlocksCount = blocksCount;
@@ -193,9 +212,10 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// Probe <paramref name="device"/> for an ext2 volume and mount it.
     /// </summary>
     /// <param name="device">Block device holding the candidate volume.</param>
+    /// <param name="readOnly">Mount read-only; set as well when the volume needs features the driver does not maintain.</param>
     /// <param name="superblock">Mounted volume on success; null on failure.</param>
     /// <returns>true when the device carries a valid, supported ext2 superblock.</returns>
-    public static bool TryCreate(IBlockDevice device, [NotNullWhen(true)] out Ext2Superblock? superblock)
+    public static bool TryCreate(IBlockDevice device, bool readOnly, [NotNullWhen(true)] out Ext2Superblock? superblock)
     {
         superblock = null;
         try
@@ -238,6 +258,32 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             if (logBlockSize > Ext2SuperblockLayout.MaxLogBlockSize)
             {
                 return false;
+            }
+
+            // ZehOS patch ext2-readonly, see PATCHES.md
+            // Feature fields exist from revision 1 on; revision 0 leaves them undefined.
+            if (revLevel >= 1)
+            {
+                if ((featureIncompat & ~Ext2SuperblockLayout.SupportedFeatureIncompat) != 0)
+                {
+                    return false;
+                }
+
+                // Stricter than the specification, which allows writing with
+                // unknown compat bits: the driver does not maintain dir_index
+                // trees, the journal, resize_inode or shared xattr blocks
+                // (Unlink never frees i_file_acl), so writing would leave them
+                // inconsistent.
+                if (featureCompat != 0 || (featureRoCompat & ~Ext2SuperblockLayout.SupportedFeatureRoCompat) != 0)
+                {
+                    readOnly = true;
+                }
+            }
+
+            // Like Linux ext2_setup_super: a newer revision is only read.
+            if (revLevel > Ext2SuperblockLayout.MaxRevLevel)
+            {
+                readOnly = true;
             }
 
             uint blockSize = (uint)Ext2SuperblockLayout.BaseBlockSize << (int)logBlockSize;
@@ -308,7 +354,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 blocksPerGroup, fragsPerGroup, inodesPerGroup,
                 firstIno, inodeSize, revLevel,
                 featureCompat, featureIncompat, featureRoCompat,
-                groups);
+                groups, readOnly);
             return true;
         }
         catch
@@ -389,7 +435,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <param name="data">Source bytes.</param>
     internal void WriteBlocks(uint ext2Block, uint count, ReadOnlySpan<byte> data)
     {
-        if (data.Length == 0)
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly || data.Length == 0)
         {
             return;
         }
@@ -536,6 +583,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <param name="inode">Inode to write back.</param>
     internal void WriteInode(Ext2Inode inode)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly)
+        {
+            return;
+        }
+
         uint group = GroupOfInode(inode.InodeNumber);
         uint index = IndexInGroup(inode.InodeNumber);
         Ext2GroupDesc gd = _groups[group];
@@ -585,6 +638,13 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <returns>true when an inode was allocated.</returns>
     internal bool TryAllocateInode(uint groupHint, out uint inodeNumber)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly)
+        {
+            inodeNumber = 0;
+            return false;
+        }
+
         for (uint g = 0; g < GroupsCount; g++)
         {
             uint gi = (groupHint + g) % GroupsCount;
@@ -689,6 +749,13 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <returns>true when a block was allocated.</returns>
     internal bool TryAllocateBlock(uint groupHint, out uint blockNumber)
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly)
+        {
+            blockNumber = 0;
+            return false;
+        }
+
         for (uint g = 0; g < GroupsCount; g++)
         {
             uint gi = (groupHint + g) % GroupsCount;
@@ -786,6 +853,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// </summary>
     internal void UpdateSuperblock()
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly)
+        {
+            return;
+        }
+
         ulong devBlockSize = Device.BlockSize;
         ulong sbByteOffset = Ext2SuperblockLayout.SuperblockOffset;
         ulong sbLba = sbByteOffset / devBlockSize;
@@ -815,6 +888,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// </summary>
     public void Flush()
     {
+        // ZehOS patch ext2-readonly, see PATCHES.md
+        if (IsReadOnly)
+        {
+            return;
+        }
+
         Device.Flush();
         UpdateSuperblock();
     }
