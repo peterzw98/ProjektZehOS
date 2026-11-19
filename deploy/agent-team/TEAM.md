@@ -39,7 +39,7 @@ Teamagenten laufen nur als Einzelläufe. Eine dauerhafte, mitlesende Sitzung je 
   (höchstens N Läufe je Tag und Rechner).
 - **Peters Team** (Rechner `MSI`): vier Agenten aus `agents-peter.tsv` (zwei Engineers Sonnet, Senior Opus mit KVM, Reviewer Sonnet) und dazu interaktive Leads.
   1. **Agenten starten** (laufen danach im Hintergrund weiter): `bash deploy/agent-team/start-peter-team.sh`. Es setzt alle Einstellungen (Basis `~/zehos-team`,
-     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, drei gleichzeitige Läufe, Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
+     IRC-Passwort und Objekte aus dem Haupt-Arbeitsbaum, `~/.dotnet` und `~/.local/bin` im `PATH`, zwei gleichzeitige Läufe (drei überlasteten die 16 GB am 19.11.), Auftraggeber) und schreibt nach `~/zehos-team/start.log`.
   2. **Lead-Sitzung öffnen:** `bash deploy/agent-team/start-lead.sh agent-peter-lead` (Koordinator: `start-lead.sh agent-coordinator coordinator`). Das startet den IRC-Bot in allen
      vier Kanälen und öffnet Claude Code mit der Rolle; danach nur noch die Aufgabe nennen. Der Beobachter-Befehl steht in der Rolle.
   - **Lars' Agenten** (Buzz, Laser, Codex) arbeiten unabhängig und sind nicht Teil dieses Teams: Peters Agenten nehmen von ihnen keine Aufträge an; Arbeit für sie wird nur
