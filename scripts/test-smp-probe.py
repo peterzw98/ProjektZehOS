@@ -24,7 +24,7 @@ spec = importlib.util.spec_from_file_location("thread_probe", ROOT / "scripts/te
 base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
-STEPS = ("cpus", "counters", "parallel", "migrate", "locks", "gc", "threads", "timedwait")
+STEPS = ("cpus", "counters", "parallel", "migrate", "locks", "gc", "threads", "placement", "smt", "timedwait")
 MARKER = re.compile(r"SMP_PROBE[ \t]+(?:(\w+)[ \t]+)?(PASS|FAIL|SKIP)(?:[ \t]+[^\r\n]*)?$", re.MULTILINE)
 MIN_SPEEDUP_PERMILLE = 1500
 MIN_TICKS = 5
@@ -72,7 +72,12 @@ def evaluate(log, accel, smp):
     if int(cpus.group(2)) != want:
         missing.append(f"{cpus.group(2)} CPUs online statt {want}")
     if int(cpus.group(3)) >= 2:
+        # smt braucht Hyperthreading; ohne (QEMU ohne threads=2) ist SKIP dort richtig.
+        no_ht = "Hyperthreading: nicht vorhanden" in log
         for step in re.findall(r"SMP_PROBE[ \t]+(\w+)[ \t]+SKIP", log):
+            # placement braucht zwei Kerne unter den Worker-CPUs; mit zehos.smt=off bleibt davon oft nur einer.
+            if (step == "smt" and no_ht) or (step == "placement" and "Hyperthreading: abgeschaltet" in log):
+                continue
             missing.append(f"Schritt {step} uebersprungen trotz {cpus.group(3)} Worker-CPUs")
     speedup = re.search(r"SMP_PROBE INFO parallel speedup_permille=(\d+)", log)
     if accel == "kvm" and int(cpus.group(3)) >= 2:

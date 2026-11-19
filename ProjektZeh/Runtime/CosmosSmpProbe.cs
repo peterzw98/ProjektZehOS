@@ -6,6 +6,7 @@ using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 using ProjektZeh.Messaging;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Runtime;
 
@@ -19,6 +20,9 @@ internal static class CosmosSmpProbe
 {
     private const int HandoffCount = 10000;
     private static uint[] workers = [];
+
+    /// <summary>Vom Kernel nach dem Lesen der Topologie gesetzt; der Schritt placement braucht die Geschwister.</summary>
+    public static CpuTopology? Topology { get; set; }
 
     public static bool Run()
     {
@@ -37,6 +41,8 @@ internal static class CosmosSmpProbe
             ok &= Step("locks", StepLocks);
             ok &= Step("gc", StepGc);
             ok &= Step("threads", StepThreads);
+            ok &= Step("placement", StepPlacement);
+            ok &= Step("smt", StepSmt);
             ok &= Step("timedwait", StepTimedWait);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
 #endif
@@ -381,6 +387,84 @@ internal static class CosmosSmpProbe
         long delta = ((long)before - (long)after) / 1024;
         Write($"INFO threads free_delta_kib={delta}");
         return ran == 100 ? null : $"nur {ran} von 100 Threads liefen";
+    }
+
+    // E7-D: Ein Interaktiv- und ein Normal-Thread (Platzierung Workers) rechnen 500 ms und melden alle 50 ms ihre CPU.
+    // Bestanden, wenn bei mindestens zwei Kernen unter den Worker-CPUs in mindestens 9 von 10 Meldungen die CPUs keine Geschwister sind.
+    private static string? StepPlacement()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured) return $"SKIP cpus={KernelCpus.Count}";
+        var cores = new HashSet<int>();
+        foreach (uint cpu in workers) if (CosmosBootOptions.WorkerCpus.Contains(cpu)) cores.Add(topology.CoreOf((int)cpu)); // mit zehos.smt=off bleibt oft nur ein Kern: SKIP
+        if (cores.Count < 2) return $"SKIP cpus={KernelCpus.Count}";
+        const int samples = 10;
+        var interactive = new int[samples];
+        var normal = new int[samples];
+        var first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers);
+        var second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
+        if (!first.IsOK() || !second.IsOK()) return "Platzierungsthread startet nicht";
+        if (first.Value?.Join(10000) != true || second.Value?.Join(10000) != true) return "Platzierungsthread endet nicht";
+        int apart = 0;
+        var line = new System.Text.StringBuilder();
+        for (int i = 0; i < samples; i++)
+        {
+            int a = interactive[i], b = normal[i];
+            bool sibling = a == b || (a >= 0 && b >= 0 && topology.CoreOf(a) == topology.CoreOf(b));
+            if (!sibling) apart++;
+            line.Append(a).Append('/').Append(b).Append(' ');
+        }
+        Write($"INFO placement apart={apart}/{samples} pairs={line.ToString().TrimEnd()}");
+        return apart >= 9 ? null : $"nur {apart} von {samples} Meldungen auf getrennten Kernen";
+    }
+
+    // E7-D: So viele rechnende Normal-Threads wie Worker-CPUs melden 500 ms lang ihre CPU. Mit zehos.smt=off darf nie ein zweiter
+    // logischer Prozessor eines Kerns auftauchen (FAIL); ohne den Schalter ist das Ergebnis nur INFO (dort treten sie bei voller Last auf).
+    private static string? StepSmt()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured || topology.CpuCount == topology.CoreCount) return $"SKIP cpus={KernelCpus.Count}";
+        int count = workers.Length;
+        if (count < 2) return $"SKIP cpus={KernelCpus.Count}";
+        var seen = new int[count][];
+        var threads = new Thread[count];
+        for (int t = 0; t < count; t++)
+        {
+            int index = t;
+            seen[index] = new int[10];
+            var started = ThreadStarter.TryStart(() => Sample(seen[index]), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
+            if (!started.IsOK()) return "Thread startet nicht";
+            threads[index] = started.Value!;
+        }
+        foreach (var thread in threads)
+            if (!thread.Join(10000)) return "Thread endet nicht";
+        var used = new SortedSet<int>();
+        foreach (int[] list in seen) foreach (int cpu in list) if (cpu >= 0) used.Add(cpu);
+        // Zweiter logischer Prozessor: nicht die kleinste Nummer seines Kerns unter allen Online-CPUs.
+        var firstOfCore = new Dictionary<int, int>();
+        for (int cpu = 0; cpu < KernelCpus.Count; cpu++)
+        {
+            int core = topology.CoreOf(cpu);
+            if (!firstOfCore.ContainsKey(core)) firstOfCore[core] = cpu;
+        }
+        int second = 0;
+        foreach (int cpu in used) if (firstOfCore[topology.CoreOf(cpu)] != cpu) second++;
+        bool off = CosmosBootOptions.Current.SmtOff;
+        Write($"INFO smt off={(off ? 1 : 0)} used={string.Join(",", used)} second={second}");
+        return off && second > 0 ? $"{second} zweite logische Prozessoren trotz zehos.smt=off genutzt" : null;
+    }
+
+    private static void Sample(int[] cpus)
+    {
+        var watch = Stopwatch.StartNew();
+        long sink = 0;
+        for (int i = 0; i < cpus.Length; i++)
+        {
+            cpus[i] = (int)KernelCpus.Current;
+            long until = (i + 1) * 50;
+            while (watch.ElapsedMilliseconds < until) sink = sink * 31 + 7;
+        }
+        if (sink == 42) Write("INFO placement sink");
     }
 
     // E6-J: Ein Warten mit Frist muss nach Ablauf false liefern und darf nicht vor der Frist enden; mit Signal
