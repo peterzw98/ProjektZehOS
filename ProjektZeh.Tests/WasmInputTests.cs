@@ -90,7 +90,7 @@ public sealed class WasmInputTests
     public void OverflowDropsPointerMovesBeforeKeysAndText()
     {
         var input = new WasmInputBuffer();
-        input.SetViewport(800, 600, 0, 0);
+        SetViewport(input, 640, 480, 640, 480);
         for (int index = 0; index < 100; index++)
         {
             input.Handle(new(InputEventType.PointerMove, X: index, Y: 1));
