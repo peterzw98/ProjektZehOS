@@ -120,12 +120,20 @@ static int dirent_mode;
 void dirent_test_mode(int mode) { dirent_mode = mode; }
 static uint32_t stub_dirent(uint8_t* buffer, uint32_t length)
 {
-    uint8_t entry[33] = {0};
-    uint64_t one = 1, next = 1;
-    uint32_t nameLength = 9;
-    memcpy(entry, &next, 8); memcpy(entry + 8, &one, 8); memcpy(entry + 16, &nameLength, 4); entry[20] = 4;
+    // Modus 1: ein Eintrag "asset.txt"; Modus 2: danach ein zweiter Eintrag "b" (d_ino = 2, d_next = 2).
+    uint8_t entry[58] = {0};
+    uint64_t one = 1, two = 2;
+    uint32_t nameLength = 9, secondLength = 1;
+    memcpy(entry, &one, 8); memcpy(entry + 8, &one, 8); memcpy(entry + 16, &nameLength, 4); entry[20] = 4;
     memcpy(entry + 24, "asset.txt", 9);
-    uint32_t count = length < sizeof entry ? length : (uint32_t)sizeof entry;
+    uint32_t size = 33;
+    if (dirent_mode == 2)
+    {
+        memcpy(entry + 33, &two, 8); memcpy(entry + 41, &two, 8); memcpy(entry + 49, &secondLength, 4); entry[53] = 4;
+        entry[57] = 'b';
+        size = 58;
+    }
+    uint32_t count = length < size ? length : size;
     memcpy(buffer, entry, count);
     return count;
 }

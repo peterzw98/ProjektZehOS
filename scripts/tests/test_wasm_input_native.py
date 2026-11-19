@@ -690,6 +690,51 @@ class NativeInputTests(unittest.TestCase):
             self.lib.dirent_test_mode(0)
         self.assertEqual(value, 1)
 
+    @staticmethod
+    def fnv(*parts):
+        """Referenz: FNV-1a-64 ueber normierte Pfadteile, '/' zwischen den Teilen (wie path_inode)."""
+        state = 0xcbf29ce484222325
+        for index, part in enumerate(parts):
+            if index:
+                state = ((state ^ 0x2f) * 0x100000001b3) & 0xffffffffffffffff
+            for byte in part:
+                state = ((state ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+        return state
+
+    def test_readdir_truncated_name_keeps_host_bytes(self):
+        # 30 Byte: Header (24) vollstaendig, aber nur 6 von 9 Namensbyte -> Zweig nameLength > Rest, d_ino bleibt 1.
+        self.lib.dirent_test_mode(1)
+        try:
+            low = self.u32([("fd_readdir", "iiiIi", (3, 1024, 30, 0, 600))], b"", 1032)
+            high = self.u32([("fd_readdir", "iiiIi", (3, 1024, 30, 0, 600))], b"", 1036)
+        finally:
+            self.lib.dirent_test_mode(0)
+        self.assertEqual((low, high), (1, 0))
+
+    def test_readdir_multiple_entries_each_get_inode(self):
+        # Zwei Eintraege (33 + 25 Byte): beide d_ino = FNV des Namens; zweiter Header liegt bei Offset 33.
+        readdir = [("fd_readdir", "iiiIi", (3, 1024, 64, 0, 600))]
+        self.lib.dirent_test_mode(2)
+        try:
+            values = [self.u32(readdir, b"", off) for off in (1032, 1036, 1065, 1069)]
+        finally:
+            self.lib.dirent_test_mode(0)
+        first, second = self.fnv(b"asset.txt"), self.fnv(b"b")
+        self.assertEqual(values, [first & 0xffffffff, first >> 32, second & 0xffffffff, second >> 32])
+
+    def test_readdir_ino_in_save_subdirectory(self):
+        # /save/maps als Ordner-fd (5) oeffnen: ino der Kinder setzt den Zustand von "maps" fort.
+        readdir = [("path_open", self.OPEN, (4, 0, 128, 4, 2, 0, 0, 0, 512)),
+                   ("fd_readdir", "iiiIi", (5, 1024, 64, 0, 600))]
+        self.lib.dirent_test_mode(1)
+        try:
+            low = self.u32(readdir, b"maps", 1032)
+            high = self.u32(readdir, b"maps", 1036)
+        finally:
+            self.lib.dirent_test_mode(0)
+        expected = self.fnv(b"maps", b"asset.txt")
+        self.assertEqual((low, high), (expected & 0xffffffff, expected >> 32))
+
     def test_filestat_has_mtime(self):
         low = self.MTIME & 0xffffffff
         stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
