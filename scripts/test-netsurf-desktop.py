@@ -206,12 +206,36 @@ def main():
         click(*frame(10,13))
         page("nach-fehler-bedienbar", "d8ecff")
 
+        def strip(pixels, top, bottom, left=0, right=798):
+            # Zeilenausschnitt des NetSurf-Bildes (Rahmenkoordinaten) aus dem Bildschirmbild.
+            width, _ = guest.size
+            x0, y0 = frame(left, top)
+            return b"".join(pixels[((y0+row)*width+x0)*3:((y0+row)*width+x0+right-left)*3] for row in range(bottom-top))
+
+        def wait_not_loading(limit=30):
+            # Waehrend die Statuszeile "Loading" zeigt, gehen Tasten verloren (Produktfehler, Block #478).
+            # Der Fehler bleibt ein Fehler im Produkt; das Skript wartet nur, bis die Zeile leer (einfarbig) ist.
+            # Geometrie der Statuszeile (unterste Bildzeilen) ist nicht mit OCR belegt: Zeitgrenze statt Abbruch.
+            deadline = time.monotonic() + limit
+            while True:
+                row = strip(capture("statuszeile"), 502, 518)
+                if len({row[i:i+3] for i in range(0, len(row), 3)}) <= 1:
+                    return True
+                if time.monotonic() > deadline:
+                    print(f"WARNUNG: Statuszeile nach {limit}s nicht leer (Loading, Block #478)", file=sys.stderr)
+                    return False
+                time.sleep(.5)
+
         def address(url):
+            wait_not_loading()
             click(*frame(284,13))
             guest.qmp.tap("home")
             for _ in range(48):
                 guest.qmp.tap("delete",hold=.03)
+            before = strip(capture("adresse-leer"), 5, 21, 270, 560)
             guest.qmp.text(url)
+            # Feldinhalt pruefen: ohne angekommene Tasten bliebe die Adresszeile unveraendert.
+            assert strip(capture("adresse-getippt"), 5, 21, 270, 560) != before, f"Adresse {url}: Tasten nicht angekommen"
             guest.qmp.tap("ret")
 
         hexcolor = lambda colour: "".join(f"{c:02x}" for c in colour)
