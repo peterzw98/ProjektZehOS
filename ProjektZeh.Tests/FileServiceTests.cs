@@ -380,10 +380,47 @@ public sealed class FileServiceTests
         Assert.IsFalse(result.IsOK(), "Ein leerer Pfad darf keine Datei erzeugen.");
         Assert.AreEqual(0, Directory.GetFileSystemEntries(directory).Length, "Ungueltige Eingaben duerfen nichts schreiben.");
     }
+    // E5-H l2: Cosmos kuerzt Schreibzugriffe bei vollem ext2 still; das Original darf dann nicht durch die Kurzfassung ersetzt werden.
+    [DataTestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void WriteBytes_SilentShortWrite_KeepsOriginalAndLeavesNoTemporary(bool keepBackup)
+    {
+        string path = Path.Combine(directory, "ziel.bin");
+        byte[] original = [1, 2, 3, 4];
+        File.WriteAllBytes(path, original);
+        var full = new FileService(directory) { OpenTemporary = p => new SilentlyTruncatingStream(p) };
+
+        var result = full.WriteBytes("ziel.bin", new byte[100], keepBackup);
+
+        Assert.IsFalse(result.IsOK(), "Eine gekuerzte Temp-Datei darf nicht als Erfolg gelten.");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+        CollectionAssert.AreEqual(new[] { path }, Directory.GetFileSystemEntries(directory));
+    }
+
+    [TestMethod]
+    public void CopyFile_SilentShortWrite_FailsWithoutTarget()
+    {
+        File.WriteAllBytes(Path.Combine(directory, "quelle.bin"), new byte[100]);
+        var full = new FileService(directory) { OpenTemporary = p => new SilentlyTruncatingStream(p) };
+
+        var result = full.CopyFile("quelle.bin", "kopie.bin");
+
+        Assert.IsFalse(result.IsOK());
+        Assert.IsFalse(File.Exists(Path.Combine(directory, "kopie.bin")));
+        CollectionAssert.AreEqual(new[] { Path.Combine(directory, "quelle.bin") }, Directory.GetFileSystemEntries(directory));
+    }
 }
 
 /// <summary>Liefert je Read hoechstens sieben Bytes, wie Geraete- oder Netzstroeme.</summary>
 internal sealed class ShortReadStream(byte[] content) : MemoryStream(content)
 {
     public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 7));
+}
+
+/// <summary>Verwirft Schreibzugriffe ohne Fehler, wie Cosmos bei vollem ext2.</summary>
+internal sealed class SilentlyTruncatingStream(string path) : FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1)
+{
+    public override void Write(byte[] buffer, int offset, int count) { }
+    public override void Write(ReadOnlySpan<byte> buffer) { }
 }
