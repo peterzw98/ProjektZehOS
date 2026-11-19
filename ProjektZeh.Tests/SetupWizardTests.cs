@@ -11,6 +11,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class SetupWizardTests
 {
     private static readonly UiPainter Painter = new(new byte[256 * 64], 16, 32);

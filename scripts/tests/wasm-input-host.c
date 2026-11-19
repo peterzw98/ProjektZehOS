@@ -61,15 +61,19 @@ int32_t zehos_wasm_host_should_exit(void) { exit_calls++; return exit_after >= 0
 static int stat_calls;
 void stat_test_reset(void) { stat_calls = 0; }
 int stat_test_calls(void) { return stat_calls; }
-int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type) {
+int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modified) {
     stat_calls++;
     if (length == 7 && memcmp(path, "missing", 7) == 0) return 44;
     if (length == 6 && memcmp(path, "denied", 6) == 0) return 2;
     if (length == 2 && memcmp(path, "io", 2) == 0) return 29;
     *type = length == 9 && memcmp(path, "asset.txt", 9) == 0 ? 4 : 3;
     *size = *type == 4 ? 7 : 0;
+    *modified = *type == 4 ? 1700000000123456789ull : 0;
     return 0;
 }
+// 12.8 P4-D: Zeit je Handle und Aufloesung der Stopwatch (Test: 1000 ns fuer jede Uhr).
+int32_t zehos_wasm_host_fstat(int32_t handle, uint64_t* modified) { *modified = handle == 42 ? 1700000000123456789ull : 0; return 0; }
+uint64_t zehos_wasm_host_clock_res_ns(int32_t clock) { (void)clock; return 1000; }
 
 static int net_calls;
 void net_test_reset(void) { net_calls = 0; }
@@ -104,14 +108,37 @@ int64_t zehos_wasm_host_save_size(int32_t handle) { (void)handle; return 0; }
 int32_t zehos_wasm_host_save_set_size(int32_t handle, uint64_t size) { (void)handle; (void)size; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_sync(int32_t handle) { (void)handle; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_close(int32_t handle) { (void)handle; save_calls++; return 0; }
-int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type)
-{ (void)path; (void)length; (void)size; (void)type; save_calls++; return 44; }
+int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modified)
+{ (void)path; (void)length; (void)size; (void)type; (void)modified; save_calls++; return 44; }
+int32_t zehos_wasm_host_save_fstat(int32_t handle, uint64_t* modified) { (void)handle; *modified = 0; return 0; }
 int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32_t length)
 { (void)operation; (void)path; (void)length; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength)
 { (void)from; (void)fromLength; (void)to; (void)toLength; save_calls++; return 0; }
+// Mit dirent_test_mode(1) liefern beide Readdir-Stubs einen echten Eintrag "asset.txt" (d_ino = Index+1 wie die Hostseite), sonst 3 Byte bzw. nichts.
+static int dirent_mode;
+void dirent_test_mode(int mode) { dirent_mode = mode; }
+static uint32_t stub_dirent(uint8_t* buffer, uint32_t length)
+{
+    // Modus 1: ein Eintrag "asset.txt"; Modus 2: danach ein zweiter Eintrag "b" (d_ino = 2, d_next = 2).
+    uint8_t entry[58] = {0};
+    uint64_t one = 1, two = 2;
+    uint32_t nameLength = 9, secondLength = 1;
+    memcpy(entry, &one, 8); memcpy(entry + 8, &one, 8); memcpy(entry + 16, &nameLength, 4); entry[20] = 4;
+    memcpy(entry + 24, "asset.txt", 9);
+    uint32_t size = 33;
+    if (dirent_mode == 2)
+    {
+        memcpy(entry + 33, &two, 8); memcpy(entry + 41, &two, 8); memcpy(entry + 49, &secondLength, 4); entry[53] = 4;
+        entry[57] = 'b';
+        size = 58;
+    }
+    uint32_t count = length < size ? length : size;
+    memcpy(buffer, entry, count);
+    return count;
+}
 int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used)
-{ (void)handle; (void)buffer; (void)length; (void)cookie; save_calls++; *used = 0; return 0; }
+{ (void)handle; (void)cookie; save_calls++; *used = dirent_mode ? stub_dirent(buffer, length) : 0; return 0; }
 // Paketordner (12.8 P4-B): "." und "sub" oeffnen (Handle 90 + laufende Nummer), alles andere ENOENT; Zaehler bleiben nach Traps lesbar.
 static int pkg_open_dirs, pkg_closedirs, pkg_opendirs, pkg_last_dir, pkg_last_readdir_handle, pkg_readdirs, pkg_openat_dir;
 static uint64_t pkg_last_cookie;
@@ -131,6 +158,7 @@ int32_t zehos_wasm_host_package_opendir(int32_t dir, const uint8_t* path, uint32
 }
 int32_t zehos_wasm_host_package_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used) {
     pkg_readdirs++; pkg_last_readdir_handle = handle; pkg_last_cookie = cookie;
+    if (dirent_mode) { *used = stub_dirent(buffer, length); return 0; }
     if (length >= 3) { memcpy(buffer, "abc", 3); *used = 3; } else *used = 0;
     return 0;
 }

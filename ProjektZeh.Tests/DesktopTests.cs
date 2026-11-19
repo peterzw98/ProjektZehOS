@@ -13,6 +13,7 @@ using ProjektZeh.Storage;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopTests
 {
     [TestMethod]

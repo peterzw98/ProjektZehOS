@@ -11,6 +11,7 @@ using ProjektZeh.UI;
 namespace ProjektZeh.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class DesktopWorkspaceTests
 {
     private string directory = "";

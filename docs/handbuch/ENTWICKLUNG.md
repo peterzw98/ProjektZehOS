@@ -47,7 +47,7 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 `write` schreibt zunächst eine temporäre Datei im selben Verzeichnis und ersetzt das Ziel erst nach erfolgreichem Schreiben und Leeren der Schreibpuffer. Die alte Datei wird dafür unter einem kurzen Zufallsnamen gesichert und bei einem fehlgeschlagenen Austausch zurückbenannt. Schlägt auch die Wiederherstellung fehl, bleibt die Sicherung erhalten und ihr Pfad steht in der Fehlermeldung. Ein Schreibfehler, etwa ein voller Datenträger, lässt den bisherigen Inhalt erhalten. Dafür muss vorübergehend Platz für die alte und die neue Datei vorhanden sein; ein Schutz vor Stromausfall während des Ersetzens ist damit nicht zugesichert. `write hallo.txt ""` leert die Datei. Ein bereits belegter Mountpunkt `/data` wird bei `disk mount` abgelehnt.
 
-Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 8189 direkte Einträge (ein Platz unter der Cosmos-Grenze bleibt für Umbenennungen frei), einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
+Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 65.535 direkte Einträge (Produktgrenze 65.536, ein Platz bleibt für Umbenennungen frei; im Gast geprüft bis 10.000 Einträge, nur mit dem P8-Versuchsfeed `zehos.0.gfdc9da0`, nicht mit dem Pin `zehos.5` (518 s bzw. 754 s je ganzem Lauf); sehr große Verzeichnisse sind langsam, siehe `docs/COSMOS_SUPPORT.md`), einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
 
 Ist ext2 als `/` eingehängt, hält Cosmos 3.0.97 jede seit dem Start berührte Datei im Speicher, bis der Datenträger ausgehängt wird. Nach etwa 17.500 verschiedenen Dateien je Sitzung können weitere Dateioperationen mit einem Fehler scheitern, weil der Speicher zu stark zerstückelt ist. Die genaue Zahl hängt vom Arbeitsspeicher und vom bisherigen Verlauf ab.
 
@@ -98,6 +98,17 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 ```
 
 Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](../../docs/COSMOS_SUPPORT.md#aufgabenverwaltung-und-round-robin-am-13-november-2026).
+
+## Kommandozeilenschalter des Kernels
+
+Der Kernel liest die Limine-Kommandozeile (`cmdline:` in `boot/limine/limine.conf` des ISO). Erkannt werden nur ganze, durch Leerzeichen getrennte Wörter; Unbekanntes und ungültige Werte werden ignoriert.
+
+| Schalter | Wirkung |
+| --- | --- |
+| `zehos.cpus=<n>` (n ≥ 1) | wird gelesen und im Systemprotokoll genannt; in Etappe 5 laufen alle Threads ohnehin auf CPU 0 |
+| `zehos.smt=off` | wird gelesen; wirkt erst mit der CPU-Topologie in späteren Etappen |
+
+Der Boot setzt als Erstes die Affinität des Hauptthreads und die Standardaffinität neuer Threads auf CPU 0, bevor ein Thread startet. Die Bootzeile lautet `CPUs online=<n>, genutzt=1 (zehos.cpus=<Wert oder ->, …)`. Für einen Versuch die Zeile `cmdline: zehos.cpus=1` unter `path:` in die `limine.conf` einer Kopie des ISO schreiben (`xorriso -dev kopie.iso -boot_image any keep -map limine.conf /boot/limine/limine.conf -commit`).
 
 ## Desktop-Dateifehler gezielt prüfen
 

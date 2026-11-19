@@ -38,6 +38,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\VmwareClock.cs" Link="Runtime\VmwareClock.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\BootOptions.cs" Link="Runtime\BootOptions.cs" />
     <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallJob.cs" Link="Installer\InstallJob.cs" />
@@ -90,9 +91,6 @@
     <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2FeatureGate.cs" Link="Storage\Ext2\Ext2FeatureGate.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeCatalog.cs" Link="Storage\Ext2\RootProbeCatalog.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootProbeContent.cs" Link="Storage\Ext2\RootProbeContent.cs" />
-    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2InodeRelease.cs" Link="Storage\Ext2\Ext2InodeRelease.cs" />
-    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2DirectoryRemoval.cs" Link="Storage\Ext2\Ext2DirectoryRemoval.cs" />
-    <Compile Include="..\ProjektZeh\Storage\Ext2\Ext2IndirectBlocks.cs" Link="Storage\Ext2\Ext2IndirectBlocks.cs" />
     <Compile Include="..\ProjektZeh\Storage\Ext2\RootVolumeState.cs" Link="Storage\Ext2\RootVolumeState.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\Crc32.cs" Link="Storage\Partitioning\Crc32.cs" />
     <Compile Include="..\ProjektZeh\Storage\Partitioning\ChecksummedText.cs" Link="Storage\Partitioning\ChecksummedText.cs" />

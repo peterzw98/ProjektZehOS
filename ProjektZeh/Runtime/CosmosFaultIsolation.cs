@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Cosmos.Kernel.Core.CPU;
@@ -36,9 +37,17 @@ internal static unsafe class FaultIsolation
         // Ohne Wasm-Laufzeit gibt es keinen Zaehler; OnCpuException haelt dann immer an.
         hostDepth = null;
 #endif
-        SchedulerThread? current = SchedulerManager.GetCpuState(0)?.CurrentThread;
+        // Vorher fest GetCpuState(0): auf mehreren CPUs der Thread von CPU 0. KernelCpus.Current mit GetCpuState waere
+        // ohne Maske nicht besser, der Worker kann dazwischen die CPU wechseln (seit SMP 5b laufen Threads auf allen
+        // CPUs). Cosmos' CurrentThread liest CPU und Thread mit maskierten Interrupts in einem Schritt.
+        SchedulerThread? current = CurrentThread(null);
         if (current != null) Volatile.Write(ref workerThreadId, (int)current.Id);
     }
+
+    // In a6bd07d8 intern; oeffentlich gibt es nur GetCpuState(cpu), das ohne Maske nicht wanderungssicher ist.
+    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_CurrentThread")]
+    private static extern SchedulerThread? CurrentThread(
+        [UnsafeAccessorType("Cosmos.Kernel.Core.Scheduler.SchedulerManager, Cosmos.Kernel.Core")] object? owner);
 
     /// <summary>Um den nativen Lauf (wasm3 oder AOT); Hostaufrufe darin zaehlt die C-Schicht.</summary>
     internal static void EnterNativeRun() => Volatile.Write(ref inNativeRun, 1);
@@ -64,12 +73,13 @@ internal static unsafe class FaultIsolation
     internal static CpuExceptionAction OnCpuException(in CpuExceptionInfo exception)
     {
         long vector = exception.Vector <= 255 ? (long)exception.Vector : FaultIsolationPolicy.UnknownVector;
-        PerCpuState? state = SchedulerManager.GetCpuState(0);
-        SchedulerThread? current = state?.CurrentThread;
+        // Cosmos liest den Thread der fehlerhaften CPU selbst (Panic.CpuException, mit Maske, ohne Sperre); vorher las
+        // ZehOS fest CPU 0 und haette auf einer anderen CPU den falschen Thread isoliert.
+        int currentId = exception.ThreadId == CpuExceptionInfo.NoThread ? -1 : (int)exception.ThreadId;
 
         // Belegt in der Gastprobe, welchen Thread die Ausnahme traf (NMI-Gegenprobe: muss der Worker im Gastcode sein).
         Serial.WriteString("ZehOS: Thread ");
-        Serial.WriteNumber(current == null ? -1 : (int)current.Id);
+        Serial.WriteNumber(currentId);
         Serial.WriteString(", Wasm-Worker ");
         Serial.WriteNumber(Volatile.Read(ref workerThreadId));
         Serial.WriteString(", Gastcode ");
@@ -77,10 +87,10 @@ internal static unsafe class FaultIsolation
         Serial.WriteString("\n");
 
         int* depth = hostDepth;
-        if (current == null || depth == null
-            || FaultIsolationPolicy.Decide(vector, (int)current.Id, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
+        if (currentId < 0 || depth == null
+            || FaultIsolationPolicy.Decide(vector, currentId, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
                 *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
-            || !Quarantine.Add((int)current.Id))
+            || !Quarantine.Add(currentId))
         {
             return CpuExceptionAction.Halt;
         }
@@ -89,7 +99,7 @@ internal static unsafe class FaultIsolation
         Volatile.Write(ref workerThreadId, -1);
         Volatile.Write(ref isolatedVector, vector);
         Volatile.Write(ref isolatedRip, exception.InstructionPointer);
-        Volatile.Write(ref isolatedThreadId, (int)current.Id);
+        Volatile.Write(ref isolatedThreadId, currentId);
         return CpuExceptionAction.AbandonThread;
     }
 

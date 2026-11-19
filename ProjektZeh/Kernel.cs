@@ -98,6 +98,7 @@ public sealed class Kernel : Sys.Kernel
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         // Lange Warte- oder Haltezeiten der Speicher-Sperre nur seriell melden: das Protokoll selbst schreibt keine Datei.
         StorageLock.Report = text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE " + text + "\n");
+        ProjektZeh.Runtime.Wasm.WasmInputBuffer.Report = text => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
         systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
@@ -208,7 +209,7 @@ public sealed class Kernel : Sys.Kernel
             string id = installed.Value[index].Manifest.Id;
             apps[index] = new(id, installed.Value[index].Manifest.Name,
                 painter => Runtime.Wasm.WasmRuntime.IsBusy ? null : new Apps.Wasm.WasmGameApp(packages, id, painter,
-                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n"), SaveRootFor));
+                    text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("APP " + id + " " + text + "\n"), SaveRootPathFor, CreateSaveRoot));
         }
         return apps;
     }
@@ -217,20 +218,25 @@ public sealed class Kernel : Sys.Kernel
     /// Etappe 13.4: /save einer App fuer das angemeldete Desktopkonto, nur mit eingebundenem /data. Der Ordner wird bei
     /// Bedarf ueber einen Dateidienst ohne Rechteverwaltung mit Waechter angelegt; ohne ihn laeuft die App ohne Speichern.
     /// </summary>
-    private string? SaveRootFor(string packageId)
+    private string? SaveRootPathFor(string packageId)
     {
         if (!accounts.IsDataMounted() || desktopIdentity.UserId is not { } user) return null;
         var path = systemPaths.AppState(packageId, user);
-        if (!path.IsOK()) return null;
+        return path.IsOK() ? path.Value : null;
+    }
+
+    // Laeuft auf dem Worker nach VerifyOnce; der Pfad kommt vom Aufrufer.
+    private string? CreateSaveRoot(string packageId, string path)
+    {
         // #210 (ebenenweise anlegen) mit dem Profilpfad aus 4.3; im Root-Profil liegt der App-Zustand unter /var/lib/zehos/apps.
         var created = Runtime.Wasm.WasmSaveStore.CreateRoot(new FileService(systemPaths.AdminRoot, pathGuard: CosmosPathGuard.For(systemPaths.AdminRoot), tryBeginWrite: SourceWrites),
-            systemPaths.AdminRoot, path.Value!);
+            systemPaths.AdminRoot, path);
         if (!created.IsOK())
         {
             systemLog.Error("Apps", "App-Speicher fuer " + packageId + " nicht angelegt: " + created.Message);
             return null;
         }
-        return path.Value;
+        return path;
     }
 
 #endif
@@ -317,8 +323,11 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
+        // Zuerst, vor jedem Threadstart und vor jedem Lesen von Environment.ProcessorCount: Etappe 5 haelt alle Threads auf CPU 0.
+        var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
+        systemLog.Information("Boot", cpuLine);
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()

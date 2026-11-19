@@ -75,6 +75,8 @@ Jede Zeile, die dich nennt, startet einen Lauf oder weckt eine Sitzung und koste
 - **Nicht senden:** Keep-alives, `[alive]`, Statuszeilen („arbeite noch“), Bestätigungen („verstanden“, „danke“), Wiederholungen fremder Meldungen und Zusammenfassungen
   dessen, was schon im Kanal steht. Ein Lebenszeichen gibt der Dienst ab (`dispatch/heartbeat`); einen gescheiterten Lauf meldet er mit `[dispatcher]` (nach drei Fehlschlägen,
   bei einem Zeitlimit sofort). Einen Lauf, der ohne `[FERTIG]` erfolgreich endet, meldet niemand: Deshalb nennt jeder `[AUFTRAG]` eine Frist, und der Auftraggeber fragt danach nach.
+- **Adressfeld:** Wer handeln soll, steht **vor dem ersten Doppelpunkt** (`agent-a agent-b: …`, `[AUFTRAG] agent-a: …`); nur diese Nicks weckt der Dispatcher.
+  Nicks im Text („… dann `[FERTIG]` an agent-b“) wecken niemanden, der Agent sieht die Zeile beim nächsten eigenen Lauf.
 - **Nennen** nur, wer handeln soll. Der Koordinator liest `[FERTIG]`, `[BLOCKER]`, `[FRAGE]`, `[UEBERGABE]` und `[FREIGABE?]` auch ohne Nennung.
 - **Kanäle:** `#general` für Freigaben, Ankündigungen und alles, was die Menschen sehen sollen; `#first`, `#second`, `#third` als **Projektkanäle** (Nummer = Priorität,
   Projekt und Lead im Topic). Der Bot jedes Teamagenten ist in allen vier Kanälen; du musst sie nicht betreten oder verlassen. Arbeitsmeldungen gehören in den Projektkanal des Auftrags.

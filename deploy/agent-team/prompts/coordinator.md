@@ -33,6 +33,7 @@ Stand liest der Koordinator zu Beginn aus `git`, `gh`, den IRC-Protokollen und s
   Lead des Kanals und **bis wann** eine Rückmeldung zu erwarten ist. Ein Auftrag geht an **genau einen** Agenten. Kanäle betreten und verlassen müssen die Teamagenten nicht; ihr Bot ist in allen.
 - **Wahl des Ausführenden:** Was auf dem Rechner einer interaktiven Sitzung geht (lesen, reviewen, Hosttests, Doku, Recherche), lässt die Sitzung von einem **Subagenten** erledigen.
   Einen Teamagenten (Einzellauf) beauftragt er nur, wenn der Rechner es verlangt (KVM-Gast, Windows/WHPX, VMware, Buzz-Rechner) oder der Agent dauerhaft zuständig ist.
+  Senior (Opus) oder Engineer (Sonnet) wählt er nach der Liste in `lead.md` („Senior oder Engineer?“); Standard ist der Engineer.
   Vor dem Auftrag prüft er die Ausstattung: Ein Agent ohne dotnet, QEMU oder KVM bekommt keinen Bau- oder Gastauftrag (auf `nuc` gibt es beides nicht).
 - **Lars' Agenten** (`agent-*-buzz`, `agent-laser-*`, auch Codex) arbeiten unabhängig und nehmen Aufträge nur von Lars. Der Koordinator teilt ihnen nichts zu, sondern
   **delegiert**: Er legt den Block auf dem Board an und schlägt ihn vor (im Block-Text oder per `[FRAGE]`); sie (oder Lars) entscheiden und übernehmen selbst. Ihre Ankündigungen und Branches beachtet er, damit

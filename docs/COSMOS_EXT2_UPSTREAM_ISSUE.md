@@ -3,7 +3,7 @@
 **Nicht veröffentlichen** ohne Freigabe von laser oder Peter. Quellstand: CosmosOS/Cosmos
 `efcf20cc62884b042a0adadffe9fc4540491fd89` (Paket `Cosmos.Kernel.System` 3.0.97). Belege: e2fsprogs 1.47.4
 `e2fsck -fn` auf frischen Images (`experiments/StorageProbe`) und auf der Gastprobe `-p:ZehOSStorageProbe=true`.
-ZehOS-Umgehungen: `ProjektZeh/Storage/Ext2/` (Formatter), `ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs`.
+ZehOS-Umgehungen (historisch): `ProjektZeh/Storage/Ext2/` (Formatter), `ProjektZeh/Storage/CosmosExt2FreeInodePlug.cs`. Beide sind entfallen; die Fehler sind im Branch `cosmos` behoben (`ext2-formatter`, `ext2-free-inode`, E2-Z1).
 
 ---
 
