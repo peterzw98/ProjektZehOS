@@ -153,8 +153,8 @@ public sealed class RoundRobinScheduler : IScheduler
 
         if (cpuData.RunQueue.Count == 0)
         {
-            // Sole runnable thread: grant a fresh slice in place instead of
-            // bouncing through the idle thread and back.
+            // Sole runnable thread: grant a fresh slice in place. A pick
+            // would find nothing and leave the thread on the CPU anyway.
             threadData.RemainingNs = QuantumNs;
             return false;
         }
@@ -162,13 +162,15 @@ public sealed class RoundRobinScheduler : IScheduler
         return true;
     }
 
-    // ========== Load Balancing (dormant until SMP) ==========
+    // ========== Placement and load balancing ==========
 
-    public uint SelectCpu(SchedulerThread thread, uint currentCpu, uint cpuCount)
+    public uint SelectCpu(SchedulerThread thread, PerCpuState[] cpus, CpuSet allowed)
     {
-        // One FIFO per CPU and no load metric worth consulting: keep the
-        // thread where it is, which also honors SchedulerThreadFlags.Pinned.
-        return currentCpu;
+        // One FIFO per CPU and no load metric worth consulting: the thread's
+        // preference, then where it is, then the lowest CPU its set allows.
+        return allowed.Contains(thread.IdealCpu) ? thread.IdealCpu
+             : allowed.Contains(thread.CpuId) ? thread.CpuId
+             : allowed.First;
     }
 
     public void OnThreadMigrate(SchedulerThread thread, PerCpuState fromState, PerCpuState toState)
@@ -180,14 +182,17 @@ public sealed class RoundRobinScheduler : IScheduler
             return;
         }
 
+        // A thread the switch-out evicted (still Running) is in no queue:
+        // the remove finds nothing and the thread joins the tail here.
         RemoveFromQueue(fromData, thread);
         EnqueueTail(toData, thread);
     }
 
-    public void Balance(PerCpuState cpuState, PerCpuState[] allCpuStates)
+    public SchedulerThread? Balance(PerCpuState cpuState, PerCpuState[] allCpuStates)
     {
-        // FIFO order carries no cross-CPU invariant to rebalance; placement
-        // stays wherever SelectCpu (which honors Pinned) put the thread.
+        // FIFO order carries no cross-CPU invariant to rebalance; a thread
+        // stays wherever SelectCpu put it until its set moves it.
+        return null;
     }
 
     // ========== Dynamic Reconfiguration ==========
@@ -207,36 +212,29 @@ public sealed class RoundRobinScheduler : IScheduler
 
     public int GetRunQueueCount(PerCpuState cpuState)
     {
-        // The SchedulerDiagnostics facade calls the diagnostics hooks from thread
-        // context; guard them against the tick ourselves, per the plugging guide.
-        using (SchedulerManager.MaskInterrupts())
-        {
-            RoundRobinCpuData? cpuData = CpuDataOf(cpuState);
-            return cpuData?.RunQueue.Count ?? 0;
-        }
+        // The caller holds the CPU's queue lock (SchedulerManager.LockCpu),
+        // per the plugging guide: a hook never takes it itself.
+        RoundRobinCpuData? cpuData = CpuDataOf(cpuState);
+        return cpuData?.RunQueue.Count ?? 0;
     }
 
     public SchedulerThread? GetRunQueueThread(PerCpuState cpuState, int index)
     {
-        using (SchedulerManager.MaskInterrupts())
+        RoundRobinCpuData? cpuData = CpuDataOf(cpuState);
+        if (cpuData is null || index < 0 || index >= cpuData.RunQueue.Count)
         {
-            RoundRobinCpuData? cpuData = CpuDataOf(cpuState);
-            if (cpuData is null || index < 0 || index >= cpuData.RunQueue.Count)
-            {
-                return null;
-            }
-
-            return cpuData.RunQueue[index];
+            return null;
         }
+
+        return cpuData.RunQueue[index];
     }
 
     // ========== Private Helpers ==========
 
-    // Read the slots with 'as', never a cast: a policy installed on a live
-    // kernel is handed threads still carrying the previous policy's
-    // bookkeeping (the boot main thread keeps its StrideThreadData across
-    // the swap), and a cast would throw on them in interrupt context.
-    // Foreign data degrades to "absent", which every hook already tolerates.
+    // Read the slots with 'as', never a cast. The seam asks every hook to
+    // tolerate an empty slot, since OnThreadExit clears it, and 'as' gives
+    // the same "absent" for a slot that holds anything but this policy's
+    // record, where a cast would throw in interrupt context.
     private static RoundRobinCpuData? CpuDataOf(PerCpuState cpuState)
     {
         return cpuState.SchedulerData as RoundRobinCpuData;
@@ -262,9 +260,9 @@ public sealed class RoundRobinScheduler : IScheduler
 
     private static void EnqueueTail(RoundRobinCpuData cpuData, SchedulerThread thread)
     {
-        // Presence guard: ReadyThread can fire for a thread the interrupt
-        // exit will also re-queue (the idle thread's block/resurrect churn in
-        // Mutex.Acquire), and a double entry would grant double turns.
+        // Presence guard: OnThreadReady arrives twice for a thread that is
+        // readied again before its first run, since it stays Created until
+        // then, and a double entry would grant double turns.
         if (!QueueHolds(cpuData, thread))
         {
             cpuData.RunQueue.Add(thread);

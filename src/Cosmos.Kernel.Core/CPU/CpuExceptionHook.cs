@@ -19,11 +19,15 @@ public enum CpuExceptionAction
 
     /// <summary>
     /// Give up the faulting thread: switch to another thread and never return
-    /// to the faulting code. Keeping the thread off the CPU afterwards is the
-    /// installed scheduler's job: the switch hands the thread to
-    /// <see cref="IScheduler.OnThreadYield"/>, which must not queue it again
-    /// (its saved stack pointer is not a frame that can be resumed). When no
-    /// switch can be staged, the kernel halts instead.
+    /// to the faulting code. The kernel marks the thread
+    /// <see cref="SchedulerThreadState.Dead"/> and does not hand it back to the
+    /// policy. Nothing reaps it here: the kernel does not call
+    /// <see cref="IScheduler.OnThreadExit"/>, unregister it, retire its
+    /// allocation context or release its joiners. The policy has no hook for
+    /// that either; the adapter that installed the hook reaps the thread
+    /// afterwards through the exit path (ExitThread or
+    /// SchedulerDiagnostics.RequestKill, ZehOS plan E6-G). Locks the thread
+    /// held stay taken. When no switch can be staged, the kernel halts instead.
     /// </summary>
     AbandonThread = 1,
 }
@@ -41,13 +45,21 @@ public readonly struct CpuExceptionInfo
     /// <param name="instructionPointer">Address of the faulting instruction (RIP or ELR).</param>
     /// <param name="stackPointer">Stack pointer of the interrupted code (RSP or SP).</param>
     /// <param name="faultAddress">Faulting data address (CR2 or FAR), zero when the exception has none.</param>
-    public CpuExceptionInfo(ulong vector, ulong instructionPointer, ulong stackPointer, ulong faultAddress)
+    /// <param name="cpuId">Index of the CPU the exception was raised on.</param>
+    /// <param name="threadId">Id of the thread running on that CPU, <see cref="NoThread"/> when none.</param>
+    public CpuExceptionInfo(ulong vector, ulong instructionPointer, ulong stackPointer, ulong faultAddress,
+        uint cpuId, uint threadId)
     {
         Vector = vector;
         InstructionPointer = instructionPointer;
         StackPointer = stackPointer;
         FaultAddress = faultAddress;
+        CpuId = cpuId;
+        ThreadId = threadId;
     }
+
+    /// <summary>The <see cref="ThreadId"/> when no thread was running on the CPU.</summary>
+    public const uint NoThread = uint.MaxValue;
 
     /// <summary>Exception vector (x64) or exception type (ARM64: 0 synchronous, 3 SError).</summary>
     public ulong Vector { get; }
@@ -60,6 +72,20 @@ public readonly struct CpuExceptionInfo
 
     /// <summary>Faulting data address (CR2 or FAR), zero when the exception has none.</summary>
     public ulong FaultAddress { get; }
+
+    /// <summary>
+    /// Index of the CPU the exception was raised on. With several CPUs the
+    /// hook decides about this CPU's thread, not about a thread it reads
+    /// elsewhere.
+    /// </summary>
+    public uint CpuId { get; }
+
+    /// <summary>
+    /// <see cref="SchedulerThread.Id"/> of the thread running on that CPU,
+    /// the one <see cref="CpuExceptionAction.AbandonThread"/> gives up;
+    /// <see cref="NoThread"/> when the scheduler runs no thread there.
+    /// </summary>
+    public uint ThreadId { get; }
 }
 
 /// <summary>

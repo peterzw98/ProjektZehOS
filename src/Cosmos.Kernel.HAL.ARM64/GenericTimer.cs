@@ -154,6 +154,18 @@ internal class GenericTimer : TickSource
     }
 
     /// <summary>
+    /// Arms the calling CPU's banked timer registers for the period <see cref="SetPeriod"/> set
+    /// and enables them, as <see cref="Start"/> did on the boot CPU, without the log lines: an
+    /// application processor, from its managed entry (SMP phase 2). The counter is system
+    /// wide, so the period means the same on every CPU. Allocation-free.
+    /// </summary>
+    public void StartOnCurrentCpu()
+    {
+        GenericTimerNative.SetTval(_ticksPerPeriod > uint.MaxValue ? uint.MaxValue : (uint)_ticksPerPeriod);
+        GenericTimerNative.Enable();
+    }
+
+    /// <summary>
     /// Registers the IRQ handler for the timer.
     /// Should be called after GIC is initialized.
     /// </summary>
@@ -185,8 +197,6 @@ internal class GenericTimer : TickSource
             return;
         }
 
-        s_timerTickCount++;
-
         // Re-arm the timer for the next period
         if (Instance._ticksPerPeriod > uint.MaxValue)
         {
@@ -197,23 +207,32 @@ internal class GenericTimer : TickSource
             GenericTimerNative.SetTval((uint)Instance._ticksPerPeriod);
         }
 
-        // Advance software timers and invoke the OnTick handler
-        Instance.HandleTick(Instance._periodNs);
-
-        // Get current CPU ID (for now, always 0 on single CPU ARM64)
-        uint cpuId = 0;
+        // The index of this CPU, from its per-CPU block.
+        uint cpuId = SchedulerManager.GetCurrentCpuId();
 
         // The saved context's SP, which the scheduler switches from.
         nuint currentSp = ARM64InterruptController.SavedContextStackPointer(ref ctx);
 
-        // Log first few ticks and then periodically
-        if (s_timerTickCount <= 5 || s_timerTickCount % 100 == 0)
+        // The boot CPU's ticks alone drive the software timers and the log:
+        // every CPU's banked timer takes this handler, the ring's timers
+        // (TimerManager, the alarms) run on the boot CPU, where the drivers
+        // that registered them live, and the log follows the tick count.
+        if (cpuId == 0)
         {
-            Serial.Write("[GenericTimer] Tick ");
-            Serial.WriteNumber(s_timerTickCount);
-            Serial.Write(" SP=0x");
-            Serial.WriteHex((ulong)currentSp);
-            Serial.Write("\n");
+            s_timerTickCount++;
+
+            // Advance software timers and invoke the OnTick handler
+            Instance.HandleTick(Instance._periodNs);
+
+            // Log first few ticks and then periodically
+            if (s_timerTickCount <= 5 || s_timerTickCount % 100 == 0)
+            {
+                Serial.Write("[GenericTimer] Tick ");
+                Serial.WriteNumber(s_timerTickCount);
+                Serial.Write(" SP=0x");
+                Serial.WriteHex((ulong)currentSp);
+                Serial.Write("\n");
+            }
         }
 
         // Call scheduler with elapsed time
@@ -222,7 +241,14 @@ internal class GenericTimer : TickSource
         // EOI is sent by the interrupt handler after we return
     }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Blocks for the given number of milliseconds on this timer's counter.
+    /// Unlike the base, the caller is never parked: it halts between two
+    /// reads of the counter, a halt its own CPU's tick ends, so a thread
+    /// stays runnable for the whole wait and gives way only when a tick
+    /// preempts it.
+    /// </summary>
+    /// <param name="timeoutMs">Milliseconds to wait.</param>
     public override void Wait(uint timeoutMs)
     {
         ulong targetTicks = GenericTimerNative.GetCounter() + ((_timerFrequency * timeoutMs) / 1000);

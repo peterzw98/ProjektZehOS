@@ -39,13 +39,11 @@ public enum SchedulerThreadFlags : ushort
     /// </summary>
     None = 0,
     /// <summary>
-    /// Per-CPU idle thread
+    /// Per-CPU idle thread: the mechanism's fallback, which no policy is handed.
     /// </summary>
     IdleThread = 1 << 1,
-    /// <summary>
-    /// Cannot migrate to other CPUs
-    /// </summary>
-    Pinned = 1 << 2,
+    // 1 << 2 was Pinned: a thread that must not migrate is one whose
+    // SchedulerThread.Affinity names a single CPU (SMP phase 3b).
     /// <summary>
     /// Entrypoint parameter is a <see cref="System.Runtime.InteropServices.GCHandle"/>
     /// of <see cref="System.Threading.Thread"/>. When set, the thread entry

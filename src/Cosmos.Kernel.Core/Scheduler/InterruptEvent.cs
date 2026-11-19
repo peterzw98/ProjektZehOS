@@ -1,7 +1,6 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
 using System.Diagnostics;
-using Cosmos.Kernel.Core.CPU;
 
 namespace Cosmos.Kernel.Core.Scheduler;
 
@@ -48,43 +47,41 @@ internal class InterruptEvent
     /// <summary>
     /// Blocks the calling thread until <see cref="Signal"/> is called.
     /// Consumes the latched signal on return (auto-reset).
-    /// Without a scheduler thread context (scheduler feature off, or
-    /// pre-scheduler boot code) this degrades to halt-and-poll on the
-    /// latch instead of blocking, so single-context kernels still get
-    /// correct completion semantics.
+    /// Without a running scheduler (the feature off, boot code before it
+    /// starts, or a scheduler stopped at boot because it never switched)
+    /// this degrades to a poll of the latch instead of blocking, so
+    /// single-context kernels still get correct completion semantics.
+    /// Code on a CPU's idle thread under a running scheduler (boot code
+    /// between the scheduler's start and <c>Main</c>'s) must not wait here:
+    /// unless a signal is already latched the park stops the kernel, since
+    /// nothing would wake an idle thread.
     /// </summary>
-    public void Wait() => WaitCore(0);
+    public void Wait()
+    {
+        WaitCore(0);
+    }
 
     /// <summary>
     /// Bounded variant of <see cref="Wait()"/>: returns false when the wait
     /// loop exhausts <paramref name="maxIterations"/> without consuming a
-    /// signal. Iterations are loop passes — IF-enabled latch polls on the
-    /// no-context/idle path, interrupt wake-ups on the blocked path — so
+    /// signal. Iterations are loop passes (IF-enabled latch polls on the
+    /// no-scheduler path, interrupt wake-ups on the blocked path), so
     /// this is a hang-breaker for lost device interrupts, not a clock.
     /// </summary>
-    public bool Wait(ulong maxIterations) => WaitCore(maxIterations);
+    public bool Wait(ulong maxIterations)
+    {
+        return WaitCore(maxIterations);
+    }
 
     private bool WaitCore(ulong maxIterations)
     {
         ulong iterations = 0;
-        SchedulerThread? currentThread = SchedulerManager.IsReady
-            ? SchedulerManager.CurrentCpuState?.CurrentThread
-            : null;
-        // The idle thread is the scheduler's fallback (PickNext ?? IdleThread):
-        // blocking it only gets it resurrected on the next tick, which re-runs
-        // the retry loop and drifts the stride accounting (OnThreadBlocked
-        // subtracts tickets that OnThreadReady never added for it). Treat an
-        // idle-thread caller — the main kernel thread — like the no-context
-        // case and poll the latch instead.
-        if (currentThread is not null && currentThread.IsIdle)
-        {
-            currentThread = null;
-        }
+        SchedulerThread? currentThread = SchedulerManager.CurrentThreadIfRunning;
         if (currentThread is null)
         {
             // Single execution context: nothing to block, so spin on the
             // latch with interrupts enabled between checks. Deliberately no
-            // Halt here — if the signaling ISR fires between the check and
+            // Halt here: if the signaling ISR fires between the check and
             // a hypothetical Halt, no further interrupt may ever arrive
             // (e.g. a build without a timer) and the CPU would sleep past
             // a latched signal forever.
@@ -134,7 +131,7 @@ internal class InterruptEvent
                 // would bury the wakeup forever (lost-wakeup race). With
                 // the transition done under the scope, Signal can only
                 // observe a genuinely Blocked thread.
-                SchedulerManager.BlockThread(currentThread.CpuId, currentThread);
+                SchedulerManager.BlockThread(currentThread);
             }
 
             // Give the CPU to the next thread until a Signal (or an
@@ -172,10 +169,11 @@ internal class InterruptEvent
     /// comes first. Unlike <see cref="Wait(ulong)"/> this is a clock: the
     /// waiter sleeps with a wake deadline the timer tick honours, so it
     /// returns false about one tick after the deadline even when no signal
-    /// ever arrives. Without a scheduler thread context (scheduler feature
-    /// off, pre-scheduler boot code, or the idle thread) it polls the latch
-    /// with interrupts enabled until the deadline, and never halts, because
-    /// a halt with no interrupt to end it would never return.
+    /// ever arrives. Without a running scheduler (the feature off, boot
+    /// code before it starts, or a scheduler stopped at boot) it polls the
+    /// latch with interrupts enabled until the deadline, and never halts,
+    /// because a halt with no interrupt to end it would never return. An
+    /// idle thread under a running scheduler must not wait here either.
     /// </summary>
     /// <param name="timeoutMilliseconds">Longest time to wait, in milliseconds.</param>
     /// <returns>True when a signal was consumed; false when the deadline passed first.</returns>
@@ -184,16 +182,7 @@ internal class InterruptEvent
         long ticksPerMillisecond = Stopwatch.Frequency / MillisecondsPerSecond;
         long deadline = Stopwatch.GetTimestamp() + ticksPerMillisecond * timeoutMilliseconds;
 
-        SchedulerThread? currentThread = SchedulerManager.IsReady
-            ? SchedulerManager.CurrentCpuState?.CurrentThread
-            : null;
-        // Same rule as WaitCore: the idle thread is the scheduler's fallback
-        // and must never be put to sleep, so it polls like the no-context case.
-        if (currentThread is not null && currentThread.IsIdle)
-        {
-            currentThread = null;
-        }
-
+        SchedulerThread? currentThread = SchedulerManager.CurrentThreadIfRunning;
         if (currentThread is null)
         {
             while (true)
@@ -239,7 +228,7 @@ internal class InterruptEvent
                 // Round up so the deadline is never undershot, and never pass
                 // 0, which MarkSleeping reads as "wake on the next tick".
                 long remainingMilliseconds = (remainingTicks + ticksPerMillisecond - 1) / ticksPerMillisecond;
-                SchedulerManager.MarkSleeping(currentThread.CpuId, currentThread, (uint)Math.Max(1, remainingMilliseconds));
+                SchedulerManager.MarkSleeping(currentThread, (uint)Math.Max(1, remainingMilliseconds));
             }
 
             // Give the CPU to the next thread until a Signal or the deadline
@@ -349,16 +338,12 @@ internal class InterruptEvent
         if (toReady is not null)
         {
             // A timed waiter may already have been readied by its deadline
-            // (the tick) while still listed here; readying it a second time
-            // would queue it twice. Masked so the tick cannot slip in between
-            // the look and the ready on this CPU.
-            using (InternalCpu.DisableInterruptsScope())
-            {
-                if (toReady.State == SchedulerThreadState.Blocked || toReady.State == SchedulerThreadState.Sleeping)
-                {
-                    SchedulerManager.ReadyThread(toReady.CpuId, toReady);
-                }
-            }
+            // (the tick) while still listed here: ReadyThread does nothing
+            // for a thread that is already Ready or Running, under the queue
+            // lock of the waiter's CPU, so the look and the ready are one
+            // step whichever CPU the tick runs on. The wake goes to that CPU
+            // by interrupt when it is not this one (SMP phase 3a).
+            SchedulerManager.ReadyThread(toReady);
         }
     }
 
