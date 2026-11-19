@@ -199,12 +199,12 @@ Der Wasm-Worker und der Wasm-Netzwerk-Worker starten mit `placement: ThreadPlace
 
 **Serielle Ausgabe:** je Schritt `SMP_PROBE <schritt> PASS` oder `SMP_PROBE <schritt> FAIL <Grund>`, Messwerte als
 `SMP_PROBE INFO <schritt> <name>=<wert>`, am Ende `SMP_PROBE PASS` oder `SMP_PROBE FAIL`. Auf einer CPU melden die
-Schritte, die mehrere brauchen, `SMP_PROBE <schritt> SKIP cpus=1`, und das Ende ist trotzdem `SMP_PROBE PASS`.
+Schritte, die mehrere brauchen, `SMP_PROBE <schritt> SKIP cpus=1`, und das Ende ist trotzdem `SMP_PROBE PASS`. Mit mindestens zwei Worker-CPUs ist ein SKIP ein FAIL des Skripts.
 
 | Schritt | Inhalt | Bestanden, wenn |
 | --- | --- | --- |
 | `cpus` | `KernelCpus.Count` und Topologie ausgeben | Skript: Zahl gleich der ersten Zahl aus `ZEHOS_QEMU_SMP` |
-| `counters` | je Worker-CPU ein dorthin gepinnter Thread zählt 300 ms einen eigenen Zähler und per `Interlocked` einen gemeinsamen | jeder eigene Zähler > 0; gemeinsamer Zähler gleich der Summe |
+| `counters` | je Worker-CPU ein dorthin gepinnter Thread zählt mindestens 300 ms (bis alle Zähler > 0, höchstens 10 s) einen eigenen Zähler und per `Interlocked` einen gemeinsamen | jeder eigene Zähler > 0; gemeinsamer Zähler gleich der Summe |
 | `parallel` | dieselbe feste Rechenlast einmal auf einem, einmal auf allen Worker-CPUs | `INFO parallel speedup_permille=…`; unter KVM mit mindestens 2 Worker-CPUs Wert ≥ 1500 (TCG: nur Information) |
 | `migrate` | ein Thread setzt 200-mal reihum `ThreadAffinity.Current` auf jede Worker-CPU | nach jedem Setzen `KernelCpus.Current` gleich dem Ziel |
 | `locks` | je Worker-CPU ein Thread: 10.000 Übergaben über `lock`/`Monitor.Wait`/`Pulse` und über `Messaging/MessageQueue` | keine Nachricht verloren oder doppelt, Reihenfolge je Sender erhalten |

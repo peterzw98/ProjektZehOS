@@ -117,6 +117,10 @@ internal static class CosmosSmpProbe
         }
         start.Set();
         Thread.Sleep(300);
+        // Unter TCG laufen die vCPUs reihum und ein Thread kann in 300 ms noch gar nicht gezaehlt haben:
+        // bis zu 10 s warten, bis jeder eigene Zaehler > 0 ist.
+        var window = Stopwatch.StartNew();
+        while (window.ElapsedMilliseconds < 10000 && !AllStarted(own, n)) Thread.Sleep(50);
         Volatile.Write(ref stop, 1);
         if (!JoinAll(threads, 5000)) return "Zaehlerthreads enden nicht";
         long sum = 0;
@@ -127,6 +131,13 @@ internal static class CosmosSmpProbe
         }
         Write($"INFO counters shared={shared} sum={sum}");
         return shared == sum ? null : $"gemeinsamer Zaehler {shared} != Summe {sum}";
+    }
+
+    private static bool AllStarted(long[] own, int n)
+    {
+        for (int i = 0; i < n; i++)
+            if (Volatile.Read(ref own[i * 8]) <= 0) return false;
+        return true;
     }
 
     // Feste Rechenlast ohne Speicherzugriffe; das Ergebnis verhindert, dass der Bau die Schleife entfernt.
