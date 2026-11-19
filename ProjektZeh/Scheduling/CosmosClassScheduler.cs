@@ -7,8 +7,7 @@ namespace ProjektZeh.Scheduling;
 /// <summary>
 /// Cosmos-Adapter des Klassenschedulers: die einzige Datei mit <see cref="IScheduler"/>-Signaturen. Die Policy liegt in
 /// <see cref="ClassRunQueues{T}"/> (hostgetestet); Etappe 5 passt nur diesen Adapter an die neue Schnittstelle an.
-/// Auf 3.0.97 ist die Hauptschleife der Idle-Thread und blockiert nie; sie laeuft deshalb mit <c>AlwaysYields</c> in der Klasse
-/// Normal. Der Vorrang der Oberflaeche kommt erst mit Etappe 5.
+/// Ab Etappe 5 (Upstream 5b) ist die Hauptschleife ein normaler Thread der Klasse Interaktiv; die Policy sieht nie einen Idle-Thread.
 /// </summary>
 internal sealed class CosmosClassScheduler : IScheduler
 {
@@ -42,7 +41,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     }
 
     public void OnThreadCreate(PerCpuState state, SchedulerThread thread) =>
-        thread.SchedulerData = new ClassThreadState { AlwaysYields = thread.IsIdle };
+        thread.SchedulerData = new ClassThreadState();
 
     public void OnThreadReady(PerCpuState state, SchedulerThread thread)
     {

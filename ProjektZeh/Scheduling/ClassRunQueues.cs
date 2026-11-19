@@ -107,8 +107,7 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
         var runningState = running == null ? null : stateOf(running);
         int runningClass = running == null ? 0 : ClassOf(running);
         bool preempted = running != null && serve < runningClass && (runningState?.RemainingNs ?? 0) > 0;
-        if (running != null && starved < 0 && serve > runningClass && !(runningState?.AlwaysYields ?? false)
-            && (runningState?.RemainingNs ?? 0) > 0)
+        if (running != null && starved < 0 && serve > runningClass && (runningState?.RemainingNs ?? 0) > 0)
         {
             return running;
         }
@@ -134,13 +133,6 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
         var state = stateOf(current);
         int own = ClassOf(current);
         bool queued = Find(current, out _, out _);
-        int others = Count - (queued ? 1 : 0);
-        if (state?.AlwaysYields ?? false)
-        {
-            if (others == 0) return false;
-            MoveToBack(current);
-            return true;
-        }
         ulong remaining = state == null ? 0 : (elapsedNs >= state.RemainingNs ? 0 : state.RemainingNs - elapsedNs);
         if (state != null) state.RemainingNs = remaining;
         if (remaining > 0) return false;

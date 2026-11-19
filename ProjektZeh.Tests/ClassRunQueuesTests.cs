@@ -209,47 +209,49 @@ public sealed class ClassRunQueuesTests
     }
 
     [TestMethod]
-    public void AlwaysYields_PreemptedAtFirstTickWhenAnyoneWaits()
+    public void InteractiveThatBlocks_GivesCpuToNormalAndPreemptsOnWake()
     {
+        // Etappe 5: die Hauptschleife ist ein normaler Thread der Klasse Interaktiv, der blockiert und geweckt wird.
         var queues = Queues();
-        var main = Make("main", remaining: 2 * Tick);
-        main.State.AlwaysYields = true;
-        Assert.IsFalse(queues.Tick(main, Tick));
-        queues.Ready(Make("n"));
-        Assert.IsTrue(queues.Tick(main, Tick));
+        var i = Make("i", ThreadClass.Interactive);
+        var n = Make("n");
+        queues.Ready(i);
+        queues.Ready(n);
+        Assert.AreSame(i, queues.Pick(null));
+        queues.Blocked(i);
+        Assert.AreSame(n, queues.Pick(null));
+        Assert.IsFalse(queues.Tick(n, Tick));
+        ulong rest = n.State.RemainingNs;
+        queues.Ready(i);
+        Assert.AreSame(i, queues.Pick(n));
+        queues.Yielded(n);
+        queues.Blocked(i);
+        Assert.AreSame(n, queues.Pick(null));
+        Assert.AreEqual(rest, n.State.RemainingNs);
+        Assert.AreEqual(0, queues.Count);
     }
 
     [TestMethod]
-    public void AlwaysYields_NeverKeptByPick()
+    public void Pick_ReturnsRunning_WhenNoBetterThreadWaits()
+    {
+        // Der Adapter bildet das auf null ab (Upstream-Vertrag PickNext): der Laufende behaelt die CPU.
+        var queues = Queues();
+        var n = Make("n", remaining: Tick);
+        queues.Ready(Make("b", ThreadClass.Background));
+        Assert.AreSame(n, queues.Pick(n));
+        Assert.AreEqual(1, queues.Count);
+    }
+
+    [TestMethod]
+    public void Blocked_NotQueued_IsNoOp()
     {
         var queues = Queues();
-        var main = Make("main", remaining: 2 * Tick);
-        main.State.AlwaysYields = true;
-        var b = Make("b", ThreadClass.Background);
+        var a = Make("a");
+        var b = Make("b");
         queues.Ready(b);
-        Assert.AreSame(b, queues.Pick(main));
-    }
-
-    [TestMethod]
-    public void MainLoopAndBusyWorker_KeepTheShareOfTheFormerScheduler()
-    {
-        var queues = Queues();
-        var main = Make("main");
-        main.State.AlwaysYields = true;
-        var worker = Make("worker");
-        queues.Ready(main);
-        queues.Ready(worker);
-        var current = queues.Pick(null)!;
-        int mainTicks = 0;
-        for (int tick = 0; tick < 300; tick++)
-        {
-            if (ReferenceEquals(current, main)) mainTicks++;
-            if (!queues.Tick(current, Tick)) continue;
-            var next = queues.Pick(current)!;
-            if (!ReferenceEquals(next, current)) queues.Yielded(current);
-            current = next;
-        }
-        Assert.AreEqual(100, mainTicks);
+        queues.Blocked(a);
+        Assert.AreEqual(1, queues.Count);
+        Assert.AreSame(b, queues.At(0));
     }
 
     [TestMethod]
