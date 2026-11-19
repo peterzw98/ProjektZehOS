@@ -38,6 +38,15 @@ public sealed unsafe class WasmRuntimeCallbackTests
     }
 
     [TestMethod]
+    public void ClockResolutionIsNanosecondsPerTickAndNeverZero()
+    {
+        Assert.AreEqual(1_000_000UL, WasmRuntime.ClockResolutionNs(1_000));
+        Assert.AreEqual(100UL, WasmRuntime.ClockResolutionNs(10_000_000));
+        Assert.AreEqual(1UL, WasmRuntime.ClockResolutionNs(2_000_000_000), "Rundung auf 0 verboten");
+        Assert.AreEqual(1UL, WasmRuntime.ClockResolutionNs(0), "ungueltige Frequenz");
+    }
+
+    [TestMethod]
     public void PresentExceptionsStayInsideBothNativeCallbacksAndReportOnlyOnce()
     {
         var session = new Session { Failure = new InvalidOperationException("present") };

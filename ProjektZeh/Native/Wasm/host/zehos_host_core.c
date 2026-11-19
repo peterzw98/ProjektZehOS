@@ -21,7 +21,11 @@ extern int32_t zehos_wasm_host_open(const uint8_t* path, uint32_t length);
 extern int64_t zehos_wasm_host_file_size(int32_t handle);
 extern int32_t zehos_wasm_host_file_read(int32_t handle, uint64_t offset, uint8_t* buffer, uint32_t length);
 extern void zehos_wasm_host_close(int32_t handle);
-extern int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type);
+// Letzte Aenderung in ns seit 1970 (UTC); 0 heisst unbekannt (Cosmos-FAT liefert keine gepflegten Zeiten).
+extern int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modifiedNs);
+extern int32_t zehos_wasm_host_fstat(int32_t handle, uint64_t* modifiedNs);
+// Aufloesung der Stopwatch in ns fuer clock_res_get (Uhren 1-3).
+extern uint64_t zehos_wasm_host_clock_res_ns(int32_t clockId);
 // Etappe 13.4: App-Speicher /save. Rueckgaben sind WASI-Fehlernummern; der C#-Teil prueft Pfade, Quote und Sperren.
 extern int32_t zehos_wasm_host_save_available(void);
 extern int32_t zehos_wasm_host_save_open(const uint8_t* path, uint32_t length, uint32_t flags, int32_t* handle);
@@ -31,7 +35,8 @@ extern int64_t zehos_wasm_host_save_size(int32_t handle);
 extern int32_t zehos_wasm_host_save_set_size(int32_t handle, uint64_t size);
 extern int32_t zehos_wasm_host_save_sync(int32_t handle);
 extern int32_t zehos_wasm_host_save_close(int32_t handle);
-extern int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type);
+extern int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modifiedNs);
+extern int32_t zehos_wasm_host_save_fstat(int32_t handle, uint64_t* modifiedNs);
 extern int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32_t length);
 extern int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength);
 extern int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used);
@@ -62,7 +67,7 @@ extern int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uin
 enum
 {
     WASI_SUCCESS = 0, WASI_EACCES = 2, WASI_EBADF = 8, WASI_EINVAL = 28, WASI_EIO = 29,
-    WASI_EISDIR = 31, WASI_EMFILE = 33, WASI_ENOENT = 44, WASI_ENOSYS = 52, WASI_ENOTCAPABLE = 76
+    WASI_EISDIR = 31, WASI_EMFILE = 33, WASI_ENOENT = 44, WASI_ENOSYS = 52, WASI_ENOTSUP = 58, WASI_ENOTCAPABLE = 76
 };
 
 // fd 3 ist das Paket ("/", nur lesend), fd 4 der App-Speicher ("/save", nur mit Freigabe); geoeffnete Dateien belegen
@@ -108,6 +113,40 @@ static zehos_wasm_file* file_of(zehos_wasm_context* context, int32_t fd)
     if (fd < FIRST_FILE_FD || fd >= FIRST_FILE_FD + MAXIMUM_FILES) return NULL;
     zehos_wasm_file* file = &context->files[fd - FIRST_FILE_FD];
     return file->handle >= 0 ? file : NULL;
+}
+
+// dev/ino (12.8 P4-D): dev 1 = Paket, 2 = /save; ino = FNV-1a-64 des normierten Pfads relativ zur Wurzel. Die Wurzel
+// hat den Startwert; ein Kind setzt den Zustand des Ordners fort, deshalb genuegt dem Ordner-fd sein inode.
+#define FNV_BASIS 0xcbf29ce484222325ull
+#define FNV_PRIME 0x100000001b3ull
+
+static uint64_t path_inode(uint64_t state, const uint8_t* path, uint32_t length)
+{
+    uint32_t start = 0;
+    for (uint32_t index = 0; index <= length; index++)
+    {
+        if (index < length && path[index] != '/') continue;
+        uint32_t size = index - start;
+        if (size > 0 && !(size == 1 && path[start] == '.'))
+        {
+            if (state != FNV_BASIS) state = (state ^ (uint64_t)'/') * FNV_PRIME;
+            for (uint32_t offset = start; offset < index; offset++) state = (state ^ path[offset]) * FNV_PRIME;
+        }
+        start = index + 1;
+    }
+    return state;
+}
+
+// Ausgangszustand fuer Namen relativ zu dirFd: Wurzel (fd 3/4) oder inode des offenen Ordners.
+static uint64_t directory_inode(zehos_wasm_context* context, int32_t dirFd)
+{
+    zehos_wasm_file* file = file_of(context, dirFd);
+    return file != NULL ? file->inode : FNV_BASIS;
+}
+
+static uint64_t device_of_kind(uint8_t kind)
+{
+    return kind == ZEHOS_FILE_PACKAGE || kind == ZEHOS_FILE_PACKAGE_DIRECTORY ? 1 : 2;
 }
 
 // Ordner im Paket: Handle des C#-Teils fuer fd 3 (Wurzel, -1) oder einen offenen Paketordner; sonst 0.
@@ -257,9 +296,15 @@ uint32_t zehos_host_clock_time_get(zehos_host_call* call, int32_t clockId, uint6
 
 uint32_t zehos_host_clock_res_get(zehos_host_call* call, int32_t clockId, uint32_t resolution)
 {
-    (void)clockId;
     if (!guest_range(call, resolution, 8)) return 0;
+    if (clockId < 0 || clockId > 3) return WASI_EINVAL;
+    // Uhr 0 (Realzeit) kommt aus der RTC-Uhr mit Millisekunden; die uebrigen messen mit der Stopwatch.
     uint64_t value = 1000000;
+    if (clockId != 0)
+    {
+        value = zehos_wasm_host_clock_res_ns(clockId);
+        if (value < 1) value = 1;
+    }
     memcpy(call->memory + resolution, &value, 8);
     return WASI_SUCCESS;
 }
@@ -371,7 +416,7 @@ uint32_t zehos_host_path_filestat_get(zehos_host_call* call, int32_t dirFd, uint
     if ((lookupFlags & ~1u) != 0) return WASI_EINVAL;
     const uint8_t* name = call->memory + path;
     if (!is_safe_path(name, pathLength)) return WASI_EACCES;
-    uint64_t size = 0;
+    uint64_t size = 0, modified = 0;
     int32_t type = 0;
     int32_t error;
     if (relative)
@@ -380,14 +425,23 @@ uint32_t zehos_host_path_filestat_get(zehos_host_call* call, int32_t dirFd, uint
         error = zehos_wasm_host_package_statat(directory, name, pathLength, &kind, &size);
         type = kind;
     }
-    else error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type) : zehos_wasm_host_stat(name, pathLength, &size, &type);
+    else error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type, &modified)
+        : zehos_wasm_host_stat(name, pathLength, &size, &type, &modified);
     if (error != WASI_SUCCESS) return (uint32_t)error;
+    uint64_t device = save ? 2 : 1;
+    uint64_t inode = path_inode(relative && dirFd != PREOPEN_FD ? directory_inode(call->context, dirFd) : FNV_BASIS, name, pathLength);
     uint8_t* target = call->memory + stat;
     memset(target, 0, 64);
+    memcpy(target, &device, 8);
+    memcpy(target + 8, &inode, 8);
     target[16] = (uint8_t)type;
     uint64_t links = 1;
     memcpy(target + 24, &links, 8);
     memcpy(target + 32, &size, 8);
+    // atim = mtim = ctim: mehr kennt der Host nicht.
+    memcpy(target + 40, &modified, 8);
+    memcpy(target + 48, &modified, 8);
+    memcpy(target + 56, &modified, 8);
     return WASI_SUCCESS;
 }
 
@@ -401,9 +455,10 @@ uint32_t zehos_host_path_readlink(zehos_host_call* call, int32_t dirFd, uint32_t
     if (dirFd != PREOPEN_FD && !save) return WASI_EBADF;
     const uint8_t* name = call->memory + path;
     if (!is_safe_path(name, pathLength)) return WASI_EACCES;
-    uint64_t size = 0;
+    uint64_t size = 0, modified = 0;
     int32_t type = 0;
-    int32_t error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type) : zehos_wasm_host_stat(name, pathLength, &size, &type);
+    int32_t error = save ? zehos_wasm_host_save_stat(name, pathLength, &size, &type, &modified)
+        : zehos_wasm_host_stat(name, pathLength, &size, &type, &modified);
     // Pakete enthalten keine Symlinks. realpath der WASI-libc erwartet fuer bestehende Nicht-Links EINVAL.
     return error == WASI_SUCCESS ? WASI_EINVAL : (uint32_t)error;
 }
@@ -442,6 +497,7 @@ static uint32_t save_path_open(zehos_host_call* call, const uint8_t* name, uint3
     // Schreiben nur mit fd_write- bzw. fd_filestat_set_size-Recht; O_CREAT/O_TRUNC allein machen den fd nicht beschreibbar.
     file->writable = (flags & SAVE_WRITE) != 0;
     file->append = (fdFlags & 1) != 0;
+    file->inode = path_inode(FNV_BASIS, name, pathLength);
     uint32_t fd = (uint32_t)(FIRST_FILE_FD + slot);
     memcpy(call->memory + openedFd, &fd, 4);
     return WASI_SUCCESS;
@@ -478,6 +534,7 @@ uint32_t zehos_host_path_open(zehos_host_call* call, int32_t dirFd, uint32_t loo
         context->files[slot].kind = ZEHOS_FILE_PACKAGE_DIRECTORY;
         context->files[slot].writable = 0;
         context->files[slot].append = 0;
+        context->files[slot].inode = path_inode(dirFd == PREOPEN_FD ? FNV_BASIS : directory_inode(context, dirFd), name, pathLength);
         uint32_t fd = (uint32_t)(FIRST_FILE_FD + slot);
         memcpy(call->memory + openedFd, &fd, 4);
         return WASI_SUCCESS;
@@ -505,6 +562,7 @@ uint32_t zehos_host_path_open(zehos_host_call* call, int32_t dirFd, uint32_t loo
     context->files[slot].kind = ZEHOS_FILE_PACKAGE;
     context->files[slot].writable = 0;
     context->files[slot].append = 0;
+    context->files[slot].inode = path_inode(dirFd == PREOPEN_FD ? FNV_BASIS : directory_inode(context, dirFd), name, pathLength);
     uint32_t fd = (uint32_t)(FIRST_FILE_FD + slot);
     memcpy(call->memory + openedFd, &fd, 4);
     return WASI_SUCCESS;
@@ -607,11 +665,25 @@ uint32_t zehos_host_fd_filestat_get(zehos_host_call* call, int32_t fd, uint32_t 
     memset(target, 0, 64);
     int directory = file == NULL || file->kind == ZEHOS_FILE_SAVE_DIRECTORY || file->kind == ZEHOS_FILE_PACKAGE_DIRECTORY;
     target[16] = directory ? 3 : 4;
+    uint64_t device = file != NULL ? device_of_kind(file->kind) : fd == SAVE_FD ? 2 : 1;
+    uint64_t inode = file != NULL ? file->inode : FNV_BASIS;
+    memcpy(target, &device, 8);
+    memcpy(target + 8, &inode, 8);
+    uint64_t links = 1;
+    memcpy(target + 24, &links, 8);
     if (!directory)
     {
         uint64_t size = file_size(file);
         memcpy(target + 32, &size, 8);
     }
+    // Zeitstempel je Handle; Preopens und Paketordner kennen keine (0). Ein Fehler des Hosts verwirft nur die Zeit.
+    uint64_t modified = 0;
+    if (file != NULL && file->kind == ZEHOS_FILE_PACKAGE) (void)zehos_wasm_host_fstat(file->handle, &modified);
+    else if (file != NULL && (file->kind == ZEHOS_FILE_SAVE || file->kind == ZEHOS_FILE_SAVE_DIRECTORY))
+        (void)zehos_wasm_host_save_fstat(file->handle, &modified);
+    memcpy(target + 40, &modified, 8);
+    memcpy(target + 48, &modified, 8);
+    memcpy(target + 56, &modified, 8);
     return WASI_SUCCESS;
 }
 
@@ -972,6 +1044,31 @@ uint32_t zehos_host_nosys(zehos_host_call* call)
 {
     (void)call;
     return WASI_ENOSYS;
+}
+
+uint32_t zehos_host_notsup(zehos_host_call* call)
+{
+    (void)call;
+    return WASI_ENOTSUP;
+}
+
+// fd_renumber: nur Datei- und Ordner-fds ab 5 (Preopens und Standardkanaele bleiben). Das Ziel wird zuerst geschlossen;
+// ein Fehler dabei geht an den Gast, die Quelle bleibt dann unveraendert offen.
+uint32_t zehos_host_fd_renumber(zehos_host_call* call, int32_t from, int32_t to)
+{
+    zehos_wasm_file* source = file_of(call->context, from);
+    if (source == NULL) return WASI_EBADF;
+    if (from == to) return WASI_SUCCESS;
+    if (to < FIRST_FILE_FD || to >= FIRST_FILE_FD + MAXIMUM_FILES) return WASI_EBADF;
+    zehos_wasm_file* target = &call->context->files[to - FIRST_FILE_FD];
+    if (target->handle >= 0)
+    {
+        uint32_t error = zehos_host_fd_close(call, to);
+        if (error != WASI_SUCCESS) return error;
+    }
+    *target = *source;
+    source->handle = -1;
+    return WASI_SUCCESS;
 }
 
 uint32_t zehos_host_sched_yield(zehos_host_call* call)

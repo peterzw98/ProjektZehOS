@@ -21,6 +21,9 @@ internal static unsafe partial class WasmRuntime
     // Einmal je Lauf melden: present laeuft je Bild, ein Dauerfehler darf das serielle Protokoll nicht fluten.
     private static bool presentFailureReported;
 
+    // Auflösung der Stopwatch in ns, mindestens 1 (clock_res_get darf nie 0 melden).
+    internal static ulong ClockResolutionNs(long frequency) => frequency <= 0 ? 1 : (ulong)Math.Max(1L, 1_000_000_000L / frequency);
+
     [UnmanagedCallersOnly(EntryPoint = "zehos_wasm_host_open")]
     private static int HostOpen(byte* path, uint length)
     {

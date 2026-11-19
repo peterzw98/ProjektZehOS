@@ -24,10 +24,11 @@ enum
 enum { ZEHOS_HOST_MAXIMUM_FILES = 16 };
 
 // kind: Paketdatei (nur lesend), Datei oder Ordner im App-Speicher /save (Etappe 13.4), Ordner im Paket (12.8 P4-B,
-// nur lesend; handle ist das Ordner-Handle des C#-Teils). Rechte gelten je fd.
+// nur lesend; handle ist das Ordner-Handle des C#-Teils). Rechte gelten je fd. inode: FNV-1a-64 des normierten Pfads (12.8 P4-D).
 enum { ZEHOS_FILE_PACKAGE = 0, ZEHOS_FILE_SAVE = 1, ZEHOS_FILE_SAVE_DIRECTORY = 2, ZEHOS_FILE_PACKAGE_DIRECTORY = 3 };
 
-typedef struct { int32_t handle; uint64_t position; uint64_t size; uint8_t kind; uint8_t writable; uint8_t append; } zehos_wasm_file;
+typedef struct { int32_t handle; uint64_t position; uint64_t size; uint8_t kind; uint8_t writable; uint8_t append;
+    uint64_t inode; } zehos_wasm_file;
 
 // Gehoert genau einem Lauf; offene Dateien schliesst zehos_host_context_close_files auf jedem Weg.
 typedef struct
@@ -116,6 +117,10 @@ typedef struct
     X(zehos_v1, net_close, i, "i", zehos_host_net_close, 1) \
     X(zehos_v1, raster_draw, i, "i", zehos_host_raster_draw, 1) \
     X(zehos_v1, raster_fill, i, "iii", zehos_host_raster_fill, 3) \
+    X(wasi_snapshot_preview1, fd_renumber, i, "ii", zehos_host_fd_renumber, 2) \
+    X(wasi_snapshot_preview1, fd_datasync, i, "i", zehos_host_fd_sync, 1) \
+    X(wasi_snapshot_preview1, fd_allocate, i, "iII", zehos_host_notsup, 0) \
+    X(wasi_snapshot_preview1, proc_raise, i, "i", zehos_host_nosys, 0) \
     X(wasi_snapshot_preview1, proc_exit, v, "i", zehos_host_proc_exit, 1)
 
 // Tiefe laufender Hostaufrufe des Wasm-Workers (Roadmap 12.4-I1): Nur bei 0 laeuft Gastcode, und nur dann darf eine
@@ -166,6 +171,8 @@ uint32_t zehos_host_notcapable(zehos_host_call* call);
 uint32_t zehos_host_badf(zehos_host_call* call);
 uint32_t zehos_host_poll_oneoff(zehos_host_call* call, uint32_t subscriptions, uint32_t events, uint32_t count, uint32_t written);
 uint32_t zehos_host_nosys(zehos_host_call* call);
+uint32_t zehos_host_notsup(zehos_host_call* call);
+uint32_t zehos_host_fd_renumber(zehos_host_call* call, int32_t from, int32_t to);
 void zehos_host_proc_exit(zehos_host_call* call, int32_t code);
 void zehos_host_present(zehos_host_call* call, uint32_t pixels, int32_t width, int32_t height, int32_t tic, int32_t test);
 void zehos_host_present_indexed(zehos_host_call* call, uint32_t indices, uint32_t palette, int32_t width,

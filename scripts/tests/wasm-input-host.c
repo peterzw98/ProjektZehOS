@@ -61,15 +61,19 @@ int32_t zehos_wasm_host_should_exit(void) { exit_calls++; return exit_after >= 0
 static int stat_calls;
 void stat_test_reset(void) { stat_calls = 0; }
 int stat_test_calls(void) { return stat_calls; }
-int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type) {
+int32_t zehos_wasm_host_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modified) {
     stat_calls++;
     if (length == 7 && memcmp(path, "missing", 7) == 0) return 44;
     if (length == 6 && memcmp(path, "denied", 6) == 0) return 2;
     if (length == 2 && memcmp(path, "io", 2) == 0) return 29;
     *type = length == 9 && memcmp(path, "asset.txt", 9) == 0 ? 4 : 3;
     *size = *type == 4 ? 7 : 0;
+    *modified = *type == 4 ? 1700000000123456789ull : 0;
     return 0;
 }
+// 12.8 P4-D: Zeit je Handle und Aufloesung der Stopwatch (Test: 1000 ns fuer jede Uhr).
+int32_t zehos_wasm_host_fstat(int32_t handle, uint64_t* modified) { *modified = handle == 42 ? 1700000000123456789ull : 0; return 0; }
+uint64_t zehos_wasm_host_clock_res_ns(int32_t clock) { (void)clock; return 1000; }
 
 static int net_calls;
 void net_test_reset(void) { net_calls = 0; }
@@ -104,8 +108,9 @@ int64_t zehos_wasm_host_save_size(int32_t handle) { (void)handle; return 0; }
 int32_t zehos_wasm_host_save_set_size(int32_t handle, uint64_t size) { (void)handle; (void)size; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_sync(int32_t handle) { (void)handle; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_close(int32_t handle) { (void)handle; save_calls++; return 0; }
-int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type)
-{ (void)path; (void)length; (void)size; (void)type; save_calls++; return 44; }
+int32_t zehos_wasm_host_save_stat(const uint8_t* path, uint32_t length, uint64_t* size, int32_t* type, uint64_t* modified)
+{ (void)path; (void)length; (void)size; (void)type; (void)modified; save_calls++; return 44; }
+int32_t zehos_wasm_host_save_fstat(int32_t handle, uint64_t* modified) { (void)handle; *modified = 0; return 0; }
 int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32_t length)
 { (void)operation; (void)path; (void)length; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength)

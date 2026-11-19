@@ -576,3 +576,7 @@ Gemeldet von tripleclerk in #first (17.11., 10:27); die Zahlen sind Promille geg
 Bekannte Grenzen der Probe: `IsSupported` ist im NativeAOT-Code entweder eine Kompilierzeitkonstante des gewählten Befehlssatzes oder ein Laufzeitwert aus der CPU-Erkennung der Runtime; welcher der beiden Fälle im Cosmos-Kernel gilt, zeigt erst der Lauf (`isa`-Zeile mit und ohne `ZehOSSimdInstructionSet`). Die Probe liest `XCR0` nicht direkt.
 
 Prüfnachtrag zu #204 nach dem Coverage-Umbau: Auf dem integrierten Stand "3899625" besteht der Linux-CI-Job mit 1339 .NET- und 186 Skripttests sowie 95,3 % Gesamtabdeckung. Die Grenzwerte wurden nicht geändert. Die sieben lokalen Rückruftests messen 97,67 % für die gemeinsame Rückrufdatei; normaler und Probe-Kernel bauen, Desktopablauf (52 s) und gezielte Ausnahme-Gastprobe unter QEMU/WHPX bestehen erneut. Die abschließende Versionsanhebung auf 0.5.89 ändert keine Ausführungslogik.
+
+## WASI-Zeitstempel (12.8 P4-D)
+
+Geprüft im Quelltext des Cosmos-Commits `5d0b9535251472db7ecfe012f0435f0a04ffca16` (nicht im Gast): `FatInodeOperations.GetAttr` setzt `AccessTime`, `ModificationTime` und `ChangeTime` fest auf 0; `FatAttributes.UnpackDateTime` wird nirgends aufgerufen. Der WASI-Host meldet deshalb `atim = mtim = ctim = 0` (unbekannt) für Paket- und `/save`-Dateien; die Rückrufe `zehos_wasm_host_stat`, `save_stat`, `fstat` und `save_fstat` liefern die Zeit schon heute durch, bis Cosmos sie füllt.
