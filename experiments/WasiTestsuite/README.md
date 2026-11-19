@@ -44,7 +44,7 @@ Spalte „Braucht“: Lesen (Datei aus dem Paket), Schreiben, Ordner, Uhr, Args/
 | `clock_getres-realtime` | Uhr | PASS | PASS | |
 | `clock_gettime-monotonic` | Uhr | PASS | PASS | |
 | `clock_gettime-realtime` | Uhr | PASS | PASS | |
-| `fdopendir-with-access` | Lesen, Ordner (`O_DIRECTORY`, `fd_readdir`, `d_ino` = `st_ino`) | PASS | **FAIL** | Trap `unreachable` (ein `assert`); Ursache nicht untersucht |
+| `fdopendir-with-access` | Lesen, Ordner (`O_DIRECTORY`, `fd_readdir`, `d_ino` = `st_ino`) | PASS | **FAIL** | Trap `unreachable` (ein `assert`). Vermutlich `assert(statbuf.st_ino == dp->d_ino)`: `fd_readdir` schreibt `d_ino` = Index + 1 (`ProjektZeh/Runtime/Wasm/WasmSaveStore.cs:35`), `fstatat` liefert den FNV-Pfadwert (`zehos_host_core.c:432`). Nur aus dem Code gelesen, im Gast nicht belegt (stderr nicht seriell) |
 | `fopen-with-access` | Lesen | PASS | PASS | |
 | `fopen-with-no-access` | Lesen (erwartet `ENOENT`/`ENOTCAPABLE`) | PASS | PASS | |
 | `lseek` | Lesen | PASS | PASS | |
