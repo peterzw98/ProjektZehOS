@@ -317,8 +317,11 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
+        // Zuerst, vor jedem Threadstart und vor jedem Lesen von Environment.ProcessorCount: Etappe 5 haelt alle Threads auf CPU 0.
+        var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
+        systemLog.Information("Boot", cpuLine);
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
