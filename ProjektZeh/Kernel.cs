@@ -628,14 +628,17 @@ public sealed class Kernel : Sys.Kernel
     private void InstallScheduler()
     {
         // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
-        // der Standard Normal). Fest CPU 0: Etappe 5 muss auf die laufende CPU umstellen (docs/SMP_AUDIT.md).
+        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt KernelCpus.Current nur, solange
+        // der Thread nicht wandert (Etappe 5: alle Threads auf CPU 0); E6-B prueft das neu.
         ThreadStarter.ApplyClass = threadClass =>
         {
-            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(0);
+            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(Cosmos.Kernel.System.Threading.KernelCpus.Current);
             if (state?.CurrentThread is { } current)
-                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(0, current, (long)threadClass);
+                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(current, (long)threadClass);
         };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
+        // Etappe 5: die Hauptschleife ist ein normaler Thread und hat Vorrang vor Normal und Hintergrund.
+        ThreadStarter.ApplyClass(ThreadClass.Interactive);
         systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
