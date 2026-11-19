@@ -22,6 +22,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
         WasmRuntime.SetTestSession(null);
         Runtime.GetField("presentFailureReported", BindingFlags.NonPublic | BindingFlags.Static)?.SetValue(null, false);
         Files.Clear();
+        Directories.Clear();
         Cosmos.Kernel.System.Diagnostics.Log.Writer = messages.Add;
     }
 
@@ -32,6 +33,7 @@ public sealed unsafe class WasmRuntimeCallbackTests
         Cosmos.Kernel.System.Diagnostics.Log.Writer = null;
         foreach (FileStream stream in Files.Values) stream.Dispose();
         Files.Clear();
+        Directories.Clear();
         Directory.Delete(directory, true);
     }
 
@@ -132,6 +134,82 @@ public sealed unsafe class WasmRuntimeCallbackTests
         ((delegate* unmanaged<int, void>)Entry("HostClose"))(8);
     }
 
+    [TestMethod]
+    public void PackageReadDir_SmallBuffer_ReturnsPartialEntriesAndUsedLength()
+    {
+        File.WriteAllText(Path.Combine(directory, "alpha"), "a");
+        File.WriteAllText(Path.Combine(directory, "beta"), "b");
+        WasmRuntime.SetTestSession(new Session { RootDirectory = directory });
+        int handle = OpenDir(-1, "");
+        byte* buffer = stackalloc byte[64];
+        uint used = 0;
+        var readdir = (delegate* unmanaged<int, byte*, uint, ulong, uint*, int>)Entry("HostPackageReadDir");
+        Assert.AreEqual(0, readdir(handle, buffer, 30, 0, &used));
+        Assert.AreEqual(30u, used, "Voller Puffer: Kopf (24) plus abgeschnittener Name.");
+        Assert.AreEqual(0, readdir(handle, buffer, 64, 0, &used));
+        Assert.AreEqual(2 * 24 + 5 + 4u, used);
+        Assert.AreEqual(0, readdir(handle, buffer, 64, 2, &used));
+        Assert.AreEqual(0u, used);
+        Assert.AreEqual(8, readdir(handle + 100, buffer, 64, 0, &used));
+    }
+
+    [TestMethod]
+    public void PackageOpenAt_RelativeToDir_OpensFile()
+    {
+        Directory.CreateDirectory(Path.Combine(directory, "res"));
+        File.WriteAllText(Path.Combine(directory, "res", "Messages"), "Test");
+        WasmRuntime.SetTestSession(new Session { RootDirectory = directory });
+        int dir = OpenDir(-1, "res");
+        int handle = 0;
+        ulong size = 0;
+        byte[] name = System.Text.Encoding.UTF8.GetBytes("Messages");
+        var openat = (delegate* unmanaged<int, byte*, uint, int*, ulong*, int>)Entry("HostPackageOpenAt");
+        fixed (byte* data = name) Assert.AreEqual(0, openat(dir, data, (uint)name.Length, &handle, &size));
+        Assert.AreEqual(4UL, size);
+        Assert.IsTrue(Files.ContainsKey(handle));
+        byte[] up = System.Text.Encoding.UTF8.GetBytes("../res/Messages");
+        fixed (byte* data = up) Assert.AreEqual(0, openat(dir, data, (uint)up.Length, &handle, &size), "Innerhalb der Wurzel erlaubt.");
+        byte[] outside = System.Text.Encoding.UTF8.GetBytes("../../x");
+        fixed (byte* data = outside) Assert.AreEqual(2, openat(dir, data, (uint)outside.Length, &handle, &size));
+        fixed (byte* data = name) Assert.AreEqual(8, openat(999, data, (uint)name.Length, &handle, &size));
+        byte[] type = new byte[1];
+        ulong statSize = 0;
+        fixed (byte* data = name)
+        fixed (byte* kind = type)
+            Assert.AreEqual(0, ((delegate* unmanaged<int, byte*, uint, byte*, ulong*, int>)Entry("HostPackageStatAt"))(dir, data, (uint)name.Length, kind, &statSize));
+        Assert.AreEqual(4, type[0]);
+        Assert.AreEqual(4UL, statSize);
+    }
+
+    [TestMethod]
+    public void PackageCloseDir_FreesHandle()
+    {
+        WasmRuntime.SetTestSession(new Session { RootDirectory = directory });
+        int handle = OpenDir(-1, "");
+        Assert.IsTrue(Directories.ContainsKey(handle));
+        ((delegate* unmanaged<int, void>)Entry("HostPackageCloseDir"))(handle);
+        Assert.IsFalse(Directories.ContainsKey(handle));
+        // Maximal 16 Handles zusammen mit Dateien.
+        int[] handles = new int[16];
+        for (int index = 0; index < 16; index++) handles[index] = OpenDir(-1, "");
+        byte[] empty = [(byte)'.'];
+        int extra = 0;
+        fixed (byte* data = empty)
+            Assert.AreEqual(33, ((delegate* unmanaged<int, byte*, uint, int*, int>)Entry("HostPackageOpenDir"))(-1, data, 1, &extra));
+        ((delegate* unmanaged<int, void>)Entry("HostPackageCloseDir"))(handles[0]);
+        Assert.AreNotEqual(0, OpenDir(-1, ""));
+    }
+
+    private static int OpenDir(int parent, string path)
+    {
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(path.Length == 0 ? "." : path);
+        int handle = 0;
+        fixed (byte* data = bytes)
+            Assert.AreEqual(0, ((delegate* unmanaged<int, byte*, uint, int*, int>)Entry("HostPackageOpenDir"))(parent, data, (uint)bytes.Length, &handle));
+        return handle;
+    }
+
+    private static Dictionary<int, string> Directories => (Dictionary<int, string>)Field("directories").GetValue(null)!;
     private static Dictionary<int, FileStream> Files => (Dictionary<int, FileStream>)Field("files").GetValue(null)!;
     private static FieldInfo Field(string name) => Runtime.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!;
     private static void* Entry(string name) => (void*)Runtime.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
