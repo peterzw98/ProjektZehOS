@@ -63,7 +63,7 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpPro
 ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --iso <ISO> --accel kvm   # ZEHOS_QEMU_SMP leer = eine CPU
 ```
 
-Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 1000 Nachrichten (nicht 10.000 wie im Plan): Auf vier CPUs dauert eine Übergabe zwischen zwei CPUs rund 50 ms.
+Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 10.000 Nachrichten.
 
 ## Lizenz
 
