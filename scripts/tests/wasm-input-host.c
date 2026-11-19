@@ -15,7 +15,16 @@ int32_t zehos_wasm_host_poll_event(int32_t* event) {
     return 1;
 }
 void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length) { }
-uint64_t zehos_wasm_host_time_ns(int32_t clock) { return 0; }
+// Simulierte Uhr fuer poll_oneoff: sleep_ms rueckt sie vor, should_exit liefert nach exit_after Aufrufen 1 (-1 = nie).
+static uint64_t sim_ns;
+static int sleep_calls, exit_calls, exit_after = -1;
+static uint32_t sleep_total_ms, sleep_max_ms;
+void poll_test_reset(int after) { sim_ns = 1000000000000ull; sleep_calls = exit_calls = 0; sleep_total_ms = sleep_max_ms = 0; exit_after = after; }
+int poll_test_sleeps(void) { return sleep_calls; }
+uint32_t poll_test_sleep_total_ms(void) { return sleep_total_ms; }
+uint32_t poll_test_sleep_max_ms(void) { return sleep_max_ms; }
+uint64_t poll_test_now_ns(void) { return sim_ns; }
+uint64_t zehos_wasm_host_time_ns(int32_t clock) { (void)clock; return sim_ns; }
 static int random_error, random_calls;
 void random_test_reset(int error) { random_error = error; random_calls = 0; }
 int random_test_calls(void) { return random_calls; }
@@ -41,10 +50,13 @@ void zehos_wasm_host_close(int32_t handle) { if (handle == 42) { open_files--; c
 void zehos_wasm_host_present(const uint32_t* p, int32_t w, int32_t h, int32_t tic, int32_t test) { }
 void zehos_wasm_host_present_indexed(const uint8_t* i, const uint32_t* p, int32_t w, int32_t h, int32_t tic) { }
 uint32_t zehos_wasm_host_ticks_ms(void) { return 0; }
-void zehos_wasm_host_sleep_ms(uint32_t ms) { }
+void zehos_wasm_host_sleep_ms(uint32_t ms) {
+    sleep_calls++; sleep_total_ms += ms; if (ms > sleep_max_ms) sleep_max_ms = ms;
+    sim_ns += (uint64_t)ms * 1000000ull;
+}
 int32_t zehos_wasm_host_poll_key(void) { return -1; }
 int32_t zehos_wasm_host_pointer_capture(int32_t enabled) { (void)enabled; return -1; }
-int32_t zehos_wasm_host_should_exit(void) { return 0; }
+int32_t zehos_wasm_host_should_exit(void) { exit_calls++; return exit_after >= 0 && exit_calls >= exit_after; }
 
 static int stat_calls;
 void stat_test_reset(void) { stat_calls = 0; }
@@ -100,3 +112,37 @@ int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, co
 { (void)from; (void)fromLength; (void)to; (void)toLength; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used)
 { (void)handle; (void)buffer; (void)length; (void)cookie; save_calls++; *used = 0; return 0; }
+// Paketordner (12.8 P4-B): "." und "sub" oeffnen (Handle 90 + laufende Nummer), alles andere ENOENT; Zaehler bleiben nach Traps lesbar.
+static int pkg_open_dirs, pkg_closedirs, pkg_opendirs, pkg_last_dir, pkg_last_readdir_handle, pkg_readdirs, pkg_openat_dir;
+static uint64_t pkg_last_cookie;
+void pkg_test_reset(void) { pkg_open_dirs = pkg_closedirs = pkg_opendirs = pkg_readdirs = 0; pkg_last_dir = pkg_last_readdir_handle = pkg_openat_dir = -2; pkg_last_cookie = 0; }
+int pkg_test_open_dirs(void) { return pkg_open_dirs; }
+int pkg_test_closedirs(void) { return pkg_closedirs; }
+int pkg_test_opendirs(void) { return pkg_opendirs; }
+int pkg_test_last_dir(void) { return pkg_last_dir; }
+int pkg_test_readdirs(void) { return pkg_readdirs; }
+int pkg_test_last_readdir_handle(void) { return pkg_last_readdir_handle; }
+int pkg_test_openat_dir(void) { return pkg_openat_dir; }
+uint64_t pkg_test_last_cookie(void) { return pkg_last_cookie; }
+int32_t zehos_wasm_host_package_opendir(int32_t dir, const uint8_t* path, uint32_t length, int32_t* handle) {
+    pkg_opendirs++; pkg_last_dir = dir;
+    if (!((length == 1 && path[0] == '.') || (length == 3 && memcmp(path, "sub", 3) == 0))) return 44;
+    *handle = 90 + pkg_opendirs; pkg_open_dirs++; return 0;
+}
+int32_t zehos_wasm_host_package_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used) {
+    pkg_readdirs++; pkg_last_readdir_handle = handle; pkg_last_cookie = cookie;
+    if (length >= 3) { memcpy(buffer, "abc", 3); *used = 3; } else *used = 0;
+    return 0;
+}
+void zehos_wasm_host_package_closedir(int32_t handle) { (void)handle; pkg_open_dirs--; pkg_closedirs++; }
+int32_t zehos_wasm_host_package_openat(int32_t dir, const uint8_t* path, uint32_t length, int32_t* handle, uint64_t* size) {
+    pkg_openat_dir = dir;
+    if (length != 9 || memcmp(path, "asset.txt", 9) != 0) return 44;
+    *handle = 42; *size = 7; open_files++; return 0;
+}
+int32_t zehos_wasm_host_package_statat(int32_t dir, const uint8_t* path, uint32_t length, uint8_t* type, uint64_t* size) {
+    pkg_last_dir = dir;
+    if (length == 9 && memcmp(path, "asset.txt", 9) == 0) { *type = 4; *size = 7; return 0; }
+    if (length == 3 && memcmp(path, "sub", 3) == 0) { *type = 3; *size = 0; return 0; }
+    return 44;
+}

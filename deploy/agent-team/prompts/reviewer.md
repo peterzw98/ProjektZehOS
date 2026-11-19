@@ -20,7 +20,8 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
    Fehlerwege, öffentliche Schnittstellen.
 4. **Prüfen, nicht glauben:** Zeilenangaben, Zahlen, Befehle und Behauptungen in Doku und PR-Text gegen Quelle, Skript und Git abgleichen („nur Belegtes“). Messwerte, die ein PR nennt, selbst
    mit demselben Filter auf `master` und auf dem Zweig messen.
-5. **Ausführen** in einem **eigenen, frischen Worktree** (`git worktree add --detach /tmp/<ordner> origin/<branch>`), nie im Haupt-Arbeitsbaum und nie auf dem Branch des Autors; danach entfernen
+5. **Ausführen** (entfällt, wenn deine Rolle „baut und testet nichts“ sagt, etwa auf MSI: dann keine Builds, Tests oder Gastläufe, auch nicht auf Bitte des Leads;
+   du bewertest die Zahlen und Protokolle des Autors und schreibst „nicht selbst ausgeführt“) in einem **eigenen, frischen Worktree** (`git worktree add --detach /tmp/<ordner> origin/<branch>`), nie im Haupt-Arbeitsbaum und nie auf dem Branch des Autors; danach entfernen
    (`git status --ignored` ansehen):
    - Hosttests: `dotnet test ProjektZeh.Tests/ProjektZeh.Tests.csproj --configuration Release -warnaserror` (bei großen Änderungen mit `--filter` auf die betroffenen Klassen; Zahl bestanden/gesamt nennen).
    - **Nativer Kernelbau bei jeder Änderung unter `ProjektZeh/`:** `dotnet build ProjektZeh/ProjektZeh.csproj -c Release -warnaserror` mit den Cosmos-Werkzeugen aus `.tools/cosmos-tools/<version>` im `PATH`

@@ -82,14 +82,21 @@ PYEOF
   pgrep -f "teambot.py $nick " >/dev/null || \
     nohup python3 -I "$here/teambot.py" "$nick" "$home/ProjektZehOS/.tools/irc" "$home/ProjektZehOS/.tools/IRCKEY" \
       '#general,#first,#second,#third' </dev/null >>"$home/bot.out" 2>&1 &
-  # Optionen aus der fuenften Spalte: kvm (Laeufe mit Gruppe kvm fuer Gastlaeufe), budget-claude=N.
-  local usekvm=0 opt
+  # Optionen aus der fuenften Spalte: kvm (Laeufe mit Gruppe kvm fuer Gastlaeufe), budget-claude=N, pool=NAME:N (oben), mem=5G (Speichergrenze je Lauf).
+  local usekvm=0 opt slots=$base/.dispatch-slots parallel=${DISPATCH_PARALLEL:-2}
+  # pool=NAME:N: eigener Topf gleichzeitiger Laeufe (etwa der leichte Reviewer neben den bauenden Agenten); das Kontingent
+  # bleibt fuer alle gemeinsam (--quota-dir)
+  for opt in $opts; do
+    case $opt in pool=?*:[1-9]*) slots=$base/.dispatch-slots/pool-${opt#pool=}; slots=${slots%:*}; parallel=${opt##*:} ;; esac
+  done
   local -a cmd=(python3 -I "$here/dispatcher.py" --nick "$nick" --irc-dir "$home/ProjektZehOS/.tools/irc" --home "$home"
-                --role "$home/role.md" --slots-dir "$base/.dispatch-slots" --max-parallel "${DISPATCH_PARALLEL:-2}"
+                --role "$home/role.md" --slots-dir "$slots" --max-parallel "$parallel" --quota-dir "$base/.dispatch-slots"
                 --allow "${DISPATCH_ALLOW:-}" --alert-to "${assigners%%,*}" --model "$model")
   for opt in $opts; do
     case $opt in
       kvm) usekvm=1 ;;
+      pool=*) ;;
+      mem=?*) cmd+=(--memory-max "${opt#mem=}") ;;
       budget-claude=*) cmd+=("--${opt%%=*}" "${opt#*=}") ;;
       *) echo "start-agent: unbekannte Option '$opt' fuer $nick" >&2 ;;
     esac
