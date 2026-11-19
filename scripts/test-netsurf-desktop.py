@@ -212,17 +212,23 @@ def main():
             x0, y0 = frame(left, top)
             return b"".join(pixels[((y0+row)*width+x0)*3:((y0+row)*width+x0+right-left)*3] for row in range(bottom-top))
 
+        # Statuszeile (Rahmenzeilen 501-518): in Ruhe steht dort "Done (x.xs)", beim Laden "Loading" oder
+        # "Fetching, Processing"; sie ist nie einfarbig (Beleg Gastlauf 19.11., Rollbalken rechts). Verglichen
+        # werden nur die Glyphen von "Done" (Rahmen x 0-34), die Zeit dahinter schwankt.
+        def done_glyphs(pixels):
+            return strip(pixels, 501, 519, 0, 34)
+
+        idle = done_glyphs(capture("statuszeile-ruhe"))
+
         def wait_not_loading(limit=30):
             # Waehrend die Statuszeile "Loading" zeigt, gehen Tasten verloren (Produktfehler, Block #478).
-            # Der Fehler bleibt ein Fehler im Produkt; das Skript wartet nur, bis die Zeile leer (einfarbig) ist.
-            # Geometrie der Statuszeile (unterste Bildzeilen) ist nicht mit OCR belegt: Zeitgrenze statt Abbruch.
+            # Der Fehler bleibt ein Fehler im Produkt; das Skript wartet nur, bis wieder "Done" steht.
             deadline = time.monotonic() + limit
             while True:
-                row = strip(capture("statuszeile"), 502, 518)
-                if len({row[i:i+3] for i in range(0, len(row), 3)}) <= 1:
+                if done_glyphs(capture("statuszeile")) == idle:
                     return True
                 if time.monotonic() > deadline:
-                    print(f"WARNUNG: Statuszeile nach {limit}s nicht leer (Loading, Block #478)", file=sys.stderr)
+                    print(f"WARNUNG: Statuszeile nach {limit}s nicht auf Done (Loading, Block #478)", file=sys.stderr)
                     return False
                 time.sleep(.5)
 
