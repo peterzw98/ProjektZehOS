@@ -20,7 +20,7 @@ spec = importlib.util.spec_from_file_location("thread_probe", ROOT / "scripts/te
 base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
-STEPS = ("cpus", "counters", "parallel", "migrate", "locks", "gc", "threads")
+STEPS = ("cpus", "counters", "parallel", "migrate", "locks", "gc", "threads", "timedwait")
 MARKER = re.compile(r"SMP_PROBE[ \t]+(?:(\w+)[ \t]+)?(PASS|FAIL|SKIP)(?:[ \t]+[^\r\n]*)?$", re.MULTILINE)
 MIN_SPEEDUP_PERMILLE = 1500
 

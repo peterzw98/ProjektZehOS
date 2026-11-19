@@ -33,6 +33,7 @@ internal static class CosmosSmpProbe
             ok &= Step("locks", StepLocks);
             ok &= Step("gc", StepGc);
             ok &= Step("threads", StepThreads);
+            ok &= Step("timedwait", StepTimedWait);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
         }
         catch (Exception exception)
@@ -375,6 +376,59 @@ internal static class CosmosSmpProbe
         long delta = ((long)before - (long)after) / 1024;
         Write($"INFO threads free_delta_kib={delta}");
         return ran == 100 ? null : $"nur {ran} von 100 Threads liefen";
+    }
+
+    // E6-J: Ein Warten mit Frist muss nach Ablauf false liefern und darf nicht vor der Frist enden; mit Signal
+    // vor Ablauf true. Alle drei Wege enden in Cosmos in LowLevelMonitor_TimedWait.
+    private const int TimedWaitMs = 100;
+    private const int TimedWaitSlackMs = 10; // Taktauflösung des Schedulers
+
+    private static string? StepTimedWait()
+    {
+        var clock = Stopwatch.StartNew();
+        using var unset = new ManualResetEvent(false);
+        bool eventResult = unset.WaitOne(TimedWaitMs);
+        long eventMs = clock.ElapsedMilliseconds;
+
+        object gate = new();
+        clock.Restart();
+        bool monitorResult;
+        lock (gate) monitorResult = Monitor.Wait(gate, TimedWaitMs);
+        long monitorMs = clock.ElapsedMilliseconds;
+
+        using var empty = new SemaphoreSlim(0);
+        clock.Restart();
+        bool semaphoreResult = empty.Wait(TimedWaitMs);
+        long semaphoreMs = clock.ElapsedMilliseconds;
+
+        // Gegenproben: Signal nach 20 ms, Frist 5 s.
+        using var later = new ManualResetEvent(false);
+        var setter = new Thread(() => { Thread.Sleep(20); later.Set(); });
+        clock.Restart();
+        setter.Start();
+        bool signaledEvent = later.WaitOne(5000);
+        long signaledEventMs = clock.ElapsedMilliseconds;
+        if (!setter.Join(5000)) return "Setzer-Thread endet nicht";
+
+        bool pulsed = false;
+        var pulser = new Thread(() => { Thread.Sleep(20); lock (gate) { pulsed = true; Monitor.PulseAll(gate); } });
+        clock.Restart();
+        pulser.Start();
+        bool signaledMonitor = true;
+        lock (gate) while (!pulsed && signaledMonitor) signaledMonitor = Monitor.Wait(gate, 5000);
+        long signaledMonitorMs = clock.ElapsedMilliseconds;
+        if (!pulser.Join(5000)) return "Puls-Thread endet nicht";
+
+        Write($"INFO timedwait event={eventResult}/{eventMs}ms monitor={monitorResult}/{monitorMs}ms " +
+              $"semaphore={semaphoreResult}/{semaphoreMs}ms signal_event={signaledEvent}/{signaledEventMs}ms " +
+              $"signal_monitor={signaledMonitor}/{signaledMonitorMs}ms");
+
+        if (eventResult || monitorResult || semaphoreResult) return "Warten ohne Signal meldet true";
+        long earliest = TimedWaitMs - TimedWaitSlackMs;
+        if (eventMs < earliest || monitorMs < earliest || semaphoreMs < earliest) return "Warten endet vor der Frist";
+        if (!signaledEvent || !signaledMonitor) return "Warten mit Signal meldet false";
+        if (signaledEventMs >= 4000 || signaledMonitorMs >= 4000) return "Signal weckt erst nach der Frist";
+        return null;
     }
 
     private static void Write(string message) => Log.WriteString($"SMP_PROBE {message}\n");
