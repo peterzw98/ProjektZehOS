@@ -1135,10 +1135,6 @@ public static class SchedulerManager
         return false;
     }
 
-    /// <summary>
-    /// Unregisters a thread from the global registry, under the registry lock. Called during
-    /// thread exit.
-    /// </summary>
     // ZehOS patch thread-stack-reaper, see PATCHES.md
     /// <summary>
     /// Frees the stacks of exited threads no CPU runs on any more. Thread context only,
@@ -1177,6 +1173,10 @@ public static class SchedulerManager
         }
     }
 
+    /// <summary>
+    /// Unregisters a thread from the global registry, under the registry lock. Called during
+    /// thread exit.
+    /// </summary>
     internal static void UnregisterThread(SchedulerThread thread)
     {
         if (s_allThreads is null)
