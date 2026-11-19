@@ -151,3 +151,12 @@ wurden nicht ausgeführt. Der Fehler ist bei 1 und 4 CPUs gleich und damit kein 
 **Nicht geprüft:** Läufe 2–5 und der Hochgruppenlauf (32/128 GiB) von `test-storage-ext2-root.py`; Gegenprobe von `test-storage-data-disk.py` mit `--legacy-image`;
 `test-storage-filesystems.py` ist ein reiner Host-Metadatenleser ohne Gastlauf und wurde nicht eigens ausgeführt (nur dessen Hosttest gehört zur Testsuite); 8 CPUs; VMware und echte Hardware.
 Hosttests (`dotnet test`) wurden für diesen reinen Dokumentationsbeitrag nicht erneut ausgeführt.
+
+### E5-H Nachtrag: Befunde zu `l2` und zum 512-MiB-Gast (20. November 2026)
+
+Quelle: Meldung des Koordinators (Agent, nicht selbst nachgeprüft); die Läufe unten wurden von anderen Agenten ausgeführt, ihre Rohdaten liegen nicht in diesem Branch.
+
+- **`l2` war echter Datenverlust, kein Skriptfehler:** Beim Ersetzen einer Datei bei vollem Datenträger blieb das Original auf Länge 0 zurück. Behoben in [PR #531](https://github.com/peterzw98/ProjektZehOS/pull/531) (Länge der Temp-Datei prüfen vor dem Rename). Beleg laut Meldung: ohne Fix rot, mit Fix Gastlauf `l2` PASS. Der oben berichtete Lauf (23 PASS, 1 FAIL) gilt damit für den Stand ohne diesen Fix.
+- **512-MiB-Gast instabil:** E4.0 stürzt dort nichtdeterministisch ab (Page Fault, CR2 `0x8`/`0x10`, in `StepG` beziehungsweise `StepI2`/`Ext2Formatter.Format`). Ursache laut Meldung eine Cosmos-Allokation, die `null` statt `OutOfMemoryException` liefert (vgl. Abschnitt zu Inode-Cache und GC-Fragmentierung). Diese Ursache wurde im Branch `cosmos` nicht geprüft.
+- **Mit `--memory 1G`:** E4.0 Lauf 1 PASS=29 FAIL=0, `e2fsck -fn` Exit 0 für Root und Zusatzplatte. Die Angabe nennt keine CPU-Zahl; ob 1 und 4 CPUs gleich verlaufen, ist hier nicht belegt.
+- **Offen:** E4.0-Läufe 2–5 liefen zum Zeitpunkt der Meldung noch; `test-storage-ext2-root.py` ist damit nur mit 1 GiB belegt, nicht mit dem Standardwert 512 MiB. Ein sicherer Mindestspeicher ist daraus nicht abgeleitet. Weiter nicht geprüft: VMware, echte Hardware.
