@@ -13,8 +13,8 @@ namespace ProjektZeh.Storage;
 
 /// <summary>
 /// Gastprobe (-p:ZehOSStorageProbe=true) fuer ext2 auf der ganzen Testplatte ohne Partitionstabelle; Gegenstueck
-/// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber VfsManager.TryFormat, damit der
-/// Plug belegt ist, Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): nur die
+/// ist scripts/test-storage-ext2-guest.py. Lauf 1 (erstes MiB null): Formatieren ueber CosmosExt2Formatter.FormatForKernel,
+/// Dateioperationen, probe.bin bleibt. Lauf 2 (ext2 vorhanden): nur die
 /// Lesekomponente CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro, verweigerte Mutationen, Imagehash vor/nach unveraendert.
 /// Jedes andere Geraet und jeder andere Inhalt bleibt unberuehrt.
 /// </summary>
@@ -66,15 +66,16 @@ internal static class CosmosExt2GuestProbe
             Check(VfsManager.RegisterFileSystem(FileSystemName, new Ext2FileSystemType(device)), "Registrierung abgelehnt");
             Pass(FileSystemName);
 
-            // Bewusst der allgemeine VFS-Weg: ohne Optionen formatiert der Paketformatter mit 1024 Byte,
-            // 4096 Byte und sparse_super belegen also den Plug auf FormatForKernel.
+            // Der Kernel formatiert über das ZehOS-Profil (nur 4096 Byte, höchstens 128 GiB, Sperre je Plattenoperation);
+            // der Cosmos-Formatter schreibt das Layout. Den allgemeinen VFS-Weg (VfsManager.TryFormat) verbietet
+            // Ext2FormatterUsageTests im Quelltext, weil er das Profil umginge.
             Begin("format");
-            Check(VfsManager.TryFormat(FileSystemName, "", null), "TryFormat abgelehnt");
+            Check(CosmosExt2Formatter.FormatForKernel(device, null), "FormatForKernel abgelehnt");
             prefix = ReadPrefix(device);
             uint logBlockSize = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.LogBlockSizeOffset);
             uint roCompat = BitConverter.ToUInt32(prefix, CosmosExt2SuperblockLayout.SuperblockOffset + CosmosExt2SuperblockLayout.FeatureRoCompatOffset);
-            Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: Plug nicht aktiv");
-            Pass("4096 Byte, sparse_super (Plug aktiv)");
+            Check(logBlockSize == 2 && (roCompat & 1) == 1, $"log_block_size={logBlockSize} ro_compat=0x{roCompat:X}: nicht 4096 Byte mit sparse_super");
+            Pass("4096 Byte, sparse_super");
 
             Begin("gate");
             var decision = Ext2FeatureGate.Evaluate(prefix.AsSpan(CosmosExt2SuperblockLayout.SuperblockOffset, CosmosExt2SuperblockLayout.SuperblockSize));

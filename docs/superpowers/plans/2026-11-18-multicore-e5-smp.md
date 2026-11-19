@@ -99,7 +99,8 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 | `Balance(PerCpuState cpuState, PerCpuState[] allCpuStates)` | Liefert `SchedulerThread?`; in dieser Etappe `null`. |
 | `OnThreadMigrate` | Ist der Thread `Ready`: `Blocked` auf der Quelle, `Ready` auf dem Ziel. Ist er `Running`: nur `Ready` auf dem Ziel. |
 | `SetPriority(PerCpuState, SchedulerThread, long)` | unverändert; Aufrufer ist jetzt `SchedulerManager.SetPriority(SchedulerThread thread, long priority)` ohne CPU-Nummer. |
-| `GetRunQueueCount`, `GetRunQueueThread`, `Snapshot` | statt `MaskInterrupts` die Sperre der CPU: `using (SchedulerManager.LockCpu(state)) { … }` |
+| `GetRunQueueCount`, `GetRunQueueThread` | `MaskInterrupts` entfällt **ersatzlos**, ohne `LockCpu`: Der Mechanismus ruft diese Hooks schon unter der Queue-Sperre der CPU auf, und die Sperre ist nicht reentrant. Ein Hook, der sie nimmt, dreht sich auf sich selbst (Upstream `IScheduler.cs:12-17`, `SchedulerManager.cs:796-802`). Für `SetPriority` und `GetPriority` gilt dasselbe, die Sperre nimmt `SchedulerManager.SetPriority`. |
+| `Snapshot` (ZehOS, kein Hook) | Läuft im Thread-Kontext. Nimmt `using (SchedulerManager.LockCpu(state)) { … }`, je CPU nacheinander, nie zwei Sperren gleichzeitig. |
 
 Allokation ist nur in `InitializeCpu`, `ShutdownCpu` und `OnThreadCreate` erlaubt; die Auswahlspur bleibt ein
 vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerData` oder ein Feld je CPU-Index umziehen). Der Zähler
@@ -187,7 +188,7 @@ oder „entfallen“ eintragen.
 | `Security/CosmosSaltSource.cs`, `CosmosVirtioEntropyDriver.cs`, `Input/CosmosUsbTabletDriver.cs` | Driver Kit | Übersetzen und Bindung |
 | verbliebene ext2-Plugs (falls Etappe 2 nicht fertig) | `FileSystem/Ext2/**` (im Stapel unverändert) | Bindung |
 | `Runtime/CosmosThreadProbe.cs`, `Messaging/MessageGuestProbe.cs`, weitere Proben | `SchedulerManager` | Übersetzen |
-| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Entschieden (Peter, 19.11.): Patch `irq-mask-scope`, siehe E5-A |
+| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Lösung (kleiner Cosmos-Patch mit öffentlichem Masken-Scope oder Umbau der Sperre) vor E5-D mit dem Lead abstimmen |
 | `Scheduling/CosmosClassScheduler.cs:112-147` (fünf `MaskInterrupts`) | `SchedulerManager.LockCpu` | Teil von E5-B (Tabelle oben), hier nur prüfen, dass keine Stelle übrig bleibt: `grep -rn MaskInterrupts ProjektZeh` leer |
 
 - [ ] **Schritt 1:** `grep -rn "GetCpuState(0)\|UnsafeAccessor\|DllImport(\"\\*\"\|\[Plug" ProjektZeh --include=*.cs` als Arbeitsliste; mit der Tabelle abgleichen, Fehlendes ergänzen.
