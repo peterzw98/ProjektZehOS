@@ -1,5 +1,7 @@
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Kernel.System.Threading;
+// Cosmos.Kernel.System.Threading hat eine gleichnamige oeffentliche CpuSet; IScheduler.SelectCpu verlangt die des Kerns.
+using CpuSet = Cosmos.Kernel.Core.Scheduler.CpuSet;
 
 #pragma warning disable COSMOS0001
 
