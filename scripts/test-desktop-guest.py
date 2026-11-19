@@ -240,7 +240,12 @@ class Run:
             raise AssertionError("Der neu gestartete Gast laeuft nicht")
         guest.log("reboot in derselben VM")
         guest.qmp.tap("ret")
-        guest.qmp.line("shutdown")
+        try:
+            guest.qmp.line("shutdown")
+        except ConnectionError:
+            # Unter KVM schaltet der Gast aus, bevor QEMU das Loslassen der Eingabetaste bestaetigt (wie im .ps1);
+            # ob das ein sauberes Ausschalten war, entscheidet powered_off am Exitcode.
+            pass
         self.powered_off()
 
     def serial(self) -> str:

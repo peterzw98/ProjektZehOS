@@ -104,6 +104,12 @@ class PowerFlowTests(unittest.TestCase):
         current.guest.wait.assert_called_once()
         current.powered_off.assert_called_once()
 
+    def test_connection_closed_by_shutdown_is_judged_by_exit_code(self):
+        current = self.flow(exits_on_reboot=False, running=True)
+        current.guest.qmp.line.side_effect = [None, ConnectionError('QMP input-send-event: Verbindung beendet')]
+        current.power_flow()
+        current.powered_off.assert_called_once()
+
     def test_qemu_exit_on_reboot_fails(self):
         current = self.flow(exits_on_reboot=True, running=True)
         with self.assertRaises(AssertionError):
