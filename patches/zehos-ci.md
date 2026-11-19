@@ -5,3 +5,4 @@
 - **Grund:** Patch-PRs gegen `cosmos` hatten keine CI; zwei Patches, die einzeln grün sind, konnten zusammen Tests brechen (P1/P7 mit dem 1-KiB-Formatter, 18. November 2026). Der Workflow läuft nur für Pull Requests gegen `cosmos` auf einem GitHub-Runner und führt `tests/Cosmos.Kernel.Tests.System` aus. Kein Code-Patch an Cosmos.
 - **Entfernter ZehOS-Umweg:** keiner
 - **Prüfung:** erster Lauf in #361 (Run 44372219916): 337 bestanden, 2 übersprungen, 0 fehlgeschlagen, 75 s, auf cosmos 775666d
+- **Auf SMP-Stand (`feat/smp-phase5b@4495213`):** unverändert; die Upstream-Workflows unter `.github/workflows` sind vom Stand ausgenommen

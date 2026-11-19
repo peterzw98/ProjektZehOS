@@ -49,10 +49,22 @@ internal class LibraryInitializer
         {
             Serial.WriteString("[KERNEL]   - Starting scheduler timer...\n");
             // Arm the timer at the reference quantum rather than a literal:
-            // Stride's fallback preemption test compares one tick's elapsed
-            // time against DefaultQuantumNs, so the two have to agree.
+            // Stride advances the running thread's pass by one stride per
+            // DefaultQuantumNs, charged a tick at a time, so the two have to
+            // agree.
             initializer.StartSchedulerTimer(
                 (uint)(SchedulerManager.DefaultQuantumNs / SchedulerManager.NanosecondsPerMillisecond));
+
+            // The application processors, last: each needs its idle thread
+            // (set up above), the shared interrupt tables and the timer's
+            // calibration, and comes online with interrupts enabled, halted
+            // on its own tick. Before the drivers so a driver that binds a
+            // line to a CPU (phase 3) finds every CPU up.
+            if (InterruptManager.IsEnabled)
+            {
+                Serial.WriteString("[KERNEL]   - Starting application processors...\n");
+                Smp.StartApplicationProcessors(initializer.StartSchedulerTimerOnCurrentCpu);
+            }
         }
     }
 
@@ -74,7 +86,13 @@ internal class LibraryInitializer
         // is installed. Thread statics live on the current thread, and a
         // policy hook may read a static whose class constructor has not run
         // yet; the class constructor runner's lock identifies its holder by a
-        // thread static, so it needs a current thread to exist.
+        // thread static, so it needs a current thread to exist. On the boot
+        // CPU the idle thread runs the rest of the library initializers, then
+        // starts Main on a thread of its own and ends in a halt loop
+        // (KernelMain.Run). On an application processor it is the halt loop
+        // the managed entry ends in, on the boot stack the loader gave it;
+        // the CPU's block points at the thread's ExInfo chain head before the
+        // CPU is released (Smp.StartApplicationProcessors).
         for (uint cpu = 0; cpu < cpuCount; cpu++)
         {
             SchedulerThread idleThread = new()
@@ -82,21 +100,24 @@ internal class LibraryInitializer
                 Id = SchedulerManager.AllocateThreadId(),
                 CpuId = cpu,
                 State = SchedulerThreadState.Running,
-                Flags = SchedulerThreadFlags.Pinned | SchedulerThreadFlags.IdleThread
+                Flags = SchedulerThreadFlags.IdleThread,
+                // An idle thread is its CPU's: the set that never lets it move.
+                Affinity = CpuSet.Single(cpu),
+                IdealCpu = cpu
             };
 
             SchedulerManager.SetupIdleThread(cpu, idleThread);
 
             Serial.WriteString("[SCHED] Idle thread ");
             Serial.WriteNumber(idleThread.Id);
-            Serial.WriteString(" (main kernel) for CPU ");
+            Serial.WriteString(" for CPU ");
             Serial.WriteNumber(cpu);
             Serial.WriteString("\n");
         }
 
-        // SetScheduler hands every registered thread to the incoming policy,
-        // so the idle threads reach OnThreadCreate already Running, the same
-        // way a thread alive across a later policy swap does.
+        // No thread but the idle ones exists yet, and a policy is never
+        // handed those: it starts with nothing to run, and each CPU runs its
+        // idle thread until the first thread is readied on it.
         StrideScheduler scheduler = new();
         SchedulerManager.SetScheduler(scheduler);
 

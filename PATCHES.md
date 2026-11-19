@@ -8,7 +8,19 @@
 
 ## Übernommene Upstream-Stände
 
-Noch keine.
+| Branch | Commit | Basis | Gespiegelt als | Eingespielt am |
+| --- | --- | --- | --- | --- |
+| `feat/smp-phase5b` (SMP-Stapel, E5-A) | `44952133e7820565552f30b057baa0660bd0a80d` | `efcf20cc62884b042a0adadffe9fc4540491fd89` | `cosmos-upstream/smp-phase5b`, `cosmos-upstream/smp-base` | 19. November 2026 |
+
+Eingespielt als kumulierter Unterschied ohne eigene Änderung, die Upstream-Workflows ausgenommen:
+
+```bash
+git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index
+```
+
+Konflikte gab es nur in `CLAUDE.md` (Grundstand, ZehOS-Fassung bleibt) und in den Dateien von `ausnahme-hook`; wie jeder
+Patch auf diesem Stand angebracht ist, steht in seiner Datei unter „Auf SMP-Stand“. Prüfen, dass außer Grundstand und Patches
+nichts abweicht: `git diff --stat 44952133 -- . ':(exclude).github' ':(exclude)PATCHES.md'`.
 
 ## Eigene Patches
 

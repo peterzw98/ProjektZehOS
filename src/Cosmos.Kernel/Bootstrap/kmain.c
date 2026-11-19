@@ -15,6 +15,15 @@ uintptr_t __cosmos_get_boot_stack_top(void)
 // Entry point
 void kmain()
 {
+#ifdef __aarch64__
+    // Limine enters in EL1t, on SP_EL0, and leaves SP_EL1 as the firmware had it: the loader's
+    // own UEFI stack. Every exception taken at EL1 selects SP_EL1, so the boot thread's
+    // interrupt frames would land on memory the kernel does not own and whose bounds nothing
+    // reports. Select SP_EL1 on the boot stack first, before any frame is pushed: from here on
+    // the boot thread runs EL1h like every scheduler thread, and its frames stack below its sp.
+    _native_arm64_select_sp_el1();
+#endif
+
     // Capture the boot stack top before anything else runs; kmain's own frame
     // is the highest thing on the Limine-provided stack.
     g_bootStackTop = (uintptr_t)__builtin_frame_address(0);
@@ -87,10 +96,14 @@ void kmain()
     char **argv;
 
     argv = __build_argv(__get_limine_cmd_line(), &argc);
-    __managed__Main(argc, argv);
+
+    // Main runs on a thread of its own: the managed side starts it and turns this context,
+    // the boot CPU's, into the halt loop every application processor ends in. A kernel
+    // without the scheduler gets its Main called from there, on this stack. Never returns.
+    __managed__boot_main(argc, argv);
 
     // Should never reach here
-    __cosmos_serial_write("[KMAIN] ERROR: Main() returned unexpectedly!\n");
+    __cosmos_serial_write("[KMAIN] ERROR: the boot CPU's managed entry returned!\n");
     while(1) {}
 }
 

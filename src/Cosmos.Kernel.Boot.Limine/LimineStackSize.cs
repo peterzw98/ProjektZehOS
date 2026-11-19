@@ -6,9 +6,13 @@ namespace Cosmos.Kernel.Boot.Limine;
 /// Limine Stack Size request.
 /// Asks the bootloader to provide at least <see cref="StackSize"/> bytes of
 /// stack to the kernel entry point instead of the 64 KiB protocol default.
-/// The boot stack hosts the whole main kernel thread, and
+/// The boot stack hosts the library initializers, and the whole of
+/// <c>Main</c> on a kernel without the scheduler, where
 /// <c>RuntimeHelpers.EnsureSufficientExecutionStack</c> requires stacks larger
-/// than 128 KiB on 64-bit to ever succeed.
+/// than 128 KiB on 64-bit to ever succeed. The loader gives every application
+/// processor it starts (the MP request) a stack of the same size
+/// (<c>common/protos/limine.c</c> in the v10 tree), so this one number sizes
+/// the boot stack of every CPU.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public readonly unsafe struct LimineStackSizeRequest(ulong stackSize)

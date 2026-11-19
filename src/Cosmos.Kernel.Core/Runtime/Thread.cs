@@ -21,7 +21,7 @@ internal class Thread
     [RuntimeExport("RhGetThreadStaticStorage")]
     internal static ref object[][]? RhGetThreadStaticStorage()
     {
-        if (CosmosFeatures.SchedulerEnabled && SchedulerManager.CurrentCpuState?.CurrentThread is { } current)
+        if (CosmosFeatures.SchedulerEnabled && SchedulerManager.CurrentThread is { } current)
         {
             return ref current.GetThreadStaticStorage();
         }
@@ -34,7 +34,7 @@ internal class Thread
     {
         if (CosmosFeatures.SchedulerEnabled)
         {
-            SchedulerThread? current = SchedulerManager.CurrentCpuState?.CurrentThread;
+            SchedulerThread? current = SchedulerManager.CurrentThread;
             if (current is not null && current.StackBase != 0)
             {
                 pStackLow = (nint)current.StackBase;
@@ -43,7 +43,8 @@ internal class Thread
             }
         }
 
-        // Boot/idle thread: runs on the bootloader-provided stack.
+        // Boot code and the idle threads run on the bootloader-provided stack
+        // of their CPU, as Main does on a kernel without the scheduler.
         pStackHigh = (nint)BootStack.Top;
         pStackLow = pStackHigh - (nint)BootStack.Size;
     }

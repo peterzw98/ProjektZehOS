@@ -10,7 +10,7 @@ If you find bugs or something abnormal, please [submit an issue](https://github.
 
 ## Experimental status
 
-The seam types (`IScheduler`, `SchedulerManager`, `SchedulerThread`, `PerCpuState`, `SchedulerExtensible`, `InterruptMaskScope`, `SchedulerThreadState`, `SchedulerThreadFlags`) carry `[Experimental("COSMOS0001")]`: they are usable today but make no compatibility promise, and they are promoted to the stable surface by removing the attribute once proven. Referencing them is a build error until the project acknowledges that contract:
+The seam types (`IScheduler`, `SchedulerManager`, `SchedulerThread`, `PerCpuState`, `SchedulerExtensible`, `CpuLockScope`, `SchedulerThreadState`, `SchedulerThreadFlags`) carry `[Experimental("COSMOS0001")]`: they are usable today but make no compatibility promise, and they are promoted to the stable surface by removing the attribute once proven. Referencing them is a build error until the project acknowledges that contract:
 
 ```xml
 <PropertyGroup>
@@ -47,12 +47,12 @@ public class Kernel : Sys.Kernel
 
     protected override void Run()
     {
-        // The kernel's main loop, which runs on the boot thread.
+        // The kernel's main loop, which runs on the main thread.
     }
 }
 ```
 
-You cannot get in ahead of the default. The kernel installs Stride while it boots, before the driver stage, so by the time your code runs Stride already manages the boot thread, the driver kit's worker thread and any thread a driver started. `SetScheduler` moves every one of them: the outgoing policy gets `OnThreadExit` for each live thread and `ShutdownCpu` for every CPU, then your policy gets `InitializeCpu` for every CPU, `OnThreadCreate` for each live thread and `OnThreadReady` for each one in the `Ready` state. The whole swap runs with interrupts masked, and every CPU reschedules on its next interrupt exit, so your policy picks from its own run structure from then on. To go back to Stride later, keep the policy `SchedulerManager.Current` returns before the swap and install it again; the `StrideScheduler` class itself is internal.
+You cannot get in ahead of the default. The kernel installs Stride while it boots, before the driver stage, so by the time your code runs Stride already manages the main thread (the one `BeforeRun` and `Run` are called on), the driver kit's worker thread and any thread a driver started. `SetScheduler` moves every one of them: the outgoing policy gets `OnThreadExit` for each live thread and `ShutdownCpu` for every CPU, then your policy gets `InitializeCpu` for every CPU, `OnThreadCreate` for each live thread and `OnThreadReady` for each one in the `Ready` state. The idle threads are not among them: each CPU has one, it belongs to the kernel, and no hook is ever called for it. The whole swap runs with the world stopped (interrupts masked on the calling CPU, every other CPU held in an interrupt handler until the swap is done), and every CPU reschedules on its next interrupt exit, so your policy picks from its own run structure from then on. To go back to Stride later, keep the policy `SchedulerManager.Current` returns before the swap and install it again; the `StrideScheduler` class itself is internal.
 
 The scheduler has to be compiled in. With `CosmosEnableScheduler` off, or with `CosmosEnableInterrupts` or `CosmosEnableTimer` off, which turn it off too, `SetScheduler` throws `InvalidOperationException`.
 
@@ -60,7 +60,7 @@ The scheduler has to be compiled in. With `CosmosEnableScheduler` off, or with `
 
 ## The interface
 
-The manager calls the policy at fixed points in a thread's life and keeps everything else: it sets every `SchedulerThread.State`, keeps the thread registry, requests a reschedule when a thread wakes, returns an exiting thread's allocation buffer to the garbage collector, performs the switch and runs the idle thread when `PickNext` returns `null`, so a policy repeats none of it. The diagram follows a thread through the hooks:
+The manager calls the policy at fixed points in a thread's life and keeps everything else: it sets every `SchedulerThread.State`, keeps the thread registry, requests a reschedule when a thread wakes, returns an exiting thread's allocation buffer to the garbage collector, performs the switch and runs the CPU's idle thread when there is nothing else to run, so a policy repeats none of it. The diagram follows a thread through the hooks:
 
 ```mermaid
 flowchart TD
@@ -69,7 +69,7 @@ flowchart TD
     Start["A thread is created<br/>Thread.Start"] --> Create["OnThreadCreate(state, thread)<br/>your per-thread record in thread.SchedulerData"]
     Create -->|"first start, or Ready at the swap"| Ready["OnThreadReady(state, thread)<br/>insert it into your run structure"]
     Ready --> Queue[("Your run structure<br/>queue, sorted list, heap, ...")]
-    Queue --> Pick["PickNext(state)<br/>remove and return the next thread, or null for the idle thread"]
+    Queue --> Pick["PickNext(state)<br/>remove and return the next thread, or null when there is none"]
     Pick -->|"switches to it"| Running["The current thread runs"]
     Pick -->|"another thread was picked"| Requeue["OnThreadYield(state, previous)<br/>put the thread switched out back, if it was still running"]
     Requeue --> Queue
@@ -95,20 +95,22 @@ Most hooks receive the `PerCpuState` they operate on, and run either with interr
 | `OnThreadBlocked(state, thread)` | a thread blocks on a primitive or goes to sleep | Remove the thread from the run structure; save whatever must survive the park |
 | `OnThreadYield(state, thread)` | a switch takes the thread off the CPU while it is still `Running`, preempted or yielding | Re-insert the thread |
 | `OnThreadExit(state, thread)` | a thread returns, or `SchedulerDiagnostics.RequestKill` kills it while it waits in the run structure, and for every live thread when the policy is replaced | Remove it everywhere and drop its bookkeeping |
-| `OnTick(state, current, elapsedNs)` | every timer tick, inside the timer interrupt | Account the elapsed time; return `true` to request a reschedule. `elapsedNs` is the configured tick interval, not a measurement |
-| `PickNext(state)` | every reschedule, in interrupt context | Remove and return the next thread to run, or return `null` to run the idle thread |
-| `OnPickFailed(state, thread)` | never yet | Put back a thread the mechanism picked but could not switch to |
-| `SelectCpu(thread, currentCpu, cpuCount)` | never yet | Choose a starting CPU for a thread; honor `SchedulerThreadFlags.Pinned` |
-| `OnThreadMigrate(thread, fromState, toState)` | from the policy's own `Balance` | Move the thread's bookkeeping, and any virtual-time base, between CPUs |
-| `Balance(state, allCpuStates)` | never yet | Rebalance load across CPUs; honor `Pinned` |
-| `SetPriority(state, thread, priority)` / `GetPriority(thread)` | `SchedulerManager.SetPriority`; `SchedulerDiagnostics` reads `GetPriority` on every thread snapshot | Priority is policy-defined: Stride reads it as tickets, a real-time policy would read it as a priority level. Neither is called with interrupts masked |
-| `GetRunQueueCount(state)` / `GetRunQueueThread(state, index)` | `SchedulerDiagnostics` reads the run structure | Read-only introspection; guard it yourself (see [kernel constraints](#kernel-constraints)) |
+| `OnTick(state, current, elapsedNs)` | every timer tick taken while one of the policy's threads runs and has not ended, inside the timer interrupt; a CPU on its idle thread, or on a thread that ended, asks for a pick at every tick instead | Account the elapsed time; return `true` to request a reschedule. `elapsedNs` is the configured tick interval, not a measurement |
+| `PickNext(state)` | every reschedule, in interrupt context | Remove and return the next thread to run, or return `null` when the policy has none: the thread on the CPU then keeps it if it is still `Running` on a CPU its set allows, and the CPU runs its idle thread otherwise. On several CPUs a `null` that leaves the CPU nothing to run is followed by `Balance`, and by a second call when a thread was pulled, so a call that returns `null` must leave the run structure as it found it |
+| `OnPickFailed(state, thread)` | a switch-out evicts a thread whose set excludes its CPU and overrides a pick of that same thread | Put back a thread the mechanism picked but could not switch to |
+| `SelectCpu(thread, cpus, allowed)` | a thread is created (`Created`, `CpuId` and `IdealCpu` both the creating CPU, in the set or not), a parked thread no CPU is on is woken (`Blocked` or `Sleeping`, `CpuId` the CPU it parked on, or the one a set change moved it to since), a set change excludes the thread's CPU, or a switch-out evicts a running thread for the same reason; under no queue lock (the waker may hold its own spinlock), from any context, an interrupt handler included; not called when `allowed` names one CPU | Choose a CPU for the thread among `allowed`, its effective set, never empty. `thread.IdealCpu` is its preference, and can name a CPU outside `allowed`: at a creation, and in the two calls a set change causes, where the mechanism repoints it only once the thread has moved. An answer outside the set is replaced by the set's first CPU. The answer places the thread and nothing more: the wake that asked may find it runnable already, and then no other hook follows. Must not allocate or block |
+| `OnThreadMigrate(thread, fromState, toState)` | the mechanism moves a thread between CPUs, under both queue locks with `CpuId` rewritten: a queued `Ready` thread (a set change, `Balance`), or a `Running` thread in no run structure, which the switch-out evicted and which turns `Ready` right after. Not called for a parked thread a wake places on another CPU: `OnThreadReady` on that CPU follows | Move the thread's bookkeeping, and any virtual-time base, between CPUs; the state tells the two cases apart. What `OnThreadBlocked` saved must not be tied to the CPU the thread parked on |
+| `Balance(state, allCpuStates)` | on `state`'s CPU, in interrupt context, on a machine with several CPUs: when `PickNext` returned `null` and the CPU is about to run its idle thread, and on one tick in a hundred, whatever it runs; under no lock | Name a thread to pull onto `state` from the CPU its `CpuId` names, or `null`; the mechanism checks the answer under both locks (still `Ready`, still there, off that CPU's stack, its set allows the puller) and moves it. The periodic call also comes on a CPU that is running a thread, so a policy that pulls only for a CPU out of work looks at `state.CurrentThread` as well as at its run structure: the CPU is out of work when that thread is its idle thread (`IsIdle`) or is no longer `Running`. Must not allocate |
+| `SetPriority(state, thread, priority)` / `GetPriority(thread)` | `SchedulerManager.SetPriority`; `SchedulerDiagnostics` reads `GetPriority` on every thread snapshot | Priority is policy-defined: Stride reads it as tickets, a real-time policy would read it as a priority level. Both run under the queue lock of the thread's CPU |
+| `GetRunQueueCount(state)` / `GetRunQueueThread(state, index)` | `SchedulerDiagnostics` reads the run structure | Read-only introspection, under the CPU's queue lock the caller holds (see [kernel constraints](#kernel-constraints)) |
 
-Four of these have no caller a policy can count on. `SelectCpu` and `Balance` are never called, because the kernel runs on one CPU ([CPU affinity and load balancing](../dev/sched-concepts/cpu-affinity.md)); `OnPickFailed` is never called, because the switch always goes to the thread `PickNext` returned; and `SetPriority` is reached only through `SchedulerManager.SetPriority`, which nothing in the kernel calls. Implement all four, but do not rely on them being exercised. `Name`, `SelectCpu` and `GetPriority` receive no `PerCpuState`, and `InitializeCpu` and `ShutdownCpu` run in thread context, inside the masked swap.
+Three of these spread threads over the CPUs, and on a machine with several they run all the time: `SelectCpu` at every creation and every wake, `Balance` whenever a CPU runs out of work, and `OnThreadMigrate` for each queued thread the mechanism moves ([CPU affinity and load balancing](../dev/sched-concepts/cpu-affinity.md)). A policy that returns `thread.CpuId` from `SelectCpu` and `null` from `Balance` leaves every thread on the CPU it was given at creation: the creating CPU when the thread's set allows it, the first CPU of the set otherwise. Two have no caller a policy can count on: `OnPickFailed` runs only when a set change takes a thread off its CPU, and `SetPriority` is reached only through `SchedulerManager.SetPriority`, which nothing in the kernel calls. Implement both, but do not rely on them being exercised. `Name`, `SelectCpu` and `GetPriority` receive no `PerCpuState`; `SelectCpu` and `Balance` run under no queue lock, so what they read of any CPU's state is a snapshot the mechanism re-checks, and a run structure another CPU rewrites, such as a queue, is walked under that CPU's lock (`SchedulerManager.LockCpu`), one CPU at a time; and `InitializeCpu` and `ShutdownCpu` run in thread context, inside the stopped-world swap, under no lock.
 
 A running thread that `RequestKill` kills is only marked `Dead`: it leaves the CPU at the next switch without `OnThreadYield` and never reaches `OnThreadExit`, so its record stays in the slot.
 
-`PickNext` runs on every reschedule, not only after `OnTick` returns `true`. A wake, a block, a `Thread.Yield` or a policy swap asks for a reschedule, and the next hardware interrupt exit calls `PickNext` for it: without calling `OnTick` at all when that interrupt is not the tick, and whatever `OnTick` answered when it is ([context switch](../dev/sched-concepts/context-switch.md)). The thread on the CPU is normally not in the run structure at that point ([thread states and the run queue](../dev/sched-concepts/run-queue.md)): it goes back through `OnThreadYield` only after `PickNext` has chosen another. The exception is a thread that blocked and was woken before the switch took it off the CPU: it is `Ready` and already queued, and `PickNext` may hand it back like any other queued thread. A policy that ranks threads, and so must not let every wake displace the current thread, compares the best queued thread with `state.CurrentThread` and returns `state.CurrentThread` itself while that thread's `State` is still `Running`, which keeps it on the CPU. Never return a thread that is `Blocked`, `Sleeping` or `Dead`: the manager does not check. Returning `null` runs the idle thread, which is the kernel's own boot thread, so an `OnTick` that returns `true` while nothing is queued hands the CPU to it.
+`PickNext` runs on every reschedule, not only after `OnTick` returns `true`. A wake, a block, a `Thread.Yield` or a policy swap asks for a reschedule, and the next hardware interrupt exit calls `PickNext` for it: without calling `OnTick` at all when that interrupt is not the tick, and whatever `OnTick` answered when it is ([context switch](../dev/sched-concepts/context-switch.md)). The thread on the CPU is normally not in the run structure at that point ([thread states and the run queue](../dev/sched-concepts/run-queue.md)): it goes back through `OnThreadYield` only after `PickNext` has chosen another. The exception is a thread that blocked and was woken before the switch took it off the CPU: it is `Ready` and already queued, and `PickNext` may hand it back like any other queued thread. A policy that ranks threads, and so must not let every wake displace the current thread, compares the best queued thread with `state.CurrentThread` and returns `state.CurrentThread` itself while that thread is one of its own, not the CPU's idle thread (`IsIdle`), and its `State` is still `Running`, which keeps it on the CPU. On an idle CPU `state.CurrentThread` is the idle thread: never return it, return a queued thread or `null`. Never return a thread that is `Blocked`, `Sleeping` or `Dead` either: the manager does not check.
+
+Returning `null` while nothing is queued costs the current thread nothing: it keeps the CPU as long as it is still `Running`, so an `OnTick` that returns `true` over an empty run structure does not hand the CPU to the idle thread. The idle thread runs only when the current thread parked, ended or is being moved off a CPU its set excludes, and the policy has no other.
 
 **Keeping the current thread also keeps it through its own `Thread.Yield`.** `PickNext` is not told why it runs, and `Thread.Yield` asks for the same reschedule a wake does. `Thread.Start` relies on that reschedule: it calls `Thread.Yield` in a loop until the new thread has run for the first time, so a policy that keeps the starting thread over a new thread that does not outrank it never lets that thread run, and the call never returns. A policy that keeps the current thread therefore gives a queued thread that is still `Created` its first run at the next reschedule. Any other loop that waits through `Thread.Yield` for a thread the policy ranks lower spins the same way.
 
@@ -135,7 +137,7 @@ public bool OnTick(PerCpuState state, SchedulerThread current, ulong elapsedNs)
 
 Read the slot with `as`, never a cast, and handle `null` on every hook. `OnThreadExit` clears the slot, so a thread can lose its record between a tick and the hook that observes it, and dereferencing the empty slot fails inside the timer interrupt. A cast would not help there, since casting `null` yields `null`, and it would throw on a slot holding anything but your record; `as` turns both into `null`, which the one check handles.
 
-A record written by another policy is not something a hook has to handle, because `SetScheduler` re-homes every live thread ([Replacing the policy](#replacing-the-policy)). A thread that arrives already running is. The thread on the CPU at the swap (the boot thread when Stride is installed at startup, or whichever thread calls `SetScheduler` later) reaches `OnThreadCreate` in the `Running` state and is never handed to `OnThreadReady`, so a policy that counts its runnable threads or their weights accounts for it there, without queuing it. Stride adds the thread's tickets to its total in `OnThreadCreate` for that reason.
+A record written by another policy is not something a hook has to handle, because `SetScheduler` re-homes every live thread ([Replacing the policy](#replacing-the-policy)). A thread that arrives already running is. The thread on a CPU at the swap (the one that calls `SetScheduler`, and the thread each other CPU was running, unless that CPU was idle) reaches `OnThreadCreate` in the `Running` state and is never handed to `OnThreadReady`, so a policy that counts its runnable threads or their weights accounts for it there, without queuing it. Stride adds the thread's tickets to its total in `OnThreadCreate` for that reason.
 
 One slot per object is the whole budget. A policy that needs several values defines one class holding them, as Stride does with one record per thread and one per CPU.
 
@@ -147,24 +149,28 @@ The hooks run inside the kernel's most sensitive window, so four rules are not o
 
 **A hook cannot wait.** `OnTick` runs inside the timer interrupt, and `PickNext` and `OnThreadYield` inside whichever interrupt exit carries the reschedule ([interrupt context](driver-concepts/interrupt-context.md)); `OnThreadReady` can run inside an interrupt too when the tick or a device handler wakes a thread, and the other lifecycle hooks run with interrupts masked on whatever thread called the manager. Either way, no other thread and no tick can run on that CPU until the hook returns, so a hook that blocks, parks or waits for another thread waits forever.
 
-**Do not allocate on the tick path.** Allocation is interrupt-safe in this kernel, but an allocation in `OnTick` or `PickNext` can start a garbage collection inside an interrupt. Allocate in `OnThreadCreate` and `InitializeCpu`, where creating a thread already pays for it, and give collections their capacity there, since a list that grows inside `OnThreadReady` or `OnThreadYield` allocates on the same path.
+**Do not allocate on the tick path, nor under the queue lock.** Allocation is interrupt-safe in this kernel, but an allocation in `OnTick` or `PickNext` can start a garbage collection inside an interrupt, and one in any hook the manager calls under a CPU's queue lock (every hook but `OnThreadCreate`, `InitializeCpu`, `ShutdownCpu`, `SelectCpu` and `Balance`) can start a collection that waits for other CPUs while they wait for that lock ([spinlocks and interrupt masking](../dev/sched-concepts/spinlocks-and-masking.md)). `SelectCpu` and `Balance` are called under no queue lock, but `SelectCpu` runs on every wake, sometimes inside an interrupt handler and sometimes under the spinlock of the primitive that wakes the thread, and `Balance` runs in the interrupt exit and on the tick, so neither allocates. Allocate in `OnThreadCreate` and `InitializeCpu`, where creating a thread already pays for it, and give collections their capacity there, since a list that grows inside `OnThreadReady` or `OnThreadYield` allocates on the same path.
 
 **Compare threads with `ReferenceEquals`.** `List<T>.Remove`, `Contains` and `IndexOf` go through `EqualityComparer<T>.Default`, which needs runtime helpers the kernel does not provide. Scan with `ReferenceEquals` and remove with `RemoveAt`, as Stride does.
 
-**Mask interrupts on the entries the manager does not.** A hook that changes the run structure can be interrupted by the tick halfway through unless interrupts are masked ([spinlocks and interrupt masking](../dev/sched-concepts/spinlocks-and-masking.md)). The manager masks them around the lifecycle hooks and the two per-CPU hooks, and the tick hooks run inside the interrupt itself, but four hooks get no mask: `SetPriority`, `GetPriority`, `GetRunQueueCount` and `GetRunQueueThread`. The per-CPU spinlock the manager holds around `SetPriority` does not help, because it keeps out another caller and the tick takes no lock at all. Those four, and any entry point a policy adds of its own, such as a tuning setter or a statistics read, mask interrupts themselves:
+**A hook runs under its CPU's queue lock and never takes it.** The manager holds the queue lock of the CPU whose run structure a hook touches, around every such hook, the tick hooks inside the interrupt included: the lock is what keeps that CPU's tick and a wake from another CPU out of the structure while the hook runs ([spinlocks and interrupt masking](../dev/sched-concepts/spinlocks-and-masking.md)). It is not re-entrant, so a hook that took it would spin on the manager that already holds it. A policy locks in two places. The first is `SelectCpu` and `Balance`, which the manager calls under no queue lock: a count read there is a snapshot, and a walk of another CPU's run structure takes that CPU's lock, one CPU at a time, since two queue locks at once are a migration's privilege, taken in index order, as Stride's `Balance` does around each queue it looks for a thread in. The second is an entry point the policy adds of its own, such as a tuning setter or a statistics read, which nobody else guards. Both take the CPU's lock through `SchedulerManager.LockCpu`, which masks interrupts and locks until the scope is disposed:
 
 ```csharp
-public int GetRunQueueCount(PerCpuState state)
+public void SetWeight(PerCpuState state, SchedulerThread thread, int weight)
 {
-    using (SchedulerManager.MaskInterrupts())
+    using (SchedulerManager.LockCpu(state))
     {
-        MyCpuData? data = state.SchedulerData as MyCpuData;
-        return data is null ? 0 : data.Queue.Count;
+        MyThreadData? data = thread.SchedulerData as MyThreadData;
+        if (data is not null)
+        {
+            data.Weight = weight;
+            Requeue(state, thread);
+        }
     }
 }
 ```
 
-Masking inside a hook makes one call atomic and no more: a caller that reads `GetRunQueueCount` and then walks the indices needs its own mask around the whole walk.
+The lock makes one scope atomic and no more: a caller that reads `GetRunQueueCount` and then walks the indices holds `LockCpu` around the whole walk, as `SchedulerDiagnostics` does, or the tick can rotate the queue between the calls.
 
 ---
 
@@ -190,7 +196,7 @@ FIFO order already bounds latency at `quantum * queue depth`, so round-robin nee
 
 This sketch exists as a complete policy written over the public seam only, exactly as a kernel's own would be: [`RoundRobinScheduler`](https://github.com/CosmosOS/Cosmos/blob/gen3/tests/Kernels/Cosmos.Kernel.Tests.Threading/RoundRobinScheduler.cs) on GitHub. Its quantum is two [ticks](../dev/sched-concepts/scheduler-tick.md), so its accounting has to carry over a tick in between. A kernel tests such a policy live, after installing it, because `PerCpuState` and `SchedulerThread` have no public constructor and the hooks cannot be driven on objects of your own. Check what only a running kernel shows: that new threads get dispatched, that a thread spinning in a loop is preempted when its quantum expires, that two spinners share the CPU the way the policy intends, and that `SchedulerDiagnostics.GetRunQueueCount` drops when a thread blocks and rises again when it wakes. Do not assert the order in which threads reach their delegate: it is not the order they became ready, because a thread preempted inside its start-up code goes back to the tail like any other.
 
-Both swap directions are worth testing as well. Going out, the policy receives the boot thread and every other live thread through `OnThreadCreate`, and still has to read every slot with `as` for the reason given in [Attaching state](#attaching-state). Coming back, the policy saved from `SchedulerManager.Current` receives them the same way, so a thread that stays alive across both swaps changes policy, and a spinner kept running across them should keep making progress under each.
+Both swap directions are worth testing as well. Going out, the policy receives the main thread and every other live thread through `OnThreadCreate`, and still has to read every slot with `as` for the reason given in [Attaching state](#attaching-state). Coming back, the policy saved from `SchedulerManager.Current` receives them the same way, so a thread that stays alive across both swaps changes policy, and a spinner kept running across them should keep making progress under each.
 
 ### Multi-level feedback queue (MLFQ)
 
@@ -221,7 +227,7 @@ The default policy of most RTOSes (FreeRTOS, Zephyr, ThreadX): the highest-prior
 | `OnThreadBlocked` / `OnThreadYield` | Remove from its level / re-enqueue at the tail of its level |
 | `OnTick` | Return `true` if any level above the current thread's is non-empty (pure priority, no quantum) |
 | `PickNext` | Top-down scan, dequeue the first head |
-| `SetPriority` | Move the thread between levels, inside `SchedulerManager.MaskInterrupts()` |
+| `SetPriority` | Move the thread between levels; the manager holds the CPU's queue lock |
 
 Rate Monotonic is FPP with priorities assigned from each thread's period, the shorter the period the higher the priority ([real-time scheduling](../dev/sched-concepts/real-time-scheduling.md)). The seam carries no period, so the policy takes it through an entry point of its own, or encodes it in the `SetPriority` value. It also has to keep the total utilization under the schedulability bound itself, and since no hook can refuse a thread (`OnThreadCreate` returns nothing), that admission check belongs in the policy's own entry point, which the kernel calls before it starts the thread.
 
@@ -246,7 +252,7 @@ A debugging policy, useful when chasing a race that disappears under preemption:
 
 ## Real-time notes
 
-The split between policy and mechanism makes the framework a plausible base for a [real-time](../dev/sched-concepts/real-time-scheduling.md) kernel. The context switch allocates nothing, so its cost is deterministic; a timed sleep provides the wake-up a periodic task needs, and `SetPriority` is the handle a priority protocol would use. Affinity is only half there: a policy honors `SchedulerThreadFlags.Pinned`, but only the idle threads carry it, since a kernel can read `SchedulerThread.Flags` and not set it. A hard real-time build still has to add pieces on both sides of the interface.
+The split between policy and mechanism makes the framework a plausible base for a [real-time](../dev/sched-concepts/real-time-scheduling.md) kernel. The context switch allocates nothing, so its cost is deterministic; a timed sleep provides the wake-up a periodic task needs, and `SetPriority` is the handle a priority protocol would use. Affinity is there: a thread carries a CPU set the mechanism enforces and an ideal CPU handed to the policy as its preference, a kernel sets both through `ThreadAffinity` ([CPU affinity and load balancing](../dev/sched-concepts/cpu-affinity.md)), and a thread allocates on whichever CPU it runs, since the collector stops every CPU; placement at wake is not there yet. A hard real-time build still has to add pieces on both sides of the interface.
 
 The policy side has to bound its own cost and police its load. Everything in `OnTick` and `PickNext` adds to the worst-case interrupt latency, so Stride's linear sorted insert would not qualify, while per-priority FIFOs or a heap keep the hooks at O(log n) or better. Nothing stops oversubscription either, and the admission check the Rate Monotonic sketch describes is the policy's own to add.
 
@@ -265,9 +271,9 @@ The kernel side lacks priority inheritance and a deadline-driven tick. The kerne
 | Read either back | `SchedulerData as MyRecord`, handling `null` |
 | Queue a runnable thread | `OnThreadReady`, `OnThreadYield` |
 | Take a thread out | `OnThreadBlocked`, `OnThreadExit` |
-| Choose the next thread | `PickNext`, returning `state.CurrentThread` to keep it or `null` for the idle thread |
+| Choose the next thread | `PickNext`, returning `state.CurrentThread` to keep it, never the idle thread, or `null` when nothing is queued |
 | Preempt on the tick | `true` from `OnTick` |
-| Guard an entry the manager does not | `using (SchedulerManager.MaskInterrupts())` |
-| Change a thread's priority | `SchedulerManager.SetPriority(cpuId, thread, priority)` |
+| Guard an entry point of the policy's own | `using (SchedulerManager.LockCpu(state))` |
+| Change a thread's priority | `SchedulerManager.SetPriority(thread, priority)` |
 | Read the run structure at run time | `SchedulerDiagnostics.GetRunQueueCount(cpuId)`, `SchedulerDiagnostics.TryGetRunQueueThread(cpuId, index, out info)` |
 | Read the tick period | `SchedulerDiagnostics.TickPeriodNs` |

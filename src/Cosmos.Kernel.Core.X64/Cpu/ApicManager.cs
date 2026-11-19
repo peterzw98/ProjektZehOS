@@ -88,8 +88,12 @@ public static class ApicManager
             return;
         }
 
+        // Every hardware line is aimed at the boot CPU (the housekeeping CPU of
+        // the SMP design), whose LAPIC id its per-CPU block records: reading
+        // the LAPIC here would aim the line at whichever CPU the caller, a
+        // driver's thread, happens to run on.
         IrqOverride? irqOverride = FindOverride(irq);
-        byte targetApicId = LocalApic.GetId();
+        byte targetApicId = (byte)PerCpuBlock.At(0).HardwareId;
         using (InternalCpu.DisableInterruptsScope())
         {
             IoApic.RouteIrq(irq, vector, targetApicId, irqOverride, startMasked);
@@ -169,7 +173,9 @@ public static class ApicManager
     }
 
     /// <summary>
-    /// Blocks for the specified number of milliseconds using the LAPIC timer.
+    /// Blocks for the specified number of milliseconds using the LAPIC timer
+    /// of the calling CPU, with interrupts masked for the whole wait
+    /// (<see cref="LocalApic.Wait"/>).
     /// </summary>
     /// <param name="ms">Number of milliseconds to wait.</param>
     public static void Wait(uint ms)

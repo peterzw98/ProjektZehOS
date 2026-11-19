@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Cosmos.Kernel.Core.Memory.GarbageCollector;
 using Cosmos.Kernel.Core.Runtime.ExceptionHandling;
@@ -32,19 +33,39 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// </summary>
     public uint Id { get; internal set; }
 
+    private uint _cpuId;
+    private SchedulerThreadState _state;
+
     /// <summary>
-    /// CPU this thread is assigned to.
+    /// CPU this thread is assigned to: the CPU whose run structure holds it
+    /// while it is <see cref="SchedulerThreadState.Ready"/>, the CPU it runs
+    /// on while <see cref="SchedulerThreadState.Running"/>. Rewritten by a
+    /// migration under both CPUs' queue locks, so a reader that needs the
+    /// value to stay true takes the CPU's queue lock and reads it again, as
+    /// the mechanism does; a bare read is a snapshot. Volatile: read on one
+    /// CPU, written on another.
     /// </summary>
-    public uint CpuId { get; internal set; }
+    public uint CpuId
+    {
+        get => Volatile.Read(ref _cpuId);
+        internal set => Volatile.Write(ref _cpuId, value);
+    }
 
     // ===== State =====
 
     /// <summary>
     /// Current lifecycle state. State transitions are performed by
     /// <see cref="SchedulerManager"/>; schedulers observe the state but do
-    /// not change it.
+    /// not change it. Volatile: a wake on one CPU writes it and the thread's
+    /// park loop on another reads it, and the pair is what carries the wake
+    /// across (the write after the policy queued the thread, the read before
+    /// the parked thread goes on).
     /// </summary>
-    public SchedulerThreadState State { get; internal set; }
+    public SchedulerThreadState State
+    {
+        get => (SchedulerThreadState)Volatile.Read(ref Unsafe.As<SchedulerThreadState, byte>(ref _state));
+        internal set => Volatile.Write(ref Unsafe.As<SchedulerThreadState, byte>(ref _state), (byte)value);
+    }
 
     /// <summary>
     /// Thread attribute flags.
@@ -52,19 +73,85 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     public SchedulerThreadFlags Flags { get; internal set; }
 
     /// <summary>
-    /// Whether this is a CPU's idle thread: the boot thread itself on the boot CPU, the
-    /// scheduler's fallback when <see cref="IScheduler.PickNext"/> returns null. The blocking
-    /// primitives make it spin or poll instead of parking, since a parked idle thread comes
-    /// back through that fallback as Running without the wake that returns its tickets.
+    /// Whether this is a CPU's idle thread: what the mechanism runs when the CPU has nothing
+    /// else (<see cref="IScheduler.PickNext"/> returned null and the thread that ran cannot go
+    /// on), the boot context of that CPU, which ends in a halt loop. It is in no run structure
+    /// and no policy is handed it, so it never blocks or sleeps: nothing would wake it. The
+    /// kernel's <c>Main</c> runs on a thread of its own, not on one of these; only a kernel
+    /// whose scheduler was stopped at boot runs it on CPU 0's, the one flow it has left.
     /// </summary>
     public bool IsIdle => (Flags & SchedulerThreadFlags.IdleThread) != 0;
 
-    // ===== Context (architecture-specific values) =====
+    // ===== Affinity =====
 
     /// <summary>
-    /// Saved stack pointer while the thread is not running.
+    /// The CPUs this thread may run on. Never empty: a new thread takes its creator's set,
+    /// or the kernel's default when the creator is the main thread or boot code, and a kernel
+    /// changes it through the ring. Written under the queue lock of the thread's CPU and read
+    /// under it wherever it decides a move (the switch-out, a set change, the creation); a
+    /// bare read is a snapshot. A set that names no online CPU is treated as every online CPU.
     /// </summary>
-    public nuint StackPointer { get; internal set; }
+    public CpuSet Affinity { get; internal set; } = CpuSet.Single(0);
+
+    /// <summary>
+    /// The CPU the policy prefers for this thread, always inside <see cref="Affinity"/>: the
+    /// CPU the thread was created on until a kernel sets it, and the CPU the thread moves to
+    /// when a set change excludes it. A hint to <see cref="IScheduler.SelectCpu"/>: the default
+    /// policy starts a new thread from it, and tries it first among the lighter CPUs at a wake.
+    /// </summary>
+    public uint IdealCpu { get; internal set; }
+
+    /// <summary>
+    /// 1 while a CPU has staged a switch to this thread or still runs on its stack, 0 once
+    /// that CPU's interrupt stub has switched to another stack. The resuming CPU sets it
+    /// after its queue lock is released, having waited for 0; the stub clears it through
+    /// <see cref="CPU.PerCpuBlock.SwitchPrevOnCpu"/>. The thread's state says nothing about
+    /// this: a thread turns Ready, Blocked or Sleeping before its CPU's handler has returned
+    /// into the stub, so a resume on another CPU waits on this word, not on the state.
+    /// </summary>
+    internal ulong _onCpu;
+
+    /// <summary>Whether a CPU is still on this thread's stack (<see cref="_onCpu"/>).</summary>
+    internal bool IsOnCpu => Volatile.Read(ref _onCpu) != 0;
+
+    /// <summary>
+    /// The address of <see cref="_onCpu"/>: what the switch-out stages into the per-CPU
+    /// block for the stub to clear. Stable: the collector does not move objects.
+    /// </summary>
+    internal nuint OnCpuSlot => (nuint)Unsafe.AsPointer(ref _onCpu);
+
+    // ===== Context (architecture-specific values) =====
+
+    private nuint _stackPointer;
+
+    /// <summary>
+    /// Saved stack pointer while the thread is not running: the base of its
+    /// <see cref="ThreadContext"/>, written by the switch-out, by
+    /// <see cref="SchedulerThread.InitializeStack"/>, and by the stop handler
+    /// for a thread another CPU stopped; or, when <see cref="SavedContextIsCapture"/>
+    /// is set, the register capture a safepoint made. A write here is a
+    /// context, so it clears that flag.
+    /// </summary>
+    public nuint StackPointer
+    {
+        get => _stackPointer;
+        internal set
+        {
+            _stackPointer = value;
+            SavedContextIsCapture = false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <see cref="StackPointer"/> points at a <c>REGDISPLAY</c> a
+    /// safepoint captured on this thread's stack (<see cref="CPU.CpuStop.Safepoint"/>)
+    /// rather than at a <see cref="ThreadContext"/>: the collector then scans the
+    /// stack from there with no register decode. Set by the safepoint alone,
+    /// after its write to <see cref="StackPointer"/>; cleared by every other
+    /// write, so a thread switched out after a capture is scanned from its
+    /// context again.
+    /// </summary>
+    internal bool SavedContextIsCapture { get; set; }
 
     /// <summary>
     /// Entry point address the thread was created with. Recorded by
@@ -89,7 +176,8 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <summary>
     /// Accumulated CPU time in nanoseconds. The active scheduler charges
     /// elapsed time to the current thread from its
-    /// <see cref="IScheduler.OnTick"/> hook.
+    /// <see cref="IScheduler.OnTick"/> hook; an idle thread's is charged by
+    /// the mechanism, which calls no hook for it.
     /// </summary>
     public ulong TotalRuntime { get; set; }
 
@@ -113,11 +201,13 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <summary>
     /// Strong handle to the <see cref="System.Threading.Thread"/> this
     /// control block runs, taken when the thread is created and released
-    /// by <see cref="SchedulerManager.ExitThread"/>. CoreLib frees its own
+    /// when the registry lets go of the thread. CoreLib frees its own
     /// handle as soon as the thread reports itself started, so this is the
     /// only reference the mechanism keeps: it is what lets a thread that is
     /// killed while queued be stopped on the managed side too. Unallocated
-    /// on a thread that runs a free delegate.
+    /// on a thread that runs a free delegate, the main thread apart, which
+    /// takes its own before it calls <c>Main</c>
+    /// (<see cref="SchedulerManager.RegisterMainThread"/>).
     /// </summary>
     internal GCHandle<System.Threading.Thread> _managedThread;
 
@@ -154,17 +244,34 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
 
     /// <summary>
     /// Allocates and initializes the thread stack with initial context.
-    /// After this call, the thread is ready to be scheduled.
+    /// When it returns true, the thread is ready to be scheduled.
     /// </summary>
     /// <param name="entryPoint">Thread entry point function address.</param>
     /// <param name="codeSegment">Code segment selector (CS).</param>
     /// <param name="arg">Optional argument passed to entry point.</param>
     /// <param name="stackSize">Stack size in bytes.</param>
-    internal void InitializeStack(nuint entryPoint, ushort codeSegment, nuint arg = 0, nuint stackSize = DefaultStackSize)
+    /// <returns>False when there is no memory for the stack, even after a collection: the thread has none and must not be started.</returns>
+    internal bool InitializeStack(nuint entryPoint, ushort codeSegment, nuint arg = 0, nuint stackSize = DefaultStackSize)
     {
-        // Allocate stack memory
+        // The collector runs only when its own heap cannot grow, so by the
+        // time a stack is asked for, the pages may all be held by segments
+        // full of dead objects. A collection returns the empty ones, and the
+        // allocation is tried once more. Without the check the context below
+        // was written at address 0.
+        nuint stackBase = (nuint)Memory.MemoryOp.Alloc((uint)stackSize);
+        if (stackBase == 0 && GarbageCollector.IsEnabled)
+        {
+            GarbageCollector.Collect();
+            stackBase = (nuint)Memory.MemoryOp.Alloc((uint)stackSize);
+        }
+
+        if (stackBase == 0)
+        {
+            return false;
+        }
+
         StackSize = stackSize;
-        StackBase = (nuint)Memory.MemoryOp.Alloc((uint)stackSize);
+        StackBase = stackBase;
 
         // Stack layout (growing downward from top):
         // [StackBase + stackSize] = Top of usable stack
@@ -194,6 +301,23 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
         StackPointer = contextAddr;
         InstructionPointer = entryPoint;
         State = SchedulerThreadState.Created;
+        return true;
+    }
+
+    /// <summary>
+    /// Frees the stack <see cref="InitializeStack"/> allocated, for a thread the registry
+    /// refused before it ever ran. Nothing of the thread lives on that stack yet.
+    /// </summary>
+    internal void ReleaseStack()
+    {
+        if (StackBase != 0)
+        {
+            Memory.MemoryOp.Free((void*)StackBase);
+        }
+
+        StackBase = 0;
+        StackSize = 0;
+        StackPointer = 0;
     }
 
     /// <summary>
@@ -212,6 +336,14 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     {
         return ref _exceptionDispatchState;
     }
+
+    /// <summary>
+    /// The address of this thread's ExInfo chain head slot
+    /// (<see cref="ExceptionDispatchState.ExInfoHead"/>): what the scheduler writes into the
+    /// per-CPU block's <c>CurrentExInfoHead</c> when the thread becomes current, so the native
+    /// stubs link a throw into this thread's chain. Stable: the collector does not move objects.
+    /// </summary>
+    internal nuint ExInfoHeadSlot => (nuint)Unsafe.AsPointer(ref _exceptionDispatchState.ExInfoHead);
 
     /// <summary>
     /// Gets a pointer to the thread's saved context.
