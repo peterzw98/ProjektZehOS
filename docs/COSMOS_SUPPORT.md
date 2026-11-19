@@ -2,6 +2,10 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Stride gegen Klassenscheduler auf dem SMP-Stand (E5-I, #385): nicht gemessen
+
+Vorbereitet sind `-p:ZehOSStrideScheduler=true` (Upstream-Stride, `InstallScheduler()` entfaellt) und `measure-wasm-frametimes.py --background busy`. Die Messung (je ISO fuenf Laeufe im Wechsel, KVM, 1 GiB, `ZEHOS_QEMU_SMP=4`, Doom/ClassiCube, mit und ohne `busy`) ist **nicht erfolgt**: auf dem Pruefrechner fehlen `qemu-system-x86_64`, `xorriso` und das Cosmos-Werkzeug (`scripts/build-cosmos.sh`). Zahlen und Bewertung gegen die Abnahme (Bildrate hoechstens 3 % schlechter, Wartezeit nicht schlechter, Spannweite ueber 3 % = nicht entscheidbar) stehen aus. Zeiten gelten nur ohne parallele andere Laeufe auf dem Host. Alle ZehOS-Threads laufen bis E6-B auf CPU 0; verglichen werden also Policies auf einer CPU im SMP-Kernel.
+
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
 **Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
