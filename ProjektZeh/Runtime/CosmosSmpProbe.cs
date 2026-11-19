@@ -6,6 +6,7 @@ using System.Threading;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 using ProjektZeh.Messaging;
+using ProjektZeh.Scheduling;
 
 namespace ProjektZeh.Runtime;
 
@@ -20,6 +21,9 @@ internal static class CosmosSmpProbe
     private const int HandoffCount = 1000;
     private static uint[] workers = [];
 
+    /// <summary>Vom Kernel nach dem Lesen der Topologie gesetzt; der Schritt placement braucht die Geschwister.</summary>
+    public static CpuTopology? Topology { get; set; }
+
     public static bool Run()
     {
         bool ok = true;
@@ -33,6 +37,7 @@ internal static class CosmosSmpProbe
             ok &= Step("locks", StepLocks);
             ok &= Step("gc", StepGc);
             ok &= Step("threads", StepThreads);
+            ok &= Step("placement", StepPlacement);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
         }
         catch (Exception exception)
@@ -364,6 +369,48 @@ internal static class CosmosSmpProbe
         long delta = ((long)before - (long)after) / 1024;
         Write($"INFO threads free_delta_kib={delta}");
         return ran == 100 ? null : $"nur {ran} von 100 Threads liefen";
+    }
+
+    // E7-D: Ein Interaktiv- und ein Normal-Thread (Platzierung Workers) rechnen 500 ms und melden alle 50 ms ihre CPU.
+    // Bestanden, wenn bei mindestens zwei Kernen unter den Worker-CPUs in mindestens 9 von 10 Meldungen die CPUs keine Geschwister sind.
+    private static string? StepPlacement()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured) return $"SKIP cpus={KernelCpus.Count}";
+        var cores = new HashSet<int>();
+        foreach (uint cpu in workers) cores.Add(topology.CoreOf((int)cpu));
+        if (cores.Count < 2) return $"SKIP cpus={KernelCpus.Count}";
+        const int samples = 10;
+        var interactive = new int[samples];
+        var normal = new int[samples];
+        var first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers);
+        var second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
+        if (!first.IsOK() || !second.IsOK()) return "Platzierungsthread startet nicht";
+        if (first.Value?.Join(10000) != true || second.Value?.Join(10000) != true) return "Platzierungsthread endet nicht";
+        int apart = 0;
+        var line = new System.Text.StringBuilder();
+        for (int i = 0; i < samples; i++)
+        {
+            int a = interactive[i], b = normal[i];
+            bool sibling = a == b || (a >= 0 && b >= 0 && topology.CoreOf(a) == topology.CoreOf(b));
+            if (!sibling) apart++;
+            line.Append(a).Append('/').Append(b).Append(' ');
+        }
+        Write($"INFO placement apart={apart}/{samples} pairs={line.ToString().TrimEnd()}");
+        return apart >= 9 ? null : $"nur {apart} von {samples} Meldungen auf getrennten Kernen";
+    }
+
+    private static void Sample(int[] cpus)
+    {
+        var watch = Stopwatch.StartNew();
+        long sink = 0;
+        for (int i = 0; i < cpus.Length; i++)
+        {
+            cpus[i] = (int)KernelCpus.Current;
+            long until = (i + 1) * 50;
+            while (watch.ElapsedMilliseconds < until) sink = sink * 31 + 7;
+        }
+        if (sink == 42) Write("INFO placement sink");
     }
 
     private static void Write(string message) => Log.WriteString($"SMP_PROBE {message}\n");

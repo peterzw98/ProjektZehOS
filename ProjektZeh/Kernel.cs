@@ -343,6 +343,9 @@ public sealed class Kernel : Sys.Kernel
         };
 #endif
         scheduler = new CosmosClassScheduler(topology);
+#if ZEHOS_SMP_PROBE
+        CosmosSmpProbe.Topology = topology;
+#endif
         systemLog.Information("Boot", "Topologie: " + topology.Describe());
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
