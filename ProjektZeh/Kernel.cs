@@ -88,7 +88,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly BackgroundTaskService tasks = new();
     private readonly CosmosNetworkService networkService = new();
     private readonly NetworkAutoConfiguration automaticNetwork;
-    private readonly CosmosClassScheduler scheduler = new();
+    private CosmosClassScheduler scheduler = null!;
     private readonly MessageDemoService messages;
     private UserSession desktopIdentity = null!;
 
@@ -151,7 +151,7 @@ public sealed class Kernel : Sys.Kernel
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
                 virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, DescribeTopology()).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
 #else
@@ -282,6 +282,8 @@ public sealed class Kernel : Sys.Kernel
             // Ohne Wasm-Loader liessen sich Pakete zwar installieren, aber nicht starten.
             .. packageCommands.Commands,
 #endif
+            new ShellCommand("sysinfo", "sysinfo", "Zeigt die CPU-Topologie.", false,
+                (_, output) => output.WriteLine(DescribeTopology())),
             .. new TaskShellCommands(tasks, DescribeScheduler).Commands,
             .. new MessageShellCommands(messages).Commands,
 #if ZEHOS_ROOT_PROFILE
@@ -322,6 +324,10 @@ public sealed class Kernel : Sys.Kernel
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
         systemLog.Information("Boot", cpuLine);
+        // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
+        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
+        scheduler = new CosmosClassScheduler(CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text)));
+        systemLog.Information("Boot", DescribeTopology());
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
@@ -430,8 +436,6 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
-        // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
-        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         // Vor dem ersten Worker: Ausnahmen in dessen Gastcode gibt der Hook auf (12.4-I1), alle anderen halten an.
 #pragma warning disable COSMOS0001 // Der Ausnahme-Hook gehoert zur experimentellen Scheduler-Schnittstelle.
         Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler = FaultIsolation.OnCpuException;
@@ -645,6 +649,8 @@ public sealed class Kernel : Sys.Kernel
         systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
+
+    private string DescribeTopology() => "Topologie: " + scheduler.Topology.Describe();
 
     private string[] DescribeScheduler()
     {

@@ -14,7 +14,7 @@ namespace ProjektZeh.Runtime;
 /// Liest Systeminformationen fuer den Taskmanager ueber Cosmos. Nur lesend: es werden weder Laufwerke
 /// eingebunden noch Netzwerkadapter konfiguriert.
 /// </summary>
-internal sealed class CosmosSystemInfo(IStorageService storage, string version)
+internal sealed class CosmosSystemInfo(IStorageService storage, string version, string topology)
 {
     private const string PageAllocatorType = "Cosmos.Kernel.Core.Memory.PageAllocator, Cosmos.Kernel.Core";
     private const ulong PageSize = 4096;
@@ -23,7 +23,7 @@ internal sealed class CosmosSystemInfo(IStorageService storage, string version)
     [
         new("Datentraeger", ReadStorage),
         new("Netzwerk", ReadNetwork),
-        new("System", () => [version, "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
+        new("System", () => [version, topology, "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
             "Grafik: " + (Cosmos.Kernel.System.Graphics.Canvas.GetFullScreen().Name ?? "unbekannt")])
     ];
 
