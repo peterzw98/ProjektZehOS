@@ -54,6 +54,13 @@ public static class SchedulerManager
     /// <summary>Stacks of exited threads given back, since boot.</summary>
     private static ulong s_releasedStacks;
 
+    /// <summary>
+    /// Exited threads whose stack is still allocated, linked through
+    /// <see cref="SchedulerThread._nextDeadStack"/> under <see cref="s_registryLock"/>. The
+    /// list keeps the thread objects alive until their stack is freed.
+    /// </summary>
+    private static SchedulerThread? s_deadStacks;
+
     /// <summary>Stacks of exited threads given back since boot (diagnostics).</summary>
     internal static ulong ReleasedStacks => Volatile.Read(ref s_releasedStacks);
 
@@ -1132,6 +1139,44 @@ public static class SchedulerManager
     /// Unregisters a thread from the global registry, under the registry lock. Called during
     /// thread exit.
     /// </summary>
+    // ZehOS patch thread-stack-reaper, see PATCHES.md
+    /// <summary>
+    /// Frees the stacks of exited threads no CPU runs on any more. Thread context only,
+    /// with no scheduler lock held (interrupts may be masked): it takes the registry lock,
+    /// then the heap lock in <see cref="SchedulerThread.ReleaseStack"/>, the documented order.
+    /// A thread still on its CPU (a self-exit before its switch-out) goes back to the list.
+    /// </summary>
+    internal static void ReapDeadStacks()
+    {
+        SchedulerThread? list;
+        using (s_registryLock.AcquireIrqSafe())
+        {
+            list = s_deadStacks;
+            s_deadStacks = null;
+        }
+
+        while (list is not null)
+        {
+            SchedulerThread thread = list;
+            list = thread._nextDeadStack;
+            thread._nextDeadStack = null;
+            if (thread.IsOnCpu)
+            {
+                using (s_registryLock.AcquireIrqSafe())
+                {
+                    thread._nextDeadStack = s_deadStacks;
+                    s_deadStacks = thread;
+                }
+
+                continue;
+            }
+
+            thread.ReleaseStack();
+            thread._deadStackQueued = false;
+            Interlocked.Increment(ref s_releasedStacks);
+        }
+    }
+
     internal static void UnregisterThread(SchedulerThread thread)
     {
         if (s_allThreads is null)
@@ -1547,6 +1592,19 @@ public static class SchedulerManager
 
             // The registry lock after the queue lock: the order every path keeps.
             UnregisterThread(thread);
+
+            // ZehOS patch thread-stack-reaper, see PATCHES.md: a thread exiting itself still runs
+            // on this stack, so it is only queued here and freed once it has left its CPU.
+            // TryReapCreated does not come through here; its caller frees that stack itself.
+            using (s_registryLock.AcquireIrqSafe())
+            {
+                if (thread.StackBase != 0 && !thread._deadStackQueued)
+                {
+                    thread._deadStackQueued = true;
+                    thread._nextDeadStack = s_deadStacks;
+                    s_deadStacks = thread;
+                }
+            }
             Serial.WriteString("[SCHED] ExitThread: OnThreadExit done\n");
         }
     }
