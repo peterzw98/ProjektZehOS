@@ -584,3 +584,7 @@ Prüfnachtrag zu #204 nach dem Coverage-Umbau: Auf dem integrierten Stand "38996
 ## WASI-Zeitstempel (12.8 P4-D)
 
 Geprüft im Quelltext des Cosmos-Commits `5d0b9535251472db7ecfe012f0435f0a04ffca16` (nicht im Gast): `FatInodeOperations.GetAttr` setzt `AccessTime`, `ModificationTime` und `ChangeTime` fest auf 0; `FatAttributes.UnpackDateTime` wird nirgends aufgerufen. Der WASI-Host meldet deshalb `atim = mtim = ctim = 0` (unbekannt) für Paket- und `/save`-Dateien; die Rückrufe `zehos_wasm_host_stat`, `save_stat`, `fstat` und `save_fstat` liefern die Zeit schon heute durch, bis Cosmos sie füllt.
+
+## Sperren-Übergabe zwischen CPUs (E6-H, 19. November 2026)
+
+Die Plugs `LowLevelMonitor_*` in `Cosmos.Kernel.Plugs/System/InteropSysPlug.cs` tragen jede umkämpfte `lock`-Sperre, `Monitor.Wait`/`PulseAll` und jedes Warten auf ein Wait-Handle. Bis Cosmos `3.0.97-zehos.6-smp.3` schrieben sie bei jedem Aufruf eine Zeile synchron auf die serielle Schnittstelle; unter KVM ist jedes Byte ein VM-Exit. Die SMP-Probe brauchte dadurch ~55 ms je Übergabe zwischen zwei CPUs (SMP 8: 1000 Übergaben je Paar in 141 s, 11 MB Serial-Log). Das Aufwecken selbst war nicht die Ursache: `ReadyThread` sendet den Reschedule-IPI an die Ziel-CPU. Patch `monitor-quiet` (`3.0.97-zehos.6-smp.4`) entfernt die Zeilen; danach 10.000 Übergaben je Paar unter KVM SMP 4 in 536–561 ms (MSI, drei Läufe). Offen: `LowLevelMonitor_TimedWait` meldet auch nach Zeitablauf `true`.

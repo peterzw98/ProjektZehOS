@@ -17,7 +17,7 @@ namespace ProjektZeh.Runtime;
 /// </summary>
 internal static class CosmosSmpProbe
 {
-    private const int HandoffCount = 1000;
+    private const int HandoffCount = 10000;
     private static uint[] workers = [];
 
     public static bool Run()
