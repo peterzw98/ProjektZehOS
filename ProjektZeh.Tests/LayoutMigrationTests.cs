@@ -85,12 +85,12 @@ public sealed class LayoutMigrationTests
     }
 
     [TestMethod]
-    public void SourceDirectoryOverTheParserLimitConflictsBeforeAnyTargetWrite()
+    public void SourceDirectoryOverTheEntryLimitConflictsBeforeAnyTargetWrite()
     {
         StandardSource();
         string bulk = Path.Combine(source, "bulk");
         Directory.CreateDirectory(bulk);
-        for (int i = 0; i < 8191; i++) File.Create(Path.Combine(bulk, $"f{i:D4}.txt")).Dispose();
+        for (int i = 0; i <= FileService.MaximumExt2DirectoryEntries; i++) File.Create(Path.Combine(bulk, $"f{i:D5}.txt")).Dispose();
         var target = Target();
         var result = Run(target);
         StringAssert.Contains(result.Status.Message, "PlanConflict");
