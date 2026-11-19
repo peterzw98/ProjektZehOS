@@ -134,7 +134,7 @@ def main():
         click(*frame(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
-            guest.qmp.tap("delete",hold=.005)
+            guest.qmp.tap("delete",hold=.03)
         guest.qmp.text("file:///pages/reset-probe.html")
         guest.qmp.tap("ret")
         page("mehrtasten-probe", "e0ffff")
@@ -210,7 +210,7 @@ def main():
             click(*frame(284,13))
             guest.qmp.tap("home")
             for _ in range(48):
-                guest.qmp.tap("delete",hold=.005)
+                guest.qmp.tap("delete",hold=.03)
             guest.qmp.text(url)
             guest.qmp.tap("ret")
 
@@ -226,6 +226,8 @@ def main():
         address("https://10.0.2.2/")
         time.sleep(2)
         capture("https-fehlerseite")
+        # Der HTTPS-Versuch laeuft im Hintergrund weiter; erst warten, sonst gehen die folgenden Tasten verloren.
+        time.sleep(5)
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 
@@ -259,12 +261,15 @@ def main():
         slow = hexcolor(pages.HTTP_SLOW)
         address(f"{base}/langsam-gegenprobe")
         page("langsam-gegenprobe", slow)
+        # Vorher eine andersfarbige Seite laden: Nur so zeigt die Farbe der langsamen Seite eindeutig, dass der Rumpf kam.
+        address("file:///pages/index.html")
+        page("vor-abbruch", "d8ecff")
         address(f"{base}/langsam-abbruch")
         time.sleep(2)
         click(*frame(91,15)) # Stopp
         time.sleep(pages.SLOW_DELAY_S + 3)
         stopped = capture("nach-abbruch")
-        assert stopped.count(bytes.fromhex(slow)) < 100, "Abgebrochene Seite ist trotzdem erschienen"
+        assert stopped.count(bytes.fromhex(slow)) == 0, "Abgebrochene Seite ist trotzdem erschienen"
         address("file:///pages/index.html")
         page("nach-abbruch-lokal", "d8ecff")
         click(*frame(99,209))
@@ -287,7 +292,7 @@ def main():
         click(*small(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
-            guest.qmp.tap("delete",hold=.005)
+            guest.qmp.tap("delete",hold=.03)
         guest.qmp.text("file:///pages/formular.html")
         guest.qmp.tap("ret")
         page("paketminimum-formular", "f0e0ff")
@@ -309,7 +314,7 @@ def main():
         click(*large(284,13))
         guest.qmp.tap("home")
         for _ in range(32):
-            guest.qmp.tap("delete",hold=.005)
+            guest.qmp.tap("delete",hold=.03)
         guest.qmp.text("file:///pages/formular.html")
         guest.qmp.tap("ret")
         page("maximiert-formular", "f0e0ff")
