@@ -41,7 +41,7 @@ internal static class Panic
         // interleaving one. The price: an exception inside the hook reports only itself.
         bool abandoned = depth == 1 && CpuExceptionHook.Handler is { } handler
             && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
-                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
+                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId(), InterruptsEnabled(ref ctx)))
                 == CpuExceptionAction.AbandonThread
             && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx));
 
@@ -82,10 +82,18 @@ internal static class Panic
     private static ulong InstructionPointer(ref IRQContext ctx) => ctx.elr;
 
     private static ulong StackPointer(ref IRQContext ctx) => ctx.sp;
+
+    // ZehOS patch ausnahme-interrupts, see PATCHES.md
+    // PSTATE.I (bit 7) of the interrupted code, saved in SPSR: set = IRQs masked.
+    private static bool InterruptsEnabled(ref IRQContext ctx) => (ctx.spsr & (1UL << 7)) == 0;
 #else
     private static ulong InstructionPointer(ref IRQContext ctx) => ctx.rip;
 
     private static ulong StackPointer(ref IRQContext ctx) => ctx.rsp;
+
+    // ZehOS patch ausnahme-interrupts, see PATCHES.md
+    // RFLAGS.IF (bit 9) of the interrupted frame, pushed by the CPU on entry.
+    private static bool InterruptsEnabled(ref IRQContext ctx) => (ctx.rflags & (1UL << 9)) != 0;
 #endif
 
     private static void PrintCpuContext(ref IRQContext ctx)
