@@ -21,8 +21,13 @@ public enum CpuExceptionAction
     /// Give up the faulting thread: switch to another thread and never return
     /// to the faulting code. The kernel marks the thread
     /// <see cref="SchedulerThreadState.Dead"/> and does not hand it back to the
-    /// policy; reaping it (stack, registry slot) is the installed scheduler's
-    /// job. When no switch can be staged, the kernel halts instead.
+    /// policy. Nothing reaps it here: the kernel does not call
+    /// <see cref="IScheduler.OnThreadExit"/>, unregister it, retire its
+    /// allocation context or release its joiners. The policy has no hook for
+    /// that either; the adapter that installed the hook reaps the thread
+    /// afterwards through the exit path (ExitThread or
+    /// SchedulerDiagnostics.RequestKill, ZehOS plan E6-G). Locks the thread
+    /// held stay taken. When no switch can be staged, the kernel halts instead.
     /// </summary>
     AbandonThread = 1,
 }
