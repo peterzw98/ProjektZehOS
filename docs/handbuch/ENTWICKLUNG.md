@@ -41,7 +41,7 @@ Mit `shutdown` ausschalten und mit demselben Startskript erneut öffnen oder mit
 
 Das QEMU-Startskript und die Visual-Studio-Projekteinstellungen in `ProjektZeh/.cosmos/config.json` setzen `-action shutdown=poweroff,reboot=reset`: `shutdown` beendet die VM, `reboot` startet den Gast in derselben VM neu. Damit werden die von Cosmos vorgegebenen Optionen (geprüft mit 3.0.94) `-no-shutdown` und `-no-reboot` überschrieben. Die Einstellung gilt ab dem nächsten VM-Start. Die vorhandene Vorbereitung mit Aushängen des Datenlaufwerks bleibt unverändert.
 
-Mit `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-power-commands.ps1` werden beide Befehle in einer eigenen unsichtbaren QEMU-VM ohne Datenplatte geprüft. Nach `reboot` müssen ein zweiter Shellstart und ein laufender Gast nachweisbar sein; nach `shutdown` muss QEMU mit Exitcode 0 enden. Das ISO vorher bauen; ein anderes ISO lässt sich mit `-IsoPath` auswählen.
+Mit `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-power-commands.ps1` werden beide Befehle in einer eigenen unsichtbaren QEMU-VM ohne Datenplatte geprüft. Nach `reboot` müssen ein zweiter Shellstart und ein laufender Gast nachweisbar sein; nach `shutdown` muss QEMU mit Exitcode 0 enden. Das ISO vorher bauen; ein anderes ISO lässt sich mit `-IsoPath` auswählen. Ohne PowerShell (Linux) prüft `python3 scripts/test-desktop-guest.py --iso <Recovery-ISO> --power` denselben Ablauf (reboot in derselben VM bis zur Textshell, danach shutdown mit Exitcode 0) mit einem Recovery-Build (`-p:ZehOSRecovery=true`), weil der normale Build auf dem Desktop startet; GDB prüft diese Fassung nicht. Die Kryptografieprobe (`-p:ZehOSSecurityProbe=true`) startet unter Linux `python3 scripts/test-security-probe.py --iso <ISO>`.
 
 Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multiarch` samt ELF-Symbolen an die zunächst angehaltene VM. GDB muss beim Neustart verbunden bleiben und nach dem Ausschalten einen normalen Gastabschluss melden; ein Stoppsignal wie `SIGQUIT` lässt den Test fehlschlagen. Die ELF-Datei muss neben dem ausgewählten ISO liegen und denselben Namen mit Endung `.elf` tragen.
 
@@ -86,6 +86,8 @@ Ein ausdrücklich aktivierter Testbuild prüft vor dem Desktop zwei echte Cosmos
 dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThreadProbe=true -warnaserror
 ./scripts/test-thread-probe.ps1 -IsoPath ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
 ```
+
+Ohne PowerShell (Linux) leistet `python3 scripts/test-thread-probe.py --iso <ISO>` dasselbe mit denselben QEMU-Argumenten; `--accel kvm` und `ZEHOS_QEMU_SMP` wirken wie in den übrigen Gastskripten. Es verlangt zusätzlich die Zeile `MESSAGES_PROBE PASS`.
 
 Der Helfer startet eine eigene QEMU-VM ohne Datenlaufwerk, wartet höchstens 45 Sekunden auf `THREAD_PROBE PASS` und beendet nur diese Test-VM. Serielle Ausgabe und QEMU-Fehlerausgabe liegen in einem jeweils neuen Ordner unter `.tools/thread-probe/`. Fehlendes Ergebnis, `THREAD_PROBE FAIL` oder ein vorzeitiges VM-Ende lassen den Helfer fehlschlagen. Ein normales ISO erfüllt diese Probe ausdrücklich nicht.
 
