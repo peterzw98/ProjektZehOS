@@ -129,6 +129,10 @@ internal static class ExceptionHandler
 
     private static void NonMaskableInterrupt(ref IRQContext ctx)
     {
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // The panic stop of another CPU halts this one here, before any report; an NMI from
+        // outside (LINT1) goes on to the exception path.
+        PanicStop.HaltIfStopping();
         Panic.CpuException("Non-Maskable Interrupt (NMI)", ref ctx);
     }
 

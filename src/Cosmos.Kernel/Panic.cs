@@ -53,6 +53,15 @@ internal static class Panic
             return;
         }
 
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // Only here, after the hook declined: giving up a thread stops no CPU. The other CPUs
+        // stop before the last line, so nothing follows it; while another CPU owns the panic,
+        // this one halts without the line.
+        if (!PanicStop.StopOthers())
+        {
+            PanicStop.HaltForever();
+        }
+
         Serial.WriteString("System halted.\n");
 
         HaltCpu();

@@ -45,6 +45,9 @@ public static class LocalApic
     private const uint ICR_DEST_SHORTHAND_SELF = 0b01u << 18;
     /// <summary>ICR delivery status (bit 12): 1 while the previous IPI is still being sent (SDM Vol 3 §10.6.1).</summary>
     private const uint ICR_DELIVERY_STATUS_PENDING = 1u << 12;
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <summary>ICR delivery mode NMI (bits 10:8 = 100b, Intel SDM Vol 3 §10.6.1); the vector field is ignored.</summary>
+    private const uint ICR_DELIVERY_MODE_NMI = 0b100u << 8;
     /// <summary>Bit position of the destination field in ICR high (bits 31:24, xAPIC physical destination mode).</summary>
     private const int ICR_DESTINATION_SHIFT = 24;
     /// <summary>LVT mask bit (bit 16) - masks delivery of the LVT entry's interrupt (Intel SDM Vol 3 §10.5.1).</summary>
@@ -285,6 +288,30 @@ public static class LocalApic
 
         Write(LAPIC_ICR_HIGH, (uint)apicId << ICR_DESTINATION_SHIFT);
         Write(LAPIC_ICR_LOW, vector);
+    }
+
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <summary>
+    /// Sends a non-maskable interrupt to the CPU whose Local APIC has <paramref name="apicId"/>,
+    /// as <see cref="SendIpi"/> does a fixed one (same ICR protocol, same masking by the caller):
+    /// delivery mode NMI, so the vector field is ignored and the target takes vector 2 even with
+    /// interrupts masked (SDM Vol 3 §10.6.1). Allocation-free; any context.
+    /// </summary>
+    /// <param name="apicId">The target's Local APIC id, as its per-CPU block records it.</param>
+    internal static void SendNmi(ulong apicId)
+    {
+        if (!s_initialized)
+        {
+            return;
+        }
+
+        // Bounded by the hardware, as in SendIpi.
+        while ((Read(LAPIC_ICR_LOW) & ICR_DELIVERY_STATUS_PENDING) != 0)
+        {
+        }
+
+        Write(LAPIC_ICR_HIGH, (uint)apicId << ICR_DESTINATION_SHIFT);
+        Write(LAPIC_ICR_LOW, ICR_DELIVERY_MODE_NMI);
     }
 
     /// <summary>
