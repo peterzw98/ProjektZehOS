@@ -1,0 +1,42 @@
+[
+  {
+    "name": "doom-quick-smp1",
+    "cmd": ["{python}", "scripts/test-wasm-doom-desktop.py", "--iso", "{iso}", "--repo", "{doomrepo}", "--key", "{key}", "--tls", "{tls}", "--scenario", "quick"],
+    "env": {"ZEHOS_QEMU_SMP": "1"},
+    "timeout": 3600,
+    "note": "Die Doom-Szenarien teilen sich den Snapshot unter .tools/guest-snapshots (je ISO, Repo und SMP); parallele Suiten mit gleicher ISO und gleichem SMP koennen sich beim Anlegen stoeren - ungeprueft."
+  },
+  {
+    "name": "doom-quick-smp4",
+    "cmd": ["{python}", "scripts/test-wasm-doom-desktop.py", "--iso", "{iso}", "--repo", "{doomrepo}", "--key", "{key}", "--tls", "{tls}", "--scenario", "quick"],
+    "env": {"ZEHOS_QEMU_SMP": "4"},
+    "timeout": 3600
+  },
+  {
+    "name": "desktop-guest",
+    "cmd": ["{python}", "scripts/test-desktop-guest.py", "--iso", "{iso}"],
+    "env": {"ZEHOS_QEMU_SMP": "4"},
+    "timeout": 1800,
+    "note": "test-desktop-guest.py liest ZEHOS_QEMU_SMP nicht selbst (nur --iso, --accel, --recovery, --power, --boot-timeout); die Variable ist dort womoeglich wirkungslos - ungeprueft."
+  },
+  {
+    "name": "isolation-probe",
+    "cmd": ["{python}", "scripts/test-isolation-probe.py", "--iso", "{isoprobe}", "--runs", "3"],
+    "timeout": 1800,
+    "note": "Braucht eine ISO mit ZehOSIsolationProbe (eigene Variable isoprobe); Standardbeschleuniger ist kvm, unter Windows --accel tcg oder whpx ergaenzen."
+  },
+  {
+    "name": "netsurf",
+    "cmd": ["{python}", "scripts/test-netsurf-desktop.py", "--iso", "{isonetsurf}", "--package", "{netsurfpkg}", "--key", "{key}"],
+    "env": {"ZEHOS_QEMU_SMP": "4"},
+    "timeout": 1800,
+    "note": "ISO und Paket stammen aus dem NetSurf-Stand (feature/netsurf); ob das Skript ZEHOS_QEMU_SMP auswertet, ist ungeprueft."
+  },
+  {
+    "name": "classicube",
+    "cmd": ["{python}", "scripts/test-classicube-desktop.py", "--iso", "{isoclassicube}", "--package", "{classicubepkg}", "--key", "{key}"],
+    "env": {"ZEHOS_QEMU_SMP": "4"},
+    "timeout": 1800,
+    "note": "Optionale Flags (--storage, --disk-full, --raster-compare) nicht eingetragen; SMP-Auswertung ungeprueft."
+  }
+]
