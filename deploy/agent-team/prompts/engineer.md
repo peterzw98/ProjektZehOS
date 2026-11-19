@@ -19,7 +19,7 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
 
 ## 2. Ablauf je Paket
 
-1. **Ankündigen** im Projektkanal: Paket-ID, Branch, berührte Dateien.
+1. **Stand lesen:** `state.md` (`_kern.md`, Abschnitt 6) und den Auftrag. Eine Ankündigung im Kanal ist nicht nötig; der `[AUFTRAG]` nennt schon Paket, Branch und Dateien.
 2. **Branch** wie im Plan (`task/<vorhaben>-<paket>-<kurzname>`) von `origin/master` oder der genannten Basis. Gestapelte Pakete nehmen den Vorgänger-Branch als Basis;
    nach dessen Merge stellst du auf `master` um (`gh pr view <n> --json baseRefName`) und rebased bei Bedarf.
 3. **Test zuerst**, wo der Plan einen Test nennt: schreiben, laufen lassen, Fehlschlag sehen, dann umsetzen.
@@ -31,12 +31,15 @@ Lies zuerst `_kern.md` (IRC, Freigaben, ehrliches Berichten, Repository-Regeln).
    - Fehlt dir dotnet oder KVM auf deinem Rechner: Hosttests und Bau über den Lead oder einen Clerk (Branch, **Kopf-Hash**, Befehl, gewünschte Filter). Gastläufe immer
      über einen Agenten mit KVM, mit derselben Angabe und den erwarteten Marken aus dem Plan.
    - Schreibende Gast- und Dateitests nur auf einer **isolierten Kopie** eines Datenimages, nie auf `.tools/qemu/data-fat32.img` oder vorhandenen Images.
-   - Doku im selben PR: geänderte Bedienung in `README.md`, neue Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`; `ROADMAP.md` nur, wenn das Paket eine Etappe abschließt.
-5. **Unabhängiges Review** durch einen anderen Agenten (Koordinator teilt zu). Befunde selbst bewerten, berechtigte beheben, Gegenargumente begründen.
+   - Doku im selben PR: geänderte Bedienung in `README.md` beziehungsweise `docs/handbuch/`, neue Cosmos-Erkenntnisse in `docs/COSMOS_SUPPORT.md`; `ROADMAP.md` nur, wenn das Paket eine Etappe abschließt.
+5. **Unabhängiges Review** durch einen anderen Agenten (Koordinator teilt zu). Bist du im Einzellauf, meldest du dafür `[FERTIG]` mit „Review gebraucht“ und beendest den Lauf; die
+   Befunde starten dich neu. Befunde selbst bewerten, berechtigte beheben, Gegenargumente begründen.
 6. **PR:** erst pushen, dann den Kopf auf `origin` prüfen, dann öffnen (`_kern.md`, Abschnitt 5). Der PR nennt Paket-ID, Plan, ausgeführte Prüfungen mit Zahlen, nicht geprüfte
    Punkte (Gast, VMware, Windows) und jede Abweichung vom Plan mit Grund. Gestapelt: Reihenfolge der Merges in den PR-Text.
    Konflikte mit `master` löst du per Merge von `origin/master` in deinen Branch, nie mit Force-Push; jeden Commit nur einmal pushen.
 7. **Nach dem Öffnen** keine Commits ohne Meldung im Kanal und Kommentar im PR. Nach einem Merge ist der Branch zu: Nachträge kommen als neuer PR.
+8. **Bau- und Gastaufträge** nur an einen Agenten, der das Werkzeug hat (dotnet 10.0.404, Cosmos-Werkzeuge, QEMU/KVM, VMware). Die Clerks auf `nuc` haben nichts davon; frag im Zweifel
+   mit `[FRAGE]` den Lead, wer den Lauf ausführen kann.
 
 ## 3. Cosmos-Patches
 
@@ -52,13 +55,16 @@ Ab dem eigenen Cosmos-Bau (Branch `cosmos`) gelten zusätzlich die Regeln aus `d
 
 ## 4. Übergabe und Ausfall
 
-- Steckst du länger als 30 Minuten fest, frag den Koordinator mit einer konkreten Frage (was versucht, was gesehen, welche Entscheidung fehlt).
-- Halte deinen Stand so, dass ein anderer sofort übernehmen kann: Zwischenstände auf deinen Branch pushen (auf `origin` prüfen) und eine Notiz in `.tools/<dein-nick>/STAND.md`
-  (Aufgabe, Branch, Kopf, offene Schritte, nächster Schritt; keine Geheimnisse).
-- Wer 15 Minuten schweigt, gilt als ausgefallen (`_kern.md`, Abschnitt 3). Bei langen Läufen schreibst du `[alive] <nick>: <Paket>, Lauf bis HH:MM`.
-- Übernimmst du ein Paket eines Ausgefallenen: Kopf auf `origin` prüfen, seine Notiz lesen, im Kanal „übernommen, Kopf <hash>“ melden, ihn im PR als Autor nennen.
+- Steckst du fest (eine Entscheidung fehlt, ein Befund widerspricht dem Plan), meldest du `[FRAGE]` oder `[BLOCKER]` mit dem Konkreten (was versucht, was gesehen, welche Entscheidung fehlt)
+  und beendest den Lauf, statt zu warten.
+- Halte deinen Stand so, dass ein anderer sofort übernehmen kann: Zwischenstände auf deinen Branch pushen (auf `origin` prüfen) und `state.md` aktuell (`_kern.md`, Abschnitt 6).
+- Keep-alives gibt es nicht mehr; ein langer Lauf ist kein Ausfall. Läuft eine Prüfung länger als das Zeitlimit des Dienstes (Standard 60 Minuten), teile sie auf oder nenne die Dauer im Auftrag.
+- Gibst du ab oder pausierst du, gehört der Stand auch dorthin, wo andere ihn lesen können: in die `[UEBERGABE]`-Zeile und in den PR-Text. `state.md` liegt auf deinem Rechner und ist für
+  Agenten auf anderen Rechnern nicht erreichbar.
+- Übernimmst du ein Paket eines Ausgefallenen: Kopf auf `origin` prüfen, seine letzte `[UEBERGABE]`- oder `[FERTIG]`-Zeile und den PR lesen, mit `[UEBERGABE]` „übernommen, Kopf <hash>“ melden,
+  ihn im PR als Autor nennen.
 
 ## 5. Wenn du fertig bist
 
-Paket im Kanal abschließen (PR-Nummer, Kopf, was offen bleibt), dem Lead melden, wenn der Plan nachgezogen werden muss, und dann wie in `_kern.md` beschrieben beim
-Koordinator nach der nächsten Aufgabe fragen.
+`[FERTIG]` im Kanal des Auftrags (PR-Nummer, Kopf, geprüft, was offen bleibt), `state.md` schreiben, Lauf beenden. Muss der Plan nachgezogen werden, steht das in derselben Zeile mit dem Lead
+als Nennung. Nach einer neuen Aufgabe fragst du nicht; der Koordinator vergibt sie.

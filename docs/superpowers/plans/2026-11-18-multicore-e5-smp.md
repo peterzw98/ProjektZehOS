@@ -20,6 +20,10 @@ Angleichen vorhandener Plugs und Messen. Verteilt wird erst in Etappe 6.
 Ist der Commit nicht mehr abrufbar, nimmt E5-A die aktuelle Spitze, hält ihren Commit in `PATCHES.md` fest und meldet
 das im Kanal; die Schnittstellen in diesem Plan sind dann gegen diesen Stand neu zu prüfen.
 
+> **Lead-Entscheidung 18.11.2026 (Lead Multicore):** Am 18.11.2026 sind `44952133` und die Basis `efcf20cc` noch abrufbar
+> (`git ls-remote`, `git fetch`). Erster Schritt von E5-A, sobald das Gate offen ist (E3-C gemergt, E4-E erledigt): beide
+> Commits sofort in den eigenen Branch `cosmos-upstream/smp-phase5b` spiegeln, damit E5 nicht mehr an Upstream hängt.
+
 ## Integrationsbranch
 
 Zwischen dem Einspielen des Stapels und der Anpassung von Adapter und Plugs lässt sich ZehOS nicht bauen. Deshalb
@@ -49,6 +53,7 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 3. Ein Plug bindet nach dem Stapel nicht mehr und wird stiller No-Op (E5-D, `check-plug-binding.py`).
 4. Code liest `GetCpuState(0)` und meint „diese CPU“ (E5-D, Suche).
 5. Eine CPU kommt beim Start nicht hoch: Cosmos hält mit Panic an; ZehOS muss das in der Abnahme mit vier und acht CPUs sehen, nicht erst auf Hardware (E5-J).
+6. Der neu angebrachte Patch `ausnahme-hook`: `TryAbandonCurrentFromInterrupt` ruft `ScheduleFromInterrupt`, das auf dem SMP-Stand `state._lock` nimmt. Fault oder Halt unter dieser Sperre = Hänger statt Halt (E5-A, Befund Trockenlauf 19.11.).
 
 ---
 
@@ -59,6 +64,7 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 - [ ] **Schritt 1:** Upstream als temporären Remote holen: `git remote add cosmos-upstream https://github.com/CosmosOS/Cosmos` und `git fetch cosmos-upstream 44952133e7820565552f30b057baa0660bd0a80d efcf20cc62884b042a0adadffe9fc4540491fd89`. Unter Windows vorher `git config core.longpaths true`.
 - [ ] **Schritt 2:** Kumulierten Unterschied anwenden: `git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index`. Konflikte entstehen nur dort, wo eigene Patches dieselben Zeilen ändern (sicher: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs`, falls E3-C schon gemergt ist; möglich: `src/Cosmos.Kernel/Panic.cs`, `SchedulerManager.cs` nach E3-A). Jeden Konflikt so lösen, dass Upstreams Fassung gilt und der eigene Patch darauf neu angebracht wird.
 - [ ] **Schritt 3:** Prüfen, dass nichts außer den eigenen Patches abweicht: `git diff --stat 44952133 -- . ':(exclude).github' ':(exclude)PATCHES.md'` listet genau die Dateien, die `PATCHES.md` nennt.
+  Trockenlauf 19.11. (agent-peter-senior, `origin/cosmos` fdc9da0a): 4 Konflikte (`CLAUDE.md`, `public-api.md`, `PublicAPI.Unshipped.txt`, `Experimentals.cs`; alle aus `ausnahme-hook` bzw. Grundstand), danach 42 Dateien. Zusätzlich zu den Patchdateien erscheinen erwartet die Grundstand-Dateien (`.taskmaster/`, `.claude/agents`, `.mcp.json`, `CLAUDE.md`, `ZEHOS.md`, `patches/`). Nicht in `patches/*.md` geführt und vor Schritt 3 nachzutragen: `Ext2FormatOptions.cs` (`ext2-formatter`), `Ext2Inode.cs` (`ext2-truncate`) und die Testdateien dieser Patches.
 - [ ] **Schritt 4:** `PATCHES.md`: neuer Abschnitt „Übernommener Upstream-Stand“ mit Branch, Commit, Datum und dem Befehl aus Schritt 2. Die bestehenden Patchzeilen bekommen den Vermerk, ob sie neu angebracht wurden.
 - [ ] **Schritt 5:** Ein Commit (`upstream: SMP stack feat/smp-phase5b@4495213`). Pakete bauen: `scripts/build-cosmos.sh --commit <Commit>`. Erwartet: alle Pakete im Feed.
 - [ ] **Schritt 6:** PR gegen `cosmos`. Gemergt wird er zusammen mit dem PR des Integrationsbranches nach `master`.
@@ -98,7 +104,8 @@ vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerD
 ```csharp
 ThreadStarter.ApplyClass = threadClass =>
 {
-    using var mask = SchedulerManager.MaskInterrupts();
+    // MaskInterrupts gibt es upstream nicht mehr; SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt
+    // KernelCpus.Current nur, solange der Thread nicht wandert (E5: alle auf CPU 0); E6-B prüft das neu.
     if (SchedulerManager.GetCpuState(KernelCpus.Current)?.CurrentThread is { } current)
         SchedulerManager.SetPriority(current, (long)threadClass);
 };
@@ -121,7 +128,7 @@ ThreadStarter.ApplyClass(ThreadClass.Interactive);   // im Hauptthread, direkt n
 - Anlegen: `ProjektZeh/Runtime/BootOptions.cs` (ohne Cosmos-Typen), Test `ProjektZeh.Tests/BootOptionsTests.cs`; Eintrag in `ProjektZeh.Tests/ProjektZeh.Tests.csproj` nach dem Muster von Zeile 36
 - Anlegen: `ProjektZeh/Runtime/CosmosBootOptions.cs` (liest `Limine.Cmdline`, setzt Affinitäten)
 - Ändern: `ProjektZeh/Kernel.cs` (erster Aufruf im Boot, vor jedem Threadstart)
-- Doku: `README.md` (Abschnitt zum VM-Start: Kommandozeilenschalter)
+- Doku: `docs/handbuch/ENTWICKLUNG.md` (VM-Start: Kommandozeilenschalter; früher in der README)
 
 **Schnittstellen (liefert):**
 
@@ -174,6 +181,8 @@ oder „entfallen“ eintragen.
 | `Security/CosmosSaltSource.cs`, `CosmosVirtioEntropyDriver.cs`, `Input/CosmosUsbTabletDriver.cs` | Driver Kit | Übersetzen und Bindung |
 | verbliebene ext2-Plugs (falls Etappe 2 nicht fertig) | `FileSystem/Ext2/**` (im Stapel unverändert) | Bindung |
 | `Runtime/CosmosThreadProbe.cs`, `Messaging/MessageGuestProbe.cs`, weitere Proben | `SchedulerManager` | Übersetzen |
+| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Lösung (kleiner Cosmos-Patch mit öffentlichem Masken-Scope oder Umbau der Sperre) vor E5-D mit dem Lead abstimmen |
+| `Scheduling/CosmosClassScheduler.cs:112-147` (fünf `MaskInterrupts`) | `SchedulerManager.LockCpu` | Teil von E5-B (Tabelle oben), hier nur prüfen, dass keine Stelle übrig bleibt: `grep -rn MaskInterrupts ProjektZeh` leer |
 
 - [ ] **Schritt 1:** `grep -rn "GetCpuState(0)\|UnsafeAccessor\|DllImport(\"\\*\"\|\[Plug" ProjektZeh --include=*.cs` als Arbeitsliste; mit der Tabelle abgleichen, Fehlendes ergänzen.
 - [ ] **Schritt 2:** Zeile für Zeile angleichen.
@@ -277,7 +286,16 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 `ThreadQuarantine` entfernen, wenn der aufgegebene Thread durch Cosmos als tot gilt und nie wieder bereit wird;
 `docs/COSMOS_SUPPORT.md` („Je Ausnahme bleiben Thread, 8-MiB-Stack … belegt“) berichtigen.
 
+> **Entscheidung Koordinator 19.11.2026 (Umfang E5-K):** E5-K deckt nur den normalen Abschluss über `ExitThread` ab
+> (eigenes Ende, `SchedulerDiagnostics.RequestKill`, gescheiterter Start). Aufgegebene Wasm-Worker erreichen `ExitThread`
+> nicht: `ProjektZeh/Runtime/CosmosFaultIsolation.cs:79-93` liefert `AbandonThread`, der Thread bleibt laut
+> `ProjektZeh/Runtime/Wasm/WasmRuntime.cs:174-177,203-205` bis zum Neustart belegt (statischer Befund Robert Oppenheimer).
+> Ihre Freigabe, der Abbau der Quarantäne und die Berichtigung in `docs/COSMOS_SUPPORT.md` gehören deshalb zum eigenen Block E6-G (#433),
+> nicht zu E5-K; der E5-K-PR nennt die 8 MiB je aufgegebenem Worker unter „Grenzen“. Die Randbedingung „und für
+> aufgegebene“ oben und der Absatz „ZehOS danach“ gelten entsprechend erst mit E6-G; Schritt 3 ist danach angepasst. E6-G ist ein eigener
+> Block, weil „Wasm-Worker freigeben“ in E6-C (#390) die Affinität meint, nicht die Rückgabe von Thread und Stack.
+
 - [ ] **Schritt 1:** Entwurfsnotiz (eine Seite) im PR gegen `cosmos`: Stelle des Aufräumens, Sperren, Reihenfolge gegenüber GC. Review durch einen zweiten Engineer senior, bevor Code entsteht.
 - [ ] **Schritt 2:** Patch, Datei `patches/<Kurzname>.md`, Pakete bauen.
-- [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Isolationsprobe mit `--runs 20`: freier Speicher sinkt nicht um 8 MiB je Lauf.
+- [ ] **Schritt 3: Gastprobe** (neuer Teil der `SMP_PROBE` aus E6-D oder, wenn E6-D noch fehlt, in `CosmosThreadProbe`): 100 Threads nacheinander starten und beenden, freie Seiten davor und danach vergleichen (`MemoryDiagnostics`); erwartet: Differenz unter 1 MiB. Die Threads enden normal (kein Quarantäne-Pfad). Dazu im Cosmos-Testkern `tests/Kernels/Cosmos.Kernel.Tests.Threading` der Fall `Thread_ExitedStacks_AreFreed` (100 Threads starten und beenden; belegt über den Diagnosezähler `SchedulerDiagnostics.ReleasedStacks`: nach 100 Threads um mindestens 99 gestiegen, ohne Patch 0; ein Vergleich freier Seiten höchstens zusätzlich mit grober Toleranz). Die Isolationsprobe mit `--runs 20` (kein Verlust von 8 MiB je Lauf) gehört zu E6-G (#433).
 - [ ] **Schritt 4:** ZehOS-PR wie in „Cosmos-Patches“ beschrieben.

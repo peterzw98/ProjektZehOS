@@ -5,7 +5,7 @@ Formatiert ein neues, dünn belegtes Rohimage (eine Partition ohne Partitionstab
 
 ```bash
 dotnet run -c Release --project experiments/StorageProbe -- selftest
-dotnet run -c Release --project experiments/StorageProbe -- format IMAGE --size BYTES --block-size 1024|2048|4096 [--label L]
+dotnet run -c Release --project experiments/StorageProbe -- format IMAGE --size BYTES --block-size 2048|4096 [--label L]
 experiments/StorageProbe/matrix.sh .tools/storage-probe [original|fixed]
 dotnet run -c Release --project experiments/StorageProbe -- layout IMAGE --size BYTES [--guid-seed HEX]
 dotnet run -c Release --project experiments/StorageProbe -- verify IMAGE
@@ -23,13 +23,13 @@ Werkzeuge gelten als offen.
 
 `--formatter fixed` (bzw. `matrix.sh … fixed`) formatiert mit der korrigierten gemeinsamen Quelle
 [ProjektZeh/Storage/Ext2](../../ProjektZeh/Storage/Ext2/README.md) statt mit dem Paketformatter; Standard bleibt
-`original`. `selftest` prüft zusätzlich das Layout der korrigierten Quelle an einem 16-MiB-/1K-Image.
+`original`. `selftest` prüft zusätzlich das Layout der korrigierten Quelle an einem 16-MiB-/4K-Image.
 
 Die Cosmos-Pakete kommen über `PackageDownload` (genau `[3.0.97]`, ohne Cosmos-Build-Props); die Probe baut
 deshalb auch ohne vorherigen Kernel-Restore (mit leerem NuGet-Ordner geprüft).
 
 `format` prüft alle Argumente, bevor eine Datei entsteht: Optionen paarweise, Größe positives Vielfaches von 512,
-Blockgröße 1024, 2048 oder 4096; unter Windows höchstens 64 MiB, solange die sparse Anlage dort nicht geprüft ist.
+Blockgröße 2048 oder 4096 (1024 lehnt der Cosmos-Formatter ab, bis der Treiber FirstDataBlock beachtet); unter Windows höchstens 64 MiB, solange die sparse Anlage dort nicht geprüft ist.
 Das Image wird mit `FileMode.CreateNew` angelegt; eine vorhandene Datei bleibt unverändert (Exitcode 3). Ausgabe
 ist eine JSON-Zeile, Exitcode 0 nur bei erfolgreichem Format. Das Dateigerät hat 512-Byte-Sektoren und lehnt
 Zugriffe hinter dem Ende, zu kleine Puffer und Überläufe ab. `selftest` prüft diese Grenzen und die

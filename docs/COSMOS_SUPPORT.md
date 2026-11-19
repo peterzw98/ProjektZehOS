@@ -63,9 +63,10 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
 gemeldeten Vektor mit dem erwarteten (#DE 0, #PF 14). Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
-das System muss anhalten. Cosmos 3.0.97 maskiert beim Start LVT LINT1 (`LocalApic.cs:174`), und QEMU stellt `inject-nmi`
-nur über ein unmaskiertes LINT1 mit Zustellart NMI zu (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`); sonst wird der NMI
-still verworfen (RED 18.11.: 0/2). Nur der NMI-Probebau setzt LINT1 deshalb vor dem Fenster auf NMI, unmaskiert. Zahlen im PR.
+das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
+(`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
+wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `patches/lint1-nmi.md`) richtet `LocalApic.Initialize`
+LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
 
 **Grenzen:**
 
@@ -185,6 +186,8 @@ Einen begrenzten Cache per Plug bewertet der [Storage-Prüfbericht](STORAGE_3_0_
 ## ext2-Formatierer aus Cosmos 3.0.97 am 17. November 2026
 
 **Keine Freigabe:** Die Linux-Hostprobe mit dem unveränderten Cosmos-Formatierer erzeugte in allen 18 Kombinationen (4/8/64 MiB und 32/64/128 GiB, jeweils 1/2/4 KiB-Blöcke) Dateisysteme, für die `e2fsck -fn` Exit 4 meldet. Festgestellt wurden fehlende Backup-Metadaten, eine falsche 1-KiB-Gruppengeometrie und ungesetzte Bitmap-Füllbits. Die Windows-Gegenprobe bestätigt Formatteraufruf und Headerwerte, keine Konsistenzprüfung im Gast. ext2-Aktivierung und Root-Migration bleiben gesperrt. Reproducer, Zuständigkeiten und Grenzen: [Storage-Prüfbericht](STORAGE_3_0_97_FINDINGS.md).
+
+**Stand 18. November 2026 (Patch `ext2-formatter`):** Die Fehler sind im Branch `cosmos` behoben (Patch `ext2-formatter`, `PATCHES.md`, Tests `Ext2FormatterTests`): `sparse_super` mit Sicherungs-Superblöcken, Gruppenanfang mit `first_data_block`, Füllbits, Abschneiden einer zu kleinen letzten Gruppe. Der Plug `CosmosExt2FormatterPlug` und die kopierte Formatter-Quelle sind entfallen; `CosmosExt2Formatter.FormatForKernel` ist nur noch das ZehOS-Profil (4096 Byte, höchstens 128 GiB). Der Cosmos-Formatter formatiert ohne Optionen mit 4096 Byte und lehnt 1024 ab, weil der Treiber 1-KiB-Volumes ohne `FirstDataBlock` falsch adressiert (optionales Paket E2-P9). Das ZehOS-Profil (nur 4096 Byte, höchstens 128 GiB, Sperre je Plattenoperation) steckt in `FormatForKernel`; der allgemeine Weg `VfsManager.TryFormat` ist im Kernel aus Politikgründen verboten (`Ext2FormatterUsageTests`). Die Freigabe der ext2-Aktivierung hängt weiter an den übrigen E4.0-Befunden und den Gastläufen.
 
 ## Cosmos 3.0.97 am 16. November 2026
 

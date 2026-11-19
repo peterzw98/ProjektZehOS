@@ -1,0 +1,26 @@
+name: Isolate self-hosted runner state
+description: >-
+  Auf dem self-hosted Runner (Peters Entwicklungsrechner, gleicher Benutzer) legt der Job sein HOME, den NuGet-Cache und die
+  globalen dotnet-Werkzeuge unter RUNNER_TEMP an, damit weder build-cosmos.sh --global noch cosmos install die Werkzeuge,
+  den NuGet-Cache oder ~/.cosmos des Rechners veraendern. Auf GitHub-gehosteten Runnern tut die Action nichts.
+
+runs:
+  using: composite
+  steps:
+    - name: Isolate HOME, NuGet cache and global tools
+      if: runner.environment == 'self-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        home="${RUNNER_TEMP:?}/home"
+        rm -rf "$home"
+        mkdir -p "$home/.nuget/packages"
+        qemu="$HOME/.cosmos/tools/qemu"
+        {
+          echo "HOME=$home"
+          echo "DOTNET_CLI_HOME=$home"
+          echo "NUGET_PACKAGES=$home/.nuget/packages"
+        } >> "$GITHUB_ENV"
+        echo "$home/.dotnet/tools" >> "$GITHUB_PATH"
+        # Das QEMU des Rechners nur lesend mitbenutzen (Gastlaeufe laufen ohne KVM unter TCG); installiert wird nichts dort.
+        if [ -x "$qemu/qemu-system-x86_64" ]; then echo "$qemu" >> "$GITHUB_PATH"; fi

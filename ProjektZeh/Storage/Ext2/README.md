@@ -52,61 +52,43 @@ der Commit, den das NuGet-Paket `Cosmos.Kernel.System` 3.0.97 nennt. BSD 3-Claus
 
 | Datei hier | Original | SHA-256 des Originals | Änderung |
 | --- | --- | --- | --- |
-| `CosmosExt2Formatter.cs` | `Ext2Formatter.cs` | `695560294181c78effe6f20a4099ca25ce6db604201f689dd58d314a5d5642d7` | siehe unten |
 | `CosmosExt2SuperblockLayout.cs` | `Ext2SuperblockLayout.cs` | `47a9c04f997b23c85a7ca0984cd7e76a1d91779573355d21cd47de62e29b0939` | nur Namespace und Klassenname |
 | `CosmosExt2InodeLayout.cs` | `Ext2InodeLayout.cs` | `6778cf991ccf5f25dfc29c461a8423b7019f056603b9e6790f9197b84c7f9d8c` | nur Namespace und Klassenname |
 
-Die beiden Layoutklassen sind in Cosmos `internal` und deshalb kopiert. `Destroy` des Originals ist nicht
-übernommen, weil nur `Format` gebraucht wird.
+Die beiden Layoutklassen sind in Cosmos `internal` und deshalb kopiert. Der Formatter selbst ist keine Kopie mehr:
+seine Korrekturen stehen als Patch `ext2-formatter` im Branch `cosmos` (`PATCHES.md`); `CosmosExt2Formatter.cs` enthält nur
+das ZehOS-Profil `FormatForKernel`.
 
-## Korrekturen im Formatter
+## Korrekturen im Formatter (jetzt in Cosmos)
 
-Jede Änderung ist im Code mit `Änderung:` markiert.
-
-1. **Gruppengeometrie:** Gruppe g beginnt bei `first_data_block + g * blocks_per_group`; Bit b der Blockbitmap
-   steht für Block `groupStart + b`. Das Original zählte ab Block 0 und markierte bei 1K-Blöcken einen Block zu
-   viel als belegt (e2fsck: `Block bitmap differences: -134` bei 4 MiB).
-2. **`sparse_super` mit Sicherungen:** Merkmal `sparse_super` (ro_compat 0x1) gesetzt; Gruppen 0, 1 und Potenzen
-   von 3, 5 und 7 erhalten Superblock (mit `s_block_group_nr`) und Deskriptortabelle, die Bitmaps folgen danach.
-   Das Original schrieb keine Sicherungen, setzte das Merkmal aber auch nicht (e2fsck: `Corrupt group descriptor`).
-3. **Bitmap-Padding:** Bits hinter dem Gruppenende bzw. hinter `inodes_per_group` bis zum Ende des Bitmapblocks
-   sind gesetzt (e2fsck: `Padding at end of … bitmap is not set`).
-4. **Kleine Volumes:** Bei einer einzigen Gruppe wird `blocks_per_group` auf ein Vielfaches von 8 abgerundet
-   (bis zu 7 Restblöcke bleiben frei), `inodes_per_group` auf ganze Inodetabellenblöcke aufgerundet. Eine letzte
-   Gruppe, die ihre eigenen Metadaten nicht fasst, wird abgeschnitten statt das Formatieren abzulehnen.
-5. **Reihenfolge:** Superblock und Deskriptortabellen werden zuletzt geschrieben; freie Zähler werden direkt aus
-   dem Layout berechnet statt aus zurückgelesenen Bitmaps. Das ist keine Absturzsicherheit: eine ältere
-   Signatur auf dem Gerät wird vorher nicht gelöscht.
-6. **Grenzen vor jedem Schreibzugriff:** Gerätesektorgröße 0 und Geräte über 128 GiB (Zielumfang) werden mit
-   `false` abgelehnt; die Größenprüfung kann nicht überlaufen.
-7. **Standardblockgröße:** `options == null` formatiert mit 4096 statt 1024 Byte (siehe Grenze unten).
+Der Patch `ext2-formatter` im Branch `cosmos` behebt, was früher hier korrigiert war: Gruppengeometrie mit
+`first_data_block`, `sparse_super` mit Sicherungs-Superblöcken (Gruppen 0, 1 und Potenzen von 3, 5, 7, mit
+`s_block_group_nr`), gesetzte Füllbits der Bitmaps, `blocks_per_group` als Vielfaches von 8 bei einer Gruppe, Abschneiden
+einer zu kleinen letzten Gruppe, Superblock und Deskriptoren zuletzt (keine Absturzsicherheit) und Ablehnen von
+Sektorgröße 0 und Überlauf. Der Standard von `Ext2FormatOptions.BlockSize` und von `Format(null)` ist dort 4096, und 1024 wird abgelehnt (siehe unten). Die Tests liegen im
+Cosmos-Baum (`Ext2FormatterTests`). Die 128-GiB-Grenze und die Beschränkung auf 4096 Byte sind ZehOS-Politik und stehen
+in `FormatForKernel`.
 
 ## Bekannte Grenze: 1K-Blöcke nicht mit dem Cosmos-Treiber verwenden
 
 `Ext2Superblock.TryAllocateBlock` und `FreeBlock` in Cosmos 3.0.97 rechnen `blockNumber = g * blocks_per_group + i`
 ohne `first_data_block`. Bei 1K-Blöcken ist das korrekte Layout um einen Block verschoben. Schreibt der
 Cosmos-Treiber auf ein korrekt formatiertes 1K-Volume, kann er belegte Metadaten- oder Datenblöcke
-überschreiben. Das Original war mit diesem Treiberfehler selbstkonsistent, aber nicht ext2-konform. Kernel und
-Plug rufen deshalb `FormatForKernel` auf: nur 4096 Byte (`null` => 4096), jede andere Blockgröße endet mit
-`false` vor dem ersten Schreibzugriff. 2048 ist formatterseitig korrigiert, aber nicht für den Kernel qualifiziert.
-`Format` selbst bleibt für die Matrix mit 1K/2K/4K nutzbar. Achtung: `new Ext2FormatOptions()` hat in Cosmos weiterhin den
-Standard 1024; Aufrufer setzen `BlockSize` ausdrücklich. Die 1K-Korrektur bleibt für die Linux-Matrix und einen
-möglichen Upstream-Fix erhalten.
+überschreiben. Das Original war mit diesem Treiberfehler selbstkonsistent, aber nicht ext2-konform. Der Cosmos-Formatter
+(Patch `ext2-formatter`) lehnt 1024 deshalb ab, bis der Treiber `FirstDataBlock` beachtet (optionales Paket E2-P9), und
+`Format(null)` sowie der Standard von `Ext2FormatOptions.BlockSize` sind 4096. 2048 ist formatterseitig korrigiert, aber
+nicht für den Kernel qualifiziert. Die 1-KiB-Varianten der Cosmos-Smoketests sind `[Ignore]`, bis der Treiber
+`FirstDataBlock` beachtet.
 
 ## Regel für Aufrufer
 
-`ProjektZeh/Storage/CosmosExt2FormatterPlug.cs` ersetzt `Ext2Formatter.Format` aus dem Paket durch
-`CosmosExt2Formatter.FormatForKernel`; auch `VfsManager.TryFormat`/`Ext2FileSystemType.TryFormat` mit ext2 laufen damit
-nur über das 4-KiB-Profil. Neuer Kernelcode ruft trotzdem bevorzugt `FormatForKernel(device, options)` direkt auf.
-`CosmosExt2Formatter.Format` (1K/2K erlaubt) ist nur für die Hostprobe.
-
-Der Plugkörper wird vom Cosmos-Patcher nach `Cosmos.Kernel.System` kopiert und darf deshalb keinen Typ aus
-`Cosmos.Kernel.System` nennen; `FormatForKernel` nimmt darum `object?`. Mit `Ext2FormatOptions` in der Signatur brach
-ILC mit „library initializer assemblies Cosmos.Kernel.System reference each other in a cycle“ ab (a2c9e39 auf
-Branch `task/storage-ext2-kernel-plug`, Gegenprobe ohne Plug grün).
-
-`ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht in `ProjektZeh/**/*.cs` außerhalb dieses Ordners nach
-`(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
+Kernelcode formatiert ext2 nur über `CosmosExt2Formatter.FormatForKernel(device, options)`. Es erzwingt das ZehOS-Profil
+(nur 4096 Byte, höchstens 128 GiB, Sektorgröße > 0), sperrt jede Plattenoperation mit `StorageLock`
+(`CosmosLockedBlockDevice`) und ruft dann `Ext2FileSystemType.TryFormat` mit dem Cosmos-Formatter auf. Der frühere Plug
+`CosmosExt2FormatterPlug` ist entfallen. Der allgemeine VFS-Weg (`VfsManager.TryFormat` mit ext2) würde technisch mit 4096
+Byte formatieren, aber ohne Größenbegrenzung und ohne Sperre je Plattenoperation und auch 2048 Byte zulassen; das ist
+Politik, nicht Technik. `ProjektZeh.Tests/Ext2FormatterUsageTests.cs` sucht deshalb in `ProjektZeh/**/*.cs` außerhalb
+dieses Ordners nach `(Cosmos)Ext2Formatter.Format(` und nach `TryFormat` mit `"ext2"` oder `Ext2FormatOptions`; über Variablen
 weitergereichte Dateisystemnamen erkennt die Suche nicht.
 
 ## Löschen: Korrektur in der Cosmos-Quelle
@@ -117,23 +99,3 @@ Cosmos-ext2-Treibers 3.0.97. Seit E2-Z1 sind die Fehler im Branch `cosmos` behob
 `Ext2IndirectBlocks` und `Ext2InodeRelease` samt Hosttests sind entfernt, die Tests leben als NUnit-Tests im Cosmos-Baum
 (`tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/`). Hintergrund und frühere Gastbelege:
 [Issue-Entwurf](../../../docs/COSMOS_EXT2_UPSTREAM_ISSUE.md) und `docs/COSMOS_SUPPORT.md`.
-
-## Gastprobe
-
-`-p:ZehOSStorageProbe=true` baut `ProjektZeh/Storage/CosmosExt2GuestProbe.cs` ein; die Hostseite ist
-`scripts/test-storage-ext2-guest.py`. Die Probe nutzt nur `sata1` (AHCI-Port 1 hinter der App-Platte an Port 0) und
-nur, wenn es genau 72 MiB groß ist; die App-Platte hat 64 MiB. Erstes MiB komplett null: Lauf 1 formatiert bewusst
-über `VfsManager.TryFormat` (4096 Byte und `sparse_super` belegen den Plug), prüft `Ext2FeatureGate`, mountet die
-ganze Platte ohne Partitionstabelle und führt Create/Write, Append, Seek-Write, Read, Rename, Mkdir, Rmdir, Delete,
-Sync und Unmount aus; `probe.bin` (72 KiB, reicht in den Einfach-Indirektblock) bleibt. Trägt die Platte ext2:
-Lauf 2 verwendet nur die Lesekomponente `CosmosReadOnlyExt2FileSystem` unter `/mnt/ext2-ro` (der native
-Cosmos-Lesemount schreibt bei Sync/Drop): SHA-256 über die ganze Platte vorher, Featurevertrag, Mount, Lesen von
-`probe.bin`/`reuse.bin`/`neu`, Datei-Handle mit Lesen, Sync und Schließen bei verweigertem Write/SetAttr, verweigerte
-Create/Delete/Mkdir/Rename ohne Wirkung, Unmount und derselbe SHA-256 danach; das Hostskript vergleicht zusätzlich den
-Image-Hash vor und nach Lauf 2. Für die verweigerten Mutationen prüft die Probe vorher die Ausgangslage (Ziel
-vorhanden, neue Namen fehlen) und nachher unveränderten Namen und Hash. `/mnt` muss nicht existieren:
-`VfsManager.TryMount` normalisiert nur den Einhängepunkt (Cosmos `VfsManager.cs:692-706`, efcf20c) und prüft keinen
-Elternpfad; die Probe protokolliert `ro-info /mnt existiert=…` ohne Bewertung. Jeder andere Inhalt bricht ohne
-Schreibzugriff ab.
-Seriell `STORAGE_PROBE <schritt> PASS|FAIL …`, Ausnahmen werden dem laufenden Schritt zugeordnet, am Ende immer
-`STORAGE_PROBE DONE`; danach fährt der Gast über den normalen Energiepfad herunter.

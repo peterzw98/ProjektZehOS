@@ -30,7 +30,10 @@ Speicher, Scheduler, Nebenläufigkeit, schwierige Fehler.
 - Messungen (Bildzeit, Scheduler-Anteile) laufen mit zwei ISOs im Wechsel unter gleicher Last, mindestens fünf Läufe je Seite, mit Umgebung (QEMU-Version, Beschleuniger,
   CPU-Aufbau, Rechner). Laufen auf der Maschine andere Arbeiten mit, ist das keine Messung; schreib das dazu.
 - QEMU belegt nichts für VMware oder echte Hardware. Fehlende Läufe stehen als „offen“ im PR.
-- Auf dem gemeinsamen KVM-Rechner läuft ein Gast zur Zeit; den Slot vergibt der Koordinator.
+- Auf dem gemeinsamen KVM-Rechner läuft ein Gast zur Zeit; den Slot vergibt der Koordinator. Dort läuft auch der selbstgehostete CI-Runner für die QEMU-Jobs; während einer Messung darf
+  keine CI dort laufen.
+- Gastläufe dauern oft länger als ein normaler Arbeitsschritt: nenne die erwartete Dauer im `[FERTIG]` oder im Auftrag an einen anderen; das Zeitlimit des Dienstes (Standard 60 Minuten) gilt
+  für den ganzen Lauf.
 
 ## 4. Verantwortung im Team
 
