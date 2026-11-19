@@ -13,7 +13,9 @@ export IRCKEY_FILE=${IRCKEY_FILE:-$main/.tools/IRCKEY}
 export CLONE_REFERENCE=${CLONE_REFERENCE:-$main}
 # sbin und zehos-tools: e2fsck, sgdisk, mtools fuer Gastlaeufe; ohne sie suchen die Agenten danach
 export PATH_PREFIX=${PATH_PREFIX:-$HOME/.dotnet:$HOME/.local/bin:$HOME/.local/opt/zehos-tools/root/usr/bin:$HOME/.local/opt/zehos-tools/root/usr/sbin:/usr/sbin}
-export DISPATCH_PARALLEL=${DISPATCH_PARALLEL:-3}   # 16 GB RAM: mehr nicht, wenn native Bauten oder KVM-Gaeste laufen
+# Bauende Agenten (Engineers, Senior) hoechstens 2 gleichzeitig: drei Laeufe mit nativem Bau oder KVM-Gast ueberlasteten MSI (19.11.).
+# Der Reviewer hat einen eigenen Topf (pool=review:1 in agents-peter.tsv) und laeuft zusaetzlich.
+export DISPATCH_PARALLEL=${DISPATCH_PARALLEL:-2}
 # Wer Auftraege geben darf: Koordinator und Peters Leads (feste Nicks, siehe TEAM.md); dieselben duerfen Laeufe starten
 export TEAM_ASSIGNERS=${TEAM_ASSIGNERS:-agent-coordinator,agent-peter-lead,agent-nweh-lead1,agent-nweh-lead2}
 export DISPATCH_ALLOW=${DISPATCH_ALLOW:-$TEAM_ASSIGNERS}
