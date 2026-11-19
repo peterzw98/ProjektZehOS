@@ -1,7 +1,9 @@
+using Cosmos.Kernel.Core.Scheduler;
 using System.Runtime.CompilerServices;
 using Cosmos.Build.API.Attributes;
 using Cosmos.Kernel.System.Input;
 using KitPointerButtons = Cosmos.Kernel.HAL.Devices.Input.PointerButtons;
+#pragma warning disable COSMOS0001 // IrqSpinLock (ZehOS-Patch irq-mask-scope, #473) ist als COSMOS0001 markiert; die Nutzung ist bewusst.
 
 namespace ProjektZeh.Input;
 
@@ -12,13 +14,13 @@ public static class CosmosMousePlug
     private const string MouseType = "Cosmos.Kernel.System.Input.MouseManager, Cosmos.Kernel.System";
     private static RelativeMouseBuffer packets;
     // Eine Sperre fuer Maus und Tablet: PS/2-Plug und Tablettreiber schreiben, CosmosInputService liest.
-    internal static CosmosIrqLock PointerLock;
+    internal static IrqSpinLock PointerLock;
 
     // Kein Rueckruf in MouseManager: der NativeAOT-Initialisierer haette sonst einen Zyklus.
     [PlugMember]
     public static void HandleRelative(int deltaX, int deltaY, KitPointerButtons buttons, int wheel)
     {
-        using (PointerLock.Enter()) AddLocked(deltaX, deltaY, buttons, wheel);
+        using (PointerLock.Acquire()) AddLocked(deltaX, deltaY, buttons, wheel);
     }
 
     // Fuer Aufrufer, die PointerLock schon halten; HandleRelative wuerde die nicht wiedereintrittsfaehige Sperre erneut nehmen.
@@ -64,3 +66,4 @@ public static class CosmosMousePlug
     private static extern ref bool Middle([UnsafeAccessorType(MouseType)] object? owner);
 }
 #pragma warning restore COSMOS0003
+#pragma warning restore COSMOS0001
