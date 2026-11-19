@@ -5,8 +5,8 @@ using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem.Ext2;
 
 // format IMAGE --size BYTES --block-size N [--label L] [--formatter original|fixed]: neues sparse Image anlegen und
-// mit dem unveraenderten Cosmos-Ext2Formatter (original, Standard) oder der korrigierten gemeinsamen Quelle
-// ProjektZeh/Storage/Ext2/CosmosExt2Formatter.cs (fixed) formatieren. Ergebnis als eine JSON-Zeile auf stdout.
+// mit dem Cosmos-Ext2Formatter (Standard, Patch ext2-formatter) oder ueber das ZehOS-Profil formatieren, jeweils ueber
+// Ext2FileSystemType.TryFormat. Ergebnis als eine JSON-Zeile auf stdout.
 // selftest: Grenz- und Argumentpruefungen sowie Layoutpruefung der korrigierten Quelle, ohne e2fsck.
 if (args.Length == 3 && args[0] == "boundary-probe") return BoundaryProbe.Run(args[1], args[2]);
 if (args.Length == 1 && args[0] == "selftest") return SelfTest.Run();
@@ -35,7 +35,7 @@ using (file)
     bool ok = false;
     string? error = null;
     var options = new Ext2FormatOptions { BlockSize = request.BlockSize, VolumeLabel = request.Label };
-    try { ok = request.Fixed ? ProjektZeh.Storage.Ext2.CosmosExt2Formatter.Format(device, options) : (bool)format.Invoke(null, [device, options])!; }
+    try { ok = request.Fixed ? new Ext2FileSystemType(device).TryFormat(ReadOnlySpan<char>.Empty, options) : (bool)format.Invoke(null, [device, options])!; }
     catch (TargetInvocationException exception) { error = exception.InnerException?.ToString() ?? exception.ToString(); }
     catch (Exception exception) when (request.Fixed) { error = exception.ToString(); }
     file.Flush();
@@ -122,16 +122,15 @@ internal static class SelfTest
     }
 
     // Fehlerfaelle der Cosmos-Quelle (fehlende Sicherungen, first_data_block, Padding) ohne e2fsck nachpruefen.
-    // 16 MiB mit 1K-Bloecken: zwei Gruppen ab Block 1, Sicherung in Gruppe 1 ab Block 8193.
-    private static void FixedLayout(string directory, Action<bool, string> expect)
+        private static void FixedLayout(string directory, Action<bool, string> expect)
     {
         string path = Path.Combine(directory, "fixed.img");
         byte[] image;
         using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite))
         {
             file.SetLength(16L * 1024 * 1024);
-            bool ok = ProjektZeh.Storage.Ext2.CosmosExt2Formatter.Format(new FileBlockDevice(file, "fixed"), new Ext2FormatOptions { BlockSize = 1024 });
-            expect(ok, "fixed: 16 MiB/1K formatiert");
+            bool ok = new Ext2FileSystemType(new FileBlockDevice(file, "fixed")).TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 });
+            expect(ok, "fixed: 16 MiB/4K formatiert");
             file.Flush();
         }
         image = File.ReadAllBytes(path);
@@ -154,28 +153,30 @@ internal static class SelfTest
         File.Delete(kernelPath);
 
         // Ungueltige Geraete: Sektorgroesse 0, Ueberlauf von BlockCount * BlockSize, mehr als 128 GiB.
+        // Sektorgroesse 0 und Ueberlauf lehnt schon der Cosmos-Formatter ab, ueber 128 GiB nur das ZehOS-Profil.
         foreach (var (sector, count, name) in new[] { (0UL, 1UL << 20, "Sektorgroesse 0"), (512UL, ulong.MaxValue, "Ueberlauf"), (512UL, (128UL << 30) / 512 + 1, "ueber 128 GiB") })
         {
             var fake = new CountingBlockDevice(sector, count);
-            expect(!ProjektZeh.Storage.Ext2.CosmosExt2Formatter.Format(fake, new Ext2FormatOptions { BlockSize = 4096 }) && fake.Accesses == 0, "fixed: " + name + " ohne Zugriff abgelehnt");
+            bool refusedFake = !ProjektZeh.Storage.Ext2.CosmosExt2Formatter.FormatForKernel(fake, new Ext2FormatOptions { BlockSize = 4096 });
+            expect(refusedFake && fake.Accesses == 0, "kernel: " + name + " ohne Zugriff abgelehnt");
         }
         uint U32(long offset) => BitConverter.ToUInt32(image, (int)offset);
         ushort U16(long offset) => BitConverter.ToUInt16(image, (int)offset);
-        const long Primary = 1024, Backup = 8193L * 1024;
-        expect(U32(Primary + 20) == 1 && U32(Primary + 32) == 8192, "fixed: first_data_block 1, 8192 Bloecke je Gruppe");
+        // 16 MiB mit 4K-Bloecken: zwei Gruppen zu 2048 Bloecken, Sicherung in Gruppe 1 ab Block 2048.
+        const long Primary = 1024, Backup = 2048L * 4096;
+        expect(U32(Primary + 20) == 0 && U32(Primary + 32) == 2048, "fixed: first_data_block 0, 2048 Bloecke je Gruppe");
         expect((U32(Primary + 100) & 1) == 1, "fixed: sparse_super gesetzt");
         expect(U16(Backup + 56) == 0xEF53 && U16(Backup + 90) == 1, "fixed: Sicherungssuperblock in Gruppe 1");
-        uint group1Bitmap = U32(2048 + 32);
-        expect(group1Bitmap == 8193 + 2 && U32(Backup + 1024 + 32) == group1Bitmap, "fixed: Gruppe-1-Bitmap hinter Sicherung, Deskriptorkopie gleich");
-        uint group0Bitmap = U32(2048);
-        int lastBits = image[group0Bitmap * 1024 + 1023];
-        int inodeTail = image[U32(2048 + 4) * 1024 + 1023];
-        expect(lastBits == 0 && inodeTail == 0xFF, "fixed: volle Blockbitmap ohne, Inodebitmap mit Padding");
-        // Gruppe 0 belegt Superblock, Deskriptor, 2 Bitmaps, 256 Inodetabellenbloecke und Wurzel: Bits 0..260.
-        // Der unveraenderte Formatter setzt Bit 261 zusaetzlich (e2fsck "-134" beim 4-MiB-Fall).
-        byte[] bitmap = image.AsSpan((int)(group0Bitmap * 1024), 1024).ToArray();
-        expect((bitmap[260 / 8] & (1 << (260 % 8))) != 0 && (bitmap[261 / 8] & (1 << (261 % 8))) == 0, "fixed: Gruppe 0 Bits 0..260 belegt, 261 frei");
-        expect(U32(Primary + 4) == 16384 && U16(2048 + 12) == 8192 - 261, "fixed: Blockzahl und freie Bloecke Gruppe 0");
+        uint group1Bitmap = U32(4096 + 32);
+        expect(group1Bitmap == 2048 + 2 && U32(Backup + 4096 + 32) == group1Bitmap, "fixed: Gruppe-1-Bitmap hinter Sicherung, Deskriptorkopie gleich");
+        uint group0Bitmap = U32(4096);
+        int lastBits = image[group0Bitmap * 4096 + 4095];
+        int inodeTail = image[U32(4096 + 4) * 4096 + 4095];
+        expect(lastBits == 0xFF && inodeTail == 0xFF, "fixed: Bitmaps mit gesetztem Padding hinter dem Gruppenende");
+        // Gruppe 0 belegt Superblock, Deskriptor, 2 Bitmaps, 16 Inodetabellenbloecke und Wurzel: Bits 0..20.
+        byte[] bitmap = image.AsSpan((int)(group0Bitmap * 4096), 4096).ToArray();
+        expect((bitmap[20 / 8] & (1 << (20 % 8))) != 0 && (bitmap[21 / 8] & (1 << (21 % 8))) == 0, "fixed: Gruppe 0 Bits 0..20 belegt, 21 frei");
+        expect(U32(Primary + 4) == 4096 && U16(4096 + 12) == 2048 - 21, "fixed: Blockzahl und freie Bloecke Gruppe 0");
     }
 
     private static bool Throws(Action action)

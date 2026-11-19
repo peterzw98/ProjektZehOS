@@ -58,12 +58,13 @@ class StorageMatrixTests(unittest.TestCase):
     def test_clean_matrix_succeeds(self):
         result = self.run_matrix()
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(18, result.stdout.count("e2fsck=0"))
+        # 6 Groessen x Bloecke 2048/4096; 1024 lehnt der Cosmos-Formatter ab.
+        self.assertEqual(12, result.stdout.count("e2fsck=0"))
 
     def test_uncorrected_errors_fail_after_reporting_all_cases(self):
         result = self.run_matrix(check_status=4)
         self.assertEqual(1, result.returncode, result.stderr)
-        self.assertEqual(18, result.stdout.count("e2fsck=4"))
+        self.assertEqual(12, result.stdout.count("e2fsck=4"))
 
     def test_format_failure_stops_without_deleting_existing_image(self):
         result = self.run_matrix(format_status=3)

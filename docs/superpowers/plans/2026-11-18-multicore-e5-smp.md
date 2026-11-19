@@ -53,16 +53,35 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 3. Ein Plug bindet nach dem Stapel nicht mehr und wird stiller No-Op (E5-D, `check-plug-binding.py`).
 4. Code liest `GetCpuState(0)` und meint „diese CPU“ (E5-D, Suche).
 5. Eine CPU kommt beim Start nicht hoch: Cosmos hält mit Panic an; ZehOS muss das in der Abnahme mit vier und acht CPUs sehen, nicht erst auf Hardware (E5-J).
+6. Der neu angebrachte Patch `ausnahme-hook`: `TryAbandonCurrentFromInterrupt` ruft `ScheduleFromInterrupt`, das auf dem SMP-Stand `state._lock` nimmt. Fault oder Halt unter dieser Sperre = Hänger statt Halt (E5-A, Befund Trockenlauf 19.11.).
+7. Der Patch `ausnahme-hook` wechselt auf dem 5b-Stand nicht mehr, wenn die Queue der CPU leer ist. `ScheduleFromInterruptLocked` kehrt mit `next is null && KeepsCpu(state, prev)` zurück, ohne zu wechseln (Upstream `44952133` `SchedulerManager.cs:2507`). `KeepsCpu` (`:2632`) ist für den fehlerhaften, noch `Running` laufenden Worker wahr. Dann liefert `TryAbandonCurrentFromInterrupt` `false`, und `Panic` hält an. Auf einer Worker-CPU (E6-C) ist eine leere Queue der Normalfall. Lösung siehe E5-A, Schritt 2a (statischer Befund Ada Lovelace, zweitgelesen Klaus Kusche 19.11.).
 
 ---
 
 ### Paket E5-A: Stapel einspielen
 
-**Branch:** `cosmos-upstream/smp-phase5b`, von `cosmos`, PR gegen `cosmos`.
+**Branch:** `cosmos-patch/smp-phase5b`, von `cosmos`, PR gegen `cosmos` (Spiegel siehe Entscheidung unten).
+
+> **Entscheidungen Peter, 19.11.2026, Terminal von agent-nweh-lead1** (Wortlaut „1. ja 2. ja“ auf die beiden Fragen):
+> 1. Die Upstream-Commits werden **vor** dem Gate gespiegelt: `cosmos-upstream/smp-phase5b` zeigt auf `44952133`, `cosmos-upstream/smp-base` auf
+>    `efcf20cc`. Beide Branches sind reine Spiegel und werden nie geändert; E5-A arbeitet deshalb auf `cosmos-patch/smp-phase5b` (von `cosmos`, PR gegen `cosmos`).
+> 2. Für `Input/CosmosIrqLock.cs` kommt ein kleiner Cosmos-Patch `irq-mask-scope` (öffentlicher Masken-Scope über Upstreams `IrqLockScope`),
+>    als eigener PR gegen `cosmos`, gestapelt auf E5-A; kein Umbau der Sperre in ZehOS. E5-D stellt `CosmosIrqLock` darauf um.
 
 - [ ] **Schritt 1:** Upstream als temporären Remote holen: `git remote add cosmos-upstream https://github.com/CosmosOS/Cosmos` und `git fetch cosmos-upstream 44952133e7820565552f30b057baa0660bd0a80d efcf20cc62884b042a0adadffe9fc4540491fd89`. Unter Windows vorher `git config core.longpaths true`.
 - [ ] **Schritt 2:** Kumulierten Unterschied anwenden: `git diff --binary efcf20cc 44952133 -- . ':(exclude).github/workflows' | git apply --3way --index`. Konflikte entstehen nur dort, wo eigene Patches dieselben Zeilen ändern (sicher: `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs`, falls E3-C schon gemergt ist; möglich: `src/Cosmos.Kernel/Panic.cs`, `SchedulerManager.cs` nach E3-A). Jeden Konflikt so lösen, dass Upstreams Fassung gilt und der eigene Patch darauf neu angebracht wird.
+- [ ] **Schritt 2a: `ausnahme-hook` an 5b anpassen.** `TryAbandonCurrentFromInterrupt` setzt den Thread unter der Queue-Sperre der CPU auf `SchedulerThreadState.Dead`, bevor gewählt wird. Danach folgt der gesperrte Pfad (`ScheduleFromInterruptLocked`, Sperre freigeben, `MigratePending`) statt `ScheduleFromInterrupt`, das die Sperre selbst nimmt. Ein `Dead`-Thread erfüllt `KeepsCpu` nicht. Der Rückweg gibt `prev` nur über `OnThreadYield` zurück, wenn er `Running` ist (`:2585-2592`), und der Stub löscht `_onCpu` wie sonst. Die CPU zieht dann Arbeit von einer anderen CPU (`PullWork`) oder läuft im Idle-Thread. Die Quarantäne im ZehOS-Adapter wird damit zur zweiten Linie.
+  **GC-Folge:** `ScanStackRoots` überspringt `Dead` (`GarbageCollector.Mark.cs:132`). Ab dem Hook ist der Worker-Stack also keine GC-Wurzel mehr. Alles, was `WasmRuntime` nach `TakeIsolated` noch braucht (Instanz, Sitzung, Puffer), muss außerhalb dieses Stacks referenziert sein, sonst droht Use-after-free nach der nächsten Sammlung. **Statisch belegt (Klaus Kusche, ZehOS `f6bbaed9`): Für E5-A/E6-C ist das unkritisch.** Sitzung, Dateien, Netz, Spielstand und der Abschluss-Callback liegen in statischen Feldern (`WasmRuntime.HostCallbacks.cs:15-16`, `WasmRuntime.cs:34,40-42`). Sie werden aus `PollFaultIsolation` über `ReleaseRunResources` freigegeben (`:151-168`, `:209`), und die Hostfunktionen lesen nur diese Felder (`:681/692/718`). Nur auf dem Worker-Stack liegen `module`/`aot`/`entryBytes` (gepinnt über `fixed`, `:347-416`) und der Lambda-Rahmen (`:121`). Mit `Dead` gibt der GC sie frei. Da der Worker nie wieder läuft und niemand die native Instanz anfasst (`:174-177`), schadet das nicht, das Modul-Array wird sogar frei. **Für E6-G (#433) entschieden (Koordinator 19.11., nach Lesung Klaus):** Die native Instanz wird nicht freigegeben. Ihre Handles liegen im C-Rahmen auf dem Worker-Stack (`Native/Wasm/host/zehos_host_wasm3.c:81-141`, `zehos_host_wamr.c:~230-358`), und `wasm_runtime_destroy` ist global. E6-G räumt nur Thread und Stack ab. Liegen bleiben höchstens `MaximumIsolatedRuns = 3` Instanzen (`WasmRuntime.cs:37`). Freigabe für den `Dead`-Hook: Koordinator, 19.11., ohne Gastbeleg. Prüfen im Gast: Isolationsprobe mit `ZEHOS_QEMU_SMP=4` und leerer Queue auf der Fehler-CPU. Erwartet wird Isolation, kein Halt.
+- [ ] **Schritt 2b: Sperre und CPU im Hook (Entscheidung Koordinator 19.11., zweitgelesen Klaus Kusche).**
+  - **Pflicht:** `TryAbandonCurrentFromInterrupt` nimmt die Queue-Sperre mit `TryAcquire` (`Scheduler/SpinLock.cs:50`), nicht mit `Acquire`. Scheitert das, liefert die Funktion `false`, und `Panic` hält an. Grund: Eine Ausnahme im Policy-Code unter der eigenen Sperre (z. B. `PickNext` im Tick) trifft den unterbrochenen Worker, `Decide` liefert `Isolate`, und `Acquire` würde ewig drehen (Review-Schwerpunkt 6). `SpinLock` kennt keinen Besitzer (`:33`), deshalb bleibt die Sperre einer anderen CPU dabei unberücksichtigt: Dann wird aus der Isolation ein Halt.
+  - **Aktuelle CPU statt `GetCpuState(0)`** im ZehOS-Hook (`ProjektZeh/Runtime/CosmosFaultIsolation.cs:39,67`). Grund: Eine Ausnahme auf einer anderen CPU, während der Worker auf CPU 0 im Gastcode läuft, ergibt `Isolate`. Die andere CPU gibt dann ihren eigenen Thread auf, und der laufende Worker landet in Quarantäne. Das ist schon in E5 möglich. `CpuExceptionInfo` führt heute keine CPU mit (`origin/cosmos` `src/Cosmos.Kernel.Core/CPU/CpuExceptionHook.cs:37-62`: Vektor, IP, SP, Fehleradresse). Zur Wahl:
+    **Entschieden (Koordinator 19.11., gegengelesen Klaus Kusche):** Der Patch `ausnahme-hook` gibt in `CpuExceptionInfo` `CpuId` und `ThreadId` mit (`uint.MaxValue` = kein Thread). Beide befüllt `Panic.cs` aus `SchedulerManager.CurrentCpuState?.CurrentThread`.
+    - Der ZehOS-Hook vergleicht `exception.ThreadId` und braucht damit kein `GetCpuState`. Das hängt nicht an E5-B/C.
+    - Die API ist `[Experimental]` und noch nicht ausgeliefert (nur `PublicAPI.Unshipped.txt`). Es gibt einen einzigen Konstruktoraufruf (`src/Cosmos.Kernel/Panic.cs:46`), der Konstruktor wird ersetzt.
+    - Auf `cosmos` ist `GetCurrentCpuId()` noch konstant `0` (`SchedulerManager.cs:441`). Die Erweiterung gehört deshalb in das Neuanbringen auf 5b.
+    - `FaultIsolation.RegisterWorker` (`:39`) bleibt bei E5-D.
 - [ ] **Schritt 3:** Prüfen, dass nichts außer den eigenen Patches abweicht: `git diff --stat 44952133 -- . ':(exclude).github' ':(exclude)PATCHES.md'` listet genau die Dateien, die `PATCHES.md` nennt.
+  Trockenlauf 19.11. (agent-peter-senior, `origin/cosmos` fdc9da0a): 4 Konflikte (`CLAUDE.md`, `public-api.md`, `PublicAPI.Unshipped.txt`, `Experimentals.cs`; alle aus `ausnahme-hook` bzw. Grundstand), danach 42 Dateien. Zusätzlich zu den Patchdateien erscheinen erwartet die Grundstand-Dateien (`.taskmaster/`, `.claude/agents`, `.mcp.json`, `CLAUDE.md`, `ZEHOS.md`, `patches/`). Nicht in `patches/*.md` geführt und vor Schritt 3 nachzutragen: `Ext2FormatOptions.cs` (`ext2-formatter`), `Ext2Inode.cs` (`ext2-truncate`) und die Testdateien dieser Patches.
 - [ ] **Schritt 4:** `PATCHES.md`: neuer Abschnitt „Übernommener Upstream-Stand“ mit Branch, Commit, Datum und dem Befehl aus Schritt 2. Die bestehenden Patchzeilen bekommen den Vermerk, ob sie neu angebracht wurden.
 - [ ] **Schritt 5:** Ein Commit (`upstream: SMP stack feat/smp-phase5b@4495213`). Pakete bauen: `scripts/build-cosmos.sh --commit <Commit>`. Erwartet: alle Pakete im Feed.
 - [ ] **Schritt 6:** PR gegen `cosmos`. Gemergt wird er zusammen mit dem PR des Integrationsbranches nach `master`.
@@ -91,7 +110,8 @@ arbeiten E5-B, E5-C, E5-D und E5-G auf PRs gegen den Integrationsbranch `task/mc
 | `Balance(PerCpuState cpuState, PerCpuState[] allCpuStates)` | Liefert `SchedulerThread?`; in dieser Etappe `null`. |
 | `OnThreadMigrate` | Ist der Thread `Ready`: `Blocked` auf der Quelle, `Ready` auf dem Ziel. Ist er `Running`: nur `Ready` auf dem Ziel. |
 | `SetPriority(PerCpuState, SchedulerThread, long)` | unverändert; Aufrufer ist jetzt `SchedulerManager.SetPriority(SchedulerThread thread, long priority)` ohne CPU-Nummer. |
-| `GetRunQueueCount`, `GetRunQueueThread`, `Snapshot` | statt `MaskInterrupts` die Sperre der CPU: `using (SchedulerManager.LockCpu(state)) { … }` |
+| `GetRunQueueCount`, `GetRunQueueThread` | `MaskInterrupts` entfällt **ersatzlos**, ohne `LockCpu`: Der Mechanismus ruft diese Hooks schon unter der Queue-Sperre der CPU auf, und die Sperre ist nicht reentrant. Ein Hook, der sie nimmt, dreht sich auf sich selbst (Upstream `IScheduler.cs:12-17`, `SchedulerManager.cs:796-802`). Für `SetPriority` und `GetPriority` gilt dasselbe, die Sperre nimmt `SchedulerManager.SetPriority`. |
+| `Snapshot` (ZehOS, kein Hook) | Läuft im Thread-Kontext. Nimmt `using (SchedulerManager.LockCpu(state)) { … }`, je CPU nacheinander, nie zwei Sperren gleichzeitig. |
 
 Allokation ist nur in `InitializeCpu`, `ShutdownCpu` und `OnThreadCreate` erlaubt; die Auswahlspur bleibt ein
 vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerData` oder ein Feld je CPU-Index umziehen). Der Zähler
@@ -102,7 +122,8 @@ vorab angelegtes Feld je CPU (heute eines für alle: auf `PerCpuState.SchedulerD
 ```csharp
 ThreadStarter.ApplyClass = threadClass =>
 {
-    using var mask = SchedulerManager.MaskInterrupts();
+    // MaskInterrupts gibt es upstream nicht mehr; SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt
+    // KernelCpus.Current nur, solange der Thread nicht wandert (E5: alle auf CPU 0); E6-B prüft das neu.
     if (SchedulerManager.GetCpuState(KernelCpus.Current)?.CurrentThread is { } current)
         SchedulerManager.SetPriority(current, (long)threadClass);
 };
@@ -178,6 +199,8 @@ oder „entfallen“ eintragen.
 | `Security/CosmosSaltSource.cs`, `CosmosVirtioEntropyDriver.cs`, `Input/CosmosUsbTabletDriver.cs` | Driver Kit | Übersetzen und Bindung |
 | verbliebene ext2-Plugs (falls Etappe 2 nicht fertig) | `FileSystem/Ext2/**` (im Stapel unverändert) | Bindung |
 | `Runtime/CosmosThreadProbe.cs`, `Messaging/MessageGuestProbe.cs`, weitere Proben | `SchedulerManager` | Übersetzen |
+| `Input/CosmosIrqLock.cs:28` (E4-D) | `SchedulerManager.MaskInterrupts` (upstream entfernt), `Scheduler/SpinLock.cs` (`internal`) | Upstream bietet keinen öffentlichen Ersatz für die Maske; `LockCpu(state)` ist eine Queue-Sperre und darf nicht im Eingabe-Interrupt genommen werden. Lösung (kleiner Cosmos-Patch mit öffentlichem Masken-Scope oder Umbau der Sperre) vor E5-D mit dem Lead abstimmen |
+| `Scheduling/CosmosClassScheduler.cs:112-147` (fünf `MaskInterrupts`) | `SchedulerManager.LockCpu` | Teil von E5-B (Tabelle oben), hier nur prüfen, dass keine Stelle übrig bleibt: `grep -rn MaskInterrupts ProjektZeh` leer |
 
 - [ ] **Schritt 1:** `grep -rn "GetCpuState(0)\|UnsafeAccessor\|DllImport(\"\\*\"\|\[Plug" ProjektZeh --include=*.cs` als Arbeitsliste; mit der Tabelle abgleichen, Fehlendes ergänzen.
 - [ ] **Schritt 2:** Zeile für Zeile angleichen.

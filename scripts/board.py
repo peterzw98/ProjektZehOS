@@ -7,7 +7,7 @@ Kommentar „[BOARD] übernommen …“); die Spalte auf dem Board zeigt den Sta
   board.py list [--status S] [--team T] [--all]  offene Blöcke (Standard: ohne Erledigt)
   board.py new TITEL --body-file DATEI [--team T]  neuen Block anlegen (Spalte Offen, mit --team gleich zugeteilt)
   board.py claim NR TEAM AGENT BRANCH              Block übernehmen; Exit 3, wenn ihn schon jemand anderes hat
-  board.py status NR SPALTE                         Spalte setzen: Offen, Übernommen, In Arbeit, Review/PR, Erledigt
+  board.py status NR SPALTE                         Spalte setzen: Offen, Übernommen, In Arbeit, Wartend, Review/PR, Erledigt
   board.py release NR TEAM [GRUND]                  eigenen Block wieder freigeben (Team-Label weg, Spalte Offen)
 
 Inhaber ist die älteste noch gültige Übernahme, deren Team-Label gesetzt ist. „[BOARD] freigegeben team=X agents=A,B“
@@ -23,7 +23,7 @@ import time
 
 REPO = "peterzw98/ProjektZehOS"
 OWNER, NUMBER = "peterzw98", 1
-COLUMNS = ("Offen", "Übernommen", "In Arbeit", "Review/PR", "Erledigt")
+COLUMNS = ("Offen", "Übernommen", "In Arbeit", "Wartend", "Review/PR", "Erledigt")
 CLAIM, FREE, WITHDRAW = "[BOARD] übernommen", "[BOARD] freigegeben", "[BOARD] zurückgezogen"
 TOKEN = re.compile(r"[A-Za-z0-9._/+-]+")   # Team, Agent und Branch stehen als key=wert im Kommentar
 

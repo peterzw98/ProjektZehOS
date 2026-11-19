@@ -4,6 +4,7 @@ import ctypes
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -135,6 +136,82 @@ def wasi_module(name, params, args, data=b"", read_back=None):
             + section(7, b"\x01" + string("run") + b"\x00\x01")
             + section(10, b"\x01" + leb(len(code)) + code)
             + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
+
+
+def seq_module(calls, data=b"", read_back=None):
+    # run ruft nacheinander WASI-Imports (name, Parametertypen, Argumente) auf und liefert das Ergebnis des letzten
+    # (oder das u32 an read_back danach). Daten liegen ab Adresse 128.
+    def const(kind, value):
+        if kind == "I":
+            return b"\x42" + leb(value, True)
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    names = []
+    for name, params, _ in calls:
+        if name not in [item[0] for item in names]:
+            names.append((name, params))
+    code = b"\x00"
+    for index, (name, params, args) in enumerate(calls):
+        code += b"".join(const(kind, value) for kind, value in zip(params, args))
+        code += b"\x10" + leb([item[0] for item in names].index(name))
+        if index < len(calls) - 1 or read_back is not None:
+            code += b"\x1a"
+    if read_back is not None:
+        code += const("i", read_back) + b"\x28\x02\x00"
+    code += b"\x0b"
+    types = b""
+    for name, params in names:
+        types += b"\x60" + leb(len(params)) + bytes(0x7e if kind == "I" else 0x7f for kind in params) + b"\x01\x7f"
+    types += b"\x60\x00\x01\x7f"
+    imports = b"".join(string("wasi_snapshot_preview1") + string(name) + b"\x00" + leb(index)
+                       for index, (name, _) in enumerate(names))
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, leb(len(names) + 1) + types)
+            + section(2, leb(len(names)) + imports)
+            + section(3, b"\x01" + leb(len(names))) + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00" + leb(len(names)))
+            + section(10, b"\x01" + leb(len(code)) + code)
+            + (section(11, b"\x01\x00\x41\x80\x01\x0b" + leb(len(data)) + data) if data else b""))
+
+
+def poll_module(subs, count=None, open_first=False, in_pointer=128, out_pointer=4096, nevents=8192):
+    # run ruft poll_oneoff auf (optional nach path_open von asset.txt -> fd 5) und liefert
+    # errno | nevents << 8 | Fehler des ersten Ereignisses << 16 | (nbytes & 0xff) << 24.
+    def const(value):
+        return b"\x41" + leb(value if value < 0x80000000 else value - 0x100000000, True)
+    count = len(subs) // 48 if count is None else count
+    code = b"\x01\x01\x7f"
+    if open_first:
+        code += b"\x41\x03\x41\x00\x41\x10\x41\x09\x41\x00\x42\x00\x42\x00\x41\x00\x41\xc0\x00\x10\x01\x1a"
+    code += const(in_pointer) + const(out_pointer) + const(count) + const(nevents) + b"\x10\x00\x21\x00"
+    code += b"\x20\x00" + const(nevents) + b"\x28\x02\x00" + const(256) + b"\x6c\x6a"
+    code += const(out_pointer + 8) + b"\x2f\x01\x00" + const(65536) + b"\x6c\x6a"
+    code += const(out_pointer + 16) + b"\x2d\x00\x00" + const(1 << 24) + b"\x6c\x6a\x0b"
+    run = 2 if open_first else 1
+    imports = [("poll_oneoff", 0)] + ([("path_open", 2)] if open_first else [])
+    return (b"\x00asm\x01\x00\x00\x00"
+            + section(1, b"\x03\x60\x04" + b"\x7f" * 4 + b"\x01\x7f\x60\x00\x01\x7f"
+                      + b"\x60\x09" + b"\x7f" * 5 + b"\x7e\x7e\x7f\x7f\x01\x7f")
+            + section(2, bytes([len(imports)]) + b"".join(
+                string("wasi_snapshot_preview1") + string(name) + b"\x00" + bytes([kind]) for name, kind in imports))
+            + section(3, b"\x01\x01") + section(5, b"\x01\x00\x01")
+            + section(7, b"\x01" + string("run") + b"\x00" + bytes([run]))
+            + section(10, b"\x01" + leb(len(code)) + code)
+            + section(11, b"\x02\x00" + const(16) + b"\x0b" + leb(9) + b"asset.txt"
+                      + b"\x00" + const(128) + b"\x0b" + leb(len(subs)) + subs))
+
+
+def clock_sub(milliseconds, clock=1, absolute=False, userdata=9, base_ns=0):
+    # Abo-Layout (48 Byte): userdata u64, tag u8 @8, Uhr u32 @16, timeout u64 @24, precision u64 @32, flags u16 @40.
+    return struct.pack("<QB7xIxxxxQQHxxxxxx", userdata, 0, clock, base_ns + milliseconds * 1000000, 0, 1 if absolute else 0)
+
+
+def fd_sub(fd, tag, userdata=5):
+    return struct.pack("<QB7xI", userdata, tag, fd).ljust(48, b"\0")
+
+
+def decode_poll(value):
+    value &= 0xffffffff
+    return value & 255, (value >> 8) & 255, (value >> 16) & 255, value >> 24
 
 
 class NativeInputTests(unittest.TestCase):
@@ -379,6 +456,166 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 9, 64, 0, 0, 512), b"w.cw", read_back=512), 5)
         self.assertEqual(self.lib.save_test_flags(), 25)
         self.assertEqual(self.save_call("path_open", "iiiiiIIii", (4, 0, 128, 4, 0x10, 64, 0, 0, 512), b"w.cw"), 28, "unbekanntes oflag")
+
+    # Etappe 12.8 (P4-C): poll_oneoff
+    def poll(self, subs, exit_after=-1, **kwargs):
+        self.lib.poll_test_reset(exit_after)
+        self.lib.file_test_reset()
+        status, value, message = self.execute(poll_module(subs, **kwargs))
+        self.assertEqual(status, 0, message)
+        return decode_poll(value)
+
+    def test_poll_clock_relative_sleeps_and_reports_event(self):
+        errno, events, error, _ = self.poll(clock_sub(25))
+        self.assertEqual((errno, events, error), (0, 1, 0))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 25)
+        self.assertEqual(self.lib.poll_test_sleeps(), 3)
+        self.assertLessEqual(self.lib.poll_test_sleep_max_ms(), 10)
+
+    def test_poll_clock_abstime(self):
+        now = 1000000000000
+        errno, events, _, _ = self.poll(clock_sub(15, absolute=True, base_ns=now))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 15)
+        # Ein bereits verstrichener Zeitpunkt wartet nicht.
+        errno, events, _, _ = self.poll(clock_sub(0, absolute=True, base_ns=now - 1))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_fd_ready_does_not_sleep(self):
+        errno, events, error, nbytes = self.poll(fd_sub(5, 1) + clock_sub(10000, userdata=7), open_first=True)
+        self.assertEqual((errno, events, error, nbytes), (0, 1, 0, 7))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+        for fd, tag in ((1, 2), (2, 2)):
+            errno, events, error, nbytes = self.poll(fd_sub(fd, tag))
+            self.assertEqual((errno, events, error, nbytes), (0, 1, 0, 0))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_unknown_fd_reports_ebadf_event(self):
+        for fd in (0, 3, 77, 0xffffffff):
+            with self.subTest(fd=fd):
+                errno, events, error, _ = self.poll(fd_sub(fd, 1))
+                self.assertEqual((errno, events, error), (0, 1, 8))
+                self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_invalid_clock_reports_einval_event(self):
+        errno, events, error, _ = self.poll(clock_sub(10, clock=9))
+        self.assertEqual((errno, events, error), (0, 1, 28))
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_zero_subscriptions_is_einval(self):
+        self.assertEqual(self.poll(clock_sub(1), count=0)[0], 28)
+        self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    def test_poll_65_subscriptions_is_einval(self):
+        self.assertEqual(self.poll(fd_sub(1, 2) * 65)[0], 28)
+        self.assertEqual(self.poll(fd_sub(1, 2) * 64)[:2], (0, 64))
+
+    def test_poll_should_exit_returns_within_10ms(self):
+        errno, events, _, _ = self.poll(clock_sub(3600000), exit_after=1)
+        self.assertEqual((errno, events), (0, 0))
+        self.assertEqual(self.lib.poll_test_sleeps(), 1)
+        self.assertLessEqual(self.lib.poll_test_sleep_max_ms(), 10)
+
+    def test_poll_long_sleep_is_not_capped(self):
+        errno, events, _, _ = self.poll(clock_sub(5000))
+        self.assertEqual((errno, events), (0, 1))
+        self.assertEqual(self.lib.poll_test_sleep_total_ms(), 5000)
+
+    def test_poll_traps_before_host_when_guest_memory_is_invalid(self):
+        for kwargs in ({"in_pointer": 65500}, {"out_pointer": 65530}, {"nevents": 65534}):
+            with self.subTest(kwargs=kwargs):
+                self.lib.poll_test_reset(-1)
+                status, _, message = self.execute(poll_module(clock_sub(50), **kwargs))
+                self.assertEqual(status, 5, message)
+                self.assertIn("out of bounds", message.lower())
+                self.assertEqual(self.lib.poll_test_sleeps(), 0)
+
+    # Etappe 12.8 (P4-B): Paketordner im Host-Kern
+    OPEN = "iiiiiIIii"
+
+    def package(self, calls, data=b"", read_back=None):
+        self.lib.pkg_test_reset()
+        self.lib.file_test_reset()
+        self.lib.save_test_reset(1)
+        status, value, message = self.execute(seq_module(calls, data, read_back))
+        self.assertEqual(status, 0, message)
+        return value
+
+    def open_dir(self, dir_fd=3, path=b"sub", out=512):
+        return ("path_open", self.OPEN, (dir_fd, 0, 128, len(path), 2, 0, 0, 0, out))
+
+    def test_package_opendir_and_readdir_lists_files(self):
+        value = self.package([self.open_dir(), ("fd_readdir", "iiiIi", (5, 1024, 64, 0, 600))], b"sub", read_back=600)
+        self.assertEqual(value, 3)
+        self.assertEqual(self.lib.pkg_test_last_readdir_handle(), 91)
+        self.assertEqual(self.lib.pkg_test_last_dir(), -1, "fd 3 ist die Paketwurzel")
+
+    def test_readdir_on_preopen_fd3(self):
+        value = self.package([("fd_readdir", "iiiIi", (3, 1024, 64, 7, 600))], read_back=600)
+        self.assertEqual(value, 3)
+        self.assertEqual(self.lib.pkg_test_last_cookie(), 7)
+        self.assertEqual((self.lib.pkg_test_opendirs(), self.lib.pkg_test_closedirs(), self.lib.pkg_test_open_dirs()), (1, 1, 0))
+
+    def test_readdir_on_save_fd4(self):
+        self.package([("fd_readdir", "iiiIi", (4, 1024, 64, 0, 600))], read_back=600)
+        self.assertEqual(self.lib.save_test_calls(), 3, "open, readdir, close im App-Speicher")
+        self.assertEqual(self.lib.save_test_flags(), 2)
+        self.assertEqual(self.lib.pkg_test_opendirs(), 0)
+        self.lib.save_test_reset(0)
+        status, value, _ = self.execute(seq_module([("fd_readdir", "iiiIi", (4, 1024, 64, 0, 600))]))
+        self.assertEqual((status, value), (0, 8), "ohne Freigabe ungueltig")
+
+    def test_readdir_rights_have_bit_14_on_fd3_and_fd4(self):
+        for fd in (3, 4):
+            self.package([("fd_fdstat_get", "ii", (fd, 512))], read_back=520)
+            status, value, _ = self.execute(seq_module([("fd_fdstat_get", "ii", (fd, 512))], read_back=520))
+            self.assertEqual(status, 0)
+            self.assertTrue(value & (1 << 14), fd)
+
+    def test_package_opendir_with_creat_is_enotcapable(self):
+        for flags in (3, 1, 6, 10):
+            with self.subTest(flags=flags):
+                value = self.package([("path_open", self.OPEN, (3, 0, 128, 3, flags, 0, 0, 0, 512))], b"sub")
+                self.assertEqual(value, 76)
+        value = self.package([("path_open", self.OPEN, (3, 0, 128, 3, 2, 64, 0, 0, 512))], b"sub")
+        self.assertEqual(value, 76, "Schreibrecht")
+        self.assertEqual(self.lib.pkg_test_opendirs(), 0)
+
+    def test_open_relative_to_package_dir_fd(self):
+        value = self.package([self.open_dir(),
+                              ("path_open", self.OPEN, (5, 0, 140, 9, 0, 0, 0, 0, 520))], b"sub" + b"\0" * 9 + b"asset.txt", read_back=520)
+        self.assertEqual(value, 6)
+        self.assertEqual(self.lib.pkg_test_openat_dir(), 91)
+        self.assertEqual(self.lib.file_test_closes(), 1, "Datei wird beim Laufende geschlossen")
+
+    def test_stat_relative_to_package_dir_fd(self):
+        value = self.package([self.open_dir(), ("path_filestat_get", "iiiii", (5, 0, 140, 9, 600))],
+                             b"sub" + b"\0" * 9 + b"asset.txt", read_back=616)
+        self.assertEqual(value & 0xff, 4)
+        self.assertEqual(self.lib.pkg_test_last_dir(), 91)
+        value = self.package([("path_filestat_get", "iiiii", (5, 0, 128, 3, 600))], b"sub")
+        self.assertEqual(value, 8, "fd 5 ist nicht offen")
+
+    def test_read_on_package_dir_is_eisdir(self):
+        self.assertEqual(self.package([self.open_dir(), ("fd_read", "iiii", (5, 1024, 0, 600))], b"sub"), 31)
+        self.assertEqual(self.package([self.open_dir(), ("fd_pread", "iiiIi", (5, 1024, 0, 0, 600))], b"sub"), 31)
+        self.assertEqual(self.package([self.open_dir(), ("fd_seek", "iIii", (5, 0, 0, 600))], b"sub"), 31)
+
+    def test_close_package_dir_calls_closedir(self):
+        self.assertEqual(self.package([self.open_dir(), ("fd_close", "i", (5,))], b"sub"), 0)
+        self.assertEqual((self.lib.pkg_test_closedirs(), self.lib.pkg_test_open_dirs()), (1, 0))
+        self.assertEqual(self.lib.save_test_calls(), 0, "nie save_close")
+
+    def test_open_package_dir_is_closed_on_every_exit_path(self):
+        value = self.package([self.open_dir()], b"sub")
+        self.assertEqual(value, 0)
+        self.assertEqual((self.lib.pkg_test_closedirs(), self.lib.pkg_test_open_dirs()), (1, 0))
+
+    def test_package_dir_fd_counts_against_limit(self):
+        calls = [self.open_dir(out=512 + 4 * index) for index in range(16)] + [self.open_dir(out=700)]
+        self.assertEqual(self.package(calls, b"sub"), 33, "17. Handle: EMFILE")
+        self.assertEqual(self.lib.pkg_test_opendirs(), 16, "ohne freien Platz kein Hostaufruf")
 
 
 if __name__ == "__main__":
