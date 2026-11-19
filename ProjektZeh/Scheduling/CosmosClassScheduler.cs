@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Kernel.System.Threading;
 // Cosmos.Kernel.System.Threading hat eine gleichnamige oeffentliche CpuSet; IScheduler.SelectCpu verlangt die des Kerns.
@@ -27,7 +28,11 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
         public int TraceNext;
         public int TraceCount;
         public ulong Preemptions;
+        public ulong BusyNs;
     }
+
+    // Beginnt mit dem ersten Typzugriff (praktisch die Registrierung des Schedulers), nicht mit dem Boot.
+    private static readonly long startTimestamp = Stopwatch.GetTimestamp();
 
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
 
@@ -95,6 +100,8 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
     {
         if (Cpu(state) is not { } cpu) return false;
         current.TotalRuntime += elapsedNs;
+        // Last in echten Nanosekunden (unabhaengig von der Tickrate); der Idle-Thread zaehlt nicht, falls Cosmos ihn doch meldet.
+        if (!current.IsIdle) cpu.BusyNs += elapsedNs;
         if (!cpu.Queues.Tick(current, elapsedNs)) return false;
         cpu.Preemptions++;
         return true;
@@ -227,6 +234,28 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
         }
         return (taken, count == buffer.Length ? buffer : buffer[..count], waitingByClass);
     }
+
+    /// <summary>
+    /// Diagnose einer CPU: laufender Thread (null = Idle), seine Klasse, Wartende je Klasse und belegte Nanosekunden (Summe der
+    /// OnTick-Zeitanteile mit einem Nicht-Idle-Thread). Thread-Kontext wie <see cref="Snapshot()"/>: nimmt nur die Sperre dieser CPU.
+    /// </summary>
+    public static (uint? RunningId, ThreadClass RunningClass, int[] WaitingByClass, ulong BusyNs)? Snapshot(uint cpuId)
+    {
+        if (cpuId >= (uint)KernelCpus.Count || SchedulerManager.GetCpuState(cpuId) is not { } state) return null;
+        var waitingByClass = new int[3];
+        using (SchedulerManager.LockCpu(state))
+        {
+            if (Cpu(state) is not { } cpu) return null;
+            for (int c = 0; c < waitingByClass.Length; c++) waitingByClass[c] = cpu.Queues.CountOf((ThreadClass)c);
+            var current = state.CurrentThread;
+            bool running = current is { IsIdle: false };
+            var threadClass = running && current!.SchedulerData is ClassThreadState classState ? classState.Class : ThreadClass.Normal;
+            return (running ? (uint?)current!.Id : null, threadClass, waitingByClass, cpu.BusyNs);
+        }
+    }
+
+    /// <summary>Gemessene Nanosekunden seit dem Start der Zaehlung, Nenner fuer die Last aus <see cref="CpuDiagnostics.LoadPercent"/>.</summary>
+    public static ulong ElapsedNs => (ulong)(Stopwatch.GetElapsedTime(startTimestamp).Ticks * 100);
 
     private static CpuQueues? Cpu(PerCpuState state) => state.SchedulerData as CpuQueues;
 }

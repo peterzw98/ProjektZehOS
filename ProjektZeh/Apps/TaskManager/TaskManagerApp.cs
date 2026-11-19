@@ -190,6 +190,11 @@ internal sealed class TaskManagerApp : IApplication
             surface.FillRectangle(left, y + cardHeight - 8, used, 4, UiPainter.Accent);
         }
         int graphTop = y + 2 * (cardHeight + 16);
+        if (metrics.CpuLoads.Length > 0)
+        {
+            painter.Text(surface, "Last je CPU: " + string.Join(", ", System.Linq.Enumerable.Select(metrics.CpuLoads, (load, cpu) => $"{cpu}: {load} %")), x, graphTop, width, UiPainter.Secondary);
+            graphTop += line;
+        }
         int graphHeight = available - (graphTop - y) - line;
         if (graphHeight < 48) return;
         painter.Text(surface, "Desktop-Schleife, letzte 60 Sekunden (0-100 %)", x, graphTop, width, UiPainter.Secondary);

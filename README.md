@@ -54,6 +54,17 @@ Die ZehOS-Version entsteht beim Bau aus Git: `<ZehOSVersionPrefix>.<ZehOSPatchBa
 
 Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
 
+### Gastproben
+
+Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, GC und Threadstart/-ende:
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbe=true -warnaserror
+ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --iso <ISO> --accel kvm   # ZEHOS_QEMU_SMP leer = eine CPU
+```
+
+Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 1000 Nachrichten (nicht 10.000 wie im Plan): Auf vier CPUs dauert eine Übergabe zwischen zwei CPUs rund 50 ms.
+
 ## Lizenz
 
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
