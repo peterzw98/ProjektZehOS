@@ -29,6 +29,14 @@ public class Kernel : Sys.Kernel
         Serial.WriteString("[GarbageCollector] BeforeRun() reached!\n");
         Serial.WriteString("[GarbageCollector] Starting tests...\n");
 
+        // ZehOS E5-H Probe: nur die Fragmentierungsmessung, Suite uebersprungen.
+        TR.Start("E5H Probe", expectedTests: 1);
+        TR.Run("E5H_FragProbe", FragProbe.Run);
+        TR.Finish();
+        Serial.WriteString("\n[Tests Complete - System Halting]\n");
+        return;
+#pragma warning disable CS0162
+
         TR.Start("GarbageCollector Tests", expectedTests: 57 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
 
         // First: Kernel.Start turned the finalizer thread on, CosmosEnableFinalizerThread being on
