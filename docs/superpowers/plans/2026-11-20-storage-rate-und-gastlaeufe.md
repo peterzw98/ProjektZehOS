@@ -128,6 +128,25 @@ Daraus folgt nur ein Verdacht, kein Beleg: Die Kosten je Befehl (VM-Exits für P
 - E5-J-Suite in Wanduhrzeit unter 45 min.
 - Kein Integritätsfehler, `e2fsck` Ende 0 in allen Läufen.
 
+## Ergebnis Paket M (20.11.2026, 00:48)
+
+Die Probe `probe/storage-rate` @e4c0c28d hat 1 Lauf je Zelle gemessen, auf MSI mit zwei anderen Gästen; Details stehen an #542.
+
+| Pfad | MB/s |
+| --- | --- |
+| AHCI roh, Schreiben und Lesen | 38–74 |
+| ext2 schreiben | ~5 |
+| ext2 lesen | ~31 |
+| FAT schreiben | ~10 |
+| FAT lesen | ~56 |
+| kleine Dateien schreiben | ~4,5 |
+
+Mit 4 CPUs ist es gleich. Beim ext2-Schreiben liegen 49 von 51 s im Gerät. Ursache ist die 6–7-fache Schreib- und 3-fache Leseverstärkung in `Ext2Superblock.TryAllocateBlock` (ab Zeile 750): Je Block werden Bitmap, Nullblock, Gruppendeskriptor-Tabelle und Superblock gelesen und geschrieben, ohne Cache.
+
+**Folge für die Reihenfolge:** Paket F (ext2, danach FAT) vor Paket A. A bleibt nötig, um über ~40–60 MB/s hinaus Richtung 100 MB/s zu kommen.
+
+**Zusätzlicher Review-Schwerpunkt für F:** Werden Gruppendeskriptoren, Superblock-Zähler und Bitmaps im Speicher gehalten, muss E4.0 Lauf 3 (harter Abbruch) weiterhin das bisherige Ergebnis liefern, nämlich `e2fsck -fn` beziehungsweise `-fy` wie in der Spec. Zähler dürfen nach einem Abbruch nur so abweichen, wie es `e2fsck` ohne Datenverlust repariert.
+
 ## Entscheidungen
 
 - Peter, 20.11.2026: Team peter parallelisiert E4.0 Lauf 3/4/5 in `scripts/test-storage-ext2-root.py` (Branch `feature/e40-abort-parallel`), laser reviewt.
