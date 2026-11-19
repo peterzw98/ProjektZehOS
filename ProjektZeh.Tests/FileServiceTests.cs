@@ -380,6 +380,7 @@ public sealed class FileServiceTests
         Assert.IsFalse(result.IsOK(), "Ein leerer Pfad darf keine Datei erzeugen.");
         Assert.AreEqual(0, Directory.GetFileSystemEntries(directory).Length, "Ungueltige Eingaben duerfen nichts schreiben.");
     }
+
     // E5-H l2: Cosmos kuerzt Schreibzugriffe bei vollem ext2 still; das Original darf dann nicht durch die Kurzfassung ersetzt werden.
     [DataTestMethod]
     [DataRow(false)]
