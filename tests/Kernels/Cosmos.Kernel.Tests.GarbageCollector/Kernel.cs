@@ -96,6 +96,12 @@ public class Kernel : Sys.Kernel
 
         TR.Run("GC_MallocHeapNotSwept", TestGCMallocHeapNotSwept);
 
+        // A failed allocation throws instead of returning null (ZehOS patch gc-oom-throw). The
+        // suite's guest has 512 MB, so 1 GiB never fits; the heap must stay usable afterwards.
+        TR.Run("GC_OutOfMemory_HeapExhaustedThrows", TestGCOutOfMemoryHeapExhaustedThrows);
+        TR.Run("GC_OutOfMemory_SizeOverflowThrows", TestGCOutOfMemorySizeOverflowThrows);
+        TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
+
         // GC Info & Configuration Tests
         TR.Run("GC_Info_SimpleMemoryInfo", TestGCInfoSimpleMemoryInfo);
         TR.Run("GC_Info_HeapAndCommittedRelations", TestGCInfoHeapAndCommittedRelations);
@@ -391,6 +397,69 @@ public class Kernel : Sys.Kernel
 
         Assert.True(!weakRef.IsAlive, "GC: weak reference cleared after collection");
         Assert.True(weakRef.Target == null, "GC: weak reference target is null after collection");
+    }
+
+    // ZehOS patch gc-oom-throw: the length comes through a non-inlined call, so ILC cannot fold
+    // the allocation or the size check.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int OpaqueLength(int length) => length;
+
+    private static void TestGCOutOfMemoryHeapExhaustedThrows()
+    {
+        bool threw = false;
+        byte[]? huge = null;
+        try
+        {
+            huge = new byte[OpaqueLength(1 << 30)];
+        }
+        catch (OutOfMemoryException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: byte[1 GiB] on a 512 MB guest must throw OutOfMemoryException");
+        Assert.True(huge is null, "GC: no array may come back from a failed allocation");
+
+        // The failed attempt collected; the heap still serves ordinary allocations.
+        byte[] after = new byte[OpaqueLength(64 * 1024)];
+        after[0] = 0x5A;
+        after[after.Length - 1] = 0xA5;
+        Assert.Equal((byte)0x5A, after[0], "GC: allocation after OutOfMemoryException, first byte");
+        Assert.Equal((byte)0xA5, after[after.Length - 1], "GC: allocation after OutOfMemoryException, last byte");
+    }
+
+    private static void TestGCOutOfMemorySizeOverflowThrows()
+    {
+        // 2^29 + 1 longs: 4 GiB + 8 + header. In 32-bit size arithmetic this wrapped to a
+        // 40-byte object with Length 2^29 + 1, and writes went past it into the heap.
+        bool threw = false;
+        try
+        {
+            long[] wrapped = new long[OpaqueLength((1 << 29) + 1)];
+            wrapped[wrapped.Length - 1] = 1;
+        }
+        catch (OutOfMemoryException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: long[2^29 + 1] must throw OutOfMemoryException, not wrap to a small object");
+    }
+
+    private static void TestGCNegativeArrayLengthThrowsOverflow()
+    {
+        bool threw = false;
+        try
+        {
+            byte[] negative = new byte[OpaqueLength(-1)];
+            negative[0] = 1;
+        }
+        catch (OverflowException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, "GC: a negative array length must throw OverflowException");
     }
 
     private static void TestGCLargeAllocationAndCollect()

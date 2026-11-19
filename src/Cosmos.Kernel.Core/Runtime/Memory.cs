@@ -1,10 +1,13 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Cosmos.Kernel.Core.IO;
 using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.Core.Memory.GarbageCollector;
+using Cosmos.Kernel.Core.Runtime.ExceptionHandling;
 using Internal.Runtime;
 
 namespace Cosmos.Kernel.Core.Runtime;
@@ -23,7 +26,8 @@ internal static unsafe class Memory
     internal static unsafe void RhAllocateNewArray(MethodTable* pArrayEEType, uint numElements, GC_ALLOC_FLAGS flags,
         out void* pResult)
     {
-        uint size = pArrayEEType->BaseSize + numElements * pArrayEEType->ComponentSize;
+        // ZehOS patch gc-oom-throw, see PATCHES.md
+        uint size = ArraySize(pArrayEEType, numElements);
 
         GCObject* result = AllocObject(size, pArrayEEType, (int)numElements, flags);
 
@@ -33,12 +37,13 @@ internal static unsafe class Memory
     [RuntimeExport("RhpNewArray")]
     internal static unsafe void* RhpNewArray(MethodTable* pMT, int length)
     {
+        // ZehOS patch gc-oom-throw, see PATCHES.md
         if (length < 0)
         {
-            return null;
+            ThrowOverflow();
         }
 
-        uint size = pMT->BaseSize + (uint)length * pMT->ComponentSize;
+        uint size = ArraySize(pMT, (uint)length);
 
         GCObject* result = AllocObject(size, pMT, length);
 
@@ -48,12 +53,13 @@ internal static unsafe class Memory
     [RuntimeExport("RhpNewPtrArrayFast")]
     internal static unsafe void* RhpNewPtrArrayFast(MethodTable* pMT, int length)
     {
+        // ZehOS patch gc-oom-throw, see PATCHES.md
         if (length < 0)
         {
-            return null;
+            ThrowOverflow();
         }
 
-        uint size = pMT->BaseSize + (uint)length * pMT->ComponentSize;
+        uint size = ArraySize(pMT, (uint)length);
 
         GCObject* result = AllocObject(size, pMT, length);
 
@@ -62,12 +68,13 @@ internal static unsafe class Memory
     [RuntimeExport("RhpNewArrayFast")]
     internal static unsafe void* RhpNewArrayFast(MethodTable* pMT, int length)
     {
+        // ZehOS patch gc-oom-throw, see PATCHES.md
         if (length < 0)
         {
-            return null;
+            ThrowOverflow();
         }
 
-        uint size = pMT->BaseSize + (uint)length * pMT->ComponentSize;
+        uint size = ArraySize(pMT, (uint)length);
 
         GCObject* result = AllocObject(size, pMT, length);
 
@@ -180,6 +187,96 @@ internal static unsafe class Memory
         return GarbageCollector.AllocateHandler(primary, (GCHandleType)6, (nint)secondary);
     }
 
+    // ZehOS patch gc-oom-throw, see PATCHES.md
+    // An allocation helper never returns null: compiled code uses the result of `newobj`/`newarr`
+    // without a check, so a null became a page fault at a small address or, through a span over
+    // it, a silent "destination too short". As in .NET, a failed allocation throws
+    // OutOfMemoryException, a negative array length OverflowException.
+
+    /// <summary>
+    /// Largest object the helpers hand to the collector. .NET's limit is just under 2 GB as well; it
+    /// also keeps the collector's 32-bit size arithmetic (Align, size classes) from wrapping.
+    /// </summary>
+    private const ulong MaxObjectSize = int.MaxValue;
+
+    /// <summary>
+    /// Thrown when even the OutOfMemoryException cannot be allocated. Created at boot by
+    /// <see cref="PreallocateOutOfMemoryException"/>.
+    /// </summary>
+    private static OutOfMemoryException? s_preallocatedOutOfMemory;
+
+    /// <summary>Non-zero while a CPU allocates a fresh OutOfMemoryException.</summary>
+    private static int s_allocatingOutOfMemory;
+
+    /// <summary>
+    /// Creates the instance thrown when the heap cannot hold a new OutOfMemoryException. Called once
+    /// at boot, after the managed modules (static bases) are initialized.
+    /// </summary>
+    internal static void PreallocateOutOfMemoryException()
+    {
+        s_preallocatedOutOfMemory ??= new OutOfMemoryException();
+    }
+
+    /// <summary>
+    /// Size of an array or string object with <paramref name="length"/> components. Computed in 64 bits:
+    /// in 32 bits a long[] of 2^29 elements wrapped to a small object whose Length still allowed
+    /// writes far past it. Throws OutOfMemoryException above <see cref="MaxObjectSize"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint ArraySize(MethodTable* pMT, uint length)
+    {
+        ulong size = pMT->BaseSize + (ulong)length * pMT->ComponentSize;
+        if (size > MaxObjectSize)
+        {
+            ThrowOutOfMemory();
+        }
+
+        return (uint)size;
+    }
+
+    /// <summary>
+    /// Throws OutOfMemoryException. A fresh instance where the heap still holds one (a shared instance
+    /// would collect every throw's stack trace); the preallocated one if allocating it failed, or another
+    /// CPU is allocating its own at the same moment. Without that fallback, the failed `new` would
+    /// re-enter here without end.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    [DoesNotReturn]
+    private static void ThrowOutOfMemory()
+    {
+        if (Interlocked.CompareExchange(ref s_allocatingOutOfMemory, 1, 0) != 0)
+        {
+            OutOfMemoryException? preallocated = s_preallocatedOutOfMemory;
+            if (preallocated is null)
+            {
+                ExceptionHelper.FailFast("Out of memory before the OutOfMemoryException was preallocated");
+            }
+
+            StackTraceMetadata.GetStackTraceString(preallocated!) = null;
+            throw preallocated!;
+        }
+
+        OutOfMemoryException fresh;
+        try
+        {
+            fresh = new OutOfMemoryException();
+        }
+        finally
+        {
+            Volatile.Write(ref s_allocatingOutOfMemory, 0);
+        }
+
+        throw fresh;
+    }
+
+    /// <summary>Throws OverflowException for a negative array length, as .NET's RhpNewArray does.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    [DoesNotReturn]
+    private static void ThrowOverflow()
+    {
+        throw new OverflowException();
+    }
+
     /// <summary>
     /// Allocates an object and stores its header: the MethodTable, and the Length of an array or
     /// a string. With the GC enabled both are stored before interrupts can fire again (see
@@ -195,7 +292,14 @@ internal static unsafe class Memory
     {
         if (GarbageCollector.IsEnabled)
         {
-            return GarbageCollector.AllocObject((nint)size, pMT, length, flags);
+            // ZehOS patch gc-oom-throw, see PATCHES.md
+            GCObject* allocated = GarbageCollector.AllocObject((nint)size, pMT, length, flags);
+            if (allocated == null)
+            {
+                ThrowOutOfMemory();
+            }
+
+            return allocated;
         }
         else
         {

@@ -34,5 +34,9 @@ internal class LibraryInitializer
         // Initialize managed modules
         Serial.WriteString("[KERNEL]   - Initializing managed modules...\n");
         ManagedModule.InitializeModules();
+
+        // ZehOS patch gc-oom-throw, see PATCHES.md
+        // Needs the static bases; before this point a nested out-of-memory halts.
+        Cosmos.Kernel.Core.Runtime.Memory.PreallocateOutOfMemoryException();
     }
 }
