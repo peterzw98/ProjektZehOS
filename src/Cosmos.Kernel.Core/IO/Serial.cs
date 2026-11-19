@@ -115,6 +115,17 @@ internal static class Serial
         {
             _irq = new InternalCpu.InterruptScope();
             bool held = false;
+
+            // ZehOS patch panic-stop-cpus, see PATCHES.md
+            // The CPU that owns a panic writes its report alone once the others are stopped:
+            // one stopped in the middle of a line holds the lock for good, and trying it a
+            // million times per line would stall the report for seconds (TCG).
+            if (PanicStop.WritesAlone)
+            {
+                _held = false;
+                return;
+            }
+
             for (int spin = 0; spin < LockSpinLimit && !held; spin++)
             {
                 held = s_lock.TryAcquire();

@@ -34,6 +34,24 @@ internal static class Panic
         ref ulong depthSlot = ref PerCpuBlock.Current.CpuExceptionDepth;
         ulong depth = ++depthSlot;
 
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // The hook decides first, the report follows: on the halt path the other CPUs are
+        // stopped before the first line, so they write nothing into it, and a second CPU that
+        // faults meanwhile (it lost the claim) halts without a report of its own instead of
+        // interleaving one. The price: an exception inside the hook reports only itself.
+        bool abandoned = depth == 1 && CpuExceptionHook.Handler is { } handler
+            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
+                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
+                == CpuExceptionAction.AbandonThread
+            && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx));
+
+        // Giving up a thread stops no CPU; only a halt does, and it claims the panic. While
+        // another CPU owns it, this one halts without a word.
+        if (!abandoned && !PanicStop.StopOthers())
+        {
+            PanicStop.HaltForever();
+        }
+
         // Use only Serial - allocation-free, no KernelConsole which may allocate
         Serial.WriteString("\n========================================\n");
         Serial.WriteString("CPU EXCEPTION: ");
@@ -43,11 +61,7 @@ internal static class Panic
         PrintStackTrace(ref ctx);
         Serial.WriteString("========================================\n");
 
-        if (depth == 1 && CpuExceptionHook.Handler is { } handler
-            && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
-                    SchedulerManager.GetCurrentCpuId(), CurrentThreadId()))
-                == CpuExceptionAction.AbandonThread
-            && SchedulerManager.TryAbandonCurrentFromInterrupt((nuint)Unsafe.AsPointer(ref ctx)))
+        if (abandoned)
         {
             Serial.WriteString("Thread abandoned.\n");
             depthSlot = depth - 1;

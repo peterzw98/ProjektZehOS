@@ -95,6 +95,13 @@ internal class X64InterruptController : IInterruptController
         LocalApic.SendIpi(hardwareId, StopVector);
     }
 
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <inheritdoc/>
+    public void SendPanicStop(ulong hardwareId)
+    {
+        LocalApic.SendNmi(hardwareId);
+    }
+
     public void RouteIrq(byte irqNo, byte vector, bool startMasked)
     {
         if (ApicManager.CanRouteIrqs)
@@ -208,6 +215,12 @@ internal class X64InterruptController : IInterruptController
 
     private static void HandleFatalException(ulong interrupt, ulong cpuFlags, ulong faultAddress)
     {
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        if (!PanicStop.StopOthers())
+        {
+            PanicStop.HaltForever();
+        }
+
         Serial.Write("[INT] FATAL: Exception ", interrupt, "\n");
 
         if (HasErrorCode(interrupt))

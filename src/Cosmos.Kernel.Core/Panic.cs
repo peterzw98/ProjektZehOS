@@ -27,6 +27,14 @@ internal static class Panic
     {
         InternalCpu.DisableInterrupts();
 
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // The other CPUs stop before the report, so none writes after it; while another CPU
+        // owns the panic, this one halts without a report of its own.
+        if (!PanicStop.StopOthers())
+        {
+            PanicStop.HaltForever();
+        }
+
         Serial.WriteString("\n");
         Serial.WriteString("========================================\n");
         Serial.WriteString("KERNEL PANIC\n");

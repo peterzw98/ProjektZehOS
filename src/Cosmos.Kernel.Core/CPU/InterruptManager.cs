@@ -281,6 +281,18 @@ internal static class InterruptManager
         s_controller?.SendStop(hardwareId);
     }
 
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <summary>
+    /// Raises the panic stop on another CPU (<see cref="IInterruptController.SendPanicStop"/>);
+    /// nothing before the controller is registered. Allocation-free; any context, interrupts
+    /// masked by the caller.
+    /// </summary>
+    /// <param name="hardwareId">The target CPU's controller identity, from its block.</param>
+    internal static void SendPanicStop(ulong hardwareId)
+    {
+        s_controller?.SendPanicStop(hardwareId);
+    }
+
     /// <summary>
     /// Undoes <see cref="SetIrqHandler"/>: masks the line at the controller,
     /// then clears the slot at 0x20 + <paramref name="irqNo"/>, so a

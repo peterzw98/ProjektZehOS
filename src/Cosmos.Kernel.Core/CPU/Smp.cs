@@ -180,6 +180,19 @@ internal static unsafe class Smp
 
         Volatile.Write(ref block.Online, 1);
 
+        // ZehOS patch panic-stop-cpus, see PATCHES.md
+        // A panic claimed while this CPU was not online yet sent it no NMI (PanicStop reads
+        // Online after its claim). The full barrier orders the Online store before the read of
+        // the claim, as the claim's compare-exchange orders it before the owner's Online read:
+        // either the owner sees this CPU online and sends the NMI, or this CPU sees the claim
+        // and halts. Not counted: the owner did not wait for it, and an NMI that still comes
+        // counts it once in the handler.
+        Interlocked.MemoryBarrier();
+        if (PanicStop.IsStopping)
+        {
+            PanicStop.HaltForever();
+        }
+
         InternalCpu.EnableInterrupts();
 
         while (true)

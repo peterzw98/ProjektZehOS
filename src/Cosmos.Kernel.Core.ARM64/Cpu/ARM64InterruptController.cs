@@ -181,6 +181,16 @@ internal class ARM64InterruptController : IInterruptController
         }
     }
 
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Sends nothing: the GIC's SGIs are maskable, and the stop SGI's handler waits for a
+    /// release that a panic never gives. The other CPUs keep running, as before the patch.
+    /// </remarks>
+    public void SendPanicStop(ulong hardwareId)
+    {
+    }
+
     public void RouteIrq(byte irqNo, byte vector, bool startMasked)
     {
         // On ARM64, irqNo is the GIC interrupt ID.

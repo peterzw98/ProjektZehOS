@@ -86,6 +86,17 @@ internal interface IInterruptController
     /// <param name="hardwareId">The target CPU's controller identity.</param>
     void SendStop(ulong hardwareId);
 
+    // ZehOS patch panic-stop-cpus, see PATCHES.md
+    /// <summary>
+    /// Raises the panic stop on another CPU, named as for <see cref="SendReschedule"/>: a
+    /// non-maskable interrupt where the architecture has one, so it lands on a CPU that spins
+    /// with interrupts masked; its handler halts the CPU for good (<see cref="PanicStop"/>).
+    /// An architecture without one sends nothing, and the halting CPU's wait times out.
+    /// Allocation-free; any context, interrupts masked by the caller.
+    /// </summary>
+    /// <param name="hardwareId">The target CPU's controller identity.</param>
+    void SendPanicStop(ulong hardwareId);
+
     /// <summary>
     /// Dispatch an interrupt delivered by the arch's assembly stub. The
     /// implementation is responsible for acknowledging (where applicable),
