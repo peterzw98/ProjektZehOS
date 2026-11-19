@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.Intrinsics.X86;
 using Cosmos.Kernel.Core.X64.Cpu;
+using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 
 namespace ProjektZeh.Scheduling;
@@ -12,6 +13,7 @@ internal static class CosmosCpuTopologyReader
         int count = KernelCpus.Count;
         try
         {
+            if (!SchedulerDiagnostics.IsRunning) return Fallback("Scheduler läuft nicht.");
             var online = KernelCpus.Online;
             var apicIds = new uint[count];
             for (uint cpu = 0; cpu < count; cpu++)
