@@ -97,10 +97,10 @@ public sealed class WasmPackagePathsTests
     [TestMethod]
     public void List_Root_ReturnsSortedEntries()
     {
-        File.WriteAllBytes(Path.Combine(root, "b.txt"), []);
+        File.WriteAllBytes(Path.Combine(root, "a.txt"), []);
         File.WriteAllBytes(Path.Combine(root, "B.txt"), []);
         Assert.AreEqual(WasmPackagePaths.Success, WasmPackagePaths.List(root, "", out var entries));
-        CollectionAssert.AreEqual(new[] { "B.txt", "b.txt", "res" }, Array.ConvertAll(entries, entry => entry.Name));
+        CollectionAssert.AreEqual(new[] { "B.txt", "a.txt", "res" }, Array.ConvertAll(entries, entry => entry.Name));
         Assert.IsTrue(entries[2].Directory);
         Assert.IsFalse(entries[0].Directory);
     }
