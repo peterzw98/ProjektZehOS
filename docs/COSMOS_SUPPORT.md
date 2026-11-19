@@ -63,8 +63,8 @@ Mittel ± Standardabweichung (Stichprobe), Klasse gegen RR und Schwellenurteil j
 Lastmittel je Lauf: 1,7 bis 5,8, Mittel 3,8.
 
 **Einordnung:**
-1. Doom liegt in allen zehn Läufen zwischen 69,8 und 70,0 fps. Das spricht für eine Bildratenobergrenze. Im Code ist sie nicht geprüft. Der Vergleich zeigt dann nur, dass der Klassenscheduler das Limit ebenso erreicht wie Round-Robin. Einen Unterschied unterhalb des Limits deckt er nicht auf.
-2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die Streuung hängt nach den Lastwerten kaum an WoW. Vermutet, nicht gemessen: Ohne festen Seed und feste Sichtweite läuft jeder Lauf in einer anderen Welt. Das Messskript kann beides heute nicht festlegen.
+1. Doom liegt in allen zehn Läufen zwischen 69,8 und 70,0 fps. Gemessen ist die Begrenzung über die Zeitanteile (`Anteile`-Zeilen der Läufe `doom-RR-1` und `doom-K-1`): Die App rechnet im Median 4,5 bis 5,4 ms je Bild, `schlaf` hat p95 bei rund 22 bis 24 ms. Doom wartet über `sleep_ms` auf den Spieltakt (`DG_SleepMs` → `zehos_sleep_ms`, `doomgeneric_zehos.c:80`). Der Wert zeigt also nur, dass Klasse und RR beide am Taktlimit liegen. Einen Unterschied zwischen den Schedulern bildet er nicht ab.
+2. ClassiCube streut stark (Klasse 57,7 bis 99,0 fps, RR 70,4 bis 113,8 fps). Die App rechnet ohne Schlaf (`app` 16,6 ms, `schlaf` 0). Die Streuung hängt nach den Lastwerten kaum an WoW. Wahrscheinlich ist die Welt die Ursache: ROADMAP (Scheduler-Fix #254, KVM, Sichtweite 512, gepinnt) zeigt für denselben Stand Seed 5 mit 36,0 fps und Seed 3 mit 75,3 fps. Unser Lauf setzt keinen Seed und keine Sichtweite, das Messskript kann beides heute nicht festlegen. Dass jeder Lauf in einer anderen Welt spielt, ist vermutet und nicht nachgesehen.
 3. Ausreißer `classicube-RR-1` mit 5671 ms maximalem Bildabstand. Der Median bleibt niedrig, die mittlere fps ist kaum betroffen. Keine Wiederholung.
 4. Der Pin-Störfaktor (zehos.1 gegen zehos.2) bleibt wie oben vermerkt.
 5. Eine ClassiCube-Wiederholung braucht eine feste Welt (ROADMAP 13.2) und mehr Läufe je Stand. Sie ist noch nicht eingeplant.
