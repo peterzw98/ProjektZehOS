@@ -89,6 +89,13 @@ public static class SchedulerDiagnostics
     /// </summary>
     public static int ThreadCount => SchedulerManager.ThreadCount;
 
+    // ZehOS patch thread-stack-reaper, see PATCHES.md
+    /// <summary>
+    /// Stacks of exited threads the scheduler has given back since boot. A stack
+    /// is freed on the next thread creation after its thread has left the CPU.
+    /// </summary>
+    public static ulong ReleasedStacks => SchedulerManager.ReleasedStacks;
+
     /// <summary>
     /// Number of slots in the thread registry, and the only valid bound for
     /// enumerating it. Slots can be empty; iterate from 0 to this value and

@@ -50,6 +50,13 @@ public static class SchedulerManager
     // and never from the tick's sleeper walk, which reads the slots without it.
     private static SpinLock s_registryLock;
 
+    // ZehOS patch thread-stack-reaper, see PATCHES.md
+    /// <summary>Stacks of exited threads given back, since boot.</summary>
+    private static ulong s_releasedStacks;
+
+    /// <summary>Stacks of exited threads given back since boot (diagnostics).</summary>
+    internal static ulong ReleasedStacks => Volatile.Read(ref s_releasedStacks);
+
     // Global thread registry: tracks ALL live threads across all states
     // (Running, Ready, Blocked, Sleeping). Used by GC to scan all thread stacks.
     // Allocated once at init to avoid heap allocations during GC.

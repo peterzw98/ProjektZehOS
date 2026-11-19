@@ -260,6 +260,7 @@ public class Kernel : Sys.Kernel
         TR.Run("Thread_RecordToString_Works", TestRecordToStringInThread);
         TR.Run("MainThread_RecordToString_Works", TestRecordToStringOnMainThread);
         TR.Run("Thread_MaxStackSize_IsHonored", TestThreadMaxStackSizeHonored);
+        TR.Run("Thread_ExitedStacks_AreFreed", TestExitedStacksAreFreed);
         TR.Run("Thread_MaxStackSize_TinyRequestIsFloored", TestThreadTinyStackSizeFloored);
         TR.Run("Thread_MaxStackSize_Unallocatable_StartThrows", TestThreadUnallocatableStackIsRefused);
         TR.Run("Thread_Kill_Queued_StopsManagedSide", TestKillQueuedThreadStopsManagedSide);
@@ -742,6 +743,30 @@ public class Kernel : Sys.Kernel
         {
             TimerManager.Wait(TaskPollIntervalMs);
         }
+    }
+
+    // ZehOS patch thread-stack-reaper, see PATCHES.md
+    private static void TestExitedStacksAreFreed()
+    {
+        const int Threads = 100;
+        ulong before = Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.ReleasedStacks;
+        for (int i = 0; i < Threads; i++)
+        {
+            var worker = new global::System.Threading.Thread(() => { });
+            worker.Start();
+            Assert.True(worker.Join(ThrowJoinTimeoutMs), "An empty thread must exit and be joinable");
+        }
+
+        // Each start reaps the stacks of threads that left their CPU before it; one more start
+        // takes the last of the hundred. The previous one may still be on its CPU, hence 99.
+        var last = new global::System.Threading.Thread(() => { });
+        last.Start();
+        Assert.True(last.Join(ThrowJoinTimeoutMs), "The reaping thread must exit as well");
+        ulong released = Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.ReleasedStacks - before;
+        Serial.WriteString("[Test] released stacks: ");
+        Serial.WriteNumber(released);
+        Serial.WriteString("\n");
+        Assert.True(released >= Threads - 1, "Stacks of exited threads must be given back");
     }
 
     private static void TestThreadMaxStackSizeHonored()

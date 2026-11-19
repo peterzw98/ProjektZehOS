@@ -972,6 +972,7 @@ static Cosmos.Kernel.System.Diagnostics.MemoryDiagnostics.TotalObjectsFreed.get 
 static Cosmos.Kernel.System.Diagnostics.MemoryDiagnostics.TotalPages.get -> ulong
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.BusyCpuTimeNs.get -> ulong
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.CpuCount.get -> uint
+static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.ReleasedStacks.get -> ulong
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.GetRunQueueCount(uint cpuId) -> int
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.IsInitialized.get -> bool
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.IsRunning.get -> bool
