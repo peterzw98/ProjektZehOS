@@ -2,6 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Cosmos.Kernel.System.Threading;
 
 namespace ProjektZeh.Runtime;
 
@@ -35,10 +36,18 @@ internal static class CosmosIsolationProbe
         {
             // QEMU stellt inject-nmi unter KVM nur ueber LVT LINT1 zu; Cosmos richtet LINT1 seit Patch lint1-nmi
             // (patches/lint1-nmi.md im Branch cosmos) selbst unmaskiert mit Zustellart NMI ein.
+            // QEMU stellt den NMI allen CPUs zu, Cosmos laesst LINT1 aber wie Linux nur auf der Boot-CPU offen
+            // (LocalApic.InitializeCurrentCpu maskiert es auf den APs). Der Worker muss also auf CPU 0 rechnen, wenn der
+            // NMI kommt; die Pinnung wirkt erst nach der naechsten Umschaltung (#515).
+            ThreadAffinity.Current = CpuSet.Single(0);
+            Thread.Sleep(1);
+            // Auf CPU 0 laeuft auch die Hauptschleife und haette den NMI in allen Laeufen abgefangen (Thread = Hauptthread);
+            // sie parkt, sobald sie das Fenster sieht (ParkMainInNmiWindow), und meldet das, bevor das Skript den NMI sendet.
+            Volatile.Write(ref nmiWindow, 1);
             FaultIsolation.EnterNativeRun();
             try
             {
-                Log("ISOLATION_PROBE nmi window open");
+                Log("ISOLATION_PROBE nmi window open cpu=" + KernelCpus.Current);
                 long end = Stopwatch.GetTimestamp() + 120 * Stopwatch.Frequency;
                 while (Stopwatch.GetTimestamp() < end) sink++;
                 Log("ISOLATION_PROBE nmi window closed");
@@ -57,6 +66,21 @@ internal static class CosmosIsolationProbe
 #endif
     }
 
+#if ZEHOS_ISOLATION_PROBE_NMI
+    private static int nmiWindow;
+
+    /// <summary>
+    /// Aus der Hauptschleife: Ist das NMI-Fenster offen, schlaeft der Hauptthread fuer immer, damit auf CPU 0 nur noch der
+    /// Worker im Gastzustand rechnet. Die Probe endet mit dem Halt durch den NMI; danach braucht niemand die Hauptschleife.
+    /// </summary>
+    internal static void ParkMainInNmiWindow()
+    {
+        if (Volatile.Read(ref nmiWindow) == 0) return;
+        Log("ISOLATION_PROBE nmi main parked");
+        while (true) Thread.Sleep(1000);
+    }
+
+#endif
     // Der Probelauf tut so, als liefe Gastcode (nativer Lauf, kein Hostaufruf); die Hauptschleife ersetzt den Worker.
     private static void Fault(string kind, Action trigger)
     {
