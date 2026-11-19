@@ -42,7 +42,7 @@ internal sealed class BackgroundTaskService
     private int busyWorkers;
     private int nextId;
 
-    /// <param name="startThread">Nur fuer Tests; sonst <see cref="ThreadStarter.TryStart(ThreadStart, int, bool, ThreadClass)"/>.</param>
+    /// <param name="startThread">Nur fuer Tests; sonst <see cref="ThreadStarter.TryStart(ThreadStart, int, bool, ThreadClass, ThreadPlacement)"/>.</param>
     public BackgroundTaskService(Func<ThreadStart, ResultObject<Thread>>? startThread = null) =>
         this.startThread = startThread ?? (body => ThreadStarter.TryStart(body, background: true, threadClass: ThreadClass.Background,
             placement: ThreadPlacement.Workers));
