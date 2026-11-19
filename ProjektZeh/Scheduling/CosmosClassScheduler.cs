@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Kernel.System.Threading;
@@ -13,7 +14,7 @@ namespace ProjektZeh.Scheduling;
 /// <see cref="ClassRunQueues{T}"/> (hostgetestet); Etappe 5 passt nur diesen Adapter an die neue Schnittstelle an.
 /// Ab Etappe 5 (Upstream 5b) ist die Hauptschleife ein normaler Thread der Klasse Interaktiv; die Policy sieht nie einen Idle-Thread.
 /// </summary>
-internal sealed class CosmosClassScheduler : IScheduler
+internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
 {
     // Yielded und PickFailed haben keinen Fehlerweg; die Kapazitaet je Klasse muss die Threadzahl decken (Cosmos kennt kein Mehr).
     private const int CapacityPerClass = SchedulerThread.MaxThreadCount;
@@ -36,6 +37,7 @@ internal sealed class CosmosClassScheduler : IScheduler
     internal static ulong TickNs => ClassRunQueues<SchedulerThread>.TickNs;
 
     public string Name => "ZehOS Klassen";
+    internal CpuTopology Topology { get; } = topology;
 
     // Allokation ist nur hier, in ShutdownCpu und in OnThreadCreate erlaubt (IScheduler-Vertrag, Upstream 5b).
     public void InitializeCpu(PerCpuState state)
@@ -84,6 +86,8 @@ internal sealed class CosmosClassScheduler : IScheduler
         var running = current is { State: SchedulerThreadState.Running, IsIdle: false } ? current : null;
         var next = cpu.Queues.Pick(running);
         if (next == null || ReferenceEquals(next, running)) return null;
+        // E6-B: die CPU, auf der er zuletzt lief, ist der Cache-Hinweis fuer ClassPlacement.SelectCpu.
+        if (next.SchedulerData is ClassThreadState nextState) nextState.LastCpu = (int)state.CpuId;
         cpu.Trace[cpu.TraceNext] = next.Id;
         cpu.TraceNext = (cpu.TraceNext + 1) % TraceLength;
         if (cpu.TraceCount < TraceLength) cpu.TraceCount++;
@@ -103,10 +107,40 @@ internal sealed class CosmosClassScheduler : IScheduler
         return true;
     }
 
-    // Etappe 5: keine Platzierung; der Thread bleibt auf seiner CPU, wenn sie erlaubt ist. Topologie kommt mit E6-B.
-    // Ohne Queue-Sperre, auch aus dem IRQ: nicht allokieren, nichts sperren.
-    public uint SelectCpu(SchedulerThread thread, PerCpuState[] cpus, CpuSet allowed) =>
-        allowed.Contains(thread.CpuId) ? thread.CpuId : allowed.First;
+    // Groesste CPU-Zahl, fuer die SelectCpu und Balance ihre Spannen auf dem Stack anlegen. Beide laufen auch im IRQ auf dem
+    // Interruptstapel; darueber gilt der Rueckfall (eigene CPU, sonst die erste erlaubte) bzw. kein Ausgleich.
+    private const int MaxPlacedCpus = 64;
+
+    /// <summary>
+    /// E6-B: Platzierung nach <see cref="ClassPlacement.SelectCpu"/> mit Topologie, Klassen der laufenden Threads und Wartenden.
+    /// Ohne Queue-Sperre, auch aus dem IRQ: nicht allokieren, nichts sperren, nichts werfen. Laufende Threads und Queue-Laengen
+    /// fremder CPUs sind Schnappschuesse; Cosmos prueft die Antwort gegen die erlaubte Menge.
+    /// </summary>
+    public uint SelectCpu(SchedulerThread thread, PerCpuState[] cpus, CpuSet allowed)
+    {
+        uint fallback = allowed.Contains(thread.CpuId) ? thread.CpuId : allowed.First;
+        int count = cpus.Length;
+        // Weicht die gelesene Topologie von der Zahl der verwalteten CPUs ab, wuerde ClassPlacement werfen.
+        if (count != Topology.CpuCount || count > MaxPlacedCpus) return fallback;
+        Span<bool> allowedByCpu = stackalloc bool[count];
+        Span<ThreadClass?> running = stackalloc ThreadClass?[count];
+        Span<int> queued = stackalloc int[count];
+        bool any = false;
+        for (int i = 0; i < count; i++)
+        {
+            allowedByCpu[i] = allowed.Contains((uint)i);
+            any |= allowedByCpu[i];
+            var state = cpus[i];
+            var current = state?.CurrentThread;
+            running[i] = current == null || current.IsIdle ? null
+                : current.SchedulerData is ClassThreadState runningState ? runningState.Class : ThreadClass.Normal;
+            queued[i] = state != null && Cpu(state) is { } cpu ? cpu.Queues.Waiting : 0;
+        }
+        if (!any) return fallback;
+        var own = thread.SchedulerData as ClassThreadState;
+        int selected = ClassPlacement.SelectCpu(Topology, own?.Class ?? ThreadClass.Normal, own?.LastCpu ?? -1, allowedByCpu, running, queued);
+        return selected >= 0 ? (uint)selected : fallback;
+    }
 
     /// <summary>
     /// Unter beiden Queue-Sperren. Ready: steht auf der Quelle und zieht um. Running: in keiner Struktur (Verdraengung beim
@@ -118,8 +152,47 @@ internal sealed class CosmosClassScheduler : IScheduler
         OnThreadReady(toState, thread);
     }
 
-    // Etappe 5: kein Ausgleich zwischen CPUs.
-    public SchedulerThread? Balance(PerCpuState state, PerCpuState[] allCpuStates) => null;
+    /// <summary>
+    /// E6-B: Eine CPU ohne eigene Arbeit zieht den vordersten verschiebbaren Thread der hoechsten Klasse einer anderen CPU, in der
+    /// Reihenfolge von <see cref="ClassPlacement.StealOrder"/> (Geschwister, Verbund, Rest). Im IRQ ohne Sperre gerufen: nimmt je
+    /// fremde CPU deren Sperre, nie zwei zugleich und nie die eigene, und nennt nur einen Thread, der unter dieser Sperre gelesen
+    /// wurde. Cosmos prueft die Antwort unter beiden Sperren erneut. Keine Allokation.
+    /// </summary>
+    public SchedulerThread? Balance(PerCpuState state, PerCpuState[] allCpuStates)
+    {
+        if (Cpu(state) is not { } own || own.Queues.Waiting > 0) return null;
+        // Wie Stride: nur eine CPU ohne Arbeit zieht. Der periodische Aufruf aus dem Tick kommt auch, waehrend hier ein Thread
+        // weiterlaeuft; ein Zug dann tauschte bei jedem Aufruf wartende Threads zwischen Nachbarn hin und her.
+        if (state.CurrentThread is { IsIdle: false, State: SchedulerThreadState.Running }) return null;
+        int count = allCpuStates.Length;
+        int self = (int)state.CpuId;
+        if (count != Topology.CpuCount || count > MaxPlacedCpus || self >= count) return null;
+        Span<int> order = stackalloc int[count];
+        int length = ClassPlacement.StealOrder(Topology, self, order);
+        uint cpuId = state.CpuId;
+        for (int n = 0; n < length; n++)
+        {
+            var victim = allCpuStates[order[n]];
+            if (victim == null || Cpu(victim) is not { } other || other.Queues.Waiting == 0) continue;
+            using (SchedulerManager.LockCpu(victim))
+            {
+                // Eine CPU auf ihrem Idle-Thread behaelt, was sie hat: Der Thread wurde gerade dorthin geweckt, und ihr eigener
+                // Interrupt-Ausgang fuehrt ihn gleich aus (wie Stride).
+                if (victim.CurrentThread is not { IsIdle: false } busy || busy.State != SchedulerThreadState.Running) continue;
+                // PeekStealable nimmt einen Delegaten; ein Lambda mit cpuId allokierte hier im IRQ eine Closure. At(i) liefert
+                // dieselbe Reihenfolge (Klassen aufsteigend, je Klasse vorn zuerst).
+                var queues = other.Queues;
+                for (int i = 0; i < queues.Count; i++)
+                    if (queues.At(i) is { } candidate && MayMoveTo(candidate, cpuId)) return candidate;
+            }
+        }
+        return null;
+    }
+
+    // Nicht gepinnt (mehr als eine CPU erlaubt), das Ziel erlaubt, bereit und schon einmal gelaufen: Einen Thread im Zustand
+    // Created verschiebt Cosmos nicht (wie Stride, LastThreadAllowedOn).
+    private static bool MayMoveTo(SchedulerThread thread, uint cpuId) =>
+        thread.State == SchedulerThreadState.Ready && thread.Affinity.Count > 1 && thread.Affinity.Contains(cpuId);
 
     /// <summary>0, 1, 2 = Interaktiv, Normal, Hintergrund; andere Werte werden ignoriert. Der Aufrufer haelt die Queue-Sperre.</summary>
     public void SetPriority(PerCpuState state, SchedulerThread thread, long priority)
