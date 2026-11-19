@@ -618,5 +618,93 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(self.lib.pkg_test_opendirs(), 16, "ohne freien Platz kein Hostaufruf")
 
 
+    # Etappe 12.8 (P4-D): Uhren, dev/ino/Zeitstempel, fehlende Imports
+    MTIME = 1700000000123456789
+    OPEN_ASSET = ("path_open", "iiiiiIIii", (3, 0, 128, 9, 0, 0, 0, 0, 512))
+
+    def u32(self, calls, data, read_back):
+        return self.package(calls, data, read_back=read_back) & 0xffffffff
+
+    def test_clock_res_get_invalid_id_is_einval(self):
+        for clock in (4, 9, -1):
+            with self.subTest(clock=clock):
+                self.assertEqual(self.package([("clock_res_get", "ii", (clock, 512))]), 28)
+        self.assertEqual(self.u32([("clock_res_get", "ii", (0, 512))], b"", 512), 1000000)
+        self.assertEqual(self.u32([("clock_res_get", "ii", (1, 512))], b"", 512), 1000, "Stopwatch-Aufloesung vom Host")
+
+    def test_filestat_dev_ino_stable_and_distinct(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        first = self.u32(stat, b"asset.txt", 608)
+        self.assertEqual(first, self.u32(stat, b"asset.txt", 608), "stabil")
+        self.assertEqual(self.u32(stat, b"asset.txt", 600), 1, "dev 1 = Paket")
+        other = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 3, 600))], b"sub", 608)
+        self.assertNotEqual(first, other, "verschiedene Pfade, verschiedene ino")
+        # "./asset.txt" ist derselbe normierte Pfad.
+        dotted = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 11, 600))], b"./asset.txt", 608)
+        self.assertEqual(first, dotted)
+        # Der offene Datei-fd meldet dieselbe ino wie der Pfad.
+        by_fd = self.u32([self.OPEN_ASSET, ("fd_filestat_get", "ii", (5, 600))], b"asset.txt", 608)
+        self.assertEqual(first, by_fd)
+
+    def test_filestat_ino_is_relative_to_package_root_through_dir_fd(self):
+        direct = self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 13, 600))], b"sub/asset.txt", 608)
+        # Der Teststub kennt unterhalb des Ordner-Handles nur "asset.txt": derselbe Pfad "sub/asset.txt" wie oben.
+        via_dir = self.u32([self.open_dir(), ("path_filestat_get", "iiiii", (5, 0, 140, 9, 600))],
+                           b"sub" + b"\0" * 9 + b"asset.txt", 608)
+        self.assertEqual(via_dir, direct, "Ordner-fd rechnet ino weiter")
+        self.assertNotEqual(via_dir, self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))], b"asset.txt", 608))
+
+    def test_filestat_has_mtime(self):
+        low = self.MTIME & 0xffffffff
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        for offset in (40, 48, 56):
+            with self.subTest(offset=offset):
+                self.assertEqual(self.u32(stat, b"asset.txt", 600 + offset), low)
+        self.assertEqual(self.u32(stat, b"asset.txt", 652), self.MTIME >> 32, "obere Haelfte von mtim")
+        self.assertEqual(self.u32([self.OPEN_ASSET, ("fd_filestat_get", "ii", (5, 600))], b"asset.txt", 648), low)
+        self.assertEqual(self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 3, 600))], b"sub", 648), 0, "unbekannt = 0")
+
+    def test_fd_renumber_moves_file(self):
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 6)),
+                                       ("fd_filestat_get", "ii", (6, 600))], b"asset.txt"), 0)
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 6)),
+                                       ("fd_filestat_get", "ii", (5, 600))], b"asset.txt"), 8, "alter fd ist frei")
+        self.assertEqual(self.lib.file_test_closes(), 1, "genau einmal geschlossen, am Laufende")
+
+    def test_fd_renumber_over_open_target_closes_it(self):
+        calls = [self.OPEN_ASSET, ("path_open", "iiiiiIIii", (3, 0, 128, 9, 0, 0, 0, 0, 516)), ("fd_renumber", "ii", (5, 6))]
+        self.assertEqual(self.package(calls, b"asset.txt"), 0)
+        self.assertEqual(self.lib.file_test_closes(), 2, "Ziel sofort, Quelle am Laufende")
+
+    def test_fd_renumber_same_fd_is_noop(self):
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, 5)),
+                                       ("fd_filestat_get", "ii", (5, 600))], b"asset.txt"), 0)
+        self.assertEqual(self.package([("fd_renumber", "ii", (7, 7))]), 8, "nicht offen")
+
+    def test_fd_renumber_preopen_is_ebadf(self):
+        for source, target in ((3, 6), (4, 6), (1, 6), (5, 6)):
+            with self.subTest(source=source):
+                self.assertEqual(self.package([("fd_renumber", "ii", (source, target))]), 8)
+        for target in (3, 4, 0, 21, -1):
+            with self.subTest(target=target):
+                self.assertEqual(self.package([self.OPEN_ASSET, ("fd_renumber", "ii", (5, target))], b"asset.txt"), 8)
+
+    def test_fd_datasync_flushes_like_sync(self):
+        save_open = ("path_open", "iiiiiIIii", (4, 0, 128, 1, 0, 1 << 6, 0, 0, 512))
+        self.assertEqual(self.package([save_open, ("fd_datasync", "i", (5,))], b"x"), 0)
+        calls_datasync = self.lib.save_test_calls()
+        self.assertEqual(self.package([save_open, ("fd_sync", "i", (5,))], b"x"), 0)
+        self.assertEqual(calls_datasync, self.lib.save_test_calls(), "datasync erreicht den Host wie sync")
+        self.assertEqual(calls_datasync, 3, "open, sync, close")
+        self.assertEqual(self.package([("fd_datasync", "i", (9,))]), 8)
+
+    def test_proc_raise_returns_enosys(self):
+        self.assertEqual(self.package([("proc_raise", "i", (6,))]), 52)
+
+    def test_fd_allocate_is_enotsup(self):
+        self.assertEqual(self.package([("fd_allocate", "iII", (1, 0, 10))]), 58)
+        self.assertEqual(self.package([self.OPEN_ASSET, ("fd_allocate", "iII", (5, 0, 10))], b"asset.txt"), 58)
+
+
 if __name__ == "__main__":
     unittest.main()
