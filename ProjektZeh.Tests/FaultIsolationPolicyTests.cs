@@ -12,31 +12,51 @@ public sealed class FaultIsolationPolicyTests
 
     [TestMethod]
     public void Isolates_WorkerInGuestCodeWithoutLocks() =>
-        Assert.AreEqual(IsolationDecision.Isolate, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, 0, false, false));
+        Assert.AreEqual(IsolationDecision.Isolate, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, true, 0, false, false));
 
     [TestMethod]
     public void Halts_OtherThread() =>
-        Assert.AreEqual(IsolationDecision.NotWorker, FaultIsolationPolicy.Decide(PageFault, 3, Worker, true, 0, false, false));
+        Assert.AreEqual(IsolationDecision.NotWorker, FaultIsolationPolicy.Decide(PageFault, 3, Worker, true, true, 0, false, false));
 
     [TestMethod]
     public void Halts_WhenNoWorkerRegistered() =>
-        Assert.AreEqual(IsolationDecision.NotWorker, FaultIsolationPolicy.Decide(PageFault, -1, -1, true, 0, false, false));
+        Assert.AreEqual(IsolationDecision.NotWorker, FaultIsolationPolicy.Decide(PageFault, -1, -1, true, true, 0, false, false));
 
     [TestMethod]
     public void Halts_WorkerOutsideNativeRun() =>
-        Assert.AreEqual(IsolationDecision.OutsideGuest, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, false, 0, false, false));
+        Assert.AreEqual(IsolationDecision.OutsideGuest, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, false, true, 0, false, false));
 
     [TestMethod]
     public void Halts_InsideHostFunction() =>
-        Assert.AreEqual(IsolationDecision.InHostFunction, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, 1, false, false));
+        Assert.AreEqual(IsolationDecision.InHostFunction, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, true, 1, false, false));
 
     [TestMethod]
     public void Halts_UnderStorageLock() =>
-        Assert.AreEqual(IsolationDecision.HoldsStorageLock, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, 0, true, false));
+        Assert.AreEqual(IsolationDecision.HoldsStorageLock, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, true, 0, true, false));
 
     [TestMethod]
     public void Halts_UnderAppStorageGate() =>
-        Assert.AreEqual(IsolationDecision.HoldsAppStorageGate, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, 0, false, true));
+        Assert.AreEqual(IsolationDecision.HoldsAppStorageGate, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, true, 0, false, true));
+
+    // E6-C.10 (#390): Ein Interrupt-Handler laeuft maskiert auf dem Stack des Workers, den er im Gastcode unterbrochen hat;
+    // Cosmos meldet dann den Worker als Thread. Eine Ausnahme dort ist Kernelcode und haelt an, auch wenn alles andere passt.
+    [TestMethod]
+    [DataRow(0L)]
+    [DataRow(6L)]
+    [DataRow(13L)]
+    [DataRow(14L)]
+    public void Halts_ProgramFaultInInterruptHandlerOverGuestCode(long vector) =>
+        Assert.AreEqual(IsolationDecision.InterruptsMasked, FaultIsolationPolicy.Decide(vector, Worker, Worker, true, false, 0, false, false));
+
+    // Die maskierte Lage entscheidet vor Hosttiefe und Sperren: Der Handler kann den Worker auch in einer Hostfunktion treffen.
+    [TestMethod]
+    public void Halts_InterruptsMaskedBeforeHostDepthAndLocks() =>
+        Assert.AreEqual(IsolationDecision.InterruptsMasked, FaultIsolationPolicy.Decide(PageFault, Worker, Worker, true, false, 1, true, true));
+
+    // Kein Programmfehler bleibt kein Programmfehler, auch maskiert (Reihenfolge der Gruende unveraendert).
+    [TestMethod]
+    public void Halts_NmiWithInterruptsMaskedAsNotProgramFault() =>
+        Assert.AreEqual(IsolationDecision.NotProgramFault, FaultIsolationPolicy.Decide(2, Worker, Worker, true, false, 0, false, false));
 
     [TestMethod]
     [DataRow(0L)]
@@ -44,7 +64,7 @@ public sealed class FaultIsolationPolicyTests
     [DataRow(13L)]
     [DataRow(14L)]
     public void Isolates_ProgramFaultVectors(long vector) =>
-        Assert.AreEqual(IsolationDecision.Isolate, FaultIsolationPolicy.Decide(vector, Worker, Worker, true, 0, false, false));
+        Assert.AreEqual(IsolationDecision.Isolate, FaultIsolationPolicy.Decide(vector, Worker, Worker, true, true, 0, false, false));
 
     // NMI (2), Double Fault (8), Machine Check (18) und die uebrigen Vektoren sind keine App-Fehler.
     [TestMethod]
@@ -57,13 +77,13 @@ public sealed class FaultIsolationPolicyTests
     [DataRow(19L)]
     [DataRow(32L)]
     public void Halts_OtherVectorsInGuestCode(long vector) =>
-        Assert.AreEqual(IsolationDecision.NotProgramFault, FaultIsolationPolicy.Decide(vector, Worker, Worker, true, 0, false, false));
+        Assert.AreEqual(IsolationDecision.NotProgramFault, FaultIsolationPolicy.Decide(vector, Worker, Worker, true, true, 0, false, false));
 
     // Halt ohne frischen Ausnahmekontext (etwa ein anderer Panic-Pfad) darf nie isolieren.
     [TestMethod]
     public void Halts_WithoutRecordedVector() =>
         Assert.AreEqual(IsolationDecision.NotProgramFault,
-            FaultIsolationPolicy.Decide(FaultIsolationPolicy.UnknownVector, Worker, Worker, true, 0, false, false));
+            FaultIsolationPolicy.Decide(FaultIsolationPolicy.UnknownVector, Worker, Worker, true, true, 0, false, false));
 
     [TestMethod]
     public void Quarantine_RemembersOnlyAddedThreads()
