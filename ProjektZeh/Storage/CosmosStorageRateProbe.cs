@@ -8,6 +8,7 @@ using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Ext2;
 using Cosmos.Kernel.System.FileSystem.Fat;
 using Cosmos.Kernel.System.Storage;
+using ProjektZeh.Storage.Ext2;
 
 namespace ProjektZeh.Storage;
 
