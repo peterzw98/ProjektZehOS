@@ -654,6 +654,42 @@ class NativeInputTests(unittest.TestCase):
         self.assertEqual(via_dir, direct, "Ordner-fd rechnet ino weiter")
         self.assertNotEqual(via_dir, self.u32([("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))], b"asset.txt", 608))
 
+    def readdir_ino(self, calls, data, high=False):
+        """d_ino (u64 bei Offset 8 des ersten Eintrags im Puffer ab 1024), optional obere Haelfte."""
+        self.lib.dirent_test_mode(1)
+        try:
+            return self.u32(calls, data, 1036 if high else 1032)
+        finally:
+            self.lib.dirent_test_mode(0)
+
+    def test_readdir_ino_matches_stat(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        readdir = [("fd_readdir", "iiiIi", (3, 1024, 64, 0, 600))]
+        for high, offset in ((False, 608), (True, 612)):
+            with self.subTest(high=high):
+                self.assertEqual(self.readdir_ino(readdir, b"asset.txt", high), self.u32(stat, b"asset.txt", offset),
+                                 "d_ino des Paketeintrags = st_ino")
+
+    def test_readdir_ino_in_subdirectory_matches_stat_through_dir_fd(self):
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 13, 600))]
+        readdir = [self.open_dir(), ("fd_readdir", "iiiIi", (5, 1024, 64, 0, 600))]
+        self.assertEqual(self.readdir_ino(readdir, b"sub", False), self.u32(stat, b"sub/asset.txt", 608))
+
+    def test_readdir_ino_on_save_fd4_matches_stat_formula(self):
+        # Wurzel von /save hat denselben Startwert wie die des Pakets: gleicher Name, gleiche ino.
+        stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]
+        self.assertEqual(self.readdir_ino([("fd_readdir", "iiiIi", (4, 1024, 64, 0, 600))], b"asset.txt"),
+                         self.u32(stat, b"asset.txt", 608))
+
+    def test_readdir_truncated_entry_keeps_host_bytes(self):
+        # 20 Byte: Header unvollstaendig, nichts wird umgeschrieben (d_ino bleibt 1 = Index+1 aus dem Stub).
+        self.lib.dirent_test_mode(1)
+        try:
+            value = self.u32([("fd_readdir", "iiiIi", (3, 1024, 20, 0, 600))], b"", 1032)
+        finally:
+            self.lib.dirent_test_mode(0)
+        self.assertEqual(value, 1)
+
     def test_filestat_has_mtime(self):
         low = self.MTIME & 0xffffffff
         stat = [("path_filestat_get", "iiiii", (3, 0, 128, 9, 600))]

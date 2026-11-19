@@ -115,8 +115,22 @@ int32_t zehos_wasm_host_save_path(int32_t operation, const uint8_t* path, uint32
 { (void)operation; (void)path; (void)length; save_calls++; return 0; }
 int32_t zehos_wasm_host_save_rename(const uint8_t* from, uint32_t fromLength, const uint8_t* to, uint32_t toLength)
 { (void)from; (void)fromLength; (void)to; (void)toLength; save_calls++; return 0; }
+// Mit dirent_test_mode(1) liefern beide Readdir-Stubs einen echten Eintrag "asset.txt" (d_ino = Index+1 wie die Hostseite), sonst 3 Byte bzw. nichts.
+static int dirent_mode;
+void dirent_test_mode(int mode) { dirent_mode = mode; }
+static uint32_t stub_dirent(uint8_t* buffer, uint32_t length)
+{
+    uint8_t entry[33] = {0};
+    uint64_t one = 1, next = 1;
+    uint32_t nameLength = 9;
+    memcpy(entry, &next, 8); memcpy(entry + 8, &one, 8); memcpy(entry + 16, &nameLength, 4); entry[20] = 4;
+    memcpy(entry + 24, "asset.txt", 9);
+    uint32_t count = length < sizeof entry ? length : (uint32_t)sizeof entry;
+    memcpy(buffer, entry, count);
+    return count;
+}
 int32_t zehos_wasm_host_save_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used)
-{ (void)handle; (void)buffer; (void)length; (void)cookie; save_calls++; *used = 0; return 0; }
+{ (void)handle; (void)cookie; save_calls++; *used = dirent_mode ? stub_dirent(buffer, length) : 0; return 0; }
 // Paketordner (12.8 P4-B): "." und "sub" oeffnen (Handle 90 + laufende Nummer), alles andere ENOENT; Zaehler bleiben nach Traps lesbar.
 static int pkg_open_dirs, pkg_closedirs, pkg_opendirs, pkg_last_dir, pkg_last_readdir_handle, pkg_readdirs, pkg_openat_dir;
 static uint64_t pkg_last_cookie;
@@ -136,6 +150,7 @@ int32_t zehos_wasm_host_package_opendir(int32_t dir, const uint8_t* path, uint32
 }
 int32_t zehos_wasm_host_package_readdir(int32_t handle, uint8_t* buffer, uint32_t length, uint64_t cookie, uint32_t* used) {
     pkg_readdirs++; pkg_last_readdir_handle = handle; pkg_last_cookie = cookie;
+    if (dirent_mode) { *used = stub_dirent(buffer, length); return 0; }
     if (length >= 3) { memcpy(buffer, "abc", 3); *used = 3; } else *used = 0;
     return 0;
 }
