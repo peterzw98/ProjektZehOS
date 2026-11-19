@@ -98,6 +98,7 @@ public sealed class Kernel : Sys.Kernel
         systemLog = new SystemLog(128, GetElapsedMilliseconds, new SerialLogSink());
         // Lange Warte- oder Haltezeiten der Speicher-Sperre nur seriell melden: das Protokoll selbst schreibt keine Datei.
         StorageLock.Report = text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("STORAGE " + text + "\n");
+        ProjektZeh.Runtime.Wasm.WasmInputBuffer.Report = text => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
         systemFiles = new CosmosSystemFiles(VersionText, GetElapsedMilliseconds, systemLog);
         automaticNetwork = new(networkService, tasks,
             text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("NET " + text + "\n"));
