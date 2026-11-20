@@ -346,9 +346,10 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             StorageLock.Run(() =>
             {
                 string marker = Path.Combine(directory, "active");
-                File.Delete(marker);
-                // Reste des Ersetzens duerfen das entfernte Paket nicht beim naechsten Einbinden wiederbeleben.
+                // Reste des Ersetzens zuerst: ein Abbruch vor dem Loeschen des Markers laesst das Paket installiert, statt dass
+                // ein uebrig gebliebenes .old es beim naechsten Einbinden wiederbelebt.
                 foreach (string rest in new[] { NewSuffix, OldSuffix, WorkSuffix }) File.Delete(marker + rest);
+                File.Delete(marker);
             });
             StorageLock.Run(() => DeleteTreeStorageLocked(directory));
             return ResultErr.CreateSuccess();
