@@ -555,6 +555,45 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void RemoveHealsAndCleansLeftoversSoPackageStaysRemoved()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("repo"), "", Publish(Path.Combine(work, "repo"), "doom", "1.0.0"), CancellationToken.None).IsOK());
+        string doom = Path.Combine(work, "store", "apps", "doom");
+        // Doppelfehler-Zustand: alter Marker nur als .old, neue als .new.
+        File.Move(Path.Combine(doom, "active"), Path.Combine(doom, "active.old"));
+        File.WriteAllText(Path.Combine(doom, "active.new"), "1.1.0\n");
+        Assert.IsTrue(store.Remove("doom").IsOK());
+        Assert.IsTrue(store.Reconcile().IsOK());
+        Assert.IsFalse(Directory.Exists(doom));
+    }
+
+    [TestMethod]
+    public void ReplaceDiscardsLegacyTruncatedNewBeforeBackingUp()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path + ".new", "1.0.0"); // gekuerzte Altlast ohne Zeilenende, Ziel fehlt
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }, true));
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+    }
+
+    [TestMethod]
+    public void FailedFirstWriteLeavesNothingAndRestoreKeepsExistingTarget()
+    {
+        string path = Path.Combine(work, "active");
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("1.0.0\n"),
+            (from, to) => { if (from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }));
+        Assert.IsFalse(File.Exists(path + ".new"));
+        File.WriteAllText(path, "1.0.0\n");
+        File.WriteAllText(path + ".old", "0.9.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".old"));
+    }
+
+    [TestMethod]
     public void CatalogRequiresSignatureAndNonDecreasingGeneration()
     {
         var store = Store();

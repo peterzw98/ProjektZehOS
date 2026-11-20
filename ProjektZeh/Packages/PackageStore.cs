@@ -226,6 +226,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     {
         using var writer = BeginWrite();
         var manifest = parsed.Value!;
+        // Vor der Rueckstufungspruefung heilen: nach einem Doppelfehler liegt der alte Marker nur als .old vor.
+        StorageLock.Run(() => RestorePendingStorageLocked(Path.Combine(Apps, manifest.Id, "active"), true));
         var current = ReadActive(manifest.Id);
         InstalledPackage? previous = current.IsOK() ? current.Value : null;
         // Auch bei beschaedigtem Paket gilt die Version aus dem Marker als Rueckstufungsgrenze, sofern es diese Version
@@ -253,7 +255,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             TryDeleteTree(target);
             return ResultObjectFactory.CreateFailure<PackageManifest>(written);
         }
-        StorageLock.Run(() => ReplaceFileStorageLocked(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n")));
+        StorageLock.Run(() => ReplaceFileStorageLocked(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"), textLine: true));
         // WriteVersion hat jede Datei beim Schreiben gehasht; ein erneuter Durchlauf vor dem ersten Start ist unnoetig.
         lock (gate) verified.Add(manifest.Id + "/" + manifest.Version);
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
@@ -337,9 +339,17 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             using var writer = BeginWrite();
+            // Zwischenstand eines Doppelfehlers zuerst heilen (sonst gilt das Paket faelschlich als nicht installiert).
+            StorageLock.Run(() => RestorePendingStorageLocked(Path.Combine(directory, "active"), true));
             if (!StorageLock.Run(() => File.Exists(Path.Combine(directory, "active")))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
             // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
-            StorageLock.Run(() => File.Delete(Path.Combine(directory, "active")));
+            StorageLock.Run(() =>
+            {
+                string marker = Path.Combine(directory, "active");
+                File.Delete(marker);
+                // Reste des Ersetzens duerfen das entfernte Paket nicht beim naechsten Einbinden wiederbeleben.
+                foreach (string rest in new[] { NewSuffix, OldSuffix, WorkSuffix }) File.Delete(marker + rest);
+            });
             StorageLock.Run(() => DeleteTreeStorageLocked(directory));
             return ResultErr.CreateSuccess();
         }
@@ -428,7 +438,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             StorageLock.Run(() =>
             {
                 Directory.CreateDirectory(root);
-                ReplaceFileStorageLocked(SourcePath, Encoding.ASCII.GetBytes(url + "\n"));
+                ReplaceFileStorageLocked(SourcePath, Encoding.ASCII.GetBytes(url + "\n"), textLine: true);
             });
             return ResultErr.CreateSuccess();
         }
@@ -520,13 +530,13 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     // kommt sie zurueck. Grundregel: Die alte Fassung (z. B. der active-Marker) wird nie verworfen, solange nicht die neue
     // wirklich an ihrem Platz liegt; bei einem Doppelfehler bleibt sie als .old und der Fehler wird gemeldet.
     // move ist die Testnaht fuer Umbenennungsfehler.
-    internal static void ReplaceFileStorageLocked(string path, byte[] bytes, Action<string, string>? move = null)
+    internal static void ReplaceFileStorageLocked(string path, byte[] bytes, Action<string, string>? move = null, bool textLine = false)
     {
         move ??= File.Move;
         string work = path + WorkSuffix, temporary = path + NewSuffix, old = path + OldSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Zwischenstand eines frueheren Abbruchs oder Doppelfehlers zuerst heilen, nie einfach loeschen (.old kann die einzige alte Fassung sein).
-        RestorePendingStorageLocked(path);
+        RestorePendingStorageLocked(path, textLine);
         // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .wip entfernt und die alte Fassung (z. B. active) bleibt.
         FileService.WriteAllBytesCompleteStorageLocked(work, bytes);
         move(work, temporary);
@@ -549,7 +559,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             TryDeleteStorageLocked(temporary);
             throw;
         }
-        if (hadOld) File.Delete(old);
+        if (hadOld) TryDeleteStorageLocked(old); // die neue Fassung liegt schon; Restore raeumt einen Rest auf
     }
 
     private static void TryDeleteStorageLocked(string path)
