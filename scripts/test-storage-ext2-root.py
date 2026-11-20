@@ -46,6 +46,9 @@ QCOW2_LIMIT = 16 * GIB
 HOST_FREE_MINIMUM = 10 * GIB
 MACHINE_BASE = list(tools.MACHINE)
 # tools.MACHINE ist global und wird in boot() je Start gesetzt; der Start (inkl. Portvergabe) ist deshalb serialisiert.
+# shortcut: die Sperre endet vor dem Binden des QMP-Ports (start_qemu im Doom-Skript haengt -qmp fest an); zwei Starts
+# koennen denselben Port erhalten, QEMU endet dann und der Lauf wird per Timeout No-Go (kein falsches Go). Aendern, sobald
+# start_qemu den QMP-Port weglassen kann oder Portkonflikte in der Praxis auftreten.
 BOOT_LOCK = threading.Lock()
 
 
@@ -245,6 +248,9 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
         return None
     finally:
         stop.set()
+        if process.poll() is None:  # unerwartete Ausnahme: QEMU nicht als Waise zuruecklassen
+            process.kill()
+            process.wait()
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
     passed, failed, done = evaluate(serial)
     ok = done and not failed and passed > 0 and process.returncode == 0
@@ -286,14 +292,22 @@ def abort_run(ctx: Context, root: Path, delay: float) -> None:
     overlay = ctx.work / f"{tag}.qcow2"
     ctx.qemu_img("create", "-f", "qcow2", "-b", str(root), "-F", "qcow2", str(overlay))
     process, directory = boot(ctx, tag, 3, overlay)
+    marker_at = killed_at = None
     try:
         tools.wait_serial(directory, "STORAGE_ROOT WRITING", ctx.args.timeout)
+        marker_at = time.monotonic()
         time.sleep(delay)
     except TimeoutError as error:
         ctx.note(f"{tag}: kein WRITING ({error})", False)
     finally:
         process.kill()
+        killed_at = time.monotonic()
         process.wait()
+    if marker_at is not None:
+        gap = killed_at - marker_at
+        ctx.note(f"{tag}: Abbruch {gap:.2f} s nach WRITING (Soll {delay:g} s)")
+        if gap > delay + 1:  # kein No-Go: nur die Abdeckung des fruehen Fensters ist fraglich
+            ctx.note(f"{tag}: Hinweis Abbruchfenster verfehlt (Ist {gap:.2f} s, Soll {delay:g} s)")
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
     if "STORAGE_ROOT DONE" in serial or "FLUSHED-STATE" not in serial:
         ctx.note(f"{tag}: Probe endete oder setzte s_state nicht vor dem Abbruch", False)
@@ -322,10 +336,14 @@ def abort_run(ctx: Context, root: Path, delay: float) -> None:
 def run_aborts(ctx: Context, root: Path, delays, parallel: int, runner=abort_run) -> None:
     """Abbruchlaeufe je Verzoegerung; Bericht in fester Reihenfolge, go als UND ueber alle (parallel laufen alle zu Ende)."""
     def one(delay: float) -> Context:
-        sub = ctx.child(f"abort-{delay:g}s", parallel == 1)
+        sub = None
         try:
+            sub = ctx.child(f"abort-{delay:g}s", parallel == 1)
             runner(sub, root, delay)
         except Exception as error:  # ein abgestuerzter Durchlauf darf die anderen nicht abbrechen
+            if sub is None:  # Anlage/Kopie scheiterte: leerer Kontext nur fuer die Fehlerzeile
+                sub = copy.copy(ctx)
+                sub.report, sub.go, sub.echo = [], True, parallel == 1
             sub.note(f"abort-{delay:g}s: Ausnahme {type(error).__name__}: {error}", False)
         return sub
 

@@ -2,10 +2,13 @@ import contextlib
 import importlib.util
 import io
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -162,10 +165,72 @@ class RunAbortsTests(unittest.TestCase):
         self.assertFalse(self.ctx.go)
         self.assertEqual(len(self.ctx.report), 4)
 
+    def test_child_failure_is_nogo_and_others_report(self):
+        (self.dir / 'fat.qcow2').unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            root.run_aborts(self.ctx, self.dir / 'root.qcow2', self.DELAYS, 4, self.runner())
+        self.assertFalse(self.ctx.go)
+        self.assertEqual(len(self.ctx.report), 4)
+        self.assertTrue(all('FileNotFoundError' in line for line in self.ctx.report))
+
+    def test_child_failure_keeps_other_delays(self):
+        real = root.Context.child
+
+        def child(ctx, name, echo):
+            if name == 'abort-2s':
+                raise FileNotFoundError('fat.qcow2')
+            return real(ctx, name, echo)
+        with mock.patch.object(root.Context, 'child', child), contextlib.redirect_stdout(io.StringIO()):
+            root.run_aborts(self.ctx, self.dir / 'root.qcow2', self.DELAYS, 4, self.runner())
+        self.assertFalse(self.ctx.go)
+        self.assertEqual(len(self.ctx.report), 4)
+        self.assertIn('lauf 0.3', self.ctx.report)
+        self.assertTrue(any('FileNotFoundError' in line for line in self.ctx.report))
+
     def test_children_have_own_disks(self):
         self.run_aborts(4)
         for delay in self.DELAYS:
             self.assertTrue((self.dir / f'abort-{delay:g}s' / 'inodes.qcow2').is_file())
+
+
+class AbortWindowTests(unittest.TestCase):
+    def measure(self, delay, real_gap):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        (directory / 'serial.log').write_text('', encoding='utf-8')
+        ctx = object.__new__(root.Context)
+        ctx.work, ctx.report, ctx.go, ctx.echo = directory, [], True, False
+        ctx.args = mock.Mock(timeout=1)
+        ctx.qemu_img = mock.Mock()
+        process = mock.Mock()
+        clock = iter([100.0, 100.0 + real_gap])  # Marker, Kill
+        with mock.patch.object(root, 'boot', return_value=(process, directory)),                 mock.patch.object(root.tools, 'wait_serial'), mock.patch.object(root.time, 'sleep'),                 mock.patch.object(root.time, 'monotonic', lambda: next(clock)):
+            root.abort_run(ctx, directory / 'root.qcow2', delay)
+        return ctx
+
+    def test_gap_is_reported(self):
+        ctx = self.measure(2.0, 2.2)
+        self.assertIn('2.20 s nach WRITING', ctx.report[0])
+        self.assertFalse(any('verfehlt' in line for line in ctx.report))
+
+    def test_missed_window_is_hint_not_nogo(self):
+        ctx = self.measure(0.3, 3.0)
+        self.assertTrue(any('Abbruchfenster verfehlt' in line for line in ctx.report))
+
+
+class RunToDoneTests(unittest.TestCase):
+    def test_unexpected_exception_kills_qemu(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(process.kill)
+        ctx = object.__new__(root.Context)
+        ctx.work, ctx.report, ctx.go, ctx.echo = directory, [], True, False
+        ctx.args = mock.Mock(timeout=1)
+        with mock.patch.object(root, 'boot', return_value=(process, directory)),                 mock.patch.object(root, 'watch_space'),                 mock.patch.object(root.tools, 'wait_serial', side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2')
+        self.assertIsNotNone(process.poll())
 
 
 if __name__ == '__main__':
