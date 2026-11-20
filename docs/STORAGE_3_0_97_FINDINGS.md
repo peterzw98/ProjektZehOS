@@ -160,3 +160,24 @@ Quelle: Meldung des Koordinators (Agent, nicht selbst nachgeprüft); die Läufe 
 - **512-MiB-Gast instabil:** E4.0 stürzt dort nichtdeterministisch ab (Page Fault, CR2 `0x8`/`0x10`, in `StepG` beziehungsweise `StepI2`/`Ext2Formatter.Format`). Ursache laut Meldung eine Cosmos-Allokation, die `null` statt `OutOfMemoryException` liefert (vgl. Abschnitt zu Inode-Cache und GC-Fragmentierung). Diese Ursache wurde im Branch `cosmos` nicht geprüft.
 - **Mit `--memory 1G`:** E4.0 Lauf 1 PASS=29 FAIL=0, `e2fsck -fn` Exit 0 für Root und Zusatzplatte. Die Angabe nennt keine CPU-Zahl; ob 1 und 4 CPUs gleich verlaufen, ist hier nicht belegt.
 - **Offen:** E4.0-Läufe 2–5 liefen zum Zeitpunkt der Meldung noch; `test-storage-ext2-root.py` ist damit nur mit 1 GiB belegt, nicht mit dem Standardwert 512 MiB. Ein sicherer Mindestspeicher ist daraus nicht abgeleitet. Weiter nicht geprüft: VMware, echte Hardware.
+
+### E5-H Wiederholung auf Cosmos 3.0.97-zehos.6-smp.10 (20. November 2026)
+
+Paket E5-H (#384). Stand: `origin/task/mc-e5-smp` @ `f3a87011` (Pin `3.0.97-zehos.6-smp.10`, `cosmos`-Commit `52114521`, Cosmos wirft `OutOfMemoryException` statt `null`, cosmos #540) plus die zwei Commits von [PR #531](https://github.com/peterzw98/ProjektZehOS/pull/531) (Fix zu `l2`) in einem lokalen, nicht gepushten Integrationsstand. Cosmos selbst gebaut mit `scripts/build-cosmos.sh` (SDK 10.0.404), ISOs mit `cosmos build` und Umgebungsvariablen `ZehOSStorageProbe`, `ZehOSSecurityRecovery`, `ZehOSStorageRootProbe`.
+Rechner: Linux 7.2, QEMU/KVM q35, je **1 Lauf** pro Zelle, höchstens zwei Gäste von mir gleichzeitig; zeitweise liefen fremde Gäste mit, Laufzeiten sind grob. Neue Arbeitsordner und Images.
+
+| Lauf | 1 CPU | 4 CPUs |
+| --- | --- | --- |
+| `test-storage-ext2-guest.py` | PASS, 10 s, `e2fsck -fn` Exit 0 | PASS, 9 s, Exit 0 |
+| `test-storage-data-disk.py` (Standardgrößen) | PASS, 142 s | PASS, 146 s |
+| `test-storage-ext2-root.py --size 2 --memory 1G`, Lauf 1 | PASS=29 FAIL=0, 3054 s, `e2fsck -fn` Exit 0 (Root und Zusatzplatte), Zähler Gast = `dumpe2fs` | PASS=29 FAIL=0, 2752 s, ebenso Exit 0 |
+| dasselbe mit `--memory 512M`, Lauf 1 | **FAIL `l2`**, 23 PASS, 1392 s; `e2fsck -fn` des Root-Images Exit 0 (Platte voll, 524288/524288 Blöcke) | **FAIL `l2`**, 23 PASS, 1476 s; Exit 0 |
+
+Das Skript meldet bei `--last-run 1` Exit 1 („unvollständig“); das gilt für die 1G-Läufe, deren Lauf 1 vollständig bestand.
+
+**Abweichung 512 MiB:** Mit smp.10 tritt der Allokationsfehler jetzt als `OutOfMemoryException` auf (bisher Page Fault auf `null`). Schritt `l2` endet mit „OutOfMemoryException: Insufficient memory to continue the execution of the program.“ unmittelbar nach den erwarteten „No space left“-Zeilen; ob #531 das `l2`-Ergebnis von smp.3 (Original gekürzt) behebt, ist bei 512 MiB nicht belegt, weil `l2` vorher am Speicher scheitert; `l1` bestand. Mit 1 GiB bestand `l2` mit dem Fix. Ab Schritt `d` meldet der GC wiederholt `[GC] WARNING: Mark stack overflow` (64 Mal in einem Lauf), zuletzt direkt vor dem Fehler. Zwei Wiederholungen 512M/1 CPU (Probe mit zusätzlicher Stack-Ausgabe, lokal, nicht eingecheckt) scheiterten schon in Schritt `g` (13 PASS, nach 389 s) mit derselben Ausnahme: Ort nichtdeterministisch (`g` oder `l2`). Die Stack-Ausgabe von `exception.StackTrace` blieb leer (NativeAOT-Kernel ohne Stackmetadaten); ein Stack liegt daher nicht vor. Läufe 2–5 wurden wegen No-Go nicht erreicht.
+Einordnung: Peter meldet in #538 den Cosmos-Patch `page-alloc-split` (Fragmentierung nach großen Arrays) mit Gegenprobe; ein ZehOS-Pin mit diesem Patch (smp.11) und ein Gastlauf dazu stehen aus.
+
+**Lesestress (#247):** kein eigenes Skript; Stress `j` (drei Threads) ist Teil von `test-storage-ext2-root.py` Lauf 1 und bestand mit 1 GiB bei 1 und 4 CPUs (Läufe oben); bei 512 MiB wurde `j` vor dem Abbruch mit PASS durchlaufen.
+
+**Nicht geprüft:** E4.0 Läufe 2–5 (mit 1 GiB nicht ausgeführt, mit 512 MiB nicht erreicht), Hochgruppenlauf 32/128 GiB, `test-storage-filesystems.py` (Host-Metadatenleser), `--legacy-image`, 8 CPUs, 512 MiB mit `page-alloc-split`, VMware und echte Hardware. Hosttests nicht ausgeführt (reine Doku). Die 1-GiB-Abnahme gilt nur für diese Konfiguration, kein Mindestspeicher abgeleitet.
