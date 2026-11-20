@@ -134,7 +134,14 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             {
                 if (graphics)
                 {
-                    try { display!.Render(input, now); }
+                    try
+                    {
+                        display!.Render(input, now);
+#if ZEHOS_ISOLATION_PROBE
+                        // Scene- und Hintergrundpuffer (je etwa 8 MiB) entstehen erst im ersten Bild, nicht beim Desktopstart.
+                        CosmosIsolationProbe.MarkFrameRendered();
+#endif
+                    }
                     catch (Exception exception) { FailGraphics("Zeichnen", exception); }
                 }
                 else
@@ -169,9 +176,6 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             systemLog.Information("Desktop", "Desktop ist bereit.");
             // Zeigt seriell, ob der Treiber einen Laufzeitwechsel der Aufloesung erlaubt (nur bei mehreren Modi).
             systemLog.Information("Desktop", $"Anzeige {display.Display.Current}, Modi: {string.Join(", ", display.Display.Modes)}");
-#if ZEHOS_ISOLATION_PROBE
-            CosmosIsolationProbe.MarkDesktopReady();
-#endif
         }
         catch (Exception exception)
         {
