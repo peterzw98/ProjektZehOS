@@ -223,9 +223,22 @@ def main():
         page("http-chunked", hexcolor(pages.HTTP_CHUNKED))
         address(f"{base}/fehlt.html")
         page("http-404", hexcolor(pages.HTTP_MISSING))
+        # #572: Der TLS-Abbruch dauert laenger als eine feste Wartezeit. Kommt die Fehlerseite erst, waehrend
+        # address() tippt, setzt NetSurf die Adresszeile neu und die Eingabe wird falsch einsortiert.
+        # Deshalb erst warten, bis sich der Inhalt gegenueber der 404-Seite geaendert hat und dann stabil bleibt.
+        vorher = body(capture("vor-https"))
         address("https://10.0.2.2/")
-        time.sleep(2)
-        capture("https-fehlerseite")
+        deadline = time.monotonic() + 60
+        letztes, stabil = None, 0
+        while True:
+            aktuell = body(capture("https-fehlerseite"))
+            stabil = stabil + 1 if aktuell == letztes else 0
+            letztes = aktuell
+            if aktuell != vorher and stabil >= 2:
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError("https-fehlerseite: Fehlerseite wurde nicht angezeigt oder bleibt instabil")
+            time.sleep(1)
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 
