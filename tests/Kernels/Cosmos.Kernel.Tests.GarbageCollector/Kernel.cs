@@ -29,7 +29,7 @@ public class Kernel : Sys.Kernel
         Serial.WriteString("[GarbageCollector] BeforeRun() reached!\n");
         Serial.WriteString("[GarbageCollector] Starting tests...\n");
 
-        TR.Start("GarbageCollector Tests", expectedTests: 57 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
+        TR.Start("GarbageCollector Tests", expectedTests: 58 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
 
         // First: Kernel.Start turned the finalizer thread on, CosmosEnableFinalizerThread being on
         // in this kernel. The cells below check the collector with the finalizers run inline, on
@@ -102,6 +102,19 @@ public class Kernel : Sys.Kernel
         TR.Run("GC_OutOfMemory_SizeOverflowThrows", TestGCOutOfMemorySizeOverflowThrows);
         TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
         TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
+
+        // Small segments must not split the free memory large arrays need (ZehOS patch page-alloc-split).
+        // The load is sized for the 512 MB guest of the Makefile: in a larger guest it no longer
+        // runs the memory short and would pass without the patch, so it is skipped there.
+        ulong managedMiB = PageAllocator.TotalPageCount * PageAllocator.PageSize >> 20;
+        if (managedMiB >= FragmentationMinMiB && managedMiB <= FragmentationMaxMiB)
+        {
+            TR.Run("GC_LargeArrays_SmallSurvivorsDoNotFragment", TestGCLargeArraysSmallSurvivorsDoNotFragment);
+        }
+        else
+        {
+            TR.Skip("GC_LargeArrays_SmallSurvivorsDoNotFragment", "load is sized for a 512 MB guest, the page allocator manages a different amount of memory");
+        }
 
         // GC Info & Configuration Tests
         TR.Run("GC_Info_SimpleMemoryInfo", TestGCInfoSimpleMemoryInfo);
@@ -544,6 +557,91 @@ public class Kernel : Sys.Kernel
         byte[] after = new byte[OpaqueLength(1 << 20)];
         after[after.Length - 1] = 0x3C;
         Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
+    }
+
+    // ZehOS patch page-alloc-split: memory the page allocator may manage for the fragmentation test
+    // to be meaningful (a 512 MB guest, less what lies below the kernel and the RAT).
+    private const ulong FragmentationMinMiB = 384;
+    private const ulong FragmentationMaxMiB = 512;
+
+    // ZehOS patch page-alloc-split: arrays of 1 to 8 MiB replace each other in 40 slots (about
+    // 180 MiB live), and between them small arrays are allocated, every eighth of which survives.
+    // The page allocator took the 16-page segments of the small ones from the top like the large
+    // runs, into the holes dead large arrays left, until no free run fit 8 MiB with more than half
+    // of the 512 MB guest free (step 557 of this sequence, in both cells). Taken from the bottom,
+    // the holes stay whole.
+    private static void TestGCLargeArraysSmallSurvivorsDoNotFragment()
+    {
+        const int Slots = 40;
+        const int Steps = 1500;
+        ulong rng = 0x9E3779B97F4A7C15;
+        byte[]?[] ring = new byte[]?[Slots];
+        object?[] survivors = new object?[4096];
+        int survivorCount = 0;
+        int failedStep = -1;
+        int failedSize = 0;
+        for (int step = 0; step < Steps; step++)
+        {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            int slot = (int)(rng % Slots);
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            int size = OpaqueLength((int)((1 + rng % 8) << 20));
+            ring[slot] = null;
+            for (int k = 0; k < 64; k++)
+            {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                object small = new byte[OpaqueLength(32 + (int)(rng % 2000))];
+                if (k % 8 == 0)
+                {
+                    survivors[survivorCount % survivors.Length] = small;
+                    survivorCount++;
+                }
+            }
+
+            try
+            {
+                byte[] large = new byte[size];
+                large[0] = 1;
+                large[size - 1] = 2;
+                ring[slot] = large;
+            }
+            catch (OutOfMemoryException)
+            {
+                failedStep = step;
+                failedSize = size;
+                break;
+            }
+        }
+
+        if (failedStep >= 0)
+        {
+            Serial.WriteString("[GarbageCollector] fragmentation: OutOfMemoryException at step ");
+            Serial.WriteNumber((ulong)failedStep);
+            Serial.WriteString(", ");
+            Serial.WriteNumber((ulong)failedSize);
+            Serial.WriteString(" bytes, free pages ");
+            Serial.WriteNumber(PageAllocator.FreePageCount);
+            Serial.WriteString("\n");
+        }
+
+        for (int i = 0; i < ring.Length; i++)
+        {
+            ring[i] = null;
+        }
+
+        for (int i = 0; i < survivors.Length; i++)
+        {
+            survivors[i] = null;
+        }
+
+        CoreGC.Collect();
+        Assert.True(failedStep < 0, "GC: arrays of 1-8 MiB with small survivors between them must not run out of contiguous pages");
     }
 
     private static void TestGCLargeAllocationAndCollect()
