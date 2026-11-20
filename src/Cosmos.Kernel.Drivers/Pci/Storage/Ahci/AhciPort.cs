@@ -22,7 +22,10 @@ namespace Cosmos.Kernel.Drivers.Pci.Storage.Ahci;
 /// Commands are polled to completion. Every method is thread context,
 /// entered by the ring from any thread; a task file error surfaces as an
 /// <see cref="IOException"/>, a stuck port or a timeout as an
-/// <see cref="InvalidOperationException"/>.
+/// <see cref="InvalidOperationException"/>. After either the port's engine
+/// is stopped and started again before the busy flag is released; a port
+/// that cannot be stopped stays disabled, so a transfer still running can
+/// never land in a bounce buffer the next caller fills.
 /// </summary>
 internal sealed class AhciPort : IBlockDevice
 {
@@ -74,6 +77,14 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>Mask of one byte, for the low byte of an IDENTIFY word.</summary>
     private const int ByteMask = 0xFF;
 
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// Sectors a 48-bit LBA addresses: IDENTIFY words 100 to 103 hold 64
+    /// bits, so a capacity above this is clamped; the FIS carries six LBA
+    /// bytes and would wrap a larger sector number back to the start.
+    /// </summary>
+    private const ulong MaxLba48Sectors = 1UL << 48;
+
     // --- Private fields ---
 
     private readonly AhciState _controller;
@@ -87,6 +98,10 @@ internal sealed class AhciPort : IBlockDevice
     private readonly string _serial;
     private readonly string _firmware;
     private bool _busy;
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>Set once a failed command left the engine running; written only under the busy flag, read in <see cref="Claim"/> under the lock.</summary>
+    private bool _disabled;
 
     // --- Constructor ---
 
@@ -157,6 +172,10 @@ internal sealed class AhciPort : IBlockDevice
                 | ((ulong)identify[AhciProtocol.IdentifyLba48CountWord + 1] << WordBits)
                 | ((ulong)identify[AhciProtocol.IdentifyLba48CountWord + 2] << (2 * WordBits))
                 | ((ulong)identify[AhciProtocol.IdentifyLba48CountWord + 3] << (3 * WordBits));
+            if (_blockCount > MaxLba48Sectors)
+            {
+                _blockCount = MaxLba48Sectors;
+            }
         }
         else
         {
@@ -184,13 +203,21 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="blockNo">The first sector.</param>
     /// <param name="blockCount">How many sectors.</param>
     /// <param name="data">Where they go; at least <paramref name="blockCount"/> times <see cref="BlockSize"/> bytes.</param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors asked for.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors asked for, or the sectors run past the device.</exception>
     /// <exception cref="IOException">A command ended in a task file error.</exception>
     /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or a command timed out.</exception>
     public void ReadBlock(ulong blockNo, ulong blockCount, Span<byte> data)
     {
         int sector = (int)AhciProtocol.SectorBytes;
         ArgumentOutOfRangeException.ThrowIfGreaterThan(blockCount, (ulong)data.Length / (uint)sector, nameof(blockCount));
+        // ZehOS patch ahci-error-recovery, see PATCHES.md
+        // Past the capacity the six LBA bytes of the FIS would wrap: a
+        // write at 2^48 would land on sector 0. Written without overflow.
+        if (blockNo > _blockCount || blockCount > _blockCount - blockNo)
+        {
+            throw new ArgumentOutOfRangeException(nameof(blockNo), "The sectors run past the end of the device.");
+        }
+
         ulong done = 0;
         while (done < blockCount)
         {
@@ -220,13 +247,21 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="blockNo">The first sector.</param>
     /// <param name="blockCount">How many sectors.</param>
     /// <param name="data">Their bytes; at least <paramref name="blockCount"/> times <see cref="BlockSize"/> bytes.</param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors given.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors given, or the sectors run past the device.</exception>
     /// <exception cref="IOException">A command ended in a task file error.</exception>
     /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or a command timed out.</exception>
     public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data)
     {
         int sector = (int)AhciProtocol.SectorBytes;
         ArgumentOutOfRangeException.ThrowIfGreaterThan(blockCount, (ulong)data.Length / (uint)sector, nameof(blockCount));
+        // ZehOS patch ahci-error-recovery, see PATCHES.md
+        // Past the capacity the six LBA bytes of the FIS would wrap: a
+        // write at 2^48 would land on sector 0. Written without overflow.
+        if (blockNo > _blockCount || blockCount > _blockCount - blockNo)
+        {
+            throw new ArgumentOutOfRangeException(nameof(blockNo), "The sectors run past the end of the device.");
+        }
+
         ulong done = 0;
         while (done < blockCount)
         {
@@ -281,6 +316,30 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>The HBA the port belongs to. Any context.</summary>
     public AhciState Controller => _controller;
 
+    // --- Internal methods ---
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// Issues one ATA command without data and without LBA, the port
+    /// claimed around it, so the storage test kernel can drive the error
+    /// path with a command the device aborts. Thread context; any thread.
+    /// </summary>
+    /// <param name="command">The ATA command.</param>
+    /// <exception cref="IOException">The command ended in an error.</exception>
+    /// <exception cref="InvalidOperationException">The port is disabled, no free slot, the port stuck busy, or the command timed out.</exception>
+    internal void IssueNonDataCommand(byte command)
+    {
+        Claim();
+        try
+        {
+            IssueCommand(command, 0, 0, isWrite: false, useLba48: false, hasData: false);
+        }
+        finally
+        {
+            Release();
+        }
+    }
+
     // --- Private methods ---
 
     /// <summary>
@@ -290,6 +349,7 @@ internal sealed class AhciPort : IBlockDevice
     /// bounded by <see cref="AhciState.CommandTimeoutMilliseconds"/>.
     /// Thread context; any thread.
     /// </summary>
+    /// <exception cref="InvalidOperationException">A failed command left the port disabled.</exception>
     private void Claim()
     {
         DeviceLock deviceLock = _controller.RequireLock();
@@ -297,6 +357,11 @@ internal sealed class AhciPort : IBlockDevice
         {
             using (deviceLock.Acquire())
             {
+                if (_disabled)
+                {
+                    throw new InvalidOperationException("SATA: port disabled after a failed recovery.");
+                }
+
                 if (!_busy)
                 {
                     _busy = true;
@@ -322,8 +387,12 @@ internal sealed class AhciPort : IBlockDevice
     /// completion: clears PxIS and PxSERR, writes the header, the PRDT
     /// entry over the bounce buffer when the command carries data, and the
     /// H2D FIS, waits for the task file to leave BSY and DRQ, orders the
-    /// stores, writes PxCI, then polls the slot's bit until it clears. The
-    /// caller holds the busy flag. Thread context; any thread.
+    /// stores, writes PxCI, then polls the slot's bit until it clears or an
+    /// error bit shows. A command counts as done only when PxIS holds no
+    /// error bit and PxTFD no ERR once the slot cleared: the HBA clears
+    /// PxCI in the same step in which it sets TFES. On an error, a timeout
+    /// or a task file stuck busy the port is recovered before the throw.
+    /// The caller holds the busy flag. Thread context; any thread.
     /// </summary>
     /// <param name="command">The ATA command.</param>
     /// <param name="lba">The first sector, used when <paramref name="useLba48"/>.</param>
@@ -331,7 +400,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="isWrite">The data goes to the device.</param>
     /// <param name="useLba48">The FIS carries the LBA and the count.</param>
     /// <param name="hasData">The command moves data through the bounce buffer.</param>
-    /// <exception cref="IOException">The port raised a task file error.</exception>
+    /// <exception cref="IOException">The command ended in a task file, host bus or interface error.</exception>
     /// <exception cref="InvalidOperationException">No slot was free, the port stuck busy, or the command timed out.</exception>
     private void IssueCommand(byte command, ulong lba, uint count, bool isWrite, bool useLba48, bool hasData)
     {
@@ -392,6 +461,8 @@ internal sealed class AhciPort : IBlockDevice
         {
             if (Stopwatch.GetTimestamp() >= busyDeadline)
             {
+                // ZehOS patch ahci-error-recovery, see PATCHES.md
+                RecoverOrDisable();
                 throw new InvalidOperationException("SATA: port stuck busy (TFD BSY/DRQ) before command issue.");
             }
 
@@ -407,14 +478,16 @@ internal sealed class AhciPort : IBlockDevice
         int fastPolls = 0;
         while ((_controller.ReadPort(port, AhciProtocol.PxCi) & slotBit) != 0)
         {
-            if ((_controller.ReadPort(port, AhciProtocol.PxIs) & AhciProtocol.IsTaskFileError) != 0)
+            // ZehOS patch ahci-error-recovery, see PATCHES.md
+            if ((_controller.ReadPort(port, AhciProtocol.PxIs) & AhciProtocol.IsErrorMask) != 0)
             {
-                throw new IOException("SATA Fatal error: Command aborted");
+                break;
             }
 
             if (Stopwatch.GetTimestamp() >= deadline)
             {
                 _controller.CountTimeout();
+                RecoverOrDisable();
                 throw new InvalidOperationException("SATA: command completion timeout.");
             }
 
@@ -434,8 +507,48 @@ internal sealed class AhciPort : IBlockDevice
             }
         }
 
+        // ZehOS patch ahci-error-recovery, see PATCHES.md
+        // Checked once the slot cleared too: QEMU and real HBAs clear PxCI
+        // with the D2H FIS that carries ERR, so the loop above mostly sees
+        // the slot clear, not TFES. Without this an aborted read returned
+        // stale bounce bytes and an aborted write reported success.
+        uint status = _controller.ReadPort(port, AhciProtocol.PxIs);
+        uint taskFile = _controller.ReadPort(port, AhciProtocol.PxTfd);
+        if ((status & AhciProtocol.IsErrorMask) != 0 || (taskFile & AhciProtocol.TfdError) != 0)
+        {
+            RecoverOrDisable();
+            throw new IOException($"SATA: command 0x{command:X2} failed (IS 0x{status:X8}, TFD 0x{taskFile:X4}).");
+        }
+
         DmaBuffer.ReadBarrier();
         _controller.CountCommand();
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// Puts the port back to work after a failed command: after an error
+    /// the HBA halts the command list until ST is cleared (AHCI 1.3.1
+    /// section 6.2.2.1), and after a timeout a transfer may still run into
+    /// the bounce buffer. Stops the engine (ST cleared, CR and PxCI
+    /// drained), falls back to a COMRESET when that fails, clears PxSERR
+    /// and PxIS and starts the engine again. When the engine cannot be
+    /// stopped or started the port is disabled for good: a transfer still
+    /// running must never land in a bounce buffer the next caller fills.
+    /// The caller holds the busy flag, so no other command runs on the
+    /// port; only this port's registers are touched. Thread context; any
+    /// thread.
+    /// </summary>
+    private void RecoverOrDisable()
+    {
+        uint port = _portNumber;
+        bool stopped = _controller.StopCommandEngine(port)
+            || (_controller.ResetPort(port) && _controller.StopCommandEngine(port));
+        _controller.WritePort(port, AhciProtocol.PxSerr, AhciProtocol.Rw1CClearAll);
+        _controller.WritePort(port, AhciProtocol.PxIs, AhciProtocol.Rw1CClearAll);
+        if (!stopped || !_controller.StartCommandEngine(port))
+        {
+            _disabled = true;
+        }
     }
 
     /// <summary>The lowest slot clear in both PxSACT and PxCI, below the HBA's slot count, or -1. Any thread.</summary>
