@@ -670,3 +670,14 @@ Der Doom-WAD-Download über HTTPS brach auf `3.0.97-zehos.6-smp.8` mit `bad_reco
 ## Speichermangel wirft OutOfMemoryException (E5-P, #538, 19. November 2026)
 
 Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`, `RhpNewArray`, `RhNewString`, Boxing und die übrigen) bei erschöpftem Heap `null` zurück. Vom Compiler erzeugter Code prüft das Ergebnis von `newobj`/`newarr` nie: Ein Zugriff wurde zum Page Fault an kleiner Adresse, ein Span darüber zu stillem Datenverlust (#530). Patch `gc-oom-throw` (`3.0.97-zehos.6-smp.10`, cosmos PR #540, Kopf `52114521`) wirft wie .NET `OutOfMemoryException`; die Arraygröße wird in 64 Bit gerechnet (vorher lief `BaseSize + length * ComponentSize` in 32 Bit über und legte zu kleine Objekte an), negative Längen werfen `OverflowException`. Gelingt das Anlegen der Ausnahme selbst nicht, wirft Cosmos eine beim Start angelegte Reserve; der Dispatcher legt für eine `OutOfMemoryException` keinen Stacktrace an. Grenze: Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten. ZehOS braucht keinen Umweg: `BufferAllocation.TryAllocate`, `ThreadStarter` und die Speicherproben fangen `OutOfMemoryException` schon; ihre Null-Zweige sind jetzt tot und können in einem eigenen PR entfallen. Einzelheiten in `patches/gc-oom-throw.md` des Branches `cosmos`.
+
+## Pin `3.0.97-zehos.6-smp.11` (20. November 2026)
+
+Cosmos `e9915bc4` bringt vier Patches gegenüber `smp.10`. Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `ahci-large-commands` (#562, `5118a2b1`, Refs #542): SATA-Befehle bis 64 KiB statt 4 KiB, PxCI-Abfrage ohne Port-0x80-Pause.
+- `page-alloc-split` (#557, `5b1bd383`, #538): Seitenläufe bis 16 Seiten kommen von unten, größere von oben. Kleine GC-Segmente zerteilen den Platz für große Arrays nicht mehr.
+- `ext2-alloc-cache` (#558, `99c1afb0`, #542): Blockbitmap und Gruppendeskriptoren bleiben im Speicher, `Write` schreibt gesammelt. Je Gerät darf nur ein Mount schreiben; ein zweiter beschreibbarer Mount desselben `IBlockDevice` wird abgelehnt.
+- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) bleibt aktiv, bis der ZehOS-Teil von E6-G auf diesem Pin gemergt ist.
+
+ZehOS ändert mit dem Pin selbst keinen Code.
