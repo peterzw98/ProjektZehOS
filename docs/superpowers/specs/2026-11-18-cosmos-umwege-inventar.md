@@ -57,7 +57,8 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 
 | ZehOS-Datei:Zeile | Umweg | Cosmos-Ursache | Korrektur | Entfällt? |
 | --- | --- | --- | --- | --- |
-| `Storage/FileService.cs:18-20`, `CosmosDirectoryEntryLimit.cs` | höchstens 8189 Einträge je ext2-Verzeichnis | Q✓ `Ext2/Ext2Directory.cs:19, 65`: `MaxParseIters = 8192` XX.cs:7-35`, `Migration/MigrationSourceSwap.cs:6-12` | Lese-Wrapper | Q✓ `Fat/FatFileOperations.cs:201-204`, `Ext2/Ext2FileOperations.cs:243-260`: `Release` ruft immer `Fsync` | K–M | nur noch für FAT; ext2 nutzt seit zehos.6 den Cosmos-Lesemodus |
+| `Storage/FileService.cs:18-20`, `CosmosDirectoryEntryLimit.cs` | höchstens 8189 Einträge je ext2-Verzeichnis | Q✓ `Ext2/Ext2Directory.cs:19, 65`: `MaxParseIters = 8192` | K–M | ja (Patch `ext2-directory-limit`, E2-P7, ZehOS-PR #463; Produktgrenze jetzt 65.535 Einträge, 65.536 mit einem Platz Reserve für Rename) |
+| `Storage/CosmosReadOnlyVfs.cs:7-35`, `Migration/MigrationSourceSwap.cs:6-12` | Lese-Wrapper | Q✓ `Fat/FatFileOperations.cs:201-204`, `Ext2/Ext2FileOperations.cs:243-260`: `Release` ruft immer `Fsync` | K–M | nur noch für FAT; ext2 nutzt seit zehos.6 den Cosmos-Lesemodus (#529) |
 | `Storage/CosmosReadOnlyVfs.cs:107-110` | feste Registrierung mit austauschbarem Inneren | Q✓ `FileSystem/VfsManager.cs:61`: kein `Unregister` | K | ja |
 | `Storage/CosmosMigrationService.cs:63-66` | durchsucht die Mounttabelle selbst | Q✓ `VfsManager.cs:334` privat | K | ja |
 | `Security/PathGuard.cs:17-20, 52` | prüft jede Pfadkomponente, lehnt Symlinks ab | Q✓ `VfsManager.cs:508, 671` privat; `LStat` = `Stat` Z | M | teilweise |
