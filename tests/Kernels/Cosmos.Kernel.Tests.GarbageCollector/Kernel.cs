@@ -104,7 +104,17 @@ public class Kernel : Sys.Kernel
         TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
 
         // Small segments must not split the free memory large arrays need (ZehOS patch page-alloc-split).
-        TR.Run("GC_LargeArrays_SmallSurvivorsDoNotFragment", TestGCLargeArraysSmallSurvivorsDoNotFragment);
+        // The load is sized for the 512 MB guest of the Makefile: in a larger guest it no longer
+        // runs the memory short and would pass without the patch, so it is skipped there.
+        ulong managedMiB = PageAllocator.TotalPageCount * PageAllocator.PageSize >> 20;
+        if (managedMiB >= FragmentationMinMiB && managedMiB <= FragmentationMaxMiB)
+        {
+            TR.Run("GC_LargeArrays_SmallSurvivorsDoNotFragment", TestGCLargeArraysSmallSurvivorsDoNotFragment);
+        }
+        else
+        {
+            TR.Skip("GC_LargeArrays_SmallSurvivorsDoNotFragment", "load is sized for a 512 MB guest, the page allocator manages a different amount of memory");
+        }
 
         // GC Info & Configuration Tests
         TR.Run("GC_Info_SimpleMemoryInfo", TestGCInfoSimpleMemoryInfo);
@@ -548,6 +558,11 @@ public class Kernel : Sys.Kernel
         after[after.Length - 1] = 0x3C;
         Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
     }
+
+    // ZehOS patch page-alloc-split: memory the page allocator may manage for the fragmentation test
+    // to be meaningful (a 512 MB guest, less what lies below the kernel and the RAT).
+    private const ulong FragmentationMinMiB = 384;
+    private const ulong FragmentationMaxMiB = 512;
 
     // ZehOS patch page-alloc-split: arrays of 1 to 8 MiB replace each other in 40 slots (about
     // 180 MiB live), and between them small arrays are allocated, every eighth of which survives.

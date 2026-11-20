@@ -67,9 +67,9 @@ internal static unsafe class PageAllocator
     private static byte* s_heapEnd;
 
     /// <summary>
-    /// RAT index where the search for a single page starts: no page below it is empty, as
-    /// <see cref="AllocPages"/> moves it past the page it takes and <see cref="Free(uint)"/> back
-    /// to a page it frees.
+    /// RAT index where the search for a single page or a small run starts: no page below it is
+    /// empty, as <see cref="AllocPages"/> moves it past the page (or the small run starting at it)
+    /// it takes and <see cref="Free(uint)"/> back to a page it frees.
     /// </summary>
     private static ulong s_singlePageHint;
 
@@ -635,7 +635,18 @@ internal static unsafe class PageAllocator
             {
                 s_singlePageHint = (ulong)offset + 1;
             }
-            else if (aPageCount > SmallRunPages)
+            else if (aPageCount <= SmallRunPages)
+            {
+                // ZehOS patch page-alloc-split, see PATCHES.md
+                // A small run that starts at the lowest empty page leaves no empty page below its
+                // end, so the next search may start there. Without this, a series of small runs
+                // with no single page between them scanned every run taken before it again.
+                if ((ulong)offset == s_singlePageHint)
+                {
+                    s_singlePageHint = (ulong)offset + aPageCount;
+                }
+            }
+            else
             {
                 s_runHint = (ulong)offset;
             }
