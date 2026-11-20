@@ -13,8 +13,14 @@ static void *test_malloc(size_t size)
     if (malloc_fail_count > 0) { malloc_fail_count--; return NULL; }
     return size > malloc_limit ? NULL : malloc(size);
 }
+static void *test_realloc(void *pointer, size_t size)
+{
+    return size > malloc_limit ? NULL : realloc(pointer, size);
+}
 #define malloc test_malloc
+#define realloc test_realloc
 #include "../frontend/zehos.c"
+#undef realloc
 #undef malloc
 
 void _nsfb_register_surface(const enum nsfb_type_e type, const nsfb_surface_rtns_t *rtns, const char *name) { }
@@ -80,7 +86,10 @@ int main(void) {
     assert(zehos_defaults(&surface) == 0);
     // Die Startanfrage von NetSurf (vor nsfb_init) aendert die Startgroesse nicht.
     assert(zehos_set_geometry(&surface, 800, 600, NSFB_FMT_ANY) == 0 && surface.width == ZEHOS_WIDTH);
-    assert(zehos_initialise(&surface) == 0);
+    // Zuerst ohne Reserve fuer die Hoechstgroesse: die Zweige unten pruefen den Rueckfall bei knappem Speicher.
+    malloc_limit = (size_t)ZEHOS_WIDTH * ZEHOS_HEIGHT * 4;
+    assert(zehos_initialise(&surface) == 0 && buffer_capacity == malloc_limit);
+    malloc_limit = (size_t)-1;
     surface.clip.x1 = ZEHOS_WIDTH;
     for (size_t i = 0; i < (size_t)ZEHOS_WIDTH * ZEHOS_HEIGHT * 4; i++) surface.ptr[i] = 0x5a;
     assert(zehos_set_geometry(&surface, 640, 400, NSFB_FMT_ANY) == 0);
@@ -88,12 +97,11 @@ int main(void) {
     for (size_t i = 0; i < (size_t)640 * 400 * 4; i++) assert(surface.ptr[i] == 0);
     assert(surface.width == 640 && surface.height == 400 && surface.linelen == 640 * 4 && surface.clip.x1 == 640);
     assert(zehos_set_geometry(&surface, 1921, 400, NSFB_FMT_ANY) == -1 && surface.width == 640);
-    assert(zehos_set_geometry(&surface, 1920, 1200, NSFB_FMT_ANY) == 0 && surface.linelen == 1920 * 4);
-    for (size_t i = 0; i < (size_t)1920 * 1200 * 4; i += 4099) assert(surface.ptr[i] == 0);
     // Zweig 1: malloc(neu) scheitert einmal; nach Freigabe des alten Puffers gelingt es, die Groesse wechselt.
     malloc_fail_count = 1;
     assert(zehos_set_geometry(&surface, 1918, 983, NSFB_FMT_ANY) == 0 && surface.width == 1918 && surface.height == 983);
     assert(surface.linelen == 1918 * 4 && surface.ptr != NULL && surface.ptr != error_pixel && malloc_fail_count == 0);
+    for (size_t i = 0; i < (size_t)1918 * 983 * 4; i += 4099) assert(surface.ptr[i] == 0);
     // Zweig 2: neue Groesse bleibt unmoeglich, die alte passt: Groesse bleibt, Puffer leer, Bild wird gesendet.
     surface.ptr[5] = 7;
     dirty = false;
@@ -122,6 +130,20 @@ int main(void) {
     zehos_flush();
     assert(presented == 2);
     zehos_finalise(&surface);
+    // Issue #536: Mit Reserve fordert kein Groessenwechsel mehr Speicher an (im Gast scheiterte genau das nach einer Weile).
+    nsfb_t reserved = { .plotter_fns = &plotters };
+    assert(zehos_defaults(&reserved) == 0 && zehos_initialise(&reserved) == 0);
+    assert(buffer_capacity == (size_t)ZEHOS_MAX_WIDTH * ZEHOS_MAX_HEIGHT * 4);
+    uint8_t *reserve = reserved.ptr;
+    for (size_t i = 0; i < (size_t)ZEHOS_WIDTH * ZEHOS_HEIGHT * 4; i++) reserved.ptr[i] = 0x5a;
+    malloc_limit = 0;
+    assert(zehos_set_geometry(&reserved, 1918, 983, NSFB_FMT_ANY) == 0 && reserved.ptr == reserve);
+    assert(reserved.width == 1918 && reserved.height == 983 && reserved.linelen == 1918 * 4);
+    for (size_t i = 0; i < (size_t)1918 * 983 * 4; i += 4099) assert(reserved.ptr[i] == 0);
+    assert(zehos_set_geometry(&reserved, 1920, 1200, NSFB_FMT_ANY) == 0 && reserved.ptr == reserve);
+    assert(zehos_set_geometry(&reserved, 300, 200, NSFB_FMT_ANY) == 0 && reserved.ptr == reserve && reserved.linelen == 300 * 4);
+    malloc_limit = (size_t)-1;
+    zehos_finalise(&reserved);
     puts("NetSurf input PASS");
     return 0;
 }

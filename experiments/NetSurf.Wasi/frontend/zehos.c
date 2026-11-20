@@ -49,6 +49,11 @@ static bool dirty;
 // Fehlerzustand von zehos_set_geometry, wenn weder neuer noch alter Puffer anlegbar ist (kein NULL-Puffer).
 static uint8_t error_pixel[4];
 static nsfb_t *surface;
+// Groesse des Bildpuffers in Byte. Er wird beim Start einmal fuer die Hoechstgroesse angelegt: Spaeter fordert ein
+// Groessenwechsel (Maximieren, Issue #536) sonst einen weiteren zusammenhaengenden Block vom Kernel an (wasm3 waechst
+// die lineare Memory per realloc, alt und neu zugleich), und den gibt der fragmentierte Kernelspeicher nach einer
+// Weile nicht mehr her.
+static size_t buffer_capacity;
 
 static void push_event(const nsfb_event_t *event)
 {
@@ -248,8 +253,15 @@ static int zehos_defaults(nsfb_t *nsfb)
 static int zehos_initialise(nsfb_t *nsfb)
 {
     if (nsfb->width <= 0 || nsfb->height <= 0 || nsfb->width > ZEHOS_MAX_WIDTH || nsfb->height > ZEHOS_MAX_HEIGHT) return -1;
-    uint8_t *buffer = realloc(nsfb->ptr, (size_t)nsfb->width * nsfb->height * 4);
-    if (buffer == NULL) return -1;
+    size_t capacity = (size_t)ZEHOS_MAX_WIDTH * ZEHOS_MAX_HEIGHT * 4;
+    uint8_t *buffer = realloc(nsfb->ptr, capacity);
+    if (buffer == NULL) {
+        // Ohne Reserve laeuft NetSurf in der angeforderten Groesse weiter (Maximieren kann dann scheitern, siehe set_geometry).
+        capacity = (size_t)nsfb->width * nsfb->height * 4;
+        buffer = realloc(nsfb->ptr, capacity);
+        if (buffer == NULL) return -1;
+    }
+    buffer_capacity = capacity;
     nsfb->ptr = buffer;
     nsfb->linelen = nsfb->width * 4;
     surface = nsfb;
@@ -271,9 +283,18 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
     if (nsfb->ptr == NULL) return 0;
     if (width <= 0 || height <= 0 || width > ZEHOS_MAX_WIDTH || height > ZEHOS_MAX_HEIGHT) return -1;
     if (width == nsfb->width && height == nsfb->height) return 0;
+    size_t new_size = (size_t)width * height * 4;
+    if (nsfb->ptr != error_pixel && new_size <= buffer_capacity) {
+        // Der Puffer der Hoechstgroesse bleibt; leer ist das Bild schwarz, bis NetSurf neu zeichnet.
+        memset(nsfb->ptr, 0, new_size);
+        nsfb->width = width;
+        nsfb->height = height;
+        nsfb->linelen = width * 4;
+        nsfb->plotter_fns->set_clip(nsfb, NULL);
+        return 0;
+    }
     // Der alte Inhalt wird ohnehin verworfen (NetSurf zeichnet nach dem Groessenwechsel neu): kein realloc, das alt und
     // neu zugleich braeuchte. Erst neu anlegen, ohne den alten Puffer freizugeben; er bleibt gueltig, wenn es scheitert.
-    size_t new_size = (size_t)width * height * 4;
     uint8_t *buffer = malloc(new_size);
     if (buffer == NULL) {
         // Issue #483: Ein Scheitern war still, Maximieren zeigte weiter das alte, hochskalierte Bild.
@@ -287,6 +308,7 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
             fprintf(stderr, "zehos: set_geometry %dx%d: Speicher erschoepft, Groesse bleibt %dx%d\n", width, height,
                 nsfb->width, nsfb->height);
             nsfb->ptr = malloc(old_size);
+            buffer_capacity = old_size;
             if (nsfb->ptr == NULL) {
                 // Auch das scheitert: nie ein NULL-Puffer, die Plotter schrieben hinein. Ein Bildpunkt als Fehlerzustand.
                 nsfb->ptr = error_pixel;
@@ -305,6 +327,7 @@ static int zehos_set_geometry(nsfb_t *nsfb, int width, int height, enum nsfb_for
     memset(buffer, 0, new_size);
     release_buffer(nsfb);
     nsfb->ptr = buffer;
+    buffer_capacity = new_size;
     nsfb->width = width;
     nsfb->height = height;
     nsfb->linelen = width * 4;
