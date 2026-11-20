@@ -214,8 +214,7 @@ class Run:
         guest.login(first=False)
         guest.desktop()
         self.screen("wieder-desktop")
-        guest.shell("shutdown")
-        self.powered_off()
+        self.shutdown_from_textshell(lambda: guest.shell("shutdown"))
 
     def recovery_flow(self) -> None:
         guest = self.guest
@@ -229,9 +228,9 @@ class Run:
         # Die Textshell ist schon aktiv; shell() wartet sonst vergeblich auf "Textshell aktiv.".
         self.shutdown_from_textshell()
 
-    def shutdown_from_textshell(self) -> None:
+    def shutdown_from_textshell(self, send=None) -> None:
         try:
-            self.guest.qmp.line("shutdown")
+            (send or (lambda: self.guest.qmp.line("shutdown")))()
         except ConnectionError:
             # Unter KVM schaltet der Gast aus, bevor QEMU das Loslassen der Eingabetaste bestaetigt (wie im .ps1);
             # ob das ein sauberes Ausschalten war, entscheidet powered_off am Exitcode.
@@ -284,8 +283,7 @@ class Run:
         time.sleep(0.5)
         guest.qmp.move(400, 300, width, height)
         self.settle("nach-mischfolge", lambda current: pointer(current) == start, 30)
-        guest.shell("shutdown")
-        self.powered_off()
+        self.shutdown_from_textshell(lambda: guest.shell("shutdown"))
 
     def serial(self) -> str:
         log = self.work / "serial.log"
