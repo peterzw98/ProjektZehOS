@@ -138,6 +138,15 @@ py -3 scripts/test-wasm-doom-desktop.py --iso <Test-ISO> --repo <doom-repo> --ke
 
 Für einen automatisierten Langlauf ergänzt `--scenario full --starts 10 --long-seconds 300` nach den Neustarts eine mindestens fünfminütige Sitzung mit Bewegungs-, Dreh-, Schuss- und Benutzungsereignissen. Die Benutzungstaste startet nach einem Tod erneut. Die Bildschirmfotos und Taskmanagerwerte müssen ausgewertet werden; der bloße Skripterfolg belegt weder menschliches Spielen noch die Bildrate von Doom.
 
+Mehrere Gastläufe (auch mit verschiedenen `ZEHOS_QEMU_SMP`) arbeitet `scripts/run-guest-suite.py` im Hintergrund und parallel ab, statt sie nacheinander im Vordergrund abzuwarten. Die Suite ist eine JSON-Liste (Beispiel `scripts/guest-suites/e5j.json`, Platzhalter `{iso}` usw. kommen aus `--var`; die dortigen `note`-Felder nennen ungeprüfte Annahmen):
+
+```powershell
+py -3 scripts/run-guest-suite.py scripts/guest-suites/e5j.json --out .tools/suite-1 --var iso=<ISO> --var key=<private.pem> --detach  # gibt den Ordner aus und kehrt zurück
+py -3 scripts/run-guest-suite.py --status .tools/suite-1   # summary.md; Exit 0 alles bestanden, 1 Fehlschlag, 2 läuft noch
+```
+
+Jeder Lauf schreibt `<name>-<i>/log.txt` unter `--out`; `summary.json` und `summary.md` werden nach jedem Lauf neu geschrieben. `--parallel N` begrenzt die gleichzeitigen Läufe (Standard `min(4, CPUs/2)`), ein Lauf über seinem `timeout` wird samt Kindprozessen beendet.
+
 `--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. `--accel kvm` läuft ebenfalls ohne Snapshot, weil `savevm` unter KVM nicht geprüft ist; die VM startet mit `-cpu qemu64,+rdrand,+rdseed` (siehe `COSMOS_SUPPORT.md`). Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.
 
 Laufzeiten am 15. November 2026 (Windows, QEMU 10.2.2, alle Szenarien bestanden):
