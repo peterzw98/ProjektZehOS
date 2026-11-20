@@ -143,16 +143,37 @@ public static partial class VfsManager
         // A volume the driver cannot write is read-only whatever the caller
         // asked for, so the mount records what it will enforce.
         MountFlags effectiveFlags = superblock.IsReadOnly ? flags | MountFlags.ReadOnly : flags;
-        string normalizedMountPoint = NormalizeMountPoint(mountPoint);
-        mount = new VfsMount(name, source.ToString(), normalizedMountPoint, fileSystemType, superblock, partition, effectiveFlags);
-        s_mountLock.Acquire();
         try
         {
-            s_mounts = [.. s_mounts, mount];
+            string normalizedMountPoint = NormalizeMountPoint(mountPoint);
+            mount = new VfsMount(name, source.ToString(), normalizedMountPoint, fileSystemType, superblock, partition, effectiveFlags);
+            s_mountLock.Acquire();
+            try
+            {
+                s_mounts = [.. s_mounts, mount];
+            }
+            finally
+            {
+                s_mountLock.Release();
+            }
         }
-        finally
+        catch
         {
-            s_mountLock.Release();
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            // The driver mounted but the table never got the mount, so no
+            // TryUnmount will drop it: drop it here, or a driver that claims
+            // its device (ext2: one writable mount) keeps it claimed. The
+            // registration error is what the caller must see.
+            mount = null;
+            try
+            {
+                superblock.SuperOperations.Drop(superblock);
+            }
+            catch
+            {
+            }
+
+            throw;
         }
 
         return true;

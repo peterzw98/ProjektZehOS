@@ -215,7 +215,17 @@ internal sealed class Ext2FileOperations : IFileOperations
                     // disk held there before, inside the file's size.
                     if (isNew)
                     {
-                        _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
+                        // The revert may fail itself (FreeBlock reads another
+                        // group's bitmap). The caller must see the original
+                        // write error; a block left allocated is only a leak
+                        // e2fsck reclaims.
+                        try
+                        {
+                            _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
+                        }
+                        catch
+                        {
+                        }
                     }
 
                     throw;
