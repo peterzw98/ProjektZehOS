@@ -450,6 +450,42 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 
 Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Target method not found` und beendet den Build erfolgreich; der Plug ist dann still wirkungslos. Dieselbe Warnung erscheint auch regulär, weil der Patcher Plugs gegen jede Assembly mit passendem Typnamen versucht. Die CI prüft deshalb mit `scripts/check-plug-binding.py` im Log von `cosmos build --verbose`, dass jede `[PlugMember]`-Methode aus `ProjektZeh/` mindestens einmal `Found matching method` erreicht.
 
+## Mehrere CPUs: Plattformmatrix (E7-E, Zwischenstand 20. November 2026)
+
+**Zwischenstand:** Stand `task/mc-e5-smp` @e5f20915 (Cosmos 3.0.97-zehos.6-smp.10), noch **ohne** E7-A bis E7-D. Der Plan (E7-E) setzt `master` nach E7-A bis E7-D voraus; diese Tabelle ist die Vorabfahrt mit dem, was heute schon läuft, und muss nach E7-D wiederholt werden. Block #398.
+
+**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (80 Läufe) für `scripts/run-guest-suite.py` (liegt auf `master`, nicht auf `task/mc-e5-smp`). Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs: normal, Recovery (`-p:ZehOSRecovery=true`), `-p:ZehOSThreadProbe=true`, `-p:ZehOSIsolationProbe=true`, Wasm mit Testschlüssel und Test-CA; Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages.
+
+Umgebung: Linux, Host Intel Core Ultra 9 185H (22 Threads), QEMU 11.1.2 `q35`; gebaut mit `dotnet build -warnaserror` (0 Warnungen, 0 Fehler). Zahlen: bestanden/Läufe, Dauer eines Laufs (3 Gäste parallel, also nicht als Messwert zu lesen).
+
+| Prüfung (Spalte) | Bedeutung |
+| --- | --- |
+| Boot | `test-desktop-guest.py`: Boot bis Desktop, Anmeldung, Desktopablauf, abschließend `shutdown` |
+| Thread | `test-thread-probe.py`: THREAD_PROBE und MESSAGES_PROBE (Ersatz für `SMP_PROBE`, das erst mit E7-A bis E7-D entsteht) |
+| Isolation | `test-isolation-probe.py --runs 2` (positiv) |
+| Shutdown | Recovery-ISO, `test-desktop-guest.py --recovery --power` (reboot und shutdown) |
+| Doom quick | `test-wasm-doom-desktop.py`, Szenarien remove, upgrade, corrupt, minkernel einzeln (4 Läufe je Zelle) |
+
+| Umgebung, CPU-Aufbau | Boot | Thread | Isolation | Shutdown | Doom quick |
+| --- | --- | --- | --- | --- | --- |
+| KVM `1` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4` | **2/4** (Befund 1) | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4,cores=2,threads=2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `8,cores=4,threads=2` | **1/4** (Befund 1) | 1/1 | 2/2 | 1/1 | 4/4 |
+| TCG `1`, `2`, `4`, `4,cores=2,threads=2`, `8,cores=4,threads=2` | je 1/1 | je 1/1 | je 2/2 | je 1/1 | je 4/4 |
+| WHPX `2`, `4` | offen: braucht Windows-Benutzer | offen | offen | offen | offen |
+| VMware `numvcpus` 1, 2, 4 | offen: braucht Benutzer mit VMware | offen | offen | offen | offen |
+| echte Hardware mit Hyperthreading | offen: braucht Benutzer mit Hardware | offen | offen | offen | offen |
+
+Dauern (ein Lauf, 3 Gäste parallel): Boot KVM 35 s, TCG 52 bis 56 s; Thread 10 s; Isolation 2 Läufe KVM 20 s, TCG 35 bis 39 s; Shutdown KVM 6 bis 7 s, TCG 8 bis 9 s; Doom quick höchstens 64 s (KVM) und 105 s (TCG).
+
+**Befund 1 (Skript, nicht Kernel):** Boot auf KVM mit 4 und 8 CPUs scheitert gelegentlich am letzten Schritt: `guest.shell("shutdown")` in `test-desktop-guest.py` bricht mit `QMP input-send-event: Verbindung beendet` oder `Connection reset by peer` ab, weil der Gast schon ausgeschaltet ist, bevor die Eingabe quittiert wird. Alle Prüfungen davor (Desktop, Anmeldung, Einstellungen, Abmelden, erneute Anmeldung) liefen durch. Quote: 4 CPUs 2/4, 8 CPUs 1/4; 1, 2 und `4,cores=2,threads=2` je 1/1, TCG immer 1/1. Der Poweroff selbst ist durch die Spalte Shutdown belegt. Ein eigenes Folgepaket (Testskript: Ende von `shutdown` abwarten oder Verbindungsabbruch dort als Erfolg werten) ist angezeigt; nicht behoben.
+
+**Abgrenzung zu E5-J (Issue #383):** E5-J belegt auf KVM und TCG die CPU-Aufbauten leer, 4 und `8,cores=4,threads=2` für Desktop, Recovery, THREAD_PROBE, Isolation (+ `--negative`, `--nmi`), Doom full, ClassiCube und Netz. Hier neu: die Aufbauten `2` und `4,cores=2,threads=2`, TCG-Thread-/Isolationsprobe, Doom quick und der Poweroff über alle Aufbauten.
+
+**Offen:** `SMP_PROBE` und Platzierungsprobe (E7-A bis E7-D); WHPX, VMware und echte Hardware (brauchen die Benutzer, die sie haben); Doom quick im TCG-Snapshotmodus (hier `--no-snapshot`, weil der Snapshot Doom aus dem Repository installiert und `repo0` keines enthält); Isolation `--negative` und `--nmi` (aus E5-J); Bildauswertung (es zählen nur Skriptmarken).
+
 ## Grenzen
 
 - Cosmos 3.0.94 verwirft in seiner normalen Tastaturabfrage Break-Ereignisse. Daher übernimmt ZehOS den Rohdatenpfad vollständig; `Console.ReadLine` und `Console.ReadKey` gehören nicht mehr zum interaktiven Pfad. Sobald Cosmos eine öffentliche Rohereignis-API bietet, sollen Plug und Zugriff auf die interne Layoutmethode entfallen.
