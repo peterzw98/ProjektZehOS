@@ -1795,6 +1795,11 @@ public class Kernel : Sys.Kernel
         s_liveVictimRelease = false;
         s_liveVictimId = 0;
 
+        // The live thread shares the CPU Main runs on: Join returns when the
+        // thread has exited, before a compute CPU of its own is back on its
+        // idle thread, and the PerCpuBlock cells after this one expect every
+        // application processor idle.
+        using OneCpuScope oneCpu = OneCpuScope.Enter();
         SysThread victim = new(LiveVictimWorker);
         victim.Start();
         for (int i = 0; i < KillVictimPollRetries && !s_liveVictimStarted; i++)
