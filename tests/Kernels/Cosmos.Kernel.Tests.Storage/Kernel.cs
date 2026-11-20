@@ -47,7 +47,7 @@ public class Kernel : Sys.Kernel
     private const string SkipNoHost = "no block device bound for partition-table tests";
 
     /// <summary>Total tests this suite reports per profile; the breakdown is at the TR.Start call site.</summary>
-    private const ushort ExpectedTestCount = 85;
+    private const ushort ExpectedTestCount = 87;
 
     /// <summary>Block devices the engine attaches per QEMU profile; any other count is a bind or double-registration regression.</summary>
     private const int AttachedDisksPerProfile = 1;
@@ -223,6 +223,28 @@ public class Kernel : Sys.Kernel
 
     /// <summary>XOR seed of the command-size pattern, mixed with the sector count so a stale earlier transfer shows.</summary>
     private const byte CommandSizeXorSeed = 0x69;
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>Why the AHCI error-path tests skip on other controllers.</summary>
+    private const string SkipNotAhci = "not an AHCI profile";
+
+    /// <summary>
+    /// ATA NOP (subcommand 0): the device ends it with ERR and ABRT, so it
+    /// drives the error path without touching the medium.
+    /// </summary>
+    private const byte AtaNopAbort = 0x00;
+
+    /// <summary>Further aborted commands after the first: each must fail on its own, not time out on a halted port.</summary>
+    private const int ErrorRepeats = 3;
+
+    /// <summary>Sector the error-path test round-trips after each abort; clear of the command-size region and the partition tests.</summary>
+    private const ulong ErrorRoundTripLba = 9001;
+
+    /// <summary>Fill of the past-end write; LBA 0 must not show it afterwards.</summary>
+    private const byte PastEndFill = 0xE7;
+
+    /// <summary>XOR seed of the error-path round trip.</summary>
+    private const byte ErrorRoundTripSeed = 0x3C;
 
     /// <summary>XOR seed of the boundary-LBA round-trip pattern.</summary>
     private const byte BoundaryXorSeed = 0xF0;
@@ -427,10 +449,10 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Storage] BeforeRun() reached!\n");
 
-        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 13 device
+        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 15 device
         // + 7 partition + 42 partition-lifecycle (MBR mutation, EBR chain,
         // PartitionManager, superfloppy) + 2 bounds probes + 2 mmio/pci
-        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 85 tests per profile.
+        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 87 tests per profile.
         TR.Start("Storage Block Device Tests", expectedTests: ExpectedTestCount);
 
         // The cell's disk is the first writable device the manager holds:
@@ -541,6 +563,10 @@ public class Kernel : Sys.Kernel
         TR.RunIf(dev, "Device_LBA_Stride_Sweep",           TestDevice_LBAStrideSweep,           SkipNoDevice);
         TR.RunIf(dev, "Device_RandomOrder_ReadAfterWrite", TestDevice_RandomOrderReadAfterWrite, SkipNoDevice);
         TR.RunIf(dev, "Device_Multiblock_TailBoundary",    TestDevice_MultiblockTailBoundary,   SkipNoDevice);
+        // ZehOS patch ahci-error-recovery, see PATCHES.md
+        bool ahci = s_dev is AhciPort;
+        TR.RunIf(ahci, "Device_PastEnd_Rejected",          TestDevice_PastEndRejected,          dev ? SkipNotAhci : SkipNoDevice);
+        TR.RunIf(ahci, "Device_TaskFileError_Recovers",    TestDevice_TaskFileErrorRecovers,    dev ? SkipNotAhci : SkipNoDevice);
 
         // ==================== Partition (MBR/GPT, partition translation) ====================
         // These run last because they overwrite LBA 0..33, which the device
@@ -1107,9 +1133,103 @@ public class Kernel : Sys.Kernel
                 Assert.Equal(writeBuf[i], readBuf[size + i]);
             }
 
+            // The read above starts on the even LBA before the transfer; read
+            // the transfer itself too, so a read also starts on an odd LBA.
+            Span<byte> oddBuf = new byte[total];
+            s_dev.ReadBlock(lba, count, oddBuf);
+            for (int i = 0; i < total; i++)
+            {
+                Assert.Equal(writeBuf[i], oddBuf[i], "read from the odd LBA");
+            }
+
             // Next transfer starts on an odd LBA again, past this one's after-guard.
             lba += count + 2;
             lba |= 1;
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // Sectors past the capacity must be refused before a command is built:
+    // the FIS carries six LBA bytes, so 2^48 wrapped to sector 0 and a write
+    // there overwrote the partition table. LBA 0 is compared before and after.
+    private static void TestDevice_PastEndRejected()
+    {
+        IBlockDevice dev = s_dev!;
+        int size = (int)dev.BlockSize;
+        byte[] before = new byte[size];
+        dev.ReadBlock(0, 1, before);
+
+        byte[] one = new byte[size];
+        byte[] two = new byte[2 * size];
+        Assert.True(PastEndThrows(() => dev.ReadBlock(dev.BlockCount, 1, one)), "read at the capacity must throw");
+        Assert.True(PastEndThrows(() => dev.ReadBlock(dev.BlockCount - 1, 2, two)), "read across the capacity must throw");
+        Assert.True(PastEndThrows(() => dev.ReadBlock(1UL << 48, 1, one)), "read at 2^48 must throw");
+
+        byte[] fill = new byte[size];
+        Array.Fill(fill, PastEndFill);
+        Assert.True(PastEndThrows(() => dev.WriteBlock(1UL << 48, 1, fill)), "write at 2^48 must throw");
+        Assert.True(PastEndThrows(() => dev.WriteBlock(ulong.MaxValue, 1, fill)), "write at ulong.MaxValue must throw");
+
+        byte[] after = new byte[size];
+        dev.ReadBlock(0, 1, after);
+        for (int i = 0; i < size; i++)
+        {
+            Assert.Equal(before[i], after[i], "LBA 0 changed by a past-end write");
+        }
+    }
+
+    // True when the call threw ArgumentOutOfRangeException; any other
+    // exception propagates and fails the test.
+    private static bool PastEndThrows(Action call)
+    {
+        try
+        {
+            call();
+            return false;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return true;
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // A command the device aborts must surface as IOException even though
+    // the HBA clears PxCI in the same step it sets TFES, and the port must
+    // work afterwards: the halted command list is restarted. Repeated aborts
+    // must each fail at once instead of timing out on a halted port.
+    private static void TestDevice_TaskFileErrorRecovers()
+    {
+        AhciPort port = (AhciPort)s_dev!;
+        Assert.True(port.BlockCount > ErrorRoundTripLba + 1, "disk too small for the error-path round trip");
+        for (int round = 0; round <= ErrorRepeats; round++)
+        {
+            bool threw = false;
+            try
+            {
+                port.IssueNonDataCommand(AtaNopAbort);
+            }
+            catch (IOException)
+            {
+                threw = true;
+            }
+
+            Assert.True(threw, "an aborted command must throw IOException");
+
+            int size = (int)port.BlockSize;
+            byte[] writeBuf = new byte[size];
+            for (int i = 0; i < size; i++)
+            {
+                writeBuf[i] = (byte)((i + round) ^ ErrorRoundTripSeed);
+            }
+
+            port.WriteBlock(ErrorRoundTripLba, 1, writeBuf);
+            byte[] readBuf = new byte[size];
+            port.ReadBlock(ErrorRoundTripLba, 1, readBuf);
+            for (int i = 0; i < size; i++)
+            {
+                Assert.Equal(writeBuf[i], readBuf[i], "round trip after an aborted command");
+            }
         }
     }
 
