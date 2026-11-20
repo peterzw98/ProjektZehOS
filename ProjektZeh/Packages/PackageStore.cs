@@ -29,6 +29,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     public const string DefaultSource = "https://packages.pjoter.de/";
     private const int BufferBytes = 64 * 1024;
     private const string NewSuffix = ".new";
+    private const string WorkSuffix = ".wip";
+    private const string OldSuffix = ".old";
     private readonly object gate = new();
     private readonly Dictionary<string, int> inUse = new(StringComparer.Ordinal);
     private readonly HashSet<string> busy = new(StringComparer.Ordinal);
@@ -224,6 +226,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     {
         using var writer = BeginWrite();
         var manifest = parsed.Value!;
+        // Vor der Rueckstufungspruefung heilen: nach einem Doppelfehler liegt der alte Marker nur als .old vor.
+        StorageLock.Run(() => RestorePendingStorageLocked(Path.Combine(Apps, manifest.Id, "active"), true));
         var current = ReadActive(manifest.Id);
         InstalledPackage? previous = current.IsOK() ? current.Value : null;
         // Auch bei beschaedigtem Paket gilt die Version aus dem Marker als Rueckstufungsgrenze, sofern es diese Version
@@ -251,7 +255,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             TryDeleteTree(target);
             return ResultObjectFactory.CreateFailure<PackageManifest>(written);
         }
-        StorageLock.Run(() => ReplaceFileStorageLocked(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n")));
+        StorageLock.Run(() => ReplaceFileStorageLocked(Path.Combine(Apps, manifest.Id, "active"), Encoding.ASCII.GetBytes(manifest.Version + "\n"), textLine: true));
         // WriteVersion hat jede Datei beim Schreiben gehasht; ein erneuter Durchlauf vor dem ersten Start ist unnoetig.
         lock (gate) verified.Add(manifest.Id + "/" + manifest.Version);
         // Bleibt die alte Version wegen eines Fehlers liegen, entfernt Reconcile sie beim naechsten Start.
@@ -335,9 +339,18 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         try
         {
             using var writer = BeginWrite();
+            // Zwischenstand eines Doppelfehlers zuerst heilen (sonst gilt das Paket faelschlich als nicht installiert).
+            StorageLock.Run(() => RestorePendingStorageLocked(Path.Combine(directory, "active"), true));
             if (!StorageLock.Run(() => File.Exists(Path.Combine(directory, "active")))) return ResultErr.CreateFailure(ResultCode.NotFound, $"Paket {id} ist nicht installiert.");
             // Zuerst den Marker loeschen: ab dann ist das Paket nicht mehr startbar, auch wenn das Aufraeumen scheitert.
-            StorageLock.Run(() => File.Delete(Path.Combine(directory, "active")));
+            StorageLock.Run(() =>
+            {
+                string marker = Path.Combine(directory, "active");
+                // Reste des Ersetzens zuerst: ein Abbruch vor dem Loeschen des Markers laesst das Paket installiert, statt dass
+                // ein uebrig gebliebenes .old es beim naechsten Einbinden wiederbelebt.
+                foreach (string rest in new[] { NewSuffix, OldSuffix, WorkSuffix }) File.Delete(marker + rest);
+                File.Delete(marker);
+            });
             StorageLock.Run(() => DeleteTreeStorageLocked(directory));
             return ResultErr.CreateSuccess();
         }
@@ -426,7 +439,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             StorageLock.Run(() =>
             {
                 Directory.CreateDirectory(root);
-                ReplaceFileStorageLocked(SourcePath, Encoding.ASCII.GetBytes(url + "\n"));
+                ReplaceFileStorageLocked(SourcePath, Encoding.ASCII.GetBytes(url + "\n"), textLine: true);
             });
             return ResultErr.CreateSuccess();
         }
@@ -453,7 +466,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         {
             using var writer = BeginWrite();
             StorageLock.Run(() => RestorePendingStorageLocked(CatalogPath));
-            StorageLock.Run(() => RestorePendingStorageLocked(SourcePath));
+            StorageLock.Run(() => RestorePendingStorageLocked(SourcePath, true));
             string[]? directories = StorageLock.Run(() => Directory.Exists(Apps) ? Directory.GetDirectories(Apps) : null);
             if (directories == null) return ResultErr.CreateSuccess();
             foreach (string directory in directories)
@@ -464,7 +477,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 // Ohne Marker wurde nie etwas veroeffentlicht: der Ordner ist ein Rest und darf weg.
                 bool published = StorageLock.Run(() =>
                 {
-                    RestorePendingStorageLocked(marker);
+                    RestorePendingStorageLocked(marker, true);
                     if (File.Exists(marker)) return true;
                     DeleteTreeStorageLocked(directory);
                     return false;
@@ -513,24 +526,73 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
     }
 
-    // Neue Fassung vollstaendig schreiben, erst dann die alte loeschen; RestorePendingStorageLocked schliesst einen Abbruch dazwischen ab.
-    private static void ReplaceFileStorageLocked(string path, byte[] bytes)
+    // Neue Fassung erst unter .wip vollstaendig schreiben, dann nach .new umbenennen: Eine vorhandene .new ist damit vollstaendig.
+    // Die alte Fassung wird zu .old gesichert und erst nach erfolgreichem Umbenennen geloescht; scheitert das Umbenennen,
+    // kommt sie zurueck. Grundregel: Die alte Fassung (z. B. der active-Marker) wird nie verworfen, solange nicht die neue
+    // wirklich an ihrem Platz liegt; bei einem Doppelfehler bleibt sie als .old und der Fehler wird gemeldet.
+    // move ist die Testnaht fuer Umbenennungsfehler.
+    internal static void ReplaceFileStorageLocked(string path, byte[] bytes, Action<string, string>? move = null, bool textLine = false)
     {
-        string temporary = path + NewSuffix;
+        move ??= File.Move;
+        string work = path + WorkSuffix, temporary = path + NewSuffix, old = path + OldSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if (File.Exists(temporary)) File.Delete(temporary);
-        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .new entfernt und die alte Fassung (z. B. active) bleibt.
-        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
-        if (File.Exists(path)) File.Delete(path);
-        File.Move(temporary, path);
+        // Zwischenstand eines frueheren Abbruchs oder Doppelfehlers zuerst heilen, nie einfach loeschen (.old kann die einzige alte Fassung sein).
+        RestorePendingStorageLocked(path, textLine);
+        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .wip entfernt und die alte Fassung (z. B. active) bleibt.
+        FileService.WriteAllBytesCompleteStorageLocked(work, bytes);
+        move(work, temporary);
+        bool hadOld = File.Exists(path);
+        if (hadOld)
+        {
+            // Ohne gesicherte alte Fassung darf keine .new liegen bleiben, die nach einem spaeteren Abbruch (Remove) aktiviert wuerde.
+            try { move(path, old); }
+            catch { TryDeleteStorageLocked(temporary); throw; }
+        }
+        try { move(temporary, path); }
+        catch (Exception first)
+        {
+            try { if (hadOld) move(old, path); }
+            catch (Exception second) when (FileErrors.IsFileError(second))
+            {
+                // Beide Fassungen liegen jetzt als .old/.new; Restore haelt die alte, bis die neue wirklich ersetzt hat.
+                throw new IOException("Ersetzen von " + Path.GetFileName(path) + " und Rueckweg scheiterten; alte Fassung bleibt als " + OldSuffix + " erhalten.", first);
+            }
+            TryDeleteStorageLocked(temporary);
+            throw;
+        }
+        if (hadOld) TryDeleteStorageLocked(old); // die neue Fassung liegt schon; Restore raeumt einen Rest auf
     }
 
-    private static void RestorePendingStorageLocked(string path)
+    private static void TryDeleteStorageLocked(string path)
     {
-        string temporary = path + NewSuffix;
-        if (!File.Exists(temporary)) return;
-        if (File.Exists(path)) File.Delete(temporary);
-        else File.Move(temporary, path);
+        try { File.Delete(path); }
+        catch (Exception exception) when (FileErrors.IsFileError(exception)) { /* Restore raeumt es beim naechsten Einbinden auf. */ }
+    }
+
+    // textLine: Die Datei ist eine Textzeile mit Zeilenende (Marker, Quelle); eine .new ohne Zeilenende ist gekuerzt (auch Altlast
+    // aus der Zeit vor .wip) und wird verworfen, weil ein gekuerzter Marker ("1.0.0" aus "1.0.01") sonst gueltig aussaehe.
+    internal static void RestorePendingStorageLocked(string path, bool textLine = false)
+    {
+        string temporary = path + NewSuffix, old = path + OldSuffix;
+        // .wip ist ein abgebrochener Schreibversuch und nie vollstaendig gesichert.
+        if (File.Exists(path + WorkSuffix)) File.Delete(path + WorkSuffix);
+        bool present = File.Exists(path);
+        // Fehlt das Ziel, aber die alte Fassung liegt als .old: die alte gewinnt, die neue wird verworfen (kein Beweis, dass sie ersetzt haette).
+        if (!present && File.Exists(old)) { File.Move(old, path); present = true; }
+        if (File.Exists(temporary))
+        {
+            if (present || (textLine && !EndsWithNewlineStorageLocked(temporary))) File.Delete(temporary);
+            else File.Move(temporary, path);
+        }
+        if (File.Exists(old)) File.Delete(old);
+    }
+
+    private static bool EndsWithNewlineStorageLocked(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        if (stream.Length == 0) return false;
+        stream.Seek(-1, SeekOrigin.End);
+        return stream.ReadByte() == '\n';
     }
 
     // Cosmos-FAT bietet kein geprueftes rekursives Directory.Delete; deshalb Dateien und Ordner einzeln entfernen.
