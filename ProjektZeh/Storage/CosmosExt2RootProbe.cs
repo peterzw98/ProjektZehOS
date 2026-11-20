@@ -268,7 +268,8 @@ internal static class CosmosExt2RootProbe
     /// <summary>
     /// Diagnoselauf 17 (E5-F, #386): erst die Dateilast aus Lauf 1 (c bis i), dann Threads starten. Lauf 1 startet seine
     /// j-Threads vorher, weil Cosmos 3.0.97 einen fehlenden Stack nicht meldete (Page Fault). Hier wird der spaete Start
-    /// je Groesse zweimal versucht: ueber ThreadStarter und direkt mit Thread.Start; beide ohne Stackprobe (Cosmos prueft selbst). Ein Fehlschlag muss als Fehler bzw. Ausnahme ankommen, nicht als Page Fault.
+    /// je Groesse zweimal versucht: ueber ThreadStarter und direkt mit Thread.Start (3x 256 KiB, 1x 8 MiB). Cosmos prueft den
+    /// Stack selbst; ein Fehlschlag muss als Fehler bzw. Ausnahme ankommen, nicht als Page Fault.
     /// </summary>
     private static void RunLateThreads(IBlockDevice root)
     {

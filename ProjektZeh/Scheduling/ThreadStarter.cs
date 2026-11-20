@@ -23,7 +23,7 @@ internal static class ThreadStarter
     internal static Action<ThreadPlacement> ApplyPlacement { get; set; } = _ => { };
 
     /// <summary>
-    /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) .
+    /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard).
     /// <paramref name="background"/> markiert dauerhaft wartende Worker, damit sie ein Prozessende (Hosttests) nicht aufhalten.
     /// </summary>
     public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false,

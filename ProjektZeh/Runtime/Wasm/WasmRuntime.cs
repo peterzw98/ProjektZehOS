@@ -134,8 +134,8 @@ internal static unsafe partial class WasmRuntime
 
     /// <summary>
     /// Legt den Worker beim Start an, solange der Heap noch frei von Netzmuell ist: Der 8-MiB-Stack kommt aus dem
-    /// nativen Heap, dessen Fehlschlag keine Collection ausloest; Cosmos 3.0.97 benutzt dann einen Nullzeiger.
-    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert die Stackprobe (ThreadStarter), bleibt der
+    /// nativen Heap; Cosmos (smp-phase5b) sammelt bei Misserfolg einmal und meldet dann den Fehler.
+    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert der Start (ThreadStarter), bleibt der
     /// Worker aus; der naechste Lauf versucht es erneut und endet sonst mit LoadFailed statt zu haengen.
     /// </summary>
     public static ResultErr StartWorker()
@@ -226,7 +226,7 @@ internal static unsafe partial class WasmRuntime
             cleaningUp = false;
             if (!retiredNow)
             {
-                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App
+                // Ein gescheiterter Ersatzstart ist voruebergehend: kein Ruhestand, die naechste App
                 // startet den Worker ueber EnqueueLoaded erneut.
                 var started = StartWorkerLocked();
                 if (!started.IsOK()) restart = started.Message;
