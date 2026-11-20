@@ -123,7 +123,8 @@ def main():
         # Eingabe (#572). Deshalb erst tippen, wenn das Laden zu Ende ist. Ein ruhiges Bild allein reicht nicht:
         # Waehrend des TLS-Aufbaus blockiert NetSurf und zeichnet nicht, das Bild steht mit "Loading". Fertig ist
         # die Seite erst, wenn die Statuszeile wieder "Done" zeigt und das Fensterbild (798x519 ab 33,120) eine
-        # Sekunde lang unveraendert bleibt.
+        # Sekunde lang unveraendert bleibt. Grenze: Die Statuszeile zeigt auch die URL eines Links unter dem
+        # Mauszeiger; steht der Zeiger beim Warten auf einem Link, fehlt "Done" und der Aufruf scheitert nach 30 s.
         deadline = time.monotonic() + 30
         last = grab()
         while True:
