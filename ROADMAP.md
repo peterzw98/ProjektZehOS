@@ -197,7 +197,7 @@ Gemergt sind drei Plugs für Cosmos-3.0.97-Fehler:
 - #226: `Rmdir` gibt alle Verzeichnisblöcke frei. Lauf 9 mit 8190 Einträgen: `e2fsck` Exit 0.
 - #229: Null-Abwehr für große Puffer. Nur auf dem Host belegt.
 
-Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien je Mount (#228, #233; Peter: kein Plug) und die E4.0-Befunde (#224).
+Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien je Mount (#228, #233; Peter: kein Plug; seit Pin `zehos.6` etwa 75.000, siehe `docs/COSMOS_SUPPORT.md`) und die E4.0-Befunde (#224).
 
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (gemergt, erfüllt):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
