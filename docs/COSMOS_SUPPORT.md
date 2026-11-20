@@ -420,6 +420,45 @@ Roadmap 6a.1 wurde auf Basis von `1d37a0d` mit unveränderten Cosmos-Paketen **3
 
 Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/scheduler-plugging.html) beschreibt die experimentelle Policy-Schnittstelle. Der passende [Paketquellstand](https://github.com/CosmosOS/Cosmos/tree/5d0b9535251472db7ecfe012f0435f0a04ffca16) enthält bereits ein Round-Robin-Beispiel in den Threading-Tests. Cosmos stellt Kontextwechsel, Timer und Warteprimitive bereit; eine eigene Thread-Laufzeit ist für den nächsten Schritt nicht nötig. Der historische Versuch enthielt noch keine ZehOS-Aufgabenverwaltung; deren anschließende Umsetzung ist oben beschrieben. Echte Hardware wurde nicht geprüft.
 
+## Mehrere CPUs: SMP-Stand und Grenzen (Entwurf E7-F, 20. November 2026)
+
+**Entwurf (#399).** Stand `task/mc-e5-smp` nach #548; die Abschnitte Plattformmatrix, Energie und Hauptschleife sind Platzhalter bis E7-A, E7-C und E7-E. Die Aussage „mehrere CPUs wurden nicht geprüft“ in den Grenzen unten gilt nur für den Stand von 3.0.94 und wird **erst mit E7-E** dort gestrichen.
+
+**Stand.** Cosmos-Pin `3.0.97-zehos.6-smp.10` (`deploy/cosmos/VERSION`, cosmos-Kopf `52114521`, #540/#543). Der SMP-Stapel startet die weiteren CPUs; ZehOS setzt den Hauptthread und die Standardaffinität auf CPU 0, Wasm-Worker, Hintergrundaufgaben und der Wasm-Netzwerk-Worker laufen auf den Compute-CPUs (`ThreadPlacement.Workers`, #514, #392). Cosmos-Patches seit Etappe 5: `monitor-quiet` (smp.4, E6-H), `ausnahme-interrupts` (smp.6, E6-C.10), `pic-remap-cli` (smp.8, E5-N), `tcp-receive-window` (smp.9, E5-O), `gc-oom-throw` (smp.10, E5-P), dazu `panic-stop-cpus` (E7-B) und der Patch für Stacks beendeter Threads (E5-K). Abschnitte dazu: [Sperren-Übergabe](#sperren-übergabe-zwischen-cpus-e6-h-19-november-2026), [PIC-Remap](#frühboot-gp-beim-pic-remap-e5-n-19-november-2026), [Netzstapel](#netzstapel-auf-mehreren-cpus-e6-c11-19-november-2026), [Hintergrundaufgaben](#hintergrundaufgaben-auf-den-compute-cpus-e6-e-392-20-november-2026), [TCP-Fenster](#tcp-empfangsfenster-und-verlorene-segmente-e5-o-530-19-november-2026), [Speichermangel](#speichermangel-wirft-outofmemoryexception-e5-p-538-19-november-2026).
+
+**Belegte Zahlen** (QEMU/KVM, ein Lauf, wenn nicht anders genannt; Quellen: die verlinkten Abschnitte, `docs/STORAGE_3_0_97_FINDINGS.md`, Kommentare in #383):
+
+| Beleg | Ergebnis |
+| --- | --- |
+| E5-J, Endlauf auf `6c5b5839` (smp.9), MSI, `--parallel 3` (Kommentar in #383) | 21 von 25 bestanden, 4 fehlgeschlagen. Doom `full` 9/9 (leer, `4`, `8,cores=4,threads=2` je 3). Desktop KVM/`4`/TCG, Recovery, Isolation (positiv, negativ), ClassiCube, Netz bestanden. Fehlgeschlagen: `isolation-nmi` (leer, `4`; später je 2/2 reproduziert, nicht untersucht, E5-M, #515) und `netsurf` (leer, `4`; Eingabeverlust wie #478, nicht SMP-spezifisch). Bildzeiten parallel verfälscht. **E5-J ist nicht abgenommen (#383 offen).** |
+| E5-H Speicherqualifikation (`docs/STORAGE_3_0_97_FINDINGS.md`, PR #553) | Root 1 GiB mit 1 und 4 CPUs bestanden. Root 512 MiB scheitert mit `OutOfMemoryException` (Schritte l2, g). Nicht geprüft: Läufe 2 bis 5, Hochgruppe, VMware, Hardware. |
+| E5-I Stride gegen Klassenscheduler (oben) | Doom bestanden mit Vorbehalt (Mittel 70,0 / 69,6 fps gegen 70,0; ein Ausreißer 107 ms), ClassiCube nicht entscheidbar (Spannweite 33 bis 60 %). |
+| E6-E (Abschnitt Hintergrundaufgaben) | Größte GC-Pause: leer 30 ms, `4` 32 ms, `8,cores=4,threads=2` 37 ms (Grenze 60 ms). `StorageLock` mit `4`: ext2 310 599 und FAT 115 705 Lesungen, 0 falsch, `e2fsck -fn` Exit 0. Doom `full` mit `4`: Bildzeit median 10 ms, p95 25 ms, 70 fps. |
+| E6-H (Abschnitt Sperren-Übergabe) | 10.000 Übergaben je Paar in 536–561 ms (smp.4) gegen ~55 ms je Übergabe zuvor. |
+| E7-D (README, Probe `smt`) | KVM, 4 CPUs als 2 Kerne × 2: ohne Schalter `used=1,2,3 second=2`, mit `zehos.smt=off` `used=2 second=0`. |
+
+**Befund 512 MiB (#538, E5-P).** Die Seitenläufe fragmentieren (Probe `probe/e5h-frag`, Details in #538). Das stille `null` statt `OutOfMemoryException` ist mit smp.10 behoben (Abschnitt Speichermangel); die Fragmentierung selbst soll der Patch `page-alloc-split` beheben (cosmos PR #557, **noch nicht gemergt**, kein Pin). **Offen:** E5-H mit 512 MiB nach diesem Patch wiederholen; bis dahin ist 1 GiB die belegte Mindestgröße für den Root-Lauf.
+
+**Plattformmatrix (E7-E, #398): offen.**
+
+| Umgebung | CPU-Aufbau | Stand |
+| --- | --- | --- |
+| QEMU TCG | `1`; `2`; `4`; `4,cores=2,threads=2`; `8,cores=4,threads=2` | offen (Teile aus E5-J, siehe oben) |
+| QEMU KVM | wie TCG | offen (Teile aus E5-J, E6-E, E7-D, siehe oben) |
+| QEMU WHPX | `2`; `4` | offen |
+| VMware | `numvcpus` 1, 2, 4 | offen |
+| echte Hardware mit Hyperthreading | wie vorhanden | offen |
+
+**Energie (E7-C, #396): offen.** **Hauptschleife auf den Compute-CPUs (E7-A, #394): offen**, sie läuft auf CPU 0.
+
+**Grenzen (Stand dieses Entwurfs).**
+
+- Hauptschleife und Interrupts auf CPU 0, nur Worker verteilt (bis E7-A).
+- Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten (smp.10).
+- Aufgegebene Wasm-Worker (Thread, 8-MiB-Stack) werden noch nicht abgeräumt (E6-G, #433, offen); Auditbefunde zu Workern in E6-C (#390) offen.
+- Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen (Abschnitt PIC-Remap).
+- VMware, WHPX und echte Hardware sind für mehrere CPUs **nicht geprüft**; Leistungsaussagen zu Hyperthreading nur für QEMU/KVM.
+
 ## Referenzumgebung
 
 Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standard-VGA und PS/2-Tastatur/-Maus. Limine fordert **1024×768×32** an; die tatsächliche Bildschirmgröße wurde im Gast geprüft. Der vorhandene QEMU-Start über Cosmos bleibt verwendbar. Für Dateiprüfungen wurde eine separate Kopie des vorhandenen 64-MiB-AHCI-Datenimages verwendet.
