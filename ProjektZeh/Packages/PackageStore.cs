@@ -536,7 +536,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         catch
         {
             // Rueckweg best effort; gelingt er nicht, schliesst RestorePendingStorageLocked mit der vollstaendigen .new ab.
-            try { if (hadOld) move(old, path); File.Delete(temporary); } catch (IOException) { }
+            try { if (hadOld) move(old, path); File.Delete(temporary); } catch (Exception rollback) when (FileErrors.IsFileError(rollback)) { }
             throw;
         }
         if (hadOld) File.Delete(old);
