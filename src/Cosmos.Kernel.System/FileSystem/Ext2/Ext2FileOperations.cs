@@ -203,7 +203,24 @@ internal sealed class Ext2FileOperations : IFileOperations
 
                 long chunk = Math.Min(blockSize - blockOffset, buffer.Length - written);
                 buffer.Slice((int)written, (int)chunk).CopyTo(blockBuffer.AsSpan((int)blockOffset, (int)chunk));
-                _superblock.WriteBlocks(physicalBlock, 1, blockBuffer);
+                try
+                {
+                    _superblock.WriteBlocks(physicalBlock, 1, blockBuffer);
+                }
+                catch
+                {
+                    // The batch end below writes the bitmap and the held-back
+                    // pointer block. Without this a new block whose data never
+                    // reached the disk would be published with whatever the
+                    // disk held there before, inside the file's size.
+                    if (isNew)
+                    {
+                        _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
+                    }
+
+                    throw;
+                }
+
                 written += chunk;
             }
         }

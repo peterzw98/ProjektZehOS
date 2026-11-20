@@ -2,6 +2,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Cosmos.Kernel.HAL.Devices.Storage;
+using SchedSpinLock = Cosmos.Kernel.Core.Scheduler.SpinLock;
 
 namespace Cosmos.Kernel.System.FileSystem.Ext2;
 
@@ -48,6 +49,20 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
     /// <summary>Contents of <see cref="_leafBlk"/>, ahead of the disk while a batch runs.</summary>
     private byte[]? _leafData;
+
+    // ZehOS patch ext2-alloc-cache, see PATCHES.md
+    // Devices with a live writable mount. The bitmap and descriptor caches
+    // assume this mount is the only writer of its device: a second writable
+    // mount would hand out blocks the first one already uses. TryCreate
+    // refuses it; Drop releases the claim. A read-only mount is still
+    // allowed next to a writable one but may see stale data.
+    private static readonly List<IBlockDevice> s_writableDevices = new();
+
+    /// <summary>Guards <see cref="s_writableDevices"/>; mount and unmount only, never I/O inside.</summary>
+    private static SchedSpinLock s_writableLock;
+
+    /// <summary>This mount holds the write claim on <see cref="Device"/>.</summary>
+    private bool _ownsWriteClaim;
 
     /// <summary>Live inodes by number; keeps open handles coherent with metadata writes.</summary>
     private readonly Dictionary<uint, Ext2Inode> _inodeCache;
@@ -392,6 +407,13 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 firstIno, inodeSize, revLevel,
                 featureCompat, featureIncompat, featureRoCompat,
                 groups, gdBuf, gdStartBlock, readOnly);
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            if (!superblock.IsReadOnly && !superblock.TryClaimWrite())
+            {
+                superblock = null;
+                return false;
+            }
+
             return true;
         }
         catch
@@ -890,6 +912,55 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     }
 
     /// <summary>
+    /// Undo the allocation of a data block whose first write failed, so the
+    /// file keeps a hole there instead of pointing at stale disk contents.
+    /// Only valid inside an allocation batch right after
+    /// <see cref="GetBlockPointer(Ext2Inode, uint, bool, bool, out bool)"/>
+    /// returned the block with isNew set: its pointer then sits in the
+    /// inode (direct) or in the held-back pointer block, neither on disk yet.
+    /// When the pointer is not found there the block stays allocated (a leak
+    /// e2fsck reclaims) rather than freeing a block something references.
+    /// </summary>
+    /// <param name="inode">File inode.</param>
+    /// <param name="logicalBlock">Zero-based block index within the file.</param>
+    /// <param name="physicalBlock">The block GetBlockPointer allocated.</param>
+    internal void RevertNewDataBlock(Ext2Inode inode, uint logicalBlock, uint physicalBlock)
+    {
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        bool unlinked = false;
+        if (logicalBlock < Ext2InodeLayout.DirectBlockCount)
+        {
+            if (inode.Block[logicalBlock] == physicalBlock)
+            {
+                inode.Block[logicalBlock] = 0;
+                unlinked = true;
+            }
+        }
+        else if (_batchDepth > 0 && _leafBlk != uint.MaxValue && _leafData is not null)
+        {
+            for (int off = 0; off + 4 <= (int)BlockSize; off += 4)
+            {
+                if (BitConverter.ToUInt32(_leafData.AsSpan(off, 4)) == physicalBlock)
+                {
+                    BitConverter.TryWriteBytes(_leafData.AsSpan(off, 4), 0u);
+                    unlinked = true;
+                    break;
+                }
+            }
+        }
+
+        if (!unlinked)
+        {
+            return;
+        }
+
+        // The indirect cache may hold the entry just cleared.
+        InvalidateIndirCache();
+        inode.Blocks -= BlockSize / 512;
+        FreeBlock(physicalBlock);
+    }
+
+    /// <summary>
     /// Persist one group's descriptor and the volume's free counts.
     /// </summary>
     /// <param name="groupIndex">Zero-based block group.</param>
@@ -944,6 +1015,11 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         }
 
         WriteBackBlockBitmap();
+        // The read reuses the buffer. A read that fills part of it and then
+        // throws must not leave the old group marked valid over foreign
+        // bytes: the next allocation there would write them back as its
+        // bitmap. Until the read succeeds no group is cached.
+        _blockBitmapGroup = uint.MaxValue;
         if (_blockBitmap is null || _blockBitmap.Length != BlockSize)
         {
             _blockBitmap = new byte[BlockSize];
@@ -1124,7 +1200,70 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     {
         _inodeCache.Clear();
         InvalidateIndirCache();
-        Flush();
+        try
+        {
+            Flush();
+        }
+        finally
+        {
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            // The VFS has removed the mount even when the flush throws.
+            ReleaseWriteClaim();
+        }
+    }
+
+    /// <summary>
+    /// Register this mount as the only writable one of its device.
+    /// </summary>
+    /// <returns>false when another writable mount of the device is live.</returns>
+    private bool TryClaimWrite()
+    {
+        s_writableLock.Acquire();
+        try
+        {
+            for (int i = 0; i < s_writableDevices.Count; i++)
+            {
+                if (ReferenceEquals(s_writableDevices[i], Device))
+                {
+                    return false;
+                }
+            }
+
+            s_writableDevices.Add(Device);
+            _ownsWriteClaim = true;
+            return true;
+        }
+        finally
+        {
+            s_writableLock.Release();
+        }
+    }
+
+    /// <summary>Give up the write claim taken by <see cref="TryClaimWrite"/>.</summary>
+    private void ReleaseWriteClaim()
+    {
+        if (!_ownsWriteClaim)
+        {
+            return;
+        }
+
+        s_writableLock.Acquire();
+        try
+        {
+            for (int i = 0; i < s_writableDevices.Count; i++)
+            {
+                if (ReferenceEquals(s_writableDevices[i], Device))
+                {
+                    s_writableDevices.RemoveAt(i);
+                    break;
+                }
+            }
+            _ownsWriteClaim = false;
+        }
+        finally
+        {
+            s_writableLock.Release();
+        }
     }
 
     /// <summary>
