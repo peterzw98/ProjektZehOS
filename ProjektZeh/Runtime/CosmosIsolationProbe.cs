@@ -18,11 +18,21 @@ internal static class CosmosIsolationProbe
     private static volatile int zero;
     private static volatile int sink;
 
+    private static volatile int desktopReady;
+
     internal static void Start() => new Thread(Probe).Start();
+
+    /// <summary>Aus der Hauptschleife, sobald der Desktop seinen Bildpuffer angelegt hat.</summary>
+    internal static void MarkDesktopReady() => desktopReady = 1;
 
     private static unsafe void Probe()
     {
         Log("ISOLATION_PROBE start");
+        // Der Desktop legt beim Start seinen Bildpuffer an (1920 x 1080 x 4 = etwa 8 MiB). Faellt das zwischen free_before
+        // und free der ersten Isolation, sieht die Speicherpruefung einen falschen Stackverlust (4 von 5 Laeufen @1123020b).
+        // Deshalb erst nach dem Desktop isolieren; ohne Desktop nach hoechstens zehn Sekunden trotzdem.
+        for (int wait = 0; wait < 100 && desktopReady == 0; wait++) Thread.Sleep(100);
+        Log("ISOLATION_PROBE desktop ready=" + desktopReady);
         zero = 0;
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
         Fault("de", () => sink = 1 / zero);

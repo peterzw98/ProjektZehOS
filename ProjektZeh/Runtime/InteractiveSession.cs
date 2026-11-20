@@ -169,6 +169,9 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             systemLog.Information("Desktop", "Desktop ist bereit.");
             // Zeigt seriell, ob der Treiber einen Laufzeitwechsel der Aufloesung erlaubt (nur bei mehreren Modi).
             systemLog.Information("Desktop", $"Anzeige {display.Display.Current}, Modi: {string.Join(", ", display.Display.Modes)}");
+#if ZEHOS_ISOLATION_PROBE
+            CosmosIsolationProbe.MarkDesktopReady();
+#endif
         }
         catch (Exception exception)
         {
