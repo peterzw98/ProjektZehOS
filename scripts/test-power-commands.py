@@ -11,6 +11,10 @@ geht hier nicht: ohne Datenplatte ist das Konto gesperrt, ein Paketinstall also 
 Root-/Datenplatte). Der zweite Start wird ohne Last auf Shell und sauberes shutdown geprueft.
 --runs N wiederholt den Lauf, jeder in einem neuen Unterordner von --work.
 
+Abweichungen von der ps1 (Grenzen): kein query-status "running" nach reboot, nur process.poll(); Fristen lockerer
+(reboot 60 s statt 15, shutdown 30 s statt 5); der Fall -WithDebugger fehlt. Marken werden mit find_marker aus
+test-wasm-doom-desktop.py gesucht (Cosmos schreibt seriell nicht zeilenatomar).
+
 Exitcodes: 0 = alle Laeufe bestanden, 1 = mindestens ein Lauf gescheitert.
 """
 import argparse
@@ -36,9 +40,19 @@ READY = "Textshell ist bereit."
 REBOOT_TIMEOUT = 60
 
 
+doom = load("doom_desktop", "test-wasm-doom-desktop.py")
+
+
 def count(run: Path, text: str) -> int:
+    """Zaehlt die Marke im seriellen Protokoll mit find_marker: Cosmos zerteilt Zeilen anderer Threads mitten in die Marke."""
     log = run / "serial.log"
-    return log.read_text(encoding="utf-8", errors="replace").count(text) if log.exists() else 0
+    if not log.exists():
+        return 0
+    content = log.read_text(encoding="utf-8", errors="replace")
+    found, position = 0, 0
+    while (position := doom.find_marker(content, text, position)) >= 0:
+        found += 1
+    return found
 
 
 def wait_count(guest, text: str, wanted: int, timeout: float) -> None:
@@ -90,12 +104,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--work", required=True, type=Path, help="neuer Arbeitsordner (je Lauf ein Unterordner)")
     parser.add_argument("--iso", required=True, type=Path)
-    parser.add_argument("--iso-recovery", type=Path, default=None, help="unbenutzt, Kompatibilitaet zu Guest")
     parser.add_argument("--accel", choices=["tcg", "kvm"], default="kvm")
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--load", action="store_true", help="vor reboot zwei busy-Aufgaben")
     args = parser.parse_args()
+    if args.runs < 1:
+        parser.error("--runs muss mindestens 1 sein")
+    args.iso_recovery = None  # Guest/storage.boot erwarten das Feld; dieser Gast braucht keinen Recovery-Build
     work = storage.new_work_dir(args.work)
     failed = 0
     for number in range(1, args.runs + 1):
