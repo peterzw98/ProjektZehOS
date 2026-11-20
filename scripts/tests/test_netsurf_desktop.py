@@ -22,7 +22,7 @@ def helpers(guest, work, clock):
     main = next(node for node in ast.parse(SCRIPT.read_text(encoding="utf-8")).body
                 if isinstance(node, ast.FunctionDef) and node.name == "main")
     functions = [node for node in main.body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("capture", "page")]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("grab", "capture", "page")]
     source = "def factory(guest, work):\n    step = 0\n"
     source += textwrap.indent("\n".join(ast.unparse(node) for node in functions), "    ")
     source += "\n    return capture, page\n"
