@@ -205,6 +205,22 @@ public class Kernel : Sys.Kernel
     /// <summary>XOR seed of the large-transfer pattern.</summary>
     private const byte LargeTransferXorSeed = 0x5A;
 
+    /// <summary>
+    /// Sector counts <see cref="TestDevice_CommandSizes"/> moves in one call:
+    /// one sector, the old SATA command limit (8) and one past it, the
+    /// 64 KiB limit (128) and one past it, and 1 MiB.
+    /// </summary>
+    private static readonly ulong[] CommandSizeCounts = [1, 8, 9, 128, 129, 2048];
+
+    /// <summary>First sector of the command-size region; odd, so no transfer starts page aligned on the disk.</summary>
+    private const ulong CommandSizeBaseLba = 10001;
+
+    /// <summary>Fill of the guard sectors right before and after each command-size transfer.</summary>
+    private const byte CommandSizeGuardFill = 0xC3;
+
+    /// <summary>XOR seed of the command-size pattern, mixed with the sector count so a stale earlier transfer shows.</summary>
+    private const byte CommandSizeXorSeed = 0x69;
+
     /// <summary>XOR seed of the boundary-LBA round-trip pattern.</summary>
     private const byte BoundaryXorSeed = 0xF0;
 
@@ -515,6 +531,7 @@ public class Kernel : Sys.Kernel
         TR.RunIf(dev, "Device_WriteRead_Idempotent",       TestDevice_WriteReadIdempotent,      SkipNoDevice);
         TR.RunIf(dev, "Device_ReReadStable",               TestDevice_ReReadStable,             SkipNoDevice);
         TR.RunIf(dev, "Device_LargeTransfer",              TestDevice_LargeTransfer,            SkipNoDevice);
+        TR.RunIf(dev, "Device_CommandSizes_OddLba",        TestDevice_CommandSizes,             SkipNoDevice);
         TR.RunIf(dev, "Device_BoundaryLBA",                TestDevice_BoundaryLBA,              SkipNoDevice);
         TR.RunIf(dev, "Device_LBA_Zero_RoundTrip",         TestDevice_LBAZeroRoundTrip,         SkipNoDevice);
         TR.RunIf(dev, "Device_CrossBlock_Isolation",       TestDevice_CrossBlockIsolation,      SkipNoDevice);
@@ -1002,8 +1019,9 @@ public class Kernel : Sys.Kernel
 
     private static void TestDevice_LargeTransfer()
     {
-        // Past every driver's per-command limit (one page, 8 sectors, for
-        // SATA; 64 KiB, 128 sectors, for USB mass storage), plus one block,
+        // Past a one-page per-command limit (8 sectors; SATA's when only a
+        // page of bounce memory was free) and USB mass storage's 64 KiB (128
+        // sectors, SATA's otherwise), plus one block,
         // so the split into several commands and a short last one are covered.
         const ulong lba = 1000;
         const ulong blocks = 257;
@@ -1022,6 +1040,52 @@ public class Kernel : Sys.Kernel
         for (int i = 0; i < (int)total; i++)
         {
             Assert.Equal(writeBuf[i], readBuf[i]);
+        }
+    }
+
+    // ZehOS patch ahci-large-commands, see PATCHES.md
+    // Each count around a per-command limit, from an odd LBA, between two
+    // guard sectors: a chunk split that drops, repeats or shifts a sector,
+    // or a bounce buffer that wraps at a page, shows in the pattern or in
+    // a guard. Every count gets its own pattern, so a read served from an
+    // earlier transfer fails too.
+    private static void TestDevice_CommandSizes()
+    {
+        int size = (int)s_dev!.BlockSize;
+        ulong lba = CommandSizeBaseLba;
+        Span<byte> guard = new byte[size];
+        guard.Fill(CommandSizeGuardFill);
+        foreach (ulong count in CommandSizeCounts)
+        {
+            s_dev.WriteBlock(lba - 1, 1, guard);
+            s_dev.WriteBlock(lba + count, 1, guard);
+
+            int total = (int)count * size;
+            byte seed = (byte)(CommandSizeXorSeed ^ (byte)count);
+            Span<byte> writeBuf = new byte[total];
+            for (int i = 0; i < total; i++)
+            {
+                writeBuf[i] = (byte)((i + (i >> LargeTransferCarryShift)) ^ seed);
+            }
+
+            s_dev.WriteBlock(lba, count, writeBuf);
+
+            Span<byte> readBuf = new byte[total + 2 * size];
+            s_dev.ReadBlock(lba - 1, count + 2, readBuf);
+            for (int i = 0; i < size; i++)
+            {
+                Assert.Equal(CommandSizeGuardFill, readBuf[i], "guard before the transfer");
+                Assert.Equal(CommandSizeGuardFill, readBuf[size + total + i], "guard after the transfer");
+            }
+
+            for (int i = 0; i < total; i++)
+            {
+                Assert.Equal(writeBuf[i], readBuf[size + i]);
+            }
+
+            // Next transfer starts on an odd LBA again, past this one's after-guard.
+            lba += count + 2;
+            lba |= 1;
         }
     }
 

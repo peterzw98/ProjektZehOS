@@ -13,8 +13,9 @@ namespace Cosmos.Kernel.Drivers.Pci.Storage.Ahci;
 /// One SATA port of an AHCI HBA, the block device <see cref="AhciDriver"/>
 /// publishes to the ring as <c>sata{n}</c>, with the geometry and the
 /// strings IDENTIFY DEVICE reported. Every transfer moves through the
-/// port's one bounce page, at most <see cref="MaxSectorsPerCommand"/>
-/// sectors per command, and one command is in flight per port: a caller
+/// port's one physically contiguous bounce buffer, at most
+/// <see cref="MaxSectorsPerCommand"/> sectors per command (one page when
+/// only a page could be allocated), and one command is in flight per port: a caller
 /// claims the port's busy flag under the controller's lock, held only
 /// around the flag, and releases it when its command and its copy are
 /// done, so chunks of two callers may interleave but never overlap.
@@ -27,11 +28,36 @@ internal sealed class AhciPort : IBlockDevice
 {
     // --- Constants ---
 
-    /// <summary>Bytes of one page: the bounce buffer is one, page aligned. The kit exposes no page size.</summary>
+    /// <summary>Bytes of one page: the bounce buffer is page aligned, and one page is the fallback size. The kit exposes no page size.</summary>
     private const int PageBytes = 4096;
 
-    /// <summary>Sectors one command moves at most: one bounce page, one PRDT entry.</summary>
-    private const uint MaxSectorsPerCommand = 8;
+    // ZehOS patch ahci-large-commands, see PATCHES.md
+    /// <summary>
+    /// Sectors one command moves at most: 64 KiB, one contiguous bounce
+    /// buffer, one PRDT entry (well under its 4 MiB byte count). One page
+    /// per command cost a full command round trip, under KVM several VM
+    /// exits, per 4 KiB.
+    /// </summary>
+    private const uint MaxSectorsPerCommand = 128;
+
+    /// <summary>Sectors per command when only one bounce page could be allocated.</summary>
+    private const uint PageSectorsPerCommand = PageBytes / (int)AhciProtocol.SectorBytes;
+
+    /// <summary>
+    /// Completion polls that pause on the timestamp counter instead of
+    /// <see cref="DeviceBinding.Delay"/>: on x64 the platform delay reads
+    /// port 0x80 once per microsecond, a VM exit each under KVM, so a
+    /// command that completes within tens of microseconds would wait
+    /// mostly on the delay. Past these polls the loop falls back to the
+    /// platform delay.
+    /// </summary>
+    private const int FastPolls = 2000;
+
+    /// <summary>Pause between two fast completion polls, on the timestamp counter.</summary>
+    private const long FastPollMicroseconds = 2;
+
+    /// <summary>Microseconds in one second, for the timestamp pause.</summary>
+    private const long MicrosecondsPerSecond = 1_000_000;
 
     /// <summary>How long the task file gets to leave BSY and DRQ before a command is issued.</summary>
     private const uint TaskFileMilliseconds = 1000;
@@ -55,6 +81,7 @@ internal sealed class AhciPort : IBlockDevice
     private readonly uint _portNumber;
     private readonly string _name;
     private readonly DmaBuffer _bounce;
+    private readonly uint _maxSectors;
     private readonly ulong _blockCount;
     private readonly string _model;
     private readonly string _serial;
@@ -65,7 +92,8 @@ internal sealed class AhciPort : IBlockDevice
 
     /// <summary>
     /// Brings the port up: refuses an ATAPI device, allocates the bounce
-    /// page (below 4 GiB on a 32-bit HBA), issues IDENTIFY DEVICE and reads
+    /// buffer (below 4 GiB on a 32-bit HBA; 64 KiB, one page when that
+    /// fails), issues IDENTIFY DEVICE and reads
     /// the strings and the capacity out of it. Thread context, from the
     /// probe, after the port was rebased and its engine started.
     /// </summary>
@@ -87,17 +115,25 @@ internal sealed class AhciPort : IBlockDevice
             throw new InvalidOperationException("the port is not a SATA device");
         }
 
-        if (controller.Supports64Bit)
-        {
-            _bounce = binding.AllocateDma(PageBytes, PageBytes);
-        }
-        else if (binding.TryAllocateDma(PageBytes, PageBytes, DmaConstraints.Addressable32Bit, out DmaBuffer? bounce))
+        DmaConstraints constraints = controller.Supports64Bit ? DmaConstraints.None : DmaConstraints.Addressable32Bit;
+        int largeBytes = (int)(MaxSectorsPerCommand * AhciProtocol.SectorBytes);
+        if (binding.TryAllocateDma(largeBytes, PageBytes, constraints, out DmaBuffer? bounce))
         {
             _bounce = bounce;
+            _maxSectors = MaxSectorsPerCommand;
+        }
+        else if (binding.TryAllocateDma(PageBytes, PageBytes, constraints, out bounce))
+        {
+            // No contiguous 64 KiB (or none below 4 GiB): one page per
+            // command stays correct, only slower.
+            _bounce = bounce;
+            _maxSectors = PageSectorsPerCommand;
         }
         else
         {
-            throw new InvalidOperationException("no DMA memory below 4 GiB for a 32-bit controller");
+            throw new InvalidOperationException(controller.Supports64Bit
+                ? "No pages left for DMA memory."
+                : "no DMA memory below 4 GiB for a 32-bit controller");
         }
 
         ushort[] identify = new ushort[AhciProtocol.IdentifyWords];
@@ -143,7 +179,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>
     /// Reads whole sectors with READ DMA EXT, at most
     /// <see cref="MaxSectorsPerCommand"/> per command through the bounce
-    /// page, the port claimed per chunk. Thread context; any thread.
+    /// buffer, the port claimed per chunk. Thread context; any thread.
     /// </summary>
     /// <param name="blockNo">The first sector.</param>
     /// <param name="blockCount">How many sectors.</param>
@@ -159,7 +195,7 @@ internal sealed class AhciPort : IBlockDevice
         while (done < blockCount)
         {
             ulong remaining = blockCount - done;
-            uint chunk = remaining >= MaxSectorsPerCommand ? MaxSectorsPerCommand : (uint)remaining;
+            uint chunk = remaining >= _maxSectors ? _maxSectors : (uint)remaining;
             int bytes = sector * (int)chunk;
             Claim();
             try
@@ -179,7 +215,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>
     /// Writes whole sectors with WRITE DMA EXT, at most
     /// <see cref="MaxSectorsPerCommand"/> per command through the bounce
-    /// page, the port claimed per chunk. Thread context; any thread.
+    /// buffer, the port claimed per chunk. Thread context; any thread.
     /// </summary>
     /// <param name="blockNo">The first sector.</param>
     /// <param name="blockCount">How many sectors.</param>
@@ -195,7 +231,7 @@ internal sealed class AhciPort : IBlockDevice
         while (done < blockCount)
         {
             ulong remaining = blockCount - done;
-            uint chunk = remaining >= MaxSectorsPerCommand ? MaxSectorsPerCommand : (uint)remaining;
+            uint chunk = remaining >= _maxSectors ? _maxSectors : (uint)remaining;
             int bytes = sector * (int)chunk;
             Claim();
             try
@@ -284,7 +320,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>
     /// Builds and issues one command on a free slot and polls it to
     /// completion: clears PxIS and PxSERR, writes the header, the PRDT
-    /// entry over the bounce page when the command carries data, and the
+    /// entry over the bounce buffer when the command carries data, and the
     /// H2D FIS, waits for the task file to leave BSY and DRQ, orders the
     /// stores, writes PxCI, then polls the slot's bit until it clears. The
     /// caller holds the busy flag. Thread context; any thread.
@@ -294,7 +330,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="count">The sector count: the PRDT byte count for a data command, the FIS count when <paramref name="useLba48"/>.</param>
     /// <param name="isWrite">The data goes to the device.</param>
     /// <param name="useLba48">The FIS carries the LBA and the count.</param>
-    /// <param name="hasData">The command moves data through the bounce page.</param>
+    /// <param name="hasData">The command moves data through the bounce buffer.</param>
     /// <exception cref="IOException">The port raised a task file error.</exception>
     /// <exception cref="InvalidOperationException">No slot was free, the port stuck busy, or the command timed out.</exception>
     private void IssueCommand(byte command, ulong lba, uint count, bool isWrite, bool useLba48, bool hasData)
@@ -367,6 +403,8 @@ internal sealed class AhciPort : IBlockDevice
         _controller.WritePort(port, AhciProtocol.PxCi, slotBit);
 
         long deadline = AhciState.DeadlineAfter(AhciState.CommandTimeoutMilliseconds);
+        long fastPause = Stopwatch.Frequency / MicrosecondsPerSecond * FastPollMicroseconds;
+        int fastPolls = 0;
         while ((_controller.ReadPort(port, AhciProtocol.PxCi) & slotBit) != 0)
         {
             if ((_controller.ReadPort(port, AhciProtocol.PxIs) & AhciProtocol.IsTaskFileError) != 0)
@@ -380,7 +418,20 @@ internal sealed class AhciPort : IBlockDevice
                 throw new InvalidOperationException("SATA: command completion timeout.");
             }
 
-            _binding.Delay(AhciState.PollMicroseconds);
+            if (fastPolls < FastPolls)
+            {
+                // Pause on the timestamp counter: no port access, so no VM
+                // exit under KVM; most commands finish within a few polls.
+                fastPolls++;
+                long until = Stopwatch.GetTimestamp() + fastPause;
+                while (Stopwatch.GetTimestamp() < until)
+                {
+                }
+            }
+            else
+            {
+                _binding.Delay(AhciState.PollMicroseconds);
+            }
         }
 
         DmaBuffer.ReadBarrier();
