@@ -463,7 +463,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 ## Mehrere CPUs: SMP-Stand und Grenzen (Entwurf E7-F, 20. November 2026)
 
-**Entwurf (#399).** Stand `task/mc-e5-smp` nach #576 (Pin smp.11, E6-G); die Abschnitte Plattformmatrix (E7-E, #398, Zwischenstand PR #566) und Hauptschleife (E7-A, #394, PR #564 nicht gemergt) sind Platzhalter. Die Aussage „mehrere CPUs wurden nicht geprüft“ in den Grenzen unten gilt nur für den Stand von 3.0.94 und wird **erst mit E7-E** dort gestrichen.
+**Entwurf (#399).** Stand `task/mc-e5-smp` nach #576 (Pin smp.11, E6-G); die Abschnitte Plattformmatrix (E7-E, #398, Zwischenstand PR #566) und Hauptschleife (E7-A, #394, PR #564 nicht gemergt) sind Platzhalter. Die Aussage „mehrere CPUs wurden nicht geprüft“ gilt nur für den Stand von 3.0.94; für QEMU TCG und KVM ist sie durch den E7-E-Zwischenstand (80/80, PR #566) überholt, für VMware, WHPX und echte Hardware bleibt sie bestehen; endgültig streichen erst nach E7-A und der kompletten Wiederholung.
 
 **Stand.** Cosmos-Pin `3.0.97-zehos.6-smp.11` (`deploy/cosmos/VERSION`, cosmos-Kopf `e9915bc4`, PR #575). Gegenüber smp.10 (`52114521`, #540/#543) kamen `ahci-large-commands`, `page-alloc-split`, `ext2-alloc-cache` und `abandoned-thread-reap` hinzu ([Pin-Abschnitt](#pin-3097-zehos6-smp11-20-november-2026)). Der SMP-Stapel startet die weiteren CPUs; ZehOS setzt den Hauptthread und die Standardaffinität auf CPU 0, Wasm-Worker, Hintergrundaufgaben und der Wasm-Netzwerk-Worker laufen auf den Compute-CPUs (`ThreadPlacement.Workers`, #514, #392). Cosmos-Patches seit Etappe 5: `monitor-quiet` (smp.4, E6-H), `ausnahme-interrupts` (smp.6, E6-C.10), `pic-remap-cli` (smp.8, E5-N), `tcp-receive-window` (smp.9, E5-O), `gc-oom-throw` (smp.10, E5-P), dazu `panic-stop-cpus` (E7-B), der Patch für Stacks beendeter Threads (E5-K) und die vier Patches von smp.11. E6-G (#576, gemergt) räumt Thread und Stack aufgegebener Wasm-Worker ab; die native Wasm-Instanz bleibt bis zum Neustart belegt (Folge-Issue #582). Abschnitte dazu: [Sperren-Übergabe](#sperren-übergabe-zwischen-cpus-e6-h-19-november-2026), [PIC-Remap](#frühboot-gp-beim-pic-remap-e5-n-19-november-2026), [Netzstapel](#netzstapel-auf-mehreren-cpus-e6-c11-19-november-2026), [Hintergrundaufgaben](#hintergrundaufgaben-auf-den-compute-cpus-e6-e-392-20-november-2026), [TCP-Fenster](#tcp-empfangsfenster-und-verlorene-segmente-e5-o-530-19-november-2026), [Speichermangel](#speichermangel-wirft-outofmemoryexception-e5-p-538-19-november-2026).
 
@@ -483,15 +483,15 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 **Befund 512 MiB (#538, E5-P; #538 ist geschlossen, 512 MiB ist ein eigener Rest).** Die Seitenläufe fragmentieren (Probe `probe/e5h-frag`, Details in #538). Das stille `null` statt `OutOfMemoryException` ist mit smp.10 behoben (Abschnitt Speichermangel); `page-alloc-split` (cosmos #557) ist seit smp.11 im Pin. Trotzdem ist **512 MiB auch auf smp.11 No-Go**: E4.0 scheitert in `l2` an der Allokation (`OutOfMemoryException`, Kommentar in #542). 1 GiB besteht; E2 ist mit 1 GiB abgenommen (Entscheidung Peter, #376, ROADMAP auf `master`, PR #556 und #573). Ein sicherer Mindestspeicher ist nicht abgeleitet.
 
-**Plattformmatrix (E7-E, #398): offen.**
+**Plattformmatrix (E7-E, #398): Zwischenstand ohne E7-A, 80/80, 20. November 2026, Quelle [PR #566](https://github.com/peterzw98/ProjektZehOS/pull/566) (noch nicht gemergt).** Stand `task/mc-e5-smp` @13f775f2 (smp.11), QEMU 11.1.2 `q35`, Host Intel Core Ultra 9 185H, 3 Gäste parallel unter Fremdlast. Je Aufbau Boot, Thread-Probe (`THREAD_PROBE`, `MESSAGES_PROBE`, noch nicht `SMP_PROBE`), Isolation (2 Läufe), Shutdown (Recovery) und Doom quick (4 Szenarien); alle 80 Läufe bestanden. Die Boot-Fehler von smp.10 auf KVM mit 4 und 8 CPUs lagen im Testskript und sind seit #567 behoben (Wiederholung 12/12). Die vollständigen Zellen, ISO-Bau, Dauern und der Abschnitt „Läufe für Menschen“ (V1–V6, H1–H3) stehen in COSMOS_SUPPORT auf [PR #566](https://github.com/peterzw98/ProjektZehOS/pull/566); sie werden hier nicht kopiert. **Komplette Wiederholung nach E7-A (#394/#564) steht aus.**
 
 | Umgebung | CPU-Aufbau | Stand |
 | --- | --- | --- |
-| QEMU TCG | `1`; `2`; `4`; `4,cores=2,threads=2`; `8,cores=4,threads=2` | offen (Teile aus E5-J, siehe oben) |
-| QEMU KVM | wie TCG | offen (Teile aus E5-J, E6-E, E7-D, siehe oben) |
-| QEMU WHPX | `2`; `4` | offen |
-| VMware | `numvcpus` 1, 2, 4 | offen |
-| echte Hardware mit Hyperthreading | wie vorhanden | offen |
+| QEMU TCG | `1`; `2`; `4`; `4,cores=2,threads=2`; `8,cores=4,threads=2` | 40/40 (ohne E7-A) |
+| QEMU KVM | wie TCG | 40/40 (ohne E7-A) |
+| QEMU WHPX | `2`; `4` | offen (braucht Windows-Benutzer) |
+| VMware | `numvcpus` 1, 2, 4 | offen (V1–V6, Menschen) |
+| echte Hardware mit Hyperthreading | wie vorhanden | offen (H1–H3, Menschen) |
 
 **Energie (E7-C, #396, Abnahme siehe Tabelle):** `test-power-commands.py` unter KVM mit 4 CPUs bestanden; WHPX, VMware und Hardware nicht geprüft. **Hauptschleife auf den Compute-CPUs (E7-A, #394): offen**, sie läuft auf CPU 0.
 
@@ -501,7 +501,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 - Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten (smp.10).
 - Thread und 8-MiB-Stack aufgegebener Wasm-Worker werden seit E6-G (#576) abgeräumt; die native Wasm-Instanz bleibt bis zum Neustart belegt, nach drei Isolationen startet kein Worker mehr (#582, offen). Auditbefunde zu Workern in E6-C (#390) offen.
 - Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen (Abschnitt PIC-Remap).
-- VMware, WHPX und echte Hardware sind für mehrere CPUs **nicht geprüft**; Leistungsaussagen zu Hyperthreading nur für QEMU/KVM.
+- VMware, WHPX und echte Hardware sind für mehrere CPUs **nicht geprüft** (offen, E7-E Zellen V1–V6, H1–H3); QEMU TCG und KVM sind im Zwischenstand ohne E7-A geprüft (80/80, PR #566). Leistungsaussagen zu Hyperthreading nur für QEMU/KVM.
 
 ## Referenzumgebung
 

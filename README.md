@@ -85,7 +85,7 @@ Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System ha
 - **Diagnose:** `tasks scheduler` und der Taskmanager (Abschnitt System) zeigen die CPU-Topologie; die Bootzeile nennt `CPUs online=<n>` und den Hyperthreading-Zustand. **Offen (E7-A):** Bootzeile mit „Oberfläche und Worker auf <Liste>“.
 - **Gastproben:** `SMP_PROBE` (Abschnitt Gastproben oben); Doom, Isolation, Netz und Speicher laufen mit `ZEHOS_QEMU_SMP=4` (Zahlen in [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#mehrere-cpus-smp-stand-und-grenzen-entwurf-e7-f-20-november-2026)).
 - **Energieaktionen mit mehreren CPUs:** `scripts/test-power-commands.py` (Linux/KVM, PR #563) prüft `reboot` und `shutdown`. Abnahme E7-C (Kommentar in #396): `ZEHOS_QEMU_SMP=4`, KVM, `reboot`, zweite Shell, `shutdown` mit Exit 0, 5 von 5 bestanden; mit zwei laufenden Hintergrundaufgaben vor `reboot` 8 von 8. Nicht Teil der Abnahme: Doom-Last, ext2-Root-Platte, der `-WithDebugger`-Zweig der ps1, Windows.
-- **Grenzen:** Dass VMware dem Gast keine Hyperthreads zeigt, ist eine Annahme des Plans und **offen** bis E7-E (#398). Leistungsaussagen zu Hyperthreading gelten nur für die gemessene QEMU/KVM-Umgebung; echte Hardware ist **nicht geprüft**. Ein QEMU-Ergebnis belegt kein VMware.
+- **Grenzen:** Dass VMware dem Gast keine Hyperthreads zeigt, ist eine Annahme des Plans und **offen** (E7-E, #398: QEMU TCG/KVM mit 1 bis 8 CPUs im Zwischenstand ohne E7-A 80/80 bestanden, PR #566, noch nicht gemergt; VMware, WHPX und Hardware offen). Leistungsaussagen zu Hyperthreading gelten nur für die gemessene QEMU/KVM-Umgebung; echte Hardware ist **nicht geprüft**. Ein QEMU-Ergebnis belegt kein VMware.
 
 ## Lizenz
 
