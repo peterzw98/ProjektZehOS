@@ -73,6 +73,30 @@ ClassiCube: Der Seed ist nicht gesetzt. Er ist beim Paketbau festzulegen (`build
 
 Hintergrundlast: Die Läufe nutzten kein `tasks start busy`. Die Last kam von `Wow.exe` auf dem Host, also von außen und unkontrolliert. VMware und echte Hardware: offen, nicht geprüft.
 
+## Wiederholung ClassiCube mit festem Weltseed (E4-E, #378, 20. November 2026)
+
+Wiederholung der nicht entscheidbaren ClassiCube-Messung von oben, diesmal mit festem Seed (`build.py --world-seed`). Abnahme wie dort: Mittel(Klasse) ≥ 0,97 × Mittel(RR); Spannweite über 3 % = nicht entscheidbar. Doom wurde nicht wiederholt (bestanden, taktbegrenzt).
+
+**Ergebnis: Das Mittelkriterium ist in beiden Seeds erfüllt (Klasse liegt bei 100,5 % und 101,8 % von RR), die Spannweitenregel ist formal verletzt (RR Seed 5: 5,6 %; Seed 1: RR 3,6 %, Klasse 1,7 %; Seed 5 Klasse 3,6 %). Streng nach Plan bleibt es deshalb „nicht entscheidbar“; die Entscheidung über das Abhaken von ROADMAP 6a liegt bei Laser.** Ungünstigster Vergleich (niedrigster Klassenlauf gegen höchsten RR-Lauf): 98,0 % (Seed 1) und 96,7 % (Seed 5). ROADMAP 6a bleibt unverändert.
+
+Je Zelle fünf Läufe, abwechselnd RR/Klasse (RR zuerst), ein Aufruf von `scripts/measure-wasm-frametimes.py --runs 1` je Lauf, wie oben gewertet (letztes 60-s-Fenster, `--seconds` 130, Bilder/s):
+
+| Seed | Stand | Läufe (fps) | Mittel ± Std. | Spannweite | Klasse/RR |
+| --- | --- | --- | --- | --- | --- |
+| 1 | RR | 86,7 87,8 89,0 89,1 85,9 | 87,7 ± 1,4 | 3,6 % | |
+| 1 | Klasse | 88,2 88,3 88,8 88,2 87,3 | 88,2 ± 0,5 | 1,7 % | 100,5 % |
+| 5 | RR | 71,4 72,2 72,1 75,5 75,5 | 73,3 ± 2,0 | 5,6 % | |
+| 5 | Klasse | 73,0 74,3 75,5 74,7 75,7 | 74,6 ± 1,1 | 3,6 % | 101,8 % |
+
+Alle 20 Läufe endeten mit `exit=0`, Laufzeit wasm3. Gegenüber der Messung ohne Seed (85,6 ± 16,7 und 81,0 ± 17,9 fps) schrumpft die Streuung auf 1 bis 3 %; die Welt war also die Hauptursache, wie vermutet. Seed 5 ist durchgehend langsamer als Seed 1 (ROADMAP 13.2 zeigt dieselbe Richtung).
+
+**Umgebung und Abweichungen vom Plan:**
+- ClassiCube `2b01bee867fe81331d0a898e7ad40a71882131de` (BSD-3-Clause), gebaut mit `experiments/ClassiCube.Wasi/build.py --world-seed 1` und `--world-seed 5` (mit Messpunkten, Sichtweite Standard 512). Modul-SHA-256: Seed 1 `2b19462b…3b87c3`, Seed 5 `b7f2ce2b…e74e5`. **Abweichung: wasi-sdk 34 (clang 23.1.0) statt der im README genannten Referenz 25.0.** Das Modul lief unter wasm3 ohne Fehler; ob 34 gegenüber 25 Bildrate oder Rastercode ändert, ist nicht verglichen. Wegen der anderen Toolchain sind die Zahlen nicht mit dem veröffentlichten Paket 1.1.0 vergleichbar, nur Klasse gegen RR untereinander.
+- **Abweichung: Die ISOs sind nicht vom selben Commit.** Auf `master` gibt es keinen Round-Robin mehr und keinen Schalter. Verwendet wurden wie in der ersten Messung `1e66ad46` (RR, Cosmos `3.0.97-zehos.1`) und `15adbae5` (Klasse, `3.0.97-zehos.2`); der Pin-Störfaktor (ext2-Patches, CPU-Ausnahme-Hook) besteht weiter. Beide ISOs wurden neu mit Testschlüssel gebaut (`ZehOSPackageKeyPath` als Umgebungsvariable, `Version=0.5.0`, weil außerhalb eines Git-Arbeitsbaums), damit das Seed-Paket mit `--package/--key` signiert werden kann; das veröffentlichte Paket ist mit dem Produktionsschlüssel signiert.
+- KVM, `-m 1G`, eine vCPU, QEMU (`/usr/bin/qemu-system-x86_64`, Version nicht protokolliert) wie das Messskript es startet, Host Intel Core Ultra 9 185H (Linux). Die Messung lief nie parallel zu einer anderen Messung. **Abweichung: Daneben liefen funktionale 1-vCPU-Gäste anderer Agenten (von Lars genehmigt).** Je Lauf vor dem Start: `pgrep -c qemu` = 1 bei 14 Läufen und 0 bei 6 Läufen (jeweils ohne die eigene VM); Lastmittel (1 min) 1,14 bis 5,77. Gestörte Läufe sind nicht ersichtlich; Ausreißer `seed1-rr-1` (Last 5,77) und `seed5-rr-2` (4,76) liegen im Mittelfeld. Kein Lauf wurde wiederholt oder ausgeschlossen.
+- Rohdaten (nicht im Repository): Protokolle und Metadaten je Lauf im Scratchpad der Sitzung.
+- Nicht geprüft: VMware, echte Hardware, Hintergrundlast (`tasks start busy`), AOT.
+
 ## Klassenscheduler statt Round-Robin (E4-C, 18. November 2026)
 
 `CosmosClassScheduler` (die einzige Datei mit `IScheduler`-Signaturen) ersetzt `CosmosRoundRobinScheduler`; die Policy liegt in `ClassRunQueues<T>` (hostgetestet, E4-B). Klassen: Interaktiv (1 Tick), Normal (2), Hintergrund (4), Tick 10 ms. `SetPriority` 0/1/2 setzt die Klasse, andere Werte werden ignoriert. Hintergrund-Worker (`BackgroundTaskService`) starten mit `ThreadClass.Background`; `ThreadStarter.ApplyClass` setzt die Klasse im neuen Thread (bis dahin gilt der Standard Normal; fest CPU 0, Etappe 5 stellt auf die laufende CPU um). Die Hauptschleife (Idle-Thread von 3.0.97) läuft mit `AlwaysYields` in der Klasse Normal; der Vorrang der Oberfläche wirkt erst mit Etappe 5. `tasks scheduler` zeigt Name, Verdrängungen, Wartende je Klasse und die Auswahlspur. Der Abschnitt zu Round-Robin darunter ist historisch.
