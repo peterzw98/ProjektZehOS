@@ -6,7 +6,11 @@ using Cosmos.Kernel.System.FileSystem.Ext2;
 
 namespace ProjektZeh.Storage.Ext2;
 
-/// <summary>Expliziter Lesemount; noch keine Boot-, Shell- oder /data-Anbindung.</summary>
+/// <summary>
+/// Expliziter Lesemount; noch keine Boot-, Shell- oder /data-Anbindung. Das Projektprofil (<see cref="Ext2FeatureGate"/>)
+/// prüft vorab; den Schreibschutz liefert der Cosmos-Treiber selbst (<c>MountFlags.ReadOnly</c>, seit 3.0.97-zehos.6),
+/// das Gerät bekommt nur die <see cref="StorageLock"/>.
+/// </summary>
 internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFileSystemType
 {
     internal const string FileSystemName = "zehos-ext2-ro";
@@ -52,10 +56,8 @@ internal sealed class CosmosReadOnlyExt2FileSystem(IBlockDevice device) : IVfsFi
         catch (Exception) { return false; }
         if (Ext2FeatureGate.Evaluate(header) == Ext2MountDecision.Reject) return false;
 
-        var native = new Ext2FileSystemType(new CosmosReadOnlyBlockDevice(device));
-        if (!native.TryMount(ReadOnlySpan<char>.Empty, flags, out IVfsSuperblock? inner)) return false;
-        superblock = CosmosReadOnlyVfs.Wrap(inner);
-        return true;
+        var native = new Ext2FileSystemType(new CosmosLockedBlockDevice(device));
+        return native.TryMount(ReadOnlySpan<char>.Empty, flags, out superblock);
     }
 
     public bool TryFormat(ReadOnlySpan<char> source, IVfsFormatOptions? options) => false;

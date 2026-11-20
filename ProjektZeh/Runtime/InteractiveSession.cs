@@ -134,7 +134,14 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             {
                 if (graphics)
                 {
-                    try { display!.Render(input, now); }
+                    try
+                    {
+                        display!.Render(input, now);
+#if ZEHOS_ISOLATION_PROBE
+                        // Scene- und Hintergrundpuffer (je etwa 8 MiB) entstehen erst im ersten Bild, nicht beim Desktopstart.
+                        CosmosIsolationProbe.MarkFrameRendered();
+#endif
+                    }
                     catch (Exception exception) { FailGraphics("Zeichnen", exception); }
                 }
                 else

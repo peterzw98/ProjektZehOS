@@ -12,15 +12,13 @@ namespace ProjektZeh.Runtime;
 
 /// <summary>
 /// Gibt den Wasm-Worker auf, wenn er in Gastcode eine CPU-Ausnahme ausloest (Roadmap 12.4-I1): Cosmos ruft dafuer den
-/// Ausnahme-Hook (<see cref="CpuExceptionHook"/>, Patch ausnahme-hook im Branch cosmos), ZehOS entscheidet, stellt den
-/// Thread unter Quarantaene im eigenen Scheduler, und Cosmos wechselt noch im Ausnahmepfad in den naechsten Thread. Den
-/// Lauf beendet danach die Hauptschleife (<c>WasmRuntime.PollFaultIsolation</c>).
+/// Ausnahme-Hook (<see cref="CpuExceptionHook"/>, Patch ausnahme-hook im Branch cosmos), ZehOS entscheidet, und Cosmos
+/// setzt den Thread auf Dead und wechselt noch im Ausnahmepfad in den naechsten Thread. Einen Dead-Thread reiht Cosmos nie
+/// wieder ein (Patch abandoned-thread-reap, ReadyLocked). Den Lauf beendet danach die Hauptschleife
+/// (<c>WasmRuntime.PollFaultIsolation</c>), die Thread und Stack ueber <c>SchedulerDiagnostics.TryReapAbandoned</c> abraeumt.
 /// </summary>
 internal static unsafe class FaultIsolation
 {
-    /// <summary>Vom eigenen Scheduler gelesen: aufgegebene Worker werden nie wieder eingereiht.</summary>
-    internal static readonly ThreadQuarantine Quarantine = new(SchedulerThread.MaxThreadCount);
-
     private static int workerThreadId = -1;
     private static int inNativeRun;
     private static volatile int* hostDepth;
@@ -105,8 +103,7 @@ internal static unsafe class FaultIsolation
         int* depth = hostDepth;
         if (currentId < 0 || depth == null
             || FaultIsolationPolicy.Decide(vector, currentId, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
-                exception.InterruptsEnabled, *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
-            || !Quarantine.Add(currentId))
+                exception.InterruptsEnabled, *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate)
         {
             return CpuExceptionAction.Halt;
         }

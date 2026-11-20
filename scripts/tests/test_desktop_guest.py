@@ -129,5 +129,43 @@ class PowerFlowTests(unittest.TestCase):
             self.flow(exits_on_reboot=False, running=False).power_flow()
 
 
+class Ps2FlowTests(unittest.TestCase):
+    def run_flow(self, frames: dict):
+        """frames: Bild je settle-Name; die Attrappe prueft die Bedingung wie Run.settle und scheitert wie bei Zeitablauf."""
+        current = guest.Run.__new__(guest.Run)
+        current.boot = mock.Mock()
+        current.screen = mock.Mock()
+        current.park_pointer = mock.Mock()
+        current.powered_off = mock.Mock()
+        current.patch = lambda image, box: image
+        current.guest = mock.Mock(size=(1024, 768))
+
+        def settle(name, test=lambda image: True, timeout=60):
+            image = frames[name]
+            if not test(image):
+                raise AssertionError(f"{name}: Bedingung nicht erfuellt")
+            return image
+        current.settle = settle
+        current.ps2_flow()
+        return current
+
+    def test_pointer_moved_by_ps2_and_restored_by_tablet(self):
+        current = self.run_flow({'arbeitsflaeche': b'leer', 'tablet-start': b'A', 'ps2-bewegt': b'B',
+                                 'tablet-zurueck': b'A', 'nach-mischfolge': b'A'})
+        rel = [call for call in current.guest.qmp.command.call_args_list if call.args[0] == 'input-send-event']
+        self.assertEqual(len(rel), 60)
+        self.assertEqual(rel[0].args[1]['events'][0], {'type': 'rel', 'data': {'axis': 'x', 'value': 15}})
+        current.powered_off.assert_called_once()
+
+    def test_unmoved_pointer_fails(self):
+        with self.assertRaises(AssertionError):
+            self.run_flow({'arbeitsflaeche': b'leer', 'tablet-start': b'A', 'ps2-bewegt': b'A'})
+
+    def test_pointer_not_restored_after_mixed_sequence_fails(self):
+        with self.assertRaises(AssertionError):
+            self.run_flow({'arbeitsflaeche': b'leer', 'tablet-start': b'A', 'ps2-bewegt': b'B',
+                           'tablet-zurueck': b'A', 'nach-mischfolge': b'C'})
+
+
 if __name__ == '__main__':
     unittest.main()
