@@ -25,9 +25,12 @@ public enum CpuExceptionAction
     /// <see cref="IScheduler.OnThreadExit"/>, unregister it, retire its
     /// allocation context or release its joiners. The policy has no hook for
     /// that either; the adapter that installed the hook reaps the thread
-    /// afterwards through the exit path (ExitThread or
-    /// SchedulerDiagnostics.RequestKill, ZehOS plan E6-G). Locks the thread
-    /// held stay taken. When no switch can be staged, the kernel halts instead.
+    /// afterwards from thread context with
+    /// SchedulerDiagnostics.TryReapAbandoned (ZehOS patch
+    /// abandoned-thread-reap), which waits for the CPU to leave its stack and
+    /// then runs the exit path. Until then no wake can queue it again. Locks
+    /// the thread held stay taken until the reap. When no switch can be
+    /// staged, the kernel halts instead.
     /// </summary>
     AbandonThread = 1,
 }
