@@ -277,6 +277,31 @@ Zusätzlich je ein 20-Minuten-Lauf unter künstlicher Hostlast (Rechenschleife a
 
 **Grenzen.** Drei Läufe je Kombination sind eine kleine Stichprobe. Geprüft ist nur QEMU, nicht VMware und keine echte Hardware. ClassiCube erreicht unter TCG nur etwa 2 fps und durchläuft dort entsprechend wenige Bilder. `free` ist nur ein Wert am Laufende, kein Verlauf. Die Engine-Messung lief stehend; bewegt und in schweren Welten (Wald) wurde AOT nicht gegen wasm3 verglichen.
 
+## ClassiCube: Host-Raster gegen SoftGPU unter KVM (20. November 2026, Block #421)
+
+Frage der Abnahme aus Roadmap 13.3: Zeigt der Kernel-Rasterizer (`zehos_v1.raster_draw`/`raster_fill`, Erkennung über `ZEHOS_FEATURES=raster_v1`) dasselbe Bild wie SoftGPU im Gast und eine messbar höhere Bildrate? Kernel: `master` bbf64f46 (Cosmos 3.0.97-zehos.6, Testschlüssel, SDK 10.0.404). Paket: ClassiCube 2b01bee mit `build.py --raster-toggle --world-seed <N>` (Messpunkte an), zweimal gebaut (Seed 1 und 5). Beide Zellen laufen im selben Paket: Standard ist das Kernel-Raster, `F8` schaltet im Spiel auf SoftGPU im Gast (wasm3) um.
+
+**Aufbau:** QEMU 11.1.2 mit KVM auf einem Linux-Host (Core Ultra 9 185H, 22 logische Kerne), Gast 1 vCPU (kein `-smp`), 1 GiB, Fenster 798×519, Spieler ohne Eingabe am Spawnpunkt. `scripts/measure-wasm-frametimes.py --accel kvm --seconds 130 --start-keys ret wait:25` (SoftGPU-Zellen zusätzlich `f8 wait:5`), je Lauf frische Platte. Gewertet ist das letzte 60-s-Fenster (avg fps = Bildzahl/60, Bildzeit-Median). Je Zelle 5 Läufe, im Wechsel (Wiederholung → Seed 1 an/aus → Seed 5 an/aus), 20 Läufe, alle ohne Absturz. Vor jedem Lauf wurden `pgrep -c qemu` und `uptime` protokolliert: 0–2 fremde QEMU-Prozesse (Funktionsläufe anderer Agenten, nicht angefasst), Last 1,6–6,8 (1-Minuten-Wert), bei den meisten Läufen 2–3. Rohdaten: `.tools/backup/421-raster/` (nicht im Repository).
+
+| Seed | Raster | avg fps je Lauf | Mittel | Spannweite | Bildzeit-Median ms |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Kernel | 77,0 / 69,1 / 87,3 / 88,1 / 88,2 | 81,9 | 69,1–88,2 | 12–14 |
+| 1 | SoftGPU | 6,8 / 6,6 / 7,5 / 7,6 / 7,7 | 7,2 | 6,6–7,7 | 129–148 |
+| 5 | Kernel | 65,0 / 71,9 / 67,7 / 70,6 / 72,0 | 69,4 | 65,0–72,0 | 14–15 |
+| 5 | SoftGPU | 4,2 / 5,6 / 5,5 / 5,5 / 5,6 | 5,3 | 4,2–5,6 | 177–217 |
+
+Das Kernel-Raster ist damit rund 11-mal (Seed 1) bzw. 13-mal (Seed 5) so schnell wie SoftGPU; die Bereiche überlappen nicht. Die App-Zeit entspricht in beiden Zellen fast der Bildzeit (Seed 1: 12–14 ms gegen 129–148 ms).
+
+**Bildgleichheit:** `scripts/test-classicube-desktop.py --raster-compare` (Kernel-Bild, dann `F8`, SoftGPU-Bild derselben Szene, Stichproben-Vergleich wie in der Roadmap beschrieben) meldete für Seed 1 und Seed 5 je 0 abweichende von 26000 Stichproben unter KVM.
+
+**Abweichungen und Grenzen:**
+- wasi-sdk 34.0 (`/opt/wasi-sdk`) statt des dokumentierten 25.0; das Modul ist dadurch nicht byteidentisch zum veröffentlichten, die Rastergegenüberstellung gilt für denselben Build in beiden Zellen.
+- Die Werte liegen deutlich über den Zahlen vom 17./18. November (rund 20–30 fps): anderer Host, aktueller Kernel mit Rasterverbesserungen (#160 und später) und Blick vom Spawn, bei dem nur ein Teil der Geometrie im Bild ist. Sie sind nicht mit den älteren Reihen vergleichbar; belegt ist das Verhältnis Kernel zu SoftGPU im selben Paket.
+- Die Streuung (Kernel Seed 1: 69–88 fps) kommt von der Host-Last; die Zellen überlappen sich trotzdem nicht. Nur Spawnblick ohne Bewegung; Wälder mit viel Geometrie liegen laut Roadmap-Stand vom 18. November niedriger.
+- Nicht geprüft: VMware (hier nicht verfügbar, braucht einen Benutzer mit VMware), TCG und WHPX in dieser Reihe, Rückfall auf SoftGPU bei fehlender Funktion `raster_v1` (nur über `F8` simuliert), Fehler beenden nur die App (nicht Teil dieser Messung).
+
+**Folgerung:** Gleiches Bild und höhere Bildrate sind unter KVM und (laut Roadmap-Stand 17. November) QEMU WHPX belegt. Die Abnahme von 13.3 bleibt offen für VMware.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
