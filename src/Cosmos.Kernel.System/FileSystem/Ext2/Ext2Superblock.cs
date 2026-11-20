@@ -516,6 +516,45 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         Device.WriteBlock(lba, devBlocks, data);
     }
 
+    // ZehOS patch ext2-direct-runs, see PATCHES.md
+    /// <summary>
+    /// Write a run of consecutive file data blocks with one device call.
+    /// Unlike <see cref="WriteBlocks"/> a run that does not fit the volume or
+    /// the device, or a source shorter than the run, throws: the caller has
+    /// already linked these blocks into a file and must not publish them
+    /// without their data.
+    /// </summary>
+    /// <param name="ext2Block">First filesystem block number.</param>
+    /// <param name="count">Blocks in the run, at least one.</param>
+    /// <param name="data">Source bytes, exactly <paramref name="count"/> blocks.</param>
+    /// <exception cref="IOException">The run is outside the volume or the device, or the volume is read-only.</exception>
+    internal void WriteDataRun(uint ext2Block, uint count, ReadOnlySpan<byte> data)
+    {
+        if (IsReadOnly)
+        {
+            throw new IOException("ext2: volume is read-only");
+        }
+
+        if (count == 0 || (ulong)data.Length != (ulong)count * BlockSize)
+        {
+            throw new IOException("ext2: data run length does not match its block count");
+        }
+
+        if ((ulong)ext2Block + count > BlocksCount)
+        {
+            throw new IOException("ext2: data run outside the volume");
+        }
+
+        ulong lba = (ulong)ext2Block * BlockSize / Device.BlockSize;
+        ulong devBlocks = (ulong)count * BlockSize / Device.BlockSize;
+        if (lba + devBlocks > Device.BlockCount)
+        {
+            throw new IOException("ext2: data run outside the device");
+        }
+
+        Device.WriteBlock(lba, devBlocks, data);
+    }
+
     /// <summary>
     /// Group descriptor for a block group index.
     /// </summary>

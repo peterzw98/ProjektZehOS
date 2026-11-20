@@ -175,6 +175,22 @@ internal sealed class Ext2FileOperations : IFileOperations
                 long fileOffset = position + written;
                 uint logicalBlock = (uint)(fileOffset / blockSize);
                 uint blockOffset = (uint)(fileOffset % blockSize);
+                // ZehOS patch ext2-direct-runs, see PATCHES.md
+                // Whole blocks go out as runs of consecutive physical blocks,
+                // straight from the caller's buffer; a partial head or tail
+                // block keeps the read-modify-write path below.
+                if (blockOffset == 0 && buffer.Length - written >= blockSize)
+                {
+                    long full = WriteFullBlocks(inode, logicalBlock, buffer.Slice((int)written));
+                    written += full;
+                    if (full == 0)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
                 // A new data block is not zeroed on disk: this loop writes the
                 // whole block, zero-filled in memory where the caller has no data.
                 uint physicalBlock = _superblock.GetBlockPointer(inode, logicalBlock, true, false, out bool isNew);
@@ -189,16 +205,13 @@ internal sealed class Ext2FileOperations : IFileOperations
                 }
 
                 byte[] blockBuffer = _blockBuffer;
-                if (blockOffset != 0 || buffer.Length - written < blockSize)
+                if (isNew)
                 {
-                    if (isNew)
-                    {
-                        blockBuffer.AsSpan(0, (int)blockSize).Clear();
-                    }
-                    else
-                    {
-                        _superblock.ReadBlocks(physicalBlock, 1, blockBuffer);
-                    }
+                    blockBuffer.AsSpan(0, (int)blockSize).Clear();
+                }
+                else
+                {
+                    _superblock.ReadBlocks(physicalBlock, 1, blockBuffer);
                 }
 
                 long chunk = Math.Min(blockSize - blockOffset, buffer.Length - written);
@@ -215,17 +228,7 @@ internal sealed class Ext2FileOperations : IFileOperations
                     // disk held there before, inside the file's size.
                     if (isNew)
                     {
-                        // The revert may fail itself (FreeBlock reads another
-                        // group's bitmap). The caller must see the original
-                        // write error; a block left allocated is only a leak
-                        // e2fsck reclaims.
-                        try
-                        {
-                            _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
-                        }
-                        catch
-                        {
-                        }
+                        RevertQuietly(inode, logicalBlock, physicalBlock);
                     }
 
                     throw;
@@ -256,6 +259,143 @@ internal sealed class Ext2FileOperations : IFileOperations
 
         _superblock.WriteInode(inode);
         return written;
+    }
+
+    // ZehOS patch ext2-direct-runs, see PATCHES.md
+    /// <summary>Most blocks one window resolves before its data goes out (1 MiB at 4 KiB blocks).</summary>
+    internal const int RunWindowBlocks = 256;
+
+    /// <summary>Physical blocks of the current window; reused across calls.</summary>
+    private uint[]? _runPhysical;
+
+    /// <summary>Which blocks of the current window this call allocated.</summary>
+    private bool[]? _runIsNew;
+
+    /// <summary>
+    /// Write whole blocks starting at a block-aligned file position: resolve
+    /// (and allocate) one window of blocks, then write each run of
+    /// consecutive physical blocks with one device call straight from the
+    /// caller's buffer. A window never crosses a pointer block boundary:
+    /// the held-back pointer block is written when the next window switches
+    /// to another one, and by then every block it points at holds its data.
+    /// </summary>
+    /// <param name="inode">File inode.</param>
+    /// <param name="logicalBlock">First logical block, aligned with the data.</param>
+    /// <param name="data">Remaining caller bytes, at least one block.</param>
+    /// <returns>Bytes written (whole blocks), 0 when no block could be resolved.</returns>
+    private long WriteFullBlocks(Ext2Inode inode, uint logicalBlock, ReadOnlySpan<byte> data)
+    {
+        uint blockSize = _superblock.BlockSize;
+        long wanted = Math.Min(data.Length / blockSize, RunWindowBlocks);
+        uint boundary = NextPointerBoundary(logicalBlock, blockSize / 4);
+        if (boundary - logicalBlock < wanted)
+        {
+            wanted = boundary - logicalBlock;
+        }
+
+        int count = (int)wanted;
+        _runPhysical ??= new uint[RunWindowBlocks];
+        _runIsNew ??= new bool[RunWindowBlocks];
+        uint[] physical = _runPhysical;
+        bool[] isNew = _runIsNew;
+
+        // Blocks [done, resolved) are linked into the file (inode or the
+        // held-back pointer block) but hold no data yet.
+        int resolved = 0;
+        int done = 0;
+        try
+        {
+            while (resolved < count)
+            {
+                uint blk = _superblock.GetBlockPointer(inode, logicalBlock + (uint)resolved, true, false, out bool fresh);
+                if (blk == 0)
+                {
+                    break;
+                }
+
+                physical[resolved] = blk;
+                isNew[resolved] = fresh;
+                resolved++;
+            }
+
+            while (done < resolved)
+            {
+                int end = done + 1;
+                while (end < resolved && physical[end] == physical[end - 1] + 1)
+                {
+                    end++;
+                }
+
+                int runBytes = (end - done) * (int)blockSize;
+                _superblock.WriteDataRun(physical[done], (uint)(end - done), data.Slice(done * (int)blockSize, runBytes));
+                done = end;
+            }
+        }
+        catch
+        {
+            // Same rule as for a single block: a new block whose data did
+            // not reach the disk must not be published by the batch end.
+            // A failed run may have written part of its blocks; all of them
+            // count as unwritten.
+            for (int i = resolved - 1; i >= done; i--)
+            {
+                if (isNew[i])
+                {
+                    RevertQuietly(inode, logicalBlock + (uint)i, physical[i]);
+                }
+            }
+
+            throw;
+        }
+
+        return (long)resolved * blockSize;
+    }
+
+    /// <summary>
+    /// First logical block past the pointer block that maps
+    /// <paramref name="logicalBlock"/>: 12 for the direct blocks, then the
+    /// end of the single indirect block, then the end of each second-level
+    /// block of the double indirect tree.
+    /// </summary>
+    /// <param name="logicalBlock">Zero-based block index within the file.</param>
+    /// <param name="perBlock">Pointers per block.</param>
+    /// <returns>Exclusive boundary, saturated at uint.MaxValue.</returns>
+    internal static uint NextPointerBoundary(uint logicalBlock, uint perBlock)
+    {
+        ulong direct = Ext2InodeLayout.DirectBlockCount;
+        if (logicalBlock < direct)
+        {
+            return (uint)direct;
+        }
+
+        ulong single = direct + perBlock;
+        if (logicalBlock < single)
+        {
+            return (uint)single;
+        }
+
+        ulong next = single + ((logicalBlock - single) / perBlock + 1) * perBlock;
+        return next > uint.MaxValue ? uint.MaxValue : (uint)next;
+    }
+
+    /// <summary>
+    /// Take back a new data block whose write failed. The revert may fail
+    /// itself (FreeBlock reads another group's bitmap); the caller must see
+    /// the original write error, and a block left allocated is only a leak
+    /// e2fsck reclaims.
+    /// </summary>
+    /// <param name="inode">File inode.</param>
+    /// <param name="logicalBlock">Logical block of the failed write.</param>
+    /// <param name="physicalBlock">The block GetBlockPointer allocated.</param>
+    private void RevertQuietly(Ext2Inode inode, uint logicalBlock, uint physicalBlock)
+    {
+        try
+        {
+            _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>
