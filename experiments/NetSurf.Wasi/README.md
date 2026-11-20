@@ -65,7 +65,7 @@ Importe des Moduls:
 
 Annahmen:
 
-- **Bild:** zunächst 798×519 (Inhalt des Paketfensters beim Öffnen, 800×560), danach die mit `poll_event` Typ 10 gemeldete Fenstergröße (NetSurf mindestens 300×200, höchstens 1920×1200); 0x00RRGGBB, immer vollständig je `present`. Ein Kernel ohne Typ 10 passt das Startbild weiter ein.
+- **Bild:** zunächst 798×519 (Inhalt des Paketfensters beim Öffnen, 800×560), danach die mit `poll_event` Typ 10 gemeldete Fenstergröße (NetSurf mindestens 300×200, höchstens 1920×1200); 0x00RRGGBB, immer vollständig je `present`. Der Bildpuffer wird beim Start einmal für 1920×1200 angelegt und bei Größenwechseln nur umgewidmet: ein späterer Wachstumsschritt der Wasm-Memory scheiterte sonst am fragmentierten Kernelspeicher (Issue #536). Ein Kernel ohne Typ 10 passt das Startbild weiter ein.
 - **Laufzeit:** Die Hauptschleife wartet höchstens 16 ms je `sleep_ms` und fragt dazwischen `should_exit` ab. Danach endet `_start` regulär.
 - **Dateien:** `stat()`/`access()` (Ressourcen, `file:`-URLs) brauchen `path_filestat_get`, `realpath()` braucht `path_readlink` (für Nicht-Links `EINVAL`). `fd_readdir` ist nur für Verzeichnislisten nötig.
 - **Tasten:** normalisierte ZehOS-Tastencodes (Set-1-Nummern ohne E0-Merkmal), zum Beispiel Pfeile 72/75/77/80 und Entf 83.
