@@ -250,6 +250,22 @@ class RunToDoneTests(unittest.TestCase):
                 root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2')
         self.assertIsNotNone(process.poll())
 
+    def test_timeout_still_reports_step_times(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        (directory / 'serial.log').write_text('STORAGE_ROOT a PASS\n', encoding='utf-8')
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(process.kill)
+        ctx = object.__new__(root.Context)
+        ctx.work, ctx.report, ctx.go, ctx.echo = directory, [], True, False
+        ctx.args = mock.Mock(timeout=1)
+        with (mock.patch.object(root, 'boot', return_value=(process, directory)),
+              mock.patch.object(root, 'watch_space'),
+              mock.patch.object(root.tools, 'wait_serial', side_effect=TimeoutError('t'))):
+            self.assertIsNone(root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2'))
+        self.assertTrue(any('Schrittzeiten' in line and 'a ' in line for line in ctx.report))
+        self.assertTrue(any('kein DONE' in line for line in ctx.report))
+
 
 if __name__ == '__main__':
     unittest.main()

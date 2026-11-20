@@ -257,6 +257,14 @@ def high_group_run(ctx: "Context", boundary: bool) -> None:
     clean_run(ctx, "lauf8" if boundary else "lauf7", 8 if boundary else 7, root, "raw")
 
 
+def note_steps(ctx: Context, name: str, directory: Path, seen: dict[str, float], started: float) -> None:
+    """Schrittzeiten auch bei Zeitlimit/Haenger melden: dort sind sie am noetigsten."""
+    log = directory / "serial.log"
+    if log.exists():
+        record_steps(log.read_text(encoding="utf-8", errors="replace"), seen, time.monotonic())  # Marken nach dem letzten Abruf
+    ctx.note(f"{name}: Schrittzeiten (Host, Erkennen der Marke) {format_steps(step_durations(seen, started))}")
+
+
 def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str = "qcow2") -> str | None:
     """Ein Lauf bis STORAGE_ROOT DONE und Gastende; liefert das serielle Protokoll oder None bei Haenger."""
     process, directory = boot(ctx, name, run, root, root_format)
@@ -273,6 +281,7 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         process.kill()
         process.wait()
+        note_steps(ctx, name, directory, seen, started)
         ctx.note(f"{name}: kein DONE oder kein Gastende ({error or 'Zeitlimit'})", False)
         return None
     finally:
@@ -282,10 +291,9 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
             process.wait()
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
     stepper.join(timeout=2)
-    record_steps(serial, seen, time.monotonic())  # Marken, die nach dem letzten Abruf kamen
     passed, failed, done = evaluate(serial)
     ok = done and not failed and passed > 0 and process.returncode == 0
-    ctx.note(f"{name}: Schrittzeiten (Host, Erkennen der Marke) {format_steps(step_durations(seen, started))}")
+    note_steps(ctx, name, directory, seen, started)
     ctx.note(f"{name}: PASS={passed} FAIL={','.join(failed) or 0} DONE={done} qemu-exit={process.returncode} "
              f"{time.monotonic() - started:.0f} s, qcow2 belegt {allocated(root) / GIB:.2f} GiB", ok)
     return serial
