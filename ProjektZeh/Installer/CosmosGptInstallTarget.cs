@@ -88,7 +88,7 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
                 Directory.CreateDirectory(RootMount + entry);
         string markerPath = RootMount + LayoutMarker.Path;
         string temporaryPath = markerPath + IMigrationTarget.TemporarySuffix;
-        File.WriteAllText(temporaryPath, new LayoutMarker(LayoutState.Fresh, diskGuid).Serialize());
+        FileService.WriteAllBytesCompleteStorageLocked(temporaryPath, System.Text.Encoding.UTF8.GetBytes(new LayoutMarker(LayoutState.Fresh, diskGuid).Serialize()));
         File.Move(temporaryPath, markerPath, true);
         var closed = RootVolumeState.Close(volume);
         if (!closed.IsOK()) return closed;
@@ -149,7 +149,7 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
         string path = Path.Combine(espMount, InstallMarker.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Temp + Rename: ein Teilschreiben hinterlaesst nie einen Marker unter dem endgueltigen Namen.
-        File.WriteAllText(path + ".tmp", text);
+        FileService.WriteAllBytesCompleteStorageLocked(path + ".tmp", System.Text.Encoding.UTF8.GetBytes(text));
         File.Move(path + ".tmp", path, true);
         return ResultErr.CreateSuccess();
     }));

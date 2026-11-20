@@ -399,6 +399,36 @@ public sealed class FileServiceTests
         CollectionAssert.AreEqual(new[] { path }, Directory.GetFileSystemEntries(directory));
     }
 
+    // Echtes Teilschreiben: nur die erste Haelfte landet im Speicher, Length bleibt kleiner als geschrieben.
+    [TestMethod]
+    public void WriteBytes_PartialWrite_ThrowsIOExceptionKeepsOriginalAndBackup()
+    {
+        string path = Path.Combine(directory, "ziel.bin"), backup = path + ".bak";
+        File.WriteAllBytes(path, [1, 2, 3, 4]);
+        File.WriteAllBytes(backup, [9, 9]);
+        var full = new FileService(directory) { OpenTemporary = p => new HalfWritingStream(p) };
+
+        var result = full.WriteBytes("ziel.bin", new byte[100], true);
+
+        Assert.IsFalse(result.IsOK());
+        StringAssert.StartsWith(result.ExceptionDetails, "System.IO.IOException");
+        CollectionAssert.AreEqual(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(path));
+        CollectionAssert.AreEqual(new byte[] { 9, 9 }, File.ReadAllBytes(backup));
+        Assert.AreEqual(2, Directory.GetFileSystemEntries(directory).Length, "Die Temp-Datei muss entfernt sein.");
+    }
+
+    [TestMethod]
+    public void WriteAllBytesCompleteStorageLocked_ReplacesContent_AndRequireCompleteRejectsShort()
+    {
+        string path = Path.Combine(directory, "m.bin");
+        File.WriteAllBytes(path, new byte[50]);
+
+        FileService.WriteAllBytesCompleteStorageLocked(path, [1, 2, 3]);
+
+        CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(path));
+        Assert.ThrowsException<IOException>(() => FileService.RequireComplete(1, 3));
+    }
+
     [TestMethod]
     public void CopyFile_SilentShortWrite_FailsWithoutTarget()
     {
@@ -424,4 +454,11 @@ internal sealed class SilentlyTruncatingStream(string path) : FileStream(path, F
 {
     public override void Write(byte[] buffer, int offset, int count) { }
     public override void Write(ReadOnlySpan<byte> buffer) { }
+}
+
+/// <summary>Schreibt nur die erste Haelfte jedes Blocks, ohne Fehler.</summary>
+internal sealed class HalfWritingStream(string path) : FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1)
+{
+    public override void Write(byte[] buffer, int offset, int count) => base.Write(buffer, offset, count / 2);
+    public override void Write(ReadOnlySpan<byte> buffer) => base.Write(buffer[..(buffer.Length / 2)]);
 }

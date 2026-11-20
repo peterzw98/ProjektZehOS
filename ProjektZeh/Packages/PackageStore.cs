@@ -280,6 +280,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             string path = Path.Combine(files, file.Path.Replace('/', Path.DirectorySeparatorChar));
             var digest = new Sha256Digest();
             ResultErr copied;
+            long stored = -1;
             // Die Quelle kann aus dem Netz lesen: nur Oeffnen, jeder Schreibblock (HashingStream) und Schliessen sperren.
             var stream = StorageLock.Run(() =>
             {
@@ -292,7 +293,12 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             });
             try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
-            finally { StorageLock.Run(() => stream.Dispose()); }
+            finally
+            {
+                // HashingStream zaehlt die uebergebenen Bytes; Cosmos kuerzt bei vollem Datentraeger still, daher die gespeicherte Laenge lesen.
+                StorageLock.Run(() => { try { stream.Flush(true); stored = stream.Length; } finally { stream.Dispose(); } });
+            }
+            if (copied.IsOK() && stored != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, $"{file.Path} ist unvollstaendig gespeichert ({stored} von {file.Size} Bytes); Datentraeger voll?");
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
             progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
@@ -507,7 +513,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         string temporary = path + NewSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (File.Exists(temporary)) File.Delete(temporary);
-        File.WriteAllBytes(temporary, bytes);
+        // Gekuerzt schreibt Cosmos ohne Fehler: dann darf die alte Fassung (z. B. der active-Marker) nicht geloescht werden.
+        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
         if (File.Exists(path)) File.Delete(path);
         File.Move(temporary, path);
     }
