@@ -1,8 +1,8 @@
 # E6-G: aufgegebenen Wasm-Worker abräumen (Entwurfsnotiz)
 
 Block #433, Branch `task/mc-e6-g-worker-abraeumen` (Basis `task/mc-e5-smp`), Cosmos-Teil auf `cosmos-patch/abandoned-thread-reap`.
-Autor agent-peter-senior (Team peter, von Team laser übernommen). Gegenlesen: agent-peter-senior2. Stand: nur statisch gelesen,
-noch kein Code. Gelesen auf `origin/cosmos` 4eeb0f92 (enthält alle hier zitierten Stellen unverändert gegenüber dem Pin e3c6ff0c)
+Autor agent-peter-senior (Team peter, von Team laser übernommen). Gegenlesen: agent-peter-senior2 (19.11., trägt; Befunde
+unten unter „Ergebnis des Gegenlesens“). Stand 20.11.: Cosmos-Patch als Code auf `cosmos-patch/abandoned-thread-reap`, ZehOS-Teil offen. Gelesen auf `origin/cosmos` 4eeb0f92 (enthält alle hier zitierten Stellen unverändert gegenüber dem Pin e3c6ff0c)
 und `origin/task/mc-e5-smp` 6623a39a. Den Entwurf von Ada Lovelace (`~/.buzz/PLANS/…`) habe ich nicht; übernommen ist, was im
 Kommentar vom 19.11. in #433 steht.
 
@@ -25,7 +25,7 @@ Kommentar vom 19.11. in #433 steht.
 - `WasmRuntime.PollFaultIsolation` (`WasmRuntime.cs:185`) bekommt die Id aus `TakeIsolated`, sobald die CPU den Worker nicht mehr
   als laufenden Thread führt. Das ist vor dem Ende des Berichts, also kann `IsOnCpu` dann noch 1 sein.
 
-## Cosmos-Patch `abandoned-thread-reap`
+## Cosmos-Patch `abandoned-thread-reap` (Entwurf 19.11.; Name, Ergebnis `NotDead` und Testfall mit `RequestKill` durch P2 überholt, gültig ist „Umsetzung Cosmos“ unten)
 
 1. **`ReadyLocked`: `Dead` wird nie wieder bereit.** In der Abfrage am Anfang kommt `|| thread.State == Dead` dazu: Sperre
    freigeben, zurück. Das gilt für jeden toten Thread (aufgegeben, `RequestKill` `MarkedForExit`, nach `ExitThread`), von jedem
@@ -104,7 +104,35 @@ jeder Aufrufer gleich.
   verschiedenen CPUs (Ziel aus Adas Kommentar).
 - Offen bleiben VMware und echte Hardware.
 
-## Fragen an das Gegenlesen
+## Ergebnis des Gegenlesens (agent-peter-senior2, 19.11., statisch auf `origin/cosmos` 52114521)
+
+- **F1 trägt:** Andere Einreihpfade umgehen `ReadyLocked` nicht für `Dead` (`SetScheduler` überspringt `Dead`, `MigrateLocked`
+  lehnt `Dead` ab, `MigratePending` und `ScheduleFromInterruptLocked` reihen nur `Running` ein). `Schedule()`/`DoContextSwitch`
+  setzt den Vorgänger ungeprüft `Ready`, hat aber keinen Aufrufer.
+- **F2:** an `SchedulerDiagnostics`, Id-basiert wie `RequestKill`. Umgesetzt.
+- **P2 (umgesetzt):** Ein Abräumen jedes `Dead`-Threads träfe auch Threads, die `RequestKill` mitten im Kernel (Allokator,
+  Spinlock) als `MarkedForExit` gestoppt hat; `RetireAllocContext` liefe dann auf einem halben Kontext. Deshalb setzt
+  `TryAbandonCurrentFromInterrupt` unter der Queue-Sperre den Merker `_abandoned` (nur wenn der Wechsel angelegt ist), und der
+  Einstieg heißt `TryReapAbandoned`; Ergebnis `NotAbandoned` statt `NotDead` für alles andere.
+- **P3:** `BlockThread` und `MarkSleeping` überschreiben ein `MarkedForExit`-`Dead` (vorbestehend, nicht Teil dieses Patches).
+  Für einen Testfall heißt das: Der Thread muss rein rechnend laufen. Ein aufgegebener Thread ist davon nicht betroffen, er
+  läuft nie mehr.
+- **P3:** Nach `SetScheduler` kennt die neue Policy den toten Thread gar nicht; `OnThreadExit` muss „unbekannt“ vertragen.
+  Stride: `RemoveThreadFromQueue` sucht nur, `ThreadDataOf` null zieht keine Tickets ab; ZehOS `OnThreadExit` (`:72`) ebenso.
+- **P3 (für ZehOS übernommen):** `StillOnCpu` ohne Obergrenze hielte die Wasm-Queue unbegrenzt, falls die CPU im Bericht
+  hängt. `PollFaultIsolation` protokolliert nach 1000 Runden mit `StillOnCpu` einmal eine Warnung und versucht weiter.
+
+## Umsetzung Cosmos (Stand `cosmos-patch/abandoned-thread-reap`)
+
+- `ReadyLocked` lehnt `Dead` ab; `TryAbandonCurrentFromInterrupt` setzt `_abandoned`; Felder `_abandoned`, `_reapClaimed` in
+  `SchedulerThread`.
+- `SchedulerDiagnostics.TryReapAbandoned(uint)` → `ThreadReapResult` (`NotFound`, `NotAbandoned`, `StillOnCpu`, `Reaped`):
+  Registry-Suche, Merker und Zustand unter der Queue-Sperre der Thread-CPU, `IsOnCpu`, Einmal-Merker per `CompareExchange`,
+  `ExitThread`, `ReapDeadStacks`.
+- Doku an `CpuExceptionAction.AbandonThread`, `TryAbandonCurrentFromInterrupt`, `ReleasedStacks`; `PublicAPI.Unshipped.txt`.
+- Offen: Testfall im Threading-Testkern (braucht eine echte CPU-Ausnahme im Testthread mit installiertem Hook), `patches/abandoned-thread-reap.md`.
+
+## Fragen an das Gegenlesen (beantwortet, siehe oben)
 
 1. Reicht die `Dead`-Sperre in `ReadyLocked` als Ersatz für die Quarantäne, oder gibt es einen Pfad, der einen Thread ohne
    `ReadyLocked` einreiht (Migration `:2030` reiht nur `Running` ein; `SetScheduler` `:277` überspringt `Dead`)?
