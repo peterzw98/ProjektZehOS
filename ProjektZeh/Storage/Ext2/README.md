@@ -4,9 +4,12 @@ Gemeinsame Quelle für Kernel (Plug) und Hostprobe `experiments/StorageProbe` (`
 3.0.97; der Treiber zum Mounten, Lesen und Schreiben kommt aus dem Paket. Ersetzt werden zwei Stellen: das Formatieren
 (`Ext2Formatter.Format`) und die Inode-Freigabe beim Löschen (`Ext2Superblock.FreeInode`, siehe unten).
 
-Im Produkt wird ext2 noch nirgends beim Booten oder über die Shell eingehängt. Die neue explizite Lesekomponente
-`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Lesemount und verwendet einen eigenen
-Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Sie ist noch nicht als Produktfunktion aktiviert.
+Im Produkt wird ext2 nur in einem Fall beim Booten eingehängt: Bei einer installierten Identität mit Zustand `RootUnclean`
+wählt `CosmosLayoutProfile.Select` die Lesekomponente und hängt `/` damit lesend ein (keine Schreibzugriffe, Anmeldung mit
+vorhandenen Konten). Sonst wird ext2 weder beim Booten noch über die Shell eingehängt. Die Lesekomponente
+`CosmosReadOnlyExt2FileSystem` prüft `Ext2FeatureGate.Evaluate` vor dem nativen Lesemount; für diesen expliziten Weg
+verwendet sie einen eigenen Dateisystemnamen sowie `/mnt/ext2-ro`, niemals `/data`. Als allgemeine Produktfunktion
+(Shell, Datenlaufwerk) ist sie nicht aktiviert.
 
 ## Abgesicherter Lesemount
 
