@@ -70,7 +70,16 @@ internal static unsafe class CosmosBootOptions
         }
         catch (InvalidOperationException exception)
         {
-            // Ohne laufenden Scheduler bleibt alles auf CPU 0.
+            // Ohne laufenden Scheduler bleibt alles auf CPU 0. Scheitert erst der Wechsel der Hauptschleife, wäre die
+            // Standardaffinität schon umgestellt und neue Threads lägen anders als die Bootzeile meldet; deshalb zurück auf CPU 0.
+            try
+            {
+                KernelCpus.DefaultAffinity = CpuSet.Single(0);
+            }
+            catch (InvalidOperationException)
+            {
+                // Ohne Scheduler gibt es keine Standardaffinität zum Zurücksetzen.
+            }
             return $"CPUs online={KernelCpus.Online.Count}, Oberfläche und Worker auf CPU 0 ({exception.Message})";
         }
     }
