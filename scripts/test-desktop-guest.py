@@ -8,6 +8,10 @@ Mit --recovery: Boot bis "Textshell ist bereit.", kein Desktop, shutdown; uname 
 Mit --power (Recovery-ISO): Linux-Fassung von test-power-commands.ps1 ohne GDB. reboot muss den Gast in derselben VM
 erneut bis "Textshell ist bereit." starten (QEMU laeuft weiter, query-status running), danach endet QEMU nach shutdown
 mit Exitcode 0.
+Mit --ps2 (normales ISO): Zeiger per USB-Tablet (absolut) setzen, dann relative QMP-Bewegung, die QEMU an die PS/2-Maus
+gibt (das Tablet nimmt nur absolute Ereignisse); der Ausschnitt um den Zeiger muss sich aendern und nach dem Zuruecksetzen
+per Tablet wieder gleichen. Danach 50 Paare Tablet/PS/2 abwechselnd; geprueft wird nur, dass der Gast danach weiter
+reagiert, keine Reihenfolge der Pakete.
 
 Geprueft wird ueber serielle Marken und Ausschnitte der Bildschirmfotos (ohne Leiste mit Uhr); der Fensterinhalt
 selbst ist Sache der Hosttests. Jeder Schritt hat eine Zeitgrenze; bei einem Fehlschlag bleiben Bildschirmfoto,
@@ -250,6 +254,39 @@ class Run:
         guest.qmp.tap("ret")
         self.shutdown_from_textshell()
 
+    def ps2_flow(self) -> None:
+        guest = self.guest
+        self.boot("Desktop ist bereit")
+        time.sleep(1)
+        self.screen("boot")
+        guest.login(first=True)
+        self.park_pointer()
+        self.settle("arbeitsflaeche")
+        width, height = guest.size
+        # Nur der Bereich um Start- und Zielposition des Zeigers: andere Bildteile (Uhr, Fenster) duerfen nicht
+        # entscheiden. 10 x (15, 10) relativ endete im Vorlauf bei etwa (550, 405); gilt nur bei Mausempfindlichkeit 1
+        # und einem Desktop von mindestens 640 x 480.
+        box = (380, 280, 640, 480)
+        pointer = lambda image: self.patch(image, box)
+        guest.qmp.move(400, 300, width, height)
+        start = pointer(self.settle("tablet-start"))
+        for _ in range(10):
+            relative(guest.qmp, 15, 10)
+            time.sleep(0.05)
+        self.settle("ps2-bewegt", lambda current: pointer(current) != start, 30)
+        guest.qmp.move(400, 300, width, height)
+        self.settle("tablet-zurueck", lambda current: pointer(current) == start, 30)
+        for index in range(50):
+            guest.qmp.move(200 + index * 4, 200, width, height)
+            relative(guest.qmp, -3, 2)
+        # PS/2 (IRQ 12) und Tablet (XHCI-Abfrageintervall) erreichen den Gast auf getrennten Wegen; ohne Pause kann der
+        # letzte relative Schritt den abschliessenden Tabletbericht ueberholen und den Zeiger um (-3, 2) versetzen.
+        time.sleep(0.5)
+        guest.qmp.move(400, 300, width, height)
+        self.settle("nach-mischfolge", lambda current: pointer(current) == start, 30)
+        guest.shell("shutdown")
+        self.powered_off()
+
     def serial(self) -> str:
         log = self.work / "serial.log"
         return log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
@@ -268,12 +305,20 @@ class Run:
             self.vm.wait()
 
 
-def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False) -> int:
+def relative(qmp, dx: int, dy: int) -> None:
+    """Relative Zeigerbewegung; QEMU leitet sie an die PS/2-Maus, weil das USB-Tablet nur absolute Ereignisse nimmt."""
+    qmp.command("input-send-event", {"events": [{"type": "rel", "data": {"axis": "x", "value": dx}},
+                                                {"type": "rel", "data": {"axis": "y", "value": dy}}]})
+
+
+def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False, ps2: bool = False) -> int:
     """Fuehrt den Ablauf aus; start_vm(port) startet den Gast und liefert seinen Prozess."""
     current = Run(work, start_vm, boot_timeout)
     try:
         if power:
             current.power_flow()
+        elif ps2:
+            current.ps2_flow()
         elif recovery:
             current.recovery_flow()
         else:
@@ -301,8 +346,12 @@ def main() -> int:
     parser.add_argument("--accel", choices=["tcg", "kvm", "whpx"], default="tcg")
     parser.add_argument("--recovery", action="store_true", help="ISO mit -p:ZehOSRecovery=true")
     parser.add_argument("--power", action="store_true", help="reboot und shutdown pruefen (Recovery-ISO)")
+    parser.add_argument("--ps2", action="store_true", help="PS/2-Maus neben dem USB-Tablet pruefen (normales ISO)")
     parser.add_argument("--boot-timeout", type=float, default=300, help="Sekunden bis zur Bootmarke")
     args = parser.parse_args()
+    if args.ps2 and (args.recovery or args.power):
+        # --recovery und --power laufen ohne AppDisk, --ps2 braucht die Ersteinrichtung auf der Platte.
+        parser.error("--ps2 ist nicht mit --recovery oder --power kombinierbar")
     iso = args.iso.resolve()
     if not iso.is_file():
         parser.error(f"ISO nicht gefunden: {iso}")
@@ -317,7 +366,7 @@ def main() -> int:
         # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
         tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
-               args.boot_timeout, args.power)
+               args.boot_timeout, args.power, args.ps2)
 
 
 if __name__ == "__main__":
