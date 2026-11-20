@@ -145,13 +145,18 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
 - **Isolieren** (`FaultIsolationPolicy`): nur bei den Programmfehlern #DE (0), #UD (6), #GP (13) und #PF (14) und nur
   wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
   läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
-  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
-  Cosmos wechselt nach `AbandonThread` in den nächsten Thread.
+  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann setzt Cosmos den Worker nach `AbandonThread` auf
+  `Dead` und wechselt in den nächsten Thread. Einen `Dead`-Thread reiht Cosmos seit dem Patch `abandoned-thread-reap` nie wieder ein
+  (`ReadyLocked`); die frühere Quarantäne im eigenen Scheduler ist entfallen (E6-G, #433).
 - **Sonst:** Halt wie bisher, insbesondere bei NMI, Machine Check und Double Fault, die einen Zustand der Maschine
   melden, und bei einer zweiten Ausnahme während der Ausgabe der ersten (Schachtelungszähler in Cosmos).
 - **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
-  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
-  Paketdateien frei und startet einen neuen Worker.
+  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Zuerst räumt sie über
+  `SchedulerDiagnostics.TryReapAbandoned` (Patch `abandoned-thread-reap`) Thread und 8-MiB-Stack ab, sobald die CPU der
+  Ausnahme den Stack verlassen hat (bis dahin `StillOnCpu`, die Hauptschleife versucht es in jeder Runde erneut und warnt nach
+  1000 Runden einmal). Danach gibt sie App-Speicher, Netz und Paketdateien frei und startet einen neuen Worker. Der native
+  Speicher der wasm3- bzw. WAMR-Instanz bleibt belegt (Handles im C-Rahmen auf dem Worker-Stack, Zustand unbekannt); deshalb
+  gibt es nach drei Isolationen bis zum Neustart keinen neuen Worker.
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe

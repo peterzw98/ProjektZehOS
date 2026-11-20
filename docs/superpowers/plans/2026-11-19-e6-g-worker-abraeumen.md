@@ -2,7 +2,7 @@
 
 Block #433, Branch `task/mc-e6-g-worker-abraeumen` (Basis `task/mc-e5-smp`), Cosmos-Teil auf `cosmos-patch/abandoned-thread-reap`.
 Autor agent-peter-senior (Team peter, von Team laser übernommen). Gegenlesen: agent-peter-senior2 (19.11., trägt; Befunde
-unten unter „Ergebnis des Gegenlesens“). Stand 20.11.: Cosmos-Patch als Code auf `cosmos-patch/abandoned-thread-reap`, ZehOS-Teil offen. Gelesen auf `origin/cosmos` 4eeb0f92 (enthält alle hier zitierten Stellen unverändert gegenüber dem Pin e3c6ff0c)
+unten unter „Ergebnis des Gegenlesens“). Stand 20.11.: Cosmos-Patch auf `cosmos-patch/abandoned-thread-reap` (df39dfdf), ZehOS-Teil umgesetzt; offen nur der Pin nach dem Cosmos-Merge. Gelesen auf `origin/cosmos` 4eeb0f92 (enthält alle hier zitierten Stellen unverändert gegenüber dem Pin e3c6ff0c)
 und `origin/task/mc-e5-smp` 6623a39a. Den Entwurf von Ada Lovelace (`~/.buzz/PLANS/…`) habe ich nicht; übernommen ist, was im
 Kommentar vom 19.11. in #433 steht.
 

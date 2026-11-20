@@ -24,6 +24,8 @@ spec.loader.exec_module(tools)
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
+# Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
+REAP_TOLERANCE_KIB = 4 * 1024
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
 # Erst wenn die Hauptschleife parkt, rechnet auf CPU 0 nur noch der Worker; nur dort kommt der NMI an (#515).
 NMI_PARKED = "ISOLATION_PROBE nmi main parked"
@@ -49,6 +51,7 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} nicht isoliert")
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
+    missing += evaluate_reap(log)
     if log.count("WASM CPU-Ausnahme im App-Code") < 2:
         missing.append("Hauptschleife hat nicht beide Laeufe beendet")
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
@@ -60,6 +63,21 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append("Gegenprobe hielt nicht an")
     if nmi:
         missing += evaluate_nmi(log)
+    return missing
+
+
+def evaluate_reap(log: str) -> list[str]:
+    """E6-G (#433): Jede Isolation gibt einen Stack frei, und die zweite kostet nicht noch einmal den 8-MiB-Stack."""
+    reaps = {m.group(1): (int(m.group(2)), int(m.group(3)))
+             for m in re.finditer(r"ISOLATION_PROBE reaped kind=(\w+) released=(\d+) free_kib=(\d+)", log)}
+    missing = []
+    for kind in VECTORS:
+        if kind not in reaps:
+            missing.append(f"{kind} ohne Abraeumbeleg")
+        elif reaps[kind][0] < 1:
+            missing.append(f"{kind}: kein Stack freigegeben")
+    if "de" in reaps and "pf" in reaps and reaps["pf"][1] < reaps["de"][1] - REAP_TOLERANCE_KIB:
+        missing.append(f"freier Speicher nach pf {reaps['pf'][1]} KiB statt etwa {reaps['de'][1]} KiB (Stack nicht frei?)")
     return missing
 
 

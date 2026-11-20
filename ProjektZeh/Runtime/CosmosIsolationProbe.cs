@@ -2,6 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 
 namespace ProjektZeh.Runtime;
@@ -87,6 +88,7 @@ internal static class CosmosIsolationProbe
     {
         int done = 0;
         int before = Wasm.WasmRuntime.IsolatedRuns;
+        ulong releasedBefore = SchedulerDiagnostics.ReleasedStacks;
         Wasm.WasmRuntime.ProbeEnqueue(() =>
         {
             FaultIsolation.EnterNativeRun();
@@ -112,6 +114,10 @@ internal static class CosmosIsolationProbe
             if (Wasm.WasmRuntime.IsolatedRuns != before)
             {
                 Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
+                // E6-G (#433): Die Hauptschleife zaehlt die Isolation erst nach dem Abraeumen und dem Start des Ersatzworkers.
+                // Ohne Abraeumen sinkt der freie Speicher je Isolation um den 8-MiB-Stack, mit bleibt er etwa gleich.
+                Log("ISOLATION_PROBE reaped kind=" + kind + " released=" + (SchedulerDiagnostics.ReleasedStacks - releasedBefore)
+                    + " free_kib=" + MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024);
                 return;
             }
             Thread.Sleep(100);

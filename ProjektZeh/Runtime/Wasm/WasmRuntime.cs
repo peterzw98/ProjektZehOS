@@ -13,14 +13,16 @@ using ProjektZeh.Scheduling;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Storage;
+using SchedulerDiagnostics = Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics;
+using ThreadReapResult = Cosmos.Kernel.System.Diagnostics.ThreadReapResult;
 
 namespace ProjektZeh.Runtime.Wasm;
 
 /// <summary>
 /// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
 /// optional nativ ueber WAMR-AOT (-p:ZehOSWasmAot=true). Alle Laeufe teilen sich einen langlebigen Worker mit festem
-/// Stack, weil Cosmos 3.0.94 Stacks beendeter Threads nicht freigibt und die nativen Stackgrenzen von wasm3
-/// (d_m3MaxNativeStack, siehe ProjektZeh.csproj) und WAMR (zehos_host_wamr.c) auf diesen Stack abgestimmt sind.
+/// Stack, weil die nativen Stackgrenzen von wasm3 (d_m3MaxNativeStack, siehe ProjektZeh.csproj) und WAMR
+/// (zehos_host_wamr.c) auf diesen Stack abgestimmt sind und ein 8-MiB-Stack nach Dateilast leicht scheitert (E4.0 1G).
 /// </summary>
 internal static unsafe partial class WasmRuntime
 {
@@ -33,8 +35,12 @@ internal static unsafe partial class WasmRuntime
     private static Thread? worker;
     private static Action<WasmStatus, int, string>? running;
     private static int isolatedRuns;
-    // Jede Isolation laesst Thread und 8-MiB-Stack liegen, und ein neuer Stack scheitert nach Dateilast leicht (E4.0 1G).
+    // Thread und Stack raeumt die Hauptschleife nach einer Isolation ab (E6-G); die native wasm3- bzw. WAMR-Instanz des
+    // abgebrochenen Laufs bleibt aber belegt: Ihre Handles liegen im C-Rahmen auf dem Worker-Stack, ihr Zustand ist
+    // unbekannt, und wasm_runtime_destroy ist global. Deshalb bleibt die Zahl der Isolationen bis zum Neustart begrenzt.
     private const int MaximumIsolatedRuns = 3;
+    // Aufgegebener Worker, bis Cosmos ihn abgeraeumt hat (E6-G); nur von der Hauptschleife gelesen und geschrieben.
+    private static readonly ProjektZeh.Runtime.PendingReap pendingReap = new();
     private static bool workerRetired;
     private static bool cleaningUp;
     private static WasmNetworkSession? network;
@@ -178,14 +184,42 @@ internal static unsafe partial class WasmRuntime
     public static int IsolatedRuns => Volatile.Read(ref isolatedRuns);
 
     /// <summary>
-    /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, beendet sie den Lauf von aussen,
-    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread, 8-MiB-Stack und der
-    /// native Speicher der Instanz bleiben bis zum Neustart belegt.
+    /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, raeumt sie Thread und 8-MiB-Stack ab,
+    /// sobald die CPU der Ausnahme den Stack verlassen hat (E6-G), beendet den Lauf von aussen, gibt seine Ressourcen frei
+    /// und startet einen neuen Worker fuer die Warteschlange. Der native Speicher der Instanz bleibt bis zum Neustart belegt.
     /// </summary>
     public static void PollFaultIsolation()
     {
-        int thread = ProjektZeh.Runtime.FaultIsolation.TakeIsolated();
-        if (thread < 0) return;
+        if (!pendingReap.HasPending)
+        {
+            int taken = ProjektZeh.Runtime.FaultIsolation.TakeIsolated();
+            if (taken < 0) return;
+            pendingReap.Begin(taken);
+            // Ab hier startet niemand einen Ersatzworker (EnqueueLoaded), bis das Aufraeumen unten fertig ist; neue Laeufe
+            // bleiben eingereiht. Der alte Worker ist Dead: Cosmos reiht ihn auch bei einem Wecken nicht wieder ein.
+            lock (gate) cleaningUp = true;
+        }
+
+        // Erst abraeumen, dann Laufressourcen freigeben: Solange StillOnCpu gilt, schreibt die CPU der Ausnahme noch ihren
+        // Bericht ueber den Stack des Workers (Panic.PrintStackTrace). Abgeraeumt ist er sicher tot und von keiner CPU mehr
+        // benutzt; das deckt Stack und Laufressourcen ueber denselben Weg ab.
+        ThreadReapResult reap = SchedulerDiagnostics.TryReapAbandoned((uint)pendingReap.ThreadId);
+        if (reap == ThreadReapResult.StillOnCpu)
+        {
+            if (pendingReap.StillOnCpu())
+            {
+                Cosmos.Kernel.System.Diagnostics.Log.WriteString(
+                    $"WASM Worker-Thread {pendingReap.ThreadId} nach {ProjektZeh.Runtime.PendingReap.WarnAfterRounds} Runden noch auf einer CPU; Wasm-Laeufe warten.\n");
+            }
+            return;
+        }
+        int thread = pendingReap.Finish();
+        if (reap != ThreadReapResult.Reaped)
+        {
+            // Nicht erwartet: TakeIsolated liefert nur einen Thread, den Cosmos aufgegeben hat. Thread und Stack bleiben dann
+            // belegt; der Lauf wird trotzdem beendet, damit Fenster und Warteschlange nicht haengen.
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Worker-Thread {thread} nicht abgeraeumt: {reap}\n");
+        }
         Action<WasmStatus, int, string>? completed;
         string? restart = null;
         bool retiredNow = false;
@@ -208,10 +242,9 @@ internal static unsafe partial class WasmRuntime
         }
         // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
         // laeuft: TakeIsolated liefert ihn erst, wenn seine CPU ihn nicht mehr fuehrt (Cosmos hat ihn als Dead aufgegeben
-        // und den Wechsel angelegt, E6-C.9); hielte Cosmos stattdessen an, kaeme er hier nie an. Danach reiht ihn Cosmos nur
-        // ueber IScheduler.OnThreadReady/OnThreadYield neu ein, und CosmosClassScheduler verwirft Threads in
-        // FaultIsolation.Quarantine. Ohne Sperre bleiben die Felder korrekt, weil Worker und Hauptschleife so nie
-        // gleichzeitig darauf zugreifen.
+        // und den Wechsel angelegt, E6-C.9); hielte Cosmos stattdessen an, kaeme er hier nie an. Einen Dead-Thread reiht
+        // Cosmos nie wieder ein (Patch abandoned-thread-reap), und abgeraeumt ist er oben schon. Ohne Sperre bleiben die
+        // Felder korrekt, weil Worker und Hauptschleife so nie gleichzeitig darauf zugreifen.
         // catch statt finally: Auch wenn das Aufraeumen unerwartet wirft, erhalten Lauf und Warteschlange ihr Ende und
         // die Isolation wird gezaehlt (Review senior).
         bool clean;
@@ -241,8 +274,9 @@ internal static unsafe partial class WasmRuntime
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
             $"WASM CPU-Ausnahme im App-Code (Vektor {ProjektZeh.Runtime.FaultIsolation.IsolatedVector}, RIP 0x{ProjektZeh.Runtime.FaultIsolation.IsolatedRip:x}), " +
-            $"Worker-Thread {thread} aufgegeben (Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
-            (restart == null ? "; neuer Worker gestartet. Neustart empfohlen.\n"
+            $"Worker-Thread {thread} aufgegeben ({(reap == ThreadReapResult.Reaped ? "Thread und Stack frei" : "Thread und Stack belegt")}, " +
+            $"Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
+            (restart == null ? "; neuer Worker gestartet.\n"
                 : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"
                 : $"; kein neuer Worker ({restart}). Die naechste App versucht den Start erneut.\n"));
         if (completed != null) NotifyEnded(completed, WasmStatus.CpuFault, CpuFaultMessage);

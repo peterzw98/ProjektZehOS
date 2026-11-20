@@ -56,8 +56,6 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
 
     public void OnThreadReady(PerCpuState state, SchedulerThread thread)
     {
-        // Ein nach einer CPU-Ausnahme aufgegebener Wasm-Worker wird nie wieder eingereiht (Roadmap 12.4-I1).
-        if (Runtime.FaultIsolation.Quarantine.Contains(thread.Id)) return;
         Cpu(state)?.Queues.Ready(thread);
     }
 
@@ -65,7 +63,6 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
 
     public void OnThreadYield(PerCpuState state, SchedulerThread thread)
     {
-        if (Runtime.FaultIsolation.Quarantine.Contains(thread.Id)) return;
         Cpu(state)?.Queues.Yielded(thread);
     }
 

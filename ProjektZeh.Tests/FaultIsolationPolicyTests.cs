@@ -85,22 +85,36 @@ public sealed class FaultIsolationPolicyTests
         Assert.AreEqual(IsolationDecision.NotProgramFault,
             FaultIsolationPolicy.Decide(FaultIsolationPolicy.UnknownVector, Worker, Worker, true, true, 0, false, false));
 
+    // E6-G (#433): Die Hauptschleife haelt den aufgegebenen Worker, bis Cosmos ihn abgeraeumt hat.
     [TestMethod]
-    public void Quarantine_RemembersOnlyAddedThreads()
+    public void PendingReap_HoldsIdUntilFinished()
     {
-        var quarantine = new ThreadQuarantine(8);
-        Assert.IsTrue(quarantine.Add(4));
-        Assert.IsTrue(quarantine.Contains(4));
-        Assert.IsFalse(quarantine.Contains(5));
+        var reap = new PendingReap();
+        Assert.IsFalse(reap.HasPending);
+        reap.Begin(7);
+        Assert.IsTrue(reap.HasPending);
+        Assert.AreEqual(7, reap.ThreadId);
+        Assert.AreEqual(7, reap.Finish());
+        Assert.IsFalse(reap.HasPending);
+        Assert.AreEqual(-1, reap.ThreadId);
     }
 
     [TestMethod]
-    public void Quarantine_RejectsIdsOutsideTable()
+    public void PendingReap_WarnsOnceAtThreshold()
     {
-        var quarantine = new ThreadQuarantine(8);
-        Assert.IsFalse(quarantine.Add(8));
-        Assert.IsFalse(quarantine.Add(-1));
-        Assert.IsFalse(quarantine.Contains(8));
+        var reap = new PendingReap();
+        reap.Begin(3);
+        int warnings = 0;
+        for (int i = 0; i < PendingReap.WarnAfterRounds * 2; i++)
+        {
+            if (reap.StillOnCpu()) warnings++;
+        }
+        Assert.AreEqual(1, warnings);
+        // Ein neuer Versuch zaehlt von vorn.
+        reap.Finish();
+        reap.Begin(4);
+        for (int i = 1; i < PendingReap.WarnAfterRounds; i++) Assert.IsFalse(reap.StillOnCpu());
+        Assert.IsTrue(reap.StillOnCpu());
     }
 
     // E6-C.9 (#390): Die Hauptschleife uebernimmt den Worker erst, wenn seine CPU ihn nicht mehr fuehrt.

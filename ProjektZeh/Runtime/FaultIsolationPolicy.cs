@@ -52,22 +52,39 @@ internal static class FaultIsolationPolicy
 }
 
 /// <summary>
-/// Threads, die der Scheduler nie wieder einreihen darf. Feste Tabelle je Thread-Id, weil der Eintrag im Ausnahmepfad
-/// ohne Allokation und ohne Sperre geschrieben wird.
+/// Aufgegebener Worker, den die Hauptschleife abraeumen will (E6-G, #433). Cosmos raeumt ihn erst ab, wenn die CPU der Ausnahme
+/// seinen Stack verlassen hat (<c>TryReapAbandoned</c> meldet bis dahin <c>StillOnCpu</c>); solange versucht die Hauptschleife
+/// es in jeder Runde erneut. Gehoert nur der Hauptschleife, deshalb ohne Sperre.
 /// </summary>
-internal sealed class ThreadQuarantine(int capacity)
+internal sealed class PendingReap
 {
-    private readonly int[] entries = new int[capacity];
+    /// <summary>Runden mit StillOnCpu, nach denen einmal gewarnt wird: Haengt die CPU im Bericht, bleibt die Wasm-Queue stehen.</summary>
+    public const int WarnAfterRounds = 1000;
 
-    /// <summary>Liefert false fuer eine Id ausserhalb der Tabelle; dann darf der Thread nicht aufgegeben werden.</summary>
-    public bool Add(int threadId)
+    private int threadId = -1;
+    private int rounds;
+
+    public bool HasPending => threadId >= 0;
+
+    public int ThreadId => threadId;
+
+    public void Begin(int id)
     {
-        if ((uint)threadId >= (uint)entries.Length) return false;
-        Volatile.Write(ref entries[threadId], 1);
-        return true;
+        threadId = id;
+        rounds = 0;
     }
 
-    public bool Contains(uint threadId) => threadId < (uint)entries.Length && Volatile.Read(ref entries[threadId]) != 0;
+    /// <summary>Zaehlt eine Runde mit StillOnCpu; true genau einmal, wenn die Warnschwelle erreicht ist.</summary>
+    public bool StillOnCpu() => ++rounds == WarnAfterRounds;
+
+    /// <summary>Beendet den Versuch und liefert die Id.</summary>
+    public int Finish()
+    {
+        int id = threadId;
+        threadId = -1;
+        rounds = 0;
+        return id;
+    }
 }
 
 /// <summary>

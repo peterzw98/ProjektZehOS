@@ -13,9 +13,11 @@ PASS_LOG = '\n'.join([
     'System halted.',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 4 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=de handled=1 vector=0',
+    'ISOLATION_PROBE reaped kind=de released=1 free_kib=900000',
     'CPU EXCEPTION: Page Fault (#PF)',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 7 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=pf handled=1 vector=14',
+    'ISOLATION_PROBE reaped kind=pf released=1 free_kib=899500',
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
     'ISOLATION_PROBE DONE',
@@ -39,6 +41,20 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(isolation.evaluate(halted, negative=True), [])
         survived = PASS_LOG + '\nISOLATION_PROBE negative pf on probe thread\nISOLATION_PROBE negative NOT HALTED'
         self.assertIn('Gegenprobe hielt nicht an', isolation.evaluate(survived, negative=True))
+
+    def test_missing_reap_is_reported(self):
+        log = PASS_LOG.replace('ISOLATION_PROBE reaped kind=pf released=1 free_kib=899500', '')
+        self.assertIn('pf ohne Abraeumbeleg', isolation.evaluate(log, negative=False))
+
+    def test_reap_without_released_stack_fails(self):
+        log = PASS_LOG.replace('kind=de released=1', 'kind=de released=0')
+        self.assertIn('de: kein Stack freigegeben', isolation.evaluate(log, negative=False))
+
+    def test_lost_worker_stack_fails(self):
+        # Ohne Abraeumen fehlt nach der zweiten Isolation ein weiterer 8-MiB-Stack.
+        log = PASS_LOG.replace('free_kib=899500', 'free_kib=891808')
+        missing = isolation.evaluate(log, negative=False)
+        self.assertTrue(any('Stack nicht frei' in m for m in missing), missing)
 
     def test_wrong_vector_points_to_layout_drift(self):
         log = PASS_LOG.replace('fault=de handled=1 vector=0', 'fault=de handled=1 vector=113')
