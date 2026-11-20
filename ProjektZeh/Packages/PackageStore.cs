@@ -280,6 +280,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             string path = Path.Combine(files, file.Path.Replace('/', Path.DirectorySeparatorChar));
             var digest = new Sha256Digest();
             ResultErr copied;
+            long stored = -1;
             // Die Quelle kann aus dem Netz lesen: nur Oeffnen, jeder Schreibblock (HashingStream) und Schliessen sperren.
             var stream = StorageLock.Run(() =>
             {
@@ -292,7 +293,18 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 progress?.Invoke(new("Download", manifest.Id + "/" + file.Path, completed, total));
             });
             try { copied = source.Copy(prefix + "files/" + file.Path, file.Size, hashing, cancellation); }
-            finally { StorageLock.Run(() => stream.Dispose()); }
+            finally
+            {
+                // HashingStream zaehlt die uebergebenen Bytes; Cosmos kuerzt bei vollem Datentraeger still, daher die gespeicherte Laenge lesen.
+                StorageLock.Run(() =>
+                {
+                    // Ein Fehler hier darf den Fehler aus source.Copy nicht verdecken; stored bleibt dann -1.
+                    try { stream.Flush(true); stored = stream.Length; }
+                    catch (Exception exception) when (FileErrors.IsFileError(exception)) { }
+                    finally { stream.Dispose(); }
+                });
+            }
+            if (copied.IsOK() && stored != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, $"{file.Path} ist unvollstaendig gespeichert ({stored} von {file.Size} Bytes); Datentraeger voll?");
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
             if (!copied.IsOK()) return copied;
             progress?.Invoke(new("Datei pruefen", manifest.Id + "/" + file.Path, completed, total));
@@ -301,8 +313,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
         StorageLock.Run(() =>
         {
-            File.WriteAllBytes(Path.Combine(target, "manifest"), manifest.Bytes);
-            File.WriteAllBytes(Path.Combine(target, "manifest.sig"), signature);
+            FileService.WriteAllBytesCompleteStorageLocked(Path.Combine(target, "manifest"), manifest.Bytes);
+            FileService.WriteAllBytesCompleteStorageLocked(Path.Combine(target, "manifest.sig"), signature);
         });
         return ResultErr.CreateSuccess();
     }
@@ -507,7 +519,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         string temporary = path + NewSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (File.Exists(temporary)) File.Delete(temporary);
-        File.WriteAllBytes(temporary, bytes);
+        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .new entfernt und die alte Fassung (z. B. active) bleibt.
+        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
         if (File.Exists(path)) File.Delete(path);
         File.Move(temporary, path);
     }
