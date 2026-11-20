@@ -307,8 +307,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
         StorageLock.Run(() =>
         {
-            File.WriteAllBytes(Path.Combine(target, "manifest"), manifest.Bytes);
-            File.WriteAllBytes(Path.Combine(target, "manifest.sig"), signature);
+            FileService.WriteAllBytesCompleteStorageLocked(Path.Combine(target, "manifest"), manifest.Bytes);
+            FileService.WriteAllBytesCompleteStorageLocked(Path.Combine(target, "manifest.sig"), signature);
         });
         return ResultErr.CreateSuccess();
     }
@@ -514,7 +514,13 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (File.Exists(temporary)) File.Delete(temporary);
         // Gekuerzt schreibt Cosmos ohne Fehler: dann darf die alte Fassung (z. B. der active-Marker) nicht geloescht werden.
-        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
+        try { FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes); }
+        catch (IOException)
+        {
+            // Sonst haelt RestorePendingStorageLocked die gekuerzte .new spaeter fuer gueltig, wenn die Zieldatei fehlt (Erstanlage).
+            try { File.Delete(temporary); } catch (IOException) { /* Reconcile entfernt den Rest. */ }
+            throw;
+        }
         if (File.Exists(path)) File.Delete(path);
         File.Move(temporary, path);
     }
