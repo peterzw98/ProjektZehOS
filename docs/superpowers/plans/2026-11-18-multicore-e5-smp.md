@@ -283,7 +283,7 @@ die Qualifikation aus `docs/STORAGE_3_0_97_FINDINGS.md` gilt für 3.0.97.
 **Nach:** E5-J. Der Stapel prüft die Stack-Allokation selbst und versucht nach einer Sammlung erneut
 (`SchedulerThread.cs:261-271`).
 
-- [x] **Schritt 1 (Lauf 17, 1 GiB, mit Probe: Pin smp.10 + Lauf 17; ohne: dieser Stand; beide 25 PASS, jeder späte Start scheitert als OutOfMemory-Fehler, kein Page Fault):** Den Gastlauf wiederholen, der die Probe begründet hat (E4.0, 1 GiB, Schritt j aus `docs/STORAGE_3_0_97_FINDINGS.md`: Threadstart nach Dateilast), einmal mit Probe, einmal mit `ThreadStarter.StackProbe = _ => true`. Erwartet ohne Probe: kein Page Fault; ein scheiternder Start liefert einen Fehler an den Aufrufer.
+- [x] **Schritt 1 (Lauf 17, 1 GiB; smp.10 mit und ohne Probe, dieser Stand auf smp.11 mit 4 CPUs und mit 1 CPU: je 25 PASS, jeder späte Start scheitert als OutOfMemory-Fehler, kein Page Fault):** Den Gastlauf wiederholen, der die Probe begründet hat (E4.0, 1 GiB, Schritt j aus `docs/STORAGE_3_0_97_FINDINGS.md`: Threadstart nach Dateilast), einmal mit Probe, einmal mit `ThreadStarter.StackProbe = _ => true`. Erwartet ohne Probe: kein Page Fault; ein scheiternder Start liefert einen Fehler an den Aufrufer.
 - [x] **Schritt 2:** Trifft das zu: `ProjektZeh/Scheduling/CosmosStackProbe.cs` löschen, `ThreadStarter.StackProbe` und die Zuweisung in `Kernel.cs` entfernen, `ThreadStarterTests` anpassen, Inventarzeile als erledigt kennzeichnen. Trifft es nicht zu: Probe bleibt, Befund in `docs/COSMOS_SUPPORT.md`.
 
 ---
