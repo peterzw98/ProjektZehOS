@@ -215,6 +215,9 @@ public class Kernel : Sys.Kernel
     /// <summary>First sector of the command-size region; odd, so no transfer starts page aligned on the disk.</summary>
     private const ulong CommandSizeBaseLba = 10001;
 
+    /// <summary>Lowest first sector of the command-size region on a small disk; keeps it off the partition-table sectors.</summary>
+    private const ulong CommandSizeMinFirstLba = 64;
+
     /// <summary>Fill of the guard sectors right before and after each command-size transfer.</summary>
     private const byte CommandSizeGuardFill = 0xC3;
 
@@ -1052,7 +1055,28 @@ public class Kernel : Sys.Kernel
     private static void TestDevice_CommandSizes()
     {
         int size = (int)s_dev!.BlockSize;
+
+        // The region spans every count plus its two guards and the odd-LBA
+        // padding, about 2350 sectors (1.2 MiB). Every engine disk is far
+        // larger; a smaller one moves the region down so it still ends
+        // before the last sector instead of running past the disk.
+        ulong span = 0;
+        foreach (ulong count in CommandSizeCounts)
+        {
+            span += count + 3;
+        }
+
+        Assert.True(s_dev.BlockCount > CommandSizeMinFirstLba + span, "disk too small for the command-size transfers");
         ulong lba = CommandSizeBaseLba;
+        if (lba + span >= s_dev.BlockCount)
+        {
+            lba = (s_dev.BlockCount - span - 1) | 1;
+            if (lba + span >= s_dev.BlockCount)
+            {
+                lba -= 2;
+            }
+        }
+
         Span<byte> guard = new byte[size];
         guard.Fill(CommandSizeGuardFill);
         foreach (ulong count in CommandSizeCounts)
