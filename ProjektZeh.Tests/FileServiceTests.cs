@@ -430,6 +430,19 @@ public sealed class FileServiceTests
     }
 
     [TestMethod]
+    public void WriteChunkComplete_AppendsAndRejectsPartialWrite()
+    {
+        string path = Path.Combine(directory, "c.bin");
+        File.WriteAllBytes(path, new byte[10]);
+        using (var ok = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None, 1))
+            FileService.WriteChunkCompleteStorageLocked(ok, new byte[8], 0, 8);
+        Assert.AreEqual(18, new FileInfo(path).Length);
+
+        using var half = new HalfWritingStream(Path.Combine(directory, "h.bin"));
+        Assert.ThrowsException<IOException>(() => FileService.WriteChunkCompleteStorageLocked(half, new byte[8], 0, 8));
+    }
+
+    [TestMethod]
     public void CopyFile_SilentShortWrite_FailsWithoutTarget()
     {
         File.WriteAllBytes(Path.Combine(directory, "quelle.bin"), new byte[100]);

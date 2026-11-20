@@ -111,8 +111,7 @@ internal sealed class CosmosGptInstallTarget(IBlockDevice device, string espFile
             string destination = espMount + path;
             if (first) Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             stream = new FileStream(destination, first ? FileMode.Create : FileMode.Append, FileAccess.Write, FileShare.None, 1);
-            stream.Write(data, offset, count);
-            stream.Flush(true);
+            FileService.WriteChunkCompleteStorageLocked(stream, data, offset, count);
         }
         catch (Exception exception) { failure = exception; }
         try { stream?.Dispose(); }

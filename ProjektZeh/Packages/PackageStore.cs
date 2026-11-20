@@ -296,7 +296,13 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
             finally
             {
                 // HashingStream zaehlt die uebergebenen Bytes; Cosmos kuerzt bei vollem Datentraeger still, daher die gespeicherte Laenge lesen.
-                StorageLock.Run(() => { try { stream.Flush(true); stored = stream.Length; } finally { stream.Dispose(); } });
+                StorageLock.Run(() =>
+                {
+                    // Ein Fehler hier darf den Fehler aus source.Copy nicht verdecken; stored bleibt dann -1.
+                    try { stream.Flush(true); stored = stream.Length; }
+                    catch (Exception exception) when (FileErrors.IsFileError(exception)) { }
+                    finally { stream.Dispose(); }
+                });
             }
             if (copied.IsOK() && stored != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, $"{file.Path} ist unvollstaendig gespeichert ({stored} von {file.Size} Bytes); Datentraeger voll?");
             if (copied.IsOK() && hashing.Written != file.Size) copied = ResultErr.CreateFailure(ResultCode.Failure, file.Path + " ist unvollstaendig.");
@@ -513,14 +519,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         string temporary = path + NewSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (File.Exists(temporary)) File.Delete(temporary);
-        // Gekuerzt schreibt Cosmos ohne Fehler: dann darf die alte Fassung (z. B. der active-Marker) nicht geloescht werden.
-        try { FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes); }
-        catch (IOException)
-        {
-            // Sonst haelt RestorePendingStorageLocked die gekuerzte .new spaeter fuer gueltig, wenn die Zieldatei fehlt (Erstanlage).
-            try { File.Delete(temporary); } catch (IOException) { /* Reconcile entfernt den Rest. */ }
-            throw;
-        }
+        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .new entfernt und die alte Fassung (z. B. active) bleibt.
+        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
         if (File.Exists(path)) File.Delete(path);
         File.Move(temporary, path);
     }
