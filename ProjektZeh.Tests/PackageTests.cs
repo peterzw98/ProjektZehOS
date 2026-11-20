@@ -441,6 +441,41 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void FailedRenameKeepsOldFileAndLeavesNoPendingNew()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path, "1.0.0\n");
+        // Umbenennungsfehler beim Uebernehmen der neuen Fassung (nach dem Sichern der alten).
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (from == path + ".new") throw new IOException("Umbenennen scheitert"); File.Move(from, to); }));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+        Assert.IsFalse(File.Exists(path + ".old"));
+    }
+
+    [TestMethod]
+    public void RestoreDiscardsInterruptedWriteButAdoptsCompleteNew()
+    {
+        string path = Path.Combine(work, "active");
+        // Abbruch waehrend des Schreibens: nur .wip, unvollstaendig; nichts wird uebernommen.
+        File.WriteAllText(path + ".wip", "2.0");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsFalse(File.Exists(path + ".wip"));
+        // Abbruch zwischen Sichern der alten und Umbenennen der neuen Fassung: die vollstaendige .new wird uebernommen, .old verworfen.
+        File.WriteAllText(path + ".new", "2.0.0\n");
+        File.WriteAllText(path + ".old", "1.0.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("2.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".old"));
+        // Nur .old (Rueckweg und Umbenennen scheiterten ohne .new): die alte Fassung kommt zurueck.
+        File.Delete(path);
+        File.WriteAllText(path + ".old", "1.0.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+    }
+
+    [TestMethod]
     public void CatalogRequiresSignatureAndNonDecreasingGeneration()
     {
         var store = Store();

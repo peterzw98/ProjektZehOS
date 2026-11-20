@@ -29,6 +29,8 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
     public const string DefaultSource = "https://packages.pjoter.de/";
     private const int BufferBytes = 64 * 1024;
     private const string NewSuffix = ".new";
+    private const string WorkSuffix = ".wip";
+    private const string OldSuffix = ".old";
     private readonly object gate = new();
     private readonly Dictionary<string, int> inUse = new(StringComparer.Ordinal);
     private readonly HashSet<string> busy = new(StringComparer.Ordinal);
@@ -513,24 +515,49 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
     }
 
-    // Neue Fassung vollstaendig schreiben, erst dann die alte loeschen; RestorePendingStorageLocked schliesst einen Abbruch dazwischen ab.
-    private static void ReplaceFileStorageLocked(string path, byte[] bytes)
+    // Neue Fassung erst unter .wip vollstaendig schreiben, dann nach .new umbenennen: Eine vorhandene .new ist damit immer
+    // vollstaendig, und RestorePendingStorageLocked darf sie nach einem Abbruch uebernehmen. Die alte Fassung wird erst zu .old
+    // gesichert und nach erfolgreichem Umbenennen geloescht; scheitert das Umbenennen, kommt sie zurueck (sonst fehlte z. B. der active-Marker).
+    // move ist die Testnaht fuer Umbenennungsfehler.
+    internal static void ReplaceFileStorageLocked(string path, byte[] bytes, Action<string, string>? move = null)
     {
-        string temporary = path + NewSuffix;
+        move ??= File.Move;
+        string work = path + WorkSuffix, temporary = path + NewSuffix, old = path + OldSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        if (File.Exists(work)) File.Delete(work);
         if (File.Exists(temporary)) File.Delete(temporary);
-        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .new entfernt und die alte Fassung (z. B. active) bleibt.
-        FileService.WriteAllBytesCompleteStorageLocked(temporary, bytes);
-        if (File.Exists(path)) File.Delete(path);
-        File.Move(temporary, path);
+        // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .wip entfernt und die alte Fassung (z. B. active) bleibt.
+        FileService.WriteAllBytesCompleteStorageLocked(work, bytes);
+        move(work, temporary);
+        if (File.Exists(old)) File.Delete(old);
+        bool hadOld = File.Exists(path);
+        if (hadOld) move(path, old);
+        try { move(temporary, path); }
+        catch
+        {
+            // Rueckweg best effort; gelingt er nicht, schliesst RestorePendingStorageLocked mit der vollstaendigen .new ab.
+            try { if (hadOld) move(old, path); File.Delete(temporary); } catch (IOException) { }
+            throw;
+        }
+        if (hadOld) File.Delete(old);
     }
 
-    private static void RestorePendingStorageLocked(string path)
+    internal static void RestorePendingStorageLocked(string path)
     {
+        // .wip ist ein abgebrochener Schreibversuch und nie vollstaendig gesichert; .old ist die ersetzte Fassung.
+        if (File.Exists(path + WorkSuffix)) File.Delete(path + WorkSuffix);
         string temporary = path + NewSuffix;
-        if (!File.Exists(temporary)) return;
-        if (File.Exists(path)) File.Delete(temporary);
-        else File.Move(temporary, path);
+        if (File.Exists(temporary))
+        {
+            if (File.Exists(path)) File.Delete(temporary);
+            else File.Move(temporary, path);
+        }
+        if (File.Exists(path + OldSuffix))
+        {
+            // Fehlt path noch (Umbenennen und Rueckweg scheiterten), bleibt die alte Fassung die Wahrheit.
+            if (File.Exists(path)) File.Delete(path + OldSuffix);
+            else File.Move(path + OldSuffix, path);
+        }
     }
 
     // Cosmos-FAT bietet kein geprueftes rekursives Directory.Delete; deshalb Dateien und Ordner einzeln entfernen.
