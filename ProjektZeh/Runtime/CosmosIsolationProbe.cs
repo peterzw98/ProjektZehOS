@@ -2,6 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
 
 namespace ProjektZeh.Runtime;
@@ -17,11 +18,22 @@ internal static class CosmosIsolationProbe
     private static volatile int zero;
     private static volatile int sink;
 
+    private static volatile int framesRendered;
+
     internal static void Start() => new Thread(Probe).Start();
+
+    /// <summary>Aus der Hauptschleife nach jedem gezeichneten Desktopbild; nur die Hauptschleife schreibt.</summary>
+    internal static void MarkFrameRendered() { if (framesRendered < 2) framesRendered++; }
 
     private static unsafe void Probe()
     {
         Log("ISOLATION_PROBE start");
+        // Der Desktop legt seine Bildpuffer (Szene, Hintergrund; je 1920 x 1080 x 4 = etwa 8 MiB) erst im ersten Bild an,
+        // nicht schon beim Start (Desktop.Render). Faellt das zwischen free_before und free der ersten Isolation, sieht die
+        // Speicherpruefung einen falschen Stackverlust (1 von 5 Laeufen @1123020b). Deshalb erst nach zwei gezeichneten
+        // Bildern isolieren (Review #576 @25ea3a60); ohne Desktop nach hoechstens zehn Sekunden trotzdem.
+        for (int wait = 0; wait < 100 && framesRendered < 2; wait++) Thread.Sleep(100);
+        Log("ISOLATION_PROBE desktop frames=" + framesRendered);
         zero = 0;
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
         Fault("de", () => sink = 1 / zero);
@@ -87,6 +99,7 @@ internal static class CosmosIsolationProbe
     {
         int done = 0;
         int before = Wasm.WasmRuntime.IsolatedRuns;
+        ulong releasedBefore = SchedulerDiagnostics.ReleasedStacks;
         Wasm.WasmRuntime.ProbeEnqueue(() =>
         {
             FaultIsolation.EnterNativeRun();
@@ -105,6 +118,9 @@ internal static class CosmosIsolationProbe
                 Volatile.Write(ref done, 1);
             }
         });
+        // Nach ProbeEnqueue: Der Worker dieses Laufs und sein Stack sind schon angelegt. Nach dem Abraeumen ersetzt der Stack
+        // des Ersatzworkers seinen, der freie Speicher muss also etwa gleich bleiben (Review laser #576, Befund 6).
+        ulong freeBefore = MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024;
 
         for (int wait = 0; wait < 100; wait++)
         {
@@ -112,6 +128,13 @@ internal static class CosmosIsolationProbe
             if (Wasm.WasmRuntime.IsolatedRuns != before)
             {
                 Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
+                // E6-G (#433): Die Hauptschleife zaehlt die Isolation erst nach dem Abraeumen und dem Start des Ersatzworkers.
+                // Ohne Abraeumen sinkt der freie Speicher je Isolation um den 8-MiB-Stack, mit bleibt er etwa gleich. Ob
+                // genau dieser Worker abgeraeumt wurde, steht in der Zeile der Hauptschleife davor ("Thread und Stack frei");
+                // released zaehlt systemweit und ist nur ein Zusatz.
+                Log("ISOLATION_PROBE memory kind=" + kind + " released=" + (SchedulerDiagnostics.ReleasedStacks - releasedBefore)
+                    + " free_before_kib=" + freeBefore
+                    + " free_kib=" + MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024);
                 return;
             }
             Thread.Sleep(100);

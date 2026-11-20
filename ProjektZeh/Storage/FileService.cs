@@ -16,7 +16,7 @@ internal sealed class FileService
 {
     internal const int MaximumTextLength = 65536;
     // Produktgrenze 65.536 je ext2-Verzeichnis (Lead-Entscheid E2-P7, 19.11.2026), ein Platz Reserve fuer Rename wie zuvor.
-    // Cosmos selbst begrenzt seit TryParseDirectory (cosmos #345) nur noch auf 4096 Bloecke/16 MiB; geprueft im Gast bis 10.000 (Lauf 16, nur mit P8-Versuchsfeed zehos.0.gfdc9da0, nicht mit Pin zehos.5).
+    // Cosmos selbst begrenzt seit TryParseDirectory (cosmos #345) nur noch auf 4096 Bloecke/16 MiB; geprueft im Gast bis 20.000 (Lauf 16 mit 20.000 Eintraegen, Pin zehos.6 mit P8).
     internal const int MaximumExt2DirectoryEntries = 65535;
     private readonly Action<string, string, bool> moveFile;
     private readonly Func<string, ResultObject<(long TotalBytes, long AvailableBytes)>>? diskSpace;
@@ -31,6 +31,8 @@ internal sealed class FileService
 
     /// <summary>Grosse Lesepuffer (Bilder, App-Speicher bis 16 MiB) mit Null-Abwehr; Tests setzen eine Allokation, die null liefert.</summary>
     internal Func<int, byte[]?> AllocateBuffer { get; init; } = BufferAllocation.TryAllocate;
+    /// <summary>Oeffnet die ungepufferte Temp-Datei; Tests liefern einen Stream, der Schreibzugriffe still kuerzt.</summary>
+    internal Func<string, FileStream>? OpenTemporary { get; init; }
     // Typquelle fuer Kopier-/Verschiebequellen (Spec §0.8); im Kernel VfsManager.TryStat + VfsStat.IsRegularFile.
     private readonly Func<string, bool> isRegularFile;
 
@@ -397,12 +399,14 @@ internal sealed class FileService
             temporaryPath = Path.Combine(Path.GetDirectoryName(resolved.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
             EnsureDirectoryEntryAvailableStorageLocked(temporaryPath);
             // Ungepuffert, damit Schreibfehler vor dem Schliessen des Handles auftreten.
-            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
+            using (var stream = OpenTemporary?.Invoke(temporaryPath) ?? new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
             {
                 temporaryStream = stream;
                 temporaryCreated = true;
                 stream.Write(data.Span);
                 stream.Flush(true);
+                // Cosmos meldet bei vollem ext2 keinen Fehler, sondern kuerzt still (E5-H l2: Original wurde durch eine leere Datei ersetzt).
+                RequireComplete(stream.Length, data.Length);
             }
 
             ReplaceFileStorageLocked(temporaryPath, resolved.Value!, keepBackup);
@@ -429,6 +433,11 @@ internal sealed class FileService
             return ResultErr.CreateFromException(exception);
         }
         finally { writer?.Dispose(); }
+    }
+
+    private static void RequireComplete(long written, long expected)
+    {
+        if (written != expected) throw new IOException($"Schreiben unvollstaendig ({written} von {expected} Bytes); Datentraeger voll?");
     }
 
     private IDisposable? BeginWrite() => tryBeginWrite == null ? null :
@@ -591,10 +600,11 @@ internal sealed class FileService
                 {
                     temporary = Path.Combine(Path.GetDirectoryName(to.Value!)!, $".zehos-{Guid.NewGuid():N}.tmp");
                     EnsureDirectoryEntryAvailableStorageLocked(temporary);
-                    using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1);
+                    using var output = OpenTemporary?.Invoke(temporary) ?? new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1);
                     temporaryStream = output;
                     input.CopyTo(output, 4096);
                     output.Flush(true);
+                    RequireComplete(output.Length, input.Length);
                 }
             }
             moveFile(moving ? from.Value! : temporary!, to.Value!, false);

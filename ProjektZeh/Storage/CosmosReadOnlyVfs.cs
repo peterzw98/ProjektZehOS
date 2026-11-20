@@ -6,7 +6,8 @@ using Cosmos.Kernel.System.FileSystem;
 namespace ProjektZeh.Storage;
 
 /// <summary>
-/// Lese-Wrapper um einen nativen Cosmos-Superblock (aus CosmosReadOnlyExt2FileSystem herausgeloest): alle Mutationen
+/// Lese-Wrapper um einen nativen Cosmos-Superblock; seit 3.0.97-zehos.6 nur noch fuer FAT (der ext2-Treiber hat einen eigenen
+/// Lesemodus, der FAT-Treiber nicht): alle Mutationen
 /// liefern false, Fsync/Release/Sync/Drop schreiben nichts. Cosmos 3.0.97 ruft beim Schliessen jeder Datei Fsync auf,
 /// auch bei reinen Lesehandles (FAT: Verzeichniseintrag und Flush); ein Mount mit MountFlags.ReadOnly allein reicht nicht.
 /// </summary>
