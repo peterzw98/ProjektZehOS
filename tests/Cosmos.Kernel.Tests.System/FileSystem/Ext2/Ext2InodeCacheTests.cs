@@ -30,6 +30,9 @@ public class Ext2InodeCacheTests
             Assert.That(writeRoot.InodeOperations.Create(writeRoot, "f" + i, VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite, out _), Is.True, $"create {i}");
         }
 
+        // Unmount the writer: only one writable mount per device.
+        writer.SuperOperations.Drop(writer);
+
         // Fresh mount: ReadDir alone fills the cache with all 30,000 inodes; a dictionary starting small would resize many times.
         Assert.That(new Ext2FileSystemType(device).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
         Ext2Superblock sb = (Ext2Superblock)vsb!;
