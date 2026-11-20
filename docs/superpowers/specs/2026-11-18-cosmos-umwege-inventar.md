@@ -39,7 +39,7 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `Update/CosmosHttpUpdateSource.cs:94-109` | setzt `TcpConnection.s_nextPort` zufällig | Q✓ `Network/Protocols/Tcp/TcpConnection.cs:39`: fester Start nach jedem Boot | K | ja |
 | `Security/CosmosSaltSource.cs:18-23` | `DllImport` auf RDSEED/RDRAND | Q✓ `Core/Security/HardwareRandom.cs:48` intern | K | wahrscheinlich |
 | `Security/CosmosVirtioEntropyDriver.cs:9-70` | eigener virtio-rng-Treiber | Q✓ in `Cosmos.Kernel.Drivers/Virtio/` fehlt rng | M | verschiebbar |
-| `Scheduling/CosmosStackProbe.cs`, `ThreadStarter.cs:8-58` | Probe-Allokation vor jedem Threadstart | Q✓ `Core/Scheduler/SchedulerThread.cs:163-188`: `MemoryOp.Alloc` ungeprüft | K | ja |
+| `Scheduling/CosmosStackProbe.cs`, `ThreadStarter.cs:8-58` | Probe-Allokation vor jedem Threadstart (entfernt in E5-F, #386: Stapel smp-phase5b prüft `InitializeStack` selbst) | Q✓ `Core/Scheduler/SchedulerThread.cs:163-188`: `MemoryOp.Alloc` ungeprüft | K | ja |
 
 ## Scheduler, Speicher, Threads
 
