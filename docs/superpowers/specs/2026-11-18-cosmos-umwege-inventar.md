@@ -87,3 +87,25 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `ProjektZeh.csproj` (`MapNativeSourcePaths`) | `-ffile-prefix-map` für C | Q✓ fehlt in `Cosmos.Build.CC/build/Cosmos.Build.CC.targets` | K | ja |
 | `scripts/check-release-paths.py:11-26` | feste Upstream-Pfade erlaubt | Q✓ vorgebaute DLLs mit `[CallerFilePath]` | K: eigener Build mit `PathMap` | ja |
 | `scripts/check-plug-binding.py` | prüft im Log, dass jeder Plug gebunden hat | Q✓ `Cosmos.Patcher/Resolution/MethodResolver.cs:102`: fehlendes Ziel nur Warnung | K | ja |
+
+## SMP-Einträge (Nachtrag E7-F-Entwurf, 20. November 2026, Pin `3.0.97-zehos.6-smp.11`)
+
+Neue Umwege und Patches der Multicore-Etappen. „Stand“ nennt die Quelle im Repository.
+
+| ZehOS-Seite | Umweg oder Patch | Cosmos-Ursache | Stand |
+| --- | --- | --- | --- |
+| `Storage/StorageLock.cs` | globale Sperre um Plattenzugriffe | keine Sperre in `FileSystem/` (oben) | bleibt; mit SMP 4 belegt (ext2 und FAT, 0 falsch; COSMOS_SUPPORT, E6-E) |
+| `Network/CosmosNetworkService.Gate`, `Network/NetworkAddressSnapshot.cs` | Gate um `IPConfig`/`DnsConfig`; Status per `TryEnter` oder Schnappschuss | `IPConfig.Get`/`FindNetwork`, `DnsConfig.Nameservers` ohne Sperre (E6-C.11) | bleibt, solange `DnsConfig` ungeschützt ist |
+| Cosmos-Patch `monitor-quiet` (smp.4) | `LowLevelMonitor_*` schrieb je Aufruf seriell | E6-H | in Cosmos; kein ZehOS-Umweg |
+| Cosmos-Patch `pic-remap-cli` (smp.8) | `RemapAndDisable` lief mit IF=1 | E5-N (#521) | in Cosmos; Restrisiko Vektoren 8, 10–14, 17, 21, 29, 30 |
+| Cosmos-Patch `tcp-receive-window` (smp.9) | Empfangsfenster fest 32 KiB, Puffer unbegrenzt | E5-O (#530) | in Cosmos; kein ZehOS-Umweg |
+| Cosmos-Patch `gc-oom-throw` (smp.10) | Allokation gab `null` zurück | E5-P (#538) | in Cosmos; die Null-Zweige in `BufferAllocation.TryAllocate`, `ThreadStarter` und den Speicherproben sind tot, Entfernung ein eigener PR (offen) |
+| Cosmos-Patch `panic-stop-cpus` | Panic hielt nur die eigene CPU an | E7-B (#395) | in Cosmos; Probe `-p:ZehOSSmpProbePanic=true` |
+| Cosmos-Patches `ahci-large-commands`, `ext2-alloc-cache` (smp.11) | SATA-Befehle nur 4 KiB; Blockbitmap je Schreibzugriff neu gelesen | Schreibrate ext2 (#542) | in Cosmos; kein ZehOS-Umweg; Gastschreibrate etwa 121 MB/s (COSMOS_SUPPORT); je Gerät nur ein schreibender Mount |
+| Cosmos-Patch `page-alloc-split` (smp.11) | Seitenläufe fragmentierten bei kleinen GC-Segmenten | #538 | in Cosmos; 512 MiB bleibt auf smp.11 No-Go (E4.0 `l2`) |
+| `ThreadQuarantine` (entfallen), Cosmos-Patch `abandoned-thread-reap` (smp.11) | aufgegebene Wasm-Worker wurden in Quarantäne gehalten | E6-G (#433, PR #576) | Umweg entfernt; native Wasm-Instanz bleibt bis Neustart belegt (#582, offen) |
+| `Scheduling/CosmosStackProbe.cs`, `ThreadStarter` | Probe-Allokation vor Threadstart (Zeile oben) | `InitializeStack` prüft den Alloc seit smp.10 selbst | Entfernung in PR #551 (E5-F, Draft, **noch nicht gemergt**) |
+| Hauptthread und Standardaffinität auf CPU 0 (`Runtime/CosmosBootOptions.cs`) | feste Affinität | Eingabe-IRQs liegen auf CPU 0 | Verlassen von CPU 0 ist E7-A (#394, **offen**) |
+
+**Schlussstand je Zeile: vorläufig.** Die Zeilen der Abschnitte oben werden erst mit E7-E endgültig fortgeschrieben; die ext2-Zeilen führt PR #556 (E2-Abschluss, auf `master` gemergt) nach.
+
