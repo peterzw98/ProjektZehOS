@@ -67,18 +67,30 @@ internal static unsafe class PageAllocator
     private static byte* s_heapEnd;
 
     /// <summary>
-    /// RAT index where the search for a single page starts: no page below it is empty, as
-    /// <see cref="AllocPages"/> moves it past the page it takes and <see cref="Free(uint)"/> back
-    /// to a page it frees.
+    /// RAT index where the search for a single page or a small run starts: no page below it is
+    /// empty, as <see cref="AllocPages"/> moves it past the page (or the small run starting at it)
+    /// it takes and <see cref="Free(uint)"/> back to a page it frees.
     /// </summary>
     private static ulong s_singlePageHint;
 
     /// <summary>
-    /// RAT index below which the search for a run of pages starts: the first page of the last run
+    /// RAT index below which the search for a large run of pages (more than
+    /// <see cref="SmallRunPages"/>) starts: the first page of the last large run
     /// taken, or above it when a run above it was freed since. Empty runs too short for a request
     /// can lie above it, so a search that finds nothing below it scans the whole RAT.
     /// </summary>
     private static ulong s_runHint;
+
+    /// <summary>
+    /// Largest run of pages that is taken from the bottom of the RAT, first fit, like single pages;
+    /// larger runs are taken from the top. Sixteen pages are the smallest garbage collector segment
+    /// (<c>GCSegmentManager.MinSegmentPages</c>). Searched from the top as well, these segments
+    /// filled the holes large arrays left when they died, and the free memory fell apart into runs
+    /// too short for the next large array: in a 512 MiB guest an 8 MiB array failed with 287 MiB
+    /// free and no free run longer than 7 MiB.
+    /// </summary>
+    // ZehOS patch page-alloc-split, see PATCHES.md
+    private const ulong SmallRunPages = 16;
 
     /// <summary>
     /// Guards the RAT and <see cref="FreePageCount"/> in <see cref="AllocPages"/>
@@ -573,7 +585,8 @@ internal static unsafe class PageAllocator
         // thread claim the same pages.
         using (s_ratLock.AcquireCollectorLock())
         {
-            // Alloc single blocks at bottom, larger blocks at top to help reduce fragmentation.
+            // Alloc single pages and small runs at bottom, large runs at top to help reduce
+            // fragmentation (ZehOS patch page-alloc-split, see PATCHES.md).
             // Each search starts where the last one of its kind ended, and scans the whole
             // RAT before it fails: starting from the bottom (or the top) every time scanned
             // every page allocated so far, which made filling the memory take time in the
@@ -585,6 +598,17 @@ internal static unsafe class PageAllocator
                 if (startPage == null && s_singlePageHint != 0)
                 {
                     startPage = FindEmptyPage(s_mRAT);
+                }
+            }
+            else if (aPageCount <= SmallRunPages)
+            {
+                // ZehOS patch page-alloc-split, see PATCHES.md
+                // First fit from the lowest empty page: no page below s_singlePageHint is empty,
+                // so no run starts there either.
+                startPage = FindEmptyRunUpwards(s_mRAT + s_singlePageHint, aPageCount);
+                if (startPage == null && s_singlePageHint != 0)
+                {
+                    startPage = FindEmptyRunUpwards(s_mRAT, aPageCount);
                 }
             }
             else
@@ -610,6 +634,17 @@ internal static unsafe class PageAllocator
             if (aPageCount == 1)
             {
                 s_singlePageHint = (ulong)offset + 1;
+            }
+            else if (aPageCount <= SmallRunPages)
+            {
+                // ZehOS patch page-alloc-split, see PATCHES.md
+                // A small run that starts at the lowest empty page leaves no empty page below its
+                // end, so the next search may start there. Without this, a series of small runs
+                // with no single page between them scanned every run taken before it again.
+                if ((ulong)offset == s_singlePageHint)
+                {
+                    s_singlePageHint = (ulong)offset + aPageCount;
+                }
             }
             else
             {
@@ -655,6 +690,35 @@ internal static unsafe class PageAllocator
             if ((PageType)(*ptr) == PageType.Empty)
             {
                 return ptr;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Scans the RAT upwards from <paramref name="from"/> for the first run of empty pages.
+    /// </summary>
+    /// <param name="from">The RAT entry to start at.</param>
+    /// <param name="aPageCount">The number of pages of the run.</param>
+    /// <returns>The entry of the first page of the run, or <c>null</c> when there is none from there.</returns>
+    // ZehOS patch page-alloc-split, see PATCHES.md
+    private static byte* FindEmptyRunUpwards(byte* from, ulong aPageCount)
+    {
+        ulong xCount = 0;
+        byte* ratEnd = s_mRAT + TotalPageCount;
+        for (byte* ptr = from; ptr < ratEnd; ptr++)
+        {
+            if (*ptr == (byte)PageType.Empty)
+            {
+                if (++xCount == aPageCount)
+                {
+                    return ptr - (aPageCount - 1);
+                }
+            }
+            else
+            {
+                xCount = 0;
             }
         }
 
