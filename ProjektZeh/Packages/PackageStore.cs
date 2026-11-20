@@ -455,7 +455,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         {
             using var writer = BeginWrite();
             StorageLock.Run(() => RestorePendingStorageLocked(CatalogPath));
-            StorageLock.Run(() => RestorePendingStorageLocked(SourcePath));
+            StorageLock.Run(() => RestorePendingStorageLocked(SourcePath, true));
             string[]? directories = StorageLock.Run(() => Directory.Exists(Apps) ? Directory.GetDirectories(Apps) : null);
             if (directories == null) return ResultErr.CreateSuccess();
             foreach (string directory in directories)
@@ -466,7 +466,7 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
                 // Ohne Marker wurde nie etwas veroeffentlicht: der Ordner ist ein Rest und darf weg.
                 bool published = StorageLock.Run(() =>
                 {
-                    RestorePendingStorageLocked(marker);
+                    RestorePendingStorageLocked(marker, true);
                     if (File.Exists(marker)) return true;
                     DeleteTreeStorageLocked(directory);
                     return false;
@@ -515,49 +515,73 @@ internal sealed class PackageStore(string root, PackageTrust? trust, UpdateVersi
         }
     }
 
-    // Neue Fassung erst unter .wip vollstaendig schreiben, dann nach .new umbenennen: Eine vorhandene .new ist damit immer
-    // vollstaendig, und RestorePendingStorageLocked darf sie nach einem Abbruch uebernehmen. Die alte Fassung wird erst zu .old
-    // gesichert und nach erfolgreichem Umbenennen geloescht; scheitert das Umbenennen, kommt sie zurueck (sonst fehlte z. B. der active-Marker).
+    // Neue Fassung erst unter .wip vollstaendig schreiben, dann nach .new umbenennen: Eine vorhandene .new ist damit vollstaendig.
+    // Die alte Fassung wird zu .old gesichert und erst nach erfolgreichem Umbenennen geloescht; scheitert das Umbenennen,
+    // kommt sie zurueck. Grundregel: Die alte Fassung (z. B. der active-Marker) wird nie verworfen, solange nicht die neue
+    // wirklich an ihrem Platz liegt; bei einem Doppelfehler bleibt sie als .old und der Fehler wird gemeldet.
     // move ist die Testnaht fuer Umbenennungsfehler.
     internal static void ReplaceFileStorageLocked(string path, byte[] bytes, Action<string, string>? move = null)
     {
         move ??= File.Move;
         string work = path + WorkSuffix, temporary = path + NewSuffix, old = path + OldSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if (File.Exists(work)) File.Delete(work);
-        if (File.Exists(temporary)) File.Delete(temporary);
+        // Zwischenstand eines frueheren Abbruchs oder Doppelfehlers zuerst heilen, nie einfach loeschen (.old kann die einzige alte Fassung sein).
+        RestorePendingStorageLocked(path);
         // Gekuerzt schreibt Cosmos ohne Fehler; dann wird die gekuerzte .wip entfernt und die alte Fassung (z. B. active) bleibt.
         FileService.WriteAllBytesCompleteStorageLocked(work, bytes);
         move(work, temporary);
-        if (File.Exists(old)) File.Delete(old);
         bool hadOld = File.Exists(path);
-        if (hadOld) move(path, old);
-        try { move(temporary, path); }
-        catch
+        if (hadOld)
         {
-            // Rueckweg best effort; gelingt er nicht, schliesst RestorePendingStorageLocked mit der vollstaendigen .new ab.
-            try { if (hadOld) move(old, path); File.Delete(temporary); } catch (Exception rollback) when (FileErrors.IsFileError(rollback)) { }
+            // Ohne gesicherte alte Fassung darf keine .new liegen bleiben, die nach einem spaeteren Abbruch (Remove) aktiviert wuerde.
+            try { move(path, old); }
+            catch { TryDeleteStorageLocked(temporary); throw; }
+        }
+        try { move(temporary, path); }
+        catch (Exception first)
+        {
+            try { if (hadOld) move(old, path); }
+            catch (Exception second) when (FileErrors.IsFileError(second))
+            {
+                // Beide Fassungen liegen jetzt als .old/.new; Restore haelt die alte, bis die neue wirklich ersetzt hat.
+                throw new IOException("Ersetzen von " + Path.GetFileName(path) + " und Rueckweg scheiterten; alte Fassung bleibt als " + OldSuffix + " erhalten.", first);
+            }
+            TryDeleteStorageLocked(temporary);
             throw;
         }
         if (hadOld) File.Delete(old);
     }
 
-    internal static void RestorePendingStorageLocked(string path)
+    private static void TryDeleteStorageLocked(string path)
     {
-        // .wip ist ein abgebrochener Schreibversuch und nie vollstaendig gesichert; .old ist die ersetzte Fassung.
+        try { File.Delete(path); }
+        catch (Exception exception) when (FileErrors.IsFileError(exception)) { /* Restore raeumt es beim naechsten Einbinden auf. */ }
+    }
+
+    // textLine: Die Datei ist eine Textzeile mit Zeilenende (Marker, Quelle); eine .new ohne Zeilenende ist gekuerzt (auch Altlast
+    // aus der Zeit vor .wip) und wird verworfen, weil ein gekuerzter Marker ("1.0.0" aus "1.0.01") sonst gueltig aussaehe.
+    internal static void RestorePendingStorageLocked(string path, bool textLine = false)
+    {
+        string temporary = path + NewSuffix, old = path + OldSuffix;
+        // .wip ist ein abgebrochener Schreibversuch und nie vollstaendig gesichert.
         if (File.Exists(path + WorkSuffix)) File.Delete(path + WorkSuffix);
-        string temporary = path + NewSuffix;
+        bool present = File.Exists(path);
+        // Fehlt das Ziel, aber die alte Fassung liegt als .old: die alte gewinnt, die neue wird verworfen (kein Beweis, dass sie ersetzt haette).
+        if (!present && File.Exists(old)) { File.Move(old, path); present = true; }
         if (File.Exists(temporary))
         {
-            if (File.Exists(path)) File.Delete(temporary);
+            if (present || (textLine && !EndsWithNewlineStorageLocked(temporary))) File.Delete(temporary);
             else File.Move(temporary, path);
         }
-        if (File.Exists(path + OldSuffix))
-        {
-            // Fehlt path noch (Umbenennen und Rueckweg scheiterten), bleibt die alte Fassung die Wahrheit.
-            if (File.Exists(path)) File.Delete(path + OldSuffix);
-            else File.Move(path + OldSuffix, path);
-        }
+        if (File.Exists(old)) File.Delete(old);
+    }
+
+    private static bool EndsWithNewlineStorageLocked(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        if (stream.Length == 0) return false;
+        stream.Seek(-1, SeekOrigin.End);
+        return stream.ReadByte() == '\n';
     }
 
     // Cosmos-FAT bietet kein geprueftes rekursives Directory.Delete; deshalb Dateien und Ordner einzeln entfernen.
