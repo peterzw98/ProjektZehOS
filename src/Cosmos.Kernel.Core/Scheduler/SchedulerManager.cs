@@ -1448,7 +1448,14 @@ public static class SchedulerManager
         // Ready thread is queued and a Running one is on its CPU, and
         // the run queue must never hold a thread twice (see
         // ScheduleFromInterruptLocked for what a second entry does).
-        if (thread.State == SchedulerThreadState.Ready || thread.State == SchedulerThreadState.Running)
+        // ZehOS patch abandoned-thread-reap, see PATCHES.md: a Dead thread
+        // never runs again. A wake that reaches one (an event set, a sleep
+        // alarm, a join for a thread given up at a fault or marked by a
+        // kill) would queue it, and the pick would resume a stack that is
+        // being reaped or already freed. Checked under the queue lock every
+        // path sets Dead under.
+        if (thread.State == SchedulerThreadState.Ready || thread.State == SchedulerThreadState.Running
+            || thread.State == SchedulerThreadState.Dead)
         {
             state._lock.Release();
             return;
@@ -2529,9 +2536,11 @@ public static class SchedulerManager
     /// another CPU or runs its idle thread. The thread stays registered and
     /// known to the policy; nothing here calls OnThreadExit, unregisters it,
     /// retires its allocation context or releases its joiners. Reaping it is
-    /// the adapter's job through the exit path (<see cref="ExitThread"/> or
-    /// SchedulerDiagnostics.RequestKill, ZehOS plan E6-G). Locks it held stay
-    /// taken. From here on its stack is no GC root.
+    /// the adapter's job, from thread context once the CPU has left its stack:
+    /// SchedulerDiagnostics.TryReapAbandoned (ZehOS patch
+    /// abandoned-thread-reap). No wake can queue it again in between, since
+    /// ReadyLocked refuses a Dead thread. Locks it held stay taken until the
+    /// reap. From here on its stack is no GC root.
     /// </summary>
     /// <remarks>
     /// Same constraints as <see cref="ScheduleFromInterrupt"/>: interrupts
@@ -2592,6 +2601,14 @@ public static class SchedulerManager
             // Nothing to switch to (no idle thread yet): the caller halts,
             // the thread is left as it was.
             prev.State = SchedulerThreadState.Running;
+        }
+        else
+        {
+            // ZehOS patch abandoned-thread-reap, see PATCHES.md: marks the
+            // thread as left at a fault, under the queue lock, so the reap
+            // (SchedulerDiagnostics.TryReapAbandoned) tells it apart from a
+            // thread a kill marked dead wherever it happened to run.
+            prev._abandoned = true;
         }
 
         state._lock.Release();

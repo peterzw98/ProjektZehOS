@@ -25,7 +25,7 @@ namespace Cosmos.Kernel.Tests.Threading;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 102;
+    private const int ExpectedTestCount = 104;
 
     /// <summary>Size of one per-CPU block, as <c>PerCpuBlock</c> lays it out and the native stubs assume.</summary>
     private const int PerCpuBlockNativeSize = 128;
@@ -264,6 +264,8 @@ public class Kernel : Sys.Kernel
         TR.Run("Thread_MaxStackSize_TinyRequestIsFloored", TestThreadTinyStackSizeFloored);
         TR.Run("Thread_MaxStackSize_Unallocatable_StartThrows", TestThreadUnallocatableStackIsRefused);
         TR.Run("Thread_Kill_Queued_StopsManagedSide", TestKillQueuedThreadStopsManagedSide);
+        TR.Run("Thread_AbandonedAtFault_IsReaped", TestAbandonedThreadIsReaped);
+        TR.Run("Thread_Alive_IsNotReaped", TestLiveThreadIsNotReaped);
         TR.Run("ScheduleFromInterrupt_UnregisteredCpu_IsNoOp", TestScheduleFromInterruptIgnoresUnregisteredCpu);
 
         // The per-CPU block (CosmosOS/Cosmos#3338, SMP phase 1): the running CPU finds its
@@ -1688,6 +1690,130 @@ public class Kernel : Sys.Kernel
         Assert.True(victim.Join(KillJoinTimeoutMs), "Join must return once the killed thread's stop event is set");
         Assert.True((victim.ThreadState & ThreadState.Stopped) != 0, "the killed thread must read as Stopped");
         Assert.True(!victim.IsAlive, "the killed thread must not read as alive");
+    }
+
+    // ZehOS patch abandoned-thread-reap, see PATCHES.md
+    // A thread the CPU exception hook gives up stays Dead and registered until
+    // the adapter reaps it from thread context with TryReapAbandoned.
+    private static volatile bool s_abandonVictimStarted;
+    private static uint s_abandonVictimId = CpuExceptionInfo.NoThread;
+    private static int s_abandonSink;
+
+    // Gives up only the victim; every other exception halts as without a hook.
+    // Runs in the exception path: no allocation, no lock, no log.
+    private static CpuExceptionAction AbandonVictimOnly(in CpuExceptionInfo exception)
+        => exception.ThreadId == s_abandonVictimId && exception.ThreadId != CpuExceptionInfo.NoThread
+            ? CpuExceptionAction.AbandonThread
+            : CpuExceptionAction.Halt;
+
+    private static unsafe void AbandonVictimWorker()
+    {
+        if (SchedulerDiagnostics.TryGetCurrentThread(SchedulerManager.GetCurrentCpuId(), out KernelThreadInfo info))
+        {
+            s_abandonVictimId = info.Id;
+        }
+        s_abandonVictimStarted = true;
+
+        // Page 0 is unmapped: a real page fault (data abort on ARM64) in
+        // thread code, the case the hook gives the thread up for.
+        s_abandonSink = *(int*)0;
+    }
+
+    private static void TestAbandonedThreadIsReaped()
+    {
+        s_abandonVictimStarted = false;
+        s_abandonVictimId = CpuExceptionInfo.NoThread;
+        ulong stacksBefore = SchedulerDiagnostics.ReleasedStacks;
+
+        CpuExceptionHandler? previous = CpuExceptionHook.Handler;
+        CpuExceptionHook.Handler = AbandonVictimOnly;
+        try
+        {
+            // Victim and Main share one CPU, so the fault hands that CPU back
+            // to Main and the reap below runs after the switch.
+            using OneCpuScope oneCpu = OneCpuScope.Enter();
+            SysThread victim = new(AbandonVictimWorker);
+            victim.Start();
+            for (int i = 0; i < KillVictimPollRetries && !s_abandonVictimStarted; i++)
+            {
+                TimerManager.Wait(KillVictimPollWaitMs);
+            }
+            Assert.True(s_abandonVictimStarted, "the victim must have started before it faults");
+            Assert.True(s_abandonVictimId != CpuExceptionInfo.NoThread, "the victim must know its thread id");
+
+            // Before the fault the thread is alive (NotAbandoned); while the
+            // report still runs on its stack the answer is StillOnCpu. Both
+            // change nothing, so the reap is simply tried again.
+            ThreadReapResult result = ThreadReapResult.NotAbandoned;
+            for (int i = 0; i < KillVictimPollRetries; i++)
+            {
+                result = SchedulerDiagnostics.TryReapAbandoned(s_abandonVictimId);
+                if (result != ThreadReapResult.NotAbandoned && result != ThreadReapResult.StillOnCpu)
+                {
+                    break;
+                }
+                TimerManager.Wait(KillVictimPollWaitMs);
+            }
+            Assert.Equal((int)ThreadReapResult.Reaped, (int)result, "a thread given up at a fault is reaped once its CPU left it");
+            Assert.True(SchedulerDiagnostics.ReleasedStacks > stacksBefore, "the reap gives the stack back at once");
+
+            // The thread is gone: a second reap finds nothing, and the managed
+            // side reads as stopped with its joiners released.
+            Assert.Equal((int)ThreadReapResult.NotFound, (int)SchedulerDiagnostics.TryReapAbandoned(s_abandonVictimId),
+                "a reaped thread is not found a second time");
+            Assert.True(victim.Join(KillJoinTimeoutMs), "Join must return once the abandoned thread is reaped");
+            Assert.True(!victim.IsAlive, "the reaped thread must not read as alive");
+        }
+        finally
+        {
+            CpuExceptionHook.Handler = previous;
+        }
+    }
+
+    private static volatile bool s_liveVictimStarted;
+    private static volatile bool s_liveVictimRelease;
+    private static uint s_liveVictimId;
+
+    private static void LiveVictimWorker()
+    {
+        if (SchedulerDiagnostics.TryGetCurrentThread(SchedulerManager.GetCurrentCpuId(), out KernelThreadInfo info))
+        {
+            s_liveVictimId = info.Id;
+        }
+        s_liveVictimStarted = true;
+        while (!s_liveVictimRelease)
+        {
+            TimerManager.Wait(KillVictimPollWaitMs);
+        }
+    }
+
+    // Counter-check: a thread that was never given up at a fault is refused
+    // and keeps running; only the exit path ends it.
+    private static void TestLiveThreadIsNotReaped()
+    {
+        s_liveVictimStarted = false;
+        s_liveVictimRelease = false;
+        s_liveVictimId = 0;
+
+        // The live thread shares the CPU Main runs on: Join returns when the
+        // thread has exited, before a compute CPU of its own is back on its
+        // idle thread, and the PerCpuBlock cells after this one expect every
+        // application processor idle.
+        using OneCpuScope oneCpu = OneCpuScope.Enter();
+        SysThread victim = new(LiveVictimWorker);
+        victim.Start();
+        for (int i = 0; i < KillVictimPollRetries && !s_liveVictimStarted; i++)
+        {
+            TimerManager.Wait(KillVictimPollWaitMs);
+        }
+        Assert.True(s_liveVictimStarted, "the live thread must have started");
+
+        Assert.Equal((int)ThreadReapResult.NotAbandoned, (int)SchedulerDiagnostics.TryReapAbandoned(s_liveVictimId),
+            "a live thread is not reaped");
+        Assert.True(victim.IsAlive, "the refused thread keeps running");
+
+        s_liveVictimRelease = true;
+        Assert.True(victim.Join(KillJoinTimeoutMs), "the live thread ends through its own exit");
     }
 
     /// <summary>

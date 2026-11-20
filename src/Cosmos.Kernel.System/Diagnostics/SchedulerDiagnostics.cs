@@ -92,7 +92,8 @@ public static class SchedulerDiagnostics
     // ZehOS patch thread-stack-reaper, see PATCHES.md
     /// <summary>
     /// Stacks of exited threads the scheduler has given back since boot. A stack
-    /// is freed on the next thread creation after its thread has left the CPU.
+    /// is freed on the next thread creation after its thread has left the CPU,
+    /// or at once by <see cref="TryReapAbandoned"/> (ZehOS patch abandoned-thread-reap).
     /// </summary>
     public static ulong ReleasedStacks => SchedulerManager.ReleasedStacks;
 
@@ -286,6 +287,102 @@ public static class SchedulerDiagnostics
         }
 
         return ThreadKillResult.RefusedBlocked;
+    }
+
+    // ZehOS patch abandoned-thread-reap, see PATCHES.md
+    /// <summary>
+    /// Reaps a thread that a CPU exception handler gave up
+    /// (<c>CpuExceptionAction.AbandonThread</c>): runs the exit path a
+    /// thread returning from its entry point would run (managed side stopped,
+    /// joiners released, mutexes it held freed, allocation context retired,
+    /// policy and registry entries removed) and frees its stack at once.
+    /// Thread context only, with no scheduler lock held; it may allocate.
+    /// <para>
+    /// Only a thread given up at a fault qualifies. A thread
+    /// <see cref="RequestKill"/> only marked dead stopped wherever it ran,
+    /// possibly holding a spin lock or halfway through the allocator, and
+    /// is refused with <see cref="ThreadReapResult.NotAbandoned"/>. Until its
+    /// CPU has left the stack (the exception report walks it) the answer is
+    /// <see cref="ThreadReapResult.StillOnCpu"/> and nothing changes; the
+    /// caller tries again later. A given-up thread can never run again in
+    /// between: the scheduler refuses to ready a Dead thread.
+    /// </para>
+    /// </summary>
+    /// <param name="threadId">ID of the given-up thread.</param>
+    /// <returns>What happened to the thread; see <see cref="ThreadReapResult"/>.</returns>
+    public static ThreadReapResult TryReapAbandoned(uint threadId)
+    {
+        IScheduler? scheduler = SchedulerManager.Current;
+        SchedulerThread?[]? threads = SchedulerManager.Threads;
+        if (scheduler is null || threads is null)
+        {
+            return ThreadReapResult.NotFound;
+        }
+
+        SchedulerThread? target = null;
+        for (int slot = 0; slot < threads.Length; slot++)
+        {
+            if (threads[slot] is SchedulerThread candidate && candidate.Id == threadId)
+            {
+                target = candidate;
+                break;
+            }
+        }
+
+        if (target is null)
+        {
+            return ThreadReapResult.NotFound;
+        }
+
+        if (target.IsIdle)
+        {
+            return ThreadReapResult.NotAbandoned;
+        }
+
+        // The mark and the state are read under the queue lock of the
+        // thread's CPU, the lock they were written under. A Dead thread
+        // never moves to another CPU, so CpuId is stable once both hold.
+        bool abandoned;
+        PerCpuState? state = SchedulerManager.GetCpuState(target.CpuId);
+        if (state is null)
+        {
+            return ThreadReapResult.NotAbandoned;
+        }
+
+        using (SchedulerManager.LockCpu(state))
+        {
+            abandoned = target._abandoned && target.State == SchedulerThreadState.Dead;
+        }
+
+        if (!abandoned)
+        {
+            return ThreadReapResult.NotAbandoned;
+        }
+
+        // Cleared by the stub on the interrupt exit after the report; a Dead
+        // thread is never resumed, so once 0 it stays 0.
+        if (target.IsOnCpu)
+        {
+            return ThreadReapResult.StillOnCpu;
+        }
+
+        // One reap per thread: a second caller between here and the
+        // unregister finds the claim and reports the thread as gone.
+        if (global::System.Threading.Interlocked.CompareExchange(ref target._reapClaimed, 1, 0) != 0)
+        {
+            return ThreadReapResult.NotFound;
+        }
+
+        // Not CurrentThread on any CPU, so ExitThread stops the managed side
+        // from here, then retires the allocation context, calls OnThreadExit
+        // (the policy may not know the thread: it was neither queued nor
+        // current, and a policy installed after the fault never saw it),
+        // unregisters it and queues its stack. ReapDeadStacks frees that
+        // stack now rather than at the next thread start, and checks
+        // IsOnCpu itself once more.
+        SchedulerManager.ExitThread(target);
+        SchedulerManager.ReapDeadStacks();
+        return ThreadReapResult.Reaped;
     }
 
     private static KernelThreadInfo Snapshot(SchedulerThread thread)

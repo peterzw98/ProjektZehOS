@@ -161,6 +161,11 @@ Cosmos.Kernel.System.Diagnostics.ThreadKillResult.MarkedForExit = 2 -> Cosmos.Ke
 Cosmos.Kernel.System.Diagnostics.ThreadKillResult.NotFound = 0 -> Cosmos.Kernel.System.Diagnostics.ThreadKillResult
 Cosmos.Kernel.System.Diagnostics.ThreadKillResult.RefusedBlocked = 4 -> Cosmos.Kernel.System.Diagnostics.ThreadKillResult
 Cosmos.Kernel.System.Diagnostics.ThreadKillResult.RefusedIdle = 3 -> Cosmos.Kernel.System.Diagnostics.ThreadKillResult
+Cosmos.Kernel.System.Diagnostics.ThreadReapResult
+Cosmos.Kernel.System.Diagnostics.ThreadReapResult.NotAbandoned = 1 -> Cosmos.Kernel.System.Diagnostics.ThreadReapResult
+Cosmos.Kernel.System.Diagnostics.ThreadReapResult.NotFound = 0 -> Cosmos.Kernel.System.Diagnostics.ThreadReapResult
+Cosmos.Kernel.System.Diagnostics.ThreadReapResult.Reaped = 3 -> Cosmos.Kernel.System.Diagnostics.ThreadReapResult
+Cosmos.Kernel.System.Diagnostics.ThreadReapResult.StillOnCpu = 2 -> Cosmos.Kernel.System.Diagnostics.ThreadReapResult
 Cosmos.Kernel.System.FileSystem.Ext2.Ext2FileSystemType
 Cosmos.Kernel.System.FileSystem.Ext2.Ext2FileSystemType.Ext2FileSystemType() -> void
 Cosmos.Kernel.System.FileSystem.Ext2.Ext2FileSystemType.Ext2FileSystemType(Cosmos.Kernel.HAL.Devices.Storage.IBlockDevice! device) -> void
@@ -978,6 +983,7 @@ static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.IsInitialized.get -
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.IsRunning.get -> bool
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.IsSupported.get -> bool
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.RequestKill(uint threadId) -> Cosmos.Kernel.System.Diagnostics.ThreadKillResult
+static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.TryReapAbandoned(uint threadId) -> Cosmos.Kernel.System.Diagnostics.ThreadReapResult
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.SchedulerName.get -> string?
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.ThreadCount.get -> int
 static Cosmos.Kernel.System.Diagnostics.SchedulerDiagnostics.ThreadSlotCount.get -> int

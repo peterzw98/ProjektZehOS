@@ -127,6 +127,19 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <summary>Whether this thread is in that list; a second ExitThread must not link it twice.</summary>
     internal bool _deadStackQueued;
 
+    // ZehOS patch abandoned-thread-reap, see PATCHES.md
+    /// <summary>
+    /// Set under the CPU's queue lock when <see cref="SchedulerManager.TryAbandonCurrentFromInterrupt"/>
+    /// gave this thread up from an exception handler: it left its CPU at a fault in thread code, not
+    /// somewhere inside the kernel. Only such a thread may be reaped from another context
+    /// (<c>SchedulerDiagnostics.TryReapAbandoned</c>); a thread a kill only marked dead may have
+    /// stopped holding a spin lock or halfway through the allocator.
+    /// </summary>
+    internal bool _abandoned;
+
+    /// <summary>1 once a reap of this abandoned thread has been claimed, so two callers never reap it twice.</summary>
+    internal int _reapClaimed;
+
     // ===== Context (architecture-specific values) =====
 
     private nuint _stackPointer;
