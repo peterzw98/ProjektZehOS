@@ -151,6 +151,26 @@ internal static class AhciProtocol
     /// <summary>PxIS.TFES, bit 30: a task file error.</summary>
     public const uint IsTaskFileError = 1u << 30;
 
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>PxTFD status byte ERR, bit 0: the device ended the last command with an error.</summary>
+    public const uint TfdError = 1;
+
+    /// <summary>PxIS.IFS, bit 27: an interface fatal error.</summary>
+    public const uint IsInterfaceFatal = 1u << 27;
+
+    /// <summary>PxIS.HBDS, bit 28: a host bus data error.</summary>
+    public const uint IsHostBusData = 1u << 28;
+
+    /// <summary>PxIS.HBFS, bit 29: a host bus fatal error.</summary>
+    public const uint IsHostBusFatal = 1u << 29;
+
+    /// <summary>
+    /// The PxIS bits after which the HBA halts the command list (AHCI 1.3.1
+    /// section 6.2.2): task file, host bus fatal, host bus data and
+    /// interface fatal errors.
+    /// </summary>
+    public const uint IsErrorMask = IsTaskFileError | IsHostBusFatal | IsHostBusData | IsInterfaceFatal;
+
     /// <summary>Mask of PxSSTS.DET, bits 3:0.</summary>
     public const uint SstsDetMask = 0xF;
 

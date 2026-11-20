@@ -195,8 +195,10 @@ internal sealed class AhciState
     /// reads busy, then waits for CR, FR, ST and FRE to all read clear.
     /// Thread context: on the kit worker from the probe and the detach hook,
     /// and on any thread from <see cref="AhciAtapiPort"/>'s check-condition
-    /// recovery, which holds the port's busy claim; the detach hook runs
-    /// only once the consumer withdrew the port, so the two never overlap.
+    /// recovery and <see cref="AhciPort"/>'s error recovery (ZehOS patch
+    /// ahci-error-recovery), which hold the port's busy claim; the detach
+    /// hook runs only once the consumer withdrew the port, so the two never
+    /// overlap.
     /// </summary>
     /// <param name="port">The port index.</param>
     /// <returns>False when an engine stayed running past its budget; the port must then be left alone.</returns>
@@ -237,8 +239,9 @@ internal sealed class AhciState
     /// <summary>
     /// Starts the port's engines: waits for CR to read clear, then sets FRE
     /// and ST. Thread context: on the kit worker from the probe, and on any
-    /// thread from <see cref="AhciAtapiPort"/>'s check-condition recovery,
-    /// which holds the port's busy claim.
+    /// thread from <see cref="AhciAtapiPort"/>'s check-condition recovery and
+    /// <see cref="AhciPort"/>'s error recovery (ZehOS patch
+    /// ahci-error-recovery), which hold the port's busy claim.
     /// </summary>
     /// <param name="port">The port index.</param>
     /// <returns>False when CR stayed set past its budget; nothing was written then.</returns>
@@ -258,8 +261,9 @@ internal sealed class AhciState
     /// Resets the port's link: clears ST and waits for it to read clear,
     /// issues COMRESET through PxSCTL.DET, holds it, releases it, waits for
     /// the PHY to report a device (a miss is ignored), clears PxSERR and
-    /// waits for the reset request to read clear. Thread context on the kit
-    /// worker.
+    /// waits for the reset request to read clear. Thread context: on the kit
+    /// worker, and on any thread from <see cref="AhciPort"/>'s error recovery
+    /// (ZehOS patch ahci-error-recovery), which holds the port's busy claim.
     /// </summary>
     /// <param name="port">The port index.</param>
     /// <returns>False when ST stayed set past its budget; the port was not reset then.</returns>
@@ -295,7 +299,7 @@ internal sealed class AhciState
 
     // --- Private methods ---
 
-    /// <summary>Sets PxSCTL.DET to 1, holds it, clears it and waits for PxSSTS.DET to report a device with its PHY up, a miss ignored. Thread context on the kit worker.</summary>
+    /// <summary>Sets PxSCTL.DET to 1, holds it, clears it and waits for PxSSTS.DET to report a device with its PHY up, a miss ignored. Thread context: the kit worker, or the holder of the port's busy claim.</summary>
     private void Comreset(uint port)
     {
         uint control = ReadPort(port, AhciProtocol.PxSctl);
