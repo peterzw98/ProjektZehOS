@@ -2,6 +2,30 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Stride gegen Klassenscheduler auf dem SMP-Stand (E5-I, #385)
+
+**Ergebnis (20.11.2026): Doom bestanden mit Vorbehalt, ClassiCube nicht entscheidbar.** Verglichen wurden die Klassenpolicy und der Upstream-Stride (`-p:ZehOSStrideScheduler=true`, `InstallScheduler()` entfaellt; gebaut ueber die Umgebungsvariable `ZehOSStrideScheduler=true`, weil `cosmos build` kein `-p:` kennt) vom selben ZehOS-Commit `a147823d` auf Cosmos-Pin `5f367e3d` (`3.0.97-zehos.6-smp.3`). ISO-Pruefsummen sha256: Klasse `25adf3fe594ac743e119b564cbbca7eec411278d3f2f0449b3fc6672a971e3be`, Stride `6580cd3fceba2fa097b756fcb6a08e604ff9a1ed26cb8d3778a147f909eb6d07`. Beleg, dass der Stride-Bau die Klassenpolicy nicht enthaelt: `strings -el` auf `stride.iso` findet "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER, ZehOS-Klassen inaktiv)" und die `DescribeScheduler`-Zeile "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER); Klassenzaehler nicht erfasst", aber weder "ZehOS Klassen" noch "Auswahl CPU 0"; `klasse.iso` enthaelt umgekehrt "ZehOS Klassen" und "Auswahl CPU 0" und keine Stride-Zeile. Die Umgebungsvariable kommt als MSBuild-Property an (`ProjektZeh.csproj` Z. 29), das `#if` greift. Das Bootlog des Stride-Gastes selbst wurde nicht ausgewertet. Der Stride-Diagnosebau uebersetzt mit `-warnaserror` ohne Warnung (0 Warnungen, 0 Fehler).
+
+Aufbau: je Zelle fuenf Laeufe im Wechsel Klasse/Stride, KVM, `-m 1G`, `ZEHOS_QEMU_SMP=4`, Doom 1.1.0 und ClassiCube 1.1.0 (wasm3), mit und ohne `--background busy` (`tasks start busy`), je Lauf das letzte 60-s-Fenster (`measure-wasm-frametimes.py`, 130 s). Auswertung: avg fps, Median, p95 und max der Bildzeit (kein p99, nicht erfasst). Hauptschleife ist unter Stride nicht Interaktiv (`ApplyClass` wirkungslos); genau das misst der Vergleich. E6-B ist gemergt, die Worker laufen nicht zwingend auf CPU 0.
+
+| Spiel | Last | Stand | fps je Lauf | Mittel | Spannweite | p95 ms je Lauf | max ms je Lauf |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Doom | keine | Klasse | 70,0 70,0 70,0 70,0 70,0 | 70,0 | 0,0 % | 28 28 28 28 28 | 36 40 42 43 38 |
+| Doom | keine | Stride | 70,0 70,0 69,9 69,9 70,0 | 70,0 | 0,1 % | 28 28 28 28 28 | 37 39 53 55 36 |
+| Doom | busy | Klasse | 70,0 70,0 70,0 68,1 70,0 | 69,6 | 2,7 % | 28 28 28 28 28 | 44 52 44 107 31 |
+| Doom | busy | Stride | 70,0 70,0 69,9 70,0 70,0 | 70,0 | 0,1 % | 28 28 28 28 28 | 53 45 46 35 47 |
+| ClassiCube | keine | Klasse | 77,4 112,2 80,0 102,0 60,5 | 86,4 | 59,8 % | 15 11 14 12 18 | 41 37 38 39 44 |
+| ClassiCube | keine | Stride | 108,8 80,8 71,8 87,9 115,1 | 92,9 | 46,6 % | 11 14 15 14 11 | 41 39 23 36 32 |
+| ClassiCube | busy | Klasse | 76,0 55,5 43,7 72,8 59,0 | 61,4 | 52,6 % | 20 28 46 21 33 | 55 60 61 55 56 |
+| ClassiCube | busy | Stride | 43,3 55,6 49,3 42,6 59,2 | 50,0 | 33,2 % | 33 21 31 33 20 | 42 46 59 54 78 |
+
+Bewertung gegen die Abnahme (Bildrate Klasse hoechstens 3 % schlechter, Wartezeit p95/max nicht schlechter, Spannweite ueber 3 % = nicht entscheidbar):
+
+- **Doom: bestanden nach fps und p95; max in einem Lauf schlechter (Klasse 107 ms gegen hoechstens 55 ms bei Stride), daher nur mit Vorbehalt.** Mittel der Klasse 70,0 und 69,6 fps gegen 70,0 (hoechstens 0,6 % schlechter), p95 identisch 28 ms, max in der Groessenordnung gleich; ein Ausreisser der Klasse (107 ms, Lauf mit busy) steht gegen einen Stride-Hoechstwert von 55 ms. Spannweiten unter 3 %. Doom ist auf 70 fps begrenzt; der Vergleich trennt die Policies deshalb kaum.
+- **ClassiCube: nicht entscheidbar.** Spannweiten 33 bis 60 % in allen vier Zellen; die Mittel (ohne Last Klasse 86,4 gegen Stride 92,9; mit busy 61,4 gegen 50,0) liegen innerhalb dieser Streuung und tragen weder fuer noch gegen die Klasse. Ursache der Streuung ist nicht untersucht.
+
+Grenzen: Auf dem Host liefen daneben fremde Gaeste anderer Agenten (Lars hat paralleles Laufen genehmigt); `pgrep -c qemu` vor dem Lauf zeigte 0 bis 2 Prozesse (inklusive des eigenen Laufs bei 1), Hostlast beim Start 0,4 bis 6,3 (`uptime` je Lauf im Messprotokoll). Die Zeiten sind deshalb nur eingeschraenkt vergleichbar; die ClassiCube-Streuung kann teilweise von dieser Fremdlast kommen. Die Hintergrundlast `tasks start busy` ist nur per Foto belegt (die Shell meldet sie nicht seriell); die busy-Zellen sind deshalb schwaecher belegt. Ein QEMU-Ergebnis belegt kein VMware.
+
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
 **Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).

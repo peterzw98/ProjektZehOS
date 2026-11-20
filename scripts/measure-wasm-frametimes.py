@@ -6,7 +6,9 @@ vertrauen (normaler Build). Doom laeuft ohne Eingabe im Titel-/Demoablauf, damit
 Mit --package/--key wird stattdessen ein lokal mit einem Testschluessel signiertes Paket verwendet (ISO mit
 -p:ZehOSPackageKeyPath=<Test-public.b64>), optional mit --aot-file. --aot on schaltet vor dem Start "wasmaot on" und
 bricht ab, wenn die App nicht unter AOT startet. --start-keys tippt nach dem ersten Bild Tasten (ClassiCube: ret
-startet Singleplayer aus dem Launcher). Jeder der --runs Laeufe bekommt eine frische Platte.
+startet Singleplayer aus dem Launcher). --background busy startet vorher eine rechnende Hintergrundaufgabe
+(tasks start busy; Beleg nur als Foto, die Shell meldet das nicht seriell). Jeder der --runs Laeufe bekommt eine
+frische Platte.
 Ausgabe: die seriellen Zeilen "Bildzeit ..." und "Anteile ..." je 60-s-Fenster und eine Zusammenfassung aus dem
 letzten Fenster jedes Laufs (das erste enthaelt Start, Launcher und Laden). Bilder/Protokolle bleiben unter
 .tools/frametimes/. Vorhandene VM-Images werden nicht verwendet. Linux-Aufrufe fuer AOT-Plan Etappe F stehen in
@@ -50,6 +52,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--move", action="store_true",
                         help="waehrend der Messung abwechselnd w/a/s/d halten (bewegte Kamera, ClassiCube)")
+    parser.add_argument("--background", choices=["busy"],
+                        help="vor dem App-Start eine rechnende Hintergrundaufgabe starten (tasks start busy, E5-I)")
     parser.add_argument("-m", "--memory",
                         help="Gastspeicher fuer QEMU -m (Standard: 1G fuer classicube, sonst 512M wie die Gasttests)")
     args = parser.parse_args(argv)
@@ -105,6 +109,12 @@ def seed(args: argparse.Namespace, work: Path) -> Path:
     return work / "seed"
 
 
+def shell_setup(args: argparse.Namespace) -> list[str]:
+    """Shellbefehle vor dem App-Start: Messung an, wahlweise AOT und rechnende Hintergrundlast."""
+    return ["frametimes on", *(["wasmaot on"] if args.aot == "on" else []),
+            *([f"tasks start {args.background}"] if args.background else [])]
+
+
 def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
     work.mkdir(exist_ok=True)
     tools.create_disk(seed_dir, work / "data.qcow2")
@@ -115,7 +125,10 @@ def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
         guest.wait("Desktop ist bereit", 180)
         guest.connect()
         guest.login(first=True)
-        guest.shell("frametimes on", *(["wasmaot on"] if args.aot == "on" else []))
+        guest.shell(*shell_setup(args))
+        # Die Shell meldet "Aufgabe <n> gestartet." nur auf dem Bildschirm, nicht seriell: das Foto ist der Beleg.
+        if args.background:
+            guest.shot("hintergrund")
         guest.pkg(f"install-local /data/pkgs/{args.id}/{args.version}", f"{args.id} {args.version} installiert.")
         guest.desktop()
         mark = guest.mark()
