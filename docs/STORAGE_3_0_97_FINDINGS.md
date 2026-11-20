@@ -128,3 +128,35 @@ Zwei Objekte für dasselbe Inode könnten einander mit veralteten Werten übersc
 [PR #211](https://github.com/peterzw98/ProjektZehOS/pull/211) setzt `FileService.MaximumExt2DirectoryEntries` auf **8189 direkte Kinder** je beschreibbarem ext2-Verzeichnis. Cosmos `ParseDirectory` betrachtet höchstens 8192 Records einschließlich `.` und `..`; der verbleibende Platz ist nötig, weil Rename zunächst den neuen Namen anlegt. Lauf 9 meldete bei 8190 Kindern eine erfolgreiche Umbenennung, nach der Cosmos in derselben Sitzung weder alten noch neuen Namen sah, obwohl `debugfs` den korrekten Platteneintrag zeigte.
 
 Versteckte und temporäre Einträge zählen mit. Die Migration berücksichtigt auch erzeugte Zielverzeichnisse und Marker-/Journalplatz vor dem Zielschreiben. Direkte interne `System.IO`-Schreibzugriffe sind von der FileService-Prüfung nicht vollständig erfasst. Die Grenze ist weder eine ext2-Formatgrenze noch ein Schutz vor dem `RemoveEntry`-Fehler oder Speichererschöpfung; fremd überfüllte oder beschädigte Verzeichnisse werden nicht repariert. Die Begründung ist im [Entwurf zur Verzeichnisgrenze](superpowers/specs/2026-11-17-ext2-directory-limit.md) beschrieben. Der Hostnachweis an der Produktgrenze und der kleine Gasttest mit Testgrenze 2 ersetzen keinen Gastgrenztest mit 8189/8190 Kindern; ein solcher Nachweis nach #211 liegt diesem Nachtrag noch nicht vor.
+
+## E5-H: Wiederholung auf dem SMP-Cosmos-Stand 3.0.97-zehos.6-smp.3 (19. November 2026)
+
+Paket E5-H (#384), Stand `task/mc-e5-smp` (Kopf `446b4246`), Cosmos-Commit `5f367e3d`, Version `3.0.97-zehos.6-smp.3`, selbst gebaut mit `scripts/build-cosmos.sh` (SDK 10.0.404).
+Rechner: Intel Core Ultra 9 185H (22 logische CPUs), Linux 7.2, QEMU 10.2.2 (Cosmos-Werkzeug), KVM, Gast mit 512 MiB (Standard der Skripte).
+CPU-Zahl über `ZEHOS_QEMU_SMP=1` beziehungsweise `=4`; das Gastprotokoll zeigte 1 beziehungsweise 4 ACPI-CPUs. Beide Konfigurationen liefen parallel auf demselben Rechner, daher sind
+Laufzeiten nur grob vergleichbar. Alle Läufe nutzten neue Arbeitsordner und neu angelegte Images; vorhandene Images wurden nicht berührt.
+
+| Lauf | 1 CPU | 4 CPUs |
+| --- | --- | --- |
+| `test-storage-ext2-guest.py` (Probe-ISO) | lauf1 20/20 PASS, lauf2 9/9 PASS, Image bitgleich, `e2fsck -fn` Exit 0; 9 s | identisch (20/20, 9/9, Exit 0); 10 s |
+| `test-storage-data-disk.py` (32/64/128 GiB, Proben A–E, G1/G2) | alle bestanden; 149 s | alle bestanden; 149 s |
+| `test-storage-ext2-root.py --size 2` (E4.0 Lauf 1, enthält Sperre #247 und Mehrleser-Stress j) | **23 PASS, 1 FAIL (`l2`)**; 1635 s; `e2fsck -fn` des Root-Images danach Exit 0 | **23 PASS, 1 FAIL (`l2`)**; 1658 s; `e2fsck -fn` Exit 0 |
+| Stress j (60 s, drei Threads) | angelegt 1617, umbenannt/gelöscht 1407, gelesen 4282, 914 Dateien gleich, 0 Fehler | angelegt 1549, umbenannt/gelöscht 1259, gelesen 3517, 920 Dateien gleich, 0 Fehler |
+
+**Abweichung (blockiert nach Abnahme von #384 den PR nach `master`):** Schritt `l2` (Ersetzen einer Datei bei vollem Datenträger) meldet bei beiden CPU-Zahlen
+„Ersetzen bei vollem Datentraeger gelang“; die Spezifikation verlangt einen Fehler mit unverändertem Original. Der Lauf endete deshalb als No-Go (Exit 1); die Läufe 2–5 des Skripts
+wurden nicht ausgeführt. Der Fehler ist bei 1 und 4 CPUs gleich und damit kein SMP-Effekt; ein Vergleichslauf auf dem Stand 3.0.97 ohne SMP wurde nicht gemacht, ob `l2` dort bestand, ist offen
+(frühere Dokumentation nennt für Lauf 1 nur einen Abbruch in Schritt e, nicht den Schritt `l2`). Ursache nicht untersucht.
+
+**Nicht geprüft:** Läufe 2–5 und der Hochgruppenlauf (32/128 GiB) von `test-storage-ext2-root.py`; Gegenprobe von `test-storage-data-disk.py` mit `--legacy-image`;
+`test-storage-filesystems.py` ist ein reiner Host-Metadatenleser ohne Gastlauf und wurde nicht eigens ausgeführt (nur dessen Hosttest gehört zur Testsuite); 8 CPUs; VMware und echte Hardware.
+Hosttests (`dotnet test`) wurden für diesen reinen Dokumentationsbeitrag nicht erneut ausgeführt.
+
+### E5-H Nachtrag: Befunde zu `l2` und zum 512-MiB-Gast (20. November 2026)
+
+Quelle: Meldung des Koordinators (Agent, nicht selbst nachgeprüft); die Läufe unten wurden von anderen Agenten ausgeführt, ihre Rohdaten liegen nicht in diesem Branch.
+
+- **`l2` war echter Datenverlust, kein Skriptfehler:** Beim Ersetzen einer Datei bei vollem Datenträger blieb das Original auf Länge 0 zurück. Behoben in [PR #531](https://github.com/peterzw98/ProjektZehOS/pull/531) (Länge der Temp-Datei prüfen vor dem Rename). Beleg laut Meldung: ohne Fix rot, mit Fix Gastlauf `l2` PASS. Der oben berichtete Lauf (23 PASS, 1 FAIL) gilt damit für den Stand ohne diesen Fix.
+- **512-MiB-Gast instabil:** E4.0 stürzt dort nichtdeterministisch ab (Page Fault, CR2 `0x8`/`0x10`, in `StepG` beziehungsweise `StepI2`/`Ext2Formatter.Format`). Ursache laut Meldung eine Cosmos-Allokation, die `null` statt `OutOfMemoryException` liefert (vgl. Abschnitt zu Inode-Cache und GC-Fragmentierung). Diese Ursache wurde im Branch `cosmos` nicht geprüft.
+- **Mit `--memory 1G`:** E4.0 Lauf 1 PASS=29 FAIL=0, `e2fsck -fn` Exit 0 für Root und Zusatzplatte. Die Angabe nennt keine CPU-Zahl; ob 1 und 4 CPUs gleich verlaufen, ist hier nicht belegt.
+- **Offen:** E4.0-Läufe 2–5 liefen zum Zeitpunkt der Meldung noch; `test-storage-ext2-root.py` ist damit nur mit 1 GiB belegt, nicht mit dem Standardwert 512 MiB. Ein sicherer Mindestspeicher ist daraus nicht abgeleitet. Weiter nicht geprüft: VMware, echte Hardware.
