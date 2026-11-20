@@ -1,6 +1,6 @@
 # ext2-alloc-cache
 
-- **Commit:** Squash des PRs gegen `cosmos`
+- **Commit:** Squash von #558 (`99c1afb0`)
 - **Dateien:** `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Superblock.cs` (`TryAllocateBlock`, `FreeBlock`, `UpdateGroupDesc`, `GetBlockPointer`, `Flush`, `Drop`, `TryCreate`, neue Helfer `LoadBlockBitmap`, `StoreBlockBitmap`, `Begin/EndAllocationBatch`, `LoadPointerBlock`, `StorePointerBlock`, `RevertNewDataBlock`, `TryClaimWrite`, `ReleaseWriteClaim`), `Ext2FileOperations.cs` (`Write`), `FileSystem/VfsManager.cs` (`TryMount`); Tests `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/Ext2AllocCacheTests.cs`
 - **Grund:** Je neu belegtem 4-KiB-Block las und schrieb `TryAllocateBlock` die Blockbitmap, die ganze Gruppendeskriptortabelle und den Superblock und schrieb den Block mit Nullen voll, den `Write` danach ohnehin überschreibt; Datenblöcke hinter einem Indirektblock wurden doppelt genullt, und der Zeigerblock wurde je Block gelesen und geschrieben. Gemessen (#542, Probe `probe/storage-rate`): ext2 schreiben ~5 MB/s bei 38–74 MB/s AHCI roh; NUnit-Zählung vor dem Patch 1774 Geräteschreibzugriffe für 1 MiB (~6,9 je Datenblock)
 - **Änderung:**

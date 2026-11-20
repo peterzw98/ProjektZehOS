@@ -1,6 +1,6 @@
 # ahci-large-commands
 
-- **Commit:** Squash des PRs gegen `cosmos`
+- **Commit:** Squash von #562 (`5118a2b1`)
 - **Dateien:** `src/Cosmos.Kernel.Drivers/Pci/Storage/Ahci/AhciPort.cs` (`MaxSectorsPerCommand`, Bounce-Puffer im Konstruktor, `ReadBlock`, `WriteBlock`, Warteschleife in `IssueCommand`); Test `tests/Kernels/Cosmos.Kernel.Tests.Storage/Kernel.cs` (`Device_CommandSizes_OddLba`), `tests/profiles.json` (Kommentar), `docs/articles/dev/testing.md` (Testzahlen)
 - **Grund:** Jeder SATA-Befehl bewegte höchstens eine Seite (8 Sektoren, 4 KiB) über einen Bounce-Puffer von einer Seite, und das Warten auf PxCI pausierte je Abfrage mit `DeviceBinding.Delay(10)`, auf x64 zehn Lesezugriffe auf Port 0x80, unter KVM je ein VM-Exit. Je 4 KiB kostete das einen ganzen Befehlsumlauf (ZehOS #542, Plan Paket A)
 - **Änderung:**
