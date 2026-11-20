@@ -204,7 +204,9 @@ class AbortWindowTests(unittest.TestCase):
         ctx.qemu_img = mock.Mock()
         process = mock.Mock()
         clock = iter([100.0, 100.0 + real_gap])  # Marker, Kill
-        with mock.patch.object(root, 'boot', return_value=(process, directory)),                 mock.patch.object(root.tools, 'wait_serial'), mock.patch.object(root.time, 'sleep'),                 mock.patch.object(root.time, 'monotonic', lambda: next(clock)):
+        with (mock.patch.object(root, 'boot', return_value=(process, directory)),
+              mock.patch.object(root.tools, 'wait_serial'), mock.patch.object(root.time, 'sleep'),
+              mock.patch.object(root.time, 'monotonic', lambda: next(clock))):
             root.abort_run(ctx, directory / 'root.qcow2', delay)
         return ctx
 
@@ -214,8 +216,11 @@ class AbortWindowTests(unittest.TestCase):
         self.assertFalse(any('verfehlt' in line for line in ctx.report))
 
     def test_missed_window_is_hint_not_nogo(self):
-        ctx = self.measure(0.3, 3.0)
-        self.assertTrue(any('Abbruchfenster verfehlt' in line for line in ctx.report))
+        with mock.patch.object(root.Context, 'note', autospec=True, side_effect=root.Context.note) as note:
+            ctx = self.measure(0.3, 3.0)
+        hints = [c for c in note.call_args_list if 'Abbruchfenster verfehlt' in c.args[1]]
+        self.assertEqual(len(hints), 1)
+        self.assertNotIn(False, hints[0].args[2:] + tuple(hints[0].kwargs.values()))  # Hinweis setzt go nicht
 
 
 class RunToDoneTests(unittest.TestCase):
@@ -227,7 +232,9 @@ class RunToDoneTests(unittest.TestCase):
         ctx = object.__new__(root.Context)
         ctx.work, ctx.report, ctx.go, ctx.echo = directory, [], True, False
         ctx.args = mock.Mock(timeout=1)
-        with mock.patch.object(root, 'boot', return_value=(process, directory)),                 mock.patch.object(root, 'watch_space'),                 mock.patch.object(root.tools, 'wait_serial', side_effect=RuntimeError('boom')):
+        with (mock.patch.object(root, 'boot', return_value=(process, directory)),
+              mock.patch.object(root, 'watch_space'),
+              mock.patch.object(root.tools, 'wait_serial', side_effect=RuntimeError('boom'))):
             with self.assertRaises(RuntimeError):
                 root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2')
         self.assertIsNotNone(process.poll())
