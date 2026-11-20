@@ -192,7 +192,7 @@ Die Dateisystemetappe wurde vorgezogen und mit Cosmos 3.0.94 in QEMU geprüft. D
 
 **Stand am 18. November 2026 (ext2-Root, Storage-Etappe 4):** Diese Arbeiten gehen über die abgehakten Punkte 7.1 bis 7.6 hinaus. Grundlage ist die E4.0-Qualifikation mit der Probe `-p:ZehOSStorageRootProbe=true` unter QEMU/KVM (2 GiB Root).
 
-Gemergt sind drei Plugs für Cosmos-3.0.97-Fehler:
+**Historisch** (Stand 18. November 2026; die Plugs sind seit E2-Z1 entfernt, siehe den Absatz „ext2-Fehler in der Cosmos-Quelle behoben“ unten): Gemergt waren drei Plugs für Cosmos-3.0.97-Fehler:
 - #225: `RemoveEntry`, keine Verzeichniseinträge über Blockgrenzen. E4.0-Lauf 10 `e2fsck -fn` Exit 0, ohne Plug Exit 12. #230 belegt die Logik zusätzlich an einem echten ext2-Image.
 - #226: `Rmdir` gibt alle Verzeichnisblöcke frei. Lauf 9 mit 8190 Einträgen: `e2fsck` Exit 0.
 - #229: Null-Abwehr für große Puffer. Nur auf dem Host belegt.
@@ -202,11 +202,13 @@ Dokumentiert sind die Inode-Cache-Grenze von etwa 17.500 verschiedenen Dateien j
 Das E4.0-Ergebnis auf 2 GiB lautet „Go mit Bedingungen“; alle 27 Schritte bestehen. Die Bedingungen:
 - **Speicher-Sperre #247 (gemergt, erfüllt):** Ohne Sperre lasen parallele Threads unveränderte Dateien falsch (etwa 1 von 30.000 Lesungen), und `e2fsck` meldete Exit 4. Mit Sperre: 182.592 Lesungen ohne Fehler, `e2fsck` Exit 0.
 - **Thread-Start-Schutz #241 und Worker-Pool #246 (beide gemergt, erfüllt):** Unter Speicherdruck kommt eine Fehlermeldung statt eines Page Faults.
-- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien:** gemergt mit #259 (Grenze dokumentiert in #262/#263).
+- **Truncate-Plug für Zeigerblöcke beim Kürzen oder Löschen großer Dateien (historisch, inzwischen Cosmos-Patch `ext2-truncate`):** gemergt mit #259 (Grenze dokumentiert in #262/#263).
 
 Der Editor und `>>` verändern Nicht-UTF-8-Dateien nicht mehr (#243, gemergt). Geprüft ist das im Gast auf FAT; ext2 ist nicht im Gast geprüft.
 
 VMware ist für alle Punkte offen.
+
+**Stand am 20. November 2026 (ext2-Fehler in der Cosmos-Quelle behoben, Etappe E2 Multicore):** Die ZehOS-Plugs für ext2 (#225, #226, #229/#230, Truncate #259) sind entfernt (#462, E2-Z1); `grep -rn "\[Plug" ProjektZeh/Storage` liefert keine Treffer. Die Korrekturen liegen im Branch `cosmos` und sind im Pin `3.0.97-zehos.6` (#528) enthalten. Kurznamen in `PATCHES.md`: `ext2-remove-entry`, `ext2-rmdir`, `ext2-truncate`, `ext2-free-inode`, `ext2-formatter`, `ext2-addentry-guard`, `ext2-directory-limit` (Produktgrenze 65.535 Einträge je Verzeichnis, #463), `ext2-inode-cache` (Grenze etwa 75.000 Inodes je Mount, rechnerisch; im Gast nur bis 20.000 geprüft) und `ext2-readonly` (Lesemodus und Feature-Prüfung, #529; Fehler beim gekürzten Schreiben der Temp-Datei in #531). Gastbelege (QEMU/KVM): E4.0 auf dem Integrationsstand (#529 und #531) mit `--memory 1G` und 1 vCPU: Läufe 1 bis 5 bestanden, Lauf 4 (Abnahme #376) „Image unverändert“ in allen vier Abbruchzeitpunkten, kleine Probe mit unverändertem Image-SHA; Einzelheiten in [COSMOS_SUPPORT.md](docs/COSMOS_SUPPORT.md). **Offen, nicht als erfüllt gewertet:** 512 MiB (die E4.0-Probe scheitert dort an der Cosmos-Allokation; auch die Wiederholung auf `smp.10` besteht nur mit 1 GiB, siehe #553 und [docs/STORAGE_3_0_97_FINDINGS.md](docs/STORAGE_3_0_97_FINDINGS.md)), Hochgruppenläufe 6 bis 8 (32/128 GiB), VMware und echte Hardware. Kein Stromausfall-Beleg.
 
 **Version 0.6 (Storage-Abnahme):** 0.6 steht für einen fertigen Speicherteil: GPT-Installer, Root-Profil mit ext2, Migration vom Legacy-Bestand, Updates und Energieaktionen im Root-Profil sowie die Gesamtmatrix 32/64/128 GiB unter QEMU. Die Abnahme macht Peter selbst unter QEMU/WHPX auf seinem Rechner, mit den zutreffenden Fällen aus dem Bericht als Kriterien; danach folgt das Release v0.6.0. Den Minor hebt ein eigener PR (`ZehOSVersionPrefix` 0.6, `ZehOSPatchBase` 0). VMware und der volle Datenträger liegen ausdrücklich außerhalb von 0.6 (Entscheidung Peter, 18. November 2026). Ergebnisse je Fall, offene Punkte und Grenzen: [Storage-Abnahme 0.6](docs/STORAGE_0_6_ABNAHME.md).
 
