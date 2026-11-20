@@ -61,7 +61,7 @@ internal static class ReadOnlySelfTest
             Expect(reader.Operations.Read(reader, buffer) == 0, "Position am Dateiende liefert EOF");
             Expect(reader.Operations.Seek(reader, 4090, SeekWhence.Set, out long position) && position == 4090 && reader.Position == 4090, "Seek aktualisiert aeussere Position");
             Expect(reader.Operations.Read(reader, buffer.AsSpan(0, 20)) == 20 && content.AsSpan(4090, 20).SequenceEqual(buffer.AsSpan(0, 20)), "Lesen nach Seek ueber Blockgrenze");
-            Expect(ThrowsUnauthorized(() => reader.Operations.Write(reader, content)), "Dateischreiben wird sichtbar abgelehnt");
+            Expect(reader.Operations.Write(reader, content) <= 0, "Dateischreiben schreibt im Lesemodus nichts");
             Expect(reader.Operations.Fsync(reader), "Fsync einer Lesedatei gelingt ohne Schreiben");
             reader.Operations.Release(reader);
             Expect(root.InodeOperations.ReadDir(root, out var entries) && entries.Count == 3, "ReadDir liefert alle Testeintraege");

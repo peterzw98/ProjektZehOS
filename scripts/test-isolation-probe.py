@@ -24,6 +24,8 @@ spec.loader.exec_module(tools)
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
+# Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
+REAP_TOLERANCE_KIB = 4 * 1024
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
 # Erst wenn die Hauptschleife parkt, rechnet auf CPU 0 nur noch der Worker; nur dort kommt der NMI an (#515).
 NMI_PARKED = "ISOLATION_PROBE nmi main parked"
@@ -49,6 +51,7 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} nicht isoliert")
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
+    missing += evaluate_reap(log)
     if log.count("WASM CPU-Ausnahme im App-Code") < 2:
         missing.append("Hauptschleife hat nicht beide Laeufe beendet")
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
@@ -60,6 +63,31 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append("Gegenprobe hielt nicht an")
     if nmi:
         missing += evaluate_nmi(log)
+    return missing
+
+
+def evaluate_reap(log: str) -> list[str]:
+    """E6-G (#433): Jede Isolation raeumt genau ihren Worker ab und kostet keinen 8-MiB-Stack.
+
+    Massgeblich ist die Zeile der Hauptschleife zu diesem Vektor ("Thread und Stack frei" nur bei Reaped); die Zahl
+    released der Probe zaehlt systemweit (auch andere Threadenden) und ist nur ein Zusatz. Der freie Speicher wird je Lauf
+    gegen den Wert vor der Isolation geprueft, nicht nur der zweite gegen den ersten (Review laser #576, Befund 6).
+    """
+    memory = {m.group(1): (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+              for m in re.finditer(r"ISOLATION_PROBE memory kind=(\w+) released=(\d+) free_before_kib=(\d+) free_kib=(\d+)", log)}
+    missing = []
+    for kind, vector in VECTORS.items():
+        main = re.search(rf"WASM CPU-Ausnahme im App-Code \(Vektor {vector},[^\r\n]*", log)
+        if main and "Thread und Stack frei" not in main.group(0):
+            missing.append(f"{kind}: Worker nicht abgeraeumt")
+        if kind not in memory:
+            missing.append(f"{kind} ohne Speicherbeleg")
+            continue
+        released, before, after = memory[kind]
+        if released < 1:
+            missing.append(f"{kind}: kein Stack freigegeben")
+        if after < before - REAP_TOLERANCE_KIB:
+            missing.append(f"{kind}: freier Speicher {after} KiB statt etwa {before} KiB (Stack nicht frei?)")
     return missing
 
 

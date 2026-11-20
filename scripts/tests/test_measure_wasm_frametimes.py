@@ -56,6 +56,16 @@ class ArgumentTests(unittest.TestCase):
         self.assertFalse(measure.parse_args(['--iso', 'x.iso']).move)
         self.assertTrue(measure.parse_args(['--iso', 'x.iso', '--move']).move)
 
+    def test_shell_setup_starts_background_load_only_when_asked(self):
+        plain = measure.parse_args(['--iso', 'x.iso'])
+        self.assertEqual(measure.shell_setup(plain), ['frametimes on'])
+        busy = measure.parse_args(['--iso', 'x.iso', '--background', 'busy', '--aot', 'on'])
+        self.assertEqual(measure.shell_setup(busy), ['frametimes on', 'wasmaot on', 'tasks start busy'])
+
+    def test_background_accepts_only_busy(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            measure.parse_args(['--iso', 'x.iso', '--background', 'wait'])
+
 
 if __name__ == '__main__':
     unittest.main()

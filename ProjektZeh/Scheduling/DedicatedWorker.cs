@@ -15,7 +15,7 @@ internal sealed class DedicatedWorker(Action<string>? log = null, Func<ThreadSta
     private readonly object gate = new();
     private readonly Queue<Action> work = new();
     private readonly Func<ThreadStart, ResultObject<Thread>> startThread =
-        startThread ?? (body => ThreadStarter.TryStart(body, background: true));
+        startThread ?? (body => ThreadStarter.TryStart(body, background: true, placement: ThreadPlacement.Workers));
     private Thread? thread;
 
     public ResultErr Start()
