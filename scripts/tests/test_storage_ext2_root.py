@@ -223,6 +223,17 @@ class AbortWindowTests(unittest.TestCase):
         self.assertNotIn(False, hints[0].args[2:] + tuple(hints[0].kwargs.values()))  # Hinweis setzt go nicht
 
 
+class StepTimeTests(unittest.TestCase):
+    def test_marks_get_first_seen_time_and_durations(self):
+        seen = {}
+        root.record_steps("STORAGE_ROOT a PASS\n", seen, 15.0)
+        root.record_steps("STORAGE_ROOT a PASS\nSTORAGE_ROOT b FAIL\nSTORAGE_ROOT DONE\n", seen, 40.0)
+        self.assertEqual(seen, {'a': 15.0, 'b': 40.0})  # DONE ist kein Schritt, a bleibt bei 15
+        durations = root.step_durations(seen, 10.0)
+        self.assertEqual(durations, [('a', 5.0), ('b', 25.0)])
+        self.assertEqual(root.format_steps(durations), 'a 5 s, b 25 s')
+
+
 class RunToDoneTests(unittest.TestCase):
     def test_unexpected_exception_kills_qemu(self):
         directory = Path(tempfile.mkdtemp())
