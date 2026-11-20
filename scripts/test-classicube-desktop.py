@@ -12,6 +12,9 @@ mit freiem Speicher. Ohne --storage muss das Speichern scheitern, ohne das Spiel
 Paket den App-Speicher /save (Etappe 13.4): die Welt wird mit einem zusaetzlich gesetzten Block gespeichert, im
 zweiten Start ueber "Load level" gefunden und geladen; danach liest das Skript options.txt (Sichtweite per F
 umgeschaltet) und die Welt aus der Testplatte. --disk-full fuellt die Platte vorab, Speichern muss dann scheitern.
+--unmount (mit --storage) haengt /data per "disk unmount" aus, waehrend die App laeuft: Speichern muss mit Meldung
+scheitern (App und Desktop bleiben bedienbar), nach "disk mount sata0" wieder gelingen. Danach wird /data vor einem
+App-Start ausgehaengt: Start oder Speichern muessen sauber scheitern, der Desktop bleibt bedienbar.
 """
 import argparse
 import gzip
@@ -110,9 +113,12 @@ def main():
     parser.add_argument("--raster-compare", action="store_true")
     parser.add_argument("--storage", action="store_true", help="Paket mit capability=storage: Welt speichern und laden")
     parser.add_argument("--disk-full", action="store_true", help="mit --storage: fast volle Datenplatte, Speichern scheitert")
+    parser.add_argument("--unmount", action="store_true", help="mit --storage: /data waehrend und vor der App aushaengen")
     args = parser.parse_args()
-    if args.disk_full and not args.storage:
-        parser.error("--disk-full braucht --storage")
+    if (args.disk_full or args.unmount) and not args.storage:
+        parser.error("--disk-full und --unmount brauchen --storage")
+    if args.disk_full and args.unmount:
+        parser.error("--disk-full und --unmount schliessen sich aus")
     work = ROOT / ".tools/classicube-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
     files = [str(p.resolve()) + "=" + p.relative_to(args.package).as_posix()
@@ -221,6 +227,16 @@ def main():
 
     launches = [0, 1, 2]
 
+    def serial_since(mark):
+        return (work / "serial.log").read_text(encoding="utf-8", errors="replace")[mark:]
+
+    def storage_change(command):
+        # Aus dem Pausenmenue per Esc in die Textshell (der Zeiger ist dort schon frei); disk meldet seriell
+        # "Laufwerksaenderung abgeschlossen." nur bei Erfolg.
+        mark = guest.mark()
+        guest.shell(command)
+        guest.wait("Laufwerksaenderung abgeschlossen.", 60, mark)
+
     def button(name):
         for down in (True, False):
             guest.qmp.command("input-send-event", {"events":[{"type":"btn", "data":{"button":name,"down":down}}]})
@@ -283,6 +299,7 @@ def main():
         guest.pkg("install-local /data/pkgs/classicube/1.0.0", "classicube 1.0.0 installiert.")
         guest.desktop()
         memory_mark = guest.mark()
+        app_mark = memory_mark
         start()
         state = world("welt")
         # Measure_ZehOS.c meldet alle 5 s Bildrate und Anteile im Chat; zwei Berichtsfenster abwarten.
@@ -335,6 +352,38 @@ def main():
         guest.qmp.tap("esc")
         time.sleep(1)
         save_level(0, args.storage and not args.disk_full)
+        if args.unmount:
+            # "disk unmount" meldet den Benutzer ab (Konten liegen auf /data); die laufende App endet dabei sauber.
+            mark = guest.mark()
+            storage_change("disk unmount")
+            # Die App endet erst, wenn der Desktop wieder laeuft (gesperrt), nicht schon in der Textshell.
+            guest.desktop()
+            guest.wait_finished("classicube", mark)
+            assert "Benutzer abgemeldet." in serial_since(mark), "Aushaengen meldet den Benutzer nicht ab"
+            time.sleep(2)
+            capture("daten-ausgehaengt-gesperrt")
+            # Meldung statt Absturz; die Textshell bleibt per Esc erreichbar und bedienbar (disk list).
+            guest.shell("disk list")
+            time.sleep(2)
+            capture("daten-ausgehaengt-textshell")
+            # Ohne Konten (liegen auf /data) gibt es keine Administratorrechte, auch "disk mount" ist abgelehnt:
+            # den Weg zurueck bietet nur der Neustart ("reboot" braucht keine Rechte).
+            mark = guest.mark()
+            guest.qmp.line("reboot")
+            guest.wait("Desktop ist bereit", 300, mark)
+            time.sleep(1)
+            guest.search = 0
+            guest.login(first=False)
+            launches[:] = [0, 1, 2]
+            start()
+            world("nach-neustart-ohne-daten")
+            time.sleep(5)
+            fresh = view(capture("nach-neustart-ohne-daten-ruhig"))
+            guest.qmp.tap("esc")
+            time.sleep(3)
+            load_level(0, fresh)
+            guest.qmp.tap("esc")
+            time.sleep(3)
         for run in range(3):
             if run:
                 start()
@@ -363,7 +412,8 @@ def main():
             capture(f"schliessen-{run}")
             guest.wait_finished("classicube", mark)
         free = guest.free_memory(memory_mark)
-        assert len(free) == 3, f"Drei aufgeraeumte Laeufe erwartet: {free}"
+        runs = 4 if args.unmount else 3
+        assert len(free) == runs, f"{runs} aufgeraeumte Laeufe erwartet: {free}"
         assert free[0]-free[-1] <= 8*1024, f"Speicherverlust ueber Starts: {free} KiB"
         saving = "Speichern ohne /save scheitert ohne Abbruch"
         if args.storage and not args.disk_full:
@@ -412,18 +462,23 @@ def main():
             assert world_file is None, "Auf voller Platte darf maps/zehtest.cw nicht entstehen"
             saving = "Speichern auf voller Platte scheitert ohne Abbruch (/save aktiv, keine Welt auf der Platte)"
         elif args.storage:
+            # Mit --unmount endet der Lauf mit der F-Umschaltung durch das Abmelden; options.txt entsteht erst beim Beenden.
             options = read(folder + "/options.txt")
-            assert options and b"viewdist=" in options, f"options.txt ohne viewdist: {options!r}"
+            if not args.unmount:
+                assert options and b"viewdist=" in options, f"options.txt ohne viewdist: {options!r}"
             assert world_file, "maps/zehtest.cw fehlt"
             nbt = gzip.decompress(world_file)
             # NBT: Compound (10), Namenslaenge (u16, big endian), Name der Wurzel.
             assert nbt[0] == 10 and nbt[3:3 + struct.unpack(">H", nbt[1:3])[0]] == b"ClassicWorld", \
                 f"maps/zehtest.cw ist keine ClassicWorld: {nbt[:16]!r}"
-            viewdist = next(line for line in options.splitlines() if line.startswith(b"viewdist=")).decode()
+            viewdist = next((l for l in (options or b"").splitlines() if l.startswith(b"viewdist=")), b"-").decode()
             print(f"Platte: options.txt mit {viewdist!r}, maps/zehtest.cw {len(world_file)} Bytes "
                   f"({len(nbt)} Bytes ClassicWorld-NBT)", flush=True)
             saving = ("Welt speichern, nach App-Neustart und nach VM-Neustart ueber Load level laden, "
                       "options.txt und Welt auf der Platte")
+            if args.unmount:
+                saving = ("Welt speichern, disk unmount bei laufender App (abgemeldet, App beendet, gesperrte Anzeige, "
+                          "Textshell bedienbar), Neustart, Welt laden, " + saving)
         print("CLASSICUBE_GUEST PASS: lokal installieren, Start aus Menue, Welt, W-Bewegung, Mausblick, "
               f"Block entfernen/setzen, {saving}, 2x Schliessen ueber X, 1x Quit game", flush=True)
         print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)

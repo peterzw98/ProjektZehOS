@@ -52,14 +52,18 @@ def main():
     guest = tools.Guest(work, port, "", time.monotonic())
     step = 0
 
-    def capture(name):
-        nonlocal step
-        step += 1
+    def grab():
         ppm = work / "screen.ppm"
         guest.qmp.command("screendump", {"filename": str(ppm)})
         header, size, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
         assert header == b"P6" and maximum == b"255", "Unerwartetes QEMU-Bildformat"
         guest.size = tuple(map(int, size.split()))
+        return pixels
+
+    def capture(name):
+        nonlocal step
+        step += 1
+        pixels = grab()
         width, height = guest.size
         raw = b"".join(b"\0" + pixels[row * width * 3:(row + 1) * width * 3] for row in range(height))
 
@@ -107,6 +111,34 @@ def main():
             {"type":"abs", "data":{"axis":"y", "value":int(y*32767/(height-1))}}]})
         time.sleep(.15)
 
+    # Statuszeile des Standardfensters: "Done" steht ab 33,622 in den ersten 32 Pixeln (vier Zeichen).
+    def region(pixels, left, top, width, height):
+        stride = guest.size[0]
+        return b"".join(pixels[(row*stride+left)*3:(row*stride+left+width)*3] for row in range(top, top+height))
+
+    done = None
+
+    def settled(name):
+        # NetSurf ueberschreibt die Adresszeile, sobald neuer Inhalt kommt (gui_window_set_url), auch mitten in der
+        # Eingabe (#572). Deshalb erst tippen, wenn das Laden zu Ende ist. Ein ruhiges Bild allein reicht nicht:
+        # Waehrend des TLS-Aufbaus blockiert NetSurf und zeichnet nicht, das Bild steht mit "Loading". Fertig ist
+        # die Seite erst, wenn die Statuszeile wieder "Done" zeigt und das Fensterbild (798x519 ab 33,120) eine
+        # Sekunde lang unveraendert bleibt. Grenze: Die Statuszeile zeigt auch die URL eines Links unter dem
+        # Mauszeiger; steht der Zeiger beim Warten auf einem Link, fehlt "Done" und der Aufruf scheitert nach 30 s.
+        deadline = time.monotonic() + 30
+        last = grab()
+        while True:
+            time.sleep(1)
+            current = grab()
+            if (region(current, 33, 120, 798, 519) == region(last, 33, 120, 798, 519)
+                    and (done is None or region(current, 33, 622, 32, 16) == done)):
+                capture(name)
+                return current
+            if time.monotonic() > deadline:
+                capture(name)
+                raise AssertionError(f"{name}: NetSurf laedt nach 30 s noch (Statuszeile nicht Done oder Bild aendert sich)")
+            last = current
+
     try:
         guest.wait("Desktop ist bereit", 180)
         guest.connect()
@@ -119,6 +151,9 @@ def main():
         memory_mark = guest.mark()
         guest.start_app("netsurf")
         page("start", "d8ecff")
+        # Die lokale Startseite laedt ohne Netz; nach einer ruhigen Sekunde zeigt die Statuszeile "Done".
+        done = region(settled("start-fertig"), 33, 622, 32, 16)
+        assert len(set(done)) > 1, "Statuszeile ohne Text, Done-Vorlage unbrauchbar"
         click(*frame(99,209))
         page("linkziel", "d8ffd8")
         click(*frame(10,13))
@@ -207,6 +242,7 @@ def main():
         page("nach-fehler-bedienbar", "d8ecff")
 
         def address(url):
+            settled("vor-adresse")
             click(*frame(284,13))
             guest.qmp.tap("home")
             for _ in range(48):
@@ -225,7 +261,7 @@ def main():
         page("http-404", hexcolor(pages.HTTP_MISSING))
         address("https://10.0.2.2/")
         time.sleep(2)
-        capture("https-fehlerseite")
+        settled("https-fehlerseite")
         address("file:///pages/index.html")
         page("nach-http-lokal", "d8ecff")
 

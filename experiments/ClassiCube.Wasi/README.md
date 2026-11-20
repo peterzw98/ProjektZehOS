@@ -40,7 +40,10 @@ Das Skript installiert das Paket lokal in einer Wegwerfplatte und prüft: Start 
 ```powershell
 python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel whpx --storage
 python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel whpx --storage --disk-full
+python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel kvm --storage --unmount
 ```
+
+`--storage --unmount` hängt `/data` mit `disk unmount` aus, während die App läuft. Beobachtet (KVM): Der Kernel meldet den Benutzer ab (Konten liegen auf `/data`), die App endet erst, wenn der Desktop wieder erscheint (gesperrte Anzeige „Konten gesperrt“), die Textshell bleibt per Esc erreichbar, aber `disk mount` ist ohne Konten als Administrator abgelehnt; zurück führt nur `reboot`. Danach lädt *Load level* die vorher gespeicherte Welt. Ein Schreibfehler `EBUSY`/`ENOENT` bei laufender App tritt so nicht auf: das Aushängen beendet die App vorher.
 
 Mehrspieler gegen den lokalen Testserver `scripts/classic-test-server.py` (nur Standardbibliothek, Protokoll 7 ohne CPE; allein gestartet lauscht er auf `127.0.0.1:25565` und schreibt Ereignisse als JSON-Zeilen):
 
