@@ -178,9 +178,17 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
   „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Zuerst räumt sie über
   `SchedulerDiagnostics.TryReapAbandoned` (Patch `abandoned-thread-reap`) Thread und 8-MiB-Stack ab, sobald die CPU der
   Ausnahme den Stack verlassen hat (bis dahin `StillOnCpu`, die Hauptschleife versucht es in jeder Runde erneut und warnt nach
-  1000 Runden einmal). Danach gibt sie App-Speicher, Netz und Paketdateien frei und startet einen neuen Worker. Der native
-  Speicher der wasm3- bzw. WAMR-Instanz bleibt belegt (Handles im C-Rahmen auf dem Worker-Stack, Zustand unbekannt); deshalb
-  gibt es nach drei Isolationen bis zum Neustart keinen neuen Worker.
+  1000 Runden einmal). `NotAbandoned` (nach Code nicht erreichbar) behandelt sie ebenso: Der Thread könnte noch laufen, also
+  schließt sie nichts, und die Wasm-Läufe warten. Bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned` bleiben Thread
+  und Stack belegt, der Lauf wird trotzdem beendet. Danach gibt sie App-Speicher, Netz und Paketdateien frei und startet einen
+  neuen Worker. Der native Speicher der wasm3- bzw. WAMR-Instanz bleibt belegt (Handles im C-Rahmen auf dem Worker-Stack);
+  deshalb gibt es nach drei Isolationen bis zum Neustart keinen neuen Worker (Folge-Issue #582). Dass der Stack trotzdem
+  zurückgehen darf, ist am WAMR-Quelltext geprüft, nicht im Gast: Mit `THREAD_MGR=0`, `MULTI_MODULE=0` und ohne
+  `OS_ENABLE_HW_BOUND_CHECK` (kein `exec_env_tls`) hält kein globaler Zustand einen Zeiger auf den Stack. Der Zeiger
+  `stack_boundary` (`zehos_platform.c`) wird vor jedem Aufruf neu gesetzt, und die Mutexe sind leer. wasm3 legt je Lauf eine
+  eigene Umgebung an. Nach einem abgebrochenen AOT-Lauf bleibt der WAMR-Referenzzähler aber bei 1: Spätere Läufe erreichen
+  `wasm_runtime_destroy_internal` nicht mehr, und jedes `register_host` legt neue Knoten für die Hostfunktionen an (etwa 40 Byte
+  je Hostfunktion und Lauf).
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe

@@ -52,6 +52,30 @@ internal static class FaultIsolationPolicy
 }
 
 /// <summary>
+/// Ergebnis eines Abraeumversuchs, als eigener Typ ohne Cosmos fuer den Hosttest. Die ersten vier Werte entsprechen
+/// Cosmos <c>ThreadReapResult</c>; <see cref="Failed"/> steht fuer eine Ausnahme aus <c>TryReapAbandoned</c>.
+/// </summary>
+internal enum ReapOutcome
+{
+    Reaped,
+    NotFound,
+    NotAbandoned,
+    StillOnCpu,
+    Failed,
+}
+
+/// <summary>Was die Hauptschleife nach einem Abraeumversuch tut.</summary>
+internal enum ReapStep
+{
+    /// <summary>Nichts schliessen, in der naechsten Runde erneut versuchen.</summary>
+    Wait,
+    /// <summary>Wie <see cref="Wait"/>, und einmal melden, dass die Wasm-Laeufe haengen.</summary>
+    WaitAndWarn,
+    /// <summary>Versuch beenden, Laufressourcen freigeben und den Ersatzworker starten.</summary>
+    Proceed,
+}
+
+/// <summary>
 /// Aufgegebener Worker, den die Hauptschleife abraeumen will (E6-G, #433). Cosmos raeumt ihn erst ab, wenn die CPU der Ausnahme
 /// seinen Stack verlassen hat (<c>TryReapAbandoned</c> meldet bis dahin <c>StillOnCpu</c>); solange versucht die Hauptschleife
 /// es in jeder Runde erneut. Gehoert nur der Hauptschleife, deshalb ohne Sperre.
@@ -74,8 +98,19 @@ internal sealed class PendingReap
         rounds = 0;
     }
 
-    /// <summary>Zaehlt eine Runde mit StillOnCpu; true genau einmal, wenn die Warnschwelle erreicht ist.</summary>
-    public bool StillOnCpu() => ++rounds == WarnAfterRounds;
+    /// <summary>
+    /// Bewertet einen Abraeumversuch. Weiter geht es nur, wenn der Worker sicher nie wieder laeuft: <c>Reaped</c>;
+    /// <c>NotFound</c> (Anspruch schon gesetzt, und den setzt Cosmos erst fuer einen Dead-Thread, den keine CPU mehr
+    /// fuehrt; einziger Aufrufer ist die Hauptschleife); <c>Failed</c> (die Ausnahme kann erst nach diesem Anspruch kommen,
+    /// davor liest Cosmos nur). <c>NotAbandoned</c> dagegen hiesse, der Thread ist nicht als Dead aufgegeben und koennte
+    /// noch laufen; Dateien und Netz zu schliessen waere dann unsicher. Er wartet deshalb wie <c>StillOnCpu</c>, die
+    /// Wasm-Laeufe bleiben eingereiht, und nach der Schwelle kommt genau eine Warnung (Review laser #576, Befund 3).
+    /// </summary>
+    public ReapStep Next(ReapOutcome outcome)
+    {
+        if (outcome != ReapOutcome.StillOnCpu && outcome != ReapOutcome.NotAbandoned) return ReapStep.Proceed;
+        return ++rounds == WarnAfterRounds ? ReapStep.WaitAndWarn : ReapStep.Wait;
+    }
 
     /// <summary>Beendet den Versuch und liefert die Id.</summary>
     public int Finish()

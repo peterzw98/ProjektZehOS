@@ -203,21 +203,22 @@ internal static unsafe partial class WasmRuntime
         // Erst abraeumen, dann Laufressourcen freigeben: Solange StillOnCpu gilt, schreibt die CPU der Ausnahme noch ihren
         // Bericht ueber den Stack des Workers (Panic.PrintStackTrace). Abgeraeumt ist er sicher tot und von keiner CPU mehr
         // benutzt; das deckt Stack und Laufressourcen ueber denselben Weg ab.
-        ThreadReapResult reap = SchedulerDiagnostics.TryReapAbandoned((uint)pendingReap.ThreadId);
-        if (reap == ThreadReapResult.StillOnCpu)
+        ProjektZeh.Runtime.ReapOutcome reap = TryReap(pendingReap.ThreadId);
+        ProjektZeh.Runtime.ReapStep step = pendingReap.Next(reap);
+        if (step != ProjektZeh.Runtime.ReapStep.Proceed)
         {
-            if (pendingReap.StillOnCpu())
+            if (step == ProjektZeh.Runtime.ReapStep.WaitAndWarn)
             {
                 Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-                    $"WASM Worker-Thread {pendingReap.ThreadId} nach {ProjektZeh.Runtime.PendingReap.WarnAfterRounds} Runden noch auf einer CPU; Wasm-Laeufe warten.\n");
+                    $"WASM Worker-Thread {pendingReap.ThreadId} nach {ProjektZeh.Runtime.PendingReap.WarnAfterRounds} Runden nicht abraeumbar ({reap}); Wasm-Laeufe warten.\n");
             }
             return;
         }
         int thread = pendingReap.Finish();
-        if (reap != ThreadReapResult.Reaped)
+        if (reap != ProjektZeh.Runtime.ReapOutcome.Reaped)
         {
-            // Nicht erwartet: TakeIsolated liefert nur einen Thread, den Cosmos aufgegeben hat. Thread und Stack bleiben dann
-            // belegt; der Lauf wird trotzdem beendet, damit Fenster und Warteschlange nicht haengen.
+            // Nicht erwartet (NotFound, Failed): Thread und Stack bleiben dann belegt. Der Worker laeuft trotzdem nie wieder
+            // (PendingReap.Next), deshalb wird der Lauf beendet, damit Fenster und Warteschlange nicht haengen.
             Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Worker-Thread {thread} nicht abgeraeumt: {reap}\n");
         }
         Action<WasmStatus, int, string>? completed;
@@ -274,7 +275,7 @@ internal static unsafe partial class WasmRuntime
         Interlocked.Increment(ref isolatedRuns);
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
             $"WASM CPU-Ausnahme im App-Code (Vektor {ProjektZeh.Runtime.FaultIsolation.IsolatedVector}, RIP 0x{ProjektZeh.Runtime.FaultIsolation.IsolatedRip:x}), " +
-            $"Worker-Thread {thread} aufgegeben ({(reap == ThreadReapResult.Reaped ? "Thread und Stack frei" : "Thread und Stack belegt")}, " +
+            $"Worker-Thread {thread} aufgegeben ({(reap == ProjektZeh.Runtime.ReapOutcome.Reaped ? "Thread und Stack frei" : "Thread und Stack belegt")}, " +
             $"Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
             (restart == null ? "; neuer Worker gestartet.\n"
                 : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"
@@ -285,6 +286,27 @@ internal static unsafe partial class WasmRuntime
         {
             if (retiredNow) NotifyEnded(waiting, WasmStatus.CpuFault, RetiredMessage);
             else NotifyEnded(waiting, WasmStatus.LoadFailed, "Wasm-Worker nicht gestartet: " + restart);
+        }
+    }
+
+    // Ein Wurf aus TryReapAbandoned (etwa aus ExitThread) verliesse sonst die Hauptschleife, und der Lauf bliebe mit
+    // cleaningUp ohne Ende (F4/Esc-Regel, Review laser #576, Befund 4). Der Thread bleibt dann tot und belegt wie vor E6-G.
+    private static ProjektZeh.Runtime.ReapOutcome TryReap(int threadId)
+    {
+        try
+        {
+            return SchedulerDiagnostics.TryReapAbandoned((uint)threadId) switch
+            {
+                ThreadReapResult.Reaped => ProjektZeh.Runtime.ReapOutcome.Reaped,
+                ThreadReapResult.StillOnCpu => ProjektZeh.Runtime.ReapOutcome.StillOnCpu,
+                ThreadReapResult.NotAbandoned => ProjektZeh.Runtime.ReapOutcome.NotAbandoned,
+                _ => ProjektZeh.Runtime.ReapOutcome.NotFound,
+            };
+        }
+        catch (Exception exception)
+        {
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Abraeumen von Worker-Thread {threadId} warf {exception.GetType().Name}\n");
+            return ProjektZeh.Runtime.ReapOutcome.Failed;
         }
     }
 

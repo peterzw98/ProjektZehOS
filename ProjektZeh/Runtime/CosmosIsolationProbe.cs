@@ -107,6 +107,9 @@ internal static class CosmosIsolationProbe
                 Volatile.Write(ref done, 1);
             }
         });
+        // Nach ProbeEnqueue: Der Worker dieses Laufs und sein Stack sind schon angelegt. Nach dem Abraeumen ersetzt der Stack
+        // des Ersatzworkers seinen, der freie Speicher muss also etwa gleich bleiben (Review laser #576, Befund 6).
+        ulong freeBefore = MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024;
 
         for (int wait = 0; wait < 100; wait++)
         {
@@ -115,8 +118,11 @@ internal static class CosmosIsolationProbe
             {
                 Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
                 // E6-G (#433): Die Hauptschleife zaehlt die Isolation erst nach dem Abraeumen und dem Start des Ersatzworkers.
-                // Ohne Abraeumen sinkt der freie Speicher je Isolation um den 8-MiB-Stack, mit bleibt er etwa gleich.
-                Log("ISOLATION_PROBE reaped kind=" + kind + " released=" + (SchedulerDiagnostics.ReleasedStacks - releasedBefore)
+                // Ohne Abraeumen sinkt der freie Speicher je Isolation um den 8-MiB-Stack, mit bleibt er etwa gleich. Ob
+                // genau dieser Worker abgeraeumt wurde, steht in der Zeile der Hauptschleife davor ("Thread und Stack frei");
+                // released zaehlt systemweit und ist nur ein Zusatz.
+                Log("ISOLATION_PROBE memory kind=" + kind + " released=" + (SchedulerDiagnostics.ReleasedStacks - releasedBefore)
+                    + " free_before_kib=" + freeBefore
                     + " free_kib=" + MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024);
                 return;
             }

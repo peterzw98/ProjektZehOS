@@ -121,6 +121,10 @@ jeder Aufrufer gleich.
   Stride: `RemoveThreadFromQueue` sucht nur, `ThreadDataOf` null zieht keine Tickets ab; ZehOS `OnThreadExit` (`:72`) ebenso.
 - **P3 (für ZehOS übernommen):** `StillOnCpu` ohne Obergrenze hielte die Wasm-Queue unbegrenzt, falls die CPU im Bericht
   hängt. `PollFaultIsolation` protokolliert nach 1000 Runden mit `StillOnCpu` einmal eine Warnung und versucht weiter.
+- **Review laser (#576):** `NotAbandoned` wartet wie `StillOnCpu`, statt Ressourcen zu schließen. Eine Ausnahme aus
+  `TryReapAbandoned` wird gefangen und wie `NotFound` behandelt (Lauf endet, Thread bleibt belegt). Die Entscheidung steht als
+  `PendingReap.Next(ReapOutcome)` im Hosttest. Die Probe prüft das Abräumen je Worker über die Zeile der Hauptschleife und den
+  freien Speicher je Lauf gegen den Wert vor der Isolation; `released` zählt systemweit und ist nur ein Zusatz.
 
 ## Umsetzung Cosmos (Stand `cosmos-patch/abandoned-thread-reap`)
 

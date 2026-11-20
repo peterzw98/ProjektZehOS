@@ -67,17 +67,27 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
 
 
 def evaluate_reap(log: str) -> list[str]:
-    """E6-G (#433): Jede Isolation gibt einen Stack frei, und die zweite kostet nicht noch einmal den 8-MiB-Stack."""
-    reaps = {m.group(1): (int(m.group(2)), int(m.group(3)))
-             for m in re.finditer(r"ISOLATION_PROBE reaped kind=(\w+) released=(\d+) free_kib=(\d+)", log)}
+    """E6-G (#433): Jede Isolation raeumt genau ihren Worker ab und kostet keinen 8-MiB-Stack.
+
+    Massgeblich ist die Zeile der Hauptschleife zu diesem Vektor ("Thread und Stack frei" nur bei Reaped); die Zahl
+    released der Probe zaehlt systemweit (auch andere Threadenden) und ist nur ein Zusatz. Der freie Speicher wird je Lauf
+    gegen den Wert vor der Isolation geprueft, nicht nur der zweite gegen den ersten (Review laser #576, Befund 6).
+    """
+    memory = {m.group(1): (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+              for m in re.finditer(r"ISOLATION_PROBE memory kind=(\w+) released=(\d+) free_before_kib=(\d+) free_kib=(\d+)", log)}
     missing = []
-    for kind in VECTORS:
-        if kind not in reaps:
-            missing.append(f"{kind} ohne Abraeumbeleg")
-        elif reaps[kind][0] < 1:
+    for kind, vector in VECTORS.items():
+        main = re.search(rf"WASM CPU-Ausnahme im App-Code \(Vektor {vector},[^\r\n]*", log)
+        if main and "Thread und Stack frei" not in main.group(0):
+            missing.append(f"{kind}: Worker nicht abgeraeumt")
+        if kind not in memory:
+            missing.append(f"{kind} ohne Speicherbeleg")
+            continue
+        released, before, after = memory[kind]
+        if released < 1:
             missing.append(f"{kind}: kein Stack freigegeben")
-    if "de" in reaps and "pf" in reaps and reaps["pf"][1] < reaps["de"][1] - REAP_TOLERANCE_KIB:
-        missing.append(f"freier Speicher nach pf {reaps['pf'][1]} KiB statt etwa {reaps['de'][1]} KiB (Stack nicht frei?)")
+        if after < before - REAP_TOLERANCE_KIB:
+            missing.append(f"{kind}: freier Speicher {after} KiB statt etwa {before} KiB (Stack nicht frei?)")
     return missing
 
 
