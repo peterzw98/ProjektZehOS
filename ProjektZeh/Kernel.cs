@@ -332,7 +332,6 @@ public sealed class Kernel : Sys.Kernel
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
         systemLog.Information("Boot", cpuLine);
         // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
-        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
 #if !ZEHOS_RECOVERY
         // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.

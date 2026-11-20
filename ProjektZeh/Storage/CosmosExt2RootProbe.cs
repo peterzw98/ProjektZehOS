@@ -268,8 +268,7 @@ internal static class CosmosExt2RootProbe
     /// <summary>
     /// Diagnoselauf 17 (E5-F, #386): erst die Dateilast aus Lauf 1 (c bis i), dann Threads starten. Lauf 1 startet seine
     /// j-Threads vorher, weil Cosmos 3.0.97 einen fehlenden Stack nicht meldete (Page Fault). Hier wird der spaete Start
-    /// je Groesse zweimal versucht: ueber ThreadStarter (mit Stackprobe) und direkt mit Thread.Start (ohne Probe). Ohne
-    /// Probe muss ein Fehlschlag als Ausnahme ankommen, nicht als Page Fault.
+    /// je Groesse zweimal versucht: ueber ThreadStarter und direkt mit Thread.Start; beide ohne Stackprobe (Cosmos prueft selbst). Ein Fehlschlag muss als Fehler bzw. Ausnahme ankommen, nicht als Page Fault.
     /// </summary>
     private static void RunLateThreads(IBlockDevice root)
     {
@@ -289,9 +288,9 @@ internal static class CosmosExt2RootProbe
         StepI(root, files);
         foreach (int bytes in new[] { 256 * 1024, 256 * 1024, 256 * 1024, 8 * 1024 * 1024 })
         {
-            Begin($"late-probe-{bytes / 1024}k");
+            Begin($"late-starter-{bytes / 1024}k");
             var started = ProjektZeh.Scheduling.ThreadStarter.TryStart(() => { }, bytes);
-            if (started.IsOK()) Check(started.Value!.Join(10000), "Thread mit Probe endet nicht");
+            if (started.IsOK()) Check(started.Value!.Join(10000), "Thread ueber ThreadStarter endet nicht");
             Pass(started.IsOK() ? "gestartet" : "abgelehnt: " + started.Status.Message);
             Begin($"late-direct-{bytes / 1024}k");
             string outcome;
@@ -299,12 +298,12 @@ internal static class CosmosExt2RootProbe
             {
                 var thread = new Thread(() => { }, bytes);
                 thread.Start();
-                Check(thread.Join(10000), "Thread ohne Probe endet nicht");
+                Check(thread.Join(10000), "Thread direkt endet nicht");
                 outcome = "gestartet";
             }
             catch (Exception exception) when (exception is OutOfMemoryException or ThreadStartException or InvalidOperationException)
             {
-                // Erwarteter Fehlerweg ohne Probe; ein Page Fault kaeme hier nie an.
+                // Erwarteter Fehlerweg; ein Page Fault kaeme hier nie an.
                 outcome = $"abgelehnt: {exception.GetType().Name}: {exception.Message}";
             }
             Pass(outcome);
