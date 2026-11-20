@@ -397,16 +397,16 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 
 ## 14 Mehrere CPUs und eigener Cosmos-Build (Entwurf, Stand 20. November 2026)
 
-**Zweck:** ZehOS nutzt mehrere CPUs (SMP), Cosmos kommt aus dem eigenen Branch `cosmos`. Plan: [Multicore](docs/superpowers/plans/2026-11-18-multicore.md), Entwurf: [Multicore-Entwurf](docs/superpowers/specs/2026-11-18-multicore-design.md), Belege: [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#mehrere-cpus-smp-stand-und-grenzen-entwurf-e7-f-20-november-2026). Gearbeitet wird auf dem Integrationsbranch `task/mc-e5-smp` (#523). Abgehakt wird nur, was die Abnahme der Etappe erfüllt; die Stände stammen aus gemergten PRs und Issues (Entwurf E7-F, #399; vor dem Merge neu zu prüfen).
+**Zweck:** ZehOS nutzt mehrere CPUs (SMP), Cosmos kommt aus dem eigenen Branch `cosmos`. Plan: [Multicore](docs/superpowers/plans/2026-11-18-multicore.md), Entwurf: [Multicore-Entwurf](docs/superpowers/specs/2026-11-18-multicore-design.md), Belege: [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#mehrere-cpus-smp-stand-und-grenzen-entwurf-e7-f-20-november-2026). Gearbeitet wird auf dem Integrationsbranch `task/mc-e5-smp` (#523; Cosmos-Pin `3.0.97-zehos.6-smp.11`, PR #575). Abgehakt wird nur, was die Abnahme der Etappe erfüllt; die Stände stammen aus gemergten PRs und Issues (Entwurf E7-F, #399; vor dem Merge neu zu prüfen).
 
 - [x] 14.0 Audit geteilter Zustände ([SMP_AUDIT](docs/SMP_AUDIT.md), gemergt; Einzelbefunde laufen in E6-C, #390).
 - [ ] 14.1 Cosmos aus Quelle (E1): Pakete und Pin aus dem Branch `cosmos` sind gemergt (E1-E, E1-F); Abnahme nicht einzeln geprüft.
-- [ ] 14.2 Patchreihe ext2 (E2): Patches und Pin zehos.6, ZehOS-Plugs entfernt (#462); Abschluss offen (#376, PR #556).
+- [x] 14.2 Patchreihe ext2 (E2): Patches und Pin zehos.6, ZehOS-Plugs entfernt (#462); Abschluss gemergt (PR #556 auf `master`), Abnahme #376 mit 1 GiB nach Entscheidung Peter (20. November 2026). 512 MiB bleibt Rest (#538; E4.0 scheitert auch auf smp.11 in `l2`), Hochgruppe, VMware, Hardware nicht geprüft.
 - [ ] 14.3 Ausnahme-Hook und LINT1 (E3): gemergt (siehe 12.4-I1); Abnahme der Etappe nicht einzeln geprüft.
 - [ ] 14.4 Klassenscheduler und Topologie auf einer CPU (E4): E4-A bis E4-D gemergt; E4-E (#378) offen (Doom mit Vorbehalt, ClassiCube nicht entscheidbar).
-- [ ] 14.5 SMP-Stapel, alle Threads auf CPU 0 (E5): E5-A bis E5-D, E5-G, E5-K, E5-L, E5-M, E5-N, E5-O, E5-P gemergt; offen E5-F (PR #551, Draft), E5-H (#384, 512 MiB), E5-I (#385, Vorbehalt), E5-J (#383, 21 von 25).
-- [ ] 14.6 Worker auf weiteren CPUs (E6): E6-A, B, D, E, F, H, J und E6-C2 (#514) gemergt; offen E6-C (#390) und E6-G (#433).
-- [ ] 14.7 Oberfläche verlässt CPU 0, Hyperthreads, Panic, Energie (E7): E7-B (Panic) und E7-D (Hyperthreads) gemergt; offen E7-A (#394), E7-C (#396), E7-E (#398), E7-F (#399, dieser Entwurf).
+- [ ] 14.5 SMP-Stapel, alle Threads auf CPU 0 (E5): E5-A bis E5-D, E5-G, E5-K, E5-L, E5-M, E5-N, E5-O, E5-P gemergt; offen E5-F (PR #551, Draft), E5-H (#384, 1 GiB besteht, 512 MiB No-Go auch auf smp.11), E5-I (#385, Vorbehalt), E5-J (#383, Endlauf auf smp.11 steht aus; Stand 21 von 25 auf smp.9, `isolation-nmi` danach bestanden, `netsurf` blockiert nicht laut Peter, #572).
+- [ ] 14.6 Worker auf weiteren CPUs (E6): E6-A, B, D, E, F, G (#576), H, J und E6-C2 (#514) gemergt; offen E6-C (#390) und der Rest von E6-G (native Wasm-Instanz bleibt bis zum Neustart belegt, #582; #433 offen).
+- [ ] 14.7 Oberfläche verlässt CPU 0, Hyperthreads, Panic, Energie (E7): E7-B (Panic), E7-C (Energie, Linux/KVM-Skript, #563, abgenommen) und E7-D (Hyperthreads) gemergt; offen E7-A (#394, PR #564 nicht gemergt), E7-E (#398, PR #566 Zwischenstand), E7-F (#399, dieser Entwurf).
 - [ ] 14.8 Basiswechsel auf ein Cosmos-Release mit SMP (E8, #400): offen.
 
 **Fertig, wenn:** E5 bis E7 abgenommen sind (Plattformmatrix E7-E ohne unbehandelte Zelle „fehlgeschlagen“) und der Integrationsbranch nach `master` gemergt ist (#523). **Hinweis zu 12.7:** Die Grundlage für Threads von Paketen (mehrere CPUs, Platzierung der Worker) liegt auf dem Integrationsbranch vor, aber noch nicht auf `master`; 12.7 bleibt offen.

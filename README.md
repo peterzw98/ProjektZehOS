@@ -78,13 +78,13 @@ Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System ha
 
 ### Mehrere CPUs (Entwurf, Stand 20. November 2026)
 
-> **Entwurf zu E7-F (#399).** Gilt nur für den Integrationsbranch `task/mc-e5-smp` (Cosmos-Pin `3.0.97-zehos.6-smp.10`), nicht für `master`. Die mit **offen** markierten Punkte hängen an E7-A bis E7-E und werden erst nach deren Merge ausgefüllt.
+> **Entwurf zu E7-F (#399).** Gilt nur für den Integrationsbranch `task/mc-e5-smp` (Cosmos-Pin `3.0.97-zehos.6-smp.11`), nicht für `master`. Die mit **offen** markierten Punkte hängen an E7-A bis E7-E und werden erst nach deren Merge ausgefüllt.
 
 - **Parameter der VM:** `ZEHOS_QEMU_SMP` (z. B. `4`, `4,cores=2,threads=2`) setzt `-smp` für `scripts/start-qemu.ps1` (dort auch `-Smp`) und die Testskripte; leer bleibt die QEMU-Vorgabe. VMware: `scripts/start-vmware.ps1 -Cpus <n>` (Standard 1).
 - **Kernel-Schalter** `zehos.cpus=<n>` und `zehos.smt=off` stehen in der [Entwicklungsanleitung](docs/handbuch/ENTWICKLUNG.md#kommandozeilenschalter-des-kernels). Beide wirken heute nur auf die Wasm-Worker; die Hauptschleife bleibt auf CPU 0 (E7-A, #394 ist **offen**).
 - **Diagnose:** `tasks scheduler` und der Taskmanager (Abschnitt System) zeigen die CPU-Topologie; die Bootzeile nennt `CPUs online=<n>` und den Hyperthreading-Zustand. **Offen (E7-A):** Bootzeile mit „Oberfläche und Worker auf <Liste>“.
 - **Gastproben:** `SMP_PROBE` (Abschnitt Gastproben oben); Doom, Isolation, Netz und Speicher laufen mit `ZEHOS_QEMU_SMP=4` (Zahlen in [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#mehrere-cpus-smp-stand-und-grenzen-entwurf-e7-f-20-november-2026)).
-- **Energieaktionen mit mehreren CPUs:** **offen** (E7-C, #396).
+- **Energieaktionen mit mehreren CPUs:** `scripts/test-power-commands.py` (Linux/KVM, PR #563) prüft `reboot` und `shutdown`. Abnahme E7-C (Kommentar in #396): `ZEHOS_QEMU_SMP=4`, KVM, `reboot`, zweite Shell, `shutdown` mit Exit 0, 5 von 5 bestanden; mit zwei laufenden Hintergrundaufgaben vor `reboot` 8 von 8. Nicht Teil der Abnahme: Doom-Last, ext2-Root-Platte, der `-WithDebugger`-Zweig der ps1, Windows.
 - **Grenzen:** Dass VMware dem Gast keine Hyperthreads zeigt, ist eine Annahme des Plans und **offen** bis E7-E (#398). Leistungsaussagen zu Hyperthreading gelten nur für die gemessene QEMU/KVM-Umgebung; echte Hardware ist **nicht geprüft**. Ein QEMU-Ergebnis belegt kein VMware.
 
 ## Lizenz
