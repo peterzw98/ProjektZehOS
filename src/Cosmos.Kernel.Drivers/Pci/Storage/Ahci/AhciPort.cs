@@ -22,10 +22,14 @@ namespace Cosmos.Kernel.Drivers.Pci.Storage.Ahci;
 /// Commands are polled to completion. Every method is thread context,
 /// entered by the ring from any thread; a task file error surfaces as an
 /// <see cref="IOException"/>, a stuck port or a timeout as an
-/// <see cref="InvalidOperationException"/>. After either the port's engine
-/// is stopped and started again before the busy flag is released; a port
-/// that cannot be stopped stays disabled, so a transfer still running can
-/// never land in a bounce buffer the next caller fills.
+/// <see cref="InvalidOperationException"/>. Before the busy flag is
+/// released the port is recovered: after a task file error its engine is
+/// stopped and started again, after a timeout or a stuck task file the
+/// device is reset as well (ZehOS patch ahci-error-recovery). A port that
+/// cannot be stopped, or whose device does not come back, stays disabled
+/// and fails every later call with an <see cref="IOException"/>: while the
+/// engine stands no transfer of the abandoned command reaches a bounce
+/// buffer the next caller fills.
 /// </summary>
 internal sealed class AhciPort : IBlockDevice
 {
@@ -100,7 +104,7 @@ internal sealed class AhciPort : IBlockDevice
     private bool _busy;
 
     // ZehOS patch ahci-error-recovery, see PATCHES.md
-    /// <summary>Set once a failed command left the engine running; written only under the busy flag, read in <see cref="Claim"/> under the lock.</summary>
+    /// <summary>Set once a recovery failed (engine left running, device not back); written only under the busy flag, read in <see cref="Claim"/> under the lock.</summary>
     private bool _disabled;
 
     // --- Constructor ---
@@ -204,7 +208,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="blockCount">How many sectors.</param>
     /// <param name="data">Where they go; at least <paramref name="blockCount"/> times <see cref="BlockSize"/> bytes.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors asked for, or the sectors run past the device.</exception>
-    /// <exception cref="IOException">A command ended in a task file error.</exception>
+    /// <exception cref="IOException">A command ended in a task file error, or a failed recovery left the port disabled.</exception>
     /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or a command timed out.</exception>
     public void ReadBlock(ulong blockNo, ulong blockCount, Span<byte> data)
     {
@@ -248,7 +252,7 @@ internal sealed class AhciPort : IBlockDevice
     /// <param name="blockCount">How many sectors.</param>
     /// <param name="data">Their bytes; at least <paramref name="blockCount"/> times <see cref="BlockSize"/> bytes.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> is shorter than the sectors given, or the sectors run past the device.</exception>
-    /// <exception cref="IOException">A command ended in a task file error.</exception>
+    /// <exception cref="IOException">A command ended in a task file error, or a failed recovery left the port disabled.</exception>
     /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or a command timed out.</exception>
     public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data)
     {
@@ -284,7 +288,7 @@ internal sealed class AhciPort : IBlockDevice
     }
 
     /// <summary>Issues FLUSH CACHE EXT so completed writes reach the media. Thread context; any thread.</summary>
-    /// <exception cref="IOException">The command ended in a task file error.</exception>
+    /// <exception cref="IOException">The command ended in a task file error, or a failed recovery left the port disabled.</exception>
     /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or the command timed out.</exception>
     public void Flush()
     {
@@ -325,14 +329,37 @@ internal sealed class AhciPort : IBlockDevice
     /// path with a command the device aborts. Thread context; any thread.
     /// </summary>
     /// <param name="command">The ATA command.</param>
-    /// <exception cref="IOException">The command ended in an error.</exception>
-    /// <exception cref="InvalidOperationException">The port is disabled, no free slot, the port stuck busy, or the command timed out.</exception>
+    /// <exception cref="IOException">The command ended in an error, or the port is disabled.</exception>
+    /// <exception cref="InvalidOperationException">No free slot, the port stuck busy, or the command timed out.</exception>
     internal void IssueNonDataCommand(byte command)
     {
         Claim();
         try
         {
             IssueCommand(command, 0, 0, isWrite: false, useLba48: false, hasData: false);
+        }
+        finally
+        {
+            Release();
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// Runs the recovery of a timeout or a stuck task file, device reset
+    /// included, the port claimed around it, so the storage test kernel can
+    /// drive the COMRESET path QEMU never times out into. Thread context;
+    /// any thread.
+    /// </summary>
+    /// <returns>True when the port is usable afterwards, false when the recovery disabled it.</returns>
+    /// <exception cref="IOException">The port was disabled already.</exception>
+    internal bool RecoverWithDeviceReset()
+    {
+        Claim();
+        try
+        {
+            RecoverOrDisable(resetDevice: true);
+            return !_disabled;
         }
         finally
         {
@@ -349,7 +376,7 @@ internal sealed class AhciPort : IBlockDevice
     /// bounded by <see cref="AhciState.CommandTimeoutMilliseconds"/>.
     /// Thread context; any thread.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A failed command left the port disabled.</exception>
+    /// <exception cref="IOException">A failed recovery left the port disabled.</exception>
     private void Claim()
     {
         DeviceLock deviceLock = _controller.RequireLock();
@@ -359,7 +386,9 @@ internal sealed class AhciPort : IBlockDevice
             {
                 if (_disabled)
                 {
-                    throw new InvalidOperationException("SATA: port disabled after a failed recovery.");
+                    // An I/O error, not a usage error: callers that map
+                    // IOException to a failed operation keep working.
+                    throw new IOException("SATA: port disabled after a failed recovery.");
                 }
 
                 if (!_busy)
@@ -391,7 +420,8 @@ internal sealed class AhciPort : IBlockDevice
     /// error bit shows. A command counts as done only when PxIS holds no
     /// error bit and PxTFD no ERR once the slot cleared: the HBA clears
     /// PxCI in the same step in which it sets TFES. On an error, a timeout
-    /// or a task file stuck busy the port is recovered before the throw.
+    /// or a task file stuck busy the port is recovered before the throw, the
+    /// device reset as well after the last two.
     /// The caller holds the busy flag. Thread context; any thread.
     /// </summary>
     /// <param name="command">The ATA command.</param>
@@ -462,7 +492,9 @@ internal sealed class AhciPort : IBlockDevice
             if (Stopwatch.GetTimestamp() >= busyDeadline)
             {
                 // ZehOS patch ahci-error-recovery, see PATCHES.md
-                RecoverOrDisable();
+                // A device stuck busy may still run an earlier command;
+                // only a reset ends that, a restart of the engine does not.
+                RecoverOrDisable(resetDevice: true);
                 throw new InvalidOperationException("SATA: port stuck busy (TFD BSY/DRQ) before command issue.");
             }
 
@@ -487,7 +519,10 @@ internal sealed class AhciPort : IBlockDevice
             if (Stopwatch.GetTimestamp() >= deadline)
             {
                 _controller.CountTimeout();
-                RecoverOrDisable();
+                // The device may still run the command: after the stop the
+                // override clears BSY in PxTFD, and a late D2H or DMA setup
+                // FIS would land on the next command's slot. Reset it.
+                RecoverOrDisable(resetDevice: true);
                 throw new InvalidOperationException("SATA: command completion timeout.");
             }
 
@@ -516,7 +551,7 @@ internal sealed class AhciPort : IBlockDevice
         uint taskFile = _controller.ReadPort(port, AhciProtocol.PxTfd);
         if ((status & AhciProtocol.IsErrorMask) != 0 || (taskFile & AhciProtocol.TfdError) != 0)
         {
-            RecoverOrDisable();
+            RecoverOrDisable(resetDevice: false);
             throw new IOException($"SATA: command 0x{command:X2} failed (IS 0x{status:X8}, TFD 0x{taskFile:X4}).");
         }
 
@@ -528,21 +563,30 @@ internal sealed class AhciPort : IBlockDevice
     /// <summary>
     /// Puts the port back to work after a failed command: after an error
     /// the HBA halts the command list until ST is cleared (AHCI 1.3.1
-    /// section 6.2.2.1), and after a timeout a transfer may still run into
-    /// the bounce buffer. Stops the engine (ST cleared, CR and PxCI
-    /// drained), falls back to a COMRESET when that fails, clears PxSERR
-    /// and PxIS and starts the engine again. When the engine cannot be
-    /// stopped or started the port is disabled for good: a transfer still
-    /// running must never land in a bounce buffer the next caller fills.
-    /// The caller holds the busy flag, so no other command runs on the
-    /// port; only this port's registers are touched. Thread context; any
-    /// thread.
+    /// section 6.2.2.1), and after a timeout the device may still run the
+    /// command, which only a device reset ends (section 10.4.2). Stops the
+    /// engine (ST cleared, CR and PxCI drained); resets the device through
+    /// <see cref="AhciState.ResetDevice"/> when the stop fails or
+    /// <paramref name="resetDevice"/> asks for it, which counts only once
+    /// the link reports the device again and its task file reads ready;
+    /// clears PxSERR and PxIS and starts the engine again. When the engine
+    /// cannot be stopped or started, or the device does not come back, the
+    /// port is disabled for good: a transfer of the abandoned command can
+    /// reach the bounce buffer only while the engine runs. The caller holds
+    /// the busy flag, so no other command runs on the port; only this
+    /// port's registers are touched. Thread context; any thread.
     /// </summary>
-    private void RecoverOrDisable()
+    /// <param name="resetDevice">Reset the device even when the engine stopped: after a timeout or a task file stuck busy.</param>
+    private void RecoverOrDisable(bool resetDevice)
     {
         uint port = _portNumber;
-        bool stopped = _controller.StopCommandEngine(port)
-            || (_controller.ResetPort(port) && _controller.StopCommandEngine(port));
+        // The stop runs first in both cases: COMRESET wants ST and CR clear.
+        bool stopped = _controller.StopCommandEngine(port) && !resetDevice;
+        if (!stopped)
+        {
+            stopped = _controller.ResetDevice(port);
+        }
+
         _controller.WritePort(port, AhciProtocol.PxSerr, AhciProtocol.Rw1CClearAll);
         _controller.WritePort(port, AhciProtocol.PxIs, AhciProtocol.Rw1CClearAll);
         if (!stopped || !_controller.StartCommandEngine(port))

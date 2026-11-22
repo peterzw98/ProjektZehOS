@@ -19,7 +19,9 @@ namespace Cosmos.Kernel.Drivers.Pci.Storage.Ahci;
 /// helpers (<see cref="StopCommandEngine"/>, <see cref="StartCommandEngine"/>,
 /// <see cref="ResetPort"/>, <see cref="KickPort"/>) run in thread context
 /// on the kit worker, from the probe and the detach hook, and the first two
-/// from a drive's check-condition recovery on any thread; the register
+/// from a drive's check-condition recovery on any thread; the first three
+/// and <see cref="ResetDevice"/> also from a disk's error recovery (ZehOS
+/// patch ahci-error-recovery) on any thread, under the port's busy claim; the register
 /// accessors are used from any thread by <see cref="AhciPort"/> and
 /// <see cref="AhciAtapiPort"/>. The HBA stays strictly polled: no interrupt
 /// is connected to it.
@@ -42,6 +44,14 @@ internal sealed class AhciState
 
     /// <summary>How long the PHY gets to report a device after COMRESET, and the reset request to clear.</summary>
     private const uint PhyMilliseconds = 100;
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// How long the link gets to report a device with its PHY up after the
+    /// COMRESET of an error recovery, on top of <see cref="PhyMilliseconds"/>:
+    /// real drives may take longer than QEMU, and a miss disables the port.
+    /// </summary>
+    private const uint RecoveryLinkMilliseconds = 1000;
 
     /// <summary>How long COMRESET is held: the specification asks for at least one millisecond.</summary>
     private const uint ComresetHoldMicroseconds = 2000;
@@ -279,6 +289,40 @@ internal sealed class AhciState
         WritePort(port, AhciProtocol.PxSerr, AhciProtocol.Rw1CClearAll);
         WaitPort(port, AhciProtocol.PxSctl, AhciProtocol.SctlDetMask, 0, PhyMilliseconds);
         return true;
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>
+    /// Resets the device behind a port whose engine was stopped or did not
+    /// stop, for <see cref="AhciPort"/>'s error recovery: COMRESET through
+    /// <see cref="ResetPort"/>, then PxSSTS.DET must report a device with
+    /// its PHY up within <see cref="RecoveryLinkMilliseconds"/>, FRE is set
+    /// so the device's first D2H FIS reaches PxTFD, the task file must leave
+    /// BSY and DRQ within <see cref="CommandTimeoutMilliseconds"/>, and the
+    /// engines are stopped again, so the caller starts them on a device that
+    /// no longer runs the command it gave up on. Unlike
+    /// <see cref="ResetPort"/> a missing device counts as a failure. Thread
+    /// context on any thread; the caller holds the port's busy claim.
+    /// </summary>
+    /// <param name="port">The port index.</param>
+    /// <returns>True when the device came back ready and every engine reads stopped; on false the port must be left alone.</returns>
+    internal bool ResetDevice(uint port)
+    {
+        if (!ResetPort(port))
+        {
+            return false;
+        }
+
+        if (!WaitPort(port, AhciProtocol.PxSsts, AhciProtocol.SstsDetMask, AhciProtocol.SstsDetPresent, RecoveryLinkMilliseconds))
+        {
+            return false;
+        }
+
+        // Without FRE the HBA drops the device's D2H FIS and PxTFD keeps
+        // the value of the reset (BSY or DRQ), so the wait would always miss.
+        SetPortBits(port, AhciProtocol.PxCmd, AhciProtocol.CmdFisReceiveEnable);
+        bool ready = WaitPort(port, AhciProtocol.PxTfd, AhciProtocol.TfdBusy | AhciProtocol.TfdDataRequest, 0, CommandTimeoutMilliseconds);
+        return StopCommandEngine(port) && ready;
     }
 
     /// <summary>
