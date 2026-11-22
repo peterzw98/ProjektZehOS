@@ -328,7 +328,7 @@ public sealed class UserManagementTests
         Assert.IsFalse(accounts.Load().IsOK());
         Assert.IsFalse(accounts.IsReady);
         Assert.IsFalse(accounts.NeedsSetup);
-        StringAssert.Contains(accounts.LockedReason, "/data ist nicht eingebunden");
+        StringAssert.Contains(accounts.LockedReason, "/data nicht eingebunden");
         Assert.IsFalse(accounts.LockedReason.Contains("Recovery-Build"));
     }
 
@@ -338,7 +338,7 @@ public sealed class UserManagementTests
         File.WriteAllText(Path.Combine(root, ".zehos-security.db"), "kaputt");
         Assert.IsFalse(accounts.Load().IsOK());
         Assert.IsFalse(accounts.IsReady);
-        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build erforderlich");
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
     }
 
     [TestMethod]
@@ -357,12 +357,13 @@ public sealed class UserManagementTests
         SetupAdministrator();
         // Eingebunden, aber nach dem Login gesperrt (Gegenfall zum Aushaengen): Recovery-Text.
         accounts.Lock();
-        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build erforderlich");
-        int columns = 680 / 8;
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+        // Der Gast zeichnet mit 16 px Glyphbreite (Gastfoto 1920x1080): 680 px fassen 42 Spalten.
+        int columns = 680 / 16;
         Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason.Length.ToString(CultureInfo.InvariantCulture));
         // Der Grund wird je Load/Lock neu bestimmt, nicht je Bild.
         accounts.IsDataMounted = () => false;
-        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build");
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
         accounts.Lock();
         Assert.IsTrue(accounts.LockedReason.Length <= columns);
         StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
