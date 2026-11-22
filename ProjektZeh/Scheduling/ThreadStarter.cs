@@ -7,29 +7,13 @@ namespace ProjektZeh.Scheduling;
 internal enum ThreadPlacement { Inherit = 0, Workers = 1 }
 
 /// <summary>
-/// Einziger Weg fuer Thread-Starts im Kernel. Cosmos 3.0.97 holt den Threadstack in SchedulerThread.InitializeStack ueber
-/// MemoryOp.Alloc aus dem nativen Heap und prueft das Ergebnis nicht: bei fragmentiertem Heap schreibt es den Threadkontext
-/// auf null+0x138 (Page Fault, E4.0 1G Schritt j). Diese Stelle liegt hinter einer UnmanagedCallersOnly-Grenze, keine
-/// Ausnahme erreicht den Aufrufer. Deshalb fordert TryStart vorher einen Block in Stackgroesse ueber denselben Heap an und
-/// gibt ihn sofort frei; scheitert das, startet kein Thread und der Aufrufer erhaelt einen Fehler.
-/// Grenze: Zwischen Probe-Free und InitializeStack kann der Platz wieder vergeben werden, durch einen anderen Thread oder durch
-/// Thread.Start selbst: dessen verwaltete Objekte (SchedulerThread, GCHandle) koennen ein neues GC-Segment aus demselben
-/// Seitenspeicher holen und die gerade freigegebenen Seiten belegen. Das Fenster wird kleiner, nicht null.
+/// Einziger Weg fuer Thread-Starts im Kernel. Seit Cosmos 3.0.97-zehos.6 (Stapel smp-phase5b) prueft SchedulerThread.InitializeStack
+/// den Threadstack selbst: bei Misserfolg Collect und zweiter Versuch, sonst false; CreateThread liefert 0 und Thread.Start wirft.
+/// Eine eigene Stackprobe davor war nur ein Fenster (TOCTOU unter SMP) und entfaellt. Ein scheiternder Start kommt als
+/// Fehler beim Aufrufer an.
 /// </summary>
 internal static class ThreadStarter
 {
-    /// <summary>Stack ohne ausdrueckliche Groesse; Cosmos meldet seriell "[libSystemNative] Thread … stack 262144 bytes".</summary>
-    public const int DefaultStackBytes = 256 * 1024;
-    // Cosmos rundet in SystemNative_CreateThread auf 4-KiB-Seiten auf und nimmt mindestens 64 KiB.
-    private const int PageBytes = 4096;
-    private const int MinimumStackBytes = 64 * 1024;
-
-    /// <summary>
-    /// Prueft, ob der native Heap einen Block der Groesse liefert (und gibt ihn wieder frei). Der Kernel setzt beim Start die
-    /// Cosmos-Probe; auf dem Host und vor dem Setzen gilt jeder Start als moeglich.
-    /// </summary>
-    internal static Func<int, bool> StackProbe { get; set; } = _ => true;
-
     /// <summary>
     /// Vom Kernel gesetzt: ordnet dem AUFRUFENDEN Thread eine Klasse zu (SetPriority des Klassenschedulers). Auf dem Host und
     /// vor dem Setzen geschieht nichts.
@@ -39,19 +23,14 @@ internal static class ThreadStarter
     internal static Action<ThreadPlacement> ApplyPlacement { get; set; } = _ => { };
 
     /// <summary>
-    /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard) nach der Stackprobe.
+    /// Startet <paramref name="body"/> mit <paramref name="stackBytes"/> (0 = Cosmos-Standard).
     /// <paramref name="background"/> markiert dauerhaft wartende Worker, damit sie ein Prozessende (Hosttests) nicht aufhalten.
     /// </summary>
     public static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes = 0, bool background = false,
-        ThreadClass threadClass = ThreadClass.Normal, ThreadPlacement placement = ThreadPlacement.Inherit) =>
-        TryStart(body, stackBytes, StackProbe, background, threadClass, placement);
-
-    internal static ResultObject<Thread> TryStart(ThreadStart body, int stackBytes, Func<int, bool> probe, bool background = false,
         ThreadClass threadClass = ThreadClass.Normal, ThreadPlacement placement = ThreadPlacement.Inherit)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentOutOfRangeException.ThrowIfNegative(stackBytes);
-        ArgumentNullException.ThrowIfNull(probe);
         if (threadClass != ThreadClass.Normal || placement != ThreadPlacement.Inherit)
         {
             var inner = body;
@@ -63,10 +42,6 @@ internal static class ThreadStarter
                 inner();
             };
         }
-        int effective = EffectiveStackBytes(stackBytes);
-        if (!probe(effective))
-            return ResultObjectFactory.CreateFailure<Thread>(ResultCode.Failure,
-                $"cause='OutOfMemory' message='Kein Speicher fuer einen Threadstack ({effective / 1024} KiB).'");
         try
         {
             var thread = stackBytes == 0 ? new Thread(body) : new Thread(body, stackBytes);
@@ -78,13 +53,5 @@ internal static class ThreadStarter
         {
             return ResultObjectFactory.CreateFromException<Thread>(exception);
         }
-    }
-
-    /// <summary>Groesse, die Cosmos tatsaechlich anfordert: Standard bzw. auf Seiten gerundet, mindestens 64 KiB.</summary>
-    internal static int EffectiveStackBytes(int stackBytes)
-    {
-        if (stackBytes == 0) return DefaultStackBytes;
-        long rounded = ((long)stackBytes + PageBytes - 1) / PageBytes * PageBytes;
-        return (int)Math.Min(int.MaxValue, Math.Max(MinimumStackBytes, rounded));
     }
 }
