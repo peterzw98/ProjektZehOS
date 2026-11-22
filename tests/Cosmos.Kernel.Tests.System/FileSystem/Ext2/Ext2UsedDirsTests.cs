@@ -51,4 +51,30 @@ public class Ext2UsedDirsTests
         Assert.That(again.GetGroup(1).UsedDirsCount, Is.EqualTo((ushort)1), "group 1 holds the new directory");
         Assert.That(again.GetGroup(0).UsedDirsCount, Is.EqualTo(group0Dirs), "group 0 unchanged");
     }
+
+    [Test]
+    public void Rmdir_InSpilledGroup_KeepsCountWhenOtherGroupWritesDescriptor()
+    {
+        MemoryBlockDevice device = new("ram0", 512, 160 * 2048);
+        Assert.That(new Ext2FileSystemType(device).TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
+        Ext2Superblock sb = Mount(device);
+        Assert.That(sb.GroupsCount, Is.GreaterThanOrEqualTo(2u));
+        ushort group0Dirs = sb.GetGroup(0).UsedDirsCount;
+
+        while (sb.GetGroup(0).FreeInodesCount > 0)
+        {
+            Assert.That(sb.TryAllocateInode(0, out _), Is.True);
+        }
+
+        Assert.That(sb.Root.InodeOperations.Mkdir(sb.Root, "spill", DirMode, out IVfsInode? dir), Is.True);
+        Assert.That(sb.GroupOfInode(((Ext2Inode)dir!).InodeNumber), Is.EqualTo(1u));
+        Assert.That(sb.Root.InodeOperations.Rmdir(sb.Root, "spill"), Is.True);
+
+        // Another group's descriptor write rewrites the shared table block.
+        Assert.That(sb.TryAllocateBlock(0, out _), Is.True);
+
+        Ext2Superblock again = Mount(device, MountFlags.ReadOnly);
+        Assert.That(again.GetGroup(1).UsedDirsCount, Is.EqualTo((ushort)0), "group 1 holds no directory after Rmdir");
+        Assert.That(again.GetGroup(0).UsedDirsCount, Is.EqualTo(group0Dirs), "group 0 unchanged");
+    }
 }
