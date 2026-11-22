@@ -2,6 +2,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Cosmos.Kernel.HAL.Devices.Storage;
+using SchedSpinLock = Cosmos.Kernel.Core.Scheduler.SpinLock;
 
 namespace Cosmos.Kernel.System.FileSystem.Ext2;
 
@@ -15,6 +16,53 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 {
     /// <summary>Group descriptor table (flat array).</summary>
     private readonly Ext2GroupDesc[] _groups;
+
+    // ZehOS patch ext2-alloc-cache, see PATCHES.md
+    // On-disk group descriptor table as read at mount. UpdateGroupDesc patches
+    // one descriptor here and writes only the block holding it, instead of
+    // reading and writing the whole table for every allocated block.
+    private readonly byte[] _gdTable;
+
+    /// <summary>First block of the group descriptor table.</summary>
+    private readonly uint _gdStartBlock;
+
+    /// <summary>Group whose block bitmap is held in <see cref="_blockBitmap"/>; uint.MaxValue = none.</summary>
+    private uint _blockBitmapGroup = uint.MaxValue;
+
+    /// <summary>Cached block bitmap of <see cref="_blockBitmapGroup"/>; always equal to or ahead of the disk.</summary>
+    private byte[]? _blockBitmap;
+
+    /// <summary>All bits below this index in <see cref="_blockBitmap"/> are known to be set.</summary>
+    private uint _blockBitmapScanFrom;
+
+    /// <summary>The cached block bitmap differs from the disk (only inside an allocation batch).</summary>
+    private bool _blockBitmapDirty;
+
+    /// <summary>Nesting depth of <see cref="BeginAllocationBatch"/>.</summary>
+    private int _batchDepth;
+
+    /// <summary>Groups whose descriptor changed inside the current batch.</summary>
+    private readonly List<uint> _dirtyGroups = new();
+
+    /// <summary>Pointer block held back inside a batch; uint.MaxValue = none.</summary>
+    private uint _leafBlk = uint.MaxValue;
+
+    /// <summary>Contents of <see cref="_leafBlk"/>, ahead of the disk while a batch runs.</summary>
+    private byte[]? _leafData;
+
+    // ZehOS patch ext2-alloc-cache, see PATCHES.md
+    // Devices with a live writable mount. The bitmap and descriptor caches
+    // assume this mount is the only writer of its device: a second writable
+    // mount would hand out blocks the first one already uses. TryCreate
+    // refuses it; Drop releases the claim. A read-only mount is still
+    // allowed next to a writable one but may see stale data.
+    private static readonly List<IBlockDevice> s_writableDevices = new();
+
+    /// <summary>Guards <see cref="s_writableDevices"/>; mount and unmount only, never I/O inside.</summary>
+    private static SchedSpinLock s_writableLock;
+
+    /// <summary>This mount holds the write claim on <see cref="Device"/>.</summary>
+    private bool _ownsWriteClaim;
 
     /// <summary>Live inodes by number; keeps open handles coherent with metadata writes.</summary>
     private readonly Dictionary<uint, Ext2Inode> _inodeCache;
@@ -167,6 +215,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         uint featureIncompat,
         uint featureRoCompat,
         Ext2GroupDesc[] groups,
+        byte[] gdTable,
+        uint gdStartBlock,
         bool readOnly)
     {
         Device = device;
@@ -199,6 +249,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             FragsSize = (uint)Ext2SuperblockLayout.BaseBlockSize >> (int)(-(int)logFragSize);
         }
         _groups = groups;
+        _gdTable = gdTable;
+        _gdStartBlock = gdStartBlock;
         GroupsCount = (uint)groups.Length;
 
         InodeOps = new Ext2InodeOperations(this);
@@ -354,7 +406,14 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 blocksPerGroup, fragsPerGroup, inodesPerGroup,
                 firstIno, inodeSize, revLevel,
                 featureCompat, featureIncompat, featureRoCompat,
-                groups, readOnly);
+                groups, gdBuf, gdStartBlock, readOnly);
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            if (!superblock.IsReadOnly && !superblock.TryClaimWrite())
+            {
+                superblock = null;
+                return false;
+            }
+
             return true;
         }
         catch
@@ -749,6 +808,19 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <returns>true when a block was allocated.</returns>
     internal bool TryAllocateBlock(uint groupHint, out uint blockNumber)
     {
+        return TryAllocateBlock(groupHint, true, out blockNumber);
+    }
+
+    /// <summary>
+    /// Allocate a free block, preferring <paramref name="groupHint"/>.
+    /// </summary>
+    /// <param name="groupHint">Block group to try first.</param>
+    /// <param name="zero">Write zeros to the block. Callers that overwrite
+    /// the whole block (or clear it in memory first) pass false.</param>
+    /// <param name="blockNumber">Allocated block number on success.</param>
+    /// <returns>true when a block was allocated.</returns>
+    internal bool TryAllocateBlock(uint groupHint, bool zero, out uint blockNumber)
+    {
         // ZehOS patch ext2-readonly, see PATCHES.md
         if (IsReadOnly)
         {
@@ -765,8 +837,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 continue;
             }
 
-            byte[] bmp = new byte[BlockSize];
-            ReadBlocks(gd.BlockBitmap, 1, bmp);
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            byte[] bmp = LoadBlockBitmap(gi);
             uint max = BlocksPerGroup;
             if (gi == GroupsCount - 1)
             {
@@ -777,23 +849,32 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 }
             }
 
-            for (uint i = 0; i < max; i++)
+            for (uint i = _blockBitmapScanFrom; i < max; i++)
             {
                 uint byteIdx = i / 8;
                 uint bitIdx = i % 8;
                 if ((bmp[byteIdx] & (1u << (int)bitIdx)) == 0)
                 {
                     bmp[byteIdx] |= (byte)(1u << (int)bitIdx);
-                    WriteBlocks(gd.BlockBitmap, 1, bmp);
+                    _blockBitmapScanFrom = i + 1;
+                    StoreBlockBitmap();
                     gd.FreeBlocksCount--;
                     UpdateGroupDesc(gi);
                     FreeBlocksCount--;
                     blockNumber = gi * BlocksPerGroup + i;
-                    byte[] zero = new byte[BlockSize];
-                    WriteBlocks(blockNumber, 1, zero);
+                    if (zero)
+                    {
+                        byte[] zeros = new byte[BlockSize];
+                        WriteBlocks(blockNumber, 1, zeros);
+                    }
+
                     return true;
                 }
             }
+
+            // Bits up to max are all set even though the descriptor counts
+            // free blocks; remember that and try the next group.
+            _blockBitmapScanFrom = max;
         }
 
         blockNumber = 0;
@@ -814,15 +895,69 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         }
 
         Ext2GroupDesc gd = _groups[group];
-        byte[] bmp = new byte[BlockSize];
-        ReadBlocks(gd.BlockBitmap, 1, bmp);
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        byte[] bmp = LoadBlockBitmap(group);
         uint byteIdx = index / 8;
         uint bitIdx = index % 8;
         bmp[byteIdx] &= (byte)~(1u << (int)bitIdx);
-        WriteBlocks(gd.BlockBitmap, 1, bmp);
+        if (index < _blockBitmapScanFrom)
+        {
+            _blockBitmapScanFrom = index;
+        }
+
+        StoreBlockBitmap();
         gd.FreeBlocksCount++;
         UpdateGroupDesc(group);
         FreeBlocksCount++;
+    }
+
+    /// <summary>
+    /// Undo the allocation of a data block whose first write failed, so the
+    /// file keeps a hole there instead of pointing at stale disk contents.
+    /// Only valid inside an allocation batch right after
+    /// <see cref="GetBlockPointer(Ext2Inode, uint, bool, bool, out bool)"/>
+    /// returned the block with isNew set: its pointer then sits in the
+    /// inode (direct) or in the held-back pointer block, neither on disk yet.
+    /// When the pointer is not found there the block stays allocated (a leak
+    /// e2fsck reclaims) rather than freeing a block something references.
+    /// </summary>
+    /// <param name="inode">File inode.</param>
+    /// <param name="logicalBlock">Zero-based block index within the file.</param>
+    /// <param name="physicalBlock">The block GetBlockPointer allocated.</param>
+    internal void RevertNewDataBlock(Ext2Inode inode, uint logicalBlock, uint physicalBlock)
+    {
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        bool unlinked = false;
+        if (logicalBlock < Ext2InodeLayout.DirectBlockCount)
+        {
+            if (inode.Block[logicalBlock] == physicalBlock)
+            {
+                inode.Block[logicalBlock] = 0;
+                unlinked = true;
+            }
+        }
+        else if (_batchDepth > 0 && _leafBlk != uint.MaxValue && _leafData is not null)
+        {
+            for (int off = 0; off + 4 <= (int)BlockSize; off += 4)
+            {
+                if (BitConverter.ToUInt32(_leafData.AsSpan(off, 4)) == physicalBlock)
+                {
+                    BitConverter.TryWriteBytes(_leafData.AsSpan(off, 4), 0u);
+                    unlinked = true;
+                    break;
+                }
+            }
+        }
+
+        if (!unlinked)
+        {
+            return;
+        }
+
+        // The indirect cache may hold the entry just cleared.
+        InvalidateIndirCache();
+        inode.Blocks -= BlockSize / 512;
+        FreeBlock(physicalBlock);
     }
 
     /// <summary>
@@ -831,11 +966,30 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <param name="groupIndex">Zero-based block group.</param>
     private void UpdateGroupDesc(uint groupIndex)
     {
-        uint gdStartBlock = BlockSize == 1024 ? 2u : 1u;
-        uint gdBytes = GroupsCount * (uint)Ext2SuperblockLayout.GroupDescSize;
-        uint gdBlocks = (gdBytes + BlockSize - 1) / BlockSize;
-        byte[] gdBuf = new byte[gdBlocks * BlockSize];
-        ReadBlocks(gdStartBlock, gdBlocks, gdBuf);
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        // Inside a batch the descriptor is written once at the batch end.
+        if (_batchDepth > 0)
+        {
+            if (!_dirtyGroups.Contains(groupIndex))
+            {
+                _dirtyGroups.Add(groupIndex);
+            }
+
+            return;
+        }
+
+        WriteGroupDesc(groupIndex);
+        UpdateSuperblock();
+    }
+
+    /// <summary>
+    /// Serialize one group's descriptor into the cached table and write the
+    /// table block holding it.
+    /// </summary>
+    /// <param name="groupIndex">Zero-based block group.</param>
+    private void WriteGroupDesc(uint groupIndex)
+    {
+        byte[] gdBuf = _gdTable;
         int off = (int)groupIndex * Ext2SuperblockLayout.GroupDescSize;
         Ext2GroupDesc gd = _groups[groupIndex];
         BitConverter.TryWriteBytes(gdBuf.AsSpan(off + Ext2SuperblockLayout.GroupDescFreeBlocksCountOffset, 2), gd.FreeBlocksCount);
@@ -844,7 +998,173 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         BitConverter.TryWriteBytes(gdBuf.AsSpan(off + Ext2SuperblockLayout.GroupDescBlockBitmapOffset, 4), gd.BlockBitmap);
         BitConverter.TryWriteBytes(gdBuf.AsSpan(off + Ext2SuperblockLayout.GroupDescInodeBitmapOffset, 4), gd.InodeBitmap);
         BitConverter.TryWriteBytes(gdBuf.AsSpan(off + Ext2SuperblockLayout.GroupDescInodeTableOffset, 4), gd.InodeTable);
-        WriteBlocks(gdStartBlock, gdBlocks, gdBuf);
+        uint tableBlock = (uint)off / BlockSize;
+        WriteBlocks(_gdStartBlock + tableBlock, 1, gdBuf.AsSpan((int)(tableBlock * BlockSize), (int)BlockSize));
+    }
+
+    /// <summary>
+    /// Block bitmap of <paramref name="group"/> from the one-group cache,
+    /// reading it from disk on a group change (after writing back a dirty one).
+    /// </summary>
+    /// <param name="group">Zero-based block group.</param>
+    private byte[] LoadBlockBitmap(uint group)
+    {
+        if (_blockBitmap is not null && _blockBitmapGroup == group)
+        {
+            return _blockBitmap;
+        }
+
+        WriteBackBlockBitmap();
+        // The read reuses the buffer. A read that fills part of it and then
+        // throws must not leave the old group marked valid over foreign
+        // bytes: the next allocation there would write them back as its
+        // bitmap. Until the read succeeds no group is cached.
+        _blockBitmapGroup = uint.MaxValue;
+        if (_blockBitmap is null || _blockBitmap.Length != BlockSize)
+        {
+            _blockBitmap = new byte[BlockSize];
+        }
+
+        ReadBlocks(_groups[group].BlockBitmap, 1, _blockBitmap);
+        _blockBitmapGroup = group;
+        _blockBitmapScanFrom = 0;
+        return _blockBitmap;
+    }
+
+    /// <summary>
+    /// Persist the cached block bitmap now, or mark it dirty inside a batch.
+    /// </summary>
+    private void StoreBlockBitmap()
+    {
+        if (_batchDepth > 0)
+        {
+            _blockBitmapDirty = true;
+            return;
+        }
+
+        WriteBlocks(_groups[_blockBitmapGroup].BlockBitmap, 1, _blockBitmap!);
+        _blockBitmapDirty = false;
+    }
+
+    /// <summary>Write the cached block bitmap if a batch left it dirty.</summary>
+    private void WriteBackBlockBitmap()
+    {
+        if (_blockBitmapDirty && _blockBitmap is not null && _blockBitmapGroup < GroupsCount)
+        {
+            WriteBlocks(_groups[_blockBitmapGroup].BlockBitmap, 1, _blockBitmap);
+        }
+
+        _blockBitmapDirty = false;
+    }
+
+    /// <summary>
+    /// Start a run of block allocations whose bitmap, descriptor and
+    /// superblock writes are deferred to <see cref="EndAllocationBatch"/>.
+    /// A crash inside the batch leaves blocks the bitmap marks free while an
+    /// inode does not yet reference them on disk; e2fsck repairs both
+    /// directions without data loss (same class as a crash between the
+    /// bitmap and inode writes before this patch).
+    /// </summary>
+    internal void BeginAllocationBatch()
+    {
+        _batchDepth++;
+    }
+
+    /// <summary>
+    /// End an allocation batch: write the dirty bitmap first, then the
+    /// changed descriptors, then the superblock counters.
+    /// </summary>
+    internal void EndAllocationBatch()
+    {
+        if (_batchDepth == 0 || --_batchDepth > 0)
+        {
+            return;
+        }
+
+        CommitAllocationState();
+    }
+
+    /// <summary>
+    /// Read a pointer block, from the batch's held-back copy when it is the
+    /// same block.
+    /// </summary>
+    /// <param name="block">Pointer block number.</param>
+    /// <param name="dest">Destination of one block.</param>
+    private void LoadPointerBlock(uint block, byte[] dest)
+    {
+        if (_leafData is not null && _leafBlk == block)
+        {
+            _leafData.AsSpan(0, (int)BlockSize).CopyTo(dest);
+            return;
+        }
+
+        ReadBlocks(block, 1, dest);
+    }
+
+    /// <summary>
+    /// Write a pointer block that gained an entry. Outside a batch the
+    /// bitmap is already on disk and the block is written now. Inside a
+    /// batch it is held back and written by <see cref="WriteBackLeaf"/>,
+    /// always after the bitmap that marks its new entries used, so the disk
+    /// never points at a block its bitmap calls free.
+    /// </summary>
+    /// <param name="block">Pointer block number.</param>
+    /// <param name="data">New contents of one block.</param>
+    private void StorePointerBlock(uint block, byte[] data)
+    {
+        if (_batchDepth == 0)
+        {
+            WriteBlocks(block, 1, data);
+            return;
+        }
+
+        if (_leafBlk != block)
+        {
+            WriteBackLeaf();
+        }
+
+        if (_leafData is null || _leafData.Length != BlockSize)
+        {
+            _leafData = new byte[BlockSize];
+        }
+
+        data.AsSpan(0, (int)BlockSize).CopyTo(_leafData);
+        _leafBlk = block;
+    }
+
+    /// <summary>Write the held-back pointer block: bitmap first, then the block.</summary>
+    private void WriteBackLeaf()
+    {
+        if (_leafBlk == uint.MaxValue || _leafData is null)
+        {
+            return;
+        }
+
+        WriteBackBlockBitmap();
+        WriteBlocks(_leafBlk, 1, _leafData);
+        _leafBlk = uint.MaxValue;
+    }
+
+    /// <summary>
+    /// Write deferred state in dependency order: bitmap, held-back pointer
+    /// block, descriptors, superblock counters. The caller writes the inode
+    /// afterwards.
+    /// </summary>
+    private void CommitAllocationState()
+    {
+        WriteBackBlockBitmap();
+        WriteBackLeaf();
+        if (_dirtyGroups.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < _dirtyGroups.Count; i++)
+        {
+            WriteGroupDesc(_dirtyGroups[i]);
+        }
+
+        _dirtyGroups.Clear();
         UpdateSuperblock();
     }
 
@@ -880,7 +1200,70 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     {
         _inodeCache.Clear();
         InvalidateIndirCache();
-        Flush();
+        try
+        {
+            Flush();
+        }
+        finally
+        {
+            // ZehOS patch ext2-alloc-cache, see PATCHES.md
+            // The VFS has removed the mount even when the flush throws.
+            ReleaseWriteClaim();
+        }
+    }
+
+    /// <summary>
+    /// Register this mount as the only writable one of its device.
+    /// </summary>
+    /// <returns>false when another writable mount of the device is live.</returns>
+    private bool TryClaimWrite()
+    {
+        s_writableLock.Acquire();
+        try
+        {
+            for (int i = 0; i < s_writableDevices.Count; i++)
+            {
+                if (ReferenceEquals(s_writableDevices[i], Device))
+                {
+                    return false;
+                }
+            }
+
+            s_writableDevices.Add(Device);
+            _ownsWriteClaim = true;
+            return true;
+        }
+        finally
+        {
+            s_writableLock.Release();
+        }
+    }
+
+    /// <summary>Give up the write claim taken by <see cref="TryClaimWrite"/>.</summary>
+    private void ReleaseWriteClaim()
+    {
+        if (!_ownsWriteClaim)
+        {
+            return;
+        }
+
+        s_writableLock.Acquire();
+        try
+        {
+            for (int i = 0; i < s_writableDevices.Count; i++)
+            {
+                if (ReferenceEquals(s_writableDevices[i], Device))
+                {
+                    s_writableDevices.RemoveAt(i);
+                    break;
+                }
+            }
+            _ownsWriteClaim = false;
+        }
+        finally
+        {
+            s_writableLock.Release();
+        }
     }
 
     /// <summary>
@@ -894,6 +1277,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             return;
         }
 
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        CommitAllocationState();
         Device.Flush();
         UpdateSuperblock();
     }
@@ -910,6 +1295,24 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <param name="isNew">True when the call allocated the returned block.</param>
     /// <returns>Physical block number, or 0 for a hole or on failure.</returns>
     internal uint GetBlockPointer(Ext2Inode inode, uint logicalBlock, bool allocate, out bool isNew)
+    {
+        return GetBlockPointer(inode, logicalBlock, allocate, true, out isNew);
+    }
+
+    /// <summary>
+    /// Resolve a file-logical block like the overload above. Indirect blocks
+    /// are always zeroed; a newly allocated data block only when
+    /// <paramref name="zeroData"/> is set.
+    /// </summary>
+    /// <param name="inode">File inode.</param>
+    /// <param name="logicalBlock">Zero-based block index within the file.</param>
+    /// <param name="allocate">Allocate a missing block instead of reporting a hole.</param>
+    /// <param name="zeroData">Zero a newly allocated data block on disk. A caller
+    /// that writes the whole block itself (with zeros where it has no data)
+    /// passes false and saves one block write.</param>
+    /// <param name="isNew">True when the call allocated the returned block.</param>
+    /// <returns>Physical block number, or 0 for a hole or on failure.</returns>
+    internal uint GetBlockPointer(Ext2Inode inode, uint logicalBlock, bool allocate, bool zeroData, out bool isNew)
     {
         isNew = false;
         if (BlockSize == 0)
@@ -933,7 +1336,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
             if (blk == 0 && allocate)
             {
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), zeroData, out uint nb))
                 {
                     return 0;
                 }
@@ -959,7 +1362,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                     return 0;
                 }
 
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), false, out uint nb))
                 {
                     return 0;
                 }
@@ -989,7 +1392,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             }
             else
             {
-                ReadBlocks(indir, 1, blockBuf);
+                LoadPointerBlock(indir, blockBuf); // ZehOS patch ext2-alloc-cache
                 if (_indirCacheData is null || _indirCacheData.Length != BlockSize)
                 {
                     _indirCacheData = new byte[BlockSize];
@@ -1007,18 +1410,19 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
             if (entry == 0 && allocate)
             {
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), zeroData, out uint nb))
                 {
                     return 0;
                 }
 
                 BitConverter.TryWriteBytes(blockBuf.AsSpan((int)logicalBlock * 4, 4), nb);
-                WriteBlocks(indir, 1, blockBuf);
+                StorePointerBlock(indir, blockBuf); // ZehOS patch ext2-alloc-cache
                 blockBuf.AsSpan(0, (int)BlockSize).CopyTo(_indirCacheData);
                 _indirCacheBlk = indir;
                 inode.Blocks += BlockSize / 512;
-                byte[] zero = new byte[BlockSize];
-                WriteBlocks(nb, 1, zero);
+                // ZehOS patch ext2-alloc-cache: TryAllocateBlock zeroes the block when zeroData is set;
+                // otherwise the caller relies on isNew to zero-fill it in memory.
+                isNew = true;
                 return nb;
             }
 
@@ -1038,7 +1442,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                     return 0;
                 }
 
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), false, out uint nb))
                 {
                     return 0;
                 }
@@ -1088,19 +1492,23 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                     return 0;
                 }
 
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), false, out uint nb))
                 {
                     return 0;
                 }
 
                 firstBlk = nb;
+                // ZehOS patch ext2-alloc-cache, see PATCHES.md
+                // Zero the new pointer block and put its bitmap bit on disk
+                // before the double-indirect block points at it.
+                byte[] zero = new byte[BlockSize];
+                WriteBlocks(firstBlk, 1, zero);
+                WriteBackBlockBitmap();
                 BitConverter.TryWriteBytes(firstBuf.AsSpan((int)firstIdx * 4, 4), nb);
                 WriteBlocks(dindir, 1, firstBuf);
                 firstBuf.AsSpan(0, (int)BlockSize).CopyTo(_indirCacheData);
                 _indirCacheBlk = dindir;
                 inode.Blocks += BlockSize / 512;
-                byte[] zero = new byte[BlockSize];
-                WriteBlocks(firstBlk, 1, zero);
             }
 
             if (_indirBuf2 is null || _indirBuf2.Length != BlockSize)
@@ -1114,7 +1522,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
                 return 0;
             }
 
-            ReadBlocks(firstBlk, 1, secondBuf);
+            LoadPointerBlock(firstBlk, secondBuf); // ZehOS patch ext2-alloc-cache
             uint entry = BitConverter.ToUInt32(secondBuf.AsSpan((int)secondIdx * 4, 4));
             if (entry >= BlocksCount)
             {
@@ -1123,16 +1531,17 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
             if (entry == 0 && allocate)
             {
-                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), out uint nb))
+                if (!TryAllocateBlock(GroupOfInode(inode.InodeNumber), zeroData, out uint nb))
                 {
                     return 0;
                 }
 
                 BitConverter.TryWriteBytes(secondBuf.AsSpan((int)secondIdx * 4, 4), nb);
-                WriteBlocks(firstBlk, 1, secondBuf);
+                StorePointerBlock(firstBlk, secondBuf); // ZehOS patch ext2-alloc-cache
                 inode.Blocks += BlockSize / 512;
-                byte[] zero = new byte[BlockSize];
-                WriteBlocks(nb, 1, zero);
+                // ZehOS patch ext2-alloc-cache: TryAllocateBlock zeroes the block when zeroData is set;
+                // otherwise the caller relies on isNew to zero-fill it in memory.
+                isNew = true;
                 return nb;
             }
 
@@ -1171,7 +1580,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// Shrink a file to <paramref name="newSize"/>, freeing data blocks past
     /// the new end and the pointer blocks whose whole range lies past it.
     /// Triple-indirect data blocks are not freed: this driver never maps or
-    /// allocates them (see <see cref="GetBlockPointer"/>).
+    /// allocates them (see <see cref="GetBlockPointer(Ext2Inode, uint, bool, out bool)"/>).
     /// </summary>
     /// <param name="inode">File inode.</param>
     /// <param name="newSize">New size in bytes.</param>
@@ -1264,7 +1673,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
     /// <summary>
     /// Drops the indirect block cache. Called after any write that mutates
-    /// indirect block contents outside <see cref="GetBlockPointer"/>.
+    /// indirect block contents outside <see cref="GetBlockPointer(Ext2Inode, uint, bool, out bool)"/>.
     /// </summary>
     private void InvalidateIndirCache()
     {

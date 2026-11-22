@@ -35,12 +35,15 @@ public class Ext2RmdirTests
     }
 
     // A fresh mount has an empty inode cache, so ReadInode returns what is on disk.
-    private Ext2Superblock Remount()
+    private Ext2Superblock Remount(MountFlags flags = MountFlags.None)
     {
         Ext2FileSystemType fs = new(_device);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, flags, out IVfsSuperblock? vsb), Is.True);
         return (Ext2Superblock)vsb!;
     }
+
+    // Look at the disk next to the live writable mount: only one writable mount per device.
+    private Ext2Superblock Inspect() => Remount(MountFlags.ReadOnly);
 
     private Ext2Inode Mkdir(string name)
     {
@@ -83,11 +86,11 @@ public class Ext2RmdirTests
         ushort parentLinks = ((Ext2Inode)_sb.Root).LinksCount;
         Ext2Inode dir = Mkdir("d");
         uint group = _sb.GroupOfInode(dir.InodeNumber);
-        ushort usedDirs = Remount().GetGroup(group).UsedDirsCount;
+        ushort usedDirs = Inspect().GetGroup(group).UsedDirsCount;
 
         Assert.That(Ops.Rmdir(_sb.Root, "d"), Is.True);
 
-        Ext2Superblock fresh = Remount();
+        Ext2Superblock fresh = Inspect();
         Ext2Inode onDisk = fresh.ReadInode(dir.InodeNumber, "d");
         Assert.That(onDisk.LinksCount, Is.Zero);
         Assert.That(onDisk.Dtime, Is.Not.Zero);

@@ -214,7 +214,7 @@ public class Ext2TruncateTests
         Assert.That(inode.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Zero);
 
         // The cleared roots and the sector count must be on disk, not only in the cached object.
-        Ext2Inode onDisk = Remount(device).ReadInode(inode.InodeNumber, "big.bin");
+        Ext2Inode onDisk = Inspect(device).ReadInode(inode.InodeNumber, "big.bin");
         Assert.That(onDisk.Blocks, Is.Zero);
         Assert.That(onDisk.Block[Ext2InodeLayout.SingleIndirectIndex], Is.Zero);
         Assert.That(onDisk.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Zero);
@@ -277,12 +277,15 @@ public class Ext2TruncateTests
     }
 
     // A fresh mount has an empty inode cache, so ReadInode returns what is on disk.
-    private static Ext2Superblock Remount(MemoryBlockDevice device)
+    private static Ext2Superblock Remount(MemoryBlockDevice device, MountFlags flags = MountFlags.None)
     {
         Ext2FileSystemType fs = new(device);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, flags, out IVfsSuperblock? vsb), Is.True);
         return (Ext2Superblock)vsb!;
     }
+
+    // Look at the disk next to the live writable mount: only one writable mount per device.
+    private static Ext2Superblock Inspect(MemoryBlockDevice device) => Remount(device, MountFlags.ReadOnly);
 
     [Test]
     public void TruncateInsideDoubleRange_KeepsLivingBlocksAndFreesTheRest()
@@ -310,7 +313,7 @@ public class Ext2TruncateTests
         const uint Freed = 1024 + 10 - 5 + 1;
         Assert.That(sb.FreeBlocksCount, Is.EqualTo(freeFull + Freed));
         Assert.That(inode.Blocks, Is.EqualTo(blocksFull - (Freed * (FsBlockSize / 512))));
-        Assert.That(Remount(device).ReadInode(inode.InodeNumber, "big.bin").Blocks, Is.EqualTo(inode.Blocks));
+        Assert.That(Inspect(device).ReadInode(inode.InodeNumber, "big.bin").Blocks, Is.EqualTo(inode.Blocks));
         Assert.That(inode.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Not.Zero);
         Assert.That(sb.GetBlockPointer(inode, DoubleStart + 4, false, out _), Is.Not.Zero);
         Assert.That(sb.GetBlockPointer(inode, DoubleStart + 5, false, out _), Is.Zero);

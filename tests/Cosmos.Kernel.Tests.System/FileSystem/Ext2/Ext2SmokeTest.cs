@@ -82,7 +82,8 @@ public class Ext2SmokeTest
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
+        // Read-only: the VFS mount below is the one writable mount of the device.
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test1", fs), Is.True);
         try
         {
@@ -113,7 +114,8 @@ public class Ext2SmokeTest
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = blockSize }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
+        // Read-only: the VFS mount below is the one writable mount of the device.
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test2", fs), Is.True);
         try
         {
@@ -168,7 +170,8 @@ public class Ext2SmokeTest
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = blockSize }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
+        // Read-only: the VFS mount below is the one writable mount of the device.
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test4", fs), Is.True);
         try
         {
@@ -235,7 +238,8 @@ public class Ext2SmokeTest
         MemoryBlockDevice device = new("ram0", BlockSize, BlockCount);
         Ext2FileSystemType fs = new(device);
         Assert.That(fs.TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 4096 }), Is.True);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), Is.True);
+        // Read-only: the VFS mount below is the one writable mount of the device.
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.ReadOnly, out IVfsSuperblock? sb), Is.True);
         Assert.That(VfsManager.RegisterFileSystem("ext2test3", fs), Is.True);
         try
         {

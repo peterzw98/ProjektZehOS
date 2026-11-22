@@ -164,32 +164,79 @@ internal sealed class Ext2FileOperations : IFileOperations
         // allocates the touched blocks, and untouched gaps read as zeros.
         long written = 0;
         uint blockSize = _superblock.BlockSize;
-        while (written < buffer.Length)
+        // ZehOS patch ext2-alloc-cache, see PATCHES.md
+        // Bitmap, group descriptor and superblock are written once at the
+        // end of this call instead of once per allocated block.
+        _superblock.BeginAllocationBatch();
+        try
         {
-            long fileOffset = position + written;
-            uint logicalBlock = (uint)(fileOffset / blockSize);
-            uint blockOffset = (uint)(fileOffset % blockSize);
-            uint physicalBlock = _superblock.GetBlockPointer(inode, logicalBlock, true, out _);
-            if (physicalBlock == 0)
+            while (written < buffer.Length)
             {
-                break;
-            }
+                long fileOffset = position + written;
+                uint logicalBlock = (uint)(fileOffset / blockSize);
+                uint blockOffset = (uint)(fileOffset % blockSize);
+                // A new data block is not zeroed on disk: this loop writes the
+                // whole block, zero-filled in memory where the caller has no data.
+                uint physicalBlock = _superblock.GetBlockPointer(inode, logicalBlock, true, false, out bool isNew);
+                if (physicalBlock == 0)
+                {
+                    break;
+                }
 
-            if (_blockBuffer is null || _blockBuffer.Length != blockSize)
-            {
-                _blockBuffer = new byte[blockSize];
-            }
+                if (_blockBuffer is null || _blockBuffer.Length != blockSize)
+                {
+                    _blockBuffer = new byte[blockSize];
+                }
 
-            byte[] blockBuffer = _blockBuffer;
-            if (blockOffset != 0 || buffer.Length - written < blockSize)
-            {
-                _superblock.ReadBlocks(physicalBlock, 1, blockBuffer);
-            }
+                byte[] blockBuffer = _blockBuffer;
+                if (blockOffset != 0 || buffer.Length - written < blockSize)
+                {
+                    if (isNew)
+                    {
+                        blockBuffer.AsSpan(0, (int)blockSize).Clear();
+                    }
+                    else
+                    {
+                        _superblock.ReadBlocks(physicalBlock, 1, blockBuffer);
+                    }
+                }
 
-            long chunk = Math.Min(blockSize - blockOffset, buffer.Length - written);
-            buffer.Slice((int)written, (int)chunk).CopyTo(blockBuffer.AsSpan((int)blockOffset, (int)chunk));
-            _superblock.WriteBlocks(physicalBlock, 1, blockBuffer);
-            written += chunk;
+                long chunk = Math.Min(blockSize - blockOffset, buffer.Length - written);
+                buffer.Slice((int)written, (int)chunk).CopyTo(blockBuffer.AsSpan((int)blockOffset, (int)chunk));
+                try
+                {
+                    _superblock.WriteBlocks(physicalBlock, 1, blockBuffer);
+                }
+                catch
+                {
+                    // The batch end below writes the bitmap and the held-back
+                    // pointer block. Without this a new block whose data never
+                    // reached the disk would be published with whatever the
+                    // disk held there before, inside the file's size.
+                    if (isNew)
+                    {
+                        // The revert may fail itself (FreeBlock reads another
+                        // group's bitmap). The caller must see the original
+                        // write error; a block left allocated is only a leak
+                        // e2fsck reclaims.
+                        try
+                        {
+                            _superblock.RevertNewDataBlock(inode, logicalBlock, physicalBlock);
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    throw;
+                }
+
+                written += chunk;
+            }
+        }
+        finally
+        {
+            _superblock.EndAllocationBatch();
         }
 
         if (written == 0)

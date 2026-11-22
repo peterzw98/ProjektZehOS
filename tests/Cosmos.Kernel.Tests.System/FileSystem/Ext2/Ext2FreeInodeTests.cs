@@ -32,12 +32,15 @@ public class Ext2FreeInodeTests
         _sb = Remount();
     }
 
-    private Ext2Superblock Remount()
+    private Ext2Superblock Remount(MountFlags flags = MountFlags.None)
     {
         Ext2FileSystemType fs = new(_device);
-        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
+        Assert.That(fs.TryMount(ReadOnlySpan<char>.Empty, flags, out IVfsSuperblock? vsb), Is.True);
         return (Ext2Superblock)vsb!;
     }
+
+    // Look at the disk next to the live writable mount: only one writable mount per device.
+    private Ext2Superblock Inspect() => Remount(MountFlags.ReadOnly);
 
     private Ext2Inode Create(string name)
     {
@@ -45,7 +48,7 @@ public class Ext2FreeInodeTests
         return (Ext2Inode)inode!;
     }
 
-    private Ext2Inode OnDisk(uint inodeNumber) => Remount().ReadInode(inodeNumber, "probe");
+    private Ext2Inode OnDisk(uint inodeNumber) => Inspect().ReadInode(inodeNumber, "probe");
 
     [Test]
     public void Release_LiveInode_WritesLinksZeroAndDtimeThenClearsBit()
@@ -108,15 +111,15 @@ public class Ext2FreeInodeTests
         _sb.FreeInode(target.InodeNumber);
         uint freeAfterFirst = _sb.FreeInodesCount;
         uint dtimeAfterFirst = OnDisk(target.InodeNumber).Dtime;
-        uint onDiskFreeAfterFirst = Remount().FreeInodesCount; // the superblock copy is written lazily
+        uint onDiskFreeAfterFirst = Inspect().FreeInodesCount; // the superblock copy is written lazily
         uint group = _sb.GroupOfInode(target.InodeNumber);
-        uint groupFreeAfterFirst = Remount().GetGroup(group).FreeInodesCount; // written immediately
+        uint groupFreeAfterFirst = Inspect().GetGroup(group).FreeInodesCount; // written immediately
 
         _sb.FreeInode(target.InodeNumber);
 
         Assert.That(_sb.FreeInodesCount, Is.EqualTo(freeAfterFirst));
-        Assert.That(Remount().FreeInodesCount, Is.EqualTo(onDiskFreeAfterFirst), "on-disk counters unchanged");
-        Assert.That(Remount().GetGroup(group).FreeInodesCount, Is.EqualTo(groupFreeAfterFirst), "group descriptor unchanged");
+        Assert.That(Inspect().FreeInodesCount, Is.EqualTo(onDiskFreeAfterFirst), "on-disk counters unchanged");
+        Assert.That(Inspect().GetGroup(group).FreeInodesCount, Is.EqualTo(groupFreeAfterFirst), "group descriptor unchanged");
         Assert.That(OnDisk(target.InodeNumber).Dtime, Is.EqualTo(dtimeAfterFirst));
     }
 
