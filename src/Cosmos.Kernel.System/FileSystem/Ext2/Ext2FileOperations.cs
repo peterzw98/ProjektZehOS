@@ -277,7 +277,9 @@ internal sealed class Ext2FileOperations : IFileOperations
     /// consecutive physical blocks with one device call straight from the
     /// caller's buffer. A window never crosses a pointer block boundary:
     /// the held-back pointer block is written when the next window switches
-    /// to another one, and by then every block it points at holds its data.
+    /// to another one, after the device calls for every block it points at.
+    /// This orders the calls only; without a flush in between, a device with
+    /// a reordering volatile cache may still persist the pointer first.
     /// </summary>
     /// <param name="inode">File inode.</param>
     /// <param name="logicalBlock">First logical block, aligned with the data.</param>

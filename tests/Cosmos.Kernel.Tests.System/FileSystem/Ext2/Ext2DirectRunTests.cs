@@ -24,13 +24,23 @@ public class Ext2DirectRunTests
 
     /// <summary>
     /// RAM device that logs every write (first sector, length, copy of the
-    /// bytes) and can fail the next write longer than one fs block.
+    /// bytes) and can fail the next write longer than one fs block, after
+    /// letting a number of such runs through, and optionally every write
+    /// after that.
     /// </summary>
     private sealed class LoggingDevice(MemoryBlockDevice inner) : IBlockDevice
     {
         public List<(ulong Lba, byte[] Data)> Log { get; } = new();
 
         public bool FailNextRun { get; set; }
+
+        /// <summary>Runs that still succeed before <see cref="FailNextRun"/> strikes.</summary>
+        public int RunsToPass { get; set; }
+
+        /// <summary>After the failed run every further write fails too (dead device).</summary>
+        public bool FailAllAfterRun { get; set; }
+
+        private bool _dead;
 
         public string Name => inner.Name;
 
@@ -42,9 +52,15 @@ public class Ext2DirectRunTests
 
         public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data)
         {
-            if (FailNextRun && blockCount * SectorSize > FsBlockSize)
+            if (_dead)
+            {
+                throw new IOException("device gone");
+            }
+
+            if (FailNextRun && blockCount * SectorSize > FsBlockSize && RunsToPass-- <= 0)
             {
                 FailNextRun = false;
+                _dead = FailAllAfterRun;
                 // Part of the run reaches the disk before the error.
                 inner.WriteBlock(blockNo, FsBlockSize / SectorSize, data[..(int)FsBlockSize]);
                 throw new IOException("injected run failure");
@@ -316,6 +332,122 @@ public class Ext2DirectRunTests
         "ABCDEFGHIJ"u8.CopyTo(expected.AsSpan(300 * (int)FsBlockSize));
         Assert.That(ReadBack(device, "fail", size), Is.EqualTo(expected), "blocks 14.. read zeros, not 0xAA");
         AssertCountersOnDisk(device, freeInMemory);
+    }
+
+    /// <summary>
+    /// Every block the file names on disk (inode and single indirect block)
+    /// is used in the bitmap and holds written data, never the 0xAA the
+    /// device was filled with; counters agree. Returns the remounted inode
+    /// and the number of data pointers.
+    /// </summary>
+    private static (Ext2Inode Inode, int Pointers) AssertDiskPointersSafe(IBlockDevice device, string name)
+    {
+        Ext2Superblock again = Inspect(device);
+        Assert.That(again.Root.InodeOperations.Lookup(again.Root, name, out IVfsInode? found), Is.True);
+        Ext2Inode inode = (Ext2Inode)found!;
+        Assert.That(inode.Block[Ext2InodeLayout.DoubleIndirectIndex], Is.Zero, "test stays below the double indirect range");
+
+        byte[] bmp = new byte[FsBlockSize];
+        again.ReadBlocks(again.GetGroup(0).BlockBitmap, 1, bmp);
+        bool Used(uint blk) => (bmp[(blk - again.FirstDataBlock) / 8] & (1 << (int)((blk - again.FirstDataBlock) % 8))) != 0;
+
+        List<uint> targets = new();
+        for (int i = 0; i < Ext2InodeLayout.DirectBlockCount; i++)
+        {
+            if (inode.Block[i] != 0)
+            {
+                targets.Add(inode.Block[i]);
+            }
+        }
+
+        uint indirect = inode.Block[Ext2InodeLayout.SingleIndirectIndex];
+        if (indirect != 0)
+        {
+            Assert.That(Used(indirect), Is.True, "indirect block used in the bitmap");
+            byte[] ptrs = new byte[FsBlockSize];
+            again.ReadBlocks(indirect, 1, ptrs);
+            for (int off = 0; off < ptrs.Length; off += 4)
+            {
+                uint target = BitConverter.ToUInt32(ptrs, off);
+                if (target != 0)
+                {
+                    targets.Add(target);
+                }
+            }
+        }
+
+        byte[] block = new byte[FsBlockSize];
+        foreach (uint target in targets)
+        {
+            Assert.That(target, Is.LessThan(again.BlocksCount), $"pointer {target} inside the volume");
+            Assert.That(Used(target), Is.True, $"block {target} named on disk but free in the bitmap");
+            again.ReadBlocks(target, 1, block);
+            Assert.That(block.All(b => b == 0xAA), Is.False, $"block {target} named on disk but holds stale disk contents");
+        }
+
+        Assert.That(FreeByBitmap(again), Is.EqualTo(again.FreeBlocksCount), "bitmap agrees with the superblock");
+        Assert.That((uint)again.GetGroup(0).FreeBlocksCount, Is.EqualTo(again.FreeBlocksCount), "descriptor agrees with the superblock");
+        return (inode, targets.Count);
+    }
+
+    [Test]
+    public void LateRunFails_DiskAfterwards_KeepsOldFileAndNamesOnlyWrittenBlocks()
+    {
+        // laser review P5 (#577): disk state right after a late run fails,
+        // without a later write that would make the inode durable.
+        LoggingDevice device = new(Formatted(0xAA));
+        Ext2Superblock sb = Mount(device);
+        OpenFile file = Create(sb, "late");
+        byte[] old = Pattern(20 * (int)FsBlockSize, seed: 2);
+        Assert.That(file.Operations.Write(file, old), Is.EqualTo(old.Length));
+
+        // 600 blocks behind block 20: windows [20,276), [276,532), [532,620).
+        // The first window goes out, the run of the second one fails.
+        byte[] more = Pattern(600 * (int)FsBlockSize, seed: 4);
+        device.FailNextRun = true;
+        device.RunsToPass = 1;
+        file.Position = old.Length;
+        Assert.That(() => file.Operations.Write(file, more), Throws.InstanceOf<IOException>().With.Message.EqualTo("injected run failure"));
+        Assert.That(device.FailNextRun, Is.False, "the injected failure struck");
+
+        (Ext2Inode onDisk, int pointers) = AssertDiskPointersSafe(device, "late");
+
+        // The inode is not written after the error: size and i_blocks are
+        // the old ones, and the old content reads back unchanged.
+        Assert.That(onDisk.FullSize, Is.EqualTo((ulong)old.Length), "size on disk");
+        Assert.That(onDisk.Blocks, Is.EqualTo((20u + 1u) * (FsBlockSize / 512)), "i_blocks on disk: 20 data blocks and the indirect block");
+        Assert.That(ReadBack(device, "late", old.Length), Is.EqualTo(old));
+
+        // Known leftover (pre-existing since ext2-alloc-cache #558, see the
+        // patch file): the held-back indirect block still names the blocks
+        // of the first window, past EOF. They hold their data (checked
+        // above); the failed window names nothing.
+        Assert.That(pointers, Is.EqualTo(276), "20 old blocks and the 256 blocks of the written window");
+    }
+
+    [Test]
+    public void LateRunFails_ThenDeviceGone_CallerSeesIOException_DiskStaysSafe()
+    {
+        // laser review P5/E3 (#577): the batch end fails as well. The
+        // caller gets an IOException (today the one from the batch end, not
+        // the run's: pre-existing, see the patch file), and the disk keeps
+        // the old file.
+        LoggingDevice device = new(Formatted(0xAA));
+        Ext2Superblock sb = Mount(device);
+        OpenFile file = Create(sb, "dead");
+        byte[] old = Pattern(20 * (int)FsBlockSize, seed: 6);
+        Assert.That(file.Operations.Write(file, old), Is.EqualTo(old.Length));
+
+        device.FailNextRun = true;
+        device.RunsToPass = 1;
+        device.FailAllAfterRun = true;
+        file.Position = old.Length;
+        Assert.Throws(Is.InstanceOf<IOException>(), () => file.Operations.Write(file, Pattern(600 * (int)FsBlockSize, seed: 8)));
+
+        (Ext2Inode onDisk, int pointers) = AssertDiskPointersSafe(device, "dead");
+        Assert.That(onDisk.FullSize, Is.EqualTo((ulong)old.Length), "size on disk");
+        Assert.That(pointers, Is.EqualTo(20), "neither bitmap nor indirect block of the failed call reached the disk");
+        Assert.That(ReadBack(device, "dead", old.Length), Is.EqualTo(old));
     }
 
     [Test]
