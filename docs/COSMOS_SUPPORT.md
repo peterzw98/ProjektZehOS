@@ -491,6 +491,80 @@ Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Ve
 
 Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Target method not found` und beendet den Build erfolgreich; der Plug ist dann still wirkungslos. Dieselbe Warnung erscheint auch regulär, weil der Patcher Plugs gegen jede Assembly mit passendem Typnamen versucht. Die CI prüft deshalb mit `scripts/check-plug-binding.py` im Log von `cosmos build --verbose`, dass jede `[PlugMember]`-Methode aus `ProjektZeh/` mindestens einmal `Found matching method` erreicht.
 
+## Mehrere CPUs: Plattformmatrix (E7-E, Zwischenstand 20. November 2026)
+
+**Zwischenstand:** Stand `task/mc-e5-smp` @13f775f2 (Cosmos 3.0.97-zehos.6-smp.11, enthält E6-G #576 und `master` #569), noch **ohne** E7-A (#564, wartet auf den Handtest) bis E7-D. Der Plan (E7-E) setzt `master` nach E7-A bis E7-D voraus; diese Tabelle ist die Vorabfahrt mit dem, was heute schon läuft. **Nach E7-A (und E7-D) folgt eine komplette Wiederholung der 80 Läufe** mit neu gebauten ISOs; die Zahlen unten gelten nur für diesen Stand. Block #398.
+
+**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (80 Läufe) für `scripts/run-guest-suite.py`. Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs (je `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`, MSBuild-Eigenschaft als Umgebungsvariable, Ausgabe `ProjektZeh/output-x64/ProjektZeh.iso`; vor jedem Bau `bin`, `obj`, `output-x64` löschen): normal, Recovery (`ZehOSRecovery=true`), `ZehOSThreadProbe=true`, `ZehOSIsolationProbe=true`, Wasm mit Testschlüssel (`ZehOSPackageKeyPath=…/public.b64`) und Test-CA (`ZehOSPackageTestCaPath=…/ca.pem`; Server-Zertifikat mit SAN `IP:10.0.2.2`). Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`, signiert mit dem Testschlüssel), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages. Skripte von `master` (#567 behebt den Wettlauf beim letzten `shutdown`); `scripts/test-desktop-guest.py` wurde dazu aus `origin/master` in den Branch übernommen, sonst keine Skriptänderung.
+
+Umgebung: Linux, Rechner HPz, Host Intel Core Ultra 9 185H (22 Threads), QEMU 11.1.2 `q35`; Bau mit SDK 10.0.404 (Cosmos-Werkzeuge smp.11), je Variante 0 Warnungen, 0 Fehler. ISO-Prüfsummen (SHA-256, Anfang): normal `2b5494cf`, Thread `e48683ac`, Isolation `91a7a5d0`, Recovery `31894a5a`, Wasm `0262186c`. Lauf 17:20 bis 17:45 (1481,6 s für 80 Läufe, `--parallel 3`). Last (alle 30 s gemessen, 50 Proben): `pgrep -c qemu` 1 bis 6 (3 eigene Gäste plus fremde Gäste anderer Sitzungen auf demselben Rechner, davon einer mit `-smp 4` auf KVM während des ganzen Laufs), `uptime` Load 1 min im Mittel 4,9, höchstens 7,5. Die Dauern sind deshalb keine Messwerte. Zahlen: bestanden/Läufe.
+
+| Prüfung (Spalte) | Bedeutung |
+| --- | --- |
+| Boot | `test-desktop-guest.py`: Boot bis Desktop, Anmeldung, Desktopablauf, abschließend `shutdown` |
+| Thread | `test-thread-probe.py`: THREAD_PROBE und MESSAGES_PROBE (Ersatz für `SMP_PROBE`, das erst mit E7-A bis E7-D entsteht) |
+| Isolation | `test-isolation-probe.py --runs 2` (positiv) |
+| Shutdown | Recovery-ISO, `test-desktop-guest.py --recovery --power` (reboot und shutdown) |
+| Doom quick | `test-wasm-doom-desktop.py`, Szenarien remove, upgrade, corrupt, minkernel einzeln (4 Läufe je Zelle) |
+
+| Umgebung, CPU-Aufbau | Boot | Thread | Isolation | Shutdown | Doom quick |
+| --- | --- | --- | --- | --- | --- |
+| KVM `1` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4,cores=2,threads=2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `8,cores=4,threads=2` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| TCG `1`, `2`, `4`, `4,cores=2,threads=2`, `8,cores=4,threads=2` | je 1/1 | je 1/1 | je 2/2 | je 1/1 | je 4/4 |
+| WHPX `2`, `4` | offen: braucht Windows-Benutzer | offen | offen | offen | offen |
+| VMware `numvcpus` 1, 2, 4 | offen: Liste unten | offen | offen | offen | offen |
+| echte Hardware mit Hyperthreading | offen: Liste unten | offen | offen | offen | offen |
+
+Summe: **80/80 bestanden** (0 Fehlschläge, 0 Zeitüberschreitungen; Quelle `summary.json` des Suitelaufs). Die zusätzliche Wiederholung (`4-kvm-boot` und `8c4t2-kvm-boot` je 6 Läufe, 143 s, `--parallel 3`) bestand 12/12; die Boot-Zellen KVM 4 und 8 CPUs stehen damit bei 7/7 je Aufbau (vorher 2/4 und 1/4).
+
+Dauern (ein Lauf, 3 Gäste parallel, Rechner belastet): Boot KVM 34,7 bis 36,2 s, TCG 55,3 bis 60,4 s; Thread KVM 9,9 bis 10,4 s, TCG 10,4 bis 11,2 s; Isolation (2 Läufe) KVM 18,7 bis 21,7 s, TCG 39,1 bis 45,2 s; Shutdown KVM 6,3 bis 8,0 s, TCG 8,3 bis 10,0 s; Doom quick KVM 35,0 bis 66,3 s, TCG 97,6 bis 151,9 s.
+
+**Befund 1 (Skript, nicht Kernel; behoben durch #567):** Auf dem Stand smp.10 scheiterte Boot auf KVM mit 4 und 8 CPUs gelegentlich am letzten Schritt (`guest.shell("shutdown")` in `test-desktop-guest.py`: `QMP input-send-event: Verbindung beendet`, weil der Gast schon ausgeschaltet war, bevor die Eingabe quittiert wurde; Quote 4 CPUs 2/4, 8 CPUs 1/4). Mit dem Skript von `master` (#567) tritt das nicht mehr auf: 7/7 je Aufbau, alle 80 Läufe grün. Kein Kernelbefund erkennbar (die Gegenprüfung von Lars am PR-Kommentar belegt dasselbe aus den Logs).
+
+**Abgrenzung zu E5-J (Issue #383):** E5-J belegt auf KVM und TCG die CPU-Aufbauten leer, 4 und `8,cores=4,threads=2` für Desktop, Recovery, THREAD_PROBE, Isolation (+ `--negative`, `--nmi`), Doom full, ClassiCube und Netz. Hier neu: die Aufbauten `2` und `4,cores=2,threads=2`, TCG-Thread-/Isolationsprobe, Doom quick und der Poweroff über alle Aufbauten.
+
+### Läufe für Menschen: VMware und echte Hardware (Ergebnis in Issue #398)
+
+Diese Zellen kann kein Agent fahren; sie brauchen Peter oder Lars mit VMware beziehungsweise Hardware. **Einmal je Wiederholung** (nach E7-A/E7-D auf dem dann gültigen Stand `master`; der Stand dieses Zwischenstands ist `task/mc-e5-smp` @13f775f2).
+
+**ISO bauen** (Linux oder Windows, Repository-Stamm, SDK `10.0.404`, Cosmos-Werkzeuge der Pin-Version `3.0.97-zehos.6-smp.11` laut `deploy/cosmos/VERSION`; vor jedem Bau `ProjektZeh/bin`, `ProjektZeh/obj`, `ProjektZeh/output-x64` löschen und die ISO danach umbenennen):
+
+| ISO | Bau | Ausgabe nach dem Bau |
+| --- | --- | --- |
+| A: normal | `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release` | `ProjektZeh/output-x64/ProjektZeh.iso` |
+| B: Thread-Probe | dieselbe Zeile mit gesetzter Umgebungsvariable `ZehOSThreadProbe=true` (PowerShell: `$env:ZehOSThreadProbe='true'`) | dieselbe Datei, als `thread.iso` sichern |
+| C: Recovery | `ZehOSRecovery=true` | als `recovery.iso` sichern |
+
+**Startparameter VMware** (`scripts/start-vmware.ps1`, Windows mit Player oder Workstation; die `.vmx` entsteht daraus): `-Cpus 1`, `-Cpus 2`, `-Cpus 4` setzen `numvcpus` (UEFI, 1024 MiB, plattenlos, NAT, serielle Ausgabe nach `.tools\vmware\serial.log`):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-vmware.ps1 -IsoPath <ISO> -Cpus <1|2|4>
+```
+
+Vor jedem Lauf die VM ausschalten; Aufbau mit Sockets/Kernen: Standard der `.vmx` (`numvcpus` ohne `cpuid.coresPerSocket`, also ein Kern je Socket); ein zweiter Durchgang mit `cpuid.coresPerSocket = "2"` in der `.vmx` (bei `numvcpus` 4) deckt Kerne je Socket ab und wird als eigene Zeile vermerkt.
+
+**Zellen und erwartetes Ergebnis** (jeweils `serial.log` als Beleg, Zeile oder Ausschnitt nennen):
+
+| Nr. | Zelle (Umgebung, Aufbau) | ISO | Prüfung | Erwartung / Marke |
+| --- | --- | --- | --- | --- |
+| V1 | VMware `numvcpus` 1 | A | Boot bis Desktop, Anmeldung, Terminal öffnen, `echo` tippen, im Terminal `shutdown` | Desktop sichtbar und bedienbar, VM schaltet sich selbst aus; `serial.log` ohne `Panic`/`CPU EXCEPTION`; keine `[SMP] CPU n up`-Zeile (nur der Startprozessor) |
+| V2 | VMware `numvcpus` 2 | A | wie V1 | zusätzlich `[SMP] CPU 1 up, hw id 0x1 …` im `serial.log` |
+| V3 | VMware `numvcpus` 4 | A | wie V1 | `[SMP] CPU 1 up`, `CPU 2 up`, `CPU 3 up` im `serial.log` |
+| V4 | VMware `numvcpus` 1, 2, 4 | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS` und `MESSAGES_PROBE PASS` im `serial.log`, kein `FAIL` |
+| V5 | VMware `numvcpus` 1, 2, 4 | C | Boot bis Textshell, `reboot` (Neustart bis Textshell erneut), dann `shutdown` | Textshell erscheint, kein Desktop; Neustart gelingt; VM schaltet sich aus |
+| V6 | VMware `numvcpus` 4 (optional `coresPerSocket` 2) | A | wie V3, danach 5 Minuten Desktop offen lassen, Fenster öffnen und ziehen | keine Hänger, Uhr läuft weiter, kein `Panic` |
+| H1 | echte Hardware mit Hyperthreading (Modell nennen: CPU, Kerne/Threads, Firmware UEFI) | A, von USB/Datenträger gestartet | Boot bis Desktop, Anmeldung, Terminal, `shutdown` | Desktop bedienbar, Gerät schaltet sich aus; sichtbarer Bildschirm und, wenn vorhanden, serielle Ausgabe/`log` im Terminal: `[SMP] CPU n up` für jeden Kern/Thread, Meldung bei fehlgeschlagenem Start eines AP unverändert festhalten |
+| H2 | echte Hardware (wie H1) | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS`, `MESSAGES_PROBE PASS` (ohne serielle Verbindung nur, soweit am Bildschirm oder über `log` sichtbar; sonst als nicht prüfbar melden) |
+| H3 | echte Hardware (wie H1) | C | Boot bis Textshell, `reboot`, `shutdown` | wie V5 |
+
+Nicht verlangt: Doom, Isolations- und Netzproben (QEMU-Zellen der Matrix); VMware und Hardware prüfen hier Start der weiteren CPUs, Probe, Neustart und Ausschalten. **Ergebnis** je Zelle (bestanden/nicht bestanden, Stand/Commit des ISOs, VMware-Version, Host, Marken oder Auszug aus `serial.log`) als Kommentar in **Issue #398** melden; ein Fehlschlag mit `serial.log` als Anhang. Bis dahin bleiben die Zeilen `VMware` und `echte Hardware` der Tabelle offen.
+
+**Offen:** `SMP_PROBE` und Platzierungsprobe (E7-A bis E7-D, danach komplette Wiederholung); WHPX, VMware und echte Hardware (brauchen die Benutzer, die sie haben, siehe oben); Doom quick im TCG-Snapshotmodus (hier `--no-snapshot`, weil der Snapshot Doom aus dem Repository installiert und `repo0` keines enthält); Isolation `--negative` und `--nmi` (aus E5-J); Bildauswertung (es zählen nur Skriptmarken). Messwerte für Dauern sind wegen der gleichzeitigen Gäste und fremder Last nicht belastbar.
+
 ## Grenzen
 
 - Cosmos 3.0.94 verwirft in seiner normalen Tastaturabfrage Break-Ereignisse. Daher übernimmt ZehOS den Rohdatenpfad vollständig; `Console.ReadLine` und `Console.ReadKey` gehören nicht mehr zum interaktiven Pfad. Sobald Cosmos eine öffentliche Rohereignis-API bietet, sollen Plug und Zugriff auf die interne Layoutmethode entfallen.
