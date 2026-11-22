@@ -321,6 +321,37 @@ public sealed class UserManagementTests
     }
 
     [TestMethod]
+    public void LockedReason_NamesMissingDataDriveInsteadOfRecoveryBuild()
+    {
+        // Fehlstart ohne Laufwerk und disk unmount: kein Recovery-Build noetig, der Neustart mit Laufwerk genuegt.
+        accounts.IsDataMounted = () => false;
+        Assert.IsFalse(accounts.Load().IsOK());
+        Assert.IsFalse(accounts.IsReady);
+        Assert.IsFalse(accounts.NeedsSetup);
+        StringAssert.Contains(accounts.LockedReason, "/data ist nicht eingebunden");
+        Assert.IsFalse(accounts.LockedReason.Contains("Recovery-Build"));
+    }
+
+    [TestMethod]
+    public void LockedReason_NamesRecoveryBuildForDamagedMetadataOnMountedDrive()
+    {
+        File.WriteAllText(Path.Combine(root, ".zehos-security.db"), "kaputt");
+        Assert.IsFalse(accounts.Load().IsOK());
+        Assert.IsFalse(accounts.IsReady);
+        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build erforderlich");
+    }
+
+    [TestMethod]
+    public void LockedReason_FollowsUnmountAfterLogin()
+    {
+        SetupAdministrator();
+        Assert.IsTrue(accounts.Load().IsOK());
+        accounts.IsDataMounted = () => false;
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
+    }
+
+    [TestMethod]
     public void UserSession_LoginAsCopiesIdentityAndCountsChanges()
     {
         var admin = SetupAdministrator();

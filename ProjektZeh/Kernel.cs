@@ -419,7 +419,7 @@ public sealed class Kernel : Sys.Kernel
         var guestIdentity = CosmosInstalledIdentity.EvaluateData();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString($"GPT_TEST IDENTITY {guestIdentity?.State.ToString() ?? "NoData"} SETUP {accounts.NeedsSetup}\n");
 #endif
-        if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
+        if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt: " + accounts.LockedReason + " Vorhandene Dateien werden nicht freigegeben.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif
         if (boot.IsRecoveryMode)

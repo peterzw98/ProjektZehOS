@@ -378,6 +378,15 @@ internal sealed class AccountService
         return result.ToArray();
     }
 
+    /// <summary>
+    /// Kurzer Grund fuer die Anzeige gesperrter Konten. Ein fehlendes oder ausgehaengtes Datenlaufwerk (Fehlstart ohne Platte,
+    /// <c>disk unmount</c>) braucht keinen Recovery-Build; der Neustart mit Laufwerk genuegt. Nur sonst (beschaedigte Metadaten,
+    /// Rootfehler) bleibt die ausdrueckliche Recovery der Weg.
+    /// </summary>
+    public string LockedReason => IsDataMounted()
+        ? "Konten oder Rechte fehlen oder sind beschaedigt (Sicherheits-Recovery-Build erforderlich)."
+        : "Datenlaufwerk /data ist nicht eingebunden. Mit Laufwerk neu starten (reboot).";
+
     public void Lock()
     {
         Access.Lock();
