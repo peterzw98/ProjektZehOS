@@ -352,6 +352,36 @@ public sealed class UserManagementTests
     }
 
     [TestMethod]
+    public void LockedReason_FitsLoginWindowAndMountedLockGivesRecoveryText()
+    {
+        SetupAdministrator();
+        // Eingebunden, aber nach dem Login gesperrt (Gegenfall zum Aushaengen): Recovery-Text.
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build erforderlich");
+        int columns = 680 / 8;
+        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason.Length.ToString(CultureInfo.InvariantCulture));
+        // Der Grund wird je Load/Lock neu bestimmt, nicht je Bild.
+        accounts.IsDataMounted = () => false;
+        StringAssert.Contains(accounts.LockedReason, "Sicherheits-Recovery-Build");
+        accounts.Lock();
+        Assert.IsTrue(accounts.LockedReason.Length <= columns);
+        StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
+    }
+
+    [TestMethod]
+    public void Desktop_LockedAccounts_RenderLoginWindowWithReason()
+    {
+        accounts.IsDataMounted = () => false;
+        Assert.IsFalse(accounts.Load().IsOK());
+        var identity = accounts.CreateSession();
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(root), session: new DesktopSession(accounts, CreateShell(identity), identity));
+        var pixels = new int[1024 * 768];
+        desktop.Render(new PixelSurface(1024, 768, pixels), 0, 10, 10, PointerButtons.None);
+        Assert.IsTrue(Array.Exists(pixels, value => value != 0));
+    }
+
+    [TestMethod]
     public void UserSession_LoginAsCopiesIdentityAndCountsChanges()
     {
         var admin = SetupAdministrator();

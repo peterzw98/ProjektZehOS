@@ -118,6 +118,14 @@ internal sealed class AccountService
 
     public ResultErr Load()
     {
+        lockedReason = null;
+        var result = LoadCore();
+        lockedReason = null;
+        return result;
+    }
+
+    private ResultErr LoadCore()
+    {
         Lock();
         NeedsSetup = false;
         var read = metadata.ReadText(MetadataFile, allowMissing: true, MaximumMetadataLength);
@@ -379,16 +387,21 @@ internal sealed class AccountService
     }
 
     /// <summary>
-    /// Kurzer Grund fuer die Anzeige gesperrter Konten. Ein fehlendes oder ausgehaengtes Datenlaufwerk (Fehlstart ohne Platte,
-    /// <c>disk unmount</c>) braucht keinen Recovery-Build; der Neustart mit Laufwerk genuegt. Nur sonst (beschaedigte Metadaten,
-    /// Rootfehler) bleibt die ausdrueckliche Recovery der Weg.
+    /// Kurzer Grund fuer die Anzeige gesperrter Konten, einmal je Load/Lock ausgewertet (kein Speichersperre-Zugriff je Bild).
+    /// Er leitet sich vom Einbindezustand ab, nicht von der Ursache der Sperre: Ist /data nicht eingebunden (Laufwerk fehlt,
+    /// <c>disk unmount</c>, Einbinden gescheitert, mehrdeutige Platte), steht das so da; die genaue Ursache nennen <c>log</c>
+    /// und die Ergebniszeile von Load. Sonst bleibt die ausdrueckliche Recovery der Weg. Hoechstens 85 Zeichen, die Breite
+    /// des Anmeldefensters (680 px bei 8 px Glyphbreite).
     /// </summary>
-    public string LockedReason => IsDataMounted()
-        ? "Konten oder Rechte fehlen oder sind beschaedigt (Sicherheits-Recovery-Build erforderlich)."
-        : "Datenlaufwerk /data ist nicht eingebunden. Mit Laufwerk neu starten (reboot).";
+    public string LockedReason => lockedReason ??= IsDataMounted()
+        ? "Konten fehlen oder sind beschaedigt: Sicherheits-Recovery-Build erforderlich."
+        : "Datenlaufwerk /data ist nicht eingebunden (fehlt oder Einbinden gescheitert).";
+
+    private string? lockedReason;
 
     public void Lock()
     {
+        lockedReason = null;
         Access.Lock();
         accounts.Clear();
         administratorCommands.Clear();
