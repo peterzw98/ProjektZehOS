@@ -166,7 +166,9 @@ class ClassicServer:
             try:
                 client.send(data)
             except OSError:
-                pass  # Der Lesefaden dieses Clients bemerkt das Ende und raeumt auf.
+                continue  # Der Lesefaden dieses Clients bemerkt das Ende und raeumt auf.
+            # Belegt am Server, was bei welchem Client ankam (Mehrspielertest mit zwei Gaesten).
+            self.event("relay", to=client.name, opcode=data[0])
 
     def set_block(self, x: int, y: int, z: int, block: int) -> None:
         """Setzt einen Block serverseitig und meldet ihn allen Clients."""

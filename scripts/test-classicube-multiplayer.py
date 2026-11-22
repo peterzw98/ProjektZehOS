@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Prueft ClassiCube-Mehrspieler gegen scripts/classic-test-server.py in einer frischen QEMU-Platte.
+"""Prueft ClassiCube-Mehrspieler mit ZWEI ZehOS-Gaesten am selben Server (scripts/classic-test-server.py).
 
 Das ISO muss mit dem oeffentlichen Gegenstueck von --key (ausschliesslich Testschluessel) gebaut sein.
---package bezeichnet die unsignierten Paketdateien des Ports; das Testpaket erhaelt capability=net.
-Der Testserver lauscht auf 127.0.0.1; der Gast erreicht ihn ueber das QEMU-Usermode-Netz als 10.0.2.2.
-Ablauf: net dhcp, Start aus dem Menue, Launcher "Direct connect", Name und Adresse tippen, Verbinden;
-Bewegung (Positionen am Server), Block setzen/entfernen (am Server und bei einem zweiten Client), Bloecke des
-zweiten Clients erscheinen im Bild, Schliessen des Fensters bei offener Verbindung, erneut verbinden, Serverausfall:
-ClassiCube zeigt den Abbruch, Textshell und Desktop wechseln weiter, das Fenster schliesst sauber.
+--package bezeichnet die unsignierten Paketdateien des Ports (z. B. classicube/1.1.0/files aus dem Branch packages);
+das Testpaket erhaelt capability=net und wird in beiden Gaesten lokal installiert.
+Netz: Der Testserver lauscht auf 127.0.0.1 des Hosts. Jeder Gast hat sein eigenes QEMU-Usermode-Netz (je ein NAT);
+darin ist der Host fuer beide als 10.0.2.2 erreichbar. Das braucht weder Bruecke noch Root-Rechte noch Portweiterleitung;
+ein gemeinsames Gastnetz (socket/Bruecke) waere nur noetig, wenn die Gaeste einander direkt erreichen muessten.
+Ablauf: beide Gaeste starten parallel (net dhcp, Paket installieren), verbinden ueber "Direct connect" mit eigenem Namen;
+der Server meldet beide Spieler und leitet Spawn-Pakete an den jeweils anderen weiter. Gast A setzt und entfernt einen
+Block: Server-Ereignis und Weiterleitung an Gast B (Ereignis "relay") sowie sichtbare Bildaenderung bei B. Gast B bewegt
+sich: Position kommt am Server an und wird an A weitergeleitet. A schliesst das Fenster bei offener Verbindung (Server
+und B bemerken es, B laeuft weiter), verbindet erneut; Serverausfall bei beiden Gaesten (Abbruch sichtbar, Textshell und
+Desktop wechseln weiter, Fenster schliesst sauber); zuletzt Start gegen den nicht mehr erreichbaren Server.
 Bilder und Protokolle bleiben unter .tools/classicube-mp-guest/ erhalten.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 from pathlib import Path
-import socket
-import struct
 import subprocess
 import sys
-import threading
 import time
 import uuid
 
@@ -35,43 +38,140 @@ def load(name, path):
 tools = load("package_guest", "scripts/test-wasm-doom-desktop.py")
 classic = load("classic_test_server", "scripts/classic-test-server.py")
 
-PLAYER = "zehos"
-OBSERVER = "beobachter"
+class Session:
+    """Ein Gast mit eigener VM, Bildschirmfotos und Fensterbedienung."""
 
+    def __init__(self, label, player, args, work, server):
+        self.label, self.player, self.server, self.accel = label, player, server, args.accel
+        self.work = work
+        self.step = 0
+        self.launches = 0
+        self.vm = None
+        self.guest = None
+        self.iso, self.memory = args.iso.resolve(), args.memory
 
-class Observer:
-    """Zweiter Client auf dem Host: sammelt, was der Server ihm schickt, und setzt selbst Bloecke."""
+    def boot(self, seed):
+        tools.create_disk(seed, self.work / "data.qcow2")
+        port = tools.free_port()
+        self.vm = tools.start_qemu(self.iso, self.work / "data.qcow2", self.work, port, self.accel, None, self.memory)
+        self.guest = tools.Guest(self.work, port, "", time.monotonic())
+        g = self.guest
+        g.wait("Desktop ist bereit", 240)
+        g.connect()
+        self.capture("boot")
+        g.login(first=True)
+        g.shell()
+        g.dhcp()
+        g.pkg("install-local /data/pkgs/classicube/1.1.0", "classicube 1.1.0 installiert.")
+        g.desktop()
+        self.memory_mark = g.mark()
 
-    def __init__(self, port):
-        self.socket = socket.create_connection(("127.0.0.1", port), timeout=10)
-        self.socket.sendall(struct.pack(">BB", 0x00, 7) + classic.text(OBSERVER) + classic.text("-") + b"\x00")
-        self.packets = []
-        self.lock = threading.Lock()
-        threading.Thread(target=self._read, daemon=True).start()
+    def stop(self):
+        if self.vm and self.vm.poll() is None:
+            self.vm.kill()
+            self.vm.wait()
 
-    def _read(self):
-        try:
-            while True:
-                opcode = classic.read_exact(self.socket, 1)[0]
-                body = classic.read_exact(self.socket, classic.SERVER_SIZES[opcode] - 1)
-                with self.lock:
-                    self.packets.append((opcode, body))
-        except (ConnectionError, OSError, KeyError):
-            pass
+    def capture(self, name):
+        self.step += 1
+        ppm = self.work / "screen.ppm"
+        self.guest.qmp.command("screendump", {"filename": str(ppm)})
+        header, size, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
+        assert header == b"P6" and maximum == b"255", "Unerwartetes QEMU-Bildformat"
+        self.guest.size = tuple(map(int, size.split()))
+        self.guest.qmp.shot(self.work / f"{self.step:02d}-{name}.png")
+        return pixels
 
-    def seen(self, opcode, predicate=lambda body: True):
-        with self.lock:
-            return [body for code, body in self.packets if code == opcode and predicate(body)]
+    # Paketfenster 800x560 bei 32,80, Inhalt 798x519 ab 33,120; jeder weitere Start versetzt das Fenster um 28.
+    def origin(self):
+        offset = 28 * (self.launches - 1)
+        return 33 + offset, 120 + offset
 
-    def place(self, x, y, z, block):
-        self.socket.sendall(struct.pack(">BhhhBB", 0x05, x, y, z, 1, block))
+    def click(self, x, y):
+        left, top = self.origin()
+        self.guest.qmp.click(left + x, top + y, *self.guest.size)
+        time.sleep(.5)
 
-    def move(self, x, y, z):
-        """Position in Blockeinheiten (Server rechnet in 1/32 Block)."""
-        self.socket.sendall(struct.pack(">BbhhhBB", 0x08, -1, x * 32 + 16, y * 32, z * 32 + 16, 0, 0))
+    def close_window(self):
+        offset = 28 * (self.launches - 1)
+        self.guest.qmp.click(812 + offset, 100 + offset, *self.guest.size)
 
-    def close(self):
-        self.socket.close()
+    def view(self, pixels):
+        width, _ = self.guest.size
+        left, top = self.origin()
+        left, top = left + 199, top + 130
+        return b"".join(pixels[(row*width+left)*3:(row*width+left+400)*3] for row in range(top, top+260))
+
+    @staticmethod
+    def difference(first, second):
+        return sum(first[i:i+3] != second[i:i+3] for i in range(0, len(first), 3*4))
+
+    def changed(self, before, name, message, threshold=1500):
+        deadline = time.monotonic() + 30
+        while True:
+            time.sleep(1)
+            after = self.view(self.capture(name))
+            if self.difference(before, after) > threshold:
+                return after
+            assert time.monotonic() < deadline, f"[{self.label}] {message} (Schwelle {threshold} Stichproben)"
+
+    def button(self, name):
+        for down in (True, False):
+            self.guest.qmp.command("input-send-event", {"events": [{"type": "btn", "data": {"button": name, "down": down}}]})
+            time.sleep(.15)
+
+    def start(self):
+        mark = self.guest.mark()
+        self.guest.launch("ClassiCube")
+        self.launches += 1
+        self.guest.wait("APP classicube erstes Bild", 180, mark)
+        time.sleep(3)
+        self.capture("launcher")
+
+    def enter_address(self, address):
+        """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect."""
+        self.click(399, 319)
+        self.capture("direct-connect")
+        self.click(334, 139)
+        self.guest.qmp.text(self.player)
+        self.click(334, 184)
+        self.guest.qmp.tap("end")
+        for _ in range(8):
+            self.guest.qmp.tap("backspace")
+        self.guest.qmp.text(address)
+        self.capture("eingaben")
+
+    def connect(self, address=None):
+        mark = self.server.mark()
+        self.enter_address(address or f"10.0.2.2:{self.server.port}")
+        self.click(289, 279)
+        return mark
+
+    def world(self, name):
+        deadline = time.monotonic() + 120
+        while True:
+            region = self.view(self.capture(name))
+            if len({region[i:i+3] for i in range(0, len(region), 3*7)}) >= 24:
+                return region
+            assert time.monotonic() < deadline, f"[{self.label}] {name}: keine Welt sichtbar"
+            time.sleep(1)
+
+    def look_down(self):
+        """Maus fangen (ein Klick nach dem Fang waere ein Spielklick, daher erst warten) und zum Boden schauen."""
+        self.click(399, 259)
+        time.sleep(2)
+        width, height = self.guest.size
+        left, top = self.origin()
+        for dy in range(1, 9):
+            self.guest.qmp.move(left + 399, top + 259 + 25*dy, width, height)
+            time.sleep(.1)
+        time.sleep(1)
+        return self.view(self.capture("blick-boden"))
+
+    def desktop_alive(self, name):
+        """Wechsel in die Textshell und zurueck (serielle Marken) belegt, dass der Kernel bedienbar bleibt."""
+        self.guest.shell()
+        self.guest.desktop()
+        self.capture(name)
 
 
 def main():
@@ -80,6 +180,7 @@ def main():
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="tcg")
+    parser.add_argument("--memory", default="512M", help="Gastspeicher je VM (QEMU -m)")
     args = parser.parse_args()
     work = ROOT / ".tools/classicube-mp-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
@@ -91,197 +192,149 @@ def main():
     events = (work / "server-events.jsonl").open("w", encoding="utf-8")
     server = classic.ClassicServer("127.0.0.1", 0, on_event=lambda e: (events.write(json.dumps(e) + "\n"), events.flush()))
     server.start()
-    tools.create_disk(work / "seed", work / "data.qcow2")
-    port = tools.free_port()
-    vm = tools.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
-    guest = tools.Guest(work, port, "", time.monotonic())
-    step = 0
-    launches = 0
-
-    def capture(name):
-        nonlocal step
-        step += 1
-        ppm = work / "screen.ppm"
-        guest.qmp.command("screendump", {"filename": str(ppm)})
-        header, size, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
-        assert header == b"P6" and maximum == b"255", "Unerwartetes QEMU-Bildformat"
-        guest.size = tuple(map(int, size.split()))
-        guest.qmp.shot(work / f"{step:02d}-{name}.png")
-        return pixels
-
-    # Paketfenster 800x560 bei 32,80, Inhalt 798x519 ab 33,120; jeder weitere Start versetzt das Fenster um 28.
-    def origin():
-        offset = 28 * (launches - 1)
-        return 33 + offset, 120 + offset
-
-    def click(x, y):
-        left, top = origin()
-        guest.qmp.click(left + x, top + y, *guest.size)
-        time.sleep(.5)
-
-    def view(pixels):
-        width, _ = guest.size
-        left, top = origin()
-        left, top = left + 199, top + 130
-        return b"".join(pixels[(row*width+left)*3:(row*width+left+400)*3] for row in range(top, top+260))
-
-    def difference(first, second):
-        return sum(first[i:i+3] != second[i:i+3] for i in range(0, len(first), 3*4))
-
-    def changed(before, name, message, threshold=1500):
-        deadline = time.monotonic() + 30
-        while True:
-            time.sleep(1)
-            after = view(capture(name))
-            if difference(before, after) > threshold:
-                return after
-            assert time.monotonic() < deadline, f"{message} (Schwelle {threshold} Stichproben)"
+    for label in "ab":
+        (work / label).mkdir()
+    a = Session("A", "zehos", args, work / "a", server)
+    b = Session("B", "gast2", args, work / "b", server)
+    sessions = (a, b)
 
     def server_event(predicate, timeout, mark, message):
         try:
             return server.wait_for(predicate, timeout, mark)
         except TimeoutError:
-            capture("fehlt-" + message.split()[0].lower())
+            for session in sessions:
+                session.capture("fehlt-" + message.split()[0].lower())
             raise AssertionError(message) from None
 
-    def button(name):
-        for down in (True, False):
-            guest.qmp.command("input-send-event", {"events":[{"type":"btn", "data":{"button":name,"down":down}}]})
-            time.sleep(.15)
+    def joined(session, mark, timeout=120):
+        server_event(lambda e: e["type"] == "joined" and e["player"] == session.player, timeout, mark,
+                     f"Login von {session.player} am Server fehlt")
+        session.guest.log(f"{session.label} am Server angemeldet")
 
-    def start():
-        nonlocal launches
-        mark = guest.mark()
-        guest.launch("ClassiCube")
-        launches += 1
-        guest.wait("APP classicube erstes Bild", 180, mark)
-        time.sleep(3)
-        capture("launcher")
+    def relayed(to, opcode, mark, message, timeout=30):
+        return server_event(lambda e: e["type"] == "relay" and e["to"] == to.player and e["opcode"] == opcode, timeout,
+                            mark, message)
 
-    def direct_connect():
-        """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect; wartet auf den Login."""
-        mark = server.mark()
-        click(399, 319)
-        capture("direct-connect")
-        click(334, 139)
-        guest.qmp.text(PLAYER)
-        click(334, 184)
-        guest.qmp.tap("end")
-        for _ in range(8):
-            guest.qmp.tap("backspace")
-        guest.qmp.text(f"10.0.2.2:{server.port}")
-        capture("eingaben")
-        click(289, 279)
-        server_event(lambda e: e["type"] == "joined" and e["player"] == PLAYER, 120, mark, "Login am Server fehlt")
-        guest.log("am Server angemeldet")
-
-    def world(name):
-        deadline = time.monotonic() + 120
-        while True:
-            region = view(capture(name))
-            if len({region[i:i+3] for i in range(0, len(region), 3*7)}) >= 24:
-                return region
-            assert time.monotonic() < deadline, f"{name}: keine Welt sichtbar"
-            time.sleep(1)
-
-    observer = None
     try:
-        guest.wait("Desktop ist bereit", 180)
-        guest.connect()
-        capture("boot")
-        guest.login(first=True)
-        guest.shell()
-        guest.dhcp()
-        guest.pkg("install-local /data/pkgs/classicube/1.1.0", "classicube 1.1.0 installiert.")
-        guest.desktop()
-        memory_mark = guest.mark()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(session.boot, work / "seed") for session in sessions]
+            for future in futures:
+                future.result()
 
-        # 1. Verbinden, Bewegung, Bloecke in beide Richtungen
-        start()
-        direct_connect()
-        state = world("welt")
-        observer = Observer(server.port)
-        server_event(lambda e: e["type"] == "joined" and e["player"] == OBSERVER, 10, 0, "Beobachter nicht angemeldet")
-        # Weg vom Spawnpunkt: Sonst steht der Beobachter beim erneuten Verbinden direkt vor der Kamera des Gasts, und
-        # sein Kopf fuellt das Bild (welt-2 fand dann zu wenige Farben).
-        observer.move(4, server.world.ground + 2, 4)
-        # Hat ClassiCube die Maus schon gefangen, wirkt der Klick als Spielklick (Block entfernen); erst danach zaehlen.
-        click(399, 259)
-        time.sleep(2)
-        state = view(capture("nach-fang"))
+        # 1. Beide verbinden; jeder bekommt den Spawn des anderen
         mark = server.mark()
-        guest.qmp.hold("w", 1.5)
-        moved = server_event(lambda e: e["type"] == "position" and e["player"] == PLAYER and
-                             (e["x"], e["z"]) != server.world.spawn()[::2],
-                             30, mark, "Bewegung kommt nicht am Server an")
-        state = changed(state, "bewegung-w", "W veraendert die Ansicht nicht")
-        assert observer.seen(0x08), "Beobachter erhaelt keine Positionen"
-        width, height = guest.size
-        left, top = origin()
-        for dy in range(1, 9):
-            guest.qmp.move(left + 399, top + 259 + 25*dy, width, height)
-            time.sleep(.1)
-        state = changed(state, "blick-boden", "Blick nach unten veraendert die Ansicht nicht")
+        a.start()
+        a.connect()
+        joined(a, mark)
+        state_a = a.world("welt")
+        mark_b = server.mark()
+        b.start()
+        b.connect()
+        joined(b, mark_b)
+        state_b = b.world("welt")
+        relayed(a, 0x07, mark_b, "Spawn von B kommt nicht bei A an")
+        relayed(b, 0x07, mark, "Spawn von A kommt nicht bei B an")
+        names = {e["player"] for e in server.events if e["type"] == "joined"}
+        assert names == {a.player, b.player}, f"Server kennt die Spieler {names}"
+        assert len(server.clients) == 2, "Server hat nicht zwei verbundene Clients"
+        state_a, state_b = a.look_down(), b.look_down()
+
+        # 2. A setzt und entfernt einen Block; B erhaelt beides
         mark = server.mark()
-        button("right")
-        placed = server_event(lambda e: e["type"] == "block" and e["player"] == PLAYER and e["mode"] == 1, 30, mark,
-                              "Gesetzter Block kommt nicht am Server an")
-        capture("block-gesetzt")
-        button("left")
-        removed = server_event(lambda e: e["type"] == "block" and e["player"] == PLAYER and e["mode"] == 0, 30, mark,
-                               "Entfernter Block kommt nicht am Server an")
-        time.sleep(1)
-        target = lambda body, e: struct.unpack(">hhh", body[:6]) == (e["x"], e["y"], e["z"])
-        assert observer.seen(0x06, lambda b: target(b, placed)), "Beobachter sieht den gesetzten Block nicht"
-        assert observer.seen(0x06, lambda b: target(b, removed)), "Beobachter sieht den entfernten Block nicht"
-        state = view(capture("bloecke-gast"))
-        # Der Beobachter pflastert den Boden um den Gast mit Stein; der Blick nach unten muss das zeigen.
-        latest = [e for e in server.events if e["type"] == "position" and e["player"] == PLAYER][-1]
-        px, pz, ground = latest["x"] // 32, latest["z"] // 32, server.world.ground
-        for x in range(px - 4, px + 5):
-            for z in range(pz - 4, pz + 5):
-                observer.place(x, ground, z, classic.STONE)
-        changed(state, "bloecke-beobachter", "Bloecke des zweiten Clients erscheinen nicht im Bild")
+        b_before = state_b
+        a.button("right")
+        placed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 1, 30, mark,
+                              "Von A gesetzter Block kommt nicht am Server an")
+        relayed(b, 0x06, mark, "Gesetzter Block wird nicht an B weitergegeben")
+        b_placed = b.changed(b_before, "block-von-a", "B sieht den Block von A nicht")
+        a.capture("a-block-gesetzt")
+        mark = server.mark()
+        a.button("left")
+        removed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 0, 30, mark,
+                               "Von A entfernter Block kommt nicht am Server an")
+        relayed(b, 0x06, mark, "Entfernter Block wird nicht an B weitergegeben")
+        b.changed(b_placed, "block-von-a-weg", "B sieht das Entfernen nicht")
+        assert (placed["x"], placed["y"], placed["z"]) == (removed["x"], removed["y"], removed["z"]), \
+            "Setzen und Entfernen betreffen verschiedene Bloecke"
 
-        # 2. Abbruch durch den Spieler: Fenster bei offener Verbindung schliessen
-        guest.qmp.tap("esc")
+        # 3. Umgekehrt: B setzt einen Block, A sieht ihn
+        a_before = a.view(a.capture("a-vor-b-block"))
+        mark = server.mark()
+        b.button("right")
+        server_event(lambda e: e["type"] == "block" and e["player"] == b.player and e["mode"] == 1, 30, mark,
+                     "Von B gesetzter Block kommt nicht am Server an")
+        relayed(a, 0x06, mark, "Gesetzter Block von B wird nicht an A weitergegeben")
+        a.changed(a_before, "block-von-b", "A sieht den Block von B nicht")
+
+        # 4. B bewegt sich; die Position geht an A
+        mark = server.mark()
+        b.guest.qmp.hold("w", 1.5)
+        server_event(lambda e: e["type"] == "position" and e["player"] == b.player and
+                     (e["x"], e["z"]) != server.world.spawn()[::2], 30, mark, "Bewegung von B kommt nicht am Server an")
+        relayed(a, 0x08, mark, "Position von B wird nicht an A weitergegeben")
+        b.capture("b-bewegt")
+        a.capture("a-sieht-b")
+
+        # 5. A schliesst das Fenster bei offener Verbindung; B bemerkt es und laeuft weiter
+        a.guest.qmp.tap("esc")
         time.sleep(2)
-        mark, serial = server.mark(), guest.mark()
-        guest.qmp.click(812 + 28*(launches-1), 100 + 28*(launches-1), *guest.size)
-        server_event(lambda e: e["type"] == "disconnect" and e["player"] == PLAYER, 30, mark,
-                     "Server bemerkt das Schliessen nicht")
-        guest.wait_finished("classicube", serial)
-        capture("geschlossen")
+        mark, serial = server.mark(), a.guest.mark()
+        a.close_window()
+        server_event(lambda e: e["type"] == "disconnect" and e["player"] == a.player, 30, mark,
+                     "Server bemerkt das Schliessen von A nicht")
+        relayed(b, 0x0C, mark, "Abgang von A wird nicht an B weitergegeben")
+        a.guest.wait_finished("classicube", serial)
+        a.capture("a-geschlossen")
+        b.capture("b-nach-abgang")
 
-        # 3. Serverausfall bei bestehender Verbindung
-        start()
-        direct_connect()
-        state = world("welt-2")
-        observer.close()
+        # 6. A verbindet erneut
+        mark = server.mark()
+        a.start()
+        a.connect()
+        joined(a, mark)
+        relayed(b, 0x07, mark, "Erneuter Spawn von A kommt nicht bei B an")
+        state_a, state_b = a.world("welt-2"), b.view(b.capture("b-nach-rejoin"))
+
+        # 7. Serverausfall bei beiden
         server.stop()
-        guest.log("Server beendet")
-        changed(state, "abbruch-anzeige", "ClassiCube zeigt den Verbindungsabbruch nicht")
-        # Desktop bleibt bedienbar: Wechsel in die Textshell und zurueck (serielle Marken).
-        guest.shell()
-        guest.desktop()
-        capture("desktop-nach-ausfall")
-        serial = guest.mark()
-        guest.qmp.click(812 + 28*(launches-1), 100 + 28*(launches-1), *guest.size)
-        guest.wait_finished("classicube", serial)
-        capture("geschlossen-2")
-        free = guest.free_memory(memory_mark)
-        print("CLASSICUBE_MULTIPLAYER PASS: Verbinden, Bewegung, Bloecke Gast->Server->Beobachter, Bloecke "
-              "Beobachter->Gast, Schliessen bei offener Verbindung, Serverausfall ohne Einfrieren", flush=True)
-        print("Bildschirmfotos visuell pruefen. Freier Speicher (KiB):", free, flush=True)
+        for session in sessions:
+            session.guest.log("Server beendet")
+        a.changed(state_a, "abbruch-anzeige", "A zeigt den Verbindungsabbruch nicht")
+        b.changed(state_b, "abbruch-anzeige", "B zeigt den Verbindungsabbruch nicht")
+        for session in sessions:
+            session.desktop_alive("desktop-nach-ausfall")
+        for session in sessions:
+            serial = session.guest.mark()
+            session.close_window()
+            session.guest.wait_finished("classicube", serial)
+            session.capture("geschlossen")
+
+        # 8. Start gegen den nicht mehr erreichbaren Server (Port geschlossen): Fehleranzeige, Desktop bedienbar
+        for session in sessions:
+            joins = len([e for e in server.events if e["type"] == "joined"])
+            session.start()
+            session.enter_address(f"10.0.2.2:{server.port}")
+            before = session.view(session.capture("vor-connect"))
+            session.click(289, 279)
+            session.changed(before, "unerreichbar", "Launcher zeigt keine Fehlermeldung")
+            time.sleep(3)
+            assert len([e for e in server.events if e["type"] == "joined"]) == joins
+            session.desktop_alive("desktop-unerreichbar")
+            serial = session.guest.mark()
+            session.close_window()
+            session.guest.wait_finished("classicube", serial)
+            session.capture("geschlossen-unerreichbar")
+        free = {s.label: s.guest.free_memory(s.memory_mark) for s in sessions}
+        print("CLASSICUBE_MULTIPLAYER PASS: zwei ZehOS-Gaeste am selben Server: Verbinden, Spawn gegenseitig, Bloecke "
+              "A->B und B->A, Position B->A, Abgang, erneutes Verbinden, Serverausfall, Start gegen unerreichbaren "
+              "Server ohne Einfrieren", flush=True)
+        print("Bildschirmfotos visuell pruefen. Gastspeicher:", args.memory, "Freier Speicher (KiB):", free, flush=True)
         return 0
     finally:
-        if observer:
-            observer.close()
         server.stop()
         events.close()
-        if vm.poll() is None:
-            vm.kill()
-            vm.wait()
+        for session in sessions:
+            session.stop()
         print("Bilder und Protokoll:", work, flush=True)
 
 
