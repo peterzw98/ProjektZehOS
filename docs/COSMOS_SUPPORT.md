@@ -28,7 +28,7 @@ Grenzen: Auf dem Host liefen daneben fremde Gaeste anderer Agenten (Lars hat par
 
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
-**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme mit Vorbehalt (Entscheidung Lars, 22.11.2026, im Terminal):** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar, die Wiederholung mit festem Seed steht unten. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
 
 Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
 
@@ -757,6 +757,10 @@ Der Doom-WAD-Download über HTTPS brach auf `3.0.97-zehos.6-smp.8` mit `bad_reco
 ## Speichermangel wirft OutOfMemoryException (E5-P, #538, 19. November 2026)
 
 Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`, `RhpNewArray`, `RhNewString`, Boxing und die übrigen) bei erschöpftem Heap `null` zurück. Vom Compiler erzeugter Code prüft das Ergebnis von `newobj`/`newarr` nie: Ein Zugriff wurde zum Page Fault an kleiner Adresse, ein Span darüber zu stillem Datenverlust (#530). Patch `gc-oom-throw` (`3.0.97-zehos.6-smp.10`, cosmos PR #540, Kopf `52114521`) wirft wie .NET `OutOfMemoryException`; die Arraygröße wird in 64 Bit gerechnet (vorher lief `BaseSize + length * ComponentSize` in 32 Bit über und legte zu kleine Objekte an), negative Längen werfen `OverflowException`. Gelingt das Anlegen der Ausnahme selbst nicht, wirft Cosmos eine beim Start angelegte Reserve; der Dispatcher legt für eine `OutOfMemoryException` keinen Stacktrace an. Grenze: Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten. ZehOS braucht keinen Umweg: `BufferAllocation.TryAllocate`, `ThreadStarter` und die Speicherproben fangen `OutOfMemoryException` schon; ihre Null-Zweige sind jetzt tot und können in einem eigenen PR entfallen. Einzelheiten in `patches/gc-oom-throw.md` des Branches `cosmos`.
+
+## Threadstack-Prüfung im Cosmos-Stapel, Stackprobe entfernt am 20. November 2026
+
+`SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
 
 ## Pin `3.0.97-zehos.6-smp.11` (20. November 2026)
 

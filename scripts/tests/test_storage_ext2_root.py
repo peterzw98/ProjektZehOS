@@ -39,7 +39,8 @@ class Ext2RootHostTests(unittest.TestCase):
         sector = root.control_sector(3)
         self.assertEqual(len(sector), 512)
         self.assertTrue(sector.startswith(b'ZEHOS-ROOTPROBE run=3\n'))
-        for bad in (0, 17):
+        self.assertTrue(root.control_sector(17).startswith(b'ZEHOS-ROOTPROBE run=17\n'))
+        for bad in (0, 18):
             with self.subTest(run=bad), self.assertRaises(ValueError):
                 root.control_sector(bad)
 

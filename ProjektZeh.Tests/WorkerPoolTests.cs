@@ -20,7 +20,7 @@ public sealed class WorkerPoolTests
     private static Func<ThreadStart, ResultObject<Thread>> Limited(Func<bool> allowed, List<Thread>? started = null) => body =>
     {
         if (!allowed()) return ResultObjectFactory.CreateFailure<Thread>(ResultCode.Failure, "cause='OutOfMemory' message='kein Stack'");
-        var thread = ThreadStarter.TryStart(body, 0, _ => true, background: true);
+        var thread = ThreadStarter.TryStart(body, 0, background: true);
         if (thread.IsOK()) started?.Add(thread.Value!);
         return thread;
     };
