@@ -393,7 +393,7 @@ public class Ext2DirectRunTests
     [Test]
     public void LateRunFails_DiskAfterwards_KeepsOldFileAndNamesOnlyWrittenBlocks()
     {
-        // laser review P5 (#577): disk state right after a late run fails,
+        // Review #577 P5: disk state right after a late run fails,
         // without a later write that would make the inode durable.
         LoggingDevice device = new(Formatted(0xAA));
         Ext2Superblock sb = Mount(device);
@@ -428,10 +428,12 @@ public class Ext2DirectRunTests
     [Test]
     public void LateRunFails_ThenDeviceGone_CallerSeesIOException_DiskStaysSafe()
     {
-        // laser review P5/E3 (#577): the batch end fails as well. The
-        // caller gets an IOException (today the one from the batch end, not
-        // the run's: pre-existing, see the patch file), and the disk keeps
-        // the old file.
+        // Review #577 P5/E3: the batch end fails as well. The caller gets an
+        // IOException (today the one from the batch end, not the run's:
+        // pre-existing, see the patch file), and the disk keeps the old
+        // file. Regression guard only: neither bitmap nor pointer block ever
+        // reaches the disk here, so this test passes without the window
+        // revert too; the test above is the one that depends on it.
         LoggingDevice device = new(Formatted(0xAA));
         Ext2Superblock sb = Mount(device);
         OpenFile file = Create(sb, "dead");
