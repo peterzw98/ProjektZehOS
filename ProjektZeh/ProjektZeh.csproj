@@ -29,6 +29,8 @@
     <DefineConstants Condition="'$(ZehOSIsolationProbe)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NEGATIVE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNmi)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NMI</DefineConstants>
+    <!-- Gastprobe 12.4-I2-A: Schliessen beendet eine App nach der Frist auch ohne should_exit. -->
+    <DefineConstants Condition="'$(ZehOSAbortProbe)' == 'true'">$(DefineConstants);ZEHOS_ABORT_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>

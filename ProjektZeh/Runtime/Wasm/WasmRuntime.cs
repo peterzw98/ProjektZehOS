@@ -111,7 +111,12 @@ internal static unsafe partial class WasmRuntime
         jobs.Enqueue(() =>
         {
             // Fuer PollFaultIsolation: endet der Worker in einer CPU-Ausnahme, meldet die Hauptschleife das Ende.
-            lock (gate) running = completed;
+            // Fuer PollAbort: ab hier trifft ein Schliessen dieser Sitzung genau diesen Lauf (Roadmap 12.4-I2-A).
+            lock (gate)
+            {
+                running = completed;
+                BeginAbortWatch(session);
+            }
             WasmStatus status = WasmStatus.LoadFailed;
             int result = 0;
             string message;
@@ -126,6 +131,7 @@ internal static unsafe partial class WasmRuntime
             {
                 pending--;
                 running = null;
+                EndAbortWatch(session);
             }
             completed(status, result, message);
         }, completed);
@@ -382,7 +388,7 @@ internal static unsafe partial class WasmRuntime
         }
         if (!ReleaseRunResources()) code = (int)WasmStatus.Trap;
         result = value;
-        message = Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
+        message = code == (int)WasmStatus.Aborted ? AbortedMessage : Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
         return (WasmStatus)code;
     }
 
