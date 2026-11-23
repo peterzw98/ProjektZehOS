@@ -168,11 +168,15 @@ class Session:
         """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect."""
         self.click(399, 319)
         self.capture("direct-connect")
+        # Mit capability=storage merkt sich der Launcher Name und Adresse des letzten Starts: Felder erst leeren.
         self.click(334, 139)
+        self.guest.qmp.tap("end")
+        for _ in range(24):
+            self.guest.qmp.tap("backspace")
         self.guest.qmp.text(self.player)
         self.click(334, 184)
         self.guest.qmp.tap("end")
-        for _ in range(8):
+        for _ in range(40):
             self.guest.qmp.tap("backspace")
         self.guest.qmp.text(address)
         self.capture("eingaben")
