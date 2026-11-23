@@ -42,24 +42,43 @@ def load(name, path):
 tools = load("package_guest", "scripts/test-wasm-doom-desktop.py")
 classic = load("classic_test_server", "scripts/classic-test-server.py")
 
+def fail(message):
+    raise SystemExit(f"Fehler: {message}")
+
+
 def read_manifest(path, package):
     """Liest das echte Manifest und prueft, dass die Dateien in package genau den dort eingetragenen entsprechen."""
+    known = ("id", "version", "runtime", "name", "entry", "min-kernel")
     result = {"capability": []}
     listed = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "zehos-package 1" or lines[-1] != "end":
+        fail(f"{path} ist kein Manifest im Format 'zehos-package 1'")
+    for line in lines[1:-1]:
         key, _, value = line.partition("=")
         if key == "capability":
+            if value not in ("net", "storage"):
+                fail(f"Manifest verlangt capability={value}; der Test kann sie nicht nachbauen")
             result["capability"].append(value)
         elif key == "file":
             digest, size, name = value.split(" ", 2)
             listed[name] = (digest, int(size))
-        elif key in ("id", "version", "name", "entry", "min-kernel"):
+        elif key in known:
             result[key] = value
+        else:
+            fail(f"unbekannte Manifestzeile: {line}")
+    missing = [key for key in ("id", "version", "name", "entry", "min-kernel") if key not in result]
+    if missing:
+        fail(f"Manifest ohne {', '.join(missing)}")
+    if result["id"] != "classicube" or "net" not in result["capability"]:
+        fail("Manifest ist nicht das von ClassiCube mit capability=net")
     present = {p.relative_to(package).as_posix(): p for p in package.rglob("*") if p.is_file()}
-    assert set(present) == set(listed), f"Dateien weichen vom Manifest ab: {sorted(set(present) ^ set(listed))}"
+    if set(present) != set(listed):
+        fail(f"Dateien weichen vom Manifest ab: {sorted(set(present) ^ set(listed))}")
     for name, (digest, size) in listed.items():
         data = present[name].read_bytes()
-        assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, f"{name} weicht vom Manifest ab"
+        if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+            fail(f"{name} weicht vom Manifest ab")
     return result
 
 
@@ -164,6 +183,13 @@ class Session:
         time.sleep(3)
         self.capture("launcher")
 
+    def fields(self, pixels):
+        """Namens- und Adressfeld des Launchers (relativ zum Fenster), zum Vergleich zwischen Starts."""
+        width, _ = self.guest.size
+        left, top = self.origin()
+        left, top = left + 225, top + 115
+        return b"".join(pixels[(row*width+left)*3:(row*width+left+340)*3] for row in range(top, top+95))
+
     def enter_address(self, address):
         """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect."""
         self.click(399, 319)
@@ -176,10 +202,18 @@ class Session:
             for _ in range(8):
                 self.guest.qmp.tap("backspace")
             self.guest.qmp.text(address)
-        # Spaetere Starts: Mit capability=storage merkt sich der Launcher Name und Adresse des ersten Starts (beim
-        # Gast belegt: Felder stehen schon richtig; erneutes Tippen haengt den Text an, auch nach Leeren des Feldes).
-        # Die Adresse bleibt in allen Starts eines Gasts dieselbe.
-        self.capture("eingaben")
+        # Spaetere Starts: Mit capability=storage merkt sich der Launcher Name und Adresse des ersten Starts (erneutes
+        # Tippen haengt den Text an, auch nach Leeren des Feldes). Die Adresse bleibt in allen Starts eines Gasts dieselbe.
+        # Beleg, dass die Felder stimmen: Bildvergleich mit dem ersten Start, bei dem das Skript sie selbst getippt hat.
+        self.guest.qmp.move(*self.origin(), *self.guest.size)  # Zeiger aus den Feldern, er ist im Bild sichtbar
+        time.sleep(.5)
+        current = self.fields(self.capture("eingaben"))
+        if self.launches == 1:
+            self.reference = current
+        else:
+            different = sum(a != b for a, b in zip(self.reference, current))
+            print(f"[{self.label}] Launcherfelder: {different} abweichende Bytes gegenueber dem ersten Start", flush=True)
+            assert different < 200, f"[{self.label}] Launcherfelder weichen vom ersten Start ab ({different} Bytes)"
 
     def connect(self, address=None):
         mark = self.server.mark()
@@ -231,7 +265,6 @@ def main():
     work.mkdir(parents=True)
     manifest = read_manifest(args.manifest, args.package)
     # Abweichung vom echten Manifest ist ein Fehler; nur die Signatur kommt vom Testschluessel (das Test-ISO vertraut ihr).
-    assert manifest["id"] == "classicube" and "net" in manifest["capability"], "Manifest ohne capability=net"
     files = [str(p.resolve()) + "=" + p.relative_to(args.package).as_posix()
              for p in sorted(args.package.rglob("*")) if p.is_file()]
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
@@ -239,6 +272,10 @@ def main():
                     "--name", manifest["name"], "--entry", manifest["entry"], "--min-kernel", manifest["min-kernel"],
                     *(["--network"] if "net" in manifest["capability"] else []),
                     *(["--storage"] if "storage" in manifest["capability"] else []), *files], check=True)
+    # Das gebaute Manifest muss dem echten byteweise entsprechen (nur die Signatur ist eine andere).
+    built = work / "seed/pkgs" / manifest["id"] / manifest["version"] / "manifest"
+    if built.read_bytes() != args.manifest.read_bytes():
+        fail("das mit dem Testschluessel gebaute Manifest weicht vom echten ab")
     events = (work / "server-events.jsonl").open("w", encoding="utf-8")
 
     def write_event(event):
@@ -377,13 +414,15 @@ def main():
 
         # 8. Start gegen den nicht mehr erreichbaren Server (Port geschlossen): Fehleranzeige, Desktop bedienbar
         for session in sessions:
+            joins = len([e for e in server.events if e["type"] == "joined"])
             session.start()
             session.enter_address(f"10.0.2.2:{server.port}")
             before = session.view(session.capture("vor-connect"))
             session.click(289, 279)
             session.changed(before, "unerreichbar", "Launcher zeigt keine Fehlermeldung")
             time.sleep(3)
-            assert not server.clients, "Server hat trotz Stopp einen Client angenommen"
+            assert not server.clients and len([e for e in server.events if e["type"] == "joined"]) == joins, \
+                "Server hat trotz Stopp einen Client angenommen"
             session.desktop_alive("desktop-unerreichbar")
             serial = session.guest.mark()
             session.close_window()
