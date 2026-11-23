@@ -232,20 +232,56 @@ class Run:
         # Die Textshell ist schon aktiv; shell() wartet sonst vergeblich auf "Textshell aktiv.".
         self.shutdown_from_textshell()
 
+    def lock_reason_columns(self, ppm: bytes) -> int:
+        """Breite der Grundzeile des gesperrten Anmeldefensters in Zeichen (16 px Glyphbreite, 32 px Zeilenhoehe, 1920x1080).
+
+        Das Fenster liegt zentriert (LoginScreen.Resize: 720 px breit, 7 Zeilen + 56 px hoch); die Grundzeile ist die zweite
+        Textzeile (Beginn 16 px unter dem Rand plus eine Zeile, Text ab 20 px vom linken Rand). Gemessen wird die Spanne bis zum
+        letzten vom Fensterhintergrund abweichenden Pixel; ein bei 42 Spalten abgeschnittener Text (680 px) laeuft dagegen bis
+        an die Grenze und liefert 41 bis 42 Zeichen.
+        """
+        width, height = self.guest.size
+        glyph, line = 16, 32
+        left, top = (width - 720) // 2, (height - 7 * line - 56) // 2
+        x0, x1 = left + 20, left + 20 + 680
+        y0, y1 = top + 16 + line, top + 16 + 2 * line
+        box = region(b"P6\n%d %d\n255\n" % (width, height - BAR_HEIGHT) + ppm, (x0, y0, x1, y1))
+        rows, cols = y1 - y0, x1 - x0
+        background = box[:3]
+        last = 0
+        for row in range(rows):
+            for col in range(cols):
+                if box[(row * cols + col) * 3:(row * cols + col) * 3 + 3] != background:
+                    last = max(last, col)
+        return (last + glyph - 1) // glyph
+
     def nodisk_flow(self) -> None:
         guest = self.guest
         self.boot("Desktop ist bereit")
         time.sleep(2)
         locked = self.screen("gesperrt")
-        # Keine Anmeldemaske ohne Konten: nach Esc muss die Textshell bedienbar sein, F4 fuehrt zurueck.
+        # "Datenlaufwerk /data nicht eingebunden." hat 38 Zeichen; der Punkt am Ende ist schmal. Weniger deutet auf Abschneiden
+        # oder anderen Text, 41 und mehr auf den alten, bei 42 Spalten abgeschnittenen Satz.
+        columns = self.lock_reason_columns(locked)
+        print(f"Grundzeile: {columns} Spalten", flush=True)
+        if not 36 <= columns <= 39:
+            raise AssertionError(f"Grundzeile des gesperrten Fensters hat {columns} Spalten statt 36 bis 39 (abgeschnitten?)")
+        # Keine Anmeldemaske ohne Konten: nach Esc muss die Textshell bedienbar sein.
         guest.qmp.tap("esc")
         guest.wait("Textshell aktiv.", 30)
         guest.qmp.tap("ret")
+        before = self.screen("textshell")
         guest.qmp.line("uname")
-        time.sleep(1)
-        self.screen("textshell")
-        if len(locked) == 0:
-            raise AssertionError("Kein Bildschirmfoto")
+        # Die Statuszeile oben tickt (Laufzeit); verglichen wird nur der Textbereich darunter.
+        body = (0, 40, self.guest.size[0], 400)
+        deadline = time.monotonic() + 20
+        while self.patch(self.screen("uname", keep=False), body) == self.patch(before, body):
+            if time.monotonic() > deadline:
+                raise AssertionError("Die Antwort von uname erschien nicht in der Textshell")
+            time.sleep(0.5)
+        self.screen("uname")
+        if WITHOUT_DISK not in self.serial():
+            raise AssertionError("Die erwartete Zeile 'Keine Datenplatte gefunden' fehlt: lief der Gast doch mit Platte?")
         self.shutdown_from_textshell()
 
     def shutdown_from_textshell(self, send=None) -> None:

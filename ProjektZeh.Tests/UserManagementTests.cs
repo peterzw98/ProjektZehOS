@@ -352,26 +352,43 @@ public sealed class UserManagementTests
     }
 
     [TestMethod]
-    public void LockedReason_FitsLoginWindowAndMountedLockGivesRecoveryText()
+    public void LockedReason_MountedLockAfterLoginGivesRecoveryText()
     {
         SetupAdministrator();
-        // Eingebunden, aber nach dem Login gesperrt (Gegenfall zum Aushaengen): Recovery-Text.
         accounts.Lock();
         StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+    }
+
+    [TestMethod]
+    public void LockedReason_BothTextsFitLoginWindowColumns()
+    {
         // Der Gast zeichnet mit 16 px Glyphbreite (Gastfoto 1920x1080): 680 px fassen 42 Spalten.
         int columns = 680 / 16;
-        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason.Length.ToString(CultureInfo.InvariantCulture));
-        // Der Grund wird je Load/Lock neu bestimmt, nicht je Bild.
+        SetupAdministrator();
+        accounts.Lock();
+        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason);
+        accounts.IsDataMounted = () => false;
+        accounts.Lock();
+        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason);
+    }
+
+    [TestMethod]
+    public void LockedReason_IsCachedUntilNextLockOrLoad()
+    {
+        SetupAdministrator();
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
         accounts.IsDataMounted = () => false;
         StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
         accounts.Lock();
-        Assert.IsTrue(accounts.LockedReason.Length <= columns);
         StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
     }
 
     [TestMethod]
-    public void Desktop_LockedAccounts_RenderLoginWindowWithReason()
+    public void Desktop_LockedAccounts_RenderLoginWindowWithoutInputFields()
     {
+        // Prueft nur, dass das gesperrte Fenster ohne Ausnahme gezeichnet wird; der Text selbst ist im Gastlauf
+        // (test-desktop-guest.py --nodisk) per Pixelspanne geprueft.
         accounts.IsDataMounted = () => false;
         Assert.IsFalse(accounts.Load().IsOK());
         var identity = accounts.CreateSession();

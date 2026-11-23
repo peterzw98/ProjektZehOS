@@ -118,6 +118,7 @@ internal sealed class AccountService
 
     public ResultErr Load()
     {
+        // Vorher und nachher: LoadCore ruft Lock() und kann den Einbindezustand (IsDataMounted) zwischendurch aendern.
         lockedReason = null;
         var result = LoadCore();
         lockedReason = null;
