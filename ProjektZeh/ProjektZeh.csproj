@@ -58,6 +58,10 @@
          8 MiB Stack (WasmRuntime.ThreadStackBytes); Rekursion endet so als Wasm-Trap statt im Triple Fault. -->
     <CCCompilerFlags>-O2 -fno-stack-protector -nostdinc -fno-builtin -Dd_m3MaxNativeStack=7340032</CCCompilerFlags>
   </PropertyGroup>
+  <!-- zehos_probe_fault.c (#UD fuer die Isolationsprobe) ist ohne diesen Schalter leer. -->
+  <PropertyGroup Condition="'$(ZehOSWasm)' == 'true' And ('$(ZehOSIsolationProbe)' == 'true' Or '$(ZehOSIsolationProbeNegative)' == 'true' Or '$(ZehOSIsolationProbeNmi)' == 'true')">
+    <CCCompilerFlags>$(CCCompilerFlags) -DZEHOS_ISOLATION_PROBE</CCCompilerFlags>
+  </PropertyGroup>
   <ItemGroup Condition="'$(ZehOSWasm)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)ThirdParty/wasm3/source/" />
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/Wasm/libc/" />

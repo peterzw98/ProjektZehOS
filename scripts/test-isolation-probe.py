@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gastprobe Roadmap 12.4-I1: CPU-Ausnahmen im Wasm-Worker beenden nur den Lauf, das System bleibt bedienbar.
 
-Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE und #PF isoliert, GC und ein weiterer Lauf, danach
+Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE, #PF, #GP und #UD isoliert, GC und ein weiterer Lauf, danach
 Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
 Probe-Thread haelt das System wie bisher an) oder mit -p:ZehOSIsolationProbeNmi=true und --nmi (Erwartung: ein per QMP
 ausgeloester NMI waehrend Gastcode des Workers haelt an, statt isoliert zu werden). Jeder Lauf nutzt eine frische
@@ -23,7 +23,7 @@ spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
-VECTORS = {"de": 0, "pf": 14}
+VECTORS = {"de": 0, "pf": 14, "gp": 13, "ud": 6}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
 
 
@@ -47,8 +47,8 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} nicht isoliert")
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
-    if log.count("WASM CPU-Ausnahme im App-Code") < 2:
-        missing.append("Hauptschleife hat nicht beide Laeufe beendet")
+    if log.count("WASM CPU-Ausnahme im App-Code") < len(VECTORS):
+        missing.append("Hauptschleife hat nicht alle Laeufe beendet")
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
         if text not in log:
             missing.append(text + " fehlt")

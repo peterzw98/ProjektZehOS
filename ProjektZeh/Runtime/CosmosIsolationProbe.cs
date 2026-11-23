@@ -1,12 +1,13 @@
 #if ZEHOS_ISOLATION_PROBE
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace ProjektZeh.Runtime;
 
 /// <summary>
-/// Gastprobe 12.4-I1 (<c>-p:ZehOSIsolationProbe=true</c>, nur Probe): #DE und #PF im Wasm-Worker, danach GC und ein
+/// Gastprobe 12.4-I1 (<c>-p:ZehOSIsolationProbe=true</c>, nur Probe): #DE, #PF, #GP und #UD im Wasm-Worker, danach GC und ein
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
 /// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
 /// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
@@ -15,6 +16,10 @@ internal static class CosmosIsolationProbe
 {
     private static volatile int zero;
     private static volatile int sink;
+
+    // #UD: zehos_probe_ud (zehos_probe_fault.c) fuehrt __builtin_trap() aus, im C-Code also ein echtes ud2.
+    [DllImport("*", EntryPoint = "zehos_probe_ud", ExactSpelling = true)]
+    private static extern void ProbeUd();
 
     internal static void Start() => new Thread(Probe).Start();
 
@@ -25,6 +30,9 @@ internal static class CosmosIsolationProbe
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
         Fault("de", () => sink = 1 / zero);
         Fault("pf", () => sink = *(int*)0);
+        // Nicht kanonische Adresse: der Zugriff loest #GP (Vektor 13) aus, kein #PF.
+        Fault("gp", () => sink = *(int*)unchecked((nint)0x8000_0000_0000_0000));
+        Fault("ud", ProbeUd);
         GC.Collect();
         Log("ISOLATION_PROBE gc ok");
         Fault("none", () => sink = 1);
