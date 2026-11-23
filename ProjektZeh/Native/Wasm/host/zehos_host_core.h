@@ -134,8 +134,8 @@ extern volatile int32_t zehos_host_depth;
 volatile int32_t* zehos_host_depth_address(void);
 
 // Abbruchmerker (Roadmap 12.4-I2-A): 1 heisst, der laufende Lauf endet am naechsten Pruefpunkt als gewoehnlicher Trap.
-// Pruefpunkte sind vor und nach jedem Hostaufruf (nie darin, weil Hostcode Kernelsperren halten kann) und bei jedem
-// Wasm-Aufruf (m3_Yield, nur wasm3). zehos_wasm_run und zehos_wasm_run_aot loeschen ihn als Erstes; gesetzt wird er
+// Pruefpunkte sind vor und nach jedem Hostaufruf (nie darin, weil Hostcode Kernelsperren halten kann), bei jedem
+// Wasm-Aufruf (m3_Yield) und je Schleifendurchlauf (op_Loop, I2-B); die beiden letzten nur unter wasm3. zehos_wasm_run und zehos_wasm_run_aot loeschen ihn als Erstes; gesetzt wird er
 // von der Hauptschleife (WasmRuntime.PollAbort), waehrend der Worker rechnet. Ein globaler Wert genuegt, weil nur der
 // eine Wasm-Worker Gastcode ausfuehrt (docs/SMP_AUDIT.md, Abschnitt C-Code); mehrere Worker brauchen ihn je Lauf.
 extern volatile int32_t zehos_host_abort;

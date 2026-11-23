@@ -329,7 +329,7 @@ Zum Vergleich auf dem Host (gcc `-O2 -fPIC`, wasm3 nativ, bester von drei Läufe
 
 ## Grenzen und offene Punkte
 
-- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
+- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es über `should_exit`, Gas und das Schließen des Fensters (nach 5 s am nächsten Prüfpunkt, Roadmap 12.4-I2-A/B; unter AOT nur an Hostaufrufen).
 - Die C#-App läuft doppelt interpretiert (Mono-Interpreter in wasm3); Start rund 4 s. Für Doom ist der C-Weg (doomgeneric) vorgesehen.
 - Der WASIp1-Umbau hängt an internen Targets des .NET-10-WASI-SDK und muss bei SDK-Updates neu geprüft werden.
 - `wasi:http`-Importe sind unverknüpft; HttpClient in Apps funktioniert nicht.

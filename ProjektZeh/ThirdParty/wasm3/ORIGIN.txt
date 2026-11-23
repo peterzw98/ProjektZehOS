@@ -8,4 +8,8 @@ Aenderungen:
   Abbruchmerker der Hostschicht (Native/Wasm/host/zehos_host_core.c) und beendet eine Schleife ohne Aufruf ueber m3_Yield
   als Trap (Roadmap 12.4-I2-B). Greift nur, wenn die Schleife weiterlaufen wuerde; Ergebnis oder Trap des Koerpers bleibt.
   Nicht erfasst: der Nachbau einer Schleife beim Fortsetzen einer Continuation (ReplayFrames, frame_loop).
+  Warum op_Loop und nicht die Ruecksprung-Ops (ContinueLoop, ContinueLoopIf und ihre _Suspendable-Fassungen, die
+  der Kommentar dort fuer Fiber-Wechsel vorschlaegt): eine Stelle fuer br, br_if und br_table statt vier; der Rahmen
+  von op_Loop bleibt gemessen gleich (-fstack-usage, gcc und clang -O2: 48 Bytes vor und nach der Aenderung).
+  Folge: wasm3 laesst sich ohne Native/Wasm/host/zehos_host_core.c (Definition von zehos_host_abort) nicht mehr binden.
 Freistehende C-Laufzeit siehe ProjektZeh/Native/Wasm/libc/.
