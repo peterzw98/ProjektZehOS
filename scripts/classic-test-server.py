@@ -125,6 +125,11 @@ class ClassicServer:
     def stop(self) -> None:
         """Simuliert einen Serverausfall: Annahme beenden und alle Verbindungen sofort schliessen."""
         self.running = False
+        # Unter Linux beendet close() allein ein blockierendes accept() nicht; die Verbindung wuerde noch angenommen.
+        try:
+            self.listener.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self.listener.close()
         with self.lock:
             clients = list(self.clients.values())
@@ -229,6 +234,7 @@ class ClassicServer:
             client.joined = True
         for other in others:
             client.send(self.spawn_packet(other))
+            self.event("relay", to=client.name, opcode=0x07)
         self.broadcast(self.spawn_packet(client), skip=client)
         self.event("joined", player=client.name, id=client.id)
 

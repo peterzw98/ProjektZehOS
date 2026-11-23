@@ -107,12 +107,16 @@ class Session:
 
     def changed(self, before, name, message, threshold=1500):
         deadline = time.monotonic() + 30
+        best = 0
         while True:
             time.sleep(1)
             after = self.view(self.capture(name))
-            if self.difference(before, after) > threshold:
+            best = max(best, self.difference(before, after))
+            if best > threshold:
+                print(f"[{self.label}] {name}: Unterschied {best} Stichproben (Schwelle {threshold})", flush=True)
                 return after
-            assert time.monotonic() < deadline, f"[{self.label}] {message} (Schwelle {threshold} Stichproben)"
+            assert time.monotonic() < deadline, \
+                f"[{self.label}] {message} (hoechster Unterschied {best}, Schwelle {threshold} Stichproben)"
 
     def button(self, name):
         for down in (True, False):
@@ -155,10 +159,11 @@ class Session:
             assert time.monotonic() < deadline, f"[{self.label}] {name}: keine Welt sichtbar"
             time.sleep(1)
 
-    def look_down(self):
-        """Maus fangen (ein Klick nach dem Fang waere ein Spielklick, daher erst warten) und zum Boden schauen."""
-        self.click(399, 259)
-        time.sleep(2)
+    def look_down(self, capture_mouse=True):
+        """Maus fangen (ein weiterer Klick waere danach ein Spielklick, daher nur einmal) und zum Boden schauen."""
+        if capture_mouse:
+            self.click(399, 259)
+            time.sleep(2)
         width, height = self.guest.size
         left, top = self.origin()
         for dy in range(1, 9):
@@ -226,7 +231,13 @@ def main():
         a.start()
         a.connect()
         joined(a, mark)
-        state_a = a.world("welt")
+        a.world("welt")
+        # Weg vom Spawnpunkt: Sonst steht B beim Verbinden im Kopf von A und dessen Modell fuellt das Bild von B.
+        a.look_down()
+        mark_a = server.mark()
+        a.guest.qmp.hold("w", 0.6)
+        server_event(lambda e: e["type"] == "position" and e["player"] == a.player and
+                     (e["x"], e["z"]) != server.world.spawn()[::2], 30, mark_a, "Bewegung von A kommt nicht am Server an")
         mark_b = server.mark()
         b.start()
         b.connect()
@@ -237,7 +248,6 @@ def main():
         names = {e["player"] for e in server.events if e["type"] == "joined"}
         assert names == {a.player, b.player}, f"Server kennt die Spieler {names}"
         assert len(server.clients) == 2, "Server hat nicht zwei verbundene Clients"
-        state_a, state_b = a.look_down(), b.look_down()
 
         # 2. A setzt und entfernt einen Block; B erhaelt beides
         mark = server.mark()
@@ -246,25 +256,27 @@ def main():
         placed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 1, 30, mark,
                               "Von A gesetzter Block kommt nicht am Server an")
         relayed(b, 0x06, mark, "Gesetzter Block wird nicht an B weitergegeben")
-        b_placed = b.changed(b_before, "block-von-a", "B sieht den Block von A nicht")
+        b_placed = b.changed(b_before, "block-von-a", "B sieht den Block von A nicht", 250)
         a.capture("a-block-gesetzt")
         mark = server.mark()
         a.button("left")
         removed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 0, 30, mark,
                                "Von A entfernter Block kommt nicht am Server an")
         relayed(b, 0x06, mark, "Entfernter Block wird nicht an B weitergegeben")
-        b.changed(b_placed, "block-von-a-weg", "B sieht das Entfernen nicht")
+        b.changed(b_placed, "block-von-a-weg", "B sieht das Entfernen nicht", 250)
         assert (placed["x"], placed["y"], placed["z"]) == (removed["x"], removed["y"], removed["z"]), \
             "Setzen und Entfernen betreffen verschiedene Bloecke"
 
-        # 3. Umgekehrt: B setzt einen Block, A sieht ihn
-        a_before = a.view(a.capture("a-vor-b-block"))
+        # 3. Umgekehrt: B setzt einen Block; Server und Weiterleitung an A
+        # B steht hinter A und sieht nach unten; sein Block liegt ausserhalb von As Blickfeld: Beleg nur am Server.
+        b.look_down()
         mark = server.mark()
         b.button("right")
         server_event(lambda e: e["type"] == "block" and e["player"] == b.player and e["mode"] == 1, 30, mark,
                      "Von B gesetzter Block kommt nicht am Server an")
         relayed(a, 0x06, mark, "Gesetzter Block von B wird nicht an A weitergegeben")
-        a.changed(a_before, "block-von-b", "A sieht den Block von B nicht")
+        b.capture("b-block-gesetzt")
+        a.capture("a-nach-block-von-b")
 
         # 4. B bewegt sich; die Position geht an A
         mark = server.mark()

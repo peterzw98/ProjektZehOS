@@ -1,6 +1,7 @@
 import gzip
 import importlib.util
 import socket
+import time
 import struct
 import unittest
 from pathlib import Path
@@ -130,6 +131,13 @@ class ClassicTestServerTests(unittest.TestCase):
                 client.packet()
         with self.assertRaises(OSError):
             socket.create_connection(('127.0.0.1', self.server.port), timeout=2).recv(1)
+
+    def test_stopped_server_refuses_new_connections(self):
+        # Fehler: close() allein liess ein blockierendes accept() unter Linux weiter Verbindungen annehmen.
+        self.server.stop()
+        time.sleep(.2)
+        with self.assertRaises(OSError):
+            socket.create_connection(('127.0.0.1', self.server.port), timeout=2)
 
     def test_wrong_protocol_is_rejected(self):
         raw = socket.create_connection(('127.0.0.1', self.server.port), timeout=5)
