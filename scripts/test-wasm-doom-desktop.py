@@ -332,8 +332,10 @@ def wait_serial(work: Path, text: str, timeout: float, start: int = 0) -> int:
 class Guest:
     """Bedienschritte einer laufenden VM; jeder Schritt wartet auf die passende serielle Marke."""
 
-    def __init__(self, work: Path, port: int, source: str, started: float):
+    def __init__(self, work: Path, port: int, source: str, started: float, doom_version: str = "1.0.0"):
         self.work, self.port, self.source, self.started = work, port, source, started
+        # Das Testrepository liefert Doom 1.0.0; ein fremdes --source (veroeffentlichte Pakete) hat eine andere Version.
+        self.doom_version = doom_version
         self.qmp: Qmp | None = None
         self.step = iter(range(1, 1000))
         self.size = (1920, 1080)
@@ -440,7 +442,7 @@ class Guest:
         self.dhcp()
         self.update_catalog()
         if with_doom:
-            self.pkg("install doom", "doom 1.0.0 installiert.")
+            self.pkg("install doom", f"doom {self.doom_version} installiert.")
         self.desktop()
 
     def launch(self, name: str) -> None:
@@ -928,7 +930,7 @@ def run_scenario(args: argparse.Namespace, scenario: str, fixtures: Path | None,
         empty.mkdir()
         create_disk(fixtures / "disk" if fixtures else empty, disk)
     port = free_port()
-    guest = Guest(work, port, source, time.monotonic())
+    guest = Guest(work, port, source, time.monotonic(), args.doom_version)
     vm = start_qemu(args.iso, disk, work, port, args.accel, "base" if base else None)
     try:
         if base is not None:
@@ -997,6 +999,8 @@ def main() -> int:
     parser.add_argument("--wasi-sdk", type=Path, help="wasi-sdk 25 (Standard: WASI_SDK_PATH oder .tools)",
                         default=Path(os.environ.get("WASI_SDK_PATH", ROOT / ".tools" / "wasi-sdk-25.0-x86_64-windows")))
     parser.add_argument("--source", help="vorhandenes Repository (https://.../) fuer Szenario full, ohne Testserver")
+    parser.add_argument("--doom-version", default="1.0.0",
+                        help="Doom-Version, die pkg install doom meldet (Testrepository: 1.0.0; veroeffentlichtes --source: 1.1.0)")
     parser.add_argument("--scenario", nargs="+", choices=SCENARIOS + list(GROUPS), default=["quick"])
     parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg, kvm oder whpx (kvm/whpx ohne Snapshot)")
     parser.add_argument("--starts", type=int, default=3, help="Doom-Starts am Ende von full (Speicherpruefung: 10)")
