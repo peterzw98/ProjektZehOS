@@ -314,7 +314,9 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         instance = wasm_runtime_instantiate_ex(module, &arguments, error, sizeof(error));
         if (instance == NULL)
         {
-            status = ZEHOS_WASM_LOAD_FAILED;
+            // Beim Instanziieren laeuft die start-Funktion; der Merker wurde oben geloescht, ist er jetzt gesetzt, hat
+            // ein Abbruch von aussen sie beendet (das Flag aborted liegt am Lauf, der hier noch nicht verbunden ist).
+            status = zehos_host_abort ? ZEHOS_WASM_ABORTED : ZEHOS_WASM_LOAD_FAILED;
             text = error;
         }
         else

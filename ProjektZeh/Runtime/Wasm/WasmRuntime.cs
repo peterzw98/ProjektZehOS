@@ -194,6 +194,7 @@ internal static unsafe partial class WasmRuntime
         {
             completed = running;
             running = null;
+            ForgetAbortRun();
             if (completed != null) pending--;
             worker = null;
             // Bis zum Ende des Aufraeumens startet niemand einen Ersatzworker (auch nicht EnqueueLoaded): ein neuer Lauf

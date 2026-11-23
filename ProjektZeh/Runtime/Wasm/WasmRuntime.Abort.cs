@@ -68,6 +68,15 @@ internal static unsafe partial class WasmRuntime
         Volatile.Write(ref abortWatching, 0);
     }
 
+    // Unter gate gerufen, wenn PollFaultIsolation einen Lauf nach einer CPU-Ausnahme von aussen beendet: Ohne das
+    // schriebe ein spaeteres Schliessen des CpuFault-Fensters nach der Frist eine falsche Abbruchzeile.
+    private static void ForgetAbortRun()
+    {
+        if (abortRun != null) watchdog.RunEnded(abortRun);
+        abortRun = null;
+        Volatile.Write(ref abortWatching, 0);
+    }
+
     [DllImport("*", EntryPoint = "zehos_host_set_abort", ExactSpelling = true)]
     private static extern void NativeSetAbort(int on);
 }

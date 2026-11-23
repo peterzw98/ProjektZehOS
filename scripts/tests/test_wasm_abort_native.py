@@ -70,6 +70,13 @@ SLEEP_LOOP = module([I32_RESULT, I32_PARAM], [("zehos_v1", "sleep_ms", 1)],
                     [(0, b"\x03\x40\x41\x0a\x10\x00\x0c\x00\x0b\x41\x00")], 1)
 # Funktion 0 ist leer; run ruft sie endlos: kein Import, nur der Pruefpunkt am Wasm-Aufruf.
 CALL_LOOP = module([I32_RESULT, NOTHING], [], [(1, b""), (0, b"\x03\x40\x10\x00\x0c\x00\x0b\x41\x00")], 1)
+# Wie HOST_LOOP, aber in der start-Funktion (Funktion 1). Diese wasm3-Fassung fuehrt sie erst in m3_CallV aus
+# (checkStartFunction, m3_env.c), nicht in m3_FindFunction; ein Abbruch dort muss trotzdem Status 9 liefern.
+START_LOOP = (b"\x00asm\x01\x00\x00\x00" + section(1, vector([b"\x60" + I32_RESULT, b"\x60" + NOTHING]))
+              + section(2, vector([string("zehos_v1") + string("should_exit") + b"\x00\x00"]))
+              + section(3, vector([b"\x01", b"\x00"])) + section(7, vector([string("run") + b"\x00\x02"]))
+              + section(8, b"\x01")
+              + section(10, vector([body(b"\x03\x40\x10\x00\x1a\x0c\x00\x0b"), body(b"\x41\x00")])))
 SEVEN = module([I32_RESULT], [], [(0, b"\x41\x07")], 0)
 # Speicherzugriff weit hinter der einen Seite: gewoehnlicher Trap, kein Abbruch.
 OUT_OF_BOUNDS = (b"\x00asm\x01\x00\x00\x00" + section(1, vector([b"\x60" + I32_RESULT]))
@@ -151,6 +158,12 @@ class NativeAbortTests(unittest.TestCase):
         status, _, message, _ = self.execute(SLEEP_LOOP, abort_after=0.1)
         self.assertEqual(status, ABORTED, message)
         self.assertGreater(self.lib.poll_test_sleeps(), 0)
+
+    def test_abort_in_start_function_is_aborted_not_entry_missing(self):
+        self.lib.abort_test_reset(3)
+        status, _, message, _ = self.execute(START_LOOP)
+        self.assertEqual(status, ABORTED, message)
+        self.assertEqual(self.lib.abort_test_calls(), 3)
 
     def test_abort_at_wasm_call(self):
         status, _, message, elapsed = self.execute(CALL_LOOP, abort_after=0.1)
