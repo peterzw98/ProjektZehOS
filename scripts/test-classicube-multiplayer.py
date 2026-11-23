@@ -176,7 +176,7 @@ class Session:
         self.guest.qmp.text(self.player)
         self.click(334, 184)
         self.guest.qmp.tap("end")
-        for _ in range(40):
+        for _ in range(20):
             self.guest.qmp.tap("backspace")
         self.guest.qmp.text(address)
         self.capture("eingaben")
