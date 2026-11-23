@@ -168,17 +168,17 @@ class Session:
         """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect."""
         self.click(399, 319)
         self.capture("direct-connect")
-        # Mit capability=storage merkt sich der Launcher Name und Adresse des letzten Starts: Felder erst leeren.
-        self.click(334, 139)
-        self.guest.qmp.tap("end")
-        for _ in range(24):
-            self.guest.qmp.tap("backspace")
-        self.guest.qmp.text(self.player)
-        self.click(334, 184)
-        self.guest.qmp.tap("end")
-        for _ in range(20):
-            self.guest.qmp.tap("backspace")
-        self.guest.qmp.text(address)
+        if self.launches == 1:
+            self.click(334, 139)
+            self.guest.qmp.text(self.player)
+            self.click(334, 184)
+            self.guest.qmp.tap("end")
+            for _ in range(8):
+                self.guest.qmp.tap("backspace")
+            self.guest.qmp.text(address)
+        # Spaetere Starts: Mit capability=storage merkt sich der Launcher Name und Adresse des ersten Starts (beim
+        # Gast belegt: Felder stehen schon richtig; erneutes Tippen haengt den Text an, auch nach Leeren des Feldes).
+        # Die Adresse bleibt in allen Starts eines Gasts dieselbe.
         self.capture("eingaben")
 
     def connect(self, address=None):
