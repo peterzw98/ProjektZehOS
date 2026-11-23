@@ -107,7 +107,7 @@ internal static class CosmosLayoutProfile
     private static ResultErr MarkReadyStorageLocked(Guid diskGuid, IRootVolume volume)
     {
         string temporary = LayoutMarker.Path + ".tmp";
-        File.WriteAllText(temporary, new LayoutMarker(LayoutState.Ready, diskGuid).Serialize());
+        FileService.WriteAllBytesCompleteStorageLocked(temporary, System.Text.Encoding.UTF8.GetBytes(new LayoutMarker(LayoutState.Ready, diskGuid).Serialize()));
         File.Move(temporary, LayoutMarker.Path, true);
         // Spec Etappe 4 §2: zweifacher Sync, dann Device.Flush (Cosmos schreibt den Superblock erst danach).
         for (int pass = 0; pass < 2; pass++)
