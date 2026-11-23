@@ -9,14 +9,18 @@ spec.loader.exec_module(isolation)
 
 PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
+    'ISOLATION_PROBE frei_vor=401000',
+    'ISOLATION_PROBE arena=1',
     'CPU EXCEPTION: Divide by Zero (#DE)',
     'System halted.',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 4 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=de handled=1 vector=0',
+    'ISOLATION_PROBE arena=1',
     'CPU EXCEPTION: Page Fault (#PF)',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 7 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=pf handled=1 vector=14',
     'ISOLATION_PROBE gc ok',
+    'ISOLATION_PROBE frei_nach=400200',
     'ISOLATION_PROBE none returned',
     'ISOLATION_PROBE DONE',
 ])
@@ -43,6 +47,19 @@ class EvaluateTests(unittest.TestCase):
     def test_wrong_vector_points_to_layout_drift(self):
         log = PASS_LOG.replace('fault=de handled=1 vector=0', 'fault=de handled=1 vector=113')
         self.assertIn('de mit Vektor 113 statt 0 (IRQContext-Versatz?)', isolation.evaluate(log, negative=False))
+
+    def test_arena_must_run_in_both_fault_runs(self):
+        log = PASS_LOG.replace('ISOLATION_PROBE arena=1', 'ISOLATION_PROBE arena=0', 1)
+        self.assertIn('Arena nicht in beiden Fehlerlaeufen gestartet', isolation.evaluate(log, negative=False))
+
+    def test_arena_blocks_must_be_released(self):
+        # 32 MiB weniger: Die 2 x 16 MiB der aufgegebenen Laeufe blieben belegt.
+        log = PASS_LOG.replace('frei_nach=400200', 'frei_nach=368232')
+        self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
+        at_limit = PASS_LOG.replace('frei_nach=400200', 'frei_nach=392808')
+        self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
+        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=400200\n', '')
+        self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))
 
 
 NMI_HALT = PASS_LOG + '\n'.join([

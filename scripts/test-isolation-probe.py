@@ -25,6 +25,7 @@ MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahm
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
+ARENA_SLACK_KIB = 8 * 1024
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -49,6 +50,14 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
     if log.count("WASM CPU-Ausnahme im App-Code") < 2:
         missing.append("Hauptschleife hat nicht beide Laeufe beendet")
+    # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei. Ohne Freigabe laege
+    # frei_nach um 32 MiB unter frei_vor, die Grenze 8 MiB laesst Raum fuer Stacks und verwaltete Reste.
+    if log.count("ISOLATION_PROBE arena=1") != 2:
+        missing.append("Arena nicht in beiden Fehlerlaeufen gestartet")
+    before = re.search(r"ISOLATION_PROBE frei_vor=(\d+)", log)
+    after = re.search(r"ISOLATION_PROBE frei_nach=(\d+)", log)
+    if not before or not after or int(before.group(1)) - int(after.group(1)) > ARENA_SLACK_KIB:
+        missing.append("Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)")
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
         if text not in log:
             missing.append(text + " fehlt")

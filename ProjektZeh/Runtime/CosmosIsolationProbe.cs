@@ -10,11 +10,14 @@ namespace ProjektZeh.Runtime;
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
 /// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
 /// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
+/// Seit I2-C haelt jeder Fehlerlauf vorher 16 MiB in der Laufarena. Die Probe meldet den freien Speicher vor der ersten
+/// und nach der zweiten Ausnahme (je nach GC.Collect); ohne Freigabe laege der zweite Wert um 32 MiB tiefer.
 /// </summary>
 internal static class CosmosIsolationProbe
 {
     private static volatile int zero;
     private static volatile int sink;
+    private const nuint ArenaBlockBytes = 16 * 1024 * 1024;
 
     internal static void Start() => new Thread(Probe).Start();
 
@@ -22,11 +25,14 @@ internal static class CosmosIsolationProbe
     {
         Log("ISOLATION_PROBE start");
         zero = 0;
+        GC.Collect();
+        Log("ISOLATION_PROBE frei_vor=" + CosmosSystemInfo.PhysicalMemory().Free / 1024);
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
-        Fault("de", () => sink = 1 / zero);
-        Fault("pf", () => sink = *(int*)0);
+        Fault("de", () => { Wasm.WasmRuntime.ProbeArenaBlock(ArenaBlockBytes); sink = 1 / zero; });
+        Fault("pf", () => { Wasm.WasmRuntime.ProbeArenaBlock(ArenaBlockBytes); sink = *(int*)0; });
         GC.Collect();
         Log("ISOLATION_PROBE gc ok");
+        Log("ISOLATION_PROBE frei_nach=" + CosmosSystemInfo.PhysicalMemory().Free / 1024);
         Fault("none", () => sink = 1);
         Log("ISOLATION_PROBE DONE");
 #if ZEHOS_ISOLATION_PROBE_NMI
