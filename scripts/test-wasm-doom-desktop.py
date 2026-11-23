@@ -1015,6 +1015,8 @@ def main() -> int:
     scenarios = list(dict.fromkeys(name for value in args.scenario for name in GROUPS.get(value, [value])))
     if args.long_seconds and "full" not in scenarios:
         parser.error("--long-seconds benoetigt das Szenario full")
+    if args.doom_version != "1.0.0" and args.source is None:
+        parser.error("--doom-version gilt nur mit --source (das Testrepository liefert 1.0.0)")
     if args.source is not None and scenarios != ["full"]:
         parser.error("--source prueft nur das Szenario full")
     if args.source is None and args.fixtures is None and (args.repo is None or args.key is None or args.tls is None):
