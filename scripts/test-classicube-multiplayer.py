@@ -3,19 +3,23 @@
 
 Das ISO muss mit dem oeffentlichen Gegenstueck von --key (ausschliesslich Testschluessel) gebaut sein.
 --package bezeichnet die unsignierten Paketdateien des Ports (z. B. classicube/1.1.0/files aus dem Branch packages);
-das Testpaket erhaelt capability=net und wird in beiden Gaesten lokal installiert.
+--manifest ist das echte Manifest dieses Pakets: Version, capability (net, storage) und min-kernel werden von dort
+uebernommen, die Dateien muessen Hash und Groesse treffen (sonst Fehler). Nur die Signatur stammt vom Testschluessel;
+Signatur- und Katalogweg des echten Pakets prueft dieser Test nicht. Das Paket wird in beiden Gaesten lokal installiert.
 Netz: Der Testserver lauscht auf 127.0.0.1 des Hosts. Jeder Gast hat sein eigenes QEMU-Usermode-Netz (je ein NAT);
 darin ist der Host fuer beide als 10.0.2.2 erreichbar. Das braucht weder Bruecke noch Root-Rechte noch Portweiterleitung;
 ein gemeinsames Gastnetz (socket/Bruecke) waere nur noetig, wenn die Gaeste einander direkt erreichen muessten.
 Ablauf: beide Gaeste starten parallel (net dhcp, Paket installieren), verbinden ueber "Direct connect" mit eigenem Namen;
 der Server meldet beide Spieler und leitet Spawn-Pakete an den jeweils anderen weiter. Gast A setzt und entfernt einen
-Block: Server-Ereignis und Weiterleitung an Gast B (Ereignis "relay") sowie sichtbare Bildaenderung bei B. Gast B bewegt
+Block: Server-Ereignis und Weiterleitung an Gast B (Ereignis "relay": der Server hat gesendet; ob ClassiCube es
+zeichnet, belegt nur das Bild und nur als Hinweis ohne Negativkontrolle). Gast B bewegt
 sich: Position kommt am Server an und wird an A weitergeleitet. A schliesst das Fenster bei offener Verbindung (Server
 und B bemerken es, B laeuft weiter), verbindet erneut; Serverausfall bei beiden Gaesten (Abbruch sichtbar, Textshell und
 Desktop wechseln weiter, Fenster schliesst sauber); zuletzt Start gegen den nicht mehr erreichbaren Server.
 Bilder und Protokolle bleiben unter .tools/classicube-mp-guest/ erhalten.
 """
 import argparse
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
@@ -37,6 +41,27 @@ def load(name, path):
 
 tools = load("package_guest", "scripts/test-wasm-doom-desktop.py")
 classic = load("classic_test_server", "scripts/classic-test-server.py")
+
+def read_manifest(path, package):
+    """Liest das echte Manifest und prueft, dass die Dateien in package genau den dort eingetragenen entsprechen."""
+    result = {"capability": []}
+    listed = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key == "capability":
+            result["capability"].append(value)
+        elif key == "file":
+            digest, size, name = value.split(" ", 2)
+            listed[name] = (digest, int(size))
+        elif key in ("id", "version", "name", "entry", "min-kernel"):
+            result[key] = value
+    present = {p.relative_to(package).as_posix(): p for p in package.rglob("*") if p.is_file()}
+    assert set(present) == set(listed), f"Dateien weichen vom Manifest ab: {sorted(set(present) ^ set(listed))}"
+    for name, (digest, size) in listed.items():
+        data = present[name].read_bytes()
+        assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, f"{name} weicht vom Manifest ab"
+    return result
+
 
 class Session:
     """Ein Gast mit eigener VM, Bildschirmfotos und Fensterbedienung."""
@@ -118,6 +143,14 @@ class Session:
             assert time.monotonic() < deadline, \
                 f"[{self.label}] {message} (hoechster Unterschied {best}, Schwelle {threshold} Stichproben)"
 
+    def observe(self, before, name):
+        """Bildunterschied nur zur Ansicht (Hinweis, keine Pruefung): ohne Negativkontrolle kein Blockbeleg."""
+        time.sleep(3)
+        after = self.view(self.capture(name))
+        print(f"[{self.label}] {name}: Bildunterschied {self.difference(before, after)} Stichproben (nur Hinweis)",
+              flush=True)
+        return after
+
     def button(self, name):
         for down in (True, False):
             self.guest.qmp.command("input-send-event", {"events": [{"type": "btn", "data": {"button": name, "down": down}}]})
@@ -184,18 +217,34 @@ def main():
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--key", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True,
+                        help="echtes Manifest des Pakets (classicube/1.1.0/manifest aus dem Branch packages): "
+                             "Version, Berechtigungen und min-kernel werden von dort uebernommen, Dateien dagegen geprueft")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="tcg")
     parser.add_argument("--memory", default="512M", help="Gastspeicher je VM (QEMU -m)")
     args = parser.parse_args()
     work = ROOT / ".tools/classicube-mp-guest" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True)
+    manifest = read_manifest(args.manifest, args.package)
+    # Abweichung vom echten Manifest ist ein Fehler; nur die Signatur kommt vom Testschluessel (das Test-ISO vertraut ihr).
+    assert manifest["id"] == "classicube" and "net" in manifest["capability"], "Manifest ohne capability=net"
     files = [str(p.resolve()) + "=" + p.relative_to(args.package).as_posix()
              for p in sorted(args.package.rglob("*")) if p.is_file()]
     subprocess.run([sys.executable, str(ROOT / "scripts/build-package.py"), "package", "--key", str(args.key.resolve()),
-                    "--repo", str(work / "seed/pkgs"), "--id", "classicube", "--version", "1.1.0", "--name", "ClassiCube",
-                    "--entry", "classicube.wasm", "--min-kernel", "0.2.22", "--network", *files], check=True)
+                    "--repo", str(work / "seed/pkgs"), "--id", manifest["id"], "--version", manifest["version"],
+                    "--name", manifest["name"], "--entry", manifest["entry"], "--min-kernel", manifest["min-kernel"],
+                    *(["--network"] if "net" in manifest["capability"] else []),
+                    *(["--storage"] if "storage" in manifest["capability"] else []), *files], check=True)
     events = (work / "server-events.jsonl").open("w", encoding="utf-8")
-    server = classic.ClassicServer("127.0.0.1", 0, on_event=lambda e: (events.write(json.dumps(e) + "\n"), events.flush()))
+
+    def write_event(event):
+        try:
+            events.write(json.dumps(event) + "\n")
+            events.flush()
+        except ValueError:
+            pass  # Datei beim Beenden schon zu; ein spaetes Ereignis eines Server-Fadens ist hier ohne Belang.
+
+    server = classic.ClassicServer("127.0.0.1", 0, on_event=write_event)
     server.start()
     for label in "ab":
         (work / label).mkdir()
@@ -256,27 +305,28 @@ def main():
         placed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 1, 30, mark,
                               "Von A gesetzter Block kommt nicht am Server an")
         relayed(b, 0x06, mark, "Gesetzter Block wird nicht an B weitergegeben")
-        b_placed = b.changed(b_before, "block-von-a", "B sieht den Block von A nicht", 250)
+        b_placed = b.observe(b_before, "block-von-a")
         a.capture("a-block-gesetzt")
         mark = server.mark()
         a.button("left")
         removed = server_event(lambda e: e["type"] == "block" and e["player"] == a.player and e["mode"] == 0, 30, mark,
                                "Von A entfernter Block kommt nicht am Server an")
         relayed(b, 0x06, mark, "Entfernter Block wird nicht an B weitergegeben")
-        b.changed(b_placed, "block-von-a-weg", "B sieht das Entfernen nicht", 250)
+        b.observe(b_placed, "block-von-a-weg")
         assert (placed["x"], placed["y"], placed["z"]) == (removed["x"], removed["y"], removed["z"]), \
             "Setzen und Entfernen betreffen verschiedene Bloecke"
 
         # 3. Umgekehrt: B setzt einen Block; Server und Weiterleitung an A
         # B steht hinter A und sieht nach unten; sein Block liegt ausserhalb von As Blickfeld: Beleg nur am Server.
         b.look_down()
+        a_before = a.view(a.capture("a-vor-block-von-b"))
         mark = server.mark()
         b.button("right")
         server_event(lambda e: e["type"] == "block" and e["player"] == b.player and e["mode"] == 1, 30, mark,
                      "Von B gesetzter Block kommt nicht am Server an")
         relayed(a, 0x06, mark, "Gesetzter Block von B wird nicht an A weitergegeben")
         b.capture("b-block-gesetzt")
-        a.capture("a-nach-block-von-b")
+        a.observe(a_before, "a-nach-block-von-b")
 
         # 4. B bewegt sich; die Position geht an A
         mark = server.mark()
@@ -323,14 +373,13 @@ def main():
 
         # 8. Start gegen den nicht mehr erreichbaren Server (Port geschlossen): Fehleranzeige, Desktop bedienbar
         for session in sessions:
-            joins = len([e for e in server.events if e["type"] == "joined"])
             session.start()
             session.enter_address(f"10.0.2.2:{server.port}")
             before = session.view(session.capture("vor-connect"))
             session.click(289, 279)
             session.changed(before, "unerreichbar", "Launcher zeigt keine Fehlermeldung")
             time.sleep(3)
-            assert len([e for e in server.events if e["type"] == "joined"]) == joins
+            assert not server.clients, "Server hat trotz Stopp einen Client angenommen"
             session.desktop_alive("desktop-unerreichbar")
             serial = session.guest.mark()
             session.close_window()
@@ -338,7 +387,7 @@ def main():
             session.capture("geschlossen-unerreichbar")
         free = {s.label: s.guest.free_memory(s.memory_mark) for s in sessions}
         print("CLASSICUBE_MULTIPLAYER PASS: zwei ZehOS-Gaeste am selben Server: Verbinden, Spawn gegenseitig, Bloecke "
-              "A->B und B->A, Position B->A, Abgang, erneutes Verbinden, Serverausfall, Start gegen unerreichbaren "
+              "A->B und B->A (am Server gesendet), Position B->A, Abgang, erneutes Verbinden, Serverausfall, Start gegen unerreichbaren "
               "Server ohne Einfrieren", flush=True)
         print("Bildschirmfotos visuell pruefen. Gastspeicher:", args.memory, "Freier Speicher (KiB):", free, flush=True)
         return 0
