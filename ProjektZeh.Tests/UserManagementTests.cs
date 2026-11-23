@@ -321,6 +321,85 @@ public sealed class UserManagementTests
     }
 
     [TestMethod]
+    public void LockedReason_NamesMissingDataDriveInsteadOfRecoveryBuild()
+    {
+        // Fehlstart ohne Laufwerk und disk unmount: kein Recovery-Build noetig, der Neustart mit Laufwerk genuegt.
+        accounts.IsDataMounted = () => false;
+        Assert.IsFalse(accounts.Load().IsOK());
+        Assert.IsFalse(accounts.IsReady);
+        Assert.IsFalse(accounts.NeedsSetup);
+        StringAssert.Contains(accounts.LockedReason, "/data nicht eingebunden");
+        Assert.IsFalse(accounts.LockedReason.Contains("Recovery-Build"));
+    }
+
+    [TestMethod]
+    public void LockedReason_NamesRecoveryBuildForDamagedMetadataOnMountedDrive()
+    {
+        File.WriteAllText(Path.Combine(root, ".zehos-security.db"), "kaputt");
+        Assert.IsFalse(accounts.Load().IsOK());
+        Assert.IsFalse(accounts.IsReady);
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+    }
+
+    [TestMethod]
+    public void LockedReason_FollowsUnmountAfterLogin()
+    {
+        SetupAdministrator();
+        Assert.IsTrue(accounts.Load().IsOK());
+        accounts.IsDataMounted = () => false;
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
+    }
+
+    [TestMethod]
+    public void LockedReason_MountedLockAfterLoginGivesRecoveryText()
+    {
+        SetupAdministrator();
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+    }
+
+    [TestMethod]
+    public void LockedReason_BothTextsFitLoginWindowColumns()
+    {
+        // Der Gast zeichnet mit 16 px Glyphbreite (Gastfoto 1920x1080): 680 px fassen 42 Spalten.
+        int columns = 680 / 16;
+        SetupAdministrator();
+        accounts.Lock();
+        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason);
+        accounts.IsDataMounted = () => false;
+        accounts.Lock();
+        Assert.IsTrue(accounts.LockedReason.Length <= columns, accounts.LockedReason);
+    }
+
+    [TestMethod]
+    public void LockedReason_IsCachedUntilNextLockOrLoad()
+    {
+        SetupAdministrator();
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+        accounts.IsDataMounted = () => false;
+        StringAssert.Contains(accounts.LockedReason, "Recovery-Build");
+        accounts.Lock();
+        StringAssert.Contains(accounts.LockedReason, "nicht eingebunden");
+    }
+
+    [TestMethod]
+    public void Desktop_LockedAccounts_RenderLoginWindowWithoutInputFields()
+    {
+        // Prueft nur, dass das gesperrte Fenster ohne Ausnahme gezeichnet wird; der Text selbst ist im Gastlauf
+        // (test-desktop-guest.py --nodisk) per Pixelspanne geprueft.
+        accounts.IsDataMounted = () => false;
+        Assert.IsFalse(accounts.Load().IsOK());
+        var identity = accounts.CreateSession();
+        var desktop = new Desktop(1024, 768, new byte[4096], 8, 16, () => new ShellService(),
+            () => new FileService(root), session: new DesktopSession(accounts, CreateShell(identity), identity));
+        var pixels = new int[1024 * 768];
+        desktop.Render(new PixelSurface(1024, 768, pixels), 0, 10, 10, PointerButtons.None);
+        Assert.IsTrue(Array.Exists(pixels, value => value != 0));
+    }
+
+    [TestMethod]
     public void UserSession_LoginAsCopiesIdentityAndCountsChanges()
     {
         var admin = SetupAdministrator();
