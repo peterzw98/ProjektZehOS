@@ -184,11 +184,12 @@ class Session:
         self.capture("launcher")
 
     def fields(self, pixels):
-        """Namens- und Adressfeld des Launchers (relativ zum Fenster), zum Vergleich zwischen Starts."""
+        """Text im Namens- und Adressfeld des Launchers (relativ zum Fenster, ohne Rahmen: der Fokusrahmen unterscheidet
+        das getippte Feld vom gemerkten), zum Vergleich zwischen Starts."""
         width, _ = self.guest.size
         left, top = self.origin()
-        left, top = left + 225, top + 115
-        return b"".join(pixels[(row*width+left)*3:(row*width+left+340)*3] for row in range(top, top+95))
+        rows = [*range(top + 129, top + 148), *range(top + 175, top + 193)]
+        return [pixels[(row*width+left+240+x)*3:(row*width+left+240+x)*3+3] for row in rows for x in range(210)]
 
     def enter_address(self, address):
         """Launcher (798x519): Direct connect, Name, Adresse (vorbelegt ":"), Connect."""
@@ -212,8 +213,8 @@ class Session:
             self.reference = current
         else:
             different = sum(a != b for a, b in zip(self.reference, current))
-            print(f"[{self.label}] Launcherfelder: {different} abweichende Bytes gegenueber dem ersten Start", flush=True)
-            assert different < 200, f"[{self.label}] Launcherfelder weichen vom ersten Start ab ({different} Bytes)"
+            print(f"[{self.label}] Launcherfelder: {different} abweichende Bildpunkte gegenueber dem ersten Start", flush=True)
+            assert different < 100, f"[{self.label}] Launcherfelder weichen vom ersten Start ab ({different} Bildpunkte)"
 
     def connect(self, address=None):
         mark = self.server.mark()
