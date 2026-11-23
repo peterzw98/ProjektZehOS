@@ -1,6 +1,7 @@
 """Fuzz-Test der Hostschicht (Roadmap 12.4, Paket I2-F): jede Funktion aus ZEHOS_HOST_FUNCTIONS wird 10.000-mal mit
 Zufallsargumenten gegen einen von Schutzseiten umgebenen Gastspeicher aufgerufen (benoetigt Linux und gcc)."""
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -34,6 +35,8 @@ def run(binary, *args, timeout=170):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "braucht mmap/mprotect (Linux)")
 @unittest.skipIf(COMPILER is None, "gcc fehlt")
+@unittest.skipUnless(platform.machine().lower() in ("x86_64", "amd64", "aarch64", "arm64"),
+                     "host-fuzz.c ruft ueber einen einheitlichen Funktionszeiger (nur x86-64/aarch64)")
 class HostFuzzTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -53,8 +56,8 @@ class HostFuzzTests(unittest.TestCase):
         core = self.work / f"{name}.c"
         core.write_text(source.replace(old, new), encoding="utf-8")
         binary = self.work / name
-        compile_harness(core, binary)
-        return binary
+        sanitized = compile_harness(core, binary)
+        return binary, sanitized
 
     def test_every_host_function_survives_10000_random_calls(self):
         header = (HOST / "zehos_host_core.h").read_text(encoding="utf-8")
@@ -91,9 +94,12 @@ class HostFuzzTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("unbekannt", result.stderr)
 
-    def assert_found_and_reproducible(self, binary):
+    def assert_found_and_reproducible(self, mutant):
+        binary, sanitized = mutant
+        # Ohne Sanitizer faengt nur die Schutzseite (SIGSEGV); das gilt als Fund, wird aber im Text gekennzeichnet.
+        note = "" if sanitized else " (Mutant ohne Sanitizer uebersetzt)"
         result = run(binary, CALLS, SEED)
-        self.assertEqual(result.returncode, 2, "Fuzz-Test fand den eingebauten Fehler nicht: " + result.stdout[-300:])
+        self.assertEqual(result.returncode, 2, "Fuzz-Test fand den eingebauten Fehler nicht" + note + ": " + result.stdout[-300:])
         found = re.search(r"FUZZ-FUND: Zugriff ausserhalb \(SIG\w+\) Funktion=(\w+) Nummer=(\d+) Saat=0x5EED5EED", result.stderr)
         self.assertIsNotNone(found, result.stderr[-500:])
         # Funktion und Nummer allein genuegen, den Fund einzeln zu wiederholen.

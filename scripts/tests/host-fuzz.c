@@ -202,6 +202,13 @@ int32_t zehos_wasm_host_raster_fill(uint8_t* memory, uint32_t length, uint32_t o
 
 // ---------------------------------------------------------------------------------------------------------------
 // Funktionstabelle aus der einzigen Importliste.
+// ABI-Annahme (formal undefiniert, auf den beiden #error-freien Zielen aber bewusst genutzt): Die Kernfunktionen haben je
+// nach Signatur 1 bis 10 Parameter aus int32/uint32/int64/uint64 und Zeiger. Auf x86-64 (SysV) und aarch64 (AAPCS64,
+// Linux) liegen die ersten Argumente in 64-Bit-Registern, der Rest in 8-Byte-Stapelplaetzen; ein Aufrufer darf mehr
+// Argumente uebergeben, als die Funktion liest (der Aufrufer raeumt auf), und 32-Bit-Parameter lesen nur die unteren
+// 32 Bit (die Argumente werden dafuer vorher maskiert). Der Rueckgabewert liegt in rax/x0; 32-Bit-Ergebnisse werden
+// vor der Pruefung auf uint32_t gekuerzt. Eine typisierte Huelle je Funktion waere sicherer, muesste aber je Signatur
+// erzeugt werden und wuerde die Tabelle aus ZEHOS_HOST_FUNCTIONS verdoppeln; daher dieser eine Zeigertyp.
 typedef uint64_t (*generic_function)(zehos_host_call*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
     uint64_t, uint64_t, uint64_t);
 typedef struct { const char* name; const char* module; generic_function function; int count; const char* signature; char result; } entry;
@@ -351,10 +358,11 @@ static int run_call(int function_index, long number, int verbose)
     current = function; current_number = number;
 
     current_variant = (int)below(3);
-    // Jeder vierte Aufruf: ungerade Groesse buendig vor der oberen Schutzseite (Ueberlauf um wenige Bytes faellt auf).
-    int unaligned = below(4) == 0;
-    guest_size = unaligned ? GUEST_SIZE - 1 - below(PAGE - 1) : GUEST_SIZE;
-    guest_base = region + PAGE + GUEST_SIZE - guest_size;
+    // Je ein Achtel: ungerade Groesse buendig vor der oberen Schutzseite (Ueberlauf um wenige Bytes) bzw. buendig hinter der
+    // unteren (Unterlauf nach unten); sonst volle 64 KiB zwischen beiden Seiten.
+    int layout = (int)below(8);
+    guest_size = layout < 2 ? GUEST_SIZE - 1 - below(PAGE - 1) : GUEST_SIZE;
+    guest_base = layout == 1 ? region + PAGE : region + PAGE + GUEST_SIZE - guest_size;
     fail_mode = (int)below(5); save_enabled = (int)below(3) != 0; should_exit_after = 1 + (int)below(200);
     exit_calls = 0; next_handle = 0; sim_ns = 1000000000000ull;
 
