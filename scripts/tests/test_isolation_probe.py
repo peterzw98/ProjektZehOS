@@ -9,19 +9,20 @@ spec.loader.exec_module(isolation)
 
 PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
+    # Die Reihenfolge der Zeilen wertet evaluate nicht aus; die Arena- und frei-Zeilen stehen gesammelt.
     'ISOLATION_PROBE frei_vor=401000',
+    'ISOLATION_PROBE arena=1',
     'ISOLATION_PROBE arena=1',
     'CPU EXCEPTION: Divide by Zero (#DE)',
     'System halted.',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 4 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=de handled=1 vector=0',
-    'ISOLATION_PROBE arena=1',
     'CPU EXCEPTION: Page Fault (#PF)',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 7 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=pf handled=1 vector=14',
     'ISOLATION_PROBE gc ok',
-    'ISOLATION_PROBE frei_nach=400200',
     'ISOLATION_PROBE none returned',
+    'ISOLATION_PROBE frei_nach=400200',
     'ISOLATION_PROBE DONE',
 ])
 

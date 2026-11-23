@@ -22,10 +22,11 @@ tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
+# I2-C: erlaubter Rueckgang des freien Speichers ueber beide Fehlerlaeufe (sie hielten je 16 MiB in der Arena).
+ARENA_SLACK_KIB = 8 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
-ARENA_SLACK_KIB = 8 * 1024
 
 
 def parse_args(argv=None) -> argparse.Namespace:

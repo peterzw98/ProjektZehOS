@@ -179,8 +179,8 @@ internal static unsafe partial class WasmRuntime
 
     /// <summary>
     /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, beendet sie den Lauf von aussen,
-    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread und 8-MiB-Stack bleiben bis
-    /// zum Neustart belegt; den nativen Speicher der Instanz gibt die Laufarena frei (I2-C, unter AOT nicht).
+    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread, 8-MiB-Stack und der
+    /// native Speicher der Instanz bleiben bis zum Neustart belegt.
     /// </summary>
     public static void PollFaultIsolation()
     {
