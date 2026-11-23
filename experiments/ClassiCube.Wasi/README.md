@@ -51,7 +51,7 @@ Mehrspieler gegen den lokalen Testserver `scripts/classic-test-server.py` (nur S
 python scripts/test-classicube-multiplayer.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel whpx
 ```
 
-Es baut das Paket mit `--network`, startet den Testserver im Skript, verbindet über *Direct connect* und prüft: Login, Positionen am Server, gesetzter und entfernter Block am Server und bei einem zweiten Client auf dem Host, Blöcke dieses Clients im Bild, Schließen des Fensters bei offener Verbindung, Serverausfall mit Anzeige des Abbruchs, Wechsel Textshell/Desktop danach und sauberes Schließen.
+Es baut das Paket mit `--network`, startet den Testserver im Skript, startet zwei QEMU-Gäste (je eigenes Usermode-Netz, der Host ist für beide `10.0.2.2`; `--memory` setzt den Gastspeicher, 256M genügt), installiert das Paket in beiden, verbindet beide über *Direct connect* und prüft am Server und in den Bildern: beide Logins, gegenseitige Spawn-Weiterleitung, Block von Gast A (setzen, entfernen) beim Gast B, Block von Gast B bei A, Position von B bei A, Schließen von As Fenster bei offener Verbindung (Server und B bemerken es), erneutes Verbinden, Serverausfall bei beiden mit Anzeige des Abbruchs, Wechsel Textshell/Desktop danach, sauberes Schließen und zuletzt den Start gegen den nicht mehr erreichbaren Server. Als `--package` dient der entpackte `classicube/1.1.0/files` aus dem Branch `packages`. Der Testserver meldet Weiterleitungen als Ereignis `relay`.
 
 ## Messwerte (17. November 2026)
 
