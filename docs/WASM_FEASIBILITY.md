@@ -310,6 +310,23 @@ Das Kernel-Raster ist damit rund 11-mal (Seed 1) bzw. 13-mal (Seed 5) so schnell
 
 **Folgerung:** Gleiches Bild und höhere Bildrate sind unter KVM und (laut Roadmap-Stand 17. November) QEMU WHPX belegt. Die Abnahme von 13.3 bleibt offen für VMware.
 
+## Abbruch-Prüfpunkt je Schleifendurchlauf (Roadmap 12.4-I2-B, 23. November 2026)
+
+Frage: Verschlechtert die Prüfung des Abbruchmerkers in `d_m3Op(Loop)` (`ThirdParty/wasm3/ORIGIN.txt`) die Bildzeit messbar? Abnahme laut [Plan 12.4](superpowers/plans/2026-11-18-isolation-12-4.md), Paket I2-B: Der Mittelwert der Bildzeit liegt für Doom und ClassiCube höchstens 2 % über dem ohne Änderung.
+
+Umgebung: Linux-Host mit 4 CPUs, QEMU 10.2.2 mit KVM, normale Release-ISOs (`cosmos build`): ohne Änderung `0.6.122+d8b3269f` (Stand I2-A), mit Änderung `0.6.123+e3507214`. Veröffentlichte Pakete aus `origin/packages`: Doom 1.1.0 (512 MiB, Titel- und Demoablauf) und ClassiCube 1.1.0 (1 GiB, `--start-keys ret wait:25`, stehend am Spawnpunkt). Je ISO und App fünf Läufe mit `python3 scripts/measure-wasm-frametimes.py --accel kvm --runs 1 --seconds 130`, die ISOs im Wechsel. Gewertet ist das letzte 60-s-Fenster; der Mittelwert der Bildzeit ist 60 s geteilt durch die Bildzahl, also der Kehrwert von `avg fps`.
+
+| App | ohne Änderung, avg fps je Lauf | Mittel | mit Änderung, avg fps je Lauf | Mittel | Bildzeit mit gegen ohne |
+| --- | --- | --- | --- | --- | --- |
+| Doom 1.1.0 | 36,5 / 36,3 / 36,4 / 36,8 / 36,7 | 36,5 | 41,8 / 36,5 / 36,4 / 36,7 / 36,6 | 37,6 | −2,8 % (ohne den Ausreißer 41,8: 36,55 fps, ±0 %) |
+| ClassiCube 1.1.0 | 14,5 / 13,1 / 15,9 / 17,0 / 17,9 | 15,7 | 15,6 / 17,4 / 13,4 / 12,4 / 13,9 | 14,5 | +7,8 % |
+
+Doom: Der App-Anteil (Median) ist in beiden Reihen 26,5 bis 26,9 ms je Bild; Doom ist durch den Spieltakt begrenzt. Abnahme erfüllt.
+
+ClassiCube: Die Läufe streuen innerhalb derselben ISO um mehr als ±15 % (Standardabweichung je Reihe etwa 1,9 fps, App-Anteil im Median 55 bis 79 ms). Der Unterschied der Mittel (1,1 fps) liegt unter einer Standardabweichung (Welch-t etwa 0,9) und ist mit fünf Läufen nicht von der Streuung zu trennen. Formal ist die Abnahme von 2 % damit **nicht erfüllt**; nach dem Plan geht das Paket mit diesen Rohwerten an den Lead zurück und wird nicht gemergt. Für eine Aussage auf 2 % braucht es eine Messung mit geringerer Streuung (feste Welt, mehr Läufe).
+
+Zum Vergleich auf dem Host (gcc `-O2 -fPIC`, wasm3 nativ, bester von drei Läufen): Eine Zählschleife aus sechs Wasm-Befehlen je Durchlauf (3·10⁸ Durchläufe) braucht 2,33 s ohne und 2,47 s mit Prüfung (+5,8 %). Das ist der ungünstigste Fall: eine Schleife, deren Körper fast nichts tut.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
