@@ -298,7 +298,8 @@ internal sealed class AhciState
     /// stop, for <see cref="AhciPort"/>'s error recovery: COMRESET through
     /// <see cref="ResetPort"/>, then PxSSTS.DET must report a device with
     /// its PHY up within <see cref="RecoveryLinkMilliseconds"/> (FRE is set
-    /// before the COMRESET, so the device's first D2H FIS reaches PxTFD),
+    /// before the COMRESET, so the device's first D2H FIS is not lost to an
+    /// HBA that discards FISes while FRE is clear),
     /// PxSERR is cleared once more, the task file must leave
     /// BSY and DRQ within <see cref="CommandTimeoutMilliseconds"/>, and the
     /// engines are stopped again, so the caller starts them on a device that
@@ -307,13 +308,16 @@ internal sealed class AhciState
     /// context on any thread; the caller holds the port's busy claim.
     /// </summary>
     /// <param name="port">The port index.</param>
-    /// <returns>True when the device came back ready and every engine reads stopped; on false the port must be left alone.</returns>
+    /// <returns>True when the device came back ready and every engine reads stopped; on false the port must be left alone, FRE possibly still set (the detach hook's stop clears it).</returns>
     internal bool ResetDevice(uint port)
     {
         // FRE before the COMRESET: the device sends its signature D2H FIS
-        // as soon as the link is up, and without FRE the HBA drops it, so
-        // PxTFD would keep the value of the reset (BSY or DRQ) and the wait
-        // below would miss. ResetPort leaves FRE as it finds it.
+        // as soon as the link is up, and depending on the HBA a FIS that
+        // arrives while FRE is clear may be discarded (AHCI 1.3.1 section
+        // 3.3.7, as remembered, not checked against the text); PxTFD would
+        // then keep the value of the reset (BSY or DRQ) and the wait below
+        // would miss. QEMU cannot tell the two orders apart. ResetPort
+        // leaves FRE as it finds it.
         SetPortBits(port, AhciProtocol.PxCmd, AhciProtocol.CmdFisReceiveEnable);
         if (!ResetPort(port))
         {
@@ -326,8 +330,9 @@ internal sealed class AhciState
         }
 
         // ResetPort cleared PxSERR before the link came up; the COMINIT of
-        // the link-up latches DIAG.X again, which some HBAs hold against
-        // FIS reception until it is cleared.
+        // the link-up latches DIAG.X again. Cleared once more as a
+        // precaution: that an HBA holds FIS reception against it is not
+        // shown here.
         WritePort(port, AhciProtocol.PxSerr, AhciProtocol.Rw1CClearAll);
         bool ready = WaitPort(port, AhciProtocol.PxTfd, AhciProtocol.TfdBusy | AhciProtocol.TfdDataRequest, 0, CommandTimeoutMilliseconds);
         return StopCommandEngine(port) && ready;
