@@ -147,7 +147,7 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
                 else
                 {
                     output.StartInteractive(Math.Max(1, Console.WindowWidth - 1), Math.Max(1, Console.WindowHeight - 2));
-                    ConsoleLineView.Status(input, now);
+                    line.Status(input, now);
                     if (shell.PagerText == null || IsLocked) line.Draw(editor, output.Buffer, output.ScrollOffset);
                 }
                 dirty = false;
@@ -258,6 +258,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         string[] lines = (shell.PagerText ?? "").Split('\n');
         int page = Math.Max(1, Console.WindowHeight - 3);
         pagerOffset = Math.Clamp(pagerOffset, 0, Math.Max(0, lines.Length - page));
+        // Der Pager ueberschreibt Status- und Ausgabezeilen am Zwischenstand der Zeilenansicht vorbei.
+        line.Invalidate();
         Console.Clear();
         int width = Math.Max(1, Console.WindowWidth - 1);
         Console.SetCursorPosition(0, 1);
