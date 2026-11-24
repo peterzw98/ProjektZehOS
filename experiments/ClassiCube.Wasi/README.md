@@ -48,10 +48,10 @@ python scripts/test-classicube-desktop.py --iso <ISO mit Test-Paketschlüssel> -
 Mehrspieler gegen den lokalen Testserver `scripts/classic-test-server.py` (nur Standardbibliothek, Protokoll 7 ohne CPE; allein gestartet lauscht er auf `127.0.0.1:25565` und schreibt Ereignisse als JSON-Zeilen):
 
 ```powershell
-python scripts/test-classicube-multiplayer.py --iso <ISO mit Test-Paketschlüssel> --package experiments/ClassiCube.Wasi/bin/package --key <Test-private.pem> --accel whpx
+python scripts/test-classicube-multiplayer.py --iso <ISO mit Test-Paketschlüssel> --package <classicube/1.1.0/files aus dem Branch packages> --manifest <classicube/1.1.0/manifest ebenda> --key <Test-private.pem> --accel kvm --memory 256M
 ```
 
-Es baut das Paket mit `--network`, startet den Testserver im Skript, verbindet über *Direct connect* und prüft: Login, Positionen am Server, gesetzter und entfernter Block am Server und bei einem zweiten Client auf dem Host, Blöcke dieses Clients im Bild, Schließen des Fensters bei offener Verbindung, Serverausfall mit Anzeige des Abbruchs, Wechsel Textshell/Desktop danach und sauberes Schließen.
+Es baut das Paket mit den Berechtigungen des Manifests, startet den Testserver im Skript, startet zwei QEMU-Gäste (je eigenes Usermode-Netz, der Host ist für beide `10.0.2.2`; `--memory` setzt den Gastspeicher; 256M bestand 4 von 4 Läufen (3 der ersten Fassung, 1 der Endfassung), weniger wurde nicht probiert; `--manifest` ist das echte Manifest des Pakets, dessen Version, Berechtigungen und min-kernel übernommen und gegen dessen Hashes die Dateien geprüft werden), installiert das Paket in beiden, verbindet beide über *Direct connect* und prüft am Server und in den Bildern: beide Logins, gegenseitige Spawn-Weiterleitung, Block von Gast A (setzen, entfernen) und Block von Gast B sowie die Position von B als vom Server an den jeweils anderen Gast gesendet (Bildunterschiede werden nur als Hinweis ausgegeben), Schließen von As Fenster bei offener Verbindung (Server und B bemerken es), erneutes Verbinden, Serverausfall bei beiden mit Anzeige des Abbruchs, Wechsel Textshell/Desktop danach, sauberes Schließen und zuletzt den Start gegen den nicht mehr erreichbaren Server. Als `--package` dient der entpackte `classicube/1.1.0/files` aus dem Branch `packages`. Der Testserver meldet Weiterleitungen als Ereignis `relay`.
 
 ## Messwerte (17. November 2026)
 
