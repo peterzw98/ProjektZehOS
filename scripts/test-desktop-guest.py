@@ -34,6 +34,17 @@ spec.loader.exec_module(tools)
 
 # Aus ProjektZeh/Graphics/Desktop.cs (BarHeight, OpenTerminal) und Window.cs (Schliessen-Feld 38 px am rechten Rand).
 BAR_HEIGHT = 56
+# Zweite Anmeldung (Kennwortpruefung in der Textshell nach logout) unter TCG: auf dem SMP-Stand mit 1 CPU dauert sie
+# 310-345 s gegen 140-155 s auf master (Block #602); 300 s reichen dort nicht. Unter KVM bleibt die alte Grenze.
+RELOGIN_TIMEOUT_TCG = 600
+RELOGIN_TIMEOUT = 300
+
+
+def relogin_timeout(accel: str) -> float:
+    """Zeitgrenze der zweiten Anmeldung fuer den Beschleuniger."""
+    return RELOGIN_TIMEOUT_TCG if accel == "tcg" else RELOGIN_TIMEOUT
+
+
 # Format von SystemLogEntry.ToString(): "[<n> ms] <Level> <Komponente>: <Text>". Nicht am Zeilenanfang verankert:
 # Debugausgaben anderer Threads koennen den Zeilenanfang ueberschreiben, eine Fehlerzeile darf dadurch nicht verschwinden.
 ERROR_LINE = re.compile(r"\[\d+ ms\] Error [^:\n]+: ")
@@ -77,8 +88,8 @@ def without_appdisk(machine: list[str]) -> list[str]:
 class Run:
     """Ein Gastlauf: Wegwerfplatte, QEMU, Guest aus test-wasm-doom-desktop.py und Bildvergleiche."""
 
-    def __init__(self, work: Path, start_vm, boot_timeout: float):
-        self.work, self.boot_timeout = work, boot_timeout
+    def __init__(self, work: Path, start_vm, boot_timeout: float, relogin_timeout: float = RELOGIN_TIMEOUT):
+        self.work, self.boot_timeout, self.relogin_timeout = work, boot_timeout, relogin_timeout
         self.port = tools.free_port()
         self.guest = tools.Guest(work, self.port, "", time.monotonic())
         self.vm: subprocess.Popen = start_vm(self.port)
@@ -211,7 +222,7 @@ class Run:
         mark = guest.mark()
         guest.shell("logout")
         guest.wait("Benutzer abgemeldet.", 30, mark)
-        guest.login(first=False)
+        guest.login(first=False, timeout=self.relogin_timeout)
         guest.desktop()
         self.screen("wieder-desktop")
         self.shutdown_from_textshell(lambda: guest.shell("shutdown"))
@@ -309,9 +320,10 @@ def relative(qmp, dx: int, dy: int) -> None:
                                                 {"type": "rel", "data": {"axis": "y", "value": dy}}]})
 
 
-def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False, ps2: bool = False) -> int:
+def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False, ps2: bool = False,
+        relogin_timeout: float = RELOGIN_TIMEOUT) -> int:
     """Fuehrt den Ablauf aus; start_vm(port) startet den Gast und liefert seinen Prozess."""
-    current = Run(work, start_vm, boot_timeout)
+    current = Run(work, start_vm, boot_timeout, relogin_timeout)
     try:
         if power:
             current.power_flow()
@@ -364,7 +376,8 @@ def main() -> int:
         # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
         tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
-               args.boot_timeout, args.power, args.ps2)
+               args.boot_timeout, args.power, args.ps2,
+               relogin_timeout(args.accel))
 
 
 if __name__ == "__main__":

@@ -358,13 +358,13 @@ class Guest:
     def connect(self) -> None:
         self.qmp = Qmp(self.port)
 
-    def login(self, first: bool) -> None:
+    def login(self, first: bool, timeout: float = 300) -> None:
         mark = self.mark()
         for value in (TEST_USER, TEST_PASSWORD, TEST_PASSWORD) if first else (TEST_USER, TEST_PASSWORD):
             self.qmp.line(value)
             time.sleep(0.5)
         # Die Ersteinrichtung (PBKDF2) dauert unter TCG unterschiedlich lange.
-        self.wait("Benutzer angemeldet.", 300, mark)
+        self.wait("Benutzer angemeldet.", timeout, mark)
         self.log("angemeldet")
         time.sleep(1)
 
