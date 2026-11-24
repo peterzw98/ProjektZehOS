@@ -117,6 +117,14 @@ internal static unsafe class FaultIsolation
         return CpuExceptionAction.AbandonThread;
     }
 
+    /// <summary>
+    /// Scheduler-Id des laufenden Threads, ohne Allokation; -1 ohne Scheduler. Rueckruf fuer die Laufarena der C-Laufzeit
+    /// (Roadmap 12.4-I2-C, <c>zehos_host_arena.c</c>): malloc fragt damit, ob der Block dem Lauf gehoert.
+    /// </summary>
+    // Wie Install (Worker-Id) liest sie ueber CurrentThread(null) die laufende CPU und den Thread in einem Schritt (SMP).
+    [UnmanagedCallersOnly(EntryPoint = "zehos_current_thread_id")]
+    internal static int CurrentThreadId() => CurrentThread(null) is { } thread ? (int)thread.Id : -1;
+
 #if ZEHOS_WASM
     [DllImport("*", EntryPoint = "zehos_host_depth_address", ExactSpelling = true)]
     private static extern int* HostDepthAddress();

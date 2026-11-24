@@ -18,7 +18,9 @@ enum
     ZEHOS_WASM_ENTRY_MISSING = 4,
     ZEHOS_WASM_TRAP = 5,
     ZEHOS_WASM_OUT_OF_GAS = 6,
-    ZEHOS_WASM_LIMIT_FAILED = 7
+    ZEHOS_WASM_LIMIT_FAILED = 7,
+    // 8 vergibt nur der C#-Kernel (WasmStatus.CpuFault, Roadmap 12.4-I1).
+    ZEHOS_WASM_ABORTED = 9      // von aussen beendet (zehos_host_abort, Roadmap 12.4-I2-A)
 };
 
 enum { ZEHOS_HOST_MAXIMUM_FILES = 16 };
@@ -45,7 +47,8 @@ typedef enum
 {
     ZEHOS_HOST_CONTINUE = 0,
     ZEHOS_HOST_TRAP_MEMORY = 1, // Gastadresse oder -laenge ausserhalb des linearen Speichers
-    ZEHOS_HOST_TRAP_EXIT = 2    // proc_exit; der Exitcode steht in context->exitCode
+    ZEHOS_HOST_TRAP_EXIT = 2,   // proc_exit; der Exitcode steht in context->exitCode
+    ZEHOS_HOST_TRAP_ABORT = 3   // Lauf wird von aussen beendet (zehos_host_abort)
 } zehos_host_trap;
 
 typedef struct
@@ -129,6 +132,14 @@ typedef struct
 // der eine Wasm-Worker Gastcode ausfuehrt; libc.c zaehlt atomar, weil der Allokator auch anderen nativen Code bedient.
 extern volatile int32_t zehos_host_depth;
 volatile int32_t* zehos_host_depth_address(void);
+
+// Abbruchmerker (Roadmap 12.4-I2-A): 1 heisst, der laufende Lauf endet am naechsten Pruefpunkt als gewoehnlicher Trap.
+// Pruefpunkte sind vor und nach jedem Hostaufruf (nie darin, weil Hostcode Kernelsperren halten kann), bei jedem
+// Wasm-Aufruf (m3_Yield) und je Schleifendurchlauf (op_Loop, I2-B); die beiden letzten nur unter wasm3. zehos_wasm_run und zehos_wasm_run_aot loeschen ihn als Erstes; gesetzt wird er
+// von der Hauptschleife (WasmRuntime.PollAbort), waehrend der Worker rechnet. Ein globaler Wert genuegt, weil nur der
+// eine Wasm-Worker Gastcode ausfuehrt (docs/SMP_AUDIT.md, Abschnitt C-Code); mehrere Worker brauchen ihn je Lauf.
+extern volatile int32_t zehos_host_abort;
+void zehos_host_set_abort(int32_t on);
 
 uint32_t zehos_host_fd_write(zehos_host_call* call, int32_t fd, uint32_t iovs, uint32_t iovsCount, uint32_t written);
 uint32_t zehos_host_args_sizes_get(zehos_host_call* call, uint32_t count, uint32_t bytes);
