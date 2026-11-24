@@ -78,7 +78,9 @@ static void end_call(wasm_exec_env_t env, zehos_host_call* call)
     }
     else if (call->trap == ZEHOS_HOST_TRAP_ABORT)
     {
-        run->aborted = 1;
+        // Waehrend des Instanziierens (Startfunktion, Konstruktoren) legt WAMR eine eigene Ausfuehrungsumgebung ohne
+        // Nutzerdaten an; dort genuegt die Ausnahme, zehos_wasm_run_aot meldet Aborted ueber den Merker.
+        if (run != NULL) run->aborted = 1;
         wasm_runtime_set_exception(instance, abort_exception);
     }
     else wasm_runtime_set_exception(instance, memory_exception);
