@@ -47,7 +47,7 @@ public class Kernel : Sys.Kernel
     private const string SkipNoHost = "no block device bound for partition-table tests";
 
     /// <summary>Total tests this suite reports per profile; the breakdown is at the TR.Start call site.</summary>
-    private const ushort ExpectedTestCount = 85;
+    private const ushort ExpectedTestCount = 89;
 
     /// <summary>Block devices the engine attaches per QEMU profile; any other count is a bind or double-registration regression.</summary>
     private const int AttachedDisksPerProfile = 1;
@@ -223,6 +223,46 @@ public class Kernel : Sys.Kernel
 
     /// <summary>XOR seed of the command-size pattern, mixed with the sector count so a stale earlier transfer shows.</summary>
     private const byte CommandSizeXorSeed = 0x69;
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    /// <summary>Why the AHCI error-path tests skip on other controllers.</summary>
+    private const string SkipNotAhci = "not an AHCI profile";
+
+    /// <summary>
+    /// ATA NOP (subcommand 0): the device ends it with ERR and ABRT, so it
+    /// drives the error path without touching the medium.
+    /// </summary>
+    private const byte AtaNopAbort = 0x00;
+
+    /// <summary>Further aborted commands after the first: each must fail on its own, not time out on a halted port.</summary>
+    private const int ErrorRepeats = 3;
+
+    /// <summary>Sector the error-path test round-trips after each abort; clear of the command-size region and the partition tests.</summary>
+    private const ulong ErrorRoundTripLba = 9001;
+
+    /// <summary>Fill of the past-end write; LBA 0 must not show it afterwards.</summary>
+    private const byte PastEndFill = 0xE7;
+
+    /// <summary>XOR seed of the error-path round trip.</summary>
+    private const byte ErrorRoundTripSeed = 0x3C;
+
+    /// <summary>Device resets the recovery test runs back to back: a second reset must find the port as the first left it.</summary>
+    private const int DeviceResetRounds = 2;
+
+    /// <summary>Pattern offset of the device-reset round trips, apart from the abort test's rounds.</summary>
+    private const int DeviceResetSeed = 0x40;
+
+    /// <summary>Pattern offset of the error-status round trips, apart from the other recovery tests.</summary>
+    private const int ErrorStatusSeed = 0x80;
+
+    /// <summary>PxTFD of a ready device: DRDY and DSC.</summary>
+    private const uint TaskFileReady = 0x50;
+
+    /// <summary>PxTFD of a ready device that reported a device fault without ERR.</summary>
+    private const uint TaskFileFault = TaskFileReady | AhciProtocol.TfdDeviceFault;
+
+    /// <summary>PxTFD of a device that still runs its command.</summary>
+    private const uint TaskFileBusy = AhciProtocol.TfdBusy;
 
     /// <summary>XOR seed of the boundary-LBA round-trip pattern.</summary>
     private const byte BoundaryXorSeed = 0xF0;
@@ -427,10 +467,10 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Storage] BeforeRun() reached!\n");
 
-        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 13 device
+        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 17 device
         // + 7 partition + 42 partition-lifecycle (MBR mutation, EBR chain,
         // PartitionManager, superfloppy) + 2 bounds probes + 2 mmio/pci
-        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 85 tests per profile.
+        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 89 tests per profile.
         TR.Start("Storage Block Device Tests", expectedTests: ExpectedTestCount);
 
         // The cell's disk is the first writable device the manager holds:
@@ -541,6 +581,12 @@ public class Kernel : Sys.Kernel
         TR.RunIf(dev, "Device_LBA_Stride_Sweep",           TestDevice_LBAStrideSweep,           SkipNoDevice);
         TR.RunIf(dev, "Device_RandomOrder_ReadAfterWrite", TestDevice_RandomOrderReadAfterWrite, SkipNoDevice);
         TR.RunIf(dev, "Device_Multiblock_TailBoundary",    TestDevice_MultiblockTailBoundary,   SkipNoDevice);
+        // ZehOS patch ahci-error-recovery, see PATCHES.md
+        bool ahci = s_dev is AhciPort;
+        TR.RunIf(ahci, "Device_PastEnd_Rejected",          TestDevice_PastEndRejected,          dev ? SkipNotAhci : SkipNoDevice);
+        TR.RunIf(ahci, "Device_TaskFileError_Recovers",    TestDevice_TaskFileErrorRecovers,    dev ? SkipNotAhci : SkipNoDevice);
+        TR.RunIf(ahci, "Device_DeviceReset_Recovers",      TestDevice_DeviceResetRecovers,      dev ? SkipNotAhci : SkipNoDevice);
+        TR.RunIf(ahci, "Device_ErrorStatus_Recovery",      TestDevice_ErrorStatusRecovery,      dev ? SkipNotAhci : SkipNoDevice);
 
         // ==================== Partition (MBR/GPT, partition translation) ====================
         // These run last because they overwrite LBA 0..33, which the device
@@ -1107,9 +1153,198 @@ public class Kernel : Sys.Kernel
                 Assert.Equal(writeBuf[i], readBuf[size + i]);
             }
 
+            // The read above starts on the even LBA before the transfer; read
+            // the transfer itself too, so a read also starts on an odd LBA.
+            Span<byte> oddBuf = new byte[total];
+            s_dev.ReadBlock(lba, count, oddBuf);
+            for (int i = 0; i < total; i++)
+            {
+                Assert.Equal(writeBuf[i], oddBuf[i], "read from the odd LBA");
+            }
+
             // Next transfer starts on an odd LBA again, past this one's after-guard.
             lba += count + 2;
             lba |= 1;
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // Sectors past the capacity must be refused before a command is built:
+    // the FIS carries six LBA bytes, so 2^48 wrapped to sector 0 and a write
+    // there overwrote the partition table. LBA 0 is compared before and after.
+    private static void TestDevice_PastEndRejected()
+    {
+        IBlockDevice dev = s_dev!;
+        int size = (int)dev.BlockSize;
+        byte[] before = new byte[size];
+        dev.ReadBlock(0, 1, before);
+
+        byte[] one = new byte[size];
+        byte[] two = new byte[2 * size];
+        Assert.True(PastEndThrows(() => dev.ReadBlock(dev.BlockCount, 1, one)), "read at the capacity must throw");
+        Assert.True(PastEndThrows(() => dev.ReadBlock(dev.BlockCount - 1, 2, two)), "read across the capacity must throw");
+        Assert.True(PastEndThrows(() => dev.ReadBlock(1UL << 48, 1, one)), "read at 2^48 must throw");
+
+        byte[] fill = new byte[size];
+        Array.Fill(fill, PastEndFill);
+        Assert.True(PastEndThrows(() => dev.WriteBlock(1UL << 48, 1, fill)), "write at 2^48 must throw");
+        Assert.True(PastEndThrows(() => dev.WriteBlock(ulong.MaxValue, 1, fill)), "write at ulong.MaxValue must throw");
+
+        byte[] after = new byte[size];
+        dev.ReadBlock(0, 1, after);
+        for (int i = 0; i < size; i++)
+        {
+            Assert.Equal(before[i], after[i], "LBA 0 changed by a past-end write");
+        }
+    }
+
+    // True when the call threw ArgumentOutOfRangeException; any other
+    // exception propagates and fails the test.
+    private static bool PastEndThrows(Action call)
+    {
+        try
+        {
+            call();
+            return false;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return true;
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // A command the device aborts must surface as IOException even though
+    // the HBA clears PxCI in the same step it sets TFES, and the port must
+    // work afterwards: the halted command list is restarted. Repeated aborts
+    // must each fail at once instead of timing out on a halted port.
+    private static void TestDevice_TaskFileErrorRecovers()
+    {
+        AhciPort port = (AhciPort)s_dev!;
+        Assert.True(port.BlockCount > ErrorRoundTripLba + 1, "disk too small for the error-path round trip");
+        for (int round = 0; round <= ErrorRepeats; round++)
+        {
+            bool threw = false;
+            try
+            {
+                port.IssueNonDataCommand(AtaNopAbort);
+            }
+            catch (IOException)
+            {
+                threw = true;
+            }
+
+            Assert.True(threw, "an aborted command must throw IOException");
+
+            int size = (int)port.BlockSize;
+            byte[] writeBuf = new byte[size];
+            for (int i = 0; i < size; i++)
+            {
+                writeBuf[i] = (byte)((i + round) ^ ErrorRoundTripSeed);
+            }
+
+            port.WriteBlock(ErrorRoundTripLba, 1, writeBuf);
+            byte[] readBuf = new byte[size];
+            port.ReadBlock(ErrorRoundTripLba, 1, readBuf);
+            for (int i = 0; i < size; i++)
+            {
+                Assert.Equal(writeBuf[i], readBuf[i], "round trip after an aborted command");
+            }
+        }
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // The recovery of a timeout or a stuck task file resets the device:
+    // COMRESET, PxSSTS.DET must report the device again and its task file
+    // must read ready before the engine restarts. QEMU never times out, so
+    // the test gate runs that recovery directly. Afterwards the port must
+    // move data, still report an aborted command as IOException (the reset
+    // left FRE and the error path intact) and move data once more.
+    private static void TestDevice_DeviceResetRecovers()
+    {
+        AhciPort port = (AhciPort)s_dev!;
+        Assert.True(port.BlockCount > ErrorRoundTripLba + 1, "disk too small for the device-reset round trip");
+        int timeoutsBefore = port.Controller.Timeouts;
+        for (int round = 0; round < DeviceResetRounds; round++)
+        {
+            Assert.True(port.RecoverWithDeviceReset(), "the device reset left the port disabled");
+            ErrorPathRoundTrip(port, DeviceResetSeed + round);
+
+            bool threw = false;
+            try
+            {
+                port.IssueNonDataCommand(AtaNopAbort);
+            }
+            catch (IOException)
+            {
+                threw = true;
+            }
+
+            Assert.True(threw, "an aborted command after the device reset must throw IOException");
+            ErrorPathRoundTrip(port, DeviceResetSeed + round + 1);
+        }
+
+        Assert.Equal(timeoutsBefore, port.Controller.Timeouts, "the device reset counted a timeout");
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // QEMU reports neither a device fault nor a bus or interface error with
+    // the device still busy, so the completion check runs on made-up PxIS and
+    // PxTFD values; the recovery it starts is the real one. A clean status
+    // must pass, a fault without ERR must fail, and the device must be reset
+    // exactly when the task file still read BSY or DRQ.
+    private static void TestDevice_ErrorStatusRecovery()
+    {
+        AhciPort port = (AhciPort)s_dev!;
+        int resets = port.DeviceResets;
+        port.CheckCompletionWith(0, TaskFileReady);
+        Assert.Equal(resets, port.DeviceResets, "a clean completion reset the device");
+
+        ErrorStatusFails(port, 0, TaskFileFault, expectReset: false, "device fault without ERR");
+        ErrorStatusFails(port, AhciProtocol.IsTaskFileError, TaskFileReady | AhciProtocol.TfdError, expectReset: false, "task file error");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusFatal, TaskFileReady, expectReset: false, "host bus fatal, device ready");
+        ErrorStatusFails(port, AhciProtocol.IsInterfaceFatal, TaskFileBusy, expectReset: true, "interface fatal, device busy");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusFatal, TaskFileBusy, expectReset: true, "host bus fatal, device busy");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusData, TaskFileReady | AhciProtocol.TfdDataRequest, expectReset: true, "host bus data, DRQ set");
+    }
+
+    // Asserts that the status fails as IOException, that the recovery reset
+    // the device or left it alone as expected, and that the port moves data.
+    private static void ErrorStatusFails(AhciPort port, uint status, uint taskFile, bool expectReset, string what)
+    {
+        int resets = port.DeviceResets;
+        bool threw = false;
+        try
+        {
+            port.CheckCompletionWith(status, taskFile);
+        }
+        catch (IOException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, what + ": must throw IOException");
+        Assert.Equal(resets + (expectReset ? 1 : 0), port.DeviceResets, what + ": device resets");
+        ErrorPathRoundTrip(port, ErrorStatusSeed + resets);
+    }
+
+    // Writes one sector at ErrorRoundTripLba with a pattern of the seed and
+    // reads it back.
+    private static void ErrorPathRoundTrip(AhciPort port, int seed)
+    {
+        int size = (int)port.BlockSize;
+        byte[] writeBuf = new byte[size];
+        for (int i = 0; i < size; i++)
+        {
+            writeBuf[i] = (byte)((i + seed) ^ ErrorRoundTripSeed);
+        }
+
+        port.WriteBlock(ErrorRoundTripLba, 1, writeBuf);
+        byte[] readBuf = new byte[size];
+        port.ReadBlock(ErrorRoundTripLba, 1, readBuf);
+        for (int i = 0; i < size; i++)
+        {
+            Assert.Equal(writeBuf[i], readBuf[i], "round trip after the recovery");
         }
     }
 
