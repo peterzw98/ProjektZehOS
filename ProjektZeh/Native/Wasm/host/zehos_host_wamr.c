@@ -222,6 +222,8 @@ static int initial_memory_exceeds(wasm_module_t module, uint32_t maximumPages)
 }
 
 // Einstieg wie bei wasm3: ohne Parameter, ohne Ergebnis ("_start") oder mit einem i32-Ergebnis.
+// Der Schleifenausstieg (zehos_host_aot_exit.h) verlaesst sich darauf: Nur so belegt WAMR auf dem Weg in den AOT-Code
+// keinen Heap, den er ueberspruenge (new_argv nur bei externref, argv1 nur bei mehreren Ergebnissen oder vielen Parametern).
 static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instance)
 {
     if (function == NULL || wasm_func_get_param_count(function, instance) != 0) return 0;

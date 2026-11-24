@@ -39,6 +39,19 @@ internal static unsafe class AotLoopExit
         CpuTickHook.Handler = OnTick;
     }
 
+    /// <summary>
+    /// Der Lauf wird nach einer CPU-Ausnahme aufgegeben: zehos_aot_call kehrt nie zurueck und loescht den Zustand nicht.
+    /// Im Ausnahmepfad gerufen, auf der CPU des Workers mit gesperrten Interrupts; nur Speicherzugriffe.
+    /// </summary>
+    internal static void Forget()
+    {
+        AotExitState* current = state;
+        if (current == null) return;
+        Volatile.Write(ref current->CodeEnd, 0);
+        Volatile.Write(ref current->Code, 0);
+        Volatile.Write(ref current->Stack, 0);
+    }
+
     // Interruptkontext, auf jeder CPU: keine Allokation, keine Sperre, kein Protokoll. Der haeufige Fall endet am Merker.
     private static nuint OnTick(in CpuTickInfo tick)
     {

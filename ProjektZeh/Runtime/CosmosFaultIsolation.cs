@@ -115,6 +115,9 @@ internal static unsafe class FaultIsolation
 
         Volatile.Write(ref inNativeRun, 0);
         Volatile.Write(ref workerThreadId, -1);
+#if ZEHOS_AOT_LOOP_EXIT && ZEHOS_WASM_AOT
+        AotLoopExit.Forget();
+#endif
         Volatile.Write(ref isolatedVector, vector);
         Volatile.Write(ref isolatedRip, exception.InstructionPointer);
         // Nur anmelden: Cosmos legt den Wechsel erst nach der Rueckkehr an und haelt an, wenn das nicht geht.
