@@ -1,0 +1,10 @@
+# ext2-dir-scan
+
+- **Commit:** Squash von PR <PR-Nummer> (`<Hash>`), nach Merge einzutragen; geschrieben auf `origin/cosmos` fbb5e340
+- **Dateien:** `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Directory.cs` (`TryFind`, neu `TryFindFirst`, `AddEntry`), `Ext2InodeOperations.cs` (`Lookup`); Tests `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/Ext2DirScanTests.cs`
+- **Grund:** `TryFind` las bei jedem Aufruf das ganze Verzeichnis in einen Puffer und legte je Eintrag ein `Ext2DirEntry` und einen `string` an; `AddEntry` tat das noch einmal, las das Verzeichnis ein zweites Mal und schrieb alle Blöcke zurück (ZehOS #542: 4000 Dateien in einem Verzeichnis)
+- **Änderung:** Blockweise Suche mit Vergleich der Namensbytes in einem Blockpuffer je Aufruf (kein geteilter Zustand, keine neue Sperre). `Lookup` endet beim Treffer (`TryFindFirst`); alle ändernden Aufrufer prüfen mit `TryFind` weiter das ganze Verzeichnis. `AddEntry` prüft und sucht die Lücke in einem Lauf, schreibt erst danach und nur den geänderten Block. Plattenformat, Wahl der Lücke und Schreibreihenfolge unverändert; es entfallen nur Schreibzugriffe mit unverändertem Inhalt
+- **Geändertes Verhalten nur bei defekten Verzeichnissen und Sonderfällen:** `Lookup` findet einen Eintrag vor einer Beschädigung (vorher Fehlschlag). `AddEntry` lehnt Nicht-Verzeichnisse ab, sucht nicht hinter `i_size` und legt bei Größe 0 den Eintrag in Block 0 (vorher blieb Block 0 genullt und das Verzeichnis unlesbar). Ein Name mit ungepaartem Surrogat gilt als gleich mit einem Eintrag `U+FFFD` (dieselben Bytes; vorher konnte `Create` so ein Duplikat anlegen)
+- **Entfernter ZehOS-Umweg:** keiner
+- **Grenzen:** die Suche bleibt linear; `RemoveEntry`, `ReadDir`, `Rmdir` und `Lookup("..")` sind unverändert. Der Heapanteil (Refill) ist ein eigener Patch
+- **Prüfung:** noch nicht gebaut und nicht ausgeführt. Vorgesehen: `Ext2DirScanTests` (Vergleich mit `TryParseDirectory` auf zufällig beschädigten Verzeichnissen, Bytevergleich mit der früheren `AddEntry`-Fassung, Zahl der Gerätezugriffe), ganzes `Cosmos.Kernel.Tests.System`, nativer Bau, Gast E4.0 mit `e2fsck -fn`
