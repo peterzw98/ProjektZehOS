@@ -960,6 +960,14 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         FreeBlock(physicalBlock);
     }
 
+    // ZehOS patch ext2-used-dirs, see PATCHES.md
+    /// <summary>
+    /// Persist one group's descriptor (including its used-directory count) for
+    /// <see cref="Ext2InodeOperations"/>.
+    /// </summary>
+    /// <param name="groupIndex">Zero-based block group.</param>
+    internal void PersistGroupDesc(uint groupIndex) => UpdateGroupDesc(groupIndex);
+
     /// <summary>
     /// Persist one group's descriptor and the volume's free counts.
     /// </summary>
