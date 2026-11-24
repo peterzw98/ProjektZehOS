@@ -363,6 +363,43 @@ public class Ext2DirScanTests
     }
 
     [Test]
+    public void RecordCrossingBlockEnd_IsRefusedByAllPaths()
+    {
+        Fill(600);
+        Assert.That(Ext2DirectoryHelper.RemoveEntry(_sb, _dir, Name(10)), Is.True, "room before the damage");
+        byte[] data = ReadDirectory();
+        int last = BlockSize;
+        for (int pos = BlockSize; pos < 2 * BlockSize; pos += BitConverter.ToUInt16(data, pos + 4))
+        {
+            last = pos;
+        }
+
+        // One step (4 bytes) past the end: the smallest overrun that keeps rec_len aligned.
+        BitConverter.TryWriteBytes(data.AsSpan(last + 4, 2), (ushort)((2 * BlockSize) - last + 4));
+        WriteDirectory(data);
+
+        Assert.That(Ext2DirectoryHelper.TryParseDirectory(_sb, _dir, out _), Is.False, "precondition");
+        Assert.That(Ext2DirectoryHelper.TryFind(_sb, _dir, Name(0), out _), Is.False);
+        Assert.That(Ext2DirectoryHelper.TryFindFirst(_sb, _dir, Name(599), out _), Is.False);
+        _device.Reset();
+        Assert.That(Add("x0010"), Is.False);
+        Assert.That(_device.Writes, Is.Empty);
+    }
+
+    [Test]
+    public void DirectorySizeWrappingBlockCount_IsRefused()
+    {
+        Fill(10);
+        _dir.Size = 0;
+        _dir.SizeHigh = BlockSize; // 2^32 blocks: the block count alone would wrap to 0
+
+        Assert.That(Ext2DirectoryHelper.TryFind(_sb, _dir, Name(1), out _), Is.False);
+        _device.Reset();
+        Assert.That(Add("new"), Is.False);
+        Assert.That(_device.Writes, Is.Empty);
+    }
+
+    [Test]
     public void DirectoryOverSizeLimit_IsRefused()
     {
         Fill(10);
