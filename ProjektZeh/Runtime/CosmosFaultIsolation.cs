@@ -48,6 +48,9 @@ internal static unsafe class FaultIsolation
     private static extern SchedulerThread? CurrentThread(
         [UnsafeAccessorType("Cosmos.Kernel.Core.Scheduler.SchedulerManager, Cosmos.Kernel.Core")] object? owner);
 
+    /// <summary>Thread dieser CPU, CPU und Thread unter Maske in einem Schritt gelesen (auch fuer ThreadStarter.ApplyClass).</summary>
+    internal static SchedulerThread? CurrentSchedulerThread() => CurrentThread(null);
+
     /// <summary>Um den nativen Lauf (wasm3 oder AOT); Hostaufrufe darin zaehlt die C-Schicht.</summary>
     internal static void EnterNativeRun() => Volatile.Write(ref inNativeRun, 1);
 
