@@ -29,7 +29,8 @@ static M3Result trap_result(zehos_host_trap trap)
 
 // Ersetzt die schwache, leere Fassung aus m3_core.c. wasm3 ruft sie bei jedem Wasm-Aufruf (Call, CallIndirect,
 // ReturnCall) und beendet den Lauf mit dem gelieferten Fehler als gewoehnlichem Trap: Stack und Instanz werden auf dem
-// normalen Weg abgebaut. Eine Schleife ohne jeden Aufruf erreicht diesen Pruefpunkt nicht (Paket I2-B).
+// normalen Weg abgebaut. Eine Schleife ohne Aufruf ruft sie ueber den Pruefpunkt je Schleifendurchlauf in op_Loop
+// (ThirdParty/wasm3/ORIGIN.txt, Paket I2-B), sobald der Merker steht.
 M3Result m3_Yield(void)
 {
     return zehos_host_abort ? zehos_m3_trap_abort : m3Err_none;

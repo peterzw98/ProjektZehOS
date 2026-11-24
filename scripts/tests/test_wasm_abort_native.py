@@ -1,8 +1,9 @@
 """Prueft den Abbruch von aussen (Roadmap 12.4-I2-A) mit der echten C-Bruecke und wasm3 (benoetigt gcc).
 
-Die Pruefpunkte liegen vor und nach jedem Hostaufruf und bei jedem Wasm-Aufruf (m3_Yield); ein gesetzter Merker beendet
-den Lauf mit Status 9 (ZEHOS_WASM_ABORTED). Jeder Lauf laeuft in einem Hintergrund-Thread: Wirkt der Abbruch nicht,
-scheitert der Test an der Frist, statt zu haengen.
+Die Pruefpunkte liegen vor und nach jedem Hostaufruf, bei jedem Wasm-Aufruf (m3_Yield) und je Schleifendurchlauf
+(op_Loop, I2-B); ein gesetzter Merker beendet den Lauf mit Status 9 (ZEHOS_WASM_ABORTED). Jeder Lauf laeuft in einem
+Hintergrund-Thread: Wirkt der Abbruch nicht, scheitert der Test an der Frist, statt zu haengen. Die Schleife ohne
+Aufruf laeuft in einem Kindprozess, weil sie ohne Pruefpunkt nie endet und sonst die geladene Bibliothek belegt.
 """
 import concurrent.futures
 import ctypes
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -77,12 +79,45 @@ START_LOOP = (b"\x00asm\x01\x00\x00\x00" + section(1, vector([b"\x60" + I32_RESU
               + section(3, vector([b"\x01", b"\x00"])) + section(7, vector([string("run") + b"\x00\x02"]))
               + section(8, b"\x01")
               + section(10, vector([body(b"\x03\x40\x10\x00\x1a\x0c\x00\x0b"), body(b"\x41\x00")])))
+# loop { br 0 } i32.const 0: weder Host- noch Wasm-Aufruf, nur der Pruefpunkt je Schleifendurchlauf (I2-B).
+TIGHT_LOOP = module([I32_RESULT], [], [(0, b"\x03\x40\x0c\x00\x0b\x41\x00")], 0)
+# Dieselbe Schleife mit den anderen Ruecksprung-Formen: br_if (ContinueLoopIf), br_table auf das Schleifenlabel und eine
+# innere Schleife, die mit br 1 die aeussere fortsetzt (die innere reicht den pc der aeusseren durch, die aeussere prueft).
+BR_IF_LOOP = module([I32_RESULT], [], [(0, b"\x03\x40\x41\x01\x0d\x00\x0b\x41\x00")], 0)
+BR_TABLE_LOOP = module([I32_RESULT], [], [(0, b"\x03\x40\x41\x00\x0e\x01\x00\x00\x0b\x41\x00")], 0)
+NESTED_LOOP = module([I32_RESULT], [], [(0, b"\x03\x40\x03\x40\x0c\x01\x0b\x0b\x41\x00")], 0)
+# (local i32) loop { local.get 0; i32.const 1; i32.add; local.tee 0; i32.const 1000; i32.lt_u; br_if 0 } local.get 0:
+# endet regulaer nach 1000 Durchlaeufen mit 1000.
+COUNT_LOOP = (b"\x00asm\x01\x00\x00\x00" + section(1, vector([b"\x60" + I32_RESULT])) + section(3, vector([b"\x00"]))
+              + section(7, vector([string("run") + b"\x00\x00"]))
+              + section(10, vector([leb(22) + b"\x01\x01\x7f\x03\x40\x20\x00\x41\x01\x6a\x22\x00\x41\xe8\x07\x49\x0d\x00"
+                                    b"\x0b\x20\x00\x0b"])))
 SEVEN = module([I32_RESULT], [], [(0, b"\x41\x07")], 0)
 # Speicherzugriff weit hinter der einen Seite: gewoehnlicher Trap, kein Abbruch.
 OUT_OF_BOUNDS = (b"\x00asm\x01\x00\x00\x00" + section(1, vector([b"\x60" + I32_RESULT]))
                  + section(3, vector([b"\x00"])) + section(5, b"\x01\x00\x01")
                  + section(7, vector([string("run") + b"\x00\x00"]))
                  + section(10, vector([body(b"\x41\x80\x80\x80\x08\x28\x02\x00")])))
+
+
+# Kindprozess fuer Laeufe, die ohne Pruefpunkt nie enden: laedt die Bibliothek, setzt den Merker nach argv[3] s aus
+# einem zweiten Thread und gibt Status und Dauer aus. Der Elternprozess beendet ihn nach seiner Frist.
+CHILD = """
+import ctypes, sys, threading, time
+lib = ctypes.CDLL(sys.argv[1])
+lib.zehos_wasm_run.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_uint32,
+    ctypes.c_uint64, ctypes.POINTER(ctypes.c_int32), ctypes.c_void_p, ctypes.c_uint32]
+lib.zehos_host_set_abort.argtypes = [ctypes.c_int32]
+lib.abort_test_reset(0)
+lib.poll_test_reset(-1)
+data = bytes.fromhex(sys.argv[2])
+threading.Timer(float(sys.argv[3]), lambda: lib.zehos_host_set_abort(1)).start()
+value = ctypes.c_int32()
+message = ctypes.create_string_buffer(512)
+started = time.monotonic()
+status = lib.zehos_wasm_run(data, len(data), b"run", 0, 65536, 65536 * 4, ctypes.byref(value), message, len(message))
+print(status, round(time.monotonic() - started, 3), message.value.decode(), flush=True)
+"""
 
 
 class NativeAbortTests(unittest.TestCase):
@@ -108,6 +143,7 @@ class NativeAbortTests(unittest.TestCase):
         subprocess.run([compiler, "-shared", *map(str, objects), "-lm", "-o", str(library)], check=True)
         if os.name == "nt":
             cls.dll_directory = os.add_dll_directory(str(Path(compiler).parent))
+        cls.library = library
         cls.lib = ctypes.CDLL(str(library))
         cls.lib.zehos_wasm_run.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p,
             ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint64, ctypes.POINTER(ctypes.c_int32),
@@ -147,6 +183,16 @@ class NativeAbortTests(unittest.TestCase):
         self.assertFalse(thread.is_alive(), "Lauf endete nicht innerhalb der Frist")
         return outcome["result"]
 
+    def execute_in_child(self, data, abort_after, timeout=10.0):
+        """Wie execute, aber in einem eigenen Prozess; liefert Status, Dauer und Meldung oder scheitert an der Frist."""
+        try:
+            done = subprocess.run([sys.executable, "-I", "-c", CHILD, str(self.library), data.hex(), str(abort_after)],
+                                  capture_output=True, text=True, timeout=timeout, check=True)
+        except subprocess.TimeoutExpired:
+            self.fail(f"Lauf endete nicht innerhalb von {timeout} s")
+        status, elapsed, message = (done.stdout.strip().split(" ", 2) + [""])[:3]
+        return int(status), float(elapsed), message
+
     def test_abort_at_host_call(self):
         self.lib.abort_test_reset(3)
         status, _, message, _ = self.execute(HOST_LOOP)
@@ -169,6 +215,20 @@ class NativeAbortTests(unittest.TestCase):
         status, _, message, elapsed = self.execute(CALL_LOOP, abort_after=0.1)
         self.assertEqual(status, ABORTED, message)
         self.assertLess(elapsed, 5.0)
+
+    def test_abort_in_tight_loop(self):
+        for name, data in (("br", TIGHT_LOOP), ("br_if", BR_IF_LOOP), ("br_table", BR_TABLE_LOOP), ("br 1", NESTED_LOOP)):
+            with self.subTest(form=name):
+                status, elapsed, message = self.execute_in_child(data, abort_after=0.1)
+                self.assertEqual(status, ABORTED, message)
+                self.assertIn("aborted by host", message)
+                # Frueher als der Merker kann der Lauf nicht enden; sonst haette etwas anderes ihn beendet.
+                self.assertGreaterEqual(elapsed, 0.1)
+                self.assertLess(elapsed, 5.0)
+
+    def test_loop_without_flag_ends_regularly(self):
+        status, value, message, _ = self.execute(COUNT_LOOP)
+        self.assertEqual((status, value), (0, 1000), message)
 
     def test_flag_cleared_at_start(self):
         self.lib.zehos_host_set_abort(1)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Gastprobe Roadmap 12.4-I2-A: Schliessen beendet eine Paket-App nach 5 s auch ohne should_exit.
+"""Gastprobe Roadmap 12.4-I2-A/B: Schliessen beendet eine Paket-App nach 5 s auch ohne should_exit.
 
 Braucht ein ISO mit -p:ZehOSAbortProbe=true. Erwartung: Fall 1 (fragt should_exit) endet Ok in unter 1 s, Fall 2
-(fragt nie) endet Aborted nach 5 bis 6 s mit der Zeile der Hauptschleife, danach ist der Worker frei und ein dritter
-Lauf endet Ok; anschliessend Anmeldung und Textshell. Jeder Lauf nutzt eine frische Wegwerfplatte unter .tools/abort-probe/.
+(fragt nie, ruft sleep_ms) und Fall 3 (Schleife ganz ohne Aufruf) enden Aborted nach 5 bis 6 s, je mit der Zeile der
+Hauptschleife; danach ist der Worker frei und ein vierter Lauf endet Ok; anschliessend Anmeldung und Textshell. Jeder Lauf nutzt eine frische Wegwerfplatte unter .tools/abort-probe/.
 """
 
 import argparse
@@ -37,15 +37,16 @@ def evaluate(log: str) -> list[str]:
     first = re.search(r"ABORT_PROBE case=1 status=(\w+) ms=(-?\d+)", log)
     if not first or first.group(1) != "Ok" or not 0 <= int(first.group(2)) < 1000:
         missing.append("Fall 1 endete nicht Ok in unter 1 s")
-    second = re.search(r"ABORT_PROBE case=2 status=(\w+) ms=(-?\d+)", log)
-    if not second or second.group(1) != "Aborted" or not 5000 <= int(second.group(2)) < 6000:
-        missing.append("Fall 2 endete nicht Aborted nach 5 bis 6 s")
-    if log.count(MAIN_LOOP_LINE) != 1:
-        missing.append("Abbruchzeile der Hauptschleife nicht genau einmal")
+    for case in (2, 3):
+        aborted = re.search(rf"ABORT_PROBE case={case} status=(\w+) ms=(-?\d+)", log)
+        if not aborted or aborted.group(1) != "Aborted" or not 5000 <= int(aborted.group(2)) < 6000:
+            missing.append(f"Fall {case} endete nicht Aborted nach 5 bis 6 s")
+    if log.count(MAIN_LOOP_LINE) != 2:
+        missing.append("Abbruchzeile der Hauptschleife nicht genau zweimal")
     if "ABORT_PROBE idle=1" not in log:
         missing.append("Worker nach dem Abbruch nicht frei")
-    if not re.search(r"ABORT_PROBE case=3 status=Ok result=7", log):
-        missing.append("dritter Lauf nicht Ok")
+    if not re.search(r"ABORT_PROBE case=4 status=Ok result=7", log):
+        missing.append("vierter Lauf nicht Ok")
     if "ABORT_PROBE PASS" not in log:
         missing.append("ABORT_PROBE PASS fehlt")
     if "CPU EXCEPTION" in log:

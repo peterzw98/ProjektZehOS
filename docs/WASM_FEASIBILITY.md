@@ -310,9 +310,38 @@ Das Kernel-Raster ist damit rund 11-mal (Seed 1) bzw. 13-mal (Seed 5) so schnell
 
 **Folgerung:** Gleiches Bild und höhere Bildrate sind unter KVM und (laut Roadmap-Stand 17. November) QEMU WHPX belegt. Die Abnahme von 13.3 bleibt offen für VMware.
 
+## Abbruch-Prüfpunkt je Schleifendurchlauf (Roadmap 12.4-I2-B, 23./24. November 2026)
+
+Frage: Verschlechtert die Prüfung des Abbruchmerkers in `d_m3Op(Loop)` (`ThirdParty/wasm3/ORIGIN.txt`) die Bildzeit messbar? Abnahme laut [Plan 12.4](superpowers/plans/2026-11-18-isolation-12-4.md), Paket I2-B: Der Mittelwert der Bildzeit liegt für Doom und ClassiCube höchstens 2 % über dem ohne Änderung.
+
+**Vergleich:** Gemessen wurde nicht `master` vor und nach der Änderung, wie der Plan es vorsieht, sondern die Stack-Basis I2-A (`d8b3269f`, 0.6.122) gegen denselben Stand mit dieser Änderung (`e3507214`, 0.6.123). Zwischen beiden liegt nur der Code dieses Pakets.
+
+**Umgebung:** Linux-Host mit 4 CPUs, QEMU 10.2.2 mit KVM, Gast 1 vCPU, je Lauf eine frische Platte. Die Läufe liefen unter einer gemeinsamen Sperre ohne fremde QEMU-Prozesse; die 1-Minuten-Last lag bei 1,0 bis 2,0, nur vor dem ersten Lauf nach den Bauten bei 6,4. `python3 scripts/measure-wasm-frametimes.py --accel kvm --runs 1 --seconds 130`, je App 10 Läufe je ISO, die beiden ISOs im Wechsel. Gewertet ist das letzte 60-s-Fenster. Der Mittelwert der Bildzeit ist 60 s geteilt durch die Bildzahl, also der Kehrwert von `avg fps`; „App“ ist der Median des App-Anteils (Wasm-Rechnen bis `present`, ohne `sleep_ms`). Die Streuung ist die Standardabweichung über die Läufe, relativ zum Mittel. Das Intervall ist das 95-%-Intervall der Differenz (Welch).
+
+- **Doom 1.1.0:** veröffentlichtes Paket aus `origin/packages`, normale Release-ISOs, 512 MiB, Titel- und Demoablauf.
+- **ClassiCube 1.1.0:** feste Welt. Gebaut mit `experiments/ClassiCube.Wasi/build.py --world-seed 1` (ClassiCube `2b01bee`, wasi-sdk 25.0) und mit Testschlüssel signiert (`--package … --key … --network --min-kernel 0.5.65`). Beide ISOs mit `-p:ZehOSPackageKeyPath=<Test-public.b64>`, 1 GiB, `--start-keys ret wait:25`, stehend am Spawnpunkt.
+
+| App | ohne Änderung: avg fps Mittel (Median), Streuung, App | mit Änderung: avg fps Mittel (Median), Streuung, App | Bildzeit mit gegen ohne (95-%-Intervall) |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | 36,49 (36,52), 0,3 %, 26,74 ms | 36,41 (36,43), 0,5 %, 26,80 ms | +0,2 % (−0,1 bis +0,6 %) |
+| ClassiCube 1.1.0, Seed 1 | 13,98 (14,00), 0,9 %, 65,56 ms | 13,96 (13,94), 0,7 %, 65,53 ms | +0,1 % (−0,7 bis +0,9 %) |
+
+Rohwerte avg fps je Lauf, in Laufreihenfolge:
+
+- Doom ohne Änderung: 36,53 / 36,43 / 36,33 / 36,35 / 36,50 / 36,60 / 36,58 / 36,60 / 36,53 / 36,40
+- Doom mit Änderung: 36,60 / 36,43 / 36,40 / 36,58 / 36,43 / 36,10 / 36,43 / 36,53 / 36,42 / 36,15
+- ClassiCube ohne Änderung: 13,70 / 13,97 / 14,03 / 13,97 / 14,05 / 14,03 / 14,20 / 14,03 / 13,93 / 13,87
+- ClassiCube mit Änderung: 13,93 / 13,85 / 14,13 / 13,95 / 13,87 / 13,93 / 13,83 / 14,05 / 14,08 / 14,02
+
+**Ergebnis: Abnahme erfüllt.** Für beide Apps liegt auch die obere Grenze des Intervalls unter 1 %. Doom ist in diesem Aufbau nicht durch den Spieltakt begrenzt, sondern rechnet in der App: Der App-Anteil (26,7 bis 26,8 ms) macht etwa 98 % der mittleren Bildzeit (27,4 ms) aus, `sleep_ms` liegt im Median bei 0,1 ms. Die Bildrate reagiert damit auf Interpreterkosten.
+
+**Verworfene erste Reihe (23. November 2026):** 5 Läufe je ISO mit den veröffentlichten Paketen; ClassiCube erzeugt dabei je Lauf eine Zufallswelt. Doom kam auf 36,5 gegen 37,6 fps (ein Lauf mit 41,8 fps), ClassiCube auf 15,7 gegen 14,5 fps bei einer Streuung von 12 % (12,4 bis 17,9 fps). Das 95-%-Intervall der ClassiCube-Bildzeit reichte von etwa −11 bis +27 %. Mit dieser Methode lässt sich eine 2-%-Grenze weder belegen noch widerlegen; für die Bewertung zählt deshalb nur die Reihe oben.
+
+**Host-Mikromessung (ungünstigster Fall):** wasm3 nativ mit gcc `-O2 -fPIC`, gebunden wie in `scripts/tests/test_wasm_abort_native.py`, einmal mit `m3_exec.h` von `d8b3269f` und einmal mit diesem Stand. Gemessen wird eine Zählschleife aus sechs Wasm-Befehlen je Durchlauf (`local.get; i32.const 1; i32.add; local.tee; i32.const N; i32.lt_u; br_if 0`, 3·10⁸ Durchläufe), bester von drei Läufen: 2,33 s ohne und 2,47 s mit Prüfung (+5,8 %). Echte Apps tun je Durchlauf deutlich mehr; bei ihnen geht der Anteil in der Streuung unter.
+
 ## Grenzen und offene Punkte
 
-- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
+- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es über `should_exit`, Gas und das Schließen des Fensters (nach 5 s am nächsten Prüfpunkt, Roadmap 12.4-I2-A/B; unter AOT nur an Hostaufrufen).
 - Die C#-App läuft doppelt interpretiert (Mono-Interpreter in wasm3); Start rund 4 s. Für Doom ist der C-Weg (doomgeneric) vorgesehen.
 - Der WASIp1-Umbau hängt an internen Targets des .NET-10-WASI-SDK und muss bei SDK-Updates neu geprüft werden.
 - `wasi:http`-Importe sind unverknüpft; HttpClient in Apps funktioniert nicht.
