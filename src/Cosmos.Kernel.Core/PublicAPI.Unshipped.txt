@@ -20,6 +20,15 @@
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.StackPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.ThreadId.get -> uint
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuExceptionInfo.Vector.get -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickHandler
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickHook
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.CpuId.get -> uint
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.CpuTickInfo() -> void
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.CpuTickInfo(ulong instructionPointer, ulong stackPointer, uint cpuId, uint threadId) -> void
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.InstructionPointer.get -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.StackPointer.get -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.ThreadId.get -> uint
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.CpuLockScope() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.Dispose() -> void
@@ -91,6 +100,8 @@
 [COSMOS0001]override Cosmos.Kernel.Core.Scheduler.CpuSet.GetHashCode() -> int
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler.get -> Cosmos.Kernel.Core.CPU.CpuExceptionHandler?
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler.set -> void
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.get -> Cosmos.Kernel.Core.CPU.CpuTickHandler?
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.All.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.Empty.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.operator !=(Cosmos.Kernel.Core.Scheduler.CpuSet left, Cosmos.Kernel.Core.Scheduler.CpuSet right) -> bool
@@ -104,6 +115,7 @@
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread, long priority) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(Cosmos.Kernel.Core.Scheduler.IScheduler! scheduler) -> void
 [COSMOS0001]virtual Cosmos.Kernel.Core.CPU.CpuExceptionHandler.Invoke(in Cosmos.Kernel.Core.CPU.CpuExceptionInfo exception) -> Cosmos.Kernel.Core.CPU.CpuExceptionAction
+[COSMOS0001]virtual Cosmos.Kernel.Core.CPU.CpuTickHandler.Invoke(in Cosmos.Kernel.Core.CPU.CpuTickInfo tick) -> nuint
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock.Acquire() -> Cosmos.Kernel.Core.Scheduler.IrqSpinLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IrqSpinLock.IrqSpinLock() -> void

@@ -583,6 +583,8 @@ public static class LocalApic
     /// LAPIC timer interrupt handler - triggers scheduler for preemptive multitasking.
     /// </summary>
     private static uint s_timerTickCount;
+    private const ulong CodeSelectorRplMask = 3;
+    private const ulong RflagsInterruptEnable = 1UL << 9;
     private static unsafe void HandleTimerInterrupt(ref IRQContext context)
     {
         // The index of this CPU, from its per-CPU block: the scheduler indexes
@@ -618,6 +620,18 @@ public static class LocalApic
                 Serial.Write("[LAPIC] Timer tick ", s_timerTickCount, " RSP=");
                 Serial.WriteHex((ulong)currentRsp);
                 Serial.Write("\n");
+            }
+        }
+
+        // ZehOS patch aot-loop-exit, see PATCHES.md
+        // Ring 3 frames and masked code (a handler, a masked section) are never redirected.
+        // The frame is the one iretq takes, also after a switch stages it as the thread's context.
+        if ((context.cs & CodeSelectorRplMask) == 0 && (context.rflags & RflagsInterruptEnable) != 0)
+        {
+            nuint target = CpuTickHook.Redirect(cpuId, context.rip, context.rsp);
+            if (target != 0)
+            {
+                context.rip = target;
             }
         }
 
