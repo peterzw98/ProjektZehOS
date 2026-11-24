@@ -118,6 +118,15 @@ internal sealed class AccountService
 
     public ResultErr Load()
     {
+        // Vorher und nachher: LoadCore ruft Lock() und kann den Einbindezustand (IsDataMounted) zwischendurch aendern.
+        lockedReason = null;
+        var result = LoadCore();
+        lockedReason = null;
+        return result;
+    }
+
+    private ResultErr LoadCore()
+    {
         Lock();
         NeedsSetup = false;
         var read = metadata.ReadText(MetadataFile, allowMissing: true, MaximumMetadataLength);
@@ -378,8 +387,22 @@ internal sealed class AccountService
         return result.ToArray();
     }
 
+    /// <summary>
+    /// Kurzer Grund fuer die Anzeige gesperrter Konten, einmal je Load/Lock ausgewertet (kein Speichersperre-Zugriff je Bild).
+    /// Er leitet sich vom Einbindezustand ab, nicht von der Ursache der Sperre: Ist /data nicht eingebunden (Laufwerk fehlt,
+    /// <c>disk unmount</c>, Einbinden gescheitert, mehrdeutige Platte), steht das so da; die genaue Ursache nennen <c>log</c>
+    /// und die Ergebniszeile von Load. Sonst bleibt die ausdrueckliche Recovery der Weg. Hoechstens 42 Zeichen, die Breite
+    /// des Anmeldefensters im Gast (680 px bei 16 px Glyphbreite, Gastfoto).
+    /// </summary>
+    public string LockedReason => lockedReason ??= IsDataMounted()
+        ? "Konten fehlen/defekt: Recovery-Build."
+        : "Datenlaufwerk /data nicht eingebunden.";
+
+    private string? lockedReason;
+
     public void Lock()
     {
+        lockedReason = null;
         Access.Lock();
         accounts.Clear();
         administratorCommands.Clear();

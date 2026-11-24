@@ -93,6 +93,14 @@ internal static unsafe class FaultIsolation
         return CpuExceptionAction.AbandonThread;
     }
 
+    /// <summary>
+    /// Scheduler-Id des laufenden Threads, ohne Allokation; -1 ohne Scheduler. Rueckruf fuer die Laufarena der C-Laufzeit
+    /// (Roadmap 12.4-I2-C, <c>zehos_host_arena.c</c>): malloc fragt damit, ob der Block dem Lauf gehoert.
+    /// </summary>
+    // Wie OnCpuException liest sie CPU 0; Multicore-Etappe 5 stellt beide auf die laufende CPU um.
+    [UnmanagedCallersOnly(EntryPoint = "zehos_current_thread_id")]
+    internal static int CurrentThreadId() => SchedulerManager.GetCpuState(0)?.CurrentThread is { } thread ? (int)thread.Id : -1;
+
 #if ZEHOS_WASM
     [DllImport("*", EntryPoint = "zehos_host_depth_address", ExactSpelling = true)]
     private static extern int* HostDepthAddress();

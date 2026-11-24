@@ -79,6 +79,11 @@ size_t heap_test_last_request(void) { return last_request; }
 int libc_test_errno(void) { return errno; }
 void libc_test_set_errno(int value) { errno = value; }
 
+// Ersatz fuer CosmosFaultIsolation.CurrentThreadId (zehos_host_arena.c): die Scheduler-Id des laufenden Threads.
+static int current_thread_id = 7;
+int zehos_current_thread_id(void) { return current_thread_id; }
+void thread_test_set(int id) { current_thread_id = id; }
+
 #ifdef _WIN32
 // Ohne C-Laufzeit braucht die Test-DLL einen eigenen Einstiegspunkt.
 int __stdcall DllMainCRTStartup(void* module, unsigned reason, void* reserved) { (void)module; (void)reason; (void)reserved; return 1; }

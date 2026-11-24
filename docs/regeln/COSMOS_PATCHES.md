@@ -7,3 +7,4 @@ Ausgelagert aus `AGENTS.md`, damit nicht jede Sitzung diese Regeln mitlädt. Sie
 - Ein Patch ändert `deploy/cosmos/COMMIT` und `VERSION` nur innerhalb von 3.0.97 (`3.0.97-zehos.N`); ein Wechsel der Cosmos-Basisversion bleibt ein Update, vor dem nachgefragt wird.
 - Patches beheben Fehler oder öffnen Schnittstellen. ZehOS-Policy wie Scheduler, Topologie und Appregeln gehört nicht in den Cosmos-Baum.
 - Keine Issues, Pull Requests oder Kommentare bei CosmosOS/Cosmos oder anderen fremden Projekten.
+- Ein Cosmos-Update (neue Basisversion, neuer Pin) folgt `docs/regeln/COSMOS_UPDATE.md`; `scripts/cosmos-update.py` prüft und setzt die Pin-Stellen.

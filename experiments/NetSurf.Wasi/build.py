@@ -44,11 +44,14 @@ ARCHIVES = {
                  "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489", "binaryen-version_133"),
 }
 GENERATORS = ["gperf", "flex"]
-# ftp.gnu.org bricht unter Last oft ab; die Spiegel liefern dasselbe Archiv, der SHA-256 bleibt maßgeblich.
+# Die Spiegel (ftp.gnu.org bricht unter Last oft ab) liefern dasselbe Archiv, der SHA-256 bleibt maßgeblich.
 # SOURCES.txt nennt weiter nur die Haupt-URL aus ARCHIVES.
 MIRRORS = {
     "gperf": ["https://ftpmirror.gnu.org/gperf/gperf-3.1.tar.gz",
               "https://mirrors.kernel.org/gnu/gperf/gperf-3.1.tar.gz"],
+    # Der NetSurf-Server war am 24. November 2026 nicht erreichbar.
+    "netsurf": ["https://cdn.netbsd.org/pub/pkgsrc/distfiles/netsurf-all-3.11.tar.gz",
+                "https://ftp.netbsd.org/pub/pkgsrc/distfiles/netsurf-all-3.11.tar.gz"],
 }
 ATTEMPTS = 3
 TIMEOUT = 60

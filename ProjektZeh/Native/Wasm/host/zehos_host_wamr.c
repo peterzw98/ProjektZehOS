@@ -21,11 +21,14 @@ typedef struct
 {
     zehos_wasm_context context;
     int exited;
+    int aborted;
 } zehos_wamr_run;
 
 // Text der Ausnahme, mit der proc_exit den AOT-Code verlaesst; ausgewertet wird das Flag exited, nicht der Text.
 static const char exit_exception[] = "proc_exit";
 static const char memory_exception[] = "out of bounds memory access";
+// Abbruch von aussen (Roadmap 12.4-I2-A); wie bei proc_exit zaehlt das Flag aborted, nicht der Text.
+static const char abort_exception[] = "aborted by host";
 
 static void copy_message(char* target, uint32_t capacity, const char* text)
 {
@@ -43,6 +46,8 @@ static zehos_host_call begin_call(wasm_exec_env_t env)
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(env);
     zehos_wamr_run* run = (zehos_wamr_run*)wasm_runtime_get_user_data(env);
     zehos_host_call call = { &run->context, NULL, 0, ZEHOS_HOST_CONTINUE };
+    // Pruefpunkt vor dem Hostaufruf: Die Kernfunktion laeuft dann nicht (die Wrapper rufen sie nur ohne Trap).
+    if (zehos_host_abort) call.trap = ZEHOS_HOST_TRAP_ABORT;
     zehos_host_depth++;
     uint8_t* base = (uint8_t*)wasm_runtime_addr_app_to_native(instance, 0);
     uint8_t* start = NULL;
@@ -56,15 +61,24 @@ static zehos_host_call begin_call(wasm_exec_env_t env)
 }
 
 // Ein Trap der Kernfunktion wird zur WAMR-Ausnahme; der AOT-Code prueft sie nach jedem Hostaufruf und kehrt zurueck.
-static void end_call(wasm_exec_env_t env, const zehos_host_call* call)
+// Pruefpunkt nach dem Hostaufruf: Endete die Kernfunktion ohne Trap und ist der Merker inzwischen gesetzt, endet der
+// Lauf ebenfalls hier. AOT-Code ohne Hostaufruf erreicht keinen Pruefpunkt (Roadmap 13.5, Was offen bleibt).
+static void end_call(wasm_exec_env_t env, zehos_host_call* call)
 {
     zehos_host_depth--;
+    if (call->trap == ZEHOS_HOST_CONTINUE && zehos_host_abort) call->trap = ZEHOS_HOST_TRAP_ABORT;
     if (call->trap == ZEHOS_HOST_CONTINUE) return;
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(env);
+    zehos_wamr_run* run = (zehos_wamr_run*)wasm_runtime_get_user_data(env);
     if (call->trap == ZEHOS_HOST_TRAP_EXIT)
     {
-        ((zehos_wamr_run*)wasm_runtime_get_user_data(env))->exited = 1;
+        run->exited = 1;
         wasm_runtime_set_exception(instance, exit_exception);
+    }
+    else if (call->trap == ZEHOS_HOST_TRAP_ABORT)
+    {
+        run->aborted = 1;
+        wasm_runtime_set_exception(instance, abort_exception);
     }
     else wasm_runtime_set_exception(instance, memory_exception);
 }
@@ -84,6 +98,8 @@ static void end_call(wasm_exec_env_t env, const zehos_host_call* call)
 // Adresse und volle Laenge prueft.
 static void guest_offsets(zehos_host_call* call, const char* params, uint64_t* slots, size_t count)
 {
+    // Ein schon gemeldeter Trap (Abbruch in begin_call) bleibt stehen.
+    if (call->trap != ZEHOS_HOST_CONTINUE) return;
     uintptr_t base = (uintptr_t)call->memory;
     for (size_t index = 0; index < count && params[index] != 0; index++)
     {
@@ -221,9 +237,12 @@ static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instan
 int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* entry, uint32_t stackBytes,
     uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength, int32_t* instantiated)
 {
+    // Ein Merker aus einem frueheren Lauf darf diesen nicht treffen (WasmRuntime.PollAbort setzt ihn je Lauf neu).
+    zehos_host_set_abort(0);
     zehos_wamr_run run;
     zehos_host_context_init(&run.context);
     run.exited = 0;
+    run.aborted = 0;
     *result = 0;
     *instantiated = 0;
     copy_message(message, messageLength, "");
@@ -295,7 +314,9 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         instance = wasm_runtime_instantiate_ex(module, &arguments, error, sizeof(error));
         if (instance == NULL)
         {
-            status = ZEHOS_WASM_LOAD_FAILED;
+            // Beim Instanziieren laeuft die start-Funktion; der Merker wurde oben geloescht, ist er jetzt gesetzt, hat
+            // ein Abbruch von aussen sie beendet (das Flag aborted liegt am Lauf, der hier noch nicht verbunden ist).
+            status = zehos_host_abort ? ZEHOS_WASM_ABORTED : ZEHOS_WASM_LOAD_FAILED;
             text = error;
         }
         else
@@ -339,6 +360,11 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         else if (run.exited)
         {
             *result = run.context.exitCode;
+        }
+        else if (run.aborted)
+        {
+            status = ZEHOS_WASM_ABORTED;
+            text = wasm_runtime_get_exception(instance);
         }
         else
         {
