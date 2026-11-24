@@ -29,7 +29,7 @@ public class Kernel : Sys.Kernel
         Serial.WriteString("[GarbageCollector] BeforeRun() reached!\n");
         Serial.WriteString("[GarbageCollector] Starting tests...\n");
 
-        TR.Start("GarbageCollector Tests", expectedTests: 58 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
+        TR.Start("GarbageCollector Tests", expectedTests: 60 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
 
         // First: Kernel.Start turned the finalizer thread on, CosmosEnableFinalizerThread being on
         // in this kernel. The cells below check the collector with the finalizers run inline, on
@@ -103,6 +103,11 @@ public class Kernel : Sys.Kernel
         TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
         TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
         TR.Run("GC_Heap_AllocOrCollectOnFullHeap", TestGCHeapAllocOrCollectOnFullHeap);
+
+        // A refill must not walk the whole free list, and must still find what is on it
+        // (ZehOS patch gc-refill-scan-limit).
+        TR.Run("GC_Refill_FreeListSearchIsBounded", TestGCRefillFreeListSearchIsBounded);
+        TR.Run("GC_Refill_FreeListServesExhaustedHeap", TestGCRefillFreeListServesExhaustedHeap);
 
         // Small segments must not split the free memory large arrays need (ZehOS patch page-alloc-split).
         // The load is sized for the 512 MB guest of the Makefile: in a larger guest it no longer
@@ -592,6 +597,130 @@ public class Kernel : Sys.Kernel
         Assert.True(plain == null, "GC: 4 MiB do not fit before the collection");
         Assert.True(served, "GC: 4 MiB fit after the collection");
         Assert.True(after == collections + 1, "GC: exactly one collection");
+    }
+
+    // ZehOS patch gc-refill-scan-limit: gaps that are just too small for a TLAB of 8 KB.
+    private const int RefillGaps = 2000;
+    private const int RefillGapObject = 5000;
+
+    // Each TLAB takes one 5000-byte array, which dies, and the small one after it, which survives:
+    // the next array does not fit in the rest, so the rest and the next TLAB's dead array make one
+    // free block of a bit less than 8192 bytes, in the size class of the TLAB size.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object[] FragmentHeap()
+    {
+        object[] survivors = new object[RefillGaps];
+        for (int i = 0; i < survivors.Length; i++)
+        {
+            byte[] dead = new byte[OpaqueLength(RefillGapObject)];
+            dead[0] = 1;
+            survivors[i] = new byte[OpaqueLength(16)];
+        }
+
+        return survivors;
+    }
+
+    private static void TestGCRefillFreeListSearchIsBounded()
+    {
+        CoreGC.Collect();
+        object[] survivors = FragmentHeap();
+        CoreGC.Collect();
+
+        // 5000-byte arrays again, kept: each one refills. The gaps serve them, the heap does not grow.
+        object[] kept = new object[RefillGaps / 2];
+        int collections = GC.CollectionCount(0);
+        ulong pagesBefore = PageAllocator.FreePageCount;
+        ulong refillsBefore = CoreGC.RefillCount;
+        ulong visitsBefore = CoreGC.FreeListVisits;
+        for (int i = 0; i < kept.Length; i++)
+        {
+            kept[i] = new byte[OpaqueLength(RefillGapObject)];
+        }
+
+        ulong visits = CoreGC.FreeListVisits - visitsBefore;
+        ulong refills = CoreGC.RefillCount - refillsBefore;
+        ulong pagesAfter = PageAllocator.FreePageCount;
+        ulong pagesUsed = pagesBefore > pagesAfter ? pagesBefore - pagesAfter : 0;
+        int collectionsAfter = GC.CollectionCount(0);
+        GC.KeepAlive(survivors);
+        GC.KeepAlive(kept);
+        survivors = null!;
+        kept = null!;
+        CoreGC.Collect();
+
+        Serial.WriteString("[GarbageCollector] refills ");
+        Serial.WriteNumber(refills);
+        Serial.WriteString(", free blocks visited ");
+        Serial.WriteNumber(visits);
+        Serial.WriteString(", pages taken ");
+        Serial.WriteNumber(pagesUsed);
+        Serial.WriteString("\n");
+
+        Assert.True(collectionsAfter == collections, "GC: no collection between the two counts");
+        Assert.True(refills >= RefillGaps / 4, "GC: the arrays must cause refills");
+
+        // Eight blocks in each of the three classes a TLAB can come from, and room for a refill
+        // of another CPU between the two reads.
+        Assert.True(visits <= refills * 32, "GC: a refill must look at a bounded number of free blocks");
+
+        // Growing instead of using the gaps would take 2000 pages.
+        Assert.True(pagesUsed < RefillGaps / 4, "GC: refills must use the gaps before the heap grows");
+    }
+
+    private static void TestGCRefillFreeListServesExhaustedHeap()
+    {
+        CoreGC.Collect();
+        object[] survivors = FragmentHeap();
+        CoreGC.Collect();
+
+        // Take the pages with blocks no gap can hold, then count what the gaps still serve. A
+        // search that gave up on the gaps would report the heap as exhausted too early.
+        FillNode? head = null;
+        for (int blockSize = 1 << 20; blockSize >= 1 << 14; blockSize >>= 1)
+        {
+            head = FillHeap(blockSize, head);
+        }
+
+        ulong freePages = PageAllocator.FreePageCount;
+        int served = 0;
+        bool thrown = false;
+        try
+        {
+            while (served < 100 * RefillGaps)
+            {
+                FillNode node = new FillNode();
+                node.Next = head;
+                head = node;
+                node.Data = new byte[OpaqueLength(RefillGapObject)];
+                served++;
+            }
+        }
+        catch (OutOfMemoryException)
+        {
+            thrown = true;
+        }
+
+        GC.KeepAlive(head);
+        GC.KeepAlive(survivors);
+        head = null;
+        survivors = null!;
+        CoreGC.Collect();
+
+        Serial.WriteString("[GarbageCollector] exhausted heap: free pages ");
+        Serial.WriteNumber(freePages);
+        Serial.WriteString(", arrays served ");
+        Serial.WriteNumber((ulong)served);
+        Serial.WriteString("\n");
+
+        Assert.True(thrown, "GC: the exhausted heap must throw OutOfMemoryException");
+
+        // The free pages hold at most one 5000-byte array each; the rest came from the gaps. The
+        // nodes of the fill took some of those, far fewer than half.
+        Assert.True((ulong)served >= freePages + RefillGaps / 2, "GC: the free list must serve an exhausted heap");
+
+        byte[] after = new byte[OpaqueLength(1 << 20)];
+        after[after.Length - 1] = 0x3C;
+        Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
     }
 
     // ZehOS patch page-alloc-split: memory the page allocator may manage for the fragmentation test

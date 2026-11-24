@@ -27,7 +27,9 @@ internal static unsafe partial class GarbageCollector
     /// Allocates from the free list for a TLAB refill: the bytes are counted per thread as the
     /// TLAB hands them out, not here.
     /// </summary>
-    private static void* AllocFromFreeListRaw(uint size)
+    /// <param name="size">The size to take; a larger block is split.</param>
+    /// <param name="maxVisitsPerClass">How many blocks of each size class to look at before going on to the next class.</param>
+    private static void* AllocFromFreeListRaw(uint size, uint maxVisitsPerClass)
     {
         if (!s_freeListsInitialized)
         {
@@ -59,8 +61,9 @@ internal static unsafe partial class GarbageCollector
             }
 
             FreeBlock* prev = null;
-            while (block != null)
+            for (uint visits = 0; block != null && visits < maxVisitsPerClass; visits++)
             {
+                s_freeListVisits++;
                 if (block->Size >= size)
                 {
                     uint remainder = (uint)(block->Size - size);
