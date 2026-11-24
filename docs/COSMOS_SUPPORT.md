@@ -770,6 +770,16 @@ Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`,
 
 `SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
 
+## Pin `3.0.97-zehos.6-smp.13` (24. November 2026)
+
+Cosmos `0354537f` bringt drei Patches gegenüber `smp.12` (`fbb5e340`). Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `aot-loop-exit` (#654, `a1924891`, Refs #423): experimenteller Hook (`COSMOS0001`) im Scheduler-Tick, der den unterbrochenen Thread an anderer Adresse fortsetzt. Ohne Handler ändert sich das Verhalten nicht; den Handler setzt ZehOS erst mit #655.
+- `gc-refill-scan-limit` (#656, `e799410e`, Refs #542): Die Refill-Suche nach einem vollen TLAB sieht je Klasse höchstens 8 Blöcke an. Preis: mehr Sammlungen auf vollem Heap.
+- `ext2-dir-scan` (#658, `0354537f`, Refs #542): Verzeichnissuche blockweise ohne Objekte je Eintrag; `AddEntry` schreibt nur den geänderten Block.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft: PRUEFUNG_NACHTRAGEN
+
 ## Pin `3.0.97-zehos.6-smp.12` (24. November 2026)
 
 Cosmos `fbb5e340` bringt drei Patches gegenüber `smp.11` (`e9915bc4`). Einzelheiten in `patches/<Kurzname>.md` des Branches `cosmos`.
