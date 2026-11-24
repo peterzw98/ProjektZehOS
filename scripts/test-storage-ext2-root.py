@@ -6,13 +6,17 @@ Das ISO muss mit -p:ZehOSStorageRootProbe=true gebaut sein. Geraete je Lauf (AHC
   sata2 inodes.qcow2 64 MiB (nur Lauf 1 benutzt; eine Gruppe, 4096 Inodes), sata3 control.img 1 MiB RAW mit "ZEHOS-ROOTPROBE run=N" in Sektor 0.
 Laeufe (--size 2): 1 frisch mit Last, 2 Neustart und Pruefung, 3 harter Abbruch (kill) nach 0,3/2/7/20 s auf je einer
 Overlay-Kopie, 4 Gate ReadOnly und unveraendertes Image je Kopie, danach e2fsck -fy auf einer weiteren Kopie, 5 auf der
-reparierten Kopie. Hochgruppenlauf (--size 32|128, Leitungsentscheid 19:02): 6 nur formatieren, Host belegt die unteren
+reparierten Kopie. Die vier Verzoegerungen (Laeufe 3/4/5) laufen parallel (--parallel N, Standard 4,
+1 = nacheinander), je mit eigenem Unterordner, eigenen Kopien von fat/inodes/control und eigenem QMP-Port; das Root-Image
+wird nur als Backing gelesen. Hochgruppenlauf (--size 32|128, Leitungsentscheid 19:02): 6 nur formatieren, Host belegt die unteren
 Gruppen per debugfs fallocate in 1-GiB-Dateien unter /fill, 7 schreibt 2 GiB - 1 in die oberen Gruppen (8 mit --k-boundary
 nur den letzten Abschnitt per Seek) und fuellt bis ENOSPC.
 Nach jedem Lauf e2fsck -fn und dumpe2fs -h auf einer sparse RAW-Kopie. Exit 0 nur bei Go (Spec Abschnitt 5),
 1 bei No-Go, 2 wenn Werkzeuge fehlen (offen, nie bestanden). Der Arbeitsordner muss neu sein.
 """
 import argparse
+import concurrent.futures
+import copy
 import importlib.util
 import os
 import re
@@ -41,6 +45,11 @@ FILL_FILE_BLOCKS = GIB // 4096
 QCOW2_LIMIT = 16 * GIB
 HOST_FREE_MINIMUM = 10 * GIB
 MACHINE_BASE = list(tools.MACHINE)
+# tools.MACHINE ist global und wird in boot() je Start gesetzt; der Start (inkl. Portvergabe) ist deshalb serialisiert.
+# shortcut: die Sperre endet vor dem Binden des QMP-Ports (start_qemu im Doom-Skript haengt -qmp fest an); zwei Starts
+# koennen denselben Port erhalten, QEMU endet dann und der Lauf wird per Timeout No-Go (kein falsches Go). Aendern, sobald
+# start_qemu den QMP-Port weglassen kann oder Portkonflikte in der Praxis auftreten.
+BOOT_LOCK = threading.Lock()
 
 
 def new_work_dir(path: Path) -> Path:
@@ -52,8 +61,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 17):
-        raise ValueError(f"Lauf ausserhalb 1..16: {run}")
+    if run not in range(1, 18):
+        raise ValueError(f"Lauf ausserhalb 1..17: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
@@ -113,9 +122,20 @@ class Context:
         self.tool, self.environment = tools.qemu_img()
         self.report: list[str] = []
         self.go = True
+        self.echo = True
+
+    def child(self, name: str, echo: bool) -> "Context":
+        """Eigener Unterordner mit eigenen Kopien der beschreibbaren Platten, eigener Bericht und eigenes go."""
+        sub = copy.copy(self)
+        sub.work = new_work_dir(self.work / name)
+        sub.report, sub.go, sub.echo = [], True, echo
+        for disk in ("fat.qcow2", "inodes.qcow2"):
+            shutil.copy2(self.work / disk, sub.work / disk)
+        return sub
 
     def note(self, line: str, ok: bool = True) -> None:
-        print(line, flush=True)
+        if self.echo:
+            print(line, flush=True)
         self.report.append(line)
         if not ok:
             self.go = False
@@ -152,8 +172,9 @@ def boot(ctx: Context, name: str, run: int, root: Path, root_format: str = "qcow
     write_control(control, run)
     base = list(MACHINE_BASE)
     base[base.index("-m") + 1] = ctx.args.memory
-    tools.MACHINE = [*base, *drives(root, root_format, ctx.work / "inodes.qcow2", control)]
-    process = tools.start_qemu(ctx.args.iso, ctx.work / "fat.qcow2", directory, tools.free_port(), ctx.args.accel, None)
+    with BOOT_LOCK:
+        tools.MACHINE = [*base, *drives(root, root_format, ctx.work / "inodes.qcow2", control)]
+        process = tools.start_qemu(ctx.args.iso, ctx.work / "fat.qcow2", directory, tools.free_port(), ctx.args.accel, None)
     return process, directory
 
 
@@ -227,6 +248,9 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
         return None
     finally:
         stop.set()
+        if process.poll() is None:  # unerwartete Ausnahme: QEMU nicht als Waise zuruecklassen
+            process.kill()
+            process.wait()
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
     passed, failed, done = evaluate(serial)
     ok = done and not failed and passed > 0 and process.returncode == 0
@@ -268,14 +292,22 @@ def abort_run(ctx: Context, root: Path, delay: float) -> None:
     overlay = ctx.work / f"{tag}.qcow2"
     ctx.qemu_img("create", "-f", "qcow2", "-b", str(root), "-F", "qcow2", str(overlay))
     process, directory = boot(ctx, tag, 3, overlay)
+    marker_at = killed_at = None
     try:
         tools.wait_serial(directory, "STORAGE_ROOT WRITING", ctx.args.timeout)
+        marker_at = time.monotonic()
         time.sleep(delay)
     except TimeoutError as error:
         ctx.note(f"{tag}: kein WRITING ({error})", False)
     finally:
         process.kill()
+        killed_at = time.monotonic()
         process.wait()
+    if marker_at is not None:
+        gap = killed_at - marker_at
+        ctx.note(f"{tag}: Abbruch {gap:.2f} s nach WRITING (Soll {delay:g} s)")
+        if gap > delay + 1:  # kein No-Go: nur die Abdeckung des fruehen Fensters ist fraglich
+            ctx.note(f"{tag}: Hinweis Abbruchfenster verfehlt (Ist {gap:.2f} s, Soll {delay:g} s)")
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
     if "STORAGE_ROOT DONE" in serial or "FLUSHED-STATE" not in serial:
         ctx.note(f"{tag}: Probe endete oder setzte s_state nicht vor dem Abbruch", False)
@@ -301,6 +333,37 @@ def abort_run(ctx: Context, root: Path, delay: float) -> None:
     repaired.unlink()
 
 
+def run_aborts(ctx: Context, root: Path, delays, parallel: int, runner=abort_run) -> None:
+    """Abbruchlaeufe je Verzoegerung; Bericht in fester Reihenfolge, go als UND ueber alle (parallel laufen alle zu Ende)."""
+    def one(delay: float) -> Context:
+        sub = None
+        try:
+            sub = ctx.child(f"abort-{delay:g}s", parallel == 1)
+            runner(sub, root, delay)
+        except Exception as error:  # ein abgestuerzter Durchlauf darf die anderen nicht abbrechen
+            if sub is None:  # Anlage/Kopie scheiterte: leerer Kontext nur fuer die Fehlerzeile
+                sub = copy.copy(ctx)
+                sub.report, sub.go, sub.echo = [], True, parallel == 1
+            sub.note(f"abort-{delay:g}s: Ausnahme {type(error).__name__}: {error}", False)
+        return sub
+
+    if parallel == 1:
+        subs = []
+        for delay in delays:
+            subs.append(one(delay))
+            if not subs[-1].go:
+                break
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+            subs = [future.result() for future in [pool.submit(one, delay) for delay in delays]]
+    for sub in subs:
+        if not sub.echo:
+            for line in sub.report:
+                print(line, flush=True)
+        ctx.report.extend(sub.report)
+        ctx.go = ctx.go and sub.go
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", type=Path, required=True)
@@ -309,16 +372,19 @@ def main() -> int:
                         help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
     parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit mit 8191 Eintraegen) auf 2 GiB; kein Go")
-    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15, 16],
-                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 10.000 Eintraege in einem Verzeichnis); kein Go")
+    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15, 16, 17],
+                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 10.000 Eintraege in einem Verzeichnis, 17 = Threadstart nach Dateilast, ThreadStarter und direkt); kein Go")
     parser.add_argument("--memory", default="512M", help="Gastspeicher (QEMU -m), Standard 512M wie das Produktprofil")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
     parser.add_argument("--timeout", type=float, default=3600, help="Sekunden je Lauf bis STORAGE_ROOT DONE")
     parser.add_argument("--e2fsck", default="e2fsck")
     parser.add_argument("--dumpe2fs", default="dumpe2fs")
+    parser.add_argument("--parallel", type=int, default=4, help="Abbruchlaeufe (je Verzoegerung Lauf 3/4/5) gleichzeitig, 1 = nacheinander")
     parser.add_argument("--last-run", type=int, choices=[1, 2, 5], default=5, help="nach diesem Lauf enden (Entwicklung; kein Go)")
     args = parser.parse_args()
+    if args.parallel < 1:
+        parser.error("--parallel muss mindestens 1 sein")
     if not args.iso.is_file():
         sys.exit(f"ISO nicht gefunden: {args.iso}")
     missing = [name for name in (args.e2fsck, args.dumpe2fs, args.debugfs) if not shutil.which(name)]
@@ -359,10 +425,11 @@ def main() -> int:
     if ctx.go and args.last_run >= 2:
         clean_run(ctx, "lauf2", 2, root)
     if ctx.go and args.last_run >= 5:
-        for delay in ABORT_DELAYS:
-            abort_run(ctx, root, delay)
-            if not ctx.go:
-                break
+        if args.parallel > 1:
+            # Unter mehreren Gaesten mit geteilter CPU treffen die Abbruchzeitpunkte anderen Gastfortschritt.
+            ctx.note(f"Hinweis: Lauf 3/4/5 mit --parallel {args.parallel}; Abbruchzeitpunkte "
+                     f"{'/'.join(str(d) for d in ABORT_DELAYS)} s sind nominell (geteilte Host-CPU)")
+        run_aborts(ctx, root, ABORT_DELAYS, args.parallel)
 
     complete = args.last_run == 5
     verdict = "Go" if ctx.go and complete else ("unvollstaendig (--last-run)" if ctx.go else "No-Go")

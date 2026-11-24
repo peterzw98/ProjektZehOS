@@ -1,0 +1,24 @@
+[
+  {
+    "name": "e40-size2",
+    "cmd": [
+      "{python}",
+      "scripts/test-storage-ext2-root.py",
+      "--iso",
+      "{iso}",
+      "--work",
+      "{work}/e40",
+      "--size",
+      "2",
+      "--accel",
+      "kvm",
+      "--parallel",
+      "4",
+      "--last-run",
+      "5"
+    ],
+    "repeat": 1,
+    "timeout": 7200,
+    "note": "E4.0 --size 2, Laeufe 1-5 (Abbruchlaeufe 3/4/5 parallel 4). {iso} = ISO mit -p:ZehOSStorageRootProbe=true. {work}/e40, weil der Runner {work} schon anlegt und das Skript einen neuen Ordner verlangt."
+  }
+]

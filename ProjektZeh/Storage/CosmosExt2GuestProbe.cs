@@ -237,8 +237,8 @@ internal static class CosmosExt2GuestProbe
     }
 
     /// <summary>
-    /// Lauf 2: nur die Lesekomponente CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro. Der native Cosmos-Lesemount faellt weg,
-    /// weil er bei Sync/Drop schreibt; der SHA-256 ueber die ganze Platte vor und nach dem Lauf belegt, dass nichts geschrieben wurde.
+    /// Lauf 2: CosmosReadOnlyExt2FileSystem unter /mnt/ext2-ro, ohne eigene Schreibsperre darunter: der Lesemodus des Cosmos-Treibers
+    /// (MountFlags.ReadOnly) muss allein genuegen; der SHA-256 ueber die ganze Platte vor und nach dem Lauf belegt, dass nichts geschrieben wurde.
     /// </summary>
     private static void ReadOnlyRun(IBlockDevice device, byte[] prefix)
     {

@@ -1,0 +1,325 @@
+[
+  {
+    "name": "doom-full-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-wasm-doom-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--repo",
+      "{fx}/repo",
+      "--key",
+      "{fx}/key/private.pem",
+      "--tls",
+      "{fx}/tls",
+      "--wasi-sdk",
+      "{fx}/sdk/wasi-sdk-25.0-x86_64-linux",
+      "--scenario",
+      "full",
+      "--accel",
+      "kvm"
+    ],
+    "repeat": 3,
+    "timeout": 3600,
+    "note": "Doom full, KVM, ohne Snapshot (kvm); 3 Wiederholungen"
+  },
+  {
+    "name": "doom-full-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-wasm-doom-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--repo",
+      "{fx}/repo",
+      "--key",
+      "{fx}/key/private.pem",
+      "--tls",
+      "{fx}/tls",
+      "--wasi-sdk",
+      "{fx}/sdk/wasi-sdk-25.0-x86_64-linux",
+      "--scenario",
+      "full",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "repeat": 3,
+    "timeout": 3600,
+    "note": "Doom full, KVM, ohne Snapshot (kvm); 3 Wiederholungen"
+  },
+  {
+    "name": "doom-full-smp8",
+    "cmd": [
+      "{python}",
+      "scripts/test-wasm-doom-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--repo",
+      "{fx}/repo",
+      "--key",
+      "{fx}/key/private.pem",
+      "--tls",
+      "{fx}/tls",
+      "--wasi-sdk",
+      "{fx}/sdk/wasi-sdk-25.0-x86_64-linux",
+      "--scenario",
+      "full",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
+    },
+    "repeat": 3,
+    "timeout": 3600,
+    "note": "Doom full, KVM, ohne Snapshot (kvm); 3 Wiederholungen"
+  },
+  {
+    "name": "desktop-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-desktop-guest.py",
+      "--iso",
+      "{isomain}",
+      "--accel",
+      "kvm"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isoiso}",
+      "--accel",
+      "kvm",
+      "--runs",
+      "5"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-neg-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isoneg}",
+      "--accel",
+      "kvm",
+      "--negative"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-nmi-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isonmi}",
+      "--accel",
+      "kvm",
+      "--nmi"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "classicube-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-classicube-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--package",
+      "{ccpkg}",
+      "--key",
+      "{fx}/key/private.pem",
+      "--accel",
+      "kvm"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "netsurf-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-netsurf-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--package",
+      "{nspkg}",
+      "--key",
+      "{fx}/key/private.pem",
+      "--accel",
+      "kvm"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "network-leer",
+    "cmd": [
+      "{python}",
+      "scripts/test-network.py",
+      "--fixtures",
+      "{netfx}",
+      "--iso",
+      "{isonet}"
+    ],
+    "timeout": 1800
+  },
+  {
+    "name": "desktop-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-desktop-guest.py",
+      "--iso",
+      "{isomain}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isoiso}",
+      "--accel",
+      "kvm",
+      "--runs",
+      "5"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-neg-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isoneg}",
+      "--accel",
+      "kvm",
+      "--negative"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "isolation-nmi-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-isolation-probe.py",
+      "--iso",
+      "{isonmi}",
+      "--accel",
+      "kvm",
+      "--nmi"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "classicube-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-classicube-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--package",
+      "{ccpkg}",
+      "--key",
+      "{fx}/key/private.pem",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "netsurf-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-netsurf-desktop.py",
+      "--iso",
+      "{isowasm}",
+      "--package",
+      "{nspkg}",
+      "--key",
+      "{fx}/key/private.pem",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "network-smp4",
+    "cmd": [
+      "{python}",
+      "scripts/test-network.py",
+      "--fixtures",
+      "{netfx}",
+      "--iso",
+      "{isonet}"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  },
+  {
+    "name": "desktop-tcg",
+    "cmd": [
+      "{python}",
+      "scripts/test-desktop-guest.py",
+      "--iso",
+      "{isomain}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 3600
+  },
+  {
+    "name": "desktop-recovery",
+    "cmd": [
+      "{python}",
+      "scripts/test-desktop-guest.py",
+      "--iso",
+      "{isorec}",
+      "--accel",
+      "kvm",
+      "--recovery",
+      "--power"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800
+  }
+]
