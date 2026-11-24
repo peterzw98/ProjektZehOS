@@ -28,7 +28,7 @@ Grenzen: Auf dem Host liefen daneben fremde Gaeste anderer Agenten (Lars hat par
 
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
-**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme mit Vorbehalt (Entscheidung Lars, 22.11.2026, im Terminal):** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar, die Wiederholung mit festem Seed steht unten. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
 
 Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
 
@@ -212,9 +212,17 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP liefert der Hook (`CpuExceptionInfo`); er
   erscheint im Protokoll der Hauptschleife.
-- Je Ausnahme bleiben Thread, 8-MiB-Stack und der native Speicher der Instanz bis zum Neustart belegt, außerdem die
-  verwalteten Objekte, auf die der aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die
-  Speicherbereinigung ihn weiter durchsucht.
+- Je Ausnahme bleiben Thread und 8-MiB-Stack bis zum Neustart belegt, außerdem die verwalteten Objekte, auf die der
+  aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die Speicherbereinigung ihn weiter durchsucht.
+  Den nativen Speicher der Instanz (wasm3-Laufzeit, lineare Memory) gibt seit Roadmap 12.4-I2-C die Laufarena der
+  C-Laufzeit frei: `PollFaultIsolation` ruft `zehos_memory_end` nach dem Aufräumen und vor dem Ersatzworker. Erst dort
+  ist der Worker in der Quarantäne und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
+  Workers (Rückruf `zehos_current_thread_id`, CPU 0). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
+  Zustand (`runtime_ref_count`, Hostfunktionen) über den toten Lauf hinaus weiterbenutzt; die Arena bleibt dann beim
+  toten Lauf, spätere Läufe melden `WASM Arena nicht gestartet`. Hat der Fehler die Blockköpfe der Arena beschädigt,
+  kann das Freigeben in der Hauptschleife selbst fehlschlagen (siehe den Punkt zum beschädigten Heap oben).
+  Die Zeile `WASM Speicher frei=… heap=… spitze=<Bytes>` nennt nach jedem Lauf die Spitze der Arena (bleibt bis zum
+  nächsten Start einer Arena stehen).
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
 - Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
   VMware.
@@ -372,7 +380,7 @@ Geprüft in QEMU TCG mit 512 MiB, e1000e und vvfat-Datenlaufwerk mit `snapshot=o
 - **Dateisystem:** `File.Move`, `File.Delete`, `Directory.CreateDirectory`, `Directory.GetFiles/GetDirectories` und nicht rekursives `Directory.Delete` funktionieren auf FAT. Installieren, Entfernen, Aktualisieren und Aufräumen nach einem Neustart laufen damit.
 - **Dauer unter TCG:** 28-MB-Download über HTTPS mit Schreiben und SHA-256 rund 90 bis 120 s. Die erneute Prüfung aller Dateien verlängert den ersten Doom-Start nach dem Booten auf bis zu etwa 30 s; danach merkt sich der Kernel die geprüfte Version bis zum nächsten Neustart.
 - **QEMU-Eingabe:** Die Kontoeinrichtung nach dem ersten Start dauert unter TCG unterschiedlich lange. Per QMP zu früh getippte Zeilen gehen verloren oder werden geteilt. Das Testskript wiederholt deshalb `net dhcp` und `pkg source`.
-- **Serielle Testmarken:** Neben `PKG …` schreibt der Kernel `NET <Ergebnis>` am Ende eines Netzwerkauftrags und `APP <id> erstes Bild` sowie `APP <id> beendet` (bzw. `Ende: …`) für Paket-Apps. Beim Wechsel vom Desktop in die Textshell folgt `Textshell aktiv.`, als Gegenstück zu `Desktop ist bereit.`. Nach jedem Wasm-Lauf und dem anschließenden `GC.Collect` des Workers schreibt der Kernel `WASM Speicher frei=… KiB heap=… KiB`. Erst diese Zeile zeigt den aufgeräumten Stand; `APP <id> beendet` kommt vorher, und eine Messung zu diesem Zeitpunkt enthält noch zweistellige MiB ungesammelter Lesepuffer. `GC.GetGCMemoryInfo().TotalCommittedBytes` liefert in Cosmos 3.0.94 einen negativen Wert und taugt nicht als Messgröße. Das Testskript wartet auf diese Zeilen statt auf feste Zeiten.
+- **Serielle Testmarken:** Neben `PKG …` schreibt der Kernel `NET <Ergebnis>` am Ende eines Netzwerkauftrags und `APP <id> erstes Bild` sowie `APP <id> beendet` (bzw. `Ende: …`) für Paket-Apps. Beim Wechsel vom Desktop in die Textshell folgt `Textshell aktiv.`, als Gegenstück zu `Desktop ist bereit.`. Nach jedem Wasm-Lauf und dem anschließenden `GC.Collect` des Workers schreibt der Kernel `WASM Speicher frei=… KiB heap=… KiB spitze=…` (Spitze der Laufarena in Bytes, Roadmap 12.4-I2-C). Erst diese Zeile zeigt den aufgeräumten Stand; `APP <id> beendet` kommt vorher, und eine Messung zu diesem Zeitpunkt enthält noch zweistellige MiB ungesammelter Lesepuffer. `GC.GetGCMemoryInfo().TotalCommittedBytes` liefert in Cosmos 3.0.94 einen negativen Wert und taugt nicht als Messgröße. Das Testskript wartet auf diese Zeilen statt auf feste Zeiten.
 - **Serielle Ausgabe nicht zeilenatomar:** `Log.WriteString` schreibt Zeichen für Zeichen. Ein Threadwechsel kann eine Marke mit Debugzeilen anderer Threads zerteilen; beobachtet unter WHPX: `PKG Kata` + `D` + `[LowLevelMonitor] …` + `log geladen …`, woran ein Testlauf scheiterte. `InternalCpu.DisableInterruptsScope` und `Serial` sind in Cosmos 3.0.94 `internal`, atomares Schreiben ist für den Kernel also nicht verfügbar. Das Testskript überspringt solche Einschübe beim Suchen (`find_marker`).
 - **QEMU-Snapshots:** Unter TCG funktionieren `savevm` und `-loadvm` mit diesem Gast (e1000e, AHCI mit qcow2-Datenlaufwerk, xHCI-Tablet). Der Gast läuft nach etwa 3 s weiter; Anmeldung, IPv4-Adresse und installierte Pakete bleiben erhalten. Unter WHPX lehnt QEMU 10.2.2 `savevm` ab (`State blocked due to non-migratable CPUID feature support, dirty memory tracking support, and XSAVE/XRSTOR support`).
 - **WHPX (Windows-Hypervisor, 15. November 2026):** Der Gast läuft mit QEMU 10.2.2 unter WHPX, wenn kein `-cpu` angegeben ist (Standardmodell). Mit `-cpu max` oder `-cpu host` bricht er sofort ab (`WHPX: Unexpected VP exit code 4`). Die Meldung `whpx: injection failed, MSI … vector: 0` erscheint, ist aber folgenlos. Die Szenarien von `scripts/test-wasm-doom-desktop.py --accel whpx` bestanden mit dem Stand von PR #41. Der Gewinn ist klein: Kontoeinrichtung 25 statt 48 s, Doom-Installation 85 statt 106 s, Szenario `packages` 517 statt 643 s. Ein wahrscheinlicher Grund ist die fest eingebaute Debugausgabe von Cosmos 3.0.94 (`[LowLevelMonitor]`, `[SCHED]`, mehrere MB je Lauf): Jedes Byte an die serielle Schnittstelle verlässt unter WHPX die VM. Abschaltbar ist sie nur zusammen mit der seriellen Schnittstelle (`CosmosEnableUART`), die die Testmarken braucht. WSL2 mit KVM ist auf dem Referenzrechner nicht installiert und nicht geprüft.
@@ -490,6 +498,80 @@ Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`
 Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Version 3.0.94 geprüft. Die [offizielle Plug-Dokumentation](https://cosmosos.github.io/articles/dev/plugs.html) beschreibt das verwendete Ersetzen einzelner Methoden. Die Paketmetadaten verweisen auf Cosmos-Quellstand `5d0b9535251472db7ecfe012f0435f0a04ffca16`.
 
 Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Target method not found` und beendet den Build erfolgreich; der Plug ist dann still wirkungslos. Dieselbe Warnung erscheint auch regulär, weil der Patcher Plugs gegen jede Assembly mit passendem Typnamen versucht. Die CI prüft deshalb mit `scripts/check-plug-binding.py` im Log von `cosmos build --verbose`, dass jede `[PlugMember]`-Methode aus `ProjektZeh/` mindestens einmal `Found matching method` erreicht.
+
+## Mehrere CPUs: Plattformmatrix (E7-E, Zwischenstand 20. November 2026)
+
+**Zwischenstand:** Stand `task/mc-e5-smp` @13f775f2 (Cosmos 3.0.97-zehos.6-smp.11, enthält E6-G #576 und `master` #569), noch **ohne** E7-A (#564, wartet auf den Handtest) bis E7-D. Der Plan (E7-E) setzt `master` nach E7-A bis E7-D voraus; diese Tabelle ist die Vorabfahrt mit dem, was heute schon läuft. **Nach E7-A (und E7-D) folgt eine komplette Wiederholung der 80 Läufe** mit neu gebauten ISOs; die Zahlen unten gelten nur für diesen Stand. Block #398.
+
+**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (80 Läufe) für `scripts/run-guest-suite.py`. Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs (je `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`, MSBuild-Eigenschaft als Umgebungsvariable, Ausgabe `ProjektZeh/output-x64/ProjektZeh.iso`; vor jedem Bau `bin`, `obj`, `output-x64` löschen): normal, Recovery (`ZehOSRecovery=true`), `ZehOSThreadProbe=true`, `ZehOSIsolationProbe=true`, Wasm mit Testschlüssel (`ZehOSPackageKeyPath=…/public.b64`) und Test-CA (`ZehOSPackageTestCaPath=…/ca.pem`; Server-Zertifikat mit SAN `IP:10.0.2.2`). Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`, signiert mit dem Testschlüssel), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages. Skripte von `master` (#567 behebt den Wettlauf beim letzten `shutdown`); `scripts/test-desktop-guest.py` wurde dazu aus `origin/master` in den Branch übernommen, sonst keine Skriptänderung.
+
+Umgebung: Linux, Rechner HPz, Host Intel Core Ultra 9 185H (22 Threads), QEMU 11.1.2 `q35`; Bau mit SDK 10.0.404 (Cosmos-Werkzeuge smp.11), je Variante 0 Warnungen, 0 Fehler. ISO-Prüfsummen (SHA-256, Anfang): normal `2b5494cf`, Thread `e48683ac`, Isolation `91a7a5d0`, Recovery `31894a5a`, Wasm `0262186c`. Lauf 17:20 bis 17:45 (1481,6 s für 80 Läufe, `--parallel 3`). Last (alle 30 s gemessen, 50 Proben): `pgrep -c qemu` 1 bis 6 (3 eigene Gäste plus fremde Gäste anderer Sitzungen auf demselben Rechner, davon einer mit `-smp 4` auf KVM während des ganzen Laufs), `uptime` Load 1 min im Mittel 4,9, höchstens 7,5. Die Dauern sind deshalb keine Messwerte. Zahlen: bestanden/Läufe.
+
+| Prüfung (Spalte) | Bedeutung |
+| --- | --- |
+| Boot | `test-desktop-guest.py`: Boot bis Desktop, Anmeldung, Desktopablauf, abschließend `shutdown` |
+| Thread | `test-thread-probe.py`: THREAD_PROBE und MESSAGES_PROBE (Ersatz für `SMP_PROBE`, das erst mit E7-A bis E7-D entsteht) |
+| Isolation | `test-isolation-probe.py --runs 2` (positiv) |
+| Shutdown | Recovery-ISO, `test-desktop-guest.py --recovery --power` (reboot und shutdown) |
+| Doom quick | `test-wasm-doom-desktop.py`, Szenarien remove, upgrade, corrupt, minkernel einzeln (4 Läufe je Zelle) |
+
+| Umgebung, CPU-Aufbau | Boot | Thread | Isolation | Shutdown | Doom quick |
+| --- | --- | --- | --- | --- | --- |
+| KVM `1` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4,cores=2,threads=2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `8,cores=4,threads=2` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| TCG `1`, `2`, `4`, `4,cores=2,threads=2`, `8,cores=4,threads=2` | je 1/1 | je 1/1 | je 2/2 | je 1/1 | je 4/4 |
+| WHPX `2`, `4` | offen: braucht Windows-Benutzer | offen | offen | offen | offen |
+| VMware `numvcpus` 1, 2, 4 | offen: Liste unten | offen | offen | offen | offen |
+| echte Hardware mit Hyperthreading | offen: Liste unten | offen | offen | offen | offen |
+
+Summe: **80/80 bestanden** (0 Fehlschläge, 0 Zeitüberschreitungen; Quelle `summary.json` des Suitelaufs). Die zusätzliche Wiederholung (`4-kvm-boot` und `8c4t2-kvm-boot` je 6 Läufe, 143 s, `--parallel 3`) bestand 12/12; die Boot-Zellen KVM 4 und 8 CPUs stehen damit bei 7/7 je Aufbau (vorher 2/4 und 1/4).
+
+Dauern (ein Lauf, 3 Gäste parallel, Rechner belastet): Boot KVM 34,7 bis 36,2 s, TCG 55,3 bis 60,4 s; Thread KVM 9,9 bis 10,4 s, TCG 10,4 bis 11,2 s; Isolation (2 Läufe) KVM 18,7 bis 21,7 s, TCG 39,1 bis 45,2 s; Shutdown KVM 6,3 bis 8,0 s, TCG 8,3 bis 10,0 s; Doom quick KVM 35,0 bis 66,3 s, TCG 97,6 bis 151,9 s.
+
+**Befund 1 (Skript, nicht Kernel; behoben durch #567):** Auf dem Stand smp.10 scheiterte Boot auf KVM mit 4 und 8 CPUs gelegentlich am letzten Schritt (`guest.shell("shutdown")` in `test-desktop-guest.py`: `QMP input-send-event: Verbindung beendet`, weil der Gast schon ausgeschaltet war, bevor die Eingabe quittiert wurde; Quote 4 CPUs 2/4, 8 CPUs 1/4). Mit dem Skript von `master` (#567) tritt das nicht mehr auf: 7/7 je Aufbau, alle 80 Läufe grün. Kein Kernelbefund erkennbar (die Gegenprüfung von Lars am PR-Kommentar belegt dasselbe aus den Logs).
+
+**Abgrenzung zu E5-J (Issue #383):** E5-J belegt auf KVM und TCG die CPU-Aufbauten leer, 4 und `8,cores=4,threads=2` für Desktop, Recovery, THREAD_PROBE, Isolation (+ `--negative`, `--nmi`), Doom full, ClassiCube und Netz. Hier neu: die Aufbauten `2` und `4,cores=2,threads=2`, TCG-Thread-/Isolationsprobe, Doom quick und der Poweroff über alle Aufbauten.
+
+### Läufe für Menschen: VMware und echte Hardware (Ergebnis in Issue #398)
+
+Diese Zellen kann kein Agent fahren; sie brauchen Peter oder Lars mit VMware beziehungsweise Hardware. **Einmal je Wiederholung** (nach E7-A/E7-D auf dem dann gültigen Stand `master`; der Stand dieses Zwischenstands ist `task/mc-e5-smp` @13f775f2).
+
+**ISO bauen** (Linux oder Windows, Repository-Stamm, SDK `10.0.404`, Cosmos-Werkzeuge der Pin-Version `3.0.97-zehos.6-smp.11` laut `deploy/cosmos/VERSION`; vor jedem Bau `ProjektZeh/bin`, `ProjektZeh/obj`, `ProjektZeh/output-x64` löschen und die ISO danach umbenennen):
+
+| ISO | Bau | Ausgabe nach dem Bau |
+| --- | --- | --- |
+| A: normal | `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release` | `ProjektZeh/output-x64/ProjektZeh.iso` |
+| B: Thread-Probe | dieselbe Zeile mit gesetzter Umgebungsvariable `ZehOSThreadProbe=true` (PowerShell: `$env:ZehOSThreadProbe='true'`) | dieselbe Datei, als `thread.iso` sichern |
+| C: Recovery | `ZehOSRecovery=true` | als `recovery.iso` sichern |
+
+**Startparameter VMware** (`scripts/start-vmware.ps1`, Windows mit Player oder Workstation; die `.vmx` entsteht daraus): `-Cpus 1`, `-Cpus 2`, `-Cpus 4` setzen `numvcpus` (UEFI, 1024 MiB, plattenlos, NAT, serielle Ausgabe nach `.tools\vmware\serial.log`):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-vmware.ps1 -IsoPath <ISO> -Cpus <1|2|4>
+```
+
+Vor jedem Lauf die VM ausschalten; Aufbau mit Sockets/Kernen: Standard der `.vmx` (`numvcpus` ohne `cpuid.coresPerSocket`, also ein Kern je Socket); ein zweiter Durchgang mit `cpuid.coresPerSocket = "2"` in der `.vmx` (bei `numvcpus` 4) deckt Kerne je Socket ab und wird als eigene Zeile vermerkt.
+
+**Zellen und erwartetes Ergebnis** (jeweils `serial.log` als Beleg, Zeile oder Ausschnitt nennen):
+
+| Nr. | Zelle (Umgebung, Aufbau) | ISO | Prüfung | Erwartung / Marke |
+| --- | --- | --- | --- | --- |
+| V1 | VMware `numvcpus` 1 | A | Boot bis Desktop, Anmeldung, Terminal öffnen, `echo` tippen, im Terminal `shutdown` | Desktop sichtbar und bedienbar, VM schaltet sich selbst aus; `serial.log` ohne `Panic`/`CPU EXCEPTION`; keine `[SMP] CPU n up`-Zeile (nur der Startprozessor) |
+| V2 | VMware `numvcpus` 2 | A | wie V1 | zusätzlich `[SMP] CPU 1 up, hw id 0x1 …` im `serial.log` |
+| V3 | VMware `numvcpus` 4 | A | wie V1 | `[SMP] CPU 1 up`, `CPU 2 up`, `CPU 3 up` im `serial.log` |
+| V4 | VMware `numvcpus` 1, 2, 4 | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS` und `MESSAGES_PROBE PASS` im `serial.log`, kein `FAIL` |
+| V5 | VMware `numvcpus` 1, 2, 4 | C | Boot bis Textshell, `reboot` (Neustart bis Textshell erneut), dann `shutdown` | Textshell erscheint, kein Desktop; Neustart gelingt; VM schaltet sich aus |
+| V6 | VMware `numvcpus` 4 (optional `coresPerSocket` 2) | A | wie V3, danach 5 Minuten Desktop offen lassen, Fenster öffnen und ziehen | keine Hänger, Uhr läuft weiter, kein `Panic` |
+| H1 | echte Hardware mit Hyperthreading (Modell nennen: CPU, Kerne/Threads, Firmware UEFI) | A, von USB/Datenträger gestartet | Boot bis Desktop, Anmeldung, Terminal, `shutdown` | Desktop bedienbar, Gerät schaltet sich aus; sichtbarer Bildschirm und, wenn vorhanden, serielle Ausgabe/`log` im Terminal: `[SMP] CPU n up` für jeden Kern/Thread, Meldung bei fehlgeschlagenem Start eines AP unverändert festhalten |
+| H2 | echte Hardware (wie H1) | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS`, `MESSAGES_PROBE PASS` (ohne serielle Verbindung nur, soweit am Bildschirm oder über `log` sichtbar; sonst als nicht prüfbar melden) |
+| H3 | echte Hardware (wie H1) | C | Boot bis Textshell, `reboot`, `shutdown` | wie V5 |
+
+Nicht verlangt: Doom, Isolations- und Netzproben (QEMU-Zellen der Matrix); VMware und Hardware prüfen hier Start der weiteren CPUs, Probe, Neustart und Ausschalten. **Ergebnis** je Zelle (bestanden/nicht bestanden, Stand/Commit des ISOs, VMware-Version, Host, Marken oder Auszug aus `serial.log`) als Kommentar in **Issue #398** melden; ein Fehlschlag mit `serial.log` als Anhang. Bis dahin bleiben die Zeilen `VMware` und `echte Hardware` der Tabelle offen.
+
+**Offen:** `SMP_PROBE` und Platzierungsprobe (E7-A bis E7-D, danach komplette Wiederholung); WHPX, VMware und echte Hardware (brauchen die Benutzer, die sie haben, siehe oben); Doom quick im TCG-Snapshotmodus (hier `--no-snapshot`, weil der Snapshot Doom aus dem Repository installiert und `repo0` keines enthält); Isolation `--negative` und `--nmi` (aus E5-J); Bildauswertung (es zählen nur Skriptmarken). Messwerte für Dauern sind wegen der gleichzeitigen Gäste und fremder Last nicht belastbar.
 
 ## Grenzen
 

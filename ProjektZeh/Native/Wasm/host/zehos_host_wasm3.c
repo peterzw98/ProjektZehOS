@@ -16,11 +16,24 @@ static void copy_message(char* target, uint32_t capacity, const char* text)
     target[index] = 0;
 }
 
+// Trap eines Abbruchs von aussen; zehos_wasm_run erkennt ihn an der Adresse, wie wasm3 seine eigenen Traps.
+static const char zehos_m3_trap_abort[] = "[trap] aborted by host";
+
 static M3Result trap_result(zehos_host_trap trap)
 {
     if (trap == ZEHOS_HOST_TRAP_EXIT) return m3Err_trapExit;
     if (trap == ZEHOS_HOST_TRAP_MEMORY) return m3Err_trapOutOfBoundsMemoryAccess;
+    if (trap == ZEHOS_HOST_TRAP_ABORT) return zehos_m3_trap_abort;
     return m3Err_none;
+}
+
+// Ersetzt die schwache, leere Fassung aus m3_core.c. wasm3 ruft sie bei jedem Wasm-Aufruf (Call, CallIndirect,
+// ReturnCall) und beendet den Lauf mit dem gelieferten Fehler als gewoehnlichem Trap: Stack und Instanz werden auf dem
+// normalen Weg abgebaut. Eine Schleife ohne Aufruf ruft sie ueber den Pruefpunkt je Schleifendurchlauf in op_Loop
+// (ThirdParty/wasm3/ORIGIN.txt, Paket I2-B), sobald der Merker steht.
+M3Result m3_Yield(void)
+{
+    return zehos_host_abort ? zehos_m3_trap_abort : m3Err_none;
 }
 
 // wasm3 legt jedes Argument in einen eigenen 64-Bit-Platz; i32-Werte stehen in den unteren 32 Bit. Die Umwandlung
@@ -50,9 +63,12 @@ static M3Result trap_result(zehos_host_trap trap)
     { \
         zehos_host_call call = { (zehos_wasm_context*)_ctx->userdata, (uint8_t*)_mem, m3_GetMemorySizeAt(_mem), \
             ZEHOS_HOST_CONTINUE }; \
+        /* Abbruch nur vor oder nach der Kernfunktion pruefen, nie darin (Roadmap 12.4-I2-A). */ \
+        if (zehos_host_abort) return trap_result(ZEHOS_HOST_TRAP_ABORT); \
         zehos_host_depth++; \
         ZEHOS_M3_CALL_##result(function, count) \
         zehos_host_depth--; \
+        if (call.trap == ZEHOS_HOST_CONTINUE && zehos_host_abort) call.trap = ZEHOS_HOST_TRAP_ABORT; \
         return trap_result(call.trap); \
     }
 ZEHOS_HOST_FUNCTIONS(ZEHOS_M3_WRAPPER)
@@ -81,6 +97,8 @@ static M3Result link_host(IM3Module module, zehos_wasm_context* context)
 int32_t zehos_wasm_run(const uint8_t* bytes, uint32_t length, const char* entry, uint64_t gas,
     uint32_t stackBytes, uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength)
 {
+    // Ein Merker aus einem frueheren Lauf darf diesen nicht treffen (WasmRuntime.PollAbort setzt ihn je Lauf neu).
+    zehos_host_set_abort(0);
     zehos_wasm_context context;
     zehos_host_context_init(&context);
     int32_t status = ZEHOS_WASM_OK;
@@ -125,6 +143,7 @@ int32_t zehos_wasm_run(const uint8_t* bytes, uint32_t length, const char* entry,
             error = m3_CallV(function);
             if (error == m3Err_trapExit) { *result = context.exitCode; error = NULL; }
             else if (error == m3Err_trapOutOfGas) status = ZEHOS_WASM_OUT_OF_GAS;
+            else if (error == zehos_m3_trap_abort) status = ZEHOS_WASM_ABORTED;
             else if (error != NULL) status = ZEHOS_WASM_TRAP;
             else if (m3_GetRetCount(function) == 1)
             {

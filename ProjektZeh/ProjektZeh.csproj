@@ -55,6 +55,8 @@
     <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
     <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
+    <!-- Gastprobe 12.4-I2-A (neben ZEHOS_WASM; eigene Zeile hier, fern der Probe-Schalter des Multicore-Zweigs): Schliessen beendet eine App nach der Frist auch ohne should_exit. -->
+    <DefineConstants Condition="'$(ZehOSAbortProbe)' == 'true'">$(DefineConstants);ZEHOS_ABORT_PROBE</DefineConstants>
   </PropertyGroup>
 
   <!-- wasm3 und seine freistehende C-Laufzeit gehoeren zum normalen Kernelbuild. -->
