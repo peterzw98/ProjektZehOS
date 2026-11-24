@@ -11,6 +11,7 @@
 #include "wasm_export.h"
 #include "platform_api_vmcore.h"
 #include "zehos_host_core.h"
+#include "zehos_host_aot_guard.h"
 
 // Wie d_m3MaxNativeStack bei wasm3: Der Worker hat 8 MiB Stack (WasmRuntime.ThreadStackBytes), der AOT-Code darf
 // 7 MiB unter dem Einstieg nutzen; der Rest bleibt fuer Hostfunktionen und C#-Rueckrufe.
@@ -218,6 +219,10 @@ static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instan
 // Instanz, Modul, ausfuehrbarer Speicher, Hostgruppen und offene Dateien nach jedem Weg freigegeben.
 // *instantiated wird 1, sobald das Instanziieren beginnt: ab dann kann Gastcode gelaufen sein (start-Funktion,
 // Konstruktoren), und der Aufrufer darf dieselbe App nicht unter wasm3 wiederholen.
+// Ein Lauf setzt die Marke beim Start und loescht sie an jedem Ausgang. Steht sie beim naechsten Start noch, hat eine
+// CPU-Ausnahme den vorigen Lauf beendet (zehos_host_aot_guard.h).
+static zehos_aot_guard aot_guard;
+
 int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* entry, uint32_t stackBytes,
     uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength, int32_t* instantiated)
 {
@@ -228,12 +233,20 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     *instantiated = 0;
     copy_message(message, messageLength, "");
 
+    // Vor jedem WAMR-Aufruf: instantiated bleibt 0, WasmRuntime weicht damit auf wasm3 aus (FallsBackToWasm3).
+    if (!zehos_aot_guard_enter(&aot_guard))
+    {
+        copy_message(message, messageLength, "AOT nach CPU-Fehler bis zum Neustart gesperrt");
+        return ZEHOS_WASM_LOAD_FAILED;
+    }
+
     RuntimeInitArgs init;
     memset(&init, 0, sizeof(init));
     init.mem_alloc_type = Alloc_With_System_Allocator;
     if (!wasm_runtime_full_init(&init))
     {
         copy_message(message, messageLength, "WAMR nicht gestartet");
+        zehos_aot_guard_leave(&aot_guard);
         return ZEHOS_WASM_NO_MEMORY;
     }
 
@@ -356,6 +369,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     if (module != NULL) wasm_runtime_unload(module);
     if (copy != NULL) os_free(copy);
     wasm_runtime_destroy();
+    zehos_aot_guard_leave(&aot_guard);
     return status;
 }
 
