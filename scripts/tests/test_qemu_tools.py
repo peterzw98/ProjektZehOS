@@ -84,6 +84,32 @@ class QemuToolTests(unittest.TestCase):
                 self.assertEqual(arguments[start:start + len(cpu)], cpu)
                 self.assertEqual(arguments.count('-cpu'), len(cpu) // 2)
 
+class FreePortTests(unittest.TestCase):
+    def test_ports_are_distinct_within_process(self):
+        ports = {guest.free_port() for _ in range(20)}
+        self.assertEqual(len(ports), 20)
+
+    def test_port_claimed_by_other_process_is_skipped(self):
+        import fcntl
+        taken = guest.free_port()
+        directory = Path(tempfile.gettempdir()) / f"zehos-qmp-ports-{__import__('os').getuid()}"
+        # Der Sperrhalter gehoert diesem Prozess; ein Kind-Prozess darf den Port nicht bekommen.
+        import subprocess, sys
+        code = ("import importlib.util,sys\n"
+                "from unittest import mock\n"
+                f"s=importlib.util.spec_from_file_location('g', r'{SCRIPTS / 'test-wasm-doom-desktop.py'}')\n"
+                "g=importlib.util.module_from_spec(s); s.loader.exec_module(g)\n"
+                f"real=g.socket.socket\n"
+                "calls=[0]\n"
+                "class S(real):\n"
+                "    def getsockname(self):\n"
+                "        calls[0]+=1\n"
+                f"        return ('127.0.0.1', {taken}) if calls[0]==1 else super().getsockname()\n"
+                "g.socket.socket=S\n"
+                "print(g.free_port())\n")
+        out = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, text=True, check=True).stdout
+        self.assertNotEqual(int(out), taken)
+
 
 if __name__ == '__main__':
     unittest.main()

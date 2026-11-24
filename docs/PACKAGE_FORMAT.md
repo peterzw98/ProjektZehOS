@@ -145,6 +145,12 @@ py -3 scripts/run-guest-suite.py scripts/guest-suites/e5j.json --out .tools/suit
 py -3 scripts/run-guest-suite.py --status .tools/suite-1   # summary.md; Exit 0 alles bestanden, 1 Fehlschlag, 2 läuft noch
 ```
 
+E4.0-Qualifikation (`scripts/guest-suites/e4-0.json`): Standard sind **3 Wiederholungen** (nicht 5). Aufruf mit `--parallel 3` (die Wiederholungen laufen gleichzeitig); darin startet `test-storage-ext2-root.py` die Abbruchläufe mit `--parallel 2`, es laufen also bis zu 3 × 2 QEMU-Prozesse zugleich. Die QMP-Ports reserviert `free_port()` in `scripts/test-wasm-doom-desktop.py` prozessübergreifend per `flock`-Sperrdatei (`<tmp>/zehos-qmp-ports-<uid>/<port>.lock`), damit zwei Prozesse nie denselben Port ziehen.
+
+```sh
+python3 scripts/run-guest-suite.py scripts/guest-suites/e4-0.json --out .tools/suite-e40 --var iso=<ISO mit -p:ZehOSStorageRootProbe=true> --parallel 3 --detach
+```
+
 Jeder Lauf schreibt `<name>-<i>/log.txt` unter `--out`; `summary.json` und `summary.md` werden nach jedem Lauf neu geschrieben. `--parallel N` begrenzt die gleichzeitigen Läufe (Standard `min(4, CPUs/2)`), ein Lauf über seinem `timeout` wird samt Kindprozessen beendet.
 
 `--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. `--accel kvm` läuft ebenfalls ohne Snapshot, weil `savevm` unter KVM nicht geprüft ist; die VM startet mit `-cpu qemu64,+rdrand,+rdseed` (siehe `COSMOS_SUPPORT.md`). Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.

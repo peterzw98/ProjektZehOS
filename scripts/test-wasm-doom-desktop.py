@@ -48,6 +48,7 @@ import ssl
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -225,11 +226,42 @@ def qemu_img() -> tuple[list[str], dict[str, str] | None]:
     return [str(real)], environment
 
 
+# Reservierte QMP-Ports dieses Prozesses; die Sperrdateien bleiben bis zum Prozessende offen.
+_PORT_LOCK = threading.Lock()
+_PORT_CLAIMS: dict[int, object] = {}
+
+
 def free_port() -> int:
-    # shortcut: der Port kann bis zum Start von QEMU neu vergeben werden; bei einem Portfehler erneut starten.
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
+    """Liefert einen freien Loopback-Port und reserviert ihn prozessuebergreifend.
+
+    Zwischen dem Freigeben der Probe und dem Start von QEMU kann ein anderer Lauf denselben Port ziehen
+    (parallele Gastlaeufe mit --parallel). Deshalb haelt jeder Aufrufer eine flock-Sperrdatei je Port bis zum
+    Prozessende; ein zweiter Prozess nimmt dann den naechsten Port. Ohne fcntl (Windows) gilt nur die Sperre im Prozess.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+    directory = Path(tempfile.gettempdir()) / f"zehos-qmp-ports-{os.getuid() if hasattr(os, 'getuid') else 0}"
+    directory.mkdir(parents=True, exist_ok=True)
+    with _PORT_LOCK:
+        for _ in range(200):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            if port in _PORT_CLAIMS:
+                continue
+            handle = None
+            if fcntl is not None:
+                handle = open(directory / f"{port}.lock", "w")
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:  # ein anderer Prozess hat diesen Port reserviert
+                    handle.close()
+                    continue
+            _PORT_CLAIMS[port] = handle
+            return port
+    raise RuntimeError("kein freier QMP-Port gefunden")
 
 
 def create_disk(directory: Path, image: Path) -> None:
