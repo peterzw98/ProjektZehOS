@@ -766,16 +766,10 @@ internal sealed class Ext2InodeOperations : IInodeOperations
     /// <param name="group">Zero-based block group.</param>
     private void WriteUsedDirsCount(uint group)
     {
-        // The descriptor table follows the superblock: block 2 with 1 KiB
-        // blocks, block 1 otherwise.
-        uint tableStart = _superblock.BlockSize == 1024 ? 2u : 1u;
-        uint tableBytes = _superblock.GroupsCount * (uint)Ext2SuperblockLayout.GroupDescSize;
-        uint tableBlocks = (tableBytes + _superblock.BlockSize - 1) / _superblock.BlockSize;
-        byte[] table = new byte[tableBlocks * _superblock.BlockSize];
-        _superblock.ReadBlocks(tableStart, tableBlocks, table);
-        int offset = (int)group * Ext2SuperblockLayout.GroupDescSize;
-        BitConverter.TryWriteBytes(table.AsSpan(offset + Ext2SuperblockLayout.GroupDescUsedDirsCountOffset, 2), _superblock.GetGroup(group).UsedDirsCount);
-        _superblock.WriteBlocks(tableStart, tableBlocks, table);
+        // ZehOS patch ext2-used-dirs, see PATCHES.md
+        // Through the descriptor cache: a direct table write would be undone by
+        // the next descriptor write of another group in the same table block.
+        _superblock.PersistGroupDesc(group);
     }
 
     /// <summary>
