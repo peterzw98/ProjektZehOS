@@ -9,7 +9,7 @@ deshalb steht hier nur der Kern. Ausführliche Regeln stehen in `docs/regeln/` u
 | Kanban-Board: Aufgabenblöcke übernehmen | `docs/regeln/BOARD.md` |
 | Code: Architektur, Fehlerwege, Namen, Tests | `docs/regeln/CODE.md` |
 | Wasm-Apps und Pakete | `docs/regeln/WASM_PAKETE.md` |
-| Cosmos-Patches (Branch `cosmos`) | `docs/regeln/COSMOS_PATCHES.md` |
+| Cosmos-Patches (Branch `cosmos`) | `docs/regeln/COSMOS_PATCHES.md`; Update auf neue Cosmos-Version: `docs/regeln/COSMOS_UPDATE.md` |
 | ZehOS-Version und Releases | `docs/regeln/VERSION.md` |
 | Technik, Bauen, Prüfen und PR ausführlich (QEMU-Optionen, Debugger, VMware, Images) | `docs/regeln/PRUEFEN.md` |
 
