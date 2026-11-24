@@ -242,7 +242,7 @@ internal static unsafe class CosmosAotProbe
             $"{name}: Meldung ohne '{messagePart}'.");
     }
 
-    private static byte[] FixtureBytes(int which)
+    internal static byte[] FixtureBytes(int which)
     {
         uint size;
         byte* bytes = NativeFixtureBytes(which, &size);
