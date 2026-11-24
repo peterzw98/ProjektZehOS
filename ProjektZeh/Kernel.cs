@@ -336,6 +336,8 @@ public sealed class Kernel : Sys.Kernel
 #if !ZEHOS_RECOVERY
         // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.
         systemLog.Information("Boot", CosmosBootOptions.ConfigureWorkerCpus(topology));
+        // E7-A: erst nach der Topologie (WorkerCpus) und vor den dauerhaften Threads, die die Standardaffinität erben.
+        systemLog.Information("Boot", CosmosBootOptions.MoveMainToWorkers());
         ThreadStarter.ApplyPlacement = placement =>
         {
             if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
@@ -675,12 +677,12 @@ public sealed class Kernel : Sys.Kernel
     private void InstallScheduler()
     {
         // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
-        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt KernelCpus.Current nur, solange
-        // der Thread nicht wandert (Etappe 5: alle Threads auf CPU 0); E6-B prueft das neu.
+        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Cosmos' CurrentThread liest CPU und Thread
+        // unter Interruptmaske: Seit E7-A laufen Hauptschleife und erbende Threads auf mehreren Worker-CPUs und koennen
+        // zwischen KernelCpus.Current und GetCpuState wandern; dann bekaeme ein fremder Thread die Klasse.
         ThreadStarter.ApplyClass = threadClass =>
         {
-            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(Cosmos.Kernel.System.Threading.KernelCpus.Current);
-            if (state?.CurrentThread is { } current)
+            if (Runtime.FaultIsolation.CurrentSchedulerThread() is { } current)
                 Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(current, (long)threadClass);
         };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);

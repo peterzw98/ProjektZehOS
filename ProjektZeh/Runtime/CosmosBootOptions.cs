@@ -28,8 +28,8 @@ internal static unsafe class CosmosBootOptions
     }
 
     /// <summary>
-    /// Zuerst im Hauptthread aufrufen, vor jedem Threadstart. Der Hauptthread und neue Threads bleiben standardmäßig
-    /// auf CPU 0. Explizit platzierte Worker verwenden später <see cref="WorkerCpus"/>.
+    /// Zuerst im Hauptthread aufrufen, vor jedem Threadstart. Der Hauptthread und neue Threads bleiben bis
+    /// <see cref="MoveMainToWorkers"/> auf CPU 0. Explizit platzierte Worker verwenden später <see cref="WorkerCpus"/>.
     /// Gibt eine Protokollzeile zurück, weil das Systemprotokoll hier noch nicht bekannt sein muss.
     /// </summary>
     public static string Apply()
@@ -47,6 +47,54 @@ internal static unsafe class CosmosBootOptions
             // Ohne laufenden Scheduler (Recovery-Fälle) bleibt es bei der Protokollzeile.
             return $"CPUs: keine Begrenzung ohne Scheduler ({exception.Message})";
         }
+    }
+
+    /// <summary>
+    /// Nach <see cref="ConfigureWorkerCpus"/> im Hauptthread aufrufen (E7-A): Hauptschleife und Standardaffinität wechseln
+    /// auf <see cref="WorkerCpus"/>, CPU 0 bleibt den Interrupts und den Cosmos-Dienstthreads. Mit <c>zehos.cpus=1</c> und
+    /// auf einer Maschine mit einer CPU ist <see cref="WorkerCpus"/> CPU 0, dann ändert sich nichts. Recovery ruft das nicht auf.
+    /// Gibt eine Protokollzeile zurück.
+    /// </summary>
+    public static string MoveMainToWorkers()
+    {
+        var workers = WorkerCpus;
+        try
+        {
+            // Environment.ProcessorCount bleibt bei dem Wert, den CoreLib beim ersten Lesen nach Apply gemerkt hat (1);
+            // ZehOS startet seine Threads selbst und nutzt den Threadpool nicht für Last.
+            KernelCpus.DefaultAffinity = workers;
+            // Der Wechsel wartet auf die Umschaltung; danach läuft die Hauptschleife nicht mehr dort, wo die Tastatur-,
+            // Maus- und Tablet-Interrupts ankommen. Die Eingabepuffer sind dafür seit E4-D mit echten Sperren geschützt.
+            ThreadAffinity.Current = workers;
+            return $"CPUs online={KernelCpus.Online.Count}, Oberfläche und Worker auf {Describe(workers)}";
+        }
+        catch (InvalidOperationException exception)
+        {
+            // Ohne laufenden Scheduler bleibt alles auf CPU 0. Scheitert erst der Wechsel der Hauptschleife, wäre die
+            // Standardaffinität schon umgestellt und neue Threads lägen anders als die Bootzeile meldet; deshalb zurück auf CPU 0.
+            try
+            {
+                KernelCpus.DefaultAffinity = CpuSet.Single(0);
+            }
+            catch (InvalidOperationException)
+            {
+                // Ohne Scheduler gibt es keine Standardaffinität zum Zurücksetzen.
+            }
+            return $"CPUs online={KernelCpus.Online.Count}, Oberfläche und Worker auf CPU 0 ({exception.Message})";
+        }
+    }
+
+    private static string Describe(CpuSet set)
+    {
+        var text = new System.Text.StringBuilder();
+        int count = KernelCpus.Count;
+        for (uint cpu = 0; cpu < count; cpu++)
+        {
+            if (!set.Contains(cpu)) continue;
+            text.Append(text.Length == 0 ? "CPU " : ",");
+            text.Append(cpu);
+        }
+        return text.Length == 0 ? "-" : text.ToString();
     }
 
     private static string? ReadCommandLine()

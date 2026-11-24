@@ -770,6 +770,16 @@ Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`,
 
 `SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
 
+## Pin `3.0.97-zehos.6-smp.12` (24. November 2026)
+
+Cosmos `fbb5e340` bringt drei Patches gegenüber `smp.11` (`e9915bc4`). Einzelheiten in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `ahci-error-recovery` (#570, Refs #565): Fehlerstatus nach PxCI, Port-Neustart, LBA-Grenze.
+- `foh-gc-retry` (#650, Refs #538): Das Frozen-Heap-Segment sammelt bei Seitenmangel einmal.
+- `ext2-used-dirs` (#593, Refs #558): `bg_used_dirs_count` läuft über den Deskriptor-Cache.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft (24. November, Rechner MSI, SDK 10.0.404, Werkzeuge smp.12 aus `scripts/build-cosmos.sh`, KVM): Hosttests 1607/1607; nativer Bau normal, Recovery, Isolation (positiv, negativ), Installer mit `GptGuestProbe` je 0 Fehler; `test-desktop-guest.py` mit `ZEHOS_QEMU_SMP=4` (serielles Log zeigt 4 CPUs) bis `ausgeschaltet`, 0 Error-Zeilen; `test-isolation-probe.py` 3/3 und `--negative` 1/1; `test-installer-gpt-guest.py --run-g1-basic` (32 und 128 GiB, ext2-Root) PASS. Offen: VMware, Windows, G1-Kontoanlage, Recovery-Gastlauf, Gastsuite.
+
 ## Pin `3.0.97-zehos.6-smp.11` (20. November 2026)
 
 Cosmos `e9915bc4` bringt vier Patches gegenüber `smp.10`. Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
