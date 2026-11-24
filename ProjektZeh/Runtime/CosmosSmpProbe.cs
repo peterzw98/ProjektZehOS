@@ -164,6 +164,7 @@ internal static class CosmosSmpProbe
     {
         int n = workers.Length;
         if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
+        // Der Zuschlag zwischen dem letzten Arbeitsende und dem letzten Join steht als join_us in der Ausgabe (nur Messwert, #660).
         // Lang genug (KVM auf MSI: etwa 200 ms je Worker), damit Threadende und Join (4 CPUs: bis 15 ms, 8 CPUs: bis 92 ms, #523) das Verhaeltnis nicht bestimmen.
         const long Work = 200_000_000;
         long sink = 0;
@@ -173,10 +174,17 @@ internal static class CosmosSmpProbe
         if (!one.Join(120000)) return "Einzellauf endet nicht";
         long singleMs = Math.Max(1, single.ElapsedMilliseconds);
         var threads = new List<Thread>();
+        var ended = new long[n];
         using var start = new ManualResetEvent(false);
         for (int i = 0; i < n; i++)
         {
-            var thread = Pinned(workers[i], () => { start.WaitOne(5000); Interlocked.Add(ref sink, Spin(Work)); });
+            int index = i;
+            var thread = Pinned(workers[i], () =>
+            {
+                start.WaitOne(5000);
+                Interlocked.Add(ref sink, Spin(Work));
+                Volatile.Write(ref ended[index], Stopwatch.GetTimestamp());
+            });
             thread.Start();
             threads.Add(thread);
         }
@@ -184,9 +192,13 @@ internal static class CosmosSmpProbe
         var all = Stopwatch.StartNew();
         start.Set();
         if (!JoinAll(threads, 120000)) return "Parallellauf endet nicht";
+        long joinedAt = Stopwatch.GetTimestamp();
         long allMs = Math.Max(1, all.ElapsedMilliseconds);
         Write($"INFO parallel single_ms={singleMs} all_ms={allMs} workers={n} sink={sink & 0xFF}");
         Write($"INFO parallel speedup_permille={singleMs * 1000 / allMs}");
+        long lastEnd = 0;
+        for (int i = 0; i < n; i++) lastEnd = Math.Max(lastEnd, Volatile.Read(ref ended[i]));
+        Write($"INFO parallel join_us={(joinedAt - lastEnd) * 1000000 / Stopwatch.Frequency}");
         return null;
     }
 
