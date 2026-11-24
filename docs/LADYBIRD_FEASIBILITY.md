@@ -2,6 +2,8 @@
 
 Stand: 17. November 2026. Wunsch von Lars (15:25): Ladybird paketieren. **Erstbewertung, nichts gebaut oder ausgeführt.** Grundlage: Upstream-Quellstand [`LadybirdBrowser/ladybird`](https://github.com/LadybirdBrowser/ladybird) Commit `eb73f2e90ba0` (17.11.2026), nur gelesen. Vergleich mit dem erfolgreichen NetSurf-Port ([NETSURF.md](NETSURF.md)) und der Firefox-Probe ([ROADMAP §12.1](../ROADMAP.md)). Kennzeichnung: **BELEGT** = im Quelltext bzw. in der Upstream-Doku nachgelesen; **HYPOTHESE** = abgeleitet, nicht geprüft.
 
+> **Entscheidung L3 (Peter, 24. November 2026): nativ**, mit Linux-kompatiblen Systemaufrufen und einem Paketdienst nach dem Vorbild von Linux. Entwurf: [Native Pakete](superpowers/specs/2026-11-24-native-pakete-design.md), Plan: [Ladybird über native Pakete](superpowers/plans/2026-11-24-ladybird-nativ.md). Empfehlungen, Zielpfade und Aufwände unten sind der Stand vor dieser Entscheidung; die Befunde bleiben gültig.
+
 ## Befunde
 
 | Punkt | Befund |
@@ -79,5 +81,7 @@ Eingehende Annahmen und was **nicht** enthalten ist:
 **Liegen lassen:** Gangbar ist formal nur der Wasm-Weg (24–42 Personwochen ohne Bibliotheksportierung), sein Hauptrisiko (Stack-Scan unter wasm) ist ungelöst, der native Weg hängt an einer nicht bezifferbaren 12.4-Umsetzung, und L1-C, 12.7 und 13.5 fehlen noch; der Kandidat bleibt liegen, bis 13.5 und 12.7 stehen und L1-C Zahlen liefert, und wird dann auf dem Wasm-Weg wieder aufgenommen.
 
 ### Entscheidungsfrage für L3
+
+Beantwortet: `nativ` (Peter, 24. November 2026). Die Frage lautete:
 
 > Ladybird (Block #457, L3): Welchen Weg sollen wir verfolgen? `wasm` (24–42 Personwochen ohne Bibliotheksportierung, Stack-Scan ungelöst), `nativ` (mindestens 14–23 Wochen Kernel plus 12.4-Umsetzung in Monaten) oder `liegen lassen` (Empfehlung)? Ein Wort genügt.

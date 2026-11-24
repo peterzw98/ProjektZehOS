@@ -420,6 +420,8 @@ Schreiber und Leser desselben Puffers nehmen dieselbe Sperre.
 
 ### Paket E4-E: Messung und Abnahme
 
+- [x] **Abnahme mit Vorbehalt** (Block #378, Messung 18. bis 20. November 2026, Doku in `docs/COSMOS_SUPPORT.md`). Doom 1.1.0: Klasse/RR 100,0 % (69,9 fps je Stand), bestanden mit Vorbehalt, da taktbegrenzt. ClassiCube 1.1.0 mit festem Seed (Seed 1 und 5, je fünf Läufe RR und Klasse, KVM, 1 GiB, 1 vCPU): Klasse/RR 100,5 % und 101,8 %, Spannweite über 3 % (Seed 1 RR 3,6 %, Seed 5 RR 5,6 %, Seed 5 Klasse 3,6 %). Ohne festen Seed (Serie 1) 94,6 % bei Spannweite 51 %, also unter der 97-%-Grenze und nicht entscheidbar. **Abnahme mit Vorbehalt: Entscheidung Lars, 22.11.2026** (im Terminal). Schritte 4 (Hintergrundlast) und 5 (VMware) sind damit nicht abgehakt; VMware bleibt offen.
+
 **Branch:** `task/mc-e4-e-messung`. **Nach:** E4-C und E4-D gemergt. **Rolle:** Clerk misst, Engineer wertet aus.
 
 **Dateien:** `docs/COSMOS_SUPPORT.md` (Messwerte), `ROADMAP.md` (Eintrag zur Etappe), `docs/DESKTOP_PERFORMANCE.md` falls dort die Bildraten geführt werden.
