@@ -81,7 +81,7 @@ internal sealed class LoginScreen
         if (!login.IsActive)
         {
             painter.Text(surface, "ZehOS - Konten gesperrt", x, bounds.Y + 16, 680);
-            painter.Text(surface, "Sicherheits-Recovery-Build erforderlich.", x, bounds.Y + 16 + line, 680, SecondaryText);
+            painter.Text(surface, session.Accounts.LockedReason, x, bounds.Y + 16 + line, 680, SecondaryText);
             painter.Text(surface, "Esc: Textshell, log zeigt die Ursache.", x, bounds.Y + 16 + 2 * line, 680, SecondaryText);
             return;
         }

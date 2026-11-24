@@ -12,6 +12,9 @@ namespace ProjektZeh.Runtime;
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
 /// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
 /// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
+/// Seit I2-C haelt jeder Fehlerlauf vorher 16 MiB in der Laufarena (mit frei= nach dem malloc); nach jeder Isolation
+/// meldet die Probe, was die Arena noch zaehlt (erwartet 0), dazu den freien Speicher nach zwei Desktopbildern und einem
+/// ersten Lauf "base" (Worker und Stack stehen dann) und nach der zweiten Ausnahme, je nach GC.Collect.
 /// </summary>
 internal static class CosmosIsolationProbe
 {
@@ -35,11 +38,20 @@ internal static class CosmosIsolationProbe
         for (int wait = 0; wait < 100 && framesRendered < 2; wait++) Thread.Sleep(100);
         Log("ISOLATION_PROBE desktop frames=" + framesRendered);
         zero = 0;
+        // I2-C: frei_vor erst, wenn Desktop-Puffer und erster Worker samt Stack stehen (Lauf base); dieselbe Wartezeile wie
+        // in #523 (task/mc-e5-smp), damit beide Fassungen ohne Konflikt zusammengehen.
+        const nuint arenaBlockBytes = 16 * 1024 * 1024;
+        Fault("base", () => sink = 1);
+        GC.Collect();
+        Log("ISOLATION_PROBE frei_vor=" + CosmosSystemInfo.PhysicalMemory().Free / 1024);
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
-        Fault("de", () => sink = 1 / zero);
-        Fault("pf", () => sink = *(int*)0);
+        Fault("de", () => { Wasm.WasmRuntime.ProbeArenaBlock(arenaBlockBytes); sink = 1 / zero; });
+        Log("ISOLATION_PROBE arena_after=de used=" + Wasm.WasmRuntime.ProbeArenaUsedBytes);
+        Fault("pf", () => { Wasm.WasmRuntime.ProbeArenaBlock(arenaBlockBytes); sink = *(int*)0; });
+        Log("ISOLATION_PROBE arena_after=pf used=" + Wasm.WasmRuntime.ProbeArenaUsedBytes);
         GC.Collect();
         Log("ISOLATION_PROBE gc ok");
+        Log("ISOLATION_PROBE frei_nach=" + CosmosSystemInfo.PhysicalMemory().Free / 1024);
         Fault("none", () => sink = 1);
         Log("ISOLATION_PROBE DONE");
 #if ZEHOS_ISOLATION_PROBE_NMI

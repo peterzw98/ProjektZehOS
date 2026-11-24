@@ -13,6 +13,10 @@ gibt (das Tablet nimmt nur absolute Ereignisse); der Ausschnitt um den Zeiger mu
 per Tablet wieder gleichen. Danach 50 Paare Tablet/PS/2 abwechselnd; geprueft wird nur, dass der Gast danach weiter
 reagiert, keine Reihenfolge der Pakete.
 
+Mit --nodisk (normales ISO): Boot ohne Datenplatte (Fehlstart ohne Laufwerk, Roadmap 13.4). Der Desktop muss starten und
+das gesperrte Anmeldefenster zeigen (Foto "gesperrt" zur Sichtpruefung: "/data nicht eingebunden" vollstaendig lesbar), Esc
+fuehrt in die bedienbare Textshell, shutdown beendet QEMU mit Exitcode 0; erlaubt ist nur die Fehlzeile "Keine Datenplatte".
+
 Geprueft wird ueber serielle Marken und Ausschnitte der Bildschirmfotos (ohne Leiste mit Uhr); der Fensterinhalt
 selbst ist Sache der Hosttests. Jeder Schritt hat eine Zeitgrenze; bei einem Fehlschlag bleiben Bildschirmfoto,
 serial.log und stderr.log unter .tools/desktop-guest/<zufaellig>/ liegen. Nur QEMU; VMware ist damit nicht geprueft.
@@ -34,6 +38,17 @@ spec.loader.exec_module(tools)
 
 # Aus ProjektZeh/Graphics/Desktop.cs (BarHeight, OpenTerminal) und Window.cs (Schliessen-Feld 38 px am rechten Rand).
 BAR_HEIGHT = 56
+# Zweite Anmeldung (Kennwortpruefung in der Textshell nach logout) unter TCG: auf dem SMP-Stand mit 1 CPU dauert sie
+# 310-345 s gegen 140-155 s auf master (Block #602); 300 s reichen dort nicht. Unter KVM bleibt die alte Grenze.
+RELOGIN_TIMEOUT_TCG = 600
+RELOGIN_TIMEOUT = 300
+
+
+def relogin_timeout(accel: str) -> float:
+    """Zeitgrenze der zweiten Anmeldung fuer den Beschleuniger."""
+    return RELOGIN_TIMEOUT_TCG if accel == "tcg" else RELOGIN_TIMEOUT
+
+
 # Format von SystemLogEntry.ToString(): "[<n> ms] <Level> <Komponente>: <Text>". Nicht am Zeilenanfang verankert:
 # Debugausgaben anderer Threads koennen den Zeilenanfang ueberschreiben, eine Fehlerzeile darf dadurch nicht verschwinden.
 ERROR_LINE = re.compile(r"\[\d+ ms\] Error [^:\n]+: ")
@@ -77,8 +92,8 @@ def without_appdisk(machine: list[str]) -> list[str]:
 class Run:
     """Ein Gastlauf: Wegwerfplatte, QEMU, Guest aus test-wasm-doom-desktop.py und Bildvergleiche."""
 
-    def __init__(self, work: Path, start_vm, boot_timeout: float):
-        self.work, self.boot_timeout = work, boot_timeout
+    def __init__(self, work: Path, start_vm, boot_timeout: float, relogin_timeout: float = RELOGIN_TIMEOUT):
+        self.work, self.boot_timeout, self.relogin_timeout = work, boot_timeout, relogin_timeout
         self.port = tools.free_port()
         self.guest = tools.Guest(work, self.port, "", time.monotonic())
         self.vm: subprocess.Popen = start_vm(self.port)
@@ -211,7 +226,7 @@ class Run:
         mark = guest.mark()
         guest.shell("logout")
         guest.wait("Benutzer abgemeldet.", 30, mark)
-        guest.login(first=False)
+        guest.login(first=False, timeout=self.relogin_timeout)
         guest.desktop()
         self.screen("wieder-desktop")
         self.shutdown_from_textshell(lambda: guest.shell("shutdown"))
@@ -226,6 +241,58 @@ class Run:
         if tools.find_marker(self.serial(), "Desktop ist bereit", 0) >= 0:
             raise AssertionError("Recovery-Build startete den Desktop")
         # Die Textshell ist schon aktiv; shell() wartet sonst vergeblich auf "Textshell aktiv.".
+        self.shutdown_from_textshell()
+
+    def lock_reason_columns(self, ppm: bytes) -> int:
+        """Breite der Grundzeile des gesperrten Anmeldefensters in Zeichen (16 px Glyphbreite, 32 px Zeilenhoehe, 1920x1080).
+
+        Das Fenster liegt zentriert (LoginScreen.Resize: 720 px breit, 7 Zeilen + 56 px hoch); die Grundzeile ist die zweite
+        Textzeile (Beginn 16 px unter dem Rand plus eine Zeile, Text ab 20 px vom linken Rand). Gemessen wird die Spanne bis zum
+        letzten vom Fensterhintergrund abweichenden Pixel; ein bei 42 Spalten abgeschnittener Text (680 px) laeuft dagegen bis
+        an die Grenze und liefert 41 bis 42 Zeichen.
+        """
+        width, height = self.guest.size
+        glyph, line = 16, 32
+        left, top = (width - 720) // 2, (height - 7 * line - 56) // 2
+        x0, x1 = left + 20, left + 20 + 680
+        y0, y1 = top + 16 + line, top + 16 + 2 * line
+        box = region(b"P6\n%d %d\n255\n" % (width, height - BAR_HEIGHT) + ppm, (x0, y0, x1, y1))
+        rows, cols = y1 - y0, x1 - x0
+        background = box[:3]
+        last = 0
+        for row in range(rows):
+            for col in range(cols):
+                if box[(row * cols + col) * 3:(row * cols + col) * 3 + 3] != background:
+                    last = max(last, col)
+        return (last + glyph - 1) // glyph
+
+    def nodisk_flow(self) -> None:
+        guest = self.guest
+        self.boot("Desktop ist bereit")
+        time.sleep(2)
+        locked = self.screen("gesperrt")
+        # "Datenlaufwerk /data nicht eingebunden." hat 38 Zeichen; der Punkt am Ende ist schmal. Weniger deutet auf Abschneiden
+        # oder anderen Text, 41 und mehr auf den alten, bei 42 Spalten abgeschnittenen Satz.
+        columns = self.lock_reason_columns(locked)
+        print(f"Grundzeile: {columns} Spalten", flush=True)
+        if not 36 <= columns <= 39:
+            raise AssertionError(f"Grundzeile des gesperrten Fensters hat {columns} Spalten statt 36 bis 39 (abgeschnitten?)")
+        # Keine Anmeldemaske ohne Konten: nach Esc muss die Textshell bedienbar sein.
+        guest.qmp.tap("esc")
+        guest.wait("Textshell aktiv.", 30)
+        guest.qmp.tap("ret")
+        before = self.screen("textshell")
+        guest.qmp.line("uname")
+        # Die Statuszeile oben tickt (Laufzeit); verglichen wird nur der Textbereich darunter.
+        body = (0, 40, self.guest.size[0], 400)
+        deadline = time.monotonic() + 20
+        while self.patch(self.screen("uname", keep=False), body) == self.patch(before, body):
+            if time.monotonic() > deadline:
+                raise AssertionError("Die Antwort von uname erschien nicht in der Textshell")
+            time.sleep(0.5)
+        self.screen("uname")
+        if WITHOUT_DISK not in self.serial():
+            raise AssertionError("Die erwartete Zeile 'Keine Datenplatte gefunden' fehlt: lief der Gast doch mit Platte?")
         self.shutdown_from_textshell()
 
     def shutdown_from_textshell(self, send=None) -> None:
@@ -309,19 +376,22 @@ def relative(qmp, dx: int, dy: int) -> None:
                                                 {"type": "rel", "data": {"axis": "y", "value": dy}}]})
 
 
-def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False, ps2: bool = False) -> int:
+def run(work: Path, start_vm, recovery: bool, boot_timeout: float, power: bool = False, ps2: bool = False,
+        nodisk: bool = False, relogin_timeout: float = RELOGIN_TIMEOUT) -> int:
     """Fuehrt den Ablauf aus; start_vm(port) startet den Gast und liefert seinen Prozess."""
-    current = Run(work, start_vm, boot_timeout)
+    current = Run(work, start_vm, boot_timeout, relogin_timeout)
     try:
         if power:
             current.power_flow()
         elif ps2:
             current.ps2_flow()
+        elif nodisk:
+            current.nodisk_flow()
         elif recovery:
             current.recovery_flow()
         else:
             current.desktop_flow()
-        errors = unexpected_errors(current.serial(), recovery)
+        errors = unexpected_errors(current.serial(), recovery or nodisk)
         if errors:
             raise AssertionError("Error-Zeilen im seriellen Protokoll:\n" + "\n".join(errors))
         current.guest.log("fertig")
@@ -345,8 +415,11 @@ def main() -> int:
     parser.add_argument("--recovery", action="store_true", help="ISO mit -p:ZehOSRecovery=true")
     parser.add_argument("--power", action="store_true", help="reboot und shutdown pruefen (Recovery-ISO)")
     parser.add_argument("--ps2", action="store_true", help="PS/2-Maus neben dem USB-Tablet pruefen (normales ISO)")
+    parser.add_argument("--nodisk", action="store_true", help="normales ISO ohne Datenplatte: gesperrtes Anmeldefenster (13.4)")
     parser.add_argument("--boot-timeout", type=float, default=300, help="Sekunden bis zur Bootmarke")
     args = parser.parse_args()
+    if args.nodisk and (args.recovery or args.power or args.ps2):
+        parser.error("--nodisk ist nicht mit --recovery, --power oder --ps2 kombinierbar")
     if args.ps2 and (args.recovery or args.power):
         # --recovery und --power laufen ohne AppDisk, --ps2 braucht die Ersteinrichtung auf der Platte.
         parser.error("--ps2 ist nicht mit --recovery oder --power kombinierbar")
@@ -359,12 +432,12 @@ def main() -> int:
     tools.create_disk(work / "empty", disk)
     if args.power:
         args.recovery = True
-    if args.recovery:
+    if args.recovery or args.nodisk:
         # Ohne Datenplatte: auf einer leeren Platte bietet Recovery die Ersteinrichtung an, und uname/shutdown wuerden
         # zu Benutzername und Kennwort. Das ungenutzte -drive if=none von start_qemu stoert QEMU nicht.
         tools.MACHINE = without_appdisk(tools.MACHINE)
     return run(work, lambda port: tools.start_qemu(iso, disk, work, port, args.accel, None), args.recovery,
-               args.boot_timeout, args.power, args.ps2)
+               args.boot_timeout, args.power, args.ps2, args.nodisk, relogin_timeout(args.accel))
 
 
 if __name__ == "__main__":
