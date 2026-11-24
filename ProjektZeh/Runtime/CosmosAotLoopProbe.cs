@@ -15,7 +15,7 @@ namespace ProjektZeh.Runtime;
 internal static class CosmosAotLoopProbe
 {
     private const int Rounds = 10;
-    private const int EndMilliseconds = AbortWatchdog.GraceMilliseconds + 1000;
+    private const long EndMilliseconds = AbortWatchdog.GraceMilliseconds + 1000;
     // Wie CosmosAotProbe, aber mit dem Muell der Lastthreads daneben.
     private const ulong LeakToleranceBytes = 4 * 1024 * 1024;
     // mov ebp, r13d; jmp <Epilog von hostcalls>
@@ -90,7 +90,7 @@ internal static class CosmosAotLoopProbe
         }
         long closed = Stopwatch.GetTimestamp();
         WasmRuntime.CloseRequested(session);
-        bool ended = done.WaitOne(EndMilliseconds + 10_000);
+        bool ended = done.WaitOne((int)EndMilliseconds + 10_000);
         long elapsed = (long)Stopwatch.GetElapsedTime(closed).TotalMilliseconds;
         Log($"round={number} status={(ended ? status.ToString() : "Timeout")} ms={elapsed} {text}");
         return ended && status == WasmStatus.Aborted && elapsed >= AbortWatchdog.GraceMilliseconds && elapsed < EndMilliseconds;
