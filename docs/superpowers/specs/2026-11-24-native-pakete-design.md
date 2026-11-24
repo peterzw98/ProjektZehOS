@@ -134,7 +134,7 @@ Personwochen, alles HYPOTHESE. L2 nennt für die 12.4-Umsetzung „Monate“; da
 | Ladybird braucht viel mehr Aufrufe als S1–S3 | N1-C |
 | Datenlaufwerk zu langsam oder zu klein | N3, Werte aus L1-C |
 | Linux-Verhalten falsch nachgebildet | N1-E: jedes Testprogramm läuft auf Linux und ZehOS mit derselben Ausgabe |
-| Überschneidung mit Multithreading (`Interrupts.s`, Scheduler) | N1-A beginnt erst nach #523 |
+| Überschneidung mit Multithreading (`Interrupts.s`, Scheduler) | die Cosmos-Pakete aus N1 beginnen erst nach #523 |
 | Ladybird bewegt sich schnell | fester Stand bis zum ersten Bild |
 
 ## 11 Für die Umsetzung offen
