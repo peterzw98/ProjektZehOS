@@ -339,6 +339,29 @@ Rohwerte avg fps je Lauf, in Laufreihenfolge:
 
 **Host-Mikromessung (ungünstigster Fall):** wasm3 nativ mit gcc `-O2 -fPIC`, gebunden wie in `scripts/tests/test_wasm_abort_native.py`, einmal mit `m3_exec.h` von `d8b3269f` und einmal mit diesem Stand. Gemessen wird eine Zählschleife aus sechs Wasm-Befehlen je Durchlauf (`local.get; i32.const 1; i32.add; local.tee; i32.const N; i32.lt_u; br_if 0`, 3·10⁸ Durchläufe), bester von drei Läufen: 2,33 s ohne und 2,47 s mit Prüfung (+5,8 %). Echte Apps tun je Durchlauf deutlich mehr; bei ihnen geht der Anteil in der Streuung unter.
 
+## Speicherspitzen und Budget je Lauf (Roadmap 12.4-I2-D, 24. November 2026)
+
+Frage: Wie viel nativen Speicher belegt ein Lauf der Paket-Apps höchstens, und welches Budget (`WasmRuntime.RunBudgetBytes`, Paket I2-E) folgt daraus? Gemessen wird mit der Laufarena aus I2-C (`zehos_memory_peak`, Zeile `WASM Speicher frei=… heap=… spitze=<Bytes>`). Die Spitze zählt alle nativen Blöcke des Laufs (Laufzeit, übersetzter Code, Hostpuffer und die lineare Memory); sie gilt nur für wasm3, AOT (WAMR) ist nicht gemessen.
+
+**Aufbau.** Kernel: Stand von #604 (`efb8ff7e`, Basis I2-C) mit einer nicht eingecheckten Messhilfe, die zusätzlich die Größe der linearen Memory am Laufende als `linmem=<Bytes>` in dieselbe Zeile schreibt (`m3_GetMemorySize(module, 0)` direkt nach `m3_CallV`; eine lineare Memory schrumpft nie, der Wert am Ende ist ihr Höchstwert). Veröffentlichte Pakete aus `origin/packages` (Doom 1.1.0, ClassiCube 1.1.0, NetSurf 1.2.0, Rechner 1.0.0), normales ISO ohne Testschlüssel, QEMU 10.2.2 mit KVM, 1 vCPU, Gast 512 MiB (ClassiCube 1 GiB), je Lauf eine frische Platte, 120 s Bedienung per QMP, danach Schließen über das X des Fensters und Warten auf die Speicherzeile. Alle 12 Läufe unter einer gemeinsamen Sperre, 1-Minuten-Last 0,6 bis 1,5. Bedienung: Doom Menü mit der Eingabetaste bis ins Spiel (Bildschirmfoto: im Level), dann vor, drehen, schießen; ClassiCube Singleplayer mit zufälliger Welt, w/a/s/d im Wechsel; NetSurf drei Seiten vom lokalen Testserver (`/seite.html`, `/viele`, `/seite.html`), danach Seite für Seite blättern; Rechner zwei Rechnungen (2+3, 7×8). Jeder Lauf endete mit `APP <id> beendet`, `WASM Arena nicht gestartet` kam nie vor.
+
+| App | Läufe | lineare Memory am Ende | Spitze der Arena | Differenz (Spitze − lineare Memory) |
+| --- | --- | --- | --- | --- |
+| Doom 1.1.0 | 3 | 8,00 MiB (8 388 608 B) in allen Läufen | 17,36 MiB (18 199 676 B) in allen Läufen | 9,36 MiB (9 811 068 B) |
+| ClassiCube 1.1.0 | 3 | 15,25 / 15,88 / 16,06 MiB | 33,22 / 34,47 / 34,85 MiB | 17,97 / 18,59 / **18,78 MiB** (18 842 583 / 19 496 748 / 19 695 283 B) |
+| NetSurf 1.2.0 | 3 | 7,06 MiB (7 405 568 B) in allen Läufen | 20,91 / 20,84 / 20,91 MiB | 13,84 / 13,78 / 13,84 MiB |
+| Rechner 1.0.0 | 3 | 1,69 MiB (1 769 472 B) in allen Läufen | 2,96 MiB (3 098 625 B) in allen Läufen | 1,27 MiB (1 329 153 B) |
+
+Doom, NetSurf und Rechner liefern bei gleicher Bedienung dieselbe Spitze auf das Byte (NetSurf: ein Lauf 65 793 B weniger), weil ihr Speicherbedarf vom Ablauf, nicht von Zufall abhängt. ClassiCube streut, weil jeder Lauf eine andere Zufallswelt erzeugt; die Spitze liegt zwischen 33,22 und 34,85 MiB.
+
+**Budget nach der festen Regel des Plans:** 256 MiB (heutige Grenze der linearen Memory, `MemoryLimitBytes`) plus die größte gemessene Differenz (ClassiCube, 18,78 MiB), aufgerundet auf volle 16 MiB: 256 + 18,78 = 274,78 MiB, gerundet **288 MiB** = 301 989 888 Bytes. Dieser Wert ist der Vorschlag für `RunBudgetBytes` in I2-E.
+
+**Grenzen.**
+- Die Regel setzt voraus, dass die Differenz unabhängig von der Größe der linearen Memory ist. Gemessen ist sie nur bei linearen Memories von 1,7 bis 16 MiB; keine der Apps wächst in die Nähe der 256-MiB-Grenze. Die gemessenen Spitzen (3 bis 35 MiB) liegen weit unter dem Budget; es begrenzt also vor allem eine App, die ihre lineare Memory stark ausdehnt, und bemisst sich an deren Höchstwert plus Laufzeitbedarf.
+- Je App nur drei Läufe mit einem festen Ablauf von zwei Minuten. Größere ClassiCube-Welten, andere Doom-WADs, NetSurf mit echten Webseiten oder TLS und längere Läufe sind nicht gemessen; ihre Differenz kann größer sein, dann muss die Regel neu angewendet werden.
+- Gemessen ist wasm3 unter QEMU/KVM. AOT (WAMR, anderer Speicherbedarf des Laufzeitsystems), TCG, VMware und echte Hardware fehlen.
+- Der Wert „lineare Memory am Ende“ kommt aus der nicht eingecheckten Messhilfe (Diff: zwei Zeilen C, eine Zeile C# in `ReportMemory`); der Kernel auf `master` schreibt nur `spitze=`. Der Messtreiber lag außerhalb des Repositorys.
+
 ## Grenzen und offene Punkte
 
 - Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es über `should_exit`, Gas und das Schließen des Fensters (nach 5 s am nächsten Prüfpunkt, Roadmap 12.4-I2-A/B; unter AOT nur an Hostaufrufen).
