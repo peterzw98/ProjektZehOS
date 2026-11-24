@@ -66,7 +66,7 @@ def write_pin(root, version, commit):
 
 def http_json(url):
     headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'ZehOS-cosmos-update'}
-    if os.environ.get('GITHUB_TOKEN') and 'api.github.com' in url:
+    if os.environ.get('GITHUB_TOKEN') and url.startswith('https://api.github.com/'):
         headers['Authorization'] = 'Bearer ' + os.environ['GITHUB_TOKEN']
     with urlopen(Request(url, headers=headers), timeout=30) as response:
         return json.load(response)
