@@ -1,6 +1,6 @@
 # gc-refill-scan-limit
 
-- **Commit:** Squash des PRs (Hash beim Merge); Basis `cosmos` fbb5e340
+- **Commit:** Squash von #656 (`e799410e`); Basis `cosmos` fbb5e340
 - **Dateien:** `src/Cosmos.Kernel.Core/Memory/GarbageCollector/GarbageCollector.Alloc.cs`, `src/Cosmos.Kernel.Core/Memory/GarbageCollector/GarbageCollector.Tlab.cs`, `src/Cosmos.Kernel.Core/Memory/GarbageCollector/GarbageCollector.cs`, `tests/Kernels/Cosmos.Kernel.Tests.GarbageCollector/Kernel.cs`
 - **Grund:** Jeder TLAB-Refill sucht zuerst 8192 Byte in der Freiliste und lief dabei die ganze Klasse 4097 bis 8192 Byte ab, unter der Heap-Sperre; nach einem Sweep sind die Blöcke dort fast alle kleiner. Gemessen (ZehOS #542, n=1, 1 CPU, KVM): bis 29263 besuchte Blöcke je Refill, 55 bis 91 % der Schrittzeit auf gefülltem Heap. Jetzt sieht die Suche nach dem vollen TLAB je Klasse höchstens 8 Blöcke an (`TlabSearchLimit`), nur wenn der Aufrufer weniger als 8192 Byte braucht; größere Anforderungen und der letzte Versuch mit exakter Größe suchen unbegrenzt wie bisher. Übersehene Blöcke nimmt `AllocLargestFromFreeListRaw` vor jedem Heapwachstum (jeder Block ab der verlangten Größe passt). Die Grenze gilt für jede Klasse, nicht nur die eigene: In der Klasse bis 16384 können Blöcke knapp über 8192 Byte wegen zu kleinem Rest abgelehnt werden. Möglicher Preis: ein exakt 8192 Byte großer Block hinter den ersten acht wird nicht mehr bevorzugt, kleinere TLABs, mehr Refills. `FreeListVisits` zählt besuchte Blöcke (unter der Heap-Sperre, für die Tests).
 - **Entfernter ZehOS-Umweg:** keiner

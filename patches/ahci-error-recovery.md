@@ -1,6 +1,6 @@
 # ahci-error-recovery
 
-- **Commit:** Squash von #570 (Hash beim Merge); geschrieben auf `origin/cosmos` 5b1bd383, Basis per Merge auf e3db3bf6 nachgezogen (#558, #571, #574)
+- **Commit:** Squash von #570 (`a7b8bfd2`); geschrieben auf `origin/cosmos` 5b1bd383, Basis per Merge auf e3db3bf6 nachgezogen (#558, #571, #574)
 - **Dateien:** `src/Cosmos.Kernel.Drivers/Pci/Storage/Ahci/AhciPort.cs` (`ReadBlock`, `WriteBlock`, Kapazität im Konstruktor, `Claim`, `IssueCommand`, neu `CheckCompletion` und `RecoverOrDisable`, Testtore `IssueNonDataCommand`, `RecoverWithDeviceReset`, `CheckCompletionWith` und Zähler `DeviceResets`), `AhciProtocol.cs` (`TfdError`, `TfdDeviceFault`, `IsInterfaceFatal`, `IsHostBusData`, `IsHostBusFatal`, `IsErrorMask`), `AhciState.cs` (neu `ResetDevice`, sonst Kommentare zum Threadkontext); Test `tests/Kernels/Cosmos.Kernel.Tests.Storage/Kernel.cs` (`Device_PastEnd_Rejected`, `Device_TaskFileError_Recovers`, `Device_DeviceReset_Recovers`, `Device_ErrorStatus_Recovery`, Lesen ab ungerader LBA in `Device_CommandSizes_OddLba`), `docs/articles/dev/testing.md` (Testzahlen)
 - **Grund:** Drei Fehler im SATA-Pfad, die schon vor #562 bestanden (ZehOS #565, Review zu #562):
   1. Ein Befehl galt als erfolgreich, sobald sein Bit in PxCI gelöscht war. Die HBA löscht PxCI im selben Schritt, in dem sie bei einem D2H-FIS mit ERR das Bit TFES setzt; die Schleife sah TFES nur, solange PxCI noch stand. Ein abgebrochenes READ lieferte dann alte Bounce-Daten, ein abgebrochenes WRITE meldete Erfolg.

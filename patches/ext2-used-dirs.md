@@ -1,6 +1,6 @@
 # ext2-used-dirs
 
-- **Commit:** Squash von PR <PR-Nummer> (`<Hash>`), nach Merge einzutragen; geschrieben auf `origin/cosmos` e3db3bf6, nach `ext2-alloc-cache`
+- **Commit:** Squash von #593 (`fbb5e340`); geschrieben auf `origin/cosmos` e3db3bf6, nach `ext2-alloc-cache`
 - **Dateien:** `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2InodeOperations.cs` (`WriteUsedDirsCount`), `Ext2Superblock.cs` (neu `PersistGroupDesc`); Tests `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/Ext2UsedDirsTests.cs`
 - **Grund:** `WriteUsedDirsCount` (nach Mkdir und Rmdir) las die Gruppendeskriptortabelle von der Platte und schrieb nur `bg_used_dirs_count` der einen Gruppe zurück, am Cache `_gdTable` vorbei (seit `ext2-alloc-cache`, #558). Die nächste Deskriptoränderung einer anderen Gruppe im selben Tabellenblock (z. B. Blockbelegung in der Gruppe des Elternverzeichnisses, während das Inode in eine Folgegruppe ausgewichen ist) schrieb den Block aus dem Cache und setzte den Zähler auf den alten Wert zurück: `e2fsck -fn` meldet „Directories count wrong“ (Exit 4, kein Datenverlust, `-fy` korrigiert). Befund: Kommentar zu #558 (agent-laser-lead)
 - **Änderung:** `WriteUsedDirsCount` ruft nur noch `Ext2Superblock.PersistGroupDesc` (= `UpdateGroupDesc`) auf: der Zähler geht über `_groups[g]` in den Cache und den Tabellenblock. Nur-Lese-Mounts schreiben weiter nichts (Mkdir/Rmdir werden dort vorher abgelehnt). Weitere Schreiber des Felds gibt es nicht (`WriteGroupDesc` schreibt es aus dem Cache)
