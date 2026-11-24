@@ -10,29 +10,42 @@ namespace ProjektZeh.Runtime;
 /// weiterer Lauf auf dem neuen Worker. <c>-p:ZehOSIsolationProbeNegative=true</c> loest zum Schluss dieselbe Ausnahme im
 /// Probe-Thread aus; das System muss dann wie bisher anhalten. <c>-p:ZehOSIsolationProbeNmi=true</c> haelt den Worker
 /// zum Schluss im Gastzustand, bis das Skript per QMP einen NMI schickt; auch der muss anhalten (Whitelist, P2-1).
-/// Seit I2-C haelt jeder Fehlerlauf vorher 16 MiB in der Laufarena; nach jeder Isolation meldet die Probe, was die Arena
-/// noch zaehlt (erwartet 0), dazu den freien Speicher nach einem ersten Lauf "base" (Worker und Stack stehen dann) und
-/// nach der zweiten Ausnahme, je nach GC.Collect.
+/// Seit I2-C haelt jeder Fehlerlauf vorher 16 MiB in der Laufarena (mit frei= nach dem malloc); nach jeder Isolation
+/// meldet die Probe, was die Arena noch zaehlt (erwartet 0), dazu den freien Speicher nach zwei Desktopbildern und einem
+/// ersten Lauf "base" (Worker und Stack stehen dann) und nach der zweiten Ausnahme, je nach GC.Collect.
 /// </summary>
 internal static class CosmosIsolationProbe
 {
     private static volatile int zero;
     private static volatile int sink;
-    private const nuint ArenaBlockBytes = 16 * 1024 * 1024;
+
+    private static volatile int framesRendered;
 
     internal static void Start() => new Thread(Probe).Start();
+
+    /// <summary>Aus der Hauptschleife nach jedem gezeichneten Desktopbild; nur die Hauptschleife schreibt.</summary>
+    internal static void MarkFrameRendered() { if (framesRendered < 2) framesRendered++; }
 
     private static unsafe void Probe()
     {
         Log("ISOLATION_PROBE start");
+        // Der Desktop legt seine Bildpuffer (Szene, Hintergrund; je 1920 x 1080 x 4 = etwa 8 MiB) erst im ersten Bild an,
+        // nicht schon beim Start (Desktop.Render). Faellt das zwischen free_before und free der ersten Isolation, sieht die
+        // Speicherpruefung einen falschen Stackverlust (1 von 5 Laeufen @1123020b). Deshalb erst nach zwei gezeichneten
+        // Bildern isolieren (Review #576 @25ea3a60); ohne Desktop nach hoechstens zehn Sekunden trotzdem.
+        for (int wait = 0; wait < 100 && framesRendered < 2; wait++) Thread.Sleep(100);
+        Log("ISOLATION_PROBE desktop frames=" + framesRendered);
         zero = 0;
+        // I2-C: frei_vor erst, wenn Desktop-Puffer und erster Worker samt Stack stehen (Lauf base); dieselbe Wartezeile wie
+        // in #523 (task/mc-e5-smp), damit beide Fassungen ohne Konflikt zusammengehen.
+        const nuint arenaBlockBytes = 16 * 1024 * 1024;
         Fault("base", () => sink = 1);
         GC.Collect();
         Log("ISOLATION_PROBE frei_vor=" + CosmosSystemInfo.PhysicalMemory().Free / 1024);
         // Unter Cosmos/NativeAOT loest die verwaltete Ganzzahldivision durch null eine echte CPU-Ausnahme aus.
-        Fault("de", () => { Wasm.WasmRuntime.ProbeArenaBlock(ArenaBlockBytes); sink = 1 / zero; });
+        Fault("de", () => { Wasm.WasmRuntime.ProbeArenaBlock(arenaBlockBytes); sink = 1 / zero; });
         Log("ISOLATION_PROBE arena_after=de used=" + Wasm.WasmRuntime.ProbeArenaUsedBytes);
-        Fault("pf", () => { Wasm.WasmRuntime.ProbeArenaBlock(ArenaBlockBytes); sink = *(int*)0; });
+        Fault("pf", () => { Wasm.WasmRuntime.ProbeArenaBlock(arenaBlockBytes); sink = *(int*)0; });
         Log("ISOLATION_PROBE arena_after=pf used=" + Wasm.WasmRuntime.ProbeArenaUsedBytes);
         GC.Collect();
         Log("ISOLATION_PROBE gc ok");

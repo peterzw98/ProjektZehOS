@@ -179,8 +179,8 @@ internal static unsafe partial class WasmRuntime
 
     /// <summary>
     /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, beendet sie den Lauf von aussen,
-    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread, 8-MiB-Stack und der
-    /// native Speicher der Instanz bleiben bis zum Neustart belegt.
+    /// gibt seine Ressourcen frei und startet einen neuen Worker fuer die Warteschlange. Thread und 8-MiB-Stack bleiben bis
+    /// zum Neustart belegt; den nativen Speicher der Instanz gibt ReleaseIsolatedArena frei (I2-C, nicht nach AOT).
     /// </summary>
     public static void PollFaultIsolation()
     {
@@ -347,7 +347,7 @@ internal static unsafe partial class WasmRuntime
     {
         var physical = CosmosSystemInfo.PhysicalMemory();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-            $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB spitze={ArenaPeakBytes}\n");
+            $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB spitze={TakeArenaPeak()}\n");
     }
 
     private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session,
@@ -400,8 +400,12 @@ internal static unsafe partial class WasmRuntime
         fixed (byte* bytes = module)
         {
             ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
-            bool arena = BeginArena(aot: false);
-            try { return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256); }
+            bool arena = false;
+            try
+            {
+                arena = BeginArena(aot: false);
+                return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+            }
             finally
             {
                 EndArena(arena);
@@ -431,8 +435,12 @@ internal static unsafe partial class WasmRuntime
         fixed (byte* bytes = aot)
         {
             ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
-            bool arena = BeginArena(aot: true);
-            try { return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated); }
+            bool arena = false;
+            try
+            {
+                arena = BeginArena(aot: true);
+                return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated);
+            }
             finally
             {
                 EndArena(arena);
