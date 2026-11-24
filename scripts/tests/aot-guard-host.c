@@ -29,6 +29,8 @@ bool wasm_runtime_register_natives(const char* module, NativeSymbol* symbols, ui
     if (mode == CRASH_AFTER_INIT) longjmp(fault, 1);
     return false;
 }
+volatile int32_t zehos_host_abort;
+void zehos_host_set_abort(int32_t on) { zehos_host_abort = on != 0; }
 void zehos_host_context_init(zehos_wasm_context* context) { (void)context; }
 void zehos_host_context_close_files(zehos_wasm_context* context) { (void)context; }
 
