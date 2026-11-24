@@ -435,9 +435,36 @@ internal sealed class FileService
         finally { writer?.Dispose(); }
     }
 
-    private static void RequireComplete(long written, long expected)
+    internal static void RequireComplete(long written, long expected)
     {
         if (written != expected) throw new IOException($"Schreiben unvollstaendig ({written} von {expected} Bytes); Datentraeger voll?");
+    }
+
+    /// <summary>Wie File.WriteAllBytes, prueft aber die gespeicherte Laenge (Cosmos kuerzt bei vollem ext2 still); Aufrufer halten den Speicherzugriff selbst.</summary>
+    internal static void WriteAllBytesCompleteStorageLocked(string path, byte[] data)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1);
+            stream.Write(data);
+            stream.Flush(true);
+            RequireComplete(stream.Length, data.Length);
+        }
+        catch (IOException)
+        {
+            // Ziel ist immer eine Temp- oder neue Datei: ein gekuerzter Rest darf nicht liegen bleiben (z. B. als .new, die Restore uebernimmt).
+            try { File.Delete(path); } catch (IOException) { /* Der naechste Lauf ueberschreibt oder Reconcile raeumt auf. */ }
+            throw;
+        }
+    }
+
+    /// <summary>Haengt an oder legt an (first) und prueft die gespeicherte Laenge; Cosmos kuerzt bei vollem Datentraeger still. Aufrufer halten den Speicherzugriff.</summary>
+    internal static void WriteChunkCompleteStorageLocked(FileStream stream, byte[] data, int offset, int count)
+    {
+        long expected = stream.Length + count;
+        stream.Write(data, offset, count);
+        stream.Flush(true);
+        RequireComplete(stream.Length, expected);
     }
 
     private IDisposable? BeginWrite() => tryBeginWrite == null ? null :
