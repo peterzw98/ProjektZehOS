@@ -54,13 +54,13 @@ def write_pin(root, version, commit):
     # Regel aus deploy/cosmos/README.md: neuer Commit, neue Version (build-cosmos.sh verweigert sonst den Bau).
     if commit != old['COMMIT'] and version == old['VERSION']:
         raise ValueError(f"Commit ändert sich, Version bleibt {version}: neue Version wählen")
-    replace_line(root / 'deploy/cosmos/COMMIT', commit)
-    replace_line(root / 'deploy/cosmos/VERSION', version)
     path = root / 'global.json'
     text = path.read_bytes().decode('utf-8')
     text, count = SDK_KEY.subn(lambda m: m.group(1) + version + m.group(3), text)
     if count != 1:
         raise ValueError('global.json: Cosmos.Sdk nicht eindeutig gefunden')
+    replace_line(root / 'deploy/cosmos/COMMIT', commit)
+    replace_line(root / 'deploy/cosmos/VERSION', version)
     path.write_bytes(text.encode('utf-8'))
 
 
@@ -78,7 +78,7 @@ def latest_stable(versions):
 
 
 def git(*args):
-    return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True, encoding='utf-8', check=True).stdout
 
 
 def patch_files(text):
@@ -101,12 +101,6 @@ def cosmos_patches():
     return {Path(n).stem: patch_files(git('show', 'origin/cosmos:' + n)) for n in names if n.endswith('.md')}
 
 
-def upstream_base():
-    """Grundstand-Commit aus PATCHES.md (erste Tabellenzeile mit einem vollen Commit)."""
-    match = re.search(r'`([0-9a-f]{40})`', git('show', 'origin/cosmos:PATCHES.md'))
-    return match.group(1) if match else None
-
-
 def changed_files(base, head):
     # Die Vergleichs-API liefert die Dateien nur auf der ersten Seite und höchstens 300.
     files = [f['filename'] for f in http_json(f'https://api.github.com/repos/{UPSTREAM}/compare/{base}...{head}')['files']]
@@ -119,12 +113,11 @@ def check(args):
     print('Neueste Upstream-Version (NuGet Cosmos.Kernel): ' + str(latest_stable(http_json(NUGET_VERSIONS)['versions'])))
     if not args.to:
         return 0
-    base = args.base or upstream_base()
-    if not base:
-        print('Grundstand nicht gefunden (git fetch origin; PATCHES.md im Branch cosmos); --base angeben', file=sys.stderr)
+    if not args.base:
+        print('--to braucht --base: letzter übernommener Upstream-Stand aus PATCHES.md im Branch cosmos', file=sys.stderr)
         return 1
-    changed, truncated = changed_files(base, args.to)
-    print(f'Upstream {base[:8]}...{args.to}: {len(changed)} geänderte Dateien' + (' (VERGLEICH ABGESCHNITTEN, Rest per git prüfen)' if truncated else ''))
+    changed, truncated = changed_files(args.base, args.to)
+    print(f'Upstream {args.base[:8]}...{args.to}: {len(changed)} geänderte Dateien' + (' (VERGLEICH ABGESCHNITTEN, Rest per git prüfen)' if truncated else ''))
     for name, hits in affected(cosmos_patches(), changed).items():
         if hits:
             print(f'  {name}: ' + ', '.join(hits))
@@ -138,7 +131,7 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     c = sub.add_parser('check', help='Pin, neueste Version, Upstream-Änderungen je Patch (nur lesend)')
     c.add_argument('--to', help='Upstream-Tag oder -Commit, bis zu dem verglichen wird (etwa v3.0.99)')
-    c.add_argument('--base', help='Upstream-Ausgangsstand (Standard: Grundstand aus PATCHES.md)')
+    c.add_argument('--base', help='letzter übernommener Upstream-Stand (PATCHES.md im Branch cosmos); mit --to Pflicht')
     p = sub.add_parser('pin', help='Pin-Stellen setzen und prüfen')
     p.add_argument('version')
     p.add_argument('commit')

@@ -17,18 +17,20 @@ Ablauf für einen Agenten von „neue Cosmos-Version da“ bis zum Pin-PR. Ergä
    ```bash
    git fetch origin
    python scripts/cosmos-update.py verify
-   python scripts/cosmos-update.py check --to <tag>
+   python scripts/cosmos-update.py check --base <letzter-stand> --to <tag>
    ```
-   `check` nennt Pin, neueste NuGet-Version von `Cosmos.Kernel` und die Upstream-Dateien, die zwischen Grundstand (`PATCHES.md` im Branch `cosmos`) und `--to` geändert wurden, je Patch aus `patches/*.md`. Ohne `--to` zeigt es nur die Versionen. Die Vergleichs-API liefert höchstens 300 Dateien (das Skript meldet Abschneiden); die Dateinamen in `patches/*.md` sind teils unvollständig, ein Patch ohne Treffer ist deshalb nicht belegt unberührt. Die Upstream-Commit-Liste (`gh api repos/CosmosOS/Cosmos/compare/<alt>...<neu>`) selbst durchgehen und für jeden dokumentierten Umweg und jede Grenze in `docs/COSMOS_SUPPORT.md` prüfen, ob sie entfällt oder bricht.
+   `check` nennt Pin, neueste NuGet-Version von `Cosmos.Kernel` und die Upstream-Dateien, die seit dem letzten übernommenen Stand bis `--to` geändert wurden (`--base`: der neueste Eintrag unter „Übernommene Upstream-Stände“ in `PATCHES.md` im Branch `cosmos`, derzeit `44952133e7820565552f30b057baa0660bd0a80d`; die API vergleicht ab der Merge-Basis), je Patch aus `patches/*.md`. Ohne `--to` zeigt es nur die Versionen. Die Vergleichs-API liefert höchstens 300 Dateien (das Skript meldet Abschneiden); die Dateinamen in `patches/*.md` sind teils unvollständig, ein Patch ohne Treffer ist deshalb nicht belegt unberührt. Die Upstream-Commit-Liste (`gh api repos/CosmosOS/Cosmos/compare/<alt>...<neu>`) selbst durchgehen und für jeden dokumentierten Umweg und jede Grenze in `docs/COSMOS_SUPPORT.md` prüfen, ob sie entfällt oder bricht.
    **Abbruch**, wenn `verify` schon vor dem Update Abweichungen meldet: erst klären.
 3. **Branch `cosmos` aktualisieren.** Eigener Branch von `origin/cosmos`, der Upstream-Stand als kumulierter Unterschied ohne Workflows (Muster aus `PATCHES.md`, Abschnitt „Übernommene Upstream-Stände“):
    ```bash
-   git fetch https://github.com/CosmosOS/Cosmos.git <tag>
-   git diff --binary <alter-grundstand> FETCH_HEAD -- . ':(exclude).github/workflows' | git apply --3way --index
+   git fetch https://github.com/CosmosOS/Cosmos.git refs/tags/<tag>:refs/tmp/cosmos-neu
+   git fetch https://github.com/CosmosOS/Cosmos.git <letzter-stand>:refs/tmp/cosmos-alt
+   # Merge-Basis statt letztem Stand: sonst nähme der Unterschied den übernommenen SMP-Stapel zurück.
+   git diff --binary "$(git merge-base refs/tmp/cosmos-alt refs/tmp/cosmos-neu)" refs/tmp/cosmos-neu -- . ':(exclude).github/workflows' | git apply --3way --index
    ```
    Konflikte je Patch lösen; die Patchdatei bekommt eine Zeile zum neuen Stand, `PATCHES.md` den neuen Grundstand. Patches, die Upstream inzwischen enthält, streichen (Datei löschen, im ZehOS-PR den zugehörigen Umweg beachten). Die Host-Tests des Cosmos-Baums (`tests/Cosmos.Kernel.Tests.System`) müssen grün sein. Den PR gegen `cosmos` erstellen; Merge nur nach Zustimmung. Der Commit, der danach im Branch `cosmos` steht, ist der Pin-Commit (voller Hash).
    **Abbruch** bei einem Konflikt, dessen fachliche Auflösung unklar ist: im Kanal fragen, nichts raten.
-4. **ZehOS-Branch** `task/cosmos-<version>` von `origin/master`. Pin setzen und prüfen (neue Version, weil der Commit neu ist; Schema `<Basis>-zehos.<N>`, bei neuer Basis `.0`):
+4. **ZehOS-Branch** `task/cosmos-<version>` von `origin/master`. Pin setzen und prüfen (neue Version, weil der Commit neu ist; Schema `<Basis>-zehos.<N>`, bei neuer Basis `.0`; für den SMP-Stand in `task/mc-e5-smp` mit `-smp.<M>`, dann auch von diesem Branch abzweigen):
    ```bash
    python scripts/cosmos-update.py pin 3.0.99-zehos.0 <voller-commit>
    python scripts/cosmos-update.py verify
