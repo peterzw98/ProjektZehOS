@@ -22,8 +22,9 @@ tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
-# I2-C: erlaubter Rueckgang des freien Speichers ueber beide Fehlerlaeufe (sie hielten je 16 MiB in der Arena).
-ARENA_SLACK_KIB = 8 * 1024
+# I2-C: erlaubter Rueckgang des freien Speichers ueber beide Fehlerlaeufe. Sie hielten je 16 MiB in der Arena (ohne
+# Freigabe 32 MiB); bis E6-G (#523) bleiben ausserdem die beiden aufgegebenen 8-MiB-Worker-Stacks belegt (16 MiB).
+ARENA_MAX_DROP_KIB = 24 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
@@ -51,13 +52,16 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
     if log.count("WASM CPU-Ausnahme im App-Code") < 2:
         missing.append("Hauptschleife hat nicht beide Laeufe beendet")
-    # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei. Ohne Freigabe laege
-    # frei_nach um 32 MiB unter frei_vor, die Grenze 8 MiB laesst Raum fuer Stacks und verwaltete Reste.
-    if log.count("ISOLATION_PROBE arena=1") != 2:
+    # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei (Zaehler der Arena 0 und
+    # der freie Speicher sinkt um hoechstens ARENA_MAX_DROP_KIB).
+    if len(re.findall(r"ISOLATION_PROBE arena=1 used=[1-9]", log)) != 2:
         missing.append("Arena nicht in beiden Fehlerlaeufen gestartet")
+    for kind in VECTORS:
+        if not re.search(rf"ISOLATION_PROBE arena_after={kind} used=0\b", log):
+            missing.append(f"Arena nach {kind} nicht freigegeben")
     before = re.search(r"ISOLATION_PROBE frei_vor=(\d+)", log)
     after = re.search(r"ISOLATION_PROBE frei_nach=(\d+)", log)
-    if not before or not after or int(before.group(1)) - int(after.group(1)) > ARENA_SLACK_KIB:
+    if not before or not after or int(before.group(1)) - int(after.group(1)) > ARENA_MAX_DROP_KIB:
         missing.append("Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)")
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
         if text not in log:

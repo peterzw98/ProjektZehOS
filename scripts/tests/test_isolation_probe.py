@@ -11,8 +11,10 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
     # Die Reihenfolge der Zeilen wertet evaluate nicht aus; die Arena- und frei-Zeilen stehen gesammelt.
     'ISOLATION_PROBE frei_vor=401000',
-    'ISOLATION_PROBE arena=1',
-    'ISOLATION_PROBE arena=1',
+    'ISOLATION_PROBE arena=1 used=16777264',
+    'ISOLATION_PROBE arena_after=de used=0',
+    'ISOLATION_PROBE arena=1 used=16777264',
+    'ISOLATION_PROBE arena_after=pf used=0',
     'CPU EXCEPTION: Divide by Zero (#DE)',
     'System halted.',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 4 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
@@ -22,7 +24,7 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE fault=pf handled=1 vector=14',
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
-    'ISOLATION_PROBE frei_nach=400200',
+    'ISOLATION_PROBE frei_nach=384600',
     'ISOLATION_PROBE DONE',
 ])
 
@@ -50,16 +52,20 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn('de mit Vektor 113 statt 0 (IRQContext-Versatz?)', isolation.evaluate(log, negative=False))
 
     def test_arena_must_run_in_both_fault_runs(self):
-        log = PASS_LOG.replace('ISOLATION_PROBE arena=1', 'ISOLATION_PROBE arena=0', 1)
+        log = PASS_LOG.replace('ISOLATION_PROBE arena=1 used=16777264', 'ISOLATION_PROBE arena=0 used=0', 1)
         self.assertIn('Arena nicht in beiden Fehlerlaeufen gestartet', isolation.evaluate(log, negative=False))
 
-    def test_arena_blocks_must_be_released(self):
-        # 32 MiB weniger: Die 2 x 16 MiB der aufgegebenen Laeufe blieben belegt.
-        log = PASS_LOG.replace('frei_nach=400200', 'frei_nach=368232')
+    def test_arena_counter_must_be_zero_after_each_isolation(self):
+        log = PASS_LOG.replace('arena_after=pf used=0', 'arena_after=pf used=16777264')
+        self.assertEqual(['Arena nach pf nicht freigegeben'], isolation.evaluate(log, negative=False))
+
+    def test_free_memory_may_drop_by_stacks_but_not_by_arena(self):
+        # 16 MiB fuer die beiden aufgegebenen Worker-Stacks sind erlaubt, 48 MiB (Stacks plus 2 x 16 MiB Arena) nicht.
+        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=352232')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
-        at_limit = PASS_LOG.replace('frei_nach=400200', 'frei_nach=392808')
+        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=376424')
         self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
-        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=400200\n', '')
+        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=384600\n', '')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))
 
 

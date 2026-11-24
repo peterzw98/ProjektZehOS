@@ -59,8 +59,14 @@ internal static unsafe partial class WasmRuntime
     internal static void ProbeArenaBlock(nuint bytes)
     {
         bool allocated = BeginArena(aot: false) && ProbeMalloc(bytes) != null;
-        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"ISOLATION_PROBE arena={(allocated ? 1 : 0)}\n");
+        Cosmos.Kernel.System.Diagnostics.Log.WriteString($"ISOLATION_PROBE arena={(allocated ? 1 : 0)} used={ArenaUsed()}\n");
     }
+
+    // Nach der Isolation vom Probethread gelesen: 0, wenn PollFaultIsolation die Bloecke freigegeben hat.
+    internal static ulong ProbeArenaUsedBytes => ArenaUsed();
+
+    [DllImport("*", EntryPoint = "zehos_memory_used", ExactSpelling = true)]
+    private static extern nuint ArenaUsed();
 
     [DllImport("*", EntryPoint = "malloc", ExactSpelling = true)]
     private static extern void* ProbeMalloc(nuint size);
