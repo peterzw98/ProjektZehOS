@@ -1,3 +1,4 @@
+using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Runtime;
 
@@ -51,6 +52,6 @@ public sealed class ConsoleLineViewTests
         Assert.IsTrue(ConsoleLineView.TryGetChangedSpan(shown, text, out int start, out int length));
         Assert.AreEqual((expectedStart, expectedLength), (start, length));
         // Der geschriebene Ausschnitt ueber dem alten Stand ergibt genau die neue Zeile.
-        Assert.AreEqual(text, shown[..start] + text.Substring(start, length) + shown[(start + length)..]);
+        Assert.AreEqual(text, string.Concat(shown.AsSpan(0, start), text.AsSpan(start, length), shown.AsSpan(start + length)));
     }
 }
