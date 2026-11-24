@@ -14,7 +14,8 @@ internal unsafe partial class FrozenObjectHeapManagerPlug
     [PlugMember]
     private static void* ClrVirtualReserve(nuint size)
     {
-        return Heap.Alloc((uint)size);
+        // ZehOS patch foh-gc-retry, see PATCHES.md
+        return Heap.AllocOrCollect((uint)size);
     }
 
     /// <summary>

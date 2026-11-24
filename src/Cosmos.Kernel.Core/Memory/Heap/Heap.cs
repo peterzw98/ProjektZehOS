@@ -139,6 +139,27 @@ internal static unsafe class Heap
         return result;
     }
 
+    /// <summary>
+    /// <see cref="Alloc"/> for a thread's large block, with one collection and one more try when the
+    /// pages run out: the collector runs only when its own heap cannot grow, so the pages may all be
+    /// held by segments full of dead objects. The collection is outside the lock of this heap. Not for
+    /// interrupt handlers, and not under a lock a thread stopped in the collection could hold spinning.
+    /// </summary>
+    /// <param name="aSize">A size of block to alloc, in bytes.</param>
+    /// <returns>The block, or null when there is no room even after the collection.</returns>
+    // ZehOS patch foh-gc-retry, see PATCHES.md
+    public static byte* AllocOrCollect(uint aSize)
+    {
+        byte* result = Alloc(aSize);
+        if (result == null && GarbageCollector.GarbageCollector.IsEnabled)
+        {
+            GarbageCollector.GarbageCollector.Collect();
+            result = Alloc(aSize);
+        }
+
+        return result;
+    }
+
     // Keep as void* and not byte* or other. Reduces typecasting from callers
     // who may have typed the pointer to their own needs.
     /// <summary>
