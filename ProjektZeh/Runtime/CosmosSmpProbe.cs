@@ -164,7 +164,7 @@ internal static class CosmosSmpProbe
     {
         int n = workers.Length;
         if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
-        // Lang genug (KVM auf MSI: etwa 200 ms je Worker), damit Threadende und Join (6 bis 14 ms) das Verhaeltnis nicht bestimmen.
+        // Lang genug (KVM auf MSI: etwa 200 ms je Worker), damit Threadende und Join (4 CPUs: bis 15 ms, 8 CPUs: bis 92 ms, #523) das Verhaeltnis nicht bestimmen.
         const long Work = 200_000_000;
         long sink = 0;
         var single = Stopwatch.StartNew();
