@@ -714,9 +714,10 @@ public class Kernel : Sys.Kernel
 
         Assert.True(thrown, "GC: the exhausted heap must throw OutOfMemoryException");
 
-        // The free pages hold at most one 5000-byte array each; the rest came from the gaps. The
-        // nodes of the fill took some of those, far fewer than half.
-        Assert.True((ulong)served >= freePages + RefillGaps / 2, "GC: the free list must serve an exhausted heap");
+        // The free pages hold at most one 5000-byte array each; the rest came from the gaps, and
+        // every gap must have served: the rests of the segments serve some arrays too, so a lower
+        // bound would not notice that most of the gaps were given up on.
+        Assert.True((ulong)served >= freePages + RefillGaps, "GC: the free list must serve an exhausted heap");
 
         byte[] after = new byte[OpaqueLength(1 << 20)];
         after[after.Length - 1] = 0x3C;
