@@ -1,5 +1,6 @@
 import importlib.util
 import shutil
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -89,12 +90,13 @@ class FreePortTests(unittest.TestCase):
         ports = {guest.free_port() for _ in range(20)}
         self.assertEqual(len(ports), 20)
 
+    @unittest.skipIf(sys.platform == 'win32', 'braucht fcntl (kein Windows)')
     def test_port_claimed_by_other_process_is_skipped(self):
-        import fcntl
+        import fcntl  # noqa: F401 - nur zur Voraussetzung
         taken = guest.free_port()
         directory = Path(tempfile.gettempdir()) / f"zehos-qmp-ports-{__import__('os').getuid()}"
         # Der Sperrhalter gehoert diesem Prozess; ein Kind-Prozess darf den Port nicht bekommen.
-        import subprocess, sys
+        import subprocess
         code = ("import importlib.util,sys\n"
                 "from unittest import mock\n"
                 f"s=importlib.util.spec_from_file_location('g', r'{SCRIPTS / 'test-wasm-doom-desktop.py'}')\n"
