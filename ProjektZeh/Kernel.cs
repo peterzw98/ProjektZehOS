@@ -459,6 +459,9 @@ public sealed class Kernel : Sys.Kernel
 #pragma warning disable COSMOS0001 // Der Ausnahme-Hook gehoert zur experimentellen Scheduler-Schnittstelle.
         Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler = FaultIsolation.OnCpuException;
 #pragma warning restore COSMOS0001
+#if ZEHOS_AOT_LOOP_EXIT && ZEHOS_WASM_AOT
+        AotLoopExit.Install();
+#endif
 #if ZEHOS_STRIDE_SCHEDULER
         // Diagnosebau E5-I: der Upstream-Stride bleibt installiert; ThreadStarter.ApplyClass bleibt wirkungslos.
         systemLog.Information("Scheduler", "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER, ZehOS-Klassen inaktiv)");

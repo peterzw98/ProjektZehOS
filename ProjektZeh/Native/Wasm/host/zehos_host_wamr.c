@@ -12,6 +12,7 @@
 #include "platform_api_vmcore.h"
 #include "zehos_host_core.h"
 #include "zehos_host_aot_guard.h"
+#include "zehos_host_aot_exit.h"
 
 // Wie d_m3MaxNativeStack bei wasm3: Der Worker hat 8 MiB Stack (WasmRuntime.ThreadStackBytes), der AOT-Code darf
 // 7 MiB unter dem Einstieg nutzen; der Rest bleibt fuer Hostfunktionen und C#-Rueckrufe.
@@ -319,6 +320,13 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         status = ZEHOS_WASM_LOAD_FAILED;
         text = memory_limit;
     }
+    // Gastcode waehrend des Instanziierens liefe ausserhalb von zehos_aot_call und waere in einer Schleife ohne Hostaufruf
+    // nicht beendbar; der Ausstieg ueberspraenge dort WAMRs Aufraeumen. instantiated bleibt 0: Die App laeuft unter wasm3.
+    if (status == ZEHOS_WASM_OK && zehos_aot_runs_on_instantiate(module))
+    {
+        status = ZEHOS_WASM_LOAD_FAILED;
+        text = "AOT-Modul mit Startfunktion";
+    }
     if (status == ZEHOS_WASM_OK)
     {
         InstantiationArgs arguments;
@@ -368,13 +376,26 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         uint8_t* top = (uint8_t*)__builtin_frame_address(0);
         zehos_wamr_set_stack_boundary(top - ZEHOS_AOT_NATIVE_STACK);
         uint32_t values[2] = { 0, 0 };
-        if (wasm_runtime_call_wasm(env, function, 0, values))
+        // Erst hier und nur um den Aufruf veroeffentlicht: Laden, Instanziieren und Abbau werden nie umgelenkt.
+        uint64_t code, codeEnd;
+        zehos_aot_code_range(module, &code, &codeEnd);
+        zehos_aot_exit_current.code = code;
+        zehos_aot_exit_current.codeEnd = codeEnd;
+        int32_t called = zehos_aot_call(env, function, 0, values);
+        zehos_aot_exit_current.codeEnd = 0;
+        zehos_aot_exit_current.code = 0;
+        if (called == ZEHOS_AOT_CALL_OK)
         {
             if (wasm_func_get_result_count(function, instance) == 1) *result = (int32_t)values[0];
         }
         else if (run.exited)
         {
             *result = run.context.exitCode;
+        }
+        else if (called == ZEHOS_AOT_CALL_LEFT)
+        {
+            status = ZEHOS_WASM_ABORTED;
+            text = abort_exception;
         }
         else if (run.aborted)
         {
