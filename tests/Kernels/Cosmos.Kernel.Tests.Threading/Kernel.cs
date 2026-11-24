@@ -25,7 +25,7 @@ namespace Cosmos.Kernel.Tests.Threading;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 104;
+    private const int ExpectedTestCount = 106;
 
     /// <summary>Size of one per-CPU block, as <c>PerCpuBlock</c> lays it out and the native stubs assume.</summary>
     private const int PerCpuBlockNativeSize = 128;
@@ -266,6 +266,13 @@ public class Kernel : Sys.Kernel
         TR.Run("Thread_Kill_Queued_StopsManagedSide", TestKillQueuedThreadStopsManagedSide);
         TR.Run("Thread_AbandonedAtFault_IsReaped", TestAbandonedThreadIsReaped);
         TR.Run("Thread_Alive_IsNotReaped", TestLiveThreadIsNotReaped);
+#if ARCH_X64
+        TR.Run("TickHook_Redirects_RunningThread", TestTickHookRedirectsRunningThread);
+        TR.Run("TickHook_IdleThread_IsNotOffered", TestTickHookIdleThreadIsNotOffered);
+#else
+        TR.Skip("TickHook_Redirects_RunningThread", "the tick hook is x64 only");
+        TR.Skip("TickHook_IdleThread_IsNotOffered", "the tick hook is x64 only");
+#endif
         TR.Run("ScheduleFromInterrupt_UnregisteredCpu_IsNoOp", TestScheduleFromInterruptIgnoresUnregisteredCpu);
 
         // The per-CPU block (CosmosOS/Cosmos#3338, SMP phase 1): the running CPU finds its
@@ -1769,6 +1776,141 @@ public class Kernel : Sys.Kernel
             CpuExceptionHook.Handler = previous;
         }
     }
+
+#if ARCH_X64
+    // ZehOS patch aot-loop-exit, see PATCHES.md
+    // The tick hook moves a thread that only computes to another address. The
+    // victim and its landing both spin without a call, so nothing is held at
+    // the point it leaves; it is killed afterwards like any spinning thread.
+    private const int TickHookDeclinedTicks = 3;
+    private const int TickHookIdleMs = 300;
+    private static volatile bool s_tickHookArmed;
+    private static volatile bool s_tickHookSpinning;
+    private static volatile bool s_tickHookLanded;
+    private static volatile uint s_tickHookVictimId;
+    private static volatile int s_tickHookOffered;
+    private static volatile int s_tickHookRedirects;
+    private static volatile int s_tickHookIdleOffers;
+    private static long s_tickHookCounter;
+    private static long s_tickHookCounterAtRedirect;
+
+    // Runs in the tick: no allocation, no lock, no log.
+    private static unsafe nuint RedirectVictimOnly(in CpuTickInfo tick)
+    {
+        if (!s_tickHookArmed || !s_tickHookSpinning || tick.ThreadId != s_tickHookVictimId)
+        {
+            return 0;
+        }
+
+        // The first ticks are declined: the thread goes on where it was.
+        if (++s_tickHookOffered <= TickHookDeclinedTicks)
+        {
+            return 0;
+        }
+
+        s_tickHookArmed = false;
+        s_tickHookCounterAtRedirect = s_tickHookCounter;
+        s_tickHookRedirects++;
+        return (nuint)(delegate*<void>)&TickHookLanding;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void TickHookLanding()
+    {
+        s_tickHookLanded = true;
+        while (true)
+        {
+        }
+    }
+
+    private static void TickHookVictimWorker()
+    {
+        if (SchedulerDiagnostics.TryGetCurrentThread(SchedulerManager.GetCurrentCpuId(), out KernelThreadInfo info))
+        {
+            s_tickHookVictimId = info.Id;
+        }
+        s_tickHookSpinning = true;
+        while (true)
+        {
+            Volatile.Write(ref s_tickHookCounter, s_tickHookCounter + 1);
+        }
+    }
+
+    private static void TestTickHookRedirectsRunningThread()
+    {
+        s_tickHookSpinning = false;
+        s_tickHookLanded = false;
+        s_tickHookVictimId = CpuExceptionInfo.NoThread;
+        s_tickHookOffered = 0;
+        s_tickHookRedirects = 0;
+        s_tickHookCounter = 0;
+        s_tickHookArmed = true;
+
+        CpuTickHandler? previous = CpuTickHook.Handler;
+        CpuTickHook.Handler = RedirectVictimOnly;
+        try
+        {
+            // On Main's CPU, so the victim is queued when it is killed.
+            using OneCpuScope oneCpu = OneCpuScope.Enter();
+            SysThread victim = new(TickHookVictimWorker);
+            victim.Start();
+            for (int i = 0; i < KillVictimPollRetries && !s_tickHookLanded; i++)
+            {
+                TimerManager.Wait(KillVictimPollWaitMs);
+            }
+
+            Assert.True(s_tickHookLanded, "the spinning thread must continue at the address the hook returned");
+            Assert.Equal(1, s_tickHookRedirects, "the thread is redirected once");
+            Assert.True(s_tickHookOffered > TickHookDeclinedTicks, "the declined ticks come first");
+            Assert.True(s_tickHookCounterAtRedirect > 0, "a declined tick leaves the thread running where it was");
+            Assert.Equal(s_tickHookCounterAtRedirect, Volatile.Read(ref s_tickHookCounter), "the loop the thread left makes no progress");
+
+            // The scans of a collection meet the thread with its frames left behind.
+            GC.Collect();
+
+            ThreadKillResult result = SchedulerDiagnostics.RequestKill(s_tickHookVictimId);
+            Assert.Equal((int)ThreadKillResult.Killed, (int)result, "the redirected thread is an ordinary queued thread");
+            Assert.True(victim.Join(KillJoinTimeoutMs), "Join must return once the redirected thread is killed");
+        }
+        finally
+        {
+            s_tickHookArmed = false;
+            CpuTickHook.Handler = previous;
+        }
+    }
+
+    // Offers only count: any offer for an idle thread breaks the contract.
+    private static nuint CountIdleOffers(in CpuTickInfo tick)
+    {
+        if (SchedulerManager.CurrentCpuState?.CurrentThread is { IsIdle: true } idle && idle.Id == tick.ThreadId)
+        {
+            s_tickHookIdleOffers++;
+        }
+
+        return 0;
+    }
+
+    // Counter-check: while Main sleeps its CPU ticks on its idle thread, which
+    // is never offered to the hook.
+    private static void TestTickHookIdleThreadIsNotOffered()
+    {
+        s_tickHookIdleOffers = 0;
+        CpuTickHandler? previous = CpuTickHook.Handler;
+        CpuTickHook.Handler = CountIdleOffers;
+        uint ticks = SchedulerManager.TickCount;
+        try
+        {
+            SysThread.Sleep(TickHookIdleMs);
+        }
+        finally
+        {
+            CpuTickHook.Handler = previous;
+        }
+
+        Assert.True(SchedulerManager.TickCount - ticks > TickHookDeclinedTicks, "the ticks went on while Main slept");
+        Assert.Equal(0, s_tickHookIdleOffers, "an idle thread is never offered to the hook");
+    }
+#endif
 
     private static volatile bool s_liveVictimStarted;
     private static volatile bool s_liveVictimRelease;

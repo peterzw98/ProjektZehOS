@@ -18,7 +18,9 @@ internal static class Experimentals
     /// <see cref="SchedulerThreadState"/>/<see cref="SchedulerThreadFlags"/> enums,
     /// and the CPU exception hook that hands a faulting thread to the scheduler
     /// (<see cref="CPU.CpuExceptionHook"/>, <see cref="CPU.CpuExceptionHandler"/>,
-    /// <see cref="CPU.CpuExceptionInfo"/>, <see cref="CPU.CpuExceptionAction"/>).
+    /// <see cref="CPU.CpuExceptionInfo"/>, <see cref="CPU.CpuExceptionAction"/>),
+    /// and the tick hook (ZehOS patch aot-loop-exit: <see cref="CPU.CpuTickHook"/>,
+    /// <see cref="CPU.CpuTickHandler"/>, <see cref="CPU.CpuTickInfo"/>).
     /// </summary>
     internal const string SchedulerSeamDiagId = "COSMOS0001";
 }
