@@ -13,7 +13,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "1-kvm-thread",
@@ -29,7 +30,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "1-kvm-isolation",
@@ -47,7 +49,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "1-kvm-shutdown",
@@ -65,7 +68,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "1-kvm-doomquick-remove",
@@ -91,7 +95,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-kvm-doomquick-upgrade",
@@ -117,7 +122,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-kvm-doomquick-corrupt",
@@ -143,7 +149,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-kvm-doomquick-minkernel",
@@ -169,7 +176,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-kvm-boot",
@@ -185,7 +193,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "2-kvm-thread",
@@ -201,7 +210,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "2-kvm-isolation",
@@ -219,7 +229,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "2-kvm-shutdown",
@@ -237,7 +248,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "2-kvm-doomquick-remove",
@@ -263,7 +275,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-kvm-doomquick-upgrade",
@@ -289,7 +302,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-kvm-doomquick-corrupt",
@@ -315,7 +329,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-kvm-doomquick-minkernel",
@@ -341,7 +356,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-kvm-boot",
@@ -357,7 +373,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "4-kvm-thread",
@@ -373,7 +390,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "4-kvm-isolation",
@@ -391,7 +409,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "4-kvm-shutdown",
@@ -409,7 +428,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "4-kvm-doomquick-remove",
@@ -435,7 +455,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-kvm-doomquick-upgrade",
@@ -461,7 +482,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-kvm-doomquick-corrupt",
@@ -487,7 +509,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-kvm-doomquick-minkernel",
@@ -513,7 +536,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-boot",
@@ -529,7 +553,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-thread",
@@ -545,7 +570,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-isolation",
@@ -563,7 +589,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-shutdown",
@@ -581,7 +608,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-doomquick-remove",
@@ -607,7 +635,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-doomquick-upgrade",
@@ -633,7 +662,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-doomquick-corrupt",
@@ -659,7 +689,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-kvm-doomquick-minkernel",
@@ -685,7 +716,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-boot",
@@ -701,7 +733,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-thread",
@@ -717,7 +750,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-isolation",
@@ -735,7 +769,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-shutdown",
@@ -753,7 +788,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-doomquick-remove",
@@ -779,7 +815,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-doomquick-upgrade",
@@ -805,7 +842,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-doomquick-corrupt",
@@ -831,7 +869,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-kvm-doomquick-minkernel",
@@ -857,7 +896,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 1800,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-tcg-boot",
@@ -873,7 +913,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "1-tcg-thread",
@@ -889,7 +930,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "1-tcg-isolation",
@@ -907,7 +949,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "1-tcg-shutdown",
@@ -925,7 +968,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "1-tcg-doomquick-remove",
@@ -952,7 +996,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-tcg-doomquick-upgrade",
@@ -979,7 +1024,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-tcg-doomquick-corrupt",
@@ -1006,7 +1052,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "1-tcg-doomquick-minkernel",
@@ -1033,7 +1080,8 @@
       "ZEHOS_QEMU_SMP": "1"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-tcg-boot",
@@ -1049,7 +1097,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "2-tcg-thread",
@@ -1065,7 +1114,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "2-tcg-isolation",
@@ -1083,7 +1133,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "2-tcg-shutdown",
@@ -1101,7 +1152,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "2-tcg-doomquick-remove",
@@ -1128,7 +1180,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-tcg-doomquick-upgrade",
@@ -1155,7 +1208,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-tcg-doomquick-corrupt",
@@ -1182,7 +1236,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "2-tcg-doomquick-minkernel",
@@ -1209,7 +1264,8 @@
       "ZEHOS_QEMU_SMP": "2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-tcg-boot",
@@ -1225,7 +1281,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "4-tcg-thread",
@@ -1241,7 +1298,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "4-tcg-isolation",
@@ -1259,7 +1317,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "4-tcg-shutdown",
@@ -1277,7 +1336,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "4-tcg-doomquick-remove",
@@ -1304,7 +1364,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-tcg-doomquick-upgrade",
@@ -1331,7 +1392,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-tcg-doomquick-corrupt",
@@ -1358,7 +1420,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4-tcg-doomquick-minkernel",
@@ -1385,7 +1448,8 @@
       "ZEHOS_QEMU_SMP": "4"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-boot",
@@ -1401,7 +1465,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-thread",
@@ -1417,7 +1482,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-isolation",
@@ -1435,7 +1501,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-shutdown",
@@ -1453,7 +1520,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-doomquick-remove",
@@ -1480,7 +1548,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-doomquick-upgrade",
@@ -1507,7 +1576,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-doomquick-corrupt",
@@ -1534,7 +1604,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "4c2t2-tcg-doomquick-minkernel",
@@ -1561,7 +1632,8 @@
       "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-boot",
@@ -1577,7 +1649,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Boot bis Desktop"
+    "note": "Boot bis Desktop",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-thread",
@@ -1593,7 +1666,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+    "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-isolation",
@@ -1611,7 +1685,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Isolation positiv, 2 Laeufe"
+    "note": "Isolation positiv, 2 Laeufe",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-shutdown",
@@ -1629,7 +1704,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Recovery-ISO: reboot und shutdown"
+    "note": "Recovery-ISO: reboot und shutdown",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-doomquick-remove",
@@ -1656,7 +1732,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario remove (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-doomquick-upgrade",
@@ -1683,7 +1760,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario upgrade (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-doomquick-corrupt",
@@ -1710,7 +1788,8 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario corrupt (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   },
   {
     "name": "8c4t2-tcg-doomquick-minkernel",
@@ -1737,6 +1816,7 @@
       "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
     },
     "timeout": 3600,
-    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)"
+    "note": "Doom quick, Szenario minkernel (einzeln, damit hoechstens 3 Gaeste laufen; TCG ohne Snapshot, weil der Snapshot Doom aus dem Repository installiert)",
+    "repeat": 3
   }
 ]
