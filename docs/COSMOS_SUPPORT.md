@@ -153,10 +153,10 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
   „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
   Paketdateien frei und startet einen neuen Worker.
 
-**Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE und #PF im Worker, danach
+**Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE, #PF, #GP und #UD im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
-gemeldeten Vektor mit dem erwarteten (#DE 0, #PF 14). Die Gegenprobe
+gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
 das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
@@ -175,7 +175,8 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
   verwalteten Objekte, auf die der aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die
   Speicherbereinigung ihn weiter durchsucht.
 - Ein Double Fault (etwa Stacküberlauf, kein IST) bleibt ein Triple Fault. Der Worker-Stack hat keine Schutzseite.
-- Nicht geprüft: #UD und #GP, eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
+- #UD und #GP (I1-N): #UD kommt aus `zehos_probe_ud` (`zehos_probe_fault.c`, `__builtin_trap()`), #GP aus einem Zugriff auf eine nicht kanonische Adresse; der Probe-Bau erlaubt 5 isolierte Läufe statt 3. Gast (QEMU, Probe-Bau, vier `handled=1` mit Vektor 0, 14, 13, 6): KVM 10/10, TCG 3/3; Gegenprobe `--negative` und `--nmi` halten je 1/1 an.
+- Nicht geprüft: eine Ausnahme mitten im wasm3-Interpreter oder in WAMR-AOT-Code statt im Probecode,
   VMware.
 
 ## Dateisysteme nicht threadsicher: StorageLock (18. November 2026)
