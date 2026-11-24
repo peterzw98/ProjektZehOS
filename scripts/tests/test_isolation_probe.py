@@ -60,10 +60,10 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(['Arena nach pf nicht freigegeben'], isolation.evaluate(log, negative=False))
 
     def test_free_memory_may_drop_by_stacks_but_not_by_arena(self):
-        # 16 MiB fuer die beiden aufgegebenen Worker-Stacks sind erlaubt, 48 MiB (Stacks plus 2 x 16 MiB Arena) nicht.
-        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=352232')
+        # Stacks und Desktop-Puffer (bis 24 MiB) sind erlaubt, 32 MiB (nach E6-G: 2 x 16 MiB Arena ohne Stacks) nicht.
+        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=368232')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
-        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=376424')
+        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=372328')
         self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
         missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=384600\n', '')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))

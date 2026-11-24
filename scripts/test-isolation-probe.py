@@ -23,8 +23,10 @@ spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # I2-C: erlaubter Rueckgang des freien Speichers ueber beide Fehlerlaeufe. Sie hielten je 16 MiB in der Arena (ohne
-# Freigabe 32 MiB); bis E6-G (#523) bleiben ausserdem die beiden aufgegebenen 8-MiB-Worker-Stacks belegt (16 MiB).
-ARENA_MAX_DROP_KIB = 24 * 1024
+# Freigabe 32 MiB). Bis E6-G (#523) bleiben ausserdem die beiden aufgegebenen 8-MiB-Worker-Stacks belegt (16 MiB), und in
+# 2 von 10 Laeufen legte der Desktop dazwischen seine Bildpuffer an (etwa 8 MiB, wie in #523 beschrieben). Gemessen mit
+# Freigabe 16 bis 25 MiB; ohne waeren es 48 bis 56 MiB, nach E6-G 32 bis 40 MiB. 28 MiB trennt beide Faelle.
+ARENA_MAX_DROP_KIB = 28 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14}
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
