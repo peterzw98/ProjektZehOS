@@ -102,6 +102,7 @@ public class Kernel : Sys.Kernel
         TR.Run("GC_OutOfMemory_SizeOverflowThrows", TestGCOutOfMemorySizeOverflowThrows);
         TR.Run("GC_NegativeArrayLengthThrowsOverflow", TestGCNegativeArrayLengthThrowsOverflow);
         TR.Run("GC_OutOfMemory_ExhaustedHeapCatchable", TestGCOutOfMemoryExhaustedHeapCatchable);
+        TR.Run("GC_Heap_AllocOrCollectOnFullHeap", TestGCHeapAllocOrCollectOnFullHeap);
 
         // Small segments must not split the free memory large arrays need (ZehOS patch page-alloc-split).
         // The load is sized for the 512 MB guest of the Makefile: in a larger guest it no longer
@@ -557,6 +558,40 @@ public class Kernel : Sys.Kernel
         byte[] after = new byte[OpaqueLength(1 << 20)];
         after[after.Length - 1] = 0x3C;
         Assert.Equal((byte)0x3C, after[after.Length - 1], "GC: allocation after the exhausted heap was released");
+    }
+
+    // ZehOS patch foh-gc-retry: the pages are held by dead objects and no collection has run, as
+    // after a package install in ZehOS. The frozen heap's 4 MiB segment must still be served.
+    private static unsafe void TestGCHeapAllocOrCollectOnFullHeap()
+    {
+        const uint SegmentSize = 4 * 1024 * 1024;
+        CoreGC.Collect();
+        int collections = GC.CollectionCount(0);
+        while (PageAllocator.FreePageCount >= 512 && GC.CollectionCount(0) == collections)
+        {
+            byte[] garbage = new byte[OpaqueLength(4096)];
+            garbage[0] = 1;
+        }
+
+        Assert.True(GC.CollectionCount(0) == collections, "GC: the heap filled without a collection");
+        byte* plain = Heap.Alloc(SegmentSize);
+        byte* block = Heap.AllocOrCollect(SegmentSize);
+        int after = GC.CollectionCount(0);
+        bool served = block != null;
+        if (plain != null)
+        {
+            Heap.Free(plain);
+        }
+
+        if (served)
+        {
+            block[SegmentSize - 1] = 0x3C;
+            Heap.Free(block);
+        }
+
+        Assert.True(plain == null, "GC: 4 MiB do not fit before the collection");
+        Assert.True(served, "GC: 4 MiB fit after the collection");
+        Assert.True(after == collections + 1, "GC: exactly one collection");
     }
 
     // ZehOS patch page-alloc-split: memory the page allocator may manage for the fragmentation test
