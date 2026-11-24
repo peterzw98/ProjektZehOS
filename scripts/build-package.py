@@ -30,9 +30,10 @@ MAX_FILES, MAX_CONTENT, MAX_MANIFEST = 128, 128 * 1024 * 1024, 16 * 1024
 # Speicher- und Stackpruefungen eines .aot nicht selbst feststellen kann (Sicherheitsdokument, Abschnitt 3.2 und 5).
 # Zugelassen ist nur das wamrc 2.4.5 mit dem Patch fixture/wamrc-noredzone.patch (alle erzeugten Funktionen ohne
 # Red Zone; Cosmos betritt Interrupts ohne Stackwechsel und ueberschrieb sonst Werte unter RSP, WASM_FEASIBILITY.md).
-# Das fruehere wamrc ohne Patch (6b400e9c...) ist bewusst nicht mehr zugelassen. Ein anderes wamrc ist eine eigene Aufgabe.
+# Das fruehere wamrc ohne Patch (6b400e9c...) und das erste gepatchte (5809858b..., Peter 17.11.) sind bewusst nicht mehr zugelassen;
+# zugelassen ist der native Neubau (gcc 14.2, 24.11., Peter im Terminal). Ein anderes wamrc ist eine eigene Aufgabe.
 WAMRC_VERSION = re.compile(r"(?<![0-9.])2\.4\.5(?![0-9.])")
-WAMRC_SHA256 = frozenset({"5809858be58ab78b00d970b5d50cae40e1a38d2a99abe16f8b952f74e128902c"})
+WAMRC_SHA256 = frozenset({"c4367cf956629f0c2d2799c63d21ecf31313aa2999c98b4ee2fef6558b678197"})
 # Gleich fixture/compile-aot.sh desselben Branches: feste Zielmaschine (TCG-tauglich), Pruefungen im erzeugten Code,
 # kein SIMD. Weitere Schalter nimmt das Werkzeug bewusst nicht an.
 WAMRC_FLAGS = ("--target=x86_64", "--cpu=x86-64", "--bounds-checks=1", "--stack-bounds-checks=1", "--size-level=0", "--disable-simd")
