@@ -129,6 +129,48 @@ class PowerFlowTests(unittest.TestCase):
             self.flow(exits_on_reboot=False, running=False).power_flow()
 
 
+class DesktopShutdownRaceTests(unittest.TestCase):
+    """desktop_flow und ps2_flow enden mit shell("shutdown"); das Key-up kann nach dem Poweroff scheitern."""
+
+    def run_ps2(self, real_powered_off):
+        current = guest.Run.__new__(guest.Run)
+        current.boot = mock.Mock()
+        current.screen = mock.Mock()
+        current.park_pointer = mock.Mock()
+        current.patch = lambda image, box: image
+        current.settle = lambda name, test=lambda image: True, timeout=60: b'A'
+        current.powered_off = real_powered_off
+        current.guest = mock.Mock(size=(1024, 768))
+        current.guest.shell.side_effect = ConnectionError('QMP input-send-event: Verbindung beendet')
+        current.ps2_flow()
+
+    def vm(self, code):
+        current = mock.Mock()
+        current.wait.return_value = code
+        return current
+
+    def powered_off(self, code):
+        current = guest.Run.__new__(guest.Run)
+        current.vm = self.vm(code)
+        current.guest = mock.Mock()
+        return current.powered_off
+
+    def test_closed_connection_with_clean_poweroff_passes(self):
+        self.run_ps2(self.powered_off(0))
+
+    def test_closed_connection_with_failed_exit_code_fails(self):
+        with self.assertRaises(AssertionError):
+            self.run_ps2(self.powered_off(1))
+
+    def test_closed_connection_without_poweroff_fails(self):
+        current = guest.Run.__new__(guest.Run)
+        current.vm = mock.Mock()
+        current.vm.wait.side_effect = subprocess.TimeoutExpired('qemu', 60)
+        current.guest = mock.Mock()
+        with self.assertRaises(AssertionError):
+            self.run_ps2(current.powered_off)
+
+
 class Ps2FlowTests(unittest.TestCase):
     def run_flow(self, frames: dict):
         """frames: Bild je settle-Name; die Attrappe prueft die Bedingung wie Run.settle und scheitert wie bei Zeitablauf."""

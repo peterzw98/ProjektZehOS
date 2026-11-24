@@ -441,6 +441,196 @@ public sealed class PackageTests
     }
 
     [TestMethod]
+    public void FailedRenameKeepsOldFileAndLeavesNoPendingNew()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path, "1.0.0\n");
+        // Umbenennungsfehler beim Uebernehmen der neuen Fassung (nach dem Sichern der alten).
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (from == path + ".new") throw new IOException("Umbenennen scheitert"); File.Move(from, to); }));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+        Assert.IsFalse(File.Exists(path + ".old"));
+    }
+
+    [TestMethod]
+    public void RestoreDiscardsInterruptedWriteButAdoptsCompleteNew()
+    {
+        string path = Path.Combine(work, "active");
+        // Abbruch waehrend des Schreibens: nur .wip, unvollstaendig; nichts wird uebernommen.
+        File.WriteAllText(path + ".wip", "2.0");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsFalse(File.Exists(path + ".wip"));
+        // Erstanlage, Abbruch nach vollstaendiger .new: wird uebernommen.
+        File.WriteAllText(path + ".new", "2.0.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("2.0.0\n", File.ReadAllText(path));
+        // Abbruch zwischen Sichern der alten und Umbenennen der neuen Fassung: die alte Fassung bleibt, die .new wird verworfen.
+        File.Delete(path);
+        File.WriteAllText(path + ".new", "2.0.0\n");
+        File.WriteAllText(path + ".old", "1.0.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        PackageStore.RestorePendingStorageLocked(path); // wiederholbar
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+        Assert.IsFalse(File.Exists(path + ".old"));
+        // Nur .old (Rueckweg und Umbenennen scheiterten ohne .new): die alte Fassung kommt zurueck.
+        File.Delete(path);
+        File.WriteAllText(path + ".old", "1.0.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+    }
+
+    private static void FailRenames(string from, string to) => throw new IOException("Umbenennen scheitert: " + Path.GetFileName(from));
+
+    [TestMethod]
+    public void DoubleRenameFailureKeepsOldFileAndReportsIt()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path, "1.0.0\n");
+        // Neue Fassung nicht uebernehmbar und der Rueckweg scheitert ebenfalls: Fehler wird gemeldet, alte Fassung bleibt als .old.
+        int calls = 0;
+        var error = Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (++calls <= 2) File.Move(from, to); else FailRenames(from, to); }));
+        StringAssert.Contains(error.Message, "Rueckweg");
+        Assert.IsFalse(File.Exists(path));
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+    }
+
+    [TestMethod]
+    public void RetryAfterDoubleFailureNeverDropsOldFile()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path + ".old", "1.0.0\n");
+        File.WriteAllText(path + ".new", "2.0.0\n");
+        // Ein weiterer Versuch vor Reconcile heilt zuerst; scheitert er, bleibt die alte Fassung.
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("3.0.0\n"),
+            (from, to) => { if (from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("3.0.0\n"));
+        Assert.AreEqual("3.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".old"));
+    }
+
+    [TestMethod]
+    public void FailedBackupLeavesNoNewThatRestoreCouldAdopt()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path, "1.0.0\n");
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (to.EndsWith(".old", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        // Remove bricht nach dem Loeschen des Markers ab: nichts darf die neue Version aktivieren.
+        File.Delete(path);
+        PackageStore.RestorePendingStorageLocked(path, true);
+        Assert.IsFalse(File.Exists(path));
+    }
+
+    [TestMethod]
+    public void RestoreDiscardsLegacyNewWithoutTrailingNewline()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path + ".new", "1.0.0"); // Altlast: konnte aus "1.0.01" gekuerzt sein
+        PackageStore.RestorePendingStorageLocked(path, true);
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+    }
+
+    [TestMethod]
+    public void ReconcileKeepsOldVersionAfterDoubleRenameFailure()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("repo"), "", Publish(Path.Combine(work, "repo"), "doom", "1.0.0"), CancellationToken.None).IsOK());
+        string doom = Path.Combine(work, "store", "apps", "doom");
+        Directory.CreateDirectory(Path.Combine(doom, "1.1.0", "files"));
+        File.Move(Path.Combine(doom, "active"), Path.Combine(doom, "active.old"));
+        File.WriteAllText(Path.Combine(doom, "active.new"), "1.1.0\n");
+        Assert.IsTrue(store.Reconcile().IsOK());
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(Path.Combine(doom, "active")));
+        Assert.IsTrue(Directory.Exists(Path.Combine(doom, "1.0.0")));
+        Assert.IsFalse(Directory.Exists(Path.Combine(doom, "1.1.0")));
+    }
+
+    [TestMethod]
+    public void RemoveHealsAndCleansLeftoversSoPackageStaysRemoved()
+    {
+        var store = Store();
+        Assert.IsTrue(store.Install(Source("repo"), "", Publish(Path.Combine(work, "repo"), "doom", "1.0.0"), CancellationToken.None).IsOK());
+        string doom = Path.Combine(work, "store", "apps", "doom");
+        // Doppelfehler-Zustand: alter Marker nur als .old, neue als .new.
+        File.Move(Path.Combine(doom, "active"), Path.Combine(doom, "active.old"));
+        File.WriteAllText(Path.Combine(doom, "active.new"), "1.1.0\n");
+        Assert.IsTrue(store.Remove("doom").IsOK());
+        Assert.IsTrue(store.Reconcile().IsOK());
+        Assert.IsFalse(Directory.Exists(doom));
+    }
+
+    [TestMethod]
+    public void ReplaceDiscardsLegacyTruncatedNewBeforeBackingUp()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path + ".new", "1.0.0"); // gekuerzte Altlast ohne Zeilenende, Ziel fehlt
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }, true));
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsFalse(File.Exists(path + ".new"));
+    }
+
+    [TestMethod]
+    public void FailedFirstWriteLeavesNothingAndRestoreKeepsExistingTarget()
+    {
+        string path = Path.Combine(work, "active");
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("1.0.0\n"),
+            (from, to) => { if (from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }));
+        Assert.IsFalse(File.Exists(path + ".new"));
+        File.WriteAllText(path, "1.0.0\n");
+        File.WriteAllText(path + ".old", "0.9.0\n");
+        PackageStore.RestorePendingStorageLocked(path);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".old"));
+    }
+
+    [TestMethod]
+    public void FailedReplaceWithoutExistingOldFileLeavesConsistentStateAndReportsError()
+    {
+        string path = Path.Combine(work, "active");
+        // Erstanlage (keine Altdatei, also auch keine .old): Umbenennen nach dem Ziel scheitert.
+        var error = Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("1.0.0\n"),
+            (from, to) => { if (to == path) FailRenames(from, to); else File.Move(from, to); }, true));
+        StringAssert.Contains(error.Message, "scheitert");
+        foreach (string suffix in new[] { "", ".new", ".old", ".wip" }) Assert.IsFalse(File.Exists(path + suffix), suffix);
+        // Zustand konsistent: ein spaeterer Versuch gelingt und Restore findet nichts Offenes.
+        PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("1.0.0\n"), null, true);
+        PackageStore.RestorePendingStorageLocked(path, true);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+    }
+
+    [TestMethod]
+    public void DoubleRenameFailureLeavesOldAsOldAndRestoreNeverDeletesIt()
+    {
+        string path = Path.Combine(work, "active");
+        File.WriteAllText(path, "1.0.0\n");
+        // Weder .new->Ziel noch der Rollback .old->Ziel gelingt.
+        var error = Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("2.0.0\n"),
+            (from, to) => { if (to == path) FailRenames(from, to); else File.Move(from, to); }, true));
+        StringAssert.Contains(error.Message, "Rueckweg");
+        Assert.IsFalse(File.Exists(path));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path + ".old"));
+        Assert.AreEqual("2.0.0\n", File.ReadAllText(path + ".new"));
+        // Ein weiterer Versuch mit weiter kaputtem Umbenennen: Restore am Anfang holt die alte Fassung zurueck, sie geht nie verloren.
+        Assert.ThrowsException<IOException>(() => PackageStore.ReplaceFileStorageLocked(path, Encoding.ASCII.GetBytes("3.0.0\n"),
+            (from, to) => { if (to == path && from.EndsWith(".new", StringComparison.Ordinal)) FailRenames(from, to); else File.Move(from, to); }, true));
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        PackageStore.RestorePendingStorageLocked(path, true);
+        Assert.AreEqual("1.0.0\n", File.ReadAllText(path));
+        Assert.IsFalse(File.Exists(path + ".old"));
+        Assert.IsFalse(File.Exists(path + ".new"));
+    }
+
+    [TestMethod]
     public void CatalogRequiresSignatureAndNonDecreasingGeneration()
     {
         var store = Store();

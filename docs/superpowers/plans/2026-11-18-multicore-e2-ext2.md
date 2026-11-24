@@ -325,6 +325,6 @@ Cosmos das Image nicht mehr verändert.
 
 ## Abschluss der Etappe
 
-- [ ] `grep -rn "\[Plug" ProjektZeh/Storage` liefert keine Treffer.
-- [ ] `ROADMAP.md`: datierter Absatz „ext2-Fehler in der Cosmos-Quelle behoben“ mit den `PATCHES.md`-Kurznamen und den Gastbelegen; die Zeilen zu den Plugs (#225, #230, Truncate-Plug) als historisch kennzeichnen.
-- [ ] Inventar: alle ext2-Zeilen als erledigt oder mit dem verbliebenen Rest.
+- [x] `grep -rn "\[Plug" ProjektZeh/Storage` liefert keine Treffer.
+- [x] `ROADMAP.md`: datierter Absatz „ext2-Fehler in der Cosmos-Quelle behoben“ mit den `PATCHES.md`-Kurznamen und den Gastbelegen; die Zeilen zu den Plugs (#225, #230, Truncate-Plug) als historisch kennzeichnen.
+- [x] Inventar: alle ext2-Zeilen als erledigt oder mit dem verbliebenen Rest.
