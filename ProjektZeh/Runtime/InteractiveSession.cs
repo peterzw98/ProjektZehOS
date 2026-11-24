@@ -45,6 +45,8 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
         while (true)
         {
 #if ZEHOS_WASM
+            // Eine geschlossene App, die should_exit nicht abfragt, nach der Frist beenden (Roadmap 12.4-I2-A).
+            Wasm.WasmRuntime.PollAbort();
             // Nach einer isolierten CPU-Ausnahme im Wasm-Worker den Lauf hier beenden (Roadmap 12.4-I1).
             Wasm.WasmRuntime.PollFaultIsolation();
 #endif
@@ -131,7 +133,14 @@ internal sealed class InteractiveSession(ShellService shell, Func<ShellService> 
             {
                 if (graphics)
                 {
-                    try { display!.Render(input, now); }
+                    try
+                    {
+                        display!.Render(input, now);
+#if ZEHOS_ISOLATION_PROBE
+                        // Scene- und Hintergrundpuffer (je etwa 8 MiB) entstehen erst im ersten Bild, nicht beim Desktopstart.
+                        CosmosIsolationProbe.MarkFrameRendered();
+#endif
+                    }
                     catch (Exception exception) { FailGraphics("Zeichnen", exception); }
                 }
                 else

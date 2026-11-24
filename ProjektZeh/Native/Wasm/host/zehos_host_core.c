@@ -12,6 +12,12 @@ volatile int32_t zehos_host_depth;
 // Der Kernel liest den Zaehler im Ausnahmepfad ohne Aufruf: die Adresse holt er einmal beim Start des Workers.
 volatile int32_t* zehos_host_depth_address(void) { return &zehos_host_depth; }
 
+volatile int32_t zehos_host_abort;
+
+// Nur 0 oder 1; ein volatile-Schreiben genuegt, weil der Worker den Wert bei jedem Pruefpunkt neu liest und ein
+// verspaetet gesehener Merker nur den Abbruch um einen Pruefpunkt verschiebt.
+void zehos_host_set_abort(int32_t on) { zehos_host_abort = on != 0; }
+
 // Exporte des C#-Kernels (UnmanagedCallersOnly).
 extern void zehos_wasm_host_write(int32_t fd, const uint8_t* data, uint32_t length);
 extern uint64_t zehos_wasm_host_time_ns(int32_t clockId);

@@ -38,6 +38,10 @@
 
 d_m3BeginExternC
 
+// ZehOS: Abbruchmerker der Hostschicht (Native/Wasm/host/zehos_host_core.c), gelesen je Schleifendurchlauf in op_Loop
+// (siehe ORIGIN.txt).
+extern volatile int32_t zehos_host_abort;
+
 #define rewrite_op(OP)             * ((void **) (_pc-1)) = (void*)(OP)
 
 #define immediate(TYPE)            * ((TYPE *) _pc++)
@@ -1970,6 +1974,12 @@ d_m3Op(Loop)
         trace_rt->callDepth++;
 #endif
         r = nextOpImpl();
+
+        // ZehOS: lets the host end a loop that makes no calls (see ORIGIN.txt).
+        if (M3_UNLIKELY(zehos_host_abort) && r == _pc) {
+            m3ret_t aborted = m3_Yield();
+            if (aborted) r = aborted;
+        }
 
 #if d_m3EnableStrace >= 3
         trace_rt->callDepth--;
