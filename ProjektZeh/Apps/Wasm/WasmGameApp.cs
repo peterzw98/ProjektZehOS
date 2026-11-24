@@ -158,6 +158,7 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
             if (result == WasmStatus.Ok && exitCode == 0) IsCloseRequested = !exitRequested;
             else if (result == WasmStatus.Ok) status = $"App beendet (Exitcode {exitCode}): {LastErrorLine()}";
             else if (result == WasmStatus.LoadFailed && frameWidth == 0) status = message;
+            else if (result == WasmStatus.Aborted) status = message;
             else status = $"App abgebrochen: {result} {message}";
             ending = result == WasmStatus.Ok && exitCode == 0 ? "beendet" : "Ende: " + status;
         }
@@ -237,15 +238,20 @@ internal sealed class WasmGameApp(PackageStore store, string packageId, UiPainte
         }
     }
 
+    // Beide Wege melden das Schliessen auch der Laufzeit: Fragt die App should_exit nicht ab, beendet WasmRuntime sie
+    // nach AbortWatchdog.GraceMilliseconds selbst (Roadmap 12.4-I2-A). Ausserhalb von gate, weil WasmRuntime seine
+    // eigene Sperre nimmt.
     public bool RequestClose()
     {
         lock (gate) { exitRequested = true; Monitor.PulseAll(gate); }
+        WasmRuntime.CloseRequested(this);
         return true;
     }
 
     public void Close()
     {
         lock (gate) { exitRequested = true; Monitor.PulseAll(gate); }
+        WasmRuntime.CloseRequested(this);
         ResetInput();
     }
 

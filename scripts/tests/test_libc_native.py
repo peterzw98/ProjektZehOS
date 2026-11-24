@@ -41,6 +41,7 @@ class NativeLibcTests(unittest.TestCase):
         subprocess.run([compiler, "-shared", "-fPIC", "-O2", "-nostdinc", "-nostdlib", "-ffreestanding", "-fno-builtin",
                         "-I", str(ROOT / "ProjektZeh/Native/Wasm/libc/include"), "-isystem", str(include),
                         str(ROOT / "ProjektZeh/Native/Wasm/libc/libc.c"), str(ROOT / "scripts/tests/libc-host.c"),
+                        str(ROOT / "ProjektZeh/Native/Wasm/host/zehos_host_arena.c"),
                         "-lgcc", "-o", str(library)] + LINK_LOCAL, check=True)
         cls.lib = lib = ctypes.CDLL(str(library))
         for name in ("malloc", "calloc", "realloc", "heap_test_last_raw", "heap_test_last_freed"):
@@ -53,6 +54,9 @@ class NativeLibcTests(unittest.TestCase):
         lib.zehos_memory_begin.argtypes = [ctypes.c_size_t, ctypes.c_int, ctypes.c_void_p]
         lib.zehos_memory_begin.restype = ctypes.c_int
         lib.zehos_memory_end.restype = None
+        lib.zehos_arena_begin.argtypes = [ctypes.c_size_t]
+        lib.zehos_arena_begin.restype = ctypes.c_int
+        lib.thread_test_set.argtypes = [ctypes.c_int]
         for name in ("zehos_memory_used", "zehos_memory_peak"):
             getattr(lib, name).restype = ctypes.c_size_t
         cls.current_thread = ctypes.c_int(7)
@@ -72,6 +76,7 @@ class NativeLibcTests(unittest.TestCase):
         self.lib.zehos_memory_end()
         self.lib.heap_test_reset()
         self.current_thread.value = 7
+        self.lib.thread_test_set(7)
 
     def tearDown(self):
         self.lib.zehos_memory_end()
@@ -267,6 +272,38 @@ class NativeLibcTests(unittest.TestCase):
         self.lib.zehos_memory_end()
         self.lib.zehos_memory_end()
         self.assertEqual(self.lib.heap_test_frees(), 4)
+
+    # Laufarena im Worker (I2-C): zehos_arena_begin nimmt den aufrufenden Thread als Besitzer, wie WasmRuntime.BeginArena.
+    def test_end_frees_blocks_left_by_owner(self):
+        self.assertEqual(self.lib.zehos_arena_begin(0), 1)
+        first, second, third = [self.lib.malloc(32) for _ in range(3)]
+        self.lib.free(second)
+        self.assertGreater(self.lib.zehos_memory_peak(), 0)
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.assertEqual(self.lib.heap_test_frees(), 3)
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 3)
+
+    def test_blocks_of_other_thread_are_not_freed(self):
+        self.assertEqual(self.lib.zehos_arena_begin(0), 1)
+        self.lib.thread_test_set(8)
+        foreign = self.lib.malloc(32)
+        self.assertEqual(self.lib.zehos_memory_used(), 0)
+        self.lib.zehos_memory_end()
+        self.assertEqual(self.lib.heap_test_frees(), 0)
+        self.lib.free(foreign)
+        self.assertEqual(self.lib.heap_test_frees(), 1)
+
+    def test_arena_begin_without_scheduler_or_twice_is_rejected(self):
+        self.lib.thread_test_set(-1)
+        self.assertEqual(self.lib.zehos_arena_begin(0), 0)
+        self.lib.thread_test_set(7)
+        self.assertEqual(self.lib.zehos_arena_begin(0), 1)
+        self.assertIsNotNone(self.lib.malloc(32))
+        # Eine laufende Arena (etwa die eines aufgegebenen AOT-Laufs) bleibt unberuehrt.
+        self.assertEqual(self.lib.zehos_arena_begin(0), 0)
+        self.assertGreater(self.lib.zehos_memory_used(), 0)
 
     def test_run_preserves_block_allocated_before_begin(self):
         before = self.lib.malloc(32)
