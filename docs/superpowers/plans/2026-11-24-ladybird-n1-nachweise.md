@@ -69,16 +69,16 @@ Frage: Kann ein Thread im Ring 3 laufen, unterbrochen werden, Systemaufrufe mach
 ### N1-A1: GDT, TSS und IST je CPU
 
 - **Branch:** `cosmos-patch/user-gdt` · **Größe:** 2 · **Rolle:** Senior (Opus) · **Voraussetzung:** #523 auf `master`
-- **Dateien:** anlegen `src/Cosmos.Kernel.Core.X64/Cpu/Gdt.cs`, `src/Cosmos.Kernel.Native.X64/CPU/Gdt.s`; ändern `src/Cosmos.Kernel.Core.X64/Cpu/Idt.cs` (IST-Nummer je Gate) und die verwalteten Startpfade von Boot- und weiteren CPUs. **Nicht** `Interrupts.s`.
-- **Inhalt:** eigene GDT und TSS je CPU, IST 1–3 für #DF, NMI, #MC; IOPB-Offset hinter dem TSS-Limit; `RSP0` auf einen gültigen Kernelstack. Handler auf einem IST-Stack dürfen keinen Threadwechsel vormerken.
+- **Dateien:** anlegen `src/Cosmos.Kernel.Core.X64/Cpu/Gdt.cs`, `src/Cosmos.Kernel.Native.X64/CPU/Gdt.s`; ändern `src/Cosmos.Kernel.Core.X64/Cpu/Idt.cs` (IST-Nummer je Gate). GDT und TSS werden in `Idt.RegisterAllInterrupts` (Boot-CPU) und `Idt.LoadOnCurrentCpu` (weitere CPUs) geladen. Keine gemeinsame Datei mit A2: **nicht** `Interrupts.s`, `X64InterruptController.cs`, `LocalApic.cs`, `ThreadContext.X64.cs`. A1 ist von R8 unabhängig, weil es den Tick nicht berührt.
+- **Inhalt:** eigene GDT und TSS je CPU, IST 1–3 für #DF, NMI, #MC; IOPB-Offset hinter dem TSS-Limit; `RSP0` auf einen gültigen Kernelstack. Handler auf einem IST-Stack dürfen keinen Threadwechsel vormerken und keinen Stack des unterbrochenen Threads melden: Prüfen, ob ein Stop per NMI (`CpuStop`, Panikpfad) den Rahmen als Threadkontext speichert; dann NMI erst in A3 auf IST legen und das im PR nennen.
 - **Abnahme:** Cosmos-Testkernel `Interrupts`, `Smp`, `Threading`, `GarbageCollector` wie ohne Patch, 1 und 4 CPUs; Selektoren und TSS jeder CPU im Seriallog; NMI-Probe (`scripts/test-isolation-probe.py`, NMI-Fall) unverändert.
 
 ### N1-A2: FPU-Zustand vollständig sichern
 
-- **Branch:** `cosmos-patch/fxsave` · **Größe:** 2 · **Rolle:** Senior (Opus) · **Voraussetzung:** #523 auf `master`
-- **Dateien:** `src/Cosmos.Kernel.Native.X64/CPU/Interrupts.s` (nur FPU-Teil), `src/Cosmos.Kernel.Core/Scheduler/ThreadContext.X64.cs`, alle Stellen mit den Versätzen 256 und 400; Test in `tests/Kernels/Cosmos.Kernel.Tests.Threading`.
-- **Inhalt:** `fxsave64`/`fxrstor64` (512 Byte, 16-Byte-ausgerichtet) statt `movdqu` XMM0–15; neue Threads beginnen mit FCW `0x37F` und MXCSR `0x1F80`.
-- **Abnahme:** neuer Test: zwei Threads mit verschiedenen x87-, MXCSR- und XMM-Werten bleiben 10 s unverändert (ohne Patch rot); Testkernel wie A1; GC-Tests grün.
+- **Branch:** `cosmos-patch/fxsave` · **Größe:** 2 · **Rolle:** Senior (Opus) · **Voraussetzung:** #523 auf `master` und der Cosmos-Patch R8 aus #423 im Branch `cosmos`
+- **Dateien:** `src/Cosmos.Kernel.Native.X64/CPU/Interrupts.s` (nur FPU-Teil), `src/Cosmos.Kernel.Core/Scheduler/ThreadContext.X64.cs`, `src/Cosmos.Kernel.Core.X64/Cpu/X64InterruptController.cs` (`XmmSaveAreaSizeBytes`, heute 256; benutzt im Reschedule- und im Stop-Pfad, Z. 156 und 201), `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs` (Tick, Z. 594); die Stub-Versätze 256 und 400. Nur prüfen, bei Bedarf ändern: `SchedulerThread.cs` (`ThreadContext.Size`, `GetContext`), `GarbageCollector.Mark.cs`, `CpuStop` und Panikpfad (Patch `panic-stop-cpus`), `TryAbandonCurrentFromInterrupt` (`ausnahme-hook`, `abandoned-thread-reap`) und der R8-Hook in `OnTimerInterrupt`. Test in `tests/Kernels/Cosmos.Kernel.Tests.Threading`.
+- **Inhalt:** Die Bereichsgröße steht danach an genau einer Stelle je Sprache; `git grep` auf 256 und 400 im PR belegt, dass kein alter Wert übrig ist. `fxsave64`/`fxrstor64` (512 Byte, 16-Byte-ausgerichtet) statt `movdqu` XMM0–15; neue Threads beginnen mit FCW `0x37F` und MXCSR `0x1F80`.
+- **Abnahme:** neuer Test: zwei Threads mit verschiedenen x87-, MXCSR- und XMM-Werten bleiben 10 s unverändert (ohne Patch rot); Testkernel wie A1; GC-Tests grün; Kerneltest von R8, aufgegebene Threads (`scripts/test-isolation-probe.py`) und Panik mit 4 CPUs unverändert.
 
 ### N1-A3: Interruptstub mit Herkunft Ring 3
 
@@ -89,10 +89,10 @@ Frage: Kann ein Thread im Ring 3 laufen, unterbrochen werden, Systemaufrufe mach
 
 ### N1-A4: Eintritt, Systemaufruf und Rückweg
 
-- **Branch:** `cosmos-patch/user-mode-probe` auf A3, mit A1 zusammengeführt · **Größe:** 3 · **Rolle:** Senior (Opus) · **Voraussetzung:** N1-A1, N1-A3
+- **Branch:** `cosmos-patch/user-mode-probe` auf A3, mit A1 zusammengeführt · **Größe:** 3 · **Rolle:** Senior (Opus) · **Voraussetzung:** N1-A1, N1-A3 (damit auch R8)
 - **Dateien:** anlegen `src/Cosmos.Kernel.Native.X64/CPU/UserMode.s`, `src/Cosmos.Kernel.Core/CPU/UserMode.cs`, `src/Cosmos.Kernel.Core.X64/Cpu/UserModeX64.cs`, `tests/Kernels/Cosmos.Kernel.Tests.UserMode/`; ändern `src/Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs`, `SchedulerThread.cs` (RSP0, FS-Basis, Merker je Thread).
-- **Inhalt:** Schnittstelle `UserMode`. `EFER.SCE`, `LSTAR`, `SFMASK` (IF, DF, TF, AC, NT) je CPU; SMEP und UMIP, wenn CPUID sie meldet. Vor **jedem** Rückweg (`sysretq` und `iretq`): RIP und RSP in der unteren kanonischen Hälfte, RFLAGS auf erlaubte Bits (IF=1, IOPL=0, NT=0), sonst kehrt `Enter` mit Fehler zurück. FS: belegen, dass Kernelcode FS nicht nutzt (Hinweis in `CpuOps.s`), sonst bei jedem Eintritt sichern. Fehler aus Ring 3 gehen an `FaultHandler`, Fehler aus Ring 0 unverändert an den vorhandenen Hook.
-- **Abnahme:** Testkernel `UserMode`, 1 und 4 CPUs: ein Systemaufruf, ein #UD, ein #PF mit Fehlercode, `RequestLeave` auf eine Schleife, nicht kanonischer Rückweg. Testseiten liegen in einem sonst leeren PML4-Eintrag der unteren Hälfte; die Kernelhälfte erhält nie ein User-Bit.
+- **Inhalt:** Schnittstelle `UserMode`. `EFER.SCE`, `LSTAR`, `SFMASK` (IF, DF, TF, AC, NT) je CPU; SMEP und UMIP, wenn CPUID sie meldet. Vor **jedem** Rückweg (`sysretq` und `iretq`): RIP und RSP in der unteren kanonischen Hälfte, RFLAGS auf erlaubte Bits (IF=1, IOPL=0, NT=0), sonst kehrt `Enter` mit Fehler zurück. FS: belegen, dass Kernelcode FS nicht nutzt (Hinweis in `CpuOps.s`), sonst bei jedem Eintritt sichern. Fehler aus Ring 3 gehen an `FaultHandler`, Fehler aus Ring 0 unverändert an den vorhandenen Hook. Der R8-Hook im Tick lenkt nie um, wenn der Rahmen aus Ring 3 stammt (`CS.RPL`); `RequestLeave` nutzt einen eigenen Merker.
+- **Abnahme:** Testkernel `UserMode`, 1 und 4 CPUs: ein Systemaufruf, ein #UD, ein #PF mit Fehlercode, `RequestLeave` auf eine Schleife, nicht kanonischer Rückweg; Kerneltest von R8 grün. Testseiten liegen in einem sonst leeren PML4-Eintrag der unteren Hälfte; die Kernelhälfte erhält nie ein User-Bit.
 
 ### N1-A5: Probeprogramm und Auswertung
 
@@ -252,7 +252,8 @@ Jedes Programm schreibt nur deterministischen Text. `expected/<satz>/<name>.txt`
 | nach #448 | N1-D1 (#622) | allein auf dem Ladybird-Rechner |
 | nach #448, #450, N1-C1 | N1-C2 (#635) | derselbe Rechner |
 | nach N1-D1 | N1-D2 (#636) |  |
-| nach #523 | N1-A1 (#619), N1-A2 (#625), N1-B2 (#631) | drei Senior-Pakete ohne gemeinsame Dateien |
+| nach #523 | N1-A1 (#619), N1-B2 (#631) | ohne gemeinsame Dateien |
+| nach #523 und R8 (#423) | N1-A2 (#625) | neben A1 und B2; R8 ändert Tick und Rahmenzugriff |
 | nach N1-A2 | N1-A3 (#626) | `Interrupts.s` |
 | nach N1-A1, N1-A3 | N1-A4 (#627) |  |
 | nach N1-A4, N1-A5 | N1-A6 (#629) |  |
@@ -264,4 +265,4 @@ Jedes Programm schreibt nur deterministischen Text. `expected/<satz>/<name>.txt`
 
 Die Vorarbeiten P1 bis P4 stehen in [Vorarbeit Paketdienst](2026-11-24-ladybird-p-paketdienst-vorarbeit.md).
 
-**Was nacheinander laufen muss:** A2 → A3 → A4 → A6 → B4 → B5 ist der kritische Weg (2+2+3+3+3+2 = 15 Arbeitstage); A7 läuft neben B4. `Interrupts.s` ändern nur A2 und A3, `SchedulerManager.cs` und `SchedulerThread.cs` nur A4 und danach B3, `probe.S` und `CosmosUserModeProbe.cs` nur A5/A6 und danach B4, `COMMIT` und `VERSION` nur A6 und danach B4. Sonst überschneiden sich keine Dateien. Voll parallel besetzt dauert N1 nach #523 also mindestens 15 Arbeitstage plus Reviews; mehr Leute verkürzen den kritischen Weg nicht.
+**Was nacheinander laufen muss:** A2 → A3 → A4 → A6 → B4 → B5 ist der kritische Weg (2+2+3+3+3+2 = 15 Arbeitstage); A7 läuft neben B4. R8 (#423) ändert `OnTimerInterrupt` und den Zugriff auf den gesicherten Rahmen; A2, A3, A4 und B3 bauen deshalb auf dem Cosmos-Stand nach R8 auf. `X64InterruptController.cs` und `LocalApic.cs` ändert in N1 nur A2 (A4 nur bei Bedarf danach). `Interrupts.s` ändern nur A2 und A3, `SchedulerManager.cs` und `SchedulerThread.cs` nur A4 und danach B3, `probe.S` und `CosmosUserModeProbe.cs` nur A5/A6 und danach B4, `COMMIT` und `VERSION` nur A6 und danach B4. Sonst überschneiden sich keine Dateien. Voll parallel besetzt dauert N1 nach #523 und R8 also mindestens 15 Arbeitstage plus Reviews; mehr Leute verkürzen den kritischen Weg nicht.
