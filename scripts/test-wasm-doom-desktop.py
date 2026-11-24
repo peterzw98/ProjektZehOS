@@ -334,8 +334,10 @@ def wait_serial(work: Path, text: str, timeout: float, start: int = 0) -> int:
 class Guest:
     """Bedienschritte einer laufenden VM; jeder Schritt wartet auf die passende serielle Marke."""
 
-    def __init__(self, work: Path, port: int, source: str, started: float):
+    def __init__(self, work: Path, port: int, source: str, started: float, doom_version: str = "1.0.0"):
         self.work, self.port, self.source, self.started = work, port, source, started
+        # Das Testrepository liefert Doom 1.0.0; ein fremdes --source (veroeffentlichte Pakete) hat eine andere Version.
+        self.doom_version = doom_version
         self.qmp: Qmp | None = None
         self.step = iter(range(1, 1000))
         self.size = (1920, 1080)
@@ -360,13 +362,13 @@ class Guest:
     def connect(self) -> None:
         self.qmp = Qmp(self.port)
 
-    def login(self, first: bool) -> None:
+    def login(self, first: bool, timeout: float = 300) -> None:
         mark = self.mark()
         for value in (TEST_USER, TEST_PASSWORD, TEST_PASSWORD) if first else (TEST_USER, TEST_PASSWORD):
             self.qmp.line(value)
             time.sleep(0.5)
         # Die Ersteinrichtung (PBKDF2) dauert unter TCG unterschiedlich lange.
-        self.wait("Benutzer angemeldet.", 300, mark)
+        self.wait("Benutzer angemeldet.", timeout, mark)
         self.log("angemeldet")
         time.sleep(1)
 
@@ -442,7 +444,7 @@ class Guest:
         self.dhcp()
         self.update_catalog()
         if with_doom:
-            self.pkg("install doom", "doom 1.0.0 installiert.")
+            self.pkg("install doom", f"doom {self.doom_version} installiert.")
         self.desktop()
 
     def launch(self, name: str) -> None:
@@ -962,7 +964,7 @@ def run_scenario(args: argparse.Namespace, scenario: str, fixtures: Path | None,
         empty.mkdir()
         create_disk(fixtures / "disk" if fixtures else empty, disk)
     port = free_port()
-    guest = Guest(work, port, source, time.monotonic())
+    guest = Guest(work, port, source, time.monotonic(), args.doom_version)
     vm = start_qemu(args.iso, disk, work, port, args.accel, "base" if base else None)
     try:
         if base is not None:
@@ -1031,6 +1033,8 @@ def main() -> int:
     parser.add_argument("--wasi-sdk", type=Path, help="wasi-sdk 25 (Standard: WASI_SDK_PATH oder .tools)",
                         default=Path(os.environ.get("WASI_SDK_PATH", ROOT / ".tools" / "wasi-sdk-25.0-x86_64-windows")))
     parser.add_argument("--source", help="vorhandenes Repository (https://.../) fuer Szenario full, ohne Testserver")
+    parser.add_argument("--doom-version", default="1.0.0",
+                        help="Doom-Version, die pkg install doom meldet (Testrepository: 1.0.0; veroeffentlichtes --source: 1.1.0)")
     parser.add_argument("--scenario", nargs="+", choices=SCENARIOS + list(GROUPS), default=["quick"])
     parser.add_argument("--accel", default="tcg", help="QEMU-Beschleuniger: tcg, kvm oder whpx (kvm/whpx ohne Snapshot)")
     parser.add_argument("--starts", type=int, default=3, help="Doom-Starts am Ende von full (Speicherpruefung: 10)")
@@ -1045,6 +1049,8 @@ def main() -> int:
     scenarios = list(dict.fromkeys(name for value in args.scenario for name in GROUPS.get(value, [value])))
     if args.long_seconds and "full" not in scenarios:
         parser.error("--long-seconds benoetigt das Szenario full")
+    if args.doom_version != "1.0.0" and args.source is None:
+        parser.error("--doom-version gilt nur mit --source (das Testrepository liefert 1.0.0)")
     if args.source is not None and scenarios != ["full"]:
         parser.error("--source prueft nur das Szenario full")
     if args.source is None and args.fixtures is None and (args.repo is None or args.key is None or args.tls is None):

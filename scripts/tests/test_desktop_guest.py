@@ -51,6 +51,17 @@ class ErrorLineTests(unittest.TestCase):
         self.assertEqual(len(guest.unexpected_errors(serial, recovery=False)), 2)
 
 
+class ReloginTimeoutTests(unittest.TestCase):
+    def test_tcg_waits_at_least_600_seconds(self):
+        # Block #602: die zweite Anmeldung braucht unter TCG mit 1 CPU auf dem SMP-Stand bis etwa 345 s.
+        self.assertGreaterEqual(guest.relogin_timeout('tcg'), 600)
+
+    def test_hardware_acceleration_keeps_300_seconds(self):
+        for accel in ('kvm', 'whpx'):
+            with self.subTest(accel=accel):
+                self.assertEqual(guest.relogin_timeout(accel), 300)
+
+
 class RecoveryMachineTests(unittest.TestCase):
     def test_without_appdisk_keeps_other_devices(self):
         machine = guest.without_appdisk(guest.tools.MACHINE)
