@@ -47,7 +47,7 @@ public class Kernel : Sys.Kernel
     private const string SkipNoHost = "no block device bound for partition-table tests";
 
     /// <summary>Total tests this suite reports per profile; the breakdown is at the TR.Start call site.</summary>
-    private const ushort ExpectedTestCount = 88;
+    private const ushort ExpectedTestCount = 89;
 
     /// <summary>Block devices the engine attaches per QEMU profile; any other count is a bind or double-registration regression.</summary>
     private const int AttachedDisksPerProfile = 1;
@@ -252,6 +252,18 @@ public class Kernel : Sys.Kernel
     /// <summary>Pattern offset of the device-reset round trips, apart from the abort test's rounds.</summary>
     private const int DeviceResetSeed = 0x40;
 
+    /// <summary>Pattern offset of the error-status round trips, apart from the other recovery tests.</summary>
+    private const int ErrorStatusSeed = 0x80;
+
+    /// <summary>PxTFD of a ready device: DRDY and DSC.</summary>
+    private const uint TaskFileReady = 0x50;
+
+    /// <summary>PxTFD of a ready device that reported a device fault without ERR.</summary>
+    private const uint TaskFileFault = TaskFileReady | AhciProtocol.TfdDeviceFault;
+
+    /// <summary>PxTFD of a device that still runs its command.</summary>
+    private const uint TaskFileBusy = AhciProtocol.TfdBusy;
+
     /// <summary>XOR seed of the boundary-LBA round-trip pattern.</summary>
     private const byte BoundaryXorSeed = 0xF0;
 
@@ -455,10 +467,10 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Storage] BeforeRun() reached!\n");
 
-        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 16 device
+        // 4 manager + 1 boot-scan + 2 profile + 1 driver-info + 17 device
         // + 7 partition + 42 partition-lifecycle (MBR mutation, EBR chain,
         // PartitionManager, superfloppy) + 2 bounds probes + 2 mmio/pci
-        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 88 tests per profile.
+        // + 5 USB hot-plug + 5 PCI hot-plug + 1 boot-reboot = 89 tests per profile.
         TR.Start("Storage Block Device Tests", expectedTests: ExpectedTestCount);
 
         // The cell's disk is the first writable device the manager holds:
@@ -574,6 +586,7 @@ public class Kernel : Sys.Kernel
         TR.RunIf(ahci, "Device_PastEnd_Rejected",          TestDevice_PastEndRejected,          dev ? SkipNotAhci : SkipNoDevice);
         TR.RunIf(ahci, "Device_TaskFileError_Recovers",    TestDevice_TaskFileErrorRecovers,    dev ? SkipNotAhci : SkipNoDevice);
         TR.RunIf(ahci, "Device_DeviceReset_Recovers",      TestDevice_DeviceResetRecovers,      dev ? SkipNotAhci : SkipNoDevice);
+        TR.RunIf(ahci, "Device_ErrorStatus_Recovery",      TestDevice_ErrorStatusRecovery,      dev ? SkipNotAhci : SkipNoDevice);
 
         // ==================== Partition (MBR/GPT, partition translation) ====================
         // These run last because they overwrite LBA 0..33, which the device
@@ -1272,6 +1285,47 @@ public class Kernel : Sys.Kernel
         }
 
         Assert.Equal(timeoutsBefore, port.Controller.Timeouts, "the device reset counted a timeout");
+    }
+
+    // ZehOS patch ahci-error-recovery, see PATCHES.md
+    // QEMU reports neither a device fault nor a bus or interface error with
+    // the device still busy, so the completion check runs on made-up PxIS and
+    // PxTFD values; the recovery it starts is the real one. A clean status
+    // must pass, a fault without ERR must fail, and the device must be reset
+    // exactly when the task file still read BSY or DRQ.
+    private static void TestDevice_ErrorStatusRecovery()
+    {
+        AhciPort port = (AhciPort)s_dev!;
+        int resets = port.DeviceResets;
+        port.CheckCompletionWith(0, TaskFileReady);
+        Assert.Equal(resets, port.DeviceResets, "a clean completion reset the device");
+
+        ErrorStatusFails(port, 0, TaskFileFault, expectReset: false, "device fault without ERR");
+        ErrorStatusFails(port, AhciProtocol.IsTaskFileError, TaskFileReady | AhciProtocol.TfdError, expectReset: false, "task file error");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusFatal, TaskFileReady, expectReset: false, "host bus fatal, device ready");
+        ErrorStatusFails(port, AhciProtocol.IsInterfaceFatal, TaskFileBusy, expectReset: true, "interface fatal, device busy");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusFatal, TaskFileBusy, expectReset: true, "host bus fatal, device busy");
+        ErrorStatusFails(port, AhciProtocol.IsHostBusData, TaskFileReady | AhciProtocol.TfdDataRequest, expectReset: true, "host bus data, DRQ set");
+    }
+
+    // Asserts that the status fails as IOException, that the recovery reset
+    // the device or left it alone as expected, and that the port moves data.
+    private static void ErrorStatusFails(AhciPort port, uint status, uint taskFile, bool expectReset, string what)
+    {
+        int resets = port.DeviceResets;
+        bool threw = false;
+        try
+        {
+            port.CheckCompletionWith(status, taskFile);
+        }
+        catch (IOException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw, what + ": must throw IOException");
+        Assert.Equal(resets + (expectReset ? 1 : 0), port.DeviceResets, what + ": device resets");
+        ErrorPathRoundTrip(port, ErrorStatusSeed + resets);
     }
 
     // Writes one sector at ErrorRoundTripLba with a pattern of the seed and

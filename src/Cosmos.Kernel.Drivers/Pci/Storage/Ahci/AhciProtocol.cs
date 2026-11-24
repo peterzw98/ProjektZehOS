@@ -155,6 +155,9 @@ internal static class AhciProtocol
     /// <summary>PxTFD status byte ERR, bit 0: the device ended the last command with an error.</summary>
     public const uint TfdError = 1;
 
+    /// <summary>PxTFD status byte DF, bit 5: a device fault. The device may report it without ERR, and then without TFES.</summary>
+    public const uint TfdDeviceFault = 1 << 5;
+
     /// <summary>PxIS.IFS, bit 27: an interface fatal error.</summary>
     public const uint IsInterfaceFatal = 1u << 27;
 
