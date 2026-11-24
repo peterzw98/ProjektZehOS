@@ -17,7 +17,7 @@ Ablauf für einen Agenten von „neue Cosmos-Version da“ bis zum Pin-PR. Ergä
    ```bash
    git fetch origin
    python scripts/cosmos-update.py verify
-   python scripts/cosmos-update.py check --to v3.0.99
+   python scripts/cosmos-update.py check --to <tag>
    ```
    `check` nennt Pin, neueste NuGet-Version von `Cosmos.Kernel` und die Upstream-Dateien, die zwischen Grundstand (`PATCHES.md` im Branch `cosmos`) und `--to` geändert wurden, je Patch aus `patches/*.md`. Ohne `--to` zeigt es nur die Versionen. Die Vergleichs-API liefert höchstens 300 Dateien (das Skript meldet Abschneiden); die Dateinamen in `patches/*.md` sind teils unvollständig, ein Patch ohne Treffer ist deshalb nicht belegt unberührt. Die Upstream-Commit-Liste (`gh api repos/CosmosOS/Cosmos/compare/<alt>...<neu>`) selbst durchgehen und für jeden dokumentierten Umweg und jede Grenze in `docs/COSMOS_SUPPORT.md` prüfen, ob sie entfällt oder bricht.
    **Abbruch**, wenn `verify` schon vor dem Update Abweichungen meldet: erst klären.

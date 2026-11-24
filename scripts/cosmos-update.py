@@ -108,13 +108,9 @@ def upstream_base():
 
 
 def changed_files(base, head):
-    files, page = [], 1
-    while True:
-        data = http_json(f'https://api.github.com/repos/{UPSTREAM}/compare/{base}...{head}?per_page=100&page={page}')
-        files += [f['filename'] for f in data.get('files', [])]
-        if len(data.get('files', [])) < 100 or page == 3:  # Die Vergleichs-API liefert höchstens 300 Dateien.
-            return files, len(files) >= 300
-        page += 1
+    # Die Vergleichs-API liefert die Dateien nur auf der ersten Seite und höchstens 300.
+    files = [f['filename'] for f in http_json(f'https://api.github.com/repos/{UPSTREAM}/compare/{base}...{head}')['files']]
+    return files, len(files) >= 300
 
 
 def check(args):
