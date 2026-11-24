@@ -2,6 +2,8 @@
 
 > Umriss. Pakete werden nach dem [Tor N1-Z](2026-11-24-ladybird-n1-nachweise.md#n1-z-tor) geschnitten. Grundlage: [Entwurf, Abschnitt 7](../specs/2026-11-24-native-pakete-design.md#7-paketdienst-v2).
 
+**Vorgezogen:** Format, Bestand und der Schreiber im Werkzeug entstehen in der [Vorarbeit P1 bis P4](2026-11-24-ladybird-p-paketdienst-vorarbeit.md); hier folgt der Anschluss an `pkg`.
+
 **Ziel:** `pkg install <id>` zieht Abhängigkeiten nach; Software wird mit Bauvorschriften gegen einen sysroot gebaut.
 
 | Bahn | Inhalt | Dateien | braucht N2 |

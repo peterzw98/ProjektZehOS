@@ -20,7 +20,7 @@
 | N5 | Apps nativ, wasm3 und WAMR entfernt | Ablösung 13.5 | [N5](2026-11-24-ladybird-n5-umstieg.md) | Tor N3-Z; Netz-Apps nach N4 |
 | N6 | Ladybird im Fenster | 12.3 | [N6](2026-11-24-ladybird-n6-ladybird.md) | Tore N3-Z und N4-Z |
 
-Nur N1 ist in Pakete geschnitten. N2 bis N6 sind Umrisse und werden am jeweiligen Tor geschnitten, weil ihre Schnittstellen von den Nachweisen abhängen.
+In Pakete geschnitten sind N1 (19 Pakete und das Tor) und die hostprüfbare [Vorarbeit P zum Paketdienst](2026-11-24-ladybird-p-paketdienst-vorarbeit.md) (P1 bis P4), die nicht auf das Tor wartet. N2 bis N6 sind Umrisse und werden am jeweiligen Tor geschnitten, weil ihre Schnittstellen von den Nachweisen abhängen.
 
 ## Nebeneinander
 
@@ -29,6 +29,7 @@ L1-A, L1-B → L1-C ─→ N1-C ─────────────┐
 L1-A ─→ N1-D ──────────────────────────┤
 N1-E (sofort) ─────────────────────────┼─→ N1-Z ─┬─→ N2 ─→ N4 ─┬─→ N6
 #523 (Multicore auf master) → N1-A → N1-B ┘      └─→ N3 ───────┴─→ N5
+P1 → P2 → P4, P1 → P3 (sofort, Host) ──────→ N3
 #423 (AOT als Standard), Lead-Chat: Voraussetzung für N1-Z
 ```
 
@@ -57,7 +58,7 @@ Jedes Tor entscheidet ein Projektbenutzer. Ergebnisse stehen in `docs/LADYBIRD_F
 | Testshell | toybox (0BSD) |
 | Läufe im Gast | je Fall 10 vollständige Läufe unter QEMU/KVM und 3 unter TCG, jeweils mit 1 und mit 4 CPUs; KVM auf MSI oder in WSL mit KVM; VMware offen |
 | No-Go Speicher | PSS auf `static.html` über 2 GiB (wie L1) |
-| Zeitlimit je Probe | 10 Arbeitstage für N1-A und N1-B, 5 für N1-D, sonst 3; danach Urteil mit dem erreichten Stand |
+| Zeitlimit | je Paket das Doppelte der genannten Größe; Gruppe A 20, B 15, D 6 Arbeitstage; danach Urteil mit dem erreichten Stand |
 
 Quellen und Bauordner liegen unter `~/ladybird-probe/` und werden nie committed. Cosmos-Änderungen nur über `cosmos`-PRs nach `docs/regeln/COSMOS_PATCHES.md`. Keine Issues, PRs oder Kommentare bei Upstream-Projekten.
 
@@ -67,4 +68,4 @@ Der Wasm-Weg samt M1 (#611–#615, PR #616) und die Wasm-Pakete #417, #418, #420
 
 ## Offen
 
-Plan freigegeben (Peter, 24. November 2026); N1 steht als #619 bis #624 auf dem Board. Keine Frage blockiert N1. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.
+Plan freigegeben (Peter, 24. November 2026); N1 und die Vorarbeit P stehen als kleine Pakete auf dem Board, N2 bis N6 als Sammelblöcke (#643 bis #647); Nummern und Reihenfolge in [N1](2026-11-24-ladybird-n1-nachweise.md#reihenfolge). Keine Frage blockiert N1. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.
