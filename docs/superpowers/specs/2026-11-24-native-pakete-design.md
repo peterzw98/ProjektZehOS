@@ -102,9 +102,10 @@ Nummern, Register, Fehlerwerte und Strukturen sind die von Linux x86-64; `MAP_FI
 | Manifest und `catalog` v1 | nach Entfernen der Laufzeiten. Alte Pakete werden gemeldet, nie von selbst gelöscht | beide Formate nebeneinander |
 | I2-Stapel von Team laser (#401–#408, PRs #598, #601, #603, #604, #606) | fällt mit der Wasm-Laufzeit weg | schützt die Wasm-Apps in der Übergangszeit. Empfehlung: fertige PRs normal zu Ende bringen, keine neue Wasm-Härtung beginnen. Team laser entscheidet mit Lars |
 | #418 (Wasm-Threads), #420 (Wasm-Instanzen) | durch N4 ersetzt | nicht mehr umsetzen |
-| #417 (Paketgrenzen), #419 (POSIX-Breite) | durch Abschnitte 4, 6, 7 ersetzt | für Wasm nicht mehr umsetzen |
+| #417 (Paketgrenzen) | durch Abschnitte 4 und 7 ersetzt | für Wasm nicht mehr umsetzen |
+| #419 (POSIX-Breite) | für native Pakete durch Abschnitt 6 ersetzt | P4-A bis P4-F sind gemergt; offen ist nur die Abnahme P4-Z |
 
-Issues und Meilenstein ändern sich erst nach Peters Planfreigabe.
+Peter hat den Plan am 24. November 2026 freigegeben; Issues und Meilenstein sind angepasst.
 
 ## 9 Sicherheit
 

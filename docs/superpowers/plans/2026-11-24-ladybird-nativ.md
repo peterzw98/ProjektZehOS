@@ -63,8 +63,8 @@ Quellen und Bauordner liegen unter `~/ladybird-probe/` und werden nie committed.
 
 ## Überholt
 
-Der Wasm-Weg samt M1 (#611–#615, PR #616) und die Wasm-Pakete #417, #418, #419, #420 ([Entwurf, Abschnitt 8](../specs/2026-11-24-native-pakete-design.md#8-übergang)). Die Berichte L2-A bis L2-F bleiben als Quelle gültig.
+Der Wasm-Weg samt M1 (#611–#615, PR #616) und die Wasm-Pakete #417, #418, #420 (geschlossen; von #419 bleibt nur die Restabnahme P4-Z, [Entwurf, Abschnitt 8](../specs/2026-11-24-native-pakete-design.md#8-übergang)). Die Berichte L2-A bis L2-F bleiben als Quelle gültig.
 
 ## Offen
 
-Keine Frage blockiert N1. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.
+Plan freigegeben (Peter, 24. November 2026); N1 steht als #619 bis #624 auf dem Board. Keine Frage blockiert N1. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.

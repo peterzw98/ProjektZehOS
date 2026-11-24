@@ -148,11 +148,11 @@ internal sealed class AddressSpaceMap(ulong start, ulong end)   // seitenausgeri
 
 | Paket | wartet auf | läuft neben | Rechner |
 | --- | --- | --- | --- |
-| N1-A | #523 | C, D, E | QEMU, KVM |
-| N1-B | N1-A; Hostteil sofort | C, D, E | QEMU, KVM |
-| N1-C | #448, #450 | A, B, D, E | Linux ≥ 32 GiB RAM |
-| N1-D | #448 | A, B, E; nicht neben anderen Ladybird-Bauten | Linux ≥ 32 GiB RAM |
-| N1-E | – | alle | Linux |
-| N1-Z | alle | – | – |
+| N1-A (#619) | #523 | C, D, E | QEMU, KVM |
+| N1-B (#620) | N1-A; Hostteil sofort | C, D, E | QEMU, KVM |
+| N1-C (#621) | #448, #450 | A, B, D, E | Linux ≥ 32 GiB RAM |
+| N1-D (#622) | #448 | A, B, E; nicht neben anderen Ladybird-Bauten | Linux ≥ 32 GiB RAM |
+| N1-E (#623) | – | alle | Linux |
+| N1-Z (#624) | alle | – | – |
 
-Nach der Planfreigabe ohne weitere Entscheidung startbar: N1-E und der Hostteil von N1-B.
+Plan freigegeben (Peter, 24. November 2026). Ohne weitere Entscheidung startbar: N1-E und der Hostteil von N1-B.
