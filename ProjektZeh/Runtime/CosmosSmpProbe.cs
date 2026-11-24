@@ -164,7 +164,8 @@ internal static class CosmosSmpProbe
     {
         int n = workers.Length;
         if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
-        const long Work = 20_000_000;
+        // Lang genug (KVM auf MSI: etwa 200 ms je Worker), damit Threadende und Join (6 bis 14 ms) das Verhaeltnis nicht bestimmen.
+        const long Work = 200_000_000;
         long sink = 0;
         var single = Stopwatch.StartNew();
         var one = Pinned(workers[0], () => Interlocked.Add(ref sink, Spin(Work * n)));
