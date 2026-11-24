@@ -261,6 +261,12 @@ internal static unsafe partial class GarbageCollector
     /// </summary>
     private static ulong s_refillCount;
 
+    /// <summary>
+    /// Free blocks <see cref="AllocFromFreeListRaw"/> has looked at since the collector started,
+    /// counted under the heap lock: what the refills pay for the free lists' length.
+    /// </summary>
+    private static ulong s_freeListVisits;
+
     /// <summary>The value of <see cref="s_refillCount"/> when the last collection ran.</summary>
     private static ulong s_refillsAtLastCollection;
 
@@ -286,6 +292,9 @@ internal static unsafe partial class GarbageCollector
 
     /// <summary>TLAB refills since the collector started, for the suites' measurement.</summary>
     internal static ulong RefillCount => Volatile.Read(ref s_refillCount);
+
+    /// <summary>Free blocks the refills have looked at since the collector started, for the suites' measurement.</summary>
+    internal static ulong FreeListVisits => Volatile.Read(ref s_freeListVisits);
 
     /// <summary>
     /// Gets a value indicating whether the garbage collector is enabled.

@@ -18,6 +18,18 @@ internal static unsafe partial class GarbageCollector
     private const uint TlabSize = 8192;
 
     /// <summary>
+    /// Blocks of each size class a refill looks at for a full-size TLAB.
+    /// </summary>
+    /// <remarks>
+    /// ZehOS patch gc-refill-scan-limit, see PATCHES.md. The class of <see cref="TlabSize"/> holds
+    /// the blocks of 4097 to 8192 bytes, and the ones a sweep leaves there are nearly all smaller
+    /// than a TLAB: every refill walked all of them, tens of thousands on a full heap, under the
+    /// heap lock. A block missed here is not lost, <see cref="AllocLargestFromFreeListRaw"/> takes
+    /// it before the heap grows.
+    /// </remarks>
+    private const uint TlabSearchLimit = 8;
+
+    /// <summary>
     /// Returns a reference to the current thread's allocation context.
     /// Uses the scheduler's current thread when enabled, otherwise falls back to the static context.
     /// </summary>
@@ -59,8 +71,9 @@ internal static unsafe partial class GarbageCollector
             // Determine TLAB request size: at least the requested size, ideally TlabSize
             uint requestSize = size > TlabSize ? size : TlabSize;
 
-            // Try free list first (raw variant — already zeroes memory)
-            void* buffer = AllocFromFreeListRaw(requestSize);
+            // Try free list first (raw variant — already zeroes memory). Only the full-size TLAB
+            // is a wish the search may give up on; a larger request needs its size.
+            void* buffer = AllocFromFreeListRaw(requestSize, requestSize > size ? TlabSearchLimit : uint.MaxValue);
             if (buffer != null)
             {
                 return SetupTlab(ref ac, buffer, requestSize);
@@ -98,7 +111,7 @@ internal static unsafe partial class GarbageCollector
             // If full TlabSize failed but we only need `size`, try exact size
             if (requestSize > size)
             {
-                buffer = AllocFromFreeListRaw(size);
+                buffer = AllocFromFreeListRaw(size, uint.MaxValue);
                 if (buffer != null)
                 {
                     return SetupTlab(ref ac, buffer, size);
