@@ -84,7 +84,8 @@ internal sealed class Ext2InodeOperations : IInodeOperations
             return true;
         }
 
-        if (!Ext2DirectoryHelper.TryFind(_superblock, parent, name, out Ext2DirEntry entry))
+        // ZehOS patch ext2-dir-scan, see PATCHES.md
+        if (!Ext2DirectoryHelper.TryFindFirst(_superblock, parent, name, out Ext2DirEntry entry))
         {
             return false;
         }

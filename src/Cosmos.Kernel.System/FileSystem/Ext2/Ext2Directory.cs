@@ -127,38 +127,154 @@ internal static class Ext2DirectoryHelper
     }
 
     /// <summary>
-    /// Find a child entry by exact (case-sensitive) name.
+    /// Find a child entry by exact (case-sensitive) name. The whole directory is checked even after a hit: callers
+    /// that change it must not act on a corrupt one. The first of several equal names wins.
     /// </summary>
     /// <param name="sb">The mounted volume.</param>
     /// <param name="dir">Directory to search.</param>
     /// <param name="name">Child name, a single path component.</param>
     /// <param name="entry">Matching entry on success.</param>
-    /// <returns>true when the name exists in <paramref name="dir"/>.</returns>
+    /// <returns>true when the name exists in <paramref name="dir"/> and the directory is sound.</returns>
     public static bool TryFind(Ext2Superblock sb, Ext2Inode dir, ReadOnlySpan<char> name, out Ext2DirEntry entry)
     {
+        return TryFind(sb, dir, name, false, out entry);
+    }
+
+    /// <summary>
+    /// Find a child entry for reading: ends at the first hit, so damage behind it goes unnoticed. A caller that
+    /// changes the directory uses <see cref="TryFind(Ext2Superblock, Ext2Inode, ReadOnlySpan{char}, out Ext2DirEntry)"/>.
+    /// </summary>
+    /// <param name="sb">The mounted volume.</param>
+    /// <param name="dir">Directory to search.</param>
+    /// <param name="name">Child name, a single path component.</param>
+    /// <param name="entry">Matching entry on success.</param>
+    /// <returns>true when the name exists and the directory is sound up to it.</returns>
+    public static bool TryFindFirst(Ext2Superblock sb, Ext2Inode dir, ReadOnlySpan<char> name, out Ext2DirEntry entry)
+    {
+        return TryFind(sb, dir, name, true, out entry);
+    }
+
+    // ZehOS patch ext2-dir-scan, see PATCHES.md
+    // Compares name bytes in one block buffer: no string and no entry object per record, only for the hit.
+    private static bool TryFind(Ext2Superblock sb, Ext2Inode dir, ReadOnlySpan<char> name, bool stopAtHit, out Ext2DirEntry entry)
+    {
         entry = null!;
-        string target = name.ToString();
-        if (!TryParseDirectory(sb, dir, out List<Ext2DirEntry> entries))
+        if (!dir.IsDirectory || !TryGetScanBlocks(sb, dir, out uint blocks) || blocks == 0)
         {
             return false;
         }
 
-        for (int i = 0; i < entries.Count; i++)
+        string target = name.ToString();
+        byte[] nameBytes = global::System.Text.Encoding.UTF8.GetBytes(target);
+
+        // ReadDir shows bytes that are not UTF-8 as U+FFFD; such an entry stays reachable under the listed name.
+        bool compareDecoded = target.Contains('\uFFFD');
+
+        int blockSize = (int)sb.BlockSize;
+        ulong size = dir.FullSize;
+        byte[] data = new byte[blockSize];
+        Ext2DirEntry? found = null;
+        for (uint i = 0; i < blocks; i++)
         {
-            if (entries[i].Name == target)
+            uint blk = sb.GetBlockPointer(dir, i, false, out _);
+            if (blk == 0)
             {
-                entry = entries[i];
-                return true;
+                return false;
+            }
+
+            sb.ReadBlocks(blk, 1, data);
+            ulong blockStart = (ulong)i * sb.BlockSize;
+            int pos = 0;
+            while (pos < blockSize && blockStart + (ulong)pos < size)
+            {
+                if (pos + Ext2InodeLayout.DirEntryMinRecLen > blockSize)
+                {
+                    // As in TryParseDirectory, a rest too short for a record is tolerated only at the end of the data.
+                    if (i + 1 < blocks)
+                    {
+                        return false;
+                    }
+
+                    break;
+                }
+
+                if (!TryReadRecord(data, pos, out uint inode, out int recLen, out int nameLen))
+                {
+                    return false;
+                }
+
+                if (inode != 0 && found is null)
+                {
+                    ReadOnlySpan<byte> entryName = data.AsSpan(pos + Ext2InodeLayout.DirEntryNameOffset, nameLen);
+                    if (entryName.SequenceEqual(nameBytes)
+                        || (compareDecoded && global::System.Text.Encoding.UTF8.GetString(entryName) == target))
+                    {
+                        found = new Ext2DirEntry(inode, (ushort)recLen, (byte)nameLen,
+                            data[pos + Ext2InodeLayout.DirEntryFileTypeOffset], target, (int)blockStart + pos);
+                        if (stopAtHit)
+                        {
+                            entry = found;
+                            return true;
+                        }
+                    }
+                }
+
+                pos += recLen;
             }
         }
 
-        return false;
+        if (found is null)
+        {
+            return false;
+        }
+
+        entry = found;
+        return true;
+    }
+
+    /// <summary>
+    /// Number of blocks a scan of <paramref name="dir"/> covers.
+    /// </summary>
+    /// <param name="sb">The mounted volume.</param>
+    /// <param name="dir">Directory to scan.</param>
+    /// <param name="blocks">Block count; 0 for an empty directory.</param>
+    /// <returns>false when the directory exceeds <see cref="MaxDirectorySize"/> or <see cref="MaxDirectoryBlocks"/>.</returns>
+    private static bool TryGetScanBlocks(Ext2Superblock sb, Ext2Inode dir, out uint blocks)
+    {
+        blocks = 0;
+        ulong size = dir.FullSize;
+        if (size > MaxDirectorySize)
+        {
+            return false;
+        }
+
+        blocks = (uint)((size + sb.BlockSize - 1) / sb.BlockSize);
+        return blocks <= MaxDirectoryBlocks;
+    }
+
+    /// <summary>
+    /// Read one record header with the same checks as <see cref="TryParseDirectory"/>.
+    /// </summary>
+    /// <param name="block">One directory block.</param>
+    /// <param name="pos">Record start; at least <see cref="Ext2InodeLayout.DirEntryMinRecLen"/> bytes before the block end.</param>
+    /// <param name="inode">Inode number; 0 for a free record.</param>
+    /// <param name="recLen">Record length.</param>
+    /// <param name="nameLen">Name length in bytes.</param>
+    /// <returns>false when the record is corrupt.</returns>
+    private static bool TryReadRecord(ReadOnlySpan<byte> block, int pos, out uint inode, out int recLen, out int nameLen)
+    {
+        inode = BitConverter.ToUInt32(block.Slice(pos + Ext2InodeLayout.DirEntryInodeOffset, 4));
+        recLen = BitConverter.ToUInt16(block.Slice(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2));
+        nameLen = block[pos + Ext2InodeLayout.DirEntryNameLenOffset];
+        return recLen >= Ext2InodeLayout.DirEntryMinRecLen
+            && pos + recLen <= block.Length
+            && nameLen <= recLen - Ext2InodeLayout.DirEntryNameOffset;
     }
 
     /// <summary>
     /// Insert an entry into a directory: splits the first entry with enough
     /// slack, reuses a free slot, or appends a fresh block. The directory
-    /// size grows by whole blocks.
+    /// size grows by whole blocks. Only the block that changes is written.
     /// </summary>
     /// <param name="sb">The mounted volume.</param>
     /// <param name="dir">Directory receiving the entry.</param>
@@ -168,7 +284,9 @@ internal static class Ext2DirectoryHelper
     /// <returns>true when the entry was inserted.</returns>
     public static bool AddEntry(Ext2Superblock sb, Ext2Inode dir, string name, uint inodeNumber, byte fileType)
     {
-        if (name.Length > 255)
+        // ZehOS patch ext2-dir-scan, see PATCHES.md
+        // One pass checks the whole directory and remembers the first place with room.
+        if (name.Length > 255 || !dir.IsDirectory)
         {
             return false;
         }
@@ -179,11 +297,7 @@ internal static class Ext2DirectoryHelper
             return false;
         }
 
-        // ZehOS patch ext2-addentry-guard, see PATCHES.md
-        // Callers check for an existing name with TryFind, which also fails
-        // on a corrupt directory; adding then would create a duplicate. A
-        // hole would also make the write-back below hit block 0.
-        if (!TryParseDirectory(sb, dir, out _))
+        if (!TryGetScanBlocks(sb, dir, out uint blocks))
         {
             return false;
         }
@@ -191,102 +305,72 @@ internal static class Ext2DirectoryHelper
         int needed = Ext2InodeLayout.DirEntryNameOffset + nameBytes.Length;
         needed = (needed + 3) & ~3;
 
-        uint blocks = (uint)((dir.FullSize + sb.BlockSize - 1) / sb.BlockSize);
-        if (blocks == 0)
-        {
-            // Need at least one block for directory.
-            if (!AllocateDirBlock(sb, dir))
-            {
-                return false;
-            }
+        int blockSize = (int)sb.BlockSize;
+        ulong size = dir.FullSize;
+        byte[] data = new byte[blockSize];
+        byte[]? slotData = null;
+        uint slotBlock = 0;
+        int slotPos = 0;
 
-            blocks = 1;
-        }
-
-        byte[] data = new byte[blocks * sb.BlockSize];
+        // ZehOS patch ext2-addentry-guard, see PATCHES.md
+        // Callers check for an existing name with TryFind, which also fails
+        // on a corrupt directory; adding then would create a duplicate. So
+        // nothing is written before every block has passed, holes included.
         for (uint i = 0; i < blocks; i++)
         {
             uint blk = sb.GetBlockPointer(dir, i, false, out _);
             if (blk == 0)
             {
-                break;
+                return false;
             }
 
-            sb.ReadBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
+            sb.ReadBlocks(blk, 1, data);
+            ulong blockStart = (ulong)i * sb.BlockSize;
+            bool slotHere = false;
+            int pos = 0;
+            while (pos < blockSize && blockStart + (ulong)pos < size)
+            {
+                if (pos + Ext2InodeLayout.DirEntryMinRecLen > blockSize)
+                {
+                    if (i + 1 < blocks)
+                    {
+                        return false;
+                    }
+
+                    break;
+                }
+
+                if (!TryReadRecord(data, pos, out uint inode, out int recLen, out int nameLen))
+                {
+                    return false;
+                }
+
+                if (slotData is null && !slotHere && recLen - UsedLength(inode, nameLen) >= needed)
+                {
+                    slotHere = true;
+                    slotBlock = blk;
+                    slotPos = pos;
+                }
+
+                pos += recLen;
+            }
+
+            if (slotHere)
+            {
+                // Keep this block; the rest of the directory is checked in a second buffer.
+                slotData = data;
+                if (i + 1 < blocks)
+                {
+                    data = new byte[blockSize];
+                }
+            }
         }
 
-        // Search for free space.
-        int pos = 0;
-        while (pos < data.Length)
+        if (slotData is not null)
         {
-            uint inode = BitConverter.ToUInt32(data.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4));
-            ushort recLen = BitConverter.ToUInt16(data.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2));
-            if (recLen == 0)
-            {
-                break;
-            }
-
-            int idealLen = 0;
-            if (inode != 0)
-            {
-                byte entryNameLen = data[pos + Ext2InodeLayout.DirEntryNameLenOffset];
-                idealLen = (Ext2InodeLayout.DirEntryNameOffset + entryNameLen + 3) & ~3;
-            }
-
-            int remaining = recLen - idealLen;
-            if (inode != 0 && remaining >= needed)
-            {
-                // Shrink the live entry to its ideal length; the new entry takes the slack behind it.
-                ushort newRecLen = (ushort)idealLen;
-                BitConverter.TryWriteBytes(data.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2), newRecLen);
-                int newPos = pos + idealLen;
-                BitConverter.TryWriteBytes(data.AsSpan(newPos + Ext2InodeLayout.DirEntryInodeOffset, 4), inodeNumber);
-                BitConverter.TryWriteBytes(data.AsSpan(newPos + Ext2InodeLayout.DirEntryRecLenOffset, 2), (ushort)(recLen - idealLen));
-                data[newPos + Ext2InodeLayout.DirEntryNameLenOffset] = (byte)nameBytes.Length;
-                data[newPos + Ext2InodeLayout.DirEntryFileTypeOffset] = fileType;
-                nameBytes.CopyTo(data.AsSpan(newPos + Ext2InodeLayout.DirEntryNameOffset, nameBytes.Length));
-                for (int z = nameBytes.Length; z < (recLen - idealLen) - Ext2InodeLayout.DirEntryNameOffset; z++)
-                {
-                    data[newPos + Ext2InodeLayout.DirEntryNameOffset + z] = 0;
-                }
-
-                for (uint i = 0; i < blocks; i++)
-                {
-                    uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
-                    {
-                        sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
-                    }
-                }
-
-                return true;
-            }
-
-            if (inode == 0 && recLen >= needed)
-            {
-                // Reuse the free slot in place: its rec_len stays, so the chain is unchanged.
-                BitConverter.TryWriteBytes(data.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4), inodeNumber);
-                data[pos + Ext2InodeLayout.DirEntryNameLenOffset] = (byte)nameBytes.Length;
-                data[pos + Ext2InodeLayout.DirEntryFileTypeOffset] = fileType;
-                nameBytes.CopyTo(data.AsSpan(pos + Ext2InodeLayout.DirEntryNameOffset, nameBytes.Length));
-                for (int z = nameBytes.Length; z < recLen - Ext2InodeLayout.DirEntryNameOffset; z++)
-                {
-                    data[pos + Ext2InodeLayout.DirEntryNameOffset + z] = 0;
-                }
-
-                for (uint i = 0; i < blocks; i++)
-                {
-                    uint blk = sb.GetBlockPointer(dir, i, false, out _);
-                    if (blk != 0) // ZehOS patch ext2-addentry-guard: never write a hole to block 0
-                    {
-                        sb.WriteBlocks(blk, 1, data.AsSpan((int)i * (int)sb.BlockSize, (int)sb.BlockSize));
-                    }
-                }
-
-                return true;
-            }
-
-            pos += recLen;
+            PlaceEntry(slotData, slotPos, nameBytes, inodeNumber, fileType);
+            sb.WriteBlocks(slotBlock, 1, slotData);
+            return true;
         }
 
         // No slot has room: append a block whose single entry spans all of it. Past the parse limit the new
@@ -313,6 +397,44 @@ internal static class Ext2DirectoryHelper
         dir.Size = (uint)((newBlockIdx + 1) * sb.BlockSize);
         sb.WriteInode(dir);
         return true;
+    }
+
+    /// <summary>Bytes of a record its own entry needs; 0 for a free record.</summary>
+    /// <param name="inode">Inode number of the record.</param>
+    /// <param name="nameLen">Name length in bytes.</param>
+    private static int UsedLength(uint inode, int nameLen)
+    {
+        return inode == 0 ? 0 : (Ext2InodeLayout.DirEntryNameOffset + nameLen + 3) & ~3;
+    }
+
+    /// <summary>
+    /// Put an entry into the record at <paramref name="pos"/>: behind a live entry, which shrinks to its used
+    /// length, or in place of a free record. The record chain of the block stays complete.
+    /// </summary>
+    /// <param name="block">Directory block to change.</param>
+    /// <param name="pos">Record with enough room.</param>
+    /// <param name="nameBytes">Name of the new entry.</param>
+    /// <param name="inodeNumber">Inode number of the new entry.</param>
+    /// <param name="fileType">File type of the new entry.</param>
+    private static void PlaceEntry(byte[] block, int pos, byte[] nameBytes, uint inodeNumber, byte fileType)
+    {
+        uint inode = BitConverter.ToUInt32(block.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4));
+        int recLen = BitConverter.ToUInt16(block.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2));
+        int used = UsedLength(inode, block[pos + Ext2InodeLayout.DirEntryNameLenOffset]);
+        if (used > 0)
+        {
+            BitConverter.TryWriteBytes(block.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2), (ushort)used);
+            pos += used;
+            recLen -= used;
+            BitConverter.TryWriteBytes(block.AsSpan(pos + Ext2InodeLayout.DirEntryRecLenOffset, 2), (ushort)recLen);
+        }
+
+        BitConverter.TryWriteBytes(block.AsSpan(pos + Ext2InodeLayout.DirEntryInodeOffset, 4), inodeNumber);
+        block[pos + Ext2InodeLayout.DirEntryNameLenOffset] = (byte)nameBytes.Length;
+        block[pos + Ext2InodeLayout.DirEntryFileTypeOffset] = fileType;
+        Span<byte> rest = block.AsSpan(pos + Ext2InodeLayout.DirEntryNameOffset, recLen - Ext2InodeLayout.DirEntryNameOffset);
+        rest.Clear();
+        nameBytes.CopyTo(rest);
     }
 
     /// <summary>
