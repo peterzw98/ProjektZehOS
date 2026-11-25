@@ -129,7 +129,10 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
             any |= allowedByCpu[i];
             var state = cpus[i];
             var current = state?.CurrentThread;
-            running[i] = current == null || current.IsIdle ? null
+            // Ein beendeter Thread bleibt bis zum naechsten Wechsel CurrentThread (bis zu einem Tick), rechnet aber nicht mehr. Zaehlte
+            // er als laufend, landete ein neuer Thread hinter einem Interaktiv-Thread, obwohl diese CPU frei ist. Das Wecken dort
+            // loest ueber den Reschedule-Interrupt sofort den Wechsel aus.
+            running[i] = current == null || current.IsIdle || current.State == SchedulerThreadState.Dead ? null
                 : current.SchedulerData is ClassThreadState runningState ? runningState.Class : ThreadClass.Normal;
             queued[i] = state != null && Cpu(state) is { } cpu ? cpu.Queues.Waiting : 0;
         }
