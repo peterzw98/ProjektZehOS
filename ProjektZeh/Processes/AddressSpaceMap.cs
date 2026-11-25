@@ -37,11 +37,18 @@ internal sealed class AddressSpaceMap
 
     /// <summary>
     /// Belegt <paramref name="length"/> Bytes. Bei <see cref="Placement.Hint"/> gilt <paramref name="hint"/> als Wunsch:
-    /// der erste freie Platz ab dem Hinweis, danach vom Anfang bis zum Hinweis; Hinweis 0 beginnt am Anfang. Bei den festen
-    /// Arten ist <paramref name="hint"/> die Adresse; FixedReplace ersetzt Überlappungen, FixedNoReplace scheitert ohne Änderung.
+    /// der erste freie Platz ab dem Hinweis (liegt er in einem belegten Bereich, dahinter), danach vom Anfang; Hinweis 0 beginnt
+    /// am Anfang. Ein unausgerichteter Hinweis wird wie bei Linux auf die nächste Seitengrenze aufgerundet (ein Hinweis hinter
+    /// dem Adressraum zählt als Ende, danach gilt der Umlauf); die Länge muss ausgerichtet sein. Bei den festen Arten ist
+    /// <paramref name="hint"/> die Adresse und muss ausgerichtet sein; FixedReplace ersetzt Überlappungen, FixedNoReplace scheitert ohne Änderung.
     /// </summary>
     public ResultObject<ulong> Reserve(ulong hint, ulong length, MapAccess access, Placement placement)
     {
+        if (placement == Placement.Hint && !IsAligned(hint))
+        {
+            hint = hint > ulong.MaxValue - (PageSize - 1) ? ulong.MaxValue & ~(PageSize - 1) : (hint + PageSize - 1) & ~(PageSize - 1);
+        }
+
         ResultErr check = ValidateRange(hint, length, placement != Placement.Hint);
         if (!check.IsOK())
         {
