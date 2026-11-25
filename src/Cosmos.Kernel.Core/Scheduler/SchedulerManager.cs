@@ -970,7 +970,7 @@ public static class SchedulerManager
                     handle.Dispose();
                     start();
                 }
-                Serial.WriteString("[SCHED] Thread entry completed\n");
+                TraceExit("[SCHED] Thread entry completed\n");
             }
             catch (Exception ex)
             {
@@ -995,11 +995,8 @@ public static class SchedulerManager
         SchedulerThread? exitThread = CurrentThread;
         uint exitThreadId = exitThread?.Id ?? 0;
 
-        Serial.WriteString("[SCHED] Thread ");
-        Serial.WriteNumber(exitThreadId);
-        Serial.WriteString(" exiting with code ");
-        Serial.WriteNumber((uint)exitCode);
-        Serial.WriteString("\n");
+        TraceExit("[SCHED] Thread ", exitThreadId, " exiting with code ");
+        TraceExit("", (uint)exitCode, "\n");
 
         if (exitThread is not null)
         {
@@ -1011,6 +1008,24 @@ public static class SchedulerManager
         {
             InternalCpu.Halt();
         }
+    }
+
+    // ZehOS patch exit-quiet, see PATCHES.md: the trace of an ordinary thread exit is in Debug builds
+    // only. The serial port is written synchronously (a VM exit per byte), three of the five lines go
+    // out before the joiners are woken, and the last with interrupts masked. In a Release build the
+    // compiler drops the calls. Exceptions and a reap from another context still report unconditionally.
+    [Conditional("DEBUG")]
+    private static void TraceExit(string text)
+    {
+        Serial.WriteString(text);
+    }
+
+    [Conditional("DEBUG")]
+    private static void TraceExit(string before, uint number, string after)
+    {
+        Serial.WriteString(before);
+        Serial.WriteNumber(number);
+        Serial.WriteString(after);
     }
 
     // ========== Thread Registry (for GC stack scanning) ==========
@@ -1558,9 +1573,7 @@ public static class SchedulerManager
             nint managedCallback = OnThreadExitCallback;
             if (managedCallback != IntPtr.Zero)
             {
-                Serial.WriteString("[SCHED] ExitThread: managed exit callback for thread ");
-                Serial.WriteNumber(thread.Id);
-                Serial.WriteString("\n");
+                TraceExit("[SCHED] ExitThread: managed exit callback for thread ", thread.Id, "\n");
                 unsafe
                 {
                     delegate* unmanaged<void> callback = (delegate* unmanaged<void>)managedCallback;
@@ -1580,9 +1593,7 @@ public static class SchedulerManager
         // a walk of the registry (FindByManagedThread) reads it under that
         // lock, and must never read a freed one.
 
-        Serial.WriteString("[SCHED] ExitThread: entering DisableInterruptsScope for thread ");
-        Serial.WriteNumber(thread.Id);
-        Serial.WriteString("\n");
+        TraceExit("[SCHED] ExitThread: entering DisableInterruptsScope for thread ", thread.Id, "\n");
 
         using (InternalCpu.DisableInterruptsScope())
         {
@@ -1612,7 +1623,7 @@ public static class SchedulerManager
                     s_deadStacks = thread;
                 }
             }
-            Serial.WriteString("[SCHED] ExitThread: OnThreadExit done\n");
+            TraceExit("[SCHED] ExitThread: OnThreadExit done\n");
         }
     }
 
