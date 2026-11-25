@@ -107,7 +107,7 @@ public sealed class PackageResolverTests
     public void CycleThroughTargetFails()
     {
         var catalog = Catalog("a 1.0.0-r1 b>=1.0.0-r1", "b 1.0.0-r1 a>=1.0.0-r1");
-        Fails(PackageResolver.Install(catalog, None, ["a"]), ResultCode.Failure, "a -> b -> a");
+        Fails(PackageResolver.Install(catalog, None, ["a"]), ResultCode.Failure, "\"a\" -> \"b\" -> \"a\"");
     }
 
     [TestMethod]
@@ -268,6 +268,90 @@ public sealed class PackageResolverTests
         Assert.IsFalse(PackageResolver.CheckRemove(installed, "p04095").IsOK());
         // Ohne das angeforderte Wurzelpaket haengt die ganze Restkette in der Luft.
         Assert.AreEqual(count - 1, PackageResolver.Unused([.. installed.Skip(1)]).Length);
+    }
+
+    [TestMethod]
+    public void PlannedDependencyComesFirstEvenWhenInstalledOneSatisfiesMinimum()
+    {
+        var catalog = Catalog("a 2.0.0-r1 b>=1.0.0-r1", "b 2.0.0-r1");
+        InstalledPackage2[] installed = [Have("a", "1.0.0-r1"), Have("b", "1.0.0-r1", false)];
+        CollectionAssert.AreEqual(new[] { "b", "a" }, Ids(PackageResolver.Upgrade(catalog, installed)));
+        var other = Catalog("x 1.0.0-r1 b>=1.0.0-r1", "y 1.0.0-r1", "b 2.0.0-r1");
+        CollectionAssert.AreEqual(new[] { "b", "x", "y" }, Ids(PackageResolver.Install(other, [Have("b", "1.0.0-r1", false)], ["x", "b", "y"])));
+    }
+
+    [TestMethod]
+    public void CycleInPlanIsNotHiddenByInstalledVersions()
+    {
+        var catalog = Catalog("a 2.0.0-r1 b>=1.0.0-r1", "b 2.0.0-r1 a>=1.0.0-r1");
+        InstalledPackage2[] installed = [Have("a", "1.0.0-r1"), Have("b", "1.0.0-r1")];
+        Fails(PackageResolver.Upgrade(catalog, installed), ResultCode.Failure, "zyklus");
+    }
+
+    [TestMethod]
+    public void NullDependencyElementIsRejectedNotThrown()
+    {
+        var broken = new InstalledPackage2("a", V("1.0.0-r1"), true, [null!]);
+        Assert.AreEqual(ResultCode.InvalidArgument, PackageResolver.CheckRemove([broken], "a").Code);
+        Assert.AreEqual(0, PackageResolver.Unused([broken]).Length);
+        Fails(PackageResolver.Install(Catalog("a 1.0.0-r1"), [broken], ["a"]), ResultCode.InvalidArgument, "Bestandseintrag");
+    }
+
+    [TestMethod]
+    public void RandomGraphsKeepDependenciesBeforeDependents()
+    {
+        var random = new Random(640);
+        int successes = 0, cycles = 0;
+        for (int round = 0; round < 3000; round++)
+        {
+            int count = random.Next(1, 10);
+            string[] names = [.. Enumerable.Range(0, count).Select(i => "p" + i.ToString(CultureInfo.InvariantCulture))];
+            var specs = new List<string>();
+            var installed = new List<InstalledPackage2>();
+            for (int i = 0; i < count; i++)
+            {
+                var deps = new List<string>();
+                for (int j = 0; j < count; j++)
+                    if (j != i && random.Next(4) == 0) deps.Add(names[j] + ">=" + random.Next(1, 3).ToString(CultureInfo.InvariantCulture) + ".0.0-r1");
+                specs.Add(names[i] + " " + random.Next(1, 4).ToString(CultureInfo.InvariantCulture) + ".0.0-r1 " + string.Join(' ', deps));
+                if (random.Next(2) == 0)
+                    installed.Add(Have(names[i], random.Next(1, 4).ToString(CultureInfo.InvariantCulture) + ".0.0-r1", random.Next(2) == 0,
+                        [.. deps.Where(_ => random.Next(2) == 0)]));
+            }
+            var catalog = Catalog([.. specs]);
+            var roots = names.Where(_ => random.Next(3) == 0).ToArray();
+            foreach (var result in new[] { PackageResolver.Install(catalog, installed, roots), PackageResolver.Upgrade(catalog, installed) })
+            {
+                if (!result.Status.IsOK())
+                {
+                    if (result.Status.Message.Contains("zyklus", StringComparison.Ordinal)) cycles++;
+                    continue;
+                }
+                successes++;
+                var plan = result.Value!;
+                Assert.AreEqual(plan.Length, plan.Select(e => e.Id).Distinct().Count());
+                for (int i = 0; i < plan.Length; i++)
+                {
+                    var have = installed.Find(p => p.Id == plan[i].Id);
+                    Assert.IsTrue(have == null || plan[i].Version.CompareTo(have.Version) > 0, "kein Wechsel auf gleich oder kleiner");
+                    foreach (var dependency in plan[i].Dependencies)
+                    {
+                        int at = Array.FindIndex(plan, e => e.Id == dependency.Id);
+                        if (at >= 0)
+                        {
+                            Assert.IsTrue(at < i, "Abhaengigkeit vor Abhaengigem");
+                            Assert.IsTrue(plan[at].Version.CompareTo(dependency.Minimum) >= 0);
+                        }
+                        else
+                        {
+                            var present = installed.Find(p => p.Id == dependency.Id);
+                            Assert.IsTrue(present != null && present.Version.CompareTo(dependency.Minimum) >= 0, "Mindestversion erfuellt");
+                        }
+                    }
+                }
+            }
+        }
+        Assert.IsTrue(successes > 500 && cycles > 20, successes + " " + cycles);
     }
 
     [TestMethod]

@@ -151,6 +151,56 @@ public sealed class PackageCatalog2Tests
     }
 
     [TestMethod]
+    public void RejectsBomAndInvalidUtf8()
+    {
+        byte[] bom = [0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes(Full)];
+        Assert.IsFalse(PackageCatalog2.Parse(bom).Status.IsOK());
+        byte[] bad = Encoding.UTF8.GetBytes(Full);
+        bad[Full.IndexOf("hello", StringComparison.Ordinal)] = 0xC0;
+        var result = PackageCatalog2.Parse(bad);
+        Assert.AreEqual(ResultCode.InvalidArgument, result.Status.Code);
+        StringAssert.Contains(result.Status.Message, "UTF-8");
+    }
+
+    // Gueltiger Katalog mit genau total Bytes: lange provides-Zeilen, die letzten beiden fuellen den Rest.
+    private static byte[] CatalogOfSize(int total)
+    {
+        var text = new StringBuilder("zehos-catalog 2\ngeneration=1\n");
+        int entry = 0, inEntry = 64, counter = 0;
+        int remaining = total - text.Length - 4;
+        while (remaining > 0)
+        {
+            int line = remaining > 213 ? (remaining > 231 ? 213 : remaining - 18) : remaining;
+            if (inEntry == 64)
+            {
+                string head = $"package=p{entry++:D5} 1.0.0-r1 {HashA} 1\n";
+                // Der Paketkopf zaehlt zur Groesse; ohne Rest wuerde er die Rechnung stoeren, also zuerst abziehen.
+                text.Append(head);
+                remaining -= head.Length;
+                inEntry = 0;
+                continue;
+            }
+            string name = counter++.ToString("D5", CultureInfo.InvariantCulture);
+            text.Append("provides=so:").Append(name).Append('x', line - 13 - name.Length).Append('\n');
+            remaining -= line;
+            inEntry++;
+        }
+        text.Append("end\n");
+        Assert.AreEqual(total, text.Length);
+        return Encoding.UTF8.GetBytes(text.ToString());
+    }
+
+    [TestMethod]
+    public void AcceptsExactlyFourMiB()
+    {
+        var exact = PackageCatalog2.Parse(CatalogOfSize(PackageCatalog2.MaximumBytes));
+        Assert.IsTrue(exact.Status.IsOK(), exact.Status.Message);
+        var over = PackageCatalog2.Parse([.. CatalogOfSize(PackageCatalog2.MaximumBytes), (byte)'\n']);
+        Assert.IsFalse(over.Status.IsOK());
+        StringAssert.Contains(over.Status.Message, "4 MiB");
+    }
+
+    [TestMethod]
     public void ErrorMessagesFilterInput()
     {
         string evil = "\u001b[31mä" + new string('x', 200);

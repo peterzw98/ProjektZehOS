@@ -122,7 +122,7 @@ internal static class PackageResolver
         var map = new Dictionary<string, InstalledPackage2>(installed.Count, StringComparer.Ordinal);
         foreach (var package in installed)
         {
-            if (package == null || package.Id == null || package.Dependencies == null)
+            if (package == null || package.Id == null || package.Dependencies == null || Array.IndexOf(package.Dependencies, null) >= 0)
             {
                 error = "Ungueltiger Bestandseintrag.";
                 return null;
@@ -142,8 +142,27 @@ internal static class PackageResolver
         public int Next;
     }
 
-    // Tiefensuche mit eigenem Stapel; Nachordnung ergibt Abhaengigkeiten vor den Abhaengigen.
+    // Tiefensuche mit eigenem Stapel; Nachordnung ergibt Abhaengigkeiten vor den Abhaengigen. Plant ein spaeterer Zweig ein Paket,
+    // das ein frueherer wegen des Bestands uebersprungen hat, laeuft die Suche mit der erweiterten Menge noch einmal; die Zielmenge
+    // aendert sich dabei nicht mehr (jeder neu eingereihte Abhaengige gehoert schon zum Ergebnis), es bleibt bei zwei Durchlaeufen.
     private static ResultObject<CatalogEntry2[]> Resolve(PackageCatalog2 catalog, Dictionary<string, InstalledPackage2> installed, List<string> roots)
+    {
+        // Pakete, die dieser Plan erneuert oder neu bringt: Abhaengige muessen sie auch dann erst nach ihnen einreihen, wenn der
+        // alte Bestand die Mindestversion schon erfuellt (sonst stuende der Abhaengige vor seiner Abhaengigkeit, ein Kreis bliebe verdeckt).
+        var planned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string root in roots)
+            if (!installed.TryGetValue(root, out var present) || present.Version.CompareTo(catalog.Find(root)!.Version) < 0) planned.Add(root);
+        while (true)
+        {
+            var result = Search(catalog, installed, roots, planned);
+            if (!result.Status.IsOK()) return result;
+            bool grown = false;
+            foreach (var entry in result.Value!) grown |= planned.Add(entry.Id);
+            if (!grown) return result;
+        }
+    }
+
+    private static ResultObject<CatalogEntry2[]> Search(PackageCatalog2 catalog, Dictionary<string, InstalledPackage2> installed, List<string> roots, HashSet<string> planned)
     {
         var order = new List<CatalogEntry2>();
         var gray = new HashSet<string>(StringComparer.Ordinal);
@@ -151,9 +170,8 @@ internal static class PackageResolver
         var stack = new List<Frame>();
         foreach (string root in roots)
         {
-            if (gray.Contains(root) || done.ContainsKey(root)) continue;
+            if (!planned.Contains(root) || gray.Contains(root) || done.ContainsKey(root)) continue;
             var rootEntry = catalog.Find(root)!;
-            if (installed.TryGetValue(root, out var present) && present.Version.CompareTo(rootEntry.Version) >= 0) continue;
             gray.Add(root);
             stack.Add(new Frame(rootEntry));
             while (stack.Count > 0)
@@ -168,16 +186,16 @@ internal static class PackageResolver
                     continue;
                 }
                 var dependency = frame.Entry.Dependencies[frame.Next++];
-                if (installed.TryGetValue(dependency.Id, out var have) && have.Version.CompareTo(dependency.Minimum) >= 0) continue;
+                if (!planned.Contains(dependency.Id) && installed.TryGetValue(dependency.Id, out var have) && have.Version.CompareTo(dependency.Minimum) >= 0) continue;
                 if (gray.Contains(dependency.Id)) return Fail<CatalogEntry2[]>(ResultCode.Failure, CycleMessage(stack, dependency.Id));
                 if (!done.TryGetValue(dependency.Id, out var target))
                 {
                     target = catalog.Find(dependency.Id);
                     if (target == null)
-                        return Fail<CatalogEntry2[]>(ResultCode.NotFound, "Abhaengigkeit fehlt im Katalog: " + dependency + ", gebraucht von " + frame.Entry.Id);
+                        return Fail<CatalogEntry2[]>(ResultCode.NotFound, "Abhaengigkeit fehlt im Katalog: " + PackageManifest2.Quote(dependency.ToString()) + ", gebraucht von " + PackageManifest2.Quote(frame.Entry.Id));
                 }
                 if (target.Version.CompareTo(dependency.Minimum) < 0)
-                    return Fail<CatalogEntry2[]>(ResultCode.Failure, "Abhaengigkeit zu alt: " + dependency + ", Katalog hat " + target.Version + ", gebraucht von " + frame.Entry.Id);
+                    return Fail<CatalogEntry2[]>(ResultCode.Failure, "Abhaengigkeit zu alt: " + PackageManifest2.Quote(dependency.ToString()) + ", Katalog hat " + target.Version + ", gebraucht von " + PackageManifest2.Quote(frame.Entry.Id));
                 if (done.ContainsKey(dependency.Id)) continue;
                 gray.Add(dependency.Id);
                 stack.Add(new Frame(target));
@@ -187,7 +205,7 @@ internal static class PackageResolver
         foreach (var entry in order)
             foreach (string name in entry.Provides)
                 if (!provided.TryAdd(name, entry.Id))
-                    return Fail<CatalogEntry2[]>(ResultCode.Failure, PackageManifest2.Quote(name) + " wird von " + provided[name] + " und " + entry.Id + " geliefert");
+                    return Fail<CatalogEntry2[]>(ResultCode.Failure, PackageManifest2.Quote(name) + " wird von " + PackageManifest2.Quote(provided[name]) + " und " + PackageManifest2.Quote(entry.Id) + " geliefert");
         return ResultObjectFactory.CreateSuccess(order.ToArray());
     }
 
@@ -196,9 +214,9 @@ internal static class PackageResolver
         int start = stack.FindIndex(frame => frame.Entry.Id == repeated);
         var message = new StringBuilder("Abhaengigkeitszyklus: ");
         int count = stack.Count - start;
-        for (int index = 0; index < Math.Min(count, MaximumListed); index++) message.Append(stack[start + index].Entry.Id).Append(" -> ");
+        for (int index = 0; index < Math.Min(count, MaximumListed); index++) message.Append(PackageManifest2.Quote(stack[start + index].Entry.Id)).Append(" -> ");
         if (count > MaximumListed) message.Append("... -> ");
-        return message.Append(repeated).ToString();
+        return message.Append(PackageManifest2.Quote(repeated)).ToString();
     }
 
     private static ResultObject<T> Fail<T>(ResultCode code, string message) => ResultObjectFactory.CreateFailure<T>(code, message);
