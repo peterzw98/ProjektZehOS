@@ -20,6 +20,7 @@ import platform
 import re
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ import tempfile
 ARGS = ["a1", "b 2"]
 ENV = {"ZEHOS_ABI": "1", "LANG": "C", "PATH": "/usr/bin:/bin"}
 TIMEOUT = 60
+STRACE_PROBLEMS = []  # Meldungen, wenn strace nichts liefert; landen im Bericht (kein Vergleichsfehler)
 
 
 def status_text(returncode):
@@ -45,13 +47,23 @@ def run_program(path):
     """Startet ein Programm in einem frischen Verzeichnis; liefert (Ausgabe, Status)."""
     with tempfile.TemporaryDirectory(prefix="linuxabi-") as work:
         try:
-            p = subprocess.run(
+            p = subprocess.Popen(
                 [path] + ARGS, cwd=work, env=ENV, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT,
-                preexec_fn=_child_setup)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                preexec_fn=_child_setup, start_new_session=True)
+        except OSError as e:
+            return ("Start fehlgeschlagen: %s\n" % e).encode(), "error"
+        try:
+            out, _ = p.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
+            # Eigene Sitzung: auch Kindprozesse des Programms beenden.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.communicate()
             return b"", "timeout"
-        return p.stdout, status_text(p.returncode)
+        return out, status_text(p.returncode)
 
 
 def strace_calls(path):
@@ -63,11 +75,13 @@ def strace_calls(path):
         run_dir = os.path.join(work, "cwd")
         os.mkdir(run_dir)
         try:
-            subprocess.run(["strace", "-f", "-c", "-o", out, "--", path] + ARGS, cwd=run_dir, env=ENV,
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=TIMEOUT, preexec_fn=_child_setup)
-            text = open(out, encoding="utf-8", errors="replace").read()
-        except (subprocess.TimeoutExpired, OSError):
+            r = subprocess.run(["strace", "-f", "-c", "-o", out, "--", path] + ARGS, cwd=run_dir, env=ENV,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               timeout=TIMEOUT, preexec_fn=_child_setup, start_new_session=True)
+            with open(out, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except (subprocess.TimeoutExpired, OSError) as e:
+            STRACE_PROBLEMS.append("strace für %s nicht auswertbar: %s" % (os.path.basename(path), e))
             return None
         names = {}
         for line in text.splitlines():
@@ -75,6 +89,12 @@ def strace_calls(path):
             # Zeile: % time, seconds, usecs/call, calls, [errors,] syscall
             if len(parts) >= 5 and re.match(r"^[0-9.]+$", parts[0]) and parts[-1] != "total" and parts[3].isdigit():
                 names[parts[-1]] = int(parts[3])
+        if not names:
+            # Leere Tabelle: meist verbotenes ptrace (Container) oder strace-Fehler.
+            err = r.stderr.decode("utf-8", "replace").strip().splitlines()
+            STRACE_PROBLEMS.append("strace für %s lieferte keine Aufrufe (Exit %d): %s" % (
+                os.path.basename(path), r.returncode, err[0] if err else "keine Meldung"))
+            return None
         return names
 
 
@@ -116,11 +136,16 @@ def compare(bindir, expdir, update, calls=strace_calls, runner=run_program):
     ok = True
     if update:
         os.makedirs(expdir, exist_ok=True)
+    del STRACE_PROBLEMS[:]
     for name in programs:
         path = os.path.abspath(os.path.join(bindir, name))
         output, status = runner(path)
         entry = {"status": status, "result": "ok"}
-        if update:
+        if update and (status in ("timeout", "error") or output.startswith(b"NEED fehlgeschlagen")):
+            # Fehllauf nie als Erwartung speichern.
+            entry["result"] = "failed-run"
+            report["problems"].append("%s: Lauf fehlgeschlagen (%s), Erwartung nicht geschrieben" % (name, status))
+        elif update:
             with open(os.path.join(expdir, name + ".txt"), "wb") as f:
                 f.write(output)
             with open(os.path.join(expdir, name + ".status"), "w", encoding="utf-8", newline="\n") as f:
@@ -157,6 +182,7 @@ def compare(bindir, expdir, update, calls=strace_calls, runner=run_program):
     if not programs:
         ok = False
         report["problems"].append("keine Programme in %s" % bindir)
+    report["strace_warnings"] = list(STRACE_PROBLEMS)
     report["syscalls"] = dict(sorted(report["syscalls"].items()))
     report["ok"] = ok
     return report, ok
@@ -181,6 +207,8 @@ def main(argv=None):
         f.write("\n")
     for n, e in report["programs"].items():
         print("%-18s %-10s %s" % (n, e["status"], e["result"]))
+    for w in report["strace_warnings"]:
+        print("WARNUNG:", w, file=sys.stderr)
     for p in report["problems"]:
         print("ABWEICHUNG:", p, file=sys.stderr)
     print("%d Programme, %d verschiedene Systemaufrufe, %s" % (

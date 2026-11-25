@@ -29,7 +29,8 @@ int main(void)
     T("clock_gettime(bad)", syscall(SYS_clock_gettime, 1, BAD));
     T("getrandom(bad)", syscall(SYS_getrandom, BAD, 8, 0));
     T("uname(bad)", syscall(SYS_uname, BAD));
-    T("readlink(bad)", syscall(SYS_readlink, "/proc/self/exe", BAD, 10));
+    NEED(syscall(SYS_symlink, "ziel", "l") == 0);
+    T("readlink(bad)", syscall(SYS_readlink, "l", BAD, 10));
     struct { void *p; unsigned long l; } iov[1] = { { BAD, 3 } };
     T("writev(bad iov base)", syscall(SYS_writev, 1, iov, 1));
     T("writev(bad iov array)", syscall(SYS_writev, 1, BAD, 1));

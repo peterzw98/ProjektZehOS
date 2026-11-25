@@ -38,7 +38,7 @@ Im Gast kommt dieselbe Ausgabe über denselben Aufruf (Argumente und Umgebung si
 | `random` | `getrandom`: zwei Aufrufe verschieden, Flags, Fehlerwege (nie die Werte) |
 | `long_double` | x87 80 Bit (`long double`, Exponent bis 4932), SSE, FPU-Zustand über einen Systemaufruf hinweg |
 | `tls` | `__thread` (`.tdata`/`.tbss`, 3000-Byte-Feld), FS-Basis über `arch_prctl(ARCH_GET_FS)` und `%fs:0` |
-| `badptr` | ungültige, Kernel- und nichtkanonische Zeiger an 14 Aufrufe: `EFAULT` (14), kein Absturz; `mprotect` auf Ungemapptes: `ENOMEM` |
+| `badptr` | ungültige, Kernel- und nichtkanonische Zeiger an 14 Aufrufe (inkl. symlink für readlink): `EFAULT` (14), kein Absturz; `mprotect` auf Ungemapptes: `ENOMEM` |
 | `unknown_syscall` | unbekannte Nummern (und `-1`): `ENOSYS` (38), der Prozess läuft weiter |
 
 Stand der Erwartungen: erzeugt mit `--update` auf Linux `6.12.90+deb13.1-amd64` (Debian 13, x86-64, musl 1.2.5, musl-gcc von Debian). Auf demselben
@@ -48,5 +48,5 @@ nicht gegengeprüft.
 ### Aufrufe in S1
 
 `strace -f -c` zeigt für die 12 Programme zusammen 39 verschiedene Aufrufe (`execve` stammt vom Start durch `strace`; `exit_group` führt `strace -c` nicht
-auf). Alle liegen im Satz S1 des Entwurfs bis auf drei, die als eigener Commit in den Entwurf nachgetragen sind: `symlink` (`files`, nötig für
-`lstat`/`readlink`), `chdir` (`dirs`) und `fcntl` (musl-`opendir`, steht dort bisher erst in S2).
+auf). Alle liegen im Satz S1 des Entwurfs bis auf vier, die als eigener Commit in den Entwurf nachgetragen sind: `symlink` (`files`, nötig für
+`lstat`/`readlink`), `chdir`, `rmdir` (beide `dirs`) und `fcntl` (musl-`opendir`, steht dort bisher erst in S2).

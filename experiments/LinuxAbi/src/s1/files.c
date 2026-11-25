@@ -1,4 +1,4 @@
-/* Dateien: openat, read, write, readv, writev, pread, lseek, fstat, unlink, rename, Fehlerwege. */
+/* Dateien: openat, read, write, readv, writev, lseek, fstat, unlink, rename, Fehlerwege. */
 #include "util.h"
 #include <fcntl.h>
 #include <string.h>

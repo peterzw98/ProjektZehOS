@@ -14,6 +14,9 @@ fi
 [ -n "$cc" ] || { echo "build.sh: kein musl-Übersetzer (musl-tools installieren oder CC setzen)" >&2; exit 1; }
 if [ "$#" -gt 0 ]; then sets=$*; else sets=$(cd "$here/src" && ls -d */ | tr -d /); fi
 for s in $sets; do
+    case $s in
+        ""|*[!A-Za-z0-9_-]*) echo "build.sh: ungültiger Satzname: $s" >&2; exit 1;;
+    esac
     src=$here/src/$s
     out=$here/out/$s
     [ -d "$src" ] || { echo "build.sh: Satz $s fehlt" >&2; exit 1; }
@@ -21,7 +24,7 @@ for s in $sets; do
     for f in "$src"/*.c; do
         [ -e "$f" ] || continue
         n=$(basename "$f" .c)
-        # -fno-pie/-no-pie: statisch und lagefest; -O1 -fno-builtin hält die Programme einfach.
+        # -fno-pie/-no-pie: statisch und lagefest; -O1 hält die Programme einfach (kein -fno-builtin).
         $cc -static -fno-pie -no-pie -O1 -Wall -Wextra -Werror -std=gnu11 -o "$out/$n" "$f"
         echo "gebaut: out/$s/$n"
     done

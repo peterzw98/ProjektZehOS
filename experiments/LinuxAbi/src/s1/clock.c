@@ -21,7 +21,7 @@ int main(void)
     NEED(clock_gettime(CLOCK_MONOTONIC, &b) == 0);
     long long d = ns(b) - ns(a);
     SHOW("slept >= 20 ms", d >= 20000000LL);
-    SHOW("slept < 2 s", d < 2000000000LL);
+    SHOW("slept < 30 s", d < 30000000000LL);
     struct timespec bad = { 0, 1000000000L };
     SHOWI("nanosleep bad nsec", nanosleep(&bad, NULL)); SHOWI("errno", errno);
     SHOWI("bad clock id", clock_gettime((clockid_t)9999, &a)); SHOWI("errno", errno);

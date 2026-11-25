@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import sys
@@ -114,6 +115,40 @@ class CompareTests(unittest.TestCase):
         _, ok = self.run_compare()
         self.assertTrue(ok)
 
+    def test_update_refuses_failed_runs(self):
+        self.program("neu", "echo 'NEED fehlgeschlagen: x Zeile 1 errno=0'; exit 2")
+        self.program("haengt", "sleep 5")
+        old = rl.TIMEOUT
+        rl.TIMEOUT = 0.3
+        self.addCleanup(setattr, rl, "TIMEOUT", old)
+        report, ok = self.run_compare(update=True)
+        self.assertFalse(ok)
+        self.assertEqual(os.listdir(self.exp), [])
+        self.assertEqual(report["programs"]["neu"]["result"], "failed-run")
+
+    def test_timeout_kills_children(self):
+        mark = os.path.join(self.tmp.name, "kind")
+        self.program("p", "(sleep 1; echo x > %s) & sleep 5" % mark)
+        self.expect("p", b"")
+        old = rl.TIMEOUT
+        rl.TIMEOUT = 0.3
+        self.addCleanup(setattr, rl, "TIMEOUT", old)
+        self.run_compare()
+        import time
+        time.sleep(1.5)
+        self.assertFalse(os.path.exists(mark))
+
+    def test_strace_warning_is_reported(self):
+        self.program("p", "echo x")
+        self.expect("p", b"x\n")
+        def leer(path):
+            rl.STRACE_PROBLEMS.append("leer")
+            return None
+        report, ok = rl.compare(self.bin, self.exp, False, calls=leer)
+        self.assertTrue(ok)
+        self.assertEqual(report["strace_warnings"], ["leer"])
+        self.assertIsNone(report["programs"]["p"]["syscalls"])
+
     def test_timeout_is_a_deviation(self):
         self.program("p", "sleep 5")
         self.expect("p", b"")
@@ -123,6 +158,23 @@ class CompareTests(unittest.TestCase):
         report, ok = self.run_compare()
         self.assertFalse(ok)
         self.assertEqual(report["programs"]["p"]["status"], "timeout")
+
+
+@unittest.skipUnless(platform.system() == "Linux", "Vergleicher läuft nur auf Linux")
+@unittest.skipUnless(shutil.which("sh"), "sh fehlt")
+class BuildScriptTests(unittest.TestCase):
+    def test_rejects_bad_set_names(self):
+        with tempfile.TemporaryDirectory() as t:
+            os.makedirs(os.path.join(t, "src", "s1"))
+            keep = os.path.join(t, "keep")
+            os.mkdir(keep)
+            shutil.copy(os.path.join(HERE, "build.sh"), t)
+            for bad in ("../keep", "..", "a/b"):
+                r = subprocess.run(["sh", os.path.join(t, "build.sh"), bad], env=dict(os.environ, CC="true"),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(r.returncode, 1, bad)
+                self.assertIn("ungültiger Satzname", r.stderr)
+            self.assertTrue(os.path.isdir(keep))
 
 
 @unittest.skipUnless(platform.system() == "Linux", "Vergleicher läuft nur auf Linux")
