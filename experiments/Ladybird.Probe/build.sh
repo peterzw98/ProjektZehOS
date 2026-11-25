@@ -11,6 +11,9 @@
 # Exit-Codes: 0 Bau fertig und $WORKDIR/build/bin/Ladybird vorhanden, 1 Aufruf- oder Umgebungsfehler,
 # 2 Voraussetzungen fehlen, 3 Abbruchregel gegriffen (Zeit, Platz, OOM), 4 Bau fehlgeschlagen,
 # 5 Quelle steht nicht auf dem festen Commit.
+#
+# Der Bau dauert Stunden: in tmux/screen oder mit nohup starten. SIGHUP, SIGINT und SIGTERM beenden den
+# laufenden Schritt und schreiben build-stats.json mit "reason": "signal".
 
 set -euo pipefail
 
@@ -31,6 +34,11 @@ readonly MAX_SECONDS="${LADYBIRD_PROBE_MAX_SECONDS:-$((8 * 3600))}"
 readonly MAX_DISK_BYTES="${LADYBIRD_PROBE_MAX_DISK_BYTES:-$((200 * 1024 * 1024 * 1024))}"
 readonly MIN_RAM_KIB="${LADYBIRD_PROBE_MIN_RAM_KIB:-$((32 * 1024 * 1024))}"
 readonly MONITOR_INTERVAL="${LADYBIRD_PROBE_MONITOR_INTERVAL:-15}"
+# du über den Arbeitsordner kostet bei großen Bäumen Zeit, deshalb nur etwa einmal je Minute.
+readonly DU_INTERVAL="${LADYBIRD_PROBE_DU_INTERVAL:-60}"
+# Puffer über der Platzgrenze beim Start, und Mindestrest auf dem Dateisystem während des Baus.
+readonly DISK_MARGIN_BYTES=$((20 * 1024 * 1024 * 1024))
+readonly MIN_FREE_BYTES=$((10 * 1024 * 1024 * 1024))
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
@@ -93,6 +101,8 @@ readonly BUILD_DIR="$WORKDIR/build"
 readonly LOG_DIR="$WORKDIR/logs"
 readonly STATE_DIR="$WORKDIR/.state"
 readonly STATS_FILE="$WORKDIR/build-stats.json"
+# Markiert einen von diesem Skript angelegten Arbeitsordner; --resume setzt ihn voraus.
+readonly MARKER_FILE="$WORKDIR/.ladybird-probe-workdir"
 
 # ---------------------------------------------------------------------------------------------
 # Voraussetzungen
@@ -272,10 +282,11 @@ check_prereqs() {
 	local probe_dir="$WORKDIR" avail
 	while [[ ! -d "$probe_dir" ]]; do probe_dir="$(dirname -- "$probe_dir")"; done
 	avail="$(df -B1 --output=avail -- "$probe_dir" | tail -n1 | tr -d ' ')"
-	if [[ "$avail" -lt "$MAX_DISK_BYTES" && "$RESUME" == 1 ]]; then
-		warn "nur $((avail / 1024 / 1024 / 1024)) GiB frei unter $probe_dir (--resume, Platzregel zählt ab Start dieses Laufs)"
-	elif [[ "$avail" -lt "$MAX_DISK_BYTES" ]]; then
-		missing "mindestens $((MAX_DISK_BYTES / 1024 / 1024 / 1024)) GiB frei unter $probe_dir (frei: $((avail / 1024 / 1024 / 1024)) GiB)"
+	local need=$((MAX_DISK_BYTES + DISK_MARGIN_BYTES))
+	if [[ "$avail" -lt "$need" && "$RESUME" == 1 ]]; then
+		warn "nur $((avail / 1024 / 1024 / 1024)) GiB frei unter $probe_dir (--resume, Arbeitsordner ist schon teilweise belegt)"
+	elif [[ "$avail" -lt "$need" ]]; then
+		missing "mindestens $((need / 1024 / 1024 / 1024)) GiB frei unter $probe_dir (frei: $((avail / 1024 / 1024 / 1024)) GiB)"
 	fi
 }
 
@@ -307,6 +318,7 @@ STATUS="failed"
 REASON=""
 ATTEMPTS=0
 CURRENT_PHASE=""
+STATS_DONE=0
 
 cmake_args() {
 	printf '%s\n' \
@@ -335,13 +347,29 @@ Geplante Schritte (DRY_RUN=1, nichts wird ausgeführt):
      bei OOM einmal: LAGOM_LINK_POOL_SIZE=1, neu konfigurieren, weiterbauen; zweites OOM -> Abbruch
   6. Prüfen: $BUILD_DIR/bin/Ladybird vorhanden; Größen aller Dateien in bin/, lib/, libexec/
   7. Ergebnis: $STATS_FILE, Logs in $LOG_DIR
-Abbruchregeln: Gesamtzeit > $((MAX_SECONDS / 3600)) h, Platzzuwachs > $((MAX_DISK_BYTES / 1024 / 1024 / 1024)) GiB, OOM auch mit LAGOM_LINK_POOL_SIZE=1
+Abbruchregeln: Gesamtzeit > $((MAX_SECONDS / 3600)) h, Arbeitsordner (du -sb) > $((MAX_DISK_BYTES / 1024 / 1024 / 1024)) GiB, weniger als $((MIN_FREE_BYTES / 1024 / 1024 / 1024)) GiB frei, OOM auch mit LAGOM_LINK_POOL_SIZE=1
 EOF
 }
 
-# Hintergrundwächter: Zeit, Platzzuwachs auf dem Dateisystem des Arbeitsordners, belegter Speicher.
+# Hintergrundwächter: Zeit, Platz des Arbeitsordners (du) und Rest auf dem Dateisystem (df), belegter Speicher.
+# Speicher und Platz werden nur abgetastet; kurze Spitzen zwischen zwei Proben fehlen in den Werten.
+kill_step_group() {
+	# TERM an die Prozessgruppe des laufenden Schritts, nach 30 s KILL, falls sie noch lebt.
+	local pgid i
+	[[ -s "$STATE_DIR/step_pgid" ]] || return 0
+	pgid="$(cat "$STATE_DIR/step_pgid" 2>/dev/null || true)"
+	[[ -n "$pgid" ]] || return 0
+	kill -TERM -- "-$pgid" 2>/dev/null || return 0
+	for ((i = 0; i < 30; i++)); do
+		kill -0 -- "-$pgid" 2>/dev/null || return 0
+		sleep 1
+	done
+	kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+
 monitor() {
-	local avail0="$1" now avail growth used peak_used=0 peak_growth=0 reason pgid
+	local avail0="$1" now avail growth used peak_used=0 peak_growth=0 reason
+	local du_bytes=0 peak_du=0 last_du=0
 	while :; do
 		now="$(date +%s)"
 		used="$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print t-a}' /proc/meminfo)"
@@ -353,20 +381,26 @@ monitor() {
 		if [[ "$growth" -gt "$peak_growth" ]]; then
 			peak_growth="$growth"; echo "$peak_growth" >"$STATE_DIR/peak_disk_growth_bytes"
 		fi
+		if [[ $((now - last_du)) -ge "$DU_INTERVAL" ]]; then
+			last_du="$now"
+			# Während des Baus verschwinden Dateien; du meldet das, der Wert bleibt brauchbar.
+			du_bytes="$(du -sb -- "$WORKDIR" 2>/dev/null | awk '{print $1}' || true)"
+			du_bytes="${du_bytes:-0}"
+			if [[ "$du_bytes" -gt "$peak_du" ]]; then
+				peak_du="$du_bytes"; echo "$peak_du" >"$STATE_DIR/peak_workdir_bytes"
+			fi
+		fi
 		reason=""
 		if [[ $((now - START_EPOCH)) -gt "$MAX_SECONDS" ]]; then
 			reason="time"
-		elif [[ "$growth" -gt "$MAX_DISK_BYTES" ]]; then
+		elif [[ "$du_bytes" -gt "$MAX_DISK_BYTES" ]]; then
 			reason="disk"
+		elif [[ "$avail" -lt "$MIN_FREE_BYTES" ]]; then
+			reason="disk_full"
 		fi
 		if [[ -n "$reason" ]]; then
 			echo "$reason" >"$STATE_DIR/abort"
-			if [[ -s "$STATE_DIR/step_pgid" ]]; then
-				pgid="$(cat "$STATE_DIR/step_pgid")"
-				kill -TERM -- "-$pgid" 2>/dev/null || true
-				sleep 30
-				kill -KILL -- "-$pgid" 2>/dev/null || true
-			fi
+			kill_step_group
 			return 0
 		fi
 		sleep "$MONITOR_INTERVAL"
@@ -386,7 +420,8 @@ cgroup_oom_kills() {
 }
 
 log_shows_oom() {
-	grep -Eqi 'Killed signal terminated program|fatal error: Killed|virtual memory exhausted|out of memory|Cannot allocate memory|std::bad_alloc|SIGKILL|signal: 9|exit status 137|exit code 137' "$1"
+	# Nur eindeutige Zeichen: vom Kernel getötete Prozesse (Signal 9, Exit 137) und die OOM-Meldungen von gcc und LLVM.
+	grep -Eq 'Killed signal terminated program|signal: 9, SIGKILL|exit status 137|exit code 137|virtual memory exhausted|LLVM ERROR: out of memory' "$1"
 }
 
 # run_step NAME BEFEHL...: in eigener Prozessgruppe unter /usr/bin/time -v, Ausgabe nach logs/NAME.log.
@@ -419,7 +454,7 @@ write_stats() {
 	START_EPOCH="$START_EPOCH" END_EPOCH="$end_epoch" RESUME="$RESUME" PHASE="$CURRENT_PHASE" \
 	SRC_DIR="$SRC_DIR" BUILD_DIR="$BUILD_DIR" STATE_DIR="$STATE_DIR" STATS_FILE="$STATS_FILE" \
 	EXPECTED_COMMIT="$LADYBIRD_COMMIT" CC_SEL="$CC_SEL" CXX_SEL="$CXX_SEL" TRIPLET="$TRIPLET" \
-	MAX_SECONDS="$MAX_SECONDS" MAX_DISK_BYTES="$MAX_DISK_BYTES" MIN_RAM_KIB="$MIN_RAM_KIB" SCRIPT_DIR="$SCRIPT_DIR" \
+	RUSTUP_TOOLCHAIN="$RUST_CHANNEL" MAX_SECONDS="$MAX_SECONDS" MAX_DISK_BYTES="$MAX_DISK_BYTES" MIN_RAM_KIB="$MIN_RAM_KIB" SCRIPT_DIR="$SCRIPT_DIR" \
 	CMAKE_ARGS="$(cmake_args)" \
 		python3 -I - <<'PY'
 import json, os, re, subprocess, time
@@ -533,6 +568,7 @@ stats = {
     "peak_rss_kib_by_phase": peak_rss,
     "peak_system_used_kib": read_int(os.path.join(state, "peak_system_used_kib")),
     "peak_disk_growth_bytes": read_int(os.path.join(state, "peak_disk_growth_bytes")),
+    "peak_workdir_bytes": read_int(os.path.join(state, "peak_workdir_bytes")),
     "disk_bytes": disk_bytes,
     "disk_bytes_detail": disk_parts,
     "binaries": dict(sorted(binaries.items())),
@@ -559,8 +595,9 @@ stats = {
         "cmake": first_line(sh("cmake", "--version")),
         "ninja": sh("ninja", "--version"),
         "qt": qt,
-        # Im Quellordner, damit rustup die Version aus rust-toolchain.toml meldet.
-        "rustc": sh("rustc", "--version", cwd=src if os.path.isdir(src) else None),
+        # Unter RUSTUP_TOOLCHAIN wie im Bau (export_build_env).
+        "rustc": sh("rustc", "--version"),
+        "rustup_toolchain": env.get("RUSTUP_TOOLCHAIN"),
         "python": sh("python3", "--version"),
     },
     "probe_script_head": sh("git", "-C", env["SCRIPT_DIR"], "rev-parse", "HEAD") or None,
@@ -584,6 +621,7 @@ cleanup() {
 # finish CODE: Wächter beenden, build-stats.json schreiben, mit CODE enden.
 finish() {
 	local code="$1"
+	STATS_DONE=1
 	cleanup
 	MONITOR_PID=""
 	if write_stats; then
@@ -592,7 +630,9 @@ finish() {
 		err "build-stats.json konnte nicht geschrieben werden"
 		[[ "$code" -eq 0 ]] && code=4
 	fi
-	if [[ "$code" -eq 3 ]]; then
+	if [[ "$code" -eq 3 && "$REASON" == signal ]]; then
+		err "Abbruch durch Signal. Stand und Zahlen in $STATS_FILE; weiterbauen nur nach Rückfrage mit --resume."
+	elif [[ "$code" -eq 3 ]]; then
 		err "Abbruchregel gegriffen ($REASON). Nicht erneut starten ohne Rückfrage; Stand und Zahlen in $STATS_FILE melden."
 	fi
 	exit "$code"
@@ -667,6 +707,8 @@ export_build_env() {
 	export VCPKG_MAX_CONCURRENCY="$JOBS"
 	# Kalter Bau: kein ccache, auch nicht in vcpkg-Ports.
 	export CCACHE_DISABLE=1
+	# cargo und rustc laufen im Bauordner außerhalb von src; dort fände rustup die rust-toolchain.toml nicht.
+	export RUSTUP_TOOLCHAIN="$RUST_CHANNEL"
 }
 
 configure() {
@@ -678,16 +720,38 @@ configure() {
 	run_step "$name" bash -c 'cd "$1" && shift && exec cmake "$@"' configure "$SRC_DIR" "${args[@]}"
 }
 
-# Strg+C erreicht die Bauschritte nicht (eigene Sitzung über setsid), deshalb hier weiterreichen.
+# Signale erreichen die Bauschritte nicht (eigene Sitzung über setsid), deshalb hier weiterreichen.
+# Nach SIGHUP ist das Terminal weg; Meldungen gehen dann nach logs/build.sh.log, sonst bricht set -e beim Schreiben ab.
 # shellcheck disable=SC2317 # über trap aufgerufen
 on_signal() {
-	local pgid
-	if [[ -s "$STATE_DIR/step_pgid" ]]; then
-		pgid="$(cat "$STATE_DIR/step_pgid")"
-		kill -TERM -- "-$pgid" 2>/dev/null || true
+	local sig="$1"
+	trap '' INT TERM HUP
+	if [[ "$sig" == HUP ]]; then
+		exec >>"$LOG_DIR/build.sh.log" 2>&1
 	fi
+	log "Signal $sig empfangen, laufender Schritt wird beendet"
+	kill_step_group
 	STATUS="aborted"; REASON="signal"
 	finish 3
+}
+
+# Unerwartetes Ende (set -e, die): Schritt und Wächter beenden und build-stats.json trotzdem schreiben.
+# shellcheck disable=SC2317 # über trap aufgerufen
+on_exit() {
+	local rc=$?
+	set +e
+	if [[ "$STATS_DONE" == 0 && -n "$START_EPOCH" ]]; then
+		STATS_DONE=1
+		kill_step_group
+		cleanup
+		MONITOR_PID=""
+		STATUS="failed"; REASON="unexpected_exit_$rc"
+		err "unerwartetes Ende mit Code $rc in Schritt ${CURRENT_PHASE:-?}"
+		write_stats && log "Ergebnis: $STATS_FILE (Status $STATUS, Grund $REASON)"
+		# Einheitlich Exit 4 (Bau fehlgeschlagen); der ursprüngliche Code steht in "reason".
+		exit 4
+	fi
+	cleanup
 }
 
 main() {
@@ -704,21 +768,26 @@ main() {
 		exit 0
 	fi
 
-	if [[ -e "$WORKDIR" && "$RESUME" == 0 ]] && [[ -n "$(ls -A -- "$WORKDIR" 2>/dev/null)" ]]; then
+	if [[ "$RESUME" == 1 ]]; then
+		[[ -f "$MARKER_FILE" ]] || die 1 "--resume nur für einen von build.sh angelegten Arbeitsordner ($MARKER_FILE fehlt)"
+	elif [[ -e "$WORKDIR" ]] && [[ -n "$(ls -A -- "$WORKDIR" 2>/dev/null)" ]]; then
 		die 1 "$WORKDIR ist nicht leer; für eine Messung einen frischen Ordner nehmen oder --resume angeben"
 	fi
 	mkdir -p "$WORKDIR" "$LOG_DIR" "$STATE_DIR" "$BUILD_DIR"
+	echo "$LADYBIRD_COMMIT" >"$MARKER_FILE"
 	# Zeiten und Spitzenwerte gelten je Lauf; auch --resume beginnt mit leerem Zustand.
 	rm -f "$STATE_DIR/abort" "$STATE_DIR/step_pgid" "$STATE_DIR"/seconds-* "$STATE_DIR"/time-*.txt \
-		"$STATE_DIR/peak_system_used_kib" "$STATE_DIR/peak_disk_growth_bytes"
+		"$STATE_DIR/peak_system_used_kib" "$STATE_DIR/peak_disk_growth_bytes" "$STATE_DIR/peak_workdir_bytes"
 
 	START_EPOCH="$(date +%s)"
 	local avail0
 	avail0="$(df -B1 --output=avail -- "$WORKDIR" | tail -n1 | tr -d ' ')"
 	monitor "$avail0" &
 	MONITOR_PID=$!
-	trap 'cleanup' EXIT
-	trap on_signal INT TERM
+	trap on_exit EXIT
+	trap 'on_signal INT' INT
+	trap 'on_signal TERM' TERM
+	trap 'on_signal HUP' HUP
 
 	fetch_source
 	check_source_pins
