@@ -22,7 +22,12 @@ public static unsafe class Idt
     /// </summary>
     public static void RegisterAllInterrupts()
     {
-        // Get the current code selector from the bootloader (Limine)
+        // ZehOS patch user-gdt, see PATCHES.md
+        // Before the IDT: its gates name the IST stacks of this CPU's TSS.
+        Gdt.Prepare();
+        Gdt.LoadOnCurrentCpu();
+
+        // Get the current code selector (the bootloader's value, kept by the kernel's own GDT)
         ulong cs = GetCurrentCodeSelector();
         Serial.Write("[IDT] Initializing with CS=0x", cs.ToString("X"), "\n");
 
@@ -46,7 +51,8 @@ public static unsafe class Idt
                 Serial.WriteString("\n");
             }
             s_idtEntries[i].Selector = (ushort)cs;
-            s_idtEntries[i].RawFlags = 0x8E00;  // P=1, DPL=0, Type=Interrupt Gate
+            // P=1, DPL=0, Type=Interrupt Gate; the IST number in bits 2:0 (ZehOS patch user-gdt)
+            s_idtEntries[i].RawFlags = (ushort)(0x8E00 | Gdt.IstOf(i));
             s_idtEntries[i].Offset = (ulong)GetStub(i);
         }
 
@@ -82,6 +88,9 @@ public static unsafe class Idt
         {
             Panic.Halt("The IDT was not built on the boot CPU before an application processor loaded it.");
         }
+
+        // ZehOS patch user-gdt, see PATCHES.md
+        Gdt.LoadOnCurrentCpu();
 
         fixed (void* ptr = &s_idtEntries[0])
         {
