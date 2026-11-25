@@ -80,7 +80,7 @@ public sealed class DiagnosticCommandTests
         output.Verify(target => target.WriteLine("WAMR-AOT aus (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Exactly(2));
         output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Exactly(2));
         // Der Hostbuild enthaelt kein WAMR; die Shell sagt das bei jeder Abfrage.
-        output.Verify(target => target.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3."), Times.Exactly(3));
+        output.Verify(target => target.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3."), Times.Exactly(4));
     }
     [DataTestMethod]
     [DataRow("version", "Versionsinformationen sind nicht verfuegbar.")]
