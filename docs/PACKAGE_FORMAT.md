@@ -207,3 +207,54 @@ er ersetzt keinen Kernel-/Gasttest.
 - Downloads haben nur ein Zeitlimit je Datenpaket, kein Gesamtlimit. Ein sehr langsamer Server hält die Netzwerksperre, bis `pkg cancel` den Auftrag abbricht.
 - Das Startmenü erkennt ein bereits offenes Fenster am Anzeigenamen; Paketnamen sollten deshalb eindeutig sein.
 - Veränderte Paketdateien sperren den Start; `pkg install <id>` derselben Version repariert sie.
+
+## Format 2 (noch nicht angeschlossen)
+
+Vorarbeit für native Pakete (Laufzeit `linux-x64-v1`, [Plan](superpowers/plans/2026-11-24-ladybird-p-paketdienst-vorarbeit.md), [Entwurf, Abschnitt 7](superpowers/specs/2026-11-24-native-pakete-design.md#7-paketdienst-v2)). Nichts davon ist an `pkg`, Kernelstart oder Server angeschlossen; `pkg` liest und schreibt weiter nur Version 1. Vertrauen und Signatur sind dieselben wie bei Version 1 (`PackageTrust`).
+
+### Manifest
+
+Implementierung `ProjektZeh/Packages/PackageManifest2.cs` (`PackageManifest2.Parse`, wirft nie). UTF-8 ohne BOM, nur LF (ein CR irgendwo ist ungültig), jede Zeile mit LF abgeschlossen, Felder genau in dieser Reihenfolge, höchstens 1 MiB:
+
+```text
+zehos-package 2
+id=hello
+version=1.2.3
+release=4
+runtime=linux-x64-v1
+license=MIT OR Apache-2.0
+name=Hallo Welt
+entry=usr/bin/hello
+capability=net
+capability=storage
+capability=files
+memory-mib=256
+min-kernel=0.5.0
+depends=musl>=1.2.5-r1
+provides=so:libhello.so.1
+exec=<sha256 klein> <bytes> usr/bin/hello
+file=<sha256 klein> <bytes> usr/lib/libhello.so.1
+link=usr/lib/libhello.so libhello.so.1
+end
+```
+
+- Pflicht sind `id`, `version`, `release`, `runtime`, `license` (lückenlos am Anfang) und mindestens eine `exec`- oder `file`-Zeile. Unbekannte Schlüssel, Leerzeilen, doppelte Einzelfelder und Felder an falscher Stelle sind ungültig.
+- `id`, `version`: wie Version 1. `release`: Paketrevision 1–9999 ohne führende Null. Version und Revision zusammen schreiben sich kanonisch `1.2.3-r4` (`PackageVersion2`); verglichen wird erst die Version, dann die Revision.
+- `runtime`: genau `linux-x64-v1`.
+- `license`: SPDX-Ausdruck, 1–64 Zeichen aus `A–Z a–z 0–9 . + - ( )` und Leerzeichen. Die SPDX-Grammatik prüft der Kernel nicht.
+- `name`: wie Version 1, nur zusammen mit `entry`. `entry`: Pfad einer `exec`-Zeile (nicht `file`, nicht `link`). Bibliotheken haben beides nicht; ein Programm darf `entry` ohne `name` haben.
+- `capability=net|storage|files`: je höchstens einmal, in dieser Reihenfolge.
+- `memory-mib`: 1–4096, nur zusammen mit `entry`. `min-kernel`: wie Version 1.
+- `depends=<id>>=<version>-r<release>`: 0–64 Zeilen, ordinal nach `id`, keine doppelte `id`, nicht das eigene Paket (`PackageDependency`).
+- `provides=so:<soname>`: 0–64 Zeilen, ordinal, `<soname>` 1–200 Zeichen aus `A–Z a–z 0–9 . _ + -`. `Provides` enthält den Wert samt `so:`.
+- `exec`/`file`: Aufbau wie `file` in Version 1; `exec` markiert ausführbare Dateien. Beide zusammen ordinal nach Pfad, höchstens 4096, Summe höchstens 1 GiB (exakt 1 GiB ist erlaubt).
+- `link=<pfad> <ziel>`: höchstens 4096, ordinal nach Pfad. Das Ziel ist kanonisch relativ zum Ordner des Links: null oder mehr führende `..`, danach mindestens eine normale Komponente (kein `.`, kein `..` mitten im Pfad, kein `/` am Anfang oder Ende). Es darf nicht über die Wurzel hinaus und nicht auf die Wurzel selbst oder auf den Link selbst zeigen. Weil `..` nur vorne steht und kein Link Ordner eines anderen Eintrags sein kann, entspricht die textuelle Auflösung der tatsächlichen.
+- Pfade (auch von `entry` und `link`): wie Version 1, dazu `+` als Zeichen, höchstens 200 Zeichen, beginnend mit `usr/`, `lib/` oder `etc/`. Doppelte Pfade (auch nur in Groß-/Kleinschreibung verschieden, auch `link` gegen `exec`/`file`) sind ungültig, ebenso ein Pfad, der zugleich Ordner eines anderen ist.
+
+### Katalog
+
+Folgt mit Plan P2.
+
+### Bestand
+
+Folgt mit Plan P3.
