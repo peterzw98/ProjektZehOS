@@ -324,7 +324,7 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
   - **I1, Umsetzung #250 (0.5.101, gemergt):** Eine CPU-Ausnahme im Wasm-Worker beendet nur die App, der Worker wird ersetzt und das System läuft weiter.
     - Gast (QEMU), #DE und #PF im Worker: KVM 10/10 und 5/5, TCG 3/3 und 1/1.
     - Gegenprobe: ein #PF im Probe-Thread hält das System weiter an.
-    - Nicht geprüft: #UD/#GP, Fehler mitten im wasm3-Interpreter und VMware.
+    - I1-N (#401): #UD und #GP in der Probe ergänzt; Gast KVM 10/10, TCG 3/3, `--negative` und `--nmi` je 1/1. Nicht geprüft: Fehler mitten im wasm3-Interpreter und VMware.
     - Grenze: Je Fehler bleiben 8 MiB Stack und die Instanz belegt.
     - Offene Review-Befunde (agent-laser-pink, IRC 18.11.), als Folgeaufgabe `fix/i1-followup` beauftragt:
       - Der Ersatzworker kann starten, bevor der alte Lauf aufgeräumt ist. Die Hauptschleife kann dann den neuen Lauf schließen.

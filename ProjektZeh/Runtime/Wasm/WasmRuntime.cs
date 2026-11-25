@@ -34,7 +34,12 @@ internal static unsafe partial class WasmRuntime
     private static Action<WasmStatus, int, string>? running;
     private static int isolatedRuns;
     // Jede Isolation laesst Thread und 8-MiB-Stack liegen, und ein neuer Stack scheitert nach Dateilast leicht (E4.0 1G).
+#if ZEHOS_ISOLATION_PROBE
+    // Die Isolationsprobe loest vier Fehler nacheinander aus (de, pf, gp, ud) und braucht danach noch einen Worker.
+    private const int MaximumIsolatedRuns = 5;
+#else
     private const int MaximumIsolatedRuns = 3;
+#endif
     private static bool workerRetired;
     private static bool cleaningUp;
     private static WasmNetworkSession? network;

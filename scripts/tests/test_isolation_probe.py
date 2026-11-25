@@ -15,6 +15,10 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE arena_after=de used=0',
     'ISOLATION_PROBE arena=1 used=16777263 frei=376400',
     'ISOLATION_PROBE arena_after=pf used=0',
+    'ISOLATION_PROBE arena=1 used=16777263 frei=368000',
+    'ISOLATION_PROBE arena_after=gp used=0',
+    'ISOLATION_PROBE arena=1 used=16777263 frei=367000',
+    'ISOLATION_PROBE arena_after=ud used=0',
     'CPU EXCEPTION: Divide by Zero (#DE)',
     'System halted.',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 4 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
@@ -22,6 +26,12 @@ PASS_LOG = '\n'.join([
     'CPU EXCEPTION: Page Fault (#PF)',
     'WASM CPU-Ausnahme im App-Code, Worker-Thread 7 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
     'ISOLATION_PROBE fault=pf handled=1 vector=14',
+    'CPU EXCEPTION: General Protection Fault (#GP)',
+    'WASM CPU-Ausnahme im App-Code, Worker-Thread 10 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
+    'ISOLATION_PROBE fault=gp handled=1 vector=13',
+    'CPU EXCEPTION: Invalid Opcode (#UD)',
+    'WASM CPU-Ausnahme im App-Code, Worker-Thread 13 aufgegeben (Ressourcen frei); neuer Worker gestartet.',
+    'ISOLATION_PROBE fault=ud handled=1 vector=6',
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
     'ISOLATION_PROBE frei_nach=384600',
@@ -37,9 +47,21 @@ class EvaluateTests(unittest.TestCase):
         log = PASS_LOG.replace('ISOLATION_PROBE fault=pf handled=1 vector=14', '')
         self.assertIn('pf nicht isoliert', isolation.evaluate(log, negative=False))
 
-    def test_main_loop_must_end_both_runs(self):
+    def test_missing_gp_and_ud_are_reported(self):
+        for kind, vector in (('gp', 13), ('ud', 6)):
+            log = PASS_LOG.replace(f'ISOLATION_PROBE fault={kind} handled=1 vector={vector}', '')
+            self.assertIn(f'{kind} nicht isoliert', isolation.evaluate(log, negative=False))
+
+    def test_three_handled_faults_are_not_enough(self):
+        # Die Probe verlangt vier handled=1: ein Mitschnitt mit nur drei (de, pf, gp) besteht nicht.
+        log = PASS_LOG.replace('ISOLATION_PROBE fault=ud handled=1 vector=6', '')
+        self.assertEqual(PASS_LOG.count('handled=1'), 4)
+        self.assertEqual(log.count('handled=1'), 3)
+        self.assertIn('ud nicht isoliert', isolation.evaluate(log, negative=False))
+
+    def test_main_loop_must_end_all_runs(self):
         log = PASS_LOG.replace('WASM CPU-Ausnahme im App-Code, Worker-Thread 7', 'x')
-        self.assertIn('Hauptschleife hat nicht beide Laeufe beendet', isolation.evaluate(log, negative=False))
+        self.assertIn('Hauptschleife hat nicht alle Laeufe beendet', isolation.evaluate(log, negative=False))
 
     def test_negative_needs_halt_after_marker(self):
         halted = PASS_LOG + '\nISOLATION_PROBE negative pf on probe thread\nCPU EXCEPTION: Page Fault (#PF)\nSystem halted.'
@@ -47,29 +69,38 @@ class EvaluateTests(unittest.TestCase):
         survived = PASS_LOG + '\nISOLATION_PROBE negative pf on probe thread\nISOLATION_PROBE negative NOT HALTED'
         self.assertIn('Gegenprobe hielt nicht an', isolation.evaluate(survived, negative=True))
 
+    def test_gp_reported_as_pf_is_wrong_vector(self):
+        log = PASS_LOG.replace('fault=gp handled=1 vector=13', 'fault=gp handled=1 vector=14')
+        self.assertIn('gp mit Vektor 14 statt 13 (IRQContext-Versatz?)', isolation.evaluate(log, negative=False))
+
     def test_wrong_vector_points_to_layout_drift(self):
         log = PASS_LOG.replace('fault=de handled=1 vector=0', 'fault=de handled=1 vector=113')
         self.assertIn('de mit Vektor 113 statt 0 (IRQContext-Versatz?)', isolation.evaluate(log, negative=False))
 
-    def test_arena_must_run_in_both_fault_runs(self):
+    def test_arena_must_run_in_all_fault_runs(self):
         log = PASS_LOG.replace('ISOLATION_PROBE arena=1 used=16777263 frei=384600', 'ISOLATION_PROBE arena=0 used=0 frei=401000')
-        self.assertIn('Arena nicht in beiden Fehlerlaeufen gestartet', isolation.evaluate(log, negative=False))
+        self.assertIn('Arena nicht in allen Fehlerlaeufen gestartet', isolation.evaluate(log, negative=False))
+
+    def test_arena_counter_must_be_zero_after_gp_and_ud(self):
+        for kind in ('gp', 'ud'):
+            log = PASS_LOG.replace(f'arena_after={kind} used=0', f'arena_after={kind} used=16777263')
+            self.assertEqual([f'Arena nach {kind} nicht freigegeben'], isolation.evaluate(log, negative=False))
 
     def test_arena_counter_must_be_zero_after_each_isolation(self):
         log = PASS_LOG.replace('arena_after=pf used=0', 'arena_after=pf used=16777263')
         self.assertEqual(['Arena nach pf nicht freigegeben'], isolation.evaluate(log, negative=False))
 
     def test_free_memory_may_drop_by_stacks_but_not_by_arena(self):
-        # Die beiden Stacks (16 MiB) und 4 MiB Reserve sind erlaubt, 32 MiB (nach E6-G: 2 x 16 MiB Arena) nicht.
-        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=368232')
+        # Die vier Stacks (32 MiB) und 4 MiB Reserve sind erlaubt, 37000 KiB nicht.
+        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=364000')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
-        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=380520')
+        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=364136')
         self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
         missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=384600\n', '')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))
 
     def test_held_block_must_lower_free_memory(self):
-        log = PASS_LOG.replace('used=16777263 frei=384600', 'used=16777263 frei=400000')
+        log = PASS_LOG.replace('used=16777263 frei=367000', 'used=16777263 frei=400000')
         self.assertEqual(['Arenablock senkt frei nicht (Messung ohne Aussage)'], isolation.evaluate(log, negative=False))
 
 
