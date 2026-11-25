@@ -11,7 +11,11 @@ internal sealed class FatSuperblock : IVfsSuperblock
     private const int ShortEntrySlotCount = 1;
 
     private readonly IBlockDevice _device;
-    private readonly Dictionary<uint, FatInode> _inodeCache = [];
+    // ZehOS patch fat-inode-cache, see PATCHES.md
+    private readonly FatInodeCache _inodeCache = new();
+
+    /// <summary>The inode cache of this mount (test hook).</summary>
+    internal FatInodeCache InodeCache => _inodeCache;
 
     public FatBootSector Boot { get; }
     public FatTable Fat { get; }
@@ -101,7 +105,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
         // empty file does not have: each open of one gets an inode of its own, so a handle opened
         // before another wrote to the file reads it as empty still (files.lua of the Lua 5.5 test
         // suite, which reads through one handle what it wrote through another).
-        if (entry.FirstCluster >= FatTable.FirstDataCluster && _inodeCache.TryGetValue(entry.FirstCluster, out FatInode? cached))
+        if (entry.FirstCluster >= FatTable.FirstDataCluster && _inodeCache.TryGet(entry.FirstCluster, out FatInode? cached))
         {
             cached.Name = entry.Name;
             cached.Size = entry.Size;
@@ -124,7 +128,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
         if (entry.FirstCluster >= FatTable.FirstDataCluster)
         {
-            _inodeCache[entry.FirstCluster] = node;
+            _inodeCache.Set(entry.FirstCluster, node);
         }
         return node;
     }
@@ -247,7 +251,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
             slots);
         if (firstCluster >= FatTable.FirstDataCluster)
         {
-            _inodeCache[firstCluster] = node;
+            _inodeCache.Set(firstCluster, node);
         }
         created = node;
         return true;
@@ -266,7 +270,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
         // (cross-link corruption of the new file). Invalidate the offset
         // while the cache can still locate the inode.
         if (match.FirstCluster >= FatTable.FirstDataCluster
-            && _inodeCache.TryGetValue(match.FirstCluster, out FatInode? live)
+            && _inodeCache.TryGet(match.FirstCluster, out FatInode? live)
             && live.DirEntryByteOffset == match.ByteOffset)
         {
             live.DirEntryByteOffset = FatInode.NoDirEntryOffset;
@@ -307,7 +311,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
         // later unlink can invalidate this object's slot reference.
         if (inode.FirstCluster >= FatTable.FirstDataCluster)
         {
-            _inodeCache[inode.FirstCluster] = inode;
+            _inodeCache.Set(inode.FirstCluster, inode);
         }
     }
 
