@@ -197,6 +197,27 @@ public class FatInodeCacheTests
     }
 
     [Test]
+    public void LookupAfterRemount_GivesTheSameObject_WhileHeld()
+    {
+        Create(_root, "a.txt", "eins");
+        _sb.SuperOperations.Drop(_sb);
+        Mount();
+        FatInode held = Lookup(_root, "a.txt");
+        Collect();
+        Assert.That(Lookup(_root, "a.txt"), Is.SameAs(held));
+        GC.KeepAlive(held);
+    }
+
+    [Test]
+    public void DeadEntries_AreNotSweptBelowTheThreshold()
+    {
+        FillUnheld(0, 200);
+        Collect();
+        FillUnheld(1000, 1);
+        Assert.That(_sb.InodeCache.Count, Is.EqualTo(201));
+    }
+
+    [Test]
     public void Drop_ForgetsEverything()
     {
         FatInode held = Create(_root, "a.txt", "alt");
