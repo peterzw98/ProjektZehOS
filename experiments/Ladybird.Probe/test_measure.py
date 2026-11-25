@@ -60,7 +60,7 @@ class MeasureTests(unittest.TestCase):
             fake = os.path.join(tmp, "fake-ladybird")
             with open(fake, "w") as f:
                 f.write("#!/bin/sh\nexec sleep 30\n")
-            os.chmod(fake, 0o755)
+            os.chmod(fake, 0o700)
             out = os.path.join(tmp, "out.json")
             page = os.path.join(HIER, "pages", "static.html")
             t0 = time.monotonic()
@@ -93,6 +93,30 @@ class MeasureTests(unittest.TestCase):
             p.kill()
             p.wait()
 
+    def test_png_complete(self):
+        full = measure.PNG_SIGNATURE + b"\0" * 20 + measure.PNG_IEND
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "a.png")
+            with open(p, "wb") as f:
+                f.write(full[:-5])
+            self.assertFalse(measure.png_complete(p))
+            with open(p, "wb") as f:
+                f.write(full)
+            self.assertTrue(measure.png_complete(p))
+            self.assertFalse(measure.png_complete(os.path.join(tmp, "fehlt.png")))
+
+    def test_group_child_outliving_root_is_killed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = os.path.join(tmp, "child.pid")
+            fake = self._fake(tmp, 'sleep 30 &\necho $! > %s\nexit 0\n' % pidfile)
+            out = os.path.join(tmp, "o.json")
+            page = os.path.join(HIER, "pages", "static.html")
+            measure.main(["--binary", fake, "--page", page, "--runs", "1", "--out", out])
+            with open(pidfile) as f:
+                child = int(f.read())
+            time.sleep(0.2)
+            self.assertIsNone(measure.proc_start(child))
+
     def test_signal_skips_reused_pid(self):
         p = subprocess.Popen(["sleep", "5"])
         try:
@@ -109,14 +133,14 @@ class MeasureTests(unittest.TestCase):
         fake = os.path.join(tmp, "fake")
         with open(fake, "w") as f:
             f.write("#!/bin/sh\n" + body)
-        os.chmod(fake, 0o755)
+        os.chmod(fake, 0o700)
         return fake
 
     def test_run_success_and_no_screenshot(self):
         page = os.path.join(HIER, "pages", "static.html")
         with tempfile.TemporaryDirectory() as tmp:
             ok = self._fake(tmp, 'while [ "$1" != --screenshot-path ]; do shift; done\n'
-                                 'sleep 0.3; echo x > "$2"; sleep 0.3\n')
+                                 'sleep 0.3; printf "\\211PNG\\r\\n\\032\\n\\0\\0\\0\\0IEND\\256B\\140\\202" > "$2"; sleep 0.3\n')
             out = os.path.join(tmp, "o.json")
             self.assertEqual(measure.main(["--binary", ok, "--page", page, "--runs", "2",
                                            "--out", out]), 0)

@@ -78,6 +78,54 @@ def proc_start(pid):
     return rest[19]
 
 
+PNG_SIGNATURE = bytes.fromhex("89504e470d0a1a0a")
+PNG_IEND = bytes.fromhex("0000000049454e44ae426082")  # Länge 0, "IEND", feste CRC
+
+
+def png_complete(path):
+    """True, wenn die Datei mit PNG-Signatur beginnt und mit dem IEND-Chunk endet (kein halbes PNG)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if head != PNG_SIGNATURE or size < 8 + len(PNG_IEND):
+                return False
+            f.seek(-len(PNG_IEND), os.SEEK_END)
+            return f.read() == PNG_IEND
+    except OSError:
+        return False
+
+
+def group_members(pgid):
+    """Lebende (keine Zombies) Prozesse der Prozessgruppe pgid."""
+    result = []
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return result
+    for n in names:
+        if not n.isdigit():
+            continue
+        text = _read(f"/proc/{n}/stat")
+        if not text:
+            continue
+        rest = text[text.rfind(")") + 2:].split()
+        if len(rest) > 2 and rest[0] != "Z" and rest[2] == str(pgid):
+            result.append(int(n))
+    return result
+
+
+def kill_group(pgid, sig):
+    """Signal an die Gruppe, solange sie Mitglieder hat (die Gruppen-ID kann dann nicht
+    neu vergeben sein), auch nach dem Ende der Wurzel."""
+    if group_members(pgid):
+        try:
+            os.killpg(pgid, sig)
+        except OSError:
+            pass
+
+
 def process_tree(root_pid):
     """Alle Nachfahren von root_pid einschließlich der Wurzel (nur lebende, keine Zombies)."""
     seen = []
@@ -194,7 +242,7 @@ def run_once(cmd, shot, timeout):
             now = time.monotonic()
             if shot_ms is None:
                 try:
-                    if os.path.getsize(shot) > 0:
+                    if png_complete(shot):
                         shot_ms = round((now - start) * 1000)
                         shot_time = now
                 except OSError:
@@ -218,9 +266,11 @@ def run_once(cmd, shot, timeout):
                 after = now - shot_time
                 if after > TERM_AFTER and not term_sent:
                     _signal_all(known, signal.SIGTERM)
+                    kill_group(proc.pid, signal.SIGTERM)
                     term_sent = True
                 if after > TERM_AFTER + KILL_AFTER and not kill_sent:
                     _signal_all(known, signal.SIGKILL)
+                    kill_group(proc.pid, signal.SIGKILL)
                     kill_sent = True
             if now - start > timeout and shot_ms is None:
                 error = "timeout"
@@ -231,11 +281,7 @@ def run_once(cmd, shot, timeout):
             time.sleep(SHOT_POLL_INTERVAL)
     finally:
         _signal_all(known, signal.SIGKILL)
-        if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)  # Gruppe gehört uns (start_new_session)
-            except OSError:
-                pass
+        kill_group(proc.pid, signal.SIGKILL)  # Gruppe gehört uns (start_new_session)
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
