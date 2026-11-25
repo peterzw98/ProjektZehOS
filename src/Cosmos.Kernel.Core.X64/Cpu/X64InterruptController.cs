@@ -135,12 +135,14 @@ internal class X64InterruptController : IInterruptController
     /// </summary>
     public unsafe void Dispatch(ref IRQContext ctx)
     {
-        if (!UserModeX64.TryHandleFault(ref ctx))
+        // Now: a handler of the program may change the frame, its CS included.
+        bool fromUser = UserModeX64.IsUser(ref ctx);
+        if (!fromUser || !UserModeX64.TryHandleFault(ref ctx))
         {
             DispatchKernel(ref ctx);
         }
 
-        UserModeX64.PrepareReturn(ref ctx);
+        UserModeX64.PrepareReturn(ref ctx, fromUser);
     }
 
     private unsafe void DispatchKernel(ref IRQContext ctx)

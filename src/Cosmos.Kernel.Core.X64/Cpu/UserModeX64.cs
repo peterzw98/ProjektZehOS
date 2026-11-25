@@ -116,10 +116,13 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
         EnterNative(frame, kernelRspSlot);
     }
 
+    /// <summary>Whether the frame is ring 3's.</summary>
+    internal static bool IsUser(ref IRQContext ctx) => (ctx.cs & UserRpl) != 0;
+
     /// <summary>Hands an exception of ring 3 to the program's handler. NMI, #DF and #MC are not the program's.</summary>
     internal static bool TryHandleFault(ref IRQContext ctx)
     {
-        if ((ctx.cs & UserRpl) == 0 || ctx.interrupt > LastExceptionVector || Gdt.IstOf((int)ctx.interrupt) != 0)
+        if (ctx.interrupt > LastExceptionVector || Gdt.IstOf((int)ctx.interrupt) != 0)
         {
             return false;
         }
@@ -136,13 +139,17 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     /// switch, when it is ring 3's. One that must not go there is turned into a return to the code
     /// after <see cref="UserMode.Enter"/>'s way out, in ring 0.
     /// </summary>
-    internal static void PrepareReturn(ref IRQContext ctx)
+    /// <param name="ctx">The interrupted frame.</param>
+    /// <param name="fromUser">Whether it was ring 3's on the entry.</param>
+    internal static void PrepareReturn(ref IRQContext ctx, bool fromUser)
     {
         IRQContext* frame = (IRQContext*)Unsafe.AsPointer(ref ctx);
         nuint staged = ContextSwitchNative.GetContextSwitchSp();
         if (staged != 0)
         {
+            // A context no handler of a program can change: its CS is its origin.
             frame = (IRQContext*)(staged + ThreadContext.FpuAreaSize);
+            fromUser = IsUser(ref *frame);
         }
         else if (ctx.interrupt <= LastExceptionVector && Gdt.IstOf((int)ctx.interrupt) != 0)
         {
@@ -151,7 +158,7 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             return;
         }
 
-        if ((frame->cs & UserRpl) == 0)
+        if (!fromUser)
         {
             return;
         }

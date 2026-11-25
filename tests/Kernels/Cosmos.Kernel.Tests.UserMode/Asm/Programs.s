@@ -15,7 +15,7 @@
 cosmos_test_user_programs:
 
 .macro PROGRAM n
-    .balign 256, 0xCC
+    .balign 512, 0xCC
 .Lprogram\n:
 .endm
 
@@ -184,7 +184,7 @@ PROGRAM 11              // an invalid stack pointer, met by the next interrupt
 1:  pause
     jmp 1b
 
-    .balign 256, 0xCC
+    .balign 512, 0xCC
 .Lprograms_end:
 
 .text

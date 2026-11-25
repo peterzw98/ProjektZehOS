@@ -85,7 +85,8 @@ public unsafe partial class Kernel : Sys.Kernel
     private const ulong PageLarge = 1UL << 7;
     private const ulong PageNoExecute = 1UL << 63;
     private const ulong AddressMask = 0x000F_FFFF_FFFF_F000;
-    private const int ProgramSize = 256;
+    private const int ProgramSize = 512;
+    private const int CodePages = 2;
     private const int DataPages = 4;
     private const int WaitMs = 10_000;
     private const byte NmiVector = 2;
@@ -141,10 +142,14 @@ public unsafe partial class Kernel : Sys.Kernel
         ulong* pdpt = NewPage();
         ulong* pd = NewPage();
         ulong* pt = NewPage();
-        ulong* code = NewPage();
+        ulong* code = (ulong*)PageAllocator.AllocPages(PageType.Unmanaged, CodePages, zero: true);
         ulong size = ProgramsSize();
-        Buffer.MemoryCopy((void*)ProgramsAddress(), code, PageSize, size);
-        pt[0] = Physical(code) | 5;
+        Buffer.MemoryCopy((void*)ProgramsAddress(), code, CodePages * PageSize, size);
+        for (int i = 0; i < CodePages; i++)
+        {
+            pt[i] = Physical(code) + (ulong)i * PageSize | 5;
+        }
+
         for (int i = 0; i < DataPages; i++)
         {
             ulong* page = NewPage();
@@ -161,7 +166,7 @@ public unsafe partial class Kernel : Sys.Kernel
 
         Core.CPU.UserMode.SyscallHandler = &OnSyscall;
         Core.CPU.UserMode.FaultHandler = &OnFault;
-        return s_pml4Index < 256 && size <= PageSize && Core.CPU.UserMode.Initialize() && Core.CPU.UserMode.IsSupported;
+        return s_pml4Index < 256 && size <= CodePages * PageSize && Core.CPU.UserMode.Initialize() && Core.CPU.UserMode.IsSupported;
     }
 
     [UnmanagedCallersOnly]
