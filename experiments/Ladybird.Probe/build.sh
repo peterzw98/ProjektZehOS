@@ -792,7 +792,8 @@ write_marker() {
 }
 
 marker_value() {
-	sed -n "s/^$1=//p" "$MARKER_FILE" | head -n1
+	# || true: fehlende Datei oder Zeile ergibt leer, die Prüfung danach meldet das (sonst set -e mit pipefail).
+	sed -n "s/^$1=//p" "$MARKER_FILE" 2>/dev/null | head -n1 || true
 }
 
 check_marker() {
@@ -821,7 +822,7 @@ detect_cached_link_pool() {
 	local cache="$BUILD_DIR/CMakeCache.txt" depth
 	[[ -f "$cache" ]] || return 0
 	grep -q '^CMAKE_JOB_POOL_LINK:[A-Z]*=probe_link_pool$' "$cache" || return 0
-	depth="$(sed -nE 's/.*"probe_link_pool=([0-9]+)".*/\1/p' "$LINK_POOL_INCLUDE" 2>/dev/null | head -n1)"
+	depth="$(sed -nE 's/.*"probe_link_pool=([0-9]+)".*/\1/p' "$LINK_POOL_INCLUDE" 2>/dev/null | head -n1 || true)"
 	if [[ -n "$depth" ]]; then
 		LINK_POOL="$depth"
 		log "Link-Pool aus dem CMake-Cache übernommen (probe_link_pool=$depth)"
@@ -945,7 +946,8 @@ main() {
 		[[ $rc -eq 0 ]] && break
 		if [[ $rc -eq 99 ]]; then STATUS="aborted"; REASON="$(abort_reason_from_state)"; finish 3; fi
 		if [[ "$oom1" -gt "$oom0" ]] || log_shows_oom "$LOG_DIR/$bname.log"; then
-			if [[ $attempt -eq 1 ]]; then
+			# Lief schon der erste Versuch mit Pool (aus dem Cache nach --resume), ist dieses OOM das zweite.
+			if [[ $attempt -eq 1 && -z "$LINK_POOL" ]]; then
 				log "OOM erkannt; zweiter und letzter Versuch mit einem Link-Job zur Zeit (probe_link_pool=1)"
 				LINK_POOL=1
 				write_link_pool_include

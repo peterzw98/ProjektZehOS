@@ -69,7 +69,7 @@ Optionen: `--jobs N`, `--workdir DIR` (muss leer sein oder fehlen), `--resume` (
 vermerkt `"resumed": true`). Der Marker hält Format, Ladybird-Commit, Preset (`Release`) und `jit=OFF` fest, dazu zur Information
 den Skript-Kopf; `--resume` bricht mit Exit 1 ab, wenn einer der ersten vier Werte abweicht (ein Marker der ersten Fassung, nur der
 Commit-Hash, gilt weiter). Erreichte der unterbrochene Lauf schon den zweiten Versuch mit Link-Pool, übernimmt `--resume` den Pool aus
-dem CMake-Cache und meldet ihn in `link_pool_size`. Compiler wählt das Skript selbst (gcc vor clang); `CC` und `CXX`
+dem CMake-Cache und meldet ihn in `link_pool_size`; ein OOM mit diesem Pool zählt dann als zweites OOM (Exit 3, kein weiterer Versuch). Compiler wählt das Skript selbst (gcc vor clang); `CC` und `CXX`
 zusammen gesetzt haben Vorrang.
 
 Schritte, jeder in eigener Prozessgruppe unter `/usr/bin/time -v`:
