@@ -21,9 +21,11 @@ internal static class Ext2InodeCacheCells
 {
     private const int Threads = 4;
     private const int Numbers = Ext2InodeCache.Limit * 3;
-    private const int CacheRounds = 3;
     private const int FilesPerThread = 600;
-    private const int FileRounds = 1;
+
+    /// <summary>A cell starts no new work after this; the engine takes ten silent seconds for a hang.</summary>
+    private const int WorkMs = 2500;
+
     private const int JoinTimeoutMs = 120_000;
     private const VfsMode FileMode = VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite;
 
@@ -36,6 +38,8 @@ internal static class Ext2InodeCacheCells
     private static int s_cpus;
     private static int s_evictedSeen;
     private static int s_next;
+    private static int s_created;
+    private static long s_until;
 
     /// <summary>Four threads look up, add, drop and replace the same numbers without any outer lock.</summary>
     internal static void CacheAlone()
@@ -60,7 +64,8 @@ internal static class Ext2InodeCacheCells
 
     private static void RunThreads(ThreadStart body)
     {
-        s_wrong = s_failed = s_done = s_cpus = s_evictedSeen = s_next = 0;
+        s_wrong = s_failed = s_done = s_cpus = s_evictedSeen = s_next = s_created = 0;
+        s_until = Environment.TickCount64 + WorkMs;
         int collections = GC.CollectionCount(0);
         SysThread[] threads = new SysThread[Threads];
         for (int i = 0; i < Threads; i++)
@@ -107,7 +112,7 @@ internal static class Ext2InodeCacheCells
         Ext2InodeCache cache = s_cache!;
         uint seed = (uint)Interlocked.Increment(ref s_next) * 2654435761u;
         Ext2Inode?[] held = new Ext2Inode?[64];
-        for (int step = 0; step < Numbers * CacheRounds; step++)
+        for (int step = 0; (step & 255) != 0 || Environment.TickCount64 < s_until; step++)
         {
             seed = seed * 1664525 + 1013904223;
             uint number = 100 + (seed >> 8) % Numbers;
@@ -157,7 +162,7 @@ internal static class Ext2InodeCacheCells
         byte[] data = new byte[700];
         byte[] back = new byte[700];
         Ext2Inode root = (Ext2Inode)s_sb!.Root;
-        for (int round = 0; round < FileRounds; round++)
+        for (int round = 0; round == 0 || Environment.TickCount64 < s_until; round++)
         {
             Ext2Inode[] open = new Ext2Inode[8];
             for (int i = 0; i < FilesPerThread; i++)
@@ -175,6 +180,16 @@ internal static class Ext2InodeCacheCells
 
                     open[i & 7] = (Ext2Inode)inode;
                     Interlocked.Add(ref s_evictedSeen, s_sb.InodeCache.EvictedCount);
+                }
+            }
+
+            // All files of the first round exist at once, more than the limit.
+            if (round == 0)
+            {
+                Interlocked.Increment(ref s_created);
+                while (Volatile.Read(ref s_created) < Threads && s_wrong + s_failed == 0)
+                {
+                    SysThread.Sleep(1);
                 }
             }
 
