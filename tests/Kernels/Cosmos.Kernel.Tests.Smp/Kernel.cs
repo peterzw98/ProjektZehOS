@@ -52,7 +52,7 @@ namespace Cosmos.Kernel.Tests.Smp;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 42;
+    private const int ExpectedTestCount = 44;
 
     /// <summary>CPUs the smp4 cell's machine has: what the bootloader lists and the kernel starts there.</summary>
     private const uint Smp4CpuCount = 4;
@@ -276,6 +276,9 @@ public class Kernel : Sys.Kernel
         TR.RunIf(smp, "Balance_BusyCpu_DoesNotPull", TestBalanceBusyCpuDoesNotPull, OneCpuCell);
         TR.RunIf(smp, "Parallel_FourSpinnersFinishInUnderThreeTimesOneSpinnersTime", TestFourSpinnersFinishInUnderThreeTimesOneSpinnersTime, OneCpuCell);
         TR.RunIf(smp, "ThreadPool_WorkersSpreadAcrossCpus", TestThreadPoolWorkersSpreadAcrossCpus, OneCpuCell);
+        // ZehOS patch ext2-inode-cache-evict, see PATCHES.md
+        TR.RunIf(smp, "Ext2InodeCache_FourThreads_OneObjectPerNumber", Ext2InodeCacheCells.CacheAlone, OneCpuCell);
+        TR.RunIf(smp, "Ext2InodeCache_FourThreads_FilesWithCollections", Ext2InodeCacheCells.Files, OneCpuCell);
         ThreadAffinity.Current = mainSet;
         TR.Run("DriverKit_ThreadsStayOnHousekeepingCpu", TestKernelThreadsStayOnHousekeepingCpu);
 

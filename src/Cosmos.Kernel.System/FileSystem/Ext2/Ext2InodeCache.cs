@@ -49,9 +49,10 @@ internal sealed class Ext2InodeCache
     private readonly object _gate = new();
     private readonly Dictionary<uint, Ext2Inode> _live;
     private readonly Dictionary<uint, GCHandle> _evicted;
-    private readonly Stack<int> _freeSlots;
     private readonly List<uint> _sweep = [];
-    private Ext2Inode?[] _slots;
+    private readonly int _limit;
+    private Ext2Inode?[] _slots; // the live inodes, dense from 0
+    private int _evictPause;
     private int _hand;
     private int _sweepAt = WeakSweepMin;
 
@@ -60,11 +61,10 @@ internal sealed class Ext2InodeCache
     public Ext2InodeCache(uint inodesCount)
     {
         int capacity = (int)Math.Clamp(inodesCount, 1u, (uint)Limit);
+        _limit = capacity;
         _live = new Dictionary<uint, Ext2Inode>(capacity);
         _evicted = new Dictionary<uint, GCHandle>((int)Math.Min(inodesCount, (uint)WeakPresize));
         _slots = new Ext2Inode?[capacity];
-        _freeSlots = new Stack<int>(capacity);
-        AddFreeSlots(0, capacity);
     }
 
     /// <summary>Inodes the cache keeps alive (test hook).</summary>
@@ -75,6 +75,9 @@ internal sealed class Ext2InodeCache
 
     /// <summary>Current capacity of both tables (test hook).</summary>
     internal int Capacity => _live.EnsureCapacity(0) + _evicted.EnsureCapacity(0);
+
+    /// <summary>Slots looked at for eviction so far (test hook).</summary>
+    internal long SearchSteps { get; private set; }
 
     /// <summary>Finds the object for an inode number, evicted or not.</summary>
     public bool TryGet(uint number, [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Ext2Inode? inode)
@@ -160,9 +163,8 @@ internal sealed class Ext2InodeCache
             _evicted.Clear();
             _live.Clear();
             Array.Clear(_slots);
-            _freeSlots.Clear();
-            AddFreeSlots(0, _slots.Length);
             _hand = 0;
+            _evictPause = 0;
             _sweepAt = WeakSweepMin;
         }
     }
@@ -195,30 +197,60 @@ internal sealed class Ext2InodeCache
 
     private void Insert(Ext2Inode inode)
     {
-        if (_freeSlots.Count == 0 && !EvictOne())
+        MakeRoom();
+        if (_live.Count == _slots.Length)
         {
-            int old = _slots.Length;
-            Array.Resize(ref _slots, old * 2);
-            AddFreeSlots(old, _slots.Length);
+            Array.Resize(ref _slots, _slots.Length * 2);
         }
 
         // Enter the dictionary first: it is the step that can allocate.
         _live.Add(inode.InodeNumber, inode);
-        int slot = _freeSlots.Pop();
+        int slot = _live.Count - 1;
         _slots[slot] = inode;
         inode.CacheSlot = slot;
         inode.CacheReferenced = false;
     }
 
-    /// <summary>Evicts one clean inode; false when all are dirty.</summary>
+    /// <summary>
+    /// Brings the cache below its limit for one more entry. A cache that grew
+    /// because too much was dirty shrinks by one entry per insertion. After a
+    /// search that met only dirty inodes the next <see cref="_limit"/>
+    /// insertions do not search, so the cost per insertion stays constant.
+    /// </summary>
+    private void MakeRoom()
+    {
+        if (_evictPause > 0)
+        {
+            _evictPause--;
+            return;
+        }
+
+        for (int i = 0; i < 2 && _live.Count >= _limit; i++)
+        {
+            if (!EvictOne())
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Evicts one clean inode; false when the bounded search finds none.</summary>
     private bool EvictOne()
     {
-        // Two rounds: the first may only clear the referenced marks.
-        for (int steps = _slots.Length * 2; steps > 0; steps--)
+        bool anyClean = false;
+
+        // Two rounds of a full cache at its limit: the first may only clear
+        // the referenced marks. Not more when it has grown (see MakeRoom).
+        for (int steps = _limit * 2; steps > 0; steps--)
         {
-            Ext2Inode? victim = _slots[_hand];
-            _hand = (_hand + 1) % _slots.Length;
-            if (victim is null || victim.Dirty)
+            SearchSteps++;
+            if (_hand >= _live.Count)
+            {
+                _hand = 0;
+            }
+
+            Ext2Inode victim = _slots[_hand++]!;
+            if (victim.Dirty)
             {
                 continue;
             }
@@ -226,6 +258,7 @@ internal sealed class Ext2InodeCache
             if (victim.CacheReferenced)
             {
                 victim.CacheReferenced = false;
+                anyClean = true;
                 continue;
             }
 
@@ -244,6 +277,11 @@ internal sealed class Ext2InodeCache
 
             RemoveLive(victim);
             return true;
+        }
+
+        if (!anyClean)
+        {
+            _evictPause = _limit;
         }
 
         return false;
@@ -281,15 +319,12 @@ internal sealed class Ext2InodeCache
     private void RemoveLive(Ext2Inode inode)
     {
         _live.Remove(inode.InodeNumber);
-        _slots[inode.CacheSlot] = null;
-        _freeSlots.Push(inode.CacheSlot);
-    }
 
-    private void AddFreeSlots(int from, int to)
-    {
-        for (int slot = to - 1; slot >= from; slot--)
-        {
-            _freeSlots.Push(slot);
-        }
+        // Close the gap with the last entry: a search meets no empty slots.
+        int last = _live.Count;
+        Ext2Inode moved = _slots[last]!;
+        _slots[inode.CacheSlot] = moved;
+        moved.CacheSlot = inode.CacheSlot;
+        _slots[last] = null;
     }
 }

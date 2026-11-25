@@ -292,6 +292,48 @@ public class Ext2InodeCacheTests
     }
 
     [Test]
+    public void GrownByDirty_SearchIsBoundedAndShrinksAgain()
+    {
+        const int Count = Ext2InodeCache.Limit * 6;
+        Ext2InodeCache cache = new(100_000);
+        Ext2Inode[] made = new Ext2Inode[Count];
+        for (int i = 0; i < Count; i++)
+        {
+            made[i] = new Ext2Inode(_sb, (uint)i + 100, "p") { Dirty = true };
+            cache.Set(made[i]);
+        }
+
+        Assert.That(cache.LiveCount, Is.EqualTo(Count), "dirty inodes stay");
+        Assert.That(cache.SearchSteps, Is.LessThanOrEqualTo(Count * 3L), "all dirty: constant cost per insertion");
+
+        foreach (Ext2Inode inode in made)
+        {
+            inode.Dirty = false;
+        }
+
+        for (int i = 0; i < Count * 2; i++)
+        {
+            cache.Set(new Ext2Inode(_sb, (uint)(100_000 + i), "q") { Dirty = false });
+        }
+
+        Assert.That(cache.LiveCount, Is.LessThanOrEqualTo(Ext2InodeCache.Limit), "back below the limit");
+        cache.Clear();
+    }
+
+    [Test]
+    public void MountRefused_LeavesNothingInTheCache_AndDropFreesWeakEntries()
+    {
+        Fill();
+        Assert.That(_sb.InodeCache.EvictedCount, Is.GreaterThan(0), "precondition");
+
+        Assert.That(new Ext2FileSystemType(_device).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out _), Is.False, "second writable mount");
+        Assert.That(Mount(MountFlags.ReadOnly).InodeCache.EvictedCount, Is.Zero, "mounting reads at most the root, so a failed mount has no weak entry");
+
+        _sb.SuperOperations.Drop(_sb);
+        Assert.That(_sb.InodeCache.EvictedCount, Is.Zero);
+    }
+
+    [Test]
     public void SetOfNewObject_DetachesTheOldOne()
     {
         Ext2Inode old = Create("a");
