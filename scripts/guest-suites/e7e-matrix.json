@@ -32,6 +32,22 @@
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
   },
   {
+    "name": "1-kvm-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "1"
+    },
+    "timeout": 1800,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
+  },
+  {
     "name": "1-kvm-isolation",
     "cmd": [
       "{python}",
@@ -202,6 +218,22 @@
     },
     "timeout": 1800,
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+  },
+  {
+    "name": "2-kvm-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "2"
+    },
+    "timeout": 1800,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
   },
   {
     "name": "2-kvm-isolation",
@@ -376,6 +408,22 @@
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
   },
   {
+    "name": "4-kvm-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 1800,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
+  },
+  {
     "name": "4-kvm-isolation",
     "cmd": [
       "{python}",
@@ -546,6 +594,22 @@
     },
     "timeout": 1800,
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+  },
+  {
+    "name": "4c2t2-kvm-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
+    },
+    "timeout": 1800,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
   },
   {
     "name": "4c2t2-kvm-isolation",
@@ -720,6 +784,22 @@
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
   },
   {
+    "name": "8c4t2-kvm-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
+    },
+    "timeout": 1800,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
+  },
+  {
     "name": "8c4t2-kvm-isolation",
     "cmd": [
       "{python}",
@@ -890,6 +970,22 @@
     },
     "timeout": 3600,
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+  },
+  {
+    "name": "1-tcg-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "1"
+    },
+    "timeout": 3600,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
   },
   {
     "name": "1-tcg-isolation",
@@ -1068,6 +1164,22 @@
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
   },
   {
+    "name": "2-tcg-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "2"
+    },
+    "timeout": 3600,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
+  },
+  {
     "name": "2-tcg-isolation",
     "cmd": [
       "{python}",
@@ -1242,6 +1354,22 @@
     },
     "timeout": 3600,
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+  },
+  {
+    "name": "4-tcg-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "timeout": 3600,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
   },
   {
     "name": "4-tcg-isolation",
@@ -1420,6 +1548,22 @@
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
   },
   {
+    "name": "4c2t2-tcg-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4,cores=2,threads=2"
+    },
+    "timeout": 3600,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
+  },
+  {
     "name": "4c2t2-tcg-isolation",
     "cmd": [
       "{python}",
@@ -1594,6 +1738,22 @@
     },
     "timeout": 3600,
     "note": "THREAD_PROBE und MESSAGES_PROBE (SMP_PROBE folgt mit E7-A bis E7-D)"
+  },
+  {
+    "name": "8c4t2-tcg-smp",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "tcg"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
+    },
+    "timeout": 3600,
+    "note": "SMP_PROBE (alle Schritte, ISO mit ZehOSSmpProbe=true)"
   },
   {
     "name": "8c4t2-tcg-isolation",
