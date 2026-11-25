@@ -64,22 +64,12 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     /// <summary>This mount holds the write claim on <see cref="Device"/>.</summary>
     private bool _ownsWriteClaim;
 
-    /// <summary>Live inodes by number; keeps open handles coherent with metadata writes.</summary>
-    private readonly Dictionary<uint, Ext2Inode> _inodeCache;
+    // ZehOS patch ext2-inode-cache-evict, see PATCHES.md
+    /// <summary>Inodes by number; keeps open handles coherent with metadata writes. Bounded.</summary>
+    private readonly Ext2InodeCache _inodeCache;
 
-    // ZehOS patch ext2-inode-cache, see PATCHES.md
-    // Upper bound for presizing the inode cache at mount. Growing a large
-    // dictionary later copies it into a new, larger array, which fails on a
-    // fragmented kernel heap (about 17,500 cached inodes per mount). Beyond
-    // the presize (rounded up to the prime 75,431) the dictionary grows as
-    // before; the up-front cost is about 2 MiB per mount.
-    internal const int InodeCachePresize = 65_536;
-
-    /// <summary>Initial inode cache size for a volume with <paramref name="inodesCount"/> inodes.</summary>
-    internal static int InitialInodeCacheSize(uint inodesCount) => (int)Math.Min(inodesCount, (uint)InodeCachePresize);
-
-    /// <summary>Current capacity of the inode cache (test hook).</summary>
-    internal int InodeCacheCapacity => _inodeCache.EnsureCapacity(0);
+    /// <summary>The inode cache (test hook).</summary>
+    internal Ext2InodeCache InodeCache => _inodeCache;
 
     /// <summary>Reusable buffer for indirect block reads (single and double first level).</summary>
     private byte[]? _indirBuf1;
@@ -221,7 +211,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     {
         Device = device;
         IsReadOnly = readOnly;
-        _inodeCache = new Dictionary<uint, Ext2Inode>(InitialInodeCacheSize(inodesCount));
+        _inodeCache = new Ext2InodeCache(inodesCount);
         InodesCount = inodesCount;
         BlocksCount = blocksCount;
         FreeBlocksCount = freeBlocksCount;
@@ -594,7 +584,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             throw new ArgumentOutOfRangeException(nameof(inodeNumber));
         }
 
-        if (_inodeCache.TryGetValue(inodeNumber, out Ext2Inode? cached))
+        if (_inodeCache.TryGet(inodeNumber, out Ext2Inode? cached))
         {
             // The cache is keyed by number, but a lookup may reach the same
             // inode under a new name (rename); refresh the leaf name.
@@ -671,8 +661,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
             FileAcl = fileAcl,
             Block = block,
         };
-        _inodeCache[inodeNumber] = inode;
-        return inode;
+        inode.Dirty = false; // the initializer above set it
+        return _inodeCache.GetOrAdd(inode);
     }
 
     /// <summary>
@@ -683,6 +673,13 @@ internal sealed class Ext2Superblock : IVfsSuperblock
     {
         // ZehOS patch ext2-readonly, see PATCHES.md
         if (IsReadOnly)
+        {
+            return;
+        }
+
+        // ZehOS patch ext2-inode-cache-evict, see PATCHES.md
+        // A handle on an unlinked file: the slot may already hold another file.
+        if (inode.Detached)
         {
             return;
         }
@@ -725,7 +722,8 @@ internal sealed class Ext2Superblock : IVfsSuperblock
         }
 
         WriteBlocks(inodeTableBlock + blockOffset, 1, blockBuf);
-        _inodeCache[inode.InodeNumber] = inode;
+        inode.Dirty = false;
+        _inodeCache.Set(inode);
     }
 
     /// <summary>
@@ -824,7 +822,7 @@ internal sealed class Ext2Superblock : IVfsSuperblock
 
         // A handle still holding the object (an open, unlinked file) may
         // call WriteInode later; it must not write dtime 0 back.
-        if (_inodeCache.TryGetValue(inodeNumber, out Ext2Inode? cached))
+        if (_inodeCache.TryGet(inodeNumber, out Ext2Inode? cached))
         {
             cached.LinksCount = 0;
             cached.Dtime = dtime;

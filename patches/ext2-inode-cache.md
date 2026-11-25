@@ -6,3 +6,4 @@
 - **Entfernter ZehOS-Umweg:** keiner; die dokumentierte Grenze (`README.md:174`, `docs/COSMOS_SUPPORT.md:174`, bisher rund 17.500) ändert der ZehOS-PR, der den Pin setzt, auf rund 75.000
 - **Prüfung:** NUnit `Ext2InodeCacheTests` (`InodeCache_ReadDirOf30000Entries_DoesNotGrowDictionary`: 30.000 Dateien, frischer Mount, ReadDir füllt den Cache, Kapazität unverändert, ohne Patch rot; Deckel 65.536 als Rechenfall); Gastlauf E4.0 `--diagnose-run 12` offen
 - **Auf SMP-Stand (`feat/smp-phase5b@4495213`):** ohne Konflikt übernommen (3-Wege-Anwendung), keine Upstream-Änderung an den Patchdateien
+- **Ersetzt durch:** `ext2-inode-cache-evict` (Cache begrenzt, Vorabgröße 65.536 entfällt)
