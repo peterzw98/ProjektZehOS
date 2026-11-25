@@ -4,6 +4,7 @@ using Cosmos.Build.API.Enum;
 using Cosmos.Kernel.Core;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
+using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.Core.Power;
 using Cosmos.Kernel.Core.X64;
 using Cosmos.Kernel.Core.X64.Cpu;
@@ -122,6 +123,11 @@ internal class X64PlatformInitializer : IPlatformInitializer
         Serial.WriteString("[X64HAL] TSC frequency: ");
         Serial.WriteNumber((ulong)X64CpuOps.TscFrequency);
         Serial.WriteString(" Hz\n");
+
+        // ZehOS patch user-page-tables, see PATCHES.md
+#pragma warning disable COSMOS0001 // the experimental seam's own wiring
+        UserPageTable.RegisterArch(new PageTables());
+#pragma warning restore COSMOS0001
 
         Serial.WriteString("[X64HAL] Initializing RTC...\n");
         _rtc = new CmosRtc();

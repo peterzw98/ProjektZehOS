@@ -23,5 +23,6 @@
         <Project Path="tests/Kernels/Cosmos.Kernel.Tests.Threading/Cosmos.Kernel.Tests.Threading.csproj"/>
         <Project Path="tests/Kernels/Cosmos.Kernel.Tests.Timer/Cosmos.Kernel.Tests.Timer.csproj"/>
         <Project Path="tests/Kernels/Cosmos.Kernel.Tests.TypeCasting/Cosmos.Kernel.Tests.TypeCasting.csproj"/>
+        <Project Path="tests/Kernels/Cosmos.Kernel.Tests.UserPaging/Cosmos.Kernel.Tests.UserPaging.csproj"/>
     </Folder>
 </Solution>

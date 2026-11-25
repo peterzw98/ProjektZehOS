@@ -29,6 +29,12 @@
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.InstructionPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.StackPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.ThreadId.get -> uint
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Dispose() -> void
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryMap(ulong user, ulong physical, bool writable, bool executable) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryProtect(ulong user, bool writable, bool executable) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryTranslate(ulong user, bool write, out ulong physical) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Unmap(ulong user) -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.CpuLockScope() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.Dispose() -> void
@@ -102,6 +108,10 @@
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.get -> Cosmos.Kernel.Core.CPU.CpuTickHandler?
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.set -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.AllocateFrame() -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreeFrame(ulong physical) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShareKernelHalf() -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TryCreate() -> Cosmos.Kernel.Core.Memory.UserPageTable?
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.All.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.Empty.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.operator !=(Cosmos.Kernel.Core.Scheduler.CpuSet left, Cosmos.Kernel.Core.Scheduler.CpuSet right) -> bool
