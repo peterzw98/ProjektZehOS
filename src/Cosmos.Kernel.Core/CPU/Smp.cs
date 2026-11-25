@@ -157,6 +157,11 @@ internal static unsafe class Smp
         // This CPU's IDT load or vector table, its Local APIC or its GIC redistributor and CPU
         // interface, the lines of its timer and its reschedule interrupt.
         InterruptManager.InitializeCurrentCpu();
+#if ARCH_X64
+        // ZehOS patch mce-enable, see PATCHES.md
+        // Der Bootprozessor hat den Handler schon installiert. Jetzt steht auch der IST dieser CPU bereit.
+        InternalCpu.EnableMachineCheck();
+#endif
 
         long skew = Stopwatch.GetTimestamp() - Volatile.Read(ref s_releaseTimestamp);
 

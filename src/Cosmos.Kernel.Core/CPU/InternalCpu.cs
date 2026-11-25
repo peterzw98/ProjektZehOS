@@ -1,6 +1,9 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
 using System.Runtime.CompilerServices;
+#if ARCH_X64
+using System.Runtime.Intrinsics.X86;
+#endif
 using Cosmos.Kernel.Core.Bridge;
 
 namespace Cosmos.Kernel.Core.CPU;
@@ -16,6 +19,20 @@ internal static class InternalCpu
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void EnableInterrupts() => CpuNative.EnableInterrupts();
+
+#if ARCH_X64
+    // ZehOS patch mce-enable, see PATCHES.md
+    /// <summary>Aktiviert #MC auf der aktuellen CPU, sobald deren IDT, IST und der Handler bereit sind.</summary>
+    internal static void EnableMachineCheck()
+    {
+        const int CpuidFeatureLeaf = 1;
+        const int CpuidEdxMce = 1 << 7;
+        if ((X86Base.CpuId(CpuidFeatureLeaf, 0).Edx & CpuidEdxMce) != 0)
+        {
+            CpuNative.EnableMachineCheck();
+        }
+    }
+#endif
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Halt() => CpuNative.Halt();

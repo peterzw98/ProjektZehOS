@@ -12,6 +12,12 @@ internal static partial class CpuNative
     [SuppressGCTransition]
     public static partial void EnableInterrupts();
 
+#if ARCH_X64
+    [LibraryImport("*", EntryPoint = "_native_cpu_enable_machine_check")]
+    [SuppressGCTransition]
+    public static partial void EnableMachineCheck();
+#endif
+
     [LibraryImport("*", EntryPoint = "_native_cpu_halt")]
     [SuppressGCTransition]
     public static partial void Halt();
