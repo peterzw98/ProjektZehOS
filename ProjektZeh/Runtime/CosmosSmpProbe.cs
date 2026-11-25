@@ -169,7 +169,7 @@ internal static class CosmosSmpProbe
         if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
         const long Work = 20_000_000;
         const long Chunk = 50_000;
-        const int Reps = 60;
+        const int Reps = 400;
         long f = Stopwatch.Frequency;
         Write($"INFO p660 freq={f} reps={Reps} work={Work} chunk={Chunk} workers={n}");
         long sink = 0;
