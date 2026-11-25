@@ -22,7 +22,7 @@ internal static class Ext2InodeCacheCells
     private const int Threads = 4;
     private const int Numbers = Ext2InodeCache.Limit * 3;
     private const int CacheRounds = 12;
-    private const int FilesPerThread = 400;
+    private const int FilesPerThread = 600;
     private const int FileRounds = 3;
     private const int JoinTimeoutMs = 120_000;
     private const VfsMode FileMode = VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite;
@@ -174,6 +174,7 @@ internal static class Ext2InodeCacheCells
                     }
 
                     open[i & 7] = (Ext2Inode)inode;
+                    Interlocked.Add(ref s_evictedSeen, s_sb.InodeCache.EvictedCount);
                 }
             }
 
@@ -182,7 +183,6 @@ internal static class Ext2InodeCacheCells
                 NoteCpu();
                 lock (s_volume)
                 {
-                    Interlocked.Add(ref s_evictedSeen, s_sb.InodeCache.EvictedCount);
                     if (!root.InodeOperations.Lookup(root, Name(id, i), out IVfsInode? inode)
                         || inode.FileOperations!.Read(new OpenFile((Ext2Inode)inode), back) != back.Length
                         || back.AsSpan().ContainsAnyExcept((byte)(id * 31 + i + round))
@@ -214,9 +214,16 @@ internal static class Ext2InodeCacheCells
     private static void Mount()
     {
         RamDisk disk = new(24 * 1024 * 1024);
-        Assert.True(new Ext2FileSystemType(disk).TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 1024 }), "format");
-        Assert.True(new Ext2FileSystemType(disk).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? sb), "mount");
-        s_sb = (Ext2Superblock)sb!;
+        IVfsSuperblock? sb = null;
+
+        // An assert of this framework does not end the cell.
+        if (!new Ext2FileSystemType(disk).TryFormat(ReadOnlySpan<char>.Empty, new Ext2FormatOptions { BlockSize = 2048 })
+            || !new Ext2FileSystemType(disk).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out sb))
+        {
+            throw new InvalidOperationException("no volume");
+        }
+
+        s_sb = (Ext2Superblock)sb;
     }
 
     private static void Unmount()
