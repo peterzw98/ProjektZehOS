@@ -414,10 +414,35 @@ internal static class CosmosSmpProbe
         const int samples = 10;
         var interactive = new int[samples];
         var normal = new int[samples];
-        var first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers);
-        var second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
-        if (!first.IsOK() || !second.IsOK()) return "Platzierungsthread startet nicht";
-        if (first.Value?.Join(10000) != true || second.Value?.Join(10000) != true) return "Platzierungsthread endet nicht";
+        Thread? first = null, second = null;
+        void StartPair()
+        {
+            first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers).Value;
+            second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers).Value;
+        }
+        // Waehrend des Starts rechnet der startende Thread selbst. Bleiben ohne seine CPU keine zwei Kerne uebrig (4 CPUs auf 2
+        // Kernen, Hauptthread auf CPU 1: nur das Paar 2/3), kann die Platzierung die Forderung nicht erfuellen, und ein laufender
+        // Thread zieht spaeter nicht um. Nur dann startet ein Normal-Thread auf CPU 0, waehrend der Hauptthread in Join wartet.
+        // Sonst bleibt es beim Start aus dem Hauptthread; nur der trifft den gerade beendeten Thread auf einer Worker-CPU.
+        uint mainCpu = KernelCpus.Current;
+        var others = new HashSet<int>();
+        foreach (uint cpu in workers)
+            if (cpu != mainCpu && CosmosBootOptions.WorkerCpus.Contains(cpu)) others.Add(topology.CoreOf((int)cpu));
+        bool fromMain = others.Count >= 2;
+        if (fromMain) StartPair();
+        else
+        {
+            var starter = Pinned(0, () =>
+            {
+                Thread.Sleep(50); // der Hauptthread wartet dann in Join, die Worker-CPUs sind frei
+                StartPair();
+            });
+            starter.Start();
+            if (!starter.Join(10000)) return "Startthread endet nicht";
+        }
+        Write($"INFO placement start={(fromMain ? "main" : "cpu0")} main_cpu={mainCpu}");
+        if (first == null || second == null) return "Platzierungsthread startet nicht";
+        if (!first.Join(10000) || !second.Join(10000)) return "Platzierungsthread endet nicht";
         int apart = 0;
         var line = new System.Text.StringBuilder();
         for (int i = 0; i < samples; i++)
