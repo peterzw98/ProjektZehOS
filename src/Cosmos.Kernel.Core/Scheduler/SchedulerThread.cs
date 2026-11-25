@@ -140,6 +140,22 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <summary>1 once a reap of this abandoned thread has been claimed, so two callers never reap it twice.</summary>
     internal int _reapClaimed;
 
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    /// <summary>The kernel stack pointer <see cref="CPU.UserMode.Enter"/> left for ring 3 with, the thread's RSP0; 0 outside of it.</summary>
+    internal ulong _userKernelRsp;
+
+    /// <summary>The program's FS base, loaded on every return to ring 3.</summary>
+    internal ulong _userFsBase;
+
+    /// <summary>Why <see cref="CPU.UserMode.Enter"/> ends without a request; 0 while nothing failed. The thread's own.</summary>
+    internal ulong _userFailure;
+
+    /// <summary>The request to leave ring 3: 0 none, 1 being written, 2 set. Any thread.</summary>
+    internal int _userLeaveState;
+
+    /// <summary>The value of the request, valid at state 2.</summary>
+    internal ulong _userLeaveValue;
+
     // ===== Context (architecture-specific values) =====
 
     private nuint _stackPointer;

@@ -134,6 +134,8 @@
          MMIO probes (Storage). -->
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Interrupts" />
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Memory" />
+    <!-- ZehOS patch user-mode-probe, see PATCHES.md -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserMode" />
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Storage" />
     <!-- White-box CSPRNG suite: known-answer tests of the BLAKE2s and ChaCha20
          primitives, and which entropy source seeded KernelRandom. -->

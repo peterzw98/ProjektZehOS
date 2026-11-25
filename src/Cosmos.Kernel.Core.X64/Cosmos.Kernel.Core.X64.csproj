@@ -23,5 +23,7 @@
          internal because IInterruptController is (Core.ARM64 already grants
          its HAL counterpart for the same reason). -->
     <InternalsVisibleTo Include="Cosmos.Kernel.HAL.X64" />
+    <!-- ZehOS patch user-mode-probe, see PATCHES.md: the suite reads CR3 and sends an NMI. -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserMode" />
   </ItemGroup>
 </Project>

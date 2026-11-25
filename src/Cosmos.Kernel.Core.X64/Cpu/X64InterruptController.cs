@@ -55,6 +55,9 @@ internal class X64InterruptController : IInterruptController
         // Dispatch's hardware-IRQ path: the EOI, then the pending reschedule.
         InterruptManager.SetHandler(RescheduleVector, HandleReschedule);
         InterruptManager.SetHandler(StopVector, HandleStop);
+
+        // ZehOS patch user-mode-probe, see PATCHES.md
+        UserMode.RegisterArch(new UserModeX64());
     }
 
     /// <inheritdoc/>
@@ -125,7 +128,22 @@ internal class X64InterruptController : IInterruptController
         }
     }
 
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    /// <summary>
+    /// A fault of a program goes to its handler, everything else the kernel's way. Last, whichever
+    /// frame the stub is about to resume is checked if it belongs to ring 3.
+    /// </summary>
     public unsafe void Dispatch(ref IRQContext ctx)
+    {
+        if (!UserModeX64.TryHandleFault(ref ctx))
+        {
+            DispatchKernel(ref ctx);
+        }
+
+        UserModeX64.PrepareReturn(ref ctx);
+    }
+
+    private unsafe void DispatchKernel(ref IRQContext ctx)
     {
         InterruptManager.IrqDelegate?[]? handlers = InterruptManager.s_irqHandlers;
         if (handlers is not null && ctx.interrupt < (ulong)handlers.Length)
@@ -207,7 +225,7 @@ internal class X64InterruptController : IInterruptController
     }
 
     /// <summary>CPU exceptions that push an error code (SDM 3A §6.15); the asm stub stashes it for <see cref="Bridge.IdtNative.GetLastErrorCode"/>.</summary>
-    private static bool HasErrorCode(ulong interrupt) =>
+    internal static bool HasErrorCode(ulong interrupt) =>
         interrupt is 8 or (>= 10 and <= 14) or 17 or 21 or 29 or 30;
 
     private static void HandleFatalException(ulong interrupt, ulong cpuFlags, ulong faultAddress)

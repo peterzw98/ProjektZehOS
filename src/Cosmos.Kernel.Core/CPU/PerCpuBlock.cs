@@ -119,11 +119,17 @@ internal struct PerCpuBlock
     private ulong _reserved3;
 
     // ZehOS patch user-stub, see PATCHES.md
-    // 0x80..0xBF: a cache line for the ring 3 entry (ZehOS N1-A4), unused until then. The
-    // offsets above are unchanged.
-    private ulong _userEntry0;
-    private ulong _userEntry1;
-    private ulong _userEntry2;
+    // 0x80..0xBF: a cache line for the ring 3 entry. The offsets above are unchanged.
+    // ZehOS patch user-mode-probe, see PATCHES.md (UserMode.s mirrors the first two)
+    /// <summary>The kernel stack a <c>syscall</c> on this CPU starts on: the thread's that runs in ring 3.</summary>
+    public nuint UserKernelRsp;
+
+    /// <summary>The program's RSP, for the instructions of the <c>syscall</c> entry before it has a stack.</summary>
+    public nuint UserScratchRsp;
+
+    /// <summary>1 once this CPU's registers for ring 3 are set.</summary>
+    public ulong UserReady;
+
     private ulong _userEntry3;
     private ulong _userEntry4;
     private ulong _userEntry5;
