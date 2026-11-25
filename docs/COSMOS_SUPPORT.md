@@ -770,6 +770,19 @@ Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`,
 
 `SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
 
+## Pin `3.0.97-zehos.6-smp.13` (25. November 2026)
+
+Cosmos `6b28fc44` bringt sechs Patches gegenüber `smp.12` (`fbb5e340`). Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `aot-loop-exit` (#654, `a1924891`, Refs #423): experimenteller Hook (`COSMOS0001`) im Scheduler-Tick, der den unterbrochenen Thread an anderer Adresse fortsetzt. Ohne Handler ändert sich das Verhalten nicht; den Handler setzt ZehOS erst mit #655.
+- `gc-refill-scan-limit` (#656, `e799410e`, Refs #542): Die Refill-Suche nach einem vollen TLAB sieht je Klasse höchstens 8 Blöcke an. Preis: mehr Sammlungen auf vollem Heap.
+- `ext2-dir-scan` (#658, `0354537f`, Refs #542): Verzeichnissuche blockweise ohne Objekte je Eintrag; `AddEntry` schreibt nur den geänderten Block.
+- `ext2-direct-runs` (#577, `f36039c6`, Refs #542): Ganze Blöcke gehen als zusammenhängende Läufe direkt aus dem Aufruferpuffer.
+- `ext2-inode-cache-evict` (#670, `33a2883b`, Refs #542): Der Inode-Cache hält höchstens 1024 saubere Inodes je Mount. Die Cachegrenze von etwa 75.000 Inodes (Nachtrag E2-P8) gilt damit nicht mehr; das Wachsen des Wörterbuchs entfällt, schmutzige Inodes bleiben gehalten. FAT hat weiter einen unbegrenzten Cache (#672).
+- `exit-quiet` (#664, `6b28fc44`, Refs #660): Die Ausgaben des Thread-Exits stehen nur noch im Debug-Bau.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft: Hosttests 1607/1607; nativer Bau normal, SMP-Probe, Recovery, Wasm und Storage-Root-Probe je 0 Warnungen, 0 Fehler, 4 Plugs gebunden (normale ISO). Gast (QEMU, ein Lauf je Zelle, OOM drei): Desktop KVM 4 CPUs, Doom full KVM 4 CPUs, OOM 516 MiB 3/3 (KVM, 4 CPUs), SMP-Probe KVM 4 und 8c4t2 sowie TCG 4, E4.0 (2 GiB, 1 GiB RAM) Lauf 1 und 2 mit `e2fsck -fn` Exit 0 (Läufe 3 bis 5 nicht). Nicht geprüft: VMware, echte Hardware, Recovery-Gast, Isolationsprobe, G1-Basic, volle Matrix.
+
 ## Pin `3.0.97-zehos.6-smp.12` (24. November 2026)
 
 Cosmos `fbb5e340` bringt drei Patches gegenüber `smp.11` (`e9915bc4`). Einzelheiten in `patches/<Kurzname>.md` des Branches `cosmos`.
