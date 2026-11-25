@@ -37,7 +37,8 @@ internal static unsafe class CosmosBootOptions
         Current = BootOptions.Parse(ReadCommandLine());
         try
         {
-            // Die Standardaffinität zuerst: CoreLib merkt sich Environment.ProcessorCount beim ersten Lesen.
+            // Die Standardaffinität zuerst, vor den Threadstarts. Environment.ProcessorCount beeinflusst das nicht mehr: CoreLib hat den
+            // Wert beim ersten Lesen gemerkt, und das geschieht vor jedem ZehOS-Code (Probe, Issue #662).
             KernelCpus.DefaultAffinity = CpuSet.Single(0);
             ThreadAffinity.Current = CpuSet.Single(0);
             return $"CPUs online={KernelCpus.Online.Count}, Hauptthread und Standardaffinität: CPU 0 (zehos.cpus={Current.Cpus?.ToString() ?? "-"})";
@@ -60,8 +61,8 @@ internal static unsafe class CosmosBootOptions
         var workers = WorkerCpus;
         try
         {
-            // Environment.ProcessorCount bleibt bei dem Wert, den CoreLib beim ersten Lesen nach Apply gemerkt hat (1);
-            // ZehOS startet seine Threads selbst und nutzt den Threadpool nicht für Last.
+            // Environment.ProcessorCount ändert sich hier nicht: CoreLib hat den Wert schon vor Apply gemerkt (online-CPUs minus CPU 0,
+            // auf 4 CPUs 3, auf 1 CPU 1). ZehOS startet seine Threads selbst und nutzt den Threadpool nicht für Last (nicht geprüft).
             KernelCpus.DefaultAffinity = workers;
             // Der Wechsel wartet auf die Umschaltung; danach läuft die Hauptschleife nicht mehr dort, wo die Tastatur-,
             // Maus- und Tablet-Interrupts ankommen. Die Eingabepuffer sind dafür seit E4-D mit echten Sperren geschützt.

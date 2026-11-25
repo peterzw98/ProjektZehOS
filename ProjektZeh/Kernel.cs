@@ -326,7 +326,8 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
-        // Vor dem ersten Threadstart und Lesen von Environment.ProcessorCount die Standardaffinitaet festlegen.
+        // Vor dem ersten Threadstart die Standardaffinitaet festlegen. Environment.ProcessorCount ist zu diesem Zeitpunkt schon gelesen
+        // (Probe, Issue #662: auf 4 CPUs 3, schon vor dem ersten Feldinitialisierer von Kernel); der Wert ist 'alle CPUs ausser CPU 0'.
         var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");

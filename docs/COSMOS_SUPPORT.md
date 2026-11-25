@@ -515,7 +515,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 **Grenzen (Stand dieses Entwurfs).**
 
-- Hauptschleife und Oberfläche laufen seit E7-A bei mehreren CPUs auf den Compute-CPUs; die Interrupts (Eingabe-IRQs) bleiben auf CPU 0. `Environment.ProcessorCount` bleibt 1 (PR #564).
+- Hauptschleife und Oberfläche laufen seit E7-A bei mehreren CPUs auf den Compute-CPUs; die Interrupts (Eingabe-IRQs) bleiben auf CPU 0. `Environment.ProcessorCount` bleibt der Wert aus dem ersten Lesen vor ZehOS-Code (alle CPUs ohne CPU 0: 4 CPUs 3, 1 CPU 1; Probe zu Issue #662, nicht 1 wie bis PR #564 angenommen).
 - Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten (smp.10).
 - Thread und 8-MiB-Stack aufgegebener Wasm-Worker werden seit E6-G (#576) abgeräumt; die native Wasm-Instanz bleibt bis zum Neustart belegt, nach drei Isolationen startet kein Worker mehr (#582, offen). Auditbefunde zu Workern in E6-C (#390) offen.
 - Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen (Abschnitt PIC-Remap).
