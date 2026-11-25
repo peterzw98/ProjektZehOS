@@ -78,22 +78,26 @@ def evaluate(log: str, expect: list[str]) -> list[str]:
     return missing
 
 
-def wait_for_done(read, timeout: float, clock=time.monotonic, sleep=time.sleep) -> bool:
-    """Wartet, bis die Schlusszeile im Log steht; false bei Zeitlimit."""
+def wait_for_done(read, timeout: float, clock=None, sleep=None, alive=lambda: True) -> bool:
+    """Wartet, bis die Schlusszeile im Log steht; false bei Zeitlimit oder wenn QEMU vorher endet (alive() false, nach einem
+    letzten Blick ins Log)."""
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
     deadline = clock() + timeout
     while True:
         if DONE.search(read()):
             return True
-        if clock() >= deadline:
-            return False
+        if clock() >= deadline or not alive():
+            return DONE.search(read()) is not None
         sleep(1)
 
 
 def terminate(vm: subprocess.Popen) -> None:
     """Beendet QEMU samt Kindprozessen (der Cosmos-Wrapper startet QEMU als Kind): erst die Prozessgruppe, dann der Prozess."""
     if hasattr(os, "killpg"):
+        # vm.pid, nicht getpgid: QEMU ist Sitzungsfuehrer (own_session); ginge das verloren, trifft killpg nie die eigene Gruppe.
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(os.getpgid(vm.pid), signal.SIGKILL)
+            os.killpg(vm.pid, signal.SIGKILL)
     if vm.poll() is None:
         vm.kill()
     vm.wait()
@@ -101,7 +105,8 @@ def terminate(vm: subprocess.Popen) -> None:
 
 @contextlib.contextmanager
 def own_session(smp: int):
-    """start_qemu startet QEMU ohne eigene Sitzung und liest die CPU-Zahl aus der Umgebung; beides nur fuer den Aufruf setzen."""
+    """start_qemu startet QEMU ohne eigene Sitzung und liest die CPU-Zahl aus der Umgebung; beides nur fuer den Aufruf setzen.
+    Das Popen-Patch wirkt prozessweit, solange der Block laeuft (nur start_qemu ruft darin Popen auf)."""
     module = tools().subprocess
     original = module.Popen
     previous = os.environ.get("ZEHOS_QEMU_SMP")
@@ -118,11 +123,7 @@ def own_session(smp: int):
 
 
 def run(args: argparse.Namespace, number: int) -> bool:
-    helper = tools()
     work = ROOT / ".tools/user-mode-probe" / uuid.uuid4().hex[:12]
-    (work / "seed").mkdir(parents=True)
-    helper.create_disk(work / "seed", work / "data.qcow2")
-    port = helper.free_port()
     serial = work / "serial.log"
     vm = None
 
@@ -130,19 +131,24 @@ def run(args: argparse.Namespace, number: int) -> bool:
         return serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
 
     try:
+        helper = tools()
+        (work / "seed").mkdir(parents=True)
+        helper.create_disk(work / "seed", work / "data.qcow2")
+        port = helper.free_port()
         with own_session(args.smp):
             vm = helper.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
-        finished = wait_for_done(text, args.timeout)
+        finished = wait_for_done(text, args.timeout, alive=lambda: vm.poll() is None)
         log = text()
         missing = evaluate(log, args.expect)
         if not finished:
-            missing.insert(0, f"Zeitlimit {args.timeout:g} s ohne Schlusszeile")
+            why = "QEMU vorzeitig beendet" if vm.poll() is not None else f"Zeitlimit {args.timeout:g} s"
+            missing.insert(0, f"{why} ohne Schlusszeile")
         for line in SHOWN.findall(log):
             print("  " + line.strip(), flush=True)
         print(f"Lauf {number} {args.accel} smp={args.smp}: {'PASS' if not missing else 'FAIL ' + '; '.join(missing)} ({work})",
               flush=True)
         return not missing
-    except (RuntimeError, OSError, TimeoutError, ConnectionError) as error:
+    except (RuntimeError, OSError, TimeoutError, ConnectionError, subprocess.CalledProcessError) as error:
         print(f"Lauf {number} {args.accel} smp={args.smp}: FAIL {type(error).__name__}: {error} ({work})", flush=True)
         return False
     finally:

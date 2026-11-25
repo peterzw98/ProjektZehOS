@@ -25,5 +25,5 @@ ld -m elf_x86_64 -e 0 -Ttext=0 --oformat=binary -o "$out/probe.bin" "$out/probe.
 ld -m elf_x86_64 -e 0 -Ttext=0 -o "$out/probe.elf" "$out/probe.o"
 # Nur den Code (ab dem ersten Slot bis zu den Daten); Kopftabelle und Konstanten waeren sonst als Befehle falsch gelesen.
 data="$(nm "$out/probe.elf" | awk '$3 == "probe_data" { print "0x" $1 }')"
-objdump -d -M intel --start-address=0x200 --stop-address="$data" "$out/probe.elf" > "$out/probe.dis"
+objdump -d -M intel --start-address=0x1000 --stop-address="$data" "$out/probe.elf" > "$out/probe.dis"
 echo "probe.bin: $(stat -c %s "$out/probe.bin") Byte, Disassembly: $out/probe.dis"

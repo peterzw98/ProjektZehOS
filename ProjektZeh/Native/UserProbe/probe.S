@@ -4,7 +4,16 @@
  * Flaches, positionsunabhaengiges Binaerabbild ohne Relokation: Der Kernel bildet es an eine beliebige Seitengrenze der
  * unteren Haelfte ab (lesbar und ausfuehrbar, nicht schreibbar) und springt mit UserMode.Enter(basis + versatz, rsp) in
  * einen Einstieg. Jeder Fall hat einen festen Einstieg; die Versaetze stehen in der Kopftabelle und aendern sich nicht,
- * wenn ein Fall waechst (Platzhalter mit .org, Ueberlauf bricht den Bau ab).
+ * wenn ein Fall waechst (Platzhalter mit .org, Ueberlauf laesst den Bau scheitern). Aufrufer lesen den Versatz immer ueber den
+ * NAMEN aus der Tabelle (ZUP1), nie als Zahl im Code. Platz: Tabelle bis 64 Eintraege (ab 0x10), Slots 0x1000 + 0x10 * Index,
+ * Ruempfe ab 0x1400; neue Faelle (N1-B4) werden am Ende der Tabelle und der Slots angehaengt.
+ *
+ * Annahmen ueber den CPU-Zustand (sonst endet ein Fall nur durch das Zeitlimit statt durch die erwartete Ausnahme):
+ * die TSS hat keine E/A-Bitmap (iomap_base >= Limit, sonst ist `in` kein #GP), CR4.PVI = 0 (sonst ist `cli` kein #GP),
+ * CR4.TSD = 0 (sonst ist `rdtsc` in loop ein #GP). Grenzen der Messung: loop liefert die Summe der TSC-Ticks ueber
+ * 1 000 000 Aufrufe, also nur einen Mittelwert je Lauf (kein Median je Aufruf); die TSC-Frequenz muss der Kernel loggen.
+ * KERNEL_ADDR ist der HHDM-Anfang: ob dort gemappt ist (Schutzverletzung) oder nicht, haengt vom Lader ab; beides ist #PF,
+ * der Fehlercode (P-Bit) gehoert ins Log. Namen in der Tabelle sind hoechstens 23 Zeichen, damit ein NUL folgt.
  *
  * Systemaufrufe (syscall; rax = Nummer, Rueckgabe in rax, rcx und r11 zerstoert wie bei Linux):
  *   0x7A01  zaehlen: der Kernel erhoeht einen Zaehler; keine Argumente.
@@ -26,21 +35,22 @@ probe_base:
 .equ KERNEL_ADDR, 0xFFFF800000000000     /* kanonisch, obere Haelfte: #PF statt #GP */
 
 .equ TABLE_OFF, 0x000
-.equ SLOT_OFF,  0x200
-.equ SLOT_SIZE, 0x40
-.equ BODY_OFF,  0x600
+.equ SLOT_OFF,  0x1000
+.equ SLOT_SIZE, 0x10
+.equ BODY_OFF,  0x1400
+.equ CAPACITY,  64
 
-/* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Reserve; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
+/* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Kapazitaet; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
         .org TABLE_OFF
         .ascii "ZUP1"
         .long 13
         .long 32
-        .long 0
+        .long CAPACITY
 
-/* Der Bau bricht ab, wenn ein Name laenger als 24 Byte ist (.fill mit negativer Anzahl). */
+/* Ein zu langer Name (> 24 Byte) ergibt eine as-Warnung (.fill mit negativer Anzahl); build.sh macht daraus einen Abbruch. */
 .macro NAMED name, index
 1:      .ascii "\name"
-        .fill 24 - (. - 1b), 1, 0
+        .fill 24 - (. - 1b), 1, 0       /* Namen bis 23 Zeichen: ein NUL folgt */
         .long SLOT_OFF + SLOT_SIZE * \index
         .long 0
 .endm

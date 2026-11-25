@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 from pathlib import Path
 import shutil
 import struct
@@ -64,6 +65,9 @@ class EvaluateTests(unittest.TestCase):
 
 
 class WaitTests(unittest.TestCase):
+    def test_stops_when_process_is_gone(self):
+        self.assertFalse(probe.wait_for_done(lambda: '', 1000, clock=lambda: 0.0, sleep=lambda _: None, alive=lambda: False))
+
     def test_timeout_without_final_line(self):
         now = [0.0]
         sleeps = []
@@ -80,22 +84,73 @@ class WaitTests(unittest.TestCase):
         self.assertTrue(probe.wait_for_done(lambda: next(logs), 60, clock=lambda: 0.0, sleep=lambda _: None))
 
 
-class RunTests(unittest.TestCase):
-    def test_timeout_is_a_failure_with_exit_1(self):
-        class Tools:
-            def create_disk(self, seed, target): pass
-            def free_port(self): return 1
-            def start_qemu(self, *args): return mock.Mock(poll=lambda: 0, wait=lambda: 0)
+class FakeTools:
+    def __init__(self, log='', vm_alive=True, disk_error=None):
+        self.log, self.vm_alive, self.disk_error = log, vm_alive, disk_error
+        self.vm = mock.Mock()
+        self.vm.poll = lambda: None if self.vm_alive else 1
 
-        args = probe.parse_args(['--iso', 'x.iso', '--timeout', '0.01'])
+    def create_disk(self, seed, target):
+        if self.disk_error:
+            raise self.disk_error
+
+    def free_port(self):
+        return 1
+
+    def start_qemu(self, iso, disk, work, port, accel, loadvm):
+        (work / 'serial.log').write_text(self.log)
+        return self.vm
+
+
+class RunTests(unittest.TestCase):
+    def run_with(self, fake, argv, clock=None):
+        args = probe.parse_args(['--iso', 'x.iso', *argv])
+        out = mock.MagicMock()
         with tempfile.TemporaryDirectory() as root, \
                 mock.patch.object(probe, 'ROOT', Path(root)), \
-                mock.patch.object(probe, 'tools', lambda: Tools()), \
+                mock.patch.object(probe, 'tools', lambda: fake), \
                 mock.patch.object(probe, 'own_session', lambda smp: mock.MagicMock()), \
                 mock.patch.object(probe, 'terminate') as terminate, \
-                mock.patch.object(probe.time, 'sleep', lambda _: None):
-            self.assertFalse(probe.run(args, 1))
-            terminate.assert_called_once()
+                mock.patch.object(probe.time, 'sleep', lambda _: None), \
+                mock.patch('builtins.print', out):
+            result = probe.run(args, 1)
+        return result, ' '.join(str(call.args[0]) for call in out.call_args_list)
+
+    def test_timeout_is_reported_as_timeout_even_with_all_cases(self):
+        # Alle Faelle ok, nur die Schlusszeile fehlt: ohne Zeitlimitzweig stuende nur "Schlusszeile fehlt" im Text.
+        log = '\n'.join(f'USER_PROBE {name} ok=1' for name in CASES)
+        now = iter(x * 0.5 for x in range(10000))
+        with mock.patch.object(probe.time, 'monotonic', lambda: next(now)):
+            result, text = self.run_with(FakeTools(log), ['--timeout', '3', '--expect', ','.join(CASES)])
+        self.assertFalse(result)
+        self.assertIn('Zeitlimit 3 s ohne Schlusszeile', text)
+
+    def test_early_qemu_exit_does_not_wait_for_timeout(self):
+        result, text = self.run_with(FakeTools('', vm_alive=False), ['--timeout', '100000'])
+        self.assertFalse(result)
+        self.assertIn('QEMU vorzeitig beendet', text)
+
+    def test_complete_log_passes(self):
+        result, _ = self.run_with(FakeTools(GOOD), ['--expect', ','.join(CASES)])
+        self.assertTrue(result)
+
+    def test_disk_error_is_a_fail_line_not_a_traceback(self):
+        error = subprocess.CalledProcessError(1, 'qemu-img')
+        result, text = self.run_with(FakeTools(disk_error=error), [])
+        self.assertFalse(result)
+        self.assertIn('CalledProcessError', text)
+
+    def test_own_session_sets_and_restores_environment(self):
+        fake_subprocess = mock.Mock(Popen=lambda *a, **k: None)
+        original = fake_subprocess.Popen
+        with mock.patch.object(probe, 'tools', lambda: mock.Mock(subprocess=fake_subprocess)), \
+                mock.patch.dict(os.environ, {'ZEHOS_QEMU_SMP': 'alt'}):
+            with probe.own_session(4):
+                self.assertEqual(os.environ['ZEHOS_QEMU_SMP'], '4')
+                self.assertIsNot(fake_subprocess.Popen, original)
+                self.assertTrue(fake_subprocess.Popen.keywords['start_new_session'])
+            self.assertEqual(os.environ['ZEHOS_QEMU_SMP'], 'alt')
+        self.assertIs(fake_subprocess.Popen, original)
 
     def test_main_exit_codes(self):
         with mock.patch.object(probe, 'run', side_effect=[True, True]):
@@ -132,13 +187,23 @@ class ProbeImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as out:
             subprocess.run(['bash', str(build), out], check=True, capture_output=True)
             image = (Path(out) / 'probe.bin').read_bytes()
-        magic, count, size = struct.unpack_from('<4sII', image, 0)
-        self.assertEqual((magic, count, size), (b'ZUP1', len(self.NAMES), 32))
-        for index, name in enumerate(self.NAMES):
+            listing = (Path(out) / 'probe.dis').read_text()
+        magic, count, size, capacity = struct.unpack_from('<4sIII', image, 0)
+        self.assertEqual((magic, count, size, capacity), (b'ZUP1', len(self.NAMES), 32, 64))
+        self.assertLessEqual(16 + 32 * capacity, 0x1000, 'Tabelle muss vor den Slots enden')
+        # Slot -> Rumpf laut Disassembly: jede Tabellenzeile (Name, Versatz) muss auf body_<Name> springen.
+        jumps = {int(m.group(1), 16): m.group(2)
+                 for m in re.finditer(r'^\s*([0-9a-f]+):\s+e9 [0-9a-f ]+\s*jmp\s+[0-9a-f]+ <body_(\w+)>', listing, re.M)}
+        table = {}
+        for index in range(count):
             raw, offset = struct.unpack_from('<24sI', image, 16 + 32 * index)
-            self.assertEqual(raw.rstrip(b'\0').decode(), name)
-            self.assertEqual(offset, 0x200 + 0x40 * index)
+            name = raw.rstrip(b'\0').decode()
+            table[name] = offset
+            self.assertEqual(offset, 0x1000 + 0x10 * index)
             self.assertEqual(image[offset], 0xE9, 'Slot beginnt mit jmp rel32')
+            self.assertEqual(jumps.get(offset), name)
+        self.assertEqual(list(table), self.NAMES)
+        self.assertEqual(len(jumps), len(self.NAMES))
 
 
 if __name__ == '__main__':
