@@ -41,7 +41,7 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     internal const int MaximumActiveBytes = 1024 * 1024;
     /// <summary>Alle Manifeste einer Menge liegen zugleich im Speicher; Grenze nach L1-C pruefen.</summary>
     internal const long MaximumManifestBytes = 16L * 1024 * 1024;
-    /// <summary>Dateien und Links aller Pakete einer Menge zusammen; begrenzt Speicher und Zeit der Konfliktpruefung.</summary>
+    /// <summary>Dateien und Links aller Pakete einer Menge zusammen; begrenzt den Speicher der Konfliktpruefung (die Zeit begrenzt SetTable.MaximumProbes).</summary>
     internal const int MaximumPaths = 131072;
     private const string Header = "zehos-active 2";
     private const string LinePrefix = "package=";
@@ -64,6 +64,8 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     /// Liest und prueft die aktive Menge: Signatur vor dem Parsen, Manifesthash gegen active2, Abhaengigkeiten und Konflikte.
     /// Fehlt active2, ist der Bestand leer; jede Beschaedigung ist ein Fehler, nie ein leerer Bestand. Schreibt nichts: Ein
     /// halb ersetztes active2 wird so gelesen, wie <see cref="PackageStore.RestorePendingStorageLocked"/> es abschliessen wuerde.
+    /// Lesen nimmt keine Schreibsperre (Begin): Laeuft gleichzeitig Reconcile oder Activate derselben Instanz, kann es einen gerade
+    /// entfernten Ordner sehen und faelschlich "beschaedigt" melden; zerstoert wird dabei nichts.
     /// </summary>
     public ResultObject<ActivePackage2[]> ReadActive()
     {
@@ -141,14 +143,22 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
         Step("active2 abschliessen");
         StorageLock.Run(() => PackageStore.RestorePendingStorageLocked(ActivePath, true));
         var lines = ReadLines();
-        if (lines.IsOK() && Array.Exists(lines.Value!, line => line.Id == manifest.Id && line.Version == manifest.Version))
+        var active = lines.IsOK() ? Array.Find(lines.Value!, line => line.Id == manifest.Id && line.Version == manifest.Version) : null;
+        // Ist active2 gerade nicht lesbar, kann ein vorhandener Ordner aktiv sein: dann wie eine aktive Version behandeln, nie
+        // loeschen (wie Reconcile). Eine wirklich zerstoerte active2 laesst sich so weiter reparieren, solange der Ordner intakt ist
+        // oder fehlt.
+        if (active != null || (!lines.IsOK() && StorageLock.Run(() => Directory.Exists(target))))
         {
             // Die aktive Version darf nicht geloescht und neu geschrieben werden: Ein Abbruch liesse sonst einen aktiven, halben
             // Ordner zurueck. Ist sie intakt, gilt sie als gestuft; eine Reparatur an Ort und Stelle gehoert nicht zu P3.
+            if (active != null && !string.Equals(active.Sha256, expected.ManifestSha256, StringComparison.Ordinal))
+                return ResultObjectFactory.CreateFailure<PackageManifest2>(ResultCode.Failure,
+                    $"Katalog nennt fuer das aktive {manifest.Id} {manifest.Version} ein anderes Manifest; die Version muss neu herausgegeben werden.");
             var stored = Load(target, manifest.Id, manifest.Version, expected.ManifestSha256);
             if (!stored.IsOK() || !VerifyFiles(new ActivePackage2(stored.Value!, false, target), cancellation).IsOK())
-                return ResultObjectFactory.CreateFailure<PackageManifest2>(ResultCode.Failure,
-                    $"{manifest.Id} {manifest.Version} ist aktiv, aber beschaedigt; zuerst eine andere Version aktivieren.");
+                return ResultObjectFactory.CreateFailure<PackageManifest2>(ResultCode.Failure, active != null
+                    ? $"{manifest.Id} {manifest.Version} ist aktiv, aber beschaedigt; zuerst eine andere Version aktivieren."
+                    : $"active2 ist nicht lesbar und {manifest.Id} {manifest.Version} liegt schon vor, aber nicht intakt; nichts geloescht. " + lines.Status.Message);
             lock (gate) staged[key] = expected.ManifestSha256;
             return parsed;
         }
@@ -172,7 +182,8 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
 
     private ResultErr WriteVersion(IPackageSource source, string prefix, PackageManifest2 manifest, byte[] signature, string target, CancellationToken cancellation)
     {
-        // Reste eines abgebrochenen Versuchs derselben Version waren nie aktiv (oben geprueft) und werden verworfen.
+        // Reste eines abgebrochenen Versuchs derselben Version: nur erreichbar, wenn active2 lesbar ist und sie nicht nennt (oben
+        // geprueft); sie waren also nie aktiv und werden verworfen.
         if (StorageLock.Run(() => Directory.Exists(target))) DeleteTree(target);
         string files = Path.Combine(target, "files");
         Step("Ordner anlegen");
@@ -228,7 +239,8 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     public ResultErr Activate(IReadOnlyList<(string Id, PackageVersion2 Version, bool Requested)> set, CancellationToken cancellation)
     {
         if (trust == null) return NoTrust();
-        if (set == null || set.Count > MaximumPackages) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Mehr als 4096 Pakete.");
+        if (set == null) return ResultErr.CreateFailure(ResultCode.MissingArgument, "Keine Paketmenge.");
+        if (set.Count > MaximumPackages) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Mehr als 4096 Pakete.");
         var sorted = new List<(string Id, PackageVersion2 Version, bool Requested)>(set);
         foreach (var entry in sorted)
             if (entry.Id == null || !PackageManifest.IsValidId(entry.Id)) return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Ungueltige Paketkennung.");
@@ -429,64 +441,182 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
             if (count > MaximumPaths) return "Mehr als 131072 Dateien und Links in der Menge.";
         }
         // Eigentuemer je Pfad; FAT32 unterscheidet keine Gross-/Kleinschreibung, also auch hier nicht.
-        var owners = new Dictionary<string, string>(count, StringComparer.OrdinalIgnoreCase);
-        var links = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var table = new SetTable(count);
         foreach (var manifest in set)
         {
             foreach (var file in manifest.Files)
-                if (!owners.TryAdd(file.Path, manifest.Id)) return Conflict(file.Path, owners[file.Path], manifest.Id);
+                if (table.Add(file.Path, manifest.Id, null) is int existing and >= 0) return Conflict(file.Path, table.Owner(existing), manifest.Id);
             foreach (var link in manifest.Links)
-            {
-                if (!owners.TryAdd(link.Path, manifest.Id)) return Conflict(link.Path, owners[link.Path], manifest.Id);
-                links.Add(link.Path, Resolve(link));
-            }
+                if (table.Add(link.Path, manifest.Id, Resolve(link)) is int existing and >= 0) return Conflict(link.Path, table.Owner(existing), manifest.Id);
         }
-        foreach (var (path, owner) in owners)
-            for (int slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
-                if (owners.TryGetValue(path[..slash], out string? parent))
-                    return $"Pfad {path[..slash]} von {parent} ist Ordner von {path} aus {owner}.";
-        return CheckLinkChains(links);
+        for (int entry = 0; entry < table.Count; entry++)
+        {
+            int parent = table.FindParent(table.Path(entry));
+            if (table.Exhausted) return Exhausted();
+            // Innerhalb eines Pakets hat der Parser das ausgeschlossen; ein Treffer gehoert also zu einem anderen Paket.
+            if (parent >= 0) return $"Pfad {table.Path(parent)} von {table.Owner(parent)} ist Ordner von {table.Path(entry)} aus {table.Owner(entry)}.";
+        }
+        return CheckLinkChains(table);
     }
 
     private static string Conflict(string path, string first, string second) =>
         $"Pfad {path} liegt in {first} und {second}.";
 
-    // Folgt jedem Linkziel durch alle Links der Menge (wie CheckLinkChains im Parser, aber paketuebergreifend).
-    private static string? CheckLinkChains(Dictionary<string, string> links)
+    private static string Exhausted() =>
+        "Pfade und Linkketten der Menge zu aufwendig zu pruefen (mehr als " + SetTable.MaximumProbes / (1024 * 1024) + " Mio. Tabellenzugriffe).";
+
+    /// <summary>
+    /// Folgt jedem Linkziel durch alle Links der Menge (wie CheckLinkChains im Parser, aber paketuebergreifend), in zwei festen
+    /// Puffern ohne Zeichenkette je Schritt. Jeder Link darf bis zu 40 Schritte gehen; damit eine gueltige, aber feindlich gebaute
+    /// Menge (viele Links auf den Anfang einer langen Kette in tiefen Ordnern) nicht Minuten braucht, begrenzt das Budget von
+    /// <see cref="SetTable"/> alle Tabellenzugriffe zusammen: Fehler statt Haenger.
+    /// </summary>
+    private static string? CheckLinkChains(SetTable table)
     {
-        foreach (var (path, target) in links)
+        var current = new char[PackageManifest2.MaximumPathLength];
+        var next = new char[PackageManifest2.MaximumPathLength];
+        for (int entry = 0; entry < table.Count; entry++)
         {
-            string current = target;
+            string? start = table.Target(entry);
+            if (start == null) continue;
+            string path = table.Path(entry);
+            start.CopyTo(current);
+            int length = start.Length;
             for (int hops = 0; ; hops++)
             {
-                if (IsSameOrNested(current, path)) return $"Link {path} zeigt ueber Paketgrenzen auf sich selbst oder darunter.";
-                int prefix = LinkPrefix(links, current, out string? through);
+                if (IsSameOrNested(current.AsSpan(0, length), path)) return $"Link {path} zeigt ueber Paketgrenzen auf sich selbst oder darunter.";
+                int prefix = table.FindLinkPrefix(current.AsSpan(0, length), out int via);
+                if (table.Exhausted) return Exhausted();
                 if (prefix < 0) break;
                 if (hops == PackageManifest2.MaximumLinkHops) return $"Mehr als 40 Links in Folge ab {path}.";
-                current = through + current[prefix..];
-                if (current.Length > PackageManifest2.MaximumPathLength) return $"Linkkette ab {path} ergibt einen Pfad ueber 200 Zeichen.";
+                string through = table.Target(via)!;
+                int total = through.Length + length - prefix;
+                if (total > PackageManifest2.MaximumPathLength) return $"Linkkette ab {path} ergibt einen Pfad ueber 200 Zeichen.";
+                current.AsSpan(prefix, length - prefix).CopyTo(next.AsSpan(through.Length));
+                through.CopyTo(next);
+                (current, next) = (next, current);
+                length = total;
             }
         }
         return null;
     }
 
-    // Laenge des kuerzesten Praefixes (an '/' oder ganz), der ein Link ist, sonst -1; through ist dessen aufgeloestes Ziel.
-    private static int LinkPrefix(Dictionary<string, string> links, string path, out string? through)
-    {
-        for (int end = path.IndexOf('/'); ; end = path.IndexOf('/', end + 1))
-        {
-            int length = end < 0 ? path.Length : end;
-            if (links.TryGetValue(path[..length], out through)) return length;
-            if (end < 0) return -1;
-        }
-    }
-
-    private static bool IsSameOrNested(string path, string link)
+    private static bool IsSameOrNested(ReadOnlySpan<char> path, ReadOnlySpan<char> link)
     {
         int shorter = Math.Min(path.Length, link.Length);
-        if (string.Compare(path, 0, link, 0, shorter, StringComparison.OrdinalIgnoreCase) != 0) return false;
+        if (!path[..shorter].Equals(link[..shorter], StringComparison.OrdinalIgnoreCase)) return false;
         if (path.Length == link.Length) return true;
         return path.Length < link.Length ? link[shorter] == '/' : path[shorter] == '/';
+    }
+
+    /// <summary>
+    /// Pfade aller Pakete einer Menge ohne Gross-/Kleinschreibung (ASCII, wie die Paketpfade), mit Suche ueber Ausschnitte und
+    /// einem Hash, der Zeichen fuer Zeichen mitlaeuft (wie PathTable im Parser): keine Zeichenkette je Ordnerebene. Jeder besuchte
+    /// Tabellenplatz zaehlt gegen <see cref="MaximumProbes"/>; auch gezielte Hashkollisionen (der Hash hat kein Salt, erreichbar
+    /// nur mit signierten Manifesten) koennen die Pruefung damit nicht beliebig verlangsamen.
+    /// </summary>
+    private sealed class SetTable
+    {
+        /// <summary>
+        /// 131072 Pfade in sechs Ordnerebenen mit je zwei Linkschritten brauchen etwa 2,4 Mio. Zugriffe; das Budget laesst das
+        /// Sechsfache zu. Der Gegenfall aus dem Review von #688 bricht damit auf dem Host nach unter einer Sekunde ab.
+        /// </summary>
+        internal const long MaximumProbes = 16L * 1024 * 1024;
+        private const ulong Offset = 14695981039346656037, Prime = 1099511628211;
+        private readonly string[] paths;
+        private readonly string[] owners;
+        private readonly string?[] targets;
+        private readonly ulong[] hashes;
+        private readonly int[] buckets;
+        private long probes;
+
+        public SetTable(int capacity)
+        {
+            paths = new string[capacity];
+            owners = new string[capacity];
+            targets = new string?[capacity];
+            hashes = new ulong[capacity];
+            int size = 16;
+            while (size < capacity * 2) size *= 2;
+            buckets = new int[size];
+        }
+
+        public int Count { get; private set; }
+        public bool Exhausted => probes > MaximumProbes;
+        public string Path(int entry) => paths[entry];
+        public string Owner(int entry) => owners[entry];
+        /// <summary>Aufgeloestes Linkziel relativ zur Wurzel; null bei Dateien.</summary>
+        public string? Target(int entry) => targets[entry];
+
+        /// <summary>Traegt den Pfad ein und liefert -1, oder den vorhandenen Eintrag gleichen Namens (ohne Gross-/Kleinschreibung).</summary>
+        public int Add(string path, string owner, string? target)
+        {
+            ulong hash = Offset;
+            foreach (char c in path) hash = Step(hash, c);
+            int existing = Find(path, hash);
+            if (existing >= 0) return existing;
+            paths[Count] = path;
+            owners[Count] = owner;
+            targets[Count] = target;
+            hashes[Count] = hash;
+            int bucket = (int)(hash & (ulong)(buckets.Length - 1));
+            while (buckets[bucket] != 0) bucket = (bucket + 1) & (buckets.Length - 1);
+            buckets[bucket] = ++Count;
+            return -1;
+        }
+
+        /// <summary>Ein eingetragener Pfad, der Ordner des gegebenen ist (Praefix vor einem '/'), sonst -1.</summary>
+        public int FindParent(string path)
+        {
+            ulong hash = Offset;
+            for (int index = 0; index < path.Length; index++)
+            {
+                if (path[index] == '/')
+                {
+                    int entry = Find(path.AsSpan(0, index), hash);
+                    if (entry >= 0 || Exhausted) return entry;
+                }
+                hash = Step(hash, path[index]);
+            }
+            return -1;
+        }
+
+        /// <summary>Laenge des kuerzesten Praefixes (an '/' oder ganz), der ein Link ist, sonst -1; via ist dessen Eintrag.</summary>
+        public int FindLinkPrefix(ReadOnlySpan<char> path, out int via)
+        {
+            ulong hash = Offset;
+            for (int index = 0; index <= path.Length; index++)
+            {
+                if (index == path.Length || path[index] == '/')
+                {
+                    int entry = Find(path[..index], hash);
+                    if (entry >= 0 && targets[entry] != null)
+                    {
+                        via = entry;
+                        return index;
+                    }
+                    if (Exhausted) break;
+                }
+                if (index < path.Length) hash = Step(hash, path[index]);
+            }
+            via = -1;
+            return -1;
+        }
+
+        private int Find(ReadOnlySpan<char> path, ulong hash)
+        {
+            int mask = buckets.Length - 1;
+            for (int bucket = (int)(hash & (ulong)mask); buckets[bucket] != 0; bucket = (bucket + 1) & mask)
+            {
+                if (++probes > MaximumProbes) return -1;
+                int entry = buckets[bucket] - 1;
+                if (hashes[entry] == hash && path.Equals(paths[entry], StringComparison.OrdinalIgnoreCase)) return entry;
+            }
+            probes++;
+            return -1;
+        }
+
+        private static ulong Step(ulong hash, char c) => unchecked((hash ^ (c is >= 'A' and <= 'Z' ? (char)(c + ('a' - 'A')) : c)) * Prime);
     }
 
     // Ziel relativ zur Wurzel; der Parser hat Form und Ergebnis schon geprueft (fuehrende "../", danach normale Komponenten).
@@ -602,6 +732,8 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     }
 
     // Cosmos-FAT bietet kein geprueftes rekursives Directory.Delete; Dateien und Ordner einzeln, jeder Schritt einzeln gesperrt.
+    // FAT32 kennt keine symbolischen Links. Auf einem Host folgt diese Schleife einem Ordner-Link und loescht dessen Inhalt; ein
+    // Hostwerkzeug, das diesen Code auf fremde Baeume anwendet, muss das selbst ausschliessen.
     private void DeleteTree(string directory)
     {
         foreach (string file in StorageLock.Run(() => Directory.GetFiles(directory)))

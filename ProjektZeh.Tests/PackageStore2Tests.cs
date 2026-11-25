@@ -412,12 +412,23 @@ public sealed class PackageStore2Tests
         var loopA = new Pkg("loopa", "1.0.0-r1", [("usr/a/file", [1], false)]) { Links = [("usr/a/up", "../b")] };
         var loopB = new Pkg("loopb", "1.0.0-r1", [("usr/c/file", [1], false)]) { Links = [("usr/b", "a/up/x")] };
         Rejected("sich selbst", [loopA, loopB], MuslR1, loopA, loopB);
+        // Kette von 40 Links in hopsa (fuer sich gueltig: ab a01 folgen 39), hopsb verlaengert sie auf 41 Folgeschritte.
+        var hopsA = new Pkg("hopsa", "1.0.0-r1", [("usr/ha/file", [1], false)])
+        { Links = Enumerable.Range(1, 40).Select(index => ($"usr/c/a{index:D2}", $"a{index + 1:D2}")).ToArray() };
+        var hopsB = new Pkg("hopsb", "1.0.0-r1", [("usr/hb/file", [1], false)]) { Links = [("usr/c/a41", "a42"), ("usr/c/a42", "a43")] };
+        Rejected("Mehr als 40 Links", [hopsA, hopsB], MuslR1, hopsA, hopsB);
+        Assert.IsTrue(Store().Stage(Source(), Publish(hopsA), CancellationToken.None).IsOK(), "40 Links in einem Paket sind erlaubt.");
+        // Link durch einen Link des anderen Pakets: Ergebnis laenger als 200 Zeichen.
+        var longA = new Pkg("longa", "1.0.0-r1", [("usr/la/file", [1], false)]) { Links = [("usr/t", "s/" + new string('z', 190))] };
+        var longB = new Pkg("longb", "1.0.0-r1", [("usr/lb/file", [1], false)]) { Links = [("usr/s", new string('q', 20))] };
+        Rejected("ueber 200 Zeichen", [longA, longB], MuslR1, longA, longB);
         // Rueckstufung gegen den aktiven Bestand, auch wenn die aeltere Version sauber gestuft ist.
         var upgraded = Store();
         Install(upgraded, MuslR2);
         before = ActiveText;
         Rejected("Rueckstufung", [MuslR1], MuslR1);
         // Ungueltige Mengen.
+        Assert.AreEqual("Keine Paketmenge.", Store().Activate(null!, CancellationToken.None).Message);
         Assert.IsFalse(Store().Activate([Entry(MuslR2), Entry(MuslR2)], CancellationToken.None).IsOK());
         Assert.IsFalse(Store().Activate([("Bad", MuslR2.Parsed, true)], CancellationToken.None).IsOK());
         Assert.IsFalse(Store().Activate(Enumerable.Range(0, PackageStore2.MaximumPackages + 1).Select(index => ("p" + index, MuslR2.Parsed, true)).ToArray(), CancellationToken.None).IsOK());
@@ -498,6 +509,15 @@ public sealed class PackageStore2Tests
         File.WriteAllText(active + ".new", r2);
         Assert.AreEqual(Describe(MuslR1), Describe(Store()));
         Assert.IsTrue(File.Exists(active + ".old") && File.Exists(active + ".new") && !File.Exists(active));
+        // Nach dem letzten Umbenennen, vor dem Loeschen der .old: das Ziel gilt, Reconcile entfernt die .old.
+        File.WriteAllText(active, r2);
+        Assert.AreEqual(Describe(MuslR2), Describe(Store()));
+        File.Delete(active + ".new");
+        Assert.IsTrue(Store().Reconcile().IsOK());
+        Assert.IsFalse(File.Exists(active + ".old"));
+        Assert.AreEqual(r2, File.ReadAllText(active));
+        File.Delete(active);
+        File.WriteAllText(active + ".new", r2);
         // Nur eine vollstaendige .new (erste Aktivierung): sie gilt.
         File.Delete(active + ".old");
         Assert.AreEqual(Describe(MuslR2), Describe(Store()));
@@ -628,6 +648,88 @@ public sealed class PackageStore2Tests
             Assert.AreEqual(v1, TreeV1(live));
             Directory.Delete(live, true);
         }
+    }
+
+    [TestMethod]
+    public void StageNeverDeletesAVersionWhileActiveFileIsUnreadable()
+    {
+        var store = Store();
+        Install(store, MuslR1);
+        string active = Path.Combine(Root, "v2", "active2");
+        string valid = File.ReadAllText(active);
+        string directory = Path.Combine(Root, "v2", "musl", "1.2.5-r1");
+        // Voruebergehend unlesbar: Die vorhandene, intakte Version wird nur geprueft und als gestuft uebernommen.
+        File.WriteAllText(active, valid + "kaputt\n");
+        var steps = new List<string>();
+        var staged = Store(step: steps.Add).Stage(Source(), Publish(MuslR1), CancellationToken.None);
+        Assert.IsTrue(staged.IsOK(), staged.Status.Message);
+        CollectionAssert.AreEqual(new[] { "active2 abschliessen" }, steps);
+        // Nicht intakt: Fehler, nichts geloescht.
+        string file = Path.Combine(directory, "files", "usr", "lib", "musl.so");
+        File.WriteAllBytes(file, [9]);
+        steps.Clear();
+        var refused = Store(step: steps.Add).Stage(Source(), Publish(MuslR1), CancellationToken.None);
+        StringAssert.Contains(refused.Status.Message, "nichts geloescht");
+        CollectionAssert.AreEqual(new[] { "active2 abschliessen" }, steps);
+        CollectionAssert.AreEqual(new byte[] { 9 }, File.ReadAllBytes(file));
+        Assert.IsTrue(File.Exists(Path.Combine(directory, "manifest")) && File.Exists(Path.Combine(directory, "manifest.sig")));
+        File.WriteAllText(active, valid);
+        Assert.AreEqual(Describe(MuslR1), Describe(Store()));
+        // Ohne vorhandenen Ordner repariert eine neu gestufte Menge ein unlesbares active2 weiterhin.
+        File.WriteAllText(active, valid + "kaputt\n");
+        Install(Store(), MuslR2);
+        Assert.AreEqual(Describe(MuslR2), Describe(Store()));
+    }
+
+    [TestMethod]
+    public void StagingActiveVersionWithOtherCatalogManifestIsNotCalledDamaged()
+    {
+        Install(Store(), MuslR1);
+        // Herausgeber hat dieselbe Version neu signiert (anderer Inhalt des Manifests).
+        var message = Store().Stage(Source(), Publish(MuslR1 with { Provides = [] }), CancellationToken.None).Status.Message;
+        StringAssert.Contains(message, "anderes Manifest");
+        Assert.IsFalse(message.Contains("beschaedigt", StringComparison.Ordinal), message);
+        Assert.AreEqual(Describe(MuslR1), Describe(Store()));
+    }
+
+    // Gegenfall aus dem Review von #688: 40er-Linkkette in einem 92 Ebenen tiefen Ordner, 20 Pakete mit je 4000 Links auf deren
+    // Anfang. Alle Einzelgrenzen gelten; ohne Budget brauchte ReadActive 188 s und 64 GB Allokation.
+    [TestMethod]
+    public void HostileLinkChainsAcrossPackagesFailFastWithoutAllocationStorm()
+    {
+        string deep = "usr" + string.Concat(Enumerable.Repeat("/a", 91));
+        var chain = new Pkg("chain", "1.0.0-r1", [("usr/chain.txt", [1], false)])
+        { Links = Enumerable.Range(1, 40).Select(index => ($"{deep}/L{index:D2}", index == 40 ? "end" : $"L{index + 1:D2}")).ToArray() };
+        var set = new List<Pkg> { chain };
+        for (int package = 0; package < 20; package++)
+            set.Add(new Pkg($"p{package:D2}", "1.0.0-r1", [($"usr/p{package:D2}.txt", [1], false)])
+            { Links = Enumerable.Range(0, 4000).Select(index => ($"{deep}/p{package:D2}-{index:D4}", "L01")).ToArray() });
+        var lines = new StringBuilder("zehos-active 2\n");
+        foreach (var pkg in set.OrderBy(pkg => pkg.Id, StringComparer.Ordinal))
+        {
+            byte[] manifest = ManifestBytes(pkg);
+            string directory = Path.Combine(Root, "v2", pkg.Id, pkg.Version);
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(Path.Combine(directory, "manifest"), manifest);
+            File.WriteAllBytes(Path.Combine(directory, "manifest.sig"), Sign(manifest));
+            lines.Append(CultureInfo.InvariantCulture, $"package={pkg.Id} {pkg.Version} requested {PackageTrust.Sha256Hex(manifest)}\n");
+        }
+        File.WriteAllText(Path.Combine(Root, "v2", "active2"), lines.Append("end\n").ToString());
+        var store = Store();
+        // Vergleichswert: dieselben Manifeste erzeugen und parsen.
+        long parseStart = GC.GetAllocatedBytesForCurrentThread();
+        foreach (var pkg in set) Assert.IsTrue(PackageManifest2.Parse(ManifestBytes(pkg)).IsOK());
+        long parseBytes = GC.GetAllocatedBytesForCurrentThread() - parseStart;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var read = store.ReadActive();
+        watch.Stop();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        StringAssert.Contains(read.Status.Message, "zu aufwendig");
+        Assert.IsTrue(watch.Elapsed < TimeSpan.FromSeconds(10), $"{watch.ElapsedMilliseconds} ms, {allocated / (1024 * 1024)} MB, parse {parseBytes / (1024 * 1024)} MB");
+        // Ueber Erzeugen und Parsen der Manifeste hinaus hoechstens etwa 100 MB (vorher 64 GB).
+        Assert.IsTrue(allocated - parseBytes < 100L * 1024 * 1024, $"{allocated / (1024 * 1024)} MB, Parsen allein {parseBytes / (1024 * 1024)} MB");
+        StringAssert.Contains(store.Activate(set.Select(pkg => Entry(pkg)).ToArray(), CancellationToken.None).Message, "zu aufwendig");
     }
 
     [TestMethod]
