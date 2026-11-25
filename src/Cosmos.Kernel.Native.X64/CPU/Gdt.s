@@ -38,10 +38,13 @@ _native_x64_store_gdt:
 // CS in bits 15:0, SS in 31:16, TR in 47:32 of the calling CPU.
 .global _native_x64_get_selectors
 _native_x64_get_selectors:
-    xor     eax, eax
-    str     ax
+    // Into 32-bit registers, which clears the upper half: the assembler encodes a move from a
+    // segment register to ax without the operand-size prefix, as one to eax.
+    str     eax
     shl     rax, 16
-    mov     ax, ss
+    mov     ecx, ss
+    or      rax, rcx
     shl     rax, 16
-    mov     ax, cs
+    mov     ecx, cs
+    or      rax, rcx
     ret
