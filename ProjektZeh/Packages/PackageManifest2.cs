@@ -33,7 +33,7 @@ internal readonly record struct PackageVersion2(UpdateVersion Version, int Relea
         return result == 0 ? Release.CompareTo(other.Release) : result;
     }
 
-    public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"{Version}-r{Release}");
+    public override string ToString() => Version + "-r" + Release.ToString(CultureInfo.InvariantCulture);
 }
 
 /// <summary>Abhaengigkeit "id>=version-rN": verlangt mindestens diese Version des Pakets.</summary>
