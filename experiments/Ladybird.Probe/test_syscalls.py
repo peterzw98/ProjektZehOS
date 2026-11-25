@@ -1,4 +1,4 @@
-"""Tests fuer syscalls.py mit festen strace-Beispielzeilen (N1-C1)."""
+"""Tests für syscalls.py mit festen strace-Beispielzeilen (N1-C1)."""
 
 import json
 import os
@@ -66,10 +66,16 @@ class Zeilen(unittest.TestCase):
         self.assertEqual(e["flags"], ["FUTEX_WAIT_PRIVATE", "FUTEX_WAKE_PRIVATE"])
 
     def test_signalzeile_wird_ignoriert(self):
-        self.assertNotIn("SIGCHLD", self.calls)
-        self.assertEqual(len(self.calls), len(set(self.calls)))
-        for name in self.calls:
-            self.assertFalse(name.startswith(("-", "+")))
+        self.assertEqual(sorted(self.calls), ["clone3", "connect", "execve", "futex", "getrandom",
+                                              "io_uring_setup", "openat", "read"])
+
+    def test_flags_nur_aus_argumenten(self):
+        self.assertEqual(self.calls["read"]["flags"], [])  # SA_RESTART steht nur hinter dem Ergebnis
+
+    def test_gekuerzte_pfade_werden_ignoriert(self):
+        p, pfade, _ = werte('openat(AT_FDCWD, "/usr/lib/x86_64-linux-gnu/libc.so"..., O_RDONLY) = 3\n')
+        self.assertEqual(p["syscalls"]["openat"]["count"], 1)
+        self.assertEqual(pfade, set())
 
     def test_enosys(self):
         self.assertEqual(self.calls["io_uring_setup"]["errors"], {"ENOSYS": 1})

@@ -3,13 +3,19 @@
 
 Eingabe: Dateien aus `strace -ff -f -yy -v -o DIR/t ...` (je Prozess und
 Thread eine Datei `t.<pid>`). Ausgabe: JSON mit Aufrufzahlen, Fehlern,
-Flags, geoeffneten Pfaden und Sockets.
+Flags, geöffneten Pfaden und Sockets.
 
     python3 syscalls.py --trace DIR --out FILE.json
 
-Grenzen: Nur die Ausgabeform von strace wird gelesen, nichts wird ausgefuehrt.
+Pfade: `paths` enthält Pfade aus Pfad-Aufrufen (auch fehlgeschlagene, also
+berührte statt nur geöffnete) und aus den `-yy`-Anmerkungen. strace kürzt
+Zeichenketten standardmäßig auf 32 Zeichen (`"..."...`); gekürzte Pfade werden
+nicht aufgenommen. Für vollständige Pfade mit `strace -s 4096` aufnehmen.
+Prozessname: erster erfolgreicher `execve`, sonst `pid-<n>` (n aus `t.<n>`).
+
+Grenzen: Nur die Ausgabeform von strace wird gelesen, nichts wird ausgeführt.
 Eine abgeschnittene letzte Zeile (Prozess abgebrochen, Platte voll) hat kein
-Ergebnis und wird nicht gezaehlt. Ein `<unfinished ...>` zaehlt beim Beginn
+Ergebnis und wird nicht gezählt. Ein `<unfinished ...>` zählt beim Beginn
 des Aufrufs, auch wenn nie ein `resumed` folgt (Prozess endet im Aufruf);
 das `resumed` liefert nur noch Fehler und Flags nach.
 """
@@ -21,7 +27,7 @@ import re
 import sys
 
 PREFIX = re.compile(r"^(?:\[pid\s+\d+\]\s+|\d+\s+)?")
-STRING = re.compile(r'"((?:[^"\\]|\\.)*)"(?:\.\.\.)?')
+STRING = re.compile(r'"((?:[^"\\]|\\.)*)"(\.\.\.)?')
 START = re.compile(r"^(\w+)\((.*)$")
 RESUMED = re.compile(r"^<\.\.\. (\w+) resumed>(.*)$")
 RESULT = re.compile(r"\)\s+=\s+(-?\d+|0x[0-9a-fA-F]+|\?)(?:<[^>]*>)?(?:\s+([A-Z][A-Z0-9_]+)\b)?[^=]*$")
@@ -47,6 +53,12 @@ SOCKET_AUFRUFE = {"connect", "bind", "sendto", "sendmsg", "accept", "accept4", "
 
 def _ohne_zeichenketten(text):
     return STRING.sub('""', text)
+
+
+def _argumente(text):
+    """Schneidet das Ergebnis (`) = ...`) ab; dahinter stehen nur Erklärungen wie SA_RESTART."""
+    m = RESULT.search(text)
+    return text[:m.start() + 1] if m else text
 
 
 def _sockaddr(args):
@@ -100,8 +112,10 @@ def _flags(args):
 
 def _sammle(proc, name, args, pfade, sockets):
     e = proc.eintrag(name)
+    args = _argumente(args)
     e["flags"] |= _flags(args)
-    strings = STRING.findall(args)
+    # Von strace gekürzte Zeichenketten ("..."...) sind keine vollständigen Pfade.
+    strings = [t for t, gekuerzt in STRING.findall(args) if not gekuerzt]
     if name in PFAD and strings:
         for s in (strings if name in PFAD2 else strings[:1]):
             if s.startswith("/") or name in ("execve", "execveat"):
@@ -150,7 +164,7 @@ def auswerten_zeilen(zeilen, proc, pfade, sockets):
         if fehler:
             e["errors"][fehler] = e["errors"].get(fehler, 0) + 1
         if name in ("execve", "execveat") and proc.name is None and not fehler:
-            s = STRING.findall(args)
+            s = [t for t, gekuerzt in STRING.findall(args) if not gekuerzt]
             if s:
                 proc.name = os.path.basename(s[0]) or s[0]
 
