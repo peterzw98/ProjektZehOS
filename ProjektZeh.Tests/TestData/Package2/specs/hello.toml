@@ -1,0 +1,18 @@
+# Testdaten fuer PackageCatalog2Tests und scripts/tests/test_package2.py; Listen absichtlich unsortiert (das Werkzeug sortiert).
+id = "hello"
+version = "1.2.3"
+release = 4
+runtime = "linux-x64-v1"
+license = "MIT OR Apache-2.0"
+name = "Hallo Welt"
+entry = "usr/bin/hello"
+capability = ["files", "net"]
+memory-mib = 256
+min-kernel = "0.5.0"
+depends = ["musl>=1.2.5-r1", "libcxx>=17.0.6-r1"]
+provides = ["so:libhello.so.1"]
+exec = ["usr/bin/hello", "usr/lib/libhello.so.1"]
+
+[link]
+"usr/lib/libhello.so" = "libhello.so.1"
+"usr/bin/hallo" = "hello"

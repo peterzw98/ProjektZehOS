@@ -1,0 +1,12 @@
+# Testdaten fuer PackageCatalog2Tests und scripts/tests/test_package2.py; Inhalte sind Platzhalter.
+id = "libcxx"
+version = "17.0.6"
+release = 2
+runtime = "linux-x64-v1"
+license = "Apache-2.0 WITH LLVM-exception"
+depends = ["musl>=1.2.5-r1"]
+provides = ["so:libc++abi.so.1", "so:libc++.so.1"]
+exec = ["usr/lib/libc++.so.1", "usr/lib/libc++abi.so.1"]
+
+[link]
+"usr/lib/libc++.so" = "libc++.so.1"

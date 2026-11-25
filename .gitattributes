@@ -69,3 +69,8 @@
 
 # Schriftdateien der Ladybird-Testseiten nie umschreiben (Pruefsumme in LICENSE-DejaVu.txt).
 experiments/Ladybird.Probe/pages/fonts/*.ttf binary
+
+# Testdaten des Paketformats 2: Hashes und Signaturen gelten fuer genau diese Bytes. -text erhaelt die Bytes und laesst
+# Diffs sichtbar; nur die Signaturen sind echt binaer.
+ProjektZeh.Tests/TestData/Package2/** -text
+ProjektZeh.Tests/TestData/Package2/**/*.sig binary

@@ -1,0 +1,13 @@
+zehos-catalog 2
+generation=3
+package=hello 1.2.3-r4 004790a6c7ccbe80ed95b487a4c1972ba55356047bcddff60301d6daad910c7e 54
+depends=libcxx>=17.0.6-r1
+depends=musl>=1.2.5-r1
+provides=so:libhello.so.1
+package=libcxx 17.0.6-r2 cf060e43018d708ae449c3461347fb1ae6881088dda3571f05157999d9f99346 43
+depends=musl>=1.2.5-r1
+provides=so:libc++.so.1
+provides=so:libc++abi.so.1
+package=musl 1.2.5-r1 3e0204214d8778790359e1efda351900e6e6201b27bd51ab0adb218fe8387424 48
+provides=so:libc.so
+end
