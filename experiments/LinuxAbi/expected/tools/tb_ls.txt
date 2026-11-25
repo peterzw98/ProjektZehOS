@@ -1,0 +1,9 @@
+ls: fehlt: No such file or directory
+.:
+.versteckt
+a.txt
+b.txt
+sub/
+
+sub:
+inner

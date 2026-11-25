@@ -1,0 +1,6 @@
+eins
+zwei
+
+drei ohne Zeilenendex
+y
+cat: fehlt.txt: No such file or directory

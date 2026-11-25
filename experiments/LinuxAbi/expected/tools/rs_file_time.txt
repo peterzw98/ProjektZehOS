@@ -1,0 +1,13 @@
+args=2
+arg1=a1 arg2=b 2
+env ZEHOS_ABI=Ok("1")
+gelesen=hallo rust
+len=24 is_file=true readonly=false
+seek=rust
+d=["b.txt"]
+fehlt=Err(Some(2))
+doppelt=Err(Some(17))
+weg=true
+sleep>=20ms=true <5s=true
+realtime>2020=true
+monoton=true
