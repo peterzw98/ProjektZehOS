@@ -50,6 +50,8 @@ internal sealed class FatSuperblock : IVfsSuperblock
     /// <summary>Flush the device's volatile write cache — the durability point for sync and unmount.</summary>
     public void Flush()
     {
+        // ZehOS patch fat-fsinfo, see PATCHES.md
+        Fat.WriteFsInfo();
         _device.Flush();
     }
 

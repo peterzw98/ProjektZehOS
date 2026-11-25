@@ -106,6 +106,24 @@ internal sealed class FatTable
 
     private uint _nextFreeHint = FirstDataCluster;
 
+    // ZehOS patch fat-fsinfo, see PATCHES.md
+    // FAT32 FSInfo tracking. Every FAT change goes through Set, so the
+    // free count is adjusted there and written back on Flush. The state
+    // is guarded by whatever serializes the FAT entries themselves (the
+    // callers of this volume); it needs no lock of its own.
+
+    /// <summary>Copy of the FSInfo sector; <see langword="null"/> when the volume has no valid FSInfo (FAT12/16, bad range or signatures).</summary>
+    private readonly byte[]? _fsInfo;
+
+    /// <summary>LBA of the FSInfo sector, valid when <see cref="_fsInfo"/> is set.</summary>
+    private readonly ulong _fsInfoLba;
+
+    /// <summary>Free data clusters; <see cref="FatFormatter.FsiUnknownValue"/> until the first change counts them.</summary>
+    private uint _freeCount = FatFormatter.FsiUnknownValue;
+
+    /// <summary>True when <see cref="_freeCount"/> changed since the last <see cref="WriteFsInfo"/>.</summary>
+    private bool _fsInfoDirty;
+
     public FatTable(IBlockDevice device, FatBootSector boot)
     {
         _device = device;
@@ -127,6 +145,74 @@ internal sealed class FatTable
             limit = fatCapacity;
         }
         _clusterLimit = (uint)limit;
+
+        // ZehOS patch fat-fsinfo, see PATCHES.md
+        // BPB_FSInfo is untrusted: it must point into the reserved area
+        // (never at the boot sector) and the sector must carry all three
+        // signatures, otherwise the volume is left exactly as before.
+        if (boot.Type == FatType.Fat32 && boot.FsInfoSector != 0 && boot.FsInfoSector < boot.ReservedSectorCount)
+        {
+            byte[] fsInfo = new byte[boot.BytesPerSector];
+            _device.ReadBlock(boot.FsInfoSector, 1, fsInfo);
+            ReadOnlySpan<byte> view = fsInfo;
+            if (BitConverter.ToUInt32(view.Slice(FatFormatter.FsiLeadSigOffset, (int)Fat32EntrySize)) == FatFormatter.FsiLeadSig
+                && BitConverter.ToUInt32(view.Slice(FatFormatter.FsiStrucSigOffset, (int)Fat32EntrySize)) == FatFormatter.FsiStrucSig
+                && BitConverter.ToUInt32(view.Slice(FatFormatter.FsiTrailSigOffset, (int)Fat32EntrySize)) == FatFormatter.FsiTrailSig)
+            {
+                _fsInfo = fsInfo;
+                _fsInfoLba = boot.FsInfoSector;
+                // A plausible stored count is trusted (as Linux and Windows
+                // do); anything else is counted on the first change.
+                uint stored = BitConverter.ToUInt32(view.Slice(FatFormatter.FsiFreeCountOffset, (int)Fat32EntrySize));
+                if (stored <= _clusterLimit - FirstDataCluster)
+                {
+                    _freeCount = stored;
+                }
+            }
+        }
+    }
+
+    // ZehOS patch fat-fsinfo, see PATCHES.md
+    /// <summary>Writes the tracked free count and search hint into the FSInfo sector when they changed; callers flush the device afterwards.</summary>
+    public void WriteFsInfo()
+    {
+        if (_fsInfo is null || !_fsInfoDirty)
+        {
+            return;
+        }
+
+        Span<byte> sector = _fsInfo;
+        BitConverter.TryWriteBytes(sector.Slice(FatFormatter.FsiFreeCountOffset, (int)Fat32EntrySize), _freeCount);
+        // FSI_Nxt_Free must name a data cluster or be unknown; the hint
+        // runs one past the last cluster after allocating it.
+        uint hint = IsDataCluster(_nextFreeHint) ? _nextFreeHint : FatFormatter.FsiUnknownValue;
+        BitConverter.TryWriteBytes(sector.Slice(FatFormatter.FsiNextFreeOffset, (int)Fat32EntrySize), hint);
+        _device.WriteBlock(_fsInfoLba, 1, sector);
+        _fsInfoDirty = false;
+    }
+
+    // ZehOS patch fat-fsinfo, see PATCHES.md
+    /// <summary>Adjusts the FSInfo free count for the entry of <paramref name="cluster"/> becoming <paramref name="value"/>; runs before the entry is written.</summary>
+    private void TrackFree(uint cluster, uint value)
+    {
+        bool wasFree = GetFat32(cluster) == FreeCluster;
+        bool isFree = (value & Fat32EntryMask) == FreeCluster;
+        if (wasFree == isFree)
+        {
+            return;
+        }
+
+        // Unknown, or a trusted stored count the FAT contradicts: count
+        // the entries as they are now (before this change).
+        if (_freeCount == FatFormatter.FsiUnknownValue
+            || (wasFree && _freeCount == 0)
+            || (isFree && _freeCount >= _clusterLimit - FirstDataCluster))
+        {
+            _freeCount = CountFree();
+        }
+
+        _freeCount = wasFree ? _freeCount - 1 : _freeCount + 1;
+        _fsInfoDirty = true;
     }
 
     /// <summary>True when <paramref name="cluster"/> addresses a data cluster this volume (and its FAT) actually has.</summary>
@@ -163,6 +249,12 @@ internal sealed class FatTable
         if (!IsDataCluster(cluster))
         {
             return;
+        }
+
+        // ZehOS patch fat-fsinfo, see PATCHES.md
+        if (_fsInfo is not null)
+        {
+            TrackFree(cluster, value);
         }
 
         switch (_boot.Type)

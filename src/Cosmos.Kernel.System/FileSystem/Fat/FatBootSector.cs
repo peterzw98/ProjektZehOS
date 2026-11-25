@@ -212,6 +212,10 @@ public sealed class FatBootSector
     /// <summary>LBA of the first FAT copy.</summary>
     public uint FatStartLba { get; private set; }
 
+    // ZehOS patch fat-fsinfo, see PATCHES.md
+    /// <summary>FSInfo sector number (BPB_FSInfo) on FAT32; 0 on FAT12/16. Untrusted: <see cref="FatTable"/> validates range and signatures.</summary>
+    internal uint FsInfoSector { get; private set; }
+
     private FatBootSector() { }
 
     /// <summary>
@@ -308,6 +312,8 @@ public sealed class FatBootSector
         if (bs.Type == FatType.Fat32)
         {
             bs.RootCluster = BitConverter.ToUInt32(bpb.Slice(RootClusOffset, UInt32FieldSize));
+            // ZehOS patch fat-fsinfo, see PATCHES.md
+            bs.FsInfoSector = BitConverter.ToUInt16(bpb.Slice(FsInfoOffset, UInt16FieldSize));
             bs.RootStartLba = 0;
             bs.RootSectorCount = 0;
             bs.DataStartLba = (uint)rootStart;
