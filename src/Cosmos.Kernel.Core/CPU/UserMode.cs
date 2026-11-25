@@ -167,11 +167,7 @@ public static unsafe class UserMode
     public static void SetFsBase(ulong address)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(address, UserEnd);
-        SchedulerThread? thread = SchedulerManager.CurrentThreadIfRunning;
-        if (thread is not null)
-        {
-            thread._userFsBase = address;
-        }
+        SchedulerManager.CurrentThreadIfRunning?._userFsBase = address;
     }
 
     internal static void RegisterArch(UserModeArch arch)
