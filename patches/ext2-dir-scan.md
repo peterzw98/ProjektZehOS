@@ -1,6 +1,6 @@
 # ext2-dir-scan
 
-- **Commit:** Squash von PR <PR-Nummer> (`<Hash>`), nach Merge einzutragen; geschrieben auf `origin/cosmos` fbb5e340
+- **Commit:** Squash von #658 (`0354537f`); geschrieben auf `origin/cosmos` fbb5e340
 - **Dateien:** `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Directory.cs` (`TryFind`, neu `TryFindFirst`, `AddEntry`), `Ext2InodeOperations.cs` (`Lookup`); Tests `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/Ext2DirScanTests.cs`
 - **Grund:** `TryFind` las bei jedem Aufruf das ganze Verzeichnis in einen Puffer und legte je Eintrag ein `Ext2DirEntry` und einen `string` an; `AddEntry` tat das noch einmal, las das Verzeichnis ein zweites Mal und schrieb alle Blöcke zurück (ZehOS #542: 4000 Dateien in einem Verzeichnis)
 - **Änderung:** Blockweise Suche mit Vergleich der Namensbytes in einem Blockpuffer je Aufruf (kein geteilter Zustand, keine neue Sperre). `Lookup` endet beim Treffer (`TryFindFirst`); alle ändernden Aufrufer prüfen mit `TryFind` weiter das ganze Verzeichnis. `AddEntry` prüft und sucht die Lücke in einem Lauf, schreibt erst danach und nur den geänderten Block. Plattenformat, Wahl der Lücke und Schreibreihenfolge unverändert; es entfallen nur Schreibzugriffe mit unverändertem Inhalt

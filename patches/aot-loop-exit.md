@@ -1,6 +1,6 @@
 # aot-loop-exit
 
-- **Commit:** PR #654; geschrieben auf a7b8bfd2, nachgezogen auf fbb5e340 (0c88729f)
+- **Commit:** Squash von #654 (`a1924891`); geschrieben auf a7b8bfd2, nachgezogen auf fbb5e340 (0c88729f)
 - **Dateien:** `src/Cosmos.Kernel.Core/CPU/CpuTickHook.cs` (neu), `src/Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs` (`HandleTimerInterrupt`), `src/Cosmos.Kernel.Core/PublicAPI.Unshipped.txt`, `Scheduler/Experimentals.cs`, `docs/articles/dev/public-api.md`, `tests/Kernels/Cosmos.Kernel.Tests.Threading/Kernel.cs`
 - **Grund:** Öffentlicher, experimenteller Hook (`COSMOS0001`) im Scheduler-Tick: Der Kernel kann den unterbrochenen Thread an einer anderen Adresse fortsetzen lassen. ZehOS beendet damit AOT-Code in einer Schleife ohne Hostaufruf (#423, R8): Der Thread verlässt den Code selbst und räumt regulär auf, statt aufgegeben zu werden (#582). Angeboten wird nur der laufende Thread der eigenen CPU (`CurrentThread`, `Running`, kein Idle-Thread), vor `OnTimerInterrupt`, in Ring 0 (`CS.RPL == 0`) und mit gesetztem IF. Geändert wird nur RIP im Rahmen, den `iretq` nimmt; RSP und Register setzt der Zielcode. Ohne Handler kostet es je Tick wenige Vergleiche
 - **Grenzen:** Nur x64; ARM64 ruft den Hook nie. Sperren und Speicher der verlassenen Rahmen bleiben belegt, der Handler lenkt deshalb nur Code um, der nichts hält. Maskierter Code wird nie angeboten, weil der Tick dort nicht ankommt; die IF-Prüfung ist nur Absicherung und nicht einzeln getestet, ebenso die Ring-3-Prüfung (kein Ring-3-Code im Testkernel)
