@@ -82,7 +82,7 @@ internal sealed class PackageManifest2
     private const int MaximumLicenseLength = 64;
     private const int MaximumNameLength = 32;
     private const int MaximumSonameLength = 200;
-    private const string SonamePrefix = "so:";
+    internal const string SonamePrefix = "so:";
     private const string Header = "zehos-package 2";
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -573,7 +573,7 @@ internal sealed class PackageManifest2
         return true;
     }
 
-    private static bool IsValidSoname(ReadOnlySpan<char> soname)
+    internal static bool IsValidSoname(ReadOnlySpan<char> soname)
     {
         if (soname.Length is < 1 or > MaximumSonameLength) return false;
         foreach (char c in soname)
@@ -589,14 +589,14 @@ internal sealed class PackageManifest2
         return true;
     }
 
-    private static bool IsLowerHex(ReadOnlySpan<char> text)
+    internal static bool IsLowerHex(ReadOnlySpan<char> text)
     {
         foreach (char c in text) if (!(c is >= '0' and <= '9' or >= 'a' and <= 'f')) return false;
         return true;
     }
 
     // Wie v1: hoechstens zehn Ziffern ohne fuehrende Null, passt immer in long; die Summengrenze prueft der Aufrufer.
-    private static bool TryParseSize(ReadOnlySpan<char> text, out long value)
+    internal static bool TryParseSize(ReadOnlySpan<char> text, out long value)
     {
         value = 0;
         if (text.Length is 0 or > 10 || (text.Length > 1 && text[0] == '0')) return false;
