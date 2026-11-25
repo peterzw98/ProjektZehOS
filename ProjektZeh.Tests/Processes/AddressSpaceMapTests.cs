@@ -224,8 +224,12 @@ public sealed class AddressSpaceMapTests
         AddressSpaceMap map = Create();
         foreach (Placement p in new[] { Placement.Hint, Placement.FixedReplace, Placement.FixedNoReplace })
         {
-            ResultObject<ulong> a = map.Reserve(0x10_0001, Page, MapAccess.Read, p);
-            Assert.AreEqual(ResultCode.InvalidArgument, a.Status.Code);
+            if (p != Placement.Hint)
+            {
+                ResultObject<ulong> a = map.Reserve(0x10_0001, Page, MapAccess.Read, p);
+                Assert.AreEqual(ResultCode.InvalidArgument, a.Status.Code);
+            }
+
             ResultObject<ulong> b = map.Reserve(0x10_0000, Page + 1, MapAccess.Read, p);
             Assert.AreEqual(ResultCode.InvalidArgument, b.Status.Code);
         }
@@ -234,6 +238,42 @@ public sealed class AddressSpaceMapTests
         Assert.AreEqual(ResultCode.InvalidArgument, map.Release(0x10_0000, 100).Code);
         Assert.AreEqual(ResultCode.InvalidArgument, map.Protect(0x10_0001, Page, MapAccess.Read).Code);
         AssertAccess(map, 0x10_0000, null);
+    }
+
+    [TestMethod]
+    public void ReserveHintUnalignedRoundsUpToNextPage()
+    {
+        AddressSpaceMap map = Create();
+        ResultObject<ulong> r = map.Reserve(0x10_0001, Page, MapAccess.Read, Placement.Hint);
+        Assert.IsTrue(r.IsOK());
+        Assert.AreEqual(0x10_1000UL, r.Value);
+        AssertAccess(map, 0x10_0000, null);
+        Assert.AreEqual(0x10_2000UL, map.Reserve(0x10_1FFF, Page, MapAccess.Read, Placement.Hint).Value);
+        Assert.AreEqual(0x10_3000UL, map.Reserve(0x10_2001, Page, MapAccess.Read, Placement.Hint).Value);
+    }
+
+    [TestMethod]
+    public void ReserveHintInsideOccupiedRegionMovesBehindIt()
+    {
+        AddressSpaceMap map = Create();
+        Fixed(map, 0x10_0000, 4);
+        Assert.AreEqual(0x10_4000UL, map.Reserve(0x10_1800, Page, MapAccess.Read, Placement.Hint).Value);
+    }
+
+    [TestMethod]
+    public void ReserveHintBeyondSpaceOrNearOverflowWrapsToBeginning()
+    {
+        AddressSpaceMap map = Create();
+        Assert.AreEqual(Base, map.Reserve(ulong.MaxValue, Page, MapAccess.Read, Placement.Hint).Value);
+        Assert.AreEqual(Base + Page, map.Reserve(ulong.MaxValue - 5, Page, MapAccess.Read, Placement.Hint).Value);
+        Assert.AreEqual(Base + 2 * Page, map.Reserve(Top + 1, Page, MapAccess.Read, Placement.Hint).Value);
+    }
+
+    [TestMethod]
+    public void ReserveHintUnalignedWithUnalignedLengthIsRejected()
+    {
+        AddressSpaceMap map = Create();
+        Assert.AreEqual(ResultCode.InvalidArgument, map.Reserve(0x10_0001, Page + 1, MapAccess.Read, Placement.Hint).Status.Code);
     }
 
     [TestMethod]
@@ -329,23 +369,22 @@ public sealed class AddressSpaceMapTests
 
                     break;
                 default:
-                    int run = 0;
-                    int expected = -1;
-                    for (int i = 0; i < pages && expected < 0; i++)
+                    // Zufälliger, oft unausgerichteter Hinweis: aufrunden, erster Platz ab dort, sonst ab Anfang.
+                    ulong hint = origin + (ulong)random.Next(pages * (int)Page + 2 * (int)Page) - Page;
+                    ulong rounded = hint > ulong.MaxValue - (Page - 1) ? hint : (hint + Page - 1) & ~(Page - 1);
+                    int startPage = rounded <= origin ? 0 : (int)Math.Min((rounded - origin) / Page, pages);
+                    int expectedHint = FindRun(model, startPage, count);
+                    if (expectedHint < 0)
                     {
-                        run = model[i] == null ? run + 1 : 0;
-                        if (run == count)
-                        {
-                            expected = i - count + 1;
-                        }
+                        expectedHint = FindRun(model, 0, count);
                     }
 
-                    ResultObject<ulong> r = map.Reserve(origin, length, access, Placement.Hint);
-                    Assert.AreEqual(expected >= 0, r.IsOK());
-                    if (expected >= 0)
+                    ResultObject<ulong> r = map.Reserve(hint, length, access, Placement.Hint);
+                    Assert.AreEqual(expectedHint >= 0, r.IsOK());
+                    if (expectedHint >= 0)
                     {
-                        Assert.AreEqual(origin + (ulong)expected * Page, r.Value);
-                        Array.Fill(model, access, expected, count);
+                        Assert.AreEqual(origin + (ulong)expectedHint * Page, r.Value);
+                        Array.Fill(model, access, expectedHint, count);
                     }
 
                     break;
@@ -360,5 +399,20 @@ public sealed class AddressSpaceMapTests
                 }
             }
         }
+    }
+
+    private static int FindRun(MapAccess?[] model, int from, int count)
+    {
+        int run = 0;
+        for (int i = from; i < model.Length; i++)
+        {
+            run = model[i] == null ? run + 1 : 0;
+            if (run == count)
+            {
+                return i - count + 1;
+            }
+        }
+
+        return -1;
     }
 }
