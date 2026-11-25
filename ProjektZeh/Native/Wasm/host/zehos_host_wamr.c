@@ -1,7 +1,7 @@
 // ZehOS: WAMR-AOT-Bindung der Hostfunktionen und Einstieg zehos_wasm_run_aot fuer den C#-Kernel (AOT-Plan Etappe D).
 // Wie zehos_host_wasm3.c nur Argumentuebernahme, Trap-Umsetzung und die aus ZEHOS_HOST_FUNCTIONS abgeleitete Tabelle;
 // die Dienste selbst und jede Pruefung von Gastadresse und -laenge liegen in zehos_host_core.c.
-// Nur mit -p:ZehOSWasmAot=true uebersetzt (ZEHOS_WASM_AOT); sonst fehlen WAMR und seine Kopfdateien im Build.
+// Nur mit ZEHOS_WASM_AOT uebersetzt (Standard, ProjektZeh.csproj ZehOSWasmAot); sonst fehlen WAMR und seine Kopfdateien im Build.
 
 #ifdef ZEHOS_WASM_AOT
 

@@ -49,9 +49,11 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
-    <!-- WAMR-AOT-Lader (Plan 5c, Etappe D) vorerst nur auf Wunsch: AOT bleibt bis Etappe F aus (Schalter wasmaot,
-         Standard aus); ohne diesen Schalter waehlt WasmGameApp immer wasm3. Er braucht wasm3s freistehende C-Laufzeit; die AOT-Gastprobe schaltet ihn ein. -->
+    <!-- WAMR-AOT-Lader: Standard an (#423, Peters Entscheidung vom 25.11.2026), -p:ZehOSWasmAot=false baut ohne ihn. Er braucht
+         wasm3s freistehende C-Laufzeit und entfaellt deshalb mit ZehOSWasm=false. Recovery und Installer bleiben ohne WAMR:
+         Einrichtung und Rettungsweg sollen ohne nativen App-Code auskommen. -->
     <ZehOSWasmAot Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasmAot>
+    <ZehOSWasmAot Condition="'$(ZehOSWasmAot)' == '' and '$(ZehOSWasm)' == 'true' and '$(ZehOSRecovery)' != 'true' and '$(ZehOSSecurityRecovery)' != 'true' and '$(ZehOSInstaller)' != 'true'">true</ZehOSWasmAot>
     <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
     <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>

@@ -522,9 +522,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_AOT_PROBE
         if (!CosmosAotProbe.Run()) { Stop(); return; }
-#if ZEHOS_AOT_LOOP_EXIT
         CosmosAotLoopProbe.Start(CosmosAotProbe.FixtureBytes(1));
-#endif
 #endif
 #if ZEHOS_INSTALLER
         if (startDesktop)

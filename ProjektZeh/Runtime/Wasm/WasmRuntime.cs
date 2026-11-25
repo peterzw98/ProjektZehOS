@@ -20,7 +20,7 @@ namespace ProjektZeh.Runtime.Wasm;
 
 /// <summary>
 /// Fuehrt Wasm-Module ueber den statisch gebundenen wasm3-Interpreter aus, mit .aot-Bytes und ohne Gasbudget
-/// optional nativ ueber WAMR-AOT (-p:ZehOSWasmAot=true). Alle Laeufe teilen sich einen langlebigen Worker mit festem
+/// optional nativ ueber WAMR-AOT (Standard, ZehOSWasmAot). Alle Laeufe teilen sich einen langlebigen Worker mit festem
 /// Stack, weil die nativen Stackgrenzen von wasm3 (d_m3MaxNativeStack, siehe ProjektZeh.csproj) und WAMR
 /// (zehos_host_wamr.c) auf diesen Stack abgestimmt sind und ein 8-MiB-Stack nach Dateilast leicht scheitert (E4.0 1G).
 /// </summary>
@@ -492,7 +492,7 @@ internal static unsafe partial class WasmRuntime
         if (name != null) Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Start {name} Laufzeit={engine}\n");
     }
 
-    // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn waehlt WasmEngineSelection immer wasm3.
+    // WAMR fehlt in Recovery, Installer und mit -p:ZehOSWasmAot=false; ohne ihn waehlt WasmEngineSelection immer wasm3.
 #if ZEHOS_WASM_AOT
 
     // Dieselben Grenzen wie wasm3 (Speicher, Stack der Ausfuehrungsumgebung), aber kein Gasbudget.

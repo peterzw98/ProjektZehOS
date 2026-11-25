@@ -58,9 +58,19 @@ class ArgumentTests(unittest.TestCase):
 
     def test_shell_setup_starts_background_load_only_when_asked(self):
         plain = measure.parse_args(['--iso', 'x.iso'])
-        self.assertEqual(measure.shell_setup(plain), ['frametimes on'])
+        # AOT ist im Kernel Standard: off muss ausdruecklich geschaltet werden, sonst misst der Lauf AOT.
+        self.assertEqual(measure.shell_setup(plain), ['frametimes on', 'wasmaot off'])
         busy = measure.parse_args(['--iso', 'x.iso', '--background', 'busy', '--aot', 'on'])
         self.assertEqual(measure.shell_setup(busy), ['frametimes on', 'wasmaot on', 'tasks start busy'])
+
+    def test_engine_must_match_the_requested_runtime(self):
+        aot = 'aot wamr245-aot5-x64-bc-nrz'
+        fallback = 'wasm3 AOT-Rueckfall: InvalidModule x'
+        measure.check_engine('on', [aot])
+        measure.check_engine('off', ['wasm3'])
+        for wanted, engines in (('off', [aot]), ('on', ['wasm3']), ('on', [aot, fallback]), ('on', []), ('off', [])):
+            with self.subTest(wanted=wanted, engines=engines), self.assertRaises(RuntimeError):
+                measure.check_engine(wanted, engines)
 
     def test_background_accepts_only_busy(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):

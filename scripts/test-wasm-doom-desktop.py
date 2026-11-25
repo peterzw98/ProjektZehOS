@@ -24,9 +24,9 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   upgrade  Installation, Katalog mit hoeherer Generation, pkg upgrade auf 1.1.0, Start.
   corrupt  Server liefert eine veraenderte testapp.wasm; die Installation muss mit Pruefsummenfehler scheitern.
   minkernel  testapp 1.1.0 verlangt ZehOS 99.0.0; pkg upgrade muss ablehnen, danach startet testapp (Fotos: 1.0.0).
-  aot      AOT-Plan Etappe E, ISO mit -p:ZehOSWasmAot=true: Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
-           Windows gibt es kein wamrc). AOT aus -> wasm3; "wasmaot on" -> aotapp laeuft nativ (Exitcode 7 der
-           Fixture); fremde Kennung -> wasm3; .aot mit falscher Formatversion -> Rueckfall auf wasm3; .aot ohne
+  aot      AOT-Plan Etappe E, normales ISO (AOT ist Standard): Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
+           Windows gibt es kein wamrc). Ohne Befehl laeuft aotvorher nativ (Exitcode 7 der Fixture); "wasmaot off"
+           -> aotapp unter wasm3; "wasmaot on" -> aotapp nativ; fremde Kennung -> wasm3; .aot mit falscher Formatversion -> Rueckfall auf wasm3; .aot ohne
            _start -> Abbruch ohne Rueckfall (Gastcode kann beim Instanziieren gelaufen sein). Geprueft ueber die
            Zeilen "WASM Start <id> Laufzeit=...". Ein nach der Installation veraendertes .aot laesst sich aus der
            Shell nicht erzeugen ("write" in den Paketbestand: Zugriff verweigert); diese Sperre ist nur hostgetestet.
@@ -739,8 +739,13 @@ def start_engine(guest: Guest, name: str, result: str, *engines: str) -> int:
 
 
 def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
-    install_aot_apps(guest, fixtures, repository, "aotapp", "aotfremd", "aotfallback", "aotnoentry")
-    # Standard aus (bis Etappe F): trotz passendem .aot laeuft das .wasm.
+    install_aot_apps(guest, fixtures, repository, "aotvorher", "aotapp", "aotfremd", "aotfallback", "aotnoentry")
+    # Standard an: ohne jeden Befehl laeuft das .aot. Eigenes Paket, weil das Fenster einer beendeten App offen bleibt.
+    end = start_engine(guest, "aotvorher", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
+    guest.wait("WASM Speicher", 60, end)
+    # Abgeschaltet: trotz passendem .aot laeuft das .wasm.
+    guest.shell("wasmaot off")
+    guest.desktop()
     start_engine(guest, "aotapp", "erstes Bild", "wasm3")
     guest.quit_testapp_named("aotapp")
     guest.shell("wasmaot on")
@@ -770,8 +775,6 @@ def scenario_aotold(guest: Guest, args: argparse.Namespace, fixtures: Path, repo
 
 def scenario_aotfault(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
     install_aot_apps(guest, fixtures, repository, "aotapp", "aotvorher", "aotfault")
-    guest.shell("wasmaot on")
-    guest.desktop()
     # Eigenes Paket: Das Fenster einer beendeten App bleibt offen, ein zweiter Start holte es nur nach vorn.
     end = start_engine(guest, "aotvorher", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
     guest.wait("WASM Speicher", 60, end)

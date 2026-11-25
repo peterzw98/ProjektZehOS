@@ -1,4 +1,4 @@
-#if ZEHOS_AOT_PROBE && ZEHOS_AOT_LOOP_EXIT
+#if ZEHOS_AOT_PROBE
 using System;
 using System.Diagnostics;
 using System.Threading;
@@ -11,6 +11,7 @@ namespace ProjektZeh.Runtime;
 /// Schleife ohne Hostaufruf, zehnmal hintereinander bei dauernder GC-Last; danach laeuft AOT weiter und der Speicher ist
 /// wieder frei. Ohne wamrc: Das letzte <c>jmp</c> von hostcalls (Fixture D) wird im Speicher zu <c>jmp $</c>; davor liegen
 /// seine Hostaufrufe, an denen die Probe den Start erkennt. Eigener Thread, weil die Hauptschleife PollAbort ruft.
+/// Nicht an ZEHOS_AOT_LOOP_EXIT gebunden: Mit <c>-p:ZehOSAotLoopExit=false</c> ist sie die Gegenprobe und darf kein PASS melden.
 /// </summary>
 internal static class CosmosAotLoopProbe
 {
