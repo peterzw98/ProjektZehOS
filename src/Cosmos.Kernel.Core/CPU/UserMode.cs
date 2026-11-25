@@ -182,8 +182,8 @@ public static unsafe class UserMode
     /// <returns>0 to return to ring 3, otherwise the kernel stack pointer to leave it with.</returns>
     internal static ulong Prepare(UserFrame* frame, SchedulerThread? mutantOld = null)
     {
-        // MUTANT (A6-Gegenprobe switch, nie pushen): alter Thread statt CurrentThread.
-        SchedulerThread? thread = mutantOld ?? SchedulerManager.CurrentCpuState?.CurrentThread;
+        // MUTANT 2 (A6-Gegenprobe switch, nie pushen): alter Thread statt CurrentThread, nur wenn er selbst in Ring 3 war.
+        SchedulerThread? thread = mutantOld is not null && mutantOld._userKernelRsp != 0 ? mutantOld : SchedulerManager.CurrentCpuState?.CurrentThread;
         if (thread is null || thread._userKernelRsp == 0)
         {
             Panic.Halt("A return to ring 3 on a thread that did not enter it.");
