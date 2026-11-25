@@ -1,0 +1,8 @@
+3
+8
+status=3
+ok1
+ok2
+ok3
+fehlgeschlagen
+1
