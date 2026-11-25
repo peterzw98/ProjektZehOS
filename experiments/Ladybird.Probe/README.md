@@ -77,7 +77,7 @@ Schritte, jeder in eigener Prozessgruppe unter `/usr/bin/time -v`:
 2. **deps:** `Meta/ladybird.py deps --preset Release`: baut vcpkg und alle Abhängigkeiten (Skia, ffmpeg, ICU, ANGLE …). Weil Ladybird den
    Release-Bau unter `src/Build/release` erwartet (`Meta/CMake/presets/CMakeBasePresets.json`), zeigt dort ein Verweis auf `$WORKDIR/build`.
 3. **configure:** `cmake --preset Release -S src -B build` mit denselben vcpkg-Argumenten wie `Meta/ladybird.py`, dazu
-   `-DENABLE_JS_JIT=OFF`, `-DLAGOM_LINK_POOL_SIZE=2`, `-DLADYBIRD_ENABLE_CCACHE=OFF`. `ENABLE_GUI_TARGETS` bleibt an (ohne sie gibt es keine
+   `-DENABLE_JS_JIT=OFF` und `-DLADYBIRD_ENABLE_CCACHE=OFF`, ohne Link-Pool (siehe Abbruchregeln). `ENABLE_GUI_TARGETS` bleibt an (ohne sie gibt es keine
    Dienste). Danach prüft das Skript `ENABLE_JS_JIT:BOOL=OFF` im CMake-Cache.
 4. **build:** `ninja -C build ladybird` (Ziel `ladybird` mit Ausgabename `Ladybird`; es hängt von allen Hilfsprozessen ab:
    WebContent, RequestServer, ImageDecoder usw. landen in `build/libexec/`). Tests und Werkzeuge werden nicht gebaut.
@@ -94,7 +94,17 @@ Ein Wächter prüft alle 15 Sekunden:
 | Zeit | Gesamtlauf ab Start (fetch bis build) über 8 h | laufender Schritt wird beendet, Exit 3, `"reason": "time"` |
 | Platz | Arbeitsordner über 200 GiB (`du -sb`, etwa jede Minute, je Zählung höchstens 120 s; danach gilt der letzte Wert) | Exit 3, `"reason": "disk"` |
 | Restplatz | weniger als 10 GiB frei auf dem Dateisystem (`df`), auch wenn andere Programme schreiben | Exit 3, `"reason": "disk_full"` |
-| OOM | Bau scheitert mit OOM: Zähler `oom_kill` der cgroup steigt, oder das Log zeigt Signal 9/Exit 137 (auch `collect2: fatal error: ld terminated with signal 9 [Killed]` beim Linken) oder die OOM-Meldung von gcc bzw. LLVM | einmal `LAGOM_LINK_POOL_SIZE=1`, neu konfigurieren, weiterbauen; zweites OOM: Exit 3, `"reason": "oom"` |
+| OOM | Bau scheitert mit OOM: Zähler `oom_kill` der cgroup steigt, oder das Log zeigt Signal 9/Exit 137 (auch `collect2: fatal error: ld terminated with signal 9 [Killed]` beim Linken) oder die OOM-Meldung von gcc bzw. LLVM | einmal mit einem Link-Job zur Zeit (`probe_link_pool=1`, siehe unten) neu konfigurieren und weiterbauen; zweites OOM: Exit 3, `"reason": "oom"` |
+
+**`LAGOM_LINK_POOL_SIZE` ist an diesem Commit unbrauchbar:** `Meta/CMake/use_linker.cmake:41-43` setzt die globale Eigenschaft
+`JOB_POOLS` auf `link_pool=N` und `CMAKE_JOB_POOL_LINK=link_pool`; `Meta/CMake/rust_crate.cmake:1` (eingebunden in `CMakeLists.txt:115`)
+überschreibt die Eigenschaft danach mit `"${JOB_POOLS};cargo=1"`, wobei `${JOB_POOLS}` eine leere normale Variable ist. Der Pool
+verschwindet, die Link-Regeln nennen ihn weiter, und ninja bricht mit `unknown pool name 'link_pool'` ab (auf Lars' PC mit CMake 4.5.0 und
+ninja 1.13.2 gesehen, hier mit CMake 3.31.6 nachgestellt). Der Plan nennt `LAGOM_LINK_POOL_SIZE=2/1`; das Skript baut deshalb
+zuerst ohne Pool und nimmt für den zweiten Versuch einen eigenen Pool: `link-pool.cmake` im Arbeitsordner hängt
+`probe_link_pool=1` per `cmake_language(DEFER)` erst am Ende der Konfiguration an `JOB_POOLS` an (eingebunden über
+`CMAKE_PROJECT_ladybird_INCLUDE`), `-DCMAKE_JOB_POOL_LINK=probe_link_pool` setzt ihn für alle Link-Schritte. Das wirkt wie
+`LAGOM_LINK_POOL_SIZE=1`, ohne Ladybird zu ändern.
 
 OOM schon bei den Abhängigkeiten bricht ohne zweiten Versuch ab. **Nach einem Abbruch kein weiterer Versuch ohne Rückfrage** (Plan L1-A);
 Stand und die bis dahin gemessenen Zahlen melden. Andere Exit-Codes: 1 Aufruf- oder Umgebungsfehler, 2 Voraussetzungen fehlen,

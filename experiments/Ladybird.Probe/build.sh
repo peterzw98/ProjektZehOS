@@ -103,6 +103,7 @@ readonly STATE_DIR="$WORKDIR/.state"
 readonly STATS_FILE="$WORKDIR/build-stats.json"
 # Markiert einen von diesem Skript angelegten Arbeitsordner; --resume setzt ihn voraus.
 readonly MARKER_FILE="$WORKDIR/.ladybird-probe-workdir"
+readonly LINK_POOL_INCLUDE="$WORKDIR/link-pool.cmake"
 
 # ---------------------------------------------------------------------------------------------
 # Voraussetzungen
@@ -343,7 +344,8 @@ report_prereqs() {
 # Ablauf
 # ---------------------------------------------------------------------------------------------
 
-LINK_POOL=2
+# Leer: kein Link-Pool (Ladybird-Standard). 1: zweiter Versuch nach OOM mit einem Link-Job zur Zeit.
+LINK_POOL=""
 TRIPLET=""
 START_EPOCH=""
 MONITOR_PID=""
@@ -364,8 +366,24 @@ cmake_args() {
 		"-DVCPKG_TARGET_TRIPLET=$TRIPLET" \
 		"-DVCPKG_HOST_TRIPLET=$TRIPLET" \
 		-DENABLE_JS_JIT=OFF \
-		"-DLAGOM_LINK_POOL_SIZE=$LINK_POOL" \
 		-DLADYBIRD_ENABLE_CCACHE=OFF
+	# LAGOM_LINK_POOL_SIZE ist an diesem Commit kaputt: use_linker.cmake setzt JOB_POOLS link_pool=N, danach
+	# überschreibt rust_crate.cmake:1 die Eigenschaft mit "${JOB_POOLS};cargo=1" (leere normale Variable), und
+	# ninja bricht mit "unknown pool name 'link_pool'" ab. Deshalb eigener Pool, am Ende der Konfiguration
+	# per cmake_language(DEFER) angehängt (link-pool.cmake, von write_link_pool_include geschrieben).
+	if [[ -n "$LINK_POOL" ]]; then
+		printf '%s\n' \
+			"-DCMAKE_PROJECT_ladybird_INCLUDE=$LINK_POOL_INCLUDE" \
+			-DCMAKE_JOB_POOL_LINK=probe_link_pool
+	fi
+}
+
+write_link_pool_include() {
+	cat >"$LINK_POOL_INCLUDE" <<EOF
+# Von experiments/Ladybird.Probe/build.sh erzeugt: Link-Pool für den zweiten Versuch nach OOM.
+# Erst am Ende der Konfiguration anhängen, weil Meta/CMake/rust_crate.cmake JOB_POOLS überschreibt.
+cmake_language(DEFER CALL set_property GLOBAL APPEND PROPERTY JOB_POOLS "probe_link_pool=$LINK_POOL")
+EOF
 }
 
 print_plan() {
@@ -377,10 +395,10 @@ Geplante Schritte (DRY_RUN=1, nichts wird ausgeführt):
   3. Abhängigkeiten (vcpkg): python3 Meta/ladybird.py deps --preset Release --cc $CC_SEL --cxx $CXX_SEL --jobs $JOBS
   4. Konfigurieren: cmake $(cmake_args | tr '\n' ' ')
   5. Bauen: ninja -C $BUILD_DIR -j $JOBS ladybird   (unter /usr/bin/time -v)
-     bei OOM einmal: LAGOM_LINK_POOL_SIZE=1, neu konfigurieren, weiterbauen; zweites OOM -> Abbruch
+     bei OOM einmal: Link-Pool mit Tiefe 1 (CMAKE_JOB_POOL_LINK, siehe cmake_args), neu konfigurieren, weiterbauen; zweites OOM -> Abbruch
   6. Prüfen: $BUILD_DIR/bin/Ladybird vorhanden; Größen aller Dateien in bin/, lib/, libexec/
   7. Ergebnis: $STATS_FILE, Logs in $LOG_DIR
-Abbruchregeln: Gesamtzeit > $((MAX_SECONDS / 3600)) h, Arbeitsordner (du -sb) > $((MAX_DISK_BYTES / 1024 / 1024 / 1024)) GiB, weniger als $((MIN_FREE_BYTES / 1024 / 1024 / 1024)) GiB frei, OOM auch mit LAGOM_LINK_POOL_SIZE=1
+Abbruchregeln: Gesamtzeit > $((MAX_SECONDS / 3600)) h, Arbeitsordner (du -sb) > $((MAX_DISK_BYTES / 1024 / 1024 / 1024)) GiB, weniger als $((MIN_FREE_BYTES / 1024 / 1024 / 1024)) GiB frei, OOM auch mit Link-Pool 1
 EOF
 }
 
@@ -610,7 +628,7 @@ stats = {
     "binaries_total_bytes": sum(binaries.values()),
     "ladybird_present": os.path.isfile(os.path.join(build, "bin", "Ladybird")),
     "jobs": int(env["JOBS"]),
-    "link_pool_size": int(env["LINK_POOL"]),
+    "link_pool_size": int(env["LINK_POOL"]) if env["LINK_POOL"] else None,
     "build_attempts": int(env["ATTEMPTS"]),
     "resumed": env["RESUME"] == "1",
     "cmake_args": env["CMAKE_ARGS"].splitlines(),
@@ -868,8 +886,9 @@ main() {
 		if [[ $rc -eq 99 ]]; then STATUS="aborted"; REASON="$(abort_reason_from_state)"; finish 3; fi
 		if [[ "$oom1" -gt "$oom0" ]] || log_shows_oom "$LOG_DIR/$bname.log"; then
 			if [[ $attempt -eq 1 ]]; then
-				log "OOM erkannt; zweiter und letzter Versuch mit LAGOM_LINK_POOL_SIZE=1"
+				log "OOM erkannt; zweiter und letzter Versuch mit einem Link-Job zur Zeit (probe_link_pool=1)"
 				LINK_POOL=1
+				write_link_pool_include
 				continue
 			fi
 			STATUS="aborted"; REASON="oom"; finish 3
