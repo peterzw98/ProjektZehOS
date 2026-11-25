@@ -212,11 +212,11 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP liefert der Hook (`CpuExceptionInfo`); er
   erscheint im Protokoll der Hauptschleife.
-- Je Ausnahme bleiben Thread und 8-MiB-Stack bis zum Neustart belegt, außerdem die verwalteten Objekte, auf die der
+- Je Ausnahme bleiben (bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned`) Thread und 8-MiB-Stack belegt, außerdem die verwalteten Objekte, auf die der
   aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die Speicherbereinigung ihn weiter durchsucht.
   Den nativen Speicher der Instanz (wasm3-Laufzeit, lineare Memory) gibt seit Roadmap 12.4-I2-C die Laufarena der
   C-Laufzeit frei: `PollFaultIsolation` ruft `zehos_memory_end` nach dem Aufräumen und vor dem Ersatzworker. Erst dort
-  ist der Worker in der Quarantäne und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
+  ist der Worker `Dead` und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
   Workers (Rückruf `zehos_current_thread_id`, CPU 0). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
   Zustand (`runtime_ref_count`, Hostfunktionen) über den toten Lauf hinaus weiterbenutzt; die Arena bleibt dann beim
   toten Lauf, spätere Läufe melden `WASM Arena nicht gestartet`. Hat der Fehler die Blockköpfe der Arena beschädigt,
@@ -787,6 +787,6 @@ Cosmos `e9915bc4` bringt vier Patches gegenüber `smp.10`. Einzelheiten und Prü
 - `ahci-large-commands` (#562, `5118a2b1`, Refs #542): SATA-Befehle bis 64 KiB statt 4 KiB, PxCI-Abfrage ohne Port-0x80-Pause.
 - `page-alloc-split` (#557, `5b1bd383`, #538): Seitenläufe bis 16 Seiten kommen von unten, größere von oben. Kleine GC-Segmente zerteilen den Platz für große Arrays nicht mehr.
 - `ext2-alloc-cache` (#558, `99c1afb0`, #542): Blockbitmap und Gruppendeskriptoren bleiben im Speicher, `Write` schreibt gesammelt. Je Gerät darf nur ein Mount schreiben; ein zweiter beschreibbarer Mount desselben `IBlockDevice` wird abgelehnt.
-- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) bleibt aktiv, bis der ZehOS-Teil von E6-G auf diesem Pin gemergt ist.
+- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der frühere ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) ist mit E6-G (#433) entfallen.
 
 ZehOS ändert mit dem Pin selbst keinen Code.
