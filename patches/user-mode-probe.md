@@ -1,0 +1,13 @@
+# user-mode-probe
+
+- **Commit:** Squash des PRs (Hash beim Merge); baut auf `user-stub` (3f57700a1) und `user-gdt` (ab2d31cc8) auf. Probebranch N1, nicht gemergt
+- **Dateien:** `src/Cosmos.Kernel.Native.X64/CPU/UserMode.s`, `src/Cosmos.Kernel.Core/CPU/UserMode.cs`, `src/Cosmos.Kernel.Core.X64/Cpu/UserModeX64.cs` (neu); `X64InterruptController.cs` (`Dispatch`), `SchedulerThread.cs`, `PerCpuBlock.cs` (drei der reservierten Plätze), `PublicAPI.Unshipped.txt`, zwei `.csproj` (Testzugriff); Testkern `tests/Kernels/Cosmos.Kernel.Tests.UserMode`, Erweiterung in `Cosmos.Kernel.Tests.Interrupts`
+- **Grund:** Ring 3 (ZehOS N1-A4, #627): `UserMode.Enter`, Systemaufruf, Fehler und Rückweg
+- **Rückweg:** Jeder Weg nach Ring 3 (erster Eintritt, `sysretq`, `iretq` nach Fehler oder Interrupt, auch der Rahmen eines vorgemerkten Threadwechsels) geht maskiert durch `UserMode.Prepare`: RIP und RSP < 2^47, CS `0x4B`, SS `0x43`, IF=1, nur erlaubte RFLAGS (kein IOPL, NT, VM, VIF, VIP). Scheitert die Prüfung oder liegt ein Leave-Wunsch vor, wird der Rahmen auf `_native_x64_user_leave` im Ring 0 umgebogen. Die Herkunft Ring 3 merkt `Dispatch` **vor** dem Handler: ein Handler, der `Cs` auf `0x28` setzt, umging sonst die Prüfung. Ausnahme: ein NMI, #DF oder #MC ohne Threadwechsel kehrt unverändert genau dorthin zurück, wo er traf (der Merker in `TempRcx` darf nicht zu einem anderen Rahmen passen)
+- **Je CPU** beim ersten Rückweg (nicht in `Initialize`; CPUs, die später kommen, brauchen nichts): `EFER.SCE`, `STAR`, `LSTAR`, `SFMASK`, `SYSENTER_CS`=0, SMEP und UMIP nach CPUID, `CR4.FSGSBASE` aus, `KERNEL_GS_BASE`=0, FS-Selektor null. Die GS-Basis des Programms ist immer 0
+- **Je Rückweg:** `TSS.RSP0`, Stack des `syscall`-Eintritts, FS-Basis (immer, weil Ring 3 sie über den Selektor ändern kann). Deshalb ist in `SchedulerManager.cs` nichts nötig
+- **FS im Kernel:** im Testkern-ELF kein einziger `fs:`-Zugriff (`objdump`), nur das eigene Nullsetzen
+- **Schnittstelle:** wie im Plan, dazu drei Konstanten für das Ergebnis von `Enter` (`EnterRefused`, `InvalidReturn`, `Faulted`) und `LeaveCurrent` auch im `FaultHandler`. Der `FaultHandler` läuft wie der `SyscallHandler` mit Interrupts an. Ein `RequestLeave` außerhalb von `Enter` beendet das nächste; der erste Wunsch gilt
+- **Grenzen:** x64. Kein AVX-Zustand (nur `fxsave`), kein SMAP, kein Meltdown- oder Spectre-Schutz. Ein Handler darf keine Ausnahme hinauslassen und kein `Enter` aufrufen (`EnterRefused`). Ein Programm, das RSP als Rechenregister nutzt oder NT setzt, endet mit `InvalidReturn`. Ein NMI aus Ring 3 geht weiter an den Panikpfad, wenn kein Handler eingetragen ist
+- **Entfernter ZehOS-Umweg:** keiner (neu)
+- **Prüfung:** Zahlen im PR. Offen: VMware, Hardware, Kosten je Aufruf, Messung (A7)
