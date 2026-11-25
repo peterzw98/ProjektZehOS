@@ -81,7 +81,7 @@ Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System ha
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
 
 - wasm3 (MIT): `ProjektZeh/ThirdParty/wasm3/LICENSE`
-- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), nur in Builds mit `-p:ZehOSWasmAot=true`: `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
+- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), im normalen Kernel enthalten (nicht in Recovery und Installer, abschaltbar mit `-p:ZehOSWasmAot=false`): `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
 - Rasterizer für Wasm-Apps, übertragen aus ClassiCubes SoftGPU (BSD-3-Clause): `ProjektZeh/Graphics/Raster/LICENSE-ClassiCube.txt`
 - BouncyCastle (MIT) als NuGet-Paket
 - Cosmos (BSD-3-Clause) als NuGet-Pakete; übernommene Teile aus Cosmos.Network.Http in `ProjektZeh/ThirdParty/CosmosHttp` mit `LICENSE.txt` und `THIRD-PARTY-NOTICES.txt` (darin auch die Mozilla-Zertifikatsliste `cacert.pem`, MPL-2.0)

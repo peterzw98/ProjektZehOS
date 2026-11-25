@@ -9,7 +9,7 @@ namespace ProjektZeh.Runtime.Wasm;
 /// <summary>Laufzeit, die einen Wasm-Lauf ausfuehrt.</summary>
 internal enum WasmEngine
 {
-    /// <summary>wasm3-Interpreter mit dem .wasm; Standard und Rueckfall.</summary>
+    /// <summary>wasm3-Interpreter mit dem .wasm; Rueckfall und Laufzeit aller Pakete ohne passendes .aot.</summary>
     Wasm3,
 
     /// <summary>WAMR-AOT-Lader mit dem vom Herausgeber erzeugten .aot.</summary>
@@ -40,13 +40,13 @@ internal static class WasmEngineSelection
 #if ZEHOS_WASM_AOT
     internal static bool AotBuiltIn => true;
 #else
-    // WAMR ist nur mit -p:ZehOSWasmAot=true im Kernel; ohne ihn laeuft jede App unter wasm3.
+    // Ohne WAMR (Recovery, Installer, -p:ZehOSWasmAot=false) laeuft jede App unter wasm3.
     internal static bool AotBuiltIn => false;
 #endif
 
-    private static volatile bool aotEnabled;
+    private static volatile bool aotEnabled = true;
 
-    /// <summary>Laufzeitschalter "wasmaot on|off"; Standard aus bis Etappe F (Peters Entscheidung, AOT-Plan Ledger).</summary>
+    /// <summary>Laufzeitschalter "wasmaot on|off"; Standard an (Peters Entscheidung vom 25.11.2026, #423), "off" gilt bis zum Neustart.</summary>
     public static bool AotEnabled
     {
         get => aotEnabled;

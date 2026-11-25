@@ -112,7 +112,7 @@ internal sealed partial class ShellService
             new ShellCommand("uptime", "uptime", "Zeigt die Laufzeit seit ZehOS-Start.", false, WriteUptime),
             new ShellCommand("log", "log", "Zeigt die gepufferten Systemdiagnosen.", false, WriteLog),
             new ShellCommand("frametimes", "frametimes [on|off]", "Zerlegt die Bildzeit von Paket-Apps in Anteile (Bericht je 60 s im Protokoll).", true, ExecuteFrametimes),
-            new ShellCommand("wasmaot", "wasmaot [on|off]", "Startet Paket-Apps mit passendem .aot nativ ueber WAMR (Standard aus).", true, ExecuteWasmAot),
+            new ShellCommand("wasmaot", "wasmaot [on|off]", "Startet Paket-Apps mit passendem .aot nativ ueber WAMR (Standard an; off gilt bis zum Neustart).", true, ExecuteWasmAot),
             .. CreateFeatureCommands(),
             .. additionalCommands
         ];

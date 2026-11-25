@@ -57,16 +57,18 @@ public sealed class DiagnosticCommandTests
     }
 
     [TestMethod]
-    public void ExecuteLine_WasmAot_IsOffByDefaultAndSwitchesForTheNextStart()
+    public void ExecuteLine_WasmAot_IsOnByDefaultAndSwitchesForTheNextStart()
     {
         var shell = new ShellService((SystemLog?)null, null, null);
         var output = new Mock<ITextOutput>(MockBehavior.Strict);
         output.Setup(target => target.WriteLine(It.IsAny<string>()));
         try
         {
-            // Peters Entscheidung: AOT bleibt standardmaessig aus, bis Etappe F abgeschlossen ist.
-            Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
+            // Peters Entscheidung vom 25.11.2026 (#423): AOT ist Standard, wasm3 bleibt Rueckfall.
+            Assert.IsTrue(Runtime.Wasm.WasmEngineSelection.AotEnabled);
             Assert.IsTrue(shell.ExecuteLine("wasmaot", output.Object).IsOK());
+            Assert.IsTrue(shell.ExecuteLine("wasmaot off", output.Object).IsOK());
+            Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
             Assert.IsTrue(shell.ExecuteLine("wasmaot on", output.Object).IsOK());
             Assert.IsTrue(Runtime.Wasm.WasmEngineSelection.AotEnabled);
             Assert.AreEqual(ResultCode.InvalidArgument, shell.ExecuteLine("wasmaot schnell", output.Object).Code);
@@ -74,9 +76,9 @@ public sealed class DiagnosticCommandTests
             Assert.IsTrue(shell.ExecuteLine("wasmaot off", output.Object).IsOK());
             Assert.IsFalse(Runtime.Wasm.WasmEngineSelection.AotEnabled);
         }
-        finally { Runtime.Wasm.WasmEngineSelection.AotEnabled = false; }
+        finally { Runtime.Wasm.WasmEngineSelection.AotEnabled = true; }
         output.Verify(target => target.WriteLine("WAMR-AOT aus (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Exactly(2));
-        output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Once);
+        output.Verify(target => target.WriteLine("WAMR-AOT an (Kennung wamr245-aot5-x64-bc-nrz)."), Times.Exactly(2));
         // Der Hostbuild enthaelt kein WAMR; die Shell sagt das bei jeder Abfrage.
         output.Verify(target => target.WriteLine("WAMR-AOT ist in diesem Kernel nicht verfuegbar; Apps laufen unter wasm3."), Times.Exactly(3));
     }

@@ -4,8 +4,8 @@
 Standard ist das veroeffentlichte Doom 1.1.0 aus dem Branch packages; das ISO muss dessen Herausgeberschluessel
 vertrauen (normaler Build). Doom laeuft ohne Eingabe im Titel-/Demoablauf, damit die Messung reproduzierbar bleibt.
 Mit --package/--key wird stattdessen ein lokal mit einem Testschluessel signiertes Paket verwendet (ISO mit
--p:ZehOSPackageKeyPath=<Test-public.b64>), optional mit --aot-file. --aot on schaltet vor dem Start "wasmaot on" und
-bricht ab, wenn die App nicht unter AOT startet. --start-keys tippt nach dem ersten Bild Tasten (ClassiCube: ret
+-p:ZehOSPackageKeyPath=<Test-public.b64>), optional mit --aot-file. --aot on|off sendet vor dem Start
+"wasmaot on|off" und bricht ab, wenn die App nicht unter der verlangten Laufzeit startet (AOT ist Standard). --start-keys tippt nach dem ersten Bild Tasten (ClassiCube: ret
 startet Singleplayer aus dem Launcher). --background busy startet vorher eine rechnende Hintergrundaufgabe
 (tasks start busy; Beleg nur als Foto, die Shell meldet das nicht seriell). Jeder der --runs Laeufe bekommt eine
 frische Platte.
@@ -110,9 +110,16 @@ def seed(args: argparse.Namespace, work: Path) -> Path:
 
 
 def shell_setup(args: argparse.Namespace) -> list[str]:
-    """Shellbefehle vor dem App-Start: Messung an, wahlweise AOT und rechnende Hintergrundlast."""
-    return ["frametimes on", *(["wasmaot on"] if args.aot == "on" else []),
+    """Shellbefehle vor dem App-Start: Messung an, Laufzeit ausdruecklich waehlen (Kernelstandard ist AOT), wahlweise rechnende Hintergrundlast."""
+    return ["frametimes on", f"wasmaot {args.aot}",
             *([f"tasks start {args.background}"] if args.background else [])]
+
+
+def check_engine(aot: str, engines: list[str]) -> None:
+    """Bricht ab, wenn die App nicht durchgehend unter der verlangten Laufzeit lief; sonst misst ein Rueckfall still die andere."""
+    expected = "aot" if aot == "on" else "wasm3"
+    if not engines or any(engine.split()[:1] != [expected] for engine in engines):
+        raise RuntimeError(f"--aot {aot}, aber Laufzeit={engines or 'keine Zeile WASM Start'}")
 
 
 def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
@@ -136,9 +143,7 @@ def run(args: argparse.Namespace, seed_dir: Path, work: Path) -> list[str]:
         log = (work / "serial.log").read_text(encoding="utf-8", errors="replace")[mark:]
         engine = re.search(rf"WASM Start {re.escape(args.id)} Laufzeit=([^\r\n]*)", log)
         print(f"Laufzeit: {engine.group(1) if engine else 'keine Zeile WASM Start'}", flush=True)
-        # Ohne diese Pruefung misst ein Rueckfall still wasm3.
-        if args.aot == "on" and not (engine and engine.group(1).startswith("aot")):
-            raise RuntimeError("--aot on, aber die App laeuft nicht unter AOT")
+        check_engine(args.aot, re.findall(rf"WASM Start {re.escape(args.id)} Laufzeit=([^\r\n]*)", log))
         if args.start_keys:
             # Der Launcher von ClassiCube nimmt Eingaben erst nach einigen Sekunden an (siehe test-classicube-desktop.py).
             time.sleep(3)
