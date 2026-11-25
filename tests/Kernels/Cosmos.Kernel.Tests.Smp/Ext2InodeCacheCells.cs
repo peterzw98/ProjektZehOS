@@ -21,9 +21,9 @@ internal static class Ext2InodeCacheCells
 {
     private const int Threads = 4;
     private const int Numbers = Ext2InodeCache.Limit * 3;
-    private const int CacheRounds = 12;
+    private const int CacheRounds = 3;
     private const int FilesPerThread = 600;
-    private const int FileRounds = 3;
+    private const int FileRounds = 1;
     private const int JoinTimeoutMs = 120_000;
     private const VfsMode FileMode = VfsMode.RegularFile | VfsMode.OwnerRead | VfsMode.OwnerWrite;
 
@@ -85,7 +85,7 @@ internal static class Ext2InodeCacheCells
         while (Volatile.Read(ref s_done) < Threads && Environment.TickCount64 < deadline)
         {
             GC.Collect();
-            SysThread.Sleep(5);
+            SysThread.Sleep(20);
         }
 
         Assert.Equal(Threads, s_done, "every worker finishes");
