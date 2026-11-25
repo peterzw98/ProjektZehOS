@@ -55,6 +55,10 @@
     <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
     <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
+    <!-- Ausstieg aus AOT-Schleifen ohne Hostaufruf (#423, R8, Cosmos-Patch aot-loop-exit ab smp.13): gehoert zu jedem AOT-Bau;
+         -p:ZehOSAotLoopExit=false nur fuer die Gegenprobe. -->
+    <ZehOSAotLoopExit Condition="'$(ZehOSAotLoopExit)' == '' and '$(ZehOSWasmAot)' == 'true'">true</ZehOSAotLoopExit>
+    <DefineConstants Condition="'$(ZehOSAotLoopExit)' == 'true'">$(DefineConstants);ZEHOS_AOT_LOOP_EXIT</DefineConstants>
     <!-- Gastprobe 12.4-I2-A (neben ZEHOS_WASM; eigene Zeile hier, fern der Probe-Schalter des Multicore-Zweigs): Schliessen beendet eine App nach der Frist auch ohne should_exit. -->
     <DefineConstants Condition="'$(ZehOSAbortProbe)' == 'true'">$(DefineConstants);ZEHOS_ABORT_PROBE</DefineConstants>
   </PropertyGroup>

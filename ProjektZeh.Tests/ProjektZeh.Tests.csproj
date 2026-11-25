@@ -73,6 +73,7 @@
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
     <Compile Include="..\ProjektZeh\Runtime\FrameTiming.cs" Link="Runtime\FrameTiming.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\AotLoopExitPolicy.cs" Link="Runtime\Wasm\AotLoopExitPolicy.cs" />
     <Compile Include="..\ProjektZeh\Runtime\FaultIsolationPolicy.cs" Link="Runtime\FaultIsolationPolicy.cs" />
     <Compile Include="..\ProjektZeh\Runtime\LoginFlow.cs" Link="Runtime\LoginFlow.cs" />
     <Compile Include="..\ProjektZeh\Graphics\LoginScreen.cs" Link="Graphics\LoginScreen.cs" />

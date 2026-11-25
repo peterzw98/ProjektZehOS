@@ -164,7 +164,9 @@ internal static class CosmosSmpProbe
     {
         int n = workers.Length;
         if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
-        const long Work = 20_000_000;
+        // Der Zuschlag zwischen dem letzten Arbeitsende und dem letzten Join steht als join_us in der Ausgabe (nur Messwert, #660).
+        // Lang genug (KVM auf MSI: etwa 200 ms je Worker), damit Threadende und Join (4 CPUs: bis 15 ms, 8 CPUs: bis 92 ms, #523) das Verhaeltnis nicht bestimmen.
+        const long Work = 200_000_000;
         long sink = 0;
         var single = Stopwatch.StartNew();
         var one = Pinned(workers[0], () => Interlocked.Add(ref sink, Spin(Work * n)));
@@ -172,10 +174,17 @@ internal static class CosmosSmpProbe
         if (!one.Join(120000)) return "Einzellauf endet nicht";
         long singleMs = Math.Max(1, single.ElapsedMilliseconds);
         var threads = new List<Thread>();
+        var ended = new long[n];
         using var start = new ManualResetEvent(false);
         for (int i = 0; i < n; i++)
         {
-            var thread = Pinned(workers[i], () => { start.WaitOne(5000); Interlocked.Add(ref sink, Spin(Work)); });
+            int index = i;
+            var thread = Pinned(workers[i], () =>
+            {
+                start.WaitOne(5000);
+                Interlocked.Add(ref sink, Spin(Work));
+                Volatile.Write(ref ended[index], Stopwatch.GetTimestamp());
+            });
             thread.Start();
             threads.Add(thread);
         }
@@ -183,9 +192,13 @@ internal static class CosmosSmpProbe
         var all = Stopwatch.StartNew();
         start.Set();
         if (!JoinAll(threads, 120000)) return "Parallellauf endet nicht";
+        long joinedAt = Stopwatch.GetTimestamp();
         long allMs = Math.Max(1, all.ElapsedMilliseconds);
         Write($"INFO parallel single_ms={singleMs} all_ms={allMs} workers={n} sink={sink & 0xFF}");
         Write($"INFO parallel speedup_permille={singleMs * 1000 / allMs}");
+        long lastEnd = 0;
+        for (int i = 0; i < n; i++) lastEnd = Math.Max(lastEnd, Volatile.Read(ref ended[i]));
+        Write($"INFO parallel join_us={(joinedAt - lastEnd) * 1000000 / Stopwatch.Frequency}");
         return null;
     }
 
@@ -401,10 +414,35 @@ internal static class CosmosSmpProbe
         const int samples = 10;
         var interactive = new int[samples];
         var normal = new int[samples];
-        var first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers);
-        var second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers);
-        if (!first.IsOK() || !second.IsOK()) return "Platzierungsthread startet nicht";
-        if (first.Value?.Join(10000) != true || second.Value?.Join(10000) != true) return "Platzierungsthread endet nicht";
+        Thread? first = null, second = null;
+        void StartPair()
+        {
+            first = ThreadStarter.TryStart(() => Sample(interactive), threadClass: ThreadClass.Interactive, placement: ThreadPlacement.Workers).Value;
+            second = ThreadStarter.TryStart(() => Sample(normal), threadClass: ThreadClass.Normal, placement: ThreadPlacement.Workers).Value;
+        }
+        // Waehrend des Starts rechnet der startende Thread selbst. Bleiben ohne seine CPU keine zwei Kerne uebrig (4 CPUs auf 2
+        // Kernen, Hauptthread auf CPU 1: nur das Paar 2/3), kann die Platzierung die Forderung nicht erfuellen, und ein laufender
+        // Thread zieht spaeter nicht um. Nur dann startet ein Normal-Thread auf CPU 0, waehrend der Hauptthread in Join wartet.
+        // Sonst bleibt es beim Start aus dem Hauptthread; nur der trifft den gerade beendeten Thread auf einer Worker-CPU.
+        uint mainCpu = KernelCpus.Current;
+        var others = new HashSet<int>();
+        foreach (uint cpu in workers)
+            if (cpu != mainCpu && CosmosBootOptions.WorkerCpus.Contains(cpu)) others.Add(topology.CoreOf((int)cpu));
+        bool fromMain = others.Count >= 2;
+        if (fromMain) StartPair();
+        else
+        {
+            var starter = Pinned(0, () =>
+            {
+                Thread.Sleep(50); // der Hauptthread wartet dann in Join, die Worker-CPUs sind frei
+                StartPair();
+            });
+            starter.Start();
+            if (!starter.Join(10000)) return "Startthread endet nicht";
+        }
+        Write($"INFO placement start={(fromMain ? "main" : "cpu0")} main_cpu={mainCpu}");
+        if (first == null || second == null) return "Platzierungsthread startet nicht";
+        if (!first.Join(10000) || !second.Join(10000)) return "Platzierungsthread endet nicht";
         int apart = 0;
         var line = new System.Text.StringBuilder();
         for (int i = 0; i < samples; i++)

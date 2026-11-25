@@ -11,6 +11,8 @@
 #include "wasm_export.h"
 #include "platform_api_vmcore.h"
 #include "zehos_host_core.h"
+#include "zehos_host_aot_guard.h"
+#include "zehos_host_aot_exit.h"
 
 // Wie d_m3MaxNativeStack bei wasm3: Der Worker hat 8 MiB Stack (WasmRuntime.ThreadStackBytes), der AOT-Code darf
 // 7 MiB unter dem Einstieg nutzen; der Rest bleibt fuer Hostfunktionen und C#-Rueckrufe.
@@ -77,7 +79,9 @@ static void end_call(wasm_exec_env_t env, zehos_host_call* call)
     }
     else if (call->trap == ZEHOS_HOST_TRAP_ABORT)
     {
-        run->aborted = 1;
+        // Waehrend des Instanziierens (Startfunktion, Konstruktoren) legt WAMR eine eigene Ausfuehrungsumgebung ohne
+        // Nutzerdaten an; dort genuegt die Ausnahme, zehos_wasm_run_aot meldet Aborted ueber den Merker.
+        if (run != NULL) run->aborted = 1;
         wasm_runtime_set_exception(instance, abort_exception);
     }
     else wasm_runtime_set_exception(instance, memory_exception);
@@ -218,6 +222,8 @@ static int initial_memory_exceeds(wasm_module_t module, uint32_t maximumPages)
 }
 
 // Einstieg wie bei wasm3: ohne Parameter, ohne Ergebnis ("_start") oder mit einem i32-Ergebnis.
+// Der Schleifenausstieg (zehos_host_aot_exit.h) verlaesst sich darauf: Nur so belegt WAMR auf dem Weg in den AOT-Code
+// keinen Heap, den er ueberspruenge (new_argv nur bei externref, argv1 nur bei mehreren Ergebnissen oder vielen Parametern).
 static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instance)
 {
     if (function == NULL || wasm_func_get_param_count(function, instance) != 0) return 0;
@@ -234,6 +240,10 @@ static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instan
 // Instanz, Modul, ausfuehrbarer Speicher, Hostgruppen und offene Dateien nach jedem Weg freigegeben.
 // *instantiated wird 1, sobald das Instanziieren beginnt: ab dann kann Gastcode gelaufen sein (start-Funktion,
 // Konstruktoren), und der Aufrufer darf dieselbe App nicht unter wasm3 wiederholen.
+// Ein Lauf setzt die Marke beim Start und loescht sie an jedem Ausgang. Steht sie beim naechsten Start noch, hat eine
+// CPU-Ausnahme den vorigen Lauf beendet (zehos_host_aot_guard.h).
+static zehos_aot_guard aot_guard;
+
 int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* entry, uint32_t stackBytes,
     uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength, int32_t* instantiated)
 {
@@ -247,12 +257,20 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     *instantiated = 0;
     copy_message(message, messageLength, "");
 
+    // Vor jedem WAMR-Aufruf: instantiated bleibt 0, WasmRuntime weicht damit auf wasm3 aus (FallsBackToWasm3).
+    if (!zehos_aot_guard_enter(&aot_guard))
+    {
+        copy_message(message, messageLength, "AOT nach CPU-Fehler bis zum Neustart gesperrt");
+        return ZEHOS_WASM_LOAD_FAILED;
+    }
+
     RuntimeInitArgs init;
     memset(&init, 0, sizeof(init));
     init.mem_alloc_type = Alloc_With_System_Allocator;
     if (!wasm_runtime_full_init(&init))
     {
         copy_message(message, messageLength, "WAMR nicht gestartet");
+        zehos_aot_guard_leave(&aot_guard);
         return ZEHOS_WASM_NO_MEMORY;
     }
 
@@ -304,6 +322,13 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         status = ZEHOS_WASM_LOAD_FAILED;
         text = memory_limit;
     }
+    // Gastcode waehrend des Instanziierens liefe ausserhalb von zehos_aot_call und waere in einer Schleife ohne Hostaufruf
+    // nicht beendbar; der Ausstieg ueberspraenge dort WAMRs Aufraeumen. instantiated bleibt 0: Die App laeuft unter wasm3.
+    if (status == ZEHOS_WASM_OK && zehos_aot_runs_on_instantiate(module))
+    {
+        status = ZEHOS_WASM_LOAD_FAILED;
+        text = "AOT-Modul mit Startfunktion";
+    }
     if (status == ZEHOS_WASM_OK)
     {
         InstantiationArgs arguments;
@@ -353,13 +378,26 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         uint8_t* top = (uint8_t*)__builtin_frame_address(0);
         zehos_wamr_set_stack_boundary(top - ZEHOS_AOT_NATIVE_STACK);
         uint32_t values[2] = { 0, 0 };
-        if (wasm_runtime_call_wasm(env, function, 0, values))
+        // Erst hier und nur um den Aufruf veroeffentlicht: Laden, Instanziieren und Abbau werden nie umgelenkt.
+        uint64_t code, codeEnd;
+        zehos_aot_code_range(module, &code, &codeEnd);
+        zehos_aot_exit_current.code = code;
+        zehos_aot_exit_current.codeEnd = codeEnd;
+        int32_t called = zehos_aot_call(env, function, 0, values);
+        zehos_aot_exit_current.codeEnd = 0;
+        zehos_aot_exit_current.code = 0;
+        if (called == ZEHOS_AOT_CALL_OK)
         {
             if (wasm_func_get_result_count(function, instance) == 1) *result = (int32_t)values[0];
         }
         else if (run.exited)
         {
             *result = run.context.exitCode;
+        }
+        else if (called == ZEHOS_AOT_CALL_LEFT)
+        {
+            status = ZEHOS_WASM_ABORTED;
+            text = abort_exception;
         }
         else if (run.aborted)
         {
@@ -382,6 +420,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     if (module != NULL) wasm_runtime_unload(module);
     if (copy != NULL) os_free(copy);
     wasm_runtime_destroy();
+    zehos_aot_guard_leave(&aot_guard);
     return status;
 }
 

@@ -212,11 +212,11 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP liefert der Hook (`CpuExceptionInfo`); er
   erscheint im Protokoll der Hauptschleife.
-- Je Ausnahme bleiben Thread und 8-MiB-Stack bis zum Neustart belegt, außerdem die verwalteten Objekte, auf die der
+- Je Ausnahme bleiben (bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned`) Thread und 8-MiB-Stack belegt, außerdem die verwalteten Objekte, auf die der
   aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die Speicherbereinigung ihn weiter durchsucht.
   Den nativen Speicher der Instanz (wasm3-Laufzeit, lineare Memory) gibt seit Roadmap 12.4-I2-C die Laufarena der
   C-Laufzeit frei: `PollFaultIsolation` ruft `zehos_memory_end` nach dem Aufräumen und vor dem Ersatzworker. Erst dort
-  ist der Worker in der Quarantäne und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
+  ist der Worker `Dead` und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
   Workers (Rückruf `zehos_current_thread_id`, CPU 0). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
   Zustand (`runtime_ref_count`, Hostfunktionen) über den toten Lauf hinaus weiterbenutzt; die Arena bleibt dann beim
   toten Lauf, spätere Läufe melden `WASM Arena nicht gestartet`. Hat der Fehler die Blockköpfe der Arena beschädigt,
@@ -552,7 +552,7 @@ Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Tar
 
 **Zwischenstand:** Stand `task/mc-e5-smp` @13f775f2 (Cosmos 3.0.97-zehos.6-smp.11, enthält E6-G #576 und `master` #569), noch **ohne** E7-A (#564, wartet auf den Handtest) bis E7-D. Der Plan (E7-E) setzt `master` nach E7-A bis E7-D voraus; diese Tabelle ist die Vorabfahrt mit dem, was heute schon läuft. **Nach E7-A (und E7-D) folgt eine komplette Wiederholung der 80 Läufe** mit neu gebauten ISOs; die Zahlen unten gelten nur für diesen Stand. Block #398.
 
-**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (80 Läufe) für `scripts/run-guest-suite.py`. Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs (je `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`, MSBuild-Eigenschaft als Umgebungsvariable, Ausgabe `ProjektZeh/output-x64/ProjektZeh.iso`; vor jedem Bau `bin`, `obj`, `output-x64` löschen): normal, Recovery (`ZehOSRecovery=true`), `ZehOSThreadProbe=true`, `ZehOSIsolationProbe=true`, Wasm mit Testschlüssel (`ZehOSPackageKeyPath=…/public.b64`) und Test-CA (`ZehOSPackageTestCaPath=…/ca.pem`; Server-Zertifikat mit SAN `IP:10.0.2.2`). Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`, signiert mit dem Testschlüssel), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages. Skripte von `master` (#567 behebt den Wettlauf beim letzten `shutdown`); `scripts/test-desktop-guest.py` wurde dazu aus `origin/master` in den Branch übernommen, sonst keine Skriptänderung.
+**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (90 Läufe) für `scripts/run-guest-suite.py`. Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isosmp=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs (je `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`, MSBuild-Eigenschaft als Umgebungsvariable, Ausgabe `ProjektZeh/output-x64/ProjektZeh.iso`; vor jedem Bau `bin`, `obj`, `output-x64` löschen): normal, Recovery (`ZehOSRecovery=true`), `ZehOSThreadProbe=true`, `ZehOSSmpProbe=true` (Variable `isosmp`, Zelle `<Topologie>-<kvm|tcg>-smp` mit `scripts/test-smp-probe.py`), `ZehOSIsolationProbe=true`, Wasm mit Testschlüssel (`ZehOSPackageKeyPath=…/public.b64`) und Test-CA (`ZehOSPackageTestCaPath=…/ca.pem`; Server-Zertifikat mit SAN `IP:10.0.2.2`). Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`, signiert mit dem Testschlüssel), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages. Skripte von `master` (#567 behebt den Wettlauf beim letzten `shutdown`); `scripts/test-desktop-guest.py` wurde dazu aus `origin/master` in den Branch übernommen, sonst keine Skriptänderung.
 
 Umgebung: Linux, Rechner HPz, Host Intel Core Ultra 9 185H (22 Threads), QEMU 11.1.2 `q35`; Bau mit SDK 10.0.404 (Cosmos-Werkzeuge smp.11), je Variante 0 Warnungen, 0 Fehler. ISO-Prüfsummen (SHA-256, Anfang): normal `2b5494cf`, Thread `e48683ac`, Isolation `91a7a5d0`, Recovery `31894a5a`, Wasm `0262186c`. Lauf 17:20 bis 17:45 (1481,6 s für 80 Läufe, `--parallel 3`). Last (alle 30 s gemessen, 50 Proben): `pgrep -c qemu` 1 bis 6 (3 eigene Gäste plus fremde Gäste anderer Sitzungen auf demselben Rechner, davon einer mit `-smp 4` auf KVM während des ganzen Laufs), `uptime` Load 1 min im Mittel 4,9, höchstens 7,5. Die Dauern sind deshalb keine Messwerte. Zahlen: bestanden/Läufe.
 
@@ -819,6 +819,19 @@ Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`,
 
 `SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
 
+## Pin `3.0.97-zehos.6-smp.13` (25. November 2026)
+
+Cosmos `6b28fc44` bringt sechs Patches gegenüber `smp.12` (`fbb5e340`). Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `aot-loop-exit` (#654, `a1924891`, Refs #423): experimenteller Hook (`COSMOS0001`) im Scheduler-Tick, der den unterbrochenen Thread an anderer Adresse fortsetzt. Ohne Handler ändert sich das Verhalten nicht; den Handler setzt ZehOS erst mit #655.
+- `gc-refill-scan-limit` (#656, `e799410e`, Refs #542): Die Refill-Suche nach einem vollen TLAB sieht je Klasse höchstens 8 Blöcke an. Preis: mehr Sammlungen auf vollem Heap.
+- `ext2-dir-scan` (#658, `0354537f`, Refs #542): Verzeichnissuche blockweise ohne Objekte je Eintrag; `AddEntry` schreibt nur den geänderten Block.
+- `ext2-direct-runs` (#577, `f36039c6`, Refs #542): Ganze Blöcke gehen als zusammenhängende Läufe direkt aus dem Aufruferpuffer.
+- `ext2-inode-cache-evict` (#670, `33a2883b`, Refs #542): Der Inode-Cache hält höchstens 1024 saubere Inodes je Mount. Die Cachegrenze von etwa 75.000 Inodes (Nachtrag E2-P8) gilt damit nicht mehr; das Wachsen des Wörterbuchs entfällt, schmutzige Inodes bleiben gehalten. FAT hat weiter einen unbegrenzten Cache (#672).
+- `exit-quiet` (#664, `6b28fc44`, Refs #660): Die Ausgaben des Thread-Exits stehen nur noch im Debug-Bau.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft: Hosttests 1607/1607; nativer Bau normal, SMP-Probe, Recovery, Wasm und Storage-Root-Probe je 0 Warnungen, 0 Fehler, 4 Plugs gebunden (normale ISO). Gast (QEMU, ein Lauf je Zelle, OOM drei): Desktop KVM 4 CPUs, Doom full KVM 4 CPUs, OOM 516 MiB 3/3 (KVM, 4 CPUs), SMP-Probe KVM 4 und 8c4t2 sowie TCG 4, E4.0 (2 GiB, 1 GiB RAM) Lauf 1 und 2 mit `e2fsck -fn` Exit 0 (Läufe 3 bis 5 nicht). Nicht geprüft: VMware, echte Hardware, Recovery-Gast, Isolationsprobe, G1-Basic, volle Matrix.
+
 ## Pin `3.0.97-zehos.6-smp.12` (24. November 2026)
 
 Cosmos `fbb5e340` bringt drei Patches gegenüber `smp.11` (`e9915bc4`). Einzelheiten in `patches/<Kurzname>.md` des Branches `cosmos`.
@@ -836,6 +849,6 @@ Cosmos `e9915bc4` bringt vier Patches gegenüber `smp.10`. Einzelheiten und Prü
 - `ahci-large-commands` (#562, `5118a2b1`, Refs #542): SATA-Befehle bis 64 KiB statt 4 KiB, PxCI-Abfrage ohne Port-0x80-Pause.
 - `page-alloc-split` (#557, `5b1bd383`, #538): Seitenläufe bis 16 Seiten kommen von unten, größere von oben. Kleine GC-Segmente zerteilen den Platz für große Arrays nicht mehr.
 - `ext2-alloc-cache` (#558, `99c1afb0`, #542): Blockbitmap und Gruppendeskriptoren bleiben im Speicher, `Write` schreibt gesammelt. Je Gerät darf nur ein Mount schreiben; ein zweiter beschreibbarer Mount desselben `IBlockDevice` wird abgelehnt.
-- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) bleibt aktiv, bis der ZehOS-Teil von E6-G auf diesem Pin gemergt ist.
+- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der frühere ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) ist mit E6-G (#433) entfallen.
 
 ZehOS ändert mit dem Pin selbst keinen Code.
