@@ -1,0 +1,25 @@
+SO_REUSEADDR gesetzt=1
+Port vergeben, Adresse 127.0.0.1=1
+Länge der Adresse=16
+SO_ACCEPTCONN=1
+zweites bind auf denselben Port: ret=-1 errno=98
+bind auf nicht lokale Adresse: ret=-1 errno=99
+socket ungültiger Typ: ret=-1 errno=22
+socket ungültige Familie: ret=-1 errno=97
+accept ohne Verbindung (nonblock): ret=-1 errno=11
+connect ohne Server: ret=-1 errno=111
+nonblock connect: EINPROGRESS oder sofortiger Fehler=1
+SO_ERROR nach verweigertem connect=111
+nonblock connect: EINPROGRESS oder 0=1
+SO_ERROR nach gelungenem connect=0
+getpeername des Servers: 127.0.0.1=1
+Daten über nonblock-Verbindung=1
+accept: Peer 127.0.0.1, Port != 0=1
+getsockname der Verbindung: Server-Port=1
+EOF nach shutdown des Clients=0
+Server: Bytes zurückgesendet=200006
+Client: Echo vollständig, exit 0=1
+sendto=3
+recvfrom=3
+  Absender-Port=1
+recvfrom leer (DONTWAIT): ret=-1 errno=11

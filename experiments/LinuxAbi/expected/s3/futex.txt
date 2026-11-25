@@ -1,0 +1,14 @@
+wake ohne Wartende: ret=0 errno=0
+wait falscher Wert: ret=-1 errno=11
+wait relative Zeit: ret=-1 errno=110
+wait_bitset absolut (Vergangenheit): ret=-1 errno=110
+wait_bitset Maske 0: ret=-1 errno=22
+wake_bitset Maske 0: ret=-1 errno=22
+unbekannte Operation: ret=-1 errno=38
+nicht ausgerichtet: ret=-1 errno=22
+wait ungültige Adresse: ret=-1 errno=14
+wartende fertig=3
+geteilt: Kind beendet mit 0=1
+cmp_requeue falscher Wert: ret=-1 errno=11
+cmp_requeue ohne Wartende: ret=0 errno=0
+requeue ohne Wartende: ret=0 errno=0

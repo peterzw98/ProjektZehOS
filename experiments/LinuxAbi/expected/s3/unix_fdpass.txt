@@ -1,0 +1,43 @@
+stream lesen=5
+peek=3
+lesen nach peek=7
+EOF nach shutdown: ret=0 errno=0
+Gegenrichtung noch offen=1
+write nach shutdown: ret=-1 errno=32
+dgram 1=4
+dgram 2 (abgeschnitten auf 3)=3
+dgram leer, nonblocking: ret=-1 errno=11
+seqpacket 1=2
+seqpacket 2=4
+seqpacket EOF: ret=0 errno=0
+socketpair ungültiger Typ: ret=-1 errno=22
+socketpair ungültiges Protokoll: ret=-1 errno=93
+senden (1 fd)=1
+empfangen: Zahl der fd=1
+  neue Nummer=1
+  kein CTRUNC=1
+  lesen über fremden fd (Zeiger bei 2)=3
+  Inhalt=1
+  Zeiger beim Absender weitergerückt=5
+  CLOEXEC nicht gesetzt=1
+senden (2 fd)=2
+empfangen: Zahl der fd=2
+  CLOEXEC gesetzt=1
+  schreiben über empfangenes Pipe-Ende=2
+  lesen am Original=2
+senden (2 fd) für CTRUNC=1
+  CTRUNC=1
+  empfangene fd=0
+senden: ungültiger fd: ret=-1 errno=9
+SO_PEERCRED: pid/uid/gid des Prozesses=1
+SO_TYPE STREAM=1
+bind erneut (EADDRINUSE): ret=-1 errno=98
+accept4: CLOEXEC=1
+benannter Socket lesen=4
+getsockname: Pfad=1
+connect: kein Socket: ret=-1 errno=2
+connect: Datei statt Socket: ret=-1 errno=111
+senden an Kind=1
+Kind fertig=1
+Kind hat in die Pipe geschrieben=4
+unlink Socket-Datei: ret=0 errno=0

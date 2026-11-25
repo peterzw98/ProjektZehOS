@@ -1,0 +1,33 @@
+CLOEXEC gesetzt=1
+Seals zu Beginn=0
+regulär, Größe 0=1
+Seiten zu Beginn Null hinter dem Inhalt=1
+Schreiben über Abbildung sichtbar=1
+WRITE mit offener Schreibabbildung: ret=-1 errno=16
+SHRINK|GROW (erlaubt): ret=0 errno=0
+Seals=6
+ftruncate kleiner (SHRINK): ret=-1 errno=1
+ftruncate größer (GROW): ret=-1 errno=1
+ftruncate gleich (erlaubt)=0
+pwrite hinter das Ende (GROW): ret=-1 errno=1
+pwrite innerhalb=1
+WRITE, nun ohne Abbildung: ret=0 errno=0
+Seals=14
+pwrite (WRITE): ret=-1 errno=1
+write (WRITE): ret=-1 errno=1
+mmap SHARED+WRITE (WRITE): ret=-1 errno=1
+mmap SHARED+READ geht, Inhalt=1
+mprotect auf WRITE (WRITE): ret=-1 errno=13
+mmap PRIVATE+WRITE geht, Original unverändert=1
+Seals nach WRITE ändern: SEAL: ret=0 errno=0
+danach weiteres Siegel (SEAL): ret=-1 errno=1
+Seals=15
+ungültiges Siegel: ret=-1 errno=22
+Kind sieht dieselben Siegel=1
+Abbildung überlebt close=1
+CLOEXEC nicht gesetzt=1
+Seals ohne ALLOW_SEALING=1
+Siegel hinzufügen (SEAL): ret=-1 errno=1
+memfd_create ungültiges Flag: ret=-1 errno=22
+memfd_create ungültiger Name: ret=-1 errno=14
+memfd_create Name zu lang: ret=-1 errno=22
