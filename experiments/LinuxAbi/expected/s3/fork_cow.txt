@@ -1,0 +1,23 @@
+wait ohne Kinder: ret=-1 errno=10
+kind 1: exit 17
+privat unverändert (COW)=1
+static unverändert=1
+stack unverändert=1
+geteilt sichtbar=1
+pipe vom kind=4
+pipe inhalt=1
+wait nach Ende: ret=-1 errno=10
+kind 2 (SIGTERM): signal 15
+WNOHANG auf laufendes Kind: ret=0 errno=0
+kind 3: exit 255
+kind 4 (wait4 mit rusage): exit 0
+waitpid unbekannte PID: ret=-1 errno=10
+waitpid ungültige Option: ret=-1 errno=22
+summe der Exitcodes=15
+wait danach: ret=-1 errno=10
+vfork-kind: exit 9
+vfork teilt Speicher=5
+clone3-kind: exit 21
+clone3: privat getrennt=1
+clone3 ungültiges exit_signal: ret=-1 errno=22
+clone3 zu kleine Struktur: ret=-1 errno=22

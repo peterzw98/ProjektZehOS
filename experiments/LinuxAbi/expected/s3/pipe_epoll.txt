@@ -1,0 +1,65 @@
+read leere Pipe (nonblock): ret=-1 errno=11
+O_NONBLOCK lesbar=1
+CLOEXEC gesetzt=1
+pipe2 ungültige Flags: ret=-1 errno=22
+poll leere Pipe: ret=1 errno=0
+  schreibbar=1
+  nicht lesbar=1
+poll mit Daten: ret=2 errno=0
+  lesbar=1
+ppoll Zeit 0: ret=2 errno=0
+lesen=3
+ctl ADD doppelt: ret=-1 errno=17
+ctl DEL unbekannt: ret=-1 errno=2
+ctl ungültiger fd: ret=-1 errno=9
+ctl epoll auf sich selbst: ret=-1 errno=22
+wait ohne Ereignis, 10 ms: ret=0 errno=0
+wait mit Daten=1
+  Daten gleich=1
+level: noch einmal gemeldet=1
+lesen=1
+level: ein Byte übrig=1
+lesen=1
+wait nichts mehr: ret=0 errno=0
+wait maxevents 0: ret=-1 errno=22
+edge: erste Meldung=1
+  neue Daten gleich=1
+edge: zweite Meldung ohne Lesen=0
+edge: nach weiteren Daten=1
+lesen=3
+oneshot: Meldung=1
+oneshot: danach=0
+oneshot: nach MOD=1
+lesen=1
+nach DEL keine Meldung: ret=0 errno=0
+lesen=1
+hup: Meldung=1
+  EPOLLHUP=1
+lesen: EOF: ret=0 errno=0
+write ohne Leser: ret=-1 errno=32
+voll: EAGAIN=1
+voll: mindestens 4096 Byte=1
+poll voll, nicht schreibbar: ret=0 errno=0
+alles wieder gelesen=1
+eventfd lesen (0): ret=-1 errno=11
+eventfd lesen (Summe)=8
+  Wert=12
+eventfd zu kurz: ret=-1 errno=22
+eventfd Wert -1: ret=-1 errno=22
+semaphor: entnommen=3
+semaphor: danach EAGAIN=1
+eventfd leer, epoll: ret=0 errno=0
+eventfd gesetzt, epoll: ret=1 errno=0
+timerfd noch nicht abgelaufen: ret=-1 errno=11
+timerfd: Meldung=1
+  mindestens 15 ms=1
+timerfd lesen=8
+  Abläufe >= 1=1
+einmalig: danach abgelaufen=1
+timerfd ungültiger Zeitgeber: ret=-1 errno=22
+periodisch: Meldung=1
+periodisch: Meldung=1
+periodisch: Meldung=1
+kind weckt epoll_wait=1
+  Daten gleich=1
+kind beendet=1

@@ -1,0 +1,29 @@
+PROT_NONE lesen: signo=11
+  si_code (SEGV_ACCERR=2)=2
+  si_addr=1
+PROT_READ schreiben: si_code=2
+  si_addr=1
+ungemappt lesen: si_code (SEGV_MAPERR=1)=1
+  si_addr=1
+Adresse 0: si_code=1
+  si_addr=1
+sigaltstack: Handler lief auf dem Ersatzstapel=1
+  sigaltstack abfragen=1
+sigaltstack zu klein: ret=-1 errno=12
+raise: Handler einmal gelaufen=1
+  im Handler gesperrt=1
+gesperrt: Handler nicht gelaufen=1
+  anhängig=1
+  alte Maske enthielt SIGUSR1=1
+entsperrt: Handler genau einmal=2
+  nichts mehr anhängig=1
+kill an sich selbst, Signal 0: ret=0 errno=0
+kill unbekannte PID: ret=-1 errno=3
+kill ungültiges Signal: ret=-1 errno=22
+sigaction SIGKILL: ret=-1 errno=22
+sigaction ungültiges Signal: ret=-1 errno=22
+read unterbrochen (kein SA_RESTART): ret=-1 errno=4
+Kind: durch Signal beendet=1
+  Signal=11
+SIGKILL trotz ignoriertem SIGTERM=1
+vor dem Absturz

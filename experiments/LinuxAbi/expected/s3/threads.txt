@@ -1,0 +1,13 @@
+joined=4
+rueckgaben ok=4
+zaehler=8000
+tls Hauptthread=7
+tids verschieden und != pid=1
+gettid Hauptthread == getpid=1
+signalmaske geerbt=4
+pingpong=50
+detached gelaufen=1
+tgkill eigener Thread, gesperrt: ret=0 errno=0
+SIGUSR1 anhängig=1
+tgkill falscher Thread: ret=-1 errno=3
+ende

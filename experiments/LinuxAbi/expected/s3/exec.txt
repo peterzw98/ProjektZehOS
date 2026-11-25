@@ -1,0 +1,37 @@
+ENOENT: ret=-1 errno=2
+EACCES (nicht ausführbar): ret=-1 errno=13
+ENOEXEC (leere Datei): ret=-1 errno=8
+EACCES (Verzeichnis): ret=-1 errno=13
+EFAULT (Pfad): ret=-1 errno=14
+EFAULT (argv): ret=-1 errno=14
+ENOTDIR: ret=-1 errno=20
+kind argc=3
+kind argv[0]=<pfad>
+kind argv[1]=--kind
+kind argv[2]=mit Leerzeichen
+kind envp[0]=E1=wert1
+kind envp[1]=E2=
+kind envp[2]=E3=a=b
+SIGUSR1 ignoriert geblieben=1
+SIGUSR2 wieder Standard=1
+SIGTERM gesperrt geblieben=1
+fd 7 offen (ohne CLOEXEC)=1
+fd 8 (CLOEXEC): ret=-1 errno=9
+fd 7 lesen (pread)=5
+fd 7 Inhalt=1
+Elternteil: exit 33=1
+jetzt exec im selben Prozess
+kind argc=3
+kind argv[0]=<pfad>
+kind argv[1]=--kind
+kind argv[2]=mit Leerzeichen
+kind envp[0]=E1=wert1
+kind envp[1]=E2=
+kind envp[2]=E3=a=b
+SIGUSR1 ignoriert geblieben=1
+SIGUSR2 wieder Standard=1
+SIGTERM gesperrt geblieben=1
+fd 7 offen (ohne CLOEXEC)=1
+fd 8 (CLOEXEC): ret=-1 errno=9
+fd 7 lesen (pread)=5
+fd 7 Inhalt=1
