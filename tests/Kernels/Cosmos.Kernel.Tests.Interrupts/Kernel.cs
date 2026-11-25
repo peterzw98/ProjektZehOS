@@ -981,7 +981,7 @@ public class Kernel : Sys.Kernel
 
     [DllImport("*", EntryPoint = "cosmos_test_user_gs_int2")]
     [SuppressGCTransition]
-    private static extern unsafe void RaiseNmiWithForeignGs(CpuState* after);
+    private static extern unsafe void RaiseNmiWithForeignGs(CpuState* after, uint vector);
 
     [DllImport("*", EntryPoint = "cosmos_test_cpu_state")]
     [SuppressGCTransition]
@@ -1027,18 +1027,26 @@ public class Kernel : Sys.Kernel
 
     // Vector 2 in ring 0 while GS, the control words and DF are a program's: CS alone would
     // say kernel and the stub would use the program's GS base as the per-CPU block.
-    private static unsafe void TestNmiForeignGsBase()
+    private static void TestNmiForeignGsBase()
     {
-        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![NmiVector];
-        InterruptManager.SetHandler(NmiVector, RecordNmi);
+        // ZehOS patch user-mode-probe: #MC and #DF too, which have the same entry.
+        RaiseWithForeignGs(NmiVector);
+        RaiseWithForeignGs(18);
+        RaiseWithForeignGs(8);
+    }
+
+    private static unsafe void RaiseWithForeignGs(byte vector)
+    {
+        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![vector];
+        InterruptManager.SetHandler(vector, RecordNmi);
         CpuState before;
         CpuState inside;
         CpuState end;
         s_nmiCount = 0;
         ReadCpuState(&before);
-        RaiseNmiWithForeignGs(&inside);
+        RaiseNmiWithForeignGs(&inside, vector);
         ReadCpuState(&end);
-        InterruptManager.s_irqHandlers![NmiVector] = previous;
+        InterruptManager.s_irqHandlers![vector] = previous;
 
         Assert.True(s_nmiCount == 1, "vector 2 reached the handler");
         Assert.True(s_nmiState.GsBase == before.GsBase, "the handler ran with the kernel's GS base");

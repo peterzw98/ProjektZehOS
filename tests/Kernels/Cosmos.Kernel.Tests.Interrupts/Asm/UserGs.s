@@ -17,7 +17,8 @@
 
 .text
 
-// void cosmos_test_user_gs_int2(UserGsResult* result)
+// void cosmos_test_user_gs_int2(UserGsResult* result, uint32_t vector)
+// Vector 2 and 18 by int. 8 by a frame built here and a jump to its stub: int pushes no error code.
 // +0 GS base after the stub, +8 MXCSR after, +12 FCW after, +16 DF after (0x400 if set)
 .global cosmos_test_user_gs_int2
 cosmos_test_user_gs_int2:
@@ -32,6 +33,10 @@ cosmos_test_user_gs_int2:
     cli
     stmxcsr dword ptr [rsp]
     fnstcw word ptr [rsp + 4]
+    mov dword ptr [rsp + 8], esi
+    mov edi, 8
+    call _native_x64_get_irq_stub
+    mov [rsp + 16], rax
 
     mov ecx, MSR_KERNEL_GS_BASE
     rdmsr
@@ -45,7 +50,27 @@ cosmos_test_user_gs_int2:
     fldcw word ptr [rip + .Luser_fcw]
     std
     swapgs
+    cmp dword ptr [rsp + 8], 18
+    je .Lint18
+    cmp dword ptr [rsp + 8], 8
+    je .Lint8
     int 2
+    jmp .Lafter_int
+.Lint18:
+    int 18
+    jmp .Lafter_int
+.Lint8:
+    mov rax, [rsp + 16]
+    mov rcx, rsp
+    push 0x30
+    push rcx
+    pushfq
+    push 0x28
+    lea rdx, [rip + .Lafter_int]
+    push rdx
+    push 0
+    jmp rax
+.Lafter_int:
     pushfq
     pop rax
     cld
