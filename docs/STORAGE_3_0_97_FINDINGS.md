@@ -123,7 +123,7 @@ Quellbefunde zu wiederholtem Parsen/Allokieren und zum Inodecache sind Hinweise 
 
 Zwei Objekte für dasselbe Inode könnten einander mit veralteten Werten überschreiben. Ein solcher Plug bräuchte eigene Gastnachweise und eine Entscheidung von Peter. Ein vorab dimensionierter Cache ist per `UnsafeAccessor` nicht erreichbar, weil der Zugriff auf das generische Dictionary mit internem Typargument im Gast `NotSupportedException` warf (vgl. `CosmosExt2FreeInodePlug`).
 
-**Nachtrag 19. November 2026:** Cosmos #427 (Pin `3.0.97-zehos.6`) dimensioniert den Cache beim Mount vorab (etwa 75.000 Inodes je Mount); Belege und offener Befund (E4.0 Lauf 1, Schritt l2) in [COSMOS_SUPPORT.md](COSMOS_SUPPORT.md). Die Aussage "per `UnsafeAccessor` nicht erreichbar" oben bleibt für 3.0.97 ohne Patch richtig.
+**Nachtrag 19. November 2026:** Cosmos #427 (Pin `3.0.97-zehos.6`) dimensioniert den Cache beim Mount vorab (etwa 75.000 Inodes je Mount); Belege und offener Befund (E4.0 Lauf 1, Schritt l2) in [COSMOS_SUPPORT.md](COSMOS_SUPPORT.md). Die Aussage "per `UnsafeAccessor` nicht erreichbar" oben bleibt für 3.0.97 ohne Patch richtig. **Nachtrag 25. November 2026:** Seit Pin smp.13 hält der Patch `ext2-inode-cache-evict` (#670) höchstens 1024 saubere Inodes je Mount; die 75.000 gelten für `zehos.6` bis smp.12. Die Wirkung im Gast auf smp.13 ist hier nicht belegt (offen; Analyse zum OOM mit Inode-Cache in #542).
 
 ### Produktgrenze 8189
 
