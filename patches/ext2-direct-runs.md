@@ -1,6 +1,6 @@
 # ext2-direct-runs
 
-- **Commit:** Squash von #577 gegen `cosmos` (Hash nach dem Merge; Stand auf `origin/cosmos` e3db3bf6, nach `abandoned-thread-reap`)
+- **Commit:** Squash von #577 gegen `cosmos` (`f36039c6`; Stand auf `origin/cosmos` e3db3bf6, nach `abandoned-thread-reap`)
 - **Dateien:** `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2FileOperations.cs` (`Write`, neu `WriteFullBlocks`, `NextPointerBoundary`, `RevertQuietly`, `RunWindowBlocks`), `src/Cosmos.Kernel.System/FileSystem/Ext2/Ext2Superblock.cs` (neu `WriteDataRun`); Tests `tests/Cosmos.Kernel.Tests.System/FileSystem/Ext2/Ext2DirectRunTests.cs`
 - **Grund:** Nach `ext2-alloc-cache` und `ahci-large-commands` kostete jeder 4-KiB-Datenblock einen Geräteaufruf (und eine Kopie in `_blockBuffer`), ein 1-MiB-Aufruf also 256 AHCI-Befehle zu 8 Sektoren. Gemessen (#542): AHCI roh 464 MB/s mit 1-MiB-Aufrufen, 71 MB/s mit 4-KiB-Aufrufen, ext2 schreiben 59 MB/s. Die Aufrufzahl war die Grenze, nicht das Gerät. Entwurf: #542, issuecomment-7037907503 (Paket F2).
 - **Änderung:**
