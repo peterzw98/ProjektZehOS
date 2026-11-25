@@ -1,0 +1,57 @@
+[
+  {
+    "name": "gc-leer-kvm",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm",
+      "--runs",
+      "1"
+    ],
+    "env": {},
+    "repeat": 3,
+    "timeout": 1800,
+    "note": "E6-E Schritt 3: INFO gc max_pause_ms je Lauf notieren; Abnahme: 8 CPUs <= 2x 1 CPU und < 100 ms"
+  },
+  {
+    "name": "gc-4-kvm",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm",
+      "--runs",
+      "1"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "4"
+    },
+    "repeat": 3,
+    "timeout": 1800,
+    "note": "E6-E Schritt 3: INFO gc max_pause_ms je Lauf notieren; Abnahme: 8 CPUs <= 2x 1 CPU und < 100 ms"
+  },
+  {
+    "name": "gc-8c4t2-kvm",
+    "cmd": [
+      "{python}",
+      "scripts/test-smp-probe.py",
+      "--iso",
+      "{isosmp}",
+      "--accel",
+      "kvm",
+      "--runs",
+      "1"
+    ],
+    "env": {
+      "ZEHOS_QEMU_SMP": "8,cores=4,threads=2"
+    },
+    "repeat": 3,
+    "timeout": 1800,
+    "note": "E6-E Schritt 3: INFO gc max_pause_ms je Lauf notieren; Abnahme: 8 CPUs <= 2x 1 CPU und < 100 ms"
+  }
+]

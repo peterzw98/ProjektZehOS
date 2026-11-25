@@ -54,7 +54,7 @@ internal static unsafe partial class WasmRuntime
         if (!started) Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Arena nicht gestartet\n");
     }
 
-    // PollFaultIsolation, nach ReleaseRunResources: Der aufgegebene Worker steht in der Quarantaene und laeuft nie wieder,
+    // PollFaultIsolation, nach ReleaseRunResources: Der aufgegebene Worker ist Dead (nie wieder bereit) und laeuft nie wieder,
     // erst jetzt duerfen seine Bloecke frei werden. Unter AOT bleiben sie belegt wie vor I2-C: WAMR haelt globalen
     // Zustand (runtime_ref_count, registrierte Hostfunktionen), den nur wasm_runtime_destroy des toten Laufs abgebaut
     // haette; der naechste AOT-Lauf benutzt ihn weiter. Die Arena bleibt dann beim toten Lauf, spaetere Laeufe messen nicht.
