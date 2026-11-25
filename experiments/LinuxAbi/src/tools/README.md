@@ -11,7 +11,7 @@ TOYBOX_TARBALL=/pfad/toybox-0.8.15.tar.gz RUSTC=/pfad/rustc CC=/pfad/musl-gcc ex
 
 | Eingabe | Stand | Prüfung |
 | --- | --- | --- |
-| toybox (0BSD) | 0.8.15, `https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz` | SHA-256 `44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e` (`build.sh` bricht bei Abweichung ab; **nur aus dem Download errechnet**, nicht gegen eine zweite Quelle bestätigt) |
+| toybox (0BSD) | 0.8.15, `https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz` | SHA-256 `44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e` (`build.sh` bricht bei Abweichung ab; zweite Quelle: Void-Linux-Paketrezept `srcpkgs/toybox/template` (master, 25.11.2026) nennt dieselbe Summe; das Archiv selbst ist nicht signiert, landley.net veröffentlicht keine Prüfsumme dazu) |
 | Rust | 1.100.0 (`0ef1bc386`, 2026-11-09), Standalone-Archive vom 2026-11-12 | `rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz` SHA-256 `98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd` und `rust-std-1.100.0-x86_64-unknown-linux-musl.tar.xz` SHA-256 `9d5211bc7b40195f9700a6f9133831832a32f50d0e2a2c0ae8af801e7656de5c`, jeweils aus dem Manifest `channel-rust-stable.toml` und mit `sha256sum -c` bestätigt; Installation mit `install.sh --prefix` in ein eigenes Verzeichnis, ohne rustup |
 | musl | 1.2.5, `https://musl.libc.org/releases/musl-1.2.5.tar.gz` | SHA-256 `a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4`; aus Quelle mit `./configure --prefix=…`; `CC` ist dessen `musl-gcc`. Das Debian-Paket `musl-tools` (ebenfalls 1.2.5) sollte dasselbe liefern; verglichen wurde es hier nicht |
 
