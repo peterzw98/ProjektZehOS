@@ -13,12 +13,15 @@ Shell auf und gibt Text aus Spec, Argumenten oder Repository nur gefiltert (druc
 """
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import importlib.util
 import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -48,6 +51,10 @@ MAX_ENTRIES = 4096
 MAX_GENERATION = 9_999_999_999          # hoechstens zehn Ziffern (PackageManifest2.TryParseSize)
 MAX_SPEC = 1024 * 1024
 CHUNK = 1024 * 1024
+# PEM-Kopf eines privaten Schluessels (PKCS#8, ENCRYPTED, RSA, EC, OPENSSH, PGP ... BLOCK). Ein so markierter Inhalt wird nie
+# signiert, auch nicht als Kopie der Schluesseldatei; ein Schluessel ohne PEM-Huelle (DER, roh) faellt nicht auf.
+PRIVATE_KEY = re.compile(rb"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----")
+PRIVATE_KEY_OVERLAP = 80
 
 # Eigene Muster mit fullmatch: "$" in re.match liesse ein abschliessendes LF durch ("hello\n").
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
@@ -359,10 +366,13 @@ def load_spec(path: Path) -> dict:
 
 def open_regular(path: Path) -> int:
     """Oeffnet eine regulaere Datei ohne Symlink in der letzten Komponente; liefert den Deskriptor."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    # O_NONBLOCK: Eine FIFO oder ein Geraet wuerde beim Oeffnen sonst ewig blockieren; abgelehnt wird es danach ueber fstat.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         if os.path.islink(path):
             raise PackageError(f"Quelle ist ein symbolischer Link: {quote(path)}")
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise PackageError(f"Quelle ist keine regulaere Datei: {quote(path)}")
         handle = os.open(path, flags)
     except OSError as error:
         raise PackageError(f"Quelle nicht lesbar ({error.strerror}): {quote(path)}") from None
@@ -384,14 +394,42 @@ def copy_hashed(source: Path, destination: Path, budget: int) -> tuple[int, str]
     """Kopiert und hasht dieselben Bytes in einem Durchgang; Groesse und Hash beschreiben genau die geschriebene Kopie."""
     digest = hashlib.sha256()
     size = 0
+    tail = b""
     with os.fdopen(open_regular(source), "rb") as reader, open(destination, "xb") as writer:
         while chunk := reader.read(CHUNK):
             size += len(chunk)
             if size > budget:
                 raise PackageError("Paketinhalt groesser als 1 GiB.")
+            # Ganze Datei durchsuchen; der Ueberlapp findet auch einen Kopf, der ueber eine Blockgrenze reicht.
+            if PRIVATE_KEY.search(tail + chunk):
+                raise PackageError(f"Inhalt enthaelt einen privaten Schluessel (PEM): {quote(source)}")
+            tail = (tail + chunk)[-PRIVATE_KEY_OVERLAP:]
             digest.update(chunk)
             writer.write(chunk)
     return size, digest.hexdigest()
+
+
+def rename_no_replace(source: Path, target: Path) -> None:
+    """Benennt um, ohne ein vorhandenes Ziel zu ersetzen (auch keinen leeren Ordner, den os.rename still ersetzen wuerde)."""
+    renameat2 = None
+    if sys.platform.startswith("linux"):
+        try:
+            renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+        except (OSError, AttributeError):
+            renameat2 = None
+    if renameat2 is not None:
+        at_fdcwd, rename_noreplace = -100, 1
+        if renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target), rename_noreplace) == 0:
+            return
+        code = ctypes.get_errno()
+        if code == errno.EEXIST:
+            raise PackageError("Version ist waehrend des Schreibens entstanden; nichts ueberschrieben.")
+        if code not in (errno.ENOSYS, errno.EINVAL):
+            raise OSError(code, os.strerror(code), str(target))
+    # Ohne renameat2 (anderes System, Dateisystem ohne RENAME_NOREPLACE) bleibt ein kleines Fenster (Doku, Grenzen).
+    if os.path.lexists(target):
+        raise PackageError("Version ist waehrend des Schreibens entstanden; nichts ueberschrieben.")
+    os.rename(source, target)
 
 
 def hash_file(path: Path) -> tuple[int, str]:
@@ -530,9 +568,7 @@ def write_version(args: argparse.Namespace, spec: dict, sources: list[tuple[Path
         signer.sign(staging / "manifest", staging / "manifest.sig")
         if (staging / "manifest").read_bytes() != data:
             raise PackageError("Manifest wurde waehrend des Signierens veraendert.")
-        if os.path.lexists(final):
-            raise PackageError("Version ist waehrend des Schreibens entstanden; nichts ueberschrieben.")
-        os.rename(staging, final)
+        rename_no_replace(staging, final)
     except BaseException:
         # Ein halber Versionsordner sperrte die Version (unveraenderlich); deshalb nur der fertige Ordner unter seinem Namen.
         shutil.rmtree(staging, ignore_errors=True)
@@ -598,11 +634,18 @@ def catalog(args: argparse.Namespace) -> None:
     with tempfile.TemporaryDirectory() as scratch:
         signer = Signer(args.key, Path(scratch))
         manifests: list[tuple[Manifest, str]] = []
-        for package_dir in sorted(p for p in args.repo.iterdir() if ID.fullmatch(p.name) and not p.is_symlink() and p.is_dir()):
+        for package_dir in sorted(p for p in args.repo.iterdir() if ID.fullmatch(p.name)):
+            # Ein verlinkter Paket- oder Versionsordner wuerde still uebergangen und eine Version nicht veroeffentlicht.
+            if package_dir.is_symlink():
+                raise PackageError(f"Symbolischer Link im Repository: {quote(package_dir.name)}")
+            if not package_dir.is_dir():
+                continue
             versions = []
             for version_dir in package_dir.iterdir():
                 match = VERSION_DIR.fullmatch(version_dir.name)
-                if match and not version_dir.is_symlink() and version_dir.is_dir():
+                if match and version_dir.is_symlink():
+                    raise PackageError(f"Symbolischer Link im Repository: {quote(package_dir.name + '/' + version_dir.name)}")
+                if match and version_dir.is_dir():
                     versions.append((version_key(match.group(1), int(match.group(2))), match.group(1), int(match.group(2)), version_dir))
             if versions:
                 _, version, release, newest = max(versions)
@@ -650,6 +693,10 @@ def check_dependencies(manifests: list[Manifest]) -> None:
                 raise PackageError(f"{manifest.id}: Abhaengigkeit fehlt im Katalog oder ist zu alt: {quote(dependency)}")
 
 
+def _interrupt(number, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -667,6 +714,9 @@ def main(argv: list[str] | None = None) -> int:
     except PackageError as error:
         print(f"Paketfehler: {error}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("Paketfehler: abgebrochen; nichts veroeffentlicht.", file=sys.stderr)
+        return 130
     except ValueError:
         # build_package.sign meldet so eine nicht rohe Ed25519-Signatur; andere ValueError tragen womoeglich Eingabetext.
         print("Paketfehler: Signatur nicht erzeugt (kein Ed25519-Schluessel?).", file=sys.stderr)
@@ -682,4 +732,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # SIGTERM und SIGHUP wie Strg+C behandeln, damit das Aufraeumen (except BaseException) auch dann laeuft.
+    for _name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, _name):
+            signal.signal(getattr(signal, _name), _interrupt)
     sys.exit(main())

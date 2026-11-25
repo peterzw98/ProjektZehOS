@@ -238,6 +238,86 @@ exec = ["usr/bin/app"]
             package2.package(args)
         self.assert_nothing_written()
 
+    def test_rejects_private_key_content(self):
+        # Auch eine Kopie (anderer Inode) und ein Schluessel mitten in einer Datei werden nie signiert.
+        copy = self.input_file('keycopy', b'Vorspann\n' + self.key.read_bytes())
+        result = self.run_tool('package', '--key', self.key, '--repo', self.repo, '--spec', self.write_spec(BASE_SPEC),
+                               f'{copy}=etc/k')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('privaten Schluessel', result.stderr)
+        self.assert_nothing_written()
+        for header in (b'-----BEGIN ENCRYPTED PRIVATE KEY-----', b'-----BEGIN RSA PRIVATE KEY-----',
+                       b'-----BEGIN EC PRIVATE KEY-----', b'-----BEGIN OPENSSH PRIVATE KEY-----',
+                       b'-----BEGIN PGP PRIVATE KEY BLOCK-----'):
+            with self.subTest(header=header):
+                source = self.input_file('pem', b'x' * 5 + header + b'\n')
+                # Kleine Bloecke: Der Kopf liegt ueber mehreren Blockgrenzen.
+                with mock.patch.object(package2, 'CHUNK', 7), self.assertRaisesRegex(package2.PackageError, 'privaten Schluessel'):
+                    package2.copy_hashed(source, self.dir / f'out-{header[11:14].decode()}-{len(header)}', 1000)
+        public = self.input_file('pub', self.public.read_bytes())
+        self.assertEqual(package2.copy_hashed(public, self.dir / 'pub-out', 1000)[0], len(self.public.read_bytes()))
+
+    def test_rejects_fifo_without_blocking(self):
+        fifo = self.source / 'fifo'
+        os.mkfifo(fifo)
+        result = subprocess.run([sys.executable, '-W', 'error', str(SCRIPT), 'package', '--key', str(self.key), '--repo',
+                                 str(self.repo), '--spec', str(self.write_spec(BASE_SPEC)), f'{fifo}=usr/bin/x'],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('keine regulaere Datei', result.stderr)
+        result = subprocess.run([sys.executable, '-W', 'error', str(SCRIPT), 'package', '--key', str(self.key), '--repo',
+                                 str(self.repo), '--spec', str(fifo), f'{self.input_file("x")}=usr/bin/x'],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 1)
+        self.assert_nothing_written()
+
+    def test_sigterm_while_signing_leaves_nothing(self):
+        # Der Wrapper startet das Werkzeug als __main__ und schickt sich beim Signieren selbst SIGTERM.
+        wrapper = self.dir / 'wrapper.py'
+        wrapper.write_text(
+            'import os, runpy, signal, subprocess, sys\n'
+            'real = subprocess.run\n'
+            'def run(command, *args, **kwargs):\n'
+            '    if "-sign" in command:\n'
+            '        os.kill(os.getpid(), signal.SIGTERM)\n'
+            '    return real(command, *args, **kwargs)\n'
+            'subprocess.run = run\n'
+            'sys.argv = sys.argv[1:]\n'
+            'runpy.run_path(sys.argv[0], run_name="__main__")\n', encoding='utf-8')
+        result = subprocess.run([sys.executable, '-W', 'error', str(wrapper), str(SCRIPT), 'package', '--key', str(self.key),
+                                 '--repo', str(self.repo), '--spec', str(self.write_spec(BASE_SPEC)), f'{self.input_file("x")}=usr/bin/x'],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertIn('abgebrochen', result.stderr)
+        self.assert_nothing_written()
+
+    def test_empty_target_created_meanwhile_is_not_replaced(self):
+        final = self.repo / 'app' / '1.0.0-r1'
+        original = package2.Signer.sign
+
+        def sign_then_race(signer, content, signature):
+            original(signer, content, signature)
+            final.mkdir()
+
+        args = argparse.Namespace(key=self.key, repo=self.repo, spec=self.write_spec(BASE_SPEC), files=[f'{self.input_file("x")}=usr/bin/x'])
+        with mock.patch.object(package2.Signer, 'sign', autospec=True, side_effect=sign_then_race), \
+                self.assertRaisesRegex(package2.PackageError, 'nichts ueberschrieben'):
+            package2.package(args)
+        self.assertEqual(list(final.iterdir()), [])
+        self.assertEqual([p.name for p in (self.repo / 'app').iterdir()], ['1.0.0-r1'])
+
+    def test_rename_no_replace_with_and_without_renameat2(self):
+        for platform in (sys.platform, 'other'):
+            with self.subTest(platform=platform), mock.patch.object(package2.sys, 'platform', platform):
+                source, target = self.dir / f'src-{platform}', self.dir / f'dst-{platform}'
+                source.mkdir()
+                target.mkdir()
+                with self.assertRaisesRegex(package2.PackageError, 'nichts ueberschrieben'):
+                    package2.rename_no_replace(source, target)
+                target.rmdir()
+                package2.rename_no_replace(source, target)
+                self.assertTrue(target.is_dir() and not source.exists())
+
     def test_rejects_conflicting_paths(self):
         cases = [
             ('', ['usr/bin/App', 'usr/bin/app'], 'Doppelter Pfad'),
@@ -467,6 +547,18 @@ exec = ["usr/bin/app"]
         os.rename(version, version.with_name('1.0.0-r2'))
         self.assertIn('andere Kennung oder Version', self.catalog(1, expect=1).stderr)
         self.assertEqual([p.name for p in self.repo.iterdir()], ['app'])
+
+    def test_catalog_rejects_symlinked_package_or_version(self):
+        self.build(BASE_SPEC, 'usr/bin/x')
+        copy = self.dir / 'copy'
+        os.rename(self.repo / 'app' / '1.0.0-r1', copy)
+        (self.repo / 'app' / '9.0.0-r1').symlink_to(copy, target_is_directory=True)
+        self.assertIn('ymbolischer Link', self.catalog(1, expect=1).stderr)
+        (self.repo / 'app' / '9.0.0-r1').unlink()
+        os.rename(self.repo / 'app', self.dir / 'app')
+        (self.repo / 'app').symlink_to(self.dir / 'app', target_is_directory=True)
+        self.assertIn('ymbolischer Link', self.catalog(1, expect=1).stderr)
+        self.assertFalse((self.repo / 'catalog2').exists())
 
     def test_catalog_requires_satisfiable_dependencies(self):
         self.build(BASE_SPEC + 'depends = ["musl>=1.2.5-r2"]\n', 'usr/bin/x')
