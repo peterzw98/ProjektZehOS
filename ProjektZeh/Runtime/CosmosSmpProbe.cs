@@ -35,6 +35,7 @@ internal static class CosmosSmpProbe
             ok &= RunPanic(); // kehrt nur bei FAIL zurueck
 #else
             ok &= Step("cpus", StepCpus);
+            ok &= Step("p660", StepP660); // Messbranch #660, nie mergen
             ok &= Step("counters", StepCounters);
             ok &= Step("parallel", StepParallel);
             ok &= Step("migrate", StepMigrate);
@@ -158,6 +159,68 @@ internal static class CosmosSmpProbe
         long x = 1;
         for (long i = 0; i < iterations; i++) x = x * 6364136223846793005L + 1442695040888963407L;
         return x;
+    }
+
+    // Messbranch #660 (nie mergen): kurze Parallellaeufe vielfach wiederholen. Jeder Worker rechnet in Stuecken und merkt sich die
+    // groesste Luecke zwischen zwei Stuecken mit ihrem Zeitpunkt; ausgegeben wird erst nach dem Join, also nicht im gemessenen Abschnitt.
+    private static string? StepP660()
+    {
+        int n = workers.Length;
+        if (n < 2) return $"SKIP cpus={KernelCpus.Count}";
+        const long Work = 20_000_000;
+        const long Chunk = 50_000;
+        const int Reps = 60;
+        long f = Stopwatch.Frequency;
+        Write($"INFO p660 freq={f} reps={Reps} work={Work} chunk={Chunk} workers={n}");
+        long sink = 0;
+        for (int r = 0; r < Reps; r++)
+        {
+            var begin = new long[n];
+            var ended = new long[n];
+            var gap = new long[n];
+            var gapAt = new long[n];
+            var gap2 = new long[n];
+            var cpuSeen = new uint[n];
+            var threads = new List<Thread>();
+            using var start = new ManualResetEvent(false);
+            for (int i = 0; i < n; i++)
+            {
+                int index = i;
+                var thread = Pinned(workers[i], () =>
+                {
+                    start.WaitOne(5000);
+                    long t = Stopwatch.GetTimestamp();
+                    begin[index] = t;
+                    long max = 0, second = 0, at = 0, x = 0;
+                    for (long done = 0; done < Work; done += Chunk)
+                    {
+                        x += Spin(Chunk);
+                        long now = Stopwatch.GetTimestamp();
+                        long d = now - t;
+                        if (d > max) { second = max; max = d; at = t; }
+                        else if (d > second) second = d;
+                        t = now;
+                    }
+                    Interlocked.Add(ref sink, x);
+                    gap[index] = max; gap2[index] = second; gapAt[index] = at;
+                    Volatile.Write(ref ended[index], Stopwatch.GetTimestamp());
+                });
+                thread.Start();
+                threads.Add(thread);
+            }
+            Thread.Sleep(50);
+            long t0 = Stopwatch.GetTimestamp();
+            start.Set();
+            if (!JoinAll(threads, 120000)) return $"Lauf {r} endet nicht";
+            long t1 = Stopwatch.GetTimestamp();
+            var line = new System.Text.StringBuilder();
+            line.Append($"INFO p660 r={r} all_us={(t1 - t0) * 1000000 / f}");
+            for (int i = 0; i < n; i++)
+                line.Append($" w{workers[i]}={(begin[i] - t0) * 1000000 / f}/{(ended[i] - t0) * 1000000 / f}/{gap[i] * 1000000 / f}@{(gapAt[i] - t0) * 1000000 / f}/{gap2[i] * 1000000 / f}");
+            Write(line.ToString());
+        }
+        Write($"INFO p660 sink={sink & 0xFF}");
+        return null;
     }
 
     private static string? StepParallel()
