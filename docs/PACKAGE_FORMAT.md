@@ -146,6 +146,12 @@ py -3 scripts/run-guest-suite.py scripts/guest-suites/e5j.json --out .tools/suit
 py -3 scripts/run-guest-suite.py --status .tools/suite-1   # summary.md; Exit 0 alles bestanden, 1 Fehlschlag, 2 läuft noch
 ```
 
+E4.0-Qualifikation (`scripts/guest-suites/e4-0.json`): Standard sind **3 Wiederholungen** (nicht 5). Aufruf mit `--parallel 3` (die Wiederholungen laufen gleichzeitig); darin startet `test-storage-ext2-root.py` die Abbruchläufe mit `--parallel 2`, es laufen also bis zu 3 × 2 QEMU-Prozesse zugleich. Die QMP-Ports reserviert `free_port()` in `scripts/test-wasm-doom-desktop.py` prozessübergreifend per `flock`-Sperrdatei (`<tmp>/zehos-qmp-ports-<uid>/<port>.lock`), damit zwei Prozesse nie denselben Port ziehen.
+
+```sh
+python3 scripts/run-guest-suite.py scripts/guest-suites/e4-0.json --out .tools/suite-e40 --var iso=<ISO mit -p:ZehOSStorageRootProbe=true> --parallel 3 --detach
+```
+
 Jeder Lauf schreibt `<name>-<i>/log.txt` unter `--out`; `summary.json` und `summary.md` werden nach jedem Lauf neu geschrieben. `--parallel N` begrenzt die gleichzeitigen Läufe (Standard `min(4, CPUs/2)`), ein Lauf über seinem `timeout` wird samt Kindprozessen beendet.
 
 `--accel whpx` läuft ohne Snapshot, weil QEMU unter WHPX kein `savevm` erlaubt; jede VM richtet sich dann selbst ein. `--accel kvm` läuft ebenfalls ohne Snapshot, weil `savevm` unter KVM nicht geprüft ist; die VM startet mit `-cpu qemu64,+rdrand,+rdseed` (siehe `COSMOS_SUPPORT.md`). Dasselbe gilt für `--no-snapshot` und für `--source` (nur Szenario `full`). Voraussetzungen sind wasi-sdk 25 (`--wasi-sdk`, sonst `WASI_SDK_PATH` oder `.tools/wasi-sdk-25.0-x86_64-windows`), OpenSSL für `build-package.py` und `qemu-img` neben QEMU. Ändern sich ISO, Repository, QEMU-Version oder Geräte, legt das Skript einen neuen Snapshot an; ändert sich der Vorbereitungsablauf im Skript, ist `SNAPSHOT_FORMAT` zu erhöhen.
@@ -208,3 +214,55 @@ er ersetzt keinen Kernel-/Gasttest.
 - Downloads haben nur ein Zeitlimit je Datenpaket, kein Gesamtlimit. Ein sehr langsamer Server hält die Netzwerksperre, bis `pkg cancel` den Auftrag abbricht.
 - Das Startmenü erkennt ein bereits offenes Fenster am Anzeigenamen; Paketnamen sollten deshalb eindeutig sein.
 - Veränderte Paketdateien sperren den Start; `pkg install <id>` derselben Version repariert sie.
+
+## Format 2 (noch nicht angeschlossen)
+
+Vorarbeit für native Pakete (Laufzeit `linux-x64-v1`, [Plan](superpowers/plans/2026-11-24-ladybird-p-paketdienst-vorarbeit.md), [Entwurf, Abschnitt 7](superpowers/specs/2026-11-24-native-pakete-design.md#7-paketdienst-v2)). Nichts davon ist an `pkg`, Kernelstart oder Server angeschlossen; `pkg` liest und schreibt weiter nur Version 1. Vertrauen und Signatur sind dieselben wie bei Version 1 (`PackageTrust`).
+
+### Manifest
+
+Implementierung `ProjektZeh/Packages/PackageManifest2.cs` (`PackageManifest2.Parse`, wirft nie). `Bytes` ist eine Kopie der Eingabe, aus der auch geparst wurde; die Signatur ist über genau diese Bytes zu prüfen. Fehlermeldungen geben Eingabetext nur gekürzt (höchstens 64 Zeichen) und auf druckbares ASCII gefiltert wieder. UTF-8 ohne BOM, nur LF (ein CR irgendwo ist ungültig), jede Zeile mit LF abgeschlossen, Felder genau in dieser Reihenfolge, höchstens 1 MiB:
+
+```text
+zehos-package 2
+id=hello
+version=1.2.3
+release=4
+runtime=linux-x64-v1
+license=MIT OR Apache-2.0
+name=Hallo Welt
+entry=usr/bin/hello
+capability=net
+capability=storage
+capability=files
+memory-mib=256
+min-kernel=0.5.0
+depends=musl>=1.2.5-r1
+provides=so:libhello.so.1
+exec=<sha256 klein> <bytes> usr/bin/hello
+file=<sha256 klein> <bytes> usr/lib/libhello.so.1
+link=usr/lib/libhello.so libhello.so.1
+end
+```
+
+- Pflicht sind `id`, `version`, `release`, `runtime`, `license` (lückenlos am Anfang) und mindestens eine `exec`- oder `file`-Zeile. Unbekannte Schlüssel, Leerzeilen, doppelte Einzelfelder und Felder an falscher Stelle sind ungültig.
+- `id`, `version`: wie Version 1. `release`: Paketrevision 1–9999 ohne führende Null. Version und Revision zusammen schreiben sich kanonisch `1.2.3-r4` (`PackageVersion2`); verglichen wird erst die Version, dann die Revision.
+- `runtime`: genau `linux-x64-v1`.
+- `license`: SPDX-Ausdruck, 1–64 Zeichen aus `A–Z a–z 0–9 . + - ( )` und Leerzeichen. Die SPDX-Grammatik prüft der Kernel nicht.
+- `name`: wie Version 1, nur zusammen mit `entry`. `entry`: Pfad einer `exec`-Zeile (nicht `file`, nicht `link`). Bibliotheken haben beides nicht; ein Programm darf `entry` ohne `name` haben.
+- `capability=net|storage|files`: je höchstens einmal, in dieser Reihenfolge.
+- `memory-mib`: 1–4096, nur zusammen mit `entry`. `min-kernel`: wie Version 1.
+- `depends=<id>>=<version>-r<release>`: 0–64 Zeilen, ordinal nach `id`, keine doppelte `id`, nicht das eigene Paket (`PackageDependency`).
+- `provides=so:<soname>`: 0–64 Zeilen, ordinal, `<soname>` 1–200 Zeichen aus `A–Z a–z 0–9 . _ + -`. `Provides` enthält den Wert samt `so:`.
+- `exec`/`file`: Aufbau wie `file` in Version 1; `exec` markiert ausführbare Dateien. Beide zusammen ordinal nach Pfad, höchstens 4096, Summe höchstens 1 GiB (exakt 1 GiB ist erlaubt).
+- `link=<pfad> <ziel>`: höchstens 4096, ordinal nach Pfad. Das Ziel ist kanonisch relativ zum Ordner des Links: null oder mehr führende `../`, danach mindestens eine normale Komponente (kein `.`, kein `..` mitten im Pfad, kein `/` am Anfang oder Ende). Das aufgelöste Ziel muss selbst ein gültiger Pfad nach der Regel unten sein (unter `usr/`, `lib/` oder `etc/`, höchstens 200 Zeichen); Ziele wie `/dev`, `/data`, `/save` oder `/tmp` sind damit ausgeschlossen. Weil `..` nur vorne steht und kein Link Ordner eines anderen Eintrags sein kann, entspricht die textuelle Auflösung der tatsächlichen.
+- Linkketten: Der Parser folgt jedem Ziel durch die Links desselben Manifests (ohne Groß-/Kleinschreibung). Ungültig ist, wenn ein Schritt auf den Link selbst, einen seiner Ordner oder einen Pfad unter ihm zeigt, mehr als 40 Links aufeinander folgen (damit auch jeder Kreis über mehrere Links) oder der Pfad dabei länger als 200 Zeichen würde. Links auf Pfade anderer Pakete kann erst der Bestand (P3) prüfen.
+- Pfade (auch von `entry` und `link`): wie Version 1, dazu `+` als Zeichen, höchstens 200 Zeichen, beginnend mit `usr/`, `lib/` oder `etc/`. Doppelte Pfade (auch nur in Groß-/Kleinschreibung verschieden, auch `link` gegen `exec`/`file`) sind ungültig, ebenso ein Pfad, der zugleich Ordner eines anderen ist.
+
+### Katalog
+
+Folgt mit Plan P2.
+
+### Bestand
+
+Folgt mit Plan P3.

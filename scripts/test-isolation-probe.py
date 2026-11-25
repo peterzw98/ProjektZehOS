@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gastprobe Roadmap 12.4-I1: CPU-Ausnahmen im Wasm-Worker beenden nur den Lauf, das System bleibt bedienbar.
 
-Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE und #PF isoliert, GC und ein weiterer Lauf, danach
+Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE, #PF, #GP und #UD isoliert, GC und ein weiterer Lauf, danach
 Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
 Probe-Thread haelt das System wie bisher an) oder mit -p:ZehOSIsolationProbeNmi=true und --nmi (Erwartung: ein per QMP
 ausgeloester NMI waehrend Gastcode des Workers haelt an, statt isoliert zu werden). Jeder Lauf nutzt eine frische
@@ -23,13 +23,13 @@ spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # I2-C: erlaubter Rueckgang des freien Speichers zwischen frei_vor (nach zwei Desktopbildern und dem Lauf base) und
-# frei_nach. Bis E6-G (#523) bleiben die beiden aufgegebenen 8-MiB-Worker-Stacks belegt (16 MiB), dazu 4 MiB Reserve.
-# Blieben die 2 x 16 MiB der Arena liegen, waeren es 48 MiB (nach E6-G 32 MiB); beides liegt ueber der Grenze.
-ARENA_MAX_DROP_KIB = 20 * 1024
+# frei_nach. Seit E6-G (#523) gibt jede Isolation auch den 8-MiB-Worker-Stack frei; ein Rest von einem Stack oder einer
+# 16-MiB-Arena liegt deshalb ueber der Grenze. 4 MiB Reserve (gemessen 0 bis 188 KiB, #681).
+ARENA_MAX_DROP_KIB = 4 * 1024
 # Der gehaltene Block muss frei sichtbar senken (16 MiB; Reserve fuer den Ersatzstack im zweiten Lauf nach oben).
 ARENA_MIN_HELD_KIB = 12 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
-VECTORS = {"de": 0, "pf": 14}
+VECTORS = {"de": 0, "pf": 14, "gp": 13, "ud": 6}
 # Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
 REAP_TOLERANCE_KIB = 4 * 1024
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
@@ -58,13 +58,13 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
     missing += evaluate_reap(log)
-    if log.count("WASM CPU-Ausnahme im App-Code") < 2:
-        missing.append("Hauptschleife hat nicht beide Laeufe beendet")
+    if log.count("WASM CPU-Ausnahme im App-Code") < len(VECTORS):
+        missing.append("Hauptschleife hat nicht alle Laeufe beendet")
     # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei (Zaehler der Arena 0 und
     # der freie Speicher sinkt um hoechstens ARENA_MAX_DROP_KIB).
     held = [int(m.group(1)) for m in re.finditer(r"ISOLATION_PROBE arena=1 used=[1-9]\d* frei=(\d+)", log)]
-    if len(held) != 2:
-        missing.append("Arena nicht in beiden Fehlerlaeufen gestartet")
+    if len(held) != len(VECTORS):
+        missing.append("Arena nicht in allen Fehlerlaeufen gestartet")
     for kind in VECTORS:
         if not re.search(rf"ISOLATION_PROBE arena_after={kind} used=0\b", log):
             missing.append(f"Arena nach {kind} nicht freigegeben")

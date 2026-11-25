@@ -1,0 +1,14 @@
+initialised=41
+zeroed=0
+bufr[0]=120
+bufr[2999]=0
+initialised+1=42
+zeroed=5=5
+bufr[2999]=121
+counter=499500
+exported=7
+arch_prctl GET_FS=0
+FS != 0=1
+fs:0 == FS=1
+&initialised near FS=1
+after syscall=42
