@@ -184,6 +184,13 @@ PROGRAM 11              // an invalid stack pointer, met by the next interrupt
 1:  pause
     jmp 1b
 
+PROGRAM 12              // #UD: ring 3 must not set the GS base; a base with bit 63 looks like the kernel's
+    mov rax, 0xFFFF800000000000
+    wrgsbase rax
+    mov edi, 0x7B
+    mov eax, SYS_LEAVE
+    syscall
+
     .balign 512, 0xCC
 .Lprograms_end:
 

@@ -28,7 +28,7 @@ namespace Cosmos.Kernel.Tests.UserMode;
 /// </summary>
 public unsafe partial class Kernel : Sys.Kernel
 {
-    private const int ExpectedTestCount = 21;
+    private const int ExpectedTestCount = 23;
     private const string NoRing3 = "no ring 3 on this architecture";
 
     protected override void BeforeRun()
@@ -48,6 +48,8 @@ public unsafe partial class Kernel : Sys.Kernel
         TR.Run("Fault_PF_KernelWrite_ErrorCode", () => TestFault(2, KernelAddress, 14, 7, KernelAddress));
         TR.Run("Fault_PF_KernelExecute", () => TestFault(3, KernelAddress, 14, 5, KernelAddress, 0x10));
         TR.Run("Fault_GP_Cli", () => TestFault(4, 0, 13, 0, 0));
+        TR.Run("Fault_UD_SetGsBase", () => TestFault(12, 0, 6, 0, 0));
+        TR.Run("FsBase_LowerHalfOnly", TestFsBaseRange);
         TR.Run("BadReturn_Syscall", TestBadSyscallReturn);
         TR.Run("BadReturn_Fault", TestBadFaultReturn);
         TR.Run("BadReturn_EnterAndInterrupt", TestBadEnter);
@@ -390,6 +392,26 @@ public unsafe partial class Kernel : Sys.Kernel
         foreach (Runner runner in runners)
         {
             Equal(0, runner.Wait());
+        }
+    }
+
+    private static void TestFsBaseRange()
+    {
+        Assert.True(Refused(0x0000_8000_0000_0000) && Refused(KernelAddress) && Refused(ulong.MaxValue), "upper half refused");
+        Core.CPU.UserMode.SetFsBase(0x0000_7FFF_FFFF_FFFF);
+        Core.CPU.UserMode.SetFsBase(0);
+    }
+
+    private static bool Refused(ulong fsBase)
+    {
+        try
+        {
+            Core.CPU.UserMode.SetFsBase(fsBase);
+            return false;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return true;
         }
     }
 
