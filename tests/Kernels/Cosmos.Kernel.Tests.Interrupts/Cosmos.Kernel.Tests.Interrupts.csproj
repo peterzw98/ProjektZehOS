@@ -28,8 +28,10 @@
   </ItemGroup>
 
   <!-- ZehOS patch user-stub: the NMI cells set GS and control words no managed API reaches. -->
+  <!-- ZehOS patch apic-hhdm: Cr3.s loads a CR3 with an empty lower half. -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == '' OR $(RuntimeIdentifier.EndsWith('-x64'))">
     <AsmFiles Include="$(MSBuildThisFileDirectory)Asm/UserGs.s" />
+    <AsmFiles Include="$(MSBuildThisFileDirectory)Asm/Cr3.s" />
   </ItemGroup>
 
   <!-- Core kernel packages (using project references for development) -->

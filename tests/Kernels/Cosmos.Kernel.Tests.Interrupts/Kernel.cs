@@ -37,8 +37,12 @@ namespace Cosmos.Kernel.Tests.Interrupts;
 // registers afterwards.
 public class Kernel : Sys.Kernel
 {
-    /// <summary>Total tests per cell: 10 cross-arch + 10 arch-specific.</summary>
-    private const int ExpectedTestCount = 20;
+    /// <summary>Total tests per cell: 10 cross-arch + 11 (x64) or 8 (arm64) arch-specific.</summary>
+#if ARCH_X64
+    private const int ExpectedTestCount = 21;
+#else
+    private const int ExpectedTestCount = 18;
+#endif
 
     /// <summary>CPUs the smp4 cells' machine has: what the bootloader lists and the kernel starts there.</summary>
     private const uint Smp4CpuCount = 4;
@@ -129,7 +133,6 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Interrupts] BeforeRun() reached!\n");
 
-        // 10 cross-arch + 10 arch-specific = 20 tests per cell.
         TR.Start("Interrupt System Tests", expectedTests: ExpectedTestCount);
 
         // The smp4 cells boot four CPUs; the application processor cell
@@ -176,6 +179,8 @@ public class Kernel : Sys.Kernel
         // ZehOS patch user-stub, see PATCHES.md
         TR.Run("Nmi_KernelGsBase_LeftAlone", TestNmiKernelGsBase);
         TR.Run("Nmi_ForeignGsBase_SwappedAndRestored", TestNmiForeignGsBase);
+        // Pinned like the cells above: the CR3 it loads is CPU 0's, whichever thread runs there.
+        TR.Run("Apic_LowerHalfEmpty_StillWorks", TestApicLowerHalfEmpty);
         Sys.Threading.ThreadAffinity.Current = mainSet;
         TR.RunIf(smp, "PerCpuBlock_ApplicationProcessors_DistinctLapicIds", TestPerCpuBlockApplicationProcessorsDistinctLapicIds, OneCpuCell);
 #else
@@ -1077,6 +1082,91 @@ public class Kernel : Sys.Kernel
                 Assert.True(block.HardwareId != PerCpuBlock.At(other).HardwareId, "two CPUs, two Local APIC ids");
             }
         }
+    }
+
+    // ZehOS patch apic-hhdm, see PATCHES.md
+    // A program's address space (ZehOS N1) has the kernel's upper half and nothing of Limine's
+    // identity map. With such a CR3 on CPU 0 the register accesses, the EOIs of the timer and of
+    // a self-IPI, the wake-up IPI to another CPU (smp4) and the I/O APIC must all still work;
+    // through the physical addresses the first access is a page fault.
+    private const int LowerHalfEntries = 256;
+    private const int RootEntries = 512;
+    private const int LowerHalfIpis = 20;
+    private const int LowerHalfWaitMs = 10;
+    /// <summary>An ISA line no driver routes: masked since boot, so masking it again changes nothing.</summary>
+    private const byte UnroutedIrq = 5;
+    private const ulong RootAddressMask = 0x000F_FFFF_FFFF_F000;
+
+    [DllImport("*", EntryPoint = "cosmos_test_load_cr3")]
+    [SuppressGCTransition]
+    private static extern void LoadCr3(ulong root);
+
+    [DllImport("*", EntryPoint = "cosmos_test_read_cr3")]
+    [SuppressGCTransition]
+    private static extern ulong ReadCr3();
+
+    private static int s_lowerHalfIpis;
+    private static volatile bool s_lowerHalfThreadRan;
+    private static volatile uint s_lowerHalfThreadCpu;
+
+    private static void LowerHalfIpiHandler(ref IRQContext context)
+    {
+        s_lowerHalfIpis++;
+    }
+
+    private static unsafe void TestApicLowerHalfEmpty()
+    {
+        ulong* root = (ulong*)PageAllocator.AllocPages(PageType.Unmanaged, 1, zero: true);
+        Assert.True(root != null, "a page for the root table");
+        byte vector = InterruptManager.AllocateVector(LowerHalfIpiHandler);
+        s_lowerHalfIpis = 0;
+        s_lowerHalfThreadRan = false;
+        // Moves itself to the compute CPUs (smp4: another CPU, woken by IPI).
+        var thread = new SysThread(() =>
+        {
+            Sys.Threading.ThreadAffinity.Current = Sys.Threading.KernelCpus.Compute;
+            s_lowerHalfThreadCpu = Sys.Threading.KernelCpus.Current;
+            s_lowerHalfThreadRan = true;
+        });
+
+        ulong rootPhysical = PageAllocator.VirtualToPhysical((ulong)root);
+        ulong kernelRoot;
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            kernelRoot = ReadCr3();
+            ulong* kernel = (ulong*)((kernelRoot & RootAddressMask) + AddressSpace.HhdmOffset);
+            for (int i = LowerHalfEntries; i < RootEntries; i++)
+            {
+                root[i] = kernel[i];
+            }
+
+            LoadCr3(rootPhysical);
+        }
+
+        byte id = LocalApic.GetId();
+        for (int i = 0; i < LowerHalfIpis; i++)
+        {
+            LocalApic.SendSelfIpi(vector);
+            // Sleeps until the timer wakes the thread: lost EOIs end it here.
+            SysThread.Sleep(LowerHalfWaitMs);
+        }
+
+        ApicManager.MaskIrq(UnroutedIrq);
+        thread.Start();
+        SysThread.Sleep(SleepDurationMs);
+
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            LoadCr3(kernelRoot);
+        }
+
+        InterruptManager.FreeVector(vector);
+        PageAllocator.Free(root);
+
+        Assert.True(id == PerCpuBlock.At(0).HardwareId, "the Local APIC id reads the same");
+        Assert.Equal(LowerHalfIpis, s_lowerHalfIpis, "every self-IPI was delivered and retired");
+        Assert.True(s_lowerHalfThreadRan, "a thread started under the empty lower half ran");
+        Assert.True(Smp.CpuCount == 1 || s_lowerHalfThreadCpu != 0, "on another CPU when there is one");
     }
 
     private static void IrqLatencyWaiter()

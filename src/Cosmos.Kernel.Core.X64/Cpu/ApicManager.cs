@@ -46,6 +46,11 @@ public static class ApicManager
 
         Serial.Write("[ApicManager] Initializing Local APIC...\n");
         LocalApic.Initialize(localApicBase);
+        // ZehOS patch apic-hhdm, see PATCHES.md
+        if (!LocalApic.IsInitialized)
+        {
+            return;
+        }
 
         Serial.Write("[ApicManager] Calibrating LAPIC timer...\n");
         LocalApic.CalibrateTimer();

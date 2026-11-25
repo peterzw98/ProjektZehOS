@@ -2,6 +2,7 @@
 
 using Cosmos.Kernel.Core;
 using Cosmos.Kernel.Core.IO;
+using Cosmos.Kernel.Core.Memory;
 
 namespace Cosmos.Kernel.Core.X64.Cpu;
 
@@ -28,7 +29,9 @@ public static class IoApic
     private const ulong ACTIVE_LOW = 1UL << 13;       // Active low (vs high)
     private const ulong LOGICAL_DEST = 1UL << 11;     // Logical (vs Physical) destination mode
 
-    private static ulong s_baseAddress;
+    // ZehOS patch apic-hhdm, see PATCHES.md
+    /// <summary>The registers through the HHDM, as in <see cref="LocalApic"/>: a handler masks its line in any thread's context.</summary>
+    private static ulong s_registers;
     private static uint s_gsiBase;
     private static byte s_maxRedirectionEntry;
     private static bool s_initialized;
@@ -44,7 +47,14 @@ public static class IoApic
     /// <param name="info">I/O APIC info from MADT.</param>
     public static void Initialize(IoApicInfo info)
     {
-        s_baseAddress = info.Address;
+        // ZehOS patch apic-hhdm, see PATCHES.md
+        if (!DeviceMapper.EnsureMapped(info.Address))
+        {
+            Serial.Write("[IOAPIC] ERROR: registers not mapped\n");
+            return;
+        }
+
+        s_registers = info.Address + AddressSpace.HhdmOffset;
         s_gsiBase = info.GsiBase;
 
         Serial.Write("[IOAPIC] Initializing at 0x", info.Address.ToString("X"), "\n");
@@ -235,8 +245,8 @@ public static class IoApic
     /// </summary>
     private static uint Read(byte reg)
     {
-        Native.MMIO.Write32(s_baseAddress + IOREGSEL, reg);
-        return Native.MMIO.Read32(s_baseAddress + IOWIN);
+        Native.MMIO.Write32(s_registers + IOREGSEL, reg);
+        return Native.MMIO.Read32(s_registers + IOWIN);
     }
 
     /// <summary>
@@ -244,7 +254,7 @@ public static class IoApic
     /// </summary>
     private static void Write(byte reg, uint value)
     {
-        Native.MMIO.Write32(s_baseAddress + IOREGSEL, reg);
-        Native.MMIO.Write32(s_baseAddress + IOWIN, value);
+        Native.MMIO.Write32(s_registers + IOREGSEL, reg);
+        Native.MMIO.Write32(s_registers + IOWIN, value);
     }
 }
