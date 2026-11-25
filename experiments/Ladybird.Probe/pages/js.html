@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>start</title>
+</head>
+<body>
+<h1>js</h1>
+<p id="status">läuft</p>
+<div id="knoten"></div>
+<script>
+// 2000 DOM-Knoten erzeugen, 100 000 Zahlen sortieren, dann den Titel auf "done" setzen.
+var wurzel = document.getElementById("knoten");
+for (var i = 0; i < 2000; i++) {
+  var d = document.createElement("div");
+  d.textContent = "Knoten " + i;
+  wurzel.appendChild(d);
+}
+// Feste Saat (LCG), damit jeder Lauf dieselbe Arbeit leistet.
+var zahlen = new Array(100000);
+var z = 12345;
+for (var j = 0; j < zahlen.length; j++) {
+  z = (z * 1103515245 + 12345) % 2147483648;
+  zahlen[j] = z;
+}
+zahlen.sort(function (a, b) { return a - b; });
+document.getElementById("status").textContent =
+  "sortiert: " + zahlen.length + " Zahlen, kleinste " + zahlen[0];
+document.title = "done";
+document.getElementById("status").textContent += " | Titel: " + document.title;
+</script>
+</body>
+</html>

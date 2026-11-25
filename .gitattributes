@@ -66,3 +66,6 @@
 
 # Binaere Testdaten nie normalisieren (PSF-Schrift der Referenzbilder).
 *.psf binary
+
+# Schriftdateien der Ladybird-Testseiten nie umschreiben (Pruefsumme in LICENSE-DejaVu.txt).
+experiments/Ladybird.Probe/pages/fonts/*.ttf binary
