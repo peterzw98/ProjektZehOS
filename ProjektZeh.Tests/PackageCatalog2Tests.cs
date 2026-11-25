@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -238,5 +240,121 @@ public sealed class PackageCatalog2Tests
             else Assert.AreEqual(ResultCode.InvalidArgument, result.Status.Code);
         }
         Assert.IsTrue(accepted < 10000);
+    }
+
+    // Repository aus scripts/package2.py (TestData/Package2, Testschluessel; der private Teil wurde nach dem Erzeugen geloescht).
+    // scripts/tests/test_package2.py erzeugt Manifeste und Katalog mit einem neuen Schluessel erneut und vergleicht byteweise.
+    private static byte[] Fixture(params string[] parts) =>
+        File.ReadAllBytes(Path.Combine([AppContext.BaseDirectory, "TestData", "Package2", .. parts]));
+
+    private static PackageTrust FixtureTrust() =>
+        new(Convert.FromBase64String(Encoding.ASCII.GetString(Fixture("public.b64")).Trim()));
+
+    private static byte[] FixtureManifest(CatalogEntry2 entry) => Fixture("repo", entry.Id, entry.Version.ToString(), "manifest");
+
+    [TestMethod]
+    public void ReadsSignedCatalogWrittenByTool()
+    {
+        var trust = FixtureTrust();
+        byte[] bytes = Fixture("repo", "catalog2");
+        // Wie beim Aufrufer: erst die Signatur ueber die Rohbytes, dann parsen.
+        Assert.IsTrue(trust.Verify(bytes, Fixture("repo", "catalog2.sig")));
+        var result = PackageCatalog2.Parse(bytes);
+        Assert.IsTrue(result.Status.IsOK(), result.Status.Message);
+        var catalog = result.Value!;
+        Assert.AreEqual(3, catalog.Generation);
+        CollectionAssert.AreEqual(new[] { "hello 1.2.3-r4", "libcxx 17.0.6-r2", "musl 1.2.5-r1" },
+            catalog.Entries.Select(e => e.Id + " " + e.Version).ToArray());
+        CollectionAssert.AreEqual(bytes, Encoding.UTF8.GetBytes(RenderCatalog(catalog)), "Katalog ist nicht kanonisch.");
+
+        foreach (var entry in catalog.Entries)
+        {
+            byte[] manifestBytes = FixtureManifest(entry);
+            Assert.IsTrue(trust.Verify(manifestBytes, Fixture("repo", entry.Id, entry.Version.ToString(), "manifest.sig")), entry.Id);
+            Assert.AreEqual(entry.ManifestSha256, PackageTrust.Sha256Hex(manifestBytes), entry.Id);
+            var parsed = PackageManifest2.Parse(manifestBytes);
+            Assert.IsTrue(parsed.Status.IsOK(), parsed.Status.Message);
+            var manifest = parsed.Value!;
+            Assert.AreEqual(entry.Id, manifest.Id);
+            Assert.AreEqual(entry.Version, manifest.Version);
+            // Vor der Aktivierung muessen depends, provides und Inhaltssumme von Katalog und Manifest uebereinstimmen.
+            CollectionAssert.AreEqual(entry.Dependencies, manifest.Dependencies, entry.Id);
+            CollectionAssert.AreEqual(entry.Provides, manifest.Provides, entry.Id);
+            Assert.AreEqual(entry.ContentBytes, manifest.Files.Sum(f => f.Size), entry.Id);
+            CollectionAssert.AreEqual(manifestBytes, Encoding.UTF8.GetBytes(RenderManifest(manifest)), entry.Id + " ist nicht kanonisch.");
+            foreach (var file in manifest.Files)
+            {
+                byte[] content = Fixture(["repo", entry.Id, entry.Version.ToString(), "files", .. file.Path.Split('/')]);
+                Assert.AreEqual(file.Size, content.Length, file.Path);
+                Assert.AreEqual(file.Sha256, PackageTrust.Sha256Hex(content), file.Path);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void ReadsManifestWrittenByTool()
+    {
+        var manifest = PackageManifest2.Parse(Fixture("repo", "hello", "1.2.3-r4", "manifest")).Value!;
+        Assert.AreEqual("MIT OR Apache-2.0", manifest.License);
+        Assert.AreEqual("Hallo Welt", manifest.Name);
+        Assert.AreEqual("usr/bin/hello", manifest.Entry);
+        Assert.AreEqual(256, manifest.MemoryMiB);
+        Assert.AreEqual("0.5.0", manifest.MinimumKernel.ToString());
+        // Die Spec nennt files vor net; das Werkzeug schreibt die feste Reihenfolge.
+        Assert.IsTrue(manifest.AllowsNetwork && manifest.AllowsFiles && !manifest.AllowsStorage);
+        CollectionAssert.AreEqual(new[] { "libcxx>=17.0.6-r1", "musl>=1.2.5-r1" }, manifest.Dependencies.Select(d => d.ToString()).ToArray());
+        CollectionAssert.AreEqual(new[] { "usr/bin/hello:True", "usr/lib/libhello.so.1:True", "usr/share/hello/greeting.txt:False" },
+            manifest.Files.Select(f => f.Path + ":" + f.Executable).ToArray());
+        CollectionAssert.AreEqual(new[] { new PackageLink("usr/bin/hallo", "hello"), new PackageLink("usr/lib/libhello.so", "libhello.so.1") },
+            manifest.Links);
+    }
+
+    [TestMethod]
+    public void RejectsChangedToolOutput()
+    {
+        var trust = FixtureTrust();
+        byte[] catalog = Fixture("repo", "catalog2");
+        catalog[catalog.Length - 6] ^= 1;
+        Assert.IsFalse(trust.Verify(catalog, Fixture("repo", "catalog2.sig")));
+        byte[] manifest = Fixture("repo", "musl", "1.2.5-r1", "manifest");
+        Assert.IsFalse(trust.Verify(manifest, Fixture("repo", "hello", "1.2.3-r4", "manifest.sig")));
+    }
+
+    // Kanonische Schreibweise aus den geparsten Feldern; muss die Bytes des Werkzeugs genau wiederergeben.
+    private static string RenderCatalog(PackageCatalog2 catalog)
+    {
+        var lines = new List<string> { "zehos-catalog 2", "generation=" + catalog.Generation.ToString(CultureInfo.InvariantCulture) };
+        foreach (var entry in catalog.Entries)
+        {
+            lines.Add(string.Create(CultureInfo.InvariantCulture, $"package={entry.Id} {entry.Version} {entry.ManifestSha256} {entry.ContentBytes}"));
+            lines.AddRange(entry.Dependencies.Select(d => "depends=" + d));
+            lines.AddRange(entry.Provides.Select(p => "provides=" + p));
+        }
+        lines.Add("end");
+        return string.Join('\n', lines) + "\n";
+    }
+
+    private static string RenderManifest(PackageManifest2 manifest)
+    {
+        var lines = new List<string>
+        {
+            "zehos-package 2", "id=" + manifest.Id, "version=" + manifest.Version.Version,
+            "release=" + manifest.Version.Release.ToString(CultureInfo.InvariantCulture), "runtime=" + PackageManifest2.Runtime,
+            "license=" + manifest.License,
+        };
+        if (manifest.Name != null) lines.Add("name=" + manifest.Name);
+        if (manifest.Entry != null) lines.Add("entry=" + manifest.Entry);
+        if (manifest.AllowsNetwork) lines.Add("capability=net");
+        if (manifest.AllowsStorage) lines.Add("capability=storage");
+        if (manifest.AllowsFiles) lines.Add("capability=files");
+        if (manifest.MemoryMiB != null) lines.Add("memory-mib=" + manifest.MemoryMiB.Value.ToString(CultureInfo.InvariantCulture));
+        if (manifest.MinimumKernel != null) lines.Add("min-kernel=" + manifest.MinimumKernel);
+        lines.AddRange(manifest.Dependencies.Select(d => "depends=" + d));
+        lines.AddRange(manifest.Provides.Select(p => "provides=" + p));
+        lines.AddRange(manifest.Files.Select(f =>
+            string.Create(CultureInfo.InvariantCulture, $"{(f.Executable ? "exec" : "file")}={f.Sha256} {f.Size} {f.Path}")));
+        lines.AddRange(manifest.Links.Select(l => "link=" + l.Path + " " + l.Target));
+        lines.Add("end");
+        return string.Join('\n', lines) + "\n";
     }
 }

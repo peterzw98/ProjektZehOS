@@ -308,3 +308,38 @@ end
 - **Aufräumen** (`Reconcile`, beim Einbinden, bevor Paketprogramme laufen): halb ersetztes `active2` abschließen, dann unvollständige Stufen und nicht aktive Versionen löschen. Ist `active2` unlesbar, wird nichts gelöscht. Ordner ohne gültige Kennung oder Version bleiben unberührt.
 - **Abbruchsicherheit:** Hosttests brechen nach jedem Dateischritt von Stufen, Aktivieren und Aufräumen ab (Kopie des Zustands im Moment des Abbruchs) und prüfen nach Neustart und Aufräumen: alte oder neue Menge, nie eine Mischung, nur aktive Versionen auf der Platte, Version 1 byteweise gleich, Wiederholung gelingt. Wie bei Version 1 garantiert FAT32 keine atomaren Schritte; das ist kein Stromausfallschutz.
 - **Grenzen:** Fehlt `active2` samt `.old` und `.new`, ist der Bestand leer (so beauftragt), und das Aufräumen löscht alle Versionen: „nie aktiviert“ und „Datei verloren“ (FAT-Schaden, versehentlich gelöscht) sind nicht unterscheidbar; später etwa über einen Marker „v2 eingerichtet“. Ob `depends` und `provides` von Katalog und Manifest übereinstimmen, prüft nicht der Bestand (`CatalogEntry2Key` trägt nur Kennung, Version und Hash), sondern die Auflösung beim Aufrufer. `ReadActive` nimmt keine Schreibsperre und kann neben einem gleichzeitigen Aufräumen derselben Instanz fälschlich „beschädigt“ melden. Schreibende Operationen einer Instanz schließen sich aus. Es gibt noch keine Belegung laufender Versionen; deshalb entfernt nur das Aufräumen beim Einbinden alte Versionen. Die Pfadmenge im Manifestparser hasht ohne Salt (gezielte Kollisionen verlangsamen ihn); weil jede Signatur vorher geprüft wird, erreicht das nur der Herausgeber.
+
+### Werkzeug
+
+`scripts/package2.py` schreibt Version und Katalog des Formats 2 in einen lokalen Repository-Ordner; Schlüssel und Signatur kommen unverändert aus `scripts/build-package.py` (OpenSSL, Ed25519), dessen Befehle für Version 1 gleich bleiben. Nichts davon geht in den Branch `packages`, solange Format 2 nicht angeschlossen ist.
+
+```sh
+python3 scripts/package2.py package --key <privater-Schlüssel.pem> --repo <ordner> --spec <paket>.toml <datei>=<pfad> ...
+python3 scripts/package2.py catalog --key <privater-Schlüssel.pem> --repo <ordner> --generation <n>
+```
+
+Die Spec (`tomllib`) enthält die Manifestfelder ohne `exec`/`file`-Zeilen; Listen dürfen unsortiert sein, das Werkzeug schreibt die kanonische Reihenfolge. `exec` nennt nur die Pfade der ausführbaren Dateien, Hash und Größe rechnet das Werkzeug aus den Quellen `<datei>` aus:
+
+```toml
+id = "hello"
+version = "1.2.3"
+release = 4
+runtime = "linux-x64-v1"
+license = "MIT OR Apache-2.0"
+name = "Hallo Welt"
+entry = "usr/bin/hello"
+capability = ["net"]
+memory-mib = 256
+min-kernel = "0.5.0"
+depends = ["musl>=1.2.5-r1"]
+provides = ["so:libhello.so.1"]
+exec = ["usr/bin/hello"]
+
+[link]
+"usr/lib/libhello.so" = "libhello.so.1"
+```
+
+- **package** prüft alle Regeln des Manifests wie `PackageManifest2.Parse` (Pfade, Groß-/Kleinschreibung, Ordnerkonflikte, Linkziele und -ketten, Grenzen) und schreibt nur, was der Parser kanonisch annimmt. Quellen müssen reguläre Dateien sein (kein symbolischer Link); ein symbolischer Link im Repository, ein Schlüssel im Repository oder als Paketinhalt wird abgelehnt. Kopiert und gehasht werden dieselben Bytes in einem Durchgang. Geschrieben wird in einen Ordner `.neu-…` neben der Version, signiert, die Signatur mit dem abgeleiteten öffentlichen Schlüssel gegen die geschriebenen Bytes geprüft und erst dann zu `<id>/<version>-r<release>` umbenannt; jeder Fehler und Strg+C entfernen den Ordner. Eine vorhandene Version wird nie überschrieben. Bei hartem Abbruch (SIGKILL) bleibt höchstens ein `.neu-…`-Ordner, den Katalog und Bestand nie als Version lesen; er ist von Hand zu löschen.
+- **catalog** nimmt je Paket die höchste Version (Version, dann Revision), prüft deren Signatur vor dem Parsen, Kennung und Version gegen den Ordnernamen und jede Datei unter `files/` mit Größe und Hash (keine fehlende, zusätzliche oder verlinkte Datei). Jede `depends`-Zeile muss im Katalog mit mindestens der verlangten Version stehen. Die Generation muss größer als die des vorhandenen `catalog2` sein. `catalog2` und `catalog2.sig` werden nach geprüfter Signatur nacheinander ersetzt; zwischen den beiden Umbenennungen passt die Signatur kurz nicht zum Katalog.
+- Meldungen geben Eingabetext nur gefiltert wieder (druckbares ASCII, höchstens 64 Zeichen); Schlüsselinhalt und OpenSSL-Befehlszeilen erscheinen nie.
+- Testdaten: `ProjektZeh.Tests/TestData/Package2` ist ein so erzeugtes Repository mit drei Paketen und Testschlüssel (nur der öffentliche Teil ist eingecheckt). `scripts/tests/test_package2.py` erzeugt es mit einem neuen Schlüssel erneut und vergleicht alles außer den Signaturen byteweise; `PackageCatalog2Tests` liest es mit den C#-Parsern.

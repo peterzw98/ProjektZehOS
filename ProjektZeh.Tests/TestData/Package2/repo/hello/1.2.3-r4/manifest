@@ -1,0 +1,21 @@
+zehos-package 2
+id=hello
+version=1.2.3
+release=4
+runtime=linux-x64-v1
+license=MIT OR Apache-2.0
+name=Hallo Welt
+entry=usr/bin/hello
+capability=net
+capability=files
+memory-mib=256
+min-kernel=0.5.0
+depends=libcxx>=17.0.6-r1
+depends=musl>=1.2.5-r1
+provides=so:libhello.so.1
+exec=ff4b01cf5fd439df1883ca9d4c7dac87606bbd836e9e278851bdd21ace79d93f 19 usr/bin/hello
+exec=53fcfa8b31075479aabb857c2b1955f129ddb06bec721ad9abebf3db80dd48da 22 usr/lib/libhello.so.1
+file=5507a82178d8c9b20f2e3e456011817e095c422bea06379a90609a8137dd5e32 13 usr/share/hello/greeting.txt
+link=usr/bin/hallo hello
+link=usr/lib/libhello.so libhello.so.1
+end

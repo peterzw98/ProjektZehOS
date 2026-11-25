@@ -1,0 +1,11 @@
+zehos-package 2
+id=musl
+version=1.2.5
+release=1
+runtime=linux-x64-v1
+license=MIT
+provides=so:libc.so
+exec=918616d589ec895e50769e632dacd7b877fa04d932ce69594b0f2394f2d5fb52 24 lib/ld-musl-x86_64.so.1
+file=0b029752d3ba16b631b6c33e7fb5f1e89e59f4c22f527cb364db6f9db65752c6 24 usr/share/licenses/musl/COPYRIGHT
+link=usr/lib/libc.so ../../lib/ld-musl-x86_64.so.1
+end

@@ -1,0 +1,11 @@
+# Testdaten fuer PackageCatalog2Tests und scripts/tests/test_package2.py; Inhalte sind Platzhalter, kein echtes musl.
+id = "musl"
+version = "1.2.5"
+release = 1
+runtime = "linux-x64-v1"
+license = "MIT"
+provides = ["so:libc.so"]
+exec = ["lib/ld-musl-x86_64.so.1"]
+
+[link]
+"usr/lib/libc.so" = "../../lib/ld-musl-x86_64.so.1"

@@ -19,6 +19,8 @@
   <ItemGroup>
     <!-- Standardschrift fuer die Referenzbilder (Herkunft: TestData/DefaultFont.ORIGIN.md); die Hosttests laden kein Cosmos-Paket. -->
     <None Include="TestData\DefaultFont.psf" Link="TestData\DefaultFont.psf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Mit scripts/package2.py erzeugtes Repository des Formats 2 (Testschluessel, nur der oeffentliche Teil ist eingecheckt). -->
+    <None Update="TestData\Package2\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <!-- Dieselben Shellquellen ohne den Bare-Metal-Kernel auf dem Host testen. -->

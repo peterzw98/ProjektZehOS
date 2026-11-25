@@ -1,0 +1,13 @@
+zehos-package 2
+id=libcxx
+version=17.0.6
+release=2
+runtime=linux-x64-v1
+license=Apache-2.0 WITH LLVM-exception
+depends=musl>=1.2.5-r1
+provides=so:libc++.so.1
+provides=so:libc++abi.so.1
+exec=8b4ca46c605cdb22f9e00f1d9f55863c5675903ad5c4b6da0fcc911286b4887f 20 usr/lib/libc++.so.1
+exec=bd759f67b1468419b2b4d54d265eca3fc89f761f257496e9d26f6d04d5200094 23 usr/lib/libc++abi.so.1
+link=usr/lib/libc++.so libc++.so.1
+end
