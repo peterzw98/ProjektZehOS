@@ -1,0 +1,12 @@
+getrandom 32=32
+getrandom 32 again=32
+differ=1
+not all zero=1
+getrandom 0=0
+NONBLOCK=8
+GRND_RANDOM=1
+bad flags=-1
+errno=22
+bad buffer=-1
+errno=14
+getrandom 1024=1024

@@ -1,0 +1,19 @@
+write(1): ret=-1 errno=14
+write(kernel): ret=-1 errno=14
+write(noncanonical): ret=-1 errno=14
+write(NULL): ret=-1 errno=14
+write len 0: ret=0 errno=0
+read(/dev/zero, bad): ret=-1 errno=14
+openat(bad path): ret=-1 errno=14
+stat(bad path): ret=-1 errno=14
+stat(bad buf): ret=-1 errno=14
+getcwd(bad buf): ret=-1 errno=14
+clock_gettime(bad): ret=-1 errno=14
+getrandom(bad): ret=-1 errno=14
+uname(bad): ret=-1 errno=14
+readlink(bad): ret=-1 errno=14
+writev(bad iov base): ret=-1 errno=14
+writev(bad iov array): ret=-1 errno=14
+mprotect(unmapped): ret=-1 errno=12
+ok
+sanity write: ret=3 errno=0

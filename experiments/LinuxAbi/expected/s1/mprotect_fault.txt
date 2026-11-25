@@ -1,0 +1,3 @@
+mprotect RO=0
+read RO=97
+vor dem Schreiben

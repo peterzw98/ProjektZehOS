@@ -1,0 +1,11 @@
+monotonic nondecreasing=1
+nsec in range=1
+realtime after 2020=1
+nanosleep 20 ms=0
+slept >= 20 ms=1
+slept < 2 s=1
+nanosleep bad nsec=-1
+errno=22
+bad clock id=-1
+errno=22
+usleep 0=0
