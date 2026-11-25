@@ -27,6 +27,11 @@
     <CosmosTestModifier Include="smp4" />
   </ItemGroup>
 
+  <!-- ZehOS patch user-stub: the NMI cells set GS and control words no managed API reaches. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' OR $(RuntimeIdentifier.EndsWith('-x64'))">
+    <AsmFiles Include="$(MSBuildThisFileDirectory)Asm/UserGs.s" />
+  </ItemGroup>
+
   <!-- Core kernel packages (using project references for development) -->
   <ItemGroup>
     <ProjectReference Include="../../../src/Cosmos.Kernel/Cosmos.Kernel.csproj" />

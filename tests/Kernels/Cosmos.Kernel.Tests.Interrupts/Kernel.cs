@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Cosmos.Kernel.Core;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
@@ -36,8 +37,8 @@ namespace Cosmos.Kernel.Tests.Interrupts;
 // registers afterwards.
 public class Kernel : Sys.Kernel
 {
-    /// <summary>Total tests per cell: 10 cross-arch + 8 arch-specific.</summary>
-    private const int ExpectedTestCount = 18;
+    /// <summary>Total tests per cell: 10 cross-arch + 10 arch-specific.</summary>
+    private const int ExpectedTestCount = 20;
 
     /// <summary>CPUs the smp4 cells' machine has: what the bootloader lists and the kernel starts there.</summary>
     private const uint Smp4CpuCount = 4;
@@ -128,7 +129,7 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Interrupts] BeforeRun() reached!\n");
 
-        // 10 cross-arch + 8 arch-specific = 18 tests per cell.
+        // 10 cross-arch + 10 arch-specific = 20 tests per cell.
         TR.Start("Interrupt System Tests", expectedTests: ExpectedTestCount);
 
         // The smp4 cells boot four CPUs; the application processor cell
@@ -172,6 +173,9 @@ public class Kernel : Sys.Kernel
         TR.Run("Msi_AddressTargetsRunningLapic", TestMsiAddressTargetsRunningLapic);
         TR.Run("TimerVector_OutsideDynamicWindow", TestTimerVectorOutsideDynamicWindow);
         TR.Run("PerCpuBlock_HardwareId_IsRunningLapicId", TestPerCpuBlockHardwareIdIsLapicId);
+        // ZehOS patch user-stub, see PATCHES.md
+        TR.Run("Nmi_KernelGsBase_LeftAlone", TestNmiKernelGsBase);
+        TR.Run("Nmi_ForeignGsBase_SwappedAndRestored", TestNmiForeignGsBase);
         Sys.Threading.ThreadAffinity.Current = mainSet;
         TR.RunIf(smp, "PerCpuBlock_ApplicationProcessors_DistinctLapicIds", TestPerCpuBlockApplicationProcessorsDistinctLapicIds, OneCpuCell);
 #else
@@ -204,6 +208,8 @@ public class Kernel : Sys.Kernel
         TR.Skip("IrqExit_ReschedulesSignaledWaiter", "self-IPI harness is x64-only");
         TR.Skip("Msi_AddressTargetsRunningLapic", "LAPIC MSI address contract is x64-only");
         TR.Skip("TimerVector_OutsideDynamicWindow", "LAPIC timer vector is x64-only");
+        TR.Skip("Nmi_KernelGsBase_LeftAlone", "GS is x64-only");
+        TR.Skip("Nmi_ForeignGsBase_SwappedAndRestored", "GS is x64-only");
 
         // Main runs on a thread of its own, on a compute CPU when the machine has several
         // (CosmosOS/Cosmos#3344, SMP phase 5b). The cell that compares block 0 with the
@@ -952,6 +958,96 @@ public class Kernel : Sys.Kernel
     {
         Assert.True(PerCpuBlock.Current.HardwareId == LocalApic.GetId(), "the running CPU's block records its Local APIC id");
         Assert.True(PerCpuBlock.At(0).HardwareId == LocalApic.GetId(), "block 0 is the boot CPU's");
+    }
+
+    // ZehOS patch user-stub, see PATCHES.md
+    private const byte NmiVector = 2;
+    private const ulong ForeignGsBase = 0x7000;
+    private const uint ForeignMxcsr = 0x1F00;
+    private const uint ForeignFcw = 0x037E;
+    private const uint DefaultMxcsr = 0x1F80;
+    private const uint DefaultFcw = 0x037F;
+    private const ulong DirectionFlag = 0x400;
+
+    /// <summary>The GS base, MXCSR, x87 control word and RFLAGS the native helpers of Asm/UserGs.s store.</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    private struct CpuState
+    {
+        [FieldOffset(0)] public ulong GsBase;
+        [FieldOffset(8)] public uint Mxcsr;
+        [FieldOffset(12)] public uint Fcw;
+        [FieldOffset(16)] public ulong Flags;
+    }
+
+    [DllImport("*", EntryPoint = "cosmos_test_user_gs_int2")]
+    [SuppressGCTransition]
+    private static extern unsafe void RaiseNmiWithForeignGs(CpuState* after);
+
+    [DllImport("*", EntryPoint = "cosmos_test_cpu_state")]
+    [SuppressGCTransition]
+    private static extern unsafe void ReadCpuState(CpuState* state);
+
+    [DllImport("*", EntryPoint = "cosmos_test_int2")]
+    [SuppressGCTransition]
+    private static extern void RaiseNmi();
+
+    private static CpuState s_nmiState;
+    private static int s_nmiCount;
+
+    private static unsafe void RecordNmi(ref IRQContext context)
+    {
+        fixed (CpuState* state = &s_nmiState)
+        {
+            ReadCpuState(state);
+        }
+
+        s_nmiCount++;
+    }
+
+    // Vector 2 with the kernel's GS: the stub must not touch it, and a second vector 2 must not
+    // find a trace of the first.
+    private static unsafe void TestNmiKernelGsBase()
+    {
+        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![NmiVector];
+        InterruptManager.SetHandler(NmiVector, RecordNmi);
+        CpuState before;
+        CpuState after;
+        s_nmiCount = 0;
+        ReadCpuState(&before);
+        RaiseNmi();
+        RaiseNmi();
+        ReadCpuState(&after);
+        InterruptManager.s_irqHandlers![NmiVector] = previous;
+
+        Assert.True(s_nmiCount == 2, "vector 2 reached the handler twice");
+        Assert.True(s_nmiState.GsBase == before.GsBase, "the handler ran with the kernel's GS base");
+        Assert.True(after.GsBase == before.GsBase, "the kernel's GS base is back after the stub");
+        Assert.True(after.Mxcsr == before.Mxcsr && after.Fcw == before.Fcw, "the control words are back after the stub");
+    }
+
+    // Vector 2 in ring 0 while GS, the control words and DF are a program's: CS alone would
+    // say kernel and the stub would use the program's GS base as the per-CPU block.
+    private static unsafe void TestNmiForeignGsBase()
+    {
+        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![NmiVector];
+        InterruptManager.SetHandler(NmiVector, RecordNmi);
+        CpuState before;
+        CpuState inside;
+        CpuState end;
+        s_nmiCount = 0;
+        ReadCpuState(&before);
+        RaiseNmiWithForeignGs(&inside);
+        ReadCpuState(&end);
+        InterruptManager.s_irqHandlers![NmiVector] = previous;
+
+        Assert.True(s_nmiCount == 1, "vector 2 reached the handler");
+        Assert.True(s_nmiState.GsBase == before.GsBase, "the handler ran with the kernel's GS base");
+        Assert.True(s_nmiState.Mxcsr == DefaultMxcsr && s_nmiState.Fcw == DefaultFcw, "the handler ran with the default control words");
+        Assert.True((s_nmiState.Flags & DirectionFlag) == 0, "the handler ran with DF clear");
+        Assert.True(inside.GsBase == ForeignGsBase, "the program's GS base is back after the stub");
+        Assert.True(inside.Mxcsr == ForeignMxcsr && inside.Fcw == ForeignFcw, "the program's control words are back after the stub");
+        Assert.True(inside.Flags == DirectionFlag, "the program's DF is back after the stub");
+        Assert.True(end.GsBase == before.GsBase, "the kernel's GS base is back at the end");
     }
 
     // Each application processor's bring-up read its own Local APIC id into its block (SMP

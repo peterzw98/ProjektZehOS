@@ -29,7 +29,7 @@ public class Kernel : Sys.Kernel
     private const int ExpectedTestCount = 108;
 
     /// <summary>Size of one per-CPU block, as <c>PerCpuBlock</c> lays it out and the native stubs assume.</summary>
-    private const int PerCpuBlockNativeSize = 128;
+    private const int PerCpuBlockNativeSize = 192;
     /// <summary>Slot offsets the native stubs use (<c>CpuOps.s</c>, <c>Interrupts.s</c>, <c>ExceptionHandling.s</c>); the managed layout must agree with them.</summary>
     private const int PerCpuSelfOffset = 0x00;
     private const int PerCpuCpuIndexOffset = 0x08;

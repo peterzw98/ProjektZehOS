@@ -637,9 +637,44 @@ _native_x64_get_irq_stub:
 .equ FPU_AREA_SIZE, 512
 .equ CONTEXT_TEMP_RCX, FPU_AREA_SIZE + 120 + 24
 
-.macro IRQ_STUB n, has_err=0
+// ZehOS patch user-stub, see PATCHES.md
+// GS on entry: an interrupt from ring 3 finds the program's GS base, the kernel's waits in
+// IA32_KERNEL_GS_BASE. CS.RPL tells the two apart, and the same test on the frame that is
+// resumed decides the exit, so a thread switch in between needs no further state.
+// Vectors 2, 8 and 18 (paranoid=1) can hit ring 0 code between an entry or exit and its
+// swapgs: CS says kernel while GS is the program's. They read IA32_GS_BASE instead: the
+// per-CPU blocks are in the kernel half, so bit 63 is set exactly for the kernel's. This
+// relies on CR4.FSGSBASE staying clear: ring 3 can then not load a base with bit 63 set.
+.equ IA32_GS_BASE, 0xC0000101
+.equ CONTEXT_CS, FPU_AREA_SIZE + 152 + 8
+// TempRcx values: 0, 1 (new thread), 2 (paranoid entry did swapgs, undo it on the exit).
+// The switch path overwrites the slot of the context it resumes, so a 2 never outlives its stub.
+.equ TEMP_SWAPGS_ON_EXIT, 2
+
+.section .rodata
+.balign 4
+.Ldefault_mxcsr:
+    .long 0x1F80
+.text
+
+.macro IRQ_STUB n, has_err=0, paranoid=0
 irq\n\()_stub:
+    .if \paranoid
     .if \has_err
+    // GS is not known yet. The only such vector is 8, whose error code is always 0.
+    add rsp, 8
+    .endif
+    .else
+    .if \has_err
+    test byte ptr [rsp + 16], 3  // CS, above the error code and RIP
+    .else
+    test byte ptr [rsp + 8], 3   // CS, above RIP
+    .endif
+    jz .Lentry_kernel\n
+    swapgs
+.Lentry_kernel\n:
+    .endif
+    .if \has_err && !\paranoid
     // The CPU pushed an error code for this vector (8, 10-14, 17, 21, 29, 30).
     // Stash it and remove it from the stack so the frame below is identical
     // to the no-error-code vectors — both the ThreadContext layout offsets
@@ -745,12 +780,40 @@ irq\n\()_stub:
     // [rsp+120..151] = Interrupt, CpuFlags, Cr2, TempRcx (32 bytes)
     // [rsp+152..] = RIP, CS, RFLAGS (CPU frame)
 
+    // ZehOS patch user-stub, see PATCHES.md
+    // The CPU leaves DF as it was, the C ABI wants it clear.
+    cld
+    .if \paranoid
+    mov ecx, IA32_GS_BASE
+    rdmsr                        // EDX = bits 63:32
+    test edx, edx
+    js .Lparanoid_kernel_gs\n
+    swapgs
+    mov qword ptr [rsp + 144], TEMP_SWAPGS_ON_EXIT
+.Lparanoid_kernel_gs\n:
+    .if \has_err
+    mov qword ptr gs:[PERCPU_LAST_ERROR_CODE], 0
+    .endif
+    .endif
+
     // ZehOS patch fxsave, see PATCHES.md
     // The whole x87/SSE state (FCW, MXCSR, ST0-7, XMM0-15). fxsave64 needs a
     // 16-byte-aligned area: the CPU aligns RSP before it pushes its 40-byte
     // frame, and the 152 bytes above leave RSP aligned again.
     sub rsp, FPU_AREA_SIZE
     fxsave64 [rsp]
+
+    // ZehOS patch user-stub, see PATCHES.md
+    // Managed code must not run with a program's control words: an unmasked exception would
+    // be raised in the kernel. fninit, not fldcw, which would itself raise a pending one.
+    // The saved state comes back with fxrstor64. Kernel threads keep theirs, as before.
+    .if !\paranoid
+    test byte ptr [rsp + CONTEXT_CS], 3
+    jz .Lfpu_kept\n
+    .endif
+    fninit
+    ldmxcsr dword ptr [rip + .Ldefault_mxcsr]
+.Lfpu_kept\n:
 
     // === CALL HANDLER ===
     lea rdi, [rsp + FPU_AREA_SIZE]
@@ -827,9 +890,21 @@ irq\n\()_stub:
     jnz .Lnew_thread\n
 
     // RESUMED thread or normal return - use iretq
+    // ZehOS patch user-stub, see PATCHES.md
+    // Interrupts are masked from here to iretq; nothing may touch gs: after the swapgs.
+    test byte ptr [rsp + 8], 3
+    jz .Lexit_kernel\n
+.Lexit_swapgs\n:
+    swapgs
+.Lexit_kernel\n:
     iretq
 
 .Lnew_thread\n:
+    .if \paranoid
+    // ZehOS patch user-stub, see PATCHES.md
+    cmp qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], TEMP_SWAPGS_ON_EXIT
+    je .Lexit_swapgs\n
+    .endif
     // NEW thread - need to set up RSP from context and jump
     // Stack: RIP, CS, RFLAGS, RSP, SS
     // Interrupts stay masked until RSP is the thread's own stack. The
@@ -848,13 +923,13 @@ irq\n\()_stub:
 // Generate IRQ stubs
 IRQ_STUB 0
 IRQ_STUB 1
-IRQ_STUB 2
+IRQ_STUB 2, 0, 1
 IRQ_STUB 3
 IRQ_STUB 4
 IRQ_STUB 5
 IRQ_STUB 6
 IRQ_STUB 7
-IRQ_STUB 8, 1
+IRQ_STUB 8, 1, 1
 IRQ_STUB 9
 IRQ_STUB 10, 1
 IRQ_STUB 11, 1
@@ -864,7 +939,7 @@ IRQ_STUB 14, 1
 IRQ_STUB 15
 IRQ_STUB 16
 IRQ_STUB 17, 1
-IRQ_STUB 18
+IRQ_STUB 18, 0, 1
 IRQ_STUB 19
 IRQ_STUB 20
 IRQ_STUB 21, 1

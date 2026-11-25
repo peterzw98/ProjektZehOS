@@ -24,7 +24,7 @@ namespace Cosmos.Kernel.Core.CPU;
 internal struct PerCpuBlock
 {
     /// <summary>Size of one block in bytes; the table holds <see cref="MaxCpus"/> of them.</summary>
-    public const int Size = 128;
+    public const int Size = 192;
 
     /// <summary>Blocks in the table: the MADT parser's bound, and more than Limine's list ever reports.</summary>
     public const int MaxCpus = 256;
@@ -117,6 +117,18 @@ internal struct PerCpuBlock
     public ulong CpuExceptionDepth;
 
     private ulong _reserved3;
+
+    // ZehOS patch user-stub, see PATCHES.md
+    // 0x80..0xBF: a cache line for the ring 3 entry (ZehOS N1-A4), unused until then. The
+    // offsets above are unchanged.
+    private ulong _userEntry0;
+    private ulong _userEntry1;
+    private ulong _userEntry2;
+    private ulong _userEntry3;
+    private ulong _userEntry4;
+    private ulong _userEntry5;
+    private ulong _userEntry6;
+    private ulong _userEntry7;
 
     /// <summary>
     /// The table: a static, so it is zeroed data at a fixed address outside the garbage
