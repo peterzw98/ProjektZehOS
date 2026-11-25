@@ -38,7 +38,7 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE memory kind=ud released=1 free_before_kib=899000 free_kib=898500',
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
-    'ISOLATION_PROBE frei_nach=384600',
+    'ISOLATION_PROBE frei_nach=400800',
     'ISOLATION_PROBE DONE',
 ])
 
@@ -121,13 +121,13 @@ class EvaluateTests(unittest.TestCase):
         log = PASS_LOG.replace('arena_after=pf used=0', 'arena_after=pf used=16777263')
         self.assertEqual(['Arena nach pf nicht freigegeben'], isolation.evaluate(log, negative=False))
 
-    def test_free_memory_may_drop_by_stacks_but_not_by_arena(self):
-        # Die vier Stacks (32 MiB) und 4 MiB Reserve sind erlaubt, 37000 KiB nicht.
-        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=364000')
+    def test_free_memory_may_drop_by_reserve_but_not_by_stack(self):
+        # Genau 4 MiB Reserve sind erlaubt, 5000 KiB nicht (ein Worker-Stack waere 8192 KiB).
+        log = PASS_LOG.replace('frei_nach=400800', 'frei_nach=396000')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
-        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=364136')
+        at_limit = PASS_LOG.replace('frei_nach=400800', 'frei_nach=396904')
         self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
-        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=384600\n', '')
+        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=400800\n', '')
         self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))
 
     def test_held_block_must_lower_free_memory(self):

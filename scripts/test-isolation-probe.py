@@ -23,9 +23,9 @@ spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # I2-C: erlaubter Rueckgang des freien Speichers zwischen frei_vor (nach zwei Desktopbildern und dem Lauf base) und
-# frei_nach. Bis E6-G (#523) bleiben die vier aufgegebenen 8-MiB-Worker-Stacks belegt (32 MiB), dazu 4 MiB Reserve.
-# Blieben die 4 x 16 MiB der Arena liegen, waeren es 96 MiB (nach E6-G 64 MiB); beides liegt ueber der Grenze.
-ARENA_MAX_DROP_KIB = 36 * 1024
+# frei_nach. Seit E6-G (#523) gibt jede Isolation auch den 8-MiB-Worker-Stack frei; ein Rest von einem Stack oder einer
+# 16-MiB-Arena liegt deshalb ueber der Grenze. 4 MiB Reserve (gemessen 0 bis 188 KiB, #681).
+ARENA_MAX_DROP_KIB = 4 * 1024
 # Der gehaltene Block muss frei sichtbar senken (16 MiB; Reserve fuer den Ersatzstack im zweiten Lauf nach oben).
 ARENA_MIN_HELD_KIB = 12 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
