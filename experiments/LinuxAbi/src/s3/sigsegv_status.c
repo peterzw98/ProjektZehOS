@@ -145,6 +145,10 @@ int main(void)
     }
     char b;
     T("read unterbrochen (kein SA_RESTART)", read(p[0], &b, 1));
+    sigset_t u2;
+    sigemptyset(&u2);
+    sigaddset(&u2, SIGUSR2);
+    sigprocmask(SIG_BLOCK, &u2, NULL);   /* ein letztes Signal des Kindes darf waitpid nicht mit EINTR beenden */
     *done = 1;
     int ws;
     NEED(waitpid(killer, &ws, 0) == killer);
