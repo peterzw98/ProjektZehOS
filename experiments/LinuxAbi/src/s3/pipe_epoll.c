@@ -172,9 +172,9 @@ int main(void)
     NEED(tf >= 0);
     T("timerfd noch nicht abgelaufen", read(tf, &v, 8));
     struct itimerspec its = { { 0, 0 }, { 0, 20 * 1000000L } };
-    NEED(timerfd_settime(tf, 0, &its, NULL) == 0);
     struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
+    clock_gettime(CLOCK_MONOTONIC, &t0);   /* vor dem Start des Zeitgebers: die Untergrenze gilt dann auch unter Last */
+    NEED(timerfd_settime(tf, 0, &its, NULL) == 0);
     ev.events = EPOLLIN; ev.data.u64 = 0x6666;
     NEED(epoll_ctl(ep, EPOLL_CTL_ADD, tf, &ev) == 0);
     n = wait_ev(ep, out, 4, BLOCK_MS);

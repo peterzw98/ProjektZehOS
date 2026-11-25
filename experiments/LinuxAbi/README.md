@@ -73,6 +73,13 @@ Stand der Erwartungen: wie bei S1 mit `--update` auf Linux `6.12.90+deb13.1-amd6
 unter voller CPU-Last) ohne Abweichung; andere Kernelversionen sind nicht gegengeprüft. `memfd_seal`, `exec` und `tcp_echo` hängen an Linux-Verhalten (EBUSY bei offener
 Schreibabbildung, `ENOEXEC` für leere ausführbare Dateien, `EADDRNOTAVAIL` für 192.0.2.1 ohne `ip_nonlocal_bind`), das die Gastimplementierung bewusst nachbilden muss.
 
+Annahmen und bekannte Schwächen von S3:
+- `pipe_epoll`: `EPOLLET` auf einer Pipe verhält sich in Linux 5.5 bis 5.13 anders (zweite Meldung ohne neue Daten); die Erwartung gilt für Kernel ab 5.14.
+- `exec`: setzt voraus, dass das Arbeitsverzeichnis nicht `noexec` eingehängt ist und kein `binfmt_misc` eine leere ausführbare Datei abfängt (sonst weicht `ENOEXEC` ab).
+- `tcp_echo`: braucht eine aktive Loopback-Schnittstelle. `connect ohne Server` nimmt den Port eines eben geschlossenen Sockets; eine Wiederverwendung durch einen fremden Prozess in dieser Zeit ist möglich, aber sehr unwahrscheinlich. `SO_ERROR=111` setzt voraus, dass das nichtblockierende `connect` zunächst `EINPROGRESS` meldet und den Fehler später liefert.
+- `memfd_seal`: scheitert bei `vm.memfd_noexec=2` (dann ist `MFD_ALLOW_SEALING` ohne `MFD_NOEXEC_SEAL` verboten).
+- Endet ein Programm durch den Wecker (`signal 14`), können Kinder verwaist zurückbleiben; `run-linux.py` beendet nach einer Zeitüberschreitung die Prozessgruppe, nach regulärem Ende aber nicht (nur erwähnt, nicht behoben).
+
 ### Aufrufe in S3
 
 `strace -f -c` zeigt für die 9 Programme zusammen 69 verschiedene Aufrufe. Alle liegen in S1 bis S3 des Entwurfs bis auf 26, die als eigener Commit in die Zeile S3 nachgetragen sind

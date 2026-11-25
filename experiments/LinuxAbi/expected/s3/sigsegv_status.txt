@@ -23,6 +23,7 @@ kill ungültiges Signal: ret=-1 errno=22
 sigaction SIGKILL: ret=-1 errno=22
 sigaction ungültiges Signal: ret=-1 errno=22
 read unterbrochen (kein SA_RESTART): ret=-1 errno=4
+Sender-Kind regulär beendet=1
 Kind: durch Signal beendet=1
   Signal=11
 SIGKILL trotz ignoriertem SIGTERM=1

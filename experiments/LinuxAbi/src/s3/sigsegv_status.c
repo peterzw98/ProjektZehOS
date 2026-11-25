@@ -36,7 +36,7 @@ static void on_usr1(int sig)
     usr1_blocked_in_handler = sigismember(&cur, SIGUSR1) == 1;   /* der behandelte Signal ist während des Handlers gesperrt */
 }
 
-static void on_alarm(int sig) { (void)sig; }
+static void on_usr2(int sig) { (void)sig; }
 
 static void fault(volatile char *p, int write)
 {
@@ -122,24 +122,33 @@ int main(void)
     T("sigaction SIGKILL", sigaction(SIGKILL, &sa, NULL));
     T("sigaction ungültiges Signal", sigaction(99, &sa, NULL));
 
-    /* Unterbrochener Aufruf: ohne SA_RESTART gibt read EINTR zurück (Signal kommt vom Kind). */
+    /* Unterbrochener Aufruf: ohne SA_RESTART gibt read EINTR zurück. Das Kind sendet SIGUSR2 wiederholt,
+     * bis der Elternteil fertig ist; so ist egal, ob der erste Versand vor dem Blockieren in read kam.
+     * SIGALRM (Schutzwecker aus INIT) bleibt unberührt. */
     int p[2];
     NEED(pipe(p) == 0);
     memset(&sa, 0, sizeof sa);
-    sa.sa_handler = on_alarm;
+    sa.sa_handler = on_usr2;
     sigemptyset(&sa.sa_mask);
-    NEED(sigaction(SIGALRM, &sa, NULL) == 0);
+    NEED(sigaction(SIGUSR2, &sa, NULL) == 0);
+    volatile int *done = mmap(NULL, ps, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    NEED(done != MAP_FAILED);
     pid_t killer = fork();
     NEED(killer >= 0);
     if (killer == 0) {
-        struct timespec d = { 0, 50 * 1000000L };
-        nanosleep(&d, NULL);
-        _exit(kill(getppid(), SIGALRM) == 0 ? 0 : 3);
+        struct timespec d = { 0, 10 * 1000000L };
+        for (int i = 0; i < 2000 && !*done; i++) {   /* höchstens ~20 s */
+            CNEED(kill(getppid(), SIGUSR2) == 0);
+            nanosleep(&d, NULL);
+        }
+        _exit(*done ? 0 : 4);
     }
     char b;
     T("read unterbrochen (kein SA_RESTART)", read(p[0], &b, 1));
+    *done = 1;
     int ws;
     NEED(waitpid(killer, &ws, 0) == killer);
+    SHOW("Sender-Kind regulär beendet", WIFEXITED(ws) && WEXITSTATUS(ws) == 0);
 
     /* Kind stirbt an SIGSEGV (Standardbehandlung). */
     pid_t c = fork();
