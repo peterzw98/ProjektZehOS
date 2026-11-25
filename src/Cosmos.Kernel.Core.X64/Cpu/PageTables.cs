@@ -150,6 +150,26 @@ internal sealed unsafe class PageTables : UserPageTableArch
         PageAllocator.Free(pml4);
     }
 
+    // ZehOS patch user-cr3, see PATCHES.md
+    public override bool TryGetAccess(ulong root, ulong user, out bool writable, out bool executable)
+    {
+        ulong* entry = FindEntry(root, user, create: false);
+        ulong value = entry == null ? 0 : *entry;
+        writable = (value & FlagWritable) != 0;
+        executable = (value & FlagNoExecute) == 0;
+        return (value & FlagPresent) != 0;
+    }
+
+    public override ulong ReadRoot() => Bridge.X64CpuNative.ReadCr3();
+
+    /// <summary>
+    /// A CR3 write drops every translation but the global ones; the kernel
+    /// half is the same in every root, so its global entries stay right.
+    /// </summary>
+    public override void LoadRoot(ulong root) => Bridge.X64CpuNative.WriteCr3(root);
+
+    public override void InvalidatePage(ulong user) => Bridge.X64CpuNative.InvalidatePage(user);
+
     /// <summary>
     /// Frees a table and the tables below it. Recurses at most twice: the
     /// last level's entries are pages, which belong to the caller.

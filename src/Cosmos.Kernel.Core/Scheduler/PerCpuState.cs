@@ -76,6 +76,15 @@ public sealed class PerCpuState : SchedulerExtensible
     // interrupt context.
     internal SchedulerThread? _pendingMigration;
 
+    // ===== Address space =====
+
+    // ZehOS patch user-cr3, see PATCHES.md
+    // The user page table this CPU's CR3 holds, null for its kernel root, and
+    // that root, read from CR3 before the first user table replaced it.
+    // Written and read on this CPU alone, with interrupts masked.
+    internal Memory.UserPageTable? _loadedTable;
+    internal ulong _kernelRoot;
+
     // ===== Synchronization =====
 
     // The queue lock: held around every policy hook that touches this CPU's

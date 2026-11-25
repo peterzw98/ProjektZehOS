@@ -8,6 +8,7 @@
 .global _native_cpu_restore_irq
 .global _native_cpu_read_irq_flags
 .global _native_cpu_read_cr3
+.global _native_cpu_write_cr3
 .global _native_cpu_invlpg
 .global _native_cpu_rdmsr
 .global _native_cpu_set_block
@@ -74,6 +75,12 @@ _native_cpu_rdtsc:
 // Returns: CR3 in RAX.
 _native_cpu_read_cr3:
     mov     rax, cr3
+    ret
+
+// ZehOS patch user-cr3, see PATCHES.md
+// Write CR3 from RDI: switches the page-table root, drops non-global translations.
+_native_cpu_write_cr3:
+    mov     cr3, rdi
     ret
 
 // Invalidate the TLB entry covering the virtual address in RDI.

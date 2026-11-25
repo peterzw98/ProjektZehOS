@@ -12,6 +12,11 @@ internal static partial class X64CpuNative
     [SuppressGCTransition]
     public static partial ulong ReadCr3();
 
+    // ZehOS patch user-cr3, see PATCHES.md
+    [LibraryImport("*", EntryPoint = "_native_cpu_write_cr3")]
+    [SuppressGCTransition]
+    public static partial void WriteCr3(ulong value);
+
     [LibraryImport("*", EntryPoint = "_native_cpu_invlpg")]
     [SuppressGCTransition]
     public static partial void InvalidatePage(ulong virtualAddress);

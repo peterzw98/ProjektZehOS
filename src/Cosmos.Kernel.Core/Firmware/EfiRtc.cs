@@ -26,11 +26,28 @@ internal static class EfiRtc
     /// Returns true and sets <paramref name="ticks"/> to DateTime ticks (UTC) on success.
     /// Only under the kernel's own page tables, with the identity map: the firmware follows
     /// its own physical pointers, so reaching the tables through the HHDM would not be enough.
-    /// The RTC initialization at boot is the only caller.
+    /// The RTC initialization at boot is the only caller. Under a user page table
+    /// (ZehOS patch user-cr3, see PATCHES.md) it returns false without calling the firmware.
     /// </summary>
     public static unsafe bool TryGetTime(out long ticks)
     {
         ticks = 0;
+
+        // ZehOS patch user-cr3, see PATCHES.md: checked and called with interrupts
+        // masked, so no switch loads a user table between the check and the call.
+        using (CPU.InternalCpu.DisableInterruptsScope())
+        {
+            if (!Memory.UserPageTable.KernelRootLoaded())
+            {
+                return false;
+            }
+
+            return TryGetTimeUnderKernelRoot(ref ticks);
+        }
+    }
+
+    private static unsafe bool TryGetTimeUnderKernelRoot(ref long ticks)
+    {
 
         if (Limine.EfiSystemTable.Response == null)
         {

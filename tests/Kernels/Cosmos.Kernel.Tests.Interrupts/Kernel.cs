@@ -37,11 +37,11 @@ namespace Cosmos.Kernel.Tests.Interrupts;
 // registers afterwards.
 public class Kernel : Sys.Kernel
 {
-    /// <summary>Total tests per cell: 10 cross-arch + 11 (x64) or 8 (arm64) arch-specific.</summary>
+    /// <summary>Total tests per cell: 10 cross-arch + 11 (x64) or 10 (arm64, skips included) arch-specific.</summary>
 #if ARCH_X64
     private const int ExpectedTestCount = 21;
 #else
-    private const int ExpectedTestCount = 18;
+    private const int ExpectedTestCount = 20;
 #endif
 
     /// <summary>CPUs the smp4 cells' machine has: what the bootloader lists and the kernel starts there.</summary>

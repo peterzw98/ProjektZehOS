@@ -2,6 +2,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
+using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.Scheduler;
 using SpinLock = Cosmos.Kernel.Core.Scheduler.SpinLock;
 
@@ -38,6 +39,19 @@ internal abstract class UserPageTableArch
 
     /// <summary>Frees the root and every table of its user half, not the pages mapped there.</summary>
     public abstract void Destroy(ulong root);
+
+    // ZehOS patch user-cr3, see PATCHES.md
+    /// <summary>The access of a mapped page. Caller holds the table's lock.</summary>
+    public abstract bool TryGetAccess(ulong root, ulong user, out bool writable, out bool executable);
+
+    /// <summary>The root this CPU translates through now. Interrupts masked.</summary>
+    public abstract ulong ReadRoot();
+
+    /// <summary>Makes this CPU translate through <paramref name="root"/>. Interrupts masked.</summary>
+    public abstract void LoadRoot(ulong root);
+
+    /// <summary>Drops this CPU's cached translation of one page. Interrupts masked.</summary>
+    public abstract void InvalidatePage(ulong user);
 }
 
 /// <summary>
@@ -46,9 +60,12 @@ internal abstract class UserPageTableArch
 /// The table owns its tables and not the pages mapped in it: the caller frees
 /// those (<see cref="FreeFrame"/>), before or after <see cref="Dispose"/>.
 /// <para>
-/// No CPU runs on such a table yet. That is why no member invalidates a TLB
-/// entry: switching to one has to add that for <see cref="TryProtect"/> and
-/// <see cref="Unmap"/>, on every CPU that may hold the translation.
+/// A thread runs on a table once it is bound to it
+/// (<see cref="BindToCurrentThread"/>): the switch to the thread loads the
+/// table on its CPU, every other switch loads that CPU's kernel root. There
+/// is no TLB shootdown yet (N4): <see cref="TryProtect"/> and
+/// <see cref="Unmap"/> invalidate the page on the calling CPU and refuse
+/// while another CPU runs on the table.
 /// </para>
 /// <para>
 /// Thread context only. Members of one table may be called from any thread;
@@ -93,6 +110,21 @@ public sealed unsafe class UserPageTable : IDisposable
 
     /// <summary>Physical address of the top-level table; 0 once disposed.</summary>
     private ulong _root;
+
+    // ZehOS patch user-cr3, see PATCHES.md
+    /// <summary>
+    /// Threads bound to the table. Raised under <see cref="_lock"/>, so that
+    /// <see cref="Dispose"/> sees every binding it races with; lowered with a
+    /// bare interlocked step, from interrupt context too (a thread given up).
+    /// </summary>
+    private int _bound;
+
+    /// <summary>
+    /// CPUs whose CR3 holds the table. Raised before the CR3 write and lowered
+    /// after the next one, interlocked: a full barrier each, which the check
+    /// in <see cref="TryProtect"/> and <see cref="Unmap"/> pairs with.
+    /// </summary>
+    private int _active;
 
     private UserPageTable(ulong root)
     {
@@ -175,7 +207,8 @@ public sealed unsafe class UserPageTable : IDisposable
     /// <param name="user">Page-aligned user address.</param>
     /// <param name="writable">Whether the program may write. Not together with <paramref name="executable"/>.</param>
     /// <param name="executable">Whether the program may execute.</param>
-    /// <returns>False, with nothing changed, for a refused argument, a page not mapped, or once disposed.</returns>
+    /// <returns>False, with nothing changed, for a refused argument, a page not mapped, once disposed,
+    /// or while another CPU runs on the table (no shootdown before N4).</returns>
     public bool TryProtect(ulong user, bool writable, bool executable)
     {
         if (!IsUserPage(user) || (writable && executable))
@@ -185,13 +218,31 @@ public sealed unsafe class UserPageTable : IDisposable
 
         using (_lock.AcquireIrqSafe())
         {
-            return _root != 0 && s_arch!.TryProtect(_root, user, writable, executable);
+            if (_root == 0 || ActiveElsewhere()
+                || !s_arch!.TryGetAccess(_root, user, out bool oldWritable, out bool oldExecutable)
+                || !s_arch.TryProtect(_root, user, writable, executable))
+            {
+                return false;
+            }
+
+            // A CPU that switched to the table since the first check may have
+            // read the old entry into its TLB, which nothing here can drop:
+            // the old entry goes back, and that CPU's copy is right again.
+            if (!SettleChange(user))
+            {
+                s_arch.TryProtect(_root, user, oldWritable, oldExecutable);
+                InvalidateHere(user);
+                return false;
+            }
+
+            return true;
         }
     }
 
     /// <summary>Removes a page; its frame is the caller's afterwards.</summary>
     /// <param name="user">Page-aligned user address.</param>
-    /// <returns>The frame's physical address, or 0 when nothing is mapped there.</returns>
+    /// <returns>The frame's physical address; 0, with nothing changed, when nothing is mapped there,
+    /// once disposed, or while another CPU runs on the table (no shootdown before N4).</returns>
     public ulong Unmap(ulong user)
     {
         if (!IsUserPage(user))
@@ -201,7 +252,23 @@ public sealed unsafe class UserPageTable : IDisposable
 
         using (_lock.AcquireIrqSafe())
         {
-            return _root == 0 ? 0 : s_arch!.Unmap(_root, user);
+            if (_root == 0 || ActiveElsewhere()
+                || !s_arch!.TryGetAccess(_root, user, out bool oldWritable, out bool oldExecutable))
+            {
+                return 0;
+            }
+
+            ulong frame = s_arch.Unmap(_root, user);
+            if (frame != 0 && !SettleChange(user))
+            {
+                // As in TryProtect. The tables on the way still exist, so the
+                // map allocates nothing and cannot fail.
+                s_arch.TryMap(_root, user, frame, oldWritable, oldExecutable);
+                InvalidateHere(user);
+                return 0;
+            }
+
+            return frame;
         }
     }
 
@@ -225,16 +292,30 @@ public sealed unsafe class UserPageTable : IDisposable
     }
 
     /// <summary>
-    /// Frees the tables, not the pages mapped in them. The caller makes sure
-    /// no CPU runs on the table. Further calls do nothing.
+    /// Frees the tables, not the pages mapped in them. Waits for the CPUs that
+    /// still hold the table in their CR3 since an unbound thread left them.
+    /// Further calls do nothing.
     /// </summary>
+    /// <exception cref="InvalidOperationException">A thread is still bound to the table.</exception>
     public void Dispose()
     {
         ulong root;
         using (_lock.AcquireIrqSafe())
         {
+            if (Volatile.Read(ref _bound) > 0)
+            {
+                throw new InvalidOperationException("A thread is bound to the table.");
+            }
+
             root = _root;
             _root = 0;
+        }
+
+        // With no thread bound no switch loads the table again; a CPU that
+        // still holds it loads its kernel root at its next switch.
+        while (Volatile.Read(ref _active) != 0)
+        {
+            Thread.SpinWait(1);
         }
 
         // Outside the lock: nothing reaches the tables any more, and a large
@@ -242,6 +323,154 @@ public sealed unsafe class UserPageTable : IDisposable
         if (root != 0)
         {
             s_arch!.Destroy(root);
+        }
+    }
+
+    // ZehOS patch user-cr3, see PATCHES.md
+    /// <summary>
+    /// Binds the calling thread to the table and loads it on this CPU at once.
+    /// A thread is bound to one table at most; the binding ends with
+    /// <see cref="UnbindCurrentThread"/> or with the thread.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The table is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The thread is bound already, or is no scheduler thread.</exception>
+    public void BindToCurrentThread()
+    {
+        using (_lock.AcquireIrqSafe())
+        {
+            ObjectDisposedException.ThrowIf(_root == 0, this);
+            PerCpuState? state = SchedulerManager.CurrentCpuState;
+            SchedulerThread? thread = state?.CurrentThread;
+            if (thread is null || thread.IsIdle || thread._pageTable is not null)
+            {
+                throw new InvalidOperationException("The thread cannot be bound.");
+            }
+
+            // Interrupts are masked: the thread stays on this CPU until the load.
+            Interlocked.Increment(ref _bound);
+            thread._pageTable = this;
+            SwitchTo(state!, this);
+        }
+    }
+
+    /// <summary>Ends the calling thread's binding and loads this CPU's kernel root. Unbound: nothing.</summary>
+    public static void UnbindCurrentThread()
+    {
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            PerCpuState? state = SchedulerManager.CurrentCpuState;
+            SchedulerThread? thread = state?.CurrentThread;
+            if (thread is null)
+            {
+                return;
+            }
+
+            Unbind(thread);
+            SwitchTo(state!, null);
+        }
+    }
+
+    /// <summary>
+    /// Whether this CPU runs on its kernel root: what code that follows the
+    /// identity map (EFI runtime services) needs. Interrupts masked.
+    /// </summary>
+    internal static bool KernelRootLoaded()
+    {
+        PerCpuState? state = SchedulerManager.CurrentCpuState;
+        return state is null || state._loadedTable is null;
+    }
+
+    /// <summary>
+    /// Ends a thread's binding, without a load: for a thread that is not
+    /// running, or that the caller switches away from. Interrupt context too.
+    /// </summary>
+    internal static void Unbind(SchedulerThread thread)
+    {
+        UserPageTable? table = thread._pageTable;
+        if (table is not null)
+        {
+            thread._pageTable = null;
+            Interlocked.Decrement(ref table._bound);
+        }
+    }
+
+    /// <summary>
+    /// Loads the table <paramref name="next"/> runs on, or the CPU's kernel
+    /// root, when the CPU holds another. Called by a switch under the CPU's
+    /// queue lock, before the CPU leaves the outgoing stack: from then on the
+    /// outgoing thread can die and its table go, so the CPU must no longer
+    /// hold it. No allocation, no lock, no log.
+    /// </summary>
+    internal static void SwitchFor(PerCpuState state, SchedulerThread next)
+    {
+        if (!ReferenceEquals(state._loadedTable, next._pageTable))
+        {
+            SwitchTo(state, next._pageTable);
+        }
+    }
+
+    /// <summary>Loads <paramref name="table"/> (null: the kernel root) on this CPU. Interrupts masked.</summary>
+    private static void SwitchTo(PerCpuState state, UserPageTable? table)
+    {
+        UserPageTable? old = state._loadedTable;
+        if (ReferenceEquals(old, table))
+        {
+            return;
+        }
+
+        if (old is null)
+        {
+            // The root the CPU came up with: its own, not CPU 0's.
+            state._kernelRoot = s_arch!.ReadRoot();
+        }
+
+        // Counted before the write, uncounted after the next one: the check
+        // in TryProtect never misses a CPU that may hold a translation.
+        if (table is not null)
+        {
+            Interlocked.Increment(ref table._active);
+        }
+
+        s_arch!.LoadRoot(table is null ? state._kernelRoot : table._root);
+        state._loadedTable = table;
+        if (old is not null)
+        {
+            Interlocked.Decrement(ref old._active);
+        }
+    }
+
+    /// <summary>Whether a CPU other than this one holds the table. Interrupts masked.</summary>
+    private bool ActiveElsewhere()
+    {
+        int here = IsLoadedHere() ? 1 : 0;
+        return Volatile.Read(ref _active) > here;
+    }
+
+    private bool IsLoadedHere()
+    {
+        PerCpuState? state = SchedulerManager.CurrentCpuState;
+        return state is not null && ReferenceEquals(state._loadedTable, this);
+    }
+
+    /// <summary>
+    /// After an entry changed: drops this CPU's copy and says whether no other
+    /// CPU switched to the table meanwhile. The barrier orders the entry
+    /// write before the count's read; a switch counted after that read loads
+    /// CR3 after the write and walks the new entry.
+    /// </summary>
+    private bool SettleChange(ulong user)
+    {
+        Interlocked.MemoryBarrier();
+        bool alone = !ActiveElsewhere();
+        InvalidateHere(user);
+        return alone;
+    }
+
+    private void InvalidateHere(ulong user)
+    {
+        if (IsLoadedHere())
+        {
+            s_arch!.InvalidatePage(user);
         }
     }
 

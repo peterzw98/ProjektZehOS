@@ -30,6 +30,7 @@
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.StackPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.ThreadId.get -> uint
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.BindToCurrentThread() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Dispose() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryMap(ulong user, ulong physical, bool writable, bool executable) -> bool
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryProtect(ulong user, bool writable, bool executable) -> bool
@@ -112,6 +113,7 @@
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreeFrame(ulong physical) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShareKernelHalf() -> bool
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TryCreate() -> Cosmos.Kernel.Core.Memory.UserPageTable?
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.UnbindCurrentThread() -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.All.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.Empty.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.operator !=(Cosmos.Kernel.Core.Scheduler.CpuSet left, Cosmos.Kernel.Core.Scheduler.CpuSet right) -> bool

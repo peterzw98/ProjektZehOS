@@ -120,6 +120,14 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// </summary>
     internal nuint OnCpuSlot => (nuint)Unsafe.AsPointer(ref _onCpu);
 
+    // ZehOS patch user-cr3, see PATCHES.md
+    /// <summary>
+    /// The user page table the thread runs on, or null for the kernel root.
+    /// Written by the thread itself with interrupts masked, or once it no
+    /// longer runs (its end); read by the switch to it under its CPU's queue lock.
+    /// </summary>
+    internal Memory.UserPageTable? _pageTable;
+
     // ZehOS patch thread-stack-reaper, see PATCHES.md
     /// <summary>Next entry in the scheduler's list of exited threads whose stack is not yet freed.</summary>
     internal SchedulerThread? _nextDeadStack;

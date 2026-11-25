@@ -1603,6 +1603,18 @@ public static class SchedulerManager
                 GarbageCollector.RetireAllocContext(ref thread._allocContext);
             }
 
+            // ZehOS patch user-cr3, see PATCHES.md: the binding ends with the
+            // thread, so that its table can go after Join. A thread exiting
+            // itself leaves the table on this CPU now; any other is not running.
+            if (ReferenceEquals(CurrentThread, thread))
+            {
+                Memory.UserPageTable.UnbindCurrentThread();
+            }
+            else
+            {
+                Memory.UserPageTable.Unbind(thread);
+            }
+
             PerCpuState state = AcquireThreadQueueLock(thread);
             thread.State = SchedulerThreadState.Dead;
             s_currentScheduler.OnThreadExit(state, thread);
@@ -2148,6 +2160,8 @@ public static class SchedulerManager
                 next.State = SchedulerThreadState.Running;
                 next.LastScheduledAt = GetTimestamp();
 
+                // ZehOS patch user-cr3, see PATCHES.md
+                Memory.UserPageTable.SwitchFor(state, next);
                 DoContextSwitch(prev, next);
             }
         }
@@ -2811,6 +2825,17 @@ public static class SchedulerManager
             // the interrupt exit switches on.
             state.CurrentThread = next;
             PerCpuBlock.Current.CurrentExInfoHead = next.ExInfoHeadSlot;
+
+            // ZehOS patch user-cr3, see PATCHES.md: now, under the queue lock,
+            // not once the stub has left prev's stack: the lock is free by
+            // then, and prev, dead or killed, may let its table go. A dead prev
+            // (given up at a fault, or killed while it ran) does not come back
+            // through ExitThread's unbind: its binding ends here.
+            Memory.UserPageTable.SwitchFor(state, next);
+            if (prev is not null && prev.State == SchedulerThreadState.Dead)
+            {
+                Memory.UserPageTable.Unbind(prev);
+            }
 
             // Check if this is a NEW thread (never run before) or RESUMED
             bool isNewThread = next.State == SchedulerThreadState.Created;
