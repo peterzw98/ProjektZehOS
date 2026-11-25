@@ -1,0 +1,6 @@
+syscall(0x3e8): ret=-1 errno=38
+syscall(0x270f): ret=-1 errno=38
+syscall(0x186a0): ret=-1 errno=38
+syscall(0x3fffffff): ret=-1 errno=38
+syscall(-1): ret=-1 errno=38
+getpid still works=1

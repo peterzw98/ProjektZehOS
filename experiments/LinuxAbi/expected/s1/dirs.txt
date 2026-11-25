@@ -1,0 +1,31 @@
+cwd absolute=1
+list .: . ..
+mkdir d=0
+mkdir d again=-1
+errno=17
+mkdir d/e/f=-1
+errno=2
+mkdir d/e=0
+list d: . .. a.t b.t c.t e
+rmdir non-empty=-1
+errno=39
+rename d/a.t d/e/z.t=0
+list d: . .. b.t c.t e
+list d/e: . .. z.t
+chdir d/e=0
+cwd suffix /d/e=1
+chdir ../..=0
+chdir file=-1
+errno=20
+opendir file=1
+errno=20
+stat d=0
+is dir=1
+unlink dir=-1
+errno=21
+unlink files=0
+rmdir d/e=0
+rmdir d=0
+rmdir again=-1
+errno=2
+list .: . ..
