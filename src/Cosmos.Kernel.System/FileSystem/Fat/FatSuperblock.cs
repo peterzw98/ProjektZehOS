@@ -51,8 +51,17 @@ internal sealed class FatSuperblock : IVfsSuperblock
     public void Flush()
     {
         // ZehOS patch fat-fsinfo, see PATCHES.md
-        Fat.WriteFsInfo();
-        _device.Flush();
+        // A failed FSInfo write must not skip the device flush: the FAT and
+        // data writes before it still have to become durable. The error
+        // propagates after the flush.
+        try
+        {
+            Fat.WriteFsInfo();
+        }
+        finally
+        {
+            _device.Flush();
+        }
     }
 
     public void ReadCluster(uint cluster, Span<byte> data)

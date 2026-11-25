@@ -1,6 +1,7 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 // ZehOS patch fat-fsinfo, see PATCHES.md
 
+using Cosmos.Kernel.HAL.Devices.Storage;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
 using Cosmos.Kernel.Tests.System.FileSystem.Ext2;
@@ -151,5 +152,69 @@ public class FatFsInfoTests
         _sb.SuperOps.Drop(_sb);
         Mount();
         Assert.That(Field(FreeCountOffset), Is.EqualTo(_sb.Fat.CountFree()));
+    }
+
+    /// <summary>Fails writes to one sector and counts flushes.</summary>
+    private sealed class FailingDevice(MemoryBlockDevice inner, ulong failLba) : IBlockDevice
+    {
+        public bool Fail { get; set; }
+
+        public int Flushes { get; private set; }
+
+        public string Name => inner.Name;
+
+        public ulong BlockSize => inner.BlockSize;
+
+        public ulong BlockCount => inner.BlockCount;
+
+        public void ReadBlock(ulong blockNo, ulong blockCount, Span<byte> data) => inner.ReadBlock(blockNo, blockCount, data);
+
+        public void WriteBlock(ulong blockNo, ulong blockCount, ReadOnlySpan<byte> data)
+        {
+            if (Fail && blockNo <= failLba && failLba < blockNo + blockCount)
+            {
+                throw new IOException("FSInfo write failed");
+            }
+            inner.WriteBlock(blockNo, blockCount, data);
+        }
+
+        public void Flush()
+        {
+            Flushes++;
+            inner.Flush();
+        }
+    }
+
+    private FailingDevice MountFailing()
+    {
+        FailingDevice failing = new(_device, FsInfoLba);
+        Assert.That(new FatFileSystemType(failing).TryMount(ReadOnlySpan<char>.Empty, MountFlags.None, out IVfsSuperblock? vsb), Is.True);
+        _sb = (FatSuperblock)vsb!;
+        _root = (FatInode)_sb.Root;
+        return failing;
+    }
+
+    [Test]
+    public void F8_FailedFsInfoWrite_StillFlushesAndThrows()
+    {
+        Format(FatType.Fat32);
+        FailingDevice failing = MountFailing();
+        CreateFile("a.bin", 20_000);
+        failing.Fail = true;
+        Assert.Throws<IOException>(() => _sb.SuperOps.Sync(_sb));
+        Assert.That(failing.Flushes, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void F9_FailedFsInfoWrite_OnUnmount_StillFlushesAndDrops()
+    {
+        Format(FatType.Fat32);
+        FailingDevice failing = MountFailing();
+        CreateFile("a.bin", 20_000);
+        Assert.That(_sb.InodeCache.Count, Is.GreaterThan(0));
+        failing.Fail = true;
+        Assert.Throws<IOException>(() => _sb.SuperOps.Drop(_sb));
+        Assert.That(failing.Flushes, Is.EqualTo(1));
+        Assert.That(_sb.InodeCache.Count, Is.EqualTo(0));
     }
 }
