@@ -190,7 +190,7 @@ class CliTests(unittest.TestCase):
             p = os.path.join(b, "p")
             with open(p, "w") as f:
                 f.write("#!/bin/sh\necho x\n")
-            os.chmod(p, 0o755)
+            os.chmod(p, 0o700)
             r = self.cli("--bin", b, "--expected", e, "--json", j)
             self.assertEqual(r.returncode, 1)
             self.assertIn("Erwartung fehlt", r.stderr)
