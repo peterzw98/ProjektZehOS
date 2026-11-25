@@ -306,6 +306,9 @@ public static partial class VfsManager
 
         bool destinationExists = TryStat(newFullPath, out VfsStat newStat);
 
+        // ZehOS patch fat-rename-open, see PATCHES.md
+        TryResolve(oldFullPath, out IVfsInode? movedInode, out _);
+
         // FAT lookups are case-insensitive, so the destination stat can
         // resolve to the SOURCE entry itself (case-only rename). Dropping it
         // would destroy the file — detect the case and hand the pair
@@ -347,10 +350,36 @@ public static partial class VfsManager
             }
 
             DropDisplacedEntry(newParent, newParentPath, backupLeaf, newIsDirectory, newFullPath);
+            MoveOpenHandles(movedInode, newFullPath);
             return true;
         }
 
-        return oldParent.TryRename(oldLeaf, newParent, newLeaf);
+        if (!oldParent.TryRename(oldLeaf, newParent, newLeaf))
+        {
+            return false;
+        }
+
+        MoveOpenHandles(movedInode, newFullPath);
+        return true;
+    }
+
+    // ZehOS patch fat-rename-open, see PATCHES.md
+    /// <summary>Lets the handles open on a renamed file follow it, so that a later
+    /// unlink of whatever takes the old name does not hit them, nor the other way round.</summary>
+    private static void MoveOpenHandles(IVfsInode? inode, string newFullPath)
+    {
+        for (int i = 0; i < s_openFileHandles.Count; i++)
+        {
+            VfsFileHandle handle = s_openFileHandles[i];
+            if (ReferenceEquals(handle.Inode, inode))
+            {
+                handle.OpenedPath = newFullPath;
+                if (handle.PendingUnlinkPath is not null)
+                {
+                    handle.PendingUnlinkPath = newFullPath;
+                }
+            }
+        }
     }
 
     // ---------------- open-handle tracking ----------------
@@ -462,6 +491,8 @@ public static partial class VfsManager
                 || (backupInode is not null && ReferenceEquals(handle.Inode, backupInode)))
             {
                 handle.PendingUnlinkPath = backupPath;
+                // ZehOS patch fat-rename-open, see PATCHES.md: the old path now names another file.
+                handle.OpenedPath = backupPath;
                 pending = true;
             }
         }

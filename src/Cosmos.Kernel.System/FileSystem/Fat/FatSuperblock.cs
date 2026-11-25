@@ -1,6 +1,7 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using Cosmos.Kernel.HAL.Devices.Storage;
 
 namespace Cosmos.Kernel.System.FileSystem.Fat;
@@ -12,6 +13,13 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
     private readonly IBlockDevice _device;
     private readonly Dictionary<uint, FatInode> _inodeCache = [];
+
+    // ZehOS patch fat-rename-open, see PATCHES.md
+    // Inodes without a first cluster (empty files) by directory slot, weakly:
+    // renaming or removing the entry has to find the object an open handle uses.
+    private const int EmptySweepMin = 256;
+    private readonly Dictionary<ulong, GCHandle> _emptyInodes = [];
+    private int _emptySweepAt = EmptySweepMin;
 
     public FatBootSector Boot { get; }
     public FatTable Fat { get; }
@@ -41,6 +49,12 @@ internal sealed class FatSuperblock : IVfsSuperblock
     public void Drop()
     {
         _inodeCache.Clear();
+        foreach (GCHandle handle in _emptyInodes.Values)
+        {
+            handle.Free();
+        }
+
+        _emptyInodes.Clear();
     }
 
     /// <summary>Flush the device's volatile write cache — the durability point for sync and unmount.</summary>
@@ -97,11 +111,11 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
     public FatInode GetOrCreateInode(FatInode parent, FatDirEntry entry)
     {
-        // TODO: one inode per file, empty files included. The cache is keyed by first cluster, which an
-        // empty file does not have: each open of one gets an inode of its own, so a handle opened
-        // before another wrote to the file reads it as empty still (files.lua of the Lua 5.5 test
-        // suite, which reads through one handle what it wrote through another).
-        if (entry.FirstCluster >= FatTable.FirstDataCluster && _inodeCache.TryGetValue(entry.FirstCluster, out FatInode? cached))
+        // ZehOS patch fat-rename-open, see PATCHES.md
+        // One inode per file, empty files included (see TryGetLive).
+        if (entry.FirstCluster >= FatTable.FirstDataCluster
+            ? _inodeCache.TryGetValue(entry.FirstCluster, out FatInode? cached)
+            : TryGetEmpty(parent, entry.ByteOffset, out cached))
         {
             cached.Name = entry.Name;
             cached.Size = entry.Size;
@@ -122,11 +136,94 @@ internal sealed class FatSuperblock : IVfsSuperblock
             entry.ByteOffset,
             entry.LfnEntryCount + ShortEntrySlotCount);
 
-        if (entry.FirstCluster >= FatTable.FirstDataCluster)
-        {
-            _inodeCache[entry.FirstCluster] = node;
-        }
+        Index(node);
         return node;
+    }
+
+    // ZehOS patch fat-rename-open, see PATCHES.md
+    /// <summary>The live inode behind a directory entry, if there is one. Unlike a lookup it changes no field.</summary>
+    public bool TryGetLive(FatInode parent, FatDirEntry entry, [NotNullWhen(true)] out FatInode? live)
+    {
+        if (entry.FirstCluster < FatTable.FirstDataCluster)
+        {
+            return TryGetEmpty(parent, entry.ByteOffset, out live);
+        }
+
+        // The slot has to match as well: an object left under a cluster that
+        // was freed and reused belongs to another entry.
+        return _inodeCache.TryGetValue(entry.FirstCluster, out live)
+            && live.DirEntryByteOffset == entry.ByteOffset
+            && live.Parent is not null
+            && live.Parent.FirstCluster == parent.FirstCluster;
+    }
+
+    private bool TryGetEmpty(FatInode parent, int byteOffset, [NotNullWhen(true)] out FatInode? inode)
+    {
+        inode = null;
+        if (_emptyInodes.TryGetValue(SlotKey(parent, byteOffset), out GCHandle handle))
+        {
+            inode = (FatInode?)handle.Target;
+        }
+
+        return inode is not null;
+    }
+
+    private void ForgetEmpty(ulong key)
+    {
+        if (_emptyInodes.Remove(key, out GCHandle handle))
+        {
+            handle.Free();
+        }
+    }
+
+    private static ulong SlotKey(FatInode parent, int byteOffset)
+    {
+        return ((ulong)parent.FirstCluster << 32) | (uint)byteOffset;
+    }
+
+    /// <summary>Makes <paramref name="inode"/> findable by first cluster or, while it has none, by slot.</summary>
+    private void Index(FatInode inode)
+    {
+        if (inode.Parent is null || inode.DirEntryByteOffset < 0)
+        {
+            return;
+        }
+
+        ulong key = SlotKey(inode.Parent, inode.DirEntryByteOffset);
+        if (inode.FirstCluster >= FatTable.FirstDataCluster)
+        {
+            ForgetEmpty(key);
+            _inodeCache[inode.FirstCluster] = inode;
+            return;
+        }
+
+        if (_emptyInodes.TryGetValue(key, out GCHandle old))
+        {
+            old.Target = inode;
+            return;
+        }
+
+        if (_emptyInodes.Count >= _emptySweepAt)
+        {
+            List<ulong> dead = [];
+            foreach (KeyValuePair<ulong, GCHandle> entry in _emptyInodes)
+            {
+                if (entry.Value.Target is null)
+                {
+                    dead.Add(entry.Key);
+                }
+            }
+
+            foreach (ulong slot in dead)
+            {
+                ForgetEmpty(slot);
+            }
+
+            // Doubling keeps the scan amortized.
+            _emptySweepAt = Math.Max(EmptySweepMin, _emptyInodes.Count * 2);
+        }
+
+        _emptyInodes.Add(key, GCHandle.Alloc(inode, GCHandleType.Weak));
     }
 
     public void ForgetInode(uint firstCluster)
@@ -185,7 +282,8 @@ internal sealed class FatSuperblock : IVfsSuperblock
         FatAttr attr,
         uint firstCluster,
         uint size,
-        [NotNullWhen(true)] out FatInode? created)
+        [NotNullWhen(true)] out FatInode? created,
+        FatInode? moved = null)
     {
         created = null;
         string longName = name.ToString();
@@ -236,6 +334,25 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
         WriteDirectoryData(parent, data);
 
+        // ZehOS patch fat-rename-open, see PATCHES.md
+        // A rename moves the live object along: open handles keep writing to
+        // their own entry, never to the slot they left.
+        if (moved is not null)
+        {
+            if (moved.Parent is not null)
+            {
+                ForgetEmpty(SlotKey(moved.Parent, moved.DirEntryByteOffset));
+            }
+
+            moved.Name = longName;
+            moved.Parent = parent;
+            moved.DirEntryByteOffset = eightThreeOffset;
+            moved.DirEntrySlotCount = slots;
+            Index(moved);
+            created = moved;
+            return true;
+        }
+
         FatInode node = new(
             this,
             longName,
@@ -245,10 +362,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
             parent,
             eightThreeOffset,
             slots);
-        if (firstCluster >= FatTable.FirstDataCluster)
-        {
-            _inodeCache[firstCluster] = node;
-        }
+        Index(node);
         created = node;
         return true;
     }
@@ -265,12 +379,13 @@ internal sealed class FatSuperblock : IVfsSuperblock
         // later Fsync must not patch whatever entry reuses this slot
         // (cross-link corruption of the new file). Invalidate the offset
         // while the cache can still locate the inode.
-        if (match.FirstCluster >= FatTable.FirstDataCluster
-            && _inodeCache.TryGetValue(match.FirstCluster, out FatInode? live)
-            && live.DirEntryByteOffset == match.ByteOffset)
+        // ZehOS patch fat-rename-open, see PATCHES.md (empty files, parent compared too)
+        if (TryGetLive(parent, match, out FatInode? live))
         {
             live.DirEntryByteOffset = FatInode.NoDirEntryOffset;
         }
+
+        ForgetEmpty(SlotKey(parent, match.ByteOffset));
     }
 
     public void UpdateInodeEntry(FatInode inode)
@@ -302,13 +417,8 @@ internal sealed class FatSuperblock : IVfsSuperblock
         data[offset + FatDirectory.AttributesOffset] = (byte)inode.Attributes;
         WriteDirectoryData(inode.Parent, data);
 
-        // Files created empty enter the world with cluster 0 and are never
-        // cached; index the live inode once a first cluster exists so a
-        // later unlink can invalidate this object's slot reference.
-        if (inode.FirstCluster >= FatTable.FirstDataCluster)
-        {
-            _inodeCache[inode.FirstCluster] = inode;
-        }
+        // A file may have gained its first cluster or lost all of them.
+        Index(inode);
     }
 
     public void TruncateChain(FatInode inode, uint newSize)
@@ -322,6 +432,8 @@ internal sealed class FatSuperblock : IVfsSuperblock
             if (inode.FirstCluster >= FatTable.FirstDataCluster)
             {
                 Fat.Free(inode.FirstCluster);
+                // ZehOS patch fat-rename-open, see PATCHES.md: the cluster may go to another file.
+                ForgetInode(inode.FirstCluster);
             }
             inode.FirstCluster = FatDirectory.EmptyFirstCluster;
             chain.Clear();

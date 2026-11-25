@@ -1,5 +1,5 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
-// ZehOS #702, zeigt den Fehler (rot)
+// ZehOS patch fat-rename-open, see PATCHES.md
 
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.FileSystem.Fat;
