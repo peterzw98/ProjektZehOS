@@ -82,6 +82,17 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(tr.result()["total_max_pss_kib"], 110)
         self.assertEqual(tr.result()["process_count"], 2)
 
+    def test_alive_false_for_dead_or_unknown_start(self):
+        self.assertFalse(measure._alive(999999, None))
+        self.assertFalse(measure._alive(999999, "1"))
+        p = subprocess.Popen(["sleep", "5"])
+        try:
+            self.assertTrue(measure._alive(p.pid, measure.proc_start(p.pid)))
+            self.assertFalse(measure._alive(p.pid, None))
+        finally:
+            p.kill()
+            p.wait()
+
     def test_signal_skips_reused_pid(self):
         p = subprocess.Popen(["sleep", "5"])
         try:

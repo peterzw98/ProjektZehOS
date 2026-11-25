@@ -153,7 +153,7 @@ class Tracker:
 
 
 def _alive(pid, start):
-    return proc_start(pid) == start
+    return start is not None and proc_start(pid) == start
 
 
 def _signal_all(known, sig):
@@ -208,7 +208,9 @@ def run_once(cmd, shot, timeout):
                 samples = [s for s in map(sample_process, pids) if s]
                 tracker.add(samples)
                 for s in samples:
-                    known.setdefault(s["pid"], proc_start(s["pid"]))
+                    st = proc_start(s["pid"])
+                    if st is not None:  # inzwischen beendet: nicht merken
+                        known.setdefault(s["pid"], st)
             stragglers = [p for p, st in known.items() if p != proc.pid and _alive(p, st)]
             if not running and not stragglers:
                 break
