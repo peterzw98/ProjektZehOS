@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Cosmos.Kernel.Core.Bridge;
@@ -25,7 +26,7 @@ namespace Cosmos.Kernel.Tests.Threading;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 106;
+    private const int ExpectedTestCount = 108;
 
     /// <summary>Size of one per-CPU block, as <c>PerCpuBlock</c> lays it out and the native stubs assume.</summary>
     private const int PerCpuBlockNativeSize = 128;
@@ -269,9 +270,13 @@ public class Kernel : Sys.Kernel
 #if ARCH_X64
         TR.Run("TickHook_Redirects_RunningThread", TestTickHookRedirectsRunningThread);
         TR.Run("TickHook_IdleThread_IsNotOffered", TestTickHookIdleThreadIsNotOffered);
+        TR.Run("Fpu_TwoThreads_KeepTheirState", TestFpuTwoThreadsKeepTheirState);
+        TR.Run("Fpu_NewThread_StartsWithDefaults", TestFpuNewThreadStartsWithDefaults);
 #else
         TR.Skip("TickHook_Redirects_RunningThread", "the tick hook is x64 only");
         TR.Skip("TickHook_IdleThread_IsNotOffered", "the tick hook is x64 only");
+        TR.Skip("Fpu_TwoThreads_KeepTheirState", "fxsave is x64 only");
+        TR.Skip("Fpu_NewThread_StartsWithDefaults", "fxsave is x64 only");
 #endif
         TR.Run("ScheduleFromInterrupt_UnregisteredCpu_IsNoOp", TestScheduleFromInterruptIgnoresUnregisteredCpu);
 
@@ -1909,6 +1914,177 @@ public class Kernel : Sys.Kernel
 
         Assert.True(SchedulerManager.TickCount - ticks > TickHookDeclinedTicks, "the ticks went on while Main slept");
         Assert.Equal(0, s_tickHookIdleOffers, "an idle thread is never offered to the hook");
+    }
+
+    // ZehOS patch fxsave, see PATCHES.md
+    private const int FpuImageSize = 512;
+    private const int FpuImageAlignment = 16;
+    private const int FpuHoldMs = 10_000;
+    private const int FpuPollMs = 100;
+    private const ushort FpuDefaultFcw = 0x37F;
+    private const uint FpuDefaultMxcsr = 0x1F80;
+
+    // Every exception masked; the rounding modes differ from each other and from the default.
+    private const ushort FpuFcwA = 0x077F;
+    private const ushort FpuFcwB = 0x0F7F;
+    private const uint FpuMxcsrA = 0x3F80;
+    private const uint FpuMxcsrB = 0xDF80;
+
+    // Offsets as in Asm/FpuState.s.
+    [StructLayout(LayoutKind.Explicit, Size = 48)]
+    private struct FpuHold
+    {
+        [FieldOffset(0)] public uint Mxcsr;
+        [FieldOffset(4)] public ushort Fcw;
+        [FieldOffset(8)] public long X87Base;
+        [FieldOffset(16)] public ulong XmmPattern;
+        [FieldOffset(24)] public int Stop;
+        [FieldOffset(32)] public ulong Loops;
+        [FieldOffset(40)] public ulong Mismatch;
+    }
+
+    [DllImport("*", EntryPoint = "cosmos_test_fpu_hold")]
+    private static extern unsafe void FpuHoldState(FpuHold* hold, byte* before, byte* after);
+
+    [DllImport("*", EntryPoint = "cosmos_test_fpu_capture")]
+    [SuppressGCTransition]
+    private static extern unsafe void FpuCapture(byte* image);
+
+    private static unsafe FpuHold* s_fpuHolds;
+    private static unsafe byte* s_fpuImages;
+    private static volatile bool s_fpuCaptured;
+
+    // Holder i: hold i, images 2i (before) and 2i+1 (after); the capture takes image 4.
+    private static unsafe byte* FpuImage(int index) =>
+        (byte*)(((nuint)s_fpuImages + FpuImageAlignment - 1) & ~(nuint)(FpuImageAlignment - 1)) + (index * FpuImageSize);
+
+    private static unsafe void FpuWorkerA() => FpuHoldState(&s_fpuHolds[0], FpuImage(0), FpuImage(1));
+
+    private static unsafe void FpuWorkerB() => FpuHoldState(&s_fpuHolds[1], FpuImage(2), FpuImage(3));
+
+    private static unsafe void FpuCaptureWorker()
+    {
+        FpuCapture(FpuImage(4));
+        s_fpuCaptured = true;
+    }
+
+    private static unsafe void FpuInitHolds(FpuHold* holds, byte* images)
+    {
+        new Span<byte>(images, (5 * FpuImageSize) + FpuImageAlignment).Clear();
+        holds[0] = new FpuHold { Mxcsr = FpuMxcsrA, Fcw = FpuFcwA, X87Base = 1000, XmmPattern = 0x0101010101010101 };
+        holds[1] = new FpuHold { Mxcsr = FpuMxcsrB, Fcw = FpuFcwB, X87Base = -5000, XmmPattern = 0x0202030305050707 };
+        s_fpuHolds = holds;
+        s_fpuImages = images;
+        s_fpuCaptured = false;
+    }
+
+    // The instruction and data pointers (8-23) and the opcode are left out: AMD restores
+    // them only with an exception pending.
+    private static unsafe bool FpuImagesEqual(byte* a, byte* b, out int offset)
+    {
+        for (offset = 0; offset < 416; offset++)
+        {
+            bool control = offset < 5 || (offset >= 24 && offset < 28);
+            bool x87 = offset >= 32 && offset < 160 && (offset - 32) % 16 < 10;
+            if ((control || x87 || offset >= 160) && a[offset] != b[offset])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static unsafe void FpuWaitForLoops(FpuHold* hold, ulong above)
+    {
+        for (int i = 0; i < KillVictimPollRetries && Volatile.Read(ref hold->Loops) <= above; i++)
+        {
+            TimerManager.Wait(KillVictimPollWaitMs);
+        }
+    }
+
+    private static unsafe void TestFpuTwoThreadsKeepTheirState()
+    {
+        FpuHold* holds = stackalloc FpuHold[2];
+        byte* images = stackalloc byte[(5 * FpuImageSize) + FpuImageAlignment];
+        FpuInitHolds(holds, images);
+
+        // On Main's CPU, so the two have to alternate.
+        using OneCpuScope oneCpu = OneCpuScope.Enter();
+        SysThread a = new(FpuWorkerA);
+        SysThread b = new(FpuWorkerB);
+        ulong loopsA;
+        ulong loopsB;
+        bool joined;
+        a.Start();
+        b.Start();
+        try
+        {
+            FpuWaitForLoops(&holds[0], 0);
+            FpuWaitForLoops(&holds[1], 0);
+            loopsA = Volatile.Read(ref holds[0].Loops);
+            loopsB = Volatile.Read(ref holds[1].Loops);
+            for (int waited = 0; waited < FpuHoldMs; waited += FpuPollMs)
+            {
+                SysThread.Sleep(FpuPollMs);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref holds[0].Stop, 1);
+            Volatile.Write(ref holds[1].Stop, 1);
+            // The workers write to this frame: it must outlive them.
+            joined = a.Join(ThrowJoinTimeoutMs) & b.Join(ThrowJoinTimeoutMs);
+        }
+
+        Assert.True(joined, "both holders must end");
+        Assert.True(loopsA > 0 && holds[0].Loops > loopsA, "holder A ran before and after the switch to B");
+        Assert.True(loopsB > 0 && holds[1].Loops > loopsB, "holder B ran before and after the switch to A");
+
+        bool sameA = FpuImagesEqual(FpuImage(0), FpuImage(1), out int offsetA);
+        bool sameB = FpuImagesEqual(FpuImage(2), FpuImage(3), out int offsetB);
+        Serial.Write("[FPU] mismatch A=", holds[0].Mismatch, " B=", holds[1].Mismatch, " offset A=", (ulong)offsetA, " B=", (ulong)offsetB, "\n");
+        // Counter-check of the comparison: the two states differ.
+        Assert.False(FpuImagesEqual(FpuImage(0), FpuImage(2), out _), "the two holders use different states");
+        Assert.True(holds[0].Mismatch == 0 && holds[1].Mismatch == 0, "MXCSR and FCW stay the thread's own in every loop");
+        Assert.True(sameA, "x87, MXCSR and XMM of holder A are unchanged");
+        Assert.True(sameB, "x87, MXCSR and XMM of holder B are unchanged");
+    }
+
+    private static unsafe void TestFpuNewThreadStartsWithDefaults()
+    {
+        FpuHold* holds = stackalloc FpuHold[2];
+        byte* images = stackalloc byte[(5 * FpuImageSize) + FpuImageAlignment];
+        FpuInitHolds(holds, images);
+
+        // On one CPU the new thread follows a holder or Main, with the holder running in between.
+        using OneCpuScope oneCpu = OneCpuScope.Enter();
+        SysThread holder = new(FpuWorkerA);
+        SysThread fresh = new(FpuCaptureWorker);
+        bool joined;
+        holder.Start();
+        try
+        {
+            FpuWaitForLoops(&holds[0], 0);
+            fresh.Start();
+            for (int i = 0; i < KillVictimPollRetries && !s_fpuCaptured; i++)
+            {
+                TimerManager.Wait(KillVictimPollWaitMs);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref holds[0].Stop, 1);
+            joined = holder.Join(ThrowJoinTimeoutMs) & fresh.Join(ThrowJoinTimeoutMs);
+        }
+
+        Assert.True(joined, "both threads must end");
+        Assert.True(s_fpuCaptured, "the new thread ran");
+        byte* image = FpuImage(4);
+        Assert.Equal((int)FpuDefaultFcw, (int)*(ushort*)image, "a new thread starts with FCW 0x37F");
+        Assert.Equal(0, (int)image[4], "a new thread starts with an empty x87 stack");
+        // The low six bits are sticky flags the thread's own start may set.
+        Assert.Equal(FpuDefaultMxcsr, *(uint*)(image + 24) & ~0x3Fu, "a new thread starts with MXCSR 0x1F80");
     }
 #endif
 

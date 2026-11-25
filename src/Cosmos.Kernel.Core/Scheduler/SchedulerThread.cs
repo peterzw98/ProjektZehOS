@@ -310,7 +310,7 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
         // The usable stack space is above it
         nuint contextAddr = StackBase;
 
-        // Align context to 16 bytes (required for XMM operations)
+        // Align context to 16 bytes (required for fxrstor64)
         contextAddr = (contextAddr + 0xF) & ~(nuint)0xF;
 
         // Calculate usable stack top (above the context)
@@ -321,7 +321,7 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
         context->Initialize(entryPoint, codeSegment, arg, usableStackTop);
 
         // The StackPointer points to the start of the context
-        // (where XMM registers are, as expected by the IRQ stub)
+        // (where the FPU area is, as expected by the IRQ stub)
         StackPointer = contextAddr;
         InstructionPointer = entryPoint;
         State = SchedulerThreadState.Created;

@@ -23,9 +23,6 @@ internal class X64InterruptController : IInterruptController
     /// <summary>Page-fault exception vector (#PF, SDM 3A §6.15).</summary>
     private const ulong PageFaultVector = 14;
 
-    /// <summary>Size in bytes of the XMM save area the asm stub pushes below the IRQContext. Internal: shared with the LAPIC timer handler's RSP derivation.</summary>
-    internal const int XmmSaveAreaSizeBytes = 256;
-
     /// <summary>
     /// The vector of the scheduler's self-IPI (<see cref="TryRaiseReschedule"/>):
     /// above the LAPIC timer's <see cref="LocalApic.TIMER_VECTOR"/>, outside
@@ -151,9 +148,9 @@ internal class X64InterruptController : IInterruptController
                     // the common asm stub applies the staged context switch on
                     // every interrupt exit, not just timer ticks. Same RSP
                     // derivation (and kernel-space sanity check) as the LAPIC
-                    // timer handler: the saved context sits 256 bytes (XMM
-                    // save area) below the IRQContext.
-                    nuint currentRsp = (nuint)Unsafe.AsPointer(ref ctx) - XmmSaveAreaSizeBytes;
+                    // timer handler: the saved context starts with the
+                    // FPU area, right below the IRQContext.
+                    nuint currentRsp = (nuint)Unsafe.AsPointer(ref ctx) - ThreadContext.FpuAreaSize;
                     if ((currentRsp & AddressSpace.KernelSpaceCanonicalMask) == AddressSpace.KernelSpaceCanonicalMask)
                     {
                         SchedulerManager.ReschedulePendingFromIrq(SchedulerManager.GetCurrentCpuId(), currentRsp);
@@ -198,7 +195,7 @@ internal class X64InterruptController : IInterruptController
     /// </summary>
     private static unsafe void HandleStop(ref IRQContext ctx)
     {
-        CpuStop.HandleStopInterrupt((nuint)Unsafe.AsPointer(ref ctx) - XmmSaveAreaSizeBytes);
+        CpuStop.HandleStopInterrupt((nuint)Unsafe.AsPointer(ref ctx) - ThreadContext.FpuAreaSize);
     }
 
     private static void SendEOI()

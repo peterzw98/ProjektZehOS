@@ -631,6 +631,12 @@ _native_x64_get_irq_stub:
     mov rax, [rax + rdi * 8]  // Load stub address for vector index
     ret
 
+// ZehOS patch fxsave, see PATCHES.md
+// Size of the fxsave64 image at the bottom of a ThreadContext; the managed side is
+// ThreadContext.FpuAreaSize. The TempRcx slot follows the area, the 15 GPRs and 3 info words.
+.equ FPU_AREA_SIZE, 512
+.equ CONTEXT_TEMP_RCX, FPU_AREA_SIZE + 120 + 24
+
 .macro IRQ_STUB n, has_err=0
 irq\n\()_stub:
     .if \has_err
@@ -648,7 +654,7 @@ irq\n\()_stub:
     // Stack at entry: [RSP] = RIP, [RSP+8] = CS, [RSP+16] = RFLAGS
     //
     // ThreadContext struct layout (low to high address):
-    //   XMM[256], R15..RAX (15 regs), Interrupt, CpuFlags, Cr2, TempRcx, RIP, CS, RFLAGS, [RSP, SS]
+    //   FPU area[FPU_AREA_SIZE], R15..RAX (15 regs), Interrupt, CpuFlags, Cr2, TempRcx, RIP, CS, RFLAGS, [RSP, SS]
     //
     // Strategy: Save all GPRs first, then compute and insert context info
 
@@ -739,27 +745,15 @@ irq\n\()_stub:
     // [rsp+120..151] = Interrupt, CpuFlags, Cr2, TempRcx (32 bytes)
     // [rsp+152..] = RIP, CS, RFLAGS (CPU frame)
 
-    // Save XMM registers (SSE/SIMD state) - 16 registers * 16 bytes = 256 bytes
-    sub rsp, 256
-    movdqu [rsp + 0], xmm0
-    movdqu [rsp + 16], xmm1
-    movdqu [rsp + 32], xmm2
-    movdqu [rsp + 48], xmm3
-    movdqu [rsp + 64], xmm4
-    movdqu [rsp + 80], xmm5
-    movdqu [rsp + 96], xmm6
-    movdqu [rsp + 112], xmm7
-    movdqu [rsp + 128], xmm8
-    movdqu [rsp + 144], xmm9
-    movdqu [rsp + 160], xmm10
-    movdqu [rsp + 176], xmm11
-    movdqu [rsp + 192], xmm12
-    movdqu [rsp + 208], xmm13
-    movdqu [rsp + 224], xmm14
-    movdqu [rsp + 240], xmm15
+    // ZehOS patch fxsave, see PATCHES.md
+    // The whole x87/SSE state (FCW, MXCSR, ST0-7, XMM0-15). fxsave64 needs a
+    // 16-byte-aligned area: the CPU aligns RSP before it pushes its 40-byte
+    // frame, and the 152 bytes above leave RSP aligned again.
+    sub rsp, FPU_AREA_SIZE
+    fxsave64 [rsp]
 
     // === CALL HANDLER ===
-    lea rdi, [rsp + 256]
+    lea rdi, [rsp + FPU_AREA_SIZE]
     call __managed__irq
 
     // === CHECK FOR CONTEXT SWITCH ===
@@ -792,39 +786,19 @@ irq\n\()_stub:
 .Lmarker_done\n:
 
     // Store flag in a location we can read after GPR restore
-    // Use the TempRcx slot in the context (offset 400 from start, or after GPRs+info)
-    // After XMM restore: rsp points to GPRs
-    // GPRs = 120 bytes, then info section starts
-    // Interrupt(8) + CpuFlags(8) + Cr2(8) + TempRcx(8)
-    // So TempRcx is at offset 256 + 120 + 24 = 400 from original RSP
-    // Or from current RSP (pointing to XMM): 120 + 24 = 144 bytes after XMM area
-    mov [rsp + 256 + 120 + 24], rdx  // Store in TempRcx slot
+    // Use the TempRcx slot in the context, behind the FPU area, the GPRs and
+    // Interrupt(8) + CpuFlags(8) + Cr2(8)
+    mov [rsp + CONTEXT_TEMP_RCX], rdx  // Store in TempRcx slot
 
 .Lrestore\n:
     // === RESTORE CONTEXT (single path for all cases) ===
     // First, read TempRcx BEFORE restoring GPRs (so we don't destroy RAX)
-    // TempRcx is at: XMM(256) + GPRs(120) + interrupt(8) + cpuflags(8) + cr2(8) = offset 400
-    mov rax, [rsp + 256 + 120 + 24]  // Read TempRcx (is_new_thread flag)
+    mov rax, [rsp + CONTEXT_TEMP_RCX]  // Read TempRcx (is_new_thread flag)
     mov qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], rax  // Keep it in this CPU's block across the restore
 
-    // Restore XMM
-    movdqu xmm0, [rsp + 0]
-    movdqu xmm1, [rsp + 16]
-    movdqu xmm2, [rsp + 32]
-    movdqu xmm3, [rsp + 48]
-    movdqu xmm4, [rsp + 64]
-    movdqu xmm5, [rsp + 80]
-    movdqu xmm6, [rsp + 96]
-    movdqu xmm7, [rsp + 112]
-    movdqu xmm8, [rsp + 128]
-    movdqu xmm9, [rsp + 144]
-    movdqu xmm10, [rsp + 160]
-    movdqu xmm11, [rsp + 176]
-    movdqu xmm12, [rsp + 192]
-    movdqu xmm13, [rsp + 208]
-    movdqu xmm14, [rsp + 224]
-    movdqu xmm15, [rsp + 240]
-    add rsp, 256
+    // Restore the x87/SSE state
+    fxrstor64 [rsp]
+    add rsp, FPU_AREA_SIZE
 
     // Restore GPRs
     pop r15
@@ -861,7 +835,7 @@ irq\n\()_stub:
     // Interrupts stay masked until RSP is the thread's own stack. The
     // context block has no headroom below its RSP slot, so an interrupt
     // taken before the switch would push its frame, and this stub's
-    // 448-byte save, past the bottom of the stack allocation into the heap.
+    // save of a whole context, past the bottom of the stack allocation into the heap.
     pop r11          // RIP -> r11
     add rsp, 8       // skip CS
     pop r10          // RFLAGS -> r10 (r10 is zero in a new context, caller-saved)

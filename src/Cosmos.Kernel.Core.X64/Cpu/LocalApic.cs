@@ -593,7 +593,7 @@ public static class LocalApic
 
         // Calculate RSP pointing to saved context for context switching
         nuint contextPtr = (nuint)Unsafe.AsPointer(ref context);
-        nuint currentRsp = contextPtr - X64InterruptController.XmmSaveAreaSizeBytes;  // RSP points to start of XMM save area
+        nuint currentRsp = contextPtr - ThreadContext.FpuAreaSize;  // RSP points to start of the FPU area
 
         // Sanity check RSP - should be in kernel space (0xFFFF800000000000+)
         if ((currentRsp & AddressSpace.KernelSpaceCanonicalMask) != AddressSpace.KernelSpaceCanonicalMask)
