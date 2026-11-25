@@ -25,5 +25,7 @@
     <InternalsVisibleTo Include="Cosmos.Kernel.HAL.X64" />
     <!-- ZehOS patch user-mode-probe, see PATCHES.md: the suite reads CR3 and sends an NMI. -->
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserMode" />
+    <!-- ZehOS patch user-page-tables, see PATCHES.md: the suite reads CR3. -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserPaging" />
   </ItemGroup>
 </Project>
