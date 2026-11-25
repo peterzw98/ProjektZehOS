@@ -56,6 +56,11 @@ internal static unsafe class FaultIsolation
 
     internal static void LeaveNativeRun() => Volatile.Write(ref inNativeRun, 0);
 
+    internal static bool InNativeRun => Volatile.Read(ref inNativeRun) == 1;
+
+    /// <summary>Scheduler-Id des Wasm-Workers oder -1.</summary>
+    internal static int WorkerThreadId => Volatile.Read(ref workerThreadId);
+
     /// <summary>
     /// Id des aufgegebenen Workers oder -1; liest und loescht. Liefert ihn erst, wenn die CPU der Ausnahme ihn nicht mehr
     /// als laufenden Thread fuehrt, Cosmos ihn also wirklich aufgegeben hat (E6-C.9); bis dahin -1, die Hauptschleife fragt
@@ -113,6 +118,9 @@ internal static unsafe class FaultIsolation
 
         Volatile.Write(ref inNativeRun, 0);
         Volatile.Write(ref workerThreadId, -1);
+#if ZEHOS_AOT_LOOP_EXIT && ZEHOS_WASM_AOT
+        AotLoopExit.Forget();
+#endif
         Volatile.Write(ref isolatedVector, vector);
         Volatile.Write(ref isolatedRip, exception.InstructionPointer);
         // Nur anmelden: Cosmos legt den Wechsel erst nach der Rueckkehr an und haelt an, wenn das nicht geht.

@@ -3028,7 +3028,24 @@ aot_module_malloc_internal(AOTModuleInstance *module_inst,
                                         retain_func, size, &offset)) {
             return 0;
         }
-        addr = offset ? (uint8 *)memory_inst->memory_data + offset : NULL;
+        // ZehOS: Bereichspruefung aus WAMR 2.4.6, siehe ORIGIN.txt
+        if (!offset) {
+            LOG_WARNING("warning: allocate %" PRIu64 " bytes memory failed",
+                        size);
+            aot_set_exception_with_id(module_inst, EXCE_OUT_OF_MEMORY);
+            return 0;
+        }
+
+        memory_inst = aot_get_default_memory(module_inst);
+        if (offset > memory_inst->memory_data_size
+            || size > memory_inst->memory_data_size - offset) {
+            LOG_ERROR("error: malloc returned offset %" PRIu64
+                      " out of linear memory of size %" PRIu64,
+                      offset, memory_inst->memory_data_size);
+            aot_set_exception_with_id(module_inst, EXCE_OUT_OF_MEMORY);
+            return 0;
+        }
+        addr = memory_inst->memory_data + offset;
     }
 
     if (!addr) {
