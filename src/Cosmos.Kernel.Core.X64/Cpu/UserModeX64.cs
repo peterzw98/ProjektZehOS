@@ -147,6 +147,14 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     /// <param name="fromUser">Whether it was ring 3's on the entry.</param>
     internal static void PrepareReturn(ref IRQContext ctx, bool fromUser)
     {
+        if (ctx.interrupt <= LastExceptionVector && Gdt.IstOf((int)ctx.interrupt) != 0)
+        {
+            // Back to exactly what was interrupted, even with a switch staged: that belongs to
+            // the handler this one interrupted, whose exit checks it. The stub's own mark
+            // decides its swapgs, so the frame's origin must not change.
+            return;
+        }
+
         IRQContext* frame = (IRQContext*)Unsafe.AsPointer(ref ctx);
         nuint staged = ContextSwitchNative.GetContextSwitchSp();
         if (staged != 0)
@@ -154,12 +162,6 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             // A context no handler of a program can change: its CS is its origin.
             frame = (IRQContext*)(staged + ThreadContext.FpuAreaSize);
             fromUser = IsUser(ref *frame);
-        }
-        else if (ctx.interrupt <= LastExceptionVector && Gdt.IstOf((int)ctx.interrupt) != 0)
-        {
-            // Back to exactly what was interrupted. The stub's own mark decides its swapgs, so
-            // the frame's origin must not change.
-            return;
         }
 
         if (!fromUser)

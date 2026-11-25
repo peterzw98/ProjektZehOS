@@ -180,7 +180,15 @@ internal class X64InterruptController : IInterruptController
                 // Last, after every switch this exit could stage, whichever
                 // handler staged it: the thread the stub is about to resume
                 // must be off its previous CPU's stack (SMP phase 3b).
-                SchedulerManager.FinishSwitchFromIrq(SchedulerManager.GetCurrentCpuId());
+                // ZehOS patch user-mode-probe, see PATCHES.md
+                // Not for 2, 8 and 18: their exit takes no switch, and one staged by the handler
+                // they interrupted is that handler's to finish. Marking the incoming thread here
+                // would make the interrupted handler wait for it forever.
+                if (ctx.interrupt > MaxCpuExceptionVector || Gdt.IstOf((int)ctx.interrupt) == 0)
+                {
+                    SchedulerManager.FinishSwitchFromIrq(SchedulerManager.GetCurrentCpuId());
+                }
+
                 return;
             }
         }

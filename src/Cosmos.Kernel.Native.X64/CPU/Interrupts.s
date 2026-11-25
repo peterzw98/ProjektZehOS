@@ -820,6 +820,14 @@ irq\n\()_stub:
     call __managed__irq
 
     // === CHECK FOR CONTEXT SWITCH ===
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // Not on the exit of 2, 8 and 18: they can hit a handler that has staged a switch and not
+    // finished it (EOI, the wait for the incoming thread to leave its previous CPU). Taking it
+    // here would run that thread while it may still be on another CPU's stack; the
+    // interrupted handler's own exit takes it.
+    .if \paranoid
+    jmp .Lrestore\n
+    .endif
     // Staged in this CPU's per-CPU block (PerCpuBlock.cs), reached through GS
     mov rax, qword ptr gs:[PERCPU_SWITCH_TARGET_SP]
     test rax, rax
@@ -856,8 +864,13 @@ irq\n\()_stub:
 .Lrestore\n:
     // === RESTORE CONTEXT (single path for all cases) ===
     // First, read TempRcx BEFORE restoring GPRs (so we don't destroy RAX)
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // Not for 2, 8 and 18: they can hit another stub between this store and its read below.
+    // They switch nothing and read their mark from their own frame instead.
+    .if !\paranoid
     mov rax, [rsp + CONTEXT_TEMP_RCX]  // Read TempRcx (is_new_thread flag)
     mov qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], rax  // Keep it in this CPU's block across the restore
+    .endif
 
     // Restore the x87/SSE state
     fxrstor64 [rsp]
@@ -885,6 +898,15 @@ irq\n\()_stub:
 
     // === EXIT PATH ===
     // Stack now: RIP, CS, RFLAGS, [RSP, SS if privilege change]
+    .if \paranoid
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // The mark is the TempRcx slot just below RIP, on this vector's own IST stack. Without it,
+    // GS was the kernel's on entry, so CS was too: no swapgs.
+    cmp qword ptr [rsp - 8], TEMP_SWAPGS_ON_EXIT
+    jne .Lexit_kernel\n
+    swapgs
+    jmp .Lexit_kernel\n
+    .endif
     // Check saved flag for new thread
     cmp qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], 0
     jnz .Lnew_thread\n
@@ -900,11 +922,6 @@ irq\n\()_stub:
     iretq
 
 .Lnew_thread\n:
-    .if \paranoid
-    // ZehOS patch user-stub, see PATCHES.md
-    cmp qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], TEMP_SWAPGS_ON_EXIT
-    je .Lexit_swapgs\n
-    .endif
     // NEW thread - need to set up RSP from context and jump
     // Stack: RIP, CS, RFLAGS, RSP, SS
     // Interrupts stay masked until RSP is the thread's own stack. The
