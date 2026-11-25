@@ -66,7 +66,10 @@ nicht mehr abbrechen, und ein Signal nach erfolgreichem Bau ändert den Status `
 
 Optionen: `--jobs N`, `--workdir DIR` (muss leer sein oder fehlen), `--resume` (nach Unterbrechung weiterbauen, nur in einem von
 `build.sh` angelegten Arbeitsordner mit `.ladybird-probe-workdir`; die Zeiten gelten dann nicht als kalter Bau, `build-stats.json`
-vermerkt `"resumed": true`). Compiler wählt das Skript selbst (gcc vor clang); `CC` und `CXX`
+vermerkt `"resumed": true`). Der Marker hält Format, Ladybird-Commit, Preset (`Release`) und `jit=OFF` fest, dazu zur Information
+den Skript-Kopf; `--resume` bricht mit Exit 1 ab, wenn einer der ersten vier Werte abweicht (ein Marker der ersten Fassung, nur der
+Commit-Hash, gilt weiter). Erreichte der unterbrochene Lauf schon den zweiten Versuch mit Link-Pool, übernimmt `--resume` den Pool aus
+dem CMake-Cache und meldet ihn in `link_pool_size`. Compiler wählt das Skript selbst (gcc vor clang); `CC` und `CXX`
 zusammen gesetzt haben Vorrang.
 
 Schritte, jeder in eigener Prozessgruppe unter `/usr/bin/time -v`:

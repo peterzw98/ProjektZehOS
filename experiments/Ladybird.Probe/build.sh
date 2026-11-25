@@ -775,6 +775,65 @@ configure() {
 	run_step "$name" bash -c 'cd "$1" && shift && exec cmake "$@"' configure "$SRC_DIR" "${args[@]}"
 }
 
+# Marker des Arbeitsordners. Verglichen werden nur Werte, die den Bau festlegen (Format, Commit, Preset, JIT);
+# der Skript-Kopf steht nur zur Information darin, denn --resume soll auch nach einer Skriptkorrektur gehen.
+readonly MARKER_FORMAT=1
+readonly MARKER_PRESET="Release"
+readonly MARKER_JIT="OFF"
+
+write_marker() {
+	{
+		echo "format=$MARKER_FORMAT"
+		echo "commit=$LADYBIRD_COMMIT"
+		echo "preset=$MARKER_PRESET"
+		echo "jit=$MARKER_JIT"
+		echo "script_head=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unbekannt)"
+	} >"$MARKER_FILE"
+}
+
+marker_value() {
+	sed -n "s/^$1=//p" "$MARKER_FILE" | head -n1
+}
+
+check_marker() {
+	local commit preset jit format
+	[[ -f "$MARKER_FILE" ]] || die 1 "--resume nur für einen von build.sh angelegten Arbeitsordner ($MARKER_FILE fehlt)"
+	if grep -Eq '^[0-9a-f]{40}$' "$MARKER_FILE"; then
+		# Erste Fassung (bis 26f8f188): nur der Commit-Hash, Preset und JIT waren fest wie heute.
+		format=0; commit="$(head -n1 "$MARKER_FILE")"; preset="$MARKER_PRESET"; jit="$MARKER_JIT"
+	else
+		format="$(marker_value format)"; commit="$(marker_value commit)"
+		preset="$(marker_value preset)"; jit="$(marker_value jit)"
+	fi
+	[[ "$format" == 0 || "$format" == "$MARKER_FORMAT" ]] \
+		|| die 1 "--resume: Marker-Format '${format:-?}' unbekannt (erwartet $MARKER_FORMAT) in $MARKER_FILE"
+	[[ "$commit" == "$LADYBIRD_COMMIT" ]] \
+		|| die 1 "--resume: Arbeitsordner gehört zu Commit '${commit:-?}', erwartet $LADYBIRD_COMMIT; frischen Ordner nehmen"
+	[[ "$preset" == "$MARKER_PRESET" ]] \
+		|| die 1 "--resume: Arbeitsordner mit Preset '${preset:-?}' gebaut, erwartet $MARKER_PRESET"
+	[[ "$jit" == "$MARKER_JIT" ]] \
+		|| die 1 "--resume: Arbeitsordner mit ENABLE_JS_JIT='${jit:-?}' gebaut, erwartet $MARKER_JIT"
+}
+
+# Nach --resume eines Laufs, der schon den zweiten Versuch erreicht hatte, steht der Link-Pool im CMake-Cache;
+# dann gilt er weiter, und build-stats.json soll ihn melden.
+detect_cached_link_pool() {
+	local cache="$BUILD_DIR/CMakeCache.txt" depth
+	[[ -f "$cache" ]] || return 0
+	grep -q '^CMAKE_JOB_POOL_LINK:[A-Z]*=probe_link_pool$' "$cache" || return 0
+	depth="$(sed -nE 's/.*"probe_link_pool=([0-9]+)".*/\1/p' "$LINK_POOL_INCLUDE" 2>/dev/null | head -n1)"
+	if [[ -n "$depth" ]]; then
+		LINK_POOL="$depth"
+		log "Link-Pool aus dem CMake-Cache übernommen (probe_link_pool=$depth)"
+	else
+		warn_now "CMake-Cache nennt probe_link_pool, aber $LINK_POOL_INCLUDE fehlt; wird neu geschrieben"
+		LINK_POOL=1
+		write_link_pool_include
+	fi
+}
+
+warn_now() { printf '[build.sh] Hinweis: %s\n' "$*" >&2; }
+
 # Signale erreichen die Bauschritte nicht (eigene Sitzung über setsid), deshalb hier weiterreichen.
 # Nach SIGHUP ist das Terminal weg; Meldungen gehen dann nach logs/build.sh.log, sonst bricht set -e beim Schreiben ab.
 # shellcheck disable=SC2317 # über trap aufgerufen
@@ -824,12 +883,12 @@ main() {
 	fi
 
 	if [[ "$RESUME" == 1 ]]; then
-		[[ -f "$MARKER_FILE" ]] || die 1 "--resume nur für einen von build.sh angelegten Arbeitsordner ($MARKER_FILE fehlt)"
+		check_marker
 	elif [[ -e "$WORKDIR" ]] && [[ -n "$(ls -A -- "$WORKDIR" 2>/dev/null)" ]]; then
 		die 1 "$WORKDIR ist nicht leer; für eine Messung einen frischen Ordner nehmen oder --resume angeben"
 	fi
 	mkdir -p "$WORKDIR" "$LOG_DIR" "$STATE_DIR" "$BUILD_DIR"
-	echo "$LADYBIRD_COMMIT" >"$MARKER_FILE"
+	write_marker
 	# Zeiten und Spitzenwerte gelten je Lauf; auch --resume beginnt mit leerem Zustand.
 	rm -f "$STATE_DIR/abort" "$STATE_DIR/step_pgid" "$STATE_DIR"/seconds-* "$STATE_DIR"/time-*.txt \
 		"$STATE_DIR/peak_system_used_kib" "$STATE_DIR/peak_disk_growth_bytes" "$STATE_DIR/peak_workdir_bytes"
@@ -848,6 +907,7 @@ main() {
 	fetch_source
 	check_source_pins
 	export_build_env
+	detect_cached_link_pool
 
 	mkdir -p "$SRC_DIR/Build"
 	if [[ ! -L "$SRC_DIR/Build/release" ]]; then
