@@ -1,7 +1,6 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.InteropServices;
 using Cosmos.Kernel.HAL.Devices.Storage;
 
 namespace Cosmos.Kernel.System.FileSystem.Fat;
@@ -12,14 +11,11 @@ internal sealed class FatSuperblock : IVfsSuperblock
     private const int ShortEntrySlotCount = 1;
 
     private readonly IBlockDevice _device;
-    private readonly Dictionary<uint, FatInode> _inodeCache = [];
+    // ZehOS patch fat-inode-cache, see PATCHES.md
+    private readonly FatInodeCache _inodeCache = new();
 
-    // ZehOS patch fat-rename-open, see PATCHES.md
-    // Inodes without a first cluster (empty files) by directory slot, weakly:
-    // renaming or removing the entry has to find the object an open handle uses.
-    private const int EmptySweepMin = 256;
-    private readonly Dictionary<ulong, GCHandle> _emptyInodes = [];
-    private int _emptySweepAt = EmptySweepMin;
+    /// <summary>The inode cache of this mount (test hook).</summary>
+    internal FatInodeCache InodeCache => _inodeCache;
 
     public FatBootSector Boot { get; }
     public FatTable Fat { get; }
@@ -49,12 +45,6 @@ internal sealed class FatSuperblock : IVfsSuperblock
     public void Drop()
     {
         _inodeCache.Clear();
-        foreach (GCHandle handle in _emptyInodes.Values)
-        {
-            handle.Free();
-        }
-
-        _emptyInodes.Clear();
     }
 
     /// <summary>Flush the device's volatile write cache — the durability point for sync and unmount.</summary>
@@ -114,7 +104,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
         // ZehOS patch fat-rename-open, see PATCHES.md
         // One inode per file, empty files included (see TryGetLive).
         if (entry.FirstCluster >= FatTable.FirstDataCluster
-            ? _inodeCache.TryGetValue(entry.FirstCluster, out FatInode? cached)
+            ? _inodeCache.TryGet(entry.FirstCluster, out FatInode? cached)
             : TryGetEmpty(parent, entry.ByteOffset, out cached))
         {
             cached.Name = entry.Name;
@@ -151,7 +141,7 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
         // The slot has to match as well: an object left under a cluster that
         // was freed and reused belongs to another entry.
-        return _inodeCache.TryGetValue(entry.FirstCluster, out live)
+        return _inodeCache.TryGet(entry.FirstCluster, out live)
             && live.DirEntryByteOffset == entry.ByteOffset
             && live.Parent is not null
             && live.Parent.FirstCluster == parent.FirstCluster;
@@ -159,21 +149,12 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
     private bool TryGetEmpty(FatInode parent, int byteOffset, [NotNullWhen(true)] out FatInode? inode)
     {
-        inode = null;
-        if (_emptyInodes.TryGetValue(SlotKey(parent, byteOffset), out GCHandle handle))
-        {
-            inode = (FatInode?)handle.Target;
-        }
-
-        return inode is not null;
+        return _inodeCache.TryGetEmpty(SlotKey(parent, byteOffset), out inode);
     }
 
     private void ForgetEmpty(ulong key)
     {
-        if (_emptyInodes.Remove(key, out GCHandle handle))
-        {
-            handle.Free();
-        }
+        _inodeCache.RemoveEmpty(key);
     }
 
     private static ulong SlotKey(FatInode parent, int byteOffset)
@@ -193,37 +174,11 @@ internal sealed class FatSuperblock : IVfsSuperblock
         if (inode.FirstCluster >= FatTable.FirstDataCluster)
         {
             ForgetEmpty(key);
-            _inodeCache[inode.FirstCluster] = inode;
+            _inodeCache.Set(inode.FirstCluster, inode);
             return;
         }
 
-        if (_emptyInodes.TryGetValue(key, out GCHandle old))
-        {
-            old.Target = inode;
-            return;
-        }
-
-        if (_emptyInodes.Count >= _emptySweepAt)
-        {
-            List<ulong> dead = [];
-            foreach (KeyValuePair<ulong, GCHandle> entry in _emptyInodes)
-            {
-                if (entry.Value.Target is null)
-                {
-                    dead.Add(entry.Key);
-                }
-            }
-
-            foreach (ulong slot in dead)
-            {
-                ForgetEmpty(slot);
-            }
-
-            // Doubling keeps the scan amortized.
-            _emptySweepAt = Math.Max(EmptySweepMin, _emptyInodes.Count * 2);
-        }
-
-        _emptyInodes.Add(key, GCHandle.Alloc(inode, GCHandleType.Weak));
+        _inodeCache.SetEmpty(key, inode);
     }
 
     public void ForgetInode(uint firstCluster)
