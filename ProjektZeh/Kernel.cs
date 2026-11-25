@@ -742,9 +742,12 @@ public sealed class Kernel : Sys.Kernel
     }
 #endif
 
+#if !ZEHOS_STRIDE_SCHEDULER
+    // Nur DescribeScheduler der Klassenpolicy liest sie; im Stride-Bau waeren sie ungenutzt (CS0169).
     private readonly object schedulerSampleGate = new();
     private ulong[] lastBusyNs = [];
     private ulong lastAllNs;
+#endif
 
     /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
     /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>
