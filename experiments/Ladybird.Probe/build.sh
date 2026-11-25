@@ -190,6 +190,44 @@ qt_has_module() {
 	return 1
 }
 
+# Autotools für die vcpkg-Ports mit vcpkg_make_configure(AUTORECONF) (am festen Stand u. a. gperf, libedit, icu,
+# libffi, ncurses). Nachgebildet nach vcpkg_run_autoreconf in ports/vcpkg-make/vcpkg_make.cmake (vcpkg 8f363bdc):
+# aclocal --dry-run über dessen configure.ac, das fehlende Makros als "System package … is missing." meldet.
+check_autotools() {
+	local tmp out
+	command -v autoreconf >/dev/null 2>&1 || missing "Programm 'autoreconf' -> Paket autoconf (base-devel)"
+	if ! command -v aclocal >/dev/null 2>&1; then
+		missing "Programm 'aclocal' -> Paket automake (base-devel)"
+		return
+	fi
+	tmp="$(mktemp -d)"
+	cat >"$tmp/configure.ac" <<'AC'
+AC_INIT([check-autoconf], [1.0])
+AM_INIT_AUTOMAKE
+m4_ifndef([AX_CHECK_COMPILE_FLAG], [m4_errprintn([System package autoconf-archive is missing.])])
+m4_ifndef([LT_INIT],               [m4_errprintn([System package libtool is missing.])])
+m4_ifndef([LTDL_INIT],             [m4_errprintn([System package libltdl-dev is missing.])])
+AC_OUTPUT
+AC
+	out="$(cd "$tmp" || exit 0; aclocal --dry-run 2>&1)" || true
+	rm -rf -- "$tmp"
+	[[ "$out" == *"autoconf-archive is missing"* ]] \
+		&& missing "Autoconf-Makros AX_* (aclocal findet AX_CHECK_COMPILE_FLAG nicht; vcpkg-Port gperf scheitert daran) -> Paket autoconf-archive"
+	[[ "$out" == *"libtool is missing"* ]] && missing "Autoconf-Makro LT_INIT -> Paket libtool (base-devel)"
+	[[ "$out" == *"libltdl-dev is missing"* ]] && missing "Autoconf-Makro LTDL_INIT -> Paket libtool (enthält libltdl)"
+	return 0
+}
+
+# OpenSSL aus vcpkg baut mit Perl und prüft IPC::Cmd (ports/openssl/unix/portfile.cmake); FindBin und Time::Piece
+# nennt Ladybirds Bauanleitung für Fedora. Unter Arch gehören alle drei zum Paket perl.
+check_perl() {
+	if ! command -v perl >/dev/null 2>&1; then
+		missing "Programm 'perl' -> Paket perl"
+	elif ! perl -MIPC::Cmd -MFindBin -MTime::Piece -e 1 2>/dev/null; then
+		missing "Perl-Module IPC::Cmd, FindBin, Time::Piece -> Paket perl"
+	fi
+}
+
 check_prereqs() {
 	local v
 
@@ -211,6 +249,7 @@ check_prereqs() {
 	need_cmd zip zip
 	need_cmd unzip unzip
 	need_cmd setsid "util-linux"
+	need_cmd timeout coreutils
 	need_cmd du coreutils
 	need_cmd df coreutils
 	need_cmd realpath coreutils
@@ -233,14 +272,8 @@ check_prereqs() {
 		python3 -c 'import venv, ensurepip' 2>/dev/null || missing "Python-Module venv/ensurepip -> Paket python"
 	fi
 
-	if command -v aclocal >/dev/null 2>&1; then
-		local acdir
-		acdir="$(aclocal --print-ac-dir 2>/dev/null || true)"
-		[[ -n "$acdir" && -f "$acdir/ax_check_compile_flag.m4" ]] \
-			|| missing "autoconf-archive (ax_check_compile_flag.m4 nicht in ${acdir:-?}) -> Paket autoconf-archive"
-	else
-		missing "Programm 'aclocal' -> Paket automake (base-devel)"
-	fi
+	check_autotools
+	check_perl
 
 	pick_compiler
 
@@ -369,7 +402,7 @@ kill_step_group() {
 
 monitor() {
 	local avail0="$1" now avail growth used peak_used=0 peak_growth=0 reason
-	local du_bytes=0 peak_du=0 last_du=0
+	local du_bytes=0 du_new peak_du=0 last_du=0
 	while :; do
 		now="$(date +%s)"
 		used="$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print t-a}' /proc/meminfo)"
@@ -384,8 +417,9 @@ monitor() {
 		if [[ $((now - last_du)) -ge "$DU_INTERVAL" ]]; then
 			last_du="$now"
 			# Während des Baus verschwinden Dateien; du meldet das, der Wert bleibt brauchbar.
-			du_bytes="$(du -sb -- "$WORKDIR" 2>/dev/null | awk '{print $1}' || true)"
-			du_bytes="${du_bytes:-0}"
+			# Zeitlimit, damit ein hängendes du die Zeit- und Platzregel nicht blockiert; dann gilt der letzte Wert.
+			du_new="$(timeout 120 du -sb -- "$WORKDIR" 2>/dev/null | awk '{print $1}' || true)"
+			[[ -n "$du_new" ]] && du_bytes="$du_new"
 			if [[ "$du_bytes" -gt "$peak_du" ]]; then
 				peak_du="$du_bytes"; echo "$peak_du" >"$STATE_DIR/peak_workdir_bytes"
 			fi
@@ -421,7 +455,8 @@ cgroup_oom_kills() {
 
 log_shows_oom() {
 	# Nur eindeutige Zeichen: vom Kernel getötete Prozesse (Signal 9, Exit 137) und die OOM-Meldungen von gcc und LLVM.
-	grep -Eq 'Killed signal terminated program|signal: 9, SIGKILL|exit status 137|exit code 137|virtual memory exhausted|LLVM ERROR: out of memory' "$1"
+	# "collect2: fatal error: ld terminated with signal 9 [Killed]" ist der OOM-Fall beim Linken.
+	grep -Eq 'Killed signal terminated program|terminated with signal 9|ld terminated with signal|signal: 9, SIGKILL|exit status 137|exit code 137|virtual memory exhausted|LLVM ERROR: out of memory' "$1"
 }
 
 # run_step NAME BEFEHL...: in eigener Prozessgruppe unter /usr/bin/time -v, Ausgabe nach logs/NAME.log.
@@ -621,6 +656,8 @@ cleanup() {
 # finish CODE: Wächter beenden, build-stats.json schreiben, mit CODE enden.
 finish() {
 	local code="$1"
+	# Ab hier ist der Lauf entschieden: weitere Signale ändern weder Status noch build-stats.json.
+	trap '' INT TERM HUP
 	STATS_DONE=1
 	cleanup
 	MONITOR_PID=""
@@ -780,14 +817,15 @@ main() {
 		"$STATE_DIR/peak_system_used_kib" "$STATE_DIR/peak_disk_growth_bytes" "$STATE_DIR/peak_workdir_bytes"
 
 	START_EPOCH="$(date +%s)"
-	local avail0
-	avail0="$(df -B1 --output=avail -- "$WORKDIR" | tail -n1 | tr -d ' ')"
-	monitor "$avail0" &
-	MONITOR_PID=$!
+	# Traps vor dem Wächter, damit er in keinem Fenster ohne Aufräumen weiterläuft.
 	trap on_exit EXIT
 	trap 'on_signal INT' INT
 	trap 'on_signal TERM' TERM
 	trap 'on_signal HUP' HUP
+	local avail0
+	avail0="$(df -B1 --output=avail -- "$WORKDIR" | tail -n1 | tr -d ' ')"
+	monitor "$avail0" &
+	MONITOR_PID=$!
 
 	fetch_source
 	check_source_pins

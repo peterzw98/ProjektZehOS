@@ -15,6 +15,11 @@ oder `syscalls.py` aus N1-C1.
 - Werkzeuge laut `Documentation/BuildInstructionsLadybird.md` am festen Commit: CMake ≥ 3.30, Qt ≥ 6.10 (mit Positioning), nasm, ninja,
   gcc ≥ 14 oder clang ≥ 19 (Untergrenzen aus `Meta/Utils/find_compiler.py`), Python ≥ 3.7, rustup mit der Toolchain aus
   `rust-toolchain.toml` (`1.98.0`), dazu GNU time für die Speichermessung.
+- Hostwerkzeuge der vcpkg-Ports (am vcpkg-Stand `8f363bdc` aus `vcpkg.json` gelesen): autoconf, automake, libtool mit libltdl und
+  **autoconf-archive** für die Ports mit `vcpkg_make_configure(AUTORECONF)`, etwa gperf, libedit, icu, libffi, ncurses
+  (`ports/vcpkg-make/vcpkg_make.cmake`); make, pkg-config, nasm, Python; Perl mit IPC::Cmd für OpenSSL
+  (`ports/openssl/unix/portfile.cmake`). `build.sh --check` prüft die Autotools-Makros genauso wie vcpkg: `aclocal --dry-run` über
+  dessen `configure.ac` (fehlen `AX_CHECK_COMPILE_FLAG`, `LT_INIT` oder `LTDL_INIT`, scheitert sonst erst der Port gperf).
 
 `build.sh` **installiert nichts**. Die Pakete installiert der Mensch einmal von Hand.
 
@@ -29,7 +34,9 @@ sudo pacman -S --needed autoconf-archive base-devel ccache cmake curl git less l
 
 `rustup` ersetzt ein installiertes Paket `rust`; pacman fragt dann nach. `ccache` steht in der Upstream-Liste, `build.sh` schaltet es
 aber ab (`LADYBIRD_ENABLE_CCACHE=OFF`, `CCACHE_DISABLE=1`), damit die Bauzeit einen kalten Bau misst. Optional: `glslang`
-(`glslangValidator`); ohne ihn baut die Qt-Oberfläche ohne ihren Vulkan-Anzeigeweg, für die Messung ohne Belang.
+(`glslangValidator`); ohne ihn baut die Qt-Oberfläche ohne ihren Vulkan-Anzeigeweg, für die Messung ohne Belang. autoconf, automake,
+libtool (mit libltdl), make, pkgconf und perl kommen unter Arch über `base-devel` bzw. als dessen Abhängigkeiten; `autoconf-archive` ist
+ein eigenes Paket und fehlt oft.
 
 ### Als normaler Benutzer
 
@@ -53,7 +60,9 @@ tmux new -s ladybird 'experiments/Ladybird.Probe/build.sh'   # Messung: --workdi
 
 Der Bau dauert Stunden; deshalb in `tmux`/`screen` oder mit `nohup … &` starten. SIGHUP (Terminal geschlossen), SIGINT und SIGTERM beenden
 den laufenden Schritt (TERM, nach 30 s KILL) und schreiben `build-stats.json` mit `"reason": "signal"`, Exit 3; nach SIGHUP stehen die
-Meldungen des Skripts in `logs/build.sh.log`.
+Meldungen des Skripts in `logs/build.sh.log`. Sobald das Ergebnis feststeht (Bau fertig, Abbruch oder erstes Signal), ignoriert das
+Skript weitere Signale: Das Zählen und Schreiben von `build-stats.json` (`du` über den Arbeitsordner, einige Minuten) lässt sich dann
+nicht mehr abbrechen, und ein Signal nach erfolgreichem Bau ändert den Status `ok` nicht.
 
 Optionen: `--jobs N`, `--workdir DIR` (muss leer sein oder fehlen), `--resume` (nach Unterbrechung weiterbauen, nur in einem von
 `build.sh` angelegten Arbeitsordner mit `.ladybird-probe-workdir`; die Zeiten gelten dann nicht als kalter Bau, `build-stats.json`
@@ -83,9 +92,9 @@ Ein Wächter prüft alle 15 Sekunden:
 | Regel | Grenze | Folge |
 | --- | --- | --- |
 | Zeit | Gesamtlauf ab Start (fetch bis build) über 8 h | laufender Schritt wird beendet, Exit 3, `"reason": "time"` |
-| Platz | Arbeitsordner über 200 GiB (`du -sb`, etwa jede Minute) | Exit 3, `"reason": "disk"` |
+| Platz | Arbeitsordner über 200 GiB (`du -sb`, etwa jede Minute, je Zählung höchstens 120 s; danach gilt der letzte Wert) | Exit 3, `"reason": "disk"` |
 | Restplatz | weniger als 10 GiB frei auf dem Dateisystem (`df`), auch wenn andere Programme schreiben | Exit 3, `"reason": "disk_full"` |
-| OOM | Bau scheitert mit OOM: Zähler `oom_kill` der cgroup steigt, oder das Log zeigt Signal 9/Exit 137 oder die OOM-Meldung von gcc bzw. LLVM | einmal `LAGOM_LINK_POOL_SIZE=1`, neu konfigurieren, weiterbauen; zweites OOM: Exit 3, `"reason": "oom"` |
+| OOM | Bau scheitert mit OOM: Zähler `oom_kill` der cgroup steigt, oder das Log zeigt Signal 9/Exit 137 (auch `collect2: fatal error: ld terminated with signal 9 [Killed]` beim Linken) oder die OOM-Meldung von gcc bzw. LLVM | einmal `LAGOM_LINK_POOL_SIZE=1`, neu konfigurieren, weiterbauen; zweites OOM: Exit 3, `"reason": "oom"` |
 
 OOM schon bei den Abhängigkeiten bricht ohne zweiten Versuch ab. **Nach einem Abbruch kein weiterer Versuch ohne Rückfrage** (Plan L1-A);
 Stand und die bis dahin gemessenen Zahlen melden. Andere Exit-Codes: 1 Aufruf- oder Umgebungsfehler, 2 Voraussetzungen fehlen,
