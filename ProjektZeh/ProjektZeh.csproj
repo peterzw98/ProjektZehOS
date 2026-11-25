@@ -34,6 +34,10 @@
     <DefineConstants Condition="'$(ZehOSSmpProbe)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE</DefineConstants>
     <!-- E7-B: Panic auf einer CPU muss die Ticks eines Threads auf einer anderen CPU anhalten; ersetzt die Schritte der SMP-Probe. -->
     <DefineConstants Condition="'$(ZehOSSmpProbePanic)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE;ZEHOS_SMP_PROBE_PANIC</DefineConstants>
+    <!-- Ladybird N1-A6: Ring-3-Faelle, braucht den Cosmos-Probestand von N1-A4; Negative haelt mit #PF im Kernelthread an. -->
+    <ZehOSUserModeProbe Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">true</ZehOSUserModeProbe>
+    <DefineConstants Condition="'$(ZehOSUserModeProbe)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE_NEGATIVE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>
@@ -92,6 +96,9 @@
   <!-- Nur fuer die SIMD-Probe: ILC-Befehlssatz ausdruecklich vorgeben (z. B. x86-64-v3, native). Ohne Angabe bleibt der Cosmos-Standard. -->
   <ItemGroup Condition="'$(ZehOSSimdProbe)' == 'true' and '$(ZehOSSimdInstructionSet)' != ''">
     <IlcArg Include="--instruction-set:$(ZehOSSimdInstructionSet)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ZehOSUserModeProbe)' == 'true'">
+    <AsmFiles Include="$(MSBuildThisFileDirectory)Native/UserProbe/probe.S;$(MSBuildThisFileDirectory)Native/UserProbe/entry.s" />
   </ItemGroup>
   <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />

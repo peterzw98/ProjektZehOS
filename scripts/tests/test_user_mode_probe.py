@@ -64,6 +64,23 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("Schlusszeile 'USER_PROBE done' fehlt", result)
 
 
+class NegativeTests(unittest.TestCase):
+    START = 'USER_PROBE gegenprobe pf in kernel thread ring3=1\n'
+
+    def test_halt_with_exception_passes(self):
+        self.assertEqual(probe.evaluate_negative(self.START + '*** CPU EXCEPTION ***\n'), [])
+
+    def test_missing_start_or_ring3_fails(self):
+        self.assertTrue(probe.evaluate_negative('CPU EXCEPTION\n'))
+        self.assertTrue(probe.evaluate_negative(self.START.replace('ring3=1', 'ring3=0') + 'CPU EXCEPTION\n'))
+
+    def test_exception_before_the_start_does_not_count(self):
+        self.assertTrue(probe.evaluate_negative('CPU EXCEPTION\n' + self.START))
+
+    def test_running_on_fails(self):
+        self.assertTrue(probe.evaluate_negative(self.START + 'CPU EXCEPTION\nUSER_PROBE gegenprobe NOT HALTED\n'))
+
+
 class WaitTests(unittest.TestCase):
     def test_stops_when_process_is_gone(self):
         self.assertFalse(probe.wait_for_done(lambda: '', 1000, clock=lambda: 0.0, sleep=lambda _: None, alive=lambda: False))
@@ -180,7 +197,7 @@ class RunTests(unittest.TestCase):
                      and sys.platform.startswith('linux'), 'binutils fehlen')
 class ProbeImageTests(unittest.TestCase):
     NAMES = ['loop', 'spin', 'fpu', 'fault_de', 'fault_ud', 'fault_gp_cli', 'fault_gp_hlt', 'fault_gp_in',
-             'fault_pf_read', 'fault_pf_write', 'fault_pf_exec', 'badret', 'leave']
+             'fault_pf_read', 'fault_pf_write', 'fault_pf_exec', 'badret', 'leave', 'fault_avx', 'fpu2', 'switch']
 
     def test_entry_table_is_fixed_and_position_independent(self):
         build = SCRIPTS.parent / 'ProjektZeh/Native/UserProbe/build.sh'
