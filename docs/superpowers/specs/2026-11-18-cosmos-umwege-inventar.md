@@ -88,7 +88,7 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `scripts/check-release-paths.py:11-26` | feste Upstream-Pfade erlaubt | Q✓ vorgebaute DLLs mit `[CallerFilePath]` | K: eigener Build mit `PathMap` | ja |
 | `scripts/check-plug-binding.py` | prüft im Log, dass jeder Plug gebunden hat | Q✓ `Cosmos.Patcher/Resolution/MethodResolver.cs:102`: fehlendes Ziel nur Warnung | K | ja |
 
-## SMP-Einträge (Nachtrag E7-F-Entwurf, Stand 25. November 2026, Pin `3.0.97-zehos.6-smp.12`)
+## SMP-Einträge (Nachtrag E7-F-Entwurf, Stand 25. November 2026, Pin `3.0.97-zehos.6-smp.13`)
 
 Neue Umwege und Patches der Multicore-Etappen. „Stand“ nennt die Quelle im Repository.
 
@@ -107,6 +107,7 @@ Neue Umwege und Patches der Multicore-Etappen. „Stand“ nennt die Quelle im R
 | `Scheduling/CosmosStackProbe.cs`, `ThreadStarter` | Probe-Allokation vor Threadstart (Zeile oben) | `InitializeStack` prüft den Alloc seit smp.10 selbst | Entfernung in PR #551 (E5-F, Draft, **noch nicht gemergt**) |
 | Hauptthread und Standardaffinität (`Runtime/CosmosBootOptions.cs`, `MoveMainToWorkers`) | bei mehreren CPUs auf den Compute-CPUs, sonst CPU 0 | Eingabe-IRQs liegen auf CPU 0 | E7-A (PR #564) gemergt; Issue #394 und Restbefunde #660 offen |
 | Cosmos-Patches `ahci-error-recovery`, `foh-gc-retry`, `ext2-used-dirs` (smp.12) | Fehlerstatus nach PxCI; Frozen-Heap-Segment sammelt bei Seitenmangel; `bg_used_dirs_count` über den Deskriptor-Cache | #570, #650, #593 | in Cosmos; kein ZehOS-Umweg |
+| Cosmos-Patches `aot-loop-exit`, `gc-refill-scan-limit`, `ext2-dir-scan`, `ext2-direct-runs`, `ext2-inode-cache-evict`, `exit-quiet` (smp.13) | Hook im Scheduler-Tick; Refill-Suche begrenzt; Verzeichnissuche blockweise; Läufe direkt schreiben; Inode-Cache auf 1024 saubere Inodes; Thread-Exit-Ausgaben nur im Debug-Bau | #654, #656, #658, #577, #670, #664 | in Cosmos; kein ZehOS-Umweg; FAT hat weiter einen unbegrenzten Cache (#672) |
 
 **Schlussstand je Zeile: vorläufig.** Die Zeilen der Abschnitte oben werden erst mit E7-E endgültig fortgeschrieben; die ext2-Zeilen führt PR #556 (E2-Abschluss, auf `master` gemergt) nach.
 
