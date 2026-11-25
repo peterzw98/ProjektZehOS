@@ -192,6 +192,30 @@ _native_x64_user_wrmsr:
     wrmsr
     ret
 
+// uint64_t _native_x64_user_cr4_features()
+// The calling CPU's SMEP (CR4 bit 20, CPUID 7 EBX 7) and UMIP (CR4 bit 11, CPUID 7 ECX 2).
+.global _native_x64_user_cr4_features
+_native_x64_user_cr4_features:
+    push    rbx
+    xor     eax, eax
+    cpuid
+    xor     esi, esi
+    cmp     eax, 7
+    jb      .Luser_features_done
+    mov     eax, 7
+    xor     ecx, ecx
+    cpuid
+    and     ebx, 1 << 7
+    shl     ebx, 13
+    and     ecx, 1 << 2
+    shl     ecx, 9
+    mov     esi, ebx
+    or      esi, ecx
+.Luser_features_done:
+    mov     rax, rsi
+    pop     rbx
+    ret
+
 // uint64_t _native_x64_user_change_cr4(uint64_t set, uint64_t clear)
 // Returns the new value.
 .global _native_x64_user_change_cr4

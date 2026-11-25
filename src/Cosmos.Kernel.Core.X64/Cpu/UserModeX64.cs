@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using Cosmos.Kernel.Core.Bridge;
 using Cosmos.Kernel.Core.CPU;
+using Cosmos.Kernel.Core.IO;
 using Cosmos.Kernel.Core.Scheduler;
 using Cosmos.Kernel.Core.X64.Bridge;
 
@@ -48,7 +49,6 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
 
     private static ulong s_syscallAddress;
     private static ulong s_leaveAddress;
-    private static ulong s_cr4Set;
 
     public override bool IsAvailable
     {
@@ -61,14 +61,18 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
                 return false;
             }
 
-            ulong set = 0;
-            if (X86Base.CpuId(0, 0).Eax >= 7)
+            // This CPU only: each CPU asks for its own when it is set up, masked and unable to log.
+            ulong features = Cr4Features();
+            if ((features & Cr4Smep) == 0)
             {
-                (int _, int ebx, int ecx, int _) = X86Base.CpuId(7, 0);
-                set = ((ebx & (1 << 7)) != 0 ? Cr4Smep : 0) | ((ecx & (1 << 2)) != 0 ? Cr4Umip : 0);
+                Serial.WriteString("[UserMode] no SMEP: the kernel could execute a program's pages\n");
             }
 
-            s_cr4Set = set;
+            if ((features & Cr4Umip) == 0)
+            {
+                Serial.WriteString("[UserMode] no UMIP: programs can read the descriptor table addresses\n");
+            }
+
             s_leaveAddress = LeaveAddress();
             s_syscallAddress = SyscallAddress();
             return true;
@@ -178,7 +182,8 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     {
         // FSGSBASE off: ring 3 could otherwise set a GS base that looks like the kernel's to the
         // NMI entry. Nothing sets a program's GS base: it is 0.
-        ChangeCr4(s_cr4Set, Cr4FsGsBase);
+        // SMEP and UMIP by this CPU's CPUID: a bit it lacks would fault.
+        ChangeCr4(Cr4Features(), Cr4FsGsBase);
         ClearFs();
         WriteMsr(KernelGsBaseMsr, 0);
 
@@ -203,6 +208,11 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     [LibraryImport("*", EntryPoint = "_native_x64_user_wrmsr")]
     [SuppressGCTransition]
     private static partial void WriteMsr(uint index, ulong value);
+
+    /// <summary>The bits of <see cref="Cr4Smep"/> and <see cref="Cr4Umip"/> the calling CPU has.</summary>
+    [LibraryImport("*", EntryPoint = "_native_x64_user_cr4_features")]
+    [SuppressGCTransition]
+    private static partial ulong Cr4Features();
 
     [LibraryImport("*", EntryPoint = "_native_x64_user_change_cr4")]
     [SuppressGCTransition]
