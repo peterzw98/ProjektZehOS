@@ -285,6 +285,7 @@ public unsafe partial class Kernel : Sys.Kernel
         }
 
         s_change = -1;
+        s_faultAction = 0;
     }
 
     private static void TestBadEnter()
