@@ -5,6 +5,7 @@ using Cosmos.Kernel.HAL.DriverKit.Buses.Usb;
 using Cosmos.Kernel.System;
 using Cosmos.Kernel.System.Input;
 using KitPointerButtons = Cosmos.Kernel.HAL.Devices.Input.PointerButtons;
+#pragma warning disable COSMOS0001 // IrqSpinLock (ZehOS-Patch irq-mask-scope, #473) ist als COSMOS0001 markiert; die Nutzung ist bewusst.
 
 namespace ProjektZeh.Input;
 
@@ -49,7 +50,7 @@ public sealed class CosmosUsbTabletDriver : Driver
                 out int x, out int y, out byte buttons, out int wheel)) return;
 
             // Ein PS/2-Interrupt oder eine zweite CPU darf die Paketfolge waehrend des Tabletberichts nicht unterbrechen.
-            using (CosmosMousePlug.PointerLock.Enter())
+            using (CosmosMousePlug.PointerLock.Acquire())
             {
                 CosmosMousePlug.ApplyPending();
                 CosmosMousePlug.RecordTabletMotion(x - MouseManager.X, y - MouseManager.Y);
@@ -65,3 +66,4 @@ public sealed class CosmosUsbTabletDriver : Driver
     }
 }
 #pragma warning restore COSMOS0003
+#pragma warning restore COSMOS0001

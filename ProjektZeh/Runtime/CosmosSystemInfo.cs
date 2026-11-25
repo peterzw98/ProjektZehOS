@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using ProjektZeh.Shared;
-using System.Runtime.CompilerServices;
+using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Network;
 using ProjektZeh.Apps.TaskManager;
+using ProjektZeh.Scheduling;
 using ProjektZeh.Storage;
 
 namespace ProjektZeh.Runtime;
@@ -14,27 +15,20 @@ namespace ProjektZeh.Runtime;
 /// Liest Systeminformationen fuer den Taskmanager ueber Cosmos. Nur lesend: es werden weder Laufwerke
 /// eingebunden noch Netzwerkadapter konfiguriert.
 /// </summary>
-internal sealed class CosmosSystemInfo(IStorageService storage, string version)
+internal sealed class CosmosSystemInfo(IStorageService storage, string version, CpuTopology topology)
 {
-    private const string PageAllocatorType = "Cosmos.Kernel.Core.Memory.PageAllocator, Cosmos.Kernel.Core";
-    private const ulong PageSize = 4096;
-
     public TaskManagerSection[] Sections =>
     [
         new("Datentraeger", ReadStorage),
         new("Netzwerk", ReadNetwork),
-        new("System", () => [version, "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
+        new("System", () => [version, "CPU-Topologie", .. topology.DescribeLines(),
+            "Speicherverwaltung: Cosmos-Seitenverwalter, Seiten zu 4 KiB",
             "Grafik: " + (Cosmos.Kernel.System.Graphics.Canvas.GetFullScreen().Name ?? "unbekannt")])
     ];
 
-    // Der Seitenverwalter ist in Cosmos 3.0.94 intern; gelesen werden nur seine Zaehler.
-    public static (ulong Total, ulong Free) PhysicalMemory() => (TotalPages(null) * PageSize, FreePages(null) * PageSize);
-
-    [UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "TotalPageCount")]
-    private static extern ref ulong TotalPages([UnsafeAccessorType(PageAllocatorType)] object? owner);
-
-    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_FreePageCount")]
-    private static extern ulong FreePages([UnsafeAccessorType(PageAllocatorType)] object? owner);
+    // Oeffentliche Zaehler des Seitenverwalters (Cosmos MemoryDiagnostics), einzeln gelesen: kein gemeinsamer Stand.
+    public static (ulong Total, ulong Free) PhysicalMemory() =>
+        (MemoryDiagnostics.TotalPages * MemoryDiagnostics.PageSizeBytes, MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes);
 
     public static ResultObject<(long TotalBytes, long AvailableBytes)> DiskSpace(string path) => StorageLock.Run(() => DiskSpaceStorageLocked(path));
 

@@ -2,7 +2,7 @@
 
 [![Build and tests](https://github.com/peterzw98/ProjektZehOS/actions/workflows/ci.yml/badge.svg)](https://github.com/peterzw98/ProjektZehOS/actions/workflows/ci.yml)
 
-ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und einer kleinen Shell in unabhängigen Terminalfenstern.
+ProjektZeh ist ein Cosmos-Gen3-Kernel für x64 mit einem grafischen Desktop und einer kleinen Shell in unabhängigen Terminalfenstern. Der Taskmanager zeigt die CPU-Topologie.
 
 ## Handbuch
 
@@ -54,12 +54,45 @@ Die ZehOS-Version entsteht beim Bau aus Git: `<ZehOSVersionPrefix>.<ZehOSPatchBa
 
 Der erste Befehl erzeugt `ProjektZeh\output-x64\ProjektZeh.iso`. Für einen Start ohne grafisches QEMU-Fenster kann `cosmos run` vor `--` mit `--headless` ausgeführt werden. Die eigentliche Konsole wird dann nicht angezeigt, weil sie auf dem Framebuffer gezeichnet wird.
 
+### Gastproben
+
+Proben bauen den Kernel mit einer Konstante und melden Ergebnisse seriell; die Skripte unter `scripts/` starten das ISO plattenlos unter QEMU. Die SMP-Probe (E6-D) prüft auf mehreren CPUs Zähler, Parallelität, Migration, Sperren, Warten mit Frist (`timedwait`), GC und Threadstart/-ende:
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbe=true -warnaserror
+ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --iso <ISO> --accel kvm   # ZEHOS_QEMU_SMP leer = eine CPU
+```
+
+Erwartet wird `SMP_PROBE PASS`; die CPU-Zahl muss der ersten Zahl aus `ZEHOS_QEMU_SMP` entsprechen, und unter KVM mit mindestens zwei Worker-CPUs muss `parallel speedup_permille` mindestens 1500 betragen. Die Probe übergibt je Sperrenpaar 10.000 Nachrichten.
+
+Die Schritte `placement` und `smt` (E7-D) brauchen Hyperthreading im Gast (`ZEHOS_QEMU_SMP=4,cores=2,threads=2`; ohne `threads=2` meldet `smt` SKIP, das Skript lässt das zu). `placement` belegt, dass ein Interaktiv- und ein Normal-Thread auf getrennten Kernen rechnen. `smt` lässt so viele Threads rechnen wie Worker-CPUs und meldet `INFO smt off=<0|1> used=<CPUs> second=<n>`: Mit `zehos.smt=off` (Zeile `cmdline: zehos.smt=off` im Limine-Eintrag des ISO, nicht committen) darf nie ein zweiter logischer Prozessor eines Kerns auftauchen (`second=0`, sonst FAIL); ohne den Schalter treten sie bei voller Last auf (Messung KVM, 4 CPUs als 2 Kerne × 2: `used=1,2,3 second=2` gegen `used=2 second=0`). `placement` meldet mit dem Schalter SKIP, weil unter den Worker-CPUs nur ein Kern bleibt.
+
+Die Panic-Probe (E7-B) belegt, dass eine Panic alle CPUs anhält (Cosmos-Patch `panic-stop-cpus`): Ein Thread schreibt alle 50 ms `SMP_PROBE tick`, nach 1 s löst ein Thread auf einer anderen CPU einen #PF aus.
+
+```bash
+dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSSmpProbePanic=true -warnaserror
+ZEHOS_QEMU_SMP=4 python3 scripts/test-smp-probe.py --panic --iso <ISO> --accel kvm --runs 5
+```
+
+Erwartet werden mindestens fünf `tick`-Zeilen vor dem Fehler, danach `System halted.` und 2 s lang keine weitere `tick`-Zeile. Ein ISO mit `ZehOSSmpProbePanic` führt nur den Schritt `cpus` und die Panic-Probe aus, keinen der übrigen Schritte; `SMP_PROBE PASS` erscheint dort nie, weil das System anhält (das Urteil fällt `--panic`). Gegenprobe: Mit einem Cosmos ohne den Patch `panic-stop-cpus` muss `--panic` FAIL melden (Ticks laufen nach `System halted.` weiter).
+
+### Mehrere CPUs (Entwurf, Stand 25. November 2026)
+
+> **Entwurf zu E7-F (#399).** Gilt nur für den Integrationsbranch `task/mc-e5-smp` (Cosmos-Pin `3.0.97-zehos.6-smp.13`), nicht für `master`. E7-A (#564), E7-E (#566, #657) und der Pin smp.13 (#678) sind dort gemergt; offen bleiben die Handtests (VMware, WHPX, echte Hardware), die einmal als Gesamttest in #610 laufen.
+
+- **Parameter der VM:** `ZEHOS_QEMU_SMP` (z. B. `4`, `4,cores=2,threads=2`) setzt `-smp` für `scripts/start-qemu.ps1` (dort auch `-Smp`) und die Testskripte; leer bleibt die QEMU-Vorgabe. VMware: `scripts/start-vmware.ps1 -Cpus <n>` (Standard 1).
+- **Kernel-Schalter** `zehos.cpus=<n>` und `zehos.smt=off` stehen in der [Entwicklungsanleitung](docs/handbuch/ENTWICKLUNG.md#kommandozeilenschalter-des-kernels). Seit E7-A (#564, gemergt auf `task/mc-e5-smp`) laufen auch Oberfläche und Hauptschleife auf den Compute-CPUs (Doom `full` mit `2`, `4`, `4,cores=2,threads=2` und `8,cores=4,threads=2` bestanden, Quelle PR #564); ohne `-smp` oder mit `zehos.cpus=1` bleibt alles auf CPU 0, der Recovery-Pfad bleibt auf CPU 0.
+- **Diagnose:** `tasks scheduler` und der Taskmanager (Abschnitt System) zeigen die CPU-Topologie; die Bootzeile nennt `CPUs online=<n>` und den Hyperthreading-Zustand. Mit E7-A nennt die Bootzeile zusätzlich „Oberflaeche und Worker auf CPU …“ (Quelle PR #564). `Environment.ProcessorCount` bleibt 1 (unverändert, PR #564).
+- **Gastproben:** `SMP_PROBE` (Abschnitt Gastproben oben); Doom, Isolation, Netz und Speicher laufen mit `ZEHOS_QEMU_SMP=4` (Zahlen in [COSMOS_SUPPORT](docs/COSMOS_SUPPORT.md#mehrere-cpus-smp-stand-und-grenzen-entwurf-e7-f-25-november-2026)).
+- **Energieaktionen mit mehreren CPUs:** `scripts/test-power-commands.py` (Linux/KVM, PR #563) prüft `reboot` und `shutdown`. Abnahme E7-C (Kommentar in #396): `ZEHOS_QEMU_SMP=4`, KVM, `reboot`, zweite Shell, `shutdown` mit Exit 0, 5 von 5 bestanden; mit zwei laufenden Hintergrundaufgaben vor `reboot` 8 von 8. Nicht Teil der Abnahme: Doom-Last, ext2-Root-Platte, der `-WithDebugger`-Zweig der ps1, Windows.
+- **Grenzen:** Dass VMware dem Gast keine Hyperthreads zeigt, ist eine Annahme des Plans und **offen** (E7-E, #398: QEMU TCG/KVM mit 1 bis 8 CPUs mit E7-A und Pin smp.13 90/90 bestanden (Kopf `7976c322c`, KVM, Quelle Kommentar in #398; Vorstand ohne smp.13: 80/80 auf `3b6fe4203`, PR #657); VMware, WHPX und Hardware nicht geprüft, sie laufen im Gesamttest #610 und blockieren #398 nicht, das laut Kommentar abgenommen ist). Leistungsaussagen zu Hyperthreading gelten nur für die gemessene QEMU/KVM-Umgebung; echte Hardware ist **nicht geprüft**. Ein QEMU-Ergebnis belegt kein VMware.
+
 ## Lizenz
 
 ZehOS steht unter der GNU General Public License Version 3 ([LICENSE](LICENSE)). Eingebundene Fremdbestandteile behalten ihre eigenen Lizenzen:
 
 - wasm3 (MIT): `ProjektZeh/ThirdParty/wasm3/LICENSE`
-- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), nur in Builds mit `-p:ZehOSWasmAot=true`: `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
+- WAMR 2.4.5 (Apache-2.0 WITH LLVM-exception), im normalen Kernel enthalten (nicht in Recovery und Installer, abschaltbar mit `-p:ZehOSWasmAot=false`): `ProjektZeh/ThirdParty/wamr/LICENSE`, Herkunft in `ORIGIN.txt`
 - Rasterizer für Wasm-Apps, übertragen aus ClassiCubes SoftGPU (BSD-3-Clause): `ProjektZeh/Graphics/Raster/LICENSE-ClassiCube.txt`
 - BouncyCastle (MIT) als NuGet-Paket
 - Cosmos (BSD-3-Clause) als NuGet-Pakete; übernommene Teile aus Cosmos.Network.Http in `ProjektZeh/ThirdParty/CosmosHttp` mit `LICENSE.txt` und `THIRD-PARTY-NOTICES.txt` (darin auch die Mozilla-Zertifikatsliste `cacert.pem`, MPL-2.0)

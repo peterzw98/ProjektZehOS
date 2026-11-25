@@ -23,14 +23,18 @@ spec.loader.exec_module(tools)
 
 MARKERS = re.compile(r"[^\r\n]*(?:ISOLATION_PROBE|CPU EXCEPTION|WASM CPU-Ausnahme|Interrupt Vector|ZehOS: Thread)[^\r\n]*")
 # I2-C: erlaubter Rueckgang des freien Speichers zwischen frei_vor (nach zwei Desktopbildern und dem Lauf base) und
-# frei_nach. Bis E6-G (#523) bleiben die vier aufgegebenen 8-MiB-Worker-Stacks belegt (32 MiB), dazu 4 MiB Reserve.
-# Blieben die 4 x 16 MiB der Arena liegen, waeren es 96 MiB (nach E6-G 64 MiB); beides liegt ueber der Grenze.
-ARENA_MAX_DROP_KIB = 36 * 1024
+# frei_nach. Seit E6-G (#523) gibt jede Isolation auch den 8-MiB-Worker-Stack frei; ein Rest von einem Stack oder einer
+# 16-MiB-Arena liegt deshalb ueber der Grenze. 4 MiB Reserve (gemessen 0 bis 188 KiB, #681).
+ARENA_MAX_DROP_KIB = 4 * 1024
 # Der gehaltene Block muss frei sichtbar senken (16 MiB; Reserve fuer den Ersatzstack im zweiten Lauf nach oben).
 ARENA_MIN_HELD_KIB = 12 * 1024
 # Erwarteter Vektor je Probe, wie ihn der Cosmos-Ausnahme-Hook meldet.
 VECTORS = {"de": 0, "pf": 14, "gp": 13, "ud": 6}
+# Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
+REAP_TOLERANCE_KIB = 4 * 1024
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
+# Erst wenn die Hauptschleife parkt, rechnet auf CPU 0 nur noch der Worker; nur dort kommt der NMI an (#515).
+NMI_PARKED = "ISOLATION_PROBE nmi main parked"
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -53,6 +57,7 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
             missing.append(f"{kind} nicht isoliert")
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
+    missing += evaluate_reap(log)
     if log.count("WASM CPU-Ausnahme im App-Code") < len(VECTORS):
         missing.append("Hauptschleife hat nicht alle Laeufe beendet")
     # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei (Zaehler der Arena 0 und
@@ -81,16 +86,45 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
     return missing
 
 
+def evaluate_reap(log: str) -> list[str]:
+    """E6-G (#433): Jede Isolation raeumt genau ihren Worker ab und kostet keinen 8-MiB-Stack.
+
+    Massgeblich ist die Zeile der Hauptschleife zu diesem Vektor ("Thread und Stack frei" nur bei Reaped); die Zahl
+    released der Probe zaehlt systemweit (auch andere Threadenden) und ist nur ein Zusatz. Der freie Speicher wird je Lauf
+    gegen den Wert vor der Isolation geprueft, nicht nur der zweite gegen den ersten (Review laser #576, Befund 6).
+    """
+    memory = {m.group(1): (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+              for m in re.finditer(r"ISOLATION_PROBE memory kind=(\w+) released=(\d+) free_before_kib=(\d+) free_kib=(\d+)", log)}
+    missing = []
+    for kind, vector in VECTORS.items():
+        main = re.search(rf"WASM CPU-Ausnahme im App-Code \(Vektor {vector},[^\r\n]*", log)
+        if main and "Thread und Stack frei" not in main.group(0):
+            missing.append(f"{kind}: Worker nicht abgeraeumt")
+        if kind not in memory:
+            missing.append(f"{kind} ohne Speicherbeleg")
+            continue
+        released, before, after = memory[kind]
+        if released < 1:
+            missing.append(f"{kind}: kein Stack freigegeben")
+        if after < before - REAP_TOLERANCE_KIB:
+            missing.append(f"{kind}: freier Speicher {after} KiB statt etwa {before} KiB (Stack nicht frei?)")
+    return missing
+
+
 def evaluate_nmi(log: str) -> list[str]:
     """Der NMI muss den Worker im Gastcode treffen und das System anhalten, ohne dass die Hauptschleife isoliert."""
     tail = log.split(NMI_WINDOW, 1)
     if len(tail) < 2:
         return ["NMI-Fenster nicht geoeffnet"]
     after = tail[1]
+    if NMI_PARKED not in after:
+        return ["Hauptschleife nicht geparkt"]
     if "Interrupt Vector: 2" not in after:
         return ["kein NMI (Vektor 2) im Log"]
     missing = []
-    target = re.search(r"ZehOS: Thread (-?\d+), Wasm-Worker (-?\d+), Gastcode (\d)", after.split("Interrupt Vector: 2", 1)[1])
+    # Seit Patch panic-stop-cpus entscheidet der Hook vor dem Bericht: seine Zeile steht vor "Interrupt Vector: 2", nicht
+    # danach (#515). Nach dem Fenster loest nur der NMI den Hook aus, also gilt die erste Zeile dahinter.
+    target = re.search(r"ZehOS: Thread (-?\d+), Wasm-Worker (-?\d+), Gastcode (\d)", after)
     if not target or target.group(1) != target.group(2) or target.group(3) != "1":
         missing.append("NMI traf nicht den Worker im Gastcode (Gegenprobe ohne Aussage, wiederholen)")
     if "WASM CPU-Ausnahme im App-Code" in after:
@@ -115,11 +149,11 @@ def run(args: argparse.Namespace, number: int) -> bool:
     try:
         # Nach einer isolierten Ausnahme laeuft das System weiter ("Thread abandoned."); erst DONE oder TIMEOUT beendet das Warten.
         end = ("ISOLATION_PROBE negative pf on probe thread" if args.negative
-               else NMI_WINDOW if args.nmi else "ISOLATION_PROBE DONE")
+               else NMI_PARKED if args.nmi else "ISOLATION_PROBE DONE")
         started = time.monotonic()
         while time.monotonic() - started < 300 and end not in text() and "TIMEOUT" not in text():
             time.sleep(1)
-        if args.nmi and NMI_WINDOW in text():
+        if args.nmi and NMI_WINDOW in text() and NMI_PARKED in text():
             time.sleep(2)
             qmp = tools.Qmp(port)
             qmp.command("inject-nmi")

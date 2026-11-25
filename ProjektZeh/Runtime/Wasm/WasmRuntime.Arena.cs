@@ -14,18 +14,28 @@ internal static unsafe partial class WasmRuntime
     // Hauptschleife gelesen (der Worker laeuft dann nie wieder).
     private static int arenaHolder;
     // true, wenn seit der letzten Speicherzeile ein Lauf mit Arena lief; sonst nennt ReportMemory keine Spitze (spitze=-),
-    // statt die eines frueheren Laufs zu wiederholen. Nur der Worker liest und schreibt.
+    // statt die eines frueheren Laufs zu wiederholen. Der Worker liest und schreibt,
+    // nach einer CPU-Isolation loescht die Hauptschleife sie vor dem Start des Ersatzworkers.
     private static bool arenaMeasured;
+    // true, sobald die Arena einem aufgegebenen AOT-Lauf gehoert und deshalb nie mehr endet. Nur die Hauptschleife setzt sie,
+    // vor dem Start des Ersatzworkers.
+    private static bool arenaLost;
 
     // Direkt vor NativeRun/NativeRunAot, nach EnterNativeRun und im try davor (LeaveNativeRun laeuft also auch, wenn das
     // hier wirft). false: Der Lauf geht ohne Arena weiter; das meldet ReportArenaStart nach LeaveNativeRun (keine
     // Protokollzeile im nativen Abschnitt).
     private static bool BeginArena(bool aot)
     {
-        if (ArenaBegin(0) == 0) return false;
-        // Erst nach dem Start: Faellt der Worker dazwischen, bleibt die Arena ungeraeumt (Leck) statt dass
-        // ReleaseIsolatedArena eine fremde (etwa die eines toten AOT-Laufs) freigibt.
+        // Eine verlorene Arena gehoert nicht diesem Lauf: ohne Halter weiter, sonst gaebe ReleaseIsolatedArena sie frei.
+        if (Volatile.Read(ref arenaLost)) return false;
+        // Vor dem Start: Faellt der Worker gleich nach zehos_arena_begin, muss ReleaseIsolatedArena den Halter kennen, sonst
+        // bliebe die Arena fuer immer aktiv. Faellt er davor, laeuft keine Arena, und end raeumt nichts.
         Volatile.Write(ref arenaHolder, aot ? ArenaAot : ArenaWasm3);
+        if (ArenaBegin(0) == 0)
+        {
+            Volatile.Write(ref arenaHolder, ArenaNone);
+            return false;
+        }
         arenaMeasured = true;
         return true;
     }
@@ -44,16 +54,21 @@ internal static unsafe partial class WasmRuntime
         if (!started) Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Arena nicht gestartet\n");
     }
 
-    // PollFaultIsolation, nach ReleaseRunResources: Der aufgegebene Worker steht in der Quarantaene und laeuft nie wieder,
+    // PollFaultIsolation, nach ReleaseRunResources: Der aufgegebene Worker ist Dead (nie wieder bereit) und laeuft nie wieder,
     // erst jetzt duerfen seine Bloecke frei werden. Unter AOT bleiben sie belegt wie vor I2-C: WAMR haelt globalen
     // Zustand (runtime_ref_count, registrierte Hostfunktionen), den nur wasm_runtime_destroy des toten Laufs abgebaut
     // haette; der naechste AOT-Lauf benutzt ihn weiter. Die Arena bleibt dann beim toten Lauf, spaetere Laeufe messen nicht.
     private static void ReleaseIsolatedArena()
     {
         int holder = Interlocked.Exchange(ref arenaHolder, ArenaNone);
+        // Den Lauf meldet kein ReportMemory mehr; spaetere Laeufe ohne Arena sollen spitze=- nennen, nicht seine.
+        arenaMeasured = false;
         if (holder == ArenaWasm3) ArenaEnd();
         else if (holder == ArenaAot)
+        {
+            Volatile.Write(ref arenaLost, true);
             Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Arena nach CPU-Fehler unter AOT nicht freigegeben\n");
+        }
     }
 
     // Fuer ReportMemory: Spitze in Bytes des Laufs seit der letzten Speicherzeile, "-" ohne Lauf mit Arena; liest und

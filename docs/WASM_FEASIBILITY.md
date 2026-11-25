@@ -202,7 +202,7 @@ Aufrufe für den Tester unter Linux, vom Repository-Stamm. `KEY` ist ein eigenes
 ```sh
 KEY=~/zehos-testkey   # enthält private.pem und public.b64
 # 1. Kernel mit WAMR, vertraut dem Testschlüssel
-dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSWasmAot=true -p:ZehOSPackageKeyPath=$KEY/public.b64
+dotnet build ProjektZeh/ProjektZeh.csproj -c Release -p:ZehOSPackageKeyPath=$KEY/public.b64
 ISO=ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso
 # 2. Paketdateien aus packages (ClassiCube samt texpacks/ und licenses/) und .aot erzeugen
 mkdir -p .tools/aot/doom .tools/aot/classicube
@@ -220,7 +220,7 @@ for ACCEL in kvm tcg; do for AOT in off on; do
 done; done
 ```
 
-Der Gastspeicher ist für `--id classicube` 1 GiB, sonst 512 MiB (`-m`/`--memory` überschreibt): ClassiCube braucht mindestens 768 MiB, und mit 512 MiB lag die Bildrate im Vergleich vom 18. November 2026 (Seed 5, stehend, KVM, je 2 Läufe) bei 16,3 statt 20,0 avg fps. Ältere ClassiCube-Reihen in diesem Dokument liefen mit 512 MiB und sind dadurch zu niedrig. Mit `--move` hält das Skript während der Messung abwechselnd W/A/S/D (bewegte Kamera, fester Tastenpfad); jede Zusammenfassung nennt zusätzlich die durchschnittliche Bildrate (`avg fps` = Bilder des letzten 60-s-Fensters / 60), die Messlatte für ClassiCube. Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` lässt nur `wasmaot on` weg (Ausgabe `Laufzeit: wasm3`), `--aot on` bricht ab, wenn nicht `Laufzeit=aot …` erscheint. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
+Der Gastspeicher ist für `--id classicube` 1 GiB, sonst 512 MiB (`-m`/`--memory` überschreibt): ClassiCube braucht mindestens 768 MiB, und mit 512 MiB lag die Bildrate im Vergleich vom 18. November 2026 (Seed 5, stehend, KVM, je 2 Läufe) bei 16,3 statt 20,0 avg fps. Ältere ClassiCube-Reihen in diesem Dokument liefen mit 512 MiB und sind dadurch zu niedrig. Mit `--move` hält das Skript während der Messung abwechselnd W/A/S/D (bewegte Kamera, fester Tastenpfad); jede Zusammenfassung nennt zusätzlich die durchschnittliche Bildrate (`avg fps` = Bilder des letzten 60-s-Fensters / 60), die Messlatte für ClassiCube. Beide Laufzeiten nutzen dasselbe Paket mit `.aot`: `--aot off` sendet `wasmaot off`, `--aot on` sendet `wasmaot on`; beide brechen ab, wenn die App nicht unter der verlangten Laufzeit startet. Skripte vor dem AOT-Standard (#423) senden bei `off` nichts und messen mit einem heutigen Kernel AOT. Gewertet wird das letzte 60-s-Fenster je Lauf (Zusammenfassung des Skripts); das erste enthält Start, den ClassiCube-Launcher (Enter startet Singleplayer) und das Laden der Welt. ClassiCube wird ohne Eingabe im Stand am Spawnpunkt gemessen. VMware ist mit dem Skript nicht messbar (QEMU-Werkzeug, VMware-VM ohne Datenlaufwerk).
 
 ### Ergebnisse (Stand 17. November 2026)
 
@@ -245,7 +245,7 @@ wamrc 2.4.5 hat keinen Schalter dafür (`--mllvm=-help-hidden` kennt keine Red-Z
 
 Peter hat am 17. November 2026 freigegeben, das gepatchte wamrc zu übernehmen. `scripts/build-package.py` lässt nur noch dieses wamrc zu (das frühere ohne Patch ist aus `WAMRC_SHA256` entfernt), und die AOT-Kennung heißt jetzt `wamr245-aot5-x64-bc-nrz` in Werkzeug und Kernel. Ein Kernel mit der neuen Kennung findet `.aot` des alten wamrc nicht mehr und startet die App unter wasm3. Rückweg: Kennung und Prüfsumme zurücksetzen; wasm3 bleibt immer der Rückfall. Kernelseitig ginge es nur mit einem Umbau des Cosmos-Kontextwechsels (eigenes TSS mit IST für den Timer-Interrupt; der Kontext müsste dann vom IST-Stack auf den Thread-Stack kopiert werden, vgl. ROADMAP 12.4).
 
-Für Nutzer besteht kein Risiko: Normale und Release-Kernel enthalten WAMR gar nicht (nur mit `-p:ZehOSWasmAot=true`), `wasmaot` bleibt auch dort standardmäßig aus, und kein veröffentlichtes Paket enthält ein `.aot`. Eingeschaltet wird AOT erst, wenn zu jeder Veröffentlichung eines Pakets mit `.aot` mindestens 10 Gastläufe je App unter KVM und TCG ohne Trap belegt sind. Wiederholbare Gegenprobe mit dem Messskript (gescheiterte Läufe zählt die Zusammenfassung als `None`, das Skript läuft weiter):
+Stand 18. November 2026 war AOT in normalen Kernels nicht enthalten. Seit Peters Entscheidung vom 25. November 2026 (#423) ist es Standard; VMware ist dabei nicht geprüft (#610). Kein veröffentlichtes Paket enthält ein `.aot`, deshalb laufen alle veröffentlichten Apps weiter unter wasm3. Ein Paket mit `.aot` braucht eine eigene Freigabe und vorher den Beleg, dass zu jeder Veröffentlichung eines Pakets mit `.aot` mindestens 10 Gastläufe je App unter KVM und TCG ohne Trap belegt sind. Wiederholbare Gegenprobe mit dem Messskript (gescheiterte Läufe zählt die Zusammenfassung als `None`, das Skript läuft weiter):
 
 ```sh
 for ACCEL in kvm tcg; do

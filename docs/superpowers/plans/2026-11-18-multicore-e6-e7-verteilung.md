@@ -98,7 +98,7 @@ Verschiebungen kommen einmal von `CpuTopologyDecoder.ReadShifts(X86Base.CpuId)`.
 
 **Branch:** `task/mc-e6-b-platzierung`. **Datei:** `ProjektZeh/Scheduling/CosmosClassScheduler.cs`.
 
-**Schnittstellen (verwendet):** `ClassPlacement.SelectCpu`, `ClassPlacement.StealOrder`, `ClassRunQueues<T>.PeekStealable`
+**Schnittstellen (verwendet):** `ClassPlacement.SelectCpu`, `ClassPlacement.StealOrder`, `ClassRunQueues<T>.At` (statt `PeekStealable`, siehe `Balance`)
 (E4-B); `CpuTopology` aus E6-A, dem Scheduler im Konstruktor übergeben; `SchedulerManager.LockCpu` (Cosmos).
 
 **`SelectCpu(thread, cpus, allowed)`:** drei `stackalloc`-Spannen der Länge `cpus.Length` füllen: `allowed[i] = allowedSet.Contains(i)`;
@@ -109,9 +109,11 @@ genügt). Klasse und `LastCpu` des Threads aus seinem Zustand. Rückgabe von `Cl
 **`PickNext`:** zusätzlich `LastCpu` des gewählten Threads auf `cpuState.CpuId` setzen.
 
 **`Balance(cpuState, allCpuStates)`:** `StealOrder` in eine `stackalloc`-Spanne; die CPUs in dieser Reihenfolge
-durchgehen, je CPU `using (SchedulerManager.LockCpu(victim))` und `PeekStealable(t => nicht gepinnt und
-t.Affinity.Contains(cpuState.CpuId))`; den ersten Fund zurückgeben, sonst `null`. Immer nur eine fremde Sperre zur
-gleichen Zeit, nie die eigene.
+durchgehen, je CPU `using (SchedulerManager.LockCpu(victim))` und die Queues dieser CPU mit `ClassRunQueues<T>.At(i)`
+(gleiche Reihenfolge wie `PeekStealable`) nach dem ersten Thread absuchen, der nicht gepinnt ist und
+`t.Affinity.Contains(cpuState.CpuId)` erfüllt; den ersten Fund zurückgeben, sonst `null`. Immer nur eine fremde Sperre zur
+gleichen Zeit, nie die eigene. (Umgesetzt mit `At(i)` statt `PeekStealable(Lambda)`: Ein Lambda mit `cpuId` wäre eine
+Closure-Allokation im Interruptkontext; eine allokationsfreie Überladung `PeekStealable(uint cpuId)` bleibt Nacharbeit.)
 
 - [ ] **Schritt 1:** Umsetzen. Die Regeln selbst sind in E4-B hostgetestet; hier entsteht nur die Übersetzung.
 - [ ] **Schritt 2:** Hosttests, nativer Build.
@@ -197,12 +199,12 @@ Der Wasm-Worker und der Wasm-Netzwerk-Worker starten mit `placement: ThreadPlace
 
 **Serielle Ausgabe:** je Schritt `SMP_PROBE <schritt> PASS` oder `SMP_PROBE <schritt> FAIL <Grund>`, Messwerte als
 `SMP_PROBE INFO <schritt> <name>=<wert>`, am Ende `SMP_PROBE PASS` oder `SMP_PROBE FAIL`. Auf einer CPU melden die
-Schritte, die mehrere brauchen, `SMP_PROBE <schritt> SKIP cpus=1`, und das Ende ist trotzdem `SMP_PROBE PASS`.
+Schritte, die mehrere brauchen, `SMP_PROBE <schritt> SKIP cpus=1`, und das Ende ist trotzdem `SMP_PROBE PASS`. Mit mindestens zwei Worker-CPUs ist ein SKIP ein FAIL des Skripts.
 
 | Schritt | Inhalt | Bestanden, wenn |
 | --- | --- | --- |
 | `cpus` | `KernelCpus.Count` und Topologie ausgeben | Skript: Zahl gleich der ersten Zahl aus `ZEHOS_QEMU_SMP` |
-| `counters` | je Worker-CPU ein dorthin gepinnter Thread zählt 300 ms einen eigenen Zähler und per `Interlocked` einen gemeinsamen | jeder eigene Zähler > 0; gemeinsamer Zähler gleich der Summe |
+| `counters` | je Worker-CPU ein dorthin gepinnter Thread zählt mindestens 300 ms (bis alle Zähler > 0, höchstens 10 s) einen eigenen Zähler und per `Interlocked` einen gemeinsamen | jeder eigene Zähler > 0; gemeinsamer Zähler gleich der Summe |
 | `parallel` | dieselbe feste Rechenlast einmal auf einem, einmal auf allen Worker-CPUs | `INFO parallel speedup_permille=…`; unter KVM mit mindestens 2 Worker-CPUs Wert ≥ 1500 (TCG: nur Information) |
 | `migrate` | ein Thread setzt 200-mal reihum `ThreadAffinity.Current` auf jede Worker-CPU | nach jedem Setzen `KernelCpus.Current` gleich dem Ziel |
 | `locks` | je Worker-CPU ein Thread: 10.000 Übergaben über `lock`/`Monitor.Wait`/`Pulse` und über `Messaging/MessageQueue` | keine Nachricht verloren oder doppelt, Reihenfolge je Sender erhalten |

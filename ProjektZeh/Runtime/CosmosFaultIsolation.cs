@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Cosmos.Kernel.Core.CPU;
@@ -11,19 +12,18 @@ namespace ProjektZeh.Runtime;
 
 /// <summary>
 /// Gibt den Wasm-Worker auf, wenn er in Gastcode eine CPU-Ausnahme ausloest (Roadmap 12.4-I1): Cosmos ruft dafuer den
-/// Ausnahme-Hook (<see cref="CpuExceptionHook"/>, Patch ausnahme-hook im Branch cosmos), ZehOS entscheidet, stellt den
-/// Thread unter Quarantaene im eigenen Scheduler, und Cosmos wechselt noch im Ausnahmepfad in den naechsten Thread. Den
-/// Lauf beendet danach die Hauptschleife (<c>WasmRuntime.PollFaultIsolation</c>).
+/// Ausnahme-Hook (<see cref="CpuExceptionHook"/>, Patch ausnahme-hook im Branch cosmos), ZehOS entscheidet, und Cosmos
+/// setzt den Thread auf Dead und wechselt noch im Ausnahmepfad in den naechsten Thread. Einen Dead-Thread reiht Cosmos nie
+/// wieder ein (Patch abandoned-thread-reap, ReadyLocked). Den Lauf beendet danach die Hauptschleife
+/// (<c>WasmRuntime.PollFaultIsolation</c>), die Thread und Stack ueber <c>SchedulerDiagnostics.TryReapAbandoned</c> abraeumt.
 /// </summary>
 internal static unsafe class FaultIsolation
 {
-    /// <summary>Vom eigenen Scheduler gelesen: aufgegebene Worker werden nie wieder eingereiht.</summary>
-    internal static readonly ThreadQuarantine Quarantine = new(SchedulerThread.MaxThreadCount);
-
     private static int workerThreadId = -1;
     private static int inNativeRun;
     private static volatile int* hostDepth;
-    private static int isolatedThreadId = -1;
+    // Angemeldet im Ausnahmepfad, uebernommen erst nach dem Wechsel weg vom Worker (E6-C.9, IsolationHandoff).
+    private static readonly IsolationHandoff isolated = new();
     private static long isolatedVector = FaultIsolationPolicy.UnknownVector;
     private static ulong isolatedRip;
 
@@ -36,17 +36,45 @@ internal static unsafe class FaultIsolation
         // Ohne Wasm-Laufzeit gibt es keinen Zaehler; OnCpuException haelt dann immer an.
         hostDepth = null;
 #endif
-        SchedulerThread? current = SchedulerManager.GetCpuState(0)?.CurrentThread;
+        // Vorher fest GetCpuState(0): auf mehreren CPUs der Thread von CPU 0. KernelCpus.Current mit GetCpuState waere
+        // ohne Maske nicht besser, der Worker kann dazwischen die CPU wechseln (seit SMP 5b laufen Threads auf allen
+        // CPUs). Cosmos' CurrentThread liest CPU und Thread mit maskierten Interrupts in einem Schritt.
+        SchedulerThread? current = CurrentThread(null);
         if (current != null) Volatile.Write(ref workerThreadId, (int)current.Id);
     }
+
+    // In a6bd07d8 intern; oeffentlich gibt es nur GetCpuState(cpu), das ohne Maske nicht wanderungssicher ist.
+    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "get_CurrentThread")]
+    private static extern SchedulerThread? CurrentThread(
+        [UnsafeAccessorType("Cosmos.Kernel.Core.Scheduler.SchedulerManager, Cosmos.Kernel.Core")] object? owner);
+
+    /// <summary>Thread dieser CPU, CPU und Thread unter Maske in einem Schritt gelesen (auch fuer ThreadStarter.ApplyClass).</summary>
+    internal static SchedulerThread? CurrentSchedulerThread() => CurrentThread(null);
 
     /// <summary>Um den nativen Lauf (wasm3 oder AOT); Hostaufrufe darin zaehlt die C-Schicht.</summary>
     internal static void EnterNativeRun() => Volatile.Write(ref inNativeRun, 1);
 
     internal static void LeaveNativeRun() => Volatile.Write(ref inNativeRun, 0);
 
-    /// <summary>Id des zuletzt aufgegebenen Workers oder -1; liest und loescht.</summary>
-    internal static int TakeIsolated() => Interlocked.Exchange(ref isolatedThreadId, -1);
+    internal static bool InNativeRun => Volatile.Read(ref inNativeRun) == 1;
+
+    /// <summary>Scheduler-Id des Wasm-Workers oder -1.</summary>
+    internal static int WorkerThreadId => Volatile.Read(ref workerThreadId);
+
+    /// <summary>
+    /// Id des aufgegebenen Workers oder -1; liest und loescht. Liefert ihn erst, wenn die CPU der Ausnahme ihn nicht mehr
+    /// als laufenden Thread fuehrt, Cosmos ihn also wirklich aufgegeben hat (E6-C.9); bis dahin -1, die Hauptschleife fragt
+    /// in der naechsten Runde erneut. Haelt Cosmos statt des Wechsels an, kommt die Id nie an.
+    /// </summary>
+    internal static int TakeIsolated()
+    {
+        int cpu = isolated.PendingCpu;
+        if (cpu < 0) return -1;
+        // Ohne Sperre gelesen: den laufenden Thread einer CPU setzt nur diese selbst, hier nur noch der Wechsel aus dem
+        // Ausnahmepfad (TryAbandonCurrentFromInterrupt). Ein veralteter Wert verzoegert die Uebernahme um eine Runde.
+        long running = SchedulerManager.GetCpuState((uint)cpu)?.CurrentThread is { } thread ? thread.Id : IsolationHandoff.NoThread;
+        return isolated.TryTake(running);
+    }
 
     /// <summary>Vektor der zuletzt isolierten Ausnahme (fuer Protokoll und Gastprobe).</summary>
     internal static long IsolatedVector => Volatile.Read(ref isolatedVector);
@@ -64,32 +92,39 @@ internal static unsafe class FaultIsolation
     internal static CpuExceptionAction OnCpuException(in CpuExceptionInfo exception)
     {
         long vector = exception.Vector <= 255 ? (long)exception.Vector : FaultIsolationPolicy.UnknownVector;
-        PerCpuState? state = SchedulerManager.GetCpuState(0);
-        SchedulerThread? current = state?.CurrentThread;
+        // Cosmos liest den Thread der fehlerhaften CPU selbst (Panic.CpuException, mit Maske, ohne Sperre); vorher las
+        // ZehOS fest CPU 0 und haette auf einer anderen CPU den falschen Thread isoliert.
+        int currentId = exception.ThreadId == CpuExceptionInfo.NoThread ? -1 : (int)exception.ThreadId;
 
         // Belegt in der Gastprobe, welchen Thread die Ausnahme traf (NMI-Gegenprobe: muss der Worker im Gastcode sein).
         Serial.WriteString("ZehOS: Thread ");
-        Serial.WriteNumber(current == null ? -1 : (int)current.Id);
+        Serial.WriteNumber(currentId);
         Serial.WriteString(", Wasm-Worker ");
         Serial.WriteNumber(Volatile.Read(ref workerThreadId));
         Serial.WriteString(", Gastcode ");
         Serial.WriteNumber(Volatile.Read(ref inNativeRun));
+        // E6-C.10: 0 heisst maskierter Kernelcode (etwa ein Interrupt-Handler ueber dem Worker), dann nie isolieren.
+        Serial.WriteString(", IF ");
+        Serial.WriteNumber(exception.InterruptsEnabled ? 1 : 0);
         Serial.WriteString("\n");
 
         int* depth = hostDepth;
-        if (current == null || depth == null
-            || FaultIsolationPolicy.Decide(vector, (int)current.Id, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
-                *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate
-            || !Quarantine.Add((int)current.Id))
+        if (currentId < 0 || depth == null
+            || FaultIsolationPolicy.Decide(vector, currentId, Volatile.Read(ref workerThreadId), Volatile.Read(ref inNativeRun) == 1,
+                exception.InterruptsEnabled, *depth, StorageLock.IsHeldByCurrentThread, AppStorageGate.IsHeldByCurrentThread) != IsolationDecision.Isolate)
         {
             return CpuExceptionAction.Halt;
         }
 
         Volatile.Write(ref inNativeRun, 0);
         Volatile.Write(ref workerThreadId, -1);
+#if ZEHOS_AOT_LOOP_EXIT && ZEHOS_WASM_AOT
+        AotLoopExit.Forget();
+#endif
         Volatile.Write(ref isolatedVector, vector);
         Volatile.Write(ref isolatedRip, exception.InstructionPointer);
-        Volatile.Write(ref isolatedThreadId, (int)current.Id);
+        // Nur anmelden: Cosmos legt den Wechsel erst nach der Rueckkehr an und haelt an, wenn das nicht geht.
+        isolated.Stage(currentId, (int)exception.CpuId);
         return CpuExceptionAction.AbandonThread;
     }
 
@@ -97,9 +132,9 @@ internal static unsafe class FaultIsolation
     /// Scheduler-Id des laufenden Threads, ohne Allokation; -1 ohne Scheduler. Rueckruf fuer die Laufarena der C-Laufzeit
     /// (Roadmap 12.4-I2-C, <c>zehos_host_arena.c</c>): malloc fragt damit, ob der Block dem Lauf gehoert.
     /// </summary>
-    // Wie OnCpuException liest sie CPU 0; Multicore-Etappe 5 stellt beide auf die laufende CPU um.
+    // Wie Install (Worker-Id) liest sie ueber CurrentThread(null) die laufende CPU und den Thread in einem Schritt (SMP).
     [UnmanagedCallersOnly(EntryPoint = "zehos_current_thread_id")]
-    internal static int CurrentThreadId() => SchedulerManager.GetCpuState(0)?.CurrentThread is { } thread ? (int)thread.Id : -1;
+    internal static int CurrentThreadId() => CurrentThread(null) is { } thread ? (int)thread.Id : -1;
 
 #if ZEHOS_WASM
     [DllImport("*", EntryPoint = "zehos_host_depth_address", ExactSpelling = true)]

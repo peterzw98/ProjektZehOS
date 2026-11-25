@@ -16,6 +16,9 @@ using Cosmos.Kernel.System.Graphics;
 using Cosmos.Kernel.System.FileSystem;
 using Cosmos.Kernel.System.Input;
 using Cosmos.Kernel.System.Storage;
+#if !ZEHOS_RECOVERY
+using Cosmos.Kernel.System.Threading;
+#endif
 using Cosmos.Kernel.System.Timers;
 using Sys = Cosmos.Kernel.System;
 
@@ -88,7 +91,7 @@ public sealed class Kernel : Sys.Kernel
     private readonly BackgroundTaskService tasks = new();
     private readonly CosmosNetworkService networkService = new();
     private readonly NetworkAutoConfiguration automaticNetwork;
-    private readonly CosmosClassScheduler scheduler = new();
+    private CosmosClassScheduler scheduler = null!;
     private readonly MessageDemoService messages;
     private UserSession desktopIdentity = null!;
 
@@ -118,7 +121,7 @@ public sealed class Kernel : Sys.Kernel
     /// Baut die profilabhaengigen Dienste genau einmal beim Boot, vor dem ersten Zugriff im Storage-Schritt (Etappe 4.3).
     /// Reihenfolge wie frueher im Konstruktor: Updates, Konten, Pakete, dann Sitzung und Shell.
     /// </summary>
-    private void InitializeServices(SystemPaths paths)
+    private void InitializeServices(SystemPaths paths, CpuTopology topology)
     {
         systemPaths = paths;
 #if !ZEHOS_INSTALLER
@@ -152,7 +155,7 @@ public sealed class Kernel : Sys.Kernel
             () => new FileService(desktopIdentity.HomeDirectory ?? systemPaths.StartDirectory, access: accounts.Access, session: desktopIdentity,
                 diskSpace: CosmosSystemInfo.DiskSpace, directoryEntryLimit: CosmosDirectoryEntryLimit.ForDirectory,
                 virtualSource: systemFiles.Produce, isRegularFile: CosmosSystemFiles.IsRegularFile),
-            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText).Sections,
+            output, GetElapsedMilliseconds, systemLog, accounts, desktopIdentity, new CosmosSystemInfo(storage, VersionText, topology).Sections,
 #if ZEHOS_WASM
             ListPackageApplications, () => networkService.Status);
 #else
@@ -323,8 +326,28 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void BeforeRun()
     {
+        // Vor dem ersten Threadstart und Lesen von Environment.ProcessorCount die Standardaffinitaet festlegen.
+        var cpuLine = CosmosBootOptions.Apply();
         // Branch-Bauten koennen dieselbe Nummer wie ein spaeterer master-Stand tragen; der Commit macht Messberichte eindeutig.
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
+        systemLog.Information("Boot", cpuLine);
+        // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
+        var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
+#if !ZEHOS_RECOVERY
+        // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.
+        systemLog.Information("Boot", CosmosBootOptions.ConfigureWorkerCpus(topology));
+        // E7-A: erst nach der Topologie (WorkerCpus) und vor den dauerhaften Threads, die die Standardaffinität erben.
+        systemLog.Information("Boot", CosmosBootOptions.MoveMainToWorkers());
+        ThreadStarter.ApplyPlacement = placement =>
+        {
+            if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
+        };
+#endif
+        scheduler = new CosmosClassScheduler(topology);
+#if ZEHOS_SMP_PROBE
+        CosmosSmpProbe.Topology = topology;
+#endif
+        systemLog.Information("Boot", "Topologie: " + topology.Describe());
         var boot = new BootService(systemLog);
         boot.RunStep("Input", () => KeyboardManager.IsEnabled
             ? ResultErr.CreateSuccess()
@@ -344,10 +367,10 @@ public sealed class Kernel : Sys.Kernel
 #if ZEHOS_ROOT_PROFILE
         if (StorageManager.IsEnabled && StorageManager.IsInitialized)
             layout = CosmosLayoutProfile.Select(text => systemLog.Information("Storage", text));
-        InitializeServices(layout?.Decision.Profile == PathProfile.Root ? SystemPaths.Root : SystemPaths.Legacy);
+        InitializeServices(layout?.Decision.Profile == PathProfile.Root ? SystemPaths.Root : SystemPaths.Legacy, topology);
         ApplyLayout();
 #else
-        InitializeServices(SystemPaths.Legacy);
+        InitializeServices(SystemPaths.Legacy, topology);
 #endif
         boot.RunStep("Storage", () =>
         {
@@ -434,13 +457,19 @@ public sealed class Kernel : Sys.Kernel
 
     protected override void Run()
     {
-        // Vor dem ersten Thread-Start: jeder Start prueft den Threadstack vorher am nativen Heap (ThreadStarter).
-        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         // Vor dem ersten Worker: Ausnahmen in dessen Gastcode gibt der Hook auf (12.4-I1), alle anderen halten an.
 #pragma warning disable COSMOS0001 // Der Ausnahme-Hook gehoert zur experimentellen Scheduler-Schnittstelle.
         Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler = FaultIsolation.OnCpuException;
 #pragma warning restore COSMOS0001
+#if ZEHOS_AOT_LOOP_EXIT && ZEHOS_WASM_AOT
+        AotLoopExit.Install();
+#endif
+#if ZEHOS_STRIDE_SCHEDULER
+        // Diagnosebau E5-I: der Upstream-Stride bleibt installiert; ThreadStarter.ApplyClass bleibt wirkungslos.
+        systemLog.Information("Scheduler", "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER, ZehOS-Klassen inaktiv)");
+#else
         InstallScheduler();
+#endif
         // Worker fuer Hintergrundaufgaben jetzt anlegen: spaetere Thread-Starts scheitern nach Dateilast (nativer Heap zerstueckelt).
         LogWorkerStart($"{BackgroundTaskService.BootWorkers} Aufgaben-Worker", tasks.StartWorkers());
         LogWorkerStart("Kennwort-Worker", ShellService.StartPasswordWorker());
@@ -460,6 +489,13 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_THREAD_PROBE
         if (!CosmosThreadProbe.Run())
+        {
+            Stop();
+            return;
+        }
+#endif
+#if ZEHOS_SMP_PROBE
+        if (!CosmosSmpProbe.Run())
         {
             Stop();
             return;
@@ -486,6 +522,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_AOT_PROBE
         if (!CosmosAotProbe.Run()) { Stop(); return; }
+        CosmosAotLoopProbe.Start(CosmosAotProbe.FixtureBytes(1));
 #endif
 #if ZEHOS_INSTALLER
         if (startDesktop)
@@ -638,25 +675,77 @@ public sealed class Kernel : Sys.Kernel
     private void InstallScheduler()
     {
         // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
-        // der Standard Normal). Fest CPU 0: Etappe 5 muss auf die laufende CPU umstellen (docs/SMP_AUDIT.md).
+        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Cosmos' CurrentThread liest CPU und Thread
+        // unter Interruptmaske: Seit E7-A laufen Hauptschleife und erbende Threads auf mehreren Worker-CPUs und koennen
+        // zwischen KernelCpus.Current und GetCpuState wandern; dann bekaeme ein fremder Thread die Klasse.
         ThreadStarter.ApplyClass = threadClass =>
         {
-            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(0);
-            if (state?.CurrentThread is { } current)
-                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(0, current, (long)threadClass);
+            if (Runtime.FaultIsolation.CurrentSchedulerThread() is { } current)
+                Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(current, (long)threadClass);
         };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
+        // Etappe 5: die Hauptschleife ist ein normaler Thread und hat Vorrang vor Normal und Hintergrund.
+        ThreadStarter.ApplyClass(ThreadClass.Interactive);
         systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
     }
 #pragma warning restore COSMOS0001
 
     private string[] DescribeScheduler()
     {
-        var snapshot = scheduler.Snapshot();
-        return [$"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
-            $"Wartend: Interaktiv={snapshot.WaitingByClass[0]}, Normal={snapshot.WaitingByClass[1]}, Hintergrund={snapshot.WaitingByClass[2]}",
-            "Auswahl (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds)];
+#if ZEHOS_STRIDE_SCHEDULER
+        // Die Klassenpolicy ist nicht installiert; ihre Zaehler waeren durchgehend 0 und der Name falsch.
+        return ["Stride (Diagnose ZEHOS_STRIDE_SCHEDULER); Klassenzaehler nicht erfasst"];
+#else
+        var snapshot = CosmosClassScheduler.Snapshot();
+        var lines = new System.Collections.Generic.List<string>
+        {
+            $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns; preemptions={snapshot.Preemptions}",
+        };
+        ulong allNs = CosmosClassScheduler.ElapsedNs;
+        int count = Cosmos.Kernel.System.Threading.KernelCpus.Count;
+        // "Last" ist das Mittel seit dem Boot und verdeckt eine App, die erst seit kurzem rechnet (E6-C2: Doom auf einer
+        // Worker-CPU sah nach 3 % aus). Darum zusaetzlich die Last seit der vorigen Abfrage; Shells koennen parallel fragen.
+        lock (schedulerSampleGate)
+        {
+            if (lastBusyNs.Length != count) { lastBusyNs = new ulong[count]; lastAllNs = 0; }
+            ulong intervalNs = allNs - lastAllNs;
+            for (uint cpu = 0; cpu < (uint)count; cpu++)
+            {
+                if (CosmosClassScheduler.Snapshot(cpu) is not { } state) continue;
+                string line = CpuDiagnostics.FormatLine(cpu, state.RunningId, state.RunningClass, state.WaitingByClass, state.BusyNs, allNs);
+                lines.Add(line + $", seit letzter Abfrage {CpuDiagnostics.LoadPercent(state.BusyNs - lastBusyNs[cpu], intervalNs)} %");
+                lastBusyNs[cpu] = state.BusyNs;
+            }
+            lastAllNs = allNs;
+        }
+        lines.Add("Auswahl CPU 0 (aelteste zuerst, letzte128 Thread-IDs): " + string.Join(",", snapshot.ThreadIds));
+#if ZEHOS_WASM && !ZEHOS_INSTALLER
+        // Belegt die Platzierung direkt: die CPU-Menge, die der Scheduler fuer den Worker fuehrt.
+        var wasmWorker = Runtime.Wasm.WasmRuntime.WorkerThread;
+        if (wasmWorker == null) lines.Add("Wasm-Worker: nicht gestartet");
+        else if (!Cosmos.Kernel.System.Threading.ThreadAffinity.TryGet(wasmWorker, out var affinity)) lines.Add("Wasm-Worker: nicht beim Scheduler");
+        else lines.Add($"Wasm-Worker: CPUs {DescribeCpus(affinity, count)}");
+#endif
+        return [.. lines];
+#endif
     }
+
+#if ZEHOS_WASM && !ZEHOS_INSTALLER
+    private static string DescribeCpus(Cosmos.Kernel.System.Threading.CpuSet cpus, int count)
+    {
+        var names = new System.Collections.Generic.List<string>();
+        for (uint cpu = 0; cpu < (uint)count; cpu++)
+            if (cpus.Contains(cpu)) names.Add(cpu.ToString());
+        return string.Join(",", names);
+    }
+#endif
+
+#if !ZEHOS_STRIDE_SCHEDULER
+    // Nur DescribeScheduler der Klassenpolicy liest sie; im Stride-Bau waeren sie ungenutzt (CS0169).
+    private readonly object schedulerSampleGate = new();
+    private ulong[] lastBusyNs = [];
+    private ulong lastAllNs;
+#endif
 
     /// <summary>Registriert und haengt zehos-proc, zehos-sys (nur lesbar) und zehos-dev ein; die Baeume sind unabhaengig,
     /// ein Fehler verhindert die anderen nicht und alle Fehler stehen in einer Meldung.</summary>

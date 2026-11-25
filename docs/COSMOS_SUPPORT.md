@@ -2,9 +2,33 @@
 
 Stand: 12. November 2026. Diese Datei dokumentiert die Prüfungen für Roadmap-Etappen 3 bis 6, keine vollständige Erledigung der Grundlagenetappe 0. Die Diagnoseetappe 2 wurde aus `master` (`d81d24a`) integriert; der Desktop baut auf `f0dc4b1` einschließlich Eingabe/Grafik und QEMU-Energiekorrektur auf. Protokoll, `uptime` und interaktive Anzeige verwenden dieselbe monotone Uhr.
 
+## Stride gegen Klassenscheduler auf dem SMP-Stand (E5-I, #385)
+
+**Ergebnis (20.11.2026): Doom bestanden mit Vorbehalt, ClassiCube nicht entscheidbar.** Verglichen wurden die Klassenpolicy und der Upstream-Stride (`-p:ZehOSStrideScheduler=true`, `InstallScheduler()` entfaellt; gebaut ueber die Umgebungsvariable `ZehOSStrideScheduler=true`, weil `cosmos build` kein `-p:` kennt) vom selben ZehOS-Commit `a147823d` auf Cosmos-Pin `5f367e3d` (`3.0.97-zehos.6-smp.3`). ISO-Pruefsummen sha256: Klasse `25adf3fe594ac743e119b564cbbca7eec411278d3f2f0449b3fc6672a971e3be`, Stride `6580cd3fceba2fa097b756fcb6a08e604ff9a1ed26cb8d3778a147f909eb6d07`. Beleg, dass der Stride-Bau die Klassenpolicy nicht enthaelt: `strings -el` auf `stride.iso` findet "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER, ZehOS-Klassen inaktiv)" und die `DescribeScheduler`-Zeile "Stride (Diagnose ZEHOS_STRIDE_SCHEDULER); Klassenzaehler nicht erfasst", aber weder "ZehOS Klassen" noch "Auswahl CPU 0"; `klasse.iso` enthaelt umgekehrt "ZehOS Klassen" und "Auswahl CPU 0" und keine Stride-Zeile. Die Umgebungsvariable kommt als MSBuild-Property an (`ProjektZeh.csproj` Z. 29), das `#if` greift. Das Bootlog des Stride-Gastes selbst wurde nicht ausgewertet. Der Stride-Diagnosebau uebersetzt mit `-warnaserror` ohne Warnung (0 Warnungen, 0 Fehler).
+
+Aufbau: je Zelle fuenf Laeufe im Wechsel Klasse/Stride, KVM, `-m 1G`, `ZEHOS_QEMU_SMP=4`, Doom 1.1.0 und ClassiCube 1.1.0 (wasm3), mit und ohne `--background busy` (`tasks start busy`), je Lauf das letzte 60-s-Fenster (`measure-wasm-frametimes.py`, 130 s). Auswertung: avg fps, Median, p95 und max der Bildzeit (kein p99, nicht erfasst). Hauptschleife ist unter Stride nicht Interaktiv (`ApplyClass` wirkungslos); genau das misst der Vergleich. E6-B ist gemergt, die Worker laufen nicht zwingend auf CPU 0.
+
+| Spiel | Last | Stand | fps je Lauf | Mittel | Spannweite | p95 ms je Lauf | max ms je Lauf |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Doom | keine | Klasse | 70,0 70,0 70,0 70,0 70,0 | 70,0 | 0,0 % | 28 28 28 28 28 | 36 40 42 43 38 |
+| Doom | keine | Stride | 70,0 70,0 69,9 69,9 70,0 | 70,0 | 0,1 % | 28 28 28 28 28 | 37 39 53 55 36 |
+| Doom | busy | Klasse | 70,0 70,0 70,0 68,1 70,0 | 69,6 | 2,7 % | 28 28 28 28 28 | 44 52 44 107 31 |
+| Doom | busy | Stride | 70,0 70,0 69,9 70,0 70,0 | 70,0 | 0,1 % | 28 28 28 28 28 | 53 45 46 35 47 |
+| ClassiCube | keine | Klasse | 77,4 112,2 80,0 102,0 60,5 | 86,4 | 59,8 % | 15 11 14 12 18 | 41 37 38 39 44 |
+| ClassiCube | keine | Stride | 108,8 80,8 71,8 87,9 115,1 | 92,9 | 46,6 % | 11 14 15 14 11 | 41 39 23 36 32 |
+| ClassiCube | busy | Klasse | 76,0 55,5 43,7 72,8 59,0 | 61,4 | 52,6 % | 20 28 46 21 33 | 55 60 61 55 56 |
+| ClassiCube | busy | Stride | 43,3 55,6 49,3 42,6 59,2 | 50,0 | 33,2 % | 33 21 31 33 20 | 42 46 59 54 78 |
+
+Bewertung gegen die Abnahme (Bildrate Klasse hoechstens 3 % schlechter, Wartezeit p95/max nicht schlechter, Spannweite ueber 3 % = nicht entscheidbar):
+
+- **Doom: bestanden nach fps und p95; max in einem Lauf schlechter (Klasse 107 ms gegen hoechstens 55 ms bei Stride), daher nur mit Vorbehalt.** Mittel der Klasse 70,0 und 69,6 fps gegen 70,0 (hoechstens 0,6 % schlechter), p95 identisch 28 ms, max in der Groessenordnung gleich; ein Ausreisser der Klasse (107 ms, Lauf mit busy) steht gegen einen Stride-Hoechstwert von 55 ms. Spannweiten unter 3 %. Doom ist auf 70 fps begrenzt; der Vergleich trennt die Policies deshalb kaum.
+- **ClassiCube: nicht entscheidbar.** Spannweiten 33 bis 60 % in allen vier Zellen; die Mittel (ohne Last Klasse 86,4 gegen Stride 92,9; mit busy 61,4 gegen 50,0) liegen innerhalb dieser Streuung und tragen weder fuer noch gegen die Klasse. Ursache der Streuung ist nicht untersucht.
+
+Grenzen: Auf dem Host liefen daneben fremde Gaeste anderer Agenten (Lars hat paralleles Laufen genehmigt); `pgrep -c qemu` vor dem Lauf zeigte 0 bis 2 Prozesse (inklusive des eigenen Laufs bei 1), Hostlast beim Start 0,4 bis 6,3 (`uptime` je Lauf im Messprotokoll). Die Zeiten sind deshalb nur eingeschraenkt vergleichbar; die ClassiCube-Streuung kann teilweise von dieser Fremdlast kommen. Die Hintergrundlast `tasks start busy` ist nur per Foto belegt (die Shell meldet sie nicht seriell); die busy-Zellen sind deshalb schwaecher belegt. Ein QEMU-Ergebnis belegt kein VMware.
+
 ## Messung Klassenscheduler gegen Round-Robin (E4-E, Entwurf)
 
-**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme offen:** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar. Die Entscheidung über ClassiCube liegt bei Laser. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
+**Status: 20 Läufe abgeschlossen, Auswertung durch Jensen. Abnahme mit Vorbehalt (Entscheidung Lars, 22.11.2026, im Terminal):** Doom 1.1.0 bestanden, mit Vorbehalt; ClassiCube 1.1.0 nicht entscheidbar, die Wiederholung mit festem Seed steht unten. Abnahme laut Plan `docs/superpowers/plans/2026-11-18-multicore-e4-scheduler.md`, Paket E4-E: Bestanden je Spiel, wenn Mittel(Klasse) ≥ 0,97 × Mittel(RR) (KVM, 1 GiB, 1 vCPU, je fünf Läufe pro Stand, abwechselnd).
 
 Gewertet wird je Lauf das letzte 60-s-Fenster; das erste Fenster mit Start, Launcher und Laden zählt nicht.
 
@@ -145,13 +169,26 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
 - **Isolieren** (`FaultIsolationPolicy`): nur bei den Programmfehlern #DE (0), #UD (6), #GP (13) und #PF (14) und nur
   wenn der Thread der Wasm-Worker ist, im nativen Lauf steckt, kein Hostaufruf
   läuft und weder `StorageLock` noch `AppStorageGate` gehalten werden. Der Zähler `zehos_host_depth` zählt die C-Wrapper
-  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann kommt der Worker in die Quarantäne des eigenen Schedulers, und
-  Cosmos wechselt nach `AbandonThread` in den nächsten Thread.
+  beider Engines, die Heapaufrufe in `libc.c` (Cosmos-Heapsperre) und die serielle Ausgabe der WAMR-Plattform. Dann setzt Cosmos den Worker nach `AbandonThread` auf
+  `Dead` und wechselt in den nächsten Thread. Einen `Dead`-Thread reiht Cosmos seit dem Patch `abandoned-thread-reap` nie wieder ein
+  (`ReadyLocked`); die frühere Quarantäne im eigenen Scheduler ist entfallen (E6-G, #433).
 - **Sonst:** Halt wie bisher, insbesondere bei NMI, Machine Check und Double Fault, die einen Zustand der Maschine
   melden, und bei einer zweiten Ausnahme während der Ausgabe der ersten (Schachtelungszähler in Cosmos).
 - **Danach:** `WasmRuntime.PollFaultIsolation` in der Hauptschleife beendet den Lauf mit `CpuFault`. Das Fenster zeigt
-  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Die Hauptschleife gibt App-Speicher, Netz und
-  Paketdateien frei und startet einen neuen Worker.
+  „CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.“ Zuerst räumt sie über
+  `SchedulerDiagnostics.TryReapAbandoned` (Patch `abandoned-thread-reap`) Thread und 8-MiB-Stack ab, sobald die CPU der
+  Ausnahme den Stack verlassen hat (bis dahin `StillOnCpu`, die Hauptschleife versucht es in jeder Runde erneut und warnt nach
+  1000 Runden einmal). `NotAbandoned` (nach Code nicht erreichbar) behandelt sie ebenso: Der Thread könnte noch laufen, also
+  schließt sie nichts, und die Wasm-Läufe warten. Bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned` bleiben Thread
+  und Stack belegt, der Lauf wird trotzdem beendet. Danach gibt sie App-Speicher, Netz und Paketdateien frei und startet einen
+  neuen Worker. Der native Speicher der wasm3- bzw. WAMR-Instanz bleibt belegt (Handles im C-Rahmen auf dem Worker-Stack);
+  deshalb gibt es nach drei Isolationen bis zum Neustart keinen neuen Worker (Folge-Issue #582). Dass der Stack trotzdem
+  zurückgehen darf, ist am WAMR-Quelltext geprüft, nicht im Gast: Mit `THREAD_MGR=0`, `MULTI_MODULE=0` und ohne
+  `OS_ENABLE_HW_BOUND_CHECK` (kein `exec_env_tls`) hält kein globaler Zustand einen Zeiger auf den Stack. Der Zeiger
+  `stack_boundary` (`zehos_platform.c`) wird vor jedem Aufruf neu gesetzt, und die Mutexe sind leer. wasm3 legt je Lauf eine
+  eigene Umgebung an. Nach einem abgebrochenen AOT-Lauf bleibt der WAMR-Referenzzähler aber bei 1: Spätere Läufe erreichen
+  `wasm_runtime_destroy_internal` nicht mehr, und jedes `register_host` legt neue Knoten für die Hostfunktionen an (etwa 40 Byte
+  je Hostfunktion und Lauf).
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE, #PF, #GP und #UD im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
@@ -162,6 +199,10 @@ das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LI
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
 wurden (RED 18.11.: 0/2); seit dem Cosmos-Patch `lint1-nmi` (Branch `cosmos`, `patches/lint1-nmi.md`) richtet `LocalApic.Initialize`
 LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr. Zahlen im PR.
+**Grenze:** NMI kommt nur auf CPU 0 an; `LocalApic.InitializeCurrentCpu` maskiert LINT1 auf den APs (wie Linux). QEMU stellt `inject-nmi` allen CPUs zu, daher pinnt die Probe den Worker auf CPU 0 und parkt die Hauptschleife (E5-M, #515). Ein NMI-Halt für Code auf APs ist damit nicht belegt.
+
+**Panic hält alle CPUs an (E7-B, #395):** Seit dem Cosmos-Patch `panic-stop-cpus` (Branch `cosmos`, `patches/panic-stop-cpus.md`) beansprucht die erste anhaltende CPU die Panic und schickt jeder anderen Online-CPU einen NMI; deren Handler hält sie mit gesperrten Interrupts an. Die anhaltende CPU wartet höchstens 100 ms und nimmt keine Sperre; der Bericht folgt erst danach, ohne die serielle Sperre. Der Weg `AbandonThread` (Isolation des Wasm-Workers) hält keine CPU an. Gastprobe `-p:ZehOSSmpProbePanic=true` mit `scripts/test-smp-probe.py --panic`: Ein Thread auf der letzten Worker-CPU schreibt alle 50 ms `SMP_PROBE tick`, nach 1 s löst ein Thread auf einer anderen CPU einen #PF aus (CPU 0, oder CPU 1, wenn die Ticks auf CPU 0 laufen; kein Wasm-Worker, also Halt); nach `System halted.` darf 2 s lang keine `tick`-Zeile folgen. Zahlen im PR.
+**Grenze:** ARM64 sendet keinen NMI (die anderen CPUs laufen dort weiter). Der NMI hat keinen eigenen Stack (kein IST). Geprüft nur unter QEMU (KVM, TCG), nicht unter VMware oder auf Hardware.
 
 **Grenzen:**
 
@@ -171,12 +212,12 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
   dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
 - Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP liefert der Hook (`CpuExceptionInfo`); er
   erscheint im Protokoll der Hauptschleife.
-- Je Ausnahme bleiben Thread und 8-MiB-Stack bis zum Neustart belegt, außerdem die verwalteten Objekte, auf die der
+- Je Ausnahme bleiben (bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned`) Thread und 8-MiB-Stack belegt, außerdem die verwalteten Objekte, auf die der
   aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die Speicherbereinigung ihn weiter durchsucht.
   Den nativen Speicher der Instanz (wasm3-Laufzeit, lineare Memory) gibt seit Roadmap 12.4-I2-C die Laufarena der
   C-Laufzeit frei: `PollFaultIsolation` ruft `zehos_memory_end` nach dem Aufräumen und vor dem Ersatzworker. Erst dort
-  ist der Worker in der Quarantäne und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
-  Workers (Rückruf `zehos_current_thread_id`, CPU 0). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
+  ist der Worker `Dead` und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
+  Workers (Rückruf `zehos_current_thread_id`; er liest über `CurrentThread(null)` den Thread der laufenden CPU, nicht mehr fest CPU 0, `CosmosFaultIsolation.cs`). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
   Zustand (`runtime_ref_count`, Hostfunktionen) über den toten Lauf hinaus weiterbenutzt; die Arena bleibt dann beim
   toten Lauf, spätere Läufe melden `WASM Arena nicht gestartet`. Hat der Fehler die Blockköpfe der Arena beschädigt,
   kann das Freigeben in der Hauptschleife selbst fehlschlagen (siehe den Punkt zum beschädigten Heap oben).
@@ -224,7 +265,7 @@ Der gemeinsame Partial-Teil `WasmRuntime.HostCallbacks.cs` und die unveränderte
 
 ## WAMR-AOT-Laufzeit im Kernel (Etappe D) am 17. November 2026
 
-`zehos_wasm_run_aot` (`Native/Wasm/host/zehos_host_wamr.c`) führt ein `.aot` über dieselbe Hostfunktionstabelle wie wasm3 aus; `WasmRuntime` wählt es nur mit `.aot`-Bytes und ohne Gasbudget (`WasmEngineSelection`). Gebaut wird WAMR nur mit `-p:ZehOSWasmAot=true` oder `-p:ZehOSAotProbe=true`; der normale Kernel enthält ihn noch nicht (Kernelabbild mit WAMR: ELF +220 248 Byte, ISO +219 136 Byte). Geprüft mit der AOT-Gastprobe (`scripts/test-wasm-loader.py --probe aot`), QEMU 10.2.2 q35, 512 MiB, unter TCG und WHPX: Rückgabewert, Speicherverletzung, Überlauf von Wasm- und nativem Stack, nicht gebundener Import (Trap erst beim Aufruf), fehlender Einstieg, ungültige Datei, Formatversion 4, abgeschnittene Datei und `.wasm` statt `.aot` mit denselben Statuscodes wie wasm3; WASI- und `zehos_v1`-Aufrufe, `proc_exit` als Exitcode, Trap einer Hostfunktion, `memory.grow` über 256 MiB (−1), Anfangsspeicher über 256 MiB (`LoadFailed`), je 20-mal offene Datei nach Trap und nach `proc_exit` (alle wieder geschlossen) und 20 Starts ohne Verlust an freiem Speicher (466 960 KiB nach dem ersten und dem letzten Lauf). Doom 1.1.0 als von Hand eingebundenes `.aot` (`--probe aot --doom-aot`, 20 s) lief auf Stand 11c42c7 bei right-tester unter Linux, QEMU 10.2.2: TCG `status=Ok exit=0`, erstes Bild nach 555 ms, 1167 Bilder (60,0 Bilder/s), KVM erstes Bild nach 639 ms, 1267 Bilder (65,4 Bilder/s), jeweils mit richtigem Prüfbild `ff0000/00ff00/0000ff/ffffff`. Nicht geprüft: VMware, echte Hardware.
+`zehos_wasm_run_aot` (`Native/Wasm/host/zehos_host_wamr.c`) führt ein `.aot` über dieselbe Hostfunktionstabelle wie wasm3 aus; `WasmRuntime` wählt es nur mit `.aot`-Bytes und ohne Gasbudget (`WasmEngineSelection`). WAMR gehört seit #423 zum normalen Kernel (`-p:ZehOSWasmAot=false` baut ohne; Recovery und Installer enthalten ihn nicht) (Kernelabbild mit WAMR: ELF +220 248 Byte, ISO +219 136 Byte). Geprüft mit der AOT-Gastprobe (`scripts/test-wasm-loader.py --probe aot`), QEMU 10.2.2 q35, 512 MiB, unter TCG und WHPX: Rückgabewert, Speicherverletzung, Überlauf von Wasm- und nativem Stack, nicht gebundener Import (Trap erst beim Aufruf), fehlender Einstieg, ungültige Datei, Formatversion 4, abgeschnittene Datei und `.wasm` statt `.aot` mit denselben Statuscodes wie wasm3; WASI- und `zehos_v1`-Aufrufe, `proc_exit` als Exitcode, Trap einer Hostfunktion, `memory.grow` über 256 MiB (−1), Anfangsspeicher über 256 MiB (`LoadFailed`), je 20-mal offene Datei nach Trap und nach `proc_exit` (alle wieder geschlossen) und 20 Starts ohne Verlust an freiem Speicher (466 960 KiB nach dem ersten und dem letzten Lauf). Doom 1.1.0 als von Hand eingebundenes `.aot` (`--probe aot --doom-aot`, 20 s) lief auf Stand 11c42c7 bei right-tester unter Linux, QEMU 10.2.2: TCG `status=Ok exit=0`, erstes Bild nach 555 ms, 1167 Bilder (60,0 Bilder/s), KVM erstes Bild nach 639 ms, 1267 Bilder (65,4 Bilder/s), jeweils mit richtigem Prüfbild `ff0000/00ff00/0000ff/ffffff`. Nicht geprüft: VMware, echte Hardware.
 
 Befunde: AOT-Code ruft gebundene Importe direkt über seine Funktionszeigertabelle mit der System-V-Konvention `(exec_env, Argumente …)` auf, nicht über WAMRs Brücke für Rohfunktionen; eine als Rohfunktion registrierte Hostfunktion erhielt so das erste Wasm-Argument als Zeiger und löste einen Seitenfehler aus. Für Importe, die `wamrc` aus WAMRs eigener WASI-Bibliothek kennt, hat der erzeugte Code Gastadressen außerdem schon in Hostzeiger gewandelt und nur ein Byte geprüft (`fd_write` erhielt `iovs` und `written` als Hostzeiger). Die Bindung registriert deshalb gewöhnliche Natives mit `*` an denselben Stellen wie die Tabelle, wandelt jeden Hostzeiger mit Bereichsprüfung zurück in einen Offset und lässt die Kernfunktionen wie bei wasm3 Adresse und volle Länge prüfen. `max_memory_pages` begrenzt in WAMR 2.4.5 nur das Wachsen; einen größeren Anfangsspeicher übernimmt WAMR mit einer Warnung, die Bindung lehnt ihn wie wasm3 ab. Die WAMR-Laufzeit startet je Lauf neu (`wasm_runtime_full_init`/`destroy`); die native Stackgrenze liegt wie bei wasm3 7 MiB unter dem Einstieg auf dem 8-MiB-Worker und kommt über `os_thread_get_stack_boundary` der Plattformschicht. `test-wasm-loader.py` lässt unter WHPX `-cpu max` weg (sonst `Unexpected VP exit code 4`, siehe unten).
 
@@ -429,6 +470,57 @@ Roadmap 6a.1 wurde auf Basis von `1d37a0d` mit unveränderten Cosmos-Paketen **3
 
 Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/scheduler-plugging.html) beschreibt die experimentelle Policy-Schnittstelle. Der passende [Paketquellstand](https://github.com/CosmosOS/Cosmos/tree/5d0b9535251472db7ecfe012f0435f0a04ffca16) enthält bereits ein Round-Robin-Beispiel in den Threading-Tests. Cosmos stellt Kontextwechsel, Timer und Warteprimitive bereit; eine eigene Thread-Laufzeit ist für den nächsten Schritt nicht nötig. Der historische Versuch enthielt noch keine ZehOS-Aufgabenverwaltung; deren anschließende Umsetzung ist oben beschrieben. Echte Hardware wurde nicht geprüft.
 
+## Mehrere CPUs: SMP-Stand und Grenzen (Entwurf E7-F, 25. November 2026)
+
+**Entwurf (#399), Stand 25. November 2026.** Stand `task/mc-e5-smp` @11dc2865 (Stand des Gesamtreviews; die Zahlen unten stammen aus den genannten PRs und Kommentaren, nicht aus einem Lauf auf diesem Kopf; Pin smp.13 mit #678, enthält E7-A #564, E7-E #566/#657, E6-G #576, #655; Kopf 857dfabf ist darin enthalten). Quellen sind die genannten PRs und die Kommentare in #383, #384, #396, #398, #433, #542, #655 und #660; Zahlen ohne Quelle stehen hier nicht. Die Aussage „mehrere CPUs wurden nicht geprüft“ gilt nur für den Stand von 3.0.94; für QEMU TCG und KVM ist sie durch die Matrix (90/90 auf smp.13, mit E7-A) überholt, für VMware, WHPX und echte Hardware bleibt sie bestehen (nicht geprüft; die Handtests laufen einmal als Gesamttest in #610 und blockieren #394, #398 und die übrigen Blöcke nicht, Entscheidung Peter, 24. November 2026, Kommentare in #394 und #398).
+
+**Stand.** Cosmos-Pin `3.0.97-zehos.6-smp.13` (`deploy/cosmos/VERSION`, cosmos-Kopf `6b28fc44`; gegenüber smp.12 sechs Patches, darunter `ext2-inode-cache-evict`, `ext2-dir-scan`, `ext2-direct-runs`, `gc-refill-scan-limit`, `aot-loop-exit`, `exit-quiet`, [Pin-Abschnitt](#pin-3097-zehos6-smp13-25-november-2026)). Zuvor Pin smp.12 (cosmos-Kopf `fbb5e340`, `ahci-error-recovery`, `foh-gc-retry`, `ext2-used-dirs`, [Pin-Abschnitt](#pin-3097-zehos6-smp12-24-november-2026)) und `3.0.97-zehos.6-smp.11` (cosmos-Kopf `e9915bc4`, PR #575). Gegenüber smp.10 (`52114521`, #540/#543) kamen `ahci-large-commands`, `page-alloc-split`, `ext2-alloc-cache` und `abandoned-thread-reap` hinzu ([Pin-Abschnitt](#pin-3097-zehos6-smp11-20-november-2026)). Der SMP-Stapel startet die weiteren CPUs; Seit E7-A (#564) verschiebt ZehOS den Hauptthread und die Standardaffinität bei mehreren CPUs auf die Compute-CPUs (`CosmosBootOptions.MoveMainToWorkers`; ohne `-smp` oder mit `zehos.cpus=1` bleibt alles auf CPU 0, Recovery bleibt auf CPU 0). Wasm-Worker, Hintergrundaufgaben und der Wasm-Netzwerk-Worker laufen auf den Compute-CPUs (`ThreadPlacement.Workers`, #514, #392). **Grenze Leerlauf:** Die Hauptschleife wartet mit `Thread.Sleep(1)` (`CosmosMainLoopIdle.cs`); der Scheduler-Tick ist 10 ms (`ClassRunQueues.TickNs`). Der Schlaf endet erst am nächsten Tick, die Hauptschleife kann also bis zu 10 ms Latenz haben und läuft höchstens etwa 100 Mal je Sekunde. Dafür gibt es keine Messung im PR; die Aussage folgt nur aus dem Code. Cosmos-Patches seit Etappe 5: `monitor-quiet` (smp.4, E6-H), `ausnahme-interrupts` (smp.6, E6-C.10), `pic-remap-cli` (smp.8, E5-N), `tcp-receive-window` (smp.9, E5-O), `gc-oom-throw` (smp.10, E5-P), dazu `panic-stop-cpus` (E7-B), der Patch für Stacks beendeter Threads (E5-K) und die vier Patches von smp.11. E6-G (#576, gemergt) räumt Thread und Stack aufgegebener Wasm-Worker ab; die native Wasm-Instanz bleibt bis zum Neustart belegt (Folge-Issue #582). Abschnitte dazu: [Sperren-Übergabe](#sperren-übergabe-zwischen-cpus-e6-h-19-november-2026), [PIC-Remap](#frühboot-gp-beim-pic-remap-e5-n-19-november-2026), [Netzstapel](#netzstapel-auf-mehreren-cpus-e6-c11-19-november-2026), [Hintergrundaufgaben](#hintergrundaufgaben-auf-den-compute-cpus-e6-e-392-20-november-2026), [TCP-Fenster](#tcp-empfangsfenster-und-verlorene-segmente-e5-o-530-19-november-2026), [Speichermangel](#speichermangel-wirft-outofmemoryexception-e5-p-538-19-november-2026).
+
+**Belegte Zahlen** (QEMU/KVM, ein Lauf, wenn nicht anders genannt; Quellen: die verlinkten Abschnitte, `docs/STORAGE_3_0_97_FINDINGS.md`, Kommentare in #383):
+
+| Beleg | Ergebnis |
+| --- | --- |
+| E5-J, Endlauf auf Kandidat K2 (Kopf `106de7d05`, lokal bei senior, nicht auf origin), MSI, allein, je Zelle 3 Läufe (Kommentar in #383, 25. November) | **81/81 bestanden:** Desktop KVM leer/`smp4`/`8c4t2` und TCG leer/`smp4`, Isolation (positiv, `neg`, `nmi`), ClassiCube, NetSurf, Netz, Thread, Recovery und Doom full je 3/3. Doom full: erster Durchgang scheiterte an meinem Fixture (doom 1.1.0 statt 1.0.0), Wiederholung 9/9. Zuordnung zum Merge-Stand laut Kommentar in #383 (agent-peter-engineer2, nach Vergleich von senior2 im IRC): K2 ist ZehOS-seitig `1545313d` + #655, baumgleich, Cosmos nur 7 `patches/*.md` anders; **die Baumgleichheit ist nicht nachgeprüft, K2 ist auf origin nicht vorhanden.** Nicht geprüft: VMware, Energie, 8c4t2 für ClassiCube, NetSurf, Netz, `neg`, `nmi`. Der frühere Lauf auf smp.9 (21 von 25) ist überholt. #383 ist abgenommen und geschlossen (Kommentar vom 25. November). |
+| E5-H, Speicherqualifikation auf Kopf `857dfabfe` (Pin smp.13), KVM, MSI, 1 und 4 CPUs (Kommentar in #384, 25. November; früher `docs/STORAGE_3_0_97_FINDINGS.md`, PR #553) | `-warnaserror` 0/0. `test-storage-ext2-guest`: Exit 0, Lauf 1 PASS=20, Lauf 2 PASS=9, FAIL=0, `e2fsck -fn` 0 (1 und 4 CPUs gleich). `test-storage-data-disk`: Exit 0. E4.0 `--size 2 --memory 1G --parallel 1`: Exit 0, „Go“, Lauf 1 PASS=29, Lauf 2 PASS=11, Lauf 4 PASS=4, Lauf 5 PASS=7, FAIL=0, `e2fsck -fn` 0. Nicht geprüft: `--legacy-image`, E4.0 mit 32/128 GiB, Stromausfall, `test-storage-filesystems` neu, VMware, Hardware. 512 MiB ist weiter nicht Teil der Zusage (siehe Befund 512 MiB). #384 ist laut Kommentar abgenommen und geschlossen. |
+| E4.0 `--size 2`, 512 MiB, smp.11 (Kommentar in #542) | `--parallel 4`, 983,6 s gegen 2480 s auf smp.10; PASS=23, FAIL=`l2` (`OutOfMemoryException`, serial.log:1767-1773): **No-Go bleibt.** Dauer parallel auf fremd belasteter Maschine, keine Messung. |
+| Schreibrate ext2 (Gast, KVM, Probe mit 256 MiB, **Stand smp.11**, Cosmos `e9915bc4` mit `ahci-large-commands` und `ext2-alloc-cache`, Kommentar in #542) | etwa 121 MB/s (1 CPU 121,5; 4 CPUs 120,7; Median aus 5 Läufen). **Gilt für smp.11, nicht für smp.13.** Der Wert 800 MB/s mit F2 (`ext2-direct-runs`, cosmos PR #577) galt damals nicht, weil F2 noch nicht gemergt war; #577, #656, #658, #654 und #670 sind seitdem gemergt (`gh pr view`) und stehen im Pin smp.13. Eine Messung der Schreibrate auf smp.13 liegt in den gesichteten Kommentaren nur als A/B-Kandidat vor (Zeile unten, n=1/n=2); die 800 MB/s sind nicht für smp.13 belegt. Gemessen ist die Probe mit 1-MiB-Aufrufen, nicht `cp` über FileService; FAT, VMware, Hardware nicht geprüft. |
+| E7-C (PR #563, Kommentar in #396) | `ZEHOS_QEMU_SMP=4`, KVM: `reboot`, zweite Shell, `shutdown` Exit 0, 5 von 5; mit zwei Hintergrundaufgaben vor `reboot` 8 von 8. Abgenommen für das Linux-Skript `test-power-commands.py`; Doom-Last und ext2-Root nicht Teil der Abnahme. |
+| E5-I Stride gegen Klassenscheduler (oben) | Doom bestanden mit Vorbehalt (Mittel 70,0 / 69,6 fps gegen 70,0; ein Ausreißer 107 ms), ClassiCube nicht entscheidbar (Spannweite 33 bis 60 %). |
+| E6-E (Abschnitt Hintergrundaufgaben) | Größte GC-Pause: leer 30 ms, `4` 32 ms, `8,cores=4,threads=2` 37 ms (Grenze 60 ms). `StorageLock` mit `4`: ext2 310 599 und FAT 115 705 Lesungen, 0 falsch, `e2fsck -fn` Exit 0. Doom `full` mit `4`: Bildzeit median 10 ms, p95 25 ms, 70 fps. |
+| E6-H (Abschnitt Sperren-Übergabe) | 10.000 Übergaben je Paar in 536–561 ms (smp.4) gegen ~55 ms je Übergabe zuvor. |
+| E7-D (README, Probe `smt`) | KVM, 4 CPUs als 2 Kerne × 2: ohne Schalter `used=1,2,3 second=2`, mit `zehos.smt=off` `used=2 second=0`. |
+| E7-A (PR #564, PR-Text) | Doom `full` rc=0 mit `-smp` leer (bleibt CPU 0), `2` (CPU 1), `4` (CPU 1,2,3), `4,cores=2,threads=2` (CPU 1,2,3), `8,cores=4,threads=2` (CPU 1–7); `zehos.cpus=1` mit smp4: alles CPU 0. `SMP_PROBE` smp4 PASS (smt SKIP); Recovery smp4 Textshell und `shutdown` ok; ClassiCube Desktop smp4 PASS. Hosttests 1566/1566, nativer Bau mit `-warnaserror` 0/0. **Nicht geprüft:** Messung der Bildraten gegen den Stand vor dem Paket (Schritt 3), Handtest Eingabe unter Last (läuft in #610), VMware, Hardware, TCG. |
+| E7-E, Matrix smp.13, Kopf `7976c322c` (+ `e7e-matrix.json` `2b3a402f`), KVM, MSI, `--parallel 3`, 1449 s (Kommentar in #398, 25. November) | **90/90 bestanden**, 0 Fehlschläge, 0 Zeitüberschreitungen; 6 ISOs mit 0 Warnungen/0 Fehlern; laut Kommentar „Matrix mit SMP-Probe je Zelle“ im Vorlauf (Kandidat K2, 9 Läufe je Zelle: boot, thread, smp, isolation, shutdown, 4× doomquick); die Aufteilung des smp.13-Laufs ist im Kommentar nicht ausgewiesen. Frühere Läufe: Kopf `3b6fe4203` (smp.12, mit E7-A, ohne SMP-Probe) 80/80, 1439 s (PR #657) und ein Kandidatenlauf 88/90 (Zelle `4c2t2`: `placement` 0 von 10, deterministisch, Kommentar in #398); beide sind überholt. Nicht geprüft: VMware, Hardware, Windows, Hosttests auf `7976c322c`. |
+| E7-C Wiederholung auf `7976c322c` (Kommentar in #396) | `ZEHOS_QEMU_SMP=4 test-power-commands`, KVM: reboot, zweite Shell, shutdown Exit 0, **5/5**, je etwa 15 s; Beleg nach E7-A. Nicht geprüft: `.ps1`, `-WithDebugger`, VMware. Zusätzlich Recovery `--power` mit `8c4t2` 3/3 (Kommentar in #383). |
+| E6-G Isolation auf `7976c322c` (Kommentar in #433) | `isolation-probe --runs 20`, SMP 4, KVM: **20/20**, Speicherverlust-Vergleich je Lauf. Nicht geprüft: `--negative`/`--nmi` außerhalb der Matrix, VMware. Die native Wasm-Instanz bleibt Folge-Issue #582. |
+| E6-E Schritt 3, GC-Pausen (Suite `scripts/guest-suites/e6-gc-pausen.json`, PR #657) | Die Suite (3 Suites × 3 Läufe) ist bereitgestellt, die **Messung ist nicht gelaufen** (wartet auf Alleinzeit, Kommentar in #398 und PR #657). Zahlen zu GC-Pausen stehen nur in der E6-E-Zeile oben (Stand vor E7-A). |
+| E4.0 `--size 2`, 1 GiB Speicher, smp.11 (Kommentar in #542, 24. November) | Gast PASS=29 FAIL=0, kein OOM, `l2` und `i2` bestanden; Gesamtdauer 1777 s (512M: 984 s; smp.10 mit 2 GiB-Vorher: 2480 s); n=1. Runner-Status trotzdem `fail`, weil `e2fsck -fn` Exit 4 meldete ("Directories count wrong", Fix `ext2-used-dirs` #593, seit smp.12 im Pin; Gegenprobe #593 mit 1 GiB: 3 von 3 Läufen PASS, Kommentar in #542). Schritte mit vielen kleinen Dateien bestimmen die Laufzeit (`e` 121 s, `f` 133 s, `g` 251 s, `h` 291 s); `l1` (2 GiB füllen) 912 s → 38 s. |
+| ext2-Schreibrate, A/B smp.13-Kandidat (Kommentar in #542, 24. November, KVM, MSI, A n=1, B n=2) | Kandidat, **nicht im Pin**: ext2 write-256MiB bei 1 CPU A 5420 ms gegen B 768/747 ms. Die Wirkung der einzelnen Änderungen ist nicht getrennt; die Streuung bei Flush liegt an der Hostplatte (nicht untersucht). |
+
+**Befund 512 MiB (#538, E5-P; #538 ist geschlossen, 512 MiB ist ein eigener Rest).** Die Seitenläufe fragmentieren (Probe `probe/e5h-frag`, Details in #538). Das stille `null` statt `OutOfMemoryException` ist mit smp.10 behoben (Abschnitt Speichermangel); `page-alloc-split` (cosmos #557) ist seit smp.11 im Pin. Trotzdem ist **512 MiB auch auf smp.11 No-Go**: E4.0 scheitert in `l2` an der Allokation (`OutOfMemoryException`, Kommentar in #542). 1 GiB besteht; E2 ist mit 1 GiB abgenommen (Entscheidung Peter, #376, ROADMAP auf `master`, PR #556 und #573). Ein sicherer Mindestspeicher ist nicht abgeleitet.
+
+**Plattformmatrix (E7-E, #398): 90/90 mit E7-A auf smp.13, 25. November 2026** (Quelle: Kommentar in #398, Kopf `7976c322c`, siehe Tabelle oben; der Vorstand 80/80 auf `3b6fe4203` ohne SMP-Probe, PR #657, ist überholt). QEMU TCG und KVM mit den CPU-Aufbauten 1, 2, 4, `4c2t2` und `8c4t2` (10 Zellen); Summe 90/90, alle bestanden. Die Aufteilung je Zelle nennt der Kommentar zu `7976c322c` nicht; belegt sind nur 9 Läufe je Zelle (boot, thread, smp, isolation, shutdown, 4× doomquick) im Kandidatenlauf-Kommentar in #398. Der frühere Zwischenstand ohne E7-A (80/80 auf smp.11, PR #566) steht unverändert im Abschnitt [Plattformmatrix (E7-E, Zwischenstand 20. November 2026)](#mehrere-cpus-plattformmatrix-e7-e-zwischenstand-20-november-2026) und gilt nur für den Stand ohne E7-A. Der Lauf auf smp.13 gilt laut Kommentar als Matrix inklusive SMP-Probe (Abnahmekommentar in #398); die Zelle `4c2t2` des Kandidatenlaufs (88/90) ist dort nicht mehr rot (Kommentar in #398, Ursache nicht im Kommentar genannt).
+
+| Umgebung | CPU-Aufbau | Stand |
+| --- | --- | --- |
+| QEMU TCG | `1`; `2`; `4`; `4c2t2`; `8c4t2` | Teil von 90/90 (smp.13, Kopf `7976c322c`); Aufteilung je Motor nicht im Kommentar genannt |
+| QEMU KVM | wie TCG | Teil von 90/90 (smp.13, Kopf `7976c322c`); Aufteilung je Motor nicht im Kommentar genannt |
+| QEMU WHPX | `2`; `4` | nicht geprüft (Handtest, Gesamttest #610) |
+| VMware | `numvcpus` 1, 2, 4 | nicht geprüft (V1–V6, Gesamttest #610) |
+| echte Hardware mit Hyperthreading | wie vorhanden | nicht geprüft (H1–H3, Gesamttest #610) |
+
+**Energie (E7-C, #396, Abnahme siehe Tabelle):** `test-power-commands.py` unter KVM mit 4 CPUs bestanden; WHPX, VMware und Hardware nicht geprüft. **Hauptschleife auf den Compute-CPUs (E7-A, #394):** gemergt (PR #564); die automatisierten Läufe stehen in der Tabelle, der Handtest (Tastatur, Maus, Tablet unter Last, Fenster ziehen) und die Bildraten-Messung gegen den Stand vor dem Paket sind nicht erfolgt (Handtest in #610; #394 ist offen).
+
+**Restbefunde E7-A (#660, offen, Refs #659):** Nach dem Placement-Fix (PR #659, gemergt) bleiben drei Punkte. (1) Ein neu angelegter Thread ist nicht ziehbar (aus dem Code): Sind bei `SelectCpu` alle erlaubten CPUs belegt und wird gleich danach eine frei, wartet ein neuer Normal-Thread bis zur Aushungerung (`StarvationLimit` 8 Ticks, etwa 80 ms); mit #659 trat das in placement 15/15 nicht auf. (2) Ein von 8 kurzen Läufen der Diagnose-ISO (KVM smp4) hatte 55 statt etwa 25 ms Rechenzeit, Ursache offen. (3) Der Zuschlag zwischen Arbeitsende des letzten Workers und letztem Join (ms, Diagnose-ISO, KVM, MSI, je 6 Läufe) wächst mit der CPU-Zahl: ohne E7-A (`b295a6abf`) 4 CPUs 6–7 (kurz) und 5–7 (x10), 8 CPUs 22–37 und 23–37; mit #659 4 CPUs 8–13 und 6–10, 8 CPUs 46–92 und 23–51. Ob E7-A oder die geänderte Threadlage die Ursache ist, ist nicht getrennt; Gegenproben in #660 (Kommentar 24./25. November, KVM, MSI, je 5 Läufe, Diagnose-ISO): ohne die fünf seriellen Ausgaben des Exit-Pfads (Cosmos fbb5e340, lokaler Stand, nicht gepusht) fällt der Zuschlag auf unter 1 ms (smp4 kurz 0 in 5 von 5 Läufen, x10 0 in 4 von 5; Ausreißer 9 ms bei smp4 und 6 ms bei smp8 x10), gegen 8–15 ms (smp4) und 45–92 ms (smp8, kurz) auf dem Fix-Stand; das belegt die Exit-Ausgaben als Hauptursache, ohne Sperre und Portzugriffe zu trennen. Der Patch `exit-quiet` (#664) ist in smp.13; auf smp.13 selbst ist der Zuschlag nicht neu gemessen. Offen: die längere Rechenzeit im kurzen Lauf auf dem Fix-Stand (smp4 20–35 gegen 20–23 ms) und der Grund, warum die Exit-Ausgaben bei 8 CPUs länger dauern. Der Zuschlag betrifft Zeitmessungen kurzer Parallelläufe, keine der Abnahmeläufe oben.
+
+**Grenzen (Stand dieses Entwurfs).**
+
+- Hauptschleife und Oberfläche laufen seit E7-A bei mehreren CPUs auf den Compute-CPUs; die Interrupts (Eingabe-IRQs) bleiben auf CPU 0. `Environment.ProcessorCount` bleibt 1 (PR #564).
+- Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten (smp.10).
+- Thread und 8-MiB-Stack aufgegebener Wasm-Worker werden seit E6-G (#576) abgeräumt; die native Wasm-Instanz bleibt bis zum Neustart belegt, nach drei Isolationen startet kein Worker mehr (#582, offen). Auditbefunde zu Workern in E6-C (#390) offen.
+- Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen (Abschnitt PIC-Remap).
+- VMware, WHPX und echte Hardware sind für mehrere CPUs **nicht geprüft** (Zellen V1–V6, H1–H3 aus #398; sie laufen einmal im Gesamttest #610); QEMU TCG und KVM sind mit E7-A geprüft (90/90, Kopf `7976c322c`). Leistungsaussagen zu Hyperthreading nur für QEMU/KVM. Die GC-Messung (`e6-gc-pausen`) ist nicht gelaufen. Der Matrixlauf gilt für den Stand `7976c322c`; spätere Änderungen auf `task/mc-e5-smp` (inzwischen @55870f15, mit #655) sind damit nicht abgedeckt; #655 hat eigene Gastläufe (Kommentar in #655: `aotfault`, `aot`, `AOT_LOOP` KVM und TCG bestanden, Kopf `3974deb75`).
+
 ## Referenzumgebung
 
 Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`, CPU `max`, 512 MiB RAM, Standard-VGA und PS/2-Tastatur/-Maus. Limine fordert **1024×768×32** an; die tatsächliche Bildschirmgröße wurde im Gast geprüft. Der vorhandene QEMU-Start über Cosmos bleibt verwendbar. Für Dateiprüfungen wurde eine separate Kopie des vorhandenen 64-MiB-AHCI-Datenimages verwendet.
@@ -448,7 +540,7 @@ Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`
 | Kurze Pause | `Thread.Sleep(1)` am Ende jeder Runde. `TimerManager.Wait(1)` nutzte im QEMU-Referenzgast einen 18-Hz-Timer und begrenzte dadurch Eingabe und Bildausgabe auf etwa 15–16 FPS. Die bereits geprüfte Scheduler-Wartefunktion beseitigt diese grobe Pause, ohne die HAL-Timerfrequenz zu verändern. [Messung](DESKTOP_PERFORMANCE.md). |
 | Grafik | `Canvas.GetFullScreen()`, `GetBuffer()` und `Display()` verwenden den schon vorhandenen Bildpuffer. Keine neue Vollbildallokation pro Bild. |
 | Auflösung | Limine fordert die Bootauflösung aus `Bootloader/limine.conf` an (1920×1080×32); das ISO startet ohne Auflösungsauswahl und Auswahlpause. Die tatsächlich verfügbare Auflösung hängt vom Anzeigetreiber ab. `Canvas.GetFullScreen(Mode)` wechselt zur Laufzeit nur bei Treibern mit `IDisplayModes`, in 3.0.94 nur `VmwareSvgaDriver`; der Limine-Bildpuffer meldet genau einen Modus. Nach einem Wechsel liefert `GetBuffer()` einen neuen Puffer; `KernelConsole` berechnet Spalten/Zeilen erst beim erneuten Setzen von `Font`. Am 15. November 2026 in QEMU 10.2.2 mit `-vga vmware` geprüft: `VmwareSvgaDriver` meldet 11 Modi von 1024×768 bis 1920×1080, der Gast startet mit 1024×768, der Wechsel auf 1920×1080 zur Laufzeit gelingt und kehrt ohne Bestätigung nach 15 s zurück. Die serielle Zeile `Anzeige …, Modi: …` nennt beim Desktopstart die angebotenen Modi. Laufzeitwechsel in VMware selbst ist nicht geprüft. |
-| Systeminfos | `NetworkManager` (Adapter, MAC, Link, IPv4) ist öffentlich und lieferte in QEMU den e1000e-Adapter. Freie/gesamte Seiten stammen aus dem internen `PageAllocator` und werden per `UnsafeAccessor`/`UnsafeAccessorType` gelesen; der native Build und QEMU zeigten plausible Werte (≈ 499 MiB bei 512 MiB Gast). `GC.GetGCMemoryInfo().HeapSizeBytes` meldete im Gast 0. |
+| Systeminfos | `NetworkManager` (Adapter, MAC, Link, IPv4) ist öffentlich und lieferte in QEMU den e1000e-Adapter. Freie/gesamte Seiten liest ZehOS seit E5-D aus dem öffentlichen `Cosmos.Kernel.System.Diagnostics.MemoryDiagnostics` (`TotalPages`, `FreePages`, `PageSizeBytes`); vorher per `UnsafeAccessor` aus dem internen `PageAllocator` (QEMU: ≈ 499 MiB bei 512 MiB Gast). `GC.GetGCMemoryInfo().HeapSizeBytes` meldete im Gast 0. |
 | Schrift | `PCScreenFont.DefaultFont` ist eine echte 16×32-Schrift (keine verdoppelte 8×16). Eine kleinere Schrift bräuchte eine zusätzliche Schriftdatei. |
 | Bitmaptext | Daten des eingebauten `PCScreenFont.DefaultFont`; `PixelSurface` beschneidet jeden sichtbaren Glyphenbereich. |
 | Zeichnen | Rechtecke, vor dem Rasterisieren beschnittene Linien, Bitmaptext und Pixelkopien. Ein Zeichenbereich kann auf ein Teilrechteck begrenzt werden. Hosttests decken auch negative und extreme Koordinaten ab. |
@@ -458,6 +550,80 @@ Cosmos Gen3 **3.0.97** (bis 16. November 2026: 3.0.94), .NET 10, x64, QEMU `q35`
 Die Methoden und ihre Sichtbarkeit wurden an den installierten Assemblies der Version 3.0.94 geprüft. Die [offizielle Plug-Dokumentation](https://cosmosos.github.io/articles/dev/plugs.html) beschreibt das verwendete Ersetzen einzelner Methoden. Die Paketmetadaten verweisen auf Cosmos-Quellstand `5d0b9535251472db7ecfe012f0435f0a04ffca16`.
 
 Cosmos.Patcher 3.0.97 meldet einen Plug ohne passendes Ziel nur als Warnung `Target method not found` und beendet den Build erfolgreich; der Plug ist dann still wirkungslos. Dieselbe Warnung erscheint auch regulär, weil der Patcher Plugs gegen jede Assembly mit passendem Typnamen versucht. Die CI prüft deshalb mit `scripts/check-plug-binding.py` im Log von `cosmos build --verbose`, dass jede `[PlugMember]`-Methode aus `ProjektZeh/` mindestens einmal `Found matching method` erreicht.
+
+## Mehrere CPUs: Plattformmatrix (E7-E, Zwischenstand 20. November 2026)
+
+**Zwischenstand:** Stand `task/mc-e5-smp` @13f775f2 (Cosmos 3.0.97-zehos.6-smp.11, enthält E6-G #576 und `master` #569), noch **ohne** E7-A (#564, wartet auf den Handtest) bis E7-D. Der Plan (E7-E) setzt `master` nach E7-A bis E7-D voraus; diese Tabelle ist die Vorabfahrt mit dem, was heute schon läuft. **Nach E7-A (und E7-D) folgt eine komplette Wiederholung der 80 Läufe** mit neu gebauten ISOs; die Zahlen unten gelten nur für diesen Stand. Block #398.
+
+**Beschreibung:** `scripts/guest-suites/e7e-matrix.json` (90 Läufe) für `scripts/run-guest-suite.py`. Aufruf mit `--parallel 3 --var isomain=… --var isothread=… --var isosmp=… --var isoisol=… --var isorec=… --var isowasm=… --var repo=… --var key=… --var tls=… --var sdk=…`. ISOs (je `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release`, MSBuild-Eigenschaft als Umgebungsvariable, Ausgabe `ProjektZeh/output-x64/ProjektZeh.iso`; vor jedem Bau `bin`, `obj`, `output-x64` löschen): normal, Recovery (`ZehOSRecovery=true`), `ZehOSThreadProbe=true`, `ZehOSSmpProbe=true` (Variable `isosmp`, Zelle `<Topologie>-<kvm|tcg>-smp` mit `scripts/test-smp-probe.py`), `ZehOSIsolationProbe=true`, Wasm mit Testschlüssel (`ZehOSPackageKeyPath=…/public.b64`) und Test-CA (`ZehOSPackageTestCaPath=…/ca.pem`; Server-Zertifikat mit SAN `IP:10.0.2.2`). Doom-Repository `repo0` ist leer (nur `catalog` mit `generation=1`, signiert mit dem Testschlüssel), `quick` braucht kein Doom. Jede VM hat eine Wegwerfkopie des Datenimages. Skripte von `master` (#567 behebt den Wettlauf beim letzten `shutdown`); `scripts/test-desktop-guest.py` wurde dazu aus `origin/master` in den Branch übernommen, sonst keine Skriptänderung.
+
+Umgebung: Linux, Rechner HPz, Host Intel Core Ultra 9 185H (22 Threads), QEMU 11.1.2 `q35`; Bau mit SDK 10.0.404 (Cosmos-Werkzeuge smp.11), je Variante 0 Warnungen, 0 Fehler. ISO-Prüfsummen (SHA-256, Anfang): normal `2b5494cf`, Thread `e48683ac`, Isolation `91a7a5d0`, Recovery `31894a5a`, Wasm `0262186c`. Lauf 17:20 bis 17:45 (1481,6 s für 80 Läufe, `--parallel 3`). Last (alle 30 s gemessen, 50 Proben): `pgrep -c qemu` 1 bis 6 (3 eigene Gäste plus fremde Gäste anderer Sitzungen auf demselben Rechner, davon einer mit `-smp 4` auf KVM während des ganzen Laufs), `uptime` Load 1 min im Mittel 4,9, höchstens 7,5. Die Dauern sind deshalb keine Messwerte. Zahlen: bestanden/Läufe.
+
+| Prüfung (Spalte) | Bedeutung |
+| --- | --- |
+| Boot | `test-desktop-guest.py`: Boot bis Desktop, Anmeldung, Desktopablauf, abschließend `shutdown` |
+| Thread | `test-thread-probe.py`: THREAD_PROBE und MESSAGES_PROBE (Ersatz für `SMP_PROBE`, das erst mit E7-A bis E7-D entsteht) |
+| Isolation | `test-isolation-probe.py --runs 2` (positiv) |
+| Shutdown | Recovery-ISO, `test-desktop-guest.py --recovery --power` (reboot und shutdown) |
+| Doom quick | `test-wasm-doom-desktop.py`, Szenarien remove, upgrade, corrupt, minkernel einzeln (4 Läufe je Zelle) |
+
+| Umgebung, CPU-Aufbau | Boot | Thread | Isolation | Shutdown | Doom quick |
+| --- | --- | --- | --- | --- | --- |
+| KVM `1` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `4,cores=2,threads=2` | 1/1 | 1/1 | 2/2 | 1/1 | 4/4 |
+| KVM `8,cores=4,threads=2` | 1/1 (+6/6 Wiederholung) | 1/1 | 2/2 | 1/1 | 4/4 |
+| TCG `1`, `2`, `4`, `4,cores=2,threads=2`, `8,cores=4,threads=2` | je 1/1 | je 1/1 | je 2/2 | je 1/1 | je 4/4 |
+| WHPX `2`, `4` | offen: braucht Windows-Benutzer | offen | offen | offen | offen |
+| VMware `numvcpus` 1, 2, 4 | offen: Liste unten | offen | offen | offen | offen |
+| echte Hardware mit Hyperthreading | offen: Liste unten | offen | offen | offen | offen |
+
+Summe: **80/80 bestanden** (0 Fehlschläge, 0 Zeitüberschreitungen; Quelle `summary.json` des Suitelaufs). Die zusätzliche Wiederholung (`4-kvm-boot` und `8c4t2-kvm-boot` je 6 Läufe, 143 s, `--parallel 3`) bestand 12/12; die Boot-Zellen KVM 4 und 8 CPUs stehen damit bei 7/7 je Aufbau (vorher 2/4 und 1/4).
+
+Dauern (ein Lauf, 3 Gäste parallel, Rechner belastet): Boot KVM 34,7 bis 36,2 s, TCG 55,3 bis 60,4 s; Thread KVM 9,9 bis 10,4 s, TCG 10,4 bis 11,2 s; Isolation (2 Läufe) KVM 18,7 bis 21,7 s, TCG 39,1 bis 45,2 s; Shutdown KVM 6,3 bis 8,0 s, TCG 8,3 bis 10,0 s; Doom quick KVM 35,0 bis 66,3 s, TCG 97,6 bis 151,9 s.
+
+**Befund 1 (Skript, nicht Kernel; behoben durch #567):** Auf dem Stand smp.10 scheiterte Boot auf KVM mit 4 und 8 CPUs gelegentlich am letzten Schritt (`guest.shell("shutdown")` in `test-desktop-guest.py`: `QMP input-send-event: Verbindung beendet`, weil der Gast schon ausgeschaltet war, bevor die Eingabe quittiert wurde; Quote 4 CPUs 2/4, 8 CPUs 1/4). Mit dem Skript von `master` (#567) tritt das nicht mehr auf: 7/7 je Aufbau, alle 80 Läufe grün. Kein Kernelbefund erkennbar (die Gegenprüfung von Lars am PR-Kommentar belegt dasselbe aus den Logs).
+
+**Abgrenzung zu E5-J (Issue #383):** E5-J belegt auf KVM und TCG die CPU-Aufbauten leer, 4 und `8,cores=4,threads=2` für Desktop, Recovery, THREAD_PROBE, Isolation (+ `--negative`, `--nmi`), Doom full, ClassiCube und Netz. Hier neu: die Aufbauten `2` und `4,cores=2,threads=2`, TCG-Thread-/Isolationsprobe, Doom quick und der Poweroff über alle Aufbauten.
+
+### Läufe für Menschen: VMware und echte Hardware (Ergebnis in Issue #398)
+
+Diese Zellen kann kein Agent fahren; sie brauchen Peter oder Lars mit VMware beziehungsweise Hardware. **Einmal je Wiederholung** (nach E7-A/E7-D auf dem dann gültigen Stand `master`; der Stand dieses Zwischenstands ist `task/mc-e5-smp` @13f775f2).
+
+**ISO bauen** (Linux oder Windows, Repository-Stamm, SDK `10.0.404`, Cosmos-Werkzeuge der Pin-Version `3.0.97-zehos.6-smp.11` laut `deploy/cosmos/VERSION`; vor jedem Bau `ProjektZeh/bin`, `ProjektZeh/obj`, `ProjektZeh/output-x64` löschen und die ISO danach umbenennen):
+
+| ISO | Bau | Ausgabe nach dem Bau |
+| --- | --- | --- |
+| A: normal | `cosmos build --project ProjektZeh/ProjektZeh.csproj --arch x64 --config Release` | `ProjektZeh/output-x64/ProjektZeh.iso` |
+| B: Thread-Probe | dieselbe Zeile mit gesetzter Umgebungsvariable `ZehOSThreadProbe=true` (PowerShell: `$env:ZehOSThreadProbe='true'`) | dieselbe Datei, als `thread.iso` sichern |
+| C: Recovery | `ZehOSRecovery=true` | als `recovery.iso` sichern |
+
+**Startparameter VMware** (`scripts/start-vmware.ps1`, Windows mit Player oder Workstation; die `.vmx` entsteht daraus): `-Cpus 1`, `-Cpus 2`, `-Cpus 4` setzen `numvcpus` (UEFI, 1024 MiB, plattenlos, NAT, serielle Ausgabe nach `.tools\vmware\serial.log`):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-vmware.ps1 -IsoPath <ISO> -Cpus <1|2|4>
+```
+
+Vor jedem Lauf die VM ausschalten; Aufbau mit Sockets/Kernen: Standard der `.vmx` (`numvcpus` ohne `cpuid.coresPerSocket`, also ein Kern je Socket); ein zweiter Durchgang mit `cpuid.coresPerSocket = "2"` in der `.vmx` (bei `numvcpus` 4) deckt Kerne je Socket ab und wird als eigene Zeile vermerkt.
+
+**Zellen und erwartetes Ergebnis** (jeweils `serial.log` als Beleg, Zeile oder Ausschnitt nennen):
+
+| Nr. | Zelle (Umgebung, Aufbau) | ISO | Prüfung | Erwartung / Marke |
+| --- | --- | --- | --- | --- |
+| V1 | VMware `numvcpus` 1 | A | Boot bis Desktop, Anmeldung, Terminal öffnen, `echo` tippen, im Terminal `shutdown` | Desktop sichtbar und bedienbar, VM schaltet sich selbst aus; `serial.log` ohne `Panic`/`CPU EXCEPTION`; keine `[SMP] CPU n up`-Zeile (nur der Startprozessor) |
+| V2 | VMware `numvcpus` 2 | A | wie V1 | zusätzlich `[SMP] CPU 1 up, hw id 0x1 …` im `serial.log` |
+| V3 | VMware `numvcpus` 4 | A | wie V1 | `[SMP] CPU 1 up`, `CPU 2 up`, `CPU 3 up` im `serial.log` |
+| V4 | VMware `numvcpus` 1, 2, 4 | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS` und `MESSAGES_PROBE PASS` im `serial.log`, kein `FAIL` |
+| V5 | VMware `numvcpus` 1, 2, 4 | C | Boot bis Textshell, `reboot` (Neustart bis Textshell erneut), dann `shutdown` | Textshell erscheint, kein Desktop; Neustart gelingt; VM schaltet sich aus |
+| V6 | VMware `numvcpus` 4 (optional `coresPerSocket` 2) | A | wie V3, danach 5 Minuten Desktop offen lassen, Fenster öffnen und ziehen | keine Hänger, Uhr läuft weiter, kein `Panic` |
+| H1 | echte Hardware mit Hyperthreading (Modell nennen: CPU, Kerne/Threads, Firmware UEFI) | A, von USB/Datenträger gestartet | Boot bis Desktop, Anmeldung, Terminal, `shutdown` | Desktop bedienbar, Gerät schaltet sich aus; sichtbarer Bildschirm und, wenn vorhanden, serielle Ausgabe/`log` im Terminal: `[SMP] CPU n up` für jeden Kern/Thread, Meldung bei fehlgeschlagenem Start eines AP unverändert festhalten |
+| H2 | echte Hardware (wie H1) | B | Start abwarten, ohne Bedienung | `THREAD_PROBE PASS`, `MESSAGES_PROBE PASS` (ohne serielle Verbindung nur, soweit am Bildschirm oder über `log` sichtbar; sonst als nicht prüfbar melden) |
+| H3 | echte Hardware (wie H1) | C | Boot bis Textshell, `reboot`, `shutdown` | wie V5 |
+
+Nicht verlangt: Doom, Isolations- und Netzproben (QEMU-Zellen der Matrix); VMware und Hardware prüfen hier Start der weiteren CPUs, Probe, Neustart und Ausschalten. **Ergebnis** je Zelle (bestanden/nicht bestanden, Stand/Commit des ISOs, VMware-Version, Host, Marken oder Auszug aus `serial.log`) als Kommentar in **Issue #398** melden; ein Fehlschlag mit `serial.log` als Anhang. Bis dahin bleiben die Zeilen `VMware` und `echte Hardware` der Tabelle offen.
+
+**Offen:** `SMP_PROBE` und Platzierungsprobe (E7-A bis E7-D, danach komplette Wiederholung); WHPX, VMware und echte Hardware (brauchen die Benutzer, die sie haben, siehe oben); Doom quick im TCG-Snapshotmodus (hier `--no-snapshot`, weil der Snapshot Doom aus dem Repository installiert und `repo0` keines enthält); Isolation `--negative` und `--nmi` (aus E5-J); Bildauswertung (es zählen nur Skriptmarken). Messwerte für Dauern sind wegen der gleichzeitigen Gäste und fremder Last nicht belastbar.
 
 ## Grenzen
 
@@ -621,3 +787,71 @@ Prüfnachtrag zu #204 nach dem Coverage-Umbau: Auf dem integrierten Stand "38996
 ## WASI-Zeitstempel (12.8 P4-D)
 
 Geprüft im Quelltext des Cosmos-Commits `5d0b9535251472db7ecfe012f0435f0a04ffca16` (nicht im Gast): `FatInodeOperations.GetAttr` setzt `AccessTime`, `ModificationTime` und `ChangeTime` fest auf 0; `FatAttributes.UnpackDateTime` wird nirgends aufgerufen. Der WASI-Host meldet deshalb `atim = mtim = ctim = 0` (unbekannt) für Paket- und `/save`-Dateien; die Rückrufe `zehos_wasm_host_stat`, `save_stat`, `fstat` und `save_fstat` liefern die Zeit schon heute durch, bis Cosmos sie füllt.
+
+## Sperren-Übergabe zwischen CPUs (E6-H, 19. November 2026)
+
+Die Plugs `LowLevelMonitor_*` in `Cosmos.Kernel.Plugs/System/InteropSysPlug.cs` tragen jede umkämpfte `lock`-Sperre, `Monitor.Wait`/`PulseAll` und jedes Warten auf ein Wait-Handle. Bis Cosmos `3.0.97-zehos.6-smp.3` schrieben sie bei jedem Aufruf eine Zeile synchron auf die serielle Schnittstelle; unter KVM ist jedes Byte ein VM-Exit. Die SMP-Probe brauchte dadurch ~55 ms je Übergabe zwischen zwei CPUs (SMP 8: 1000 Übergaben je Paar in 141 s, 11 MB Serial-Log). Das Aufwecken selbst war nicht die Ursache: `ReadyThread` sendet den Reschedule-IPI an die Ziel-CPU. Patch `monitor-quiet` (`3.0.97-zehos.6-smp.4`) entfernt die Zeilen; danach 10.000 Übergaben je Paar unter KVM SMP 4 in 536–561 ms (MSI, drei Läufe). Offen: `LowLevelMonitor_TimedWait` meldet auch nach Zeitablauf `true`.
+
+## Frühboot-#GP beim PIC-Remap (E5-N, 19. November 2026)
+
+`_native_x64_load_idt` endet mit `sti`; `LegacyPic.RemapAndDisable` lief danach mit IF=1. ICW1 löscht die Maske der 8259, und bis zum letzten Maskenschreiben kam ein anstehender PIT-Tick (IRQ0) noch auf der Firmware-Vektorbasis 0x08 an, also über den Stub von #DF, der ein nie gelegtes Fehlerwort vom Stack nimmt. Der verschobene Rahmen endete beim ersten `movaps` mit `[INT] FATAL: Exception 13` (Fehlercode 0, RFLAGS 0x10046), vor jedem ZehOS-Code. Unter Hostlast (je `out` ein VM-Exit) fiel der Tick oft ins Fenster: KVM SMP 4, Last ~20, 9 von 10 Boots (MSI). Patch `pic-remap-cli` (`3.0.97-zehos.6-smp.8`, cosmos e3c6ff0c) sperrt Interrupts für die ganze Folge; danach 50/50 Boots SMP 4 bis `APIC system initialized` bei Last ~19. Bleibt zu beachten: Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen genauso.
+
+## Netzstapel auf mehreren CPUs (E6-C.11, 19. November 2026)
+
+Gelesen am Cosmos-Stand `e3c6ff0c` (`3.0.97-zehos.6-smp.8`). Der Netzstapel hat eine eigene Sperre, `NetworkStackLock` in `Cosmos.Kernel.System/Network/NetworkStackLock.cs`: ein blockierender, rekursiver `Scheduler.Mutex` nur für Threadkontext. Unter ihr laufen der Empfang (der Kit-Worker ruft `NetworkStack.HandlePacket`, kein IRQ), die Verbindungstabelle, Empfangspuffer, Client-Warteschlangen, Ausgangsschlangen sowie Adress- und Nachbartabellen. Die Geräteliste in `NetworkManager` schützt ein IRQ-sicherer Spinlock (`s_lock`). **Ohne Sperre** liest Cosmos die IPv4-Konfiguration: `IPConfig.Get` und `IPConfig.FindNetwork` gehen über die `List` `s_configs`, die `IPConfig.Set` unter der Stapelsperre ändert; `NetworkAdapter.IPConfig`, `UdpClient.Connect`, `DnsClient` und `IcmpClient` lesen sie ohne Sperre. `DnsConfig.Nameservers` ist eine ungeschützte `List`. ZehOS ruft deshalb alles, was diese Teile liest oder schreibt, unter `CosmosNetworkService.Gate`; der Desktopstatus liest die Adresse nur mit `Monitor.TryEnter(Gate)` und sonst einen Schnappschuss (`Network/NetworkAddressSnapshot.cs`). Ein Upstream-Patch, der `IPConfig.Get`/`FindNetwork` unter `NetworkStackLock` liest, würde den Umweg nicht ersetzen, solange `DnsConfig` ungeschützt bleibt.
+
+## Hintergrundaufgaben auf den Compute-CPUs (E6-E, #392, 20. November 2026)
+
+`BackgroundTaskService` und `DedicatedWorker` starten ihre Threads mit `ThreadPlacement.Workers`. Messungen unter QEMU/KVM (MSI, 12 Threads), Kopf nach Merge von `task/mc-e5-smp`:
+
+- **GC-Pausen** (`SMP_PROBE gc`, `INFO gc max_pause_ms`, fünf Läufe je Topologie, alle `SMP_PROBE PASS`): `ZEHOS_QEMU_SMP` leer 20, 20, 29, 30, 30 ms; `4` 15, 16, 15, 15, 32 ms; `8,cores=4,threads=2` 34, 37, 20, 20, 19 ms. Die größte Pause mit acht CPUs (37 ms) liegt unter der Grenze von 60 ms (doppelt so lang wie die größte mit einer CPU) und unter 100 ms.
+- **Dateisysteme mit `StorageLock`, `ZEHOS_QEMU_SMP=4`** (`test-storage-ext2-root.py --diagnose-run`): Lauf 14 (ext2) 310 599 Lesungen, 0 falsch, `e2fsck -fn` Exit 0; Lauf 15 (FAT) 115 705 Lesungen, 0 falsch, `e2fsck -fn` Exit 0. Gegenprobe Lauf 13 ohne Sperre: `e2fsck -fn` Exit 4. Die Skriptzeile „FAIL (kein Go-Kriterium)“ der Diagnoseläufe kommt aus der fehlenden `COUNTERS`-Auswertung des Hosts, nicht aus dem Gast (Gast meldet `conc PASS`).
+- **Netzwerkprobe** (`test-network.py --smoke`, `ZEHOS_QEMU_SMP=4`): `NETWORK_PROBE PASS`.
+- **Doom im Desktop, `ZEHOS_QEMU_SMP=4`, KVM** (`test-wasm-doom-desktop.py --scenario full`, Testschlüssel und Test-CA, Anmeldung und Konto im Skript): Lauf ohne Fehlermeldung, 122 s; freier Speicher nach den vier Doom-Läufen 421,3 / 419,4 / 419,4 / 419,4 MiB. Bildzeit (`measure-wasm-frametimes.py`, veröffentlichtes Doom 1.1.0 unter wasm3, 130 s, ein Lauf): erstes Fenster median 11 ms, p95 26 ms, max 71 ms (n=4133); letztes Fenster median 10 ms, p95 25 ms, max 28 ms (n=4201), 70 fps, keine GC-Pausen im Fenster.
+- Nicht gemessen: Anmeldung und Kennwortwechsel im Desktop über das Skript hinaus (Szenario `reboot` nicht gelaufen); VMware und Windows; je nur ein Lauf.
+
+## TCP-Empfangsfenster und verlorene Segmente (E5-O, #530, 19. November 2026)
+
+Der Doom-WAD-Download über HTTPS brach auf `3.0.97-zehos.6-smp.8` mit `bad_record_mac` ab. Mitschnitt und TLS-Schlüssellog zeigten alle Records auf der Leitung gültig; der Gast verlor Segmente, die er schon bestätigt hatte. Ursache in `TcpConnection` (Cosmos `e3c6ff0c`): `TCB.RcvWnd` blieb fest bei 32 KiB, egal wie viel ungelesen im Puffer lag; las die Anwendung langsamer, als das Netz lieferte, wuchs der Empfangspuffer ohne Grenze (im Gast 23 MB), die nächste Verdopplung (`new byte[46,9 MB]`) bekam vom GC `null`, und `AppendToData` warf. Weil `ProcessEstablished` `RcvNxt` schon vor dem Anhängen erhöht hatte, bestätigte das nächste ACK die verlorenen Bytes, und die Gegenstelle wiederholte sie nie. Patch `tcp-receive-window` (`3.0.97-zehos.6-smp.9`, cosmos `4eeb0f92`, PR #537) begrenzt den ungelesenen Puffer je Verbindung auf 256 KiB, bietet als Fenster den freien Platz an (höchstens 32 KiB), schickt nach `ReadData` ein Window-Update und erhöht `RcvNxt` erst nach erfolgreichem Anhängen. ZehOS braucht keinen Umweg. Seit `3.0.97-zehos.6-smp.10` wirft der GC bei Speichermangel `OutOfMemoryException` (nächster Abschnitt).
+
+## Speichermangel wirft OutOfMemoryException (E5-P, #538, 19. November 2026)
+
+Bis `3.0.97-zehos.6-smp.9` gaben die Allokationshelfer von Cosmos (`RhpNewFast`, `RhpNewArray`, `RhNewString`, Boxing und die übrigen) bei erschöpftem Heap `null` zurück. Vom Compiler erzeugter Code prüft das Ergebnis von `newobj`/`newarr` nie: Ein Zugriff wurde zum Page Fault an kleiner Adresse, ein Span darüber zu stillem Datenverlust (#530). Patch `gc-oom-throw` (`3.0.97-zehos.6-smp.10`, cosmos PR #540, Kopf `52114521`) wirft wie .NET `OutOfMemoryException`; die Arraygröße wird in 64 Bit gerechnet (vorher lief `BaseSize + length * ComponentSize` in 32 Bit über und legte zu kleine Objekte an), negative Längen werfen `OverflowException`. Gelingt das Anlegen der Ausnahme selbst nicht, wirft Cosmos eine beim Start angelegte Reserve; der Dispatcher legt für eine `OutOfMemoryException` keinen Stacktrace an. Grenze: Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten. ZehOS braucht keinen Umweg: `BufferAllocation.TryAllocate`, `ThreadStarter` und die Speicherproben fangen `OutOfMemoryException` schon; ihre Null-Zweige sind jetzt tot und können in einem eigenen PR entfallen. Einzelheiten in `patches/gc-oom-throw.md` des Branches `cosmos`.
+
+## Threadstack-Prüfung im Cosmos-Stapel, Stackprobe entfernt am 20. November 2026
+
+`SchedulerThread.InitializeStack` (unverändert seit `smp.10`; am Quelltext von Pin `3.0.97-zehos.6-smp.11`, Cosmos `e9915bc4`, geprüft) prüft `MemoryOp.Alloc`, sammelt einmal und versucht erneut; `SystemNative_CreateThread` liefert dann 0, `Thread.Start` wirft `OutOfMemoryException`. Die ZehOS-Stackprobe (`CosmosStackProbe`) vor `ThreadStarter.TryStart` entfällt (E5-F, #386). Geprüft mit Diagnoselauf 17 des E4.0-Probe (`--diagnose-run 17`, QEMU KVM, 1 GiB, isolierte Images): nach der Dateilast (c bis i) scheitern je 3 Starts mit 256 KiB und 1 Start mit 8 MiB, sowohl über `ThreadStarter` als auch direkt per `Thread.Start`, jeweils als `OutOfMemoryException`/Fehlerergebnis, ohne Page Fault; 25 PASS auf Pin `smp.11` (4 CPUs und 1 CPU; unter `smp.10` mit und ohne Probe gleich). Auf `smp.11` meldet `e2fsck -fn` in beiden Läufen identisch zwei Gruppenzähler (Verzeichniszahl Gruppe 21 und 27 falsch, Befund unabhängig von E5-F und von der CPU-Zahl, nicht untersucht; unter `smp.10` war e2fsck sauber). Nicht geprüft: Mehr-CPU-Wettlauf mehrerer gleichzeitiger Starts (E5-J), VMware, echte Hardware.
+
+## Pin `3.0.97-zehos.6-smp.13` (25. November 2026)
+
+Cosmos `6b28fc44` bringt sechs Patches gegenüber `smp.12` (`fbb5e340`). Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `aot-loop-exit` (#654, `a1924891`, Refs #423): experimenteller Hook (`COSMOS0001`) im Scheduler-Tick, der den unterbrochenen Thread an anderer Adresse fortsetzt. Ohne Handler ändert sich das Verhalten nicht; den Handler setzt ZehOS erst mit #655.
+- `gc-refill-scan-limit` (#656, `e799410e`, Refs #542): Die Refill-Suche nach einem vollen TLAB sieht je Klasse höchstens 8 Blöcke an. Preis: mehr Sammlungen auf vollem Heap.
+- `ext2-dir-scan` (#658, `0354537f`, Refs #542): Verzeichnissuche blockweise ohne Objekte je Eintrag; `AddEntry` schreibt nur den geänderten Block.
+- `ext2-direct-runs` (#577, `f36039c6`, Refs #542): Ganze Blöcke gehen als zusammenhängende Läufe direkt aus dem Aufruferpuffer.
+- `ext2-inode-cache-evict` (#670, `33a2883b`, Refs #542): Der Inode-Cache hält höchstens 1024 saubere Inodes je Mount. Die Cachegrenze von etwa 75.000 Inodes (Nachtrag E2-P8) gilt damit nicht mehr; das Wachsen des Wörterbuchs entfällt, schmutzige Inodes bleiben gehalten. FAT hat weiter einen unbegrenzten Cache (#672).
+- `exit-quiet` (#664, `6b28fc44`, Refs #660): Die Ausgaben des Thread-Exits stehen nur noch im Debug-Bau.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft: Hosttests 1607/1607; nativer Bau normal, SMP-Probe, Recovery, Wasm und Storage-Root-Probe je 0 Warnungen, 0 Fehler, 4 Plugs gebunden (normale ISO). Gast (QEMU, ein Lauf je Zelle, OOM drei): Desktop KVM 4 CPUs, Doom full KVM 4 CPUs, OOM 516 MiB 3/3 (KVM, 4 CPUs), SMP-Probe KVM 4 und 8c4t2 sowie TCG 4, E4.0 (2 GiB, 1 GiB RAM) Lauf 1 und 2 mit `e2fsck -fn` Exit 0 (Läufe 3 bis 5 nicht). Nicht geprüft: VMware, echte Hardware, Recovery-Gast, Isolationsprobe, G1-Basic, volle Matrix.
+
+## Pin `3.0.97-zehos.6-smp.12` (24. November 2026)
+
+Cosmos `fbb5e340` bringt drei Patches gegenüber `smp.11` (`e9915bc4`). Einzelheiten in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `ahci-error-recovery` (#570, Refs #565): Fehlerstatus nach PxCI, Port-Neustart, LBA-Grenze.
+- `foh-gc-retry` (#650, Refs #538): Das Frozen-Heap-Segment sammelt bei Seitenmangel einmal.
+- `ext2-used-dirs` (#593, Refs #558): `bg_used_dirs_count` läuft über den Deskriptor-Cache.
+
+ZehOS ändert mit dem Pin selbst keinen Code. Geprüft (24. November, Rechner MSI, SDK 10.0.404, Werkzeuge smp.12 aus `scripts/build-cosmos.sh`, KVM): Hosttests 1607/1607; nativer Bau normal, Recovery, Isolation (positiv, negativ), Installer mit `GptGuestProbe` je 0 Fehler; `test-desktop-guest.py` mit `ZEHOS_QEMU_SMP=4` (serielles Log zeigt 4 CPUs) bis `ausgeschaltet`, 0 Error-Zeilen; `test-isolation-probe.py` 3/3 und `--negative` 1/1; `test-installer-gpt-guest.py --run-g1-basic` (32 und 128 GiB, ext2-Root) PASS. Offen: VMware, Windows, G1-Kontoanlage, Recovery-Gastlauf, Gastsuite.
+
+## Pin `3.0.97-zehos.6-smp.11` (20. November 2026)
+
+Cosmos `e9915bc4` bringt vier Patches gegenüber `smp.10`. Einzelheiten und Prüfungen stehen in `patches/<Kurzname>.md` des Branches `cosmos`.
+
+- `ahci-large-commands` (#562, `5118a2b1`, Refs #542): SATA-Befehle bis 64 KiB statt 4 KiB, PxCI-Abfrage ohne Port-0x80-Pause.
+- `page-alloc-split` (#557, `5b1bd383`, #538): Seitenläufe bis 16 Seiten kommen von unten, größere von oben. Kleine GC-Segmente zerteilen den Platz für große Arrays nicht mehr.
+- `ext2-alloc-cache` (#558, `99c1afb0`, #542): Blockbitmap und Gruppendeskriptoren bleiben im Speicher, `Write` schreibt gesammelt. Je Gerät darf nur ein Mount schreiben; ein zweiter beschreibbarer Mount desselben `IBlockDevice` wird abgelehnt.
+- `abandoned-thread-reap` (#571, `e9915bc4`, #433): `Dead` wird nie wieder bereit, `TryReapAbandoned` räumt aufgegebene Threads ab. Der frühere ZehOS-Umweg (`ThreadQuarantine`, Verwerfen in `OnThreadReady`/`OnThreadYield`) ist mit E6-G (#433) entfallen.
+
+ZehOS ändert mit dem Pin selbst keinen Code.

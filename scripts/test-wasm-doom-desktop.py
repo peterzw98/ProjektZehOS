@@ -24,16 +24,18 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
   upgrade  Installation, Katalog mit hoeherer Generation, pkg upgrade auf 1.1.0, Start.
   corrupt  Server liefert eine veraenderte testapp.wasm; die Installation muss mit Pruefsummenfehler scheitern.
   minkernel  testapp 1.1.0 verlangt ZehOS 99.0.0; pkg upgrade muss ablehnen, danach startet testapp (Fotos: 1.0.0).
-  aot      AOT-Plan Etappe E, ISO mit -p:ZehOSWasmAot=true: Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
-           Windows gibt es kein wamrc). AOT aus -> wasm3; "wasmaot on" -> aotapp laeuft nativ (Exitcode 7 der
-           Fixture); fremde Kennung -> wasm3; .aot mit falscher Formatversion -> Rueckfall auf wasm3; .aot ohne
+  aot      AOT-Plan Etappe E, normales ISO (AOT ist Standard): Pakete mit .aot (Fixture-Bytes aus Native/AotProbe, unter
+           Windows gibt es kein wamrc). Ohne Befehl laeuft aotvorher nativ (Exitcode 7 der Fixture); "wasmaot off"
+           -> aotapp unter wasm3; "wasmaot on" -> aotapp nativ; fremde Kennung -> wasm3; .aot mit falscher Formatversion -> Rueckfall auf wasm3; .aot ohne
            _start -> Abbruch ohne Rueckfall (Gastcode kann beim Instanziieren gelaufen sein). Geprueft ueber die
            Zeilen "WASM Start <id> Laufzeit=...". Ein nach der Installation veraendertes .aot laesst sich aus der
            Shell nicht erzeugen ("write" in den Paketbestand: Zugriff verweigert); diese Sperre ist nur hostgetestet.
   aotold   Paket mit .aot auf einem Kernel ohne AOT-Auswahl (aelteres ISO): Installation und Start unter wasm3.
+  aotfault  ISO wie aot: .aot, dessen Code nur aus ungueltigen Befehlen besteht -> App endet mit CpuFault, das System laeuft
+           weiter; danach startet dasselbe gueltige .aot bis zum Neustart unter wasm3 (zehos_host_aot_guard.h), wiederholt.
   aotcorrupt  Server liefert ein veraendertes .aot; die Installation muss mit Pruefsummenfehler scheitern.
 Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien ausser den AOT-Faellen
-(vor dem PR), aotall = aot aotcorrupt (Gruppennamen duerfen keine Szenarionamen sein: Kindprozesse expandieren sonst endlos).
+(vor dem PR), aotall = aot aotfault aotcorrupt (Gruppennamen duerfen keine Szenarionamen sein: Kindprozesse expandieren sonst endlos).
 """
 
 import argparse
@@ -61,8 +63,8 @@ TEST_USER, TEST_PASSWORD = "tester", "testkennwort1"
 # Deutsche Tastaturbelegung des Gasts (DEStandardLayout) liegt zentral in scripts/guest_keys.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from guest_keys import key_for  # noqa: E402
-SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel", "aot", "aotold", "aotcorrupt"]
-GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS[:6], "aotall": ["aot", "aotcorrupt"]}
+SCENARIOS = ["full", "remove", "reboot", "upgrade", "corrupt", "minkernel", "aot", "aotold", "aotfault", "aotcorrupt"]
+GROUPS = {"quick": ["remove", "upgrade", "corrupt", "minkernel"], "all": SCENARIOS[:6], "aotall": ["aot", "aotfault", "aotcorrupt"]}
 # Kennung und Namensregel wie WasmEngineSelection.AotAbi im Kernel.
 AOT_FILE = "testapp.wamr245-aot5-x64-bc-nrz.aot"
 FOREIGN_AOT_FILE = "testapp.wamr999-aot6-x64-bc.aot"
@@ -769,8 +771,13 @@ def start_engine(guest: Guest, name: str, result: str, *engines: str) -> int:
 
 
 def scenario_aot(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
-    install_aot_apps(guest, fixtures, repository, "aotapp", "aotfremd", "aotfallback", "aotnoentry")
-    # Standard aus (bis Etappe F): trotz passendem .aot laeuft das .wasm.
+    install_aot_apps(guest, fixtures, repository, "aotvorher", "aotapp", "aotfremd", "aotfallback", "aotnoentry")
+    # Standard an: ohne jeden Befehl laeuft das .aot. Eigenes Paket, weil das Fenster einer beendeten App offen bleibt.
+    end = start_engine(guest, "aotvorher", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
+    guest.wait("WASM Speicher", 60, end)
+    # Abgeschaltet: trotz passendem .aot laeuft das .wasm.
+    guest.shell("wasmaot off")
+    guest.desktop()
     start_engine(guest, "aotapp", "erstes Bild", "wasm3")
     guest.quit_testapp_named("aotapp")
     guest.shell("wasmaot on")
@@ -798,6 +805,19 @@ def scenario_aotold(guest: Guest, args: argparse.Namespace, fixtures: Path, repo
     guest.quit_testapp_named("aotapp")
 
 
+def scenario_aotfault(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
+    install_aot_apps(guest, fixtures, repository, "aotapp", "aotvorher", "aotfault")
+    # Eigenes Paket: Das Fenster einer beendeten App bleibt offen, ein zweiter Start holte es nur nach vorn.
+    end = start_engine(guest, "aotvorher", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
+    guest.wait("WASM Speicher", 60, end)
+    start_engine(guest, "aotfault", "Ende: App abgebrochen: CpuFault", "aot wamr245-aot5-x64-bc-nrz")
+    # Das gueltige .aot laeuft jetzt nicht mehr nativ: Der Exitcode 7 bleibt aus, das .wasm zeigt Bilder.
+    for _ in range(2):
+        start_engine(guest, "aotapp", "erstes Bild", "aot wamr245-aot5-x64-bc-nrz",
+                     "wasm3 AOT-Rueckfall: LoadFailed AOT nach CPU-Fehler bis zum Neustart gesperrt")
+        guest.quit_testapp_named("aotapp")
+
+
 def scenario_aotcorrupt(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:
     repository.directory = fixtures / "repo-aot"
     guest.use_source()
@@ -808,7 +828,7 @@ def scenario_aotcorrupt(guest: Guest, args: argparse.Namespace, fixtures: Path, 
 
 
 RUN = {"full": scenario_full, "remove": scenario_remove, "reboot": scenario_reboot, "upgrade": scenario_upgrade,
-       "corrupt": scenario_corrupt, "minkernel": scenario_minkernel, "aot": scenario_aot, "aotold": scenario_aotold,
+       "corrupt": scenario_corrupt, "minkernel": scenario_minkernel, "aot": scenario_aot, "aotold": scenario_aotold, "aotfault": scenario_aotfault,
        "aotcorrupt": scenario_aotcorrupt}
 
 
@@ -823,6 +843,22 @@ def aot_fixture(source: str, symbol: str) -> bytes:
     if len(data) != int(size.group(1)):
         raise ValueError(f"{symbol}: {len(data)} statt {size.group(1)} Bytes.")
     return data
+
+
+def fault_fixture(aot: bytes) -> bytes:
+    """Dasselbe .aot, aber der Code (Abschnitt 2 nach den Konstanten) besteht nur aus ud2: #UD beim ersten Befehl."""
+    data, offset = bytearray(aot), 8
+    while offset + 8 <= len(data):
+        offset = (offset + 3) & ~3
+        kind, size = struct.unpack_from("<II", data, offset)
+        offset += 8
+        if kind == 2:
+            code = offset + 4 + struct.unpack_from("<I", data, offset)[0]
+            count = offset + size - code
+            data[code:offset + size] = (b"\x0f\x0b" * (count // 2 + 1))[:count]
+            return bytes(data)
+        offset += size
+    raise ValueError("Kein Codeabschnitt im .aot.")
 
 
 def catalog_generation(repo: Path) -> int:
@@ -874,7 +910,8 @@ def build_fixtures(args: argparse.Namespace, target: Path) -> Path:
     # Byte 4 ist die AOT-Formatversion (wie der Fall "d version" der AOT-Probe).
     wrong_version = no_start[:4] + bytes([4]) + no_start[5:]
     for app, name, data in (("aotapp", AOT_FILE, host), ("aotfremd", FOREIGN_AOT_FILE, host),
-                            ("aotfallback", AOT_FILE, wrong_version), ("aotnoentry", AOT_FILE, no_start)):
+                            ("aotfallback", AOT_FILE, wrong_version), ("aotnoentry", AOT_FILE, no_start),
+                            ("aotvorher", AOT_FILE, host), ("aotfault", AOT_FILE, fault_fixture(host))):
         aot = target / f"{app}.aot"
         aot.write_bytes(data)
         subprocess.run([*tool, "package", "--key", str(args.key), "--repo", str(aot_repo), "--id", app, "--version", "1.0.0",

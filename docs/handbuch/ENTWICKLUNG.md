@@ -49,7 +49,7 @@ Mit dem Zusatz `-WithDebugger` hängt derselbe Test das installierte `gdb-multia
 
 Auf beschreibbarem ext2 begrenzt der Dateidienst jedes Verzeichnis auf 65.535 direkte Einträge (Produktgrenze 65.536, ein Platz bleibt für Umbenennungen frei; im Gast geprüft bis 10.000 Einträge, nur mit dem P8-Versuchsfeed `zehos.0.gfdc9da0`, nicht mit dem Pin `zehos.5` (518 s bzw. 754 s je ganzem Lauf); sehr große Verzeichnisse sind langsam, siehe `docs/COSMOS_SUPPORT.md`), einschließlich versteckter Dateien und Unterverzeichnisse. Ein weiterer Eintrag liefert `cause='DirectoryEntryLimit'`; Dateien dann auf mehrere Ordner verteilen. Temporäre Schreibdateien zählen mit: Das Ersetzen in einem bereits vollen Ordner kann deshalb scheitern, wobei das Original erhalten bleibt. Eine Umbenennung im selben Ordner und `touch` auf vorhandene Dateien bleiben möglich. FAT erhält diese zusätzliche Grenze nicht. Die Layout-Migration lehnt übergroße Quellverzeichnisse und durch ihre Zuordnung überfüllte Zielverzeichnisse vor dem ersten Zielschreiben ab.
 
-Ist ext2 als `/` eingehängt, hält Cosmos 3.0.97 jede seit dem Start berührte Datei im Speicher, bis der Datenträger ausgehängt wird. Nach etwa 75.000 verschiedenen Dateien je Sitzung (Pin `3.0.97-zehos.6`, Cosmos legt den Cache beim Einhängen vorab an; rechnerisch aus der Vorabgröße, im Gast nur bis 20.000 geprüft; bis `zehos.5` waren es etwa 17.500) können weitere Dateioperationen mit einem Fehler scheitern, weil der Speicher zu stark zerstückelt ist. Die genaue Zahl hängt vom Arbeitsspeicher und vom bisherigen Verlauf ab.
+Ist ext2 als `/` eingehängt, hält Cosmos 3.0.97 jede seit dem Start berührte Datei im Speicher, bis der Datenträger ausgehängt wird. Nach etwa 75.000 verschiedenen Dateien je Sitzung (Pin `3.0.97-zehos.6`, Cosmos legt den Cache beim Einhängen vorab an; rechnerisch aus der Vorabgröße, im Gast nur bis 20.000 geprüft; bis `zehos.5` waren es etwa 17.500) können weitere Dateioperationen mit einem Fehler scheitern, weil der Speicher zu stark zerstückelt ist. Die genaue Zahl hängt vom Arbeitsspeicher und vom bisherigen Verlauf ab. **Seit Pin smp.13** begrenzt der Cosmos-Patch `ext2-inode-cache-evict` (#670) den Cache auf höchstens 1024 saubere Inodes je Mount (Quelle: Pin-Abschnitt in `docs/COSMOS_SUPPORT.md`); die Zahl 75.000 gilt für die Pins `zehos.6` bis smp.12. Im Gast auf smp.13 ist die Grenze nicht eigens geprüft, der Hinweis bleibt dafür **offen**.
 
 - **Betroffen** sind Vorgänge, die viele verschiedene Dateien berühren: große Ordner auflisten, ganze Bäume durchsuchen oder kopieren, Pakete mit vielen Dateien installieren.
 - **Kaum betroffen** ist das normale Speichern, weil es freigegebene Dateinummern wiederverwendet.
@@ -98,6 +98,17 @@ dotnet build ProjektZeh/ProjektZeh.csproj --configuration Release -p:ZehOSThread
 ```
 
 Ergebnisse und Grenzen stehen in [COSMOS_SUPPORT.md](../../docs/COSMOS_SUPPORT.md#aufgabenverwaltung-und-round-robin-am-13-november-2026).
+
+## Kommandozeilenschalter des Kernels
+
+Der Kernel liest die Limine-Kommandozeile (`cmdline:` in `boot/limine/limine.conf` des ISO). Erkannt werden nur ganze, durch Leerzeichen getrennte Wörter; Unbekanntes und ungültige Werte werden ignoriert.
+
+| Schalter | Wirkung |
+| --- | --- |
+| `zehos.cpus=<n>` (n ≥ 1) | begrenzt die CPUs für den Wasm-Worker und den Wasm-Netzwerk-Worker auf Indizes kleiner als n |
+| `zehos.smt=off` | beschränkt die Wasm-Worker bei gemessener Topologie auf den jeweils ersten logischen Prozessor je Kern |
+
+Der Boot setzt als Erstes die Affinität des Hauptthreads und die Standardaffinität neuer Threads auf CPU 0, bevor ein Thread startet. Die beiden Wasm-Worker wechseln anschließend auf die erlaubten Online-CPUs ab Index 1. Ist keine solche CPU verfügbar oder läuft der Recovery-Build, bleiben sie auf CPU 0. Für einen Versuch die Zeile `cmdline: zehos.cpus=1` unter `path:` in die `limine.conf` einer Kopie des ISO schreiben (`xorriso -dev kopie.iso -boot_image any keep -map limine.conf /boot/limine/limine.conf -commit`).
 
 ## Desktop-Dateifehler gezielt prüfen
 

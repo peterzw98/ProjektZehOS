@@ -39,6 +39,7 @@
     <Compile Include="..\ProjektZeh\Runtime\Wasm\WasmRandom.cs" Link="Runtime\Wasm\WasmRandom.cs" />
     <Compile Include="..\ProjektZeh\Graphics\Raster\*.cs" Link="Graphics\Raster\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\VmwareClock.cs" Link="Runtime\VmwareClock.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\BootOptions.cs" Link="Runtime\BootOptions.cs" />
     <Compile Include="..\ProjektZeh\Installer\IInstallService.cs" Link="Installer\IInstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallService.cs" Link="Installer\InstallService.cs" />
     <Compile Include="..\ProjektZeh\Installer\InstallJob.cs" Link="Installer\InstallJob.cs" />
@@ -73,6 +74,7 @@
     <Compile Include="..\ProjektZeh\Apps\**\*.cs" Link="Apps\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Runtime\ConsoleLineView.cs" Link="Runtime\ConsoleLineView.cs" />
     <Compile Include="..\ProjektZeh\Runtime\FrameTiming.cs" Link="Runtime\FrameTiming.cs" />
+    <Compile Include="..\ProjektZeh\Runtime\Wasm\AotLoopExitPolicy.cs" Link="Runtime\Wasm\AotLoopExitPolicy.cs" />
     <Compile Include="..\ProjektZeh\Runtime\FaultIsolationPolicy.cs" Link="Runtime\FaultIsolationPolicy.cs" />
     <Compile Include="..\ProjektZeh\Runtime\LoginFlow.cs" Link="Runtime\LoginFlow.cs" />
     <Compile Include="..\ProjektZeh\Graphics\LoginScreen.cs" Link="Graphics\LoginScreen.cs" />

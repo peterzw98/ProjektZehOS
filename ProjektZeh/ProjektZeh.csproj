@@ -25,10 +25,15 @@
     <DefineConstants Condition="'$(ZehOSNetworkProbe)' == 'true'">$(DefineConstants);ZEHOS_NETWORK_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSRecovery)' == 'true'">$(DefineConstants);ZEHOS_RECOVERY</DefineConstants>
     <DefineConstants Condition="'$(ZehOSThreadProbe)' == 'true'">$(DefineConstants);ZEHOS_THREAD_PROBE</DefineConstants>
+    <!-- Nur Diagnose (E5-I): ohne ZehOS-Klassenscheduler laeuft der Upstream-Stride, zum Vergleich der Policies. -->
+    <DefineConstants Condition="'$(ZehOSStrideScheduler)' == 'true'">$(DefineConstants);ZEHOS_STRIDE_SCHEDULER</DefineConstants>
     <!-- Gastprobe 12.4-I1: CPU-Ausnahmen im Wasm-Worker; Negative haelt zum Schluss im Probe-Thread an. -->
     <DefineConstants Condition="'$(ZehOSIsolationProbe)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NEGATIVE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSIsolationProbeNmi)' == 'true'">$(DefineConstants);ZEHOS_ISOLATION_PROBE;ZEHOS_ISOLATION_PROBE_NMI</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSSmpProbe)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE</DefineConstants>
+    <!-- E7-B: Panic auf einer CPU muss die Ticks eines Threads auf einer anderen CPU anhalten; ersetzt die Schritte der SMP-Probe. -->
+    <DefineConstants Condition="'$(ZehOSSmpProbePanic)' == 'true'">$(DefineConstants);ZEHOS_SMP_PROBE;ZEHOS_SMP_PROBE_PANIC</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>
@@ -44,12 +49,18 @@
     <ZehOSWasm Condition="'$(ZehOSWasmProbe)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasm)' == 'true'">$(DefineConstants);ZEHOS_WASM</DefineConstants>
     <DefineConstants Condition="'$(ZehOSWasmProbe)' == 'true'">$(DefineConstants);ZEHOS_WASM_PROBE</DefineConstants>
-    <!-- WAMR-AOT-Lader (Plan 5c, Etappe D) vorerst nur auf Wunsch: AOT bleibt bis Etappe F aus (Schalter wasmaot,
-         Standard aus); ohne diesen Schalter waehlt WasmGameApp immer wasm3. Er braucht wasm3s freistehende C-Laufzeit; die AOT-Gastprobe schaltet ihn ein. -->
+    <!-- WAMR-AOT-Lader: Standard an (#423, Peters Entscheidung vom 25.11.2026), -p:ZehOSWasmAot=false baut ohne ihn. Er braucht
+         wasm3s freistehende C-Laufzeit und entfaellt deshalb mit ZehOSWasm=false. Recovery und Installer bleiben ohne WAMR:
+         Einrichtung und Rettungsweg sollen ohne nativen App-Code auskommen. -->
     <ZehOSWasmAot Condition="'$(ZehOSAotProbe)' == 'true'">true</ZehOSWasmAot>
+    <ZehOSWasmAot Condition="'$(ZehOSWasmAot)' == '' and '$(ZehOSWasm)' == 'true' and '$(ZehOSRecovery)' != 'true' and '$(ZehOSSecurityRecovery)' != 'true' and '$(ZehOSInstaller)' != 'true'">true</ZehOSWasmAot>
     <ZehOSWasm Condition="'$(ZehOSWasmAot)' == 'true'">true</ZehOSWasm>
     <DefineConstants Condition="'$(ZehOSWasmAot)' == 'true'">$(DefineConstants);ZEHOS_WASM_AOT</DefineConstants>
     <DefineConstants Condition="'$(ZehOSAotProbe)' == 'true'">$(DefineConstants);ZEHOS_AOT_PROBE</DefineConstants>
+    <!-- Ausstieg aus AOT-Schleifen ohne Hostaufruf (#423, R8, Cosmos-Patch aot-loop-exit ab smp.13): gehoert zu jedem AOT-Bau;
+         -p:ZehOSAotLoopExit=false nur fuer die Gegenprobe. -->
+    <ZehOSAotLoopExit Condition="'$(ZehOSAotLoopExit)' == '' and '$(ZehOSWasmAot)' == 'true'">true</ZehOSAotLoopExit>
+    <DefineConstants Condition="'$(ZehOSAotLoopExit)' == 'true'">$(DefineConstants);ZEHOS_AOT_LOOP_EXIT</DefineConstants>
     <!-- Gastprobe 12.4-I2-A (neben ZEHOS_WASM; eigene Zeile hier, fern der Probe-Schalter des Multicore-Zweigs): Schliessen beendet eine App nach der Frist auch ohne should_exit. -->
     <DefineConstants Condition="'$(ZehOSAbortProbe)' == 'true'">$(DefineConstants);ZEHOS_ABORT_PROBE</DefineConstants>
   </PropertyGroup>

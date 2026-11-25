@@ -3,6 +3,8 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Cosmos.Kernel.System.Diagnostics;
+using Cosmos.Kernel.System.Threading;
 
 namespace ProjektZeh.Runtime;
 
@@ -68,10 +70,19 @@ internal static class CosmosIsolationProbe
         {
             // QEMU stellt inject-nmi unter KVM nur ueber LVT LINT1 zu; Cosmos richtet LINT1 seit Patch lint1-nmi
             // (patches/lint1-nmi.md im Branch cosmos) selbst unmaskiert mit Zustellart NMI ein.
+            // QEMU stellt den NMI allen CPUs zu, Cosmos laesst LINT1 aber wie Linux nur auf der Boot-CPU offen
+            // (LocalApic.InitializeCurrentCpu maskiert es auf den APs). Der Worker muss also auf CPU 0 rechnen, wenn der
+            // NMI kommt; die Pinnung wirkt erst nach der naechsten Umschaltung (#515).
+            ThreadAffinity.Current = CpuSet.Single(0);
+            Thread.Sleep(1);
+            // Auf CPU 0 laeuft auch die Hauptschleife und haette den NMI in allen Laeufen abgefangen (Thread = Hauptthread);
+            // sie parkt, sobald sie das Fenster sieht (ParkMainInNmiWindow), und meldet das, bevor das Skript den NMI sendet.
             FaultIsolation.EnterNativeRun();
             try
             {
-                Log("ISOLATION_PROBE nmi window open");
+                Log("ISOLATION_PROBE nmi window open cpu=" + KernelCpus.Current);
+                // Erst nach der Zeile "window open": Das Skript wertet ab dort aus (evaluate_nmi), "main parked" muss dahinter stehen.
+                Volatile.Write(ref nmiWindow, 1);
                 long end = Stopwatch.GetTimestamp() + 120 * Stopwatch.Frequency;
                 while (Stopwatch.GetTimestamp() < end) sink++;
                 Log("ISOLATION_PROBE nmi window closed");
@@ -90,11 +101,27 @@ internal static class CosmosIsolationProbe
 #endif
     }
 
+#if ZEHOS_ISOLATION_PROBE_NMI
+    private static int nmiWindow;
+
+    /// <summary>
+    /// Aus der Hauptschleife: Ist das NMI-Fenster offen, schlaeft der Hauptthread fuer immer, damit auf CPU 0 nur noch der
+    /// Worker im Gastzustand rechnet. Die Probe endet mit dem Halt durch den NMI; danach braucht niemand die Hauptschleife.
+    /// </summary>
+    internal static void ParkMainInNmiWindow()
+    {
+        if (Volatile.Read(ref nmiWindow) == 0) return;
+        Log("ISOLATION_PROBE nmi main parked");
+        while (true) Thread.Sleep(1000);
+    }
+
+#endif
     // Der Probelauf tut so, als liefe Gastcode (nativer Lauf, kein Hostaufruf); die Hauptschleife ersetzt den Worker.
     private static void Fault(string kind, Action trigger)
     {
         int done = 0;
         int before = Wasm.WasmRuntime.IsolatedRuns;
+        ulong releasedBefore = SchedulerDiagnostics.ReleasedStacks;
         Wasm.WasmRuntime.ProbeEnqueue(() =>
         {
             FaultIsolation.EnterNativeRun();
@@ -113,6 +140,9 @@ internal static class CosmosIsolationProbe
                 Volatile.Write(ref done, 1);
             }
         });
+        // Nach ProbeEnqueue: Der Worker dieses Laufs und sein Stack sind schon angelegt. Nach dem Abraeumen ersetzt der Stack
+        // des Ersatzworkers seinen, der freie Speicher muss also etwa gleich bleiben (Review laser #576, Befund 6).
+        ulong freeBefore = MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024;
 
         for (int wait = 0; wait < 100; wait++)
         {
@@ -120,6 +150,13 @@ internal static class CosmosIsolationProbe
             if (Wasm.WasmRuntime.IsolatedRuns != before)
             {
                 Log("ISOLATION_PROBE fault=" + kind + " handled=1 vector=" + FaultIsolation.IsolatedVector);
+                // E6-G (#433): Die Hauptschleife zaehlt die Isolation erst nach dem Abraeumen und dem Start des Ersatzworkers.
+                // Ohne Abraeumen sinkt der freie Speicher je Isolation um den 8-MiB-Stack, mit bleibt er etwa gleich. Ob
+                // genau dieser Worker abgeraeumt wurde, steht in der Zeile der Hauptschleife davor ("Thread und Stack frei");
+                // released zaehlt systemweit und ist nur ein Zusatz.
+                Log("ISOLATION_PROBE memory kind=" + kind + " released=" + (SchedulerDiagnostics.ReleasedStacks - releasedBefore)
+                    + " free_before_kib=" + freeBefore
+                    + " free_kib=" + MemoryDiagnostics.FreePages * MemoryDiagnostics.PageSizeBytes / 1024);
                 return;
             }
             Thread.Sleep(100);
