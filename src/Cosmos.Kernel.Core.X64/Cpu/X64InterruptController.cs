@@ -137,12 +137,13 @@ internal class X64InterruptController : IInterruptController
     {
         // Now: a handler of the program may change the frame, its CS included.
         bool fromUser = UserModeX64.IsUser(ref ctx);
+        Cosmos.Kernel.Core.Scheduler.SchedulerThread? mutantOld = Cosmos.Kernel.Core.Scheduler.SchedulerManager.CurrentCpuState?.CurrentThread;
         if (!fromUser || !UserModeX64.TryHandleFault(ref ctx))
         {
             DispatchKernel(ref ctx);
         }
 
-        UserModeX64.PrepareReturn(ref ctx, fromUser);
+        UserModeX64.PrepareReturn(ref ctx, fromUser, mutantOld);
     }
 
     private unsafe void DispatchKernel(ref IRQContext ctx)

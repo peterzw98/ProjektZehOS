@@ -145,7 +145,7 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     /// </summary>
     /// <param name="ctx">The interrupted frame.</param>
     /// <param name="fromUser">Whether it was ring 3's on the entry.</param>
-    internal static void PrepareReturn(ref IRQContext ctx, bool fromUser)
+    internal static void PrepareReturn(ref IRQContext ctx, bool fromUser, SchedulerThread? mutantOld = null)
     {
         if (ctx.interrupt <= LastExceptionVector && Gdt.IstOf((int)ctx.interrupt) != 0)
         {
@@ -169,7 +169,7 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             return;
         }
 
-        ulong leaveRsp = UserMode.Prepare((UserFrame*)frame);
+        ulong leaveRsp = UserMode.Prepare((UserFrame*)frame, mutantOld);
         if (leaveRsp != 0)
         {
             frame->rip = s_leaveAddress;
