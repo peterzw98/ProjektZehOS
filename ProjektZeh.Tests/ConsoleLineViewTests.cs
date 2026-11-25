@@ -1,3 +1,4 @@
+using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Runtime;
 
@@ -22,5 +23,35 @@ public sealed class ConsoleLineViewTests
     {
         string written = ConsoleLineView.FormatLine("echo abcdefghijklmnopqrstuvwxyz", 16);
         Assert.AreEqual("zehos> echo abcdefghijklmnopqrstuvwxyz", written);
+    }
+
+    [TestMethod]
+    public void ChangedSpan_UnchangedRow_WritesNothing()
+    {
+        Assert.IsFalse(ConsoleLineView.TryGetChangedSpan("ZehOS | Laufzeit: 12 s", "ZehOS | Laufzeit: 12 s", out _, out int length));
+        Assert.AreEqual(0, length);
+    }
+
+    [TestMethod]
+    public void ChangedSpan_UnknownOrResizedRow_WritesWholeRow()
+    {
+        Assert.IsTrue(ConsoleLineView.TryGetChangedSpan(null, "zehos> ", out int start, out int length));
+        Assert.AreEqual((0, 7), (start, length));
+        Assert.IsTrue(ConsoleLineView.TryGetChangedSpan("zehos>  ", "zehos> ", out start, out length));
+        Assert.AreEqual((0, 7), (start, length));
+    }
+
+    [DataTestMethod]
+    [DataRow("Laufzeit: 9 s  ", "Laufzeit: 10 s ", 10, 4)]
+    [DataRow("Laufzeit: 19 s ", "Laufzeit: 20 s ", 10, 2)]
+    [DataRow("zehos> ab      ", "zehos> abc     ", 9, 1)]
+    [DataRow("zehos> abc     ", "zehos> ab      ", 9, 1)]
+    [DataRow("a-------------z", "b-------------y", 0, 15)]
+    public void ChangedSpan_ChangedColumns_CoversFirstToLastDifference(string shown, string text, int expectedStart, int expectedLength)
+    {
+        Assert.IsTrue(ConsoleLineView.TryGetChangedSpan(shown, text, out int start, out int length));
+        Assert.AreEqual((expectedStart, expectedLength), (start, length));
+        // Der geschriebene Ausschnitt ueber dem alten Stand ergibt genau die neue Zeile.
+        Assert.AreEqual(text, string.Concat(shown.AsSpan(0, start), text.AsSpan(start, length), shown.AsSpan(start + length)));
     }
 }

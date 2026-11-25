@@ -9,6 +9,12 @@ spec.loader.exec_module(isolation)
 
 PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
+    # Die Reihenfolge der Zeilen wertet evaluate nicht aus; die Arena- und frei-Zeilen stehen gesammelt.
+    'ISOLATION_PROBE frei_vor=401000',
+    'ISOLATION_PROBE arena=1 used=16777263 frei=384600',
+    'ISOLATION_PROBE arena_after=de used=0',
+    'ISOLATION_PROBE arena=1 used=16777263 frei=376400',
+    'ISOLATION_PROBE arena_after=pf used=0',
     'CPU EXCEPTION: Divide by Zero (#DE)',
     'System halted.',
     'WASM CPU-Ausnahme im App-Code (Vektor 0, RIP 0x1), Worker-Thread 4 aufgegeben (Thread und Stack frei, Ressourcen frei); neuer Worker gestartet.',
@@ -20,6 +26,7 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE memory kind=pf released=1 free_before_kib=900000 free_kib=899500',
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
+    'ISOLATION_PROBE frei_nach=384600',
     'ISOLATION_PROBE DONE',
 ])
 
@@ -64,6 +71,27 @@ class EvaluateTests(unittest.TestCase):
     def test_wrong_vector_points_to_layout_drift(self):
         log = PASS_LOG.replace('fault=de handled=1 vector=0', 'fault=de handled=1 vector=113')
         self.assertIn('de mit Vektor 113 statt 0 (IRQContext-Versatz?)', isolation.evaluate(log, negative=False))
+
+    def test_arena_must_run_in_both_fault_runs(self):
+        log = PASS_LOG.replace('ISOLATION_PROBE arena=1 used=16777263 frei=384600', 'ISOLATION_PROBE arena=0 used=0 frei=401000')
+        self.assertIn('Arena nicht in beiden Fehlerlaeufen gestartet', isolation.evaluate(log, negative=False))
+
+    def test_arena_counter_must_be_zero_after_each_isolation(self):
+        log = PASS_LOG.replace('arena_after=pf used=0', 'arena_after=pf used=16777263')
+        self.assertEqual(['Arena nach pf nicht freigegeben'], isolation.evaluate(log, negative=False))
+
+    def test_free_memory_may_drop_by_stacks_but_not_by_arena(self):
+        # Die beiden Stacks (16 MiB) und 4 MiB Reserve sind erlaubt, 32 MiB (nach E6-G: 2 x 16 MiB Arena) nicht.
+        log = PASS_LOG.replace('frei_nach=384600', 'frei_nach=368232')
+        self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(log, negative=False))
+        at_limit = PASS_LOG.replace('frei_nach=384600', 'frei_nach=380520')
+        self.assertEqual(isolation.evaluate(at_limit, negative=False), [])
+        missing = PASS_LOG.replace('ISOLATION_PROBE frei_nach=384600\n', '')
+        self.assertIn('Arena nach den CPU-Fehlern nicht freigegeben (frei_vor/frei_nach)', isolation.evaluate(missing, negative=False))
+
+    def test_held_block_must_lower_free_memory(self):
+        log = PASS_LOG.replace('used=16777263 frei=384600', 'used=16777263 frei=400000')
+        self.assertEqual(['Arenablock senkt frei nicht (Messung ohne Aussage)'], isolation.evaluate(log, negative=False))
 
 
 NMI_HALT = PASS_LOG + '\n'.join([

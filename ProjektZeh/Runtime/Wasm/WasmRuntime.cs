@@ -117,7 +117,12 @@ internal static unsafe partial class WasmRuntime
         jobs.Enqueue(() =>
         {
             // Fuer PollFaultIsolation: endet der Worker in einer CPU-Ausnahme, meldet die Hauptschleife das Ende.
-            lock (gate) running = completed;
+            // Fuer PollAbort: ab hier trifft ein Schliessen dieser Sitzung genau diesen Lauf (Roadmap 12.4-I2-A).
+            lock (gate)
+            {
+                running = completed;
+                BeginAbortWatch(session);
+            }
             WasmStatus status = WasmStatus.LoadFailed;
             int result = 0;
             string message;
@@ -132,6 +137,7 @@ internal static unsafe partial class WasmRuntime
             {
                 pending--;
                 running = null;
+                EndAbortWatch(session);
             }
             completed(status, result, message);
         }, completed);
@@ -140,8 +146,8 @@ internal static unsafe partial class WasmRuntime
 
     /// <summary>
     /// Legt den Worker beim Start an, solange der Heap noch frei von Netzmuell ist: Der 8-MiB-Stack kommt aus dem
-    /// nativen Heap, dessen Fehlschlag keine Collection ausloest; Cosmos 3.0.97 benutzt dann einen Nullzeiger.
-    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert die Stackprobe (ThreadStarter), bleibt der
+    /// nativen Heap; Cosmos (smp-phase5b) sammelt bei Misserfolg einmal und meldet dann den Fehler.
+    /// Erst nach dem Scheduler aufrufen, sonst laeuft der Thread nie. Scheitert der Start (ThreadStarter), bleibt der
     /// Worker aus; der naechste Lauf versucht es erneut und endet sonst mit LoadFailed statt zu haengen.
     /// </summary>
     public static ResultErr StartWorker()
@@ -186,7 +192,8 @@ internal static unsafe partial class WasmRuntime
     /// <summary>
     /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, raeumt sie Thread und 8-MiB-Stack ab,
     /// sobald die CPU der Ausnahme den Stack verlassen hat (E6-G), beendet den Lauf von aussen, gibt seine Ressourcen frei
-    /// und startet einen neuen Worker fuer die Warteschlange. Der native Speicher der Instanz bleibt bis zum Neustart belegt.
+    /// und startet einen neuen Worker fuer die Warteschlange. Den nativen Speicher der Instanz gibt ReleaseIsolatedArena
+    /// frei (I2-C, nicht nach AOT).
     /// </summary>
     public static void PollFaultIsolation()
     {
@@ -229,6 +236,7 @@ internal static unsafe partial class WasmRuntime
         {
             completed = running;
             running = null;
+            ForgetAbortRun();
             if (completed != null) pending--;
             worker = null;
             // Bis zum Ende des Aufraeumens startet niemand einen Ersatzworker (auch nicht EnqueueLoaded): ein neuer Lauf
@@ -255,12 +263,14 @@ internal static unsafe partial class WasmRuntime
             clean = false;
             Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Aufraeumen nach CPU-Ausnahme fehlgeschlagen: {exception.GetType().Name}\n");
         }
+        // Vor dem Ersatzworker unten: Dessen Lauf startet eine neue Arena, die end sonst mitraeumte.
+        ReleaseIsolatedArena();
         lock (gate)
         {
             cleaningUp = false;
             if (!retiredNow)
             {
-                // Ein gescheiterter Ersatzstart (Stackprobe) ist voruebergehend: kein Ruhestand, die naechste App
+                // Ein gescheiterter Ersatzstart ist voruebergehend: kein Ruhestand, die naechste App
                 // startet den Worker ueber EnqueueLoaded erneut.
                 var started = StartWorkerLocked();
                 if (!started.IsOK()) restart = started.Message;
@@ -403,7 +413,7 @@ internal static unsafe partial class WasmRuntime
     {
         var physical = CosmosSystemInfo.PhysicalMemory();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
-            $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB\n");
+            $"WASM Speicher frei={physical.Free / 1024} KiB heap={GC.GetGCMemoryInfo().HeapSizeBytes / 1024} KiB spitze={TakeArenaPeak()}\n");
     }
 
     private static WasmStatus Execute(byte[] module, byte[]? aot, string entry, ulong gas, IWasmSession session,
@@ -447,7 +457,7 @@ internal static unsafe partial class WasmRuntime
         }
         if (!ReleaseRunResources()) code = (int)WasmStatus.Trap;
         result = value;
-        message = Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
+        message = code == (int)WasmStatus.Aborted ? AbortedMessage : Marshal.PtrToStringAnsi((IntPtr)text) ?? string.Empty;
         return (WasmStatus)code;
     }
 
@@ -456,8 +466,18 @@ internal static unsafe partial class WasmRuntime
         fixed (byte* bytes = module)
         {
             ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
-            try { return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256); }
-            finally { ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun(); }
+            bool arena = false;
+            try
+            {
+                arena = BeginArena(aot: false);
+                return NativeRun(bytes, (uint)module.Length, entry, gas, WasmStackBytes, MemoryLimitBytes, value, text, 256);
+            }
+            finally
+            {
+                EndArena(arena);
+                ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun();
+                ReportArenaStart(arena);
+            }
         }
     }
 
@@ -481,8 +501,18 @@ internal static unsafe partial class WasmRuntime
         fixed (byte* bytes = aot)
         {
             ProjektZeh.Runtime.FaultIsolation.EnterNativeRun();
-            try { return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated); }
-            finally { ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun(); }
+            bool arena = false;
+            try
+            {
+                arena = BeginArena(aot: true);
+                return NativeRunAot(bytes, (uint)aot.Length, entry, WasmStackBytes, MemoryLimitBytes, value, text, 256, instantiated);
+            }
+            finally
+            {
+                EndArena(arena);
+                ProjektZeh.Runtime.FaultIsolation.LeaveNativeRun();
+                ReportArenaStart(arena);
+            }
         }
     }
 

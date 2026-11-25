@@ -332,11 +332,12 @@ public sealed class Kernel : Sys.Kernel
         systemLog.Information("Boot", $"ZehOS {CurrentVersion}+{BuildInfo.Commit}{ManifestSignature.BuildLabel} startet.");
         systemLog.Information("Boot", cpuLine);
         // Die Topologiemessung startet vor den dauerhaften Workern eigene, kurzlebige Threads.
-        ThreadStarter.StackProbe = CosmosStackProbe.CanAllocate;
         var topology = CosmosCpuTopologyReader.Read(text => systemLog.Warning("Boot", text));
 #if !ZEHOS_RECOVERY
         // Recovery behält die Standardaffinität auf CPU 0 auch für Wasm-Worker.
         systemLog.Information("Boot", CosmosBootOptions.ConfigureWorkerCpus(topology));
+        // E7-A: erst nach der Topologie (WorkerCpus) und vor den dauerhaften Threads, die die Standardaffinität erben.
+        systemLog.Information("Boot", CosmosBootOptions.MoveMainToWorkers());
         ThreadStarter.ApplyPlacement = placement =>
         {
             if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
@@ -441,7 +442,8 @@ public sealed class Kernel : Sys.Kernel
         var guestIdentity = CosmosInstalledIdentity.EvaluateData();
         Cosmos.Kernel.System.Diagnostics.Log.WriteString($"GPT_TEST IDENTITY {guestIdentity?.State.ToString() ?? "NoData"} SETUP {accounts.NeedsSetup}\n");
 #endif
-        if (!security.IsOK() && !accounts.NeedsSetup) output.WriteLine("Konten/Rechte gesperrt. Sicherheits-Recovery erforderlich; vorhandene Dateien werden nicht freigegeben.");
+        if (!security.IsOK() && !accounts.NeedsSetup)
+            output.WriteLine("Konten/Rechte gesperrt: " + accounts.LockedReason + " Dateien bleiben gesperrt.");
         if (SecurityRecovery) output.WriteLine("Sicherheits-Recovery aktiv: security recover <Adminname> startet die ausdrueckliche Neueinrichtung.");
 #endif
         if (boot.IsRecoveryMode)
@@ -475,6 +477,9 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_ISOLATION_PROBE
         Runtime.CosmosIsolationProbe.Start();
+#endif
+#if ZEHOS_ABORT_PROBE && ZEHOS_WASM && !ZEHOS_INSTALLER
+        Runtime.Wasm.CosmosAbortProbe.Start();
 #endif
 #if ZEHOS_NETWORK_PROBE
         if (!CosmosNetworkProbe.Run(tasks)) { Stop(); return; }
@@ -666,12 +671,12 @@ public sealed class Kernel : Sys.Kernel
     private void InstallScheduler()
     {
         // Klasse des aufrufenden Threads setzen (Hintergrund-Worker rufen das als Erstes in ihrem Thread auf; bis dahin gilt
-        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Ohne Maske stimmt KernelCpus.Current nur, solange
-        // der Thread nicht wandert (Etappe 5: alle Threads auf CPU 0); E6-B prueft das neu.
+        // der Standard Normal). SetPriority nimmt die Queue-Sperre selbst. Cosmos' CurrentThread liest CPU und Thread
+        // unter Interruptmaske: Seit E7-A laufen Hauptschleife und erbende Threads auf mehreren Worker-CPUs und koennen
+        // zwischen KernelCpus.Current und GetCpuState wandern; dann bekaeme ein fremder Thread die Klasse.
         ThreadStarter.ApplyClass = threadClass =>
         {
-            var state = Cosmos.Kernel.Core.Scheduler.SchedulerManager.GetCpuState(Cosmos.Kernel.System.Threading.KernelCpus.Current);
-            if (state?.CurrentThread is { } current)
+            if (Runtime.FaultIsolation.CurrentSchedulerThread() is { } current)
                 Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetPriority(current, (long)threadClass);
         };
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);

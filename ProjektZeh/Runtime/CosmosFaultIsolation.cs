@@ -48,6 +48,9 @@ internal static unsafe class FaultIsolation
     private static extern SchedulerThread? CurrentThread(
         [UnsafeAccessorType("Cosmos.Kernel.Core.Scheduler.SchedulerManager, Cosmos.Kernel.Core")] object? owner);
 
+    /// <summary>Thread dieser CPU, CPU und Thread unter Maske in einem Schritt gelesen (auch fuer ThreadStarter.ApplyClass).</summary>
+    internal static SchedulerThread? CurrentSchedulerThread() => CurrentThread(null);
+
     /// <summary>Um den nativen Lauf (wasm3 oder AOT); Hostaufrufe darin zaehlt die C-Schicht.</summary>
     internal static void EnterNativeRun() => Volatile.Write(ref inNativeRun, 1);
 
@@ -116,6 +119,14 @@ internal static unsafe class FaultIsolation
         isolated.Stage(currentId, (int)exception.CpuId);
         return CpuExceptionAction.AbandonThread;
     }
+
+    /// <summary>
+    /// Scheduler-Id des laufenden Threads, ohne Allokation; -1 ohne Scheduler. Rueckruf fuer die Laufarena der C-Laufzeit
+    /// (Roadmap 12.4-I2-C, <c>zehos_host_arena.c</c>): malloc fragt damit, ob der Block dem Lauf gehoert.
+    /// </summary>
+    // Wie Install (Worker-Id) liest sie ueber CurrentThread(null) die laufende CPU und den Thread in einem Schritt (SMP).
+    [UnmanagedCallersOnly(EntryPoint = "zehos_current_thread_id")]
+    internal static int CurrentThreadId() => CurrentThread(null) is { } thread ? (int)thread.Id : -1;
 
 #if ZEHOS_WASM
     [DllImport("*", EntryPoint = "zehos_host_depth_address", ExactSpelling = true)]

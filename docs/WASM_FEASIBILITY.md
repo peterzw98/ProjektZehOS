@@ -144,6 +144,14 @@ Insgesamt 7336 Bilder, rund 12,2 Bilder/s; ein früherer TCG-Lauf vor Einführun
 
 In beiden Läufen liegt das größte Maximum im ersten Fenster, das Menü und Levelstart enthält; ob es von dort stammt, zeigt die Messung nicht. Es gab keine Pausen. Die Heap-Angabe änderte sich während der Fenster nicht (KVM 28 477 KiB, TCG 51 475 KiB); erst nach dem Aufräumen stand sie bei 29 645 bzw. 52 676 KiB. Als Verlauf über die Spielzeit taugt sie deshalb nicht. Bildschirmfotos zeigen E1M1 im Spiel und einen weiter aktualisierten Taskmanager. VMware, echte Hardware und eine menschliche Spielprüfung sind damit nicht geprüft.
 
+**Wiederholung auf master `57ceabee` (23. November 2026, KVM, QEMU 10.2.2, 512 MiB, 1920×1080):** ISO mit `ZehOSWasm=true` (eingechecktes Herausgeberschlüssel-Paket), `scripts/test-wasm-doom-desktop.py --scenario full --accel kvm --starts 10 --long-seconds 300 --doom-version 1.1.0 --source https://packages.pjoter.de/`, Exitcode 0, 664 s Gesamtdauer, kein Fehler, keine Panik, kein Trap. Der Host war dabei durch andere Gäste und Bauten belastet (Lastmittel 1,2 bis 2,1), die Bildzeiten sind deshalb schlechter als in der Messung oben.
+- **Neustarts:** zehn Doom-Starts mit Beenden über das Menü, jedes Mal „APP doom erstes Bild" und „APP doom beendet". Das serielle Protokoll (`serial.log`) hat elf Zeilen „WASM Speicher frei" vor dem Langlauf: den ersten Doom-Lauf (Demo) und die zehn Skript-Starts 01 bis 10. Freier Speicher nach dem Aufräumen (MiB): 375,1 (384 104 KiB) nach dem ersten Lauf, danach 379,5 bis 379,7; nach dem Langlauf 379,5 (Zeile „frei nach jedem Doom-Lauf" im Lauf-Log). Er sinkt nicht (Grenze des Skripts: höchstens 8 MiB); der Anstieg um 4,4 MiB liegt zwischen erstem und zweitem Lauf. GC-Heap des Wasm-Workers nach dem ersten Lauf 88 912 KiB, danach bei jedem Ende zwischen 84 314 und 84 408 KiB (`serial.log`).
+- **Langlauf:** 301,7 s automatische Eingaben, fünf 60-s-Fenster mit zusammen 12 093 Bildern (rund 40 Bilder/s): Median 24 bis 27 ms, p95 38 bis 42 ms, Maximum 58 bis 72 ms; nur das erste Fenster (Menü, Levelstart) hatte 694 ms. Pausen: 0.
+- **Desktop:** die Bildschirmfotos `24-long-010` bis `28-long-050` zeigen laufende Änderungen im Spiel; das Foto des Taskmanagers nach dem Lauf zeigt einen weiter aktualisierten Desktop (längstes Bild 94 ms, 17 Bilder/s bei Änderung). Die Reaktionsfähigkeit ist damit nur über diese Kennzahlen belegt; eine Eingabelatenz wurde nicht gemessen.
+- **Skriptfehler behoben:** Mit `--source` erwartete das Skript fest „doom 1.0.0 installiert."; das veröffentlichte Paket ist 1.1.0, das Setup scheiterte nach 75 s mit „Unerwartetes Ergebnis". Neu: `--doom-version` (Standard 1.0.0 für das Testrepository).
+- **Grenzen:** nur ein Lauf, bei belastetem Host; ein Wiederholungslauf bei ruhigem Host steht aus (zum Zeitpunkt der Korrektur Last 3,4).
+- **Offen:** die menschliche Spielprüfung (Roadmap 9.6) und VMware; die automatischen Eingaben ersetzen beides nicht. KVM-Bildzeit unter geringer Hostlast ist hier nicht neu gemessen; der Median von 12 bis 13 ms oben bleibt die Referenz.
+
 **Gate B ist damit in QEMU erfüllt.** Grenzen: Fehlermeldungen werden am Fensterrand abgeschnitten; VMware und echte Hardware ungeprüft. Der feste Ordner ist inzwischen durch den signierten Paketbestand ersetzt; die Prüfung mit Installation aus dem Repository steht in [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md).
 
 ## Bildzeit-Anteile (ClassiCube-Etappe 1, 17. November 2026)
@@ -277,9 +285,86 @@ Zusätzlich je ein 20-Minuten-Lauf unter künstlicher Hostlast (Rechenschleife a
 
 **Grenzen.** Drei Läufe je Kombination sind eine kleine Stichprobe. Geprüft ist nur QEMU, nicht VMware und keine echte Hardware. ClassiCube erreicht unter TCG nur etwa 2 fps und durchläuft dort entsprechend wenige Bilder. `free` ist nur ein Wert am Laufende, kein Verlauf. Die Engine-Messung lief stehend; bewegt und in schweren Welten (Wald) wurde AOT nicht gegen wasm3 verglichen.
 
+## ClassiCube: Host-Raster gegen SoftGPU unter KVM (20. November 2026, Block #421)
+
+Frage der Abnahme aus Roadmap 13.3: Zeigt der Kernel-Rasterizer (`zehos_v1.raster_draw`/`raster_fill`, Erkennung über `ZEHOS_FEATURES=raster_v1`) dasselbe Bild wie SoftGPU im Gast und eine messbar höhere Bildrate? Kernel: `master` bbf64f46 (Cosmos 3.0.97-zehos.6, Testschlüssel, SDK 10.0.404). Paket: ClassiCube 2b01bee mit `build.py --raster-toggle --world-seed <N>` (Messpunkte an), zweimal gebaut (Seed 1 und 5). Beide Zellen laufen im selben Paket: Standard ist das Kernel-Raster, `F8` schaltet im Spiel auf SoftGPU im Gast (wasm3) um.
+
+**Aufbau:** QEMU 11.1.2 mit KVM auf einem Linux-Host (Core Ultra 9 185H, 22 logische Kerne), Gast 1 vCPU (kein `-smp`), 1 GiB, Fenster 798×519, Spieler ohne Eingabe am Spawnpunkt. `scripts/measure-wasm-frametimes.py --accel kvm --seconds 130 --start-keys ret wait:25` (SoftGPU-Zellen zusätzlich `f8 wait:5`), je Lauf frische Platte. Gewertet ist das letzte 60-s-Fenster (avg fps = Bildzahl/60, Bildzeit-Median). Je Zelle 5 Läufe, im Wechsel (Wiederholung → Seed 1 an/aus → Seed 5 an/aus), 20 Läufe, alle ohne Absturz. Vor jedem Lauf wurden `pgrep -c qemu` und `uptime` protokolliert: 0–2 fremde QEMU-Prozesse (Funktionsläufe anderer Agenten, nicht angefasst), Last 1,6–6,8 (1-Minuten-Wert), bei den meisten Läufen 2–3. Rohdaten: `.tools/backup/421-raster/` (nicht im Repository).
+
+| Seed | Raster | avg fps je Lauf | Mittel | Spannweite | Bildzeit-Median ms |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Kernel | 77,0 / 69,1 / 87,3 / 88,1 / 88,2 | 81,9 | 69,1–88,2 | 12–14 |
+| 1 | SoftGPU | 6,8 / 6,6 / 7,5 / 7,6 / 7,7 | 7,2 | 6,6–7,7 | 129–148 |
+| 5 | Kernel | 65,0 / 71,9 / 67,7 / 70,6 / 72,0 | 69,4 | 65,0–72,0 | 14–15 |
+| 5 | SoftGPU | 4,2 / 5,6 / 5,5 / 5,5 / 5,6 | 5,3 | 4,2–5,6 | 177–217 |
+
+Das Kernel-Raster ist damit rund 11-mal (Seed 1) bzw. 13-mal (Seed 5) so schnell wie SoftGPU; die Bereiche überlappen nicht. Die App-Zeit entspricht in beiden Zellen fast der Bildzeit (Seed 1: 12–14 ms gegen 129–148 ms).
+
+**Bildgleichheit:** `scripts/test-classicube-desktop.py --raster-compare` (Kernel-Bild, dann `F8`, SoftGPU-Bild derselben Szene, Stichproben-Vergleich wie in der Roadmap beschrieben) meldete für Seed 1 und Seed 5 je 0 abweichende von 26000 Stichproben unter KVM.
+
+**Abweichungen und Grenzen:**
+- wasi-sdk 34.0 (`/opt/wasi-sdk`) statt des dokumentierten 25.0; das Modul ist dadurch nicht byteidentisch zum veröffentlichten, die Rastergegenüberstellung gilt für denselben Build in beiden Zellen.
+- Die Werte liegen deutlich über den Zahlen vom 17./18. November (rund 20–30 fps): anderer Host, aktueller Kernel mit Rasterverbesserungen (#160 und später) und Blick vom Spawn, bei dem nur ein Teil der Geometrie im Bild ist. Sie sind nicht mit den älteren Reihen vergleichbar; belegt ist das Verhältnis Kernel zu SoftGPU im selben Paket.
+- Die Streuung (Kernel Seed 1: 69–88 fps) kommt von der Host-Last; die Zellen überlappen sich trotzdem nicht. Nur Spawnblick ohne Bewegung; Wälder mit viel Geometrie liegen laut Roadmap-Stand vom 18. November niedriger.
+- Nicht geprüft: VMware (hier nicht verfügbar, braucht einen Benutzer mit VMware), TCG und WHPX in dieser Reihe, Rückfall auf SoftGPU bei fehlender Funktion `raster_v1` (nur über `F8` simuliert), Fehler beenden nur die App (nicht Teil dieser Messung).
+
+**Folgerung:** Gleiches Bild und höhere Bildrate sind unter KVM und (laut Roadmap-Stand 17. November) QEMU WHPX belegt. Die Abnahme von 13.3 bleibt offen für VMware.
+
+## Abbruch-Prüfpunkt je Schleifendurchlauf (Roadmap 12.4-I2-B, 23./24. November 2026)
+
+Frage: Verschlechtert die Prüfung des Abbruchmerkers in `d_m3Op(Loop)` (`ThirdParty/wasm3/ORIGIN.txt`) die Bildzeit messbar? Abnahme laut [Plan 12.4](superpowers/plans/2026-11-18-isolation-12-4.md), Paket I2-B: Der Mittelwert der Bildzeit liegt für Doom und ClassiCube höchstens 2 % über dem ohne Änderung.
+
+**Vergleich:** Gemessen wurde nicht `master` vor und nach der Änderung, wie der Plan es vorsieht, sondern die Stack-Basis I2-A (`d8b3269f`, 0.6.122) gegen denselben Stand mit dieser Änderung (`e3507214`, 0.6.123). Zwischen beiden liegt nur der Code dieses Pakets.
+
+**Umgebung:** Linux-Host mit 4 CPUs, QEMU 10.2.2 mit KVM, Gast 1 vCPU, je Lauf eine frische Platte. Die Läufe liefen unter einer gemeinsamen Sperre ohne fremde QEMU-Prozesse; die 1-Minuten-Last lag bei 1,0 bis 2,0, nur vor dem ersten Lauf nach den Bauten bei 6,4. `python3 scripts/measure-wasm-frametimes.py --accel kvm --runs 1 --seconds 130`, je App 10 Läufe je ISO, die beiden ISOs im Wechsel. Gewertet ist das letzte 60-s-Fenster. Der Mittelwert der Bildzeit ist 60 s geteilt durch die Bildzahl, also der Kehrwert von `avg fps`; „App“ ist der Median des App-Anteils (Wasm-Rechnen bis `present`, ohne `sleep_ms`). Die Streuung ist die Standardabweichung über die Läufe, relativ zum Mittel. Das Intervall ist das 95-%-Intervall der Differenz (Welch).
+
+- **Doom 1.1.0:** veröffentlichtes Paket aus `origin/packages`, normale Release-ISOs, 512 MiB, Titel- und Demoablauf.
+- **ClassiCube 1.1.0:** feste Welt. Gebaut mit `experiments/ClassiCube.Wasi/build.py --world-seed 1` (ClassiCube `2b01bee`, wasi-sdk 25.0) und mit Testschlüssel signiert (`--package … --key … --network --min-kernel 0.5.65`). Beide ISOs mit `-p:ZehOSPackageKeyPath=<Test-public.b64>`, 1 GiB, `--start-keys ret wait:25`, stehend am Spawnpunkt.
+
+| App | ohne Änderung: avg fps Mittel (Median), Streuung, App | mit Änderung: avg fps Mittel (Median), Streuung, App | Bildzeit mit gegen ohne (95-%-Intervall) |
+| --- | --- | --- | --- |
+| Doom 1.1.0 | 36,49 (36,52), 0,3 %, 26,74 ms | 36,41 (36,43), 0,5 %, 26,80 ms | +0,2 % (−0,1 bis +0,6 %) |
+| ClassiCube 1.1.0, Seed 1 | 13,98 (14,00), 0,9 %, 65,56 ms | 13,96 (13,94), 0,7 %, 65,53 ms | +0,1 % (−0,7 bis +0,9 %) |
+
+Rohwerte avg fps je Lauf, in Laufreihenfolge:
+
+- Doom ohne Änderung: 36,53 / 36,43 / 36,33 / 36,35 / 36,50 / 36,60 / 36,58 / 36,60 / 36,53 / 36,40
+- Doom mit Änderung: 36,60 / 36,43 / 36,40 / 36,58 / 36,43 / 36,10 / 36,43 / 36,53 / 36,42 / 36,15
+- ClassiCube ohne Änderung: 13,70 / 13,97 / 14,03 / 13,97 / 14,05 / 14,03 / 14,20 / 14,03 / 13,93 / 13,87
+- ClassiCube mit Änderung: 13,93 / 13,85 / 14,13 / 13,95 / 13,87 / 13,93 / 13,83 / 14,05 / 14,08 / 14,02
+
+**Ergebnis: Abnahme erfüllt.** Für beide Apps liegt auch die obere Grenze des Intervalls unter 1 %. Doom ist in diesem Aufbau nicht durch den Spieltakt begrenzt, sondern rechnet in der App: Der App-Anteil (26,7 bis 26,8 ms) macht etwa 98 % der mittleren Bildzeit (27,4 ms) aus, `sleep_ms` liegt im Median bei 0,1 ms. Die Bildrate reagiert damit auf Interpreterkosten.
+
+**Verworfene erste Reihe (23. November 2026):** 5 Läufe je ISO mit den veröffentlichten Paketen; ClassiCube erzeugt dabei je Lauf eine Zufallswelt. Doom kam auf 36,5 gegen 37,6 fps (ein Lauf mit 41,8 fps), ClassiCube auf 15,7 gegen 14,5 fps bei einer Streuung von 12 % (12,4 bis 17,9 fps). Das 95-%-Intervall der ClassiCube-Bildzeit reichte von etwa −11 bis +27 %. Mit dieser Methode lässt sich eine 2-%-Grenze weder belegen noch widerlegen; für die Bewertung zählt deshalb nur die Reihe oben.
+
+**Host-Mikromessung (ungünstigster Fall):** wasm3 nativ mit gcc `-O2 -fPIC`, gebunden wie in `scripts/tests/test_wasm_abort_native.py`, einmal mit `m3_exec.h` von `d8b3269f` und einmal mit diesem Stand. Gemessen wird eine Zählschleife aus sechs Wasm-Befehlen je Durchlauf (`local.get; i32.const 1; i32.add; local.tee; i32.const N; i32.lt_u; br_if 0`, 3·10⁸ Durchläufe), bester von drei Läufen: 2,33 s ohne und 2,47 s mit Prüfung (+5,8 %). Echte Apps tun je Durchlauf deutlich mehr; bei ihnen geht der Anteil in der Streuung unter.
+
+## Speicherspitzen und Budget je Lauf (Roadmap 12.4-I2-D, 24. November 2026)
+
+Frage: Wie viel nativen Speicher belegt ein Lauf der Paket-Apps höchstens, und welches Budget (`WasmRuntime.RunBudgetBytes`, Paket I2-E) folgt daraus? Gemessen wird mit der Laufarena aus I2-C (`zehos_memory_peak`, Zeile `WASM Speicher frei=… heap=… spitze=<Bytes>`). Die Spitze zählt alle nativen Blöcke des Laufs (Laufzeit, übersetzter Code, Hostpuffer und die lineare Memory); sie gilt nur für wasm3, AOT (WAMR) ist nicht gemessen.
+
+**Aufbau.** Kernel: Stand von #604 (`efb8ff7e`, Basis I2-C) mit einer nicht eingecheckten Messhilfe, die zusätzlich die Größe der linearen Memory am Laufende als `linmem=<Bytes>` in dieselbe Zeile schreibt (`m3_GetMemorySize(module, 0)` direkt nach `m3_CallV`; eine lineare Memory schrumpft nie, der Wert am Ende ist ihr Höchstwert). Veröffentlichte Pakete aus `origin/packages` (Doom 1.1.0, ClassiCube 1.1.0, NetSurf 1.2.0, Rechner 1.0.0), normales ISO ohne Testschlüssel, QEMU 10.2.2 mit KVM, 1 vCPU, Gast 512 MiB (ClassiCube 1 GiB), je Lauf eine frische Platte, 120 s Bedienung per QMP, danach Schließen über das X des Fensters und Warten auf die Speicherzeile. Alle 12 Läufe unter einer gemeinsamen Sperre, 1-Minuten-Last 0,6 bis 1,5. Bedienung: Doom Menü mit der Eingabetaste bis ins Spiel (Bildschirmfoto: im Level), dann vor, drehen, schießen; ClassiCube Singleplayer mit zufälliger Welt, w/a/s/d im Wechsel; NetSurf drei Seiten vom lokalen Testserver (`/seite.html`, `/viele`, `/seite.html`), danach Seite für Seite blättern; Rechner zwei Rechnungen (2+3, 7×8). Jeder Lauf endete mit `APP <id> beendet`, `WASM Arena nicht gestartet` kam nie vor.
+
+| App | Läufe | lineare Memory am Ende | Spitze der Arena | Differenz (Spitze − lineare Memory) |
+| --- | --- | --- | --- | --- |
+| Doom 1.1.0 | 3 | 8,00 MiB (8 388 608 B) in allen Läufen | 17,36 MiB (18 199 676 B) in allen Läufen | 9,36 MiB (9 811 068 B) |
+| ClassiCube 1.1.0 | 3 | 15,25 / 15,88 / 16,06 MiB | 33,22 / 34,47 / 34,85 MiB | 17,97 / 18,59 / **18,78 MiB** (18 842 583 / 19 496 748 / 19 695 283 B) |
+| NetSurf 1.2.0 | 3 | 7,06 MiB (7 405 568 B) in allen Läufen | 20,91 / 20,84 / 20,91 MiB | 13,84 / 13,78 / 13,84 MiB |
+| Rechner 1.0.0 | 3 | 1,69 MiB (1 769 472 B) in allen Läufen | 2,96 MiB (3 098 625 B) in allen Läufen | 1,27 MiB (1 329 153 B) |
+
+Doom, NetSurf und Rechner liefern bei gleicher Bedienung dieselbe Spitze auf das Byte (NetSurf: ein Lauf 65 793 B weniger), weil ihr Speicherbedarf vom Ablauf, nicht von Zufall abhängt. ClassiCube streut, weil jeder Lauf eine andere Zufallswelt erzeugt; die Spitze liegt zwischen 33,22 und 34,85 MiB.
+
+**Budget nach der festen Regel des Plans:** 256 MiB (heutige Grenze der linearen Memory, `MemoryLimitBytes`) plus die größte gemessene Differenz (ClassiCube, 18,78 MiB), aufgerundet auf volle 16 MiB: 256 + 18,78 = 274,78 MiB, gerundet **288 MiB** = 301 989 888 Bytes. Dieser Wert ist der Vorschlag für `RunBudgetBytes` in I2-E.
+
+**Grenzen.**
+- Die Regel setzt voraus, dass die Differenz unabhängig von der Größe der linearen Memory ist. Gemessen ist sie nur bei linearen Memories von 1,7 bis 16 MiB; keine der Apps wächst in die Nähe der 256-MiB-Grenze. Die gemessenen Spitzen (3 bis 35 MiB) liegen weit unter dem Budget; es begrenzt also vor allem eine App, die ihre lineare Memory stark ausdehnt, und bemisst sich an deren Höchstwert plus Laufzeitbedarf.
+- Je App nur drei Läufe mit einem festen Ablauf von zwei Minuten. Größere ClassiCube-Welten, andere Doom-WADs, NetSurf mit echten Webseiten oder TLS und längere Läufe sind nicht gemessen; ihre Differenz kann größer sein, dann muss die Regel neu angewendet werden.
+- Gemessen ist wasm3 unter QEMU/KVM. AOT (WAMR, anderer Speicherbedarf des Laufzeitsystems), TCG, VMware und echte Hardware fehlen.
+- Der Wert „lineare Memory am Ende“ kommt aus der nicht eingecheckten Messhilfe (Diff: zwei Zeilen C, eine Zeile C# in `ReportMemory`); der Kernel auf `master` schreibt nur `spitze=`. Der Messtreiber lag außerhalb des Repositorys.
+
 ## Grenzen und offene Punkte
 
-- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es nur über `should_exit` und Gas.
+- Apps kommen nur aus dem signierten Paketbestand und lesen nur ihr eigenes Paket. Es gibt keinen Shellbefehl `run` für Konsolen-Apps und nur eine Paket-App zur Zeit. Einen Abbruch von außen gibt es über `should_exit`, Gas und das Schließen des Fensters (nach 5 s am nächsten Prüfpunkt, Roadmap 12.4-I2-A/B; unter AOT nur an Hostaufrufen).
 - Die C#-App läuft doppelt interpretiert (Mono-Interpreter in wasm3); Start rund 4 s. Für Doom ist der C-Weg (doomgeneric) vorgesehen.
 - Der WASIp1-Umbau hängt an internen Targets des .NET-10-WASI-SDK und muss bei SDK-Updates neu geprüft werden.
 - `wasi:http`-Importe sind unverknüpft; HttpClient in Apps funktioniert nicht.

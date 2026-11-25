@@ -1,6 +1,6 @@
 # Inventar: ZehOS-Umwege um Cosmos 3.0.97
 
-Stand 18. November 2026, ZehOS master `5c5538d`, Cosmos-Quelle zum Paketcommit `efcf20c`. Anlass und Einordnung:
+Stand 18. November 2026 (ext2-Zeilen nachgeführt am 20. November 2026 mit dem Abschluss von E2, #376), ZehOS master `5c5538d`, Cosmos-Quelle zum Paketcommit `efcf20c`. Anlass und Einordnung:
 [Multicore-Entwurf](2026-11-18-multicore-design.md), Abschnitt 8. Reine Bestandsaufnahme, kein Arbeitsauftrag.
 
 ZehOS-Pfade sind relativ zu `ProjektZeh/`, Cosmos-Pfade relativ zu `src/` im Cosmos-Repository.
@@ -27,19 +27,19 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `Runtime/CosmosVmwareClockPlug.cs:1-128`, `ThirdParty/CosmosTiming` | Plugs auf `LocalApic.CalibrateTimer` und `X64CpuOps`; Frequenzen unter VMware aus CPUID 0x40000010 | Q✓ `Cosmos.Kernel.Core.X64/Cpu/LocalApic.cs:280-320` nur PIT, `X64CpuOps.cs:40-63` TSC nur über LAPIC; Fehlwerte Z | K–M | ja, samt Kopie |
 | `Runtime/CosmosFaultIsolation.cs:11-30, 177-189` | Plug auf `Panic.HaltCpu` und `PrintCpuContext`; `UnsafeAccessor` auf `ScheduleFromInterrupt` und `InternalCpu.Halt` | Q✓ `Cosmos.Kernel/Panic.cs:19-36, 167-174`: jede CPU-Ausnahme endet im Halt, kein Hook | M: öffentlicher Ausnahme-Hook | erledigt mit E3-A/E3-B (Patch `ausnahme-hook`, 3.0.97-zehos.2) |
 | `Runtime/CosmosIrqContextStub.cs:1-10` | leere öffentliche Attrappe `IRQContext`, Versätze 120/152 fest | Q✓ `Core/CPU/IRQContext.cs:16`: `internal struct`; Patcher vergleicht Typen nur über den Namen | K | erledigt mit E3-B (Hook bekommt `CpuExceptionInfo`, `IRQContext` bleibt intern) |
-| `Storage/CosmosExt2PlugTypes.cs` | Attrappen `Ext2Superblock`/`Ext2Inode` | Q✓ interne Typen | mit den ext2-Korrekturen | erledigt mit E2-Z1 (Attrappen entfallen mit den Plugs) |
-| `Storage/CosmosExt2RemoveEntryPlug.cs:9-67` | Records nur innerhalb eines Blocks verschmelzen | Q✓ `FileSystem/Ext2/Ext2Directory.cs:302, 340-345` | K | erledigt mit E2-Z1 (Patch `ext2-remove-entry`) |
-| `Storage/CosmosExt2RmdirPlug.cs:10-103` | gibt alle Blöcke frei | Q✓ `Ext2/Ext2InodeOperations.cs:472-482`: nur `Block[0]` | K | erledigt mit E2-Z1 (Patch `ext2-rmdir`) |
-| `Storage/CosmosExt2TruncatePlug.cs:8-130` | gibt auch geleerte Zeigerblöcke frei | Q✓ `Ext2/Ext2Superblock.cs:1043-1049`; dreifach indirekt liefert 0 (`:1014`) | M | erledigt mit E2-Z1 (Patch `ext2-truncate`) |
-| `Storage/CosmosExt2FreeInodePlug.cs:8-91` | schreibt Inode samt dtime vor dem Bitmapbit | Q✓ `Ext2/Ext2Superblock.cs:617-632` | K | erledigt mit E2-Z1 (Patch `ext2-free-inode`) |
-~~| `Storage/CosmosExt2FormatterPlug.cs:8-17`, `Storage/Ext2/CosmosExt2Formatter.cs` | eigener Formatter | Q✓ `Ext2/Ext2Formatter.cs:185`: keine Backup-Superblöcke; Geometrie Z | M | ja, samt Kopie |~~ erledigt am 18. November 2026: Patch `ext2-formatter` (Plug und Kopie entfernt, `FormatForKernel` bleibt als ZehOS-Profil).
-| `Storage/Ext2/Ext2FeatureGate.cs` | prüft Feature-Bits vor dem Mount | Q✓ `Ext2/Ext2Superblock.cs:154-156` liest sie nur | M | bleibt als Projektprofil; Feature-Prüfung und Lesemodus liefert Cosmos seit Pin zehos.6 (Patch `ext2-readonly`, #432) |
+| `Storage/CosmosExt2PlugTypes.cs` | Attrappen `Ext2Superblock`/`Ext2Inode` | Q✓ interne Typen | mit den ext2-Korrekturen | erledigt mit E2-Z1 (Attrappen entfallen mit den Plugs; ZehOS #462) |
+| `Storage/CosmosExt2RemoveEntryPlug.cs:9-67` | Records nur innerhalb eines Blocks verschmelzen | Q✓ `FileSystem/Ext2/Ext2Directory.cs:302, 340-345` | K | erledigt mit E2-Z1 (Patch `ext2-remove-entry`, cosmos #344; ZehOS #462) |
+| `Storage/CosmosExt2RmdirPlug.cs:10-103` | gibt alle Blöcke frei | Q✓ `Ext2/Ext2InodeOperations.cs:472-482`: nur `Block[0]` | K | erledigt mit E2-Z1 (Patch `ext2-rmdir`, cosmos #355; ZehOS #462) |
+| `Storage/CosmosExt2TruncatePlug.cs:8-130` | gibt auch geleerte Zeigerblöcke frei | Q✓ `Ext2/Ext2Superblock.cs:1043-1049`; dreifach indirekt liefert 0 (`:1014`) | M | erledigt mit E2-Z1 (Patch `ext2-truncate`, cosmos #353; ZehOS #462) |
+| `Storage/CosmosExt2FreeInodePlug.cs:8-91` | schreibt Inode samt dtime vor dem Bitmapbit | Q✓ `Ext2/Ext2Superblock.cs:617-632` | K | erledigt mit E2-Z1 (Patch `ext2-free-inode`, cosmos #354; ZehOS #462) |
+~~| `Storage/CosmosExt2FormatterPlug.cs:8-17`, `Storage/Ext2/CosmosExt2Formatter.cs` | eigener Formatter | Q✓ `Ext2/Ext2Formatter.cs:185`: keine Backup-Superblöcke; Geometrie Z | M | ja, samt Kopie |~~ erledigt am 18. November 2026: Patch `ext2-formatter`, cosmos #346 (Plug und Kopie entfernt, `FormatForKernel` bleibt als ZehOS-Profil).
+| `Storage/Ext2/Ext2FeatureGate.cs` | prüft Feature-Bits vor dem Mount | Q✓ `Ext2/Ext2Superblock.cs:154-156` liest sie nur | M | bleibt als Projektprofil; Feature-Prüfung und Lesemodus liefert Cosmos seit Pin zehos.6 (Patch `ext2-readonly`, cosmos #432; ZehOS #529, Pin #528). `CosmosReadOnlyExt2FileSystem` bleibt als dünner Rahmen, `CosmosReadOnlyBlockDevice` und `CosmosReadOnlyVfs.Wrap` entfallen für ext2 |
 | `Graphics/DisplayService.cs:120-122` | `UnsafeAccessor` auf `Canvas._display` für Teilrechtecke | Q✓ `Graphics/Canvas.cs:65` privat | K | ja |
 | `Runtime/CosmosSystemInfo.cs:30-37` | `UnsafeAccessor` auf `PageAllocator` | Q✓ intern, aber `Diagnostics/MemoryDiagnostics.cs:19` ist öffentlich | keine | ja, schon heute |
 | `Update/CosmosHttpUpdateSource.cs:94-109` | setzt `TcpConnection.s_nextPort` zufällig | Q✓ `Network/Protocols/Tcp/TcpConnection.cs:39`: fester Start nach jedem Boot | K | ja |
 | `Security/CosmosSaltSource.cs:18-23` | `DllImport` auf RDSEED/RDRAND | Q✓ `Core/Security/HardwareRandom.cs:48` intern | K | wahrscheinlich |
 | `Security/CosmosVirtioEntropyDriver.cs:9-70` | eigener virtio-rng-Treiber | Q✓ in `Cosmos.Kernel.Drivers/Virtio/` fehlt rng | M | verschiebbar |
-| `Scheduling/CosmosStackProbe.cs`, `ThreadStarter.cs:8-58` | Probe-Allokation vor jedem Threadstart | Q✓ `Core/Scheduler/SchedulerThread.cs:163-188`: `MemoryOp.Alloc` ungeprüft | K | ja |
+| `Scheduling/CosmosStackProbe.cs`, `ThreadStarter.cs:8-58` | Probe-Allokation vor jedem Threadstart (entfernt in E5-F, #386: Stapel smp-phase5b prüft `InitializeStack` selbst) | Q✓ `Core/Scheduler/SchedulerThread.cs:163-188`: `MemoryOp.Alloc` ungeprüft (Stand 3.0.97; seit smp.10 geprüft, an smp.11 `SchedulerThread.cs:285-295` bestätigt) | K | ja |
 
 ## Scheduler, Speicher, Threads
 
@@ -57,8 +57,8 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 
 | ZehOS-Datei:Zeile | Umweg | Cosmos-Ursache | Korrektur | Entfällt? |
 | --- | --- | --- | --- | --- |
-| `Storage/FileService.cs:18-20`, `CosmosDirectoryEntryLimit.cs` | höchstens 8189 Einträge je ext2-Verzeichnis | Q✓ `Ext2/Ext2Directory.cs:19, 65`: `MaxParseIters = 8192` | K–M | ja |
-| `Storage/CosmosReadOnlyVfs.cs:7-35`, `Migration/MigrationSourceSwap.cs:6-12` | Lese-Wrapper | Q✓ `Fat/FatFileOperations.cs:201-204`, `Ext2/Ext2FileOperations.cs:243-260`: `Release` ruft immer `Fsync` | K–M | nur noch für FAT; ext2 nutzt seit zehos.6 den Cosmos-Lesemodus |
+| `Storage/FileService.cs:18-20`, `CosmosDirectoryEntryLimit.cs` | höchstens 8189 Einträge je ext2-Verzeichnis | Q✓ `Ext2/Ext2Directory.cs:19, 65`: `MaxParseIters = 8192` | K–M | ja (Patch `ext2-directory-limit`, E2-P7, ZehOS-PR #463; Produktgrenze jetzt 65.535 Einträge, 65.536 mit einem Platz Reserve für Rename) |
+| `Storage/CosmosReadOnlyVfs.cs:7-35`, `Migration/MigrationSourceSwap.cs:6-12` | Lese-Wrapper | Q✓ `Fat/FatFileOperations.cs:201-204`, `Ext2/Ext2FileOperations.cs:243-260`: `Release` ruft immer `Fsync` | K–M | nur noch für FAT; ext2 nutzt seit zehos.6 den Cosmos-Lesemodus (#529) |
 | `Storage/CosmosReadOnlyVfs.cs:107-110` | feste Registrierung mit austauschbarem Inneren | Q✓ `FileSystem/VfsManager.cs:61`: kein `Unregister` | K | ja |
 | `Storage/CosmosMigrationService.cs:63-66` | durchsucht die Mounttabelle selbst | Q✓ `VfsManager.cs:334` privat | K | ja |
 | `Security/PathGuard.cs:17-20, 52` | prüft jede Pfadkomponente, lehnt Symlinks ab | Q✓ `VfsManager.cs:508, 671` privat; `LStat` = `Stat` Z | M | teilweise |
@@ -66,7 +66,7 @@ Die Recherche stammt von einem Unteragenten; gegen die Quelle selbst nachgeprüf
 | `Storage/FileService.cs:419` | Stream bei ENOSPC explizit schließen | Z (Stand 3.0.94) | offen | neu prüfen |
 | `Storage/FileService.cs:661` | `touch` ohne Zeitstempel | Q✓ `Plugs/System/IO/InteropSysFilePlug.cs:231-234`: wirkungslos | M | ja |
 | Installer: ESP mit 4-KiB-Clustern | FAT32 mit 16-KiB-Clustern scheitert | Z | offen | offen |
-| ext2-Inode-Cache (nur dokumentierte Grenze) | keiner | Q✓ `Ext2/Ext2Superblock.cs:20, 759`: unbegrenztes Dictionary | M | erledigt mit Pin zehos.6 (Patch `ext2-inode-cache`, #427): vorab dimensioniert, Grenze etwa 75.000 |
+| ext2-Inode-Cache (nur dokumentierte Grenze) | keiner | Q✓ `Ext2/Ext2Superblock.cs:20, 759`: unbegrenztes Dictionary | M | erledigt mit Pin zehos.6 (Patch `ext2-inode-cache`, cosmos #427; Pin #528): vorab dimensioniert, Grenze etwa 75.000 |
 
 ## Netz, Zeit, Ausgabe
 

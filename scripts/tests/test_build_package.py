@@ -107,6 +107,14 @@ output.write_bytes(b'AOT:' + Path(sys.argv[-1]).read_bytes() + (bytes.fromhex('4
 """
 
 
+class WamrcAllowListTests(unittest.TestCase):
+    """Die Zulassungsliste enthaelt genau den von Peter am 24.11.2026 zugelassenen Neubau (kein Werkzeug sonst)."""
+
+    def test_nur_der_zugelassene_neubau(self):
+        self.assertEqual(load_tool().WAMRC_SHA256,
+                         frozenset({"c4367cf956629f0c2d2799c63d21ecf31313aa2999c98b4ee2fef6558b678197"}))
+
+
 class BuildPackageAotTests(unittest.TestCase):
     """aot uebersetzt nur mit dem zugelassenen wamrc und festen Schaltern; package --aot-file nimmt das Ergebnis auf."""
 

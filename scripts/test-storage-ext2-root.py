@@ -61,8 +61,8 @@ def new_work_dir(path: Path) -> Path:
 
 
 def control_sector(run: int) -> bytes:
-    if run not in range(1, 17):
-        raise ValueError(f"Lauf ausserhalb 1..16: {run}")
+    if run not in range(1, 18):
+        raise ValueError(f"Lauf ausserhalb 1..17: {run}")
     text = f"ZEHOS-ROOTPROBE run={run}\n".encode("ascii")
     return text + bytes(512 - len(text))
 
@@ -79,6 +79,32 @@ def evaluate(serial: str) -> tuple[int, list[str], bool]:
     results = [(match.group(1), match.group(2)) for match in RESULT.finditer(serial)]
     failed = [name for name, outcome in results if outcome == "FAIL"]
     return sum(1 for _, outcome in results if outcome == "PASS"), failed, "STORAGE_ROOT DONE" in serial
+
+
+def record_steps(serial: str, seen: dict[str, float], now: float) -> None:
+    """Haelt je neu erkanntem Schritt (STORAGE_ROOT <name> PASS|FAIL) die Host-Zeit fest; bekannte bleiben unveraendert."""
+    for match in RESULT.finditer(serial):
+        seen.setdefault(match.group(1), now)
+
+
+def step_durations(seen: dict[str, float], started: float) -> list[tuple[str, float]]:
+    """Dauer je Schritt: Abstand zur vorherigen Marke, der erste Schritt ab Start (enthaelt den Gastboot)."""
+    previous, result = started, []
+    for name, moment in sorted(seen.items(), key=lambda item: item[1]):
+        result.append((name, moment - previous))
+        previous = moment
+    return result
+
+
+def format_steps(durations: list[tuple[str, float]]) -> str:
+    return ", ".join(f"{name} {seconds:.0f} s" for name, seconds in durations)
+
+
+def watch_steps(directory: Path, seen: dict[str, float], stop: threading.Event) -> None:
+    while not stop.wait(0.5):
+        log = directory / "serial.log"
+        if log.exists():
+            record_steps(log.read_text(encoding="utf-8", errors="replace"), seen, time.monotonic())
 
 
 def guest_counters(serial: str, phase: str = "m") -> dict[str, int] | None:
@@ -231,6 +257,14 @@ def high_group_run(ctx: "Context", boundary: bool) -> None:
     clean_run(ctx, "lauf8" if boundary else "lauf7", 8 if boundary else 7, root, "raw")
 
 
+def note_steps(ctx: Context, name: str, directory: Path, seen: dict[str, float], started: float) -> None:
+    """Schrittzeiten auch bei Zeitlimit/Haenger melden: dort sind sie am noetigsten."""
+    log = directory / "serial.log"
+    if log.exists():
+        record_steps(log.read_text(encoding="utf-8", errors="replace"), seen, time.monotonic())  # Marken nach dem letzten Abruf
+    ctx.note(f"{name}: Schrittzeiten (Host, Erkennen der Marke) {format_steps(step_durations(seen, started))}")
+
+
 def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str = "qcow2") -> str | None:
     """Ein Lauf bis STORAGE_ROOT DONE und Gastende; liefert das serielle Protokoll oder None bei Haenger."""
     process, directory = boot(ctx, name, run, root, root_format)
@@ -238,12 +272,16 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
     watcher = threading.Thread(target=watch_space, args=(ctx, root, process, stop), daemon=True)
     watcher.start()
     started = time.monotonic()
+    seen: dict[str, float] = {}
+    stepper = threading.Thread(target=watch_steps, args=(directory, seen, stop), daemon=True)
+    stepper.start()
     try:
         tools.wait_serial(directory, "STORAGE_ROOT DONE", ctx.args.timeout)
         process.wait(timeout=120)
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         process.kill()
         process.wait()
+        note_steps(ctx, name, directory, seen, started)
         ctx.note(f"{name}: kein DONE oder kein Gastende ({error or 'Zeitlimit'})", False)
         return None
     finally:
@@ -252,8 +290,10 @@ def run_to_done(ctx: Context, name: str, run: int, root: Path, root_format: str 
             process.kill()
             process.wait()
     serial = (directory / "serial.log").read_text(encoding="utf-8", errors="replace")
+    stepper.join(timeout=2)
     passed, failed, done = evaluate(serial)
     ok = done and not failed and passed > 0 and process.returncode == 0
+    note_steps(ctx, name, directory, seen, started)
     ctx.note(f"{name}: PASS={passed} FAIL={','.join(failed) or 0} DONE={done} qemu-exit={process.returncode} "
              f"{time.monotonic() - started:.0f} s, qcow2 belegt {allocated(root) / GIB:.2f} GiB", ok)
     return serial
@@ -372,8 +412,8 @@ def main() -> int:
                         help="Root-Platte in GiB: 2 = Laeufe 1-5, 32/128 = Hochgruppenlauf 6-8")
     parser.add_argument("--k-boundary", action="store_true", help="Hochgruppenlauf: k nur als Grenzpruefung per Seek (Lauf 8)")
     parser.add_argument("--limit-only", action="store_true", help="Diagnose: nur Lauf 9 (Format + e-limit mit 8191 Eintraegen) auf 2 GiB; kein Go")
-    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15, 16],
-                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 10.000 Eintraege in einem Verzeichnis); kein Go")
+    parser.add_argument("--diagnose-run", type=int, choices=[9, 10, 11, 12, 13, 14, 15, 16, 17],
+                        help="Diagnose: nur dieser Lauf auf 2 GiB (10 = Loeschen ueber Blockgrenzen, 11 = Verzeichnisgroesse, 12 = GC-Fragmentierung, 13 = Nebenlaeufigkeit, 14 = nur mit Sperre, 15 = mit Sperre auf FAT, 16 = 10.000 Eintraege in einem Verzeichnis, 17 = Threadstart nach Dateilast, ThreadStarter und direkt); kein Go")
     parser.add_argument("--memory", default="512M", help="Gastspeicher (QEMU -m), Standard 512M wie das Produktprofil")
     parser.add_argument("--debugfs", default="debugfs")
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
@@ -432,6 +472,11 @@ def main() -> int:
         run_aborts(ctx, root, ABORT_DELAYS, args.parallel)
 
     complete = args.last_run == 5
+    steps = [line for line in ctx.report if "Schrittzeiten" in line]
+    if steps:
+        ctx.note("summary Schrittzeiten:")
+        for line in steps:
+            ctx.note("  " + line)
     verdict = "Go" if ctx.go and complete else ("unvollstaendig (--last-run)" if ctx.go else "No-Go")
     ctx.note(f"ERGEBNIS {args.size} GiB: {verdict}; kein Stromausfall-Beleg (Spec Abschnitt 1)")
     (ctx.work / "bericht.txt").write_text("\n".join(ctx.report) + "\n", encoding="utf-8")

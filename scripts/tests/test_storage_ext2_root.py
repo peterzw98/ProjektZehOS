@@ -39,7 +39,8 @@ class Ext2RootHostTests(unittest.TestCase):
         sector = root.control_sector(3)
         self.assertEqual(len(sector), 512)
         self.assertTrue(sector.startswith(b'ZEHOS-ROOTPROBE run=3\n'))
-        for bad in (0, 17):
+        self.assertTrue(root.control_sector(17).startswith(b'ZEHOS-ROOTPROBE run=17\n'))
+        for bad in (0, 18):
             with self.subTest(run=bad), self.assertRaises(ValueError):
                 root.control_sector(bad)
 
@@ -223,6 +224,17 @@ class AbortWindowTests(unittest.TestCase):
         self.assertNotIn(False, hints[0].args[2:] + tuple(hints[0].kwargs.values()))  # Hinweis setzt go nicht
 
 
+class StepTimeTests(unittest.TestCase):
+    def test_marks_get_first_seen_time_and_durations(self):
+        seen = {}
+        root.record_steps("STORAGE_ROOT a PASS\n", seen, 15.0)
+        root.record_steps("STORAGE_ROOT a PASS\nSTORAGE_ROOT b FAIL\nSTORAGE_ROOT DONE\n", seen, 40.0)
+        self.assertEqual(seen, {'a': 15.0, 'b': 40.0})  # DONE ist kein Schritt, a bleibt bei 15
+        durations = root.step_durations(seen, 10.0)
+        self.assertEqual(durations, [('a', 5.0), ('b', 25.0)])
+        self.assertEqual(root.format_steps(durations), 'a 5 s, b 25 s')
+
+
 class RunToDoneTests(unittest.TestCase):
     def test_unexpected_exception_kills_qemu(self):
         directory = Path(tempfile.mkdtemp())
@@ -238,6 +250,22 @@ class RunToDoneTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2')
         self.assertIsNotNone(process.poll())
+
+    def test_timeout_still_reports_step_times(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        (directory / 'serial.log').write_text('STORAGE_ROOT a PASS\n', encoding='utf-8')
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(process.kill)
+        ctx = object.__new__(root.Context)
+        ctx.work, ctx.report, ctx.go, ctx.echo = directory, [], True, False
+        ctx.args = mock.Mock(timeout=1)
+        with (mock.patch.object(root, 'boot', return_value=(process, directory)),
+              mock.patch.object(root, 'watch_space'),
+              mock.patch.object(root.tools, 'wait_serial', side_effect=TimeoutError('t'))):
+            self.assertIsNone(root.run_to_done(ctx, 'x', 1, directory / 'root.qcow2'))
+        self.assertTrue(any('Schrittzeiten' in line and 'a ' in line for line in ctx.report))
+        self.assertTrue(any('kein DONE' in line for line in ctx.report))
 
 
 if __name__ == '__main__':
