@@ -651,6 +651,18 @@ _native_x64_get_irq_stub:
 // The switch path overwrites the slot of the context it resumes, so a 2 never outlives its stub.
 .equ TEMP_SWAPGS_ON_EXIT, 2
 
+.data
+.balign 8
+.global diag_hit
+diag_hit: .zero 64
+.global diag_cpu
+diag_cpu: .zero 512
+.global diag_nmis
+diag_nmis: .quad 0
+.global diag_staged
+diag_staged: .quad 0
+.global diag_consumed
+diag_consumed: .quad 0
 .section .rodata
 .balign 4
 .Ldefault_mxcsr:
@@ -800,6 +812,43 @@ irq\n\()_stub:
     // The whole x87/SSE state (FCW, MXCSR, ST0-7, XMM0-15). fxsave64 needs a
     // 16-byte-aligned area: the CPU aligns RSP before it pushes its 40-byte
     // frame, and the 152 bytes above leave RSP aligned again.
+    cmp qword ptr gs:[0x98], 0
+    je .Ldiag_ok\n
+    // DIAG2: Eintritt, waehrend diese CPU in einem NMI ist (kein iretq dazwischen); zaehlen, ersten festhalten
+    mov rax, qword ptr gs:[8]
+    and eax, 7
+    shl eax, 6
+    lea rcx, [rip + diag_cpu]
+    add rcx, rax
+    inc qword ptr [rcx]
+    cmp qword ptr [rcx], 1
+    jne .Ldiag_ok\n
+    mov qword ptr [rcx + 8], \n
+    mov rax, [rsp + 152]
+    mov [rcx + 16], rax
+    mov rax, [rsp + 176]
+    mov [rcx + 24], rax
+    lea rax, [rsp + 152]
+    mov [rcx + 32], rax
+    mov rax, qword ptr gs:[0xA0]
+    mov [rcx + 40], rax
+    mov rax, qword ptr gs:[0xA8]
+    mov [rcx + 48], rax
+    mov rax, [rsp + 168]
+    mov [rcx + 56], rax
+.Ldiag_ok\n:
+    .if \n == 2
+    mov qword ptr gs:[0x98], 1
+    lock inc qword ptr [rip + diag_nmis]
+    mov rax, [rsp + 152]
+    mov qword ptr gs:[0xA0], rax
+    lea rax, [rsp + 152]
+    mov qword ptr gs:[0xA8], rax
+    cmp qword ptr gs:[PERCPU_SWITCH_TARGET_SP], 0
+    je .Ldiag_nostaged\n
+    lock inc qword ptr [rip + diag_staged]
+.Ldiag_nostaged\n:
+    .endif
     sub rsp, FPU_AREA_SIZE
     fxsave64 [rsp]
 
@@ -832,6 +881,9 @@ irq\n\()_stub:
     mov rax, qword ptr gs:[PERCPU_SWITCH_TARGET_SP]
     test rax, rax
     jz .Lrestore\n
+    .if \n == 2
+    lock inc qword ptr [rip + diag_consumed]
+    .endif
 
     // Switch to new context - clear the slots and switch stack
     xor rcx, rcx
@@ -898,6 +950,9 @@ irq\n\()_stub:
 
     // === EXIT PATH ===
     // Stack now: RIP, CS, RFLAGS, [RSP, SS if privilege change]
+    .if \n == 2
+    mov qword ptr gs:[0x98], 0
+    .endif
     .if \paranoid
     // ZehOS patch user-mode-probe, see PATCHES.md
     // The mark is the TempRcx slot just below RIP, on this vector's own IST stack. Without it,
