@@ -106,6 +106,7 @@ cosmos run --iso ProjektZeh/output-x64/ProjektZeh.iso --arch x64 -- -action shut
 - Hosttests ersetzen keinen Kernelstart: Bei Kerneländerungen nativer Bau und der betroffene Ablauf in QEMU. Bei Boot- oder Anzeigeänderungen auch
   Recovery (`-p:ZehOSRecovery=true`). Energieaktionen und VM-Start: `scripts/test-power-commands.ps1`.
 - QEMU und VMware sind Zielplattformen; fehlende Plattformprüfungen ausdrücklich als offen führen. Ein QEMU-Ergebnis belegt kein VMware, echte Hardware nur, wenn dort getestet.
+- Bei Änderungen an Scheduler, Threads, Hauptschleife oder Interrupts die Plattformmatrix (`scripts/guest-suites/e7e-matrix.json`) oder mindestens `SMP_PROBE` und Desktop mit `ZEHOS_QEMU_SMP=1` und `4` (KVM und TCG) laufen lassen. Ein Lauf je Zelle genügt; Fehlschläge zweimal wiederholen und alle Läufe nennen.
 - Reine Doku: Verweise, Befehle und Aussagen prüfen (`python3 scripts/check-doc-links.py`), kein Kernelbau nötig.
 
 ## Branch, Review, Pull Request
