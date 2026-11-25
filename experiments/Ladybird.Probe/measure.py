@@ -2,12 +2,18 @@
 """Misst Prozesse, Threads, PSS, VmSize und Zeit bis zum Screenshot eines headless Ladybird.
 
 Nur Linux (/proc). Gehört nicht in den Kernel- oder Paketbau.
+Exit-Codes: 0 ok, 1 Lauf ohne Screenshot ("no_screenshot") oder Start fehlgeschlagen
+("start_failed"), 2 Zeitlimit ("timeout"), 64 falsche Aufrufoptionen.
+Grenzen: Der Prozessbaum wird nur alle 100 ms und nur über die Wurzel abgetastet; Prozesse,
+die kürzer als etwa 100 ms leben, fehlen. Nach dem Ende der Wurzel werden bereits gesehene
+Nachzügler weiter gemessen.
 Die "Zeit bis Screenshot" ist KEINE Zeit bis zum ersten Bild: Ladybird löst den Screenshot
 über einen festen Timer (--screenshot-delay, hier 5 s) aus.
 """
 import argparse
 import json
 import os
+import pathlib
 import signal
 import statistics
 import subprocess
@@ -57,6 +63,21 @@ def children_of(pid):
     return result
 
 
+def proc_start(pid):
+    """Startzeit (Feld 22 von /proc/<pid>/stat) oder None, wenn der Prozess fehlt oder Zombie ist.
+
+    Zusammen mit der PID erkennt sie PID-Wiederverwendung, bevor ein Signal gesendet wird.
+    """
+    text = _read(f"/proc/{pid}/stat")
+    if not text:
+        return None
+    # comm steht in Klammern und darf Leerzeichen enthalten: ab der letzten ')' zerlegen.
+    rest = text[text.rfind(")") + 2:].split()
+    if len(rest) < 20 or rest[0] == "Z":
+        return None
+    return rest[19]
+
+
 def process_tree(root_pid):
     """Alle Nachfahren von root_pid einschließlich der Wurzel (nur lebende, keine Zombies)."""
     seen = []
@@ -67,7 +88,7 @@ def process_tree(root_pid):
             continue
         seen.append(pid)
         stack.extend(children_of(pid))
-    return [p for p in seen if sample_process(p) is not None]
+    return [p for p in seen if proc_start(p) is not None]
 
 
 def sample_process(pid):
@@ -131,31 +152,38 @@ class Tracker:
         }
 
 
-def _alive(pid):
-    return sample_process(pid) is not None
+def _alive(pid, start):
+    return proc_start(pid) == start
 
 
-def _signal_all(pids, sig):
-    for pid in pids:
-        try:
-            os.kill(pid, sig)
-        except OSError:
-            pass
+def _signal_all(known, sig):
+    """Signal nur an Prozesse, deren Startzeit noch zur gemerkten passt (PID-Wiederverwendung)."""
+    for pid, start in known.items():
+        if _alive(pid, start):
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
 
 
 def build_command(binary, page, width, height, shot):
     return [binary, "--headless=screenshot", "--force-cpu-painting",
             "--window-width", str(width), "--window-height", str(height),
             "--screenshot-delay", "5", "--screenshot-path", shot,
-            "file://" + os.path.abspath(page)]
+            pathlib.Path(page).resolve().as_uri()]
 
 
 def run_once(cmd, shot, timeout):
     """Ein Lauf. Rückgabe (Ergebnis-Dict, Fehlerart oder None)."""
     tracker = Tracker()
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    known = {proc.pid}
+    try:
+        # Eigene Sitzung: Aufräumen trifft zusätzlich die ganze Prozessgruppe.
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+    except OSError as e:
+        return {"screenshot_ms": None, "error": "start_failed", "detail": str(e)}, "start_failed"
+    known = {}  # pid -> Startzeit
     shot_ms = None
     error = None
     shot_time = None
@@ -171,24 +199,26 @@ def run_once(cmd, shot, timeout):
                         shot_time = now
                 except OSError:
                     pass
+            running = proc.poll() is None
             if now - last_sample >= SAMPLE_INTERVAL:
                 last_sample = now
-                tree = process_tree(proc.pid) if proc.poll() is None else []
-                samples = [s for s in map(sample_process, tree) if s]
+                pids = process_tree(proc.pid) if running else []
+                # Nachzügler (nach dem Ende der Wurzel an init umgehängt) weiter messen
+                pids += [p for p, st in known.items() if p not in pids and _alive(p, st)]
+                samples = [s for s in map(sample_process, pids) if s]
                 tracker.add(samples)
-                known.update(s["pid"] for s in samples)
-            running = proc.poll() is None
-            # Nachzügler, die nach dem Ende der Wurzel noch leben (an init umgehängt)
-            stragglers = [p for p in known if p != proc.pid and _alive(p)]
+                for s in samples:
+                    known.setdefault(s["pid"], proc_start(s["pid"]))
+            stragglers = [p for p, st in known.items() if p != proc.pid and _alive(p, st)]
             if not running and not stragglers:
                 break
             if shot_time is not None:
                 after = now - shot_time
                 if after > TERM_AFTER and not term_sent:
-                    _signal_all([p for p in known if _alive(p)], signal.SIGTERM)
+                    _signal_all(known, signal.SIGTERM)
                     term_sent = True
                 if after > TERM_AFTER + KILL_AFTER and not kill_sent:
-                    _signal_all([p for p in known if _alive(p)], signal.SIGKILL)
+                    _signal_all(known, signal.SIGKILL)
                     kill_sent = True
             if now - start > timeout and shot_ms is None:
                 error = "timeout"
@@ -198,8 +228,12 @@ def run_once(cmd, shot, timeout):
                 break
             time.sleep(SHOT_POLL_INTERVAL)
     finally:
-        if proc.poll() is None or any(_alive(p) for p in known if p != proc.pid):
-            _signal_all([p for p in known if _alive(p)], signal.SIGKILL)
+        _signal_all(known, signal.SIGKILL)
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)  # Gruppe gehört uns (start_new_session)
+            except OSError:
+                pass
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -229,8 +263,19 @@ def median_of(runs):
     return out
 
 
+def _write(a, runs):
+    result = {"page": os.path.abspath(a.page), "runs": runs, "median": median_of(runs)}
+    with open(a.out, "w") as f:
+        json.dump(result, f, indent=2)
+        f.write("\n")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # argparse beendet sich sonst mit 2 und kollidiert mit dem Timeout-Code.
+    ap.error = lambda msg: (ap.print_usage(sys.stderr),
+                            print(f"{ap.prog}: Fehler: {msg}", file=sys.stderr),
+                            sys.exit(64))
     ap.add_argument("--binary", required=True)
     ap.add_argument("--page", required=True)
     ap.add_argument("--runs", type=int, default=3)
@@ -239,9 +284,17 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=120)
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.runs < 1:
+        ap.error("--runs muss mindestens 1 sein")
 
     runs = []
     exit_code = 0
+    if not (os.path.isfile(a.binary) and os.access(a.binary, os.X_OK)):
+        runs = [{"screenshot_ms": None, "error": "start_failed",
+                 "detail": f"Binary nicht ausführbar oder fehlt: {a.binary}"}]
+        _write(a, runs)
+        print(runs[0]["detail"], file=sys.stderr)
+        return 1
     with tempfile.TemporaryDirectory(prefix="ladybird-measure-") as tmp:
         for i in range(a.runs):
             shot = os.path.join(tmp, f"shot{i}.png")
@@ -251,10 +304,7 @@ def main(argv=None):
             if error:
                 exit_code = 2 if error == "timeout" else 1
                 break
-    result = {"page": os.path.abspath(a.page), "runs": runs, "median": median_of(runs)}
-    with open(a.out, "w") as f:
-        json.dump(result, f, indent=2)
-        f.write("\n")
+    _write(a, runs)
     return exit_code
 
 

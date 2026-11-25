@@ -13,6 +13,11 @@ sys.path.insert(0, HIER)
 import measure  # noqa: E402
 
 
+def _load(p):
+    with open(p) as f:
+        return json.load(f)
+
+
 class MeasureTests(unittest.TestCase):
     def test_tree_collects_children(self):
         # Ohne "wait" ersetzt sh sich per exec durch das letzte sleep; dann wären es nur 2.
@@ -66,6 +71,62 @@ class MeasureTests(unittest.TestCase):
             with open(out) as f:
                 data = json.load(f)
             self.assertEqual(data["runs"][0]["error"], "timeout")
+
+    def test_tracker_sums_per_instant(self):
+        tr = measure.Tracker()
+        mk = lambda pid, pss: {"pid": pid, "name": "x", "threads": 1, "vmsize_kib": 10,
+                               "vmrss_kib": 1, "pss_kib": pss}
+        tr.add([mk(1, 100), mk(2, 10)])
+        tr.add([mk(1, 10), mk(2, 100)])
+        # Summe der Maxima wäre 200; gleichzeitig waren es höchstens 110.
+        self.assertEqual(tr.result()["total_max_pss_kib"], 110)
+        self.assertEqual(tr.result()["process_count"], 2)
+
+    def test_signal_skips_reused_pid(self):
+        p = subprocess.Popen(["sleep", "5"])
+        try:
+            measure._signal_all({p.pid: "0"}, signal.SIGKILL)  # falsche Startzeit
+            time.sleep(0.2)
+            self.assertIsNone(p.poll())
+            measure._signal_all({p.pid: measure.proc_start(p.pid)}, signal.SIGKILL)
+            self.assertEqual(p.wait(timeout=3), -signal.SIGKILL)
+        finally:
+            p.kill()
+            p.wait()
+
+    def _fake(self, tmp, body):
+        fake = os.path.join(tmp, "fake")
+        with open(fake, "w") as f:
+            f.write("#!/bin/sh\n" + body)
+        os.chmod(fake, 0o755)
+        return fake
+
+    def test_run_success_and_no_screenshot(self):
+        page = os.path.join(HIER, "pages", "static.html")
+        with tempfile.TemporaryDirectory() as tmp:
+            ok = self._fake(tmp, 'while [ "$1" != --screenshot-path ]; do shift; done\n'
+                                 'sleep 0.3; echo x > "$2"; sleep 0.3\n')
+            out = os.path.join(tmp, "o.json")
+            self.assertEqual(measure.main(["--binary", ok, "--page", page, "--runs", "2",
+                                           "--out", out]), 0)
+            data = _load(out)
+            self.assertEqual(len(data["runs"]), 2)
+            self.assertGreater(data["median"]["screenshot_ms"], 0)
+            none = self._fake(tmp, "sleep 0.3\n")
+            self.assertEqual(measure.main(["--binary", none, "--page", page, "--runs", "1",
+                                           "--out", out]), 1)
+            self.assertEqual(_load(out)["runs"][0]["error"], "no_screenshot")
+
+    def test_missing_binary_and_bad_runs(self):
+        page = os.path.join(HIER, "pages", "static.html")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "o.json")
+            self.assertEqual(measure.main(["--binary", os.path.join(tmp, "nein"), "--page", page,
+                                           "--out", out]), 1)
+            self.assertEqual(_load(out)["runs"][0]["error"], "start_failed")
+            with self.assertRaises(SystemExit) as c:
+                measure.main(["--binary", "x", "--page", page, "--runs", "0", "--out", out])
+            self.assertEqual(c.exception.code, 64)
 
 
 if __name__ == "__main__":

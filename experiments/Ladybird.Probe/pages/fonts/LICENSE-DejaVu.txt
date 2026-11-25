@@ -1,3 +1,8 @@
+Herkunft: Debian-Paket fonts-dejavu-core 2.37-8 (/usr/share/fonts/truetype/dejavu/).
+sha256 DejaVuSans.ttf  57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e
+sha256 DejaVuSerif.ttf 8cb29f7db250ebb2551a6ce2c1e0bfd5a0eb520e9e233370db0493e82e1f36f7
+Lizenztext (debian/copyright des Pakets) folgt.
+
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: DejaVu fonts
 Upstream-Author: Stepan Roh <src@users.sourceforge.net> (original author),
