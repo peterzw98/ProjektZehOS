@@ -13,8 +13,10 @@ static void tb_path(const char *self, const char *applet, char *buf, size_t n)
 {
     const char *slash = strrchr(self, '/');
     int dir = slash ? (int)(slash - self) : 0;
-    if (slash) snprintf(buf, n, "%.*s/tb/%s", dir, self, applet);
-    else snprintf(buf, n, "tb/%s", applet);
+    int len = slash ? snprintf(buf, n, "%.*s/tb/%s", dir, self, applet)
+                    : snprintf(buf, n, "tb/%s", applet);
+    /* Abgeschnittene Pfade würden ein falsches Programm starten: lieber abbrechen. */
+    if (len < 0 || (size_t)len >= n) { fputs("tb_path: Pfad zu lang\n", stderr); exit(2); }
 }
 
 __attribute__((unused)) static void tb_file(const char *name, const char *content)

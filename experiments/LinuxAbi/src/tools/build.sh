@@ -6,7 +6,7 @@
 # Eingaben (alles außerhalb des Repositorys, nichts wird eingecheckt):
 #   TOYBOX_TARBALL  Pfad zu toybox-0.8.15.tar.gz; fehlt er, lädt das Skript ihn nach $OUT_DIR/../.cache
 #   RUSTC           Pfad zu rustc (Standard: rustc im PATH); braucht das Ziel x86_64-unknown-linux-musl
-#   CC              musl-Übersetzer wie in ../../build.sh (hier schon aufgelöst oder musl-gcc)
+#   CC              musl-Übersetzer; ../../build.sh reicht den von ihm gewählten weiter (Standard hier: musl-gcc)
 # Ergebnis: $OUT_DIR/tbs_{cat,ls,wc} (eigenständig, S1), $OUT_DIR/tb/{toybox,cat,ls,wc,sh,echo} (Mehrfachprogramm
 # mit Verknüpfungen für die Treiber tb_*), $OUT_DIR/rs_file_time, $OUT_DIR/rs_thread (Rust).
 set -eu
@@ -25,7 +25,8 @@ rm -rf "$work"; mkdir -p "$work"
 tar_=${TOYBOX_TARBALL:-$cache/toybox-$TOYBOX_VERSION.tar.gz}
 if [ ! -f "$tar_" ]; then
     echo "tools/build.sh: lade $TOYBOX_URL" >&2
-    curl -fsSL -o "$tar_" "$TOYBOX_URL"
+    # Erst in eine Teildatei, dann umbenennen: ein abgebrochener Download soll keine unvollständige Datei im Cache hinterlassen.
+    curl -fsSL -o "$tar_.part" "$TOYBOX_URL" && mv "$tar_.part" "$tar_" || { rm -f "$tar_.part"; echo "tools/build.sh: Download fehlgeschlagen" >&2; exit 1; }
 fi
 echo "$TOYBOX_SHA256  $tar_" | sha256sum -c - >/dev/null || { echo "tools/build.sh: SHA-256 von $tar_ stimmt nicht" >&2; exit 1; }
 tar -C "$work" -xf "$tar_"

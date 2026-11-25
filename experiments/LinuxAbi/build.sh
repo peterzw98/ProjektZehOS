@@ -29,6 +29,6 @@ for s in $sets; do
         echo "gebaut: out/$s/$n"
     done
     if [ -f "$src/build.sh" ]; then
-        OUT_DIR=$out SRC_DIR=$src sh "$src/build.sh"
+        CC=$cc OUT_DIR=$out SRC_DIR=$src sh "$src/build.sh"
     fi
 done

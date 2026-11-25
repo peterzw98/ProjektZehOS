@@ -5,6 +5,8 @@ Vergleichsprogramme aus **fremder** Quelle, damit der Systemaufruf-Satz nicht nu
 
 ## Bau
 
+Voraussetzungen auf dem Rechner: `sh`, **`bash`** (`scripts/single.sh` von toybox ruft es), `make`, `curl` (nur ohne `TOYBOX_TARBALL`), `sha256sum`, `tar`, `sed`, `nproc`.
+
 ```sh
 TOYBOX_TARBALL=/pfad/toybox-0.8.15.tar.gz RUSTC=/pfad/rustc CC=/pfad/musl-gcc experiments/LinuxAbi/build.sh tools
 ```
@@ -47,6 +49,8 @@ Rust baut mit dem eigenen musl des Rust-Archivs (`rust-std`), nicht mit `CC`; `C
 
 Insgesamt 49 verschiedene Aufrufe. **Nicht in S1 bis S3 des Entwurfs** (zur Ergänzung oder Nachweis, dass sie verzichtbar sind):
 `umask` (toybox, alle `tb*`), `readlinkat` (`tb_sh`), `clock_nanosleep` (Rust-`sleep`, statt `nanosleep`), `prctl` und `sched_getaffinity` (Rust-Threads; `prctl` benennt den Thread).
+**Nicht in der Liste, aber in ZehOS nötig:** `strace -c` zählt `clock_gettime` nicht, weil es hier über das vDSO läuft (`Instant`, `SystemTime`, toybox-Zeitstempel). Ohne vDSO
+ruft musl `clock_gettime` als echten Systemaufruf; ZehOS muss ihn deshalb bereitstellen (Rust-`Instant`/`SystemTime`, `rs_file_time`, `rs_thread`, toybox-`ls`/`sh`).
 In S2 stehen `dup`, `dup2` (`tb_ls`, `tb_sh`). Zu S3 gehören `fork pipe wait4 getppid clone futex execve`; deshalb liegen die `tb_*`-Treiber in S3, obwohl `cat`, `ls`, `wc` selbst S1 sind (`tbs_*`).
 
 ## Stand der Erwartungen
