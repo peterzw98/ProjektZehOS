@@ -246,6 +246,10 @@ public sealed class PackageStore2Tests
         }
         File.WriteAllText(Path.Combine(Root, "v2", "active2"), valid);
         Assert.AreEqual(Describe(MuslR1, Hello), Describe(Store()));
+        // Auch ein zu grosses active2 verhindert die Reparatur durch eine neu gestufte Menge nicht.
+        File.WriteAllText(Path.Combine(Root, "v2", "active2"), damaged[^1]);
+        Install(Store(), MuslR2, Hello);
+        Assert.AreEqual(Describe(MuslR2, Hello), Describe(Store()));
     }
 
     [TestMethod]

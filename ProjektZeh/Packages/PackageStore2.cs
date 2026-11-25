@@ -284,7 +284,7 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
         StorageLock.Run(() =>
         {
             Directory.CreateDirectory(Packages);
-            PackageStore.ReplaceFileStorageLocked(ActivePath, text, Move, textLine: true);
+            PackageStore.ReplaceFileStorageLocked(ActivePath, text, MoveStorageLocked, textLine: true);
         });
         lock (gate) foreach (var line in lines) staged.Remove(Key(line.Id, line.Version));
         return ResultErr.CreateSuccess();
@@ -503,13 +503,22 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     }
 
     // Liest die Zeilen von active2 ohne Signaturpruefung, aber streng; fehlt die Datei (auch als Ersatzfassung), ist die Menge leer.
+    // Ein zu grosses oder unlesbares active2 ist ein Fehlerergebnis, keine Ausnahme: Stufen und Aktivieren reparieren es dann.
     private ResultObject<ActiveLine[]> ReadLines()
     {
-        byte[]? bytes = StorageLock.Run(() =>
+        byte[]? bytes;
+        try
         {
-            string? path = EffectiveActivePathStorageLocked();
-            return path == null ? null : ReadSmallStorageLocked(path, MaximumActiveBytes);
-        });
+            bytes = StorageLock.Run(() =>
+            {
+                string? path = EffectiveActivePathStorageLocked();
+                return path == null ? null : ReadSmallStorageLocked(path, MaximumActiveBytes);
+            });
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            return Failure<ActiveLine[]>("active2 nicht lesbar: " + exception.Message);
+        }
         if (bytes == null) return ResultObjectFactory.CreateSuccess<ActiveLine[]>([]);
         return Parse(bytes);
     }
@@ -586,7 +595,7 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     private void Step(string what) => FileStep?.Invoke(what);
 
     // Umbenennen fuer ReplaceFileStorageLocked, damit Abbruchtests jeden Zwischenstand von active2 erreichen.
-    private void Move(string from, string to)
+    private void MoveStorageLocked(string from, string to)
     {
         Step("verschieben " + Path.GetFileName(from) + " -> " + Path.GetFileName(to));
         File.Move(from, to);
