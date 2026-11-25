@@ -38,7 +38,12 @@ internal static unsafe partial class WasmRuntime
     // Thread und Stack raeumt die Hauptschleife nach einer Isolation ab (E6-G); die native wasm3- bzw. WAMR-Instanz des
     // abgebrochenen Laufs bleibt aber belegt: Ihre Handles liegen im C-Rahmen auf dem Worker-Stack, ihr Zustand ist
     // unbekannt, und wasm_runtime_destroy ist global. Deshalb bleibt die Zahl der Isolationen bis zum Neustart begrenzt.
+#if ZEHOS_ISOLATION_PROBE
+    // Die Isolationsprobe loest vier Fehler nacheinander aus (de, pf, gp, ud) und braucht danach noch einen Worker.
+    private const int MaximumIsolatedRuns = 5;
+#else
     private const int MaximumIsolatedRuns = 3;
+#endif
     // Aufgegebener Worker, bis Cosmos ihn abgeraeumt hat (E6-G); nur von der Hauptschleife gelesen und geschrieben.
     private static readonly ProjektZeh.Runtime.PendingReap pendingReap = new();
     private static bool workerRetired;

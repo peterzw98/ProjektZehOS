@@ -13,12 +13,12 @@
       "--accel",
       "kvm",
       "--parallel",
-      "4",
+      "2",
       "--last-run",
       "5"
     ],
-    "repeat": 1,
+    "repeat": 3,
     "timeout": 7200,
-    "note": "E4.0 --size 2, Laeufe 1-5 (Abbruchlaeufe 3/4/5 parallel 4). {iso} = ISO mit -p:ZehOSStorageRootProbe=true. {work}/e40, weil der Runner {work} schon anlegt und das Skript einen neuen Ordner verlangt."
+    "note": "E4.0 --size 2, Laeufe 1-5 (Abbruchlaeufe 3/4/5 parallel 2 je Wiederholung). Standard 3 Wiederholungen; Aufruf mit run-guest-suite.py --parallel 3, also bis zu 3x2 QEMU gleichzeitig (docs/PACKAGE_FORMAT.md). {iso} = ISO mit -p:ZehOSStorageRootProbe=true. {work}/e40, weil der Runner {work} schon anlegt und das Skript einen neuen Ordner verlangt."
   }
 ]

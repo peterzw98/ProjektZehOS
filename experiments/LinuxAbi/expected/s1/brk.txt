@@ -1,0 +1,9 @@
+brk(0) != 0=1
+grow 256 KiB=1
+last byte=165
+brk(0) == new=1
+shrink to 1 page=1
+grow again=1
+zero after regrow=1
+below start refused=1
+beyond user space refused=1

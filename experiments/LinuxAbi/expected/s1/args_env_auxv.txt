@@ -1,0 +1,22 @@
+argc=3
+argv[1]=a1
+argv[2]=b 2
+env=ZEHOS_ABI=1
+env=LANG=C
+env=PATH=/usr/bin:/bin
+envc=3
+AT_PAGESZ=4096
+AT_PHENT=56
+AT_PHNUM>0=1
+AT_PHDR!=0=1
+AT_ENTRY!=0=1
+AT_BASE=0
+AT_RANDOM!=0=1
+AT_UID==getuid=1
+AT_EUID==geteuid=1
+AT_GID==getgid=1
+AT_EGID==getegid=1
+AT_SECURE=0
+AT_HWCAP!=0=1
+AT_EXECFN!=0=1
+AT_EXECFN basename=args_env_auxv
