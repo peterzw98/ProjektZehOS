@@ -1921,6 +1921,11 @@ public class Kernel : Sys.Kernel
     private const int FpuImageAlignment = 16;
     private const int FpuHoldMs = 10_000;
     private const int FpuPollMs = 100;
+    private const int FpuKeepAliveMs = 2000;
+
+    // An empty protocol frame (command 0), which the runner ignores: it ends a suite after 10 s without one.
+    private static readonly byte[] s_fpuKeepAlive = { 0x07, 0x08, 0x74, 0x19, 0, 0, 0 };
+
     private const ushort FpuDefaultFcw = 0x37F;
     private const uint FpuDefaultMxcsr = 0x1F80;
 
@@ -2027,6 +2032,10 @@ public class Kernel : Sys.Kernel
             for (int waited = 0; waited < FpuHoldMs; waited += FpuPollMs)
             {
                 SysThread.Sleep(FpuPollMs);
+                if (waited % FpuKeepAliveMs == 0)
+                {
+                    Log.WriteBytes(s_fpuKeepAlive);
+                }
             }
         }
         finally
