@@ -11,7 +11,7 @@ namespace ProjektZeh.Runtime;
 /// <summary>
 /// Beendet AOT-Code in einer Schleife ohne Hostaufruf (#423, R8): Cosmos ruft im Scheduler-Tick den Hook (Patch
 /// aot-loop-exit, nur Ring 0 und freigegebene Interrupts), der den Wasm-Worker auf zehos_aot_exit umlenkt.
-/// Nur mit <c>-p:ZehOSAotLoopExit=true</c>, bis der Cosmos-Pin den Patch enthaelt.
+/// In jedem AOT-Bau; <c>-p:ZehOSAotLoopExit=false</c> nur fuer die Gegenprobe.
 /// </summary>
 internal static unsafe class AotLoopExit
 {

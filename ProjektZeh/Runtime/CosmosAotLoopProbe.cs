@@ -7,7 +7,7 @@ using ProjektZeh.Runtime.Wasm;
 namespace ProjektZeh.Runtime;
 
 /// <summary>
-/// Gastprobe R8 (#423, <c>-p:ZehOSAotProbe=true -p:ZehOSAotLoopExit=true</c>): Schliessen beendet AOT-Code in einer
+/// Gastprobe R8 (#423, <c>-p:ZehOSAotProbe=true</c>): Schliessen beendet AOT-Code in einer
 /// Schleife ohne Hostaufruf, zehnmal hintereinander bei dauernder GC-Last; danach laeuft AOT weiter und der Speicher ist
 /// wieder frei. Ohne wamrc: Das letzte <c>jmp</c> von hostcalls (Fixture D) wird im Speicher zu <c>jmp $</c>; davor liegen
 /// seine Hostaufrufe, an denen die Probe den Start erkennt. Eigener Thread, weil die Hauptschleife PollAbort ruft.
