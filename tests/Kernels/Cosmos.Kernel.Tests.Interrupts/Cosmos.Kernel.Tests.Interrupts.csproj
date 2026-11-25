@@ -27,6 +27,10 @@
     <CosmosTestModifier Include="smp4" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' OR $(RuntimeIdentifier.EndsWith('-x64'))">
+    <AsmFiles Include="$(MSBuildThisFileDirectory)Asm/Cr3.s" />
+  </ItemGroup>
+
   <!-- Core kernel packages (using project references for development) -->
   <ItemGroup>
     <ProjectReference Include="../../../src/Cosmos.Kernel/Cosmos.Kernel.csproj" />

@@ -24,6 +24,9 @@ internal static class EfiRtc
     /// <summary>
     /// Attempts to read the current wall-clock time via EFI Runtime Services.
     /// Returns true and sets <paramref name="ticks"/> to DateTime ticks (UTC) on success.
+    /// Only under the kernel's own page tables, with the identity map: the firmware follows
+    /// its own physical pointers, so reaching the tables through the HHDM would not be enough.
+    /// The RTC initialization at boot is the only caller.
     /// </summary>
     public static unsafe bool TryGetTime(out long ticks)
     {
