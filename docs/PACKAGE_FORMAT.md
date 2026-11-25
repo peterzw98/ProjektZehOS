@@ -214,7 +214,7 @@ Vorarbeit für native Pakete (Laufzeit `linux-x64-v1`, [Plan](superpowers/plans/
 
 ### Manifest
 
-Implementierung `ProjektZeh/Packages/PackageManifest2.cs` (`PackageManifest2.Parse`, wirft nie). UTF-8 ohne BOM, nur LF (ein CR irgendwo ist ungültig), jede Zeile mit LF abgeschlossen, Felder genau in dieser Reihenfolge, höchstens 1 MiB:
+Implementierung `ProjektZeh/Packages/PackageManifest2.cs` (`PackageManifest2.Parse`, wirft nie). `Bytes` ist eine Kopie der Eingabe, aus der auch geparst wurde; die Signatur ist über genau diese Bytes zu prüfen. Fehlermeldungen geben Eingabetext nur gekürzt (höchstens 64 Zeichen) und auf druckbares ASCII gefiltert wieder. UTF-8 ohne BOM, nur LF (ein CR irgendwo ist ungültig), jede Zeile mit LF abgeschlossen, Felder genau in dieser Reihenfolge, höchstens 1 MiB:
 
 ```text
 zehos-package 2
@@ -248,7 +248,8 @@ end
 - `depends=<id>>=<version>-r<release>`: 0–64 Zeilen, ordinal nach `id`, keine doppelte `id`, nicht das eigene Paket (`PackageDependency`).
 - `provides=so:<soname>`: 0–64 Zeilen, ordinal, `<soname>` 1–200 Zeichen aus `A–Z a–z 0–9 . _ + -`. `Provides` enthält den Wert samt `so:`.
 - `exec`/`file`: Aufbau wie `file` in Version 1; `exec` markiert ausführbare Dateien. Beide zusammen ordinal nach Pfad, höchstens 4096, Summe höchstens 1 GiB (exakt 1 GiB ist erlaubt).
-- `link=<pfad> <ziel>`: höchstens 4096, ordinal nach Pfad. Das Ziel ist kanonisch relativ zum Ordner des Links: null oder mehr führende `..`, danach mindestens eine normale Komponente (kein `.`, kein `..` mitten im Pfad, kein `/` am Anfang oder Ende). Es darf nicht über die Wurzel hinaus und nicht auf die Wurzel selbst oder auf den Link selbst zeigen. Weil `..` nur vorne steht und kein Link Ordner eines anderen Eintrags sein kann, entspricht die textuelle Auflösung der tatsächlichen.
+- `link=<pfad> <ziel>`: höchstens 4096, ordinal nach Pfad. Das Ziel ist kanonisch relativ zum Ordner des Links: null oder mehr führende `../`, danach mindestens eine normale Komponente (kein `.`, kein `..` mitten im Pfad, kein `/` am Anfang oder Ende). Das aufgelöste Ziel muss selbst ein gültiger Pfad nach der Regel unten sein (unter `usr/`, `lib/` oder `etc/`, höchstens 200 Zeichen); Ziele wie `/dev`, `/data`, `/save` oder `/tmp` sind damit ausgeschlossen. Weil `..` nur vorne steht und kein Link Ordner eines anderen Eintrags sein kann, entspricht die textuelle Auflösung der tatsächlichen.
+- Linkketten: Der Parser folgt jedem Ziel durch die Links desselben Manifests (ohne Groß-/Kleinschreibung). Ungültig ist, wenn ein Schritt auf den Link selbst, einen seiner Ordner oder einen Pfad unter ihm zeigt, mehr als 40 Links aufeinander folgen (damit auch jeder Kreis über mehrere Links) oder der Pfad dabei länger als 200 Zeichen würde. Links auf Pfade anderer Pakete kann erst der Bestand (P3) prüfen.
 - Pfade (auch von `entry` und `link`): wie Version 1, dazu `+` als Zeichen, höchstens 200 Zeichen, beginnend mit `usr/`, `lib/` oder `etc/`. Doppelte Pfade (auch nur in Groß-/Kleinschreibung verschieden, auch `link` gegen `exec`/`file`) sind ungültig, ebenso ein Pfad, der zugleich Ordner eines anderen ist.
 
 ### Katalog

@@ -188,7 +188,7 @@ public sealed class PackageManifest2Tests
     {
         AssertInvalid(Full.Replace("zehos-package 2\n", "zehos-package 3\n", StringComparison.Ordinal));
         AssertInvalid(Full.Replace("zehos-package 2\n", "zehos-package 2 \n", StringComparison.Ordinal));
-        AssertInvalid("﻿" + Full);
+        AssertInvalid("\uFEFF" + Full);
         AssertInvalid("");
         AssertInvalid("zehos-package 2\n");
         AssertInvalid("zehos-package 2\nend\n");
@@ -488,7 +488,7 @@ public sealed class PackageManifest2Tests
         string With(string link) => Full.Replace(links, link + "\n", StringComparison.Ordinal);
         foreach (string valid in new[]
         {
-            "link=usr/lib/x libhello.so.1", "link=usr/lib/x ../bin/hello", "link=usr/lib/x ../../etc/hosts", "link=lib/x ../var/y",
+            "link=usr/lib/x libhello.so.1", "link=usr/lib/x ../bin/hello", "link=usr/lib/x ../../etc/hosts", "link=lib/x ../etc/y",
             "link=usr/lib/x sub/dir/y", "link=usr/lib/x ../../usr/lib/libhello.so.1", "link=usr/lib/x g++",
         }) AssertValid(With(valid));
         foreach (string invalid in new[]
@@ -511,8 +511,11 @@ public sealed class PackageManifest2Tests
             "link=usr/lib/x a\\..\\..\\..\\y",
             "link=usr/lib/x y.",
             "link=usr/lib/x " + new string('a', 201),
+            "link=usr/lib/x a\0b", "link=usr/lib/x a\tb", "link=usr/lib/x ä", "link=usr/lib/x \uFF0E\uFF0E/y",
+            "link=usr/lib/x ../", "link=usr/lib/x ../.", "link=usr/lib/x ../a/../b", "link=usr/lib/x ...",
         }) AssertInvalid(With(invalid));
-        AssertValid(With("link=usr/lib/x " + new string('a', 200)));
+        AssertValid(With("link=usr/lib/x " + new string('a', 192)));     // aufgeloest genau 200 Zeichen
+        AssertInvalid(With("link=usr/lib/x " + new string('a', 193)));
     }
 
     [TestMethod]
@@ -555,10 +558,168 @@ public sealed class PackageManifest2Tests
                 accepted++;
                 Assert.IsNotNull(parsed.Value);
                 CollectionAssert.AreEqual(mutated, parsed.Value.Bytes);
+                AssertInvariants(parsed.Value, round);
             }
             else Assert.AreEqual(ResultCode.InvalidArgument, parsed.Status.Code);
         }
         // Mutationen, die nur einen Hash- oder Namensbuchstaben aendern, bleiben gueltig; die meisten muessen scheitern.
         Assert.IsTrue(accepted < 5000, accepted.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // Was der Parser annimmt, muss die Formatregeln erfuellen, egal wie es entstanden ist.
+    private static void AssertInvariants(PackageManifest2 manifest, int round)
+    {
+        string context = "Runde " + round.ToString(CultureInfo.InvariantCulture);
+        Assert.IsTrue(PackageManifest.IsValidId(manifest.Id), context);
+        Assert.IsTrue(manifest.Version.Release is >= 1 and <= 9999, context);
+        Assert.IsTrue(manifest.Files.Length is >= 1 and <= PackageManifest2.MaximumFiles, context);
+        Assert.IsTrue(manifest.Links.Length <= PackageManifest2.MaximumLinks, context);
+        Assert.IsTrue(manifest.Dependencies.Length <= 64 && manifest.Provides.Length <= 64, context);
+        long total = 0;
+        for (int index = 0; index < manifest.Files.Length; index++)
+        {
+            var file = manifest.Files[index];
+            Assert.IsTrue(PackageManifest2.IsValidPath(file.Path) && file.Size >= 0 && file.Sha256.Length == 64, context);
+            if (index > 0) Assert.IsTrue(string.CompareOrdinal(manifest.Files[index - 1].Path, file.Path) < 0, context);
+            total += file.Size;
+        }
+        Assert.IsTrue(total <= PackageManifest2.MaximumContentBytes, context);
+        for (int index = 1; index < manifest.Links.Length; index++)
+            Assert.IsTrue(string.CompareOrdinal(manifest.Links[index - 1].Path, manifest.Links[index].Path) < 0, context);
+        for (int index = 1; index < manifest.Dependencies.Length; index++)
+            Assert.IsTrue(string.CompareOrdinal(manifest.Dependencies[index - 1].Id, manifest.Dependencies[index].Id) < 0, context);
+        Assert.IsTrue(manifest.Dependencies.All(dependency => dependency.Id != manifest.Id), context);
+        Assert.IsTrue(manifest.Name == null || manifest.Entry != null, context);
+        Assert.IsTrue(manifest.MemoryMiB == null || manifest.Entry != null, context);
+        Assert.IsTrue(manifest.Entry == null || manifest.Files.Any(file => file.Executable && file.Path == manifest.Entry), context);
+        var paths = manifest.Files.Select(file => file.Path).Concat(manifest.Links.Select(link => link.Path)).ToList();
+        Assert.AreEqual(paths.Count, paths.Distinct(StringComparer.OrdinalIgnoreCase).Count(), context);
+        Assert.IsFalse(paths.Any(path => paths.Any(other => other.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase))), context);
+    }
+
+    [TestMethod]
+    public void TryParse_RandomStrings_NeverThrow()
+    {
+        var random = new Random(639);
+        const string alphabet = "0123456789.-r>=abcmusl \0ä";
+        for (int round = 0; round < 10000; round++)
+        {
+            var text = new string(Enumerable.Range(0, random.Next(24)).Select(_ => alphabet[random.Next(alphabet.Length)]).ToArray());
+            if (PackageVersion2.TryParse(text, out var version)) Assert.AreEqual(text, version.ToString());
+            if (PackageDependency.TryParse(text, out var dependency)) Assert.AreEqual(text, dependency!.ToString());
+        }
+    }
+
+    private static string LinkLibrary(params string[] links) =>
+        WithLibraryFiles($"file={HashA} 1 usr/bin/tool\n" + string.Concat(links.Select(link => "link=" + link + "\n")));
+
+    [TestMethod]
+    public void Parse_LinkTarget_MustStayInPackageTrees()
+    {
+        AssertValid(LinkLibrary("usr/lib/x ../../etc/hosts"));
+        AssertValid(LinkLibrary("lib/x ../usr/bin/tool"));
+        foreach (string target in new[] { "../../dev/zehos", "../../data/secret", "../../save", "../../save/x", "../../tmp/x", "../../usr" })
+            AssertInvalid(LinkLibrary("usr/lib/x " + target));
+        AssertInvalid(LinkLibrary("lib/x ../var/y"));
+        // Das aufgeloeste Ziel unterliegt derselben Laengengrenze wie jeder Pfad.
+        string deep = "usr/" + string.Join('/', Enumerable.Repeat("d", 60)) + "/x";
+        AssertValid(LinkLibrary(deep + " " + new string('a', 70)));
+        AssertInvalid(LinkLibrary(deep + " " + new string('a', 90)));
+    }
+
+    [TestMethod]
+    public void Parse_LinkCycles_AreRejected()
+    {
+        AssertInvalid(LinkLibrary("usr/lib/l l/x"));                          // Ziel unter dem Link selbst
+        AssertInvalid(LinkLibrary("usr/lib/x ../lib"));                       // Ziel ist Ordner des Links
+        AssertInvalid(LinkLibrary("usr/lib/x ../../usr/lib"));
+        AssertInvalid(LinkLibrary("usr/lib/a b", "usr/lib/b a"));             // Kreis aus zwei Links
+        AssertInvalid(LinkLibrary("usr/lib/a b", "usr/lib/b c", "usr/lib/c a"));
+        AssertInvalid(LinkLibrary("usr/d lib", "usr/lib/x ../d"));            // ueber einen anderen Link auf den eigenen Ordner
+        AssertInvalid(LinkLibrary("usr/lib/a b/x", "usr/lib/b a"));           // wachsender Kreis
+        AssertValid(LinkLibrary("usr/lib/a b", "usr/lib/b c"));               // Kette ohne Kreis
+        AssertValid(LinkLibrary("usr/lib/d ../share", "usr/lib/y d/x"));      // durch einen Link als Ordner
+    }
+
+    [TestMethod]
+    public void Parse_LinkChains_AtMost40HopsAnd200Characters()
+    {
+        string Chain(int hops) => LinkLibrary(Enumerable.Range(0, hops + 1).Select(i =>
+            "usr/share/l" + i.ToString("D2", CultureInfo.InvariantCulture) + " " +
+            (i == hops ? "../bin/tool" : "l" + (i + 1).ToString("D2", CultureInfo.InvariantCulture))).ToArray());
+        AssertValid(Chain(40));
+        AssertInvalid(Chain(41));
+        string longTarget = "usr/s " + new string('a', 180);      // aufgeloest 184 Zeichen
+        AssertValid(LinkLibrary("usr/q s/" + new string('b', 10), longTarget));
+        AssertInvalid(LinkLibrary("usr/q s/" + new string('b', 100), longTarget));
+    }
+
+    [TestMethod]
+    public void Parse_ErrorMessage_IsShortAndPrintable()
+    {
+        string hostile = "\u001b[2J\u001b]0;pwn\u0007" + new string('Q', 900_000);
+        foreach (string text in new[]
+        {
+            LinkLibrary("usr/lib/x " + hostile),
+            Replace(Full, "capability=net", "capability=" + hostile),
+            Replace(Full, "depends=libcxx>=17.0.6-r1", "depends=" + hostile),
+            Replace(Full, "provides=so:libhello.so.1", "provides=" + hostile),
+            Replace(Full, $"exec={HashA} 10 usr/bin/hello", "exec=" + hostile),
+            WithLibraryFiles($"file={HashA} 1 usr/" + hostile + "\n"),
+        })
+        {
+            string message = Parse(text).Status.Message;
+            Assert.IsTrue(message.Length < 300, message.Length.ToString(CultureInfo.InvariantCulture));
+            Assert.IsTrue(message.All(c => c is >= ' ' and <= '~'), message);
+        }
+        Assert.AreEqual("\"a?b\"", PackageManifest2.Quote("a\u001bb"));
+        Assert.AreEqual("\"" + new string('x', 64) + "\"...", PackageManifest2.Quote(new string('x', 65)));
+    }
+
+    [TestMethod]
+    public void Parse_Bytes_AreCopiedFromInput()
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(Full);
+        var manifest = PackageManifest2.Parse(bytes).Value!;
+        Assert.AreNotSame(bytes, manifest.Bytes);
+        bytes[20] ^= 1;
+        CollectionAssert.AreEqual(Encoding.UTF8.GetBytes(Full), manifest.Bytes);
+    }
+
+    [TestMethod]
+    public void Parse_InvalidUtf8AndTruncation_AreRejected()
+    {
+        byte[] valid = Encoding.UTF8.GetBytes(Full);
+        Assert.IsFalse(PackageManifest2.Parse([0xEF, 0xBB, 0xBF, .. valid]).IsOK());       // BOM
+        byte[] overlong = Encoding.UTF8.GetBytes(Replace(Full, "name=Hallo Welt", "name=Hallo XX"));
+        int at = Array.IndexOf(overlong, (byte)'X');
+        overlong[at] = 0xC0;
+        overlong[at + 1] = 0xAE;                                                            // ueberlanges '.'
+        Assert.IsFalse(PackageManifest2.Parse(overlong).IsOK());
+        byte[] surrogate = Encoding.UTF8.GetBytes(Replace(Full, "name=Hallo Welt", "name=Hallo XXX"));
+        at = Array.IndexOf(surrogate, (byte)'X');
+        (surrogate[at], surrogate[at + 1], surrogate[at + 2]) = ((byte)0xED, (byte)0xA0, (byte)0x80);
+        Assert.IsFalse(PackageManifest2.Parse(surrogate).IsOK());
+        AssertInvalid(Full[..^4]);                                                         // ohne end
+        AssertInvalid(Full[..Full.IndexOf("provides=", StringComparison.Ordinal)]);
+        AssertInvalid(Replace(Full, "name=Hallo Welt", "name=Hallo\0Welt"));
+        AssertInvalid(Replace(Full, "name=Hallo Welt", "name=Hallo\tWelt"));
+    }
+
+    [TestMethod]
+    public void Parse_DeepPaths_AllocateLittle()
+    {
+        // Nahe 1 MiB, 3868 Dateien in 95 Ebenen: Die Ordnerpruefung darf nicht je Ebene eine Zeichenkette anlegen.
+        string directory = "usr/" + string.Join('/', Enumerable.Repeat("a", 93));
+        string text = WithLibraryFiles(Content(3868, 1, index => directory + "/f" + index.ToString("D4", CultureInfo.InvariantCulture)));
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        Assert.IsTrue(bytes.Length is > 1_000_000 and <= PackageManifest2.MaximumBytes, bytes.Length.ToString(CultureInfo.InvariantCulture));
+        Assert.IsTrue(PackageManifest2.Parse(bytes).IsOK());
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var parsed = PackageManifest2.Parse(bytes);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.IsTrue(parsed.IsOK(), parsed.ToString());
+        Console.WriteLine("Parse_DeepPaths_AllocateLittle: " + allocated.ToString(CultureInfo.InvariantCulture) + " Bytes");
+        Assert.IsTrue(allocated < 10L * 1024 * 1024, allocated.ToString(CultureInfo.InvariantCulture));
     }
 }
