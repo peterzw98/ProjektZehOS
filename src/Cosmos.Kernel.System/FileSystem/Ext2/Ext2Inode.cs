@@ -19,43 +19,43 @@ internal sealed class Ext2Inode : IVfsInode
     public string Name { get; internal set; }
 
     /// <summary>File type plus permission bits (i_mode).</summary>
-    public ushort Mode { get; internal set; }
+    public ushort Mode { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Owner user id (i_uid).</summary>
-    public ushort Uid { get; internal set; }
+    public ushort Uid { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Owner group id (i_gid).</summary>
-    public ushort Gid { get; internal set; }
+    public ushort Gid { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>File size in bytes, low 32 bits (i_size).</summary>
-    public uint Size { get; internal set; }
+    public uint Size { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>File size in bytes, high 32 bits (i_dir_acl for regular files).</summary>
-    public uint SizeHigh { get; internal set; }
+    public uint SizeHigh { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Full 64-bit file size.</summary>
     public ulong FullSize => ((ulong)SizeHigh << 32) | Size;
 
     /// <summary>Last access time, Unix seconds (i_atime).</summary>
-    public uint Atime { get; internal set; }
+    public uint Atime { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Inode change time, Unix seconds (i_ctime).</summary>
-    public uint Ctime { get; internal set; }
+    public uint Ctime { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Last modification time, Unix seconds (i_mtime).</summary>
-    public uint Mtime { get; internal set; }
+    public uint Mtime { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Deletion time, Unix seconds (i_dtime).</summary>
-    public uint Dtime { get; internal set; }
+    public uint Dtime { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Hard link count (i_links_count).</summary>
-    public ushort LinksCount { get; internal set; }
+    public ushort LinksCount { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>512-byte sectors allocated to the inode (i_blocks).</summary>
-    public uint Blocks { get; internal set; }
+    public uint Blocks { get; internal set { field = value; Dirty = true; } }
 
     /// <summary>Inode flags (i_flags).</summary>
-    public uint Flags { get; internal set; }
+    public uint Flags { get; internal set { field = value; Dirty = true; } }
 
     // ZehOS patch ext2-truncate, see PATCHES.md
     /// <summary>Extended attribute block (i_file_acl); 0 when none. Read only, never written back.</summary>
@@ -63,6 +63,23 @@ internal sealed class Ext2Inode : IVfsInode
 
     /// <summary>15 block pointers: 12 direct, then single, double and triple indirect.</summary>
     public uint[] Block { get; internal set; } = new uint[Ext2InodeLayout.BlockCount];
+
+    // ZehOS patch ext2-inode-cache-evict, see PATCHES.md
+    /// <summary>
+    /// Fields are ahead of the disk; keeps the inode in the cache. Set by the
+    /// setters above. Elements of <see cref="Block"/> do not set it: whoever
+    /// changes one changes <see cref="Blocks"/> or <see cref="Size"/> too.
+    /// </summary>
+    internal bool Dirty { get; set; }
+
+    /// <summary>The inode was released: its number may belong to another file, so it is never written again.</summary>
+    internal bool Detached { get; set; }
+
+    /// <summary>Slot in the <see cref="Ext2InodeCache"/>; valid while cached, under its lock.</summary>
+    internal int CacheSlot { get; set; }
+
+    /// <summary>Looked up since the cache last considered evicting it; under the cache's lock.</summary>
+    internal bool CacheReferenced { get; set; }
 
     /// <inheritdoc/>
     public IInodeOperations InodeOperations => Superblock.InodeOps;

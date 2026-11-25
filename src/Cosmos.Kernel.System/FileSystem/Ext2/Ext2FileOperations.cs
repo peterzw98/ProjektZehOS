@@ -136,7 +136,9 @@ internal sealed class Ext2FileOperations : IFileOperations
         }
 
         // ZehOS patch ext2-readonly, see PATCHES.md
-        if (_superblock.IsReadOnly)
+        // ZehOS patch ext2-inode-cache-evict: blocks allocated for a released
+        // inode would never be recorded anywhere and leak.
+        if (_superblock.IsReadOnly || inode.Detached)
         {
             return 0;
         }
