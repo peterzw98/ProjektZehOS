@@ -97,11 +97,15 @@ public sealed class ProcessRootAccessTests
     public void RootProfileSystemDirectoriesAreNoProcessRoot()
     {
         // Root-Profil: Verwaltungswurzel ist das Dateisystem selbst. Abgelehnt wird vor jedem Zugriff auf die Platte.
-        var access = new FileAccessControl("/", StringComparison.Ordinal);
+        // Wurzel des Hostlaufwerks statt "/": Unter Windows ist "/" kein voll qualifizierter Pfad, ResolvePath scheiterte dort
+        // schon an Path.GetFullPath (Muster wie SystemDataPathTests); im Kernel ist die Wurzel "/".
+        string root = Path.GetPathRoot(Path.GetTempPath())!;
+        var access = new FileAccessControl(root, StringComparison.Ordinal);
         access.Initialize();
-        var admin = new FileService("/", access: access, session: new UserSession("0", "admin", true, "/root"));
-        foreach (string path in new[] { "/", "/etc", "/etc/zehos", "/etc/ssl", "/var/lib", "/var/lib/zehos/apps", "/boot/efi" })
+        var admin = new FileService(root, access: access, session: new UserSession("0", "admin", true, Path.Combine(root, "root")));
+        foreach (string relative in new[] { "", "etc", "etc/zehos", "etc/ssl", "var/lib", "var/lib/zehos/apps", "boot/efi" })
         {
+            string path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
             ResultErr result = admin.AuthorizeProcessRoot(path);
             Assert.IsFalse(result.IsOK(), path);
             StringAssert.Contains(result.Message, "ProcessRootDenied", path);
