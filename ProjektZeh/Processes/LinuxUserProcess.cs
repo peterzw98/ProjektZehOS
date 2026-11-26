@@ -197,7 +197,16 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
                 }
             }
 
-            file.Close();
+            if (file is LinuxOpenFile open)
+            {
+                // CloseChecked fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat
+                // am Prozessende keinen Empfänger mehr (wie Linux beim exit) und darf die übrigen Dateien nicht offen lassen.
+                _ = open.CloseChecked();
+            }
+            else
+            {
+                file.Close();
+            }
         }
     }
 
