@@ -1035,6 +1035,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         finally
         {
             DestroyMemory();
+            FreeIds();
         }
     }
 
