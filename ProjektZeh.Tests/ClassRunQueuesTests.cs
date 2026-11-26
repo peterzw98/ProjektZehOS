@@ -106,6 +106,32 @@ public sealed class ClassRunQueuesTests
         Assert.AreSame(n2, queues.Pick(null));
     }
 
+    // smp1-Hänger (Story Ladybird, #716): Ein Thread, der per Thread.Yield abgibt, bevor ein Tick seine Scheibe belastet hat, darf
+    // nicht wie ein verdrängter vorn zurück, sonst bekäme er jede Runde, die die Aushungerungsgrenze seiner Klasse gibt.
+    [TestMethod]
+    public void Yielded_VoluntarilyWhileHigherClassWaits_GoesToBackWithFreshSlice()
+    {
+        var queues = Queues();
+        FakeThread n1 = Make("n1", remaining: 5_000_000), n2 = Make("n2"), i = Make("i", ThreadClass.Interactive);
+        queues.Ready(n2);
+        queues.Ready(i);
+        Assert.AreSame(i, queues.Pick(n1, yielded: true));
+        queues.Yielded(n1);
+        Assert.AreSame(n2, queues.Pick(null));
+        Assert.AreSame(n1, queues.Pick(null));
+        Assert.AreEqual(2 * Tick, n1.State.RemainingNs);
+    }
+
+    [TestMethod]
+    public void Pick_YieldingHigherClass_KeepsCpuAsBefore()
+    {
+        var queues = Queues();
+        FakeThread i = Make("i", ThreadClass.Interactive, remaining: Tick), n = Make("n");
+        queues.Ready(n);
+        Assert.AreSame(i, queues.Pick(i, yielded: true));
+        Assert.AreSame(n, queues.At(0));
+    }
+
     [TestMethod]
     public void Yielded_AfterSliceEnd_GoesToBackWithFreshSlice()
     {
