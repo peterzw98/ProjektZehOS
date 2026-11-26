@@ -373,3 +373,6 @@ output-*/
 
 # Paketpfade usr/bin/ in den Testdaten des Formats 2 sind Inhalt, keine Buildausgabe.
 !ProjektZeh.Tests/TestData/Package2/repo/*/*/files/**/bin/
+
+# Lokal gebauter Cosmos-NuGet-Feed (scripts/build-cosmos.sh)
+deploy/cosmos/feed/
