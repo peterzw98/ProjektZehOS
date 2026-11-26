@@ -50,6 +50,9 @@ internal interface ILinuxThreads
 
     /// <summary>tgkill/tkill; <paramref name="tgid"/> negativ heißt tkill (ohne Gruppenprüfung).</summary>
     long SignalThread(int tgid, int tid, int signal);
+
+    /// <summary>Nach sigprocmask und sigaction: anhängige Signale verwerfen oder ihrer Standardaktion folgen (V10-Review P3).</summary>
+    void SignalStateChanged();
 }
 
 /// <summary>

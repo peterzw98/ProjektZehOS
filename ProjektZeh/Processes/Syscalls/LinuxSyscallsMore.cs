@@ -260,6 +260,9 @@ internal static partial class LinuxSyscalls
             st.Flags[sig] = newFlags;
             st.Restorer[sig] = newRestorer;
             st.Mask[sig] = newMask & ~SigKillStopMask;
+
+            // SIG_IGN verwirft ein anhängiges Signal (Linux do_sigaction), auch ein blockiertes.
+            (p as ILinuxThreads)?.SignalStateChanged();
         }
 
         return 0;
@@ -298,6 +301,9 @@ internal static partial class LinuxSyscalls
         {
             ulong next = how == 0 ? st.Blocked | value : how == 1 ? st.Blocked & ~value : value;
             st.Blocked = next & ~SigKillStopMask;
+
+            // Ein freigegebenes anhängiges Signal (tgkill während der Blockade) folgt jetzt seiner Standardaktion.
+            (p as ILinuxThreads)?.SignalStateChanged();
         }
 
         return 0;
