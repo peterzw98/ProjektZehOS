@@ -142,6 +142,88 @@ public sealed class LinuxProcessWaitTests
             Sys(P, Open, Path(path), (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat | extra), 0x1A4);
     }
 
+    /// <summary>Kind des ersten Prozesses nach execve, das selbst ein Kind per vfork und execve startet (Enkel).</summary>
+    private static (LinuxUserProcess Mid, LinuxUserProcess Grand) SpawnGrandchild(Root r)
+    {
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess mid = r.Exec!;
+        child.Release();
+
+        LinuxUserProcess? grand = null;
+        LinuxUserProcess? vforked = null;
+        mid.StartVfork = (c, _) =>
+        {
+            vforked = c;
+            c.CreatePages = () => new Pages();
+            c.StartExec = (n, _) =>
+            {
+                grand = n;
+                return true;
+            };
+            return true;
+        };
+        Assert.AreEqual(0L, Sys(mid, LinuxSyscalls.Clone, Spawn));
+        Assert.AreEqual(0L, vforked!.Exec("/hello", ["/hello"], []));
+        vforked.Release();
+        return (mid, grand!);
+    }
+
+    [TestMethod]
+    public void KillErreichtDenWaisenHinterEinemZombie()
+    {
+        var r = new Root();
+        (LinuxUserProcess mid, LinuxUserProcess grand) = SpawnGrandchild(r);
+        int killed = 0;
+        grand.OnKilled = _ => killed++;
+        mid.OnKilled = _ => Assert.Fail("der Zombie bekommt kein Signal");
+        r.P.OnExit = _ => Assert.Fail("kill(-1) trifft den Aufrufer nicht");
+
+        mid.ReportEnd(LinuxWaitStatus.Exited(0));
+        mid.Destroy(); // FreeIds: der Enkel läuft und bleibt in der Liste des toten Zwischenprozesses
+
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)grand.Pid, 0), "Waise hinter dem Zombie-Eintrag ist ein Ziel");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, unchecked((ulong)-1), 15), "kill(-1) erreicht ihn auch");
+        Assert.AreEqual(1, killed);
+        Assert.AreEqual(15, grand.TerminatedBySignal);
+    }
+
+    [TestMethod]
+    public void KillErreichtDenWaisenNachDemErntenDesZwischenprozesses()
+    {
+        var r = new Root();
+        (LinuxUserProcess mid, LinuxUserProcess grand) = SpawnGrandchild(r);
+        int killed = 0;
+        grand.OnKilled = _ => killed++;
+
+        mid.ReportEnd(LinuxWaitStatus.Exited(0));
+        mid.Destroy();
+        Assert.AreEqual((long)mid.Pid, r.Wait4(mid.Pid, 0, 0), "Eintrag des Zwischenprozesses ist ausgetragen");
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, (ulong)mid.Pid, 0), "der Zwischenprozess selbst ist weg");
+
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)grand.Pid, 0));
+        Assert.AreEqual(0L, Sys(r.P, KillNr, 0, 9), "kill(0) erreicht den Waisen");
+        Assert.AreEqual(1, killed);
+        Assert.AreEqual(9, grand.TerminatedBySignal);
+    }
+
+    [TestMethod]
+    public void KillWaehrendVforkMerktAlleSignaleUndSigkillGewinnt()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)child.Pid, 17), "SIGCHLD: Standard ignorieren");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)child.Pid, 9));
+        Assert.IsNull(child.ExitCode);
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        Assert.AreEqual(9, next.TerminatedBySignal, "das spätere SIGKILL geht nicht hinter SIGCHLD verloren");
+        Assert.AreEqual(137, next.ExitCode);
+        child.Release();
+    }
+
     private static long Sys(LinuxUserProcess p, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0)
     {
         var a = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4 };

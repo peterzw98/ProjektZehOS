@@ -148,9 +148,11 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
     /// </summary>
     public Action<int>? OnKilled { get; set; }
 
-    // Unter _threadGate: Signal aus kill, das während vfork ankam (das Kind läuft auf dem Kernelthread des Elternprozesses und lässt sich
-    // von außen nicht aus dem Ring 3 holen); execve stellt es dem neuen Abbild zu. Nach execve zeigt _execSuccessor auf das neue Abbild.
-    private int _killInVfork;
+    // Unter _threadGate: Signale aus kill, die während vfork ankamen (das Kind läuft auf dem Kernelthread des Elternprozesses und lässt sich
+    // von außen nicht aus dem Ring 3 holen), als Maske wie Linux' anhängige Signale (Bit signal-1); execve stellt sie dem neuen Abbild zu.
+    // Eine Maske statt eines Werts, damit ein späteres SIGKILL nicht hinter einem früheren, folgenlosen Signal verloren geht.
+    // Nach execve zeigt _execSuccessor auf das neue Abbild.
+    private ulong _killsInVfork;
     private LinuxUserProcess? _execSuccessor;
 
     public long KillProcess(int pid, int signal)
@@ -235,10 +237,10 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
 
                 if (target.InVfork)
                 {
-                    // Nur Signale merken, die beenden würden; Handler und blockierte Signale entscheidet execve beim neuen Abbild.
-                    if (signal != 0 && target._killInVfork == 0)
+                    // Handler und blockierte Signale entscheidet das neue Abbild nach execve.
+                    if (signal != 0)
                     {
-                        target._killInVfork = signal;
+                        target._killsInVfork |= 1UL << (signal - 1);
                     }
 
                     return 0;
@@ -269,18 +271,43 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
     }
 
     /// <summary>execve, Punkt ohne Rückweg: Spätere kill-Aufrufe treffen <paramref name="next"/>; ein Signal aus der vfork-Zeit bekommt es nach dem Start.</summary>
-    private int HandOverKill(LinuxUserProcess next)
+    private ulong HandOverKill(LinuxUserProcess next)
     {
         lock (_threadGate)
         {
             _execSuccessor = next;
-            int signal = _killInVfork;
-            _killInVfork = 0;
-            return signal;
+            ulong signals = _killsInVfork;
+            _killsInVfork = 0;
+            return signals;
         }
     }
 
-    /// <summary>Sucht <paramref name="pid"/> im Baum ab <paramref name="p"/>; ein selbst geernteter Prozess (SIG_IGN) ist schon weg.</summary>
+    /// <summary>
+    /// Stellt die während vfork gemerkten Signale dem neuen Abbild zu. SIGKILL und SIGSTOP zuerst (sie beenden immer, LinuxUserProcess.cs),
+    /// danach die übrigen aufsteigend; ein Signal nach dem Ende ist wirkungslos, der Exitstatus bleibt.
+    /// </summary>
+    private static void DeliverKillsFromVfork(LinuxUserProcess next, ulong signals)
+    {
+        const ulong Ending = (1UL << (9 - 1)) | (1UL << (19 - 1));
+        if ((signals & Ending) != 0)
+        {
+            _ = next.DeliverSignal((signals & (1UL << (9 - 1))) != 0 ? 9 : 19, fromOutside: true);
+            return;
+        }
+
+        for (int signal = 1; signal <= 64; signal++)
+        {
+            if ((signals & (1UL << (signal - 1))) != 0)
+            {
+                _ = next.DeliverSignal(signal, fromOutside: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sucht <paramref name="pid"/> im Baum ab <paramref name="p"/> und unter den toten Zwischenprozessen, die der erste Prozess für Waisen
+    /// aufhebt (<see cref="OrphanHolders"/>); ein selbst geernteter Prozess (SIG_IGN) ist schon weg.
+    /// </summary>
     private static bool Find(LinuxUserProcess p, int pid, out LinuxUserProcess? found, out bool zombie)
     {
         found = null;
@@ -291,6 +318,27 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
             return true;
         }
 
+        if (FindBelow(p, pid, out found, out zombie))
+        {
+            return true;
+        }
+
+        foreach (LinuxUserProcess holder in p.OrphanHolders)
+        {
+            // Nur unterhalb suchen: Die PID des toten Zwischenprozesses selbst ist frei und kann schon einem anderen gehören.
+            if (FindBelow(holder, pid, out found, out zombie))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool FindBelow(LinuxUserProcess p, int pid, out LinuxUserProcess? found, out bool zombie)
+    {
+        found = null;
+        zombie = false;
         foreach (LinuxChild c in p.Children)
         {
             if (c.Pid == pid)
@@ -305,7 +353,9 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                 return true;
             }
 
-            if (c.WaitStatus == null && Find(c.Process, pid, out found, out zombie))
+            // Auch unter beendeten Einträgen weitersuchen: Die noch laufenden Kinder eines toten Zwischenprozesses bleiben in seiner Liste
+            // (FreeIds räumt nur beendete aus); Linux hängt sie an init, hier bleiben sie im Baum erreichbar.
+            if (FindBelow(c.Process, pid, out found, out zombie))
             {
                 return true;
             }
@@ -314,16 +364,30 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
         return false;
     }
 
-    /// <summary>Alle laufenden Prozesse unter <paramref name="p"/> (Schnappschüsse der Kinderlisten, keine Sperre gleichzeitig).</summary>
+    /// <summary>
+    /// Alle laufenden Prozesse unter <paramref name="p"/>, auch die Waisen toter Zwischenprozesse (Schnappschüsse der Kinderlisten,
+    /// keine Sperre gleichzeitig). Zombies selbst sind kein Ziel, ihre noch laufenden Kinder schon.
+    /// </summary>
     private static void Collect(LinuxUserProcess p, List<LinuxUserProcess> into)
     {
         into.Add(p);
+        CollectBelow(p, into);
+        foreach (LinuxUserProcess holder in p.OrphanHolders)
+        {
+            CollectBelow(holder, into);
+        }
+    }
+
+    private static void CollectBelow(LinuxUserProcess p, List<LinuxUserProcess> into)
+    {
         foreach (LinuxChild c in p.Children)
         {
             if (c.WaitStatus == null)
             {
-                Collect(c.Process, into);
+                into.Add(c.Process);
             }
+
+            CollectBelow(c.Process, into);
         }
     }
 
