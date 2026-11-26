@@ -188,7 +188,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
         }
 
         ulong page = address & ~(Page - 1);
-        if (_frames.ContainsKey(page) || !_map.TryFind(page, out MapAccess access) || access == MapAccess.None)
+        if (!_map.TryFind(page, out MapAccess access) || access == MapAccess.None)
         {
             return false;
         }
@@ -196,6 +196,13 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
         if (((error & FaultWrite) != 0 && access != MapAccess.ReadWrite) || ((error & FaultFetch) != 0 && access != MapAccess.ReadExecute))
         {
             return false;
+        }
+
+        // Frame da, Seite nicht abgebildet: Protect konnte sie nach dem Aufheben nicht neu abbilden (V3-Review P3 b).
+        // Jetzt mit dem Zugriff aus der Karte nachholen; Inhalt und Frame bleiben.
+        if (_frames.TryGetValue(page, out ulong held))
+        {
+            return _pages.Map(page, held, access);
         }
 
         return Populate(page, access) != 0;
@@ -239,35 +246,57 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
 
     public bool Unmap(ulong addr, ulong len)
     {
-        if (!InUserRange(addr, len))
+        // Erst prüfen, dann Frames freigeben: scheiterte _map.Release erst danach, blieben Bereiche ohne Frames stehen und
+        // füllten sich beim nächsten Zugriff genullt (V3-Review P3 d).
+        if (len == 0 || ((addr | len) & (Page - 1)) != 0 || !InUserRange(addr, len))
         {
             return false;
         }
 
-        Release(addr, addr + len);
-        return true;
+        // Unter MinAddress liegt nie ein Bereich; dort ist munmap wie bei Linux erfolgreich und ohne Wirkung.
+        ulong start = Math.Max(addr, ElfLoader.MinAddress);
+        return start >= addr + len || Release(start, addr + len);
     }
 
     public bool Protect(ulong addr, ulong len, int prot)
     {
-        if (!InUserRange(addr, len) || !TryAccess(prot, out MapAccess access) || !_map.Protect(addr, len, access).IsOK())
+        if (!InUserRange(addr, len) || !TryAccess(prot, out MapAccess access))
+        {
+            return false;
+        }
+
+        // Der alte Zugriff je Seite mit Frame, damit eine Seite, die die Tabelle nicht freigibt, in der Karte so bleibt, wie die
+        // Tabelle sie abbildet (V3-Review P3 b). Sonst erlaubte die Karte dem Kernel, was die Tabelle dem Programm verwehrt, oder umgekehrt.
+        List<ulong> pages = PagesWithFrames(addr, addr + len);
+        var before = new MapAccess[pages.Count];
+        for (int i = 0; i < pages.Count; i++)
+        {
+            _map.TryFind(pages[i], out before[i]);
+        }
+
+        if (!_map.Protect(addr, len, access).IsOK())
         {
             return false;
         }
 
         bool ok = true;
-        foreach (ulong page in PagesWithFrames(addr, addr + len))
+        for (int i = 0; i < pages.Count; i++)
         {
+            ulong page = pages[i];
+
             // Neu abbilden statt umschreiben: IUserPages kennt nur Map und Unmap, der Frame und sein Inhalt bleiben.
             if (!_pages.Unmap(page))
             {
+                _map.Protect(page, Page, before[i]);
                 ok = false;
                 continue;
             }
 
-            if (access != MapAccess.None)
+            // Scheitert das neue Abbilden, bleibt der Frame beim Prozess und die Seite unabgebildet: Karte und Tabelle widersprechen
+            // sich nicht, der nächste Zugriff des Programms bildet über HandlePageFault nach, der Kernel liest über den Frame.
+            if (access != MapAccess.None && !_pages.Map(page, _frames[page], access))
             {
-                ok &= _pages.Map(page, _frames[page], access);
+                ok = false;
             }
         }
 
@@ -401,20 +430,39 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
 
     private ulong NewFrame() => (ulong)_frames.Count >= _maxFrames ? 0 : _pages.AllocateFrame();
 
-    private void Release(ulong start, ulong end)
+    /// <summary>Gibt [start, end) frei; start und end ausgerichtet und im Adressraum der Karte.</summary>
+    private bool Release(ulong start, ulong end)
     {
+        List<ulong> stuck = new();
         foreach (ulong page in PagesWithFrames(start, end))
         {
             // Bleibt die Seite abgebildet (die Tabelle lehnt ab), darf der Frame nicht frei werden: er bleibt beim Prozess,
-            // bis Destroy die Tabelle aufgelöst hat. Ein Zugriff dort bricht das Programm ab (Seite ohne Bereich).
+            // bis Destroy die Tabelle aufgelöst hat.
             if (_pages.Unmap(page))
             {
                 _pages.FreeFrame(_frames[page]);
                 _frames.Remove(page);
             }
+            else
+            {
+                stuck.Add(page);
+            }
         }
 
-        _map.Release(start, end - start);
+        if (!_map.Release(start, end - start).IsOK())
+        {
+            return false;
+        }
+
+        // Eine solche Seite bleibt als gesperrter Bereich (None) belegt (V3-Review P3 a): Sonst legte ein späteres mmap oder brk
+        // dort einen neuen Bereich an, und Programm wie Kernel sähen den alten, nicht genullten Frame. Der Kernel greift auf None
+        // nie zu, ein Seitenfehler dort bricht ab; ein späteres munmap versucht das Aufheben erneut.
+        foreach (ulong page in stuck)
+        {
+            _map.Reserve(page, Page, MapAccess.None, Placement.FixedNoReplace);
+        }
+
+        return true;
     }
 
     /// <summary>Seiten mit Frame in [start, end): über die Frames, nicht über den Bereich, der Terabytes groß sein kann.</summary>

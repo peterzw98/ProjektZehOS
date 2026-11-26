@@ -26,6 +26,7 @@ public sealed class LinuxUserProcessTests
         public ulong Next = 0x100000;
         public int Limit = int.MaxValue;
         public bool RefuseUnmap;
+        public bool RefuseMap;
 
         public ulong AllocateFrame()
         {
@@ -48,7 +49,7 @@ public sealed class LinuxUserProcessTests
         public bool Map(ulong page, ulong frame, MapAccess access)
         {
             Assert.AreNotEqual(MapAccess.None, access);
-            if (Mapped.ContainsKey(page)) return false;
+            if (RefuseMap || Mapped.ContainsKey(page)) return false;
             Mapped[page] = (frame, access);
             return true;
         }
@@ -273,10 +274,73 @@ public sealed class LinuxUserProcessTests
         int frames = process.FrameCount;
         Assert.IsTrue(process.Unmap(a, Page));
         Assert.AreEqual(frames, process.FrameCount, "abgebildet: nicht frei");
-        Assert.IsFalse(process.Protect(a, Page, 1));
+
+        // Die Seite bleibt gesperrt: kein neuer Bereich mit dem alten Frame, kein Kernelzugriff, Fehler brechen ab.
+        ulong b = process.MapAnonymous(Page, 3);
+        Assert.AreNotEqual(a, b, "gesperrte Seite nicht wieder vergeben");
+        Assert.IsFalse(process.TryRead(a, new byte[1]));
+        Assert.IsFalse(process.HandlePageFault(a, NotPresentRead));
+        Assert.IsFalse(process.Protect(a, Page, 1), "Tabelle lehnt weiter ab");
+        Assert.IsFalse(process.TryRead(a, new byte[1]), "Karte bleibt bei None, wie die Tabelle sie sieht");
+
+        // Gibt die Tabelle die Seite später frei, gehen Frame und Sperre mit dem nächsten munmap.
         pages.RefuseUnmap = false;
+        Assert.IsTrue(process.Unmap(a, Page));
+        Assert.AreEqual(frames - 1, process.FrameCount);
+        Assert.AreEqual(a, process.MapAnonymous(Page, 3));
+        byte[] fresh = new byte[1];
+        Assert.IsTrue(process.TryRead(a, fresh));
+        Assert.AreEqual(0, fresh[0], "neuer Bereich: genullter Frame");
         process.Destroy();
         Assert.AreEqual(0, pages.Frames.Count);
+    }
+
+    [TestMethod]
+    public void ProtectKeepsMapAndTableInStep()
+    {
+        var (process, pages, _, _) = Start();
+        ulong a = process.MapAnonymous(Page, 3);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 9 }));
+
+        // Tabelle gibt nicht frei: die Karte behält den alten Zugriff, der Kernel darf weiter schreiben wie das Programm.
+        pages.RefuseUnmap = true;
+        Assert.IsFalse(process.Protect(a, Page, 1));
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[a].Access);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 8 }));
+        pages.RefuseUnmap = false;
+
+        // Neu abbilden scheitert: Seite unabgebildet, Frame bleibt; der nächste Fehler bildet mit dem neuen Zugriff nach.
+        pages.RefuseMap = true;
+        Assert.IsFalse(process.Protect(a, Page, 1));
+        Assert.IsFalse(pages.Mapped.ContainsKey(a));
+        Assert.IsFalse(process.TryWrite(a, new byte[] { 7 }), "Karte sagt nur lesen");
+        pages.RefuseMap = false;
+        Assert.IsFalse(process.HandlePageFault(a, NotPresentWrite), "Schreiben bleibt verboten");
+        Assert.IsTrue(process.HandlePageFault(a, NotPresentRead));
+        Assert.AreEqual(MapAccess.Read, pages.Mapped[a].Access);
+        byte[] back = new byte[1];
+        Assert.IsTrue(process.TryRead(a, back));
+        Assert.AreEqual(8, back[0], "Inhalt erhalten");
+    }
+
+    [TestMethod]
+    public void UnmapChecksBeforeFreeing()
+    {
+        var (process, _, _, _) = Start();
+        ulong a = process.MapAnonymous(2 * Page, 3);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 5 }));
+        int frames = process.FrameCount;
+        Assert.IsFalse(process.Unmap(a + 1, Page), "unausgerichtet");
+        Assert.IsFalse(process.Unmap(a, Page + 1), "Länge unausgerichtet");
+        Assert.IsFalse(process.Unmap(a, 0));
+        Assert.AreEqual(frames, process.FrameCount, "nichts freigegeben");
+        byte[] back = new byte[1];
+        Assert.IsTrue(process.TryRead(a, back));
+        Assert.AreEqual(5, back[0]);
+        Assert.IsTrue(process.Unmap(0, Page), "unter MinAddress: wie Linux ohne Wirkung");
+        Assert.IsTrue(process.Unmap(0, a + Page), "über MinAddress hinweg");
+        Assert.IsFalse(process.TryRead(a, back), "freigegeben");
+        Assert.IsTrue(process.TryRead(a + Page, back), "dahinter unverändert");
     }
 
     [TestMethod]
@@ -348,6 +412,35 @@ public sealed class TerminalDescriptorTests
         Assert.AreEqual(2, lines.Text.Count, "nichts doppelt");
         terminal.Write(Encoding.UTF8.GetBytes("\n"));
         Assert.AreEqual("", lines.Text[2], "leere Zeile bleibt");
+    }
+
+    [TestMethod]
+    public void ControlSequencesDoNotReachTheTerminal()
+    {
+        Assert.AreEqual("rot normal", TerminalDescriptor.Printable("\x1b[1;31mrot\x1b[0m normal"));
+        Assert.AreEqual("> ", TerminalDescriptor.Printable("\x1b[2K\x1b[G> "), "Zeile löschen, Spalte 1");
+        Assert.AreEqual("Text", TerminalDescriptor.Printable("\x1b]0;Titel\aText"));
+        Assert.AreEqual("Text", TerminalDescriptor.Printable("\x1b]0;Titel\x1b\\Text"));
+        Assert.AreEqual("100%", TerminalDescriptor.Printable("10%\r50%\r100%"), "\\r beginnt die Zeile neu");
+        Assert.AreEqual("ende", TerminalDescriptor.Printable("ende\r"));
+        Assert.AreEqual("ab", TerminalDescriptor.Printable("abc\b"));
+        Assert.AreEqual("a\tb", TerminalDescriptor.Printable("a\u0007\u0000\tb\u007f"));
+        Assert.AreEqual("x", TerminalDescriptor.Printable("x\x1b["), "abgeschnittene Folge");
+        Assert.AreEqual("äö", TerminalDescriptor.Printable("äö"));
+    }
+
+    [TestMethod]
+    public void ClosedTerminalDropsOutput()
+    {
+        var lines = new Lines();
+        var mirrored = 0;
+        var terminal = new TerminalDescriptor(lines) { Mirror = d => mirrored += d.Length };
+        terminal.Write("a\n"u8);
+        terminal.Close();
+        Assert.AreEqual(2L, terminal.Write("b\n"u8));
+        terminal.Flush();
+        Assert.AreEqual("a", string.Join("|", lines.Text));
+        Assert.AreEqual(2, mirrored);
     }
 
     [TestMethod]
