@@ -1621,7 +1621,26 @@ public static class SchedulerManager
                 GarbageCollector.RetireAllocContext(ref thread._allocContext);
             }
 
+            // ZehOS patch user-cr3, see PATCHES.md: the binding ends with the
+            // thread, so that its table can go after Join. A thread exiting
+            // itself leaves the table on this CPU now.
+            bool self = ReferenceEquals(CurrentThread, thread);
+            if (self)
+            {
+                Memory.UserPageTable.UnbindCurrentThread();
+            }
+
             PerCpuState state = AcquireThreadQueueLock(thread);
+            // Any other thread under its queue lock, in one step with Dead:
+            // the switch to it reads the binding under that lock, so it either
+            // came first, and its CPU stays counted in the table until it
+            // switches away, or it cannot come. Unbound before the lock, the
+            // switch could read the table after Dispose had freed it.
+            if (!self)
+            {
+                Memory.UserPageTable.Unbind(thread);
+            }
+
             thread.State = SchedulerThreadState.Dead;
             s_currentScheduler.OnThreadExit(state, thread);
             state._lock.Release();
@@ -1684,25 +1703,54 @@ public static class SchedulerManager
         return true;
     }
 
+    // ZehOS patch yield-now, see PATCHES.md
     /// <summary>
-    /// Gives up the CPU at the next interrupt exit: sets the request
-    /// <see cref="BlockThread"/> makes, so that exit switches even when the
-    /// quantum has not run out. The switch re-queues the thread through
-    /// <see cref="IScheduler.OnThreadYield"/> after the policy picked another,
-    /// as a preemption does. Returns at once: nothing switches outside an
-    /// interrupt exit, and waiting for one would cost every call up to a
-    /// tick, while CoreLib's spin-then-block loops call Thread.Yield once per
-    /// spin (70 times before an idle thread pool worker parks on one CPU).
-    /// The request is this CPU's own and its exit consumes it under the queue
-    /// lock; a bare store here is enough, since a store that lands after the
-    /// exit's read is served by the next exit.
+    /// Gives up the CPU: sets the request <see cref="BlockThread"/> makes,
+    /// and when the caller runs with interrupts enabled and another thread
+    /// waits in this CPU's run structure, raises the reschedule interrupt on
+    /// this CPU, as <see cref="Park"/> does, so the switch happens within a
+    /// few instructions instead of at the next tick. The switch re-queues the
+    /// thread through <see cref="IScheduler.OnThreadYield"/> after the policy
+    /// picked another, as a preemption does, and the call returns once the
+    /// thread runs again. With nothing else queued here the call only sets
+    /// the request and returns at once, as before the patch: CoreLib's
+    /// spin-then-block loops call Thread.Yield once per spin (70 times before
+    /// an idle thread pool worker parks on one CPU), and an interrupt per
+    /// spin would switch to nothing. Flag, queue read and interrupt name the
+    /// CPU read under the mask (not <paramref name="cpuId"/>: the caller may
+    /// have moved since it read it); the queue is read under its lock, and a
+    /// wake that queues a thread here after the read sends the reschedule
+    /// interrupt itself. A caller with interrupts masked (a handler, a masked
+    /// section, an IST handler) only sets the request, which the next
+    /// interrupt exit serves: nothing may switch away from such a frame.
     /// </summary>
-    /// <param name="cpuId">CPU ID of the calling thread.</param>
+    /// <param name="cpuId">CPU ID of the calling thread, used when interrupts are masked.</param>
     internal static void YieldThread(uint cpuId)
     {
         ThrowIfCpuStateNotInitialized();
 
-        Volatile.Write(ref s_cpuStates[cpuId]._needReschedule, true);
+        if (!InternalCpu.InterruptsEnabled)
+        {
+            Volatile.Write(ref s_cpuStates[cpuId]._needReschedule, true);
+            return;
+        }
+
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            PerCpuState state = s_cpuStates[GetCurrentCpuId()];
+            Volatile.Write(ref state._needReschedule, true);
+
+            // Interrupts are masked, so the plain form of the queue lock.
+            bool othersQueued;
+            state._lock.Acquire();
+            othersQueued = s_currentScheduler is not null && s_currentScheduler.GetRunQueueCount(state) > 0;
+            state._lock.Release();
+
+            if (othersQueued)
+            {
+                InterruptManager.TryRaiseReschedule();
+            }
+        }
     }
 
     /// <summary>
@@ -2180,6 +2228,8 @@ public static class SchedulerManager
                 next.State = SchedulerThreadState.Running;
                 next.LastScheduledAt = GetTimestamp();
 
+                // ZehOS patch user-cr3, see PATCHES.md
+                Memory.UserPageTable.SwitchFor(state, next);
                 DoContextSwitch(prev, next);
             }
         }
@@ -2908,6 +2958,17 @@ public static class SchedulerManager
             // the interrupt exit switches on.
             state.CurrentThread = next;
             PerCpuBlock.Current.CurrentExInfoHead = next.ExInfoHeadSlot;
+
+            // ZehOS patch user-cr3, see PATCHES.md: now, under the queue lock,
+            // not once the stub has left prev's stack: the lock is free by
+            // then, and prev, dead or killed, may let its table go. A dead prev
+            // (given up at a fault, or killed while it ran) does not come back
+            // through ExitThread's unbind: its binding ends here.
+            Memory.UserPageTable.SwitchFor(state, next);
+            if (prev is not null && prev.State == SchedulerThreadState.Dead)
+            {
+                Memory.UserPageTable.Unbind(prev);
+            }
 
             // Check if this is a NEW thread (never run before) or RESUMED
             bool isNewThread = next.State == SchedulerThreadState.Created;

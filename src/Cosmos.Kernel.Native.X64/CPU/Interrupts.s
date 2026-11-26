@@ -631,9 +631,50 @@ _native_x64_get_irq_stub:
     mov rax, [rax + rdi * 8]  // Load stub address for vector index
     ret
 
-.macro IRQ_STUB n, has_err=0
+// ZehOS patch fxsave, see PATCHES.md
+// Size of the fxsave64 image at the bottom of a ThreadContext; the managed side is
+// ThreadContext.FpuAreaSize. The TempRcx slot follows the area, the 15 GPRs and 3 info words.
+.equ FPU_AREA_SIZE, 512
+.equ CONTEXT_TEMP_RCX, FPU_AREA_SIZE + 120 + 24
+
+// ZehOS patch user-stub, see PATCHES.md
+// GS on entry: an interrupt from ring 3 finds the program's GS base, the kernel's waits in
+// IA32_KERNEL_GS_BASE. CS.RPL tells the two apart, and the same test on the frame that is
+// resumed decides the exit, so a thread switch in between needs no further state.
+// Vectors 2, 8 and 18 (paranoid=1) can hit ring 0 code between an entry or exit and its
+// swapgs: CS says kernel while GS is the program's. They read IA32_GS_BASE instead: the
+// per-CPU blocks are in the kernel half, so bit 63 is set exactly for the kernel's. This
+// relies on CR4.FSGSBASE staying clear: ring 3 can then not load a base with bit 63 set.
+.equ IA32_GS_BASE, 0xC0000101
+.equ CONTEXT_CS, FPU_AREA_SIZE + 152 + 8
+// TempRcx values: 0, 1 (new thread), 2 (paranoid entry did swapgs, undo it on the exit).
+// The switch path overwrites the slot of the context it resumes, so a 2 never outlives its stub.
+.equ TEMP_SWAPGS_ON_EXIT, 2
+
+.section .rodata
+.balign 4
+.Ldefault_mxcsr:
+    .long 0x1F80
+.text
+
+.macro IRQ_STUB n, has_err=0, paranoid=0
 irq\n\()_stub:
+    .if \paranoid
     .if \has_err
+    // GS is not known yet. The only such vector is 8, whose error code is always 0.
+    add rsp, 8
+    .endif
+    .else
+    .if \has_err
+    test byte ptr [rsp + 16], 3  // CS, above the error code and RIP
+    .else
+    test byte ptr [rsp + 8], 3   // CS, above RIP
+    .endif
+    jz .Lentry_kernel\n
+    swapgs
+.Lentry_kernel\n:
+    .endif
+    .if \has_err && !\paranoid
     // The CPU pushed an error code for this vector (8, 10-14, 17, 21, 29, 30).
     // Stash it and remove it from the stack so the frame below is identical
     // to the no-error-code vectors — both the ThreadContext layout offsets
@@ -648,7 +689,7 @@ irq\n\()_stub:
     // Stack at entry: [RSP] = RIP, [RSP+8] = CS, [RSP+16] = RFLAGS
     //
     // ThreadContext struct layout (low to high address):
-    //   XMM[256], R15..RAX (15 regs), Interrupt, CpuFlags, Cr2, TempRcx, RIP, CS, RFLAGS, [RSP, SS]
+    //   FPU area[FPU_AREA_SIZE], R15..RAX (15 regs), Interrupt, CpuFlags, Cr2, TempRcx, RIP, CS, RFLAGS, [RSP, SS]
     //
     // Strategy: Save all GPRs first, then compute and insert context info
 
@@ -739,30 +780,54 @@ irq\n\()_stub:
     // [rsp+120..151] = Interrupt, CpuFlags, Cr2, TempRcx (32 bytes)
     // [rsp+152..] = RIP, CS, RFLAGS (CPU frame)
 
-    // Save XMM registers (SSE/SIMD state) - 16 registers * 16 bytes = 256 bytes
-    sub rsp, 256
-    movdqu [rsp + 0], xmm0
-    movdqu [rsp + 16], xmm1
-    movdqu [rsp + 32], xmm2
-    movdqu [rsp + 48], xmm3
-    movdqu [rsp + 64], xmm4
-    movdqu [rsp + 80], xmm5
-    movdqu [rsp + 96], xmm6
-    movdqu [rsp + 112], xmm7
-    movdqu [rsp + 128], xmm8
-    movdqu [rsp + 144], xmm9
-    movdqu [rsp + 160], xmm10
-    movdqu [rsp + 176], xmm11
-    movdqu [rsp + 192], xmm12
-    movdqu [rsp + 208], xmm13
-    movdqu [rsp + 224], xmm14
-    movdqu [rsp + 240], xmm15
+    // ZehOS patch user-stub, see PATCHES.md
+    // The CPU leaves DF as it was, the C ABI wants it clear.
+    cld
+    .if \paranoid
+    mov ecx, IA32_GS_BASE
+    rdmsr                        // EDX = bits 63:32
+    test edx, edx
+    js .Lparanoid_kernel_gs\n
+    swapgs
+    mov qword ptr [rsp + 144], TEMP_SWAPGS_ON_EXIT
+.Lparanoid_kernel_gs\n:
+    .if \has_err
+    mov qword ptr gs:[PERCPU_LAST_ERROR_CODE], 0
+    .endif
+    .endif
+
+    // ZehOS patch fxsave, see PATCHES.md
+    // The whole x87/SSE state (FCW, MXCSR, ST0-7, XMM0-15). fxsave64 needs a
+    // 16-byte-aligned area: the CPU aligns RSP before it pushes its 40-byte
+    // frame, and the 152 bytes above leave RSP aligned again.
+    sub rsp, FPU_AREA_SIZE
+    fxsave64 [rsp]
+
+    // ZehOS patch user-stub, see PATCHES.md
+    // Managed code must not run with a program's control words: an unmasked exception would
+    // be raised in the kernel. fninit, not fldcw, which would itself raise a pending one.
+    // The saved state comes back with fxrstor64. Kernel threads keep theirs, as before.
+    .if !\paranoid
+    test byte ptr [rsp + CONTEXT_CS], 3
+    jz .Lfpu_kept\n
+    .endif
+    fninit
+    ldmxcsr dword ptr [rip + .Ldefault_mxcsr]
+.Lfpu_kept\n:
 
     // === CALL HANDLER ===
-    lea rdi, [rsp + 256]
+    lea rdi, [rsp + FPU_AREA_SIZE]
     call __managed__irq
 
     // === CHECK FOR CONTEXT SWITCH ===
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // Not on the exit of 2, 8 and 18: they can hit a handler that has staged a switch and not
+    // finished it (EOI, the wait for the incoming thread to leave its previous CPU). Taking it
+    // here would run that thread while it may still be on another CPU's stack; the
+    // interrupted handler's own exit takes it.
+    .if \paranoid
+    jmp .Lrestore\n
+    .endif
     // Staged in this CPU's per-CPU block (PerCpuBlock.cs), reached through GS
     mov rax, qword ptr gs:[PERCPU_SWITCH_TARGET_SP]
     test rax, rax
@@ -792,39 +857,24 @@ irq\n\()_stub:
 .Lmarker_done\n:
 
     // Store flag in a location we can read after GPR restore
-    // Use the TempRcx slot in the context (offset 400 from start, or after GPRs+info)
-    // After XMM restore: rsp points to GPRs
-    // GPRs = 120 bytes, then info section starts
-    // Interrupt(8) + CpuFlags(8) + Cr2(8) + TempRcx(8)
-    // So TempRcx is at offset 256 + 120 + 24 = 400 from original RSP
-    // Or from current RSP (pointing to XMM): 120 + 24 = 144 bytes after XMM area
-    mov [rsp + 256 + 120 + 24], rdx  // Store in TempRcx slot
+    // Use the TempRcx slot in the context, behind the FPU area, the GPRs and
+    // Interrupt(8) + CpuFlags(8) + Cr2(8)
+    mov [rsp + CONTEXT_TEMP_RCX], rdx  // Store in TempRcx slot
 
 .Lrestore\n:
     // === RESTORE CONTEXT (single path for all cases) ===
     // First, read TempRcx BEFORE restoring GPRs (so we don't destroy RAX)
-    // TempRcx is at: XMM(256) + GPRs(120) + interrupt(8) + cpuflags(8) + cr2(8) = offset 400
-    mov rax, [rsp + 256 + 120 + 24]  // Read TempRcx (is_new_thread flag)
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // Not for 2, 8 and 18: they can hit another stub between this store and its read below.
+    // They switch nothing and read their mark from their own frame instead.
+    .if !\paranoid
+    mov rax, [rsp + CONTEXT_TEMP_RCX]  // Read TempRcx (is_new_thread flag)
     mov qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], rax  // Keep it in this CPU's block across the restore
+    .endif
 
-    // Restore XMM
-    movdqu xmm0, [rsp + 0]
-    movdqu xmm1, [rsp + 16]
-    movdqu xmm2, [rsp + 32]
-    movdqu xmm3, [rsp + 48]
-    movdqu xmm4, [rsp + 64]
-    movdqu xmm5, [rsp + 80]
-    movdqu xmm6, [rsp + 96]
-    movdqu xmm7, [rsp + 112]
-    movdqu xmm8, [rsp + 128]
-    movdqu xmm9, [rsp + 144]
-    movdqu xmm10, [rsp + 160]
-    movdqu xmm11, [rsp + 176]
-    movdqu xmm12, [rsp + 192]
-    movdqu xmm13, [rsp + 208]
-    movdqu xmm14, [rsp + 224]
-    movdqu xmm15, [rsp + 240]
-    add rsp, 256
+    // Restore the x87/SSE state
+    fxrstor64 [rsp]
+    add rsp, FPU_AREA_SIZE
 
     // Restore GPRs
     pop r15
@@ -848,11 +898,27 @@ irq\n\()_stub:
 
     // === EXIT PATH ===
     // Stack now: RIP, CS, RFLAGS, [RSP, SS if privilege change]
+    .if \paranoid
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    // The mark is the TempRcx slot just below RIP, on this vector's own IST stack. Without it,
+    // GS was the kernel's on entry, so CS was too: no swapgs.
+    cmp qword ptr [rsp - 8], TEMP_SWAPGS_ON_EXIT
+    jne .Lexit_kernel\n
+    swapgs
+    jmp .Lexit_kernel\n
+    .endif
     // Check saved flag for new thread
     cmp qword ptr gs:[PERCPU_TEMP_IS_NEW_THREAD], 0
     jnz .Lnew_thread\n
 
     // RESUMED thread or normal return - use iretq
+    // ZehOS patch user-stub, see PATCHES.md
+    // Interrupts are masked from here to iretq; nothing may touch gs: after the swapgs.
+    test byte ptr [rsp + 8], 3
+    jz .Lexit_kernel\n
+.Lexit_swapgs\n:
+    swapgs
+.Lexit_kernel\n:
     iretq
 
 .Lnew_thread\n:
@@ -861,7 +927,7 @@ irq\n\()_stub:
     // Interrupts stay masked until RSP is the thread's own stack. The
     // context block has no headroom below its RSP slot, so an interrupt
     // taken before the switch would push its frame, and this stub's
-    // 448-byte save, past the bottom of the stack allocation into the heap.
+    // save of a whole context, past the bottom of the stack allocation into the heap.
     pop r11          // RIP -> r11
     add rsp, 8       // skip CS
     pop r10          // RFLAGS -> r10 (r10 is zero in a new context, caller-saved)
@@ -874,13 +940,13 @@ irq\n\()_stub:
 // Generate IRQ stubs
 IRQ_STUB 0
 IRQ_STUB 1
-IRQ_STUB 2
+IRQ_STUB 2, 0, 1
 IRQ_STUB 3
 IRQ_STUB 4
 IRQ_STUB 5
 IRQ_STUB 6
 IRQ_STUB 7
-IRQ_STUB 8, 1
+IRQ_STUB 8, 1, 1
 IRQ_STUB 9
 IRQ_STUB 10, 1
 IRQ_STUB 11, 1
@@ -890,7 +956,7 @@ IRQ_STUB 14, 1
 IRQ_STUB 15
 IRQ_STUB 16
 IRQ_STUB 17, 1
-IRQ_STUB 18
+IRQ_STUB 18, 0, 1
 IRQ_STUB 19
 IRQ_STUB 20
 IRQ_STUB 21, 1

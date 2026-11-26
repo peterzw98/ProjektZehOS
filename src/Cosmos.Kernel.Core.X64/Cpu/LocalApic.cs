@@ -108,6 +108,9 @@ public static class LocalApic
     private const uint TimerLogPeriodTicks = 100;
 
     private static ulong s_baseAddress;
+    // ZehOS patch apic-hhdm, see PATCHES.md
+    /// <summary>The register page through the HHDM: every access goes here, so it holds under a CR3 without the identity map.</summary>
+    private static ulong s_registers;
     private static bool s_initialized;
     private static uint s_ticksPerMs;
     private static bool s_timerCalibrated;
@@ -115,7 +118,7 @@ public static class LocalApic
     private static ulong s_timerIntervalNs;
 
     /// <summary>
-    /// Gets the base address of the Local APIC.
+    /// Gets the physical base address of the Local APIC.
     /// </summary>
     public static ulong BaseAddress => s_baseAddress;
 
@@ -156,7 +159,17 @@ public static class LocalApic
     /// <param name="baseAddress">The physical address of the Local APIC registers.</param>
     public static void Initialize(ulong baseAddress)
     {
+        // ZehOS patch apic-hhdm, see PATCHES.md
+        // EOIs, IPIs and the timer run in every thread's context; the identity map Limine left
+        // in the lower half is not part of a program's address space, the HHDM is.
+        if (!DeviceMapper.EnsureMapped(baseAddress))
+        {
+            Serial.Write("[LocalAPIC] ERROR: registers not mapped\n");
+            return;
+        }
+
         s_baseAddress = baseAddress;
+        s_registers = baseAddress + AddressSpace.HhdmOffset;
 
         Serial.Write("[LocalAPIC] Initializing at 0x", baseAddress.ToString("X"), "\n");
 
@@ -359,7 +372,7 @@ public static class LocalApic
     /// </summary>
     private static uint Read(uint offset)
     {
-        return Native.MMIO.Read32(s_baseAddress + offset);
+        return Native.MMIO.Read32(s_registers + offset);
     }
 
     /// <summary>
@@ -367,7 +380,7 @@ public static class LocalApic
     /// </summary>
     private static void Write(uint offset, uint value)
     {
-        Native.MMIO.Write32(s_baseAddress + offset, value);
+        Native.MMIO.Write32(s_registers + offset, value);
     }
 
     /// <summary>
@@ -593,7 +606,7 @@ public static class LocalApic
 
         // Calculate RSP pointing to saved context for context switching
         nuint contextPtr = (nuint)Unsafe.AsPointer(ref context);
-        nuint currentRsp = contextPtr - X64InterruptController.XmmSaveAreaSizeBytes;  // RSP points to start of XMM save area
+        nuint currentRsp = contextPtr - ThreadContext.FpuAreaSize;  // RSP points to start of the FPU area
 
         // Sanity check RSP - should be in kernel space (0xFFFF800000000000+)
         if ((currentRsp & AddressSpace.KernelSpaceCanonicalMask) != AddressSpace.KernelSpaceCanonicalMask)

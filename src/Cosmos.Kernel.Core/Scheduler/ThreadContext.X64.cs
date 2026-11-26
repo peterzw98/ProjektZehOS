@@ -10,8 +10,19 @@ namespace Cosmos.Kernel.Core.Scheduler;
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal unsafe struct ThreadContext
 {
-    // XMM registers (256 bytes) - SSE/SIMD state
-    public fixed byte Xmm[256];
+    // ZehOS patch fxsave, see PATCHES.md
+    /// <summary>Size of the fxsave64 image in bytes; the native side is <c>FPU_AREA_SIZE</c> in Interrupts.s.</summary>
+    internal const int FpuAreaSize = 512;
+
+    // Offsets in the fxsave64 image and the power-on values a new thread starts with:
+    // every exception masked, round to nearest, x87 in extended precision.
+    private const int FxsaveFcwOffset = 0;
+    private const int FxsaveMxcsrOffset = 24;
+    private const ushort DefaultFcw = 0x37F;
+    private const uint DefaultMxcsr = 0x1F80;
+
+    // fxsave64 image: x87 and SSE state. The context must be 16-byte aligned.
+    public fixed byte Fpu[FpuAreaSize];
 
     // General purpose registers (pushed in reverse order)
     public ulong R15;
@@ -50,7 +61,7 @@ internal unsafe struct ThreadContext
     /// <summary>
     /// Size of the complete context in bytes.
     /// </summary>
-    public const int Size = 256 + (15 * 8) + (3 * 8) + 8 + (5 * 8);  // XMM + GPRs + info + temp + full CPU frame
+    public const int Size = FpuAreaSize + (15 * 8) + (3 * 8) + 8 + (5 * 8);  // FPU area + GPRs + info + temp + full CPU frame
 
     /// <summary>
     /// Sets up initial context for a new thread.
@@ -83,13 +94,17 @@ internal unsafe struct ThreadContext
         // Set RBP to 0 (clean frame pointer for new thread)
         Rbp = 0;
 
-        // XMM registers are zeroed by default (uninitialized)
-        fixed (byte* xmm = Xmm)
+        // Zero registers and an empty x87 stack (the abridged tag word is 0), then the control
+        // words: an all-zero image would unmask every exception
+        fixed (byte* fpu = Fpu)
         {
-            for (int i = 0; i < 256; i++)
+            for (int i = 0; i < FpuAreaSize; i++)
             {
-                xmm[i] = 0;
+                fpu[i] = 0;
             }
+
+            *(ushort*)(fpu + FxsaveFcwOffset) = DefaultFcw;
+            *(uint*)(fpu + FxsaveMxcsrOffset) = DefaultMxcsr;
         }
     }
 }

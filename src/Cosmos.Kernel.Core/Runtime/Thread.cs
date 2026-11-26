@@ -90,10 +90,12 @@ internal class Thread
     }
 
     /// <summary>
-    /// Backs <c>Thread.Yield</c>, and through it CoreLib's spin waits: asks
-    /// the next interrupt exit to switch, and returns before it does.
+    /// Backs <c>Thread.Yield</c>, and through it CoreLib's spin waits: with
+    /// interrupts enabled and another thread queued on this CPU the switch
+    /// happens before it returns (ZehOS patch yield-now, see PATCHES.md);
+    /// otherwise the next interrupt exit switches.
     /// </summary>
-    /// <returns>0: no other thread has run yet when it returns.</returns>
+    /// <returns>0: whether another thread ran is not tracked.</returns>
     [RuntimeExport("RhYield")]
     internal static int RhYield()
     {

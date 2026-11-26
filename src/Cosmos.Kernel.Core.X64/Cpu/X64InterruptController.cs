@@ -23,9 +23,6 @@ internal class X64InterruptController : IInterruptController
     /// <summary>Page-fault exception vector (#PF, SDM 3A §6.15).</summary>
     private const ulong PageFaultVector = 14;
 
-    /// <summary>Size in bytes of the XMM save area the asm stub pushes below the IRQContext. Internal: shared with the LAPIC timer handler's RSP derivation.</summary>
-    internal const int XmmSaveAreaSizeBytes = 256;
-
     /// <summary>
     /// The vector of the scheduler's self-IPI (<see cref="TryRaiseReschedule"/>):
     /// above the LAPIC timer's <see cref="LocalApic.TIMER_VECTOR"/>, outside
@@ -58,6 +55,9 @@ internal class X64InterruptController : IInterruptController
         // Dispatch's hardware-IRQ path: the EOI, then the pending reschedule.
         InterruptManager.SetHandler(RescheduleVector, HandleReschedule);
         InterruptManager.SetHandler(StopVector, HandleStop);
+
+        // ZehOS patch user-mode-probe, see PATCHES.md
+        UserMode.RegisterArch(new UserModeX64());
     }
 
     /// <inheritdoc/>
@@ -128,7 +128,24 @@ internal class X64InterruptController : IInterruptController
         }
     }
 
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    /// <summary>
+    /// A fault of a program goes to its handler, everything else the kernel's way. Last, whichever
+    /// frame the stub is about to resume is checked if it belongs to ring 3.
+    /// </summary>
     public unsafe void Dispatch(ref IRQContext ctx)
+    {
+        // Now: a handler of the program may change the frame, its CS included.
+        bool fromUser = UserModeX64.IsUser(ref ctx);
+        if (!fromUser || !UserModeX64.TryHandleFault(ref ctx))
+        {
+            DispatchKernel(ref ctx);
+        }
+
+        UserModeX64.PrepareReturn(ref ctx, fromUser);
+    }
+
+    private unsafe void DispatchKernel(ref IRQContext ctx)
     {
         InterruptManager.IrqDelegate?[]? handlers = InterruptManager.s_irqHandlers;
         if (handlers is not null && ctx.interrupt < (ulong)handlers.Length)
@@ -151,9 +168,9 @@ internal class X64InterruptController : IInterruptController
                     // the common asm stub applies the staged context switch on
                     // every interrupt exit, not just timer ticks. Same RSP
                     // derivation (and kernel-space sanity check) as the LAPIC
-                    // timer handler: the saved context sits 256 bytes (XMM
-                    // save area) below the IRQContext.
-                    nuint currentRsp = (nuint)Unsafe.AsPointer(ref ctx) - XmmSaveAreaSizeBytes;
+                    // timer handler: the saved context starts with the
+                    // FPU area, right below the IRQContext.
+                    nuint currentRsp = (nuint)Unsafe.AsPointer(ref ctx) - ThreadContext.FpuAreaSize;
                     if ((currentRsp & AddressSpace.KernelSpaceCanonicalMask) == AddressSpace.KernelSpaceCanonicalMask)
                     {
                         SchedulerManager.ReschedulePendingFromIrq(SchedulerManager.GetCurrentCpuId(), currentRsp);
@@ -163,7 +180,15 @@ internal class X64InterruptController : IInterruptController
                 // Last, after every switch this exit could stage, whichever
                 // handler staged it: the thread the stub is about to resume
                 // must be off its previous CPU's stack (SMP phase 3b).
-                SchedulerManager.FinishSwitchFromIrq(SchedulerManager.GetCurrentCpuId());
+                // ZehOS patch user-mode-probe, see PATCHES.md
+                // Not for 2, 8 and 18: their exit takes no switch, and one staged by the handler
+                // they interrupted is that handler's to finish. Marking the incoming thread here
+                // would make the interrupted handler wait for it forever.
+                if (ctx.interrupt > MaxCpuExceptionVector || Gdt.IstOf((int)ctx.interrupt) == 0)
+                {
+                    SchedulerManager.FinishSwitchFromIrq(SchedulerManager.GetCurrentCpuId());
+                }
+
                 return;
             }
         }
@@ -198,7 +223,7 @@ internal class X64InterruptController : IInterruptController
     /// </summary>
     private static unsafe void HandleStop(ref IRQContext ctx)
     {
-        CpuStop.HandleStopInterrupt((nuint)Unsafe.AsPointer(ref ctx) - XmmSaveAreaSizeBytes);
+        CpuStop.HandleStopInterrupt((nuint)Unsafe.AsPointer(ref ctx) - ThreadContext.FpuAreaSize);
     }
 
     private static void SendEOI()
@@ -210,7 +235,7 @@ internal class X64InterruptController : IInterruptController
     }
 
     /// <summary>CPU exceptions that push an error code (SDM 3A §6.15); the asm stub stashes it for <see cref="Bridge.IdtNative.GetLastErrorCode"/>.</summary>
-    private static bool HasErrorCode(ulong interrupt) =>
+    internal static bool HasErrorCode(ulong interrupt) =>
         interrupt is 8 or (>= 10 and <= 14) or 17 or 21 or 29 or 30;
 
     private static void HandleFatalException(ulong interrupt, ulong cpuFlags, ulong faultAddress)

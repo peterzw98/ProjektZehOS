@@ -29,6 +29,13 @@
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.InstructionPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.StackPointer.get -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.CPU.CpuTickInfo.ThreadId.get -> uint
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.BindToCurrentThread() -> void
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Dispose() -> void
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryMap(ulong user, ulong physical, bool writable, bool executable) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryProtect(ulong user, bool writable, bool executable) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryTranslate(ulong user, bool write, out ulong physical) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Unmap(ulong user) -> ulong
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.CpuLockScope() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.Dispose() -> void
@@ -102,6 +109,11 @@
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuExceptionHook.Handler.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.get -> Cosmos.Kernel.Core.CPU.CpuTickHandler?
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.set -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.AllocateFrame() -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreeFrame(ulong physical) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShareKernelHalf() -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TryCreate() -> Cosmos.Kernel.Core.Memory.UserPageTable?
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.UnbindCurrentThread() -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.All.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.Empty.get -> Cosmos.Kernel.Core.Scheduler.CpuSet
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.operator !=(Cosmos.Kernel.Core.Scheduler.CpuSet left, Cosmos.Kernel.Core.Scheduler.CpuSet right) -> bool
@@ -125,3 +137,41 @@
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IVoluntaryMove
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IVoluntaryMove.SelectMoveTarget(Cosmos.Kernel.Core.Scheduler.PerCpuState! cpuState, Cosmos.Kernel.Core.Scheduler.SchedulerThread! current, Cosmos.Kernel.Core.Scheduler.PerCpuState![]! allCpuStates, Cosmos.Kernel.Core.Scheduler.CpuSet allowed) -> uint
 [COSMOS0001]const Cosmos.Kernel.Core.Scheduler.SchedulerManager.VoluntaryMoveIntervalTicks = 10 -> uint
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.UserFrame() -> void
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R15 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R14 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R13 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R12 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R11 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R10 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R9 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.R8 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rdi -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rsi -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rbp -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rbx -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rdx -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rcx -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rax -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Interrupt -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.CpuFlags -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Cr2 -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Temp -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rip -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Cs -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rflags -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Rsp -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserFrame.Ss -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.CPU.UserMode
+[COSMOS0001]const Cosmos.Kernel.Core.CPU.UserMode.EnterRefused = 18446744073709551615 -> ulong
+[COSMOS0001]const Cosmos.Kernel.Core.CPU.UserMode.InvalidReturn = 18446744073709551614 -> ulong
+[COSMOS0001]const Cosmos.Kernel.Core.CPU.UserMode.Faulted = 18446744073709551613 -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.Enter(ulong rip, ulong rsp) -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.Initialize() -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.IsSupported.get -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.LeaveCurrent(ulong exitValue) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.RequestLeave(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread, ulong exitValue) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.SetFsBase(ulong address) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.SyscallHandler -> delegate* unmanaged<Cosmos.Kernel.Core.CPU.UserFrame*, void>
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.FaultHandler -> delegate* unmanaged<Cosmos.Kernel.Core.CPU.UserFrame*, ulong, ulong, ulong, int>

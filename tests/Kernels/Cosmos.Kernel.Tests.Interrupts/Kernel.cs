@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Cosmos.Kernel.Core;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.IO;
@@ -36,8 +37,12 @@ namespace Cosmos.Kernel.Tests.Interrupts;
 // registers afterwards.
 public class Kernel : Sys.Kernel
 {
-    /// <summary>Total tests per cell: 10 cross-arch + 8 arch-specific.</summary>
-    private const int ExpectedTestCount = 18;
+    /// <summary>Total tests per cell: 10 cross-arch + 11 (x64) or 10 (arm64, skips included) arch-specific.</summary>
+#if ARCH_X64
+    private const int ExpectedTestCount = 21;
+#else
+    private const int ExpectedTestCount = 20;
+#endif
 
     /// <summary>CPUs the smp4 cells' machine has: what the bootloader lists and the kernel starts there.</summary>
     private const uint Smp4CpuCount = 4;
@@ -128,7 +133,6 @@ public class Kernel : Sys.Kernel
     {
         Serial.WriteString("[Interrupts] BeforeRun() reached!\n");
 
-        // 10 cross-arch + 8 arch-specific = 18 tests per cell.
         TR.Start("Interrupt System Tests", expectedTests: ExpectedTestCount);
 
         // The smp4 cells boot four CPUs; the application processor cell
@@ -172,6 +176,11 @@ public class Kernel : Sys.Kernel
         TR.Run("Msi_AddressTargetsRunningLapic", TestMsiAddressTargetsRunningLapic);
         TR.Run("TimerVector_OutsideDynamicWindow", TestTimerVectorOutsideDynamicWindow);
         TR.Run("PerCpuBlock_HardwareId_IsRunningLapicId", TestPerCpuBlockHardwareIdIsLapicId);
+        // ZehOS patch user-stub, see PATCHES.md
+        TR.Run("Nmi_KernelGsBase_LeftAlone", TestNmiKernelGsBase);
+        TR.Run("Nmi_ForeignGsBase_SwappedAndRestored", TestNmiForeignGsBase);
+        // Pinned like the cells above: the CR3 it loads is CPU 0's, whichever thread runs there.
+        TR.Run("Apic_LowerHalfEmpty_StillWorks", TestApicLowerHalfEmpty);
         Sys.Threading.ThreadAffinity.Current = mainSet;
         TR.RunIf(smp, "PerCpuBlock_ApplicationProcessors_DistinctLapicIds", TestPerCpuBlockApplicationProcessorsDistinctLapicIds, OneCpuCell);
 #else
@@ -204,6 +213,8 @@ public class Kernel : Sys.Kernel
         TR.Skip("IrqExit_ReschedulesSignaledWaiter", "self-IPI harness is x64-only");
         TR.Skip("Msi_AddressTargetsRunningLapic", "LAPIC MSI address contract is x64-only");
         TR.Skip("TimerVector_OutsideDynamicWindow", "LAPIC timer vector is x64-only");
+        TR.Skip("Nmi_KernelGsBase_LeftAlone", "GS is x64-only");
+        TR.Skip("Nmi_ForeignGsBase_SwappedAndRestored", "GS is x64-only");
 
         // Main runs on a thread of its own, on a compute CPU when the machine has several
         // (CosmosOS/Cosmos#3344, SMP phase 5b). The cell that compares block 0 with the
@@ -954,6 +965,104 @@ public class Kernel : Sys.Kernel
         Assert.True(PerCpuBlock.At(0).HardwareId == LocalApic.GetId(), "block 0 is the boot CPU's");
     }
 
+    // ZehOS patch user-stub, see PATCHES.md
+    private const byte NmiVector = 2;
+    private const ulong ForeignGsBase = 0x7000;
+    private const uint ForeignMxcsr = 0x1F00;
+    private const uint ForeignFcw = 0x037E;
+    private const uint DefaultMxcsr = 0x1F80;
+    private const uint DefaultFcw = 0x037F;
+    private const ulong DirectionFlag = 0x400;
+
+    /// <summary>The GS base, MXCSR, x87 control word and RFLAGS the native helpers of Asm/UserGs.s store.</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    private struct CpuState
+    {
+        [FieldOffset(0)] public ulong GsBase;
+        [FieldOffset(8)] public uint Mxcsr;
+        [FieldOffset(12)] public uint Fcw;
+        [FieldOffset(16)] public ulong Flags;
+    }
+
+    [DllImport("*", EntryPoint = "cosmos_test_user_gs_int2")]
+    [SuppressGCTransition]
+    private static extern unsafe void RaiseNmiWithForeignGs(CpuState* after, uint vector);
+
+    [DllImport("*", EntryPoint = "cosmos_test_cpu_state")]
+    [SuppressGCTransition]
+    private static extern unsafe void ReadCpuState(CpuState* state);
+
+    [DllImport("*", EntryPoint = "cosmos_test_int2")]
+    [SuppressGCTransition]
+    private static extern void RaiseNmi();
+
+    private static CpuState s_nmiState;
+    private static int s_nmiCount;
+
+    private static unsafe void RecordNmi(ref IRQContext context)
+    {
+        fixed (CpuState* state = &s_nmiState)
+        {
+            ReadCpuState(state);
+        }
+
+        s_nmiCount++;
+    }
+
+    // Vector 2 with the kernel's GS: the stub must not touch it, and a second vector 2 must not
+    // find a trace of the first.
+    private static unsafe void TestNmiKernelGsBase()
+    {
+        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![NmiVector];
+        InterruptManager.SetHandler(NmiVector, RecordNmi);
+        CpuState before;
+        CpuState after;
+        s_nmiCount = 0;
+        ReadCpuState(&before);
+        RaiseNmi();
+        RaiseNmi();
+        ReadCpuState(&after);
+        InterruptManager.s_irqHandlers![NmiVector] = previous;
+
+        Assert.True(s_nmiCount == 2, "vector 2 reached the handler twice");
+        Assert.True(s_nmiState.GsBase == before.GsBase, "the handler ran with the kernel's GS base");
+        Assert.True(after.GsBase == before.GsBase, "the kernel's GS base is back after the stub");
+        Assert.True(after.Mxcsr == before.Mxcsr && after.Fcw == before.Fcw, "the control words are back after the stub");
+    }
+
+    // Vector 2 in ring 0 while GS, the control words and DF are a program's: CS alone would
+    // say kernel and the stub would use the program's GS base as the per-CPU block.
+    private static void TestNmiForeignGsBase()
+    {
+        // ZehOS patch user-mode-probe: #MC and #DF too, which have the same entry.
+        RaiseWithForeignGs(NmiVector);
+        RaiseWithForeignGs(18);
+        RaiseWithForeignGs(8);
+    }
+
+    private static unsafe void RaiseWithForeignGs(byte vector)
+    {
+        InterruptManager.IrqDelegate? previous = InterruptManager.s_irqHandlers![vector];
+        InterruptManager.SetHandler(vector, RecordNmi);
+        CpuState before;
+        CpuState inside;
+        CpuState end;
+        s_nmiCount = 0;
+        ReadCpuState(&before);
+        RaiseNmiWithForeignGs(&inside, vector);
+        ReadCpuState(&end);
+        InterruptManager.s_irqHandlers![vector] = previous;
+
+        Assert.True(s_nmiCount == 1, "vector 2 reached the handler");
+        Assert.True(s_nmiState.GsBase == before.GsBase, "the handler ran with the kernel's GS base");
+        Assert.True(s_nmiState.Mxcsr == DefaultMxcsr && s_nmiState.Fcw == DefaultFcw, "the handler ran with the default control words");
+        Assert.True((s_nmiState.Flags & DirectionFlag) == 0, "the handler ran with DF clear");
+        Assert.True(inside.GsBase == ForeignGsBase, "the program's GS base is back after the stub");
+        Assert.True(inside.Mxcsr == ForeignMxcsr && inside.Fcw == ForeignFcw, "the program's control words are back after the stub");
+        Assert.True(inside.Flags == DirectionFlag, "the program's DF is back after the stub");
+        Assert.True(end.GsBase == before.GsBase, "the kernel's GS base is back at the end");
+    }
+
     // Each application processor's bring-up read its own Local APIC id into its block (SMP
     // phase 2): the ids are distinct, and each one is the id the bootloader listed the CPU
     // under, so a message aimed at a CPU by index reaches that CPU.
@@ -973,6 +1082,91 @@ public class Kernel : Sys.Kernel
                 Assert.True(block.HardwareId != PerCpuBlock.At(other).HardwareId, "two CPUs, two Local APIC ids");
             }
         }
+    }
+
+    // ZehOS patch apic-hhdm, see PATCHES.md
+    // A program's address space (ZehOS N1) has the kernel's upper half and nothing of Limine's
+    // identity map. With such a CR3 on CPU 0 the register accesses, the EOIs of the timer and of
+    // a self-IPI, the wake-up IPI to another CPU (smp4) and the I/O APIC must all still work;
+    // through the physical addresses the first access is a page fault.
+    private const int LowerHalfEntries = 256;
+    private const int RootEntries = 512;
+    private const int LowerHalfIpis = 20;
+    private const int LowerHalfWaitMs = 10;
+    /// <summary>An ISA line no driver routes: masked since boot, so masking it again changes nothing.</summary>
+    private const byte UnroutedIrq = 5;
+    private const ulong RootAddressMask = 0x000F_FFFF_FFFF_F000;
+
+    [DllImport("*", EntryPoint = "cosmos_test_load_cr3")]
+    [SuppressGCTransition]
+    private static extern void LoadCr3(ulong root);
+
+    [DllImport("*", EntryPoint = "cosmos_test_read_cr3")]
+    [SuppressGCTransition]
+    private static extern ulong ReadCr3();
+
+    private static int s_lowerHalfIpis;
+    private static volatile bool s_lowerHalfThreadRan;
+    private static volatile uint s_lowerHalfThreadCpu;
+
+    private static void LowerHalfIpiHandler(ref IRQContext context)
+    {
+        s_lowerHalfIpis++;
+    }
+
+    private static unsafe void TestApicLowerHalfEmpty()
+    {
+        ulong* root = (ulong*)PageAllocator.AllocPages(PageType.Unmanaged, 1, zero: true);
+        Assert.True(root != null, "a page for the root table");
+        byte vector = InterruptManager.AllocateVector(LowerHalfIpiHandler);
+        s_lowerHalfIpis = 0;
+        s_lowerHalfThreadRan = false;
+        // Moves itself to the compute CPUs (smp4: another CPU, woken by IPI).
+        var thread = new SysThread(() =>
+        {
+            Sys.Threading.ThreadAffinity.Current = Sys.Threading.KernelCpus.Compute;
+            s_lowerHalfThreadCpu = Sys.Threading.KernelCpus.Current;
+            s_lowerHalfThreadRan = true;
+        });
+
+        ulong rootPhysical = PageAllocator.VirtualToPhysical((ulong)root);
+        ulong kernelRoot;
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            kernelRoot = ReadCr3();
+            ulong* kernel = (ulong*)((kernelRoot & RootAddressMask) + AddressSpace.HhdmOffset);
+            for (int i = LowerHalfEntries; i < RootEntries; i++)
+            {
+                root[i] = kernel[i];
+            }
+
+            LoadCr3(rootPhysical);
+        }
+
+        byte id = LocalApic.GetId();
+        for (int i = 0; i < LowerHalfIpis; i++)
+        {
+            LocalApic.SendSelfIpi(vector);
+            // Sleeps until the timer wakes the thread: lost EOIs end it here.
+            SysThread.Sleep(LowerHalfWaitMs);
+        }
+
+        ApicManager.MaskIrq(UnroutedIrq);
+        thread.Start();
+        SysThread.Sleep(SleepDurationMs);
+
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            LoadCr3(kernelRoot);
+        }
+
+        InterruptManager.FreeVector(vector);
+        PageAllocator.Free(root);
+
+        Assert.True(id == PerCpuBlock.At(0).HardwareId, "the Local APIC id reads the same");
+        Assert.Equal(LowerHalfIpis, s_lowerHalfIpis, "every self-IPI was delivered and retired");
+        Assert.True(s_lowerHalfThreadRan, "a thread started under the empty lower half ran");
+        Assert.True(Smp.CpuCount == 1 || s_lowerHalfThreadCpu != 0, "on another CPU when there is one");
     }
 
     private static void IrqLatencyWaiter()

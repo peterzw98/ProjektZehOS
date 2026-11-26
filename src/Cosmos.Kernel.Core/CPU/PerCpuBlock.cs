@@ -24,7 +24,7 @@ namespace Cosmos.Kernel.Core.CPU;
 internal struct PerCpuBlock
 {
     /// <summary>Size of one block in bytes; the table holds <see cref="MaxCpus"/> of them.</summary>
-    public const int Size = 128;
+    public const int Size = 192;
 
     /// <summary>Blocks in the table: the MADT parser's bound, and more than Limine's list ever reports.</summary>
     public const int MaxCpus = 256;
@@ -117,6 +117,24 @@ internal struct PerCpuBlock
     public ulong CpuExceptionDepth;
 
     private ulong _reserved3;
+
+    // ZehOS patch user-stub, see PATCHES.md
+    // 0x80..0xBF: a cache line for the ring 3 entry. The offsets above are unchanged.
+    // ZehOS patch user-mode-probe, see PATCHES.md (UserMode.s mirrors the first two)
+    /// <summary>The kernel stack a <c>syscall</c> on this CPU starts on: the thread's that runs in ring 3.</summary>
+    public nuint UserKernelRsp;
+
+    /// <summary>The program's RSP, for the instructions of the <c>syscall</c> entry before it has a stack.</summary>
+    public nuint UserScratchRsp;
+
+    /// <summary>1 once this CPU's registers for ring 3 are set.</summary>
+    public ulong UserReady;
+
+    private ulong _userEntry3;
+    private ulong _userEntry4;
+    private ulong _userEntry5;
+    private ulong _userEntry6;
+    private ulong _userEntry7;
 
     /// <summary>
     /// The table: a static, so it is zeroed data at a fixed address outside the garbage

@@ -65,7 +65,10 @@ public sealed class PerCpuState : SchedulerExtensible
     // interrupt after; this CPU's own request (YieldThread, Park, the swap
     // with the world stopped) is a bare volatile store, since the exit that
     // consumes it runs here, under the lock, and a store that lands after
-    // its read is served by the next exit.
+    // its read is served by the next exit. Park and YieldThread then raise
+    // the reschedule interrupt here so that exit comes at once; YieldThread
+    // stores and raises with interrupts masked, so both name the CPU it runs
+    // on (ZehOS patch yield-now, see PATCHES.md).
     internal bool _needReschedule;
 
     // The thread the last switch-out on this CPU evicted because its set
@@ -85,6 +88,14 @@ public sealed class PerCpuState : SchedulerExtensible
     // interrupt context.
     internal uint _voluntaryTarget = SchedulerManager.NoCpu;
     internal uint _pendingTarget = SchedulerManager.NoCpu;
+    // ===== Address space =====
+
+    // ZehOS patch user-cr3, see PATCHES.md
+    // The user page table this CPU's CR3 holds, null for its kernel root, and
+    // that root, read from CR3 before the first user table replaced it.
+    // Written and read on this CPU alone, with interrupts masked.
+    internal Memory.UserPageTable? _loadedTable;
+    internal ulong _kernelRoot;
 
     // ===== Synchronization =====
 

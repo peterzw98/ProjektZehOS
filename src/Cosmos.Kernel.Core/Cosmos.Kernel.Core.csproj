@@ -134,6 +134,8 @@
          MMIO probes (Storage). -->
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Interrupts" />
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Memory" />
+    <!-- ZehOS patch user-mode-probe, see PATCHES.md -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserMode" />
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Storage" />
     <!-- White-box CSPRNG suite: known-answer tests of the BLAKE2s and ChaCha20
          primitives, and which entropy source seeded KernelRandom. -->
@@ -145,6 +147,8 @@
     <!-- The ISO 9660 suite reads its fixture images, embedded in the test
          kernel, through ResourceManager. -->
     <InternalsVisibleTo Include="Cosmos.Kernel.Tests.Iso9660" />
+    <!-- ZehOS patch user-page-tables, see PATCHES.md: the suite reads the raw tables and the free page count. -->
+    <InternalsVisibleTo Include="Cosmos.Kernel.Tests.UserPaging" />
   </ItemGroup>
 
   <ItemGroup>

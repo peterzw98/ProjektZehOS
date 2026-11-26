@@ -54,6 +54,28 @@ public partial class Engine
             _ => throw new ArgumentException($"Unsupported architecture: {_config.Architecture}")
         };
 
+        // ZehOS patch user-cr3, see PATCHES.md
+        // Extra symbols for test builds only (COSMOS_TEST_DEFINES=A;B), e.g.
+        // COSMOS_TEST_HOOKS, which widens race windows in Core. Packages never
+        // see them: make package sets DefineConstants itself. %3B keeps the
+        // separator from splitting the -p argument.
+        string? testDefines = Environment.GetEnvironmentVariable("COSMOS_TEST_DEFINES");
+        if (!string.IsNullOrWhiteSpace(testDefines))
+        {
+            foreach (string symbol in testDefines.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                foreach (char c in symbol)
+                {
+                    if (!(char.IsAsciiLetterOrDigit(c) || c == '_'))
+                    {
+                        throw new ArgumentException($"COSMOS_TEST_DEFINES: invalid symbol '{symbol}'");
+                    }
+                }
+
+                defineConstants += "%3B" + symbol;
+            }
+        }
+
         string cosmosArch = _config.Architecture.ToLowerInvariant();
 
         string coverageArg = _config.CoverageEnabled ? "-p:CosmosCoverage=true " : "";

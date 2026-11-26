@@ -120,6 +120,14 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// </summary>
     internal nuint OnCpuSlot => (nuint)Unsafe.AsPointer(ref _onCpu);
 
+    // ZehOS patch user-cr3, see PATCHES.md
+    /// <summary>
+    /// The user page table the thread runs on, or null for the kernel root.
+    /// Written by the thread itself with interrupts masked, or once it no
+    /// longer runs (its end); read by the switch to it under its CPU's queue lock.
+    /// </summary>
+    internal Memory.UserPageTable? _pageTable;
+
     // ZehOS patch thread-stack-reaper, see PATCHES.md
     /// <summary>Next entry in the scheduler's list of exited threads whose stack is not yet freed.</summary>
     internal SchedulerThread? _nextDeadStack;
@@ -139,6 +147,22 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
 
     /// <summary>1 once a reap of this abandoned thread has been claimed, so two callers never reap it twice.</summary>
     internal int _reapClaimed;
+
+    // ZehOS patch user-mode-probe, see PATCHES.md
+    /// <summary>The kernel stack pointer <see cref="CPU.UserMode.Enter"/> left for ring 3 with, the thread's RSP0; 0 outside of it.</summary>
+    internal ulong _userKernelRsp;
+
+    /// <summary>The program's FS base, loaded on every return to ring 3.</summary>
+    internal ulong _userFsBase;
+
+    /// <summary>Why <see cref="CPU.UserMode.Enter"/> ends without a request; 0 while nothing failed. The thread's own.</summary>
+    internal ulong _userFailure;
+
+    /// <summary>The request to leave ring 3: 0 none, 1 being written, 2 set. Any thread.</summary>
+    internal int _userLeaveState;
+
+    /// <summary>The value of the request, valid at state 2.</summary>
+    internal ulong _userLeaveValue;
 
     // ===== Context (architecture-specific values) =====
 
@@ -310,7 +334,7 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
         // The usable stack space is above it
         nuint contextAddr = StackBase;
 
-        // Align context to 16 bytes (required for XMM operations)
+        // Align context to 16 bytes (required for fxrstor64)
         contextAddr = (contextAddr + 0xF) & ~(nuint)0xF;
 
         // Calculate usable stack top (above the context)
@@ -321,7 +345,7 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
         context->Initialize(entryPoint, codeSegment, arg, usableStackTop);
 
         // The StackPointer points to the start of the context
-        // (where XMM registers are, as expected by the IRQ stub)
+        // (where the FPU area is, as expected by the IRQ stub)
         StackPointer = contextAddr;
         InstructionPointer = entryPoint;
         State = SchedulerThreadState.Created;

@@ -111,6 +111,56 @@ public static unsafe class DeviceMapper
     private static int s_writeCombiningIndex = PatUnread;
 
     /// <summary>
+    /// Whether every PML4 entry of the kernel half is present, and copied into
+    /// other PML4s: an entry created after that would be missing in those.
+    /// Under <see cref="s_lock"/>.
+    /// </summary>
+    // ZehOS patch user-page-tables, see PATCHES.md
+    private static bool s_kernelHalfShared;
+
+    /// <summary>
+    /// Creates every PML4 entry of the kernel half that is missing, under the
+    /// lock that guards such entries. Afterwards no mapping of this class
+    /// creates one. The kernel's PML4 must be the loaded one the first time.
+    /// </summary>
+    /// <returns>The kernel's PML4, or null when the kernel does not run on 4-level tables or an allocation failed.</returns>
+    // ZehOS patch user-page-tables, see PATCHES.md
+    internal static ulong* ShareKernelHalf()
+    {
+        // With 5-level paging the HHDM lies below the 4-level kernel half.
+        if (Limine.HHDM.Response == null || Limine.HHDM.Response->Offset < AddressSpace.KernelSpaceStart)
+        {
+            return null;
+        }
+
+        ulong hhdm = Limine.HHDM.Response->Offset;
+        using (s_lock.AcquireIrqSafe())
+        {
+            if (s_kernelHalfShared)
+            {
+                return s_kernelPml4;
+            }
+
+            ulong* pml4 = (ulong*)((X64CpuNative.ReadCr3() & AddrMask) + hhdm);
+            for (int i = PageTables.KernelHalfStart; i < TableEntries; i++)
+            {
+                if (GetOrCreateTable(pml4, i, hhdm) == null)
+                {
+                    return null;
+                }
+            }
+
+            s_kernelPml4 = pml4;
+            s_kernelHalfShared = true;
+            return pml4;
+        }
+    }
+
+    /// <summary>The kernel's PML4 once <see cref="s_kernelHalfShared"/> is set. Under <see cref="s_lock"/>.</summary>
+    // ZehOS patch user-page-tables, see PATCHES.md
+    private static ulong* s_kernelPml4;
+
+    /// <summary>
     /// Ensures the 2 MiB block containing <paramref name="physBase"/> is
     /// mapped at (phys + HHDM offset). No-op when the block is already
     /// mapped (in particular the whole Limine-covered low 4 GiB). Safe to
@@ -176,9 +226,19 @@ public static unsafe class DeviceMapper
         // The tables themselves live in low RAM, which the HHDM covers.
         ulong* pml4 = (ulong*)((X64CpuNative.ReadCr3() & AddrMask) + hhdm);
 
+        // ZehOS patch user-page-tables, see PATCHES.md
+        // Once shared, the kernel half is complete: a missing entry means the
+        // address left it, and a table there would belong to a user space.
+        int pml4Index = (int)((virt >> Pml4Shift) & TableIndexMask);
+        if (s_kernelHalfShared && (pml4Index < PageTables.KernelHalfStart || (pml4[pml4Index] & FlagPresent) == 0))
+        {
+            Serial.WriteString("[DeviceMapper] ERROR: address outside the shared kernel half\n");
+            return false;
+        }
+
         // A PML4 entry cannot be a huge page (PS is reserved there), so
         // null here can only mean the table allocation failed.
-        ulong* pdpt = GetOrCreateTable(pml4, (int)((virt >> Pml4Shift) & TableIndexMask), hhdm);
+        ulong* pdpt = GetOrCreateTable(pml4, pml4Index, hhdm);
         if (pdpt == null)
         {
             return false;
