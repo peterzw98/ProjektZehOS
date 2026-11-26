@@ -75,7 +75,7 @@ internal static class VoluntaryMoveCells
         }
     }
 
-    private static bool WaitFor(System.Func<bool> condition)
+    private static bool WaitFor(global::System.Func<bool> condition)
     {
         for (int i = 0; i < PollRetries && !condition(); i++)
         {
