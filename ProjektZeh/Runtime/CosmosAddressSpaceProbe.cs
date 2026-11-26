@@ -413,8 +413,10 @@ internal static unsafe class CosmosAddressSpaceProbe
 
     /// <summary>
     /// Kosten eines Adressraumwechsels: ein Yield-Aufruf im Ring 3, allein (kein anderer Thread, kein Wechsel) und mit einem zweiten
-    /// Programm in einem anderen Adressraum auf derselben CPU (zwei Wechsel mit CR3). Die Differenz der Mediane enthaelt den Scheduler
-    /// (Thread.Yield) und nicht nur CR3; als Gegenprobe wechseln zwei Kernelthreads auf derselben CPU ohne Ring 3 (Ticks von Stopwatch).
+    /// Programm in einem anderen Adressraum auf derselben CPU (zwei Wechsel mit CR3). Gemessen wird "Wechsel inkl. Yield": Die Differenz
+    /// der Mediane enthaelt Scheduler (Thread.Yield), Syscall-Ein/Austritt und CR3, nicht CR3 allein. Die Gegenstelle ruft nur Yield
+    /// (kein SYS_SAMPLE), damit beide Arme dieselbe Arbeit je Runde tun. Gegenprobe: zwei Kernelthreads auf derselben CPU ohne Ring 3,
+    /// ebenfalls in TSC-Ticks (gleiche Einheit wie alone/pair).
     /// </summary>
     private static (bool, string) AddressSwitch()
     {
@@ -428,7 +430,7 @@ internal static unsafe class CosmosAddressSpaceProbe
         bool stopped = alone.Stop();
         bool failed = alone.Bad != 0 || alone.Failure != "";
         var first = new Runner(a, "aswitch", 1, cpu);
-        var second = new Runner(b, "aswitch", 1, cpu);
+        var second = new Runner(b, "aswitch", 0xFF, cpu); // Gegenstelle: nur Yield, ohne rdtsc/SYS_SAMPLE (gleiche Arbeit wie im Arm "alone")
         bool pairOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[1]) >= SampleMax, 60);
         stopped &= first.Stop();
         stopped &= second.Stop();
@@ -441,7 +443,7 @@ internal static unsafe class CosmosAddressSpaceProbe
         // Gegenprobe ohne Ring 3: zwei Kernelthreads wechseln per Yield auf derselben CPU.
         string kernelText = KernelSwitch(cpu, out bool kernelOk);
         return (aloneOk && pairOk && stopped && !failed && kernelOk,
-            "alone: " + aloneText + " pair: " + pairText + " net_med=" + net + " kernel_pair(sw_ticks): " + kernelText + " sw_hz=" + Stopwatch.Frequency);
+            "alone: " + aloneText + " pair: " + pairText + " net_med=" + net + " kernel_pair(tsc_ticks): " + kernelText);
     }
 
     private static string KernelSwitch(uint cpu, out bool ok)
@@ -459,9 +461,9 @@ internal static unsafe class CosmosAddressSpaceProbe
             Probe.PinTo(cpu);
             for (; count < rounds; count++)
             {
-                long start = Stopwatch.GetTimestamp();
+                ulong start = Probe.ReadTsc();
                 Thread.Yield();
-                ticks[count] = (uint)(Stopwatch.GetTimestamp() - start);
+                ticks[count] = (uint)(Probe.ReadTsc() - start);
             }
         });
         other.Start();

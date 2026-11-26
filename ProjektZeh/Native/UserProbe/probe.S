@@ -409,6 +409,12 @@ body_device:
  * an den Kernel (rsi = Gruppe). Ende nur durch RequestLeave. */
 body_aswitch:
         mov rbx, [rsp]
+        cmp rbx, 0xFF
+        jne 1f
+        /* Gegenstelle (Gruppe 0xFF): nur Yield, kein rdtsc und kein SYS_SAMPLE; so bleibt im Paarmedian nur Yield-Arbeit beider Seiten. */
+0:      mov eax, SYS_YIELD
+        syscall
+        jmp 0b
 1:      rdtsc
         shl rdx, 32
         or rax, rdx

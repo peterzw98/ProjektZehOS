@@ -19,6 +19,14 @@ zehos_user_probe_cr3:
     mov     rax, cr3
     ret
 
+.global zehos_user_probe_tsc
+zehos_user_probe_tsc:
+    lfence
+    rdtsc
+    shl     rdx, 32
+    or      rax, rdx
+    ret
+
 .global zehos_user_probe_cr4
 zehos_user_probe_cr4:
     mov     rax, cr4

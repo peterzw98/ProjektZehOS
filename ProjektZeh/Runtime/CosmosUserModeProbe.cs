@@ -51,6 +51,7 @@ internal static unsafe partial class CosmosUserModeProbe
     [LibraryImport("*", EntryPoint = "zehos_user_probe_address"), SuppressGCTransition] internal static partial ulong ImageAddress();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_size"), SuppressGCTransition] internal static partial ulong ImageSize();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_cr3"), SuppressGCTransition] internal static partial ulong ReadCr3();
+    [LibraryImport("*", EntryPoint = "zehos_user_probe_tsc"), SuppressGCTransition] internal static partial ulong ReadTsc();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_cr4"), SuppressGCTransition] private static partial ulong ReadCr4();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_mask"), SuppressGCTransition] private static partial ulong Mask();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_restore"), SuppressGCTransition] private static partial void Restore(ulong flags);
