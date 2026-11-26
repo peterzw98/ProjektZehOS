@@ -607,8 +607,8 @@ public sealed class LinuxFileSystemTests
             Assert.AreEqual(128L * Kib, r.Write(new byte[128 * Kib]));
             Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ED));
             Assert.AreEqual(0L, fs.Rename("/r", "/d/r"));
-            Assert.AreEqual(0L, fs.Rename("/d", "/e"));
-            Assert.AreEqual(0L, fs.Unlink("/e/r"));
+            Assert.AreEqual(-E.EBUSY, fs.Rename("/d", "/e")); // Ordner mit offener Datei darunter: Cosmos zöge deren Pfad nicht mit
+            Assert.AreEqual(0L, fs.Unlink("/d/r"));
             Assert.AreEqual(100L + 128 * Kib, store.GrownBytes);
             Assert.AreEqual(0L, r.Close());
             Assert.AreEqual(100L, store.GrownBytes);
@@ -679,6 +679,58 @@ public sealed class LinuxFileSystemTests
             Assert.AreEqual(0, store.PendingPathCount);
             Assert.AreEqual(0L, fs.Rmdir("/d"));
             WriteFile(fs, "/d2", "frei");
+            Assert.AreEqual(0, fs.OpenFiles);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void DirectoryWithOpenOrPendingChildIsNotRenamed()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Kib = 1 << 10;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, 4L << 20);
+            string root = Path.Combine(tmp, "root");
+
+            // Ablauf aus dem Review: /d/k offen, entfernt, rename /d -> /e, neues /d/k, alten Deskriptor schließen.
+            Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ED));
+            ILinuxFile k = OpenOk(fs, "/d/k", Create);
+            Assert.AreEqual(256L * Kib, k.Write(new byte[256 * Kib]));
+            Assert.AreEqual(0L, fs.Unlink("/d/k"));
+            string zombie = Path.Combine(root, "d", "k");
+            File.WriteAllBytes(zombie, new byte[16]); // Cosmos führt den Eintrag bis zum letzten Schließen weiter
+            Assert.AreEqual(-E.EBUSY, fs.Rename("/d", "/e"));
+            Assert.IsTrue(Directory.Exists(Path.Combine(root, "d")));
+            Assert.IsFalse(Directory.Exists(Path.Combine(root, "e")));
+            Assert.AreEqual(256L * Kib, store.GrownBytes);
+
+            // Ziel, das leer wirkt, in dem aber ein entfernter, offener Eintrag steht: -ENOTEMPTY statt -EIO.
+            Assert.AreEqual(0L, fs.Mkdir("/s", 0x1ED));
+            Assert.AreEqual(-E.ENOTEMPTY, fs.Rename("/s", "/d"));
+
+            File.Delete(zombie);
+            Assert.AreEqual(0L, k.Close());
+            Assert.AreEqual(0L, store.GrownBytes);
+            WriteFile(fs, "/d/k", "neu");
+            Assert.AreEqual(0L, fs.Rename("/d", "/e")); // nichts mehr offen: geht
+            Assert.AreEqual("neu", ReadFile(fs, "/e/k"));
+
+            // Auch eine nur offene (nicht entfernte) Datei darunter sperrt das Umbenennen des Ordners.
+            ILinuxFile open = OpenOk(fs, "/e/k", Fs.ORdOnly);
+            Assert.AreEqual(-E.EBUSY, fs.Rename("/e", "/f"));
+            Assert.AreEqual(0L, open.Close());
+            Assert.AreEqual(0L, fs.Rename("/e", "/f"));
+            Assert.AreEqual("neu", ReadFile(fs, "/f/k"));
             Assert.AreEqual(0, fs.OpenFiles);
         }
         finally

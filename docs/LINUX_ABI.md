@@ -147,7 +147,11 @@ Grenzen (Review V2, bewusst offen):
   Cosmos lässt dabei auch den Namen bis zum letzten Schließen stehen (sichtbar, ein weiteres `unlink` gelänge). `DirectoryFileStore` führt solche Pfade
   deshalb eigens (sie wandern bei `rename` mit): wie bei Linux sind sie sofort weg (`stat`/`open`/`unlink`/`rename` `-ENOENT`, nicht in Listen), ohne zweite
   Gutschrift. Anlegen, `mkdir`, `symlink` und `rename` auf einen solchen Namen sind `-EEXIST`, solange das Laufwerk ihn noch führt (Abweichung: Linux erlaubt das
-  sofort; ein Linux-Host entfernt sofort, dann ist der Name frei), und `rmdir` des Ordners ist bis dahin `-ENOTEMPTY`. Den Namen `<name>.~replace`, unter dem
+  sofort; ein Linux-Host entfernt sofort, dann ist der Name frei), und `rmdir` des Ordners ist bis dahin `-ENOTEMPTY`, ebenso `rename` eines Ordners auf
+  ein solches, leer wirkendes Ziel. Einen Ordner, unter dem eine Datei offen oder entfernt, aber noch offen ist, benennt `rename` nicht um (`-EBUSY`; Abweichung:
+  Linux benennt um): Cosmos zieht nur die Handles des umbenannten Eintrags selbst mit (`MoveOpenHandles`, `VfsManager.Paths.cs:369-383`, Pin 5790fa74), die
+  Kinder behielten ihren alten Pfad; das aufgeschobene Entfernen träfe beim letzten Schließen eine neue Datei unter dem alten Namen, und ein `unlink` unter dem
+  neuen Namen fände den offenen Handle nicht (`MarkPendingIfOpen` vergleicht `OpenedPath`, `:425`) und gäbe dessen Cluster frei. Den Namen `<name>.~replace`, unter dem
   Cosmos ein durch `rename` ersetztes, noch offenes Ziel bis zum Schließen beiseitelegt (`DropDisplacedEntry`), sieht das Programm nicht und kann ihn nicht anlegen. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
   Kontingent zurück; gelingt auch das nicht, bleibt die Datei halb gewachsen (erreichte Länge, im Kontingent gebucht) und der Fehler des Schritts gilt.
   Grenze: Ändert ein anderer Akteur (Shell, zweiter Prozess) die Länge zwischen der Abfrage und den Schritten, setzen die Schritte auf die alte Länge auf und

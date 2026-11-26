@@ -171,7 +171,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         return false;
     }
 
-    /// <summary>Umbenennen: offene Einträge unter <paramref name="from"/> (auch in einem umbenannten Ordner) wandern mit.</summary>
+    /// <summary>Umbenennen einer Datei: ihr offener oder entfernter, offener Eintrag wandert mit (Ordner mit solchen Einträgen darunter benennt <see cref="RenameStorageLocked"/> nicht um).</summary>
     private void MoveEntriesStorageLocked(string from, string to)
     {
         MoveKeys(_openEntries, from, to);
@@ -678,13 +678,27 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             return 0;
         }
 
+        // Cosmos zieht beim Umbenennen nur die Handles des umbenannten Eintrags selbst mit (MoveOpenHandles, VfsManager.Paths.cs:369-383,
+        // Pin 5790fa74), nicht die seiner Kinder; deren OpenedPath bleibt alt. Ein aufgeschobenes Entfernen löschte dann beim letzten
+        // Schließen den alten Pfad (eine fremde, neue Datei dort), und unlink unter dem neuen Pfad fände den offenen Handle nicht
+        // (MarkPendingIfOpen vergleicht OpenedPath, :425) und gäbe die Cluster unter ihm frei. Deshalb: Ordner mit offenen oder entfernten,
+        // noch offenen Einträgen darunter nicht umbenennen.
+        if (HoldsOpenBelowStorageLocked(from) || HoldsPendingStorageLocked(from))
+        {
+            return -LinuxErrno.EBUSY;
+        }
+
         if (existing == LinuxNodeKind.Directory)
         {
+            if (HoldsPendingStorageLocked(to))
+            {
+                return -LinuxErrno.ENOTEMPTY; // leer wirkend, aber ein entfernter, offener Eintrag steht dort noch
+            }
+
             Directory.Delete(target, false); // leer, vom Dateisystem geprüft
         }
 
         Directory.Move(source, target);
-        MoveEntriesStorageLocked(from, to);
         return 0;
     }
 
@@ -712,7 +726,21 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         return true;
     }
 
-    /// <summary><see cref="PathComponent.IsValid"/> (kein ".", "..", ':', '\\', abschließender Punkt, ".zehos-") und keine Steuerzeichen.</summary>
+    /// <summary>Ist unter <paramref name="directory"/> eine Datei offen?</summary>
+    private bool HoldsOpenBelowStorageLocked(string directory)
+    {
+        string prefix = directory + "/";
+        foreach (string open in _openEntries.Keys)
+        {
+            if (open.StartsWith(prefix, NameComparison))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Steht unter <paramref name="directory"/> noch ein entfernter, offener Eintrag, den das Laufwerk führt?</summary>
     private bool HoldsPendingStorageLocked(string directory)
     {
@@ -728,6 +756,10 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         return false;
     }
 
+    /// <summary>
+    /// <see cref="PathComponent.IsValid"/> (kein ".", "..", ':', '\\', abschließender Punkt, ".zehos-"), keine Steuerzeichen und kein
+    /// "&lt;name&gt;.~replace" von Cosmos.
+    /// </summary>
     private static bool ValidName(string name)
     {
         // "<name>.~replace" legt Cosmos für ein ersetztes, noch offenes Ziel bis zum letzten Schließen an (DropDisplacedEntry): kein Name
