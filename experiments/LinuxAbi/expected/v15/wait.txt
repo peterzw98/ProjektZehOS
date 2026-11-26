@@ -1,0 +1,13 @@
+cloexec_flag=1
+spawn=0 pid_ok=1
+pipe_read=1 byte=x
+pipe_eof=0
+cloexec_pipe_eof=0
+waitpid_ok=1 exited=1 code=7
+waitpid_none=-1 errno=10
+wnohang_ok=1 code=0
+waitid=0 signo=17 code=1 status=5 pid_ok=1
+nach_wnowait_ok=1 code=5
+kill_ok=1 signaled=1 sig=9
+spawn_fehlt=2
+danach_keine_kinder=-1 errno=10

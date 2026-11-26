@@ -128,8 +128,8 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        // V15: Nach vfork teilen Prozesse der Familie die offenen Dateien; die letzte Nummer irgendeines lebenden Prozesses schließt.
-        if (p is ILinuxFamilyMember member && member.Family.ReferencedByOthers(d, p))
+        // V15: Nach vfork teilen Prozesse eines Laufs die offenen Dateien; erst die letzte Nummer irgendeines Prozesses schließt.
+        if (p is ILinuxOpenFileCount count && count.IsOpenAnywhere(d))
         {
             return 0;
         }

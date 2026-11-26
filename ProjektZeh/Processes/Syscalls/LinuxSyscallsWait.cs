@@ -3,8 +3,8 @@ using System;
 namespace ProjektZeh.Processes.Syscalls;
 
 /// <summary>
-/// V15: Warten auf Kindprozesse (wait4, waitid) und getppid. Die Kinder und ihren Status hält <see cref="LinuxProcessFamily"/>; ein Prozess ohne
-/// Familie hat keine Kinder (-ECHILD) und den Elternteil 0.
+/// V15: Warten auf Kindprozesse (wait4, waitid) und getppid über <see cref="ILinuxWait"/>; ein Prozess ohne sie hat keine Kinder (-ECHILD)
+/// und den Elternteil 0.
 /// </summary>
 internal static partial class LinuxSyscalls
 {
@@ -20,7 +20,7 @@ internal static partial class LinuxSyscalls
         switch (a.Number)
         {
             case Getppid:
-                return p is ILinuxFamilyMember member ? member.Family.ParentOf(p.Pid) : 0;
+                return p is ILinuxWait waiter ? waiter.ParentPid : 0;
             case Wait4:
                 return DoWait4(p, (int)a.A0, a.A1, (int)a.A2, a.A3);
             default:
@@ -31,7 +31,7 @@ internal static partial class LinuxSyscalls
     /// <summary>wait4(pid, wstatus, options, rusage): PID des abgeholten Kindes, 0 bei WNOHANG ohne fertiges Kind, oder -errno.</summary>
     private static long DoWait4(ILinuxProcess p, int pid, ulong statusPtr, int options, ulong rusagePtr)
     {
-        if (!LinuxProcessFamily.ValidWait4Options(options))
+        if (!LinuxUserProcess.ValidWait4Options(options))
         {
             return -EINVAL;
         }
@@ -42,14 +42,14 @@ internal static partial class LinuxSyscalls
             return -ESRCH;
         }
 
-        if (p is not ILinuxFamilyMember member)
+        if (p is not ILinuxWait member)
         {
             return -ECHILD;
         }
 
         int idType = pid > 0 ? PPid : pid == -1 ? PAll : PPgid;
-        int id = pid > 0 ? pid : pid == 0 ? member.Family.RootPid : -pid;
-        long r = member.Family.Wait(p.Pid, idType, id, options, consume: true, () => Aborted(p), out int status, out _);
+        int id = pid > 0 ? pid : pid == 0 ? member.GroupPid : -pid;
+        long r = member.WaitChild(idType, id, options, consume: true, () => Aborted(p), out int status, out _);
         if (r <= 0)
         {
             return r;
@@ -70,7 +70,7 @@ internal static partial class LinuxSyscalls
     /// </summary>
     private static long DoWaitid(ILinuxProcess p, int idType, int id, ulong infoPtr, int options, ulong rusagePtr)
     {
-        if (!LinuxProcessFamily.ValidWaitidOptions(options))
+        if (!LinuxUserProcess.ValidWaitidOptions(options))
         {
             return -EINVAL;
         }
@@ -87,18 +87,18 @@ internal static partial class LinuxSyscalls
                 return -EINVAL; // auch P_PIDFD (3): es gibt keine pidfds
         }
 
-        if (p is not ILinuxFamilyMember member)
+        if (p is not ILinuxWait member)
         {
             return -ECHILD;
         }
 
         if (idType == PPgid && id == 0)
         {
-            id = member.Family.RootPid;
+            id = member.GroupPid;
         }
 
-        bool consume = (options & LinuxProcessFamily.WNowait) == 0;
-        long r = member.Family.Wait(p.Pid, idType, id, options, consume, () => Aborted(p), out int status, out ulong uid);
+        bool consume = (options & LinuxUserProcess.WNowait) == 0;
+        long r = member.WaitChild(idType, id, options, consume, () => Aborted(p), out int status, out ulong uid);
         if (r < 0)
         {
             return r;

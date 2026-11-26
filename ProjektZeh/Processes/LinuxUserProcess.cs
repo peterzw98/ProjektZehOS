@@ -45,8 +45,8 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
-    ILinuxSystemInfo, ILinuxFamilyMember, ILinuxFdFlags
+internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
+    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -75,9 +75,10 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     // V11: Threads teilen Deskriptortabelle, Arbeitsverzeichnis und Dateisystem. Der Verteiler nimmt die Sperre für jeden
     // Dateiaufruf (ILinuxFiles.FileGate), im Threadkontext, nie im Interrupt. Platz in der Reihenfolge: vor _memGate (Kopieren in
     // den Benutzerspeicher) und vor StorageLock (Platte); nie zusammen mit der Sperre der futex-Tabelle.
-    // V15: Die Sperre gehört der Familie (LinuxProcessFamily.FileGate), alle Prozesse eines Laufs teilen sie, weil sie nach vfork
-    // dieselben offenen Dateien haben.
+    // V15: Die Sperre ist die Zähltabelle LinuxOpenFiles, die alle Prozesse eines Laufs teilen, weil sie nach vfork dieselben offenen
+    // Dateien haben (Referenzzählung über Tabellen hinweg).
     private readonly object _fileGate;
+    private readonly LinuxOpenFiles _openFiles;
     private readonly ulong _maxFrames;
 
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
@@ -93,13 +94,15 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
     /// <param name="fileSystem">Dateisystem des Prozesses (V7); ohne Angabe ein leeres im Arbeitsspeicher, das mit dem Prozess endet.</param>
-    /// <param name="family">
-    /// V15: Familie eines Kindes; der Erzeuger trägt es mit <see cref="LinuxProcessFamily.AddChild"/> ein. Ohne Angabe ist der Prozess der
-    /// erste einer neuen Familie.
-    /// </param>
+    /// <param name="openFiles">V15: Zähltabelle offener Dateien und zugleich Dateisperre, die alle Prozesse eines Laufs teilen; ohne Angabe eine eigene.</param>
+    /// <param name="ids">V15: gemeinsame Vergabe von PIDs und TIDs aller Prozesse eines Laufs; ohne Angabe eine eigene ab <paramref name="pid"/>.</param>
     public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes, ILinuxHost? host = null,
-        ILinuxFileSystem? fileSystem = null, LinuxProcessFamily? family = null)
+        ILinuxFileSystem? fileSystem = null, LinuxOpenFiles? openFiles = null, LinuxIds? ids = null)
     {
+        _openFiles = openFiles ?? new LinuxOpenFiles();
+        _fileGate = _openFiles;
+        _ids = ids ?? new LinuxIds(pid);
+        _ids.Add(pid);
         _host = host;
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
@@ -112,24 +115,12 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         Pid = pid;
         _maxFrames = maxBytes / Page;
 
-        // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs zählen ab der PID hoch (NextTid).
+        // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs vergibt _ids (NextTid über alle Prozesse).
         MainThread = new LinuxThread(pid);
         _threads.Add(MainThread);
         _liveThreads = 1;
-        _nextTid = pid;
         Futexes = new LinuxFutexTable(() => MonotonicNanos);
-        if (family is null)
-        {
-            family = new LinuxProcessFamily();
-            family.AddRoot(pid, this);
-        }
-
-        Family = family;
-        _fileGate = family.FileGate;
     }
-
-    /// <summary>V15: Prozesse dieses Laufs (Eltern, Kinder, Zombies, gemeinsame Dateisperre).</summary>
-    public LinuxProcessFamily Family { get; }
 
     /// <summary>Wird beim Exit gerufen; im Kernel verlässt das den Ring 3 (<c>UserMode.LeaveCurrent</c>).</summary>
     public Action<int>? OnExit { get; set; }
@@ -141,13 +132,13 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public int? ExitCode { get; private set; }
 
     /// <summary>Anzahl der Frames, die der Prozess gerade hält.</summary>
-    public int FrameCount => _frames.Count;
+    public int FrameCount => _vforkOf?.FrameCount ?? _frames.Count;
 
     public IUserMemory Memory => this;
 
     public int Pid { get; }
 
-    public ulong Brk => _brk;
+    public ulong Brk => _vforkOf?.Brk ?? _brk;
 
     /// <summary>Kommt aus dem geladenen Abbild (AT_UID); vor <see cref="Load"/> gilt 1000.</summary>
     public ulong Uid => _uid;
@@ -155,10 +146,15 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public ulong Gid => _gid;
 
     /// <summary>Größe der Stackabbildung aus dem geladenen Abbild (RLIMIT_STACK, V9); vor <see cref="Load"/> der Linux-Standard.</summary>
-    public ulong StackSize => _stackSize;
+    public ulong StackSize => _vforkOf?.StackSize ?? _stackSize;
 
     public bool IsMapped(ulong addr, ulong len)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.IsMapped(addr, len);
+        }
+
         // V10: Die Karte ändern andere Threads (munmap, mmap) unter derselben Sperre.
         lock (_memGate)
         {
@@ -209,7 +205,6 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     // Laufende Threads und der Hauptthread; beendete Kinder fallen beim nächsten clone heraus, damit die Liste nicht mit jedem
     // kurzlebigen Thread wächst und ihre TIDs wieder frei werden.
     private readonly List<LinuxThread> _threads = new();
-    private int _nextTid;
     private int _liveThreads;
 
     // Anhängige Signale (Bit = Nummer - 1), unter _threadGate: tgkill eines blockierten Signals; je Prozess wie Signals.Blocked.
@@ -262,7 +257,13 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             return -LinuxSyscalls.EINVAL;
         }
 
-        // Neue Prozesse (fork, vfork, posix_spawn) gibt es nicht; ehrlich ablehnen statt halb teilen.
+        // V15: vfork und posix_spawn (CLONE_VM|CLONE_VFORK ohne CLONE_THREAD) werden ein neuer Prozess auf geteiltem Speicher.
+        if ((flags & (CloneVm | CloneVfork)) == (CloneVm | CloneVfork) && (flags & (CloneThreadFlag | CloneSighand)) == 0)
+        {
+            return CloneVforkProcess(flags, stack);
+        }
+
+        // fork (eigener Speicher, Kopie beim Schreiben) gibt es nicht; ehrlich ablehnen statt halb teilen.
         if ((flags & CloneThreadSet) != CloneThreadSet || (flags & ~(CloneThreadSet | CloneKnownExtras)) != 0)
         {
             return -LinuxSyscalls.ENOSYS;
@@ -277,9 +278,16 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             }
 
             // Beendete Kinder austragen; der Hauptthread bleibt (seine TID ist die PID, Linux hält sie bis zum Prozessende).
+            foreach (LinuxThread t in _threads)
+            {
+                if (t.Exited && !ReferenceEquals(t, MainThread))
+                {
+                    _ids.Remove(t.Tid);
+                }
+            }
+
             _threads.RemoveAll(t => t.Exited && !ReferenceEquals(t, MainThread));
-            _nextTid = NextTid(_nextTid, Pid, TidInUse);
-            child = new LinuxThread(_nextTid)
+            child = new LinuxThread(_ids.Allocate())
             {
                 StackPointer = stack,
                 FsBase = (flags & CloneSettls) != 0 ? tls : CurrentThread.FsBase,
@@ -310,6 +318,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
                 _liveThreads--;
             }
 
+            _ids.Remove(child.Tid);
             return -LinuxSyscalls.EAGAIN;
         }
 
@@ -318,8 +327,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     /// <summary>
     /// Nächste freie TID nach <paramref name="last"/>, nach <see cref="TidMax"/> wieder ab 1; übersprungen werden die PID und belegte
-    /// TIDs. Es gibt immer nur einen Linux-Prozess (PID 1, CosmosLinuxRun lehnt einen zweiten ab), deshalb kann eine TID mit keiner
-    /// fremden PID zusammenfallen; kommen mehrere Prozesse, muss diese Vergabe in eine gemeinsame Tabelle für PIDs und TIDs wandern.
+    /// TIDs. Seit V15 (mehrere Prozesse) ruft das <see cref="LinuxIds"/>, die PIDs und TIDs aller Prozesse eines Laufs gemeinsam führt.
     /// </summary>
     internal static int NextTid(int last, int pid, Func<int, bool> inUse)
     {
@@ -584,6 +592,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             {
                 _descriptors[fd] = d;
                 _closeOnExec[fd] = false; // neue Nummern (open, dup, dup2) beginnen ohne FD_CLOEXEC; Flags setzt der Verteiler danach
+                _openFiles.Add(d);
                 return fd;
             }
         }
@@ -593,13 +602,14 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool RemoveDescriptor(int fd)
     {
-        if ((uint)fd >= MaxDescriptors || _descriptors[fd] == null)
+        if ((uint)fd >= MaxDescriptors || _descriptors[fd] is not ILinuxDescriptor d)
         {
             return false;
         }
 
         _descriptors[fd] = null;
         _closeOnExec[fd] = false;
+        _openFiles.Remove(d);
         return true;
     }
 
@@ -613,74 +623,55 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         }
     }
 
-    /// <summary>
-    /// V15 (vfork-Kind): übernimmt Deskriptortabelle, FD_CLOEXEC und Arbeitsverzeichnis des Elternteils, wie Linux bei clone ohne CLONE_FILES.
-    /// Die offenen Dateien teilen beide danach (gleiche Position); jede schließt erst die letzte Nummer der Familie. Ruft der Erzeuger, bevor das
-    /// Kind läuft und nachdem es in der Familie steht; vorhandene Nummern des Kindes (das Terminal) werden ersetzt.
-    /// </summary>
-    public void CopyDescriptorsFrom(LinuxUserProcess parent)
+    /// <summary>V15: true, solange irgendeine Nummer irgendeines Prozesses dieses Laufs auf <paramref name="d"/> zeigt. Der Aufrufer hält FileGate.</summary>
+    public bool IsOpenAnywhere(ILinuxDescriptor d) => _openFiles.IsReferenced(d);
+
+    /// <summary>Leert Nummer <paramref name="fd"/> und schließt die Datei, wenn es die letzte Nummer im Lauf war. Der Aufrufer hält FileGate.</summary>
+    private void DropDescriptor(int fd)
     {
-        ArgumentNullException.ThrowIfNull(parent);
-        if (!ReferenceEquals(parent._fileGate, _fileGate))
+        ILinuxDescriptor? d = _descriptors[fd];
+        _closeOnExec[fd] = false;
+        if (d is null)
         {
-            throw new InvalidOperationException("Kind und Elternteil müssen derselben Familie angehören");
+            return;
         }
 
-        lock (_fileGate)
-        {
-            Array.Copy(parent._descriptors, _descriptors, MaxDescriptors);
-            Array.Copy(parent._closeOnExec, _closeOnExec, MaxDescriptors);
-            _cwd = parent._cwd;
-        }
+        _descriptors[fd] = null;
+        _openFiles.Remove(d);
+
+        // Close fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat am Prozessende oder
+        // bei execve keinen Empfänger mehr (wie Linux in exit und do_close_on_exec) und darf die übrigen Dateien nicht offen lassen.
+        // Pipe-Enden zählen mit: sonst sähe der Elternteil nach dem Ende eines Kindes nie EOF.
+        _ = LinuxSyscalls.ReleaseIfUnused(this, d);
     }
 
-    /// <summary>
-    /// V15 (execve): schließt jede Nummer mit FD_CLOEXEC. Die Datei selbst schließt erst, wenn keine Nummer der Familie mehr auf sie zeigt
-    /// (der Elternteil hat sie nach vfork meist noch). Fehler beim Zurückschreiben haben keinen Empfänger (wie Linux in do_close_on_exec).
-    /// </summary>
-    public void CloseOnExec()
+    /// <summary>V15 (execve): schließt jede Nummer mit FD_CLOEXEC; die Datei selbst erst, wenn keine Nummer im Lauf mehr auf sie zeigt.</summary>
+    private void CloseOnExec()
     {
         lock (_fileGate)
         {
             for (int fd = 0; fd < MaxDescriptors; fd++)
             {
-                ILinuxDescriptor? d = _descriptors[fd];
-                if (d is null || !_closeOnExec[fd])
+                if (_closeOnExec[fd])
                 {
-                    continue;
+                    DropDescriptor(fd);
                 }
-
-                _descriptors[fd] = null;
-                _closeOnExec[fd] = false;
-                _ = LinuxSyscalls.ReleaseIfUnused(this, d);
             }
         }
     }
 
     /// <summary>
-    /// Schließt jede noch offene Datei genau einmal (dup teilt eine Datei über mehrere Nummern) und leert die Tabelle. Ruft
-    /// <see cref="Destroy"/>; ohne das blieben Dateien auf der Datenplatte bis zum nächsten Boot offen.
+    /// Schließt jede noch offene Datei genau einmal (dup teilt eine Datei über mehrere Nummern, vfork über mehrere Prozesse) und leert
+    /// die Tabelle. Ruft <see cref="Destroy"/> und <see cref="Release"/>; ohne das blieben Dateien auf der Datenplatte bis zum nächsten Boot offen.
     /// </summary>
     public void CloseAllFiles()
     {
-        // V15: unter der Familiensperre, weil andere Prozesse dieselben Dateien halten und gleichzeitig schließen können.
+        // V15: unter der geteilten Sperre, weil andere Prozesse dieselben Dateien halten und gleichzeitig schließen können.
         lock (_fileGate)
         {
             for (int fd = 0; fd < MaxDescriptors; fd++)
             {
-                ILinuxDescriptor? d = _descriptors[fd];
-                _descriptors[fd] = null;
-                _closeOnExec[fd] = false;
-                if (d is null)
-                {
-                    continue;
-                }
-
-                // Close fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat am Prozessende
-                // keinen Empfänger mehr (wie Linux beim exit) und darf die übrigen Dateien nicht offen lassen. Weitere Nummern derselben
-                // Datei hier und in anderen Prozessen der Familie halten sie offen; die letzte schließt (V15: auch Pipe-Enden, sonst sähe
-                // der Elternteil nach dem Ende eines Kindes nie EOF).
-                _ = LinuxSyscalls.ReleaseIfUnused(this, d);
+                DropDescriptor(fd);
             }
         }
     }
@@ -712,6 +703,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public ResultErr Load(UserImage image, ReadOnlySpan<byte> elf)
     {
         ArgumentNullException.ThrowIfNull(image);
+        if (_vforkOf != null)
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, "Ein vfork-Kind lädt nur über execve in einen neuen Adressraum.");
+        }
+
         _uid = image.Uid;
         _gid = image.Gid;
         ResultErr reserved = image.Reserve(_map);
@@ -771,6 +767,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     /// </summary>
     public bool HandlePageFault(ulong address, ulong error)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.HandlePageFault(address, error);
+        }
+
         lock (_memGate)
         {
             return HandlePageFaultLocked(address, error);
@@ -807,6 +808,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool TrySetBrk(ulong newBrk)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.TrySetBrk(newBrk);
+        }
+
         lock (_memGate)
         {
             return TrySetBrkLocked(newBrk);
@@ -840,6 +846,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public ulong MapAnonymous(ulong len, int prot)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.MapAnonymous(len, prot);
+        }
+
         lock (_memGate)
         {
             return MapAnonymousLocked(len, prot);
@@ -860,6 +871,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     // MapFixed und Discard (V2c) laufen wie Unmap unter _memGate: Threads (V10) teilen Karte und Frames.
     public bool MapFixed(ulong addr, ulong len, int prot)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.MapFixed(addr, len, prot);
+        }
+
         lock (_memGate)
         {
             return MapFixedLocked(addr, len, prot);
@@ -881,6 +897,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool Discard(ulong addr, ulong len)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.Discard(addr, len);
+        }
+
         lock (_memGate)
         {
             return DiscardLocked(addr, len);
@@ -914,6 +935,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool Unmap(ulong addr, ulong len)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.Unmap(addr, len);
+        }
+
         lock (_memGate)
         {
             return UnmapLocked(addr, len);
@@ -936,6 +962,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool Protect(ulong addr, ulong len, int prot)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.Protect(addr, len, prot);
+        }
+
         lock (_memGate)
         {
             return ProtectLocked(addr, len, prot);
@@ -993,6 +1024,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool CanWrite(ulong addr, ulong length)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.CanWrite(addr, length);
+        }
+
         lock (_memGate)
         {
             return length == 0 || (InUserRange(addr, length) && PagesAllowLocked(addr, length, write: true));
@@ -1043,6 +1079,15 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         }
         finally
         {
+            DestroyMemory();
+        }
+    }
+
+    /// <summary>Gibt Tabelle und Frames frei; ein vfork-Kind besitzt keinen eigenen Speicher (er gehört dem Elternprozess).</summary>
+    private void DestroyMemory()
+    {
+        if (_vforkOf == null)
+        {
             // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
             _pages.DestroyTable();
             foreach (ulong frame in _frames.Values)
@@ -1056,6 +1101,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     private bool Copy(ulong addr, Span<byte> dst, ReadOnlySpan<byte> src, bool write)
     {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.Copy(addr, dst, src, write);
+        }
+
         lock (_memGate)
         {
             return CopyLocked(addr, dst, src, write);

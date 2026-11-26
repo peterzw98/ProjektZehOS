@@ -1,109 +1,95 @@
-/* Ladybird V15: Prozess startet Prozess. musl posix_spawn (clone(CLONE_VM|CLONE_VFORK) + execve) startet dieses Programm
- * erneut als Kind ("kind <modus> ..."), danach wait4/waitpid/waitid. Geprüft: Exitcode, Tod durch Signal, WNOHANG, ECHILD,
- * waitid-siginfo, geerbte Deskriptoren (ohne CLOEXEC offen, mit CLOEXEC nach execve zu), EOF erst nach dem Ende des Kindes,
- * getppid im Kind, posix_spawn auf ein fehlendes Programm (ENOENT über die CLOEXEC-Pipe von musl).
- * Das Kind schreibt nichts nach stdout; es meldet sich über Exitcode und eine Pipe. Keine PIDs in der Ausgabe. */
+// V15 "Prozess startet Prozess": posix_spawn (musl: clone(CLONE_VM|CLONE_VFORK|SIGCHLD) + execve) eines kleinen
+// statischen Programms, das "kind" schreibt und mit 42 endet; Fehlerfall (Datei fehlt -> ENOENT über die Pipe von musl)
+// und rohes vfork mit _exit vor execve. Ohne wait4 auf ZehOS-Seite (senior2, task/lb-v15-wait) prüft das Programm nur,
+// was auch ohne Warten feststeht; die kurze Pause ordnet die Ausgabe des Kinds vor die Schlusszeile.
+#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
 extern char **environ;
 
-static int kind(int argc, char **argv)
+// ELF64, ein PT_LOAD (R X) ab 0x400000, Einsprung 0x400078:
+// write(1, "kind\n", 5); exit_group(42)
+static const unsigned char code[] = {
+    0xb8, 0x01, 0x00, 0x00, 0x00,             // mov eax, 1
+    0xbf, 0x01, 0x00, 0x00, 0x00,             // mov edi, 1
+    0x48, 0x8d, 0x35, 0x13, 0x00, 0x00, 0x00, // lea rsi, [rip + 0x13]
+    0xba, 0x05, 0x00, 0x00, 0x00,             // mov edx, 5
+    0x0f, 0x05,                               // syscall
+    0xb8, 0xe7, 0x00, 0x00, 0x00,             // mov eax, 231
+    0xbf, 0x2a, 0x00, 0x00, 0x00,             // mov edi, 42
+    0x0f, 0x05,                               // syscall
+    'k', 'i', 'n', 'd', '\n',
+};
+
+static void put64(unsigned char *p, unsigned long v) { for (int i = 0; i < 8; i++) p[i] = (unsigned char)(v >> (8 * i)); }
+static void put32(unsigned char *p, unsigned v) { for (int i = 0; i < 4; i++) p[i] = (unsigned char)(v >> (8 * i)); }
+static void put16(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+
+static int write_child(const char *path)
 {
-    if (argc < 6) return 80;
-    int code = atoi(argv[3]);
-    int keep = atoi(argv[4]), gone = atoi(argv[5]);
-    if (argc > 6 && getppid() != atoi(argv[6])) return 92;
-    if (keep >= 0 && write(keep, "x", 1) != 1) return 90;
-    if (gone >= 0 && (fcntl(gone, F_GETFD) != -1 || errno != EBADF)) return 91;
-    if (strcmp(argv[2], "kill") == 0) {
-        kill(getpid(), SIGKILL);
-        return 93;
-    }
-    return code;
+    unsigned char f[0x78 + sizeof code];
+    memset(f, 0, sizeof f);
+    memcpy(f, "\x7f" "ELF\x02\x01\x01", 7);
+    put16(f + 16, 2);          // ET_EXEC
+    put16(f + 18, 62);         // x86-64
+    put32(f + 20, 1);
+    put64(f + 24, 0x400078);   // Einsprung
+    put64(f + 32, 64);         // Programmköpfe
+    put16(f + 52, 64);
+    put16(f + 54, 56);
+    put16(f + 56, 1);
+    unsigned char *ph = f + 64;
+    put32(ph, 1);              // PT_LOAD
+    put32(ph + 4, 5);          // R X
+    put64(ph + 16, 0x400000);
+    put64(ph + 24, 0x400000);
+    put64(ph + 32, sizeof f);
+    put64(ph + 40, sizeof f);
+    put64(ph + 48, 0x1000);
+    memcpy(f + 0x78, code, sizeof code);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) return -1;
+    int ok = write(fd, f, sizeof f) == (ssize_t)sizeof f;
+    return close(fd) == 0 && ok ? 0 : -1;
 }
 
-static pid_t start(char *self, const char *mode, const char *code, int keep, int gone, int *err)
+static void pause_ms(long ms)
 {
-    char k[16], g[16], pp[16];
-    snprintf(k, sizeof k, "%d", keep);
-    snprintf(g, sizeof g, "%d", gone);
-    snprintf(pp, sizeof pp, "%d", (int)getpid());
-    char *args[] = { self, "kind", (char *)mode, (char *)code, k, g, pp, NULL };
-    pid_t pid = -1;
-    *err = posix_spawn(&pid, self, NULL, NULL, args, environ);
-    return pid;
+    struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&t, 0);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
-    if (argc > 1 && strcmp(argv[1], "kind") == 0) return kind(argc, argv);
-    setvbuf(stdout, NULL, _IONBF, 0);
-    alarm(30);
-    int err, st = 0;
+    if (write_child("kind") != 0) { printf("schreiben fehlgeschlagen errno %d\n", errno); return 1; }
 
-    /* 1. Exitcode 7, geerbte Pipe ohne CLOEXEC, zweite mit CLOEXEC. */
-    int p[2], c[2];
-    if (pipe(p) != 0 || pipe2(c, O_CLOEXEC) != 0) { printf("pipe fehlgeschlagen\n"); return 2; }
-    printf("cloexec_flag=%d\n", fcntl(c[1], F_GETFD) & FD_CLOEXEC);
-    pid_t a = start(argv[0], "exit", "7", p[1], c[1], &err);
-    printf("spawn=%d pid_ok=%d\n", err, a > 0);
-    close(p[1]);
-    close(c[1]);
-    char buf[8];
-    ssize_t n = read(p[0], buf, sizeof buf);
-    printf("pipe_read=%zd byte=%c\n", n, n > 0 ? buf[0] : '-');
-    n = read(p[0], buf, sizeof buf);
-    printf("pipe_eof=%zd\n", n);
-    n = read(c[0], buf, sizeof buf);
-    printf("cloexec_pipe_eof=%zd\n", n);
-    pid_t w = waitpid(a, &st, 0);
-    printf("waitpid_ok=%d exited=%d code=%d\n", w == a, WIFEXITED(st), WIFEXITED(st) ? WEXITSTATUS(st) : -1);
-    errno = 0;
-    w = waitpid(-1, &st, WNOHANG);
-    printf("waitpid_none=%d errno=%d\n", (int)w, errno);
-    close(p[0]);
-    close(c[0]);
+    pid_t pid = 0;
+    char *argv[] = { "kind", 0 };
+    int rc = posix_spawn(&pid, "kind", 0, 0, argv, environ);
+    pause_ms(300);
+    printf("spawn rc %d pid>1 %d anderer %d\n", rc, pid > 1, pid != getpid());
 
-    /* 2. WNOHANG, bis das Kind fertig ist (erster Versuch 0 oder schon fertig; gezeigt wird nur das Ende). */
-    a = start(argv[0], "exit", "0", -1, -1, &err);
-    int spins = 0;
-    while ((w = waitpid(a, &st, WNOHANG)) == 0 && spins < 3000) {
-        struct timespec ts = { 0, 1000000 };
-        nanosleep(&ts, NULL);
-        spins++;
+    pid_t pid2 = 0;
+    char *argv2[] = { "fehlt", 0 };
+    rc = posix_spawn(&pid2, "fehlt", 0, 0, argv2, environ);
+    printf("spawn fehlt rc %d\n", rc);
+
+    // Rohes vfork: Das Kind sieht eine eigene PID, schreibt in geteilten Speicher und endet vor execve.
+    static volatile int shared;
+    pid_t self = getpid();
+    long v = syscall(SYS_vfork);
+    if (v == 0) {
+        shared = (getpid() != self) ? 2 : 1;
+        syscall(SYS_exit_group, 7);
     }
-    printf("wnohang_ok=%d code=%d\n", w == a, WEXITSTATUS(st));
-
-    /* 3. waitid mit siginfo, WNOWAIT lässt den Zombie stehen. */
-    a = start(argv[0], "exit", "5", -1, -1, &err);
-    siginfo_t si;
-    memset(&si, 0, sizeof si);
-    int r = waitid(P_PID, a, &si, WEXITED | WNOWAIT);
-    printf("waitid=%d signo=%d code=%d status=%d pid_ok=%d\n", r, si.si_signo, si.si_code, si.si_status, si.si_pid == a);
-    w = waitpid(a, &st, 0);
-    printf("nach_wnowait_ok=%d code=%d\n", w == a, WEXITSTATUS(st));
-
-    /* 4. Kind stirbt an SIGKILL. */
-    a = start(argv[0], "kill", "0", -1, -1, &err);
-    w = waitpid(a, &st, 0);
-    printf("kill_ok=%d signaled=%d sig=%d\n", w == a, WIFSIGNALED(st), WIFSIGNALED(st) ? WTERMSIG(st) : -1);
-
-    /* 5. Fehlendes Programm: musl meldet den execve-Fehler des Kindes über seine CLOEXEC-Pipe. */
-    pid_t x = -1;
-    char *nargs[] = { "fehlt", NULL };
-    err = posix_spawn(&x, "/gibt/es/nicht", NULL, NULL, nargs, environ);
-    printf("spawn_fehlt=%d\n", err);
-    errno = 0;
-    w = waitpid(-1, &st, WNOHANG);
-    printf("danach_keine_kinder=%d errno=%d\n", (int)w, errno);
+    printf("vfork pid>1 %d geteilt %d\n", v > 1, shared);
+    printf("ende\n");
     return 0;
 }
