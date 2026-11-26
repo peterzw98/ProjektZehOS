@@ -510,11 +510,12 @@ internal static partial class LinuxSyscalls
             case FdSetfd:
                 MarkCloseOnExec(f, fd, ((int)arg & FdCloexec) != 0); // Linux kennt nur dieses Bit, der Rest wird ignoriert
                 return 0;
-            case FdGetfl when p.GetDescriptor(fd) is LinuxPipeEnd pipeEnd:
-                return pipeEnd.StatusFlags;
-            case FdSetfl when p.GetDescriptor(fd) is LinuxPipeEnd pipeEnd:
-                // Wie Linux ändert F_SETFL nur O_NONBLOCK (und O_APPEND/O_ASYNC/O_DIRECT, die eine Pipe nicht braucht); der Rest wird ignoriert.
-                pipeEnd.NonBlocking = ((int)arg & LinuxPipeEnd.ONonblock) != 0;
+            case FdGetfl when p.GetDescriptor(fd) is ILinuxStatusFlags flagged:
+                return flagged.StatusFlags;
+            case FdSetfl when p.GetDescriptor(fd) is ILinuxStatusFlags flagged:
+                // Wie Linux ändert F_SETFL nur O_NONBLOCK (und O_APPEND/O_ASYNC/O_DIRECT, die Pipe und Socket nicht brauchen); der Rest
+                // wird ignoriert. V16: gilt für Pipe-Enden und Unix-Sockets.
+                flagged.NonBlocking = ((int)arg & LinuxPipeEnd.ONonblock) != 0;
                 return 0;
             case FdGetfl:
                 // Die Öffnungsflags liegen in der Datei und sind über ILinuxFile nicht sichtbar; O_RDWR ist für die Laufzeiten
