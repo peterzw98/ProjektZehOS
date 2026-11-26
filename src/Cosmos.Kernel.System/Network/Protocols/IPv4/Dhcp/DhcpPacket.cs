@@ -97,12 +97,17 @@ public class DhcpPacket : UdpPacket
     /// <summary>
     /// Initializes a new instance of the <see cref="DhcpPacket"/> class as a broadcast request,
     /// sent from 0.0.0.0 to 255.255.255.255 (the form used by discover and request packets).
+    /// Sets the BOOTP BROADCAST flag (RFC 2131 section 4.1): before configuration the IPv4 handler
+    /// drops unicast to the offered address, so the server must reply by broadcast.
     /// </summary>
     /// <param name="sourceMac">The MAC address of the sending network device.</param>
     /// <param name="dhcpDataSize">The size in bytes of the DHCP options that follow the fixed BOOTP header.</param>
     public DhcpPacket(MacAddress sourceMac, ushort dhcpDataSize)
         : this(Address4.Zero, Address4.Broadcast, sourceMac, dhcpDataSize)
-    { }
+    {
+        // ZehOS patch dhcp-broadcast, see PATCHES.md
+        RawData[52] = 0x80;
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DhcpPacket"/> class addressed from
