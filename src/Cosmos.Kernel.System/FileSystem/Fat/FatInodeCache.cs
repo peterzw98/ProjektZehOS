@@ -30,8 +30,20 @@ internal sealed class FatInodeCache
     private readonly List<uint> _sweep = [];
     private int _sweepAt = SweepMin;
 
+    // ZehOS patch fat-rename-open, see PATCHES.md
+    // Inodes without a first cluster (empty files) by directory slot, weakly:
+    // renaming or removing the entry has to find the object an open handle
+    // uses. Same lock as the cluster entries: both tables change together.
+    internal const int EmptySweepMin = 256;
+    private readonly Dictionary<ulong, GCHandle> _empty = [];
+    private readonly List<ulong> _emptySweep = [];
+    private int _emptySweepAt = EmptySweepMin;
+
     /// <summary>Entries, dead ones included until swept (test hook).</summary>
     internal int Count => _entries.Count;
+
+    /// <summary>Slot entries of empty files, dead ones included until swept (test hook).</summary>
+    internal int EmptyCount => _empty.Count;
 
     /// <summary>Finds the live object for a first cluster.</summary>
     public bool TryGet(uint cluster, [NotNullWhen(true)] out FatInode? inode)
@@ -90,6 +102,58 @@ internal sealed class FatInodeCache
         }
     }
 
+    /// <summary>Finds the live empty-file object for a directory slot.</summary>
+    public bool TryGetEmpty(ulong slot, [NotNullWhen(true)] out FatInode? inode)
+    {
+        inode = null;
+        lock (_gate)
+        {
+            if (_empty.TryGetValue(slot, out GCHandle handle))
+            {
+                inode = (FatInode?)handle.Target;
+            }
+        }
+
+        return inode is not null;
+    }
+
+    /// <summary>Makes <paramref name="inode"/> the empty-file object for a directory slot.</summary>
+    public void SetEmpty(ulong slot, FatInode inode)
+    {
+        lock (_gate)
+        {
+            if (_empty.TryGetValue(slot, out GCHandle old))
+            {
+                old.Target = inode;
+                return;
+            }
+
+            SweepDeadEmpty();
+            GCHandle handle = GCHandle.Alloc(inode, GCHandleType.Weak);
+            try
+            {
+                _empty.Add(slot, handle);
+            }
+            catch
+            {
+                handle.Free();
+                throw;
+            }
+        }
+    }
+
+    /// <summary>Forgets a directory slot (entry removed, moved or given a first cluster).</summary>
+    public void RemoveEmpty(ulong slot)
+    {
+        lock (_gate)
+        {
+            if (_empty.Remove(slot, out GCHandle handle))
+            {
+                handle.Free();
+            }
+        }
+    }
+
     /// <summary>Drops every entry (unmount).</summary>
     public void Clear()
     {
@@ -102,7 +166,44 @@ internal sealed class FatInodeCache
 
             _entries.Clear();
             _sweepAt = SweepMin;
+
+            foreach (GCHandle handle in _empty.Values)
+            {
+                handle.Free();
+            }
+
+            _empty.Clear();
+            _emptySweepAt = EmptySweepMin;
         }
+    }
+
+    /// <summary>Frees the slot entries of collected empty-file inodes once there are enough of them.</summary>
+    private void SweepDeadEmpty()
+    {
+        if (_empty.Count < _emptySweepAt)
+        {
+            return;
+        }
+
+        _emptySweep.Clear();
+        foreach (KeyValuePair<ulong, GCHandle> entry in _empty)
+        {
+            if (entry.Value.Target is null)
+            {
+                _emptySweep.Add(entry.Key);
+            }
+        }
+
+        foreach (ulong slot in _emptySweep)
+        {
+            _empty.Remove(slot, out GCHandle handle);
+            handle.Free();
+        }
+
+        _emptySweep.Clear();
+
+        // Doubling keeps the scan amortized.
+        _emptySweepAt = Math.Max(EmptySweepMin, _empty.Count * 2);
     }
 
     /// <summary>Frees the entries of collected inodes once there are enough of them.</summary>

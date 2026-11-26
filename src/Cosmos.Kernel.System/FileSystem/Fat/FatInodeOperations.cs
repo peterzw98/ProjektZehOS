@@ -261,17 +261,19 @@ internal sealed class FatInodeOperations : IInodeOperations
         uint firstCluster = match.FirstCluster;
         uint size = match.Size;
 
+        // ZehOS patch fat-rename-open, see PATCHES.md
+        _superblock.TryGetLive(oldDir, match, out FatInode? live);
+
         // Allocate the destination first: a failed rename must leave the
         // filesystem unchanged (the allocator only fills free slots, so
         // the source entry stays valid until removed). Crash-safe too —
         // worst case is a transiently duplicated name, not a lost file.
-        if (!_superblock.AllocateDirectoryEntry(newDir, newName, attr, firstCluster, size, out _))
+        if (!_superblock.AllocateDirectoryEntry(newDir, newName, attr, firstCluster, size, out _, live))
         {
             return false;
         }
 
         _superblock.RemoveDirectoryEntry(oldDir, match);
-        _superblock.ForgetInode(match.FirstCluster);
 
         // A directory moved across parents keeps a '..' pointing at the
         // old parent; rewrite it (0 when the new parent is the root).

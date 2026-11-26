@@ -253,4 +253,71 @@ public class FatInodeCacheTests
         });
         GC.KeepAlive(held);
     }
+
+    // ZehOS patch fat-rename-open, see PATCHES.md
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void FillUnheldEmpty(int from, int count)
+    {
+        for (int i = from; i < from + count; i++)
+        {
+            Create(_root, "e" + i, "");
+        }
+    }
+
+    [Test]
+    public void ManyEmptyFiles_SlotEntriesStayBounded()
+    {
+        // Only the objects of the current batch can be alive at a sweep, whether or
+        // not a GC runs inside the batch. With a batch below EmptySweepMin / 2 the
+        // next sweep point stays at EmptySweepMin, so the bound holds without
+        // relying on GC timing (300 per batch failed when no GC ran in between).
+        const int batch = FatInodeCache.EmptySweepMin / 2;
+        for (int i = 0; i < 8; i++)
+        {
+            FillUnheldEmpty(i * batch, batch);
+            Collect();
+        }
+
+        Assert.That(_sb.InodeCache.EmptyCount, Is.LessThanOrEqualTo(FatInodeCache.EmptySweepMin + 1));
+    }
+
+    [Test]
+    public void Drop_ForgetsEmptyFiles_Too()
+    {
+        FatInode held = Create(_root, "leer.txt", "");
+        Assert.That(_sb.InodeCache.EmptyCount, Is.EqualTo(1));
+        _sb.SuperOperations.Drop(_sb);
+        Assert.That(_sb.InodeCache.EmptyCount, Is.Zero);
+        GC.KeepAlive(held);
+    }
+
+    [Test]
+    public void ParallelUse_OfBothTables_DoesNotLoseHeldObjects()
+    {
+        FatInode[] held = new FatInode[4];
+        Parallel.For(0, 4, t =>
+        {
+            FatInode mine = new(_sb, "h" + t, FatAttr.Archive, 0, 0, _root, 0, 1);
+            held[t] = mine;
+            ulong own = 1UL << 40 | (uint)t;
+            _sb.InodeCache.SetEmpty(own, mine);
+            for (uint i = 0; i < 20_000; i++)
+            {
+                ulong slot = (ulong)(100 + (i % 3000) + t * 3000);
+                _sb.InodeCache.SetEmpty(slot, new FatInode(_sb, "x", FatAttr.Archive, 0, 0, _root, 0, 1));
+                _sb.InodeCache.Set((uint)slot, new FatInode(_sb, "y", FatAttr.Archive, (uint)slot, 1, _root, 0, 1));
+                if (i % 7 == 0)
+                {
+                    _sb.InodeCache.RemoveEmpty(slot);
+                    _sb.InodeCache.Remove((uint)slot);
+                }
+
+                if (!_sb.InodeCache.TryGetEmpty(own, out FatInode? found) || !ReferenceEquals(found, mine))
+                {
+                    throw new InvalidOperationException("held empty inode lost");
+                }
+            }
+        });
+        GC.KeepAlive(held);
+    }
 }
