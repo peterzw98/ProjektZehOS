@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Processes.Vfs;
 
@@ -65,16 +66,34 @@ internal abstract class LinuxOpenFile : ILinuxFile
         return _closed ? -LinuxErrno.EBADF : -LinuxErrno.ENOTDIR;
     }
 
-    public void Close()
+    public void Close() => CloseChecked();
+
+    /// <summary>
+    /// Wie <see cref="Close"/>, liefert aber den Fehler beim Schließen (0 oder -errno, etwa -EIO beim Zurückschreiben auf die Platte).
+    /// Die Datei ist danach in jedem Fall zu und zählt nicht mehr zum Budget, wie <c>close</c> unter Linux; ein zweiter Aufruf liefert 0.
+    /// </summary>
+    public long CloseChecked()
     {
         if (_closed)
         {
-            return;
+            return 0;
         }
 
         _closed = true;
-        Release();
-        FileSystem.Closed();
+        try
+        {
+            return Release();
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            // Ein Speicher, der beim Schließen wirft statt -errno zu liefern: trotzdem zu, Fehler als -errno.
+            return DirectoryFileStore.Errno(exception);
+        }
+        finally
+        {
+            // Auch wenn Release unerwartet wirft: Budget und Zustand bleiben stimmig, der Aufrufer kann die übrigen Dateien schließen.
+            FileSystem.Closed();
+        }
     }
 
     protected abstract long ReadCore(Span<byte> dst);
@@ -85,9 +104,8 @@ internal abstract class LinuxOpenFile : ILinuxFile
 
     protected abstract long StatCore(out LinuxStat st);
 
-    protected virtual void Release()
-    {
-    }
+    /// <summary>Gibt Speicherressourcen frei; 0 oder -errno.</summary>
+    protected virtual long Release() => 0;
 
     /// <summary>Neue Position nach lseek; -EINVAL für negative Ergebnisse und unbekanntes whence, -EOVERFLOW bei Überlauf.</summary>
     protected static long NewPosition(long position, long length, long offset, int whence)
@@ -205,21 +223,36 @@ internal sealed class LinuxRegularFile : LinuxOpenFile
         return 0;
     }
 
-    protected override void Release() => _file.Dispose();
+    protected override long Release() => _file.Close();
 }
 
-/// <summary>/dev/null (liest EOF, verwirft) und /dev/tty (schreibt auf das Terminal, liest EOF: Eingabe gibt es in V7 noch nicht).</summary>
+/// <summary>
+/// /dev/null (liest EOF, verwirft), /dev/zero (liest Nullbytes in jeder Länge, verwirft) und /dev/tty (schreibt auf das Terminal,
+/// liest EOF: Eingabe über /dev/tty gibt es in V7 noch nicht).
+/// </summary>
 internal sealed class LinuxDeviceFile : LinuxOpenFile
 {
+    private readonly LinuxFileSystem.LocArea _area;
     private readonly bool _tty;
 
-    public LinuxDeviceFile(LinuxFileSystem fs, bool tty, bool read, bool write)
-        : base(fs, tty ? "/dev/tty" : "/dev/null", read, write)
+    public LinuxDeviceFile(LinuxFileSystem fs, LinuxFileSystem.LocArea area, bool read, bool write)
+        : base(fs, area switch { LinuxFileSystem.LocArea.DevTty => "/dev/tty", LinuxFileSystem.LocArea.DevZero => "/dev/zero", _ => "/dev/null" }, read, write)
     {
-        _tty = tty;
+        _area = area;
+        _tty = area == LinuxFileSystem.LocArea.DevTty;
     }
 
-    protected override long ReadCore(Span<byte> dst) => 0;
+    protected override long ReadCore(Span<byte> dst)
+    {
+        if (_area != LinuxFileSystem.LocArea.DevZero)
+        {
+            return 0;
+        }
+
+        // Der Verteiler liest in Stücken; die Länge begrenzt der Puffer des Aufrufers.
+        dst.Clear();
+        return dst.Length;
+    }
 
     protected override long WriteCore(ReadOnlySpan<byte> data) => _tty ? FileSystem.Terminal.Write(data) : data.Length;
 
@@ -228,9 +261,7 @@ internal sealed class LinuxDeviceFile : LinuxOpenFile
 
     protected override long StatCore(out LinuxStat st)
     {
-        st = _tty
-            ? FileSystem.DevStat(LinuxMode.CharDevice | 0x1B6, 3, 0x500, 1)
-            : FileSystem.DevStat(LinuxMode.CharDevice | 0x1B6, 2, 0x103, 1);
+        st = FileSystem.StatOf(new LinuxFileSystem.Loc { Area = _area, Exists = true });
         return 0;
     }
 }
@@ -241,7 +272,7 @@ internal sealed class LinuxDeviceFile : LinuxOpenFile
 /// </summary>
 internal sealed class LinuxDirectoryFile : LinuxOpenFile
 {
-    private static readonly string[] DevNames = ["null", "tty"];
+    private static readonly string[] DevNames = ["null", "tty", "zero"];
     private readonly string? _storePath;
     private readonly bool _dev;
     private readonly uint _mode;
@@ -341,7 +372,7 @@ internal sealed class LinuxDirectoryFile : LinuxOpenFile
         string name = _names[index - 2];
         if (_dev)
         {
-            entry = new LinuxDirEntry(name == "null" ? 2UL : 3UL, LinuxMode.DtChar, name);
+            entry = new LinuxDirEntry(name switch { "null" => 2UL, "tty" => 3UL, _ => 4UL }, LinuxMode.DtChar, name);
             return 0;
         }
 

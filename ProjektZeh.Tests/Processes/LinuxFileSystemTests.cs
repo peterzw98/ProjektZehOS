@@ -16,7 +16,7 @@ namespace ProjektZeh.Tests.Processes;
 public sealed class LinuxFileSystemTests
 {
     private const int Create = Fs.OCreat | Fs.ORdWr;
-    private static readonly string[] DevListing = [".", "..", "null", "tty"];
+    private static readonly string[] DevListing = [".", "..", "null", "tty", "zero"];
     private static readonly string[] ShadowListing = [".", "..", "dev", "z"];
     private static readonly string[] DiskListing = [".", "..", "dev", "abs", "e", "lf", "rel", "up"];
     private static readonly string[] DiskOutside = ["geheim", "root"];
@@ -208,6 +208,135 @@ public sealed class LinuxFileSystemTests
         Assert.AreEqual(0L, fs.Stat("/dev", true, out LinuxStat ds));
         Assert.AreEqual(LinuxMode.Directory, ds.Mode & LinuxMode.TypeMask);
         Assert.AreEqual(0, fs.OpenFiles);
+    }
+
+    [TestMethod]
+    public void DevZeroReadsZerosAndDiscardsWrites()
+    {
+        var (fs, _, _) = New();
+        ILinuxFile z = OpenOk(fs, "/dev/zero", Fs.ORdWr);
+        byte[] buf = Enumerable.Repeat((byte)0xAA, 70_000).ToArray();
+        Assert.AreEqual(70_000L, z.Read(buf));
+        Assert.IsTrue(buf.All(b => b == 0));
+        Assert.AreEqual(0L, z.Read(Span<byte>.Empty));
+        Assert.AreEqual(5L, z.Write("abcde"u8));
+        Assert.AreEqual(0L, z.Seek(123, 0));
+        Assert.AreEqual(0L, z.Stat(out LinuxStat st));
+        Assert.AreEqual(LinuxMode.CharDevice, st.Mode & LinuxMode.TypeMask);
+        Assert.AreEqual(0x105UL, st.Rdev);
+        Assert.AreEqual("/dev/zero", z.Path);
+        z.Close();
+        Assert.AreEqual(0L, fs.Stat("/dev/zero", true, out st));
+        Assert.AreEqual(0x105UL, st.Rdev);
+        Assert.AreEqual(-E.EACCES, fs.Unlink("/dev/zero"));
+        Assert.AreEqual(0, fs.OpenFiles);
+    }
+
+    /// <summary>Speicher, dessen Dateien beim Schließen scheitern: einmal mit -EIO, einmal mit einer IOException.</summary>
+    private sealed class FailingCloseStore(MemoryFileStore inner) : ILinuxFileStore
+    {
+        private int _opened;
+
+        public StringComparison NameComparison => inner.NameComparison;
+
+        public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
+
+        public long ReadLink(string path, out string target) => inner.ReadLink(path, out target);
+
+        public long List(string path, out string[] names) => inner.List(path, out names);
+
+        public long OpenFile(string path, bool write, out ILinuxStoreFile? file)
+        {
+            long r = inner.OpenFile(path, write, out ILinuxStoreFile? f);
+            file = f is null ? null : new Failing(f, _opened++ % 2 == 0);
+            return r;
+        }
+
+        public long CreateFile(string path, uint mode, out ILinuxStoreFile? file) => inner.CreateFile(path, mode, out file);
+
+        public long CreateDirectory(string path, uint mode) => inner.CreateDirectory(path, mode);
+
+        public long CreateSymlink(string path, string target) => inner.CreateSymlink(path, target);
+
+        public long DeleteFile(string path) => inner.DeleteFile(path);
+
+        public long DeleteDirectory(string path) => inner.DeleteDirectory(path);
+
+        public long Rename(string from, string to) => inner.Rename(from, to);
+
+        private sealed class Failing(ILinuxStoreFile f, bool throws) : ILinuxStoreFile
+        {
+            public long Length() => f.Length();
+
+            public long ReadAt(long offset, Span<byte> dst) => f.ReadAt(offset, dst);
+
+            public long WriteAt(long offset, ReadOnlySpan<byte> src) => f.WriteAt(offset, src);
+
+            public long SetLength(long length) => f.SetLength(length);
+
+            public long Close()
+            {
+                f.Close();
+                return throws ? throw new IOException("Zurückschreiben gescheitert") : -E.EIO;
+            }
+        }
+    }
+
+    [TestMethod]
+    public void FailingCloseStillClosesEveryFile()
+    {
+        var memory = new MemoryFileStore();
+        var (fs, _, _) = New(maxOpen: 4, store: memory);
+        WriteFile(fs, "/f", "x");
+        var failing = new Fs(new FailingCloseStore(memory), new Sink(), maxOpenFiles: 4);
+        var files = Enumerable.Range(0, 4).Select(_ => OpenOk(failing, "/f", Fs.ORdOnly)).ToList();
+        Assert.AreEqual(-E.EMFILE, failing.Open("/f", Fs.ORdOnly, 0, out _));
+
+        // Wie CloseAllFiles eines Prozesses: jede Datei einmal schließen, ohne dass eine Ausnahme die Schleife abbricht.
+        var errors = files.Select(f => ((LinuxOpenFile)f).CloseChecked()).ToList();
+        CollectionAssert.AreEqual(new[] { -E.EIO, -E.EIO, -E.EIO, -E.EIO }, errors);
+        Assert.AreEqual(0, failing.OpenFiles);
+        Assert.AreEqual(0L, ((LinuxOpenFile)files[0]).CloseChecked()); // zweites Schließen: nichts mehr zu tun
+        files[1].Close();
+        Assert.AreEqual(0, failing.OpenFiles);
+        Assert.AreEqual(-E.EBADF, files[2].Read(new byte[1]));
+        OpenOk(failing, "/f", Fs.ORdOnly).Close(); // Budget wieder frei
+        Assert.AreEqual(0, failing.OpenFiles);
+    }
+
+    [TestMethod]
+    public void SymlinkOnDriveWithoutLinksIsEperm()
+    {
+        string tmp = TempDir();
+        try
+        {
+            string root = Path.Combine(tmp, "root");
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+            }
+
+            var fs = new Fs(DirectoryFileStore.Open(root, new NoLinks(), StringComparison.Ordinal).Value!, new Sink());
+            Assert.AreEqual(-E.EPERM, fs.Symlink("ziel", "/l"));
+            Assert.AreEqual(-E.ENOENT, fs.Stat("/l", false, out _));
+            Assert.AreEqual(0, Directory.GetFileSystemEntries(root).Length);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    /// <summary>Wie FAT unter Cosmos: Symlink anlegen meldet false.</summary>
+    private sealed class NoLinks : ILinuxDiskLinks
+    {
+        private readonly HostLinuxDiskLinks _host = new();
+
+        public LinuxNodeKind KindStorageLocked(string parent, string name) => _host.KindStorageLocked(parent, name);
+
+        public string ReadLinkStorageLocked(string full) => _host.ReadLinkStorageLocked(full);
+
+        public bool CreateSymlinkStorageLocked(string full, string target) => false;
     }
 
     [TestMethod]
@@ -602,6 +731,11 @@ public sealed class LinuxFileSystemTests
     [TestMethod]
     public void DirectoryStoreRejectsAmbiguousDiskNames()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel; Windows-Pfade nimmt DirectoryFileStore nicht an.");
+        }
+
         string tmp = TempDir();
         try
         {

@@ -124,7 +124,7 @@ Grenzen (Review V2, bewusst offen):
 - `LinuxFileSystem` (`ProjektZeh/Processes/Vfs/`, plattformunabhängig, Hosttests `LinuxFileSystemTests`) implementiert `ILinuxFileSystem` und `ILinuxFile`
   (Schnittstellen von V2-Dateien, `ProjektZeh/Processes/Syscalls/ILinuxFileSystem.cs`). Die Wurzel "/" liegt auf einem `ILinuxFileStore`:
   `DirectoryFileStore` (Ordner auf der Datenplatte, jeder Zugriff unter `StorageLock`) oder `MemoryFileStore` (Arbeitsspeicher, Tests).
-  Darüber virtuell `/dev` mit `null` (liest EOF, verwirft, `lseek` 0) und `tty` (schreibt auf den Terminal-Deskriptor des Prozesses, liest EOF, `lseek` `-ESPIPE`).
+  Darüber virtuell `/dev` mit `null` (liest EOF, verwirft, `lseek` 0), `zero` (liest Nullbytes in jeder Länge, verwirft) und `tty` (schreibt auf den Terminal-Deskriptor des Prozesses, liest EOF, `lseek` `-ESPIPE`).
 - Ausbruchschutz: Pfade kommen absolut und normalisiert vom Verteiler; ".." darin ergibt `-EINVAL` (nicht selbst gedeutet). Symlinks löst `LinuxFileSystem`
   Teil für Teil selbst auf, der Speicher folgt keinem Link (im Kernel `CosmosLinuxDiskLinks` über Cosmos-Inodes, weil Cosmos-System.IO Links in jedem Teil folgt).
   Absolute Linkziele beginnen an der Prozesswurzel, ".." im Linkziel ist physisch und endet an der Wurzel (wie `chroot`). Ein Mount unter der Wurzel ist `-EACCES`.
@@ -133,15 +133,17 @@ Grenzen (Review V2, bewusst offen):
   Datei auf der Platte höchstens 1 GiB (`-EFBIG`, Schreiben bis zur Grenze wird gekürzt); `MemoryFileStore` 16 MiB je Datei, 64 MiB und 65 536 Einträge gesamt (`-ENOSPC`).
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
+- Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
+- `close`: die Datei ist danach immer zu und zählt nicht mehr zum Budget; ein Fehler beim Schließen (Platte) kommt über `LinuxOpenFile.CloseChecked` als `-errno`, `ILinuxFile.Close` wirft bei Dateifehlern nicht.
 - Namen auf der Platte: was FAT oder Cosmos anders deuten könnte (`:`, `\`, Steuerzeichen, abschließender Punkt oder Leerzeichen, `.zehos-`-Systemnamen) gibt es nicht:
   Abfragen melden es als fehlend, Anlegen `-EINVAL`, Listen lassen es weg. Groß-/Kleinschreibung bestimmt das Laufwerk (`NameComparison`).
 - `open`-Flags: Zugriff, `O_CREAT O_EXCL O_TRUNC O_APPEND O_DIRECTORY O_NOFOLLOW` wirken; `O_NOCTTY O_NONBLOCK O_SYNC O_DSYNC O_LARGEFILE O_NOATIME O_CLOEXEC`
   werden angenommen (CLOEXEC gehört zur Deskriptortabelle); `O_TMPFILE` `-EOPNOTSUPP`, übrige (`O_DIRECT`, `O_PATH`, `O_ASYNC`) `-EINVAL`;
   `O_CREAT|O_DIRECTORY` `-EINVAL` wie Linux ab 6.4. Eine entfernte, offene Datei bleibt les- und abfragbar (`MemoryFileStore`; Platte im Gast noch offen).
 - Bekannte Abweichung FAT-Datenplatte: Cosmos legt auf FAT keine Symlinks an (`FatInodeOperations.Symlink` liefert immer false), `symlink`/`symlinkat`
-  auf der Platte enden deshalb mit `-EIO`; folgende `readlink`, `lstat` und `unlink` des Links finden nichts. Im Gast weicht `s1/files` darum in den
+  auf der Platte enden deshalb mit `-EPERM` (wie Linux auf vfat); folgende `readlink`, `lstat` und `unlink` des Links finden nichts. Im Gast weicht `s1/files` darum in den
   Symlink-Zeilen ab (erwartete Ausgabe bleibt die von Linux). Im Arbeitsspeicher (`MemoryFileStore`) gibt es Symlinks; ext2 implementiert `Symlink` in Cosmos, als Prozesswurzel im Gast ist das ungeprüft.
-- Offen: Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/zero` (braucht `s1/badptr`), `/dev/urandom`,
+- Offen: Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/urandom`,
   `/tmp` im Speicher, Eingabe über `/dev/tty`.
 
 ## Dateien im Prozess (V8)
