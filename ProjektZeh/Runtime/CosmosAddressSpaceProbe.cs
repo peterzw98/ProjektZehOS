@@ -685,7 +685,7 @@ internal static unsafe class CosmosAddressSpaceProbe
     private static byte[] diskReference = Array.Empty<byte>(), diskBuffer = Array.Empty<byte>();
     private static Canvas? canvas;
     private static int deviceRound;
-    private static int diskReads, frames, pings;
+    private static int diskReads, frames, pings, pingLosses;
     private static string deviceFailure = "";
     private const int DeviceRounds = 30, DiskBlocks = 8;
 
@@ -733,9 +733,12 @@ internal static unsafe class CosmosAddressSpaceProbe
             client.Connect(new Address4(10, 0, 2, 2));
             var source = new EndPoint(Address4.Zero, 0);
             // Beim ersten Echo ist die ARP-Antwort oft noch nicht da (IPv4OutgoingBuffer: "ARP timeout", die Antwort kommt danach),
-            // das Echo geht verloren. Deshalb bis zu fuenf Versuche je eine Sekunde.
+            // das Echo geht verloren. Deshalb bis zu fuenf Versuche je eine Sekunde. Jeder Versuch nach dem ersten zaehlt als
+            // Verlust: Nur der Referenz-Ping darf welche haben (ARP), danach verlangt Device() 0, sonst verdeckte die
+            // Wiederholung verlorene Echos auf der Tabelle des Programms.
             for (int attempt = 0; attempt < 5; attempt++)
             {
+                if (attempt > 0) pingLosses++;
                 client.SendEcho();
                 var clock = Stopwatch.StartNew();
                 while (clock.ElapsedMilliseconds < 1000)
@@ -770,16 +773,18 @@ internal static unsafe class CosmosAddressSpaceProbe
         bool network = NetworkManager.IsEnabled && NetworkManager.IsInitialized && NetworkManager.DeviceCount > 0;
         if (network && (NetworkManager.Primary.IPConfig == null || NetworkManager.Primary.IPConfig.Address.Equals(Address4.Zero)))
             IPConfig.Enable(new Address4(10, 0, 2, 15), new Address4(255, 255, 255, 0), new Address4(10, 0, 2, 2)); // QEMU user-Netz
+        pingLosses = 0;
         bool reference = network && Ping();
+        int referenceLosses = pingLosses;
         if (disk == null || canvas == null || !reference)
             return (false, "disk=" + (disk != null ? 1 : 0) + " canvas=" + (canvas != null ? 1 : 0) + " net=" + (network ? 1 : 0)
-                + " ping_kernel_tables=" + (reference ? 1 : 0) + " " + deviceFailure);
+                + " ping_kernel_tables=" + (reference ? 1 : 0) + " ref_losses=" + referenceLosses + " " + deviceFailure);
 
         // 1) im Handler eines gebundenen Threads
         Space? created = Space.Create();
         if (created == null) return (false, "no space");
         Space space = created;
-        deviceRound = diskReads = frames = pings = 0;
+        deviceRound = diskReads = frames = pings = pingLosses = 0;
         ulong result = 0xDEAD;
         var worker = new Thread(() =>
         {
@@ -791,7 +796,9 @@ internal static unsafe class CosmosAddressSpaceProbe
         worker.Start();
         bool joined = Probe.Join(worker, 300);
         space.Dispose();
-        string inHandler = "handler: result=" + Hex(result) + " disk=" + diskReads + " frames=" + frames + " pings=" + pings + " " + deviceFailure;
+        int handlerLosses = pingLosses;
+        string inHandler = "ref_losses=" + referenceLosses + " | handler: result=" + Hex(result) + " joined=" + (joined ? 1 : 0) + " disk=" + diskReads
+            + " frames=" + frames + " pings=" + pings + " ping_losses=" + handlerLosses + " " + deviceFailure;
 
         // 2) aus einem Kernelthread, waehrend ein Programm mit eigener Tabelle auf der Programm-CPU laeuft
         checks = 0;
@@ -800,15 +807,32 @@ internal static unsafe class CosmosAddressSpaceProbe
         if (running == null) return (false, inHandler + " no space");
         var runner = new Runner(running, "isolate", 0x5555, Probe.ProgramCpu);
         bool progress = runner.WaitProgress();
-        deviceRound = diskReads = frames = pings = 0;
-        ulong step = 0;
-        while (step == 0) step = DeviceStep();
-        progress &= runner.WaitProgress();
-        joined &= runner.Stop();
+        diskReads = frames = pings = pingLosses = 0;
+        ulong step = 1;
+        int rounds = 0;
+        // Geraeterunden wiederholen, bis das Programm mindestens einmal geprueft hat (hoechstens 10 s): Unter TCG mit einer CPU
+        // kam das Programm in den 30 Schritten einer Runde manchmal nicht zum Zug (program_checks=0, #633-Serie TCG smp1 1/3).
+        var deadline = Stopwatch.StartNew();
+        do
+        {
+            deviceRound = 0;
+            step = 0;
+            while (step == 0) step = DeviceStep();
+            rounds++;
+            if (step != 1) break;
+            if (Volatile.Read(ref checks) == 0) Thread.Sleep(10); // dem Programm auf derselben CPU Zeit geben
+        }
+        while (Volatile.Read(ref checks) == 0 && deadline.ElapsedMilliseconds < 10000);
+        bool kernelProgress = runner.WaitProgress();
+        bool kernelJoined = runner.Stop();
         running.Dispose();
-        string inKernel = "kernel: step=" + Hex(step) + " disk=" + diskReads + " frames=" + frames + " pings=" + pings
-            + " program_checks=" + checks + " check_failures=" + checkFailures + " bad=0x" + runner.Bad.ToString("X");
-        bool ok = joined && result == 0 && step == 1 && progress && checkFailures == 0 && runner.Bad == 0 && checks > 0;
+        long programChecks = Volatile.Read(ref checks);
+        string inKernel = "kernel: step=" + Hex(step) + " rounds=" + rounds + " ms=" + deadline.ElapsedMilliseconds + " disk=" + diskReads
+            + " frames=" + frames + " pings=" + pings + " ping_losses=" + pingLosses + " program_checks=" + programChecks
+            + " check_failures=" + checkFailures + " bad=0x" + runner.Bad.ToString("X")
+            + " progress=" + (progress ? 1 : 0) + "/" + (kernelProgress ? 1 : 0) + " joined=" + (kernelJoined ? 1 : 0);
+        bool ok = joined && kernelJoined && result == 0 && step == 1 && progress && kernelProgress && checkFailures == 0 && runner.Bad == 0
+            && programChecks > 0 && handlerLosses == 0 && pingLosses == 0;
         return (ok, inHandler + " | " + inKernel);
     }
 }
