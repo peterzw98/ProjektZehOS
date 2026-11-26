@@ -24,6 +24,7 @@ internal static partial class LinuxSyscalls
     // Obergrenze der Deskriptornummern (RLIMIT_NOFILE wie poll); close sucht darin nach weiteren Verweisen auf dieselbe Datei.
     private const int FileMaxFds = 1024;
     private const int FileOCloexec = 0x80000;
+    private const int FdCloexec = 1;
     private const int FdDupfd = 0, FdGetfd = 1, FdSetfd = 2, FdGetfl = 3, FdSetfl = 4, FdDupfdCloexec = 1030;
     private const int FileChunk = 65536;
 
@@ -53,7 +54,7 @@ internal static partial class LinuxSyscalls
                     return -FileErr.EINVAL;
                 }
 
-                return DoDup2(p, f, (int)a.A0, (int)a.A1, allowSame: false);
+                return WithCloseOnExec(f, DoDup2(p, f, (int)a.A0, (int)a.A1, allowSame: false), ((int)a.A2 & FileOCloexec) != 0);
             case FileNr.Fcntl: return DoFcntl(p, f, (int)a.A0, (int)a.A1, a.A2);
             case FileNr.Getcwd: return DoGetcwd(p, f, a.A0, a.A1);
             case FileNr.Chdir: return DoChdir(p, f, a.A0);
@@ -88,6 +89,10 @@ internal static partial class LinuxSyscalls
         {
             _ = file.Close(); // -EMFILE: die Datei hat keinen Deskriptor bekommen und wäre sonst nie geschlossen
         }
+        else
+        {
+            MarkCloseOnExec(f, fd, (flags & FileOCloexec) != 0);
+        }
 
         return fd;
     }
@@ -105,10 +110,10 @@ internal static partial class LinuxSyscalls
     }
 
     /// <summary>
-    /// Schließt eine Datei erst, wenn keine Nummer mehr auf sie zeigt (dup teilt die offene Datei wie bei Linux).
+    /// Schließt eine Datei erst, wenn keine Nummer mehr auf sie zeigt (dup teilt die offene Datei wie bei Linux). Der Aufrufer hält FileGate.
     /// Die Tabelle hat keine Aufzählung; FileMaxFds Abfragen je close sind billig gegenüber einer Datei-I/O.
     /// </summary>
-    private static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
+    internal static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
     {
         if (d is not ILinuxFile and not LinuxPipeEnd)
         {
@@ -121,6 +126,12 @@ internal static partial class LinuxSyscalls
             {
                 return 0;
             }
+        }
+
+        // V15: Nach vfork teilen Prozesse eines Laufs die offenen Dateien; erst die letzte Nummer irgendeines Prozesses schließt.
+        if (p is ILinuxOpenFileCount count && count.IsOpenAnywhere(d))
+        {
+            return 0;
         }
 
         if (d is LinuxPipeEnd end)
@@ -490,11 +501,14 @@ internal static partial class LinuxSyscalls
         switch (cmd)
         {
             case FdDupfd:
-            case FdDupfdCloexec:
                 return DoDup(p, f, fd, (int)arg);
+            case FdDupfdCloexec:
+                return WithCloseOnExec(f, DoDup(p, f, fd, (int)arg), true);
             case FdGetfd:
-                return 0; // FD_CLOEXEC wird nicht geführt: es gibt noch kein execve
+                // V15: FD_CLOEXEC (Bit 0) gilt bei execve; ohne Flagtabelle (Hosttests mit Ersatzprozessen) wie bisher 0.
+                return f is ILinuxFdFlags getFlags && getFlags.GetCloseOnExec(fd) ? FdCloexec : 0;
             case FdSetfd:
+                MarkCloseOnExec(f, fd, ((int)arg & FdCloexec) != 0); // Linux kennt nur dieses Bit, der Rest wird ignoriert
                 return 0;
             case FdGetfl when p.GetDescriptor(fd) is LinuxPipeEnd pipeEnd:
                 return pipeEnd.StatusFlags;
@@ -515,7 +529,7 @@ internal static partial class LinuxSyscalls
 
     /// <summary>
     /// pipe/pipe2 (V13): legt eine Pipe im Prozess an und schreibt die Nummern {lesen, schreiben} nach <paramref name="fdsPtr"/>.
-    /// O_CLOEXEC wird angenommen und nicht geführt (es gibt kein execve, wie bei F_SETFD); O_NONBLOCK gilt für beide Enden.
+    /// O_CLOEXEC setzt FD_CLOEXEC auf beiden Nummern (V15); O_NONBLOCK gilt für beide Enden.
     /// Andere Flags (O_DIRECT, Paketmodus) -EINVAL. Scheitert das Zurückschreiben, sind beide Nummern wieder frei (wie Linux).
     /// </summary>
     private static long DoPipe2(ILinuxProcess p, ILinuxFiles f, ulong fdsPtr, int flags)
@@ -549,7 +563,30 @@ internal static partial class LinuxSyscalls
             return -EFAULT;
         }
 
+        bool cloexec = (flags & FileOCloexec) != 0;
+        MarkCloseOnExec(f, rfd, cloexec);
+        MarkCloseOnExec(f, wfd, cloexec);
         return 0;
+    }
+
+    /// <summary>V15: setzt FD_CLOEXEC der Nummer, wenn der Prozess Flags führt (Hosttests mit Ersatzprozessen führen keine).</summary>
+    private static void MarkCloseOnExec(ILinuxFiles f, int fd, bool on)
+    {
+        if (f is ILinuxFdFlags flags)
+        {
+            flags.SetCloseOnExec(fd, on);
+        }
+    }
+
+    /// <summary>Setzt FD_CLOEXEC auf das Ergebnis eines dup-Aufrufs, wenn es eine Nummer ist; Fehler gehen unverändert durch.</summary>
+    private static long WithCloseOnExec(ILinuxFiles f, long fd, bool on)
+    {
+        if (fd >= 0)
+        {
+            MarkCloseOnExec(f, (int)fd, on);
+        }
+
+        return fd;
     }
 
     private static long DoGetcwd(ILinuxProcess p, ILinuxFiles f, ulong buf, ulong size)

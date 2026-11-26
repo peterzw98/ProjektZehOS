@@ -109,6 +109,9 @@ internal static unsafe class CosmosLinuxRun
     private sealed class Bridge
     {
         public required LinuxThread Linux;
+
+        /// <summary>Prozess des Threads; im vfork-Kind (V15) bis zu execve oder exit das Kind, danach wieder der Elternprozess.</summary>
+        public required LinuxUserProcess Process;
         public SchedulerThread? Sched;
         public int Slot;
 
@@ -126,6 +129,18 @@ internal static unsafe class CosmosLinuxRun
         /// </summary>
         public bool Pending;
         public ulong EntryRip;
+
+        /// <summary>V15 vfork: Elternprozess, Elternthread und dessen Register beim clone; gesetzt, solange das Kind auf diesem Thread läuft.</summary>
+        public LinuxUserProcess? VforkParent;
+        public LinuxThread? VforkThread;
+        public UserFrame VforkFrame;
+
+        /// <summary>V15: Das vfork-Kind hat execve oder exit gerufen; nach dem Aufruf läuft der Thread wieder als Elternthread weiter.</summary>
+        public bool Resume;
+
+        /// <summary>Ausnahme im Ring 3 auf diesem Thread (V15: ein Kindprozess meldet sie selbst, nicht über <see cref="Running"/>).</summary>
+        public bool Fault;
+        public ulong FaultVector;
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -308,11 +323,41 @@ internal static unsafe class CosmosLinuxRun
             }
         }
 
+        // Alle Prozesse des Laufs (V15): Kinder enden mit dem ersten Prozess.
         run.Process?.Futexes.Abort();
+        for (int i = 0; i < run.Threads.Length; i++)
+        {
+            Volatile.Read(ref run.Threads[i])?.Process.Futexes.Abort();
+        }
+
         if (Volatile.Read(ref run.KernelThreads) > 1)
         {
             run.Session?.EndInput();
         }
+    }
+
+    /// <summary>
+    /// V15: Nur die Threads von <paramref name="process"/> verlassen den Ring 3 (exit_group oder Absturz in einem Kindprozess); für den
+    /// ersten Prozess des Laufs wie <see cref="LeaveAll"/>.
+    /// </summary>
+    private static void LeaveProcess(Running run, LinuxUserProcess process, Bridge? except, ulong result)
+    {
+        if (ReferenceEquals(process, run.Process))
+        {
+            LeaveAll(run, except, result);
+            return;
+        }
+
+        foreach (Bridge? b in run.Threads)
+        {
+            SchedulerThread? sched = b == null || b == except || !ReferenceEquals(b.Process, process) ? null : Volatile.Read(ref b.Sched);
+            if (sched != null)
+            {
+                UserMode.RequestLeave(sched, result);
+            }
+        }
+
+        process.Futexes.Abort();
     }
 
     /// <summary>Ende eines Vordergrundprogramms: letzte Zeile, Statuszeile für die Shell, Spiegel ins serielle Protokoll.</summary>
@@ -519,9 +564,10 @@ internal static unsafe class CosmosLinuxRun
 
         var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
-            OnFsBase = UserMode.SetFsBase,
             ExePath = run.ExePath,
+            HwCap = (uint)X86Base.CpuId(1, 0).Edx,
         };
+        Wire(run, table, process);
 
         // V10: exit_group (oder das Ende des letzten Threads) beendet alle Threads; exit nur den aufrufenden.
         process.OnExit = code =>
@@ -529,10 +575,7 @@ internal static unsafe class CosmosLinuxRun
             UserMode.LeaveCurrent((ulong)code);
             LeaveAll(run, CurrentBridge(run), (ulong)code);
         };
-        process.OnThreadExit = (_, code) => UserMode.LeaveCurrent((ulong)code);
-        process.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? process.MainThread;
-        process.StartThread = child => StartChild(run, table, process, child);
-        var main = new Bridge { Linux = process.MainThread, Sched = FaultIsolation.CurrentSchedulerThread() };
+        var main = new Bridge { Linux = process.MainThread, Process = process, Sched = FaultIsolation.CurrentSchedulerThread() };
         run.Threads[0] = main;
         run.KernelThreads = 1;
         run.Process = process;
@@ -629,24 +672,16 @@ internal static unsafe class CosmosLinuxRun
             return false;
         }
 
-        var b = new Bridge { Linux = child, Start = *parent.Frame, Pending = true, EntryRip = parent.Frame->Rip - 2 };
+        var b = new Bridge { Linux = child, Process = process, Start = *parent.Frame, Pending = true, EntryRip = parent.Frame->Rip - 2 };
         b.Start.Rax = 0;
         if (child.StackPointer != 0)
         {
             b.Start.Rsp = child.StackPointer;
         }
 
-        lock (run.Threads)
+        if (!TakeSlot(run, b))
         {
-            int slot = Array.IndexOf(run.Threads, null);
-            if (slot < 0 || run.Cancelled)
-            {
-                return false;
-            }
-
-            b.Slot = slot;
-            Volatile.Write(ref run.Threads[slot], b);
-            Interlocked.Increment(ref run.KernelThreads);
+            return false;
         }
 
         child.Host = b;
@@ -659,6 +694,24 @@ internal static unsafe class CosmosLinuxRun
         {
             ReleaseSlot(run, b);
             return false;
+        }
+    }
+
+    /// <summary>Trägt den Thread in <see cref="Running.Threads"/> ein (alle Prozesse des Laufs zusammen); false, wenn voll oder abgebrochen.</summary>
+    private static bool TakeSlot(Running run, Bridge b)
+    {
+        lock (run.Threads)
+        {
+            int slot = Array.IndexOf(run.Threads, null);
+            if (slot < 0 || run.Cancelled)
+            {
+                return false;
+            }
+
+            b.Slot = slot;
+            Volatile.Write(ref run.Threads[slot], b);
+            Interlocked.Increment(ref run.KernelThreads);
+            return true;
         }
     }
 
@@ -692,17 +745,22 @@ internal static unsafe class CosmosLinuxRun
             }
 
             UserMode.Enter(b.EntryRip, b.Start.Rsp);
+            if (b.Fault && !ReferenceEquals(process, run.Process))
+            {
+                process.RecordFault(SignalOf(b.FaultVector));
+            }
+
 
             // Weder exit noch exit_group: Absturz oder ungültige Register. Linux beendet dann den ganzen Prozess.
             if (!b.Linux.Exited && !process.ExitCode.HasValue)
             {
-                LeaveAll(run, b, Killed);
+                LeaveProcess(run, process, b, Killed);
             }
         }
         catch (Exception exception)
         {
             run.Error ??= exception.GetType().Name + ": " + exception.Message;
-            LeaveAll(run, b, Killed);
+            LeaveProcess(run, process, b, Killed);
         }
         finally
         {
@@ -781,7 +839,7 @@ internal static unsafe class CosmosLinuxRun
     {
         Running? run = Volatile.Read(ref current);
         Bridge? me = run == null ? null : CurrentBridge(run);
-        if (run?.Process == null || me == null)
+        if (run == null || me == null)
         {
             frame->Rax = unchecked((ulong)-LinuxSyscalls.ENOSYS);
             return;
@@ -808,7 +866,15 @@ internal static unsafe class CosmosLinuxRun
                 A4 = frame->R8,
                 A5 = frame->R9,
             };
-            frame->Rax = unchecked((ulong)LinuxSyscalls.Dispatch(ref args, run.Process));
+            long result = LinuxSyscalls.Dispatch(ref args, me.Process);
+            if (me.Resume)
+            {
+                ResumeParent(me, frame);
+            }
+            else
+            {
+                frame->Rax = unchecked((ulong)result);
+            }
         }
         catch (Exception exception)
         {
@@ -823,18 +889,191 @@ internal static unsafe class CosmosLinuxRun
         }
     }
 
+    /// <summary>
+    /// V15: Ende der vfork-Phase (execve oder exit des Kinds). Der Thread läuft als Elternthread weiter: dessen Register aus clone, rax
+    /// die PID des Kinds, seine FS-Basis. Das vfork-Objekt gibt nur seine Tabelle ab, Speicher und offene Dateien gehören dem Elternprozess.
+    /// </summary>
+    private static void ResumeParent(Bridge me, UserFrame* frame)
+    {
+        LinuxUserProcess child = me.Process;
+        me.Resume = false;
+        *frame = me.VforkFrame;
+        frame->Rax = (ulong)child.Pid;
+        me.Process = me.VforkParent!;
+        me.Linux = me.VforkThread!;
+        me.VforkParent = null;
+        me.VforkThread = null;
+        UserMode.SetFsBase(me.Linux.FsBase);
+        child.Release();
+    }
+
+    /// <summary>Hooks eines Prozesses im Kernel (erster Prozess und jedes Abbild nach execve).</summary>
+    private static void Wire(Running run, UserPageTable table, LinuxUserProcess process)
+    {
+        process.OnFsBase = UserMode.SetFsBase;
+        process.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? process.MainThread;
+        process.StartThread = child => StartChild(run, table, process, child);
+        process.OnThreadExit = (_, code) => UserMode.LeaveCurrent((ulong)code);
+        process.StartVfork = (child, stack) => StartVfork(run, child, stack);
+        process.CreatePages = () =>
+        {
+            UserPageTable? created = UserPageTable.TryCreate();
+            return created == null ? null : new CosmosUserPages(created);
+        };
+        process.StartExec = (next, image) => StartExec(run, next, image);
+    }
+
+    /// <summary>
+    /// V15 vfork: Der aufrufende Thread läuft ab dem Rücksprung als <paramref name="child"/> weiter (rax 0, Stack aus clone). Der
+    /// Elternthread ist damit blockiert, wie Linux es für CLONE_VFORK verlangt, ohne einen zweiten Kernelthread auf demselben Speicher.
+    /// </summary>
+    private static bool StartVfork(Running run, LinuxUserProcess child, ulong stack)
+    {
+        Bridge? me = CurrentBridge(run);
+        if (me == null || me.Frame == null || me.VforkParent != null)
+        {
+            return false;
+        }
+
+        me.VforkFrame = *me.Frame;
+        if (stack != 0)
+        {
+            me.Frame->Rsp = stack;
+        }
+
+        child.OnFsBase = UserMode.SetFsBase;
+        child.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? child.MainThread;
+        child.CreatePages = () =>
+        {
+            UserPageTable? created = UserPageTable.TryCreate();
+            return created == null ? null : new CosmosUserPages(created);
+        };
+        child.StartExec = (next, image) => StartExec(run, next, image);
+
+        // exit vor execve: kein Verlassen des Ring 3, der Thread kehrt nach dem Aufruf als Elternthread zurück.
+        child.OnExit = _ =>
+        {
+            child.ReportEnd(child.WaitStatusOf(9));
+            me.Resume = true;
+        };
+        me.VforkParent = me.Process;
+        me.VforkThread = me.Linux;
+        me.Process = child;
+        me.Linux = child.MainThread;
+        return true;
+    }
+
+    /// <summary>
+    /// V15 execve im vfork-Kind: das neue Abbild auf eigenem Kernelthread mit eigener Seitentabelle; der aufrufende Thread kehrt nach dem
+    /// Aufruf als Elternthread zurück (auch wenn kein Thread startet, dann endet das Kind mit SIGKILL).
+    /// </summary>
+    private static bool StartExec(Running run, LinuxUserProcess next, UserImage image)
+    {
+        Bridge? me = CurrentBridge(run);
+        if (me == null || me.VforkParent == null)
+        {
+            return false;
+        }
+
+        me.Resume = true;
+        var table = ((CosmosUserPages)next.Pages).Table;
+        Wire(run, table, next);
+        next.OnExit = code =>
+        {
+            UserMode.LeaveCurrent((ulong)code);
+            LeaveProcess(run, next, CurrentBridge(run), (ulong)code);
+        };
+        var b = new Bridge { Linux = next.MainThread, Process = next };
+        if (!TakeSlot(run, b))
+        {
+            return false;
+        }
+
+        try
+        {
+            new Thread(() => ProcessBody(run, table, next, b, image)).Start();
+            return true;
+        }
+        catch (Exception)
+        {
+            ReleaseSlot(run, b);
+            return false;
+        }
+    }
+
+    /// <summary>Kernelthread eines Prozesses nach execve: Ring 3 am Einsprung, dann auf die eigenen Threads warten, Ende melden, aufräumen.</summary>
+    private static void ProcessBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b, UserImage image)
+    {
+        bool bound = false;
+        try
+        {
+            Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
+            table.BindToCurrentThread();
+            bound = true;
+            UserMode.SetFsBase(0);
+            Interlocked.MemoryBarrier();
+            if (!run.Cancelled)
+            {
+                UserMode.Enter(image.Entry, image.StackPointer);
+                if (b.Fault)
+                {
+                    process.RecordFault(SignalOf(b.FaultVector));
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            run.Error ??= exception.GetType().Name + ": " + exception.Message;
+        }
+        finally
+        {
+            // Wie WaitForThreads, nur für diesen Prozess: erst wenn kein eigener Thread mehr läuft, darf der Adressraum weg.
+            while (HasOtherThreads(run, process, b))
+            {
+                LeaveProcess(run, process, b, Killed);
+                Thread.Sleep(SleepSlice);
+            }
+
+            process.ThreadGone(b.Linux);
+            if (bound)
+            {
+                UserPageTable.UnbindCurrentThread();
+            }
+
+            process.ReportEnd(process.WaitStatusOf(9));
+            process.Destroy();
+            ReleaseSlot(run, b);
+        }
+    }
+
+    private static bool HasOtherThreads(Running run, LinuxUserProcess process, Bridge self)
+    {
+        for (int i = 0; i < run.Threads.Length; i++)
+        {
+            Bridge? other = Volatile.Read(ref run.Threads[i]);
+            if (other != null && other != self && ReferenceEquals(other.Process, process))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [UnmanagedCallersOnly]
     private static int OnFault(UserFrame* frame, ulong vector, ulong error, ulong address)
     {
-        Running? run = Current();
-        if (run?.Process == null)
+        Running? run = Volatile.Read(ref current);
+        Bridge? me = run == null ? null : CurrentBridge(run);
+        if (run == null || me == null)
         {
             return 0;
         }
 
         try
         {
-            if (vector == PageFault && run.Process.HandlePageFault(address, error))
+            // Im vfork-Kind leitet der Prozess an den Speicher des Elternprozesses weiter (V15).
+            if (vector == PageFault && me.Process.HandlePageFault(address, error))
             {
                 return 1;
             }
@@ -842,6 +1081,15 @@ internal static unsafe class CosmosLinuxRun
         catch (Exception exception)
         {
             run.Error = exception.GetType().Name + ": " + exception.Message;
+        }
+
+        // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
+        // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
+        me.Fault = true;
+        me.FaultVector = vector;
+        if (!ReferenceEquals(me.Process, run.Process) && !me.Process.InVfork)
+        {
+            return 0;
         }
 
         run.Fault = true;
@@ -901,7 +1149,7 @@ internal static unsafe class CosmosLinuxRun
             while (ms > 0)
             {
                 Running? run = Current();
-                if (run == null || run.Cancelled)
+                if (run == null || run.Cancelled || CurrentBridge(run)?.Process.IsAborted == true)
                 {
                     return;
                 }
@@ -919,6 +1167,8 @@ internal static unsafe class CosmosLinuxRun
         private readonly UserPageTable _table;
 
         public CosmosUserPages(UserPageTable table) => _table = table;
+
+        public UserPageTable Table => _table;
 
         public ulong AllocateFrame() => UserPageTable.AllocateFrame();
 

@@ -1,0 +1,5 @@
+kind
+spawn rc 0 pid>1 1 anderer 1
+spawn fehlt rc 2
+vfork pid>1 1 geteilt 2
+ende
