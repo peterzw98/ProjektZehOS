@@ -44,6 +44,7 @@ internal static class CosmosSmpProbe
             ok &= Step("placement", StepPlacement);
             ok &= Step("smt", StepSmt);
             ok &= Step("timedwait", StepTimedWait);
+            ok &= Step("smtbench", StepSmtBench);
             Write("isolation INFO test-isolation-probe.py laeuft getrennt");
 #endif
         }
@@ -490,6 +491,82 @@ internal static class CosmosSmpProbe
         bool off = CosmosBootOptions.Current.SmtOff;
         Write($"INFO smt off={(off ? 1 : 0)} used={string.Join(",", used)} second={second}");
         return off && second > 0 ? $"{second} zweite logische Prozessoren trotz zehos.smt=off genutzt" : null;
+    }
+
+    // #674 Messung A (nur lokal, nicht fuer master): Rechenzeit eines festen Auftrags auf CPU a, wenn das SMT-Geschwister b
+    // einen Dauerrechner traegt (S) oder frei ist (F); dazu die Weckabweichung eines Sleep(1)-Threads auf a.
+    // Durchsatzlast: vier unabhaengige Ketten teilen sich die Ausfuehrungseinheiten des Kerns (SMT-empfindlich).
+    private static long Wide(long x, long n)
+    {
+        long a = x, b = x + 1, c = x + 2, d = x + 3;
+        for (long i = 0; i < n; i++) { a = a * 6364136223846793005L + 1; b = b * 6364136223846793005L + 3; c = c * 6364136223846793005L + 5; d = d * 6364136223846793005L + 7; }
+        return a ^ b ^ c ^ d;
+    }
+
+    private static string? StepSmtBench()
+    {
+        var topology = Topology;
+        if (topology == null || !topology.Measured || topology.CpuCount == topology.CoreCount) return $"SKIP cpus={KernelCpus.Count}";
+        int a = -1, b = -1;
+        for (int c = 1; c < KernelCpus.Count && b < 0; c++)
+            for (int d = c + 1; d < KernelCpus.Count; d++)
+                if (topology.CoreOf(c) == topology.CoreOf(d)) { a = c; b = d; break; }
+        if (b < 0) return "SKIP kein Paar";
+        Write($"INFO smtbench a={a} b={b}");
+        // #674 V2: Fall M wie S, aber der Rechenthread startet auf a und darf danach auf alle Rechen-CPUs (nicht gepinnt):
+        // Mit V2 zieht er auf einen ganz freien Kern, sofern es einen gibt (bei 4c2t2 nicht: CPU 0 traegt die Hauptschleife).
+        // Gross: zehnfacher Auftrag, damit die Umzugsverzoegerung (bis ~140 ms) die Rechenzeit nicht verdeckt.
+        foreach (long size in new[] { 100_000_000L, 1_000_000_000L })
+        for (int round = 0; round < 5; round++)
+            foreach (char kind in new[] { 'S', 'F', 'M' })
+            {
+                bool busy = kind != 'F';
+                int stop = 0;
+                Thread? spinner = null;
+                if (busy)
+                {
+                    spinner = Pinned((uint)b, () => { long x = 1; while (Volatile.Read(ref stop) == 0) x = Wide(x, 1 << 20); if (x == 42) Write("sink"); });
+                    spinner.Start();
+                    Thread.Sleep(30);
+                }
+                var lat = new long[4000];
+                int latCount = 0;
+                int done = 0;
+                var sleeper = Pinned((uint)a, () =>
+                {
+                    while (Volatile.Read(ref done) == 0 && latCount < lat.Length)
+                    {
+                        long t0 = Stopwatch.GetTimestamp();
+                        Thread.Sleep(1);
+                        lat[latCount++] = (Stopwatch.GetTimestamp() - t0) * 1000000 / Stopwatch.Frequency - 1000;
+                    }
+                });
+                sleeper.Start();
+                long sink = 0;
+                long ms = 0;
+                uint endCpu = uint.MaxValue;
+                var compute = Pinned((uint)a, () =>
+                {
+                    if (kind == 'M') ThreadAffinity.Current = KernelCpus.Compute;
+                    var clock = Stopwatch.StartNew();
+                    sink = Wide(1, size);
+                    ms = clock.ElapsedMilliseconds;
+                    endCpu = KernelCpus.Current;
+                });
+                compute.Start();
+                compute.Join(120000);
+                Volatile.Write(ref done, 1);
+                sleeper.Join(5000);
+                Volatile.Write(ref stop, 1);
+                spinner?.Join(5000);
+                int n = latCount;
+                var sorted = new long[n];
+                Array.Copy(lat, sorted, n);
+                Array.Sort(sorted);
+                long p50 = n > 0 ? sorted[n / 2] : -1, p99 = n > 0 ? sorted[Math.Min(n - 1, n * 99 / 100)] : -1;
+                Write($"INFO smtbench case={kind} size={size} round={round} end_cpu={endCpu} compute_ms={ms} wake_n={n} p50_us={p50} p99_us={p99} sink={sink & 0xFF}");
+            }
+        return null;
     }
 
     private static void Sample(int[] cpus)
