@@ -46,7 +46,7 @@ internal interface IUserPages
 /// </para>
 /// </summary>
 internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
-    ILinuxSystemInfo
+    ILinuxSystemInfo, ILinuxFamilyMember, ILinuxFdFlags
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -67,12 +67,17 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     private readonly ILinuxDescriptor _terminal;
     private readonly ILinuxHost? _host;
     private readonly ILinuxDescriptor?[] _descriptors = new ILinuxDescriptor?[MaxDescriptors];
+
+    // V15: FD_CLOEXEC je Nummer (gehört zur Nummer, nicht zur Datei); geschützt wie die Tabelle durch FileGate.
+    private readonly bool[] _closeOnExec = new bool[MaxDescriptors];
     private string _cwd = "/";
 
     // V11: Threads teilen Deskriptortabelle, Arbeitsverzeichnis und Dateisystem. Der Verteiler nimmt die Sperre für jeden
     // Dateiaufruf (ILinuxFiles.FileGate), im Threadkontext, nie im Interrupt. Platz in der Reihenfolge: vor _memGate (Kopieren in
     // den Benutzerspeicher) und vor StorageLock (Platte); nie zusammen mit der Sperre der futex-Tabelle.
-    private readonly object _fileGate = new();
+    // V15: Die Sperre gehört der Familie (LinuxProcessFamily.FileGate), alle Prozesse eines Laufs teilen sie, weil sie nach vfork
+    // dieselben offenen Dateien haben.
+    private readonly object _fileGate;
     private readonly ulong _maxFrames;
 
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
@@ -88,8 +93,12 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
     /// <param name="fileSystem">Dateisystem des Prozesses (V7); ohne Angabe ein leeres im Arbeitsspeicher, das mit dem Prozess endet.</param>
+    /// <param name="family">
+    /// V15: Familie eines Kindes; der Erzeuger trägt es mit <see cref="LinuxProcessFamily.AddChild"/> ein. Ohne Angabe ist der Prozess der
+    /// erste einer neuen Familie.
+    /// </param>
     public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes, ILinuxHost? host = null,
-        ILinuxFileSystem? fileSystem = null)
+        ILinuxFileSystem? fileSystem = null, LinuxProcessFamily? family = null)
     {
         _host = host;
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
@@ -109,7 +118,18 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         _liveThreads = 1;
         _nextTid = pid;
         Futexes = new LinuxFutexTable(() => MonotonicNanos);
+        if (family is null)
+        {
+            family = new LinuxProcessFamily();
+            family.AddRoot(pid, this);
+        }
+
+        Family = family;
+        _fileGate = family.FileGate;
     }
+
+    /// <summary>V15: Prozesse dieses Laufs (Eltern, Kinder, Zombies, gemeinsame Dateisperre).</summary>
+    public LinuxProcessFamily Family { get; }
 
     /// <summary>Wird beim Exit gerufen; im Kernel verlässt das den Ring 3 (<c>UserMode.LeaveCurrent</c>).</summary>
     public Action<int>? OnExit { get; set; }
@@ -563,6 +583,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             if (_descriptors[fd] == null)
             {
                 _descriptors[fd] = d;
+                _closeOnExec[fd] = false; // neue Nummern (open, dup, dup2) beginnen ohne FD_CLOEXEC; Flags setzt der Verteiler danach
                 return fd;
             }
         }
@@ -578,7 +599,62 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         }
 
         _descriptors[fd] = null;
+        _closeOnExec[fd] = false;
         return true;
+    }
+
+    public bool GetCloseOnExec(int fd) => (uint)fd < MaxDescriptors && _descriptors[fd] != null && _closeOnExec[fd];
+
+    public void SetCloseOnExec(int fd, bool on)
+    {
+        if ((uint)fd < MaxDescriptors && _descriptors[fd] != null)
+        {
+            _closeOnExec[fd] = on;
+        }
+    }
+
+    /// <summary>
+    /// V15 (vfork-Kind): übernimmt Deskriptortabelle, FD_CLOEXEC und Arbeitsverzeichnis des Elternteils, wie Linux bei clone ohne CLONE_FILES.
+    /// Die offenen Dateien teilen beide danach (gleiche Position); jede schließt erst die letzte Nummer der Familie. Ruft der Erzeuger, bevor das
+    /// Kind läuft und nachdem es in der Familie steht; vorhandene Nummern des Kindes (das Terminal) werden ersetzt.
+    /// </summary>
+    public void CopyDescriptorsFrom(LinuxUserProcess parent)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+        if (!ReferenceEquals(parent._fileGate, _fileGate))
+        {
+            throw new InvalidOperationException("Kind und Elternteil müssen derselben Familie angehören");
+        }
+
+        lock (_fileGate)
+        {
+            Array.Copy(parent._descriptors, _descriptors, MaxDescriptors);
+            Array.Copy(parent._closeOnExec, _closeOnExec, MaxDescriptors);
+            _cwd = parent._cwd;
+        }
+    }
+
+    /// <summary>
+    /// V15 (execve): schließt jede Nummer mit FD_CLOEXEC. Die Datei selbst schließt erst, wenn keine Nummer der Familie mehr auf sie zeigt
+    /// (der Elternteil hat sie nach vfork meist noch). Fehler beim Zurückschreiben haben keinen Empfänger (wie Linux in do_close_on_exec).
+    /// </summary>
+    public void CloseOnExec()
+    {
+        lock (_fileGate)
+        {
+            for (int fd = 0; fd < MaxDescriptors; fd++)
+            {
+                ILinuxDescriptor? d = _descriptors[fd];
+                if (d is null || !_closeOnExec[fd])
+                {
+                    continue;
+                }
+
+                _descriptors[fd] = null;
+                _closeOnExec[fd] = false;
+                _ = LinuxSyscalls.ReleaseIfUnused(this, d);
+            }
+        }
     }
 
     /// <summary>
@@ -587,26 +663,25 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     /// </summary>
     public void CloseAllFiles()
     {
-        for (int fd = 0; fd < MaxDescriptors; fd++)
+        // V15: unter der Familiensperre, weil andere Prozesse dieselben Dateien halten und gleichzeitig schließen können.
+        lock (_fileGate)
         {
-            if (_descriptors[fd] is not ILinuxFile file)
+            for (int fd = 0; fd < MaxDescriptors; fd++)
             {
+                ILinuxDescriptor? d = _descriptors[fd];
                 _descriptors[fd] = null;
-                continue;
-            }
-
-            // Alle Nummern derselben Datei leeren, dann einmal schließen.
-            for (int other = fd; other < MaxDescriptors; other++)
-            {
-                if (ReferenceEquals(_descriptors[other], file))
+                _closeOnExec[fd] = false;
+                if (d is null)
                 {
-                    _descriptors[other] = null;
+                    continue;
                 }
-            }
 
-            // Close fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat
-            // am Prozessende keinen Empfänger mehr (wie Linux beim exit) und darf die übrigen Dateien nicht offen lassen.
-            _ = file.Close();
+                // Close fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat am Prozessende
+                // keinen Empfänger mehr (wie Linux beim exit) und darf die übrigen Dateien nicht offen lassen. Weitere Nummern derselben
+                // Datei hier und in anderen Prozessen der Familie halten sie offen; die letzte schließt (V15: auch Pipe-Enden, sonst sähe
+                // der Elternteil nach dem Ende eines Kindes nie EOF).
+                _ = LinuxSyscalls.ReleaseIfUnused(this, d);
+            }
         }
     }
 
