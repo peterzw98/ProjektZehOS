@@ -26,6 +26,12 @@ HALT_START = "USER_PROBE gegenprobe pf in kernel thread ring3=1"
 NMI_OPEN = "USER_PROBE nmi window open"
 NMI_CLOSED = "USER_PROBE nmi window closed"
 SHOWN = re.compile(r"[^\r\n]*USER_PROBE[^\r\n]*")
+PF_HEADER = re.compile(r"^CPU EXCEPTION: Page Fault \(#PF\)\s*$", re.MULTILINE)
+PF_VECTOR = re.compile(r"^Interrupt Vector: 14\s*$", re.MULTILINE)
+PF_ADDRESS = re.compile(r"^\s*CR2: 0x0\s*$", re.MULTILINE)
+HALTED = re.compile(r"^System halted\.\s*$", re.MULTILINE)
+INFO_AVX = re.compile(r"USER_PROBE info [^\r\n]*\bavx=([01])(?=\s|$)")
+CASE_AVX = re.compile(r"USER_PROBE fault_avx ok=1(?=\s|$)")
 _tools = None
 
 
@@ -92,9 +98,22 @@ def evaluate_negative(log: str) -> list[str]:
     missing = []
     if "NOT HALTED" in after:
         missing.append("Kernelthread lief nach dem #PF weiter")
-    if not re.search(r"CPU EXCEPTION|FATAL: Exception 14", after):
-        missing.append("keine Ausnahmemeldung")
+    # Nur der erwartete Fehler zaehlt: #PF (Vektor 14) auf Adresse 0 und danach der Halt; eine andere Ausnahme besteht nicht.
+    for pattern, why in ((PF_HEADER, "keine #PF-Meldung"), (PF_VECTOR, "Vektor nicht 14"), (PF_ADDRESS, "CR2 nicht 0"),
+                         (HALTED, "keine Haltmeldung")):
+        if not pattern.search(after):
+            missing.append(why)
     return missing
+
+
+def notes(log: str) -> list[str]:
+    """Hinweise ohne Einfluss auf das Ergebnis: Faelle, die auf dieser CPU nichts belegen."""
+    found = []
+    avx = INFO_AVX.findall(log)
+    if avx and "0" in avx and CASE_AVX.search(log):
+        # Ohne AVX in CPUID ist vmovdqa auch bei gesetztem CR4.OSXSAVE ein #UD; der Fall laeuft dann leer (etwa KVM/qemu64).
+        found.append("fault_avx ohne Aussage (CPUID avx=0, #UD auch ohne AVX zu erwarten)")
+    return found
 
 
 def wait_for_done(read, timeout: float, clock=None, sleep=None, alive=lambda: True) -> bool:
@@ -185,6 +204,8 @@ def run(args: argparse.Namespace, number: int) -> bool:
             missing.insert(0, f"{why} ohne Schlusszeile")
         for line in SHOWN.findall(log):
             print("  " + line.strip(), flush=True)
+        for note in notes(log):
+            print("  Hinweis: " + note, flush=True)
         print(f"Lauf {number} {args.accel} smp={args.smp}: {'PASS' if not missing else 'FAIL ' + '; '.join(missing)} ({work})",
               flush=True)
         return not missing

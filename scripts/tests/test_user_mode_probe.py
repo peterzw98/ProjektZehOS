@@ -66,19 +66,50 @@ class EvaluateTests(unittest.TestCase):
 
 class NegativeTests(unittest.TestCase):
     START = 'USER_PROBE gegenprobe pf in kernel thread ring3=1\n'
+    # Ausschnitt aus dem Seriallog eines echten Laufs (KVM, 1 CPU, Pin 4027f1c9).
+    PF = ('\n========================================\nCPU EXCEPTION: Page Fault (#PF)\n'
+          '========================================\nInterrupt Vector: 14\nCPU Flags (ESR): 0x10246\n\n'
+          'Registers:\n  RIP: 0xFFFFFFFF8030AC02  RSP: 0xFFFF80001E13AE40\n  RFL: 0x10246\n  CR2: 0x0\n\nSystem halted.\n')
 
-    def test_halt_with_exception_passes(self):
-        self.assertEqual(probe.evaluate_negative(self.START + '*** CPU EXCEPTION ***\n'), [])
+    def test_halt_with_page_fault_passes(self):
+        self.assertEqual(probe.evaluate_negative(self.START + self.PF), [])
 
     def test_missing_start_or_ring3_fails(self):
-        self.assertTrue(probe.evaluate_negative('CPU EXCEPTION\n'))
-        self.assertTrue(probe.evaluate_negative(self.START.replace('ring3=1', 'ring3=0') + 'CPU EXCEPTION\n'))
+        self.assertTrue(probe.evaluate_negative(self.PF))
+        self.assertTrue(probe.evaluate_negative(self.START.replace('ring3=1', 'ring3=0') + self.PF))
 
     def test_exception_before_the_start_does_not_count(self):
-        self.assertTrue(probe.evaluate_negative('CPU EXCEPTION\n' + self.START))
+        self.assertTrue(probe.evaluate_negative(self.PF + self.START))
 
     def test_running_on_fails(self):
-        self.assertTrue(probe.evaluate_negative(self.START + 'CPU EXCEPTION\nUSER_PROBE gegenprobe NOT HALTED\n'))
+        self.assertIn('Kernelthread lief nach dem #PF weiter',
+                      probe.evaluate_negative(self.START + self.PF + 'USER_PROBE gegenprobe NOT HALTED\n'))
+
+    def test_other_exception_fails(self):
+        other = self.PF.replace('Page Fault (#PF)', 'General Protection Fault (#GP)').replace('Vector: 14', 'Vector: 13')
+        result = probe.evaluate_negative(self.START + other)
+        self.assertIn('keine #PF-Meldung', result)
+        self.assertIn('Vektor nicht 14', result)
+
+    def test_other_address_fails(self):
+        self.assertEqual(probe.evaluate_negative(self.START + self.PF.replace('CR2: 0x0', 'CR2: 0x10')), ['CR2 nicht 0'])
+
+    def test_without_halt_fails(self):
+        self.assertEqual(probe.evaluate_negative(self.START + self.PF.replace('System halted.', '')), ['keine Haltmeldung'])
+
+
+class NoteTests(unittest.TestCase):
+    INFO = '  USER_PROBE info cpus=1 base=0x8000000000 cr4=0x620 avx={} tsc_hz=2502998000\n'
+    AVX = '  USER_PROBE fault_avx ok=1 vector=6 error=0x0 address=0x0 faults=1 osxsave=0 after=1 ms=0\n'
+
+    def test_avx_case_without_avx_is_marked_empty(self):
+        self.assertEqual(len(probe.notes(self.INFO.format(0) + self.AVX)), 1)
+
+    def test_avx_case_with_avx_has_no_note(self):
+        self.assertEqual(probe.notes(self.INFO.format(1) + self.AVX), [])
+
+    def test_note_does_not_change_the_result(self):
+        self.assertEqual(probe.evaluate(self.INFO.format(0) + self.AVX + 'USER_PROBE done failed=0\n', ['fault_avx']), [])
 
 
 class WaitTests(unittest.TestCase):
