@@ -17,7 +17,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 
 | Nr | Name | Verhalten |
 | --- | --- | --- |
-| 0 | `read` | nur Eingaben (`ILinuxInput`, fd 0 des Terminals): wartet wie an einer Pipe auf wenigstens ein Byte, höchstens 4 KiB je Aufruf; 0 einmal je Strg+D; `-EINTR` nach Strg+C/Esc; Puffer wird vor dem Warten geprüft (`-EFAULT`); andere fd `-EBADF` |
+| 0 | `read` | nur Eingaben (`ILinuxInput`, fd 0 des Terminals): wartet wie an einer Pipe auf wenigstens ein Byte, höchstens 4 KiB je Aufruf; 0 einmal je Strg+D; `-EINTR` nach Strg+C/Esc; Puffer wird vor dem Warten geprüft (`-EFAULT`); andere fd gehen an die Dateiaufrufe (V2 unten) |
 | 19 | `readv` | wie `read`, ein Lesen verteilt auf die Einträge (musl liest stdin so); höchstens 1024 Einträge, vorab gelesen |
 | 1 | `write` | Stückweise Kopie (4 KiB); Länge auf 0x7ffff000 begrenzt; `-EBADF`, `-EFAULT`; ein Fehler nach erfolgreichen Stücken liefert die bisherige Anzahl |
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
@@ -43,7 +43,36 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 
 Grenze: `write` verlässt sich auf `ILinuxDescriptor.Write` ≤ angebotene Länge (größere Rückgaben werden nicht abgefangen); je Aufruf ein 4-KiB-Puffer.
 
-Nicht in S1: Dateien (`open`, `read`), Signalzustellung, Threads (`clone`, echtes `futex`-Warten), `MAP_FIXED`, Dateiabbildungen.
+Nicht in S1: Dateien (siehe V2 unten), Signalzustellung, Threads (`clone`, echtes `futex`-Warten), `MAP_FIXED`, Dateiabbildungen.
+
+## Dateien (V2)
+
+Nur aktiv, wenn der Prozess `ILinuxFiles` anbietet (Dateisystem, Arbeitsverzeichnis, Deskriptortabelle); sonst liefern alle Aufrufe dieses Abschnitts `-ENOSYS`.
+Verteiler: `LinuxFileSyscalls.cs` (Inhalt und Deskriptoren) und `LinuxFileMetaSyscalls.cs` (Metadaten und Verzeichnisbaum), Dateisystem hinter `ILinuxFileSystem`.
+
+Pfade (`LinuxPath.Resolve`, für alle Aufrufe gleich): relativ zu cwd oder zum Verzeichnis-fd (`*at`, nur bei relativem Pfad; ungültiger fd `-EBADF`, kein Verzeichnis
+`-ENOTDIR`); leerer Pfad `-ENOENT`; ohne NUL in 4096 Bytes `-ENAMETOOLONG`, sonst nicht lesbar `-EFAULT`. Leere Teile und `.` fallen weg, `..` wird **textuell**
+aufgelöst, bevor das Dateisystem Symlinks sieht (Abweichung: `link/..` ist der Ordner, in dem der Link liegt, nicht der Elternordner des Ziels); `..` an der Wurzel
+bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt erhalten und verlangt ein Verzeichnis.
+
+| Nr | Name | Verhalten |
+| --- | --- | --- |
+| 2, 257 | `open`, `openat` | Flags gehen unverändert ans Dateisystem, `mode & 07777`; kleinste freie Nummer; Tabelle voll `-EMFILE` (die Datei wird dann gleich geschlossen) |
+| 3 | `close` | entfernt die Nummer; die Datei schließt erst mit der letzten Nummer, die auf sie zeigt (`dup`) |
+| 0, 19 | `read`, `readv` | Länge auf 0x7ffff000 begrenzt, Stücke zu 64 KiB; Verzeichnis `-EISDIR`; Terminal liest über `ILinuxInput` (S1-Tabelle, V3 stdin); scheitert das Zurückschreiben, wird die Position zurückgesetzt (`-EFAULT` oder die bisherige Anzahl); `readv` wie `writev` |
+| 17 | `pread64` | über Seek nachgebildet (Position bleibt); nicht atomar gegen einen zweiten Thread (es gibt noch keine Threads); Terminal `-ESPIPE`, Versatz < 0 `-EINVAL` |
+| 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
+| 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
+| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar); `F_SETFL` ohne Wirkung (Abweichung); sonst `-EINVAL` |
+| 79 | `getcwd` | Rückgabe Länge mit NUL; zu kleiner Puffer `-ERANGE` |
+| 80, 81 | `chdir`, `fchdir` | Ziel muss Verzeichnis sein (`-ENOTDIR`) und Suchrecht haben (`access X_OK`); cwd ist der textuell normalisierte Pfad (Symlinks bleiben darin stehen) |
+| 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat` |
+| 21, 269, 439 | `access`, `faccessat`, `faccessat2` | Modus nur `F_OK`/`R_OK`/`W_OK`/`X_OK`; Flags ohne Wirkung |
+| 217 | `getdents64` | Position = Index am Deskriptor, `d_off` = nächster Index; erster Eintrag passt nicht `-EINVAL` |
+| 89, 267 | `readlink`, `readlinkat` | gekürzt ohne NUL wie Linux |
+| 83, 258, 84, 87, 263 | `mkdir(at)`, `rmdir`, `unlink(at)` | `AT_REMOVEDIR`; andere Flags `-EINVAL` |
+| 82, 264, 316 | `rename`, `renameat`, `renameat2` | `renameat2` nur mit Flags 0 (`RENAME_NOREPLACE`/`EXCHANGE` `-EINVAL`) |
+| 88, 266 | `symlink`, `symlinkat` | Ziel ist beliebiger Text und wird nicht aufgelöst |
 
 ## Prozess und Terminal (V3)
 

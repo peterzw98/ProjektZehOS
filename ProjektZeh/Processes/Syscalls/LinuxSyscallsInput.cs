@@ -25,7 +25,7 @@ internal static partial class LinuxSyscalls
 
     public const long EINTR = 4;
 
-    private static long DoRead(ILinuxProcess p, int fd, ulong buf, ulong count)
+    private static long DoReadInput(ILinuxProcess p, int fd, ulong buf, ulong count)
     {
         var d = p.GetDescriptor(fd);
         if (d is not ILinuxInput input)
@@ -49,7 +49,7 @@ internal static partial class LinuxSyscalls
         return ReadToUser(p, input, [buf], [(ulong)n]);
     }
 
-    private static long DoReadv(ILinuxProcess p, int fd, ulong iov, ulong cnt)
+    private static long DoReadvInput(ILinuxProcess p, int fd, ulong iov, ulong cnt)
     {
         var d = p.GetDescriptor(fd);
         if (d is not ILinuxInput input)
