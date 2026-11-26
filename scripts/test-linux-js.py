@@ -49,8 +49,8 @@ try:
     g.shell("security adopt /data/t tester", "security adopt /data/t/bin tester", "security adopt /data/t/bin/js tester")
     time.sleep(1); g.desktop(); g.launch("Terminal"); time.sleep(3)
     g.qmp.line("cd /data/t"); time.sleep(1)
-    # 1) Einzelrechnung
-    m = g.mark(); g.qmp.line("run bin/js -c 1+1")
+    # 1) Einzelrechnung; -l (print-last-result, js.rs) gibt das Ergebnis aus, -c allein schweigt wie unter Linux
+    m = g.mark(); g.qmp.line("run bin/js -l -c 1+1")
     check("js -c start", wait_serial("LINUXRUN BEGIN bin/js", 60, m))
     check("js -c ende exit 0", wait_serial("LINUXRUN END exit 0", 120, m))
     check("js -c ausgabe 2", "2" in out_since(m).split())
@@ -76,7 +76,7 @@ try:
     check("schleife start", wait_serial("LINUXRUN BEGIN bin/js", 60, m))
     time.sleep(5); m = g.mark(); g.qmp.tap("ctrl", "c")
     check("strg+c beendet", wait_serial("LINUXRUN END", 30, m))
-    m = g.mark(); g.qmp.line("run bin/js -c 6*7")
+    m = g.mark(); g.qmp.line("run bin/js -l -c 6*7")
     check("danach wieder frei", wait_serial("LINUXRUN END exit 0", 120, m) and "42" in out_since(m).split())
     time.sleep(1); g.shot("ende")
     try: g.qmp.line("shutdown")
