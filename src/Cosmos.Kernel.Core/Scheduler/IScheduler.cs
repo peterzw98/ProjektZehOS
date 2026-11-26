@@ -161,6 +161,9 @@ public interface IScheduler
     /// <em>after</em> <see cref="PickNext"/>
     /// has already chosen the replacement: the outgoing thread is not a
     /// candidate for the switch it is leaving by.
+    /// <see cref="PerCpuState.SwitchIsYield"/> tells a yield from a
+    /// preemption, here and in <see cref="PickNext"/> (ZehOS patch yield-now,
+    /// see PATCHES.md).
     /// </summary>
     /// <param name="cpuState">CPU the thread is queued on.</param>
     /// <param name="thread">Thread giving up the CPU.</param>

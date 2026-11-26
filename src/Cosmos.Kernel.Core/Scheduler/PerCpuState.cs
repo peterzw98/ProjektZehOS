@@ -71,6 +71,27 @@ public sealed class PerCpuState : SchedulerExtensible
     // on (ZehOS patch yield-now, see PATCHES.md).
     internal bool _needReschedule;
 
+    // ZehOS patch yield-now, see PATCHES.md
+    // The thread that last gave up the CPU here through YieldThread, until the
+    // next switch-out on this CPU takes the request: that switch-out serves a
+    // yield when it takes this same thread off, still Running. Written by
+    // YieldThread with interrupts masked and read by the switch-out in
+    // interrupt context, both on this CPU.
+    internal SchedulerThread? _yieldRequestedBy;
+
+    // ZehOS patch yield-now, see PATCHES.md
+    /// <summary>
+    /// <see langword="true"/> while the reschedule under way on this CPU takes
+    /// off a thread that gave up the CPU through <c>Thread.Yield</c>, not one
+    /// a tick or a wake preempts. Valid in <see cref="IScheduler.PickNext"/>
+    /// and <see cref="IScheduler.OnThreadYield"/> of that reschedule, under
+    /// this CPU's queue lock, <see langword="false"/> everywhere else. Since a
+    /// yield switches at once, before any tick charged the slice, a policy
+    /// that puts a preempted thread back first with the rest of its slice
+    /// would hand a yielding one the CPU again at every turn it takes.
+    /// </summary>
+    public bool SwitchIsYield { get; internal set; }
+
     // The thread the last switch-out on this CPU evicted because its set
     // excludes this CPU (SMP phase 3b): left out of the run structure, still
     // Running when it was, and moved by SchedulerManager.MigratePending on

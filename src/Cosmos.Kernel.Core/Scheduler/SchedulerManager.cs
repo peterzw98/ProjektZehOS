@@ -1731,13 +1731,18 @@ public static class SchedulerManager
 
         if (!InternalCpu.InterruptsEnabled)
         {
-            Volatile.Write(ref s_cpuStates[cpuId]._needReschedule, true);
+            PerCpuState masked = s_cpuStates[cpuId];
+            masked._yieldRequestedBy = masked.CurrentThread;
+            Volatile.Write(ref masked._needReschedule, true);
             return;
         }
 
         using (InternalCpu.DisableInterruptsScope())
         {
             PerCpuState state = s_cpuStates[GetCurrentCpuId()];
+            // The switch-out that serves this request tells the policy it
+            // serves a yield (PerCpuState.SwitchIsYield).
+            state._yieldRequestedBy = state.CurrentThread;
             Volatile.Write(ref state._needReschedule, true);
 
             // Interrupts are masked, so the plain form of the queue lock.
@@ -2836,6 +2841,23 @@ public static class SchedulerManager
     /// anything is staged.
     /// </summary>
     private static void ScheduleFromInterruptLocked(PerCpuState state, nuint currentRsp)
+    {
+        // ZehOS patch yield-now, see PATCHES.md
+        // A yield request is taken by the first switch-out after it, whatever
+        // it decides; it serves the yield when it takes the thread that asked
+        // off the CPU still Running. The policy reads the answer only in
+        // PickNext and OnThreadYield of this reschedule, which run on this
+        // CPU, so it is set for this call and cleared when it returns.
+        SchedulerThread? yielder = state._yieldRequestedBy;
+        state._yieldRequestedBy = null;
+        SchedulerThread? current = state.CurrentThread;
+        state.SwitchIsYield = yielder is not null && yielder == current && !yielder.IsIdle
+            && yielder.State == SchedulerThreadState.Running;
+        ScheduleFromInterruptLockedCore(state, currentRsp);
+        state.SwitchIsYield = false;
+    }
+
+    private static void ScheduleFromInterruptLockedCore(PerCpuState state, nuint currentRsp)
     {
         SchedulerThread? prev = state.CurrentThread;
         SchedulerThread? next = s_currentScheduler!.PickNext(state);
