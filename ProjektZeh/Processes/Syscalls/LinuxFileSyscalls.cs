@@ -77,7 +77,7 @@ internal static partial class LinuxSyscalls
         int fd = f.AddDescriptor(file, 0);
         if (fd < 0)
         {
-            file.Close(); // -EMFILE: die Datei hat keinen Deskriptor bekommen und wäre sonst nie geschlossen
+            _ = file.Close(); // -EMFILE: die Datei hat keinen Deskriptor bekommen und wäre sonst nie geschlossen
         }
 
         return fd;
@@ -91,30 +91,30 @@ internal static partial class LinuxSyscalls
             return -EBADF;
         }
 
-        ReleaseIfUnused(p, d);
-        return 0;
+        // Wie Linux: Die Nummer ist auch bei einem Fehler frei; der Fehler beim Zurückschreiben erreicht das Programm (nur beim letzten close).
+        return ReleaseIfUnused(p, d);
     }
 
     /// <summary>
     /// Schließt eine Datei erst, wenn keine Nummer mehr auf sie zeigt (dup teilt die offene Datei wie bei Linux).
     /// Die Tabelle hat keine Aufzählung; FileMaxFds Abfragen je close sind billig gegenüber einer Datei-I/O.
     /// </summary>
-    private static void ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
+    private static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
     {
         if (d is not ILinuxFile file)
         {
-            return; // Terminal und andere gehören dem Prozess, nicht der Tabelle
+            return 0; // Terminal und andere gehören dem Prozess, nicht der Tabelle
         }
 
         for (int i = 0; i < FileMaxFds; i++)
         {
             if (ReferenceEquals(p.GetDescriptor(i), d))
             {
-                return;
+                return 0;
             }
         }
 
-        file.Close();
+        return file.Close();
     }
 
     private static long DoRead(ILinuxProcess p, int fd, ulong buf, ulong count)
@@ -354,7 +354,7 @@ internal static partial class LinuxSyscalls
         ILinuxDescriptor? old = p.GetDescriptor(newFd);
         if (old is not null && f.RemoveDescriptor(newFd))
         {
-            ReleaseIfUnused(p, old);
+            _ = ReleaseIfUnused(p, old); // dup2 verwirft den Fehler des stillen close wie Linux
         }
 
         return f.AddDescriptor(d, newFd);

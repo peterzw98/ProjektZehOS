@@ -82,7 +82,13 @@ public class LinuxFileSyscallsTests
         }
         public long Stat(out LinuxStat st) { st = default; return 0; }
         public long ReadDir(long index, out LinuxDirEntry entry) { entry = default; return 1; }
-        public void Close() => Closes++;
+        public long Close()
+        {
+            Closes++;
+            return CloseResult;
+        }
+
+        public long CloseResult { get; set; }
     }
 
     private sealed class Fs : ILinuxFileSystem
@@ -305,6 +311,20 @@ public class LinuxFileSyscallsTests
         Assert.AreEqual(0L, Call(p, Close, 10));
         Assert.AreEqual(0, f.Closes, "fd 4 zeigt noch darauf");
         Assert.AreEqual(0L, Call(p, Close, 4));
+        Assert.AreEqual(1, f.Closes);
+    }
+
+    [TestMethod]
+    public void CloseReportsWritebackErrorOnLastReference()
+    {
+        var p = WithFile("/f", "x");
+        Call(p, Open, p.Mem.Put(0x100, "/f"), 0, 0);
+        var f = p.Fs.Files["/f"];
+        f.CloseResult = -5;
+        Assert.AreEqual(4L, Call(p, Dup, 3));
+        Assert.AreEqual(0L, Call(p, Close, 3), "nicht der letzte Verweis: kein Schließen, kein Fehler");
+        Assert.AreEqual(-5L, Call(p, Close, 4), "-EIO beim Zurückschreiben erreicht das Programm");
+        Assert.AreEqual(-9L, Call(p, Close, 4), "die Nummer ist trotz Fehler frei");
         Assert.AreEqual(1, f.Closes);
     }
 

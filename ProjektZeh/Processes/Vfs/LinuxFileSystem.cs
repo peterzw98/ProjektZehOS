@@ -228,7 +228,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
             r = opened!.SetLength(0);
             if (r < 0)
             {
-                opened.Close(); // der Fehler von SetLength ist der maßgebliche
+                _ = opened.Close(); // der Fehler von SetLength ist der maßgebliche
                 return r;
             }
         }

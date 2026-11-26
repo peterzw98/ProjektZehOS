@@ -75,7 +75,7 @@ public class LinuxFileMetaSyscallsTests
             entry = Entries[(int)index];
             return 0;
         }
-        public void Close() { }
+        public long Close() => 0;
     }
 
     private sealed class Fs : ILinuxFileSystem

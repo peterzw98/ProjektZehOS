@@ -60,8 +60,11 @@ internal interface ILinuxFile : ILinuxDescriptor
     /// <summary>Position des nächsten getdents64-Eintrags; gehört zum offenen Deskriptor wie bei Linux.</summary>
     long DirIndex { get; set; }
 
-    /// <summary>Gibt Puffer frei; der Verteiler ruft das beim letzten close.</summary>
-    void Close();
+    /// <summary>
+    /// Gibt Puffer frei; der Verteiler ruft das beim letzten close. 0 oder -errno (etwa -EIO beim Zurückschreiben); die Datei ist danach
+    /// in jedem Fall zu, wie <c>close</c> unter Linux.
+    /// </summary>
+    long Close();
 }
 
 /// <summary>

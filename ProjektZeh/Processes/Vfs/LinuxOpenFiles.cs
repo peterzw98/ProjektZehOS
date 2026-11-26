@@ -66,7 +66,7 @@ internal abstract class LinuxOpenFile : ILinuxFile
         return _closed ? -LinuxErrno.EBADF : -LinuxErrno.ENOTDIR;
     }
 
-    public void Close() => CloseChecked();
+    public long Close() => CloseChecked();
 
     /// <summary>
     /// Wie <see cref="Close"/>, liefert aber den Fehler beim Schließen (0 oder -errno, etwa -EIO beim Zurückschreiben auf die Platte).
