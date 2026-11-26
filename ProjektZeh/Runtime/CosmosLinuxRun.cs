@@ -82,7 +82,10 @@ internal static unsafe class CosmosLinuxRun
             return file.Status;
         }
 
-        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120);
+        // Spiegel ins serielle Protokoll für scripts/test-linux-abi.py (V5): rohe Bytes als Hex, Status wie run-linux.py.
+        Serial("LINUXRUN BEGIN " + arguments[0]);
+        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)));
+        Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
         if (!outcome.Ran)
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "run: " + outcome.Detail);
@@ -92,8 +95,10 @@ internal static unsafe class CosmosLinuxRun
         return ResultErr.CreateSuccess();
     }
 
+    private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
+
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
-    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds)
+    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -128,7 +133,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, "kein Hardwarezufall für AT_RANDOM: " + exception.Message);
             }
 
-            var run = new Running(new TerminalDescriptor(output));
+            var run = new Running(new TerminalDescriptor(output) { Mirror = mirror });
             var thread = new Thread(() => Body(run, image, elf));
             thread.Start();
             bool timedOut = false;
@@ -202,7 +207,7 @@ internal static unsafe class CosmosLinuxRun
             return;
         }
 
-        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes)
+        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host)
         {
             OnExit = code => UserMode.LeaveCurrent((ulong)code),
             OnFsBase = UserMode.SetFsBase,
@@ -337,6 +342,42 @@ internal static unsafe class CosmosLinuxRun
         run.FaultAddress = address;
         run.FaultRip = frame->Rip;
         return 0;
+    }
+
+    private static readonly CosmosLinuxHost Host = new();
+
+    /// <summary>Zeit, Zufall und Schlafen für die Aufrufe aus V2b (clock_gettime, getrandom, poll mit Frist).</summary>
+    private sealed class CosmosLinuxHost : ILinuxHost
+    {
+        public long RealtimeNanos => (DateTime.UtcNow - DateTime.UnixEpoch).Ticks * 100;
+
+        public long MonotonicNanos
+        {
+            get
+            {
+                // Ohne 128-Bit-Arithmetik: ganze Sekunden und Rest getrennt (der Rest mal 10^9 bleibt bei Frequenzen unter 9 GHz in long).
+                long ticks = System.Diagnostics.Stopwatch.GetTimestamp();
+                long frequency = System.Diagnostics.Stopwatch.Frequency;
+                return (ticks / frequency * 1_000_000_000) + (ticks % frequency * 1_000_000_000 / frequency);
+            }
+        }
+
+        public bool TryFillRandom(Span<byte> dst)
+        {
+            try
+            {
+                byte[] bytes = new byte[dst.Length];
+                CosmosSaltSource.Fill(bytes);
+                bytes.CopyTo(dst);
+                return true;
+            }
+            catch (HardwareRandomUnavailableException)
+            {
+                return false;
+            }
+        }
+
+        public void SleepNanos(long ns) => Thread.Sleep((int)Math.Clamp(ns / 1_000_000, 1, int.MaxValue));
     }
 
     /// <summary>Seiten über eine <see cref="UserPageTable"/>; Frames liest und schreibt der Kernel über das HHDM.</summary>

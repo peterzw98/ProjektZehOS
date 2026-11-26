@@ -5,6 +5,9 @@ using ProjektZeh.Shell;
 
 namespace ProjektZeh.Processes;
 
+/// <summary>Empfänger roher Ausgabebytes (etwa ein Spiegel ins serielle Protokoll).</summary>
+internal delegate void ByteSink(ReadOnlySpan<byte> data);
+
 /// <summary>
 /// Deskriptor 0 bis 2 eines Linux-Prozesses (V3): Bytes gehen zeilenweise an das Terminal. <see cref="ITextOutput"/> kennt nur
 /// ganze Zeilen; eine Zeile ohne Zeilenende bleibt deshalb bis zum nächsten <c>\n</c>, bis <see cref="MaxLine"/> Bytes oder bis
@@ -25,8 +28,12 @@ internal sealed class TerminalDescriptor : ILinuxDescriptor
         _output = output ?? throw new ArgumentNullException(nameof(output));
     }
 
+    /// <summary>Bekommt jeden Schreibaufruf unverändert, bevor er in Zeilen zerlegt wird (Prüfskripte vergleichen Bytes).</summary>
+    public ByteSink? Mirror { get; set; }
+
     public long Write(ReadOnlySpan<byte> data)
     {
+        Mirror?.Invoke(data);
         foreach (byte b in data)
         {
             if (b == (byte)'\n')

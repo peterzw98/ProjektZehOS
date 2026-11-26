@@ -351,6 +351,17 @@ public sealed class TerminalDescriptorTests
     }
 
     [TestMethod]
+    public void MirrorGetsRawBytes()
+    {
+        var lines = new Lines();
+        var seen = new List<byte>();
+        var terminal = new TerminalDescriptor(lines) { Mirror = data => seen.AddRange(data.ToArray()) };
+        terminal.Write("a\r\nb"u8);
+        Assert.AreEqual("a\r\nb", Encoding.UTF8.GetString(seen.ToArray()));
+        Assert.AreEqual("a", string.Join("|", lines.Text));
+    }
+
+    [TestMethod]
     public void LongLinesAreCut()
     {
         var lines = new Lines();

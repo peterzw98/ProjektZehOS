@@ -41,7 +41,7 @@ internal interface IUserPages
 /// laufen auf seinem Kernelstack), das Aufräumen danach auf demselben Thread.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
 {
     private const ulong Page = AddressSpaceMap.PageSize;
     private const int ProtRead = 1, ProtWrite = 2, ProtExec = 4;
@@ -54,14 +54,17 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory
     private readonly AddressSpaceMap _map = new(ElfLoader.MinAddress, ElfLoader.UserEnd);
     private readonly Dictionary<ulong, ulong> _frames = new();
     private readonly ILinuxDescriptor _terminal;
+    private readonly ILinuxHost? _host;
     private readonly ulong _maxFrames;
     private ulong _brkStart;
     private ulong _brk;
     private ulong _fsBase;
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
-    public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes)
+    /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
+    public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes, ILinuxHost? host = null)
     {
+        _host = host;
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
         Pid = pid;
@@ -97,6 +100,17 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory
             OnFsBase?.Invoke(value);
         }
     }
+
+    public LinuxSignalState Signals { get; } = new();
+
+    // ILinuxHost: der Verteiler fragt den Prozess (p as ILinuxHost); weitergereicht an den Host des Kernels.
+    public long RealtimeNanos => _host?.RealtimeNanos ?? 0;
+
+    public long MonotonicNanos => _host?.MonotonicNanos ?? 0;
+
+    public bool TryFillRandom(Span<byte> dst) => _host != null && _host.TryFillRandom(dst);
+
+    public void SleepNanos(long ns) => _host?.SleepNanos(ns);
 
     public ILinuxDescriptor? GetDescriptor(int fd) => fd is >= 0 and <= 2 ? _terminal : null;
 

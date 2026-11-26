@@ -19,7 +19,7 @@ internal struct SyscallArgs
 /// Linux-x86-64-Aufrufe Stufe S1 (siehe docs/LINUX_ABI.md). Rückgabe: Ergebnis oder -errno.
 /// Plattformunabhängig, jeder Zeiger geht über <see cref="IUserMemory"/>.
 /// </summary>
-internal static class LinuxSyscalls
+internal static partial class LinuxSyscalls
 {
     public const long Write = 1, Mmap = 9, Mprotect = 10, Munmap = 11, Brk = 12, Ioctl = 16, Writev = 20,
         Getpid = 39, Exit = 60, ArchPrctl = 158, Gettid = 186, SetTidAddress = 218, ExitGroup = 231,
@@ -66,7 +66,7 @@ internal static class LinuxSyscalls
             case Ioctl:
                 return p.GetDescriptor((int)a.A0) is null ? -EBADF : -ENOTTY;
             default:
-                return -ENOSYS; // auch rseq: musl und glibc fallen dann zurück
+                return DispatchMore(ref a, p); // Zeit, Zufall, Signale, poll, madvise, futex; sonst -ENOSYS (auch rseq: musl und glibc fallen zurück)
         }
     }
 
