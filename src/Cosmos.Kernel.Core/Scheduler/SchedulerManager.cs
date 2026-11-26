@@ -40,6 +40,11 @@ public static class SchedulerManager
 {
 
     private static IScheduler? s_currentScheduler;
+
+    // ZehOS patch smt-sibling-yield, see PATCHES.md
+    // The installed policy when it also moves running threads, else null:
+    // resolved once at the install, so the tick does no type test.
+    private static IVoluntaryMove? s_voluntaryMove;
     private static PerCpuState[]? s_cpuStates;
     private static uint s_cpuCount;
     private static bool s_enabled;
@@ -145,6 +150,18 @@ public static class SchedulerManager
     /// asks at once, so this one is for a policy that evens out queues none of which is empty.
     /// </summary>
     private const uint BalanceIntervalTicks = 100;
+
+    // ZehOS patch smt-sibling-yield, see PATCHES.md
+    /// <summary>
+    /// Ticks of a CPU between two calls of <see cref="IVoluntaryMove.SelectMoveTarget"/>
+    /// for the thread it runs (100 ms at 100 Hz): often enough that a long computation
+    /// moves soon after a core comes free, rarely enough that the walk over the CPUs
+    /// costs nothing measurable.
+    /// </summary>
+    public const uint VoluntaryMoveIntervalTicks = 10;
+
+    /// <summary>No CPU: the empty value of <see cref="PerCpuState._voluntaryTarget"/> and <see cref="PerCpuState._pendingTarget"/>.</summary>
+    internal const uint NoCpu = uint.MaxValue;
 
     /// <summary>Number of initial timer ticks logged to serial, to show at boot that the tick is live.</summary>
     private const uint InitialTickLogCount = 10;
@@ -256,6 +273,7 @@ public static class SchedulerManager
             }
 
             s_currentScheduler = scheduler;
+            s_voluntaryMove = scheduler as IVoluntaryMove; // ZehOS patch smt-sibling-yield, see PATCHES.md
 
             for (uint i = 0; i < s_cpuCount; i++)
             {
@@ -2021,9 +2039,17 @@ public static class SchedulerManager
 
         state._pendingMigration = null;
 
+        // ZehOS patch smt-sibling-yield, see PATCHES.md
+        // A voluntary move goes where the policy named, while the set still
+        // allows that CPU; otherwise the eviction's own rule applies.
+        uint voluntary = state._pendingTarget;
+        state._pendingTarget = NoCpu;
+
         uint fromCpu = state.CpuId;
         CpuSet allowed = EffectiveAffinity(thread);
-        uint target = allowed.Contains(fromCpu) ? fromCpu : SelectCpuVerified(thread, allowed);
+        bool isVoluntary = voluntary != NoCpu && voluntary != fromCpu && allowed.Contains(voluntary);
+        uint target = isVoluntary ? voluntary
+            : allowed.Contains(fromCpu) ? fromCpu : SelectCpuVerified(thread, allowed);
 
         PerCpuState first = s_cpuStates![Math.Min(fromCpu, target)];
         PerCpuState second = s_cpuStates[Math.Max(fromCpu, target)];
@@ -2036,7 +2062,13 @@ public static class SchedulerManager
         bool moved = false;
         if (thread.CpuId == fromCpu)
         {
-            if (target == fromCpu)
+            // ZehOS patch smt-sibling-yield, see PATCHES.md
+            // A voluntary destination that is no longer free is stale: the
+            // thread stays, as if no move had been proposed. Only while this
+            // CPU is allowed; a set that excludes it now makes the move an
+            // eviction, which goes on to the destination.
+            bool stale = isVoluntary && allowed.Contains(fromCpu) && !IsFreeLocked(s_cpuStates[target]);
+            if (target == fromCpu || stale)
             {
                 // Back where a preemption would have put it: a Running thread
                 // through the yield hook; a Ready one is queued here already
@@ -2410,6 +2442,12 @@ public static class SchedulerManager
             PullWork(state, picking: false);
         }
 
+        // ZehOS patch smt-sibling-yield, see PATCHES.md
+        // The voluntary move: the policy may name a CPU for the thread this
+        // one runs. Under no lock, like the pull, and only proposed here: the
+        // switch-out under the lock decides, and MigratePending moves.
+        ProposeVoluntaryMove(state, current);
+
         // Interrupt context: interrupts are masked already, so the plain
         // acquire. A remote wake holds this lock for a few stores at most.
         state._lock.Acquire();
@@ -2440,13 +2478,61 @@ public static class SchedulerManager
             needsReschedule = s_currentScheduler.OnTick(state, current, elapsedNs);
         }
 
-        if (needsReschedule)
+        // ZehOS patch smt-sibling-yield, see PATCHES.md
+        // A proposed move needs the switch-out even when the policy asked for none.
+        if (needsReschedule || state._voluntaryTarget != NoCpu)
         {
             ScheduleFromInterruptLocked(state, currentRsp);
         }
 
         state._lock.Release();
         MigratePending(state);
+    }
+
+    // ZehOS patch smt-sibling-yield, see PATCHES.md
+    /// <summary>
+    /// Asks the policy, once in <see cref="VoluntaryMoveIntervalTicks"/> of
+    /// this CPU's ticks, whether the thread it runs should move
+    /// (<see cref="IVoluntaryMove.SelectMoveTarget"/>), and stages a valid
+    /// answer in <see cref="PerCpuState._voluntaryTarget"/> for the
+    /// switch-out of this same tick. Only a Running thread of a policy's
+    /// whose effective set names another CPU is asked about. On this CPU, in
+    /// its timer interrupt, under no lock.
+    /// </summary>
+    private static void ProposeVoluntaryMove(PerCpuState state, SchedulerThread current)
+    {
+        state._voluntaryTarget = NoCpu;
+        IVoluntaryMove? mover = s_voluntaryMove;
+        if (mover is null || s_cpuCount < 2 || state._tickCount % VoluntaryMoveIntervalTicks != 0
+            || current.IsIdle || current.State != SchedulerThreadState.Running)
+        {
+            return;
+        }
+
+        uint cpuId = state.CpuId;
+        CpuSet allowed = EffectiveAffinity(current).Without(cpuId);
+        if (allowed.IsEmpty)
+        {
+            return;
+        }
+
+        uint target = mover.SelectMoveTarget(state, current, s_cpuStates!, allowed);
+        if (target != cpuId && target < s_cpuCount && allowed.Contains(target))
+        {
+            state._voluntaryTarget = target;
+        }
+    }
+
+    // ZehOS patch smt-sibling-yield, see PATCHES.md
+    /// <summary>
+    /// Whether a voluntary move's destination is still free, under its queue
+    /// lock: it runs its idle thread and no wake has queued a thread there
+    /// that its next exit would pick.
+    /// </summary>
+    private static bool IsFreeLocked(PerCpuState toState)
+    {
+        SchedulerThread? running = toState.CurrentThread;
+        return running is not null && running.IsIdle && !Volatile.Read(ref toState._needReschedule);
     }
 
     /// <summary>
@@ -2711,7 +2797,16 @@ public static class SchedulerManager
         // CPU does not go looking for work either. A thread that parked or
         // died, or that this CPU is excluded from, cannot go on: the CPU
         // pulls or idles below.
-        if (next is null && KeepsCpu(state, prev))
+        // ZehOS patch smt-sibling-yield, see PATCHES.md
+        // A move the tick proposed for the thread this CPU runs: consumed
+        // here whatever happens, so it never outlives the exit it was meant
+        // for. Such a thread does not keep the CPU; it is evicted below.
+        uint voluntary = state._voluntaryTarget;
+        state._voluntaryTarget = NoCpu;
+        bool movesAway = voluntary != NoCpu && prev is not null && !prev.IsIdle
+            && prev.State == SchedulerThreadState.Running;
+
+        if (next is null && !movesAway && KeepsCpu(state, prev))
         {
             return;
         }
@@ -2748,10 +2843,11 @@ public static class SchedulerManager
         // leaves now, whatever the policy picked. The cheap check first, the
         // online intersection only when the set excludes this CPU.
         bool evict = prev is not null && !prev.IsIdle && prev.State != SchedulerThreadState.Dead
-            && !IsAllowedOn(prev, state.CpuId);
+            && (movesAway || !IsAllowedOn(prev, state.CpuId)); // ZehOS patch smt-sibling-yield, see PATCHES.md
         if (evict)
         {
             state._pendingMigration = prev;
+            state._pendingTarget = movesAway ? voluntary : NoCpu; // ZehOS patch smt-sibling-yield, see PATCHES.md
             if (next == prev)
             {
                 // The policy handed prev back: run the idle thread meanwhile.
@@ -2768,6 +2864,7 @@ public static class SchedulerManager
                 if (next is null)
                 {
                     state._pendingMigration = null;
+                    state._pendingTarget = NoCpu; // ZehOS patch smt-sibling-yield, see PATCHES.md
                     return;
                 }
             }

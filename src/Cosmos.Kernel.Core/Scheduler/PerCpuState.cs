@@ -76,6 +76,16 @@ public sealed class PerCpuState : SchedulerExtensible
     // interrupt context.
     internal SchedulerThread? _pendingMigration;
 
+    // ZehOS patch smt-sibling-yield, see PATCHES.md
+    // The CPU the policy named in this CPU's last tick for the thread it runs
+    // (IVoluntaryMove), or SchedulerManager.NoCpu: written by the tick before
+    // the queue lock, consumed by the switch-out of the same exit. And the
+    // destination of a voluntary eviction for SchedulerManager.MigratePending,
+    // which consumes it with _pendingMigration. Both on this CPU alone, in
+    // interrupt context.
+    internal uint _voluntaryTarget = SchedulerManager.NoCpu;
+    internal uint _pendingTarget = SchedulerManager.NoCpu;
+
     // ===== Synchronization =====
 
     // The queue lock: held around every policy hook that touches this CPU's
