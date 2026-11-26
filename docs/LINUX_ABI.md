@@ -192,7 +192,7 @@ Grenzen (Review V2, bewusst offen):
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
   - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte (smp1) mit der bekannten Grenze `-EIO` hinter einer Lücke; volle Platte auf smp4, TCG und VMware nicht.
   - Neu Anlegen unter dem Namen einer entfernten, noch offenen Datei ist unter Cosmos `-EEXIST` bis zum letzten Schließen (siehe oben; Linux: Erfolg), ein übliches
-    Muster für temporäre Dateien. Im Gast nicht geprüft.
+    Muster für temporäre Dateien. Im Gast belegt (`v7bopen`, KVM smp1 und smp4), ebenso `-ENOENT` für den entfernten Namen und `-EBUSY` für `rename` eines Ordners mit offenem Kind.
   - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.
 
 ## Dateien im Prozess (V8)

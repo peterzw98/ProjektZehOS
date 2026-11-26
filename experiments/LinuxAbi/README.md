@@ -100,12 +100,13 @@ Zeile endet auf ` FEHLER`, der Exitcode ist dann 1. Ein Gastlauf braucht nur `--
 | Programm | prüft |
 | --- | --- |
 | `v7bnames` | FAT findet Einträge auch über den 8.3-Kurznamen; über Linux trifft nur der eigene Name (`ABCDEF~1.TXT` `-ENOENT` für open, stat, lstat, access, readlink, unlink, chdir, rmdir, opendir), Anlegen, `mkdir`, `symlink`, `rename` auf den Kurznamen `-EEXIST`; die Liste zeigt keinen Kurznamen |
+| `v7bopen` | Entfernte, offene Datei: `stat`/`open`/`unlink`/`rename` `-ENOENT`, nicht in der Liste, Anlegen und `mkdir` des Namens `-EEXIST` bis zum Schließen, `rmdir` des Ordners `-ENOTEMPTY`, Lesen und Schreiben über den Deskriptor; `rename` eines Ordners mit offenem oder entferntem, offenem Kind (auch Enkel) `-EBUSY`, Geschwister mit gleichem Präfix und die offene Datei selbst umbenennbar, nach dem Schließen alles frei (PR #741) |
 | `v7bquota` | Kontingent je Wurzel (64 MiB Nettowachstum): `ftruncate` und Lücke darüber `-ENOSPC`, Füllen bis `-ENOSPC`, Freigabe durch `unlink` und `ftruncate` nach unten, Lücken lesen sich als Nullbytes, `pwrite` nach der Freigabe |
 | `v7bfull` | Schreiben bis zum Ende mit `-ENOSPC` (nicht `-EIO`), Länge gleich dem Geschriebenen, nach dem Löschen wieder Platz. Mit `run-guest-full.py` ist die Platte voll, bevor das Kontingent greift |
 
 ```sh
 python3 -I scripts/test-linux-run.py run --iso <iso> --expected experiments/LinuxAbi/expected/s1 \
-    --status "v7bnames=exit 0" --status "v7bquota=exit 0" --status "v7bfull=exit 0" --programs ... v7bnames v7bquota v7bfull --accel kvm
+    --status "v7bnames=exit 0" --status "v7bopen=exit 0" --status "v7bquota=exit 0" --status "v7bfull=exit 0" --programs ... v7bnames v7bopen v7bquota v7bfull --accel kvm
 FILLER_MIB=478 python3 -I experiments/LinuxAbi/run-guest-full.py run --iso <iso> ...   # gleiche Argumente, Seed mit Fülldatei (504-MiB-Platte)
 ```
 
