@@ -325,6 +325,33 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
+    public void NanosleepSchlaeftUndExitGroupWecktSchlaeferUndPause()
+    {
+        var f = new Fixture();
+        ulong ts = f.Mem + 0x200;
+        f.WriteTimespec(ts, 0, 30_000_000);
+        var sw = Stopwatch.StartNew();
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Nanosleep, ts));
+        Assert.IsTrue(sw.ElapsedMilliseconds >= 25, "nanosleep " + sw.ElapsedMilliseconds);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(LinuxSyscalls.ClockNanosleep, 3, 0, ts), "Thread-CPU-Uhr");
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(LinuxSyscalls.ClockNanosleep, 1, 2, ts), "unbekanntes Flag");
+        f.WriteTimespec(ts, 0, 1);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.ClockNanosleep, 1, 1, ts), "absolut in der Vergangenheit");
+        f.WriteTimespec(ts, 0, -1);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(LinuxSyscalls.Nanosleep, ts));
+
+        f.WriteTimespec(ts, 3600, 0);
+        long slept = 1, paused = 1;
+        Thread a = Fixture.RunAs(f.Clone(0, 0), () => slept = f.Call(LinuxSyscalls.Nanosleep, ts));
+        Thread b = Fixture.RunAs(f.Clone(0, 0), () => paused = f.Call(LinuxSyscalls.Pause));
+        Thread.Sleep(30);
+        f.Call(LinuxSyscalls.ExitGroup, 0);
+        Assert.IsTrue(a.Join(5000) && b.Join(5000));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, slept);
+        Assert.AreEqual(-LinuxSyscalls.EINTR, paused);
+    }
+
+    [TestMethod]
     public void SpeicherBleibtBeiGleichzeitigenThreadsKonsistent()
     {
         // Mehrere Threads belegen, beschreiben und geben frei; die Speichersperre hält Karte und Frames zusammen.

@@ -240,6 +240,35 @@ internal sealed class LinuxFutexTable
         }
     }
 
+    /// <summary>
+    /// Schlaf ohne Adresse (nanosleep, clock_nanosleep, pause): 0 nach der Frist (monoton, negativ = ohne Frist), -EINTR, sobald
+    /// der Prozess endet. So beendet exit_group auch schlafende Threads, nicht erst nach ihrer Frist.
+    /// </summary>
+    public long Sleep(long deadlineNanos)
+    {
+        lock (_gate)
+        {
+            while (!_aborted)
+            {
+                int slice = SliceMs;
+                if (deadlineNanos >= 0)
+                {
+                    long left = deadlineNanos - _monotonicNanos();
+                    if (left <= 0)
+                    {
+                        return 0;
+                    }
+
+                    slice = (int)Math.Min(SliceMs, Math.Max(1, left / 1_000_000));
+                }
+
+                Monitor.Wait(_gate, slice);
+            }
+
+            return -LinuxSyscalls.EINTR;
+        }
+    }
+
     /// <summary>Der Prozess endet: jeder Wartende kehrt mit -EINTR zurück, neue Wartende auch.</summary>
     public void Abort()
     {

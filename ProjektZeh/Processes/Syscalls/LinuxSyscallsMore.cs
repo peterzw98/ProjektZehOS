@@ -38,7 +38,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Nanosleep = 35, ClockNanosleep = 230, Pause = 34;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -60,8 +60,58 @@ internal static partial class LinuxSyscalls
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
+            case Nanosleep: return DoSleep(p, 1, 0, a.A0);
+            case ClockNanosleep: return DoSleep(p, (int)a.A0, (int)a.A1, a.A2);
+            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
             default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
+    }
+
+    /// <summary>
+    /// nanosleep und clock_nanosleep (V10, für Threads, die warten): REALTIME, MONOTONIC und BOOTTIME (0, 1, 7), mit TIMER_ABSTIME
+    /// absolut auf dieser Uhr. Mit Threads schläft der Aufruf auf der futex-Tabelle und endet mit exit_group (-EINTR); <c>rem</c>
+    /// bleibt unberührt (ohne Signale endet der Schlaf nur so). Ohne Threads schläft der Host.
+    /// </summary>
+    private static long DoSleep(ILinuxProcess p, int clock, int flags, ulong reqPtr)
+    {
+        const int TimerAbstime = 1;
+        if (clock is not (0 or 1 or 7) || (flags & ~TimerAbstime) != 0)
+        {
+            return -EINVAL;
+        }
+
+        Span<byte> ts = stackalloc byte[16];
+        if (!p.Memory.TryRead(reqPtr, ts))
+        {
+            return -EFAULT;
+        }
+
+        long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+        if (sec < 0 || nsec < 0 || nsec >= 1_000_000_000L)
+        {
+            return -EINVAL;
+        }
+
+        var host = p as ILinuxHost;
+        long now = host?.MonotonicNanos ?? 0;
+        long ns = sec > long.MaxValue / 2_000_000_000L ? long.MaxValue / 2 : sec * 1_000_000_000L + nsec;
+        if ((flags & TimerAbstime) != 0)
+        {
+            ns -= clock == 0 ? host?.RealtimeNanos ?? 0 : now;
+        }
+
+        if (ns <= 0)
+        {
+            return 0;
+        }
+
+        if (p is ILinuxThreads threads)
+        {
+            return threads.Futexes.Sleep(now + ns);
+        }
+
+        host?.SleepNanos(ns);
+        return 0;
     }
 
     private static long DoClockGettime(ILinuxProcess p, int clock, ulong tsPtr)
