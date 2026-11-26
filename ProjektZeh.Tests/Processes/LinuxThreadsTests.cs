@@ -325,6 +325,101 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
+    public void TidVergabeLaeuftUmUndUeberspringtPidUndBelegte()
+    {
+        var used = new HashSet<int> { 3, 5 };
+        Assert.AreEqual(4, LinuxUserProcess.NextTid(2, 2, used.Contains), "3 belegt");
+        Assert.AreEqual(1, LinuxUserProcess.NextTid(LinuxUserProcess.TidMax, 7, used.Contains), "nach TidMax wieder ab 1");
+        Assert.AreEqual(2, LinuxUserProcess.NextTid(LinuxUserProcess.TidMax, 1, used.Contains), "PID 1 uebersprungen");
+        Assert.AreEqual(6, LinuxUserProcess.NextTid(4, 1, used.Contains));
+        Assert.AreEqual(1, LinuxUserProcess.NextTid(-5, 9, used.Contains), "nie negativ");
+    }
+
+    [TestMethod]
+    public void BeendeteThreadsGebenIhreTidFrei()
+    {
+        var f = new Fixture();
+        for (int i = 0; i < 3 * LinuxUserProcess.MaxThreads; i++)
+        {
+            LinuxThread child = f.Clone(0, 0);
+            Assert.AreEqual(Pid + 1 + i, child.Tid, "TIDs zaehlen weiter, nicht sofort wiederverwendet");
+            Fixture.Current = child;
+            f.Call(LinuxSyscalls.Exit, 0);
+            Fixture.Current = null;
+        }
+
+        Assert.AreEqual(1, f.P.LiveThreads);
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, f.Call(LinuxSyscalls.Tgkill, Pid, Pid + 1, 0), "beendeter Thread bleibt weg");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, Pid, 0), "Hauptthread");
+    }
+
+    private static void SetMask(Fixture f, int how, ulong set)
+    {
+        Assert.IsTrue(f.P.TryWrite(f.Mem + 0x300, BitConverter.GetBytes(set)));
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigprocmask, (ulong)how, f.Mem + 0x300, 0, 8));
+    }
+
+    private static void SetHandler(Fixture f, int sig, ulong handler)
+    {
+        Assert.IsTrue(f.P.TryWrite(f.Mem + 0x400, new byte[32]));
+        Assert.IsTrue(f.P.TryWrite(f.Mem + 0x400, BitConverter.GetBytes(handler)));
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigaction, (ulong)sig, f.Mem + 0x400, 0, 8));
+    }
+
+    [TestMethod]
+    public void TgkillBlockiertesSignalBleibtAnhaengigBisZurFreigabe()
+    {
+        var f = new Fixture();
+        ulong tid = (ulong)f.Clone(0, 0).Tid;
+        SetMask(f, 0, (1UL << 14) | (1UL << 9)); // SIG_BLOCK SIGTERM, SIGUSR1
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 15));
+        Assert.IsNull(f.P.ExitCode, "blockiert: nicht beendet");
+        Assert.AreEqual(1UL << 14, f.P.PendingSignals);
+        SetMask(f, 1, 1UL << 9); // SIGUSR1 frei, SIGTERM bleibt blockiert
+        Assert.IsNull(f.P.ExitCode);
+        SetMask(f, 1, 1UL << 14); // SIG_UNBLOCK SIGTERM
+        Assert.AreEqual(15, f.P.TerminatedBySignal);
+        Assert.AreEqual(128 + 15, f.P.ExitCode);
+        Assert.AreEqual(0UL, f.P.PendingSignals);
+    }
+
+    [TestMethod]
+    public void AnhaengigesSignalFaelltMitSigIgnWegHandlerBleibtEnosys()
+    {
+        var f = new Fixture();
+        ulong tid = (ulong)f.Clone(0, 0).Tid;
+        SetMask(f, 2, 1UL << 9); // SIG_SETMASK SIGUSR1
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10));
+        Assert.AreEqual(1UL << 9, f.P.PendingSignals);
+        SetHandler(f, 10, 1); // SIG_IGN verwirft das anhaengige Signal
+        Assert.AreEqual(0UL, f.P.PendingSignals);
+        SetMask(f, 2, 0);
+        Assert.IsNull(f.P.ExitCode);
+
+        SetMask(f, 2, 1UL << 11);
+        SetHandler(f, 12, 0x401000);
+        Assert.AreEqual(-LinuxSyscalls.ENOSYS, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 12), "Handler auch blockiert: Zustellen fehlt");
+        Assert.AreEqual(0UL, f.P.PendingSignals);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 9), "SIGKILL ist nie blockiert");
+        Assert.AreEqual(9, f.P.TerminatedBySignal);
+    }
+
+    [TestMethod]
+    public void StoppsignaleWerdenInVerwaisterGruppeVerworfenSigstopBeendet()
+    {
+        var f = new Fixture();
+        ulong tid = (ulong)f.Clone(0, 0).Tid;
+        foreach (ulong sig in new ulong[] { 20, 21, 22 })
+        {
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, sig), "Signal " + sig);
+        }
+
+        Assert.IsNull(f.P.ExitCode, "SIGTSTP/TTIN/TTOU halten nicht an und beenden nicht");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 19));
+        Assert.AreEqual(19, f.P.TerminatedBySignal, "SIGSTOP: kein Anhalten, also beenden");
+    }
+
+    [TestMethod]
     public void NanosleepSchlaeftUndExitGroupWecktSchlaeferUndPause()
     {
         var f = new Fixture();

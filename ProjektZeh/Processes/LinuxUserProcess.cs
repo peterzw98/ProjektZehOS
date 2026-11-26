@@ -103,7 +103,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         Pid = pid;
         _maxFrames = maxBytes / Page;
 
-        // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs zählen ab der PID hoch.
+        // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs zählen ab der PID hoch (NextTid).
         MainThread = new LinuxThread(pid);
         _threads.Add(MainThread);
         _liveThreads = 1;
@@ -168,6 +168,12 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     /// <summary>Höchstzahl gleichzeitiger Threads; darüber scheitert clone mit -EAGAIN (wie RLIMIT_NPROC).</summary>
     public const int MaxThreads = 64;
 
+    /// <summary>
+    /// Größte TID (Linux <c>PID_MAX_LIMIT</c>, 2^22). Danach beginnt die Vergabe wieder unten; robuste Mutexe und futex-Eigentümer
+    /// brauchen TIDs unter <c>FUTEX_TID_MASK</c> (2^30), ein Überlauf ins Negative darf nie entstehen (V10-Review P3).
+    /// </summary>
+    public const int TidMax = 1 << 22;
+
     public const ulong CloneVm = 0x100, CloneFs = 0x200, CloneFiles = 0x400, CloneSighand = 0x800, CloneVfork = 0x4000,
         CloneParent = 0x8000, CloneThreadFlag = 0x10000, CloneSysvsem = 0x40000, CloneSettls = 0x80000, CloneParentSettid = 0x100000,
         CloneChildCleartid = 0x200000, CloneDetached = 0x400000, CloneChildSettid = 0x01000000;
@@ -177,10 +183,17 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     private const ulong CloneKnownExtras = CloneSettls | CloneParentSettid | CloneChildCleartid | CloneChildSettid | CloneDetached | 0xff;
 
+    // Sperrreihenfolge: _threadGate steht zuunterst; darin keine Speicher-, Datei- oder futex-Sperre (Schreiben und Wecken geschehen danach).
     private readonly object _threadGate = new();
+
+    // Laufende Threads und der Hauptthread; beendete Kinder fallen beim nächsten clone heraus, damit die Liste nicht mit jedem
+    // kurzlebigen Thread wächst und ihre TIDs wieder frei werden.
     private readonly List<LinuxThread> _threads = new();
     private int _nextTid;
     private int _liveThreads;
+
+    // Anhängige Signale (Bit = Nummer - 1), unter _threadGate: tgkill eines blockierten Signals; je Prozess wie Signals.Blocked.
+    private ulong _pendingSignals;
 
     /// <summary>Liefert den Thread des laufenden Aufrufs; im Kernel über den Kernelthread, ohne Brücke der Hauptthread.</summary>
     public Func<LinuxThread>? CurrentThreadSource { get; set; }
@@ -243,7 +256,10 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
                 return -LinuxSyscalls.EAGAIN;
             }
 
-            child = new LinuxThread(++_nextTid)
+            // Beendete Kinder austragen; der Hauptthread bleibt (seine TID ist die PID, Linux hält sie bis zum Prozessende).
+            _threads.RemoveAll(t => t.Exited && !ReferenceEquals(t, MainThread));
+            _nextTid = NextTid(_nextTid, Pid, TidInUse);
+            child = new LinuxThread(_nextTid)
             {
                 StackPointer = stack,
                 FsBase = (flags & CloneSettls) != 0 ? tls : CurrentThread.FsBase,
@@ -278,6 +294,41 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         }
 
         return child.Tid;
+    }
+
+    /// <summary>
+    /// Nächste freie TID nach <paramref name="last"/>, nach <see cref="TidMax"/> wieder ab 1; übersprungen werden die PID und belegte
+    /// TIDs. Es gibt immer nur einen Linux-Prozess (PID 1, CosmosLinuxRun lehnt einen zweiten ab), deshalb kann eine TID mit keiner
+    /// fremden PID zusammenfallen; kommen mehrere Prozesse, muss diese Vergabe in eine gemeinsame Tabelle für PIDs und TIDs wandern.
+    /// </summary>
+    internal static int NextTid(int last, int pid, Func<int, bool> inUse)
+    {
+        // Höchstens MaxThreads belegt: nach MaxThreads + 2 Schritten ist eine freie TID gefunden; die Grenze schützt nur vor Endlosschleifen.
+        int tid = last;
+        for (int i = 0; i <= TidMax; i++)
+        {
+            tid = tid >= TidMax || tid < 1 ? 1 : tid + 1;
+            if (tid != pid && !inUse(tid))
+            {
+                return tid;
+            }
+        }
+
+        throw new InvalidOperationException("keine freie TID");
+    }
+
+    // Unter _threadGate: belegt ist jede TID eines Threads in der Liste (laufend oder der Hauptthread).
+    private bool TidInUse(int tid)
+    {
+        foreach (LinuxThread t in _threads)
+        {
+            if (t.Tid == tid)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void ExitThread(int code)
@@ -363,22 +414,102 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             return 0;
         }
 
-        // Zustellen an einen Handler kann der Kernel noch nicht (keine Signalrahmen im Ring 3); ehrlich ablehnen statt verschlucken.
-        if (signal != 9 && signal != 19 && Signals.Handler[signal] > 1)
+        // SIGKILL beendet immer; SIGSTOP ebenfalls, denn Anhalten gibt es nicht und niemand könnte mit SIGCONT fortsetzen.
+        if (signal is 9 or 19)
+        {
+            Terminate(signal);
+            return 0;
+        }
+
+        // Zustellen an einen Handler kann der Kernel noch nicht (keine Signalrahmen im Ring 3); ehrlich ablehnen statt verschlucken,
+        // auch wenn das Signal blockiert ist (sonst stünde es anhängig für einen Handler, den nie jemand ruft).
+        if (Signals.Handler[signal] > 1)
         {
             return -LinuxSyscalls.ENOSYS;
         }
 
-        // Ignoriert (SIG_IGN = 1) oder Standard "ignorieren" (SIGCHLD 17, SIGCONT 18, SIGURG 23, SIGWINCH 28): nichts geschieht.
-        if (signal != 9 && signal != 19 && (Signals.Handler[signal] == 1 || signal is 17 or 18 or 23 or 28))
+        // Blockiert: anhängig, bis sigprocmask es freigibt oder sigaction es ignoriert (Linux reiht auch ignorierte blockierte ein,
+        // denn der Handler kann sich bis zur Freigabe ändern). Prüfen und Eintragen unter derselben Sperre wie SignalStateChanged.
+        ulong bit = 1UL << (signal - 1);
+        lock (_threadGate)
         {
-            return 0;
+            if ((Signals.Blocked & bit) != 0)
+            {
+                _pendingSignals |= bit;
+                return 0;
+            }
         }
 
-        // Standard "beenden" (auch SIGSTOP: Anhalten gibt es nicht) beendet den ganzen Prozess, wie bei Linux.
+        if (!IsIgnored(signal))
+        {
+            Terminate(signal);
+        }
+
+        return 0;
+    }
+
+    /// <summary>Anhängige Signale (Bit = Nummer - 1), etwa für Tests und rt_sigpending.</summary>
+    public ulong PendingSignals
+    {
+        get
+        {
+            lock (_threadGate)
+            {
+                return _pendingSignals;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Nach sigprocmask oder sigaction: anhängige Signale, die jetzt ignoriert werden, fallen weg (Linux beim Setzen von SIG_IGN);
+    /// das niedrigste freigegebene mit Standardaktion "beenden" beendet den Prozess. Eines mit inzwischen gesetztem Handler bleibt
+    /// anhängig, denn zustellen kann der Kernel nicht.
+    /// </summary>
+    public void SignalStateChanged()
+    {
+        int deliver = 0;
+        lock (_threadGate)
+        {
+            for (int sig = 1; sig <= 64 && _pendingSignals != 0; sig++)
+            {
+                ulong bit = 1UL << (sig - 1);
+                if ((_pendingSignals & bit) == 0)
+                {
+                    continue;
+                }
+
+                if (IsIgnored(sig))
+                {
+                    _pendingSignals &= ~bit;
+                }
+                else if (deliver == 0 && (Signals.Blocked & bit) == 0 && Signals.Handler[sig] == 0)
+                {
+                    _pendingSignals &= ~bit;
+                    deliver = sig;
+                }
+            }
+        }
+
+        // Außerhalb der Sperre: Exit nimmt _threadGate selbst und weckt die futex-Tabelle.
+        if (deliver != 0)
+        {
+            Terminate(deliver);
+        }
+    }
+
+    /// <summary>
+    /// SIG_IGN, Standard "ignorieren" (SIGCHLD 17, SIGCONT 18, SIGURG 23, SIGWINCH 28) und die Stoppsignale SIGTSTP 20, SIGTTIN 21,
+    /// SIGTTOU 22 mit Standardaktion: Der Prozess ist allein in einer verwaisten Prozessgruppe (getpgrp = getsid = PID, kein Elternprozess),
+    /// und dort verwirft Linux diese drei, statt anzuhalten (POSIX; kernel/signal.c, get_signal, is_current_pgrp_orphaned).
+    /// </summary>
+    private bool IsIgnored(int signal) =>
+        Signals.Handler[signal] == 1 || (Signals.Handler[signal] == 0 && signal is 17 or 18 or 20 or 21 or 22 or 23 or 28);
+
+    // Standardaktion "beenden": den ganzen Prozess, wie bei Linux (Status "signal <n>").
+    private void Terminate(int signal)
+    {
         TerminatedBySignal ??= signal;
         Exit(128 + signal);
-        return 0;
     }
 
     public LinuxSignalState Signals { get; } = new();
@@ -480,6 +611,14 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     }
 
     /// <summary>exit_group (und das Ende des letzten Threads): beendet den Prozess; Wartende in futex kehren zurück.</summary>
+    /// <remarks>
+    /// <c>clear_child_tid</c> der übrigen Threads wird hier absichtlich nicht geschrieben (V10-Review P3). Linux schreibt es in
+    /// <c>mm_release</c> nur, solange noch jemand anderes den Adressraum nutzt (<c>mm_users &gt; 1</c>); sehen kann das nur ein zweiter
+    /// Prozess über gemeinsamen Speicher oder ptrace. ZehOS hat genau einen Linux-Prozess, keinen gemeinsamen Speicher zwischen
+    /// Prozessen (Datei-mmap ist eine Kopie) und kein ptrace; alle futex-Wartenden des Prozesses kehren über <see cref="LinuxFutexTable.Abort"/>
+    /// zurück und verlassen den Ring 3. Ein Schreiben hätte keinen Leser und würde in den Speicher eines sterbenden Prozesses fallen,
+    /// während andere Threads ihn noch auf ihrer CPU benutzen.
+    /// </remarks>
     public void Exit(int code)
     {
         lock (_threadGate)
