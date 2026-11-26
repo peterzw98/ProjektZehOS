@@ -16,6 +16,22 @@ internal interface IShellForeground
     /// <summary>Gibt eine Eingabezeile an das Programm (mit Zeilenende).</summary>
     void Submit(string line);
 
+    /// <summary>
+    /// true im Rohmodus (das Programm hat ICANON ausgeschaltet, etwa ein Zeileneditor): Tasten gehen einzeln als Bytes an das
+    /// Programm (<see cref="SubmitRaw"/>), die Shell editiert und zeigt nichts selbst; <see cref="Prompt"/> ist dann die Zeile,
+    /// die das Programm gezeichnet hat, mit dem Cursor bei <see cref="PromptCursor"/>.
+    /// </summary>
+    bool RawInput { get; }
+
+    /// <summary>Cursorspalte in <see cref="Prompt"/> im Rohmodus; sonst -1 (der Cursor gehoert der Shell).</summary>
+    int PromptCursor { get; }
+
+    /// <summary>true, solange Strg+C das Programm abbricht (ISIG); sonst bekommt es das Byte 0x03.</summary>
+    bool SignalKeys { get; }
+
+    /// <summary>Gibt Tastenbytes an das Programm (Rohmodus); ein CR wird mit ICRNL zum Zeilenende.</summary>
+    void SubmitRaw(byte[] bytes);
+
     /// <summary>Eingabeende (Strg+D): das naechste Lesen ohne Bytes liefert 0.</summary>
     void EndInput();
 

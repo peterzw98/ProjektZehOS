@@ -36,6 +36,11 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     private string? _status;
     private bool _done;
 
+    // Terminalmodus aus termios (V3 raw), gesetzt vom Programmthread über den Deskriptor, gelesen von der Ereignisschleife.
+    private bool _raw;
+    private bool _signalKeys = true;
+    private bool _crToNewline = true;
+
     /// <param name="sleep">Schläft so viele Millisekunden (Kernel: Thread.Sleep; Tests: zählt oder liefert Eingabe nach).</param>
     public LinuxTerminalSession(Action<int> sleep)
     {
@@ -59,6 +64,42 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     public Action? OnInterrupt { get; set; }
 
     // ---- Programmseite ----
+
+    /// <summary>
+    /// Übernimmt den Modus aus termios (TCSETS*): <paramref name="canonical"/> (ICANON) heißt ganze Zeilen aus dem Zeileneditor
+    /// der Shell, sonst Tasten einzeln (Rohmodus). <paramref name="signalKeys"/> ist ISIG (Strg+C bricht ab),
+    /// <paramref name="crToNewline"/> ist ICRNL (Enter liefert \n statt \r). ECHO wird nicht gebraucht: Im kanonischen Modus zeigt die
+    /// Shell die Zeile immer, im Rohmodus zeigt sie nur, was das Programm zeichnet (ein Rohmodus mit Echo ist nicht umgesetzt).
+    /// </summary>
+    public void SetMode(bool canonical, bool signalKeys, bool crToNewline)
+    {
+        lock (_gate)
+        {
+            _raw = !canonical;
+            _signalKeys = signalKeys;
+            _crToNewline = crToNewline;
+        }
+    }
+
+    /// <summary>
+    /// Bytes, die das Terminal selbst in die Eingabe legt (Antwort auf <c>ESC [ 6 n</c>), ohne Umwandlung; zählen nicht gegen
+    /// <see cref="MaxInputBytes"/>, damit ein Programm, das nach der Cursorposition fragt, nie ohne Antwort wartet.
+    /// </summary>
+    public void Respond(ReadOnlySpan<byte> bytes)
+    {
+        lock (_gate)
+        {
+            if (_detached)
+            {
+                return;
+            }
+
+            foreach (byte b in bytes)
+            {
+                _input.Enqueue(b);
+            }
+        }
+    }
 
     /// <summary>Eine fertige Ausgabezeile (vom <see cref="TerminalDescriptor"/>). Wartet, solange die Warteschlange voll ist.</summary>
     public void WriteLine(string text)
@@ -215,7 +256,74 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
         {
             lock (_gate)
             {
-                return _prompt == null ? string.Empty : TerminalDescriptor.Printable(Encoding.UTF8.GetString(_prompt));
+                if (_prompt == null)
+                {
+                    return string.Empty;
+                }
+
+                string text = Encoding.UTF8.GetString(_prompt);
+                return _raw ? TerminalLine.Render(text, out _) : TerminalDescriptor.Printable(text);
+            }
+        }
+    }
+
+    public bool RawInput
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _raw;
+            }
+        }
+    }
+
+    public int PromptCursor
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!_raw)
+                {
+                    return -1;
+                }
+
+                if (_prompt == null)
+                {
+                    return 0;
+                }
+
+                TerminalLine.Render(Encoding.UTF8.GetString(_prompt), out int cursor);
+                return cursor;
+            }
+        }
+    }
+
+    public bool SignalKeys
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _signalKeys;
+            }
+        }
+    }
+
+    public void SubmitRaw(byte[] bytes)
+    {
+        lock (_gate)
+        {
+            // Die Eingabezeile bleibt stehen: Im Rohmodus zeichnet das Programm sie nach der Taste selbst neu.
+            if (_finished || _input.Count + bytes.Length > MaxInputBytes)
+            {
+                return;
+            }
+
+            foreach (byte b in bytes)
+            {
+                _input.Enqueue(b == (byte)'\r' && _crToNewline ? (byte)'\n' : b);
             }
         }
     }

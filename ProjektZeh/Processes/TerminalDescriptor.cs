@@ -41,10 +41,20 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
 
     public bool IsTerminal => _session != null;
 
+    // Kanonisch (ICANON): Zeilen sind Ausgaben eines Zeilenterminals; sonst (Rohmodus) zeichnet ein Zeileneditor die Zeile neu.
+    private bool _canonical = true;
+
     public byte[] Termios
     {
         get => _termios;
-        set => _termios = value ?? throw new ArgumentNullException(nameof(value));
+        set
+        {
+            _termios = value ?? throw new ArgumentNullException(nameof(value));
+            uint iflag = BitConverter.ToUInt32(value, 0);
+            uint lflag = BitConverter.ToUInt32(value, 12);
+            _canonical = (lflag & LinuxSyscalls.ICANON) != 0;
+            _session?.SetMode(_canonical, (lflag & LinuxSyscalls.ISIG) != 0, (iflag & LinuxSyscalls.ICRNL) != 0);
+        }
     }
 
     public (ushort Rows, ushort Columns) WindowSize => _session?.WindowSize ?? ((ushort)24, (ushort)80);
@@ -72,12 +82,16 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
                 continue;
             }
 
-            if (_length == MaxLine)
+            if (_length == MaxLine && (_canonical || !Compact()))
             {
                 EmitFull();
             }
 
             _line[_length++] = b;
+            if (b == (byte)'n' && IsStatusRequest())
+            {
+                AnswerStatusRequest();
+            }
         }
 
         return data.Length;
@@ -151,6 +165,46 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
         Array.Copy(_line, 0, _line, prompt.Length, Math.Max(0, keep));
         prompt.CopyTo(_line, 0);
         _length = prompt.Length + Math.Max(0, keep);
+    }
+
+    /// <summary>true, wenn die Zeile gerade mit <c>ESC [ 6 n</c> endet (DSR, Frage nach der Cursorposition).</summary>
+    private bool IsStatusRequest() =>
+        _session != null && _length >= 4 && _line[_length - 4] == 0x1b && _line[_length - 3] == (byte)'[' && _line[_length - 2] == (byte)'6';
+
+    /// <summary>
+    /// Antwortet wie ein VT100 mit <c>ESC [ Zeile ; Spalte R</c> in die Eingabe (V3 raw): LibLine fragt so vor jeder Eingabezeile
+    /// und liest, bis die Antwort kommt. Die angefangene Zeile steht im Fenster ganz unten, die Zeile ist deshalb die letzte; die
+    /// Spalte ergibt sich aus dem, was das Programm bisher gezeichnet hat. Die Frage selbst wird nicht angezeigt.
+    /// </summary>
+    private void AnswerStatusRequest()
+    {
+        _length -= 4;
+        TerminalLine.Render(Encoding.UTF8.GetString(_line, 0, _length), out int cursor);
+        string answer = "\x1b[" + WindowSize.Rows + ";" + (cursor + 1) + "R";
+        _session!.Respond(Encoding.ASCII.GetBytes(answer));
+    }
+
+    /// <summary>
+    /// Rohmodus: Ein Zeileneditor zeichnet die Zeile bei jeder Taste neu und schreibt dabei lange kein Zeilenende. Statt die
+    /// Neuzeichnungen als Zeile auszugeben, wird die volle Zeile durch ihren Stand ersetzt (Text, dann Cursor mit <c>ESC [ n G</c>).
+    /// Eine angefangene Folge am Ende bleibt dahinter. false, wenn auch der Stand die Zeile füllt.
+    /// </summary>
+    private bool Compact()
+    {
+        int cut = IncompleteTail(_line, _length);
+        int keep = cut < 0 ? _length : cut;
+        string text = TerminalLine.Render(Encoding.UTF8.GetString(_line, 0, keep), out int cursor);
+        byte[] state = Encoding.UTF8.GetBytes(text + "\x1b[" + (cursor + 1) + "G");
+        int tail = _length - keep;
+        if (state.Length + tail > MaxLine / 2)
+        {
+            return false;
+        }
+
+        Array.Copy(_line, keep, _line, state.Length, tail);
+        state.CopyTo(_line, 0);
+        _length = state.Length + tail;
+        return true;
     }
 
     /// <summary>
@@ -240,7 +294,9 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
 
     private void Emit()
     {
-        _output.WriteLine(Printable(Encoding.UTF8.GetString(_line, 0, _length)));
+        string text = Encoding.UTF8.GetString(_line, 0, _length);
+        // Im Rohmodus ist die Zeile das, was der Zeileneditor zuletzt gezeichnet hat (V3 raw), nicht die Folge seiner Neuzeichnungen.
+        _output.WriteLine(_canonical ? Printable(text) : TerminalLine.Render(text, out _).TrimEnd(' '));
         _length = 0;
     }
 

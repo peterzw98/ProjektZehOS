@@ -34,6 +34,23 @@ internal sealed partial class ShellService
     /// <summary>Eingabeaufforderung des Programms (angefangene Ausgabezeile) oder null ohne Vordergrundprogramm.</summary>
     public string? ForegroundPrompt => foreground?.Prompt;
 
+    /// <summary>true, solange das Vordergrundprogramm Tasten einzeln bekommt (Rohmodus, etwa ein Zeileneditor).</summary>
+    public bool ForegroundRawInput => !closed && foreground?.RawInput == true;
+
+    /// <summary>Cursorspalte in <see cref="ForegroundPrompt"/> im Rohmodus, sonst -1.</summary>
+    public int ForegroundCursor => foreground?.PromptCursor ?? -1;
+
+    /// <summary>true, wenn Strg+C als Byte an das Programm geht statt es abzubrechen (Rohmodus ohne ISIG).</summary>
+    public bool ForegroundTakesInterruptKey => !closed && foreground is { RawInput: true, SignalKeys: false };
+
+    /// <summary>Tastenbytes an das Vordergrundprogramm (Rohmodus); false ohne Programm.</summary>
+    public bool SendForegroundInput(byte[] bytes)
+    {
+        if (closed || foreground == null) return false;
+        foreground.SubmitRaw(bytes);
+        return true;
+    }
+
     /// <summary>Meldet ein gestartetes Programm an; seine Ausgabe holt <see cref="Poll"/> ab.</summary>
     internal ResultErr AttachForeground(IShellForeground program)
     {
