@@ -85,3 +85,102 @@ Eingehende Annahmen und was **nicht** enthalten ist:
 Beantwortet: `nativ` (Peter, 24. November 2026). Die Frage lautete:
 
 > Ladybird (Block #457, L3): Welchen Weg sollen wir verfolgen? `wasm` (24–42 Personwochen ohne Bibliotheksportierung, Stack-Scan ungelöst), `nativ` (mindestens 14–23 Wochen Kernel plus 12.4-Umsetzung in Monaten) oder `liegen lassen` (Empfehlung)? Ein Wort genügt.
+
+## Ergebnis N1
+
+Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/peterzw98/ProjektZehOS/issues/624)) und die Vorstellung am 4. Dezember. Grundlage: [Plan N1](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), die Berichte [Ring 3 (N1-A7)](superpowers/plans/2026-11-26-ladybird-n1-ring3.md) und [Adressräume (N1-B5)](superpowers/plans/2026-11-26-ladybird-n1-adressraum.md) und die PR-Texte und Kommentare, die unten genannt sind (Stand `story/ladybird` `b52427e5`). Die Berichte liegen als `plans/…-n1-ring3.md` und `plans/…-n1-adressraum.md`, nicht als `specs/…-n1-<thema>.md` wie im Plan vorgesehen; es gibt noch keinen Bericht zu C, D und E. **Dieser Abschnitt misst nichts neu:** Jede Zahl und jedes Urteil steht mit Quelle da; was nicht belegt ist, steht als `offen`. Die Urteile `trägt` in A und B sind die der Senior-Agenten laut Berichten (nur gelesen, ohne eigenen Gastlauf, siehe Quellen); das Tor N1-Z entscheidet Peter oder Lars.
+
+### Stand N1
+
+| Gruppe | Inhalt | Urteil (Quelle) | Stand |
+| --- | --- | --- | --- |
+| A Ring 3 | Cosmos-Patches A1–A4, Gastfälle A6, Messung A7 | **`trägt`** (Senior, N1-A7-Bericht) | Gastläufe und Messung gelaufen; offen: NMI-Rest unter TCG, VMware, echte Hardware |
+| B Adressräume | AddressSpaceMap B1, Seitentabellen B2/B3, Gastfälle B4, Messung B5 | **`trägt`** (Senior, N1-B5-Bericht) | Gastläufe gelaufen; **Kosten je Adressraumwechsel nicht gemessen** ([#716](https://github.com/peterzw98/ProjektZehOS/issues/716)) |
+| C Aufrufliste | Auswertung C1, Messung C2 | **`offen`** | C1 gemergt (Hosttests); C2 nicht gelaufen (hängt an #450) |
+| D musl | LibJS D1, ganzes Ladybird D2 | **`offen`** | D1: nur Skript auf Branch, Bau steht aus; D2 nicht begonnen |
+| E Vergleichsprogramme | Satz S1, S3, `tools` (E1–E3) | Abnahmeregel des Plans erfüllt, förmliches Urteil noch nicht geschrieben | alle drei gemergt, nur auf Linux gelaufen, kein Gastlauf |
+| Messung L1 | Bau L1-A, Seiten und Messskript L1-B, Messung L1-C ([#450](https://github.com/peterzw98/ProjektZehOS/issues/450)) | **`offen`** | L1-A erledigt, L1-B gemergt, **L1-C nicht gelaufen: keine Messzahlen** |
+| #423 (13.5 AOT) | Voraussetzung des Tors | offen | Issue offen |
+
+### A: Ring 3 unter Cosmos
+
+**Geprüft.** Die Cosmos-Patches A1 bis A4 (GDT/TSS/IST, `fxsave`, Interruptstub mit Herkunft Ring 3, Eintritt/Systemaufruf/Rückweg; PRs #691, #697, #699, #700) liegen laut Kommentar in #704 vom 26.11. in `story/ladybird-cosmos` (`0aa72ea3`) und `story/ladybird` (`3f82af27`). Die Gastfälle A6 (18 Fälle plus `switch` und `fault_avx`, PR #704, Kopf `a456519c1`, Pin `4027f1c9`, QEMU 10.0.13) liefen:
+
+| Lauf | Ergebnis (PR #704, Kommentare 7177818605, 7178349620, 7178644063) |
+| --- | --- |
+| KVM 1 und 4 CPUs | je 10/10 |
+| TCG `-cpu max` 1 und 4 CPUs | je 3/3 |
+| Gegenprobe (Kernelthread-#PF hält an) KVM 1 und 4 CPUs | je 2/2 |
+| `switch`-Mutanten (Fall muss rot werden) | beide rot auf KVM 1 und 4 CPUs; Mutant 2 auf 4 CPUs nur über einen Absturz, nicht über den Fall selbst, je 1 Lauf |
+| Hosttests | 1747/1747 (`-warnaserror`) |
+
+**Messwerte** (N1-A7-Bericht, Kopf `b332f61d6`, KVM, MSI, TSC 2,4996 GHz, 3 Läufe je CPU-Zahl): Systemaufruf hin und zurück **netto 360–378 Ticks ≈ 0,15 µs** (Regel: ≤ 5 µs), bei 1 und 4 CPUs gleich. Doom-Bildzahl im zweiten 60-s-Fenster, Median über 3 Läufe: wasm3 Basis smp.13 4078, mit A4 4060 (**−0,44 %**, Regel: ≤ 5 %); AOT 12594 gegen 12598 Bilder in drei Läufen (+0,03 %, rund 70 Bilder/s). `test-power-commands.py` je Stand 3/3.
+
+**Urteil `trägt`** (Senior, 26.11., Kopf `086f5fe78`; kein eigener Gastlauf, gestützt auf #704 und den Bericht): A6 erfüllt, Median ≤ 5 µs, Doom ≤ 5 % Verlust; kein Fall scheitert an einer Ursache ohne abgegrenzten Patch.
+
+**Grenzen laut Bericht und Reviews:**
+
+- Die Doom-Messung ist wenig empfindlich: AOT läuft an einer Obergrenze von rund 70 Bildern/s, wasm3 hat rund 3 % Spielraum; der Verlust unterhalb der Obergrenze kann sich verstecken. Eine Abschätzung (unter 0,1 % Rechenzeit) ist geschätzt, nicht gemessen. Das Urteil fällt auf `offen` zurück, wenn eine Last ohne Obergrenze mehr als 5 % Verlust zeigt.
+- Nur 3 statt 5 Doom-Läufe (Abweichung vom Plan), `rdtsc` ohne `lfence`, `fxsave`/`swapgs` nicht einzeln gemessen, Plan-Skript `test-power-commands.ps1` durch das Python-Gegenstück ersetzt.
+- **Offener Befund #700, verschachteltes NMI unter TCG:** Ein Fehler beim NMI-Ausgang ist behoben (Kommentar 7176781445: 7 von 20 Läufen vorher, 0 von 20 nachher); ein verschachteltes NMI auf CPU 0 (TCG `thread=multi`, 5 von 20) ist belegt, die Ursache offen, KVM 0 von 20 (Kommentar 7177195850). Muss laut Senior vor dem Merge der Patches entschieden werden.
+- Nicht geprüft: VMware, echte Hardware, AMD, SMEP/UMIP als Gastfall (nur Hosttests in #700).
+
+### B: Eigene Adressräume
+
+**Geprüft.** B1 `AddressSpaceMap` (PR #666, Folge #677) ist auf `master` gemergt; auf `master` `53cba9cd5` `--filter AddressSpaceMapTests` 24 bestanden, 0 fehlgeschlagen. Die Seitentabellen B2/B3 (PRs #692, #701, #710) und die Gastfälle B4 (PR #712, Kopf `d1f3fc7c1`, 27 Fälle) laufen im Probebau; Zahlen laut N1-B5-Bericht (Kopf `36f94913b`): B4 KVM 1 und 4 CPUs je 10/10, TCG 1 und 4 CPUs je 3/3 (smp1 nach dem Device-Fix `d1f3fc7c1`; davor 1/3 wegen `device`).
+
+**Normalbau unverändert** (ohne Probe, KVM, `master` `53cba9cd5` mit smp.13, je 3 Läufe): Desktop, Netz und ClassiCube bei 1 und 4 CPUs 18/18 bestanden, Bau mit `-warnaserror` ohne Warnungen.
+
+**Messwerte:** Seitenfehler (`pfault`, 4000 Seiten, KVM, Median je Lauf) **rund 2030–2100 Ticks** (≈ 0,8–0,85 µs bei 2,5 GHz, eigene Umrechnung) je Fehler bei 1 und 4 CPUs, p99 2880–3406 Ticks. **Zeit je Adressraumwechsel: nicht messbar.** `Thread.Yield` wechselt erst am Timertakt ([#716](https://github.com/peterzw98/ProjektZehOS/issues/716)); eine Runde dauert 25–50 Mio. Ticks, auch bei zwei reinen Kernelthreads, die Zeitscheibe verdeckt den CR3-Aufwand. Belegt ist nur, dass der CR3 in allen 3000 Paarrunden je CPU-Zahl wechselt.
+
+**Urteil `trägt`** (Senior, 26.11.; nur gelesen): B1 und B4 erfüllt, Normalbau unverändert; die Regel von #634 nennt keine Schwelle für die Wechselzeit, die Messung ist keine Bedingung.
+
+**Grenzen:** Zeitfälle nur KVM; `neg` nicht auf `d1f3fc7c1` neu gelaufen; ein Fenster in B3 (Warten auf `Changing`) nur durch Lesereview gestützt; `gc2` mit 4 CPUs `overlapped=0`; `rdtsc` ohne `lfence`; VMware, echte Hardware nicht geprüft. Die Wechselkosten werden nachgetragen, sobald #716 (`yield-now`, #717 geschlossen, Entwurf) einen sofortigen Wechsel liefert.
+
+### C: Aufrufliste von Ladybird
+
+- **Umgesetzt:** C1, die Auswertung von `strace -ff -f -yy -v` (`experiments/Ladybird.Probe/syscalls.py`, PR #665, Kopf `d7442098e`), 16 Tests OK, ein echter `strace`-Lauf (python3, 3 Prozesse, 115 Pfade). **Nicht auf Ladybird-Spuren angewendet.**
+- **Offen:** C2 (#635), die Messung der drei L1-Seiten und von `js -c '1+1'` unter `strace`: nicht gelaufen. Es gibt keine Zahl zu Aufrufen in S4, `/proc`-Pfaden, Threads je Prozess oder reserviertem Adressraum.
+- **Urteil: `offen`.** Die Regel (höchstens 40 S4-Pflichtaufrufe, keiner aus `io_uring_*`, `bpf`, `userfaultfd`, `ptrace`, kein GPU-Gerät) ist nicht prüfbar.
+
+### D: Ladybird mit musl
+
+- **Umgesetzt:** Skript und README für `js` mit musl auf dem Branch `task/ladybird-n1d1-js` (Kopf `bd044b36`, `experiments/Ladybird.Probe/musl/`), noch nicht in der Story; Block #622 ist übernommen. Laut README des Branchs: „Der vollständige Bau und die Ausführung in Alpine stehen aus.“
+- **Offen:** D1-Zwischenurteil (Bau, `1+1`, Sortieren von 10 000 Einträgen, Patchzeilen, Größe), D2 (#636, ganzes Ladybird, Grenze 1000 Patchzeilen). Es gibt keinen musl-Bau und keine Patchzahl.
+- **Urteil: `offen`.** Der glibc-Bau (L1-A, #448) steht (siehe Messung L1); er ist die Rückfallstufe `glibc` der Tor-Regel, falls D2 an musl scheitert.
+
+### E: Vergleichsprogramme
+
+- **Umgesetzt und auf Linux geprüft** (`experiments/LinuxAbi`, alle gemergt): S1 mit 12 Programmen (PR #667, Kopf `895a4b79d`; Linux 6.12.90, musl 1.2.5; 5 Läufe gleich, 39 verschiedene Aufrufe, 11 Tests OK); S3 mit 9 Programmen (PR #686, Kopf `0cd5d4518`; 20 von 20 Läufen gleich, danach nach einer Änderung erneut 20 von 20, 5 von 5 unter 6 CPU-Schleifen; 69 verschiedene Aufrufe unter `strace -f -c`; 15 Tests OK); `tools` mit toybox 0.8.15 und zwei Rust-Programmen, 9 Programme (PR #696, Kopf `5992af6c4`; Linux 6.12.117; zweimal gleich, 49 Aufrufe; Review ohne P1/P2).
+- **Abnahmeregel des Plans** („Gruppe E `trägt`, wenn E1 bis E3 erfüllt sind“): erfüllt, soweit die PR-Texte reichen. Ein eigenes Urteilsdokument gibt es nicht; das Tor N1-Z führt es.
+- **Grenzen:** nur Linux 6.12, andere Kernel und Toolchains nicht geprüft; **kein Lauf in ZehOS** (kommt mit N2 und N4); einige Erwartungen hängen an Linux-Verhalten (`EBUSY`, `ENOEXEC`, `EADDRNOTAVAIL`); CI führt die Python-Tests nicht aus.
+
+### Messung L1 (L1-C offen)
+
+Die Messung L1-C (#450, Block übernommen von `agent-nweh-senior25`, Branch `docs/ladybird-l1c-ergebnis`) ist **nicht gelaufen**; Speicher je Prozess, Threads und Seitenmessung gibt es nicht. Die Tor-Bedingung „PSS ≤ 2 GiB“ ist daher unbelegt. Vorhanden ist nur der Bau (L1-A, #448, PR #669, Kommentar 7151270240, Kopf `26f8f188`; Ladybird `6fba5b78a104`, ohne JIT, glibc, `x64-linux-dynamic`, Rechner HPz mit 22 Threads, 62 GiB RAM, GCC 16.2.1, Rust 1.98.0):
+
+| Messwert | Wert |
+| --- | --- |
+| Bauzeit (Schritt `build`, nach `deps`) | 1112 s (`deps` im Vorlauf 630 s) |
+| Spitzen-RSS eines Bauprozesses | 4 847 408 KiB (≈ 4,6 GiB) |
+| Spitze des belegten Systemspeichers | 26 018 896 KiB (≈ 24,8 GiB) |
+| Platz im Arbeitsordner | 7 172 690 403 Byte (≈ 6,7 GiB), davon `build` 5 435 340 251 |
+| Binärdateien gesamt (`binaries_total_bytes`) | 638 375 526 Byte; `liblagom-web.so` 271 988 272, `libexec/WebContent` 9 250 608 |
+
+Grenzen: ein Lauf, `LAGOM_LINK_POOL_SIZE` nicht gesetzt (Ladybird hat an diesem Commit einen Fehler, siehe PR #669), kalter Bau ohne ccache. Das ist ein Bau, keine Laufzeitmessung; er sagt nichts über den Speicher beim Seitenladen. Die Seiten und das Messskript (L1-B) sind mit PR #671 gemergt, aber nicht ausgeführt.
+
+### Tor N1-Z (Lage, keine Entscheidung)
+
+Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“): A und B `trägt`, E erfüllt, C und D `offen`, PSS unbelegt, #423 offen. Damit greift heute die Zeile „#423 nicht abgenommen: warten, mit dem fehlenden Punkt“. Wäre #423 abgenommen, griffe wegen C und D `offen` die Zeile „Peter kann GO geben, Ladybird (N6) wartet“. Die Entscheidung trifft Peter oder Lars.
+
+### Offene Punkte
+
+1. **#450 (L1-C):** Messung Speicher, Threads, Binärgrößen; Voraussetzung für C2 und die PSS-Bedingung.
+2. **N1-C2 (#635):** Aufrufliste von Ladybird mit `syscalls.py` auswerten.
+3. **N1-D1/D2 (#622, #636):** musl-Bau von `js` und von ganz Ladybird; Patchzeilen.
+4. **#423:** AOT-Abnahme (Voraussetzung des Tors).
+5. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
+6. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
+7. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
+8. **E im Gast:** die drei Programmsätze laufen noch nicht in ZehOS (N2 und N4).
+9. **Reviews:** Das Delta `5802b0abe` von #704 (nur `scripts/`) ist nach dem Bericht noch nicht nachgeprüft; die Berichte N1-A7 und N1-B5 sind Entwurf, die Urteile nur gelesen.
