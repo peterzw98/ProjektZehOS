@@ -77,8 +77,9 @@ if [[ "$gui" == ON ]]; then
         || die 'Vollbau braucht Qt ab 6.10 (Base, GuiPrivate, Positioning), glib-dev und xcb-util-wm-dev.'
     /sbin/apk info -e qt6-qtbase-private-dev >/dev/null || die 'Alpine-Paket qt6-qtbase-private-dev fehlt.'
 fi
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if [[ "$target" == all ]]; then
-    probe_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+    probe_dir=$(dirname -- "$script_dir")
     [[ -r "$probe_dir/measure.py" && -r "$probe_dir/pages/static.html" ]] \
         || die 'measure.py und pages/static.html fehlen neben dem musl-Verzeichnis.'
 fi
@@ -112,6 +113,14 @@ if [[ -z "$head" ]]; then
     git -C "$src" checkout --detach "$commit"
 fi
 [[ "$(git -C "$src" rev-parse HEAD)" == "$commit" ]] || die 'Ladybird-Quellstand stimmt nicht.'
+if [[ "$gui" == ON ]]; then
+    for patch in "$script_dir"/patches/all/*.patch; do
+        [[ -f "$patch" ]] || continue
+        if ! git -C "$src" apply --reverse --check "$patch" 2>/dev/null; then
+            git -C "$src" apply "$patch" || die "Vollbau-Patch fehlgeschlagen: $patch"
+        fi
+    done
+fi
 mkdir -p "$src/Build"
 if [[ ! -L "$src/Build/distribution" ]]; then
     ln -s "$build" "$src/Build/distribution"

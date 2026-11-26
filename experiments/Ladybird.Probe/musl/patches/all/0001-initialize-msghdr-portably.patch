@@ -1,0 +1,131 @@
+diff --git a/Libraries/LibSandbox/ConnectBroker.cpp b/Libraries/LibSandbox/ConnectBroker.cpp
+--- a/Libraries/LibSandbox/ConnectBroker.cpp
++++ b/Libraries/LibSandbox/ConnectBroker.cpp
+@@ -43,15 +43,11 @@
+         char space[CMSG_SPACE(2 * sizeof(int))];
+     } control {};
+
+-    msghdr message {
+-        .msg_name = nullptr,
+-        .msg_namelen = 0,
+-        .msg_iov = &io,
+-        .msg_iovlen = 1,
+-        .msg_control = &control,
+-        .msg_controllen = sizeof(control),
+-        .msg_flags = 0,
+-    };
++    msghdr message {};
++    message.msg_iov = &io;
++    message.msg_iovlen = 1;
++    message.msg_control = &control;
++    message.msg_controllen = sizeof(control);
+
+     ssize_t received = 0;
+     do {
+@@ -159,15 +155,9 @@
+         char space[CMSG_SPACE(sizeof(int))];
+     } control {};
+
+-    msghdr message {
+-        .msg_name = nullptr,
+-        .msg_namelen = 0,
+-        .msg_iov = &io,
+-        .msg_iovlen = 1,
+-        .msg_control = nullptr,
+-        .msg_controllen = 0,
+-        .msg_flags = 0,
+-    };
++    msghdr message {};
++    message.msg_iov = &io;
++    message.msg_iovlen = 1;
+
+     if (connected_fd >= 0) {
+         message.msg_control = &control;
+diff --git a/Libraries/LibSandbox/FileBroker.cpp b/Libraries/LibSandbox/FileBroker.cpp
+--- a/Libraries/LibSandbox/FileBroker.cpp
++++ b/Libraries/LibSandbox/FileBroker.cpp
+@@ -560,15 +560,9 @@
+         char space[CMSG_SPACE(sizeof(int))];
+     } control {};
+
+-    msghdr message {
+-        .msg_name = nullptr,
+-        .msg_namelen = 0,
+-        .msg_iov = &io,
+-        .msg_iovlen = 1,
+-        .msg_control = nullptr,
+-        .msg_controllen = 0,
+-        .msg_flags = 0,
+-    };
++    msghdr message {};
++    message.msg_iov = &io;
++    message.msg_iovlen = 1;
+
+     if (fd >= 0) {
+         message.msg_control = &control;
+@@ -678,15 +672,11 @@
+             char space[CMSG_SPACE(4 * sizeof(int))];
+         } control {};
+
+-        msghdr message {
+-            .msg_name = nullptr,
+-            .msg_namelen = 0,
+-            .msg_iov = &io,
+-            .msg_iovlen = 1,
+-            .msg_control = &control,
+-            .msg_controllen = sizeof(control),
+-            .msg_flags = 0,
+-        };
++        msghdr message {};
++        message.msg_iov = &io;
++        message.msg_iovlen = 1;
++        message.msg_control = &control;
++        message.msg_controllen = sizeof(control);
+
+         ssize_t received = 0;
+         do {
+diff --git a/Libraries/LibSandbox/Seccomp.cpp b/Libraries/LibSandbox/Seccomp.cpp
+--- a/Libraries/LibSandbox/Seccomp.cpp
++++ b/Libraries/LibSandbox/Seccomp.cpp
+@@ -1282,15 +1282,11 @@
+         char space[CMSG_SPACE(3 * sizeof(int))];
+     } request_control {};
+
+-    msghdr request_message {
+-        .msg_name = nullptr,
+-        .msg_namelen = 0,
+-        .msg_iov = &request_io,
+-        .msg_iovlen = 1,
+-        .msg_control = &request_control,
+-        .msg_controllen = CMSG_SPACE(passed_fd_count * sizeof(int)),
+-        .msg_flags = 0,
+-    };
++    msghdr request_message {};
++    request_message.msg_iov = &request_io;
++    request_message.msg_iovlen = 1;
++    request_message.msg_control = &request_control;
++    request_message.msg_controllen = CMSG_SPACE(passed_fd_count * sizeof(int));
+
+     auto* request_header = CMSG_FIRSTHDR(&request_message);
+     request_header->cmsg_level = SOL_SOCKET;
+@@ -1321,15 +1317,11 @@
+         char space[CMSG_SPACE(sizeof(int))];
+     } response_control {};
+
+-    msghdr response_message {
+-        .msg_name = nullptr,
+-        .msg_namelen = 0,
+-        .msg_iov = &response_io,
+-        .msg_iovlen = 1,
+-        .msg_control = &response_control,
+-        .msg_controllen = sizeof(response_control),
+-        .msg_flags = 0,
+-    };
++    msghdr response_message {};
++    response_message.msg_iov = &response_io;
++    response_message.msg_iovlen = 1;
++    response_message.msg_control = &response_control;
++    response_message.msg_controllen = sizeof(response_control);
+
+     ssize_t received = 0;
+     do {
