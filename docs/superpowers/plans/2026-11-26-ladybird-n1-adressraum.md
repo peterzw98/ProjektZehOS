@@ -77,7 +77,7 @@ B1 (#620, gemergt mit #666, Folge #677): auf master 53cba9cd5 `dotnet test Proje
 
 ## Urteil
 
-**`offen`** (agent-peter-senior, 26.11.2026, Neufassung auf Kopf `9ae3f80cb`; nur gelesen, kein Gastlauf). Ersetzt das Urteil auf `e94c4c9ec`. Offen bleibt es **nur wegen B4** (formale Abnahme); die Wechselkosten tragen das Urteil nicht.
+**`trägt`** (agent-peter-senior, 26.11.2026, Abschluss auf Basis `05cca78b6`; nur gelesen, kein eigener Gastlauf). Ersetzt das Urteil `offen` auf `05cca78b6` (offen nur wegen der B4-Abnahme); diese ist jetzt erfüllt.
 
 **Regel #634:** `trägt`, wenn B1 und B4 erfüllt sind und der Normalbau unverändert läuft; `trägt nicht` bei bekannter Ursache in Cosmos/NativeAOT ohne abgegrenzten Patch; sonst `offen`. Anders als A7 (Median ≤ 5 µs) nennt die Regel **keine Schwelle für die Wechselzeit**. Die Zeitmessung ist Inhalt des Pakets, aber keine Bedingung für `trägt`.
 
@@ -85,19 +85,23 @@ B1 (#620, gemergt mit #666, Folge #677): auf master 53cba9cd5 `dotnet test Proje
 | --- | --- | --- |
 | B1 | erfüllt | #666 und #677 auf master gemergt (mit Review); `AddressSpaceMapTests` auf master `53cba9cd5` 24/24 (Nachtrag) |
 | Normalbau unverändert | erfüllt | gegen master `53cba9cd5` (smp.13): Desktop, Netz, ClassiCube je 1 und 4 CPUs je 3/3 = 18/18, Bau 0/0 `-warnaserror`; mit Pin `7b4b1018` Desktop 9/9, Netz 6/6, ClassiCube 2/2 |
-| B4 | **noch nicht abgenommen** | siehe unten |
+| B4 | erfüllt | siehe unten |
 | Zeit je Seitenfehler | gemessen | pfault ~2030-2100 Ticks je Fehler (KVM Median, smp1 und smp4, je 3 Läufe) |
 | Zeit je Adressraumwechsel | **nicht messbar** | Yield wechselt erst am Timertakt (#716); Rundenzeit = Zeitscheibe (25-50 Mio Ticks), auch für zwei Kernelthreads. CR3-Wechsel je Runde ist belegt (3000/3000 je smp), sein Aufwand nicht |
 
-**Warum B4 noch nicht erfüllt ist:** Die Abnahme von B4 (#633) lautet „alle Fälle je 10 Läufe KVM und 3 TCG, 1 und 4 CPUs“. Auf `04d19c72` waren alle Fälle KVM 10/10 je smp und TCG smp4 3/3, aber TCG smp1 nur 1/3 (`device`). Der Fix `d1f3fc7c1` ändert ausschließlich den Abschnitt `device` in `CosmosAddressSpaceProbe.cs` (alle Hunks ab Zeile 687, Abschnitt beginnt Zeile 682); die übrigen 26 Fälle bleiben damit von der Serie auf `04d19c72` abgedeckt. Für `device` auf dem neuen Code liegen vor: KVM smp1 3+3, KVM smp4 3+3 (#712 Kommentar 7182091025 und dieser Bericht, `12904e126`), TCG smp1 3/3, **TCG smp4 0**. Es fehlen also für `device`: KVM je smp 4 weitere Läufe (auf 10), TCG smp4 3 Läufe. Außerdem hat #712 als Code-PR **noch kein unabhängiges Review** (Plan, „Urteil je Gruppe“: Code-PRs brauchen ein unabhängiges Review).
+**B4 (#633, „alle Fälle je 10 Läufe KVM und 3 TCG, 1 und 4 CPUs“):** Auf `04d19c72` alle Fälle KVM 10/10 je smp und TCG smp4 3/3; TCG smp1 1/3 nur wegen `device`. Der Fix `d1f3fc7c1` ändert ausschließlich den Abschnitt `device` in `CosmosAddressSpaceProbe.cs`; die übrigen 26 Fälle bleiben von der Serie auf `04d19c72` abgedeckt. `device` auf dem Code von `d1f3fc7c1`, jeweils alle 27 Fälle erwartet, `ping_losses=0`, `check_failures=0`:
+
+| Lauf | Läufe | Quellen |
+| --- | --- | --- |
+| KVM smp1 | 10/10 | 3 (#712 Kommentar 7182091025) + 3 (dieser Bericht, `12904e126`, `device` unverändert) + 4 (#712 Kommentar 7184935521) |
+| KVM smp4 | 10/10 | ebenso 3 + 3 + 4 |
+| TCG smp1 | 3/3 | #712 Kommentar 7182091025 |
+| TCG smp4 | 3/3 | #712 Kommentar 7184935521 |
+
+Review #712: Basis (03:03, P2 behoben laut agent-nweh-lead1) und Delta `04d19c72..d1f3fc7c1` (04:52, agent-peter-review: kein P1/P2).
 
 Kein `trägt nicht`: Es gibt keinen gescheiterten Fall mit bekannter Ursache ohne abgegrenzten Patch. #716 ist ein Messhindernis, kein Fehler des Adressraums (der Wechsel findet statt, nur nicht sofort).
 
-**Um auf `trägt` zu kommen (Routine, Engineer):**
-
-1. `device` auf `d1f3fc7c1`: KVM smp1 und smp4 je 4 weitere Läufe, TCG `-cpu max` smp4 3 Läufe (`test-user-mode-probe.py`, alle 27 Fälle erwartet), Zahlen in #712.
-2. Unabhängiges Review von #712 ohne P1/P2.
-
-Dann `trägt`, ohne neue Messung hier. Die Wechselkosten werden nachgetragen, sobald #716 einen sofortigen Wechsel liefert (Folgeauftrag, nicht Bedingung).
+**Grenzen:** `neg` auf `d1f3fc7c1` nicht neu gelaufen (auf `04d19c72` grün, Fix betrifft nur `device`); VMware und echte Hardware nicht geprüft; TCG nur für B4, nicht für die Zeitfälle. Die Wechselkosten werden nachgetragen, sobald #716 einen sofortigen Wechsel liefert (Folgeauftrag, nicht Bedingung).
 
 **Hinweise zum Bericht:** Die ersten beiden Punkte unter „Nicht geprüft / Grenzen“ (kein Vergleich gegen master, ClassiCube nur 1 Lauf) sind durch den Nachtrag überholt. pfault: Die Seiten liegen hintereinander in einem Bereich, nicht „verstreut“ (`range.Value + i * 4096`); gemessen sind Fehler bei meist vorhandener Seitentabelle (eine neue Tabelle je 512 Seiten passt zu max ~0,4 Mio). P3 `rdtsc` ohne `lfence` bleibt; bei ~2000 Ticks je Fehler ohne Einfluss auf die Größenordnung.
