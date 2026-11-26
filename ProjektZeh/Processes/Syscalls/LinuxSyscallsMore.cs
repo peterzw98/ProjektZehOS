@@ -17,6 +17,9 @@ internal interface ILinuxHost
 
     /// <summary>Füllt mit kryptographischem Zufall; false, wenn keine Quelle verfügbar ist.</summary>
     bool TryFillRandom(Span<byte> dst);
+
+    /// <summary>Gibt die CPU für etwa so viele Nanosekunden ab (poll mit Frist ohne bereite Einträge).</summary>
+    void SleepNanos(long ns);
 }
 
 /// <summary>Zustand der Signale eines Prozesses (S1: nur Verwaltung, keine Zustellung).</summary>
@@ -53,7 +56,7 @@ internal static partial class LinuxSyscalls
             case RtSigprocmask: return DoSigprocmask(p, (int)a.A0, a.A1, a.A2, a.A3);
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
             case SchedYield: return 0;
-            case Poll: return DoPoll(p, a.A0, a.A1);
+            case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
             case Futex: return DoFutex(p, ref a);
             default: return -ENOSYS;
@@ -291,7 +294,7 @@ internal static partial class LinuxSyscalls
         return 0;
     }
 
-    private static long DoPoll(ILinuxProcess p, ulong fds, ulong nfds)
+    private static long DoPoll(ILinuxProcess p, ulong fds, ulong nfds, long timeoutMs)
     {
         const short PollOut = 4, PollNval = 0x20;
         if (nfds > 1024)
@@ -332,8 +335,19 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        // Kein Warten: ohne bereite Einträge gilt die Zeitgrenze sofort als abgelaufen (Ergebnis 0).
-        return nfds > 0 && !p.Memory.TryWrite(fds, b) ? -EFAULT : ready;
+        if (nfds > 0 && !p.Memory.TryWrite(fds, b))
+        {
+            return -EFAULT;
+        }
+
+        // Ohne bereite Einträge schläft poll die Frist ab (sonst drehen Warteschleifen, etwa poll(NULL, 0, ms)).
+        // Negative Frist (unendlich) schläft nie: es kann niemand wecken, Ergebnis 0. Ohne Host entfällt das Schlafen.
+        if (ready == 0 && timeoutMs > 0 && p is ILinuxHost host)
+        {
+            host.SleepNanos(timeoutMs * 1_000_000L);
+        }
+
+        return ready;
     }
 
     private static long DoMadvise(ulong addr, ulong len, int advice)
