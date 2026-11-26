@@ -9,8 +9,9 @@ namespace ProjektZeh.Processes;
 /// <summary>Einstellungen des Laders, die nicht aus der Datei kommen. Voreinstellungen passen für die Hosttests und den ersten Gastlauf.</summary>
 internal sealed class ElfLoadOptions
 {
-    /// <summary>16 Bytes für AT_RANDOM (Stack-Kanarie, Zeigerschutz in musl). Fehlt der Wert, kommen sie aus <see cref="Random.Shared"/>;
-    /// der Prozessstart (V3) soll Bytes aus <c>HardwareRandom</c> übergeben.</summary>
+    /// <summary>16 Bytes für AT_RANDOM (Stack-Kanarie, Zeigerschutz in musl). Pflicht: Es gibt keinen stillen Ersatz aus einem
+    /// nicht kryptografischen Generator; ohne Wert wirft der Lader <see cref="ElfLoadException"/> (<see cref="ElfLoadError.NoRandom"/>).
+    /// Der Prozessstart übergibt Bytes aus der Hardware, Hosttests eine feste Testquelle.</summary>
     public byte[]? Random { get; init; }
 
     /// <summary>Pfad für AT_EXECFN; fehlt er, gilt argv[0] (bei leerem argv eine leere Zeichenkette).</summary>
@@ -61,8 +62,6 @@ internal static class ElfLoader
     private const ulong AtNull = 0, AtPhdr = 3, AtPhent = 4, AtPhnum = 5, AtPagesz = 6, AtBase = 7, AtFlags = 8, AtEntry = 9;
     private const ulong AtUid = 11, AtEuid = 12, AtGid = 13, AtEgid = 14, AtHwcap = 16, AtClktck = 17, AtSecure = 23, AtRandom = 25, AtExecfn = 31;
 
-    public static UserImage Load(ReadOnlySpan<byte> elf, string[] argv, string[] envp) => Load(elf, argv, envp, new ElfLoadOptions());
-
     public static UserImage Load(ReadOnlySpan<byte> elf, string[] argv, string[] envp, ElfLoadOptions options)
     {
         ArgumentNullException.ThrowIfNull(argv);
@@ -73,7 +72,12 @@ internal static class ElfLoader
             throw new ArgumentException("Die Stackgröße muss seitenausgerichtet und mindestens zwei Seiten groß sein.", nameof(options));
         }
 
-        if (options.Random != null && options.Random.Length != 16)
+        if (options.Random == null)
+        {
+            throw new ElfLoadException("Keine Zufallsquelle für AT_RANDOM übergeben.", ElfLoadError.NoRandom);
+        }
+
+        if (options.Random.Length != 16)
         {
             throw new ArgumentException("AT_RANDOM braucht genau 16 Bytes.", nameof(options));
         }
@@ -164,7 +168,7 @@ internal static class ElfLoader
             throw new ElfLoadException("Die Programmköpfe liegen in keinem geladenen Segment (AT_PHDR).");
         }
 
-        byte[] random = options.Random ?? NewRandom();
+        byte[] random = options.Random;
         string execFn = options.ExecFn ?? (argv.Length > 0 ? argv[0] : string.Empty);
         ulong[] auxv =
         [
@@ -396,9 +400,12 @@ internal static class ElfLoader
     /// </summary>
     private static byte[] BuildStack(ulong top, string[] argv, string[] envp, string execFn, byte[] random, ulong[] auxv, ulong limit, out ulong stackPointer)
     {
-        byte[][] args = Encode(argv, nameof(argv));
-        byte[][] envs = Encode(envp, nameof(envp));
-        byte[] exec = Encode([execFn], "execFn")[0];
+        // Gemeinsames Budget über argv, envp und execFn: Die Eingabe wird schon beim Umwandeln gegen die Grenze gezählt, damit
+        // ein riesiges Argument oder Millionen leerer Einträge nicht erst vollständig umgewandelt werden.
+        ulong used = 0;
+        byte[][] args = Encode(argv, "argv", limit, ref used);
+        byte[][] envs = Encode(envp, "envp", limit, ref used);
+        byte[] exec = Encode([execFn], "execFn", limit, ref used)[0];
 
         ulong strings = 16 + (ulong)exec.Length;
         foreach (byte[] a in args)
@@ -418,7 +425,7 @@ internal static class ElfLoader
         ulong size = top - stackPointer;
         if (size > limit)
         {
-            throw new ArgumentException("Argumente und Umgebung sind zu groß für den Stack (E2BIG).");
+            throw TooBig();
         }
 
         byte[] content = new byte[size];
@@ -494,31 +501,48 @@ internal static class ElfLoader
         index++;
     }
 
+    private static ElfLoadException TooBig()
+        => new("Argumente und Umgebung sind zu groß für den Stack (E2BIG).", ElfLoadError.ArgumentsTooLong);
+
     // UTF-8 mit abschließender Null; eine eingebettete Null würde die Zeichenkette für das Programm stillschweigend kürzen.
-    private static byte[][] Encode(string[] values, string name)
+    // Fehler in der Eingabe sind ElfLoadException (nie ArgumentException), die Meldung nennt Liste und Nummer, nie den Text.
+    // Das Budget wird vor jeder Allokation und vor jedem Durchlauf über die Zeichenkette geprüft: Jeder Eintrag braucht mindestens
+    // 9 Bytes (Null plus Zeiger), jedes UTF-16-Zeichen mindestens ein UTF-8-Byte.
+    private static byte[][] Encode(string[] values, string name, ulong limit, ref ulong used)
     {
+        if (used > limit || (ulong)values.Length * 9 > limit - used)
+        {
+            throw TooBig();
+        }
+
         var result = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            string value = values[i] ?? throw new ArgumentException("Leerer Eintrag.", name);
-            if (value.Contains('\0'))
+            string value = values[i] ?? throw new ElfLoadException(name + "[" + i.ToString(CultureInfo.InvariantCulture) + "] ist null.", ElfLoadError.InvalidArgument);
+            if ((ulong)value.Length + 9 > limit - used)
             {
-                throw new ArgumentException("Eintrag mit Nullzeichen.", name);
+                throw TooBig();
             }
 
-            byte[] bytes = new byte[Encoding.UTF8.GetByteCount(value) + 1];
+            if (value.Contains('\0'))
+            {
+                throw new ElfLoadException(name + "[" + i.ToString(CultureInfo.InvariantCulture) + "] enthält ein Nullzeichen.", ElfLoadError.InvalidArgument);
+            }
+
+            // Zeichenkette mit Null plus Zeiger; die endgültige Größe (Ausrichtung, Hilfsvektor) prüft BuildStack danach.
+            ulong length = (ulong)Encoding.UTF8.GetByteCount(value) + 1;
+            used += length + 8;
+            if (used > limit)
+            {
+                throw TooBig();
+            }
+
+            byte[] bytes = new byte[length];
             Encoding.UTF8.GetBytes(value, bytes);
             result[i] = bytes;
         }
 
         return result;
-    }
-
-    private static byte[] NewRandom()
-    {
-        byte[] bytes = new byte[16];
-        System.Random.Shared.NextBytes(bytes);
-        return bytes;
     }
 
     private static ulong PageUp(ulong value) => (value + PageSize - 1) & ~(PageSize - 1);
