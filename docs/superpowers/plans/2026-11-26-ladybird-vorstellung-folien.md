@@ -24,7 +24,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 ## 4. Demo (im Gast, QEMU/KVM, 1 und 4 CPUs)
 
 1. `run hello` im Desktop-Terminal → „Hallo aus dem Ring 3!“, Ende 0.
-2. Linux-Testprogramme: **20 von 22** gleiche Ausgabe wie unter Linux (Rest: FAT kennt keine symbolischen Links).
+2. Linux-Testprogramme: **23 von 24** wie unter Linux (KVM, 1 und 4 CPUs, senior2 18:24); einzige Abweichung `badptr`, weil FAT keine symbolischen Links kennt.
 3. **Ladybirds JavaScript-Engine `js`** (statisch mit musl, 33 MB, unverändert) im ZehOS-Terminal: `1+1` → `2`, REPL mit `(7*6).toString(2)` → `"101010"`, Strg+C bricht Endlosschleife ab. Gastskript 11/11 bei 1 und 4 CPUs. Foto: `zehos-v3-out/js14-1/03-repl-antwort.png` (MSI).
 
 ## 5. Zahlen zur Machbarkeit
