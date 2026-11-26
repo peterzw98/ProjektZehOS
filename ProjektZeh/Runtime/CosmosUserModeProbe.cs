@@ -38,6 +38,9 @@ internal static unsafe partial class CosmosUserModeProbe
 
     private static long calls;
     private static ulong exitAux;
+    private const int SampleMax = 100000;
+    private static readonly uint[][] samples = [new uint[SampleMax], new uint[SampleMax]];
+    private static readonly int[] sampleCount = new int[2];
     private static int badReturn;
     private static int faults;
     private static ulong faultVector, faultError, faultAddress;
@@ -95,6 +98,7 @@ internal static unsafe partial class CosmosUserModeProbe
             // Der wichtigste Fall zuerst: Er wertet jeden Rueckweg ueber einen vorgemerkten Wechsel.
             Case("switch", Switch);
             Case("loop", Loop);
+            Case("sysmed", SysMed);
             Case("spin", Spin);
             Case("fpu", Fpu);
             Case("gc", Collect);
@@ -234,6 +238,10 @@ internal static unsafe partial class CosmosUserModeProbe
             case 0x7A02:
                 exitAux = frame->Rsi;
                 UserMode.LeaveCurrent(frame->Rdi);
+                break;
+            case 0x7A04:
+                if (sampleCount[frame->Rsi & 1] < SampleMax) samples[frame->Rsi & 1][sampleCount[frame->Rsi & 1]++] = (uint)frame->Rdi;
+                frame->Rax = 0;
                 break;
             case 0x7A03:
                 ulong result = Check(frame);
@@ -429,6 +437,24 @@ internal static unsafe partial class CosmosUserModeProbe
         calls = 0;
         ulong result = UserMode.Enter(Entry("loop"), Stack(0));
         return (result == 0 && calls == 1000000, "calls=" + calls + " result=0x" + result.ToString("X") + " tsc_ticks=" + exitAux);
+    }
+
+    /// <summary>N1-A7: Ticks eines Systemaufrufs hin und zurueck (rdtsc im Ring 3), Median ueber 100 000; leeres rdtsc-Paar als Eigenkosten.</summary>
+    private static (bool, string) SysMed()
+    {
+        sampleCount[0] = sampleCount[1] = 0;
+        long start = Stopwatch.GetTimestamp();
+        ulong result = UserMode.Enter(Entry("sysmed"), Stack(0));
+        long wall = Stopwatch.GetTimestamp() - start;
+        if (sampleCount[0] != SampleMax || sampleCount[1] != SampleMax) return (false, "samples=" + sampleCount[0] + "/" + sampleCount[1] + " result=0x" + result.ToString("X"));
+        string text = "";
+        for (int k = 0; k < 2; k++)
+        {
+            Array.Sort(samples[k]);
+            text += (k == 0 ? " empty" : " call") + "_min=" + samples[k][0] + " p10=" + samples[k][SampleMax / 10] + " med=" + samples[k][SampleMax / 2]
+                + " p90=" + samples[k][SampleMax * 9 / 10] + " p99=" + samples[k][SampleMax * 99 / 100] + " max=" + samples[k][SampleMax - 1];
+        }
+        return (result == 0, "n=" + SampleMax + text + " net_med=" + ((long)samples[1][SampleMax / 2] - samples[0][SampleMax / 2]) + " wall_ticks=" + wall + " sw_hz=" + Stopwatch.Frequency);
     }
 
     private static (bool, string) Spin()

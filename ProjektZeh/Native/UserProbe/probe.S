@@ -37,6 +37,8 @@ probe_base:
 .equ KERNEL_ADDR, 0xFFFF800000000000     /* kanonisch, obere Haelfte: #PF statt #GP */
 
 .equ SYS_CHECK, 0x7A03
+.equ SYS_SAMPLE, 0x7A04
+.equ MED_CALLS, 100000
 
 /* Endlosschleife. Kein `jmp .`: den Punkt als Sprungziel kennt der Assembler von clang (Kernelbau) in Intel-Schreibweise nicht. */
 .macro HANG
@@ -52,7 +54,7 @@ probe_base:
 /* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Kapazitaet; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
         .org TABLE_OFF
         .ascii "ZUP1"
-        .long 16
+        .long 17
         .long 32
         .long CAPACITY
 
@@ -80,6 +82,7 @@ probe_base:
         NAMED fault_avx, 13
         NAMED fpu2, 14
         NAMED switch, 15
+        NAMED sysmed, 16
 
 .macro SLOT index, target
         .org SLOT_OFF + SLOT_SIZE * \index, 0xCC   /* Luecken als int3 */
@@ -102,6 +105,7 @@ probe_base:
         SLOT 13, body_fault_avx
         SLOT 14, body_fpu2
         SLOT 15, body_switch
+        SLOT 16, body_sysmed
 
         .org BODY_OFF, 0xCC
 
@@ -125,6 +129,47 @@ body_loop:
         mov eax, SYS_EXIT
         syscall
         HANG                           /* nie erreicht */
+
+/* sysmed (N1-A7): Je Aufruf ein rdtsc-Paar um den Zaehlaufruf; die Differenz geht NACH dem Messfenster per 0x7A04 (rdi = Ticks,
+ * rsi = 1) an den Kernel, der den Median bildet. Davor MED_CALLS leere rdtsc-Paare (rsi = 0) als Eigenkosten der Messung. */
+body_sysmed:
+        mov r9d, MED_CALLS
+1:      rdtsc
+        shl rdx, 32
+        or rax, rdx
+        mov r8, rax
+        rdtsc
+        shl rdx, 32
+        or rax, rdx
+        sub rax, r8
+        mov rdi, rax
+        xor esi, esi
+        mov eax, SYS_SAMPLE
+        syscall
+        dec r9d
+        jnz 1b
+        mov r9d, MED_CALLS
+2:      rdtsc
+        shl rdx, 32
+        or rax, rdx
+        mov r8, rax
+        mov eax, SYS_COUNT
+        syscall
+        rdtsc
+        shl rdx, 32
+        or rax, rdx
+        sub rax, r8
+        mov rdi, rax
+        mov esi, 1
+        mov eax, SYS_SAMPLE
+        syscall
+        dec r9d
+        jnz 2b
+        xor edi, edi
+        xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
 
 /* spin: kein Systemaufruf; nur Unterbrechungen holen den Thread zurueck. */
 body_spin:
