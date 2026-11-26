@@ -92,7 +92,7 @@ Grenzen (Review V2, bewusst offen):
   `brk`, `mmap`) entstehen genullt beim ersten Zugriff (Seitenfehler oder Kernelzugriff über `IUserMemory`, der dieselben Rechte prüft und alles oder nichts kopiert).
   `mprotect` behält Frame und Inhalt (auch über `PROT_NONE`). `PROT_WRITE|PROT_EXEC` scheitert (W^X: `mmap` `-ENOMEM`, `mprotect` `-ENOMEM`).
   Anonyme Abbildungen ab 16 TiB (`MmapBase`), `brk` wächst bis an die nächste Belegung; höchstens 512 MiB Frames je Prozess, darüber Abbruch.
-- Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); jeder andere ist `-EBADF`.
+- Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); weitere Nummern sind Dateien (V8).
   Lesen (fd 0) über `LinuxTerminalSession`: Enter-Zeilen des Fensters mit `\n`, Strg+D Eingabeende; ohne Sitzung (Gastprobe) leer wie `/dev/null`.
   Wartet das Programm auf Eingabe, wird die angefangene Zeile (`> `) zur Eingabeaufforderung im Fenster. Ausgabe: ANSI-Folgen fallen weg, `\r` beginnt die
   Zeile erst beim nächsten sichtbaren Zeichen neu, die Teilung nach 4096 Bytes trennt keine ESC-Folge und kein UTF-8-Zeichen.
@@ -118,3 +118,45 @@ Grenzen (Review V2, bewusst offen):
   #UD 4, #DE 8); eine Ausnahme in der Brücke ebenso (`signal 9`).
 - Gastprobe: `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>` startet beim Boot die Programme eines Bündels (`scripts/test-linux-run.py`).
   Pin: `story/ladybird-cosmos` (Patches `user-cr3` u. a.).
+
+## Dateisystem der Prozesse (V7)
+
+- `LinuxFileSystem` (`ProjektZeh/Processes/Vfs/`, plattformunabhängig, Hosttests `LinuxFileSystemTests`) implementiert `ILinuxFileSystem` und `ILinuxFile`
+  (Schnittstellen von V2-Dateien, `ProjektZeh/Processes/Syscalls/ILinuxFileSystem.cs`). Die Wurzel "/" liegt auf einem `ILinuxFileStore`:
+  `DirectoryFileStore` (Ordner auf der Datenplatte, jeder Zugriff unter `StorageLock`) oder `MemoryFileStore` (Arbeitsspeicher, Tests).
+  Darüber virtuell `/dev` mit `null` (liest EOF, verwirft, `lseek` 0) und `tty` (schreibt auf den Terminal-Deskriptor des Prozesses, liest EOF, `lseek` `-ESPIPE`).
+- Ausbruchschutz: Pfade kommen absolut und normalisiert vom Verteiler; ".." darin ergibt `-EINVAL` (nicht selbst gedeutet). Symlinks löst `LinuxFileSystem`
+  Teil für Teil selbst auf, der Speicher folgt keinem Link (im Kernel `CosmosLinuxDiskLinks` über Cosmos-Inodes, weil Cosmos-System.IO Links in jedem Teil folgt).
+  Absolute Linkziele beginnen an der Prozesswurzel, ".." im Linkziel ist physisch und endet an der Wurzel (wie `chroot`). Ein Mount unter der Wurzel ist `-EACCES`.
+- Grenzen: Pfad ab 4096 Bytes und Teil über 255 Bytes (UTF-8) `-ENAMETOOLONG`, auch für aufgelöste Pfade; 40 Links `-ELOOP`; je Auflösung höchstens 4096 Teile
+  (Eingabe und Linkziele), sonst `-ELOOP` (Abweichung: Linux kennt nur die Linkgrenze); 1024 offene Dateien je Dateisystem `-EMFILE`;
+  Datei auf der Platte höchstens 1 GiB (`-EFBIG`, Schreiben bis zur Grenze wird gekürzt); `MemoryFileStore` 16 MiB je Datei, 64 MiB und 65 536 Einträge gesamt (`-ENOSPC`).
+- Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
+  beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
+- Namen auf der Platte: was FAT oder Cosmos anders deuten könnte (`:`, `\`, Steuerzeichen, abschließender Punkt oder Leerzeichen, `.zehos-`-Systemnamen) gibt es nicht:
+  Abfragen melden es als fehlend, Anlegen `-EINVAL`, Listen lassen es weg. Groß-/Kleinschreibung bestimmt das Laufwerk (`NameComparison`).
+- `open`-Flags: Zugriff, `O_CREAT O_EXCL O_TRUNC O_APPEND O_DIRECTORY O_NOFOLLOW` wirken; `O_NOCTTY O_NONBLOCK O_SYNC O_DSYNC O_LARGEFILE O_NOATIME O_CLOEXEC`
+  werden angenommen (CLOEXEC gehört zur Deskriptortabelle); `O_TMPFILE` `-EOPNOTSUPP`, übrige (`O_DIRECT`, `O_PATH`, `O_ASYNC`) `-EINVAL`;
+  `O_CREAT|O_DIRECTORY` `-EINVAL` wie Linux ab 6.4. Eine entfernte, offene Datei bleibt les- und abfragbar (`MemoryFileStore`; Platte im Gast noch offen).
+- Bekannte Abweichung FAT-Datenplatte: Cosmos legt auf FAT keine Symlinks an (`FatInodeOperations.Symlink` liefert immer false), `symlink`/`symlinkat`
+  auf der Platte enden deshalb mit `-EIO`; folgende `readlink`, `lstat` und `unlink` des Links finden nichts. Im Gast weicht `s1/files` darum in den
+  Symlink-Zeilen ab (erwartete Ausgabe bleibt die von Linux). Im Arbeitsspeicher (`MemoryFileStore`) gibt es Symlinks; ext2 implementiert `Symlink` in Cosmos, als Prozesswurzel im Gast ist das ungeprüft.
+- Offen: Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/zero` (braucht `s1/badptr`), `/dev/urandom`,
+  `/tmp` im Speicher, Eingabe über `/dev/tty`.
+
+## Dateien im Prozess (V8)
+
+- `LinuxUserProcess` ist `ILinuxFiles`: Deskriptortabelle mit 1024 Nummern (0–2 auf das Terminal, darüber `-EMFILE`), Arbeitsverzeichnis ab "/",
+  Dateisystem aus dem Konstruktor (ohne Angabe ein leeres `MemoryFileStore`, das mit dem Prozess endet). `close` auf 0–2 entfernt nur die Nummer, das Terminal
+  bleibt offen. Beim Ende (`Destroy`) schließt der Prozess jede noch offene Datei genau einmal, auch über `dup` geteilte, danach erst gibt er den Speicher frei.
+- `run` aus der Shell: Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis (`cd /data/s1`, dann `run files`); in "/"
+  und direkt auf einem Einhängepunkt (`/data`: dort lägen Konten und Pakete) bekommt das Programm ein leeres Dateisystem im Arbeitsspeicher. Lässt sich die Wurzel nicht öffnen, startet das Programm nicht.
+  Namen ohne Groß-/Kleinschreibung (FAT-Datenplatte), auch wenn die Wurzel auf einem anderen Laufwerk liegt.
+- Rechte der Prozesswurzel (Review V8): Das Programm schreibt im ganzen Unterbaum ohne eigene Rechteprüfung, `cd` prüft aber nur Lesen. Deshalb startet `run`
+  auf der Platte nur mit angemeldeter Sitzung, Schreibrecht auf die Wurzel und Verwaltungsrecht (Eigentümer oder Administrator) auf die Wurzel und jeden zugeordneten
+  Eintrag darunter (höchstens 4096 Einträge). Nie Wurzel: die Verwaltungswurzel selbst, Komponenten mit `.zehos` am Anfang und im Root-Profil alles unter `/etc`, `/var`
+  und `/boot`. Sonst `cause='ProcessRootDenied'`. Einträge ohne Rechtezuordnung (vom Programm angelegt) bleiben erlaubt; zwischen Prüfung und Lauf kann sich der Baum ändern.
+- Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
+  die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Arbeitsverzeichnis ist der Unterordner `/w` darin (wird angelegt), weil `run-linux.py`
+  ebenfalls in einem Unterordner startet: In "/" zeigte `ls .` den virtuellen Ordner `dev`, und `s1/dirs` erwartet vor `/d/e` noch einen Ordnernamen. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
+  fände die Dateien des ersten.

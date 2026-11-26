@@ -9,6 +9,7 @@ using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.Core.Scheduler;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
@@ -64,6 +65,12 @@ internal static unsafe class CosmosLinuxRun
     {
         public readonly TerminalDescriptor Terminal;
 
+        /// <summary>Prozesswurzel auf der Datenplatte (Kernelpfad) oder null für ein leeres Dateisystem im Arbeitsspeicher (V8).</summary>
+        public string? Root;
+
+        /// <summary>Anfängliches Arbeitsverzeichnis im Prozess (wird angelegt) oder null für "/"; nur die Gastprobe setzt es.</summary>
+        public string? StartCwd;
+
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
         public LinuxUserProcess? Process;
@@ -96,6 +103,9 @@ internal static unsafe class CosmosLinuxRun
     /// Shell: <c>run &lt;datei&gt; [argumente...]</c>. argv[0] ist der Pfad wie angegeben. Mit <paramref name="shell"/> läuft das
     /// Programm neben der Ereignisschleife (V3 stdin): Der Befehl kehrt sofort zurück, die Shell holt die Ausgabe in
     /// <see cref="ShellService.Poll"/>, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab; ohne Zeitlimit.
+    /// Dateien (V8): Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis des Programms
+    /// (etwa <c>cd /data/s1</c>, dann <c>run files</c>); in "/" oder direkt auf einem Laufwerk bekommt es ein leeres Dateisystem im Arbeitsspeicher.
+    /// Eine Wurzel auf der Platte braucht Schreib- und Verwaltungsrecht des angemeldeten Nutzers (<see cref="FileService.AuthorizeProcessRoot"/>).
     /// </summary>
     public static ResultErr RunFile(FileService files, string[] arguments, ITextOutput output, ShellService? shell)
     {
@@ -110,14 +120,25 @@ internal static unsafe class CosmosLinuxRun
             return file.Status;
         }
 
+        string? root = RootFor(files.CurrentDirectory);
+        if (root != null)
+        {
+            // Review V8 (P1): Das Programm schreibt im ganzen Unterbaum ohne eigene Rechteprüfung; cd prüft nur Lesen.
+            ResultErr allowed = files.AuthorizeProcessRoot(root);
+            if (!allowed.IsOK())
+            {
+                return ResultErr.CreateFailure(allowed.Code, "run: " + allowed.Message);
+            }
+        }
+
         if (shell != null)
         {
-            return StartForeground(file.Value!, arguments, shell);
+            return StartForeground(file.Value!, arguments, shell, root);
         }
 
         // Spiegel ins serielle Protokoll für scripts/test-linux-abi.py (V5): rohe Bytes als Hex, Status wie run-linux.py.
         Serial("LINUXRUN BEGIN " + arguments[0]);
-        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)));
+        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root);
         Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
         if (!outcome.Ran)
         {
@@ -129,10 +150,38 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>
+    /// Prozesswurzel für <c>run</c> aus dem Verzeichnis der Shell; null (Arbeitsspeicher) für "/" und für einen Einhängepunkt selbst.
+    /// "/" nimmt <see cref="DirectoryFileStore"/> nicht an, und ein ganzes Laufwerk (etwa <c>/data</c>) gäbe dem Programm die
+    /// Systemdateien darauf (Konten, Pakete); erst ein Unterordner wie <c>/data/s1</c> wird Wurzel.
+    /// </summary>
+    private static string? RootFor(string directory)
+    {
+        string root = directory.TrimEnd('/');
+        if (root.Length == 0)
+        {
+            return null;
+        }
+
+        bool mountPoint = StorageLock.Run(() =>
+        {
+            foreach (Cosmos.Kernel.System.FileSystem.VfsMount mount in Cosmos.Kernel.System.FileSystem.VfsManager.Mounts)
+            {
+                if (string.Equals(mount.MountPoint.TrimEnd('/'), root, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+        return mountPoint ? null : root;
+    }
+
+    /// <summary>
     /// Startet das Programm als Vordergrundprogramm der Shell und kehrt sofort zurück. Das Ende meldet der Programmthread selbst
     /// (Statuszeile in der Sitzung, LINUXRUN END im seriellen Protokoll).
     /// </summary>
-    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell)
+    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root)
     {
         if (shell.HasForeground)
         {
@@ -158,6 +207,7 @@ internal static unsafe class CosmosLinuxRun
             run = new Running(new TerminalDescriptor(session) { Mirror = data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)) })
             {
                 Session = session,
+                Root = root,
 
                 // Nur der Programmthread gibt busy frei; die Shell wartet nicht auf ihn.
                 Owners = 1,
@@ -246,7 +296,10 @@ internal static unsafe class CosmosLinuxRun
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
-    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null)
+    /// <param name="root">Prozesswurzel (Kernelpfad, wird bei Bedarf angelegt) oder null für ein leeres Dateisystem im Arbeitsspeicher.</param>
+    /// <param name="cwd">Arbeitsverzeichnis im Prozess (absolut, wird angelegt) oder null für "/".</param>
+    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
+        string? root = null, string? cwd = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -261,7 +314,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror });
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -371,6 +424,21 @@ internal static unsafe class CosmosLinuxRun
     private static void Execute(Running run, UserImage image, byte[] elf)
     {
         Volatile.Write(ref run.Thread, FaultIsolation.CurrentSchedulerThread());
+        ILinuxFileSystem? fileSystem = null;
+        if (run.Root != null)
+        {
+            // Datenplatte FAT: Namen ohne Groß-/Kleinschreibung. Fehlt die Wurzel oder lässt sie sich nicht anlegen, startet das
+            // Programm nicht, statt still ohne Dateien zu laufen.
+            ResultObject<DirectoryFileStore> store = DirectoryFileStore.Open(run.Root, new CosmosLinuxDiskLinks(run.Root), StringComparison.OrdinalIgnoreCase);
+            if (!store.IsOK())
+            {
+                run.Error = "Prozesswurzel " + run.Root + ": " + store.Status.Message;
+                return;
+            }
+
+            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal);
+        }
+
         UserPageTable? table = UserPageTable.TryCreate();
         if (table == null)
         {
@@ -378,12 +446,25 @@ internal static unsafe class CosmosLinuxRun
             return;
         }
 
-        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host)
+        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
             OnExit = code => UserMode.LeaveCurrent((ulong)code),
             OnFsBase = UserMode.SetFsBase,
         };
         run.Process = process;
+        if (run.StartCwd != null)
+        {
+            // Wie run-linux.py, das in einem Unterordner startet: "/" zeigte sonst /dev und getcwd hätte keinen Ordnernamen.
+            long made = process.FileSystem.Mkdir(run.StartCwd, 0x1ED);
+            if (made < 0 && made != -LinuxErrno.EEXIST)
+            {
+                run.Error = "Arbeitsverzeichnis " + run.StartCwd + ": errno " + (-made);
+                return;
+            }
+
+            process.Cwd = run.StartCwd;
+        }
+
         bool bound = false;
         try
         {

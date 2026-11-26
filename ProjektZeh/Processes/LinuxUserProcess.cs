@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 using ProjektZeh.Shared;
 
 namespace ProjektZeh.Processes;
@@ -33,7 +34,8 @@ internal interface IUserPages
 
 /// <summary>
 /// Ein Linux-Prozess mit einem Thread (V3 des Plans <c>2026-11-26-ladybird-vorstellung.md</c>): Speicher, brk, anonyme
-/// Abbildungen und Deskriptoren 0 bis 2 auf das Terminal. Die Bereiche führt <see cref="AddressSpaceMap"/>; Frames kommen erst bei
+/// Abbildungen, Deskriptoren 0 bis 2 auf das Terminal und Dateien über ein <see cref="ILinuxFileSystem"/> (V8: Deskriptortabelle und
+/// Arbeitsverzeichnis, <see cref="ILinuxFiles"/>). Die Bereiche führt <see cref="AddressSpaceMap"/>; Frames kommen erst bei
 /// Bedarf (<see cref="HandlePageFault"/> oder ein Kernelzugriff über <see cref="IUserMemory"/>), nur die Seiten mit Dateiinhalt
 /// und der vorbereitete Teil des Stacks werden beim Laden gefüllt. Plattformunabhängig und auf dem Host geprüft.
 /// <para>
@@ -41,8 +43,14 @@ internal interface IUserPages
 /// laufen auf seinem Kernelstack), das Aufräumen danach auf demselben Thread.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles
 {
+    /// <summary>
+    /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
+    /// (<c>LinuxSyscalls.FileMaxFds</c>). Wie RLIMIT_NOFILE unter Linux standardmäßig 1024.
+    /// </summary>
+    public const int MaxDescriptors = 1024;
+
     private const ulong Page = AddressSpaceMap.PageSize;
     private const int ProtRead = 1, ProtWrite = 2, ProtExec = 4;
     private const ulong FaultPresent = 1, FaultWrite = 2, FaultFetch = 0x10;
@@ -55,6 +63,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     private readonly Dictionary<ulong, ulong> _frames = new();
     private readonly ILinuxDescriptor _terminal;
     private readonly ILinuxHost? _host;
+    private readonly ILinuxDescriptor?[] _descriptors = new ILinuxDescriptor?[MaxDescriptors];
+    private string _cwd = "/";
     private readonly ulong _maxFrames;
     private ulong _brkStart;
     private ulong _brk;
@@ -64,11 +74,19 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
-    public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes, ILinuxHost? host = null)
+    /// <param name="fileSystem">Dateisystem des Prozesses (V7); ohne Angabe ein leeres im Arbeitsspeicher, das mit dem Prozess endet.</param>
+    public LinuxUserProcess(IUserPages pages, ILinuxDescriptor terminal, int pid, ulong maxBytes, ILinuxHost? host = null,
+        ILinuxFileSystem? fileSystem = null)
     {
         _host = host;
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
+        FileSystem = fileSystem ?? new LinuxFileSystem(new MemoryFileStore(), terminal);
+
+        // 0 bis 2 zeigen auf das Terminal wie bisher; das Terminal gehört dem Prozess, nicht der Tabelle (close schließt es nicht).
+        _descriptors[0] = terminal;
+        _descriptors[1] = terminal;
+        _descriptors[2] = terminal;
         Pid = pid;
         _maxFrames = maxBytes / Page;
     }
@@ -119,7 +137,69 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
 
     public void SleepNanos(long ns) => _host?.SleepNanos(ns);
 
-    public ILinuxDescriptor? GetDescriptor(int fd) => fd is >= 0 and <= 2 ? _terminal : null;
+    public ILinuxDescriptor? GetDescriptor(int fd) => (uint)fd < MaxDescriptors ? _descriptors[fd] : null;
+
+    // ILinuxFiles: Tabelle und Arbeitsverzeichnis; Pfade, dup und close setzt der Verteiler darauf um (V2 Dateien).
+    public ILinuxFileSystem FileSystem { get; }
+
+    public string Cwd
+    {
+        get => _cwd;
+        set => _cwd = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    public int AddDescriptor(ILinuxDescriptor d, int min)
+    {
+        ArgumentNullException.ThrowIfNull(d);
+        for (int fd = Math.Max(min, 0); fd < MaxDescriptors; fd++)
+        {
+            if (_descriptors[fd] == null)
+            {
+                _descriptors[fd] = d;
+                return fd;
+            }
+        }
+
+        return (int)-LinuxErrno.EMFILE;
+    }
+
+    public bool RemoveDescriptor(int fd)
+    {
+        if ((uint)fd >= MaxDescriptors || _descriptors[fd] == null)
+        {
+            return false;
+        }
+
+        _descriptors[fd] = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Schließt jede noch offene Datei genau einmal (dup teilt eine Datei über mehrere Nummern) und leert die Tabelle. Ruft
+    /// <see cref="Destroy"/>; ohne das blieben Dateien auf der Datenplatte bis zum nächsten Boot offen.
+    /// </summary>
+    public void CloseAllFiles()
+    {
+        for (int fd = 0; fd < MaxDescriptors; fd++)
+        {
+            if (_descriptors[fd] is not ILinuxFile file)
+            {
+                _descriptors[fd] = null;
+                continue;
+            }
+
+            // Alle Nummern derselben Datei leeren, dann einmal schließen.
+            for (int other = fd; other < MaxDescriptors; other++)
+            {
+                if (ReferenceEquals(_descriptors[other], file))
+                {
+                    _descriptors[other] = null;
+                }
+            }
+
+            file.Close();
+        }
+    }
 
     public void Exit(int code)
     {
@@ -391,14 +471,22 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     /// <summary>Hebt alle Abbildungen auf, gibt die Tabelle und danach alle Frames frei. Danach ist der Prozess unbrauchbar.</summary>
     public void Destroy()
     {
-        // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
-        _pages.DestroyTable();
-        foreach (ulong frame in _frames.Values)
+        try
         {
-            _pages.FreeFrame(frame);
+            // Dateien zuerst: Nach Destroy ruft niemand mehr den Prozess. Scheitert ein Schließen, gibt finally den Speicher trotzdem frei.
+            CloseAllFiles();
         }
+        finally
+        {
+            // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
+            _pages.DestroyTable();
+            foreach (ulong frame in _frames.Values)
+            {
+                _pages.FreeFrame(frame);
+            }
 
-        _frames.Clear();
+            _frames.Clear();
+        }
     }
 
     private bool Copy(ulong addr, Span<byte> dst, ReadOnlySpan<byte> src, bool write)
