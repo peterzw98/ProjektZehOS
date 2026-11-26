@@ -602,6 +602,11 @@ public sealed class LinuxFileSystemTests
     [TestMethod]
     public void DirectoryStoreRejectsAmbiguousDiskNames()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel; Windows-Pfade nimmt DirectoryFileStore nicht an.");
+        }
+
         string tmp = TempDir();
         try
         {
