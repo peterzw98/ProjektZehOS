@@ -29,7 +29,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 218 | `set_tid_address` | merkt die Adresse, liefert die Thread-ID |
 | 39, 186 | `getpid`, `gettid` | Prozess-ID |
 | 273 | `set_robust_list` | `0` (ohne Wirkung) |
-| 111, 121, 124 | `getpgrp`, `getpgid`, `getsid` | Prozess-ID (V3 raw: allein in Gruppe und Sitzung, führt beide wie ein Programm in einem neuen pty); andere PID `-ESRCH`, negative `-EINVAL` |
+| 111, 121, 124 | `getpgrp`, `getpgid`, `getsid` | Prozess-ID (V3 raw: allein in Gruppe und Sitzung, führt beide wie ein Programm in einem neuen pty); andere und negative PID `-ESRCH` |
 | 109, 112 | `setpgid`, `setsid` | `-EPERM` wie bei Linux für Sitzungs- bzw. Gruppenführer (auch ohne Änderung); `setpgid` mit fremder PID `-ESRCH`, negativer Gruppe `-EINVAL` |
 | 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 ebenfalls monoton: Abweichung); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
