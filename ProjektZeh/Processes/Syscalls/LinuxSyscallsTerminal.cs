@@ -166,7 +166,8 @@ internal static partial class LinuxSyscalls
                 return p.Pid;
             case Getpgid:
             case Getsid:
-                return pid == 0 || pid == p.Pid ? p.Pid : (pid < 0 ? -EINVAL : -ESRCH);
+                // Linux sucht auch eine negative PID nur nach und findet sie nicht: ESRCH (EINVAL gibt es nur für setpgid mit pgid < 0).
+                return pid == 0 || pid == p.Pid ? p.Pid : -ESRCH;
             case Setpgid:
             {
                 if ((int)a.A1 < 0)

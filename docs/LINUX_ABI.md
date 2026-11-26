@@ -107,8 +107,12 @@ Grenzen (Review V2, bewusst offen):
   dann). Die angefangene Zeile zeigt das Fenster wie ein VT100 (`TerminalLine`): Überschreiben an der Cursorspalte, `\r`, Backspace, Tab, CSI `K J C D G H f s u`,
   `ESC 7/8`; Zeilenwechsel (`A`, `B`, Zeile von `H`), Farben und private Folgen fallen weg. Am Zeilenende wird der gezeichnete Stand ausgegeben, nicht die
   Neuzeichnungen; über 4096 Bytes ohne Zeilenende wird die Zeile auf ihren Stand verdichtet. `ESC [ 6 n` (auch über zwei `write` verteilt) beantwortet das
-  Terminal in die Eingabe mit `ESC [ <letzte Fensterzeile> ; <Spalte> R` und zeigt die Frage nicht. Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige
-  Bearbeitung, Echo im Rohmodus.
+  Terminal in die Eingabe mit `ESC [ <letzte Fensterzeile> ; <Spalte> R` und zeigt die Frage nicht. Antworten dürfen die Eingabegrenze (64 KiB) um 64 Bytes
+  überschreiten; darüber verwirft das Terminal sie wie ein volles Linux-tty (ein Programm, das fragt und nie liest, füllt keinen Kernelspeicher).
+  Grenze Abbruch: Im Rohmodus ist Esc eine Taste wie jede andere (`ESC` an fd 0) und bricht nicht ab. Mit `ISIG` bleibt Strg+C der Abbruch; schaltet ein
+  Programm `ISIG` aus und liest nicht (oder ignoriert 0x03), beendet es nur das Schließen des Terminalfensters. Grenze Spalte: Die Cursorspalte zählt
+  UTF-16-Einheiten, nicht Zeichenbreiten; Zeichen außerhalb der BMP (Emoji) oder breite CJK-Zeichen verschieben Cursor und `ESC [ 6 n`-Spalte.
+  Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige Bearbeitung, Echo im Rohmodus.
   Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.
 - Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ELF bis 128 MiB,
   ein Programm zugleich, eigener Kernelthread mit eigener `UserPageTable`). Aus der Shell läuft es neben der Ereignisschleife (V3 stdin): der Befehl kehrt
