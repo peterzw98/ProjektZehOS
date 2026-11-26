@@ -45,6 +45,9 @@ public static class SchedulerManager
     // The installed policy when it also moves running threads, else null:
     // resolved once at the install, so the tick does no type test.
     private static IVoluntaryMove? s_voluntaryMove;
+    // ZehOS patch tick-observer, see PATCHES.md
+    // The installed policy when it also watches every CPU's tick, else null.
+    private static ITickObserver? s_tickObserver;
     private static PerCpuState[]? s_cpuStates;
     private static uint s_cpuCount;
     private static bool s_enabled;
@@ -274,6 +277,7 @@ public static class SchedulerManager
 
             s_currentScheduler = scheduler;
             s_voluntaryMove = scheduler as IVoluntaryMove; // ZehOS patch smt-sibling-yield, see PATCHES.md
+            s_tickObserver = scheduler as ITickObserver; // ZehOS patch tick-observer, see PATCHES.md
 
             for (uint i = 0; i < s_cpuCount; i++)
             {
@@ -344,6 +348,29 @@ public static class SchedulerManager
     /// ready. Before it is ready this returns null for any value.
     /// </exception>
     public static PerCpuState? GetCpuState(uint cpuId) => s_cpuStates?[cpuId];
+
+    // ZehOS patch tick-observer, see PATCHES.md
+    /// <summary>
+    /// Sends <paramref name="cpuId"/>'s CPU the reschedule interrupt, and
+    /// nothing else: no reschedule is requested, so the interrupt takes its
+    /// exit path and the CPU goes on with what it ran. What it is for is the
+    /// delivery itself (<see cref="ITickObserver"/>). Nothing happens for the
+    /// calling CPU, a CPU that is not managed or not online, or before the
+    /// scheduler is ready. Any context, interrupt handlers included; does not
+    /// allocate, lock or log.
+    /// </summary>
+    /// <param name="cpuId">The CPU to interrupt.</param>
+    [Experimental(Experimentals.SchedulerSeamDiagId)]
+    public static void Nudge(uint cpuId)
+    {
+        if (s_cpuStates is null || cpuId >= s_cpuCount || cpuId == GetCurrentCpuId()
+            || Volatile.Read(ref PerCpuBlock.At(cpuId).Online) == 0)
+        {
+            return;
+        }
+
+        InterruptManager.SendReschedule(PerCpuBlock.At(cpuId).HardwareId);
+    }
 
     /// <summary>
     /// The scheduling state of the CPU running this code, or
@@ -2432,6 +2459,13 @@ public static class SchedulerManager
         // lock is taken: a wake takes the sleeper's CPU's lock, and two queue
         // locks are held at once only by a migration.
         CheckSleepingThreads(cpuId);
+
+        // ZehOS patch tick-observer, see PATCHES.md
+        // Every tick, the idle thread's too, before the lock like the pull.
+        if (s_cpuCount > 1)
+        {
+            s_tickObserver?.OnCpuTick(state, s_cpuStates);
+        }
 
         // The periodic balance, whatever this CPU runs. Before the lock for
         // the same reason, and before the policy's tick, so a thread pulled

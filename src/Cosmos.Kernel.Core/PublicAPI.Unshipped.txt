@@ -125,3 +125,6 @@
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IVoluntaryMove
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IVoluntaryMove.SelectMoveTarget(Cosmos.Kernel.Core.Scheduler.PerCpuState! cpuState, Cosmos.Kernel.Core.Scheduler.SchedulerThread! current, Cosmos.Kernel.Core.Scheduler.PerCpuState![]! allCpuStates, Cosmos.Kernel.Core.Scheduler.CpuSet allowed) -> uint
 [COSMOS0001]const Cosmos.Kernel.Core.Scheduler.SchedulerManager.VoluntaryMoveIntervalTicks = 10 -> uint
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.ITickObserver
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.ITickObserver.OnCpuTick(Cosmos.Kernel.Core.Scheduler.PerCpuState! cpuState, Cosmos.Kernel.Core.Scheduler.PerCpuState![]! allCpuStates) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Scheduler.SchedulerManager.Nudge(uint cpuId) -> void
