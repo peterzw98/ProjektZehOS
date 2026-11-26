@@ -38,7 +38,7 @@ timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target al
 
 Der Vollbau wendet die Anpassungen unter [`patches/all/`](patches/all/) auf den festgeschriebenen Quellstand an. Die Unix-Nachrichtenheader der Broker werden vollständig nullinitialisiert und anschließend mit denselben Nutzdatenfeldern befüllt. So kompiliert das Layout mit den zusätzlichen Padding-Feldern von musl auch mit `-Werror=missing-field-initializers`. Der Seccomp-Code liest seine Ioctl-Typkonstanten aus dem Linux-UAPI-Header `linux/ioctl.h`.
 
-Für statische Linux-Bibliotheken kennt CMake die gegenseitige Abhängigkeit zwischen `LibGfx` und `libgfx_rust`. CMake wiederholt beide Archive auf der Linkzeile. So kann der GNU-Linker die Rückverweise aus Rust auf C++ auch beim `ImageDecoder` auflösen.
+Für statische Linux-Bibliotheken kennt CMake die gegenseitigen Abhängigkeiten von `LibGfx` und `libgfx_rust` sowie von `LibUnicode` und `libunicode_rust`. CMake wiederholt die Archive auf der Linkzeile. So kann der GNU-Linker die Rückverweise aus Rust auf C++ auch beim `ImageDecoder` und `WebRTCClient` auflösen.
 
 ## Prüfstand für `js`
 
