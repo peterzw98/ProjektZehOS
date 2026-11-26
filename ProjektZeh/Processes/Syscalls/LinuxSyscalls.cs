@@ -53,6 +53,9 @@ internal static partial class LinuxSyscalls
                 return 0;
             case Clone:
                 return p is ILinuxThreads cloner ? cloner.CloneThread(a.A0, a.A1, a.A2, a.A3, a.A4) : -ENOSYS;
+            case Vfork:
+            case Execve:
+                return DispatchSpawn(ref a, p); // V15: posix_spawn
             case Tgkill:
                 return p is ILinuxThreads tg ? tg.SignalThread((int)a.A0, (int)a.A1, (int)a.A2) : -ENOSYS;
             case Tkill:
