@@ -63,4 +63,16 @@ Lesart: Der Wechsel zum Peer ist jetzt belegt (CR3 in allen 3000 Paarrunden je s
 
 ## Urteil
 
-(Senior)
+**`offen`** (agent-peter-senior, 26.11.2026; nur gelesen, kein Gastlauf; Cosmos-Quelle `7b4b1018`, Fälle `12904e126`).
+
+**aswitch misst keinen Adressraumwechsel.** `Thread.Yield` wechselt in diesem Cosmos nicht: `RhYield` (`src/Cosmos.Kernel.Core/Runtime/Thread.cs:97-105`) ruft `SchedulerManager.YieldThread`, und das setzt nur `_needReschedule` (`SchedulerManager.cs:1702-1707`, „Returns at once: nothing switches outside an interrupt exit“). Verbraucht wird die Marke nur beim Austritt eines Interrupts (`ReschedulePendingFromIrq`, `SchedulerManager.cs:2530`, aufgerufen aus `X64InterruptController.cs:176` nach einer Hardware-IRQ, dazu der Timer-Tick). Der Syscall-Weg (`_native_x64_user_syscall`, `src/Cosmos.Kernel.Native.X64/CPU/UserMode.s:109-171`) kehrt nach `__managed__user_syscall` direkt mit `sysretq` zurück und prüft die Marke nicht. Eine Runde `SYS_YIELD` ist deshalb in beiden Armen dieselbe Arbeit (Syscall, Store, `sysretq`, zwei `rdtsc`); gewechselt wird nur beim nächsten Tick oder einer Geräte-IRQ, also in wenigen der 20 000 Runden, und diese landen oberhalb des Medians (p99/max). `net_med = 0` ist damit das erwartete Ergebnis ohne jeden CR3-Wechsel, kein Beleg für „CR3 unter der Auflösung“. Dasselbe gilt für die Gegenprobe `kernel_pair`: 54-58 Ticks sind ein Funktionsaufruf mit Store, kein Kontextwechsel (der allein speichert und lädt 512 Byte FPU-Zustand und nimmt die Queue-Sperre). Ein Zähler der CR3-Ladungen fehlt im Fall; er würde je Runde nahe 0 zeigen. Die Lesart im Abschnitt „aswitch“ und die Zeile „~54-58 je Kernelthread-Wechsel“ sind zu streichen.
+
+**pfault trägt als Messung:** Der Store auf eine reservierte, nicht abgebildete Seite löst einen echten #PF aus, `mapped=4000` und `first == pages` belegen je Seite einen Fehler mit Belegung; ~2040-2100 Ticks je Fehler (KVM, Median, abzüglich 14 Ticks Leerlauf) sind plausibel. Kleinigkeit: Die Seiten liegen hintereinander in einem Bereich, nicht „verstreut“ (Code `PageFault`, `range.Value` + `i * 4096`); die Messung zeigt also Fehler bei schon vorhandener Seitentabelle (bis auf je eine neue Tabelle alle 512 Seiten, das passt zu max ~0,4 Mio).
+
+**Regel #634:** `trägt` braucht B1 und B4 erfüllt und den Normalbau unverändert, und der Inhalt des Pakets ist die Zeit je Adressraumwechsel. Davon fehlt: (1) Zeit je Wechsel (siehe oben), (2) B1 hier nicht nachgeprüft, (3) Normalbau nicht gegen `origin/master` verglichen, ClassiCube 1 statt 3 Läufe. Eine bekannte Ursache in Cosmos/NativeAOT ohne abgegrenzten Patch liegt nicht vor, also nicht `trägt nicht`.
+
+**Um auf `trägt` zu kommen:**
+
+1. aswitch mit erzwungenem Wechsel je Runde: Der Handler wartet blockierend (zwei Ereignisse/Semaphoren im Ping-Pong, die Gegenstelle signalisiert und wartet); `Park` löst den Wechsel sofort über den Reschedule-Interrupt aus. Zwei Arme mit gleicher Arbeit: Paar in **einem** Adressraum (beide Threads an dieselbe Tabelle gebunden, `SwitchFor` lädt dann nichts) gegen Paar in **zwei** Adressräumen; die Differenz ist CR3 plus TLB. Beleg im Fall: Zähler, dass sich die Seiten abwechseln (jede Runde lief die andere Seite), und ein CR3-Wert je Seite (`ReadCr3` im Handler, zwei verschiedene im zweiten Arm, einer im ersten). smp1 genügt; smp4 nur mit Beleg derselben CPU.
+2. Normalbau gegen `origin/master` (gleiche Skripte, je 3 Läufe KVM), ClassiCube 3 Läufe je smp.
+3. B1-Abnahme verlinken (Kopf, Zahlen).
