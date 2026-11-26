@@ -26,7 +26,7 @@ namespace Cosmos.Kernel.Tests.Threading;
 public class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 108;
+    private const int ExpectedTestCount = 109;
 
     /// <summary>Size of one per-CPU block, as <c>PerCpuBlock</c> lays it out and the native stubs assume.</summary>
     private const int PerCpuBlockNativeSize = 192;
@@ -314,6 +314,7 @@ public class Kernel : Sys.Kernel
         TR.Run("Mutex_ReleaseHandsOffToParkedWaiter", TestMutexReleaseHandsOff);
         TR.Run("Thread_Yield_PingPong_BothWaitersFinish", TestThreadYieldPingPong);
         TR.Run("Thread_Yield_InterruptsMasked_ReturnsFalse", TestThreadYieldInterruptsMasked);
+        TR.Run("Thread_Yield_PingPong_SwitchesBeforeTick", TestThreadYieldSwitchesBeforeTick);
 
         // ThreadPool / Task / async-await tests (validate fix for #245, #246)
         TR.Run("ThreadPool_QueueUserWorkItem_ExecutesCallback", TestThreadPoolQueueUserWorkItem);
@@ -1287,6 +1288,66 @@ public class Kernel : Sys.Kernel
         }
 
         return s_pingPongTurn == turn;
+    }
+
+    // ZehOS patch yield-now, see PATCHES.md
+    /// <summary>Rounds of the one-CPU ping-pong that has to finish within <see cref="FastPingPongMaxTicks"/>.</summary>
+    private const int FastPingPongRounds = 1000;
+    /// <summary>Ticks the one-CPU ping-pong may take: a yield that waits for the tick needs two per round.</summary>
+    private const uint FastPingPongMaxTicks = 20;
+
+    // ZehOS patch yield-now, see PATCHES.md
+    /// <summary>
+    /// Main and a worker on one CPU hand a turn back and forth through
+    /// Thread.Yield alone. A yield that only switches at the next tick costs
+    /// a tick per turn, 2 * <see cref="FastPingPongRounds"/> ticks in all; a
+    /// yield that switches at once finishes every round within a few ticks.
+    /// </summary>
+    private static void TestThreadYieldSwitchesBeforeTick()
+    {
+        using OneCpuScope oneCpu = OneCpuScope.Enter();
+        s_pingPongTurn = 0;
+        s_pingPongStop = false;
+
+        SysThread worker = new(FastPingPongWorker);
+        worker.Start();
+
+        uint start = SchedulerManager.TickCount;
+        int rounds = 0;
+        for (; rounds < FastPingPongRounds; rounds++)
+        {
+            int handedTurn = (2 * rounds) + 1;
+            s_pingPongTurn = handedTurn;
+            if (!YieldUntilTurn(handedTurn + 1))
+            {
+                break;
+            }
+        }
+
+        uint ticks = SchedulerManager.TickCount - start;
+        s_pingPongStop = true;
+        TimerManager.Wait(ExitGraceWaitMs);
+
+        Serial.WriteString("[Test] yield ping-pong: ");
+        Serial.WriteNumber((ulong)rounds);
+        Serial.WriteString(" rounds in ");
+        Serial.WriteNumber(ticks);
+        Serial.WriteString(" ticks\n");
+        Assert.Equal(FastPingPongRounds, rounds, "the one-CPU yield ping-pong must finish every round");
+        Assert.True(ticks <= FastPingPongMaxTicks, "Thread.Yield must switch before the next tick");
+    }
+
+    private static void FastPingPongWorker()
+    {
+        for (int turn = 1; turn < 2 * FastPingPongRounds; turn += 2)
+        {
+            if (!YieldUntilTurn(turn))
+            {
+                return;
+            }
+
+            s_pingPongTurn = turn + 1;
+        }
     }
 
     /// <summary>

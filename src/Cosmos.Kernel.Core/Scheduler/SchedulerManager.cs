@@ -1685,25 +1685,40 @@ public static class SchedulerManager
         return true;
     }
 
+    // ZehOS patch yield-now, see PATCHES.md
     /// <summary>
-    /// Gives up the CPU at the next interrupt exit: sets the request
-    /// <see cref="BlockThread"/> makes, so that exit switches even when the
-    /// quantum has not run out. The switch re-queues the thread through
+    /// Gives up the CPU now: sets the request <see cref="BlockThread"/>
+    /// makes and, when the caller runs with interrupts enabled, raises the
+    /// reschedule interrupt on this CPU, as <see cref="Park"/> does, so the
+    /// switch happens within a few instructions instead of at the next tick.
+    /// The switch re-queues the thread through
     /// <see cref="IScheduler.OnThreadYield"/> after the policy picked another,
-    /// as a preemption does. Returns at once: nothing switches outside an
-    /// interrupt exit, and waiting for one would cost every call up to a
-    /// tick, while CoreLib's spin-then-block loops call Thread.Yield once per
-    /// spin (70 times before an idle thread pool worker parks on one CPU).
-    /// The request is this CPU's own and its exit consumes it under the queue
-    /// lock; a bare store here is enough, since a store that lands after the
-    /// exit's read is served by the next exit.
+    /// as a preemption does; with nothing else to run here the thread keeps
+    /// the CPU and the round costs one interrupt. Returns once the thread runs
+    /// again. Flag and interrupt are set with interrupts masked, on the CPU
+    /// read under the mask (not <paramref name="cpuId"/>: the caller may have
+    /// moved since it read it), so both name the same CPU and no handler
+    /// writes the interrupt command register in between. A caller with
+    /// interrupts masked (a handler, a masked section, an IST handler) only
+    /// sets the request, which the next interrupt exit serves: nothing may
+    /// switch away from such a frame.
     /// </summary>
-    /// <param name="cpuId">CPU ID of the calling thread.</param>
+    /// <param name="cpuId">CPU ID of the calling thread, used when interrupts are masked.</param>
     internal static void YieldThread(uint cpuId)
     {
         ThrowIfCpuStateNotInitialized();
 
-        Volatile.Write(ref s_cpuStates[cpuId]._needReschedule, true);
+        if (!InternalCpu.InterruptsEnabled)
+        {
+            Volatile.Write(ref s_cpuStates[cpuId]._needReschedule, true);
+            return;
+        }
+
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            Volatile.Write(ref s_cpuStates[GetCurrentCpuId()]._needReschedule, true);
+            InterruptManager.TryRaiseReschedule();
+        }
     }
 
     /// <summary>

@@ -1,0 +1,8 @@
+# yield-now
+
+- **Commit:** wird beim Squash gesetzt (Entwurf, gestapelt auf `cosmos-patch/user-cr3` f8d88bde)
+- **Dateien:** `src/Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs` (`YieldThread`), `src/Cosmos.Kernel.Core/Runtime/Thread.cs` (Doku `RhYield`), `tests/Kernels/Cosmos.Kernel.Tests.Threading/Kernel.cs` (Zelle `Thread_Yield_PingPong_SwitchesBeforeTick`)
+- **Grund:** ZehOS #716. `Thread.Yield` setzte nur `_needReschedule`; gewechselt wurde erst am nächsten Hardware-IRQ-Austritt, ohne Gerätelast am Timertakt. Ein Ping-Pong zweier Threads über Yield kostete so eine Zeitscheibe je Wechsel, im Kernel wie aus einem Systemaufruf (Ring 3, #634 `aswitch`). Jetzt löst `YieldThread` wie `Park` die Selbst-IPI (`TryRaiseReschedule`) aus, deren Austritt sofort wechselt. Flag und IPI werden unter maskierten Interrupts auf der dabei gelesenen CPU gesetzt (der Aufrufer kann seit dem Lesen der CPU-ID umgezogen sein; kein Handler schreibt dazwischen ins ICR). Nur mit Interrupts an: Ein maskierter Aufrufer (Handler, maskierter Abschnitt, IST-Handler für #DF/NMI/#MC) setzt wie bisher nur das Flag, damit nie von einem solchen Rahmen weggewechselt wird. Im Systemaufruf läuft der Handler mit Interrupts an auf dem Kernelstapel des Threads (`__managed__user_syscall`); die IPI landet dort wie jeder Timertakt, oder nach `sysretq` beim ersten Ring-3-Befehl. Ein Prüfpunkt im Syscall-Rückweg ist deshalb nicht nötig. Blockieren (`Park`) wechselte schon sofort.
+- **Grenzen:** Ist sonst nichts lauffähig, behält der Thread die CPU; jeder Yield kostet dann eine Interrupt-Runde (CoreLibs Spin-then-block ruft bis zu etwa 70 Yields). `RhYield` gibt weiter 0 zurück. ARM64 (SGI) nicht im Gast geprüft.
+- **Entfernter ZehOS-Umweg:** keiner
+- **Prüfung:** siehe PR
