@@ -57,6 +57,15 @@ internal interface ILinuxFile : ILinuxDescriptor
     /// </summary>
     long ReadDir(long index, out LinuxDirEntry entry);
 
+    /// <summary>
+    /// ftruncate (V14): setzt die Länge, eine Verlängerung liest sich als Nullbytes; die Position bleibt. 0 oder -errno; -EINVAL, wenn der
+    /// Deskriptor keine reguläre Datei ist oder nicht zum Schreiben offen (wie Linux, nicht -EBADF).
+    /// </summary>
+    long Truncate(long length);
+
+    /// <summary>fsync/fdatasync (V14): 0 oder -errno; -EINVAL für Geräte wie /dev/null (Linux: kein fsync für Zeichengeräte).</summary>
+    long Sync();
+
     /// <summary>Position des nächsten getdents64-Eintrags; gehört zum offenen Deskriptor wie bei Linux.</summary>
     long DirIndex { get; set; }
 

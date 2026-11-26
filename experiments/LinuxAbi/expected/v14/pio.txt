@@ -1,0 +1,58 @@
+write: ret=6 errno=0
+pwrite 1: ret=2 errno=0
+pos=6
+pwrite hinter Ende: ret=1 errno=0
+pos=6 size=10
+inhalt: n=10 [aXYdef...Z]
+pwrite len 0: ret=0 errno=0
+pwrite negativ: ret=-1 errno=22
+pwrite negativ, fd falsch: ret=-1 errno=22
+pwrite fd falsch: ret=-1 errno=9
+pwrite stdout: ret=-1 errno=29
+pwrite bad buf: ret=-1 errno=14
+pos=6
+preadv 2: ret=5 errno=0
+a=Yd b=ef pos=6
+preadv hinter Ende: ret=0 errno=0
+pwritev 4: ret=5 errno=0
+pos=6 size=10
+inhalt: n=10 [aXYd12345Z]
+pwritev 0 Eintraege: ret=0 errno=0
+pwritev negativ: ret=-1 errno=22
+ftruncate 3: ret=0 errno=0
+pos=6 size=3
+ftruncate 7: ret=0 errno=0
+pos=6 size=7
+inhalt: n=7 [aXY....]
+write nach ftruncate: ret=1 errno=0
+pos=7 size=7
+inhalt: n=7 [aXY...W]
+ftruncate negativ: ret=-1 errno=22
+ftruncate negativ, fd falsch: ret=-1 errno=22
+ftruncate fd falsch: ret=-1 errno=9
+ftruncate stdout: ret=-1 errno=22
+ftruncate 0: ret=0 errno=0
+size=0
+fsync: ret=0 errno=0
+fdatasync: ret=0 errno=0
+close: ret=0 errno=0
+ftruncate nur lesend: ret=-1 errno=22
+pwrite nur lesend: ret=-1 errno=9
+fsync nur lesend: ret=0 errno=0
+write append: ret=3 errno=0
+pwrite append 0: ret=1 errno=0
+pos=3
+ftruncate append 2: ret=0 errno=0
+inhalt: n=2 [ab]
+mkdir: ret=0 errno=0
+pwrite verzeichnis: ret=-1 errno=9
+preadv verzeichnis: ret=-1 errno=21
+ftruncate verzeichnis: ret=-1 errno=22
+fsync verzeichnis: ret=0 errno=0
+rmdir: ret=0 errno=0
+pwrite /dev/null: ret=1 errno=0
+ftruncate /dev/null: ret=-1 errno=22
+fsync /dev/null: ret=-1 errno=22
+fsync stdout: ret=-1 errno=22
+fdatasync fd falsch: ret=-1 errno=9
+unlink: ret=0 errno=0

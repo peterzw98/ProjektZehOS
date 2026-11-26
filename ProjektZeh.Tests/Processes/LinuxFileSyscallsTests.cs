@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 
 namespace ProjektZeh.Tests.Processes;
 
@@ -83,6 +84,8 @@ public class LinuxFileSyscallsTests
             return t;
         }
         public long Stat(out LinuxStat st) { st = default; return 0; }
+        public long Truncate(long length) => -22;
+        public long Sync() => 0;
         public long ReadDir(long index, out LinuxDirEntry entry) { entry = default; return 1; }
         public long Close()
         {
@@ -204,6 +207,147 @@ public class LinuxFileSyscallsTests
         Assert.AreEqual(-14L, LinuxPath.ReadPath(p, 0x10, out _));
         p.Mem.Data.AsSpan(0x100, 5000).Fill((byte)'a');
         Assert.AreEqual(-36L, LinuxPath.ReadPath(p, Base + 0x100, out _));
+    }
+
+    // V14: pwrite64, preadv/pwritev, ftruncate, fsync/fdatasync auf echten Dateien (LinuxFileSystem über MemoryFileStore).
+    private const long Pwrite64 = 18, Fsync = 74, Fdatasync = 75, Ftruncate = 77, Preadv = 295, Pwritev = 296;
+
+    private static (Proc P, LinuxFileSystem Fs) WithRealFs()
+    {
+        var p = new Proc();
+        var fs = new LinuxFileSystem(new MemoryFileStore(), new Term());
+        return (p, fs);
+    }
+
+    private static int OpenReal(Proc p, LinuxFileSystem fs, string path, int flags)
+    {
+        Assert.AreEqual(0L, fs.Open(path, flags, 0x1A4, out ILinuxFile? file), path);
+        return p.AddDescriptor(file!, 3);
+    }
+
+    private static string Content(LinuxFileSystem fs, string path)
+    {
+        Assert.AreEqual(0L, fs.Open(path, LinuxFileSystem.ORdOnly, 0, out ILinuxFile? file));
+        var buf = new byte[256];
+        long n = file!.Read(buf);
+        file.Close();
+        return Encoding.Latin1.GetString(buf, 0, (int)n);
+    }
+
+    private static void PutIov(Proc p, int at, params (ulong Base, ulong Len)[] entries)
+    {
+        for (int i = 0; i < entries.Length; i++)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(at + i * 16, 8), entries[i].Base);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(at + i * 16 + 8, 8), entries[i].Len);
+        }
+    }
+
+    [TestMethod]
+    public void PwriteWritesAtOffsetAndKeepsPosition()
+    {
+        var (p, fs) = WithRealFs();
+        int fd = OpenReal(p, fs, "/a", LinuxFileSystem.OCreat | LinuxFileSystem.ORdWr);
+        p.Mem.Put(0x100, "abcdef");
+        Assert.AreEqual(6L, Call(p, Write, (ulong)fd, Base + 0x100, 6));
+        p.Mem.Put(0x100, "XY");
+        Assert.AreEqual(2L, Call(p, Pwrite64, (ulong)fd, Base + 0x100, 2, 1));
+        Assert.AreEqual(6L, Call(p, Lseek, (ulong)fd, 0, 1), "Position bleibt");
+        Assert.AreEqual(2L, Call(p, Pwrite64, (ulong)fd, Base + 0x100, 2, 10), "hinter dem Ende: Lücke");
+        Assert.AreEqual(6L, Call(p, Lseek, (ulong)fd, 0, 1));
+        Assert.AreEqual("aXYdef\0\0\0\0XY", Content(fs, "/a"));
+        Assert.AreEqual(-22L, Call(p, Pwrite64, 99, Base + 0x100, 2, unchecked((ulong)-1L)), "negative Position vor dem Deskriptor");
+        Assert.AreEqual(-9L, Call(p, Pwrite64, 99, Base + 0x100, 2, 0));
+        Assert.AreEqual(-29L, Call(p, Pwrite64, 1, Base + 0x100, 2, 0), "Terminal");
+        Assert.AreEqual(-14L, Call(p, Pwrite64, (ulong)fd, 0x10, 2, 0));
+        Assert.AreEqual(6L, Call(p, Lseek, (ulong)fd, 0, 1), "Position auch nach Fehler");
+        Assert.AreEqual(-22L, Call(p, Pwrite64, (ulong)fd, Base + 0x100, 2, (ulong)long.MaxValue), "Überlauf");
+    }
+
+    [TestMethod]
+    public void PwriteRespectsAccessModeAndAppend()
+    {
+        var (p, fs) = WithRealFs();
+        int w = OpenReal(p, fs, "/a", LinuxFileSystem.OCreat | LinuxFileSystem.OWrOnly);
+        p.Mem.Put(0x100, "1234");
+        Assert.AreEqual(4L, Call(p, Write, (ulong)w, Base + 0x100, 4));
+        int r = OpenReal(p, fs, "/a", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(-9L, Call(p, Pwrite64, (ulong)r, Base + 0x100, 1, 0), "nur lesend offen");
+        int ap = OpenReal(p, fs, "/a", LinuxFileSystem.OWrOnly | LinuxFileSystem.OAppend);
+        p.Mem.Put(0x100, "Z");
+        Assert.AreEqual(1L, Call(p, Pwrite64, (ulong)ap, Base + 0x100, 1, 0), "O_APPEND hängt wie Linux an");
+        Assert.AreEqual(0L, Call(p, Lseek, (ulong)ap, 0, 1));
+        Assert.AreEqual("1234Z", Content(fs, "/a"));
+        Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ed));
+        int d = OpenReal(p, fs, "/d", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(-9L, Call(p, Pwrite64, (ulong)d, Base + 0x100, 1, 0), "Verzeichnis");
+        Assert.AreEqual(-21L, Call(p, Preadv, (ulong)d, Base + 0x300, 1, 0), "Verzeichnis lesen");
+    }
+
+    [TestMethod]
+    public void PreadvPwritevUseOffset()
+    {
+        var (p, fs) = WithRealFs();
+        int fd = OpenReal(p, fs, "/v", LinuxFileSystem.OCreat | LinuxFileSystem.ORdWr);
+        p.Mem.Put(0x100, "hallo");
+        p.Mem.Put(0x110, "welt");
+        PutIov(p, 0x300, (Base + 0x100, 5), (Base + 0x110, 4));
+        Assert.AreEqual(9L, Call(p, Pwritev, (ulong)fd, Base + 0x300, 2, 3));
+        Assert.AreEqual(0L, Call(p, Lseek, (ulong)fd, 0, 1));
+        Assert.AreEqual(12L, Call(p, Lseek, (ulong)fd, 0, 2));
+        PutIov(p, 0x300, (Base + 0x200, 2), (Base + 0x210, 3));
+        Assert.AreEqual(5L, Call(p, Preadv, (ulong)fd, Base + 0x300, 2, 4));
+        Assert.AreEqual("al", Encoding.UTF8.GetString(p.Mem.Data, 0x200, 2));
+        Assert.AreEqual("low", Encoding.UTF8.GetString(p.Mem.Data, 0x210, 3));
+        Assert.AreEqual(12L, Call(p, Lseek, (ulong)fd, 0, 1), "Position bleibt");
+        Assert.AreEqual(0L, Call(p, Preadv, (ulong)fd, Base + 0x300, 2, 100), "hinter dem Ende");
+        Assert.AreEqual(-22L, Call(p, Pwritev, (ulong)fd, Base + 0x300, 1025, 0));
+        Assert.AreEqual(-22L, Call(p, Preadv, 99, Base + 0x300, 1, unchecked((ulong)-5L)));
+        Assert.AreEqual(-14L, Call(p, Pwritev, (ulong)fd, 0x10, 1, 0));
+        Assert.AreEqual(-29L, Call(p, Preadv, 0, Base + 0x300, 1, 0), "Terminal");
+    }
+
+    [TestMethod]
+    public void FtruncateShrinksGrowsAndChecksMode()
+    {
+        var (p, fs) = WithRealFs();
+        int fd = OpenReal(p, fs, "/t", LinuxFileSystem.OCreat | LinuxFileSystem.ORdWr);
+        p.Mem.Put(0x100, "abcdef");
+        Assert.AreEqual(6L, Call(p, Write, (ulong)fd, Base + 0x100, 6));
+        Assert.AreEqual(0L, Call(p, Ftruncate, (ulong)fd, 3));
+        Assert.AreEqual(6L, Call(p, Lseek, (ulong)fd, 0, 1), "Position bleibt");
+        Assert.AreEqual("abc", Content(fs, "/t"));
+        Assert.AreEqual(0L, Call(p, Ftruncate, (ulong)fd, 5));
+        Assert.AreEqual("abc\0\0", Content(fs, "/t"));
+        Assert.AreEqual(-22L, Call(p, Ftruncate, 99, unchecked((ulong)-1L)), "Länge vor dem Deskriptor");
+        Assert.AreEqual(-9L, Call(p, Ftruncate, 99, 0));
+        Assert.AreEqual(-22L, Call(p, Ftruncate, 1, 0), "Terminal");
+        int r = OpenReal(p, fs, "/t", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(-22L, Call(p, Ftruncate, (ulong)r, 0), "nur lesend offen");
+        Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ed));
+        int d = OpenReal(p, fs, "/d", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(-22L, Call(p, Ftruncate, (ulong)d, 0), "Verzeichnis");
+        int n = OpenReal(p, fs, "/dev/null", LinuxFileSystem.OWrOnly);
+        Assert.AreEqual(-22L, Call(p, Ftruncate, (ulong)n, 0), "Gerät");
+        Assert.AreEqual(-27L, Call(p, Ftruncate, (ulong)fd, 1L << 40), "über der Dateigrenze des Speichers");
+        Assert.AreEqual(5L, Call(p, Lseek, (ulong)fd, 0, 2));
+    }
+
+    [TestMethod]
+    public void FsyncAcceptsFilesAndDirectoriesOnly()
+    {
+        var (p, fs) = WithRealFs();
+        int fd = OpenReal(p, fs, "/s", LinuxFileSystem.OCreat | LinuxFileSystem.ORdWr);
+        Assert.AreEqual(0L, Call(p, Fsync, (ulong)fd));
+        Assert.AreEqual(0L, Call(p, Fdatasync, (ulong)fd));
+        int r = OpenReal(p, fs, "/s", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(0L, Call(p, Fsync, (ulong)r), "auch nur lesend offen");
+        int d = OpenReal(p, fs, "/", LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(0L, Call(p, Fsync, (ulong)d), "Verzeichnis");
+        int n = OpenReal(p, fs, "/dev/null", LinuxFileSystem.ORdWr);
+        Assert.AreEqual(-22L, Call(p, Fsync, (ulong)n), "Gerät");
+        Assert.AreEqual(-22L, Call(p, Fdatasync, 1), "Terminal");
+        Assert.AreEqual(-9L, Call(p, Fsync, 99));
     }
 
     [TestMethod]

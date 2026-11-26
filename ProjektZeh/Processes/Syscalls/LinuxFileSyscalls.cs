@@ -5,15 +5,15 @@ namespace ProjektZeh.Processes.Syscalls;
 
 /// <summary>
 /// Dateiaufrufe mit Dateiinhalt und Deskriptoren (V2, Teil Inhalt): open/openat, close, read/readv/pread64, lseek, dup/dup2/dup3,
-/// fcntl, getcwd, chdir/fchdir. Alles Pfadbezogene geht über <see cref="LinuxPath.Resolve(ILinuxProcess, ILinuxFiles, int, ulong, out string)"/>.
+/// fcntl, getcwd, chdir/fchdir; dazu V14 pwrite64, preadv/pwritev, ftruncate, fsync/fdatasync. Alles Pfadbezogene geht über <see cref="LinuxPath.Resolve(ILinuxProcess, ILinuxFiles, int, ulong, out string)"/>.
 /// Nur aktiv, wenn der Prozess <see cref="ILinuxFiles"/> anbietet; was hier nicht bekannt ist, geht an <see cref="DispatchFileMeta"/>.
 /// </summary>
 internal static partial class LinuxSyscalls
 {
     private static class FileNr
     {
-        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Readv = 19, Dup = 32, Dup2 = 33, Fcntl = 72,
-            Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe = 22, Pipe2 = 293;
+        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72,
+            Fsync = 74, Fdatasync = 75, Ftruncate = 77, Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe2 = 293, Preadv = 295, Pwritev = 296;
     }
 
     private static class FileErr
@@ -37,6 +37,13 @@ internal static partial class LinuxSyscalls
             case FileNr.Read: return DoRead(p, (int)a.A0, a.A1, a.A2);
             case FileNr.Readv: return DoReadv(p, (int)a.A0, a.A1, a.A2);
             case FileNr.Pread64: return DoPread(p, (int)a.A0, a.A1, a.A2, unchecked((long)a.A3));
+            case FileNr.Pwrite64: return DoPositioned(p, (int)a.A0, a.A1, a.A2, unchecked((long)a.A3), write: true, vector: false);
+            // preadv/pwritev: Position in A3 (pos_l); A4 (pos_h) hat auf x86-64 keine Bedeutung, der Kernel schiebt sie ganz hinaus.
+            case FileNr.Preadv: return DoPositioned(p, (int)a.A0, a.A1, a.A2, unchecked((long)a.A3), write: false, vector: true);
+            case FileNr.Pwritev: return DoPositioned(p, (int)a.A0, a.A1, a.A2, unchecked((long)a.A3), write: true, vector: true);
+            case FileNr.Ftruncate: return DoFtruncate(p, (int)a.A0, unchecked((long)a.A1));
+            case FileNr.Fsync:
+            case FileNr.Fdatasync: return DoFsync(p, (int)a.A0);
             case FileNr.Lseek: return DoLseek(p, (int)a.A0, unchecked((long)a.A1), (int)a.A2);
             case FileNr.Dup: return DoDup(p, f, (int)a.A0, 0);
             case FileNr.Dup2: return DoDup2(p, f, (int)a.A0, (int)a.A1, allowSame: true);
@@ -212,6 +219,12 @@ internal static partial class LinuxSyscalls
             return -FileErr.EISDIR;
         }
 
+        return ReadvFrom(p, file, iov, cnt);
+    }
+
+    /// <summary>readv auf eine geprüfte Datei (kein Verzeichnis, cnt höchstens <see cref="MaxIov"/>).</summary>
+    private static long ReadvFrom(ILinuxProcess p, ILinuxFile file, ulong iov, ulong cnt)
+    {
         // Wie writev: erst alle Einträge lesen und prüfen, dann lesen.
         var bases = new ulong[cnt];
         var lens = new ulong[cnt];
@@ -298,6 +311,100 @@ internal static partial class LinuxSyscalls
         long n = ReadToUser(file, p, buf, Math.Min(count, (ulong)MaxRw));
         file.Seek(saved, 0);
         return n;
+    }
+
+    /// <summary>
+    /// pwrite64, preadv und pwritev (V14): wie write/readv/writev ab <paramref name="offset"/>, die Position des Deskriptors bleibt.
+    /// Nachgebildet wie <see cref="DoPread"/> über Seek unter der Dateisperre. Reihenfolge der Prüfungen wie Linux: negative Position
+    /// vor dem Deskriptor (-EINVAL), dann -EBADF, Terminal -ESPIPE, Verzeichnis beim Lesen -EISDIR, beim Schreiben -EBADF (nur lesend offen).
+    /// Bei O_APPEND hängt pwrite wie unter Linux ans Ende an (bekannte Linux-Eigenheit), die Position bleibt trotzdem.
+    /// </summary>
+    private static long DoPositioned(ILinuxProcess p, int fd, ulong buf, ulong count, long offset, bool write, bool vector)
+    {
+        if (offset < 0)
+        {
+            return -EINVAL;
+        }
+
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is null)
+        {
+            return -EBADF;
+        }
+
+        if (d is not ILinuxFile file)
+        {
+            return -FileErr.ESPIPE;
+        }
+
+        if (file.IsDirectory)
+        {
+            return write ? -EBADF : -FileErr.EISDIR;
+        }
+
+        if (vector && count > MaxIov)
+        {
+            return -EINVAL;
+        }
+
+        ulong n = vector ? count : Math.Min(count, (ulong)MaxRw);
+        if (!vector && offset > long.MaxValue - (long)n)
+        {
+            return -EINVAL; // Linux: Position und Länge laufen über (rw_verify_area)
+        }
+
+        long saved = file.Seek(0, 1);
+        if (saved < 0)
+        {
+            return saved;
+        }
+
+        long r = file.Seek(offset, 0);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        if (write)
+        {
+            r = vector ? WritevTo(p, file, buf, count) : WriteFromUser(p, file, buf, n);
+        }
+        else
+        {
+            r = ReadvFrom(p, file, buf, count);
+        }
+
+        file.Seek(saved, 0);
+        return r;
+    }
+
+    private static long DoFtruncate(ILinuxProcess p, int fd, long length)
+    {
+        if (length < 0)
+        {
+            return -EINVAL; // Linux prüft die Länge vor dem Deskriptor
+        }
+
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is null)
+        {
+            return -EBADF;
+        }
+
+        // Terminal und andere Nicht-Dateien: keine reguläre Datei, -EINVAL wie Linux für Pipes und Geräte.
+        return d is ILinuxFile file ? file.Truncate(length) : -EINVAL;
+    }
+
+    private static long DoFsync(ILinuxProcess p, int fd)
+    {
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is null)
+        {
+            return -EBADF;
+        }
+
+        // Terminal: Linux hat für Terminals und Pipes kein fsync (-EINVAL).
+        return d is ILinuxFile file ? file.Sync() : -EINVAL;
     }
 
     private static long DoLseek(ILinuxProcess p, int fd, long offset, int whence)

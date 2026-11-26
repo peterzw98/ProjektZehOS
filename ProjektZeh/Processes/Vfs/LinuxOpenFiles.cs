@@ -54,6 +54,11 @@ internal abstract class LinuxOpenFile : ILinuxFile
 
     public long Seek(long offset, int whence) => _closed ? -LinuxErrno.EBADF : SeekCore(offset, whence);
 
+    // Linux prüft bei ftruncate die Schreibberechtigung des Deskriptors und meldet sie wie einen falschen Typ als -EINVAL.
+    public long Truncate(long length) => _closed ? -LinuxErrno.EBADF : !CanWrite ? -LinuxErrno.EINVAL : TruncateCore(length);
+
+    public long Sync() => _closed ? -LinuxErrno.EBADF : SyncCore();
+
     public long Stat(out LinuxStat st)
     {
         st = default;
@@ -106,6 +111,15 @@ internal abstract class LinuxOpenFile : ILinuxFile
 
     /// <summary>Gibt Speicherressourcen frei; 0 oder -errno.</summary>
     protected virtual long Release() => 0;
+
+    /// <summary>Nur reguläre Dateien lassen sich kürzen oder verlängern; alles andere ist -EINVAL wie bei Linux.</summary>
+    protected virtual long TruncateCore(long length) => -LinuxErrno.EINVAL;
+
+    /// <summary>
+    /// Die Speicher schreiben ungepuffert durch (<c>DirectoryFileStore</c> öffnet mit Puffergröße 1, Cosmos-FAT schreibt jeden Cluster sofort):
+    /// Bei Rückkehr von write liegen die Daten schon beim Laufwerk, fsync hat nichts nachzuholen.
+    /// </summary>
+    protected virtual long SyncCore() => 0;
 
     /// <summary>Neue Position nach lseek; -EINVAL für negative Ergebnisse und unbekanntes whence, -EOVERFLOW bei Überlauf.</summary>
     protected static long NewPosition(long position, long length, long offset, int whence)
@@ -224,6 +238,8 @@ internal sealed class LinuxRegularFile : LinuxOpenFile
     }
 
     protected override long Release() => _file.Close();
+
+    protected override long TruncateCore(long length) => length < 0 ? -LinuxErrno.EINVAL : _file.SetLength(length);
 }
 
 /// <summary>
@@ -255,6 +271,9 @@ internal sealed class LinuxDeviceFile : LinuxOpenFile
     }
 
     protected override long WriteCore(ReadOnlySpan<byte> data) => _tty ? FileSystem.Terminal.Write(data) : data.Length;
+
+    // Linux: Zeichengeräte haben kein fsync.
+    protected override long SyncCore() => -LinuxErrno.EINVAL;
 
     // Linux: lseek auf /dev/null liefert 0, auf einem Terminal -ESPIPE.
     protected override long SeekCore(long offset, int whence) => _tty ? -LinuxErrno.ESPIPE : (whence is >= 0 and <= 2 ? 0 : -LinuxErrno.EINVAL);

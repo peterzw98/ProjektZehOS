@@ -63,6 +63,10 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 3 | `close` | entfernt die Nummer; die Datei schließt erst mit der letzten Nummer, die auf sie zeigt (`dup`) |
 | 0, 19 | `read`, `readv` | Länge auf 0x7ffff000 begrenzt, Stücke zu 64 KiB; Verzeichnis `-EISDIR`; Terminal liest über `ILinuxInput` (S1-Tabelle, V3 stdin); scheitert das Zurückschreiben, wird die Position zurückgesetzt (`-EFAULT` oder die bisherige Anzahl); `readv` wie `writev` |
 | 17 | `pread64` | über Seek nachgebildet (Position bleibt); nicht atomar gegen einen zweiten Thread (es gibt noch keine Threads); Terminal `-ESPIPE`, Versatz < 0 `-EINVAL` |
+| 18 | `pwrite64` | V14: wie `write` ab dem Versatz, über Seek nachgebildet wie `pread64` (Position bleibt, auch nach einem Fehler); Versatz < 0 `-EINVAL` vor der Prüfung des Deskriptors, Versatz + Länge über `INT64_MAX` `-EINVAL`; Terminal `-ESPIPE`; Verzeichnis und nur lesend offen `-EBADF`; mit `O_APPEND` hängt es wie Linux ans Ende an |
+| 295, 296 | `preadv`, `pwritev` | V14: wie `readv`/`writev` ab dem Versatz `pos_l` (`pos_h` hat auf x86-64 keine Bedeutung), Position bleibt; Fehlerwege wie `pwrite64`, `preadv` auf ein Verzeichnis `-EISDIR`; mehr als 1024 Einträge `-EINVAL` |
+| 77 | `ftruncate` | V14: setzt die Länge, die Position bleibt; Verlängern liest sich als Nullbytes und läuft auf der Platte in Schritten mit Kontingent (V7, `-ENOSPC`); Länge < 0 `-EINVAL` vor der Prüfung des Deskriptors; nicht zum Schreiben offen, Verzeichnis, Gerät, Terminal `-EINVAL` wie Linux; über der Dateigrenze des Speichers `-EFBIG` |
+| 74, 75 | `fsync`, `fdatasync` | V14: Datei und Verzeichnis `0` (beide Speicher schreiben ungepuffert durch: `DirectoryFileStore` öffnet mit Puffergröße 1, Cosmos-FAT schreibt jeden Cluster sofort); `/dev/null`, `/dev/zero`, `/dev/tty` und das Terminal `-EINVAL` wie Linux für Zeichengeräte und Pipes |
 | 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
 | 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
 | 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13) `O_RDONLY`/`O_WRONLY` mit `O_NONBLOCK`; `F_SETFL` ohne Wirkung (Abweichung), bei Pipe-Enden setzt oder löscht es `O_NONBLOCK`; sonst `-EINVAL` |
@@ -159,8 +163,10 @@ Grenzen (Review V2, bewusst offen):
   Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (nur auf einem Nicht-Windows-Host), 0x70/0x27 (nur unter Windows; unter Linux ist 39 `ENOTEMPTY`) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
   setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
   `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. .NET meldet EFBIG aus
-  `FileStream.SetLength` unter Unix als `ArgumentOutOfRangeException` (dann `-EINVAL`); die 1-GiB-Grenze fängt das vorher ab. Der HResult im Gast ist bei senior2 angefragt.
-  Im Gast ist Wachstum nur über `lseek` + `write` erreichbar: `ftruncate` (77) und `pwrite64` (18) liefert der Verteiler noch mit `-ENOSYS`.
+  `FileStream.SetLength` unter Unix als `ArgumentOutOfRangeException` (dann `-EINVAL`); die 1-GiB-Grenze fängt das vorher ab. Im Gast belegt (V7b, KVM smp1): `write` am Ende bei voller Platte `-ENOSPC`.
+  Bekannte Grenze: Wächst eine Datei über eine Lücke (`write` hinter dem Ende, `ftruncate` nach oben) und die Platte wird dabei voll, kommt `-EIO` statt `-ENOSPC`.
+  Cosmos' `Truncate` meldet beim Verlängern jeden Fehler als EIO (`FileDescriptorTable.cs:440-442` im Pin 5790fa74), nicht den PAL-Wert wie `PWrite` (`:248`).
+  Behebung als Cosmos-Patch nach der Vorstellung (#743); `v7bfull` nimmt dort bis dahin `-EIO` an.
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
@@ -184,10 +190,9 @@ Grenzen (Review V2, bewusst offen):
   - FAT-Sonderzeichen `? * " < >`, reservierte Namen (`CON`) und ein führendes Leerzeichen werden angenommen (Cosmos deutet sie nicht, chkdsk/Windows bemängeln sie).
   - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
-  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte auf smp4, TCG und VMware nicht. `ftruncate`/`pwrite64` fehlen im Verteiler.
+  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte (smp1) mit der bekannten Grenze `-EIO` hinter einer Lücke; volle Platte auf smp4, TCG und VMware nicht.
   - Neu Anlegen unter dem Namen einer entfernten, noch offenen Datei ist unter Cosmos `-EEXIST` bis zum letzten Schließen (siehe oben; Linux: Erfolg), ein übliches
-    Muster für temporäre Dateien. Im Gast nicht geprüft. Ebenso offen: `write` hinter einer Lücke auf voller Platte liefert im Gast `-EIO` (Cosmos
-    `FileDescriptorTable.cs:440-442`, Truncate kennt nur bool), Entscheidung Cosmos-Patch oder ZehOS-Deutung steht aus.
+    Muster für temporäre Dateien. Im Gast belegt (`v7bopen`, KVM smp1 und smp4), ebenso `-ENOENT` für den entfernten Namen und `-EBUSY` für `rename` eines Ordners mit offenem Kind.
   - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.
 
 ## Dateien im Prozess (V8)
