@@ -38,3 +38,5 @@ Material nach LGPL 2.1 § 6(a):
 | Bauinformationen und Hilfsprogramme | `experiments/Ladybird.Probe/musl/build.sh` und README auf `task/ladybird-n1d1-js-story` (PR #739) in diesem Repository |
 
 Neu linken mit geänderter libdwarf: Quellarchiv bzw. vcpkg-Port ändern und `build.sh --target js` erneut ausführen; das Skript baut die Abhängigkeiten und linkt `bin/js` statisch neu.
+
+Vollständige Lizenztexte aller Bestandteile: `licenses/texts/`, Zuordnung `licenses/LIZENZEN.md`, Originalhinweise `licenses/NOTICES.txt`.
