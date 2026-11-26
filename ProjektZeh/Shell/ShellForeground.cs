@@ -7,6 +7,27 @@ internal sealed partial class ShellService
 {
     private IShellForeground? foreground;
 
+    // Zeilen und Spalten des Fensters in einem Wert (Zeilen oben), damit der Programmthread nie ein halb geschriebenes Paar liest.
+    // 0: kein Fenster hat eine Größe gemeldet.
+    private int windowSize;
+
+    /// <summary>Meldet das Fenster (TerminalApp bei jeder Größenänderung); Programme lesen sie mit TIOCGWINSZ.</summary>
+    public void SetWindowSize(int rows, int columns)
+    {
+        int packed = (System.Math.Clamp(rows, 1, 0xffff) << 16) | System.Math.Clamp(columns, 1, 0xffff);
+        System.Threading.Volatile.Write(ref windowSize, packed);
+    }
+
+    /// <summary>Fenstergröße in Zeichen; ohne Meldung 24 x 80 wie ein frisches Linux-Terminal. Darf von jedem Thread kommen.</summary>
+    public (ushort Rows, ushort Columns) WindowSize
+    {
+        get
+        {
+            int packed = System.Threading.Volatile.Read(ref windowSize);
+            return packed == 0 ? ((ushort)24, (ushort)80) : ((ushort)((uint)packed >> 16), (ushort)(packed & 0xffff));
+        }
+    }
+
     /// <summary>true, solange ein Programm im Vordergrund laeuft; Eingabezeilen gehen dann an das Programm.</summary>
     public bool HasForeground => foreground != null;
 

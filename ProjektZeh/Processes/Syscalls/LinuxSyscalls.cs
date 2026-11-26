@@ -68,7 +68,7 @@ internal static partial class LinuxSyscalls
             case SetRobustList:
                 return 0;
             case Ioctl:
-                return p.GetDescriptor((int)a.A0) is null ? -EBADF : -ENOTTY;
+                return DoIoctl(p, (int)a.A0, a.A1, a.A2); // Terminal (V3 termios), sonst -ENOTTY
             default:
                 return DispatchMore(ref a, p); // Zeit, Zufall, Signale, poll, madvise, futex; sonst -ENOSYS (auch rseq: musl und glibc fallen zurück)
         }

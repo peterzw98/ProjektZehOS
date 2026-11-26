@@ -365,4 +365,109 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(1, interrupts);
         Assert.IsFalse(shell.HasForeground);
     }
+
+    // ---- termios (V3 termios): isatty, Zeilenpuffer, REPL-Erkennung ----
+
+    private static uint U32(Proc p, int offset) => BitConverter.ToUInt32(p.Mem.Data, offset);
+
+    [TestMethod]
+    public void TcgetsLiefertKanonischMitEchoAufAllenDreiFds()
+    {
+        var (_, _, _, p) = Program();
+        for (ulong fd = 0; fd <= 2; fd++)
+        {
+            Array.Clear(p.Mem.Data);
+            Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, fd, LinuxSyscalls.TCGETS, Base));
+            uint lflag = U32(p, 12);
+            Assert.AreEqual(0x2u, lflag & 0x2, "ICANON");
+            Assert.AreEqual(0x8u, lflag & 0x8, "ECHO");
+            Assert.AreEqual(0x1u, lflag & 0x1, "ISIG");
+            Assert.AreEqual(0x5u, U32(p, 4), "OPOST ONLCR");
+            Assert.AreEqual(0x03, p.Mem.Data[17 + 0], "VINTR ^C");
+            Assert.AreEqual(0x04, p.Mem.Data[17 + 4], "VEOF ^D");
+            Assert.AreEqual(0x01, p.Mem.Data[17 + 6], "VMIN 1");
+            Assert.AreEqual(0, p.Mem.Data[LinuxSyscalls.TermiosSize], "nur die Kernelstruktur, nichts dahinter");
+        }
+    }
+
+    [TestMethod]
+    public void TcsetsSpeichertRohmodusFuerAlleFdsUndLiestZeilenWeiter()
+    {
+        var (session, _, _, p) = Program();
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCGETS, Base));
+        // cfmakeraw: ICANON, ECHO, ISIG aus; VMIN 1, VTIME 0
+        uint raw = U32(p, 12) & ~0xbu;
+        BitConverter.GetBytes(raw).CopyTo(p.Mem.Data, 12);
+        foreach (ulong request in new[] { LinuxSyscalls.TCSETS, LinuxSyscalls.TCSETSW, LinuxSyscalls.TCSETSF })
+        {
+            Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, request, Base));
+        }
+
+        Array.Clear(p.Mem.Data);
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TCGETS, Base + 0x100));
+        Assert.AreEqual(raw, U32(p, 0x100 + 12), "fd 1 sieht, was fd 0 gesetzt hat");
+
+        // Nicht umgesetzt: weiter ganze Zeilen.
+        session.Submit("abc");
+        Assert.AreEqual(4, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual("abc\n", Text(p, 0, 4));
+    }
+
+    [TestMethod]
+    public void WinszKommtAusDemFensterUndHatEinenErsatz()
+    {
+        var (session, _, _, p) = Program();
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TIOCGWINSZ, Base));
+        Assert.AreEqual(24, (int)BitConverter.ToUInt16(p.Mem.Data, 0));
+        Assert.AreEqual(80, (int)BitConverter.ToUInt16(p.Mem.Data, 2));
+
+        var shell = new ShellService();
+        session.SizeSource = () => shell.WindowSize;
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TIOCGWINSZ, Base));
+        Assert.AreEqual(24, (int)BitConverter.ToUInt16(p.Mem.Data, 0), "Shell ohne Fenstermeldung");
+        shell.SetWindowSize(37, 112);
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 2, LinuxSyscalls.TIOCGWINSZ, Base));
+        Assert.AreEqual(37, (int)BitConverter.ToUInt16(p.Mem.Data, 0));
+        Assert.AreEqual(112, (int)BitConverter.ToUInt16(p.Mem.Data, 2));
+        Assert.AreEqual(0u, BitConverter.ToUInt32(p.Mem.Data, 4), "Pixelgröße 0");
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TIOCSWINSZ, Base), "angenommen, ohne Wirkung");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TIOCGWINSZ, 8));
+    }
+
+    [TestMethod]
+    public void VordergrundgruppeIstDerProzess()
+    {
+        var (_, _, _, p) = Program();
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TIOCGPGRP, Base));
+        Assert.AreEqual(p.Pid, BitConverter.ToInt32(p.Mem.Data, 0));
+        BitConverter.GetBytes(p.Pid).CopyTo(p.Mem.Data, 0x10);
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TIOCSPGRP, Base + 0x10));
+        BitConverter.GetBytes(77).CopyTo(p.Mem.Data, 0x10);
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TIOCSPGRP, Base + 0x10));
+        BitConverter.GetBytes(-1).CopyTo(p.Mem.Data, 0x10);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TIOCSPGRP, Base + 0x10));
+    }
+
+    [TestMethod]
+    public void OhneSitzungKeinTerminalUndFehlerWieLinux()
+    {
+        var p = new Proc(new TerminalDescriptor(new Lines()));
+        Assert.AreEqual(-LinuxSyscalls.ENOTTY, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TIOCGWINSZ, Base), "serieller Prüflauf bleibt voll gepuffert");
+        Assert.AreEqual(-LinuxSyscalls.ENOTTY, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCGETS, Base));
+
+        var (_, _, _, q) = Program();
+        Assert.AreEqual(-LinuxSyscalls.EBADF, Call(q, LinuxSyscalls.Ioctl, 3, LinuxSyscalls.TCGETS, Base));
+        Assert.AreEqual(-LinuxSyscalls.ENOTTY, Call(q, LinuxSyscalls.Ioctl, 0, 0x541B, Base), "FIONREAD nicht umgesetzt");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(q, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCGETS, 8));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(q, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCSETS, 8));
+    }
+
+    [TestMethod]
+    public void ShellMeldetFenstergroesseGeklemmt()
+    {
+        var shell = new ShellService();
+        Assert.AreEqual(((ushort)24, (ushort)80), shell.WindowSize);
+        shell.SetWindowSize(0, 100000);
+        Assert.AreEqual(((ushort)1, (ushort)0xffff), shell.WindowSize);
+    }
 }

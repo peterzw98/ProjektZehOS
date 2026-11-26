@@ -427,6 +427,9 @@ public sealed class TerminalDescriptorTests
         Assert.AreEqual("a\tb", TerminalDescriptor.Printable("a\u0007\u0000\tb\u007f"));
         Assert.AreEqual("x", TerminalDescriptor.Printable("x\x1b["), "abgeschnittene Folge");
         Assert.AreEqual("äö", TerminalDescriptor.Printable("äö"));
+        Assert.AreEqual("ab", TerminalDescriptor.Printable("ab\r\x1b[0m"), "\\r vor Steuerfolgen ist noch Zeilenende (Review P3 a)");
+        Assert.AreEqual("neu", TerminalDescriptor.Printable("alt\r\x1b[Kneu"), "\\r ESC[K Text");
+        Assert.AreEqual("x", TerminalDescriptor.Printable("abc\r\bx"));
     }
 
     [TestMethod]
@@ -464,5 +467,42 @@ public sealed class TerminalDescriptorTests
         Assert.AreEqual(TerminalDescriptor.MaxLine, lines.Text[0].Length);
         terminal.Flush();
         Assert.AreEqual("x", lines.Text[1]);
+    }
+
+    [TestMethod]
+    public void CutNeverSplitsAnEscapeOrACharacter()
+    {
+        // Review P3 b: Die Folge am Ende der vollen Zeile wandert ganz in die nächste.
+        var lines = new Lines();
+        var terminal = new TerminalDescriptor(lines);
+        byte[] fill = Enumerable.Repeat((byte)'x', TerminalDescriptor.MaxLine - 3).ToArray();
+        terminal.Write(fill);
+        terminal.Write("\x1b[31mrot"u8);
+        terminal.Flush();
+        Assert.AreEqual(2, lines.Text.Count);
+        Assert.AreEqual(TerminalDescriptor.MaxLine - 3, lines.Text[0].Length);
+        Assert.AreEqual("rot", lines.Text[1], "kein \"[31m\" sichtbar");
+
+        lines.Text.Clear();
+        terminal.Write(Enumerable.Repeat((byte)'x', TerminalDescriptor.MaxLine - 1).ToArray());
+        terminal.Write("ä!"u8);
+        terminal.Flush();
+        Assert.AreEqual(TerminalDescriptor.MaxLine - 1, lines.Text[0].Length);
+        Assert.AreEqual("ä!", lines.Text[1], "UTF-8-Zeichen bleibt ganz");
+
+        Assert.AreEqual(-1, TerminalDescriptor.IncompleteTail("ab\x1b[0m"u8.ToArray(), 6));
+        Assert.AreEqual(2, TerminalDescriptor.IncompleteTail("ab\x1b[1;3"u8.ToArray(), 7));
+        Assert.AreEqual(2, TerminalDescriptor.IncompleteTail("ab\x1b]0;Tit"u8.ToArray(), 9));
+        Assert.AreEqual(-1, TerminalDescriptor.IncompleteTail("ab\x1b]0;T\a"u8.ToArray(), 8));
+        Assert.AreEqual(2, TerminalDescriptor.IncompleteTail("ab\x1b"u8.ToArray(), 3));
+        Assert.AreEqual(-1, TerminalDescriptor.IncompleteTail("ab\x1bM"u8.ToArray(), 4));
+        Assert.AreEqual(1, TerminalDescriptor.IncompleteTail(new byte[] { (byte)'a', 0xe2, 0x82 }, 3));
+        Assert.AreEqual(-1, TerminalDescriptor.IncompleteTail(new byte[] { (byte)'a', 0xe2, 0x82, 0xac }, 4));
+
+        // Eine einzige Folge über die ganze Zeile geht so, statt endlos zu warten.
+        lines.Text.Clear();
+        terminal.Write("\x1b]"u8);
+        terminal.Write(Enumerable.Repeat((byte)'t', TerminalDescriptor.MaxLine).ToArray());
+        Assert.AreEqual(1, lines.Text.Count);
     }
 }

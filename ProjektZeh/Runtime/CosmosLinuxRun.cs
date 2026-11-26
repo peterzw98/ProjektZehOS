@@ -164,6 +164,7 @@ internal static unsafe class CosmosLinuxRun
             };
             Running target = run;
             session.OnInterrupt = () => Abort(target, Interrupted);
+            session.SizeSource = () => shell.WindowSize;
             ResultErr attached = shell.AttachForeground(session);
             if (!attached.IsOK())
             {

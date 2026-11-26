@@ -29,7 +29,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 218 | `set_tid_address` | merkt die Adresse, liefert die Thread-ID |
 | 39, 186 | `getpid`, `gettid` | Prozess-ID |
 | 273 | `set_robust_list` | `0` (ohne Wirkung) |
-| 16 | `ioctl` | `-ENOTTY` für gültige fd, sonst `-EBADF` (musl fragt damit nach dem Terminal) |
+| 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 ebenfalls monoton: Abweichung); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
 | 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN` |
 | 63 | `uname` | Linux / zehos / 6.1.0-zehos / x86_64 |
@@ -83,8 +83,14 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
   Anonyme Abbildungen ab 16 TiB (`MmapBase`), `brk` wächst bis an die nächste Belegung; höchstens 512 MiB Frames je Prozess, darüber Abbruch.
 - Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); jeder andere ist `-EBADF`.
   Lesen (fd 0) über `LinuxTerminalSession`: Enter-Zeilen des Fensters mit `\n`, Strg+D Eingabeende; ohne Sitzung (Gastprobe) leer wie `/dev/null`.
-  Wartet das Programm auf Eingabe, wird die angefangene Zeile (`> `) zur Eingabeaufforderung im Fenster. `ioctl(TCGETS)` bleibt `-ENOTTY`
-  (kein Terminal: musl puffert stdout voll, Programme müssen vor dem Lesen `fflush` rufen).
+  Wartet das Programm auf Eingabe, wird die angefangene Zeile (`> `) zur Eingabeaufforderung im Fenster. Ausgabe: ANSI-Folgen fallen weg, `\r` beginnt die
+  Zeile erst beim nächsten sichtbaren Zeichen neu, die Teilung nach 4096 Bytes trennt keine ESC-Folge und kein UTF-8-Zeichen.
+- termios (V3 termios): Mit Sitzung (Fenster) sind fd 0–2 ein Terminal, `isatty` ist wahr und musl puffert stdout zeilenweise (musl prüft `TIOCGWINSZ`).
+  `TCGETS` liefert die Kernelstruktur (36 Bytes) eines frischen Linux-Terminals: kanonisch mit Echo (`ICANON ECHO ISIG IEXTEN …`, `OPOST ONLCR`, `^C ^D`, VMIN 1).
+  `TCSETS*` speichert nur (fd 0–2 teilen den Zustand): Das Fenster liest immer ganze Zeilen, ein Rohmodus wird zurückgemeldet, aber nicht umgesetzt;
+  `TCSETSF` verwirft keine getippten Zeilen. `TIOCGWINSZ` aus dem Fenster (sichtbare Zeilen, Spalten; ohne Meldung 24 × 80, Pixel 0), `TIOCSWINSZ` ohne Wirkung.
+  `TIOCGPGRP` liefert die PID, `TIOCSPGRP` nimmt nur sie an (sonst `-ESRCH`, negativ `-EINVAL`); `getpgrp`/`setpgid` gibt es noch nicht.
+  Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.
 - Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ELF bis 128 MiB,
   ein Programm zugleich, eigener Kernelthread mit eigener `UserPageTable`). Aus der Shell läuft es neben der Ereignisschleife (V3 stdin): der Befehl kehrt
   sofort zurück, die Shell holt die Ausgabe je Bild ab, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab (`signal 2`), ein zweites Strg+C gibt das

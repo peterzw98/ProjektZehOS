@@ -151,6 +151,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         Buffer.Reflow(Math.Max(1, (width - 16) / CellWidth));
         pager?.Reflow(Math.Max(1, (width - 16) / CellWidth));
         visibleRows = Math.Max(1, (height - 16) / CellHeight - 1);
+        shell.SetWindowSize(visibleRows, Buffer.Columns);
         ScrollOffset = Math.Clamp(ScrollOffset, 0, Math.Max(0, Buffer.Count - visibleRows));
         pagerOffset = Math.Clamp(pagerOffset, 0, MaximumScroll);
         ValidateSelection();

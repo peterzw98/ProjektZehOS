@@ -455,14 +455,22 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
         }
 
         // Eine solche Seite bleibt als gesperrter Bereich (None) belegt (V3-Review P3 a): Sonst legte ein späteres mmap oder brk
-        // dort einen neuen Bereich an, und Programm wie Kernel sähen den alten, nicht genullten Frame. Der Kernel greift auf None
-        // nie zu, ein Seitenfehler dort bricht ab; ein späteres munmap versucht das Aufheben erneut.
+        // dort einen neuen Bereich an, und Programm wie Kernel sähen den alten, nicht genullten Frame. Die Sperre gilt nur für die
+        // Karte (V3-Review P3 c): Der Kernel greift über IUserMemory nicht mehr zu, und ein Seitenfehler dort bricht ab. Die Tabelle
+        // bildet die Seite aber weiter mit den alten Rechten ab; das Programm greift ohne Fehler weiter auf den alten Inhalt zu, bis
+        // ein späteres munmap das Aufheben erneut versucht oder Destroy die Tabelle auflöst.
+        bool reserved = true;
         foreach (ulong page in stuck)
         {
-            _map.Reserve(page, Page, MapAccess.None, Placement.FixedNoReplace);
+            // Der Bereich ist eben frei geworden und nur dieser Thread ändert die Karte; scheitert es doch, meldet munmap den
+            // Fehler, statt die Seite unbemerkt zur Wiedervergabe freizugeben. Der Frame bleibt in jedem Fall beim Prozess.
+            if (!_map.Reserve(page, Page, MapAccess.None, Placement.FixedNoReplace).IsOK())
+            {
+                reserved = false;
+            }
         }
 
-        return true;
+        return reserved;
     }
 
     /// <summary>Seiten mit Frame in [start, end): über die Frames, nicht über den Bereich, der Terabytes groß sein kann.</summary>
