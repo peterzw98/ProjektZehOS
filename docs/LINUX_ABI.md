@@ -90,7 +90,7 @@ Grenzen (Review V2, bewusst offen):
   `brk`, `mmap`) entstehen genullt beim ersten Zugriff (Seitenfehler oder Kernelzugriff über `IUserMemory`, der dieselben Rechte prüft und alles oder nichts kopiert).
   `mprotect` behält Frame und Inhalt (auch über `PROT_NONE`). `PROT_WRITE|PROT_EXEC` scheitert (W^X: `mmap` `-ENOMEM`, `mprotect` `-ENOMEM`).
   Anonyme Abbildungen ab 16 TiB (`MmapBase`), `brk` wächst bis an die nächste Belegung; höchstens 512 MiB Frames je Prozess, darüber Abbruch.
-- Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); jeder andere ist `-EBADF`.
+- Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); weitere Nummern sind Dateien (V8).
   Lesen (fd 0) über `LinuxTerminalSession`: Enter-Zeilen des Fensters mit `\n`, Strg+D Eingabeende; ohne Sitzung (Gastprobe) leer wie `/dev/null`.
   Wartet das Programm auf Eingabe, wird die angefangene Zeile (`> `) zur Eingabeaufforderung im Fenster. `ioctl(TCGETS)` bleibt `-ENOTTY`
   (kein Terminal: musl puffert stdout voll, Programme müssen vor dem Lesen `fflush` rufen).
@@ -122,5 +122,17 @@ Grenzen (Review V2, bewusst offen):
 - `open`-Flags: Zugriff, `O_CREAT O_EXCL O_TRUNC O_APPEND O_DIRECTORY O_NOFOLLOW` wirken; `O_NOCTTY O_NONBLOCK O_SYNC O_DSYNC O_LARGEFILE O_NOATIME O_CLOEXEC`
   werden angenommen (CLOEXEC gehört zur Deskriptortabelle); `O_TMPFILE` `-EOPNOTSUPP`, übrige (`O_DIRECT`, `O_PATH`, `O_ASYNC`) `-EINVAL`;
   `O_CREAT|O_DIRECTORY` `-EINVAL` wie Linux ab 6.4. Eine entfernte, offene Datei bleibt les- und abfragbar (`MemoryFileStore`; Platte im Gast noch offen).
-- Offen: Anbindung an `run` (Prozesswurzel je Programm auf der Datenplatte), Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/zero`, `/dev/urandom`,
+- Offen: Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/zero` (braucht `s1/badptr`), `/dev/urandom`,
   `/tmp` im Speicher, Eingabe über `/dev/tty`.
+
+## Dateien im Prozess (V8)
+
+- `LinuxUserProcess` ist `ILinuxFiles`: Deskriptortabelle mit 1024 Nummern (0–2 auf das Terminal, darüber `-EMFILE`), Arbeitsverzeichnis ab "/",
+  Dateisystem aus dem Konstruktor (ohne Angabe ein leeres `MemoryFileStore`, das mit dem Prozess endet). `close` auf 0–2 entfernt nur die Nummer, das Terminal
+  bleibt offen. Beim Ende (`Destroy`) schließt der Prozess jede noch offene Datei genau einmal, auch über `dup` geteilte, danach erst gibt er den Speicher frei.
+- `run` aus der Shell: Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis (`cd /data/s1`, dann `run files`); in "/"
+  und direkt auf einem Einhängepunkt (`/data`: dort lägen Konten und Pakete) bekommt das Programm ein leeres Dateisystem im Arbeitsspeicher. Lässt sich die Wurzel nicht öffnen, startet das Programm nicht.
+  Namen ohne Groß-/Kleinschreibung (FAT-Datenplatte), auch wenn die Wurzel auf einem anderen Laufwerk liegt.
+- Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
+  die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
+  fände die Dateien des ersten.

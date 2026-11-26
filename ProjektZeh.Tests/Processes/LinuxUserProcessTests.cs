@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 using ProjektZeh.Shell;
 
 namespace ProjektZeh.Tests.Processes;
@@ -383,6 +384,118 @@ public sealed class LinuxUserProcessTests
         LinuxSyscalls.Dispatch(ref exit, process);
         Assert.AreEqual(3, exited);
         Assert.AreEqual(3, process.ExitCode);
+    }
+
+    private static long Call(LinuxUserProcess process, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0)
+    {
+        var args = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3 };
+        return LinuxSyscalls.Dispatch(ref args, process);
+    }
+
+    private static ulong PutString(LinuxUserProcess process, ulong at, string text)
+    {
+        Assert.IsTrue(process.TryWrite(at, Encoding.UTF8.GetBytes(text + "\0")));
+        return at;
+    }
+
+    [TestMethod]
+    public void FilesThroughDispatcherUseOwnTableAndFileSystem()
+    {
+        // V8: der echte Prozess als ILinuxFiles mit dem V7-Dateisystem (Arbeitsspeicher): mkdir, chdir, open relativ, write, dup,
+        // close, erneut lesen. Ohne die Verdrahtung wäre jeder dieser Aufrufe -ENOSYS.
+        var (process, _, _, _) = Start();
+        Assert.IsInstanceOfType<ILinuxFiles>(process);
+        Assert.AreEqual("/", process.Cwd);
+        const long Read = 0, Write = 1, Open = 2, Close = 3, Dup = 32, Getcwd = 79, Chdir = 80, Mkdir = 83;
+        const ulong Buf = Data + 0x800;
+        Assert.AreEqual(0L, Call(process, Mkdir, PutString(process, Data + 0x100, "d"), 0x1ED));
+        Assert.AreEqual(0L, Call(process, Chdir, PutString(process, Data + 0x100, "d")));
+        Assert.AreEqual("/d", process.Cwd);
+
+        long fd = Call(process, Open, PutString(process, Data + 0x100, "f.txt"), (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.AreEqual(3L, fd, "kleinste freie Nummer nach dem Terminal");
+        Assert.IsTrue(process.TryWrite(Buf, "abc"u8));
+        Assert.AreEqual(3L, Call(process, Write, (ulong)fd, Buf, 3));
+        long copy = Call(process, Dup, (ulong)fd);
+        Assert.AreEqual(4L, copy);
+        Assert.AreSame(process.GetDescriptor(3), process.GetDescriptor(4));
+        Assert.AreEqual(0L, Call(process, Close, (ulong)fd));
+        Assert.AreEqual(0L, Call(process, Close, (ulong)copy));
+        Assert.AreEqual(-LinuxSyscalls.EBADF, Call(process, Close, (ulong)copy));
+
+        long again = Call(process, Open, PutString(process, Data + 0x100, "/d/f.txt"), (ulong)LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(3L, again, "geschlossene Nummer wird wieder vergeben");
+        Assert.AreEqual(3L, Call(process, Read, (ulong)again, Buf + 0x100, 16));
+        byte[] got = new byte[3];
+        Assert.IsTrue(process.TryRead(Buf + 0x100, got));
+        Assert.AreEqual("abc", Encoding.UTF8.GetString(got));
+        Assert.AreEqual(3L, Call(process, Getcwd, Buf + 0x200, 64), "Länge mit NUL");
+    }
+
+    [TestMethod]
+    public void DescriptorTableBoundsAndTerminalStay()
+    {
+        var (process, _, _, output) = Start();
+        Assert.IsNull(process.GetDescriptor(-1));
+        Assert.IsNull(process.GetDescriptor(LinuxUserProcess.MaxDescriptors));
+        Assert.IsNull(process.GetDescriptor(3));
+        ILinuxDescriptor terminal = process.GetDescriptor(1)!;
+        Assert.AreSame(terminal, process.GetDescriptor(0));
+        Assert.AreSame(terminal, process.GetDescriptor(2));
+
+        Assert.AreEqual(10, process.AddDescriptor(terminal, 10));
+        for (int fd = 3; fd < LinuxUserProcess.MaxDescriptors; fd++)
+        {
+            if (fd != 10)
+            {
+                Assert.AreEqual(fd, process.AddDescriptor(terminal, 0));
+            }
+        }
+
+        Assert.AreEqual((int)-LinuxErrno.EMFILE, process.AddDescriptor(terminal, 0));
+        Assert.AreEqual((int)-LinuxErrno.EMFILE, process.AddDescriptor(terminal, LinuxUserProcess.MaxDescriptors));
+        Assert.IsFalse(process.RemoveDescriptor(-1));
+        Assert.IsFalse(process.RemoveDescriptor(LinuxUserProcess.MaxDescriptors));
+        Assert.IsTrue(process.RemoveDescriptor(1));
+        Assert.IsFalse(process.RemoveDescriptor(1));
+        Assert.AreEqual(1, process.AddDescriptor(terminal, 0));
+
+        // close(1) schließt das Terminal nicht: Es gehört dem Prozess, fd 2 schreibt weiter.
+        Assert.AreEqual(0L, Call(process, 3, 1));
+        Assert.IsTrue(process.TryWrite(Data + 0x200, "x\n"u8));
+        Assert.AreEqual(2L, Call(process, 1, 2, Data + 0x200, 2));
+        Assert.AreEqual("x", output.Text.Last());
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void DestroyClosesEachOpenFileOnce()
+    {
+        var store = new MemoryFileStore();
+        var output = new Lines();
+        var terminal = new TerminalDescriptor(output);
+        var fileSystem = new LinuxFileSystem(store, terminal);
+        byte[] elf = Elf();
+        UserImage image = ElfLoader.Load(elf, ["prog"], [], new ElfLoadOptions { Random = new byte[16], StackSize = 64 * 1024 });
+        var pages = new FakePages();
+        var process = new LinuxUserProcess(pages, terminal, 7, 64 << 20, fileSystem: fileSystem);
+        Assert.IsTrue(process.Load(image, elf).IsOK());
+        Assert.AreSame(fileSystem, process.FileSystem);
+
+        long a = Call(process, 2, PutString(process, Data + 0x100, "/a"), (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat), 0x1A4);
+        long b = Call(process, 2, PutString(process, Data + 0x100, "/b"), (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.AreEqual(7L, Call(process, 33, (ulong)a, 7), "dup2 auf eine hohe Nummer");
+        Assert.AreEqual(2, fileSystem.OpenFiles);
+        var file = (ILinuxFile)process.GetDescriptor((int)a)!;
+
+        process.Destroy();
+        Assert.AreEqual(0, fileSystem.OpenFiles, "jede Datei einmal geschlossen, auch die geteilte");
+        Assert.IsNull(process.GetDescriptor((int)a));
+        Assert.IsNull(process.GetDescriptor((int)b));
+        Assert.IsNull(process.GetDescriptor(7));
+        Assert.IsNull(process.GetDescriptor(1), "Tabelle ganz leer");
+        Assert.AreEqual(-LinuxErrno.EBADF, file.Write("x"u8), "geschlossen");
+        Assert.AreEqual(0, pages.Frames.Count, "Speicher trotzdem frei");
     }
 }
 

@@ -4,6 +4,8 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 using Cosmos.Kernel.System.Diagnostics;
+using Cosmos.Kernel.System.FileSystem;
+using ProjektZeh.Storage;
 using ProjektZeh.Shell;
 
 namespace ProjektZeh.Runtime;
@@ -13,11 +15,17 @@ namespace ProjektZeh.Runtime;
 /// eines eingebetteten Bündels (<c>scripts/test-linux-run.py bundle</c>) über <see cref="CosmosLinuxRun"/> mit den Argumenten und der
 /// Umgebung von <c>experiments/LinuxAbi/run-linux.py</c> und schreibt Ausgabe und Status seriell (<c>LINUX_RUN</c>-Zeilen). Danach hält
 /// der Kernel an. Nur Testbau: Das Bündel liegt im Kernelabbild.
+/// <para>
+/// Dateien (V8): Wie <c>run-linux.py</c> ein frisches Verzeichnis je Programm nimmt, bekommt hier jedes Programm die Wurzel
+/// <see cref="RootBase"/>/&lt;name&gt; auf der Datenplatte, wenn <c>/data</c> eingehängt ist (das Gastskript startet mit einem frischen
+/// Image), sonst ein leeres Dateisystem im Arbeitsspeicher. Die Zeile <c>LINUX_RUN root</c> nennt, welches.
+/// </para>
 /// </summary>
 internal static unsafe partial class CosmosLinuxRunProbe
 {
     private const uint Magic = 0x3152_4C5A; // "ZLR1"
     private const int TimeoutSeconds = 20;
+    private const string RootBase = "/data/linuxrun";
 
     [LibraryImport("*", EntryPoint = "zehos_linux_run_bundle_address"), SuppressGCTransition] private static partial ulong BundleAddress();
     [LibraryImport("*", EntryPoint = "zehos_linux_run_bundle_size"), SuppressGCTransition] private static partial ulong BundleSize();
@@ -60,7 +68,10 @@ internal static unsafe partial class CosmosLinuxRunProbe
                 at += 4 + size;
 
                 Write("begin " + name + " size=" + size);
-                CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds);
+                string? root = StorageLock.Run(() => VfsManager.TryGetMount("/data", out _)) ? RootBase + "/" + name : null;
+                Write("root " + name + " " + (root ?? "memory"));
+                CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds,
+                    root: root);
                 Write(outcome.Ran
                     ? "status " + name + " " + outcome.Status + (outcome.Detail.Length > 0 ? " (" + outcome.Detail + ")" : string.Empty)
                     : "status " + name + " notrun (" + outcome.Detail + ")");
