@@ -524,6 +524,8 @@ public sealed class LinuxUserProcessTests
         Assert.IsNull(process.GetDescriptor(1), "Tabelle ganz leer");
         Assert.AreEqual(-LinuxErrno.EBADF, file.Write("x"u8), "geschlossen");
         Assert.AreEqual(0, pages.Frames.Count, "Speicher trotzdem frei");
+    }
+
     private static long Sys(LinuxUserProcess process, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0, ulong a5 = 0)
     {
         var a = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4, A5 = a5 };
