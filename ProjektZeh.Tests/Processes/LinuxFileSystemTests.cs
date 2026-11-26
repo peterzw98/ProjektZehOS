@@ -622,6 +622,53 @@ public sealed class LinuxFileSystemTests
     }
 
     [TestMethod]
+    public void TruncateOfRemovedOpenFileCannotDriveQuotaNegative()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        // Gegenfall aus dem V14-Review: ftruncate verkleinert eine entfernte, offene Datei. Würde unlink die Länge sofort gutschreiben,
+        // zählte das Verkleinern ein zweites Mal und das Kontingent liefe ins Minus (vorher -2 MiB, Kontingent umgehbar).
+        const int Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, 2L * Mib);
+            ILinuxFile f = OpenOk(fs, "/big", Create);
+            Assert.AreEqual(0L, f.Truncate(2L * Mib));
+            Assert.AreEqual(2L * Mib, store.GrownBytes);
+            Assert.AreEqual(0L, fs.Unlink("/big"));
+            Assert.AreEqual(2L * Mib, store.GrownBytes, "entfernt, aber offen: weiter belegt");
+            Assert.AreEqual(0L, f.Truncate(Mib));
+            Assert.AreEqual((long)Mib, store.GrownBytes);
+            Assert.AreEqual(0L, f.Truncate(0));
+            Assert.AreEqual(0L, store.GrownBytes, "Verkleinern zählt genau einmal");
+            Assert.AreEqual(0L, f.Close());
+            Assert.AreEqual(0L, store.GrownBytes, "Schließen schreibt nur die Restlänge 0 gut");
+
+            // Wieder wachsen auf dem entfernten fd ist Wachstum wie jedes andere: über das Kontingent -ENOSPC.
+            ILinuxFile g = OpenOk(fs, "/g", Create);
+            Assert.AreEqual(0L, fs.Unlink("/g"));
+            Assert.AreEqual(0L, g.Truncate(2L * Mib));
+            Assert.AreEqual(-E.ENOSPC, g.Truncate(2L * Mib + 1));
+            Assert.AreEqual(0L, g.Truncate(Mib));
+            Assert.AreEqual(0L, g.Close());
+            Assert.AreEqual(0L, store.GrownBytes);
+            ILinuxFile h = OpenOk(fs, "/h", Create);
+            Assert.AreEqual(0L, h.Truncate(2L * Mib), "volles Kontingent wieder verfügbar");
+            Assert.AreEqual(-E.ENOSPC, h.Truncate(2L * Mib + 1));
+            Assert.AreEqual(0L, h.Close());
+            Assert.AreEqual(0, store.OpenEntryCount);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
     public void PendingNameOfRemovedOpenFileIsGoneAndCreditedOnce()
     {
         if (OperatingSystem.IsWindows())
