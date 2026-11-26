@@ -71,6 +71,10 @@ public sealed class LinuxTerminalInputTests
         public ulong MapAnonymous(ulong len, int prot) => 0;
         public bool Unmap(ulong a, ulong l) => false;
         public bool Protect(ulong a, ulong l, int p) => false;
+        public bool MapFixed(ulong a, ulong l, int p) => false;
+        public bool Discard(ulong a, ulong l) => false;
+        public ulong Uid => 1000;
+        public ulong Gid => 1000;
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 1;
