@@ -24,7 +24,7 @@ Neuer Fall `sysmed` (`probe.S`, `CosmosUserModeProbe.cs`): 100 000 Aufrufe von `
 
 Median über die Läufe: **378 Ticks netto ≈ 0,15 µs** (Regel: ≤ 5 µs). Alle Läufe bestanden alle 19 Fälle (`done failed=0`). Die Schleife `loop` (1 000 000 Aufrufe, Mittelwert) stimmt: 371–384 Mio. Ticks ≈ 371–384 Ticks je Aufruf (inkl. Schleife).
 
-Grenzen: KVM auf dem Host, kein TCG (dort ist Zeit sinnlos); Kosten von `fxsave`/`swapgs` einzeln nicht getrennt (der Aufruf enthält `swapgs` und Rahmenwechsel, `fxsave` nur bei Wechsel auf einen anderen Thread); mit `max` gab es einzelne Ausreißer bis 84 000 Ticks (Host-Verdrängung), der Median ist davon nicht berührt.
+Grenzen: KVM auf dem Host, kein TCG (dort ist Zeit sinnlos); Kosten von `fxsave`/`swapgs` einzeln nicht getrennt (der Aufruf enthält `swapgs` und Rahmenwechsel, `fxsave` nur bei Wechsel auf einen anderen Thread); einzelne Ausreißer (Höchstwert bis 84 000 Ticks, vermutlich Host-Verdrängung) berühren den Median nicht.
 
 ## 2. Doom-Bildzeit (Normalbau, KVM, ohne Probe)
 
