@@ -89,20 +89,36 @@ internal sealed class TerminalDescriptor : ILinuxInput
             return 0;
         }
 
-        // Wie an einem Terminal steht eine angefangene Zeile ("> ") schon da, wenn das Programm auf Eingabe wartet: Die Shell zeigt
-        // sie als Eingabeaufforderung und gibt sie mit der Enter-Zeile aus.
-        if (_length > 0 && !_session.InputReady)
-        {
-            _session.SetPrompt(_line.AsSpan(0, _length).ToArray());
-            _length = 0;
-        }
-
+        PublishPrompt();
         return _session.ReadInput(dst);
     }
 
     public bool InputReady => _session?.InputReady ?? true;
 
-    public bool WaitInput(long timeoutMs) => _session?.WaitInput(timeoutMs) ?? true;
+    public bool WaitInput(long timeoutMs)
+    {
+        if (_session == null)
+        {
+            return true;
+        }
+
+        // poll wartet wie read auf eine Zeile (etwa REPLs, die erst pollen): die Aufforderung muss schon dabei sichtbar sein.
+        PublishPrompt();
+        return _session.WaitInput(timeoutMs);
+    }
+
+    /// <summary>
+    /// Wie an einem Terminal steht eine angefangene Zeile ("> ") schon da, wenn das Programm auf Eingabe wartet: Die Shell zeigt
+    /// sie als Eingabeaufforderung und gibt sie mit der Enter-Zeile aus.
+    /// </summary>
+    private void PublishPrompt()
+    {
+        if (_length > 0 && !_session!.InputReady)
+        {
+            _session.SetPrompt(_line.AsSpan(0, _length).ToArray());
+            _length = 0;
+        }
+    }
 
     /// <summary>Holt eine nicht beantwortete Eingabeaufforderung zurück in die Zeile: Weitere Ausgaben setzen sie fort.</summary>
     private void Reclaim()

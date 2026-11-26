@@ -227,6 +227,27 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void AufforderungErscheintAuchBeimWartenInPoll()
+    {
+        var (session, terminal, clock, p) = Program();
+        var shown = new Lines();
+        BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(0, 4), 0);
+        BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(4, 2), (short)1);
+        terminal.Write("> "u8);
+        clock.OnSleep = n =>
+        {
+            if (n != 1) return;
+            Assert.AreEqual("> ", session.Prompt, "REPL wartet in poll, nicht in read");
+            session.Submit("quit");
+        };
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Poll, Base, 1, unchecked((ulong)-1)));
+        Assert.AreEqual(5, Call(p, LinuxSyscalls.Read, 0, Base + 0x100, 64));
+        terminal.Write("tschuess\n"u8);
+        session.Drain(shown);
+        Assert.AreEqual("tschuess", string.Join("|", shown.All));
+    }
+
+    [TestMethod]
     public void UnbeantworteteAufforderungGehtBeiWeitererAusgabeInDieZeile()
     {
         var (session, terminal, clock, p) = Program();
