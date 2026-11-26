@@ -88,6 +88,7 @@
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxPipe.cs" Link="Processes\Syscalls\LinuxPipe.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxUnixSocket.cs" Link="Processes\Syscalls\LinuxUnixSocket.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsSocket.cs" Link="Processes\Syscalls\LinuxSyscallsSocket.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxUnixNames.cs" Link="Processes\Syscalls\LinuxUnixNames.cs" />
     <Compile Include="..\ProjektZeh\Processes\Vfs\*.cs" Exclude="..\ProjektZeh\Processes\Vfs\Cosmos*.cs" Link="Processes\Vfs\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />

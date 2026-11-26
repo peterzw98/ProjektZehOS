@@ -20,6 +20,9 @@ internal sealed class LinuxIds
     /// <param name="start">Die erste Vergabe liefert die nächste freie Nummer nach <paramref name="start"/> (wie bisher PID + 1).</param>
     public LinuxIds(int start) => _last = start;
 
+    /// <summary>V16: Namen der Unix-Sockets; wie die PIDs ein Namensraum je Lauf (eigene Blattsperre).</summary>
+    public LinuxUnixNames UnixNames { get; } = new();
+
     public void Add(int id)
     {
         lock (_gate)
@@ -96,7 +99,7 @@ internal interface ILinuxSpawn
 /// Elternprozesses blockiert (im Kernel läuft das Kind auf genau diesem Kernelthread). execve lädt das Programm in einen neuen Adressraum
 /// (eigene Seitentabelle) und gibt den Elternthread frei.
 /// </summary>
-internal sealed partial class LinuxUserProcess
+internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 {
     /// <summary>Größte Datei, die execve lädt (wie <c>CosmosLinuxRun.MaxFileSize</c>).</summary>
     public const int MaxExecFileSize = 128 << 20;
@@ -107,6 +110,9 @@ internal sealed partial class LinuxUserProcess
     // Speicherbesitzer im vfork-Kind (bis execve oder exit); null in jedem Prozess mit eigenem Adressraum.
     private readonly LinuxUserProcess? _vforkOf;
     private readonly LinuxIds _ids;
+
+    /// <summary>V16: Namenstabelle der Unix-Sockets des Laufs (geteilt über <see cref="LinuxIds"/>).</summary>
+    public LinuxUnixNames UnixNames => _ids.UnixNames;
 
     // Kinder dieses Prozesses; die Liste ist zugleich die Sperre (ChildGate), zuunterst in der Reihenfolge wie _threadGate.
     private readonly List<LinuxChild> _children = new();

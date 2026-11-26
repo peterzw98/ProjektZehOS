@@ -1,0 +1,60 @@
+socketpair=0 errno=0
+poll_leer=1 revents=4
+setfl=0 errno=0
+nonblock=1
+read_nonblock=-1 errno=11
+spawn=0
+sendmsg=1 errno=0
+poll_daten=1 revents=1
+datei_vom_kind=7 inhalt
+echo_write=4 errno=0
+echo_read=4 echo
+wait_ok=1 exited=1 code=0
+poll_ende=1 revents=17
+eof=0 errno=0
+epipe=-1 errno=32
+socket_ok=1 cloexec=1
+listen_unbenannt=-1 errno=22
+bind_abstrakt=0 errno=0
+bind_doppelt=-1 errno=98
+listen=0 errno=0
+poll_ohne_verbindung=0 revents=0
+connect=0 errno=0
+poll_mit_verbindung=1 revents=1
+accept_ok=1 cloexec=1
+accept_name len=2 unbenannt
+write_c=2 errno=0
+read_x=2 hi
+write_x=2 errno=0
+read_c=2 zu
+read_c_leer=-1 errno=11
+sockname_s len=12 abstrakt=zehos-v16
+peername_c len=12 abstrakt=zehos-v16
+peername_x len=2 unbenannt
+peername_s=-1 errno=107
+accept_leer=-1 errno=11
+connect_fehlt=-1 errno=111
+eof_nach_close=0 errno=0
+bind_wieder=0 errno=0
+bind_pfad=0 errno=0
+listen_pfad=0 errno=0
+bind_pfad_doppelt=-1 errno=98
+access_sock=0
+connect_pfad=0 errno=0
+accept_pfad_ok=1
+write_pfad=2 errno=0
+read_pfad=2 pf
+sockname_pfad len=7 pfad=sock
+connect_datei=-1 errno=111
+unlink_sock=0 errno=0
+connect_nach_unlink=-1 errno=2
+seq_bind=0 errno=0
+seq_listen=0 errno=0
+seq_connect=0 errno=0
+seq_accept_ok=1
+seq_send1=1 errno=0
+seq_send2=2 errno=0
+seq_recv1=1 errno=0
+seq_recv2=2 errno=0
+connect_falscher_typ=-1 errno=111
+ende

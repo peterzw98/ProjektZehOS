@@ -62,7 +62,7 @@ internal sealed class LinuxSocketFds
 /// Prozesses, nicht des erzeugenden: Über SCM_RIGHTS und vfork benutzen auch andere Prozesse das Ende, und der Erzeuger darf vorher enden.
 /// </para>
 /// </summary>
-internal sealed class LinuxUnixSocket : ILinuxPollable, ILinuxInput
+internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILinuxStatusFlags
 {
     public const int SockStream = 1, SockSeqpacket = 5;
 
@@ -111,6 +111,12 @@ internal sealed class LinuxUnixSocket : ILinuxPollable, ILinuxInput
     public bool IsConnected => Volatile.Read(ref _link) != null;
 
     private bool IsStream => Type == SockStream;
+
+    /// <summary>Beim letzten close vor dem Schließen der Kanäle; ohne Umsetzung entfällt der Aufruf.</summary>
+    partial void OnLastClose();
+
+    /// <summary>poll eines lauschenden Sockets: setzt <paramref name="listening"/> und die Ereignisse; ohne Umsetzung entfällt der Aufruf.</summary>
+    partial void ListenEvents(short events, ref short result, ref bool listening);
 
     /// <summary>socketpair: zwei verbundene Enden desselben Typs.</summary>
     public static (LinuxUnixSocket A, LinuxUnixSocket B) CreatePair(int type, bool nonBlocking, int creatorPid = 0)
@@ -381,6 +387,8 @@ internal sealed class LinuxUnixSocket : ILinuxPollable, ILinuxInput
             return;
         }
 
+        OnLastClose(); // V16 senior2 (LinuxUnixSocket.Listen.cs): Namen freigeben, Wartende eines Listeners wecken
+
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {
@@ -421,6 +429,15 @@ internal sealed class LinuxUnixSocket : ILinuxPollable, ILinuxInput
     /// <summary>Bereitschaft wie Linux' unix_poll; unverbunden nur schreibbereit.</summary>
     public short PollEvents(short events)
     {
+        // Ein lauschendes Socket (listen) beantwortet poll selbst (POLLIN bei wartender Verbindung); Teil von senior2.
+        short listen = 0;
+        bool listening = false;
+        ListenEvents(events, ref listen, ref listening);
+        if (listening)
+        {
+            return listen;
+        }
+
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {

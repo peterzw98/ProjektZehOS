@@ -290,7 +290,18 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        return (flags & MetaAtRemovedir) != 0 ? f.FileSystem.Rmdir(path) : f.FileSystem.Unlink(path);
+        if ((flags & MetaAtRemovedir) != 0)
+        {
+            return f.FileSystem.Rmdir(path);
+        }
+
+        r = f.FileSystem.Unlink(path);
+        if (r == 0 && p is ILinuxUnixNames named)
+        {
+            named.UnixNames.Unlinked(path); // V16: unlink löst einen Socketnamen wie bei Linux
+        }
+
+        return r;
     }
 
     private static long DoMkdir(ILinuxProcess p, ILinuxFiles f, int dirfd, ulong pathPtr, uint mode)
@@ -308,7 +319,18 @@ internal static partial class LinuxSyscalls
         }
 
         r = LinuxPath.Resolve(p, f, newDirfd, newPtr, out string to);
-        return r < 0 ? r : f.FileSystem.Rename(from, to);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        r = f.FileSystem.Rename(from, to);
+        if (r == 0 && p is ILinuxUnixNames named)
+        {
+            named.UnixNames.Renamed(from, to); // V16: ein umbenannter Socket ist unter dem neuen Pfad erreichbar
+        }
+
+        return r;
     }
 
     private static long DoSymlink(ILinuxProcess p, ILinuxFiles f, ulong targetPtr, int dirfd, ulong linkPtr)

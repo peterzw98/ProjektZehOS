@@ -35,6 +35,19 @@ internal interface ILinuxPollable : ILinuxDescriptor
 }
 
 /// <summary>
+/// Ein Deskriptor mit Statusflags der offenen Datei (V16): fcntl F_GETFL/F_SETFL für Pipe-Enden und Unix-Sockets. O_NONBLOCK gehört wie
+/// bei Linux zur offenen Datei; dup und SCM_RIGHTS teilen es.
+/// </summary>
+internal interface ILinuxStatusFlags : ILinuxDescriptor
+{
+    /// <summary>O_NONBLOCK.</summary>
+    bool NonBlocking { get; set; }
+
+    /// <summary>Flags für F_GETFL: Zugriffsart (O_RDONLY, O_WRONLY, O_RDWR), dazu O_NONBLOCK.</summary>
+    int StatusFlags { get; }
+}
+
+/// <summary>
 /// Pipe innerhalb eines Prozesses (V13, pipe/pipe2): ein Ringpuffer bis <see cref="Capacity"/> Bytes, ein Lese- und ein Schreibende.
 /// LibCore (Ladybird) weckt seine Ereignisschleife über eine solche Pipe aus anderen Threads; deshalb blockieren Lesen und Schreiben
 /// wie bei Linux und poll wartet auf beide Enden.
@@ -316,7 +329,7 @@ internal sealed class LinuxPipe
 }
 
 /// <summary>Gemeinsames eines Pipe-Endes: Statusflags (O_NONBLOCK) und einmaliges Schließen.</summary>
-internal abstract class LinuxPipeEnd : ILinuxPollable
+internal abstract class LinuxPipeEnd : ILinuxPollable, ILinuxStatusFlags
 {
     public const int ONonblock = 0x800;
 
