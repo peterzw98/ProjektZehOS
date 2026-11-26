@@ -13,8 +13,10 @@ internal delegate void ByteSink(ReadOnlySpan<byte> data);
 /// ganze Zeilen; eine Zeile ohne Zeilenende bleibt deshalb bis zum nächsten <c>\n</c>, bis <see cref="MaxLine"/> Bytes oder bis
 /// <see cref="Flush"/> (Prozessende) stehen. Bytes werden erst beim Ausgeben als UTF-8 gelesen, damit ein Zeichen, das über zwei
 /// <c>write</c>-Aufrufe verteilt ist, ganz bleibt.
+/// Mit einer <see cref="LinuxTerminalSession"/> liest fd 0 die Enter-Zeilen des Fensters (V3 stdin); ohne sie ist die Eingabe
+/// leer wie <c>/dev/null</c> (Prüfläufe über die serielle Schnittstelle).
 /// </summary>
-internal sealed class TerminalDescriptor : ILinuxDescriptor
+internal sealed class TerminalDescriptor : ILinuxInput
 {
     /// <summary>Höchstens so viele Bytes ohne Zeilenende werden gesammelt, dann als Zeile ausgegeben.</summary>
     public const int MaxLine = 4096;
@@ -27,7 +29,10 @@ internal sealed class TerminalDescriptor : ILinuxDescriptor
     public TerminalDescriptor(ITextOutput output)
     {
         _output = output ?? throw new ArgumentNullException(nameof(output));
+        _session = output as LinuxTerminalSession;
     }
+
+    private readonly LinuxTerminalSession? _session;
 
     /// <summary>Bekommt jeden Schreibaufruf unverändert, bevor er in Zeilen zerlegt wird (Prüfskripte vergleichen Bytes).</summary>
     public ByteSink? Mirror { get; set; }
@@ -41,6 +46,7 @@ internal sealed class TerminalDescriptor : ILinuxDescriptor
         }
 
         Mirror?.Invoke(data);
+        Reclaim();
         foreach (byte b in data)
         {
             if (b == (byte)'\n')
@@ -69,10 +75,49 @@ internal sealed class TerminalDescriptor : ILinuxDescriptor
     /// <summary>Gibt eine angefangene Zeile aus (Prozessende).</summary>
     public void Flush()
     {
+        Reclaim();
         if (_length > 0)
         {
             Emit();
         }
+    }
+
+    public long ReadInput(Span<byte> dst)
+    {
+        if (_session == null)
+        {
+            return 0;
+        }
+
+        // Wie an einem Terminal steht eine angefangene Zeile ("> ") schon da, wenn das Programm auf Eingabe wartet: Die Shell zeigt
+        // sie als Eingabeaufforderung und gibt sie mit der Enter-Zeile aus.
+        if (_length > 0 && !_session.InputReady)
+        {
+            _session.SetPrompt(_line.AsSpan(0, _length).ToArray());
+            _length = 0;
+        }
+
+        return _session.ReadInput(dst);
+    }
+
+    public bool InputReady => _session?.InputReady ?? true;
+
+    public bool WaitInput(long timeoutMs) => _session?.WaitInput(timeoutMs) ?? true;
+
+    /// <summary>Holt eine nicht beantwortete Eingabeaufforderung zurück in die Zeile: Weitere Ausgaben setzen sie fort.</summary>
+    private void Reclaim()
+    {
+        byte[]? prompt = _session?.TakePrompt();
+        if (prompt == null)
+        {
+            return;
+        }
+
+        // Die Aufforderung war vor dem Lesen die ganze angefangene Zeile; was danach kam, hängt dahinter.
+        int keep = Math.Min(_length, MaxLine - prompt.Length);
+        Array.Copy(_line, 0, _line, prompt.Length, Math.Max(0, keep));
+        prompt.CopyTo(_line, 0);
+        _length = prompt.Length + Math.Max(0, keep);
     }
 
     private void Emit()

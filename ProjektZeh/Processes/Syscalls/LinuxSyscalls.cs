@@ -37,6 +37,8 @@ internal static partial class LinuxSyscalls
     {
         switch (a.Number)
         {
+            case Read: return DoRead(p, (int)a.A0, a.A1, a.A2);
+            case Readv: return DoReadv(p, (int)a.A0, a.A1, a.A2);
             case Write: return DoWrite(p, (int)a.A0, a.A1, a.A2);
             case Writev: return DoWritev(p, (int)a.A0, a.A1, a.A2);
             case ExitGroup:
