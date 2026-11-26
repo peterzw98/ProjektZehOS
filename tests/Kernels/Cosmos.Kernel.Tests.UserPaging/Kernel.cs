@@ -2,6 +2,7 @@
 
 using System;
 using System.Threading;
+using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.System.Diagnostics;
 using Cosmos.Kernel.System.Threading;
@@ -22,11 +23,12 @@ namespace Cosmos.Kernel.Tests.UserPaging;
 /// <see cref="UserPageTable"/> without a switch to it: every cell reads the
 /// tables back through the HHDM, none runs on them. On ARM64, which has no
 /// implementation, one cell checks that it says so and the rest skip.
+/// The cells of patch user-cr3 bind threads to tables and run on them.
 /// </summary>
 public unsafe class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 13;
+    private const int ExpectedTestCount = 23;
 
     /// <summary>A user address with a different index on every level.</summary>
     private const ulong User = 0x0000_1234_5678_9000;
@@ -72,6 +74,18 @@ public unsafe class Kernel : Sys.Kernel
         TR.RunIf(supported, "Churn_ThousandTables_NoLeak", TestChurn, NoTables);
         TR.RunIf(supported, "DeviceMapper_AfterShare_AddsNoPml4Entry", TestDeviceMapper, NoTables);
         TR.RunIf(supported && KernelCpus.Count >= RaceThreads, "Map_FourThreads_EachPageOnce", TestRace, "needs four CPUs");
+        // ZehOS patch user-cr3, see PATCHES.md
+        bool twoCpus = supported && KernelCpus.Count >= 2;
+        TR.RunIf(supported, "Bind_LoadsTable_KeepsItAcrossSwitches", TestBindSwitch, NoTables);
+        TR.RunIf(supported, "TwoTables_SameAddress_OwnContents", TestTwoTables, NoTables);
+        TR.RunIf(supported, "Bind_Refusals_AndDisposeWhileBound", TestBindRefusals, NoTables);
+        TR.RunIf(supported, "Bound_GcAndAllocation_UnderUserTable", TestGcUnderTable, NoTables);
+        TR.RunIf(supported, "ThreadEnd_WithoutUnbind_DisposeAfterJoin", TestThreadEndUnbinds, NoTables);
+        TR.RunIf(supported, "Kill_QueuedBound_EndsBinding", TestKillQueued, NoTables);
+        TR.RunIf(supported, "Abandon_BoundAtFault_EndsBinding", TestAbandon, NoTables);
+        TR.RunIf(twoCpus, "ActiveOnOtherCpu_ProtectUnmapRefused", TestActiveElsewhere, "needs two CPUs");
+        TR.RunIf(twoCpus, "BoundNotRunning_ChangeSeenAfterSwitch", TestBoundNotRunning, "needs two CPUs");
+        TR.RunIf(twoCpus, "Kill_RunningBound_EndsBindingAtSwitch", TestKillRunning, "needs two CPUs");
         TR.Finish();
     }
 
@@ -330,6 +344,598 @@ public unsafe class Kernel : Sys.Kernel
             {
                 Interlocked.Increment(ref s_raceWins);
             }
+        }
+    }
+
+    // ===== ZehOS patch user-cr3, see PATCHES.md =====
+
+    private const ulong ValueA = 0xA11CE;
+    private const ulong ValueB = 0xB0B;
+    private const int SwitchRounds = 200;
+    private const int GcRounds = 100;
+    private const int PollMs = 10;
+    private const int PollRetries = 500;
+
+    private static UserPageTable? s_tableA;
+    private static UserPageTable? s_tableB;
+    private static volatile string? s_failure;
+    private static volatile int s_step;
+    private static volatile bool s_release;
+    private static volatile uint s_workerCpu;
+    private static volatile uint s_victimId = CpuExceptionInfo.NoThread;
+    private static ulong s_sink;
+
+#if ARCH_X64
+    /// <summary>The root this CPU translates through.</summary>
+    private static ulong Cr3() => X64CpuNative.ReadCr3() & 0x000F_FFFF_FFFF_F000;
+#else
+    private static ulong Cr3() => 0;
+#endif
+
+    /// <summary>The first failure a worker saw; a worker cannot assert.</summary>
+    private static void Fail(string what) => s_failure ??= what;
+
+    private static void Reset()
+    {
+        s_failure = null;
+        s_step = 0;
+        s_release = false;
+        s_victimId = CpuExceptionInfo.NoThread;
+    }
+
+    private static void AssertWorkerClean() => Assert.True(s_failure == null, s_failure ?? "the workers saw no error");
+
+    /// <summary>A table with one page at <see cref="User"/> that holds <paramref name="value"/>.</summary>
+    private static UserPageTable TableWith(ulong value, out ulong frame)
+    {
+        UserPageTable table = Create();
+        frame = Frame();
+        *At(frame) = value;
+        Assert.True(table.TryMap(User, frame, writable: true, executable: false), "map the page");
+        return table;
+    }
+
+    /// <summary>Frees the tables; the frames stay the caller's.</summary>
+    private static void Release(UserPageTable table) => table.Dispose();
+
+    /// <summary>Moves the calling thread to <paramref name="cpu"/> and stays there.</summary>
+    private static bool PinHere(uint cpu)
+    {
+        ThreadAffinity.Current = CpuSet.Single(cpu);
+        SysThread.Yield();
+        return KernelCpus.Current == cpu;
+    }
+
+    /// <summary>Polls <paramref name="condition"/>, once per round: it may have an effect (a reap, an unmap).</summary>
+    private static bool WaitFor(Func<bool> condition)
+    {
+        for (int i = 0; i < PollRetries; i++)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            SysThread.Sleep(PollMs);
+        }
+
+        return false;
+    }
+
+    private static uint CurrentThreadId()
+        => SchedulerDiagnostics.TryGetCurrentThread(KernelCpus.Current, out KernelThreadInfo info) ? info.Id : CpuExceptionInfo.NoThread;
+
+    // Bind loads the table, every switch back to the thread loads it again,
+    // Unbind loads the kernel root; Main never runs on the table.
+    private static void TestBindSwitch()
+    {
+        Reset();
+        ulong mainRoot = Cr3();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        var worker = new SysThread(BindSwitchWorker);
+        worker.Start();
+        // On one CPU Main runs between the worker's rounds: the switch away
+        // from the bound thread has to load the kernel root again.
+        Assert.True(WaitFor(() => s_step == 1), "the worker is bound");
+        Assert.True(Cr3() == mainRoot, "Main runs on its kernel root while the worker is bound");
+        s_release = true;
+        Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+        AssertWorkerClean();
+        Assert.True(Cr3() == mainRoot, "Main still runs on its kernel root");
+        Assert.True(*At(frame) == ValueA + 1, "the worker wrote through the table");
+        Assert.True(s_tableA.Unmap(User) == frame, "unmap after the worker left");
+        Release(s_tableA);
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void BindSwitchWorker()
+    {
+        if (!PinHere(KernelCpus.Current))
+        {
+            Fail("the worker stays on its CPU");
+            return;
+        }
+
+        ulong kernelRoot = Cr3();
+        s_tableA!.BindToCurrentThread();
+        if (Cr3() != s_tableA.Root)
+        {
+            Fail("bind loads the table at once");
+        }
+
+        s_step = 1;
+        for (int i = 0; (i < SwitchRounds || !s_release) && s_failure == null; i++)
+        {
+            if (*(ulong*)User != ValueA)
+            {
+                Fail("the thread reads its page");
+            }
+
+            // A yield may come back without a switch, a sleep goes through idle.
+            if ((i & 1) == 0)
+            {
+                SysThread.Yield();
+            }
+            else
+            {
+                SysThread.Sleep(1);
+            }
+
+            if (Cr3() != s_tableA.Root)
+            {
+                Fail("the switch back loads the table again");
+            }
+        }
+
+        *(ulong*)User = ValueA + 1;
+        UserPageTable.UnbindCurrentThread();
+        if (Cr3() != kernelRoot)
+        {
+            Fail("unbind loads the CPU's kernel root");
+        }
+    }
+
+    // Two threads on one CPU, the same address in two tables: each reads its
+    // own page after every switch between them.
+    private static void TestTwoTables()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong a);
+        s_tableB = TableWith(ValueB, out ulong b);
+        s_workerCpu = (uint)(KernelCpus.Count - 1);
+        var first = new SysThread(() => TwoTablesWorker(s_tableA!, ValueA));
+        var second = new SysThread(() => TwoTablesWorker(s_tableB!, ValueB));
+        first.Start();
+        second.Start();
+        Assert.True(first.Join(JoinTimeoutMs) && second.Join(JoinTimeoutMs), "the workers end");
+        AssertWorkerClean();
+        Release(s_tableA);
+        Release(s_tableB);
+        UserPageTable.FreeFrame(a);
+        UserPageTable.FreeFrame(b);
+    }
+
+    private static void TwoTablesWorker(UserPageTable table, ulong value)
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("both workers share one CPU");
+            return;
+        }
+
+        table.BindToCurrentThread();
+        Interlocked.Increment(ref s_step);
+        while (s_step < 2)
+        {
+            SysThread.Yield();
+        }
+
+        for (int i = 0; i < SwitchRounds && s_failure == null; i++)
+        {
+            if (*(ulong*)User != value || Cr3() != table.Root)
+            {
+                Fail("each thread runs on its own table");
+            }
+
+            SysThread.Yield();
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    private static void TestBindRefusals()
+    {
+        Reset();
+        ulong mainRoot = Cr3();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        var worker = new SysThread(BindRefusalsWorker);
+        worker.Start();
+        Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+        AssertWorkerClean();
+        Release(s_tableA);
+        Assert.True(ThrowsOnBind(s_tableA) == 2, "a disposed table refuses the bind");
+        Assert.True(Cr3() == mainRoot, "and loads nothing");
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void BindRefusalsWorker()
+    {
+        UserPageTable table = s_tableA!;
+        // Unbound: nothing happens.
+        UserPageTable.UnbindCurrentThread();
+        table.BindToCurrentThread();
+        if (ThrowsOnBind(table) != 1)
+        {
+            Fail("a second bind is refused");
+        }
+
+        UserPageTable other = Create();
+        if (ThrowsOnBind(other) != 1)
+        {
+            Fail("a bound thread cannot bind another table");
+        }
+
+        other.Dispose();
+        if (!ThrowsOnDispose(table))
+        {
+            Fail("dispose is refused while a thread is bound");
+        }
+
+        if (*(ulong*)User != ValueA || !table.TryTranslate(User, true, out _))
+        {
+            Fail("the refused dispose changed nothing");
+        }
+
+        UserPageTable.UnbindCurrentThread();
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    /// <summary>0: bound; 1: InvalidOperationException; 2: ObjectDisposedException.</summary>
+    private static int ThrowsOnBind(UserPageTable table)
+    {
+        try
+        {
+            table.BindToCurrentThread();
+            return 0;
+        }
+        catch (ObjectDisposedException)
+        {
+            return 2;
+        }
+        catch (InvalidOperationException)
+        {
+            return 1;
+        }
+    }
+
+    private static bool ThrowsOnDispose(UserPageTable table)
+    {
+        try
+        {
+            table.Dispose();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    // The kernel half is shared: allocation and collection work under the table.
+    private static void TestGcUnderTable()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        var worker = new SysThread(GcWorker);
+        worker.Start();
+        Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+        AssertWorkerClean();
+        Release(s_tableA);
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void GcWorker()
+    {
+        s_tableA!.BindToCurrentThread();
+        long sum = 0;
+        for (int i = 0; i < GcRounds && s_failure == null; i++)
+        {
+            var garbage = new byte[4096 + i];
+            garbage[i] = (byte)i;
+            sum += garbage[i];
+            GC.Collect();
+            if (*(ulong*)User != ValueA || Cr3() != s_tableA.Root)
+            {
+                Fail("the table stays loaded across a collection");
+            }
+        }
+
+        if (sum != (long)GcRounds * (GcRounds - 1) / 2)
+        {
+            Fail("the allocations hold their data");
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    // A thread that ends bound releases the table: Dispose after Join succeeds.
+    private static void TestThreadEndUnbinds()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        var worker = new SysThread(() =>
+        {
+            s_tableA!.BindToCurrentThread();
+            s_sink = *(ulong*)User;
+        });
+        worker.Start();
+        Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+        Assert.True(s_sink == ValueA, "it read its page");
+        Assert.False(ThrowsOnDispose(s_tableA), "the binding ended with the thread");
+        Assert.True(*At(frame) == ValueA, "the frame survives the table");
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void BoundSpinner()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the victim runs on Main's CPU");
+        }
+
+        s_victimId = CurrentThreadId();
+        s_tableA!.BindToCurrentThread();
+        s_step = 1;
+        while (!s_release)
+        {
+            s_sink = *(ulong*)User;
+            SysThread.Yield();
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    // A killed thread that waited in the run queue ends through ExitThread.
+    private static void TestKillQueued()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        CpuSet mainSet = ThreadAffinity.Current;
+        try
+        {
+            // Victim and Main share Main's CPU: while Main kills, the victim is queued.
+            s_workerCpu = KernelCpus.Current;
+            Assert.True(PinHere(s_workerCpu), "Main stays on its CPU");
+            var victim = new SysThread(BoundSpinner);
+            victim.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the victim is bound");
+            Assert.Equal((int)ThreadKillResult.Killed, (int)SchedulerDiagnostics.RequestKill(s_victimId), "a queued thread is killed");
+            Assert.True(victim.Join(JoinTimeoutMs), "Join returns");
+            Assert.False(ThrowsOnDispose(s_tableA), "the binding ended with the kill");
+        }
+        finally
+        {
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(frame);
+    }
+
+    // A thread given up at a fault never comes back through ExitThread: the
+    // switch away from it ends the binding.
+    private static CpuExceptionAction AbandonVictimOnly(in CpuExceptionInfo exception)
+        => exception.ThreadId == s_victimId && exception.ThreadId != CpuExceptionInfo.NoThread
+            ? CpuExceptionAction.AbandonThread
+            : CpuExceptionAction.Halt;
+
+    private static void TestAbandon()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        CpuExceptionHandler? previous = CpuExceptionHook.Handler;
+        CpuExceptionHook.Handler = AbandonVictimOnly;
+        try
+        {
+            var victim = new SysThread(() =>
+            {
+                s_victimId = CurrentThreadId();
+                s_tableA!.BindToCurrentThread();
+                s_step = 1;
+                // Page 0 is not mapped in the user table either.
+                s_sink = *(ulong*)0;
+            });
+            victim.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the victim is bound");
+            ThreadReapResult result = ThreadReapResult.NotAbandoned;
+            Assert.True(WaitFor(() =>
+            {
+                result = SchedulerDiagnostics.TryReapAbandoned(s_victimId);
+                return result != ThreadReapResult.NotAbandoned && result != ThreadReapResult.StillOnCpu;
+            }), "the reap finishes");
+            Assert.Equal((int)ThreadReapResult.Reaped, (int)result, "the victim is reaped");
+            Assert.True(victim.Join(JoinTimeoutMs), "Join returns");
+            Assert.False(ThrowsOnDispose(s_tableA), "the binding ended at the switch away");
+        }
+        finally
+        {
+            CpuExceptionHook.Handler = previous;
+        }
+
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static uint OtherCpu() => (KernelCpus.Current + 1) % (uint)KernelCpus.Count;
+
+    // Option B: no shootdown before N4, so a change is refused while another
+    // CPU runs on the table, and the entry stays as it was.
+    private static void TestActiveElsewhere()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        ulong second = Frame();
+        CpuSet mainSet = ThreadAffinity.Current;
+        try
+        {
+            Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
+            s_workerCpu = OtherCpu();
+            var worker = new SysThread(ActiveWorker);
+            worker.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
+            AssertWorkerClean();
+            Assert.False(s_tableA.TryProtect(User, false, false), "protect is refused");
+            Assert.True(s_tableA.Unmap(User) == 0, "unmap is refused");
+            Assert.True(s_tableA.TryTranslate(User, true, out ulong physical) && physical == frame, "the entry is unchanged");
+            Assert.True(s_tableA.TryMap(User + PageSize, second, true, false), "a new page needs no shootdown");
+            s_release = true;
+            Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+            AssertWorkerClean();
+            Assert.True(s_tableA.TryProtect(User, false, false), "protect once no CPU runs on the table");
+            Assert.True(s_tableA.Unmap(User) == frame && s_tableA.Unmap(User + PageSize) == second, "unmap too");
+            Release(s_tableA);
+        }
+        finally
+        {
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(frame);
+        UserPageTable.FreeFrame(second);
+    }
+
+    private static void ActiveWorker()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the worker runs on the other CPU");
+            s_step = 1;
+            return;
+        }
+
+        s_tableA!.BindToCurrentThread();
+        s_step = 1;
+        // No yield: the CPU holds the table until the release.
+        while (!s_release)
+        {
+            s_sink = *(ulong*)User;
+        }
+
+        if (*(ulong*)User != ValueA)
+        {
+            Fail("the refused change left the page");
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    // A bound thread that sleeps leaves its CPU on the kernel root: the change
+    // goes through, and the switch back walks the new entry.
+    private static void TestBoundNotRunning()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong a);
+        ulong b = Frame();
+        *At(b) = ValueB;
+        CpuSet mainSet = ThreadAffinity.Current;
+        try
+        {
+            Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
+            s_workerCpu = OtherCpu();
+            var worker = new SysThread(SleepingWorker);
+            worker.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the worker is bound and asleep");
+            AssertWorkerClean();
+            // The worker wakes every few milliseconds; a refusal then is right, so try again.
+            ulong unmapped = 0;
+            Assert.True(WaitFor(() => (unmapped = s_tableA!.Unmap(User)) != 0), "unmap while the thread sleeps");
+            Assert.True(unmapped == a, "the old frame comes back");
+            Assert.True(s_tableA.TryMap(User, b, true, false), "another frame at the same address");
+            s_step = 2;
+            Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+            AssertWorkerClean();
+            Assert.True(s_tableA.Unmap(User) == b, "unmap");
+            Release(s_tableA);
+        }
+        finally
+        {
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(a);
+        UserPageTable.FreeFrame(b);
+    }
+
+    private static void SleepingWorker()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the worker runs on the other CPU");
+        }
+
+        s_tableA!.BindToCurrentThread();
+        if (*(ulong*)User != ValueA)
+        {
+            Fail("the worker reads the first frame");
+        }
+
+        s_step = 1;
+        for (int i = 0; i < PollRetries && s_step != 2; i++)
+        {
+            SysThread.Sleep(PollMs);
+        }
+
+        if (*(ulong*)User != ValueB)
+        {
+            Fail("the worker sees the new frame, not a stale translation");
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    // A running thread is only marked dead; the switch away from it ends the
+    // binding, its CPU loads the kernel root, and Dispose succeeds. The thread
+    // keeps its slot (ThreadKillResult.MarkedForExit), as without the patch.
+    private static void TestKillRunning()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        CpuSet mainSet = ThreadAffinity.Current;
+        try
+        {
+            Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
+            s_workerCpu = OtherCpu();
+            var victim = new SysThread(RunningVictim);
+            victim.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the victim runs bound on the other CPU");
+            AssertWorkerClean();
+            Assert.Equal((int)ThreadKillResult.MarkedForExit, (int)SchedulerDiagnostics.RequestKill(s_victimId), "a running thread is marked");
+            Assert.True(WaitFor(() => !ThrowsOnDispose(s_tableA!)), "the binding ends at the switch away");
+            Assert.True(*At(frame) == ValueA, "the frame survives");
+        }
+        finally
+        {
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void RunningVictim()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the victim runs on the other CPU");
+        }
+
+        s_victimId = CurrentThreadId();
+        s_tableA!.BindToCurrentThread();
+        s_step = 1;
+        while (!s_release)
+        {
+            s_sink = *(ulong*)User;
         }
     }
 
