@@ -26,22 +26,22 @@ Die Fälle von #712 (`isolate`, `kernelread`, `nx`, `edge`, `sparse`, `copy`, `c
 
 ## Messwerte
 
-Rechner MSI (KVM), Bau `task/ladybird-n1b5-zeitfaelle` @`12904e126` (auf #712 `d1f3fc7c1`, Cosmos `3.0.97-zehos.0.g7b4b101`), `-warnaserror` 0 Warnungen/0 Fehler für Probe- und Normalbau. Je ein Gast gleichzeitig, Rohdaten `~/zehos-b4-out/n1b5-*` auf MSI. Einheit: TSC-Ticks (`rdtsc`); Wechsel/Seitenfehler sind Mediane je Lauf.
+Rechner MSI (KVM), Bau `task/ladybird-n1b5-zeitfaelle` @`12904e126` (aswitch neu gemessen @`c5a7948d0`, siehe dort) (auf #712 `d1f3fc7c1`, Cosmos `3.0.97-zehos.0.g7b4b101`), `-warnaserror` 0 Warnungen/0 Fehler für Probe- und Normalbau. Je ein Gast gleichzeitig, Rohdaten `~/zehos-b4-out/n1b5-*` auf MSI. Einheit: TSC-Ticks (`rdtsc`); Wechsel/Seitenfehler sind Mediane je Lauf.
 
 **B4 (#712-Fälle + Zeitfälle), `test-user-mode-probe.py --accel kvm --runs 3`:** smp1 3/3 PASS, smp4 3/3 PASS (isolate, kernelread, nx, edge, sparse, copy, churn, gc2, device, aswitch, pfault, `failed=0`). TCG smp1 3/3 steht in #712 Kommentar 7182091025 (nicht neu gelaufen).
 
-**aswitch** (Wechsel inkl. Yield; 20 000 Runden; Gegenstelle nur Yield, gleiche Arbeit in beiden Armen): Median alone (ein Adressraum) / pair (zwei Adressräume), Differenz `net_med`:
+**aswitch (korrigiert, Review-P2 #715):** Die erste Messung (426 Ticks, `net_med` 0) war **kein** Wechselmaß: `Thread.Yield` setzt nur ein Flag für den nächsten Interrupt-Austritt und kehrt sofort zurück, die 426 Ticks waren ein Syscall-Rundlauf. Der Fall ist umgebaut (Kopf `c5a7948d0`): Der Peer erhöht je Aufruf einen Kernelzähler und merkt sich sein CR3; eine Paarrunde endet erst, wenn der Zähler gestiegen ist (Peer lief nachweislich), und je Runde wird das CR3 des Peers gegen das des Messers geprüft. `kernel_pair` zählt genauso (zwei Kernelthreads, gemeinsamer Zähler). 1000 Paarrunden (eine Runde dauert einen Timertakt), alone 20 000 Runden. KVM, je 3 Läufe, alle PASS:
 
-| smp | Lauf | alone | pair | net_med | kernel_pair (Kernelthreads, ohne Ring 3) |
+| smp | Lauf | alone | pair (Median) | Runden CR3 verschieden / gleich | kernel_pair (Median) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 1 | 436 | 436 | 0 | 54 |
-| 1 | 2 | 426 | 426 | 0 | 54 |
-| 1 | 3 | 426 | 426 | 0 | 54 |
-| 4 | 1 | 426 | 426 | 0 | 58 |
-| 4 | 2 | 426 | 424 | -2 | 56 |
-| 4 | 3 | 426 | 428 | +2 | 56 |
+| 1 | 1 | 416 | 50 081 502 | 1000 / 0 | 24 975 358 |
+| 1 | 2 | 436 | 50 119 150 | 1000 / 0 | 25 058 224 |
+| 1 | 3 | 436 | 50 119 830 | 1000 / 0 | 25 057 588 |
+| 4 | 1 | 436 | 49 962 490 | 1000 / 0 | 49 962 952 |
+| 4 | 2 | 436 | 49 967 220 | 1000 / 0 | 49 967 746 |
+| 4 | 3 | 436 | 49 958 396 | 1000 / 0 | 49 959 006 |
 
-Lesart: Der zusätzliche Aufwand des CR3-Wechsels liegt unter der Auflösung der Messung (|net_med| <= 2 Ticks von ~426); eine Yield-Runde mit Ring-3-Rückkehr kostet ~426 Ticks, ein reiner Kernelthread-Wechsel ~54-58. Kein reines CR3-Maß. **Grenze smp4:** Dauer `ms` ~60 statt 12-41 s bei smp1; mit mehreren CPUs ist nicht belegt, dass beide Programme auf derselben CPU wechseln (Yield wechselt ggf. nicht). Aussagekräftig für den Wechsel ist smp1.
+Lesart: Der Wechsel zum Peer ist jetzt belegt (CR3 in allen 3000 Paarrunden je smp verschieden, Peer-Läufe >= Runden), aber eine Runde kostet 25-50 Mio Ticks (10-20 ms bei 2,5 GHz) = ein bis zwei Timertakte, auch für zwei reine Kernelthreads. **Der Wechsel geschieht erst am Takt, nicht beim Yield; die Rundenzeit ist die Zeitscheibe, nicht der CR3-Aufwand.** Der Aufwand eines Adressraumwechsels ist damit **nicht gemessen** (die Differenz pair−alone ist nutzlos). Ein Maß bräuchte einen sofortigen Wechsel (Cosmos-Änderung oder ein anderer Auslöser, etwa ein Interrupt aus dem Kernel); das ist ein Folgeauftrag. smp4: pair und kernel_pair zeigen beide ~50 Mio, das min (8,6 Mio) deutet auf einzelne Runden mit Wechsel auf eine andere CPU; die Fälle sind nicht an eine CPU gebunden bewiesen. Rohdaten `~/zehos-b4-out/n1b5v2-*`.
 
 **pfault** (4000 verstreute Seiten, `FaultHandler` belegt): Median erster Zugriff 2118/2054/2056 (smp1) und 2044/2042/2098 (smp4) Ticks, schon abgebildet 14; Abzug `net_med` je Fehler 2104/2040/2042 (smp1), 2030/2028/2084 (smp4). p99 erster Zugriff 2880-3406; max 0,37-0,41 Mio Ticks (Seitentabellenzuteilung/Ausreißer).
 
@@ -58,7 +58,7 @@ Lesart: Der zusätzliche Aufwand des CR3-Wechsels liegt unter der Auflösung der
 - Kein Vergleich gegen `origin/master` (smp.13) im Normalbau gemessen; nur der Pin dieses Stands. Die Matrix von engineer2 (#708, 90/90) lief auf anderem Kopf.
 - ClassiCube nur 1 Lauf je smp (nicht 3); Bildschirmfotos nicht visuell geprüft; Paket nicht mit `--world-seed 1` neu gebaut (Skript lief trotzdem durch).
 - TCG, VMware, echte Hardware nicht gemessen. `gc2` smp4 `overlapped=0` unverändert (aus #712). P3 aus dem Review offen: `rdtsc` ohne `lfence` im Ring-3-Arm.
-- aswitch smp4 siehe oben (kein belegter Same-CPU-Wechsel); Medianwerte ohne Streuungsangabe über Läufe außer der Tabelle.
+- aswitch: Wechselkosten nicht gemessen (siehe oben, Yield wechselt erst am Timertakt); Medianwerte ohne Streuungsangabe über Läufe außer der Tabelle.
 - Ein Fenster in B3 (Warten auf `Changing`) bleibt nur durch Lesereview gestützt.
 
 ## Urteil
