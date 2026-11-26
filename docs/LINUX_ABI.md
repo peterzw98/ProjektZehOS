@@ -156,7 +156,7 @@ Grenzen (Review V2, bewusst offen):
   `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Im Gast belegt (V7b, KVM smp1): `write` am Ende bei voller Platte `-ENOSPC`.
   Bekannte Grenze: Wächst eine Datei über eine Lücke (`write` hinter dem Ende, `ftruncate` nach oben) und die Platte wird dabei voll, kommt `-EIO` statt `-ENOSPC`.
   Cosmos' `Truncate` meldet beim Verlängern jeden Fehler als EIO (`FileDescriptorTable.cs:440-442` im Pin 5790fa74), nicht den PAL-Wert wie `PWrite` (`:248`).
-  Behebung als Cosmos-Patch nach der Vorstellung geplant (Issue); `v7bfull` nimmt dort bis dahin `-EIO` an.
+  Behebung als Cosmos-Patch nach der Vorstellung (#743); `v7bfull` nimmt dort bis dahin `-EIO` an.
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
