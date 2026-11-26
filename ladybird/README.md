@@ -14,4 +14,11 @@ Nur für den Gasttest der Ladybird-Story (`story/ladybird`), nicht für master o
 
 Bauabweichungen gegenüber dem Skript: echtes `ninja` (Paket `ninja-build`) vor samurai im Suchpfad, `gcompat` für das glibc-`gn` von vcpkg (Skia), libedit gegen statisches `libncursesw.a` gelinkt.
 
-Lizenz: BSD-2-Clause, siehe `LICENSE.ladybird`.
+Aufbau wie im Bauordner: `bin/js` sucht seine ICU-Daten unter `<bindir>/../share/Lagom/icu/icudt78l.dat` (oder `$LADYBIRD_ICU_DATA`). Im Gast also den ganzen Ordner `ladybird/` ablegen.
+
+| Datei | Größe | SHA-256 |
+| --- | --- | --- |
+| `bin/js` | 33 092 712 | `bd719b4fd8a383e4d0d386a88ce716157c91bc205fcac7700f39bbaad3d32804` |
+| `share/Lagom/icu/icudt78l.dat` (ICU 78) | 27 687 488 | `3910ea655e8ef353f740d34b4d4fcb1fd4c08f7d5da7ee7ca8099481128096cd` |
+
+Lizenzen: Ladybird BSD-2-Clause (`LICENSE.ladybird`), ICU Unicode-Lizenz (`share/Lagom/icu/LICENSE.icu`).
