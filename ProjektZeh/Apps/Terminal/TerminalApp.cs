@@ -70,6 +70,14 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             if (value.KeyCode == (byte)PhysicalKey.Control) { control = down; return; }
             if (value.KeyCode is (byte)PhysicalKey.LeftShift or (byte)PhysicalKey.RightShift) { shift = down; return; }
         }
+        // Reservierte Abbruchtaste (Issue #735 P2-3): Strg+Umschalt+Esc bricht das Vordergrundprogramm immer ab, auch im Rohmodus ohne
+        // ISIG, wo Strg+C und Esc als Bytes an das Programm gehen. Sie erreicht nie das Programm; ein zweiter Druck gibt das Fenster frei.
+        if (control && shift && value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape && pager == null && shell.HasForeground)
+        {
+            shell.TryInterrupt(Buffer);
+            ScrollOffset = 0;
+            return;
+        }
         if (control && !shift && value.Type == InputEventType.KeyDown && value.KeyCode == 46 && !shell.ForegroundTakesInterruptKey && shell.TryInterrupt(Buffer))
         {
             ScrollOffset = 0;

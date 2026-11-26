@@ -23,7 +23,7 @@ internal static partial class LinuxSyscalls
 {
     public const long Write = 1, Mmap = 9, Mprotect = 10, Munmap = 11, Brk = 12, Ioctl = 16, Writev = 20,
         Getpid = 39, Exit = 60, ArchPrctl = 158, Gettid = 186, SetTidAddress = 218, ExitGroup = 231,
-        SetRobustList = 273, Rseq = 334;
+        SetRobustList = 273, Rseq = 334, Clone = 56, Tkill = 200, Tgkill = 234;
 
     public const long EPERM = 1, EBADF = 9, ENOMEM = 12, EFAULT = 14, EINVAL = 22, ENOTTY = 25, ENOSYS = 38, ENODEV = 19;
 
@@ -43,10 +43,20 @@ internal static partial class LinuxSyscalls
             case Readv when p is not ILinuxFiles || p.GetDescriptor((int)a.A0) is ILinuxInput: return DoReadvInput(p, (int)a.A0, a.A1, a.A2);
             case Write: return DoWrite(p, (int)a.A0, a.A1, a.A2);
             case Writev: return DoWritev(p, (int)a.A0, a.A1, a.A2);
+            case Exit when p is ILinuxThreads threads:
+                // V10: exit beendet nur den Thread; der letzte beendet den Prozess.
+                threads.ExitThread((int)(a.A0 & 0xff));
+                return 0;
             case ExitGroup:
             case Exit:
                 p.Exit((int)(a.A0 & 0xff));
                 return 0;
+            case Clone:
+                return p is ILinuxThreads cloner ? cloner.CloneThread(a.A0, a.A1, a.A2, a.A3, a.A4) : -ENOSYS;
+            case Tgkill:
+                return p is ILinuxThreads tg ? tg.SignalThread((int)a.A0, (int)a.A1, (int)a.A2) : -ENOSYS;
+            case Tkill:
+                return p is ILinuxThreads tk ? tk.SignalThread(-1, (int)a.A0, (int)a.A1) : -ENOSYS;
             case Brk:
                 // Wie Linux: bei Fehler den alten Wert zurückgeben, nie einen Fehlercode.
                 if (a.A0 != 0)
@@ -61,9 +71,10 @@ internal static partial class LinuxSyscalls
             case ArchPrctl: return DoArchPrctl(p, a.A0, a.A1);
             case SetTidAddress:
                 p.ClearChildTid = a.A0;
-                return p.Pid;
-            case Getpid:
+                return p is ILinuxThreads me ? me.CurrentThread.Tid : p.Pid;
             case Gettid:
+                return p is ILinuxThreads cur ? cur.CurrentThread.Tid : p.Pid;
+            case Getpid:
                 return p.Pid;
             case SetRobustList:
                 return 0;
@@ -75,6 +86,13 @@ internal static partial class LinuxSyscalls
             case Setpgid:
             case Setsid:
                 return DoProcessGroup(p, ref a); // V3 raw
+            case Mremap:
+            case Prlimit64:
+            case Getrlimit:
+            case Setrlimit:
+            case SchedGetaffinity:
+            case Prctl:
+                return DispatchLimits(ref a, p); // V9: Stackmessung, Grenzen, CPU-Maske, Threadname (js-Vorbereitung)
             default:
                 return DispatchMore(ref a, p); // Zeit, Zufall, Signale, poll, madvise, futex; sonst -ENOSYS (auch rseq: musl und glibc fallen zurück)
         }
@@ -82,14 +100,28 @@ internal static partial class LinuxSyscalls
 
     private static long DoWrite(ILinuxProcess p, int fd, ulong buf, ulong count)
     {
-        var d = p.GetDescriptor(fd);
-        if (d is null)
+        ulong n = count > (ulong)MaxRw ? (ulong)MaxRw : count;
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is ILinuxFile && p is ILinuxFiles f)
         {
-            return -EBADF;
+            // V11: Dateien nur unter der Dateisperre, sonst könnte ein anderer Thread sie mitten im Schreiben schließen; unter der
+            // Sperre neu nachsehen. Das Terminal gehört dem Prozess und wird nie über die Tabelle geschlossen: Es schreibt ohne
+            // Sperre (wie Linux mit dem Verweis vom Anfang des Aufrufs), damit eine volle Ausgabe keine Dateiaufrufe aufhält.
+            lock (f.FileGate)
+            {
+                d = p.GetDescriptor(fd);
+                return d is null ? -EBADF : WriteFromUser(p, d, buf, n);
+            }
         }
 
-        return WriteFromUser(p, d, buf, count > (ulong)MaxRw ? (ulong)MaxRw : count);
+        return d is null ? -EBADF : WriteFromUser(p, d, buf, n);
     }
+
+    /// <summary>
+    /// true, wenn das Programm abgebrochen ist (Strg+C, Zeitlimit, exit_group). Kopierschleifen bis <see cref="MaxRw"/> (2 GiB) prüfen das
+    /// je Stück und enden mit dem bisher Kopierten oder -EINTR (Issue #735 P2-2): Ring 3 verlässt das Programm erst nach dem Aufruf.
+    /// </summary>
+    private static bool Aborted(ILinuxProcess p) => p is ILinuxAbort abort && abort.IsAborted;
 
     /// <summary>Kopiert in Stücken aus dem Benutzerspeicher. Schlägt erst ein späteres Stück fehl, zählt das bisher Geschriebene.</summary>
     private static long WriteFromUser(ILinuxProcess p, ILinuxDescriptor d, ulong buf, ulong count)
@@ -98,6 +130,11 @@ internal static partial class LinuxSyscalls
         ulong done = 0;
         while (done < count)
         {
+            if (Aborted(p))
+            {
+                return done > 0 ? (long)done : -EINTR;
+            }
+
             int n = (int)Math.Min(count - done, (ulong)tmp.Length);
             if (buf + done < buf || !p.Memory.TryRead(buf + done, tmp.Slice(0, n)))
             {
@@ -122,12 +159,22 @@ internal static partial class LinuxSyscalls
 
     private static long DoWritev(ILinuxProcess p, int fd, ulong iov, ulong cnt)
     {
-        var d = p.GetDescriptor(fd);
-        if (d is null)
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is ILinuxFile && p is ILinuxFiles f)
         {
-            return -EBADF;
+            // V11: wie DoWrite, Dateien unter der Dateisperre, das Terminal ohne.
+            lock (f.FileGate)
+            {
+                d = p.GetDescriptor(fd);
+                return d is null ? -EBADF : WritevTo(p, d, iov, cnt);
+            }
         }
 
+        return d is null ? -EBADF : WritevTo(p, d, iov, cnt);
+    }
+
+    private static long WritevTo(ILinuxProcess p, ILinuxDescriptor d, ulong iov, ulong cnt)
+    {
         if (cnt > MaxIov)
         {
             return -EINVAL;
@@ -199,14 +246,20 @@ internal static partial class LinuxSyscalls
             return fd < 0 ? -EBADF : -ENODEV; // S1: keine Dateiabbildung
         }
 
-        if ((flags & MapFixed) != 0)
-        {
-            return -ENOSYS; // S1: Platzierung bestimmt der Kernel
-        }
-
         if (len > ulong.MaxValue - 0xfff)
         {
             return -ENOMEM;
+        }
+
+        if ((flags & MapFixed) != 0)
+        {
+            ulong flen = (len + 0xfff) & ~0xfffUL;
+            if ((a.A0 & 0xfff) != 0 || a.A0 > MaxUserSpan || flen > MaxUserSpan - a.A0)
+            {
+                return -EINVAL;
+            }
+
+            return p.MapFixed(a.A0, flen, prot) ? unchecked((long)a.A0) : -ENOMEM;
         }
 
         ulong r = p.MapAnonymous((len + 0xfff) & ~0xfffUL, prot);

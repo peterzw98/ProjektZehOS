@@ -75,7 +75,7 @@ public class LinuxFileMetaSyscallsTests
             entry = Entries[(int)index];
             return 0;
         }
-        public void Close() { }
+        public long Close() => 0;
     }
 
     private sealed class Fs : ILinuxFileSystem
@@ -105,12 +105,17 @@ public class LinuxFileMetaSyscallsTests
         public ulong MapAnonymous(ulong len, int prot) => 0;
         public bool Unmap(ulong a, ulong l) => false;
         public bool Protect(ulong a, ulong l, int p) => false;
+        public bool MapFixed(ulong a, ulong l, int p) => false;
+        public bool Discard(ulong a, ulong l) => false;
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 1;
+        public ulong Uid => 1000;
+        public ulong Gid => 100;
         public LinuxSignalState Signals { get; } = new();
         public void Exit(int code) { }
         public ILinuxFileSystem FileSystem => Fs;
+        public object FileGate { get; } = new();
         public string Cwd { get; set; } = "/home/u";
         public int AddDescriptor(ILinuxDescriptor d, int min) => -24;
         public bool RemoveDescriptor(int fd) => false;

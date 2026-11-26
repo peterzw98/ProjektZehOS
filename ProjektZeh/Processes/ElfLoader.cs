@@ -193,7 +193,7 @@ internal static class ElfLoader
         regions.AddRange(segmentRegions);
         regions.Add(new UserRegion(guard, stackBottom, MapAccess.None));
         regions.Add(new UserRegion(stackBottom, stackTop, MapAccess.ReadWrite));
-        return new UserImage(entry, stackPointer, bias, phdrAddress, highest, stackBottom, stackTop, segments, regions.ToArray(), stack, elf.Length);
+        return new UserImage(entry, stackPointer, bias, phdrAddress, highest, stackBottom, stackTop, segments, regions.ToArray(), stack, elf.Length, options.Uid, options.Gid);
     }
 
     private static void ValidateLoad(ElfProgramHeader ph, int fileLength)

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjektZeh.Apps.Terminal;
+using ProjektZeh.Input;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
 using ProjektZeh.Shell;
@@ -61,8 +63,9 @@ public sealed class LinuxTerminalInputTests
         }
     }
 
-    private sealed class Proc(ILinuxDescriptor terminal) : ILinuxProcess, ILinuxHost
+    private sealed class Proc(ILinuxDescriptor terminal) : ILinuxProcess, ILinuxHost, ILinuxAbort
     {
+        public bool IsAborted { get; set; }
         public readonly Memory Mem = new();
         public IUserMemory Memory => Mem;
         public ILinuxDescriptor? GetDescriptor(int fd) => fd is >= 0 and <= 2 ? terminal : null;
@@ -71,6 +74,10 @@ public sealed class LinuxTerminalInputTests
         public ulong MapAnonymous(ulong len, int prot) => 0;
         public bool Unmap(ulong a, ulong l) => false;
         public bool Protect(ulong a, ulong l, int p) => false;
+        public bool MapFixed(ulong a, ulong l, int p) => false;
+        public bool Discard(ulong a, ulong l) => false;
+        public ulong Uid => 1000;
+        public ulong Gid => 1000;
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 1;
@@ -555,6 +562,53 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void AntwortenAufCursorfragenSindBegrenzt()
+    {
+        var (session, terminal, _, p) = Program();
+        SetRaw(p);
+        // Review V3 raw P2: Ein Programm, das fragt und nie liest, darf die Eingabe nicht ohne Grenze wachsen lassen.
+        for (int i = 0; i < 100_000; i++)
+        {
+            terminal.Write("\x1b[6n"u8);
+        }
+
+        int total = 0;
+        while (session.InputReady)
+        {
+            long n = Call(p, LinuxSyscalls.Read, 0, Base, 0x4000);
+            Assert.IsTrue(n > 0);
+            total += (int)n;
+        }
+
+        Assert.IsTrue(total <= LinuxTerminalSession.MaxInputBytes + LinuxTerminalSession.ResponseReserve, $"{total} Byte gepuffert");
+        Assert.IsTrue(total >= LinuxTerminalSession.MaxInputBytes, "bis zur Grenze wird geantwortet");
+    }
+
+    [TestMethod]
+    public void CursorfrageBeiVollerEingabeWirdNochBeantwortet()
+    {
+        var (session, terminal, _, p) = Program();
+        SetRaw(p);
+        session.SubmitRaw(new byte[LinuxTerminalSession.MaxInputBytes]);
+        terminal.Write("\x1b[6n"u8);
+        long last = 0;
+        while (session.InputReady)
+        {
+            last = Call(p, LinuxSyscalls.Read, 0, Base, 0x4000);
+        }
+
+        Assert.AreEqual((byte)'R', p.Mem.Data[last - 1], "Antwort steht hinter der vollen Eingabe");
+    }
+
+    [TestMethod]
+    public void ZuKurzesTermiosWirdAbgelehnt()
+    {
+        var (_, terminal, _, _) = Program();
+        Assert.ThrowsException<ArgumentException>(() => terminal.Termios = new byte[12]);
+        Assert.AreEqual(LinuxSyscalls.TermiosSize, terminal.Termios.Length, "Zustand unveraendert");
+    }
+
+    [TestMethod]
     public void RohmodusZeigtGezeichneteZeileMitCursorUndGibtNurDenStandAus()
     {
         var (session, terminal, clock, p) = Program();
@@ -612,11 +666,64 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getpgid, 77));
         Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getsid, 0));
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getsid, 77));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getpgid, unchecked((ulong)-1L)), "Linux: negative PID nicht gefunden");
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getsid, unchecked((ulong)-5L)));
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, 0, 0), "Sitzungsfuehrer, wie Linux im neuen pty");
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, (ulong)p.Pid, (ulong)p.Pid));
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Setpgid, 77, 0));
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, 0, 77));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Setpgid, 0, unchecked((ulong)-1L)));
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setsid), "schon Gruppenfuehrer");
+    }
+
+    [TestMethod]
+    public void NachDemAbbruchBleibtDieAusgabeBegrenztUndWartetNicht()
+    {
+        // Issue #735 P2-2: Nach Strg+C wartet WriteLine nicht mehr, hält aber die Grenze (vorher wuchs die Warteschlange ohne Ende).
+        var (session, _, clock, _) = Program();
+        session.Interrupt();
+        for (int i = 0; i < 3 * LinuxTerminalSession.MaxQueuedLines; i++) session.WriteLine("z" + i);
+        Assert.AreEqual(0, clock.Sleeps);
+        var shown = new Lines();
+        session.Drain(shown);
+        Assert.IsTrue(shown.All.Count <= LinuxTerminalSession.MaxQueuedLines + 1);
+    }
+
+    [TestMethod]
+    public void LangeKopienPruefenDenAbbruchJeStueck()
+    {
+        // Issue #735 P2-2: write/writev und getrandom enden nach dem Abbruch mit dem bisher Kopierten oder -EINTR.
+        var (session, _, _, p) = Program();
+        session.OnInterrupt = () => p.IsAborted = true;
+        p.Mem.Data.AsSpan(0, 0x3000).Fill((byte)'a');
+        Assert.AreEqual(100, Call(p, LinuxSyscalls.Write, 1, Base, 100));
+
+        session.Interrupt();
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Call(p, LinuxSyscalls.Write, 1, Base, 0x3000));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Call(p, LinuxSyscalls.Getrandom, Base, 0x1000));
+    }
+
+    [TestMethod]
+    public void StrgUmschaltEscBrichtAuchImRohmodusOhneIsigAb()
+    {
+        // Issue #735 P2-3: Im Rohmodus ohne ISIG gehen Strg+C und Esc als Bytes an das Programm; Strg+Umschalt+Esc bricht trotzdem ab.
+        var (session, _, _, p) = Program();
+        SetRaw(p, cfmakeraw: true);
+        var shell = new ShellService();
+        Assert.IsTrue(shell.AttachForeground(session).IsOK());
+        var terminal = new TerminalApp(shell, new byte[256 * 16], 8, 16, 80);
+
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsFalse(session.IsInterrupted, "Esc allein ist im Rohmodus eine Taste");
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual(0x1b, p.Mem.Data[0]);
+
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Control));
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.LeftShift));
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsTrue(session.IsInterrupted);
+
+        terminal.Handle(new(InputEventType.KeyDown, KeyCode: (byte)PhysicalKey.Escape));
+        Assert.IsFalse(shell.HasForeground, "zweiter Druck gibt das Fenster frei");
     }
 }

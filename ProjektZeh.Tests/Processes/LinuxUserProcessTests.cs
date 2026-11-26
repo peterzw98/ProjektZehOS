@@ -3,9 +3,12 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 using ProjektZeh.Shell;
 
 namespace ProjektZeh.Tests.Processes;
@@ -265,6 +268,34 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
+    public void MapFixedErsetztUndDiscardNullt()
+    {
+        var (process, _, _, _) = Start();
+        ulong a = process.MapAnonymous(2 * Page, 3);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 9 }));
+        Assert.IsTrue(process.TryWrite(a + Page, new byte[] { 8 }));
+
+        Assert.IsTrue(process.Discard(a, Page));
+        var b = new byte[1];
+        Assert.IsTrue(process.TryRead(a, b));
+        Assert.AreEqual(0, b[0], "verworfene Seite liest sich als Null");
+        Assert.IsTrue(process.TryRead(a + Page, b));
+        Assert.AreEqual(8, b[0], "Nachbarseite bleibt");
+
+        // MAP_FIXED über belegtem Bereich: ersetzt, Inhalt weg; auch über Freiem.
+        Assert.IsTrue(process.MapFixed(a + Page, Page, 3));
+        Assert.IsTrue(process.TryRead(a + Page, b));
+        Assert.AreEqual(0, b[0]);
+        ulong free = a + 16 * Page;
+        Assert.IsTrue(process.MapFixed(free, Page, 3));
+        Assert.IsTrue(process.TryWrite(free, new byte[] { 1 }));
+        Assert.IsFalse(process.MapFixed(free + 1, Page, 3), "nicht ausgerichtet");
+        Assert.IsFalse(process.MapFixed(ElfLoader.UserEnd, Page, 3), "außerhalb");
+        Assert.IsFalse(process.MapFixed(free, Page, 7), "W^X");
+        Assert.IsFalse(process.Discard(ElfLoader.UserEnd, Page));
+    }
+
+    [TestMethod]
     public void RefusedUnmapKeepsTheFrame()
     {
         var (process, pages, _, _) = Start();
@@ -383,6 +414,334 @@ public sealed class LinuxUserProcessTests
         LinuxSyscalls.Dispatch(ref exit, process);
         Assert.AreEqual(3, exited);
         Assert.AreEqual(3, process.ExitCode);
+    }
+
+    private static long Call(LinuxUserProcess process, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0)
+    {
+        var args = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3 };
+        return LinuxSyscalls.Dispatch(ref args, process);
+    }
+
+    private static ulong PutString(LinuxUserProcess process, ulong at, string text)
+    {
+        Assert.IsTrue(process.TryWrite(at, Encoding.UTF8.GetBytes(text + "\0")));
+        return at;
+    }
+
+    [TestMethod]
+    public void FilesThroughDispatcherUseOwnTableAndFileSystem()
+    {
+        // V8: der echte Prozess als ILinuxFiles mit dem V7-Dateisystem (Arbeitsspeicher): mkdir, chdir, open relativ, write, dup,
+        // close, erneut lesen. Ohne die Verdrahtung wäre jeder dieser Aufrufe -ENOSYS.
+        var (process, _, _, _) = Start();
+        Assert.IsInstanceOfType<ILinuxFiles>(process);
+        Assert.AreEqual("/", process.Cwd);
+        const long Read = 0, Write = 1, Open = 2, Close = 3, Dup = 32, Getcwd = 79, Chdir = 80, Mkdir = 83;
+        const ulong Buf = Data + 0x800;
+        Assert.AreEqual(0L, Call(process, Mkdir, PutString(process, Data + 0x100, "d"), 0x1ED));
+        Assert.AreEqual(0L, Call(process, Chdir, PutString(process, Data + 0x100, "d")));
+        Assert.AreEqual("/d", process.Cwd);
+
+        long fd = Call(process, Open, PutString(process, Data + 0x100, "f.txt"), (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.AreEqual(3L, fd, "kleinste freie Nummer nach dem Terminal");
+        Assert.IsTrue(process.TryWrite(Buf, "abc"u8));
+        Assert.AreEqual(3L, Call(process, Write, (ulong)fd, Buf, 3));
+        long copy = Call(process, Dup, (ulong)fd);
+        Assert.AreEqual(4L, copy);
+        Assert.AreSame(process.GetDescriptor(3), process.GetDescriptor(4));
+        Assert.AreEqual(0L, Call(process, Close, (ulong)fd));
+        Assert.AreEqual(0L, Call(process, Close, (ulong)copy));
+        Assert.AreEqual(-LinuxSyscalls.EBADF, Call(process, Close, (ulong)copy));
+
+        long again = Call(process, Open, PutString(process, Data + 0x100, "/d/f.txt"), (ulong)LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(3L, again, "geschlossene Nummer wird wieder vergeben");
+        Assert.AreEqual(3L, Call(process, Read, (ulong)again, Buf + 0x100, 16));
+        byte[] got = new byte[3];
+        Assert.IsTrue(process.TryRead(Buf + 0x100, got));
+        Assert.AreEqual("abc", Encoding.UTF8.GetString(got));
+        Assert.AreEqual(3L, Call(process, Getcwd, Buf + 0x200, 64), "Länge mit NUL");
+    }
+
+    [TestMethod]
+    public void DescriptorTableBoundsAndTerminalStay()
+    {
+        var (process, _, _, output) = Start();
+        Assert.IsNull(process.GetDescriptor(-1));
+        Assert.IsNull(process.GetDescriptor(LinuxUserProcess.MaxDescriptors));
+        Assert.IsNull(process.GetDescriptor(3));
+        ILinuxDescriptor terminal = process.GetDescriptor(1)!;
+        Assert.AreSame(terminal, process.GetDescriptor(0));
+        Assert.AreSame(terminal, process.GetDescriptor(2));
+
+        Assert.AreEqual(10, process.AddDescriptor(terminal, 10));
+        for (int fd = 3; fd < LinuxUserProcess.MaxDescriptors; fd++)
+        {
+            if (fd != 10)
+            {
+                Assert.AreEqual(fd, process.AddDescriptor(terminal, 0));
+            }
+        }
+
+        Assert.AreEqual((int)-LinuxErrno.EMFILE, process.AddDescriptor(terminal, 0));
+        Assert.AreEqual((int)-LinuxErrno.EMFILE, process.AddDescriptor(terminal, LinuxUserProcess.MaxDescriptors));
+        Assert.IsFalse(process.RemoveDescriptor(-1));
+        Assert.IsFalse(process.RemoveDescriptor(LinuxUserProcess.MaxDescriptors));
+        Assert.IsTrue(process.RemoveDescriptor(1));
+        Assert.IsFalse(process.RemoveDescriptor(1));
+        Assert.AreEqual(1, process.AddDescriptor(terminal, 0));
+
+        // close(1) schließt das Terminal nicht: Es gehört dem Prozess, fd 2 schreibt weiter.
+        Assert.AreEqual(0L, Call(process, 3, 1));
+        Assert.IsTrue(process.TryWrite(Data + 0x200, "x\n"u8));
+        Assert.AreEqual(2L, Call(process, 1, 2, Data + 0x200, 2));
+        Assert.AreEqual("x", output.Text.Last());
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void DestroyClosesEachOpenFileOnce()
+    {
+        var store = new MemoryFileStore();
+        var output = new Lines();
+        var terminal = new TerminalDescriptor(output);
+        var fileSystem = new LinuxFileSystem(store, terminal);
+        byte[] elf = Elf();
+        UserImage image = ElfLoader.Load(elf, ["prog"], [], new ElfLoadOptions { Random = new byte[16], StackSize = 64 * 1024 });
+        var pages = new FakePages();
+        var process = new LinuxUserProcess(pages, terminal, 7, 64 << 20, fileSystem: fileSystem);
+        Assert.IsTrue(process.Load(image, elf).IsOK());
+        Assert.AreSame(fileSystem, process.FileSystem);
+
+        long a = Call(process, 2, PutString(process, Data + 0x100, "/a"), (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat), 0x1A4);
+        long b = Call(process, 2, PutString(process, Data + 0x100, "/b"), (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.AreEqual(7L, Call(process, 33, (ulong)a, 7), "dup2 auf eine hohe Nummer");
+        Assert.AreEqual(2, fileSystem.OpenFiles);
+        var file = (ILinuxFile)process.GetDescriptor((int)a)!;
+
+        process.Destroy();
+        Assert.AreEqual(0, fileSystem.OpenFiles, "jede Datei einmal geschlossen, auch die geteilte");
+        Assert.IsNull(process.GetDescriptor((int)a));
+        Assert.IsNull(process.GetDescriptor((int)b));
+        Assert.IsNull(process.GetDescriptor(7));
+        Assert.IsNull(process.GetDescriptor(1), "Tabelle ganz leer");
+        Assert.AreEqual(-LinuxErrno.EBADF, file.Write("x"u8), "geschlossen");
+        Assert.AreEqual(0, pages.Frames.Count, "Speicher trotzdem frei");
+    }
+
+    private static long Sys(LinuxUserProcess process, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0, ulong a5 = 0)
+    {
+        var a = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4, A5 = a5 };
+        return LinuxSyscalls.Dispatch(ref a, process);
+    }
+
+    private static bool Write64(LinuxUserProcess process, ulong addr, ulong value)
+    {
+        Span<byte> b = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt64LittleEndian(b, value);
+        return process.TryWrite(addr, b);
+    }
+
+    private static bool Read64(LinuxUserProcess process, ulong addr, out ulong value)
+    {
+        Span<byte> b = stackalloc byte[8];
+        bool ok = process.TryRead(addr, b);
+        value = BinaryPrimitives.ReadUInt64LittleEndian(b);
+        return ok;
+    }
+
+    [TestMethod]
+    public void MuslStackmessungFindetDenGanzenStack()
+    {
+        // Nachbau von musl pthread_getattr_np für den Hauptthread (src/thread/pthread_getattr_np.c): ab der Seite über auxv
+        // Seite um Seite nach unten mremap(p-l-PAGE, PAGE, 2*PAGE, 0), solange -ENOMEM kommt.
+        var (process, _, image, _) = Start();
+        ulong p = (image.StackPointer + Page - 1) & ~(Page - 1);
+        ulong l = Page;
+        while (Sys(process, LinuxSyscalls.Mremap, p - l - Page, Page, 2 * Page) == -LinuxSyscalls.ENOMEM)
+        {
+            l += Page;
+        }
+
+        // Die Schutzseite unter dem Stack ist eine Abbildung (PROT_NONE) und zählt mit: eine Seite mehr als bei Linux.
+        Assert.AreEqual(p - image.StackBottom + Page, l);
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Mremap, image.StackBottom - 2 * Page, Page, 2 * Page));
+    }
+
+    [TestMethod]
+    public void RlimitStackIstDerHauptstack()
+    {
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 3, 0, buf));
+        Assert.IsTrue(Read64(process, buf, out ulong cur));
+        Assert.IsTrue(Read64(process, buf + 8, out ulong max));
+        Assert.AreEqual(64UL * 1024, cur);
+        Assert.AreEqual(64UL * 1024, max);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 7, buf));
+        Assert.IsTrue(Read64(process, buf, out cur));
+        Assert.AreEqual(1024UL, cur);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 9, buf)); // RLIMIT_AS
+        Assert.IsTrue(Read64(process, buf, out cur));
+        Assert.AreEqual(ulong.MaxValue, cur);
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Sys(process, LinuxSyscalls.Setrlimit, 3, buf));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Getrlimit, 16, buf));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Sys(process, LinuxSyscalls.Prlimit64, 99, 3, 0, buf));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Getrlimit, 3, 0x10));
+    }
+
+    [TestMethod]
+    public void RlimitGleicherWertGelingtUndNullzeigerIstEfault()
+    {
+        // Review V9 P3 a/b: setrlimit auf den geltenden Wert ist 0; prlimit64 schreibt old nur bei Erfolg (kernel/sys.c).
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        ulong old = buf + 64;
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 7, buf));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Setrlimit, 7, buf)); // NOFILE Soft = Hard = 1024
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, buf, old));
+        Assert.IsTrue(Read64(process, old + 8, out ulong max));
+        Assert.AreEqual(1024UL, max);
+
+        Assert.IsTrue(Write64(process, buf, 512));
+        Assert.IsTrue(Write64(process, old, 7));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, buf, old)); // Senken: Abweichung
+        Assert.IsTrue(Read64(process, old, out ulong untouched));
+        Assert.AreEqual(7UL, untouched);
+
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Getrlimit, 7, 0));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Setrlimit, 7, 0));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, 0, 0)); // prlimit64: beide Zeiger optional
+    }
+
+    [TestMethod]
+    public void MremapVerkleinertNurAnOrtUndStelle()
+    {
+        var (process, _, _, _) = Start();
+        ulong m = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, 3 * Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual((long)m, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, 3 * Page));
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, 4 * Page, 1)); // MAYMOVE: Abweichung
+        Assert.AreEqual((long)m, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, Page + 1));
+        Assert.IsTrue(process.IsMapped(m, 2 * Page));
+        Assert.IsFalse(process.IsMapped(m + 2 * Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m + 1, Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, Page, 2)); // FIXED ohne MAYMOVE
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, 0, Page, 1)); // Review V9 P3 c: oldSize 0 privat
+    }
+
+    [TestMethod]
+    public void AffinitaetUndThreadname()
+    {
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual(8L, Sys(process, LinuxSyscalls.SchedGetaffinity, 0, 128, buf));
+        Assert.IsTrue(Read64(process, buf, out ulong mask));
+        Assert.AreEqual(1UL, mask);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.SchedGetaffinity, 0, 4, buf));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Sys(process, LinuxSyscalls.SchedGetaffinity, 99, 8, buf));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prctl, 15, buf)); // PR_SET_NAME
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Prctl, 15, 0x10));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Prctl, 0x53564d41, 0)); // PR_SET_VMA (mimalloc)
+    }
+
+    [TestMethod]
+    public void FileCallsWaitForFileGateTerminalWriteDoesNot()
+    {
+        // V11: Dateiaufrufe laufen unter FileGate; hält ein anderer Thread sie, wartet open. Das Terminal schreibt ohne Sperre,
+        // sonst hielte eine volle Ausgabe alle Dateiaufrufe auf.
+        var (process, _, _, output) = Start();
+        const long Write = 1, Open = 2;
+        ulong path = PutString(process, Data + 0x100, "/f");
+        Assert.IsTrue(process.TryWrite(Data + 0x200, "hi\n"u8));
+        Task<long> open;
+        lock (process.FileGate)
+        {
+            open = Task.Run(() => Call(process, Open, path, (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat), 0x1A4));
+            Assert.IsFalse(open.Wait(200), "open darf nicht an der gehaltenen Dateisperre vorbei");
+            Task<long> tty = Task.Run(() => Call(process, Write, 1, Data + 0x200, 3));
+            Assert.IsTrue(tty.Wait(5000), "Terminal braucht die Dateisperre nicht");
+            Assert.AreEqual(3L, tty.Result);
+        }
+
+        Assert.IsTrue(open.Wait(5000));
+        Assert.AreEqual(3L, open.Result);
+        Assert.AreEqual(0L, Call(process, 3, 3), "close");
+        CollectionAssert.Contains(output.Text, "hi");
+    }
+
+    [TestMethod]
+    public void ConcurrentFileCallsKeepTableAndFileSystemConsistent()
+    {
+        // V11: vier Threads öffnen, beschreiben, dup-en und schließen gleichzeitig. Ohne Sperre teilen sie die Arbeitslisten der
+        // Pfadauflösung, vergeben dieselbe Nummer doppelt oder schließen eine Datei zweimal; danach müssen Tabelle und
+        // Dateibudget leer sein.
+        var (process, _, _, _) = Start();
+        const long Write = 1, Open = 2, Close = 3, Dup = 32, Mkdir = 83;
+        Assert.AreEqual(0L, Call(process, Mkdir, PutString(process, Data + 0x100, "/d"), 0x1ED));
+        const int Threads = 4, Rounds = 300;
+        var errors = new List<string>();
+        var workers = new Thread[Threads];
+        for (int t = 0; t < Threads; t++)
+        {
+            int k = t;
+            ulong path = PutString(process, Data + 0x100 + (ulong)k * 0x100, "/d/f" + k);
+            ulong buf = Data + 0x1000 + (ulong)k * 0x100;
+            Assert.IsTrue(process.TryWrite(buf, "x"u8));
+            workers[t] = new Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < Rounds; i++)
+                    {
+                        long fd = Call(process, Open, path, (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat | LinuxFileSystem.OAppend), 0x1A4);
+                        long copy = Call(process, Dup, (ulong)fd);
+                        long w = Call(process, Write, (ulong)copy, buf, 1);
+                        long c1 = Call(process, Close, (ulong)fd);
+                        long c2 = Call(process, Close, (ulong)copy);
+                        if (fd < 3 || copy < 3 || w != 1 || c1 != 0 || c2 != 0)
+                        {
+                            lock (errors)
+                            {
+                                errors.Add($"t{k} i{i}: fd {fd} dup {copy} write {w} close {c1}/{c2}");
+                            }
+
+                            return;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    lock (errors)
+                    {
+                        errors.Add($"t{k}: {e.GetType().Name} {e.Message}");
+                    }
+                }
+            });
+        }
+
+        foreach (Thread w in workers)
+        {
+            w.Start();
+        }
+
+        foreach (Thread w in workers)
+        {
+            Assert.IsTrue(w.Join(60000));
+        }
+
+        Assert.AreEqual(0, errors.Count, string.Join("; ", errors.Take(5)));
+        for (int fd = 3; fd < LinuxUserProcess.MaxDescriptors; fd++)
+        {
+            Assert.IsNull(process.GetDescriptor(fd), "fd " + fd);
+        }
+
+        Assert.AreEqual(0, ((LinuxFileSystem)process.FileSystem).OpenFiles, "jede Datei genau einmal geschlossen");
+        long stat = Call(process, 4, PutString(process, Data + 0x100, "/d/f0"), Data + 0x1800); // stat
+        Assert.AreEqual(0L, stat);
+        byte[] size = new byte[8];
+        Assert.IsTrue(process.TryRead(Data + 0x1800 + 48, size));
+        Assert.AreEqual((long)Rounds, BitConverter.ToInt64(size), "jedes Anhängen kam an");
     }
 }
 

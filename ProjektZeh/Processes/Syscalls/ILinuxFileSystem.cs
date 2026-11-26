@@ -60,8 +60,11 @@ internal interface ILinuxFile : ILinuxDescriptor
     /// <summary>Position des nächsten getdents64-Eintrags; gehört zum offenen Deskriptor wie bei Linux.</summary>
     long DirIndex { get; set; }
 
-    /// <summary>Gibt Puffer frei; der Verteiler ruft das beim letzten close.</summary>
-    void Close();
+    /// <summary>
+    /// Gibt Puffer frei; der Verteiler ruft das beim letzten close. 0 oder -errno (etwa -EIO beim Zurückschreiben); die Datei ist danach
+    /// in jedem Fall zu, wie <c>close</c> unter Linux.
+    /// </summary>
+    long Close();
 }
 
 /// <summary>
@@ -99,6 +102,14 @@ internal interface ILinuxFileSystem
 internal interface ILinuxFiles
 {
     ILinuxFileSystem FileSystem { get; }
+
+    /// <summary>
+    /// Sperre für Deskriptortabelle, Arbeitsverzeichnis, <see cref="FileSystem"/> und die offenen Dateien (V11). Der Verteiler hält sie
+    /// während jedes Dateiaufrufs und beim Schreiben in eine Datei; die übrigen Mitglieder dieser Schnittstelle setzen sie voraus.
+    /// Reihenfolge: vor der Speichersperre des Prozesses (Kopieren in den Benutzerspeicher) und vor <c>StorageLock</c> (Platte);
+    /// nie zusammen mit der Sperre der futex-Tabelle.
+    /// </summary>
+    object FileGate { get; }
 
     /// <summary>Arbeitsverzeichnis, absolut und normalisiert; Start "/".</summary>
     string Cwd { get; set; }

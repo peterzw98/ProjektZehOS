@@ -24,6 +24,9 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     /// <summary>So viele Eingabebytes werden höchstens gepuffert; Zeilen darüber hinaus fallen weg (das Programm liest nicht).</summary>
     public const int MaxInputBytes = 64 << 10;
 
+    /// <summary>Platz über <see cref="MaxInputBytes"/> nur für Antworten des Terminals (eine <c>ESC [ Zeile ; Spalte R</c> ist höchstens 16 Byte).</summary>
+    public const int ResponseReserve = 64;
+
     private readonly object _gate = new();
     private readonly Action<int> _sleep;
     private readonly Queue<string> _lines = new();
@@ -82,14 +85,16 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     }
 
     /// <summary>
-    /// Bytes, die das Terminal selbst in die Eingabe legt (Antwort auf <c>ESC [ 6 n</c>), ohne Umwandlung; zählen nicht gegen
-    /// <see cref="MaxInputBytes"/>, damit ein Programm, das nach der Cursorposition fragt, nie ohne Antwort wartet.
+    /// Bytes, die das Terminal selbst in die Eingabe legt (Antwort auf <c>ESC [ 6 n</c>), ohne Umwandlung. Sie dürfen
+    /// <see cref="MaxInputBytes"/> um <see cref="ResponseReserve"/> überschreiten, damit ein Programm, das bei voller Eingabe nach
+    /// der Cursorposition fragt, trotzdem eine Antwort bekommt. Darüber verwirft die Sitzung die Antwort wie ein volles Linux-tty:
+    /// Ein Programm, das fragt und nie liest, darf den Kernelspeicher nicht füllen.
     /// </summary>
     public void Respond(ReadOnlySpan<byte> bytes)
     {
         lock (_gate)
         {
-            if (_detached)
+            if (_detached || _input.Count + bytes.Length > MaxInputBytes + ResponseReserve)
             {
                 return;
             }
@@ -113,10 +118,16 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
                     return;
                 }
 
-                // Nach dem Abbruch nicht mehr warten: das Programm soll den Aufruf schnell verlassen.
-                if (_lines.Count < MaxQueuedLines || _interrupted)
+                if (_lines.Count < MaxQueuedLines)
                 {
                     _lines.Enqueue(text);
+                    return;
+                }
+
+                // Nach dem Abbruch nicht mehr warten, damit das Programm den Aufruf schnell verlässt, aber die Grenze halten
+                // (Issue #735 P2-2): Ein Aufruf bis 2 GiB füllte sonst den Kernelheap. Was die Shell nicht mehr anzeigt, fällt weg.
+                if (_interrupted)
+                {
                     return;
                 }
             }

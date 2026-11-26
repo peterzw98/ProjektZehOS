@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Processes;
 using System.Diagnostics;
 
 namespace ProjektZeh.Processes.Syscalls;
@@ -36,8 +37,8 @@ internal sealed class LinuxSignalState
 
 internal static partial class LinuxSyscalls
 {
-    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318;
+    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -57,9 +58,32 @@ internal static partial class LinuxSyscalls
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
             case SchedYield: return 0;
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
-            case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
-            case Futex: return DoFutex(p, ref a);
-            default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
+            case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
+            case Nanosleep: return DoNanosleep(p, a.A0, a.A1);
+            case ClockNanosleep: return DoClockNanosleep(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
+            // Ein Benutzer ohne Konten: der Wert kommt aus dem Prozess und ist derselbe wie AT_UID/AT_GID im Startstack.
+            case Getuid:
+            case Geteuid: return (long)p.Uid;
+            case Getgid:
+            case Getegid: return (long)p.Gid;
+            case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
+            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
+            default: return p is ILinuxFiles files ? DispatchFileGated(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
+        }
+    }
+
+    /// <summary>
+    /// V11: Alle Datei- und Pfadaufrufe eines Prozesses laufen nacheinander unter <see cref="ILinuxFiles.FileGate"/>. Threads (V10)
+    /// teilen Deskriptortabelle, Arbeitsverzeichnis und das <c>LinuxFileSystem</c> (dessen Auflösung Arbeitslisten im Objekt hält);
+    /// ohne Sperre könnte ein Thread eine Datei schließen, die ein anderer gerade liest, oder dieselbe Nummer zweimal vergeben.
+    /// Eine grobe Sperre reicht: Dateiaufrufe warten hier nie auf andere Threads, nur auf die Platte. Das Lesen vom Terminal
+    /// (fd 0) läuft vorher in <c>Dispatch</c> ab und hält die Sperre nicht, sonst stünden alle Dateiaufrufe bis zur nächsten Eingabe.
+    /// </summary>
+    private static long DispatchFileGated(ref SyscallArgs a, ILinuxProcess p, ILinuxFiles files)
+    {
+        lock (files.FileGate)
+        {
+            return DispatchFile(ref a, p, files);
         }
     }
 
@@ -105,6 +129,11 @@ internal static partial class LinuxSyscalls
         ulong done = 0;
         while (done < count)
         {
+            if (Aborted(p))
+            {
+                return done > 0 ? (long)done : -EINTR;
+            }
+
             int n = (int)Math.Min(count - done, (ulong)tmp.Length);
             var span = tmp.AsSpan(0, n);
             if (!host.TryFillRandom(span))
@@ -376,7 +405,7 @@ internal static partial class LinuxSyscalls
         return ready;
     }
 
-    private static long DoMadvise(ulong addr, ulong len, int advice)
+    private static long DoMadvise(ILinuxProcess p, ulong addr, ulong len, int advice)
     {
         if ((addr & 0xfff) != 0 || len > (1UL << 47))
         {
@@ -389,14 +418,126 @@ internal static partial class LinuxSyscalls
             case 1: // RANDOM
             case 2: // SEQUENTIAL
             case 3: // WILLNEED
+            case 10: // DONTFORK
+            case 11: // DOFORK
+            case 12: // MERGEABLE
+            case 13: // UNMERGEABLE
             case 14: // HUGEPAGE
             case 15: // NOHUGEPAGE
-                return 0;
+            case 16: // DONTDUMP
+            case 17: // DODUMP
+            case 18: // WIPEONFORK
+            case 19: // KEEPONFORK
+            case 20: // COLD
+            case 21: // PAGEOUT
+                return 0; // nur Hinweise; es gibt weder fork noch Kernabzug noch Auslagerung
+            case 4: // DONTNEED
+            case 8: // FREE
+                // Alles ist anonym und privat: Verwerfen heißt "beim nächsten Zugriff Nullen" (Allokatoren geben so Speicher zurück).
+                if (len == 0)
+                {
+                    return 0;
+                }
+
+                return p.Discard(addr, (len + 0xfff) & ~0xfffUL) ? 0 : -ENOMEM;
             default:
-                // DONTNEED/FREE würden Seiten nullen; das kann der Prozess noch nicht, also ehrlich ablehnen
-                // (Allokatoren behandeln den Fehler als "nicht freigegeben"). Unbekannte Werte ebenso.
-                return -EINVAL;
+                return -EINVAL; // REMOVE, DONTNEED_LOCKED, unbekannte Werte
         }
+    }
+
+    private const long NsPerSec = 1_000_000_000L;
+
+    /// <summary>Liest ein timespec; false bei -EFAULT, sonst Nanosekunden ; Fehler als negatives Ergebnis.</summary>
+    private static long ReadTimespec(ILinuxProcess p, ulong ptr, out long ns)
+    {
+        ns = 0;
+        Span<byte> ts = stackalloc byte[16];
+        if (!p.Memory.TryRead(ptr, ts))
+        {
+            return -EFAULT;
+        }
+
+        long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+        if (sec < 0 || nsec < 0 || nsec >= NsPerSec)
+        {
+            return -EINVAL;
+        }
+
+        ns = sec > (long.MaxValue - nsec) / NsPerSec ? long.MaxValue : sec * NsPerSec + nsec; // Sättigung statt Überlauf
+        return 0;
+    }
+
+    /// <summary>
+    /// Schläft <paramref name="ns"/> relativ (V2c). Mit Threads (V10) schläft der Aufruf auf der futex-Tabelle und endet mit exit_group
+    /// vorzeitig (-EINTR, <c>rem</c> bleibt dann unberührt); ohne Threads schläft der Host.
+    /// </summary>
+    private static long SleepFor(ILinuxProcess p, long ns)
+    {
+        if (ns <= 0)
+        {
+            return 0;
+        }
+
+        if (p is ILinuxThreads threads && p is ILinuxHost clock)
+        {
+            long now = clock.MonotonicNanos;
+            return threads.Futexes.Sleep(ns > long.MaxValue - now ? long.MaxValue : now + ns);
+        }
+
+        (p as ILinuxHost)?.SleepNanos(ns);
+        return 0;
+    }
+
+    private static long DoNanosleep(ILinuxProcess p, ulong req, ulong rem)
+    {
+        long r = ReadTimespec(p, req, out long ns);
+        if (r != 0)
+        {
+            return r;
+        }
+
+        long slept = SleepFor(p, ns);
+        if (slept != 0)
+        {
+            return slept;
+        }
+
+        // Ungestört bis zum Ende geschlafen (keine Signalzustellung in S1): Rest 0.
+        return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
+    }
+
+    private static long DoClockNanosleep(ILinuxProcess p, int clock, int flags, ulong req, ulong rem)
+    {
+        const int TimerAbstime = 1;
+        // CPU-Zeituhren (2, 3) und unbekannte lehnt der Aufruf ab (-EINVAL); erlaubt sind REALTIME, MONOTONIC, BOOTTIME, TAI und die groben Uhren.
+        if (clock is not (0 or 1 or 4 or 5 or 6 or 7 or 9 or 11) || (flags & ~TimerAbstime) != 0)
+        {
+            return -EINVAL;
+        }
+
+        long r = ReadTimespec(p, req, out long ns);
+        if (r != 0)
+        {
+            return r;
+        }
+
+        if ((flags & TimerAbstime) != 0)
+        {
+            var host = p as ILinuxHost;
+            long now = (clock == 0 || clock == 5 || clock == 11)
+                ? (host != null ? host.RealtimeNanos : (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100)
+                : (host != null ? host.MonotonicNanos : (long)((Stopwatch.GetTimestamp() - StartTicks) * (1_000_000_000.0 / Stopwatch.Frequency)));
+            ns = ns > now ? ns - now : 0;
+            rem = 0; // bei absoluter Frist wird rem nie geschrieben
+        }
+
+        long slept = SleepFor(p, ns);
+        if (slept != 0)
+        {
+            return slept;
+        }
+
+        return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
     }
 
     private static long DoFutex(ILinuxProcess p, ref SyscallArgs a)
@@ -478,6 +619,89 @@ internal static partial class LinuxSyscalls
                 }
 
                 return 0;
+            default:
+                return -ENOSYS;
+        }
+    }
+    /// <summary>
+    /// futex mit Threads (V10): WAIT/WAKE (auch _BITSET), REQUEUE und CMP_REQUEUE über die futex-Tabelle des Prozesses. WAIT
+    /// schläft wirklich, bis ein anderer Thread weckt, die Frist abläuft oder der Prozess endet (-EINTR). Fristen: FUTEX_WAIT relativ,
+    /// FUTEX_WAIT_BITSET absolut auf CLOCK_MONOTONIC (mit FUTEX_CLOCK_REALTIME auf der Wanduhr).
+    /// </summary>
+    private static long DoFutexThreads(ILinuxProcess p, LinuxFutexTable table, ref SyscallArgs a)
+    {
+        const int Wait = 0, Wake = 1, Requeue = 3, CmpRequeue = 4, WaitBitset = 9, WakeBitset = 10, ClockRealtime = 256;
+        int op = (int)a.A1 & 127;
+        bool realtime = ((int)a.A1 & ClockRealtime) != 0;
+        if ((a.A0 & 3) != 0)
+        {
+            return -EINVAL;
+        }
+
+        switch (op)
+        {
+            case Wait:
+            case WaitBitset:
+            {
+                uint bitset = op == WaitBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                long deadline = -1;
+                if (a.A3 != 0)
+                {
+                    Span<byte> ts = stackalloc byte[16];
+                    if (!p.Memory.TryRead(a.A3, ts))
+                    {
+                        return -EFAULT;
+                    }
+
+                    long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+                    if (nsec < 0 || nsec >= 1_000_000_000L || sec < 0)
+                    {
+                        return -EINVAL;
+                    }
+
+                    var host = p as ILinuxHost;
+                    long now = host?.MonotonicNanos ?? 0;
+                    long ns = sec > long.MaxValue / 2_000_000_000L ? long.MaxValue / 2 : sec * 1_000_000_000L + nsec;
+                    if (op == Wait)
+                    {
+                        deadline = now + ns; // relativ, auch mit FUTEX_CLOCK_REALTIME (Linux ab 4.5)
+                    }
+                    else
+                    {
+                        // Absolut: auf die monotone Uhr umrechnen, die die Tabelle misst.
+                        long clockNow = realtime ? host?.RealtimeNanos ?? 0 : now;
+                        deadline = now + Math.Max(0, ns - clockNow);
+                    }
+                }
+
+                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline);
+            }
+
+            case Wake:
+            case WakeBitset:
+            {
+                uint bitset = op == WakeBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Wake(a.A0, (int)Math.Min((uint)a.A2, int.MaxValue), bitset);
+            }
+
+            case Requeue:
+            case CmpRequeue:
+                if ((a.A4 & 3) != 0 || (int)a.A2 < 0 || (int)a.A3 < 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Requeue(p.Memory, a.A0, a.A4, (int)a.A2, (int)a.A3, op == CmpRequeue ? (int)a.A5 : null);
             default:
                 return -ENOSYS;
         }

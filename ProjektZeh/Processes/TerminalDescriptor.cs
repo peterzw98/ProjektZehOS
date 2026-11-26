@@ -49,7 +49,14 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
         get => _termios;
         set
         {
-            _termios = value ?? throw new ArgumentNullException(nameof(value));
+            ArgumentNullException.ThrowIfNull(value);
+            // ioctl liest immer TermiosSize Byte; ein kürzeres Feld (andere Aufrufer, Tests) wäre ein Programmfehler, nicht ein halber Zustand.
+            if (value.Length < LinuxSyscalls.TermiosSize)
+            {
+                throw new ArgumentException($"termios braucht {LinuxSyscalls.TermiosSize} Byte, nicht {value.Length}", nameof(value));
+            }
+
+            _termios = value;
             uint iflag = BitConverter.ToUInt32(value, 0);
             uint lflag = BitConverter.ToUInt32(value, 12);
             _canonical = (lflag & LinuxSyscalls.ICANON) != 0;

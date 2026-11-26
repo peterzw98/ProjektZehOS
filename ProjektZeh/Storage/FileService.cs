@@ -881,6 +881,85 @@ internal sealed class FileService
 
     internal void ResetDirectory(string directory) => CurrentDirectory = directory;
 
+    /// <summary>Höchstzahl der Einträge, die <see cref="AuthorizeProcessRoot"/> unter einer Prozesswurzel prüft.</summary>
+    internal const int MaximumProcessRootEntries = 4096;
+
+    /// <summary>
+    /// Ladybird V8 (Review V8, P1): Darf <c>run</c> <paramref name="directory"/> als Prozesswurzel nehmen? Das Programm schreibt im
+    /// ganzen Unterbaum ohne eigene Rechteprüfung; deshalb gilt hier mehr als für <c>cd</c> (nur Lesen): angemeldete Sitzung, Pfad
+    /// unter der Verwaltungswurzel, aber nicht sie selbst, kein Systempfad (<see cref="IsProcessRootForbidden"/>), Schreibrecht auf
+    /// die Wurzel und Verwaltungsrecht (Eigentümer oder Administrator) auf die Wurzel und jeden zugeordneten Eintrag darunter.
+    /// Einträge ohne Rechtezuordnung sind für Nicht-Administratoren über den Dateidienst ohnehin unsichtbar; sie stammen von früheren
+    /// Läufen (der Prozess legt keine Rechteeinträge an) und bleiben erlaubt. Restrisiko: zwischen Prüfung und Lauf kann sich der
+    /// Baum ändern (etwa ein fremder Eintrag mit Schreibfreigabe des Eigentümers).
+    /// </summary>
+    public ResultErr AuthorizeProcessRoot(string directory) => StorageLock.Run(() => AuthorizeProcessRootStorageLocked(directory));
+
+    private ResultErr AuthorizeProcessRootStorageLocked(string directory)
+    {
+        if (access == null || session?.UserId == null) return FileAccessControl.Denied();
+        var resolved = ResolvePath(directory);
+        if (!resolved.IsOK()) return resolved.Status;
+        string root = resolved.Value!;
+        StringComparison rootComparison = access.Comparison;
+        if (string.Equals(root, access.RootDirectory, rootComparison) || !access.IsManagedPath(root) || IsProcessRootForbidden(root))
+            return ProcessRootDenied(root, "Verwaltungswurzel oder Systempfad");
+        if (!access.Check(session, root, FilePermission.Write).IsOK() || !Manages(root))
+            return ProcessRootDenied(root, "Schreib- und Verwaltungsrecht fehlen");
+
+        var pending = new Stack<string>();
+        pending.Push(root);
+        int visited = 0;
+        try
+        {
+            while (pending.Count > 0)
+            {
+                foreach (string entry in Directory.EnumerateFileSystemEntries(pending.Pop()))
+                {
+                    if (++visited > MaximumProcessRootEntries)
+                        return ProcessRootDenied(root, "mehr als " + MaximumProcessRootEntries + " Einträge");
+                    if (access.Contains(entry) && !Manages(entry))
+                        return ProcessRootDenied(root, "fremder Eintrag " + entry);
+                    // Vor GetAttributes: Cosmos folgt dort Symlinks. Verknüpfungen und Mountgrenzen löst der Prozess selbst
+                    // innerhalb der Wurzel auf (DirectoryFileStore); hier wird nicht hineingegangen.
+                    if (!FileAccessControl.RunGuard(pathGuard, entry, false).IsOK()) continue;
+                    var attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) == 0 && (attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+                }
+            }
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            return ResultErr.CreateFromException(exception);
+        }
+
+        return ResultErr.CreateSuccess();
+    }
+
+    // Verwaltungsrecht wie bei Rechtevergabe (AccountService.Grant): Administrator oder Eigentümer des Eintrags.
+    private bool Manages(string path) => session!.IsAdministrator || access!.IsOwner(path, session.UserId!);
+
+    /// <summary>
+    /// Systempfade, die nie Prozesswurzel werden: jede Komponente mit <c>.zehos</c> am Anfang (Legacy-Systemdaten unter /data) und,
+    /// wenn die Verwaltungswurzel das Dateisystem selbst ist (Root-Profil), alles unter /etc, /var und /boot. Strenger als
+    /// <see cref="FileAccessControl.IsManagedPath"/>, das nur /etc/zehos und /var/lib/zehos sperrt: Ein Programm bekäme dort
+    /// sonst als "/zehos" die Systemdaten.
+    /// </summary>
+    private bool IsProcessRootForbidden(string path)
+    {
+        StringComparison rootComparison = access!.Comparison;
+        string prefix = Path.EndsInDirectorySeparator(access.RootDirectory) ? access.RootDirectory : access.RootDirectory + Path.DirectorySeparatorChar;
+        string[] parts = path[prefix.Length..].Split(Path.DirectorySeparatorChar);
+        foreach (string part in parts)
+            if (part.StartsWith(".zehos", StringComparison.OrdinalIgnoreCase)) return true;
+        bool fileSystemRoot = string.Equals(access.RootDirectory, Path.GetPathRoot(access.RootDirectory), rootComparison);
+        return fileSystemRoot && (string.Equals(parts[0], "etc", rootComparison) || string.Equals(parts[0], "var", rootComparison) ||
+            string.Equals(parts[0], "boot", rootComparison));
+    }
+
+    private static ResultErr ProcessRootDenied(string root, string reason) =>
+        ResultErr.CreateFailure(ResultCode.Failure, $"cause='ProcessRootDenied' message='{root} ist als Prozesswurzel gesperrt: {reason}.'");
+
     /// <summary>Ein Listeneintrag ist sichtbar nach Rechten, ohne Rechteverwaltung nach dem Pfadwaechter.</summary>
     private bool Visible(string entry) => access != null
         ? access.Check(session!, entry, FilePermission.Read).IsOK()
