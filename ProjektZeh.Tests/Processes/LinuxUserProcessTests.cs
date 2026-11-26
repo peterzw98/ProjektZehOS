@@ -265,6 +265,34 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
+    public void MapFixedErsetztUndDiscardNullt()
+    {
+        var (process, _, _, _) = Start();
+        ulong a = process.MapAnonymous(2 * Page, 3);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 9 }));
+        Assert.IsTrue(process.TryWrite(a + Page, new byte[] { 8 }));
+
+        Assert.IsTrue(process.Discard(a, Page));
+        var b = new byte[1];
+        Assert.IsTrue(process.TryRead(a, b));
+        Assert.AreEqual(0, b[0], "verworfene Seite liest sich als Null");
+        Assert.IsTrue(process.TryRead(a + Page, b));
+        Assert.AreEqual(8, b[0], "Nachbarseite bleibt");
+
+        // MAP_FIXED über belegtem Bereich: ersetzt, Inhalt weg; auch über Freiem.
+        Assert.IsTrue(process.MapFixed(a + Page, Page, 3));
+        Assert.IsTrue(process.TryRead(a + Page, b));
+        Assert.AreEqual(0, b[0]);
+        ulong free = a + 16 * Page;
+        Assert.IsTrue(process.MapFixed(free, Page, 3));
+        Assert.IsTrue(process.TryWrite(free, new byte[] { 1 }));
+        Assert.IsFalse(process.MapFixed(free + 1, Page, 3), "nicht ausgerichtet");
+        Assert.IsFalse(process.MapFixed(ElfLoader.UserEnd, Page, 3), "außerhalb");
+        Assert.IsFalse(process.MapFixed(free, Page, 7), "W^X");
+        Assert.IsFalse(process.Discard(ElfLoader.UserEnd, Page));
+    }
+
+    [TestMethod]
     public void RefusedUnmapKeepsTheFrame()
     {
         var (process, pages, _, _) = Start();

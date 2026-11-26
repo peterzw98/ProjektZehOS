@@ -49,11 +49,16 @@ public sealed class LinuxSyscallsTests
         public IUserMemory Memory => Mem;
         public ILinuxDescriptor? GetDescriptor(int fd) => fd == 1 ? Out : null;
         public ulong Brk { get; set; } = 0x400000UL;
+        public ulong Uid { get; set; } = 1000;
+        public ulong Gid { get; set; } = 2000;
         public bool TrySetBrk(ulong n) { if (n < 0x400000UL || n > 0x500000UL) return false; Brk = n; return true; }
         public ulong MapAnonymous(ulong len, int prot) { LastLen = len; return len > 0x1000000 ? 0UL : 0x7000_0000UL; }
         public ulong LastLen;
         public ulong UnmapLen, ProtectLen;
         public bool Unmap(ulong a, ulong l) { UnmapLen = l; return true; }
+        public ulong FixedAddr, FixedLen, DiscardAddr, DiscardLen;
+        public bool MapFixed(ulong a, ulong l, int p) { FixedAddr = a; FixedLen = l; return a < 0x8000_0000_0000UL; }
+        public bool Discard(ulong a, ulong l) { DiscardAddr = a; DiscardLen = l; return true; }
         public bool Protect(ulong a, ulong l, int p) { ProtectLen = l; return true; }
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
@@ -363,6 +368,57 @@ public sealed class LinuxSyscallsTests
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Poll, Base + 0x4000 - 4, 1, 0));
     }
 
+    private static long Call2(NoHostProc n, long nr, ulong a0, ulong a1, ulong a2, ulong a3 = 0, ulong a4 = 0)
+    {
+        var a = new SyscallArgs { Number = nr, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4 };
+        return LinuxSyscalls.Dispatch(ref a, n);
+    }
+
+    [TestMethod]
+    public void IdentitaetUndMapFixed()
+    {
+        var p = new Proc();
+        // Die Werte kommen aus dem Prozess (derselbe Wert wie AT_UID/AT_GID), nicht fest.
+        Assert.AreEqual(1000L, Call(p, LinuxSyscalls.Getuid));
+        Assert.AreEqual(1000L, Call(p, LinuxSyscalls.Geteuid));
+        Assert.AreEqual(2000L, Call(p, LinuxSyscalls.Getgid));
+        Assert.AreEqual(2000L, Call(p, LinuxSyscalls.Getegid));
+
+        const ulong Fl = 0x32; // PRIVATE | FIXED | ANONYMOUS
+        Assert.AreEqual(0x20_0000L, Call(p, LinuxSyscalls.Mmap, 0x20_0000, 5000, 3, Fl, ulong.MaxValue));
+        Assert.AreEqual(0x20_0000UL, p.FixedAddr);
+        Assert.AreEqual(8192UL, p.FixedLen);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Mmap, 0x20_0001, 4096, 3, Fl, ulong.MaxValue));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Mmap, 0x7fff_ffff_f000, 8192, 3, Fl, ulong.MaxValue));
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Call2(new NoHostProc(), LinuxSyscalls.Mmap, 0x20_0000, 4096, 3, Fl, ulong.MaxValue));
+    }
+
+    [TestMethod]
+    public void NanosleepSchlaeftUndPrueft()
+    {
+        var p = new Proc();
+        ulong Req = Base + 0x100, Rem = Base + 0x200;
+        BitConverter.GetBytes(2L).CopyTo(p.Mem.Data, 0x100);
+        BitConverter.GetBytes(500L).CopyTo(p.Mem.Data, 0x108);
+        BitConverter.GetBytes(7L).CopyTo(p.Mem.Data, 0x200);
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.Nanosleep, Req, Rem));
+        Assert.AreEqual(2_000_000_500L, p.SleptNanos);
+        Assert.AreEqual(0L, BitConverter.ToInt64(p.Mem.Data, 0x200), "rem = 0");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Nanosleep, 0x10, 0));
+        BitConverter.GetBytes(1_000_000_000L).CopyTo(p.Mem.Data, 0x108);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Nanosleep, Req, 0));
+        // clock_nanosleep: relativ auf MONOTONIC, absolut (Frist = Monotonic + 1 s; Monotonic ist 5_000_000_007)
+        p.SleptNanos = 0;
+        BitConverter.GetBytes(0L).CopyTo(p.Mem.Data, 0x108);
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.ClockNanosleep, 1, 0, Req, 0));
+        Assert.AreEqual(2_000_000_000L, p.SleptNanos);
+        p.SleptNanos = 0;
+        BitConverter.GetBytes(6L).CopyTo(p.Mem.Data, 0x100);
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.ClockNanosleep, 1, 1, Req, Rem));
+        Assert.AreEqual(999_999_993L, p.SleptNanos);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.ClockNanosleep, 2, 0, Req, 0));
+    }
+
     [TestMethod]
     public void MadviseHinweiseOkDontneedAbgelehnt()
     {
@@ -371,7 +427,11 @@ public sealed class LinuxSyscallsTests
         Assert.AreEqual(0L, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 8192, 3));
         Assert.AreEqual(0L, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 0, 14));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Madvise, 0x7000_0001, 4096, 0));
-        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 4096, 4));
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 5000, 4)); // DONTNEED: aufgerundet verworfen
+        Assert.AreEqual(8192UL, p.DiscardLen);
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 4096, 8));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 4096, 9)); // REMOVE
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Call2(new NoHostProc(), LinuxSyscalls.Madvise, 0x7000_0000, 4096, 4)); // Discard scheitert
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, 4096, 99));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Madvise, 0x7000_0000, ulong.MaxValue, 0));
     }
@@ -431,9 +491,13 @@ public sealed class LinuxSyscallsTests
         public IUserMemory Memory => Mem;
         public ILinuxDescriptor? GetDescriptor(int fd) => null;
         public ulong Brk => 0;
+        public ulong Uid => 1000;
+        public ulong Gid => 1000;
         public bool TrySetBrk(ulong n) => false;
         public ulong MapAnonymous(ulong len, int prot) => 0;
         public bool Unmap(ulong a, ulong l) => false;
+        public bool MapFixed(ulong a, ulong l, int p) => false;
+        public bool Discard(ulong a, ulong l) => false;
         public bool Protect(ulong a, ulong l, int p) => false;
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
