@@ -46,7 +46,7 @@ internal interface IUserPages
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
-    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait
+    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -646,6 +646,16 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
     /// <summary>V15: true, solange irgendeine Nummer irgendeines Prozesses dieses Laufs auf <paramref name="d"/> zeigt. Der Aufrufer hält FileGate.</summary>
     public bool IsOpenAnywhere(ILinuxDescriptor d) => _openFiles.IsReferenced(d);
+
+    /// <summary>V16 (SCM_RIGHTS): eine Unix-Socket-Nachricht hält <paramref name="d"/> wie eine Nummer. Der Aufrufer hält FileGate.</summary>
+    public void HoldInFlight(ILinuxDescriptor d) => _openFiles.Add(d);
+
+    /// <summary>V16: die Nachricht gibt <paramref name="d"/> ab; war es der letzte Verweis im Lauf, schließt die Datei. Der Aufrufer hält FileGate.</summary>
+    public void ReleaseInFlight(ILinuxDescriptor d)
+    {
+        _openFiles.Remove(d);
+        _ = LinuxSyscalls.ReleaseIfUnused(this, d);
+    }
 
     /// <summary>Leert Nummer <paramref name="fd"/> und schließt die Datei, wenn es die letzte Nummer im Lauf war. Der Aufrufer hält FileGate.</summary>
     private void DropDescriptor(int fd)

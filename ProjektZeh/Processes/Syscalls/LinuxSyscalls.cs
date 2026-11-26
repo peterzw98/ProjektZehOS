@@ -144,7 +144,8 @@ internal static partial class LinuxSyscalls
                 return done > 0 ? (long)done : -EFAULT;
             }
 
-            long w = d.Write(tmp.Slice(0, n));
+            // V16: Pipes und Unix-Sockets warten mit dem Abbruch des schreibenden Prozesses, nicht des Erzeugers (vfork, SCM_RIGHTS).
+            long w = d is ILinuxPollable pollable ? pollable.WriteAs(tmp.Slice(0, n), p as ILinuxAbort) : d.Write(tmp.Slice(0, n));
             if (w < 0)
             {
                 return done > 0 ? (long)done : w;

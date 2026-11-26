@@ -93,8 +93,8 @@ internal sealed class LinuxOpenFiles
 
     public bool IsReferenced(ILinuxDescriptor d) => CountOf(d) > 0;
 
-    // Wie ReleaseIfUnused: nur Dateien und Pipe-Enden werden geschlossen, also nur sie gezählt.
-    private static bool Counted(ILinuxDescriptor d) => d is ILinuxFile or LinuxPipeEnd;
+    // Wie ReleaseIfUnused: nur Dateien, Pipe-Enden und Unix-Sockets (V16) werden geschlossen, also nur sie gezählt.
+    private static bool Counted(ILinuxDescriptor d) => d is ILinuxFile or LinuxPipeEnd or LinuxUnixSocket;
 
     private Entry? Find(ILinuxDescriptor d)
     {
