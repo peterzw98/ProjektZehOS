@@ -377,6 +377,39 @@ public sealed class LinuxProcessWaitTests
     }
 
     [TestMethod]
+    public void Wait4KehrtErstNachGeschlossenenDateienDesKindesZurueck()
+    {
+        // Review V15 P2: Das Ende wird gemeldet, bevor Release/Destroy laufen (Brücke: ReportEnd, dann Aufräumen). Schon nach der Meldung
+        // muss das Schreibende zu sein, sonst sähe der Elternprozess nach wait4 kein EOF.
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        Assert.AreEqual(0L, Sys(r.P, Pipe2, r.Buf, ONonblock));
+        int rfd = r.ReadInt(r.Buf), wfd = r.ReadInt(r.Buf + 4);
+
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual(0L, Sys(r.P, Close, (ulong)wfd), "Eltern schließen ihr Schreibende, das vfork-Kind hält seins");
+        child.ReportEnd(LinuxWaitStatus.Exited(0));
+        Assert.AreEqual((long)child.Pid, r.Wait4(-1, 0, 0));
+        Assert.AreEqual(0L, Sys(r.P, Read, (ulong)rfd, r.Buf + 0x100, 16), "vfork-Kind: EOF direkt nach wait4");
+        child.Release();
+
+        // Dasselbe für ein Kind mit eigenem Abbild (ProcessBody: ReportEnd vor Destroy).
+        Assert.AreEqual(0L, Sys(r.P, Pipe2, r.Buf, ONonblock));
+        rfd = r.ReadInt(r.Buf);
+        wfd = r.ReadInt(r.Buf + 4);
+        child = r.Spawn();
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        child.Release();
+        Assert.AreEqual(0L, Sys(r.P, Close, (ulong)wfd));
+        next.ReportEnd(LinuxWaitStatus.Exited(0));
+        Assert.AreEqual((long)next.Pid, r.Wait4(-1, 0, 0));
+        Assert.AreEqual(0L, Sys(r.P, Read, (ulong)rfd, r.Buf + 0x100, 16), "neues Abbild: EOF direkt nach wait4");
+        Assert.IsTrue(next.IdInUse(r.P.Pid), "PID des ersten Prozesses bleibt belegt");
+        next.Destroy();
+    }
+
+    [TestMethod]
     public void PipeEndeImNeuenAbbildHaeltEofBisEsEndet()
     {
         var r = new Root();
