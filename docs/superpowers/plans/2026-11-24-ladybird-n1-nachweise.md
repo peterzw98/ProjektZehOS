@@ -257,10 +257,11 @@ Jedes Programm schreibt nur deterministischen Text. `expected/<satz>/<name>.txt`
 | nach N1-A2 | N1-A3 (#626) | `Interrupts.s` |
 | nach N1-A1, N1-A3 | N1-A4 (#627) |  |
 | nach N1-A4, N1-A5 | N1-A6 (#629) |  |
-| nach N1-A4, N1-B2 | N1-B3 (#632) | neben N1-A6 |
+| nach N1-A2 | N1-B3a (#698) | APIC und EfiRtc über HHDM; nachträglich aus N1-B3 gelöst |
+| nach N1-A4, N1-B2, N1-B3a | N1-B3 (#632) | neben N1-A6 |
 | nach N1-A6 | N1-A7 (#630) |  |
 | nach N1-A6, N1-B1, N1-B3 | N1-B4 (#633) | neben N1-A7 |
-| nach N1-B4 | N1-B5 (#634) |  |
+| nach N1-B4 | N1-B5 (#634) | Zeit je Adressraumwechsel erst nach #716 messbar |
 | nach allem und #423 | N1-Z (#624) | Entscheidung Peter oder Lars |
 
 Die Vorarbeiten P1 bis P4 stehen in [Vorarbeit Paketdienst](2026-11-24-ladybird-p-paketdienst-vorarbeit.md).
