@@ -404,24 +404,35 @@ body_device:
         syscall
         HANG
 
-/* aswitch (N1-B5): Gruppe bei [rsp]. Je Runde ein rdtsc-Paar um SYS_YIELD; liegt ein zweites Programm in einem anderen Adressraum auf
- * derselben CPU, kostet der Aufruf zwei Wechsel (hin und zurueck, mit CR3), allein keinen. Die Ticks gehen NACH dem Paar per SYS_SAMPLE
- * an den Kernel (rsi = Gruppe). Ende nur durch RequestLeave. */
+/* aswitch (N1-B5): Gruppe bei [rsp]: 0 allein, 1 Messer mit Peer, 0xFF Peer. SYS_YIELD (rdi = 1: Peer) liefert in rax den Zaehler, den nur
+ * der Peer erhoeht. Der Messer beendet eine Runde im Paar erst, wenn der Zaehler gestiegen ist (der Peer lief also nachweislich); allein
+ * endet sie nach einem Yield. Ticks (rdtsc-Paar um die ganze Runde) gehen NACH der Runde per SYS_SAMPLE an den Kernel (rsi = Gruppe).
+ * Ende nur durch RequestLeave. */
 body_aswitch:
         mov rbx, [rsp]
         cmp rbx, 0xFF
         jne 1f
-        /* Gegenstelle (Gruppe 0xFF): nur Yield, kein rdtsc und kein SYS_SAMPLE; so bleibt im Paarmedian nur Yield-Arbeit beider Seiten. */
-0:      mov eax, SYS_YIELD
+0:      mov edi, 1
+        mov eax, SYS_YIELD
         syscall
         jmp 0b
-1:      rdtsc
+1:      xor edi, edi
+        mov eax, SYS_YIELD
+        syscall
+        mov r10, rax
+2:      rdtsc
         shl rdx, 32
         or rax, rdx
         mov r8, rax
+3:      xor edi, edi
         mov eax, SYS_YIELD
         syscall
-        rdtsc
+        test rbx, rbx
+        jz 4f
+        cmp rax, r10
+        je 3b
+        mov r10, rax
+4:      rdtsc
         shl rdx, 32
         or rax, rdx
         sub rax, r8
@@ -429,7 +440,7 @@ body_aswitch:
         mov rsi, rbx
         mov eax, SYS_SAMPLE
         syscall
-        jmp 1b
+        jmp 2b
 
 /* pfault (N1-B5): Anfang der reservierten Adressen bei [rsp], Seitenzahl bei [rsp + 8]. Durchgang 0 schreibt je Seite (Erstzugriff: der
  * FaultHandler belegt sie), Durchgang 1 dieselben Seiten noch einmal (schon abgebildet, Eigenkosten von Store und rdtsc). Je Seite ein

@@ -48,6 +48,9 @@ internal static unsafe class CosmosAddressSpaceProbe
     private const int SampleMax = 20000;
     private static readonly uint[][] samples = [new uint[SampleMax], new uint[SampleMax]];
     private static readonly int[] sampleCount = new int[2];
+    // Yield wechselt erst am naechsten Interrupt-Austritt (Timertakt ~10 ms): eine Paarrunde dauert einen Takt, deshalb wenige Runden.
+    private const int PairRounds = 1000;
+    private static long peerCount, peerCr3, roundsDiffCr3, roundsSameCr3;
 
     private static long calls;
     private static int faults, faultsMapped;
@@ -228,11 +231,23 @@ internal static unsafe class CosmosAddressSpaceProbe
                 ulong group = frame->Rsi & 1;
                 int index = Interlocked.Increment(ref sampleCount[group]) - 1;
                 if (index < SampleMax) samples[group][index] = (uint)frame->Rdi;
+                // Paarmessung: je Runde pruefen, dass der Peer in einem anderen Adressraum lief (CR3 des Messers gegen das des Peers).
+                if (group == 1)
+                {
+                    if (peerCr3 != 0 && peerCr3 != (long)(Probe.ReadCr3() & 0x000F_FFFF_FFFF_F000)) Interlocked.Increment(ref roundsDiffCr3);
+                    else Interlocked.Increment(ref roundsSameCr3);
+                }
                 frame->Rax = 0;
                 break;
             case SysYield:
+                // rdi = 1: Peer; er erhoeht den Zaehler und merkt sich sein CR3. Der Messer bekommt den Zaehler zurueck.
+                if (frame->Rdi == 1)
+                {
+                    peerCr3 = (long)(Probe.ReadCr3() & 0x000F_FFFF_FFFF_F000);
+                    Interlocked.Increment(ref peerCount);
+                }
                 Thread.Yield();
-                frame->Rax = 0;
+                frame->Rax = (ulong)Interlocked.Read(ref peerCount);
                 break;
             default:
                 frame->Rax = ulong.MaxValue;
@@ -415,7 +430,7 @@ internal static unsafe class CosmosAddressSpaceProbe
     /// Kosten eines Adressraumwechsels: ein Yield-Aufruf im Ring 3, allein (kein anderer Thread, kein Wechsel) und mit einem zweiten
     /// Programm in einem anderen Adressraum auf derselben CPU (zwei Wechsel mit CR3). Gemessen wird "Wechsel inkl. Yield": Die Differenz
     /// der Mediane enthaelt Scheduler (Thread.Yield), Syscall-Ein/Austritt und CR3, nicht CR3 allein. Die Gegenstelle ruft nur Yield
-    /// (kein SYS_SAMPLE), damit beide Arme dieselbe Arbeit je Runde tun. Gegenprobe: zwei Kernelthreads auf derselben CPU ohne Ring 3,
+    /// (kein SYS_SAMPLE); eine Paarrunde endet erst, wenn ein gemeinsamer Zaehler zeigt, dass der Peer lief (Thread.Yield setzt nur ein Flag und wechselt nicht sofort), und je Runde muss das CR3 des Peers verschieden sein. Gegenprobe: zwei Kernelthreads auf derselben CPU ohne Ring 3,
     /// ebenfalls in TSC-Ticks (gleiche Einheit wie alone/pair).
     /// </summary>
     private static (bool, string) AddressSwitch()
@@ -425,54 +440,62 @@ internal static unsafe class CosmosAddressSpaceProbe
         Space? b = Space.Create();
         if (a == null || b == null) { a?.Dispose(); b?.Dispose(); return (false, "no space"); }
         sampleCount[0] = sampleCount[1] = 0;
+        peerCount = peerCr3 = roundsDiffCr3 = roundsSameCr3 = 0;
         var alone = new Runner(a, "aswitch", 0, cpu);
         bool aloneOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[0]) >= SampleMax, 60);
         bool stopped = alone.Stop();
         bool failed = alone.Bad != 0 || alone.Failure != "";
         var first = new Runner(a, "aswitch", 1, cpu);
         var second = new Runner(b, "aswitch", 0xFF, cpu); // Gegenstelle: nur Yield, ohne rdtsc/SYS_SAMPLE (gleiche Arbeit wie im Arm "alone")
-        bool pairOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[1]) >= SampleMax, 60);
+        bool pairOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[1]) >= PairRounds, 120);
         stopped &= first.Stop();
         stopped &= second.Stop();
         failed |= first.Bad != 0 || second.Bad != 0 || first.Failure != "" || second.Failure != "";
         int aloneN = Filled(0), pairN = Filled(1);
         string aloneText = Stats(samples[0], aloneN), pairText = Stats(samples[1], pairN);
         long net = aloneN == 0 || pairN == 0 ? -1 : (long)samples[1][pairN / 2] - samples[0][aloneN / 2];
+        long peerRuns = Interlocked.Read(ref peerCount), diff = Interlocked.Read(ref roundsDiffCr3), same = Interlocked.Read(ref roundsSameCr3);
         a.Dispose();
         b.Dispose();
         // Gegenprobe ohne Ring 3: zwei Kernelthreads wechseln per Yield auf derselben CPU.
         string kernelText = KernelSwitch(cpu, out bool kernelOk);
-        return (aloneOk && pairOk && stopped && !failed && kernelOk,
-            "alone: " + aloneText + " pair: " + pairText + " net_med=" + net + " kernel_pair(tsc_ticks): " + kernelText);
+        // Jede Paarrunde muss einen Peer-Lauf in anderem Adressraum haben: kein Runde mit gleichem CR3, Peer-Laeufe mindestens so viele wie Runden.
+        bool proven = same == 0 && diff >= PairRounds && peerRuns >= diff;
+        return (aloneOk && pairOk && stopped && !failed && kernelOk && proven,
+            "alone: " + aloneText + " pair: " + pairText + " net_med=" + net + " peer_runs=" + peerRuns + " rounds_cr3_diff=" + diff
+            + " rounds_cr3_same=" + same + " kernel_pair(tsc_ticks): " + kernelText);
     }
 
     private static string KernelSwitch(uint cpu, out bool ok)
     {
-        const int rounds = 20000;
+        const int rounds = PairRounds;
         var ticks = new uint[rounds];
         int count = 0, stop = 0;
+        long shared = 0;
         var other = new Thread(() =>
         {
             Probe.PinTo(cpu);
-            while (Volatile.Read(ref stop) == 0) Thread.Yield();
+            while (Volatile.Read(ref stop) == 0) { Interlocked.Increment(ref shared); Thread.Yield(); }
         });
         var measure = new Thread(() =>
         {
             Probe.PinTo(cpu);
             for (; count < rounds; count++)
             {
+                // Die Runde endet erst, wenn der andere Thread nachweislich lief (Zaehler gestiegen).
+                long before = Interlocked.Read(ref shared);
                 ulong start = Probe.ReadTsc();
-                Thread.Yield();
+                do Thread.Yield(); while (Interlocked.Read(ref shared) == before && Volatile.Read(ref stop) == 0);
                 ticks[count] = (uint)(Probe.ReadTsc() - start);
             }
         });
         other.Start();
         measure.Start();
-        bool joined = Probe.Join(measure, 60);
+        bool joined = Probe.Join(measure, 120);
         Volatile.Write(ref stop, 1);
         joined &= Probe.Join(other, 60);
         ok = joined && count == rounds;
-        return Stats(ticks, count);
+        return Stats(ticks, count) + " peer_runs=" + Interlocked.Read(ref shared);
     }
 
     /// <summary>
