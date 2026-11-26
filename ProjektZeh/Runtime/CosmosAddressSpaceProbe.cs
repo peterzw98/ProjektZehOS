@@ -63,7 +63,8 @@ internal static unsafe class CosmosAddressSpaceProbe
 
         private Space(UserPageTable table) => Table = table;
 
-        public static Space? Create(bool code = true)
+        /// <param name="sharedData">Gegenprobe isolate: Datenseite 0 auf diesen fremden Frame (gehoert dem anderen Raum, hier nicht freigeben).</param>
+        public static Space? Create(bool code = true, ulong sharedData = 0)
         {
             UserPageTable? table = UserPageTable.TryCreate();
             if (table == null) return null;
@@ -74,7 +75,7 @@ internal static unsafe class CosmosAddressSpaceProbe
                     ok &= table.TryMap(CodeBase + (ulong)i * PageSize, codeFrames[i], writable: false, executable: true);
             for (int i = 0; i < DataPages && ok; i++)
             {
-                ulong frame = space.NewFrame();
+                ulong frame = i == 0 && sharedData != 0 ? sharedData : space.NewFrame();
                 space.Data[i] = frame;
                 ok = frame != 0 && table.TryMap(DataBase + (ulong)i * PageSize, frame, writable: true, executable: false);
             }
@@ -315,24 +316,37 @@ internal static unsafe class CosmosAddressSpaceProbe
     /// <summary>Zwei Programme an denselben Adressen in zwei Tabellen, je 10 s auf derselben CPU und (ab 2 CPUs) auf verschiedenen.</summary>
     private static (bool, string) Isolate()
     {
-        string same = IsolatePair(Probe.ProgramCpu, Probe.ProgramCpu, out bool sameOk);
-        if (KernelCpus.Count == 1) return (sameOk, "same: " + same + " other: skipped(1 cpu)");
-        string other = IsolatePair(0, Probe.ProgramCpu, out bool otherOk);
-        return (sameOk && otherOk, "same: " + same + " other: " + other);
+        // Gegenprobe zuerst: Teilen beide Tabellen die Datenseite, muss der Fall das sehen, sonst beweist er auch ohne CR3-Wechsel nichts.
+        uint controlCpu = KernelCpus.Count == 1 ? Probe.ProgramCpu : 0;
+        string control = IsolatePair(controlCpu, Probe.ProgramCpu, true, out bool controlOk);
+        string same = IsolatePair(Probe.ProgramCpu, Probe.ProgramCpu, false, out bool sameOk);
+        string text = "control(shared page): " + control + " same: " + same;
+        if (KernelCpus.Count == 1) return (controlOk && sameOk, text + " other: skipped(1 cpu)");
+        string other = IsolatePair(0, Probe.ProgramCpu, false, out bool otherOk);
+        return (controlOk && sameOk && otherOk, text + " other: " + other);
     }
 
-    private static string IsolatePair(uint firstCpu, uint secondCpu, out bool ok)
+    /// <param name="shared">Gegenprobe: b bildet die Datenseite von a ab; ok heisst dann, die Ueberschneidung wurde gesehen.</param>
+    private static string IsolatePair(uint firstCpu, uint secondCpu, bool shared, out bool ok)
     {
         checks = 0;
         checkFailures = 0;
-        Space? a = Space.Create(), b = Space.Create();
-        if (a == null || b == null) { a?.Dispose(); b?.Dispose(); ok = false; return "no space"; }
+        Space? a = Space.Create();
+        Space? b = a == null ? null : Space.Create(sharedData: shared ? a.Data[0] : 0);
+        if (a == null || b == null) { b?.Dispose(); a?.Dispose(); ok = false; return "no space"; }
         var first = new Runner(a, "isolate", 0x1111, firstCpu);
         var second = new Runner(b, "isolate", 0x2222, secondCpu);
         int seconds = 0, wrong = 0;
         bool progress = true;
         for (; seconds < 10; seconds++)
         {
+            if (shared)
+            {
+                // Bad liest der Runner nach jedem Austritt; ein erster Befund reicht, die Gegenprobe endet dann frueh.
+                if (first.Bad != 0 || second.Bad != 0 || Volatile.Read(ref checkFailures) != 0) break;
+                Thread.Sleep(1000);
+                continue;
+            }
             progress &= first.WaitProgress() && second.WaitProgress();
             // Gegenlesung aus dem Kernel: jeder Frame haelt nur die eigene Kennung.
             if (*a.At(0) != 0x1111 || *b.At(0) != 0x2222) wrong++;
@@ -340,10 +354,14 @@ internal static unsafe class CosmosAddressSpaceProbe
         }
         bool joined = first.Stop() & second.Stop();
         ulong p1 = first.Progress, p2 = second.Progress;
-        a.Dispose();
+        // b zuerst: sein Eintrag zeigt bei der Gegenprobe auf den Frame von a, den erst a.Dispose freigibt.
         b.Dispose();
-        ok = joined && progress && wrong == 0 && first.Bad == 0 && second.Bad == 0 && checks > 0 && checkFailures == 0
-            && first.Failure == "" && second.Failure == "";
+        a.Dispose();
+        bool failures = first.Failure == "" && second.Failure == "";
+        if (shared)
+            ok = joined && failures && (first.Bad == 1 || second.Bad == 1 || checkFailures > 0);
+        else
+            ok = joined && progress && wrong == 0 && first.Bad == 0 && second.Bad == 0 && checks > 0 && checkFailures == 0 && failures;
         return "cpus=" + firstCpu + "/" + secondCpu + " seconds=" + seconds + " progress=" + p1 + "/" + p2 + " checks=" + checks
             + " check_failures=" + checkFailures + " wrong=" + wrong + " bad=0x" + first.Bad.ToString("X") + "/0x" + second.Bad.ToString("X")
             + " " + first.Failure + second.Failure;
@@ -375,7 +393,8 @@ internal static unsafe class CosmosAddressSpaceProbe
         if (space == null) return (false, "no space");
         ulong heap = Probe.data[0], image = Probe.ImageAddress(), window = Probe.userBase, identity = 0x10_0000;
         ulong kernelRoot = Probe.ReadCr3() & 0x000F_FFFF_FFFF_F000;
-        bool identityInKernel = (*(ulong*)(kernelRoot + hhdm) & 1) != 0;
+        // Ohne Abbildung in den Kerneltabellen faende der Fall identity auch ohne eigene Tabelle #PF mit P=0: dann ist er rot.
+        bool identityInKernel = KernelMaps(kernelRoot, identity);
         var cases = new (string Name, ulong Address, ulong Error)[]
         {
             ("heap", heap, 5), ("image", image, 5), ("a6window", window, 4), ("identity", identity, 4),
@@ -393,8 +412,22 @@ internal static unsafe class CosmosAddressSpaceProbe
         // Gegenprobe mit den Kerneltabellen (Programm von N1-A6): readat endet mit 0x10, wenn das Lesen gelingt.
         *(ulong*)(Probe.data[0] + 2048) = window;
         ulong control = UserMode.Enter(Probe.userBase + Probe.Offset("readat"), Probe.Stack(0));
-        ok &= control == 0x10;
-        return (ok, text + "kernel_tables_read=" + Hex(control) + " pml4_0_present=" + (identityInKernel ? 1 : 0));
+        ok &= control == 0x10 && identityInKernel;
+        return (ok, text + "kernel_tables_read=" + Hex(control) + " identity_in_kernel=" + (identityInKernel ? 1 : 0));
+    }
+
+    /// <summary>Geht die Kerneltabellen ab <paramref name="root"/> fuer <paramref name="address"/> durch (4 Ebenen, grosse Seiten).</summary>
+    private static bool KernelMaps(ulong root, ulong address)
+    {
+        ulong table = root;
+        for (int shift = 39; shift >= 12; shift -= 9)
+        {
+            ulong entry = ((ulong*)(table + hhdm))[(address >> shift) & 0x1FF];
+            if ((entry & 1) == 0) return false;
+            if (shift == 12 || (shift <= 30 && (entry & 0x80) != 0)) return true;
+            table = entry & 0x000F_FFFF_FFFF_F000;
+        }
+        return false;
     }
 
     /// <summary>Ausfuehren einer Datenseite: #PF mit I/D-Bit; Gegenprobe: Sprung in den Code laeuft.</summary>
@@ -449,6 +482,7 @@ internal static unsafe class CosmosAddressSpaceProbe
         space.Map = map;
         space.Frames.Capacity = pages + 64;
         ulong seed = 0x5EED_0B41;
+        var pageList = new ulong[pages];
         for (int i = 0; i < pages; i++)
         {
             seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
@@ -456,7 +490,18 @@ internal static unsafe class CosmosAddressSpaceProbe
             ulong length = inLarge ? 4UL << 40 : 32UL << 30;
             ulong start = inLarge ? large.Value : small.Value;
             // Die Liste liegt in zwei Datenseiten, deren Frames nicht nebeneinander liegen muessen.
-            *space.At(2 + i / 512, (ulong)(i % 512) * 8) = start + (seed % (length / PageSize)) * PageSize + ((seed >> 40) & 0x1FF) * 8;
+            ulong address = start + (seed % (length / PageSize)) * PageSize + ((seed >> 40) & 0x1FF) * 8;
+            *space.At(2 + i / 512, (ulong)(i % 512) * 8) = address;
+            pageList[i] = address & ~(PageSize - 1);
+        }
+        // Der Handler belegt jede Seite genau einmal: erwartet ist die Zahl verschiedener Seiten, nicht nur hoechstens 1000.
+        // Quadratisch statt Array.Sort: 10^6 Vergleiche, keine im Kernel ungepruefte API.
+        int distinct = 0;
+        for (int i = 0; i < pages; i++)
+        {
+            int j = 0;
+            while (j < i && pageList[j] != pageList[i]) j++;
+            if (j == i) distinct++;
         }
         int framesBefore = space.Frames.Count;
         faultsMapped = 0;
@@ -466,13 +511,16 @@ internal static unsafe class CosmosAddressSpaceProbe
         var (outside, outVector, _, outAddress) = Fault(space, "readat", 0x8000_0000);
         int framesUsed = space.Frames.Count - framesBefore;
         space.Dispose();
-        bool ok = result == 0 && mapped > 0 && mapped <= pages && framesUsed == mapped
+        bool ok = result == 0 && mapped == distinct && framesUsed == mapped
             && outside == UserMode.Faulted && outVector == 14 && outAddress == 0x8000_0000;
-        return (ok, "small=" + Hex(small.Value) + " large=" + Hex(large.Value) + " mapped=" + mapped + " result=" + Hex(result)
+        return (ok, "small=" + Hex(small.Value) + " large=" + Hex(large.Value) + " mapped=" + mapped + " distinct=" + distinct + " result=" + Hex(result)
             + " vector=" + vector + " outside=" + Hex(outside));
     }
 
-    /// <summary>Kopierweg wie ein Systemaufruf ihn braucht: Seite fuer Seite TryTranslate, dann ueber den HHDM; alles oder nichts.</summary>
+    /// <summary>
+    /// Kopierweg wie ein Systemaufruf ihn braucht: Seite fuer Seite TryTranslate, dann ueber den HHDM; alles oder nichts. Der Pin
+    /// (user-cr3) hat keinen eigenen Kopierweg in den Kernel; geprueft wird daher dieser probeneigene Weg auf UserPageTable.TryTranslate.
+    /// </summary>
     private static bool CopyUser(Space space, ulong user, byte* kernel, ulong length, bool toUser)
     {
         if (length == 0) return true;
@@ -551,7 +599,7 @@ internal static unsafe class CosmosAddressSpaceProbe
                     if (((byte*)(frames[i] + hhdm))[j] != shadow[i * (int)PageSize + j]) { differs++; break; }
         space.Dispose();
         return (setup && wrong == 0 && differs == 0 && succeeded > 100 && refused > 100,
-            "rounds=" + rounds + " ok=" + succeeded + " refused=" + refused + " wrong=" + wrong + " differs=" + differs);
+            "path=probe_copyuser_on_trytranslate rounds=" + rounds + " ok=" + succeeded + " refused=" + refused + " wrong=" + wrong + " differs=" + differs);
     }
 
     private static bool Expected(ulong user, ulong length, bool write, ulong copyBase, int pages)
@@ -619,13 +667,16 @@ internal static unsafe class CosmosAddressSpaceProbe
         });
         collector.Start();
         bool joined = Probe.Join(collector, 900);
+        int overlapped = Volatile.Read(ref collectionsInCheck);
+        // Sammeln im Handler haengt nur am Fortschritt der Programme (jeder achte SYS_CHECK), nicht an der Dauer des Sammlers.
+        bool inHandler = Probe.WaitFor(() => Volatile.Read(ref collectionsInCheck) >= 4, 120);
         progress &= first.WaitProgress() && second.WaitProgress();
         Volatile.Write(ref collectInCheck, 0);
         long exits = first.Exits + second.Exits;
         joined &= first.Stop() & second.Stop();
         a.Dispose(); b.Dispose(); c.Dispose();
-        return (joined && progress && failure == "" && collections == 1000 && exits == 0 && checkFailures == 0 && collectionsInCheck > 0,
-            "collections=" + collections + " in_handler=" + collectionsInCheck + " exits=" + exits + " check_failures=" + checkFailures + " " + failure);
+        return (joined && progress && failure == "" && collections == 1000 && exits == 0 && checkFailures == 0 && inHandler,
+            "collections=" + collections + " in_handler=" + collectionsInCheck + " overlapped=" + overlapped + " exits=" + exits + " check_failures=" + checkFailures + " " + failure);
     }
 
     // ---- device ----
@@ -680,13 +731,18 @@ internal static unsafe class CosmosAddressSpaceProbe
         try
         {
             client.Connect(new Address4(10, 0, 2, 2));
-            client.SendEcho();
             var source = new EndPoint(Address4.Zero, 0);
-            var clock = Stopwatch.StartNew();
-            while (clock.ElapsedMilliseconds < 3000)
+            // Beim ersten Echo ist die ARP-Antwort oft noch nicht da (IPv4OutgoingBuffer: "ARP timeout", die Antwort kommt danach),
+            // das Echo geht verloren. Deshalb bis zu fuenf Versuche je eine Sekunde.
+            for (int attempt = 0; attempt < 5; attempt++)
             {
-                if (client.Receive(ref source, 0) >= 0) return true;
-                Thread.Sleep(10);
+                client.SendEcho();
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < 1000)
+                {
+                    if (client.Receive(ref source, 0) >= 0) return true;
+                    Thread.Sleep(10);
+                }
             }
             return false;
         }
