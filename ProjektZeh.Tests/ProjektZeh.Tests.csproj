@@ -67,6 +67,7 @@
     <Compile Include="..\ProjektZeh\Processes\Syscalls\IUserMemory.cs" Link="Processes\Syscalls\IUserMemory.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxProcess.cs" Link="Processes\Syscalls\LinuxProcess.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscalls.cs" Link="Processes\Syscalls\LinuxSyscalls.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsMore.cs" Link="Processes\Syscalls\LinuxSyscallsMore.cs" />
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
     <Compile Include="..\ProjektZeh\Graphics\GermanFont.cs" Link="Graphics\GermanFont.cs" />
