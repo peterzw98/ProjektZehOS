@@ -263,6 +263,9 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
   Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
   `-ENODEV` (nichts flösse in die Datei zurück). Weitere Fehler: Terminal und Verzeichnis `-ENODEV`, nur zum Schreiben geöffnet `-EACCES`,
   unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
+- `MAP_FIXED` mit Datei-fd liefert `-EINVAL` (Abweichung; der alte Bereich bleibt unberührt). Nur ein dynamischer Lader bräuchte es, und `PT_INTERP`
+  wird abgelehnt. Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
+  eine teilweise gefüllte Abbildung bleibt nie zurück.
 - Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
 - Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
 

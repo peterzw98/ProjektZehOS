@@ -747,13 +747,15 @@ public sealed class LinuxUserProcessTests
     // V12: Dateiabbildung als Kopie und /proc/self/exe.
     private const ulong MapAnon = 0x22, MapSharedFlag = 0x01, MapPrivateFlag = 0x02, ProtR = 1, ProtRW = 3;
 
-    private static (LinuxUserProcess Process, byte[] Content) StartWithFile(int size)
+    private static (LinuxUserProcess Process, byte[] Content) StartWithFile(int size) => StartWithFile(size, new FakePages());
+
+    private static (LinuxUserProcess Process, byte[] Content) StartWithFile(int size, FakePages pages)
     {
         var store = new MemoryFileStore();
         var terminal = new TerminalDescriptor(new Lines());
         byte[] elf = Elf();
         UserImage image = ElfLoader.Load(elf, ["prog"], [], new ElfLoadOptions { Random = new byte[16], StackSize = 64 * 1024 });
-        var process = new LinuxUserProcess(new FakePages(), terminal, 7, 64 << 20, fileSystem: new LinuxFileSystem(store, terminal));
+        var process = new LinuxUserProcess(pages, terminal, 7, 64 << 20, fileSystem: new LinuxFileSystem(store, terminal));
         Assert.IsTrue(process.Load(image, elf).IsOK());
         byte[] content = new byte[size];
         for (int i = 0; i < size; i++)
@@ -826,6 +828,46 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 1, 0), "Terminal");
         Assert.AreEqual(-LinuxSyscalls.EBADF, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 40, 0));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, (ulong)ro, 100), "Versatz nicht seitenausgerichtet");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiFrameMangelMittenInDerKopieIstFehler()
+    {
+        // Review Stufe c: Fehlt mitten in der Kopie ein Frame, darf mmap keinen Erfolg mit teilgenullter Abbildung melden.
+        var pages = new FakePages();
+        const int Pages = 20; // mehr als ein Kopierstück (64 KiB = 16 Seiten): das erste Stück gelingt, das zweite nicht
+        var (process, _) = StartWithFile(Pages * (int)Page, pages);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        int before = pages.Frames.Count;
+        pages.Limit = before + 17;
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0));
+        Assert.AreEqual(before, pages.Frames.Count, "teilgefüllte Abbildung freigegeben");
+        pages.Limit = int.MaxValue;
+        Assert.AreEqual(0L, Sys(process, 8, (ulong)fd, 0, 1), "Dateiposition unverändert");
+        Assert.IsTrue(Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0) > 0, "danach wieder möglich");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiFixedAbgelehntAltbestandBleibt()
+    {
+        // Review Stufe c: Datei-MAP_FIXED darf den alten Bereich nicht entfernen, auch nicht bei einem Fehler wie O_WRONLY.
+        const ulong MapFixedFlag = 0x10;
+        var (process, _) = StartWithFile(100);
+        long ro = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long wo = OpenIcu(process, LinuxFileSystem.OWrOnly);
+        ulong old = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, 2 * Page, ProtRW, MapAnon, ulong.MaxValue, 0);
+        Assert.IsTrue(process.TryWrite(old, "alt"u8));
+        Assert.IsTrue(process.TryWrite(old + Page, "zwei"u8));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)wo, 0), "nur zum Schreiben offen");
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)ro, 0), "lesbar");
+        byte[] a = new byte[3], b = new byte[4];
+        Assert.IsTrue(process.TryRead(old, a));
+        Assert.IsTrue(process.TryRead(old + Page, b));
+        Assert.AreEqual("alt", System.Text.Encoding.ASCII.GetString(a));
+        Assert.AreEqual("zwei", System.Text.Encoding.ASCII.GetString(b));
+        Assert.IsTrue(process.TryWrite(old, "neu"u8), "weiter beschreibbar");
         process.Destroy();
     }
 

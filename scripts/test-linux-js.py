@@ -38,6 +38,17 @@ def wait_out(want, timeout, mark):
         if want in out_since(mark): return True
         time.sleep(0.5)
     return False
+def lines_since(mark):
+    return [l.strip() for l in re.split(r"\r\n|\r|\n", out_since(mark))]
+def wait_line(want, timeout, mark):
+    """Wartet auf eine Ausgabezeile, die genau want ist (nicht nur irgendwo enthaelt)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if want in lines_since(mark): return True
+        time.sleep(0.5)
+    return False
+def ended_since(mark):
+    return "LINUXRUN END" in (work / "serial.log").read_text(encoding="utf-8", errors="replace")[mark:]
 def wait_serial(marker, timeout, mark):
     try: g.wait(marker, timeout, mark); return True
     except (TimeoutError, RuntimeError): return False
@@ -53,7 +64,7 @@ try:
     m = g.mark(); g.qmp.line("run bin/js -l -c 1+1")
     check("js -c start", wait_serial("LINUXRUN BEGIN bin/js", 60, m))
     check("js -c ende exit 0", wait_serial("LINUXRUN END exit 0", 120, m))
-    check("js -c ausgabe 2", "2" in out_since(m).split())
+    check("js -c ausgabe 2", "2" in lines_since(m))
     print("AUSGABE -c: " + repr(out_since(m)[-200:]), flush=True)
     time.sleep(1); g.shot("js-c")
     # 2) REPL
@@ -61,23 +72,25 @@ try:
     check("repl aufforderung", wait_out("> ", 120, m))
     time.sleep(2); g.shot("repl-prompt")
     m = g.mark(); g.qmp.line("1+1")
-    check("repl 1+1 = 2", wait_out("2", 60, m))
+    check("repl 1+1 = 2", wait_line("2", 60, m))
     print("AUSGABE 1+1: " + repr(out_since(m)[-200:]), flush=True)
     m = g.mark(); g.qmp.line("(7*6).toString(2)")
-    check("repl toString(2)", wait_out("101010", 60, m))
+    check("repl toString(2)", wait_line('"101010"', 60, m))
     print("AUSGABE toString: " + repr(out_since(m)[-200:]), flush=True)
     time.sleep(1); g.shot("repl-antwort")
     m = g.mark(); g.qmp.tap("ctrl", "d")
-    check("strg+d beendet", wait_serial("LINUXRUN END", 60, m))
+    check("strg+d beendet", wait_serial("LINUXRUN END exit 0", 60, m))
     print("ENDE: " + repr([l for l in (work / "serial.log").read_text(errors="replace")[m:].splitlines() if "LINUXRUN END" in l]), flush=True)
     time.sleep(1); g.shot("repl-ende")
     # 3) Endlosschleife, Strg+C bricht ab, danach wieder frei
     m = g.mark(); g.qmp.line("run bin/js -c while(1);")
     check("schleife start", wait_serial("LINUXRUN BEGIN bin/js", 60, m))
-    time.sleep(5); m = g.mark(); g.qmp.tap("ctrl", "c")
-    check("strg+c beendet", wait_serial("LINUXRUN END", 30, m))
+    time.sleep(5)
+    check("schleife laeuft noch", not ended_since(m))  # sonst belegte Strg+C nichts
+    m = g.mark(); g.qmp.tap("ctrl", "c")
+    check("strg+c beendet mit SIGINT", wait_serial("LINUXRUN END signal 2", 30, m))
     m = g.mark(); g.qmp.line("run bin/js -l -c 6*7")
-    check("danach wieder frei", wait_serial("LINUXRUN END exit 0", 120, m) and "42" in out_since(m).split())
+    check("danach wieder frei", wait_serial("LINUXRUN END exit 0", 120, m) and "42" in lines_since(m))
     time.sleep(1); g.shot("ende")
     try: g.qmp.line("shutdown")
     except Exception: pass

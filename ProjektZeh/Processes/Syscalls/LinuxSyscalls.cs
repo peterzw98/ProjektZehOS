@@ -275,6 +275,8 @@ internal static partial class LinuxSyscalls
     /// dem Dateiende Nullen) und erst danach auf <paramref name="prot"/> gesetzt. Das entspricht MAP_PRIVATE bis auf eines: spätere
     /// Änderungen an der Datei sieht die Abbildung nicht. MAP_SHARED gibt es deshalb nur ohne PROT_WRITE (Ladybird bildet ICU-Daten
     /// so ab); beschreibbar geteilt bleibt -ENODEV, weil nichts in die Datei zurückfließen würde.
+    /// MAP_FIXED mit Datei lehnt der Aufruf mit -EINVAL ab: MapFixed ersetzte den alten Bereich, bevor feststeht, ob die Kopie gelingt,
+    /// und ein Fehler danach hinterließe ein Loch. Nur ein dynamischer Lader braucht das, und PT_INTERP lehnt ElfLoader ab.
     /// </summary>
     private static long MapFile(ILinuxProcess p, ulong addr, ulong flen, int prot, int flags, int fd, ulong offset)
     {
@@ -293,15 +295,14 @@ internal static partial class LinuxSyscalls
             return -ENODEV;
         }
 
-        bool fixedAt = (flags & MapFixed) != 0;
-        if (flen > MaxUserSpan || offset > long.MaxValue - flen)
+        if ((flags & MapFixed) != 0)
         {
-            return fixedAt ? -EINVAL : -ENOMEM;
+            return -EINVAL; // Altbestand bleibt unberührt (siehe oben)
         }
 
-        if (fixedAt && ((addr & 0xfff) != 0 || addr > MaxUserSpan || flen > MaxUserSpan - addr))
+        if (flen > MaxUserSpan || offset > long.MaxValue - flen)
         {
-            return -EINVAL;
+            return -ENOMEM;
         }
 
         // Reihenfolge der Sperren wie bei read: Dateisperre, darin die Speichersperre (MapAnonymous, Kopieren, Protect).
@@ -319,8 +320,8 @@ internal static partial class LinuxSyscalls
             }
 
             // Zum Füllen beschreibbar, ohne PROT_EXEC (W^X); den gewünschten Schutz setzt erst Protect.
-            ulong at = addr;
-            if (fixedAt ? !p.MapFixed(addr, flen, ProtReadWrite) : (at = p.MapAnonymous(flen, ProtReadWrite)) == 0)
+            ulong at = p.MapAnonymous(flen, ProtReadWrite);
+            if (at == 0)
             {
                 return -ENOMEM;
             }
@@ -333,7 +334,7 @@ internal static partial class LinuxSyscalls
 
             if (result < 0)
             {
-                p.Unmap(at, flen); // bei MAP_FIXED ist der alte Inhalt ohnehin ersetzt; Linux hinterlässt dort ebenfalls nichts Gültiges
+                p.Unmap(at, flen); // frisch belegter Bereich: keine teilgefüllte Abbildung bleibt zurück
                 return result;
             }
 
@@ -354,7 +355,7 @@ internal static partial class LinuxSyscalls
         if (r >= 0)
         {
             // Über MaxRw (2 GiB) hinaus bleibt der Rest Null; so große Abbildungen braucht kein Programm, das hier läuft.
-            r = ReadToUser(file, p, at, Math.Min(flen, (ulong)MaxRw));
+            r = CopyToMapping(p, file, at, Math.Min(flen, (ulong)MaxRw));
             if (r == -EBADF)
             {
                 r = -EACCES; // nur zum Schreiben geöffnet: Linux meldet EACCES
@@ -363,6 +364,46 @@ internal static partial class LinuxSyscalls
 
         file.Seek(saved, 0);
         return r < 0 ? r : 0;
+    }
+
+    /// <summary>
+    /// Kopiert bis zum Dateiende oder <paramref name="count"/> Bytes; 0 oder -errno. Anders als ReadToUser (read liefert nach einer
+    /// Teilkopie die Kurzlänge) ist hier jeder Abbruch ein Fehler: Eine still teilgenullte Abbildung sähe aus wie gültige Daten.
+    /// Nur ein Lesen mit 0 Bytes ist das Dateiende.
+    /// </summary>
+    private static long CopyToMapping(ILinuxProcess p, ILinuxFile file, ulong at, ulong count)
+    {
+        byte[] tmp = new byte[(int)Math.Min(Math.Max(count, 1), (ulong)FileChunk)];
+        ulong done = 0;
+        while (done < count)
+        {
+            if (Aborted(p))
+            {
+                return -EINTR;
+            }
+
+            int want = (int)Math.Min(count - done, (ulong)tmp.Length);
+            long n = file.Read(tmp.AsSpan(0, want));
+            if (n < 0)
+            {
+                return n;
+            }
+
+            if (n == 0)
+            {
+                return 0;
+            }
+
+            // Der Bereich ist belegt und beschreibbar; scheitert das Schreiben, fehlt ein Frame.
+            if (!p.Memory.TryWrite(at + done, tmp.AsSpan(0, (int)n)))
+            {
+                return -ENOMEM;
+            }
+
+            done += (ulong)n;
+        }
+
+        return 0;
     }
 
     private static long DoMunmap(ILinuxProcess p, ulong addr, ulong len)
