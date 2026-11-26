@@ -67,3 +67,12 @@ internal interface ILinuxAbort
 {
     bool IsAborted { get; }
 }
+
+/// <summary>
+/// Optional neben <see cref="ILinuxProcess"/>: Pfad des laufenden Programms, wie der Prozess ihn sieht (V12, readlink "/proc/self/exe").
+/// null, wenn das Programm außerhalb der Prozesswurzel liegt; dann gibt es den Link nicht (-ENOENT).
+/// </summary>
+internal interface ILinuxExe
+{
+    string? ExePath { get; }
+}

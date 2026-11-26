@@ -430,4 +430,15 @@ public class LinuxFileSyscallsTests
         public LinuxSignalState Signals { get; } = new();
         public void Exit(int code) { }
     }
+    [TestMethod]
+    public void InsideRootGibtProzesspfad()
+    {
+        Assert.AreEqual("/bin/js", LinuxPath.InsideRoot("/data/app/bin/js", "/data/app"));
+        Assert.AreEqual("/bin/js", LinuxPath.InsideRoot("/DATA/App/bin/js", "/data/app/"), "FAT: Schreibweise egal");
+        Assert.AreEqual("/js", LinuxPath.InsideRoot("/data/app/./x/../js", "/data/app"));
+        Assert.IsNull(LinuxPath.InsideRoot("/data/apps/js", "/data/app"), "Nachbarordner mit gleichem Anfang");
+        Assert.IsNull(LinuxPath.InsideRoot("/data/t/js", "/data/app"), "außerhalb der Wurzel");
+        Assert.IsNull(LinuxPath.InsideRoot("/data/app", "/data/app"), "die Wurzel selbst ist kein Programm");
+        Assert.IsNull(LinuxPath.InsideRoot("/data/t/js", null), "Dateisystem im Arbeitsspeicher");
+    }
 }

@@ -743,6 +743,152 @@ public sealed class LinuxUserProcessTests
         Assert.IsTrue(process.TryRead(Data + 0x1800 + 48, size));
         Assert.AreEqual((long)Rounds, BitConverter.ToInt64(size), "jedes Anhängen kam an");
     }
+
+    // V12: Dateiabbildung als Kopie und /proc/self/exe.
+    private const ulong MapAnon = 0x22, MapSharedFlag = 0x01, MapPrivateFlag = 0x02, ProtR = 1, ProtRW = 3;
+
+    private static (LinuxUserProcess Process, byte[] Content) StartWithFile(int size) => StartWithFile(size, new FakePages());
+
+    private static (LinuxUserProcess Process, byte[] Content) StartWithFile(int size, FakePages pages)
+    {
+        var store = new MemoryFileStore();
+        var terminal = new TerminalDescriptor(new Lines());
+        byte[] elf = Elf();
+        UserImage image = ElfLoader.Load(elf, ["prog"], [], new ElfLoadOptions { Random = new byte[16], StackSize = 64 * 1024 });
+        var process = new LinuxUserProcess(pages, terminal, 7, 64 << 20, fileSystem: new LinuxFileSystem(store, terminal));
+        Assert.IsTrue(process.Load(image, elf).IsOK());
+        byte[] content = new byte[size];
+        for (int i = 0; i < size; i++)
+        {
+            content[i] = (byte)((i * 7) + (i >> 8));
+        }
+
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, (ulong)size, ProtRW, MapAnon, ulong.MaxValue, 0);
+        Assert.IsTrue(process.TryWrite(buf, content));
+        long fd = Sys(process, 2, PutString(process, Data + 0x100, "/icu.dat"), (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.AreEqual((long)size, Sys(process, 1, (ulong)fd, buf, (ulong)size));
+        Assert.AreEqual(0L, Sys(process, 3, (ulong)fd));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, buf, (ulong)size));
+        return (process, content);
+    }
+
+    private static long OpenIcu(LinuxUserProcess process, int flags) =>
+        Sys(process, 2, PutString(process, Data + 0x100, "/icu.dat"), (ulong)flags, 0);
+
+    [TestMethod]
+    public void MmapDateiNurLesenGeteiltKopiertInhalt()
+    {
+        // Wie Ladybird MappedFile (ICU): open O_RDONLY, mmap PROT_READ MAP_SHARED, close; die Abbildung bleibt.
+        var (process, content) = StartWithFile(5000);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        Assert.AreEqual(10L, Sys(process, 8, (ulong)fd, 10, 0), "Position vorher");
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 5000, ProtR, MapSharedFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        Assert.AreEqual(10L, Sys(process, 8, (ulong)fd, 0, 1), "Position unverändert wie bei Linux");
+        Assert.AreEqual(0L, Sys(process, 3, (ulong)fd));
+
+        byte[] got = new byte[2 * Page];
+        Assert.IsTrue(process.TryRead((ulong)at, got));
+        CollectionAssert.AreEqual(content, got.AsSpan(0, 5000).ToArray());
+        Assert.IsTrue(got.AsSpan(5000).ToArray().All(b => b == 0), "hinter dem Dateiende Nullen");
+        Assert.IsFalse(process.TryWrite((ulong)at, "x"u8), "PROT_READ bleibt nur lesbar");
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, (ulong)at, 5000));
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiMitVersatzUndPrivatBeschreibbar()
+    {
+        var (process, content) = StartWithFile(3 * (int)Page + 100);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdWr);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, Page + 100, ProtRW, MapPrivateFlag, (ulong)fd, 2 * Page);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        byte[] got = new byte[Page + 100];
+        Assert.IsTrue(process.TryRead((ulong)at, got));
+        CollectionAssert.AreEqual(content.AsSpan(2 * (int)Page, (int)Page + 100).ToArray(), got);
+
+        // Privat: Schreiben ändert nur die Kopie, nicht die Datei.
+        Assert.IsTrue(process.TryWrite((ulong)at, "zz"u8));
+        byte[] one = new byte[2];
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapAnon, ulong.MaxValue, 0);
+        Assert.AreEqual(2L, Sys(process, 17, (ulong)fd, buf, 2, 2 * Page));
+        Assert.IsTrue(process.TryRead(buf, one));
+        CollectionAssert.AreEqual(content.AsSpan(2 * (int)Page, 2).ToArray(), one);
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiFehler()
+    {
+        var (process, _) = StartWithFile(100);
+        long ro = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long wo = OpenIcu(process, LinuxFileSystem.OWrOnly);
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapSharedFlag, (ulong)ro, 0), "geteilt beschreibbar");
+        Assert.AreEqual(-LinuxSyscalls.EACCES, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, (ulong)wo, 0), "nur zum Schreiben offen");
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 1, 0), "Terminal");
+        Assert.AreEqual(-LinuxSyscalls.EBADF, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 40, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, (ulong)ro, 100), "Versatz nicht seitenausgerichtet");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiFrameMangelMittenInDerKopieIstFehler()
+    {
+        // Review Stufe c: Fehlt mitten in der Kopie ein Frame, darf mmap keinen Erfolg mit teilgenullter Abbildung melden.
+        var pages = new FakePages();
+        const int Pages = 20; // mehr als ein Kopierstück (64 KiB = 16 Seiten): das erste Stück gelingt, das zweite nicht
+        var (process, _) = StartWithFile(Pages * (int)Page, pages);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        int before = pages.Frames.Count;
+        pages.Limit = before + 17;
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0));
+        Assert.AreEqual(before, pages.Frames.Count, "teilgefüllte Abbildung freigegeben");
+        pages.Limit = int.MaxValue;
+        Assert.AreEqual(0L, Sys(process, 8, (ulong)fd, 0, 1), "Dateiposition unverändert");
+        Assert.IsTrue(Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0) > 0, "danach wieder möglich");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiFixedAbgelehntAltbestandBleibt()
+    {
+        // Review Stufe c: Datei-MAP_FIXED darf den alten Bereich nicht entfernen, auch nicht bei einem Fehler wie O_WRONLY.
+        const ulong MapFixedFlag = 0x10;
+        var (process, _) = StartWithFile(100);
+        long ro = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long wo = OpenIcu(process, LinuxFileSystem.OWrOnly);
+        ulong old = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, 2 * Page, ProtRW, MapAnon, ulong.MaxValue, 0);
+        Assert.IsTrue(process.TryWrite(old, "alt"u8));
+        Assert.IsTrue(process.TryWrite(old + Page, "zwei"u8));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)wo, 0), "nur zum Schreiben offen");
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)ro, 0), "lesbar");
+        byte[] a = new byte[3], b = new byte[4];
+        Assert.IsTrue(process.TryRead(old, a));
+        Assert.IsTrue(process.TryRead(old + Page, b));
+        Assert.AreEqual("alt", System.Text.Encoding.ASCII.GetString(a));
+        Assert.AreEqual("zwei", System.Text.Encoding.ASCII.GetString(b));
+        Assert.IsTrue(process.TryWrite(old, "neu"u8), "weiter beschreibbar");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void ReadlinkProcSelfExe()
+    {
+        var (process, _) = StartWithFile(1);
+        ulong buf = Data + 0x400;
+        Assert.AreEqual(-LinuxErrno.ENOENT, Sys(process, 89, PutString(process, Data + 0x100, "/proc/self/exe"), buf, 64), "ohne Programmpfad");
+        process.ExePath = "/bin/js";
+        foreach (string link in new[] { "/proc/self/exe", "/proc/7/exe", "/proc/self/../self/exe" })
+        {
+            Assert.AreEqual(7L, Sys(process, 89, PutString(process, Data + 0x100, link), buf, 64), link);
+            byte[] got = new byte[7];
+            Assert.IsTrue(process.TryRead(buf, got));
+            Assert.AreEqual("/bin/js", System.Text.Encoding.ASCII.GetString(got));
+        }
+
+        Assert.AreEqual(-LinuxErrno.ENOENT, Sys(process, 89, PutString(process, Data + 0x100, "/proc/8/exe"), buf, 64), "fremde PID");
+        process.Destroy();
+    }
 }
 
 [TestClass]

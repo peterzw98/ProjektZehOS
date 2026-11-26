@@ -13,7 +13,7 @@ internal static partial class LinuxSyscalls
     private static class FileNr
     {
         public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Readv = 19, Dup = 32, Dup2 = 33, Fcntl = 72,
-            Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292;
+            Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe = 22, Pipe2 = 293;
     }
 
     private static class FileErr
@@ -51,6 +51,8 @@ internal static partial class LinuxSyscalls
             case FileNr.Getcwd: return DoGetcwd(p, f, a.A0, a.A1);
             case FileNr.Chdir: return DoChdir(p, f, a.A0);
             case FileNr.Fchdir: return DoFchdir(p, f, (int)a.A0);
+            case FileNr.Pipe: return DoPipe2(p, f, a.A0, 0);
+            case FileNr.Pipe2: return DoPipe2(p, f, a.A0, (int)a.A1);
             default: return DispatchFileMeta(ref a, p, f);
         }
     }
@@ -101,7 +103,7 @@ internal static partial class LinuxSyscalls
     /// </summary>
     private static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
     {
-        if (d is not ILinuxFile file)
+        if (d is not ILinuxFile and not LinuxPipeEnd)
         {
             return 0; // Terminal und andere gehören dem Prozess, nicht der Tabelle
         }
@@ -114,7 +116,13 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        return file.Close();
+        if (d is LinuxPipeEnd end)
+        {
+            end.Close(); // V13: erst das letzte close eines Endes meldet dem anderen EOF oder EPIPE
+            return 0;
+        }
+
+        return ((ILinuxFile)d).Close();
     }
 
     private static long DoRead(ILinuxProcess p, int fd, ulong buf, ulong count)
@@ -381,6 +389,12 @@ internal static partial class LinuxSyscalls
                 return 0; // FD_CLOEXEC wird nicht geführt: es gibt noch kein execve
             case FdSetfd:
                 return 0;
+            case FdGetfl when p.GetDescriptor(fd) is LinuxPipeEnd pipeEnd:
+                return pipeEnd.StatusFlags;
+            case FdSetfl when p.GetDescriptor(fd) is LinuxPipeEnd pipeEnd:
+                // Wie Linux ändert F_SETFL nur O_NONBLOCK (und O_APPEND/O_ASYNC/O_DIRECT, die eine Pipe nicht braucht); der Rest wird ignoriert.
+                pipeEnd.NonBlocking = ((int)arg & LinuxPipeEnd.ONonblock) != 0;
+                return 0;
             case FdGetfl:
                 // Die Öffnungsflags liegen in der Datei und sind über ILinuxFile nicht sichtbar; O_RDWR ist für die Laufzeiten
                 // (stdio-Puffer, isatty-Wege) die unschädliche Antwort. Abweichung in LINUX_ABI.md.
@@ -390,6 +404,45 @@ internal static partial class LinuxSyscalls
             default:
                 return -EINVAL;
         }
+    }
+
+    /// <summary>
+    /// pipe/pipe2 (V13): legt eine Pipe im Prozess an und schreibt die Nummern {lesen, schreiben} nach <paramref name="fdsPtr"/>.
+    /// O_CLOEXEC wird angenommen und nicht geführt (es gibt kein execve, wie bei F_SETFD); O_NONBLOCK gilt für beide Enden.
+    /// Andere Flags (O_DIRECT, Paketmodus) -EINVAL. Scheitert das Zurückschreiben, sind beide Nummern wieder frei (wie Linux).
+    /// </summary>
+    private static long DoPipe2(ILinuxProcess p, ILinuxFiles f, ulong fdsPtr, int flags)
+    {
+        if ((flags & ~(FileOCloexec | LinuxPipeEnd.ONonblock)) != 0)
+        {
+            return -EINVAL;
+        }
+
+        var (reader, writer) = LinuxPipe.Create(p as ILinuxAbort, (flags & LinuxPipeEnd.ONonblock) != 0);
+        int rfd = f.AddDescriptor(reader, 0);
+        if (rfd < 0)
+        {
+            return rfd;
+        }
+
+        int wfd = f.AddDescriptor(writer, 0);
+        if (wfd < 0)
+        {
+            f.RemoveDescriptor(rfd);
+            return wfd;
+        }
+
+        Span<byte> b = stackalloc byte[8];
+        BitConverter.TryWriteBytes(b.Slice(0, 4), rfd);
+        BitConverter.TryWriteBytes(b.Slice(4, 4), wfd);
+        if (!p.Memory.TryWrite(fdsPtr, b))
+        {
+            f.RemoveDescriptor(rfd);
+            f.RemoveDescriptor(wfd);
+            return -EFAULT;
+        }
+
+        return 0;
     }
 
     private static long DoGetcwd(ILinuxProcess p, ILinuxFiles f, ulong buf, ulong size)
