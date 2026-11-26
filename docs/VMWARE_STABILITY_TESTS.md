@@ -93,10 +93,11 @@ Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warm
 | Versuchspin `3.0.97-zehos.0.g333b59e` | 3/5 PASS | 5/5 PASS | 5/5 PASS |
 | Versuchspin `3.0.97-zehos.0.gbeeed95` | 2/5 PASS | 5/5 PASS | 5/5 PASS |
 | Pin-Kandidat `3.0.97-zehos.0.g0b51510` | 5/5 PASS (Zufall, siehe unten) | 5/5 PASS | 5/5 PASS |
+| Pin `3.0.97-zehos.6-smp.18` (cosmos `ca7eed5e`, Code wie Kandidat) | 3/5 PASS | 5/5 PASS | 5/5 PASS |
 
-Mit Korrektur sind beide Zaehler etwa gleich gross (zum Beispiel 47 085 810 und 48 873 975 Inkremente bei 2 vCPUs), ohne sie oft um ein Vielfaches verschieden. ISO A (Normalbau) mit dem Pin-Kandidaten erreicht `Desktop ist bereit.` mit 2 vCPUs 2/2 und mit 4 vCPUs 2/2, ohne `Panic` oder `CPU EXCEPTION`; mit dem Versuchspin `g333b59e` ebenso je 2/2.
+Mit Korrektur sind beide Zaehler etwa gleich gross (zum Beispiel 47 085 810 und 48 873 975 Inkremente bei 2 vCPUs), ohne sie oft um ein Vielfaches verschieden. ISO A (Normalbau) mit dem Pin-Kandidaten erreicht `Desktop ist bereit.` mit 2 vCPUs 2/2 und mit 4 vCPUs 2/2, ohne `Panic` oder `CPU EXCEPTION`; mit dem Versuchspin `g333b59e` ebenso je 2/2. Mit dem Pin `smp.18` ebenso je 2/2; die Bootzeile mit `Anstoss ohne Tick (VMware)` stand in allen 19 VMware-Laeufen.
 
-**Grenze 1 vCPU:** Ohne zweite CPU stoesst niemand an. Rechnende Threads werden unter VMware auf diesem Host dann weiter verspaetet verdraengt; die Probe besteht nur, wenn VMware zufaellig rechtzeitig zustellt (oben 3/5, 2/5 und 5/5). Das ist eine Plattformgrenze, kein behobener Fehler. Ebenso hilft der Anstoss nicht, wenn alle CPUs gleichzeitig rechnen. Nicht geprueft: VMware unter Windows, andere Host-Kernel, echte Hardware.
+**Grenze 1 vCPU:** Ohne zweite CPU stoesst niemand an. Rechnende Threads werden unter VMware auf diesem Host dann weiter verspaetet verdraengt; die Probe besteht nur, wenn VMware zufaellig rechtzeitig zustellt (oben 3/5, 2/5, 5/5 und 3/5). Das ist eine Plattformgrenze, kein behobener Fehler. Ebenso hilft der Anstoss nicht, wenn alle CPUs gleichzeitig rechnen. Nicht geprueft: VMware unter Windows, andere Host-Kernel, echte Hardware.
 
 ## Grenzen
 
