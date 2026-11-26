@@ -90,15 +90,18 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
         Insert(ClassOf(thread), thread, front);
     }
 
-    /// <summary>Liefert running zurück, wenn er weiterlaufen soll; null, wenn nichts wartet.</summary>
-    public T? Pick(T? running)
+    /// <summary>
+    /// Liefert running zurück, wenn er weiterlaufen soll; null, wenn nichts wartet. yielded: running gibt die CPU selbst ab
+    /// (Thread.Yield), statt verdrängt zu werden; er kommt dann nicht vorn mit dem Rest seiner Scheibe zurück.
+    /// </summary>
+    public T? Pick(T? running, bool yielded = false)
     {
-        var picked = PickCore(running);
+        var picked = PickCore(running, yielded);
         Publish();
         return picked;
     }
 
-    private T? PickCore(T? running)
+    private T? PickCore(T? running, bool yielded)
     {
         int starved = StarvedClass();
         int serve = starved >= 0 ? starved : FirstNonEmpty();
@@ -116,7 +119,9 @@ internal sealed class ClassRunQueues<T>(int capacityPerClass, Func<T, ClassThrea
         starvation[serve] = 0;
         for (int c = serve + 1; c < ClassCount; c++) if (counts[c] > 0) starvation[c]++;
         if (stateOf(thread!) is { RemainingNs: 0 } state) state.RemainingNs = SliceNs((ThreadClass)serve);
-        if (preempted) requeueFront = running;
+        // Ein Yield wechselt sofort, bevor ein Tick die Scheibe belastet hat: Käme der Thread wie ein verdrängter vorn zurück,
+        // bekäme er jede Runde seiner Klasse und die Threads hinter ihm nie eine (smp1-Hänger der Story, Cosmos yield-now).
+        if (preempted && !yielded) requeueFront = running;
         return thread;
     }
 
