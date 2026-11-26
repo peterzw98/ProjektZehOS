@@ -79,6 +79,25 @@ Ergebnisse mit VMware Workstation 26.0.1 unter Linux, 1 vCPU, UEFI:
 
 Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warmstarts folgte auf Anmeldung, F4 und Tastatureingaben ueber VNC (50 ms Druck, 50 ms Abstand). Der Fehler liess sich damit nicht reproduzieren; bei einer beobachteten Rate von 1 zu 26 waere in 49 Warmstarts mit etwa 85 % Wahrscheinlichkeit mindestens ein Fehllauf zu erwarten gewesen. Abweichend vom Fehllauf dauerte ein vollstaendiger Zyklus mit Start, Anmeldung und `reboot` nur etwa 16 s, der Desktop blieb ohne geoeffnete Fenster und `/data` war die frisch installierte Platte. Der Befund bleibt offen.
 
+## Verspaetete Timer-Ticks (#727)
+
+**Host:** Manjaro Linux, Kernel 7.3.4 (seit 24. November), `vmmon` per DKMS, Intel Core Ultra 9 185H; VMware Workstation 26.0.1 (Build 25688693). VMX wie `scripts/start-vmware.ps1` (UEFI, `other-64`, 1024 MiB, ohne Platte und Netz, `serial0` in eine Datei), Start mit `vmrun -T ws start … nogui`, Ergebnis aus der seriellen Ausgabe, frisches Verzeichnis je Lauf, keine anderen VMs oder QEMU-Gaeste gleichzeitig. ISO B ist der Bau mit `ZehOSThreadProbe=true`, PASS heisst `THREAD_PROBE PASS` und `MESSAGES_PROBE PASS`.
+
+**Befund:** VMware stellt den abgelaufenen LAPIC-Timer einer rechnenden vCPU erst beim naechsten Austritt zu; Messwerte und Gegenprobe unter QEMU/KVM stehen in [COSMOS_SUPPORT.md](COSMOS_SUPPORT.md#vmware-workstation-verspätete-timer-ticks-bei-rechnenden-cpus-727-26-november-2026). Die Thread-Probe scheiterte deshalb mit 1 und 2 vCPUs sporadisch mit `Nicht beide Rechenaufgaben machen ohne Yield Fortschritt.`; die Diagnose zeigte in den zwei Fenstern von je 200 ms nur 3 bis 8 statt etwa 40 Ticks.
+
+**Korrektur:** Cosmos-Patch `tick-observer` (Beobachter jedes Ticks, `Nudge`) und in ZehOS `StalledTickWatch`: Unter VMware stoesst eine CPU, die ihre Ticks bekommt, eine CPU an, die einen Thread rechnet und zwei eigene Ticks lang keinen Tick hatte. Bootzeile: `Scheduler: ZehOS Klassen; Tick=10000000ns; Anstoss ohne Tick (VMware)`.
+
+| Stand | 1 vCPU | 2 vCPUs | 4 vCPUs |
+| --- | --- | --- | --- |
+| master `5e3c29c0` (smp.17), ohne Korrektur | 4/6 PASS | 2/5 PASS | 5/5 PASS |
+| Versuchspin `3.0.97-zehos.0.g333b59e` | 3/5 PASS | 5/5 PASS | 5/5 PASS |
+| Versuchspin `3.0.97-zehos.0.gbeeed95` | 2/5 PASS | 5/5 PASS | 5/5 PASS |
+| Pin-Kandidat `3.0.97-zehos.0.g0b51510` | 5/5 PASS | 5/5 PASS | 5/5 PASS |
+
+Mit Korrektur sind beide Zaehler etwa gleich gross (zum Beispiel 47 085 810 und 48 873 975 Inkremente bei 2 vCPUs), ohne sie oft um ein Vielfaches verschieden. ISO A (Normalbau) mit dem Pin-Kandidaten erreicht `Desktop ist bereit.` mit 2 vCPUs 2/2 und mit 4 vCPUs 2/2, ohne `Panic` oder `CPU EXCEPTION`; mit dem Versuchspin `g333b59e` ebenso je 2/2.
+
+**Grenze 1 vCPU:** Ohne zweite CPU stoesst niemand an. Rechnende Threads werden unter VMware auf diesem Host dann weiter verspaetet verdraengt; die Probe besteht nur, wenn VMware zufaellig rechtzeitig zustellt (oben 3/5, 2/5 und 5/5). Das ist eine Plattformgrenze, kein behobener Fehler. Ebenso hilft der Anstoss nicht, wenn alle CPUs gleichzeitig rechnen. Nicht geprueft: VMware unter Windows, andere Host-Kernel, echte Hardware.
+
 ## Grenzen
 
 Keine Aussage zu echter Hardware, mehreren CPUs, anderen VMware-Versionen oder weiteren PCI-Segmenten. VMware-Mausbedienung, Aufloesungswechsel, Netzwerk, Kernelupdates und Rueckfallstart werden durch diese Korrektur nicht als neu geprueft bezeichnet. Es wurde kein PS/2-Treiber auf Verdacht veraendert; der beschriebene seltene ACK-Fehler bleibt offen.

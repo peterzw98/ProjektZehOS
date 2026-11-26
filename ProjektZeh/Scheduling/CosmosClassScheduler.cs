@@ -14,16 +14,21 @@ namespace ProjektZeh.Scheduling;
 /// <see cref="ClassRunQueues{T}"/> (hostgetestet); Etappe 5 passt nur diesen Adapter an die neue Schnittstelle an.
 /// Ab Etappe 5 (Upstream 5b) ist die Hauptschleife ein normaler Thread der Klasse Interaktiv; die Policy sieht nie einen Idle-Thread.
 /// </summary>
-internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, IVoluntaryMove
+/// <param name="nudgeStalledTicks">#727: CPUs ohne Tick anstossen (<see cref="StalledTickWatch"/>); der Kernel setzt es nur unter VMware.</param>
+internal sealed class CosmosClassScheduler(CpuTopology topology, bool nudgeStalledTicks) : IScheduler, IVoluntaryMove, ITickObserver
 {
     // Yielded und PickFailed haben keinen Fehlerweg; die Kapazitaet je Klasse muss die Threadzahl decken (Cosmos kennt kein Mehr).
     private const int CapacityPerClass = SchedulerThread.MaxThreadCount;
     private const int TraceLength = 128;
 
-    /// <summary>Zustand je CPU: Queues, Auswahlspur und Verdraengungen. Nur unter der Queue-Sperre dieser CPU geschrieben.</summary>
-    private sealed class CpuQueues(ClassRunQueues<SchedulerThread> queues)
+    /// <summary>
+    /// Zustand je CPU: Queues, Auswahlspur und Verdraengungen. Nur unter der Queue-Sperre dieser CPU geschrieben; ausgenommen
+    /// TickWatch, die nur diese CPU in ihrem Timer-Interrupt ohne Sperre benutzt.
+    /// </summary>
+    private sealed class CpuQueues(ClassRunQueues<SchedulerThread> queues, StalledTickWatch? tickWatch)
     {
         public readonly ClassRunQueues<SchedulerThread> Queues = queues;
+        public readonly StalledTickWatch? TickWatch = tickWatch;
         public readonly uint[] Trace = new uint[TraceLength];
         public int TraceNext;
         public int TraceCount;
@@ -38,12 +43,13 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, I
 
     public string Name => "ZehOS Klassen";
     internal CpuTopology Topology { get; } = topology;
+    internal bool NudgesStalledTicks => nudgeStalledTicks;
 
     // Allokation ist nur hier, in ShutdownCpu und in OnThreadCreate erlaubt (IScheduler-Vertrag, Upstream 5b).
     public void InitializeCpu(PerCpuState state)
     {
         var queues = new ClassRunQueues<SchedulerThread>(CapacityPerClass, thread => thread.SchedulerData as ClassThreadState);
-        state.SchedulerData = new CpuQueues(queues);
+        state.SchedulerData = new CpuQueues(queues, nudgeStalledTicks ? new StalledTickWatch(Topology.CpuCount) : null);
     }
 
     public void ShutdownCpu(PerCpuState state)
@@ -97,6 +103,22 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, I
     }
 
     public void OnPickFailed(PerCpuState state, SchedulerThread thread) => Cpu(state)?.Queues.PickFailed(thread);
+
+    /// <summary>
+    /// #727: Jeder Tick jeder CPU, auch auf dem Idle-Thread. Im IRQ ohne Sperre: Zaehler und laufende Threads fremder CPUs sind
+    /// Schnappschuesse, keine Allokation. Ohne VMware (TickWatch null) nur die Typpruefung.
+    /// </summary>
+    public void OnCpuTick(PerCpuState state, PerCpuState[] allCpuStates)
+    {
+        if (Cpu(state)?.TickWatch is not { } watch) return;
+        int count = Math.Min(allCpuStates.Length, watch.CpuCount);
+        for (int i = 0; i < count; i++)
+        {
+            if (i == (int)state.CpuId || allCpuStates[i] is not { } other) continue;
+            bool runsThread = other.CurrentThread is { IsIdle: false, State: SchedulerThreadState.Running };
+            if (watch.Observe(i, other.TickCount, runsThread)) SchedulerManager.Nudge((uint)i);
+        }
+    }
 
     public bool OnTick(PerCpuState state, SchedulerThread current, ulong elapsedNs)
     {
