@@ -40,6 +40,9 @@ internal interface ILinuxProcess
 
     int Pid { get; }
 
+    /// <summary>Signalzustand des Prozesses (Handler, Maske, Alternativstack); der Prozess hält ihn, damit er mit ihm endet.</summary>
+    LinuxSignalState Signals { get; }
+
     /// <summary>Beendet den Prozess mit dem Code; kehrt im Test zurück, im Kernel nicht.</summary>
     void Exit(int code);
 }

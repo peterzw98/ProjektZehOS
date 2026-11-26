@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 
 namespace ProjektZeh.Processes.Syscalls;
 
@@ -41,7 +40,6 @@ internal static partial class LinuxSyscalls
 
     private const int ClockMax = 7;
     private const ulong SigKillStopMask = (1UL << 8) | (1UL << 18); // Signal 9 und 19, Bit = Nummer - 1
-    private static readonly ConditionalWeakTable<ILinuxProcess, LinuxSignalState> SignalStates = new();
     private static readonly long StartTicks = Stopwatch.GetTimestamp();
 
     private static long DispatchMore(ref SyscallArgs a, ILinuxProcess p)
@@ -143,7 +141,7 @@ internal static partial class LinuxSyscalls
         }
     }
 
-    private static LinuxSignalState Signals(ILinuxProcess p) => SignalStates.GetValue(p, _ => new LinuxSignalState());
+    private static LinuxSignalState Signals(ILinuxProcess p) => p.Signals;
 
     private static long DoSigaction(ILinuxProcess p, int sig, ulong act, ulong oact, ulong sigsetsize)
     {
@@ -410,18 +408,29 @@ internal static partial class LinuxSyscalls
 
                 return -EDEADLK; // Einzelthread ohne Frist würde ewig hängen; Linux hängt, wir melden es
             case Wake:
-                return 0; // keine Wartenden
+                return p.Memory.TryRead(a.A0, w) ? 0 : -EFAULT; // keine Wartenden; Linux prüft den Zeiger trotzdem
             case WakeBitset:
-                return (uint)a.A5 == 0 ? -EINVAL : 0;
+                if ((uint)a.A5 == 0)
+                {
+                    return -EINVAL;
+                }
+
+                return p.Memory.TryRead(a.A0, w) ? 0 : -EFAULT;
             case Requeue:
             case CmpRequeue:
+                if ((a.A4 & 3) != 0)
+                {
+                    return -EINVAL;
+                }
+
+                Span<byte> w2 = stackalloc byte[4];
+                if (!p.Memory.TryRead(a.A0, w) || !p.Memory.TryRead(a.A4, w2))
+                {
+                    return -EFAULT;
+                }
+
                 if (op == CmpRequeue)
                 {
-                    if (!p.Memory.TryRead(a.A0, w))
-                    {
-                        return -EFAULT;
-                    }
-
                     if (BitConverter.ToInt32(w) != (int)a.A5)
                     {
                         return -EAGAIN;

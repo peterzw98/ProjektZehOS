@@ -58,6 +58,7 @@ public sealed class LinuxSyscallsTests
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 7;
+        public LinuxSignalState Signals { get; } = new();
         public long RealtimeNanos => 1_700_000_000_123_456_789L;
         public long MonotonicNanos => 5_000_000_007L;
         public int RandomCalls;
@@ -390,6 +391,20 @@ public sealed class LinuxSyscallsTests
         Assert.AreEqual(-LinuxSyscalls.EAGAIN, Call(p, F, Buf, 4, 1, 1, Buf, 9));   // CMP_REQUEUE, Wert verschieden
         Assert.AreEqual(0L, Call(p, F, Buf, 4, 1, 1, Buf, 5));
         Assert.AreEqual(-LinuxSyscalls.ENOSYS, Call(p, F, Buf, 5, 1));              // WAKE_OP nicht umgesetzt
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, F, 8, 1, 1));                // WAKE mit ungueltigem Zeiger
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, F, 8, 10, 1, 0, 0, 1));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, F, Buf, 3, 1, 1, 8, 0));     // REQUEUE: uaddr2 ungueltig
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, F, Buf, 3, 1, 1, Buf + 2, 0));
+    }
+
+    [TestMethod]
+    public void FehlerpfadeUngueltigerZeiger()
+    {
+        var p = new Proc();
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Uname, 8));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Poll, 8, 1, 0));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.RtSigaction, 2, 8, 0, 8));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.RtSigaction, 2, 0, 8, 8));
     }
 
     [TestMethod]
@@ -416,6 +431,7 @@ public sealed class LinuxSyscallsTests
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 1;
+        public LinuxSignalState Signals { get; } = new();
         public void Exit(int code) { }
     }
 }
