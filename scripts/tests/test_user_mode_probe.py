@@ -228,7 +228,8 @@ class RunTests(unittest.TestCase):
                      and sys.platform.startswith('linux'), 'binutils fehlen')
 class ProbeImageTests(unittest.TestCase):
     NAMES = ['loop', 'spin', 'fpu', 'fault_de', 'fault_ud', 'fault_gp_cli', 'fault_gp_hlt', 'fault_gp_in',
-             'fault_pf_read', 'fault_pf_write', 'fault_pf_exec', 'badret', 'leave', 'fault_avx', 'fpu2', 'switch']
+             'fault_pf_read', 'fault_pf_write', 'fault_pf_exec', 'badret', 'leave', 'fault_avx', 'fpu2', 'switch',
+             'isolate', 'readat', 'execat', 'sparse', 'device', 'sysmed']
 
     def test_entry_table_is_fixed_and_position_independent(self):
         build = SCRIPTS.parent / 'ProjektZeh/Native/UserProbe/build.sh'
