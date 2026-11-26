@@ -42,7 +42,7 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxThreads, ILinuxAddressSpace
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxThreads, ILinuxAddressSpace, ILinuxAbort
 {
     private const ulong Page = AddressSpaceMap.PageSize;
     private const int ProtRead = 1, ProtWrite = 2, ProtExec = 4;
@@ -359,6 +359,9 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public bool TryFillRandom(Span<byte> dst) => _host != null && _host.TryFillRandom(dst);
 
     public void SleepNanos(long ns) => _host?.SleepNanos(ns);
+
+    /// <summary>Abbruch des Programms (über <see cref="LinuxFutexTable.Abort"/>, das Strg+C, Zeitlimit und exit_group auslösen).</summary>
+    public bool IsAborted => Futexes.IsAborted;
 
     public ILinuxDescriptor? GetDescriptor(int fd) => fd is >= 0 and <= 2 ? _terminal : null;
 

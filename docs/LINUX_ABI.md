@@ -19,7 +19,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | --- | --- | --- |
 | 0 | `read` | nur Eingaben (`ILinuxInput`, fd 0 des Terminals): wartet wie an einer Pipe auf wenigstens ein Byte, höchstens 4 KiB je Aufruf; 0 einmal je Strg+D; `-EINTR` nach Strg+C/Esc; Puffer wird vor dem Warten geprüft (`-EFAULT`); andere fd gehen an die Dateiaufrufe (V2 unten) |
 | 19 | `readv` | wie `read`, ein Lesen verteilt auf die Einträge (musl liest stdin so); höchstens 1024 Einträge, vorab gelesen |
-| 1 | `write` | Stückweise Kopie (4 KiB); Länge auf 0x7ffff000 begrenzt; `-EBADF`, `-EFAULT`; ein Fehler nach erfolgreichen Stücken liefert die bisherige Anzahl |
+| 1 | `write` | Stückweise Kopie (4 KiB); Länge auf 0x7ffff000 begrenzt; `-EBADF`, `-EFAULT`; ein Fehler nach erfolgreichen Stücken liefert die bisherige Anzahl; nach einem Abbruch (Strg+C, Zeitlimit) endet die Kopie vor dem nächsten Stück mit der bisherigen Anzahl oder `-EINTR` (#735) |
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
@@ -33,7 +33,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 109, 112 | `setpgid`, `setsid` | `-EPERM` wie bei Linux für Sitzungs- bzw. Gruppenführer (auch ohne Änderung); `setpgid` mit fremder PID `-ESRCH`, negativer Gruppe `-EINVAL` |
 | 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 ebenfalls monoton: Abweichung); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
-| 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN` |
+| 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN`; Abbruch je Stück wie `write` (#735) |
 | 63 | `uname` | Linux / zehos / 6.1.0-zehos / x86_64 |
 | 13, 14 | `rt_sigaction`, `rt_sigprocmask` | nur Verwaltung je Prozess (keine Zustellung); sigsetsize 8, SIGKILL/SIGSTOP nicht abfangbar und nicht blockierbar |
 | 131 | `sigaltstack` | setzen/abfragen/abschalten; Größe < 2048 `-ENOMEM`; ohne Zustellung wirkungslos; SS_AUTODISARM wird nicht gemerkt (Abweichung) |
@@ -103,14 +103,15 @@ Grenzen (Review V2, bewusst offen):
   `TIOCGPGRP` liefert die PID, `TIOCSPGRP` nimmt nur sie an (sonst `-ESRCH`, negativ `-EINVAL`).
 - Rohmodus (V3 raw, für Zeileneditoren wie LibLine der js-REPL): Ohne `ICANON` editiert die Shell nichts, jede Taste geht sofort als Bytes an fd 0 (Zeichen
   UTF-8, Enter CR, mit `ICRNL` LF, Backspace DEL, Pfeile/Pos1/Ende `ESC [ A–D/H/F`, Entf `ESC [ 3 ~`, Esc `ESC`, Strg+Buchstabe 1–26, Einfügen wie Tippen);
-  `ECHO` wirkt nicht (die Shell zeigt nur, was das Programm zeichnet). Strg+C bricht mit `ISIG` ab, ohne geht 0x03 an das Programm (Fenster schließen beendet es
-  dann). Die angefangene Zeile zeigt das Fenster wie ein VT100 (`TerminalLine`): Überschreiben an der Cursorspalte, `\r`, Backspace, Tab, CSI `K J C D G H f s u`,
+  `ECHO` wirkt nicht (die Shell zeigt nur, was das Programm zeichnet). Strg+C bricht mit `ISIG` ab, ohne geht 0x03 an das Programm; Strg+Umschalt+Esc bricht immer ab
+  (#735). Die angefangene Zeile zeigt das Fenster wie ein VT100 (`TerminalLine`): Überschreiben an der Cursorspalte, `\r`, Backspace, Tab, CSI `K J C D G H f s u`,
   `ESC 7/8`; Zeilenwechsel (`A`, `B`, Zeile von `H`), Farben und private Folgen fallen weg. Am Zeilenende wird der gezeichnete Stand ausgegeben, nicht die
   Neuzeichnungen; über 4096 Bytes ohne Zeilenende wird die Zeile auf ihren Stand verdichtet. `ESC [ 6 n` (auch über zwei `write` verteilt) beantwortet das
   Terminal in die Eingabe mit `ESC [ <letzte Fensterzeile> ; <Spalte> R` und zeigt die Frage nicht. Antworten dürfen die Eingabegrenze (64 KiB) um 64 Bytes
   überschreiten; darüber verwirft das Terminal sie wie ein volles Linux-tty (ein Programm, das fragt und nie liest, füllt keinen Kernelspeicher).
-  Grenze Abbruch: Im Rohmodus ist Esc eine Taste wie jede andere (`ESC` an fd 0) und bricht nicht ab. Mit `ISIG` bleibt Strg+C der Abbruch; schaltet ein
-  Programm `ISIG` aus und liest nicht (oder ignoriert 0x03), beendet es nur das Schließen des Terminalfensters. Grenze Spalte: Die Cursorspalte zählt
+  Abbruch: Im Rohmodus ist Esc eine Taste wie jede andere (`ESC` an fd 0) und bricht nicht ab; mit `ISIG` bleibt Strg+C der Abbruch. Die reservierte Taste
+  Strg+Umschalt+Esc erreicht nie das Programm und bricht unabhängig von `ISIG` und Rohmodus ab (ein zweiter Druck gibt das Fenster frei wie ein zweites
+  Strg+C). Nach dem Abbruch verwirft das Terminal Ausgabezeilen über der Grenze (2048), statt das Programm warten zu lassen. Grenze Spalte: Die Cursorspalte zählt
   UTF-16-Einheiten, nicht Zeichenbreiten; Zeichen außerhalb der BMP (Emoji) oder breite CJK-Zeichen verschieben Cursor und `ESC [ 6 n`-Spalte.
   Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige Bearbeitung, Echo im Rohmodus.
   Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.

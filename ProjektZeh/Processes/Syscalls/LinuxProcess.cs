@@ -46,3 +46,12 @@ internal interface ILinuxProcess
     /// <summary>Beendet den Prozess mit dem Code; kehrt im Test zurück, im Kernel nicht.</summary>
     void Exit(int code);
 }
+
+/// <summary>
+/// Optional neben <see cref="ILinuxProcess"/>: true, sobald das Programm abgebrochen ist (Strg+C, Zeitlimit, exit_group).
+/// Ohne sie laufen Kopierschleifen bis zum Ende (Hosttests mit Ersatzprozessen).
+/// </summary>
+internal interface ILinuxAbort
+{
+    bool IsAborted { get; }
+}
