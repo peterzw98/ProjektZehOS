@@ -44,6 +44,43 @@ internal static class ClassPlacement
         return true;
     }
 
+    /// <summary>
+    /// #674 V2: Ziel für den freiwilligen Umzug des Threads, der auf cpu läuft, oder -1. Umgezogen wird nur, wenn ein Geschwister
+    /// von cpu einen Thread rechnet und ein erlaubter anderer Kern ganz frei ist (alle seine CPUs ohne Laufenden und ohne Wartende);
+    /// dann die kleinste freie CPU dort. Gegen Pendeln: Der Thread muss mindestens minOnCpu auf cpu gelaufen und seit dem letzten
+    /// Umzug minSinceMove vergangen sein (Einheit beliebig, gleich für alle vier Werte). Nach einem Umzug hat der alte Kern ein freies
+    /// Geschwister; zurück ginge es erst, wenn der neue Kern wieder voll wird, und auch dann höchstens einmal je minSinceMove.
+    /// Zuerst ein Kern, dessen CPUs alle erlaubt sind: Ein Kern mit einer nicht erlaubten CPU (etwa CPU 0 mit der Hauptschleife)
+    /// ist nur gerade frei, und der Thread läge dort bald wieder neben einem belegten Geschwister.
+    /// </summary>
+    public static int SelectMoveTarget(CpuTopology topology, int cpu, ReadOnlySpan<bool> allowed, ReadOnlySpan<ThreadClass?> running,
+        ReadOnlySpan<int> queued, long onCpu, long sinceMove, long minOnCpu, long minSinceMove)
+    {
+        int count = topology.CpuCount;
+        if (allowed.Length < count || running.Length < count || queued.Length < count)
+            throw new ArgumentException("allowed, running und queued brauchen je einen Eintrag pro CPU.");
+        if (cpu < 0 || cpu >= count || onCpu < minOnCpu || sinceMove < minSinceMove) return -1;
+        bool siblingBusy = false;
+        foreach (int sibling in topology.SiblingsOf(cpu)) siblingBusy |= running[sibling] != null;
+        if (!siblingBusy) return -1;
+        int ownCore = topology.CoreOf(cpu);
+        int fallback = -1;
+        for (int other = 0; other < count; other++)
+        {
+            if (!allowed[other] || topology.CoreOf(other) == ownCore || !Free(running, queued, other) || !SiblingsFree(topology, running, queued, other))
+                continue;
+            if (SiblingsAllowed(topology, allowed, other)) return other;
+            if (fallback < 0) fallback = other;
+        }
+        return fallback;
+    }
+
+    private static bool SiblingsAllowed(CpuTopology topology, ReadOnlySpan<bool> allowed, int cpu)
+    {
+        foreach (int sibling in topology.SiblingsOf(cpu)) if (!allowed[sibling]) return false;
+        return true;
+    }
+
     /// <summary>Füllt order mit allen anderen CPUs: erst Geschwister, dann derselbe Verbund, dann der Rest, je aufsteigend. Liefert die Anzahl.</summary>
     public static int StealOrder(CpuTopology topology, int cpu, Span<int> order)
     {

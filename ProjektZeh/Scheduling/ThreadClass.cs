@@ -11,4 +11,8 @@ internal sealed class ClassThreadState
     public ulong RemainingNs;
     /// <summary>CPU der letzten Auswahl, -1 = noch nie.</summary>
     public int LastCpu = -1;
+    /// <summary>#674 V2: Stopwatch-Zeitpunkt, seit dem der Thread auf LastCpu läuft.</summary>
+    public long OnCpuSince;
+    /// <summary>#674 V2: Stopwatch-Zeitpunkt des letzten Umzugs, 0 = nie.</summary>
+    public long MovedAt;
 }
