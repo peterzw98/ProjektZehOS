@@ -17,4 +17,14 @@ timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target js
 
 ## Prüfstand
 
-Der vollständige Bau und die Ausführung in Alpine stehen aus.
+Der Preflight lief in Alpine 3.24.4 auf WSL 2 mit GCC 15.2.0, CMake 4.2.3 und Rust 1.98.0 (`x86_64-unknown-linux-musl`). Drei parallele Jobs sind für den Baulauf vorgesehen. Der vollständige Bau und die Ausführung in Alpine stehen aus.
+
+Für eine Wiederholung wurden im Alpine-Minirootfs diese Pakete installiert. [Alpine-Linux-Downloads](https://www.alpinelinux.org/downloads/#minirootfs)
+
+```bash
+apk add --no-cache bash git curl ca-certificates build-base cmake ninja nasm \
+  autoconf automake libtool autoconf-archive zip unzip time python3 pkgconf \
+  binutils file util-linux coreutils linux-headers ncurses-dev ncurses-static libdrm-dev strace
+```
+
+Der Build startet als normaler Benutzer im Alpine-Rootfs mit eingehängtem `/proc` und `/dev/fd`, Rust 1.98.0 im `PATH` und dem oben angegebenen Aufruf. Die Protokolle `fetch.log`, `deps.log`, `configure.log` und `build.log` liegen nach dem jeweiligen Schritt in `~/ladybird-probe/v4/logs/`.
