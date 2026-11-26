@@ -57,7 +57,7 @@ internal interface ILinuxFileStore
 }
 
 /// <summary>Eine offene reguläre Datei des Speichers; Positionen verwaltet das Dateisystem.</summary>
-internal interface ILinuxStoreFile : IDisposable
+internal interface ILinuxStoreFile
 {
     /// <summary>Länge in Bytes oder -errno.</summary>
     long Length();
@@ -69,4 +69,7 @@ internal interface ILinuxStoreFile : IDisposable
     long WriteAt(long offset, ReadOnlySpan<byte> src);
 
     long SetLength(long length);
+
+    /// <summary>Schließt die Datei; 0 oder -errno (etwa -EIO beim Zurückschreiben). Danach ist sie in jedem Fall zu, ein zweiter Aufruf liefert 0.</summary>
+    long Close();
 }

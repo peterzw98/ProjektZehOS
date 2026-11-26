@@ -68,15 +68,16 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         return target;
     }
 
-    public void CreateSymlinkStorageLocked(string full, string target)
+    /// <summary>
+    /// Cosmos meldet ein Scheitern nur als false; FAT kann keine Symlinks (FatInodeOperations.Symlink liefert immer false), daher
+    /// gilt false als "nicht unterstützt" (-EPERM), nicht als Ein-/Ausgabefehler.
+    /// </summary>
+    public bool CreateSymlinkStorageLocked(string full, string target)
     {
         (string parent, string name) = Split(full);
         using IVfsDirectoryHandle directory = OpenDirectoryStorageLocked(parent);
         IVfsInode inode = directory.Inode;
-        if (!inode.InodeOperations.Symlink(inode, name, target, out _))
-        {
-            throw new IOException("Symlink nicht angelegt.");
-        }
+        return inode.InodeOperations.Symlink(inode, name, target, out _);
     }
 
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)

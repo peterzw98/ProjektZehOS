@@ -405,11 +405,11 @@ internal sealed class MemoryFileStore : ILinuxFileStore
             return 0;
         }
 
-        public void Dispose()
+        public long Close()
         {
             if (_node is null)
             {
-                return;
+                return 0;
             }
 
             _node.OpenCount--;
@@ -419,6 +419,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
             }
 
             _node = null;
+            return 0;
         }
 
         /// <summary>Verlängert auf <paramref name="end"/> (genullt); verdoppelt den Puffer, damit viele kleine Schreibvorgänge linear bleiben.</summary>

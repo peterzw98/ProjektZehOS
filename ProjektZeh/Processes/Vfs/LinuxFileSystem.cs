@@ -8,7 +8,7 @@ namespace ProjektZeh.Processes.Vfs;
 /// <summary>
 /// Dateisystem eines Linux-Prozesses (V7 des Plans <c>2026-11-26-ladybird-vorstellung.md</c>): Die Prozesswurzel "/" liegt auf
 /// einem <see cref="ILinuxFileStore"/> (Ordner der Datenplatte oder Arbeitsspeicher), darüber ein virtuelles <c>/dev</c> mit
-/// <c>null</c> (liest EOF, verwirft Geschriebenes) und <c>tty</c> (das Terminal des Prozesses).
+/// <c>null</c> (liest EOF, verwirft Geschriebenes), <c>zero</c> (liest Nullbytes, verwirft) und <c>tty</c> (das Terminal des Prozesses).
 /// <para>
 /// Ausbruchschutz: Der Verteiler übergibt absolute, normalisierte Pfade (<see cref="ILinuxFileSystem"/>); ein ".." darin lehnt
 /// dieses Dateisystem mit -EINVAL ab, statt es selbst aufzulösen. Symlinks löst es Komponente für Komponente selbst auf, der
@@ -163,12 +163,13 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
                 break;
             case LocArea.DevNull:
             case LocArea.DevTty:
+            case LocArea.DevZero:
                 if (directory || loc.MustBeDirectory)
                 {
                     return -LinuxErrno.ENOTDIR;
                 }
 
-                file = new LinuxDeviceFile(this, loc.Area == LocArea.DevTty, read, write);
+                file = new LinuxDeviceFile(this, loc.Area, read, write);
                 break;
             default:
                 r = OpenStore(in loc, flags, read, write, append, out file);
@@ -227,7 +228,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
             r = opened!.SetLength(0);
             if (r < 0)
             {
-                opened.Dispose();
+                opened.Close(); // der Fehler von SetLength ist der maßgebliche
                 return r;
             }
         }
@@ -336,6 +337,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
                 return -LinuxErrno.EISDIR;
             case LocArea.DevNull:
             case LocArea.DevTty:
+            case LocArea.DevZero:
                 return -LinuxErrno.EACCES;
         }
 
@@ -377,6 +379,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
                 return -LinuxErrno.EBUSY;
             case LocArea.DevNull:
             case LocArea.DevTty:
+            case LocArea.DevZero:
                 return -LinuxErrno.ENOTDIR;
         }
 
@@ -556,6 +559,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
         LocArea.DevDirectory => DevStat(LinuxMode.Directory | DevDirMode, 1, 0, 2),
         LocArea.DevNull => DevStat(LinuxMode.CharDevice | DevNodeMode, 2, 0x103, 1), // makedev(1, 3)
         LocArea.DevTty => DevStat(LinuxMode.CharDevice | DevNodeMode, 3, 0x500, 1), // makedev(5, 0)
+        LocArea.DevZero => DevStat(LinuxMode.CharDevice | DevNodeMode, 4, 0x105, 1), // makedev(1, 5)
         _ => StoreStat(loc.Path, loc.Node),
     };
 
@@ -620,6 +624,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
         DevDirectory,
         DevNull,
         DevTty,
+        DevZero,
     }
 
     /// <summary>Ergebnis einer Auflösung: der letzte Eintrag (vorhanden oder fehlend) und sein Elternverzeichnis.</summary>
@@ -727,7 +732,13 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
 
             if (inDev)
             {
-                LocArea area = name == "null" ? LocArea.DevNull : name == "tty" ? LocArea.DevTty : LocArea.Store;
+                LocArea area = name switch
+                {
+                    "null" => LocArea.DevNull,
+                    "tty" => LocArea.DevTty,
+                    "zero" => LocArea.DevZero,
+                    _ => LocArea.Store,
+                };
                 if (area == LocArea.Store)
                 {
                     if (!last)

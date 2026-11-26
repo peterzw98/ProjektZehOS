@@ -19,7 +19,8 @@ internal interface ILinuxDiskLinks
 
     public string ReadLinkStorageLocked(string full);
 
-    public void CreateSymlinkStorageLocked(string full, string target);
+    /// <summary>false, wenn das Laufwerk keine Symlinks kann (FAT); das Dateisystem meldet dann -EPERM wie Linux.</summary>
+    public bool CreateSymlinkStorageLocked(string full, string target);
 }
 
 /// <summary>Host-Fassung über .NET (lstat-Semantik von <see cref="FileSystemInfo"/> unter Unix). Nur für Hosttests belegt.</summary>
@@ -45,7 +46,11 @@ internal sealed class HostLinuxDiskLinks : ILinuxDiskLinks
     public string ReadLinkStorageLocked(string full) =>
         new FileInfo(full).LinkTarget ?? throw new IOException("Kein Symlink.");
 
-    public void CreateSymlinkStorageLocked(string full, string target) => File.CreateSymbolicLink(full, target);
+    public bool CreateSymlinkStorageLocked(string full, string target)
+    {
+        File.CreateSymbolicLink(full, target);
+        return true;
+    }
 }
 
 /// <summary>
@@ -314,8 +319,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                     return -LinuxErrno.EEXIST;
                 }
 
-                _links.CreateSymlinkStorageLocked(Full(path), target);
-                return 0;
+                return _links.CreateSymlinkStorageLocked(Full(path), target) ? 0 : -LinuxErrno.EPERM;
             }
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
@@ -431,7 +435,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 File.Delete(target);
             }
 
-            _links.CreateSymlinkStorageLocked(target, linkTarget);
+            if (!_links.CreateSymlinkStorageLocked(target, linkTarget))
+            {
+                return -LinuxErrno.EPERM; // kann nicht vorkommen, wenn schon ein Link da ist; sonst nichts verändert außer dem ersetzten Ziel
+            }
+
             File.Delete(source);
             return 0;
         }
@@ -638,19 +646,27 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             }
         }
 
-        public void Dispose()
+        public long Close()
         {
             FileStream? stream = _stream;
             _stream = null;
             if (stream is null)
             {
-                return;
+                return 0;
             }
 
-            // Schließen schreibt Puffer zurück; scheitert das, ist der Deskriptor trotzdem zu (wie close unter Linux nach EIO).
-            using (StorageLock.Enter())
+            // Schließen kann noch schreiben; scheitert das, ist die Datei trotzdem zu (wie close unter Linux nach -EIO).
+            try
             {
-                stream.Dispose();
+                using (StorageLock.Enter())
+                {
+                    stream.Dispose();
+                    return 0;
+                }
+            }
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
+            {
+                return Errno(exception);
             }
         }
     }
