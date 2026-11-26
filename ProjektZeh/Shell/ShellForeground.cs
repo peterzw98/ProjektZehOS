@@ -7,11 +7,49 @@ internal sealed partial class ShellService
 {
     private IShellForeground? foreground;
 
+    // Zeilen und Spalten des Fensters in einem Wert (Zeilen oben), damit der Programmthread nie ein halb geschriebenes Paar liest.
+    // 0: kein Fenster hat eine Größe gemeldet.
+    private int windowSize;
+
+    /// <summary>Meldet das Fenster (TerminalApp bei jeder Größenänderung); Programme lesen sie mit TIOCGWINSZ.</summary>
+    public void SetWindowSize(int rows, int columns)
+    {
+        int packed = (System.Math.Clamp(rows, 1, 0xffff) << 16) | System.Math.Clamp(columns, 1, 0xffff);
+        System.Threading.Volatile.Write(ref windowSize, packed);
+    }
+
+    /// <summary>Fenstergröße in Zeichen; ohne Meldung 24 x 80 wie ein frisches Linux-Terminal. Darf von jedem Thread kommen.</summary>
+    public (ushort Rows, ushort Columns) WindowSize
+    {
+        get
+        {
+            int packed = System.Threading.Volatile.Read(ref windowSize);
+            return packed == 0 ? ((ushort)24, (ushort)80) : ((ushort)((uint)packed >> 16), (ushort)(packed & 0xffff));
+        }
+    }
+
     /// <summary>true, solange ein Programm im Vordergrund laeuft; Eingabezeilen gehen dann an das Programm.</summary>
     public bool HasForeground => foreground != null;
 
     /// <summary>Eingabeaufforderung des Programms (angefangene Ausgabezeile) oder null ohne Vordergrundprogramm.</summary>
     public string? ForegroundPrompt => foreground?.Prompt;
+
+    /// <summary>true, solange das Vordergrundprogramm Tasten einzeln bekommt (Rohmodus, etwa ein Zeileneditor).</summary>
+    public bool ForegroundRawInput => !closed && foreground?.RawInput == true;
+
+    /// <summary>Cursorspalte in <see cref="ForegroundPrompt"/> im Rohmodus, sonst -1.</summary>
+    public int ForegroundCursor => foreground?.PromptCursor ?? -1;
+
+    /// <summary>true, wenn Strg+C als Byte an das Programm geht statt es abzubrechen (Rohmodus ohne ISIG).</summary>
+    public bool ForegroundTakesInterruptKey => !closed && foreground is { RawInput: true, SignalKeys: false };
+
+    /// <summary>Tastenbytes an das Vordergrundprogramm (Rohmodus); false ohne Programm.</summary>
+    public bool SendForegroundInput(byte[] bytes)
+    {
+        if (closed || foreground == null) return false;
+        foreground.SubmitRaw(bytes);
+        return true;
+    }
 
     /// <summary>Meldet ein gestartetes Programm an; seine Ausgabe holt <see cref="Poll"/> ab.</summary>
     internal ResultErr AttachForeground(IShellForeground program)

@@ -14,10 +14,12 @@ def check_file(path, patterns):
     upstream_files = (
         'Cosmos.Kernel.Core/CPU/CpuStop.cs',
         'Cosmos.Kernel.Core/CPU/Smp.cs',
+        'Cosmos.Kernel.Core/CPU/UserMode.cs',
         'Cosmos.Kernel.Core/Scheduler/ConditionVariable.cs',
         'Cosmos.Kernel.Core/Scheduler/InterruptEvent.cs',
         'Cosmos.Kernel.Core/Scheduler/Mutex.cs',
         'Cosmos.Kernel.Core/Scheduler/SchedulerManager.cs',
+        'Cosmos.Kernel.Core.X64/Cpu/Gdt.cs',
         'Cosmos.Kernel.Core.X64/Cpu/Idt.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/DriverEngine.cs',
         'Cosmos.Kernel.HAL/DriverKit/Engine/InterruptContextGuard.cs',

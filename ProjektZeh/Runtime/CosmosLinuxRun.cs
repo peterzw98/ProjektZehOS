@@ -9,6 +9,7 @@ using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.Core.Scheduler;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
+using ProjektZeh.Processes.Vfs;
 using ProjektZeh.Security;
 using ProjektZeh.Shared;
 using ProjektZeh.Shell;
@@ -64,6 +65,12 @@ internal static unsafe class CosmosLinuxRun
     {
         public readonly TerminalDescriptor Terminal;
 
+        /// <summary>Prozesswurzel auf der Datenplatte (Kernelpfad) oder null für ein leeres Dateisystem im Arbeitsspeicher (V8).</summary>
+        public string? Root;
+
+        /// <summary>Anfängliches Arbeitsverzeichnis im Prozess (wird angelegt) oder null für "/"; nur die Gastprobe setzt es.</summary>
+        public string? StartCwd;
+
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
         public LinuxUserProcess? Process;
@@ -83,7 +90,39 @@ internal static unsafe class CosmosLinuxRun
         /// </summary>
         public int Owners = 2;
 
+        /// <summary>
+        /// V10: die Kernelthreads der Linux-Threads, Platz 0 der Hauptthread. Geschrieben unter der Sperre auf dem Feld, gelesen
+        /// ohne Sperre in den Handlern (Referenzen, volatil gelesen); ein Platz wird erst frei, wenn sein Thread den Ring 3 verlassen hat.
+        /// </summary>
+        public readonly Bridge?[] Threads = new Bridge?[LinuxUserProcess.MaxThreads];
+
+        /// <summary>Kernelthreads des Programms, die noch laufen; der Hauptthread räumt erst auf, wenn er der letzte ist.</summary>
+        public int KernelThreads;
+
         public Running(TerminalDescriptor terminal) => Terminal = terminal;
+    }
+
+    /// <summary>Ein Linux-Thread im Kernel (V10): sein Kernelthread und, bis zu seinem ersten Aufruf, die Register aus clone.</summary>
+    private sealed class Bridge
+    {
+        public required LinuxThread Linux;
+        public SchedulerThread? Sched;
+        public int Slot;
+
+        /// <summary>Frame des laufenden Aufrufs (nur auf dem eigenen Kernelstack gültig, nur dort gelesen).</summary>
+        public UserFrame* Frame;
+
+        /// <summary>Register des Elternthreads beim clone, mit rax 0 und dem neuen Stack.</summary>
+        public UserFrame Start;
+
+        /// <summary>
+        /// Gesetzt, bis der Kindthread seinen ersten Aufruf macht. Er betritt den Ring 3 auf dem <c>syscall</c> des Elternthreads
+        /// (<see cref="EntryRip"/>) mit genullten Registern; der Aufruf kommt sofort und übernimmt <see cref="Start"/> statt
+        /// verteilt zu werden. Der Rückweg aus einem Aufruf stellt jedes Register aus dem Frame her (UserMode.s), so braucht
+        /// clone keinen Cosmos-Patch.
+        /// </summary>
+        public bool Pending;
+        public ulong EntryRip;
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -96,6 +135,9 @@ internal static unsafe class CosmosLinuxRun
     /// Shell: <c>run &lt;datei&gt; [argumente...]</c>. argv[0] ist der Pfad wie angegeben. Mit <paramref name="shell"/> läuft das
     /// Programm neben der Ereignisschleife (V3 stdin): Der Befehl kehrt sofort zurück, die Shell holt die Ausgabe in
     /// <see cref="ShellService.Poll"/>, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab; ohne Zeitlimit.
+    /// Dateien (V8): Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis des Programms
+    /// (etwa <c>cd /data/s1</c>, dann <c>run files</c>); in "/" oder direkt auf einem Laufwerk bekommt es ein leeres Dateisystem im Arbeitsspeicher.
+    /// Eine Wurzel auf der Platte braucht Schreib- und Verwaltungsrecht des angemeldeten Nutzers (<see cref="FileService.AuthorizeProcessRoot"/>).
     /// </summary>
     public static ResultErr RunFile(FileService files, string[] arguments, ITextOutput output, ShellService? shell)
     {
@@ -110,14 +152,25 @@ internal static unsafe class CosmosLinuxRun
             return file.Status;
         }
 
+        string? root = RootFor(files.CurrentDirectory);
+        if (root != null)
+        {
+            // Review V8 (P1): Das Programm schreibt im ganzen Unterbaum ohne eigene Rechteprüfung; cd prüft nur Lesen.
+            ResultErr allowed = files.AuthorizeProcessRoot(root);
+            if (!allowed.IsOK())
+            {
+                return ResultErr.CreateFailure(allowed.Code, "run: " + allowed.Message);
+            }
+        }
+
         if (shell != null)
         {
-            return StartForeground(file.Value!, arguments, shell);
+            return StartForeground(file.Value!, arguments, shell, root);
         }
 
         // Spiegel ins serielle Protokoll für scripts/test-linux-abi.py (V5): rohe Bytes als Hex, Status wie run-linux.py.
         Serial("LINUXRUN BEGIN " + arguments[0]);
-        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)));
+        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root);
         Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
         if (!outcome.Ran)
         {
@@ -129,10 +182,38 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>
+    /// Prozesswurzel für <c>run</c> aus dem Verzeichnis der Shell; null (Arbeitsspeicher) für "/" und für einen Einhängepunkt selbst.
+    /// "/" nimmt <see cref="DirectoryFileStore"/> nicht an, und ein ganzes Laufwerk (etwa <c>/data</c>) gäbe dem Programm die
+    /// Systemdateien darauf (Konten, Pakete); erst ein Unterordner wie <c>/data/s1</c> wird Wurzel.
+    /// </summary>
+    private static string? RootFor(string directory)
+    {
+        string root = directory.TrimEnd('/');
+        if (root.Length == 0)
+        {
+            return null;
+        }
+
+        bool mountPoint = StorageLock.Run(() =>
+        {
+            foreach (Cosmos.Kernel.System.FileSystem.VfsMount mount in Cosmos.Kernel.System.FileSystem.VfsManager.Mounts)
+            {
+                if (string.Equals(mount.MountPoint.TrimEnd('/'), root, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+        return mountPoint ? null : root;
+    }
+
+    /// <summary>
     /// Startet das Programm als Vordergrundprogramm der Shell und kehrt sofort zurück. Das Ende meldet der Programmthread selbst
     /// (Statuszeile in der Sitzung, LINUXRUN END im seriellen Protokoll).
     /// </summary>
-    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell)
+    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root)
     {
         if (shell.HasForeground)
         {
@@ -158,12 +239,14 @@ internal static unsafe class CosmosLinuxRun
             run = new Running(new TerminalDescriptor(session) { Mirror = data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)) })
             {
                 Session = session,
+                Root = root,
 
                 // Nur der Programmthread gibt busy frei; die Shell wartet nicht auf ihn.
                 Owners = 1,
             };
             Running target = run;
             session.OnInterrupt = () => Abort(target, Interrupted);
+            session.SizeSource = () => shell.WindowSize;
             ResultErr attached = shell.AttachForeground(session);
             if (!attached.IsOK())
             {
@@ -195,6 +278,33 @@ internal static unsafe class CosmosLinuxRun
         if (target != null)
         {
             UserMode.RequestLeave(target, result);
+        }
+
+        LeaveAll(run, null, result);
+    }
+
+    /// <summary>
+    /// Alle Kernelthreads des Programms außer <paramref name="except"/> verlassen den Ring 3 (exit_group, Absturz eines Threads,
+    /// Abbruch). Wartende in futex kehren zurück, ein Lesen auf fd 0 bekommt Dateiende; ein Thread, der noch nicht im Ring 3
+    /// ist, sieht <see cref="Running.Cancelled"/> und betritt ihn nicht.
+    /// </summary>
+    private static void LeaveAll(Running run, Bridge? except, ulong result)
+    {
+        run.Cancelled = true;
+        Interlocked.MemoryBarrier();
+        foreach (Bridge? b in run.Threads)
+        {
+            SchedulerThread? sched = b == null || b == except ? null : Volatile.Read(ref b.Sched);
+            if (sched != null)
+            {
+                UserMode.RequestLeave(sched, result);
+            }
+        }
+
+        run.Process?.Futexes.Abort();
+        if (Volatile.Read(ref run.KernelThreads) > 1)
+        {
+            run.Session?.EndInput();
         }
     }
 
@@ -245,7 +355,10 @@ internal static unsafe class CosmosLinuxRun
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
-    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null)
+    /// <param name="root">Prozesswurzel (Kernelpfad, wird bei Bedarf angelegt) oder null für ein leeres Dateisystem im Arbeitsspeicher.</param>
+    /// <param name="cwd">Arbeitsverzeichnis im Prozess (absolut, wird angelegt) oder null für "/".</param>
+    public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
+        string? root = null, string? cwd = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -260,7 +373,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror });
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -302,6 +415,11 @@ internal static unsafe class CosmosLinuxRun
         if (!run.Started)
         {
             return new Outcome(false, string.Empty, run.Error ?? "nicht gestartet");
+        }
+
+        if (run.Process?.TerminatedBySignal is int signal)
+        {
+            return new Outcome(true, "signal " + signal, "tgkill");
         }
 
         if (run.Process?.ExitCode is int code)
@@ -370,6 +488,21 @@ internal static unsafe class CosmosLinuxRun
     private static void Execute(Running run, UserImage image, byte[] elf)
     {
         Volatile.Write(ref run.Thread, FaultIsolation.CurrentSchedulerThread());
+        ILinuxFileSystem? fileSystem = null;
+        if (run.Root != null)
+        {
+            // Datenplatte FAT: Namen ohne Groß-/Kleinschreibung. Fehlt die Wurzel oder lässt sie sich nicht anlegen, startet das
+            // Programm nicht, statt still ohne Dateien zu laufen.
+            ResultObject<DirectoryFileStore> store = DirectoryFileStore.Open(run.Root, new CosmosLinuxDiskLinks(run.Root), StringComparison.OrdinalIgnoreCase);
+            if (!store.IsOK())
+            {
+                run.Error = "Prozesswurzel " + run.Root + ": " + store.Status.Message;
+                return;
+            }
+
+            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal);
+        }
+
         UserPageTable? table = UserPageTable.TryCreate();
         if (table == null)
         {
@@ -377,15 +510,48 @@ internal static unsafe class CosmosLinuxRun
             return;
         }
 
-        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host)
+        var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
-            OnExit = code => UserMode.LeaveCurrent((ulong)code),
             OnFsBase = UserMode.SetFsBase,
         };
+
+        // V10: exit_group (oder das Ende des letzten Threads) beendet alle Threads; exit nur den aufrufenden.
+        process.OnExit = code =>
+        {
+            UserMode.LeaveCurrent((ulong)code);
+            LeaveAll(run, CurrentBridge(run), (ulong)code);
+        };
+        process.OnThreadExit = (_, code) => UserMode.LeaveCurrent((ulong)code);
+        process.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? process.MainThread;
+        process.StartThread = child => StartChild(run, table, process, child);
+        var main = new Bridge { Linux = process.MainThread, Sched = FaultIsolation.CurrentSchedulerThread() };
+        run.Threads[0] = main;
+        run.KernelThreads = 1;
         run.Process = process;
+        if (run.StartCwd != null)
+        {
+            // Wie run-linux.py, das in einem Unterordner startet: "/" zeigte sonst /dev und getcwd hätte keinen Ordnernamen.
+            long made = process.FileSystem.Mkdir(run.StartCwd, 0x1ED);
+            if (made < 0 && made != -LinuxErrno.EEXIST)
+            {
+                run.Error = "Arbeitsverzeichnis " + run.StartCwd + ": errno " + (-made);
+                return;
+            }
+
+            process.Cwd = run.StartCwd;
+        }
+
         bool bound = false;
         try
         {
+            // Alle Threads eines Programms auf einer CPU: UserPageTable kennt noch keinen TLB-Shootdown (N4) und lehnt Unmap und
+            // Protect ab, solange eine andere CPU auf der Tabelle läuft. Kindthreads erben die Menge ihres Erzeugers.
+            var cpus = Cosmos.Kernel.System.Threading.ThreadAffinity.Current;
+            if (cpus.Count > 1)
+            {
+                Cosmos.Kernel.System.Threading.ThreadAffinity.Current = Cosmos.Kernel.System.Threading.CpuSet.Single(cpus.First);
+            }
+
             ResultErr loaded = process.Load(image, elf);
             if (!loaded.IsOK())
             {
@@ -415,6 +581,8 @@ internal static unsafe class CosmosLinuxRun
         }
         finally
         {
+            // Erst wenn kein anderer Thread mehr im Ring 3 oder im Kernel auf dem Adressraum arbeitet, darf er weg.
+            WaitForThreads(run, process, main);
             Volatile.Write(ref current, null);
             if (bound)
             {
@@ -422,6 +590,121 @@ internal static unsafe class CosmosLinuxRun
             }
 
             process.Destroy();
+        }
+    }
+
+    /// <summary>
+    /// Der Hauptthread hat den Ring 3 verlassen. Mit exit (pthread_exit in main) laufen die anderen weiter, bis der letzte endet;
+    /// sonst (exit_group, Absturz, Abbruch, Fehler) beendet er sie. Gewartet wird in Scheiben, der Abbruch wird je Scheibe erneuert.
+    /// </summary>
+    private static void WaitForThreads(Running run, LinuxUserProcess process, Bridge main)
+    {
+        while (Volatile.Read(ref run.KernelThreads) > 1)
+        {
+            if (process.ExitCode.HasValue || run.Cancelled || !main.Linux.Exited)
+            {
+                LeaveAll(run, main, Killed);
+            }
+
+            Thread.Sleep(SleepSlice);
+        }
+
+        process.ThreadGone(main.Linux);
+    }
+
+    /// <summary>clone im Kernel: ein Kernelthread für den neuen Linux-Thread, mit den Registern des aufrufenden Threads.</summary>
+    private static bool StartChild(Running run, UserPageTable table, LinuxUserProcess process, LinuxThread child)
+    {
+        Bridge? parent = CurrentBridge(run);
+        if (parent == null || parent.Frame == null || parent.Frame->Rip < 2)
+        {
+            return false;
+        }
+
+        var b = new Bridge { Linux = child, Start = *parent.Frame, Pending = true, EntryRip = parent.Frame->Rip - 2 };
+        b.Start.Rax = 0;
+        if (child.StackPointer != 0)
+        {
+            b.Start.Rsp = child.StackPointer;
+        }
+
+        lock (run.Threads)
+        {
+            int slot = Array.IndexOf(run.Threads, null);
+            if (slot < 0 || run.Cancelled)
+            {
+                return false;
+            }
+
+            b.Slot = slot;
+            Volatile.Write(ref run.Threads[slot], b);
+            Interlocked.Increment(ref run.KernelThreads);
+        }
+
+        child.Host = b;
+        try
+        {
+            new Thread(() => ChildBody(run, table, process, b)).Start();
+            return true;
+        }
+        catch (Exception)
+        {
+            ReleaseSlot(run, b);
+            return false;
+        }
+    }
+
+    private static void ReleaseSlot(Running run, Bridge b)
+    {
+        lock (run.Threads)
+        {
+            if (run.Threads[b.Slot] == b)
+            {
+                Volatile.Write(ref run.Threads[b.Slot], null);
+                Interlocked.Decrement(ref run.KernelThreads);
+            }
+        }
+    }
+
+    private static void ChildBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b)
+    {
+        bool bound = false;
+        try
+        {
+            Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
+            table.BindToCurrentThread();
+            bound = true;
+            UserMode.SetFsBase(b.Linux.FsBase);
+
+            // Wie im Hauptthread: Sched schreiben, dann Cancelled lesen; LeaveAll schreibt Cancelled, dann liest es Sched.
+            Interlocked.MemoryBarrier();
+            if (run.Cancelled || process.ExitCode.HasValue)
+            {
+                return;
+            }
+
+            UserMode.Enter(b.EntryRip, b.Start.Rsp);
+
+            // Weder exit noch exit_group: Absturz oder ungültige Register. Linux beendet dann den ganzen Prozess.
+            if (!b.Linux.Exited && !process.ExitCode.HasValue)
+            {
+                LeaveAll(run, b, Killed);
+            }
+        }
+        catch (Exception exception)
+        {
+            run.Error ??= exception.GetType().Name + ": " + exception.Message;
+            LeaveAll(run, b, Killed);
+        }
+        finally
+        {
+            if (bound)
+            {
+                UserPageTable.UnbindCurrentThread();
+            }
+
+            process.ThreadGone(b.Linux);
+            ReleaseSlot(run, b);
         }
     }
 
@@ -458,7 +741,29 @@ internal static unsafe class CosmosLinuxRun
     private static Running? Current()
     {
         Running? run = Volatile.Read(ref current);
-        return run != null && ReferenceEquals(run.Thread, FaultIsolation.CurrentSchedulerThread()) ? run : null;
+        return run != null && CurrentBridge(run) != null ? run : null;
+    }
+
+    /// <summary>Der Linux-Thread des aufrufenden Kernelthreads; ohne Allokation (Handler).</summary>
+    private static Bridge? CurrentBridge(Running run)
+    {
+        SchedulerThread? me = FaultIsolation.CurrentSchedulerThread();
+        if (me == null)
+        {
+            return null;
+        }
+
+        Bridge?[] threads = run.Threads;
+        for (int i = 0; i < threads.Length; i++)
+        {
+            Bridge? b = Volatile.Read(ref threads[i]);
+            if (b != null && ReferenceEquals(Volatile.Read(ref b.Sched), me))
+            {
+                return b;
+            }
+        }
+
+        return null;
     }
 
     // ---- Handler: auf dem Kernelstack des Programmthreads, Interrupts an, keine Ausnahme darf hinaus ----
@@ -466,13 +771,23 @@ internal static unsafe class CosmosLinuxRun
     [UnmanagedCallersOnly]
     private static void OnSyscall(UserFrame* frame)
     {
-        Running? run = Current();
-        if (run?.Process == null)
+        Running? run = Volatile.Read(ref current);
+        Bridge? me = run == null ? null : CurrentBridge(run);
+        if (run?.Process == null || me == null)
         {
             frame->Rax = unchecked((ulong)-LinuxSyscalls.ENOSYS);
             return;
         }
 
+        // Erster Aufruf eines Kindthreads: Register aus clone übernehmen, nichts verteilen (siehe Bridge.Pending).
+        if (me.Pending)
+        {
+            me.Pending = false;
+            *frame = me.Start;
+            return;
+        }
+
+        me.Frame = frame;
         try
         {
             var args = new SyscallArgs
@@ -492,6 +807,11 @@ internal static unsafe class CosmosLinuxRun
             // Ein Fehler der Brücke beendet das Programm, nicht den Kernel.
             run.Error = "Aufruf " + frame->Rax + ": " + exception.GetType().Name + ": " + exception.Message;
             UserMode.LeaveCurrent(Killed);
+            LeaveAll(run, me, Killed);
+        }
+        finally
+        {
+            me.Frame = null;
         }
     }
 

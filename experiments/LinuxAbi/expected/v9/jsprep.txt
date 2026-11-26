@@ -1,0 +1,11 @@
+getattr rc 0
+stack mehr als 64 KiB: ja
+stackzeiger im stack: ja
+getrlimit stack rc 0, cur mindestens 1 MiB: ja
+getrlimit nofile rc 0, cur mindestens 64: ja
+cpus mindestens 1: ja
+setname rc 0
+mremap verkleinert: ja
+reservierung 64 GiB: ja
+reservierung 4 TiB: ja
+reservierung beschreibbar nach mprotect: ja

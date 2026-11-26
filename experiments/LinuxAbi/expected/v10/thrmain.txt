@@ -1,0 +1,2 @@
+main: pthread_exit
+worker: nach main

@@ -1,0 +1,6 @@
+cwd fehler 0
+naechste nummer 3
+f0: fehler 0 groesse 200
+f1: fehler 0 groesse 200
+f2: fehler 0 groesse 200
+f3: fehler 0 groesse 200

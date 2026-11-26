@@ -19,6 +19,7 @@
 | N4 | Threads, Prozesse, IPC, Netz | 12.7, 12.8, 12.9 | [N4](2026-11-24-ladybird-n4-posix.md) | Tor N2-Z |
 | N5 | Apps nativ, wasm3 und WAMR entfernt | Ablösung 13.5 | [N5](2026-11-24-ladybird-n5-umstieg.md) | Tor N3-Z; Netz-Apps nach N4 |
 | N6 | Ladybird im Fenster | 12.3 | [N6](2026-11-24-ladybird-n6-ladybird.md) | Tore N3-Z und N4-Z |
+| SDL | SDL-Anbindung für native Programme (#690, Auftrag Peter 25.11.) | – | Issue #690, Schnitt danach | Tore N3-Z und N4-Z |
 
 In Pakete geschnitten sind N1 (19 Pakete und das Tor) und die hostprüfbare [Vorarbeit P zum Paketdienst](2026-11-24-ladybird-p-paketdienst-vorarbeit.md) (P1 bis P4), die nicht auf das Tor wartet. N2 bis N6 sind Umrisse und werden am jeweiligen Tor geschnitten, weil ihre Schnittstellen von den Nachweisen abhängen.
 
@@ -31,9 +32,27 @@ N1-E (sofort) ──────────────────────
 #523 (Multicore auf master) → N1-A → N1-B ┘      └─→ N3 ───────┴─→ N5
 P1 → P2 → P4, P1 → P3 (sofort, Host) ──────→ N3
 #423 (AOT als Standard), Lead-Chat: Voraussetzung für N1-Z
+V1 bis V10 (#731, Story-Branches) vorgezogen aus N2 und N4, neben N1
 ```
 
 N2 und N3 haben getrennte Dateien (`Processes/` gegen `Packages/`, `pkgs/`, Werkzeuge) bis auf Index, sysroot und Anzeige in N3. N5 und N6 haben getrennte Dateien.
+
+## Story-Branches und Vorstellung
+
+Seit 26. November 2026 (Auftrag Peter) läuft alle Ladybird-Arbeit auf `story/ladybird` (ZehOS, Basis `master`, Pin für Gastbauten auf `story/ladybird-cosmos`) und `story/ladybird-cosmos` (Cosmos-Patches, Basis `cosmos`). Pakete arbeiten auf `task/lb-<paket>` oder ihrem Plan-Branch und werden per Merge in die Story übernommen; kein Ladybird-PR gegen `master` oder `cosmos`. Das ändert die Regeln oben: „Jedes Paket ist ein eigener PR“ gilt gegen die Story, „Cosmos-Änderungen nur über `cosmos`-PRs“ erst bei der Übernahme nach `cosmos`. Issues, deren Ergebnis nur auf der Story liegt, sind trotzdem geschlossen (#450, #630, #632, #634, #635, #698). Wann und wie die Story nach `master` und `cosmos` geht, entscheidet das Tor N1-Z.
+
+Für die Vorstellung am Freitag, 4. Dezember 2026 wird N2 vor dem Tor vorgezogen: [Plan Vorstellung](2026-11-26-ladybird-vorstellung.md) mit V0 bis V6, auf den Branches inzwischen bis V10; Übersicht im Sammelblock #731. V10 (Threads, `clone`, `futex`) ist Inhalt von N4. Die Tore N2-Z und N4-Z gelten unverändert; die V-Pakete ersetzen sie nicht.
+
+Seit dem Schnitt am 24. November dazugekommen:
+
+| Issue | Inhalt | Bezug |
+| --- | --- | --- |
+| #698 | N1-B3a: APIC und EfiRtc über HHDM, nötig für CR3 je Thread | vor N1-B3 (#632), geschlossen |
+| #716 | Cosmos: `Thread.Yield` wechselt erst am Timertakt; Patch `yield-now` in `story/ladybird-cosmos` | Kosten je Adressraumwechsel (N1-B5) erst danach messbar; Latenz für N2 bis N4 |
+| #732 | verschachteltes NMI unter TCG (Rest aus #700) | vor der Übernahme von A1–A4 nach `cosmos` |
+| #733 | VMware, echte Hardware, Last ohne Obergrenze für A und B | vor N2-Z |
+| #690 | SDL-Anbindung | nach N3-Z und N4-Z |
+| #419 | 12.8, nur noch Restabnahme P4-Z | siehe „Überholt“ |
 
 ## Tore
 
@@ -68,4 +87,4 @@ Der Wasm-Weg samt M1 (#611–#615, PR #616) und die Wasm-Pakete #417, #418, #420
 
 ## Offen
 
-Plan freigegeben (Peter, 24. November 2026); N1 und die Vorarbeit P stehen als kleine Pakete auf dem Board, N2 bis N6 als Sammelblöcke (#643 bis #647); Nummern und Reihenfolge in [N1](2026-11-24-ladybird-n1-nachweise.md#reihenfolge). Keine Frage blockiert N1. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.
+Plan freigegeben (Peter, 24. November 2026); N1 und die Vorarbeit P stehen als kleine Pakete auf dem Board, N2 bis N6 als Sammelblöcke (#643 bis #647); Nummern und Reihenfolge in [N1](2026-11-24-ladybird-n1-nachweise.md#reihenfolge). **Stand 26. November 2026:** P1 bis P4, L1 und N1-A, B, C, E sind erledigt (A, B, C `trägt`, Entwurf [Ergebnis N1](../../LADYBIRD_FEASIBILITY.md#ergebnis-n1)); offen sind D (#622, #636) und #423. Nach der Tor-Regel wartet N1-Z damit auf #423. An N1-Z entscheidet Peter über N2, an N5-Z über das Entfernen der Laufzeiten. In N3 ist zu entscheiden, wo Paketdateien über 100 MiB liegen.

@@ -1,0 +1,5 @@
+adder: counter=80000 ok=4 tls-main=1
+pingpong: rounds=1000
+join: 42
+detached: 8
+main: tid==pid 1

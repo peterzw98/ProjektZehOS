@@ -24,6 +24,9 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     /// <summary>So viele Eingabebytes werden höchstens gepuffert; Zeilen darüber hinaus fallen weg (das Programm liest nicht).</summary>
     public const int MaxInputBytes = 64 << 10;
 
+    /// <summary>Platz über <see cref="MaxInputBytes"/> nur für Antworten des Terminals (eine <c>ESC [ Zeile ; Spalte R</c> ist höchstens 16 Byte).</summary>
+    public const int ResponseReserve = 64;
+
     private readonly object _gate = new();
     private readonly Action<int> _sleep;
     private readonly Queue<string> _lines = new();
@@ -36,16 +39,72 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
     private string? _status;
     private bool _done;
 
+    // Terminalmodus aus termios (V3 raw), gesetzt vom Programmthread über den Deskriptor, gelesen von der Ereignisschleife.
+    private bool _raw;
+    private bool _signalKeys = true;
+    private bool _crToNewline = true;
+
     /// <param name="sleep">Schläft so viele Millisekunden (Kernel: Thread.Sleep; Tests: zählt oder liefert Eingabe nach).</param>
     public LinuxTerminalSession(Action<int> sleep)
     {
         _sleep = sleep ?? throw new ArgumentNullException(nameof(sleep));
     }
 
+    /// <summary>Liefert die Fenstergröße (Zeilen, Spalten) für TIOCGWINSZ; ohne sie 24 x 80. Wird vom Programmthread gerufen.</summary>
+    public Func<(ushort Rows, ushort Columns)>? SizeSource { get; set; }
+
+    /// <summary>Fenstergröße in Zeichen, nie 0.</summary>
+    public (ushort Rows, ushort Columns) WindowSize
+    {
+        get
+        {
+            (ushort rows, ushort columns) = SizeSource?.Invoke() ?? ((ushort)24, (ushort)80);
+            return (rows == 0 ? (ushort)24 : rows, columns == 0 ? (ushort)80 : columns);
+        }
+    }
+
     /// <summary>Wird bei <see cref="Interrupt"/> aufgerufen (auf der Ereignisschleife): verlässt den Ring 3 des Programms.</summary>
     public Action? OnInterrupt { get; set; }
 
     // ---- Programmseite ----
+
+    /// <summary>
+    /// Übernimmt den Modus aus termios (TCSETS*): <paramref name="canonical"/> (ICANON) heißt ganze Zeilen aus dem Zeileneditor
+    /// der Shell, sonst Tasten einzeln (Rohmodus). <paramref name="signalKeys"/> ist ISIG (Strg+C bricht ab),
+    /// <paramref name="crToNewline"/> ist ICRNL (Enter liefert \n statt \r). ECHO wird nicht gebraucht: Im kanonischen Modus zeigt die
+    /// Shell die Zeile immer, im Rohmodus zeigt sie nur, was das Programm zeichnet (ein Rohmodus mit Echo ist nicht umgesetzt).
+    /// </summary>
+    public void SetMode(bool canonical, bool signalKeys, bool crToNewline)
+    {
+        lock (_gate)
+        {
+            _raw = !canonical;
+            _signalKeys = signalKeys;
+            _crToNewline = crToNewline;
+        }
+    }
+
+    /// <summary>
+    /// Bytes, die das Terminal selbst in die Eingabe legt (Antwort auf <c>ESC [ 6 n</c>), ohne Umwandlung. Sie dürfen
+    /// <see cref="MaxInputBytes"/> um <see cref="ResponseReserve"/> überschreiten, damit ein Programm, das bei voller Eingabe nach
+    /// der Cursorposition fragt, trotzdem eine Antwort bekommt. Darüber verwirft die Sitzung die Antwort wie ein volles Linux-tty:
+    /// Ein Programm, das fragt und nie liest, darf den Kernelspeicher nicht füllen.
+    /// </summary>
+    public void Respond(ReadOnlySpan<byte> bytes)
+    {
+        lock (_gate)
+        {
+            if (_detached || _input.Count + bytes.Length > MaxInputBytes + ResponseReserve)
+            {
+                return;
+            }
+
+            foreach (byte b in bytes)
+            {
+                _input.Enqueue(b);
+            }
+        }
+    }
 
     /// <summary>Eine fertige Ausgabezeile (vom <see cref="TerminalDescriptor"/>). Wartet, solange die Warteschlange voll ist.</summary>
     public void WriteLine(string text)
@@ -59,10 +118,16 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
                     return;
                 }
 
-                // Nach dem Abbruch nicht mehr warten: das Programm soll den Aufruf schnell verlassen.
-                if (_lines.Count < MaxQueuedLines || _interrupted)
+                if (_lines.Count < MaxQueuedLines)
                 {
                     _lines.Enqueue(text);
+                    return;
+                }
+
+                // Nach dem Abbruch nicht mehr warten, damit das Programm den Aufruf schnell verlässt, aber die Grenze halten
+                // (Issue #735 P2-2): Ein Aufruf bis 2 GiB füllte sonst den Kernelheap. Was die Shell nicht mehr anzeigt, fällt weg.
+                if (_interrupted)
+                {
                     return;
                 }
             }
@@ -202,7 +267,74 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
         {
             lock (_gate)
             {
-                return _prompt == null ? string.Empty : TerminalDescriptor.Printable(Encoding.UTF8.GetString(_prompt));
+                if (_prompt == null)
+                {
+                    return string.Empty;
+                }
+
+                string text = Encoding.UTF8.GetString(_prompt);
+                return _raw ? TerminalLine.Render(text, out _) : TerminalDescriptor.Printable(text);
+            }
+        }
+    }
+
+    public bool RawInput
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _raw;
+            }
+        }
+    }
+
+    public int PromptCursor
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!_raw)
+                {
+                    return -1;
+                }
+
+                if (_prompt == null)
+                {
+                    return 0;
+                }
+
+                TerminalLine.Render(Encoding.UTF8.GetString(_prompt), out int cursor);
+                return cursor;
+            }
+        }
+    }
+
+    public bool SignalKeys
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _signalKeys;
+            }
+        }
+    }
+
+    public void SubmitRaw(byte[] bytes)
+    {
+        lock (_gate)
+        {
+            // Die Eingabezeile bleibt stehen: Im Rohmodus zeichnet das Programm sie nach der Taste selbst neu.
+            if (_finished || _input.Count + bytes.Length > MaxInputBytes)
+            {
+                return;
+            }
+
+            foreach (byte b in bytes)
+            {
+                _input.Enqueue(b == (byte)'\r' && _crToNewline ? (byte)'\n' : b);
             }
         }
     }

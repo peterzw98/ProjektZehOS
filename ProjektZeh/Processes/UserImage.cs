@@ -35,7 +35,9 @@ internal sealed class UserImage
         UserSegment[] segments,
         UserRegion[] regions,
         byte[] stackContent,
-        int elfLength)
+        int elfLength,
+        ulong uid = 1000,
+        ulong gid = 1000)
     {
         Entry = entry;
         StackPointer = stackPointer;
@@ -48,7 +50,14 @@ internal sealed class UserImage
         Regions = regions;
         _stackContent = stackContent;
         _elfLength = elfLength;
+        Uid = uid;
+        Gid = gid;
     }
+
+    /// <summary>Benutzer- und Gruppennummer wie im Hilfsvektor (AT_UID/AT_GID); getuid und getgid liefern dieselben Werte.</summary>
+    public ulong Uid { get; }
+
+    public ulong Gid { get; }
 
     /// <summary>Einsprung (RIP) im Ring 3, Verschiebung schon eingerechnet.</summary>
     public ulong Entry { get; }
