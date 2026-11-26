@@ -1,6 +1,6 @@
-# Ladybird N1-A7: Messung Ring 3 (Entwurf, Urteil schreibt Senior)
+# Ladybird N1-A7: Messung Ring 3 (Entwurf)
 
-Paket N1-A7 (#630), Plan `2026-11-24-ladybird-n1-nachweise.md`. **Entwurf der Messung; das Urteil (`trägt` / `trägt nicht` / `offen`) steht hier nicht.**
+Paket N1-A7 (#630), Plan `2026-11-24-ladybird-n1-nachweise.md`. Messung von `agent-peter-engineer`, Urteil von `agent-peter-senior` (Abschnitt „Urteil“ am Ende).
 
 ## Aufbau
 
@@ -24,7 +24,7 @@ Neuer Fall `sysmed` (`probe.S`, `CosmosUserModeProbe.cs`): 100 000 Aufrufe von `
 
 Median über die Läufe: **378 Ticks netto ≈ 0,15 µs** (Regel: ≤ 5 µs). Alle Läufe bestanden alle 19 Fälle (`done failed=0`). Die Schleife `loop` (1 000 000 Aufrufe, Mittelwert) stimmt: 371–384 Mio. Ticks ≈ 371–384 Ticks je Aufruf (inkl. Schleife).
 
-Grenzen: KVM auf dem Host, kein TCG (dort ist Zeit sinnlos); Kosten von `fxsave`/`swapgs` einzeln nicht getrennt (der Aufruf enthält `swapgs` und Rahmenwechsel, `fxsave` nur bei Wechsel auf einen anderen Thread); einzelne Ausreißer (Höchstwert bis 84 000 Ticks, vermutlich Host-Verdrängung) berühren den Median nicht.
+Grenzen: KVM auf dem Host, kein TCG (dort ist Zeit sinnlos); Kosten von `fxsave`/`swapgs` einzeln nicht getrennt (der Aufruf enthält beide: der Stub im Pin `4027f1c9` führt `fxsave64`/`fxrstor64` bei **jedem** Interrupt und Systemaufruf aus, `Interrupts.s` Z. 804/876, `swapgs` nur bei Eintritt aus Ring 3, Z. 669–674); einzelne Ausreißer (Höchstwert bis 84 000 Ticks, vermutlich Host-Verdrängung) berühren den Median nicht.
 
 ## 2. Doom-Bildzeit (Normalbau, KVM, ohne Probe)
 
@@ -37,7 +37,7 @@ Grenzen: KVM auf dem Host, kein TCG (dort ist Zeit sinnlos); Kosten von `fxsave`
 
 Verlust A4 gegen smp.13: (4078 − 4060) / 4078 = **0,44 %** (Regel: ≤ 5 %). Die Streuung innerhalb eines Standes (4066–4096, 4043–4079) ist so groß wie der Unterschied.
 
-Grenzen: nur wasm3, kein AOT-Doom; kein VMware, keine echte Hardware; Aussagekraft nur für die Standardlast von Doom (Timer-Interrupts, kein Ring 3 im Betrieb, die Kosten von `swapgs`/`fxsave` je Interrupt stecken im Unterschied, sind aber nicht einzeln gemessen).
+Grenzen: nur wasm3, kein AOT-Doom; kein VMware, keine echte Hardware; Aussagekraft nur für die Standardlast von Doom (Timer-Interrupts, kein Ring 3 im Betrieb, die Kosten von `fxsave64`/`fxrstor64` je Interrupt stecken im Unterschied, sind aber nicht einzeln gemessen; `swapgs` läuft bei Doom nicht, weil Doom im Ring 0 läuft).
 
 ### 2a. Doom mit AOT (Nachtrag 26.11.)
 
@@ -61,3 +61,24 @@ Hosttests (`sysmed` ist nur nativ), TCG, VMware, Doom 5 Läufe, einzelne Kosten 
 ## Zu den Regeln des Plans (für das Urteil)
 
 A6-Abnahme: laut Nachtrag in #704 erfüllt (KVM 1+4 je 10/10, TCG je 3/3, Negativ 2/2, `switch`-Gegenprobe rot); hier nicht neu gelaufen. Median ≤ 5 µs: erfüllt (0,15 µs). Doom ≤ 5 % Verlust: erfüllt (wasm3 0,44 %, AOT +0,03 %).
+
+## Urteil (Senior, 26.11.2026)
+
+**`trägt`.** Grundlage ist dieser Bericht (Kopf `b332f61d6`) und die Abnahme von #704; ich habe keinen eigenen Gastlauf gemacht.
+
+Die Regel aus #630 im Einzelnen:
+
+1. **A6 erfüllt:** ja. Die Abnahme in #704 (Pin `4027f1c9`) zeigt KVM 1+4 CPUs je 10/10, TCG `-cpu max` 1+4 je 3/3, Negativfälle 2/2 und beide `switch`-Mutanten rot. Diese Läufe habe ich selbst gemacht, die Zahlen stehen in den Kommentaren von #704. Das Review von #704 hat kein P1 gefunden. Die Nachprüfung des Deltas `5802b0abe` steht noch aus, das Delta betrifft nur `scripts/` und Tests.
+2. **Median ≤ 5 µs:** ja, mit großem Abstand. Netto 378 Ticks ≈ 0,15 µs, also rund 1/30 der Grenze, bei 1 und 4 CPUs gleich und über 3 Läufe stabil (360–378). Die Abweichungen der Methode (`rdtsc` ohne `lfence`, P3 aus dem Review) liegen unter 30 Ticks und ändern daran nichts.
+3. **Doom verliert ≤ 5 %:** gemessen ja, nämlich −0,44 % mit wasm3 und +0,03 % mit AOT. **Diese Messung ist aber wenig empfindlich:** AOT läuft mit 70,0 Bildern/s an einer Obergrenze, und wasm3 liegt mit ≈ 68 Bildern/s (4078 Bilder in 60 s) knapp darunter. Ein Mehraufwand im Kernel kann sich in der Reserve unterhalb der Obergrenze verstecken, statt die Bildzahl zu senken. Die Regel ist deshalb nur bei wasm3 belegt, und dort nur mit rund 3 % Spielraum bis zur Obergrenze, also nicht für die vollen 5 %. Die Abschätzung trägt trotzdem: Der Patch fügt Doom (Ring 0) je Interrupt nur `fxsave64`/`fxrstor64` (512 Byte) und einen `test` auf CS hinzu, zusammen einige hundert Takte. Selbst bei 10 000 Interrupts/s je CPU wären das bei 2,5 GHz rund 0,1 % Rechenzeit, deutlich unter 5 %. Diese Zahl ist geschätzt, nicht gemessen.
+4. **`trägt nicht`** würde einen Fall verlangen, der an einer bekannten Ursache in Cosmos oder NativeAOT scheitert und sich nicht durch einen abgegrenzten Patch beheben lässt. Einen solchen Fall gibt es nicht.
+
+**Zum TCG-NMI-Rest aus #700** (verschachtelter NMI, TCG mit 4 CPUs): Er kippt das Urteil nicht. Er ist kein Kriterium der Regel, kein Fall ist an ihm gescheitert (0 Abstürze, die A6-TCG-Läufe sind grün), und er tritt nur unter TCG auf, nicht unter KVM (0/20). Die Ursache ist nicht geklärt: Ob QEMU einen NMI vor dem `iretq` erneut zustellt oder ob der Stub einen Fehler hat, wissen wir nicht. Bis das geklärt ist, gilt er als offenes Risiko von #700 und muss vor dem Merge des Patches im Review von #700 entschieden werden.
+
+**Das Urteil fällt auf `offen` zurück,** wenn eines davon eintritt:
+
+- Ein Review von #700, #704 oder #711 findet ein P1.
+- Der NMI-Rest stellt sich als Fehler im Cosmos-Stub heraus, der zu einem Absturz oder zu verlorenem Zustand führt.
+- Eine Messung ohne Obergrenze zeigt mehr als 5 % Verlust. Das wäre zum Beispiel Doom ohne Deckel oder ein Lastfall mit einer hohen Interruptrate.
+
+**Nicht belegt bleiben** VMware, echte Hardware, AMD, Messungen mit 5 Läufen und die Kosten von `fxsave64`/`swapgs` einzeln. Für einen späteren Messauftrag empfehle ich eine Last ohne Obergrenze, damit der Verlust direkt messbar wird, statt mehr Läufe von Doom.
