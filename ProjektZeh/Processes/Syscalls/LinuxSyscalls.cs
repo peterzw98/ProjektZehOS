@@ -189,14 +189,20 @@ internal static partial class LinuxSyscalls
             return fd < 0 ? -EBADF : -ENODEV; // S1: keine Dateiabbildung
         }
 
-        if ((flags & MapFixed) != 0)
-        {
-            return -ENOSYS; // S1: Platzierung bestimmt der Kernel
-        }
-
         if (len > ulong.MaxValue - 0xfff)
         {
             return -ENOMEM;
+        }
+
+        if ((flags & MapFixed) != 0)
+        {
+            ulong flen = (len + 0xfff) & ~0xfffUL;
+            if ((a.A0 & 0xfff) != 0 || a.A0 > MaxUserSpan || flen > MaxUserSpan - a.A0)
+            {
+                return -EINVAL;
+            }
+
+            return p.MapFixed(a.A0, flen, prot) ? unchecked((long)a.A0) : -ENOMEM;
         }
 
         ulong r = p.MapAnonymous((len + 0xfff) & ~0xfffUL, prot);

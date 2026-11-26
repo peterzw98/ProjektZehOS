@@ -36,7 +36,7 @@ internal sealed class LinuxSignalState
 
 internal static partial class LinuxSyscalls
 {
-    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Uname = 63,
+    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
         Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
@@ -57,7 +57,14 @@ internal static partial class LinuxSyscalls
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
             case SchedYield: return 0;
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
-            case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
+            case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
+            case Nanosleep: return DoNanosleep(p, a.A0, a.A1);
+            case ClockNanosleep: return DoClockNanosleep(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
+            // Ein Benutzer ohne Konten: alles läuft als root (wie der Lader es in AT_UID meldet, solange Uid 0 ist).
+            case Getuid:
+            case Geteuid:
+            case Getgid:
+            case Getegid: return 0;
             case Futex: return DoFutex(p, ref a);
             default: return -ENOSYS;
         }
@@ -350,7 +357,7 @@ internal static partial class LinuxSyscalls
         return ready;
     }
 
-    private static long DoMadvise(ulong addr, ulong len, int advice)
+    private static long DoMadvise(ILinuxProcess p, ulong addr, ulong len, int advice)
     {
         if ((addr & 0xfff) != 0 || len > (1UL << 47))
         {
@@ -363,14 +370,103 @@ internal static partial class LinuxSyscalls
             case 1: // RANDOM
             case 2: // SEQUENTIAL
             case 3: // WILLNEED
+            case 10: // DONTFORK
+            case 11: // DOFORK
+            case 12: // MERGEABLE
+            case 13: // UNMERGEABLE
             case 14: // HUGEPAGE
             case 15: // NOHUGEPAGE
-                return 0;
+            case 16: // DONTDUMP
+            case 17: // DODUMP
+            case 18: // WIPEONFORK
+            case 19: // KEEPONFORK
+            case 20: // COLD
+            case 21: // PAGEOUT
+                return 0; // nur Hinweise; es gibt weder fork noch Kernabzug noch Auslagerung
+            case 4: // DONTNEED
+            case 8: // FREE
+                // Alles ist anonym und privat: Verwerfen heißt "beim nächsten Zugriff Nullen" (Allokatoren geben so Speicher zurück).
+                if (len == 0)
+                {
+                    return 0;
+                }
+
+                return p.Discard(addr, (len + 0xfff) & ~0xfffUL) ? 0 : -ENOMEM;
             default:
-                // DONTNEED/FREE würden Seiten nullen; das kann der Prozess noch nicht, also ehrlich ablehnen
-                // (Allokatoren behandeln den Fehler als "nicht freigegeben"). Unbekannte Werte ebenso.
-                return -EINVAL;
+                return -EINVAL; // REMOVE, DONTNEED_LOCKED, unbekannte Werte
         }
+    }
+
+    private const long NsPerSec = 1_000_000_000L;
+
+    /// <summary>Liest ein timespec; false bei -EFAULT, sonst Nanosekunden ; Fehler als negatives Ergebnis.</summary>
+    private static long ReadTimespec(ILinuxProcess p, ulong ptr, out long ns)
+    {
+        ns = 0;
+        Span<byte> ts = stackalloc byte[16];
+        if (!p.Memory.TryRead(ptr, ts))
+        {
+            return -EFAULT;
+        }
+
+        long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+        if (sec < 0 || nsec < 0 || nsec >= NsPerSec)
+        {
+            return -EINVAL;
+        }
+
+        ns = sec > (long.MaxValue - nsec) / NsPerSec ? long.MaxValue : sec * NsPerSec + nsec; // Sättigung statt Überlauf
+        return 0;
+    }
+
+    private static long DoNanosleep(ILinuxProcess p, ulong req, ulong rem)
+    {
+        long r = ReadTimespec(p, req, out long ns);
+        if (r != 0)
+        {
+            return r;
+        }
+
+        if (ns > 0 && p is ILinuxHost host)
+        {
+            host.SleepNanos(ns);
+        }
+
+        // Ungestört bis zum Ende geschlafen (keine Signalzustellung in S1): Rest 0.
+        return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
+    }
+
+    private static long DoClockNanosleep(ILinuxProcess p, int clock, int flags, ulong req, ulong rem)
+    {
+        const int TimerAbstime = 1;
+        // CPU-Zeituhren (2, 3) und unbekannte lehnt der Aufruf ab (-EINVAL); erlaubt sind REALTIME, MONOTONIC, BOOTTIME, TAI und die groben Uhren.
+        if (clock is not (0 or 1 or 4 or 5 or 6 or 7 or 9 or 11) || (flags & ~TimerAbstime) != 0)
+        {
+            return -EINVAL;
+        }
+
+        long r = ReadTimespec(p, req, out long ns);
+        if (r != 0)
+        {
+            return r;
+        }
+
+        if ((flags & TimerAbstime) != 0)
+        {
+            var host = p as ILinuxHost;
+            long now = (clock == 0 || clock == 5 || clock == 11)
+                ? (host != null ? host.RealtimeNanos : (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100)
+                : (host != null ? host.MonotonicNanos : (long)((Stopwatch.GetTimestamp() - StartTicks) * (1_000_000_000.0 / Stopwatch.Frequency)));
+            ns = ns > now ? ns - now : 0;
+            rem = 0; // bei absoluter Frist wird rem nie geschrieben
+        }
+
+        if (ns > 0 && p is ILinuxHost h)
+        {
+            h.SleepNanos(ns);
+        }
+
+        return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
     }
 
     private static long DoFutex(ILinuxProcess p, ref SyscallArgs a)

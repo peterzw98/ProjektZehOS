@@ -237,6 +237,44 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
         return placed.IsOK() ? placed.Value : 0;
     }
 
+    public bool MapFixed(ulong addr, ulong len, int prot)
+    {
+        if (len == 0 || (len & (Page - 1)) != 0 || (addr & (Page - 1)) != 0 || addr < ElfLoader.MinAddress
+            || !InUserRange(addr, len) || !TryAccess(prot, out MapAccess access))
+        {
+            return false;
+        }
+
+        // Erst die Frames des Altbestands freigeben (sonst blieben sie mit altem Inhalt an den Seiten), dann neu belegen.
+        Release(addr, addr + len);
+        return _map.Reserve(addr, len, access, Placement.FixedNoReplace).IsOK();
+    }
+
+    public bool Discard(ulong addr, ulong len)
+    {
+        if (!InUserRange(addr, len))
+        {
+            return false;
+        }
+
+        bool ok = true;
+        foreach (ulong page in PagesWithFrames(addr, addr + len))
+        {
+            // Frame weg, Bereich bleibt: der nächste Zugriff füllt die Seite über den Seitenfehler mit Nullen.
+            if (_pages.Unmap(page))
+            {
+                _pages.FreeFrame(_frames[page]);
+                _frames.Remove(page);
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+
+        return ok;
+    }
+
     public bool Unmap(ulong addr, ulong len)
     {
         if (!InUserRange(addr, len))

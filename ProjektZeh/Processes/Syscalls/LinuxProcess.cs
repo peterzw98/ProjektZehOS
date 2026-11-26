@@ -26,6 +26,12 @@ internal interface ILinuxProcess
     /// <summary>Belegt anonymen Speicher; 0 bei Fehler. <paramref name="prot"/> sind die PROT_*-Bits.</summary>
     ulong MapAnonymous(ulong len, int prot);
 
+    /// <summary>Belegt anonymen Speicher genau bei <paramref name="addr"/> und ersetzt dort Vorhandenes (MAP_FIXED); false bei Fehler.</summary>
+    bool MapFixed(ulong addr, ulong len, int prot);
+
+    /// <summary>Verwirft den Inhalt der Seiten (madvise DONTNEED/FREE): der Bereich bleibt belegt und liest sich danach als Nullen; false bei Fehler.</summary>
+    bool Discard(ulong addr, ulong len);
+
     /// <summary>Gibt einen Bereich frei; false bei Fehler.</summary>
     bool Unmap(ulong addr, ulong len);
 
