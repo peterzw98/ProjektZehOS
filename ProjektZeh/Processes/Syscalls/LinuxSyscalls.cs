@@ -109,6 +109,12 @@ internal static partial class LinuxSyscalls
         return WriteFromUser(p, d, buf, count > (ulong)MaxRw ? (ulong)MaxRw : count);
     }
 
+    /// <summary>
+    /// true, wenn das Programm abgebrochen ist (Strg+C, Zeitlimit, exit_group). Kopierschleifen bis <see cref="MaxRw"/> (2 GiB) prüfen das
+    /// je Stück und enden mit dem bisher Kopierten oder -EINTR (Issue #735 P2-2): Ring 3 verlässt das Programm erst nach dem Aufruf.
+    /// </summary>
+    private static bool Aborted(ILinuxProcess p) => p is ILinuxAbort abort && abort.IsAborted;
+
     /// <summary>Kopiert in Stücken aus dem Benutzerspeicher. Schlägt erst ein späteres Stück fehl, zählt das bisher Geschriebene.</summary>
     private static long WriteFromUser(ILinuxProcess p, ILinuxDescriptor d, ulong buf, ulong count)
     {
@@ -116,6 +122,11 @@ internal static partial class LinuxSyscalls
         ulong done = 0;
         while (done < count)
         {
+            if (Aborted(p))
+            {
+                return done > 0 ? (long)done : -EINTR;
+            }
+
             int n = (int)Math.Min(count - done, (ulong)tmp.Length);
             if (buf + done < buf || !p.Memory.TryRead(buf + done, tmp.Slice(0, n)))
             {

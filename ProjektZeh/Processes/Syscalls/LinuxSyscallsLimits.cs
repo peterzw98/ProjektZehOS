@@ -34,8 +34,9 @@ internal static partial class LinuxSyscalls
         {
             case Mremap: return DoMremap(p, a.A0, a.A1, a.A2, a.A3);
             case Prlimit64: return DoPrlimit(p, (long)a.A0, (int)a.A1, a.A2, a.A3);
-            case Getrlimit: return DoPrlimit(p, 0, (int)a.A0, 0, a.A1);
-            case Setrlimit: return DoPrlimit(p, 0, (int)a.A0, a.A1, 0);
+            // Anders als prlimit64 (beide Zeiger optional) verlangen getrlimit/setrlimit ihren Zeiger: 0 ist -EFAULT.
+            case Getrlimit: return a.A1 == 0 ? -EFAULT : DoPrlimit(p, 0, (int)a.A0, 0, a.A1);
+            case Setrlimit: return a.A1 == 0 ? -EFAULT : DoPrlimit(p, 0, (int)a.A0, a.A1, 0);
             case SchedGetaffinity: return DoSchedGetaffinity(p, (long)a.A0, a.A1, a.A2);
             case Prctl: return DoPrctl(p, (int)a.A0, a.A1);
             default: return -ENOSYS;
@@ -62,15 +63,15 @@ internal static partial class LinuxSyscalls
             return -EINVAL;
         }
 
-        if (newSize == 0 || newSize > MaxUserSpan || oldSize > MaxUserSpan || oldAddr > MaxUserSpan)
+        // oldSize 0 heißt bei Linux „gemeinsame Abbildung duplizieren“; private Abbildungen (die einzigen hier) liefern -EINVAL.
+        if (newSize == 0 || oldSize == 0 || newSize > MaxUserSpan || oldSize > MaxUserSpan || oldAddr > MaxUserSpan)
         {
             return -EINVAL;
         }
 
         ulong oldLen = (oldSize + 0xfff) & ~0xfffUL, newLen = (newSize + 0xfff) & ~0xfffUL;
 
-        // oldSize 0 heißt bei Linux „gemeinsame Abbildung duplizieren“; das gibt es hier nicht.
-        if (oldLen == 0 || !space.IsMapped(oldAddr, oldLen))
+        if (!space.IsMapped(oldAddr, oldLen))
         {
             return -EFAULT;
         }
@@ -96,7 +97,8 @@ internal static partial class LinuxSyscalls
     /// <summary>
     /// Grenzen nur lesen: RLIMIT_STACK ist der Hauptstack (musl meldet sonst für den Hauptthread nur die erste Größe, und Ladybirds
     /// AK::StackInfo rechnet mit RLIMIT_STACK), NOFILE 1024 (Deskriptortabelle), CORE 0, alle übrigen unbegrenzt.
-    /// Setzen liefert -EPERM (Abweichung: Linux erlaubt Senken).
+    /// Setzen auf den geltenden Wert (Soft = Hard = Wert, so setzen Programme „Soft auf Hard“) gelingt ohne Wirkung; jeder andere Wert
+    /// liefert -EPERM (Abweichung: Linux erlaubt Senken). Wie Linux (kernel/sys.c, prlimit64) wird old nur bei Erfolg geschrieben.
     /// </summary>
     private static long DoPrlimit(ILinuxProcess p, long pid, int resource, ulong newPtr, ulong oldPtr)
     {
@@ -109,6 +111,14 @@ internal static partial class LinuxSyscalls
         {
             return -EINVAL;
         }
+
+        ulong value = resource switch
+        {
+            RlimitStack => p is ILinuxAddressSpace space ? space.StackSize : DefaultStackSize,
+            RlimitNofile => 1024,
+            RlimitCore => 0,
+            _ => RlimInfinity,
+        };
 
         if (newPtr != 0)
         {
@@ -124,18 +134,14 @@ internal static partial class LinuxSyscalls
                 return -EINVAL;
             }
 
-            return -EPERM;
+            if (cur != value || max != value)
+            {
+                return -EPERM;
+            }
         }
 
         if (oldPtr != 0)
         {
-            ulong value = resource switch
-            {
-                RlimitStack => p is ILinuxAddressSpace space ? space.StackSize : DefaultStackSize,
-                RlimitNofile => 1024,
-                RlimitCore => 0,
-                _ => RlimInfinity,
-            };
             Span<byte> limit = stackalloc byte[16];
             BitConverter.TryWriteBytes(limit, value);
             BitConverter.TryWriteBytes(limit[8..], value);

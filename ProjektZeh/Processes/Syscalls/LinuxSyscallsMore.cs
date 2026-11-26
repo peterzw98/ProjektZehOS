@@ -114,6 +114,11 @@ internal static partial class LinuxSyscalls
         ulong done = 0;
         while (done < count)
         {
+            if (Aborted(p))
+            {
+                return done > 0 ? (long)done : -EINTR;
+            }
+
             int n = (int)Math.Min(count - done, (ulong)tmp.Length);
             var span = tmp.AsSpan(0, n);
             if (!host.TryFillRandom(span))

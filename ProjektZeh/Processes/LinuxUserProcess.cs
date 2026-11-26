@@ -44,7 +44,7 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -132,12 +132,12 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool IsMapped(ulong addr, ulong len)
     {
+        // V10: Die Karte ändern andere Threads (munmap, mmap) unter derselben Sperre.
         lock (_memGate)
         {
             return _map.IsMapped(addr, len);
         }
     }
-
 
     public ulong ClearChildTid
     {
@@ -384,6 +384,9 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public bool TryFillRandom(Span<byte> dst) => _host != null && _host.TryFillRandom(dst);
 
     public void SleepNanos(long ns) => _host?.SleepNanos(ns);
+
+    /// <summary>Abbruch des Programms (über <see cref="LinuxFutexTable.Abort"/>, das Strg+C, Zeitlimit und exit_group auslösen).</summary>
+    public bool IsAborted => Futexes.IsAborted;
 
     public ILinuxDescriptor? GetDescriptor(int fd) => (uint)fd < MaxDescriptors ? _descriptors[fd] : null;
 

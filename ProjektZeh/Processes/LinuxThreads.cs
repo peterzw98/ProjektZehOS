@@ -269,6 +269,9 @@ internal sealed class LinuxFutexTable
         }
     }
 
+    /// <summary>true nach <see cref="Abort"/> (Strg+C, Zeitlimit, exit_group); lange Kopierschleifen fragen das je Stück ab.</summary>
+    public bool IsAborted => Volatile.Read(ref _aborted);
+
     /// <summary>Der Prozess endet: jeder Wartende kehrt mit -EINTR zurück, neue Wartende auch.</summary>
     public void Abort()
     {

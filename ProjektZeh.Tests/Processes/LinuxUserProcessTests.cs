@@ -532,6 +532,13 @@ public sealed class LinuxUserProcessTests
         return LinuxSyscalls.Dispatch(ref a, process);
     }
 
+    private static bool Write64(LinuxUserProcess process, ulong addr, ulong value)
+    {
+        Span<byte> b = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt64LittleEndian(b, value);
+        return process.TryWrite(addr, b);
+    }
+
     private static bool Read64(LinuxUserProcess process, ulong addr, out ulong value)
     {
         Span<byte> b = stackalloc byte[8];
@@ -581,6 +588,30 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
+    public void RlimitGleicherWertGelingtUndNullzeigerIstEfault()
+    {
+        // Review V9 P3 a/b: setrlimit auf den geltenden Wert ist 0; prlimit64 schreibt old nur bei Erfolg (kernel/sys.c).
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        ulong old = buf + 64;
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 7, buf));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Setrlimit, 7, buf)); // NOFILE Soft = Hard = 1024
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, buf, old));
+        Assert.IsTrue(Read64(process, old + 8, out ulong max));
+        Assert.AreEqual(1024UL, max);
+
+        Assert.IsTrue(Write64(process, buf, 512));
+        Assert.IsTrue(Write64(process, old, 7));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, buf, old)); // Senken: Abweichung
+        Assert.IsTrue(Read64(process, old, out ulong untouched));
+        Assert.AreEqual(7UL, untouched);
+
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Getrlimit, 7, 0));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Setrlimit, 7, 0));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 7, 0, 0)); // prlimit64: beide Zeiger optional
+    }
+
+    [TestMethod]
     public void MremapVerkleinertNurAnOrtUndStelle()
     {
         var (process, _, _, _) = Start();
@@ -594,6 +625,7 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m + 1, Page, Page));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, Page, 2)); // FIXED ohne MAYMOVE
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, 0, Page, 1)); // Review V9 P3 c: oldSize 0 privat
     }
 
     [TestMethod]

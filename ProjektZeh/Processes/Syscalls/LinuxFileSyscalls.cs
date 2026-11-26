@@ -153,6 +153,11 @@ internal static partial class LinuxSyscalls
         ulong done = 0;
         while (done < count)
         {
+            if (Aborted(p))
+            {
+                return done > 0 ? (long)done : -EINTR;
+            }
+
             int want = (int)Math.Min(count - done, (ulong)tmp.Length);
             long n = file.Read(tmp.AsSpan(0, want));
             if (n < 0)

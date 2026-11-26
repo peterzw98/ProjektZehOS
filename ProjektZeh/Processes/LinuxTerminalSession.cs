@@ -118,10 +118,16 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
                     return;
                 }
 
-                // Nach dem Abbruch nicht mehr warten: das Programm soll den Aufruf schnell verlassen.
-                if (_lines.Count < MaxQueuedLines || _interrupted)
+                if (_lines.Count < MaxQueuedLines)
                 {
                     _lines.Enqueue(text);
+                    return;
+                }
+
+                // Nach dem Abbruch nicht mehr warten, damit das Programm den Aufruf schnell verlässt, aber die Grenze halten
+                // (Issue #735 P2-2): Ein Aufruf bis 2 GiB füllte sonst den Kernelheap. Was die Shell nicht mehr anzeigt, fällt weg.
+                if (_interrupted)
+                {
                     return;
                 }
             }
