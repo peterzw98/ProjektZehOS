@@ -22,7 +22,16 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 CASE = re.compile(r"USER_PROBE ([A-Za-z0-9_.-]+) ok=([01])(?=\s|$)")
 DONE = re.compile(r"USER_PROBE done failed=(\d+)(?=\s|$)")
+HALT_START = "USER_PROBE gegenprobe pf in kernel thread ring3=1"
+NMI_OPEN = "USER_PROBE nmi window open"
+NMI_CLOSED = "USER_PROBE nmi window closed"
 SHOWN = re.compile(r"[^\r\n]*USER_PROBE[^\r\n]*")
+PF_HEADER = re.compile(r"^CPU EXCEPTION: Page Fault \(#PF\)\s*$", re.MULTILINE)
+PF_VECTOR = re.compile(r"^Interrupt Vector: 14\s*$", re.MULTILINE)
+PF_ADDRESS = re.compile(r"^\s*CR2: 0x0\s*$", re.MULTILINE)
+HALTED = re.compile(r"^System halted\.\s*$", re.MULTILINE)
+INFO_AVX = re.compile(r"USER_PROBE info [^\r\n]*\bavx=([01])(?=\s|$)")
+CASE_AVX = re.compile(r"USER_PROBE fault_avx ok=1(?=\s|$)")
 _tools = None
 
 
@@ -44,6 +53,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--expect", type=lambda value: [name for name in value.split(",") if name], default=[],
                         help="Faelle, die mit ok=1 vorkommen muessen (kommagetrennt)")
+    parser.add_argument("--negative", action="store_true",
+                        help="ISO mit ZehOSUserModeProbeNegative: #PF im Kernelthread muss anhalten")
     parser.add_argument("--timeout", type=float, default=300, help="Sekunden je Lauf bis zur Schlusszeile")
     args = parser.parse_args(argv)
     if args.smp < 1 or args.runs < 1 or args.timeout <= 0:
@@ -76,6 +87,33 @@ def evaluate(log: str, expect: list[str]) -> list[str]:
         elif bad:
             missing.append("Schlusszeile meldet failed=0, obwohl ein Fall ok=0 hat")
     return missing
+
+
+def evaluate_negative(log: str) -> list[str]:
+    """Gegenprobe: Ring 3 lief, danach haelt ein #PF im Kernelthread das System an."""
+    start = log.find(HALT_START)
+    if start < 0:
+        return ["Gegenprobe nicht begonnen oder Ring 3 lief nicht"]
+    after = log[start:]
+    missing = []
+    if "NOT HALTED" in after:
+        missing.append("Kernelthread lief nach dem #PF weiter")
+    # Nur der erwartete Fehler zaehlt: #PF (Vektor 14) auf Adresse 0 und danach der Halt; eine andere Ausnahme besteht nicht.
+    for pattern, why in ((PF_HEADER, "keine #PF-Meldung"), (PF_VECTOR, "Vektor nicht 14"), (PF_ADDRESS, "CR2 nicht 0"),
+                         (HALTED, "keine Haltmeldung")):
+        if not pattern.search(after):
+            missing.append(why)
+    return missing
+
+
+def notes(log: str) -> list[str]:
+    """Hinweise ohne Einfluss auf das Ergebnis: Faelle, die auf dieser CPU nichts belegen."""
+    found = []
+    avx = INFO_AVX.findall(log)
+    if avx and "0" in avx and CASE_AVX.search(log):
+        # Ohne AVX in CPUID ist vmovdqa auch bei gesetztem CR4.OSXSAVE ein #UD; der Fall laeuft dann leer (etwa KVM/qemu64).
+        found.append("fault_avx ohne Aussage (CPUID avx=0, #UD auch ohne AVX zu erwarten)")
+    return found
 
 
 def wait_for_done(read, timeout: float, clock=None, sleep=None, alive=lambda: True) -> bool:
@@ -137,7 +175,28 @@ def run(args: argparse.Namespace, number: int) -> bool:
         port = helper.free_port()
         with own_session(args.smp):
             vm = helper.start_qemu(args.iso.resolve(), work / "data.qcow2", work, port, args.accel, None)
-        finished = wait_for_done(text, args.timeout, alive=lambda: vm.poll() is None)
+        if args.negative:
+            deadline = time.monotonic() + args.timeout
+            while HALT_START not in text() and time.monotonic() < deadline and vm.poll() is None:
+                time.sleep(1)
+            time.sleep(10)
+            log = text()
+            missing = evaluate_negative(log)
+            print(f"Lauf {number} {args.accel} smp={args.smp} negative: "
+                  f"{'PASS' if not missing else 'FAIL ' + '; '.join(missing)} ({work})", flush=True)
+            return not missing
+        qmp = None
+
+        def read() -> str:
+            # Mit einer CPU kann nur der Rechner von aussen einen NMI schicken, waehrend das Programm im Ring 3 ist.
+            nonlocal qmp
+            log = text()
+            if NMI_OPEN in log and NMI_CLOSED not in log:
+                qmp = qmp or helper.Qmp(port)
+                qmp.command("inject-nmi")
+            return log
+
+        finished = wait_for_done(read, args.timeout, sleep=lambda _: time.sleep(0.2), alive=lambda: vm.poll() is None)
         log = text()
         missing = evaluate(log, args.expect)
         if not finished:
@@ -145,6 +204,8 @@ def run(args: argparse.Namespace, number: int) -> bool:
             missing.insert(0, f"{why} ohne Schlusszeile")
         for line in SHOWN.findall(log):
             print("  " + line.strip(), flush=True)
+        for note in notes(log):
+            print("  Hinweis: " + note, flush=True)
         print(f"Lauf {number} {args.accel} smp={args.smp}: {'PASS' if not missing else 'FAIL ' + '; '.join(missing)} ({work})",
               flush=True)
         return not missing

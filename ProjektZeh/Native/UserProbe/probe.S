@@ -19,6 +19,8 @@
  *   0x7A01  zaehlen: der Kernel erhoeht einen Zaehler; keine Argumente.
  *   0x7A02  beenden: rdi = Ergebnis (0 = Fall erreicht sein Ziel, sonst Fehlerkennung), rsi = Hilfswert (loop: TSC-Ticks
  *           des gesamten Laufs). Der Handler ruft LeaveCurrent; der Aufruf kehrt nie zurueck.
+ *   0x7A03  pruefen (switch): rdi = Kennung; der Kernel vergleicht sie mit dem laufenden Thread und prueft, dass der Rahmen auf
+ *           dessen Kernelstack liegt. Rueckgabe 0 = stimmt, sonst Fehlerkennung.
  * Faelle ohne Ende (spin) und fault_* beenden nicht selbst: spin endet durch RequestLeave, fault_* durch den FaultHandler.
  * Stack: nur fpu braucht 32 Byte unterhalb von rsp, kein anderer Fall fasst den Stack an.
  */
@@ -34,6 +36,13 @@ probe_base:
 .equ FPU_ROUNDS, 20000000               /* Runden ohne Systemaufruf; A6 darf anpassen, bis die Laufzeit passt */
 .equ KERNEL_ADDR, 0xFFFF800000000000     /* kanonisch, obere Haelfte: #PF statt #GP */
 
+.equ SYS_CHECK, 0x7A03
+
+/* Endlosschleife. Kein `jmp .`: den Punkt als Sprungziel kennt der Assembler von clang (Kernelbau) in Intel-Schreibweise nicht. */
+.macro HANG
+8:      jmp 8b
+.endm
+
 .equ TABLE_OFF, 0x000
 .equ SLOT_OFF,  0x1000
 .equ SLOT_SIZE, 0x10
@@ -43,7 +52,7 @@ probe_base:
 /* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Kapazitaet; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
         .org TABLE_OFF
         .ascii "ZUP1"
-        .long 13
+        .long 16
         .long 32
         .long CAPACITY
 
@@ -68,6 +77,9 @@ probe_base:
         NAMED fault_pf_exec, 10
         NAMED badret, 11
         NAMED leave, 12
+        NAMED fault_avx, 13
+        NAMED fpu2, 14
+        NAMED switch, 15
 
 .macro SLOT index, target
         .org SLOT_OFF + SLOT_SIZE * \index, 0xCC   /* Luecken als int3 */
@@ -87,6 +99,9 @@ probe_base:
         SLOT 10, body_fault_pf_exec
         SLOT 11, body_badret
         SLOT 12, body_leave
+        SLOT 13, body_fault_avx
+        SLOT 14, body_fpu2
+        SLOT 15, body_switch
 
         .org BODY_OFF, 0xCC
 
@@ -109,7 +124,7 @@ body_loop:
         xor edi, edi
         mov eax, SYS_EXIT
         syscall
-        jmp .                           /* nie erreicht */
+        HANG                           /* nie erreicht */
 
 /* spin: kein Systemaufruf; nur Unterbrechungen holen den Thread zurueck. */
 body_spin:
@@ -118,92 +133,104 @@ body_spin:
 
 /* fpu: x87-Stapel, FCW, MXCSR und XMM0-15 mit festen Werten belegen, FPU_ROUNDS Runden ohne Systemaufruf laufen, vergleichen.
  * Ende: rdi = 0 unveraendert, 1 x87-Stapel, 2 FCW, 3 MXCSR, 4 XMM. */
-body_fpu:
+.macro FPU_BODY prefix, fcw, mxcsr, first, second, third
         fninit
-        fldcw [rip + fpu_fcw]
-        ldmxcsr [rip + fpu_mxcsr]
-        fld1
-        fldpi
-        fldl2e
+        fldcw [rip + \prefix\()_fcw]
+        ldmxcsr [rip + \prefix\()_mxcsr]
+        \first
+        \second
+        \third
 .irp i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-        movdqa xmm\i, [rip + fpu_xmm + 16 * \i]
+        movdqa xmm\i, [rip + \prefix\()_xmm + 16 * \i]
 .endr
         mov ecx, FPU_ROUNDS
 1:      pause
         dec ecx
         jnz 1b
         mov edi, 1
-        fldl2e
+        \third
         fucomip st, st(1)
-        jne fpu_fail
-        jp fpu_fail
+        jne \prefix\()_fail
+        jp \prefix\()_fail
         fstp st(0)
-        fldpi
+        \second
         fucomip st, st(1)
-        jne fpu_fail
-        jp fpu_fail
+        jne \prefix\()_fail
+        jp \prefix\()_fail
         fstp st(0)
-        fld1
+        \first
         fucomip st, st(1)
-        jne fpu_fail
-        jp fpu_fail
+        jne \prefix\()_fail
+        jp \prefix\()_fail
         fstp st(0)
         mov edi, 2
         fnstcw [rsp - 8]
-        cmp word ptr [rsp - 8], 0x027F
-        jne fpu_fail
+        cmp word ptr [rsp - 8], \fcw
+        jne \prefix\()_fail
         mov edi, 3
         stmxcsr [rsp - 8]
-        cmp dword ptr [rsp - 8], 0x5F80
-        jne fpu_fail
+        cmp dword ptr [rsp - 8], \mxcsr
+        jne \prefix\()_fail
         mov edi, 4
         movdqu [rsp - 24], xmm0         /* xmm0 dient als Hilfsregister; Original merken */
 .irp i, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-        movdqa xmm0, [rip + fpu_xmm + 16 * \i]
+        movdqa xmm0, [rip + \prefix\()_xmm + 16 * \i]
         pcmpeqb xmm0, xmm\i
         pmovmskb eax, xmm0
         cmp eax, 0xFFFF
-        jne fpu_fail
+        jne \prefix\()_fail
 .endr
         movdqu xmm0, [rsp - 24]
-        movdqa xmm1, [rip + fpu_xmm]   /* xmm0 zuletzt: xmm1 ist geprueft und dient als Hilfsregister */
+        movdqa xmm1, [rip + \prefix\()_xmm]   /* xmm0 zuletzt: xmm1 ist geprueft und dient als Hilfsregister */
         pcmpeqb xmm1, xmm0
         pmovmskb eax, xmm1
         cmp eax, 0xFFFF
-        jne fpu_fail
+        jne \prefix\()_fail
         xor edi, edi
-fpu_fail:
+\prefix\()_fail:
         xor esi, esi
         mov eax, SYS_EXIT
         syscall
-        jmp .
+        HANG
+.endm
+
+body_fpu:
+        FPU_BODY fpu, 0x027F, 0x5F80, fld1, fldpi, fldl2e
+
+/* fpu2: dasselbe mit anderen Werten, damit zwei Threads sich gegenseitig verraten. */
+body_fpu2:
+        FPU_BODY fpu2, 0x0F7F, 0x3F80, fldln2, fldlg2, fldl2t
 
 body_fault_de:
         xor edx, edx
         xor ecx, ecx
         mov eax, 1
         div ecx
-        jmp .
+        HANG
 body_fault_ud:
         ud2
-        jmp .
+        HANG
 body_fault_gp_cli:
         cli
-        jmp .
+        HANG
 body_fault_gp_hlt:
         hlt
-        jmp .
+        HANG
 body_fault_gp_in:
         in al, 0x80                     /* IOPL 0, kein E/A-Bitfeld: #GP */
-        jmp .
+        HANG
+/* Ohne CR4.OSXSAVE ist jeder AVX-Befehl #UD: der Kernel sichert nur den fxsave-Bereich (Review #700, P3 b). */
+body_fault_avx:
+        vmovdqa ymm0, [rip + avx_data]
+        HANG
 body_fault_pf_read:
         mov rax, KERNEL_ADDR
         mov rax, [rax]
-        jmp .
+        HANG
 body_fault_pf_write:
         mov rax, KERNEL_ADDR
         mov qword ptr [rax], 0
-        jmp .
+        HANG
 body_fault_pf_exec:
         mov rax, KERNEL_ADDR
         jmp rax
@@ -216,7 +243,7 @@ body_badret:
         xor esi, esi
         mov eax, SYS_EXIT
         syscall
-        jmp .
+        HANG
 
 /* leave: sofort beenden (1000-mal Enter und LeaveCurrent). */
 body_leave:
@@ -224,9 +251,51 @@ body_leave:
         xor esi, esi
         mov eax, SYS_EXIT
         syscall
-        jmp .
+        HANG
 
-        .balign 16
+/* switch: Kennung (nicht 0) bei [rsp], Zaehler bei [rsp + 8]; die FS-Basis zeigt auf ein Wort mit derselben Kennung. Rechnet meist
+ * ohne Systemaufruf, damit der Tick im Ring 3 trifft, und vergleicht laufend FS, Register, XMM und Stack; dazwischen SYS_CHECK.
+ * Ende nur durch RequestLeave oder rdi = 1 FS, 2 Register, 3 XMM, 4 Stack, 5 SYS_CHECK. */
+body_switch:
+        mov rbx, [rsp]
+        lea r12, [rbx + 2 * rbx]
+        mov r13, rbx
+        not r13
+        movq xmm7, rbx
+1:      mov r9d, 20000
+2:      mov edi, 1
+        cmp qword ptr fs:[0], rbx
+        jne 3f
+        mov edi, 2
+        lea rax, [rbx + 2 * rbx]
+        cmp rax, r12
+        jne 3f
+        mov rax, rbx
+        not rax
+        cmp rax, r13
+        jne 3f
+        mov edi, 3
+        movq rax, xmm7
+        cmp rax, rbx
+        jne 3f
+        mov edi, 4
+        cmp [rsp], rbx
+        jne 3f
+        inc qword ptr [rsp + 8]
+        dec r9d
+        jnz 2b
+        mov rdi, rbx
+        mov eax, SYS_CHECK
+        syscall
+        test rax, rax
+        jz 1b
+        mov edi, 5
+3:      xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+        .balign 32
         .global probe_data
 probe_data:
 fpu_xmm:
@@ -238,4 +307,18 @@ fpu_fcw:
         .word 0x027F                    /* doppelte Genauigkeit, alle Ausnahmen maskiert (Standard waere 0x037F) */
 fpu_mxcsr:
         .long 0x5F80                    /* Rundung nach oben, alle Ausnahmen maskiert (Standard waere 0x1F80) */
+        .balign 16
+fpu2_xmm:
+.irp i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+        .quad 0x8877665544332200 + \i
+        .quad 0x00AA55FF11EE2200 - \i
+.endr
+fpu2_fcw:
+        .word 0x0F7F                    /* erweiterte Genauigkeit, Rundung zur Null */
+fpu2_mxcsr:
+        .long 0x3F80                    /* Rundung nach unten */
+        .balign 32
+avx_data:
+        .zero 32
+        .global probe_end
 probe_end:

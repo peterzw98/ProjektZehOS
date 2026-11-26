@@ -502,6 +502,13 @@ public sealed class Kernel : Sys.Kernel
             return;
         }
 #endif
+#if ZEHOS_USER_MODE_PROBE
+        if (!CosmosUserModeProbe.Run())
+        {
+            Stop();
+            return;
+        }
+#endif
 #if ZEHOS_SIMD_PROBE
         if (!CosmosSimdProbe.Run())
         {
