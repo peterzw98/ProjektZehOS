@@ -136,12 +136,41 @@ Grenzen (Review V2, bewusst offen):
 - Grenzen: Pfad ab 4096 Bytes und Teil über 255 Bytes (UTF-8) `-ENAMETOOLONG`, auch für aufgelöste Pfade; 40 Links `-ELOOP`; je Auflösung höchstens 4096 Teile
   (Eingabe und Linkziele), sonst `-ELOOP` (Abweichung: Linux kennt nur die Linkgrenze); 1024 offene Dateien je Dateisystem `-EMFILE`;
   Datei auf der Platte höchstens 1 GiB (`-EFBIG`, Schreiben bis zur Grenze wird gekürzt); `MemoryFileStore` 16 MiB je Datei, 64 MiB und 65 536 Einträge gesamt (`-ENOSPC`).
+- Wachstum auf der Platte: Cosmos-FAT kennt keine Lücken (Sparse) und nullt beim Verlängern sofort jeden Cluster. Deshalb wächst eine Datei (Lücke vor einem
+  `write` nach `lseek`, `ftruncate` nach oben) in Schritten von höchstens `StorageLock.ChunkBytes` (1 MiB), jeder unter einer eigenen Sperre, damit Desktop und
+  Shell dazwischen drankommen. Dazu ein Kontingent je `DirectoryFileStore`, also je Start eines Programms (nicht je Wurzel auf der Platte: jeder Start und jeder
+  zweite Prozess auf derselben Wurzel hat wieder 64 MiB, was ein Start hinterlässt, bleibt): höchstens 64 MiB Nettowachstum (`DirectoryFileStore.DefaultQuotaBytes`;
+  vorhandene Dateien wie Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC`; vor einem `write` hinter
+  dem Ende wird die Lücke plus ein Byte geprüft, passt das nicht, entsteht nichts. Ein Schreiben am Rand wird gekürzt.
+  Entfernte oder durch `rename` ersetzte Dateien, die noch offen sind, belegen unter Cosmos weiter Platz (das Entfernen kommt erst beim letzten Schließen,
+  `VfsManager.Paths.cs` `MarkPendingIfOpen`); ihre Länge wird deshalb erst beim letzten Schließen gutgeschrieben, die Gutschrift hängt am Eintrag, nicht am Namen.
+  Cosmos lässt dabei auch den Namen bis zum letzten Schließen stehen (sichtbar, ein weiteres `unlink` gelänge). `DirectoryFileStore` führt solche Pfade
+  deshalb eigens (sie wandern bei `rename` mit): wie bei Linux sind sie sofort weg (`stat`/`open`/`unlink`/`rename` `-ENOENT`, nicht in Listen), ohne zweite
+  Gutschrift. Anlegen, `mkdir`, `symlink` und `rename` auf einen solchen Namen sind `-EEXIST`, solange das Laufwerk ihn noch führt (Abweichung: Linux erlaubt das
+  sofort; ein Linux-Host entfernt sofort, dann ist der Name frei), und `rmdir` des Ordners ist bis dahin `-ENOTEMPTY`, ebenso `rename` eines Ordners auf
+  ein solches, leer wirkendes Ziel. Einen Ordner, unter dem eine Datei offen oder entfernt, aber noch offen ist, benennt `rename` nicht um (`-EBUSY`; Abweichung:
+  Linux benennt um): Cosmos zieht nur die Handles des umbenannten Eintrags selbst mit (`MoveOpenHandles`, `VfsManager.Paths.cs:369-383`, Pin 5790fa74), die
+  Kinder behielten ihren alten Pfad; das aufgeschobene Entfernen träfe beim letzten Schließen eine neue Datei unter dem alten Namen, und ein `unlink` unter dem
+  neuen Namen fände den offenen Handle nicht (`MarkPendingIfOpen` vergleicht `OpenedPath`, `:425`) und gäbe dessen Cluster frei. Den Namen `<name>.~replace`, unter dem
+  Cosmos ein durch `rename` ersetztes, noch offenes Ziel bis zum Schließen beiseitelegt (`DropDisplacedEntry`), sieht das Programm nicht und kann ihn nicht anlegen. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
+  Kontingent zurück; gelingt auch das nicht, bleibt die Datei halb gewachsen (erreichte Länge, im Kontingent gebucht) und der Fehler des Schritts gilt.
+  Grenze: Ändert ein anderer Akteur (Shell, zweiter Prozess) die Länge zwischen der Abfrage und den Schritten, setzen die Schritte auf die alte Länge auf und
+  können die Datei kürzen.
+  Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (nur auf einem Nicht-Windows-Host), 0x70/0x27 (nur unter Windows; unter Linux ist 39 `ENOTEMPTY`) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
+  setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
+  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. .NET meldet EFBIG aus
+  `FileStream.SetLength` unter Unix als `ArgumentOutOfRangeException` (dann `-EINVAL`); die 1-GiB-Grenze fängt das vorher ab. Der HResult im Gast ist bei senior2 angefragt.
+  Im Gast ist Wachstum nur über `lseek` + `write` erreichbar: `ftruncate` (77) und `pwrite64` (18) liefert der Verteiler noch mit `-ENOSYS`.
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
 - `close`: die Datei ist danach immer zu und zählt nicht mehr zum Budget; ein Fehler beim Schließen (Platte, etwa `-EIO` beim Zurückschreiben) kommt beim letzten Verweis als Rückgabe von `close` beim Programm an (`ILinuxFile.Close` liefert 0 oder `-errno` und wirft bei Dateifehlern nicht). `dup2`/`dup3` auf ein offenes Ziel und das Prozessende verwerfen ihn wie Linux.
 - Namen auf der Platte: was FAT oder Cosmos anders deuten könnte (`:`, `\`, Steuerzeichen, abschließender Punkt oder Leerzeichen, `.zehos-`-Systemnamen) gibt es nicht:
   Abfragen melden es als fehlend, Anlegen `-EINVAL`, Listen lassen es weg. Groß-/Kleinschreibung bestimmt das Laufwerk (`NameComparison`).
+  FAT findet einen Eintrag auch über seinen 8.3-Kurznamen (`_ZEHOS~1.DB` für `.zehos-security.db`); `CosmosLinuxDiskLinks` meldet den geführten Namen, und ein
+  Treffer, dessen Name nicht (bei FAT ohne Groß-/Kleinschreibung) gleich dem angefragten ist, gilt als fehlend (`-ENOENT`); Anlegen, `mkdir`, `symlink` und
+  `rename` auf einen solchen Zweitnamen sind `-EEXIST` (Abweichung von vfat, das den Zweitnamen auf denselben Eintrag deutet), damit nie ein vorhandener Eintrag über
+  ihn überschrieben wird. `/dev` verdeckt auf einem solchen Laufwerk jede Schreibweise (`/DEV`, `/Dev`).
 - `open`-Flags: Zugriff, `O_CREAT O_EXCL O_TRUNC O_APPEND O_DIRECTORY O_NOFOLLOW` wirken; `O_NOCTTY O_NONBLOCK O_SYNC O_DSYNC O_LARGEFILE O_NOATIME O_CLOEXEC`
   werden angenommen (CLOEXEC gehört zur Deskriptortabelle); `O_TMPFILE` `-EOPNOTSUPP`, übrige (`O_DIRECT`, `O_PATH`, `O_ASYNC`) `-EINVAL`;
   `O_CREAT|O_DIRECTORY` `-EINVAL` wie Linux ab 6.4. Eine entfernte, offene Datei bleibt les- und abfragbar (`MemoryFileStore`; Platte im Gast noch offen).
@@ -149,7 +178,17 @@ Grenzen (Review V2, bewusst offen):
   auf der Platte enden deshalb mit `-EPERM` (wie Linux auf vfat); folgende `readlink`, `lstat` und `unlink` des Links finden nichts. Im Gast weicht `s1/files` darum in den
   Symlink-Zeilen ab (erwartete Ausgabe bleibt die von Linux). Im Arbeitsspeicher (`MemoryFileStore`) gibt es Symlinks; ext2 implementiert `Symlink` in Cosmos, als Prozesswurzel im Gast ist das ungeprüft.
 - Offen: Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/urandom`,
-  `/tmp` im Speicher, Eingabe über `/dev/tty`.
+  `/tmp` im Speicher, Eingabe über `/dev/tty`. Weiter offen aus dem Review von #724:
+  - Wechsel zwischen Auflösung und Zugriff wird nur am letzten Teil erneut geprüft; Cosmos folgt beim Öffnen des Elternordners Links. Das gilt deshalb nur für einen
+    Prozess je Wurzel auf einem Laufwerk ohne Links (FAT); ein zweiter Akteur, der Zwischenordner durch Links ersetzt, ist nicht abgedeckt.
+  - FAT-Sonderzeichen `? * " < >`, reservierte Namen (`CON`) und ein führendes Leerzeichen werden angenommen (Cosmos deutet sie nicht, chkdsk/Windows bemängeln sie).
+  - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
+  - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
+  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte auf smp4, TCG und VMware nicht. `ftruncate`/`pwrite64` fehlen im Verteiler.
+  - Neu Anlegen unter dem Namen einer entfernten, noch offenen Datei ist unter Cosmos `-EEXIST` bis zum letzten Schließen (siehe oben; Linux: Erfolg), ein übliches
+    Muster für temporäre Dateien. Im Gast nicht geprüft. Ebenso offen: `write` hinter einer Lücke auf voller Platte liefert im Gast `-EIO` (Cosmos
+    `FileDescriptorTable.cs:440-442`, Truncate kennt nur bool), Entscheidung Cosmos-Patch oder ZehOS-Deutung steht aus.
+  - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.
 
 ## Dateien im Prozess (V8)
 
