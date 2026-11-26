@@ -84,7 +84,10 @@ int main(void)
     // Rohes vfork: Das Kind sieht eine eigene PID, schreibt in geteilten Speicher und endet vor execve.
     static volatile int shared;
     pid_t self = getpid();
-    long v = syscall(SYS_vfork);
+    // vfork direkt als Befehl in main: Über syscall() kehrte das Kind aus dem Rahmen der libc-Funktion zurück und überschriebe ihn
+    // für die Eltern (Rücksprungadresse, gesicherte Register), das ist auch auf Linux undefiniert (v war dort 0).
+    long v;
+    __asm__ volatile("syscall" : "=a"(v) : "0"((long)SYS_vfork) : "rcx", "r11", "memory");
     if (v == 0) {
         shared = (getpid() != self) ? 2 : 1;
         syscall(SYS_exit_group, 7);

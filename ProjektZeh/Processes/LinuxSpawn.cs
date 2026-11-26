@@ -515,8 +515,17 @@ internal sealed partial class LinuxUserProcess
         }
     }
 
-    /// <summary>Meldet das Ende an den Elternprozess (einmal); weckt Wartende auf <see cref="ChildGate"/>.</summary>
-    public void ReportEnd(int waitStatus) => Parent?.ChildEnded(Pid, waitStatus);
+    /// <summary>
+    /// Meldet das Ende an den Elternprozess (einmal); weckt Wartende auf <see cref="ChildGate"/>. Schließt vorher alle offenen Dateien:
+    /// Linux schließt sie in <c>do_exit</c> vor dem Zombie, wait4 kehrt also erst zurück, wenn Pipe-Enden und Dateien des Kinds zu sind
+    /// (sonst sähe der Elternprozess nach wait4 noch kein EOF), und die PID wird nicht geerntet und neu vergeben, solange das alte Objekt
+    /// noch Dateien hält. <see cref="Destroy"/> und <see cref="Release"/> finden danach eine leere Tabelle.
+    /// </summary>
+    public void ReportEnd(int waitStatus)
+    {
+        CloseAllFiles();
+        Parent?.ChildEnded(Pid, waitStatus);
+    }
 
     /// <summary>Wartestatus aus dem Ende: Signal (tgkill, Abbruch) oder exit; <paramref name="fallbackSignal"/>, wenn keins von beiden.</summary>
     public int WaitStatusOf(int fallbackSignal) =>
