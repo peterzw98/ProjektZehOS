@@ -90,7 +90,39 @@ internal static unsafe class CosmosLinuxRun
         /// </summary>
         public int Owners = 2;
 
+        /// <summary>
+        /// V10: die Kernelthreads der Linux-Threads, Platz 0 der Hauptthread. Geschrieben unter der Sperre auf dem Feld, gelesen
+        /// ohne Sperre in den Handlern (Referenzen, volatil gelesen); ein Platz wird erst frei, wenn sein Thread den Ring 3 verlassen hat.
+        /// </summary>
+        public readonly Bridge?[] Threads = new Bridge?[LinuxUserProcess.MaxThreads];
+
+        /// <summary>Kernelthreads des Programms, die noch laufen; der Hauptthread räumt erst auf, wenn er der letzte ist.</summary>
+        public int KernelThreads;
+
         public Running(TerminalDescriptor terminal) => Terminal = terminal;
+    }
+
+    /// <summary>Ein Linux-Thread im Kernel (V10): sein Kernelthread und, bis zu seinem ersten Aufruf, die Register aus clone.</summary>
+    private sealed class Bridge
+    {
+        public required LinuxThread Linux;
+        public SchedulerThread? Sched;
+        public int Slot;
+
+        /// <summary>Frame des laufenden Aufrufs (nur auf dem eigenen Kernelstack gültig, nur dort gelesen).</summary>
+        public UserFrame* Frame;
+
+        /// <summary>Register des Elternthreads beim clone, mit rax 0 und dem neuen Stack.</summary>
+        public UserFrame Start;
+
+        /// <summary>
+        /// Gesetzt, bis der Kindthread seinen ersten Aufruf macht. Er betritt den Ring 3 auf dem <c>syscall</c> des Elternthreads
+        /// (<see cref="EntryRip"/>) mit genullten Registern; der Aufruf kommt sofort und übernimmt <see cref="Start"/> statt
+        /// verteilt zu werden. Der Rückweg aus einem Aufruf stellt jedes Register aus dem Frame her (UserMode.s), so braucht
+        /// clone keinen Cosmos-Patch.
+        /// </summary>
+        public bool Pending;
+        public ulong EntryRip;
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -247,6 +279,33 @@ internal static unsafe class CosmosLinuxRun
         {
             UserMode.RequestLeave(target, result);
         }
+
+        LeaveAll(run, null, result);
+    }
+
+    /// <summary>
+    /// Alle Kernelthreads des Programms außer <paramref name="except"/> verlassen den Ring 3 (exit_group, Absturz eines Threads,
+    /// Abbruch). Wartende in futex kehren zurück, ein Lesen auf fd 0 bekommt Dateiende; ein Thread, der noch nicht im Ring 3
+    /// ist, sieht <see cref="Running.Cancelled"/> und betritt ihn nicht.
+    /// </summary>
+    private static void LeaveAll(Running run, Bridge? except, ulong result)
+    {
+        run.Cancelled = true;
+        Interlocked.MemoryBarrier();
+        foreach (Bridge? b in run.Threads)
+        {
+            SchedulerThread? sched = b == null || b == except ? null : Volatile.Read(ref b.Sched);
+            if (sched != null)
+            {
+                UserMode.RequestLeave(sched, result);
+            }
+        }
+
+        run.Process?.Futexes.Abort();
+        if (Volatile.Read(ref run.KernelThreads) > 1)
+        {
+            run.Session?.EndInput();
+        }
     }
 
     /// <summary>Ende eines Vordergrundprogramms: letzte Zeile, Statuszeile für die Shell, Spiegel ins serielle Protokoll.</summary>
@@ -358,6 +417,11 @@ internal static unsafe class CosmosLinuxRun
             return new Outcome(false, string.Empty, run.Error ?? "nicht gestartet");
         }
 
+        if (run.Process?.TerminatedBySignal is int signal)
+        {
+            return new Outcome(true, "signal " + signal, "tgkill");
+        }
+
         if (run.Process?.ExitCode is int code)
         {
             return new Outcome(true, "exit " + code, string.Empty);
@@ -448,9 +512,21 @@ internal static unsafe class CosmosLinuxRun
 
         var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
-            OnExit = code => UserMode.LeaveCurrent((ulong)code),
             OnFsBase = UserMode.SetFsBase,
         };
+
+        // V10: exit_group (oder das Ende des letzten Threads) beendet alle Threads; exit nur den aufrufenden.
+        process.OnExit = code =>
+        {
+            UserMode.LeaveCurrent((ulong)code);
+            LeaveAll(run, CurrentBridge(run), (ulong)code);
+        };
+        process.OnThreadExit = (_, code) => UserMode.LeaveCurrent((ulong)code);
+        process.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? process.MainThread;
+        process.StartThread = child => StartChild(run, table, process, child);
+        var main = new Bridge { Linux = process.MainThread, Sched = FaultIsolation.CurrentSchedulerThread() };
+        run.Threads[0] = main;
+        run.KernelThreads = 1;
         run.Process = process;
         if (run.StartCwd != null)
         {
@@ -468,6 +544,14 @@ internal static unsafe class CosmosLinuxRun
         bool bound = false;
         try
         {
+            // Alle Threads eines Programms auf einer CPU: UserPageTable kennt noch keinen TLB-Shootdown (N4) und lehnt Unmap und
+            // Protect ab, solange eine andere CPU auf der Tabelle läuft. Kindthreads erben die Menge ihres Erzeugers.
+            var cpus = Cosmos.Kernel.System.Threading.ThreadAffinity.Current;
+            if (cpus.Count > 1)
+            {
+                Cosmos.Kernel.System.Threading.ThreadAffinity.Current = Cosmos.Kernel.System.Threading.CpuSet.Single(cpus.First);
+            }
+
             ResultErr loaded = process.Load(image, elf);
             if (!loaded.IsOK())
             {
@@ -497,6 +581,8 @@ internal static unsafe class CosmosLinuxRun
         }
         finally
         {
+            // Erst wenn kein anderer Thread mehr im Ring 3 oder im Kernel auf dem Adressraum arbeitet, darf er weg.
+            WaitForThreads(run, process, main);
             Volatile.Write(ref current, null);
             if (bound)
             {
@@ -504,6 +590,121 @@ internal static unsafe class CosmosLinuxRun
             }
 
             process.Destroy();
+        }
+    }
+
+    /// <summary>
+    /// Der Hauptthread hat den Ring 3 verlassen. Mit exit (pthread_exit in main) laufen die anderen weiter, bis der letzte endet;
+    /// sonst (exit_group, Absturz, Abbruch, Fehler) beendet er sie. Gewartet wird in Scheiben, der Abbruch wird je Scheibe erneuert.
+    /// </summary>
+    private static void WaitForThreads(Running run, LinuxUserProcess process, Bridge main)
+    {
+        while (Volatile.Read(ref run.KernelThreads) > 1)
+        {
+            if (process.ExitCode.HasValue || run.Cancelled || !main.Linux.Exited)
+            {
+                LeaveAll(run, main, Killed);
+            }
+
+            Thread.Sleep(SleepSlice);
+        }
+
+        process.ThreadGone(main.Linux);
+    }
+
+    /// <summary>clone im Kernel: ein Kernelthread für den neuen Linux-Thread, mit den Registern des aufrufenden Threads.</summary>
+    private static bool StartChild(Running run, UserPageTable table, LinuxUserProcess process, LinuxThread child)
+    {
+        Bridge? parent = CurrentBridge(run);
+        if (parent == null || parent.Frame == null || parent.Frame->Rip < 2)
+        {
+            return false;
+        }
+
+        var b = new Bridge { Linux = child, Start = *parent.Frame, Pending = true, EntryRip = parent.Frame->Rip - 2 };
+        b.Start.Rax = 0;
+        if (child.StackPointer != 0)
+        {
+            b.Start.Rsp = child.StackPointer;
+        }
+
+        lock (run.Threads)
+        {
+            int slot = Array.IndexOf(run.Threads, null);
+            if (slot < 0 || run.Cancelled)
+            {
+                return false;
+            }
+
+            b.Slot = slot;
+            Volatile.Write(ref run.Threads[slot], b);
+            Interlocked.Increment(ref run.KernelThreads);
+        }
+
+        child.Host = b;
+        try
+        {
+            new Thread(() => ChildBody(run, table, process, b)).Start();
+            return true;
+        }
+        catch (Exception)
+        {
+            ReleaseSlot(run, b);
+            return false;
+        }
+    }
+
+    private static void ReleaseSlot(Running run, Bridge b)
+    {
+        lock (run.Threads)
+        {
+            if (run.Threads[b.Slot] == b)
+            {
+                Volatile.Write(ref run.Threads[b.Slot], null);
+                Interlocked.Decrement(ref run.KernelThreads);
+            }
+        }
+    }
+
+    private static void ChildBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b)
+    {
+        bool bound = false;
+        try
+        {
+            Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
+            table.BindToCurrentThread();
+            bound = true;
+            UserMode.SetFsBase(b.Linux.FsBase);
+
+            // Wie im Hauptthread: Sched schreiben, dann Cancelled lesen; LeaveAll schreibt Cancelled, dann liest es Sched.
+            Interlocked.MemoryBarrier();
+            if (run.Cancelled || process.ExitCode.HasValue)
+            {
+                return;
+            }
+
+            UserMode.Enter(b.EntryRip, b.Start.Rsp);
+
+            // Weder exit noch exit_group: Absturz oder ungültige Register. Linux beendet dann den ganzen Prozess.
+            if (!b.Linux.Exited && !process.ExitCode.HasValue)
+            {
+                LeaveAll(run, b, Killed);
+            }
+        }
+        catch (Exception exception)
+        {
+            run.Error ??= exception.GetType().Name + ": " + exception.Message;
+            LeaveAll(run, b, Killed);
+        }
+        finally
+        {
+            if (bound)
+            {
+                UserPageTable.UnbindCurrentThread();
+            }
+
+            process.ThreadGone(b.Linux);
+            ReleaseSlot(run, b);
         }
     }
 
@@ -540,7 +741,29 @@ internal static unsafe class CosmosLinuxRun
     private static Running? Current()
     {
         Running? run = Volatile.Read(ref current);
-        return run != null && ReferenceEquals(run.Thread, FaultIsolation.CurrentSchedulerThread()) ? run : null;
+        return run != null && CurrentBridge(run) != null ? run : null;
+    }
+
+    /// <summary>Der Linux-Thread des aufrufenden Kernelthreads; ohne Allokation (Handler).</summary>
+    private static Bridge? CurrentBridge(Running run)
+    {
+        SchedulerThread? me = FaultIsolation.CurrentSchedulerThread();
+        if (me == null)
+        {
+            return null;
+        }
+
+        Bridge?[] threads = run.Threads;
+        for (int i = 0; i < threads.Length; i++)
+        {
+            Bridge? b = Volatile.Read(ref threads[i]);
+            if (b != null && ReferenceEquals(Volatile.Read(ref b.Sched), me))
+            {
+                return b;
+            }
+        }
+
+        return null;
     }
 
     // ---- Handler: auf dem Kernelstack des Programmthreads, Interrupts an, keine Ausnahme darf hinaus ----
@@ -548,13 +771,23 @@ internal static unsafe class CosmosLinuxRun
     [UnmanagedCallersOnly]
     private static void OnSyscall(UserFrame* frame)
     {
-        Running? run = Current();
-        if (run?.Process == null)
+        Running? run = Volatile.Read(ref current);
+        Bridge? me = run == null ? null : CurrentBridge(run);
+        if (run?.Process == null || me == null)
         {
             frame->Rax = unchecked((ulong)-LinuxSyscalls.ENOSYS);
             return;
         }
 
+        // Erster Aufruf eines Kindthreads: Register aus clone übernehmen, nichts verteilen (siehe Bridge.Pending).
+        if (me.Pending)
+        {
+            me.Pending = false;
+            *frame = me.Start;
+            return;
+        }
+
+        me.Frame = frame;
         try
         {
             var args = new SyscallArgs
@@ -574,6 +807,11 @@ internal static unsafe class CosmosLinuxRun
             // Ein Fehler der Brücke beendet das Programm, nicht den Kernel.
             run.Error = "Aufruf " + frame->Rax + ": " + exception.GetType().Name + ": " + exception.Message;
             UserMode.LeaveCurrent(Killed);
+            LeaveAll(run, me, Killed);
+        }
+        finally
+        {
+            me.Frame = null;
         }
     }
 

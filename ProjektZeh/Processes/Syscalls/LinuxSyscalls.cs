@@ -23,7 +23,7 @@ internal static partial class LinuxSyscalls
 {
     public const long Write = 1, Mmap = 9, Mprotect = 10, Munmap = 11, Brk = 12, Ioctl = 16, Writev = 20,
         Getpid = 39, Exit = 60, ArchPrctl = 158, Gettid = 186, SetTidAddress = 218, ExitGroup = 231,
-        SetRobustList = 273, Rseq = 334;
+        SetRobustList = 273, Rseq = 334, Clone = 56, Tkill = 200, Tgkill = 234;
 
     public const long EPERM = 1, EBADF = 9, ENOMEM = 12, EFAULT = 14, EINVAL = 22, ENOTTY = 25, ENOSYS = 38, ENODEV = 19;
 
@@ -43,10 +43,20 @@ internal static partial class LinuxSyscalls
             case Readv when p is not ILinuxFiles || p.GetDescriptor((int)a.A0) is ILinuxInput: return DoReadvInput(p, (int)a.A0, a.A1, a.A2);
             case Write: return DoWrite(p, (int)a.A0, a.A1, a.A2);
             case Writev: return DoWritev(p, (int)a.A0, a.A1, a.A2);
+            case Exit when p is ILinuxThreads threads:
+                // V10: exit beendet nur den Thread; der letzte beendet den Prozess.
+                threads.ExitThread((int)(a.A0 & 0xff));
+                return 0;
             case ExitGroup:
             case Exit:
                 p.Exit((int)(a.A0 & 0xff));
                 return 0;
+            case Clone:
+                return p is ILinuxThreads cloner ? cloner.CloneThread(a.A0, a.A1, a.A2, a.A3, a.A4) : -ENOSYS;
+            case Tgkill:
+                return p is ILinuxThreads tg ? tg.SignalThread((int)a.A0, (int)a.A1, (int)a.A2) : -ENOSYS;
+            case Tkill:
+                return p is ILinuxThreads tk ? tk.SignalThread(-1, (int)a.A0, (int)a.A1) : -ENOSYS;
             case Brk:
                 // Wie Linux: bei Fehler den alten Wert zurückgeben, nie einen Fehlercode.
                 if (a.A0 != 0)
@@ -61,9 +71,10 @@ internal static partial class LinuxSyscalls
             case ArchPrctl: return DoArchPrctl(p, a.A0, a.A1);
             case SetTidAddress:
                 p.ClearChildTid = a.A0;
-                return p.Pid;
-            case Getpid:
+                return p is ILinuxThreads me ? me.CurrentThread.Tid : p.Pid;
             case Gettid:
+                return p is ILinuxThreads cur ? cur.CurrentThread.Tid : p.Pid;
+            case Getpid:
                 return p.Pid;
             case SetRobustList:
                 return 0;

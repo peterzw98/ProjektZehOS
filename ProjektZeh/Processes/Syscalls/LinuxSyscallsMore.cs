@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Processes;
 using System.Diagnostics;
 
 namespace ProjektZeh.Processes.Syscalls;
@@ -37,7 +38,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -65,7 +66,8 @@ internal static partial class LinuxSyscalls
             case Geteuid: return (long)p.Uid;
             case Getgid:
             case Getegid: return (long)p.Gid;
-            case Futex: return DoFutex(p, ref a);
+            case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
+            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
             default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }
@@ -445,6 +447,27 @@ internal static partial class LinuxSyscalls
         return 0;
     }
 
+    /// <summary>
+    /// Schläft <paramref name="ns"/> relativ (V2c). Mit Threads (V10) schläft der Aufruf auf der futex-Tabelle und endet mit exit_group
+    /// vorzeitig (-EINTR, <c>rem</c> bleibt dann unberührt); ohne Threads schläft der Host.
+    /// </summary>
+    private static long SleepFor(ILinuxProcess p, long ns)
+    {
+        if (ns <= 0)
+        {
+            return 0;
+        }
+
+        if (p is ILinuxThreads threads && p is ILinuxHost clock)
+        {
+            long now = clock.MonotonicNanos;
+            return threads.Futexes.Sleep(ns > long.MaxValue - now ? long.MaxValue : now + ns);
+        }
+
+        (p as ILinuxHost)?.SleepNanos(ns);
+        return 0;
+    }
+
     private static long DoNanosleep(ILinuxProcess p, ulong req, ulong rem)
     {
         long r = ReadTimespec(p, req, out long ns);
@@ -453,9 +476,10 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        if (ns > 0 && p is ILinuxHost host)
+        long slept = SleepFor(p, ns);
+        if (slept != 0)
         {
-            host.SleepNanos(ns);
+            return slept;
         }
 
         // Ungestört bis zum Ende geschlafen (keine Signalzustellung in S1): Rest 0.
@@ -487,9 +511,10 @@ internal static partial class LinuxSyscalls
             rem = 0; // bei absoluter Frist wird rem nie geschrieben
         }
 
-        if (ns > 0 && p is ILinuxHost h)
+        long slept = SleepFor(p, ns);
+        if (slept != 0)
         {
-            h.SleepNanos(ns);
+            return slept;
         }
 
         return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
@@ -574,6 +599,89 @@ internal static partial class LinuxSyscalls
                 }
 
                 return 0;
+            default:
+                return -ENOSYS;
+        }
+    }
+    /// <summary>
+    /// futex mit Threads (V10): WAIT/WAKE (auch _BITSET), REQUEUE und CMP_REQUEUE über die futex-Tabelle des Prozesses. WAIT
+    /// schläft wirklich, bis ein anderer Thread weckt, die Frist abläuft oder der Prozess endet (-EINTR). Fristen: FUTEX_WAIT relativ,
+    /// FUTEX_WAIT_BITSET absolut auf CLOCK_MONOTONIC (mit FUTEX_CLOCK_REALTIME auf der Wanduhr).
+    /// </summary>
+    private static long DoFutexThreads(ILinuxProcess p, LinuxFutexTable table, ref SyscallArgs a)
+    {
+        const int Wait = 0, Wake = 1, Requeue = 3, CmpRequeue = 4, WaitBitset = 9, WakeBitset = 10, ClockRealtime = 256;
+        int op = (int)a.A1 & 127;
+        bool realtime = ((int)a.A1 & ClockRealtime) != 0;
+        if ((a.A0 & 3) != 0)
+        {
+            return -EINVAL;
+        }
+
+        switch (op)
+        {
+            case Wait:
+            case WaitBitset:
+            {
+                uint bitset = op == WaitBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                long deadline = -1;
+                if (a.A3 != 0)
+                {
+                    Span<byte> ts = stackalloc byte[16];
+                    if (!p.Memory.TryRead(a.A3, ts))
+                    {
+                        return -EFAULT;
+                    }
+
+                    long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+                    if (nsec < 0 || nsec >= 1_000_000_000L || sec < 0)
+                    {
+                        return -EINVAL;
+                    }
+
+                    var host = p as ILinuxHost;
+                    long now = host?.MonotonicNanos ?? 0;
+                    long ns = sec > long.MaxValue / 2_000_000_000L ? long.MaxValue / 2 : sec * 1_000_000_000L + nsec;
+                    if (op == Wait)
+                    {
+                        deadline = now + ns; // relativ, auch mit FUTEX_CLOCK_REALTIME (Linux ab 4.5)
+                    }
+                    else
+                    {
+                        // Absolut: auf die monotone Uhr umrechnen, die die Tabelle misst.
+                        long clockNow = realtime ? host?.RealtimeNanos ?? 0 : now;
+                        deadline = now + Math.Max(0, ns - clockNow);
+                    }
+                }
+
+                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline);
+            }
+
+            case Wake:
+            case WakeBitset:
+            {
+                uint bitset = op == WakeBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Wake(a.A0, (int)Math.Min((uint)a.A2, int.MaxValue), bitset);
+            }
+
+            case Requeue:
+            case CmpRequeue:
+                if ((a.A4 & 3) != 0 || (int)a.A2 < 0 || (int)a.A3 < 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Requeue(p.Memory, a.A0, a.A4, (int)a.A2, (int)a.A3, op == CmpRequeue ? (int)a.A5 : null);
             default:
                 return -ENOSYS;
         }

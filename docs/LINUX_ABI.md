@@ -26,8 +26,8 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 9 | `mmap` | nur `MAP_ANONYMOUS` mit genau einem von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; `MAP_FIXED` `-ENOSYS` (Abweichung: Linux liefert je nach Fall `-EINVAL`/`-ENOMEM`); Datei-fd `-ENODEV` (fd < 0 ohne ANONYMOUS `-EBADF`); `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
-| 218 | `set_tid_address` | merkt die Adresse, liefert die Thread-ID |
-| 39, 186 | `getpid`, `gettid` | Prozess-ID |
+| 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
+| 39, 186 | `getpid`, `gettid` | Prozess-ID; `gettid` die Thread-ID (V10, Hauptthread = PID) |
 | 273 | `set_robust_list` | `0` (ohne Wirkung) |
 | 111, 121, 124 | `getpgrp`, `getpgid`, `getsid` | Prozess-ID (V3 raw: allein in Gruppe und Sitzung, führt beide wie ein Programm in einem neuen pty); andere und negative PID `-ESRCH` |
 | 109, 112 | `setpgid`, `setsid` | `-EPERM` wie bei Linux für Sitzungs- bzw. Gruppenführer (auch ohne Änderung); `setpgid` mit fremder PID `-ESRCH`, negativer Gruppe `-EINVAL` |
@@ -40,12 +40,12 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 24 | `sched_yield` | `0` |
 | 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet); ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
 | 28 | `madvise` | Hinweise 0-3, 14, 15 liefern 0; DONTNEED/FREE und Unbekanntes `-EINVAL` (Seiten nullen geht noch nicht); prüft keine Abbildung (Linux `-ENOMEM`) |
-| 202 | `futex` | Einzelthread: WAIT/WAIT_BITSET mit abweichendem Wert `-EAGAIN`, mit Frist `-ETIMEDOUT` (ohne zu schlafen), ohne Frist `-EDEADLK` (Linux hängt; glibc bricht bei diesem unbekannten Fehler ab, musl dreht in einer Schleife); Wert wird vor der Frist gelesen: kaputte Frist bei abweichendem Wert liefert `-EAGAIN` statt `-EFAULT`/`-EINVAL` (Abweichung); WAKE* 0; CMP_REQUEUE prüft den Wert; WAKE_OP `-ENOSYS` |
+| 202 | `futex` | mit Threads siehe V10; ohne Thread-Fähigkeit (Hosttests) wie S1, Einzelthread: WAIT/WAIT_BITSET mit abweichendem Wert `-EAGAIN`, mit Frist `-ETIMEDOUT` (ohne zu schlafen), ohne Frist `-EDEADLK` (Linux hängt; glibc bricht bei diesem unbekannten Fehler ab, musl dreht in einer Schleife); Wert wird vor der Frist gelesen: kaputte Frist bei abweichendem Wert liefert `-EAGAIN` statt `-EFAULT`/`-EINVAL` (Abweichung); WAKE* 0; CMP_REQUEUE prüft den Wert; WAKE_OP `-ENOSYS` |
 | 334 | `rseq` | `-ENOSYS` (Laufzeitbibliotheken fallen zurück) |
 
 Grenze: `write` verlässt sich auf `ILinuxDescriptor.Write` ≤ angebotene Länge (größere Rückgaben werden nicht abgefangen); je Aufruf ein 4-KiB-Puffer.
 
-Nicht in S1: Dateien (siehe V2 unten), Signalzustellung, Threads (`clone`, echtes `futex`-Warten), `MAP_FIXED`, Dateiabbildungen.
+Nicht in S1: Dateien (siehe V2 unten), Signalzustellung, Threads (siehe V10), `MAP_FIXED`, Dateiabbildungen.
 
 ## Dateien (V2)
 
@@ -166,6 +166,7 @@ Grenzen (Review V2, bewusst offen):
   die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Arbeitsverzeichnis ist der Unterordner `/w` darin (wird angelegt), weil `run-linux.py`
   ebenfalls in einem Unterordner startet: In "/" zeigte `ls .` den virtuellen Ordner `dev`, und `s1/dirs` erwartet vor `/d/e` noch einen Ordnernamen. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
   fände die Dateien des ersten.
+
 ## js-Vorbereitung (V9)
 
 Gelesen: Ladybird `6fba5b78a104` (`AK/StackInfo.cpp`, `AK/Rust/src/stack.rs`, `AK/kmalloc.cpp`, `Libraries/LibCore/System.cpp`, `Libraries/LibGC/BlockAllocator.cpp`,
@@ -214,3 +215,35 @@ Geprüft, kein Handlungsbedarf: Reservierungen von 64 GiB (GC-Region, 2 × 32 Gi
 `MADV_POPULATE_WRITE` (`-EINVAL`) wird ignoriert (`BlockAllocator.cpp:145-148`). `sysconf(_SC_NPROCESSORS_ONLN)` zählt die Maske aus `sched_getaffinity`.
 Nicht an diesem Stand gelesen (mimalloc und Rust-`std` liegen außerhalb des Ladybird-Baums), nur erwartet: mimalloc öffnet `/sys/...`-Dateien optional,
 Rust-`std` legt unter musl keine Stackwache für den Hauptthread an und braucht `sigaltstack`, `sigaction` und `poll` auf fd 0–2 (gibt es).
+
+## Threads (V10)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxThreads.cs` und `LinuxUserProcess` (Hosttests `LinuxThreadsTests`), im Kernel in
+`ProjektZeh/Runtime/CosmosLinuxRun.cs`. Gastprobe: `experiments/LinuxAbi/src/v10` (threads, thrxit, thrmain, thrsegv), Erwartungen aus Linux.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 56 | `clone` | nur Threads: `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM` müssen alle gesetzt sein, dazu erlaubt `SETTLS`, `PARENT_SETTID`, `CHILD_SETTID`, `CHILD_CLEARTID`, `DETACHED`, Signalbyte (ignoriert wie bei Linux); `THREAD` ohne `SIGHAND` oder `SIGHAND` ohne `VM` `-EINVAL`; fork, vfork, posix_spawn und unbekannte Bits `-ENOSYS`; über 64 Threads oder nach `exit_group` `-EAGAIN`. Stack 0 heißt Stack des Elternthreads. TIDs ab PID+1 |
+| 435 | `clone3` | `-ENOSYS` (glibc fällt auf `clone` zurück) |
+| 60 | `exit` | beendet nur den Thread: `clear_child_tid` wird 0 und ein Wartender geweckt (pthread_join); der letzte Thread beendet den Prozess mit seinem Code |
+| 231 | `exit_group` | beendet alle Threads; futex-Wartende und Schlafende kehren mit `-EINTR` zurück, ein Lesen auf fd 0 bekommt Dateiende, dann verlassen alle den Ring 3 |
+| 202 | `futex` | WAIT/WAIT_BITSET schlafen wirklich, bis ein anderer Thread weckt (`0`), die Frist abläuft (`-ETIMEDOUT`; WAIT relativ, WAIT_BITSET absolut auf MONOTONIC oder mit `FUTEX_CLOCK_REALTIME` auf der Wanduhr) oder der Prozess endet (`-EINTR`); abweichender Wert `-EAGAIN`; WAKE/WAKE_BITSET wecken in Wartereihenfolge und liefern die Anzahl; REQUEUE/CMP_REQUEUE hängen um; WAKE_OP, PI-Futexe `-ENOSYS`; `FUTEX_PRIVATE_FLAG` ohne Wirkung (ein Adressraum) |
+| 200, 234 | `tkill`, `tgkill` | Ziel prüfen (`-ESRCH`, `-EINVAL`), Signal 0 `0`; ignorierte Signale (SIG_IGN, SIGCHLD/CONT/URG/WINCH) `0`; Standardaktion beendet den Prozess (Status `signal <n>`); mit Handler `-ENOSYS` (keine Signalzustellung) |
+| 35, 230 | `nanosleep`, `clock_nanosleep` | Uhren 0, 1, 4–7, 9, 11 (REALTIME, MONOTONIC, BOOTTIME, TAI, grobe), mit `TIMER_ABSTIME`; CPU-Zeituhren und unbekannte `-EINVAL`; nach vollem Schlaf `rem` 0 (V2c); mit Threads schläft der Aufruf auf der futex-Tabelle und endet mit `exit_group` (`-EINTR`, `rem` dann unberührt) |
+| 34 | `pause` | schläft bis zum Prozessende (`-EINTR`), da keine Signale zugestellt werden |
+
+Umsetzung und Grenzen:
+
+- Je Linux-Thread ein Kernelthread auf derselben `UserPageTable`. Der Kindthread betritt den Ring 3 auf dem `syscall`-Befehl des Elternthreads (RIP − 2) mit
+  genullten Registern; sein erster Aufruf übernimmt den gesicherten Frame des Elternthreads (rax 0, neuer Stack) statt verteilt zu werden. Das geht ohne
+  Cosmos-Patch, weil der Rückweg aus `syscall` jedes Register aus dem Frame herstellt. FS-Basis je Thread (`CLONE_SETTLS`, `arch_prctl`).
+- Der FPU-/SSE-Zustand des Kindes ist der Startzustand (FCW 0x37F, MXCSR 0x1F80), nicht die Kopie des Elternthreads (musl und glibc setzen nichts voraus).
+- Alle Threads eines Programms laufen auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie): `UserPageTable` hat noch keinen TLB-Shootdown
+  (N4) und lehnt `munmap`/`mprotect` ab, solange eine andere CPU auf der Tabelle läuft. Nebenläufig ja, parallel nein.
+- Speicher (Karte, Frames, brk) schützt eine Sperre im Prozess; futex liest den Wert unter der Sperre der futex-Tabelle (Reihenfolge: futex-Tabelle vor
+  Speicher vor `UserPageTable` vor `PageAllocator`). Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
+- Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
+  anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
+- Signalmaske und Alternativstack sind noch je Prozess, nicht je Thread; keine Signalzustellung (auch nicht pthread_cancel, `SIGCANCEL`).
+- Offen (Integration V8 + V10): Deskriptortabelle, Arbeitsverzeichnis und `LinuxFileSystem` haben keine eigene Sperre; zwei Threads, die gleichzeitig Dateien öffnen oder schließen, können sich verdrängen (eine CPU, aber präemptiv).
+- Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
