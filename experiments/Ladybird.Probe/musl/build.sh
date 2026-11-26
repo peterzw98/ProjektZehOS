@@ -43,6 +43,7 @@ readonly ncurses_archive=/usr/lib/libncursesw.a
 [[ -x "$ninja_dir/ninja" ]] || die 'Alpine-Paket ninja-build fehlt.'
 /sbin/apk info -e gcompat >/dev/null || die 'Alpine-Paket gcompat fehlt (für Skias gn).'
 [[ -r "$ncurses_archive" ]] || die 'Alpine-Paket ncurses-static fehlt.'
+[[ -x /usr/bin/time ]] || die 'Alpine-Paket time fehlt.'
 # Samurai akzeptiert das von vcpkg verwendete `ninja install -v` nicht.
 export PATH="$ninja_dir:$PATH"
 for tool in git realpath gcc g++ cmake ninja python3 rustup readelf strace timeout; do
