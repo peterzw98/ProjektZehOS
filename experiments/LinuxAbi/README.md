@@ -91,3 +91,31 @@ Annahmen und bekannte Schwächen von S3:
 mit `--update` auf Linux erzeugt. `src/v3neg/spin` dreht ohne Systemaufruf und hat keine Erwartung: Im Gast muss der Kernel es nach dem Zeitlimit
 beenden (`signal 9`). Gastlauf: `scripts/test-linux-run.py` (Bündel bauen, ISO mit `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>`,
 dann `run --expected experiments/LinuxAbi/expected/v3 --status "spin=signal 9" --programs hello segv spin`).
+
+## Satz V7b (Dateisystem der Prozesse, nur Gast)
+
+`src/v7b` prüft, was es so nur im ZehOS-Gast gibt, und hat deshalb **keine** Linux-Erwartung: Die Programme prüfen sich selbst (`src/v7b/check.h`), jede abweichende
+Zeile endet auf ` FEHLER`, der Exitcode ist dann 1. Ein Gastlauf braucht nur `--status <name>=exit 0`.
+
+| Programm | prüft |
+| --- | --- |
+| `v7bnames` | FAT findet Einträge auch über den 8.3-Kurznamen; über Linux trifft nur der eigene Name (`ABCDEF~1.TXT` `-ENOENT` für open, stat, lstat, access, readlink, unlink, chdir, rmdir, opendir), Anlegen, `mkdir`, `symlink`, `rename` auf den Kurznamen `-EEXIST`; die Liste zeigt keinen Kurznamen |
+| `v7bquota` | Kontingent je Wurzel (64 MiB Nettowachstum): `ftruncate` und Lücke darüber `-ENOSPC`, Füllen bis `-ENOSPC`, Freigabe durch `unlink` und `ftruncate` nach unten, Lücken lesen sich als Nullbytes, `pwrite` nach der Freigabe |
+| `v7bfull` | Schreiben bis zum Ende mit `-ENOSPC` (nicht `-EIO`), Länge gleich dem Geschriebenen, nach dem Löschen wieder Platz. Mit `run-guest-full.py` ist die Platte voll, bevor das Kontingent greift |
+
+```sh
+python3 -I scripts/test-linux-run.py run --iso <iso> --expected experiments/LinuxAbi/expected/s1 \
+    --status "v7bnames=exit 0" --status "v7bquota=exit 0" --status "v7bfull=exit 0" --programs ... v7bnames v7bquota v7bfull --accel kvm
+FILLER_MIB=478 python3 -I experiments/LinuxAbi/run-guest-full.py run --iso <iso> ...   # gleiche Argumente, Seed mit Fülldatei (504-MiB-Platte)
+```
+
+Grenzen: `v7bquota` setzt voraus, dass vorher im selben Gastlauf höchstens 24 MiB Wachstum stehen geblieben sind (es prüft „zwischen 40 und 64 MiB geschrieben“).
+`v7bfull` mit Fülldatei braucht die Abbildung von Cosmos' „Platte voll“ auf `-ENOSPC` (Folge zu PR #741); bis dahin endet es dort mit `-EIO` und Exitcode 1.
+`rename` einer Datei auf ihren eigenen Kurznamen ist `-EEXIST` (vfat unter Linux benennt um), bekannte Abweichung aus PR #741.
+
+## Satz V14 (Schreiben an fester Stelle, Dateilänge)
+
+`src/v14/pio`: `pwrite64`, `preadv`/`pwritev` (Position bleibt, auch bei `O_APPEND`), `ftruncate` (kürzen, verlängern mit Nullbytes, Fehlerwege einschließlich
+nur lesend offen, Verzeichnis, `/dev/null`, stdout), `fsync`/`fdatasync` (Datei, nur lesend offen, Verzeichnis, `/dev/null`, stdout). Erwartung mit `--update` auf
+Linux `6.12.117+deb13-amd64` erzeugt (musl 1.2.5), drei weitere Läufe ohne Abweichung; `strace` war dabei nicht installiert (keine Aufrufliste). stdout ist unter
+`run-linux.py` eine Pipe, im Gast das Terminal; beide liefern für `pwrite` `ESPIPE` und für `ftruncate`/`fsync` `EINVAL`.

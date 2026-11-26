@@ -62,6 +62,8 @@ public class LinuxFileMetaSyscallsTests
         public List<LinuxDirEntry> Entries = new() { new(1, 4, "."), new(1, 4, ".."), new(5, 8, "datei.txt"), new(6, 4, "ä") };
         public long Write(ReadOnlySpan<byte> data) => -9;
         public long Read(Span<byte> dst) => 0;
+        public long Truncate(long length) => -22;
+        public long Sync() => 0;
         public long Seek(long offset, int whence) => 0;
         public long Stat(out LinuxStat st)
         {
