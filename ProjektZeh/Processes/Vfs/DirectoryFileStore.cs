@@ -96,6 +96,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     // Eintrag, nicht am Namen, und kommt erst beim letzten Schließen. Zugriff nur unter StorageLock.
     private readonly Dictionary<string, OpenEntry> _openEntries;
 
+    // Entfernte, noch offene Einträge je Pfad. Cosmos lässt ihren Namen bis zum letzten Schließen stehen (MarkPendingIfOpen,
+    // VfsManager.Paths.cs:210-229): ein zweites unlink gelänge und schriebe erneut gut. Wie bei Linux gilt der Name deshalb sofort als
+    // fehlend; Anlegen unter ihm ist -EEXIST, solange das Laufwerk ihn noch führt. Zugriff nur unter StorageLock.
+    private readonly Dictionary<string, OpenEntry> _pendingPaths;
+
     /// <summary>Ein offener Eintrag; mehrere Deskriptoren auf dieselbe Datei teilen ihn.</summary>
     private sealed class OpenEntry
     {
@@ -112,11 +117,16 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         NameComparison = nameComparison;
         MaxFileBytes = maxFileBytes;
         QuotaBytes = quotaBytes;
-        _openEntries = new Dictionary<string, OpenEntry>(nameComparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        StringComparer comparer = nameComparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+        _openEntries = new Dictionary<string, OpenEntry>(comparer);
+        _pendingPaths = new Dictionary<string, OpenEntry>(comparer);
     }
 
     /// <summary>Anzahl der offenen Einträge (Tests).</summary>
     internal int OpenEntryCount => _openEntries.Count;
+
+    /// <summary>Anzahl der entfernten, noch offenen Pfade (Tests).</summary>
+    internal int PendingPathCount => _pendingPaths.Count;
 
     private OpenEntry AttachStorageLocked(string path)
     {
@@ -139,17 +149,39 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         if (_openEntries.Remove(path, out OpenEntry? entry))
         {
             entry.Detached = true;
+            _pendingPaths[path] = entry;
             return;
         }
 
         GrownBytes -= length;
     }
 
-    /// <summary>Umbenennen: offene Einträge unter <paramref name="from"/> (auch in einem umbenannten Ordner) wandern mit.</summary>
+    /// <summary>
+    /// Ist <paramref name="path"/> belegt? Auch ein Zweitname (8.3) und der stehende Name einer entfernten, offenen Datei. Führt das
+    /// Laufwerk einen solchen entfernten Namen nicht mehr (Linux-Host entfernt sofort), wird er frei.
+    /// </summary>
+    private bool OccupiedStorageLocked(string path)
+    {
+        if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
+        {
+            return true;
+        }
+
+        _pendingPaths.Remove(path); // die abgelöste Datei bleibt bis zum letzten Schließen gebucht, nur der Name ist frei
+        return false;
+    }
+
+    /// <summary>Umbenennen einer Datei: ihr offener oder entfernter, offener Eintrag wandert mit (Ordner mit solchen Einträgen darunter benennt <see cref="RenameStorageLocked"/> nicht um).</summary>
     private void MoveEntriesStorageLocked(string from, string to)
     {
+        MoveKeys(_openEntries, from, to);
+        MoveKeys(_pendingPaths, from, to);
+    }
+
+    private void MoveKeys(Dictionary<string, OpenEntry> table, string from, string to)
+    {
         var moved = new List<KeyValuePair<string, OpenEntry>>();
-        foreach (KeyValuePair<string, OpenEntry> entry in _openEntries)
+        foreach (KeyValuePair<string, OpenEntry> entry in table)
         {
             if (string.Equals(entry.Key, from, NameComparison) || entry.Key.StartsWith(from + "/", NameComparison))
             {
@@ -159,8 +191,8 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
         foreach (KeyValuePair<string, OpenEntry> entry in moved)
         {
-            _openEntries.Remove(entry.Key);
-            _openEntries[string.Concat(to, entry.Key.AsSpan(from.Length))] = entry.Value;
+            table.Remove(entry.Key);
+            table[string.Concat(to, entry.Key.AsSpan(from.Length))] = entry.Value;
         }
     }
 
@@ -177,16 +209,22 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
         if (entry.Detached)
         {
-            GrownBytes -= lengthAtClose;
+            GrownBytes -= lengthAtClose; // genau einmal: der Eintrag ist in keiner Tabelle mehr benannt
+            RemoveByReference(_pendingPaths, entry);
             return;
         }
 
-        foreach (KeyValuePair<string, OpenEntry> pair in _openEntries)
+        RemoveByReference(_openEntries, entry);
+    }
+
+    private static void RemoveByReference(Dictionary<string, OpenEntry> table, OpenEntry entry)
+    {
+        foreach (KeyValuePair<string, OpenEntry> pair in table)
         {
             if (ReferenceEquals(pair.Value, entry))
             {
-                _openEntries.Remove(pair.Key);
-                break;
+                table.Remove(pair.Key);
+                return;
             }
         }
     }
@@ -279,6 +317,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     /// <summary>Art des Eintrags unter genau diesem Namen; ein Treffer über einen Zweitnamen (8.3) gilt als fehlend.</summary>
     private LinuxNodeKind KindStorageLocked(string path)
     {
+        if (_pendingPaths.ContainsKey(path))
+        {
+            return LinuxNodeKind.Missing; // entfernt, nur noch offen: wie Linux nicht mehr unter dem Namen zu finden
+        }
+
         LinuxNodeKind kind = RawKindStorageLocked(path, out bool alias);
         return alias ? LinuxNodeKind.Missing : kind;
     }
@@ -344,7 +387,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 foreach (string entry in Directory.GetFileSystemEntries(Full(path)))
                 {
                     string name = Path.GetFileName(entry);
-                    if (ValidName(name))
+                    if (ValidName(name) && !_pendingPaths.ContainsKey(path.Length == 0 ? name : path + "/" + name))
                     {
                         result.Add(name);
                     }
@@ -406,7 +449,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             {
                 // CreateNew meldet einen belegten Namen nur als allgemeine IOException; vorher ohne Folgen nachsehen. Auch ein
                 // Zweitname zählt als belegt: sonst landete das Anlegen auf dem vorhandenen Eintrag.
-                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
+                if (OccupiedStorageLocked(path))
                 {
                     return -LinuxErrno.EEXIST;
                 }
@@ -433,9 +476,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
+                if (OccupiedStorageLocked(path))
                 {
-                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) eines vorhandenen Eintrags
+                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) oder der stehende Name einer entfernten, offenen Datei
                 }
 
                 Directory.CreateDirectory(Full(path));
@@ -459,9 +502,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
+                if (OccupiedStorageLocked(path))
                 {
-                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) eines vorhandenen Eintrags
+                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) oder der stehende Name einer entfernten, offenen Datei
                 }
 
                 return _links.CreateSymlinkStorageLocked(Full(path), target) ? 0 : -LinuxErrno.EPERM;
@@ -524,6 +567,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                     return kind == LinuxNodeKind.Missing ? -LinuxErrno.ENOENT : -LinuxErrno.ENOTDIR;
                 }
 
+                if (HoldsPendingStorageLocked(path))
+                {
+                    return -LinuxErrno.ENOTEMPTY; // ein entfernter, offener Eintrag steht dort bis zum letzten Schließen noch (Cosmos)
+                }
+
                 Directory.Delete(Full(path), false);
                 return 0;
             }
@@ -576,6 +624,18 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             return -LinuxErrno.EEXIST;
         }
 
+        if (_pendingPaths.ContainsKey(to))
+        {
+            // Ziel ist der stehende Name einer entfernten, offenen Datei: Cosmos schöbe sie als "<name>.~replace" beiseite und die
+            // Gutschrift käme doppelt. Solange das Laufwerk den Namen führt, belegt; sonst ist er frei.
+            if (existing != LinuxNodeKind.Missing)
+            {
+                return -LinuxErrno.EEXIST;
+            }
+
+            _pendingPaths.Remove(to);
+        }
+
         long replaced = existing == LinuxNodeKind.File ? new FileInfo(target).Length : 0;
 
         if (kind == LinuxNodeKind.Symlink)
@@ -618,13 +678,27 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             return 0;
         }
 
+        // Cosmos zieht beim Umbenennen nur die Handles des umbenannten Eintrags selbst mit (MoveOpenHandles, VfsManager.Paths.cs:369-383,
+        // Pin 5790fa74), nicht die seiner Kinder; deren OpenedPath bleibt alt. Ein aufgeschobenes Entfernen löschte dann beim letzten
+        // Schließen den alten Pfad (eine fremde, neue Datei dort), und unlink unter dem neuen Pfad fände den offenen Handle nicht
+        // (MarkPendingIfOpen vergleicht OpenedPath, :425) und gäbe die Cluster unter ihm frei. Deshalb: Ordner mit offenen oder entfernten,
+        // noch offenen Einträgen darunter nicht umbenennen.
+        if (HoldsOpenBelowStorageLocked(from) || HoldsPendingStorageLocked(from))
+        {
+            return -LinuxErrno.EBUSY;
+        }
+
         if (existing == LinuxNodeKind.Directory)
         {
+            if (HoldsPendingStorageLocked(to))
+            {
+                return -LinuxErrno.ENOTEMPTY; // leer wirkend, aber ein entfernter, offener Eintrag steht dort noch
+            }
+
             Directory.Delete(target, false); // leer, vom Dateisystem geprüft
         }
 
         Directory.Move(source, target);
-        MoveEntriesStorageLocked(from, to);
         return 0;
     }
 
@@ -652,10 +726,45 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         return true;
     }
 
-    /// <summary><see cref="PathComponent.IsValid"/> (kein ".", "..", ':', '\\', abschließender Punkt, ".zehos-") und keine Steuerzeichen.</summary>
+    /// <summary>Ist unter <paramref name="directory"/> eine Datei offen?</summary>
+    private bool HoldsOpenBelowStorageLocked(string directory)
+    {
+        string prefix = directory + "/";
+        foreach (string open in _openEntries.Keys)
+        {
+            if (open.StartsWith(prefix, NameComparison))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Steht unter <paramref name="directory"/> noch ein entfernter, offener Eintrag, den das Laufwerk führt?</summary>
+    private bool HoldsPendingStorageLocked(string directory)
+    {
+        string prefix = directory + "/";
+        foreach (string pending in _pendingPaths.Keys)
+        {
+            if (pending.StartsWith(prefix, NameComparison) && RawKindStorageLocked(pending, out _) != LinuxNodeKind.Missing)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// <see cref="PathComponent.IsValid"/> (kein ".", "..", ':', '\\', abschließender Punkt, ".zehos-"), keine Steuerzeichen und kein
+    /// "&lt;name&gt;.~replace" von Cosmos.
+    /// </summary>
     private static bool ValidName(string name)
     {
-        if (!PathComponent.IsValid(name))
+        // "<name>.~replace" legt Cosmos für ein ersetztes, noch offenes Ziel bis zum letzten Schließen an (DropDisplacedEntry): kein Name
+        // des Programms, nicht sichtbar und nicht anlegbar.
+        if (!PathComponent.IsValid(name) || name.EndsWith(".~replace", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -679,8 +788,12 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         // 0x8007xxxx). Cosmos (Pin 5790fa74) setzt ConvertErrorPalToPlatform als Identität ein (Cosmos.Kernel.Plugs/System/IO/
         // InteropSysFilePlug.cs:336), der HResult ist dort also der PAL-Wert selbst: PalError.ENOSPC = 0x10034 und EFBIG = 0x10016
         // (Interop.Error.cs:37 und :23), gemeldet von FileDescriptorTable.cs:248. Unbekannte Werte bleiben -EIO.
-        IOException { HResult: 28 or 0x10034 or 0x70 or 0x27 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
-        IOException { HResult: 27 or 0x10016 } => -LinuxErrno.EFBIG,
+        IOException { HResult: 0x10034 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
+        IOException { HResult: 0x10016 } => -LinuxErrno.EFBIG,
+        // Nackte Codes je nach Wirt: Windows-Fehlernummern nur unter Windows (unter Linux ist 0x27 = 39 ENOTEMPTY), errno nur sonst.
+        IOException { HResult: 0x70 or 0x27 } when OperatingSystem.IsWindows() => -LinuxErrno.ENOSPC,
+        IOException { HResult: 28 } when !OperatingSystem.IsWindows() => -LinuxErrno.ENOSPC,
+        IOException { HResult: 27 } when !OperatingSystem.IsWindows() => -LinuxErrno.EFBIG,
         FileNotFoundException or DirectoryNotFoundException => -LinuxErrno.ENOENT,
         UnauthorizedAccessException => -LinuxErrno.EACCES,
         PathTooLongException => -LinuxErrno.ENAMETOOLONG,

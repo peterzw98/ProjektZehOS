@@ -147,13 +147,23 @@ Grenzen (Review V2, bewusst offen):
   vorhandene Dateien wie Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC`; vor einem `write` hinter
   dem Ende wird die Lücke plus ein Byte geprüft, passt das nicht, entsteht nichts. Ein Schreiben am Rand wird gekürzt.
   Entfernte oder durch `rename` ersetzte Dateien, die noch offen sind, belegen unter Cosmos weiter Platz (das Entfernen kommt erst beim letzten Schließen,
-  `VfsManager.Paths.cs` `MarkPendingIfOpen`); ihre Länge wird deshalb erst beim letzten Schließen gutgeschrieben, die Gutschrift hängt am Eintrag, nicht am Namen. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
+  `VfsManager.Paths.cs` `MarkPendingIfOpen`); ihre Länge wird deshalb erst beim letzten Schließen gutgeschrieben, die Gutschrift hängt am Eintrag, nicht am Namen.
+  Cosmos lässt dabei auch den Namen bis zum letzten Schließen stehen (sichtbar, ein weiteres `unlink` gelänge). `DirectoryFileStore` führt solche Pfade
+  deshalb eigens (sie wandern bei `rename` mit): wie bei Linux sind sie sofort weg (`stat`/`open`/`unlink`/`rename` `-ENOENT`, nicht in Listen), ohne zweite
+  Gutschrift. Anlegen, `mkdir`, `symlink` und `rename` auf einen solchen Namen sind `-EEXIST`, solange das Laufwerk ihn noch führt (Abweichung: Linux erlaubt das
+  sofort; ein Linux-Host entfernt sofort, dann ist der Name frei), und `rmdir` des Ordners ist bis dahin `-ENOTEMPTY`, ebenso `rename` eines Ordners auf
+  ein solches, leer wirkendes Ziel. Einen Ordner, unter dem eine Datei offen oder entfernt, aber noch offen ist, benennt `rename` nicht um (`-EBUSY`; Abweichung:
+  Linux benennt um): Cosmos zieht nur die Handles des umbenannten Eintrags selbst mit (`MoveOpenHandles`, `VfsManager.Paths.cs:369-383`, Pin 5790fa74), die
+  Kinder behielten ihren alten Pfad; das aufgeschobene Entfernen träfe beim letzten Schließen eine neue Datei unter dem alten Namen, und ein `unlink` unter dem
+  neuen Namen fände den offenen Handle nicht (`MarkPendingIfOpen` vergleicht `OpenedPath`, `:425`) und gäbe dessen Cluster frei. Den Namen `<name>.~replace`, unter dem
+  Cosmos ein durch `rename` ersetztes, noch offenes Ziel bis zum Schließen beiseitelegt (`DropDisplacedEntry`), sieht das Programm nicht und kann ihn nicht anlegen. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
   Kontingent zurück; gelingt auch das nicht, bleibt die Datei halb gewachsen (erreichte Länge, im Kontingent gebucht) und der Fehler des Schritts gilt.
   Grenze: Ändert ein anderer Akteur (Shell, zweiter Prozess) die Länge zwischen der Abfrage und den Schritten, setzen die Schritte auf die alte Länge auf und
   können die Datei kürzen.
-  Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (Linux-Host), 0x70/0x27 (Windows) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
+  Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (nur auf einem Nicht-Windows-Host), 0x70/0x27 (nur unter Windows; unter Linux ist 39 `ENOTEMPTY`) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
   setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
-  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Im Gast belegt (V7b, KVM smp1): `write` am Ende bei voller Platte `-ENOSPC`.
+  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. .NET meldet EFBIG aus
+  `FileStream.SetLength` unter Unix als `ArgumentOutOfRangeException` (dann `-EINVAL`); die 1-GiB-Grenze fängt das vorher ab. Im Gast belegt (V7b, KVM smp1): `write` am Ende bei voller Platte `-ENOSPC`.
   Bekannte Grenze: Wächst eine Datei über eine Lücke (`write` hinter dem Ende, `ftruncate` nach oben) und die Platte wird dabei voll, kommt `-EIO` statt `-ENOSPC`.
   Cosmos' `Truncate` meldet beim Verlängern jeden Fehler als EIO (`FileDescriptorTable.cs:440-442` im Pin 5790fa74), nicht den PAL-Wert wie `PWrite` (`:248`).
   Behebung als Cosmos-Patch nach der Vorstellung (#743); `v7bfull` nimmt dort bis dahin `-EIO` an.
@@ -181,8 +191,8 @@ Grenzen (Review V2, bewusst offen):
   - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
   - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte (smp1) mit der bekannten Grenze `-EIO` hinter einer Lücke; volle Platte auf smp4, TCG und VMware nicht.
-  - Nach `unlink` einer offenen Datei bleibt der Eintrag unter Cosmos bis zum letzten Schließen sichtbar; ein erneutes `open(O_CREAT|O_EXCL)` oder `mkdir`
-    desselben Namens liefert dann wahrscheinlich `-EEXIST` (Linux: Erfolg), ein übliches Muster für temporäre Dateien. Im Gast nicht geprüft.
+  - Neu Anlegen unter dem Namen einer entfernten, noch offenen Datei ist unter Cosmos `-EEXIST` bis zum letzten Schließen (siehe oben; Linux: Erfolg), ein übliches
+    Muster für temporäre Dateien. Im Gast nicht geprüft.
   - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.
 
 ## Dateien im Prozess (V8)
