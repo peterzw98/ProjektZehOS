@@ -88,7 +88,7 @@ Beantwortet: `nativ` (Peter, 24. November 2026). Die Frage lautete:
 
 ## Ergebnis N1
 
-Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/peterzw98/ProjektZehOS/issues/624)) und die Vorstellung am 4. Dezember. Grundlage: [Plan N1](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), die Berichte [Ring 3 (N1-A7)](superpowers/plans/2026-11-26-ladybird-n1-ring3.md) und [Adressräume (N1-B5)](superpowers/plans/2026-11-26-ladybird-n1-adressraum.md) und die PR-Texte und Kommentare, die unten genannt sind (Stand `story/ladybird` `b52427e5`). Die Berichte liegen als `plans/…-n1-ring3.md` und `plans/…-n1-adressraum.md`, nicht als `specs/…-n1-<thema>.md` wie im Plan vorgesehen; es gibt noch keinen Bericht zu C, D und E. **Dieser Abschnitt misst nichts neu:** Jede Zahl und jedes Urteil steht mit Quelle da; was nicht belegt ist, steht als `offen`. Die Urteile `trägt` in A und B sind die der Senior-Agenten laut Berichten (nur gelesen, ohne eigenen Gastlauf, siehe Quellen); das Tor N1-Z entscheidet Peter oder Lars.
+Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/peterzw98/ProjektZehOS/issues/624)) und die Vorstellung am 4. Dezember. Grundlage: [Plan N1](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), die Berichte [Ring 3 (N1-A7)](superpowers/plans/2026-11-26-ladybird-n1-ring3.md) und [Adressräume (N1-B5)](superpowers/plans/2026-11-26-ladybird-n1-adressraum.md) und die PR-Texte und Kommentare, die unten genannt sind (Stand `story/ladybird` `b52427e5`). Die Berichte liegen als `plans/…-n1-ring3.md` und `plans/…-n1-adressraum.md`, nicht als `specs/…-n1-<thema>.md` wie im Plan vorgesehen; es gibt noch keinen Bericht zu C, D und E. **Dieser Abschnitt misst nichts neu** (außer „Messung L1“, dort mit eigener Quelle): Jede Zahl und jedes Urteil steht mit Quelle da; was nicht belegt ist, steht als `offen`. Die Urteile `trägt` in A und B sind die der Senior-Agenten laut Berichten (nur gelesen, ohne eigenen Gastlauf, siehe Quellen); das Tor N1-Z entscheidet Peter oder Lars.
 
 ### Stand N1
 
@@ -96,10 +96,10 @@ Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/p
 | --- | --- | --- | --- |
 | A Ring 3 | Cosmos-Patches A1–A4, Gastfälle A6, Messung A7 | **`trägt`** (Senior, N1-A7-Bericht) | Gastläufe und Messung gelaufen; offen: NMI-Rest unter TCG, VMware, echte Hardware |
 | B Adressräume | AddressSpaceMap B1, Seitentabellen B2/B3, Gastfälle B4, Messung B5 | **`trägt`** (Senior, N1-B5-Bericht) | Gastläufe gelaufen; **Kosten je Adressraumwechsel nicht gemessen** ([#716](https://github.com/peterzw98/ProjektZehOS/issues/716)) |
-| C Aufrufliste | Auswertung C1, Messung C2 | **`offen`** | C1 gemergt (Hosttests); C2 nicht gelaufen (hängt an #450) |
+| C Aufrufliste | Auswertung C1, Messung C2 | **`offen`** | C1 gemergt (Hosttests); C2 nicht gelaufen ([#635](https://github.com/peterzw98/ProjektZehOS/issues/635), läuft nach #450) |
 | D musl | LibJS D1, ganzes Ladybird D2 | **`offen`** | D1: nur Skript auf Branch, Bau steht aus; D2 nicht begonnen |
 | E Vergleichsprogramme | Satz S1, S3, `tools` (E1–E3) | Abnahmeregel des Plans erfüllt, förmliches Urteil noch nicht geschrieben | alle drei gemergt, nur auf Linux gelaufen, kein Gastlauf |
-| Messung L1 | Bau L1-A, Seiten und Messskript L1-B, Messung L1-C ([#450](https://github.com/peterzw98/ProjektZehOS/issues/450)) | **`offen`** | L1-A erledigt, L1-B gemergt, **L1-C nicht gelaufen: keine Messzahlen** |
+| Messung L1 | Bau L1-A, Seiten und Messskript L1-B, Messung L1-C ([#450](https://github.com/peterzw98/ProjektZehOS/issues/450)) | PSS ≤ 2 GiB erfüllt (Messung L1) | L1-A, L1-B und L1-C gelaufen; PSS `static.html` 334 MiB (siehe Messung L1) |
 | #423 (13.5 AOT) | Voraussetzung des Tors | offen | Issue offen |
 
 ### A: Ring 3 unter Cosmos
@@ -155,9 +155,21 @@ Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/p
 - **Abnahmeregel des Plans** („Gruppe E `trägt`, wenn E1 bis E3 erfüllt sind“): erfüllt, soweit die PR-Texte reichen. Ein eigenes Urteilsdokument gibt es nicht; das Tor N1-Z führt es.
 - **Grenzen:** nur Linux 6.12, andere Kernel und Toolchains nicht geprüft; **kein Lauf in ZehOS** (kommt mit N2 und N4); einige Erwartungen hängen an Linux-Verhalten (`EBUSY`, `ENOEXEC`, `EADDRNOTAVAIL`); CI führt die Python-Tests nicht aus.
 
-### Messung L1 (L1-C offen)
+### Messung L1
 
-Die Messung L1-C (#450, Block übernommen von `agent-nweh-senior25`, Branch `docs/ladybird-l1c-ergebnis`) ist **nicht gelaufen**; Speicher je Prozess, Threads und Seitenmessung gibt es nicht. Die Tor-Bedingung „PSS ≤ 2 GiB“ ist daher unbelegt. Vorhanden ist nur der Bau (L1-A, #448, PR #669, Kommentar 7151270240, Kopf `26f8f188`; Ladybird `6fba5b78a104`, ohne JIT, glibc, `x64-linux-dynamic`, Rechner HPz mit 22 Threads, 62 GiB RAM, GCC 16.2.1, Rust 1.98.0):
+Messung L1-C (#450) am 26. November 2026 durch `agent-laser-lead` auf Lars' Rechner (Zuteilung durch `agent-nweh-lead1`), mit dem Bau aus L1-A und `measure.py` aus L1-B (`story/ladybird` `21496432`). Je Seite drei Läufe, `--headless=screenshot --force-cpu-painting`, 798×519, Rechner sonst ruhig (Last ≈ 1, kein Bau). Werte sind Mediane über die drei Läufe; „gesamt“ ist die größte gleichzeitige Summe über alle Prozesse in einer Abtastung (alle 100 ms), keine Summe der Einzelspitzen. Die drei JSON-Ausgaben stehen im PR-Text.
+
+| Seite | Prozesse | Threads gesamt | PSS gesamt (MiB) | größter `VmSize` (GiB) | Screenshot (ms) |
+| --- | --- | --- | --- | --- | --- |
+| `static.html` | 7 | 69 | 334 | 4162 (`WebContent`) | 5272 |
+| `css.html` | 7 | 69 | 344 | 4162 (`WebContent`) | 5666 |
+| `js.html` | 7 | 69 | 438 | 4162 (`WebContent`) | 5990 |
+
+- **Prozesse je Lauf:** `Hub`, `Compositor`, `SystemProbe`, zwei `RequestServer`, zwei `WebContent`; im ersten `static`-Lauf ein dritter `WebContent` (8 Prozesse, 70 Threads). Größter Einzelprozess: `WebContent` mit 108–141 MiB PSS; auf `js.html` steigt `Hub` von ≈ 55 auf ≈ 180 MiB.
+- **Screenshot** enthält den festen Timer `--screenshot-delay 5` (Plan L1-B); das ist keine Zeit bis zum ersten Bild.
+- **Bewertungsregel:** PSS gesamt auf `static.html` 334 MiB, also unter 512 MiB und unter 2 GiB: Keiner der beiden Sätze der Regel greift, die Tor-Bedingung „PSS ≤ 2 GiB“ ist erfüllt. `VmSize` ≥ 32 GiB in `WebContent` (≈ 4,06 TiB): **Die GC-Reservierung ist als Messwert bestätigt.**
+
+Bau (L1-A, #448, PR #669, Kommentar 7151270240, Kopf `26f8f188`; Ladybird `6fba5b78a104`, ohne JIT, glibc, `x64-linux-dynamic`, Rechner HPz: Intel Core Ultra 9 185H, 22 Threads, 62 GiB RAM, Manjaro, Kernel 7.3.4, GCC 16.2.1, Rust 1.98.0, Qt 6.12.0):
 
 | Messwert | Wert |
 | --- | --- |
@@ -165,22 +177,22 @@ Die Messung L1-C (#450, Block übernommen von `agent-nweh-senior25`, Branch `doc
 | Spitzen-RSS eines Bauprozesses | 4 847 408 KiB (≈ 4,6 GiB) |
 | Spitze des belegten Systemspeichers | 26 018 896 KiB (≈ 24,8 GiB) |
 | Platz im Arbeitsordner | 7 172 690 403 Byte (≈ 6,7 GiB), davon `build` 5 435 340 251 |
-| Binärdateien gesamt (`binaries_total_bytes`) | 638 375 526 Byte; `liblagom-web.so` 271 988 272, `libexec/WebContent` 9 250 608 |
+| Binärdateien gesamt (`binaries_total_bytes`) | 638 375 526 Byte in 59 Dateien |
+| fünf größte Dateien | `lib/liblagom-web.so.0.1.0` 271 988 272, `lib/liblagom-webcommon.so.0.1.0` 42 564 312, `lib/liblagom-webview.so.0.1.0` 30 447 624, `bin/Ladybird` 28 652 480, `libexec/WebRTCClient` 28 567 000 |
 
-Grenzen: ein Lauf, `LAGOM_LINK_POOL_SIZE` nicht gesetzt (Ladybird hat an diesem Commit einen Fehler, siehe PR #669), kalter Bau ohne ccache. Das ist ein Bau, keine Laufzeitmessung; er sagt nichts über den Speicher beim Seitenladen. Die Seiten und das Messskript (L1-B) sind mit PR #671 gemergt, aber nicht ausgeführt.
+Grenzen: ein Rechner, Linux-Host statt ZehOS, glibc statt musl; drei Läufe je Seite. `build-stats.json` vermerkt `"resumed": true` (Schritt `build` nach Unterbrechung weitergeführt), die Bauzeit ist daher keine Messung eines ganzen kalten Baus; `LAGOM_LINK_POOL_SIZE` nicht gesetzt (Ladybird hat an diesem Commit einen Fehler, siehe PR #669). Nicht gemessen: Verhalten bei mehreren Tabs, längeren Sitzungen oder Netzseiten.
 
 ### Tor N1-Z (Lage, keine Entscheidung)
 
-Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“): A und B `trägt`, E erfüllt, C und D `offen`, PSS unbelegt, #423 offen. Damit greift heute die Zeile „#423 nicht abgenommen: warten, mit dem fehlenden Punkt“. Wäre #423 abgenommen, griffe wegen C und D `offen` die Zeile „Peter kann GO geben, Ladybird (N6) wartet“. Die Entscheidung trifft Peter oder Lars.
+Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“): A und B `trägt`, E erfüllt, C und D `offen`, PSS ≤ 2 GiB (334 MiB auf `static.html`), #423 offen. Damit greift heute die Zeile „#423 nicht abgenommen: warten, mit dem fehlenden Punkt“. Wäre #423 abgenommen, griffe wegen C und D `offen` die Zeile „Peter kann GO geben, Ladybird (N6) wartet“. Die Entscheidung trifft Peter oder Lars.
 
 ### Offene Punkte
 
-1. **#450 (L1-C):** Messung Speicher, Threads, Binärgrößen; Voraussetzung für C2 und die PSS-Bedingung.
-2. **N1-C2 (#635):** Aufrufliste von Ladybird mit `syscalls.py` auswerten.
-3. **N1-D1/D2 (#622, #636):** musl-Bau von `js` und von ganz Ladybird; Patchzeilen.
-4. **#423:** AOT-Abnahme (Voraussetzung des Tors).
-5. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
-6. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
-7. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
-8. **E im Gast:** die drei Programmsätze laufen noch nicht in ZehOS (N2 und N4).
-9. **Reviews:** Das Delta `5802b0abe` von #704 (nur `scripts/`) ist nach dem Bericht noch nicht nachgeprüft; die Berichte N1-A7 und N1-B5 sind Entwurf, die Urteile nur gelesen.
+1. **N1-C2 (#635):** Aufrufliste von Ladybird mit `syscalls.py` auswerten.
+2. **N1-D1/D2 (#622, #636):** musl-Bau von `js` und von ganz Ladybird; Patchzeilen.
+3. **#423:** AOT-Abnahme (Voraussetzung des Tors).
+4. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
+5. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
+6. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
+7. **E im Gast:** die drei Programmsätze laufen noch nicht in ZehOS (N2 und N4).
+8. **Reviews:** Das Delta `5802b0abe` von #704 (nur `scripts/`) ist nach dem Bericht noch nicht nachgeprüft; die Berichte N1-A7 und N1-B5 sind Entwurf, die Urteile nur gelesen.
