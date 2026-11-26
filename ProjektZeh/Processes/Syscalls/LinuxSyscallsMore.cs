@@ -59,7 +59,7 @@ internal static partial class LinuxSyscalls
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
             case Futex: return DoFutex(p, ref a);
-            default: return -ENOSYS;
+            default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }
 
