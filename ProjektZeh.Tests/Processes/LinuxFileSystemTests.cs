@@ -16,6 +16,8 @@ namespace ProjektZeh.Tests.Processes;
 public sealed class LinuxFileSystemTests
 {
     private const int Create = Fs.OCreat | Fs.ORdWr;
+    private static readonly string[] ShortNameDisk = [".zehos-security.db", "langdir", "langername", "langlink", "neu"];
+    private static readonly string[] DevOnlyListing = [".", "..", "dev"];
     private static readonly string[] DevListing = [".", "..", "null", "tty", "zero"];
     private static readonly string[] ShadowListing = [".", "..", "dev", "z"];
     private static readonly string[] DiskListing = [".", "..", "dev", "abs", "e", "lf", "rel", "up"];
@@ -332,11 +334,256 @@ public sealed class LinuxFileSystemTests
     {
         private readonly HostLinuxDiskLinks _host = new();
 
-        public LinuxNodeKind KindStorageLocked(string parent, string name) => _host.KindStorageLocked(parent, name);
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found) => _host.KindStorageLocked(parent, name, out found);
 
         public string ReadLinkStorageLocked(string full) => _host.ReadLinkStorageLocked(full);
 
         public bool CreateSymlinkStorageLocked(string full, string target) => false;
+    }
+
+    /// <summary>Wie Cosmos-FAT: findet Einträge auch über ihren 8.3-Kurznamen und meldet dann den Langnamen als geführten Namen.</summary>
+    private sealed class ShortNameLinks(Dictionary<string, string> aliases) : ILinuxDiskLinks
+    {
+        private readonly HostLinuxDiskLinks _host = new();
+
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found)
+        {
+            if (aliases.TryGetValue(name, out string? longName))
+            {
+                LinuxNodeKind kind = _host.KindStorageLocked(parent, longName, out _);
+                found = longName;
+                return kind;
+            }
+
+            return _host.KindStorageLocked(parent, name, out found);
+        }
+
+        public string ReadLinkStorageLocked(string full) => _host.ReadLinkStorageLocked(full);
+
+        public bool CreateSymlinkStorageLocked(string full, string target) => _host.CreateSymlinkStorageLocked(full, target);
+    }
+
+    [TestMethod]
+    public void ShortNamesDoNotReachLongNameEntries()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel; Symlinks auf dem Host nur unter Unix.");
+        }
+
+        string tmp = TempDir();
+        try
+        {
+            string root = Path.Combine(tmp, "root");
+            Directory.CreateDirectory(Path.Combine(root, "langdir"));
+            File.WriteAllText(Path.Combine(root, ".zehos-security.db"), "GEHEIM");
+            File.WriteAllText(Path.Combine(root, "langername"), "L");
+            File.WriteAllText(Path.Combine(root, "langdir", "x"), "X");
+            File.CreateSymbolicLink(Path.Combine(root, "langlink"), "langername");
+            var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["_ZEHOS~1.DB"] = ".zehos-security.db",
+                ["LANGER~1"] = "langername",
+                ["LANGDI~1"] = "langdir",
+                ["LANGLI~1"] = "langlink",
+            };
+            var store = DirectoryFileStore.Open(root, new ShortNameLinks(aliases), StringComparison.OrdinalIgnoreCase).Value!;
+            var fs = new Fs(store, new Sink());
+
+            // Lesen und Abfragen: der Zweitname gilt als fehlend.
+            Assert.AreEqual(-E.ENOENT, fs.Open("/_ZEHOS~1.DB", Fs.ORdOnly, 0, out _));
+            Assert.AreEqual(-E.ENOENT, fs.Open("/_zehos~1.db", Fs.ORdWr, 0, out _));
+            Assert.AreEqual(-E.ENOENT, fs.Stat("/LANGER~1", true, out _));
+            Assert.AreEqual(-E.ENOENT, fs.Open("/LANGDI~1/x", Fs.ORdOnly, 0, out _));
+            Assert.AreEqual(-E.ENOENT, fs.ReadLink("/LANGLI~1", out _));
+            Assert.AreEqual(-E.ENOENT, fs.Open("/LANGLI~1", Fs.ORdOnly, 0, out _));
+            Assert.AreEqual(-E.ENOENT, store.ReadLink("LANGLI~1", out _));
+
+            // Entfernen über den Zweitnamen erreicht nichts.
+            Assert.AreEqual(-E.ENOENT, fs.Unlink("/_ZEHOS~1.DB"));
+            Assert.AreEqual(-E.ENOENT, fs.Unlink("/LANGLI~1"));
+            Assert.AreEqual(-E.ENOENT, fs.Rmdir("/LANGDI~1"));
+            Assert.AreEqual(-E.ENOENT, store.DeleteFile("LANGER~1"));
+            Assert.AreEqual(-E.ENOENT, store.DeleteDirectory("LANGDI~1"));
+            Assert.AreEqual(-E.ENOENT, fs.Rename("/LANGER~1", "/neu"));
+
+            // Anlegen und Umbenennen auf einen Zweitnamen: belegt, nichts überschrieben.
+            Assert.AreEqual(-E.EEXIST, fs.Open("/_ZEHOS~1.DB", Fs.OCreat | Fs.OWrOnly | Fs.OTrunc, 0x1A4, out _));
+            Assert.AreEqual(-E.EEXIST, fs.Mkdir("/LANGER~1", 0x1ED));
+            Assert.AreEqual(-E.EEXIST, fs.Symlink("ziel", "/LANGDI~1"));
+            Assert.AreEqual(-E.EEXIST, fs.Rename("/langername", "/LANGER~1")); // derselbe Eintrag über seinen Kurznamen
+            WriteFile(fs, "/neu", "N");
+            Assert.AreEqual(-E.EEXIST, fs.Rename("/neu", "/_ZEHOS~1.DB"));
+            Assert.AreEqual(-E.EEXIST, store.CreateDirectory("LANGLI~1", 0x1ED));
+
+            Assert.AreEqual("GEHEIM", File.ReadAllText(Path.Combine(root, ".zehos-security.db")));
+            Assert.AreEqual("L", File.ReadAllText(Path.Combine(root, "langername")));
+            Assert.AreEqual("L", ReadFile(fs, "/langername"));
+            Assert.AreEqual("X", ReadFile(fs, "/langdir/x"));
+            Assert.AreEqual("L", ReadFile(fs, "/langlink"));
+            CollectionAssert.AreEquivalent(ShortNameDisk,
+                Directory.GetFileSystemEntries(root).Select(Path.GetFileName).ToArray());
+            Assert.AreEqual(0, fs.OpenFiles);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void SameNameFollowsTheDriveRule()
+    {
+        Assert.IsTrue(DirectoryFileStore.SameName("Datei", "DATEI", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(DirectoryFileStore.SameName("Datei", "DATEI", StringComparison.Ordinal));
+        Assert.IsTrue(DirectoryFileStore.SameName("a", "a", StringComparison.Ordinal));
+        Assert.IsFalse(DirectoryFileStore.SameName(".zehos-security.db", "_ZEHOS~1.DB", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(DirectoryFileStore.SameName("langername", "LANGER~1", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(DirectoryFileStore.SameName(null, "a", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void DiskGrowthRunsInStepsAndCountsAgainstQuota()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            string root = Path.Combine(tmp, "root");
+            var store = DirectoryFileStore.Open(root, new HostLinuxDiskLinks(), StringComparison.Ordinal, quotaBytes: 8L * Mib).Value!;
+            var fs = new Fs(store, new Sink());
+            Assert.AreEqual(Mib, ProjektZeh.Storage.StorageLock.ChunkBytes);
+
+            // ftruncate nach oben: in Schritten zu je höchstens ChunkBytes, jeder unter eigener Sperre.
+            Assert.AreEqual(0L, store.CreateFile("g", 0x1A4, out ILinuxStoreFile? g));
+            Assert.AreEqual(0L, g!.SetLength(3 * Mib + Mib / 2));
+            Assert.AreEqual(4, store.GrowSteps);
+            Assert.AreEqual(3L * Mib + Mib / 2, g.Length());
+            Assert.AreEqual(3L * Mib + Mib / 2, store.GrownBytes);
+
+            // 1 GiB auf einmal: abgelehnt, bevor irgendetwas wächst.
+            Assert.AreEqual(-E.ENOSPC, g.SetLength(1L << 30));
+            Assert.AreEqual(4, store.GrowSteps);
+            Assert.AreEqual(3L * Mib + Mib / 2, g.Length());
+
+            // lseek weit nach vorn und 1 Byte: die Lücke zählt mit.
+            ILinuxFile f = OpenOk(fs, "/f", Create);
+            Assert.AreEqual((1L << 30) - 1, f.Seek((1L << 30) - 1, 0));
+            Assert.AreEqual(-E.ENOSPC, f.Write("x"u8));
+            Assert.AreEqual(0L, new FileInfo(Path.Combine(root, "f")).Length);
+            Assert.AreEqual(4L * Mib, f.Seek(4L * Mib, 0));
+            Assert.AreEqual(3L, f.Write("abc"u8)); // Lücke 4 MiB in vier Schritten, dann die Daten
+            Assert.AreEqual(8, store.GrowSteps);
+            Assert.AreEqual(4L * Mib + 3, new FileInfo(Path.Combine(root, "f")).Length);
+            Assert.AreEqual(7L * Mib + Mib / 2 + 3, store.GrownBytes);
+
+            // Rest des Kontingents: gekürzt, danach -ENOSPC.
+            long room = 8L * Mib - store.GrownBytes;
+            Assert.AreEqual(room, f.Write(new byte[Mib]));
+            Assert.AreEqual(-E.ENOSPC, f.Write("y"u8));
+            f.Close();
+
+            // Löschen und Kürzen geben frei.
+            Assert.AreEqual(0L, fs.Unlink("/f"));
+            Assert.AreEqual(3L * Mib + Mib / 2, store.GrownBytes);
+            Assert.AreEqual(0L, g.SetLength(0));
+            Assert.AreEqual(0L, store.GrownBytes);
+            Assert.AreEqual(0L, g.Close());
+            WriteFile(fs, "/wieder", "ok");
+            Assert.AreEqual(0, fs.OpenFiles);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void DiskFullMapsToEnospc()
+    {
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 28)));
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", unchecked((int)0x80070070))));
+        Assert.AreEqual(-E.EIO, DirectoryFileStore.Errno(new IOException("anders")));
+        Assert.AreEqual(-E.ENOENT, DirectoryFileStore.Errno(new FileNotFoundException()));
+    }
+
+    /// <summary>Speicher mit der Namensregel von FAT (ohne Groß-/Kleinschreibung) für die /dev-Prüfung.</summary>
+    private sealed class FoldingStore(MemoryFileStore inner) : ILinuxFileStore
+    {
+        public StringComparison NameComparison => StringComparison.OrdinalIgnoreCase;
+
+        public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
+
+        public long ReadLink(string path, out string target) => inner.ReadLink(path, out target);
+
+        public long List(string path, out string[] names) => inner.List(path, out names);
+
+        public long OpenFile(string path, bool write, out ILinuxStoreFile? file) => inner.OpenFile(path, write, out file);
+
+        public long CreateFile(string path, uint mode, out ILinuxStoreFile? file) => inner.CreateFile(path, mode, out file);
+
+        public long CreateDirectory(string path, uint mode) => inner.CreateDirectory(path, mode);
+
+        public long CreateSymlink(string path, string target) => inner.CreateSymlink(path, target);
+
+        public long DeleteFile(string path) => inner.DeleteFile(path);
+
+        public long DeleteDirectory(string path) => inner.DeleteDirectory(path);
+
+        public long Rename(string from, string to) => inner.Rename(from, to);
+    }
+
+    [TestMethod]
+    public void DevCoversEverySpellingOnCaseInsensitiveStore()
+    {
+        var memory = new MemoryFileStore();
+        Assert.AreEqual(0L, memory.CreateDirectory("DEV", 0x1ED));
+        Assert.AreEqual(0L, memory.CreateDirectory("DEV/sda", 0x1ED));
+        var fs = new Fs(new FoldingStore(memory), new Sink());
+        Assert.AreEqual(0L, fs.Stat("/DEV", true, out LinuxStat st));
+        Assert.AreEqual(Fs.DevDevice, st.Dev);
+        Assert.AreEqual(0L, fs.Stat("/Dev/null", true, out st));
+        Assert.AreEqual(0x103UL, st.Rdev);
+        Assert.AreEqual(-E.ENOENT, fs.Stat("/DEV/sda", true, out _));
+        ILinuxFile root = OpenOk(fs, "/", Fs.ORdOnly);
+        CollectionAssert.AreEqual(DevOnlyListing, ListDir(root));
+        root.Close();
+
+        // Ordinaler Speicher: dort ist "DEV" ein eigener Ordner.
+        var (plain, store, _) = New();
+        Assert.AreEqual(0L, store.CreateDirectory("DEV", 0x1ED));
+        Assert.AreEqual(0L, plain.Stat("/DEV", true, out st));
+        Assert.AreEqual(Fs.StoreDevice, st.Dev);
+    }
+
+    [TestMethod]
+    public void ResolvedPathsCountUtf8Bytes()
+    {
+        var (fs, _, _) = New();
+        string name = new('ä', 120); // 240 Bytes, 120 Zeichen
+        string real = string.Empty;
+        for (int depth = 1; ; depth++)
+        {
+            // Kurzer Eingabepfad über einen Link auf das bisher tiefste Verzeichnis; der aufgelöste Pfad wächst um 241 Bytes je Ebene.
+            fs.Unlink("/s");
+            Assert.AreEqual(0L, fs.Symlink(real.Length == 0 ? "/" : real, "/s"));
+            long r = fs.Mkdir("/s/" + name, 0x1ED);
+            int bytes = Encoding.UTF8.GetByteCount(real + "/" + name) - 1; // Speicherpfad ohne führendes '/'
+            if (bytes >= Fs.PathMax)
+            {
+                Assert.AreEqual(-E.ENAMETOOLONG, r, "Tiefe " + depth);
+                Assert.IsTrue((real + "/" + name).Length < Fs.PathMax, "in Zeichen wäre es noch kürzer als PATH_MAX");
+                break;
+            }
+
+            Assert.AreEqual(0L, r, "Tiefe " + depth);
+            real += "/" + name;
+        }
     }
 
     [TestMethod]

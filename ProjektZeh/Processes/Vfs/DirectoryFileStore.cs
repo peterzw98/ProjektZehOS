@@ -15,7 +15,12 @@ namespace ProjektZeh.Processes.Vfs;
 /// </summary>
 internal interface ILinuxDiskLinks
 {
-    public LinuxNodeKind KindStorageLocked(string parent, string name);
+    /// <summary>
+    /// Art des Eintrags <paramref name="name"/> in <paramref name="parent"/> ohne Folgen. <paramref name="found"/> ist der Name, unter
+    /// dem das Laufwerk den Eintrag führt: FAT findet einen Eintrag auch über seinen 8.3-Kurznamen ("_ZEHOS~1.DB" für
+    /// ".zehos-security.db"), dann unterscheidet sich <paramref name="found"/> vom angefragten Namen.
+    /// </summary>
+    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found);
 
     public string ReadLinkStorageLocked(string full);
 
@@ -26,8 +31,9 @@ internal interface ILinuxDiskLinks
 /// <summary>Host-Fassung über .NET (lstat-Semantik von <see cref="FileSystemInfo"/> unter Unix). Nur für Hosttests belegt.</summary>
 internal sealed class HostLinuxDiskLinks : ILinuxDiskLinks
 {
-    public LinuxNodeKind KindStorageLocked(string parent, string name)
+    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found)
     {
+        found = name; // Linux-Hosts suchen exakt; es gibt keinen zweiten Namen
         var info = new FileInfo(parent + "/" + name);
         FileAttributes attributes = info.Attributes;
         if ((int)attributes == -1)
@@ -57,7 +63,14 @@ internal sealed class HostLinuxDiskLinks : ILinuxDiskLinks
 /// Prozesswurzel als Ordner eines eingebundenen Laufwerks (Datenplatte). Jeder Zugriff läuft unter <see cref="StorageLock"/>, auch
 /// Lesen und Schreiben auf offenen Dateien. Namen, die ein FAT- oder Cosmos-Pfad anders deuten könnte (":", "\\", Steuerzeichen,
 /// abschließender Punkt oder Leerzeichen, Systemnamen ".zehos-"), gibt es hier nicht: Abfragen melden sie als fehlend, Anlegen
-/// lehnt sie mit -EINVAL ab, Listen lassen sie weg. So entsteht aus einem Linux-Namen nie ein anderer Pfad auf dem Laufwerk.
+/// lehnt sie mit -EINVAL ab, Listen lassen sie weg. Ein Treffer über einen anderen Namen als den angefragten (FAT-Kurzname, siehe
+/// <see cref="ILinuxDiskLinks.KindStorageLocked"/>) gilt als fehlend; Anlegen und Umbenennen auf einen solchen Namen sind -EEXIST,
+/// damit nie ein vorhandener Eintrag über seinen Zweitnamen überschrieben wird.
+/// <para>
+/// Wachstum: Eine Datei wächst in Schritten von höchstens <see cref="StorageLock.ChunkBytes"/>, jeder unter einer eigenen Sperre
+/// (Cosmos-FAT nullt Lücken sofort, ohne Sparse), und alles, was dieser Speicher wachsen lässt, zählt gegen
+/// <see cref="QuotaBytes"/> (-ENOSPC).
+/// </para>
 /// <para>
 /// Rechte: Ordner 0755, Dateien 0644 (schreibgeschützte 0444); FAT kennt keine Unix-Rechte, ein Ausführungsbit fehlt deshalb.
 /// Umbenennen über ein vorhandenes Verzeichnis entfernt es erst und ist damit nicht atomar.
@@ -67,17 +80,34 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 {
     public const long DefaultMaxFileBytes = 1L << 30;
 
+    /// <summary>
+    /// Kontingent je Wurzel: so viele Bytes darf ein Prozess die Platte über diesen Speicher netto wachsen lassen. 64 MiB reichen für
+    /// die Testprogramme und js (schreibt nichts) und halten ein bösartiges Programm unter einem kleinen Teil der Datenplatte;
+    /// vorhandene Dateien (Pakete) zählen nicht, Löschen und Kürzen geben frei.
+    /// </summary>
+    public const long DefaultQuotaBytes = 64L << 20;
+
     private const uint DirectoryMode = 0x1ED, FileMode = 0x1A4, ReadOnlyFileMode = 0x124;
     private readonly string _root;
     private readonly ILinuxDiskLinks _links;
 
-    private DirectoryFileStore(string root, ILinuxDiskLinks links, StringComparison nameComparison, long maxFileBytes)
+    private DirectoryFileStore(string root, ILinuxDiskLinks links, StringComparison nameComparison, long maxFileBytes, long quotaBytes)
     {
         _root = root;
         _links = links;
         NameComparison = nameComparison;
         MaxFileBytes = maxFileBytes;
+        QuotaBytes = quotaBytes;
     }
+
+    /// <summary>Kontingent für das Nettowachstum (siehe <see cref="DefaultQuotaBytes"/>).</summary>
+    public long QuotaBytes { get; }
+
+    /// <summary>Bisheriges Nettowachstum; kann durch Löschen vorhandener Dateien negativ werden.</summary>
+    public long GrownBytes { get; private set; }
+
+    /// <summary>Anzahl der Wachstumsschritte (je höchstens <see cref="StorageLock.ChunkBytes"/> unter einer Sperre); Diagnose und Tests.</summary>
+    public int GrowSteps { get; private set; }
 
     public StringComparison NameComparison { get; }
 
@@ -89,7 +119,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     /// Der Pfad kommt vom Kernel, nicht vom Programm.
     /// </summary>
     public static ResultObject<DirectoryFileStore> Open(string root, ILinuxDiskLinks links, StringComparison nameComparison,
-        long maxFileBytes = DefaultMaxFileBytes)
+        long maxFileBytes = DefaultMaxFileBytes, long quotaBytes = DefaultQuotaBytes)
     {
         ArgumentNullException.ThrowIfNull(links);
         if (string.IsNullOrEmpty(root) || root[0] != '/' || root.EndsWith('/') || root.Contains("/../", StringComparison.Ordinal) ||
@@ -101,7 +131,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         try
         {
             StorageLock.Run(() => Directory.CreateDirectory(root));
-            return ResultObjectFactory.CreateSuccess(new DirectoryFileStore(root, links, nameComparison, maxFileBytes));
+            return ResultObjectFactory.CreateSuccess(new DirectoryFileStore(root, links, nameComparison, maxFileBytes, quotaBytes));
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
@@ -155,12 +185,30 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         }
     }
 
+    /// <summary>Art des Eintrags unter genau diesem Namen; ein Treffer über einen Zweitnamen (8.3) gilt als fehlend.</summary>
     private LinuxNodeKind KindStorageLocked(string path)
+    {
+        LinuxNodeKind kind = RawKindStorageLocked(path, out bool alias);
+        return alias ? LinuxNodeKind.Missing : kind;
+    }
+
+    /// <summary>Art des Eintrags, wie das Laufwerk ihn findet; <paramref name="alias"/>, wenn es ihn unter einem anderen Namen führt.</summary>
+    private LinuxNodeKind RawKindStorageLocked(string path, out bool alias)
     {
         int slash = path.LastIndexOf('/');
         string parent = slash < 0 ? _root : string.Concat(_root, "/", path.AsSpan(0, slash));
-        return _links.KindStorageLocked(parent, path.Substring(slash + 1));
+        string name = path.Substring(slash + 1);
+        LinuxNodeKind kind = _links.KindStorageLocked(parent, name, out string found);
+        alias = kind != LinuxNodeKind.Missing && !SameName(found, name, NameComparison);
+        return kind;
     }
+
+    /// <summary>
+    /// Gleicher Name im Sinn des Laufwerks: ordinal, bei einem Laufwerk ohne Groß-/Kleinschreibung ordinal ohne sie. Ein anderer
+    /// Name (Kurzname statt Langname) ist nie gleich.
+    /// </summary>
+    internal static bool SameName(string? found, string requested, StringComparison comparison) =>
+        string.Equals(found, requested, comparison == StringComparison.Ordinal ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     public long ReadLink(string path, out string target)
     {
@@ -174,6 +222,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
+                if (KindStorageLocked(path) != LinuxNodeKind.Symlink)
+                {
+                    return -LinuxErrno.ENOENT; // auch ein Treffer über einen Zweitnamen
+                }
+
                 target = _links.ReadLinkStorageLocked(Full(path));
                 return 0;
             }
@@ -238,7 +291,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 // Ohne Puffer (1 Byte): Schreibfehler zeigen sich beim write, nicht erst beim Schließen, das keinen Fehler melden kann.
                 var stream = new FileStream(Full(path), System.IO.FileMode.Open, write ? FileAccess.ReadWrite : FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete, 1);
-                file = new DiskFile(stream, MaxFileBytes);
+                file = new DiskFile(this, stream);
                 return 0;
             }
         }
@@ -260,14 +313,15 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                // CreateNew meldet einen belegten Namen nur als allgemeine IOException; vorher ohne Folgen nachsehen.
-                if (KindStorageLocked(path) != LinuxNodeKind.Missing)
+                // CreateNew meldet einen belegten Namen nur als allgemeine IOException; vorher ohne Folgen nachsehen. Auch ein
+                // Zweitname zählt als belegt: sonst landete das Anlegen auf dem vorhandenen Eintrag.
+                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
                 {
                     return -LinuxErrno.EEXIST;
                 }
 
                 var stream = new FileStream(Full(path), System.IO.FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1);
-                file = new DiskFile(stream, MaxFileBytes);
+                file = new DiskFile(this, stream);
                 return 0;
             }
         }
@@ -288,9 +342,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                if (KindStorageLocked(path) != LinuxNodeKind.Missing)
+                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
                 {
-                    return -LinuxErrno.EEXIST;
+                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) eines vorhandenen Eintrags
                 }
 
                 Directory.CreateDirectory(Full(path));
@@ -314,9 +368,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                if (KindStorageLocked(path) != LinuxNodeKind.Missing)
+                if (RawKindStorageLocked(path, out _) != LinuxNodeKind.Missing)
                 {
-                    return -LinuxErrno.EEXIST;
+                    return -LinuxErrno.EEXIST; // auch ein Zweitname (8.3) eines vorhandenen Eintrags
                 }
 
                 return _links.CreateSymlinkStorageLocked(Full(path), target) ? 0 : -LinuxErrno.EPERM;
@@ -350,7 +404,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                     return -LinuxErrno.EISDIR;
                 }
 
+                long freed = kind == LinuxNodeKind.File ? new FileInfo(Full(path)).Length : 0;
                 File.Delete(Full(path));
+                GrownBytes -= freed; // eine noch offene Datei belegt unter Cosmos/FAT weiter; Näherung zugunsten des Programms
                 return 0;
             }
         }
@@ -371,9 +427,10 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                if (KindStorageLocked(path) != LinuxNodeKind.Directory)
+                LinuxNodeKind kind = KindStorageLocked(path);
+                if (kind != LinuxNodeKind.Directory)
                 {
-                    return -LinuxErrno.ENOTDIR;
+                    return kind == LinuxNodeKind.Missing ? -LinuxErrno.ENOENT : -LinuxErrno.ENOTDIR;
                 }
 
                 Directory.Delete(Full(path), false);
@@ -420,12 +477,21 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             return -LinuxErrno.ENOENT;
         }
 
+        // Ziel nur unter seinem eigenen Namen: rename("/langername", "/LANGER~1") träfe denselben Eintrag über seinen Kurznamen,
+        // File.Move mit Überschreiben könnte ihn dann verlieren.
+        LinuxNodeKind existing = RawKindStorageLocked(to, out bool targetAlias);
+        if (targetAlias)
+        {
+            return -LinuxErrno.EEXIST;
+        }
+
+        long replaced = existing == LinuxNodeKind.File ? new FileInfo(target).Length : 0;
+
         if (kind == LinuxNodeKind.Symlink)
         {
             // File.Move prüft unter .NET das Linkziel und scheitert an hängenden Links: Link neu anlegen, dann den alten entfernen
             // (nicht atomar, wie das Ersetzen eines Verzeichnisses).
             string linkTarget = _links.ReadLinkStorageLocked(source);
-            LinuxNodeKind existing = KindStorageLocked(to);
             if (existing == LinuxNodeKind.Directory)
             {
                 Directory.Delete(target, false);
@@ -441,16 +507,18 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             }
 
             File.Delete(source);
+            GrownBytes -= replaced;
             return 0;
         }
 
         if (kind != LinuxNodeKind.Directory)
         {
             File.Move(source, target, true);
+            GrownBytes -= replaced;
             return 0;
         }
 
-        if (KindStorageLocked(to) == LinuxNodeKind.Directory)
+        if (existing == LinuxNodeKind.Directory)
         {
             Directory.Delete(target, false); // leer, vom Dateisystem geprüft
         }
@@ -506,6 +574,9 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
     internal static long Errno(Exception exception) => exception switch
     {
+        // Platte voll: .NET unter Unix trägt errno 28 als HResult, Windows ERROR_DISK_FULL/ERROR_HANDLE_DISK_FULL; was Cosmos meldet,
+        // ist im Gast nicht geprüft (sonst -EIO).
+        IOException { HResult: 28 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
         FileNotFoundException or DirectoryNotFoundException => -LinuxErrno.ENOENT,
         UnauthorizedAccessException => -LinuxErrno.EACCES,
         PathTooLongException => -LinuxErrno.ENAMETOOLONG,
@@ -513,16 +584,19 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         _ => -LinuxErrno.EINVAL,
     };
 
-    /// <summary>Offene Datei auf dem Laufwerk; jede Stream-Operation unter der Sperre, höchstens <see cref="StorageLock.ChunkBytes"/> je Abschnitt.</summary>
+    /// <summary>
+    /// Offene Datei auf dem Laufwerk; jede Stream-Operation unter der Sperre, höchstens <see cref="StorageLock.ChunkBytes"/> je
+    /// Abschnitt. Wachsen (Lücke vor einem Schreiben, ftruncate nach oben) läuft in Schritten über <see cref="GrowStorage"/>.
+    /// </summary>
     private sealed class DiskFile : ILinuxStoreFile
     {
-        private readonly long _maxBytes;
+        private readonly DirectoryFileStore _store;
         private FileStream? _stream;
 
-        public DiskFile(FileStream stream, long maxBytes)
+        public DiskFile(DirectoryFileStore store, FileStream stream)
         {
+            _store = store;
             _stream = stream;
-            _maxBytes = maxBytes;
         }
 
         public long Length()
@@ -594,18 +668,52 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 return 0;
             }
 
-            if (offset >= _maxBytes)
+            if (offset >= _store.MaxFileBytes)
             {
                 return -LinuxErrno.EFBIG;
             }
 
-            ReadOnlySpan<byte> part = src.Slice(0, (int)Math.Min(Math.Min(src.Length, _maxBytes - offset), StorageLock.ChunkBytes));
+            long length = Length();
+            if (length < 0)
+            {
+                return length;
+            }
+
+            if (offset > length)
+            {
+                // Lücke erst in Schritten anlegen (Cosmos-FAT nullt sie sofort), dann schreiben.
+                long grown = Grow(length, offset);
+                if (grown < 0)
+                {
+                    return grown;
+                }
+
+                length = offset;
+            }
+
+            int count = (int)Math.Min(Math.Min(src.Length, _store.MaxFileBytes - offset), StorageLock.ChunkBytes);
+            long growth = Math.Max(0, offset + count - length);
+            long room = _store.QuotaBytes - _store.GrownBytes;
+            if (growth > room)
+            {
+                // Wie bei voller Platte: kürzen, ganz ohne Platz -ENOSPC.
+                count -= (int)(growth - Math.Max(0, room));
+                if (count <= 0)
+                {
+                    return -LinuxErrno.ENOSPC;
+                }
+
+                growth = Math.Max(0, offset + count - length);
+            }
+
+            ReadOnlySpan<byte> part = src.Slice(0, count);
             try
             {
                 using (StorageLock.Enter())
                 {
                     _stream.Position = offset;
                     _stream.Write(part);
+                    _store.GrownBytes += growth;
                     return part.Length;
                 }
             }
@@ -627,9 +735,21 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 return -LinuxErrno.EINVAL;
             }
 
-            if (length > _maxBytes)
+            if (length > _store.MaxFileBytes)
             {
                 return -LinuxErrno.EFBIG;
+            }
+
+            long current = Length();
+            if (current < 0)
+            {
+                return current;
+            }
+
+            if (length > current)
+            {
+                long grown = Grow(current, length);
+                return grown < 0 ? grown : 0;
             }
 
             try
@@ -637,6 +757,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 using (StorageLock.Enter())
                 {
                     _stream.SetLength(length);
+                    _store.GrownBytes -= current - length;
                     return 0;
                 }
             }
@@ -645,6 +766,13 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 return Errno(exception);
             }
         }
+
+        /// <summary>
+        /// Verlängert von <paramref name="from"/> auf <paramref name="to"/> in Schritten von höchstens <see cref="StorageLock.ChunkBytes"/>,
+        /// jeder Schritt unter einer eigenen Sperre, damit andere Plattenzugriffe dazwischen drankommen. Prüft vorher das Kontingent
+        /// für das ganze Wachstum (-ENOSPC, nichts geschrieben). Ein Fehler mitten drin lässt die bis dahin gewachsene Länge stehen.
+        /// </summary>
+        private long Grow(long from, long to) => _store.GrowStorage(_stream!, from, to);
 
         public long Close()
         {
@@ -669,5 +797,37 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 return Errno(exception);
             }
         }
+    }
+
+    /// <summary>Siehe <see cref="DiskFile"/>: Wachstum in Schritten mit Kontingent.</summary>
+    private long GrowStorage(FileStream stream, long from, long to)
+    {
+        if (to - from > QuotaBytes - GrownBytes)
+        {
+            return -LinuxErrno.ENOSPC;
+        }
+
+        long current = from;
+        while (current < to)
+        {
+            long next = Math.Min(to, current + StorageLock.ChunkBytes);
+            try
+            {
+                using (StorageLock.Enter())
+                {
+                    stream.SetLength(next);
+                    GrownBytes += next - current;
+                    GrowSteps++;
+                }
+            }
+            catch (Exception exception) when (FileErrors.IsFileError(exception))
+            {
+                return Errno(exception);
+            }
+
+            current = next;
+        }
+
+        return 0;
     }
 }

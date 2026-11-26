@@ -21,8 +21,9 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         _root = root;
     }
 
-    public LinuxNodeKind KindStorageLocked(string parent, string name)
+    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found)
     {
+        found = name;
         var mountPoints = new List<string>();
         foreach (VfsMount mount in VfsManager.Mounts)
         {
@@ -40,6 +41,9 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         {
             return LinuxNodeKind.Missing;
         }
+
+        // FAT findet auch über den 8.3-Kurznamen (FatInodeOperations.Lookup): den geführten Namen melden, DirectoryFileStore vergleicht.
+        found = child.Name;
 
         // Unlesbare Attribute: ablehnen statt einen Symlink zu übersehen.
         if (!child.InodeOperations.GetAttr(child, out VfsStat stat))

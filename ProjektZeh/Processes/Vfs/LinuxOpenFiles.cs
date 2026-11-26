@@ -415,7 +415,7 @@ internal sealed class LinuxDirectoryFile : LinuxOpenFile
             var list = new List<string>(names.Length + 1) { "dev" };
             foreach (string name in names)
             {
-                if (name != "dev")
+                if (!FileSystem.IsDevName(name))
                 {
                     list.Add(name);
                 }

@@ -764,7 +764,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
                 return -LinuxErrno.EACCES;
             }
 
-            if (current.Length == 0 && name == "dev")
+            if (current.Length == 0 && IsDevName(name))
             {
                 // /dev ist virtuell und verdeckt einen gleichnamigen Ordner des Speichers.
                 inDev = true;
@@ -773,7 +773,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
             }
 
             string child = current.Length == 0 ? name : current + "/" + name;
-            if (child.Length >= PathMax)
+            if (child.Length >= PathMax || Encoding.UTF8.GetByteCount(child) >= PathMax)
             {
                 return -LinuxErrno.ENAMETOOLONG; // auch aufgelöste Pfade bleiben unter PATH_MAX
             }
@@ -844,6 +844,9 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
 
         return 0;
     }
+
+    /// <summary>"dev" in der Wurzel nach der Namensregel des Speichers: auf FAT verdeckt /dev auch "DEV" und "Dev".</summary>
+    internal bool IsDevName(string name) => string.Equals(name, "dev", _store.NameComparison);
 
     private uint ParentMode(LinuxStoreNode rootNode) => _parents.Count > 0 ? _parents[^1].Node.Mode : rootNode.Mode;
 

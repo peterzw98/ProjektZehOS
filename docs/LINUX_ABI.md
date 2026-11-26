@@ -115,14 +115,29 @@ Grenzen (Review V2, bewusst offen):
 - Grenzen: Pfad ab 4096 Bytes und Teil über 255 Bytes (UTF-8) `-ENAMETOOLONG`, auch für aufgelöste Pfade; 40 Links `-ELOOP`; je Auflösung höchstens 4096 Teile
   (Eingabe und Linkziele), sonst `-ELOOP` (Abweichung: Linux kennt nur die Linkgrenze); 1024 offene Dateien je Dateisystem `-EMFILE`;
   Datei auf der Platte höchstens 1 GiB (`-EFBIG`, Schreiben bis zur Grenze wird gekürzt); `MemoryFileStore` 16 MiB je Datei, 64 MiB und 65 536 Einträge gesamt (`-ENOSPC`).
+- Wachstum auf der Platte: Cosmos-FAT kennt keine Lücken (Sparse) und nullt beim Verlängern sofort jeden Cluster. Deshalb wächst eine Datei (Lücke vor einem
+  `write` nach `lseek`, `ftruncate` nach oben) in Schritten von höchstens `StorageLock.ChunkBytes` (1 MiB), jeder unter einer eigenen Sperre, damit Desktop und
+  Shell dazwischen drankommen. Dazu ein Kontingent je Wurzel: höchstens 64 MiB Nettowachstum (`DirectoryFileStore.DefaultQuotaBytes`; vorhandene Dateien wie
+  Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC` (die Lücke wird vorher geprüft, nichts geschrieben),
+  ein Schreiben am Rand wird gekürzt. Volle Platte (`IOException` mit errno 28 oder Windows-Code) ist `-ENOSPC`, was Cosmos dabei meldet, ist im Gast nicht geprüft (sonst `-EIO`).
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
 - `close`: die Datei ist danach immer zu und zählt nicht mehr zum Budget; ein Fehler beim Schließen (Platte) kommt über `LinuxOpenFile.CloseChecked` als `-errno`, `ILinuxFile.Close` wirft bei Dateifehlern nicht.
 - Namen auf der Platte: was FAT oder Cosmos anders deuten könnte (`:`, `\`, Steuerzeichen, abschließender Punkt oder Leerzeichen, `.zehos-`-Systemnamen) gibt es nicht:
   Abfragen melden es als fehlend, Anlegen `-EINVAL`, Listen lassen es weg. Groß-/Kleinschreibung bestimmt das Laufwerk (`NameComparison`).
+  FAT findet einen Eintrag auch über seinen 8.3-Kurznamen (`_ZEHOS~1.DB` für `.zehos-security.db`); `CosmosLinuxDiskLinks` meldet den geführten Namen, und ein
+  Treffer, dessen Name nicht (bei FAT ohne Groß-/Kleinschreibung) gleich dem angefragten ist, gilt als fehlend (`-ENOENT`); Anlegen, `mkdir`, `symlink` und
+  `rename` auf einen solchen Zweitnamen sind `-EEXIST` (Abweichung von vfat, das den Zweitnamen auf denselben Eintrag deutet), damit nie ein vorhandener Eintrag über
+  ihn überschrieben wird. `/dev` verdeckt auf einem solchen Laufwerk jede Schreibweise (`/DEV`, `/Dev`).
 - `open`-Flags: Zugriff, `O_CREAT O_EXCL O_TRUNC O_APPEND O_DIRECTORY O_NOFOLLOW` wirken; `O_NOCTTY O_NONBLOCK O_SYNC O_DSYNC O_LARGEFILE O_NOATIME O_CLOEXEC`
   werden angenommen (CLOEXEC gehört zur Deskriptortabelle); `O_TMPFILE` `-EOPNOTSUPP`, übrige (`O_DIRECT`, `O_PATH`, `O_ASYNC`) `-EINVAL`;
   `O_CREAT|O_DIRECTORY` `-EINVAL` wie Linux ab 6.4. Eine entfernte, offene Datei bleibt les- und abfragbar (`MemoryFileStore`; Platte im Gast noch offen).
 - Offen: Anbindung an `run` (Prozesswurzel je Programm auf der Datenplatte), Gastlauf von `DirectoryFileStore` und `CosmosLinuxDiskLinks`, `/dev/urandom`,
-  `/tmp` im Speicher, Eingabe über `/dev/tty`.
+  `/tmp` im Speicher, Eingabe über `/dev/tty`. Weiter offen aus dem Review von #724:
+  - Wechsel zwischen Auflösung und Zugriff wird nur am letzten Teil erneut geprüft; Cosmos folgt beim Öffnen des Elternordners Links. Das gilt deshalb nur für einen
+    Prozess je Wurzel auf einem Laufwerk ohne Links (FAT); ein zweiter Akteur, der Zwischenordner durch Links ersetzt, ist nicht abgedeckt.
+  - `close`-Fehler kommen beim Programm erst an, wenn der Verteiler `CloseChecked` statt `Close` ruft.
+  - FAT-Sonderzeichen `? * " < >`, reservierte Namen (`CON`) und ein führendes Leerzeichen werden angenommen (Cosmos deutet sie nicht, chkdsk/Windows bemängeln sie).
+  - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
+  - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
