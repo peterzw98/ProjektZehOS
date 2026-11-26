@@ -123,7 +123,7 @@ internal static class LinuxSyscalls
             return -EINVAL;
         }
 
-        // Erst alle Längen prüfen (Summe über MaxRw ist EINVAL), dann schreiben, wie Linux.
+        // Erst alle Längen prüfen (Summe über MaxRw ist EINVAL; Linux kürzt stattdessen, siehe LINUX_ABI.md), dann schreiben.
         var bases = new ulong[cnt];
         var lens = new ulong[cnt];
         ulong total = 0;
@@ -173,10 +173,15 @@ internal static class LinuxSyscalls
     {
         ulong len = a.A1;
         int prot = (int)a.A2, flags = (int)a.A3;
-        long fd = (long)a.A4;
+        int fd = (int)a.A4; // int: ein zero-extended -1 muss EBADF ergeben
         if (len == 0 || (a.A5 & 0xfff) != 0 || ((flags & MapPrivate) != 0) == ((flags & MapShared) != 0))
         {
             return -EINVAL;
+        }
+
+        if ((prot & ~0x7) != 0)
+        {
+            return -EINVAL; // unbekannte Schutzbits wie Linux
         }
 
         if ((flags & MapAnonymous) == 0)
@@ -198,24 +203,31 @@ internal static class LinuxSyscalls
         return r == 0 ? -ENOMEM : unchecked((long)r);
     }
 
+    private const ulong MaxUserSpan = 1UL << 47;
+
     private static long DoMunmap(ILinuxProcess p, ulong addr, ulong len)
     {
-        if ((addr & 0xfff) != 0 || len == 0)
+        if ((addr & 0xfff) != 0 || len == 0 || len > MaxUserSpan || addr > MaxUserSpan)
         {
             return -EINVAL;
         }
 
-        return p.Unmap(addr, len) ? 0 : -EINVAL;
+        return p.Unmap(addr, (len + 0xfff) & ~0xfffUL) ? 0 : -EINVAL;
     }
 
     private static long DoMprotect(ILinuxProcess p, ulong addr, ulong len, int prot)
     {
-        if ((addr & 0xfff) != 0)
+        if ((addr & 0xfff) != 0 || len > MaxUserSpan || addr > MaxUserSpan || (prot & ~0x7) != 0)
         {
             return -EINVAL;
         }
 
-        return p.Protect(addr, len, prot) ? 0 : -ENOMEM;
+        if (len == 0)
+        {
+            return 0;
+        }
+
+        return p.Protect(addr, (len + 0xfff) & ~0xfffUL, prot) ? 0 : -ENOMEM;
     }
 
     private static long DoArchPrctl(ILinuxProcess p, ulong code, ulong arg)
@@ -223,8 +235,8 @@ internal static class LinuxSyscalls
         switch (code)
         {
             case ArchSetFs:
-                // Nur kanonische Adressen, sonst #GP beim Laden von FS.base.
-                if (arg >= 0x0000_8000_0000_0000UL && arg < 0xffff_8000_0000_0000UL)
+                // Nur Adressen der Benutzerhälfte (kanonisch, sonst #GP beim Laden von FS.base).
+                if (arg >= 0x0000_8000_0000_0000UL)
                 {
                     return -EPERM;
                 }

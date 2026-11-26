@@ -52,8 +52,9 @@ public sealed class LinuxSyscallsTests
         public bool TrySetBrk(ulong n) { if (n < 0x400000UL || n > 0x500000UL) return false; Brk = n; return true; }
         public ulong MapAnonymous(ulong len, int prot) { LastLen = len; return len > 0x1000000 ? 0UL : 0x7000_0000UL; }
         public ulong LastLen;
-        public bool Unmap(ulong a, ulong l) => true;
-        public bool Protect(ulong a, ulong l, int p) => true;
+        public ulong UnmapLen, ProtectLen;
+        public bool Unmap(ulong a, ulong l) { UnmapLen = l; return true; }
+        public bool Protect(ulong a, ulong l, int p) { ProtectLen = l; return true; }
         public ulong FsBase { get; set; }
         public ulong ClearChildTid { get; set; }
         public int Pid => 7;
@@ -155,6 +156,32 @@ public sealed class LinuxSyscallsTests
     }
 
     [TestMethod]
+    public void MunmapMprotectPruefenLaenge()
+    {
+        var p = new Proc();
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Munmap, 0x7000_0000, 5000));
+        Assert.AreEqual(8192UL, p.UnmapLen);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Munmap, 0x7000_0000, ulong.MaxValue));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Munmap, 0x7000_0000, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Munmap, 0x7000_0001, 4096));
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Mprotect, 0x7000_0000, 5000, 3));
+        Assert.AreEqual(8192UL, p.ProtectLen);
+        p.ProtectLen = 0;
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Mprotect, 0x7000_0000, 0, 3));
+        Assert.AreEqual(0UL, p.ProtectLen);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Mprotect, 0x7000_0000, 1UL << 48, 3));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Mprotect, 0x7000_0000, 4096, 0x100));
+    }
+
+    [TestMethod]
+    public void MmapFdIstInt()
+    {
+        var p = new Proc();
+        Assert.AreEqual(-LinuxSyscalls.EBADF, Call(p, LinuxSyscalls.Mmap, 0, 4096, 3, 0x02, 0xffff_ffffUL, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Mmap, 0, 4096, 0x100, 0x22, ulong.MaxValue, 0));
+    }
+
+    [TestMethod]
     public void ArchPrctlSetztUndLiestFs()
     {
         var p = new Proc();
@@ -163,6 +190,7 @@ public sealed class LinuxSyscallsTests
         Assert.AreEqual(0, Call(p, LinuxSyscalls.ArchPrctl, 0x1003, Base));
         Assert.AreEqual(0x7000_1000UL, BitConverter.ToUInt64(p.Mem.Data, 0));
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.ArchPrctl, 0x1002, 0x0000_8000_0000_0000UL));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.ArchPrctl, 0x1002, 0xffff_8000_0000_0000UL)); // Kernelhälfte
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.ArchPrctl, 0x1003, 0));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.ArchPrctl, 0x9999, 0));
     }
