@@ -81,6 +81,8 @@ cd "$src"
 export RUSTUP_TOOLCHAIN="$rust_channel" CCACHE_DISABLE=1
 export LADYBIRD_SOURCE_DIR="$src" LADYBIRD_MAIN_SOURCE_DIR="$src"
 export VCPKG_ROOT="$src/Build/vcpkg-distribution" VCPKG_MAX_CONCURRENCY="$jobs"
+# Heruntergeladene glibc-Werkzeuge starten in Alpine nicht.
+export VCPKG_FORCE_SYSTEM_BINARIES=1
 triplet=$(PYTHONPATH=Meta python3 -c 'from Utils.host_platform import Platform; from Utils.vcpkg_deps import determine_triplet; print(determine_triplet(Platform(), "Distribution"))')
 printf 'Ladybird %s, Triplet %s, Jobs %s\n' "$commit" "$triplet" "$jobs"
 
