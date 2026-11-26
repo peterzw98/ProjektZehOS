@@ -67,4 +67,63 @@ public sealed class ClassPlacementTests
         Assert.AreEqual(7, ClassPlacement.StealOrder(topology, 5, order));
         CollectionAssert.AreEqual(new[] { 4, 0, 1, 2, 3, 6, 7 }, order);
     }
+
+    // #674 V2: freiwilliger Umzug eines laufenden Threads weg vom belegten SMT-Geschwister.
+    private const long Long = 1_000, Short = 1;
+
+    private static int Move(CpuTopology topology, int cpu, ThreadClass?[] running, int[]? queued = null, bool[]? allowed = null,
+        long onCpu = Long, long sinceMove = Long)
+    {
+        allowed ??= Array.ConvertAll(new bool[topology.CpuCount], _ => true);
+        queued ??= new int[topology.CpuCount];
+        return ClassPlacement.SelectMoveTarget(topology, cpu, allowed, running, queued, onCpu, sinceMove, minOnCpu: 100, minSinceMove: 100);
+    }
+
+    [TestMethod]
+    public void SelectMoveTarget_SiblingBusy_WholeCoreFree_Moves() =>
+        Assert.AreEqual(2, Move(T2x2, 0, [N, N, null, null]));
+
+    [TestMethod]
+    public void SelectMoveTarget_FromSecondCore_MovesToFirst() =>
+        Assert.AreEqual(0, Move(T2x2, 3, [null, null, B, N]));
+
+    [TestMethod]
+    public void SelectMoveTarget_SiblingIdle_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, null, null, null]));
+
+    [TestMethod]
+    public void SelectMoveTarget_NoWholeFreeCore_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, N, null]));
+
+    [TestMethod]
+    public void SelectMoveTarget_FullLoad_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, N, N]));
+
+    [TestMethod]
+    public void SelectMoveTarget_QueuedOnFreeCore_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, null, null], queued: [0, 0, 0, 1]));
+
+    [TestMethod]
+    public void SelectMoveTarget_FreeCoreNotAllowed_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, null, null], allowed: [true, true, false, false]));
+
+    [TestMethod]
+    public void SelectMoveTarget_OnlyOneCpuOfFreeCoreAllowed_MovesThere() =>
+        Assert.AreEqual(3, Move(T2x2, 0, [N, N, null, null], allowed: [true, true, false, true]));
+
+    [TestMethod]
+    public void SelectMoveTarget_NoSmt_Stays() =>
+        Assert.AreEqual(-1, Move(T4x1, 0, [N, N, null, null]));
+
+    [TestMethod]
+    public void SelectMoveTarget_NotAQuantumOnCpuYet_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, null, null], onCpu: Short));
+
+    [TestMethod]
+    public void SelectMoveTarget_MovedRecently_Stays() =>
+        Assert.AreEqual(-1, Move(T2x2, 0, [N, N, null, null], sinceMove: Short));
+
+    [TestMethod]
+    public void SelectMoveTarget_WrongLengths_Throws() =>
+        Assert.ThrowsException<ArgumentException>(() => ClassPlacement.SelectMoveTarget(T2x2, 0, new bool[3], new ThreadClass?[4], new int[4], Long, Long, 100, 100));
 }
