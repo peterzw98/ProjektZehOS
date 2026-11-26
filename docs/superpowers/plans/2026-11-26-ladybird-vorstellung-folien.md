@@ -29,6 +29,8 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 
 ## 5. Zahlen zur Machbarkeit
 
+- **`js` im Gast so schnell wie unter Linux** (KVM, 1 CPU, je 3 Läufe, [Bericht](../specs/2026-11-26-ladybird-js-gast.md)): Sortieren 10 000 Einträge 10–11 ms vs. 9–10 ms, Schleife 1 Mio. 4–5 vs. 4 ms, `fib(25)` 6–10 vs. 6–7 ms, 10⁸ Durchläufe 407 vs. 402 ms. Nur der Programmstart ist langsamer: ~0,4 s im Gast vs. ~10 ms unter Linux.
+
 - Ladybird-Bau (glibc, ohne JIT) auf normalem PC: ~60 min, Spitzen-RAM ~4 GiB (der angenommene 32-GiB-Rechner war unnötig).
 - Laufzeitbedarf (L1-C): 334–438 MiB PSS für drei Testseiten, 7 Prozesse, 69 Threads.
 - Ganzes Ladybird mit musl: baut mit **87 Patchzeilen** (Grenze 1000); Start ohne Oberfläche noch offen.
