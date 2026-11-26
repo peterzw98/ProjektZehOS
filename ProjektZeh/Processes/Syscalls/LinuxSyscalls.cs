@@ -37,6 +37,10 @@ internal static partial class LinuxSyscalls
     {
         switch (a.Number)
         {
+            // Terminaleingabe (V3 stdin) hier, Dateien über DispatchFile (V2 Dateien, nur mit ILinuxFiles); ohne Dateien ist jeder
+            // andere fd -EBADF wie bei Linux, nicht -ENOSYS.
+            case Read when p is not ILinuxFiles || p.GetDescriptor((int)a.A0) is ILinuxInput: return DoReadInput(p, (int)a.A0, a.A1, a.A2);
+            case Readv when p is not ILinuxFiles || p.GetDescriptor((int)a.A0) is ILinuxInput: return DoReadvInput(p, (int)a.A0, a.A1, a.A2);
             case Write: return DoWrite(p, (int)a.A0, a.A1, a.A2);
             case Writev: return DoWritev(p, (int)a.A0, a.A1, a.A2);
             case ExitGroup:

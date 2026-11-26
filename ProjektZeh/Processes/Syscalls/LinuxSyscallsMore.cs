@@ -59,7 +59,7 @@ internal static partial class LinuxSyscalls
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
             case Futex: return DoFutex(p, ref a);
-            default: return -ENOSYS;
+            default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }
 
@@ -296,7 +296,7 @@ internal static partial class LinuxSyscalls
 
     private static long DoPoll(ILinuxProcess p, ulong fds, ulong nfds, long timeoutMs)
     {
-        const short PollOut = 4, PollNval = 0x20;
+        const short PollIn = 1, PollOut = 4, PollNval = 0x20;
         if (nfds > 1024)
         {
             return -EINVAL; // RLIMIT_NOFILE-Obergrenze
@@ -309,22 +309,60 @@ internal static partial class LinuxSyscalls
             return -EFAULT;
         }
 
+        long ready = PollScan(p, b, (int)nfds, PollIn, PollOut, PollNval, out ILinuxInput? waitFor);
+
+        // Wartet poll auf Terminaleingabe (V3 stdin), wartet die Eingabe selbst (in Scheiben, mit Abbruch), auch ohne Frist.
+        if (ready == 0 && timeoutMs != 0 && waitFor != null && waitFor.WaitInput(timeoutMs))
+        {
+            ready = PollScan(p, b, (int)nfds, PollIn, PollOut, PollNval, out _);
+        }
+        else if (ready == 0 && timeoutMs > 0 && waitFor == null && p is ILinuxHost host)
+        {
+            // Ohne bereite Einträge schläft poll die Frist ab (sonst drehen Warteschleifen, etwa poll(NULL, 0, ms)).
+            // Negative Frist (unendlich) schläft nie: es kann niemand wecken, Ergebnis 0. Ohne Host entfällt das Schlafen.
+            host.SleepNanos(timeoutMs * 1_000_000L);
+        }
+
+        if (nfds > 0 && !p.Memory.TryWrite(fds, b))
+        {
+            return -EFAULT;
+        }
+
+        return ready;
+    }
+
+    /// <summary>Setzt revents aller Einträge in <paramref name="b"/>; liefert die Zahl bereiter Einträge und eine Eingabe, auf die poll warten kann.</summary>
+    private static long PollScan(ILinuxProcess p, byte[] b, int nfds, short pollIn, short pollOut, short pollNval, out ILinuxInput? waitFor)
+    {
+        waitFor = null;
         long ready = 0;
-        for (int i = 0; i < (int)nfds; i++)
+        for (int i = 0; i < nfds; i++)
         {
             int fd = BitConverter.ToInt32(b, i * 8);
             short events = BitConverter.ToInt16(b, i * 8 + 4);
             short revents = 0;
             if (fd >= 0)
             {
-                if (p.GetDescriptor(fd) is null)
+                ILinuxDescriptor? d = p.GetDescriptor(fd);
+                if (d is null)
                 {
-                    revents = PollNval;
+                    revents = pollNval;
                 }
                 else
                 {
-                    // Nur Schreibbereitschaft ist bekannt (ILinuxDescriptor kann nur schreiben); Lesen meldet nie bereit.
-                    revents = (short)(events & PollOut);
+                    // Schreiben ist immer bereit; Lesen nur bei einer Eingabe mit Bytes, Eingabeende oder Abbruch (V3 stdin).
+                    revents = (short)(events & pollOut);
+                    if ((events & pollIn) != 0 && d is ILinuxInput input)
+                    {
+                        if (input.InputReady)
+                        {
+                            revents |= pollIn;
+                        }
+                        else
+                        {
+                            waitFor ??= input;
+                        }
+                    }
                 }
             }
 
@@ -333,18 +371,6 @@ internal static partial class LinuxSyscalls
             {
                 ready++;
             }
-        }
-
-        if (nfds > 0 && !p.Memory.TryWrite(fds, b))
-        {
-            return -EFAULT;
-        }
-
-        // Ohne bereite Einträge schläft poll die Frist ab (sonst drehen Warteschleifen, etwa poll(NULL, 0, ms)).
-        // Negative Frist (unendlich) schläft nie: es kann niemand wecken, Ergebnis 0. Ohne Host entfällt das Schlafen.
-        if (ready == 0 && timeoutMs > 0 && p is ILinuxHost host)
-        {
-            host.SleepNanos(timeoutMs * 1_000_000L);
         }
 
         return ready;

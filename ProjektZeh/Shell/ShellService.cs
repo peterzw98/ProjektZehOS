@@ -43,7 +43,15 @@ internal sealed partial class ShellService
     /// <summary>Legt den Kennwort-Worker beim Boot an, solange ein Thread-Start noch sicher Platz findet.</summary>
     internal static ResultErr StartPasswordWorker() => PasswordWorker.Start();
 
-    public bool TryInterrupt(ITextOutput output) => !closed && !IsSecretInput && InterruptJob?.Invoke(output) == true;
+    public bool TryInterrupt(ITextOutput output)
+    {
+        if (!closed && foreground != null)
+        {
+            InterruptForeground(output);
+            return true;
+        }
+        return !closed && !IsSecretInput && InterruptJob?.Invoke(output) == true;
+    }
 
     public void BeginSecretInput(Func<string, Func<Func<ResultErr>>> prepare) => secretInput = prepare;
 
@@ -52,7 +60,7 @@ internal sealed partial class ShellService
 
     public bool Poll(ITextOutput output)
     {
-        bool written = false;
+        bool written = PollForeground(output);
         if (!closed && TakeJobProgress?.Invoke() is string progress)
         {
             if (output is IProgressOutput live) live.WriteProgress(progress);
@@ -80,6 +88,7 @@ internal sealed partial class ShellService
     {
         if (closed) return;
         closed = true;
+        CloseForeground();
         history.Clear(); aliases.Clear(); DismissPager();
         secretInput = null;
         OnClose?.Invoke();
@@ -128,6 +137,8 @@ internal sealed partial class ShellService
     {
         SyncIdentity();
         if (closed || IsBusy) return ResultErr.CreateFailure(ResultCode.Failure, "Kennwortoperation laeuft oder Sitzung geschlossen.");
+        // Laeuft ein Programm im Vordergrund (run), ist die Zeile seine Eingabe, kein Befehl.
+        if (foreground != null) { foreground.Submit(line ?? ""); return ResultErr.CreateSuccess(); }
         if (secretInput != null)
         {
             // Geschlossene Fenster duerfen die globale Grenze nicht durch neue Sitzungen umgehen.
