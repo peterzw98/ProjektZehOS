@@ -92,7 +92,7 @@ Jeder Start meldete TSC 3072000000 Hz und LAPIC 4125 Ticks/ms. Jeder der 49 Warm
 | master `5e3c29c0` (smp.17), ohne Korrektur | 4/6 PASS | 2/5 PASS | 5/5 PASS |
 | Versuchspin `3.0.97-zehos.0.g333b59e` | 3/5 PASS | 5/5 PASS | 5/5 PASS |
 | Versuchspin `3.0.97-zehos.0.gbeeed95` | 2/5 PASS | 5/5 PASS | 5/5 PASS |
-| Pin-Kandidat `3.0.97-zehos.0.g0b51510` | 5/5 PASS | 5/5 PASS | 5/5 PASS |
+| Pin-Kandidat `3.0.97-zehos.0.g0b51510` | 5/5 PASS (Zufall, siehe unten) | 5/5 PASS | 5/5 PASS |
 
 Mit Korrektur sind beide Zaehler etwa gleich gross (zum Beispiel 47 085 810 und 48 873 975 Inkremente bei 2 vCPUs), ohne sie oft um ein Vielfaches verschieden. ISO A (Normalbau) mit dem Pin-Kandidaten erreicht `Desktop ist bereit.` mit 2 vCPUs 2/2 und mit 4 vCPUs 2/2, ohne `Panic` oder `CPU EXCEPTION`; mit dem Versuchspin `g333b59e` ebenso je 2/2.
 
@@ -100,6 +100,6 @@ Mit Korrektur sind beide Zaehler etwa gleich gross (zum Beispiel 47 085 810 und 
 
 ## Grenzen
 
-Keine Aussage zu echter Hardware, mehreren CPUs, anderen VMware-Versionen oder weiteren PCI-Segmenten. VMware-Mausbedienung, Aufloesungswechsel, Netzwerk, Kernelupdates und Rueckfallstart werden durch diese Korrektur nicht als neu geprueft bezeichnet. Es wurde kein PS/2-Treiber auf Verdacht veraendert; der beschriebene seltene ACK-Fehler bleibt offen.
+Keine Aussage zu echter Hardware, mehreren CPUs (ausser den Laeufen zu #727 oben), anderen VMware-Versionen oder weiteren PCI-Segmenten. VMware-Mausbedienung, Aufloesungswechsel, Netzwerk, Kernelupdates und Rueckfallstart werden durch diese Korrektur nicht als neu geprueft bezeichnet. Es wurde kein PS/2-Treiber auf Verdacht veraendert; der beschriebene seltene ACK-Fehler bleibt offen.
 
 Lokale Protokolle und ISO-Kopien liegen unter dem ignorierten `.tools/vmware-stability` und `.tools/vmware-source`; sie werden nicht als Quellcode eingecheckt.
