@@ -260,6 +260,7 @@ internal sealed class Desktop
         if (value.IsRepeat) return true;
         if (CloseNetworkFlyout()) return true;
         if (ClosePopup() || CloseMenu()) return true;
+        if (Windows.ActiveWindow?.Application.CapturesEscape == true) { Windows.Handle(value); return true; }
         if (!Windows.HasAppPointerCapture) return false;
         Windows.Handle(value);
         return true;

@@ -37,6 +37,10 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
     public int Zoom { get; private set; } = 1;
     public bool IsClosed { get; private set; }
     public bool IsCloseRequested => shell.ExitRequested;
+    /// <summary>Esc bricht ein laufendes Programm ab (run), statt den Desktop zu verlassen.</summary>
+    public bool CapturesEscape => shell.HasForeground;
+    // Laeuft ein Programm, steht seine angefangene Zeile ("> ") an Stelle des Shellprompts.
+    private string InputPrompt => shell.ForegroundPrompt ?? Prompt;
     private int CellWidth => glyphWidth * Zoom;
     private int CellHeight => glyphHeight * Zoom;
     private TerminalBuffer Output => pager ?? Buffer;
@@ -72,6 +76,12 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             return;
         }
         if (HandlePointer(value)) return;
+        if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape && pager == null && shell.HasForeground)
+        {
+            shell.TryInterrupt(Buffer);
+            ScrollOffset = 0;
+            return;
+        }
         if (value.Type == InputEventType.KeyDown && !value.IsTextKey)
         {
             if (value.KeyCode == (byte)PhysicalKey.PageUp) { Scroll(-visibleRows); return; }
@@ -91,9 +101,10 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
                 else if (shift && value.KeyCode == 47) PasteClipboard();
                 else if (value.KeyCode == 38) { Buffer.Clear(); ClearSelection(); ScrollOffset = 0; }
                 else if (value.KeyCode == 19 && !shell.IsSecretInput) Editor.SearchHistory();
+                else if (value.KeyCode == 32 && Editor.Text.Length == 0) shell.EndForegroundInput();
                 return;
             }
-            if (value.KeyCode == (byte)PhysicalKey.Tab && !shell.IsSecretInput && !shell.IsBusy)
+            if (value.KeyCode == (byte)PhysicalKey.Tab && !shell.IsSecretInput && !shell.IsBusy && !shell.HasForeground)
             {
                 var alternatives = Editor.Complete(shell);
                 if (alternatives.Count > 0)
@@ -118,7 +129,7 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         ScrollOffset = 0;
         cursorVisible = true;
         if (command == null) return;
-        Buffer.WriteLine(Prompt + (Editor.IsSecret ? "********" : command));
+        Buffer.WriteLine(shell.HasForeground ? InputPrompt + command : Prompt + (Editor.IsSecret ? "********" : command));
         var result = shell.ExecuteLine(command, Buffer);
         if (!result.IsOK()) Buffer.WriteLine(result.Message);
         SyncPager();
@@ -283,12 +294,13 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         if (pager != null) Text(surface, "less: Pfeile, Bild, q", x + 8, inputY, accent);
         else
         {
-            int inputColumns = Math.Max(1, (width - 16) / CellWidth - Prompt.Length - 1);
+            string prompt = InputPrompt;
+            int inputColumns = Math.Max(1, (width - 16) / CellWidth - prompt.Length - 1);
             string text = Editor.DisplayText;
             int start = Math.Max(0, Editor.Cursor - inputColumns + 1);
             string visible = text.Substring(start, Math.Min(inputColumns, text.Length - start));
-            Text(surface, Prompt, x + 8, inputY, accent);
-            int textLeft = x + 8 + Prompt.Length * CellWidth;
+            Text(surface, prompt, x + 8, inputY, accent);
+            int textLeft = x + 8 + prompt.Length * CellWidth;
             Text(surface, visible, textLeft, inputY, foreground);
             if (start == 0 && Editor.Suggestion is { } suggestion && suggestion.Length <= inputColumns)
                 Text(surface, suggestion.AsSpan(text.Length), textLeft + text.Length * CellWidth, inputY, UiPainter.Mix(foreground, background, 40));

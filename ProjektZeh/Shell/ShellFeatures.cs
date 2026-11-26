@@ -158,7 +158,8 @@ internal sealed partial class ShellService
     public bool CanRemember(string line)
     {
         SyncIdentity();
-        if (IsSecretInput || IsBusy) return false;
+        // Eingaben an ein laufendes Programm gehoeren nicht in den Shellverlauf.
+        if (IsSecretInput || IsBusy || foreground != null) return false;
         var remembered = new StringBuilder(line.Length);
         bool quoted = false;
         foreach (char character in line)

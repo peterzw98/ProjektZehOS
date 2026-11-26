@@ -15,6 +15,8 @@ internal interface IApplication
     bool NeedsAnimation => false;
     /// <summary>true, solange die Anwendung den Zeiger eingefangen hat; dann erhaelt sie alle Zeigerereignisse.</summary>
     bool CapturesPointer => false;
+    /// <summary>true, solange die Anwendung Esc selbst braucht (etwa zum Abbruch eines Programms); dann verlaesst Esc den Desktop nicht.</summary>
+    bool CapturesEscape => false;
     bool RequestClose() => true;
     void Close();
 }

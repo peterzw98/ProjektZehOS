@@ -89,6 +89,7 @@ internal sealed class TerminalWorkspaceApp : IApplication
     public int ActiveTabIndex { get; private set; }
     public int ViewCount => tabs.Count == 0 ? 0 : tabs[ActiveTabIndex].Leaves.Count;
     public TerminalApp ActiveTerminal => tabs[ActiveTabIndex].Active.Terminal!;
+    public bool CapturesEscape => !closed && tabs.Count > 0 && !menuOpen && !searchOpen && ActiveTerminal.CapturesEscape;
     public int Profile { get; private set; }
     public bool IsCloseRequested => closed;
 
