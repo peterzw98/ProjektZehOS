@@ -91,6 +91,20 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     private readonly string _root;
     private readonly ILinuxDiskLinks _links;
 
+    // Offene Einträge je Speicherpfad: Cosmos schiebt das Entfernen einer offenen Datei bis zum letzten Schließen auf
+    // (VfsManager.Paths.cs MarkPendingIfOpen), sie belegt so lange weiter Platz. Die Gutschrift fürs Kontingent hängt deshalb am
+    // Eintrag, nicht am Namen, und kommt erst beim letzten Schließen. Zugriff nur unter StorageLock.
+    private readonly Dictionary<string, OpenEntry> _openEntries;
+
+    /// <summary>Ein offener Eintrag; mehrere Deskriptoren auf dieselbe Datei teilen ihn.</summary>
+    private sealed class OpenEntry
+    {
+        public int OpenCount;
+
+        /// <summary>Entfernt oder ersetzt, solange offen: beim letzten Schließen die dann belegte Länge gutschreiben.</summary>
+        public bool Detached;
+    }
+
     private DirectoryFileStore(string root, ILinuxDiskLinks links, StringComparison nameComparison, long maxFileBytes, long quotaBytes)
     {
         _root = root;
@@ -98,6 +112,83 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         NameComparison = nameComparison;
         MaxFileBytes = maxFileBytes;
         QuotaBytes = quotaBytes;
+        _openEntries = new Dictionary<string, OpenEntry>(nameComparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Anzahl der offenen Einträge (Tests).</summary>
+    internal int OpenEntryCount => _openEntries.Count;
+
+    private OpenEntry AttachStorageLocked(string path)
+    {
+        if (!_openEntries.TryGetValue(path, out OpenEntry? entry))
+        {
+            entry = new OpenEntry();
+            _openEntries[path] = entry;
+        }
+
+        entry.OpenCount++;
+        return entry;
+    }
+
+    /// <summary>
+    /// Ein Eintrag verschwindet unter seinem Namen (unlink, ersetzt durch rename). Ist er offen, wird er abgelöst und die Gutschrift
+    /// auf das letzte Schließen verschoben; sonst gleich gutschreiben.
+    /// </summary>
+    private void DetachStorageLocked(string path, long length)
+    {
+        if (_openEntries.Remove(path, out OpenEntry? entry))
+        {
+            entry.Detached = true;
+            return;
+        }
+
+        GrownBytes -= length;
+    }
+
+    /// <summary>Umbenennen: offene Einträge unter <paramref name="from"/> (auch in einem umbenannten Ordner) wandern mit.</summary>
+    private void MoveEntriesStorageLocked(string from, string to)
+    {
+        var moved = new List<KeyValuePair<string, OpenEntry>>();
+        foreach (KeyValuePair<string, OpenEntry> entry in _openEntries)
+        {
+            if (string.Equals(entry.Key, from, NameComparison) || entry.Key.StartsWith(from + "/", NameComparison))
+            {
+                moved.Add(entry);
+            }
+        }
+
+        foreach (KeyValuePair<string, OpenEntry> entry in moved)
+        {
+            _openEntries.Remove(entry.Key);
+            _openEntries[string.Concat(to, entry.Key.AsSpan(from.Length))] = entry.Value;
+        }
+    }
+
+    /// <summary>
+    /// Ein Deskriptor des Eintrags schließt. Beim letzten: ein abgelöster Eintrag gibt die beim Schließen belegte Länge frei, ein
+    /// noch benannter verlässt nur die Tabelle (seine Länge bleibt belegt, die Datei besteht weiter).
+    /// </summary>
+    private void ReleaseStorageLocked(OpenEntry entry, long lengthAtClose)
+    {
+        if (--entry.OpenCount > 0)
+        {
+            return;
+        }
+
+        if (entry.Detached)
+        {
+            GrownBytes -= lengthAtClose;
+            return;
+        }
+
+        foreach (KeyValuePair<string, OpenEntry> pair in _openEntries)
+        {
+            if (ReferenceEquals(pair.Value, entry))
+            {
+                _openEntries.Remove(pair.Key);
+                break;
+            }
+        }
     }
 
     /// <summary>Kontingent für das Nettowachstum (siehe <see cref="DefaultQuotaBytes"/>).</summary>
@@ -291,7 +382,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 // Ohne Puffer (1 Byte): Schreibfehler zeigen sich beim write, nicht erst beim Schließen, das keinen Fehler melden kann.
                 var stream = new FileStream(Full(path), System.IO.FileMode.Open, write ? FileAccess.ReadWrite : FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete, 1);
-                file = new DiskFile(this, stream);
+                file = new DiskFile(this, stream, AttachStorageLocked(path));
                 return 0;
             }
         }
@@ -321,7 +412,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                 }
 
                 var stream = new FileStream(Full(path), System.IO.FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1);
-                file = new DiskFile(this, stream);
+                file = new DiskFile(this, stream, AttachStorageLocked(path));
                 return 0;
             }
         }
@@ -406,7 +497,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
                 long freed = kind == LinuxNodeKind.File ? new FileInfo(Full(path)).Length : 0;
                 File.Delete(Full(path));
-                GrownBytes -= freed; // eine noch offene Datei belegt unter Cosmos/FAT weiter; Näherung zugunsten des Programms
+                DetachStorageLocked(path, freed);
                 return 0;
             }
         }
@@ -507,14 +598,23 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             }
 
             File.Delete(source);
-            GrownBytes -= replaced;
+            if (existing != LinuxNodeKind.Missing)
+            {
+                DetachStorageLocked(to, replaced);
+            }
+
             return 0;
         }
 
         if (kind != LinuxNodeKind.Directory)
         {
             File.Move(source, target, true);
-            GrownBytes -= replaced;
+            if (existing != LinuxNodeKind.Missing)
+            {
+                DetachStorageLocked(to, replaced);
+            }
+
+            MoveEntriesStorageLocked(from, to);
             return 0;
         }
 
@@ -524,6 +624,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         }
 
         Directory.Move(source, target);
+        MoveEntriesStorageLocked(from, to);
         return 0;
     }
 
@@ -594,12 +695,14 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     private sealed class DiskFile : ILinuxStoreFile
     {
         private readonly DirectoryFileStore _store;
+        private readonly OpenEntry _entry;
         private FileStream? _stream;
 
-        public DiskFile(DirectoryFileStore store, FileStream stream)
+        public DiskFile(DirectoryFileStore store, FileStream stream, OpenEntry entry)
         {
             _store = store;
             _stream = stream;
+            _entry = entry;
         }
 
         public long Length()
@@ -680,6 +783,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             if (length < 0)
             {
                 return length;
+            }
+
+            if (offset > length && offset - length + 1 > _store.QuotaBytes - _store.GrownBytes)
+            {
+                return -LinuxErrno.ENOSPC; // Lücke und mindestens ein Byte passen nicht: nichts anlegen
             }
 
             if (offset > length)
@@ -787,17 +895,35 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             }
 
             // Schließen kann noch schreiben; scheitert das, ist die Datei trotzdem zu (wie close unter Linux nach -EIO).
-            try
+            using (StorageLock.Enter())
             {
-                using (StorageLock.Enter())
+                long lengthAtClose = LengthForCreditStorageLocked(stream);
+                try
                 {
                     stream.Dispose();
                     return 0;
                 }
+                catch (Exception exception) when (FileErrors.IsFileError(exception))
+                {
+                    return Errno(exception);
+                }
+                finally
+                {
+                    _store.ReleaseStorageLocked(_entry, lengthAtClose);
+                }
+            }
+        }
+
+        /// <summary>Belegte Länge für die Gutschrift; ist sie nicht lesbar, 0 (dann keine Gutschrift, das Kontingent bleibt vorsichtig belegt).</summary>
+        private static long LengthForCreditStorageLocked(FileStream stream)
+        {
+            try
+            {
+                return stream.Length;
             }
             catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
-                return Errno(exception);
+                return 0;
             }
         }
     }
