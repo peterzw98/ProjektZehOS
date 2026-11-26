@@ -293,6 +293,9 @@ public class Kernel : Sys.Kernel
         TR.RunIf(smp, "InterruptEvent_WakesThreadOnOtherCpu", TestInterruptEventWakesThreadOnOtherCpu, OneCpuCell);
         TR.RunIf(smp, "Mutex_CrossCpuHandoff", TestMutexCrossCpuHandoff, OneCpuCell);
         TR.RunIf(smp, "SetScheduler_SwapsWhileOtherCpusRun", TestSetSchedulerSwapsWhileOtherCpusRun, OneCpuCell);
+        // ZehOS patch smt-sibling-yield, see PATCHES.md
+        TR.RunIf(smp, "VoluntaryMove_RunningThread_MovesAndKeepsSet", VoluntaryMoveCells.MovesRunningThreadAndKeepsSet, OneCpuCell);
+        TR.RunIf(smp, "VoluntaryMove_BusyTarget_IsStale", VoluntaryMoveCells.BusyTargetIsStale, OneCpuCell);
         Sys.Threading.ThreadAffinity.Current = mainSet;
         // Main on a thread of its own (CosmosOS/Cosmos#3344, SMP phase 5b): its stack is not
         // the boot stack, it parks on a contended mutex and in CoreLib's waits, and the
