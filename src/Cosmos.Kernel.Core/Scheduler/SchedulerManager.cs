@@ -1605,17 +1605,24 @@ public static class SchedulerManager
 
             // ZehOS patch user-cr3, see PATCHES.md: the binding ends with the
             // thread, so that its table can go after Join. A thread exiting
-            // itself leaves the table on this CPU now; any other is not running.
-            if (ReferenceEquals(CurrentThread, thread))
+            // itself leaves the table on this CPU now.
+            bool self = ReferenceEquals(CurrentThread, thread);
+            if (self)
             {
                 Memory.UserPageTable.UnbindCurrentThread();
             }
-            else
+
+            PerCpuState state = AcquireThreadQueueLock(thread);
+            // Any other thread under its queue lock, in one step with Dead:
+            // the switch to it reads the binding under that lock, so it either
+            // came first, and its CPU stays counted in the table until it
+            // switches away, or it cannot come. Unbound before the lock, the
+            // switch could read the table after Dispose had freed it.
+            if (!self)
             {
                 Memory.UserPageTable.Unbind(thread);
             }
 
-            PerCpuState state = AcquireThreadQueueLock(thread);
             thread.State = SchedulerThreadState.Dead;
             s_currentScheduler.OnThreadExit(state, thread);
             state._lock.Release();

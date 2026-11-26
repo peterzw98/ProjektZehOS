@@ -41,9 +41,6 @@ internal abstract class UserPageTableArch
     public abstract void Destroy(ulong root);
 
     // ZehOS patch user-cr3, see PATCHES.md
-    /// <summary>The access of a mapped page. Caller holds the table's lock.</summary>
-    public abstract bool TryGetAccess(ulong root, ulong user, out bool writable, out bool executable);
-
     /// <summary>The root this CPU translates through now. Interrupts masked.</summary>
     public abstract ulong ReadRoot();
 
@@ -120,11 +117,21 @@ public sealed unsafe class UserPageTable : IDisposable
     private int _bound;
 
     /// <summary>
-    /// CPUs whose CR3 holds the table. Raised before the CR3 write and lowered
-    /// after the next one, interlocked: a full barrier each, which the check
-    /// in <see cref="TryProtect"/> and <see cref="Unmap"/> pairs with.
+    /// CPUs whose CR3 holds the table, and <see cref="Changing"/> while an
+    /// entry is rewritten. Raised before the CR3 write, never while
+    /// <see cref="Changing"/> is set, and lowered after the next CR3 write,
+    /// interlocked: a full barrier each, which <see cref="TryBeginChange"/> pairs with.
     /// </summary>
     private int _active;
+
+    /// <summary>
+    /// Bit of <see cref="_active"/> that holds off every switch to the table
+    /// while <see cref="TryProtect"/> or <see cref="Unmap"/> rewrites an
+    /// entry: set only under <see cref="_lock"/>, and only while no other
+    /// CPU holds the table, so no CPU can read the entry into its TLB before
+    /// the change is complete. Held for a few instructions, interrupts masked.
+    /// </summary>
+    private const int Changing = 1 << 30;
 
     private UserPageTable(ulong root)
     {
@@ -218,24 +225,16 @@ public sealed unsafe class UserPageTable : IDisposable
 
         using (_lock.AcquireIrqSafe())
         {
-            if (_root == 0 || ActiveElsewhere()
-                || !s_arch!.TryGetAccess(_root, user, out bool oldWritable, out bool oldExecutable)
-                || !s_arch.TryProtect(_root, user, writable, executable))
+            // Refused before the entry is touched: a write taken back later
+            // would leave a window in which another CPU caches the new entry.
+            if (_root == 0 || !TryBeginChange(out int here))
             {
                 return false;
             }
 
-            // A CPU that switched to the table since the first check may have
-            // read the old entry into its TLB, which nothing here can drop:
-            // the old entry goes back, and that CPU's copy is right again.
-            if (!SettleChange(user))
-            {
-                s_arch.TryProtect(_root, user, oldWritable, oldExecutable);
-                InvalidateHere(user);
-                return false;
-            }
-
-            return true;
+            bool changed = s_arch!.TryProtect(_root, user, writable, executable);
+            EndChange(here, user);
+            return changed;
         }
     }
 
@@ -252,22 +251,14 @@ public sealed unsafe class UserPageTable : IDisposable
 
         using (_lock.AcquireIrqSafe())
         {
-            if (_root == 0 || ActiveElsewhere()
-                || !s_arch!.TryGetAccess(_root, user, out bool oldWritable, out bool oldExecutable))
+            // As in TryProtect: refused before the entry is touched.
+            if (_root == 0 || !TryBeginChange(out int here))
             {
                 return 0;
             }
 
-            ulong frame = s_arch.Unmap(_root, user);
-            if (frame != 0 && !SettleChange(user))
-            {
-                // As in TryProtect. The tables on the way still exist, so the
-                // map allocates nothing and cannot fail.
-                s_arch.TryMap(_root, user, frame, oldWritable, oldExecutable);
-                InvalidateHere(user);
-                return 0;
-            }
-
+            ulong frame = s_arch!.Unmap(_root, user);
+            EndChange(here, user);
             return frame;
         }
     }
@@ -428,7 +419,7 @@ public sealed unsafe class UserPageTable : IDisposable
         // in TryProtect never misses a CPU that may hold a translation.
         if (table is not null)
         {
-            Interlocked.Increment(ref table._active);
+            EnterActive(table);
         }
 
         s_arch!.LoadRoot(table is null ? state._kernelRoot : table._root);
@@ -439,31 +430,70 @@ public sealed unsafe class UserPageTable : IDisposable
         }
     }
 
-    /// <summary>Whether a CPU other than this one holds the table. Interrupts masked.</summary>
-    private bool ActiveElsewhere()
+    /// <summary>
+    /// Counts this CPU into <see cref="_active"/>, waiting out a change in
+    /// progress: its holder masks interrupts, takes no further lock and
+    /// finishes in a few instructions, so the wait is bounded even under a
+    /// queue lock. Interrupts masked.
+    /// </summary>
+    private static void EnterActive(UserPageTable table)
     {
-        int here = IsLoadedHere() ? 1 : 0;
-        return Volatile.Read(ref _active) > here;
+        while (true)
+        {
+            int value = Volatile.Read(ref table._active);
+            if ((value & Changing) == 0
+                && Interlocked.CompareExchange(ref table._active, value + 1, value) == value)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sets <see cref="Changing"/> when no CPU but this one holds the table;
+    /// from then on none can load it until <see cref="EndChange"/>. Caller
+    /// holds <see cref="_lock"/>, interrupts masked.
+    /// </summary>
+    /// <param name="here">1 when this CPU holds the table, else 0: the count <see cref="EndChange"/> restores.</param>
+    /// <returns>False, with nothing set, while another CPU holds the table (no shootdown before N4).</returns>
+    private bool TryBeginChange(out int here)
+    {
+        here = IsLoadedHere() ? 1 : 0;
+        while (true)
+        {
+            // Changing is never set here: only the holder of _lock sets it.
+            // A CPU that enters or leaves meanwhile fails the exchange, and
+            // the retry sees the new count.
+            int value = Volatile.Read(ref _active);
+            if (value > here)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _active, value | Changing, value) == value)
+            {
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drops this CPU's copy of the changed entry and lets switches to the
+    /// table go on. While <see cref="Changing"/> was set no other CPU could
+    /// enter or leave, and this one did not switch: the count is
+    /// <paramref name="here"/> still. The exchange is a full barrier, so a
+    /// CPU that enters afterwards loads CR3 after the entry's write.
+    /// </summary>
+    private void EndChange(int here, ulong user)
+    {
+        InvalidateHere(user);
+        Interlocked.Exchange(ref _active, here);
     }
 
     private bool IsLoadedHere()
     {
         PerCpuState? state = SchedulerManager.CurrentCpuState;
         return state is not null && ReferenceEquals(state._loadedTable, this);
-    }
-
-    /// <summary>
-    /// After an entry changed: drops this CPU's copy and says whether no other
-    /// CPU switched to the table meanwhile. The barrier orders the entry
-    /// write before the count's read; a switch counted after that read loads
-    /// CR3 after the write and walks the new entry.
-    /// </summary>
-    private bool SettleChange(ulong user)
-    {
-        Interlocked.MemoryBarrier();
-        bool alone = !ActiveElsewhere();
-        InvalidateHere(user);
-        return alone;
     }
 
     private void InvalidateHere(ulong user)

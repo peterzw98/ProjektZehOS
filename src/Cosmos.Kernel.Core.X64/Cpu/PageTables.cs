@@ -151,15 +151,6 @@ internal sealed unsafe class PageTables : UserPageTableArch
     }
 
     // ZehOS patch user-cr3, see PATCHES.md
-    public override bool TryGetAccess(ulong root, ulong user, out bool writable, out bool executable)
-    {
-        ulong* entry = FindEntry(root, user, create: false);
-        ulong value = entry == null ? 0 : *entry;
-        writable = (value & FlagWritable) != 0;
-        executable = (value & FlagNoExecute) == 0;
-        return (value & FlagPresent) != 0;
-    }
-
     public override ulong ReadRoot() => Bridge.X64CpuNative.ReadCr3();
 
     /// <summary>

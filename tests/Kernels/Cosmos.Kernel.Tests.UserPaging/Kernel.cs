@@ -28,7 +28,7 @@ namespace Cosmos.Kernel.Tests.UserPaging;
 public unsafe class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 23;
+    private const int ExpectedTestCount = 24;
 
     /// <summary>A user address with a different index on every level.</summary>
     private const ulong User = 0x0000_1234_5678_9000;
@@ -86,6 +86,7 @@ public unsafe class Kernel : Sys.Kernel
         TR.RunIf(twoCpus, "ActiveOnOtherCpu_ProtectUnmapRefused", TestActiveElsewhere, "needs two CPUs");
         TR.RunIf(twoCpus, "BoundNotRunning_ChangeSeenAfterSwitch", TestBoundNotRunning, "needs two CPUs");
         TR.RunIf(twoCpus, "Kill_RunningBound_EndsBindingAtSwitch", TestKillRunning, "needs two CPUs");
+        TR.RunIf(twoCpus, "Protect_RacingSwitches_RefusalWritesNothing", TestProtectRace, "needs two CPUs");
         TR.Finish();
     }
 
@@ -364,6 +365,9 @@ public unsafe class Kernel : Sys.Kernel
     private static volatile uint s_workerCpu;
     private static volatile uint s_victimId = CpuExceptionInfo.NoThread;
     private static ulong s_sink;
+    private static int s_seenChanges;
+    private const int ProtectRaceRounds = 200_000;
+    private const int ProtectRaceEnough = 1000;
 
 #if ARCH_X64
     /// <summary>The root this CPU translates through.</summary>
@@ -829,6 +833,114 @@ public unsafe class Kernel : Sys.Kernel
         UserPageTable.UnbindCurrentThread();
     }
 
+    // A bound thread on the other CPU switches in and out without pause,
+    // against a filler thread there, while Main flips the page's write bit.
+    // A refusal must not touch the entry at all (no write taken back later):
+    // the worker, each time it runs, reads the entry and counts every change
+    // of the bit it sees. It may miss changes, never see more than Main made.
+    private static void TestProtectRace()
+    {
+        Reset();
+        s_seenChanges = 0;
+        s_tableA = TableWith(ValueA, out ulong frame);
+        CpuSet mainSet = ThreadAffinity.Current;
+        int done = 0;
+        int refused = 0;
+        bool writable = true;
+        try
+        {
+            Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
+            s_workerCpu = OtherCpu();
+            var filler = new SysThread(FillerWorker);
+            var worker = new SysThread(RacingWorker);
+            filler.Start();
+            worker.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
+            for (int i = 0; i < ProtectRaceRounds && (done < ProtectRaceEnough || refused < ProtectRaceEnough); i++)
+            {
+                if (s_tableA.TryProtect(User, !writable, false))
+                {
+                    writable = !writable;
+                    done++;
+                }
+                else
+                {
+                    refused++;
+                    if (LeafWritable(s_tableA, User) != writable)
+                    {
+                        Fail("a refused protect left the entry changed");
+                    }
+                }
+            }
+
+            s_release = true;
+            Assert.True(worker.Join(JoinTimeoutMs) && filler.Join(JoinTimeoutMs), "the workers end");
+            AssertWorkerClean();
+            Assert.True(done > 0 && refused > 0, "changes went through and were refused, both");
+            Assert.True(Volatile.Read(ref s_seenChanges) <= done, "the worker saw no change Main did not make");
+            Assert.True(s_tableA.TryTranslate(User, true, out _) == writable, "the entry holds the last change");
+            Assert.True(s_tableA.Unmap(User) == frame, "unmap once no CPU runs on the table");
+            Release(s_tableA);
+        }
+        finally
+        {
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(frame);
+    }
+
+    private static void RacingWorker()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the worker runs on the other CPU");
+            s_step = 1;
+            return;
+        }
+
+        s_tableA!.BindToCurrentThread();
+        s_step = 1;
+        bool last = LeafWritable(s_tableA, User);
+        while (!s_release)
+        {
+            for (int i = 0; i < 64; i++)
+            {
+                bool now = LeafWritable(s_tableA, User);
+                if (now != last)
+                {
+                    last = now;
+                    Interlocked.Increment(ref s_seenChanges);
+                }
+            }
+
+            if (*(ulong*)User != ValueA)
+            {
+                Fail("the worker reads its page");
+            }
+
+            // To the filler: the CPU loads its kernel root and back.
+            SysThread.Yield();
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    private static void FillerWorker()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the filler runs on the other CPU");
+            return;
+        }
+
+        while (!s_release)
+        {
+            SysThread.Yield();
+        }
+    }
+
     // A bound thread that sleeps leaves its CPU on the kernel root: the change
     // goes through, and the switch back walks the new entry.
     private static void TestBoundNotRunning()
@@ -947,6 +1059,8 @@ public unsafe class Kernel : Sys.Kernel
     private const int KernelHalf = 256;
     private const int Entries = 512;
 
+    private static bool LeafWritable(UserPageTable table, ulong user) => (Leaf(table, user, out _) & 2) != 0;
+
     private static ulong* KernelPml4() => At(X64CpuNative.ReadCr3() & AddrMask);
 
     private static void TestShareFillsUpperHalf()
@@ -1030,6 +1144,8 @@ public unsafe class Kernel : Sys.Kernel
         Assert.True((At(pdpt)[0] & Present) != 0, "a table created before sees the mapping");
     }
 #else
+    private static bool LeafWritable(UserPageTable table, ulong user) => false;
+
     private static void TestShareFillsUpperHalf()
     {
     }
