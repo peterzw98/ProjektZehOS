@@ -88,6 +88,21 @@ public sealed class ClassPlacementTests
         Assert.AreEqual(0, Move(T2x2, 3, [null, null, B, N]));
 
     [TestMethod]
+    public void SelectMoveTarget_PrefersCoreWhollyAllowed()
+    {
+        // Drei Kerne {0,1} {2,3} {4,5}; CPU 0 nicht erlaubt (Hauptschleife): Kern {4,5} vor {0,1}, obwohl beide frei sind.
+        var t3x2 = CpuTopology.FromApicIds([0, 1, 2, 3, 4, 5], 1, 3);
+        Assert.AreEqual(4, Move(t3x2, 2, [null, null, N, N, null, null], allowed: [false, true, true, true, true, true]));
+    }
+
+    [TestMethod]
+    public void SelectMoveTarget_OnlyPartlyAllowedCoreFree_TakesIt()
+    {
+        var t3x2 = CpuTopology.FromApicIds([0, 1, 2, 3, 4, 5], 1, 3);
+        Assert.AreEqual(1, Move(t3x2, 2, [null, null, N, N, N, null], allowed: [false, true, true, true, true, true]));
+    }
+
+    [TestMethod]
     public void SelectMoveTarget_SiblingIdle_Stays() =>
         Assert.AreEqual(-1, Move(T2x2, 0, [N, null, null, null]));
 
