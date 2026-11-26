@@ -60,11 +60,11 @@ internal static partial class LinuxSyscalls
             case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
             case Nanosleep: return DoNanosleep(p, a.A0, a.A1);
             case ClockNanosleep: return DoClockNanosleep(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
-            // Ein Benutzer ohne Konten: alles läuft als root (wie der Lader es in AT_UID meldet, solange Uid 0 ist).
+            // Ein Benutzer ohne Konten: der Wert kommt aus dem Prozess und ist derselbe wie AT_UID/AT_GID im Startstack.
             case Getuid:
-            case Geteuid:
+            case Geteuid: return (long)p.Uid;
             case Getgid:
-            case Getegid: return 0;
+            case Getegid: return (long)p.Gid;
             case Futex: return DoFutex(p, ref a);
             default: return -ENOSYS;
         }

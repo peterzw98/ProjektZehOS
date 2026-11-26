@@ -49,6 +49,8 @@ public sealed class LinuxSyscallsTests
         public IUserMemory Memory => Mem;
         public ILinuxDescriptor? GetDescriptor(int fd) => fd == 1 ? Out : null;
         public ulong Brk { get; set; } = 0x400000UL;
+        public ulong Uid { get; set; } = 1000;
+        public ulong Gid { get; set; } = 2000;
         public bool TrySetBrk(ulong n) { if (n < 0x400000UL || n > 0x500000UL) return false; Brk = n; return true; }
         public ulong MapAnonymous(ulong len, int prot) { LastLen = len; return len > 0x1000000 ? 0UL : 0x7000_0000UL; }
         public ulong LastLen;
@@ -376,10 +378,11 @@ public sealed class LinuxSyscallsTests
     public void IdentitaetUndMapFixed()
     {
         var p = new Proc();
-        foreach (long nr in new[] { LinuxSyscalls.Getuid, LinuxSyscalls.Geteuid, LinuxSyscalls.Getgid, LinuxSyscalls.Getegid })
-        {
-            Assert.AreEqual(0L, Call(p, nr));
-        }
+        // Die Werte kommen aus dem Prozess (derselbe Wert wie AT_UID/AT_GID), nicht fest.
+        Assert.AreEqual(1000L, Call(p, LinuxSyscalls.Getuid));
+        Assert.AreEqual(1000L, Call(p, LinuxSyscalls.Geteuid));
+        Assert.AreEqual(2000L, Call(p, LinuxSyscalls.Getgid));
+        Assert.AreEqual(2000L, Call(p, LinuxSyscalls.Getegid));
 
         const ulong Fl = 0x32; // PRIVATE | FIXED | ANONYMOUS
         Assert.AreEqual(0x20_0000L, Call(p, LinuxSyscalls.Mmap, 0x20_0000, 5000, 3, Fl, ulong.MaxValue));
@@ -488,6 +491,8 @@ public sealed class LinuxSyscallsTests
         public IUserMemory Memory => Mem;
         public ILinuxDescriptor? GetDescriptor(int fd) => null;
         public ulong Brk => 0;
+        public ulong Uid => 1000;
+        public ulong Gid => 1000;
         public bool TrySetBrk(ulong n) => false;
         public ulong MapAnonymous(ulong len, int prot) => 0;
         public bool Unmap(ulong a, ulong l) => false;

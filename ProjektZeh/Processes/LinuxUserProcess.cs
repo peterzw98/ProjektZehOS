@@ -59,6 +59,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     private ulong _brkStart;
     private ulong _brk;
     private ulong _fsBase;
+    private ulong _uid = 1000;
+    private ulong _gid = 1000;
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
@@ -88,6 +90,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     public int Pid { get; }
 
     public ulong Brk => _brk;
+
+    /// <summary>Kommt aus dem geladenen Abbild (AT_UID); vor <see cref="Load"/> gilt 1000.</summary>
+    public ulong Uid => _uid;
+
+    public ulong Gid => _gid;
 
     public ulong ClearChildTid { get; set; }
 
@@ -127,6 +134,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     public ResultErr Load(UserImage image, ReadOnlySpan<byte> elf)
     {
         ArgumentNullException.ThrowIfNull(image);
+        _uid = image.Uid;
+        _gid = image.Gid;
         ResultErr reserved = image.Reserve(_map);
         if (!reserved.IsOK())
         {

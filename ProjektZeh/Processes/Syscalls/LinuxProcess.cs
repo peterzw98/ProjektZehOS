@@ -20,6 +20,12 @@ internal interface ILinuxProcess
     /// <summary>Aktuelles Programmende (brk).</summary>
     ulong Brk { get; }
 
+    /// <summary>Benutzernummer des Prozesses (dieselbe wie AT_UID), für getuid und geteuid.</summary>
+    ulong Uid { get; }
+
+    /// <summary>Gruppennummer des Prozesses (dieselbe wie AT_GID), für getgid und getegid.</summary>
+    ulong Gid { get; }
+
     /// <summary>Setzt brk; false, wenn die Adresse unter dem Anfang liegt oder nicht belegbar ist (Brk bleibt dann unverändert).</summary>
     bool TrySetBrk(ulong newBrk);
 
