@@ -9,5 +9,7 @@ wnohang_ok=1 code=0
 waitid=0 signo=17 code=1 status=5 pid_ok=1
 nach_wnowait_ok=1 code=5
 kill_ok=1 signaled=1 sig=9
+kill_kind=0 0 ok=1 signaled=1 sig=15
+kill_geerntet=-1 errno=3
 spawn_fehlt=2
 danach_keine_kinder=-1 errno=10

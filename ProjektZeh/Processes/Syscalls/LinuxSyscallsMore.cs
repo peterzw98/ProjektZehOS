@@ -85,7 +85,8 @@ internal static partial class LinuxSyscalls
             case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
             case Wait4:
             case Waitid:
-            case Getppid: return DispatchWait(ref a, p); // V15: Kindprozesse (posix_spawn)
+            case Getppid:
+            case Kill: return DispatchWait(ref a, p); // V15: Kindprozesse (posix_spawn)
             default: return p is ILinuxFiles files ? DispatchFileGated(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }

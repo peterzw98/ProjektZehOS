@@ -575,6 +575,9 @@ internal static unsafe class CosmosLinuxRun
             UserMode.LeaveCurrent((ulong)code);
             LeaveAll(run, CurrentBridge(run), (ulong)code);
         };
+
+        // V15 kill aus einem Kindprozess: Der aufrufende Thread gehört nicht zu diesem Prozess und bleibt im Ring 3, bis der Lauf ihn beendet.
+        process.OnKilled = code => LeaveAll(run, CurrentBridge(run), (ulong)code);
         var main = new Bridge { Linux = process.MainThread, Process = process, Sched = FaultIsolation.CurrentSchedulerThread() };
         run.Threads[0] = main;
         run.KernelThreads = 1;
@@ -983,6 +986,7 @@ internal static unsafe class CosmosLinuxRun
             UserMode.LeaveCurrent((ulong)code);
             LeaveProcess(run, next, CurrentBridge(run), (ulong)code);
         };
+        next.OnKilled = code => LeaveProcess(run, next, CurrentBridge(run), (ulong)code); // kill aus einem anderen Prozess
         var b = new Bridge { Linux = next.MainThread, Process = next };
         if (!TakeSlot(run, b))
         {
@@ -1012,7 +1016,9 @@ internal static unsafe class CosmosLinuxRun
             bound = true;
             UserMode.SetFsBase(0);
             Interlocked.MemoryBarrier();
-            if (!run.Cancelled)
+
+            // kill vor dem Start (etwa während vfork angekommen): ExitCode steht schon, der Ring 3 bleibt zu.
+            if (!run.Cancelled && process.ExitCode == null)
             {
                 UserMode.Enter(image.Entry, image.StackPointer);
                 if (b.Fault)

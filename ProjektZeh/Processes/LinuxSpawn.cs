@@ -115,6 +115,11 @@ internal sealed partial class LinuxUserProcess
     // ihre PID wird beim Ende sofort frei.
     private bool _reapsOrphans;
 
+    // Nur im ersten Prozess, eigene Sperre (zuunterst, nie mit einer anderen gehalten): tote Prozesse, deren Eintrag ausgetragen ist, die aber
+    // noch laufende Kinder haben. Linux hängt solche Waisen an init; hier bleiben sie in der Liste ihres toten Elternprozesses, und kill
+    // erreicht sie über diese Liste (LinuxWait.cs). Sie wächst höchstens um einen Eintrag je beendetem Prozess des Laufs.
+    private readonly List<LinuxUserProcess> _orphanHolders = new();
+
     // Nach execve gehört die PID dem neuen Abbild; Release dieses vfork-Kinds gibt sie dann nicht frei.
     private bool _pidPassed;
 
@@ -153,6 +158,45 @@ internal sealed partial class LinuxUserProcess
             lock (_children)
             {
                 return _children.ToArray();
+            }
+        }
+    }
+
+    /// <summary>Schnappschuss der toten Prozesse mit noch laufenden Kindern (nur im ersten Prozess gefüllt).</summary>
+    public LinuxUserProcess[] OrphanHolders
+    {
+        get
+        {
+            lock (_orphanHolders)
+            {
+                return _orphanHolders.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ein Eintrag für <paramref name="dead"/> wurde ausgetragen. Hat er noch laufende Kinder, hebt der erste Prozess ihn auf, damit kill sie
+    /// weiter findet. Höchstens unter ChildGate des Elternprozesses von <paramref name="dead"/> rufen (wait4 → Reap): Eltern- vor Kindliste,
+    /// nie umgekehrt; die Liste des ersten Prozesses zuunterst.
+    /// </summary>
+    private void KeepOrphansReachable(LinuxUserProcess dead)
+    {
+        if (!Array.Exists(dead.Children, c => c.WaitStatus == null))
+        {
+            return;
+        }
+
+        LinuxUserProcess root = this;
+        while (root.Parent != null)
+        {
+            root = root.Parent;
+        }
+
+        lock (root._orphanHolders)
+        {
+            if (!root._orphanHolders.Contains(dead))
+            {
+                root._orphanHolders.Add(dead);
             }
         }
     }
@@ -275,10 +319,15 @@ internal sealed partial class LinuxUserProcess
         // Ab hier kein Rückweg (Linux: point of no return): Dateien, Arbeitsverzeichnis und Signalmaske wandern ins neue Abbild.
         next.TakeOver(this);
         Parent.ReplaceChild(Pid, next);
+        ulong killed = HandOverKill(next); // kill während vfork (LinuxWait.cs)
         if (!StartExec(next, image))
         {
             next.ReportEnd(9);
             next.Destroy();
+        }
+        else if (killed != 0)
+        {
+            DeliverKillsFromVfork(next, killed);
         }
 
         return 0;
@@ -446,6 +495,7 @@ internal sealed partial class LinuxUserProcess
             }
         }
 
+        List<LinuxUserProcess>? removed = null;
         lock (_children)
         {
             _reapsOrphans = true;
@@ -454,10 +504,19 @@ internal sealed partial class LinuxUserProcess
                 if (c.WaitStatus != null)
                 {
                     _ids.Remove(c.Pid);
+                    (removed ??= new List<LinuxUserProcess>()).Add(c.Process);
                 }
             }
 
             _children.RemoveAll(c => c.WaitStatus != null);
+        }
+
+        if (removed != null)
+        {
+            foreach (LinuxUserProcess dead in removed)
+            {
+                KeepOrphansReachable(dead);
+            }
         }
 
         if (!_pidPassed && Parent == null)
@@ -473,13 +532,20 @@ internal sealed partial class LinuxUserProcess
     /// <summary>Elternprozess schon beendet: niemand erntet mehr; die PID des beendeten Kinds wird frei.</summary>
     private void FreeIfOrphaned(int pid)
     {
+        LinuxChild? removed = null;
         lock (_children)
         {
             if (_reapsOrphans || _children.Exists(c => c.Pid == pid && c.AutoReaped))
             {
+                removed = _children.Find(c => c.Pid == pid);
                 _children.RemoveAll(c => c.Pid == pid);
                 _ids.Remove(pid);
             }
+        }
+
+        if (removed != null)
+        {
+            KeepOrphansReachable(removed.Process);
         }
     }
 
@@ -489,6 +555,7 @@ internal sealed partial class LinuxUserProcess
     /// </summary>
     public bool Reap(int pid)
     {
+        LinuxUserProcess dead;
         lock (_children)
         {
             int i = _children.FindIndex(c => c.Pid == pid && c.WaitStatus != null);
@@ -497,10 +564,13 @@ internal sealed partial class LinuxUserProcess
                 return false;
             }
 
+            dead = _children[i].Process;
             _children.RemoveAt(i);
             _ids.Remove(pid);
-            return true;
         }
+
+        KeepOrphansReachable(dead);
+        return true;
     }
 
     /// <summary>Test und Diagnose: ist <paramref name="id"/> als PID oder TID im Lauf belegt?</summary>

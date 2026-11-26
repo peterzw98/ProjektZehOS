@@ -437,6 +437,15 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             return -LinuxSyscalls.ESRCH;
         }
 
+        return DeliverSignal(signal, fromOutside: false);
+    }
+
+    /// <summary>
+    /// Zustellen an den Prozess (tgkill, tkill, kill). <paramref name="fromOutside"/>: Der Aufrufer ist ein Thread eines anderen Prozesses
+    /// (kill aus LinuxWait.cs); dann verlässt nicht der aufrufende Thread den Ring 3, sondern die Threads dieses Prozesses (<see cref="OnKilled"/>).
+    /// </summary>
+    private long DeliverSignal(int signal, bool fromOutside)
+    {
         if (signal == 0)
         {
             return 0;
@@ -445,7 +454,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         // SIGKILL beendet immer; SIGSTOP ebenfalls, denn Anhalten gibt es nicht und niemand könnte mit SIGCONT fortsetzen.
         if (signal is 9 or 19)
         {
-            Terminate(signal);
+            End(signal, fromOutside);
             return 0;
         }
 
@@ -470,10 +479,22 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
         if (!IsIgnored(signal))
         {
-            Terminate(signal);
+            End(signal, fromOutside);
         }
 
         return 0;
+    }
+
+    private void End(int signal, bool fromOutside)
+    {
+        if (fromOutside)
+        {
+            Kill(signal);
+        }
+        else
+        {
+            Terminate(signal);
+        }
     }
 
     /// <summary>Anhängige Signale (Bit = Nummer - 1), etwa für Tests und rt_sigpending.</summary>
