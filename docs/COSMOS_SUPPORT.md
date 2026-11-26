@@ -514,7 +514,8 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 | QEMU TCG | `1`; `2`; `4`; `4c2t2`; `8c4t2` | Teil von 90/90 (smp.13, Kopf `7976c322c`); Aufteilung je Motor nicht im Kommentar genannt |
 | QEMU KVM | wie TCG | Teil von 90/90 (smp.13, Kopf `7976c322c`); Aufteilung je Motor nicht im Kommentar genannt |
 | QEMU WHPX | `2`; `4` | nicht geprüft (Handtest, Gesamttest #610) |
-| VMware | `numvcpus` 1, 2, 4 | nicht geprüft (V1–V6, Gesamttest #610) |
+| VMware | `numvcpus` 4 | bestanden (V3–V6, Gesamttest #610, Lars, `v0.6.150` `5e3c29c0`, smp.17, 26. November 2026) |
+| VMware | `numvcpus` 1, 2 | nicht geprüft (Thread-Probe dort sporadisch `FAIL`, #727) |
 | echte Hardware mit Hyperthreading | wie vorhanden | nicht geprüft (H1–H3, Gesamttest #610) |
 
 **Energie (E7-C, #396, Abnahme siehe Tabelle):** `test-power-commands.py` unter KVM mit 4 CPUs bestanden; WHPX, VMware und Hardware nicht geprüft. **Hauptschleife auf den Compute-CPUs (E7-A, #394):** gemergt (PR #564); die automatisierten Läufe stehen in der Tabelle, der Handtest (Tastatur, Maus, Tablet unter Last, Fenster ziehen) und die Bildraten-Messung gegen den Stand vor dem Paket sind nicht erfolgt (Handtest in #610; #394 ist offen).
