@@ -45,7 +45,8 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
+    ILinuxSystemInfo
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -390,6 +391,19 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public bool TryFillRandom(Span<byte> dst) => _host != null && _host.TryFillRandom(dst);
 
     public void SleepNanos(long ns) => _host?.SleepNanos(ns);
+
+    // ILinuxSystemInfo (V13 sysinfo): nur, wenn der Host des Kernels Speicher melden kann.
+    public bool TryGetMemory(out ulong totalBytes, out ulong freeBytes)
+    {
+        if (_host is ILinuxSystemInfo info)
+        {
+            return info.TryGetMemory(out totalBytes, out freeBytes);
+        }
+
+        totalBytes = 0;
+        freeBytes = 0;
+        return false;
+    }
 
     /// <summary>Abbruch des Programms (über <see cref="LinuxFutexTable.Abort"/>, das Strg+C, Zeitlimit und exit_group auslösen).</summary>
     public bool IsAborted => Futexes.IsAborted;

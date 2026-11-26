@@ -105,6 +105,11 @@ internal static partial class LinuxSyscalls
                 return r;
             }
         }
+        else if (d is LinuxPipeEnd)
+        {
+            // V13: Pipe (S_IFIFO, 0600); Größe 0 wie bei Linux, Blockgröße eine Seite.
+            st = new LinuxStat { Mode = 0x1000 | 0x180, Nlink = 1, BlockSize = 4096 };
+        }
         else
         {
             // Terminal und andere Deskriptoren ohne Datei: Zeichengerät (C-Laufzeiten fragen damit "ist das ein Terminal?" und die Puffergröße).

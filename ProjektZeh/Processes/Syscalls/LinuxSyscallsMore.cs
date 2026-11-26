@@ -23,6 +23,16 @@ internal interface ILinuxHost
     void SleepNanos(long ns);
 }
 
+/// <summary>
+/// Optional neben <see cref="ILinuxHost"/> (V13, sysinfo): Arbeitsspeicher des Rechners. Eigene Schnittstelle, damit vorhandene
+/// Hosts unverändert bleiben; ohne sie meldet sysinfo 0 Bytes.
+/// </summary>
+internal interface ILinuxSystemInfo
+{
+    /// <summary>Gesamter und freier physischer Speicher in Bytes; false, wenn unbekannt.</summary>
+    bool TryGetMemory(out ulong totalBytes, out ulong freeBytes);
+}
+
 /// <summary>Zustand der Signale eines Prozesses (S1: nur Verwaltung, keine Zustellung).</summary>
 internal sealed class LinuxSignalState
 {
@@ -38,11 +48,15 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
     private const int ClockMax = 7;
+    private const short PollIn = 1, PollOut = 4, PollNval = 0x20;
+
+    // Scheibe, wenn poll auf mehrere Deskriptoren zugleich wartet (V13): so spät meldet sich höchstens der zweite.
+    private const int PollMultiSliceMs = 10;
     private const ulong SigKillStopMask = (1UL << 8) | (1UL << 18); // Signal 9 und 19, Bit = Nummer - 1
     private static readonly long StartTicks = Stopwatch.GetTimestamp();
 
@@ -53,6 +67,7 @@ internal static partial class LinuxSyscalls
             case ClockGettime: return DoClockGettime(p, (int)a.A0, a.A1);
             case Getrandom: return DoGetrandom(p, a.A0, a.A1, (uint)a.A2);
             case Uname: return DoUname(p, a.A0);
+            case Sysinfo: return DoSysinfo(p, a.A0);
             case RtSigaction: return DoSigaction(p, (int)a.A0, a.A1, a.A2, a.A3);
             case RtSigprocmask: return DoSigprocmask(p, (int)a.A0, a.A1, a.A2, a.A3);
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
@@ -162,6 +177,30 @@ internal static partial class LinuxSyscalls
         PutField(b, 3, "#1 ZehOS");
         PutField(b, 4, "x86_64");
         PutField(b, 5, "(none)");
+        return p.Memory.TryWrite(buf, b) ? 0 : -EFAULT;
+    }
+
+    /// <summary>
+    /// sysinfo (V13): struct sysinfo von x86-64 (112 Bytes). Laufzeit in Sekunden aus der monotonen Uhr (wie Linux CLOCK_BOOTTIME ohne
+    /// Ruhezustand), Speicher aus <see cref="ILinuxSystemInfo"/> in Bytes (mem_unit 1). Lastwerte, Swap, geteilter und Pufferspeicher
+    /// sind 0; procs ist 1 (ein Prozess sieht nur sich).
+    /// </summary>
+    private static long DoSysinfo(ILinuxProcess p, ulong buf)
+    {
+        long ns = p is ILinuxHost host ? host.MonotonicNanos : (long)((Stopwatch.GetTimestamp() - StartTicks) * (1_000_000_000.0 / Stopwatch.Frequency));
+        ulong total = 0, free = 0;
+        if (p is ILinuxSystemInfo info && info.TryGetMemory(out ulong t, out ulong f))
+        {
+            total = t;
+            free = Math.Min(f, t);
+        }
+
+        byte[] b = new byte[112];
+        BitConverter.TryWriteBytes(b.AsSpan(0, 8), Math.Max(0, ns / 1_000_000_000L)); // uptime
+        BitConverter.TryWriteBytes(b.AsSpan(32, 8), total); // totalram
+        BitConverter.TryWriteBytes(b.AsSpan(40, 8), free); // freeram
+        BitConverter.TryWriteBytes(b.AsSpan(80, 2), (ushort)1); // procs
+        BitConverter.TryWriteBytes(b.AsSpan(104, 4), 1u); // mem_unit
         return p.Memory.TryWrite(buf, b) ? 0 : -EFAULT;
     }
 
@@ -325,7 +364,6 @@ internal static partial class LinuxSyscalls
 
     private static long DoPoll(ILinuxProcess p, ulong fds, ulong nfds, long timeoutMs)
     {
-        const short PollIn = 1, PollOut = 4, PollNval = 0x20;
         if (nfds > 1024)
         {
             return -EINVAL; // RLIMIT_NOFILE-Obergrenze
@@ -338,12 +376,31 @@ internal static partial class LinuxSyscalls
             return -EFAULT;
         }
 
-        long ready = PollScan(p, b, (int)nfds, PollIn, PollOut, PollNval, out ILinuxInput? waitFor);
+        long ready = PollScan(p, b, (int)nfds, out object? waitFor, out short waitEvents, out int waitables);
 
-        // Wartet poll auf Terminaleingabe (V3 stdin), wartet die Eingabe selbst (in Scheiben, mit Abbruch), auch ohne Frist.
-        if (ready == 0 && timeoutMs != 0 && waitFor != null && waitFor.WaitInput(timeoutMs))
+        if (ready == 0 && timeoutMs != 0 && waitFor != null)
         {
-            ready = PollScan(p, b, (int)nfds, PollIn, PollOut, PollNval, out _);
+            // Wartet poll auf Terminaleingabe (V3 stdin) oder eine Pipe (V13), wartet der Deskriptor selbst (in Scheiben, mit Abbruch),
+            // auch ohne Frist. Bei einem Wartenden die ganze Frist; bei mehreren reihum in kurzen Scheiben auf den ersten, dann neu
+            // durchsuchen, damit ein anderer (etwa die Weckpipe neben fd 0) höchstens eine Scheibe zu spät gemeldet wird. Gezählt wird
+            // die gewartete Zeit wie im Terminal, nicht die Uhr: Ersatzprozesse in den Tests haben eine stehende Uhr.
+            long waited = 0;
+            while (true)
+            {
+                long slice = waitables == 1 ? (timeoutMs < 0 ? -1 : timeoutMs - waited)
+                    : (timeoutMs < 0 ? PollMultiSliceMs : Math.Min(PollMultiSliceMs, timeoutMs - waited));
+                _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice) : ((ILinuxInput)waitFor).WaitInput(slice);
+                ready = PollScan(p, b, (int)nfds, out _, out _, out _);
+                if (slice >= 0)
+                {
+                    waited += slice;
+                }
+
+                if (ready > 0 || Aborted(p) || (timeoutMs >= 0 && waited >= timeoutMs) || waitables == 1)
+                {
+                    break;
+                }
+            }
         }
         else if (ready == 0 && timeoutMs > 0 && waitFor == null && p is ILinuxHost host)
         {
@@ -360,10 +417,15 @@ internal static partial class LinuxSyscalls
         return ready;
     }
 
-    /// <summary>Setzt revents aller Einträge in <paramref name="b"/>; liefert die Zahl bereiter Einträge und eine Eingabe, auf die poll warten kann.</summary>
-    private static long PollScan(ILinuxProcess p, byte[] b, int nfds, short pollIn, short pollOut, short pollNval, out ILinuxInput? waitFor)
+    /// <summary>
+    /// Füllt revents aller Einträge; zählt die bereiten. <paramref name="waitFor"/> ist der erste nicht bereite Deskriptor, auf den
+    /// sich warten lässt (<see cref="ILinuxPollable"/> oder <see cref="ILinuxInput"/>), <paramref name="waitables"/> ihre Anzahl.
+    /// </summary>
+    private static long PollScan(ILinuxProcess p, byte[] b, int nfds, out object? waitFor, out short waitEvents, out int waitables)
     {
         waitFor = null;
+        waitEvents = 0;
+        waitables = 0;
         long ready = 0;
         for (int i = 0; i < nfds; i++)
         {
@@ -375,20 +437,35 @@ internal static partial class LinuxSyscalls
                 ILinuxDescriptor? d = p.GetDescriptor(fd);
                 if (d is null)
                 {
-                    revents = pollNval;
+                    revents = PollNval;
+                }
+                else if (d is ILinuxPollable pollable)
+                {
+                    // V13 Pipe: Lesen mit Bytes, Schreiben mit Platz; POLLHUP/POLLERR auch ungefragt.
+                    revents = pollable.PollEvents(events);
+                    if (revents == 0 && (events & (PollIn | PollOut)) != 0)
+                    {
+                        waitables++;
+                        if (waitFor == null)
+                        {
+                            waitFor = pollable;
+                            waitEvents = events;
+                        }
+                    }
                 }
                 else
                 {
                     // Schreiben ist immer bereit; Lesen nur bei einer Eingabe mit Bytes, Eingabeende oder Abbruch (V3 stdin).
-                    revents = (short)(events & pollOut);
-                    if ((events & pollIn) != 0 && d is ILinuxInput input)
+                    revents = (short)(events & PollOut);
+                    if ((events & PollIn) != 0 && d is ILinuxInput input)
                     {
                         if (input.InputReady)
                         {
-                            revents |= pollIn;
+                            revents |= PollIn;
                         }
                         else
                         {
+                            waitables++;
                             waitFor ??= input;
                         }
                     }

@@ -854,9 +854,18 @@ internal static unsafe class CosmosLinuxRun
 
     private static readonly CosmosLinuxHost Host = new();
 
-    /// <summary>Zeit, Zufall und Schlafen für die Aufrufe aus V2b (clock_gettime, getrandom, poll mit Frist).</summary>
-    private sealed class CosmosLinuxHost : ILinuxHost
+    /// <summary>Zeit, Zufall, Schlafen und Speicher für die Aufrufe aus V2b (clock_gettime, getrandom, poll mit Frist) und V13 (sysinfo).</summary>
+    private sealed class CosmosLinuxHost : ILinuxHost, ILinuxSystemInfo
     {
+        /// <summary>sysinfo (V13): dieselbe Quelle wie <c>CosmosSystemInfo.MemoryText</c> und die Speicherzeilen der Proben.</summary>
+        public bool TryGetMemory(out ulong totalBytes, out ulong freeBytes)
+        {
+            var memory = CosmosSystemInfo.PhysicalMemory();
+            totalBytes = memory.Total;
+            freeBytes = memory.Free;
+            return true;
+        }
+
         public long RealtimeNanos => (DateTime.UtcNow - DateTime.UnixEpoch).Ticks * 100;
 
         public long MonotonicNanos

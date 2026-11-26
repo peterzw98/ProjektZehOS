@@ -38,7 +38,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 13, 14 | `rt_sigaction`, `rt_sigprocmask` | nur Verwaltung je Prozess (keine Zustellung); sigsetsize 8, SIGKILL/SIGSTOP nicht abfangbar und nicht blockierbar |
 | 131 | `sigaltstack` | setzen/abfragen/abschalten; Größe < 2048 `-ENOMEM`; ohne Zustellung wirkungslos; SS_AUTODISARM wird nicht gemerkt (Abweichung) |
 | 24 | `sched_yield` | `0` |
-| 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet); ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
+| 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet), warten mehrere (Pipe-Enden, V13), reihum in 10-ms-Scheiben; ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
 | 28 | `madvise` | Hinweise 0-3, 14, 15 liefern 0; DONTNEED/FREE und Unbekanntes `-EINVAL` (Seiten nullen geht noch nicht); prüft keine Abbildung (Linux `-ENOMEM`) |
 | 202 | `futex` | mit Threads siehe V10; ohne Thread-Fähigkeit (Hosttests) wie S1, Einzelthread: WAIT/WAIT_BITSET mit abweichendem Wert `-EAGAIN`, mit Frist `-ETIMEDOUT` (ohne zu schlafen), ohne Frist `-EDEADLK` (Linux hängt; glibc bricht bei diesem unbekannten Fehler ab, musl dreht in einer Schleife); Wert wird vor der Frist gelesen: kaputte Frist bei abweichendem Wert liefert `-EAGAIN` statt `-EFAULT`/`-EINVAL` (Abweichung); WAKE* 0; CMP_REQUEUE prüft den Wert; WAKE_OP `-ENOSYS` |
 | 334 | `rseq` | `-ENOSYS` (Laufzeitbibliotheken fallen zurück) |
@@ -65,7 +65,7 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 17 | `pread64` | über Seek nachgebildet (Position bleibt); nicht atomar gegen einen zweiten Thread (es gibt noch keine Threads); Terminal `-ESPIPE`, Versatz < 0 `-EINVAL` |
 | 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
 | 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
-| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar); `F_SETFL` ohne Wirkung (Abweichung); sonst `-EINVAL` |
+| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13) `O_RDONLY`/`O_WRONLY` mit `O_NONBLOCK`; `F_SETFL` ohne Wirkung (Abweichung), bei Pipe-Enden setzt oder löscht es `O_NONBLOCK`; sonst `-EINVAL` |
 | 79 | `getcwd` | Rückgabe Länge mit NUL; zu kleiner Puffer `-ERANGE` |
 | 80, 81 | `chdir`, `fchdir` | Ziel muss Verzeichnis sein (`-ENOTDIR`) und Suchrecht haben (`access X_OK`); cwd ist der textuell normalisierte Pfad (Symlinks bleiben darin stehen) |
 | 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat`, mit `AT_FDCWD` das Arbeitsverzeichnis |
@@ -265,3 +265,24 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
   unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
 - Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
 - Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
+
+## Pipes und sysinfo (V13)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxPipe.cs`, `LinuxFileSyscalls.cs` und `LinuxSyscallsMore.cs` (Hosttests `LinuxPipeTests`); Speicher im
+Kernel aus `CosmosSystemInfo.PhysicalMemory` (`CosmosLinuxRun.CosmosLinuxHost`). Anlass: der strace von js (V4) zeigt `pipe2` und `sysinfo`; LibCore weckt seine
+Ereignisschleife aus anderen Threads über eine Pipe.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 22, 293 | `pipe`, `pipe2` | Pipe innerhalb des Prozesses (kein fork): kleinste freie Nummern für Lese- und Schreibende; Flags `O_CLOEXEC` (angenommen, nicht geführt: kein `execve`) und `O_NONBLOCK`, andere (`O_DIRECT`) `-EINVAL`; `-EFAULT` gibt beide Nummern wieder frei, `-EMFILE` ebenso |
+| 0, 19 | `read`, `readv` auf dem Leseende | blockiert ohne Daten bis zu einem Schreiben, bis kein Schreibende mehr offen ist (`0`, EOF) oder zum Abbruch (`-EINTR`); mit `O_NONBLOCK` `-EAGAIN`; liefert das Verfügbare, höchstens 4096 Bytes je Aufruf; auf dem Schreibende `-EBADF` |
+| 1, 20 | `write`, `writev` auf dem Schreibende | Puffer 64 KiB; bis 4096 Bytes (`PIPE_BUF`) ganz oder gar nicht; voll blockiert es, mit `O_NONBLOCK` `-EAGAIN`; ohne Leseende `-EPIPE` (kein `SIGPIPE`, Signale werden nicht zugestellt); auf dem Leseende `-EBADF` |
+| 7 | `poll` | Leseende `POLLIN` mit Daten, `POLLHUP` ohne Schreibende; Schreibende `POLLOUT` bei mindestens 4096 Bytes Platz, `POLLERR` ohne Leseende; wartet auf Pipe-Enden ohne Dateisperre und wacht beim Schreiben, Lesen oder Schließen eines anderen Threads auf |
+| 3 | `close` | erst das letzte `close` eines Endes (nach `dup`) meldet dem anderen EOF beziehungsweise `EPIPE`; Ungelesenes wird mit dem Leseende verworfen |
+| 5, 8 | `fstat`, `lseek` | `S_IFIFO` mit 0600, Größe 0; `lseek` `-ESPIPE` |
+| 99 | `sysinfo` | `uptime` aus der monotonen Uhr in Sekunden, `totalram`/`freeram` in Bytes (`mem_unit` 1) aus dem Seitenverwalter von Cosmos, `procs` 1; Lastwerte, Swap, `sharedram`, `bufferram` 0 |
+
+Grenzen: Ein `write` über 4096 Bytes mit `O_NONBLOCK` wird in Stücken zu 4096 Bytes geschrieben; ist weniger als ein Stück frei, kommt `-EAGAIN` (Linux schriebe
+den freien Rest). Schließt ein Thread das Schreibende, während ein anderer noch hineinschreibt, sieht der Leser schon EOF (Linux hält die Datei bis zum Ende
+des Aufrufs). `ioctl(FIONREAD)`, `select`, `ppoll` und `epoll` gibt es nicht. Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
+Benutzerspeicher noch eine andere Sperre.
