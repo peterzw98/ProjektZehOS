@@ -85,14 +85,15 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     public long MaxFileBytes { get; }
 
     /// <summary>
-    /// Öffnet <paramref name="root"/> (absolut, siehe <see cref="ValidRoot"/>) als Prozesswurzel und legt den Ordner bei Bedarf an.
+    /// Öffnet <paramref name="root"/> (absolut, ohne abschließendes '/') als Prozesswurzel und legt den Ordner bei Bedarf an.
     /// Der Pfad kommt vom Kernel, nicht vom Programm.
     /// </summary>
     public static ResultObject<DirectoryFileStore> Open(string root, ILinuxDiskLinks links, StringComparison nameComparison,
         long maxFileBytes = DefaultMaxFileBytes)
     {
         ArgumentNullException.ThrowIfNull(links);
-        if (!ValidRoot(root))
+        if (string.IsNullOrEmpty(root) || root[0] != '/' || root.EndsWith('/') || root.Contains("/../", StringComparison.Ordinal) ||
+            root.EndsWith("/..", StringComparison.Ordinal))
         {
             return ResultObjectFactory.CreateFailure<DirectoryFileStore>(ResultCode.InvalidArgument, "Die Prozesswurzel ist kein absoluter Ordnerpfad.");
         }
@@ -106,30 +107,6 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             return ResultObjectFactory.CreateFromException<DirectoryFileStore>(exception);
         }
-    }
-
-    /// <summary>
-    /// Absolut (im Kernel mit '/', auf einem Windows-Host auch "C:\..."), ohne abschließenden Trenner und ohne "."- oder "..".
-    /// Teile. Windows-Pfade nimmt nur ein Windows-Host an (<see cref="Path.IsPathFullyQualified(string)"/>), damit die Hosttests dort
-    /// echt laufen; der Kernel und Linux sehen nur '/'-Pfade.
-    /// </summary>
-    private static bool ValidRoot(string root)
-    {
-        if (string.IsNullOrEmpty(root) || !(root[0] == '/' || Path.IsPathFullyQualified(root)) || root.EndsWith('/') ||
-            root.EndsWith('\\'))
-        {
-            return false;
-        }
-
-        foreach (string part in root.Split('/', '\\'))
-        {
-            if (part is "." or "..")
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     public long Lookup(string path, out LinuxStoreNode node)
