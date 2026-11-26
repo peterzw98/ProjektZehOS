@@ -774,6 +774,14 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     public bool TryWrite(ulong addr, ReadOnlySpan<byte> src) => Copy(addr, default, src, write: true);
 
+    public bool CanWrite(ulong addr, ulong length)
+    {
+        lock (_memGate)
+        {
+            return length == 0 || (InUserRange(addr, length) && PagesAllowLocked(addr, length, write: true));
+        }
+    }
+
     public bool TryReadCString(ulong addr, int max, out string s)
     {
         s = string.Empty;
@@ -851,13 +859,9 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         }
 
         // Erst alle Seiten prüfen, dann kopieren: ein Fehler mitten im Bereich lässt nichts halb geschrieben.
-        ulong end = addr + length;
-        for (ulong page = addr & ~(Page - 1); page < end; page += Page)
+        if (!PagesAllowLocked(addr, length, write))
         {
-            if (!_map.TryFind(page, out MapAccess access) || access == MapAccess.None || (write && access != MapAccess.ReadWrite))
-            {
-                return false;
-            }
+            return false;
         }
 
         ulong done = 0;
@@ -888,6 +892,21 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
             }
 
             done += (ulong)chunk;
+        }
+
+        return true;
+    }
+
+    /// <summary>Alle Seiten von [addr, addr+length) sind abgebildet und erlauben den Zugriff; Bereich schon geprüft, _memGate gehalten.</summary>
+    private bool PagesAllowLocked(ulong addr, ulong length, bool write)
+    {
+        ulong end = addr + length;
+        for (ulong page = addr & ~(Page - 1); page < end; page += Page)
+        {
+            if (!_map.TryFind(page, out MapAccess access) || access == MapAccess.None || (write && access != MapAccess.ReadWrite))
+            {
+                return false;
+            }
         }
 
         return true;

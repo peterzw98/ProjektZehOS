@@ -56,6 +56,8 @@ public sealed class LinuxTerminalInputTests
             return true;
         }
 
+        public bool CanWrite(ulong addr, ulong length) => UserRange.Contains(Base, Base + (ulong)Data.Length, addr, length);
+
         public bool TryReadCString(ulong addr, int max, out string s)
         {
             s = "";

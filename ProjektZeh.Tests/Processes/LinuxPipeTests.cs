@@ -40,6 +40,8 @@ public class LinuxPipeTests
             return true;
         }
 
+        public bool CanWrite(ulong addr, ulong length) => UserRange.Contains(Base, Base + (ulong)Data.Length, addr, length);
+
         public bool TryReadCString(ulong addr, int max, out string s)
         {
             s = "";
@@ -466,6 +468,69 @@ public class LinuxPipeTests
         Thread.Sleep(80);
         p.Abort = true;
         Assert.AreEqual(0L, poller.Result);
+    }
+
+    [TestMethod]
+    [Timeout(10000)]
+    public void PollDeadlineHoldsDespiteForeignPulses()
+    {
+        // V13-Review P2-1: Jedes Lesen eines anderen Threads weckt den Wartenden (PulseAll). Die Frist darf dadurch nicht schrumpfen,
+        // für ein Ende allein und für mehrere Einträge (Scheibenweg in DoPoll).
+        var p = new Proc();
+        var (r, w) = MakePipe(p, ONonblock);
+        var (r2, _) = MakePipe(p);
+        while (Call(p, Write, (ulong)w, WBuf, 0x10000) > 0)
+        {
+        }
+
+        using var stop = new CancellationTokenSource();
+        var reader = (ILinuxInput)p.GetDescriptor(r)!;
+        var drip = Task.Run(() =>
+        {
+            // 1 Byte je 2 ms: Platz entsteht, aber nie PIPE_BUF, also nie POLLOUT.
+            byte[] one = new byte[1];
+            while (!stop.IsCancellationRequested)
+            {
+                reader.ReadInput(one);
+                Thread.Sleep(2);
+            }
+        });
+
+        foreach (var entries in new[] { new[] { (w, PollOut) }, new[] { (w, PollOut), (r2, PollIn) } })
+        {
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            DoPoll(p, 400, out long n, entries);
+            Assert.AreEqual(0L, n, "kein Eintrag bereit");
+            Assert.IsTrue(started.ElapsedMilliseconds >= 380, $"Frist 400 ms, gewartet {started.ElapsedMilliseconds} ms bei {entries.Length} Einträgen");
+        }
+
+        stop.Cancel();
+        drip.Wait();
+    }
+
+    [TestMethod]
+    [Timeout(10000)]
+    public void ReadLeavesBufferAloneWithoutData()
+    {
+        // V13-Review P2-2: Linux schreibt den Puffer nur mit gelesenen Bytes; -EAGAIN, -EINTR und EOF lassen ihn unverändert.
+        var p = new Proc();
+        byte[] marker = [9, 9, 9, 9];
+        var (r, w) = MakePipe(p, ONonblock);
+        p.Mem.TryWrite(RBuf, marker);
+        Assert.AreEqual(-LinuxSyscalls.EAGAIN, Call(p, Read, (ulong)r, RBuf, 4));
+        CollectionAssert.AreEqual(marker, p.Mem.Data[(int)(RBuf - Base)..(int)(RBuf - Base + 4)], "EAGAIN");
+
+        Assert.AreEqual(0L, Call(p, Close, (ulong)w));
+        Assert.AreEqual(0L, Call(p, Read, (ulong)r, RBuf, 4));
+        CollectionAssert.AreEqual(marker, p.Mem.Data[(int)(RBuf - Base)..(int)(RBuf - Base + 4)], "EOF");
+
+        var (rb, _) = MakePipe(p);
+        p.Abort = true;
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Call(p, Read, (ulong)rb, RBuf, 4));
+        CollectionAssert.AreEqual(marker, p.Mem.Data[(int)(RBuf - Base)..(int)(RBuf - Base + 4)], "EINTR");
+
+        // Die Prüfung vor dem Warten bleibt: ein ungültiger Puffer ist weiter -EFAULT.
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, Read, (ulong)rb, Base + Size - 2, 4));
     }
 
     [TestMethod]

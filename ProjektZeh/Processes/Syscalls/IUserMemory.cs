@@ -12,6 +12,12 @@ internal interface IUserMemory
     bool TryRead(ulong addr, Span<byte> dst);
     bool TryWrite(ulong addr, ReadOnlySpan<byte> src);
 
+    /// <summary>
+    /// true, wenn <see cref="TryWrite"/> auf [addr, addr+length) die Seiten beschreiben dürfte; schreibt nichts. Für Aufrufe, die vor dem
+    /// Warten -EFAULT melden müssen, ohne den Benutzerpuffer bei -EAGAIN, -EINTR oder EOF zu verändern (V13-Review P2-2).
+    /// </summary>
+    bool CanWrite(ulong addr, ulong length);
+
     /// <summary>Liest eine NUL-terminierte Zeichenkette (UTF-8) von höchstens <paramref name="max"/> Bytes ohne NUL.</summary>
     bool TryReadCString(ulong addr, int max, out string s);
 }
