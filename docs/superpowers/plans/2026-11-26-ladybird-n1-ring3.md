@@ -39,14 +39,25 @@ Verlust A4 gegen smp.13: (4078 − 4060) / 4078 = **0,44 %** (Regel: ≤ 5 %). D
 
 Grenzen: nur wasm3, kein AOT-Doom; kein VMware, keine echte Hardware; Aussagekraft nur für die Standardlast von Doom (Timer-Interrupts, kein Ring 3 im Betrieb, die Kosten von `swapgs`/`fxsave` je Interrupt stecken im Unterschied, sind aber nicht einzeln gemessen).
 
+### 2a. Doom mit AOT (Nachtrag 26.11.)
+
+Gleiches Skript, `--aot on` (Laufzeit im Protokoll: `aot wamr245-aot5-x64-bc-nrz`), Doom 1.1.0 aus `origin/packages` mit der AOT-Datei aus `aot-out/doom.aot` (Beleg-WASM-Hash `b0e47bb1…` stimmt mit dem Paket überein), lokaler Testschlüssel, je Stand ein eigenes ISO mit `-p:ZehOSPackageKeyPath`, 3 Läufe, KVM, MSI allein. Stände: A4 = Kopf #711 (`72bd9687a`, Cosmos-Pin 4027f1c9; #704 steht inzwischen auf `5802b0abe`, dessen Unterschied liegt nur in `scripts/`), Basis smp.13 = `53cba9cd5`.
+
+| Stand | Bildzahl 2. Fenster (Läufe 1/2/3) | Summe | avg fps | Bildzeit-Median |
+| --- | --- | --- | --- | --- |
+| Basis smp.13 | 4201 / 4195 / 4198 | 12594 | 70,0 | 11 ms |
+| Cosmos A4 | 4198 / 4200 / 4200 | 12598 | 70,0 | 11-12 ms |
+
+Unterschied +0,03 % (A4 nicht langsamer). Grenze: Doom läuft hier mit rund 70 Bildern/s an einer Obergrenze (Bildzahl fast konstant); die Messung zeigt „kein Verlust“, ist aber kein Test der Reserve.
+
 ## 3. Power-Befehle
 
 `scripts/test-power-commands.py` (Linux-Gegenstück der `.ps1`, `pwsh` fehlt auf MSI), KVM, 3 Läufe je Stand, Normalbau: A4 3/3, smp.13 3/3 bestanden (je 18 s je Lauf).
 
 ## Nicht geprüft
 
-Hosttests (`sysmed` ist nur nativ), TCG, VMware, AOT-Doom, Doom 5 Läufe, einzelne Kosten von `fxsave` und `swapgs` je Interrupt, unabhängiges Review.
+Hosttests (`sysmed` ist nur nativ), TCG, VMware, Doom 5 Läufe, einzelne Kosten von `fxsave` und `swapgs` je Interrupt, unabhängiges Review.
 
 ## Zu den Regeln des Plans (für das Urteil)
 
-A6-Abnahme: laut Nachtrag in #704 erfüllt (KVM 1+4 je 10/10, TCG je 3/3, Negativ 2/2, `switch`-Gegenprobe rot); hier nicht neu gelaufen. Median ≤ 5 µs: erfüllt (0,15 µs). Doom ≤ 5 % Verlust: erfüllt (0,44 %).
+A6-Abnahme: laut Nachtrag in #704 erfüllt (KVM 1+4 je 10/10, TCG je 3/3, Negativ 2/2, `switch`-Gegenprobe rot); hier nicht neu gelaufen. Median ≤ 5 µs: erfüllt (0,15 µs). Doom ≤ 5 % Verlust: erfüllt (wasm3 0,44 %, AOT +0,03 %).
