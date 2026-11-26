@@ -375,6 +375,11 @@ public unsafe class Kernel : Sys.Kernel
     private static int s_leaves;
     private const int ProtectRaceRounds = 200_000;
     private const int ProtectRaceEnough = 1000;
+#if COSMOS_TEST_HOOKS
+    // Etwa eine halbe Millisekunde unter KVM: viel laenger als ein Wechsel des
+    // Workers zum Fueller und zurueck, kurz genug fuer 1000 Aenderungen.
+    private const int ProtectRaceHoldSpins = 20_000;
+#endif
 
 #if ARCH_X64
     /// <summary>The root this CPU translates through.</summary>
@@ -856,6 +861,13 @@ public unsafe class Kernel : Sys.Kernel
         bool writable = true;
         s_onTable = 0;
         s_leaves = 0;
+#if COSMOS_TEST_HOOKS
+        // Testbau mit Haken: haelt das Sperrbit nach jedem Schreiben lange,
+        // damit der Wechsel des Workers in das Fenster faellt; die Tabelle
+        // zaehlt, ob dabei eine CPU hinzukam (Gegenprobe nogate wird rot).
+        UserPageTable.TestEnteredDuringChange = 0;
+        UserPageTable.TestHeldChanges = 0;
+#endif
         try
         {
             Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
@@ -865,6 +877,9 @@ public unsafe class Kernel : Sys.Kernel
             filler.Start();
             worker.Start();
             Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, ProtectRaceHoldSpins);
+#endif
             for (int i = 0; i < ProtectRaceRounds && (done < ProtectRaceEnough || refused < ProtectRaceEnough); i++)
             {
                 int leaves = Volatile.Read(ref s_leaves);
@@ -888,10 +903,20 @@ public unsafe class Kernel : Sys.Kernel
                 }
             }
 
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, 0);
+#endif
             s_release = true;
             Assert.True(worker.Join(JoinTimeoutMs) && filler.Join(JoinTimeoutMs), "the workers end");
             AssertWorkerClean();
             Assert.True(done > 0 && refused > 0, "changes went through and were refused, both");
+#if COSMOS_TEST_HOOKS
+            int held = Volatile.Read(ref UserPageTable.TestHeldChanges);
+            int entered = Volatile.Read(ref UserPageTable.TestEnteredDuringChange);
+            Log.WriteString($"[UserPaging] protect race: {done} changes, {held} held, {entered} entered during one\n");
+            Assert.True(held == done, "the hook held every change");
+            Assert.True(entered == 0, "no CPU loaded the table while an entry changed");
+#endif
             Assert.True(Volatile.Read(ref s_seenChanges) <= done, "the worker saw no change Main did not make");
             Assert.True(s_tableA.TryTranslate(User, true, out _) == writable, "the entry holds the last change");
             Assert.True(s_tableA.Unmap(User) == frame, "unmap once no CPU runs on the table");
@@ -899,6 +924,9 @@ public unsafe class Kernel : Sys.Kernel
         }
         finally
         {
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, 0);
+#endif
             s_release = true;
             ThreadAffinity.Current = mainSet;
         }

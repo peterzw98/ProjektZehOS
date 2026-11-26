@@ -233,6 +233,9 @@ public sealed unsafe class UserPageTable : IDisposable
             }
 
             bool changed = s_arch!.TryProtect(_root, user, writable, executable);
+#if COSMOS_TEST_HOOKS
+            TestHoldChange(here);
+#endif
             EndChange(here, user);
             return changed;
         }
@@ -258,6 +261,9 @@ public sealed unsafe class UserPageTable : IDisposable
             }
 
             ulong frame = s_arch!.Unmap(_root, user);
+#if COSMOS_TEST_HOOKS
+            TestHoldChange(here);
+#endif
             EndChange(here, user);
             return frame;
         }
@@ -489,6 +495,44 @@ public sealed unsafe class UserPageTable : IDisposable
         InvalidateHere(user);
         Interlocked.Exchange(ref _active, here);
     }
+
+#if COSMOS_TEST_HOOKS
+    // ZehOS patch user-cr3, see PATCHES.md
+    // Only in test builds (COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS, see the
+    // test engine); never in a package. Widens the window in which Changing
+    // is set from a few instructions to TestChangeHoldSpins pauses, so that a
+    // switch on another CPU lands in it, and counts every CPU that entered
+    // meanwhile: with EnterActive waiting on Changing that is never one.
+
+    /// <summary>Pauses to hold <see cref="Changing"/> after an entry's write; 0 holds nothing.</summary>
+    internal static int TestChangeHoldSpins;
+
+    /// <summary>Changes during which another CPU counted itself in.</summary>
+    internal static int TestEnteredDuringChange;
+
+    /// <summary>Changes held for <see cref="TestChangeHoldSpins"/>.</summary>
+    internal static int TestHeldChanges;
+
+    private void TestHoldChange(int here)
+    {
+        int spins = Volatile.Read(ref TestChangeHoldSpins);
+        if (spins <= 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < spins; i++)
+        {
+            Thread.SpinWait(1);
+        }
+
+        Interlocked.Increment(ref TestHeldChanges);
+        if ((Volatile.Read(ref _active) & ~Changing) != here)
+        {
+            Interlocked.Increment(ref TestEnteredDuringChange);
+        }
+    }
+#endif
 
     private bool IsLoadedHere()
     {
