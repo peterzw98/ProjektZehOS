@@ -39,7 +39,8 @@ internal sealed class ObservingStride : StrideScheduler, ITickObserver
 // ZehOS patch tick-observer, see PATCHES.md
 /// <summary>
 /// The tick observer on four CPUs: every CPU's tick reaches it, an idle CPU's too; a nudge
-/// interrupts the CPU and changes nothing else: the spinner it runs stays there and goes on.
+/// changes nothing else: the spinner the CPU runs stays there and goes on. The cell counts
+/// Nudge calls, not deliveries: under QEMU a delivered and a dropped IPI look the same.
 /// </summary>
 internal static class TickObserverCells
 {
@@ -110,8 +111,9 @@ internal static class TickObserverCells
         {
             ObservingStride.NudgeTarget = uint.MaxValue;
             s_stop = true;
-            spinner.Join(5000);
+            bool joined = spinner.Join(5000);
             SchedulerManager.SetScheduler(new StrideScheduler());
+            Assert.True(joined, "the spinner ends");
         }
     }
 }

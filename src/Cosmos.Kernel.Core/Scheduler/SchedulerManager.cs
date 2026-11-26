@@ -356,20 +356,25 @@ public static class SchedulerManager
     /// exit path and the CPU goes on with what it ran. What it is for is the
     /// delivery itself (<see cref="ITickObserver"/>). Nothing happens for the
     /// calling CPU, a CPU that is not managed or not online, or before the
-    /// scheduler is ready. Any context, interrupt handlers included; does not
-    /// allocate, lock or log.
+    /// per-CPU states exist. Any context, interrupt handlers included: the
+    /// body masks interrupts itself, since the two-register IPI write must not
+    /// be split by a nudge from this CPU's own tick and the caller must stay on
+    /// this CPU for the own-CPU check. Does not allocate, lock or log.
     /// </summary>
     /// <param name="cpuId">The CPU to interrupt.</param>
     [Experimental(Experimentals.SchedulerSeamDiagId)]
     public static void Nudge(uint cpuId)
     {
-        if (s_cpuStates is null || cpuId >= s_cpuCount || cpuId == GetCurrentCpuId()
-            || Volatile.Read(ref PerCpuBlock.At(cpuId).Online) == 0)
+        using (InternalCpu.DisableInterruptsScope())
         {
-            return;
-        }
+            if (s_cpuStates is null || cpuId >= s_cpuCount || cpuId == GetCurrentCpuId()
+                || Volatile.Read(ref PerCpuBlock.At(cpuId).Online) == 0)
+            {
+                return;
+            }
 
-        InterruptManager.SendReschedule(PerCpuBlock.At(cpuId).HardwareId);
+            InterruptManager.SendReschedule(PerCpuBlock.At(cpuId).HardwareId);
+        }
     }
 
     /// <summary>
