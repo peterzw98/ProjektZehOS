@@ -3,6 +3,8 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes;
 using ProjektZeh.Processes.Syscalls;
@@ -641,6 +643,105 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prctl, 15, buf)); // PR_SET_NAME
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Prctl, 15, 0x10));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Prctl, 0x53564d41, 0)); // PR_SET_VMA (mimalloc)
+    }
+
+    [TestMethod]
+    public void FileCallsWaitForFileGateTerminalWriteDoesNot()
+    {
+        // V11: Dateiaufrufe laufen unter FileGate; hält ein anderer Thread sie, wartet open. Das Terminal schreibt ohne Sperre,
+        // sonst hielte eine volle Ausgabe alle Dateiaufrufe auf.
+        var (process, _, _, output) = Start();
+        const long Write = 1, Open = 2;
+        ulong path = PutString(process, Data + 0x100, "/f");
+        Assert.IsTrue(process.TryWrite(Data + 0x200, "hi\n"u8));
+        Task<long> open;
+        lock (process.FileGate)
+        {
+            open = Task.Run(() => Call(process, Open, path, (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat), 0x1A4));
+            Assert.IsFalse(open.Wait(200), "open darf nicht an der gehaltenen Dateisperre vorbei");
+            Task<long> tty = Task.Run(() => Call(process, Write, 1, Data + 0x200, 3));
+            Assert.IsTrue(tty.Wait(5000), "Terminal braucht die Dateisperre nicht");
+            Assert.AreEqual(3L, tty.Result);
+        }
+
+        Assert.IsTrue(open.Wait(5000));
+        Assert.AreEqual(3L, open.Result);
+        Assert.AreEqual(0L, Call(process, 3, 3), "close");
+        CollectionAssert.Contains(output.Text, "hi");
+    }
+
+    [TestMethod]
+    public void ConcurrentFileCallsKeepTableAndFileSystemConsistent()
+    {
+        // V11: vier Threads öffnen, beschreiben, dup-en und schließen gleichzeitig. Ohne Sperre teilen sie die Arbeitslisten der
+        // Pfadauflösung, vergeben dieselbe Nummer doppelt oder schließen eine Datei zweimal; danach müssen Tabelle und
+        // Dateibudget leer sein.
+        var (process, _, _, _) = Start();
+        const long Write = 1, Open = 2, Close = 3, Dup = 32, Mkdir = 83;
+        Assert.AreEqual(0L, Call(process, Mkdir, PutString(process, Data + 0x100, "/d"), 0x1ED));
+        const int Threads = 4, Rounds = 300;
+        var errors = new List<string>();
+        var workers = new Thread[Threads];
+        for (int t = 0; t < Threads; t++)
+        {
+            int k = t;
+            ulong path = PutString(process, Data + 0x100 + (ulong)k * 0x100, "/d/f" + k);
+            ulong buf = Data + 0x1000 + (ulong)k * 0x100;
+            Assert.IsTrue(process.TryWrite(buf, "x"u8));
+            workers[t] = new Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < Rounds; i++)
+                    {
+                        long fd = Call(process, Open, path, (ulong)(LinuxFileSystem.OWrOnly | LinuxFileSystem.OCreat | LinuxFileSystem.OAppend), 0x1A4);
+                        long copy = Call(process, Dup, (ulong)fd);
+                        long w = Call(process, Write, (ulong)copy, buf, 1);
+                        long c1 = Call(process, Close, (ulong)fd);
+                        long c2 = Call(process, Close, (ulong)copy);
+                        if (fd < 3 || copy < 3 || w != 1 || c1 != 0 || c2 != 0)
+                        {
+                            lock (errors)
+                            {
+                                errors.Add($"t{k} i{i}: fd {fd} dup {copy} write {w} close {c1}/{c2}");
+                            }
+
+                            return;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    lock (errors)
+                    {
+                        errors.Add($"t{k}: {e.GetType().Name} {e.Message}");
+                    }
+                }
+            });
+        }
+
+        foreach (Thread w in workers)
+        {
+            w.Start();
+        }
+
+        foreach (Thread w in workers)
+        {
+            Assert.IsTrue(w.Join(60000));
+        }
+
+        Assert.AreEqual(0, errors.Count, string.Join("; ", errors.Take(5)));
+        for (int fd = 3; fd < LinuxUserProcess.MaxDescriptors; fd++)
+        {
+            Assert.IsNull(process.GetDescriptor(fd), "fd " + fd);
+        }
+
+        Assert.AreEqual(0, ((LinuxFileSystem)process.FileSystem).OpenFiles, "jede Datei genau einmal geschlossen");
+        long stat = Call(process, 4, PutString(process, Data + 0x100, "/d/f0"), Data + 0x1800); // stat
+        Assert.AreEqual(0L, stat);
+        byte[] size = new byte[8];
+        Assert.IsTrue(process.TryRead(Data + 0x1800 + 48, size));
+        Assert.AreEqual((long)Rounds, BitConverter.ToInt64(size), "jedes Anhängen kam an");
     }
 }
 

@@ -273,8 +273,8 @@ internal static partial class LinuxSyscalls
             return -EINVAL;
         }
 
-        // pread lässt die Position unverändert. Über Seek nachgebildet: Ein zweiter Thread desselben Prozesses könnte dazwischen
-        // lesen; Linux-Prozesse laufen hier bisher mit einem Thread (V3), das steht in LINUX_ABI.md.
+        // pread lässt die Position unverändert. Über Seek nachgebildet; das ist atomar, weil alle Dateiaufrufe unter der
+        // Dateisperre laufen (V11, DispatchFileGated).
         long saved = file.Seek(0, 1);
         if (saved < 0)
         {

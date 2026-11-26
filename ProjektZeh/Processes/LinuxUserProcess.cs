@@ -40,7 +40,8 @@ internal interface IUserPages
 /// und der vorbereitete Teil des Stacks werden beim Laden gefüllt. Plattformunabhängig und auf dem Host geprüft.
 /// <para>
 /// Threads (V10): Aufrufe und Seitenfehler kommen von allen Threads des Prozesses (die Handler von <c>UserMode</c> laufen auf dem
-/// Kernelstack des jeweiligen Threads); Speicher schützt <c>_memGate</c>, die Threadtabelle <c>_threadGate</c>. Laden vor dem
+/// Kernelstack des jeweiligen Threads); Speicher schützt <c>_memGate</c>, die Threadtabelle <c>_threadGate</c>, Dateien und
+/// Arbeitsverzeichnis <c>_fileGate</c> (V11, genommen vom Verteiler). Laden vor dem
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
@@ -66,6 +67,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     private readonly ILinuxHost? _host;
     private readonly ILinuxDescriptor?[] _descriptors = new ILinuxDescriptor?[MaxDescriptors];
     private string _cwd = "/";
+
+    // V11: Threads teilen Deskriptortabelle, Arbeitsverzeichnis und Dateisystem. Der Verteiler nimmt die Sperre für jeden
+    // Dateiaufruf (ILinuxFiles.FileGate), im Threadkontext, nie im Interrupt. Platz in der Reihenfolge: vor _memGate (Kopieren in
+    // den Benutzerspeicher) und vor StorageLock (Platte); nie zusammen mit der Sperre der futex-Tabelle.
+    private readonly object _fileGate = new();
     private readonly ulong _maxFrames;
 
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
@@ -392,6 +398,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
 
     // ILinuxFiles: Tabelle und Arbeitsverzeichnis; Pfade, dup und close setzt der Verteiler darauf um (V2 Dateien).
     public ILinuxFileSystem FileSystem { get; }
+
+    public object FileGate => _fileGate;
 
     public string Cwd
     {

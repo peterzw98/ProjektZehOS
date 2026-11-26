@@ -138,6 +138,7 @@ public class LinuxFileSyscallsTests
         public LinuxSignalState Signals { get; } = new();
         public void Exit(int code) { }
         public ILinuxFileSystem FileSystem => Fs;
+        public object FileGate { get; } = new();
         public string Cwd { get; set; } = "/home/u";
         public int AddDescriptor(ILinuxDescriptor d, int min)
         {

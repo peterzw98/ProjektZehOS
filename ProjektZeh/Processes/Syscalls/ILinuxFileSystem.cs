@@ -103,6 +103,14 @@ internal interface ILinuxFiles
 {
     ILinuxFileSystem FileSystem { get; }
 
+    /// <summary>
+    /// Sperre für Deskriptortabelle, Arbeitsverzeichnis, <see cref="FileSystem"/> und die offenen Dateien (V11). Der Verteiler hält sie
+    /// während jedes Dateiaufrufs und beim Schreiben in eine Datei; die übrigen Mitglieder dieser Schnittstelle setzen sie voraus.
+    /// Reihenfolge: vor der Speichersperre des Prozesses (Kopieren in den Benutzerspeicher) und vor <c>StorageLock</c> (Platte);
+    /// nie zusammen mit der Sperre der futex-Tabelle.
+    /// </summary>
+    object FileGate { get; }
+
     /// <summary>Arbeitsverzeichnis, absolut und normalisiert; Start "/".</summary>
     string Cwd { get; set; }
 

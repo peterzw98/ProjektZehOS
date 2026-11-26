@@ -100,13 +100,21 @@ internal static partial class LinuxSyscalls
 
     private static long DoWrite(ILinuxProcess p, int fd, ulong buf, ulong count)
     {
-        var d = p.GetDescriptor(fd);
-        if (d is null)
+        ulong n = count > (ulong)MaxRw ? (ulong)MaxRw : count;
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is ILinuxFile && p is ILinuxFiles f)
         {
-            return -EBADF;
+            // V11: Dateien nur unter der Dateisperre, sonst könnte ein anderer Thread sie mitten im Schreiben schließen; unter der
+            // Sperre neu nachsehen. Das Terminal gehört dem Prozess und wird nie über die Tabelle geschlossen: Es schreibt ohne
+            // Sperre (wie Linux mit dem Verweis vom Anfang des Aufrufs), damit eine volle Ausgabe keine Dateiaufrufe aufhält.
+            lock (f.FileGate)
+            {
+                d = p.GetDescriptor(fd);
+                return d is null ? -EBADF : WriteFromUser(p, d, buf, n);
+            }
         }
 
-        return WriteFromUser(p, d, buf, count > (ulong)MaxRw ? (ulong)MaxRw : count);
+        return d is null ? -EBADF : WriteFromUser(p, d, buf, n);
     }
 
     /// <summary>
@@ -151,12 +159,22 @@ internal static partial class LinuxSyscalls
 
     private static long DoWritev(ILinuxProcess p, int fd, ulong iov, ulong cnt)
     {
-        var d = p.GetDescriptor(fd);
-        if (d is null)
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is ILinuxFile && p is ILinuxFiles f)
         {
-            return -EBADF;
+            // V11: wie DoWrite, Dateien unter der Dateisperre, das Terminal ohne.
+            lock (f.FileGate)
+            {
+                d = p.GetDescriptor(fd);
+                return d is null ? -EBADF : WritevTo(p, d, iov, cnt);
+            }
         }
 
+        return d is null ? -EBADF : WritevTo(p, d, iov, cnt);
+    }
+
+    private static long WritevTo(ILinuxProcess p, ILinuxDescriptor d, ulong iov, ulong cnt)
+    {
         if (cnt > MaxIov)
         {
             return -EINVAL;
