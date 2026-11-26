@@ -133,6 +133,10 @@ Grenzen (Review V2, bewusst offen):
 - `run` aus der Shell: Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis (`cd /data/s1`, dann `run files`); in "/"
   und direkt auf einem Einhängepunkt (`/data`: dort lägen Konten und Pakete) bekommt das Programm ein leeres Dateisystem im Arbeitsspeicher. Lässt sich die Wurzel nicht öffnen, startet das Programm nicht.
   Namen ohne Groß-/Kleinschreibung (FAT-Datenplatte), auch wenn die Wurzel auf einem anderen Laufwerk liegt.
+- Rechte der Prozesswurzel (Review V8): Das Programm schreibt im ganzen Unterbaum ohne eigene Rechteprüfung, `cd` prüft aber nur Lesen. Deshalb startet `run`
+  auf der Platte nur mit angemeldeter Sitzung, Schreibrecht auf die Wurzel und Verwaltungsrecht (Eigentümer oder Administrator) auf die Wurzel und jeden zugeordneten
+  Eintrag darunter (höchstens 4096 Einträge). Nie Wurzel: die Verwaltungswurzel selbst, Komponenten mit `.zehos` am Anfang und im Root-Profil alles unter `/etc`, `/var`
+  und `/boot`. Sonst `cause='ProcessRootDenied'`. Einträge ohne Rechtezuordnung (vom Programm angelegt) bleiben erlaubt; zwischen Prüfung und Lauf kann sich der Baum ändern.
 - Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
   die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
   fände die Dateien des ersten.

@@ -102,6 +102,7 @@ internal static unsafe class CosmosLinuxRun
     /// <see cref="ShellService.Poll"/>, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab; ohne Zeitlimit.
     /// Dateien (V8): Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis des Programms
     /// (etwa <c>cd /data/s1</c>, dann <c>run files</c>); in "/" oder direkt auf einem Laufwerk bekommt es ein leeres Dateisystem im Arbeitsspeicher.
+    /// Eine Wurzel auf der Platte braucht Schreib- und Verwaltungsrecht des angemeldeten Nutzers (<see cref="FileService.AuthorizeProcessRoot"/>).
     /// </summary>
     public static ResultErr RunFile(FileService files, string[] arguments, ITextOutput output, ShellService? shell)
     {
@@ -117,6 +118,16 @@ internal static unsafe class CosmosLinuxRun
         }
 
         string? root = RootFor(files.CurrentDirectory);
+        if (root != null)
+        {
+            // Review V8 (P1): Das Programm schreibt im ganzen Unterbaum ohne eigene Rechteprüfung; cd prüft nur Lesen.
+            ResultErr allowed = files.AuthorizeProcessRoot(root);
+            if (!allowed.IsOK())
+            {
+                return ResultErr.CreateFailure(allowed.Code, "run: " + allowed.Message);
+            }
+        }
+
         if (shell != null)
         {
             return StartForeground(file.Value!, arguments, shell, root);
