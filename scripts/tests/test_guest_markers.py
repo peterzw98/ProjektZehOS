@@ -37,5 +37,22 @@ class GuestMarkerTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 5)
 
 
+class CatalogTimeoutTests(unittest.TestCase):
+    def test_timeout_per_accelerator(self):
+        # Issue #674: erstes pkg update unter TCG mit 1 CPU bis 315 s, unter KVM etwa 28 s.
+        self.assertGreaterEqual(guest.catalog_timeout('tcg'), 600)
+        for accel in ('kvm', 'whpx'):
+            self.assertEqual(guest.catalog_timeout(accel), 120)
+
+    def test_update_catalog_passes_timeout(self):
+        for accel, expected in (('tcg', 600), ('kvm', 120)):
+            with self.subTest(accel=accel):
+                calls = []
+                vm = guest.Guest(Path('.'), 0, '', 0.0, accel=accel)
+                vm.pkg = lambda *args: calls.append(args)
+                vm.update_catalog()
+                self.assertEqual(calls, [('update', 'Katalog geladen', expected)])
+
+
 if __name__ == '__main__':
     unittest.main()

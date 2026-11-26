@@ -363,10 +363,23 @@ def wait_serial(work: Path, text: str, timeout: float, start: int = 0) -> int:
     raise TimeoutError(f"Kein '{text}' im seriellen Protokoll.")
 
 
+# Erstes "pkg update" im Gast: unter TCG mit 1 CPU 304-315 s (Issue #674: smp.13 304 s, smp.16 315 s; Login 124 s,
+# gesamt 530 s), unter KVM etwa 28 s. 120 s reichen unter TCG nicht (Matrixzelle doomquick 0/24).
+CATALOG_TIMEOUT_TCG = 600
+CATALOG_TIMEOUT = 120
+
+
+def catalog_timeout(accel: str) -> float:
+    """Zeitgrenze fuer 'PKG Katalog geladen' je Beschleuniger."""
+    return CATALOG_TIMEOUT_TCG if accel == "tcg" else CATALOG_TIMEOUT
+
+
 class Guest:
     """Bedienschritte einer laufenden VM; jeder Schritt wartet auf die passende serielle Marke."""
 
-    def __init__(self, work: Path, port: int, source: str, started: float, doom_version: str = "1.0.0"):
+    def __init__(self, work: Path, port: int, source: str, started: float, doom_version: str = "1.0.0",
+                 accel: str = "kvm"):
+        self.accel = accel
         self.work, self.port, self.source, self.started = work, port, source, started
         # Das Testrepository liefert Doom 1.0.0; ein fremdes --source (veroeffentlichte Pakete) hat eine andere Version.
         self.doom_version = doom_version
@@ -448,7 +461,7 @@ class Guest:
     def update_catalog(self) -> None:
         for attempt in range(3):
             try:
-                self.pkg("update", "Katalog geladen", 120)
+                self.pkg("update", "Katalog geladen", catalog_timeout(self.accel))
                 return
             except RuntimeError as error:
                 self.shot("update-failed")
@@ -952,7 +965,7 @@ def prepare_snapshot(args: argparse.Namespace, fixtures: Path, run_root: Path) -
     create_disk(fixtures / "disk", image)
     repository = Repository(fixtures / "repo", args.tls)
     port = free_port()
-    guest = Guest(work, port, repository.source, time.monotonic())
+    guest = Guest(work, port, repository.source, time.monotonic(), accel="tcg")
     vm = start_qemu(args.iso, image, work, port, "tcg", None)
     try:
         guest.setup(with_doom=True)
@@ -999,7 +1012,7 @@ def run_scenario(args: argparse.Namespace, scenario: str, fixtures: Path | None,
         empty.mkdir()
         create_disk(fixtures / "disk" if fixtures else empty, disk)
     port = free_port()
-    guest = Guest(work, port, source, time.monotonic(), args.doom_version)
+    guest = Guest(work, port, source, time.monotonic(), args.doom_version, args.accel)
     vm = start_qemu(args.iso, disk, work, port, args.accel, "base" if base else None)
     try:
         if base is not None:
