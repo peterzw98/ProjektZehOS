@@ -119,7 +119,7 @@ public class LinuxFileMetaSyscallsTests
     private static long Call(Proc p, long n, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0)
     {
         var a = new SyscallArgs { Number = n, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4 };
-        return LinuxSyscalls.DispatchFileMeta(ref a, p, p);
+        return LinuxSyscalls.Dispatch(ref a, p); // über den ganzen Verteiler: belegt auch den Haken in DispatchMore
     }
 
     private const long Stat = 4, Fstat = 5, Lstat = 6, Access = 21, Rename = 82, Mkdir = 83, Rmdir = 84, Unlink = 87, Symlink = 88,
@@ -167,7 +167,7 @@ public class LinuxFileMetaSyscallsTests
         Assert.AreEqual("stat /home/u/a/c", p.Fs.Calls[^1]);
         Assert.IsTrue(p.Fs.Follow);
         Assert.AreEqual(0L, Call(p, Lstat, p.Mem.Put(0x100, "/../x//y/"), Base));
-        Assert.AreEqual("stat /x/y", p.Fs.Calls[^1]);
+        Assert.AreEqual("stat /x/y/", p.Fs.Calls[^1], "abschließendes / bleibt: Verzeichnis verlangt");
         Assert.IsFalse(p.Fs.Follow);
         Assert.AreEqual(-2L, Call(p, Stat, p.Mem.Put(0x100, "/nix"), Base));
         Assert.AreEqual(-2L, Call(p, Stat, p.Mem.Put(0x100, ""), Base), "leerer Pfad");

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 
 namespace ProjektZeh.Processes.Syscalls;
@@ -54,66 +53,6 @@ internal static partial class LinuxSyscalls
             case MetaNr.Symlinkat: return DoSymlink(p, f, a.A0, (int)a.A1, a.A2);
             default: return -MetaErr.ENOSYS;
         }
-    }
-
-    /// <summary>Löst Zeichenkette und Verzeichnis-fd zu einem absoluten, normalisierten Pfad (kein ".", "..", "//").</summary>
-    private static long MetaResolve(ILinuxProcess p, ILinuxFiles f, int dirfd, ulong ptr, out string path)
-    {
-        path = string.Empty;
-        if (!p.Memory.TryReadCString(ptr, MetaPathMax, out string raw))
-        {
-            return -MetaErr.EFAULT;
-        }
-
-        if (raw.Length == 0)
-        {
-            return -MetaErr.ENOENT;
-        }
-
-        string dir = f.Cwd;
-        if (raw[0] != '/' && dirfd != MetaAtFdcwd)
-        {
-            if (p.GetDescriptor(dirfd) is not ILinuxFile d)
-            {
-                return -MetaErr.EBADF;
-            }
-
-            if (!d.IsDirectory)
-            {
-                return -MetaErr.ENOTDIR;
-            }
-
-            dir = d.Path;
-        }
-
-        path = MetaNormalize(raw[0] == '/' ? raw : dir + "/" + raw);
-        return 0;
-    }
-
-    private static string MetaNormalize(string path)
-    {
-        var parts = new List<string>();
-        foreach (string part in path.Split('/'))
-        {
-            if (part.Length == 0 || part == ".")
-            {
-                continue;
-            }
-
-            if (part == "..")
-            {
-                if (parts.Count > 0)
-                {
-                    parts.RemoveAt(parts.Count - 1);
-                }
-
-                continue; // über die Wurzel hinaus bleibt es die Wurzel
-            }
-
-            parts.Add(part);
-        }
-
-        return "/" + string.Join('/', parts);
     }
 
     private static long WriteStat(ILinuxProcess p, ulong buf, in LinuxStat st)
@@ -187,7 +126,7 @@ internal static partial class LinuxSyscalls
             return DoFstat(p, dirfd, buf); // leerer Pfad: der Deskriptor selbst
         }
 
-        long r = MetaResolve(p, f, dirfd, pathPtr, out string path);
+        long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
         if (r < 0)
         {
             return r;
@@ -204,7 +143,7 @@ internal static partial class LinuxSyscalls
             return -MetaErr.EINVAL;
         }
 
-        long r = MetaResolve(p, f, dirfd, pathPtr, out string path);
+        long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
         return r < 0 ? r : f.FileSystem.Access(path, mode);
     }
 
@@ -274,7 +213,7 @@ internal static partial class LinuxSyscalls
             return -MetaErr.EINVAL;
         }
 
-        long r = MetaResolve(p, f, dirfd, pathPtr, out string path);
+        long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
         if (r < 0)
         {
             return r;
@@ -298,7 +237,7 @@ internal static partial class LinuxSyscalls
             return -MetaErr.EINVAL;
         }
 
-        long r = MetaResolve(p, f, dirfd, pathPtr, out string path);
+        long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
         if (r < 0)
         {
             return r;
@@ -309,19 +248,19 @@ internal static partial class LinuxSyscalls
 
     private static long DoMkdir(ILinuxProcess p, ILinuxFiles f, int dirfd, ulong pathPtr, uint mode)
     {
-        long r = MetaResolve(p, f, dirfd, pathPtr, out string path);
+        long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
         return r < 0 ? r : f.FileSystem.Mkdir(path, mode & 0x1ff);
     }
 
     private static long DoRename(ILinuxProcess p, ILinuxFiles f, int oldDirfd, ulong oldPtr, int newDirfd, ulong newPtr)
     {
-        long r = MetaResolve(p, f, oldDirfd, oldPtr, out string from);
+        long r = LinuxPath.Resolve(p, f, oldDirfd, oldPtr, out string from);
         if (r < 0)
         {
             return r;
         }
 
-        r = MetaResolve(p, f, newDirfd, newPtr, out string to);
+        r = LinuxPath.Resolve(p, f, newDirfd, newPtr, out string to);
         return r < 0 ? r : f.FileSystem.Rename(from, to);
     }
 
@@ -338,7 +277,7 @@ internal static partial class LinuxSyscalls
             return -MetaErr.ENOENT;
         }
 
-        long r = MetaResolve(p, f, dirfd, linkPtr, out string link);
+        long r = LinuxPath.Resolve(p, f, dirfd, linkPtr, out string link);
         return r < 0 ? r : f.FileSystem.Symlink(target, link);
     }
 }
