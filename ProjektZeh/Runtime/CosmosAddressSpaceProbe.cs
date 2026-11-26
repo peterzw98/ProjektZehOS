@@ -35,7 +35,7 @@ internal static unsafe class CosmosAddressSpaceProbe
     private const int DataPages = 4;             // 0 Daten (isolate), 1 Stack, 2-3 Adressliste (sparse)
     private const ulong StackTop = DataBase + PageSize + 2048;
     private const ulong TopPage = 0x0000_7FFF_FFFF_F000; // gesperrt: erste Adresse hinter dem abbildbaren Bereich
-    private const ulong SysCount = 0x7A01, SysExit = 0x7A02, SysCheck = 0x7A03, SysDevice = 0x7A04;
+    private const ulong SysCount = 0x7A01, SysExit = 0x7A02, SysCheck = 0x7A03, SysDevice = 0x7A04, SysSample = 0x7A05, SysYield = 0x7A06;
     private const int MaxSpaces = 8;
 
     private static ulong hhdm;
@@ -43,6 +43,11 @@ internal static unsafe class CosmosAddressSpaceProbe
 
     // Gebundene Adressraeume, damit die Handler den des laufenden Threads finden (Handler laufen im Thread, Interrupts an).
     private static readonly Space?[] bound = new Space?[MaxSpaces];
+
+    // N1-B5: Messwerte der Zeitfaelle (Ticks aus rdtsc im Ring 3), je Gruppe; ausgewertet wird erst nach dem Messfenster.
+    private const int SampleMax = 20000;
+    private static readonly uint[][] samples = [new uint[SampleMax], new uint[SampleMax]];
+    private static readonly int[] sampleCount = new int[2];
 
     private static long calls;
     private static int faults, faultsMapped;
@@ -164,6 +169,8 @@ internal static unsafe class CosmosAddressSpaceProbe
             Probe.Case("churn", Churn);
             Probe.Case("gc2", Collect);
             Probe.Case("device", Device);
+            Probe.Case("aswitch", AddressSwitch);
+            Probe.Case("pfault", PageFault);
         }
         finally
         {
@@ -215,6 +222,17 @@ internal static unsafe class CosmosAddressSpaceProbe
                 break;
             case SysDevice:
                 frame->Rax = DeviceStep();
+                break;
+            case SysSample:
+                // Mehr als SampleMax je Gruppe werden verworfen; der Zaehler laeuft weiter, damit der Fall das Ende sieht.
+                ulong group = frame->Rsi & 1;
+                int index = Interlocked.Increment(ref sampleCount[group]) - 1;
+                if (index < SampleMax) samples[group][index] = (uint)frame->Rdi;
+                frame->Rax = 0;
+                break;
+            case SysYield:
+                Thread.Yield();
+                frame->Rax = 0;
                 break;
             default:
                 frame->Rax = ulong.MaxValue;
@@ -378,6 +396,111 @@ internal static unsafe class CosmosAddressSpaceProbe
         try { result = UserMode.Enter(rip != 0 ? rip : Entry(program), StackTop); }
         finally { space.Unbind(); }
         return (result, faults == 1 ? faultVector : 0xFF, faultError, faultAddress);
+    }
+
+    // ---- N1-B5: Zeitfaelle ----
+
+    /// <summary>Min, p10, Median, p90, p99, Max der ersten <paramref name="count"/> Ticks (sortiert in place).</summary>
+    private static string Stats(uint[] values, int count)
+    {
+        if (count == 0) return "n=0";
+        Array.Sort(values, 0, count);
+        return "n=" + count + " min=" + values[0] + " p10=" + values[count / 10] + " med=" + values[count / 2]
+            + " p90=" + values[count * 9 / 10] + " p99=" + values[count * 99 / 100] + " max=" + values[count - 1];
+    }
+
+    private static int Filled(int group) => Math.Min(Volatile.Read(ref sampleCount[group]), SampleMax);
+
+    /// <summary>
+    /// Kosten eines Adressraumwechsels: ein Yield-Aufruf im Ring 3, allein (kein anderer Thread, kein Wechsel) und mit einem zweiten
+    /// Programm in einem anderen Adressraum auf derselben CPU (zwei Wechsel mit CR3). Die Differenz der Mediane enthaelt den Scheduler
+    /// (Thread.Yield) und nicht nur CR3; als Gegenprobe wechseln zwei Kernelthreads auf derselben CPU ohne Ring 3 (Ticks von Stopwatch).
+    /// </summary>
+    private static (bool, string) AddressSwitch()
+    {
+        uint cpu = Probe.ProgramCpu;
+        Space? a = Space.Create();
+        Space? b = Space.Create();
+        if (a == null || b == null) { a?.Dispose(); b?.Dispose(); return (false, "no space"); }
+        sampleCount[0] = sampleCount[1] = 0;
+        var alone = new Runner(a, "aswitch", 0, cpu);
+        bool aloneOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[0]) >= SampleMax, 60);
+        bool stopped = alone.Stop();
+        bool failed = alone.Bad != 0 || alone.Failure != "";
+        var first = new Runner(a, "aswitch", 1, cpu);
+        var second = new Runner(b, "aswitch", 1, cpu);
+        bool pairOk = Probe.WaitFor(() => Volatile.Read(ref sampleCount[1]) >= SampleMax, 60);
+        stopped &= first.Stop();
+        stopped &= second.Stop();
+        failed |= first.Bad != 0 || second.Bad != 0 || first.Failure != "" || second.Failure != "";
+        int aloneN = Filled(0), pairN = Filled(1);
+        string aloneText = Stats(samples[0], aloneN), pairText = Stats(samples[1], pairN);
+        long net = aloneN == 0 || pairN == 0 ? -1 : (long)samples[1][pairN / 2] - samples[0][aloneN / 2];
+        a.Dispose();
+        b.Dispose();
+        // Gegenprobe ohne Ring 3: zwei Kernelthreads wechseln per Yield auf derselben CPU.
+        string kernelText = KernelSwitch(cpu, out bool kernelOk);
+        return (aloneOk && pairOk && stopped && !failed && kernelOk,
+            "alone: " + aloneText + " pair: " + pairText + " net_med=" + net + " kernel_pair(sw_ticks): " + kernelText + " sw_hz=" + Stopwatch.Frequency);
+    }
+
+    private static string KernelSwitch(uint cpu, out bool ok)
+    {
+        const int rounds = 20000;
+        var ticks = new uint[rounds];
+        int count = 0, stop = 0;
+        var other = new Thread(() =>
+        {
+            Probe.PinTo(cpu);
+            while (Volatile.Read(ref stop) == 0) Thread.Yield();
+        });
+        var measure = new Thread(() =>
+        {
+            Probe.PinTo(cpu);
+            for (; count < rounds; count++)
+            {
+                long start = Stopwatch.GetTimestamp();
+                Thread.Yield();
+                ticks[count] = (uint)(Stopwatch.GetTimestamp() - start);
+            }
+        });
+        other.Start();
+        measure.Start();
+        bool joined = Probe.Join(measure, 60);
+        Volatile.Write(ref stop, 1);
+        joined &= Probe.Join(other, 60);
+        ok = joined && count == rounds;
+        return Stats(ticks, count);
+    }
+
+    /// <summary>
+    /// Kosten eines Seitenfehlers mit Belegung: Erstzugriff (Store, der FaultHandler holt einen Frame und bildet ihn ab) gegen denselben
+    /// Store auf einer schon abgebildeten Seite. Die Seiten liegen hintereinander in einem Bereich (eine Seitentabelle fasst 512).
+    /// </summary>
+    private static (bool, string) PageFault()
+    {
+        const int pages = 4000;
+        Space? space = Space.Create();
+        if (space == null) return (false, "no space");
+        var map = new AddressSpaceMap(PageSize, TopPage);
+        map.Reserve(CodeBase, (ulong)codeFrames.Length * PageSize, MapAccess.ReadExecute, Placement.FixedNoReplace);
+        map.Reserve(DataBase, DataPages * PageSize, MapAccess.ReadWrite, Placement.FixedNoReplace);
+        var range = map.Reserve(0x1_0000_0000, pages * PageSize, MapAccess.ReadWrite, Placement.Hint);
+        if (!range.IsOK()) { space.Dispose(); return (false, "reserve failed"); }
+        space.Map = map;
+        space.Frames.Capacity = pages + 64;
+        sampleCount[0] = sampleCount[1] = 0;
+        faultsMapped = 0;
+        var (result, vector, _, _) = Fault(space, "pfault", range.Value, pages);
+        int mapped = faultsMapped;
+        int framesUsed = space.Frames.Count;
+        space.Dispose();
+        int first = Filled(0), again = Filled(1);
+        string firstText = Stats(samples[0], first), againText = Stats(samples[1], again);
+        long net = first == 0 || again == 0 ? -1 : (long)samples[0][first / 2] - samples[1][again / 2];
+        return (result == 0 && mapped == pages && first == pages && again == pages,
+            "pages=" + pages + " mapped=" + mapped + " frames=" + framesUsed + " first_touch: " + firstText + " mapped_touch: " + againText + " net_med=" + net
+            + " result=" + Hex(result) + " vector=" + vector);
     }
 
     private static string Hex(ulong value) => "0x" + value.ToString("X");
