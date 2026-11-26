@@ -1,6 +1,7 @@
 // V15 "Prozess startet Prozess": posix_spawn (musl: clone(CLONE_VM|CLONE_VFORK|SIGCHLD) + execve) eines kleinen
-// statischen Programms, das "kind" schreibt und mit 42 endet; Fehlerfall (Datei fehlt -> ENOENT über die Pipe von musl)
-// und rohes vfork mit _exit vor execve. Ohne wait4 auf ZehOS-Seite (senior2, task/lb-v15-wait) prüft das Programm nur,
+// statischen Programms, das "kind" schreibt und mit 42 endet; Fehlerfall (Datei fehlt -> ENOENT über die Pipe von musl).
+// Rohes vfork mit Schreiben vor _exit fehlt mit Absicht: undefiniertes Verhalten, auch auf Linux. Ohne wait4 auf ZehOS-Seite
+// (senior2, task/lb-v15-wait) prüft das Programm nur,
 // was auch ohne Warten feststeht; die kurze Pause ordnet die Ausgabe des Kinds vor die Schlusszeile.
 #define _GNU_SOURCE
 #include <errno.h>
@@ -8,7 +9,6 @@
 #include <spawn.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -81,15 +81,6 @@ int main(void)
     rc = posix_spawn(&pid2, "fehlt", 0, 0, argv2, environ);
     printf("spawn fehlt rc %d\n", rc);
 
-    // Rohes vfork: Das Kind sieht eine eigene PID, schreibt in geteilten Speicher und endet vor execve.
-    static volatile int shared;
-    pid_t self = getpid();
-    long v = syscall(SYS_vfork);
-    if (v == 0) {
-        shared = (getpid() != self) ? 2 : 1;
-        syscall(SYS_exit_group, 7);
-    }
-    printf("vfork pid>1 %d geteilt %d\n", v > 1, shared);
     printf("ende\n");
     return 0;
 }

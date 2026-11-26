@@ -275,10 +275,15 @@ internal sealed partial class LinuxUserProcess
         // Ab hier kein Rückweg (Linux: point of no return): Dateien, Arbeitsverzeichnis und Signalmaske wandern ins neue Abbild.
         next.TakeOver(this);
         Parent.ReplaceChild(Pid, next);
+        int killed = HandOverKill(next); // kill während vfork (LinuxWait.cs)
         if (!StartExec(next, image))
         {
             next.ReportEnd(9);
             next.Destroy();
+        }
+        else if (killed != 0)
+        {
+            _ = next.DeliverSignal(killed, fromOutside: true);
         }
 
         return 0;

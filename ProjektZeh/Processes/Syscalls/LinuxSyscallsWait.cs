@@ -8,7 +8,7 @@ namespace ProjektZeh.Processes.Syscalls;
 /// </summary>
 internal static partial class LinuxSyscalls
 {
-    public const long Wait4 = 61, Getppid = 110, Waitid = 247;
+    public const long Wait4 = 61, Kill = 62, Getppid = 110, Waitid = 247;
 
     private const long ECHILD = 10;
     private const int PAll = 0, PPid = 1, PPgid = 2;
@@ -23,6 +23,10 @@ internal static partial class LinuxSyscalls
                 return p is ILinuxWait waiter ? waiter.ParentPid : 0;
             case Wait4:
                 return DoWait4(p, (int)a.A0, a.A1, (int)a.A2, a.A3);
+            case Kill:
+                // Ohne Prozessbaum: nur der Prozess selbst (wie tgkill auf den Hauptthread).
+                return p is ILinuxWait killer ? killer.KillProcess((int)a.A0, (int)a.A1)
+                    : p is ILinuxThreads self && (int)a.A0 == p.Pid ? self.SignalThread(p.Pid, p.Pid, (int)a.A1) : -ENOSYS;
             default:
                 return DoWaitid(p, (int)a.A0, (int)a.A1, a.A2, (int)a.A3, a.A4);
         }

@@ -29,7 +29,8 @@ static void sys(void) { b1(0x0f); b1(0x05); }
 static void ok_or_exit(int fail) { b1(0x74); b1(12); movr(0xb8, 231); movr(0xbf, (unsigned)fail); sys(); }
 
 /* Kind: keep >= 0 schreibt ein Byte auf keep (sonst exit 90); gone >= 0 muss EBADF bei F_GETFD liefern (sonst 91);
- * getppid muss ppid sein (sonst 92); kill_self beendet mit SIGKILL über tgkill (sonst 93), sonst exit_group(exitcode). */
+ * getppid muss ppid sein (sonst 92); kill_self 1 beendet mit SIGKILL über kill(getpid()) (sonst 93), 2 dreht endlos im Ring 3, bis der
+ * Elternprozess es mit kill beendet; sonst exit_group(exitcode). */
 static int write_child(const char *path, int exitcode, int keep, int gone, int ppid, int kill_self)
 {
     len = 0;
@@ -48,12 +49,14 @@ static int write_child(const char *path, int exitcode, int keep, int gone, int p
     movr(0xb8, 110); sys();                    /* getppid */
     b1(0x3d); b4((unsigned)ppid);              /* cmp eax, ppid */
     ok_or_exit(92);
-    if (kill_self) {
+    if (kill_self == 1) {
         movr(0xb8, 39); sys();                 /* getpid */
-        b1(0x89); b1(0xc7);                    /* mov edi, eax */
-        b1(0x89); b1(0xc6);                    /* mov esi, eax: tgkill(pid, pid) (kill 62 fehlt in ZehOS noch) */
-        movr(0xba, SIGKILL); movr(0xb8, 234); sys();
+        b1(0x89); b1(0xc7);                    /* mov edi, eax: kill(pid, SIGKILL) */
+        movr(0xbe, SIGKILL); movr(0xb8, 62); sys();
         movr(0xb8, 231); movr(0xbf, 93); sys();
+    }
+    if (kill_self == 2) {
+        b1(0xeb); b1(0xfe);                    /* jmp $ */
     }
     movr(0xb8, 231); movr(0xbf, (unsigned)exitcode); sys();
 
@@ -143,6 +146,16 @@ int main(void)
     a = start(0, -1, -1, 1, &err);
     w = waitpid(a, &st, 0);
     printf("kill_ok=%d signaled=%d sig=%d\n", w == a, WIFSIGNALED(st), WIFSIGNALED(st) ? WTERMSIG(st) : -1);
+
+    /* 4b. Der Elternprozess beendet ein Kind, das im Ring 3 dreht, mit kill(pid, SIGTERM); kill(pid, 0) prüft vorher nur. */
+    a = start(0, -1, -1, 2, &err);
+    r = kill(a, 0);
+    int r2 = kill(a, SIGTERM);
+    w = waitpid(a, &st, 0);
+    printf("kill_kind=%d %d ok=%d signaled=%d sig=%d\n", r, r2, w == a, WIFSIGNALED(st), WIFSIGNALED(st) ? WTERMSIG(st) : -1);
+    errno = 0;
+    r = kill(a, 0);
+    printf("kill_geerntet=%d errno=%d\n", r, errno);
 
     /* 5. Fehlendes Programm: musl meldet den execve-Fehler des Kindes über seine CLOEXEC-Pipe. */
     pid_t x = -1;

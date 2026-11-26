@@ -421,4 +421,110 @@ public sealed class LinuxProcessWaitTests
         Assert.AreEqual(content.Length, f!.Write(content));
         Assert.AreEqual(0, f.Close());
     }
+
+    private const long KillNr = 62, ESRCH = 3;
+
+    [TestMethod]
+    public void KillAufSichSelbstBeendetMitSignal()
+    {
+        var r = new Root();
+        Assert.AreEqual(0L, Sys(r.P, KillNr, RootPid, 0), "Signal 0 prüft nur");
+        Assert.AreEqual(-EINVAL, Sys(r.P, KillNr, RootPid, 65));
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, 77, 15), "unbekannte PID");
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, unchecked((ulong)-77), 15), "fremde Gruppe");
+        Assert.IsNull(r.P.ExitCode);
+        Assert.AreEqual(0L, Sys(r.P, KillNr, RootPid, 15));
+        Assert.AreEqual(143, r.P.ExitCode);
+        Assert.AreEqual(15, r.P.TerminatedBySignal);
+    }
+
+    [TestMethod]
+    public void KillNachExecveBeendetDasKindVonAussen()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        child.Release();
+        int? killed = null;
+        bool ownExit = false;
+        next.OnKilled = code => killed = code;
+        next.OnExit = _ => ownExit = true;
+        r.P.OnExit = _ => Assert.Fail("der Aufrufer bleibt");
+
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)next.Pid, 0));
+        Assert.IsNull(killed);
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)next.Pid, 15));
+        Assert.AreEqual(143, killed, "Brücke holt die Threads des Kindes");
+        Assert.IsFalse(ownExit, "nicht OnExit: das verließe den Ring 3 des Aufrufers");
+        Assert.AreEqual(15, next.TerminatedBySignal);
+        Assert.IsNull(r.P.ExitCode);
+
+        next.ReportEnd(next.WaitStatusOf(9));
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)next.Pid, 9), "Zombie: gelingt ohne Wirkung");
+        Assert.AreEqual((long)next.Pid, r.Wait4(next.Pid, r.Buf, 0));
+        Assert.AreEqual(15, LinuxWaitStatus.TermSignal(r.ReadInt(r.Buf)));
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, (ulong)next.Pid, 9), "geerntet");
+    }
+
+    [TestMethod]
+    public void KillAufEinEndendesKindLaesstDenExitstatus()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        child.Release();
+        bool killed = false;
+        next.OnExit = _ => { };
+        next.OnKilled = _ => killed = true;
+        Sys(next, LinuxSyscalls.ExitGroup, 3);
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)next.Pid, 9), "läuft noch ab, also ein Ziel");
+        Assert.IsFalse(killed);
+        Assert.IsNull(next.TerminatedBySignal);
+        Assert.AreEqual(LinuxWaitStatus.Exited(3), next.WaitStatusOf(9));
+    }
+
+    [TestMethod]
+    public void KillWaehrendVforkTrifftDasNeueAbbild()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        child.OnExit = _ => Assert.Fail("vfork-Kind läuft auf dem Kernelthread des Elternprozesses");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)child.Pid, 9));
+        Assert.IsNull(child.ExitCode, "gemerkt, nicht zugestellt");
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        Assert.AreEqual(9, next.TerminatedBySignal, "execve stellt zu");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, (ulong)child.Pid, 0), "die PID gehört jetzt dem Abbild");
+        child.Release();
+        next.ReportEnd(next.WaitStatusOf(9));
+        Assert.AreEqual((long)next.Pid, r.Wait4(-1, 0, 0));
+    }
+
+    [TestMethod]
+    public void KillAufDieGruppeTrifftAlleKinderUndZuletztDenAufrufer()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        var ends = new List<string>();
+        LinuxUserProcess[] kids = new LinuxUserProcess[2];
+        for (int i = 0; i < 2; i++)
+        {
+            LinuxUserProcess c = r.Spawn();
+            Assert.AreEqual(0L, c.Exec("/hello", ["/hello"], []));
+            c.Release();
+            kids[i] = r.Exec!;
+            int n = i;
+            kids[i].OnKilled = _ => ends.Add("kind" + n);
+        }
+
+        r.P.OnExit = _ => ends.Add("ich");
+        Assert.AreEqual(0L, Sys(kids[0], KillNr, unchecked((ulong)-1), 0), "-1: das andere Kind und nicht der erste Prozess");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, 0, 15));
+        Assert.AreEqual("kind0 kind1 ich", string.Join(" ", ends));
+    }
 }

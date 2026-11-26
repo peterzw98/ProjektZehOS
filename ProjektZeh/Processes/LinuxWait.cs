@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using ProjektZeh.Processes.Syscalls;
 
@@ -37,6 +38,12 @@ internal interface ILinuxWait
     /// </summary>
     /// <param name="consume">false bei WNOWAIT: der Zombie bleibt stehen.</param>
     long WaitChild(int idType, int id, int options, bool consume, Func<bool>? aborted, out int status, out ulong uid);
+
+    /// <summary>
+    /// kill(pid, sig) im Lauf: <paramref name="pid"/> &gt; 0 ein Prozess, 0 oder -Gruppe alle des Laufs, -1 alle außer dem Aufrufer und dem
+    /// ersten Prozess. Liefert 0, -EINVAL (Signalnummer), -ESRCH (kein Ziel) oder -ENOSYS (Handler, die der Kernel nicht anspringen kann).
+    /// </summary>
+    long KillProcess(int pid, int signal);
 }
 
 /// <summary>
@@ -134,6 +141,191 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
     /// </summary>
     private bool ReapsChildrenAutomatically() =>
         Signals.Handler[SigChld] == SigIgnHandler || (Signals.Flags[SigChld] & SaNoCldWait) != 0;
+
+    /// <summary>
+    /// Kernel (V15 kill): Ein anderer Prozess hat diesen beendet. Anders als <see cref="OnExit"/> gehört der aufrufende Thread nicht zu diesem
+    /// Prozess und darf den Ring 3 nicht verlassen; die Brücke schickt nur die Threads dieses Prozesses hinaus.
+    /// </summary>
+    public Action<int>? OnKilled { get; set; }
+
+    // Unter _threadGate: Signal aus kill, das während vfork ankam (das Kind läuft auf dem Kernelthread des Elternprozesses und lässt sich
+    // von außen nicht aus dem Ring 3 holen); execve stellt es dem neuen Abbild zu. Nach execve zeigt _execSuccessor auf das neue Abbild.
+    private int _killInVfork;
+    private LinuxUserProcess? _execSuccessor;
+
+    public long KillProcess(int pid, int signal)
+    {
+        if ((uint)signal > 64)
+        {
+            return -LinuxSyscalls.EINVAL;
+        }
+
+        // Linux: -INT_MIN lässt sich nicht verneinen (kill_something_info meldet ESRCH).
+        if (pid == int.MinValue)
+        {
+            return -LinuxSyscalls.ESRCH;
+        }
+
+        LinuxUserProcess root = this;
+        while (root.Parent != null)
+        {
+            root = root.Parent;
+        }
+
+        if (pid > 0)
+        {
+            return Find(root, pid, out LinuxUserProcess? target, out bool zombie)
+                ? zombie ? 0 : SignalProcess(target!, signal) // Linux: kill auf einen Zombie gelingt ohne Wirkung
+                : -LinuxSyscalls.ESRCH;
+        }
+
+        // Prozessgruppen gibt es nicht (setpgid -EPERM): Gruppe 0 und -GroupPid sind der ganze Lauf, eine andere Gruppe ist leer.
+        if (pid < -1 && -pid != root.Pid)
+        {
+            return -LinuxSyscalls.ESRCH;
+        }
+
+        var all = new List<LinuxUserProcess>();
+        Collect(root, all);
+        long result = -LinuxSyscalls.ESRCH;
+        bool self = false;
+        foreach (LinuxUserProcess target in all)
+        {
+            if (ReferenceEquals(target, this))
+            {
+                self = pid != -1;
+                continue;
+            }
+
+            if (pid == -1 && ReferenceEquals(target, root))
+            {
+                continue; // wie init im Namensraum
+            }
+
+            long r = SignalProcess(target, signal);
+            result = result == -LinuxSyscalls.ESRCH || r == 0 ? r : result;
+        }
+
+        // Der Aufrufer zuletzt: Beendet ihn das Signal, sind die anderen schon erreicht.
+        if (self)
+        {
+            long r = SignalProcess(this, signal);
+            result = result == -LinuxSyscalls.ESRCH || r == 0 ? r : result;
+        }
+
+        return result;
+    }
+
+    private long SignalProcess(LinuxUserProcess target, int signal)
+    {
+        if (ReferenceEquals(target, this))
+        {
+            return DeliverSignal(signal, fromOutside: false);
+        }
+
+        while (true)
+        {
+            lock (target._threadGate)
+            {
+                if (target._execSuccessor != null)
+                {
+                    target = target._execSuccessor;
+                    continue;
+                }
+
+                if (target.InVfork)
+                {
+                    // Nur Signale merken, die beenden würden; Handler und blockierte Signale entscheidet execve beim neuen Abbild.
+                    if (signal != 0 && target._killInVfork == 0)
+                    {
+                        target._killInVfork = signal;
+                    }
+
+                    return 0;
+                }
+            }
+
+            return target.DeliverSignal(signal, fromOutside: true);
+        }
+    }
+
+    /// <summary>Beendet diesen Prozess von außen (kill eines anderen Prozesses).</summary>
+    private void Kill(int signal)
+    {
+        lock (_threadGate)
+        {
+            // Endet der Prozess schon (exit_group, Absturz), bleibt sein Status; seine Threads verlassen den Ring 3 ohnehin.
+            if (ExitCode != null)
+            {
+                return;
+            }
+
+            ExitCode = 128 + signal;
+            TerminatedBySignal = signal;
+        }
+
+        Futexes.Abort();
+        OnKilled?.Invoke(128 + signal);
+    }
+
+    /// <summary>execve, Punkt ohne Rückweg: Spätere kill-Aufrufe treffen <paramref name="next"/>; ein Signal aus der vfork-Zeit bekommt es nach dem Start.</summary>
+    private int HandOverKill(LinuxUserProcess next)
+    {
+        lock (_threadGate)
+        {
+            _execSuccessor = next;
+            int signal = _killInVfork;
+            _killInVfork = 0;
+            return signal;
+        }
+    }
+
+    /// <summary>Sucht <paramref name="pid"/> im Baum ab <paramref name="p"/>; ein selbst geernteter Prozess (SIG_IGN) ist schon weg.</summary>
+    private static bool Find(LinuxUserProcess p, int pid, out LinuxUserProcess? found, out bool zombie)
+    {
+        found = null;
+        zombie = false;
+        if (p.Pid == pid)
+        {
+            found = p;
+            return true;
+        }
+
+        foreach (LinuxChild c in p.Children)
+        {
+            if (c.Pid == pid)
+            {
+                if (c.WaitStatus != null && c.AutoReaped)
+                {
+                    return false;
+                }
+
+                found = c.Process;
+                zombie = c.WaitStatus != null;
+                return true;
+            }
+
+            if (c.WaitStatus == null && Find(c.Process, pid, out found, out zombie))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Alle laufenden Prozesse unter <paramref name="p"/> (Schnappschüsse der Kinderlisten, keine Sperre gleichzeitig).</summary>
+    private static void Collect(LinuxUserProcess p, List<LinuxUserProcess> into)
+    {
+        into.Add(p);
+        foreach (LinuxChild c in p.Children)
+        {
+            if (c.WaitStatus == null)
+            {
+                Collect(c.Process, into);
+            }
+        }
+    }
 
     /// <summary>Prüft die Optionen von wait4 (Linux kernel/exit.c): erlaubt WNOHANG, WUNTRACED, WCONTINUED und die __W-Bits.</summary>
     public static bool ValidWait4Options(int options) => (options & ~(WNohang | WUntraced | WContinued | WNothread | WAll | WClone)) == 0;
