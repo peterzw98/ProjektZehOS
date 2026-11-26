@@ -53,6 +53,20 @@ Lesart: Der Wechsel zum Peer ist jetzt belegt (CR3 in allen 3000 Paarrunden je s
 | `test-network.py` (Probe-ISO mit Fixture-CA, Netzprobe) | smp1 3/3, smp4 3/3 `NETWORK_PROBE PASS` |
 | `test-classicube-desktop.py` (Normalbau mit Testschlüssel, Paket `~/zehos-676-pk/cc`) | smp1 1/1 PASS, smp4 1/1 PASS (freier Speicher ~440-447 MiB) |
 
+## Nachtrag: Normalbau gegen master (smp.13) und B1
+
+Stand: `origin/master` 53cba9cd5 (Cosmos 3.0.97-zehos.6-smp.13), **ohne** den Probe-Code dieses Branches; Rechner MSI, KVM, ein Gast zugleich. Je ISO `-warnaserror`: main, wasm (Testschlüssel/-CA), net (Netzwerkprobe) 0 Warnungen, 0 Fehler.
+
+| Fall | 1 CPU | 4 CPUs |
+| --- | --- | --- |
+| Desktop (`test-desktop-guest.py`) | 3/3 PASS | 3/3 PASS |
+| Netz (`test-network.py`) | 3/3 PASS | 3/3 PASS |
+| ClassiCube (`test-classicube-desktop.py`, Paket Seed 1) | 3/3 PASS | 3/3 PASS |
+
+ClassiCube: freier Speicher in den drei Starts je Lauf 440,5-446,9 MiB, ohne Ausreißer. Der Normalbau ist damit nicht schlechter als in den früheren Läufen mit dem Branch-Stand. Bildschirmfotos wurden nicht angesehen (das Skript meldet PASS aus dem seriellen Protokoll).
+
+B1 (#620, gemergt mit #666, Folge #677): auf master 53cba9cd5 `dotnet test ProjektZeh.Tests --configuration Release -warnaserror --filter AddressSpaceMapTests`: 24 bestanden, 0 fehlgeschlagen. Das ist nur der Hostteil (Buchführung); die Kernelprobe `CosmosAddressSpaceProbe` wurde hier nicht gefahren.
+
 ## Nicht geprüft / Grenzen
 
 - Kein Vergleich gegen `origin/master` (smp.13) im Normalbau gemessen; nur der Pin dieses Stands. Die Matrix von engineer2 (#708, 90/90) lief auf anderem Kopf.
@@ -69,7 +83,7 @@ Lesart: Der Wechsel zum Peer ist jetzt belegt (CR3 in allen 3000 Paarrunden je s
 
 **pfault trägt als Messung:** Der Store auf eine reservierte, nicht abgebildete Seite löst einen echten #PF aus, `mapped=4000` und `first == pages` belegen je Seite einen Fehler mit Belegung; ~2040-2100 Ticks je Fehler (KVM, Median, abzüglich 14 Ticks Leerlauf) sind plausibel. Kleinigkeit: Die Seiten liegen hintereinander in einem Bereich, nicht „verstreut“ (Code `PageFault`, `range.Value` + `i * 4096`); die Messung zeigt also Fehler bei schon vorhandener Seitentabelle (bis auf je eine neue Tabelle alle 512 Seiten, das passt zu max ~0,4 Mio).
 
-**Regel #634:** `trägt` braucht B1 und B4 erfüllt und den Normalbau unverändert, und der Inhalt des Pakets ist die Zeit je Adressraumwechsel. Davon fehlt: (1) Zeit je Wechsel (siehe oben), (2) B1 hier nicht nachgeprüft, (3) Normalbau nicht gegen `origin/master` verglichen, ClassiCube 1 statt 3 Läufe. Eine bekannte Ursache in Cosmos/NativeAOT ohne abgegrenzten Patch liegt nicht vor, also nicht `trägt nicht`.
+**Regel #634:** `trägt` braucht B1 und B4 erfüllt und den Normalbau unverändert, und der Inhalt des Pakets ist die Zeit je Adressraumwechsel. Davon fehlt: (1) Zeit je Wechsel (siehe oben), (2) B1: Hosttests auf master 24/24 (siehe Nachtrag), (3) Normalbau gegen master smp.13 und ClassiCube 3x je smp: erledigt (siehe Nachtrag). Eine bekannte Ursache in Cosmos/NativeAOT ohne abgegrenzten Patch liegt nicht vor, also nicht `trägt nicht`.
 
 **Um auf `trägt` zu kommen:**
 
