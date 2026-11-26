@@ -140,7 +140,12 @@ Grenzen (Review V2, bewusst offen):
   `write` nach `lseek`, `ftruncate` nach oben) in Schritten von höchstens `StorageLock.ChunkBytes` (1 MiB), jeder unter einer eigenen Sperre, damit Desktop und
   Shell dazwischen drankommen. Dazu ein Kontingent je Wurzel: höchstens 64 MiB Nettowachstum (`DirectoryFileStore.DefaultQuotaBytes`; vorhandene Dateien wie
   Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC` (die Lücke wird vorher geprüft, nichts geschrieben),
-  ein Schreiben am Rand wird gekürzt. Volle Platte (`IOException` mit errno 28 oder Windows-Code) ist `-ENOSPC`, was Cosmos dabei meldet, ist im Gast nicht geprüft (sonst `-EIO`).
+  ein Schreiben am Rand wird gekürzt. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
+  Kontingent zurück; gelingt auch das nicht, bleibt die erreichte Länge gebucht und der Fehler des Schritts gilt.
+  Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (Linux-Host), 0x70/0x27 (Windows) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
+  setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
+  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Der HResult im Gast ist bei senior2 angefragt.
+  Im Gast ist Wachstum nur über `lseek` + `write` erreichbar: `ftruncate` (77) und `pwrite64` (18) liefert der Verteiler noch mit `-ENOSYS`.
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
@@ -164,6 +169,7 @@ Grenzen (Review V2, bewusst offen):
   - FAT-Sonderzeichen `? * " < >`, reservierte Namen (`CON`) und ein führendes Leerzeichen werden angenommen (Cosmos deutet sie nicht, chkdsk/Windows bemängeln sie).
   - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
+  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte auf smp4, TCG und VMware nicht. `ftruncate`/`pwrite64` fehlen im Verteiler.
 
 ## Dateien im Prozess (V8)
 
