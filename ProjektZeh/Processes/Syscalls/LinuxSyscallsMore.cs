@@ -382,21 +382,17 @@ internal static partial class LinuxSyscalls
         {
             // Wartet poll auf Terminaleingabe (V3 stdin) oder eine Pipe (V13), wartet der Deskriptor selbst (in Scheiben, mit Abbruch),
             // auch ohne Frist. Bei einem Wartenden die ganze Frist; bei mehreren reihum in kurzen Scheiben auf den ersten, dann neu
-            // durchsuchen, damit ein anderer (etwa die Weckpipe neben fd 0) höchstens eine Scheibe zu spät gemeldet wird. Gezählt wird
-            // die gewartete Zeit wie im Terminal, nicht die Uhr: Ersatzprozesse in den Tests haben eine stehende Uhr.
-            long waited = 0;
+            // durchsuchen, damit ein anderer (etwa die Weckpipe neben fd 0) höchstens eine Scheibe zu spät gemeldet wird. Die Frist läuft
+            // nach der Stopwatch, nicht nach der Uhr des Prozesses (Ersatzprozesse in den Tests haben eine stehende) und nicht nach der
+            // nominalen Scheibe: Eine Pipe kehrt bei jedem fremden Puls früh zurück, gezählte Scheiben verkürzten die Frist (V13-Review P2-1).
+            long start = Stopwatch.GetTimestamp();
             while (true)
             {
-                long slice = waitables == 1 ? (timeoutMs < 0 ? -1 : timeoutMs - waited)
-                    : (timeoutMs < 0 ? PollMultiSliceMs : Math.Min(PollMultiSliceMs, timeoutMs - waited));
+                long left = timeoutMs < 0 ? -1 : Math.Max(0, timeoutMs - LinuxPipe.ElapsedMs(start));
+                long slice = waitables == 1 || left == 0 ? left : (left < 0 ? PollMultiSliceMs : Math.Min(PollMultiSliceMs, left));
                 _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice) : ((ILinuxInput)waitFor).WaitInput(slice);
                 ready = PollScan(p, b, (int)nfds, out _, out _, out _);
-                if (slice >= 0)
-                {
-                    waited += slice;
-                }
-
-                if (ready > 0 || Aborted(p) || (timeoutMs >= 0 && waited >= timeoutMs) || waitables == 1)
+                if (ready > 0 || Aborted(p) || waitables == 1 || (timeoutMs >= 0 && LinuxPipe.ElapsedMs(start) >= timeoutMs))
                 {
                     break;
                 }

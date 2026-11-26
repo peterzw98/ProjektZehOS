@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 
 namespace ProjektZeh.Processes.Syscalls;
@@ -253,24 +254,28 @@ internal sealed class LinuxPipe
 
     public bool WaitPoll(bool reader, short events, long timeoutMs)
     {
-        long waited = 0;
+        // Die Frist läuft nach der Uhr, nicht nach Scheiben: PulseAll weckt bei jedem Lesen oder Schreiben eines anderen Threads vorzeitig,
+        // ein Zählen der nominalen Scheibe verkürzte die Frist dann beliebig (V13-Review P2-1: 1500 ms wurden 71 ms).
+        long start = Stopwatch.GetTimestamp();
         lock (_gate)
         {
             while (EventsLocked(reader, events) == 0)
             {
-                if (Aborted || (timeoutMs >= 0 && waited >= timeoutMs))
+                long left = timeoutMs < 0 ? SliceMs : timeoutMs - ElapsedMs(start);
+                if (Aborted || left <= 0)
                 {
                     return false;
                 }
 
-                int step = timeoutMs < 0 ? SliceMs : (int)Math.Min(SliceMs, timeoutMs - waited);
-                Monitor.Wait(_gate, step);
-                waited += step;
+                Monitor.Wait(_gate, (int)Math.Min(SliceMs, left));
             }
 
             return true;
         }
     }
+
+    /// <summary>Vergangene Millisekunden seit <paramref name="start"/> (Stopwatch-Ticks, im Gast an den TSC gebunden).</summary>
+    internal static long ElapsedMs(long start) => (long)((Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency);
 
     /// <summary>Das letzte Verweis auf ein Ende ist zu: Leser bekommen EOF, Schreiber EPIPE; Wartende wachen auf.</summary>
     public void CloseEnd(bool reader)

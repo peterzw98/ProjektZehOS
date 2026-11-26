@@ -40,8 +40,9 @@ internal static partial class LinuxSyscalls
         }
 
         // Erst prüfen, ob der Puffer beschreibbar ist, dann warten: sonst ginge eine Eingabezeile an einen ungültigen Zeiger verloren.
+        // Nur prüfen, nicht schreiben: Bei -EAGAIN, -EINTR oder EOF bleibt der Puffer wie bei Linux unverändert (V13-Review P2-2).
         int n = (int)Math.Min(count, (ulong)Chunk);
-        if (buf + (ulong)n < buf || !p.Memory.TryWrite(buf, new byte[n]))
+        if (buf + (ulong)n < buf || !p.Memory.CanWrite(buf, (ulong)n))
         {
             return -EFAULT;
         }
@@ -96,7 +97,7 @@ internal static partial class LinuxSyscalls
         {
             ulong take = Math.Min(lens[i], left);
             lens[i] = take;
-            if (take > 0 && (bases[i] + take < bases[i] || !p.Memory.TryWrite(bases[i], new byte[take])))
+            if (take > 0 && (bases[i] + take < bases[i] || !p.Memory.CanWrite(bases[i], take)))
             {
                 return -EFAULT;
             }
