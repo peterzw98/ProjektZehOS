@@ -41,7 +41,7 @@ internal interface IUserPages
 /// laufen auf seinem Kernelstack), das Aufräumen danach auf demselben Thread.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxAddressSpace
 {
     private const ulong Page = AddressSpaceMap.PageSize;
     private const int ProtRead = 1, ProtWrite = 2, ProtExec = 4;
@@ -59,6 +59,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     private ulong _brkStart;
     private ulong _brk;
     private ulong _fsBase;
+    private ulong _stackSize = 8UL << 20;
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
@@ -88,6 +89,11 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
     public int Pid { get; }
 
     public ulong Brk => _brk;
+
+    /// <summary>Größe der Stackabbildung aus dem geladenen Abbild (RLIMIT_STACK, V9); vor <see cref="Load"/> der Linux-Standard.</summary>
+    public ulong StackSize => _stackSize;
+
+    public bool IsMapped(ulong addr, ulong len) => _map.IsMapped(addr, len);
 
     public ulong ClearChildTid { get; set; }
 
@@ -132,6 +138,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost
         {
             return reserved;
         }
+
+        _stackSize = image.StackTop - image.StackBottom;
 
         ulong stackContent = image.StackPointer & ~(Page - 1);
         foreach (UserRegion region in image.Regions)

@@ -108,3 +108,52 @@ Grenzen (Review V2, bewusst offen):
   #UD 4, #DE 8); eine Ausnahme in der Brücke ebenso (`signal 9`).
 - Gastprobe: `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>` startet beim Boot die Programme eines Bündels (`scripts/test-linux-run.py`).
   Pin: `story/ladybird-cosmos` (Patches `user-cr3` u. a.).
+
+## js-Vorbereitung (V9)
+
+Gelesen: Ladybird `6fba5b78a104` (`AK/StackInfo.cpp`, `AK/Rust/src/stack.rs`, `AK/kmalloc.cpp`, `Libraries/LibCore/System.cpp`, `Libraries/LibGC/BlockAllocator.cpp`,
+`Libraries/LibGC/PrimitiveStorage.cpp`, `Libraries/LibThreading/Thread.cpp`, `Libraries/LibJS/Rust/src/{source_text,parser/mod}.rs`, `Libraries/LibJS/Rust/src/utilities/{js,line_editor}.rs`,
+`Utilities/js.cpp`), dazu musl 1.2 (`pthread_getattr_np`, `getrlimit`, `sysconf`). Nichts davon ist mit einem echten js belegt; das Binary kommt aus V4.
+Code: `ProjektZeh/Processes/Syscalls/LinuxSyscallsLimits.cs`, Hosttests in `LinuxUserProcessTests` und `LinuxSyscallsTests`, Gastprogramm `experiments/LinuxAbi/src/v9/jsprep.c`.
+
+| Nr | Name | Verhalten |
+| --- | --- | --- |
+| 25 | `mremap` | nur mit `ILinuxAddressSpace`, sonst `-ENOSYS`. Alter Bereich nicht ganz abgebildet `-EFAULT`; Verkleinern gibt das Ende frei; gleiche Größe liefert die Adresse; Vergrößern (auch mit `MREMAP_MAYMOVE`) und `MREMAP_FIXED`/`DONTUNMAP` `-ENOMEM` (Abweichung: musl-`realloc` und mimalloc kopieren dann); unausgerichtete Adresse, neue Größe 0, unbekannte Flags, `FIXED`/`DONTUNMAP` ohne `MAYMOVE` `-EINVAL` |
+| 302, 97, 160 | `prlimit64`, `getrlimit`, `setrlimit` | nur lesen: `RLIMIT_STACK` = Größe der Stackabbildung (Standard 8 MiB), `RLIMIT_NOFILE` 1024, `RLIMIT_CORE` 0, alle übrigen unbegrenzt; Setzen `-EPERM` (Abweichung), fremde PID `-ESRCH`, Ressource ≥ 16 `-EINVAL` |
+| 204 | `sched_getaffinity` | eine CPU (Maske 1), Rückgabe 8; Länge < 8 oder nicht durch 8 teilbar `-EINVAL`, fremde PID `-ESRCH` |
+| 157 | `prctl` | `PR_SET_NAME` prüft nur den Zeiger (ohne Wirkung), `PR_GET_NAME` liefert einen leeren Namen (Abweichung); alles andere `-EINVAL` (auch mimallocs `PR_SET_VMA`) |
+
+Warum diese Aufrufe: musls `pthread_getattr_np` misst den Hauptstack, indem es unterhalb des Stackanfangs Seite um Seite `mremap(p-l-PAGE, PAGE, 2*PAGE, 0)`
+versucht, solange `-ENOMEM` kommt. Mit `-ENOSYS` meldet es eine Seite; Ladybirds Rust-Seite (`AK/Rust/src/stack.rs:25-38`, genutzt in
+`LibJS/Rust/src/parser/mod.rs:186-189`) setzte die Stackgrenze dann über den Stackzeiger, jeder JS-Aufruf wäre „Maximum call stack size exceeded“. Die Schutzseite
+unter dem ZehOS-Stack ist eine Abbildung (PROT_NONE) und zählt mit (eine Seite mehr als Linux; LibJS hält `VM_STACK_SPACE_LIMIT` Abstand). Die C++-Seite
+(`AK/StackInfo.cpp:122-135`) nimmt bei musl für den Hauptthread `RLIMIT_STACK`; ohne `prlimit64`/`getrlimit` bliebe die Struktur dort uninitialisiert.
+
+### Lücken für js (Stand dieses Abschnitts)
+
+Muss vor dem ersten js-Lauf geschlossen sein:
+
+1. **Threads.** `GC::DecommitWorker` startet beim ersten freigegebenen Block mit aufgeschobenem Decommit einen Thread über `Threading::Thread::start()`,
+   und das ist `MUST(try_start())` (`LibGC/BlockAllocator.cpp:349-357,494,638`; `LibThreading/Thread.cpp:58`). Ohne `clone` endet js beim ersten GC mit Abbruch.
+   Gebraucht: `clone` mit `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|CHILD_CLEARTID` (musl `pthread_create`), je Thread eigene FS-Basis,
+   eigene TID (`gettid` ≠ `getpid`), `set_tid_address`/`CHILD_CLEARTID` mit futex-Wecken beim Threadende (musl `pthread_join`/`detach`), `exit` (nur der Thread)
+   gegen `exit_group` (alle), echtes `futex` WAIT/WAKE mit Frist zwischen Threads (Bedingungsvariable mit `wait_for`), `tgkill` für `pthread_kill`/Abbruch,
+   gemeinsamer Adressraum mit Sperre um Karte und Seitentabelle. Der zweite Thread (`LibJS source parking`, `LibJS/Rust/src/source_text.rs:336-342`) ist
+   optional: scheitert sein Start, läuft js weiter.
+2. **V2c** (`task/lb-v2c-aufrufe`, Review offen): `MAP_FIXED` ist Ladybirds `commit_memory`/`decommit_memory` (`LibCore/System.cpp:193-221`),
+   `madvise(MADV_FREE)` der Block-Decommit (`BlockAllocator.cpp:225-260`). Ohne V2c scheitert der erste GC-Chunk mit `MUST`.
+3. **Rohmodus** (`task/lb-v3-raw`, Review offen): js liest über libedit (`Utilities/js.cpp:10-48`); LibLine gibt es in diesem Stand nicht mehr.
+
+Sollte vorher geklärt sein (Frage an den V4-Bau):
+
+4. **libedit und terminfo.** Die Umgebung von `run` setzt weder `TERM` noch `HOME` (`CosmosLinuxRun.Environment`). Ohne `TERM` nimmt libedit ein dummes
+   Terminal (keine Zeilenbearbeitung); mit `TERM` braucht ein statisches ncurses eine eingebaute Beschreibung (`--with-fallbacks`) oder eine terminfo-Datei
+   im Prozessdateisystem. Die Historie geht nach `$HOME/.js-history`, ohne `HOME` (und ohne `/etc/passwd`) nach `/.js-history` (`js.rs:2017-2030`).
+5. **ICU-Daten.** Liest das js-Binary ICU-Daten aus einer Datei, braucht es Dateiabbildungen (`mmap` mit fd, heute `-ENODEV`). Statisch eingebundene Daten brauchen nichts.
+6. **Signale.** libedit setzt Handler für SIGINT, SIGWINCH, SIGTSTP u. a.; zugestellt wird nichts. Strg+C beendet das Programm (`signal 2`) statt die Zeile zu verwerfen.
+
+Geprüft, kein Handlungsbedarf: Reservierungen von 64 GiB (GC-Region, 2 × 32 GiB, Kopf und Ende per `munmap`) und 4 TiB + Rand (`PrimitiveStorage`) mit
+`PROT_NONE|MAP_NORESERVE` passen in den Bereich ab `MmapBase` und kosten keine Frames; `mprotect`/`munmap` laufen über die Frames, nicht über die Länge.
+`MADV_POPULATE_WRITE` (`-EINVAL`) wird ignoriert (`BlockAllocator.cpp:145-148`). `sysconf(_SC_NPROCESSORS_ONLN)` zählt die Maske aus `sched_getaffinity`.
+Nicht an diesem Stand gelesen (mimalloc und Rust-`std` liegen außerhalb des Ladybird-Baums), nur erwartet: mimalloc öffnet `/sys/...`-Dateien optional,
+Rust-`std` legt unter musl keine Stackwache für den Hauptthread an und braucht `sigaltstack`, `sigaction` und `poll` auf fd 0–2 (gibt es).
