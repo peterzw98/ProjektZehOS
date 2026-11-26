@@ -33,3 +33,12 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 Grenze: `write` verlässt sich auf `ILinuxDescriptor.Write` ≤ angebotene Länge (größere Rückgaben werden nicht abgefangen); je Aufruf ein 4-KiB-Puffer.
 
 Nicht in S1: Dateien (`open`, `read`), Signale, Threads (`clone`, `futex`), `MAP_FIXED`, Dateiabbildungen.
+
+## Prozess und Terminal (V3)
+
+- `LinuxUserProcess` (`ProjektZeh/Processes/LinuxUserProcess.cs`, plattformunabhängig, Hosttests `LinuxUserProcessTests`): `AddressSpaceMap` plus `IUserPages`
+  (Seitenebene). Seiten entstehen beim ersten Zugriff (Seitenfehler oder Kernelzugriff über `IUserMemory`), `mmap` und `brk` belegen nur die Karte.
+  Deskriptoren 0–2 schreiben zeilenweise ins Terminal, jeder andere ist `-EBADF`. `mmap`/`mprotect` mit `PROT_WRITE|PROT_EXEC` scheitern (W^X, `-ENOMEM`).
+  `brk` darf höchstens 1 GiB über das Programmende wachsen.
+- Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es die Shell-Anweisung `run <datei> [argumente...]`
+  (liest die ELF-Datei bis 64 MiB, ein Programm zugleich, Zeitgrenze 120 s). Pin: `story/ladybird-cosmos` (Patches `user-cr3` u. a.).

@@ -38,6 +38,7 @@
     <ZehOSUserModeProbe Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">true</ZehOSUserModeProbe>
     <DefineConstants Condition="'$(ZehOSUserModeProbe)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE_NEGATIVE</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSLinuxRun)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>

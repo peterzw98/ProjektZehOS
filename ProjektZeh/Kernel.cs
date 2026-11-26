@@ -309,6 +309,23 @@ public sealed class Kernel : Sys.Kernel
                     ? ResultErr.CreateSuccess()
                     : ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: powerfault <" + string.Join("|", PowerFaultProbe.Points) + "> [...]")),
 #endif
+#if ZEHOS_LINUX_RUN
+            // Nur Testbau (V3): statisches Linux-Programm im Ring 3 starten; Ausgabe und Ende im Terminal.
+            new ShellCommand("run", "run <datei> [argumente...]",
+                "Testbau: startet ein statisches x86-64-Linux-Programm (ELF) im Ring 3.", true,
+                (arguments, output) =>
+                {
+                    if (arguments.Length == 0)
+                    {
+                        return ResultErr.CreateFailure(ResultCode.MissingArgument, "Verwendung: run <datei> [argumente...]");
+                    }
+
+                    var read = files.ReadBytes(arguments[0], 64 * 1024 * 1024);
+                    return read.IsOK()
+                        ? CosmosLinuxRun.Run(read.Value!, arguments, ["ZEHOS_ABI=1", "LANG=C", "PATH=/usr/bin:/bin"], output)
+                        : ResultErr.CreateFailure(read.Status.Code, read.Status.Message);
+                }),
+#endif
         ], systemLog, GetAvailableUptime,
             VersionText,
             command => accounts.Authorize(identity, command), files: files, getMemory: CosmosSystemInfo.MemoryText, getSessionGeneration: () => identity.Generation);
