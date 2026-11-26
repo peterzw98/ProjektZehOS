@@ -1,4 +1,5 @@
 using System;
+using ProjektZeh.Processes;
 using System.Diagnostics;
 
 namespace ProjektZeh.Processes.Syscalls;
@@ -58,7 +59,7 @@ internal static partial class LinuxSyscalls
             case SchedYield: return 0;
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Madvise: return DoMadvise(a.A0, a.A1, (int)a.A2);
-            case Futex: return DoFutex(p, ref a);
+            case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
             default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }
@@ -478,6 +479,89 @@ internal static partial class LinuxSyscalls
                 }
 
                 return 0;
+            default:
+                return -ENOSYS;
+        }
+    }
+    /// <summary>
+    /// futex mit Threads (V10): WAIT/WAKE (auch _BITSET), REQUEUE und CMP_REQUEUE über die futex-Tabelle des Prozesses. WAIT
+    /// schläft wirklich, bis ein anderer Thread weckt, die Frist abläuft oder der Prozess endet (-EINTR). Fristen: FUTEX_WAIT relativ,
+    /// FUTEX_WAIT_BITSET absolut auf CLOCK_MONOTONIC (mit FUTEX_CLOCK_REALTIME auf der Wanduhr).
+    /// </summary>
+    private static long DoFutexThreads(ILinuxProcess p, LinuxFutexTable table, ref SyscallArgs a)
+    {
+        const int Wait = 0, Wake = 1, Requeue = 3, CmpRequeue = 4, WaitBitset = 9, WakeBitset = 10, ClockRealtime = 256;
+        int op = (int)a.A1 & 127;
+        bool realtime = ((int)a.A1 & ClockRealtime) != 0;
+        if ((a.A0 & 3) != 0)
+        {
+            return -EINVAL;
+        }
+
+        switch (op)
+        {
+            case Wait:
+            case WaitBitset:
+            {
+                uint bitset = op == WaitBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                long deadline = -1;
+                if (a.A3 != 0)
+                {
+                    Span<byte> ts = stackalloc byte[16];
+                    if (!p.Memory.TryRead(a.A3, ts))
+                    {
+                        return -EFAULT;
+                    }
+
+                    long sec = BitConverter.ToInt64(ts.Slice(0, 8)), nsec = BitConverter.ToInt64(ts.Slice(8, 8));
+                    if (nsec < 0 || nsec >= 1_000_000_000L || sec < 0)
+                    {
+                        return -EINVAL;
+                    }
+
+                    var host = p as ILinuxHost;
+                    long now = host?.MonotonicNanos ?? 0;
+                    long ns = sec > long.MaxValue / 2_000_000_000L ? long.MaxValue / 2 : sec * 1_000_000_000L + nsec;
+                    if (op == Wait)
+                    {
+                        deadline = now + ns; // relativ, auch mit FUTEX_CLOCK_REALTIME (Linux ab 4.5)
+                    }
+                    else
+                    {
+                        // Absolut: auf die monotone Uhr umrechnen, die die Tabelle misst.
+                        long clockNow = realtime ? host?.RealtimeNanos ?? 0 : now;
+                        deadline = now + Math.Max(0, ns - clockNow);
+                    }
+                }
+
+                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline);
+            }
+
+            case Wake:
+            case WakeBitset:
+            {
+                uint bitset = op == WakeBitset ? (uint)a.A5 : uint.MaxValue;
+                if (bitset == 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Wake(a.A0, (int)Math.Min((uint)a.A2, int.MaxValue), bitset);
+            }
+
+            case Requeue:
+            case CmpRequeue:
+                if ((a.A4 & 3) != 0 || (int)a.A2 < 0 || (int)a.A3 < 0)
+                {
+                    return -EINVAL;
+                }
+
+                return table.Requeue(p.Memory, a.A0, a.A4, (int)a.A2, (int)a.A3, op == CmpRequeue ? (int)a.A5 : null);
             default:
                 return -ENOSYS;
         }
