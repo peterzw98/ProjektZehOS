@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes;
@@ -285,8 +286,8 @@ public sealed class ElfLoaderTests
         Assert.AreEqual(0x178BFBFFUL, s.Aux[16]);
         Assert.AreEqual(0UL, image.StackPointer % 16);
 
-        // Die feste Schnittstelle aus dem Plan liefert eigene Zufallsbytes und den vollen Stack.
-        UserImage plain = ElfLoader.Load(elf, ["p"], []);
+        // Ohne Zufallsquelle kein stiller Ersatz; die Voreinstellung der Stackgröße (8 MiB) gilt sonst.
+        UserImage plain = ElfLoader.Load(elf, ["p"], [], new ElfLoadOptions { Random = FixedRandom });
         Assert.AreEqual(ElfLoader.UserEnd - (8UL << 20), plain.StackBottom);
     }
 
@@ -441,9 +442,10 @@ public sealed class ElfLoaderTests
     public void RejectsBadArguments()
     {
         byte[] elf = Static().Build();
-        Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a\0b"], [], Options()));
-        Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a"], [null!], Options()));
-        Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, [new string('x', 20000)], [], Options()));
+        // Eingabefehler aus argv/envp sind ElfLoadException mit Art, nie ArgumentException (Prepare fängt nur diese).
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a\0b"], [], Options())).Kind);
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a"], [null!], Options())).Kind);
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, [new string('x', 20000)], [], Options())).Kind);
         Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a"], [], new ElfLoadOptions { Random = new byte[8] }));
         Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a"], [], new ElfLoadOptions { StackSize = Page + 1 }));
         UserImage image = Load(elf);
@@ -451,44 +453,306 @@ public sealed class ElfLoaderTests
         Assert.ThrowsException<ArgumentException>(() => image.FillPage(elf, 0x400001, new byte[Page]));
     }
 
-    /// <summary>Zufällig verfälschte Köpfe dürfen nur mit <see cref="ElfLoadException"/> scheitern, nie mit einem anderen Fehler.</summary>
     [TestMethod]
-    public void MutatedHeadersFailCleanly()
+    public void ArgumentErrorsAreLoadExceptionsWithKind()
     {
-        byte[] valid = Pie().Build();
-        var random = new Random(4711);
-        int loaded = 0;
-        for (int round = 0; round < 3000; round++)
+        byte[] elf = Static().Build();
+        ElfLoadException big = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p", new string('x', 3 << 20)], [], Options(8UL << 20)));
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, big.Kind);
+        Assert.IsTrue(big.Message.Contains("E2BIG", StringComparison.Ordinal));
+        Assert.IsFalse(big.Message.Contains("xxxx", StringComparison.Ordinal), "keine Eingabe in der Meldung");
+
+        string[] empties = new string[300_000];
+        Array.Fill(empties, string.Empty);
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, empties, [], Options(8UL << 20))).Kind);
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], empties, Options(8UL << 20))).Kind);
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [new string('y', 3 << 20)], Options(8UL << 20))).Kind);
+
+        // Auch execFn zählt zum Budget.
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [], new ElfLoadOptions { Random = FixedRandom, StackSize = 64 * 1024, ExecFn = new string('z', 1 << 20) }));
+
+        // NUL und null in argv und envp; der Text taucht nicht in der Meldung auf.
+        ElfLoadException nul = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["ge\0heim"], [], Options()));
+        Assert.IsFalse(nul.Message.Contains("geheim", StringComparison.Ordinal));
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], ["A=1\0B=2"], Options()));
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, [null!], [], Options()));
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], ["A=1", null!], Options()));
+
+        // Genau an der Grenze geht es noch: 64 KiB Stack, Viertel = 16 KiB.
+        Assert.IsNotNull(Load(elf, ["p", new string('x', 8000)]));
+    }
+
+    [TestMethod]
+    public void MissingRandomSourceIsRejected()
+    {
+        byte[] elf = Static().Build();
+        ElfLoadException e = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [], new ElfLoadOptions { StackSize = 64 * 1024 }));
+        Assert.AreEqual(ElfLoadError.NoRandom, e.Kind);
+    }
+
+    // Eine Tabelle aus 1024 oder 1025 Köpfen: erster Kopf PT_LOAD für die ganze Tabelle, dann Auffüllung mit PT_NULL, Code dahinter.
+    private static byte[] ManyHeaders(int count)
+    {
+        var b = new ElfBuilder { Body = new byte[0x12000] };
+        b.Add(ElfProgramHeader.Load, R, 0, 0x400000, 0xF000, 0xF000);
+        b.Add(ElfProgramHeader.Load, R | X, 0xF000, 0x410000, 0x1000, 0x1000);
+        for (int i = 2; i < count; i++)
         {
-            byte[] elf = (byte[])valid.Clone();
-            int changes = random.Next(1, 4);
-            for (int c = 0; c < changes; c++)
+            b.Add(0, 0, 0, 0, 0, 0);
+        }
+
+        b.Entry = 0x410000;
+        return b.Build();
+    }
+
+    [TestMethod]
+    public void ProgramHeaderCountLimitIs1024()
+    {
+        UserImage image = Load(ManyHeaders(1024));
+        Assert.AreEqual(0x400000UL + 64, image.ProgramHeaderAddress);
+        AssertRejected(ManyHeaders(1025));
+    }
+
+    [TestMethod]
+    public void UnalignedProgramHeaderOffsetIsAccepted()
+    {
+        // Linux prüft e_phoff nicht auf Ausrichtung; die Köpfe werden byteweise gelesen. Der Lader lehnt deshalb nicht ab, die Adresse
+        // in AT_PHDR folgt dem tatsächlichen Versatz.
+        byte[] elf = Static().Build();
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(elf.AsSpan(56));
+        Array.Copy(elf, 64, elf, 67, count * 56);
+        BinaryPrimitives.WriteUInt64LittleEndian(elf.AsSpan(32), 67);
+        UserImage image = Load(elf);
+        Assert.AreEqual(0x400000UL + 67, image.ProgramHeaderAddress);
+    }
+
+    [TestMethod]
+    public void ZeroSizedLoadIsIgnoredAndShortHeaderRejected()
+    {
+        UserImage image = Load(Build(b => b.Add(ElfProgramHeader.Load, R | W, 0, 0x7000_0000, 0, 0)));
+        foreach (UserRegion r in image.Regions)
+        {
+            Assert.IsFalse(r.Start <= 0x7000_0000 && 0x7000_0000 < r.End);
+        }
+
+        // Nur Segmente mit memsz 0: nichts zu laden.
+        AssertRejected(Build(b =>
+        {
+            b.Headers.Clear();
+            b.Add(ElfProgramHeader.Load, R | X, 0, 0x401000, 0, 0);
+        }));
+
+        byte[] shortHeader = Static().Build();
+        BinaryPrimitives.WriteUInt16LittleEndian(shortHeader.AsSpan(52), 63);
+        AssertRejected(shortHeader);
+    }
+
+    [TestMethod]
+    public void ProgramHeaderEntryNotPointingAtHeadersIsTrustedLikeLinux()
+    {
+        // Linux übernimmt p_vaddr von PT_PHDR ungeprüft in AT_PHDR; der Lader verlangt nur, dass die Köpfe lückenlos lesbar abgebildet sind.
+        // Zeigt PT_PHDR woandershin (hier in die .bss), lädt das Programm; musl fände dort keine Köpfe, das schadet nur dem Programm selbst.
+        UserImage image = Load(Build(b => b.Add(ElfProgramHeader.ProgramHeaders, R, 64, 0x404000, 56, 56)));
+        Assert.AreEqual(0x404000UL, image.ProgramHeaderAddress);
+
+        // Nicht abgebildet oder nicht ganz abgebildet: abgelehnt.
+        AssertRejected(Build(b => b.Add(ElfProgramHeader.ProgramHeaders, R, 64, 0x500000, 56, 56)));
+        AssertRejected(Build(b => b.Add(ElfProgramHeader.ProgramHeaders, R, 64, 0x405FF0, 56, 56)));
+    }
+
+    [TestMethod]
+    public void SegmentWithoutFlagsAndSharedPageRights()
+    {
+        // flags 0: ein Bereich ohne Zugriff (wie PROT_NONE), nicht lesbar.
+        UserImage none = Load(Build(b => b.Add(ElfProgramHeader.Load, 0, 0, 0x600000, 0x10, 0x1000)));
+        Assert.IsTrue(none.Regions.Any(r => r.Start == 0x600000 && r.Access == MapAccess.None));
+
+        // R- und RX-Segment in derselben Seite: Die Seite wird ausführbar (wie Linux ohne -z separate-code), also auch der Einsprung
+        // ins Nur-Lesen-Segment. Dokumentiertes Verhalten (V1-Review P3-1); W bleibt nie in einer RX-Seite.
+        var b2 = new ElfBuilder { Entry = 0x701900 };
+        b2.Add(ElfProgramHeader.Load, R, 0, 0x400000, 0x200, 0x200);
+        b2.Add(ElfProgramHeader.Load, R | X, Page, 0x701000, 0x800, 0x800);
+        b2.Add(ElfProgramHeader.Load, R, 2 * Page, 0x701800, 0x300, 0x300);
+        b2.Add(ElfProgramHeader.ProgramHeaders, R, 64, 64 + 0x400000, 4 * 56, 4 * 56);
+        UserImage shared = Load(b2.Build());
+        Assert.AreEqual(MapAccess.ReadExecute, shared.Regions.First(r => r.Start == 0x701000).Access);
+        AssertRejected(Build(b => b.Add(ElfProgramHeader.Load, R | W, 0, 0x401800, 0x10, 0x10)));
+    }
+
+    [TestMethod]
+    public void WorstCaseManySegmentsAndBigBssStaysFast()
+    {
+        // 1022 winzige Segmente je eine Seite auseinander plus ein RW-Segment fast in Höhe des Budgets (1 GiB). Der Lader braucht
+        // keine zeitlich nennenswerte Arbeit (O(n^2) nur über die höchstens 1024 Köpfe). Das Abbilden pro Seite im Aufrufer
+        // (LinuxUserProcess.Load) läuft über Seiten x Segmente und ist hier nicht Teil der Messung (offen im PR).
+        var b = new ElfBuilder { Body = new byte[0x12000] };
+        b.Add(ElfProgramHeader.Load, R, 0, 0x400000, 0xF000, 0xF000);
+        b.Add(ElfProgramHeader.Load, R | X, 0xF000, 0x410000, 0x10, 0x10);
+        b.Entry = 0x410000;
+        for (int i = 0; i < 1020; i++)
+        {
+            b.Add(ElfProgramHeader.Load, R, 0x2000, 0x500000 + ((ulong)i * Page), 1, 1);
+        }
+
+        b.Add(ElfProgramHeader.Load, R | W, 0x10000, 0x1000_0000, 0x10, (1UL << 30) - (64UL << 20));
+        byte[] elf = b.Build();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        UserImage image = ElfLoader.Load(elf, ["p"], [], Options());
+        Assert.IsTrue(image.Reserve(new AddressSpaceMap(Page, ElfLoader.UserEnd)).IsOK());
+        Assert.IsTrue(watch.Elapsed < TimeSpan.FromSeconds(10), "Laden dauerte " + watch.Elapsed);
+    }
+
+    private static readonly ulong[] Edge =
+    [
+        0, 1, 2, 7, 8, 0x7F, 0x80, 0xFF, 0xFFF, 0x1000, 0x1001, 0xFFFF, 0x1_0000, 0x7FFF_FFFF, 0x8000_0000, 0xFFFF_FFFF,
+        0x1_0000_0000, 0x1000_0000_0000, 0x5555_5555_4000, 0x5555_5555_5000, 0x7FFF_FFFF_E000, 0x7FFF_FFFF_F000, 0x7FFF_FFFF_FFFF,
+        0x8000_0000_0000, 0x7FFF_FFFF_FFFF_FFFF, 0x8000_0000_0000_0000, 0x8000_0000_0000_0001, 0xFFFF_FFFF_FFFF_F000,
+        0xFFFF_FFFF_FFFF_FFFE, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_AAAA_AAAB_C000, 0x4000_0000,
+    ];
+
+    /// <summary>Prüft alle Invarianten eines geladenen Abbilds (siehe MutatedImagesKeepInvariants).</summary>
+    private static void CheckInvariants(UserImage image, byte[] elf)
+    {
+        ulong guard = image.StackBottom - Page;
+        UserRegion prev = default;
+        bool first = true;
+        foreach (UserRegion r in image.Regions)
+        {
+            Assert.IsTrue(r.Start % Page == 0 && r.End % Page == 0 && r.Start < r.End, "Bereich ausgerichtet");
+            Assert.IsTrue(r.Start >= ElfLoader.MinAddress && r.End <= ElfLoader.UserEnd, "Bereich im Benutzerraum");
+            if (!first)
             {
-                int at = random.Next(0, 64 + (4 * 56));
-                elf[at] = (byte)random.Next(256);
+                Assert.IsTrue(prev.End <= r.Start, "sortiert und überlappungsfrei");
             }
 
-            try
-            {
-                UserImage image = ElfLoader.Load(elf, ["p"], [], Options());
-                loaded++;
-                foreach (UserRegion region in image.Regions)
-                {
-                    Assert.IsTrue(region.Start >= ElfLoader.MinAddress && region.End <= ElfLoader.UserEnd && region.Start < region.End);
-                }
+            prev = r;
+            first = false;
+        }
 
-                byte[] page = new byte[Page];
-                foreach (UserSegment segment in image.Segments)
-                {
-                    image.FillPage(elf, segment.Address & ~(Page - 1), page);
-                }
-            }
-            catch (ElfLoadException)
+        // W nie in einer RX-Seite: kein RW-Segment berührt einen RX-Bereich und umgekehrt.
+        UserRegion[] regions = image.Regions.ToArray();
+        ulong segmentsEnd = 0;
+        foreach (UserSegment s in image.Segments)
+        {
+            Assert.IsTrue(s.Address >= ElfLoader.MinAddress && s.MemorySize <= ElfLoader.UserEnd - s.Address, "Segment im Benutzerraum");
+            Assert.IsTrue(ElfFile.FitsInFile(s.FileOffset, s.FileSize, elf.Length) && s.FileSize <= s.MemorySize);
+            ulong sStart = s.Address & ~(Page - 1), sEnd = (s.Address + s.MemorySize + Page - 1) & ~(Page - 1);
+            segmentsEnd = Math.Max(segmentsEnd, sEnd);
+            foreach (UserRegion r in regions)
             {
+                if (r.Start < sEnd && r.End > sStart)
+                {
+                    Assert.IsFalse(s.Access == MapAccess.ReadWrite && r.Access == MapAccess.ReadExecute, "W in RX-Seite");
+                    Assert.IsFalse(s.Access == MapAccess.ReadExecute && r.Access == MapAccess.ReadWrite, "X in RW-Seite");
+                }
             }
         }
 
-        Assert.IsTrue(loaded > 0, "einige Verfälschungen bleiben ladbar");
+        UserRegion? entryRegion = regions.Cast<UserRegion?>().FirstOrDefault(r => image.Entry >= r!.Value.Start && image.Entry < r.Value.End);
+        Assert.IsNotNull(entryRegion, "Einsprung abgebildet");
+        Assert.AreEqual(MapAccess.ReadExecute, entryRegion!.Value.Access, "Einsprung in RX");
+
+        Assert.IsTrue(image.BreakStart <= guard && image.BreakStart >= segmentsEnd && image.BreakStart % Page == 0, "brk vor der Schutzseite");
+        Assert.AreEqual(0UL, image.StackPointer % 16);
+        Assert.IsTrue(image.StackPointer > image.StackBottom && image.StackPointer < image.StackTop);
+
+        var map = new AddressSpaceMap(Page, ElfLoader.UserEnd);
+        Assert.IsTrue(image.Reserve(map).IsOK(), "Reserve in frischer Karte");
+
+        // FillPage: Anfang, Ende und einige Seiten jedes Bereichs mit Zugriff (ein Bereich kann bis zu 1 GiB groß sein).
+        byte[] page = new byte[Page];
+        foreach (UserRegion r in regions)
+        {
+            if (r.Access == MapAccess.None)
+            {
+                continue;
+            }
+
+            ulong pages = (r.End - r.Start) / Page;
+            for (ulong i = 0; i < Math.Min(pages, 6); i++)
+            {
+                image.FillPage(elf, r.Start + (i * Page), page);
+                image.FillPage(elf, r.End - ((i + 1) * Page), page);
+            }
+        }
+    }
+
+    // Eine Mutation auf einer Kopie: Zufallsbyte, Feld mit Grenzwert, Typ/Flags, Kopffelder.
+    private static void MutateOnce(byte[] elf, Random random)
+    {
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(elf.AsSpan(56));
+        int phdr = 64 + (random.Next(Math.Min(count, 8)) * 56);
+        switch (random.Next(5))
+        {
+            case 0:
+                elf[random.Next(0, Math.Min(elf.Length, 64 + (count * 56)))] = (byte)random.Next(256);
+                break;
+            case 1:
+                {
+                    int[] fields = [8, 16, 24, 32, 40, 48];
+                    BinaryPrimitives.WriteUInt64LittleEndian(elf.AsSpan(phdr + fields[random.Next(fields.Length)]), Edge[random.Next(Edge.Length)]);
+                    break;
+                }
+
+            case 2:
+                {
+                    uint[] types = [0, 1, 2, 3, 4, 6, 7, 0x6474_E551, 0x6474_E550, 0x7FFF_FFFF, 0xFFFF_FFFF];
+                    BinaryPrimitives.WriteUInt32LittleEndian(elf.AsSpan(phdr), types[random.Next(types.Length)]);
+                    BinaryPrimitives.WriteUInt32LittleEndian(elf.AsSpan(phdr + 4), random.Next(3) == 0 ? (uint)random.Next() : (uint)random.Next(8));
+                    break;
+                }
+
+            case 3:
+                BinaryPrimitives.WriteUInt64LittleEndian(elf.AsSpan(random.Next(2) == 0 ? 24 : 32), Edge[random.Next(Edge.Length)]);
+                break;
+            default:
+                if (random.Next(2) == 0)
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(56), (ushort)random.Next(0, 80));
+                }
+                else
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(16), (ushort)random.Next(0, 5));
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Mutationsprobe mit fester Saat auf einer statischen und einer PIE-Grunddatei: Zufallsbytes, Felder mit Grenzwerten, Typ/Flags und
+    /// Kopffelder. Das Ergebnis ist nie eine andere Ausnahme als <see cref="ElfLoadException"/>; was lädt, erfüllt alle Invarianten.
+    /// </summary>
+    [TestMethod]
+    public void MutatedImagesKeepInvariants()
+    {
+        byte[][] bases = [Static().Build(), Pie().Build()];
+        var random = new Random(20261126);
+        int loaded = 0;
+        for (int round = 0; round < 10_000; round++)
+        {
+            byte[] elf = (byte[])bases[round % 2].Clone();
+            int changes = random.Next(1, 5);
+            for (int c = 0; c < changes; c++)
+            {
+                MutateOnce(elf, random);
+            }
+
+            UserImage image;
+            try
+            {
+                image = ElfLoader.Load(elf, ["p"], ["A=1"], Options());
+            }
+            catch (ElfLoadException)
+            {
+                continue;
+            }
+
+            loaded++;
+            CheckInvariants(image, elf);
+        }
+
+        Assert.IsTrue(loaded > 100, "einige Verfälschungen bleiben ladbar: " + loaded);
     }
 
     private static byte[] Build(Action<ElfBuilder> change)

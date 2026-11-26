@@ -7,7 +7,28 @@ namespace ProjektZeh.Processes;
 /// <summary>Fehler im ELF-Abbild oder ein Abbild, das der Lader (noch) nicht unterstützt.</summary>
 internal sealed class ElfLoadException : FormatException
 {
-    public ElfLoadException(string message) : base(message) { }
+    public ElfLoadException(string message) : this(message, ElfLoadError.Invalid) { }
+
+    public ElfLoadException(string message, ElfLoadError kind) : base(message)
+    {
+        Kind = kind;
+    }
+
+    /// <summary>Art des Fehlers, damit Aufrufer ihn ohne Textvergleich unterscheiden können (E2BIG als -E2BIG melden).</summary>
+    public ElfLoadError Kind { get; }
+}
+
+/// <summary>Grobe Fehlerart des Laders.</summary>
+internal enum ElfLoadError
+{
+    /// <summary>Abbild ungültig oder nicht unterstützt (ENOEXEC).</summary>
+    Invalid,
+
+    /// <summary>Argumente und Umgebung passen nicht in den Platz für die Startinformationen oder enthalten ungültige Einträge (E2BIG, EINVAL).</summary>
+    ArgumentsTooLong,
+
+    /// <summary>Keine Zufallsquelle für AT_RANDOM übergeben.</summary>
+    NoRandom,
 }
 
 /// <summary>Ein Programmkopf (ELF64 Phdr), unverändert aus der Datei.</summary>

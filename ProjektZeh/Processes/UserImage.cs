@@ -12,7 +12,7 @@ internal readonly record struct UserRegion(ulong Start, ulong End, MapAccess Acc
 internal readonly record struct UserSegment(ulong Address, ulong MemorySize, ulong FileOffset, ulong FileSize, MapAccess Access);
 
 /// <summary>
-/// Ergebnis von <see cref="ElfLoader.Load(ReadOnlySpan{byte}, string[], string[])"/>: wo das Programm liegt, wo es startet und was
+/// Ergebnis von <see cref="ElfLoader.Load(ReadOnlySpan{byte}, string[], string[], ElfLoadOptions)"/>: wo das Programm liegt, wo es startet und was
 /// in seinen Seiten steht. Das Abbild bildet selbst nichts ab, damit es auf dem Host prüfbar ist. Wer den Prozess anlegt (V3),
 /// belegt <see cref="Regions"/> (etwa mit <see cref="Reserve"/>), holt für jede Seite eines Bereichs mit Zugriff einen Frame,
 /// füllt ihn mit <see cref="FillPage"/> und bildet ihn mit dem Zugriff des Bereichs ab. Seiten mit <see cref="MapAccess.None"/>
