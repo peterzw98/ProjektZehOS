@@ -25,7 +25,7 @@
 - `IUserMemory`: `bool TryRead(ulong addr, Span<byte> dst)`, `bool TryWrite(ulong addr, ReadOnlySpan<byte> src)`, `bool TryReadCString(ulong addr, int max, out string s)`.
 - `LinuxSyscalls.Dispatch(ref SyscallArgs a, ILinuxProcess p) -> long` (negativer Wert = `-errno`); `SyscallArgs` mit `Number, A0..A5`.
 - `ILinuxProcess`: `IUserMemory Memory`, Deskriptortabelle, `Brk`, `MapAnonymous(ulong len, int prot) -> ulong`, `Exit(int code)`, `ITextOutput Terminal`.
-- `UserImage ElfLoader.Load(ReadOnlySpan<byte> elf, string[] argv, string[] envp)` → `Entry`, `StackPointer`, belegte Bereiche.
+- `UserImage ElfLoader.Load(ReadOnlySpan<byte> elf, string[] argv, string[] envp, ElfLoadOptions options)` → `Entry`, `StackPointer`, belegte Bereiche.
 
 **Abnahme Demo (Stufen, jede für sich vorzeigbar):** (a) N1-E-`hello` gibt seinen Text im Terminal aus und endet mit 0; (b) die übrigen N1-E-Programme gegen `expected/`; (c) `js -c '1+1'` gibt `2` aus. Prüfung im Gast (QEMU/KVM), Ergebnis mit Befehl und Ausgabe in die Vorlage.
 

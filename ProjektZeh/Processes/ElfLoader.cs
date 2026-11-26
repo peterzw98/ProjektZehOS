@@ -403,9 +403,9 @@ internal static class ElfLoader
         // Gemeinsames Budget über argv, envp und execFn: Die Eingabe wird schon beim Umwandeln gegen die Grenze gezählt, damit
         // ein riesiges Argument oder Millionen leerer Einträge nicht erst vollständig umgewandelt werden.
         ulong used = 0;
-        byte[][] args = Encode(argv, limit, ref used);
-        byte[][] envs = Encode(envp, limit, ref used);
-        byte[] exec = Encode([execFn], limit, ref used)[0];
+        byte[][] args = Encode(argv, "argv", limit, ref used);
+        byte[][] envs = Encode(envp, "envp", limit, ref used);
+        byte[] exec = Encode([execFn], "execFn", limit, ref used)[0];
 
         ulong strings = 16 + (ulong)exec.Length;
         foreach (byte[] a in args)
@@ -505,16 +505,28 @@ internal static class ElfLoader
         => new("Argumente und Umgebung sind zu groß für den Stack (E2BIG).", ElfLoadError.ArgumentsTooLong);
 
     // UTF-8 mit abschließender Null; eine eingebettete Null würde die Zeichenkette für das Programm stillschweigend kürzen.
-    // Fehler in der Eingabe sind ElfLoadException (nie ArgumentException), die Meldung nennt nur Nummer und Art, nie den Text.
-    private static byte[][] Encode(string[] values, ulong limit, ref ulong used)
+    // Fehler in der Eingabe sind ElfLoadException (nie ArgumentException), die Meldung nennt Liste und Nummer, nie den Text.
+    // Das Budget wird vor jeder Allokation und vor jedem Durchlauf über die Zeichenkette geprüft: Jeder Eintrag braucht mindestens
+    // 9 Bytes (Null plus Zeiger), jedes UTF-16-Zeichen mindestens ein UTF-8-Byte.
+    private static byte[][] Encode(string[] values, string name, ulong limit, ref ulong used)
     {
+        if (used > limit || (ulong)values.Length * 9 > limit - used)
+        {
+            throw TooBig();
+        }
+
         var result = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            string value = values[i] ?? throw new ElfLoadException("Eintrag " + i.ToString(CultureInfo.InvariantCulture) + " ist leer (null).", ElfLoadError.ArgumentsTooLong);
+            string value = values[i] ?? throw new ElfLoadException(name + "[" + i.ToString(CultureInfo.InvariantCulture) + "] ist null.", ElfLoadError.InvalidArgument);
+            if ((ulong)value.Length + 9 > limit - used)
+            {
+                throw TooBig();
+            }
+
             if (value.Contains('\0'))
             {
-                throw new ElfLoadException("Eintrag " + i.ToString(CultureInfo.InvariantCulture) + " enthält ein Nullzeichen.", ElfLoadError.ArgumentsTooLong);
+                throw new ElfLoadException(name + "[" + i.ToString(CultureInfo.InvariantCulture) + "] enthält ein Nullzeichen.", ElfLoadError.InvalidArgument);
             }
 
             // Zeichenkette mit Null plus Zeiger; die endgültige Größe (Ausrichtung, Hilfsvektor) prüft BuildStack danach.

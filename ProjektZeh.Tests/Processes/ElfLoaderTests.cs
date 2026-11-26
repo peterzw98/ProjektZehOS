@@ -443,8 +443,8 @@ public sealed class ElfLoaderTests
     {
         byte[] elf = Static().Build();
         // Eingabefehler aus argv/envp sind ElfLoadException mit Art, nie ArgumentException (Prepare fängt nur diese).
-        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a\0b"], [], Options())).Kind);
-        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a"], [null!], Options())).Kind);
+        Assert.AreEqual(ElfLoadError.InvalidArgument, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a\0b"], [], Options())).Kind);
+        Assert.AreEqual(ElfLoadError.InvalidArgument, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["a"], [null!], Options())).Kind);
         Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, [new string('x', 20000)], [], Options())).Kind);
         Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a"], [], new ElfLoadOptions { Random = new byte[8] }));
         Assert.ThrowsException<ArgumentException>(() => ElfLoader.Load(elf, ["a"], [], new ElfLoadOptions { StackSize = Page + 1 }));
@@ -478,8 +478,62 @@ public sealed class ElfLoaderTests
         Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, [null!], [], Options()));
         Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], ["A=1", null!], Options()));
 
-        // Genau an der Grenze geht es noch: 64 KiB Stack, Viertel = 16 KiB.
-        Assert.IsNotNull(Load(elf, ["p", new string('x', 8000)]));
+        // Echter Grenzfall: größtes noch passendes Argument suchen (64 KiB Stack, Viertel = 16 KiB), das nächstlängere scheitert.
+        int fit = 0;
+        for (int step = 1 << 14; step > 0; step >>= 1)
+        {
+            try
+            {
+                Load(elf, ["p", new string('x', fit + step)]);
+                fit += step;
+            }
+            catch (ElfLoadException)
+            {
+            }
+        }
+
+        Assert.IsTrue(fit > 8000 && fit < 16384, "Grenze " + fit);
+        Assert.IsNotNull(Load(elf, ["p", new string('x', fit)]));
+        Assert.AreEqual(ElfLoadError.ArgumentsTooLong, Assert.ThrowsException<ElfLoadException>(() => Load(elf, ["p", new string('x', fit + 1)])).Kind);
+    }
+
+    [TestMethod]
+    public void ArgumentBudgetIsCheckedBeforeAllocating()
+    {
+        // Das Budget greift beim Umwandeln: Eine riesige Zeichenkette und Millionen leerer Einträge werden abgelehnt, ohne dass ihre
+        // UTF-8-Form oder die Zeigertabelle angelegt wird (ohne frühe Prüfung wären das 64 MiB und 2,4 MB).
+        byte[] elf = Static().Build();
+        string huge = new('x', 64 << 20);
+        string[] empties = new string[300_000];
+        Array.Fill(empties, string.Empty);
+        ElfLoadOptions options = Options();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p", huge], [], options));
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], empties, options));
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.IsTrue(allocated < (1 << 20), "angelegt: " + allocated);
+    }
+
+    [TestMethod]
+    public void SegmentEndsAtGuardPageBoundary()
+    {
+        // Grenze der Prüfung in Load: Segmentende höchstens an der Schutzseite unter dem Stack (die Mutationsprobe erreicht das nie).
+        ulong guard = ElfLoader.UserEnd - (64 * 1024) - Page;
+        Assert.IsNotNull(Load(Build(b => b.Add(ElfProgramHeader.Load, R | W, 0, guard - Page, 0x10, Page))));
+        AssertRejected(Build(b => b.Add(ElfProgramHeader.Load, R | W, 0, guard - Page, 0x10, Page + 1)));
+        AssertRejected(Build(b => b.Add(ElfProgramHeader.Load, R | W, 0, guard, 0x10, 1)));
+
+        // Mit PIE-Verschiebung: Das Ende zählt nach der Verschiebung (bias = PieBase - niedrigste Seite).
+        ulong limit = guard - ElfLoader.PieBase;
+        Assert.IsNotNull(Load(PieWith(b => b.Add(ElfProgramHeader.Load, R | W, 0, limit - Page, 0x10, Page))));
+        AssertRejected(PieWith(b => b.Add(ElfProgramHeader.Load, R | W, 0, limit - Page, 0x10, Page + 1)));
+    }
+
+    private static byte[] PieWith(Action<ElfBuilder> change)
+    {
+        ElfBuilder b = Pie();
+        change(b);
+        return b.Build();
     }
 
     [TestMethod]

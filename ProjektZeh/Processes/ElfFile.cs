@@ -24,8 +24,11 @@ internal enum ElfLoadError
     /// <summary>Abbild ungültig oder nicht unterstützt (ENOEXEC).</summary>
     Invalid,
 
-    /// <summary>Argumente und Umgebung passen nicht in den Platz für die Startinformationen oder enthalten ungültige Einträge (E2BIG, EINVAL).</summary>
+    /// <summary>Argumente und Umgebung passen nicht in den Platz für die Startinformationen (E2BIG).</summary>
     ArgumentsTooLong,
+
+    /// <summary>Ein Eintrag in argv, envp oder execFn ist ungültig: null oder mit eingebettetem Nullzeichen (EINVAL).</summary>
+    InvalidArgument,
 
     /// <summary>Keine Zufallsquelle für AT_RANDOM übergeben.</summary>
     NoRandom,
