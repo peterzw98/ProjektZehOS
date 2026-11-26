@@ -75,6 +75,13 @@ internal static partial class LinuxSyscalls
             case Setpgid:
             case Setsid:
                 return DoProcessGroup(p, ref a); // V3 raw
+            case Mremap:
+            case Prlimit64:
+            case Getrlimit:
+            case Setrlimit:
+            case SchedGetaffinity:
+            case Prctl:
+                return DispatchLimits(ref a, p); // V9: Stackmessung, Grenzen, CPU-Maske, Threadname (js-Vorbereitung)
             default:
                 return DispatchMore(ref a, p); // Zeit, Zufall, Signale, poll, madvise, futex; sonst -ENOSYS (auch rseq: musl und glibc fallen zurück)
         }

@@ -524,6 +524,89 @@ public sealed class LinuxUserProcessTests
         Assert.IsNull(process.GetDescriptor(1), "Tabelle ganz leer");
         Assert.AreEqual(-LinuxErrno.EBADF, file.Write("x"u8), "geschlossen");
         Assert.AreEqual(0, pages.Frames.Count, "Speicher trotzdem frei");
+    private static long Sys(LinuxUserProcess process, long number, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0, ulong a5 = 0)
+    {
+        var a = new SyscallArgs { Number = number, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4, A5 = a5 };
+        return LinuxSyscalls.Dispatch(ref a, process);
+    }
+
+    private static bool Read64(LinuxUserProcess process, ulong addr, out ulong value)
+    {
+        Span<byte> b = stackalloc byte[8];
+        bool ok = process.TryRead(addr, b);
+        value = BinaryPrimitives.ReadUInt64LittleEndian(b);
+        return ok;
+    }
+
+    [TestMethod]
+    public void MuslStackmessungFindetDenGanzenStack()
+    {
+        // Nachbau von musl pthread_getattr_np für den Hauptthread (src/thread/pthread_getattr_np.c): ab der Seite über auxv
+        // Seite um Seite nach unten mremap(p-l-PAGE, PAGE, 2*PAGE, 0), solange -ENOMEM kommt.
+        var (process, _, image, _) = Start();
+        ulong p = (image.StackPointer + Page - 1) & ~(Page - 1);
+        ulong l = Page;
+        while (Sys(process, LinuxSyscalls.Mremap, p - l - Page, Page, 2 * Page) == -LinuxSyscalls.ENOMEM)
+        {
+            l += Page;
+        }
+
+        // Die Schutzseite unter dem Stack ist eine Abbildung (PROT_NONE) und zählt mit: eine Seite mehr als bei Linux.
+        Assert.AreEqual(p - image.StackBottom + Page, l);
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Mremap, image.StackBottom - 2 * Page, Page, 2 * Page));
+    }
+
+    [TestMethod]
+    public void RlimitStackIstDerHauptstack()
+    {
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prlimit64, 0, 3, 0, buf));
+        Assert.IsTrue(Read64(process, buf, out ulong cur));
+        Assert.IsTrue(Read64(process, buf + 8, out ulong max));
+        Assert.AreEqual(64UL * 1024, cur);
+        Assert.AreEqual(64UL * 1024, max);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 7, buf));
+        Assert.IsTrue(Read64(process, buf, out cur));
+        Assert.AreEqual(1024UL, cur);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Getrlimit, 9, buf)); // RLIMIT_AS
+        Assert.IsTrue(Read64(process, buf, out cur));
+        Assert.AreEqual(ulong.MaxValue, cur);
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Sys(process, LinuxSyscalls.Setrlimit, 3, buf));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Getrlimit, 16, buf));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Sys(process, LinuxSyscalls.Prlimit64, 99, 3, 0, buf));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Getrlimit, 3, 0x10));
+    }
+
+    [TestMethod]
+    public void MremapVerkleinertNurAnOrtUndStelle()
+    {
+        var (process, _, _, _) = Start();
+        ulong m = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, 3 * Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual((long)m, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, 3 * Page));
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, 4 * Page, 1)); // MAYMOVE: Abweichung
+        Assert.AreEqual((long)m, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, Page + 1));
+        Assert.IsTrue(process.IsMapped(m, 2 * Page));
+        Assert.IsFalse(process.IsMapped(m + 2 * Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Mremap, m, 3 * Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m + 1, Page, Page));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, Page, 2)); // FIXED ohne MAYMOVE
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mremap, m, Page, 0));
+    }
+
+    [TestMethod]
+    public void AffinitaetUndThreadname()
+    {
+        var (process, _, _, _) = Start();
+        ulong buf = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, 3, 0x22, ulong.MaxValue);
+        Assert.AreEqual(8L, Sys(process, LinuxSyscalls.SchedGetaffinity, 0, 128, buf));
+        Assert.IsTrue(Read64(process, buf, out ulong mask));
+        Assert.AreEqual(1UL, mask);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.SchedGetaffinity, 0, 4, buf));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Sys(process, LinuxSyscalls.SchedGetaffinity, 99, 8, buf));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Prctl, 15, buf)); // PR_SET_NAME
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Sys(process, LinuxSyscalls.Prctl, 15, 0x10));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Prctl, 0x53564d41, 0)); // PR_SET_VMA (mimalloc)
     }
 }
 

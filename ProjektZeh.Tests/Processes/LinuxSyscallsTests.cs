@@ -505,4 +505,14 @@ public sealed class LinuxSyscallsTests
         public LinuxSignalState Signals { get; } = new();
         public void Exit(int code) { }
     }
+
+    [TestMethod]
+    public void OhneAdressraumKeinMremapUndStackAchtMiB()
+    {
+        var p = new Proc();
+        Assert.AreEqual(-LinuxSyscalls.ENOSYS, Call(p, LinuxSyscalls.Mremap, 0x7000_0000UL, 4096, 8192));
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Prlimit64, 7, 3, 0, Base));
+        Assert.AreEqual(8UL << 20, BitConverter.ToUInt64(p.Mem.Data, 0));
+        Assert.AreEqual(8UL << 20, BitConverter.ToUInt64(p.Mem.Data, 8));
+    }
 }
