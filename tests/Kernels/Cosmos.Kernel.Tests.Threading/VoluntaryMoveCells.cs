@@ -57,8 +57,13 @@ internal static class VoluntaryMoveCells
     private static volatile uint s_pinnedId = uint.MaxValue;
     private static volatile uint s_pinnedCpu = uint.MaxValue;
 
+    // Each spinner sets its own set first thing: ThreadAffinity.Set needs a started thread.
+    private static Sys.Threading.CpuSet s_moverSet;
+    private static Sys.Threading.CpuSet s_pinnedSet;
+
     private static void Mover()
     {
+        Sys.Threading.ThreadAffinity.Current = s_moverSet;
         s_moverId = SchedulerManager.CurrentThread!.Id;
         while (!s_stop)
         {
@@ -68,6 +73,7 @@ internal static class VoluntaryMoveCells
 
     private static void Pinned()
     {
+        Sys.Threading.ThreadAffinity.Current = s_pinnedSet;
         s_pinnedId = SchedulerManager.CurrentThread!.Id;
         while (!s_stop)
         {
@@ -102,8 +108,8 @@ internal static class VoluntaryMoveCells
         SysThread pinned = new(Pinned);
         try
         {
-            Assert.True(Sys.Threading.ThreadAffinity.Set(pinned, Sys.Threading.CpuSet.Single(3)), "the pinned spinner gets CPU 3");
-            Assert.True(Sys.Threading.ThreadAffinity.Set(mover, moverSet), "the mover may run on CPU 1 and 2");
+            s_pinnedSet = Sys.Threading.CpuSet.Single(3);
+            s_moverSet = moverSet;
             pinned.Start();
             mover.Start();
             Assert.True(WaitFor(() => s_moverCpu is 1 or 2 && s_pinnedCpu == 3), "both spinners run where their sets say");
@@ -150,8 +156,8 @@ internal static class VoluntaryMoveCells
         SysThread busy = new(Pinned);
         try
         {
-            Assert.True(Sys.Threading.ThreadAffinity.Set(busy, Sys.Threading.CpuSet.Single(2)), "the busy spinner gets CPU 2");
-            Assert.True(Sys.Threading.ThreadAffinity.Set(mover, Sys.Threading.CpuSet.Single(1).With(2)), "the mover may run on CPU 1 and 2");
+            s_pinnedSet = Sys.Threading.CpuSet.Single(2);
+            s_moverSet = Sys.Threading.CpuSet.Single(1).With(2);
             busy.Start();
             Assert.True(WaitFor(() => s_pinnedCpu == 2), "the busy spinner runs on CPU 2");
             mover.Start();
