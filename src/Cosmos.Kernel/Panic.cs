@@ -21,7 +21,8 @@ internal static class Panic
     /// </summary>
     /// <param name="exceptionName">The name of the CPU exception.</param>
     /// <param name="ctx">The interrupt context with register state.</param>
-    internal static unsafe void CpuException(string exceptionName, ref IRQContext ctx)
+    /// <param name="allowThreadAbandon">Erlaubt dem Ausnahme-Hook, den betroffenen Thread aufzugeben.</param>
+    internal static unsafe void CpuException(string exceptionName, ref IRQContext ctx, bool allowThreadAbandon = true)
     {
         InternalCpu.DisableInterrupts();
 
@@ -39,7 +40,7 @@ internal static class Panic
         // stopped before the first line, so they write nothing into it, and a second CPU that
         // faults meanwhile (it lost the claim) halts without a report of its own instead of
         // interleaving one. The price: an exception inside the hook reports only itself.
-        bool abandoned = depth == 1 && CpuExceptionHook.Handler is { } handler
+        bool abandoned = allowThreadAbandon && depth == 1 && CpuExceptionHook.Handler is { } handler
             && handler(new CpuExceptionInfo(ctx.interrupt, InstructionPointer(ref ctx), StackPointer(ref ctx), ctx.fault_address,
                     SchedulerManager.GetCurrentCpuId(), CurrentThreadId(), InterruptsEnabled(ref ctx)))
                 == CpuExceptionAction.AbandonThread

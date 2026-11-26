@@ -4,6 +4,7 @@
 .global _native_cpu_rdtsc
 .global _native_cpu_disable_interrupts
 .global _native_cpu_enable_interrupts
+.global _native_cpu_enable_machine_check
 .global _native_cpu_save_irq_and_disable
 .global _native_cpu_restore_irq
 .global _native_cpu_read_irq_flags
@@ -39,6 +40,14 @@ _native_cpu_disable_interrupts:
 // Enable interrupts (STI)
 _native_cpu_enable_interrupts:
     sti
+    ret
+
+// ZehOS patch mce-enable, see PATCHES.md
+// Der Aufrufer hat MCE per CPUID geprüft. Andere CR4-Bits bleiben erhalten.
+_native_cpu_enable_machine_check:
+    mov     rax, cr4
+    or      rax, (1 << 6)
+    mov     cr4, rax
     ret
 
 // Save RFLAGS and disable interrupts.

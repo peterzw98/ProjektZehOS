@@ -78,6 +78,10 @@ internal static class ExceptionHandler
         // Vector 0x13: SIMD Floating Point
         InterruptManager.SetHandler(0x13, SimdFloatingPoint);
 
+        // ZehOS patch mce-enable, see PATCHES.md
+        // Erst nach der Registrierung darf die Boot-CPU einen Machine-Check empfangen.
+        InternalCpu.EnableMachineCheck();
+
         Serial.WriteString("[ExceptionHandler] CPU exception handlers registered\n");
 #else
         Serial.WriteString("[ExceptionHandler] No exception handlers for this architecture\n");
@@ -203,7 +207,8 @@ internal static class ExceptionHandler
 
     private static void MachineCheck(ref IRQContext ctx)
     {
-        Panic.CpuException("Machine Check (#MC)", ref ctx);
+        // Der Fehler lässt sich keinem einzelnen Thread sicher zuordnen.
+        Panic.CpuException("Machine Check (#MC)", ref ctx, allowThreadAbandon: false);
     }
 
     private static void SimdFloatingPoint(ref IRQContext ctx)
