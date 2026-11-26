@@ -18,10 +18,20 @@ internal interface ILinuxPollable : ILinuxDescriptor
 
     /// <summary>
     /// Wartet höchstens <paramref name="timeoutMs"/> (negativ: ohne Frist), bis <see cref="PollEvents"/> etwas meldet oder das Programm
-    /// abbricht; liefert, ob etwas bereit ist. Das Prüfen geschieht unter derselben Sperre wie das Wecken, damit kein Ereignis
-    /// zwischen dem Durchsuchen in poll und dem Schlaf verloren geht.
+    /// <paramref name="abort"/> abbricht; liefert, ob etwas bereit ist. Das Prüfen geschieht unter derselben Sperre wie das Wecken, damit kein
+    /// Ereignis zwischen dem Durchsuchen in poll und dem Schlaf verloren geht.
     /// </summary>
-    bool WaitPoll(short events, long timeoutMs);
+    bool WaitPoll(short events, long timeoutMs, ILinuxAbort? abort);
+
+    /// <summary>
+    /// read/readv eines Prozesses, der bei seinem Abbruch nicht weiter warten darf. V16: Der Abbruch ist der des Aufrufers, nicht des
+    /// Erzeugers; über vfork und SCM_RIGHTS benutzen andere Prozesse dasselbe Objekt, und der Erzeuger darf vorher enden. -EBADF, wenn nur zum
+    /// Schreiben offen.
+    /// </summary>
+    long ReadAs(Span<byte> dst, ILinuxAbort? abort);
+
+    /// <summary>write wie <see cref="ReadAs"/> mit dem Abbruch des Aufrufers; -EBADF, wenn nur zum Lesen offen.</summary>
+    long WriteAs(ReadOnlySpan<byte> data, ILinuxAbort? abort);
 }
 
 /// <summary>
@@ -82,10 +92,12 @@ internal sealed class LinuxPipe
         }
     }
 
-    private bool Aborted => _abort is { IsAborted: true };
+    // V16: der Abbruch des aufrufenden Prozesses; nur ohne ihn (Aufrufe über ILinuxInput/ILinuxDescriptor) der des Erzeugers wie bisher.
+    // Sonst bekäme ein Prozess, dem die Pipe per vfork oder SCM_RIGHTS gehört, nach dem Ende des Erzeugers nur noch -EINTR.
+    private bool Aborted(ILinuxAbort? caller) => (caller ?? _abort) is { IsAborted: true };
 
     /// <summary>Liest verfügbare Bytes; 0 am Ende (kein Schreibende mehr offen), -EAGAIN ohne Daten bei O_NONBLOCK, -EINTR beim Abbruch.</summary>
-    public long Read(Span<byte> dst, bool nonBlocking)
+    public long Read(Span<byte> dst, bool nonBlocking, ILinuxAbort? caller = null)
     {
         if (dst.IsEmpty)
         {
@@ -118,7 +130,7 @@ internal sealed class LinuxPipe
                     return 0;
                 }
 
-                if (Aborted)
+                if (Aborted(caller))
                 {
                     return -EINTR;
                 }
@@ -138,7 +150,7 @@ internal sealed class LinuxPipe
     /// wartet der Aufruf oder liefert -EAGAIN. -EPIPE ohne Leseende (SIGPIPE wird nicht zugestellt, die Signale sind in S1 nur
     /// verwaltet), -EINTR beim Abbruch; wurde schon etwas geschrieben, zählt das.
     /// </summary>
-    public long Write(ReadOnlySpan<byte> src, bool nonBlocking)
+    public long Write(ReadOnlySpan<byte> src, bool nonBlocking, ILinuxAbort? caller = null)
     {
         if (src.IsEmpty)
         {
@@ -156,7 +168,7 @@ internal sealed class LinuxPipe
                     return done > 0 ? done : -EPIPE;
                 }
 
-                if (Aborted)
+                if (Aborted(caller))
                 {
                     return done > 0 ? done : -EINTR;
                 }
@@ -252,7 +264,7 @@ internal sealed class LinuxPipe
         }
     }
 
-    public bool WaitPoll(bool reader, short events, long timeoutMs)
+    public bool WaitPoll(bool reader, short events, long timeoutMs, ILinuxAbort? caller = null)
     {
         // Die Frist läuft nach der Uhr, nicht nach Scheiben: PulseAll weckt bei jedem Lesen oder Schreiben eines anderen Threads vorzeitig,
         // ein Zählen der nominalen Scheibe verkürzte die Frist dann beliebig (V13-Review P2-1: 1500 ms wurden 71 ms).
@@ -262,7 +274,7 @@ internal sealed class LinuxPipe
             while (EventsLocked(reader, events) == 0)
             {
                 long left = timeoutMs < 0 ? SliceMs : timeoutMs - ElapsedMs(start);
-                if (Aborted || left <= 0)
+                if (Aborted(caller) || left <= 0)
                 {
                     return false;
                 }
@@ -326,7 +338,11 @@ internal abstract class LinuxPipeEnd : ILinuxPollable
 
     public short PollEvents(short events) => Pipe.PollEvents(IsReader, events);
 
-    public bool WaitPoll(short events, long timeoutMs) => Pipe.WaitPoll(IsReader, events, timeoutMs);
+    public bool WaitPoll(short events, long timeoutMs, ILinuxAbort? abort) => Pipe.WaitPoll(IsReader, events, timeoutMs, abort);
+
+    public long ReadAs(Span<byte> dst, ILinuxAbort? abort) => IsReader ? Pipe.Read(dst, NonBlocking, abort) : -9; // EBADF
+
+    public long WriteAs(ReadOnlySpan<byte> data, ILinuxAbort? abort) => IsReader ? -9 : Pipe.Write(data, NonBlocking, abort);
 
     /// <summary>Beim letzten close (keine Nummer zeigt mehr darauf); ein zweiter Aufruf ändert nichts.</summary>
     public void Close()
@@ -354,7 +370,7 @@ internal sealed class LinuxPipeReader : LinuxPipeEnd, ILinuxInput
 
     public bool InputReady => PollEvents(LinuxPipe.PollIn) != 0;
 
-    public bool WaitInput(long timeoutMs) => WaitPoll(LinuxPipe.PollIn, timeoutMs);
+    public bool WaitInput(long timeoutMs) => WaitPoll(LinuxPipe.PollIn, timeoutMs, null);
 }
 
 /// <summary>Schreibende; read darauf liefert -EBADF.</summary>

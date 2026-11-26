@@ -87,6 +87,9 @@ internal static partial class LinuxSyscalls
             case Waitid:
             case Getppid:
             case Kill: return DispatchWait(ref a, p); // V15: Kindprozesse (posix_spawn)
+            case >= Socket and <= Getsockopt:
+            case Accept4:
+                return p is ILinuxFiles sockets ? DispatchSocket(ref a, p, sockets) : -ENOSYS; // V16: Unix-Sockets, ohne grobe Dateisperre
             default: return p is ILinuxFiles files ? DispatchFileGated(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
         }
     }
@@ -404,7 +407,8 @@ internal static partial class LinuxSyscalls
                 long left = timeoutMs < 0 ? -1 : (first ? timeoutMs : Math.Max(0, timeoutMs - LinuxPipe.ElapsedMs(start)));
                 first = false;
                 long slice = waitables == 1 || left == 0 ? left : (left < 0 ? PollMultiSliceMs : Math.Min(PollMultiSliceMs, left));
-                _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice) : ((ILinuxInput)waitFor).WaitInput(slice);
+                // V16: Pipes und Sockets warten mit dem Abbruch des Aufrufers (sie gehören oft einem anderen Prozess, der vorher enden darf).
+                _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice, p as ILinuxAbort) : ((ILinuxInput)waitFor).WaitInput(slice);
                 ready = PollScan(p, b, (int)nfds, out _, out _, out _);
                 if (ready > 0 || Aborted(p) || waitables == 1 || (timeoutMs >= 0 && LinuxPipe.ElapsedMs(start) >= timeoutMs))
                 {

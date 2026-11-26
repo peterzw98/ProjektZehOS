@@ -115,7 +115,7 @@ internal static partial class LinuxSyscalls
     /// </summary>
     internal static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
     {
-        if (d is not ILinuxFile and not LinuxPipeEnd)
+        if (d is not ILinuxFile and not LinuxPipeEnd and not LinuxUnixSocket)
         {
             return 0; // Terminal und andere gehören dem Prozess, nicht der Tabelle
         }
@@ -131,6 +131,12 @@ internal static partial class LinuxSyscalls
         // V15: Nach vfork teilen Prozesse eines Laufs die offenen Dateien; erst die letzte Nummer irgendeines Prozesses schließt.
         if (p is ILinuxOpenFileCount count && count.IsOpenAnywhere(d))
         {
+            return 0;
+        }
+
+        if (d is LinuxUnixSocket socket)
+        {
+            socket.Close(); // V16: Gegenseite sieht EOF/EPIPE, Ungelesenes und mitgeschickte Dateien verfallen
             return 0;
         }
 

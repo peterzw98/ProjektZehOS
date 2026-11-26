@@ -105,6 +105,11 @@ internal static partial class LinuxSyscalls
                 return r;
             }
         }
+        else if (d is LinuxUnixSocket)
+        {
+            // V16: Socket (S_IFSOCK, 0777 wie Linux bei socketpair), Größe 0.
+            st = new LinuxStat { Mode = 0xC000 | 0x1FF, Nlink = 1, BlockSize = 4096 };
+        }
         else if (d is LinuxPipeEnd)
         {
             // V13: Pipe (S_IFIFO, 0600); Größe 0 wie bei Linux, Blockgröße eine Seite.

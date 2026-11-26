@@ -118,7 +118,8 @@ internal static partial class LinuxSyscalls
         }
 
         byte[] tmp = new byte[(int)room];
-        long got = input.ReadInput(tmp);
+        // V16: Pipes und Unix-Sockets warten mit dem Abbruch des lesenden Prozesses, nicht des Erzeugers (vfork, SCM_RIGHTS).
+        long got = input is ILinuxPollable pollable ? pollable.ReadAs(tmp, p as ILinuxAbort) : input.ReadInput(tmp);
         if (got <= 0)
         {
             return got;
