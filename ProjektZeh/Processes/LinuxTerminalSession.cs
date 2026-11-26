@@ -42,6 +42,19 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
         _sleep = sleep ?? throw new ArgumentNullException(nameof(sleep));
     }
 
+    /// <summary>Liefert die Fenstergröße (Zeilen, Spalten) für TIOCGWINSZ; ohne sie 24 x 80. Wird vom Programmthread gerufen.</summary>
+    public Func<(ushort Rows, ushort Columns)>? SizeSource { get; set; }
+
+    /// <summary>Fenstergröße in Zeichen, nie 0.</summary>
+    public (ushort Rows, ushort Columns) WindowSize
+    {
+        get
+        {
+            (ushort rows, ushort columns) = SizeSource?.Invoke() ?? ((ushort)24, (ushort)80);
+            return (rows == 0 ? (ushort)24 : rows, columns == 0 ? (ushort)80 : columns);
+        }
+    }
+
     /// <summary>Wird bei <see cref="Interrupt"/> aufgerufen (auf der Ereignisschleife): verlässt den Ring 3 des Programms.</summary>
     public Action? OnInterrupt { get; set; }
 
