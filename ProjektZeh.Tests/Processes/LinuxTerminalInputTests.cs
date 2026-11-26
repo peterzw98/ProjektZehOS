@@ -559,6 +559,53 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void AntwortenAufCursorfragenSindBegrenzt()
+    {
+        var (session, terminal, _, p) = Program();
+        SetRaw(p);
+        // Review V3 raw P2: Ein Programm, das fragt und nie liest, darf die Eingabe nicht ohne Grenze wachsen lassen.
+        for (int i = 0; i < 100_000; i++)
+        {
+            terminal.Write("\x1b[6n"u8);
+        }
+
+        int total = 0;
+        while (session.InputReady)
+        {
+            long n = Call(p, LinuxSyscalls.Read, 0, Base, 0x4000);
+            Assert.IsTrue(n > 0);
+            total += (int)n;
+        }
+
+        Assert.IsTrue(total <= LinuxTerminalSession.MaxInputBytes + LinuxTerminalSession.ResponseReserve, $"{total} Byte gepuffert");
+        Assert.IsTrue(total >= LinuxTerminalSession.MaxInputBytes, "bis zur Grenze wird geantwortet");
+    }
+
+    [TestMethod]
+    public void CursorfrageBeiVollerEingabeWirdNochBeantwortet()
+    {
+        var (session, terminal, _, p) = Program();
+        SetRaw(p);
+        session.SubmitRaw(new byte[LinuxTerminalSession.MaxInputBytes]);
+        terminal.Write("\x1b[6n"u8);
+        long last = 0;
+        while (session.InputReady)
+        {
+            last = Call(p, LinuxSyscalls.Read, 0, Base, 0x4000);
+        }
+
+        Assert.AreEqual((byte)'R', p.Mem.Data[last - 1], "Antwort steht hinter der vollen Eingabe");
+    }
+
+    [TestMethod]
+    public void ZuKurzesTermiosWirdAbgelehnt()
+    {
+        var (_, terminal, _, _) = Program();
+        Assert.ThrowsException<ArgumentException>(() => terminal.Termios = new byte[12]);
+        Assert.AreEqual(LinuxSyscalls.TermiosSize, terminal.Termios.Length, "Zustand unveraendert");
+    }
+
+    [TestMethod]
     public void RohmodusZeigtGezeichneteZeileMitCursorUndGibtNurDenStandAus()
     {
         var (session, terminal, clock, p) = Program();
@@ -616,6 +663,8 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getpgid, 77));
         Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getsid, 0));
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getsid, 77));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getpgid, unchecked((ulong)-1L)), "Linux: negative PID nicht gefunden");
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getsid, unchecked((ulong)-5L)));
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, 0, 0), "Sitzungsfuehrer, wie Linux im neuen pty");
         Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, (ulong)p.Pid, (ulong)p.Pid));
         Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Setpgid, 77, 0));
