@@ -18,7 +18,8 @@ namespace ProjektZeh.Runtime;
 /// <para>
 /// Dateien (V8): Wie <c>run-linux.py</c> ein frisches Verzeichnis je Programm nimmt, bekommt hier jedes Programm die Wurzel
 /// <see cref="RootBase"/>/&lt;name&gt; auf der Datenplatte, wenn <c>/data</c> eingehängt ist (das Gastskript startet mit einem frischen
-/// Image), sonst ein leeres Dateisystem im Arbeitsspeicher. Die Zeile <c>LINUX_RUN root</c> nennt, welches.
+/// Image), sonst ein leeres Dateisystem im Arbeitsspeicher. Die Zeile <c>LINUX_RUN root</c> nennt, welches. Arbeitsverzeichnis ist
+/// <see cref="ProbeCwd"/> darin.
 /// </para>
 /// </summary>
 internal static unsafe partial class CosmosLinuxRunProbe
@@ -26,6 +27,12 @@ internal static unsafe partial class CosmosLinuxRunProbe
     private const uint Magic = 0x3152_4C5A; // "ZLR1"
     private const int TimeoutSeconds = 20;
     private const string RootBase = "/data/linuxrun";
+
+    /// <summary>
+    /// Arbeitsverzeichnis jedes Programms: <c>run-linux.py</c> startet in einem frischen Unterordner, die erwarteten Ausgaben
+    /// (<c>dirs</c>: leeres Listing von ".", getcwd endet auf "/d/e" nach mindestens einem Ordner davor) setzen das voraus.
+    /// </summary>
+    private const string ProbeCwd = "/w";
 
     [LibraryImport("*", EntryPoint = "zehos_linux_run_bundle_address"), SuppressGCTransition] private static partial ulong BundleAddress();
     [LibraryImport("*", EntryPoint = "zehos_linux_run_bundle_size"), SuppressGCTransition] private static partial ulong BundleSize();
@@ -71,7 +78,7 @@ internal static unsafe partial class CosmosLinuxRunProbe
                 string? root = StorageLock.Run(() => VfsManager.TryGetMount("/data", out _)) ? RootBase + "/" + name : null;
                 Write("root " + name + " " + (root ?? "memory"));
                 CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds,
-                    root: root);
+                    root: root, cwd: ProbeCwd);
                 Write(outcome.Ran
                     ? "status " + name + " " + outcome.Status + (outcome.Detail.Length > 0 ? " (" + outcome.Detail + ")" : string.Empty)
                     : "status " + name + " notrun (" + outcome.Detail + ")");

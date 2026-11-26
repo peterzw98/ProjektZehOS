@@ -68,6 +68,9 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Prozesswurzel auf der Datenplatte (Kernelpfad) oder null für ein leeres Dateisystem im Arbeitsspeicher (V8).</summary>
         public string? Root;
 
+        /// <summary>Anfängliches Arbeitsverzeichnis im Prozess (wird angelegt) oder null für "/"; nur die Gastprobe setzt es.</summary>
+        public string? StartCwd;
+
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
         public LinuxUserProcess? Process;
@@ -293,8 +296,9 @@ internal static unsafe class CosmosLinuxRun
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
     /// <param name="root">Prozesswurzel (Kernelpfad, wird bei Bedarf angelegt) oder null für ein leeres Dateisystem im Arbeitsspeicher.</param>
+    /// <param name="cwd">Arbeitsverzeichnis im Prozess (absolut, wird angelegt) oder null für "/".</param>
     public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
-        string? root = null)
+        string? root = null, string? cwd = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -309,7 +313,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -447,6 +451,19 @@ internal static unsafe class CosmosLinuxRun
             OnFsBase = UserMode.SetFsBase,
         };
         run.Process = process;
+        if (run.StartCwd != null)
+        {
+            // Wie run-linux.py, das in einem Unterordner startet: "/" zeigte sonst /dev und getcwd hätte keinen Ordnernamen.
+            long made = process.FileSystem.Mkdir(run.StartCwd, 0x1ED);
+            if (made < 0 && made != -LinuxErrno.EEXIST)
+            {
+                run.Error = "Arbeitsverzeichnis " + run.StartCwd + ": errno " + (-made);
+                return;
+            }
+
+            process.Cwd = run.StartCwd;
+        }
+
         bool bound = false;
         try
         {
