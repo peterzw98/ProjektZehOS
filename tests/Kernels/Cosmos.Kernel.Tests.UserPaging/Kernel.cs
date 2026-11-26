@@ -366,6 +366,13 @@ public unsafe class Kernel : Sys.Kernel
     private static volatile uint s_victimId = CpuExceptionInfo.NoThread;
     private static ulong s_sink;
     private static int s_seenChanges;
+    // Der Worker setzt s_onTable nur im maskierten Abschnitt nach Yield, also
+    // sicher auf Tabelle A (gezaehlt); s_leaves zaehlt jedes Ende davon.
+    // Liest Main vor TryProtect s_onTable == 1 und ist s_leaves danach
+    // unveraendert, lief der Worker die ganze Zeit dort: dann muss die
+    // Aenderung abgelehnt werden. Faengt einen verlorenen Zaehler in _active.
+    private static volatile int s_onTable;
+    private static int s_leaves;
     private const int ProtectRaceRounds = 200_000;
     private const int ProtectRaceEnough = 1000;
 
@@ -847,6 +854,8 @@ public unsafe class Kernel : Sys.Kernel
         int done = 0;
         int refused = 0;
         bool writable = true;
+        s_onTable = 0;
+        s_leaves = 0;
         try
         {
             Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
@@ -858,10 +867,16 @@ public unsafe class Kernel : Sys.Kernel
             Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
             for (int i = 0; i < ProtectRaceRounds && (done < ProtectRaceEnough || refused < ProtectRaceEnough); i++)
             {
+                int leaves = Volatile.Read(ref s_leaves);
+                bool onTable = s_onTable == 1;
                 if (s_tableA.TryProtect(User, !writable, false))
                 {
                     writable = !writable;
                     done++;
+                    if (onTable && Volatile.Read(ref s_leaves) == leaves)
+                    {
+                        Fail("a change went through while the worker ran on the table");
+                    }
                 }
                 else
                 {
@@ -905,14 +920,24 @@ public unsafe class Kernel : Sys.Kernel
         bool last = LeafWritable(s_tableA, User);
         while (!s_release)
         {
-            for (int i = 0; i < 64; i++)
+            // Maskiert, damit kein Tick den Worker im markierten Abschnitt
+            // von der Tabelle nimmt (sonst Fehlalarm in Main). Erst
+            // abmelden, dann zaehlen: beides noch auf der Tabelle.
+            using (InternalCpu.DisableInterruptsScope())
             {
-                bool now = LeafWritable(s_tableA, User);
-                if (now != last)
+                s_onTable = 1;
+                for (int i = 0; i < 64; i++)
                 {
-                    last = now;
-                    Interlocked.Increment(ref s_seenChanges);
+                    bool now = LeafWritable(s_tableA, User);
+                    if (now != last)
+                    {
+                        last = now;
+                        Interlocked.Increment(ref s_seenChanges);
+                    }
                 }
+
+                s_onTable = 0;
+                Interlocked.Increment(ref s_leaves);
             }
 
             if (*(ulong*)User != ValueA)
