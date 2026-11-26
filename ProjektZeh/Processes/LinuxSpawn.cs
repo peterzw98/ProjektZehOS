@@ -74,6 +74,9 @@ internal sealed class LinuxChild
 
     /// <summary>Wartestatus wie Linux (<c>exit n</c>: n &lt;&lt; 8, Signal: Nummer), null, solange das Kind läuft.</summary>
     public int? WaitStatus { get; internal set; }
+
+    /// <summary>Elternprozess ignoriert SIGCHLD: beendet, aber kein Zombie für wait4 (LinuxWait.cs).</summary>
+    public bool AutoReaped { get; internal set; }
 }
 
 /// <summary>Optional neben <see cref="ILinuxProcess"/> (V15): execve. Ohne sie ist execve -ENOSYS.</summary>
@@ -107,6 +110,16 @@ internal sealed partial class LinuxUserProcess
 
     // Kinder dieses Prozesses; die Liste ist zugleich die Sperre (ChildGate), zuunterst in der Reihenfolge wie _threadGate.
     private readonly List<LinuxChild> _children = new();
+
+    // Unter _children: Dieser Prozess ist beendet; beendete Kinder trägt niemand mehr per wait4 aus (Linux: init übernimmt und erntet),
+    // ihre PID wird beim Ende sofort frei.
+    private bool _reapsOrphans;
+
+    // Nach execve gehört die PID dem neuen Abbild; Release dieses vfork-Kinds gibt sie dann nicht frei.
+    private bool _pidPassed;
+
+    // Einmal: die IDs dieses Prozesses sind abgerechnet (Destroy oder Release).
+    private bool _idsFreed;
 
     /// <summary>vfork-Kind: eigener Prozess auf dem Speicher von <paramref name="parent"/> (V15).</summary>
     private LinuxUserProcess(LinuxUserProcess parent)
@@ -195,7 +208,10 @@ internal sealed partial class LinuxUserProcess
                 _children.Remove(entry);
             }
 
+            // Das Kind war nie sichtbar (kein Wartestatus, kein wait4): seine PID wird hier frei, nicht erst beim Ernten.
+            child._pidPassed = true;
             child.Release();
+            _ids.Remove(child.Pid);
             return -LinuxSyscalls.EAGAIN;
         }
 
@@ -330,6 +346,7 @@ internal sealed partial class LinuxUserProcess
     private void TakeOver(LinuxUserProcess from)
     {
         Parent = from.Parent;
+        from._pidPassed = true;
         lock (_fileGate)
         {
             // Die Nummern wandern, die Zählung in LinuxOpenFiles bleibt gleich.
@@ -401,7 +418,93 @@ internal sealed partial class LinuxUserProcess
         }
 
         CloseAllFiles();
+        FreeIds();
     }
+
+    /// <summary>
+    /// Ende des Prozesses (Destroy, Release): TIDs der Nebenthreads werden frei; die PID erst, wenn niemand mehr den Wartestatus abholen
+    /// kann (kein Elternprozess oder Elternprozess beendet), sonst mit <see cref="Reap"/> wie bei Linux. Beendete Kinder dieses Prozesses
+    /// geben ihre PID jetzt frei, laufende beim eigenen Ende (<see cref="ChildEnded"/>).
+    /// Sperren nacheinander, nie verschachtelt außer <c>_children</c> vor <see cref="LinuxIds"/> (zuunterst).
+    /// </summary>
+    private void FreeIds()
+    {
+        lock (_threadGate)
+        {
+            if (_idsFreed)
+            {
+                return;
+            }
+
+            _idsFreed = true;
+            foreach (LinuxThread t in _threads)
+            {
+                if (!ReferenceEquals(t, MainThread))
+                {
+                    _ids.Remove(t.Tid);
+                }
+            }
+        }
+
+        lock (_children)
+        {
+            _reapsOrphans = true;
+            foreach (LinuxChild c in _children)
+            {
+                if (c.WaitStatus != null)
+                {
+                    _ids.Remove(c.Pid);
+                }
+            }
+
+            _children.RemoveAll(c => c.WaitStatus != null);
+        }
+
+        if (!_pidPassed && Parent == null)
+        {
+            _ids.Remove(Pid);
+        }
+        else if (!_pidPassed)
+        {
+            Parent!.FreeIfOrphaned(Pid);
+        }
+    }
+
+    /// <summary>Elternprozess schon beendet: niemand erntet mehr; die PID des beendeten Kinds wird frei.</summary>
+    private void FreeIfOrphaned(int pid)
+    {
+        lock (_children)
+        {
+            if (_reapsOrphans || _children.Exists(c => c.Pid == pid && c.AutoReaped))
+            {
+                _children.RemoveAll(c => c.Pid == pid);
+                _ids.Remove(pid);
+            }
+        }
+    }
+
+    /// <summary>
+    /// wait4/waitid ohne WNOWAIT: trägt das beendete Kind <paramref name="pid"/> aus und gibt seine PID frei. false, wenn es kein
+    /// beendetes Kind mit dieser PID gibt (läuft noch oder unbekannt). Ruft man unter <see cref="ChildGate"/> oder ohne Sperre.
+    /// </summary>
+    public bool Reap(int pid)
+    {
+        lock (_children)
+        {
+            int i = _children.FindIndex(c => c.Pid == pid && c.WaitStatus != null);
+            if (i < 0)
+            {
+                return false;
+            }
+
+            _children.RemoveAt(i);
+            _ids.Remove(pid);
+            return true;
+        }
+    }
+
+    /// <summary>Test und Diagnose: ist <paramref name="id"/> als PID oder TID im Lauf belegt?</summary>
+    internal bool IdInUse(int id) => _ids.InUse(id);
 
     /// <summary>Ein Thread endete mit einer Ausnahme im Ring 3 (Kernel): Linux beendet den Prozess mit dem Signal der Ausnahme.</summary>
     public void RecordFault(int signal)
@@ -427,10 +530,9 @@ internal sealed partial class LinuxUserProcess
             if (child != null && child.WaitStatus == null)
             {
                 child.WaitStatus = waitStatus;
-                if (ReapsChildrenAutomatically())
-                {
-                    _children.Remove(child); // kein Zombie (LinuxWait.cs)
-                }
+                // Kein Zombie (LinuxWait.cs): wait4 sieht das Kind nicht mehr; Eintrag und PID räumt FreeIfOrphaned, sobald das Kind
+                // seine IDs abrechnet (danach kann die PID nicht mehr an einen noch laufenden Endpfad vergeben werden).
+                child.AutoReaped = ReapsChildrenAutomatically();
             }
 
             Monitor.PulseAll(_children);

@@ -89,7 +89,7 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                 for (int i = 0; i < _children.Count; i++)
                 {
                     LinuxChild c = _children[i];
-                    if ((idType == 1 && c.Pid != id) || (idType == 2 && id != group))
+                    if (c.AutoReaped || (idType == 1 && c.Pid != id) || (idType == 2 && id != group))
                     {
                         continue;
                     }
@@ -101,7 +101,7 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                         uid = c.Process.Uid;
                         if (consume)
                         {
-                            _children.RemoveAt(i);
+                            _ = Reap(c.Pid); // trägt aus und gibt die PID frei (LinuxSpawn.cs)
                         }
 
                         return c.Pid;

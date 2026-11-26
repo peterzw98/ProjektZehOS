@@ -174,6 +174,7 @@ public sealed class LinuxProcessWaitTests
         Assert.AreEqual(0x2a00, status);
         Assert.AreEqual(42, LinuxWaitStatus.ExitCode(status));
         Assert.AreEqual(0, r.P.Children.Length, "abgeholt");
+        Assert.IsFalse(r.P.IdInUse(child.Pid), "PID beim Ernten frei");
         Assert.AreEqual(-ECHILD, r.Wait4(-1, 0, 0));
     }
 
@@ -260,8 +261,11 @@ public sealed class LinuxProcessWaitTests
         var r = new Root();
         LinuxUserProcess child = r.Spawn();
         r.P.Signals.Handler[17] = 1; // SIG_IGN
-        Root.End(child, LinuxWaitStatus.Exited(3));
+        child.ReportEnd(LinuxWaitStatus.Exited(3));
+        Assert.AreEqual(-ECHILD, r.Wait4(-1, 0, LinuxUserProcess.WNohang), "kein Zombie, schon vor dem Abrechnen");
+        child.Release();
         Assert.AreEqual(0, r.P.Children.Length);
+        Assert.IsFalse(r.P.IdInUse(child.Pid), "PID frei");
         Assert.AreEqual(-ECHILD, r.Wait4(-1, 0, 0));
     }
 

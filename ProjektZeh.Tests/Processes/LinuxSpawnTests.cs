@@ -224,6 +224,93 @@ public sealed class LinuxSpawnTests
         Assert.IsNotNull(child.GetDescriptor(1));
     }
 
+    [TestMethod]
+    public void PidDesKindsBleibtBisZumErntenBelegt()
+    {
+        var f = new Fixture();
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Fixture.Call(child, LinuxSyscalls.ExitGroup, 3);
+        child.Release();
+        Assert.IsTrue(f.Parent.IdInUse(child.Pid), "Zombie: PID bleibt bis wait4");
+        Assert.IsFalse(f.Parent.Reap(child.Pid + 1), "unbekannte PID");
+        Assert.IsTrue(f.Parent.Reap(child.Pid));
+        Assert.IsFalse(f.Parent.IdInUse(child.Pid));
+        Assert.AreEqual(0, f.Parent.Children.Length);
+        Assert.IsFalse(f.Parent.Reap(child.Pid), "nur einmal");
+    }
+
+    [TestMethod]
+    public void LaufendesKindLaesstSichNichtErnten()
+    {
+        var f = new Fixture();
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        Assert.IsFalse(f.Parent.Reap(f.Child!.Pid));
+        Assert.IsTrue(f.Parent.IdInUse(f.Child.Pid));
+    }
+
+    [TestMethod]
+    public void NachExecveGehoertDiePidDemNeuenAbbild()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        ulong path = f.Strings(f.Mem + (2 * Page), "/hello") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, path, 0, 0));
+        child.Release();
+        Assert.IsTrue(f.Parent.IdInUse(child.Pid), "Release des vfork-Kinds gibt die PID des Abbilds nicht frei");
+        LinuxUserProcess next = f.Exec!;
+        next.ReportEnd(0);
+        next.Destroy();
+        Assert.IsTrue(f.Parent.IdInUse(child.Pid), "Zombie bis wait4");
+        Assert.IsTrue(f.Parent.Reap(child.Pid));
+        Assert.IsFalse(f.Parent.IdInUse(child.Pid));
+    }
+
+    [TestMethod]
+    public void EagainBeimVforkGibtPidSofortFrei()
+    {
+        var f = new Fixture();
+        int pid = 0;
+        f.Parent.StartVfork = (c, _) => { pid = c.Pid; return false; };
+        Assert.AreEqual(-LinuxSyscalls.EAGAIN, Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0));
+        Assert.AreNotEqual(0, pid);
+        Assert.IsFalse(f.Parent.IdInUse(pid));
+        Assert.AreEqual(0, f.Parent.Children.Length);
+    }
+
+    [TestMethod]
+    public void ProzessendeGibtTidsUndPidsVerwaisterKinderFrei()
+    {
+        var f = new Fixture();
+        long tid = Fixture.Call(f.Parent, LinuxSyscalls.Clone, LinuxUserProcess.CloneThreadSet, f.Mem + Page);
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess zombie = f.Child!;
+        Fixture.Call(zombie, LinuxSyscalls.ExitGroup, 0);
+        zombie.Release();
+
+        f.WriteFile("/hello", Elf());
+        ulong path = f.Strings(f.Mem + (2 * Page), "/hello") + 0x100;
+        f.Parent.CurrentThreadSource = null;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess running = f.Child!;
+        Assert.AreEqual(0, Fixture.Call(running, LinuxSyscalls.Execve, path, 0, 0));
+        running.Release();
+
+        f.Parent.Destroy();
+        Assert.IsFalse(f.Parent.IdInUse((int)tid), "TID des Nebenthreads");
+        Assert.IsFalse(f.Parent.IdInUse(Pid), "erster Prozess ohne Eltern");
+        Assert.IsFalse(f.Parent.IdInUse(zombie.Pid), "beendetes Kind ohne Ernter");
+        Assert.IsTrue(f.Parent.IdInUse(running.Pid), "laufendes Kind behält seine PID");
+
+        // Endet das verwaiste Kind, erntet niemand mehr: die PID wird mit seinem Ende frei.
+        f.Exec!.ReportEnd(0);
+        f.Exec.Destroy();
+        Assert.IsFalse(f.Parent.IdInUse(running.Pid));
+        Assert.AreEqual(0, f.Parent.Children.Length);
+    }
+
     // Statisches Programm wie in LinuxUserProcessTests: Code bei 0x401000 (ret), Daten bei 0x403000.
     internal static byte[] Elf()
     {
