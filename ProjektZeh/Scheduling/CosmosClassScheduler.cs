@@ -14,7 +14,7 @@ namespace ProjektZeh.Scheduling;
 /// <see cref="ClassRunQueues{T}"/> (hostgetestet); Etappe 5 passt nur diesen Adapter an die neue Schnittstelle an.
 /// Ab Etappe 5 (Upstream 5b) ist die Hauptschleife ein normaler Thread der Klasse Interaktiv; die Policy sieht nie einen Idle-Thread.
 /// </summary>
-internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
+internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, IVoluntaryMove
 {
     // Yielded und PickFailed haben keinen Fehlerweg; die Kapazitaet je Klasse muss die Threadzahl decken (Cosmos kennt kein Mehr).
     private const int CapacityPerClass = SchedulerThread.MaxThreadCount;
@@ -84,7 +84,12 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
         var next = cpu.Queues.Pick(running);
         if (next == null || ReferenceEquals(next, running)) return null;
         // E6-B: die CPU, auf der er zuletzt lief, ist der Cache-Hinweis fuer ClassPlacement.SelectCpu.
-        if (next.SchedulerData is ClassThreadState nextState) nextState.LastCpu = (int)state.CpuId;
+        if (next.SchedulerData is ClassThreadState nextState && nextState.LastCpu != (int)state.CpuId)
+        {
+            nextState.LastCpu = (int)state.CpuId;
+            // #674 V2: Grundlage fuer die Mindestlaufzeit vor einem freiwilligen Umzug.
+            nextState.OnCpuSince = Stopwatch.GetTimestamp();
+        }
         cpu.Trace[cpu.TraceNext] = next.Id;
         cpu.TraceNext = (cpu.TraceNext + 1) % TraceLength;
         if (cpu.TraceCount < TraceLength) cpu.TraceCount++;
@@ -148,6 +153,8 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
     /// </summary>
     public void OnThreadMigrate(SchedulerThread thread, PerCpuState fromState, PerCpuState toState)
     {
+        // #674 V2: jeder Umzug (auch Ausgleich und Verdraengung) sperrt den naechsten freiwilligen fuer MinSinceMove.
+        if (thread.SchedulerData is ClassThreadState moved) moved.MovedAt = Stopwatch.GetTimestamp();
         if (thread.State == SchedulerThreadState.Ready) OnThreadBlocked(fromState, thread);
         OnThreadReady(toState, thread);
     }
@@ -187,6 +194,44 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
             }
         }
         return null;
+    }
+
+    // #674 V2: Mindestlaufzeit auf der CPU (das laengste Quantum, Hintergrund) und Abstand zwischen zwei Umzuegen (zwei
+    // Pruefintervalle von Cosmos), beides in Stopwatch-Einheiten, damit der IRQ nicht in Nanosekunden umrechnen muss.
+    private static readonly long minOnCpuTicks = Stopwatch.Frequency * 4 * (long)TickNs / 1_000_000_000;
+    private static readonly long minSinceMoveTicks =
+        Stopwatch.Frequency * 2 * SchedulerManager.VoluntaryMoveIntervalTicks * (long)TickNs / 1_000_000_000;
+
+    /// <summary>
+    /// #674 V2: Cosmos fragt im Tick der CPU, die den Thread rechnet, ob er auf einen ganz freien Kern umziehen soll, weil sein
+    /// SMT-Geschwister belegt ist (<see cref="ClassPlacement.SelectMoveTarget"/>). Im IRQ ohne Sperre wie <see cref="SelectCpu"/>:
+    /// Schnappschuesse, keine Allokation; Cosmos prueft das Ziel unter beiden Sperren erneut. Die eigene CPU heisst kein Umzug.
+    /// </summary>
+    public uint SelectMoveTarget(PerCpuState state, SchedulerThread current, PerCpuState[] allCpuStates, CpuSet allowed)
+    {
+        uint self = state.CpuId;
+        int count = allCpuStates.Length;
+        if (count != Topology.CpuCount || count > MaxPlacedCpus || self >= count) return self;
+        if (current.SchedulerData is not ClassThreadState own) return self;
+        Span<bool> allowedByCpu = stackalloc bool[count];
+        Span<ThreadClass?> running = stackalloc ThreadClass?[count];
+        Span<int> queued = stackalloc int[count];
+        for (int i = 0; i < count; i++)
+        {
+            allowedByCpu[i] = allowed.Contains((uint)i);
+            var cpuState = allCpuStates[i];
+            var other = cpuState?.CurrentThread;
+            // Wie SelectCpu: ein beendeter Thread rechnet nicht mehr.
+            running[i] = other == null || other.IsIdle || other.State == SchedulerThreadState.Dead ? null
+                : other.SchedulerData is ClassThreadState otherState ? otherState.Class : ThreadClass.Normal;
+            queued[i] = cpuState != null && Cpu(cpuState) is { } cpu ? cpu.Queues.Waiting : 0;
+        }
+        long now = Stopwatch.GetTimestamp();
+        long onCpu = own.LastCpu == (int)self ? now - own.OnCpuSince : 0;
+        long sinceMove = own.MovedAt == 0 ? long.MaxValue : now - own.MovedAt;
+        int target = ClassPlacement.SelectMoveTarget(Topology, (int)self, allowedByCpu, running, queued, onCpu, sinceMove,
+            minOnCpuTicks, minSinceMoveTicks);
+        return target >= 0 ? (uint)target : self;
     }
 
     // Nicht gepinnt (mehr als eine CPU erlaubt), das Ziel erlaubt, bereit und schon einmal gelaufen: Einen Thread im Zustand
