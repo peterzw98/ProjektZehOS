@@ -81,7 +81,8 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler
         if (Cpu(state) is not { } cpu) return null;
         var current = state.CurrentThread;
         var running = current is { State: SchedulerThreadState.Running, IsIdle: false } ? current : null;
-        var next = cpu.Queues.Pick(running);
+        // Ein Thread, der per Thread.Yield abgibt, kommt hinten wieder an (Cosmos-Patch yield-now, PerCpuState.SwitchIsYield).
+        var next = cpu.Queues.Pick(running, state.SwitchIsYield);
         if (next == null || ReferenceEquals(next, running)) return null;
         // E6-B: die CPU, auf der er zuletzt lief, ist der Cache-Hinweis fuer ClassPlacement.SelectCpu.
         if (next.SchedulerData is ClassThreadState nextState) nextState.LastCpu = (int)state.CpuId;
